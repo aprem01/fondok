@@ -33,6 +33,15 @@ dependencies = [
   "openpyxl>=3.1.2",
   "weasyprint>=63.0",
   "python-pptx>=1.0.0",
+  # PDF parsing — PyMuPDF for text + pdfplumber for tables. LlamaParse
+  # is optional; only used when ``LLAMA_CLOUD_API_KEY`` is set.
+  "pymupdf>=1.24.0",
+  "pdfplumber>=0.11.0",
+  "llama-parse>=0.5.0",
+  # Object storage — boto3 for the S3RawStore backend.
+  "boto3>=1.35.0",
+  # Test fixture generation (sample PDFs) — used by tests/test_documents.py.
+  "reportlab>=4.0.0",
 ]
 
 [project.optional-dependencies]

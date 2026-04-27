@@ -164,7 +164,7 @@ async def node_variance(state: DealState) -> DealState:
     out = await run_variance(payload)
     existing = state.get("model_calls") or []
     return {
-        "variance_report": out,
+        "variance_report": {"flags": out.flags},
         "model_calls": [*existing, *out.model_calls],
     }
 

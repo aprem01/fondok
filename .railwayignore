@@ -1,0 +1,36 @@
+# Files NOT uploaded to Railway. The Docker build context is the
+# only thing Railway needs for the Python worker — the Next.js web
+# app and its lockfile live in apps/web/ and are deployed via Vercel.
+
+# Frontend / Vercel app — not built by this image.
+apps/web/
+
+# Lockfiles for the JS workspace — Railway's vulnerability scanner
+# trips on Next.js CVEs that don't apply to the Python worker.
+package-lock.json
+pnpm-lock.yaml
+node_modules/
+**/node_modules/
+
+# Local SQLite DBs and other dev artifacts.
+apps/worker/fondok.db
+apps/worker/*.db
+apps/worker/*.sqlite*
+apps/worker/.venv/
+**/.pytest_cache/
+**/.ruff_cache/
+**/.mypy_cache/
+**/__pycache__/
+
+# Secrets must not ship.
+**/.env
+**/.env.*
+!**/.env.example
+
+# Misc.
+.git/
+.next/
+.turbo/
+.vercel/
+docs/
+evals/

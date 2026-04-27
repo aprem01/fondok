@@ -89,7 +89,8 @@ def create_app() -> FastAPI:
 
     app.include_router(health_router.router, tags=["health"])
     app.include_router(deals_router.router, prefix="/deals", tags=["deals"])
-    app.include_router(documents_router.router, prefix="/documents", tags=["documents"])
+    # Documents are deal-scoped: /deals/{deal_id}/documents/...
+    app.include_router(documents_router.router, prefix="/deals", tags=["documents"])
     app.include_router(model_router.router, prefix="/model", tags=["model"])
     app.include_router(market_router.router, prefix="/market", tags=["market"])
     app.include_router(analysis_router.router, prefix="/analysis", tags=["analysis"])

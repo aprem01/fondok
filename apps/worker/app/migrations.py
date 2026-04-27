@@ -11,6 +11,9 @@ Each entry is a single SQL statement. ``CREATE TABLE IF NOT EXISTS`` /
 ``CREATE INDEX IF NOT EXISTS`` / ``ALTER TABLE ... ADD COLUMN IF NOT
 EXISTS`` are the safe forms. The append-only audit_log trigger is
 guarded by a pg_trigger lookup so re-creation is a no-op.
+
+For SQLite (dev) we run a slimmer DDL set so the documents/extraction
+flow works locally without Postgres provisioning.
 """
 
 from __future__ import annotations
@@ -63,10 +66,57 @@ MIGRATIONS: list[tuple[str, str]] = [
             tenant_id        UUID NOT NULL,
             filename         TEXT NOT NULL,
             doc_type         TEXT,
-            status           TEXT NOT NULL DEFAULT 'uploaded',
+            status           TEXT NOT NULL DEFAULT 'UPLOADED',
             uploaded_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+            content_hash     TEXT,
+            storage_key      TEXT,
+            size_bytes       BIGINT,
+            page_count       INTEGER,
+            parser           TEXT,
             extraction_data  JSONB
         )
+        """,
+    ),
+    (
+        "documents.add_content_hash",
+        "ALTER TABLE documents ADD COLUMN IF NOT EXISTS content_hash TEXT",
+    ),
+    (
+        "documents.add_storage_key",
+        "ALTER TABLE documents ADD COLUMN IF NOT EXISTS storage_key TEXT",
+    ),
+    (
+        "documents.add_size_bytes",
+        "ALTER TABLE documents ADD COLUMN IF NOT EXISTS size_bytes BIGINT",
+    ),
+    (
+        "documents.add_page_count",
+        "ALTER TABLE documents ADD COLUMN IF NOT EXISTS page_count INTEGER",
+    ),
+    (
+        "documents.add_parser",
+        "ALTER TABLE documents ADD COLUMN IF NOT EXISTS parser TEXT",
+    ),
+    (
+        "extraction_results.create_table",
+        """
+        CREATE TABLE IF NOT EXISTS extraction_results (
+            id                 UUID PRIMARY KEY,
+            document_id        UUID NOT NULL REFERENCES documents(id) ON DELETE CASCADE,
+            deal_id            UUID NOT NULL,
+            tenant_id          UUID NOT NULL,
+            fields             JSONB,
+            confidence_report  JSONB,
+            agent_version      TEXT,
+            created_at         TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        )
+        """,
+    ),
+    (
+        "extraction_results.idx_document",
+        """
+        CREATE INDEX IF NOT EXISTS idx_extraction_results_document
+        ON extraction_results (document_id, created_at DESC)
         """,
     ),
     (
@@ -143,24 +193,105 @@ MIGRATIONS: list[tuple[str, str]] = [
 ]
 
 
+# SQLite-flavored DDL for dev / unit tests. UUIDs are stored as TEXT,
+# JSONB collapses to TEXT (we encode JSON ourselves), no triggers.
+SQLITE_MIGRATIONS: list[tuple[str, str]] = [
+    (
+        "deals.create_table",
+        """
+        CREATE TABLE IF NOT EXISTS deals (
+            id              TEXT PRIMARY KEY,
+            tenant_id       TEXT NOT NULL,
+            name            TEXT NOT NULL,
+            city            TEXT,
+            keys            INTEGER,
+            service         TEXT,
+            status          TEXT NOT NULL DEFAULT 'Draft',
+            deal_stage      TEXT,
+            risk            TEXT,
+            ai_confidence   REAL,
+            created_at      TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            updated_at      TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+        )
+        """,
+    ),
+    (
+        "deals.idx_tenant",
+        "CREATE INDEX IF NOT EXISTS idx_deals_tenant ON deals (tenant_id, created_at DESC)",
+    ),
+    (
+        "documents.create_table",
+        """
+        CREATE TABLE IF NOT EXISTS documents (
+            id               TEXT PRIMARY KEY,
+            deal_id          TEXT NOT NULL,
+            tenant_id        TEXT NOT NULL,
+            filename         TEXT NOT NULL,
+            doc_type         TEXT,
+            status           TEXT NOT NULL DEFAULT 'UPLOADED',
+            uploaded_at      TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            content_hash     TEXT,
+            storage_key      TEXT,
+            size_bytes       INTEGER,
+            page_count       INTEGER,
+            parser           TEXT,
+            extraction_data  TEXT
+        )
+        """,
+    ),
+    (
+        "documents.idx_deal",
+        "CREATE INDEX IF NOT EXISTS idx_documents_deal ON documents (deal_id, uploaded_at DESC)",
+    ),
+    (
+        "documents.idx_tenant",
+        "CREATE INDEX IF NOT EXISTS idx_documents_tenant ON documents (tenant_id)",
+    ),
+    (
+        "extraction_results.create_table",
+        """
+        CREATE TABLE IF NOT EXISTS extraction_results (
+            id                 TEXT PRIMARY KEY,
+            document_id        TEXT NOT NULL,
+            deal_id            TEXT NOT NULL,
+            tenant_id          TEXT NOT NULL,
+            fields             TEXT,
+            confidence_report  TEXT,
+            agent_version      TEXT,
+            created_at         TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+        )
+        """,
+    ),
+    (
+        "extraction_results.idx_document",
+        """
+        CREATE INDEX IF NOT EXISTS idx_extraction_results_document
+        ON extraction_results (document_id, created_at DESC)
+        """,
+    ),
+]
+
+
 async def run_startup_migrations() -> None:
     """Apply every entry in ``MIGRATIONS`` against the live DB.
 
-    Skips silently when the active engine is SQLite (dev mode) — the
-    Postgres-flavored DDL above (UUID, JSONB, plpgsql) won't parse, and
-    local dev doesn't need the production schema to test routing.
+    On SQLite we apply the lighter ``SQLITE_MIGRATIONS`` set so the
+    documents + extractions flow works for local dev / unit tests.
+    LangGraph's checkpointer manages its own schema (Postgres only).
     """
     settings = get_settings()
-    if settings.async_database_url.startswith("sqlite"):
+    is_sqlite = settings.async_database_url.startswith("sqlite")
+    entries = SQLITE_MIGRATIONS if is_sqlite else MIGRATIONS
+
+    if is_sqlite:
         logger.info(
-            "migrations: sqlite detected — skipping Postgres DDL "
-            "(set DATABASE_URL=postgresql+asyncpg://... for prod schema)"
+            "migrations: sqlite detected — applying lite schema "
+            "(deals/documents/extraction_results)"
         )
-        return
 
     engine = get_engine()
     async with engine.begin() as conn:
-        for name, sql in MIGRATIONS:
+        for name, sql in entries:
             try:
                 await conn.execute(text(sql))
                 logger.info("migration applied: %s", name)
@@ -168,4 +299,4 @@ async def run_startup_migrations() -> None:
                 logger.exception("migration failed: %s — %s", name, exc)
 
 
-__all__ = ["MIGRATIONS", "run_startup_migrations"]
+__all__ = ["MIGRATIONS", "SQLITE_MIGRATIONS", "run_startup_migrations"]

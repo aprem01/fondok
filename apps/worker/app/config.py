@@ -75,6 +75,12 @@ class Settings(BaseSettings):
     OTEL_EXPORTER_OTLP_ENDPOINT: str | None = Field(default=None)
     DEPLOYMENT_ENVIRONMENT: str = Field(default="development")
 
+    # ── Analyst memo streaming ──────────────────────────────────────
+    # When true, ``run_analyst`` drafts the memo section-by-section
+    # and publishes each completed section to the in-process
+    # ``MemoBroadcast`` so the UI can render the memo as it builds.
+    MEMO_STREAMING_ENABLED: bool = Field(default=False)
+
     @property
     def async_database_url(self) -> str:
         """SQLAlchemy expects ``postgresql+asyncpg://`` for the asyncpg driver."""

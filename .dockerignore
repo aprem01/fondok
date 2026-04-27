@@ -1,0 +1,36 @@
+# Keep build context lean and secret-free.
+**/.env
+**/.env.*
+**/.git
+**/.next
+**/.turbo
+**/.vercel
+**/node_modules
+**/__pycache__
+**/.pytest_cache
+**/.ruff_cache
+**/.mypy_cache
+**/.venv
+**/dist
+**/build
+**/coverage
+**/*.log
+
+# Local SQLite snapshots — Railway uses managed Postgres.
+apps/worker/fondok.db
+apps/worker/*.db
+apps/worker/*.sqlite
+apps/worker/*.sqlite3
+
+# Other apps not needed by the worker image. Keeps Railway's
+# vulnerability scanner from inspecting the Next.js web app.
+apps/web
+docs
+evals
+package-lock.json
+pnpm-lock.yaml
+
+# IDE / OS noise
+.DS_Store
+.idea
+.vscode

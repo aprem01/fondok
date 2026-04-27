@@ -23,6 +23,8 @@ import logging
 import os
 from typing import Any, Literal
 
+from langchain_core.messages import SystemMessage
+
 from .config import get_settings
 
 logger = logging.getLogger(__name__)
@@ -147,9 +149,49 @@ def build_structured_llm(
     return base.with_structured_output(schema)
 
 
+def cached_system_message_blocks(
+    blocks: list[str], *, role: Role
+) -> SystemMessage:
+    """SystemMessage with one Anthropic prompt-cache breakpoint per block.
+
+    Anthropic allows up to 4 ``cache_control`` breakpoints per request.
+    Splitting role-level system prompts (tenant-agnostic, ~500 tokens)
+    from per-tenant catalogues (USALI rules, brand catalog, market
+    data — often 2-20k tokens) means switching tenants only invalidates
+    the trailing block while the role prompt continues to hit cache.
+
+    On a cache hit Anthropic charges 10% of normal input cost on the
+    cached prefix, so this materially reduces both latency and spend
+    once the same agent runs more than once in the 5-minute TTL.
+
+    For non-Anthropic providers we collapse to a plain joined string —
+    ``cache_control`` is silently ignored on the OpenAI-compatible path.
+    """
+    provider = _provider_for(role)
+    if provider != "anthropic":
+        return SystemMessage(content="\n\n".join(blocks))
+    return SystemMessage(
+        content=[
+            {
+                "type": "text",
+                "text": text,
+                "cache_control": {"type": "ephemeral"},
+            }
+            for text in blocks
+        ]
+    )
+
+
+def cached_system_message(content: str, *, role: Role) -> SystemMessage:
+    """One-block convenience wrapper around ``cached_system_message_blocks``."""
+    return cached_system_message_blocks([content], role=role)
+
+
 __all__ = [
     "Provider",
     "Role",
     "build_llm",
     "build_structured_llm",
+    "cached_system_message",
+    "cached_system_message_blocks",
 ]
