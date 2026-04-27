@@ -43,6 +43,7 @@ from ..config import get_settings
 from ..database import get_session, get_session_factory
 from ..extraction import ParseError, parse_pdf
 from ..storage import get_raw_store
+from .deals import get_tenant_id
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -189,6 +190,7 @@ def _coerce_dt(value: Any) -> datetime:
 async def upload_documents(
     deal_id: UUID,
     session: Annotated[AsyncSession, Depends(get_session)],
+    tenant_id: Annotated[UUID, Depends(get_tenant_id)],
     files: list[UploadFile] = File(...),
 ) -> list[DocumentRecord]:
     """Persist and parse one-or-more PDFs against ``deal_id``.
@@ -205,7 +207,7 @@ async def upload_documents(
         )
 
     settings = get_settings()
-    tenant_id = settings.DEFAULT_TENANT_ID  # multi-tenant auth lands later
+    tenant_id_str = str(tenant_id)
     store = get_raw_store(settings)
     records: list[DocumentRecord] = []
 
@@ -221,7 +223,7 @@ async def upload_documents(
 
         try:
             storage_key = await store.put(
-                tenant_id=str(tenant_id),
+                tenant_id=tenant_id_str,
                 deal_id=str(deal_id),
                 content_hash=content_hash,
                 filename=filename,
@@ -284,7 +286,7 @@ async def upload_documents(
             {
                 "id": str(doc_id),
                 "deal_id": str(deal_id),
-                "tenant_id": str(tenant_id),
+                "tenant_id": tenant_id_str,
                 "filename": filename,
                 "doc_type": doc_type,
                 "status": DOC_STATUS_UPLOADED,
@@ -305,7 +307,7 @@ async def upload_documents(
             DocumentRecord(
                 id=doc_id,
                 deal_id=deal_id,
-                tenant_id=UUID(tenant_id),
+                tenant_id=tenant_id,
                 filename=filename,
                 doc_type=doc_type,
                 status=DOC_STATUS_UPLOADED,
@@ -321,7 +323,7 @@ async def upload_documents(
     logger.info(
         "documents.upload: deal=%s tenant=%s files=%d",
         deal_id,
-        tenant_id,
+        tenant_id_str,
         len(records),
     )
     return records
@@ -512,12 +514,23 @@ async def _run_extraction_pipeline(
             row = (
                 await session.execute(
                     text(
-                        "SELECT storage_key, extraction_data FROM documents WHERE id = :id"
+                        "SELECT storage_key, filename, extraction_data FROM documents WHERE id = :id"
                     ),
                     {"id": doc_id},
                 )
             ).first()
-            storage_key = row._mapping["storage_key"] if row else None
+            if not row:
+                raise RuntimeError(f"document {doc_id} vanished mid-extraction")
+            storage_key = row._mapping["storage_key"]
+            filename = row._mapping["filename"]
+            raw_extraction_data = row._mapping["extraction_data"]
+            if isinstance(raw_extraction_data, str):
+                try:
+                    extraction_data = json.loads(raw_extraction_data)
+                except json.JSONDecodeError:
+                    extraction_data = None
+            else:
+                extraction_data = raw_extraction_data
 
             if os.environ.get("EVALS_MOCK", "").lower() in ("1", "true", "yes"):
                 fields, confidence = _mock_extraction_payload()
@@ -527,6 +540,9 @@ async def _run_extraction_pipeline(
                     deal_id=deal_id,
                     tenant_id=tenant_id,
                     storage_key=storage_key,
+                    doc_id=doc_id,
+                    filename=filename,
+                    extraction_data=extraction_data,
                 )
 
             ext_id = uuid4()
@@ -581,30 +597,74 @@ async def _run_graph_extraction(
     deal_id: str,
     tenant_id: str,
     storage_key: str | None,
+    doc_id: str,
+    filename: str,
+    extraction_data: dict[str, Any] | None,
 ) -> tuple[list[dict[str, Any]], dict[str, Any], str]:
-    """Drive the LangGraph runtime through classify → extract → normalize.
+    """Drive Router → Extractor against a single uploaded document.
 
-    For the upload pipeline we don't need to run the full deal flow —
-    we just need the agents that turn raw pages into structured
-    fields + confidence. We invoke those agents directly and let the
-    end-to-end graph run land at the deal level later.
+    Reads the parsed page text cached on the document row's
+    ``extraction_data`` JSONB and feeds it to the Extractor as actual
+    content (NOT a URI — the agent has no fetcher). Returns the
+    flattened field list + rolled-up confidence + agent version string.
     """
-    from ..agents.extractor import ExtractorInput, run_extractor
+    from ..agents.extractor import (
+        ExtractorDocument,
+        ExtractorInput,
+        run_extractor,
+    )
     from ..agents.router import RouterInput, run_router
 
-    router_input = RouterInput(tenant_id=tenant_id, deal_id=deal_id)
-    router_out = await run_router(router_input)
+    # Reconstruct page text from parser cache.
+    pages = (extraction_data or {}).get("pages") or []
+    if not pages:
+        logger.warning(
+            "extraction: no parsed pages cached for doc=%s — extractor will see empty content",
+            doc_id,
+        )
+        content = ""
+        source_pages: list[int] = []
+    else:
+        content = "\n\n".join(
+            f"[Page {p.get('page_num', i+1)}]\n{p.get('text', '')}".strip()
+            for i, p in enumerate(pages)
+        )
+        source_pages = [int(p.get("page_num", i + 1)) for i, p in enumerate(pages)]
 
+    # Cheap filename-based doc-type hint passes to Router; agent confirms.
+    hint = _guess_doc_type(filename)
+
+    router_input = RouterInput(
+        tenant_id=tenant_id,
+        deal_id=deal_id,
+        filename=filename,
+        content_sample=content[:2000],
+    ) if "filename" in RouterInput.model_fields else RouterInput(
+        tenant_id=tenant_id, deal_id=deal_id,
+    )
+    try:
+        router_out = await run_router(router_input)
+        doc_type = getattr(router_out, "doc_type", None) or hint
+        route = getattr(router_out, "route", "extract")
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("router failed for doc=%s — falling back to %s: %s", doc_id, hint, exc)
+        doc_type = hint
+        route = "extract-fallback"
+
+    extractor_doc = ExtractorDocument(
+        document_id=doc_id,
+        filename=filename,
+        doc_type=doc_type,
+        content=content or f"(empty document: {filename})",
+        source_pages=source_pages,
+    )
     extractor_input = ExtractorInput(
         tenant_id=tenant_id,
         deal_id=deal_id,
-        document_uris=[storage_key] if storage_key else [],
+        documents=[extractor_doc],
     )
     extractor_out = await run_extractor(extractor_input)
 
-    # The real Extractor returns ``extracted_documents`` per the
-    # current agent envelope; we project it down to a plain field
-    # list + confidence dict the API can serialize.
     fields: list[dict[str, Any]] = []
     confidence: dict[str, Any] = {
         "overall": 0.0,
@@ -613,17 +673,14 @@ async def _run_graph_extraction(
         "requires_human_review": True,
     }
     for doc in extractor_out.extracted_documents or []:
-        # The real extractor envelope (TBD) will expose .fields and
-        # .confidence; until then we tolerate either a Pydantic model
-        # or a plain dict.
         as_dict = doc.model_dump() if hasattr(doc, "model_dump") else dict(doc)
         for f in as_dict.get("fields", []) or []:
-            fields.append(dict(f))
+            fields.append(dict(f) if not isinstance(f, dict) else f)
         cr = as_dict.get("confidence")
         if cr:
-            confidence = dict(cr)
+            confidence = dict(cr) if not isinstance(cr, dict) else cr
 
-    return fields, confidence, f"router:{router_out.route};extractor"
+    return fields, confidence, f"router:{route};extractor"
 
 
 def _mock_extraction_payload() -> tuple[list[dict[str, Any]], dict[str, Any]]:
