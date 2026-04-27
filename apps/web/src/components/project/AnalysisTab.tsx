@@ -2,8 +2,15 @@
 import { useState, useEffect } from 'react';
 import {
   Sparkles, ArrowRight, RefreshCw, ShieldCheck, FileSearch,
-  TrendingUp, Layers,
+  TrendingUp, Layers, DollarSign,
 } from 'lucide-react';
+import dynamic from 'next/dynamic';
+import TabLoadingSkeleton from './TabLoadingSkeleton';
+
+const CostPanel = dynamic(() => import('./CostPanel'), {
+  loading: () => <TabLoadingSkeleton rows={4} />,
+  ssr: false,
+});
 import { useSearchParams, useRouter, useParams } from 'next/navigation';
 import { Card } from '@/components/ui/Card';
 import { Button } from '@/components/ui/Button';
@@ -21,7 +28,69 @@ const sensData: Record<string, { irr: number[]; coc: number[]; mult: number[] }>
   'Exit Cap Rate':         { irr: [29.4, 26.4, 23.48, 20.6, 17.7], coc: [4.6, 4.6, 4.6, 4.6, 4.6], mult: [2.42, 2.27, 2.12, 1.97, 1.82] },
 };
 
-type SubTab = 'summary' | 'risks' | 'variance' | 'sensitivity' | 'scenarios';
+// Cache-hit badge: hits the worker's /observability/cache-stats once on
+// mount. Worker URL is optional — when NEXT_PUBLIC_WORKER_URL is unset
+// the badge silently renders as "—" so dev preview deploys still work.
+type CacheStats = {
+  cache_hit_rate: number;
+  samples: number;
+  totals: {
+    input_tokens: number;
+    cache_read_tokens: number;
+    cache_creation_tokens: number;
+    output_tokens: number;
+    estimated_cost_usd: number;
+  };
+};
+
+function CacheHitBadge() {
+  const [stats, setStats] = useState<CacheStats | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    const base = process.env.NEXT_PUBLIC_WORKER_URL;
+    if (!base) {
+      setError('worker url not configured');
+      return;
+    }
+    const controller = new AbortController();
+    fetch(`${base.replace(/\/$/, '')}/observability/cache-stats?n=100`, {
+      signal: controller.signal,
+    })
+      .then((r) => (r.ok ? r.json() : Promise.reject(new Error(`HTTP ${r.status}`))))
+      .then((data: CacheStats) => setStats(data))
+      .catch((e) => {
+        if (e?.name !== 'AbortError') setError(String(e?.message || e));
+      });
+    return () => controller.abort();
+  }, []);
+
+  if (error || !stats || stats.samples === 0) {
+    return (
+      <span title={error || 'no cache data yet'} className="inline-flex">
+        <Badge tone="gray">Cache hit: —</Badge>
+      </span>
+    );
+  }
+  const pct = Math.round(stats.cache_hit_rate * 1000) / 10;
+  const totals = stats.totals;
+  const tooltip =
+    `Last ${stats.samples} model calls\n` +
+    `Cache reads: ${totals.cache_read_tokens.toLocaleString()} tokens\n` +
+    `Cache writes: ${totals.cache_creation_tokens.toLocaleString()} tokens\n` +
+    `Plain input: ${totals.input_tokens.toLocaleString()} tokens\n` +
+    `Output: ${totals.output_tokens.toLocaleString()} tokens\n` +
+    `Estimated spend: $${totals.estimated_cost_usd.toFixed(4)}`;
+  return (
+    <span title={tooltip} className="inline-flex">
+      <Badge tone={pct >= 80 ? 'green' : pct >= 30 ? 'amber' : 'gray'}>
+        Cache hit: {pct.toFixed(1)}%
+      </Badge>
+    </span>
+  );
+}
+
+type SubTab = 'summary' | 'risks' | 'variance' | 'sensitivity' | 'scenarios' | 'cost';
 
 const subTabs: { id: SubTab; label: string; icon: typeof Sparkles; badge?: string }[] = [
   { id: 'summary',     label: 'AI Summary',     icon: Sparkles },
@@ -29,6 +98,7 @@ const subTabs: { id: SubTab; label: string; icon: typeof Sparkles; badge?: strin
   { id: 'variance',    label: 'Broker Variance', icon: FileSearch, badge: 'NEW' },
   { id: 'sensitivity', label: 'Sensitivity',    icon: TrendingUp },
   { id: 'scenarios',   label: 'Scenarios',      icon: Layers },
+  { id: 'cost',        label: 'Cost',           icon: DollarSign },
 ];
 
 export default function AnalysisTab() {
@@ -70,7 +140,10 @@ export default function AnalysisTab() {
               sensitivity analysis, and scenario comparison.
             </p>
           </div>
-          <Badge tone="green">✓ Analysis Complete</Badge>
+          <div className="flex items-center gap-2">
+            <CacheHitBadge />
+            <Badge tone="green">✓ Analysis Complete</Badge>
+          </div>
         </div>
         <div className="flex items-center gap-1 border-b border-border -mb-5 px-0 -mx-1">
           {subTabs.map(t => {
@@ -210,6 +283,8 @@ export default function AnalysisTab() {
           </table>
         </Card>
       )}
+
+      {sub === 'cost' && <CostPanel />}
 
       {sub === 'scenarios' && (
         <Card className="p-5">

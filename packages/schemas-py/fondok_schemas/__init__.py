@@ -20,6 +20,7 @@ from .analysis import (
 )
 from .common import Money, ModelCall, Risk, Severity, TenantScoped
 from .confidence import ConfidenceReport
+from .cost import AgentCost, DealCostReport
 from .deal import (
     Deal,
     DealStage,
@@ -100,6 +101,9 @@ __all__ = [
     "TenantScoped",
     # confidence
     "ConfidenceReport",
+    # cost
+    "AgentCost",
+    "DealCostReport",
     # deal
     "Deal",
     "DealStage",

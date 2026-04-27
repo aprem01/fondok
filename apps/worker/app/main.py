@@ -18,11 +18,12 @@ from .api import export as export_router
 from .api import health as health_router
 from .api import market as market_router
 from .api import model as model_router
+from .api import observability as observability_router
 from .api import settings as settings_router
 from .config import get_settings
 from .database import dispose_engine
 from .migrations import run_startup_migrations
-from .telemetry import setup_telemetry
+from .telemetry import setup_langsmith, setup_telemetry
 
 logging.basicConfig(
     level=logging.INFO,
@@ -40,6 +41,13 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
         settings.LLM_PROVIDER,
         settings.DEFAULT_DEAL_BUDGET_USD,
     )
+    # LangSmith tracing — no-op when LANGSMITH_API_KEY is unset.
+    # Must run before the first agent call so the LangChain client
+    # picks up the tracing env vars on instantiation.
+    try:
+        setup_langsmith()
+    except Exception as exc:
+        logger.warning("langsmith setup failed: %s", exc)
     # Idempotent schema additions — creates deals/documents/audit_log
     # on Postgres, no-ops on SQLite (dev). Never raises out of lifespan.
     try:
@@ -99,6 +107,11 @@ def create_app() -> FastAPI:
         data_library_router.router, prefix="/data-library", tags=["data-library"]
     )
     app.include_router(settings_router.router, prefix="/settings", tags=["settings"])
+    app.include_router(
+        observability_router.router,
+        prefix="/observability",
+        tags=["observability"],
+    )
     return app
 
 

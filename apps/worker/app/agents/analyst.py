@@ -434,10 +434,16 @@ async def _run_analyst_single(payload: AnalystInput) -> AnalystOutput:
     started = datetime.now(UTC)
     t0 = time.monotonic()
 
-    from ..llm import cached_system_message_blocks
+    from ..llm import build_agent_system_blocks, cached_system_message_blocks
     from ..usage import UsageCapture
 
-    system_blocks = [SYSTEM_PROMPT, rules_as_prompt_block()]
+    # 4-block system prompt: agent instructions (uncached) + USALI rules
+    # + brand catalog + schema addendum (all cached).
+    system_blocks = build_agent_system_blocks(
+        role="analyst",
+        agent_instructions=SYSTEM_PROMPT,
+    )
+    rules_as_prompt_block()  # warm the catalog cache
     messages = [
         cached_system_message_blocks(system_blocks, role="analyst"),
         HumanMessage(content=_build_user_prompt(payload)),
@@ -492,6 +498,9 @@ async def _run_analyst_single(payload: AnalystInput) -> AnalystOutput:
         trace_id=payload.deal_id,
         started_at=started,
         completed_at=completed,
+        cache_creation_input_tokens=usage.cache_creation_input_tokens,
+        cache_read_input_tokens=usage.cache_read_input_tokens,
+        agent_name="analyst",
     )
     logger.info(
         "analyst OK deal=%s sections=%d in %dms",
@@ -514,7 +523,7 @@ async def _draft_one_section(
     section_id: str,
     *,
     llm: Any,
-    system_blocks: list[str],
+    system_blocks: list[Any],
     context_block: str,
     usage: Any,
 ) -> _MemoSectionEnvelope | None:
@@ -563,10 +572,15 @@ async def _run_analyst_streaming(payload: AnalystInput) -> AnalystOutput:
     started = datetime.now(UTC)
     t0 = time.monotonic()
 
+    from ..llm import build_agent_system_blocks
     from ..streaming.broadcast import DONE_SENTINEL, get_broadcast
     from ..usage import UsageCapture
 
-    system_blocks = [SYSTEM_PROMPT, rules_as_prompt_block()]
+    system_blocks = build_agent_system_blocks(
+        role="analyst",
+        agent_instructions=SYSTEM_PROMPT,
+    )
+    rules_as_prompt_block()  # warm the catalog cache
     context_block = _build_user_prompt(payload)
     broadcast = get_broadcast()
     section_llm = _build_section_llm()
@@ -590,8 +604,18 @@ async def _run_analyst_streaming(payload: AnalystInput) -> AnalystOutput:
         drafted_sections.append(proj)
         try:
             await broadcast.publish(
-                str(payload.deal_id),
-                {"event": "section", "data": proj.model_dump(mode="json")},
+                f"memo:{payload.deal_id}",
+                {
+                    "event": "section",
+                    "data": proj.model_dump(mode="json"),
+                    "metadata": {
+                        "input_tokens": usage.input_tokens,
+                        "output_tokens": usage.output_tokens,
+                        "model": usage.model,
+                        "section_index": len(drafted_sections),
+                        "section_total": len(_REQUIRED_SECTION_IDS),
+                    },
+                },
             )
         except Exception as exc:  # pragma: no cover - defensive
             logger.warning("analyst: broadcast publish failed (%s)", exc)
@@ -615,8 +639,16 @@ async def _run_analyst_streaming(payload: AnalystInput) -> AnalystOutput:
 
     try:
         await broadcast.publish(
-            str(payload.deal_id),
-            {"event": DONE_SENTINEL, "data": {"sections": len(memo.sections)}},
+            f"memo:{payload.deal_id}",
+            {
+                "event": DONE_SENTINEL,
+                "data": {"sections": len(memo.sections)},
+                "metadata": {
+                    "input_tokens": usage.input_tokens,
+                    "output_tokens": usage.output_tokens,
+                    "model": usage.model,
+                },
+            },
         )
     except Exception as exc:  # pragma: no cover - defensive
         logger.warning("analyst: final broadcast failed (%s)", exc)
@@ -632,6 +664,9 @@ async def _run_analyst_streaming(payload: AnalystInput) -> AnalystOutput:
         trace_id=payload.deal_id,
         started_at=started,
         completed_at=completed,
+        cache_creation_input_tokens=usage.cache_creation_input_tokens,
+        cache_read_input_tokens=usage.cache_read_input_tokens,
+        agent_name="analyst",
     )
     logger.info(
         "analyst (streaming) OK deal=%s sections=%d in %dms",

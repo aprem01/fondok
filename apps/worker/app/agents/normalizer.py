@@ -435,10 +435,17 @@ async def run_normalizer(payload: NormalizerInput) -> NormalizerOutput:
             error=str(exc),
         )
 
-    from ..llm import cached_system_message_blocks
+    from ..llm import build_agent_system_blocks, cached_system_message_blocks
     from ..usage import UsageCapture
 
-    system_blocks = [SYSTEM_PROMPT, rules_as_prompt_block()]
+    # 4-block system prompt: agent instructions (uncached) + USALI rules
+    # + brand catalog + schema addendum (all cached).
+    system_blocks = build_agent_system_blocks(
+        role="normalizer",
+        agent_instructions=SYSTEM_PROMPT,
+    )
+    # Warm the catalog cache so the first call doesn't pay the parse cost.
+    rules_as_prompt_block()
     messages = [
         cached_system_message_blocks(system_blocks, role="normalizer"),
         HumanMessage(content=_build_user_prompt(payload)),
@@ -479,6 +486,9 @@ async def run_normalizer(payload: NormalizerInput) -> NormalizerOutput:
         trace_id=payload.deal_id,
         started_at=started,
         completed_at=completed,
+        cache_creation_input_tokens=usage.cache_creation_input_tokens,
+        cache_read_input_tokens=usage.cache_read_input_tokens,
+        agent_name="normalizer",
     )
 
     if warnings:

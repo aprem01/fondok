@@ -1,0 +1,20 @@
+{
+  "_comment": "Per-field numeric tolerances for the Kimpton Angler golden set. Defaults to 0.005 (0.5%) when a field isn't listed. Wider bands cover hand-curated rollups and stress-down assumptions documented in test_pipeline.py.",
+  "default_tolerance_pct": 0.005,
+  "fields": {
+    "investment_engine.price_per_key_usd": 0.005,
+    "investment_engine.total_capital_usd": 0.05,
+    "debt_engine.loan_amount_usd": 0.005,
+    "debt_engine.annual_debt_service_usd": 0.005,
+    "debt_engine.year1_debt_yield": 0.01,
+    "returns_engine.gross_sale_price_usd": 0.05,
+    "returns_engine.selling_costs_usd": 0.05,
+    "returns_engine.terminal_noi_usd": 0.005,
+    "returns_engine.exit_cap_rate_pct": 0.005,
+    "p_and_l_engine_proforma.lines.Room Revenue.y1": 0.01,
+    "p_and_l_engine_proforma.lines.F&B Revenue.y1": 0.01,
+    "p_and_l_engine_proforma.lines.Total Revenue.y1": 0.01,
+    "p_and_l_engine_proforma.lines.Net Operating Income.y1": 0.01,
+    "p_and_l_engine_proforma.lines.Net Operating Income.y5": 0.02
+  }
+}

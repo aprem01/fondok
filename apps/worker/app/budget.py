@@ -76,23 +76,44 @@ def _price_for(model: str) -> tuple[float, float]:
 def estimate_spent_usd(model_calls: list[Any]) -> float:
     """Sum USD spend across a DealState's ``model_calls`` list.
 
-    Trusts ``cost_usd`` on the call when present; otherwise recomputes
-    from token counts using the per-model pricing table.
+    Recomputes from token counts using the per-model pricing table.
+    Anthropic prompt caching:
+      * cache_creation_input_tokens are billed at 1.25x the input rate
+      * cache_read_input_tokens are billed at 0.10x the input rate
+      * Plain ``input_tokens`` already includes cache_creation/read on
+        Anthropic's response, so we subtract them to avoid double-counting.
+
+    A non-zero ``cost_usd`` on the call wins over the recomputation
+    (callers who price upstream stay authoritative).
     """
     total = 0.0
     for call in model_calls or []:
         stored = _attr(call, "cost_usd", None)
         if stored is not None:
             try:
-                total += float(stored)
-                continue
+                stored_f = float(stored)
+                if stored_f > 0:
+                    total += stored_f
+                    continue
             except (TypeError, ValueError):
                 pass
         model = str(_attr(call, "model", "") or "")
         in_tok = int(_attr(call, "input_tokens", 0) or 0)
         out_tok = int(_attr(call, "output_tokens", 0) or 0)
+        cache_create = int(_attr(call, "cache_creation_input_tokens", 0) or 0)
+        cache_read = int(_attr(call, "cache_read_input_tokens", 0) or 0)
+        # Anthropic's input_tokens is the *uncached* portion of the
+        # input stream — cache_creation / cache_read are surfaced
+        # separately. If a caller bundled them into input_tokens we
+        # still want to avoid double-counting.
+        plain_in = max(in_tok - cache_create - cache_read, 0) if (in_tok >= cache_create + cache_read) else in_tok
         in_price, out_price = _price_for(model)
-        total += (in_tok * in_price + out_tok * out_price) / 1_000_000
+        total += (
+            plain_in * in_price
+            + cache_create * in_price * 1.25
+            + cache_read * in_price * 0.10
+            + out_tok * out_price
+        ) / 1_000_000
     return total
 
 

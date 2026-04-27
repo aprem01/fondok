@@ -1,14 +1,17 @@
 'use client';
 import { useState } from 'react';
 import Link from 'next/link';
+import { useRouter } from 'next/navigation';
 import {
   Check, ChevronDown, Target, TrendingUp, Rocket, UploadCloud, Tag, Search,
   Sparkles, Crown, DollarSign, Pencil, AlertTriangle, ArrowLeft, ChevronRight,
+  Loader2,
 } from 'lucide-react';
 import { Card } from '@/components/ui/Card';
 import { Button } from '@/components/ui/Button';
 import { dealStages, returnProfiles, positioningTiers, brandFamilies } from '@/lib/mockData';
 import { cn } from '@/lib/format';
+import { api, isWorkerConnected } from '@/lib/api';
 
 const steps = [
   { n: 1, label: 'Deal Details' },
@@ -23,7 +26,11 @@ const iconForReturn: Record<string, any> = { core: Target, 'value-add': Trending
 const iconForPos: Record<string, any> = { default: Sparkles, luxury: Crown, upscale: TrendingUp, economy: DollarSign };
 
 export default function NewProjectPage() {
+  const router = useRouter();
   const [step, setStep] = useState(1);
+  const [submitting, setSubmitting] = useState(false);
+  const [submitError, setSubmitError] = useState<string | null>(null);
+  const [savedLocally, setSavedLocally] = useState(false);
   const [data, setData] = useState({
     dealName: '', city: '', keys: '', stage: 'Teaser', hotelName: '', price: '',
     returnProfile: 'value-add',
@@ -37,6 +44,37 @@ export default function NewProjectPage() {
   const update = (patch: Partial<typeof data>) => setData(d => ({ ...d, ...patch }));
   const next = () => setStep(s => Math.min(6, s + 1));
   const back = () => setStep(s => Math.max(1, s - 1));
+
+  const onCreate = async () => {
+    setSubmitError(null);
+    if (!data.dealName.trim()) {
+      setSubmitError('Deal name is required.');
+      setStep(1);
+      return;
+    }
+    if (!isWorkerConnected()) {
+      // Demo mode: nothing to persist. Drop a brief "saved locally" toast and go.
+      setSavedLocally(true);
+      setTimeout(() => router.push('/projects'), 600);
+      return;
+    }
+    setSubmitting(true);
+    try {
+      const created = await api.deals.create({
+        name: data.dealName.trim(),
+        city: data.city.trim() || null,
+        keys: data.keys ? Number(data.keys) : null,
+        // Worker schema expects `service`; positioning/return profile aren't
+        // first-class on the create body yet (Phase 6+). We pass what's safe.
+        service: null,
+      });
+      router.push(`/projects/${created.id}`);
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
+      setSubmitError(msg);
+      setSubmitting(false);
+    }
+  };
 
   return (
     <div className="px-8 py-8 max-w-[1100px] mx-auto">
@@ -85,15 +123,39 @@ export default function NewProjectPage() {
         {step === 6 && <Step6 data={data} jumpTo={setStep} />}
       </Card>
 
+      {submitError && (
+        <Card className="mt-4 p-4 border-danger-500/30 bg-danger-50">
+          <div className="flex items-start gap-3">
+            <AlertTriangle size={15} className="text-danger-700 flex-shrink-0 mt-0.5" />
+            <div className="flex-1">
+              <div className="text-[12.5px] font-semibold text-danger-700">Couldn’t create deal</div>
+              <p className="text-[12px] text-danger-700/85 mt-1">{submitError}</p>
+            </div>
+            <Button variant="secondary" size="sm" onClick={onCreate}>Retry</Button>
+          </div>
+        </Card>
+      )}
+
+      {savedLocally && (
+        <Card className="mt-4 p-4 border-warn-500/30 bg-warn-50">
+          <div className="flex items-center gap-2 text-[12.5px] text-warn-700">
+            <Check size={14} /> Saved locally — worker not connected, no remote persistence.
+          </div>
+        </Card>
+      )}
+
       {/* Footer */}
       <div className="flex items-center justify-between mt-5">
-        <Button variant="secondary" onClick={back} disabled={step === 1}>
+        <Button variant="secondary" onClick={back} disabled={step === 1 || submitting}>
           <ArrowLeft size={13} /> Back
         </Button>
         {step < 6 ? (
           <Button variant="primary" onClick={next}>Next <ChevronRight size={13} /></Button>
         ) : (
-          <Link href="/projects"><Button variant="primary">Create Shell Deal</Button></Link>
+          <Button variant="primary" onClick={onCreate} disabled={submitting}>
+            {submitting && <Loader2 size={13} className="animate-spin" />}
+            {submitting ? 'Creating…' : 'Create Shell Deal'}
+          </Button>
         )}
       </div>
     </div>

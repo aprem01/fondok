@@ -259,11 +259,23 @@ async def run_router(payload: RouterInput) -> RouterOutput:
             error=str(exc),
         )
 
-    from ..llm import cached_system_message_blocks
+    from ..llm import build_agent_system_blocks, cached_system_message_blocks
     from ..usage import UsageCapture
 
+    # 4-block system prompt: per-agent instructions (uncached) +
+    # USALI rules + brand catalog + schema addendum (all cached).
+    # The Router doesn't need the USALI catalog — it only classifies
+    # documents — so we omit the rules block to keep the breakpoint
+    # budget for tenants that pin exotic brand catalogs.
+    system_blocks = build_agent_system_blocks(
+        role="router",
+        agent_instructions=SYSTEM_PROMPT,
+        include_rules=False,
+        include_brand=True,
+        include_schema=True,
+    )
     messages = [
-        cached_system_message_blocks([SYSTEM_PROMPT], role="router"),
+        cached_system_message_blocks(system_blocks, role="router"),
         HumanMessage(content=_build_user_prompt(payload)),
     ]
     usage = UsageCapture()
@@ -304,6 +316,9 @@ async def run_router(payload: RouterInput) -> RouterOutput:
         trace_id=payload.deal_id,
         started_at=started,
         completed_at=completed,
+        cache_creation_input_tokens=usage.cache_creation_input_tokens,
+        cache_read_input_tokens=usage.cache_read_input_tokens,
+        agent_name="router",
     )
 
     return RouterOutput(

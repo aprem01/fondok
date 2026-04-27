@@ -27,6 +27,9 @@ export const ModelCall = z.object({
   trace_id: z.string(),
   started_at: z.string().datetime(),
   completed_at: z.string().datetime(),
+  cache_creation_input_tokens: z.number().int().nonnegative().default(0),
+  cache_read_input_tokens: z.number().int().nonnegative().default(0),
+  agent_name: z.string().nullable().optional(),
 });
 export type ModelCall = z.infer<typeof ModelCall>;
 
@@ -644,6 +647,33 @@ export const Gate1Decision = GateDecisionBase.extend({
   reextract_documents: z.array(z.string().uuid()).default([]),
 });
 export type Gate1Decision = z.infer<typeof Gate1Decision>;
+
+// ─────────────────────────── Cost ───────────────────────────
+
+export const AgentCost = z.object({
+  agent: z.string().min(1).max(80),
+  calls: z.number().int().nonnegative().default(0),
+  input_tokens: z.number().int().nonnegative().default(0),
+  output_tokens: z.number().int().nonnegative().default(0),
+  cache_read_tokens: z.number().int().nonnegative().default(0),
+  cache_creation_tokens: z.number().int().nonnegative().default(0),
+  // Decimals are serialized as strings by Pydantic; accept both.
+  cost_usd: z.union([z.string(), z.number()]).transform((v) => Number(v)),
+  avg_latency_ms: z.number().nonnegative().default(0),
+});
+export type AgentCost = z.infer<typeof AgentCost>;
+
+export const DealCostReport = z.object({
+  deal_id: z.string().uuid(),
+  total_cost_usd: z.union([z.string(), z.number()]).transform((v) => Number(v)),
+  budget_usd: z.union([z.string(), z.number()]).transform((v) => Number(v)),
+  cache_hit_rate: z.number().min(0).max(1).default(0),
+  by_agent: z.array(AgentCost).default([]),
+  by_model: z.record(z.string(), AgentCost).default({}),
+  timeline: z.array(ModelCall).default([]),
+  generated_at: z.string().datetime(),
+});
+export type DealCostReport = z.infer<typeof DealCostReport>;
 
 export const Gate2Decision = GateDecisionBase.extend({
   recommendation: z.enum([

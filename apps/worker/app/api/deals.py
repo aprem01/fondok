@@ -7,15 +7,24 @@ implementations land underneath.
 
 from __future__ import annotations
 
+import json
 import logging
+from collections.abc import AsyncIterator
 from datetime import UTC, datetime
 from typing import Any
 from uuid import UUID, uuid4
 
-from fastapi import APIRouter, status
+from fastapi import APIRouter, BackgroundTasks, status
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, ConfigDict, Field
 
 from ..config import get_settings
+from ..costs import build_cost_report
+
+try:
+    from fondok_schemas import DealCostReport
+except ImportError:  # pragma: no cover
+    DealCostReport = None  # type: ignore[assignment]
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -161,10 +170,125 @@ async def get_memo(deal_id: UUID) -> MemoEnvelope:
     return MemoEnvelope(deal_id=deal_id)
 
 
+@router.get("/{deal_id}/costs", response_model=DealCostReport)
+async def get_deal_costs(deal_id: UUID) -> Any:
+    """Aggregated LLM cost dashboard for ``deal_id``.
+
+    Reads ``ModelCall`` rows from the ``model_calls`` table (when
+    populated) and rolls them up by agent and model bucket. Returns a
+    well-formed zeroed report when there's no activity yet so the UI
+    can render the empty state without a separate code path.
+    """
+    return await build_cost_report(str(deal_id))
+
+
+async def _load_deal_payload(deal_id: str) -> Any:
+    """Build an ``AnalystInput`` from the persisted deal + engine state.
+
+    Until the live deal flow is fully wired through the database we fall
+    back to the Kimpton Angler fixture so the streaming endpoint demos
+    end-to-end. Once ``apps/worker/app/storage`` lands a deal-fetch helper
+    this function should prefer real DB rows when available.
+    """
+    from ..agents.analyst import AnalystInput, AnalystSourceDocument
+    from ..export.fixtures import kimpton_deal, kimpton_memo, kimpton_model
+
+    settings = get_settings()
+    deal = kimpton_deal()
+    deal["id"] = deal_id
+    model = kimpton_model()
+    memo = kimpton_memo()
+
+    # Build a lightweight set of source documents from the memo's
+    # appendix so the Analyst has something to cite. Each filename
+    # maps to a deterministic synthetic document_id; the Analyst
+    # tolerates citations that reference any of these ids.
+    docs: list[AnalystSourceDocument] = []
+    for idx, fname in enumerate(memo.get("appendix", {}).get("documents_reviewed", []), start=1):
+        docs.append(
+            AnalystSourceDocument(
+                document_id=f"doc-{idx:02d}",
+                filename=fname,
+                doc_type="reference",
+                page_count=1,
+                excerpts_by_page={1: f"Reference excerpt for {fname}."},
+            )
+        )
+
+    return AnalystInput(
+        tenant_id=settings.DEFAULT_TENANT_ID,
+        deal_id=deal_id,
+        deal_data=deal,
+        normalized_spread=None,
+        engine_results=model,
+        variance_report=None,
+        source_documents=docs,
+    )
+
+
+@router.post("/{deal_id}/memo/generate")
+async def trigger_memo_generation(
+    deal_id: str, background_tasks: BackgroundTasks
+) -> dict[str, str]:
+    """Kick off the streaming Opus memo draft. Returns immediately.
+
+    The Analyst publishes one section at a time to the in-process
+    ``MemoBroadcast`` keyed by ``memo:{deal_id}``; clients should
+    immediately open ``GET /deals/{deal_id}/memo/stream`` to receive
+    the sections via SSE.
+    """
+    from ..agents.analyst import run_analyst_streaming
+
+    payload = await _load_deal_payload(deal_id)
+    background_tasks.add_task(run_analyst_streaming, payload)
+    logger.info("memo/generate: scheduled streaming draft for deal=%s", deal_id)
+    return {"status": "started", "deal_id": deal_id}
+
+
 @router.get("/{deal_id}/memo/stream")
-async def stream_memo(deal_id: UUID) -> dict[str, str]:
+async def stream_memo(deal_id: str) -> StreamingResponse:
     """SSE stream of memo sections as the Analyst writes them.
 
-    Stub: SSE wiring lands once the streaming Analyst is in place.
+    Subscribes to the in-process ``MemoBroadcast`` channel
+    ``memo:{deal_id}``. Each completed section is emitted as a
+    ``section`` SSE event; a final ``done`` event closes the stream.
     """
-    return {"deal_id": str(deal_id), "stream": "stub"}
+    from ..streaming import DONE_SENTINEL, get_broadcast
+
+    broadcast = get_broadcast()
+    channel = f"memo:{deal_id}"
+
+    async def event_stream() -> AsyncIterator[bytes]:
+        try:
+            async for event in broadcast.subscribe(channel):
+                event_name = event.get("event", "section")
+                if event_name == DONE_SENTINEL:
+                    payload = json.dumps(
+                        {
+                            "data": event.get("data", {}),
+                            "metadata": event.get("metadata", {}),
+                        }
+                    )
+                    yield f"event: done\ndata: {payload}\n\n".encode()
+                    break
+                payload = json.dumps(
+                    {
+                        "data": event.get("data", {}),
+                        "metadata": event.get("metadata", {}),
+                    }
+                )
+                yield f"event: section\ndata: {payload}\n\n".encode()
+        except Exception as exc:  # pragma: no cover - defensive
+            logger.warning("memo/stream: subscriber loop failed (%s)", exc)
+            err = json.dumps({"error": str(exc)})
+            yield f"event: error\ndata: {err}\n\n".encode()
+
+    return StreamingResponse(
+        event_stream(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",  # Disable nginx buffering
+        },
+    )

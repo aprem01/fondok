@@ -73,14 +73,9 @@ jobs:
     name: Golden-set regression
     runs-on: ubuntu-latest
     needs: [python]
-    # Run on every push to main; on PRs only when engine / schema / eval
-    # surface area changes (cheap LLM cost on touched-files PRs).
-    if: |
-      github.ref == 'refs/heads/main' ||
-      contains(github.event.pull_request.changed_files, 'apps/worker/app/engines/') ||
-      contains(github.event.pull_request.changed_files, 'apps/worker/app/graph.py') ||
-      contains(github.event.pull_request.changed_files, 'packages/schemas-py/') ||
-      contains(github.event.pull_request.changed_files, 'evals/')
+    # REQUIRED check: runs on every push to main and every PR. The
+    # deterministic engine pipeline burns no LLM tokens, so it's cheap
+    # enough to gate every merge — drift in math is an instant red.
     steps:
       - uses: actions/checkout@v4
 
@@ -97,8 +92,54 @@ jobs:
         run: uv sync --extra dev
 
       - name: Run golden set
-        working-directory: apps/worker
+        id: golden
+        working-directory: ${{ github.workspace }}
         env:
-          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
-          EVALS_MOCK: ${{ secrets.ANTHROPIC_API_KEY == '' && 'true' || 'false' }}
-        run: uv run python ../../evals/run.py
+          # Engines are deterministic; LLM is not invoked in the eval
+          # pipeline, so the API key isn't required here. Leaving the
+          # secret reference in place so an env override (mocking) can
+          # still be wired in later without rewriting the workflow.
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY || 'sk-ant-test-dummy' }}
+          EVALS_MOCK: "true"
+        run: uv run --project apps/worker python evals/run.py | tee evals/last-run.txt
+
+      - name: Upload JUnit results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: golden-set-results
+          path: |
+            evals/results.xml
+            evals/last-run.txt
+          if-no-files-found: warn
+
+      - name: Publish drift report to PR
+        if: always() && github.event_name == 'pull_request'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            let body = '## Golden-set drift report\n\n';
+            try {
+              const txt = fs.readFileSync('evals/last-run.txt', 'utf8');
+              body += '```\n' + txt + '```\n';
+            } catch (e) {
+              body += '_(no drift report produced)_\n';
+            }
+            const { owner, repo } = context.repo;
+            await github.rest.issues.createComment({
+              owner,
+              repo,
+              issue_number: context.issue.number,
+              body,
+            });
+
+      - name: Annotate PR with JUnit results
+        if: always() && github.event_name == 'pull_request'
+        uses: dorny/test-reporter@v1
+        continue-on-error: true
+        with:
+          name: Golden-set drift
+          path: evals/results.xml
+          reporter: java-junit
+          fail-on-error: false

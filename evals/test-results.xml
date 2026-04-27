@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuites name="fondok-golden-set" tests="12" failures="1" errors="0" time="0.525">
+  <testsuite name="kimpton-angler" tests="12" failures="1" errors="0" time="0.525">
+    <testcase classname="kimpton-angler" name="investment_engine.price_per_key_usd" time="0.001">
+    </testcase>
+    <testcase classname="kimpton-angler" name="investment_engine.total_capital_usd" time="0.001">
+    </testcase>
+    <testcase classname="kimpton-angler" name="debt_engine.loan_amount_usd" time="0.001">
+      <failure message="drift 21.133% &gt; tolerance 0.500% (expected 30000000, actual 23660000.0)">drift 21.133% &gt; tolerance 0.500% (expected 30000000, actual 23660000.0)</failure>
+    </testcase>
+    <testcase classname="kimpton-angler" name="debt_engine.annual_debt_service_usd" time="0.001">
+    </testcase>
+    <testcase classname="kimpton-angler" name="debt_engine.year1_debt_yield" time="0.001">
+    </testcase>
+    <testcase classname="kimpton-angler" name="returns_engine.gross_sale_price_usd" time="0.001">
+    </testcase>
+    <testcase classname="kimpton-angler" name="returns_engine.selling_costs_usd" time="0.001">
+    </testcase>
+    <testcase classname="kimpton-angler" name="p_and_l_engine_proforma.lines.Room Revenue.y1" time="0.001">
+    </testcase>
+    <testcase classname="kimpton-angler" name="p_and_l_engine_proforma.lines.F&amp;B Revenue.y1" time="0.001">
+    </testcase>
+    <testcase classname="kimpton-angler" name="p_and_l_engine_proforma.lines.Total Revenue.y1" time="0.001">
+    </testcase>
+    <testcase classname="kimpton-angler" name="p_and_l_engine_proforma.lines.Net Operating Income.y1" time="0.001">
+    </testcase>
+    <testcase classname="kimpton-angler" name="p_and_l_engine_proforma.lines.Net Operating Income.y5" time="0.001">
+    </testcase>
+  </testsuite>
+</testsuites>

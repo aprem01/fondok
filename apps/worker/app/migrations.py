@@ -175,6 +175,34 @@ MIGRATIONS: list[tuple[str, str]] = [
         """,
     ),
     (
+        "model_calls.create_table",
+        """
+        CREATE TABLE IF NOT EXISTS model_calls (
+            id                          UUID PRIMARY KEY,
+            deal_id                     UUID NOT NULL,
+            tenant_id                   UUID,
+            agent_name                  TEXT NOT NULL,
+            model                       TEXT NOT NULL,
+            input_tokens                INTEGER NOT NULL DEFAULT 0,
+            output_tokens               INTEGER NOT NULL DEFAULT 0,
+            cache_read_tokens           INTEGER NOT NULL DEFAULT 0,
+            cache_creation_tokens       INTEGER NOT NULL DEFAULT 0,
+            cost_usd                    NUMERIC(10, 4) NOT NULL DEFAULT 0,
+            latency_ms                  INTEGER,
+            trace_id                    TEXT,
+            status                      TEXT NOT NULL DEFAULT 'ok',
+            created_at                  TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        )
+        """,
+    ),
+    (
+        "model_calls.idx_deal",
+        """
+        CREATE INDEX IF NOT EXISTS idx_model_calls_deal
+        ON model_calls (deal_id, created_at DESC)
+        """,
+    ),
+    (
         "audit_log.append_only_trigger",
         """
         DO $$
@@ -268,6 +296,31 @@ SQLITE_MIGRATIONS: list[tuple[str, str]] = [
         CREATE INDEX IF NOT EXISTS idx_extraction_results_document
         ON extraction_results (document_id, created_at DESC)
         """,
+    ),
+    (
+        "model_calls.create_table",
+        """
+        CREATE TABLE IF NOT EXISTS model_calls (
+            id                       TEXT PRIMARY KEY,
+            deal_id                  TEXT NOT NULL,
+            tenant_id                TEXT,
+            agent_name               TEXT NOT NULL,
+            model                    TEXT NOT NULL,
+            input_tokens             INTEGER NOT NULL DEFAULT 0,
+            output_tokens            INTEGER NOT NULL DEFAULT 0,
+            cache_read_tokens        INTEGER NOT NULL DEFAULT 0,
+            cache_creation_tokens    INTEGER NOT NULL DEFAULT 0,
+            cost_usd                 REAL NOT NULL DEFAULT 0,
+            latency_ms               INTEGER,
+            trace_id                 TEXT,
+            status                   TEXT NOT NULL DEFAULT 'ok',
+            created_at               TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+        )
+        """,
+    ),
+    (
+        "model_calls.idx_deal",
+        "CREATE INDEX IF NOT EXISTS idx_model_calls_deal ON model_calls (deal_id, created_at DESC)",
     ),
 ]
 

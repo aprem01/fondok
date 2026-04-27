@@ -1,27 +1,96 @@
 'use client';
 import Link from 'next/link';
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import {
   Plus, Search, ChevronDown, LayoutGrid, List, Building2,
-  MapPin, AlertTriangle, Upload,
+  MapPin, AlertTriangle, Upload, Loader2, RefreshCw,
 } from 'lucide-react';
 import PageHeader from '@/components/ui/PageHeader';
 import { Card } from '@/components/ui/Card';
 import { Button } from '@/components/ui/Button';
 import { StatusBadge } from '@/components/ui/Badge';
 import KebabMenu from '@/components/ui/KebabMenu';
-import { projects, projectStatuses } from '@/lib/mockData';
+import { projects as mockProjects, projectStatuses, Project } from '@/lib/mockData';
 import { cn } from '@/lib/format';
+import { useDeals } from '@/lib/hooks/useDeals';
+import { WorkerDeal } from '@/lib/api';
 
-const projectMenu = (id: number) => [
+const projectMenu = (id: string) => [
   { label: 'View Details', onSelect: () => { window.location.href = `/projects/${id}`; } },
   { label: 'Export Excel', onSelect: () => {} },
   { label: 'Export Memo', onSelect: () => {} },
   { label: 'Archive', onSelect: () => {}, danger: true },
 ];
 
-const riskTone = (r: string) =>
-  r === 'Low' ? 'text-success-700 bg-success-50' : r === 'Medium' ? 'text-warn-700 bg-warn-50' : 'text-danger-700 bg-danger-50';
+const riskTone = (r: string | null | undefined) =>
+  r === 'Low' ? 'text-success-700 bg-success-50' :
+  r === 'Medium' ? 'text-warn-700 bg-warn-50' :
+  r === 'High' ? 'text-danger-700 bg-danger-50' :
+  'text-ink-500 bg-ink-300/15';
+
+interface DisplayDeal {
+  id: string;
+  name: string;
+  city: string;
+  keys: number;
+  service: string;
+  status: string;
+  dealStage: string;
+  revpar: number | null;
+  irr: number | null;
+  noi: number | null;
+  risk: string | null;
+  aiConfidence: number; // 0–100
+  assignee: string;
+  docs: string;
+  updatedAt: string;
+  noDocs: boolean;
+  isMock: boolean;
+}
+
+function fromMockProject(p: Project): DisplayDeal {
+  return {
+    id: String(p.id),
+    name: p.name,
+    city: p.city,
+    keys: p.keys,
+    service: p.service,
+    status: p.status,
+    dealStage: p.dealStage,
+    revpar: p.revpar,
+    irr: p.irr,
+    noi: p.noi ?? null,
+    risk: p.risk,
+    aiConfidence: p.aiConfidence,
+    assignee: p.assignee,
+    docs: p.docs,
+    updatedAt: p.updatedAt,
+    noDocs: !!p.noDocs,
+    isMock: true,
+  };
+}
+
+function fromWorkerDeal(d: WorkerDeal): DisplayDeal {
+  return {
+    id: d.id,
+    name: d.name,
+    city: d.city ?? '—',
+    keys: d.keys ?? 0,
+    service: d.service ?? '—',
+    status: d.status || 'Draft',
+    dealStage: d.deal_stage || 'Teaser',
+    revpar: null,
+    irr: null,
+    noi: null,
+    risk: d.risk,
+    aiConfidence: Math.round((d.ai_confidence ?? 0) * 100),
+    assignee: '—',
+    docs: '0/0',
+    updatedAt: d.updated_at ? new Date(d.updated_at).toLocaleDateString() : '—',
+    noDocs: true,
+    isMock: false,
+  };
+}
 
 export default function ProjectsPage() {
   const [view, setView] = useState<'grid' | 'list'>('grid');
@@ -29,16 +98,29 @@ export default function ProjectsPage() {
   const [search, setSearch] = useState('');
   const [filterOpen, setFilterOpen] = useState(false);
 
-  const filtered = projects.filter(p =>
+  const { deals, loading, error, fromMock, refresh } = useDeals();
+
+  // Always show the mock projects so the demo deals (Kimpton Angler etc.) stay
+  // available alongside any real worker deals while we're still mid-migration.
+  const display: DisplayDeal[] = useMemo(() => {
+    const workerRows = deals.map(fromWorkerDeal);
+    const mockRows = mockProjects.map(fromMockProject);
+    if (fromMock) return mockRows;
+    // De-dupe by id (worker uses uuid, mock uses numeric).
+    const seen = new Set(workerRows.map((d) => d.id));
+    return [...workerRows, ...mockRows.filter((m) => !seen.has(m.id))];
+  }, [deals, fromMock]);
+
+  const filtered = display.filter((p) =>
     (filter === 'All Status' || p.status === filter) &&
-    (!search || p.name.toLowerCase().includes(search.toLowerCase()) || p.city.toLowerCase().includes(search.toLowerCase()))
+    (!search || p.name.toLowerCase().includes(search.toLowerCase()) || (p.city || '').toLowerCase().includes(search.toLowerCase()))
   );
 
   return (
     <div className="px-8 py-8 max-w-[1440px]">
       <PageHeader
         title="Projects"
-        subtitle={`${projects.length} total projects · ${projects.filter(p => p.status !== 'Archived').length} active`}
+        subtitle={`${display.length} total projects · ${display.filter((p) => p.status !== 'Archived').length} active`}
         action={
           <Link href="/projects/new">
             <Button variant="primary"><Plus size={14} /> New Project</Button>
@@ -86,7 +168,42 @@ export default function ProjectsPage() {
         </div>
       </div>
 
-      {view === 'grid' ? (
+      {error && !fromMock && (
+        <Card className="p-5 mb-5 border-danger-500/30 bg-danger-50">
+          <div className="flex items-start gap-3">
+            <AlertTriangle size={16} className="text-danger-700 flex-shrink-0 mt-0.5" />
+            <div className="flex-1">
+              <div className="text-[13px] font-semibold text-danger-700">Couldn’t reach the worker</div>
+              <p className="text-[12px] text-danger-700/80 mt-1">{error}</p>
+            </div>
+            <Button variant="secondary" size="sm" onClick={refresh}><RefreshCw size={12} /> Retry</Button>
+          </div>
+        </Card>
+      )}
+
+      {loading && deals.length === 0 ? (
+        <div className="grid grid-cols-3 gap-4">
+          {[0, 1, 2].map((i) => (
+            <Card key={i} className="p-5 animate-pulse">
+              <div className="h-10 bg-ink-300/30 rounded mb-3" />
+              <div className="h-3 bg-ink-300/20 rounded w-2/3 mb-2" />
+              <div className="h-3 bg-ink-300/20 rounded w-1/3 mb-4" />
+              <div className="h-12 bg-ink-300/20 rounded" />
+            </Card>
+          ))}
+        </div>
+      ) : filtered.length === 0 ? (
+        <Card className="p-12 text-center">
+          <Building2 size={36} className="text-ink-400 mx-auto mb-3" />
+          <div className="text-[14px] font-semibold text-ink-900">No deals yet</div>
+          <p className="text-[12.5px] text-ink-500 mt-1">Create your first deal to start underwriting.</p>
+          <div className="mt-5">
+            <Link href="/projects/new">
+              <Button variant="primary"><Plus size={14} /> New Project</Button>
+            </Link>
+          </div>
+        </Card>
+      ) : view === 'grid' ? (
         <div className="grid grid-cols-3 gap-4">
           {filtered.map(p => (
             <Link key={p.id} href={`/projects/${p.id}`}>
@@ -129,16 +246,16 @@ export default function ProjectsPage() {
                     <div className="grid grid-cols-3 gap-2 mb-4">
                       <div>
                         <div className="text-[10px] text-ink-500 uppercase tracking-wide">RevPAR</div>
-                        <div className="text-[14px] font-semibold tabular-nums">${p.revpar}</div>
+                        <div className="text-[14px] font-semibold tabular-nums">{p.revpar != null ? `$${p.revpar}` : '—'}</div>
                       </div>
                       <div>
                         <div className="text-[10px] text-ink-500 uppercase tracking-wide">IRR</div>
-                        <div className="text-[14px] font-semibold tabular-nums">{p.irr.toFixed(2)}%</div>
+                        <div className="text-[14px] font-semibold tabular-nums">{p.irr != null ? `${p.irr.toFixed(2)}%` : '—'}</div>
                       </div>
                       <div>
                         <div className="text-[10px] text-ink-500 uppercase tracking-wide">Risk</div>
                         <div className={cn('text-[12px] font-medium px-1.5 py-0.5 rounded inline-block', riskTone(p.risk))}>
-                          {p.risk}
+                          {p.risk ?? '—'}
                         </div>
                       </div>
                     </div>
@@ -183,15 +300,21 @@ export default function ProjectsPage() {
                 </div>
                 <div className="text-[12px] text-ink-500 mt-0.5">{p.city} · {p.keys} keys · {p.service}</div>
               </div>
-              <div className="text-[12.5px] tabular-nums w-20 text-right">${p.revpar} <span className="text-ink-400">RevPAR</span></div>
-              <div className="text-[12.5px] tabular-nums w-24 text-right">${(p.noi! / 1e6).toFixed(2)}M <span className="text-ink-400">NOI</span></div>
-              <div className="text-[12.5px] tabular-nums w-16 text-right font-medium">{p.irr.toFixed(2)}%</div>
-              <div className={cn('text-[11.5px] font-medium px-2 py-0.5 rounded w-16 text-center', riskTone(p.risk))}>{p.risk}</div>
+              <div className="text-[12.5px] tabular-nums w-20 text-right">{p.revpar != null ? `$${p.revpar}` : '—'} <span className="text-ink-400">RevPAR</span></div>
+              <div className="text-[12.5px] tabular-nums w-24 text-right">{p.noi != null ? `$${(p.noi / 1e6).toFixed(2)}M` : '—'} <span className="text-ink-400">NOI</span></div>
+              <div className="text-[12.5px] tabular-nums w-16 text-right font-medium">{p.irr != null ? `${p.irr.toFixed(2)}%` : '—'}</div>
+              <div className={cn('text-[11.5px] font-medium px-2 py-0.5 rounded w-16 text-center', riskTone(p.risk))}>{p.risk ?? '—'}</div>
               <div className="w-7 h-7 rounded-full bg-ink-300/30 flex items-center justify-center text-[10px] font-semibold">{p.assignee}</div>
               <KebabMenu items={projectMenu(p.id)} />
             </Link>
           ))}
         </Card>
+      )}
+
+      {loading && deals.length > 0 && (
+        <div className="mt-3 inline-flex items-center gap-2 text-[11.5px] text-ink-500">
+          <Loader2 size={11} className="animate-spin" /> Refreshing…
+        </div>
       )}
     </div>
   );

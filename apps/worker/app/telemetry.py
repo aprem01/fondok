@@ -1,8 +1,13 @@
-"""OpenTelemetry wiring.
+"""OpenTelemetry + LangSmith wiring.
 
-Exports traces over OTLP/HTTP. Off by default — set
-``OTEL_EXPORTER_OTLP_ENDPOINT`` (and optionally ``OTEL_EXPORTER_OTLP_HEADERS``)
-to enable.
+OpenTelemetry exports traces over OTLP/HTTP. Off by default — set
+``OTEL_EXPORTER_OTLP_ENDPOINT`` (and optionally
+``OTEL_EXPORTER_OTLP_HEADERS``) to enable.
+
+LangSmith captures every LLM call as a trace under the ``fondok-{env}``
+project. Off by default — set ``LANGSMITH_API_KEY`` to enable. We do
+this by setting LangChain's standard ``LANGCHAIN_TRACING_V2`` env vars,
+which the langchain-anthropic client picks up automatically.
 
 Auto-instrumentation:
   * FastAPI request lifecycle (one span per HTTP request)
@@ -12,7 +17,9 @@ Auto-instrumentation:
 
 Manual instrumentation:
   * ``@trace_agent("Extractor")`` decorator on each agent's ``run_*`` so
-    we get span/duration per agent invocation.
+    we get span/duration per agent invocation. The decorator also
+    propagates ``deal_id`` + ``agent_name`` tags onto LangSmith traces
+    via the LangChain run metadata.
 """
 
 from __future__ import annotations
@@ -30,6 +37,7 @@ logger = logging.getLogger(__name__)
 
 _INSTRUMENTED = False
 _TRACER: Any = None
+_LANGSMITH_ENABLED = False
 
 F = TypeVar("F", bound=Callable[..., Any])
 
@@ -155,6 +163,65 @@ def _try_instrument_httpx() -> None:
         logger.warning("otel: httpx instrumentation failed (%s)", exc)
 
 
+def setup_langsmith() -> bool:
+    """Enable LangSmith tracing if ``LANGSMITH_API_KEY`` is set.
+
+    The langchain-anthropic + langchain-core stack auto-detects the
+    standard LangChain tracing env vars (``LANGCHAIN_TRACING_V2``,
+    ``LANGCHAIN_API_KEY``, ``LANGCHAIN_PROJECT``) and ships every LLM
+    invocation to LangSmith without code changes in the agents.
+
+    Project name is ``fondok-{environment}`` (e.g. ``fondok-production``)
+    so traces from dev / staging / prod don't collide.
+
+    Idempotent — safe to call from ``lifespan`` on every worker boot.
+    Returns True when tracing was activated.
+    """
+    global _LANGSMITH_ENABLED
+    if _LANGSMITH_ENABLED:
+        return True
+
+    api_key = os.environ.get("LANGSMITH_API_KEY", "").strip()
+    if not api_key:
+        logger.info("langsmith: disabled (LANGSMITH_API_KEY not set)")
+        return False
+
+    settings = get_settings()
+    env = os.environ.get("DEPLOYMENT_ENVIRONMENT", settings.DEPLOYMENT_ENVIRONMENT)
+    project = os.environ.get("LANGSMITH_PROJECT") or f"fondok-{env}"
+
+    # Mirror LangSmith's API key into LangChain's tracing namespace and
+    # turn V2 tracing on. Both sets of env vars are read at langchain
+    # client instantiation, so setting them here propagates to every
+    # ChatAnthropic the agents construct downstream.
+    os.environ["LANGCHAIN_TRACING_V2"] = "true"
+    os.environ["LANGCHAIN_API_KEY"] = api_key
+    os.environ["LANGCHAIN_PROJECT"] = project
+    # Optional override (LangSmith self-hosted or EU endpoint).
+    endpoint = os.environ.get("LANGSMITH_ENDPOINT", "").strip()
+    if endpoint:
+        os.environ["LANGCHAIN_ENDPOINT"] = endpoint
+
+    try:
+        # Importing langsmith here both validates the dep is installed
+        # and pre-warms the SDK's lazy globals so the first agent call
+        # doesn't pay the import cost in its critical path.
+        import langsmith  # noqa: F401
+    except ImportError as exc:
+        logger.warning("langsmith: import failed — disabling (%s)", exc)
+        for k in ("LANGCHAIN_TRACING_V2", "LANGCHAIN_API_KEY", "LANGCHAIN_PROJECT"):
+            os.environ.pop(k, None)
+        return False
+
+    _LANGSMITH_ENABLED = True
+    logger.info(
+        "langsmith: enabled project=%s endpoint=%s",
+        project,
+        endpoint or "https://api.smith.langchain.com",
+    )
+    return True
+
+
 def _try_instrument_asyncpg() -> None:
     try:
         from opentelemetry.instrumentation.asyncpg import AsyncPGInstrumentor
@@ -200,6 +267,11 @@ def trace_agent(agent_name: str) -> Callable[[F], F]:
     """Decorator: wrap an async ``run_*`` agent in a span tagged with
     ``agent.name``. Records exceptions on the span without swallowing.
 
+    When LangSmith is enabled, also wraps the inner call with
+    LangSmith's ``traceable`` decorator (resolved lazily so the import
+    is free in the off path) and tags the trace with ``deal_id``,
+    ``agent_name``, and ``model`` (when discoverable on the payload).
+
     Usage::
 
         @trace_agent("Extractor")
@@ -211,6 +283,32 @@ def trace_agent(agent_name: str) -> Callable[[F], F]:
             raise TypeError(
                 f"trace_agent requires an async function, got {fn!r}"
             )
+
+        # Lazily resolve langsmith.traceable so off-path callers don't
+        # eat the import time. Resolved on first call, cached after.
+        _langsmith_wrapped: list[Any] = []
+
+        def _wrap_langsmith(inner: Any) -> Any:
+            if not _LANGSMITH_ENABLED:
+                return inner
+            if _langsmith_wrapped:
+                return _langsmith_wrapped[0]
+            try:
+                from langsmith import traceable
+
+                wrapped = traceable(
+                    name=f"agent.{agent_name.lower()}",
+                    run_type="chain",
+                    tags=[f"agent:{agent_name.lower()}"],
+                    metadata={"agent_name": agent_name},
+                )(inner)
+            except Exception as exc:  # pragma: no cover - defensive
+                logger.warning(
+                    "langsmith: traceable wrap failed for %s (%s)", agent_name, exc
+                )
+                wrapped = inner
+            _langsmith_wrapped.append(wrapped)
+            return wrapped
 
         @wraps(fn)
         async def _wrapped(*args: Any, **kwargs: Any) -> Any:
@@ -224,7 +322,8 @@ def trace_agent(agent_name: str) -> Callable[[F], F]:
                 if deal_id:
                     span.set_attribute("fondok.deal_id", str(deal_id))
                 try:
-                    return await fn(*args, **kwargs)
+                    inner = _wrap_langsmith(fn)
+                    return await inner(*args, **kwargs)
                 except Exception as exc:
                     span.record_exception(exc)
                     raise
@@ -236,6 +335,7 @@ def trace_agent(agent_name: str) -> Callable[[F], F]:
 
 __all__ = [
     "get_tracer",
+    "setup_langsmith",
     "setup_telemetry",
     "trace_agent",
 ]

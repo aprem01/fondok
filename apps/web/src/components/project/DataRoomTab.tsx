@@ -1,5 +1,5 @@
 'use client';
-import { useState } from 'react';
+import { useMemo, useRef, useState } from 'react';
 import { useParams, useRouter } from 'next/navigation';
 import {
   UploadCloud, FolderOpen, Info, FileText, MoreHorizontal, FileSpreadsheet,
@@ -10,6 +10,8 @@ import { Button } from '@/components/ui/Button';
 import { Badge, StatusBadge } from '@/components/ui/Badge';
 import { documentChecklist, engines, kimptonDocuments } from '@/lib/mockData';
 import { criticalCount, warnCount, varianceFlags } from '@/lib/varianceData';
+import { isWorkerConnected, WorkerDocument, ExtractionField } from '@/lib/api';
+import { useDocuments } from '@/lib/hooks/useDocuments';
 
 // Documents with broker-vs-T12 variance flags raised against them.
 const VARIANCE_DOCS = new Set([
@@ -17,35 +19,180 @@ const VARIANCE_DOCS = new Set([
   'T12_FinancialStatement.xlsx',
 ]);
 
+// Map worker doc statuses to a single label the StatusBadge knows about.
+function statusLabel(s: string): string {
+  switch (s) {
+    case 'EXTRACTED':
+      return 'Extracted';
+    case 'EXTRACTING':
+    case 'CLASSIFYING':
+    case 'PROCESSING':
+      return 'Processing';
+    case 'FAILED':
+      return 'Pending';
+    case 'UPLOADED':
+    default:
+      return 'Pending';
+  }
+}
+
+function formatBytes(bytes: number | null | undefined): string {
+  if (bytes == null) return '—';
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+  return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
+}
+
+function formatValue(v: unknown, unit: string | null): string {
+  if (v == null) return '—';
+  if (typeof v === 'number') {
+    if (unit === 'USD') {
+      const abs = Math.abs(v);
+      if (abs >= 1_000_000) return `$${(v / 1_000_000).toFixed(2)}M`;
+      if (abs >= 1_000) return `$${(v / 1_000).toFixed(1)}K`;
+      return `$${v.toFixed(0)}`;
+    }
+    if (unit === 'ratio' || unit === 'percent') {
+      return `${(v * (unit === 'percent' ? 1 : 100)).toFixed(1)}%`;
+    }
+    return v.toLocaleString();
+  }
+  return String(v);
+}
+
 export default function DataRoomTab({ projectId }: { projectId: number }) {
   const router = useRouter();
   const params = useParams();
-  const id = Number(params?.id) || projectId;
+  // Raw id from the URL — could be a numeric mock id or a real worker UUID.
+  const rawId = (params?.id as string | undefined) ?? String(projectId);
+  const isMockId = /^\d+$/.test(rawId);
+  const isFullDoc = isMockId && Number(rawId) === 7; // Kimpton Angler
+
+  const fileInputRef = useRef<HTMLInputElement>(null);
   const [selectedDoc, setSelectedDoc] = useState<string | null>(null);
-  const isFullDoc = projectId === 7; // Kimpton Angler has docs
-  const docs = isFullDoc ? kimptonDocuments : [];
+
+  const { documents, uploading, upload, extractions, error: docsError, refresh } =
+    useDocuments(rawId);
+
+  // When we're on a real (UUID) deal, use live documents; otherwise mock.
+  const liveMode = isWorkerConnected() && !isMockId;
+
   const goToVariance = () =>
-    router.push(`/projects/${id}?tab=analysis&sub=variance`, { scroll: false });
+    router.push(`/projects/${rawId}?tab=analysis&sub=variance`, { scroll: false });
+
+  // Build the unified doc rows the UI renders.
+  type Row = {
+    id: string;
+    name: string;
+    type: string;
+    status: string; // human-friendly status label
+    rawStatus: string; // upstream status (UPLOADED / EXTRACTED / Extracted / etc.)
+    size: string;
+    date: string;
+    fields: number;
+    confidence: number;
+    populates: string[];
+    fieldList?: ExtractionField[];
+  };
+
+  const docs: Row[] = useMemo(() => {
+    if (liveMode) {
+      return documents.map((d: WorkerDocument): Row => {
+        const ex = extractions[d.id];
+        const fieldList = ex?.fields ?? [];
+        const overall = ex?.confidence_report?.overall ?? 0;
+        return {
+          id: d.id,
+          name: d.filename,
+          type: d.doc_type ?? '—',
+          status: statusLabel(d.status),
+          rawStatus: d.status,
+          size: formatBytes(d.size_bytes),
+          date: d.uploaded_at ? new Date(d.uploaded_at).toLocaleDateString() : '—',
+          fields: fieldList.length,
+          confidence: Math.round(overall * 100),
+          populates: [],
+          fieldList,
+        };
+      });
+    }
+    if (isFullDoc) {
+      return kimptonDocuments.map((d) => ({
+        id: d.name,
+        name: d.name,
+        type: d.type,
+        status: d.status,
+        rawStatus: d.status,
+        size: d.size,
+        date: d.date,
+        fields: d.fields,
+        confidence: d.confidence,
+        populates: d.populates,
+      }));
+    }
+    return [];
+  }, [liveMode, documents, extractions, isFullDoc]);
+
+  const selectedDocRow = useMemo(
+    () => docs.find((d) => d.name === selectedDoc) ?? null,
+    [docs, selectedDoc],
+  );
   const selectedHasVariance = selectedDoc !== null && VARIANCE_DOCS.has(selectedDoc);
   const selectedVarianceFlags = selectedHasVariance
-    ? varianceFlags.filter(f =>
-        f.source_documents.some(s =>
-          (selectedDoc === 'Offering_Memorandum_Final.pdf' && s.document_id === 'kimpton-angler-om-2026') ||
-          (selectedDoc === 'T12_FinancialStatement.xlsx' && s.document_id === 'kimpton-angler-t12-2026q1'),
+    ? varianceFlags.filter((f) =>
+        f.source_documents.some(
+          (s) =>
+            (selectedDoc === 'Offering_Memorandum_Final.pdf' && s.document_id === 'kimpton-angler-om-2026') ||
+            (selectedDoc === 'T12_FinancialStatement.xlsx' && s.document_id === 'kimpton-angler-t12-2026q1'),
         ),
       )
     : [];
-  const selectedCriticalCount = selectedVarianceFlags.filter(f => f.severity === 'CRITICAL').length;
+  const selectedCriticalCount = selectedVarianceFlags.filter((f) => f.severity === 'CRITICAL').length;
+
   const checklist = documentChecklist.map((d, i) => ({
-    name: d, complete: isFullDoc && i < 4,
+    name: d,
+    complete: liveMode
+      ? i < docs.filter((x) => x.status === 'Extracted').length
+      : isFullDoc && i < 4,
   }));
 
-  const completeCount = checklist.filter(d => d.complete).length;
-  const extracted = docs.filter(d => d.status === 'Extracted').length;
-  const processing = docs.filter(d => d.status === 'Processing').length;
+  const completeCount = checklist.filter((d) => d.complete).length;
+  const extracted = docs.filter((d) => d.status === 'Extracted').length;
+  const processing = docs.filter((d) => d.status === 'Processing').length;
+
+  const onPickFiles = () => fileInputRef.current?.click();
+
+  const onFilesSelected = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const files = e.target.files ? Array.from(e.target.files) : [];
+    e.target.value = ''; // reset so same file can be re-picked
+    if (files.length === 0) return;
+    if (!liveMode) {
+      window.alert(
+        isWorkerConnected()
+          ? 'Uploads are only supported on real worker deals. Use “New Project” to create one.'
+          : 'Worker not connected — uploads are disabled in demo mode.',
+      );
+      return;
+    }
+    try {
+      await upload(files);
+    } catch (err) {
+      console.error('upload failed', err);
+      window.alert(`Upload failed: ${err instanceof Error ? err.message : String(err)}`);
+    }
+  };
 
   return (
     <div className="space-y-5">
+      <input
+        ref={fileInputRef}
+        type="file"
+        multiple
+        accept=".pdf,.xlsx,.xls,.csv,.doc,.docx"
+        onChange={onFilesSelected}
+        className="hidden"
+      />
+
       <Card className="p-5">
         <div className="flex items-start gap-3">
           <FolderOpen size={20} className="text-brand-500 mt-0.5" />
@@ -53,6 +200,11 @@ export default function DataRoomTab({ projectId }: { projectId: number }) {
             <div className="flex items-center gap-2">
               <h2 className="text-[15px] font-semibold text-ink-900">Data Room</h2>
               <Info size={13} className="text-ink-400" />
+              {liveMode && (
+                <span className="text-[10.5px] uppercase tracking-wider text-success-700 bg-success-50 border border-success-500/20 px-1.5 py-0.5 rounded">
+                  Live
+                </span>
+              )}
             </div>
             <p className="text-[12.5px] text-ink-500 mt-1">
               Upload and manage deal documents for AI-powered extraction and underwriting automation.
@@ -81,11 +233,22 @@ export default function DataRoomTab({ projectId }: { projectId: number }) {
           </div>
           <div className="flex-1">
             <h3 className="text-[14px] font-semibold text-ink-900">Upload Documents</h3>
-            <p className="text-[12px] text-ink-500 mt-0.5">Drag and drop OM, T12, STR reports · AI auto-extracts key data</p>
+            <p className="text-[12px] text-ink-500 mt-0.5">
+              Drag and drop OM, T12, STR reports · AI auto-extracts key data
+            </p>
           </div>
-          <Button variant="primary" size="sm">Choose Files</Button>
+          <Button variant="primary" size="sm" onClick={onPickFiles} disabled={uploading}>
+            {uploading ? <Loader2 size={12} className="animate-spin" /> : null}
+            {uploading ? 'Uploading…' : 'Choose Files'}
+          </Button>
           <Button variant="secondary" size="sm">Browse Templates</Button>
         </div>
+        {docsError && liveMode && (
+          <div className="mt-3 px-3 py-2 rounded-md bg-danger-50 text-danger-700 text-[11.5px] flex items-center gap-2">
+            <AlertTriangle size={12} /> {docsError}
+            <button onClick={refresh} className="ml-auto underline hover:no-underline">Retry</button>
+          </div>
+        )}
       </Card>
 
       <div className="grid grid-cols-3 gap-5">
@@ -105,7 +268,7 @@ export default function DataRoomTab({ projectId }: { projectId: number }) {
             </div>
           </div>
           <div className="space-y-2">
-            {checklist.map(d => (
+            {checklist.map((d) => (
               <div key={d.name} className="flex items-center gap-3 py-1.5">
                 {d.complete
                   ? <CheckCircle2 size={15} className="text-success-500 flex-shrink-0" />
@@ -121,7 +284,7 @@ export default function DataRoomTab({ projectId }: { projectId: number }) {
         <Card className="p-5">
           <h3 className="text-[14px] font-semibold text-ink-900 mb-4">Engine Status</h3>
           <div className="space-y-3.5">
-            {engines.map(e => (
+            {engines.map((e) => (
               <div key={e.id}>
                 <div className="flex items-center justify-between mb-1">
                   <span className="text-[12px] text-ink-700 font-medium">{e.label}</span>
@@ -151,19 +314,20 @@ export default function DataRoomTab({ projectId }: { projectId: number }) {
 
           <div className="grid grid-cols-3 gap-5">
             <div className="col-span-2 space-y-2">
-              {docs.map(d => {
+              {docs.map((d) => {
                 const hasVariance = VARIANCE_DOCS.has(d.name);
                 const flagsForDoc = hasVariance
-                  ? varianceFlags.filter(f =>
-                      f.source_documents.some(s =>
-                        (d.name === 'Offering_Memorandum_Final.pdf' && s.document_id === 'kimpton-angler-om-2026') ||
-                        (d.name === 'T12_FinancialStatement.xlsx' && s.document_id === 'kimpton-angler-t12-2026q1'),
+                  ? varianceFlags.filter((f) =>
+                      f.source_documents.some(
+                        (s) =>
+                          (d.name === 'Offering_Memorandum_Final.pdf' && s.document_id === 'kimpton-angler-om-2026') ||
+                          (d.name === 'T12_FinancialStatement.xlsx' && s.document_id === 'kimpton-angler-t12-2026q1'),
                       ),
                     )
                   : [];
-                const docCritical = flagsForDoc.filter(f => f.severity === 'CRITICAL').length;
+                const docCritical = flagsForDoc.filter((f) => f.severity === 'CRITICAL').length;
                 return (
-                  <button key={d.name} onClick={() => setSelectedDoc(d.name)}
+                  <button key={d.id} onClick={() => setSelectedDoc(d.name)}
                     className={`w-full text-left p-3 rounded-md border transition-colors ${
                       selectedDoc === d.name ? 'bg-brand-50 border-brand-500' : 'border-border hover:bg-ink-300/10'
                     }`}>
@@ -179,7 +343,7 @@ export default function DataRoomTab({ projectId }: { projectId: number }) {
                           {docCritical > 0 && (
                             <span
                               role="button"
-                              onClick={e => { e.stopPropagation(); goToVariance(); }}
+                              onClick={(e) => { e.stopPropagation(); goToVariance(); }}
                               className="inline-flex items-center gap-1 px-2 py-0.5 text-[10.5px] font-semibold rounded-md bg-danger-50 text-danger-700 border border-danger-500/30 hover:bg-danger-500 hover:text-white transition-colors cursor-pointer"
                               title="Open Broker Variance tab"
                             >
@@ -197,18 +361,18 @@ export default function DataRoomTab({ projectId }: { projectId: number }) {
                             </div>
                             {d.populates.length > 0 && (
                               <div className="flex gap-1">
-                                {d.populates.map(p => <Badge key={p} tone="blue">{p}</Badge>)}
+                                {d.populates.map((p) => <Badge key={p} tone="blue">{p}</Badge>)}
                               </div>
                             )}
                           </div>
                         )}
                         {d.status === 'Processing' && (
                           <div className="flex items-center gap-1.5 mt-2 text-[11px] text-brand-700">
-                            <Loader2 size={11} className="animate-spin" /> Extracting...
+                            <Loader2 size={11} className="animate-spin" /> Extracting…
                           </div>
                         )}
                       </div>
-                      <button onClick={e => { e.stopPropagation(); }} className="p-1 hover:bg-ink-300/20 rounded">
+                      <button onClick={(e) => { e.stopPropagation(); }} className="p-1 hover:bg-ink-300/20 rounded">
                         <MoreHorizontal size={14} className="text-ink-400" />
                       </button>
                     </div>
@@ -242,10 +406,24 @@ export default function DataRoomTab({ projectId }: { projectId: number }) {
                     </button>
                   )}
                   {(() => {
-                    const doc = docs.find(d => d.name === selectedDoc);
-                    if (!doc || doc.status !== 'Extracted') {
-                      return <div className="text-[11.5px] text-ink-500">Document still processing...</div>;
+                    if (!selectedDocRow || selectedDocRow.status !== 'Extracted') {
+                      return <div className="text-[11.5px] text-ink-500">Document still processing…</div>;
                     }
+                    if (liveMode && selectedDocRow.fieldList && selectedDocRow.fieldList.length > 0) {
+                      return (
+                        <div className="space-y-2 text-[11.5px]">
+                          {selectedDocRow.fieldList.slice(0, 12).map((f) => (
+                            <DataRow
+                              key={f.field_name}
+                              label={f.field_name}
+                              value={formatValue(f.value, f.unit)}
+                              confidence={Math.round((f.confidence ?? 0) * 100)}
+                            />
+                          ))}
+                        </div>
+                      );
+                    }
+                    // Mock fallback
                     return (
                       <div className="space-y-2 text-[11.5px]">
                         <DataRow label="ADR" value="$385" confidence={96} />

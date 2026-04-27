@@ -34,6 +34,10 @@ Set on `fondok-worker` service. Use `railway variables --service fondok-worker` 
 | `ANTHROPIC_ANALYST_MODEL` | `claude-opus-4-7` |
 | `ANTHROPIC_VARIANCE_MODEL` | `claude-sonnet-4-6` |
 | `PYTHONUNBUFFERED` | `1` |
+| `LANGSMITH_API_KEY` | _optional_; enables LangSmith trace export when set |
+| `LANGSMITH_PROJECT` | _optional_; defaults to `fondok-${DEPLOYMENT_ENVIRONMENT}` |
+| `LANGSMITH_ENDPOINT` | _optional_; self-hosted / EU LangSmith endpoint |
+| `ALLOW_TEST_INGEST` | `false` in production; defaults to `true` for dev |
 
 `PORT` is injected by Railway at runtime; the Dockerfile binds to `${PORT:-8000}`.
 
@@ -58,6 +62,47 @@ Set on `fondok-worker` service. Use `railway variables --service fondok-worker` 
   builder, then `python:3.12-slim-bookworm` runtime with WeasyPrint native
   deps (`libcairo2`, `libpango-1.0-0`, `libpangocairo-1.0-0`, `libpangoft2-1.0-0`,
   `libgdk-pixbuf-2.0-0`, `libffi8`, `shared-mime-info`, `fonts-dejavu-core`).
+
+## Observability
+
+### LangSmith tracing
+
+LangSmith captures every LLM call (router / extractor / normalizer /
+variance / analyst) under a project named `fondok-{environment}`. To
+enable, set `LANGSMITH_API_KEY` on the Railway service:
+
+```bash
+printf "$LANGSMITH_KEY" | railway variable set --service fondok-worker --stdin LANGSMITH_API_KEY
+```
+
+That single env var is enough — the worker auto-detects it on boot and
+sets the standard `LANGCHAIN_TRACING_V2`, `LANGCHAIN_API_KEY`, and
+`LANGCHAIN_PROJECT` env vars internally so every `ChatAnthropic` client
+ships traces upstream. To override the project name, also set
+`LANGSMITH_PROJECT`. To target a self-hosted / EU instance, set
+`LANGSMITH_ENDPOINT`.
+
+When `LANGSMITH_API_KEY` is unset, tracing is silently disabled.
+
+### Cache hit rate dashboard
+
+The worker exposes two read-only endpoints:
+
+```bash
+# Last 100 model calls — overall + per-agent cache hit rate
+curl https://fondok-worker-production.up.railway.app/observability/cache-stats
+
+# Per-agent token spend + cache hit rate over the last 7 days
+curl https://fondok-worker-production.up.railway.app/observability/agent-costs?days=7
+```
+
+The Vercel web app reads `/observability/cache-stats` from the
+AnalysisTab badge (top-right "Cache hit: NN%"). When
+`NEXT_PUBLIC_WORKER_URL` is unset the badge degrades to "—" silently.
+
+`POST /observability/_test/model-call` is gated by `ALLOW_TEST_INGEST`
+and exists only for the worker test suite — production sets it to
+`false`.
 
 ## Common operations
 

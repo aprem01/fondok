@@ -288,7 +288,7 @@ async def _extract_one(
     doc: ExtractorDocument,
     *,
     deal_id: str,
-    system_blocks: list[str],
+    system_blocks: list[Any],
 ) -> tuple[ExtractedDocumentResult, ModelCall | None]:
     """Run one LLM call for one document. Errors return success=False."""
     started = datetime.now(UTC)
@@ -356,6 +356,9 @@ async def _extract_one(
         trace_id=deal_id,
         started_at=started,
         completed_at=completed,
+        cache_creation_input_tokens=usage.cache_creation_input_tokens,
+        cache_read_input_tokens=usage.cache_read_input_tokens,
+        agent_name="extractor",
     )
     return result, model_call
 
@@ -395,9 +398,21 @@ async def run_extractor(payload: ExtractorInput) -> ExtractorOutput:
             error=str(exc),
         )
 
-    # Cached system prompt + USALI rule catalog. The rule catalog adds
-    # ~3k tokens per call; with caching it's free on repeat calls.
-    system_blocks = [SYSTEM_PROMPT, rules_as_prompt_block()]
+    # 4-block system prompt: agent instructions (uncached) +
+    # USALI rules + brand catalog + extractor schema addendum (cached).
+    # The agent instructions block changes per agent; the trailing
+    # blocks are stable across tenants and live in the cache prefix
+    # so the second call inside the 5-min TTL hits cache.
+    from ..llm import build_agent_system_blocks
+
+    system_blocks = build_agent_system_blocks(
+        role="extractor",
+        agent_instructions=SYSTEM_PROMPT,
+    )
+    # Pre-cache the catalog block so the lru_cache is warm before the
+    # first parallel doc fan-out — keeps the very first call from
+    # paying both the build cost and the cache miss cost.
+    rules_as_prompt_block()
 
     results: list[ExtractedDocumentResult] = []
     model_calls: list[ModelCall] = []

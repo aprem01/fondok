@@ -19,8 +19,11 @@ Roles map to the four agent stages:
 
 from __future__ import annotations
 
+import json
 import logging
 import os
+from functools import lru_cache
+from pathlib import Path
 from typing import Any, Literal
 
 from langchain_core.messages import SystemMessage
@@ -150,15 +153,30 @@ def build_structured_llm(
 
 
 def cached_system_message_blocks(
-    blocks: list[str], *, role: Role
+    blocks: list[str | tuple[str, bool] | dict],
+    *,
+    role: Role,
 ) -> SystemMessage:
-    """SystemMessage with one Anthropic prompt-cache breakpoint per block.
+    """SystemMessage with selectively cached Anthropic prompt-cache breakpoints.
 
     Anthropic allows up to 4 ``cache_control`` breakpoints per request.
-    Splitting role-level system prompts (tenant-agnostic, ~500 tokens)
-    from per-tenant catalogues (USALI rules, brand catalog, market
-    data — often 2-20k tokens) means switching tenants only invalidates
-    the trailing block while the role prompt continues to hit cache.
+    Each block may be either:
+      * ``str`` — text block, cached by default
+      * ``(text, cache_bool)`` tuple — text + explicit cache flag
+      * ``{"text": str, "cache": bool}`` dict — same as above
+
+    Block-tuning recipe (the layout the agents pass in):
+      1. Agent-specific instructions    — small (~500 tok), changes per
+         agent, NO cache (would invalidate downstream blocks anyway).
+      2. USALI rules catalog            — stable across tenants → CACHE.
+      3. Brand catalog                  — stable across tenants → CACHE.
+      4. Per-agent extraction schema /
+         hotel-specific addendum        — stable per role → CACHE.
+
+    The Anthropic cap is 4 breakpoints; we tag the LAST contiguous run
+    of cache-eligible blocks (up to 4) with ``cache_control`` and emit
+    the rest as plain text. This lets a 5-block prompt still fit the
+    breakpoint budget without dropping cache hits.
 
     On a cache hit Anthropic charges 10% of normal input cost on the
     cached prefix, so this materially reduces both latency and spend
@@ -167,19 +185,41 @@ def cached_system_message_blocks(
     For non-Anthropic providers we collapse to a plain joined string —
     ``cache_control`` is silently ignored on the OpenAI-compatible path.
     """
+    # Normalize all inputs to (text, cache_eligible) tuples.
+    norm: list[tuple[str, bool]] = []
+    for b in blocks:
+        if isinstance(b, str):
+            norm.append((b, True))
+        elif isinstance(b, tuple) and len(b) == 2:
+            norm.append((str(b[0]), bool(b[1])))
+        elif isinstance(b, dict):
+            norm.append((str(b.get("text", "")), bool(b.get("cache", True))))
+        else:
+            norm.append((str(b), True))
+
+    # Drop empty blocks — they only waste tool-schema tokens.
+    norm = [(t, c) for (t, c) in norm if t and t.strip()]
+
     provider = _provider_for(role)
     if provider != "anthropic":
-        return SystemMessage(content="\n\n".join(blocks))
-    return SystemMessage(
-        content=[
-            {
-                "type": "text",
-                "text": text,
-                "cache_control": {"type": "ephemeral"},
-            }
-            for text in blocks
-        ]
-    )
+        return SystemMessage(content="\n\n".join(t for t, _ in norm))
+
+    # Honor Anthropic's 4-breakpoint cap by reserving the LAST 4
+    # cache-eligible blocks. This matters when a caller passes >4 blocks.
+    cache_eligible_idx = [i for i, (_, c) in enumerate(norm) if c]
+    if len(cache_eligible_idx) > 4:
+        # Demote the earliest extras to non-cache so we stay under the cap.
+        for i in cache_eligible_idx[:-4]:
+            t, _ = norm[i]
+            norm[i] = (t, False)
+
+    content: list[dict] = []
+    for text, cache in norm:
+        block: dict = {"type": "text", "text": text}
+        if cache:
+            block["cache_control"] = {"type": "ephemeral"}
+        content.append(block)
+    return SystemMessage(content=content)
 
 
 def cached_system_message(content: str, *, role: Role) -> SystemMessage:
@@ -187,11 +227,142 @@ def cached_system_message(content: str, *, role: Role) -> SystemMessage:
     return cached_system_message_blocks([content], role=role)
 
 
+# ─────────────────────── shared catalog loaders ───────────────────────
+
+
+_DEFAULT_BRAND_CATALOG_PATH = (
+    Path(__file__).resolve().parents[3]
+    / "evals"
+    / "golden-set"
+    / "brand-catalog.json"
+)
+
+
+@lru_cache(maxsize=1)
+def brand_catalog_as_prompt_block() -> str:
+    """Load the brand catalog and render it as a stable prompt block.
+
+    Cached for the process lifetime so cache key hashing on the
+    Anthropic side can find the block on every call.
+    """
+    override = os.environ.get("FONDOK_BRAND_CATALOG_PATH")
+    path = Path(override).expanduser().resolve() if override else _DEFAULT_BRAND_CATALOG_PATH
+    if not path.exists():
+        logger.info("brand-catalog: not found at %s — empty block", path)
+        return "=== BRAND CATALOG ===\n(unavailable)"
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        logger.warning("brand-catalog: failed to read %s: %s", path, exc)
+        return "=== BRAND CATALOG ===\n(parse error)"
+    # Pretty-print with stable key ordering so the block hashes the
+    # same way on every call.
+    body = json.dumps(data, indent=2, sort_keys=True)
+    return f"=== BRAND CATALOG ===\n{body}"
+
+
+# Per-agent extraction-schema addendum. These are short, stable hints
+# the LLM uses to pick the right field paths and units; splitting them
+# into their own cached block (instead of inlining into the agent
+# prompt) keeps the agent-specific block small and lets the schema
+# addendum live in the cache prefix shared across tenants.
+_EXTRACTION_SCHEMA_BLOCKS: dict[str, str] = {
+    "router": (
+        "=== ROUTER SCHEMA ADDENDUM ===\n"
+        "DocType tokens: OM | T12 | STR | RENT_ROLL | PNL | "
+        "MARKET_STUDY | CONTRACT | UNKNOWN.\n"
+        "Confidence is in [0, 1]; <0.7 implies UNKNOWN.\n"
+        "Reasoning is one short sentence (<=80 words)."
+    ),
+    "extractor": (
+        "=== EXTRACTOR SCHEMA ADDENDUM ===\n"
+        "Field paths use dotted notation rooted at the source document:\n"
+        "  asking_price.headline_price_usd\n"
+        "  property_overview.{name,keys,year_built,address,brand}\n"
+        "  broker_proforma.{rooms_revenue_usd,fb_revenue_usd,noi_usd,...}\n"
+        "  ttm_summary_per_om.{occupancy_pct,adr_usd,revpar_usd}\n"
+        "  in_place_debt.{loan_balance_usd,rate_pct,maturity_date}\n"
+        "  p_and_l_usali.<bucket>.<line> for T-12.\n"
+        "  ttm_performance.{subject,comp_set,indices}.* for STR.\n"
+        "Units: USD (no symbols), pct (decimal 0..1), keys, ratio, count, date."
+    ),
+    "normalizer": (
+        "=== NORMALIZER SCHEMA ADDENDUM ===\n"
+        "Output schema USALINormalized has fields:\n"
+        "  rooms_revenue, fb_revenue, other_revenue, total_revenue\n"
+        "  dept_expenses{rooms,food_beverage,other_operated,total}\n"
+        "  undistributed{administrative_general,information_telecom,"
+        "sales_marketing,property_operations,utilities,total}\n"
+        "  mgmt_fee, ffe_reserve\n"
+        "  fixed_charges{property_taxes,insurance,rent,other_fixed,total}\n"
+        "  gop, noi, opex_ratio\n"
+        "  occupancy, adr, revpar (optional)\n"
+        "All amounts USD, occupancy in [0,1]."
+    ),
+    "variance": (
+        "=== VARIANCE SCHEMA ADDENDUM ===\n"
+        "Each note entry is {field, rule_id, note}. Match (field, rule_id)\n"
+        "to one of the deterministic flags exactly — order preserved."
+    ),
+    "analyst": (
+        "=== ANALYST SCHEMA ADDENDUM ===\n"
+        "Section ids: investment_thesis | market_analysis | deal_overview |\n"
+        "  financial_analysis | risk_factors | recommendation.\n"
+        "Each section emits {section_id, title, body, citations[>=1]}.\n"
+        "Citations: {document_id, page, field?, excerpt?} pointing at the\n"
+        "Source Documents the orchestrator surfaces — never invent ids."
+    ),
+}
+
+
+def extraction_schema_block(role: Role) -> str:
+    """Per-agent schema reminder, kept stable so it lives in the cache prefix."""
+    return _EXTRACTION_SCHEMA_BLOCKS.get(
+        role, "=== SCHEMA ADDENDUM ===\n(none registered for this role)"
+    )
+
+
+def build_agent_system_blocks(
+    *,
+    role: Role,
+    agent_instructions: str,
+    include_rules: bool = True,
+    include_brand: bool = True,
+    include_schema: bool = True,
+) -> list[tuple[str, bool]]:
+    """Assemble the canonical 4-block system prompt for an agent.
+
+    Block order (matches the cache-tuning recipe in the docstring):
+      1. Agent instructions  — uncached (per-agent, small).
+      2. USALI rules catalog — cached.
+      3. Brand catalog       — cached.
+      4. Schema addendum     — cached.
+
+    Callers should pass the result straight to
+    ``cached_system_message_blocks(blocks, role=role)``.
+    """
+    # Imported lazily to avoid a hard import cycle at module load.
+    from .usali_rules import rules_as_prompt_block
+
+    blocks: list[tuple[str, bool]] = []
+    blocks.append((agent_instructions, False))
+    if include_rules:
+        blocks.append((rules_as_prompt_block(), True))
+    if include_brand:
+        blocks.append((brand_catalog_as_prompt_block(), True))
+    if include_schema:
+        blocks.append((extraction_schema_block(role), True))
+    return blocks
+
+
 __all__ = [
     "Provider",
     "Role",
+    "brand_catalog_as_prompt_block",
+    "build_agent_system_blocks",
     "build_llm",
     "build_structured_llm",
     "cached_system_message",
     "cached_system_message_blocks",
+    "extraction_schema_block",
 ]

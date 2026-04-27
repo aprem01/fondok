@@ -8,6 +8,7 @@ import {
 import { useState, useRef, useEffect } from 'react';
 import { workspace, currentUser } from '@/lib/mockData';
 import { cn } from '@/lib/format';
+import { isWorkerConnected } from '@/lib/api';
 
 const navItems = [
   { href: '/dashboard', label: 'Dashboard', icon: LayoutGrid },
@@ -113,6 +114,21 @@ export default function Sidebar({
           );
         })}
       </nav>
+
+      {/* Data source indicator */}
+      <div className="px-3 pt-2 pb-1">
+        {isWorkerConnected() ? (
+          <div className="flex items-center gap-2 px-2 py-1.5 rounded-md bg-success-50 border border-success-500/20">
+            <span className="w-1.5 h-1.5 rounded-full bg-success-500" />
+            <span className="text-[10.5px] text-success-700 font-medium">Connected to live worker</span>
+          </div>
+        ) : (
+          <div className="flex items-center gap-2 px-2 py-1.5 rounded-md bg-warn-50 border border-warn-500/30">
+            <span className="w-1.5 h-1.5 rounded-full bg-warn-500" />
+            <span className="text-[10.5px] text-warn-700 font-medium">Offline · using sample data</span>
+          </div>
+        )}
+      </div>
 
       {/* User menu */}
       <div className="px-3 pb-4 relative" ref={userRef}>
