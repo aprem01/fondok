@@ -58,6 +58,26 @@ MIGRATIONS: list[tuple[str, str]] = [
         """,
     ),
     (
+        "deals.add_return_profile",
+        "ALTER TABLE deals ADD COLUMN IF NOT EXISTS return_profile TEXT",
+    ),
+    (
+        "deals.add_brand",
+        "ALTER TABLE deals ADD COLUMN IF NOT EXISTS brand TEXT",
+    ),
+    (
+        "deals.add_positioning",
+        "ALTER TABLE deals ADD COLUMN IF NOT EXISTS positioning TEXT",
+    ),
+    (
+        "deals.add_purchase_price",
+        "ALTER TABLE deals ADD COLUMN IF NOT EXISTS purchase_price NUMERIC(14,2)",
+    ),
+    (
+        "deals.add_assignee_id",
+        "ALTER TABLE deals ADD COLUMN IF NOT EXISTS assignee_id UUID",
+    ),
+    (
         "documents.create_table",
         """
         CREATE TABLE IF NOT EXISTS documents (
@@ -238,6 +258,11 @@ SQLITE_MIGRATIONS: list[tuple[str, str]] = [
             deal_stage      TEXT,
             risk            TEXT,
             ai_confidence   REAL,
+            return_profile  TEXT,
+            brand           TEXT,
+            positioning     TEXT,
+            purchase_price  REAL,
+            assignee_id     TEXT,
             created_at      TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
             updated_at      TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
         )
@@ -246,6 +271,29 @@ SQLITE_MIGRATIONS: list[tuple[str, str]] = [
     (
         "deals.idx_tenant",
         "CREATE INDEX IF NOT EXISTS idx_deals_tenant ON deals (tenant_id, created_at DESC)",
+    ),
+    # SQLite-side additive ALTERs for legacy DBs created before the new
+    # columns landed. SQLite raises a duplicate-column error if the
+    # column already exists; the migration runner swallows it.
+    (
+        "deals.add_return_profile_sqlite",
+        "ALTER TABLE deals ADD COLUMN return_profile TEXT",
+    ),
+    (
+        "deals.add_brand_sqlite",
+        "ALTER TABLE deals ADD COLUMN brand TEXT",
+    ),
+    (
+        "deals.add_positioning_sqlite",
+        "ALTER TABLE deals ADD COLUMN positioning TEXT",
+    ),
+    (
+        "deals.add_purchase_price_sqlite",
+        "ALTER TABLE deals ADD COLUMN purchase_price REAL",
+    ),
+    (
+        "deals.add_assignee_id_sqlite",
+        "ALTER TABLE deals ADD COLUMN assignee_id TEXT",
     ),
     (
         "documents.create_table",
@@ -321,6 +369,33 @@ SQLITE_MIGRATIONS: list[tuple[str, str]] = [
     (
         "model_calls.idx_deal",
         "CREATE INDEX IF NOT EXISTS idx_model_calls_deal ON model_calls (deal_id, created_at DESC)",
+    ),
+    (
+        "audit_log.create_table",
+        """
+        CREATE TABLE IF NOT EXISTS audit_log (
+            id             TEXT PRIMARY KEY,
+            tenant_id      TEXT NOT NULL,
+            deal_id        TEXT,
+            actor_id       TEXT,
+            action         TEXT NOT NULL,
+            resource_type  TEXT NOT NULL,
+            resource_id    TEXT,
+            payload        TEXT,
+            created_at     TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+        )
+        """,
+    ),
+    (
+        "audit_log.idx_tenant_created",
+        """
+        CREATE INDEX IF NOT EXISTS idx_audit_log_tenant_created
+        ON audit_log (tenant_id, created_at DESC)
+        """,
+    ),
+    (
+        "audit_log.idx_deal",
+        "CREATE INDEX IF NOT EXISTS idx_audit_log_deal ON audit_log (deal_id)",
     ),
 ]
 

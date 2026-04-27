@@ -1,8 +1,12 @@
 """Deal lifecycle endpoints — CRUD, status, HITL gates, memo streaming.
 
-Phase-2 stubs: every route returns a typed Pydantic response so the
-web client can wire against a stable contract while the agent + engine
-implementations land underneath.
+CRUD is now real and DB-backed: every mutation persists to the
+``deals`` table and writes an append-only ``audit_log`` row. The
+status endpoint rolls up document/extraction state so the UI can
+render a single "where is this deal" pill without a second query.
+
+The HITL gate + memo endpoints remain thin wrappers around the
+LangGraph runtime and the streaming broadcast.
 """
 
 from __future__ import annotations
@@ -11,15 +15,18 @@ import json
 import logging
 from collections.abc import AsyncIterator
 from datetime import UTC, datetime
-from typing import Any
+from typing import Annotated, Any
 from uuid import UUID, uuid4
 
-from fastapi import APIRouter, BackgroundTasks, status
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, status
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, ConfigDict, Field
+from sqlalchemy import text
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..config import get_settings
 from ..costs import build_cost_report
+from ..database import get_session
 
 try:
     from fondok_schemas import DealCostReport
@@ -40,6 +47,30 @@ class CreateDealBody(BaseModel):
     city: str | None = None
     keys: int | None = Field(default=None, ge=1)
     service: str | None = None
+    deal_stage: str | None = None
+    return_profile: str | None = None
+    brand: str | None = None
+    positioning: str | None = None
+    purchase_price: float | None = Field(default=None, ge=0)
+
+
+class UpdateDealBody(BaseModel):
+    """Partial update — every field is optional."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    name: str | None = Field(default=None, min_length=1, max_length=200)
+    city: str | None = None
+    keys: int | None = Field(default=None, ge=1)
+    service: str | None = None
+    status: str | None = None
+    deal_stage: str | None = None
+    risk: str | None = None
+    ai_confidence: float | None = Field(default=None, ge=0.0, le=1.0)
+    return_profile: str | None = None
+    brand: str | None = None
+    positioning: str | None = None
+    purchase_price: float | None = Field(default=None, ge=0)
 
 
 class Gate1Body(BaseModel):
@@ -59,7 +90,9 @@ class Gate2Body(BaseModel):
 # ─────────────────────────── response shapes ───────────────────────────
 
 
-class DealSummary(BaseModel):
+class DealRecord(BaseModel):
+    """Full row-level view of a deal — what list/get/patch return."""
+
     model_config = ConfigDict(extra="forbid")
 
     id: UUID
@@ -72,6 +105,10 @@ class DealSummary(BaseModel):
     deal_stage: str | None = None
     risk: str | None = None
     ai_confidence: float | None = None
+    return_profile: str | None = None
+    brand: str | None = None
+    positioning: str | None = None
+    purchase_price: float | None = None
     created_at: datetime
     updated_at: datetime
 
@@ -83,6 +120,11 @@ class DealStatusResponse(BaseModel):
     status: str
     deal_stage: str | None = None
     last_event: str | None = None
+    docs_total: int = 0
+    docs_extracted: int = 0
+    docs_extracting: int = 0
+    docs_failed: int = 0
+    ai_confidence: float | None = None
 
 
 class GateResponse(BaseModel):
@@ -102,45 +144,479 @@ class MemoEnvelope(BaseModel):
     citations: list[dict[str, Any]] = Field(default_factory=list)
 
 
-# ─────────────────────────── routes ───────────────────────────
+# ─────────────────────────── helpers ───────────────────────────
 
 
 def _now() -> datetime:
     return datetime.now(UTC)
 
 
-def _stub_summary(name: str = "Stub Deal", deal_id: UUID | None = None) -> DealSummary:
-    settings = get_settings()
-    return DealSummary(
-        id=deal_id or uuid4(),
-        tenant_id=UUID(settings.DEFAULT_TENANT_ID),
-        name=name,
-        status="Draft",
-        created_at=_now(),
-        updated_at=_now(),
+def _coerce_dt(value: Any) -> datetime:
+    if isinstance(value, datetime):
+        if value.tzinfo is None:
+            return value.replace(tzinfo=UTC)
+        return value
+    if isinstance(value, str):
+        try:
+            return datetime.fromisoformat(value).replace(tzinfo=UTC)
+        except ValueError:
+            pass
+    return _now()
+
+
+def _coerce_float(value: Any) -> float | None:
+    if value is None:
+        return None
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _row_to_record(row: dict[str, Any]) -> DealRecord:
+    return DealRecord(
+        id=UUID(str(row["id"])),
+        tenant_id=UUID(str(row["tenant_id"])),
+        name=row["name"],
+        city=row.get("city"),
+        keys=row.get("keys"),
+        service=row.get("service"),
+        status=row.get("status") or "Draft",
+        deal_stage=row.get("deal_stage"),
+        risk=row.get("risk"),
+        ai_confidence=_coerce_float(row.get("ai_confidence")),
+        return_profile=row.get("return_profile"),
+        brand=row.get("brand"),
+        positioning=row.get("positioning"),
+        purchase_price=_coerce_float(row.get("purchase_price")),
+        created_at=_coerce_dt(row.get("created_at")),
+        updated_at=_coerce_dt(row.get("updated_at")),
     )
 
 
-@router.get("", response_model=list[DealSummary])
-async def list_deals() -> list[DealSummary]:
-    """Stub: returns an empty list until the DB-backed query lands."""
-    return []
+_DEAL_COLUMNS = (
+    "id, tenant_id, name, city, keys, service, status, deal_stage, "
+    "risk, ai_confidence, return_profile, brand, positioning, "
+    "purchase_price, created_at, updated_at"
+)
 
 
-@router.post("", response_model=DealSummary, status_code=status.HTTP_201_CREATED)
-async def create_deal(body: CreateDealBody) -> DealSummary:
-    """Stub: echoes the request body as a freshly minted deal."""
-    return _stub_summary(name=body.name)
+async def _write_audit(
+    session: AsyncSession,
+    *,
+    tenant_id: str,
+    deal_id: str,
+    actor_id: str,
+    action: str,
+    payload: dict[str, Any],
+) -> None:
+    """Append a row to ``audit_log``. Best-effort — never raises out."""
+    try:
+        await session.execute(
+            text(
+                """
+                INSERT INTO audit_log (
+                    id, tenant_id, deal_id, actor_id, action,
+                    resource_type, resource_id, payload, created_at
+                ) VALUES (
+                    :id, :tenant, :deal, :actor, :action,
+                    'deal', :rid, :payload, :ts
+                )
+                """
+            ),
+            {
+                "id": str(uuid4()),
+                "tenant": tenant_id,
+                "deal": deal_id,
+                "actor": actor_id,
+                "action": action,
+                "rid": deal_id,
+                "payload": json.dumps(payload, default=str),
+                "ts": _now().isoformat(),
+            },
+        )
+    except Exception as exc:  # noqa: BLE001
+        logger.warning(
+            "audit_log write failed (action=%s deal=%s): %s",
+            action,
+            deal_id,
+            exc,
+        )
 
 
-@router.get("/{deal_id}", response_model=DealSummary)
-async def get_deal(deal_id: UUID) -> DealSummary:
-    return _stub_summary(deal_id=deal_id)
+# ─────────────────────────── routes ───────────────────────────
+
+
+@router.get("", response_model=list[DealRecord])
+async def list_deals(
+    session: Annotated[AsyncSession, Depends(get_session)],
+) -> list[DealRecord]:
+    """Return all deals for the current tenant, newest first."""
+    settings = get_settings()
+    rows = await session.execute(
+        text(
+            f"""
+            SELECT {_DEAL_COLUMNS}
+              FROM deals
+             WHERE tenant_id = :tenant
+             ORDER BY created_at DESC
+            """
+        ),
+        {"tenant": settings.DEFAULT_TENANT_ID},
+    )
+    return [_row_to_record(dict(r._mapping)) for r in rows.fetchall()]
+
+
+@router.post("", response_model=DealRecord, status_code=status.HTTP_201_CREATED)
+async def create_deal(
+    body: CreateDealBody,
+    session: Annotated[AsyncSession, Depends(get_session)],
+) -> DealRecord:
+    """Insert a new deal row + audit log entry."""
+    settings = get_settings()
+    tenant_id = settings.DEFAULT_TENANT_ID
+    deal_id = uuid4()
+    now = _now()
+
+    params = {
+        "id": str(deal_id),
+        "tenant": tenant_id,
+        "name": body.name,
+        "city": body.city,
+        "keys": body.keys,
+        "service": body.service,
+        "status": "Draft",
+        "deal_stage": body.deal_stage,
+        "risk": None,
+        "ai_confidence": 0.0,
+        "return_profile": body.return_profile,
+        "brand": body.brand,
+        "positioning": body.positioning,
+        "purchase_price": body.purchase_price,
+        "created_at": now.isoformat(),
+        "updated_at": now.isoformat(),
+    }
+
+    await session.execute(
+        text(
+            """
+            INSERT INTO deals (
+                id, tenant_id, name, city, keys, service, status,
+                deal_stage, risk, ai_confidence, return_profile,
+                brand, positioning, purchase_price,
+                created_at, updated_at
+            ) VALUES (
+                :id, :tenant, :name, :city, :keys, :service, :status,
+                :deal_stage, :risk, :ai_confidence, :return_profile,
+                :brand, :positioning, :purchase_price,
+                :created_at, :updated_at
+            )
+            """
+        ),
+        params,
+    )
+
+    await _write_audit(
+        session,
+        tenant_id=tenant_id,
+        deal_id=str(deal_id),
+        actor_id="system",
+        action="deal.created",
+        payload={
+            "name": body.name,
+            "city": body.city,
+            "keys": body.keys,
+            "service": body.service,
+            "deal_stage": body.deal_stage,
+        },
+    )
+    await session.commit()
+
+    logger.info("deals.create: deal=%s tenant=%s name=%r", deal_id, tenant_id, body.name)
+    return DealRecord(
+        id=deal_id,
+        tenant_id=UUID(tenant_id),
+        name=body.name,
+        city=body.city,
+        keys=body.keys,
+        service=body.service,
+        status="Draft",
+        deal_stage=body.deal_stage,
+        risk=None,
+        ai_confidence=0.0,
+        return_profile=body.return_profile,
+        brand=body.brand,
+        positioning=body.positioning,
+        purchase_price=body.purchase_price,
+        created_at=now,
+        updated_at=now,
+    )
+
+
+@router.get("/{deal_id}", response_model=DealRecord)
+async def get_deal(
+    deal_id: UUID,
+    session: Annotated[AsyncSession, Depends(get_session)],
+) -> DealRecord:
+    settings = get_settings()
+    row = (
+        await session.execute(
+            text(
+                f"""
+                SELECT {_DEAL_COLUMNS}
+                  FROM deals
+                 WHERE id = :id AND tenant_id = :tenant
+                """
+            ),
+            {"id": str(deal_id), "tenant": settings.DEFAULT_TENANT_ID},
+        )
+    ).first()
+    if row is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"deal {deal_id} not found",
+        )
+    return _row_to_record(dict(row._mapping))
+
+
+@router.patch("/{deal_id}", response_model=DealRecord)
+async def update_deal(
+    deal_id: UUID,
+    body: UpdateDealBody,
+    session: Annotated[AsyncSession, Depends(get_session)],
+) -> DealRecord:
+    """Partial update. Sends an audit entry with the diff."""
+    settings = get_settings()
+    tenant_id = settings.DEFAULT_TENANT_ID
+
+    existing = (
+        await session.execute(
+            text(
+                f"SELECT {_DEAL_COLUMNS} FROM deals "
+                "WHERE id = :id AND tenant_id = :tenant"
+            ),
+            {"id": str(deal_id), "tenant": tenant_id},
+        )
+    ).first()
+    if existing is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"deal {deal_id} not found",
+        )
+
+    changes = body.model_dump(exclude_unset=True)
+    if not changes:
+        # Nothing to update — return the existing row.
+        return _row_to_record(dict(existing._mapping))
+
+    set_clauses: list[str] = []
+    params: dict[str, Any] = {"id": str(deal_id), "tenant": tenant_id}
+    for field, value in changes.items():
+        set_clauses.append(f"{field} = :{field}")
+        params[field] = value
+    now = _now()
+    set_clauses.append("updated_at = :updated_at")
+    params["updated_at"] = now.isoformat()
+
+    await session.execute(
+        text(
+            f"""
+            UPDATE deals
+               SET {", ".join(set_clauses)}
+             WHERE id = :id AND tenant_id = :tenant
+            """
+        ),
+        params,
+    )
+
+    await _write_audit(
+        session,
+        tenant_id=tenant_id,
+        deal_id=str(deal_id),
+        actor_id="system",
+        action="deal.updated",
+        payload={"changes": changes},
+    )
+    await session.commit()
+
+    refreshed = (
+        await session.execute(
+            text(
+                f"SELECT {_DEAL_COLUMNS} FROM deals "
+                "WHERE id = :id AND tenant_id = :tenant"
+            ),
+            {"id": str(deal_id), "tenant": tenant_id},
+        )
+    ).first()
+    assert refreshed is not None  # we just updated it
+    logger.info("deals.update: deal=%s changes=%s", deal_id, list(changes.keys()))
+    return _row_to_record(dict(refreshed._mapping))
+
+
+@router.delete("/{deal_id}", response_model=DealRecord)
+async def archive_deal(
+    deal_id: UUID,
+    session: Annotated[AsyncSession, Depends(get_session)],
+) -> DealRecord:
+    """Soft-delete: flip status to ``Archived``. The row is kept."""
+    settings = get_settings()
+    tenant_id = settings.DEFAULT_TENANT_ID
+
+    existing = (
+        await session.execute(
+            text(
+                f"SELECT {_DEAL_COLUMNS} FROM deals "
+                "WHERE id = :id AND tenant_id = :tenant"
+            ),
+            {"id": str(deal_id), "tenant": tenant_id},
+        )
+    ).first()
+    if existing is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"deal {deal_id} not found",
+        )
+
+    now = _now()
+    await session.execute(
+        text(
+            """
+            UPDATE deals
+               SET status = 'Archived', updated_at = :ts
+             WHERE id = :id AND tenant_id = :tenant
+            """
+        ),
+        {"id": str(deal_id), "tenant": tenant_id, "ts": now.isoformat()},
+    )
+
+    await _write_audit(
+        session,
+        tenant_id=tenant_id,
+        deal_id=str(deal_id),
+        actor_id="system",
+        action="deal.archived",
+        payload={"previous_status": existing._mapping.get("status")},
+    )
+    await session.commit()
+
+    refreshed = (
+        await session.execute(
+            text(
+                f"SELECT {_DEAL_COLUMNS} FROM deals "
+                "WHERE id = :id AND tenant_id = :tenant"
+            ),
+            {"id": str(deal_id), "tenant": tenant_id},
+        )
+    ).first()
+    assert refreshed is not None
+    logger.info("deals.archive: deal=%s tenant=%s", deal_id, tenant_id)
+    return _row_to_record(dict(refreshed._mapping))
 
 
 @router.get("/{deal_id}/status", response_model=DealStatusResponse)
-async def get_deal_status(deal_id: UUID) -> DealStatusResponse:
-    return DealStatusResponse(id=deal_id, status="Draft", last_event="created")
+async def get_deal_status(
+    deal_id: UUID,
+    session: Annotated[AsyncSession, Depends(get_session)],
+) -> DealStatusResponse:
+    """Aggregate the deal + document state into a single status pill.
+
+    The web UI calls this after every upload/extract to learn whether
+    the deal is still ``draft`` (no docs), ``extracting`` (any
+    document mid-flight), ``ready`` (every doc extracted), or has
+    failures.
+    """
+    settings = get_settings()
+    tenant_id = settings.DEFAULT_TENANT_ID
+
+    deal_row = (
+        await session.execute(
+            text(
+                """
+                SELECT id, status, deal_stage, ai_confidence
+                  FROM deals
+                 WHERE id = :id AND tenant_id = :tenant
+                """
+            ),
+            {"id": str(deal_id), "tenant": tenant_id},
+        )
+    ).first()
+    if deal_row is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"deal {deal_id} not found",
+        )
+
+    doc_rows = await session.execute(
+        text(
+            """
+            SELECT status, COUNT(*) AS n
+              FROM documents
+             WHERE deal_id = :id
+             GROUP BY status
+            """
+        ),
+        {"id": str(deal_id)},
+    )
+    counts: dict[str, int] = {}
+    for r in doc_rows.fetchall():
+        counts[r._mapping["status"]] = int(r._mapping["n"])
+
+    docs_total = sum(counts.values())
+    docs_extracted = counts.get("EXTRACTED", 0)
+    docs_extracting = counts.get("EXTRACTING", 0) + counts.get("CLASSIFYING", 0)
+    docs_failed = counts.get("FAILED", 0)
+
+    if docs_total == 0:
+        agg = "draft"
+    elif docs_extracting > 0 or counts.get("UPLOADED", 0) > 0:
+        agg = "extracting"
+    elif docs_extracted == docs_total:
+        agg = "ready"
+    elif docs_failed > 0:
+        agg = "failed"
+    else:
+        agg = "draft"
+
+    # Roll up extraction confidence across all extracted docs.
+    confidence: float | None = _coerce_float(deal_row._mapping.get("ai_confidence"))
+    if docs_extracted:
+        cr_rows = await session.execute(
+            text(
+                """
+                SELECT confidence_report
+                  FROM extraction_results
+                 WHERE deal_id = :id
+                """
+            ),
+            {"id": str(deal_id)},
+        )
+        scores: list[float] = []
+        for r in cr_rows.fetchall():
+            blob = r._mapping["confidence_report"]
+            if isinstance(blob, str):
+                try:
+                    blob = json.loads(blob) if blob else None
+                except json.JSONDecodeError:
+                    blob = None
+            if isinstance(blob, dict):
+                overall = blob.get("overall")
+                if isinstance(overall, (int, float)):
+                    scores.append(float(overall))
+        if scores:
+            confidence = sum(scores) / len(scores)
+
+    deal_status = deal_row._mapping["status"] or "Draft"
+    return DealStatusResponse(
+        id=deal_id,
+        status=deal_status,
+        deal_stage=deal_row._mapping.get("deal_stage"),
+        last_event=agg,
+        docs_total=docs_total,
+        docs_extracted=docs_extracted,
+        docs_extracting=docs_extracting,
+        docs_failed=docs_failed,
+        ai_confidence=confidence,
+    )
 
 
 @router.post("/{deal_id}/gate1", response_model=GateResponse)
