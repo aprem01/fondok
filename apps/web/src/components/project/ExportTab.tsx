@@ -1,17 +1,30 @@
 'use client';
+import { useState } from 'react';
 import {
   FileSpreadsheet, FileText, Presentation, Download, Copy, ExternalLink,
-  CheckCircle2, AlertTriangle, Sparkles,
+  CheckCircle2, AlertTriangle, Sparkles, Loader2,
 } from 'lucide-react';
 import { Card } from '@/components/ui/Card';
 import { Button } from '@/components/ui/Button';
 import { Badge } from '@/components/ui/Badge';
 import type { Project } from '@/lib/mockData';
 
-const deliverables = [
-  { type: 'Excel Model', ext: '.xlsx', desc: 'Complete underwriting model with all assumptions and calculations', icon: FileSpreadsheet, color: 'text-success-700 bg-success-50', age: '2 hours ago' },
-  { type: 'IC Memo (PDF)', ext: '.pdf', desc: 'One-page investment committee summary document', icon: FileText, color: 'text-danger-700 bg-danger-50', age: '2 hours ago' },
-  { type: 'Deal Presentation', ext: '.pptx', desc: 'Full presentation deck with market analysis and financials', icon: Presentation, color: 'text-warn-700 bg-warn-50', age: '2 hours ago' },
+type ExportPath = 'excel' | 'memo.pdf' | 'presentation.pptx';
+
+type Deliverable = {
+  type: string;
+  ext: string;
+  desc: string;
+  icon: typeof FileSpreadsheet;
+  color: string;
+  age: string;
+  path: ExportPath;
+};
+
+const deliverables: Deliverable[] = [
+  { type: 'Excel Model', ext: '.xlsx', desc: 'Complete underwriting model with all assumptions and calculations', icon: FileSpreadsheet, color: 'text-success-700 bg-success-50', age: '2 hours ago', path: 'excel' },
+  { type: 'IC Memo (PDF)', ext: '.pdf', desc: 'One-page investment committee summary document', icon: FileText, color: 'text-danger-700 bg-danger-50', age: '2 hours ago', path: 'memo.pdf' },
+  { type: 'Deal Presentation', ext: '.pptx', desc: 'Full presentation deck with market analysis and financials', icon: Presentation, color: 'text-warn-700 bg-warn-50', age: '2 hours ago', path: 'presentation.pptx' },
 ];
 
 const highlights = [
@@ -27,7 +40,24 @@ const risks = [
   'Market supply pipeline of 414 rooms (2.2%)',
 ];
 
+// Browsers don't expose .env to client without the NEXT_PUBLIC_ prefix.
+// When unset (production today) we disable the buttons and surface a tooltip.
+const WORKER_URL = process.env.NEXT_PUBLIC_WORKER_URL ?? '';
+
 export default function ExportTab({ project }: { project: Project }) {
+  const [busy, setBusy] = useState<ExportPath | null>(null);
+  const workerConnected = WORKER_URL.length > 0;
+
+  const handleDownload = (path: ExportPath) => {
+    if (!workerConnected) return;
+    setBusy(path);
+    // Stream the file via the worker — FileResponse on the Python side sets
+    // Content-Disposition so the browser saves it directly.
+    window.location.href = `${WORKER_URL}/deals/${project.id}/export/${path}`;
+    // The redirect kicks off a download; clear the spinner shortly after.
+    window.setTimeout(() => setBusy(null), 2500);
+  };
+
   return (
     <div className="space-y-5">
       <Card className="p-5">
@@ -36,13 +66,16 @@ export default function ExportTab({ project }: { project: Project }) {
             <h2 className="text-[15px] font-semibold text-ink-900">Export</h2>
             <p className="text-[12.5px] text-ink-500 mt-1">Generate IC memos, deal presentations, and Excel models for distribution.</p>
           </div>
-          <Badge tone="green">3 exports ready</Badge>
+          <Badge tone={workerConnected ? 'green' : 'amber'}>
+            {workerConnected ? '3 exports ready' : 'Worker not connected'}
+          </Badge>
         </div>
       </Card>
 
       <div className="grid grid-cols-3 gap-4">
         {deliverables.map(d => {
           const Icon = d.icon;
+          const isBusy = busy === d.path;
           return (
             <Card key={d.type} className="p-5">
               <div className="flex items-start gap-3 mb-4">
@@ -56,7 +89,20 @@ export default function ExportTab({ project }: { project: Project }) {
               </div>
               <p className="text-[11.5px] text-ink-500 mb-4 leading-relaxed">{d.desc}</p>
               <div className="text-[10.5px] text-ink-500 mb-3">Generated {d.age}</div>
-              <Button variant="primary" size="sm" className="w-full"><Download size={12} /> Download</Button>
+              <Button
+                variant="primary"
+                size="sm"
+                className="w-full"
+                onClick={() => handleDownload(d.path)}
+                disabled={!workerConnected || isBusy}
+                title={workerConnected ? `Download ${d.ext}` : 'Connect worker to enable downloads'}
+              >
+                {isBusy ? (
+                  <><Loader2 size={12} className="animate-spin" /> Generating…</>
+                ) : (
+                  <><Download size={12} /> Download</>
+                )}
+              </Button>
             </Card>
           );
         })}

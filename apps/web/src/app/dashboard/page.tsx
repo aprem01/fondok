@@ -1,13 +1,14 @@
 'use client';
 import Link from 'next/link';
 import {
-  FolderKanban, FileText, TrendingUp, Clock, Plus, Building2, MoreHorizontal,
+  FolderKanban, FileText, TrendingUp, Clock, Plus, Building2,
   ArrowUpRight, Sparkles,
 } from 'lucide-react';
 import PageHeader from '@/components/ui/PageHeader';
 import { Card } from '@/components/ui/Card';
 import { Button } from '@/components/ui/Button';
 import { StatusBadge } from '@/components/ui/Badge';
+import KebabMenu from '@/components/ui/KebabMenu';
 import {
   currentUser, dashboardStats, projects,
 } from '@/lib/mockData';
@@ -88,9 +89,12 @@ export default function DashboardPage() {
                 <div className="w-7 h-7 rounded-full bg-ink-300/30 flex items-center justify-center text-[10px] font-semibold text-ink-700">
                   {p.assignee}
                 </div>
-                <button className="p-1 hover:bg-ink-300/20 rounded" onClick={(e) => { e.preventDefault(); }}>
-                  <MoreHorizontal size={14} className="text-ink-400" />
-                </button>
+                <KebabMenu items={[
+                  { label: 'View Details', onSelect: () => { window.location.href = `/projects/${p.id}`; } },
+                  { label: 'Export Excel', onSelect: () => {} },
+                  { label: 'Export Memo', onSelect: () => {} },
+                  { label: 'Archive', onSelect: () => {}, danger: true },
+                ]} />
               </Link>
             ))}
           </div>

@@ -3,6 +3,8 @@ import { useMemo, useState } from 'react';
 import { TrendingDown, Minus, TrendingUp } from 'lucide-react';
 import { Card } from '@/components/ui/Card';
 import EngineHeader from './EngineHeader';
+import EngineRightRail from './EngineRightRail';
+import EngineLegend from './EngineLegend';
 import { dealScenarios, kimptonAnglerOverview } from '@/lib/mockData';
 import { fmtPct, cn } from '@/lib/format';
 import { useAssumptionsOptional } from '@/stores/assumptionsStore';
@@ -17,7 +19,8 @@ export default function ReturnsTab() {
   // If we're inside the AssumptionsProvider (Kimpton deal), use live model.
   // Otherwise fall back to static mock data.
   return (
-    <div>
+    <div className="flex gap-4">
+      <div className="flex-1 min-w-0">
       <EngineHeader
         name="Returns Engine"
         desc="Computes IRR, equity multiple, and scenario sensitivities for investment analysis."
@@ -26,7 +29,7 @@ export default function ReturnsTab() {
         complete
       />
 
-      <div className="flex items-center gap-1 mb-5 border-b border-border">
+      <div className="flex items-center gap-1 mb-3 border-b border-border">
         {subTabs.map(t => (
           <button key={t} onClick={() => setTab(t)}
             className={cn(
@@ -37,9 +40,12 @@ export default function ReturnsTab() {
           </button>
         ))}
       </div>
+      <EngineLegend />
 
       {tab === 'Returns Summary' && (ctx ? <LiveReturnsSummary /> : <StaticReturnsSummary />)}
       {tab === 'Sensitivities' && (ctx ? <LiveSensitivities /> : <StaticSensitivities />)}
+      </div>
+      <EngineRightRail />
     </div>
   );
 }

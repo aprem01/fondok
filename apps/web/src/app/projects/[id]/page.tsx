@@ -4,12 +4,13 @@ import Link from 'next/link';
 import {
   ArrowLeft, MapPin, Building2, Calendar, Users, Share2, MoreHorizontal,
   Sparkles, FolderOpen, FileText, DollarSign, TrendingUp, BarChart3, Activity,
-  Briefcase, MapPinned, FileSearch, Download,
+  Briefcase, MapPinned, FileSearch, Download, AlertTriangle,
 } from 'lucide-react';
 import { Card } from '@/components/ui/Card';
 import { Button } from '@/components/ui/Button';
 import { StatusBadge, Badge } from '@/components/ui/Badge';
 import { projects } from '@/lib/mockData';
+import { criticalCount as varianceCriticalCount } from '@/lib/varianceData';
 import { cn } from '@/lib/format';
 import DataRoomTab from '@/components/project/DataRoomTab';
 import OverviewTab from '@/components/project/OverviewTab';
@@ -80,8 +81,17 @@ export default function ProjectDetailPage() {
               <FileText size={12} /> Docs <span className="text-ink-500">{project.docs}</span>
             </button>
             <button className="px-2.5 py-1.5 bg-brand-50 hover:bg-brand-100 rounded-md text-[12px] flex items-center gap-1.5 text-brand-700">
-              <Sparkles size={12} /> {project.aiConfidence}% AI Confidence
+              <Sparkles size={12} /> {project.aiConfidence === 0 ? 'Awaiting docs' : `${project.aiConfidence}% AI Confidence`}
             </button>
+            {id === 7 && varianceCriticalCount > 0 && (
+              <button
+                onClick={() => router.push(`/projects/${id}?tab=analysis&sub=variance`, { scroll: false })}
+                className="px-2.5 py-1.5 bg-danger-50 hover:bg-danger-500 hover:text-white text-danger-700 border border-danger-500/30 rounded-md text-[12px] flex items-center gap-1.5 font-medium transition-colors"
+                title="Open Broker Variance review"
+              >
+                <AlertTriangle size={12} /> {varianceCriticalCount} critical flag{varianceCriticalCount === 1 ? '' : 's'}
+              </button>
+            )}
             <button className="p-2 hover:bg-ink-300/20 rounded-md"><Users size={14} className="text-ink-500" /></button>
             <Button size="sm" variant="secondary"><Share2 size={12} /> Share</Button>
             <button className="p-2 hover:bg-ink-300/20 rounded-md"><MoreHorizontal size={14} className="text-ink-500" /></button>

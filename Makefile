@@ -1,4 +1,4 @@
-.PHONY: install dev build web worker test lint clean
+.PHONY: install dev build web worker worker-dev worker-test test lint evals clean
 
 install:
 	pnpm install
@@ -14,6 +14,15 @@ web:
 
 worker:
 	cd apps/worker && uv run uvicorn app.main:app --reload --port 8000
+
+worker-dev:
+	cd apps/worker && DATABASE_URL=sqlite+aiosqlite:///./fondok.db uv run uvicorn app.main:app --reload --port 8001
+
+worker-test:
+	cd apps/worker && uv run pytest tests/ -v
+
+evals:
+	python evals/run.py
 
 test:
 	pnpm --filter web test

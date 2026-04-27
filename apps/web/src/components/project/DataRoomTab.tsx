@@ -1,18 +1,41 @@
 'use client';
 import { useState } from 'react';
+import { useParams, useRouter } from 'next/navigation';
 import {
   UploadCloud, FolderOpen, Info, FileText, MoreHorizontal, FileSpreadsheet,
-  CheckCircle2, Loader2, Circle,
+  CheckCircle2, Loader2, Circle, AlertTriangle, ArrowRight,
 } from 'lucide-react';
 import { Card } from '@/components/ui/Card';
 import { Button } from '@/components/ui/Button';
 import { Badge, StatusBadge } from '@/components/ui/Badge';
 import { documentChecklist, engines, kimptonDocuments } from '@/lib/mockData';
+import { criticalCount, warnCount, varianceFlags } from '@/lib/varianceData';
+
+// Documents with broker-vs-T12 variance flags raised against them.
+const VARIANCE_DOCS = new Set([
+  'Offering_Memorandum_Final.pdf',
+  'T12_FinancialStatement.xlsx',
+]);
 
 export default function DataRoomTab({ projectId }: { projectId: number }) {
+  const router = useRouter();
+  const params = useParams();
+  const id = Number(params?.id) || projectId;
   const [selectedDoc, setSelectedDoc] = useState<string | null>(null);
   const isFullDoc = projectId === 7; // Kimpton Angler has docs
   const docs = isFullDoc ? kimptonDocuments : [];
+  const goToVariance = () =>
+    router.push(`/projects/${id}?tab=analysis&sub=variance`, { scroll: false });
+  const selectedHasVariance = selectedDoc !== null && VARIANCE_DOCS.has(selectedDoc);
+  const selectedVarianceFlags = selectedHasVariance
+    ? varianceFlags.filter(f =>
+        f.source_documents.some(s =>
+          (selectedDoc === 'Offering_Memorandum_Final.pdf' && s.document_id === 'kimpton-angler-om-2026') ||
+          (selectedDoc === 'T12_FinancialStatement.xlsx' && s.document_id === 'kimpton-angler-t12-2026q1'),
+        ),
+      )
+    : [];
+  const selectedCriticalCount = selectedVarianceFlags.filter(f => f.severity === 'CRITICAL').length;
   const checklist = documentChecklist.map((d, i) => ({
     name: d, complete: isFullDoc && i < 4,
   }));
@@ -36,6 +59,18 @@ export default function DataRoomTab({ projectId }: { projectId: number }) {
               {' '}({extracted} of {checklist.length} extracted)
             </p>
           </div>
+          {isFullDoc && criticalCount > 0 && (
+            <button
+              onClick={goToVariance}
+              className="inline-flex items-center gap-2 px-3 py-1.5 rounded-md bg-danger-50 hover:bg-danger-500 hover:text-white text-danger-700 border border-danger-500/30 transition-colors group"
+            >
+              <AlertTriangle size={13} />
+              <span className="text-[12px] font-semibold">
+                {criticalCount} critical · {warnCount} warn variance flags
+              </span>
+              <ArrowRight size={12} />
+            </button>
+          )}
         </div>
       </Card>
 
@@ -116,47 +151,70 @@ export default function DataRoomTab({ projectId }: { projectId: number }) {
 
           <div className="grid grid-cols-3 gap-5">
             <div className="col-span-2 space-y-2">
-              {docs.map(d => (
-                <button key={d.name} onClick={() => setSelectedDoc(d.name)}
-                  className={`w-full text-left p-3 rounded-md border transition-colors ${
-                    selectedDoc === d.name ? 'bg-brand-50 border-brand-500' : 'border-border hover:bg-ink-300/10'
-                  }`}>
-                  <div className="flex items-start gap-3">
-                    <div className="w-9 h-9 rounded bg-ink-300/30 flex items-center justify-center flex-shrink-0">
-                      {d.name.endsWith('.xlsx') ? <FileSpreadsheet size={16} className="text-success-700" /> : <FileText size={16} className="text-ink-700" />}
-                    </div>
-                    <div className="flex-1 min-w-0">
-                      <div className="flex items-center gap-2">
-                        <div className="text-[12.5px] font-medium text-ink-900 truncate">{d.name}</div>
-                        <StatusBadge value={d.status} />
-                        <Badge tone="gray">{d.type}</Badge>
+              {docs.map(d => {
+                const hasVariance = VARIANCE_DOCS.has(d.name);
+                const flagsForDoc = hasVariance
+                  ? varianceFlags.filter(f =>
+                      f.source_documents.some(s =>
+                        (d.name === 'Offering_Memorandum_Final.pdf' && s.document_id === 'kimpton-angler-om-2026') ||
+                        (d.name === 'T12_FinancialStatement.xlsx' && s.document_id === 'kimpton-angler-t12-2026q1'),
+                      ),
+                    )
+                  : [];
+                const docCritical = flagsForDoc.filter(f => f.severity === 'CRITICAL').length;
+                return (
+                  <button key={d.name} onClick={() => setSelectedDoc(d.name)}
+                    className={`w-full text-left p-3 rounded-md border transition-colors ${
+                      selectedDoc === d.name ? 'bg-brand-50 border-brand-500' : 'border-border hover:bg-ink-300/10'
+                    }`}>
+                    <div className="flex items-start gap-3">
+                      <div className="w-9 h-9 rounded bg-ink-300/30 flex items-center justify-center flex-shrink-0">
+                        {d.name.endsWith('.xlsx') ? <FileSpreadsheet size={16} className="text-success-700" /> : <FileText size={16} className="text-ink-700" />}
                       </div>
-                      <div className="text-[11px] text-ink-500 mt-1">{d.size} · {d.date}</div>
-                      {d.status === 'Extracted' && (
-                        <div className="flex items-center gap-3 mt-2">
-                          <div className="text-[11px] text-ink-700">
-                            <span className="text-brand-700 font-medium">{d.fields}</span> fields extracted
-                            {' · '}<span className="font-medium">{d.confidence}%</span> confidence
-                          </div>
-                          {d.populates.length > 0 && (
-                            <div className="flex gap-1">
-                              {d.populates.map(p => <Badge key={p} tone="blue">{p}</Badge>)}
-                            </div>
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <div className="text-[12.5px] font-medium text-ink-900 truncate">{d.name}</div>
+                          <StatusBadge value={d.status} />
+                          <Badge tone="gray">{d.type}</Badge>
+                          {docCritical > 0 && (
+                            <span
+                              role="button"
+                              onClick={e => { e.stopPropagation(); goToVariance(); }}
+                              className="inline-flex items-center gap-1 px-2 py-0.5 text-[10.5px] font-semibold rounded-md bg-danger-50 text-danger-700 border border-danger-500/30 hover:bg-danger-500 hover:text-white transition-colors cursor-pointer"
+                              title="Open Broker Variance tab"
+                            >
+                              <AlertTriangle size={10} />
+                              {docCritical} critical variance flag{docCritical === 1 ? '' : 's'}
+                            </span>
                           )}
                         </div>
-                      )}
-                      {d.status === 'Processing' && (
-                        <div className="flex items-center gap-1.5 mt-2 text-[11px] text-brand-700">
-                          <Loader2 size={11} className="animate-spin" /> Extracting...
-                        </div>
-                      )}
+                        <div className="text-[11px] text-ink-500 mt-1">{d.size} · {d.date}</div>
+                        {d.status === 'Extracted' && (
+                          <div className="flex items-center gap-3 mt-2">
+                            <div className="text-[11px] text-ink-700">
+                              <span className="text-brand-700 font-medium">{d.fields}</span> fields extracted
+                              {' · '}<span className="font-medium">{d.confidence}%</span> confidence
+                            </div>
+                            {d.populates.length > 0 && (
+                              <div className="flex gap-1">
+                                {d.populates.map(p => <Badge key={p} tone="blue">{p}</Badge>)}
+                              </div>
+                            )}
+                          </div>
+                        )}
+                        {d.status === 'Processing' && (
+                          <div className="flex items-center gap-1.5 mt-2 text-[11px] text-brand-700">
+                            <Loader2 size={11} className="animate-spin" /> Extracting...
+                          </div>
+                        )}
+                      </div>
+                      <button onClick={e => { e.stopPropagation(); }} className="p-1 hover:bg-ink-300/20 rounded">
+                        <MoreHorizontal size={14} className="text-ink-400" />
+                      </button>
                     </div>
-                    <button onClick={e => { e.stopPropagation(); }} className="p-1 hover:bg-ink-300/20 rounded">
-                      <MoreHorizontal size={14} className="text-ink-400" />
-                    </button>
-                  </div>
-                </button>
-              ))}
+                  </button>
+                );
+              })}
             </div>
 
             <Card className="p-4 bg-ink-300/5">
@@ -164,6 +222,25 @@ export default function DataRoomTab({ projectId }: { projectId: number }) {
               {selectedDoc ? (
                 <div>
                   <div className="text-[11px] text-ink-500 mb-3 truncate">{selectedDoc}</div>
+                  {selectedHasVariance && selectedVarianceFlags.length > 0 && (
+                    <button
+                      onClick={goToVariance}
+                      className="w-full mb-3 p-2.5 rounded-md border border-danger-500/40 bg-danger-50 hover:bg-danger-500 hover:text-white group transition-colors text-left"
+                    >
+                      <div className="flex items-start gap-2">
+                        <AlertTriangle size={13} className="text-danger-700 group-hover:text-white mt-0.5 flex-shrink-0" />
+                        <div className="flex-1 min-w-0">
+                          <div className="text-[11.5px] font-semibold text-danger-700 group-hover:text-white">
+                            {selectedCriticalCount} critical · {selectedVarianceFlags.length - selectedCriticalCount} other variance flags
+                          </div>
+                          <div className="text-[10.5px] text-danger-700/80 group-hover:text-white/90 mt-0.5">
+                            Broker pro forma vs T-12 actuals diverge materially. View Variance tab.
+                          </div>
+                        </div>
+                        <ArrowRight size={12} className="text-danger-700 group-hover:text-white mt-0.5" />
+                      </div>
+                    </button>
+                  )}
                   {(() => {
                     const doc = docs.find(d => d.name === selectedDoc);
                     if (!doc || doc.status !== 'Extracted') {

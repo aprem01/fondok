@@ -14,7 +14,7 @@ const steps = [
   { n: 1, label: 'Deal Details' },
   { n: 2, label: 'Return Profile' },
   { n: 3, label: 'Documents' },
-  { n: 4, label: 'Branding' },
+  { n: 4, label: 'Brand' },
   { n: 5, label: 'Positioning' },
   { n: 6, label: 'Review' },
 ];

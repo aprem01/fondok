@@ -8,6 +8,8 @@ import { Activity } from 'lucide-react';
 import { Card } from '@/components/ui/Card';
 import { Button } from '@/components/ui/Button';
 import EngineHeader from './EngineHeader';
+import EngineRightRail from './EngineRightRail';
+import EngineLegend from './EngineLegend';
 import { kimptonAnglerOverview } from '@/lib/mockData';
 import { fmtCurrency, fmtMillions, cn } from '@/lib/format';
 
@@ -85,21 +87,25 @@ export default function CashFlowTab({ projectId }: { projectId: number }) {
 
   if (projectId !== 7) {
     return (
-      <div>
-        <EngineHeader
-          name="Cash Flow Engine"
-          desc="Computes levered and unlevered cash flow from operations through hold period."
-          outputs={['Levered CF', 'Unlevered CF', 'CoC', 'DSCR']}
-          dependsOn="P&L"
-        />
-        <Card className="p-16 text-center">
-          <div className="w-12 h-12 rounded-lg bg-ink-300/20 flex items-center justify-center mx-auto mb-4">
-            <Activity size={20} className="text-ink-400" />
-          </div>
-          <h3 className="text-[15px] font-semibold text-ink-900">No Cash Flow Output</h3>
-          <p className="text-[12.5px] text-ink-500 mt-1">Run the cash flow engine to populate levered and unlevered schedules.</p>
-          <Button variant="primary" size="sm" className="mt-4">Run Model</Button>
-        </Card>
+      <div className="flex gap-4">
+        <div className="flex-1 min-w-0">
+          <EngineHeader
+            name="Cash Flow Engine"
+            desc="Computes levered and unlevered cash flow from operations through hold period."
+            outputs={['Levered CF', 'Unlevered CF', 'CoC', 'DSCR']}
+            dependsOn="P&L"
+          />
+          <EngineLegend />
+          <Card className="p-16 text-center">
+            <div className="w-12 h-12 rounded-lg bg-ink-300/20 flex items-center justify-center mx-auto mb-4">
+              <Activity size={20} className="text-ink-400" />
+            </div>
+            <h3 className="text-[15px] font-semibold text-ink-900">No Cash Flow Output</h3>
+            <p className="text-[12.5px] text-ink-500 mt-1">Run the cash flow engine to populate levered and unlevered schedules.</p>
+            <Button variant="primary" size="sm" className="mt-4">Run Model</Button>
+          </Card>
+        </div>
+        <EngineRightRail />
       </div>
     );
   }
@@ -111,7 +117,8 @@ export default function CashFlowTab({ projectId }: { projectId: number }) {
   const cumulativeDist = cf.distributions.reduce((s, v) => s + v, 0);
 
   return (
-    <div>
+    <div className="flex gap-4">
+      <div className="flex-1 min-w-0">
       <EngineHeader
         name="Cash Flow Engine"
         desc="Computes levered and unlevered cash flow from operations through hold period."
@@ -127,7 +134,7 @@ export default function CashFlowTab({ projectId }: { projectId: number }) {
         <KPI label="Cumulative Distributions" value={fmtMillions(cumulativeDist, 2)} tone="green" />
       </div>
 
-      <div className="flex items-center gap-1 mb-5 border-b border-border">
+      <div className="flex items-center gap-1 mb-3 border-b border-border">
         {subTabs.map(t => (
           <button key={t} onClick={() => setTab(t)}
             className={cn(
@@ -138,11 +145,14 @@ export default function CashFlowTab({ projectId }: { projectId: number }) {
           </button>
         ))}
       </div>
+      <EngineLegend />
 
       {tab === 'Cash Flow Summary' && <Summary />}
       {tab === 'Levered Detail' && <LeveredDetail />}
       {tab === 'Unlevered Detail' && <UnleveredDetail />}
       {tab === 'Distributions' && <Distributions />}
+      </div>
+      <EngineRightRail />
     </div>
   );
 }

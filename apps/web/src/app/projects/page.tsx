@@ -2,15 +2,23 @@
 import Link from 'next/link';
 import { useState } from 'react';
 import {
-  Plus, Search, ChevronDown, LayoutGrid, List, Building2, MoreHorizontal,
+  Plus, Search, ChevronDown, LayoutGrid, List, Building2,
   MapPin, AlertTriangle, Upload,
 } from 'lucide-react';
 import PageHeader from '@/components/ui/PageHeader';
 import { Card } from '@/components/ui/Card';
 import { Button } from '@/components/ui/Button';
-import { StatusBadge, Badge } from '@/components/ui/Badge';
+import { StatusBadge } from '@/components/ui/Badge';
+import KebabMenu from '@/components/ui/KebabMenu';
 import { projects, projectStatuses } from '@/lib/mockData';
 import { cn } from '@/lib/format';
+
+const projectMenu = (id: number) => [
+  { label: 'View Details', onSelect: () => { window.location.href = `/projects/${id}`; } },
+  { label: 'Export Excel', onSelect: () => {} },
+  { label: 'Export Memo', onSelect: () => {} },
+  { label: 'Archive', onSelect: () => {}, danger: true },
+];
 
 const riskTone = (r: string) =>
   r === 'Low' ? 'text-success-700 bg-success-50' : r === 'Medium' ? 'text-warn-700 bg-warn-50' : 'text-danger-700 bg-danger-50';
@@ -52,14 +60,14 @@ export default function ProjectsPage() {
         <div className="relative">
           <button onClick={() => setFilterOpen(!filterOpen)}
             className="flex items-center gap-2 px-3 py-2 text-[12.5px] bg-white border border-border rounded-md hover:bg-ink-300/10">
-            {filter} <ChevronDown size={13} className="text-ink-400" />
+            {filter === 'All Status' ? 'All' : filter} <ChevronDown size={13} className="text-ink-400" />
           </button>
           {filterOpen && (
             <div className="absolute right-0 top-full mt-1 bg-white border border-border rounded-lg shadow-lg py-1 z-10 min-w-[140px]">
               {projectStatuses.map(s => (
                 <button key={s} onClick={() => { setFilter(s); setFilterOpen(false); }}
                   className="w-full px-3 py-2 text-[12.5px] hover:bg-ink-300/10 text-left">
-                  {s}
+                  {s === 'All Status' ? 'All' : s}
                 </button>
               ))}
             </div>
@@ -180,9 +188,7 @@ export default function ProjectsPage() {
               <div className="text-[12.5px] tabular-nums w-16 text-right font-medium">{p.irr.toFixed(2)}%</div>
               <div className={cn('text-[11.5px] font-medium px-2 py-0.5 rounded w-16 text-center', riskTone(p.risk))}>{p.risk}</div>
               <div className="w-7 h-7 rounded-full bg-ink-300/30 flex items-center justify-center text-[10px] font-semibold">{p.assignee}</div>
-              <button className="p-1 hover:bg-ink-300/20 rounded" onClick={e => e.preventDefault()}>
-                <MoreHorizontal size={14} className="text-ink-400" />
-              </button>
+              <KebabMenu items={projectMenu(p.id)} />
             </Link>
           ))}
         </Card>

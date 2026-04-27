@@ -27,6 +27,28 @@ Health check: `GET http://localhost:8000/health`
 - `app/engines/` — deterministic engine stubs (revenue, F&B, expense, capital, debt, returns, sensitivity, partnership).
 - `app/api/` — HTTP routers (deals, documents, model, market, analysis, export, data_library, settings, health).
 
+## Exports
+
+Three real export endpoints stream institutional-grade artifacts:
+
+- `GET /deals/{deal_id}/export/excel` → 10-tab `.xlsx` acquisition model (openpyxl)
+- `GET /deals/{deal_id}/export/memo.pdf` → 2-3 page IC memo PDF (WeasyPrint)
+- `GET /deals/{deal_id}/export/presentation.pptx` → 8-slide IC deck (python-pptx)
+
+Until the agent runtime persists EngineOutputs to the DB, every `deal_id`
+resolves to the Kimpton Angler demo fixture (`app/export/fixtures.py`).
+
+### WeasyPrint native dependencies
+
+`weasyprint` requires system libraries (cairo, pango, gdk-pixbuf, libffi):
+
+```bash
+# macOS
+brew install cairo pango gdk-pixbuf libffi
+# Debian / Ubuntu
+apt-get install -y libcairo2 libpango-1.0-0 libpangoft2-1.0-0 libgdk-pixbuf-2.0-0
+```
+
 ## Status
 
 Phase 2/3 scaffold — most routes return placeholder Pydantic responses. Real agent and engine logic land in subsequent passes.

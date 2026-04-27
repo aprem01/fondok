@@ -1,9 +1,10 @@
 'use client';
 import { useState } from 'react';
-import { Plus, Search, Star, EyeOff, MoreHorizontal } from 'lucide-react';
+import { Plus, Search, Star, EyeOff } from 'lucide-react';
 import PageHeader from '@/components/ui/PageHeader';
 import { Card } from '@/components/ui/Card';
 import { Button } from '@/components/ui/Button';
+import KebabMenu from '@/components/ui/KebabMenu';
 import { compSets, marketDataLib, templates } from '@/lib/mockData';
 import { cn } from '@/lib/format';
 
@@ -12,6 +13,23 @@ const tabs = ['Comp Sets', 'Market Data', 'Templates'];
 export default function DataLibraryPage() {
   const [tab, setTab] = useState('Comp Sets');
   const [search, setSearch] = useState('');
+
+  const q = search.toLowerCase().trim();
+  const filteredComps = !q ? compSets : compSets.filter(c =>
+    c.name.toLowerCase().includes(q) || (c.description?.toLowerCase().includes(q) ?? false)
+  );
+  const filteredMarkets = !q ? marketDataLib : marketDataLib.filter(m =>
+    m.market.toLowerCase().includes(q) || m.submarket.toLowerCase().includes(q) || m.source.toLowerCase().includes(q)
+  );
+  const filteredTemplates = !q ? templates : templates.filter(t =>
+    t.name.toLowerCase().includes(q) || t.description.toLowerCase().includes(q)
+  );
+
+  const cardMenu = [
+    { label: 'Edit', onSelect: () => {} },
+    { label: 'Duplicate', onSelect: () => {} },
+    { label: 'Delete', onSelect: () => {}, danger: true },
+  ];
 
   return (
     <div className="px-8 py-8 max-w-[1440px]">
@@ -44,7 +62,7 @@ export default function DataLibraryPage() {
 
       {tab === 'Comp Sets' && (
         <div className="grid grid-cols-3 gap-4">
-          {compSets.map(c => (
+          {filteredComps.map(c => (
             <Card key={c.name} className="p-5">
               <div className="flex items-start justify-between mb-3">
                 <div className="flex-1">
@@ -55,7 +73,7 @@ export default function DataLibraryPage() {
                   </div>
                   <div className="text-[11.5px] text-ink-500 mt-0.5">{c.properties} properties</div>
                 </div>
-                <button className="p-1 hover:bg-ink-300/20 rounded"><MoreHorizontal size={14} className="text-ink-400" /></button>
+                <KebabMenu items={cardMenu} />
               </div>
               <p className="text-[12px] text-ink-700 mb-3 leading-relaxed">{c.description}</p>
               {c.usedIn && (
@@ -93,7 +111,7 @@ export default function DataLibraryPage() {
               </tr>
             </thead>
             <tbody>
-              {marketDataLib.map(m => (
+              {filteredMarkets.map(m => (
                 <tr key={m.market + m.submarket} className="border-b border-border/50 hover:bg-ink-300/10">
                   <td className="px-5 py-3">
                     <div className="font-medium text-ink-900">{m.market}</div>
@@ -106,7 +124,7 @@ export default function DataLibraryPage() {
                     {m.yoy > 0 ? '+' : ''}{m.yoy}%
                   </td>
                   <td className="px-3">{m.source}</td>
-                  <td className="px-3"><MoreHorizontal size={14} className="text-ink-400 cursor-pointer" /></td>
+                  <td className="px-3"><KebabMenu items={cardMenu} /></td>
                 </tr>
               ))}
             </tbody>
@@ -116,11 +134,11 @@ export default function DataLibraryPage() {
 
       {tab === 'Templates' && (
         <div className="grid grid-cols-3 gap-4">
-          {templates.map(t => (
+          {filteredTemplates.map(t => (
             <Card key={t.name} className="p-5">
               <div className="flex items-start justify-between mb-3">
                 <h3 className="text-[14px] font-semibold text-ink-900">{t.name}</h3>
-                <button className="p-1 hover:bg-ink-300/20 rounded"><MoreHorizontal size={14} className="text-ink-400" /></button>
+                <KebabMenu items={cardMenu} />
               </div>
               <p className="text-[12px] text-ink-500 mb-4 leading-relaxed">{t.description}</p>
               <div className="grid grid-cols-3 gap-2 mb-4">

@@ -1,0 +1,104 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  typescript:
+    name: TypeScript (web)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+
+      - name: Install deps
+        run: npm install
+
+      - name: Lint web
+        working-directory: apps/web
+        run: npx --yes next lint --max-warnings=0
+        continue-on-error: true
+
+      - name: Build web
+        working-directory: apps/web
+        env:
+          NEXT_TELEMETRY_DISABLED: "1"
+        run: npx --yes next build
+
+  python:
+    name: Python (worker)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v3
+
+      - name: Install worker deps
+        working-directory: apps/worker
+        run: uv sync --extra dev
+
+      - name: Ruff (informational)
+        working-directory: apps/worker
+        run: uv run ruff check .
+        continue-on-error: true
+
+      - name: Pytest
+        working-directory: apps/worker
+        env:
+          DATABASE_URL: sqlite+aiosqlite:///./fondok-ci.db
+          ANTHROPIC_API_KEY: sk-ant-test-dummy
+        run: uv run pytest tests/ -v
+
+      - name: Import smoke
+        working-directory: apps/worker
+        env:
+          DATABASE_URL: sqlite+aiosqlite:///./fondok-ci.db
+        run: uv run python -c "from app.main import app; print('OK')"
+
+  evals:
+    name: Golden-set regression
+    runs-on: ubuntu-latest
+    needs: [python]
+    # Run on every push to main; on PRs only when engine / schema / eval
+    # surface area changes (cheap LLM cost on touched-files PRs).
+    if: |
+      github.ref == 'refs/heads/main' ||
+      contains(github.event.pull_request.changed_files, 'apps/worker/app/engines/') ||
+      contains(github.event.pull_request.changed_files, 'apps/worker/app/graph.py') ||
+      contains(github.event.pull_request.changed_files, 'packages/schemas-py/') ||
+      contains(github.event.pull_request.changed_files, 'evals/')
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v3
+
+      - name: Install worker deps
+        working-directory: apps/worker
+        run: uv sync --extra dev
+
+      - name: Run golden set
+        working-directory: apps/worker
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          EVALS_MOCK: ${{ secrets.ANTHROPIC_API_KEY == '' && 'true' || 'false' }}
+        run: uv run python ../../evals/run.py

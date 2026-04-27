@@ -3,6 +3,8 @@ import { useState } from 'react';
 import { Card } from '@/components/ui/Card';
 import { Badge } from '@/components/ui/Badge';
 import EngineHeader from './EngineHeader';
+import EngineRightRail from './EngineRightRail';
+import EngineLegend from './EngineLegend';
 import { kimptonAnglerOverview } from '@/lib/mockData';
 import { fmtCurrency, fmtPct, cn } from '@/lib/format';
 
@@ -13,7 +15,8 @@ export default function DebtTab() {
   const o = kimptonAnglerOverview;
 
   return (
-    <div>
+    <div className="flex gap-4">
+      <div className="flex-1 min-w-0">
       <EngineHeader
         name="Debt Engine"
         desc="Structures senior and mezzanine debt, calculates debt service, and models refinancing scenarios."
@@ -22,7 +25,7 @@ export default function DebtTab() {
         complete
       />
 
-      <div className="flex items-center gap-1 mb-5 border-b border-border">
+      <div className="flex items-center gap-1 mb-3 border-b border-border">
         {subTabs.map(t => (
           <button key={t} onClick={() => setTab(t)}
             className={cn(
@@ -33,6 +36,7 @@ export default function DebtTab() {
           </button>
         ))}
       </div>
+      <EngineLegend />
 
       {tab === 'Debt Summary' && (
         <>
@@ -186,6 +190,8 @@ export default function DebtTab() {
           </div>
         </Card>
       )}
+      </div>
+      <EngineRightRail />
     </div>
   );
 }

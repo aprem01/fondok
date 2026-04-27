@@ -3,6 +3,8 @@ import { useState } from 'react';
 import { ChevronDown, ChevronUp } from 'lucide-react';
 import { Card } from '@/components/ui/Card';
 import EngineHeader from './EngineHeader';
+import EngineRightRail from './EngineRightRail';
+import EngineLegend from './EngineLegend';
 import { kimptonAnglerOverview } from '@/lib/mockData';
 import { fmtCurrency, fmtPct, cn } from '@/lib/format';
 import { useAssumptionsOptional } from '@/stores/assumptionsStore';
@@ -15,7 +17,8 @@ export default function InvestmentTab() {
   const ctx = useAssumptionsOptional();
 
   return (
-    <div>
+    <div className="flex gap-4">
+      <div className="flex-1 min-w-0">
       <EngineHeader
         name="Investment Engine"
         desc="Defines deal structure, purchase price, key dates, and investment thesis for the transaction."
@@ -24,7 +27,7 @@ export default function InvestmentTab() {
         complete
       />
 
-      <div className="flex items-center gap-1 mb-5 border-b border-border">
+      <div className="flex items-center gap-1 mb-3 border-b border-border">
         {subTabs.map(t => (
           <button key={t} onClick={() => setTab(t)}
             className={cn(
@@ -35,6 +38,7 @@ export default function InvestmentTab() {
           </button>
         ))}
       </div>
+      <EngineLegend />
 
       {tab === 'Deal Summary' && (
         <div className="grid grid-cols-2 gap-5">
@@ -109,6 +113,8 @@ export default function InvestmentTab() {
           </table>
         </Card>
       )}
+      </div>
+      <EngineRightRail />
     </div>
   );
 }

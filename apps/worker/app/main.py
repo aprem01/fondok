@@ -93,7 +93,7 @@ def create_app() -> FastAPI:
     app.include_router(model_router.router, prefix="/model", tags=["model"])
     app.include_router(market_router.router, prefix="/market", tags=["market"])
     app.include_router(analysis_router.router, prefix="/analysis", tags=["analysis"])
-    app.include_router(export_router.router, prefix="/export", tags=["export"])
+    app.include_router(export_router.router, prefix="/deals", tags=["export"])
     app.include_router(
         data_library_router.router, prefix="/data-library", tags=["data-library"]
     )

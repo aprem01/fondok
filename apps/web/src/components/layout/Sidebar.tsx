@@ -16,7 +16,13 @@ const navItems = [
   { href: '/settings', label: 'Settings', icon: Settings },
 ];
 
-export default function Sidebar() {
+export default function Sidebar({
+  mobileOpen = false,
+  onCloseMobile,
+}: {
+  mobileOpen?: boolean;
+  onCloseMobile?: () => void;
+} = {}) {
   const pathname = usePathname();
   const [wsOpen, setWsOpen] = useState(false);
   const [userOpen, setUserOpen] = useState(false);
@@ -33,7 +39,21 @@ export default function Sidebar() {
   }, []);
 
   return (
-    <aside className="fixed left-0 top-0 h-screen w-[216px] bg-white border-r border-border flex flex-col z-30">
+    <>
+    {mobileOpen && (
+      <div
+        className="md:hidden fixed inset-0 bg-black/30 z-30"
+        onClick={onCloseMobile}
+        aria-hidden="true"
+      />
+    )}
+    <aside
+      className={cn(
+        'fixed left-0 top-0 h-screen w-[216px] bg-white border-r border-border flex flex-col z-40 transition-transform',
+        'md:translate-x-0',
+        mobileOpen ? 'translate-x-0' : '-translate-x-full md:translate-x-0',
+      )}
+    >
       {/* Logo */}
       <div className="px-4 pt-5 pb-3">
         <Link href="/dashboard" className="flex items-center gap-2.5">
@@ -125,5 +145,6 @@ export default function Sidebar() {
         )}
       </div>
     </aside>
+    </>
   );
 }
