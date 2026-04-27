@@ -1,15 +1,18 @@
 'use client';
 import { useState } from 'react';
+import { ChevronDown, ChevronUp } from 'lucide-react';
 import { Card } from '@/components/ui/Card';
 import EngineHeader from './EngineHeader';
 import { kimptonAnglerOverview } from '@/lib/mockData';
 import { fmtCurrency, fmtPct, cn } from '@/lib/format';
+import { useAssumptionsOptional } from '@/stores/assumptionsStore';
 
 const subTabs = ['Deal Summary', 'Sources & Uses', 'Timeline'];
 
 export default function InvestmentTab() {
   const [tab, setTab] = useState('Deal Summary');
   const o = kimptonAnglerOverview;
+  const ctx = useAssumptionsOptional();
 
   return (
     <div>
@@ -65,36 +68,7 @@ export default function InvestmentTab() {
         </div>
       )}
 
-      {tab === 'Sources & Uses' && (
-        <div className="grid grid-cols-2 gap-5">
-          <Card className="p-5">
-            <h3 className="text-[13px] font-semibold text-ink-900 mb-3">Transaction Uses</h3>
-            <table className="w-full text-[12.5px]">
-              <tbody>
-                {o.uses.map(u => (
-                  <tr key={u.label} className={u.total ? 'font-semibold border-t border-border' : 'border-b border-border/50'}>
-                    <td className="py-2">{u.label}</td>
-                    <td className="text-right tabular-nums">{fmtCurrency(u.amount)}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </Card>
-          <Card className="p-5">
-            <h3 className="text-[13px] font-semibold text-ink-900 mb-3">Transaction Sources</h3>
-            <table className="w-full text-[12.5px]">
-              <tbody>
-                {o.sources.map(s => (
-                  <tr key={s.label} className={s.total ? 'font-semibold border-t border-border' : 'border-b border-border/50'}>
-                    <td className="py-2">{s.label}</td>
-                    <td className="text-right tabular-nums">{fmtCurrency(s.amount)}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </Card>
-        </div>
-      )}
+      {tab === 'Sources & Uses' && (ctx ? <LiveSourcesUses /> : <StaticSourcesUses />)}
 
       {tab === 'Timeline' && (
         <Card className="p-5">
@@ -135,6 +109,168 @@ export default function InvestmentTab() {
           </table>
         </Card>
       )}
+    </div>
+  );
+}
+
+// ───────────────────────────────────────────────────────────────────
+// Live (Kimpton) Sources & Uses with editable assumptions.
+// ───────────────────────────────────────────────────────────────────
+
+function LiveSourcesUses() {
+  const { assumptions, setAssumption, model } = useAssumptionsOptional()!;
+  const [edit, setEdit] = useState(false);
+
+  return (
+    <>
+      <div className="grid grid-cols-2 gap-5 mb-5">
+        <Card className="p-5">
+          <h3 className="text-[13px] font-semibold text-ink-900 mb-3">Transaction Uses</h3>
+          <table className="w-full text-[12.5px]">
+            <tbody>
+              {model.sourcesAndUses.uses.map(u => (
+                <tr key={u.label}
+                  className={u.total ? 'font-semibold border-t border-border' : 'border-b border-border/50'}>
+                  <td className="py-2">{u.label}</td>
+                  <td className="text-right tabular-nums">{fmtCurrency(u.amount)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </Card>
+        <Card className="p-5">
+          <h3 className="text-[13px] font-semibold text-ink-900 mb-3">Transaction Sources</h3>
+          <table className="w-full text-[12.5px]">
+            <tbody>
+              {model.sourcesAndUses.sources.map(s => (
+                <tr key={s.label}
+                  className={s.total ? 'font-semibold border-t border-border' : 'border-b border-border/50'}>
+                  <td className="py-2">
+                    {s.label}
+                    {!s.total && <span className="ml-2 text-ink-500 text-[11px]">{(s.pct * 100).toFixed(1)}%</span>}
+                  </td>
+                  <td className="text-right tabular-nums">{fmtCurrency(s.amount)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </Card>
+      </div>
+
+      <Card className="p-5">
+        <button onClick={() => setEdit(e => !e)}
+          className="flex items-center gap-2 text-[12.5px] font-medium text-brand-700 hover:text-brand-800">
+          {edit ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
+          {edit ? 'Hide' : 'Edit'} Assumptions
+        </button>
+        {edit && (
+          <div className="mt-4 grid grid-cols-3 gap-4">
+            <NumberField
+              label="Purchase Price"
+              value={assumptions.purchasePrice}
+              onChange={v => setAssumption('purchasePrice', v)}
+              format={v => `$${(v / 1e6).toFixed(2)}M`}
+              step={100_000}
+            />
+            <NumberField
+              label="Closing Costs %"
+              value={assumptions.closingCostsPct}
+              onChange={v => setAssumption('closingCostsPct', v)}
+              format={v => `${(v * 100).toFixed(2)}%`}
+              step={0.0025}
+              min={0} max={0.10}
+            />
+            <NumberField
+              label="Working Capital"
+              value={assumptions.workingCapital}
+              onChange={v => setAssumption('workingCapital', v)}
+              format={v => `$${(v / 1e3).toFixed(0)}K`}
+              step={25_000}
+            />
+            <NumberField
+              label="Renovation Budget"
+              value={assumptions.renovationBudget}
+              onChange={v => setAssumption('renovationBudget', v)}
+              format={v => `$${(v / 1e6).toFixed(2)}M`}
+              step={100_000}
+            />
+            <NumberField
+              label="LTV"
+              value={assumptions.ltv}
+              onChange={v => setAssumption('ltv', v)}
+              format={v => `${(v * 100).toFixed(0)}%`}
+              step={0.01}
+              min={0.30} max={0.80}
+            />
+            <div className="text-[11.5px] text-ink-500 self-end pb-1">
+              Equity Required:{' '}
+              <span className="font-semibold text-ink-900 tabular-nums">{fmtCurrency(model.equity)}</span>
+            </div>
+          </div>
+        )}
+      </Card>
+    </>
+  );
+}
+
+function NumberField({
+  label, value, onChange, format, step = 1, min, max,
+}: {
+  label: string; value: number; onChange: (v: number) => void; format: (v: number) => string;
+  step?: number; min?: number; max?: number;
+}) {
+  return (
+    <div>
+      <div className="flex items-baseline justify-between mb-1">
+        <label className="text-[11px] text-ink-500 uppercase tracking-wide">{label}</label>
+        <span className="text-[12.5px] font-semibold text-brand-700 tabular-nums">{format(value)}</span>
+      </div>
+      <input
+        type="number"
+        value={value}
+        step={step}
+        min={min}
+        max={max}
+        onChange={e => {
+          const v = parseFloat(e.target.value);
+          if (!isNaN(v)) onChange(v);
+        }}
+        className="w-full px-2 py-1.5 text-[12.5px] border border-border rounded-md tabular-nums focus:outline-none focus:ring-2 focus:ring-brand-500"
+      />
+    </div>
+  );
+}
+
+function StaticSourcesUses() {
+  const o = kimptonAnglerOverview;
+  return (
+    <div className="grid grid-cols-2 gap-5">
+      <Card className="p-5">
+        <h3 className="text-[13px] font-semibold text-ink-900 mb-3">Transaction Uses</h3>
+        <table className="w-full text-[12.5px]">
+          <tbody>
+            {o.uses.map(u => (
+              <tr key={u.label} className={u.total ? 'font-semibold border-t border-border' : 'border-b border-border/50'}>
+                <td className="py-2">{u.label}</td>
+                <td className="text-right tabular-nums">{fmtCurrency(u.amount)}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </Card>
+      <Card className="p-5">
+        <h3 className="text-[13px] font-semibold text-ink-900 mb-3">Transaction Sources</h3>
+        <table className="w-full text-[12.5px]">
+          <tbody>
+            {o.sources.map(s => (
+              <tr key={s.label} className={s.total ? 'font-semibold border-t border-border' : 'border-b border-border/50'}>
+                <td className="py-2">{s.label}</td>
+                <td className="text-right tabular-nums">{fmtCurrency(s.amount)}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </Card>
     </div>
   );
 }

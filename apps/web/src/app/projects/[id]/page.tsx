@@ -13,14 +13,16 @@ import { projects } from '@/lib/mockData';
 import { cn } from '@/lib/format';
 import DataRoomTab from '@/components/project/DataRoomTab';
 import OverviewTab from '@/components/project/OverviewTab';
-import EnginePlaceholder from '@/components/project/EnginePlaceholder';
 import InvestmentTab from '@/components/project/InvestmentTab';
+import PLTab from '@/components/project/PLTab';
 import DebtTab from '@/components/project/DebtTab';
+import CashFlowTab from '@/components/project/CashFlowTab';
 import ReturnsTab from '@/components/project/ReturnsTab';
 import PartnershipTab from '@/components/project/PartnershipTab';
 import MarketTab from '@/components/project/MarketTab';
 import AnalysisTab from '@/components/project/AnalysisTab';
 import ExportTab from '@/components/project/ExportTab';
+import { AssumptionsProvider } from '@/stores/assumptionsStore';
 
 const tabs = [
   { id: '', label: 'Data Room', icon: FolderOpen },
@@ -49,7 +51,10 @@ export default function ProjectDetailPage() {
     router.push(url, { scroll: false });
   };
 
-  return (
+  // Only the Kimpton Angler deal (id=7) has the live assumption sliders wired.
+  // For other deals we render without the provider; tabs that need it use the
+  // optional accessor and fall back to static mockData.
+  const inner = (
     <div>
       {/* Header */}
       <div className="px-8 pt-8 pb-4 bg-white border-b border-border">
@@ -108,9 +113,9 @@ export default function ProjectDetailPage() {
         {activeTab === '' && <DataRoomTab projectId={id} />}
         {activeTab === 'overview' && <OverviewTab projectId={id} />}
         {activeTab === 'investment' && <InvestmentTab />}
-        {activeTab === 'pl' && <EnginePlaceholder name="P&L Engine" desc="Models room revenue, F&B, and operating expenses across the projection period." outputs={['Total Revenue', 'NOI', 'GOP Margin', '+1']} dependsOn={null} />}
+        {activeTab === 'pl' && <PLTab projectId={id} />}
         {activeTab === 'debt' && <DebtTab />}
-        {activeTab === 'cash-flow' && <EnginePlaceholder name="Cash Flow Engine" desc="Computes levered and unlevered cash flow from operations through hold period." outputs={['Levered CF', 'Unlevered CF', 'CoC', '+1']} dependsOn="P&L" />}
+        {activeTab === 'cash-flow' && <CashFlowTab projectId={id} />}
         {activeTab === 'returns' && <ReturnsTab />}
         {activeTab === 'partnership' && <PartnershipTab />}
         {activeTab === 'market' && <MarketTab />}
@@ -119,4 +124,6 @@ export default function ProjectDetailPage() {
       </div>
     </div>
   );
+
+  return id === 7 ? <AssumptionsProvider>{inner}</AssumptionsProvider> : inner;
 }
