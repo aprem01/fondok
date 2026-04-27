@@ -2,13 +2,17 @@
 import { useState, useEffect } from 'react';
 import {
   Sparkles, ArrowRight, RefreshCw, ShieldCheck, FileSearch,
-  TrendingUp, Layers, DollarSign,
+  TrendingUp, Layers, DollarSign, FileText,
 } from 'lucide-react';
 import dynamic from 'next/dynamic';
 import TabLoadingSkeleton from './TabLoadingSkeleton';
 
 const CostPanel = dynamic(() => import('./CostPanel'), {
   loading: () => <TabLoadingSkeleton rows={4} />,
+  ssr: false,
+});
+const MemoStream = dynamic(() => import('./MemoStream'), {
+  loading: () => <TabLoadingSkeleton rows={6} />,
   ssr: false,
 });
 import { useSearchParams, useRouter, useParams } from 'next/navigation';
@@ -90,10 +94,11 @@ function CacheHitBadge() {
   );
 }
 
-type SubTab = 'summary' | 'risks' | 'variance' | 'sensitivity' | 'scenarios' | 'cost';
+type SubTab = 'summary' | 'memo' | 'risks' | 'variance' | 'sensitivity' | 'scenarios' | 'cost';
 
 const subTabs: { id: SubTab; label: string; icon: typeof Sparkles; badge?: string }[] = [
   { id: 'summary',     label: 'AI Summary',     icon: Sparkles },
+  { id: 'memo',        label: 'IC Memo',        icon: FileText, badge: 'LIVE' },
   { id: 'risks',       label: 'Risks',          icon: ShieldCheck },
   { id: 'variance',    label: 'Broker Variance', icon: FileSearch, badge: 'NEW' },
   { id: 'sensitivity', label: 'Sensitivity',    icon: TrendingUp },

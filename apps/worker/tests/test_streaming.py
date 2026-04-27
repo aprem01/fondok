@@ -108,13 +108,26 @@ async def test_memo_stream_endpoint_returns_sse(monkeypatch: pytest.MonkeyPatch)
     sections = _canned_sections()
     deal_id = "stream-test-deal"
 
-    started_event = asyncio.Event()
+    # FastAPI's BackgroundTasks awaits the task before completing the
+    # response — that interleaving is fine in production but it would
+    # cause the in-test POST to block on the publisher, which itself
+    # is waiting for the SSE subscriber. We sidestep that by stubbing
+    # ``add_task`` to spawn a real asyncio.Task instead.
+    import fastapi as fastapi_module
+
+    real_add_task = fastapi_module.BackgroundTasks.add_task
+
+    spawned: list[asyncio.Task[Any]] = []
+
+    def fire_and_forget(self: Any, func: Any, *args: Any, **kwargs: Any) -> None:
+        spawned.append(asyncio.create_task(func(*args, **kwargs)))
+
+    monkeypatch.setattr(fastapi_module.BackgroundTasks, "add_task", fire_and_forget)
 
     async def fake_run_analyst_streaming(_payload: Any) -> None:
-        # Wait for the SSE subscriber to attach before publishing,
-        # otherwise messages fan out to zero subscribers and are lost.
-        await started_event.wait()
         bc = get_broadcast()
+        # Tiny pause so the SSE subscriber attaches before we fan out.
+        await asyncio.sleep(0.05)
         for idx, sec in enumerate(sections, start=1):
             await bc.publish(
                 f"memo:{deal_id}",
@@ -159,30 +172,26 @@ async def test_memo_stream_endpoint_returns_sse(monkeypatch: pytest.MonkeyPatch)
     async with AsyncClient(
         transport=ASGITransport(app=app), base_url="http://test"
     ) as client:
-        # Trigger generation.
         r = await client.post(f"/deals/{deal_id}/memo/generate")
         assert r.status_code == 200
         assert r.json() == {"status": "started", "deal_id": deal_id}
 
-        # Open the SSE stream first; flip ``started_event`` once we
-        # know the subscriber queue is registered, then read events.
         async with client.stream("GET", f"/deals/{deal_id}/memo/stream") as resp:
             assert resp.status_code == 200
             ctype = resp.headers.get("content-type", "")
             assert ctype.startswith("text/event-stream"), f"got {ctype!r}"
             assert resp.headers.get("cache-control") == "no-cache"
-
-            # The route's subscribe() registers the queue lazily on the
-            # first iteration step, which happens once the body starts
-            # streaming. Yield once so the generator can attach, then
-            # release the publisher.
-            await asyncio.sleep(0.05)
-            started_event.set()
-
             body = b""
             async for chunk in resp.aiter_bytes():
                 body += chunk
             text = body.decode("utf-8")
+
+    # Quiet warning hygiene — drain spawned tasks.
+    for t in spawned:
+        if not t.done():
+            t.cancel()
+    # Restore (monkeypatch handles this on teardown but be explicit).
+    fastapi_module.BackgroundTasks.add_task = real_add_task  # type: ignore[method-assign]
 
     # Six section events + one done event.
     assert text.count("event: section\n") == len(sections), text
@@ -207,20 +216,22 @@ async def test_memo_stream_cancellation() -> None:
 
     received: list[dict[str, Any]] = []
 
-    async def consume_one_then_quit() -> None:
-        async for evt in bc.subscribe(channel):
-            received.append(evt)
-            break  # bail mid-stream
-
-    consumer = asyncio.create_task(consume_one_then_quit())
+    # Drive the async generator manually so we can explicitly call
+    # ``aclose()`` — otherwise the finally-block cleanup that removes
+    # the queue from ``_subs`` runs only when the generator is GC'd,
+    # which Python doesn't guarantee is prompt enough for an assertion.
+    sub = bc.subscribe(channel)
+    consumer = asyncio.create_task(sub.__anext__())
+    # Yield once so the generator registers its queue.
     await asyncio.sleep(0)
 
     await bc.publish(channel, {"event": "section", "data": {"section_id": "x"}})
 
-    await asyncio.wait_for(consumer, timeout=1.0)
+    received.append(await asyncio.wait_for(consumer, timeout=1.0))
+
+    # Close the generator — runs the cleanup finally-block.
+    await sub.aclose()
 
     assert len(received) == 1
-    # After the subscriber exits, the channel's queue list should be empty.
-    # Internal attribute access is acceptable here since this test exists
-    # specifically to guard the cleanup contract.
+    # After the subscriber exits, the channel must be fully removed.
     assert bc._subs.get(channel) in (None, [])
