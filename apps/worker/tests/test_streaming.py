@@ -108,9 +108,13 @@ async def test_memo_stream_endpoint_returns_sse(monkeypatch: pytest.MonkeyPatch)
     sections = _canned_sections()
     deal_id = "stream-test-deal"
 
+    started_event = asyncio.Event()
+
     async def fake_run_analyst_streaming(_payload: Any) -> None:
+        # Wait for the SSE subscriber to attach before publishing,
+        # otherwise messages fan out to zero subscribers and are lost.
+        await started_event.wait()
         bc = get_broadcast()
-        await asyncio.sleep(0)  # let the subscriber attach
         for idx, sec in enumerate(sections, start=1):
             await bc.publish(
                 f"memo:{deal_id}",
@@ -160,12 +164,21 @@ async def test_memo_stream_endpoint_returns_sse(monkeypatch: pytest.MonkeyPatch)
         assert r.status_code == 200
         assert r.json() == {"status": "started", "deal_id": deal_id}
 
-        # Stream sections. ASGITransport buffers, so we read the full body.
+        # Open the SSE stream first; flip ``started_event`` once we
+        # know the subscriber queue is registered, then read events.
         async with client.stream("GET", f"/deals/{deal_id}/memo/stream") as resp:
             assert resp.status_code == 200
             ctype = resp.headers.get("content-type", "")
             assert ctype.startswith("text/event-stream"), f"got {ctype!r}"
             assert resp.headers.get("cache-control") == "no-cache"
+
+            # The route's subscribe() registers the queue lazily on the
+            # first iteration step, which happens once the body starts
+            # streaming. Yield once so the generator can attach, then
+            # release the publisher.
+            await asyncio.sleep(0.05)
+            started_event.set()
+
             body = b""
             async for chunk in resp.aiter_bytes():
                 body += chunk
