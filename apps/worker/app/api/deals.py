@@ -232,7 +232,7 @@ async def _write_audit(
                 "action": action,
                 "rid": deal_id,
                 "payload": json.dumps(payload, default=str),
-                "ts": _now().isoformat(),
+                "ts": _now(),
             },
         )
     except Exception as exc:  # noqa: BLE001
@@ -293,8 +293,8 @@ async def create_deal(
         "brand": body.brand,
         "positioning": body.positioning,
         "purchase_price": body.purchase_price,
-        "created_at": now.isoformat(),
-        "updated_at": now.isoformat(),
+        "created_at": now,
+        "updated_at": now,
     }
 
     await session.execute(
@@ -416,7 +416,7 @@ async def update_deal(
         params[field] = value
     now = _now()
     set_clauses.append("updated_at = :updated_at")
-    params["updated_at"] = now.isoformat()
+    params["updated_at"] = now
 
     await session.execute(
         text(
@@ -486,7 +486,7 @@ async def archive_deal(
              WHERE id = :id AND tenant_id = :tenant
             """
         ),
-        {"id": str(deal_id), "tenant": tenant_id, "ts": now.isoformat()},
+        {"id": str(deal_id), "tenant": tenant_id, "ts": now},
     )
 
     await _write_audit(

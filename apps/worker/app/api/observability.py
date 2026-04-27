@@ -67,9 +67,9 @@ async def _select_recent_calls(
     params: dict[str, Any] = {}
     if since is not None:
         where_clauses.append("created_at >= :since")
-        # SQLite stores TIMESTAMP as a string; ISO format with Z suffix
-        # works for both backends.
-        params["since"] = since.isoformat()
+        # asyncpg requires datetime objects for TIMESTAMPTZ; SQLite codec
+        # accepts datetimes too via the Python adapter.
+        params["since"] = since
     where_sql = ("WHERE " + " AND ".join(where_clauses)) if where_clauses else ""
     limit_sql = f"LIMIT {int(limit)}" if limit else ""
     sql = text(
