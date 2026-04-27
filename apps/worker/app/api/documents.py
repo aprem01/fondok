@@ -288,7 +288,7 @@ async def upload_documents(
                 "filename": filename,
                 "doc_type": doc_type,
                 "status": DOC_STATUS_UPLOADED,
-                "uploaded_at": uploaded_at.isoformat(),
+                "uploaded_at": uploaded_at,
                 "content_hash": content_hash,
                 "storage_key": storage_key,
                 "size_bytes": len(body),
@@ -550,7 +550,7 @@ async def _run_extraction_pipeline(
                     "fields": json.dumps(fields),
                     "cr": json.dumps(confidence),
                     "ver": agent_version,
-                    "created": _now().isoformat(),
+                    "created": _now(),
                 },
             )
             await session.execute(
