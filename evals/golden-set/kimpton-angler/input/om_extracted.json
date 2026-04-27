@@ -1,0 +1,154 @@
+{
+  "comment": "Synthetic OM extracted JSON for Kimpton Angler Hotel — what the OM extraction agent would produce after parsing the full Offering Memorandum PDF. All currency in USD.",
+  "document_id": "kimpton-angler-om-2026",
+  "filename": "Offering_Memorandum_Final.pdf",
+  "doc_type": "offering_memorandum",
+  "page_count": 87,
+  "extracted_at": "2026-04-19T14:32:00Z",
+  "broker": {
+    "firm": "JLL Hotels & Hospitality Group",
+    "lead_broker": "Gilda Perez-Alvarado",
+    "process": "Marketed sale, no call for offers date",
+    "data_room": "Intralinks"
+  },
+  "property_overview": {
+    "name": "Kimpton Angler Hotel",
+    "address": "660 Washington Avenue, Miami Beach, FL 33139",
+    "submarket": "South Beach",
+    "msa": "Miami-Fort Lauderdale-Pompano Beach, FL",
+    "asset_type": "Lifestyle Boutique Hotel",
+    "service_level": "Full-Service",
+    "brand": "Kimpton Hotels & Restaurants",
+    "brand_family": "IHG Hotels & Resorts",
+    "year_built": 2015,
+    "year_renovated": 2019,
+    "keys": 132,
+    "gba_sf": 142000,
+    "land_acres": 0.62,
+    "stories": 5,
+    "meeting_space_sf": 4200,
+    "parking_spaces": 88,
+    "parking_type": "On-site valet",
+    "fb_outlets": 2,
+    "fb_concept": "The Coast restaurant (rooftop), Minnow Bar (lobby)",
+    "amenities": [
+      "Rooftop pool",
+      "Fitness center",
+      "Beach service",
+      "Bicycle program",
+      "Pet-friendly"
+    ],
+    "construction_type": "Concrete and steel"
+  },
+  "asking_price": {
+    "headline_price_usd": 36400000,
+    "price_per_key_usd": 275758,
+    "ask_basis": "All cash, free and clear",
+    "marketing_method": "Best and final"
+  },
+  "broker_proforma": {
+    "as_of_period": "Year 1 stabilized (calendar 2027)",
+    "occupancy_pct": 0.80,
+    "adr_usd": 395.00,
+    "revpar_usd": 316.00,
+    "rooms_revenue_usd": 15226400,
+    "fb_revenue_usd": 4100000,
+    "other_revenue_usd": 850000,
+    "total_revenue_usd": 20176400,
+    "departmental_expenses_usd": 6253000,
+    "undistributed_expenses_usd": 5400000,
+    "gop_usd": 8523400,
+    "gop_margin_pct": 0.4225,
+    "mgmt_fee_usd": 605000,
+    "ffe_reserve_usd": 807000,
+    "fixed_charges_usd": 1911400,
+    "noi_usd": 5200000,
+    "noi_margin_pct": 0.2578,
+    "implied_cap_rate_pct": 0.1429,
+    "comment": "Broker proforma assumes year-1 stabilized after PIP completion; 80 percent occupancy versus market 76.2 percent and TTM actual 76.2 percent — flagged as optimistic"
+  },
+  "ttm_summary_per_om": {
+    "as_of_date": "2026-03-31",
+    "occupancy_pct": 0.762,
+    "adr_usd": 385.00,
+    "revpar_usd": 293.37,
+    "rooms_revenue_usd": 14133420,
+    "total_revenue_usd": 18750000,
+    "noi_usd": 4281000,
+    "implied_cap_rate_pct": 0.1176
+  },
+  "renovation_pip": {
+    "pip_required": true,
+    "pip_estimate_usd": 5280000,
+    "pip_per_key_usd": 40000,
+    "pip_scope": "Soft-good refresh of guestrooms (2026), public area FF&E refresh, rooftop pool deck resurfacing, mechanical upgrade",
+    "pip_timing_months": 9,
+    "brand_pip_letter_date": "2026-02-15"
+  },
+  "in_place_debt": {
+    "loan_balance_usd": 18500000,
+    "lender": "Bank OZK",
+    "rate_pct": 0.0625,
+    "maturity_date": "2027-09-30",
+    "assumability": "Subject to lender approval, 1.0% assumption fee",
+    "defeasance_required": false
+  },
+  "title_and_zoning": {
+    "fee_simple": true,
+    "ground_lease": false,
+    "zoning": "RM-3 Multiple Family Residential High Intensity",
+    "flood_zone": "AE",
+    "wind_zone": "150 mph",
+    "historic_designation": "Architecturally significant - South Beach Local Historic District"
+  },
+  "market_overview_per_om": {
+    "submarket_revpar_usd": 238.09,
+    "submarket_occupancy_pct": 0.762,
+    "submarket_adr_usd": 312.45,
+    "supply_growth_pct": 0.012,
+    "demand_growth_pct": 0.048,
+    "compset_revpar_usd": 261.50,
+    "compset_occupancy_pct": 0.749,
+    "compset_adr_usd": 349.00,
+    "subject_rgi": 1.122,
+    "subject_ari": 1.103,
+    "subject_mpi": 1.017,
+    "demand_generators": [
+      "Miami Beach Convention Center (1.2M attendees)",
+      "Art Basel (83,000 annually)",
+      "South Beach Entertainment District (15M annually)",
+      "Miami International Airport (52M passengers)",
+      "Cruise Port of Miami (7.5M passengers)"
+    ]
+  },
+  "comparable_sales_per_om": [
+    { "property": "The Setai Miami Beach", "keys": 130, "date": "2025-08-01", "price_usd": 245000000, "per_key_usd": 1884615, "cap_rate_pct": 0.048, "buyer": "Ashkenazy Acquisition" },
+    { "property": "Nautilus by Arlo", "keys": 250, "date": "2025-05-15", "price_usd": 98000000, "per_key_usd": 392000, "cap_rate_pct": 0.062, "buyer": "Private" },
+    { "property": "SLS South Beach", "keys": 140, "date": "2024-12-10", "price_usd": 95000000, "per_key_usd": 678571, "cap_rate_pct": 0.060, "buyer": "REIT" }
+  ],
+  "raw_text_by_page": {
+    "1": "OFFERING MEMORANDUM\nKimpton Angler Hotel\n660 Washington Avenue\nMiami Beach, FL 33139\n\nA 132-key Lifestyle Boutique Hotel\nSouth Beach Submarket\n\nMarketed Exclusively by JLL Hotels & Hospitality Group\nGilda Perez-Alvarado, Senior Managing Director\n\nAsking: $36,400,000 ($275,758 per key)",
+    "12": "PROPERTY SUMMARY\nThe Kimpton Angler is a 132-key, 5-story lifestyle boutique hotel located at 660 Washington Avenue in the heart of South Beach, Miami Beach, FL. Built in 2015 and most recently renovated in 2019, the property features 142,000 square feet of gross building area, a rooftop pool, two food and beverage outlets (The Coast restaurant on the rooftop and Minnow Bar in the lobby), 4,200 square feet of meeting space, and 88 on-site valet parking spaces. The asset operates as a Kimpton Hotels & Restaurants franchise (IHG Hotels & Resorts). Pet-friendly with full beach service and complimentary bicycle program.",
+    "34": "BROKER YEAR-1 STABILIZED PROFORMA (Calendar 2027)\nOccupancy: 80.0%\nADR: $395.00\nRevPAR: $316.00\nRooms Revenue: $15,226,400\nF&B Revenue: $4,100,000\nOther Revenue: $850,000\nTotal Revenue: $20,176,400\nDepartmental Expenses: $6,253,000\nUndistributed Expenses: $5,400,000\nGross Operating Profit: $8,523,400 (42.25%)\nManagement Fee: $605,000\nFF&E Reserve: $807,000\nFixed Charges: $1,911,400\nNet Operating Income: $5,200,000 (25.78%)\nImplied Cap Rate at $36.4M: 14.29%",
+    "47": "TRAILING TWELVE MONTHS (TTM, ended 2026-03-31)\nOccupancy: 76.2%\nADR: $385.00\nRevPAR: $293.37\nRooms Revenue: $14,133,420\nTotal Revenue: $18,750,000\nNOI: $4,281,000\nImplied Cap Rate at $36.4M: 11.76%",
+    "61": "PIP REQUIREMENTS\nIHG Brand letter dated February 15, 2026 estimates $5,280,000 ($40,000 per key) of required property improvement plan work over the next 9 months. Scope includes guestroom soft-good refresh, public area FF&E refresh, rooftop pool deck resurfacing, and mechanical equipment upgrade.",
+    "72": "MARKET OVERVIEW\nSouth Beach submarket TTM RevPAR of $238.09 reflects a Miami Beach market-leading occupancy of 76.2% and ADR of $312.45. Supply growth of 1.2% versus demand growth of 4.8% supports continued RevPAR expansion. Subject property indexes at 112.2 RGI, 110.3 ARI, and 101.7 MPI versus comp set."
+  },
+  "tables_by_page": {},
+  "confidence": {
+    "overall": 0.94,
+    "by_field": {
+      "asking_price.headline_price_usd": 0.99,
+      "property_overview.keys": 1.0,
+      "broker_proforma.noi_usd": 0.96,
+      "ttm_summary_per_om.noi_usd": 0.95,
+      "renovation_pip.pip_estimate_usd": 0.92,
+      "in_place_debt.loan_balance_usd": 0.88
+    },
+    "low_confidence_fields": [
+      "in_place_debt.maturity_date",
+      "title_and_zoning.flood_zone"
+    ],
+    "requires_human_review": false
+  }
+}

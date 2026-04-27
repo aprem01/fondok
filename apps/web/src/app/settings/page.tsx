@@ -87,8 +87,8 @@ export default function SettingsPage() {
             <div className="grid grid-cols-3 gap-4 mb-4">
               <div>
                 <label className="block text-[12px] font-medium text-ink-700 mb-1.5">Default Hold Period</label>
-                <select className="w-full px-3 py-2 text-[13px] bg-white border border-border rounded-md">
-                  <option>3 years</option><option selected>5 years</option><option>7 years</option><option>10 years</option>
+                <select defaultValue="5 years" className="w-full px-3 py-2 text-[13px] bg-white border border-border rounded-md">
+                  <option>3 years</option><option>5 years</option><option>7 years</option><option>10 years</option>
                 </select>
               </div>
               <Field label="Default LTV" defaultValue="65%" />

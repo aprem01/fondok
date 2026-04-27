@@ -1,0 +1,121 @@
+{
+  "comment": "Synthetic STR market report extracted JSON for Kimpton Angler Hotel — what the STR extraction agent would produce after parsing the STAR report PDF. TTM ended 2026-03-31. Comp set defined by STR.",
+  "document_id": "kimpton-angler-str-2026q1",
+  "filename": "STR_MarketReport_Q1.pdf",
+  "doc_type": "str_star_report",
+  "report_type": "Trend Report (Monthly, 12 months)",
+  "currency": "USD",
+  "as_of_date": "2026-03-31",
+  "ttm_period": "2025-04-01 to 2026-03-31",
+  "subject": {
+    "property_name": "Kimpton Angler Hotel",
+    "str_id": "61234",
+    "address": "660 Washington Avenue, Miami Beach, FL 33139",
+    "submarket": "South Beach",
+    "msa": "Miami-Fort Lauderdale-Pompano Beach, FL",
+    "keys": 132,
+    "open_date": "2015-06-01"
+  },
+  "comp_set": {
+    "name": "South Beach Lifestyle Comp Set",
+    "comp_set_size": 5,
+    "comp_set_keys_total": 712,
+    "properties": [
+      { "name": "The Setai Miami Beach", "keys": 130 },
+      { "name": "Nautilus by Arlo", "keys": 250 },
+      { "name": "SLS South Beach", "keys": 140 },
+      { "name": "1 Hotel South Beach", "keys": 100 },
+      { "name": "The Plymouth South Beach", "keys": 92 }
+    ]
+  },
+  "ttm_performance": {
+    "subject": {
+      "occupancy_pct": 0.762,
+      "adr_usd": 385.00,
+      "revpar_usd": 293.37
+    },
+    "comp_set": {
+      "occupancy_pct": 0.749,
+      "adr_usd": 349.00,
+      "revpar_usd": 261.50
+    },
+    "indices": {
+      "mpi_occupancy_index": 101.74,
+      "ari_adr_index": 110.32,
+      "rgi_revpar_index": 112.20
+    },
+    "rank_in_compset": {
+      "occupancy_rank": "2 of 6",
+      "adr_rank": "2 of 6",
+      "revpar_rank": "2 of 6"
+    }
+  },
+  "monthly_subject_performance": [
+    { "month": "2025-04", "occupancy_pct": 0.785, "adr_usd": 358.00, "revpar_usd": 281.03 },
+    { "month": "2025-05", "occupancy_pct": 0.712, "adr_usd": 322.00, "revpar_usd": 229.27 },
+    { "month": "2025-06", "occupancy_pct": 0.684, "adr_usd": 305.00, "revpar_usd": 208.62 },
+    { "month": "2025-07", "occupancy_pct": 0.701, "adr_usd": 312.00, "revpar_usd": 218.71 },
+    { "month": "2025-08", "occupancy_pct": 0.678, "adr_usd": 298.00, "revpar_usd": 202.04 },
+    { "month": "2025-09", "occupancy_pct": 0.642, "adr_usd": 285.00, "revpar_usd": 182.95 },
+    { "month": "2025-10", "occupancy_pct": 0.735, "adr_usd": 348.00, "revpar_usd": 255.78 },
+    { "month": "2025-11", "occupancy_pct": 0.794, "adr_usd": 412.00, "revpar_usd": 327.13 },
+    { "month": "2025-12", "occupancy_pct": 0.861, "adr_usd": 488.00, "revpar_usd": 420.17 },
+    { "month": "2026-01", "occupancy_pct": 0.821, "adr_usd": 508.00, "revpar_usd": 417.07 },
+    { "month": "2026-02", "occupancy_pct": 0.854, "adr_usd": 525.00, "revpar_usd": 448.35 },
+    { "month": "2026-03", "occupancy_pct": 0.872, "adr_usd": 535.00, "revpar_usd": 466.52 }
+  ],
+  "monthly_compset_performance": [
+    { "month": "2025-04", "occupancy_pct": 0.770, "adr_usd": 320.00, "revpar_usd": 246.40 },
+    { "month": "2025-05", "occupancy_pct": 0.700, "adr_usd": 290.00, "revpar_usd": 203.00 },
+    { "month": "2025-06", "occupancy_pct": 0.668, "adr_usd": 275.00, "revpar_usd": 183.70 },
+    { "month": "2025-07", "occupancy_pct": 0.689, "adr_usd": 282.00, "revpar_usd": 194.30 },
+    { "month": "2025-08", "occupancy_pct": 0.665, "adr_usd": 268.00, "revpar_usd": 178.22 },
+    { "month": "2025-09", "occupancy_pct": 0.628, "adr_usd": 258.00, "revpar_usd": 162.02 },
+    { "month": "2025-10", "occupancy_pct": 0.722, "adr_usd": 318.00, "revpar_usd": 229.60 },
+    { "month": "2025-11", "occupancy_pct": 0.782, "adr_usd": 372.00, "revpar_usd": 290.90 },
+    { "month": "2025-12", "occupancy_pct": 0.847, "adr_usd": 442.00, "revpar_usd": 374.37 },
+    { "month": "2026-01", "occupancy_pct": 0.808, "adr_usd": 460.00, "revpar_usd": 371.68 },
+    { "month": "2026-02", "occupancy_pct": 0.840, "adr_usd": 475.00, "revpar_usd": 399.00 },
+    { "month": "2026-03", "occupancy_pct": 0.860, "adr_usd": 490.00, "revpar_usd": 421.40 }
+  ],
+  "monthly_indices": [
+    { "month": "2025-04", "mpi": 101.95, "ari": 111.88, "rgi": 114.05 },
+    { "month": "2025-05", "mpi": 101.71, "ari": 111.03, "rgi": 112.94 },
+    { "month": "2025-06", "mpi": 102.40, "ari": 110.91, "rgi": 113.57 },
+    { "month": "2025-07", "mpi": 101.74, "ari": 110.64, "rgi": 112.56 },
+    { "month": "2025-08", "mpi": 101.95, "ari": 111.19, "rgi": 113.37 },
+    { "month": "2025-09", "mpi": 102.23, "ari": 110.47, "rgi": 112.92 },
+    { "month": "2025-10", "mpi": 101.80, "ari": 109.43, "rgi": 111.40 },
+    { "month": "2025-11", "mpi": 101.53, "ari": 110.75, "rgi": 112.45 },
+    { "month": "2025-12", "mpi": 101.65, "ari": 110.41, "rgi": 112.24 },
+    { "month": "2026-01", "mpi": 101.61, "ari": 110.43, "rgi": 112.21 },
+    { "month": "2026-02", "mpi": 101.67, "ari": 110.53, "rgi": 112.37 },
+    { "month": "2026-03", "mpi": 101.40, "ari": 109.18, "rgi": 110.71 }
+  ],
+  "yoy_growth": {
+    "subject": { "occupancy_yoy_pts": 2.4, "adr_yoy_pct": 6.2, "revpar_yoy_pct": 8.8 },
+    "comp_set": { "occupancy_yoy_pts": 2.1, "adr_yoy_pct": 5.8, "revpar_yoy_pct": 8.1 }
+  },
+  "supply_demand": {
+    "supply_growth_pct": 0.012,
+    "demand_growth_pct": 0.048,
+    "rooms_in_pipeline_24mo": 414,
+    "pipeline_pct_of_existing": 0.058
+  },
+  "raw_text_by_page": {
+    "1": "STR Trend Report — Subject Property: Kimpton Angler Hotel\nSTR ID: 61234\n660 Washington Avenue, Miami Beach, FL 33139\nReport Period: April 2025 - March 2026\nComp Set: South Beach Lifestyle (5 properties, 712 keys)",
+    "3": "TTM SUMMARY (12 Months)\n                 Subject     Comp Set    Index\nOccupancy        76.2%       74.9%       MPI 101.74\nADR              $385.00     $349.00     ARI 110.32\nRevPAR           $293.37     $261.50     RGI 112.20\nRank in Comp Set: 2 of 6 across all three metrics"
+  },
+  "confidence": {
+    "overall": 0.91,
+    "by_field": {
+      "ttm_performance.indices.rgi_revpar_index": 0.97,
+      "monthly_indices": 0.93,
+      "comp_set.properties": 0.85
+    },
+    "low_confidence_fields": [
+      "comp_set.properties"
+    ],
+    "requires_human_review": false
+  }
+}

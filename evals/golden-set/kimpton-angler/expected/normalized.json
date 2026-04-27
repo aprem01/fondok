@@ -1,0 +1,146 @@
+{
+  "comment": "USALI-normalized financials matching the T-12 actuals. The pipeline normalizes the raw extracted T-12 into the canonical USALI 11th Edition schema used by the engine. Currency in USD.",
+  "deal_id": "kimpton-angler-2026",
+  "normalization_basis": "USALI 11th Edition",
+  "currency": "USD",
+  "as_of": "2026-03-31",
+  "period": "TTM 2025-04-01 to 2026-03-31",
+  "keys": 132,
+  "available_rooms": 48180,
+  "occupied_rooms": 36713,
+  "operating_metrics": {
+    "occupancy_pct": 0.762,
+    "adr_usd": 385.00,
+    "revpar_usd": 293.37,
+    "trevpar_usd": 389.16
+  },
+  "revenue_normalized": {
+    "rooms_revenue": {
+      "amount_usd": 14133420,
+      "pct_of_total": 0.7538,
+      "pct_of_revpar_check": "PASS"
+    },
+    "fb_revenue": {
+      "amount_usd": 3550000,
+      "pct_of_total": 0.1893,
+      "subcategories": {
+        "food": 2240000,
+        "beverage": 1310000,
+        "banquet": 0
+      }
+    },
+    "other_operated_departments": {
+      "amount_usd": 715000,
+      "pct_of_total": 0.0381,
+      "subcategories": {
+        "spa": 145000,
+        "parking": 320000,
+        "telecom": 25000,
+        "minor_other": 225000
+      }
+    },
+    "miscellaneous_income": {
+      "amount_usd": 351580,
+      "pct_of_total": 0.0188
+    },
+    "total_operating_revenue": {
+      "amount_usd": 18750000,
+      "revenue_sum_check": "PASS"
+    }
+  },
+  "departmental_expense_normalized": {
+    "rooms": {
+      "expense_usd": 3389021,
+      "margin_pct": 0.7602,
+      "margin_check_full_service": "PASS"
+    },
+    "fb": {
+      "expense_usd": 2670000,
+      "margin_pct": 0.2479,
+      "margin_check_full_service": "PASS"
+    },
+    "other_operated": {
+      "expense_usd": 422000,
+      "margin_pct": 0.4098
+    },
+    "total_departmental_expenses": 6481021,
+    "departmental_expense_sum_check": "PASS"
+  },
+  "departmental_profit": {
+    "amount_usd": 12268979,
+    "margin_pct": 0.6543
+  },
+  "undistributed_operating_expenses": {
+    "administrative_and_general": { "amount_usd": 1430000, "pct_revenue": 0.0763, "in_range_check": "PASS" },
+    "information_and_telecom": { "amount_usd": 198000, "pct_revenue": 0.0106 },
+    "sales_and_marketing": { "amount_usd": 1180000, "pct_revenue": 0.0629, "in_range_check": "PASS" },
+    "franchise_fees": {
+      "amount_usd": 1413342,
+      "royalty_fee": 706671,
+      "marketing_fee": 706671,
+      "royalty_pct_rooms": 0.05,
+      "marketing_pct_rooms": 0.05,
+      "in_range_check": "PASS"
+    },
+    "property_operations_and_maintenance": { "amount_usd": 920000, "pct_revenue": 0.0491, "in_range_check": "PASS" },
+    "utilities": { "amount_usd": 678000, "per_key_usd": 5136, "in_range_check": "FAIL_OUT_OF_RANGE_HIGH" },
+    "total_undistributed": 5819342
+  },
+  "gross_operating_profit": {
+    "amount_usd": 6449658,
+    "margin_pct": 0.3440,
+    "in_range_check": "PASS"
+  },
+  "fees_and_reserves_normalized": {
+    "base_management_fee": {
+      "amount_usd": 562500,
+      "pct_revenue": 0.030,
+      "in_range_check": "PASS"
+    },
+    "incentive_management_fee": { "amount_usd": 0, "pct_gop": 0.0 },
+    "ffe_reserve": {
+      "amount_usd": 750000,
+      "pct_revenue": 0.040,
+      "brand_floor_check": "PASS",
+      "industry_range_check": "PASS"
+    }
+  },
+  "fixed_charges_normalized": {
+    "property_taxes": {
+      "amount_usd": 412000,
+      "per_key_usd": 3121,
+      "pct_value_implied": 0.0113,
+      "in_range_check": "PASS"
+    },
+    "insurance": {
+      "amount_usd": 502000,
+      "per_key_usd": 3803,
+      "coastal_flag": true,
+      "in_range_check": "COASTAL_FLAGGED"
+    },
+    "ground_rent": { "amount_usd": 0 },
+    "other_fixed": { "amount_usd": 42158 },
+    "total_fixed_charges": 956158
+  },
+  "net_operating_income": {
+    "amount_usd": 4181000,
+    "margin_pct": 0.2230,
+    "noi_per_key_usd": 31674,
+    "noi_identity_check": "PASS",
+    "in_range_check": "PASS"
+  },
+  "labor_normalized": {
+    "total_labor_usd": 6850000,
+    "pct_revenue": 0.3653,
+    "labor_per_occupied_room_usd": 186.58,
+    "labor_pct_full_service_check": "PASS",
+    "labor_per_occ_room_check": "FAIL_OUT_OF_RANGE_HIGH"
+  },
+  "all_identity_checks": {
+    "REVPAR_CHECK": "PASS",
+    "REVENUE_SUM": "PASS",
+    "DEPT_EXPENSE_SUM": "PASS",
+    "GOP_IDENTITY": "PASS",
+    "NOI_IDENTITY": "PASS"
+  }
+}

@@ -1,0 +1,130 @@
+{
+  "comment": "Variance flags raised by the underwriting pipeline. Every flag is grounded to a rule_id from usali-rules.csv and references the input documents.",
+  "deal_id": "kimpton-angler-2026",
+  "evaluated_at": "2026-04-19T14:35:00Z",
+  "summary": {
+    "total_flags": 7,
+    "critical": 1,
+    "warn": 4,
+    "info": 2
+  },
+  "flags": [
+    {
+      "flag_id": "VF-001",
+      "rule_id": "BROKER_VS_T12_NOI_VARIANCE",
+      "severity": "CRITICAL",
+      "metric": "NOI",
+      "broker_value": 5200000,
+      "t12_value": 4181000,
+      "variance_abs": 1019000,
+      "variance_pct": -0.1960,
+      "explanation": "Broker proforma NOI of $5.20M is 19.6 percent above T-12 actual of $4.18M, exceeding 5 percent CRITICAL threshold. Reconcile by examining broker assumptions for occupancy uplift and PIP-driven ADR growth.",
+      "source_documents": [
+        { "document_id": "kimpton-angler-om-2026", "page": 34, "field": "broker_proforma.noi_usd" },
+        { "document_id": "kimpton-angler-t12-2026q1", "page": 4, "field": "p_and_l_usali.net_operating_income.noi_usd" }
+      ],
+      "recommended_action": "Apply T-12 actual NOI as base case in underwriting; treat broker proforma as upside case only after PIP completion in Year 2."
+    },
+    {
+      "flag_id": "VF-002",
+      "rule_id": "BROKER_VS_T12_OCC_VARIANCE",
+      "severity": "WARN",
+      "metric": "Occupancy",
+      "broker_value": 0.80,
+      "t12_value": 0.762,
+      "variance_abs": 0.038,
+      "variance_pct_pts": 3.8,
+      "explanation": "Broker proforma occupancy of 80.0 percent is 380 bps above T-12 actual of 76.2 percent. Exceeds 200 bps WARN threshold. Subject already at MPI 101.74 versus comp set so further occupancy gains require market-level demand growth.",
+      "source_documents": [
+        { "document_id": "kimpton-angler-om-2026", "page": 34, "field": "broker_proforma.occupancy_pct" },
+        { "document_id": "kimpton-angler-t12-2026q1", "page": 1, "field": "occupancy_pct" }
+      ],
+      "recommended_action": "Cap base case occupancy at 77.5 percent (T-12 plus 130 bps) reflecting modest market growth."
+    },
+    {
+      "flag_id": "VF-003",
+      "rule_id": "BROKER_VS_T12_ADR_VARIANCE",
+      "severity": "WARN",
+      "metric": "ADR",
+      "broker_value": 395.00,
+      "t12_value": 385.00,
+      "variance_abs": 10.00,
+      "variance_pct": 0.026,
+      "explanation": "Broker proforma ADR of $395 is 2.6 percent above T-12 actual of $385. Within 5 percent threshold but worth noting in IC memo as PIP-driven ADR uplift assumption.",
+      "source_documents": [
+        { "document_id": "kimpton-angler-om-2026", "page": 34, "field": "broker_proforma.adr_usd" },
+        { "document_id": "kimpton-angler-t12-2026q1", "page": 1, "field": "adr_usd" }
+      ],
+      "recommended_action": "Acceptable. Underwrite ADR uplift to $395 in Year 2 post-PIP."
+    },
+    {
+      "flag_id": "VF-004",
+      "rule_id": "INSURANCE_PER_KEY_COASTAL",
+      "severity": "INFO",
+      "metric": "Insurance per Key",
+      "value": 3803,
+      "threshold_min": 2500,
+      "threshold_max": 8000,
+      "explanation": "Insurance expense of $3,803 per key is above the non-coastal cap of $2,500 but within the coastal market range of $2,500 to $8,000. Miami Beach exposure to wind and flood loadings is consistent with this loading.",
+      "source_documents": [
+        { "document_id": "kimpton-angler-t12-2026q1", "page": 4, "field": "p_and_l_usali.fixed_charges.insurance" }
+      ],
+      "recommended_action": "Acceptable for Miami Beach coastal exposure. Hold quote-driven sensitivity for renewal cycle."
+    },
+    {
+      "flag_id": "VF-005",
+      "rule_id": "UTILITIES_PER_KEY",
+      "severity": "WARN",
+      "metric": "Utilities per Key",
+      "value": 5136,
+      "threshold_min": 800,
+      "threshold_max": 2500,
+      "explanation": "Utilities of $5,136 per key materially exceeds the $800-$2,500 industry range. Driven by 24/7 rooftop pool, FL climate cooling load, and full F&B operation.",
+      "source_documents": [
+        { "document_id": "kimpton-angler-t12-2026q1", "page": 3, "field": "p_and_l_usali.undistributed_operating_expenses.utilities" }
+      ],
+      "recommended_action": "Validate against energy audit report; PIP energy retrofit may yield 15-20 percent savings."
+    },
+    {
+      "flag_id": "VF-006",
+      "rule_id": "GOP_MARGIN_RANGE",
+      "severity": "INFO",
+      "metric": "GOP Margin",
+      "value": 0.3440,
+      "threshold_min": 0.15,
+      "threshold_max": 0.55,
+      "explanation": "GOP margin of 34.4 percent is within the 15-55 percent industry range. Lower end of urban full-service lifestyle norm of 35-42 percent reflecting elevated F&B labor and utilities.",
+      "source_documents": [
+        { "document_id": "kimpton-angler-t12-2026q1", "page": 3, "field": "p_and_l_usali.gross_operating_profit.gop_usd" }
+      ],
+      "recommended_action": "Identify GOP uplift levers in business plan: labor productivity, F&B mix shift to higher-margin beverage."
+    },
+    {
+      "flag_id": "VF-007",
+      "rule_id": "REVPAR_VS_COMPSET",
+      "severity": "WARN",
+      "metric": "RGI",
+      "value": 1.122,
+      "threshold_min": 0.85,
+      "threshold_max": 1.30,
+      "explanation": "Subject RGI of 112.2 indicates premium positioning relative to comp set, but trails Setai (130+) and 1 Hotel (125+). Yield management upside identified in market analysis (lifestyle brand premium under-realized).",
+      "source_documents": [
+        { "document_id": "kimpton-angler-str-2026q1", "page": 3, "field": "ttm_performance.indices.rgi_revpar_index" }
+      ],
+      "recommended_action": "Model 200-300 bps of RGI uplift in Year 2-3 driven by post-PIP repositioning."
+    }
+  ],
+  "rules_evaluated": [
+    "REVPAR_CHECK", "REVENUE_SUM", "DEPT_EXPENSE_SUM", "GOP_IDENTITY", "NOI_IDENTITY",
+    "GOP_MARGIN_RANGE", "NOI_MARGIN_RANGE", "FFE_RESERVE_RANGE", "FFE_RESERVE_BRAND_FLOOR",
+    "MGMT_FEE_RANGE", "OCCUPANCY_RANGE", "ADR_RANGE", "ROOMS_DEPT_MARGIN_FULL", "FB_DEPT_MARGIN_FULL",
+    "LABOR_PCT_REVENUE_FULL", "INSURANCE_PER_KEY", "INSURANCE_PER_KEY_COASTAL",
+    "PROPERTY_TAX_PER_KEY", "UTILITIES_PER_KEY", "MARKETING_PCT_REVENUE", "RM_PCT_REVENUE",
+    "A_AND_G_PCT_REVENUE", "FRANCHISE_FEE_RANGE", "FRANCHISE_MARKETING_FEE_RANGE",
+    "ADR_VS_COMPSET", "REVPAR_VS_COMPSET", "OCC_VS_COMPSET",
+    "DEBT_YIELD_MIN", "DSCR_MIN", "LTV_MAX", "LTC_MAX", "INTEREST_RATE_RANGE",
+    "CAP_RATE_RANGE", "EXIT_CAP_VS_ENTRY", "PRICE_PER_KEY_RANGE",
+    "IRR_RANGE_OPPORTUNISTIC", "EQUITY_MULTIPLE_MIN", "YIELD_ON_COST_MIN",
+    "BROKER_VS_T12_NOI_VARIANCE", "BROKER_VS_T12_OCC_VARIANCE", "BROKER_VS_T12_ADR_VARIANCE"
+  ]
+}

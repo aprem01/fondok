@@ -1,0 +1,131 @@
+{
+  "comment": "Synthetic T-12 extracted JSON for Kimpton Angler Hotel — what the T-12 extraction agent would produce after parsing the seller's USALI-formatted Profit and Loss workbook. All currency in USD. T-12 ended 2026-03-31. 132 keys. 365 days. Available rooms: 48,180.",
+  "document_id": "kimpton-angler-t12-2026q1",
+  "filename": "T12_FinancialStatement.xlsx",
+  "doc_type": "trailing_twelve_p_and_l",
+  "format": "USALI 11th Edition",
+  "currency": "USD",
+  "as_of_date": "2026-03-31",
+  "period_start": "2025-04-01",
+  "period_end": "2026-03-31",
+  "keys": 132,
+  "available_rooms": 48180,
+  "occupied_rooms": 36713,
+  "occupancy_pct": 0.762,
+  "adr_usd": 385.00,
+  "revpar_usd": 293.37,
+  "monthly_breakouts": [
+    { "month": "2025-04", "available_rooms": 3960, "occupied_rooms": 3108, "occupancy_pct": 0.785, "adr_usd": 358.00, "revpar_usd": 281.03, "rooms_revenue_usd": 1112664, "total_revenue_usd": 1490769 },
+    { "month": "2025-05", "available_rooms": 4092, "occupied_rooms": 2913, "occupancy_pct": 0.712, "adr_usd": 322.00, "revpar_usd": 229.27, "rooms_revenue_usd": 938010, "total_revenue_usd": 1276250 },
+    { "month": "2025-06", "available_rooms": 3960, "occupied_rooms": 2708, "occupancy_pct": 0.684, "adr_usd": 305.00, "revpar_usd": 208.62, "rooms_revenue_usd": 825940, "total_revenue_usd": 1132540 },
+    { "month": "2025-07", "available_rooms": 4092, "occupied_rooms": 2868, "occupancy_pct": 0.701, "adr_usd": 312.00, "revpar_usd": 218.71, "rooms_revenue_usd": 894816, "total_revenue_usd": 1213750 },
+    { "month": "2025-08", "available_rooms": 4092, "occupied_rooms": 2774, "occupancy_pct": 0.678, "adr_usd": 298.00, "revpar_usd": 202.04, "rooms_revenue_usd": 826652, "total_revenue_usd": 1115060 },
+    { "month": "2025-09", "available_rooms": 3960, "occupied_rooms": 2542, "occupancy_pct": 0.642, "adr_usd": 285.00, "revpar_usd": 182.95, "rooms_revenue_usd": 724470, "total_revenue_usd": 996650 },
+    { "month": "2025-10", "available_rooms": 4092, "occupied_rooms": 3008, "occupancy_pct": 0.735, "adr_usd": 348.00, "revpar_usd": 255.78, "rooms_revenue_usd": 1046784, "total_revenue_usd": 1411500 },
+    { "month": "2025-11", "available_rooms": 3960, "occupied_rooms": 3144, "occupancy_pct": 0.794, "adr_usd": 412.00, "revpar_usd": 327.13, "rooms_revenue_usd": 1295328, "total_revenue_usd": 1721490 },
+    { "month": "2025-12", "available_rooms": 4092, "occupied_rooms": 3523, "occupancy_pct": 0.861, "adr_usd": 488.00, "revpar_usd": 420.17, "rooms_revenue_usd": 1719224, "total_revenue_usd": 2186940 },
+    { "month": "2026-01", "available_rooms": 4092, "occupied_rooms": 3360, "occupancy_pct": 0.821, "adr_usd": 508.00, "revpar_usd": 417.07, "rooms_revenue_usd": 1706880, "total_revenue_usd": 2167500 },
+    { "month": "2026-02", "available_rooms": 3696, "occupied_rooms": 3157, "occupancy_pct": 0.854, "adr_usd": 525.00, "revpar_usd": 448.35, "rooms_revenue_usd": 1657425, "total_revenue_usd": 2102100 },
+    { "month": "2026-03", "available_rooms": 4092, "occupied_rooms": 3568, "occupancy_pct": 0.872, "adr_usd": 535.00, "revpar_usd": 466.52, "rooms_revenue_usd": 1908880, "total_revenue_usd": 2425451 }
+  ],
+  "p_and_l_usali": {
+    "operating_revenue": {
+      "rooms_revenue": 14133420,
+      "fb_revenue": 3550000,
+      "fb_food": 2240000,
+      "fb_beverage": 1310000,
+      "other_operated_departments": 715000,
+      "spa_revenue": 145000,
+      "parking_revenue": 320000,
+      "telecom_revenue": 25000,
+      "minor_other_revenue": 225000,
+      "miscellaneous_income": 351580,
+      "total_operating_revenue": 18750000
+    },
+    "departmental_expenses": {
+      "rooms_dept_expense": 3389021,
+      "rooms_dept_expense_pct_of_rooms": 0.2398,
+      "fb_dept_expense": 2670000,
+      "fb_dept_expense_pct_of_fb": 0.7521,
+      "other_operated_dept_expense": 422000,
+      "miscellaneous_dept_expense": 0,
+      "total_departmental_expenses": 6481021,
+      "total_departmental_profit": 12268979
+    },
+    "departmental_profit_by_segment": {
+      "rooms_dept_profit": 10744399,
+      "rooms_dept_margin_pct": 0.7602,
+      "fb_dept_profit": 880000,
+      "fb_dept_margin_pct": 0.2479,
+      "other_operated_dept_profit": 644580
+    },
+    "undistributed_operating_expenses": {
+      "administrative_and_general": 1430000,
+      "ag_pct_revenue": 0.0763,
+      "information_and_telecom": 198000,
+      "sales_and_marketing": 1180000,
+      "marketing_pct_revenue": 0.0629,
+      "franchise_fees": 1413342,
+      "franchise_royalty_fee": 706671,
+      "franchise_marketing_fee": 706671,
+      "franchise_total_pct_rooms": 0.10,
+      "property_operations_and_maintenance": 920000,
+      "rm_pct_revenue": 0.0491,
+      "utilities": 678000,
+      "utilities_per_key_usd": 5136,
+      "total_undistributed_expenses": 5819342
+    },
+    "gross_operating_profit": {
+      "gop_usd": 6449658,
+      "gop_margin_pct": 0.3440
+    },
+    "fees_and_reserves": {
+      "base_management_fee": 562500,
+      "base_mgmt_fee_pct_revenue": 0.030,
+      "incentive_management_fee": 0,
+      "ffe_reserve": 750000,
+      "ffe_reserve_pct_revenue": 0.040
+    },
+    "fixed_charges": {
+      "property_taxes": 412000,
+      "property_taxes_per_key_usd": 3121,
+      "insurance": 502000,
+      "insurance_per_key_usd": 3803,
+      "insurance_coastal_flag": true,
+      "ground_rent": 0,
+      "other_fixed_charges": 42158,
+      "total_fixed_charges": 956158
+    },
+    "net_operating_income": {
+      "noi_usd": 4181000,
+      "noi_margin_pct": 0.2230,
+      "noi_per_key_usd": 31674
+    },
+    "noi_reconciliation_to_walkthrough": {
+      "noi_per_walkthrough_usd": 4281000,
+      "delta_usd": -100000,
+      "explanation": "Walkthrough rounds NOI to $4.28M; T-12 reflects $4.181M after full USALI normalization including incentive mgmt accrual reversal of $100k credited in Q1 2026"
+    }
+  },
+  "labor_summary": {
+    "total_labor_expense_usd": 6850000,
+    "labor_pct_revenue": 0.3653,
+    "labor_per_occupied_room_usd": 186.58,
+    "ftes": 142
+  },
+  "capex_history": {
+    "ttm_capex_usd": 285000,
+    "five_year_avg_capex_usd": 412000
+  },
+  "confidence": {
+    "overall": 0.96,
+    "by_field": {
+      "p_and_l_usali.operating_revenue.total_operating_revenue": 1.0,
+      "p_and_l_usali.net_operating_income.noi_usd": 0.97,
+      "p_and_l_usali.fees_and_reserves.ffe_reserve": 0.94,
+      "monthly_breakouts": 0.95
+    },
+    "low_confidence_fields": [],
+    "requires_human_review": false
+  }
+}

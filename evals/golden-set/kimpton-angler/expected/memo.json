@@ -1,0 +1,115 @@
+{
+  "comment": "IC memo sections — must match the AI investment summary in mockData.kimptonAnalysis. Every claim cites a source document and field.",
+  "deal_id": "kimpton-angler-2026",
+  "memo_version": "1.0",
+  "drafted_at": "2026-04-19T14:42:00Z",
+  "drafted_by": "Fondok AI - Investment Memo Engine",
+  "header": {
+    "title": "Investment Committee Memorandum",
+    "subject_property": "Kimpton Angler Hotel",
+    "location": "Miami Beach, FL",
+    "deal_stage": "Under NDA",
+    "recommendation": "PROCEED TO LOI",
+    "ic_date": "TBD",
+    "lead_analyst": "Eshan Mehta",
+    "workspace": "Brookfield Real Estate"
+  },
+  "sections": [
+    {
+      "section_id": "executive_summary",
+      "title": "Executive Summary",
+      "body": "Kimpton Angler is a compelling value-add acquisition in the South Beach submarket at $36.4M ($276K/key) — a 22% discount to recent comparable lifestyle-tier transactions. The basis provides meaningful downside protection and supports a 24.5% levered IRR over a 5-year hold.",
+      "citations": [
+        { "source": "Offering_Memorandum_Final.pdf", "page": 1, "field": "asking_price.headline_price_usd" },
+        { "source": "STR_MarketReport_Q1.pdf", "page": 3, "field": "ttm_performance.indices.rgi_revpar_index" },
+        { "source": "engine.returns_engine.levered_irr" }
+      ]
+    },
+    {
+      "section_id": "investment_thesis",
+      "title": "Investment Thesis",
+      "body": "The Brickell-adjacent location captures both leisure and corporate demand, and Kimpton brand affiliation commands a 14% ADR premium versus independent boutique competitors. STR data shows the asset trailing the comp set on RGI by 4 points relative to top performers (Setai 130+, 1 Hotel 125+), suggesting near-term yield management upside.",
+      "citations": [
+        { "source": "STR_MarketReport_Q1.pdf", "page": 3, "field": "ttm_performance.indices.rgi_revpar_index" },
+        { "source": "Offering_Memorandum_Final.pdf", "page": 12, "field": "property_overview.brand" }
+      ]
+    },
+    {
+      "section_id": "recommendation",
+      "title": "Recommendation",
+      "body": "We recommend proceeding to LOI at the current ask. PIP requirement of $5.3M ($40K/key) is in line with brand standards refresh and is captured in Year 1 capital plan. Senior debt sized at 65% LTC delivers 1.57x DSCR with comfortable covenant headroom.",
+      "citations": [
+        { "source": "Offering_Memorandum_Final.pdf", "page": 61, "field": "renovation_pip.pip_estimate_usd" },
+        { "source": "engine.debt_engine.year1_dscr" },
+        { "source": "engine.debt_engine.ltv_value" }
+      ]
+    },
+    {
+      "section_id": "key_insights",
+      "title": "Key Insights",
+      "items": [
+        {
+          "title": "Prime South Beach Location",
+          "body": "Walking distance to ocean and Lincoln Road; positioned for both leisure compression weekends and corporate weekday demand from Brickell.",
+          "citations": [{ "source": "Offering_Memorandum_Final.pdf", "page": 12 }]
+        },
+        {
+          "title": "Lifestyle Brand Premium",
+          "body": "Kimpton affiliation delivers a 14% ADR premium versus independent boutique competitors with comparable amenity packages.",
+          "citations": [{ "source": "STR_MarketReport_Q1.pdf", "page": 3, "field": "ttm_performance.indices.ari_adr_index" }]
+        },
+        {
+          "title": "Seasonal Concentration",
+          "body": "Q1 RevPAR runs 80% above Q3 trough — strong seasonal hedging in revenue model is critical for stable distributions.",
+          "citations": [{ "source": "T12_FinancialStatement.xlsx", "page": 1, "field": "monthly_breakouts" }]
+        },
+        {
+          "title": "Attractive Basis",
+          "body": "$276K/key represents a 22% discount to replacement cost and 18% discount to last-trade lifestyle-tier comp set.",
+          "citations": [{ "source": "Offering_Memorandum_Final.pdf", "page": 1, "field": "asking_price.price_per_key_usd" }]
+        }
+      ]
+    },
+    {
+      "section_id": "risk_assessment",
+      "title": "Risk Assessment",
+      "overall_risk_score": 24,
+      "overall_risk_tier": "Low Risk",
+      "subscores": [
+        { "name": "RevPAR Volatility",   "tier": "Low Risk",    "score": 32 },
+        { "name": "Market Supply Risk",  "tier": "Medium Risk", "score": 38 },
+        { "name": "Operator Risk",       "tier": "Low Risk",    "score": 18 },
+        { "name": "Capital Needs",       "tier": "Low Risk",    "score": 28 }
+      ]
+    },
+    {
+      "section_id": "scenario_analysis",
+      "title": "Scenario Analysis",
+      "scenarios": [
+        { "name": "Base Case",     "probability": 0.55, "irr": 0.2348, "coc": 0.046, "multiple": 2.12, "exit_value_usd": 73142000 },
+        { "name": "Upside Case",   "probability": 0.25, "irr": 0.3120, "coc": 0.061, "multiple": 2.58, "exit_value_usd": 84500000 },
+        { "name": "Downside Case", "probability": 0.20, "irr": 0.1480, "coc": 0.032, "multiple": 1.65, "exit_value_usd": 58200000 }
+      ]
+    },
+    {
+      "section_id": "variance_disclosure",
+      "title": "Variance Disclosure",
+      "body": "Broker proforma NOI of $5.20M is materially above T-12 actual of $4.18M (-19.6 percent variance, CRITICAL flag). Underwriting uses T-12 as base, with broker proforma achievable only after PIP completion in Year 2.",
+      "linked_flag_ids": ["VF-001", "VF-002", "VF-003"]
+    }
+  ],
+  "appendix": {
+    "documents_reviewed": [
+      "Offering_Memorandum_Final.pdf",
+      "T12_FinancialStatement.xlsx",
+      "STR_MarketReport_Q1.pdf",
+      "Monthly_PL_2024_2025.xlsx",
+      "PIP_Estimate_2026.pdf",
+      "Lender_Term_Sheet.pdf",
+      "STR_Comp_Set_Detail.pdf",
+      "Property_Survey_2024.pdf"
+    ],
+    "engines_run": ["investment", "p_and_l", "debt", "cash_flow", "returns", "partnership"],
+    "ai_confidence": 0.87
+  }
+}

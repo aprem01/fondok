@@ -1,0 +1,103 @@
+{
+  "comment": "Engine outputs for Kimpton Angler — must match these values within 0.5 percent tolerance. Numbers reconcile to mockData.kimptonAnglerOverview from /Users/prem/fondok/apps/web/src/lib/mockData.ts. Currency in USD. Proforma figures in thousands.",
+  "deal_id": "kimpton-angler-2026",
+  "model_version": "fondok-engine-1.0",
+  "ran_at": "2026-04-19T14:38:00Z",
+  "investment_engine": {
+    "purchase_price_usd": 36400000,
+    "price_per_key_usd": 275758,
+    "closing_costs_usd": 728736,
+    "renovation_budget_usd": 5280000,
+    "renovation_per_key_usd": 40000,
+    "soft_costs_usd": 528000,
+    "contingency_usd": 528000,
+    "working_capital_usd": 500000,
+    "loan_costs_usd": 364368,
+    "total_capital_usd": 43309906,
+    "total_capital_per_key_usd": 328105,
+    "entry_cap_rate_t12": 0.1148,
+    "entry_cap_rate_year1_uw": 0.1293,
+    "year1_yield_on_cost": 0.1086
+  },
+  "p_and_l_engine_proforma": {
+    "comment": "5-year underwritten proforma. Year 1 starts post-PIP completion. All figures in $ thousands.",
+    "year1_period": "2027-01 to 2027-12",
+    "lines": [
+      { "label": "Room Revenue",         "y1": 11120, "y2": 11676, "y3": 12260, "y4": 12873, "y5": 13517, "cagr": 0.05 },
+      { "label": "F&B Revenue",          "y1": 3240,  "y2": 3402,  "y3": 3572,  "y4": 3751,  "y5": 3938,  "cagr": 0.05 },
+      { "label": "Other Revenue",        "y1": 720,   "y2": 756,   "y3": 794,   "y4": 833,   "y5": 875,   "cagr": 0.05 },
+      { "label": "Total Revenue",        "y1": 15080, "y2": 15834, "y3": 16626, "y4": 17457, "y5": 18330, "cagr": 0.05, "bold": true },
+      { "label": "Operating Expenses",   "y1": 9320,  "y2": 9660,  "y3": 10010, "y4": 10372, "y5": 10745 },
+      { "label": "Management Fee",       "y1": 452,   "y2": 475,   "y3": 499,   "y4": 524,   "y5": 550 },
+      { "label": "FF&E Reserve",         "y1": 603,   "y2": 633,   "y3": 665,   "y4": 698,   "y5": 733 },
+      { "label": "Net Operating Income", "y1": 4705,  "y2": 5066,  "y3": 5452,  "y4": 5863,  "y5": 6302,  "cagr": 0.075, "bold": true },
+      { "label": "Debt Service",         "y1": 1610,  "y2": 1610,  "y3": 1610,  "y4": 1610,  "y5": 1610 },
+      { "label": "Cash Flow After Debt", "y1": 3095,  "y2": 3456,  "y3": 3842,  "y4": 4253,  "y5": 4692,  "bold": true }
+    ]
+  },
+  "debt_engine": {
+    "loan_amount_usd": 23683922,
+    "ltv_cost": 0.547,
+    "ltv_value": 0.65,
+    "ltc": 0.547,
+    "interest_rate_pct": 0.0680,
+    "amortization_years": 30,
+    "term_years": 5,
+    "annual_debt_service_usd": 1610507,
+    "year1_dscr": 1.57,
+    "year1_debt_yield": 0.1986,
+    "interest_only_period_months": 0
+  },
+  "refi_engine": {
+    "refi_year": 4,
+    "refi_ltv": 0.60,
+    "refi_rate_pct": 0.06,
+    "refi_term_years": 5,
+    "refi_amortization_years": 30,
+    "refi_proceeds_usd": 32000000,
+    "cash_out_to_equity_usd": 9500000
+  },
+  "cash_flow_engine": {
+    "year1_cf_after_debt_usd": 3095000,
+    "year2_cf_after_debt_usd": 3456000,
+    "year3_cf_after_debt_usd": 3842000,
+    "year4_cf_after_debt_usd": 4253000,
+    "year5_cf_after_debt_usd": 4692000,
+    "cumulative_cf_5yr_usd": 19338000
+  },
+  "returns_engine": {
+    "hold_years": 5,
+    "exit_cap_rate_pct": 0.0700,
+    "terminal_noi_usd": 5120000,
+    "gross_sale_price_usd": 73142000,
+    "selling_costs_usd": 1462840,
+    "net_sale_proceeds_usd": 71679160,
+    "levered_irr": 0.2348,
+    "unlevered_irr": 0.1684,
+    "equity_multiple": 2.12,
+    "year1_cash_on_cash": 0.046,
+    "avg_cash_on_cash": 0.0518,
+    "in_range_check_value_add": "PASS_OPPORTUNISTIC"
+  },
+  "partnership_engine": {
+    "structure": "GP/LP waterfall",
+    "lp_equity_usd": 17663386,
+    "gp_equity_usd": 1962598,
+    "total_equity_usd": 19625984,
+    "lp_pref_pct": 0.08,
+    "gp_promote_tier_1_pct": 0.20,
+    "gp_promote_tier_1_irr_hurdle": 0.12,
+    "gp_promote_tier_2_pct": 0.30,
+    "gp_promote_tier_2_irr_hurdle": 0.18,
+    "lp_irr_after_promote": 0.1820,
+    "gp_irr_after_promote": 0.4870,
+    "lp_equity_multiple": 1.85,
+    "gp_equity_multiple": 4.45
+  },
+  "scenario_outputs": [
+    { "name": "Downside",  "irr": 0.148,  "unlevered_irr": 0.092,  "multiple": 1.65, "avg_coc": 0.032, "exit_value_usd": 58200000 },
+    { "name": "Base Case", "irr": 0.2348, "unlevered_irr": 0.1684, "multiple": 2.12, "avg_coc": 0.046, "exit_value_usd": 73142000, "base": true },
+    { "name": "Upside",    "irr": 0.3120, "unlevered_irr": 0.2210, "multiple": 2.58, "avg_coc": 0.061, "exit_value_usd": 84500000 }
+  ],
+  "tolerance_pct": 0.005
+}

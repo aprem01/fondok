@@ -1,0 +1,198 @@
+{
+  "comment": "Expected extraction output — every field with source_page, confidence, and raw_text. Pipeline outputs must reconcile to the input files in /input/.",
+  "deal_id": "kimpton-angler-2026",
+  "extracted_at": "2026-04-19T14:32:00Z",
+  "fields": [
+    {
+      "field": "property.name",
+      "value": "Kimpton Angler Hotel",
+      "source_document": "Offering_Memorandum_Final.pdf",
+      "source_page": 1,
+      "raw_text": "Kimpton Angler Hotel",
+      "confidence": 1.0
+    },
+    {
+      "field": "property.address",
+      "value": "660 Washington Avenue, Miami Beach, FL 33139",
+      "source_document": "Offering_Memorandum_Final.pdf",
+      "source_page": 1,
+      "raw_text": "660 Washington Avenue\nMiami Beach, FL 33139",
+      "confidence": 1.0
+    },
+    {
+      "field": "property.keys",
+      "value": 132,
+      "source_document": "Offering_Memorandum_Final.pdf",
+      "source_page": 12,
+      "raw_text": "132-key, 5-story lifestyle boutique hotel",
+      "confidence": 1.0
+    },
+    {
+      "field": "property.year_built",
+      "value": 2015,
+      "source_document": "Offering_Memorandum_Final.pdf",
+      "source_page": 12,
+      "raw_text": "Built in 2015",
+      "confidence": 0.99
+    },
+    {
+      "field": "property.brand",
+      "value": "Kimpton Hotels & Restaurants",
+      "source_document": "Offering_Memorandum_Final.pdf",
+      "source_page": 12,
+      "raw_text": "Kimpton Hotels & Restaurants franchise (IHG Hotels & Resorts)",
+      "confidence": 1.0
+    },
+    {
+      "field": "asking_price.headline_price_usd",
+      "value": 36400000,
+      "source_document": "Offering_Memorandum_Final.pdf",
+      "source_page": 1,
+      "raw_text": "Asking: $36,400,000 ($275,758 per key)",
+      "confidence": 0.99
+    },
+    {
+      "field": "broker_proforma.year1.occupancy_pct",
+      "value": 0.80,
+      "source_document": "Offering_Memorandum_Final.pdf",
+      "source_page": 34,
+      "raw_text": "Occupancy: 80.0%",
+      "confidence": 0.97
+    },
+    {
+      "field": "broker_proforma.year1.adr_usd",
+      "value": 395.00,
+      "source_document": "Offering_Memorandum_Final.pdf",
+      "source_page": 34,
+      "raw_text": "ADR: $395.00",
+      "confidence": 0.97
+    },
+    {
+      "field": "broker_proforma.year1.noi_usd",
+      "value": 5200000,
+      "source_document": "Offering_Memorandum_Final.pdf",
+      "source_page": 34,
+      "raw_text": "Net Operating Income: $5,200,000 (25.78%)",
+      "confidence": 0.96
+    },
+    {
+      "field": "ttm.occupancy_pct",
+      "value": 0.762,
+      "source_document": "T12_FinancialStatement.xlsx",
+      "source_page": 1,
+      "raw_text": "Occupancy: 76.2%",
+      "confidence": 1.0
+    },
+    {
+      "field": "ttm.adr_usd",
+      "value": 385.00,
+      "source_document": "T12_FinancialStatement.xlsx",
+      "source_page": 1,
+      "raw_text": "ADR: $385.00",
+      "confidence": 1.0
+    },
+    {
+      "field": "ttm.revpar_usd",
+      "value": 293.37,
+      "source_document": "T12_FinancialStatement.xlsx",
+      "source_page": 1,
+      "raw_text": "RevPAR: $293.37",
+      "confidence": 1.0
+    },
+    {
+      "field": "ttm.rooms_revenue_usd",
+      "value": 14133420,
+      "source_document": "T12_FinancialStatement.xlsx",
+      "source_page": 2,
+      "raw_text": "Rooms Revenue: $14,133,420",
+      "confidence": 1.0
+    },
+    {
+      "field": "ttm.fb_revenue_usd",
+      "value": 3550000,
+      "source_document": "T12_FinancialStatement.xlsx",
+      "source_page": 2,
+      "raw_text": "F&B Revenue: $3,550,000",
+      "confidence": 0.98
+    },
+    {
+      "field": "ttm.total_revenue_usd",
+      "value": 18750000,
+      "source_document": "T12_FinancialStatement.xlsx",
+      "source_page": 2,
+      "raw_text": "Total Operating Revenue: $18,750,000",
+      "confidence": 1.0
+    },
+    {
+      "field": "ttm.gop_usd",
+      "value": 6449658,
+      "source_document": "T12_FinancialStatement.xlsx",
+      "source_page": 3,
+      "raw_text": "Gross Operating Profit: $6,449,658",
+      "confidence": 0.97
+    },
+    {
+      "field": "ttm.noi_usd",
+      "value": 4181000,
+      "source_document": "T12_FinancialStatement.xlsx",
+      "source_page": 4,
+      "raw_text": "Net Operating Income: $4,181,000",
+      "confidence": 0.97
+    },
+    {
+      "field": "ttm.ffe_reserve_usd",
+      "value": 750000,
+      "source_document": "T12_FinancialStatement.xlsx",
+      "source_page": 4,
+      "raw_text": "FF&E Reserve: $750,000 (4.00% of Total Revenue)",
+      "confidence": 0.94
+    },
+    {
+      "field": "ttm.mgmt_fee_usd",
+      "value": 562500,
+      "source_document": "T12_FinancialStatement.xlsx",
+      "source_page": 4,
+      "raw_text": "Base Management Fee: $562,500 (3.00% of Total Revenue)",
+      "confidence": 0.95
+    },
+    {
+      "field": "ttm.insurance_per_key_usd",
+      "value": 3803,
+      "source_document": "T12_FinancialStatement.xlsx",
+      "source_page": 4,
+      "raw_text": "Insurance: $502,000 ($3,803 per key — coastal market loading)",
+      "confidence": 0.93
+    },
+    {
+      "field": "str.compset.revpar_usd",
+      "value": 261.50,
+      "source_document": "STR_MarketReport_Q1.pdf",
+      "source_page": 3,
+      "raw_text": "Comp Set RevPAR $261.50",
+      "confidence": 0.97
+    },
+    {
+      "field": "str.subject.rgi",
+      "value": 1.122,
+      "source_document": "STR_MarketReport_Q1.pdf",
+      "source_page": 3,
+      "raw_text": "RGI 112.20",
+      "confidence": 0.97
+    },
+    {
+      "field": "renovation.pip_estimate_usd",
+      "value": 5280000,
+      "source_document": "Offering_Memorandum_Final.pdf",
+      "source_page": 61,
+      "raw_text": "$5,280,000 ($40,000 per key) of required property improvement plan work",
+      "confidence": 0.92
+    }
+  ],
+  "extraction_summary": {
+    "total_fields_extracted": 156,
+    "fields_with_high_confidence": 142,
+    "fields_requiring_review": 4,
+    "documents_processed": 3,
+    "overall_confidence": 0.94
+  }
+}

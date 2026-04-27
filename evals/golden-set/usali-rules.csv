@@ -1,0 +1,57 @@
+rule_id,name,category,formula_or_check,threshold_min,threshold_max,severity,description
+REVPAR_CHECK,RevPAR Identity,Math,abs(revpar - (occupancy * adr)) / revpar,0,0.005,CRITICAL,RevPAR must equal Occupancy multiplied by ADR within 0.5 percent rounding tolerance
+REVENUE_SUM,Revenue Components Sum,Math,abs(total_revenue - (rooms_revenue + fb_revenue + other_revenue)) / total_revenue,0,0.005,CRITICAL,Total revenue must equal sum of Rooms plus Food and Beverage plus Other Operated Departments revenue
+DEPT_EXPENSE_SUM,Departmental Expense Sum,Math,abs(total_dept_expense - sum(dept_expenses_by_line)) / total_dept_expense,0,0.005,CRITICAL,Reported total departmental expense must equal sum of departmental expense line items
+GOP_IDENTITY,GOP Identity,Math,abs(gop - (total_revenue - dept_expenses - undistributed_expenses)) / gop,0,0.005,CRITICAL,GOP must equal Total Revenue minus Departmental Expenses minus Undistributed Operating Expenses
+NOI_IDENTITY,NOI Identity,Math,abs(noi - (gop - mgmt_fee - ffe_reserve - fixed_charges)) / noi,0,0.005,CRITICAL,NOI must equal GOP minus Management Fee minus FF&E Reserve minus Fixed Charges
+GOP_MARGIN_RANGE,GOP Margin Range,Profitability,gop / total_revenue,0.15,0.55,WARN,Gross Operating Profit margin should fall between 15 and 55 percent of Total Revenue
+NOI_MARGIN_RANGE,NOI Margin Range,Profitability,noi / total_revenue,0.10,0.45,WARN,Net Operating Income margin should fall between 10 and 45 percent of Total Revenue
+FFE_RESERVE_RANGE,FF&E Reserve Range,Reserves,ffe_reserve / total_revenue,0.03,0.05,WARN,FF&E Reserve should be 3 to 5 percent of Total Revenue per industry standard
+FFE_RESERVE_BRAND_FLOOR,Brand FF&E Reserve Floor,Reserves,ffe_reserve / total_revenue,0.04,1.0,INFO,Most franchise agreements require minimum 4 percent FF&E reserve
+MGMT_FEE_RANGE,Management Fee Range,Fees,mgmt_fee / total_revenue,0.02,0.06,WARN,Base management fee typically 2 to 6 percent of Total Revenue
+INCENTIVE_MGMT_FEE_RANGE,Incentive Management Fee Range,Fees,incentive_mgmt_fee / gop,0.0,0.20,INFO,Incentive management fee typically capped at 20 percent of GOP above hurdle
+OCCUPANCY_RANGE,Occupancy Range,Operations,occupancy,0.40,0.95,WARN,Annual occupancy should fall between 40 and 95 percent for stabilized assets
+ADR_RANGE,ADR Range,Operations,adr,50,2000,WARN,ADR should fall between 50 and 2000 USD for credible US hotel deal
+REVPAR_GROWTH_RANGE,RevPAR Growth Range,Operations,revpar_yoy_growth,-0.20,0.20,WARN,Year over year RevPAR growth outside plus or minus 20 percent merits explanation
+ROOMS_DEPT_MARGIN_SELECT,Rooms Department Margin Select-Service,Profitability,rooms_dept_profit / rooms_revenue,0.60,0.80,WARN,Select-service Rooms departmental profit margin should be 60 to 80 percent of Rooms Revenue
+ROOMS_DEPT_MARGIN_FULL,Rooms Department Margin Full-Service,Profitability,rooms_dept_profit / rooms_revenue,0.70,0.85,WARN,Full-service Rooms departmental profit margin should be 70 to 85 percent of Rooms Revenue
+FB_DEPT_MARGIN_FULL,F&B Department Margin Full-Service,Profitability,fb_dept_profit / fb_revenue,0.10,0.25,WARN,Full-service Food and Beverage departmental profit margin should be 10 to 25 percent of F&B Revenue
+FB_DEPT_NA_SELECT,F&B Not Applicable Select-Service,Operations,fb_revenue / total_revenue,0.0,0.05,INFO,Select-service hotels typically have negligible F&B revenue (under 5 percent)
+LABOR_PCT_REVENUE_SELECT,Labor Percent of Revenue Select-Service,Operations,total_labor / total_revenue,0.28,0.42,WARN,Total labor cost should be 28 to 42 percent of Total Revenue for select-service
+LABOR_PCT_REVENUE_FULL,Labor Percent of Revenue Full-Service,Operations,total_labor / total_revenue,0.30,0.45,WARN,Total labor cost should be 30 to 45 percent of Total Revenue for full-service
+LABOR_PER_OCC_ROOM,Labor Per Occupied Room,Operations,labor_cost_per_occupied_room,15,90,WARN,Labor cost per occupied room should fall between 15 and 90 USD
+INSURANCE_PER_KEY,Insurance Per Key,Fixed Charges,insurance_expense / keys,500,2500,WARN,Property insurance per key should fall between 500 and 2500 USD outside of coastal markets
+INSURANCE_PER_KEY_COASTAL,Insurance Per Key Coastal Flag,Fixed Charges,insurance_expense / keys,2500,8000,INFO,Coastal market property insurance commonly exceeds 2500 USD per key after wind and flood loadings
+PROPERTY_TAX_PER_KEY,Property Tax Per Key,Fixed Charges,property_tax / property_value,0.01,0.04,WARN,Property tax should be 1 to 4 percent of assessed property value
+UTILITIES_PER_KEY,Utilities Per Key,Operations,utilities_expense / keys,800,2500,WARN,Annual utilities expense per key should fall between 800 and 2500 USD
+MARKETING_PCT_REVENUE,Marketing Percent of Revenue,Operations,marketing_expense / total_revenue,0.03,0.08,WARN,Sales and Marketing expense typically 3 to 8 percent of Total Revenue
+RM_PCT_REVENUE,Repairs and Maintenance Percent,Operations,rm_expense / total_revenue,0.03,0.07,WARN,Repairs and Maintenance typically 3 to 7 percent of Total Revenue
+A_AND_G_PCT_REVENUE,Administrative and General Percent,Operations,ag_expense / total_revenue,0.06,0.11,WARN,Administrative and General expense typically 6 to 11 percent of Total Revenue
+FRANCHISE_FEE_RANGE,Franchise Royalty Fee Range,Fees,franchise_royalty_fee / rooms_revenue,0.04,0.07,WARN,Franchise royalty fee typically 4 to 7 percent of Rooms Revenue
+FRANCHISE_MARKETING_FEE_RANGE,Franchise Marketing Fee Range,Fees,franchise_marketing_fee / rooms_revenue,0.02,0.05,WARN,Franchise marketing or program fee typically 2 to 5 percent of Rooms Revenue
+PIP_PER_KEY,PIP Per Key,Capital,pip_estimate / keys,5000,80000,INFO,Property Improvement Plan budget per key varies by brand cycle and tier
+RENOVATION_PER_KEY,Renovation Hard Cost Per Key,Capital,renovation_hard_costs / keys,15000,150000,INFO,Renovation hard costs per key vary by scope and tier
+ADR_VS_COMPSET,ADR vs Comp Set Index,Market,adr / compset_adr,0.80,1.30,WARN,Subject ADR should fall within 80 to 130 percent of comp set ADR (ARI)
+REVPAR_VS_COMPSET,RevPAR vs Comp Set Index,Market,revpar / compset_revpar,0.85,1.30,WARN,Subject RevPAR Generation Index (RGI) should fall between 0.85 and 1.30
+OCC_VS_COMPSET,Occupancy vs Comp Set Index,Market,occupancy / compset_occupancy,0.85,1.20,WARN,Subject Market Penetration Index (MPI) should fall between 0.85 and 1.20
+DEBT_YIELD_MIN,Minimum Debt Yield,Financing,noi / loan_amount,0.08,1.0,CRITICAL,Acquisition debt yield should exceed 8 percent for credible underwriting
+DSCR_MIN,Minimum DSCR,Financing,noi / annual_debt_service,1.20,99,CRITICAL,Debt Service Coverage Ratio must exceed 1.20x at acquisition
+LTV_MAX,Maximum Loan to Value,Financing,loan_amount / property_value,0,0.75,WARN,Acquisition LTV should not exceed 75 percent for hotel collateral
+LTC_MAX,Maximum Loan to Cost,Financing,loan_amount / total_capital,0,0.70,WARN,Loan to total capitalization should not exceed 70 percent
+INTEREST_RATE_RANGE,Interest Rate Sanity Check,Financing,interest_rate,0.04,0.12,INFO,Hotel mortgage interest rate should fall between 4 and 12 percent
+CAP_RATE_RANGE,Cap Rate Range,Valuation,entry_cap_rate,0.04,0.09,WARN,Entry cap rate should fall between 4 and 9 percent depending on market and tier
+EXIT_CAP_VS_ENTRY,Exit Cap Spread to Entry,Valuation,exit_cap_rate - entry_cap_rate,0.0,0.0150,INFO,Exit cap rate typically 0 to 150 bps wider than entry cap (exit cushion)
+PRICE_PER_KEY_RANGE,Price Per Key Range,Valuation,purchase_price / keys,30000,2000000,INFO,Price per key sanity check across all tiers
+IRR_RANGE_CORE,Levered IRR Core Strategy,Returns,levered_irr,0.08,0.12,INFO,Core strategy targets 8 to 12 percent levered IRR
+IRR_RANGE_VALUE_ADD,Levered IRR Value-Add Strategy,Returns,levered_irr,0.12,0.18,INFO,Value-add strategy targets 12 to 18 percent levered IRR
+IRR_RANGE_OPPORTUNISTIC,Levered IRR Opportunistic Strategy,Returns,levered_irr,0.18,0.30,INFO,Opportunistic strategy targets 18 percent or higher levered IRR
+EQUITY_MULTIPLE_MIN,Equity Multiple Minimum,Returns,equity_multiple,1.50,5.0,WARN,Equity multiple should exceed 1.5x over the hold period
+YIELD_ON_COST_MIN,Yield on Cost Minimum,Returns,stabilized_noi / total_capital,0.07,1.0,WARN,Stabilized yield on total capital should exceed 7 percent
+BROKER_VS_T12_NOI_VARIANCE,Broker vs T-12 NOI Variance,Variance,abs(broker_noi - t12_noi) / t12_noi,0,0.05,CRITICAL,Broker proforma NOI variance from T-12 actual exceeding 5 percent must be reconciled
+BROKER_VS_T12_OCC_VARIANCE,Broker vs T-12 Occupancy Variance,Variance,abs(broker_occupancy - t12_occupancy),0,0.02,WARN,Broker proforma occupancy variance from T-12 actual exceeding 200 bps must be reconciled
+BROKER_VS_T12_ADR_VARIANCE,Broker vs T-12 ADR Variance,Variance,abs(broker_adr - t12_adr) / t12_adr,0,0.05,WARN,Broker proforma ADR variance from T-12 actual exceeding 5 percent must be reconciled
+T12_VS_T24_TREND,T-12 vs T-24 Trend Sanity,Variance,abs(t12_revpar - t24_revpar) / t24_revpar,-0.15,0.15,WARN,T-12 RevPAR change versus T-24 outside plus or minus 15 percent merits review
+SEASONALITY_CHECK,Monthly Seasonality Sanity,Operations,max(monthly_revpar) / min(monthly_revpar),1.0,4.0,INFO,Peak to trough monthly RevPAR ratio above 4x indicates extreme seasonality
+PARKING_REVENUE_PCT,Parking Revenue Percent,Other Operated,parking_revenue / total_revenue,0.0,0.05,INFO,Parking revenue typically 0 to 5 percent of Total Revenue
+SPA_REVENUE_PCT,Spa Revenue Percent,Other Operated,spa_revenue / total_revenue,0.0,0.04,INFO,Spa revenue typically 0 to 4 percent of Total Revenue for resort assets
+MEETING_SPACE_REVENUE_PCT,Meeting Space Revenue Percent,Other Operated,meeting_space_revenue / total_revenue,0.0,0.08,INFO,Meeting and banquet revenue typically under 8 percent for non-group focused properties

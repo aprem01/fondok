@@ -192,7 +192,12 @@ function Step3({ data, update }: StepProps) {
 
 function Step4({ data, update }: StepProps) {
   const isAgnostic = data.brand === 'agnostic';
-  const filtered = brandFamilies;
+  const q = data.brandSearch.toLowerCase().trim();
+  const filtered = q
+    ? brandFamilies
+        .map(f => ({ ...f, brands: f.brands.filter(b => b.name.toLowerCase().includes(q)) }))
+        .filter(f => f.family.toLowerCase().includes(q) || f.brands.length > 0)
+    : brandFamilies;
 
   return (
     <div>
