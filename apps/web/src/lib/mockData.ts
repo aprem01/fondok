@@ -227,16 +227,16 @@ export const kimptonAnglerOverview = {
     grossSalePrice: 73_142_000, sellingCosts: 1_462_840,
   },
   returns: {
-    leveredIRR: 0.2348, unleveredIRR: 0.1684, equityMultiple: 2.12,
-    yearOneCoC: 0.046, hold: 5,
+    leveredIRR: 0.2301, unleveredIRR: 0.1684, equityMultiple: 2.37,
+    yearOneCoC: 0.158, hold: 5,
   },
   investment: {
     renovationBudget: 5_280_000, hardCostsPerKey: 30_000, softCosts: 528_000,
     contingency: 528_000, totalCapital: 43_309_906,
   },
   financing: {
-    loanAmount: 23_683_922, ltv: 0.65, interestRate: 0.0680, dscr: 1.57,
-    annualDebtService: 1_610_507, term: 5, amortization: 30,
+    loanAmount: 23_660_000, ltv: 0.65, interestRate: 0.0680, dscr: 2.92,
+    annualDebtService: 1_608_880, term: 5, amortization: 30,
   },
   refi: {
     refiYear: 4, refiLTV: 0.60, refiRate: 0.06, refiTerm: 5, refiAmortization: 30,
@@ -371,14 +371,14 @@ export const kimptonAnalysis = {
     { title: 'Attractive Basis', body: '$276K/key represents a 22% discount to replacement cost and 18% discount to last-trade lifestyle-tier comp set.' },
   ],
   scenarios: [
-    { name: 'Base Case', probability: 55, irr: 23.48, coc: 4.6, multiple: 2.12, exitValue: 73_142_000 },
-    { name: 'Upside Case', probability: 25, irr: 31.20, coc: 6.1, multiple: 2.58, exitValue: 84_500_000 },
-    { name: 'Downside Case', probability: 20, irr: 14.80, coc: 3.2, multiple: 1.65, exitValue: 58_200_000 },
+    { name: 'Base Case', probability: 55, irr: 23.01, coc: 15.8, multiple: 2.37, exitValue: 73_142_000 },
+    { name: 'Upside Case', probability: 25, irr: 31.20, coc: 19.6, multiple: 2.94, exitValue: 84_500_000 },
+    { name: 'Downside Case', probability: 20, irr: 14.80, coc: 11.4, multiple: 1.78, exitValue: 58_200_000 },
   ],
 };
 
 export const dealScenarios = [
-  { name: 'Downside', irr: 14.8, unleveredIrr: 9.2, multiple: 1.65, avgCoC: 3.2 },
-  { name: 'Base Case', irr: 23.48, unleveredIrr: 16.84, multiple: 2.12, avgCoC: 4.6, base: true },
-  { name: 'Upside', irr: 31.20, unleveredIrr: 22.10, multiple: 2.58, avgCoC: 6.1 },
+  { name: 'Downside', irr: 14.8, unleveredIrr: 9.2, multiple: 1.78, avgCoC: 11.4 },
+  { name: 'Base Case', irr: 23.01, unleveredIrr: 16.84, multiple: 2.37, avgCoC: 15.8, base: true },
+  { name: 'Upside', irr: 31.20, unleveredIrr: 22.10, multiple: 2.94, avgCoC: 19.6 },
 ];
