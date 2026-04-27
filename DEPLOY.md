@@ -33,6 +33,7 @@ Set on `fondok-worker` service. Use `railway variables --service fondok-worker` 
 | `ANTHROPIC_NORMALIZER_MODEL` | `claude-sonnet-4-6` |
 | `ANTHROPIC_ANALYST_MODEL` | `claude-opus-4-7` |
 | `ANTHROPIC_VARIANCE_MODEL` | `claude-sonnet-4-6` |
+| `MEMO_STREAMING_ENABLED` | `true` (Phase 5: Analyst drafts the IC memo section-by-section and publishes each finished section to the in-process `MemoBroadcast`. The web app subscribes via SSE at `GET /deals/{id}/memo/stream`. Set to `false` to fall back to the single-shot Opus call.) |
 | `PYTHONUNBUFFERED` | `1` |
 | `LANGSMITH_API_KEY` | _optional_; enables LangSmith trace export when set |
 | `LANGSMITH_PROJECT` | _optional_; defaults to `fondok-${DEPLOYMENT_ENVIRONMENT}` |

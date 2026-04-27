@@ -1,5 +1,6 @@
 'use client';
 import { useState } from 'react';
+import { useRouter } from 'next/navigation';
 import {
   FileSpreadsheet, FileText, Presentation, Download, Copy, ExternalLink,
   CheckCircle2, AlertTriangle, Sparkles, Loader2,
@@ -45,6 +46,7 @@ const risks = [
 const WORKER_URL = process.env.NEXT_PUBLIC_WORKER_URL ?? '';
 
 export default function ExportTab({ project }: { project: Project }) {
+  const router = useRouter();
   const [busy, setBusy] = useState<ExportPath | null>(null);
   const workerConnected = WORKER_URL.length > 0;
 
@@ -120,7 +122,17 @@ export default function ExportTab({ project }: { project: Project }) {
       <Card className="overflow-hidden">
         <div className="px-5 py-4 border-b border-border flex items-center justify-between">
           <h3 className="text-[14px] font-semibold text-ink-900">IC Memo Preview</h3>
-          <button className="text-[12px] text-brand-500 hover:text-brand-700 font-medium">Full Preview ↗</button>
+          <button
+            className="text-[12px] text-brand-500 hover:text-brand-700 font-medium"
+            onClick={() =>
+              router.push(
+                `/projects/${String(project.id)}?tab=analysis&sub=memo`,
+                { scroll: false },
+              )
+            }
+          >
+            Full Preview ↗
+          </button>
         </div>
         <div className="p-6 bg-gradient-to-br from-white to-ink-300/5">
           <div className="flex items-start justify-between mb-4">

@@ -199,7 +199,9 @@ export default function AnalysisTab() {
             ))}
           </div>
           <div className="flex items-center gap-2 mt-4">
-            <Button variant="primary" size="sm">Generate IC Memo <ArrowRight size={12} /></Button>
+            <Button variant="primary" size="sm" onClick={() => setSubTab('memo')}>
+              Generate IC Memo <ArrowRight size={12} />
+            </Button>
             <Button variant="secondary" size="sm"><RefreshCw size={12} /> Regenerate Summary</Button>
             <Button variant="secondary" size="sm" onClick={() => setSubTab('variance')}>
               <FileSearch size={12} /> Review {criticalCount} Critical Variance Flags
@@ -207,6 +209,8 @@ export default function AnalysisTab() {
           </div>
         </Card>
       )}
+
+      {sub === 'memo' && <MemoStream dealId={String(projectId)} />}
 
       {sub === 'risks' && (
         <div className="grid grid-cols-3 gap-5">
