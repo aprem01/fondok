@@ -2,7 +2,7 @@
 import { LayoutGrid, Download, Pencil, Link2 } from 'lucide-react';
 import { Card } from '@/components/ui/Card';
 import { Button } from '@/components/ui/Button';
-import { kimptonAnglerOverview } from '@/lib/mockData';
+import { kimptonAnglerOverview, findBrand, returnProfiles, positioningTiers } from '@/lib/mockData';
 import { fmtCurrency, fmtPct, fmtMillions, fmtNumber } from '@/lib/format';
 
 export default function OverviewTab({ projectId }: { projectId: number }) {
@@ -20,6 +20,17 @@ export default function OverviewTab({ projectId }: { projectId: number }) {
   }
 
   const o = kimptonAnglerOverview;
+
+  // Brand tier enrichment: if the deal's brand string resolves to a known
+  // catalog brand, render "Kimpton (Upper Upscale)" instead of just "Kimpton".
+  const brandMatch = findBrand(o.general.brand);
+  const brandDisplay = brandMatch
+    ? `${o.general.brand} (${brandMatch.brand.tier})`
+    : o.general.brand;
+
+  // Investment Profile rows (return strategy, IRR target, positioning tier).
+  const profile = returnProfiles.find(r => r.id === o.investmentProfile.returnProfile);
+  const positioning = positioningTiers.find(p => p.id === o.investmentProfile.positioning);
 
   return (
     <div className="space-y-5">
@@ -45,7 +56,7 @@ export default function OverviewTab({ projectId }: { projectId: number }) {
           ['Property Name', o.general.name],
           ['Location', o.general.location],
           ['Type', o.general.type],
-          ['Brand', o.general.brand],
+          ['Brand', brandDisplay],
           ['Keys', fmtNumber(o.general.keys)],
           ['Year Built', o.general.yearBuilt.toString()],
           ['GBA (SF)', fmtNumber(o.general.gba)],
@@ -54,6 +65,14 @@ export default function OverviewTab({ projectId }: { projectId: number }) {
           ['F&B Outlets', o.general.fbOutlets.toString()],
         ]} />
 
+        <Section title="Investment Profile" rows={[
+          ['Return Strategy', profile?.label ?? '—'],
+          ['IRR Target', profile?.target ?? '—'],
+          ['Positioning Tier', positioning?.label ?? '—'],
+        ]} />
+      </div>
+
+      <div className="grid grid-cols-1 gap-5">
         <Section title="Acquisition Assumptions" rows={[
           ['Purchase Price', fmtCurrency(o.acquisition.purchasePrice)],
           ['Price/Key', fmtCurrency(o.acquisition.pricePerKey)],

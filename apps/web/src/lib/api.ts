@@ -4,6 +4,8 @@
 // When NEXT_PUBLIC_WORKER_URL is unset, `isWorkerConnected()` returns false
 // and consumers should fall back to `lib/mockData.ts`.
 
+import { getCurrentOrgId } from './auth';
+
 const BASE = (process.env.NEXT_PUBLIC_WORKER_URL ?? '').replace(/\/+$/, '');
 
 export const isWorkerConnected = (): boolean => BASE.length > 0;
@@ -120,11 +122,16 @@ async function request<T>(
     );
   }
   const url = `${BASE}${path}`;
-  const init: RequestInit = { method, headers: {}, signal: opts?.signal };
+  const headers: Record<string, string> = {};
+  // Multi-tenant header: when an active Clerk org is set, scope every
+  // request to it. Worker falls back to DEFAULT_TENANT_ID when absent.
+  const orgId = getCurrentOrgId();
+  if (orgId) headers['X-Tenant-Id'] = orgId;
+  const init: RequestInit = { method, headers, signal: opts?.signal };
   if (opts?.formData) {
     init.body = opts.formData;
   } else if (body !== undefined) {
-    init.headers = { 'Content-Type': 'application/json' };
+    headers['Content-Type'] = 'application/json';
     init.body = JSON.stringify(body);
   }
   const res = await fetch(url, init);

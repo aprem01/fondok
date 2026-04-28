@@ -14,11 +14,21 @@ import {
 } from '@/lib/mockData';
 import { fmtCurrency } from '@/lib/format';
 
-const stats = [
-  { label: 'Active Projects', value: dashboardStats.activeProjects.toString(), sub: `${dashboardStats.totalProjects} total`, subTone: 'green' as const, icon: FolderKanban },
-  { label: 'Documents Processed', value: dashboardStats.documentsProcessed.toString(), sub: '', icon: FileText },
-  { label: 'Total Deal Volume', value: fmtCurrency(dashboardStats.totalDealVolume), sub: '', icon: TrendingUp },
-  { label: 'Avg. Time to IC', value: dashboardStats.avgTimeToIC ?? '—', sub: '', icon: Clock },
+type StatTone = 'default' | 'luxe';
+
+const stats: Array<{
+  label: string;
+  value: string;
+  sub: string;
+  subTone?: 'green';
+  icon: typeof FolderKanban;
+  tone: StatTone;
+}> = [
+  { label: 'Active Projects',     value: dashboardStats.activeProjects.toString(),       sub: `${dashboardStats.totalProjects} total`, subTone: 'green', icon: FolderKanban, tone: 'default' },
+  { label: 'Documents Processed', value: dashboardStats.documentsProcessed.toString(),   sub: '',                                       icon: FileText,    tone: 'default' },
+  // Total Deal Volume is the anchor metric — gets the luxe treatment.
+  { label: 'Total Deal Volume',   value: fmtCurrency(dashboardStats.totalDealVolume),    sub: '',                                       icon: TrendingUp,  tone: 'luxe'    },
+  { label: 'Avg. Time to IC',     value: dashboardStats.avgTimeToIC ?? '—',              sub: '',                                       icon: Clock,       tone: 'default' },
 ];
 
 const riskTone = (r: string) => r === 'Low' ? 'text-success-700' : r === 'Medium' ? 'text-warn-700' : 'text-danger-700';
@@ -27,6 +37,7 @@ export default function DashboardPage() {
   return (
     <div className="px-8 py-8 max-w-[1440px]">
       <PageHeader
+        eyebrow={`Portfolio · ${dashboardStats.activeProjects} active deals`}
         title="Dashboard"
         subtitle={`Welcome back, ${currentUser.name.split(' ')[0]}. Here's your portfolio overview.`}
         action={
@@ -36,24 +47,42 @@ export default function DashboardPage() {
         }
       />
 
-      {/* Stat cards */}
+      {/* Stat cards — Bloomberg-cell rhythm. */}
       <div className="grid grid-cols-4 gap-4 mb-6">
         {stats.map(s => {
           const Icon = s.icon;
+          const isLuxe = s.tone === 'luxe';
           return (
-            <Card key={s.label} className="p-5">
+            <Card
+              key={s.label}
+              tone={s.tone}
+              className={isLuxe ? 'p-5 pl-6' : 'p-5'}
+            >
               <div className="flex items-start justify-between">
-                <div>
-                  <div className="text-[12px] text-ink-500 font-medium">{s.label}</div>
-                  <div className="text-[28px] font-semibold text-ink-900 mt-1.5 tabular-nums tracking-tight">{s.value}</div>
+                <div className="min-w-0">
+                  <div className="eyebrow">{s.label}</div>
+                  <div
+                    className={
+                      'text-display-lg text-ink-900 mt-2 tabular-nums ' +
+                      (isLuxe ? 'font-display' : 'font-display')
+                    }
+                  >
+                    {s.value}
+                  </div>
                   {s.sub && (
-                    <div className={`text-[11.5px] mt-1 ${s.subTone === 'green' ? 'text-success-700' : 'text-ink-500'}`}>
+                    <div className={`text-[11.5px] mt-1.5 tabular-nums ${s.subTone === 'green' ? 'text-success-700' : 'text-ink-500'}`}>
                       {s.sub}
                     </div>
                   )}
                 </div>
-                <div className="w-9 h-9 rounded-md bg-brand-50 flex items-center justify-center">
-                  <Icon size={16} className="text-brand-500" />
+                {/* Outlined icon — refined. */}
+                <div
+                  className={
+                    'w-8 h-8 rounded-md border flex items-center justify-center flex-shrink-0 ' +
+                    (isLuxe ? 'border-gold-200 text-gold-500' : 'border-ink-200 text-ink-500')
+                  }
+                >
+                  <Icon size={14} strokeWidth={1.75} />
                 </div>
               </div>
             </Card>
@@ -64,18 +93,18 @@ export default function DashboardPage() {
       <div className="grid grid-cols-3 gap-4">
         {/* Recent Projects */}
         <Card className="col-span-2">
-          <div className="px-5 py-4 border-b border-border flex items-center justify-between">
-            <h2 className="text-[14px] font-semibold text-ink-900">Recent Projects</h2>
-            <Link href="/projects" className="text-[12px] text-brand-500 hover:text-brand-700 font-medium inline-flex items-center gap-1">
+          <div className="px-5 py-4 border-b hairline flex items-center justify-between">
+            <h2 className="font-display text-[14px] font-semibold text-ink-900 tracking-tight">Recent Projects</h2>
+            <Link href="/projects" className="text-[12px] text-brand-700 hover:text-brand-900 font-medium inline-flex items-center gap-1">
               View All <ArrowUpRight size={12} />
             </Link>
           </div>
           <div>
             {projects.map((p, i) => (
               <Link key={p.id} href={`/projects/${p.id}`}
-                className={`flex items-center gap-3 px-5 py-3.5 hover:bg-ink-300/10 transition-colors ${i < projects.length - 1 ? 'border-b border-border' : ''}`}>
+                className={`flex items-center gap-3 px-5 py-3.5 hover:bg-ink-100 transition-colors ${i < projects.length - 1 ? 'border-b hairline' : ''}`}>
                 <div className="w-9 h-9 rounded-md bg-brand-50 flex items-center justify-center flex-shrink-0">
-                  <Building2 size={16} className="text-brand-500" />
+                  <Building2 size={16} className="text-brand-500" strokeWidth={1.75} />
                 </div>
                 <div className="flex-1 min-w-0">
                   <div className="flex items-center gap-2">
@@ -86,7 +115,7 @@ export default function DashboardPage() {
                 </div>
                 <div className="text-[12.5px] text-ink-700 tabular-nums">${p.revpar} <span className="text-ink-400">RevPAR</span></div>
                 <div className={`text-[12px] font-medium w-16 text-center ${riskTone(p.risk)}`}>{p.risk}</div>
-                <div className="w-7 h-7 rounded-full bg-ink-300/30 flex items-center justify-center text-[10px] font-semibold text-ink-700">
+                <div className="w-7 h-7 rounded-full bg-ink-100 border border-ink-200 flex items-center justify-center text-[10px] font-semibold text-ink-700">
                   {p.assignee}
                 </div>
                 <KebabMenu items={[
@@ -103,15 +132,15 @@ export default function DashboardPage() {
         {/* Right rail */}
         <div className="space-y-4">
           <Card className="p-5">
-            <h3 className="text-[13.5px] font-semibold text-ink-900 mb-4">Team Activity</h3>
+            <h3 className="font-display text-[13.5px] font-semibold text-ink-900 mb-4 tracking-tight">Team Activity</h3>
             <div className="text-center py-6">
               <div className="text-[12px] text-ink-500">No recent activity</div>
             </div>
           </Card>
           <Card className="p-5">
             <div className="flex items-center gap-2 mb-4">
-              <Sparkles size={14} className="text-brand-500" />
-              <h3 className="text-[13.5px] font-semibold text-ink-900">AI Insights</h3>
+              <Sparkles size={14} className="text-gold-500" strokeWidth={1.75} />
+              <h3 className="font-display text-[13.5px] font-semibold text-ink-900 tracking-tight">AI Insights</h3>
             </div>
             <div className="text-center py-6">
               <div className="text-[12px] text-ink-500 leading-relaxed">

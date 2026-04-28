@@ -103,78 +103,96 @@ export default function ProjectDetailPage() {
   const inner = (
     <div>
       {/* Header */}
-      <div className="px-8 pt-8 pb-4 bg-white border-b border-border">
+      <div className="px-8 pt-7 pb-0 bg-white border-b hairline">
         <Link
           href="/projects"
-          className="inline-flex items-center gap-1 text-[12.5px] text-ink-700 hover:text-ink-900 mb-3 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-500 rounded"
+          className="inline-flex items-center gap-1 text-[12px] text-ink-500 hover:text-ink-900 mb-4 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-500 rounded eyebrow normal-case tracking-wide"
         >
           <ArrowLeft size={13} aria-hidden="true" /> Back to Projects
         </Link>
 
-        <div className="flex items-start justify-between mb-3">
-          <div>
-            <div className="flex items-center gap-3">
-              <h1 className="text-[24px] font-semibold text-ink-900">{project.name}</h1>
+        {/* Title + IC-ready badge + right-side controls */}
+        <div className="flex items-start justify-between gap-6 mb-4">
+          <div className="min-w-0 flex-1">
+            <div className="flex items-center gap-3 flex-wrap">
+              <h1 className="font-display text-[28px] font-semibold tracking-[-0.018em] text-ink-900 leading-[1.15]">
+                {project.name}
+              </h1>
               <StatusBadge value={project.status} />
-            </div>
-            <div className="flex items-center gap-4 text-[12.5px] text-ink-700 mt-2">
-              <div className="flex items-center gap-1"><MapPin size={12} aria-hidden="true" /> {project.city}</div>
-              <div className="flex items-center gap-1"><Building2 size={12} aria-hidden="true" /> {project.keys} keys · {project.service}</div>
-              <div className="flex items-center gap-1"><Calendar size={12} aria-hidden="true" /> Created {project.createdAt || 'Apr 2026'}</div>
             </div>
           </div>
 
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-2 flex-shrink-0">
             <button
               type="button"
               aria-label={`Open documents (${project.docs} files)`}
-              className="px-2.5 py-1.5 bg-ink-300/15 hover:bg-ink-300/30 rounded-md text-[12px] flex items-center gap-1.5 text-ink-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-500"
+              className="h-8 px-2.5 bg-white border border-border hover:border-ink-300 hover:bg-ink-100 rounded-md text-[12px] inline-flex items-center gap-1.5 text-ink-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-500"
             >
-              <FileText size={12} aria-hidden="true" /> Docs <span className="text-ink-700">{project.docs}</span>
+              <FileText size={12} aria-hidden="true" /> Docs <span className="text-ink-900 font-medium tabular-nums">{project.docs}</span>
             </button>
             <button
               type="button"
               aria-label={project.aiConfidence === 0 ? 'Awaiting documents' : `AI confidence ${project.aiConfidence}%`}
-              className="px-2.5 py-1.5 bg-brand-50 hover:bg-brand-100 rounded-md text-[12px] flex items-center gap-1.5 text-brand-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-500"
+              className="h-8 px-2.5 bg-brand-50 hover:bg-brand-100 border border-brand-100 rounded-md text-[12px] inline-flex items-center gap-1.5 text-brand-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-500"
             >
-              <Sparkles size={12} aria-hidden="true" /> {project.aiConfidence === 0 ? 'Awaiting docs' : `${project.aiConfidence}% AI Confidence`}
+              <Sparkles size={12} aria-hidden="true" />
+              {project.aiConfidence === 0 ? 'Awaiting docs' : (
+                <span className="tabular-nums"><span className="font-semibold">{project.aiConfidence}%</span> AI Confidence</span>
+              )}
             </button>
             {id === 7 && varianceCriticalCount > 0 && (
               <button
                 type="button"
                 onClick={() => router.push(`/projects/${id}?tab=analysis&sub=variance`, { scroll: false })}
-                className="px-2.5 py-1.5 bg-danger-50 hover:bg-danger-500 hover:text-white text-danger-700 border border-danger-500/30 rounded-md text-[12px] flex items-center gap-1.5 font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-500"
+                className="h-8 px-2.5 bg-danger-50 hover:bg-danger-500 hover:text-white text-danger-700 border border-danger-500/30 rounded-md text-[12px] inline-flex items-center gap-1.5 font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-500"
                 title="Open Broker Variance review"
                 aria-label={`${varianceCriticalCount} critical variance flags — open review`}
               >
                 <AlertTriangle size={12} aria-hidden="true" /> {varianceCriticalCount} critical flag{varianceCriticalCount === 1 ? '' : 's'}
               </button>
             )}
+            <div className="w-px h-5 bg-ink-200 mx-1" aria-hidden="true" />
             <button
               type="button"
               aria-label="Manage collaborators"
-              className="p-2 hover:bg-ink-300/20 rounded-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-500"
+              className="h-8 w-8 inline-flex items-center justify-center hover:bg-ink-100 rounded-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-500"
             >
               <Users size={14} className="text-ink-700" aria-hidden="true" />
             </button>
-            <Button size="sm" variant="secondary" aria-label="Share deal">
+            <Button
+              size="sm"
+              variant={project.status === 'IC Ready' ? 'premium' : 'secondary'}
+              aria-label="Share deal"
+            >
               <Share2 size={12} aria-hidden="true" /> Share
             </Button>
             <button
               type="button"
               aria-label="More actions"
-              className="p-2 hover:bg-ink-300/20 rounded-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-500"
+              className="h-8 w-8 inline-flex items-center justify-center hover:bg-ink-100 rounded-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-500"
             >
               <MoreHorizontal size={14} className="text-ink-700" aria-hidden="true" />
             </button>
           </div>
         </div>
 
+        {/* Hairline divider between title row and meta line. */}
+        <div className="border-t hairline" />
+
+        {/* Meta line — breathing room. */}
+        <div className="flex items-center gap-5 text-[12.5px] text-ink-600 py-3">
+          <div className="flex items-center gap-1.5"><MapPin size={12} className="text-ink-400" aria-hidden="true" /> {project.city}</div>
+          <div className="w-px h-3 bg-ink-200" aria-hidden="true" />
+          <div className="flex items-center gap-1.5"><Building2 size={12} className="text-ink-400" aria-hidden="true" /> <span className="tabular-nums">{project.keys}</span> keys · {project.service}</div>
+          <div className="w-px h-3 bg-ink-200" aria-hidden="true" />
+          <div className="flex items-center gap-1.5"><Calendar size={12} className="text-ink-400" aria-hidden="true" /> Created {project.createdAt || 'Apr 2026'}</div>
+        </div>
+
         {/* Tabs */}
         <nav
           role="tablist"
           aria-label="Project sections"
-          className="flex items-center gap-1 -mb-px overflow-x-auto scrollbar-thin"
+          className="flex items-center gap-1 -mb-px overflow-x-auto scrollbar-thin border-t hairline pt-1"
         >
           {tabs.map(t => {
             const Icon = t.icon;
@@ -191,7 +209,7 @@ export default function ProjectDetailPage() {
                 className={cn(
                   'flex items-center gap-1.5 px-3 py-2.5 text-[12.5px] border-b-2 whitespace-nowrap transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-500 rounded-t',
                   isActive
-                    ? 'border-brand-500 text-brand-700 font-medium'
+                    ? 'border-brand-500 text-brand-700 font-semibold'
                     : 'border-transparent text-ink-700 hover:text-ink-900'
                 )}>
                 <Icon size={13} aria-hidden="true" /> {t.label}

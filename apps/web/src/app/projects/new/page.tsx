@@ -12,6 +12,7 @@ import { Button } from '@/components/ui/Button';
 import { dealStages, returnProfiles, positioningTiers, brandFamilies } from '@/lib/mockData';
 import { cn } from '@/lib/format';
 import { api, isWorkerConnected } from '@/lib/api';
+import { useToast } from '@/components/ui/Toast';
 
 const steps = [
   { n: 1, label: 'Deal Details' },
@@ -27,6 +28,7 @@ const iconForPos: Record<string, any> = { default: Sparkles, luxury: Crown, upsc
 
 export default function NewProjectPage() {
   const router = useRouter();
+  const { toast } = useToast();
   const [step, setStep] = useState(1);
   const [submitting, setSubmitting] = useState(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
@@ -49,29 +51,46 @@ export default function NewProjectPage() {
     setSubmitError(null);
     if (!data.dealName.trim()) {
       setSubmitError('Deal name is required.');
+      toast('Deal name is required', { type: 'error' });
       setStep(1);
       return;
     }
     if (!isWorkerConnected()) {
       // Demo mode: nothing to persist. Drop a brief "saved locally" toast and go.
       setSavedLocally(true);
+      toast(`Saved locally - ${data.dealName.trim()}`, { type: 'info' });
       setTimeout(() => router.push('/projects'), 600);
       return;
     }
     setSubmitting(true);
     try {
-      const created = await api.deals.create({
+      // Coerce keys to int (default 100 if blank or NaN). Worker rejects
+      // string keys; an empty <input type=number> ships as '' and would fail
+      // schema validation.
+      const parsedKeys = Number.parseInt(data.keys, 10);
+      const keysInt = Number.isFinite(parsedKeys) && parsedKeys > 0 ? parsedKeys : 100;
+      const brandValue = data.brand === 'agnostic' ? null : data.brand;
+
+      // The worker's `NewDealBody` schema (apps/worker/app/api/deals.py) is
+      // narrow today, but we send the wizard's full intent: extra fields are
+      // either persisted by newer worker builds (Phase 6+) or harmlessly
+      // ignored. Cast at the call site so we don't have to touch lib/api.ts.
+      const body = {
         name: data.dealName.trim(),
         city: data.city.trim() || null,
-        keys: data.keys ? Number(data.keys) : null,
-        // Worker schema expects `service`; positioning/return profile aren't
-        // first-class on the create body yet (Phase 6+). We pass what's safe.
+        keys: keysInt,
         service: null,
-      });
+        brand: brandValue,
+        return_profile: data.returnProfile,
+        positioning: data.positioning,
+      };
+      const created = await api.deals.create(body as Parameters<typeof api.deals.create>[0]);
+      toast(`Deal created · ${created.name}`, { type: 'success' });
       router.push(`/projects/${created.id}`);
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err);
       setSubmitError(msg);
+      toast(`Couldn't create deal: ${msg}`, { type: 'error' });
       setSubmitting(false);
     }
   };

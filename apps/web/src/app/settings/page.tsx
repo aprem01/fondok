@@ -1,18 +1,95 @@
 'use client';
 import { useState } from 'react';
-import { MoreHorizontal } from 'lucide-react';
+import { AlertTriangle, Loader2, MoreHorizontal, Trash2 } from 'lucide-react';
 import PageHeader from '@/components/ui/PageHeader';
 import { Card } from '@/components/ui/Card';
 import { Button } from '@/components/ui/Button';
 import { Badge } from '@/components/ui/Badge';
 import { workspace, teamMembers, notificationDefaults, integrations } from '@/lib/mockData';
 import { cn } from '@/lib/format';
+import { useToast } from '@/components/ui/Toast';
+import { api, isWorkerConnected, WorkerError } from '@/lib/api';
 
 const tabs = ['Team', 'Workspace', 'Notifications', 'Integrations'];
 
 export default function SettingsPage() {
   const [tab, setTab] = useState('Team');
   const [notifs, setNotifs] = useState(notificationDefaults);
+  const { toast } = useToast();
+  const [confirmReset, setConfirmReset] = useState<{ count: number } | null>(null);
+  const [resetting, setResetting] = useState(false);
+  const workerConnected = isWorkerConnected();
+
+  const onSaveDefaults = () => {
+    // No-op persistence today — mock workspace defaults aren't sent anywhere.
+    // Surface a toast so users get feedback that their click registered.
+    toast('Workspace defaults saved', { type: 'success' });
+  };
+
+  const openResetModal = async () => {
+    if (!workerConnected) return;
+    try {
+      const deals = await api.deals.list();
+      setConfirmReset({ count: deals.length });
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      toast(`Couldn't list deals: ${msg}`, { type: 'error' });
+    }
+  };
+
+  const onConfirmReset = async () => {
+    setResetting(true);
+    try {
+      const deals = await api.deals.list();
+      if (deals.length === 0) {
+        toast('No worker deals to archive', { type: 'info' });
+        setConfirmReset(null);
+        setResetting(false);
+        return;
+      }
+      let archived = 0;
+      let failed = 0;
+      for (const d of deals) {
+        try {
+          // Worker exposes DELETE /deals/{id}; if the endpoint isn't wired
+          // we still surface the failure per-deal rather than aborting.
+          await fetch(`${process.env.NEXT_PUBLIC_WORKER_URL}/deals/${d.id}`, {
+            method: 'DELETE',
+          }).then((r) => {
+            if (!r.ok) {
+              throw new WorkerError(
+                `DELETE /deals/${d.id} → ${r.status}`,
+                r.status,
+                '',
+              );
+            }
+          });
+          archived += 1;
+          toast(`Archived ${d.name || d.id.slice(0, 8)}`, {
+            type: 'info',
+            duration: 1500,
+          });
+        } catch (err) {
+          failed += 1;
+          const msg = err instanceof Error ? err.message : String(err);
+          toast(`Couldn't archive ${d.name}: ${msg}`, { type: 'error' });
+        }
+      }
+      if (failed === 0) {
+        toast(`Reset complete · ${archived} deal${archived === 1 ? '' : 's'} archived`, {
+          type: 'success',
+        });
+      } else {
+        toast(
+          `Reset partial · ${archived} archived, ${failed} failed`,
+          { type: 'error' },
+        );
+      }
+    } finally {
+      setResetting(false);
+      setConfirmReset(null);
+    }
+  };
 
   return (
     <div className="px-8 py-8 max-w-[1100px]">
@@ -94,7 +171,80 @@ export default function SettingsPage() {
               <Field label="Default LTV" defaultValue="65%" />
               <Field label="Default Interest Rate" defaultValue="6.25%" />
             </div>
-            <Button variant="primary">Save Defaults</Button>
+            <Button variant="primary" onClick={onSaveDefaults}>Save Defaults</Button>
+          </Card>
+
+          {workerConnected && (
+            <Card className="p-5 border-danger-500/40">
+              <div className="flex items-center gap-2 mb-1">
+                <AlertTriangle size={14} className="text-danger-700" />
+                <h3 className="text-[14px] font-semibold text-danger-700">Danger Zone</h3>
+              </div>
+              <div className="border-t border-border my-3" />
+              <div className="flex items-start justify-between gap-4">
+                <div className="flex-1">
+                  <div className="text-[13px] font-semibold text-ink-900">Reset Demo Data</div>
+                  <p className="text-[12px] text-ink-500 mt-1 leading-relaxed">
+                    Deletes all worker-side deals you&apos;ve created (your 4 mock projects always remain).
+                  </p>
+                </div>
+                <Button
+                  variant="danger"
+                  size="sm"
+                  onClick={openResetModal}
+                  disabled={resetting}
+                >
+                  {resetting ? <Loader2 size={12} className="animate-spin" /> : <Trash2 size={12} />}
+                  Reset Demo Data
+                </Button>
+              </div>
+            </Card>
+          )}
+        </div>
+      )}
+
+      {confirmReset && (
+        <div
+          role="dialog"
+          aria-modal="true"
+          className="fixed inset-0 z-50 flex items-center justify-center bg-ink-900/40 px-4"
+          onClick={() => !resetting && setConfirmReset(null)}
+        >
+          <Card
+            className="p-5 max-w-md w-full"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-start gap-3 mb-3">
+              <div className="w-9 h-9 rounded-md bg-danger-50 flex items-center justify-center flex-shrink-0">
+                <AlertTriangle size={16} className="text-danger-700" />
+              </div>
+              <div>
+                <h4 className="text-[14px] font-semibold text-ink-900">Are you sure?</h4>
+                <p className="text-[12.5px] text-ink-500 mt-1 leading-relaxed">
+                  This will archive {confirmReset.count} deal{confirmReset.count === 1 ? '' : 's'} from the worker.
+                  Mock projects remain available regardless. This action cannot be undone.
+                </p>
+              </div>
+            </div>
+            <div className="flex items-center justify-end gap-2 mt-4">
+              <Button
+                variant="secondary"
+                size="sm"
+                onClick={() => setConfirmReset(null)}
+                disabled={resetting}
+              >
+                Cancel
+              </Button>
+              <Button
+                variant="danger"
+                size="sm"
+                onClick={onConfirmReset}
+                disabled={resetting}
+              >
+                {resetting && <Loader2 size={12} className="animate-spin" />}
+                {resetting ? 'Resetting…' : `Delete ${confirmReset.count} deal${confirmReset.count === 1 ? '' : 's'}`}
+              </Button>
+            </div>
           </Card>
         </div>
       )}

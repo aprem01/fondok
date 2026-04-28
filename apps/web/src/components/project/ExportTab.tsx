@@ -9,6 +9,7 @@ import { Card } from '@/components/ui/Card';
 import { Button } from '@/components/ui/Button';
 import { Badge } from '@/components/ui/Badge';
 import type { Project } from '@/lib/mockData';
+import { useToast } from '@/components/ui/Toast';
 
 type ExportPath = 'excel' | 'memo.pdf' | 'presentation.pptx';
 
@@ -45,14 +46,22 @@ const risks = [
 // When unset (production today) we disable the buttons and surface a tooltip.
 const WORKER_URL = process.env.NEXT_PUBLIC_WORKER_URL ?? '';
 
+const labelByPath: Record<ExportPath, string> = {
+  excel: 'Excel model',
+  'memo.pdf': 'IC memo',
+  'presentation.pptx': 'deal presentation',
+};
+
 export default function ExportTab({ project }: { project: Project }) {
   const router = useRouter();
   const [busy, setBusy] = useState<ExportPath | null>(null);
   const workerConnected = WORKER_URL.length > 0;
+  const { toast } = useToast();
 
   const handleDownload = (path: ExportPath) => {
     if (!workerConnected) return;
     setBusy(path);
+    toast(`Generating ${labelByPath[path]}…`, { type: 'info' });
     // Stream the file via the worker — FileResponse on the Python side sets
     // Content-Disposition so the browser saves it directly.
     window.location.href = `${WORKER_URL}/deals/${project.id}/export/${path}`;
@@ -73,6 +82,21 @@ export default function ExportTab({ project }: { project: Project }) {
           </Badge>
         </div>
       </Card>
+
+      {!workerConnected && (
+        <Card className="p-5 border-warn-500/30 bg-warn-50">
+          <div className="flex items-start gap-3">
+            <AlertTriangle size={16} className="text-warn-700 flex-shrink-0 mt-0.5" />
+            <div className="flex-1">
+              <div className="text-[13px] font-semibold text-ink-900">Run the model and generate the IC memo to enable downloads</div>
+              <p className="text-[12px] text-ink-700 mt-1 leading-relaxed">
+                Exports are produced by the Fondok worker. Connect the worker (set <span className="font-mono">NEXT_PUBLIC_WORKER_URL</span>)
+                or visit a worker-backed deal to generate Excel models, IC memos, and presentation decks.
+              </p>
+            </div>
+          </div>
+        </Card>
+      )}
 
       <div className="grid grid-cols-3 gap-4">
         {deliverables.map(d => {
@@ -194,7 +218,12 @@ export default function ExportTab({ project }: { project: Project }) {
             <h3 className="text-[14px] font-semibold text-ink-900">Ready for Investment Committee?</h3>
             <p className="text-[12px] text-ink-700 mt-1">Mark this project as IC Ready to notify your team for review.</p>
           </div>
-          <Button variant="primary">Mark as IC Ready</Button>
+          <Button
+            variant="primary"
+            onClick={() => toast('Marked as IC Ready', { type: 'success' })}
+          >
+            Mark as IC Ready
+          </Button>
         </div>
       </Card>
     </div>

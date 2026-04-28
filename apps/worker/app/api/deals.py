@@ -18,7 +18,7 @@ from datetime import UTC, datetime
 from typing import Annotated, Any
 from uuid import UUID, uuid4
 
-from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, status
+from fastapi import APIRouter, BackgroundTasks, Depends, Header, HTTPException, status
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import text
@@ -35,6 +35,31 @@ except ImportError:  # pragma: no cover
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
+
+
+# ─────────────────────────── tenant resolution ───────────────────────────
+
+
+async def get_tenant_id(
+    x_tenant_id: Annotated[str | None, Header(alias="X-Tenant-Id")] = None,
+) -> UUID:
+    """Resolve the tenant for this request.
+
+    Reads the ``X-Tenant-Id`` header set by the web app's `lib/api.ts`
+    (mirrors the active Clerk Organization id). When the header is
+    missing or unparseable we fall back to ``settings.DEFAULT_TENANT_ID``
+    so the unauthenticated demo persona keeps working end-to-end.
+    """
+    settings = get_settings()
+    if x_tenant_id:
+        try:
+            return UUID(x_tenant_id)
+        except ValueError:
+            logger.warning(
+                "get_tenant_id: malformed X-Tenant-Id header %r — using default",
+                x_tenant_id,
+            )
+    return UUID(settings.DEFAULT_TENANT_ID)
 
 
 # ─────────────────────────── request bodies ───────────────────────────
@@ -250,9 +275,9 @@ async def _write_audit(
 @router.get("", response_model=list[DealRecord])
 async def list_deals(
     session: Annotated[AsyncSession, Depends(get_session)],
+    tenant_id: Annotated[UUID, Depends(get_tenant_id)],
 ) -> list[DealRecord]:
     """Return all deals for the current tenant, newest first."""
-    settings = get_settings()
     rows = await session.execute(
         text(
             f"""
@@ -262,7 +287,7 @@ async def list_deals(
              ORDER BY created_at DESC
             """
         ),
-        {"tenant": settings.DEFAULT_TENANT_ID},
+        {"tenant": str(tenant_id)},
     )
     return [_row_to_record(dict(r._mapping)) for r in rows.fetchall()]
 
@@ -271,16 +296,16 @@ async def list_deals(
 async def create_deal(
     body: CreateDealBody,
     session: Annotated[AsyncSession, Depends(get_session)],
+    tenant_id: Annotated[UUID, Depends(get_tenant_id)],
 ) -> DealRecord:
     """Insert a new deal row + audit log entry."""
-    settings = get_settings()
-    tenant_id = settings.DEFAULT_TENANT_ID
+    tenant_id_str = str(tenant_id)
     deal_id = uuid4()
     now = _now()
 
     params = {
         "id": str(deal_id),
-        "tenant": tenant_id,
+        "tenant": tenant_id_str,
         "name": body.name,
         "city": body.city,
         "keys": body.keys,
@@ -318,7 +343,7 @@ async def create_deal(
 
     await _write_audit(
         session,
-        tenant_id=tenant_id,
+        tenant_id=tenant_id_str,
         deal_id=str(deal_id),
         actor_id="system",
         action="deal.created",
@@ -332,10 +357,10 @@ async def create_deal(
     )
     await session.commit()
 
-    logger.info("deals.create: deal=%s tenant=%s name=%r", deal_id, tenant_id, body.name)
+    logger.info("deals.create: deal=%s tenant=%s name=%r", deal_id, tenant_id_str, body.name)
     return DealRecord(
         id=deal_id,
-        tenant_id=UUID(tenant_id),
+        tenant_id=tenant_id,
         name=body.name,
         city=body.city,
         keys=body.keys,
@@ -357,8 +382,8 @@ async def create_deal(
 async def get_deal(
     deal_id: UUID,
     session: Annotated[AsyncSession, Depends(get_session)],
+    tenant_id: Annotated[UUID, Depends(get_tenant_id)],
 ) -> DealRecord:
-    settings = get_settings()
     row = (
         await session.execute(
             text(
@@ -368,7 +393,7 @@ async def get_deal(
                  WHERE id = :id AND tenant_id = :tenant
                 """
             ),
-            {"id": str(deal_id), "tenant": settings.DEFAULT_TENANT_ID},
+            {"id": str(deal_id), "tenant": str(tenant_id)},
         )
     ).first()
     if row is None:
@@ -384,10 +409,10 @@ async def update_deal(
     deal_id: UUID,
     body: UpdateDealBody,
     session: Annotated[AsyncSession, Depends(get_session)],
+    tenant_id: Annotated[UUID, Depends(get_tenant_id)],
 ) -> DealRecord:
     """Partial update. Sends an audit entry with the diff."""
-    settings = get_settings()
-    tenant_id = settings.DEFAULT_TENANT_ID
+    tenant_id_str = str(tenant_id)
 
     existing = (
         await session.execute(
@@ -395,7 +420,7 @@ async def update_deal(
                 f"SELECT {_DEAL_COLUMNS} FROM deals "
                 "WHERE id = :id AND tenant_id = :tenant"
             ),
-            {"id": str(deal_id), "tenant": tenant_id},
+            {"id": str(deal_id), "tenant": tenant_id_str},
         )
     ).first()
     if existing is None:
@@ -410,7 +435,7 @@ async def update_deal(
         return _row_to_record(dict(existing._mapping))
 
     set_clauses: list[str] = []
-    params: dict[str, Any] = {"id": str(deal_id), "tenant": tenant_id}
+    params: dict[str, Any] = {"id": str(deal_id), "tenant": tenant_id_str}
     for field, value in changes.items():
         set_clauses.append(f"{field} = :{field}")
         params[field] = value
@@ -431,7 +456,7 @@ async def update_deal(
 
     await _write_audit(
         session,
-        tenant_id=tenant_id,
+        tenant_id=tenant_id_str,
         deal_id=str(deal_id),
         actor_id="system",
         action="deal.updated",
@@ -445,7 +470,7 @@ async def update_deal(
                 f"SELECT {_DEAL_COLUMNS} FROM deals "
                 "WHERE id = :id AND tenant_id = :tenant"
             ),
-            {"id": str(deal_id), "tenant": tenant_id},
+            {"id": str(deal_id), "tenant": tenant_id_str},
         )
     ).first()
     assert refreshed is not None  # we just updated it
@@ -457,10 +482,10 @@ async def update_deal(
 async def archive_deal(
     deal_id: UUID,
     session: Annotated[AsyncSession, Depends(get_session)],
+    tenant_id: Annotated[UUID, Depends(get_tenant_id)],
 ) -> DealRecord:
     """Soft-delete: flip status to ``Archived``. The row is kept."""
-    settings = get_settings()
-    tenant_id = settings.DEFAULT_TENANT_ID
+    tenant_id_str = str(tenant_id)
 
     existing = (
         await session.execute(
@@ -468,7 +493,7 @@ async def archive_deal(
                 f"SELECT {_DEAL_COLUMNS} FROM deals "
                 "WHERE id = :id AND tenant_id = :tenant"
             ),
-            {"id": str(deal_id), "tenant": tenant_id},
+            {"id": str(deal_id), "tenant": tenant_id_str},
         )
     ).first()
     if existing is None:
@@ -486,12 +511,12 @@ async def archive_deal(
              WHERE id = :id AND tenant_id = :tenant
             """
         ),
-        {"id": str(deal_id), "tenant": tenant_id, "ts": now},
+        {"id": str(deal_id), "tenant": tenant_id_str, "ts": now},
     )
 
     await _write_audit(
         session,
-        tenant_id=tenant_id,
+        tenant_id=tenant_id_str,
         deal_id=str(deal_id),
         actor_id="system",
         action="deal.archived",
@@ -505,11 +530,11 @@ async def archive_deal(
                 f"SELECT {_DEAL_COLUMNS} FROM deals "
                 "WHERE id = :id AND tenant_id = :tenant"
             ),
-            {"id": str(deal_id), "tenant": tenant_id},
+            {"id": str(deal_id), "tenant": tenant_id_str},
         )
     ).first()
     assert refreshed is not None
-    logger.info("deals.archive: deal=%s tenant=%s", deal_id, tenant_id)
+    logger.info("deals.archive: deal=%s tenant=%s", deal_id, tenant_id_str)
     return _row_to_record(dict(refreshed._mapping))
 
 
@@ -517,6 +542,7 @@ async def archive_deal(
 async def get_deal_status(
     deal_id: UUID,
     session: Annotated[AsyncSession, Depends(get_session)],
+    tenant_id: Annotated[UUID, Depends(get_tenant_id)],
 ) -> DealStatusResponse:
     """Aggregate the deal + document state into a single status pill.
 
@@ -525,8 +551,7 @@ async def get_deal_status(
     document mid-flight), ``ready`` (every doc extracted), or has
     failures.
     """
-    settings = get_settings()
-    tenant_id = settings.DEFAULT_TENANT_ID
+    tenant_id_str = str(tenant_id)
 
     deal_row = (
         await session.execute(
@@ -537,7 +562,7 @@ async def get_deal_status(
                  WHERE id = :id AND tenant_id = :tenant
                 """
             ),
-            {"id": str(deal_id), "tenant": tenant_id},
+            {"id": str(deal_id), "tenant": tenant_id_str},
         )
     ).first()
     if deal_row is None:

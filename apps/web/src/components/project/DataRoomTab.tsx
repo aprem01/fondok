@@ -1,5 +1,5 @@
 'use client';
-import { useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useParams, useRouter } from 'next/navigation';
 import {
   UploadCloud, FolderOpen, Info, FileText, MoreHorizontal, FileSpreadsheet,
@@ -12,6 +12,7 @@ import { documentChecklist, engines, kimptonDocuments } from '@/lib/mockData';
 import { criticalCount, warnCount, varianceFlags } from '@/lib/varianceData';
 import { isWorkerConnected, WorkerDocument, ExtractionField } from '@/lib/api';
 import { useDocuments } from '@/lib/hooks/useDocuments';
+import { useToast } from '@/components/ui/Toast';
 
 // Documents with broker-vs-T12 variance flags raised against them.
 const VARIANCE_DOCS = new Set([
@@ -70,9 +71,33 @@ export default function DataRoomTab({ projectId }: { projectId: number }) {
 
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [selectedDoc, setSelectedDoc] = useState<string | null>(null);
+  const { toast } = useToast();
+  // Track which doc IDs we've already toasted on extraction so we don't
+  // re-fire as the polling loop re-emits the same EXTRACTED record.
+  const extractionToastedRef = useRef<Set<string>>(new Set());
 
   const { documents, uploading, upload, extractions, error: docsError, refresh } =
     useDocuments(rawId);
+
+  // Surface a toast each time a doc transitions to EXTRACTED.
+  useEffect(() => {
+    documents.forEach((d) => {
+      if (extractionToastedRef.current.has(d.id)) return;
+      const ex = extractions[d.id];
+      if (ex && ex.status === 'EXTRACTED') {
+        extractionToastedRef.current.add(d.id);
+        const fieldCount = ex.fields?.length ?? 0;
+        toast(`Extracted ${fieldCount} field${fieldCount === 1 ? '' : 's'} from ${d.filename}`, {
+          type: 'success',
+        });
+      } else if (d.status === 'FAILED') {
+        if (!extractionToastedRef.current.has(d.id)) {
+          extractionToastedRef.current.add(d.id);
+          toast(`Extraction failed for ${d.filename}`, { type: 'error' });
+        }
+      }
+    });
+  }, [documents, extractions, toast]);
 
   // When we're on a real (UUID) deal, use live documents; otherwise mock.
   const liveMode = isWorkerConnected() && !isMockId;
@@ -167,18 +192,23 @@ export default function DataRoomTab({ projectId }: { projectId: number }) {
     e.target.value = ''; // reset so same file can be re-picked
     if (files.length === 0) return;
     if (!liveMode) {
-      window.alert(
+      toast(
         isWorkerConnected()
-          ? 'Uploads are only supported on real worker deals. Use “New Project” to create one.'
-          : 'Worker not connected — uploads are disabled in demo mode.',
+          ? 'Uploads only work on worker-backed deals. Create one via "New Project".'
+          : 'Worker not connected - uploads disabled in demo mode.',
+        { type: 'error' },
       );
       return;
     }
+    files.forEach((f) =>
+      toast(`Uploading ${f.name}…`, { type: 'info', duration: 2500 }),
+    );
     try {
       await upload(files);
     } catch (err) {
       console.error('upload failed', err);
-      window.alert(`Upload failed: ${err instanceof Error ? err.message : String(err)}`);
+      const msg = err instanceof Error ? err.message : String(err);
+      toast(`Upload failed: ${msg}`, { type: 'error' });
     }
   };
 
@@ -226,30 +256,73 @@ export default function DataRoomTab({ projectId }: { projectId: number }) {
         </div>
       </Card>
 
-      <Card className="p-5">
-        <div className="flex items-center gap-4">
-          <div className="w-14 h-14 rounded-lg bg-brand-50 flex items-center justify-center flex-shrink-0">
-            <UploadCloud size={24} className="text-brand-500" />
+      {liveMode && docs.length === 0 ? (
+        <Card className="p-8">
+          <div
+            onClick={onPickFiles}
+            role="button"
+            tabIndex={0}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter' || e.key === ' ') onPickFiles();
+            }}
+            className="cursor-pointer border-2 border-dashed border-ink-300 rounded-lg py-12 px-6 text-center hover:border-brand-500 hover:bg-brand-50/40 transition-colors"
+          >
+            <div className="w-14 h-14 mx-auto rounded-lg bg-brand-50 flex items-center justify-center mb-3">
+              <UploadCloud size={26} className="text-brand-500" />
+            </div>
+            <div className="text-[14px] font-semibold text-ink-900">
+              Upload an OM, T-12, or rent roll to start the AI underwriting flow
+            </div>
+            <div className="text-[12px] text-ink-500 mt-1">
+              Drag &amp; drop or click anywhere in this box · PDF, Excel, CSV, Word
+            </div>
+            <div className="flex items-center justify-center gap-2 mt-4">
+              <Button variant="primary" size="sm" disabled={uploading}>
+                {uploading ? <Loader2 size={12} className="animate-spin" /> : null}
+                {uploading ? 'Uploading…' : 'Choose Files'}
+              </Button>
+              <Button
+                variant="secondary"
+                size="sm"
+                onClick={(e) => e.stopPropagation()}
+              >
+                Browse Templates
+              </Button>
+            </div>
           </div>
-          <div className="flex-1">
-            <h3 className="text-[14px] font-semibold text-ink-900">Upload Documents</h3>
-            <p className="text-[12px] text-ink-500 mt-0.5">
-              Drag and drop OM, T12, STR reports · AI auto-extracts key data
-            </p>
+          {docsError && (
+            <div className="mt-3 px-3 py-2 rounded-md bg-danger-50 text-danger-700 text-[11.5px] flex items-center gap-2">
+              <AlertTriangle size={12} /> {docsError}
+              <button onClick={refresh} className="ml-auto underline hover:no-underline">Retry</button>
+            </div>
+          )}
+        </Card>
+      ) : (
+        <Card className="p-5">
+          <div className="flex items-center gap-4">
+            <div className="w-14 h-14 rounded-lg bg-brand-50 flex items-center justify-center flex-shrink-0">
+              <UploadCloud size={24} className="text-brand-500" />
+            </div>
+            <div className="flex-1">
+              <h3 className="text-[14px] font-semibold text-ink-900">Upload Documents</h3>
+              <p className="text-[12px] text-ink-500 mt-0.5">
+                Drag and drop OM, T12, STR reports · AI auto-extracts key data
+              </p>
+            </div>
+            <Button variant="primary" size="sm" onClick={onPickFiles} disabled={uploading}>
+              {uploading ? <Loader2 size={12} className="animate-spin" /> : null}
+              {uploading ? 'Uploading…' : 'Choose Files'}
+            </Button>
+            <Button variant="secondary" size="sm">Browse Templates</Button>
           </div>
-          <Button variant="primary" size="sm" onClick={onPickFiles} disabled={uploading}>
-            {uploading ? <Loader2 size={12} className="animate-spin" /> : null}
-            {uploading ? 'Uploading…' : 'Choose Files'}
-          </Button>
-          <Button variant="secondary" size="sm">Browse Templates</Button>
-        </div>
-        {docsError && liveMode && (
-          <div className="mt-3 px-3 py-2 rounded-md bg-danger-50 text-danger-700 text-[11.5px] flex items-center gap-2">
-            <AlertTriangle size={12} /> {docsError}
-            <button onClick={refresh} className="ml-auto underline hover:no-underline">Retry</button>
-          </div>
-        )}
-      </Card>
+          {docsError && liveMode && (
+            <div className="mt-3 px-3 py-2 rounded-md bg-danger-50 text-danger-700 text-[11.5px] flex items-center gap-2">
+              <AlertTriangle size={12} /> {docsError}
+              <button onClick={refresh} className="ml-auto underline hover:no-underline">Retry</button>
+            </div>
+          )}
+        </Card>
+      )}
 
       <div className="grid grid-cols-3 gap-5">
         {/* Document Checklist */}

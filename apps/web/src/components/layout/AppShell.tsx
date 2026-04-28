@@ -1,9 +1,11 @@
 'use client';
 import { useEffect, useState } from 'react';
-import { Menu, Sparkles } from 'lucide-react';
+import { Menu } from 'lucide-react';
 import Sidebar from './Sidebar';
+import FondokMark from '@/components/brand/FondokMark';
 import { api, isWorkerConnected, workerUrl } from '@/lib/api';
 import { cn } from '@/lib/format';
+import { ToastProvider } from '@/components/ui/Toast';
 
 type WorkerHealth = 'unknown' | 'green' | 'red' | 'offline';
 
@@ -38,32 +40,28 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
   const env = process.env.NEXT_PUBLIC_VERCEL_ENV ?? process.env.NODE_ENV ?? 'development';
 
   return (
+    <ToastProvider>
     <div className="flex min-h-screen">
       <Sidebar mobileOpen={mobileOpen} onCloseMobile={() => setMobileOpen(false)} />
       <main role="main" className="flex-1 md:ml-[216px] min-h-screen bg-bg flex flex-col">
         {/* Mobile top bar */}
-        <div className="md:hidden sticky top-0 z-20 flex items-center gap-3 px-4 py-3 bg-white border-b border-border">
+        <div className="md:hidden sticky top-0 z-20 flex items-center gap-3 px-4 py-3 bg-white border-b hairline">
           <button
             type="button"
             aria-label="Open menu"
             onClick={() => setMobileOpen(true)}
-            className="p-1.5 rounded-md hover:bg-ink-300/20 text-ink-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-500"
+            className="p-1.5 rounded-md hover:bg-ink-100 text-ink-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-500"
           >
             <Menu size={18} aria-hidden="true" />
           </button>
-          <div className="flex items-center gap-2">
-            <div className="w-7 h-7 rounded-md bg-gradient-to-br from-brand-500 to-brand-700 flex items-center justify-center shadow-sm">
-              <Sparkles size={13} className="text-white" aria-hidden="true" />
-            </div>
-            <div className="font-semibold text-[14px] text-ink-900">Fondok AI</div>
-          </div>
+          <FondokMark size="sm" />
         </div>
         <div className="flex-1">{children}</div>
 
         {/* Observability footer */}
         <footer
           aria-label="Build and worker status"
-          className="border-t border-border bg-white px-4 md:px-8 py-2 flex items-center justify-between text-[10.5px] text-ink-700"
+          className="border-t hairline bg-white px-4 md:px-8 py-2 flex items-center justify-between text-[10.5px] text-ink-700"
         >
           <div className="flex items-center gap-3">
             <span className="font-medium text-ink-900">Fondok</span>
@@ -92,5 +90,6 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
         </footer>
       </main>
     </div>
+    </ToastProvider>
   );
 }

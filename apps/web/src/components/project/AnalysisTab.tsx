@@ -111,6 +111,11 @@ export default function AnalysisTab() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const projectId = Number(params?.id);
+  // Only the Kimpton Angler mock deal (id 7) ships with cached analysis data.
+  // Every other deal — including any worker-backed UUID — gets an empty
+  // state nudge until we wire live analysis fetching.
+  const rawId = (params?.id as string | undefined) ?? String(projectId);
+  const hasCannedAnalysis = /^\d+$/.test(rawId) && Number(rawId) === 7;
 
   // Sub-tab is driven by ?sub= so DataRoom / header pills can deep-link.
   const requested = (searchParams.get('sub') as SubTab | null) || 'summary';
@@ -184,7 +189,24 @@ export default function AnalysisTab() {
         </div>
       </Card>
 
-      {sub === 'summary' && (
+      {sub === 'summary' && !hasCannedAnalysis && (
+        <Card className="p-8 text-center">
+          <div className="w-12 h-12 mx-auto rounded-lg bg-brand-50 flex items-center justify-center mb-3">
+            <Sparkles size={20} className="text-brand-500" />
+          </div>
+          <h3 className="text-[14px] font-semibold text-ink-900 mb-1">No analysis yet</h3>
+          <p className="text-[12.5px] text-ink-500 max-w-md mx-auto leading-relaxed">
+            Generate the IC memo to see AI investment summary, risk assessment, and variance flags.
+          </p>
+          <div className="mt-4">
+            <Button variant="primary" size="sm" onClick={() => setSubTab('memo')}>
+              <Sparkles size={12} /> Generate IC Memo
+            </Button>
+          </div>
+        </Card>
+      )}
+
+      {sub === 'summary' && hasCannedAnalysis && (
         <Card className="p-5">
           <div className="flex items-center gap-2 mb-3">
             <Sparkles size={15} className="text-brand-500" />
@@ -256,7 +278,22 @@ export default function AnalysisTab() {
         </div>
       )}
 
-      {sub === 'variance' && <VarianceTab />}
+      {sub === 'variance' && (
+        hasCannedAnalysis ? (
+          <VarianceTab />
+        ) : (
+          <Card className="p-8 text-center">
+            <div className="w-12 h-12 mx-auto rounded-lg bg-warn-50 flex items-center justify-center mb-3">
+              <FileSearch size={20} className="text-warn-700" />
+            </div>
+            <h3 className="text-[14px] font-semibold text-ink-900 mb-1">No variance flags</h3>
+            <p className="text-[12.5px] text-ink-500 max-w-md mx-auto leading-relaxed">
+              Either you haven&apos;t uploaded broker proforma + T-12, or extraction is still running.
+              Variance detection runs automatically once both documents are extracted.
+            </p>
+          </Card>
+        )
+      )}
 
       {sub === 'sensitivity' && (
         <Card className="p-5">

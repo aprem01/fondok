@@ -3,12 +3,20 @@ import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import {
   LayoutGrid, FolderKanban, Database, Settings, ChevronDown, Building2,
-  Sparkles, Users, UserCog, LogOut, Plus, Check,
+  Users, UserCog, LogOut, Plus, Check,
 } from 'lucide-react';
 import { useState, useRef, useEffect } from 'react';
-import { workspace, currentUser } from '@/lib/mockData';
+import { OrganizationSwitcher } from '@clerk/nextjs';
 import { cn } from '@/lib/format';
 import { isWorkerConnected } from '@/lib/api';
+import FondokMark from '@/components/brand/FondokMark';
+import {
+  isClerkConfigured,
+  setCurrentOrgId,
+  useCurrentOrg,
+  useCurrentUser,
+  useSignOut,
+} from '@/lib/auth';
 
 const navItems = [
   { href: '/dashboard', label: 'Dashboard', icon: LayoutGrid },
@@ -30,6 +38,20 @@ export default function Sidebar({
   const wsRef = useRef<HTMLDivElement>(null);
   const userRef = useRef<HTMLDivElement>(null);
 
+  // Auth-aware user + org. In demo mode these resolve to the static
+  // Brookfield Real Estate / Eshan Mehta persona (mockData.ts). When
+  // Clerk is configured they hydrate from the active session/org.
+  const currentUser = useCurrentUser();
+  const workspace = useCurrentOrg();
+  const signOut = useSignOut();
+
+  // Mirror the active org id into the api.ts singleton so X-Tenant-Id
+  // is attached to outbound worker requests on every render where the
+  // org changes (workspace switcher, etc.).
+  useEffect(() => {
+    setCurrentOrgId(workspace.id);
+  }, [workspace.id]);
+
   useEffect(() => {
     function onClick(e: MouseEvent) {
       if (wsRef.current && !wsRef.current.contains(e.target as Node)) setWsOpen(false);
@@ -38,6 +60,19 @@ export default function Sidebar({
     document.addEventListener('mousedown', onClick);
     return () => document.removeEventListener('mousedown', onClick);
   }, []);
+
+  const handleSignOut = async () => {
+    setUserOpen(false);
+    if (!isClerkConfigured) {
+      // Demo mode — no auth backend to sign out of. Surface a tiny
+      // affordance so the user knows the click registered.
+      if (typeof window !== 'undefined') {
+        window.alert('Sign out (demo mode) — auth is not configured.');
+      }
+      return;
+    }
+    await signOut();
+  };
 
   return (
     <>
@@ -50,50 +85,78 @@ export default function Sidebar({
     )}
     <aside
       className={cn(
-        'fixed left-0 top-0 h-screen w-[216px] bg-white border-r border-border flex flex-col z-40 transition-transform',
+        'fixed left-0 top-0 h-screen w-[216px] bg-white border-r hairline flex flex-col z-40 transition-transform',
         'md:translate-x-0',
         mobileOpen ? 'translate-x-0' : '-translate-x-full md:translate-x-0',
       )}
     >
       {/* Logo */}
       <div className="px-4 pt-5 pb-3">
-        <Link href="/dashboard" className="flex items-center gap-2.5">
-          <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-brand-500 to-brand-700 flex items-center justify-center shadow-sm">
-            <Sparkles size={16} className="text-white" />
-          </div>
-          <div className="font-semibold text-[15px] text-ink-900">Fondok AI</div>
+        <Link
+          href="/dashboard"
+          className="inline-flex focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-500 rounded-md"
+          aria-label="Fondok — go to dashboard"
+        >
+          <FondokMark size="md" />
         </Link>
       </div>
 
-      {/* Workspace switcher */}
-      <div className="px-3 pb-2 relative" ref={wsRef}>
-        <button
-          onClick={() => setWsOpen(!wsOpen)}
-          className="w-full flex items-center gap-2 px-2 py-2 rounded-md hover:bg-ink-300/20 transition-colors"
-        >
-          <div className="w-8 h-8 rounded-md bg-ink-300/30 flex items-center justify-center flex-shrink-0">
-            <Building2 size={15} className="text-ink-700" />
+      {/* Workspace switcher — Clerk OrganizationSwitcher when configured,
+          otherwise the static Brookfield Real Estate pill from mockData. */}
+      {isClerkConfigured ? (
+        <div className="px-3 pb-2">
+          <div className="px-2 py-1">
+            <OrganizationSwitcher
+              hidePersonal={false}
+              afterCreateOrganizationUrl="/dashboard"
+              afterSelectOrganizationUrl="/dashboard"
+              appearance={{
+                elements: {
+                  rootBox: 'w-full',
+                  organizationSwitcherTrigger:
+                    'w-full flex items-center gap-2 px-2 py-2 rounded-md hover:bg-ink-300/20 transition-colors text-left',
+                  organizationPreviewMainIdentifier:
+                    'text-[12.5px] font-semibold text-ink-900 truncate',
+                  organizationPreviewSecondaryIdentifier:
+                    'text-[11px] text-ink-500',
+                  organizationSwitcherTriggerIcon: 'text-ink-400 ml-auto',
+                  organizationSwitcherPopoverCard:
+                    'border border-border rounded-lg shadow-lg',
+                },
+              }}
+            />
           </div>
-          <div className="flex-1 min-w-0 text-left">
-            <div className="text-[12.5px] font-semibold text-ink-900 truncate">{workspace.name}</div>
-            <div className="text-[11px] text-ink-500">{workspace.plan}</div>
-          </div>
-          <ChevronDown size={13} className="text-ink-400" />
-        </button>
-        {wsOpen && (
-          <div className="absolute left-3 right-3 top-full mt-1 bg-white border border-border rounded-lg shadow-lg py-1 z-40">
-            <div className="px-3 py-2 flex items-center gap-2 text-[12.5px] hover:bg-ink-300/10">
-              <Check size={13} className="text-brand-500" />
-              <span className="font-medium">{workspace.name}</span>
+        </div>
+      ) : (
+        <div className="px-3 pb-2 relative" ref={wsRef}>
+          <button
+            onClick={() => setWsOpen(!wsOpen)}
+            className="w-full flex items-center gap-2 px-2 py-2 rounded-md hover:bg-ink-300/20 transition-colors"
+          >
+            <div className="w-8 h-8 rounded-md bg-ink-300/30 flex items-center justify-center flex-shrink-0">
+              <Building2 size={15} className="text-ink-700" />
             </div>
-            <div className="border-t border-border my-1" />
-            <button className="w-full px-3 py-2 flex items-center gap-2 text-[12.5px] hover:bg-ink-300/10 text-left">
-              <Plus size={13} className="text-ink-500" />
-              Create Workspace
-            </button>
-          </div>
-        )}
-      </div>
+            <div className="flex-1 min-w-0 text-left">
+              <div className="text-[12.5px] font-semibold text-ink-900 truncate">{workspace.name}</div>
+              <div className="text-[11px] text-ink-500">{workspace.plan}</div>
+            </div>
+            <ChevronDown size={13} className="text-ink-400" />
+          </button>
+          {wsOpen && (
+            <div className="absolute left-3 right-3 top-full mt-1 bg-white border border-border rounded-lg shadow-lg py-1 z-40">
+              <div className="px-3 py-2 flex items-center gap-2 text-[12.5px] hover:bg-ink-300/10">
+                <Check size={13} className="text-brand-500" />
+                <span className="font-medium">{workspace.name}</span>
+              </div>
+              <div className="border-t border-border my-1" />
+              <button className="w-full px-3 py-2 flex items-center gap-2 text-[12.5px] hover:bg-ink-300/10 text-left">
+                <Plus size={13} className="text-ink-500" />
+                Create Workspace
+              </button>
+            </div>
+          )}
+        </div>
+      )}
 
       {/* Nav */}
       <nav className="flex-1 px-3 pt-2">
@@ -105,8 +168,8 @@ export default function Sidebar({
               className={cn(
                 'flex items-center gap-3 px-3 py-2 rounded-md text-[13px] mb-0.5 transition-colors',
                 isActive
-                  ? 'bg-brand-50 text-brand-700 font-medium'
-                  : 'text-ink-700 hover:bg-ink-300/15'
+                  ? 'bg-brand-50 text-brand-700 font-semibold'
+                  : 'text-ink-700 hover:bg-ink-100'
               )}>
               <Icon size={16} className={isActive ? 'text-brand-500' : 'text-ink-500'} />
               {it.label}
@@ -154,8 +217,11 @@ export default function Sidebar({
               <UserCog size={13} className="text-ink-500" /> Account Settings
             </button>
             <div className="border-t border-border my-1" />
-            <button className="w-full px-3 py-2 flex items-center gap-2 text-[12.5px] hover:bg-danger-50 text-danger-700 text-left">
-              <LogOut size={13} /> Sign Out
+            <button
+              onClick={handleSignOut}
+              className="w-full px-3 py-2 flex items-center gap-2 text-[12.5px] hover:bg-danger-50 text-danger-700 text-left"
+            >
+              <LogOut size={13} /> {isClerkConfigured ? 'Sign Out' : 'Sign out (demo)'}
             </button>
           </div>
         )}

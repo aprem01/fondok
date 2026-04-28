@@ -48,6 +48,42 @@ Set on `fondok-worker` service. Use `railway variables --service fondok-worker` 
 | --- | --- | --- | --- |
 | `NEXT_PUBLIC_WORKER_URL` | `https://fondok-worker-production.up.railway.app` | same | _not yet set — see Known Issues_ |
 | `ANTHROPIC_API_KEY` | encrypted | encrypted | – |
+| `NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY` | _optional_; unset = demo mode | _optional_ | _optional_ |
+| `CLERK_SECRET_KEY` | _optional_; required when publishable key is set | _optional_ | _optional_ |
+
+## Enabling Clerk auth
+
+Auth is feature-flagged via `NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY`. Without
+it, the app boots in demo mode as **Eshan Mehta · Brookfield Real Estate**
+(see `apps/web/src/lib/mockData.ts`) and every worker request resolves
+to `DEFAULT_TENANT_ID`. Setting both keys flips the app into authenticated
+multi-tenant mode without any code changes.
+
+1. Sign up at [clerk.com](https://clerk.com) and create a new application
+   (Standard plan suffices for an org-aware deployment).
+2. From the Clerk dashboard → API Keys, copy the **Publishable key**
+   (`pk_test_…` or `pk_live_…`).
+3. Set `NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY` in Vercel:
+   ```bash
+   vercel env add NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY production --value 'pk_live_xxx'
+   ```
+4. Copy the **Secret key** and set `CLERK_SECRET_KEY` (encrypted):
+   ```bash
+   vercel env add CLERK_SECRET_KEY production --value 'sk_live_xxx'
+   ```
+5. Redeploy the web app — `vercel --prod --yes`. Sign-in / sign-up routes
+   activate automatically and the sidebar swaps the demo persona for the
+   live Clerk user + organization switcher.
+6. (Optional, multi-tenant) In the Clerk dashboard → Organizations,
+   enable organizations. Each organization becomes a Fondok tenant: the
+   web app sends `X-Tenant-Id: <organization_id>` on every worker
+   request, and the worker scopes all reads/writes to that tenant. When
+   no org is selected, the worker falls back to `DEFAULT_TENANT_ID`.
+
+To disable auth in a deployment without unsetting the env var (useful
+for previews), set `NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY=pk_test_dummy_dummy`
+— the `_dummy` suffix is treated as unset and the app reverts to demo
+mode.
 
 ## Build configuration
 
@@ -104,6 +140,43 @@ AnalysisTab badge (top-right "Cache hit: NN%"). When
 `POST /observability/_test/model-call` is gated by `ALLOW_TEST_INGEST`
 and exists only for the worker test suite — production sets it to
 `false`.
+
+### Sentry (web error reporting, optional)
+
+Sentry is wired into the Next.js web app behind a single env-var feature
+flag. When `NEXT_PUBLIC_SENTRY_DSN` is unset, every Sentry call is a
+no-op — even if the optional `@sentry/nextjs` package is installed. To
+enable:
+
+1. Install the optional dep (already declared in `apps/web/package.json`
+   under `optionalDependencies`):
+
+   ```bash
+   cd apps/web && npm install
+   ```
+
+2. Set the DSN on Vercel for whichever environments you want to capture:
+
+   ```bash
+   vercel env add NEXT_PUBLIC_SENTRY_DSN production --value 'https://<key>@o<org>.ingest.sentry.io/<project>' --yes
+   vercel env add NEXT_PUBLIC_SENTRY_DSN preview    --value 'https://<key>@o<org>.ingest.sentry.io/<project>' --yes
+   ```
+
+3. (Optional) Wrap the export in `apps/web/next.config.js` with
+   `withSentryConfig` from `@sentry/nextjs` if you want source-map
+   upload. The two config files at `apps/web/sentry.client.config.ts`
+   and `apps/web/sentry.server.config.ts` are already in place and do
+   the actual `Sentry.init()` calls behind the DSN gate.
+
+4. Redeploy the web app:
+
+   ```bash
+   vercel --prod --yes
+   ```
+
+To disable, simply unset `NEXT_PUBLIC_SENTRY_DSN`. The worker (Python)
+ships with its own observability stack (LangSmith / cache stats) and is
+intentionally not wired through Sentry.
 
 ## Common operations
 
