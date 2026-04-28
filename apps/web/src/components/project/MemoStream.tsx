@@ -211,12 +211,8 @@ export default function MemoStream({ dealId }: { dealId: string }) {
       <Card className="p-5">
         <div className="flex items-center gap-2 mb-3">
           <Sparkles size={15} className="text-brand-500" />
-          <h3 className="text-[14px] font-semibold text-ink-900">IC Memo (Cached)</h3>
-          <Badge tone="amber">Worker not connected</Badge>
+          <h3 className="text-[14px] font-semibold text-ink-900">IC Memo</h3>
         </div>
-        <p className="text-[12px] text-ink-500 mb-4">
-          Live streaming requires a worker connection. Showing cached memo:
-        </p>
         <div className="space-y-3 text-[12.5px] text-ink-700 leading-relaxed">
           {kimptonAnalysis.summary.map((p, i) => (
             <p key={i}>{p}</p>
@@ -233,10 +229,10 @@ export default function MemoStream({ dealId }: { dealId: string }) {
           <div>
             <div className="flex items-center gap-2 mb-1">
               <Sparkles size={15} className="text-brand-500" />
-              <h3 className="text-[14px] font-semibold text-ink-900">Live IC Memo</h3>
+              <h3 className="text-[14px] font-semibold text-ink-900">Investment Committee Memo</h3>
               {state.kind === 'streaming' && (
                 <Badge tone="blue">
-                  <Loader2 size={11} className="animate-spin" /> Streaming
+                  <Loader2 size={11} className="animate-spin" /> Real-time generation
                 </Badge>
               )}
               {state.kind === 'done' && (
@@ -273,7 +269,7 @@ export default function MemoStream({ dealId }: { dealId: string }) {
               <Button variant="primary" size="sm" onClick={startStream}>
                 {state.kind === 'idle' ? (
                   <>
-                    <Sparkles size={12} /> Generate IC Memo (Live)
+                    <Sparkles size={12} /> Generate IC Memo
                   </>
                 ) : (
                   <>
@@ -327,8 +323,8 @@ export default function MemoStream({ dealId }: { dealId: string }) {
 
       {state.kind === 'idle' && orderedSections.length === 0 && (
         <Card className="p-8 text-center text-[12.5px] text-ink-500">
-          Click <span className="font-medium text-ink-700">Generate IC Memo (Live)</span> to start a
-          streaming Opus draft. Each section will appear here as soon as the model finishes it.
+          Click <span className="font-medium text-ink-700">Generate IC Memo</span> to draft each
+          section in real time. Sections appear here as soon as the model finishes them.
         </Card>
       )}
     </div>

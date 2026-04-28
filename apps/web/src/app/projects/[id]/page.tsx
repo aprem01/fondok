@@ -326,7 +326,7 @@ export default function ProjectDetailPage() {
                     </div>
                     <button
                       type="button"
-                      onClick={() => { setCollabOpen(false); toast('Invite collaborators — coming soon', { type: 'info' }); }}
+                      onClick={() => { setCollabOpen(false); toast('Invitations available on enterprise plans', { type: 'info' }); }}
                       className="mt-3 w-full text-left text-[12px] text-brand-700 hover:text-brand-500 font-medium border-t border-border pt-2"
                     >
                       + Invite collaborators

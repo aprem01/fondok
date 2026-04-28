@@ -86,7 +86,7 @@ export default function VarianceSnapshot() {
                 ))}
               </div>
               <div className="mt-5 pt-4 border-t border-border text-[11px] text-ink-500">
-                Sample: Kimpton Angler · Miami Beach · T-12 normalized
+                Kimpton Angler · Miami Beach · T-12 normalized
               </div>
             </div>
           </div>

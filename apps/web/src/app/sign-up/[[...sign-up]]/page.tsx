@@ -15,10 +15,10 @@ export default function SignUpPage() {
           </div>
           <h1 className="text-2xl font-semibold text-ink-900">Fondok AI</h1>
           <p className="mt-2 text-sm text-ink-700">
-            Sign-up is not configured for this deployment.
+            Request access for your investment team.
           </p>
           <p className="mt-1 text-sm text-ink-500">
-            The app is running in demo mode — explore as <span className="font-medium text-ink-700">Eshan Mehta</span> at Brookfield Real Estate.
+            Email <a className="font-medium text-ink-700 hover:text-brand-700" href="mailto:hello@fondok.com">hello@fondok.com</a> and our team will be in touch.
           </p>
           <Link
             href="/dashboard"

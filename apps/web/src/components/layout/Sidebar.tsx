@@ -8,7 +8,6 @@ import {
 import { useState, useRef, useEffect } from 'react';
 import { OrganizationSwitcher } from '@clerk/nextjs';
 import { cn } from '@/lib/format';
-import { isWorkerConnected } from '@/lib/api';
 import FondokMark from '@/components/brand/FondokMark';
 import {
   isClerkConfigured,
@@ -64,11 +63,7 @@ export default function Sidebar({
   const handleSignOut = async () => {
     setUserOpen(false);
     if (!isClerkConfigured) {
-      // Demo mode — no auth backend to sign out of. Surface a tiny
-      // affordance so the user knows the click registered.
-      if (typeof window !== 'undefined') {
-        window.alert('Sign out (demo mode) — auth is not configured.');
-      }
+      // No auth backend configured — silently no-op.
       return;
     }
     await signOut();
@@ -178,21 +173,6 @@ export default function Sidebar({
         })}
       </nav>
 
-      {/* Data source indicator */}
-      <div className="px-3 pt-2 pb-1">
-        {isWorkerConnected() ? (
-          <div className="flex items-center gap-2 px-2 py-1.5 rounded-md bg-success-50 border border-success-500/20">
-            <span className="w-1.5 h-1.5 rounded-full bg-success-500" />
-            <span className="text-[10.5px] text-success-700 font-medium">Connected to live worker</span>
-          </div>
-        ) : (
-          <div className="flex items-center gap-2 px-2 py-1.5 rounded-md bg-warn-50 border border-warn-500/30">
-            <span className="w-1.5 h-1.5 rounded-full bg-warn-500" />
-            <span className="text-[10.5px] text-warn-700 font-medium">Offline · using sample data</span>
-          </div>
-        )}
-      </div>
-
       {/* User menu */}
       <div className="px-3 pb-4 relative" ref={userRef}>
         <button
@@ -221,7 +201,7 @@ export default function Sidebar({
               onClick={handleSignOut}
               className="w-full px-3 py-2 flex items-center gap-2 text-[12.5px] hover:bg-danger-50 text-danger-700 text-left"
             >
-              <LogOut size={13} /> {isClerkConfigured ? 'Sign Out' : 'Sign out (demo)'}
+              <LogOut size={13} /> Sign Out
             </button>
           </div>
         )}

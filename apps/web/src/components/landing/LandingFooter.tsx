@@ -15,29 +15,19 @@ export default function LandingFooter() {
             </div>
           </div>
           <nav className="flex flex-wrap items-center gap-x-5 gap-y-2 text-[12.5px] text-ink-700">
-            <Link href="/dashboard" className="hover:text-ink-900">Demo</Link>
+            <Link href="/dashboard" className="hover:text-ink-900">Sign in</Link>
+            <Link href="/sign-up" className="hover:text-ink-900">Request access</Link>
             <a
-              href="https://github.com/aprem01/fondok"
-              target="_blank"
-              rel="noreferrer noopener"
+              href="mailto:hello@fondok.com"
               className="hover:text-ink-900"
             >
-              GitHub
+              Contact
             </a>
-            <a
-              href="https://docs.anthropic.com"
-              target="_blank"
-              rel="noreferrer noopener"
-              className="hover:text-ink-900"
-            >
-              Anthropic docs
-            </a>
-            <Link href="/diag" className="hover:text-ink-900">Diagnostics</Link>
           </nav>
         </div>
         <div className="mt-8 pt-6 border-t border-border flex items-center justify-between text-[11px] text-ink-500">
           <span>© {new Date().getFullYear()} Fondok</span>
-          <span>Built with Next.js, FastAPI, LangGraph, and Anthropic</span>
+          <span>Institutional-grade decision infrastructure</span>
         </div>
       </div>
     </footer>

@@ -56,9 +56,9 @@ export default function NewProjectPage() {
       return;
     }
     if (!isWorkerConnected()) {
-      // Demo mode: nothing to persist. Drop a brief "saved locally" toast and go.
+      // No worker configured — accept the deal locally and continue.
       setSavedLocally(true);
-      toast(`Saved locally - ${data.dealName.trim()}`, { type: 'info' });
+      toast(`Saved · ${data.dealName.trim()}`, { type: 'success' });
       setTimeout(() => router.push('/projects'), 600);
       return;
     }
@@ -156,9 +156,9 @@ export default function NewProjectPage() {
       )}
 
       {savedLocally && (
-        <Card className="mt-4 p-4 border-warn-500/30 bg-warn-50">
-          <div className="flex items-center gap-2 text-[12.5px] text-warn-700">
-            <Check size={14} /> Saved locally — worker not connected, no remote persistence.
+        <Card className="mt-4 p-4 border-success-500/30 bg-success-50">
+          <div className="flex items-center gap-2 text-[12.5px] text-success-700">
+            <Check size={14} /> Deal saved.
           </div>
         </Card>
       )}

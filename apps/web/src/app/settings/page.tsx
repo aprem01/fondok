@@ -24,6 +24,10 @@ export default function SettingsPage() {
   const [confirmReset, setConfirmReset] = useState<{ count: number } | null>(null);
   const [resetting, setResetting] = useState(false);
   const workerConnected = isWorkerConnected();
+  // Danger zone (Reset Worker Data) is hidden by default and only shown
+  // when NEXT_PUBLIC_SHOW_DANGER_ZONE === 'true'. Keeps the destructive
+  // affordance available to operators while keeping it out of customer view.
+  const showDangerZone = process.env.NEXT_PUBLIC_SHOW_DANGER_ZONE === 'true';
 
   // Invite form state — kept local; no remote invites API today.
   const [inviteEmail, setInviteEmail] = useState('');
@@ -208,8 +212,8 @@ export default function SettingsPage() {
                 </select>
                 <KebabMenu
                   items={[
-                    { label: 'Edit', onSelect: () => toast('Edit member coming soon', { type: 'info' }) },
-                    { label: 'Remove', danger: true, onSelect: () => toast('Remove member coming soon', { type: 'info' }) },
+                    { label: 'Edit', onSelect: () => toast('Member edits available on enterprise plans', { type: 'info' }) },
+                    { label: 'Remove', danger: true, onSelect: () => toast('Member removal available on enterprise plans', { type: 'info' }) },
                   ]}
                 />
               </div>
@@ -255,7 +259,7 @@ export default function SettingsPage() {
             <Button variant="primary" onClick={onSaveDefaults}>Save Defaults</Button>
           </Card>
 
-          {workerConnected && (
+          {workerConnected && showDangerZone && (
             <Card className="p-5 border-danger-500/40">
               <div className="flex items-center gap-2 mb-1">
                 <AlertTriangle size={14} className="text-danger-700" />
@@ -264,9 +268,9 @@ export default function SettingsPage() {
               <div className="border-t border-border my-3" />
               <div className="flex items-start justify-between gap-4">
                 <div className="flex-1">
-                  <div className="text-[13px] font-semibold text-ink-900">Reset Demo Data</div>
+                  <div className="text-[13px] font-semibold text-ink-900">Archive All Workspace Deals</div>
                   <p className="text-[12px] text-ink-500 mt-1 leading-relaxed">
-                    Deletes all worker-side deals you&apos;ve created (your 4 mock projects always remain).
+                    Archives every deal currently in this workspace. This action cannot be undone.
                   </p>
                 </div>
                 <Button
@@ -276,7 +280,7 @@ export default function SettingsPage() {
                   disabled={resetting}
                 >
                   {resetting ? <Loader2 size={12} className="animate-spin" /> : <Trash2 size={12} />}
-                  Reset Demo Data
+                  Archive All Deals
                 </Button>
               </div>
             </Card>
@@ -302,8 +306,8 @@ export default function SettingsPage() {
               <div>
                 <h4 className="text-[14px] font-semibold text-ink-900">Are you sure?</h4>
                 <p className="text-[12.5px] text-ink-500 mt-1 leading-relaxed">
-                  This will archive {confirmReset.count} deal{confirmReset.count === 1 ? '' : 's'} from the worker.
-                  Mock projects remain available regardless. This action cannot be undone.
+                  This will archive {confirmReset.count} deal{confirmReset.count === 1 ? '' : 's'} from the workspace.
+                  This action cannot be undone.
                 </p>
               </div>
             </div>
@@ -368,7 +372,7 @@ export default function SettingsPage() {
                     <div className="text-[11.5px] text-ink-500">{i.description}</div>
                   </div>
                 </div>
-                <Badge tone="gray">{i.status}</Badge>
+                <Badge tone="gray">{i.status === 'Coming Soon' ? 'Enterprise plan' : i.status}</Badge>
               </div>
             ))}
           </Card>

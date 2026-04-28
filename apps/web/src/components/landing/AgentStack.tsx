@@ -22,7 +22,7 @@ export default function AgentStack() {
       <div className="max-w-6xl mx-auto px-6 md:px-10 py-14 md:py-16">
         <div className="text-center mb-10">
           <div className="text-[11.5px] font-semibold uppercase tracking-wider text-ink-500 mb-2">
-            Built on Anthropic
+            Powered by frontier models
           </div>
           <h2 className="text-[20px] md:text-[24px] font-semibold tracking-tight text-ink-900">
             Right model for every step of the pipeline

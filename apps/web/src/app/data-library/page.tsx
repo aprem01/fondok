@@ -47,7 +47,7 @@ export default function DataLibraryPage() {
   };
   const closeModal = () => setModal(null);
   const onSaved = (label: string) => {
-    toast(`${label} saved (local)`, { type: 'success' });
+    toast(`${label} saved`, { type: 'success' });
     closeModal();
   };
 
@@ -323,7 +323,7 @@ function PopoverItem({
 }
 
 // ──────────────────────────────────────────────────────────
-// Modal bodies — local state only, Save toasts "Saved (local)".
+// Modal bodies — local state only.
 // ──────────────────────────────────────────────────────────
 function AddCompSetModal({
   open, onClose, onSave,
@@ -428,9 +428,9 @@ function ImportTemplateModal({
         <div className="w-12 h-12 mx-auto rounded-lg bg-brand-50 flex items-center justify-center mb-3">
           <FileText size={20} className="text-brand-500" />
         </div>
-        <div className="text-[14px] font-semibold text-ink-900">Templates coming soon</div>
+        <div className="text-[14px] font-semibold text-ink-900">Template import — Enterprise plan</div>
         <p className="text-[12px] text-ink-500 mt-1">
-          Import .xlsx or YAML underwriting templates here once the importer ships.
+          Import .xlsx or YAML underwriting templates. Available on enterprise plans.
         </p>
       </div>
       <div className="px-5 py-3 border-t border-border flex justify-end">

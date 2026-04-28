@@ -69,11 +69,12 @@ export function useCurrentUser(): CurrentUser {
   const { user, isLoaded } = useUser();
   if (!isLoaded || !user) {
     // Pre-load fallback so we don't flash the mock persona during the
-    // brief window before Clerk hydrates.
+    // brief window before Clerk hydrates. Render a clean skeleton via
+    // empty strings so the UI doesn't show a "Loading…" placeholder.
     return {
-      name: 'Loading…',
-      role: '',
-      initials: '··',
+      name: ' ',
+      role: ' ',
+      initials: ' ',
       email: '',
       id: 'pending',
     };

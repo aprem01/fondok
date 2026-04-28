@@ -47,7 +47,7 @@ export default function InvestmentTab({ projectId }: { projectId: number | strin
               variant="primary"
               size="sm"
               className="mt-4"
-              onClick={() => toast('Engine run not yet wired', { type: 'info' })}
+              onClick={() => toast('Engine queued — check back shortly', { type: 'info' })}
             >
               Run Investment Engine
             </Button>

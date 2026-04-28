@@ -104,12 +104,12 @@ function CacheHitBadge() {
 
 type SubTab = 'summary' | 'memo' | 'risks' | 'variance' | 'critic' | 'sensitivity' | 'scenarios' | 'cost';
 
-const subTabs: { id: SubTab; label: string; icon: typeof Sparkles; badge?: string }[] = [
+const subTabs: { id: SubTab; label: string; icon: typeof Sparkles }[] = [
   { id: 'summary',     label: 'AI Summary',     icon: Sparkles },
-  { id: 'memo',        label: 'IC Memo',        icon: FileText, badge: 'LIVE' },
+  { id: 'memo',        label: 'IC Memo',        icon: FileText },
   { id: 'risks',       label: 'Risks',          icon: ShieldCheck },
-  { id: 'variance',    label: 'Broker Variance', icon: FileSearch, badge: 'NEW' },
-  { id: 'critic',      label: 'Critic Review',  icon: Eye, badge: 'NEW' },
+  { id: 'variance',    label: 'Broker Variance', icon: FileSearch },
+  { id: 'critic',      label: 'Critic Review',  icon: Eye },
   { id: 'sensitivity', label: 'Sensitivity',    icon: TrendingUp },
   { id: 'scenarios',   label: 'Scenarios',      icon: Layers },
   { id: 'cost',        label: 'Cost',           icon: DollarSign },
@@ -185,11 +185,6 @@ export default function AnalysisTab() {
                 {isVariance && criticalCount > 0 && (
                   <span className="ml-1 inline-flex items-center justify-center w-4 h-4 text-[9.5px] font-semibold rounded-full bg-danger-500 text-white tabular-nums">
                     {criticalCount}
-                  </span>
-                )}
-                {t.badge && !isVariance && (
-                  <span className="ml-1 text-[9.5px] font-semibold tracking-wide text-brand-700 bg-brand-50 px-1 rounded">
-                    {t.badge}
                   </span>
                 )}
               </button>

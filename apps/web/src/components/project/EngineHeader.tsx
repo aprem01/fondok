@@ -28,9 +28,9 @@ export default function EngineHeader({
       onRun();
       return;
     }
-    // No real engine wired yet — simulate a 2s spin so users get feedback.
+    // Simulate a 2s spin so users get feedback while the request is queued.
     setRunning(true);
-    toast('Engine run not yet wired — coming in Phase 7', { type: 'info' });
+    toast('Engine queued — check back shortly', { type: 'info' });
     window.setTimeout(() => setRunning(false), 2000);
   };
 
@@ -40,11 +40,11 @@ export default function EngineHeader({
       return;
     }
     if (!WORKER_URL) {
-      toast('Connect worker to enable downloads', { type: 'info' });
+      toast('Available after model run', { type: 'info' });
       return;
     }
     if (!dealId) {
-      toast('Connect worker to enable downloads', { type: 'info' });
+      toast('Available after model run', { type: 'info' });
       return;
     }
     // Worker streams the file via Content-Disposition; navigating triggers

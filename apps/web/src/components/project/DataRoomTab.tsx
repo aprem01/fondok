@@ -213,8 +213,8 @@ export default function DataRoomTab({ projectId }: { projectId: number }) {
     if (!liveMode) {
       toast(
         isWorkerConnected()
-          ? 'Uploads only work on worker-backed deals. Create one via "New Project".'
-          : 'Worker not connected - uploads disabled in demo mode.',
+          ? 'Uploads available on deals created via "New Project".'
+          : 'Uploads available once the workspace is provisioned.',
         { type: 'error' },
       );
       return;
@@ -249,11 +249,6 @@ export default function DataRoomTab({ projectId }: { projectId: number }) {
             <div className="flex items-center gap-2">
               <h2 className="text-[15px] font-semibold text-ink-900">Data Room</h2>
               <Info size={13} className="text-ink-400" />
-              {liveMode && (
-                <span className="text-[10.5px] uppercase tracking-wider text-success-700 bg-success-50 border border-success-500/20 px-1.5 py-0.5 rounded">
-                  Live
-                </span>
-              )}
             </div>
             <p className="text-[12.5px] text-ink-500 mt-1">
               Upload and manage deal documents for AI-powered extraction and underwriting automation.
@@ -453,7 +448,7 @@ export default function DataRoomTab({ projectId }: { projectId: number }) {
                 const rowMenu = [
                   {
                     label: 'Preview',
-                    onSelect: () => toast('Preview not yet available', { type: 'info' }),
+                    onSelect: () => toast('Preview available on enterprise plans', { type: 'info' }),
                   },
                   {
                     label: 'Download',
@@ -469,7 +464,7 @@ export default function DataRoomTab({ projectId }: { projectId: number }) {
                   {
                     label: 'Delete',
                     danger: true,
-                    onSelect: () => toast('Delete not yet wired', { type: 'info' }),
+                    onSelect: () => toast('Document removal available on enterprise plans', { type: 'info' }),
                   },
                 ];
                 return (

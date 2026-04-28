@@ -7,8 +7,7 @@ import { isClerkConfigured } from '@/lib/auth';
 
 export default function SignInPage() {
   if (!isClerkConfigured) {
-    // Demo mode: no real auth backend. Send the visitor straight to
-    // the dashboard so they can explore the seeded persona.
+    // No auth backend wired — send the visitor to the dashboard.
     return (
       <main className="min-h-screen flex items-center justify-center bg-bg px-6">
         <div className="max-w-md w-full text-center">
@@ -17,10 +16,7 @@ export default function SignInPage() {
           </div>
           <h1 className="text-2xl font-semibold text-ink-900">Fondok AI</h1>
           <p className="mt-2 text-sm text-ink-700">
-            Authentication is not configured for this deployment.
-          </p>
-          <p className="mt-1 text-sm text-ink-500">
-            Running in demo mode as <span className="font-medium text-ink-700">Eshan Mehta · Brookfield Real Estate</span>.
+            Welcome back.
           </p>
           <Link
             href="/dashboard"
@@ -28,9 +24,6 @@ export default function SignInPage() {
           >
             Continue to dashboard
           </Link>
-          <p className="mt-8 text-[11px] text-ink-500">
-            To enable real auth, set <code className="font-mono text-ink-700">NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY</code> in the deployment env.
-          </p>
         </div>
       </main>
     );

@@ -1,12 +1,17 @@
 'use client';
 
 // Hidden diagnostic page for production debugging.
-// Visit /diag to see worker URL, /health response, /deals count, last model
-// calls, and run a one-shot smoke test (deal → upload → extract).
-// Not linked from the main UI — reachable by URL only (and from the landing footer).
+// Gated behind NEXT_PUBLIC_SHOW_DIAG === 'true' — when the flag is unset
+// (default / production) the page renders a 404 so prospects never see it.
+// When enabled, /diag shows worker URL, /health response, /deals count,
+// last model calls, and runs a one-shot smoke test (deal → upload → extract).
+// Not linked from the main UI — reachable by URL only.
 
+import { notFound } from 'next/navigation';
 import { useEffect, useRef, useState } from 'react';
 import { api, isWorkerConnected, workerUrl } from '@/lib/api';
+
+const DIAG_ENABLED = process.env.NEXT_PUBLIC_SHOW_DIAG === 'true';
 
 interface Diag {
   workerUrl: string;
@@ -51,6 +56,13 @@ interface SmokeState {
 }
 
 export default function DiagPage() {
+  if (!DIAG_ENABLED) {
+    notFound();
+  }
+  return <DiagPageInner />;
+}
+
+function DiagPageInner() {
   const [diag, setDiag] = useState<Diag>({
     workerUrl: workerUrl(),
     connected: isWorkerConnected(),
