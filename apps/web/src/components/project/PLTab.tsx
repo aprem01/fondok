@@ -17,6 +17,9 @@ import { kimptonAnglerOverview } from '@/lib/mockData';
 import { fmtCurrency, fmtMillions, cn } from '@/lib/format';
 import { useEngineOutputs } from '@/lib/hooks/useEngineOutputs';
 import { useFlash } from '@/lib/hooks/useFlash';
+import { IntroCard } from '@/components/help/IntroCard';
+import { MetricLabel } from '@/components/help/MetricLabel';
+import { GLOSSARY } from '@/lib/glossary';
 
 const subTabs = ['Operating Statement', 'Departmental', 'Per-Key Metrics', 'Historical vs Projected'];
 
@@ -125,6 +128,17 @@ export default function PLTab({ projectId }: { projectId: number }) {
     return (
       <div className="flex gap-4">
         <div className="flex-1 min-w-0">
+          <IntroCard
+            dismissKey="pl-intro"
+            title="The P&L Engine"
+            body={
+              <>
+                Profit and Loss — every dollar of revenue and expense across the hold period,
+                formatted in industry-standard <span className="font-semibold">USALI</span> categories
+                so you can compare any two hotels apples-to-apples.
+              </>
+            }
+          />
           <EngineHeader
             name="P&L Engine"
             desc="Models room revenue, F&B, and operating expenses across the projection period in USALI format."
@@ -144,8 +158,11 @@ export default function PLTab({ projectId }: { projectId: number }) {
             <div className="w-12 h-12 rounded-lg bg-ink-300/20 flex items-center justify-center mx-auto mb-4">
               <BarChart3 size={20} className="text-ink-400" />
             </div>
-            <h3 className="text-[15px] font-semibold text-ink-900">No P&L Output</h3>
-            <p className="text-[12.5px] text-ink-500 mt-1">Run the P&L engine to populate the operating statement.</p>
+            <h3 className="text-[15px] font-semibold text-ink-900">No P&L output yet</h3>
+            <p className="text-[12.5px] text-ink-500 mt-1 max-w-md mx-auto leading-relaxed">
+              We need a <span className="font-medium">T-12</span> (the last 12 months of profit &amp; loss) to project
+              forward revenue and expenses. Drop it into the Data Room, then run the model.
+            </p>
             <Button variant="primary" size="sm" className="mt-4">Run Model</Button>
           </Card>
           <EngineRunHistory dealId={dealId} />
@@ -164,6 +181,17 @@ export default function PLTab({ projectId }: { projectId: number }) {
   return (
     <div className="flex gap-4">
       <div className="flex-1 min-w-0">
+      <IntroCard
+        dismissKey="pl-intro"
+        title="The P&L Engine"
+        body={
+          <>
+            Profit and Loss — every dollar of revenue and expense across the hold period,
+            formatted in industry-standard <span className="font-semibold">USALI</span> categories
+            so you can compare any two hotels apples-to-apples.
+          </>
+        }
+      />
       <EngineHeader
         name="P&L Engine"
         desc="Models room revenue, F&B, and operating expenses across the projection period in USALI format."
@@ -189,10 +217,10 @@ export default function PLTab({ projectId }: { projectId: number }) {
       />
 
       <div className={cn('grid grid-cols-4 gap-4 mb-5', computing && 'pointer-events-none opacity-60')}>
-        <KPI label="Year 1 Revenue" value={fmtMillions(y1Rev, 2)} flashKey={y1Rev} />
-        <KPI label="Year 1 NOI" value={fmtMillions(y1NOI, 2)} tone="green" flashKey={y1NOI} />
-        <KPI label="NOI Margin" value={`${(margin * 100).toFixed(1)}%`} flashKey={margin} />
-        <KPI label="5-Year NOI CAGR" value={`${(noiCagr * 100).toFixed(1)}%`} tone="green" flashKey={noiCagr} />
+        <KPI label="Year 1 Revenue" tip="Total top-line revenue projected for the first full year of ownership — rooms, F&B, and other revenue combined." value={fmtMillions(y1Rev, 2)} flashKey={y1Rev} />
+        <KPI label="Year 1 NOI" tip={GLOSSARY['NOI']} value={fmtMillions(y1NOI, 2)} tone="green" flashKey={y1NOI} />
+        <KPI label="NOI Margin" tip="NOI as a percentage of total revenue. Higher margins mean a more efficient hotel — typical for select-service hotels: 30–40%." value={`${(margin * 100).toFixed(1)}%`} flashKey={margin} />
+        <KPI label="5-Year NOI CAGR" tip="Compound Annual Growth Rate of NOI over the five-year hold. How fast the hotel's earning power grows year-over-year." value={`${(noiCagr * 100).toFixed(1)}%`} tone="green" flashKey={noiCagr} />
       </div>
 
       <div className="flex items-center gap-1 mb-3 border-b border-border">
@@ -533,11 +561,13 @@ function HistoricalProjected() {
   );
 }
 
-function KPI({ label, value, tone, flashKey }: { label: string; value: string; tone?: 'green' | 'amber' | 'red'; flashKey?: unknown }) {
+function KPI({ label, value, tone, flashKey, tip }: { label: string; value: string; tone?: 'green' | 'amber' | 'red'; flashKey?: unknown; tip?: string }) {
   const flash = useFlash(flashKey ?? value);
   return (
     <Card className={cn('p-4', flash && 'value-flash')}>
-      <div className="text-[10.5px] text-ink-500 uppercase tracking-wide">{label}</div>
+      <div className="text-[10.5px] text-ink-500 uppercase tracking-wide">
+        {tip ? <MetricLabel label={label} tip={tip} /> : label}
+      </div>
       <div className={cn(
         'text-[20px] font-semibold tabular-nums mt-1',
         tone === 'green' ? 'text-success-700'

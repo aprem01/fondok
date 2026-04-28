@@ -13,6 +13,8 @@ import {
   currentUser, dashboardStats, projects,
 } from '@/lib/mockData';
 import { fmtCurrency } from '@/lib/format';
+import { IntroCard } from '@/components/help/IntroCard';
+import { MetricLabel } from '@/components/help/MetricLabel';
 
 type StatTone = 'default' | 'luxe';
 
@@ -23,12 +25,17 @@ const stats: Array<{
   subTone?: 'green';
   icon: typeof FolderKanban;
   tone: StatTone;
+  tip: string;
 }> = [
-  { label: 'Active Projects',     value: dashboardStats.activeProjects.toString(),       sub: `${dashboardStats.totalProjects} total`, subTone: 'green', icon: FolderKanban, tone: 'default' },
-  { label: 'Documents Processed', value: dashboardStats.documentsProcessed.toString(),   sub: '',                                       icon: FileText,    tone: 'default' },
+  { label: 'Active Projects',     value: dashboardStats.activeProjects.toString(),       sub: `${dashboardStats.totalProjects} total`, subTone: 'green', icon: FolderKanban, tone: 'default',
+    tip: 'Hotel deals you\'re currently underwriting — anything not archived. Excludes deals you\'ve passed on or closed.' },
+  { label: 'Documents Processed', value: dashboardStats.documentsProcessed.toString(),   sub: '',                                       icon: FileText,    tone: 'default',
+    tip: 'PDFs and Excels our AI has read end-to-end and pulled fields out of (offering memos, T-12 financials, STR reports).' },
   // Total Deal Volume is the anchor metric — gets the luxe treatment.
-  { label: 'Total Deal Volume',   value: fmtCurrency(dashboardStats.totalDealVolume),    sub: '',                                       icon: TrendingUp,  tone: 'luxe'    },
-  { label: 'Avg. Time to IC',     value: dashboardStats.avgTimeToIC ?? '—',              sub: '',                                       icon: Clock,       tone: 'default' },
+  { label: 'Total Deal Volume',   value: fmtCurrency(dashboardStats.totalDealVolume),    sub: '',                                       icon: TrendingUp,  tone: 'luxe',
+    tip: 'Sum of asking prices across all active deals in your pipeline. Tells you how much capital you\'re evaluating right now.' },
+  { label: 'Avg. Time to IC',     value: dashboardStats.avgTimeToIC ?? '—',              sub: '',                                       icon: Clock,       tone: 'default',
+    tip: 'How long your team typically takes to get a deal from "received OM" to "investment committee ready." Industry norm is 2–4 weeks; with Fondok it should drop to days.' },
 ];
 
 const riskTone = (r: string) => r === 'Low' ? 'text-success-700' : r === 'Medium' ? 'text-warn-700' : 'text-danger-700';
@@ -47,6 +54,18 @@ export default function DashboardPage() {
         }
       />
 
+      <IntroCard
+        dismissKey="dashboard-overview"
+        title="Welcome to your portfolio"
+        body={
+          <>
+            The numbers up top show how many hotel deals you have in flight, how many
+            documents we&apos;ve extracted data from, and total deal volume across your
+            active pipeline. Click any deal below to open its full underwriting model.
+          </>
+        }
+      />
+
       {/* Stat cards — Bloomberg-cell rhythm. */}
       <div className="grid grid-cols-4 gap-4 mb-6">
         {stats.map(s => {
@@ -60,7 +79,8 @@ export default function DashboardPage() {
             >
               <div className="flex items-start justify-between">
                 <div className="min-w-0">
-                  <div className="eyebrow">{s.label}</div>
+                  <MetricLabel label={s.label} tip={s.tip} eyebrow />
+
                   <div
                     className={
                       'text-display-lg text-ink-900 mt-2 tabular-nums ' +

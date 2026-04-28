@@ -10,6 +10,7 @@ import { Button } from '@/components/ui/Button';
 import { Badge } from '@/components/ui/Badge';
 import type { Project } from '@/lib/mockData';
 import { useToast } from '@/components/ui/Toast';
+import { IntroCard } from '@/components/help/IntroCard';
 
 type ExportPath = 'excel' | 'memo.pdf' | 'presentation.pptx';
 
@@ -71,6 +72,18 @@ export default function ExportTab({ project }: { project: Project }) {
 
   return (
     <div className="space-y-5">
+      <IntroCard
+        dismissKey="export-intro"
+        title="The Export tab"
+        body={
+          <>
+            Download the deal in three formats: a full <span className="font-semibold">Excel model</span> with
+            10 tabs (the actual financial workbook), a <span className="font-semibold">PDF IC memo</span> (the
+            narrative your investment committee reads), and a <span className="font-semibold">PowerPoint deck</span>
+            {' '}(the visual presentation). All three regenerate from the latest model run.
+          </>
+        }
+      />
       <Card className="p-5">
         <div className="flex items-center justify-between">
           <div>

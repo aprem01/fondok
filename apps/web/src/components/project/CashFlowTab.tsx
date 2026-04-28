@@ -15,6 +15,9 @@ import EngineRunHistory from './EngineRunHistory';
 import { kimptonAnglerOverview } from '@/lib/mockData';
 import { fmtCurrency, fmtMillions, cn } from '@/lib/format';
 import { useFlash } from '@/lib/hooks/useFlash';
+import { IntroCard } from '@/components/help/IntroCard';
+import { MetricLabel } from '@/components/help/MetricLabel';
+import { GLOSSARY } from '@/lib/glossary';
 
 const subTabs = ['Cash Flow Summary', 'Levered Detail', 'Unlevered Detail', 'Distributions'];
 
@@ -95,6 +98,17 @@ export default function CashFlowTab({ projectId }: { projectId: number }) {
     return (
       <div className="flex gap-4">
         <div className="flex-1 min-w-0">
+          <IntroCard
+            dismissKey="cashflow-intro"
+            title="The Cash Flow Engine"
+            body={
+              <>
+                What hits the equity investors&apos; pockets each year, after debt service and capex.
+                <span className="font-semibold"> Levered</span> = after debt; <span className="font-semibold">unlevered</span> = before debt.
+                Distributions, exit proceeds, and the cumulative cash to LPs all live here.
+              </>
+            }
+          />
           <EngineHeader
             name="Cash Flow Engine"
             desc="Computes levered and unlevered cash flow from operations through hold period."
@@ -110,8 +124,11 @@ export default function CashFlowTab({ projectId }: { projectId: number }) {
             <div className="w-12 h-12 rounded-lg bg-ink-300/20 flex items-center justify-center mx-auto mb-4">
               <Activity size={20} className="text-ink-400" />
             </div>
-            <h3 className="text-[15px] font-semibold text-ink-900">No Cash Flow Output</h3>
-            <p className="text-[12.5px] text-ink-500 mt-1">Run the cash flow engine to populate levered and unlevered schedules.</p>
+            <h3 className="text-[15px] font-semibold text-ink-900">No cash flow output yet</h3>
+            <p className="text-[12.5px] text-ink-500 mt-1 max-w-md mx-auto leading-relaxed">
+              Cash flow depends on the <span className="font-medium">P&amp;L</span> engine. Run the P&amp;L
+              first to populate levered and unlevered schedules.
+            </p>
             <Button variant="primary" size="sm" className="mt-4">Run Model</Button>
           </Card>
           <EngineRunHistory dealId={dealId} />
@@ -130,6 +147,17 @@ export default function CashFlowTab({ projectId }: { projectId: number }) {
   return (
     <div className="flex gap-4">
       <div className="flex-1 min-w-0">
+      <IntroCard
+        dismissKey="cashflow-intro"
+        title="The Cash Flow Engine"
+        body={
+          <>
+            What hits the equity investors&apos; pockets each year, after debt service and capex.
+            <span className="font-semibold"> Levered</span> = after debt; <span className="font-semibold">unlevered</span> = before debt.
+            Distributions, exit proceeds, and the cumulative cash to LPs all live here.
+          </>
+        }
+      />
       <EngineHeader
         name="Cash Flow Engine"
         desc="Computes levered and unlevered cash flow from operations through hold period."
@@ -144,10 +172,10 @@ export default function CashFlowTab({ projectId }: { projectId: number }) {
       />
 
       <div className={cn('grid grid-cols-4 gap-4 mb-5', computing && 'pointer-events-none opacity-60')}>
-        <KPI label="5-Yr Levered CF" value={fmtMillions(sumLevered, 2)} tone="green" flashKey={sumLevered} />
-        <KPI label="5-Yr Unlevered CF" value={fmtMillions(sumUnlevered, 2)} flashKey={sumUnlevered} />
-        <KPI label="Avg Cash-on-Cash" value={`${(avgCoC * 100).toFixed(1)}%`} flashKey={avgCoC} />
-        <KPI label="Cumulative Distributions" value={fmtMillions(cumulativeDist, 2)} tone="green" flashKey={cumulativeDist} />
+        <KPI label="5-Yr Levered CF" tip="Total cash flow to equity over the 5-year hold, after debt service. The actual money investors see." value={fmtMillions(sumLevered, 2)} tone="green" flashKey={sumLevered} />
+        <KPI label="5-Yr Unlevered CF" tip="Total cash flow before debt — the asset-level cash production over the hold." value={fmtMillions(sumUnlevered, 2)} flashKey={sumUnlevered} />
+        <KPI label="Avg Cash-on-Cash" tip={GLOSSARY['CoC']} value={`${(avgCoC * 100).toFixed(1)}%`} flashKey={avgCoC} />
+        <KPI label="Cumulative Distributions" tip="Total cash actually paid out to investors over the hold, including the exit." value={fmtMillions(cumulativeDist, 2)} tone="green" flashKey={cumulativeDist} />
       </div>
 
       <div className="flex items-center gap-1 mb-3 border-b border-border">
@@ -514,11 +542,13 @@ function Distributions() {
   );
 }
 
-function KPI({ label, value, tone, flashKey }: { label: string; value: string; tone?: 'green' | 'amber' | 'red'; flashKey?: unknown }) {
+function KPI({ label, value, tone, flashKey, tip }: { label: string; value: string; tone?: 'green' | 'amber' | 'red'; flashKey?: unknown; tip?: string }) {
   const flash = useFlash(flashKey ?? value);
   return (
     <Card className={cn('p-4', flash && 'value-flash')}>
-      <div className="text-[10.5px] text-ink-500 uppercase tracking-wide">{label}</div>
+      <div className="text-[10.5px] text-ink-500 uppercase tracking-wide">
+        {tip ? <MetricLabel label={label} tip={tip} /> : label}
+      </div>
       <div className={cn(
         'text-[20px] font-semibold tabular-nums mt-1',
         tone === 'green' ? 'text-success-700'

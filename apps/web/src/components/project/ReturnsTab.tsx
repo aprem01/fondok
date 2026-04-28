@@ -16,6 +16,9 @@ import { useAssumptionsOptional } from '@/stores/assumptionsStore';
 import { defaultSensitivities, SensitivityMatrix } from '@/lib/engines';
 import { getEngineField, useEngineOutputs } from '@/lib/hooks/useEngineOutputs';
 import { useFlash } from '@/lib/hooks/useFlash';
+import { IntroCard } from '@/components/help/IntroCard';
+import { MetricLabel } from '@/components/help/MetricLabel';
+import { GLOSSARY } from '@/lib/glossary';
 
 const subTabs = ['Returns Summary', 'Sensitivities'];
 
@@ -34,6 +37,17 @@ export default function ReturnsTab({ projectId }: { projectId: number | string }
     return (
       <div className="flex gap-4">
         <div className="flex-1 min-w-0">
+          <IntroCard
+            dismissKey="returns-intro"
+            title="The Returns Engine"
+            body={
+              <>
+                The headline numbers — IRR, equity multiple, cash-on-cash — and how sensitive
+                they are to your assumptions. This is what investors actually earn over the
+                hold period after debt service.
+              </>
+            }
+          />
           <EngineHeader
             name="Returns Engine"
             desc="Computes IRR, equity multiple, and scenario sensitivities for investment analysis."
@@ -52,8 +66,10 @@ export default function ReturnsTab({ projectId }: { projectId: number | string }
               <TrendingUp size={20} className="text-ink-400" />
             </div>
             <h3 className="text-[15px] font-semibold text-ink-900">Returns Engine unavailable</h3>
-            <p className="text-[12.5px] text-ink-500 mt-1">
-              IRR, multiple, and sensitivity analysis run after Cash Flow completes.
+            <p className="text-[12.5px] text-ink-500 mt-1 max-w-md mx-auto leading-relaxed">
+              IRR, equity multiple, and sensitivity analysis depend on the
+              <span className="font-medium"> Cash Flow</span> engine. Run that first, or upload an OM
+              and T-12 if you haven&apos;t.
             </p>
             <Button
               variant="primary"
@@ -76,6 +92,17 @@ export default function ReturnsTab({ projectId }: { projectId: number | string }
   return (
     <div className="flex gap-4">
       <div className="flex-1 min-w-0">
+      <IntroCard
+        dismissKey="returns-intro"
+        title="The Returns Engine"
+        body={
+          <>
+            The headline numbers — IRR, equity multiple, cash-on-cash — and how sensitive
+            they are to your assumptions. This is what investors actually earn over the
+            hold period after debt service.
+          </>
+        }
+      />
       <EngineHeader
         name="Returns Engine"
         desc="Computes IRR, equity multiple, and scenario sensitivities for investment analysis."
@@ -151,10 +178,10 @@ function LiveReturnsSummary({ outputs }: { outputs: ReturnType<typeof useEngineO
   return (
     <>
       <div className="grid grid-cols-4 gap-4 mb-5">
-        <KPI label="Levered IRR" value={fmtPct(irr, 2)} flashKey={irr} />
-        <KPI label="Equity Multiple" value={`${mult.toFixed(2)}x`} flashKey={mult} />
-        <KPI label="Cash-on-Cash" value={fmtPct(coc, 2)} flashKey={coc} />
-        <KPI label="Hold Period" value={`${assumptions.holdYears} Years`} flashKey={assumptions.holdYears} />
+        <KPI label="Levered IRR" tip={GLOSSARY['IRR']} value={fmtPct(irr, 2)} flashKey={irr} />
+        <KPI label="Equity Multiple" tip={GLOSSARY['Equity Multiple']} value={`${mult.toFixed(2)}x`} flashKey={mult} />
+        <KPI label="Cash-on-Cash" tip={GLOSSARY['CoC']} value={fmtPct(coc, 2)} flashKey={coc} />
+        <KPI label="Hold Period" tip={GLOSSARY['Hold Period']} value={`${assumptions.holdYears} Years`} flashKey={assumptions.holdYears} />
       </div>
 
       <Card className="p-5 mb-5">
@@ -327,10 +354,10 @@ function StaticReturnsSummary({ outputs }: { outputs: ReturnType<typeof useEngin
   return (
     <>
       <div className="grid grid-cols-4 gap-4 mb-5">
-        <KPI label="Levered IRR" value={fmtPct(irr, 2)} flashKey={irr} />
-        <KPI label="Equity Multiple" value={`${mult.toFixed(2)}x`} flashKey={mult} />
-        <KPI label="Cash-on-Cash" value={cocLabel} flashKey={cocLabel} />
-        <KPI label="Hold Period" value={`${o.returns.hold} Years`} flashKey={o.returns.hold} />
+        <KPI label="Levered IRR" tip={GLOSSARY['IRR']} value={fmtPct(irr, 2)} flashKey={irr} />
+        <KPI label="Equity Multiple" tip={GLOSSARY['Equity Multiple']} value={`${mult.toFixed(2)}x`} flashKey={mult} />
+        <KPI label="Cash-on-Cash" tip={GLOSSARY['CoC']} value={cocLabel} flashKey={cocLabel} />
+        <KPI label="Hold Period" tip={GLOSSARY['Hold Period']} value={`${o.returns.hold} Years`} flashKey={o.returns.hold} />
       </div>
       <Card className="p-5">
         <h3 className="text-[14px] font-semibold text-ink-900 mb-4">Scenario Analysis</h3>
@@ -403,11 +430,13 @@ function StaticSensitivities() {
 // Shared bits
 // ───────────────────────────────────────────────────────────────────
 
-function KPI({ label, value, flashKey }: { label: string; value: string; flashKey?: unknown }) {
+function KPI({ label, value, flashKey, tip }: { label: string; value: string; flashKey?: unknown; tip?: string }) {
   const flash = useFlash(flashKey ?? value);
   return (
     <Card className={cn('p-4', flash && 'value-flash')}>
-      <div className="text-[10.5px] text-ink-500 uppercase tracking-wide">{label}</div>
+      <div className="text-[10.5px] text-ink-500 uppercase tracking-wide">
+        {tip ? <MetricLabel label={label} tip={tip} /> : label}
+      </div>
       <div className="text-[22px] font-semibold tabular-nums mt-1 text-brand-700">{value}</div>
     </Card>
   );

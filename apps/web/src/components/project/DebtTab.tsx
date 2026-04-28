@@ -15,6 +15,9 @@ import { kimptonAnglerOverview } from '@/lib/mockData';
 import { fmtCurrency, fmtPct, cn } from '@/lib/format';
 import { getEngineField, useEngineOutputs } from '@/lib/hooks/useEngineOutputs';
 import { useFlash } from '@/lib/hooks/useFlash';
+import { IntroCard } from '@/components/help/IntroCard';
+import { MetricLabel } from '@/components/help/MetricLabel';
+import { GLOSSARY } from '@/lib/glossary';
 
 const subTabs = ['Debt Summary', 'Rates & Covenants', 'Term & Refinance', 'Debt Schedule'];
 
@@ -43,6 +46,17 @@ export default function DebtTab({ projectId }: { projectId: number | string }) {
     return (
       <div className="flex gap-4">
         <div className="flex-1 min-w-0">
+          <IntroCard
+            dismissKey="debt-intro"
+            title="The Debt Engine"
+            body={
+              <>
+                How the debt is structured: loan amount, interest rate, covenants, and any refinancing.
+                This is where you stress-test whether the hotel earns enough to comfortably service its loan
+                — the headline ratio is <span className="font-semibold">DSCR</span> (Debt Service Coverage Ratio).
+              </>
+            }
+          />
           <EngineHeader
             name="Debt Engine"
             desc="Structures senior and mezzanine debt, calculates debt service, and models refinancing scenarios."
@@ -62,8 +76,10 @@ export default function DebtTab({ projectId }: { projectId: number | string }) {
               <DollarSign size={20} className="text-ink-400" />
             </div>
             <h3 className="text-[15px] font-semibold text-ink-900">Debt Engine unavailable</h3>
-            <p className="text-[12.5px] text-ink-500 mt-1">
-              Debt structuring runs after the P&amp;L engine completes.
+            <p className="text-[12.5px] text-ink-500 mt-1 max-w-md mx-auto leading-relaxed">
+              Debt structuring needs the <span className="font-medium">P&amp;L</span> engine to finish first
+              (it sizes the loan against year-1 NOI). Run the model from the P&amp;L tab, or upload a T-12
+              if you haven&apos;t yet.
             </p>
             <Button
               variant="primary"
@@ -84,6 +100,17 @@ export default function DebtTab({ projectId }: { projectId: number | string }) {
   return (
     <div className="flex gap-4">
       <div className="flex-1 min-w-0">
+      <IntroCard
+        dismissKey="debt-intro"
+        title="The Debt Engine"
+        body={
+          <>
+            How the debt is structured: loan amount, interest rate, covenants, and any refinancing.
+            This is where you stress-test whether the hotel earns enough to comfortably service its loan
+            — the headline ratio is <span className="font-semibold">DSCR</span> (Debt Service Coverage Ratio).
+          </>
+        }
+      />
       <EngineHeader
         name="Debt Engine"
         desc="Structures senior and mezzanine debt, calculates debt service, and models refinancing scenarios."
@@ -124,10 +151,10 @@ export default function DebtTab({ projectId }: { projectId: number | string }) {
       {tab === 'Debt Summary' && (
         <div className={cn(computing && 'relative pointer-events-none opacity-60')}>
           <div className="grid grid-cols-4 gap-4 mb-5">
-            <KPI label="Total Debt" value={fmtCurrency(loanAmount, { compact: true })} flashKey={loanAmount} />
-            <KPI label="LTC" value={fmtPct(ltc, 1)} flashKey={ltc} />
-            <KPI label="DSCR" value={`${dscr.toFixed(2)}x`} tone="green" flashKey={dscr} />
-            <KPI label="Debt Yield" value={debtYield} tone="amber" flashKey={debtYield} />
+            <KPI label="Total Debt" tip="Total senior and mezzanine debt on the deal." value={fmtCurrency(loanAmount, { compact: true })} flashKey={loanAmount} />
+            <KPI label="LTC" tip={GLOSSARY['LTC']} value={fmtPct(ltc, 1)} flashKey={ltc} />
+            <KPI label="DSCR" tip={GLOSSARY['DSCR']} value={`${dscr.toFixed(2)}x`} tone="green" flashKey={dscr} />
+            <KPI label="Debt Yield" tip={GLOSSARY['Debt Yield']} value={debtYield} tone="amber" flashKey={debtYield} />
           </div>
           <div className="grid grid-cols-2 gap-5">
             <Panel title="Debt Summary" rows={[
@@ -290,11 +317,13 @@ export default function DebtTab({ projectId }: { projectId: number | string }) {
   );
 }
 
-function KPI({ label, value, tone, flashKey }: { label: string; value: string; tone?: 'green' | 'amber' | 'red'; flashKey?: unknown }) {
+function KPI({ label, value, tone, flashKey, tip }: { label: string; value: string; tone?: 'green' | 'amber' | 'red'; flashKey?: unknown; tip?: string }) {
   const flash = useFlash(flashKey ?? value);
   return (
     <Card className={cn('p-4', flash && 'value-flash')}>
-      <div className="text-[10.5px] text-ink-500 uppercase tracking-wide">{label}</div>
+      <div className="text-[10.5px] text-ink-500 uppercase tracking-wide">
+        {tip ? <MetricLabel label={label} tip={tip} /> : label}
+      </div>
       <div className={`text-[20px] font-semibold tabular-nums mt-1 ${
         tone === 'green' ? 'text-success-700' : tone === 'amber' ? 'text-warn-700' : tone === 'red' ? 'text-danger-700' : 'text-ink-900'
       }`}>{value}</div>

@@ -13,6 +13,9 @@ import WhatJustHappened from './WhatJustHappened';
 import { fmtCurrency, fmtPct, cn } from '@/lib/format';
 import { getEngineField, useEngineOutputs } from '@/lib/hooks/useEngineOutputs';
 import { useFlash } from '@/lib/hooks/useFlash';
+import { IntroCard } from '@/components/help/IntroCard';
+import { MetricLabel } from '@/components/help/MetricLabel';
+import { GLOSSARY } from '@/lib/glossary';
 
 const subTabs = ['Summary', 'Waterfall Structure', 'Distribution Timeline', 'Returns Summary'];
 
@@ -49,6 +52,18 @@ export default function PartnershipTab({ projectId }: { projectId: number | stri
     return (
       <div className="flex gap-4">
         <div className="flex-1 min-w-0">
+          <IntroCard
+            dismissKey="partnership-intro"
+            title="The Partnership Engine"
+            body={
+              <>
+                How the deal&apos;s profits split between the sponsor (you, the
+                <span className="font-semibold"> GP</span>) and outside investors
+                (<span className="font-semibold">LPs</span>). The waterfall pays LPs their preferred
+                return first, then promotes the GP on the upside.
+              </>
+            }
+          />
           <EngineHeader
             name="Partnership Engine"
             desc="Models GP/LP waterfall structures, promote calculations, and investor distributions."
@@ -68,8 +83,10 @@ export default function PartnershipTab({ projectId }: { projectId: number | stri
               <Users size={20} className="text-ink-400" />
             </div>
             <h3 className="text-[15px] font-semibold text-ink-900">Partnership Engine unavailable</h3>
-            <p className="text-[12.5px] text-ink-500 mt-1">
-              Waterfall and promote calculations run after the Returns engine completes.
+            <p className="text-[12.5px] text-ink-500 mt-1 max-w-md mx-auto leading-relaxed">
+              The waterfall splits depend on total deal returns, so this engine waits for
+              <span className="font-medium"> Returns</span> to finish. Run the model from the Returns
+              tab to populate GP/LP splits.
             </p>
             <Button
               variant="primary"
@@ -90,6 +107,18 @@ export default function PartnershipTab({ projectId }: { projectId: number | stri
   return (
     <div className="flex gap-4">
       <div className="flex-1 min-w-0">
+      <IntroCard
+        dismissKey="partnership-intro"
+        title="The Partnership Engine"
+        body={
+          <>
+            How the deal&apos;s profits split between the sponsor (you, the
+            <span className="font-semibold"> GP</span>) and outside investors
+            (<span className="font-semibold">LPs</span>). The waterfall pays LPs their preferred
+            return first, then promotes the GP on the upside.
+          </>
+        }
+      />
       <EngineHeader
         name="Partnership Engine"
         desc="Models GP/LP waterfall structures, promote calculations, and investor distributions."
@@ -130,10 +159,10 @@ export default function PartnershipTab({ projectId }: { projectId: number | stri
       {tab === 'Summary' && (
         <div className={cn(computing && 'relative pointer-events-none opacity-60')}>
           <div className="grid grid-cols-4 gap-4 mb-5">
-            <KPI label="GP LIRR (Net to Sponsor)" value={gpIrrLabel} flashKey={gpIrrLabel} />
-            <KPI label="LP LIRR (Net to Investors)" value={lpIrrLabel} flashKey={lpIrrLabel} />
-            <KPI label="GP Profit (Carry)" value={promoteLabel} flashKey={promoteLabel} />
-            <KPI label="Deal Profit (Levered)" value={fmtCurrency(22_120_000, { compact: true })} />
+            <KPI label="GP LIRR (Net to Sponsor)" tip="The General Partner's (sponsor's) levered IRR after the promote — what you take home for putting the deal together." value={gpIrrLabel} flashKey={gpIrrLabel} />
+            <KPI label="LP LIRR (Net to Investors)" tip="The Limited Partners' (outside investors') levered IRR after waterfall splits. What your LPs actually earn." value={lpIrrLabel} flashKey={lpIrrLabel} />
+            <KPI label="GP Profit (Carry)" tip={GLOSSARY['Promote']} value={promoteLabel} flashKey={promoteLabel} />
+            <KPI label="Deal Profit (Levered)" tip="Total cash to all equity holders over the hold, minus equity invested. The pie that gets split GP/LP." value={fmtCurrency(22_120_000, { compact: true })} />
           </div>
 
           <div className="grid grid-cols-2 gap-5 mb-5">
@@ -307,11 +336,13 @@ export default function PartnershipTab({ projectId }: { projectId: number | stri
   );
 }
 
-function KPI({ label, value, flashKey }: { label: string; value: string; flashKey?: unknown }) {
+function KPI({ label, value, flashKey, tip }: { label: string; value: string; flashKey?: unknown; tip?: string }) {
   const flash = useFlash(flashKey ?? value);
   return (
     <Card className={cn('p-4', flash && 'value-flash')}>
-      <div className="text-[10.5px] text-ink-500 uppercase tracking-wide">{label}</div>
+      <div className="text-[10.5px] text-ink-500 uppercase tracking-wide">
+        {tip ? <MetricLabel label={label} tip={tip} /> : label}
+      </div>
       <div className="text-[20px] font-semibold tabular-nums mt-1 text-ink-900">{value}</div>
     </Card>
   );

@@ -8,6 +8,10 @@ import {
   brandFamilies,
 } from '@/lib/mockData';
 import { fmtCurrency, fmtPct, fmtMillions, fmtNumber, cn } from '@/lib/format';
+import { IntroCard } from '@/components/help/IntroCard';
+import { MetricLabel } from '@/components/help/MetricLabel';
+import { Term } from '@/components/help/Term';
+import { GLOSSARY } from '@/lib/glossary';
 
 export default function OverviewTab({ projectId }: { projectId: number }) {
   if (projectId !== 7) {
@@ -16,8 +20,12 @@ export default function OverviewTab({ projectId }: { projectId: number }) {
         <div className="w-12 h-12 rounded-lg bg-ink-300/20 flex items-center justify-center mx-auto mb-4">
           <LayoutGrid size={20} className="text-ink-400" />
         </div>
-        <h3 className="text-[15px] font-semibold text-ink-900">No Underwriting Data</h3>
-        <p className="text-[12.5px] text-ink-500 mt-1">Run underwriting to populate the overview.</p>
+        <h3 className="text-[15px] font-semibold text-ink-900">No underwriting data yet</h3>
+        <p className="text-[12.5px] text-ink-500 mt-1 max-w-md mx-auto leading-relaxed">
+          We need an Offering Memorandum (the broker&apos;s pitch deck) and a T-12 (the last 12 months
+          of profit &amp; loss) before we can build the model. Drop them into the
+          <span className="font-medium"> Data Room</span> tab to get started.
+        </p>
         <Button variant="primary" size="sm" className="mt-4">Run Underwriting</Button>
       </Card>
     );
@@ -38,6 +46,18 @@ export default function OverviewTab({ projectId }: { projectId: number }) {
 
   return (
     <div className="space-y-5">
+      <IntroCard
+        dismissKey="overview-intro"
+        title="The complete underwriting model on one page"
+        body={
+          <>
+            Acquisition assumptions, financing, returns — every input and output the AI built from
+            your documents. The colored dots in the legend below tell you which numbers you can edit
+            (amber), which are derived from other engines (green), and which are read-only.
+          </>
+        }
+      />
+
       <Card className="p-5">
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-5 text-[11.5px] text-ink-500">
@@ -96,18 +116,26 @@ export default function OverviewTab({ projectId }: { projectId: number }) {
       </div>
 
       <Card className="p-5 bg-brand-50 border-brand-100">
-        <h3 className="text-[13px] font-semibold text-ink-900 mb-4">Returns Summary</h3>
+        <h3 className="text-[13px] font-semibold text-ink-900 mb-1">Returns Summary</h3>
+        <p className="text-[11.5px] text-ink-500 mb-4">What investors will earn over the hold period.</p>
         <div className="grid grid-cols-5 gap-4">
-          {[
-            ['Levered IRR', fmtPct(o.returns.leveredIRR, 2)],
-            ['Unlevered IRR', fmtPct(o.returns.unleveredIRR, 2)],
-            ['Equity Multiple', `${o.returns.equityMultiple.toFixed(2)}x`],
-            ['Year-1 CoC', fmtPct(o.returns.yearOneCoC, 1)],
-            ['Hold Period', `${o.returns.hold} Years`],
-          ].map(([k, v]) => (
-            <div key={k}>
-              <div className="text-[11px] text-ink-500 uppercase tracking-wide">{k}</div>
-              <div className="text-[20px] font-semibold text-brand-700 tabular-nums mt-0.5">{v}</div>
+          {([
+            { label: 'Levered IRR', value: fmtPct(o.returns.leveredIRR, 2),
+              tip: GLOSSARY['IRR'] + ' "Levered" means after debt service.' },
+            { label: 'Unlevered IRR', value: fmtPct(o.returns.unleveredIRR, 2),
+              tip: 'Asset-level IRR before debt — what you\'d earn if the hotel were paid for in cash.' },
+            { label: 'Equity Multiple', value: `${o.returns.equityMultiple.toFixed(2)}x`,
+              tip: GLOSSARY['Equity Multiple'] },
+            { label: 'Year-1 CoC', value: fmtPct(o.returns.yearOneCoC, 1),
+              tip: GLOSSARY['CoC'] + ' Year-1 is the first full year after acquisition.' },
+            { label: 'Hold Period', value: `${o.returns.hold} Years`,
+              tip: GLOSSARY['Hold Period'] },
+          ]).map(s => (
+            <div key={s.label}>
+              <div className="text-[11px] text-ink-500 uppercase tracking-wide">
+                <MetricLabel label={s.label} tip={s.tip} />
+              </div>
+              <div className="text-[20px] font-semibold text-brand-700 tabular-nums mt-0.5">{s.value}</div>
             </div>
           ))}
         </div>

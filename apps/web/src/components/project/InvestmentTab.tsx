@@ -14,6 +14,7 @@ import { kimptonAnglerOverview } from '@/lib/mockData';
 import { fmtCurrency, fmtPct, cn } from '@/lib/format';
 import { useAssumptionsOptional } from '@/stores/assumptionsStore';
 import { useEngineOutputs } from '@/lib/hooks/useEngineOutputs';
+import { IntroCard } from '@/components/help/IntroCard';
 
 const subTabs = ['Deal Summary', 'Sources & Uses', 'Timeline'];
 
@@ -33,6 +34,17 @@ export default function InvestmentTab({ projectId }: { projectId: number | strin
     return (
       <div className="flex gap-4">
         <div className="flex-1 min-w-0">
+          <IntroCard
+            dismissKey="investment-intro"
+            title="The Investment Engine"
+            body={
+              <>
+                Defines the deal structure: what you&apos;re buying, what you&apos;re paying,
+                when you&apos;re selling. Sources &amp; Uses, key dates, and the entry cap rate live
+                here. This is the starting point of the model — every other engine builds on it.
+              </>
+            }
+          />
           <EngineHeader
             name="Investment Engine"
             desc="Defines deal structure, purchase price, key dates, and investment thesis for the transaction."
@@ -53,8 +65,9 @@ export default function InvestmentTab({ projectId }: { projectId: number | strin
               <Briefcase size={20} className="text-ink-400" />
             </div>
             <h3 className="text-[15px] font-semibold text-ink-900">Investment Engine unavailable</h3>
-            <p className="text-[12.5px] text-ink-500 mt-1">
-              Upload an Offering Memorandum to populate the investment summary.
+            <p className="text-[12.5px] text-ink-500 mt-1 max-w-md mx-auto leading-relaxed">
+              Upload an <span className="font-medium">Offering Memorandum</span> (the broker&apos;s pitch deck) into
+              the Data Room and we&apos;ll populate the investment summary automatically.
             </p>
             <Button
               variant="primary"
@@ -75,6 +88,17 @@ export default function InvestmentTab({ projectId }: { projectId: number | strin
   return (
     <div className="flex gap-4">
       <div className="flex-1 min-w-0">
+      <IntroCard
+        dismissKey="investment-intro"
+        title="The Investment Engine"
+        body={
+          <>
+            Defines the deal structure: what you&apos;re buying, what you&apos;re paying,
+            when you&apos;re selling. Sources &amp; Uses, key dates, and the entry cap rate live
+            here. This is the starting point of the model — every other engine builds on it.
+          </>
+        }
+      />
       <EngineHeader
         name="Investment Engine"
         desc="Defines deal structure, purchase price, key dates, and investment thesis for the transaction."

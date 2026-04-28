@@ -226,7 +226,9 @@ export default function ProjectDetailPage() {
               <h1 className="font-display text-[28px] font-semibold tracking-[-0.018em] text-ink-900 leading-[1.15]">
                 {project.name}
               </h1>
-              <StatusBadge value={project.status} />
+              <span title="Where this deal stands. Draft = early stage, no IC review yet. In Review = team is reviewing. IC Ready = ready for the investment committee.">
+                <StatusBadge value={project.status} />
+              </span>
             </div>
           </div>
 
@@ -239,6 +241,7 @@ export default function ProjectDetailPage() {
                 aria-label={`Open documents (${project.docs} files)`}
                 aria-expanded={docsOpen}
                 aria-haspopup="dialog"
+                title="Documents uploaded vs the underwriting checklist (OM, T-12, STR report, rent roll, PIP estimate, etc.). Click to open the docs drawer."
                 className="h-8 px-2.5 bg-white border border-border hover:border-ink-300 hover:bg-ink-100 rounded-md text-[12px] inline-flex items-center gap-1.5 text-ink-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-500"
               >
                 <FileText size={12} aria-hidden="true" /> Docs <span className="text-ink-900 font-medium tabular-nums">{project.docs}</span>
@@ -254,6 +257,7 @@ export default function ProjectDetailPage() {
                 onBlur={() => setConfidenceOpen(false)}
                 aria-label={project.aiConfidence === 0 ? 'Awaiting documents' : `AI confidence ${project.aiConfidence}%`}
                 aria-describedby={confidenceOpen ? 'ai-confidence-tooltip' : undefined}
+                title="The AI's certainty in the model, based on document completeness and extraction quality. Climbs toward 100% as you upload the full doc set."
                 className="h-8 px-2.5 bg-brand-50 hover:bg-brand-100 border border-brand-100 rounded-md text-[12px] inline-flex items-center gap-1.5 text-brand-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-500"
               >
                 <Sparkles size={12} aria-hidden="true" />

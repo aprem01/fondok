@@ -15,6 +15,8 @@ import { criticalCount, warnCount, varianceFlags } from '@/lib/varianceData';
 import { isWorkerConnected, workerUrl, WorkerDocument, ExtractionField } from '@/lib/api';
 import { useDocuments } from '@/lib/hooks/useDocuments';
 import { useToast } from '@/components/ui/Toast';
+import { IntroCard } from '@/components/help/IntroCard';
+import { MetricLabel } from '@/components/help/MetricLabel';
 
 // Documents with broker-vs-T12 variance flags raised against them.
 const VARIANCE_DOCS = new Set([
@@ -242,6 +244,20 @@ export default function DataRoomTab({ projectId }: { projectId: number }) {
         className="hidden"
       />
 
+      <IntroCard
+        dismissKey="dataroom-intro"
+        title="The Data Room"
+        body={
+          <>
+            Drop your deal documents here. Our AI reads each PDF and Excel end-to-end and pulls
+            out every number, every assumption, every risk — automatically. The
+            <span className="font-semibold"> Document Checklist</span> on the right tracks what
+            we still need to fully underwrite the deal; the
+            <span className="font-semibold"> Engine Status</span> bars climb as the AI gets more confident.
+          </>
+        }
+      />
+
       <Card className="p-5">
         <div className="flex items-start gap-3">
           <FolderOpen size={20} className="text-brand-500 mt-0.5" />
@@ -287,8 +303,10 @@ export default function DataRoomTab({ projectId }: { projectId: number }) {
             <div className="text-[14px] font-semibold text-ink-900">
               Upload an OM, T-12, or rent roll to start the AI underwriting flow
             </div>
-            <div className="text-[12px] text-ink-500 mt-1">
-              Drag &amp; drop or click anywhere in this box · PDF, Excel, CSV, Word
+            <div className="text-[12px] text-ink-500 mt-1 max-w-md mx-auto leading-relaxed">
+              Drag &amp; drop or click anywhere in this box. <span className="font-medium">OM</span> = Offering Memorandum
+              (the broker&apos;s pitch deck). <span className="font-medium">T-12</span> = the last 12 months of profit &amp;
+              loss. PDF, Excel, CSV, Word — all welcome.
             </div>
             <div className="flex items-center justify-center gap-2 mt-4">
               <Button variant="primary" size="sm" disabled={uploading}>
@@ -398,10 +416,15 @@ export default function DataRoomTab({ projectId }: { projectId: number }) {
 
         {/* Engine Status */}
         <Card className="p-5">
-          <h3 className="text-[14px] font-semibold text-ink-900 mb-4">Engine Status</h3>
+          <h3 className="text-[14px] font-semibold text-ink-900 mb-1">Engine Status</h3>
+          <p className="text-[11.5px] text-ink-500 mb-4 leading-relaxed">
+            Each engine builds part of the model (P&amp;L, Debt, Returns, etc.). The
+            percentage is how confident the engine is, based on which documents
+            you&apos;ve uploaded.
+          </p>
           <div className="space-y-3.5">
             {engines.map((e) => (
-              <div key={e.id}>
+              <div key={e.id} title={`${e.label} is ${e.progress}% confident — climbs as you upload the documents this engine needs.`}>
                 <div className="flex items-center justify-between mb-1">
                   <span className="text-[12px] text-ink-700 font-medium">{e.label}</span>
                   <span className="text-[11px] text-ink-500 tabular-nums">{e.progress}%</span>

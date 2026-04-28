@@ -11,6 +11,7 @@ import { Button } from '@/components/ui/Button';
 import { Badge } from '@/components/ui/Badge';
 import { miamiMarket } from '@/lib/mockData';
 import { cn } from '@/lib/format';
+import { IntroCard } from '@/components/help/IntroCard';
 
 const subTabs = ['Market Overview', 'Transaction Comps'];
 
@@ -27,6 +28,17 @@ export default function MarketTab({ projectId }: { projectId: number | string })
   if (!isKimptonDemo) {
     return (
       <div>
+        <IntroCard
+          dismissKey="market-intro"
+          title="The Market view"
+          body={
+            <>
+              What&apos;s happening in this submarket — recent performance trends, new hotels being
+              built (the supply pipeline), what&apos;s driving demand, and recent sales of comparable
+              hotels. The basis for your projections and exit valuation.
+            </>
+          }
+        />
         <Card className="p-5 mb-5">
           <div className="flex items-start justify-between">
             <div>
@@ -41,9 +53,11 @@ export default function MarketTab({ projectId }: { projectId: number | string })
           <div className="w-12 h-12 rounded-lg bg-ink-300/20 flex items-center justify-center mx-auto mb-4">
             <MapPinned size={20} className="text-ink-400" />
           </div>
-          <h3 className="text-[15px] font-semibold text-ink-900">Market Engine unavailable</h3>
-          <p className="text-[12.5px] text-ink-500 mt-1">
-            No market data for this submarket. Add a market via Data Library to populate.
+          <h3 className="text-[15px] font-semibold text-ink-900">No market data yet</h3>
+          <p className="text-[12.5px] text-ink-500 mt-1 max-w-md mx-auto leading-relaxed">
+            We don&apos;t have benchmark data for this submarket yet. Open the
+            <span className="font-medium"> Data Library</span> to add it (paste in an STR report or
+            attach a saved market).
           </p>
           <Link href="/data-library?tab=market" className="inline-block mt-4">
             <Button variant="primary" size="sm">Open Data Library</Button>
@@ -55,6 +69,17 @@ export default function MarketTab({ projectId }: { projectId: number | string })
 
   return (
     <div>
+      <IntroCard
+        dismissKey="market-intro"
+        title="The Market view"
+        body={
+          <>
+            What&apos;s happening in this submarket — recent performance trends, new hotels being
+            built (the supply pipeline), what&apos;s driving demand, and recent sales of comparable
+            hotels. The basis for your projections and exit valuation.
+          </>
+        }
+      />
       <Card className="p-5 mb-5">
         <div className="flex items-start justify-between">
           <div>

@@ -10,6 +10,7 @@ import { workspace, teamMembers, notificationDefaults, integrations } from '@/li
 import { cn } from '@/lib/format';
 import { useToast } from '@/components/ui/Toast';
 import { api, isWorkerConnected, WorkerError } from '@/lib/api';
+import { IntroCard } from '@/components/help/IntroCard';
 
 const tabs = ['Team', 'Workspace', 'Notifications', 'Integrations'];
 
@@ -166,6 +167,18 @@ export default function SettingsPage() {
 
       {tab === 'Team' && (
         <div className="space-y-5">
+          <IntroCard
+            dismissKey="settings-team-intro"
+            title="Team & roles"
+            body={
+              <>
+                Invite your colleagues. <span className="font-semibold">Analysts</span> can run models
+                and edit assumptions. <span className="font-semibold">Principals</span> can approve
+                IC memos. <span className="font-semibold">Admins</span> can change workspace settings
+                and manage billing.
+              </>
+            }
+          />
           <Card className="p-5">
             <h3 className="text-[14px] font-semibold text-ink-900 mb-1">Invite Team Member</h3>
             <p className="text-[12px] text-ink-500 mb-4">Add new members to your workspace. They'll receive an email invitation.</p>
@@ -224,6 +237,17 @@ export default function SettingsPage() {
 
       {tab === 'Workspace' && (
         <div className="space-y-5">
+          <IntroCard
+            dismissKey="settings-workspace-intro"
+            title="Your firm's defaults"
+            body={
+              <>
+                Workspace name, URL, and the default underwriting assumptions (LTV, interest rate,
+                hold period) that pre-fill every new deal. Setting smart defaults here saves you
+                from re-entering the same numbers on each new deal.
+              </>
+            }
+          />
           <Card className="p-5">
             <h3 className="text-[14px] font-semibold text-ink-900 mb-4">Workspace Details</h3>
             <div className="space-y-4">
@@ -335,6 +359,18 @@ export default function SettingsPage() {
       )}
 
       {tab === 'Notifications' && (
+        <>
+        <IntroCard
+          dismissKey="settings-notifications-intro"
+          title="Email notifications"
+          body={
+            <>
+              Pick which events email you. The defaults are sensible for most workflows —
+              status changes, document uploads, AI extraction completion. Toggle anything off
+              if your inbox is getting noisy.
+            </>
+          }
+        />
         <Card className="p-5">
           <h3 className="text-[14px] font-semibold text-ink-900 mb-1">Email Notifications</h3>
           <p className="text-[12px] text-ink-500 mb-5">Choose what updates you want to receive via email.</p>
@@ -354,10 +390,22 @@ export default function SettingsPage() {
             </div>
           ))}
         </Card>
+        </>
       )}
 
       {tab === 'Integrations' && (
         <div className="space-y-5">
+          <IntroCard
+            dismissKey="settings-integrations-intro"
+            title="External data sources"
+            body={
+              <>
+                Connect data providers we can pull from. <span className="font-semibold">STR</span> (Smith
+                Travel Research) is the gold standard for hotel performance data — RevPAR, occupancy,
+                comp set benchmarks. Most integrations are gated to Enterprise plans.
+              </>
+            }
+          />
           <Card className="p-5">
             <h3 className="text-[14px] font-semibold text-ink-900 mb-1">Data Sources</h3>
             <p className="text-[12px] text-ink-500 mb-5">Connect external data sources to enhance your underwriting.</p>

@@ -192,14 +192,21 @@ function Step1({ data, update }: StepProps) {
   return (
     <div>
       <h2 className="text-[18px] font-semibold text-ink-900 mb-1">Create New Deal</h2>
-      <p className="text-[12.5px] text-ink-500 mb-6">Enter deal details for pipeline tracking. Documents can be added later.</p>
+      <p className="text-[12.5px] text-ink-500 mb-3">Enter deal details for pipeline tracking. Documents can be added later.</p>
+      <div className="rounded-md bg-brand-50 border border-brand-100 p-3 text-[12px] text-ink-700 leading-relaxed mb-6">
+        Tell us the basics about the hotel — what it&apos;s called, where it is, how many rooms,
+        and how far along you are in the acquisition. We use this to set up the deal in your
+        pipeline. Anything you enter here can be edited later.
+      </div>
 
       <div className="space-y-4">
         <Field label="Deal Name *" value={data.dealName} onChange={v => update({ dealName: v })} placeholder="Chicago Downtown Acquisition" />
         <Field label="City / Submarket *" value={data.city} onChange={v => update({ city: v })} placeholder="Chicago, IL" />
         <div className="grid grid-cols-2 gap-4">
-          <Field label="Keys *" value={data.keys} onChange={v => update({ keys: v })} placeholder="312" type="number" />
-          <Select label="Deal Stage *" value={data.stage} onChange={v => update({ stage: v })} options={dealStages} />
+          <Field label="Keys *" value={data.keys} onChange={v => update({ keys: v })} placeholder="312" type="number"
+            help="Number of guest rooms. 'Keys' is industry shorthand for rooms." />
+          <Select label="Deal Stage *" value={data.stage} onChange={v => update({ stage: v })} options={dealStages}
+            help="Teaser = haven't even signed an NDA. Under NDA = NDA signed, accessing docs. LOI = letter of intent submitted. PSA = under purchase & sale agreement." />
         </div>
         <div className="grid grid-cols-2 gap-4">
           <Field label="Hotel Name (Optional)" value={data.hotelName} onChange={v => update({ hotelName: v })} placeholder="Marriott Chicago Downtown" />
@@ -221,10 +228,21 @@ function Step1({ data, update }: StepProps) {
 }
 
 function Step2({ data, update }: StepProps) {
+  // Plain-English example for each return profile so 10th-graders can pick one.
+  const example: Record<string, string> = {
+    core: 'Buying a stable Marriott in a major market — moderate returns, low risk.',
+    'value-add': 'Buying a tired hotel and renovating it — medium returns, medium risk.',
+    opportunistic: 'Converting an office building into a hotel — high returns, high risk.',
+  };
   return (
     <div>
       <h2 className="text-[18px] font-semibold text-ink-900 mb-1">Return Requirements</h2>
-      <p className="text-[12.5px] text-ink-500 mb-6">Select the investment strategy that matches your return targets.</p>
+      <p className="text-[12.5px] text-ink-500 mb-3">Select the investment strategy that matches your return targets.</p>
+      <div className="rounded-md bg-brand-50 border border-brand-100 p-3 text-[12px] text-ink-700 leading-relaxed mb-6">
+        Different deals carry different risk-and-return profiles. Pick the strategy that
+        matches what you&apos;re trying to do — Fondok uses this to calibrate the model
+        (default leverage, exit cap, hurdles) and to grade the deal against your target return.
+      </div>
       <div className="grid grid-cols-3 gap-4">
         {returnProfiles.map(p => {
           const Icon = iconForReturn[p.id];
@@ -244,6 +262,11 @@ function Step2({ data, update }: StepProps) {
               <div className="text-[14px] font-semibold text-ink-900">{p.label}</div>
               <div className="text-[12px] text-brand-700 font-medium mt-1">Target IRR: {p.target}</div>
               <p className="text-[11.5px] text-ink-500 mt-2 leading-relaxed">{p.desc}</p>
+              {example[p.id] && (
+                <p className="text-[11px] text-ink-700 mt-2 leading-relaxed">
+                  <span className="font-medium text-ink-900">Example: </span>{example[p.id]}
+                </p>
+              )}
             </button>
           );
         })}
@@ -256,7 +279,13 @@ function Step3({ data, update }: StepProps) {
   return (
     <div>
       <h2 className="text-[18px] font-semibold text-ink-900 mb-1">Upload Documents</h2>
-      <p className="text-[12.5px] text-ink-500 mb-6">Add your deal documents to the data room for AI extraction.</p>
+      <p className="text-[12.5px] text-ink-500 mb-3">Add your deal documents to the data room for AI extraction.</p>
+      <div className="rounded-md bg-brand-50 border border-brand-100 p-3 text-[12px] text-ink-700 leading-relaxed mb-6">
+        Drop in any PDF or Excel files for this deal: the offering memorandum (the broker&apos;s pitch
+        deck), the trailing-12-month financials (T-12), STR market reports, rent rolls, PIP estimates.
+        Our AI will read each one end-to-end and pull out every number we need to build the model.
+        You can skip this step and add documents later from the Data Room tab.
+      </div>
 
       <div className="border-2 border-dashed border-ink-300 rounded-lg py-12 px-6 text-center">
         <UploadCloud size={36} className="text-ink-400 mx-auto mb-3" />
@@ -289,7 +318,13 @@ function Step4({ data, update }: StepProps) {
   return (
     <div>
       <h2 className="text-[18px] font-semibold text-ink-900 mb-1">Select Brand</h2>
-      <p className="text-[12.5px] text-ink-500 mb-6">Choose a hotel brand or select brand agnostic for independent analysis.</p>
+      <p className="text-[12.5px] text-ink-500 mb-3">Choose a hotel brand or select brand agnostic for independent analysis.</p>
+      <div className="rounded-md bg-brand-50 border border-brand-100 p-3 text-[12px] text-ink-700 leading-relaxed mb-6">
+        Hotel brands work like franchises — each one has different fees, standards, and
+        customer expectations (think Marriott vs. Holiday Inn vs. an indie boutique). Pick the
+        brand that matches the deal so we can pull in the right benchmarks, or choose
+        <span className="font-medium"> Brand Agnostic</span> for an independent hotel.
+      </div>
 
       <button onClick={() => update({ brand: 'agnostic' })}
         className={cn(
@@ -394,10 +429,23 @@ function Step4({ data, update }: StepProps) {
 }
 
 function Step5({ data, update }: StepProps) {
+  // Anchor each tier to consumer-recognizable brands so the choice is concrete.
+  const tierExample: Record<string, string> = {
+    luxury: 'Ritz-Carlton, Four Seasons, St. Regis.',
+    upscale: 'Westin, Marriott full-service, Hyatt Regency.',
+    midscale: 'Holiday Inn Express, Hampton Inn, Courtyard.',
+    economy: 'Motel 6, Days Inn, Super 8.',
+    default: 'No specific tier — Fondok picks based on the brand and ADR.',
+  };
   return (
     <div>
       <h2 className="text-[18px] font-semibold text-ink-900 mb-1">Market Positioning</h2>
-      <p className="text-[12.5px] text-ink-500 mb-6">Select the market segment for your analysis.</p>
+      <p className="text-[12.5px] text-ink-500 mb-3">Select the market segment for your analysis.</p>
+      <div className="rounded-md bg-brand-50 border border-brand-100 p-3 text-[12px] text-ink-700 leading-relaxed mb-6">
+        Hotels are graded into tiers — luxury, upscale, midscale, economy — based on price
+        point and amenities. The tier shapes what comp set we benchmark against and which
+        operating ratios are reasonable.
+      </div>
       <div className="grid grid-cols-2 gap-4">
         {positioningTiers.map(p => {
           const Icon = iconForPos[p.id];
@@ -418,6 +466,11 @@ function Step5({ data, update }: StepProps) {
                 {selected && <Check size={16} className="text-brand-500 ml-auto" />}
               </div>
               <p className="text-[12px] text-ink-500 leading-relaxed">{p.desc}</p>
+              {tierExample[p.id] && (
+                <p className="text-[11px] text-ink-700 mt-2 leading-relaxed">
+                  <span className="font-medium text-ink-900">Examples: </span>{tierExample[p.id]}
+                </p>
+              )}
             </button>
           );
         })}
@@ -446,7 +499,12 @@ function Step6({ data, jumpTo }: { data: WizardData; jumpTo: (step: number) => v
   return (
     <div>
       <h2 className="text-[18px] font-semibold text-ink-900 mb-1">Review & Create Deal</h2>
-      <p className="text-[12.5px] text-ink-500 mb-6">Review your selections before creating the deal.</p>
+      <p className="text-[12.5px] text-ink-500 mb-3">Last check before we create the deal.</p>
+      <div className="rounded-md bg-brand-50 border border-brand-100 p-3 text-[12px] text-ink-700 leading-relaxed mb-6">
+        Confirm everything looks right. Click any row to edit a section. Once you click
+        <span className="font-medium"> Create Shell Deal</span>, the deal goes into your pipeline and you can start
+        uploading documents from the Data Room tab.
+      </div>
 
       {noDocs && (
         <div className="bg-warn-50 border border-warn-500/30 rounded-lg p-4 mb-5 flex gap-3">
@@ -482,20 +540,21 @@ function Step6({ data, jumpTo }: { data: WizardData; jumpTo: (step: number) => v
   );
 }
 
-function Field({ label, value, onChange, placeholder, type = 'text' }: {
-  label: string; value: string; onChange: (v: string) => void; placeholder?: string; type?: string;
+function Field({ label, value, onChange, placeholder, type = 'text', help }: {
+  label: string; value: string; onChange: (v: string) => void; placeholder?: string; type?: string; help?: string;
 }) {
   return (
     <div>
       <label className="block text-[12px] font-medium text-ink-700 mb-1.5">{label}</label>
       <input type={type} value={value} onChange={e => onChange(e.target.value)} placeholder={placeholder}
         className="w-full px-3 py-2 text-[13px] bg-white border border-border rounded-md focus:outline-none focus:ring-2 focus:ring-brand-100 focus:border-brand-500" />
+      {help && <div className="mt-1 text-[11px] text-ink-500 leading-relaxed">{help}</div>}
     </div>
   );
 }
 
-function Select({ label, value, onChange, options }: {
-  label: string; value: string; onChange: (v: string) => void; options: readonly string[];
+function Select({ label, value, onChange, options, help }: {
+  label: string; value: string; onChange: (v: string) => void; options: readonly string[]; help?: string;
 }) {
   return (
     <div>
@@ -504,6 +563,7 @@ function Select({ label, value, onChange, options }: {
         className="w-full px-3 py-2 text-[13px] bg-white border border-border rounded-md focus:outline-none focus:ring-2 focus:ring-brand-100 focus:border-brand-500">
         {options.map(o => <option key={o}>{o}</option>)}
       </select>
+      {help && <div className="mt-1 text-[11px] text-ink-500 leading-relaxed">{help}</div>}
     </div>
   );
 }

@@ -9,6 +9,7 @@ import Modal from '@/components/ui/Modal';
 import { useToast } from '@/components/ui/Toast';
 import { compSets, marketDataLib, templates } from '@/lib/mockData';
 import { cn } from '@/lib/format';
+import { IntroCard } from '@/components/help/IntroCard';
 
 const tabs = ['Comp Sets', 'Market Data', 'Templates'];
 
@@ -134,6 +135,20 @@ export default function DataLibraryPage() {
         title="Data Library"
         subtitle="Manage shared data across your underwriting projects"
         action={addDataAction}
+      />
+
+      <IntroCard
+        dismissKey="data-library-intro"
+        title="Reusable assets across all your deals"
+        body={
+          <>
+            <span className="font-semibold">Comp Sets</span> are groups of competing hotels you
+            benchmark against. <span className="font-semibold">Market Data</span> is submarket
+            performance (RevPAR, ADR, occupancy). <span className="font-semibold">Templates</span> are
+            saved sets of underwriting assumptions you reuse for similar deal types — so you
+            don&apos;t re-enter LTV / hold / exit cap on every new deal.
+          </>
+        }
       />
 
       <div className="relative mb-5 max-w-md">

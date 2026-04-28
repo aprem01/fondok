@@ -14,6 +14,8 @@ import { projects as mockProjects, projectStatuses, Project } from '@/lib/mockDa
 import { cn } from '@/lib/format';
 import { useDeals } from '@/lib/hooks/useDeals';
 import { WorkerDeal } from '@/lib/api';
+import { IntroCard } from '@/components/help/IntroCard';
+import { MetricLabel } from '@/components/help/MetricLabel';
 
 const projectMenu = (id: string) => [
   { label: 'View Details', onSelect: () => { window.location.href = `/projects/${id}`; } },
@@ -128,6 +130,20 @@ export default function ProjectsPage() {
         }
       />
 
+      <IntroCard
+        dismissKey="projects-list"
+        title="Your deal pipeline"
+        body={
+          <>
+            Each card below is one hotel deal you&apos;re evaluating. The
+            <span className="font-semibold"> AI Confidence</span> score (0–100) tells you
+            how complete our model is — green means we&apos;ve extracted enough data to be
+            confident in the numbers, red means we&apos;re still missing key documents.
+            Click any deal to open its full underwriting.
+          </>
+        }
+      />
+
       {/* Toolbar */}
       <div className="flex items-center gap-3 mb-5">
         <div className="relative flex-1 max-w-md">
@@ -196,7 +212,11 @@ export default function ProjectsPage() {
         <Card className="p-12 text-center">
           <Building2 size={36} className="text-ink-400 mx-auto mb-3" />
           <div className="text-[14px] font-semibold text-ink-900">No deals yet</div>
-          <p className="text-[12.5px] text-ink-500 mt-1">Create your first deal to start underwriting.</p>
+          <p className="text-[12.5px] text-ink-500 mt-1 max-w-md mx-auto leading-relaxed">
+            A deal is one hotel acquisition you&apos;re evaluating. Click <span className="font-medium">+ New Project</span> to set up
+            your first one — you&apos;ll add the deal name, market, and key count, then drop in
+            the offering memorandum and T-12 to start underwriting.
+          </p>
           <div className="mt-5">
             <Link href="/projects/new">
               <Button variant="primary"><Plus size={14} /> New Project</Button>
@@ -288,13 +308,27 @@ export default function ProjectsPage() {
           <div className="flex items-center gap-3 px-5 py-2.5 border-b border-border bg-ink-100/40 text-[10.5px] font-semibold uppercase tracking-wide text-ink-500">
             <div className="w-9 flex-shrink-0" aria-hidden="true" />
             <div className="flex-1 min-w-0">Project</div>
-            <div className="w-20 text-right">Stage</div>
-            <div className="w-20 text-right">RevPAR</div>
-            <div className="w-24 text-right">NOI</div>
-            <div className="w-16 text-right">IRR</div>
-            <div className="w-16 text-center">Risk</div>
-            <div className="w-24 text-right">AI Conf.</div>
-            <div className="w-14 text-right">Docs</div>
+            <div className="w-20 flex justify-end">
+              <MetricLabel label="Stage" tip="Where this deal is in the acquisition process. Teaser → Under NDA → LOI → PSA → Closed." />
+            </div>
+            <div className="w-20 flex justify-end">
+              <MetricLabel label="RevPAR" tip="Revenue per Available Room — average daily rate × occupancy. The single best yardstick of a hotel's revenue performance." />
+            </div>
+            <div className="w-24 flex justify-end">
+              <MetricLabel label="NOI" tip="Net Operating Income — revenue minus operating expenses, before debt and capex. The truest measure of the hotel's earning power." />
+            </div>
+            <div className="w-16 flex justify-end">
+              <MetricLabel label="IRR" tip="Internal Rate of Return — the annualized return on equity over the hold period. The headline return metric." />
+            </div>
+            <div className="w-16 flex justify-center">
+              <MetricLabel label="Risk" tip="Fondok's overall risk grade for the deal — combines market, brand, debt, and execution risk." />
+            </div>
+            <div className="w-24 flex justify-end">
+              <MetricLabel label="AI Conf." tip="How confident the AI is in the model, based on document completeness and extraction quality. Climbs toward 100% as you upload the full doc set." />
+            </div>
+            <div className="w-14 flex justify-end">
+              <MetricLabel label="Docs" tip="Number of documents uploaded vs. the underwriting checklist (OM, T-12, STR report, rent roll, PIP estimate, etc.)." />
+            </div>
             <div className="w-16 text-right">Updated</div>
             <div className="w-7 text-center">Owner</div>
             <div className="w-7" aria-hidden="true" />
