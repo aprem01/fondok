@@ -579,7 +579,7 @@ async def run_single_engine(
     # as a 500.
     row_id = await _persist_status(
         session,
-        deal_id=deal_id,
+        deal_id=str(_coerce_uuid(deal_id)),
         tenant_id=tenant_id,
         engine_name=engine_name,
         run_id=run_id,
@@ -657,7 +657,7 @@ async def run_all_engines(
             started_at = _now()
             row_id = await _persist_status(
                 session,
-                deal_id=deal_id,
+                deal_id=str(_coerce_uuid(deal_id)),
                 tenant_id=tenant_id,
                 engine_name=name,
                 run_id=run_id,
