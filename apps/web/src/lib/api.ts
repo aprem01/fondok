@@ -90,6 +90,54 @@ export interface ExtractionStartResponse {
   status: string;
 }
 
+// ─── Engines ────────────────────────────────────────────────────────
+// Mirrors apps/worker/app/api/model.py engines_router responses.
+
+export type EngineName =
+  | 'revenue'
+  | 'fb'
+  | 'expense'
+  | 'capital'
+  | 'debt'
+  | 'returns'
+  | 'sensitivity'
+  | 'partnership';
+
+export type EngineStatus = 'queued' | 'running' | 'complete' | 'failed';
+
+export interface EngineOutputResponse {
+  deal_id: string;
+  engine: EngineName;
+  status: EngineStatus;
+  /** One-line headline (e.g. "IRR 23.0% · Multiple 2.37x"). */
+  summary: string;
+  outputs: Record<string, unknown> | null;
+  inputs: Record<string, unknown> | null;
+  error: string | null;
+  runtime_ms: number | null;
+  started_at: string | null;
+  completed_at: string | null;
+  run_id: string | null;
+}
+
+export interface EngineOutputsResponse {
+  deal_id: string;
+  engines: Record<EngineName, EngineOutputResponse>;
+}
+
+export interface EngineRunKickoffResponse {
+  deal_id: string;
+  run_id: string;
+  started_at: string;
+  engines: { name: EngineName; status: EngineStatus }[];
+}
+
+export interface EngineRunStatusResponse {
+  deal_id: string;
+  run_id: string;
+  engines: EngineOutputResponse[];
+}
+
 // ─────────────────────────── core fetcher ───────────────────────────
 
 interface RequestOpts {
@@ -183,6 +231,50 @@ export const api = {
       request<ExtractionResult>(
         'GET',
         `/deals/${dealId}/documents/${docId}/extraction`,
+        undefined,
+        { signal },
+      ),
+  },
+  engines: {
+    /** Run all 8 engines in dependency order (background task on the worker). */
+    runAll: (dealId: string, assumptions?: Record<string, unknown>) =>
+      request<EngineRunKickoffResponse>(
+        'POST',
+        `/deals/${dealId}/engines/run`,
+        assumptions ? { assumptions } : undefined,
+      ),
+    /** Run a single engine synchronously; returns the persisted row. */
+    runOne: (
+      dealId: string,
+      name: EngineName,
+      assumptions?: Record<string, unknown>,
+    ) =>
+      request<EngineOutputResponse>(
+        'POST',
+        `/deals/${dealId}/engines/${name}/run`,
+        assumptions ? { assumptions } : undefined,
+      ),
+    /** Latest persisted output per engine for a deal. */
+    getAll: (dealId: string, signal?: AbortSignal) =>
+      request<EngineOutputsResponse>(
+        'GET',
+        `/deals/${dealId}/engines`,
+        undefined,
+        { signal },
+      ),
+    /** Latest persisted output for a single engine. */
+    getOne: (dealId: string, name: EngineName, signal?: AbortSignal) =>
+      request<EngineOutputResponse>(
+        'GET',
+        `/deals/${dealId}/engines/${name}`,
+        undefined,
+        { signal },
+      ),
+    /** All engine rows for a specific run_id (kickoff polling). */
+    getRun: (dealId: string, runId: string, signal?: AbortSignal) =>
+      request<EngineRunStatusResponse>(
+        'GET',
+        `/deals/${dealId}/engines/run/${runId}`,
         undefined,
         { signal },
       ),

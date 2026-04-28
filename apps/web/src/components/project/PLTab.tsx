@@ -124,6 +124,8 @@ export default function PLTab({ projectId }: { projectId: number }) {
             outputs={['Total Revenue', 'NOI', 'GOP', 'Margin']}
             dependsOn={null}
             dealId={dealId}
+            engineName="expense"
+            runMode="all"
           />
           <EngineLegend />
           <Card className="p-16 text-center">
@@ -156,6 +158,8 @@ export default function PLTab({ projectId }: { projectId: number }) {
         dependsOn={null}
         complete
         dealId={dealId}
+        engineName="expense"
+        runMode="all"
       />
 
       <div className="grid grid-cols-4 gap-4 mb-5">

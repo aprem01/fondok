@@ -33,6 +33,8 @@ export default function InvestmentTab({ projectId }: { projectId: number | strin
             outputs={['Purchase Price', 'Price/Key', 'Entry Cap', '+1']}
             dependsOn={null}
             dealId={dealId}
+            engineName="capital"
+            runMode="all"
           />
           <EngineLegend />
           <Card className="p-16 text-center">
@@ -68,6 +70,8 @@ export default function InvestmentTab({ projectId }: { projectId: number | strin
         dependsOn={null}
         complete
         dealId={dealId}
+        engineName="capital"
+        runMode="all"
       />
 
       <div className="flex items-center gap-1 mb-3 border-b border-border">

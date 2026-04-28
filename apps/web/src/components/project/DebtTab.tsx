@@ -32,6 +32,7 @@ export default function DebtTab({ projectId }: { projectId: number | string }) {
             outputs={['Loan Amount', 'DSCR', 'Debt Yield', '+1']}
             dependsOn="P&L"
             dealId={dealId}
+            engineName="debt"
           />
           <EngineLegend />
           <Card className="p-16 text-center">
@@ -67,6 +68,7 @@ export default function DebtTab({ projectId }: { projectId: number | string }) {
         dependsOn="P&L"
         complete
         dealId={dealId}
+        engineName="debt"
       />
 
       <div className="flex items-center gap-1 mb-3 border-b border-border">

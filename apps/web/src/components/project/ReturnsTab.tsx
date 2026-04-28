@@ -33,6 +33,7 @@ export default function ReturnsTab({ projectId }: { projectId: number | string }
             outputs={['Levered IRR', 'Unlevered IRR', 'Equity Multiple', '+1']}
             dependsOn="Cash Flow"
             dealId={dealId}
+            engineName="returns"
           />
           <EngineLegend />
           <Card className="p-16 text-center">
@@ -70,6 +71,7 @@ export default function ReturnsTab({ projectId }: { projectId: number | string }
         dependsOn="Cash Flow"
         complete
         dealId={dealId}
+        engineName="returns"
       />
 
       <div className="flex items-center gap-1 mb-3 border-b border-border">

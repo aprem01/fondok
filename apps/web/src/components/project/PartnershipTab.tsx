@@ -38,6 +38,7 @@ export default function PartnershipTab({ projectId }: { projectId: number | stri
             outputs={['GP IRR', 'LP IRR', 'GP Promote', '+1']}
             dependsOn="Returns"
             dealId={dealId}
+            engineName="partnership"
           />
           <EngineLegend />
           <Card className="p-16 text-center">
@@ -73,6 +74,7 @@ export default function PartnershipTab({ projectId }: { projectId: number | stri
         dependsOn="Returns"
         complete
         dealId={dealId}
+        engineName="partnership"
       />
 
       <div className="flex items-center gap-1 mb-3 border-b border-border">

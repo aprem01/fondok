@@ -98,6 +98,7 @@ export default function CashFlowTab({ projectId }: { projectId: number }) {
             outputs={['Levered CF', 'Unlevered CF', 'CoC', 'DSCR']}
             dependsOn="P&L"
             dealId={dealId}
+            engineName="returns"
           />
           <EngineLegend />
           <Card className="p-16 text-center">
@@ -130,6 +131,7 @@ export default function CashFlowTab({ projectId }: { projectId: number }) {
         dependsOn="P&L"
         complete
         dealId={dealId}
+        engineName="returns"
       />
 
       <div className="grid grid-cols-4 gap-4 mb-5">

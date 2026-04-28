@@ -385,6 +385,43 @@ MIGRATIONS: list[tuple[str, str]] = [
         ON critic_reports (deal_id, created_at DESC)
         """,
     ),
+    # ─── Engine outputs ────────────────────────────────────────────
+    # One row per (deal, engine, run) capturing inputs, outputs and
+    # status. The Run Model button persists here so the UI can poll
+    # for completion without re-running the engines on every page load.
+    (
+        "engine_outputs.create_table",
+        """
+        CREATE TABLE IF NOT EXISTS engine_outputs (
+            id              UUID PRIMARY KEY,
+            deal_id         UUID NOT NULL,
+            tenant_id       UUID NOT NULL,
+            run_id          UUID,
+            engine_name     TEXT NOT NULL,
+            status          TEXT NOT NULL,
+            inputs          JSONB,
+            outputs         JSONB,
+            error           TEXT,
+            started_at      TIMESTAMPTZ NOT NULL,
+            completed_at    TIMESTAMPTZ,
+            runtime_ms      INTEGER
+        )
+        """,
+    ),
+    (
+        "engine_outputs.idx_deal_engine",
+        """
+        CREATE INDEX IF NOT EXISTS idx_engine_outputs_deal
+        ON engine_outputs (deal_id, engine_name, completed_at DESC)
+        """,
+    ),
+    (
+        "engine_outputs.idx_run",
+        """
+        CREATE INDEX IF NOT EXISTS idx_engine_outputs_run
+        ON engine_outputs (run_id)
+        """,
+    ),
 ]
 
 
@@ -645,6 +682,40 @@ SQLITE_MIGRATIONS: list[tuple[str, str]] = [
         """
         CREATE INDEX IF NOT EXISTS idx_critic_reports_deal
         ON critic_reports (deal_id, created_at DESC)
+        """,
+    ),
+    # ─── Engine outputs (SQLite mirror) ────────────────────────────
+    (
+        "engine_outputs.create_table",
+        """
+        CREATE TABLE IF NOT EXISTS engine_outputs (
+            id              TEXT PRIMARY KEY,
+            deal_id         TEXT NOT NULL,
+            tenant_id       TEXT NOT NULL,
+            run_id          TEXT,
+            engine_name     TEXT NOT NULL,
+            status          TEXT NOT NULL,
+            inputs          TEXT,
+            outputs         TEXT,
+            error           TEXT,
+            started_at      TEXT NOT NULL,
+            completed_at    TEXT,
+            runtime_ms      INTEGER
+        )
+        """,
+    ),
+    (
+        "engine_outputs.idx_deal_engine",
+        """
+        CREATE INDEX IF NOT EXISTS idx_engine_outputs_deal
+        ON engine_outputs (deal_id, engine_name, completed_at DESC)
+        """,
+    ),
+    (
+        "engine_outputs.idx_run",
+        """
+        CREATE INDEX IF NOT EXISTS idx_engine_outputs_run
+        ON engine_outputs (run_id)
         """,
     ),
 ]

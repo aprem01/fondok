@@ -100,6 +100,12 @@ def create_app() -> FastAPI:
     # Documents are deal-scoped: /deals/{deal_id}/documents/...
     app.include_router(documents_router.router, prefix="/deals", tags=["documents"])
     app.include_router(model_router.router, prefix="/model", tags=["model"])
+    # Deal-scoped engine surface — /deals/{id}/engines/... — backs the
+    # web app's Run Model button. Mounted under /deals so the routes
+    # share path-parameter semantics with the rest of the deal API.
+    app.include_router(
+        model_router.engines_router, prefix="/deals", tags=["engines"]
+    )
     app.include_router(market_router.router, prefix="/market", tags=["market"])
     app.include_router(analysis_router.router, prefix="/analysis", tags=["analysis"])
     app.include_router(export_router.router, prefix="/deals", tags=["export"])
