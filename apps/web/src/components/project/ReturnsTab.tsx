@@ -14,6 +14,7 @@ import { dealScenarios, kimptonAnglerOverview } from '@/lib/mockData';
 import { fmtPct, cn } from '@/lib/format';
 import { useAssumptionsOptional } from '@/stores/assumptionsStore';
 import { defaultSensitivities, SensitivityMatrix } from '@/lib/engines';
+import type { SensitivityCell } from '@/lib/engines/types';
 import { getEngineField, useEngineOutputs } from '@/lib/hooks/useEngineOutputs';
 import { useFlash } from '@/lib/hooks/useFlash';
 import { IntroCard } from '@/components/help/IntroCard';
@@ -33,7 +34,12 @@ export default function ReturnsTab({ projectId }: { projectId: number | string }
   const [computing, setComputing] = useState(false);
   const [runToken, setRunToken] = useState<number | null>(null);
 
-  if (!isKimptonDemo) {
+  // Has the Returns engine been run for this deal? Used to decide whether to
+  // render the placeholder or the live UI for non-Kimpton deals.
+  const wReturnsIrr = getEngineField<number>(outputs, 'returns', 'levered_irr');
+  const hasWorkerReturns = wReturnsIrr != null;
+
+  if (!isKimptonDemo && !hasWorkerReturns) {
     return (
       <div className="flex gap-4">
         <div className="flex-1 min-w-0">
@@ -270,19 +276,98 @@ function LiveReturnsSummary({ outputs }: { outputs: ReturnType<typeof useEngineO
 
 function LiveSensitivities() {
   const { assumptions } = useAssumptionsOptional()!;
+  const params = useParams();
+  const dealId = (params?.id as string | undefined) ?? '';
+  const { outputs } = useEngineOutputs(dealId);
   // Sensitivity matrices recompute on assumption change. 5x5x3 = 75 model runs;
   // each run is fast so the user perceives no lag.
-  const matrices = useMemo(() => defaultSensitivities(assumptions), [assumptions]);
+  const tsMatrices = useMemo(() => defaultSensitivities(assumptions), [assumptions]);
+
+  // Worker sensitivity output: a single matrix (the first one in our suite).
+  // When present, we prefer it and merge it as the first matrix in the trio.
+  const workerMatrix = useMemo(() => {
+    return matrixFromWorker(outputs);
+  }, [outputs]);
+
+  const matrices = workerMatrix
+    ? [workerMatrix, ...tsMatrices.slice(1)]
+    : tsMatrices;
+  const titles = ['Levered IRR', 'Equity Multiple (MOIC)', 'Year-1 Cash-on-Cash'];
+
   return (
     <div className="grid grid-cols-3 gap-4">
       {matrices.map((m, i) => (
-        <SensitivityCard key={i} matrix={m} title={['Levered IRR', 'Equity Multiple (MOIC)', 'Year-1 Cash-on-Cash'][i]} />
+        <SensitivityCard
+          key={i}
+          matrix={m}
+          title={titles[i]}
+          source={i === 0 && workerMatrix ? 'worker' : 'ts'}
+        />
       ))}
     </div>
   );
 }
 
-function SensitivityCard({ matrix, title }: { matrix: SensitivityMatrix; title: string }) {
+// Map a worker sensitivity engine output into the SensitivityMatrix shape the
+// existing card uses. Returns null when the engine hasn't run yet.
+function matrixFromWorker(
+  outputs: ReturnType<typeof useEngineOutputs>['outputs'],
+): SensitivityMatrix | null {
+  const out = getEngineField<{
+    row_variable: string;
+    col_variable: string;
+    metric: string;
+    rows: number[];
+    cols: number[];
+    cells: { row_value: number; col_value: number; value: number; is_base: boolean }[];
+  }>(outputs, 'sensitivity');
+  if (!out || !Array.isArray(out.rows) || !Array.isArray(out.cols)) return null;
+  if (!Array.isArray(out.cells) || out.cells.length === 0) return null;
+
+  // Worker emits a flat cell list — re-shape to a 2D grid keyed by (row, col).
+  const grid: SensitivityCell[][] = [];
+  let baseRow = 0, baseCol = 0;
+  for (let i = 0; i < out.rows.length; i++) {
+    const row: SensitivityCell[] = [];
+    for (let j = 0; j < out.cols.length; j++) {
+      const found = out.cells.find(
+        c => Math.abs(c.row_value - out.rows[i]) < 1e-9 && Math.abs(c.col_value - out.cols[j]) < 1e-9,
+      );
+      const cell: SensitivityCell = {
+        value: found?.value ?? 0,
+        rowVal: out.rows[i],
+        colVal: out.cols[j],
+        isBase: !!found?.is_base,
+      };
+      if (cell.isBase) { baseRow = i; baseCol = j; }
+      row.push(cell);
+    }
+    grid.push(row);
+  }
+
+  // Pretty labels for axes — fall back to the raw key when unknown.
+  const labelFor = (key: string) => ({
+    exit_cap_rate: 'Exit Cap',
+    revpar_growth: 'RevPAR Growth',
+    ltv: 'LTV',
+    interest_rate: 'Interest Rate',
+    hold_years: 'Hold',
+    purchase_price: 'Purchase Price',
+  } as Record<string, string>)[key] ?? key;
+
+  return {
+    rowLabel: labelFor(out.row_variable),
+    colLabel: labelFor(out.col_variable),
+    rows: out.rows,
+    cols: out.cols,
+    cells: grid,
+    unit: out.metric === 'equity_multiple' ? 'multiple' : 'pct',
+    baseRow,
+    baseCol,
+  };
+}
+
+function SensitivityCard({ matrix, title, source = 'ts' }: { matrix: SensitivityMatrix; title: string; source?: 'worker' | 'ts' }) {
   const flat = matrix.cells.flat().map(c => c.value);
   const min = Math.min(...flat);
   const max = Math.max(...flat);
@@ -299,7 +384,14 @@ function SensitivityCard({ matrix, title }: { matrix: SensitivityMatrix; title: 
 
   return (
     <Card className="p-4">
-      <h3 className="text-[12.5px] font-semibold text-ink-900 mb-2">{title}</h3>
+      <div className="flex items-center justify-between mb-2">
+        <h3 className="text-[12.5px] font-semibold text-ink-900">{title}</h3>
+        {source === 'worker' && (
+          <span className="text-[9.5px] uppercase tracking-wide text-success-700 bg-success-50 rounded px-1.5 py-0.5">
+            Live
+          </span>
+        )}
+      </div>
       <div className="text-[10.5px] text-ink-500 mb-3">
         {matrix.rowLabel} ↓ × {matrix.colLabel} →
       </div>
@@ -390,18 +482,27 @@ function StaticReturnsSummary({ outputs }: { outputs: ReturnType<typeof useEngin
 }
 
 function StaticSensitivities() {
+  const params = useParams();
+  const dealId = (params?.id as string | undefined) ?? '';
+  const { outputs } = useEngineOutputs(dealId);
+  const workerMatrix = matrixFromWorker(outputs);
+
   return (
     <div className="grid grid-cols-3 gap-4">
-      <StaticHeatmap title="Levered IRR" rowLabel="Exit Cap" colLabel="RevPAR Growth"
-        rows={['6.0%', '6.5%', '7.0%', '7.5%', '8.0%']}
-        cols={['2.0%', '2.5%', '3.0%', '3.5%', '4.0%']}
-        data={[
-          [29.4, 31.2, 33.0, 34.7, 36.5],
-          [25.6, 27.4, 29.2, 31.0, 32.8],
-          [21.9, 23.5, 23.48, 27.4, 29.2],
-          [18.4, 20.0, 21.7, 23.4, 25.1],
-          [15.0, 16.6, 18.3, 20.0, 21.7],
-        ]} baseRow={2} baseCol={2} unit="%" />
+      {workerMatrix ? (
+        <SensitivityCard matrix={workerMatrix} title="Levered IRR" source="worker" />
+      ) : (
+        <StaticHeatmap title="Levered IRR" rowLabel="Exit Cap" colLabel="RevPAR Growth"
+          rows={['6.0%', '6.5%', '7.0%', '7.5%', '8.0%']}
+          cols={['2.0%', '2.5%', '3.0%', '3.5%', '4.0%']}
+          data={[
+            [29.4, 31.2, 33.0, 34.7, 36.5],
+            [25.6, 27.4, 29.2, 31.0, 32.8],
+            [21.9, 23.5, 23.48, 27.4, 29.2],
+            [18.4, 20.0, 21.7, 23.4, 25.1],
+            [15.0, 16.6, 18.3, 20.0, 21.7],
+          ]} baseRow={2} baseCol={2} unit="%" />
+      )}
       <StaticHeatmap title="Equity Multiple (MOIC)" rowLabel="LTV" colLabel="Hold"
         rows={['55%', '60%', '65%', '70%', '75%']}
         cols={['3y', '4y', '5y', '6y', '7y']}

@@ -13,16 +13,52 @@ import KebabMenu from '@/components/ui/KebabMenu';
 import { projects as mockProjects, projectStatuses, Project } from '@/lib/mockData';
 import { cn } from '@/lib/format';
 import { useDeals } from '@/lib/hooks/useDeals';
-import { WorkerDeal } from '@/lib/api';
+import { WorkerDeal, isWorkerConnected, workerUrl } from '@/lib/api';
+import { useToast } from '@/components/ui/Toast';
 import { IntroCard } from '@/components/help/IntroCard';
 import { MetricLabel } from '@/components/help/MetricLabel';
 
-const projectMenu = (id: string) => [
-  { label: 'View Details', onSelect: () => { window.location.href = `/projects/${id}`; } },
-  { label: 'Export Excel', onSelect: () => {} },
-  { label: 'Export Memo', onSelect: () => {} },
-  { label: 'Archive', onSelect: () => {}, danger: true },
-];
+// Per-row kebab actions. Worker-backed deals (UUID id, not pure-numeric mock)
+// stream Excel / Memo via the worker; mock deals get an honest toast that
+// names the export plus a Data Room nudge so the affordance still reads.
+const buildProjectMenu = (
+  id: string,
+  isMock: boolean,
+  toast: (m: string, opts?: { type?: 'success' | 'error' | 'info' }) => void,
+  onArchived: () => void,
+) => {
+  const liveMode = isWorkerConnected() && !isMock;
+  const onExport = (path: 'excel' | 'memo.pdf') => () => {
+    if (liveMode) {
+      window.location.href = `${workerUrl()}/deals/${id}/export/${path}`;
+    } else {
+      toast(
+        `${path === 'excel' ? 'Excel export' : 'IC memo export'} available once this deal has run the model`,
+        { type: 'info' },
+      );
+    }
+  };
+  const onArchive = async () => {
+    if (!liveMode) {
+      toast('Archive available on worker-backed deals', { type: 'info' });
+      return;
+    }
+    try {
+      const r = await fetch(`${workerUrl()}/deals/${id}`, { method: 'DELETE' });
+      if (!r.ok) throw new Error(`HTTP ${r.status}`);
+      toast('Project archived', { type: 'success' });
+      onArchived();
+    } catch (err) {
+      toast(`Archive failed: ${err instanceof Error ? err.message : String(err)}`, { type: 'error' });
+    }
+  };
+  return [
+    { label: 'View Details', onSelect: () => { window.location.href = `/projects/${id}`; } },
+    { label: 'Export Excel', onSelect: onExport('excel') },
+    { label: 'Export Memo', onSelect: onExport('memo.pdf') },
+    { label: 'Archive', onSelect: onArchive, danger: true },
+  ];
+};
 
 const riskTone = (r: string | null | undefined) =>
   r === 'Low' ? 'text-success-700 bg-success-50' :
@@ -99,6 +135,7 @@ export default function ProjectsPage() {
   const [filter, setFilter] = useState<string>('All Status');
   const [search, setSearch] = useState('');
   const [filterOpen, setFilterOpen] = useState(false);
+  const { toast } = useToast();
 
   const { deals, loading, error, fromMock, refresh } = useDeals();
 
@@ -369,7 +406,7 @@ export default function ProjectsPage() {
               <div className="text-[12px] tabular-nums w-14 text-right text-ink-700">{p.docs}</div>
               <div className="text-[11.5px] w-16 text-right text-ink-500">{p.updatedAt}</div>
               <div className="w-7 h-7 rounded-full bg-ink-300/30 flex items-center justify-center text-[10px] font-semibold">{p.assignee}</div>
-              <KebabMenu items={projectMenu(p.id)} />
+              <KebabMenu items={buildProjectMenu(p.id, p.isMock, toast, refresh)} />
             </Link>
           ))}
         </Card>

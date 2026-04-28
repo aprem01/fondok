@@ -610,46 +610,112 @@ async def _draft_one_section(
 
 
 async def _run_analyst_streaming(payload: AnalystInput) -> AnalystOutput:
-    """Per-section streaming variant. Same return shape as the single-shot path."""
+    """Per-section streaming variant. Same return shape as the single-shot path.
+
+    Errors are surfaced via the broadcast channel (``ERROR_SENTINEL``)
+    and the memo cache so the SSE handler and ``GET /memo`` can both
+    show "this run failed because X" instead of returning empty
+    payloads silently.
+    """
     started = datetime.now(UTC)
     t0 = time.monotonic()
 
     from ..llm import build_agent_system_blocks
-    from ..streaming.broadcast import DONE_SENTINEL, get_broadcast
+    from ..streaming.broadcast import (
+        DONE_SENTINEL,
+        ERROR_SENTINEL,
+        get_broadcast,
+        get_memo_cache,
+    )
     from ..usage import UsageCapture
 
-    system_blocks = build_agent_system_blocks(
-        role="analyst",
-        agent_instructions=SYSTEM_PROMPT,
-    )
-    rules_as_prompt_block()  # warm the catalog cache
-    context_block = _build_user_prompt(payload)
     broadcast = get_broadcast()
-    section_llm = _build_section_llm()
+    memo_cache = get_memo_cache()
+    channel = f"memo:{payload.deal_id}"
+
+    async def _publish_error(message: str, *, code: str = "analyst_failed") -> None:
+        try:
+            await broadcast.publish(
+                channel,
+                {
+                    "event": ERROR_SENTINEL,
+                    "data": {"message": message, "code": code},
+                    "metadata": {"deal_id": payload.deal_id},
+                },
+            )
+        except Exception as exc:  # pragma: no cover - defensive
+            logger.warning("analyst: broadcast error publish failed (%s)", exc)
+        await memo_cache.mark_failed(
+            payload.deal_id,
+            message=message,
+            generated_at=datetime.now(UTC).isoformat(),
+        )
+
+    try:
+        system_blocks = build_agent_system_blocks(
+            role="analyst",
+            agent_instructions=SYSTEM_PROMPT,
+        )
+        rules_as_prompt_block()  # warm the catalog cache
+        context_block = _build_user_prompt(payload)
+        section_llm = _build_section_llm()
+    except Exception as exc:  # noqa: BLE001 - error path
+        logger.exception(
+            "analyst: streaming setup failed for deal=%s", payload.deal_id
+        )
+        await _publish_error(
+            f"memo setup failed: {type(exc).__name__}: {exc}",
+            code="analyst_setup_failed",
+        )
+        return AnalystOutput(
+            deal_id=payload.deal_id,
+            memo=None,
+            success=False,
+            error=f"{type(exc).__name__}: {exc}",
+        )
+
     usage = UsageCapture()
     doc_ids = {d.document_id for d in payload.source_documents}
 
     drafted_sections: list[MemoSection] = []
     for section_id in _REQUIRED_SECTION_IDS:
-        envelope = await _draft_one_section(
-            section_id,
-            llm=section_llm,
-            system_blocks=system_blocks,
-            context_block=context_block,
-            usage=usage,
-        )
+        try:
+            envelope = await _draft_one_section(
+                section_id,
+                llm=section_llm,
+                system_blocks=system_blocks,
+                context_block=context_block,
+                usage=usage,
+            )
+        except Exception as exc:  # noqa: BLE001 - per-section guard
+            logger.exception(
+                "analyst: section %s raised unexpectedly for deal=%s",
+                section_id,
+                payload.deal_id,
+            )
+            await _publish_error(
+                f"section {section_id} failed: {type(exc).__name__}: {exc}",
+                code="analyst_section_failed",
+            )
+            return AnalystOutput(
+                deal_id=payload.deal_id,
+                memo=None,
+                success=False,
+                error=f"{type(exc).__name__}: {exc}",
+            )
         if envelope is None:
             continue
         proj = _project_section(envelope, doc_ids=doc_ids)
         if proj is None:
             continue
         drafted_sections.append(proj)
+        section_payload = proj.model_dump(mode="json")
         try:
             await broadcast.publish(
-                f"memo:{payload.deal_id}",
+                channel,
                 {
                     "event": "section",
-                    "data": proj.model_dump(mode="json"),
+                    "data": section_payload,
                     "metadata": {
                         "input_tokens": usage.input_tokens,
                         "output_tokens": usage.output_tokens,
@@ -661,8 +727,18 @@ async def _run_analyst_streaming(payload: AnalystInput) -> AnalystOutput:
             )
         except Exception as exc:  # pragma: no cover - defensive
             logger.warning("analyst: broadcast publish failed (%s)", exc)
+        # Also stash in the in-process memo cache so GET /memo can
+        # return the latest state without re-running the analyst.
+        try:
+            await memo_cache.record_section(payload.deal_id, section_payload)
+        except Exception as exc:  # pragma: no cover - defensive
+            logger.warning("analyst: memo cache record_section failed (%s)", exc)
 
     if not drafted_sections:
+        await _publish_error(
+            "analyst: streaming path produced no sections",
+            code="analyst_no_sections",
+        )
         return AnalystOutput(
             deal_id=payload.deal_id,
             memo=None,
@@ -679,9 +755,10 @@ async def _run_analyst_streaming(payload: AnalystInput) -> AnalystOutput:
         version=1,
     )
 
+    generated_at_iso = datetime.now(UTC).isoformat()
     try:
         await broadcast.publish(
-            f"memo:{payload.deal_id}",
+            channel,
             {
                 "event": DONE_SENTINEL,
                 "data": {"sections": len(memo.sections)},
@@ -689,11 +766,18 @@ async def _run_analyst_streaming(payload: AnalystInput) -> AnalystOutput:
                     "input_tokens": usage.input_tokens,
                     "output_tokens": usage.output_tokens,
                     "model": usage.model,
+                    "generated_at": generated_at_iso,
                 },
             },
         )
     except Exception as exc:  # pragma: no cover - defensive
         logger.warning("analyst: final broadcast failed (%s)", exc)
+    try:
+        await memo_cache.mark_done(
+            payload.deal_id, generated_at=generated_at_iso
+        )
+    except Exception as exc:  # pragma: no cover - defensive
+        logger.warning("analyst: memo cache mark_done failed (%s)", exc)
 
     completed = datetime.now(UTC)
     elapsed_ms = int((time.monotonic() - t0) * 1000)

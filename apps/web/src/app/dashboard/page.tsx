@@ -13,6 +13,7 @@ import {
   currentUser, dashboardStats, projects,
 } from '@/lib/mockData';
 import { fmtCurrency } from '@/lib/format';
+import { useToast } from '@/components/ui/Toast';
 import { IntroCard } from '@/components/help/IntroCard';
 import { MetricLabel } from '@/components/help/MetricLabel';
 
@@ -41,6 +42,28 @@ const stats: Array<{
 const riskTone = (r: string) => r === 'Low' ? 'text-success-700' : r === 'Medium' ? 'text-warn-700' : 'text-danger-700';
 
 export default function DashboardPage() {
+  const { toast } = useToast();
+  // The dashboard list shows seeded mock projects only — none are
+  // worker-backed. The kebab actions therefore route Export and Archive to an
+  // honest toast rather than a fake URL. Once a deal moves to the worker,
+  // the equivalent kebab on /projects (which knows about the worker URL)
+  // takes over.
+  const mockKebabItems = (id: number) => [
+    { label: 'View Details', onSelect: () => { window.location.href = `/projects/${id}`; } },
+    {
+      label: 'Export Excel',
+      onSelect: () => toast('Excel export opens from the project Export tab once the model has run', { type: 'info' }),
+    },
+    {
+      label: 'Export Memo',
+      onSelect: () => toast('IC memo export opens from the project Export tab once the model has run', { type: 'info' }),
+    },
+    {
+      label: 'Archive',
+      onSelect: () => toast('Open the project to archive it', { type: 'info' }),
+      danger: true,
+    },
+  ];
   return (
     <div className="px-8 py-8 max-w-[1440px]">
       <PageHeader
@@ -138,12 +161,7 @@ export default function DashboardPage() {
                 <div className="w-7 h-7 rounded-full bg-ink-100 border border-ink-200 flex items-center justify-center text-[10px] font-semibold text-ink-700">
                   {p.assignee}
                 </div>
-                <KebabMenu items={[
-                  { label: 'View Details', onSelect: () => { window.location.href = `/projects/${p.id}`; } },
-                  { label: 'Export Excel', onSelect: () => {} },
-                  { label: 'Export Memo', onSelect: () => {} },
-                  { label: 'Archive', onSelect: () => {}, danger: true },
-                ]} />
+                <KebabMenu items={mockKebabItems(p.id)} />
               </Link>
             ))}
           </div>

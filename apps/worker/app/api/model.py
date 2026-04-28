@@ -81,16 +81,27 @@ class ScenarioResponse(BaseModel):
 
 @router.post("/{deal_id}/engines/run", response_model=EngineRunResponse)
 async def run_engine_legacy(deal_id: UUID, body: EngineRunRequest) -> EngineRunResponse:
-    """Stub — kept so existing clients don't 404. New clients should
-    target the deal-scoped ``/deals/{id}/engines/{name}/run`` endpoint.
+    """Legacy stub — kept so existing clients don't 404.
+
+    TODO(remove-legacy-model-route): the web app moved to the
+    deal-scoped ``/deals/{id}/engines/{name}/run`` route months ago;
+    this entry-point can be deleted once the OpenAPI client gen drops
+    the corresponding helper. Returning an empty ``outputs`` keeps
+    legacy callers from misinterpreting the response as real.
     """
-    logger.info("model(stub): run engine=%s deal=%s", body.engine, deal_id)
+    logger.info("model(stub-legacy): run engine=%s deal=%s", body.engine, deal_id)
     return EngineRunResponse(deal_id=deal_id, engine=body.engine)
 
 
 @router.post("/{deal_id}/scenarios", response_model=ScenarioResponse)
 async def create_scenario(deal_id: UUID, body: ScenarioRequest) -> ScenarioResponse:
-    """Stub: spawns a what-if scenario derived from the base case."""
+    """Stub: spawns a what-if scenario derived from the base case.
+
+    TODO(scenario-engine): no real scenario runner yet. The plan is
+    to overlay ``ScenarioRequest.overrides`` on the base assumptions
+    and call the engine chain again with a distinct ``run_id``. For
+    now the response is a placeholder so existing clients don't 404.
+    """
     return ScenarioResponse(deal_id=deal_id, scenario=body.name)
 
 

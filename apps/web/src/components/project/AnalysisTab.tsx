@@ -323,7 +323,17 @@ export default function AnalysisTab() {
             <Button variant="primary" size="sm" onClick={() => setSubTab('memo')}>
               Generate IC Memo <ArrowRight size={12} />
             </Button>
-            <Button variant="secondary" size="sm"><RefreshCw size={12} /> Regenerate Summary</Button>
+            {/* Regenerate Summary opens the IC Memo sub-tab in regenerate mode —
+                the live MemoStream there owns the actual streaming flow. Routing
+                instead of duplicating the SSE plumbing keeps both surfaces in sync. */}
+            <Button
+              variant="secondary"
+              size="sm"
+              onClick={() => setSubTab('memo')}
+              title="Regenerate the IC memo (and summary) on the Memo sub-tab"
+            >
+              <RefreshCw size={12} /> Regenerate Summary
+            </Button>
             <Button variant="secondary" size="sm" onClick={() => setSubTab('variance')}>
               <FileSearch size={12} /> Review {criticalCount} Critical Variance Flags
             </Button>

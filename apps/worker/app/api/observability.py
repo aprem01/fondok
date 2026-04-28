@@ -328,7 +328,10 @@ async def ingest_model_call(body: _ModelCallIngest) -> dict[str, Any]:
         "latency_ms": body.latency_ms,
         "trace_id": body.trace_id,
         "status": body.status,
-        "created_at": datetime.now(UTC).isoformat(),
+        # asyncpg requires a datetime instance for TIMESTAMPTZ; SQLite
+        # accepts datetimes too via the Python adapter, so a single shape
+        # works for both backends.
+        "created_at": datetime.now(UTC),
     }
     try:
         async with engine.begin() as conn:

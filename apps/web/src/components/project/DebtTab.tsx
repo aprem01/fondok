@@ -11,6 +11,7 @@ import EngineRightRail from './EngineRightRail';
 import EngineLegend from './EngineLegend';
 import EngineRunHistory from './EngineRunHistory';
 import WhatJustHappened from './WhatJustHappened';
+import type { EngineOutputsResponse } from '@/lib/api';
 import { kimptonAnglerOverview } from '@/lib/mockData';
 import { fmtCurrency, fmtPct, cn } from '@/lib/format';
 import { getEngineField, useEngineOutputs } from '@/lib/hooks/useEngineOutputs';
@@ -37,12 +38,17 @@ export default function DebtTab({ projectId }: { projectId: number | string }) {
   const wDscr = getEngineField<number>(outputs, 'debt', 'year_one_dscr');
   const wDy = getEngineField<number>(outputs, 'debt', 'year_one_debt_yield');
   const wLtc = getEngineField<number>(outputs, 'capital', 'ltc');
-  const loanAmount = wLoan ?? o.financing.loanAmount;
-  const ltc = wLtc ?? o.financing.ltv;
-  const dscr = wDscr ?? o.financing.dscr;
-  const debtYield = wDy != null ? fmtPct(wDy, 1) : '6.8%';
+  // Non-Kimpton deals get worker data only — no mock fallback.
+  const loanAmount = isKimptonDemo ? (wLoan ?? o.financing.loanAmount) : (wLoan ?? 0);
+  const ltc = isKimptonDemo ? (wLtc ?? o.financing.ltv) : (wLtc ?? 0);
+  const dscr = isKimptonDemo ? (wDscr ?? o.financing.dscr) : (wDscr ?? 0);
+  const debtYield = wDy != null
+    ? fmtPct(wDy, 1)
+    : (isKimptonDemo ? '6.8%' : '—');
+  const hasWorkerDebtOutput = wLoan != null;
 
-  if (!isKimptonDemo) {
+  // Non-Kimpton deals: show empty placeholder until engines have run.
+  if (!isKimptonDemo && !hasWorkerDebtOutput) {
     return (
       <div className="flex gap-4">
         <div className="flex-1 min-w-0">
@@ -158,31 +164,39 @@ export default function DebtTab({ projectId }: { projectId: number | string }) {
           </div>
           <div className="grid grid-cols-2 gap-5">
             <Panel title="Debt Summary" rows={[
-              ['Total Debt', fmtCurrency(o.financing.loanAmount)],
-              ['Senior Loan', fmtCurrency(o.financing.loanAmount)],
+              ['Total Debt', fmtCurrency(loanAmount)],
+              ['Senior Loan', fmtCurrency(loanAmount)],
               ['PACE Loan', '$0'],
-              ['LTC %', fmtPct(o.financing.ltv, 1)],
-              ['Debt Yield', '6.8%'],
-              ['DSCR', `${o.financing.dscr.toFixed(2)}x`],
+              ['LTC %', fmtPct(ltc, 1)],
+              ['Debt Yield', debtYield],
+              ['DSCR', `${dscr.toFixed(2)}x`],
             ]} />
             <Panel title="Loan Identification" rows={[
-              ['Borrower', 'Brookfield Hotel Holdings LLC'],
-              ['Lender', 'Wells Fargo Real Estate'],
+              ['Borrower', isKimptonDemo ? 'Brookfield Hotel Holdings LLC' : '—'],
+              ['Lender', isKimptonDemo ? 'Wells Fargo Real Estate' : '—'],
               ['Loan Type', 'Acquisition'],
-              ['Property Name', o.general.name],
+              ['Property Name', isKimptonDemo ? o.general.name : '—'],
             ]} />
             <Panel title="Senior Loan Terms" rows={[
-              ['Loan Amount', fmtCurrency(o.financing.loanAmount)],
-              ['LTC Amount', fmtCurrency(o.financing.loanAmount)],
-              ['Per Key', fmtCurrency(o.financing.loanAmount / o.general.keys)],
+              ['Loan Amount', fmtCurrency(loanAmount)],
+              ['LTC Amount', fmtCurrency(loanAmount)],
+              ['Per Key', isKimptonDemo
+                ? fmtCurrency(loanAmount / o.general.keys)
+                : '—'],
               ['Origination Fee %', '1.5%'],
-              ['Origination Fee $', fmtCurrency(364_368)],
+              ['Origination Fee $', fmtCurrency(loanAmount * 0.015)],
             ]} />
             <Panel title="Valuation & Metrics" rows={[
-              ['Total Uses', fmtCurrency(o.investment.totalCapital)],
-              ['Hotel Purchase Price', fmtCurrency(o.acquisition.purchasePrice)],
-              ['LTV', fmtPct(o.financing.ltv, 1)],
-              ['DY (FTM NOI)', '6.8%'],
+              ['Total Uses', isKimptonDemo
+                ? fmtCurrency(o.investment.totalCapital)
+                : (getEngineField<number>(outputs, 'capital', 'total_capital') != null
+                    ? fmtCurrency(getEngineField<number>(outputs, 'capital', 'total_capital')!)
+                    : '—')],
+              ['Hotel Purchase Price', isKimptonDemo
+                ? fmtCurrency(o.acquisition.purchasePrice)
+                : '—'],
+              ['LTV', fmtPct(ltc, 1)],
+              ['DY (FTM NOI)', debtYield],
             ]} />
             <Panel title="Computed Values" rows={[
               ['Interest Only Period', '48 Months'],
@@ -271,44 +285,8 @@ export default function DebtTab({ projectId }: { projectId: number | string }) {
         </>
       )}
 
-      {/* Other tab subviews keep static for now — engine wiring is on the
-          Summary KPI strip + the diff panel. */}
       {tab === 'Debt Schedule' && (
-        <Card className="p-5">
-          <h3 className="text-[13px] font-semibold text-ink-900 mb-3">Monthly Debt Service Schedule</h3>
-          <div className="overflow-x-auto text-[11.5px]">
-            <table className="min-w-[800px] w-full">
-              <thead>
-                <tr className="text-ink-500 text-[10.5px] border-b border-border">
-                  <th className="text-left font-medium py-2 sticky left-0 bg-white">Metric</th>
-                  {['Sep-25', 'Oct-25', 'Nov-25', 'Dec-25', 'Jan-26', 'Feb-26', 'Mar-26', 'Apr-26'].map(m =>
-                    <th key={m} className="text-right font-medium py-2 px-2">{m}</th>
-                  )}
-                </tr>
-              </thead>
-              <tbody>
-                {[
-                  ['Beginning Balance', [23_683_922, 23_683_922, 23_683_922, 23_683_922, 23_683_922, 23_683_922, 23_683_922, 23_683_922]],
-                  ['Interest', [134_209, 134_209, 134_209, 134_209, 134_209, 134_209, 134_209, 134_209]],
-                  ['Principal', [0, 0, 0, 0, 0, 0, 0, 0]],
-                  ['Ending Balance', [23_683_922, 23_683_922, 23_683_922, 23_683_922, 23_683_922, 23_683_922, 23_683_922, 23_683_922]],
-                ].map(row => (
-                  <tr key={row[0] as string} className="border-b border-border/50">
-                    <td className="py-1.5 sticky left-0 bg-white">{row[0]}</td>
-                    {(row[1] as number[]).map((v, i) =>
-                      <td key={i} className="text-right tabular-nums px-2">{v.toLocaleString()}</td>
-                    )}
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-          <div className="mt-4 pt-4 border-t border-border text-[11px] text-ink-500 space-y-1">
-            <div>• Debt Yield = TTM NOI / Total Loan Balance</div>
-            <div>• NOI excludes debt service and depreciation</div>
-            <div>• DSCR = TTM NOI / Next TM Debt Service</div>
-          </div>
-        </Card>
+        <DebtScheduleTable outputs={outputs} isKimptonDemo={isKimptonDemo} />
       )}
       <EngineRunHistory dealId={dealId} seedDemo />
       </div>
@@ -356,5 +334,127 @@ function CovenantRow({ label, pass, value }: { label: string; pass: boolean; val
         <Badge tone={pass ? 'green' : 'red'}>{pass ? '✓' : '✗'}</Badge>
       </div>
     </div>
+  );
+}
+
+// ───────────────────────────────────────────────────────────────────
+// Debt Schedule — preferred source: worker monthly_schedule[].
+// For Kimpton demo (no worker), synthesize a static IO schedule from
+// the mock financing assumptions so the demo never goes blank.
+// ───────────────────────────────────────────────────────────────────
+
+interface DebtMonthRow {
+  month: number;
+  interest: number;
+  principal: number;
+  payment: number;
+  ending_balance: number;
+}
+
+function DebtScheduleTable({
+  outputs,
+  isKimptonDemo,
+}: {
+  outputs: EngineOutputsResponse | null;
+  isKimptonDemo: boolean;
+}) {
+  const workerSchedule = getEngineField<DebtMonthRow[]>(outputs, 'debt', 'monthly_schedule');
+  const hasWorker = Array.isArray(workerSchedule) && workerSchedule.length > 0;
+
+  // Anchor month/year for column headers — same start date used by Investment tab.
+  const startYear = 2025, startMonth = 9; // Sep 2025
+  const monthLabel = (idx: number) => {
+    const m = (startMonth - 1 + idx) % 12;
+    const y = startYear + Math.floor((startMonth - 1 + idx) / 12);
+    const names = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+    return `${names[m]}-${String(y).slice(-2)}`;
+  };
+
+  // Build the schedule we'll render. Worker wins; Kimpton demo synthesizes; otherwise empty state.
+  let rows: DebtMonthRow[] = [];
+  let beginBalances: number[] = [];
+
+  if (hasWorker) {
+    rows = workerSchedule!.slice(0, 12); // First 12 months for the table
+    let bal = (rows[0]?.ending_balance ?? 0) + (rows[0]?.principal ?? 0);
+    beginBalances = rows.map((r) => {
+      const beg = bal;
+      bal = r.ending_balance;
+      return beg;
+    });
+  } else if (isKimptonDemo) {
+    const o = kimptonAnglerOverview;
+    const loan = o.financing.loanAmount;
+    const monthlyRate = o.financing.interestRate / 12;
+    const monthlyInterest = Math.round(loan * monthlyRate);
+    rows = Array.from({ length: 8 }, (_, i) => ({
+      month: i + 1,
+      interest: monthlyInterest,
+      principal: 0,
+      payment: monthlyInterest,
+      ending_balance: loan,
+    }));
+    beginBalances = rows.map(() => loan);
+  }
+
+  if (rows.length === 0) {
+    return (
+      <Card className="p-12 text-center">
+        <div className="w-10 h-10 rounded-lg bg-ink-300/20 flex items-center justify-center mx-auto mb-3">
+          <DollarSign size={18} className="text-ink-400" />
+        </div>
+        <h3 className="text-[14px] font-semibold text-ink-900">Debt schedule not yet built</h3>
+        <p className="text-[12px] text-ink-500 mt-1 max-w-md mx-auto leading-relaxed">
+          Run the Debt engine to populate the monthly amortization schedule.
+        </p>
+      </Card>
+    );
+  }
+
+  const monthsToShow = Math.min(rows.length, hasWorker ? 12 : 8);
+
+  return (
+    <Card className="p-5">
+      <div className="flex items-baseline justify-between mb-3">
+        <h3 className="text-[13px] font-semibold text-ink-900">Monthly Debt Service Schedule</h3>
+        <span className="text-[11px] text-ink-500">
+          {hasWorker ? `Showing first ${monthsToShow} of ${workerSchedule!.length} months` : 'IO Period (no principal)'}
+        </span>
+      </div>
+      <div className="overflow-x-auto text-[11.5px]">
+        <table className="min-w-[800px] w-full">
+          <thead>
+            <tr className="text-ink-500 text-[10.5px] border-b border-border">
+              <th className="text-left font-medium py-2 sticky left-0 bg-white">Metric</th>
+              {Array.from({ length: monthsToShow }, (_, i) => (
+                <th key={i} className="text-right font-medium py-2 px-2">{monthLabel(i)}</th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {[
+              { label: 'Beginning Balance', vals: beginBalances.slice(0, monthsToShow) },
+              { label: 'Interest', vals: rows.slice(0, monthsToShow).map(r => r.interest) },
+              { label: 'Principal', vals: rows.slice(0, monthsToShow).map(r => r.principal) },
+              { label: 'Total Payment', vals: rows.slice(0, monthsToShow).map(r => r.payment) },
+              { label: 'Ending Balance', vals: rows.slice(0, monthsToShow).map(r => r.ending_balance) },
+            ].map(row => (
+              <tr key={row.label} className="border-b border-border/50">
+                <td className="py-1.5 sticky left-0 bg-white">{row.label}</td>
+                {row.vals.map((v, i) =>
+                  <td key={i} className="text-right tabular-nums px-2">{Math.round(v).toLocaleString()}</td>
+                )}
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+      <div className="mt-4 pt-4 border-t border-border text-[11px] text-ink-500 space-y-1">
+        <div>• Debt Yield = TTM NOI / Total Loan Balance</div>
+        <div>• NOI excludes debt service and depreciation</div>
+        <div>• DSCR = TTM NOI / Next TM Debt Service</div>
+        {hasWorker && <div>• Schedule sourced from latest Debt engine run.</div>}
+      </div>
+    </Card>
   );
 }

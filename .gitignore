@@ -10,3 +10,4 @@ __pycache__
 .venv
 .uv
 *.tsbuildinfo
+apps/worker/tests/fondok-costs.db

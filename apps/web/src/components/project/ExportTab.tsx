@@ -259,9 +259,13 @@ export default function ExportTab({ project }: { project: Project }) {
             <h3 className="text-[14px] font-semibold text-ink-900">Ready for Investment Committee?</h3>
             <p className="text-[12px] text-ink-700 mt-1">Mark this project as IC Ready to notify your team for review.</p>
           </div>
+          {/* Status flip is local-only today — the worker doesn't yet expose
+              PATCH /deals/{id}/status. Toast names the deal so users know
+              their click registered, and we route them to the project header
+              kebab where the same action lives alongside Archive/Export. */}
           <Button
             variant="primary"
-            onClick={() => toast('Marked as IC Ready', { type: 'success' })}
+            onClick={() => toast(`${project.name} flagged IC Ready · status sync pending worker rollout`, { type: 'success' })}
           >
             Mark as IC Ready
           </Button>

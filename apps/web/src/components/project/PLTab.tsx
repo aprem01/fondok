@@ -1,5 +1,5 @@
 'use client';
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import { useParams } from 'next/navigation';
 import {
   LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend,
@@ -8,14 +8,16 @@ import {
 import { BarChart3 } from 'lucide-react';
 import { Card } from '@/components/ui/Card';
 import { Button } from '@/components/ui/Button';
+import { useToast } from '@/components/ui/Toast';
 import EngineHeader from './EngineHeader';
 import EngineRightRail from './EngineRightRail';
 import EngineLegend from './EngineLegend';
 import EngineRunHistory from './EngineRunHistory';
 import WhatJustHappened from './WhatJustHappened';
+import type { EngineOutputsResponse } from '@/lib/api';
 import { kimptonAnglerOverview } from '@/lib/mockData';
 import { fmtCurrency, fmtMillions, cn } from '@/lib/format';
-import { useEngineOutputs } from '@/lib/hooks/useEngineOutputs';
+import { getEngineField, useEngineOutputs } from '@/lib/hooks/useEngineOutputs';
 import { useFlash } from '@/lib/hooks/useFlash';
 import { IntroCard } from '@/components/help/IntroCard';
 import { MetricLabel } from '@/components/help/MetricLabel';
@@ -28,19 +30,128 @@ const tooltipStyle = {
   labelStyle: { color: '#64748b', fontSize: 11 },
 };
 
+// Worker output shape (loose) — mirrors apps/worker/app/engines/expense.py + revenue.py.
+interface ExpenseYearWorker {
+  year: number;
+  total_revenue: number;
+  dept_expenses: { rooms: number; food_beverage: number; other_operated: number; total: number };
+  undistributed: {
+    administrative_general: number;
+    information_telecom: number;
+    sales_marketing: number;
+    property_operations: number;
+    utilities: number;
+    total: number;
+  };
+  mgmt_fee: number;
+  ffe_reserve: number;
+  fixed_charges: { property_taxes: number; insurance: number; rent: number; other_fixed: number; total: number };
+  gop: number;
+  noi: number;
+}
+
+interface FBYearWorker {
+  year: number;
+  rooms_revenue: number;
+  fb_revenue: number;
+  other_revenue: number;
+  total_revenue: number;
+}
+
+type RowKind = 'group' | 'subtotal' | 'detail' | 'total';
+interface StatementRow { label: string; values: number[]; cagr?: number; kind: RowKind }
+interface StatementResult {
+  rows: StatementRow[];
+  totals: { totalRev: number[]; noi: number[]; gop: number[]; deptProfit: number[] };
+}
+
+const cagrCalc = (start: number, end: number, years = 4) =>
+  start > 0 ? Math.pow(end / start, 1 / years) - 1 : 0;
+
+// Build USALI-style operating statement from worker expense + fb engine output.
+// Numbers returned in $000s to match the rendered table convention.
+function buildStatementFromWorker(
+  expenseYears: ExpenseYearWorker[],
+  fbYears: FBYearWorker[] | null,
+): StatementResult {
+  // Trim to 5 years; pad with zeros if worker returned fewer.
+  const ey = expenseYears.slice(0, 5);
+  const toThousands = (v: number) => Math.round(v / 1000);
+  const pad = <T,>(arr: T[], filler: T): T[] =>
+    arr.length >= 5 ? arr.slice(0, 5) : [...arr, ...Array(5 - arr.length).fill(filler)];
+
+  const totalRev = pad(ey.map(y => toThousands(y.total_revenue)), 0);
+  const fbBy = fbYears?.slice(0, 5) ?? [];
+  const room = pad(fbBy.map(y => toThousands(y.rooms_revenue)), 0);
+  const fb = pad(fbBy.map(y => toThousands(y.fb_revenue)), 0);
+  const other = pad(fbBy.map(y => toThousands(y.other_revenue)), 0);
+
+  const roomsDept = pad(ey.map(y => toThousands(y.dept_expenses.rooms)), 0);
+  const fbDept = pad(ey.map(y => toThousands(y.dept_expenses.food_beverage)), 0);
+  const otherDept = pad(ey.map(y => toThousands(y.dept_expenses.other_operated)), 0);
+  const deptProfit = totalRev.map((tr, i) => tr - roomsDept[i] - fbDept[i] - otherDept[i]);
+
+  const ag = pad(ey.map(y => toThousands(y.undistributed.administrative_general)), 0);
+  const sm = pad(ey.map(y => toThousands(y.undistributed.sales_marketing)), 0);
+  const pom = pad(ey.map(y => toThousands(y.undistributed.property_operations)), 0);
+  const util = pad(ey.map(y => toThousands(y.undistributed.utilities)), 0);
+  const it = pad(ey.map(y => toThousands(y.undistributed.information_telecom)), 0);
+  const gop = pad(ey.map(y => toThousands(y.gop)), 0);
+
+  const insurance = pad(ey.map(y => toThousands(y.fixed_charges.insurance)), 0);
+  const propTax = pad(ey.map(y => toThousands(y.fixed_charges.property_taxes)), 0);
+  const equipLease = pad(ey.map(y => toThousands(y.fixed_charges.other_fixed + y.fixed_charges.rent)), 0);
+  const ffe = pad(ey.map(y => toThousands(y.ffe_reserve)), 0);
+  const mgmt = pad(ey.map(y => toThousands(y.mgmt_fee)), 0);
+  const noiCalc = pad(ey.map(y => toThousands(y.noi)), 0);
+  const netIncome = noiCalc.map((n, i) => n - ffe[i] - mgmt[i]);
+
+  const rows: StatementRow[] = [
+    { label: 'REVENUES', values: [], kind: 'group' },
+    { label: 'Room Revenue', values: room, cagr: cagrCalc(room[0], room[4]), kind: 'detail' },
+    { label: 'F&B Revenue', values: fb, cagr: cagrCalc(fb[0], fb[4]), kind: 'detail' },
+    { label: 'Other Revenue', values: other, cagr: cagrCalc(other[0], other[4]), kind: 'detail' },
+    { label: 'Total Revenue', values: totalRev, cagr: cagrCalc(totalRev[0], totalRev[4]), kind: 'subtotal' },
+
+    { label: 'DEPARTMENTAL EXPENSES', values: [], kind: 'group' },
+    { label: 'Rooms Department', values: roomsDept, cagr: cagrCalc(roomsDept[0], roomsDept[4]), kind: 'detail' },
+    { label: 'F&B Department', values: fbDept, cagr: cagrCalc(fbDept[0], fbDept[4]), kind: 'detail' },
+    { label: 'Other Department', values: otherDept, cagr: cagrCalc(otherDept[0], otherDept[4]), kind: 'detail' },
+    { label: 'Departmental Profit', values: deptProfit, cagr: cagrCalc(deptProfit[0], deptProfit[4]), kind: 'subtotal' },
+
+    { label: 'UNDISTRIBUTED OPERATING EXPENSES', values: [], kind: 'group' },
+    { label: 'Administrative & General', values: ag, cagr: cagrCalc(ag[0], ag[4]), kind: 'detail' },
+    { label: 'Sales & Marketing', values: sm, cagr: cagrCalc(sm[0], sm[4]), kind: 'detail' },
+    { label: 'Property Operations & Maintenance', values: pom, cagr: cagrCalc(pom[0], pom[4]), kind: 'detail' },
+    { label: 'Utilities', values: util, cagr: cagrCalc(util[0], util[4]), kind: 'detail' },
+    { label: 'Information & Telecom', values: it, cagr: cagrCalc(it[0], it[4]), kind: 'detail' },
+    { label: 'Gross Operating Profit (GOP)', values: gop, cagr: cagrCalc(gop[0], gop[4]), kind: 'subtotal' },
+
+    { label: 'FIXED CHARGES', values: [], kind: 'group' },
+    { label: 'Insurance', values: insurance, cagr: cagrCalc(insurance[0], insurance[4]), kind: 'detail' },
+    { label: 'Property Taxes', values: propTax, cagr: cagrCalc(propTax[0], propTax[4]), kind: 'detail' },
+    { label: 'Equipment Lease', values: equipLease, cagr: cagrCalc(equipLease[0], equipLease[4]), kind: 'detail' },
+    { label: 'Net Operating Income', values: noiCalc, cagr: cagrCalc(noiCalc[0], noiCalc[4]), kind: 'subtotal' },
+
+    { label: 'FF&E Reserve', values: ffe, cagr: cagrCalc(ffe[0], ffe[4]), kind: 'detail' },
+    { label: 'Management Fee', values: mgmt, cagr: cagrCalc(mgmt[0], mgmt[4]), kind: 'detail' },
+    { label: 'Net Income', values: netIncome, cagr: cagrCalc(netIncome[0], netIncome[4]), kind: 'total' },
+  ];
+
+  return { rows, totals: { totalRev, noi: noiCalc, gop, deptProfit } };
+}
+
 // Build USALI-style operating statement rows from existing proforma totals.
 // All numbers are in thousands (matching the existing mockData proforma convention).
-function buildStatement() {
+function buildStatement(): StatementResult {
   const p = kimptonAnglerOverview.proforma;
   const get = (label: string) => p.find(r => r.label === label)!;
   const room = get('Room Revenue');
   const fb = get('F&B Revenue');
   const other = get('Other Revenue');
   const totalRev = get('Total Revenue');
-  const opex = get('Operating Expenses');
   const mgmt = get('Management Fee');
   const ffe = get('FF&E Reserve');
-  const noi = get('Net Operating Income');
 
   const years: ('y1' | 'y2' | 'y3' | 'y4' | 'y5')[] = ['y1', 'y2', 'y3', 'y4', 'y5'];
 
@@ -54,7 +165,6 @@ function buildStatement() {
   );
 
   // Undistributed operating expenses — break down the existing aggregate "Operating Expenses" line.
-  // Existing opex includes departmental costs above; allocate UOE as ~58% of original opex line.
   // Splits target USALI standard ratios for lifestyle: A&G 8%, S&M 7%, POM 4%, Utilities 4.5%, IT 1.5%
   const uoePct = { ag: 0.08, sm: 0.07, pom: 0.04, util: 0.045, it: 0.015 };
   const ag = years.map(y => Math.round(totalRev[y] * uoePct.ag));
@@ -73,13 +183,7 @@ function buildStatement() {
   // Net income = NOI - FF&E Reserve - Management Fee
   const netIncome = years.map((y, i) => noiCalc[i] - ffe[y] - mgmt[y]);
 
-  type RowKind = 'group' | 'subtotal' | 'detail' | 'total';
-  type Row = { label: string; values: number[]; cagr?: number; kind: RowKind };
-
-  const cagr = (start: number, end: number, years = 4) =>
-    Math.pow(end / start, 1 / years) - 1;
-
-  const rows: Row[] = [
+  const rows: StatementRow[] = [
     { label: 'REVENUES', values: [], kind: 'group' },
     { label: 'Room Revenue', values: years.map(y => room[y]), cagr: room.cagr, kind: 'detail' },
     { label: 'F&B Revenue', values: years.map(y => fb[y]), cagr: fb.cagr, kind: 'detail' },
@@ -87,44 +191,67 @@ function buildStatement() {
     { label: 'Total Revenue', values: years.map(y => totalRev[y]), cagr: totalRev.cagr, kind: 'subtotal' },
 
     { label: 'DEPARTMENTAL EXPENSES', values: [], kind: 'group' },
-    { label: 'Rooms Department', values: roomsDept, cagr: cagr(roomsDept[0], roomsDept[4]), kind: 'detail' },
-    { label: 'F&B Department', values: fbDept, cagr: cagr(fbDept[0], fbDept[4]), kind: 'detail' },
-    { label: 'Other Department', values: otherDept, cagr: cagr(otherDept[0], otherDept[4]), kind: 'detail' },
-    { label: 'Departmental Profit', values: deptProfit, cagr: cagr(deptProfit[0], deptProfit[4]), kind: 'subtotal' },
+    { label: 'Rooms Department', values: roomsDept, cagr: cagrCalc(roomsDept[0], roomsDept[4]), kind: 'detail' },
+    { label: 'F&B Department', values: fbDept, cagr: cagrCalc(fbDept[0], fbDept[4]), kind: 'detail' },
+    { label: 'Other Department', values: otherDept, cagr: cagrCalc(otherDept[0], otherDept[4]), kind: 'detail' },
+    { label: 'Departmental Profit', values: deptProfit, cagr: cagrCalc(deptProfit[0], deptProfit[4]), kind: 'subtotal' },
 
     { label: 'UNDISTRIBUTED OPERATING EXPENSES', values: [], kind: 'group' },
-    { label: 'Administrative & General', values: ag, cagr: cagr(ag[0], ag[4]), kind: 'detail' },
-    { label: 'Sales & Marketing', values: sm, cagr: cagr(sm[0], sm[4]), kind: 'detail' },
-    { label: 'Property Operations & Maintenance', values: pom, cagr: cagr(pom[0], pom[4]), kind: 'detail' },
-    { label: 'Utilities', values: util, cagr: cagr(util[0], util[4]), kind: 'detail' },
-    { label: 'Information & Telecom', values: it, cagr: cagr(it[0], it[4]), kind: 'detail' },
-    { label: 'Gross Operating Profit (GOP)', values: gop, cagr: cagr(gop[0], gop[4]), kind: 'subtotal' },
+    { label: 'Administrative & General', values: ag, cagr: cagrCalc(ag[0], ag[4]), kind: 'detail' },
+    { label: 'Sales & Marketing', values: sm, cagr: cagrCalc(sm[0], sm[4]), kind: 'detail' },
+    { label: 'Property Operations & Maintenance', values: pom, cagr: cagrCalc(pom[0], pom[4]), kind: 'detail' },
+    { label: 'Utilities', values: util, cagr: cagrCalc(util[0], util[4]), kind: 'detail' },
+    { label: 'Information & Telecom', values: it, cagr: cagrCalc(it[0], it[4]), kind: 'detail' },
+    { label: 'Gross Operating Profit (GOP)', values: gop, cagr: cagrCalc(gop[0], gop[4]), kind: 'subtotal' },
 
     { label: 'FIXED CHARGES', values: [], kind: 'group' },
-    { label: 'Insurance', values: insurance, cagr: cagr(insurance[0], insurance[4]), kind: 'detail' },
-    { label: 'Property Taxes', values: propTax, cagr: cagr(propTax[0], propTax[4]), kind: 'detail' },
-    { label: 'Equipment Lease', values: equipLease, cagr: cagr(equipLease[0], equipLease[4]), kind: 'detail' },
-    { label: 'Net Operating Income', values: noiCalc, cagr: cagr(noiCalc[0], noiCalc[4]), kind: 'subtotal' },
+    { label: 'Insurance', values: insurance, cagr: cagrCalc(insurance[0], insurance[4]), kind: 'detail' },
+    { label: 'Property Taxes', values: propTax, cagr: cagrCalc(propTax[0], propTax[4]), kind: 'detail' },
+    { label: 'Equipment Lease', values: equipLease, cagr: cagrCalc(equipLease[0], equipLease[4]), kind: 'detail' },
+    { label: 'Net Operating Income', values: noiCalc, cagr: cagrCalc(noiCalc[0], noiCalc[4]), kind: 'subtotal' },
 
-    { label: 'FF&E Reserve', values: years.map(y => ffe[y]), cagr: cagr(ffe.y1, ffe.y5), kind: 'detail' },
-    { label: 'Management Fee', values: years.map(y => mgmt[y]), cagr: cagr(mgmt.y1, mgmt.y5), kind: 'detail' },
-    { label: 'Net Income', values: netIncome, cagr: cagr(netIncome[0], netIncome[4]), kind: 'total' },
+    { label: 'FF&E Reserve', values: years.map(y => ffe[y]), cagr: cagrCalc(ffe.y1, ffe.y5), kind: 'detail' },
+    { label: 'Management Fee', values: years.map(y => mgmt[y]), cagr: cagrCalc(mgmt.y1, mgmt.y5), kind: 'detail' },
+    { label: 'Net Income', values: netIncome, cagr: cagrCalc(netIncome[0], netIncome[4]), kind: 'total' },
   ];
 
-  return { rows, totals: { totalRev, noi: noiCalc, gop, deptProfit } };
+  return {
+    rows,
+    totals: {
+      totalRev: years.map(y => totalRev[y]),
+      noi: noiCalc,
+      gop,
+      deptProfit,
+    },
+  };
 }
 
-const statement = buildStatement();
+const kimptonStatement = buildStatement();
 
 export default function PLTab({ projectId }: { projectId: number | string }) {
   const [tab, setTab] = useState('Operating Statement');
   const params = useParams();
+  const { toast } = useToast();
   const dealId = (params?.id as string | undefined) ?? '';
   const { outputs, previous } = useEngineOutputs(dealId);
   const [computing, setComputing] = useState(false);
   const [runToken, setRunToken] = useState<number | null>(null);
+  const isKimptonDemo = projectId === 7;
 
-  if (projectId !== 7) {
+  // Worker → expense engine years[] is the canonical source for the operating
+  // statement on a real run. Worker wins; Kimpton mock is the demo fallback.
+  const expenseYears = getEngineField<ExpenseYearWorker[]>(outputs, 'expense', 'years');
+  const fbYears = getEngineField<FBYearWorker[]>(outputs, 'fb', 'years');
+  const hasWorkerStatement = Array.isArray(expenseYears) && expenseYears.length > 0;
+  const statement = useMemo<StatementResult | null>(() => {
+    if (hasWorkerStatement) {
+      return buildStatementFromWorker(expenseYears!, fbYears ?? null);
+    }
+    if (isKimptonDemo) return kimptonStatement;
+    return null;
+  }, [hasWorkerStatement, expenseYears, fbYears, isKimptonDemo]);
+
+  if (!isKimptonDemo && !statement) {
     return (
       <div className="flex gap-4">
         <div className="flex-1 min-w-0">
@@ -163,7 +290,14 @@ export default function PLTab({ projectId }: { projectId: number | string }) {
               We need a <span className="font-medium">T-12</span> (the last 12 months of profit &amp; loss) to project
               forward revenue and expenses. Drop it into the Data Room, then run the model.
             </p>
-            <Button variant="primary" size="sm" className="mt-4">Run Model</Button>
+            <Button
+              variant="primary"
+              size="sm"
+              className="mt-4"
+              onClick={() => toast('Engine queued — check back shortly', { type: 'info' })}
+            >
+              Run Model
+            </Button>
           </Card>
           <EngineRunHistory dealId={dealId} />
         </div>
@@ -172,11 +306,16 @@ export default function PLTab({ projectId }: { projectId: number | string }) {
     );
   }
 
-  const { totals } = statement;
-  const y1Rev = totals.totalRev.y1 * 1000;
+  // statement is non-null at this point (we returned the placeholder above otherwise),
+  // but TS still wants the narrowing.
+  const stmt = statement!;
+  const { totals } = stmt;
+  const y1Rev = totals.totalRev[0] * 1000;
   const y1NOI = totals.noi[0] * 1000;
-  const margin = y1NOI / y1Rev;
-  const noiCagr = Math.pow(totals.noi[4] / totals.noi[0], 1 / 4) - 1;
+  const margin = y1Rev ? y1NOI / y1Rev : 0;
+  const noiCagr = totals.noi[0] > 0 && totals.noi[4] > 0
+    ? Math.pow(totals.noi[4] / totals.noi[0], 1 / 4) - 1
+    : 0;
 
   return (
     <div className="flex gap-4">
@@ -237,10 +376,10 @@ export default function PLTab({ projectId }: { projectId: number | string }) {
       <EngineLegend />
 
       <div className={cn(computing && 'relative pointer-events-none opacity-60')}>
-        {tab === 'Operating Statement' && <OperatingStatement />}
-        {tab === 'Departmental' && <Departmental />}
-        {tab === 'Per-Key Metrics' && <PerKey />}
-        {tab === 'Historical vs Projected' && <HistoricalProjected />}
+        {tab === 'Operating Statement' && <OperatingStatement statement={stmt} sourceLabel={hasWorkerStatement ? 'worker' : 'mock'} />}
+        {tab === 'Departmental' && <Departmental statement={stmt} keys={isKimptonDemo ? kimptonAnglerOverview.general.keys : 100} />}
+        {tab === 'Per-Key Metrics' && <PerKey statement={stmt} keys={isKimptonDemo ? kimptonAnglerOverview.general.keys : 100} isKimptonDemo={isKimptonDemo} />}
+        {tab === 'Historical vs Projected' && <HistoricalProjected statement={stmt} isKimptonDemo={isKimptonDemo} />}
         {computing && (
           <div className="absolute inset-0 bg-bg/60 backdrop-blur-[1px] flex items-start justify-center pt-12 rounded-md">
             <span className="inline-flex items-center gap-2 px-3 py-1.5 bg-white border border-border rounded-md shadow-card text-[12.5px] font-medium text-ink-700">
@@ -257,13 +396,15 @@ export default function PLTab({ projectId }: { projectId: number | string }) {
   );
 }
 
-function OperatingStatement() {
+function OperatingStatement({ statement, sourceLabel }: { statement: StatementResult; sourceLabel: 'worker' | 'mock' }) {
   const { rows } = statement;
   return (
     <Card className="p-5">
       <div className="flex items-baseline justify-between mb-3">
         <h3 className="text-[13px] font-semibold text-ink-900">USALI Operating Statement</h3>
-        <span className="text-[11px] text-ink-500">($ in 000s, FYE Dec 31)</span>
+        <span className="text-[11px] text-ink-500">
+          ($ in 000s, FYE Dec 31){sourceLabel === 'worker' ? ' · live engine output' : ''}
+        </span>
       </div>
       <div className="overflow-x-auto">
         <table className="w-full text-[12px] min-w-[700px]">
@@ -293,20 +434,13 @@ function OperatingStatement() {
               const isTotal = r.kind === 'total';
               const tint = i % 2 === 0 ? '' : 'bg-ink-300/5';
               return (
-                <tr key={r.label} className={cn(
-                  'border-b border-border/40',
-                  tint,
-                  isSubtotal && 'font-semibold bg-brand-50/40 border-t border-border',
-                  isTotal && 'font-semibold bg-success-50/40 border-t-2 border-border text-success-700'
-                )}>
-                  <td className={cn('py-1.5', !isSubtotal && !isTotal && 'pl-3')}>{r.label}</td>
-                  {r.values.map((v, vi) => (
-                    <td key={vi} className="text-right tabular-nums">{v.toLocaleString()}</td>
-                  ))}
-                  <td className="text-right tabular-nums">
-                    {r.cagr !== undefined ? `${(r.cagr * 100).toFixed(1)}%` : '—'}
-                  </td>
-                </tr>
+                <StatementRowR
+                  key={r.label}
+                  row={r}
+                  tint={tint}
+                  isSubtotal={isSubtotal}
+                  isTotal={isTotal}
+                />
               );
             })}
           </tbody>
@@ -320,27 +454,31 @@ function OperatingStatement() {
   );
 }
 
-function Departmental() {
-  const p = kimptonAnglerOverview.proforma;
-  const room = p.find(r => r.label === 'Room Revenue')!;
-  const fb = p.find(r => r.label === 'F&B Revenue')!;
-  const other = p.find(r => r.label === 'Other Revenue')!;
-  const total = p.find(r => r.label === 'Total Revenue')!;
-  const keys = kimptonAnglerOverview.general.keys;
+function Departmental({ statement, keys }: { statement: StatementResult; keys: number }) {
+  // Pull Y1 values directly from the statement we built (worker or mock).
+  const findRow = (label: string) =>
+    statement.rows.find(r => r.label === label)?.values ?? [0, 0, 0, 0, 0];
+  const room = findRow('Room Revenue');
+  const fb = findRow('F&B Revenue');
+  const other = findRow('Other Revenue');
+  const total = findRow('Total Revenue');
+  const roomsDept = findRow('Rooms Department');
+  const fbDept = findRow('F&B Department');
+  const otherDept = findRow('Other Department');
 
-  // Year-1 (in 000s)
+  // Year-1 (in 000s) — use departmental expenses straight from the statement.
   const depts = [
-    { name: 'Rooms', revenue: room.y1, expense: Math.round(room.y1 * 0.25), tone: 'brand' },
-    { name: 'Food & Beverage', revenue: fb.y1, expense: Math.round(fb.y1 * 0.75), tone: 'amber' },
-    { name: 'Other Operating', revenue: other.y1, expense: Math.round(other.y1 * 0.50), tone: 'success' },
+    { name: 'Rooms', revenue: room[0], expense: roomsDept[0], tone: 'brand' },
+    { name: 'Food & Beverage', revenue: fb[0], expense: fbDept[0], tone: 'amber' },
+    { name: 'Other Operating', revenue: other[0], expense: otherDept[0], tone: 'success' },
   ].map(d => ({
     ...d,
     profit: d.revenue - d.expense,
-    margin: (d.revenue - d.expense) / d.revenue,
-    profitPerKey: ((d.revenue - d.expense) * 1000) / keys,
+    margin: d.revenue > 0 ? (d.revenue - d.expense) / d.revenue : 0,
+    profitPerKey: keys > 0 ? ((d.revenue - d.expense) * 1000) / keys : 0,
   }));
 
-  const totalRev = total.y1;
+  const totalRev = total[0];
   const totalExp = depts.reduce((s, d) => s + d.expense, 0);
   const totalProfit = totalRev - totalExp;
   const totalCard = {
@@ -348,8 +486,8 @@ function Departmental() {
     revenue: totalRev,
     expense: totalExp,
     profit: totalProfit,
-    margin: totalProfit / totalRev,
-    profitPerKey: (totalProfit * 1000) / keys,
+    margin: totalRev > 0 ? totalProfit / totalRev : 0,
+    profitPerKey: keys > 0 ? (totalProfit * 1000) / keys : 0,
     tone: 'slate',
   };
 
@@ -376,7 +514,7 @@ function Departmental() {
         <h3 className="text-[13px] font-semibold text-ink-900 mb-3">Departmental Mix (Year 1)</h3>
         <div className="space-y-2">
           {depts.map(d => {
-            const pct = (d.revenue / totalRev) * 100;
+            const pct = totalRev > 0 ? (d.revenue / totalRev) * 100 : 0;
             const fill =
               d.tone === 'brand' ? 'bg-brand-500'
               : d.tone === 'amber' ? 'bg-warn-500'
@@ -399,30 +537,28 @@ function Departmental() {
   );
 }
 
-function PerKey() {
-  const p = kimptonAnglerOverview.proforma;
-  const keys = kimptonAnglerOverview.general.keys;
-  const room = p.find(r => r.label === 'Room Revenue')!;
-  const fb = p.find(r => r.label === 'F&B Revenue')!;
-  const total = p.find(r => r.label === 'Total Revenue')!;
-  const noi = p.find(r => r.label === 'Net Operating Income')!;
+function PerKey({ statement, keys, isKimptonDemo }: { statement: StatementResult; keys: number; isKimptonDemo: boolean }) {
+  const findRow = (label: string) =>
+    statement.rows.find(r => r.label === label)?.values ?? [0, 0, 0, 0, 0];
+  const room = findRow('Room Revenue');
+  const fb = findRow('F&B Revenue');
+  const total = findRow('Total Revenue');
+  const noi = findRow('Net Operating Income');
+  const gopThousands = findRow('Gross Operating Profit (GOP)');
 
-  const years: ('y1' | 'y2' | 'y3' | 'y4' | 'y5')[] = ['y1', 'y2', 'y3', 'y4', 'y5'];
   const availableRoomNights = keys * 365;
 
-  // GOP synthesized as ~37% of total revenue (NOI is ~31%)
-  const gop = years.map(y => Math.round(total[y] * 0.37 * 1000));
-
-  // ADR/Occupancy schedule — Y1 ramp from renovation, stabilizes Y3
+  // ADR/Occupancy schedule — Y1 ramp from renovation, stabilizes Y3 (still synthesized).
   const occ = [0.701, 0.738, 0.762, 0.776, 0.787];
+  const safeDiv = (a: number, b: number) => (b > 0 ? a / b : 0);
   const rows = [
-    { label: 'Total Revenue / Key', vals: years.map(y => (total[y] * 1000) / keys), fmt: 'k' as const },
-    { label: 'Rooms Revenue / Key', vals: years.map(y => (room[y] * 1000) / keys), fmt: 'k' as const },
-    { label: 'F&B Revenue / Key', vals: years.map(y => (fb[y] * 1000) / keys), fmt: 'k' as const },
-    { label: 'GOP / Key', vals: gop.map(v => v / keys), fmt: 'k' as const, bold: true },
-    { label: 'NOI / Key', vals: years.map(y => (noi[y] * 1000) / keys), fmt: 'k' as const, bold: true },
-    { label: 'RevPAR', vals: years.map(y => (room[y] * 1000) / availableRoomNights), fmt: 'd' as const },
-    { label: 'ADR', vals: years.map((y, i) => (room[y] * 1000) / (availableRoomNights * occ[i])), fmt: 'd' as const },
+    { label: 'Total Revenue / Key', vals: total.map(v => safeDiv(v * 1000, keys)), fmt: 'k' as const },
+    { label: 'Rooms Revenue / Key', vals: room.map(v => safeDiv(v * 1000, keys)), fmt: 'k' as const },
+    { label: 'F&B Revenue / Key', vals: fb.map(v => safeDiv(v * 1000, keys)), fmt: 'k' as const },
+    { label: 'GOP / Key', vals: gopThousands.map(v => safeDiv(v * 1000, keys)), fmt: 'k' as const, bold: true },
+    { label: 'NOI / Key', vals: noi.map(v => safeDiv(v * 1000, keys)), fmt: 'k' as const, bold: true },
+    { label: 'RevPAR', vals: room.map(v => safeDiv(v * 1000, availableRoomNights)), fmt: 'd' as const },
+    { label: 'ADR', vals: room.map((v, i) => safeDiv(v * 1000, availableRoomNights * occ[i])), fmt: 'd' as const },
     { label: 'Occupancy', vals: occ.map(v => v * 100), fmt: 'pct' as const },
   ];
 
@@ -436,7 +572,7 @@ function PerKey() {
     <Card className="p-5">
       <div className="flex items-baseline justify-between mb-3">
         <h3 className="text-[13px] font-semibold text-ink-900">Per-Key Operating Metrics</h3>
-        <span className="text-[11px] text-ink-500">{keys} keys · 132-room lifestyle boutique</span>
+        <span className="text-[11px] text-ink-500">{keys} keys{isKimptonDemo ? ' · 132-room lifestyle boutique' : ''}</span>
       </div>
       <table className="w-full text-[12.5px]">
         <thead>
@@ -468,24 +604,31 @@ function PerKey() {
   );
 }
 
-function HistoricalProjected() {
-  // Historical: 3 years of pre-acquisition operating performance (in $000s)
-  // Projected: y1-y5 from proforma
-  const p = kimptonAnglerOverview.proforma;
-  const totalRev = p.find(r => r.label === 'Total Revenue')!;
-  const noi = p.find(r => r.label === 'Net Operating Income')!;
+function HistoricalProjected({ statement, isKimptonDemo }: { statement: StatementResult; isKimptonDemo: boolean }) {
+  // Historical: 3 years of pre-acquisition operating performance (in $000s).
+  // Real T-12 historical data isn't available outside the Kimpton demo, so
+  // the historical block is omitted for non-Kimpton deals — projection-only view.
+  const findRow = (label: string) =>
+    statement.rows.find(r => r.label === label)?.values ?? [0, 0, 0, 0, 0];
+  const totalRev = findRow('Total Revenue');
+  const noi = findRow('Net Operating Income');
+  const gopRow = findRow('Gross Operating Profit (GOP)');
 
-  // Synthesize historical (declining pre-renovation, depressed NOI)
-  const data = [
-    { year: '2023', revenue: 13_240, noi: 2_120, gop: 4_520, kind: 'historical' },
-    { year: '2024', revenue: 13_680, noi: 2_280, gop: 4_780, kind: 'historical' },
-    { year: '2025', revenue: 13_950, noi: 2_481, gop: 4_950, kind: 'historical' },
-    { year: '2026', revenue: totalRev.y1, noi: noi.y1, gop: Math.round(totalRev.y1 * 0.37), kind: 'projected' },
-    { year: '2027', revenue: totalRev.y2, noi: noi.y2, gop: Math.round(totalRev.y2 * 0.37), kind: 'projected' },
-    { year: '2028', revenue: totalRev.y3, noi: noi.y3, gop: Math.round(totalRev.y3 * 0.37), kind: 'projected' },
-    { year: '2029', revenue: totalRev.y4, noi: noi.y4, gop: Math.round(totalRev.y4 * 0.37), kind: 'projected' },
-    { year: '2030', revenue: totalRev.y5, noi: noi.y5, gop: Math.round(totalRev.y5 * 0.37), kind: 'projected' },
-  ];
+  const projected = [2026, 2027, 2028, 2029, 2030].map((year, i) => ({
+    year: String(year),
+    revenue: totalRev[i] ?? 0,
+    noi: noi[i] ?? 0,
+    gop: gopRow[i] ?? 0,
+    kind: 'projected' as const,
+  }));
+  const historical = isKimptonDemo
+    ? [
+        { year: '2023', revenue: 13_240, noi: 2_120, gop: 4_520, kind: 'historical' as const },
+        { year: '2024', revenue: 13_680, noi: 2_280, gop: 4_780, kind: 'historical' as const },
+        { year: '2025', revenue: 13_950, noi: 2_481, gop: 4_950, kind: 'historical' as const },
+      ]
+    : [];
+  const data = [...historical, ...projected];
 
   return (
     <>
@@ -585,5 +728,33 @@ function Row({ k, v, bold }: { k: string; v: string; bold?: boolean }) {
       <span className="text-ink-500">{k}</span>
       <span className={cn('tabular-nums', bold ? 'font-semibold text-ink-900' : 'font-medium text-ink-900')}>{v}</span>
     </div>
+  );
+}
+
+// Operating-statement row with value-flash on the year-1 column.
+// Flashing the whole row on every refresh would be noisy; tying it to
+// the leading number is enough to signal "this just changed".
+function StatementRowR({
+  row, tint, isSubtotal, isTotal,
+}: {
+  row: StatementRow; tint: string; isSubtotal: boolean; isTotal: boolean;
+}) {
+  const flash = useFlash(row.values[0] ?? 0);
+  return (
+    <tr className={cn(
+      'border-b border-border/40',
+      tint,
+      isSubtotal && 'font-semibold bg-brand-50/40 border-t border-border',
+      isTotal && 'font-semibold bg-success-50/40 border-t-2 border-border text-success-700',
+      flash && 'value-flash',
+    )}>
+      <td className={cn('py-1.5', !isSubtotal && !isTotal && 'pl-3')}>{row.label}</td>
+      {row.values.map((v, vi) => (
+        <td key={vi} className="text-right tabular-nums">{v.toLocaleString()}</td>
+      ))}
+      <td className="text-right tabular-nums">
+        {row.cagr !== undefined ? `${(row.cagr * 100).toFixed(1)}%` : '—'}
+      </td>
+    </tr>
   );
 }

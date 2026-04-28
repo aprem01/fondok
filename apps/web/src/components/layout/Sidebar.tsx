@@ -1,6 +1,6 @@
 'use client';
 import Link from 'next/link';
-import { usePathname } from 'next/navigation';
+import { usePathname, useRouter } from 'next/navigation';
 import {
   LayoutGrid, FolderKanban, Database, Settings, ChevronDown, Building2,
   Users, UserCog, LogOut, Plus, Check,
@@ -9,6 +9,7 @@ import { useState, useRef, useEffect } from 'react';
 import { OrganizationSwitcher } from '@clerk/nextjs';
 import { cn } from '@/lib/format';
 import FondokMark from '@/components/brand/FondokMark';
+import { useToast } from '@/components/ui/Toast';
 import {
   isClerkConfigured,
   setCurrentOrgId,
@@ -32,6 +33,8 @@ export default function Sidebar({
   onCloseMobile?: () => void;
 } = {}) {
   const pathname = usePathname();
+  const router = useRouter();
+  const { toast } = useToast();
   const [wsOpen, setWsOpen] = useState(false);
   const [userOpen, setUserOpen] = useState(false);
   const wsRef = useRef<HTMLDivElement>(null);
@@ -144,7 +147,20 @@ export default function Sidebar({
                 <span className="font-medium">{workspace.name}</span>
               </div>
               <div className="border-t border-border my-1" />
-              <button className="w-full px-3 py-2 flex items-center gap-2 text-[12.5px] hover:bg-ink-300/10 text-left">
+              {/* Workspace creation is gated behind Clerk Organizations.
+                  In demo mode (no Clerk) we surface an honest toast rather
+                  than mounting a fake create-org dialog. */}
+              <button
+                type="button"
+                onClick={() => {
+                  setWsOpen(false);
+                  toast(
+                    'Workspace creation runs through Clerk Organizations — available on team plans',
+                    { type: 'info' },
+                  );
+                }}
+                className="w-full px-3 py-2 flex items-center gap-2 text-[12.5px] hover:bg-ink-300/10 text-left"
+              >
                 <Plus size={13} className="text-ink-500" />
                 Create Workspace
               </button>
@@ -190,10 +206,27 @@ export default function Sidebar({
         </button>
         {userOpen && (
           <div className="absolute left-3 right-3 bottom-full mb-1 bg-white border border-border rounded-lg shadow-lg py-1 z-40">
-            <button className="w-full px-3 py-2 flex items-center gap-2 text-[12.5px] hover:bg-ink-300/10 text-left">
+            {/* Team Members deep-links to the Settings → Team tab. */}
+            <button
+              type="button"
+              onClick={() => {
+                setUserOpen(false);
+                router.push('/settings');
+              }}
+              className="w-full px-3 py-2 flex items-center gap-2 text-[12.5px] hover:bg-ink-300/10 text-left"
+            >
               <Users size={13} className="text-ink-500" /> Team Members
             </button>
-            <button className="w-full px-3 py-2 flex items-center gap-2 text-[12.5px] hover:bg-ink-300/10 text-left">
+            {/* Account Settings → workspace tab; Clerk's account profile
+                is reachable via the user button when Clerk is configured. */}
+            <button
+              type="button"
+              onClick={() => {
+                setUserOpen(false);
+                router.push('/settings');
+              }}
+              className="w-full px-3 py-2 flex items-center gap-2 text-[12.5px] hover:bg-ink-300/10 text-left"
+            >
               <UserCog size={13} className="text-ink-500" /> Account Settings
             </button>
             <div className="border-t border-border my-1" />
@@ -201,7 +234,7 @@ export default function Sidebar({
               onClick={handleSignOut}
               className="w-full px-3 py-2 flex items-center gap-2 text-[12.5px] hover:bg-danger-50 text-danger-700 text-left"
             >
-              <LogOut size={13} /> Sign Out
+              <LogOut size={13} /> {isClerkConfigured ? 'Sign Out' : 'Sign Out (demo · no auth backend)'}
             </button>
           </div>
         )}

@@ -38,17 +38,49 @@ export default function PartnershipTab({ projectId }: { projectId: number | stri
   const [computing, setComputing] = useState(false);
   const [runToken, setRunToken] = useState<number | null>(null);
 
-  // Worker overrides for the Summary KPIs.
-  const wGpIrr = getEngineField<number>(outputs, 'partnership', 'gp_irr');
-  const wLpIrr = getEngineField<number>(outputs, 'partnership', 'lp_irr');
+  // Worker partnership engine fields. Note: schema is `gp.irr` / `lp.irr`, not
+  // `gp_irr`. We support both shapes for forward compatibility.
+  type PartnerReturn = {
+    partner: string;
+    contributed_equity: number;
+    distributions: number;
+    irr: number;
+    equity_multiple: number;
+  };
+  const wGp = getEngineField<PartnerReturn>(outputs, 'partnership', 'gp');
+  const wLp = getEngineField<PartnerReturn>(outputs, 'partnership', 'lp');
   const wPromote = getEngineField<number>(outputs, 'partnership', 'promote_amount');
-  const gpIrrLabel = wGpIrr != null ? fmtPct(wGpIrr, 2) : '42.18%';
-  const lpIrrLabel = wLpIrr != null ? fmtPct(wLpIrr, 2) : '20.45%';
+  const wGpFlows = getEngineField<number[]>(outputs, 'partnership', 'gp_cash_flows');
+  const wLpFlows = getEngineField<number[]>(outputs, 'partnership', 'lp_cash_flows');
+
+  const wGpIrr = wGp?.irr;
+  const wLpIrr = wLp?.irr;
+  const wGpEquity = wGp?.contributed_equity;
+  const wLpEquity = wLp?.contributed_equity;
+  const wGpMultiple = wGp?.equity_multiple;
+  const wLpMultiple = wLp?.equity_multiple;
+  const wGpDist = wGp?.distributions;
+  const wLpDist = wLp?.distributions;
+
+  const hasWorkerPartnership = wGp != null || wLp != null;
+  const gpIrrLabel = wGpIrr != null
+    ? fmtPct(wGpIrr, 2)
+    : (isKimptonDemo ? '42.18%' : '—');
+  const lpIrrLabel = wLpIrr != null
+    ? fmtPct(wLpIrr, 2)
+    : (isKimptonDemo ? '20.45%' : '—');
   const promoteLabel = wPromote != null
     ? fmtCurrency(wPromote, { compact: true })
-    : fmtCurrency(2_840_000, { compact: true });
+    : (isKimptonDemo ? fmtCurrency(2_840_000, { compact: true }) : '—');
 
-  if (!isKimptonDemo) {
+  // Total deal profit = total cash returned to all equity - equity contributed.
+  const totalDistributions = (wGpDist ?? 0) + (wLpDist ?? 0);
+  const totalEquity = (wGpEquity ?? 0) + (wLpEquity ?? 0);
+  const dealProfitLabel = hasWorkerPartnership
+    ? fmtCurrency(Math.max(0, totalDistributions - totalEquity), { compact: true })
+    : (isKimptonDemo ? fmtCurrency(22_120_000, { compact: true }) : '—');
+
+  if (!isKimptonDemo && !hasWorkerPartnership) {
     return (
       <div className="flex gap-4">
         <div className="flex-1 min-w-0">
@@ -162,7 +194,7 @@ export default function PartnershipTab({ projectId }: { projectId: number | stri
             <KPI label="GP LIRR (Net to Sponsor)" tip="The General Partner's (sponsor's) levered IRR after the promote — what you take home for putting the deal together." value={gpIrrLabel} flashKey={gpIrrLabel} />
             <KPI label="LP LIRR (Net to Investors)" tip="The Limited Partners' (outside investors') levered IRR after waterfall splits. What your LPs actually earn." value={lpIrrLabel} flashKey={lpIrrLabel} />
             <KPI label="GP Profit (Carry)" tip={GLOSSARY['Promote']} value={promoteLabel} flashKey={promoteLabel} />
-            <KPI label="Deal Profit (Levered)" tip="Total cash to all equity holders over the hold, minus equity invested. The pie that gets split GP/LP." value={fmtCurrency(22_120_000, { compact: true })} />
+            <KPI label="Deal Profit (Levered)" tip="Total cash to all equity holders over the hold, minus equity invested. The pie that gets split GP/LP." value={dealProfitLabel} flashKey={dealProfitLabel} />
           </div>
 
           <div className="grid grid-cols-2 gap-5 mb-5">
@@ -177,21 +209,32 @@ export default function PartnershipTab({ projectId }: { projectId: number | stri
                   </tr>
                 </thead>
                 <tbody>
-                  <tr className="border-b border-border/50">
-                    <td className="py-2">Sponsor / GP (General Partner)</td>
-                    <td className="text-right tabular-nums">10.0%</td>
-                    <td className="text-right tabular-nums">{fmtCurrency(1_388_960)}</td>
-                  </tr>
-                  <tr className="border-b border-border/50">
-                    <td className="py-2">LP Investors (Limited Partners)</td>
-                    <td className="text-right tabular-nums">90.0%</td>
-                    <td className="text-right tabular-nums">{fmtCurrency(12_447_110)}</td>
-                  </tr>
-                  <tr className="font-semibold border-t border-border">
-                    <td className="py-2">Total Equity</td>
-                    <td className="text-right tabular-nums">100.0%</td>
-                    <td className="text-right tabular-nums">{fmtCurrency(13_836_070)}</td>
-                  </tr>
+                  {(() => {
+                    const gpEq = wGpEquity ?? (isKimptonDemo ? 1_388_960 : 0);
+                    const lpEq = wLpEquity ?? (isKimptonDemo ? 12_447_110 : 0);
+                    const total = gpEq + lpEq;
+                    const gpPct = total > 0 ? (gpEq / total) * 100 : 0;
+                    const lpPct = total > 0 ? (lpEq / total) * 100 : 0;
+                    return (
+                      <>
+                        <tr className="border-b border-border/50">
+                          <td className="py-2">Sponsor / GP (General Partner)</td>
+                          <td className="text-right tabular-nums">{gpPct.toFixed(1)}%</td>
+                          <td className="text-right tabular-nums">{fmtCurrency(gpEq)}</td>
+                        </tr>
+                        <tr className="border-b border-border/50">
+                          <td className="py-2">LP Investors (Limited Partners)</td>
+                          <td className="text-right tabular-nums">{lpPct.toFixed(1)}%</td>
+                          <td className="text-right tabular-nums">{fmtCurrency(lpEq)}</td>
+                        </tr>
+                        <tr className="font-semibold border-t border-border">
+                          <td className="py-2">Total Equity</td>
+                          <td className="text-right tabular-nums">100.0%</td>
+                          <td className="text-right tabular-nums">{fmtCurrency(total)}</td>
+                        </tr>
+                      </>
+                    );
+                  })()}
                 </tbody>
               </table>
             </Card>
@@ -208,18 +251,35 @@ export default function PartnershipTab({ projectId }: { projectId: number | stri
                   </tr>
                 </thead>
                 <tbody>
-                  <tr className="border-b border-border/50">
-                    <td className="py-2">GP / Sponsor</td>
-                    <td className="text-right tabular-nums">42.18%</td>
-                    <td className="text-right tabular-nums">3.04x</td>
-                    <td className="text-right tabular-nums">{fmtCurrency(2_840_000)}</td>
-                  </tr>
-                  <tr>
-                    <td className="py-2">LP / Investors</td>
-                    <td className="text-right tabular-nums">20.45%</td>
-                    <td className="text-right tabular-nums">2.02x</td>
-                    <td className="text-right tabular-nums">{fmtCurrency(19_280_000)}</td>
-                  </tr>
+                  {(() => {
+                    // Profit = distributions - contributed equity for each partner.
+                    const gpProfit = (wGpDist ?? 0) - (wGpEquity ?? 0);
+                    const lpProfit = (wLpDist ?? 0) - (wLpEquity ?? 0);
+                    const gpMultiple = wGpMultiple ?? (isKimptonDemo ? 3.04 : 0);
+                    const lpMultiple = wLpMultiple ?? (isKimptonDemo ? 2.02 : 0);
+                    const gpProfitLabel = hasWorkerPartnership
+                      ? fmtCurrency(Math.max(0, gpProfit))
+                      : (isKimptonDemo ? fmtCurrency(2_840_000) : '—');
+                    const lpProfitLabel = hasWorkerPartnership
+                      ? fmtCurrency(Math.max(0, lpProfit))
+                      : (isKimptonDemo ? fmtCurrency(19_280_000) : '—');
+                    return (
+                      <>
+                        <tr className="border-b border-border/50">
+                          <td className="py-2">GP / Sponsor</td>
+                          <td className="text-right tabular-nums">{gpIrrLabel}</td>
+                          <td className="text-right tabular-nums">{gpMultiple.toFixed(2)}x</td>
+                          <td className="text-right tabular-nums">{gpProfitLabel}</td>
+                        </tr>
+                        <tr>
+                          <td className="py-2">LP / Investors</td>
+                          <td className="text-right tabular-nums">{lpIrrLabel}</td>
+                          <td className="text-right tabular-nums">{lpMultiple.toFixed(2)}x</td>
+                          <td className="text-right tabular-nums">{lpProfitLabel}</td>
+                        </tr>
+                      </>
+                    );
+                  })()}
                 </tbody>
               </table>
             </Card>
@@ -282,32 +342,52 @@ export default function PartnershipTab({ projectId }: { projectId: number | stri
       {tab === 'Distribution Timeline' && (
         <Card className="p-5">
           <h3 className="text-[13px] font-semibold text-ink-900 mb-3">Annual Distributions</h3>
-          <table className="w-full text-[12.5px]">
-            <thead>
-              <tr className="text-ink-500 text-[11px] border-b border-border">
-                <th className="text-left font-medium pb-2">Year</th>
-                <th className="text-right font-medium pb-2">GP Distribution</th>
-                <th className="text-right font-medium pb-2">LP Distribution</th>
-                <th className="text-right font-medium pb-2">Total</th>
-              </tr>
-            </thead>
-            <tbody>
-              {[
-                ['Year 1', 0, 309_500, 309_500],
-                ['Year 2', 0, 345_600, 345_600],
-                ['Year 3', 0, 384_200, 384_200],
-                ['Year 4', 92_000, 425_300, 517_300],
-                ['Year 5 (Exit)', 2_748_000, 17_815_400, 20_563_400],
-              ].map(([y, gp, lp, t]) => (
-                <tr key={y as string} className="border-b border-border/50">
-                  <td className="py-2 font-medium">{y}</td>
-                  <td className="text-right tabular-nums">{fmtCurrency(gp as number)}</td>
-                  <td className="text-right tabular-nums">{fmtCurrency(lp as number)}</td>
-                  <td className="text-right tabular-nums font-medium">{fmtCurrency(t as number)}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
+          {(() => {
+            // Worker GP/LP cash flows are the source of truth. Final element is the exit year.
+            const useWorker = Array.isArray(wGpFlows) && Array.isArray(wLpFlows)
+              && wGpFlows.length > 0 && wGpFlows.length === wLpFlows.length;
+            const rows: Array<[string, number, number, number]> = useWorker
+              ? wGpFlows!.map((gp, i) => {
+                  const lp = wLpFlows![i] ?? 0;
+                  const yearLabel = i === wGpFlows!.length - 1
+                    ? `Year ${i + 1} (Exit)`
+                    : `Year ${i + 1}`;
+                  return [yearLabel, gp, lp, gp + lp];
+                })
+              : isKimptonDemo
+                ? [
+                    ['Year 1', 0, 309_500, 309_500],
+                    ['Year 2', 0, 345_600, 345_600],
+                    ['Year 3', 0, 384_200, 384_200],
+                    ['Year 4', 92_000, 425_300, 517_300],
+                    ['Year 5 (Exit)', 2_748_000, 17_815_400, 20_563_400],
+                  ]
+                : [];
+            if (rows.length === 0) {
+              return (
+                <div className="py-6 text-center text-[12px] text-ink-500">
+                  Run the Partnership engine to populate annual distributions.
+                </div>
+              );
+            }
+            return (
+              <table className="w-full text-[12.5px]">
+                <thead>
+                  <tr className="text-ink-500 text-[11px] border-b border-border">
+                    <th className="text-left font-medium pb-2">Year</th>
+                    <th className="text-right font-medium pb-2">GP Distribution</th>
+                    <th className="text-right font-medium pb-2">LP Distribution</th>
+                    <th className="text-right font-medium pb-2">Total</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {rows.map(([y, gp, lp, t]) => (
+                    <DistRow key={y} y={y} gp={gp} lp={lp} t={t} />
+                  ))}
+                </tbody>
+              </table>
+            );
+          })()}
         </Card>
       )}
 
@@ -316,15 +396,27 @@ export default function PartnershipTab({ projectId }: { projectId: number | stri
           <Card className="p-5">
             <h3 className="text-[13px] font-semibold text-ink-900 mb-3">GP Returns</h3>
             <div className="space-y-2 text-[12.5px]">
-              <Row k="LIRR" v="42.18%" /><Row k="Equity Multiple" v="3.04x" />
-              <Row k="Promote" v={fmtCurrency(2_840_000)} /><Row k="Total Distributions" v={fmtCurrency(2_840_000)} />
+              <Row k="LIRR" v={gpIrrLabel} />
+              <Row k="Equity Multiple" v={`${(wGpMultiple ?? (isKimptonDemo ? 3.04 : 0)).toFixed(2)}x`} />
+              <Row k="Promote" v={promoteLabel} />
+              <Row k="Total Distributions" v={
+                wGpDist != null
+                  ? fmtCurrency(wGpDist)
+                  : (isKimptonDemo ? fmtCurrency(2_840_000) : '—')
+              } />
             </div>
           </Card>
           <Card className="p-5">
             <h3 className="text-[13px] font-semibold text-ink-900 mb-3">LP Returns</h3>
             <div className="space-y-2 text-[12.5px]">
-              <Row k="LIRR" v="20.45%" /><Row k="Equity Multiple" v="2.02x" />
-              <Row k="Pref Met" v="Yes" /><Row k="Total Distributions" v={fmtCurrency(19_280_000)} />
+              <Row k="LIRR" v={lpIrrLabel} />
+              <Row k="Equity Multiple" v={`${(wLpMultiple ?? (isKimptonDemo ? 2.02 : 0)).toFixed(2)}x`} />
+              <Row k="Pref Met" v={hasWorkerPartnership ? (wLpIrr != null && wLpIrr >= 0.10 ? 'Yes' : 'No') : (isKimptonDemo ? 'Yes' : '—')} />
+              <Row k="Total Distributions" v={
+                wLpDist != null
+                  ? fmtCurrency(wLpDist)
+                  : (isKimptonDemo ? fmtCurrency(19_280_000) : '—')
+              } />
             </div>
           </Card>
         </div>
@@ -347,6 +439,18 @@ function KPI({ label, value, flashKey, tip }: { label: string; value: string; fl
     </Card>
   );
 }
+function DistRow({ y, gp, lp, t }: { y: string; gp: number; lp: number; t: number }) {
+  const flash = useFlash(t);
+  return (
+    <tr className={cn('border-b border-border/50', flash && 'value-flash')}>
+      <td className="py-2 font-medium">{y}</td>
+      <td className="text-right tabular-nums">{fmtCurrency(gp)}</td>
+      <td className="text-right tabular-nums">{fmtCurrency(lp)}</td>
+      <td className="text-right tabular-nums font-medium">{fmtCurrency(t)}</td>
+    </tr>
+  );
+}
+
 function Row({ k, v }: { k: string; v: string }) {
   return (
     <div className="flex justify-between py-1.5 border-b border-border/50 last:border-0">

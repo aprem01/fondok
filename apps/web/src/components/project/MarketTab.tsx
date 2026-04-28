@@ -9,6 +9,7 @@ import { Calendar, Download, MapPinned } from 'lucide-react';
 import { Card } from '@/components/ui/Card';
 import { Button } from '@/components/ui/Button';
 import { Badge } from '@/components/ui/Badge';
+import { useToast } from '@/components/ui/Toast';
 import { miamiMarket } from '@/lib/mockData';
 import { cn } from '@/lib/format';
 import { IntroCard } from '@/components/help/IntroCard';
@@ -24,6 +25,34 @@ export default function MarketTab({ projectId }: { projectId: number | string })
   const [tab, setTab] = useState('Market Overview');
   const m = miamiMarket;
   const isKimptonDemo = projectId === 7;
+  const { toast } = useToast();
+
+  // Sales-data export streams the demo's CoStar-style table to a CSV the
+  // analyst can paste into Excel. We build it client-side from the same
+  // miamiMarket fixture the page renders, so what's downloaded matches
+  // what the user sees byte-for-byte.
+  const onExportSales = () => {
+    const headers = ['Property', 'Keys', 'Sale Date', 'Sale Price', '$/Key', 'Cap Rate', 'Buyer'];
+    const rows = m.sales.map((s) =>
+      [s.name, s.keys, s.date, s.price, s.perKey, s.cap, s.buyer]
+        .map((cell) => {
+          const str = String(cell ?? '');
+          return /[",\n]/.test(str) ? `"${str.replace(/"/g, '""')}"` : str;
+        })
+        .join(','),
+    );
+    const csv = [headers.join(','), ...rows].join('\n');
+    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = `miami-beach-sales-${m.asOf.replace(/\s+/g, '-')}.csv`;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(url);
+    toast(`Downloaded ${rows.length} sales as CSV`, { type: 'success' });
+  };
 
   if (!isKimptonDemo) {
     return (
@@ -88,7 +117,7 @@ export default function MarketTab({ projectId }: { projectId: number | string })
           </div>
           <div className="flex items-center gap-2">
             <Badge tone="gray"><Calendar size={11} /> As of {m.asOf}</Badge>
-            <Button variant="secondary" size="sm"><Download size={12} /> Export Sales Data</Button>
+            <Button variant="secondary" size="sm" onClick={onExportSales}><Download size={12} /> Export Sales Data</Button>
           </div>
         </div>
       </Card>

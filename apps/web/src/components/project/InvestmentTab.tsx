@@ -13,7 +13,7 @@ import WhatJustHappened from './WhatJustHappened';
 import { kimptonAnglerOverview } from '@/lib/mockData';
 import { fmtCurrency, fmtPct, cn } from '@/lib/format';
 import { useAssumptionsOptional } from '@/stores/assumptionsStore';
-import { useEngineOutputs } from '@/lib/hooks/useEngineOutputs';
+import { getEngineField, useEngineOutputs } from '@/lib/hooks/useEngineOutputs';
 import { IntroCard } from '@/components/help/IntroCard';
 
 const subTabs = ['Deal Summary', 'Sources & Uses', 'Timeline'];
@@ -285,20 +285,45 @@ export default function InvestmentTab({ projectId }: { projectId: number | strin
 
 // ───────────────────────────────────────────────────────────────────
 // Live (Kimpton) Sources & Uses with editable assumptions.
+// Worker capital engine output (sources / uses arrays) is the persisted
+// authoritative version; we prefer it over the live-slider model when
+// both are present.
 // ───────────────────────────────────────────────────────────────────
+
+interface CapitalLine { label: string; amount: number; pct?: number | null; is_total?: boolean }
 
 function LiveSourcesUses() {
   const { assumptions, setAssumption, model } = useAssumptionsOptional()!;
   const [edit, setEdit] = useState(false);
+  const params = useParams();
+  const dealId = (params?.id as string | undefined) ?? '';
+  const { outputs } = useEngineOutputs(dealId);
+
+  // Worker capital engine wins when present.
+  const wSources = getEngineField<CapitalLine[]>(outputs, 'capital', 'sources');
+  const wUses = getEngineField<CapitalLine[]>(outputs, 'capital', 'uses');
+
+  const usesRows = (wUses && wUses.length > 0)
+    ? wUses.map(u => ({ label: u.label, amount: u.amount, total: !!u.is_total, pct: u.pct ?? 0 }))
+    : model.sourcesAndUses.uses.map(u => ({ ...u, total: u.total ?? false, pct: 0 }));
+  const sourcesRows = (wSources && wSources.length > 0)
+    ? wSources.map(s => ({ label: s.label, amount: s.amount, total: !!s.is_total, pct: s.pct ?? 0 }))
+    : model.sourcesAndUses.sources;
+  const usingWorker = (wSources && wSources.length > 0) || (wUses && wUses.length > 0);
 
   return (
     <>
       <div className="grid grid-cols-2 gap-5 mb-5">
         <Card className="p-5">
-          <h3 className="text-[13px] font-semibold text-ink-900 mb-3">Transaction Uses</h3>
+          <div className="flex items-center justify-between mb-3">
+            <h3 className="text-[13px] font-semibold text-ink-900">Transaction Uses</h3>
+            {usingWorker && (
+              <span className="text-[9.5px] uppercase tracking-wide text-success-700 bg-success-50 rounded px-1.5 py-0.5">Live</span>
+            )}
+          </div>
           <table className="w-full text-[12.5px]">
             <tbody>
-              {model.sourcesAndUses.uses.map(u => (
+              {usesRows.map(u => (
                 <tr key={u.label}
                   className={u.total ? 'font-semibold border-t border-border' : 'border-b border-border/50'}>
                   <td className="py-2">{u.label}</td>
@@ -309,15 +334,20 @@ function LiveSourcesUses() {
           </table>
         </Card>
         <Card className="p-5">
-          <h3 className="text-[13px] font-semibold text-ink-900 mb-3">Transaction Sources</h3>
+          <div className="flex items-center justify-between mb-3">
+            <h3 className="text-[13px] font-semibold text-ink-900">Transaction Sources</h3>
+            {usingWorker && (
+              <span className="text-[9.5px] uppercase tracking-wide text-success-700 bg-success-50 rounded px-1.5 py-0.5">Live</span>
+            )}
+          </div>
           <table className="w-full text-[12.5px]">
             <tbody>
-              {model.sourcesAndUses.sources.map(s => (
+              {sourcesRows.map(s => (
                 <tr key={s.label}
                   className={s.total ? 'font-semibold border-t border-border' : 'border-b border-border/50'}>
                   <td className="py-2">
                     {s.label}
-                    {!s.total && <span className="ml-2 text-ink-500 text-[11px]">{(s.pct * 100).toFixed(1)}%</span>}
+                    {!s.total && s.pct ? <span className="ml-2 text-ink-500 text-[11px]">{(s.pct * 100).toFixed(1)}%</span> : null}
                   </td>
                   <td className="text-right tabular-nums">{fmtCurrency(s.amount)}</td>
                 </tr>
@@ -412,14 +442,33 @@ function NumberField({
 }
 
 function StaticSourcesUses() {
+  const params = useParams();
+  const dealId = (params?.id as string | undefined) ?? '';
+  const { outputs } = useEngineOutputs(dealId);
+  const wSources = getEngineField<CapitalLine[]>(outputs, 'capital', 'sources');
+  const wUses = getEngineField<CapitalLine[]>(outputs, 'capital', 'uses');
+
   const o = kimptonAnglerOverview;
+  const uses = (wUses && wUses.length > 0)
+    ? wUses.map(u => ({ label: u.label, amount: u.amount, total: !!u.is_total }))
+    : o.uses;
+  const sources = (wSources && wSources.length > 0)
+    ? wSources.map(s => ({ label: s.label, amount: s.amount, total: !!s.is_total }))
+    : o.sources;
+  const usingWorker = (wSources && wSources.length > 0) || (wUses && wUses.length > 0);
+
   return (
     <div className="grid grid-cols-2 gap-5">
       <Card className="p-5">
-        <h3 className="text-[13px] font-semibold text-ink-900 mb-3">Transaction Uses</h3>
+        <div className="flex items-center justify-between mb-3">
+          <h3 className="text-[13px] font-semibold text-ink-900">Transaction Uses</h3>
+          {usingWorker && (
+            <span className="text-[9.5px] uppercase tracking-wide text-success-700 bg-success-50 rounded px-1.5 py-0.5">Live</span>
+          )}
+        </div>
         <table className="w-full text-[12.5px]">
           <tbody>
-            {o.uses.map(u => (
+            {uses.map(u => (
               <tr key={u.label} className={u.total ? 'font-semibold border-t border-border' : 'border-b border-border/50'}>
                 <td className="py-2">{u.label}</td>
                 <td className="text-right tabular-nums">{fmtCurrency(u.amount)}</td>
@@ -429,10 +478,15 @@ function StaticSourcesUses() {
         </table>
       </Card>
       <Card className="p-5">
-        <h3 className="text-[13px] font-semibold text-ink-900 mb-3">Transaction Sources</h3>
+        <div className="flex items-center justify-between mb-3">
+          <h3 className="text-[13px] font-semibold text-ink-900">Transaction Sources</h3>
+          {usingWorker && (
+            <span className="text-[9.5px] uppercase tracking-wide text-success-700 bg-success-50 rounded px-1.5 py-0.5">Live</span>
+          )}
+        </div>
         <table className="w-full text-[12.5px]">
           <tbody>
-            {o.sources.map(s => (
+            {sources.map(s => (
               <tr key={s.label} className={s.total ? 'font-semibold border-t border-border' : 'border-b border-border/50'}>
                 <td className="py-2">{s.label}</td>
                 <td className="text-right tabular-nums">{fmtCurrency(s.amount)}</td>
