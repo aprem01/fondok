@@ -658,6 +658,77 @@ async def get_memo(deal_id: UUID) -> MemoEnvelope:
     return MemoEnvelope(deal_id=deal_id)
 
 
+class CriticReportResponse(BaseModel):
+    """Latest persisted Critic report for a deal."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    deal_id: UUID
+    summary: str | None = None
+    findings: list[dict[str, Any]] = Field(default_factory=list)
+    critical_count: int = 0
+    warn_count: int = 0
+    info_count: int = 0
+    created_at: datetime
+
+
+@router.get("/{deal_id}/critic", response_model=CriticReportResponse)
+async def get_critic_report(
+    deal_id: UUID,
+    session: Annotated[AsyncSession, Depends(get_session)],
+    tenant_id: Annotated[UUID, Depends(get_tenant_id)],
+) -> CriticReportResponse:
+    """Return the latest CriticReport for ``deal_id``.
+
+    The Critic agent runs after the Variance pass and identifies
+    cross-field stories that the per-field variance pass would miss
+    (coastal insurance held flat, NOI growth without OpEx pressure,
+    etc.). Each finding is grounded in a USALI catalog rule_id or one
+    of the ``MULTI_FIELD_*`` cross-field rules.
+    """
+    row = (
+        await session.execute(
+            text(
+                """
+                SELECT id, deal_id, tenant_id, summary, report_json, created_at
+                  FROM critic_reports
+                 WHERE deal_id = :deal AND tenant_id = :tenant
+                 ORDER BY created_at DESC
+                 LIMIT 1
+                """
+            ),
+            {"deal": str(deal_id), "tenant": str(tenant_id)},
+        )
+    ).first()
+    if row is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=(
+                f"no critic report found for deal {deal_id} — "
+                "extract a broker proforma + T-12 first"
+            ),
+        )
+    mapping = row._mapping
+    raw_report = mapping["report_json"]
+    if isinstance(raw_report, str):
+        try:
+            report = json.loads(raw_report)
+        except json.JSONDecodeError:
+            report = {}
+    else:
+        report = dict(raw_report) if raw_report else {}
+    findings = report.get("findings") or []
+    return CriticReportResponse(
+        deal_id=deal_id,
+        summary=mapping.get("summary") or report.get("summary"),
+        findings=findings,
+        critical_count=int(report.get("critical_count") or 0),
+        warn_count=int(report.get("warn_count") or 0),
+        info_count=int(report.get("info_count") or 0),
+        created_at=_coerce_dt(mapping["created_at"]),
+    )
+
+
 @router.get("/{deal_id}/costs", response_model=DealCostReport)
 async def get_deal_costs(deal_id: UUID) -> Any:
     """Aggregated LLM cost dashboard for ``deal_id``.

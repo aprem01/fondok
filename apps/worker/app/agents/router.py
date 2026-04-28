@@ -321,6 +321,15 @@ async def run_router(payload: RouterInput) -> RouterOutput:
         agent_name="router",
     )
 
+    # Persist for the cost dashboard. Best-effort; never blocks the agent.
+    from ..cost_persistence import persist_model_calls_standalone
+
+    await persist_model_calls_standalone(
+        deal_id=payload.deal_id,
+        tenant_id=payload.tenant_id,
+        calls=[model_call],
+    )
+
     return RouterOutput(
         deal_id=payload.deal_id,
         document_id=payload.document_id,

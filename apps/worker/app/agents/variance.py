@@ -585,6 +585,16 @@ async def run_variance(payload: VarianceInput) -> VarianceOutput:
     # haven't migrated to the typed VarianceReport yet.
     legacy = [f.model_dump(mode="json") for f in enriched]
 
+    # Persist for the cost dashboard. Best-effort.
+    if model_calls:
+        from ..cost_persistence import persist_model_calls_standalone
+
+        await persist_model_calls_standalone(
+            deal_id=payload.deal_id,
+            tenant_id=payload.tenant_id,
+            calls=model_calls,
+        )
+
     return VarianceOutput(
         deal_id=payload.deal_id,
         report=report,

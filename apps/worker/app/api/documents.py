@@ -591,6 +591,15 @@ async def _run_extraction_pipeline(
                 fields=fields,
                 extraction_data=extraction_data,
             )
+
+            # Cross-field critic pass — looks for narrative issues spanning
+            # multiple fields (coastal insurance, NOI vs OpEx divergence,
+            # etc.). Best-effort; never blocks completion.
+            await _persist_critic_report(
+                session,
+                deal_id=deal_id,
+                tenant_id=tenant_id,
+            )
         except Exception as exc:  # noqa: BLE001
             logger.exception("extraction failed: doc=%s — %s", doc_id, exc)
             try:
@@ -831,6 +840,282 @@ async def _persist_verification_report(
             doc_id,
             exc,
         )
+
+
+# ─────────────────────────── critic ───────────────────────────
+
+
+async def _persist_critic_report(
+    session: AsyncSession,
+    *,
+    deal_id: str,
+    tenant_id: str,
+) -> None:
+    """Run the Critic agent over the deal and persist findings.
+
+    Best-effort: any failure logs and returns silently — the Critic is
+    additive; never block the extraction pipeline on it. We re-build
+    minimal financial inputs from the latest extraction results on the
+    deal so the Critic has something to read.
+
+    When ``EVALS_MOCK=true`` we skip the LLM narrative pass — the
+    deterministic checks still run so CI exercises the wiring without
+    spending tokens.
+    """
+    try:
+        from ..agents.critic import CriticInput, run_critic
+
+        # The first cut is intentionally narrow: we read whatever
+        # broker / T-12 financials we can synthesize from the latest
+        # extraction blob on the deal. When richer context is wired
+        # through the LangGraph state, this helper can pick that up
+        # without the API surface changing.
+        broker, actuals, market_context, keys = await _load_critic_inputs(
+            session, deal_id=deal_id
+        )
+
+        # If we have neither side of the comparison there's nothing to
+        # critique — the agent's empty-input contract makes this safe
+        # to invoke, but we skip the DB write so the UI doesn't show a
+        # spurious "no findings yet" entry.
+        if broker is None and actuals is None:
+            return
+
+        run_narrative = not (
+            os.environ.get("EVALS_MOCK", "").lower() in ("1", "true", "yes")
+        )
+        critic_input = CriticInput(
+            tenant_id=tenant_id,
+            deal_id=deal_id,
+            t12_actual=actuals,
+            broker_proforma=broker,
+            initial_variance=None,
+            market_context=market_context,
+            keys=keys,
+        )
+        out = await run_critic(critic_input, run_narrative_pass=run_narrative)
+        if out.report is None:
+            return
+
+        report = out.report
+        report_id = uuid4()
+        await session.execute(
+            text(
+                """
+                INSERT INTO critic_reports (
+                    id, deal_id, tenant_id, summary, report_json, created_at
+                ) VALUES (
+                    :id, :deal, :tenant, :summary, :report, :created
+                )
+                """
+            ),
+            {
+                "id": str(report_id),
+                "deal": deal_id,
+                "tenant": tenant_id,
+                "summary": report.summary,
+                "report": report.model_dump_json(),
+                "created": _now(),
+            },
+        )
+        for f in report.findings:
+            await session.execute(
+                text(
+                    """
+                    INSERT INTO critic_findings (
+                        id, deal_id, tenant_id, rule_id, title, narrative,
+                        severity, cited_fields, cited_pages,
+                        impact_estimate_usd, created_at
+                    ) VALUES (
+                        :id, :deal, :tenant, :rule_id, :title, :narrative,
+                        :severity, :cited_fields, :cited_pages,
+                        :impact_estimate_usd, :created
+                    )
+                    """
+                ),
+                {
+                    "id": str(f.id),
+                    "deal": deal_id,
+                    "tenant": tenant_id,
+                    "rule_id": f.rule_id,
+                    "title": f.title,
+                    "narrative": f.narrative,
+                    "severity": f.severity.value,
+                    "cited_fields": json.dumps(f.cited_fields or []),
+                    "cited_pages": json.dumps(f.cited_pages or []),
+                    "impact_estimate_usd": f.impact_estimate_usd,
+                    "created": _now(),
+                },
+            )
+        await session.commit()
+        logger.info(
+            "critic: deal=%s findings=%d (CRIT=%d WARN=%d INFO=%d)",
+            deal_id,
+            len(report.findings),
+            report.critical_count,
+            report.warn_count,
+            report.info_count,
+        )
+    except Exception as exc:  # noqa: BLE001 - never block extraction
+        logger.warning(
+            "critic: failed to persist report for deal=%s: %s", deal_id, exc
+        )
+
+
+async def _load_critic_inputs(
+    session: AsyncSession,
+    *,
+    deal_id: str,
+) -> tuple[Any | None, Any | None, dict[str, Any], int | None]:
+    """Pull whatever broker proforma + T-12 + market context we can
+    reconstruct from the latest extraction results on the deal.
+
+    Returns ``(broker_proforma, t12_actual, market_context, keys)``.
+    Both financial sides may be ``None`` when only one document type
+    has been extracted yet.
+    """
+    try:
+        from fondok_schemas import (
+            DepartmentalExpenses,
+            FixedCharges,
+            USALIFinancials,
+            UndistributedExpenses,
+        )
+    except ImportError:
+        return None, None, {}, None
+
+    # Pull the deal row for market context (city, brand, service, keys).
+    deal_row = (
+        await session.execute(
+            text(
+                """
+                SELECT city, brand, service, keys
+                  FROM deals
+                 WHERE id = :id
+                """
+            ),
+            {"id": deal_id},
+        )
+    ).first()
+    market_context: dict[str, Any] = {}
+    keys: int | None = None
+    if deal_row is not None:
+        m = deal_row._mapping
+        if m.get("city"):
+            market_context["city"] = m["city"]
+            market_context["location"] = m["city"]
+        if m.get("brand"):
+            market_context["brand"] = m["brand"]
+        if m.get("service"):
+            market_context["service"] = m["service"]
+        if m.get("keys"):
+            try:
+                keys = int(m["keys"])
+                market_context["keys"] = keys
+            except (TypeError, ValueError):
+                pass
+
+    # Walk every extraction result on the deal, bucketing fields by
+    # T-12 (USALI P&L paths) vs broker proforma (broker_proforma.*).
+    rows = await session.execute(
+        text(
+            """
+            SELECT er.fields, d.doc_type
+              FROM extraction_results er
+              JOIN documents d ON d.id = er.document_id
+             WHERE er.deal_id = :deal
+             ORDER BY er.created_at DESC
+            """
+        ),
+        {"deal": deal_id},
+    )
+
+    broker_fields: dict[str, float] = {}
+    actual_fields: dict[str, float] = {}
+    for r in rows.fetchall():
+        m = r._mapping
+        raw_fields = m["fields"]
+        if isinstance(raw_fields, str):
+            try:
+                raw_fields = json.loads(raw_fields)
+            except json.JSONDecodeError:
+                continue
+        if not isinstance(raw_fields, list):
+            continue
+        doc_type = (m.get("doc_type") or "").upper()
+        for f in raw_fields:
+            if not isinstance(f, dict):
+                continue
+            name = (f.get("field_name") or "").strip()
+            value = f.get("value")
+            if not name or not isinstance(value, (int, float)):
+                continue
+            value_f = float(value)
+            lname = name.lower()
+            # broker_proforma.* always feeds broker side regardless of doc_type.
+            if "broker_proforma." in lname or "broker." in lname:
+                broker_fields.setdefault(lname.rsplit(".", 1)[-1], value_f)
+            elif doc_type in ("T12", "PNL"):
+                actual_fields.setdefault(lname.rsplit(".", 1)[-1], value_f)
+            elif doc_type == "OM":
+                # OM headlines feed the broker side.
+                broker_fields.setdefault(lname.rsplit(".", 1)[-1], value_f)
+
+    def _build(values: dict[str, float], label: str) -> Any | None:
+        if not values:
+            return None
+        # Prefer explicit total_revenue; otherwise sum the legs we know.
+        total_rev = values.get("total_revenue") or values.get("total_revenue_usd")
+        rooms = values.get("rooms_revenue") or values.get("rooms_revenue_usd") or 0.0
+        fb = values.get("fb_revenue") or values.get("fb_revenue_usd") or 0.0
+        other = values.get("other_revenue") or values.get("other_revenue_usd") or 0.0
+        if total_rev is None:
+            total_rev = rooms + fb + other
+        if total_rev <= 0:
+            return None
+        noi = (
+            values.get("noi") or values.get("noi_usd") or 0.0
+        )
+        gop = values.get("gop") or values.get("gop_usd") or noi
+        opex_ratio = (
+            (total_rev - noi) / total_rev if total_rev > 0 else 0.0
+        )
+        opex_ratio = max(0.0, min(2.0, opex_ratio))
+        try:
+            return USALIFinancials(
+                period_label=label,
+                rooms_revenue=max(0.0, rooms),
+                fb_revenue=max(0.0, fb),
+                other_revenue=max(0.0, other),
+                total_revenue=max(0.0, total_rev),
+                dept_expenses=DepartmentalExpenses(
+                    rooms=max(0.0, values.get("departmental_rooms", 0.0)),
+                    food_beverage=max(0.0, values.get("departmental_fb", 0.0)),
+                    other_operated=0.0,
+                    total=max(0.0, values.get("departmental_expenses", 0.0)),
+                ),
+                undistributed=UndistributedExpenses(),
+                mgmt_fee=max(0.0, values.get("mgmt_fee", 0.0)),
+                ffe_reserve=max(0.0, values.get("ffe_reserve", 0.0)),
+                fixed_charges=FixedCharges(
+                    insurance=max(0.0, values.get("insurance", 0.0)),
+                    property_taxes=max(0.0, values.get("property_taxes", 0.0)),
+                    total=max(0.0, values.get("fixed_charges", 0.0)),
+                ),
+                gop=gop,
+                noi=noi,
+                opex_ratio=opex_ratio,
+                occupancy=values.get("occupancy") or values.get("occupancy_pct"),
+                adr=values.get("adr") or values.get("adr_usd"),
+                revpar=values.get("revpar") or values.get("revpar_usd"),
+            )
+        except Exception as exc:  # noqa: BLE001 - degrade gracefully
+            logger.debug("critic: %s build failed (%s)", label, exc)
+            return None
+
+    broker = _build(broker_fields, "Broker Proforma Year 1")
+    actuals = _build(actual_fields, "T-12 Actual")
+    return broker, actuals, market_context, keys
 
 
 # Public symbols for tests.

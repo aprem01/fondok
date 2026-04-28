@@ -2,7 +2,8 @@
 import { useState, useEffect } from 'react';
 import {
   Sparkles, ArrowRight, RefreshCw, ShieldCheck, FileSearch,
-  TrendingUp, Layers, DollarSign, FileText,
+  TrendingUp, Layers, DollarSign, FileText, Eye, AlertTriangle,
+  AlertCircle, Info,
 } from 'lucide-react';
 import dynamic from 'next/dynamic';
 import TabLoadingSkeleton from './TabLoadingSkeleton';
@@ -19,7 +20,13 @@ import { useSearchParams, useRouter, useParams } from 'next/navigation';
 import { Card } from '@/components/ui/Card';
 import { Button } from '@/components/ui/Button';
 import { Badge } from '@/components/ui/Badge';
-import { kimptonAnalysis } from '@/lib/mockData';
+import {
+  kimptonAnalysis,
+  kimptonCriticFindings,
+  kimptonCriticSummary,
+  type KimptonCriticFinding,
+  type KimptonCriticSeverity,
+} from '@/lib/mockData';
 import { fmtCurrency, cn } from '@/lib/format';
 import VarianceTab from './VarianceTab';
 import { criticalCount } from '@/lib/varianceData';
@@ -95,13 +102,14 @@ function CacheHitBadge() {
   );
 }
 
-type SubTab = 'summary' | 'memo' | 'risks' | 'variance' | 'sensitivity' | 'scenarios' | 'cost';
+type SubTab = 'summary' | 'memo' | 'risks' | 'variance' | 'critic' | 'sensitivity' | 'scenarios' | 'cost';
 
 const subTabs: { id: SubTab; label: string; icon: typeof Sparkles; badge?: string }[] = [
   { id: 'summary',     label: 'AI Summary',     icon: Sparkles },
   { id: 'memo',        label: 'IC Memo',        icon: FileText, badge: 'LIVE' },
   { id: 'risks',       label: 'Risks',          icon: ShieldCheck },
   { id: 'variance',    label: 'Broker Variance', icon: FileSearch, badge: 'NEW' },
+  { id: 'critic',      label: 'Critic Review',  icon: Eye, badge: 'NEW' },
   { id: 'sensitivity', label: 'Sensitivity',    icon: TrendingUp },
   { id: 'scenarios',   label: 'Scenarios',      icon: Layers },
   { id: 'cost',        label: 'Cost',           icon: DollarSign },
@@ -328,6 +336,26 @@ export default function AnalysisTab() {
         </Card>
       )}
 
+      {sub === 'critic' && (
+        hasCannedAnalysis ? (
+          <CriticReview findings={kimptonCriticFindings} summary={kimptonCriticSummary} />
+        ) : (
+          <Card className="p-8 text-center">
+            <div className="w-12 h-12 mx-auto rounded-lg bg-brand-50 flex items-center justify-center mb-3">
+              <Eye size={20} className="text-brand-500" />
+            </div>
+            <h3 className="text-[14px] font-semibold text-ink-900 mb-1">
+              No cross-field issues detected
+            </h3>
+            <p className="text-[12.5px] text-ink-500 max-w-md mx-auto leading-relaxed">
+              The Critic agent runs after the Variance pass. Once both broker proforma
+              and T-12 documents are extracted, Fondok will surface narrative issues
+              spanning multiple fields here.
+            </p>
+          </Card>
+        )
+      )}
+
       {sub === 'cost' && <CostPanel />}
 
       {sub === 'scenarios' && (
@@ -399,4 +427,189 @@ function renderSummaryParagraph(text: string): React.ReactNode[] {
     }
     return <span key={i}>{part}</span>;
   });
+}
+
+// ---------- Critic Review sub-tab ------------------------------------
+// Renders the cross-field findings from the Critic agent. Each finding
+// pairs a narrative paragraph with a rule_id chip, severity badge, the
+// USALI fields it spans, and clickable page citations into the source
+// document pane. Sorted by severity (CRITICAL → WARN → INFO).
+
+const SEVERITY_RANK: Record<KimptonCriticSeverity, number> = {
+  CRITICAL: 0,
+  WARN: 1,
+  INFO: 2,
+};
+
+const SEVERITY_TONE: Record<KimptonCriticSeverity, 'red' | 'amber' | 'blue'> = {
+  CRITICAL: 'red',
+  WARN: 'amber',
+  INFO: 'blue',
+};
+
+const SEVERITY_BORDER: Record<KimptonCriticSeverity, string> = {
+  CRITICAL: 'border-l-danger-500 bg-danger-50/40',
+  WARN: 'border-l-warn-500 bg-warn-50/40',
+  INFO: 'border-l-brand-500/50 bg-brand-50/30',
+};
+
+const SEVERITY_ICON: Record<KimptonCriticSeverity, typeof AlertTriangle> = {
+  CRITICAL: AlertTriangle,
+  WARN: AlertCircle,
+  INFO: Info,
+};
+
+function CriticReview({
+  findings,
+  summary,
+}: {
+  findings: KimptonCriticFinding[];
+  summary: string;
+}) {
+  if (findings.length === 0) {
+    return (
+      <Card className="p-8 text-center">
+        <div className="w-12 h-12 mx-auto rounded-lg bg-success-50 flex items-center justify-center mb-3">
+          <ShieldCheck size={20} className="text-success-500" />
+        </div>
+        <h3 className="text-[14px] font-semibold text-ink-900 mb-1">
+          No cross-field issues detected
+        </h3>
+        <p className="text-[12.5px] text-ink-500 max-w-md mx-auto leading-relaxed">
+          The broker proforma is internally consistent. Fondok found no
+          cross-field stories to surface beyond the per-field Variance pass.
+        </p>
+      </Card>
+    );
+  }
+
+  const sorted = [...findings].sort(
+    (a, b) => SEVERITY_RANK[a.severity] - SEVERITY_RANK[b.severity],
+  );
+  const counts = sorted.reduce(
+    (acc, f) => {
+      acc[f.severity] = (acc[f.severity] ?? 0) + 1;
+      return acc;
+    },
+    { CRITICAL: 0, WARN: 0, INFO: 0 } as Record<KimptonCriticSeverity, number>,
+  );
+
+  return (
+    <div className="space-y-4">
+      <Card className="p-5 border-l-4 border-l-brand-500 bg-brand-50/40">
+        <div className="flex items-start gap-3">
+          <div className="w-9 h-9 rounded-lg bg-brand-50 flex items-center justify-center flex-shrink-0">
+            <Eye size={16} className="text-brand-500" />
+          </div>
+          <div className="flex-1">
+            <div className="flex items-center justify-between mb-1.5">
+              <h3 className="text-[14px] font-semibold text-ink-900">
+                Cross-field Critic Review
+              </h3>
+              <div className="flex items-center gap-1.5">
+                {counts.CRITICAL > 0 && (
+                  <Badge tone="red">{counts.CRITICAL} Critical</Badge>
+                )}
+                {counts.WARN > 0 && (
+                  <Badge tone="amber">{counts.WARN} Warn</Badge>
+                )}
+                {counts.INFO > 0 && (
+                  <Badge tone="blue">{counts.INFO} Info</Badge>
+                )}
+              </div>
+            </div>
+            <p className="text-[12.5px] text-ink-700 leading-relaxed">{summary}</p>
+          </div>
+        </div>
+      </Card>
+
+      <div className="space-y-3">
+        {sorted.map((f) => {
+          const Icon = SEVERITY_ICON[f.severity];
+          return (
+            <Card
+              key={f.id}
+              className={cn('p-5 border-l-4', SEVERITY_BORDER[f.severity])}
+            >
+              <div className="flex items-start gap-3">
+                <div className="flex-shrink-0 mt-0.5">
+                  <Icon
+                    size={16}
+                    className={cn(
+                      f.severity === 'CRITICAL' && 'text-danger-500',
+                      f.severity === 'WARN' && 'text-warn-700',
+                      f.severity === 'INFO' && 'text-brand-500',
+                    )}
+                  />
+                </div>
+                <div className="flex-1 min-w-0">
+                  <div className="flex items-start justify-between gap-3 mb-2">
+                    <h4 className="text-[13px] font-semibold text-ink-900 leading-snug">
+                      {f.title}
+                    </h4>
+                    <Badge tone={SEVERITY_TONE[f.severity]}>
+                      {f.severity === 'CRITICAL'
+                        ? 'Critical'
+                        : f.severity === 'WARN'
+                          ? 'Warn'
+                          : 'Info'}
+                    </Badge>
+                  </div>
+
+                  <div className="flex items-center gap-2 flex-wrap mb-2.5">
+                    <span
+                      className="inline-flex items-center px-2 py-0.5 rounded text-[10.5px] font-mono font-medium bg-ink-100 text-ink-700 border border-border"
+                      title="USALI rule that grounds this finding"
+                    >
+                      {f.ruleId}
+                    </span>
+                    {f.citedFields.map((field) => (
+                      <span
+                        key={field}
+                        className="inline-flex items-center px-1.5 py-0.5 rounded text-[10.5px] font-mono text-ink-500 bg-ink-50"
+                      >
+                        {field}
+                      </span>
+                    ))}
+                  </div>
+
+                  <p className="text-[12.5px] text-ink-700 leading-relaxed mb-3">
+                    {f.narrative}
+                  </p>
+
+                  <div className="flex items-center gap-3 flex-wrap text-[11.5px]">
+                    {f.citedPages.length > 0 && f.citedDocumentId && (
+                      <div className="flex items-center gap-1.5">
+                        <span className="text-ink-500">Sources:</span>
+                        {f.citedPages.map((page) => (
+                          <Citation
+                            key={page}
+                            data={{
+                              documentId: f.citedDocumentId!,
+                              documentName: f.citedDocumentName,
+                              page,
+                              field: f.citedFields[0],
+                            }}
+                          />
+                        ))}
+                      </div>
+                    )}
+                    {typeof f.impactEstimateUsd === 'number' && (
+                      <div className="flex items-center gap-1 text-ink-700">
+                        <DollarSign size={11} className="text-ink-500" />
+                        <span className="text-ink-500">Impact:</span>
+                        <span className="font-semibold tabular-nums">
+                          {fmtCurrency(f.impactEstimateUsd, { compact: true })}
+                        </span>
+                      </div>
+                    )}
+                  </div>
+                </div>
+              </div>
+            </Card>
+          );
+        })}
+      </div>
+    </div>
+  );
 }

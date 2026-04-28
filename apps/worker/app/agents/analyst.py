@@ -538,6 +538,16 @@ async def _run_analyst_single(payload: AnalystInput) -> AnalystOutput:
         len(eval_result.errors),
         len(eval_result.warnings),
     )
+
+    # Persist for the cost dashboard. Best-effort.
+    from ..cost_persistence import persist_model_calls_standalone
+
+    await persist_model_calls_standalone(
+        deal_id=payload.deal_id,
+        tenant_id=payload.tenant_id,
+        calls=[model_call],
+    )
+
     return AnalystOutput(
         deal_id=payload.deal_id,
         memo=memo,
@@ -710,6 +720,16 @@ async def _run_analyst_streaming(payload: AnalystInput) -> AnalystOutput:
         len(eval_result.errors),
         len(eval_result.warnings),
     )
+
+    # Persist for the cost dashboard. Best-effort.
+    from ..cost_persistence import persist_model_calls_standalone
+
+    await persist_model_calls_standalone(
+        deal_id=payload.deal_id,
+        tenant_id=payload.tenant_id,
+        calls=[model_call],
+    )
+
     return AnalystOutput(
         deal_id=payload.deal_id,
         memo=memo,

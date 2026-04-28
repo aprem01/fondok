@@ -587,3 +587,92 @@ export const dealScenarios = [
   { name: 'Base Case', irr: 23.01, unleveredIrr: 16.84, multiple: 2.37, avgCoC: 15.8, base: true },
   { name: 'Upside', irr: 31.20, unleveredIrr: 22.10, multiple: 2.94, avgCoC: 19.6 },
 ];
+
+// ─────────────────── Critic findings — Kimpton Angler ───────────────────
+// The Critic agent reads the broker proforma + T-12 + market context and
+// surfaces cross-field issues that a per-field variance pass would miss.
+// Each finding grounds in a USALI rule_id (or a MULTI_FIELD_* rule from
+// the cross-field rule additions). Severity ordered CRITICAL → WARN → INFO.
+export type KimptonCriticSeverity = 'CRITICAL' | 'WARN' | 'INFO';
+
+export interface KimptonCriticFinding {
+  id: string;
+  ruleId: string;
+  title: string;
+  narrative: string;
+  severity: KimptonCriticSeverity;
+  citedFields: string[];
+  citedPages: number[];
+  citedDocumentId?: string;
+  citedDocumentName?: string;
+  impactEstimateUsd?: number;
+}
+
+export const kimptonCriticFindings: KimptonCriticFinding[] = [
+  {
+    id: 'critic-kimpton-1',
+    ruleId: 'MULTI_FIELD_INSURANCE_COASTAL_RISK',
+    title: 'Coastal insurance held flat in a Florida property',
+    narrative:
+      'Property is on Miami Beach, where wind/flood reinsurance has driven insurance per key up 30-60% at most renewals over the past 24 months. Broker assumes $1,851/key vs comp set average of $2,800/key (only +1.5% YoY). Underwrite to a 30-50% lift; the gap would lift insurance expense by approximately $244K and shave roughly 17 bps off NOI margin.',
+    severity: 'CRITICAL',
+    citedFields: ['insurance', 'fixed_charges'],
+    citedPages: [22, 24],
+    citedDocumentId: 'kimpton-angler-om-2026',
+    citedDocumentName: 'Offering_Memorandum_Final.pdf',
+    impactEstimateUsd: 244_000,
+  },
+  {
+    id: 'critic-kimpton-2',
+    ruleId: 'MULTI_FIELD_NOI_GROWTH_WITHOUT_OPEX_PRESSURE',
+    title: 'NOI margin expansion without OpEx ratio movement',
+    narrative:
+      'Broker projects NOI growth of 13.4% ($3.78M → $4.28M) while OpEx ratio holds at 65.4% (T-12 actual 65.6%, delta 0.2pp). Margin expansion of this size requires an explicit revenue or labor source — the proforma does not show ADR uplift sufficient to support it. Confirm the assumption stack with the asset-management plan before locking the underwrite.',
+    severity: 'WARN',
+    citedFields: ['noi', 'opex_ratio', 'total_revenue'],
+    citedPages: [38, 41],
+    citedDocumentId: 'kimpton-angler-om-2026',
+    citedDocumentName: 'Offering_Memorandum_Final.pdf',
+    impactEstimateUsd: 503_000,
+  },
+  {
+    id: 'critic-kimpton-3',
+    ruleId: 'MULTI_FIELD_FNB_MARGIN_AGGRESSIVE',
+    title: 'F&B margin aggressive for a lifestyle-tier select-service profile',
+    narrative:
+      'Broker projects F&B departmental margin of 27.5% on $740K of F&B revenue. Lifestyle Kimpton properties at this scale typically run F&B at 10-15% margin — the on-site bar/cafe operation does not have the banquet base to support full-service economics. Reset F&B margin to 12-14% in the underwrite.',
+    severity: 'WARN',
+    citedFields: ['fb_revenue', 'dept_expenses.food_beverage'],
+    citedPages: [34],
+    citedDocumentId: 'kimpton-angler-t12-2026q1',
+    citedDocumentName: 'T12_FinancialStatement.xlsx',
+    impactEstimateUsd: 96_000,
+  },
+  {
+    id: 'critic-kimpton-4',
+    ruleId: 'MULTI_FIELD_SEASONAL_PATTERN_MISSING',
+    title: 'Q1 seasonal swing under-modeled vs Miami Beach historical pattern',
+    narrative:
+      'Miami Beach Q1 RevPAR historically runs 60-90% above Q3 trough on the comp set. Proforma shows a Q1-Q3 swing of only 18%, smoothing the seasonal curve. This overstates Q3 distributable cash and understates Q1 compression revenue — both feed an unrealistically stable DSCR profile. Re-spread monthly RevPAR before locking the debt sizing assumption.',
+    severity: 'WARN',
+    citedFields: ['revpar', 'occupancy'],
+    citedPages: [11, 13],
+    citedDocumentId: 'kimpton-angler-om-2026',
+    citedDocumentName: 'Offering_Memorandum_Final.pdf',
+  },
+  {
+    id: 'critic-kimpton-5',
+    ruleId: 'MULTI_FIELD_PIP_TIMING_INCONSISTENT',
+    title: 'Year-1 $5.3M PIP scheduled but Year-1 NOI only dips 2.1%',
+    narrative:
+      'Broker has a $5.3M PIP scheduled in Year 1 ($40K/key, brand-standard refresh) but Year-1 NOI dips only 2.1%. A soft-good plus FF&E refresh of this size typically takes out 30-50 rooms for 6-10 weeks per phase, costing 4-7% of stabilized NOI in displacement. Either the PIP is being phased off-peak with smaller blocks (model the displacement explicitly) or the timing is unrealistic.',
+    severity: 'WARN',
+    citedFields: ['noi', 'capex'],
+    citedPages: [42, 43],
+    citedDocumentId: 'kimpton-angler-om-2026',
+    citedDocumentName: 'Offering_Memorandum_Final.pdf',
+    impactEstimateUsd: 265_000,
+  },
+];
+
+export const kimptonCriticSummary = `Fondok identified 5 cross-field issues across the broker proforma (1 CRITICAL, 4 WARN). The coastal-insurance flat-hold is the highest-leverage finding — it understates Year-1 fixed charges by ~$244K and would compress DSCR by ~12 bps if remediated. The NOI-without-OpEx-pressure and PIP-timing flags are companion concerns that compound at the cash-on-cash line. Recommend re-pricing the deal at 30% insurance lift + 12% F&B margin before LOI.`;

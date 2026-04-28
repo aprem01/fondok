@@ -333,6 +333,58 @@ MIGRATIONS: list[tuple[str, str]] = [
         ON verification_reports (tenant_id)
         """,
     ),
+    (
+        "critic_findings.create_table",
+        """
+        CREATE TABLE IF NOT EXISTS critic_findings (
+            id                    UUID PRIMARY KEY,
+            deal_id               UUID NOT NULL,
+            tenant_id             UUID NOT NULL,
+            rule_id               TEXT NOT NULL,
+            title                 TEXT NOT NULL,
+            narrative             TEXT NOT NULL,
+            severity              TEXT NOT NULL,
+            cited_fields          JSONB,
+            cited_pages           JSONB,
+            impact_estimate_usd   NUMERIC,
+            created_at            TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        )
+        """,
+    ),
+    (
+        "critic_findings.idx_deal",
+        """
+        CREATE INDEX IF NOT EXISTS idx_critic_findings_deal
+        ON critic_findings (deal_id, created_at DESC)
+        """,
+    ),
+    (
+        "critic_findings.idx_tenant",
+        """
+        CREATE INDEX IF NOT EXISTS idx_critic_findings_tenant
+        ON critic_findings (tenant_id)
+        """,
+    ),
+    (
+        "critic_reports.create_table",
+        """
+        CREATE TABLE IF NOT EXISTS critic_reports (
+            id            UUID PRIMARY KEY,
+            deal_id       UUID NOT NULL,
+            tenant_id     UUID NOT NULL,
+            summary       TEXT,
+            report_json   JSONB NOT NULL,
+            created_at    TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        )
+        """,
+    ),
+    (
+        "critic_reports.idx_deal",
+        """
+        CREATE INDEX IF NOT EXISTS idx_critic_reports_deal
+        ON critic_reports (deal_id, created_at DESC)
+        """,
+    ),
 ]
 
 
@@ -548,6 +600,51 @@ SQLITE_MIGRATIONS: list[tuple[str, str]] = [
         """
         CREATE INDEX IF NOT EXISTS idx_verification_reports_deal_created
         ON verification_reports (deal_id, created_at DESC)
+        """,
+    ),
+    (
+        "critic_findings.create_table",
+        """
+        CREATE TABLE IF NOT EXISTS critic_findings (
+            id                    TEXT PRIMARY KEY,
+            deal_id               TEXT NOT NULL,
+            tenant_id             TEXT NOT NULL,
+            rule_id               TEXT NOT NULL,
+            title                 TEXT NOT NULL,
+            narrative             TEXT NOT NULL,
+            severity              TEXT NOT NULL,
+            cited_fields          TEXT,
+            cited_pages           TEXT,
+            impact_estimate_usd   REAL,
+            created_at            TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+        )
+        """,
+    ),
+    (
+        "critic_findings.idx_deal",
+        """
+        CREATE INDEX IF NOT EXISTS idx_critic_findings_deal
+        ON critic_findings (deal_id, created_at DESC)
+        """,
+    ),
+    (
+        "critic_reports.create_table",
+        """
+        CREATE TABLE IF NOT EXISTS critic_reports (
+            id            TEXT PRIMARY KEY,
+            deal_id       TEXT NOT NULL,
+            tenant_id     TEXT NOT NULL,
+            summary       TEXT,
+            report_json   TEXT NOT NULL,
+            created_at    TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+        )
+        """,
+    ),
+    (
+        "critic_reports.idx_deal",
+        """
+        CREATE INDEX IF NOT EXISTS idx_critic_reports_deal
+        ON critic_reports (deal_id, created_at DESC)
         """,
     ),
 ]

@@ -469,6 +469,32 @@ export const VarianceReport = z.object({
 });
 export type VarianceReport = z.infer<typeof VarianceReport>;
 
+// ─────────────────────────── Critic ───────────────────────────
+
+export const CriticFinding = z.object({
+  id: z.string().uuid(),
+  deal_id: z.string().uuid(),
+  rule_id: z.string().min(1).max(120),
+  title: z.string().min(1).max(200),
+  narrative: z.string().min(1).max(2000),
+  severity: Severity,
+  cited_fields: z.array(z.string()).default([]),
+  cited_pages: z.array(z.number().int().min(1)).default([]),
+  cited_document_ids: z.array(z.string().uuid()).default([]),
+  impact_estimate_usd: z.number().nullable().optional(),
+});
+export type CriticFinding = z.infer<typeof CriticFinding>;
+
+export const CriticReport = z.object({
+  deal_id: z.string().uuid(),
+  findings: z.array(CriticFinding).default([]),
+  summary: z.string().max(2000).nullable().optional(),
+  critical_count: z.number().int().nonnegative().default(0),
+  warn_count: z.number().int().nonnegative().default(0),
+  info_count: z.number().int().nonnegative().default(0),
+});
+export type CriticReport = z.infer<typeof CriticReport>;
+
 // ─────────────────────────── Memo ───────────────────────────
 
 export const SourceRegion = z.object({

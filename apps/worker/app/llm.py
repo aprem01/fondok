@@ -33,7 +33,7 @@ from .config import get_settings
 logger = logging.getLogger(__name__)
 
 Provider = Literal["anthropic"]
-Role = Literal["router", "extractor", "normalizer", "analyst", "variance"]
+Role = Literal["router", "extractor", "normalizer", "analyst", "variance", "critic"]
 
 
 def _default_model(provider: Provider, role: Role) -> str:
@@ -45,7 +45,7 @@ def _default_model(provider: Provider, role: Role) -> str:
             return settings.ANTHROPIC_EXTRACTOR_MODEL
         if role == "normalizer":
             return settings.ANTHROPIC_NORMALIZER_MODEL
-        if role in ("analyst", "variance"):
+        if role in ("analyst", "variance", "critic"):
             return settings.ANTHROPIC_ANALYST_MODEL
         return settings.ANTHROPIC_MODEL
     return settings.ANTHROPIC_MODEL
@@ -311,6 +311,18 @@ _EXTRACTION_SCHEMA_BLOCKS: dict[str, str] = {
         "Each section emits {section_id, title, body, citations[>=1]}.\n"
         "Citations: {document_id, page, field?, excerpt?} pointing at the\n"
         "Source Documents the orchestrator surfaces — never invent ids."
+    ),
+    "critic": (
+        "=== CRITIC SCHEMA ADDENDUM ===\n"
+        "Each finding emits {rule_id, title, narrative, severity,\n"
+        "  cited_fields[], cited_pages[], impact_estimate_usd?}.\n"
+        "rule_id MUST come from the USALI catalog OR be a MULTI_FIELD_*\n"
+        "  rule from the Cross-Field Rules block — unknown ids are dropped.\n"
+        "severity is one of CRITICAL | WARN | INFO.\n"
+        "cited_fields enumerate canonical USALI field names involved\n"
+        "  (e.g. ['noi', 'opex_ratio', 'mgmt_fee']).\n"
+        "narrative is plain hotel-underwriting English, <=400 words,\n"
+        "  reads like a senior IC reviewer wrote it."
     ),
 }
 

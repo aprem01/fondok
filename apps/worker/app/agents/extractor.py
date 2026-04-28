@@ -451,6 +451,16 @@ async def run_extractor(payload: ExtractorInput) -> ExtractorOutput:
         elapsed_ms,
     )
 
+    # Persist all per-document calls for the cost dashboard. Best-effort.
+    if model_calls:
+        from ..cost_persistence import persist_model_calls_standalone
+
+        await persist_model_calls_standalone(
+            deal_id=payload.deal_id,
+            tenant_id=payload.tenant_id,
+            calls=model_calls,
+        )
+
     return ExtractorOutput(
         deal_id=payload.deal_id,
         extracted_documents=results,
