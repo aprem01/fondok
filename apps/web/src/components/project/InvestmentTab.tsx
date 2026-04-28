@@ -1,7 +1,10 @@
 'use client';
 import { useState } from 'react';
-import { ChevronDown, ChevronUp } from 'lucide-react';
+import { useParams } from 'next/navigation';
+import { ChevronDown, ChevronUp, Briefcase } from 'lucide-react';
 import { Card } from '@/components/ui/Card';
+import { Button } from '@/components/ui/Button';
+import { useToast } from '@/components/ui/Toast';
 import EngineHeader from './EngineHeader';
 import EngineRightRail from './EngineRightRail';
 import EngineLegend from './EngineLegend';
@@ -11,10 +14,49 @@ import { useAssumptionsOptional } from '@/stores/assumptionsStore';
 
 const subTabs = ['Deal Summary', 'Sources & Uses', 'Timeline'];
 
-export default function InvestmentTab() {
+export default function InvestmentTab({ projectId }: { projectId: number | string }) {
   const [tab, setTab] = useState('Deal Summary');
   const o = kimptonAnglerOverview;
   const ctx = useAssumptionsOptional();
+  const params = useParams();
+  const dealId = (params?.id as string | undefined) ?? '';
+  const { toast } = useToast();
+  const isKimptonDemo = projectId === 7;
+
+  if (!isKimptonDemo) {
+    return (
+      <div className="flex gap-4">
+        <div className="flex-1 min-w-0">
+          <EngineHeader
+            name="Investment Engine"
+            desc="Defines deal structure, purchase price, key dates, and investment thesis for the transaction."
+            outputs={['Purchase Price', 'Price/Key', 'Entry Cap', '+1']}
+            dependsOn={null}
+            dealId={dealId}
+          />
+          <EngineLegend />
+          <Card className="p-16 text-center">
+            <div className="w-12 h-12 rounded-lg bg-ink-300/20 flex items-center justify-center mx-auto mb-4">
+              <Briefcase size={20} className="text-ink-400" />
+            </div>
+            <h3 className="text-[15px] font-semibold text-ink-900">Investment Engine unavailable</h3>
+            <p className="text-[12.5px] text-ink-500 mt-1">
+              Upload an Offering Memorandum to populate the investment summary.
+            </p>
+            <Button
+              variant="primary"
+              size="sm"
+              className="mt-4"
+              onClick={() => toast('Engine run not yet wired', { type: 'info' })}
+            >
+              Run Investment Engine
+            </Button>
+          </Card>
+        </div>
+        <EngineRightRail />
+      </div>
+    );
+  }
 
   return (
     <div className="flex gap-4">
@@ -25,6 +67,7 @@ export default function InvestmentTab() {
         outputs={['Purchase Price', 'Price/Key', 'Entry Cap', '+1']}
         dependsOn={null}
         complete
+        dealId={dealId}
       />
 
       <div className="flex items-center gap-1 mb-3 border-b border-border">
@@ -41,35 +84,91 @@ export default function InvestmentTab() {
       <EngineLegend />
 
       {tab === 'Deal Summary' && (
-        <div className="grid grid-cols-2 gap-5">
-          <Panel title="Property Overview" rows={[
-            ['Name', o.general.name], ['Type', o.general.type], ['Location', o.general.location],
-            ['Year Built', o.general.yearBuilt.toString()], ['Pre-Renovation Keys', o.general.keys.toString()],
-            ['Post-Renovation Keys', o.general.keys.toString()], ['Post-Renovation SF', o.general.gba.toLocaleString()],
-          ]} />
-          <Panel title="Entry Valuation" rows={[
-            ['NOI', fmtCurrency(2_481_478)], ['Entry Cap Rate', fmtPct(o.acquisition.entryCapRate, 2)],
-            ['2025 Run-Rate NOI', '$2,481,478'], ['FTM Date', '12/31/2025'],
-            ['Hotel Purchase Price', fmtCurrency(o.acquisition.purchasePrice)],
-            ['Per Key', fmtCurrency(o.acquisition.pricePerKey)],
-          ]} />
-          <Panel title="Exit Valuation" rows={[
-            ['Exit Month', '60'], ['Exit Date', '9/30/2030'], ['Fwd. 12 Mo NOI', fmtCurrency(o.reversion.terminalNOI)],
-            ['Exit Cap Rate', fmtPct(o.reversion.exitCapRate, 2)], ['Gross Exit Value', fmtCurrency(o.reversion.grossSalePrice)],
-            ['Per Key', fmtCurrency(o.reversion.grossSalePrice / o.general.keys)],
-            ['Exit Sales Cost', fmtCurrency(o.reversion.sellingCosts)], ['Transfer Tax', '0.6%'],
-          ]} />
-          <Panel title="Renovation Budget" rows={[
-            ['Renovation Budget', fmtCurrency(o.investment.renovationBudget)],
-            ['Per Key', fmtCurrency(o.investment.renovationBudget / o.general.keys)],
-            ['Per SF', fmtCurrency(o.investment.renovationBudget / o.general.gba)],
-            ['Hard Costs (75%)', fmtCurrency(3_960_000)],
-            ['Soft Costs (20%)', fmtCurrency(528_000)],
-            ['Professional Fees (5%)', fmtCurrency(264_000)],
-            ['Contingency', fmtCurrency(o.investment.contingency)],
-            ['Total Renovation', fmtCurrency(o.investment.renovationBudget)],
-          ]} />
-        </div>
+        <>
+          <div className="grid grid-cols-2 gap-5">
+            <Panel title="Property Overview" rows={[
+              ['Name', o.general.name], ['Type', o.general.type], ['Location', o.general.location],
+              ['Year Built', o.general.yearBuilt.toString()], ['Pre-Renovation Keys', o.general.keys.toString()],
+              ['Post-Renovation Keys', o.general.keys.toString()], ['Post-Renovation SF', o.general.gba.toLocaleString()],
+            ]} />
+            <Panel title="Entry Valuation" rows={[
+              ['NOI', fmtCurrency(2_481_478)], ['Entry Cap Rate', fmtPct(o.acquisition.entryCapRate, 2)],
+              ['2025 Run-Rate NOI', '$2,481,478'], ['FTM Date', '12/31/2025'],
+              ['Hotel Purchase Price', fmtCurrency(o.acquisition.purchasePrice)],
+              ['Per Key', fmtCurrency(o.acquisition.pricePerKey)],
+            ]} />
+            <Panel title="Exit Valuation" rows={[
+              ['Exit Month', '60'], ['Exit Date', '9/30/2030'], ['Fwd. 12 Mo NOI', fmtCurrency(o.reversion.terminalNOI)],
+              ['Exit Cap Rate', fmtPct(o.reversion.exitCapRate, 2)], ['Gross Exit Value', fmtCurrency(o.reversion.grossSalePrice)],
+              ['Per Key', fmtCurrency(o.reversion.grossSalePrice / o.general.keys)],
+              ['Exit Sales Cost', fmtCurrency(o.reversion.sellingCosts)], ['Transfer Tax', '0.6%'],
+            ]} />
+            <Panel title="Renovation Budget" rows={[
+              ['Renovation Budget', fmtCurrency(o.investment.renovationBudget)],
+              ['Per Key', fmtCurrency(o.investment.renovationBudget / o.general.keys)],
+              ['Per SF', fmtCurrency(o.investment.renovationBudget / o.general.gba)],
+              ['Hard Costs (75%)', fmtCurrency(3_960_000)],
+              ['Soft Costs (20%)', fmtCurrency(528_000)],
+              ['Professional Fees (5%)', fmtCurrency(264_000)],
+              ['Contingency', fmtCurrency(o.investment.contingency)],
+              ['Total Renovation', fmtCurrency(o.investment.renovationBudget)],
+            ]} />
+          </div>
+          <div className="grid grid-cols-2 gap-5 mt-5">
+            <Panel title="Valuation Assumptions" rows={[
+              ['Total Dev. Cost', fmtCurrency(o.investment.totalCapital)],
+              ['Per Key', fmtCurrency(o.investment.totalCapital / o.general.keys)],
+              ['Hold Years', `${o.returns.hold} yrs`],
+              ['Stabilized NOI FWD 12', fmtCurrency(o.reversion.terminalNOI)],
+              ['Exit Cap Rate', fmtPct(o.reversion.exitCapRate, 2)],
+              ['Sale Price', fmtCurrency(o.reversion.grossSalePrice)],
+              ['Disposition Fees', fmtCurrency(o.reversion.sellingCosts)],
+            ]} />
+            <Panel title="Senior Loan Financing" rows={[
+              ['Month Funding', '0'],
+              ['Start Date', '9/30/2025'],
+              ['Term', `${o.financing.term} yrs`],
+              ['Maturity Date', '9/30/2030'],
+              ['Senior Acq. Cost', fmtCurrency(o.financing.loanAmount * 0.015)],
+              ['LTC Amount', fmtCurrency(o.financing.loanAmount)],
+              ['LTC %', fmtPct(0.65, 1)],
+              ['LTV Amount', fmtCurrency(o.financing.loanAmount)],
+              ['LTV %', fmtPct(o.financing.ltv, 1)],
+              ['DY Amount', fmtCurrency(4_280_000)],
+              ['DY Date', '12/31/2027'],
+              ['DY NOI', fmtCurrency(4_280_000)],
+              ['DY %', fmtPct(0.181, 1)],
+              ['Loan Amount', fmtCurrency(o.financing.loanAmount)],
+              ['Variable / Fixed', 'Variable'],
+              ['Spread over SOFR', '290 bps'],
+              ['SOFR Rate', fmtPct(0.035, 2)],
+              ['SOFR Floor', fmtPct(0, 2)],
+              ['SOFR Ceiling', fmtPct(0.045, 2)],
+              ['Interest Only Period', '24 mo'],
+              ['Amortization Period', `${o.financing.amortization} yrs`],
+              ['Origination Fee', fmtPct(0.015, 2)],
+            ]} />
+          </div>
+          <div className="grid grid-cols-1 gap-5 mt-5">
+            <Panel title="Senior Loan Refinancing" rows={[
+              ['Month Funding', '48'],
+              ['Start Date', '9/30/2029'],
+              ['Term', `${o.refi.refiTerm} yrs`],
+              ['Maturity Date', '9/30/2034'],
+              ['LTV Amount', fmtCurrency(31_200_000)],
+              ['LTV %', fmtPct(o.refi.refiLTV, 1)],
+              ['Loan Proceeds', fmtCurrency(31_200_000)],
+              ['Loan Payoff', fmtCurrency(o.financing.loanAmount)],
+              ['Cash Pulled Out', fmtCurrency(31_200_000 - o.financing.loanAmount)],
+              ['Variable / Fixed', 'Fixed'],
+              ['Interest Rate', fmtPct(o.refi.refiRate, 2)],
+              ['Interest Only Period', '12 mo'],
+              ['Amortization Period', `${o.refi.refiAmortization} yrs`],
+              ['Origination Fee', fmtPct(0.0125, 2)],
+              ['Refi Acq. Cost', fmtCurrency(31_200_000 * 0.0125)],
+            ]} />
+          </div>
+        </>
       )}
 
       {tab === 'Sources & Uses' && (ctx ? <LiveSourcesUses /> : <StaticSourcesUses />)}

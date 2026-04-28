@@ -138,8 +138,37 @@ export default function ExportTab({ project }: { project: Project }) {
         <h3 className="text-[14px] font-semibold text-ink-900 mb-2">Share with Team</h3>
         <p className="text-[12px] text-ink-500 mb-4">Generate a secure link for principals to review this analysis.</p>
         <div className="flex items-center gap-2">
-          <Button variant="secondary" size="sm"><Copy size={12} /> Copy Link</Button>
-          <Button variant="secondary" size="sm"><ExternalLink size={12} /> Open Preview</Button>
+          <Button
+            variant="secondary"
+            size="sm"
+            onClick={async () => {
+              try {
+                // Append ?share=true so collaborators landing on the link know
+                // they're on a shared view (the page itself can read this in
+                // a future iteration to suppress edit affordances).
+                const url = new URL(window.location.href);
+                url.searchParams.set('share', 'true');
+                await navigator.clipboard.writeText(url.toString());
+                toast('Share link copied', { type: 'success' });
+              } catch {
+                toast('Could not copy link', { type: 'error' });
+              }
+            }}
+          >
+            <Copy size={12} /> Copy Link
+          </Button>
+          <Button
+            variant="secondary"
+            size="sm"
+            onClick={() =>
+              router.push(
+                `/projects/${String(project.id)}?tab=analysis&sub=memo`,
+                { scroll: false },
+              )
+            }
+          >
+            <ExternalLink size={12} /> Open Preview
+          </Button>
         </div>
       </Card>
 

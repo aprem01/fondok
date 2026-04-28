@@ -1,5 +1,6 @@
 'use client';
 import { useState } from 'react';
+import { useParams } from 'next/navigation';
 import {
   LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend,
   ResponsiveContainer, ReferenceLine,
@@ -110,6 +111,8 @@ const statement = buildStatement();
 
 export default function PLTab({ projectId }: { projectId: number }) {
   const [tab, setTab] = useState('Operating Statement');
+  const params = useParams();
+  const dealId = (params?.id as string | undefined) ?? '';
 
   if (projectId !== 7) {
     return (
@@ -120,6 +123,7 @@ export default function PLTab({ projectId }: { projectId: number }) {
             desc="Models room revenue, F&B, and operating expenses across the projection period in USALI format."
             outputs={['Total Revenue', 'NOI', 'GOP', 'Margin']}
             dependsOn={null}
+            dealId={dealId}
           />
           <EngineLegend />
           <Card className="p-16 text-center">
@@ -151,6 +155,7 @@ export default function PLTab({ projectId }: { projectId: number }) {
         outputs={['Total Revenue', 'NOI', 'GOP', 'Margin']}
         dependsOn={null}
         complete
+        dealId={dealId}
       />
 
       <div className="grid grid-cols-4 gap-4 mb-5">

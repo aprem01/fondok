@@ -1,5 +1,6 @@
 'use client';
 import { useState } from 'react';
+import { useParams } from 'next/navigation';
 import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend,
   ResponsiveContainer, LabelList,
@@ -84,6 +85,8 @@ const cf = buildCashFlow();
 
 export default function CashFlowTab({ projectId }: { projectId: number }) {
   const [tab, setTab] = useState('Cash Flow Summary');
+  const params = useParams();
+  const dealId = (params?.id as string | undefined) ?? '';
 
   if (projectId !== 7) {
     return (
@@ -94,6 +97,7 @@ export default function CashFlowTab({ projectId }: { projectId: number }) {
             desc="Computes levered and unlevered cash flow from operations through hold period."
             outputs={['Levered CF', 'Unlevered CF', 'CoC', 'DSCR']}
             dependsOn="P&L"
+            dealId={dealId}
           />
           <EngineLegend />
           <Card className="p-16 text-center">
@@ -125,6 +129,7 @@ export default function CashFlowTab({ projectId }: { projectId: number }) {
         outputs={['Levered CF', 'Unlevered CF', 'CoC', 'DSCR']}
         dependsOn="P&L"
         complete
+        dealId={dealId}
       />
 
       <div className="grid grid-cols-4 gap-4 mb-5">

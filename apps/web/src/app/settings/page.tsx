@@ -1,16 +1,21 @@
 'use client';
-import { useState } from 'react';
-import { AlertTriangle, Loader2, MoreHorizontal, Trash2 } from 'lucide-react';
+import { useEffect, useRef, useState } from 'react';
+import { AlertTriangle, Loader2, Trash2 } from 'lucide-react';
 import PageHeader from '@/components/ui/PageHeader';
 import { Card } from '@/components/ui/Card';
 import { Button } from '@/components/ui/Button';
 import { Badge } from '@/components/ui/Badge';
+import KebabMenu from '@/components/ui/KebabMenu';
 import { workspace, teamMembers, notificationDefaults, integrations } from '@/lib/mockData';
 import { cn } from '@/lib/format';
 import { useToast } from '@/components/ui/Toast';
 import { api, isWorkerConnected, WorkerError } from '@/lib/api';
 
 const tabs = ['Team', 'Workspace', 'Notifications', 'Integrations'];
+
+// Surface-level email check — good enough to gate the "Send Invite" CTA;
+// the worker will validate server-side once the invites endpoint lands.
+const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
 export default function SettingsPage() {
   const [tab, setTab] = useState('Team');
@@ -19,6 +24,54 @@ export default function SettingsPage() {
   const [confirmReset, setConfirmReset] = useState<{ count: number } | null>(null);
   const [resetting, setResetting] = useState(false);
   const workerConnected = isWorkerConnected();
+
+  // Invite form state — kept local; no remote invites API today.
+  const [inviteEmail, setInviteEmail] = useState('');
+  const [inviteRole, setInviteRole] = useState('Analyst');
+
+  // Workspace fields are bound so we can fire a "saved" toast on blur.
+  // No real persistence — the mock workspace object is read-only — but the
+  // affordance ships now so the wiring is in place for the worker route.
+  const [workspaceName, setWorkspaceName] = useState(workspace.name);
+  const [workspaceUrl, setWorkspaceUrl] = useState(workspace.url);
+  const [defaultLtv, setDefaultLtv] = useState('65%');
+  const [defaultRate, setDefaultRate] = useState('6.25%');
+
+  // Debounce notification preference toasts so flipping several toggles
+  // back-to-back collapses to a single "Preferences saved" notice.
+  const notifDebounce = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const notifFirstRender = useRef(true);
+  useEffect(() => {
+    if (notifFirstRender.current) {
+      notifFirstRender.current = false;
+      return;
+    }
+    if (notifDebounce.current) clearTimeout(notifDebounce.current);
+    notifDebounce.current = setTimeout(() => {
+      toast('Preferences saved', { type: 'success' });
+    }, 500);
+    return () => {
+      if (notifDebounce.current) clearTimeout(notifDebounce.current);
+    };
+  }, [notifs, toast]);
+
+  const onSendInvite = () => {
+    const email = inviteEmail.trim();
+    if (!EMAIL_RE.test(email)) {
+      toast('Enter a valid email address', { type: 'error' });
+      return;
+    }
+    toast(`Invitation sent to ${email}`, { type: 'success' });
+    setInviteEmail('');
+  };
+
+  const onContactSales = () => {
+    const url =
+      'mailto:sales@anthropic.com?subject=Fondok+AI+Enterprise+Inquiry';
+    // _blank keeps the mail client invocation from replacing the tab in
+    // browsers that route the protocol via a web client.
+    window.open(url, '_blank');
+  };
 
   const onSaveDefaults = () => {
     // No-op persistence today — mock workspace defaults aren't sent anywhere.
@@ -113,12 +166,24 @@ export default function SettingsPage() {
             <h3 className="text-[14px] font-semibold text-ink-900 mb-1">Invite Team Member</h3>
             <p className="text-[12px] text-ink-500 mb-4">Add new members to your workspace. They'll receive an email invitation.</p>
             <div className="flex items-center gap-2">
-              <input placeholder="colleague@company.com"
-                className="flex-1 px-3 py-2 text-[13px] bg-white border border-border rounded-md focus:outline-none focus:ring-2 focus:ring-brand-100 focus:border-brand-500" />
-              <select className="px-3 py-2 text-[13px] bg-white border border-border rounded-md">
+              <input
+                value={inviteEmail}
+                onChange={(e) => setInviteEmail(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') onSendInvite();
+                }}
+                placeholder="colleague@company.com"
+                type="email"
+                className="flex-1 px-3 py-2 text-[13px] bg-white border border-border rounded-md focus:outline-none focus:ring-2 focus:ring-brand-100 focus:border-brand-500"
+              />
+              <select
+                value={inviteRole}
+                onChange={(e) => setInviteRole(e.target.value)}
+                className="px-3 py-2 text-[13px] bg-white border border-border rounded-md"
+              >
                 <option>Analyst</option><option>Principal</option><option>Admin</option>
               </select>
-              <Button variant="primary">Send Invite</Button>
+              <Button variant="primary" onClick={onSendInvite}>Send Invite</Button>
             </div>
           </Card>
 
@@ -141,7 +206,12 @@ export default function SettingsPage() {
                 <select defaultValue={m.role} className="px-2.5 py-1.5 text-[12px] bg-white border border-border rounded-md">
                   <option>Analyst</option><option>Principal</option><option>Admin</option>
                 </select>
-                <button className="p-1.5 hover:bg-ink-300/20 rounded"><MoreHorizontal size={14} className="text-ink-400" /></button>
+                <KebabMenu
+                  items={[
+                    { label: 'Edit', onSelect: () => toast('Edit member coming soon', { type: 'info' }) },
+                    { label: 'Remove', danger: true, onSelect: () => toast('Remove member coming soon', { type: 'info' }) },
+                  ]}
+                />
               </div>
             ))}
           </Card>
@@ -153,8 +223,19 @@ export default function SettingsPage() {
           <Card className="p-5">
             <h3 className="text-[14px] font-semibold text-ink-900 mb-4">Workspace Details</h3>
             <div className="space-y-4">
-              <Field label="Workspace Name" defaultValue={workspace.name} />
-              <Field label="Workspace URL" defaultValue={workspace.url} prefix="fondok.ai/" />
+              <Field
+                label="Workspace Name"
+                value={workspaceName}
+                onChange={setWorkspaceName}
+                onBlur={() => toast('Workspace name updated', { type: 'success' })}
+              />
+              <Field
+                label="Workspace URL"
+                value={workspaceUrl}
+                onChange={setWorkspaceUrl}
+                onBlur={() => toast('Workspace URL updated', { type: 'success' })}
+                prefix="fondok.ai/"
+              />
             </div>
           </Card>
 
@@ -168,8 +249,8 @@ export default function SettingsPage() {
                   <option>3 years</option><option>5 years</option><option>7 years</option><option>10 years</option>
                 </select>
               </div>
-              <Field label="Default LTV" defaultValue="65%" />
-              <Field label="Default Interest Rate" defaultValue="6.25%" />
+              <Field label="Default LTV" value={defaultLtv} onChange={setDefaultLtv} />
+              <Field label="Default Interest Rate" value={defaultRate} onChange={setDefaultRate} />
             </div>
             <Button variant="primary" onClick={onSaveDefaults}>Save Defaults</Button>
           </Card>
@@ -298,7 +379,7 @@ export default function SettingsPage() {
                 <h3 className="text-[14px] font-semibold text-ink-900">Enterprise Integrations</h3>
                 <p className="text-[12px] text-ink-700 mt-1">Contact us to discuss custom integrations with your existing systems.</p>
               </div>
-              <Button variant="secondary">Contact Sales</Button>
+              <Button variant="secondary" onClick={onContactSales}>Contact Sales</Button>
             </div>
           </Card>
         </div>
@@ -307,14 +388,26 @@ export default function SettingsPage() {
   );
 }
 
-function Field({ label, defaultValue, prefix }: { label: string; defaultValue: string; prefix?: string }) {
+function Field({
+  label, value, onChange, onBlur, prefix,
+}: {
+  label: string;
+  value: string;
+  onChange: (v: string) => void;
+  onBlur?: () => void;
+  prefix?: string;
+}) {
   return (
     <div>
       <label className="block text-[12px] font-medium text-ink-700 mb-1.5">{label}</label>
       <div className="flex items-center bg-white border border-border rounded-md focus-within:ring-2 focus-within:ring-brand-100 focus-within:border-brand-500">
         {prefix && <span className="pl-3 text-[12.5px] text-ink-500">{prefix}</span>}
-        <input defaultValue={defaultValue}
-          className="flex-1 px-3 py-2 text-[13px] bg-transparent rounded-md focus:outline-none" />
+        <input
+          value={value}
+          onChange={(e) => onChange(e.target.value)}
+          onBlur={onBlur}
+          className="flex-1 px-3 py-2 text-[13px] bg-transparent rounded-md focus:outline-none"
+        />
       </div>
     </div>
   );

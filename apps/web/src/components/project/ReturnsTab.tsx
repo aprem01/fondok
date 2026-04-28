@@ -1,7 +1,10 @@
 'use client';
 import { useMemo, useState } from 'react';
+import { useParams } from 'next/navigation';
 import { TrendingDown, Minus, TrendingUp } from 'lucide-react';
 import { Card } from '@/components/ui/Card';
+import { Button } from '@/components/ui/Button';
+import { useToast } from '@/components/ui/Toast';
 import EngineHeader from './EngineHeader';
 import EngineRightRail from './EngineRightRail';
 import EngineLegend from './EngineLegend';
@@ -12,9 +15,48 @@ import { defaultSensitivities, SensitivityMatrix } from '@/lib/engines';
 
 const subTabs = ['Returns Summary', 'Sensitivities'];
 
-export default function ReturnsTab() {
+export default function ReturnsTab({ projectId }: { projectId: number | string }) {
   const [tab, setTab] = useState('Returns Summary');
   const ctx = useAssumptionsOptional();
+  const params = useParams();
+  const dealId = (params?.id as string | undefined) ?? '';
+  const { toast } = useToast();
+  const isKimptonDemo = projectId === 7;
+
+  if (!isKimptonDemo) {
+    return (
+      <div className="flex gap-4">
+        <div className="flex-1 min-w-0">
+          <EngineHeader
+            name="Returns Engine"
+            desc="Computes IRR, equity multiple, and scenario sensitivities for investment analysis."
+            outputs={['Levered IRR', 'Unlevered IRR', 'Equity Multiple', '+1']}
+            dependsOn="Cash Flow"
+            dealId={dealId}
+          />
+          <EngineLegend />
+          <Card className="p-16 text-center">
+            <div className="w-12 h-12 rounded-lg bg-ink-300/20 flex items-center justify-center mx-auto mb-4">
+              <TrendingUp size={20} className="text-ink-400" />
+            </div>
+            <h3 className="text-[15px] font-semibold text-ink-900">Returns Engine unavailable</h3>
+            <p className="text-[12.5px] text-ink-500 mt-1">
+              IRR, multiple, and sensitivity analysis run after Cash Flow completes.
+            </p>
+            <Button
+              variant="primary"
+              size="sm"
+              className="mt-4"
+              onClick={() => toast('Engine run not yet wired', { type: 'info' })}
+            >
+              Run Returns Engine
+            </Button>
+          </Card>
+        </div>
+        <EngineRightRail />
+      </div>
+    );
+  }
 
   // If we're inside the AssumptionsProvider (Kimpton deal), use live model.
   // Otherwise fall back to static mock data.
@@ -27,6 +69,7 @@ export default function ReturnsTab() {
         outputs={['Levered IRR', 'Unlevered IRR', 'Equity Multiple', '+1']}
         dependsOn="Cash Flow"
         complete
+        dealId={dealId}
       />
 
       <div className="flex items-center gap-1 mb-3 border-b border-border">

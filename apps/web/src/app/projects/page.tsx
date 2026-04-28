@@ -284,6 +284,21 @@ export default function ProjectsPage() {
         </div>
       ) : (
         <Card>
+          {/* Header row */}
+          <div className="flex items-center gap-3 px-5 py-2.5 border-b border-border bg-ink-100/40 text-[10.5px] font-semibold uppercase tracking-wide text-ink-500">
+            <div className="w-9 flex-shrink-0" aria-hidden="true" />
+            <div className="flex-1 min-w-0">Project</div>
+            <div className="w-20 text-right">Stage</div>
+            <div className="w-20 text-right">RevPAR</div>
+            <div className="w-24 text-right">NOI</div>
+            <div className="w-16 text-right">IRR</div>
+            <div className="w-16 text-center">Risk</div>
+            <div className="w-24 text-right">AI Conf.</div>
+            <div className="w-14 text-right">Docs</div>
+            <div className="w-16 text-right">Updated</div>
+            <div className="w-7 text-center">Owner</div>
+            <div className="w-7" aria-hidden="true" />
+          </div>
           {filtered.map((p, i) => (
             <Link key={p.id} href={`/projects/${p.id}`}
               className={cn(
@@ -300,10 +315,25 @@ export default function ProjectsPage() {
                 </div>
                 <div className="text-[12px] text-ink-500 mt-0.5">{p.city} · {p.keys} keys · {p.service}</div>
               </div>
-              <div className="text-[12.5px] tabular-nums w-20 text-right">{p.revpar != null ? `$${p.revpar}` : '—'} <span className="text-ink-400">RevPAR</span></div>
-              <div className="text-[12.5px] tabular-nums w-24 text-right">{p.noi != null ? `$${(p.noi / 1e6).toFixed(2)}M` : '—'} <span className="text-ink-400">NOI</span></div>
+              <div className="w-20 flex justify-end">
+                <StatusBadge value={p.dealStage} />
+              </div>
+              <div className="text-[12.5px] tabular-nums w-20 text-right">{p.revpar != null ? `$${p.revpar}` : '—'}</div>
+              <div className="text-[12.5px] tabular-nums w-24 text-right">{p.noi != null ? `$${(p.noi / 1e6).toFixed(2)}M` : '—'}</div>
               <div className="text-[12.5px] tabular-nums w-16 text-right font-medium">{p.irr != null ? `${p.irr.toFixed(2)}%` : '—'}</div>
-              <div className={cn('text-[11.5px] font-medium px-2 py-0.5 rounded w-16 text-center', riskTone(p.risk))}>{p.risk ?? '—'}</div>
+              <div className="w-16 flex justify-center">
+                <span className={cn('text-[11.5px] font-medium px-2 py-0.5 rounded text-center', riskTone(p.risk))}>{p.risk ?? '—'}</span>
+              </div>
+              <div className="w-24">
+                <div className="flex items-center gap-1.5">
+                  <div className="flex-1 h-1.5 bg-ink-300/30 rounded-full overflow-hidden">
+                    <div className="h-full bg-brand-500" style={{ width: `${p.aiConfidence}%` }} />
+                  </div>
+                  <span className="text-[11px] tabular-nums text-ink-700 w-7 text-right">{p.aiConfidence}%</span>
+                </div>
+              </div>
+              <div className="text-[12px] tabular-nums w-14 text-right text-ink-700">{p.docs}</div>
+              <div className="text-[11.5px] w-16 text-right text-ink-500">{p.updatedAt}</div>
               <div className="w-7 h-7 rounded-full bg-ink-300/30 flex items-center justify-center text-[10px] font-semibold">{p.assignee}</div>
               <KebabMenu items={projectMenu(p.id)} />
             </Link>

@@ -1,10 +1,11 @@
 'use client';
 import { useState } from 'react';
+import Link from 'next/link';
 import {
   LineChart, Line, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip,
   Legend, ResponsiveContainer,
 } from 'recharts';
-import { Calendar, Download } from 'lucide-react';
+import { Calendar, Download, MapPinned } from 'lucide-react';
 import { Card } from '@/components/ui/Card';
 import { Button } from '@/components/ui/Button';
 import { Badge } from '@/components/ui/Badge';
@@ -18,9 +19,39 @@ const tooltipStyle = {
   labelStyle: { color: '#64748b', fontSize: 11 },
 };
 
-export default function MarketTab() {
+export default function MarketTab({ projectId }: { projectId: number | string }) {
   const [tab, setTab] = useState('Market Overview');
   const m = miamiMarket;
+  const isKimptonDemo = projectId === 7;
+
+  if (!isKimptonDemo) {
+    return (
+      <div>
+        <Card className="p-5 mb-5">
+          <div className="flex items-start justify-between">
+            <div>
+              <h2 className="text-[15px] font-semibold text-ink-900">Market Data</h2>
+              <p className="text-[12.5px] text-ink-500 mt-1">
+                Submarket performance, supply pipeline, demand drivers, and recent transaction comparables.
+              </p>
+            </div>
+          </div>
+        </Card>
+        <Card className="p-16 text-center">
+          <div className="w-12 h-12 rounded-lg bg-ink-300/20 flex items-center justify-center mx-auto mb-4">
+            <MapPinned size={20} className="text-ink-400" />
+          </div>
+          <h3 className="text-[15px] font-semibold text-ink-900">Market Engine unavailable</h3>
+          <p className="text-[12.5px] text-ink-500 mt-1">
+            No market data for this submarket. Add a market via Data Library to populate.
+          </p>
+          <Link href="/data-library?tab=market" className="inline-block mt-4">
+            <Button variant="primary" size="sm">Open Data Library</Button>
+          </Link>
+        </Card>
+      </div>
+    );
+  }
 
   return (
     <div>

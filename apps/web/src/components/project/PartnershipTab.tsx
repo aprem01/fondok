@@ -1,6 +1,10 @@
 'use client';
 import { useState } from 'react';
+import { useParams } from 'next/navigation';
+import { Users } from 'lucide-react';
 import { Card } from '@/components/ui/Card';
+import { Button } from '@/components/ui/Button';
+import { useToast } from '@/components/ui/Toast';
 import EngineHeader from './EngineHeader';
 import EngineRightRail from './EngineRightRail';
 import EngineLegend from './EngineLegend';
@@ -17,8 +21,47 @@ const waterfall = [
   { tier: 'Hurdle #6 (>30%)', gp: 50, lp: 50 },
 ];
 
-export default function PartnershipTab() {
+export default function PartnershipTab({ projectId }: { projectId: number | string }) {
   const [tab, setTab] = useState('Summary');
+  const { toast } = useToast();
+  const params = useParams();
+  const dealId = (params?.id as string | undefined) ?? '';
+  const isKimptonDemo = projectId === 7;
+
+  if (!isKimptonDemo) {
+    return (
+      <div className="flex gap-4">
+        <div className="flex-1 min-w-0">
+          <EngineHeader
+            name="Partnership Engine"
+            desc="Models GP/LP waterfall structures, promote calculations, and investor distributions."
+            outputs={['GP IRR', 'LP IRR', 'GP Promote', '+1']}
+            dependsOn="Returns"
+            dealId={dealId}
+          />
+          <EngineLegend />
+          <Card className="p-16 text-center">
+            <div className="w-12 h-12 rounded-lg bg-ink-300/20 flex items-center justify-center mx-auto mb-4">
+              <Users size={20} className="text-ink-400" />
+            </div>
+            <h3 className="text-[15px] font-semibold text-ink-900">Partnership Engine unavailable</h3>
+            <p className="text-[12.5px] text-ink-500 mt-1">
+              Waterfall and promote calculations run after the Returns engine completes.
+            </p>
+            <Button
+              variant="primary"
+              size="sm"
+              className="mt-4"
+              onClick={() => toast('Engine run not yet wired', { type: 'info' })}
+            >
+              Run Partnership Engine
+            </Button>
+          </Card>
+        </div>
+        <EngineRightRail />
+      </div>
+    );
+  }
 
   return (
     <div className="flex gap-4">
@@ -29,6 +72,7 @@ export default function PartnershipTab() {
         outputs={['GP IRR', 'LP IRR', 'GP Promote', '+1']}
         dependsOn="Returns"
         complete
+        dealId={dealId}
       />
 
       <div className="flex items-center gap-1 mb-3 border-b border-border">

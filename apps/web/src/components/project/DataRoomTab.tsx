@@ -2,15 +2,16 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useParams, useRouter } from 'next/navigation';
 import {
-  UploadCloud, FolderOpen, Info, FileText, MoreHorizontal, FileSpreadsheet,
+  UploadCloud, FolderOpen, Info, FileText, FileSpreadsheet,
   CheckCircle2, Loader2, Circle, AlertTriangle, ArrowRight,
 } from 'lucide-react';
 import { Card } from '@/components/ui/Card';
 import { Button } from '@/components/ui/Button';
 import { Badge, StatusBadge } from '@/components/ui/Badge';
-import { documentChecklist, engines, kimptonDocuments } from '@/lib/mockData';
+import KebabMenu from '@/components/ui/KebabMenu';
+import { documentChecklist, engines, kimptonDocuments, templates } from '@/lib/mockData';
 import { criticalCount, warnCount, varianceFlags } from '@/lib/varianceData';
-import { isWorkerConnected, WorkerDocument, ExtractionField } from '@/lib/api';
+import { isWorkerConnected, workerUrl, WorkerDocument, ExtractionField } from '@/lib/api';
 import { useDocuments } from '@/lib/hooks/useDocuments';
 import { useToast } from '@/components/ui/Toast';
 
@@ -71,7 +72,24 @@ export default function DataRoomTab({ projectId }: { projectId: number }) {
 
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [selectedDoc, setSelectedDoc] = useState<string | null>(null);
+  // Browse Templates popover — anchored to whichever button the user clicked.
+  const [templatesAnchor, setTemplatesAnchor] = useState<'empty' | 'inline' | null>(null);
   const { toast } = useToast();
+
+  // Close the templates popover on outside click / Escape.
+  useEffect(() => {
+    if (!templatesAnchor) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setTemplatesAnchor(null);
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [templatesAnchor]);
+
+  const onApplyTemplate = (name: string) => {
+    setTemplatesAnchor(null);
+    toast(`Template applied: ${name} (assumptions loaded)`, { type: 'success' });
+  };
   // Track which doc IDs we've already toasted on extraction so we don't
   // re-fire as the polling loop re-emits the same EXTRACTED record.
   const extractionToastedRef = useRef<Set<string>>(new Set());
@@ -281,13 +299,26 @@ export default function DataRoomTab({ projectId }: { projectId: number }) {
                 {uploading ? <Loader2 size={12} className="animate-spin" /> : null}
                 {uploading ? 'Uploading…' : 'Choose Files'}
               </Button>
-              <Button
-                variant="secondary"
-                size="sm"
-                onClick={(e) => e.stopPropagation()}
-              >
-                Browse Templates
-              </Button>
+              <div className="relative">
+                <Button
+                  variant="secondary"
+                  size="sm"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    setTemplatesAnchor((cur) => (cur === 'empty' ? null : 'empty'));
+                  }}
+                  aria-haspopup="menu"
+                  aria-expanded={templatesAnchor === 'empty'}
+                >
+                  Browse Templates
+                </Button>
+                {templatesAnchor === 'empty' && (
+                  <TemplatesPopover
+                    onApply={onApplyTemplate}
+                    onClose={() => setTemplatesAnchor(null)}
+                  />
+                )}
+              </div>
             </div>
           </div>
           {docsError && (
@@ -313,7 +344,23 @@ export default function DataRoomTab({ projectId }: { projectId: number }) {
               {uploading ? <Loader2 size={12} className="animate-spin" /> : null}
               {uploading ? 'Uploading…' : 'Choose Files'}
             </Button>
-            <Button variant="secondary" size="sm">Browse Templates</Button>
+            <div className="relative">
+              <Button
+                variant="secondary"
+                size="sm"
+                onClick={() => setTemplatesAnchor((cur) => (cur === 'inline' ? null : 'inline'))}
+                aria-haspopup="menu"
+                aria-expanded={templatesAnchor === 'inline'}
+              >
+                Browse Templates
+              </Button>
+              {templatesAnchor === 'inline' && (
+                <TemplatesPopover
+                  onApply={onApplyTemplate}
+                  onClose={() => setTemplatesAnchor(null)}
+                />
+              )}
+            </div>
           </div>
           {docsError && liveMode && (
             <div className="mt-3 px-3 py-2 rounded-md bg-danger-50 text-danger-700 text-[11.5px] flex items-center gap-2">
@@ -399,6 +446,31 @@ export default function DataRoomTab({ projectId }: { projectId: number }) {
                     )
                   : [];
                 const docCritical = flagsForDoc.filter((f) => f.severity === 'CRITICAL').length;
+
+                // Per-row kebab — Preview / Download / Delete. Delete & Preview
+                // are stubs until the worker exposes the matching routes.
+                const rowMenu = [
+                  {
+                    label: 'Preview',
+                    onSelect: () => toast('Preview not yet available', { type: 'info' }),
+                  },
+                  {
+                    label: 'Download',
+                    onSelect: () => {
+                      if (liveMode) {
+                        // Worker download endpoint may not exist yet — best-effort.
+                        window.location.href = `${workerUrl()}/deals/${rawId}/documents/${d.id}/download`;
+                      } else {
+                        toast(`Download URL: ${d.id}`, { type: 'info' });
+                      }
+                    },
+                  },
+                  {
+                    label: 'Delete',
+                    danger: true,
+                    onSelect: () => toast('Delete not yet wired', { type: 'info' }),
+                  },
+                ];
                 return (
                   <button key={d.id} onClick={() => setSelectedDoc(d.name)}
                     className={`w-full text-left p-3 rounded-md border transition-colors ${
@@ -445,9 +517,9 @@ export default function DataRoomTab({ projectId }: { projectId: number }) {
                           </div>
                         )}
                       </div>
-                      <button onClick={(e) => { e.stopPropagation(); }} className="p-1 hover:bg-ink-300/20 rounded">
-                        <MoreHorizontal size={14} className="text-ink-400" />
-                      </button>
+                      <div onClick={(e) => e.stopPropagation()}>
+                        <KebabMenu items={rowMenu} />
+                      </div>
                     </div>
                   </button>
                 );
@@ -531,5 +603,47 @@ function DataRow({ label, value, confidence }: { label: string; value: string; c
         <span className="text-ink-400 text-[10px]">{confidence}%</span>
       </div>
     </div>
+  );
+}
+
+// Browse Templates popover — anchors to the trigger via absolute positioning.
+// Backdrop catches outside clicks; the parent owns the open/close state so
+// the same component can render under both Browse Templates buttons.
+function TemplatesPopover({
+  onApply,
+  onClose,
+}: {
+  onApply: (name: string) => void;
+  onClose: () => void;
+}) {
+  return (
+    <>
+      <div
+        className="fixed inset-0 z-30"
+        onClick={onClose}
+        aria-hidden="true"
+      />
+      <div
+        role="menu"
+        aria-label="Templates"
+        className="absolute right-0 top-full mt-1.5 z-40 w-72 rounded-md border border-border bg-white shadow-card-hover py-1.5"
+      >
+        <div className="px-3 py-1.5 text-[10.5px] uppercase tracking-wider text-ink-500 font-semibold">
+          Templates
+        </div>
+        {templates.map((t) => (
+          <button
+            key={t.name}
+            type="button"
+            role="menuitem"
+            onClick={() => onApply(t.name)}
+            className="w-full text-left px-3 py-2 hover:bg-ink-100 focus-visible:outline-none focus-visible:bg-ink-100"
+          >
+            <div className="text-[12.5px] font-medium text-ink-900">{t.name}</div>
+            <div className="text-[11px] text-ink-500 mt-0.5 leading-snug">{t.description}</div>
+          </button>
+        ))}
+      </div>
+    </>
   );
 }

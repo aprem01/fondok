@@ -1,7 +1,11 @@
 'use client';
 import { useState } from 'react';
+import { useParams } from 'next/navigation';
+import { DollarSign } from 'lucide-react';
 import { Card } from '@/components/ui/Card';
 import { Badge } from '@/components/ui/Badge';
+import { Button } from '@/components/ui/Button';
+import { useToast } from '@/components/ui/Toast';
 import EngineHeader from './EngineHeader';
 import EngineRightRail from './EngineRightRail';
 import EngineLegend from './EngineLegend';
@@ -10,9 +14,48 @@ import { fmtCurrency, fmtPct, cn } from '@/lib/format';
 
 const subTabs = ['Debt Summary', 'Rates & Covenants', 'Term & Refinance', 'Debt Schedule'];
 
-export default function DebtTab() {
+export default function DebtTab({ projectId }: { projectId: number | string }) {
   const [tab, setTab] = useState('Debt Summary');
   const o = kimptonAnglerOverview;
+  const params = useParams();
+  const dealId = (params?.id as string | undefined) ?? '';
+  const { toast } = useToast();
+  const isKimptonDemo = projectId === 7;
+
+  if (!isKimptonDemo) {
+    return (
+      <div className="flex gap-4">
+        <div className="flex-1 min-w-0">
+          <EngineHeader
+            name="Debt Engine"
+            desc="Structures senior and mezzanine debt, calculates debt service, and models refinancing scenarios."
+            outputs={['Loan Amount', 'DSCR', 'Debt Yield', '+1']}
+            dependsOn="P&L"
+            dealId={dealId}
+          />
+          <EngineLegend />
+          <Card className="p-16 text-center">
+            <div className="w-12 h-12 rounded-lg bg-ink-300/20 flex items-center justify-center mx-auto mb-4">
+              <DollarSign size={20} className="text-ink-400" />
+            </div>
+            <h3 className="text-[15px] font-semibold text-ink-900">Debt Engine unavailable</h3>
+            <p className="text-[12.5px] text-ink-500 mt-1">
+              Debt structuring runs after the P&amp;L engine completes.
+            </p>
+            <Button
+              variant="primary"
+              size="sm"
+              className="mt-4"
+              onClick={() => toast('Engine run not yet wired', { type: 'info' })}
+            >
+              Run Debt Engine
+            </Button>
+          </Card>
+        </div>
+        <EngineRightRail />
+      </div>
+    );
+  }
 
   return (
     <div className="flex gap-4">
@@ -23,6 +66,7 @@ export default function DebtTab() {
         outputs={['Loan Amount', 'DSCR', 'Debt Yield', '+1']}
         dependsOn="P&L"
         complete
+        dealId={dealId}
       />
 
       <div className="flex items-center gap-1 mb-3 border-b border-border">

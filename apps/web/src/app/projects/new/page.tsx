@@ -280,6 +280,12 @@ function Step4({ data, update }: StepProps) {
         .filter(f => f.family.toLowerCase().includes(q) || f.brands.length > 0)
     : brandFamilies;
 
+  // Re-clicking the active brand drops back to the agnostic default.
+  // Keeps the wizard recoverable without a separate "Clear" affordance.
+  const onBrandClick = (name: string) => {
+    update({ brand: data.brand === name ? 'agnostic' : name });
+  };
+
   return (
     <div>
       <h2 className="text-[18px] font-semibold text-ink-900 mb-1">Select Brand</h2>
@@ -310,6 +316,22 @@ function Step4({ data, update }: StepProps) {
         <div className="flex-1 h-px bg-border" />
       </div>
 
+      {!isAgnostic && (
+        <div className="mb-4 px-3 py-2 rounded-md border border-brand-500/40 bg-brand-50 flex items-center gap-2">
+          <Check size={14} className="text-brand-500" />
+          <div className="text-[12px] text-ink-900">
+            Selected: <span className="font-semibold">{data.brand}</span>
+          </div>
+          <button
+            type="button"
+            onClick={() => update({ brand: 'agnostic' })}
+            className="ml-auto text-[11.5px] text-brand-700 hover:text-brand-500 font-medium"
+          >
+            Clear
+          </button>
+        </div>
+      )}
+
       <div className="relative mb-4">
         <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-ink-400" />
         <input
@@ -339,16 +361,28 @@ function Step4({ data, update }: StepProps) {
               </button>
               {expanded && fam.brands.length > 0 && (
                 <div className="grid grid-cols-3 gap-2 p-3 border-t border-border">
-                  {fam.brands.map(b => (
-                    <button key={b.name} onClick={() => update({ brand: b.name })}
-                      className={cn(
-                        'p-2.5 rounded-md text-left border transition-colors',
-                        data.brand === b.name ? 'border-brand-500 bg-brand-50' : 'border-border hover:border-ink-300'
-                      )}>
-                      <div className="text-[12px] font-medium text-ink-900">{b.name}</div>
-                      <div className="text-[10px] text-ink-500 mt-0.5">{b.tier}</div>
-                    </button>
-                  ))}
+                  {fam.brands.map(b => {
+                    const selected = data.brand === b.name;
+                    return (
+                      <button
+                        key={b.name}
+                        onClick={() => onBrandClick(b.name)}
+                        aria-pressed={selected}
+                        className={cn(
+                          'relative p-2.5 rounded-md text-left border-2 transition-colors',
+                          selected
+                            ? 'border-brand-500 bg-brand-50'
+                            : 'border-border hover:border-ink-300'
+                        )}
+                      >
+                        {selected && (
+                          <Check size={12} className="absolute top-1.5 right-1.5 text-brand-500" />
+                        )}
+                        <div className="text-[12px] font-medium text-ink-900 pr-3">{b.name}</div>
+                        <div className="text-[10px] text-ink-500 mt-0.5">{b.tier}</div>
+                      </button>
+                    );
+                  })}
                 </div>
               )}
             </div>
