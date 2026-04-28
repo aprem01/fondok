@@ -88,7 +88,7 @@ function buildCashFlow() {
 
 const cf = buildCashFlow();
 
-export default function CashFlowTab({ projectId }: { projectId: number }) {
+export default function CashFlowTab({ projectId }: { projectId: number | string }) {
   const [tab, setTab] = useState('Cash Flow Summary');
   const params = useParams();
   const dealId = (params?.id as string | undefined) ?? '';

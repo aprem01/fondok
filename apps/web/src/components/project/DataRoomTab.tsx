@@ -65,11 +65,15 @@ function formatValue(v: unknown, unit: string | null): string {
   return String(v);
 }
 
-export default function DataRoomTab({ projectId }: { projectId: number }) {
+export default function DataRoomTab({ projectId }: { projectId: number | string }) {
   const router = useRouter();
   const params = useParams();
-  // Raw id from the URL — could be a numeric mock id or a real worker UUID.
-  const rawId = (params?.id as string | undefined) ?? String(projectId);
+  // Raw id from the URL — always a string. Could be a numeric mock id or a
+  // real worker UUID. Never coerce through Number() to avoid stringifying
+  // NaN into the API path.
+  const projectIdStr = String(projectId);
+  const fallback = projectIdStr === 'NaN' ? '' : projectIdStr;
+  const rawId = (params?.id as string | undefined) ?? fallback;
   const isMockId = /^\d+$/.test(rawId);
   const isFullDoc = isMockId && Number(rawId) === 7; // Kimpton Angler
 

@@ -122,11 +122,10 @@ export default function AnalysisTab() {
   const params = useParams();
   const router = useRouter();
   const searchParams = useSearchParams();
-  const projectId = Number(params?.id);
   // Only the Kimpton Angler mock deal (id 7) ships with cached analysis data.
   // Every other deal — including any worker-backed UUID — gets an empty
   // state nudge until we wire live analysis fetching.
-  const rawId = (params?.id as string | undefined) ?? String(projectId);
+  const rawId = (params?.id as string | undefined) ?? '';
   const hasCannedAnalysis = /^\d+$/.test(rawId) && Number(rawId) === 7;
 
   // Sub-tab is driven by ?sub= so DataRoom / header pills can deep-link.
@@ -147,7 +146,7 @@ export default function AnalysisTab() {
 
   const setSubTab = (id: SubTab) => {
     setSub(id);
-    const url = `/projects/${projectId}?tab=analysis&sub=${id}`;
+    const url = `/projects/${rawId}?tab=analysis&sub=${id}`;
     router.replace(url, { scroll: false });
   };
 
@@ -332,7 +331,7 @@ export default function AnalysisTab() {
         </Card>
       )}
 
-      {sub === 'memo' && <MemoStream dealId={String(projectId)} />}
+      {sub === 'memo' && <MemoStream dealId={rawId} />}
 
       {sub === 'risks' && (
         <div className="grid grid-cols-3 gap-5">

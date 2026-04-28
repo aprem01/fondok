@@ -71,9 +71,14 @@ export default function ProjectDetailPage() {
   const { toast } = useToast();
   const rawId = (params?.id as string | undefined) ?? '';
   const isMockId = /^\d+$/.test(rawId);
-  const id = isMockId ? Number(rawId) : NaN;
+  // For mock ids we want the numeric form for === 7 checks. For real
+  // (UUID) deals we keep the raw string so children can pass it to API
+  // calls without ever stringifying NaN into a URL path.
+  const id: number | string = isMockId ? Number(rawId) : rawId;
   const { deal } = useDeal(rawId);
-  const mockMatch = isMockId ? projects.find(p => p.id === id) : undefined;
+  const mockMatch = isMockId
+    ? projects.find(p => p.id === Number(rawId))
+    : undefined;
   const workerConnected = isWorkerConnected();
 
   // Header kebab actions — Export Excel / Export IC Memo / Mark IC Ready /

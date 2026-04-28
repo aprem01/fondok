@@ -13,7 +13,7 @@ import { MetricLabel } from '@/components/help/MetricLabel';
 import { Term } from '@/components/help/Term';
 import { GLOSSARY } from '@/lib/glossary';
 
-export default function OverviewTab({ projectId }: { projectId: number }) {
+export default function OverviewTab({ projectId }: { projectId: number | string }) {
   if (projectId !== 7) {
     return (
       <Card className="p-16 text-center">

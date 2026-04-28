@@ -116,7 +116,7 @@ function buildStatement() {
 
 const statement = buildStatement();
 
-export default function PLTab({ projectId }: { projectId: number }) {
+export default function PLTab({ projectId }: { projectId: number | string }) {
   const [tab, setTab] = useState('Operating Statement');
   const params = useParams();
   const dealId = (params?.id as string | undefined) ?? '';
