@@ -33,4 +33,4 @@ apps/worker/.venv/
 .turbo/
 .vercel/
 docs/
-evals/
+/evals/

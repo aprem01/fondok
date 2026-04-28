@@ -26,7 +26,7 @@ apps/worker/*.sqlite3
 # vulnerability scanner from inspecting the Next.js web app.
 apps/web
 docs
-evals
+/evals
 package-lock.json
 pnpm-lock.yaml
 
