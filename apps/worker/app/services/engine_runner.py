@@ -716,7 +716,7 @@ async def get_latest_output(
                  LIMIT 1
                 """
             ),
-            {"deal": deal_id, "engine": engine_name},
+            {"deal": str(_coerce_uuid(deal_id)), "engine": engine_name},
         )
     ).first()
     if row is None:
@@ -744,7 +744,7 @@ async def get_latest_outputs(
              ORDER BY started_at DESC
             """
         ),
-        {"deal": deal_id},
+        {"deal": str(_coerce_uuid(deal_id))},
     )
     seen: dict[str, dict[str, Any]] = {}
     for r in rows.fetchall():
@@ -774,7 +774,7 @@ async def get_run_status(
              ORDER BY started_at ASC
             """
         ),
-        {"deal": deal_id, "run": run_id},
+        {"deal": str(_coerce_uuid(deal_id)), "run": run_id},
     )
     return [_row_to_dict(r._mapping) for r in rows.fetchall()]
 
