@@ -21,6 +21,7 @@ const isPublicRoute = createRouteMatcher([
   '/sign-up(.*)',
   '/diag',
   '/landing',
+  '/test-documents(.*)',
 ]);
 
 const middleware = isClerkConfigured
