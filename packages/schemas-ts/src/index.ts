@@ -471,10 +471,19 @@ export type VarianceReport = z.infer<typeof VarianceReport>;
 
 // ─────────────────────────── Memo ───────────────────────────
 
+export const SourceRegion = z.object({
+  x0: z.number(),
+  y0: z.number(),
+  x1: z.number(),
+  y1: z.number(),
+});
+export type SourceRegion = z.infer<typeof SourceRegion>;
+
 export const Citation = z.object({
   document_id: z.string().uuid(),
   page: z.number().int().min(1),
   field: z.string().max(200).nullable().optional(),
+  region: SourceRegion.nullable().optional(),
   excerpt: z.string().max(1000).nullable().optional(),
 });
 export type Citation = z.infer<typeof Citation>;
@@ -696,3 +705,55 @@ export const Gate2Decision = GateDecisionBase.extend({
   }
 });
 export type Gate2Decision = z.infer<typeof Gate2Decision>;
+
+// ─────────────────────────── Verification ───────────────────────────
+
+// Mirror of fondok_schemas.verification.CitationStatus / VerificationCheck /
+// VerificationReport. Drives the IC-grounding score the UI surfaces next
+// to every memo: did the model's cited number actually appear in the
+// cited page? `pass_rate` is computed client-side from `checks` so the
+// persisted shape stays compact.
+
+export const CitationStatus = z.enum([
+  "match",
+  "close",
+  "mismatch",
+  "unverifiable",
+]);
+export type CitationStatus = z.infer<typeof CitationStatus>;
+
+export const VerificationCheck = z.object({
+  field_name: z.string().min(1).max(200),
+  cited_value: z.string().max(200),
+  parsed_value: z.number().nullable().optional(),
+  found_in_source: z.number().nullable().optional(),
+  delta_abs: z.number().nullable().optional(),
+  delta_pct: z.number().nullable().optional(),
+  status: CitationStatus,
+  source_doc_id: z.string().uuid().nullable().optional(),
+  source_page: z.number().int().min(1).nullable().optional(),
+  excerpt: z.string().max(400).nullable().optional(),
+});
+export type VerificationCheck = z.infer<typeof VerificationCheck>;
+
+export const VerificationReport = z.object({
+  deal_id: z.string().uuid(),
+  checks: z.array(VerificationCheck).default([]),
+  generated_at: z.string().datetime(),
+});
+export type VerificationReport = z.infer<typeof VerificationReport>;
+
+/**
+ * Share of verifiable checks where the cited number appeared in the
+ * source page. Unverifiable checks (no parseable number on the cited
+ * page) are excluded from the denominator. Returns 0.0 when nothing is
+ * verifiable — the safe default for a deal with no grounding.
+ */
+export function verificationPassRate(report: VerificationReport): number {
+  const verifiable = report.checks.filter((c) => c.status !== "unverifiable");
+  if (verifiable.length === 0) return 0.0;
+  const passed = verifiable.filter(
+    (c) => c.status === "match" || c.status === "close",
+  );
+  return passed.length / verifiable.length;
+}

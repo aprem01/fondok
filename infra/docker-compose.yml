@@ -1,0 +1,41 @@
+version: '3.9'
+
+# Local data plane for Fondok development.
+#
+#   make db-up    → start Postgres + Redis
+#   make db-down  → stop everything (data persists in named volume)
+#
+# Postgres is the canonical store; Redis is reserved for SSE fan-out
+# / job queueing if/when we add a background worker tier.
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: fondok-postgres
+    environment:
+      POSTGRES_USER: fondok
+      POSTGRES_PASSWORD: fondok
+      POSTGRES_DB: fondok
+    ports:
+      - "5432:5432"
+    volumes:
+      - fondok_pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U fondok -d fondok"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  redis:
+    image: redis:7-alpine
+    container_name: fondok-redis
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+volumes:
+  fondok_pgdata:

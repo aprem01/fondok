@@ -56,6 +56,7 @@ from .memo import (
     InvestmentMemo,
     MemoSection,
     MemoSectionId,
+    SourceRegion,
 )
 from .partnership import (
     PartnerReturn,
@@ -83,6 +84,11 @@ from .underwriting import (
     SourceUseLine,
 )
 from .variance import VarianceFlag, VarianceReport
+from .verification import (
+    CitationStatus,
+    VerificationCheck,
+    VerificationReport,
+)
 
 __all__ = [
     # analysis
@@ -138,6 +144,7 @@ __all__ = [
     "InvestmentMemo",
     "MemoSection",
     "MemoSectionId",
+    "SourceRegion",
     # partnership
     "PartnerReturn",
     "PartnershipInput",
@@ -164,6 +171,10 @@ __all__ = [
     # variance
     "VarianceFlag",
     "VarianceReport",
+    # verification
+    "CitationStatus",
+    "VerificationCheck",
+    "VerificationReport",
 ]
 
 __version__ = "0.1.0"

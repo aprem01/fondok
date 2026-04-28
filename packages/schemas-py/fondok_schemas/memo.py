@@ -12,6 +12,21 @@ from pydantic import BaseModel, ConfigDict, Field
 from .confidence import ConfidenceReport
 
 
+class SourceRegion(BaseModel):
+    """Rectangular bounding box on a PDF page (PDF-coordinate floats).
+
+    Origin is the bottom-left corner per PDF convention. Renderers
+    convert to pixel-space when overlaying highlights.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    x0: float
+    y0: float
+    x1: float
+    y1: float
+
+
 class Citation(BaseModel):
     """Pointer back to the source document/field that grounds a memo claim."""
 
@@ -20,6 +35,7 @@ class Citation(BaseModel):
     document_id: UUID
     page: Annotated[int, Field(ge=1)]
     field: Annotated[str, Field(max_length=200)] | None = None
+    region: SourceRegion | None = None
     excerpt: Annotated[str, Field(max_length=1000)] | None = None
 
 

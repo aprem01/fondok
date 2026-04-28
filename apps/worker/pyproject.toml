@@ -43,6 +43,11 @@ dependencies = [
   "boto3>=1.35.0",
   # Test fixture generation (sample PDFs) — used by tests/test_documents.py.
   "reportlab>=4.0.0",
+  # Pub/sub backend for memo streaming. Without REDIS_URL the broadcast
+  # falls back to in-process queues; on Railway (multi-replica) the
+  # Redis backend is the only way the SSE subscriber sees publishes
+  # from a different worker pod.
+  "redis>=5.0.0",
 ]
 
 [project.optional-dependencies]

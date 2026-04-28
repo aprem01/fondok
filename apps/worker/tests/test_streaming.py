@@ -235,3 +235,93 @@ async def test_memo_stream_cancellation() -> None:
     assert len(received) == 1
     # After the subscriber exits, the channel must be fully removed.
     assert bc._subs.get(channel) in (None, [])
+
+
+# ─────────────────── 4. factory wiring ───────────────────
+
+
+def test_get_broadcast_picks_redis_when_url_set(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Factory routes to ``RedisMemoBroadcast`` when ``REDIS_URL`` is set.
+
+    We don't actually open a Redis connection here — the publisher
+    client is built lazily on the first ``publish`` call. Asserting
+    the singleton's class is enough to prove the wiring.
+    """
+    from app.config import get_settings
+    from app.streaming import (
+        InProcessMemoBroadcast,
+        RedisMemoBroadcast,
+        get_broadcast,
+        reset_broadcast_for_test,
+    )
+
+    reset_broadcast_for_test()
+    settings = get_settings()
+    monkeypatch.setattr(settings, "REDIS_URL", "redis://fake-host:6379/0")
+    try:
+        bc = get_broadcast()
+        assert isinstance(bc, RedisMemoBroadcast)
+        assert not isinstance(bc, InProcessMemoBroadcast)
+    finally:
+        reset_broadcast_for_test()
+        monkeypatch.setattr(settings, "REDIS_URL", None)
+
+
+# ─────────────────── 5. Redis backend roundtrip (opt-in) ───────────────────
+
+
+@pytest.mark.asyncio
+async def test_redis_broadcast_roundtrip() -> None:
+    """Live Redis pub/sub roundtrip — skipped when no ``REDIS_URL`` env.
+
+    Set ``REDIS_URL=redis://localhost:6379/0`` to opt in. We publish
+    three sections + a DONE_SENTINEL and assert the subscriber sees
+    all four in order before exiting cleanly.
+    """
+    redis_url = os.environ.get("REDIS_URL")
+    if not redis_url:
+        pytest.skip("REDIS_URL not set — skipping live Redis backend test")
+
+    try:
+        import redis.asyncio  # noqa: F401
+    except ImportError:
+        pytest.skip("redis package not installed")
+
+    from app.streaming import DONE_SENTINEL, RedisMemoBroadcast
+
+    bc = RedisMemoBroadcast(redis_url)
+    channel = f"memo:redis-roundtrip-{os.getpid()}"
+
+    received: list[dict[str, Any]] = []
+
+    async def consume() -> None:
+        async for evt in bc.subscribe(channel):
+            received.append(evt)
+
+    consumer = asyncio.create_task(consume())
+    # Give the subscriber a tick to attach to the channel.
+    await asyncio.sleep(0.1)
+
+    try:
+        for i in range(3):
+            await bc.publish(
+                channel,
+                {
+                    "event": "section",
+                    "data": {"section_id": f"s{i}", "body": f"body {i}"},
+                },
+            )
+        await bc.publish(
+            channel, {"event": DONE_SENTINEL, "data": {"sections": 3}}
+        )
+
+        # Subscriber auto-exits on DONE_SENTINEL.
+        await asyncio.wait_for(consumer, timeout=5.0)
+    finally:
+        await bc.close()
+
+    assert len(received) == 4
+    assert received[-1]["event"] == DONE_SENTINEL
+    assert received[-1]["data"] == {"sections": 3}

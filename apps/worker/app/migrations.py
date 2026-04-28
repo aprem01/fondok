@@ -183,6 +183,74 @@ MIGRATIONS: list[tuple[str, str]] = [
         ON audit_log (deal_id)
         """,
     ),
+    # Tamper-evident hashes — added by the centralized log_audit helper
+    # so a Blackstone IT review can prove the row's payload hasn't been
+    # silently rewritten downstream.
+    (
+        "audit_log.add_input_hash",
+        "ALTER TABLE audit_log ADD COLUMN IF NOT EXISTS input_hash TEXT",
+    ),
+    (
+        "audit_log.add_output_hash",
+        "ALTER TABLE audit_log ADD COLUMN IF NOT EXISTS output_hash TEXT",
+    ),
+    (
+        "memo_edits.create_table",
+        """
+        CREATE TABLE IF NOT EXISTS memo_edits (
+            id              UUID PRIMARY KEY,
+            tenant_id       UUID NOT NULL,
+            deal_id         UUID NOT NULL,
+            section_id      TEXT NOT NULL,
+            actor_id        TEXT NOT NULL,
+            original_body   TEXT NOT NULL,
+            new_body        TEXT NOT NULL,
+            comment         TEXT,
+            created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        )
+        """,
+    ),
+    (
+        "memo_edits.idx_deal",
+        """
+        CREATE INDEX IF NOT EXISTS idx_memo_edits_deal
+        ON memo_edits (deal_id, created_at DESC)
+        """,
+    ),
+    (
+        "memo_edits.idx_deal_section",
+        """
+        CREATE INDEX IF NOT EXISTS idx_memo_edits_deal_section
+        ON memo_edits (deal_id, section_id, created_at DESC)
+        """,
+    ),
+    (
+        "memo_edits.append_only_fn",
+        """
+        CREATE OR REPLACE FUNCTION memo_edits_block_mutation()
+        RETURNS TRIGGER AS $$
+        BEGIN
+            RAISE EXCEPTION 'memo_edits is append-only (operation: %)', TG_OP;
+        END;
+        $$ LANGUAGE plpgsql
+        """,
+    ),
+    (
+        "memo_edits.append_only_trigger",
+        """
+        DO $$
+        BEGIN
+            IF NOT EXISTS (
+                SELECT 1 FROM pg_trigger WHERE tgname = 'memo_edits_no_update_delete'
+            ) THEN
+                CREATE TRIGGER memo_edits_no_update_delete
+                BEFORE UPDATE OR DELETE ON memo_edits
+                FOR EACH ROW EXECUTE FUNCTION memo_edits_block_mutation();
+            END IF;
+        END
+        $$
+        """,
+    ),
     (
         "audit_log.append_only_fn",
         """
@@ -236,6 +304,33 @@ MIGRATIONS: list[tuple[str, str]] = [
             END IF;
         END
         $$
+        """,
+    ),
+    (
+        "verification_reports.create_table",
+        """
+        CREATE TABLE IF NOT EXISTS verification_reports (
+            id            UUID PRIMARY KEY,
+            deal_id       UUID NOT NULL,
+            tenant_id     UUID NOT NULL,
+            pass_rate     NUMERIC(5,4) NOT NULL DEFAULT 0,
+            report_json   JSONB NOT NULL,
+            created_at    TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        )
+        """,
+    ),
+    (
+        "verification_reports.idx_deal_created",
+        """
+        CREATE INDEX IF NOT EXISTS idx_verification_reports_deal_created
+        ON verification_reports (deal_id, created_at DESC)
+        """,
+    ),
+    (
+        "verification_reports.idx_tenant",
+        """
+        CREATE INDEX IF NOT EXISTS idx_verification_reports_tenant
+        ON verification_reports (tenant_id)
         """,
     ),
 ]
@@ -396,6 +491,64 @@ SQLITE_MIGRATIONS: list[tuple[str, str]] = [
     (
         "audit_log.idx_deal",
         "CREATE INDEX IF NOT EXISTS idx_audit_log_deal ON audit_log (deal_id)",
+    ),
+    # SQLite duplicate-column errors are swallowed by the migration
+    # runner — that's how we get an "ADD COLUMN IF NOT EXISTS" effect
+    # on a backend that doesn't support the IF NOT EXISTS guard.
+    (
+        "audit_log.add_input_hash_sqlite",
+        "ALTER TABLE audit_log ADD COLUMN input_hash TEXT",
+    ),
+    (
+        "audit_log.add_output_hash_sqlite",
+        "ALTER TABLE audit_log ADD COLUMN output_hash TEXT",
+    ),
+    (
+        "memo_edits.create_table",
+        """
+        CREATE TABLE IF NOT EXISTS memo_edits (
+            id              TEXT PRIMARY KEY,
+            tenant_id       TEXT NOT NULL,
+            deal_id         TEXT NOT NULL,
+            section_id      TEXT NOT NULL,
+            actor_id        TEXT NOT NULL,
+            original_body   TEXT NOT NULL,
+            new_body        TEXT NOT NULL,
+            comment         TEXT,
+            created_at      TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+        )
+        """,
+    ),
+    (
+        "memo_edits.idx_deal",
+        "CREATE INDEX IF NOT EXISTS idx_memo_edits_deal ON memo_edits (deal_id, created_at DESC)",
+    ),
+    (
+        "memo_edits.idx_deal_section",
+        """
+        CREATE INDEX IF NOT EXISTS idx_memo_edits_deal_section
+        ON memo_edits (deal_id, section_id, created_at DESC)
+        """,
+    ),
+    (
+        "verification_reports.create_table",
+        """
+        CREATE TABLE IF NOT EXISTS verification_reports (
+            id            TEXT PRIMARY KEY,
+            deal_id       TEXT NOT NULL,
+            tenant_id     TEXT NOT NULL,
+            pass_rate     REAL NOT NULL DEFAULT 0,
+            report_json   TEXT NOT NULL,
+            created_at    TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+        )
+        """,
+    ),
+    (
+        "verification_reports.idx_deal_created",
+        """
+        CREATE INDEX IF NOT EXISTS idx_verification_reports_deal_created
+        ON verification_reports (deal_id, created_at DESC)
+        """,
     ),
 ]
 

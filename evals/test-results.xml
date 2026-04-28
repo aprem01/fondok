@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<testsuites name="fondok-golden-set" tests="12" failures="1" errors="0" time="0.491">
-  <testsuite name="kimpton-angler" tests="12" failures="1" errors="0" time="0.491">
+<testsuites name="fondok-golden-set" tests="12" failures="1" errors="0" time="0.464">
+  <testsuite name="kimpton-angler" tests="12" failures="1" errors="0" time="0.464">
     <testcase classname="kimpton-angler" name="investment_engine.price_per_key_usd" time="0.001">
     </testcase>
     <testcase classname="kimpton-angler" name="investment_engine.total_capital_usd" time="0.001">

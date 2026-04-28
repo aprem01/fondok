@@ -46,6 +46,7 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from ..budget import check_budget
 from ..config import get_settings
+from ..evals import evaluate_memo
 from ..telemetry import trace_agent
 from ..usali_rules import rules_as_prompt_block
 
@@ -190,6 +191,13 @@ class AnalystOutput(BaseModel):
     success: bool = True
     error: str | None = None
     model_calls: list[ModelCall] = Field(default_factory=list)
+    # Quality eval results (rule-based hotel-banker voice check). Populated
+    # by ``evaluate_memo`` after the LLM draft. ``regeneration_recommended``
+    # is True iff there are blocking violations (number-format, filler);
+    # the API surfaces it as a non-blocking warning so the analyst can
+    # choose to redraft.
+    quality_findings: list[dict[str, Any]] = Field(default_factory=list)
+    regeneration_recommended: bool = False
 
 
 # ─────────────────────── helpers ───────────────────────
@@ -427,6 +435,25 @@ def _make_confidence(
     )
 
 
+# ─────────────────────── quality eval helper ───────────────────────
+
+
+def _safe_evaluate(memo: InvestmentMemo) -> Any:
+    """Run the rule-based memo quality eval, never raising into the pipeline.
+
+    A faulty rule should not block a memo from reaching the analyst —
+    this is grounding-defense, not a hard gate. Returns an empty
+    ``MemoEvalResult`` on failure.
+    """
+    try:
+        return evaluate_memo(memo)
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("analyst: evaluate_memo raised (%s) — skipping", exc)
+        from ..evals import MemoEvalResult
+
+        return MemoEvalResult(findings=[])
+
+
 # ─────────────────────── single-shot path ───────────────────────
 
 
@@ -502,17 +529,22 @@ async def _run_analyst_single(payload: AnalystInput) -> AnalystOutput:
         cache_read_input_tokens=usage.cache_read_input_tokens,
         agent_name="analyst",
     )
+    eval_result = _safe_evaluate(memo)
     logger.info(
-        "analyst OK deal=%s sections=%d in %dms",
+        "analyst OK deal=%s sections=%d in %dms quality_errors=%d quality_warns=%d",
         payload.deal_id,
         len(sections),
         elapsed_ms,
+        len(eval_result.errors),
+        len(eval_result.warnings),
     )
     return AnalystOutput(
         deal_id=payload.deal_id,
         memo=memo,
         success=True,
         model_calls=[model_call],
+        quality_findings=[f.model_dump(mode="json") for f in eval_result.findings],
+        regeneration_recommended=eval_result.needs_regeneration,
     )
 
 
@@ -668,17 +700,23 @@ async def _run_analyst_streaming(payload: AnalystInput) -> AnalystOutput:
         cache_read_input_tokens=usage.cache_read_input_tokens,
         agent_name="analyst",
     )
+    eval_result = _safe_evaluate(memo)
     logger.info(
-        "analyst (streaming) OK deal=%s sections=%d in %dms",
+        "analyst (streaming) OK deal=%s sections=%d in %dms "
+        "quality_errors=%d quality_warns=%d",
         payload.deal_id,
         len(memo.sections),
         elapsed_ms,
+        len(eval_result.errors),
+        len(eval_result.warnings),
     )
     return AnalystOutput(
         deal_id=payload.deal_id,
         memo=memo,
         success=True,
         model_calls=[model_call],
+        quality_findings=[f.model_dump(mode="json") for f in eval_result.findings],
+        regeneration_recommended=eval_result.needs_regeneration,
     )
 
 

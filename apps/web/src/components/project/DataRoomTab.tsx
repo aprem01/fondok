@@ -9,6 +9,7 @@ import { Card } from '@/components/ui/Card';
 import { Button } from '@/components/ui/Button';
 import { Badge, StatusBadge } from '@/components/ui/Badge';
 import KebabMenu from '@/components/ui/KebabMenu';
+import { ConfidenceBadge } from '@/components/ui/ConfidenceBadge';
 import { documentChecklist, engines, kimptonDocuments, templates } from '@/lib/mockData';
 import { criticalCount, warnCount, varianceFlags } from '@/lib/varianceData';
 import { isWorkerConnected, workerUrl, WorkerDocument, ExtractionField } from '@/lib/api';
@@ -600,7 +601,10 @@ function DataRow({ label, value, confidence }: { label: string; value: string; c
       <span className="text-ink-500">{label}</span>
       <div className="flex items-center gap-2">
         <span className="font-medium tabular-nums text-ink-900">{value}</span>
-        <span className="text-ink-400 text-[10px]">{confidence}%</span>
+        {/* `confidence` is a 0–100 percent at this row's call sites; convert
+            to the 0–1 scale ConfidenceBadge expects so the same component
+            grades to red/amber/green at the agreed-upon thresholds. */}
+        <ConfidenceBadge value={confidence / 100} />
       </div>
     </div>
   );

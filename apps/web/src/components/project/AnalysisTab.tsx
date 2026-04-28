@@ -23,6 +23,7 @@ import { kimptonAnalysis } from '@/lib/mockData';
 import { fmtCurrency, cn } from '@/lib/format';
 import VarianceTab from './VarianceTab';
 import { criticalCount } from '@/lib/varianceData';
+import { Citation, type CitationData } from '@/components/citations/Citation';
 
 const sensTabs = ['ADR Sensitivity', 'Occupancy Sensitivity', 'Exit Cap Rate'];
 
@@ -214,10 +215,7 @@ export default function AnalysisTab() {
           </div>
           <div className="space-y-3 text-[12.5px] text-ink-700 leading-relaxed">
             {a.summary.map((p, i) => (
-              <p key={i} dangerouslySetInnerHTML={{ __html: p
-                .replace(/(\$36\.4M|\$276K\/key|24\.5% levered IRR|22% discount|14% ADR premium)/g,
-                  '<span class="font-semibold text-brand-700">$1</span>')
-              }} />
+              <p key={i}>{renderSummaryParagraph(p)}</p>
             ))}
           </div>
           <div className="flex items-center gap-2 mt-4">
@@ -369,4 +367,36 @@ function Row({ k, v }: { k: string; v: string }) {
       <span className="font-medium tabular-nums text-ink-900">{v}</span>
     </div>
   );
+}
+
+// ---------- AI Summary inline citations ------------------------------
+// The Kimpton summary paragraphs reference specific extracted figures.
+// Each phrase below maps to the source document/page that grounds it,
+// so the analyst can click any number and see exactly where it came
+// from. When live memo data exists this would come off the streamed
+// citations array — until then this is the canned mapping.
+const SUMMARY_CITATIONS: Record<string, CitationData> = {
+  '$36.4M':              { documentId: 'kimpton-angler-om-2026',     documentName: 'Offering_Memorandum_Final.pdf', page: 6,  field: 'asking_price', excerpt: 'Asking price: $36,400,000' },
+  '$276K/key':           { documentId: 'kimpton-angler-om-2026',     documentName: 'Offering_Memorandum_Final.pdf', page: 6,  field: 'price_per_key', excerpt: '$276,000 per key (132 keys)' },
+  '24.5% levered IRR':   { documentId: 'kimpton-angler-om-2026',     documentName: 'Offering_Memorandum_Final.pdf', page: 41, field: 'returns.levered_irr', excerpt: 'Levered IRR projection: 24.5% over 5-year hold' },
+  '22% discount':        { documentId: 'kimpton-angler-om-2026',     documentName: 'Offering_Memorandum_Final.pdf', page: 28, field: 'comp_set.price_per_key', excerpt: 'Submarket comp set average: $354K/key — basis represents a 22% discount' },
+  '14% ADR premium':     { documentId: 'kimpton-angler-t12-2026q1',  documentName: 'T12_FinancialStatement.xlsx',   page: 1,  field: 'adr_premium_vs_comp', excerpt: 'Property ADR $385 vs comp-set ADR $338 (+14%)' },
+};
+
+const SUMMARY_PHRASE_RE =
+  /(\$36\.4M|\$276K\/key|24\.5% levered IRR|22% discount|14% ADR premium)/g;
+
+function renderSummaryParagraph(text: string): React.ReactNode[] {
+  const parts = text.split(SUMMARY_PHRASE_RE);
+  return parts.map((part, i) => {
+    const cite = SUMMARY_CITATIONS[part];
+    if (cite) {
+      return (
+        <Citation key={i} data={cite}>
+          <span className="font-semibold text-brand-700">{part}</span>
+        </Citation>
+      );
+    }
+    return <span key={i}>{part}</span>;
+  });
 }

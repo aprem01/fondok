@@ -18,6 +18,14 @@ import {
   type VarianceFlag,
   type Severity,
 } from '@/lib/varianceData';
+import { Citation } from '@/components/citations/Citation';
+
+// Filename lookup for the synthetic Kimpton mock document IDs so the
+// SourceDocPane header can show a human-readable label.
+const VARIANCE_DOC_NAMES: Record<string, string> = {
+  'kimpton-angler-om-2026': 'Offering_Memorandum_Final.pdf',
+  'kimpton-angler-t12-2026q1': 'T12_FinancialStatement.xlsx',
+};
 
 type RowDecision = 'pending' | 'accepted' | 'overridden';
 
@@ -316,6 +324,34 @@ export default function VarianceTab() {
                           <div className="text-[10.5px] text-ink-500 mt-0.5 font-mono">
                             {flag.flag_id}
                           </div>
+                          {flag.source_documents.length > 0 && (
+                            // Each chip opens the SourceDocPane on the
+                            // exact page the variance was computed from.
+                            <div className="mt-1.5 flex flex-wrap items-center gap-1">
+                              {flag.source_documents.map((src, idx) => {
+                                const name =
+                                  VARIANCE_DOC_NAMES[src.document_id] ?? src.document_id;
+                                const tag =
+                                  src.document_id.includes('om')
+                                    ? 'OM'
+                                    : src.document_id.includes('t12')
+                                      ? 'T12'
+                                      : 'DOC';
+                                return (
+                                  <Citation
+                                    key={`${src.document_id}-${src.page}-${idx}`}
+                                    data={{
+                                      documentId: src.document_id,
+                                      documentName: name,
+                                      page: src.page,
+                                      field: src.field,
+                                    }}
+                                    label={`${tag}:p${src.page}`}
+                                  />
+                                );
+                              })}
+                            </div>
+                          )}
                         </div>
                       </div>
                     </td>

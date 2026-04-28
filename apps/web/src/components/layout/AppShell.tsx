@@ -6,6 +6,7 @@ import FondokMark from '@/components/brand/FondokMark';
 import { api, isWorkerConnected, workerUrl } from '@/lib/api';
 import { cn } from '@/lib/format';
 import { ToastProvider } from '@/components/ui/Toast';
+import SourceDocPane from '@/components/citations/SourceDocPane';
 
 type WorkerHealth = 'unknown' | 'green' | 'red' | 'offline';
 
@@ -89,6 +90,9 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
           </div>
         </footer>
       </main>
+      {/* Globally mounted citation viewer — listens for fondok:citation-focus
+          events from anywhere in the app and slides in from the right. */}
+      <SourceDocPane />
     </div>
     </ToastProvider>
   );

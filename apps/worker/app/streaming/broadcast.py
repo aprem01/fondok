@@ -9,10 +9,11 @@ Two backends:
 * ``InProcessMemoBroadcast`` — single-process asyncio fan-out keyed by
   ``deal_id``. Good enough for dev and the single-replica deployment we
   ship today. Picked when ``REDIS_URL`` is unset.
-* The abstract ``MemoBroadcast`` base intentionally ships without a
-  Redis implementation in fondok yet — a future PR can drop one in
-  beside ``InProcessMemoBroadcast`` and the factory will route to it
-  when ``REDIS_URL`` lands in settings.
+* ``RedisMemoBroadcast`` — Redis pub/sub. Required when there's more
+  than one worker replica, since the SSE subscriber may land on a
+  different replica from the publisher. The factory routes here when
+  ``settings.REDIS_URL`` is configured (Railway provisions it
+  automatically when the Redis service is added).
 
 Both implementations send a final ``DONE_SENTINEL`` payload after the
 last section so subscribers can close the connection cleanly instead of
@@ -22,6 +23,7 @@ timing out.
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 from collections import defaultdict
 from collections.abc import AsyncIterator
@@ -109,6 +111,70 @@ class InProcessMemoBroadcast(MemoBroadcast):
                     self._subs.pop(deal_id, None)
 
 
+class RedisMemoBroadcast(MemoBroadcast):
+    """Redis pub/sub fan-out — survives multi-replica deployments.
+
+    One publisher client is reused for the lifetime of the process;
+    each ``subscribe`` call opens its own client + pubsub so cleanup
+    is per-subscription. This matches the LogiCov pattern that's been
+    running in production for institutional-grade pilots.
+    """
+
+    def __init__(self, url: str) -> None:
+        self._url = url
+        self._publisher: Any = None
+
+    async def _get_publisher(self) -> Any:
+        if self._publisher is None:
+            import redis.asyncio as aioredis
+
+            self._publisher = aioredis.from_url(
+                self._url, decode_responses=True
+            )
+        return self._publisher
+
+    async def publish(self, deal_id: str, payload: dict[str, Any]) -> None:
+        client = await self._get_publisher()
+        await client.publish(deal_id, json.dumps(payload, default=str))
+
+    async def subscribe(
+        self, deal_id: str
+    ) -> AsyncIterator[dict[str, Any]]:
+        import redis.asyncio as aioredis
+
+        client = aioredis.from_url(self._url, decode_responses=True)
+        pubsub = client.pubsub()
+        await pubsub.subscribe(deal_id)
+        try:
+            async for msg in pubsub.listen():
+                if msg.get("type") != "message":
+                    continue
+                data = msg.get("data")
+                if not isinstance(data, str):
+                    continue
+                try:
+                    payload = json.loads(data)
+                except json.JSONDecodeError:
+                    logger.warning(
+                        "memo broadcast: malformed JSON on %s", deal_id
+                    )
+                    continue
+                yield payload
+                if payload.get("event") == DONE_SENTINEL:
+                    return
+        finally:
+            try:
+                await pubsub.unsubscribe(deal_id)
+                await pubsub.close()
+            finally:
+                await client.close()
+
+    async def close(self) -> None:
+        if self._publisher is not None:
+            await self._publisher.close()
+            self._publisher = None
+
+
 # ─── module-level singleton ───────────────────────────────────────
 
 _broadcast_singleton: MemoBroadcast | None = None
@@ -117,15 +183,26 @@ _broadcast_singleton: MemoBroadcast | None = None
 def get_broadcast() -> MemoBroadcast:
     """Return the process-wide broadcast, picking backend on first use.
 
-    Today only ``InProcessMemoBroadcast`` is wired; a Redis backend
-    will live alongside it once multi-replica deploys land.
+    ``REDIS_URL`` (set on Railway when the Redis service is
+    provisioned) selects ``RedisMemoBroadcast`` so a multi-replica
+    deploy can fan out sections across pods. Without it we fall back
+    to ``InProcessMemoBroadcast`` for single-process dev / single-pod
+    deployments.
     """
     global _broadcast_singleton
     if _broadcast_singleton is None:
-        logger.info(
-            "memo broadcast: using in-process queues (Redis backend not yet wired)"
-        )
-        _broadcast_singleton = InProcessMemoBroadcast()
+        from ..config import get_settings
+
+        settings = get_settings()
+        if settings.REDIS_URL:
+            host_hint = settings.REDIS_URL.split("@")[-1]
+            logger.info("memo broadcast: using Redis at %s", host_hint)
+            _broadcast_singleton = RedisMemoBroadcast(settings.REDIS_URL)
+        else:
+            logger.info(
+                "memo broadcast: using in-process queues (REDIS_URL not set)"
+            )
+            _broadcast_singleton = InProcessMemoBroadcast()
     return _broadcast_singleton
 
 
@@ -140,6 +217,7 @@ __all__ = [
     "DONE_SENTINEL",
     "InProcessMemoBroadcast",
     "MemoBroadcast",
+    "RedisMemoBroadcast",
     "get_broadcast",
     "reset_broadcast_for_test",
 ]

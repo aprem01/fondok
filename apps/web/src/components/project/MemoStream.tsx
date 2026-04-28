@@ -21,6 +21,7 @@ import { Button } from '@/components/ui/Button';
 import { Badge } from '@/components/ui/Badge';
 import { kimptonAnalysis } from '@/lib/mockData';
 import { cn } from '@/lib/format';
+import { Citation as CitationChip } from '@/components/citations/Citation';
 
 const WORKER_URL = process.env.NEXT_PUBLIC_WORKER_URL ?? '';
 
@@ -375,16 +376,21 @@ function SectionCard({
           ),
         )}
         {section.citations.length > 0 && (
-          <span className="ml-1 align-super text-[10px] text-brand-700 tabular-nums">
-            [
+          // Each chip dispatches `fondok:citation-focus` so the global
+          // SourceDocPane slides in to the cited page.
+          <span className="ml-1 inline-flex flex-wrap items-baseline gap-0.5 align-super">
             {section.citations.map((c, i) => (
-              <span key={i} title={c.excerpt ?? undefined}>
-                {i > 0 ? ',' : ''}
-                {c.document_id ? (c.document_id.slice(-2)) : '?'}
-                {c.page ? `:${c.page}` : ''}
-              </span>
+              <CitationChip
+                key={`${c.document_id ?? 'unknown'}:${c.page ?? 0}:${i}`}
+                data={{
+                  documentId: c.document_id ?? '',
+                  page: c.page ?? 1,
+                  field: c.field ?? undefined,
+                  excerpt: c.excerpt ?? undefined,
+                }}
+                label={`[${i + 1}]`}
+              />
             ))}
-            ]
           </span>
         )}
       </div>

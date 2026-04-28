@@ -24,9 +24,11 @@ from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from ..audit import log_audit
 from ..config import get_settings
 from ..costs import build_cost_report
 from ..database import get_session
+from ..memo_edits import list_edits, record_edit
 
 try:
     from fondok_schemas import DealCostReport
@@ -235,38 +237,23 @@ async def _write_audit(
     action: str,
     payload: dict[str, Any],
 ) -> None:
-    """Append a row to ``audit_log``. Best-effort — never raises out."""
-    try:
-        await session.execute(
-            text(
-                """
-                INSERT INTO audit_log (
-                    id, tenant_id, deal_id, actor_id, action,
-                    resource_type, resource_id, payload, created_at
-                ) VALUES (
-                    :id, :tenant, :deal, :actor, :action,
-                    'deal', :rid, :payload, :ts
-                )
-                """
-            ),
-            {
-                "id": str(uuid4()),
-                "tenant": tenant_id,
-                "deal": deal_id,
-                "actor": actor_id,
-                "action": action,
-                "rid": deal_id,
-                "payload": json.dumps(payload, default=str),
-                "ts": _now(),
-            },
-        )
-    except Exception as exc:  # noqa: BLE001
-        logger.warning(
-            "audit_log write failed (action=%s deal=%s): %s",
-            action,
-            deal_id,
-            exc,
-        )
+    """Thin compatibility wrapper around :func:`app.audit.log_audit`.
+
+    Existing call sites in this module pass a single ``payload`` blob;
+    the centralized helper splits input/output and computes SHA-256
+    hashes for the IT-review trail. We forward the legacy ``payload``
+    as ``output_payload`` so the hash captures the diff that the
+    mutation actually applied.
+    """
+    await log_audit(
+        session,
+        tenant_id=tenant_id,
+        actor_id=actor_id,
+        action=action,
+        resource_type="deal",
+        resource_id=deal_id,
+        output_payload=payload,
+    )
 
 
 # ─────────────────────────── routes ───────────────────────────
@@ -683,6 +670,72 @@ async def get_deal_costs(deal_id: UUID) -> Any:
     return await build_cost_report(str(deal_id))
 
 
+class VerificationReportResponse(BaseModel):
+    """Latest persisted verification report for a deal."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    deal_id: UUID
+    pass_rate: float
+    created_at: datetime
+    report: dict[str, Any]
+
+
+@router.get(
+    "/{deal_id}/verification", response_model=VerificationReportResponse
+)
+async def get_verification_report(
+    deal_id: UUID,
+    session: Annotated[AsyncSession, Depends(get_session)],
+    tenant_id: Annotated[UUID, Depends(get_tenant_id)],
+) -> VerificationReportResponse:
+    """Return the latest deterministic verification report for a deal.
+
+    Each report is the output of ``verify_citations`` over the deal's
+    extracted fields against the parser cache — one ``VerificationCheck``
+    per cited number, classified ``match`` / ``close`` / ``mismatch`` /
+    ``unverifiable``. The reports table is append-only; we always return
+    the most recent row.
+    """
+    row = (
+        await session.execute(
+            text(
+                """
+                SELECT id, deal_id, tenant_id, pass_rate, report_json, created_at
+                  FROM verification_reports
+                 WHERE deal_id = :deal AND tenant_id = :tenant
+                 ORDER BY created_at DESC
+                 LIMIT 1
+                """
+            ),
+            {"deal": str(deal_id), "tenant": str(tenant_id)},
+        )
+    ).first()
+    if row is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=(
+                f"no verification report found for deal {deal_id} — "
+                "extract at least one document first"
+            ),
+        )
+    mapping = row._mapping
+    raw_report = mapping["report_json"]
+    if isinstance(raw_report, str):
+        try:
+            report = json.loads(raw_report)
+        except json.JSONDecodeError:
+            report = {}
+    else:
+        report = dict(raw_report) if raw_report else {}
+    return VerificationReportResponse(
+        deal_id=deal_id,
+        pass_rate=float(mapping["pass_rate"] or 0.0),
+        created_at=_coerce_dt(mapping["created_at"]),
+        report=report,
+    )
+
+
 async def _load_deal_payload(deal_id: str) -> Any:
     """Build an ``AnalystInput`` from the persisted deal + engine state.
 
@@ -793,3 +846,129 @@ async def stream_memo(deal_id: str) -> StreamingResponse:
             "X-Accel-Buffering": "no",  # Disable nginx buffering
         },
     )
+
+
+# ─────────────────────── memo edit history ───────────────────────
+
+
+class MemoEditBody(BaseModel):
+    """Request body for ``POST /deals/{deal_id}/memo/{section_id}/edits``.
+
+    The client submits ``original_body`` (the section text it was
+    looking at) so the server can record the full pre/post diff. We
+    don't attempt optimistic-concurrency conflict detection — concurrent
+    editors are a future problem; today the audit trail is the source
+    of truth.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    new_body: str = Field(min_length=1)
+    original_body: str = Field(default="")
+    comment: str | None = None
+
+
+class MemoEditRecord(BaseModel):
+    """One memo-edit row as returned by the history endpoint."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    id: str
+    tenant_id: str
+    deal_id: str
+    section_id: str
+    actor_id: str
+    original_body: str
+    new_body: str
+    comment: str | None = None
+    created_at: str
+
+
+@router.post(
+    "/{deal_id}/memo/{section_id}/edits",
+    response_model=MemoEditRecord,
+    status_code=status.HTTP_201_CREATED,
+)
+async def post_memo_edit(
+    deal_id: UUID,
+    section_id: str,
+    body: MemoEditBody,
+    session: Annotated[AsyncSession, Depends(get_session)],
+    tenant_id: Annotated[UUID, Depends(get_tenant_id)],
+) -> MemoEditRecord:
+    """Record an append-only memo-section edit.
+
+    Both the edit row and the matching ``audit_log`` entry land in the
+    same transaction — if either insert fails the other rolls back, so
+    a half-recorded change never reaches the IT-review trail.
+    """
+    tenant_id_str = str(tenant_id)
+    actor_id = "system"  # TODO: thread through Clerk user once auth lands
+
+    edit_id = await record_edit(
+        session,
+        tenant_id=tenant_id_str,
+        deal_id=str(deal_id),
+        section_id=section_id,
+        actor_id=actor_id,
+        original_body=body.original_body,
+        new_body=body.new_body,
+        comment=body.comment,
+    )
+
+    await log_audit(
+        session,
+        tenant_id=tenant_id_str,
+        actor_id=actor_id,
+        action="memo.edited",
+        resource_type="memo",
+        resource_id=str(deal_id),
+        input_payload={
+            "section_id": section_id,
+            "original_body": body.original_body,
+        },
+        output_payload={
+            "section_id": section_id,
+            "new_body": body.new_body,
+            "comment": body.comment,
+        },
+        metadata={"edit_id": str(edit_id)},
+    )
+    await session.commit()
+
+    # Read the row back so the response contains the canonical
+    # created_at the DB stamped (avoids drift between client + server
+    # clocks the audit trail would later flag).
+    history = await list_edits(
+        session, deal_id=str(deal_id), section_id=section_id
+    )
+    matching = next((h for h in history if h["id"] == str(edit_id)), None)
+    if matching is None:  # pragma: no cover - defensive; we just inserted it
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="memo edit not visible after commit",
+        )
+    logger.info(
+        "memo.edited: deal=%s section=%s edit=%s", deal_id, section_id, edit_id
+    )
+    return MemoEditRecord(**matching)
+
+
+@router.get(
+    "/{deal_id}/memo/edits",
+    response_model=list[MemoEditRecord],
+)
+async def get_memo_edits(
+    deal_id: UUID,
+    session: Annotated[AsyncSession, Depends(get_session)],
+    section_id: str | None = None,
+) -> list[MemoEditRecord]:
+    """Return the chronological edit history for a deal's memo.
+
+    Pass ``section_id`` to scope to a single section; omit it to get
+    every edit across the deal (newest first).
+    """
+    rows = await list_edits(
+        session, deal_id=str(deal_id), section_id=section_id
+    )
+    return [MemoEditRecord(**r) for r in rows]

@@ -81,6 +81,14 @@ class Settings(BaseSettings):
     # ``MemoBroadcast`` so the UI can render the memo as it builds.
     MEMO_STREAMING_ENABLED: bool = Field(default=False)
 
+    # ── Pub/sub backend ─────────────────────────────────────────────
+    # When set, ``MemoBroadcast`` uses Redis pub/sub instead of the
+    # single-process in-memory queue. Required for multi-replica
+    # deployments where the SSE subscriber may land on a different
+    # worker pod than the publisher. Railway provisions REDIS_URL
+    # automatically when the Redis service is added.
+    REDIS_URL: str | None = Field(default=None)
+
     @property
     def async_database_url(self) -> str:
         """SQLAlchemy expects ``postgresql+asyncpg://`` for the asyncpg driver."""

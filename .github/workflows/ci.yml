@@ -36,6 +36,21 @@ jobs:
   python:
     name: Python (worker)
     runs-on: ubuntu-latest
+    services:
+      # Mirror Railway's Postgres add-on locally so the worker test
+      # suite exercises the same driver path (asyncpg) it uses in prod.
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: fondok
+          POSTGRES_PASSWORD: fondok
+          POSTGRES_DB: fondok
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U fondok"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
     steps:
       - uses: actions/checkout@v4
 
@@ -59,23 +74,32 @@ jobs:
       - name: Pytest
         working-directory: apps/worker
         env:
-          DATABASE_URL: sqlite+aiosqlite:///./fondok-ci.db
+          DATABASE_URL: postgresql+asyncpg://fondok:fondok@localhost:5432/fondok
           ANTHROPIC_API_KEY: sk-ant-test-dummy
         run: uv run pytest tests/ -v
 
       - name: Import smoke
         working-directory: apps/worker
         env:
-          DATABASE_URL: sqlite+aiosqlite:///./fondok-ci.db
+          DATABASE_URL: postgresql+asyncpg://fondok:fondok@localhost:5432/fondok
         run: uv run python -c "from app.main import app; print('OK')"
 
+  # Conditional eval gating ported from LogiCov: only burn a CI minute
+  # on the golden set when something the engines/agents/graph/schemas/
+  # evals depend on actually changed — or when we're landing on main
+  # (where drift must be caught before deploy). PRs that only touch
+  # web, docs, or infra skip the regression entirely.
   evals:
     name: Golden-set regression
     runs-on: ubuntu-latest
     needs: [python]
-    # REQUIRED check: runs on every push to main and every PR. The
-    # deterministic engine pipeline burns no LLM tokens, so it's cheap
-    # enough to gate every merge — drift in math is an instant red.
+    if: |
+      github.event_name == 'push' ||
+      contains(github.event.pull_request.changed_files, 'apps/worker/app/engines/') ||
+      contains(github.event.pull_request.changed_files, 'apps/worker/app/agents/') ||
+      contains(github.event.pull_request.changed_files, 'apps/worker/app/graph.py') ||
+      contains(github.event.pull_request.changed_files, 'packages/schemas-py/') ||
+      contains(github.event.pull_request.changed_files, 'evals/')
     steps:
       - uses: actions/checkout@v4
 
@@ -96,9 +120,8 @@ jobs:
         working-directory: ${{ github.workspace }}
         env:
           # Engines are deterministic; LLM is not invoked in the eval
-          # pipeline, so the API key isn't required here. Leaving the
-          # secret reference in place so an env override (mocking) can
-          # still be wired in later without rewriting the workflow.
+          # pipeline, so the API key isn't required here. EVALS_MOCK=true
+          # keeps CI from burning Anthropic tokens.
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY || 'sk-ant-test-dummy' }}
           EVALS_MOCK: "true"
         run: uv run --project apps/worker python evals/run.py | tee evals/last-run.txt

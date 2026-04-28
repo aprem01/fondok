@@ -580,6 +580,17 @@ async def _run_extraction_pipeline(
                 deal_id,
                 len(fields),
             )
+
+            # Chain-of-verification — re-read each cited number against the
+            # parser cache. Best-effort; never blocks completion.
+            await _persist_verification_report(
+                session,
+                deal_id=deal_id,
+                tenant_id=tenant_id,
+                doc_id=doc_id,
+                fields=fields,
+                extraction_data=extraction_data,
+            )
         except Exception as exc:  # noqa: BLE001
             logger.exception("extraction failed: doc=%s — %s", doc_id, exc)
             try:
@@ -710,6 +721,116 @@ def _mock_extraction_payload() -> tuple[list[dict[str, Any]], dict[str, Any]]:
         "requires_human_review": False,
     }
     return fields, confidence
+
+
+# ─────────────────────────── verification ───────────────────────────
+
+
+async def _persist_verification_report(
+    session: AsyncSession,
+    *,
+    deal_id: str,
+    tenant_id: str,
+    doc_id: str,
+    fields: list[dict[str, Any]],
+    extraction_data: dict[str, Any] | None,
+) -> None:
+    """Run the deterministic citation verifier and persist the report.
+
+    Best-effort: any failure logs and returns silently — verification is
+    a defense layer, never a hard gate. The persisted ``pass_rate`` lets
+    the UI surface a single grounding-quality score next to the memo.
+    """
+    if extraction_data is None:
+        return
+    try:
+        from datetime import datetime as _dt
+        from fondok_schemas import ExtractionField
+        from ..extraction.models import ParsedDocument, ParsedPage
+        from ..verification import verify_citations
+
+        # Reconstruct ParsedDocument from the cached extraction_data.
+        pages = []
+        for p in extraction_data.get("pages") or []:
+            pages.append(
+                ParsedPage(
+                    page_num=int(p.get("page_num", 1)),
+                    text=p.get("text", "") or "",
+                    tables=p.get("tables") or [],
+                    metadata=p.get("metadata") or {},
+                )
+            )
+        if not pages:
+            return
+        parsed_at_raw = extraction_data.get("parsed_at")
+        try:
+            parsed_at = (
+                _dt.fromisoformat(parsed_at_raw) if parsed_at_raw else _now()
+            )
+        except (TypeError, ValueError):
+            parsed_at = _now()
+        parsed_doc = ParsedDocument(
+            filename=extraction_data.get("filename", "uploaded.pdf"),
+            total_pages=int(extraction_data.get("total_pages", len(pages))),
+            pages=pages,
+            content_hash=extraction_data.get("content_hash", "0" * 64),
+            parsed_at=parsed_at,
+            parser=extraction_data.get("parser", "pymupdf"),
+        )
+
+        # Coerce raw field dicts → ExtractionField. Skip non-numeric or
+        # malformed entries silently.
+        ef_list: list[ExtractionField] = []
+        field_doc_ids: dict[str, str] = {}
+        for f in fields:
+            try:
+                ef = ExtractionField.model_validate(f)
+            except Exception:
+                continue
+            ef_list.append(ef)
+            field_doc_ids[ef.field_name] = doc_id
+
+        report = verify_citations(
+            ef_list,
+            {doc_id: parsed_doc},
+            deal_id=deal_id,
+            field_doc_ids=field_doc_ids,
+        )
+
+        report_id = uuid4()
+        await session.execute(
+            text(
+                """
+                INSERT INTO verification_reports (
+                    id, deal_id, tenant_id, pass_rate, report_json, created_at
+                ) VALUES (
+                    :id, :deal, :tenant, :pass_rate, :report, :created
+                )
+                """
+            ),
+            {
+                "id": str(report_id),
+                "deal": deal_id,
+                "tenant": tenant_id,
+                "pass_rate": float(report.pass_rate),
+                "report": report.model_dump_json(),
+                "created": _now(),
+            },
+        )
+        await session.commit()
+        logger.info(
+            "verification: deal=%s doc=%s pass_rate=%.3f checks=%d",
+            deal_id,
+            doc_id,
+            report.pass_rate,
+            len(report.checks),
+        )
+    except Exception as exc:  # noqa: BLE001 - never block extraction
+        logger.warning(
+            "verification: failed to persist report for doc=%s: %s",
+            doc_id,
+            exc,
+        )
 
 
 # Public symbols for tests.
