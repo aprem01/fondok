@@ -1,5 +1,5 @@
 'use client';
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import {
@@ -36,7 +36,7 @@ export default function NewProjectPage() {
   const [data, setData] = useState({
     dealName: '', city: '', keys: '', stage: 'Teaser', hotelName: '', price: '',
     returnProfile: 'value-add',
-    docs: [] as string[],
+    docs: [] as File[],
     brand: 'agnostic',
     brandSearch: '',
     expandedFamilies: ['Hilton'] as string[],
@@ -86,6 +86,33 @@ export default function NewProjectPage() {
       };
       const created = await api.deals.create(body as Parameters<typeof api.deals.create>[0]);
       toast(`Deal created · ${created.name}`, { type: 'success' });
+
+      // If the wizard collected files in step 3, upload them to the new deal
+      // and kick off extraction. Each upload + extract call is best-effort —
+      // a failed upload doesn't block routing to the deal page.
+      if (data.docs.length > 0) {
+        toast(
+          `Uploading ${data.docs.length} document${data.docs.length === 1 ? '' : 's'}…`,
+          { type: 'info' },
+        );
+        try {
+          const uploaded = await api.documents.upload(String(created.id), data.docs);
+          await Promise.all(
+            uploaded.map((d) =>
+              api.documents
+                .extract(String(created.id), d.id)
+                .catch((err) => console.warn('extract kickoff failed', d.id, err)),
+            ),
+          );
+          toast(`Uploaded ${uploaded.length} · extraction in progress`, {
+            type: 'success',
+          });
+        } catch (uErr) {
+          const uMsg = uErr instanceof Error ? uErr.message : String(uErr);
+          toast(`Deal created, but upload failed: ${uMsg}`, { type: 'error' });
+        }
+      }
+
       router.push(`/projects/${created.id}`);
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err);
@@ -183,7 +210,7 @@ export default function NewProjectPage() {
 
 type WizardData = {
   dealName: string; city: string; keys: string; stage: string; hotelName: string; price: string;
-  returnProfile: string; docs: string[]; brand: string; brandSearch: string;
+  returnProfile: string; docs: File[]; brand: string; brandSearch: string;
   expandedFamilies: string[]; positioning: string;
 };
 type StepProps = { data: WizardData; update: (patch: Partial<WizardData>) => void };
@@ -276,6 +303,40 @@ function Step2({ data, update }: StepProps) {
 }
 
 function Step3({ data, update }: StepProps) {
+  const inputRef = useRef<HTMLInputElement>(null);
+  const [dragOver, setDragOver] = useState(false);
+
+  const accept = '.pdf,.xls,.xlsx,.csv,.doc,.docx,application/pdf';
+
+  const addFiles = (files: FileList | File[] | null) => {
+    if (!files) return;
+    const next = Array.from(files);
+    if (!next.length) return;
+    // Dedupe by name + size so picking the same files twice doesn't double up.
+    const existing = new Set(data.docs.map(f => `${f.name}::${f.size}`));
+    const merged = [...data.docs];
+    for (const f of next) {
+      const key = `${f.name}::${f.size}`;
+      if (!existing.has(key)) {
+        merged.push(f);
+        existing.add(key);
+      }
+    }
+    update({ docs: merged });
+  };
+
+  const removeAt = (idx: number) => {
+    const next = [...data.docs];
+    next.splice(idx, 1);
+    update({ docs: next });
+  };
+
+  const onDrop = (e: React.DragEvent<HTMLDivElement>) => {
+    e.preventDefault();
+    setDragOver(false);
+    addFiles(e.dataTransfer.files);
+  };
+
   return (
     <div>
       <h2 className="text-[18px] font-semibold text-ink-900 mb-1">Upload Documents</h2>
@@ -287,15 +348,91 @@ function Step3({ data, update }: StepProps) {
         You can skip this step and add documents later from the Data Room tab.
       </div>
 
-      <div className="border-2 border-dashed border-ink-300 rounded-lg py-12 px-6 text-center">
+      <input
+        ref={inputRef}
+        type="file"
+        multiple
+        accept={accept}
+        className="hidden"
+        onChange={(e) => {
+          addFiles(e.target.files);
+          // Reset so picking the same file again still fires onChange.
+          e.target.value = '';
+        }}
+      />
+
+      <div
+        role="button"
+        tabIndex={0}
+        onClick={() => inputRef.current?.click()}
+        onKeyDown={(e) => {
+          if (e.key === 'Enter' || e.key === ' ') {
+            e.preventDefault();
+            inputRef.current?.click();
+          }
+        }}
+        onDragOver={(e) => { e.preventDefault(); setDragOver(true); }}
+        onDragLeave={() => setDragOver(false)}
+        onDrop={onDrop}
+        className={cn(
+          'border-2 border-dashed rounded-lg py-12 px-6 text-center cursor-pointer transition-colors',
+          dragOver ? 'border-brand-500 bg-brand-50' : 'border-ink-300 hover:border-brand-500 hover:bg-brand-50/40',
+        )}
+      >
         <UploadCloud size={36} className="text-ink-400 mx-auto mb-3" />
-        <div className="text-[14px] font-medium text-ink-900">Drag & drop files here</div>
-        <div className="text-[12px] text-ink-500 mt-1">or click to browse</div>
-        <Button variant="primary" size="sm" className="mt-4">Select Files</Button>
-        <div className="text-[11px] text-ink-500 mt-3">Supported: PDF, Excel, CSV, Word documents</div>
+        <div className="text-[14px] font-medium text-ink-900">
+          {dragOver ? 'Drop to add files' : 'Drag & drop files here'}
+        </div>
+        <div className="text-[12px] text-ink-500 mt-1">or click anywhere in this box to browse</div>
+        <Button
+          variant="primary"
+          size="sm"
+          className="mt-4"
+          onClick={(e) => {
+            e.stopPropagation();
+            inputRef.current?.click();
+          }}
+        >
+          Select Files
+        </Button>
+        <div className="text-[11px] text-ink-500 mt-3">Supported: PDF, Excel, CSV, Word</div>
       </div>
 
-      <p className="text-[12px] text-ink-500 mt-4 text-center">You can skip this step and upload documents later</p>
+      {data.docs.length > 0 && (
+        <div className="mt-5">
+          <div className="text-[11.5px] font-semibold text-ink-700 mb-2 uppercase tracking-wide">
+            Selected · {data.docs.length} file{data.docs.length === 1 ? '' : 's'}
+          </div>
+          <div className="space-y-1.5">
+            {data.docs.map((f, i) => (
+              <div
+                key={`${f.name}-${f.size}-${i}`}
+                className="flex items-center gap-3 px-3 py-2 bg-white border border-border rounded-md"
+              >
+                <UploadCloud size={14} className="text-brand-500 flex-shrink-0" />
+                <div className="flex-1 min-w-0">
+                  <div className="text-[12.5px] font-medium text-ink-900 truncate">{f.name}</div>
+                  <div className="text-[11px] text-ink-500">
+                    {(f.size / 1024).toFixed(1)} KB
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => removeAt(i)}
+                  className="text-ink-400 hover:text-danger-700 text-[11.5px] px-2 py-1"
+                  aria-label={`Remove ${f.name}`}
+                >
+                  Remove
+                </button>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      <p className="text-[12px] text-ink-500 mt-4 text-center">
+        Files upload automatically after you click <strong>Create Shell Deal</strong> on the review step. You can also add more from the Data Room tab later.
+      </p>
     </div>
   );
 }
