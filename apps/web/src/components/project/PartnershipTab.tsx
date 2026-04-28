@@ -8,7 +8,11 @@ import { useToast } from '@/components/ui/Toast';
 import EngineHeader from './EngineHeader';
 import EngineRightRail from './EngineRightRail';
 import EngineLegend from './EngineLegend';
-import { fmtCurrency, cn } from '@/lib/format';
+import EngineRunHistory from './EngineRunHistory';
+import WhatJustHappened from './WhatJustHappened';
+import { fmtCurrency, fmtPct, cn } from '@/lib/format';
+import { getEngineField, useEngineOutputs } from '@/lib/hooks/useEngineOutputs';
+import { useFlash } from '@/lib/hooks/useFlash';
 
 const subTabs = ['Summary', 'Waterfall Structure', 'Distribution Timeline', 'Returns Summary'];
 
@@ -27,6 +31,19 @@ export default function PartnershipTab({ projectId }: { projectId: number | stri
   const params = useParams();
   const dealId = (params?.id as string | undefined) ?? '';
   const isKimptonDemo = projectId === 7;
+  const { outputs, previous } = useEngineOutputs(dealId);
+  const [computing, setComputing] = useState(false);
+  const [runToken, setRunToken] = useState<number | null>(null);
+
+  // Worker overrides for the Summary KPIs.
+  const wGpIrr = getEngineField<number>(outputs, 'partnership', 'gp_irr');
+  const wLpIrr = getEngineField<number>(outputs, 'partnership', 'lp_irr');
+  const wPromote = getEngineField<number>(outputs, 'partnership', 'promote_amount');
+  const gpIrrLabel = wGpIrr != null ? fmtPct(wGpIrr, 2) : '42.18%';
+  const lpIrrLabel = wLpIrr != null ? fmtPct(wLpIrr, 2) : '20.45%';
+  const promoteLabel = wPromote != null
+    ? fmtCurrency(wPromote, { compact: true })
+    : fmtCurrency(2_840_000, { compact: true });
 
   if (!isKimptonDemo) {
     return (
@@ -39,6 +56,11 @@ export default function PartnershipTab({ projectId }: { projectId: number | stri
             dependsOn="Returns"
             dealId={dealId}
             engineName="partnership"
+            onRunStart={() => setComputing(true)}
+            onRunComplete={() => {
+              setComputing(false);
+              setRunToken(Date.now());
+            }}
           />
           <EngineLegend />
           <Card className="p-16 text-center">
@@ -58,6 +80,7 @@ export default function PartnershipTab({ projectId }: { projectId: number | stri
               Run Partnership Engine
             </Button>
           </Card>
+          <EngineRunHistory dealId={dealId} />
         </div>
         <EngineRightRail />
       </div>
@@ -75,6 +98,20 @@ export default function PartnershipTab({ projectId }: { projectId: number | stri
         complete
         dealId={dealId}
         engineName="partnership"
+        runMode="all"
+        onRunStart={() => setComputing(true)}
+        onRunComplete={() => {
+          setComputing(false);
+          setRunToken(Date.now());
+        }}
+      />
+
+      <WhatJustHappened
+        engine="partnership"
+        engineLabel="Partnership"
+        outputs={outputs}
+        previous={previous}
+        runToken={runToken}
       />
 
       <div className="flex items-center gap-1 mb-3 border-b border-border">
@@ -91,11 +128,11 @@ export default function PartnershipTab({ projectId }: { projectId: number | stri
       <EngineLegend />
 
       {tab === 'Summary' && (
-        <>
+        <div className={cn(computing && 'relative pointer-events-none opacity-60')}>
           <div className="grid grid-cols-4 gap-4 mb-5">
-            <KPI label="GP LIRR (Net to Sponsor)" value="42.18%" />
-            <KPI label="LP LIRR (Net to Investors)" value="20.45%" />
-            <KPI label="GP Profit (Carry)" value={fmtCurrency(2_840_000, { compact: true })} />
+            <KPI label="GP LIRR (Net to Sponsor)" value={gpIrrLabel} flashKey={gpIrrLabel} />
+            <KPI label="LP LIRR (Net to Investors)" value={lpIrrLabel} flashKey={lpIrrLabel} />
+            <KPI label="GP Profit (Carry)" value={promoteLabel} flashKey={promoteLabel} />
             <KPI label="Deal Profit (Levered)" value={fmtCurrency(22_120_000, { compact: true })} />
           </div>
 
@@ -180,7 +217,15 @@ export default function PartnershipTab({ projectId }: { projectId: number | stri
               </tbody>
             </table>
           </Card>
-        </>
+          {computing && (
+            <div className="absolute inset-0 bg-bg/60 backdrop-blur-[1px] flex items-start justify-center pt-12 rounded-md">
+              <span className="inline-flex items-center gap-2 px-3 py-1.5 bg-white border border-border rounded-md shadow-card text-[12.5px] font-medium text-ink-700">
+                <span className="w-1.5 h-1.5 rounded-full bg-brand-500 animate-pulse" />
+                Recomputing…
+              </span>
+            </div>
+          )}
+        </div>
       )}
 
       {tab === 'Waterfall Structure' && (
@@ -255,15 +300,17 @@ export default function PartnershipTab({ projectId }: { projectId: number | stri
           </Card>
         </div>
       )}
+      <EngineRunHistory dealId={dealId} seedDemo />
       </div>
       <EngineRightRail />
     </div>
   );
 }
 
-function KPI({ label, value }: { label: string; value: string }) {
+function KPI({ label, value, flashKey }: { label: string; value: string; flashKey?: unknown }) {
+  const flash = useFlash(flashKey ?? value);
   return (
-    <Card className="p-4">
+    <Card className={cn('p-4', flash && 'value-flash')}>
       <div className="text-[10.5px] text-ink-500 uppercase tracking-wide">{label}</div>
       <div className="text-[20px] font-semibold tabular-nums mt-1 text-ink-900">{value}</div>
     </Card>

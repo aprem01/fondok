@@ -11,8 +11,10 @@ import { Button } from '@/components/ui/Button';
 import EngineHeader from './EngineHeader';
 import EngineRightRail from './EngineRightRail';
 import EngineLegend from './EngineLegend';
+import EngineRunHistory from './EngineRunHistory';
 import { kimptonAnglerOverview } from '@/lib/mockData';
 import { fmtCurrency, fmtMillions, cn } from '@/lib/format';
+import { useFlash } from '@/lib/hooks/useFlash';
 
 const subTabs = ['Cash Flow Summary', 'Levered Detail', 'Unlevered Detail', 'Distributions'];
 
@@ -87,6 +89,7 @@ export default function CashFlowTab({ projectId }: { projectId: number }) {
   const [tab, setTab] = useState('Cash Flow Summary');
   const params = useParams();
   const dealId = (params?.id as string | undefined) ?? '';
+  const [computing, setComputing] = useState(false);
 
   if (projectId !== 7) {
     return (
@@ -99,6 +102,8 @@ export default function CashFlowTab({ projectId }: { projectId: number }) {
             dependsOn="P&L"
             dealId={dealId}
             engineName="returns"
+            onRunStart={() => setComputing(true)}
+            onRunComplete={() => setComputing(false)}
           />
           <EngineLegend />
           <Card className="p-16 text-center">
@@ -109,6 +114,7 @@ export default function CashFlowTab({ projectId }: { projectId: number }) {
             <p className="text-[12.5px] text-ink-500 mt-1">Run the cash flow engine to populate levered and unlevered schedules.</p>
             <Button variant="primary" size="sm" className="mt-4">Run Model</Button>
           </Card>
+          <EngineRunHistory dealId={dealId} />
         </div>
         <EngineRightRail />
       </div>
@@ -132,13 +138,16 @@ export default function CashFlowTab({ projectId }: { projectId: number }) {
         complete
         dealId={dealId}
         engineName="returns"
+        runMode="all"
+        onRunStart={() => setComputing(true)}
+        onRunComplete={() => setComputing(false)}
       />
 
-      <div className="grid grid-cols-4 gap-4 mb-5">
-        <KPI label="5-Yr Levered CF" value={fmtMillions(sumLevered, 2)} tone="green" />
-        <KPI label="5-Yr Unlevered CF" value={fmtMillions(sumUnlevered, 2)} />
-        <KPI label="Avg Cash-on-Cash" value={`${(avgCoC * 100).toFixed(1)}%`} />
-        <KPI label="Cumulative Distributions" value={fmtMillions(cumulativeDist, 2)} tone="green" />
+      <div className={cn('grid grid-cols-4 gap-4 mb-5', computing && 'pointer-events-none opacity-60')}>
+        <KPI label="5-Yr Levered CF" value={fmtMillions(sumLevered, 2)} tone="green" flashKey={sumLevered} />
+        <KPI label="5-Yr Unlevered CF" value={fmtMillions(sumUnlevered, 2)} flashKey={sumUnlevered} />
+        <KPI label="Avg Cash-on-Cash" value={`${(avgCoC * 100).toFixed(1)}%`} flashKey={avgCoC} />
+        <KPI label="Cumulative Distributions" value={fmtMillions(cumulativeDist, 2)} tone="green" flashKey={cumulativeDist} />
       </div>
 
       <div className="flex items-center gap-1 mb-3 border-b border-border">
@@ -154,10 +163,21 @@ export default function CashFlowTab({ projectId }: { projectId: number }) {
       </div>
       <EngineLegend />
 
-      {tab === 'Cash Flow Summary' && <Summary />}
-      {tab === 'Levered Detail' && <LeveredDetail />}
-      {tab === 'Unlevered Detail' && <UnleveredDetail />}
-      {tab === 'Distributions' && <Distributions />}
+      <div className={cn(computing && 'relative pointer-events-none opacity-60')}>
+        {tab === 'Cash Flow Summary' && <Summary />}
+        {tab === 'Levered Detail' && <LeveredDetail />}
+        {tab === 'Unlevered Detail' && <UnleveredDetail />}
+        {tab === 'Distributions' && <Distributions />}
+        {computing && (
+          <div className="absolute inset-0 bg-bg/60 backdrop-blur-[1px] flex items-start justify-center pt-12 rounded-md">
+            <span className="inline-flex items-center gap-2 px-3 py-1.5 bg-white border border-border rounded-md shadow-card text-[12.5px] font-medium text-ink-700">
+              <span className="w-1.5 h-1.5 rounded-full bg-brand-500 animate-pulse" />
+              Recomputing…
+            </span>
+          </div>
+        )}
+      </div>
+      <EngineRunHistory dealId={dealId} seedDemo />
       </div>
       <EngineRightRail />
     </div>
@@ -494,9 +514,10 @@ function Distributions() {
   );
 }
 
-function KPI({ label, value, tone }: { label: string; value: string; tone?: 'green' | 'amber' | 'red' }) {
+function KPI({ label, value, tone, flashKey }: { label: string; value: string; tone?: 'green' | 'amber' | 'red'; flashKey?: unknown }) {
+  const flash = useFlash(flashKey ?? value);
   return (
-    <Card className="p-4">
+    <Card className={cn('p-4', flash && 'value-flash')}>
       <div className="text-[10.5px] text-ink-500 uppercase tracking-wide">{label}</div>
       <div className={cn(
         'text-[20px] font-semibold tabular-nums mt-1',

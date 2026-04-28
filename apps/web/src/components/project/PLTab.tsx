@@ -11,8 +11,12 @@ import { Button } from '@/components/ui/Button';
 import EngineHeader from './EngineHeader';
 import EngineRightRail from './EngineRightRail';
 import EngineLegend from './EngineLegend';
+import EngineRunHistory from './EngineRunHistory';
+import WhatJustHappened from './WhatJustHappened';
 import { kimptonAnglerOverview } from '@/lib/mockData';
 import { fmtCurrency, fmtMillions, cn } from '@/lib/format';
+import { useEngineOutputs } from '@/lib/hooks/useEngineOutputs';
+import { useFlash } from '@/lib/hooks/useFlash';
 
 const subTabs = ['Operating Statement', 'Departmental', 'Per-Key Metrics', 'Historical vs Projected'];
 
@@ -113,6 +117,9 @@ export default function PLTab({ projectId }: { projectId: number }) {
   const [tab, setTab] = useState('Operating Statement');
   const params = useParams();
   const dealId = (params?.id as string | undefined) ?? '';
+  const { outputs, previous } = useEngineOutputs(dealId);
+  const [computing, setComputing] = useState(false);
+  const [runToken, setRunToken] = useState<number | null>(null);
 
   if (projectId !== 7) {
     return (
@@ -126,6 +133,11 @@ export default function PLTab({ projectId }: { projectId: number }) {
             dealId={dealId}
             engineName="expense"
             runMode="all"
+            onRunStart={() => setComputing(true)}
+            onRunComplete={() => {
+              setComputing(false);
+              setRunToken(Date.now());
+            }}
           />
           <EngineLegend />
           <Card className="p-16 text-center">
@@ -136,6 +148,7 @@ export default function PLTab({ projectId }: { projectId: number }) {
             <p className="text-[12.5px] text-ink-500 mt-1">Run the P&L engine to populate the operating statement.</p>
             <Button variant="primary" size="sm" className="mt-4">Run Model</Button>
           </Card>
+          <EngineRunHistory dealId={dealId} />
         </div>
         <EngineRightRail />
       </div>
@@ -160,13 +173,26 @@ export default function PLTab({ projectId }: { projectId: number }) {
         dealId={dealId}
         engineName="expense"
         runMode="all"
+        onRunStart={() => setComputing(true)}
+        onRunComplete={() => {
+          setComputing(false);
+          setRunToken(Date.now());
+        }}
       />
 
-      <div className="grid grid-cols-4 gap-4 mb-5">
-        <KPI label="Year 1 Revenue" value={fmtMillions(y1Rev, 2)} />
-        <KPI label="Year 1 NOI" value={fmtMillions(y1NOI, 2)} tone="green" />
-        <KPI label="NOI Margin" value={`${(margin * 100).toFixed(1)}%`} />
-        <KPI label="5-Year NOI CAGR" value={`${(noiCagr * 100).toFixed(1)}%`} tone="green" />
+      <WhatJustHappened
+        engine="expense"
+        engineLabel="P&L"
+        outputs={outputs}
+        previous={previous}
+        runToken={runToken}
+      />
+
+      <div className={cn('grid grid-cols-4 gap-4 mb-5', computing && 'pointer-events-none opacity-60')}>
+        <KPI label="Year 1 Revenue" value={fmtMillions(y1Rev, 2)} flashKey={y1Rev} />
+        <KPI label="Year 1 NOI" value={fmtMillions(y1NOI, 2)} tone="green" flashKey={y1NOI} />
+        <KPI label="NOI Margin" value={`${(margin * 100).toFixed(1)}%`} flashKey={margin} />
+        <KPI label="5-Year NOI CAGR" value={`${(noiCagr * 100).toFixed(1)}%`} tone="green" flashKey={noiCagr} />
       </div>
 
       <div className="flex items-center gap-1 mb-3 border-b border-border">
@@ -182,10 +208,21 @@ export default function PLTab({ projectId }: { projectId: number }) {
       </div>
       <EngineLegend />
 
-      {tab === 'Operating Statement' && <OperatingStatement />}
-      {tab === 'Departmental' && <Departmental />}
-      {tab === 'Per-Key Metrics' && <PerKey />}
-      {tab === 'Historical vs Projected' && <HistoricalProjected />}
+      <div className={cn(computing && 'relative pointer-events-none opacity-60')}>
+        {tab === 'Operating Statement' && <OperatingStatement />}
+        {tab === 'Departmental' && <Departmental />}
+        {tab === 'Per-Key Metrics' && <PerKey />}
+        {tab === 'Historical vs Projected' && <HistoricalProjected />}
+        {computing && (
+          <div className="absolute inset-0 bg-bg/60 backdrop-blur-[1px] flex items-start justify-center pt-12 rounded-md">
+            <span className="inline-flex items-center gap-2 px-3 py-1.5 bg-white border border-border rounded-md shadow-card text-[12.5px] font-medium text-ink-700">
+              <span className="w-1.5 h-1.5 rounded-full bg-brand-500 animate-pulse" />
+              Recomputing…
+            </span>
+          </div>
+        )}
+      </div>
+      <EngineRunHistory dealId={dealId} seedDemo />
       </div>
       <EngineRightRail />
     </div>
@@ -496,9 +533,10 @@ function HistoricalProjected() {
   );
 }
 
-function KPI({ label, value, tone }: { label: string; value: string; tone?: 'green' | 'amber' | 'red' }) {
+function KPI({ label, value, tone, flashKey }: { label: string; value: string; tone?: 'green' | 'amber' | 'red'; flashKey?: unknown }) {
+  const flash = useFlash(flashKey ?? value);
   return (
-    <Card className="p-4">
+    <Card className={cn('p-4', flash && 'value-flash')}>
       <div className="text-[10.5px] text-ink-500 uppercase tracking-wide">{label}</div>
       <div className={cn(
         'text-[20px] font-semibold tabular-nums mt-1',

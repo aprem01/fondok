@@ -8,9 +8,12 @@ import { useToast } from '@/components/ui/Toast';
 import EngineHeader from './EngineHeader';
 import EngineRightRail from './EngineRightRail';
 import EngineLegend from './EngineLegend';
+import EngineRunHistory from './EngineRunHistory';
+import WhatJustHappened from './WhatJustHappened';
 import { kimptonAnglerOverview } from '@/lib/mockData';
 import { fmtCurrency, fmtPct, cn } from '@/lib/format';
 import { useAssumptionsOptional } from '@/stores/assumptionsStore';
+import { useEngineOutputs } from '@/lib/hooks/useEngineOutputs';
 
 const subTabs = ['Deal Summary', 'Sources & Uses', 'Timeline'];
 
@@ -22,6 +25,9 @@ export default function InvestmentTab({ projectId }: { projectId: number | strin
   const dealId = (params?.id as string | undefined) ?? '';
   const { toast } = useToast();
   const isKimptonDemo = projectId === 7;
+  const { outputs, previous } = useEngineOutputs(dealId);
+  const [computing, setComputing] = useState(false);
+  const [runToken, setRunToken] = useState<number | null>(null);
 
   if (!isKimptonDemo) {
     return (
@@ -35,6 +41,11 @@ export default function InvestmentTab({ projectId }: { projectId: number | strin
             dealId={dealId}
             engineName="capital"
             runMode="all"
+            onRunStart={() => setComputing(true)}
+            onRunComplete={() => {
+              setComputing(false);
+              setRunToken(Date.now());
+            }}
           />
           <EngineLegend />
           <Card className="p-16 text-center">
@@ -54,6 +65,7 @@ export default function InvestmentTab({ projectId }: { projectId: number | strin
               Run Investment Engine
             </Button>
           </Card>
+          <EngineRunHistory dealId={dealId} />
         </div>
         <EngineRightRail />
       </div>
@@ -72,6 +84,19 @@ export default function InvestmentTab({ projectId }: { projectId: number | strin
         dealId={dealId}
         engineName="capital"
         runMode="all"
+        onRunStart={() => setComputing(true)}
+        onRunComplete={() => {
+          setComputing(false);
+          setRunToken(Date.now());
+        }}
+      />
+
+      <WhatJustHappened
+        engine="capital"
+        engineLabel="Capital"
+        outputs={outputs}
+        previous={previous}
+        runToken={runToken}
       />
 
       <div className="flex items-center gap-1 mb-3 border-b border-border">
@@ -86,6 +111,8 @@ export default function InvestmentTab({ projectId }: { projectId: number | strin
         ))}
       </div>
       <EngineLegend />
+
+      <div className={cn(computing && 'relative pointer-events-none opacity-60')}>
 
       {tab === 'Deal Summary' && (
         <>
@@ -216,6 +243,16 @@ export default function InvestmentTab({ projectId }: { projectId: number | strin
           </table>
         </Card>
       )}
+      {computing && (
+        <div className="absolute inset-0 bg-bg/60 backdrop-blur-[1px] flex items-start justify-center pt-12 rounded-md">
+          <span className="inline-flex items-center gap-2 px-3 py-1.5 bg-white border border-border rounded-md shadow-card text-[12.5px] font-medium text-ink-700">
+            <span className="w-1.5 h-1.5 rounded-full bg-brand-500 animate-pulse" />
+            Recomputing…
+          </span>
+        </div>
+      )}
+      </div>
+      <EngineRunHistory dealId={dealId} seedDemo />
       </div>
       <EngineRightRail />
     </div>

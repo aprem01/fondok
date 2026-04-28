@@ -8,10 +8,14 @@ import { useToast } from '@/components/ui/Toast';
 import EngineHeader from './EngineHeader';
 import EngineRightRail from './EngineRightRail';
 import EngineLegend from './EngineLegend';
+import EngineRunHistory from './EngineRunHistory';
+import WhatJustHappened from './WhatJustHappened';
 import { dealScenarios, kimptonAnglerOverview } from '@/lib/mockData';
 import { fmtPct, cn } from '@/lib/format';
 import { useAssumptionsOptional } from '@/stores/assumptionsStore';
 import { defaultSensitivities, SensitivityMatrix } from '@/lib/engines';
+import { getEngineField, useEngineOutputs } from '@/lib/hooks/useEngineOutputs';
+import { useFlash } from '@/lib/hooks/useFlash';
 
 const subTabs = ['Returns Summary', 'Sensitivities'];
 
@@ -22,6 +26,9 @@ export default function ReturnsTab({ projectId }: { projectId: number | string }
   const dealId = (params?.id as string | undefined) ?? '';
   const { toast } = useToast();
   const isKimptonDemo = projectId === 7;
+  const { outputs, previous } = useEngineOutputs(dealId);
+  const [computing, setComputing] = useState(false);
+  const [runToken, setRunToken] = useState<number | null>(null);
 
   if (!isKimptonDemo) {
     return (
@@ -34,6 +41,10 @@ export default function ReturnsTab({ projectId }: { projectId: number | string }
             dependsOn="Cash Flow"
             dealId={dealId}
             engineName="returns"
+            onRunComplete={() => {
+              setComputing(false);
+              setRunToken(Date.now());
+            }}
           />
           <EngineLegend />
           <Card className="p-16 text-center">
@@ -53,6 +64,7 @@ export default function ReturnsTab({ projectId }: { projectId: number | string }
               Run Returns Engine
             </Button>
           </Card>
+          <EngineRunHistory dealId={dealId} />
         </div>
         <EngineRightRail />
       </div>
@@ -72,6 +84,12 @@ export default function ReturnsTab({ projectId }: { projectId: number | string }
         complete
         dealId={dealId}
         engineName="returns"
+        runMode="all"
+        onRunStart={() => setComputing(true)}
+        onRunComplete={() => {
+          setComputing(false);
+          setRunToken(Date.now());
+        }}
       />
 
       <div className="flex items-center gap-1 mb-3 border-b border-border">
@@ -87,8 +105,29 @@ export default function ReturnsTab({ projectId }: { projectId: number | string }
       </div>
       <EngineLegend />
 
-      {tab === 'Returns Summary' && (ctx ? <LiveReturnsSummary /> : <StaticReturnsSummary />)}
-      {tab === 'Sensitivities' && (ctx ? <LiveSensitivities /> : <StaticSensitivities />)}
+      <WhatJustHappened
+        engine="returns"
+        engineLabel="Returns"
+        outputs={outputs}
+        previous={previous}
+        runToken={runToken}
+      />
+
+      <div className={cn(computing && 'relative pointer-events-none opacity-60')}>
+        {tab === 'Returns Summary' && (
+          ctx ? <LiveReturnsSummary outputs={outputs} /> : <StaticReturnsSummary outputs={outputs} />
+        )}
+        {tab === 'Sensitivities' && (ctx ? <LiveSensitivities /> : <StaticSensitivities />)}
+        {computing && (
+          <div className="absolute inset-0 bg-bg/60 backdrop-blur-[1px] flex items-center justify-center text-[12.5px] font-medium text-ink-700 rounded-md">
+            <span className="inline-flex items-center gap-2 px-3 py-1.5 bg-white border border-border rounded-md shadow-card">
+              <span className="w-1.5 h-1.5 rounded-full bg-brand-500 animate-pulse" />
+              Recomputing…
+            </span>
+          </div>
+        )}
+      </div>
+      <EngineRunHistory dealId={dealId} seedDemo />
       </div>
       <EngineRightRail />
     </div>
@@ -99,16 +138,23 @@ export default function ReturnsTab({ projectId }: { projectId: number | string }
 // Live (Kimpton) version — wired to the assumptions store + engine.
 // ───────────────────────────────────────────────────────────────────
 
-function LiveReturnsSummary() {
+function LiveReturnsSummary({ outputs }: { outputs: ReturnType<typeof useEngineOutputs>['outputs'] }) {
   const { assumptions, setAssumption, model } = useAssumptionsOptional()!;
+  // Worker overrides — fall back to live in-page model when worker has no data.
+  const wIrr = getEngineField<number>(outputs, 'returns', 'levered_irr');
+  const wMult = getEngineField<number>(outputs, 'returns', 'equity_multiple');
+  const wCoC = getEngineField<number>(outputs, 'returns', 'cash_on_cash_year_one');
+  const irr = wIrr ?? model.leveredIrr;
+  const mult = wMult ?? model.equityMultiple;
+  const coc = wCoC ?? model.cashOnCash;
 
   return (
     <>
       <div className="grid grid-cols-4 gap-4 mb-5">
-        <KPI label="Levered IRR" value={fmtPct(model.leveredIrr, 2)} />
-        <KPI label="Equity Multiple" value={`${model.equityMultiple.toFixed(2)}x`} />
-        <KPI label="Cash-on-Cash" value={fmtPct(model.cashOnCash, 2)} />
-        <KPI label="Hold Period" value={`${assumptions.holdYears} Years`} />
+        <KPI label="Levered IRR" value={fmtPct(irr, 2)} flashKey={irr} />
+        <KPI label="Equity Multiple" value={`${mult.toFixed(2)}x`} flashKey={mult} />
+        <KPI label="Cash-on-Cash" value={fmtPct(coc, 2)} flashKey={coc} />
+        <KPI label="Hold Period" value={`${assumptions.holdYears} Years`} flashKey={assumptions.holdYears} />
       </div>
 
       <Card className="p-5 mb-5">
@@ -270,15 +316,21 @@ function SensitivityCard({ matrix, title }: { matrix: SensitivityMatrix; title: 
 // Static fallback for non-Kimpton deals (preserves original look).
 // ───────────────────────────────────────────────────────────────────
 
-function StaticReturnsSummary() {
+function StaticReturnsSummary({ outputs }: { outputs: ReturnType<typeof useEngineOutputs>['outputs'] }) {
   const o = kimptonAnglerOverview;
+  const wIrr = getEngineField<number>(outputs, 'returns', 'levered_irr');
+  const wMult = getEngineField<number>(outputs, 'returns', 'equity_multiple');
+  const wCoC = getEngineField<number>(outputs, 'returns', 'cash_on_cash_year_one');
+  const irr = wIrr ?? o.returns.leveredIRR;
+  const mult = wMult ?? o.returns.equityMultiple;
+  const cocLabel = wCoC != null ? fmtPct(wCoC, 2) : '4.6%';
   return (
     <>
       <div className="grid grid-cols-4 gap-4 mb-5">
-        <KPI label="Levered IRR" value={fmtPct(o.returns.leveredIRR, 2)} />
-        <KPI label="Equity Multiple" value={`${o.returns.equityMultiple.toFixed(2)}x`} />
-        <KPI label="Cash-on-Cash" value="4.6%" />
-        <KPI label="Hold Period" value={`${o.returns.hold} Years`} />
+        <KPI label="Levered IRR" value={fmtPct(irr, 2)} flashKey={irr} />
+        <KPI label="Equity Multiple" value={`${mult.toFixed(2)}x`} flashKey={mult} />
+        <KPI label="Cash-on-Cash" value={cocLabel} flashKey={cocLabel} />
+        <KPI label="Hold Period" value={`${o.returns.hold} Years`} flashKey={o.returns.hold} />
       </div>
       <Card className="p-5">
         <h3 className="text-[14px] font-semibold text-ink-900 mb-4">Scenario Analysis</h3>
@@ -351,9 +403,10 @@ function StaticSensitivities() {
 // Shared bits
 // ───────────────────────────────────────────────────────────────────
 
-function KPI({ label, value }: { label: string; value: string }) {
+function KPI({ label, value, flashKey }: { label: string; value: string; flashKey?: unknown }) {
+  const flash = useFlash(flashKey ?? value);
   return (
-    <Card className="p-4">
+    <Card className={cn('p-4', flash && 'value-flash')}>
       <div className="text-[10.5px] text-ink-500 uppercase tracking-wide">{label}</div>
       <div className="text-[22px] font-semibold tabular-nums mt-1 text-brand-700">{value}</div>
     </Card>

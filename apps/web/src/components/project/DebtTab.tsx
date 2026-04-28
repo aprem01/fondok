@@ -9,8 +9,12 @@ import { useToast } from '@/components/ui/Toast';
 import EngineHeader from './EngineHeader';
 import EngineRightRail from './EngineRightRail';
 import EngineLegend from './EngineLegend';
+import EngineRunHistory from './EngineRunHistory';
+import WhatJustHappened from './WhatJustHappened';
 import { kimptonAnglerOverview } from '@/lib/mockData';
 import { fmtCurrency, fmtPct, cn } from '@/lib/format';
+import { getEngineField, useEngineOutputs } from '@/lib/hooks/useEngineOutputs';
+import { useFlash } from '@/lib/hooks/useFlash';
 
 const subTabs = ['Debt Summary', 'Rates & Covenants', 'Term & Refinance', 'Debt Schedule'];
 
@@ -21,6 +25,19 @@ export default function DebtTab({ projectId }: { projectId: number | string }) {
   const dealId = (params?.id as string | undefined) ?? '';
   const { toast } = useToast();
   const isKimptonDemo = projectId === 7;
+  const { outputs, previous } = useEngineOutputs(dealId);
+  const [computing, setComputing] = useState(false);
+  const [runToken, setRunToken] = useState<number | null>(null);
+
+  // Worker overrides for the KPI strip — fall back to mock when missing.
+  const wLoan = getEngineField<number>(outputs, 'debt', 'loan_amount');
+  const wDscr = getEngineField<number>(outputs, 'debt', 'year_one_dscr');
+  const wDy = getEngineField<number>(outputs, 'debt', 'year_one_debt_yield');
+  const wLtc = getEngineField<number>(outputs, 'capital', 'ltc');
+  const loanAmount = wLoan ?? o.financing.loanAmount;
+  const ltc = wLtc ?? o.financing.ltv;
+  const dscr = wDscr ?? o.financing.dscr;
+  const debtYield = wDy != null ? fmtPct(wDy, 1) : '6.8%';
 
   if (!isKimptonDemo) {
     return (
@@ -33,6 +50,11 @@ export default function DebtTab({ projectId }: { projectId: number | string }) {
             dependsOn="P&L"
             dealId={dealId}
             engineName="debt"
+            onRunStart={() => setComputing(true)}
+            onRunComplete={() => {
+              setComputing(false);
+              setRunToken(Date.now());
+            }}
           />
           <EngineLegend />
           <Card className="p-16 text-center">
@@ -52,6 +74,7 @@ export default function DebtTab({ projectId }: { projectId: number | string }) {
               Run Debt Engine
             </Button>
           </Card>
+          <EngineRunHistory dealId={dealId} />
         </div>
         <EngineRightRail />
       </div>
@@ -69,6 +92,20 @@ export default function DebtTab({ projectId }: { projectId: number | string }) {
         complete
         dealId={dealId}
         engineName="debt"
+        runMode="all"
+        onRunStart={() => setComputing(true)}
+        onRunComplete={() => {
+          setComputing(false);
+          setRunToken(Date.now());
+        }}
+      />
+
+      <WhatJustHappened
+        engine="debt"
+        engineLabel="Debt"
+        outputs={outputs}
+        previous={previous}
+        runToken={runToken}
       />
 
       <div className="flex items-center gap-1 mb-3 border-b border-border">
@@ -85,12 +122,12 @@ export default function DebtTab({ projectId }: { projectId: number | string }) {
       <EngineLegend />
 
       {tab === 'Debt Summary' && (
-        <>
+        <div className={cn(computing && 'relative pointer-events-none opacity-60')}>
           <div className="grid grid-cols-4 gap-4 mb-5">
-            <KPI label="Total Debt" value={fmtCurrency(o.financing.loanAmount, { compact: true })} />
-            <KPI label="LTC" value={fmtPct(o.financing.ltv, 1)} />
-            <KPI label="DSCR" value={`${o.financing.dscr.toFixed(2)}x`} tone="green" />
-            <KPI label="Debt Yield" value="6.8%" tone="amber" />
+            <KPI label="Total Debt" value={fmtCurrency(loanAmount, { compact: true })} flashKey={loanAmount} />
+            <KPI label="LTC" value={fmtPct(ltc, 1)} flashKey={ltc} />
+            <KPI label="DSCR" value={`${dscr.toFixed(2)}x`} tone="green" flashKey={dscr} />
+            <KPI label="Debt Yield" value={debtYield} tone="amber" flashKey={debtYield} />
           </div>
           <div className="grid grid-cols-2 gap-5">
             <Panel title="Debt Summary" rows={[
@@ -136,7 +173,15 @@ export default function DebtTab({ projectId }: { projectId: number | string }) {
               </div>
             </Card>
           </div>
-        </>
+          {computing && (
+            <div className="absolute inset-0 bg-bg/60 backdrop-blur-[1px] flex items-start justify-center pt-12 rounded-md">
+              <span className="inline-flex items-center gap-2 px-3 py-1.5 bg-white border border-border rounded-md shadow-card text-[12.5px] font-medium text-ink-700">
+                <span className="w-1.5 h-1.5 rounded-full bg-brand-500 animate-pulse" />
+                Recomputing…
+              </span>
+            </div>
+          )}
+        </div>
       )}
 
       {tab === 'Rates & Covenants' && (
@@ -199,6 +244,8 @@ export default function DebtTab({ projectId }: { projectId: number | string }) {
         </>
       )}
 
+      {/* Other tab subviews keep static for now — engine wiring is on the
+          Summary KPI strip + the diff panel. */}
       {tab === 'Debt Schedule' && (
         <Card className="p-5">
           <h3 className="text-[13px] font-semibold text-ink-900 mb-3">Monthly Debt Service Schedule</h3>
@@ -236,15 +283,17 @@ export default function DebtTab({ projectId }: { projectId: number | string }) {
           </div>
         </Card>
       )}
+      <EngineRunHistory dealId={dealId} seedDemo />
       </div>
       <EngineRightRail />
     </div>
   );
 }
 
-function KPI({ label, value, tone }: { label: string; value: string; tone?: 'green' | 'amber' | 'red' }) {
+function KPI({ label, value, tone, flashKey }: { label: string; value: string; tone?: 'green' | 'amber' | 'red'; flashKey?: unknown }) {
+  const flash = useFlash(flashKey ?? value);
   return (
-    <Card className="p-4">
+    <Card className={cn('p-4', flash && 'value-flash')}>
       <div className="text-[10.5px] text-ink-500 uppercase tracking-wide">{label}</div>
       <div className={`text-[20px] font-semibold tabular-nums mt-1 ${
         tone === 'green' ? 'text-success-700' : tone === 'amber' ? 'text-warn-700' : tone === 'red' ? 'text-danger-700' : 'text-ink-900'
