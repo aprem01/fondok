@@ -1010,6 +1010,7 @@ async def _load_deal_payload(
     settings = get_settings()
 
     real_source_docs: list[AnalystSourceDocument] = []
+    real_payload_fields: dict[str, Any] | None = None
 
     if session is not None:
         # Confirm the deal exists in this tenant's DB before we even
@@ -1045,6 +1046,14 @@ async def _load_deal_payload(
             real_source_docs = await _load_source_documents(
                 session, deal_id=deal_id
             )
+            # Hydrate the rest of the Analyst payload (deal metadata,
+            # spread, engine outputs, deterministic variance report)
+            # from real DB state. We bias to real data wherever possible
+            # so the Analyst never grounds its numbers in the fixture
+            # while citing pages of a real T-12.
+            real_payload_fields = await _build_real_analyst_fields(
+                session, deal_id=deal_id
+            )
 
     deal = kimpton_deal()
     deal["id"] = deal_id
@@ -1070,6 +1079,20 @@ async def _load_deal_payload(
                 )
             )
 
+    if real_payload_fields is not None:
+        # Real-data path — every numeric input traces back to the deal's
+        # extractions / engine runs. If any layer is sparse the Analyst
+        # sees None / empty for that layer rather than a fixture lie.
+        return AnalystInput(
+            tenant_id=settings.DEFAULT_TENANT_ID,
+            deal_id=deal_id,
+            deal_data=real_payload_fields["deal_data"],
+            normalized_spread=real_payload_fields["normalized_spread"],
+            engine_results=real_payload_fields["engine_results"],
+            variance_report=real_payload_fields["variance_report"],
+            source_documents=docs,
+        )
+
     return AnalystInput(
         tenant_id=settings.DEFAULT_TENANT_ID,
         deal_id=deal_id,
@@ -1079,6 +1102,167 @@ async def _load_deal_payload(
         variance_report=None,
         source_documents=docs,
     )
+
+
+async def _build_real_analyst_fields(
+    session: AsyncSession, *, deal_id: str
+) -> dict[str, Any]:
+    """Hydrate the non-source-document fields of an ``AnalystInput`` from
+    real DB state.
+
+    Returns a dict with keys ``deal_data``, ``normalized_spread``,
+    ``engine_results``, ``variance_report``. Each individual field is
+    best-effort: extraction may be partial, engines may not have run,
+    variance may be empty if only one of (broker, actuals) exists. We
+    fall back to a None / empty value for that layer in those cases —
+    never to a fixture. The Analyst's prompt tolerates missing layers
+    (it'll just have less material to cite in the financial section).
+    """
+    # ── deal_data ─────────────────────────────────────────────────────
+    deal_data: dict[str, Any] = {"id": deal_id}
+    deal_row = (
+        await session.execute(
+            text(
+                """
+                SELECT name, city, keys, brand, service, positioning,
+                       deal_stage, return_profile, purchase_price, status
+                  FROM deals
+                 WHERE id = :id
+                """
+            ),
+            {"id": deal_id},
+        )
+    ).first()
+    if deal_row is not None:
+        m = deal_row._mapping
+        for col in (
+            "name",
+            "city",
+            "keys",
+            "brand",
+            "service",
+            "positioning",
+            "deal_stage",
+            "return_profile",
+            "purchase_price",
+            "status",
+        ):
+            value = m.get(col)
+            if value is None:
+                continue
+            # Coerce numerics so the prompt prints clean.
+            if col == "keys":
+                try:
+                    deal_data[col] = int(value)
+                except (TypeError, ValueError):
+                    deal_data[col] = value
+            elif col == "purchase_price":
+                try:
+                    deal_data[col] = float(value)
+                except (TypeError, ValueError):
+                    deal_data[col] = value
+            else:
+                deal_data[col] = value
+        if "city" in deal_data:
+            # ``location`` is what the fixture surfaces and downstream
+            # formatters look for — keep both shapes alive.
+            deal_data["location"] = deal_data["city"]
+
+    # ── broker + actuals (USALIFinancials) ─────────────────────────────
+    # ``_load_critic_inputs`` already does the heavy lifting of bucketing
+    # extracted fields by doc_type. Lazy import — documents.py imports
+    # from this module, so a top-level import would cycle.
+    from .documents import _load_critic_inputs
+
+    broker, actuals, _market_context, _keys = await _load_critic_inputs(
+        session, deal_id=deal_id
+    )
+
+    # Prefer T-12 actuals as the locked spread; fall back to broker so
+    # the Analyst still sees something to anchor the financial section
+    # when only an OM has been extracted.
+    spread = actuals if actuals is not None else broker
+
+    # ── engine_results ────────────────────────────────────────────────
+    # Pull every engine's latest persisted ``outputs`` blob; the prompt
+    # iterates a flat dict, so we surface only the ``outputs`` payload
+    # (not the run wrapper) keyed by engine name.
+    from ..services.engine_runner import get_latest_outputs
+
+    raw_engines = await get_latest_outputs(session, deal_id=deal_id)
+    engine_results: dict[str, Any] = {}
+    for name, envelope in raw_engines.items():
+        if not isinstance(envelope, dict):
+            continue
+        outputs = envelope.get("outputs")
+        if isinstance(outputs, dict) and outputs:
+            engine_results[name] = outputs
+
+    # ── variance_report ───────────────────────────────────────────────
+    # Deterministic flags only — no LLM narration here. The Analyst
+    # only needs the rule_id + delta to surface variances; per-flag
+    # narrative notes are a nice-to-have we skip to keep memo gen fast.
+    variance_report = None
+    if actuals is not None and broker is not None:
+        try:
+            from uuid import UUID as _UUID, uuid5 as _uuid5
+            from fondok_schemas.variance import VarianceReport
+            from ..agents.variance import (
+                VarianceBrokerField,
+                _build_flags,
+                _to_uuid as _variance_to_uuid,
+            )
+
+            # Mirror ``USALIFinancials`` onto the broker-side payload
+            # the variance builder consumes — one VarianceBrokerField
+            # per known field.
+            broker_fields: list[VarianceBrokerField] = []
+            for field_name, value in (
+                ("noi", broker.noi),
+                ("rooms_revenue", broker.rooms_revenue),
+                ("fb_revenue", broker.fb_revenue),
+                ("total_revenue", broker.total_revenue),
+                ("departmental_expenses", broker.dept_expenses.total),
+                ("undistributed_expenses", broker.undistributed.total),
+                ("gop", broker.gop),
+                ("mgmt_fee", broker.mgmt_fee),
+                ("ffe_reserve", broker.ffe_reserve),
+                ("fixed_charges", broker.fixed_charges.total),
+                ("insurance", broker.fixed_charges.insurance),
+                ("occupancy", broker.occupancy),
+                ("adr", broker.adr),
+                ("revpar", broker.revpar),
+            ):
+                if value is None:
+                    continue
+                try:
+                    broker_fields.append(
+                        VarianceBrokerField(field=field_name, value=float(value))
+                    )
+                except Exception:  # noqa: BLE001
+                    continue
+
+            deal_uuid = _variance_to_uuid(deal_id)
+            flags = _build_flags(
+                deal_uuid=deal_uuid,
+                actuals=actuals,
+                broker_fields=broker_fields,
+            )
+            variance_report = VarianceReport(deal_id=deal_uuid, flags=flags)
+        except Exception as exc:  # noqa: BLE001 - variance is best-effort
+            logger.warning(
+                "memo: variance build failed for deal=%s: %s — proceeding without flags",
+                deal_id,
+                exc,
+            )
+            variance_report = None
+
+    return {
+        "deal_data": deal_data,
+        "normalized_spread": spread,
+        "engine_results": engine_results,
+        "variance_report": variance_report,
+    }
 
 
 # Per-page excerpt cap. Opus 4.7 has 1M context, but every additional

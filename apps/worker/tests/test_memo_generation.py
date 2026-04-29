@@ -573,3 +573,245 @@ async def test_load_deal_payload_falls_back_to_fixture_without_session() -> None
     for d in payload.source_documents:
         assert d.document_id.startswith("doc-")
         assert d.doc_type == "reference"
+
+
+# ─────────────────── 7. Real numeric inputs replace fixture spread ───────────────────
+
+
+@pytest.mark.asyncio
+async def test_load_deal_payload_hydrates_real_spread_engines_variance() -> None:
+    """When EXTRACTED docs + extraction_results + engine_outputs all
+    exist on a deal, the Analyst payload must surface the deal's real
+    metadata, build a USALIFinancials spread from extracted T-12 fields,
+    pass real engine outputs, and emit a deterministic variance report
+    when both broker and actuals are available — never the Kimpton
+    fixture numbers underneath citations of a real PDF.
+    """
+    import json
+    from datetime import UTC, datetime
+
+    from app.api.deals import _load_deal_payload
+    from app.database import get_session_factory
+
+    deal_id = uuid4()
+    tenant_id = "00000000-0000-0000-0000-000000000001"
+
+    factory = get_session_factory()
+    async with factory() as session:
+        # Insert a deal with rich metadata so deal_data must come back
+        # as the real row, not the Kimpton fixture.
+        await session.execute(
+            text(
+                """
+                INSERT INTO deals (
+                    id, tenant_id, name, city, keys, brand, service,
+                    deal_stage, return_profile, status, ai_confidence,
+                    created_at, updated_at
+                ) VALUES (
+                    :id, :tenant, :name, :city, :keys, :brand, :service,
+                    :stage, :return_profile, 'Underwriting', 0.0, :ts, :ts
+                )
+                """
+            ),
+            {
+                "id": str(deal_id),
+                "tenant": tenant_id,
+                "name": "Coral Bay Resort",
+                "city": "Miami Beach",
+                "keys": 214,
+                "brand": "Marriott",
+                "service": "Full Service",
+                "stage": "LOI",
+                "return_profile": "Core+",
+                "ts": datetime.now(UTC),
+            },
+        )
+
+        # T-12 document with extracted USALI fields (actuals).
+        t12_doc_id = uuid4()
+        t12_extraction = {
+            "parser": "pymupdf",
+            "total_pages": 1,
+            "content_hash": "0" * 64,
+            "parsed_at": datetime.now(UTC).isoformat(),
+            "pages": [
+                {"page_num": 1, "text": "T-12 statement page", "tables": [], "metadata": {}}
+            ],
+        }
+        await session.execute(
+            text(
+                """
+                INSERT INTO documents (
+                    id, deal_id, tenant_id, filename, doc_type, status,
+                    uploaded_at, page_count, extraction_data
+                ) VALUES (
+                    :id, :deal, :tenant, 'coral-bay-T12.pdf', 'T12',
+                    'EXTRACTED', :ts, 1, :data
+                )
+                """
+            ),
+            {
+                "id": str(t12_doc_id),
+                "deal": str(deal_id),
+                "tenant": tenant_id,
+                "ts": datetime.now(UTC),
+                "data": json.dumps(t12_extraction),
+            },
+        )
+        # Actuals: T-12 USALI fields. ``_load_critic_inputs`` buckets
+        # T12 fields directly into the actuals side.
+        await session.execute(
+            text(
+                """
+                INSERT INTO extraction_results (
+                    id, document_id, deal_id, tenant_id, fields,
+                    confidence_report, agent_version, created_at
+                ) VALUES (
+                    :id, :doc, :deal, :tenant, :fields, '{}', 'test', :ts
+                )
+                """
+            ),
+            {
+                "id": str(uuid4()),
+                "doc": str(t12_doc_id),
+                "deal": str(deal_id),
+                "tenant": tenant_id,
+                "fields": json.dumps(
+                    [
+                        {"field_name": "total_revenue", "value": 24_567_890.0},
+                        {"field_name": "rooms_revenue", "value": 18_000_000.0},
+                        {"field_name": "fb_revenue", "value": 5_500_000.0},
+                        {"field_name": "other_revenue", "value": 1_067_890.0},
+                        {"field_name": "noi", "value": 7_890_123.0},
+                        {"field_name": "occupancy", "value": 0.712},
+                        {"field_name": "adr", "value": 241.0},
+                    ]
+                ),
+                "ts": datetime.now(UTC),
+            },
+        )
+
+        # OM document with broker proforma headlines (broker side).
+        om_doc_id = uuid4()
+        om_extraction = {
+            "parser": "pymupdf",
+            "total_pages": 1,
+            "content_hash": "1" * 64,
+            "parsed_at": datetime.now(UTC).isoformat(),
+            "pages": [
+                {"page_num": 1, "text": "OM page", "tables": [], "metadata": {}}
+            ],
+        }
+        await session.execute(
+            text(
+                """
+                INSERT INTO documents (
+                    id, deal_id, tenant_id, filename, doc_type, status,
+                    uploaded_at, page_count, extraction_data
+                ) VALUES (
+                    :id, :deal, :tenant, 'coral-bay-OM.pdf', 'OM',
+                    'EXTRACTED', :ts, 1, :data
+                )
+                """
+            ),
+            {
+                "id": str(om_doc_id),
+                "deal": str(deal_id),
+                "tenant": tenant_id,
+                "ts": datetime.now(UTC),
+                "data": json.dumps(om_extraction),
+            },
+        )
+        # Broker side: OM headlines deliberately rosier than T-12 so
+        # variance flags fire (NOI 9.6M broker vs 7.9M actual).
+        await session.execute(
+            text(
+                """
+                INSERT INTO extraction_results (
+                    id, document_id, deal_id, tenant_id, fields,
+                    confidence_report, agent_version, created_at
+                ) VALUES (
+                    :id, :doc, :deal, :tenant, :fields, '{}', 'test', :ts
+                )
+                """
+            ),
+            {
+                "id": str(uuid4()),
+                "doc": str(om_doc_id),
+                "deal": str(deal_id),
+                "tenant": tenant_id,
+                "fields": json.dumps(
+                    [
+                        {"field_name": "broker_proforma.total_revenue", "value": 28_000_000.0},
+                        {"field_name": "broker_proforma.rooms_revenue", "value": 19_500_000.0},
+                        {"field_name": "broker_proforma.fb_revenue", "value": 6_900_000.0},
+                        {"field_name": "broker_proforma.noi", "value": 9_600_000.0},
+                        {"field_name": "broker_proforma.occupancy", "value": 0.78},
+                        {"field_name": "broker_proforma.adr", "value": 255.0},
+                    ]
+                ),
+                "ts": datetime.now(UTC),
+            },
+        )
+
+        # Engine outputs — at least one row so engine_results isn't empty.
+        await session.execute(
+            text(
+                """
+                INSERT INTO engine_outputs (
+                    id, deal_id, tenant_id, run_id, engine_name, status,
+                    inputs, outputs, error, started_at, completed_at,
+                    runtime_ms
+                ) VALUES (
+                    :id, :deal, :tenant, :run, 'returns', 'complete',
+                    '{}', :outputs, NULL, :ts, :ts, 12
+                )
+                """
+            ),
+            {
+                "id": str(uuid4()),
+                "deal": str(deal_id),
+                "tenant": tenant_id,
+                "run": str(uuid4()),
+                "outputs": json.dumps(
+                    {
+                        "levered_irr": 0.231,
+                        "equity_multiple": 2.37,
+                        "year1_cash_on_cash": 0.062,
+                    }
+                ),
+                "ts": datetime.now(UTC).isoformat(),
+            },
+        )
+        await session.commit()
+
+        payload = await _load_deal_payload(str(deal_id), session=session)
+
+    # ── deal_data must be the real deal, not Kimpton ───────────────────
+    assert payload.deal_data["name"] == "Coral Bay Resort", payload.deal_data
+    assert payload.deal_data["city"] == "Miami Beach"
+    assert payload.deal_data["keys"] == 214
+    assert payload.deal_data["brand"] == "Marriott"
+
+    # ── normalized_spread comes from the T-12 actuals ──────────────────
+    assert payload.normalized_spread is not None
+    assert payload.normalized_spread.noi == pytest.approx(7_890_123.0)
+    assert payload.normalized_spread.total_revenue == pytest.approx(24_567_890.0)
+
+    # ── engine_results carries the real engine outputs ────────────────
+    assert "returns" in payload.engine_results
+    returns_blob = payload.engine_results["returns"]
+    assert returns_blob.get("levered_irr") == pytest.approx(0.231)
+    assert returns_blob.get("equity_multiple") == pytest.approx(2.37)
+
+    # ── variance_report fires CRITICAL/WARN flags on NOI delta ────────
+    assert payload.variance_report is not None
+    assert len(payload.variance_report.flags) > 0
+    flag_fields = {f.field for f in payload.variance_report.flags}
+    # NOI variance should fire — broker $9.6M vs actual $7.89M is ~22% off.
+    assert "noi" in flag_fields, flag_fields
+    noi_flag = next(f for f in payload.variance_report.flags if f.field == "noi")
+    assert noi_flag.actual == pytest.approx(7_890_123.0)
+    assert noi_flag.broker == pytest.approx(9_600_000.0)
+    # Severity enum surfaces title-cased values ("Critical" / "Warn" / "Info").
+    assert noi_flag.severity.value in ("Warn", "Critical")
