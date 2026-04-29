@@ -35,6 +35,7 @@ from fastapi import (
     UploadFile,
     status,
 )
+from fastapi.responses import Response
 from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -42,7 +43,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from ..config import get_settings
 from ..database import get_session, get_session_factory
 from ..extraction import ParseError, parse_pdf
-from ..storage import get_raw_store
+from ..storage import StorageError, get_raw_store
 from .deals import get_tenant_id
 
 logger = logging.getLogger(__name__)
@@ -119,6 +120,12 @@ class ExtractionResultResponse(BaseModel):
     confidence_report: ConfidenceReportOut | None = None
     agent_version: str | None = None
     created_at: datetime | None = None
+    # Per-page text from the parser cache, keyed by page number as
+    # string. Lets the citation side-pane show the cited page's
+    # contents without re-parsing the PDF. Empty when extraction
+    # hasn't run yet or the parser produced no usable pages.
+    parsed_pages: dict[str, str] = Field(default_factory=dict)
+    page_count: int | None = None
 
 
 # ─────────────────────────── helpers ───────────────────────────
@@ -354,6 +361,91 @@ async def list_documents(
     return [_row_to_record(dict(r._mapping)) for r in rows.fetchall()]
 
 
+# ─────────────────────────── download ───────────────────────────
+
+
+@router.get("/{deal_id}/documents/{doc_id}/download")
+async def download_document(
+    deal_id: UUID,
+    doc_id: UUID,
+    session: Annotated[AsyncSession, Depends(get_session)],
+) -> Response:
+    """Stream the raw uploaded file bytes back to the caller.
+
+    Used by the citation side-pane's "See PDF" deep-link so reviewers
+    can open the source document at the cited page (browsers honor
+    ``#page=N`` anchors on application/pdf URLs). Inline disposition
+    keeps the file in the viewer rather than forcing a download.
+    """
+    row = (
+        await session.execute(
+            text(
+                """
+                SELECT filename, storage_key
+                  FROM documents
+                 WHERE id = :id AND deal_id = :deal
+                """
+            ),
+            {"id": str(doc_id), "deal": str(deal_id)},
+        )
+    ).first()
+    if row is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"document {doc_id} not found on deal {deal_id}",
+        )
+    storage_key = row._mapping["storage_key"]
+    filename = row._mapping["filename"] or "document.pdf"
+    if not storage_key:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"document {doc_id} has no stored bytes",
+        )
+
+    settings = get_settings()
+    store = get_raw_store(settings)
+    try:
+        body = await store.get(storage_key)
+    except FileNotFoundError as exc:
+        # LocalRawStore raises StorageError, not FileNotFoundError, but
+        # leaving this branch in case a future backend uses it directly.
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"stored bytes missing for document {doc_id}",
+        ) from exc
+    except StorageError as exc:
+        # Local backend raises this on missing-key. Treat as 404 so the
+        # citation pane shows a clean "not found" instead of crashing.
+        if "missing" in str(exc).lower():
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"stored bytes missing for document {doc_id}",
+            ) from exc
+        logger.exception("download: store.get failed for %s", storage_key)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"raw store read failed: {exc}",
+        ) from exc
+    except Exception as exc:  # noqa: BLE001
+        logger.exception("download: store.get failed for %s", storage_key)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"raw store read failed: {exc}",
+        ) from exc
+
+    media_type = "application/pdf" if filename.lower().endswith(".pdf") else "application/octet-stream"
+    return Response(
+        content=body,
+        media_type=media_type,
+        headers={
+            # Inline so the browser's PDF viewer renders it (and honors
+            # the ``#page=N`` anchor) instead of forcing a save dialog.
+            "Content-Disposition": f'inline; filename="{filename}"',
+            "Cache-Control": "private, max-age=300",
+        },
+    )
+
+
 # ─────────────────────────── extract ───────────────────────────
 
 
@@ -434,7 +526,11 @@ async def get_extraction(
     doc_row = (
         await session.execute(
             text(
-                "SELECT status FROM documents WHERE id = :id AND deal_id = :d"
+                """
+                SELECT status, page_count, extraction_data
+                  FROM documents
+                 WHERE id = :id AND deal_id = :d
+                """
             ),
             {"id": str(doc_id), "d": str(deal_id)},
         )
@@ -445,6 +541,38 @@ async def get_extraction(
             detail=f"document {doc_id} not found",
         )
     doc_status = doc_row._mapping["status"]
+    page_count_raw = doc_row._mapping.get("page_count")
+    try:
+        page_count_value: int | None = (
+            int(page_count_raw) if page_count_raw is not None else None
+        )
+    except (TypeError, ValueError):
+        page_count_value = None
+
+    # Page text comes from the parser cache stashed at upload time —
+    # citations need to deep-link to a page even before the LLM
+    # Extractor has run, so we surface it whenever it exists.
+    raw_extraction_data = doc_row._mapping.get("extraction_data")
+    if isinstance(raw_extraction_data, str):
+        try:
+            extraction_data = json.loads(raw_extraction_data)
+        except json.JSONDecodeError:
+            extraction_data = None
+    else:
+        extraction_data = raw_extraction_data
+
+    parsed_pages: dict[str, str] = {}
+    for p in (extraction_data or {}).get("pages") or []:
+        try:
+            num = int(p.get("page_num", 0))
+        except (TypeError, ValueError):
+            continue
+        if num < 1:
+            continue
+        page_text = p.get("text")
+        if not isinstance(page_text, str) or not page_text.strip():
+            continue
+        parsed_pages[str(num)] = page_text
 
     extraction_row = (
         await session.execute(
@@ -465,6 +593,8 @@ async def get_extraction(
         return ExtractionResultResponse(
             document_id=doc_id,
             status=doc_status,
+            parsed_pages=parsed_pages,
+            page_count=page_count_value,
         )
 
     mapping = extraction_row._mapping
@@ -487,6 +617,8 @@ async def get_extraction(
         confidence_report=confidence_report,
         agent_version=mapping["agent_version"],
         created_at=_coerce_dt(mapping["created_at"]),
+        parsed_pages=parsed_pages,
+        page_count=page_count_value,
     )
 
 

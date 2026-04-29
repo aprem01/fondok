@@ -990,14 +990,26 @@ async def _load_deal_payload(
       the seed-data demo flow green; production callers always pass a
       real session via the route layer.
 
-    Once ``apps/worker/app/storage`` lands a deal-fetch helper that
-    rebuilds a ``USALIFinancials`` spread from the persisted extraction
-    JSON, this function should swap the fixture for the real spread.
+    Source-document handling:
+
+    * When real ``EXTRACTED`` documents exist on the deal, we hydrate
+      ``source_documents`` with their actual UUIDs, filenames, doc
+      types, and per-page text from ``documents.extraction_data``.
+      That gives the Analyst real material to cite and lets the UI's
+      citation chips deep-link back to the cited PDF page.
+    * Fixture documents (Kimpton appendix) are only used as a fallback
+      when no real docs are present (the legacy demo path).
+
+    The deal_data / engine_results / variance fields are still served
+    from the Kimpton fixture pending a deal-fetch helper that can
+    rebuild a ``USALIFinancials`` spread from extraction JSON.
     """
     from ..agents.analyst import AnalystInput, AnalystSourceDocument
     from ..export.fixtures import kimpton_deal, kimpton_memo, kimpton_model
 
     settings = get_settings()
+
+    real_source_docs: list[AnalystSourceDocument] = []
 
     if session is not None:
         # Confirm the deal exists in this tenant's DB before we even
@@ -1029,27 +1041,34 @@ async def _load_deal_payload(
                     code="memo_inputs_extraction_pending",
                     missing=["extraction"],
                 )
+            # Hydrate real source documents from the persisted parser cache.
+            real_source_docs = await _load_source_documents(
+                session, deal_id=deal_id
+            )
 
     deal = kimpton_deal()
     deal["id"] = deal_id
     model = kimpton_model()
     memo = kimpton_memo()
 
-    # Build a lightweight set of source documents from the memo's
-    # appendix so the Analyst has something to cite. Each filename
-    # maps to a deterministic synthetic document_id; the Analyst
-    # tolerates citations that reference any of these ids.
-    docs: list[AnalystSourceDocument] = []
-    for idx, fname in enumerate(memo.get("appendix", {}).get("documents_reviewed", []), start=1):
-        docs.append(
-            AnalystSourceDocument(
-                document_id=f"doc-{idx:02d}",
-                filename=fname,
-                doc_type="reference",
-                page_count=1,
-                excerpts_by_page={1: f"Reference excerpt for {fname}."},
+    if real_source_docs:
+        docs = real_source_docs
+    else:
+        # Fixture fallback — used only by the seed-data demo / streaming
+        # smoke tests where no real documents have been uploaded.
+        docs = []
+        for idx, fname in enumerate(
+            memo.get("appendix", {}).get("documents_reviewed", []), start=1
+        ):
+            docs.append(
+                AnalystSourceDocument(
+                    document_id=f"doc-{idx:02d}",
+                    filename=fname,
+                    doc_type="reference",
+                    page_count=1,
+                    excerpts_by_page={1: f"Reference excerpt for {fname}."},
+                )
             )
-        )
 
     return AnalystInput(
         tenant_id=settings.DEFAULT_TENANT_ID,
@@ -1060,6 +1079,86 @@ async def _load_deal_payload(
         variance_report=None,
         source_documents=docs,
     )
+
+
+# Per-page excerpt cap. Opus 4.7 has 1M context, but every additional
+# character is paid input tokens; 3000 chars is enough headroom for the
+# Analyst to locate supporting evidence on most pages without bloating
+# the prompt past the prompt-cache 4-block budget.
+_SOURCE_DOC_PAGE_CHAR_CAP = 3000
+
+
+async def _load_source_documents(
+    session: AsyncSession, *, deal_id: str
+) -> list[Any]:
+    """Build ``AnalystSourceDocument`` list from real ``EXTRACTED`` rows.
+
+    Reads the parser cache on ``documents.extraction_data['pages']`` so
+    the Analyst sees actual per-page text and can emit citations whose
+    ``document_id`` matches the real DB UUID — letting the UI deep-link
+    back to the source PDF page.
+    """
+    from ..agents.analyst import AnalystSourceDocument
+
+    rows = await session.execute(
+        text(
+            """
+            SELECT id, filename, doc_type, page_count, extraction_data
+              FROM documents
+             WHERE deal_id = :deal AND status = 'EXTRACTED'
+             ORDER BY uploaded_at ASC
+            """
+        ),
+        {"deal": deal_id},
+    )
+
+    out: list[AnalystSourceDocument] = []
+    for r in rows.fetchall():
+        m = r._mapping
+        raw = m["extraction_data"]
+        if isinstance(raw, str):
+            try:
+                raw = json.loads(raw) if raw else None
+            except json.JSONDecodeError:
+                raw = None
+        pages_blob = (raw or {}).get("pages") or []
+
+        excerpts: dict[int, str] = {}
+        for p in pages_blob:
+            try:
+                page_num = int(p.get("page_num", 0))
+            except (TypeError, ValueError):
+                continue
+            if page_num < 1:
+                continue
+            text_value = (p.get("text") or "").strip()
+            if not text_value:
+                continue
+            if len(text_value) > _SOURCE_DOC_PAGE_CHAR_CAP:
+                text_value = text_value[:_SOURCE_DOC_PAGE_CHAR_CAP] + "…[truncated]"
+            excerpts[page_num] = text_value
+
+        if not excerpts:
+            # Skip documents with no usable page text — citing them
+            # produces broken deep-links.
+            continue
+
+        page_count_value = m.get("page_count")
+        try:
+            page_count = max(1, int(page_count_value)) if page_count_value else max(excerpts)
+        except (TypeError, ValueError):
+            page_count = max(excerpts)
+
+        out.append(
+            AnalystSourceDocument(
+                document_id=str(m["id"]),
+                filename=str(m["filename"]),
+                doc_type=(m.get("doc_type") or None),
+                page_count=page_count,
+                excerpts_by_page=excerpts,
+            )
+        )
+    return out
 
 
 # SSE timing — heartbeat keeps intermediate proxies (Railway's edge,

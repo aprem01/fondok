@@ -18,7 +18,7 @@ import { useParams } from 'next/navigation';
 import { FileText, X, ExternalLink, Loader2 } from 'lucide-react';
 import { cn } from '@/lib/format';
 import { useDocuments } from '@/lib/hooks/useDocuments';
-import { isWorkerConnected, workerUrl } from '@/lib/api';
+import { api, isWorkerConnected, workerUrl } from '@/lib/api';
 
 type FocusDetail = {
   documentId: string;
@@ -102,10 +102,13 @@ export default function SourceDocPane() {
   const filename =
     focus?.documentName ?? matchedDoc?.filename ?? focus?.documentId ?? '';
 
-  // Worker preview route is best-effort — left as TODO worker-side.
+  // Deep-link straight to the raw uploaded PDF, anchored to the cited
+  // page. Browsers honor ``#page=N`` on application/pdf URLs and the
+  // worker's /download route serves with inline disposition so the
+  // built-in viewer renders rather than forcing a save dialog.
   const previewUrl =
-    focus && rawId && workerUrl()
-      ? `${workerUrl()}/deals/${rawId}/documents/${focus.documentId}/preview?page=${focus.page}`
+    focus && rawId && workerUrl() && focus.documentId
+      ? api.documents.downloadUrl(rawId, focus.documentId, focus.page)
       : null;
 
   if (!open || !focus) return null;

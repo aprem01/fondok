@@ -471,3 +471,105 @@ async def test_memo_persists_after_successful_run(
     assert len(body["citations"]) == 2
     assert body["generated_at"] is not None
     assert body["error"] is None
+
+
+# ─────────────────── 6. Real source documents flow into Analyst ───────────────────
+
+
+@pytest.mark.asyncio
+async def test_load_deal_payload_uses_real_extracted_documents() -> None:
+    """When a deal has ``EXTRACTED`` documents with parsed page text, the
+    Analyst payload must surface those real ids + page excerpts so memo
+    citations deep-link back to the source PDF instead of pointing at the
+    Kimpton fixture filenames.
+    """
+    import json
+    from datetime import UTC, datetime
+
+    from app.api.deals import _load_deal_payload
+    from app.database import get_session_factory
+
+    deal_id = uuid4()
+    await _insert_deal(deal_id)
+
+    doc_uuid = uuid4()
+    extraction_data = {
+        "parser": "pymupdf",
+        "total_pages": 2,
+        "content_hash": "0" * 64,
+        "parsed_at": datetime.now(UTC).isoformat(),
+        "pages": [
+            {
+                "page_num": 1,
+                "text": "Kimpton Angler Hotel — Property Overview\n214 keys, Miami Beach.",
+                "tables": [],
+                "metadata": {},
+            },
+            {
+                "page_num": 2,
+                "text": "T-12 Trailing Twelve Months\nTotal Revenue: $24,567,890\nNOI: $7,890,123",
+                "tables": [],
+                "metadata": {},
+            },
+        ],
+    }
+    factory = get_session_factory()
+    async with factory() as session:
+        await session.execute(
+            text(
+                """
+                INSERT INTO documents (
+                    id, deal_id, tenant_id, filename, doc_type, status,
+                    uploaded_at, page_count, parser, extraction_data
+                ) VALUES (
+                    :id, :deal, :tenant, :filename, :doc_type, 'EXTRACTED',
+                    :ts, :pc, :parser, :data
+                )
+                """
+            ),
+            {
+                "id": str(doc_uuid),
+                "deal": str(deal_id),
+                "tenant": "00000000-0000-0000-0000-000000000001",
+                "filename": "kimpton-T12.pdf",
+                "doc_type": "T12",
+                "ts": datetime.now(UTC),
+                "pc": 2,
+                "parser": "pymupdf",
+                "data": json.dumps(extraction_data),
+            },
+        )
+        await session.commit()
+
+        payload = await _load_deal_payload(str(deal_id), session=session)
+
+    # The payload must carry exactly the real document, not the Kimpton
+    # fixture appendix (which has multiple synthetic ``doc-NN`` entries).
+    assert len(payload.source_documents) == 1, [
+        d.document_id for d in payload.source_documents
+    ]
+    src = payload.source_documents[0]
+    assert src.document_id == str(doc_uuid)
+    assert src.filename == "kimpton-T12.pdf"
+    assert src.doc_type == "T12"
+    assert src.page_count == 2
+    # Per-page text must round-trip from extraction_data.
+    assert 1 in src.excerpts_by_page
+    assert 2 in src.excerpts_by_page
+    assert "Kimpton Angler" in src.excerpts_by_page[1]
+    assert "$24,567,890" in src.excerpts_by_page[2]
+
+
+@pytest.mark.asyncio
+async def test_load_deal_payload_falls_back_to_fixture_without_session() -> None:
+    """Demo path (no DB session) keeps the Kimpton fixture so the
+    streaming smoke flow stays green."""
+    from app.api.deals import _load_deal_payload
+
+    payload = await _load_deal_payload("kimpton-angler-2026")
+
+    # Fixture path emits the synthetic ``doc-NN`` ids.
+    assert len(payload.source_documents) > 0
+    for d in payload.source_documents:
+        assert d.document_id.startswith("doc-")
+        assert d.doc_type == "reference"

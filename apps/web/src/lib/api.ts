@@ -82,6 +82,9 @@ export interface ExtractionResult {
   confidence_report: ExtractionConfidenceReport | null;
   agent_version: string | null;
   created_at: string | null;
+  /** Per-page text from the parser cache, keyed by page number string. */
+  parsed_pages?: Record<string, string>;
+  page_count?: number | null;
 }
 
 export interface ExtractionStartResponse {
@@ -234,6 +237,13 @@ export const api = {
         undefined,
         { signal },
       ),
+    /** Direct URL to the raw uploaded file — citation deep-links use ``#page=N``. */
+    downloadUrl: (dealId: string, docId: string, page?: number): string => {
+      const base = workerUrl();
+      if (!base) return '';
+      const url = `${base}/deals/${dealId}/documents/${docId}/download`;
+      return page && page > 0 ? `${url}#page=${page}` : url;
+    },
   },
   engines: {
     /** Run all 8 engines in dependency order (background task on the worker). */

@@ -22,6 +22,8 @@ import { Badge } from '@/components/ui/Badge';
 import { kimptonAnalysis } from '@/lib/mockData';
 import { cn } from '@/lib/format';
 import { Citation as CitationChip } from '@/components/citations/Citation';
+import { useDocuments } from '@/lib/hooks/useDocuments';
+import type { WorkerDocument } from '@/lib/api';
 
 const WORKER_URL = process.env.NEXT_PUBLIC_WORKER_URL ?? '';
 
@@ -84,6 +86,20 @@ function sectionLabel(id: string): string {
     .join(' ');
 }
 
+// Map worker-side doc_type codes to the display labels reviewers expect
+// in the chip — "T-12 p.7" reads cleaner than the raw "T12 p.7".
+function formatDocTypeLabel(docType: string | null | undefined): string {
+  if (!docType) return 'doc';
+  const t = docType.toUpperCase();
+  if (t === 'T12' || t === 'PNL') return 'T-12';
+  if (t === 'OM') return 'OM';
+  if (t === 'STR') return 'STR';
+  if (t === 'RENT_ROLL') return 'Rent Roll';
+  if (t === 'MARKET_STUDY') return 'Market';
+  if (t === 'CONTRACT') return 'Contract';
+  return t;
+}
+
 export default function MemoStream({ dealId }: { dealId: string }) {
   const [state, setState] = useState<StreamState>({ kind: 'idle' });
   const [sections, setSections] = useState<Section[]>([]);
@@ -93,6 +109,16 @@ export default function MemoStream({ dealId }: { dealId: string }) {
 
   const workerConnected = WORKER_URL.length > 0;
   const hasEventSource = typeof window !== 'undefined' && typeof window.EventSource !== 'undefined';
+
+  // Pull the deal's documents so we can label each citation with the
+  // doc_type the Analyst was citing (e.g. "T-12 p.7" instead of "[1]")
+  // and pass the filename through to the side pane header.
+  const { documents } = useDocuments(dealId);
+  const docById = useMemo(() => {
+    const m = new Map<string, WorkerDocument>();
+    documents.forEach((d) => m.set(d.id, d));
+    return m;
+  }, [documents]);
 
   // Disable streaming entirely if EventSource is missing or worker unset.
   useEffect(() => {
@@ -287,6 +313,7 @@ export default function MemoStream({ dealId }: { dealId: string }) {
           key={sec.section_id}
           section={sec}
           streaming={state.kind === 'streaming'}
+          docById={docById}
         />
       ))}
 
@@ -334,9 +361,11 @@ export default function MemoStream({ dealId }: { dealId: string }) {
 function SectionCard({
   section,
   streaming,
+  docById,
 }: {
   section: Section;
   streaming: boolean;
+  docById: Map<string, WorkerDocument>;
 }) {
   // Word-by-word fade-in: split the body into tokens and animate them in.
   // Keeps under-render cost bounded — sections are <=500 words.
@@ -373,20 +402,32 @@ function SectionCard({
         )}
         {section.citations.length > 0 && (
           // Each chip dispatches `fondok:citation-focus` so the global
-          // SourceDocPane slides in to the cited page.
+          // SourceDocPane slides in to the cited page. Label format is
+          // "T-12 p.7" when we can resolve the citation's document_id
+          // back to a real upload; otherwise we fall back to a numeric
+          // index so fixture/synthetic citations still render.
           <span className="ml-1 inline-flex flex-wrap items-baseline gap-0.5 align-super">
-            {section.citations.map((c, i) => (
-              <CitationChip
-                key={`${c.document_id ?? 'unknown'}:${c.page ?? 0}:${i}`}
-                data={{
-                  documentId: c.document_id ?? '',
-                  page: c.page ?? 1,
-                  field: c.field ?? undefined,
-                  excerpt: c.excerpt ?? undefined,
-                }}
-                label={`[${i + 1}]`}
-              />
-            ))}
+            {section.citations.map((c, i) => {
+              const docId = c.document_id ?? '';
+              const page = c.page ?? 1;
+              const matched = docId ? docById.get(docId) : undefined;
+              const label = matched
+                ? `${formatDocTypeLabel(matched.doc_type)} p.${page}`
+                : `[${i + 1}]`;
+              return (
+                <CitationChip
+                  key={`${docId || 'unknown'}:${page}:${i}`}
+                  data={{
+                    documentId: docId,
+                    documentName: matched?.filename,
+                    page,
+                    field: c.field ?? undefined,
+                    excerpt: c.excerpt ?? undefined,
+                  }}
+                  label={label}
+                />
+              );
+            })}
           </span>
         )}
       </div>
