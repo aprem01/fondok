@@ -18,6 +18,7 @@ import type { EngineOutputsResponse } from '@/lib/api';
 import { kimptonAnglerOverview } from '@/lib/mockData';
 import { fmtCurrency, fmtMillions, cn } from '@/lib/format';
 import { getEngineField, useEngineOutputs } from '@/lib/hooks/useEngineOutputs';
+import { useDeal } from '@/lib/hooks/useDeal';
 import { useFlash } from '@/lib/hooks/useFlash';
 import { IntroCard } from '@/components/help/IntroCard';
 import { MetricLabel } from '@/components/help/MetricLabel';
@@ -234,9 +235,16 @@ export default function PLTab({ projectId }: { projectId: number | string }) {
   const { toast } = useToast();
   const dealId = (params?.id as string | undefined) ?? '';
   const { outputs, previous } = useEngineOutputs(dealId);
+  const { deal } = useDeal(dealId);
   const [computing, setComputing] = useState(false);
   const [runToken, setRunToken] = useState<number | null>(null);
   const isKimptonDemo = projectId === 7;
+  // Per-Key / Departmental dividers must use the real deal's room count,
+  // not a 100-key default. Sam QA #2: passing 100 for non-Kimpton deals
+  // made every per-key figure mathematically wrong on real uploads.
+  const propertyKeys = isKimptonDemo
+    ? kimptonAnglerOverview.general.keys
+    : (deal?.keys && deal.keys > 0 ? deal.keys : 100);
 
   // Worker → expense engine years[] is the canonical source for the operating
   // statement on a real run. Worker wins; Kimpton mock is the demo fallback.
@@ -377,8 +385,8 @@ export default function PLTab({ projectId }: { projectId: number | string }) {
 
       <div className={cn(computing && 'relative pointer-events-none opacity-60')}>
         {tab === 'Operating Statement' && <OperatingStatement statement={stmt} sourceLabel={hasWorkerStatement ? 'worker' : 'mock'} />}
-        {tab === 'Departmental' && <Departmental statement={stmt} keys={isKimptonDemo ? kimptonAnglerOverview.general.keys : 100} />}
-        {tab === 'Per-Key Metrics' && <PerKey statement={stmt} keys={isKimptonDemo ? kimptonAnglerOverview.general.keys : 100} isKimptonDemo={isKimptonDemo} />}
+        {tab === 'Departmental' && <Departmental statement={stmt} keys={propertyKeys} />}
+        {tab === 'Per-Key Metrics' && <PerKey statement={stmt} keys={propertyKeys} isKimptonDemo={isKimptonDemo} />}
         {tab === 'Historical vs Projected' && <HistoricalProjected statement={stmt} isKimptonDemo={isKimptonDemo} />}
         {computing && (
           <div className="absolute inset-0 bg-bg/60 backdrop-blur-[1px] flex items-start justify-center pt-12 rounded-md">

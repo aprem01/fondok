@@ -172,6 +172,16 @@ export default function ProjectDetailPage() {
         ? kimptonDocuments.map((d) => ({ name: d.name, status: d.status, type: d.type }))
         : []);
 
+  // Standard institutional underwriting checklist size (OM, T-12, STR
+  // report, rent roll, PIP estimate). Used as the denominator in the
+  // header "Docs N/M" pill so the count keeps moving as more documents
+  // land. The mock fixtures use their own format (e.g. "8/8" for the
+  // Kimpton demo) — we only synthesize the string for live deals.
+  const EXPECTED_DOC_COUNT = 5;
+  const liveDocsLabel = liveMode
+    ? `${liveDocs.length}/${Math.max(EXPECTED_DOC_COUNT, liveDocs.length)}`
+    : project.docs;
+
   // Esc closes any open header overlay.
   useEffect(() => {
     if (!docsOpen && !confidenceOpen && !collabOpen) return;
@@ -243,13 +253,13 @@ export default function ProjectDetailPage() {
                 ref={docsBtnRef}
                 type="button"
                 onClick={() => { setDocsOpen(o => !o); setConfidenceOpen(false); setCollabOpen(false); }}
-                aria-label={`Open documents (${project.docs} files)`}
+                aria-label={`Open documents (${liveDocsLabel} files)`}
                 aria-expanded={docsOpen}
                 aria-haspopup="dialog"
                 title="Documents uploaded vs the underwriting checklist (OM, T-12, STR report, rent roll, PIP estimate, etc.). Click to open the docs drawer."
                 className="h-8 px-2.5 bg-white border border-border hover:border-ink-300 hover:bg-ink-100 rounded-md text-[12px] inline-flex items-center gap-1.5 text-ink-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-500"
               >
-                <FileText size={12} aria-hidden="true" /> Docs <span className="text-ink-900 font-medium tabular-nums">{project.docs}</span>
+                <FileText size={12} aria-hidden="true" /> Docs <span className="text-ink-900 font-medium tabular-nums">{liveDocsLabel}</span>
               </button>
             </div>
             <div className="relative">

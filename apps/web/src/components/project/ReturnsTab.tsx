@@ -174,12 +174,29 @@ export default function ReturnsTab({ projectId }: { projectId: number | string }
 function LiveReturnsSummary({ outputs }: { outputs: ReturnType<typeof useEngineOutputs>['outputs'] }) {
   const { assumptions, setAssumption, model } = useAssumptionsOptional()!;
   // Worker overrides — fall back to live in-page model when worker has no data.
+  // The headline KPIs and the Base Case scenario card MUST resolve to the same
+  // numbers; otherwise an analyst sees "Levered IRR 18.07%" up top and a Base
+  // Case card showing "23.01%" on the same page (Sam QA #5). We compute the
+  // canonical triple here and reuse it both places.
   const wIrr = getEngineField<number>(outputs, 'returns', 'levered_irr');
   const wMult = getEngineField<number>(outputs, 'returns', 'equity_multiple');
   const wCoC = getEngineField<number>(outputs, 'returns', 'cash_on_cash_year_one');
+  const wUnleveredIrr = getEngineField<number>(outputs, 'returns', 'unlevered_irr');
+  const wExitValue = getEngineField<number>(outputs, 'returns', 'exit_value_usd');
   const irr = wIrr ?? model.leveredIrr;
   const mult = wMult ?? model.equityMultiple;
   const coc = wCoC ?? model.cashOnCash;
+  // Project the canonical Base Case off the worker outputs when present;
+  // Downside / Upside still come from the in-page sensitivity model.
+  const baseScenario = (wIrr !== undefined || wMult !== undefined)
+    ? {
+        irr: wIrr ?? model.scenarios.base.irr,
+        unleveredIrr: wUnleveredIrr ?? model.scenarios.base.unleveredIrr,
+        multiple: wMult ?? model.scenarios.base.multiple,
+        coc: wCoC ?? model.scenarios.base.coc,
+        exitValue: wExitValue ?? model.scenarios.base.exitValue,
+      }
+    : model.scenarios.base;
 
   return (
     <>
@@ -244,7 +261,7 @@ function LiveReturnsSummary({ outputs }: { outputs: ReturnType<typeof useEngineO
         <div className="grid grid-cols-3 gap-4">
           {[
             { name: 'Downside', sc: model.scenarios.downside },
-            { name: 'Base Case', sc: model.scenarios.base, base: true },
+            { name: 'Base Case', sc: baseScenario, base: true },
             { name: 'Upside', sc: model.scenarios.upside },
           ].map(({ name, sc, base }) => {
             const Icon = name === 'Downside' ? TrendingDown : name === 'Base Case' ? Minus : TrendingUp;

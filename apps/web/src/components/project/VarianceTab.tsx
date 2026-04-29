@@ -1,5 +1,6 @@
 'use client';
 import { useMemo, useState, useRef } from 'react';
+import { useParams } from 'next/navigation';
 import {
   Sparkles, AlertTriangle, AlertCircle, Info, ArrowDown, ArrowUp,
   ShieldCheck, X, Check, FileSearch,
@@ -9,15 +10,16 @@ import { Button } from '@/components/ui/Button';
 import { Badge } from '@/components/ui/Badge';
 import { cn, fmtCurrency, fmtPct } from '@/lib/format';
 import {
-  varianceFlags,
+  varianceFlags as mockVarianceFlags,
   varianceSummary,
   rulesById,
-  criticalCount,
-  warnCount,
-  infoCount,
+  criticalCount as mockCriticalCount,
+  warnCount as mockWarnCount,
+  infoCount as mockInfoCount,
   type VarianceFlag,
   type Severity,
 } from '@/lib/varianceData';
+import { useVariance } from '@/lib/hooks/useVariance';
 import { Citation } from '@/components/citations/Citation';
 
 // Filename lookup for the synthetic Kimpton mock document IDs so the
@@ -102,8 +104,23 @@ function formatDelta(flag: VarianceFlag): { text: string; pct?: string } {
 }
 
 export default function VarianceTab() {
+  const params = useParams();
+  const rawId = (params?.id as string | undefined) ?? '';
   const [decisions, setDecisions] = useState<Record<string, RowDecision>>({});
   const rowRefs = useRef<Record<string, HTMLTableRowElement | null>>({});
+
+  // Live worker-backed variance flags for real (UUID) deals; falls back to
+  // the Kimpton fixture for mock ids and when the worker has nothing to
+  // compare yet. This is what fixes Sam QA #6: the badge and content now
+  // resolve to the same flag set, and a real deal's flags reflect the
+  // deal's actual broker vs T-12 deltas instead of the demo fixture.
+  const live = useVariance(rawId);
+  const liveActive = live.flags !== null;
+  const varianceFlags: VarianceFlag[] = liveActive ? (live.flags ?? []) : mockVarianceFlags;
+  const criticalCount = liveActive ? live.critical : mockCriticalCount;
+  const warnCount = liveActive ? live.warn : mockWarnCount;
+  const infoCount = liveActive ? live.info : mockInfoCount;
+  const liveNote = liveActive ? live.note : null;
 
   const setDecision = (id: string, d: RowDecision) =>
     setDecisions(prev => ({ ...prev, [id]: prev[id] === d ? 'pending' : d }));
@@ -114,7 +131,7 @@ export default function VarianceTab() {
     return [...varianceFlags]
       .sort((a, b) => Math.abs(b.noi_impact_usd) - Math.abs(a.noi_impact_usd))
       .map(f => ({ flag: f, share: Math.abs(f.noi_impact_usd) / total }));
-  }, []);
+  }, [varianceFlags]);
 
   const scrollToFlag = (id: string) => {
     const el = rowRefs.current[id];
@@ -124,6 +141,51 @@ export default function VarianceTab() {
       setTimeout(() => el.classList.remove('ring-2', 'ring-brand-500'), 1400);
     }
   };
+
+  // Empty state for live deals that don't have both sides of the
+  // comparison yet (only OM uploaded, only T-12, etc.). Renders the
+  // worker's structured "what's missing" note instead of the Kimpton
+  // narrative which would mislead.
+  if (liveActive && varianceFlags.length === 0) {
+    return (
+      <div className="space-y-5">
+        <Card className="p-5">
+          <div className="flex items-start gap-3">
+            <div className="w-9 h-9 rounded-md bg-bg flex items-center justify-center flex-shrink-0">
+              <FileSearch size={16} className="text-ink-500" />
+            </div>
+            <div className="flex-1">
+              <div className="flex items-center gap-2 mb-1.5">
+                <h3 className="text-[14px] font-semibold text-ink-900">
+                  Broker Variance — awaiting inputs
+                </h3>
+                <Badge tone="gray">No flags yet</Badge>
+              </div>
+              <p className="text-[12.5px] text-ink-700 leading-relaxed">
+                {liveNote ??
+                  'Variance compares the broker pro forma (from the OM) against T-12 actuals. Upload and extract both an Offering Memorandum and a T-12 to populate this tab.'}
+              </p>
+            </div>
+          </div>
+        </Card>
+      </div>
+    );
+  }
+
+  // Live deals with real flags get a generic narrative since the canned
+  // Kimpton commentary (coastal insurance / occupancy uplift) won't
+  // describe the deal. Kimpton mock keeps its richer narrative.
+  const totalFlags = liveActive ? varianceFlags.length : varianceSummary.total_flags;
+  const noiOverstateUsd = liveActive
+    ? varianceFlags.reduce((s, f) => s + Math.max(0, f.broker_value ?? 0) - Math.max(0, f.t12_value ?? 0), 0)
+    : varianceSummary.noi_overstate_usd;
+  const noiOverstatePct = liveActive
+    ? (() => {
+        const noiFlag = varianceFlags.find((f) => f.metric.toLowerCase() === 'noi');
+        if (!noiFlag || !noiFlag.t12_value) return 0;
+        return (noiFlag.broker_value ?? 0) / noiFlag.t12_value - 1;
+      })()
+    : varianceSummary.noi_overstate_pct;
 
   return (
     <div className="space-y-5">
@@ -145,16 +207,24 @@ export default function VarianceTab() {
             <p className="text-[12.5px] text-ink-700 leading-relaxed">
               Fondok detected{' '}
               <span className="font-semibold text-ink-900">
-                {varianceSummary.total_flags} variance flags
+                {totalFlags} variance flag{totalFlags === 1 ? '' : 's'}
               </span>{' '}
-              between the broker pro forma and T-12 actuals. Most material: broker NOI
-              overstated by{' '}
-              <span className="font-semibold text-danger-700">
-                {fmtCurrency(varianceSummary.noi_overstate_usd, { compact: true })}{' '}
-                ({(Math.abs(varianceSummary.noi_overstate_pct) * 100).toFixed(1)}%)
-              </span>
-              , driven by optimistic occupancy uplift, understated coastal insurance, and
-              compressed OpEx ratio assumptions.{' '}
+              between the broker pro forma and T-12 actuals.
+              {liveActive ? (
+                <>
+                  {' '}Each flag below cites the source page and rule it tripped.{' '}
+                </>
+              ) : (
+                <>
+                  {' '}Most material: broker NOI overstated by{' '}
+                  <span className="font-semibold text-danger-700">
+                    {fmtCurrency(noiOverstateUsd, { compact: true })}{' '}
+                    ({(Math.abs(noiOverstatePct) * 100).toFixed(1)}%)
+                  </span>
+                  , driven by optimistic occupancy uplift, understated coastal insurance, and
+                  compressed OpEx ratio assumptions.{' '}
+                </>
+              )}
               <span className="text-ink-900 font-medium">
                 Recommended action: re-underwrite at the corrected NOI level before LOI.
               </span>
@@ -185,14 +255,18 @@ export default function VarianceTab() {
         />
         <KpiCard
           label="NOI Variance"
-          value={fmtCurrency(varianceSummary.noi_overstate_usd, { compact: true })}
-          sub={`${(Math.abs(varianceSummary.noi_overstate_pct) * 100).toFixed(1)}% overstate`}
+          value={fmtCurrency(noiOverstateUsd, { compact: true })}
+          sub={`${(Math.abs(noiOverstatePct) * 100).toFixed(1)}% overstate`}
           tone="danger"
           icon={ArrowDown}
         />
         <KpiCard
           label="Sources Reconciled"
-          value={`${varianceSummary.sources_reconciled} of ${varianceSummary.sources_total}`}
+          value={
+            liveActive
+              ? `${varianceFlags.filter((f) => f.source_documents.length > 0).length} of ${varianceFlags.length}`
+              : `${varianceSummary.sources_reconciled} of ${varianceSummary.sources_total}`
+          }
           tone="success"
           icon={ShieldCheck}
         />

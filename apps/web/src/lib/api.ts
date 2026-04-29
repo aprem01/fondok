@@ -289,4 +289,40 @@ export const api = {
         { signal },
       ),
   },
+  analysis: {
+    /** Deterministic broker-vs-T12 variance flags for a deal. */
+    variance: (dealId: string, signal?: AbortSignal) =>
+      request<VarianceReportResult>(
+        'GET',
+        `/analysis/${dealId}/variance`,
+        undefined,
+        { signal },
+      ),
+  },
 };
+
+// ─── Analysis ───────────────────────────────────────────────────────
+// Mirrors apps/worker/app/api/analysis.py VarianceReportResponse shape.
+
+export interface VarianceFlagResult {
+  field: string;
+  rule_id: string | null;
+  /** Title-cased severity per fondok_schemas Severity enum. */
+  severity: 'Critical' | 'Warn' | 'Info' | string;
+  actual: number | null;
+  broker: number | null;
+  delta: number | null;
+  delta_pct: number | null;
+  source_page: number | null;
+  note: string | null;
+}
+
+export interface VarianceReportResult {
+  deal_id: string;
+  flags: VarianceFlagResult[];
+  critical_count: number;
+  warn_count: number;
+  info_count: number;
+  /** Set when no flags can be computed yet (e.g. only one of broker/T-12 is extracted). */
+  note: string | null;
+}
