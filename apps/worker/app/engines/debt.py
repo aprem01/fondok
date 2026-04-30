@@ -39,10 +39,19 @@ class DebtMonth(BaseModel):
 
 
 class DebtEngineOutputExt(DebtEngineOutput):
-    """Debt output enriched with DSCR, debt-yield and a monthly schedule."""
+    """Debt output enriched with DSCR, debt-yield and a monthly schedule.
+
+    ``loan_amount`` is echoed from the input so the web app can render
+    the headline KPI strip (loan amount + DSCR + debt yield) without
+    having to re-fetch the engine inputs separately. The Debt tab
+    treats a missing ``loan_amount`` as "engine hasn't run yet" and
+    short-circuits to the empty-state placeholder — Sam QA #4 was
+    that path triggering even though DSCR was clearly present.
+    """
 
     model_config = ConfigDict(extra="forbid")
 
+    loan_amount: Annotated[float, Field(ge=0)] | None = None
     monthly_schedule: list[DebtMonth] = Field(default_factory=list)
     year_one_dscr: Annotated[float, Field(ge=0)] | None = None
     year_one_debt_yield: Annotated[float, Field(ge=0)] | None = None
@@ -142,6 +151,7 @@ class DebtEngine(BaseEngine[DebtEngineInputExt, DebtEngineOutputExt]):
             annual_debt_service=annual_ds,
             schedule=schedule,
             avg_dscr=avg_dscr,
+            loan_amount=payload.loan_amount,
             monthly_schedule=monthly_schedule,
             year_one_dscr=year1_dscr,
             year_one_debt_yield=year1_dy,

@@ -51,20 +51,58 @@ Your output is a flat list of ``ExtractionField`` rows. Every row must
 include:
 
 1. ``field_name``  — a dotted path that mirrors how an analyst would
-   reference the value. Examples:
-     * OM:   ``asking_price.headline_price_usd``,
-             ``broker_proforma.noi_usd``,
-             ``ttm_summary_per_om.occupancy_pct``,
-             ``property_overview.keys``,
-             ``in_place_debt.loan_balance_usd``,
-             ``market_overview_per_om.compset_revpar_usd``.
-     * T12:  ``p_and_l_usali.operating_revenue.rooms_revenue``,
-             ``p_and_l_usali.fees_and_reserves.ffe_reserve``,
-             ``p_and_l_usali.net_operating_income.noi_usd``,
-             ``occupancy_pct``, ``adr_usd``, ``revpar_usd``.
-     * STR:  ``ttm_performance.subject.revpar_usd``,
-             ``ttm_performance.indices.rgi_revpar_index``,
-             ``comp_set.comp_set_size``.
+   reference the value. The first segment of the path is REQUIRED and
+   tells the downstream pipeline whether the value is an actual or a
+   broker projection. Get this prefix wrong and a broker NOI projection
+   will be reconciled as if it were a T-12 actual.
+
+   * **OM (Offering Memorandum) — ALL fields MUST be prefixed.** OMs
+     contain three kinds of numbers: (a) broker pro-forma year-1
+     underwriting projections, (b) trailing twelve months historical
+     summaries the broker pasted in, (c) physical/legal property
+     metadata. Each lives under its own root:
+       * ``broker_proforma.<line>``   — every Year-1 broker projection
+         on the rent roll / pro forma. Use this for ANY headline NOI,
+         occupancy, ADR, RevPAR, revenue or expense the broker shows
+         as their underwritten case. Examples:
+           ``broker_proforma.noi_usd``,
+           ``broker_proforma.rooms_revenue_usd``,
+           ``broker_proforma.fb_revenue_usd``,
+           ``broker_proforma.occupancy_pct``,
+           ``broker_proforma.adr_usd``.
+       * ``ttm_summary_per_om.<line>`` — historical T-12 numbers the
+         OM cites as actuals (only use this when the OM clearly
+         labels the figure as actual / TTM / LTM, not when the broker
+         is projecting forward). Examples:
+           ``ttm_summary_per_om.noi_usd``,
+           ``ttm_summary_per_om.occupancy_pct``.
+       * ``asking_price.headline_price_usd``,
+         ``asking_price.price_per_key_usd``.
+       * ``property_overview.keys``, ``property_overview.brand``,
+         ``property_overview.year_built``, ``property_overview.address``.
+       * ``in_place_debt.loan_balance_usd``, etc.
+       * ``market_overview_per_om.compset_revpar_usd``, etc.
+     CRITICAL: a number you find in an OM that you are tempted to emit
+     as bare ``noi_usd`` MUST instead be ``broker_proforma.noi_usd``.
+     Bare names without a root prefix are reserved for T-12 actuals.
+     If you cannot decide whether a number is broker-projected or
+     historical, default to ``broker_proforma.*`` — overstating the
+     broker side is recoverable; mislabeling it as T-12 actual is not.
+   * **T12 (trailing twelve months / P&L statement) — fields use the
+     P&L USALI namespace.** Examples:
+       ``p_and_l_usali.operating_revenue.rooms_revenue``,
+       ``p_and_l_usali.operating_revenue.food_beverage_revenue``,
+       ``p_and_l_usali.operating_revenue.resort_fees``,
+       ``p_and_l_usali.operating_revenue.misc_revenue``,
+       ``p_and_l_usali.operating_revenue.other_revenue``,
+       ``p_and_l_usali.fees_and_reserves.ffe_reserve``,
+       ``p_and_l_usali.net_operating_income.noi_usd``,
+       ``occupancy_pct``, ``adr_usd``, ``revpar_usd``.
+   * **STR (STR / smith travel benchmark report).** Examples:
+       ``ttm_performance.subject.revpar_usd``,
+       ``ttm_performance.indices.rgi_revpar_index``,
+       ``comp_set.comp_set_size``.
+
 2. ``value``        — the extracted scalar (number, string, or bool).
                       Strip thousand-separators; use a decimal between
                       0 and 1 for percentages (``0.762``, not
@@ -84,15 +122,19 @@ include:
 Coverage targets per document type:
   * **OM** — extract at least 30 fields covering: property overview
     (keys, brand, year built, address), asking price + per-key,
-    every line of the broker proforma (rooms/F&B/other revenue,
-    departmental + undistributed expenses, GOP, mgmt fee, FF&E,
-    fixed charges, NOI, cap rate), in-place debt, PIP scope,
+    every line of the broker proforma (rooms/F&B/RESORT FEES/other
+    revenue, departmental + undistributed expenses, GOP, mgmt fee,
+    FF&E, fixed charges, NOI, cap rate), in-place debt, PIP scope,
     market overview (subject + comp set indices), and the headline
-    comparable sales.
+    comparable sales. Resort Fees, when broken out separately on the
+    OM rent roll, MUST be its own field (``broker_proforma.resort_fees_usd``)
+    — do NOT roll it into ``misc_revenue`` or ``other_revenue``.
   * **T12** — every USALI line in operating revenue, departmental
     expenses, undistributed expenses, fees & reserves, fixed charges,
     plus GOP and NOI rollups. Include the operational KPIs
-    (occupancy, ADR, RevPAR, available/occupied rooms).
+    (occupancy, ADR, RevPAR, available/occupied rooms). Resort Fees
+    are a separate USALI revenue line (``p_and_l_usali.operating_revenue.resort_fees``)
+    — extract them distinctly from miscellaneous income.
   * **STR** — subject + comp-set occupancy/ADR/RevPAR for the TTM,
     the three penetration indices (MPI/ARI/RGI), comp-set size
     and total keys, and any forward outlook the report carries.

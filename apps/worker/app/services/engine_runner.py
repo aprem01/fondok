@@ -203,9 +203,118 @@ async def _load_engine_inputs(
             except (TypeError, ValueError):
                 pass
 
+    # Pull Year-1 T-12 expense actuals from the deal's extraction results
+    # so the expense engine can ground synthesis on real numbers (Sam QA
+    # #1: synthesized expenses ($457K Insurance vs actual $1.16M;
+    # $905K Utilities vs actual $288K) cascaded into wrong DSCR / returns
+    # / per-key metrics). Best-effort — partial extraction degrades to
+    # ratio synthesis line-by-line.
+    base["t12_expense_actuals"] = await _load_t12_expense_actuals(
+        session, deal_id=deal_id
+    )
+
     if overrides:
         base.update(overrides)
     return base
+
+
+# Map extracted T-12 field paths onto the canonical expense-line keys
+# the expense engine recognizes. Both the dotted ``p_and_l_usali.*``
+# paths the Extractor agent emits and the bare lowercase aliases the
+# legacy normalizer uses are accepted.
+_T12_EXPENSE_FIELD_ALIASES: dict[str, str] = {
+    # Departmental
+    "p_and_l_usali.departmental_expenses.rooms": "rooms_dept_expense",
+    "rooms_dept_expense": "rooms_dept_expense",
+    "rooms_departmental_expenses": "rooms_dept_expense",
+    "p_and_l_usali.departmental_expenses.food_beverage": "fb_dept_expense",
+    "fb_dept_expense": "fb_dept_expense",
+    "food_beverage_departmental_expenses": "fb_dept_expense",
+    "p_and_l_usali.departmental_expenses.other_operated": "other_dept_expense",
+    "other_dept_expense": "other_dept_expense",
+    # Undistributed
+    "p_and_l_usali.undistributed.administrative_general": "administrative_general",
+    "administrative_general": "administrative_general",
+    "admin_general": "administrative_general",
+    "p_and_l_usali.undistributed.information_telecom": "information_telecom",
+    "information_telecom": "information_telecom",
+    "p_and_l_usali.undistributed.sales_marketing": "sales_marketing",
+    "sales_marketing": "sales_marketing",
+    "p_and_l_usali.undistributed.property_operations": "property_operations",
+    "property_operations": "property_operations",
+    "repairs_maintenance": "property_operations",
+    "p_and_l_usali.undistributed.utilities": "utilities",
+    "utilities": "utilities",
+    # Fees & reserves
+    "p_and_l_usali.fees_and_reserves.mgmt_fee": "mgmt_fee",
+    "mgmt_fee": "mgmt_fee",
+    "management_fee": "mgmt_fee",
+    "p_and_l_usali.fees_and_reserves.ffe_reserve": "ffe_reserve",
+    "ffe_reserve": "ffe_reserve",
+    # Fixed charges
+    "p_and_l_usali.fixed_charges.property_taxes": "property_taxes",
+    "property_taxes": "property_taxes",
+    "p_and_l_usali.fixed_charges.insurance": "insurance",
+    "insurance": "insurance",
+}
+
+
+async def _load_t12_expense_actuals(
+    session: AsyncSession,
+    *,
+    deal_id: str,
+) -> dict[str, float]:
+    """Read Year-1 expense actuals off the deal's most recent T-12 extraction.
+
+    Returns ``{}`` (no overrides — engine falls back to USALI ratios) when
+    no T-12 has been extracted, when the deal id isn't a UUID, or when
+    the migrations haven't been applied to the test DB.
+    """
+    try:
+        UUID(deal_id)
+    except (ValueError, TypeError):
+        return {}
+    try:
+        rows = await session.execute(
+            text(
+                """
+                SELECT er.fields, d.doc_type
+                  FROM extraction_results er
+                  JOIN documents d ON d.id = er.document_id
+                 WHERE er.deal_id = :deal AND d.doc_type IN ('T12','PNL')
+                 ORDER BY er.created_at DESC
+                """
+            ),
+            {"deal": deal_id},
+        )
+    except Exception:
+        return {}
+
+    actuals: dict[str, float] = {}
+    for r in rows.fetchall():
+        raw_fields = r._mapping["fields"]
+        if isinstance(raw_fields, str):
+            try:
+                raw_fields = json.loads(raw_fields)
+            except (json.JSONDecodeError, TypeError):
+                continue
+        if not isinstance(raw_fields, list):
+            continue
+        for f in raw_fields:
+            if not isinstance(f, dict):
+                continue
+            name = (f.get("field_name") or "").strip().lower()
+            value = f.get("value")
+            if not name or not isinstance(value, (int, float)):
+                continue
+            canonical = _T12_EXPENSE_FIELD_ALIASES.get(name)
+            if canonical is None:
+                # Try the last segment of a dotted path as a fallback.
+                tail = name.rsplit(".", 1)[-1] if "." in name else name
+                canonical = _T12_EXPENSE_FIELD_ALIASES.get(tail)
+            if canonical and canonical not in actuals:
+                actuals[canonical] = float(value)
+    return actuals
 
 
 # ─────────────────────────── Per-engine input ─────────────────────────
@@ -251,6 +360,10 @@ def _build_input_for(
             ffe_reserve_pct=base["ffe_reserve_pct"],
             expense_growth=base["expense_growth"],
             grow_opex_independently=base["grow_opex_independently"],
+            # When the deal has an extracted T-12, the engine prefers
+            # actuals over USALI benchmark ratios for Year 1. Loaded by
+            # ``_load_engine_inputs`` below; absent on demo deals.
+            t12_actuals=base.get("t12_expense_actuals", {}) or {},
         )
 
     if engine_name == "capital":

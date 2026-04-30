@@ -523,10 +523,23 @@ export default function DataRoomTab({ projectId }: { projectId: number | string 
                         <div className="text-[11px] text-ink-500 mt-1">{d.size} · {d.date}</div>
                         {d.status === 'Extracted' && (
                           <div className="flex items-center gap-3 mt-2">
-                            <div className="text-[11px] text-ink-700">
-                              <span className="text-brand-700 font-medium">{d.fields}</span> fields extracted
-                              {' · '}<span className="font-medium">{d.confidence}%</span> confidence
-                            </div>
+                            {d.fields > 0 ? (
+                              <div className="text-[11px] text-ink-700">
+                                <span className="text-brand-700 font-medium">{d.fields}</span> fields extracted
+                                {' · '}<span className="font-medium">{d.confidence}%</span> confidence
+                              </div>
+                            ) : (
+                              // The doc is EXTRACTED on the worker but the
+                              // extraction results poll hasn't caught up yet,
+                              // OR the LLM Extractor returned 0 scalar fields
+                              // for a narrative-heavy OM. Don't show
+                              // "0 fields · 0% confidence" — that contradicts
+                              // the right panel which shows the same data.
+                              <div className="flex items-center gap-1.5 text-[11px] text-ink-500">
+                                <Loader2 size={11} className="animate-spin" />
+                                Loading extraction details…
+                              </div>
+                            )}
                             {d.populates.length > 0 && (
                               <div className="flex gap-1">
                                 {d.populates.map((p) => <Badge key={p} tone="blue">{p}</Badge>)}

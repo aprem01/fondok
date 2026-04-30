@@ -30,7 +30,19 @@ export default function InvestmentTab({ projectId }: { projectId: number | strin
   const [computing, setComputing] = useState(false);
   const [runToken, setRunToken] = useState<number | null>(null);
 
-  if (!isKimptonDemo) {
+  // Detect whether the capital (Investment) engine has a persisted output.
+  // Sam QA #8: this tab always rendered the empty state for non-Kimpton
+  // deals — even after an OM was uploaded and engines had run. We now
+  // render the live UI as soon as ANY capital field has shipped, so a
+  // freshly-extracted OM unblocks the tab the same way the other engines
+  // unblock theirs.
+  const wPurchase = getEngineField<number>(outputs, 'capital', 'purchase_price');
+  const wPricePerKey = getEngineField<number>(outputs, 'capital', 'price_per_key');
+  const wEntryCap = getEngineField<number>(outputs, 'capital', 'entry_cap_rate');
+  const hasCapitalOutput =
+    wPurchase != null || wPricePerKey != null || wEntryCap != null;
+
+  if (!isKimptonDemo && !hasCapitalOutput) {
     return (
       <div className="flex gap-4">
         <div className="flex-1 min-w-0">

@@ -644,7 +644,13 @@ function HistoricalProjected({ statement, isKimptonDemo }: { statement: Statemen
         <div className="flex items-center justify-between mb-3">
           <div>
             <h3 className="text-[13px] font-semibold text-ink-900">Historical vs Projected Performance</h3>
-            <div className="text-[11px] text-ink-500 mt-0.5">Pre-acquisition T-3 (2023-2025) and underwritten projection (2026-2030) · $ in 000s</div>
+            <div className="text-[11px] text-ink-500 mt-0.5">
+              {historical.length > 0 ? (
+                <>Pre-acquisition T-3 (2023-2025) and underwritten projection (2026-2030) · $ in 000s</>
+              ) : (
+                <>Underwritten projection (2026-2030) · $ in 000s · upload prior-period operating statements to see the historical baseline</>
+              )}
+            </div>
           </div>
           <div className="flex items-center gap-3 text-[11px]">
             <span className="flex items-center gap-1.5"><span className="w-3 h-0.5 bg-[#0d9488]" /> Historical</span>
