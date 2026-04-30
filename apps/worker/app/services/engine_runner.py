@@ -245,6 +245,35 @@ async def _load_engine_inputs(
             0.95, revenue_actuals["revpar"] / revenue_actuals["adr"]
         )
 
+    # When the T-12 carries Y1 revenue dollars, derive the engine's
+    # per-occupied-room F&B anchor and the other-revenue ratio so the
+    # Operating Statement's revenue mix reflects the real property
+    # rather than the Kimpton seed (~$88 F&B/occupied room, ~6.5% other).
+    # Resort Fees are treated separately per modern USALI (Sam QA #11);
+    # we fold them into the "other" pool only when the T-12 doesn't
+    # break them out independently.
+    rooms_rev = revenue_actuals.get("rooms_revenue")
+    fb_rev = revenue_actuals.get("fb_revenue")
+    other_rev = revenue_actuals.get("other_revenue", 0.0) or 0.0
+    resort_fees = revenue_actuals.get("resort_fees", 0.0) or 0.0
+    misc_rev = revenue_actuals.get("misc_revenue", 0.0) or 0.0
+    other_pool = other_rev + resort_fees + misc_rev
+
+    starting_occupancy = base.get("starting_occupancy", 0.0)
+    keys = base.get("keys", 0)
+    occupied_room_nights = (
+        starting_occupancy * float(keys) * 365.0
+        if starting_occupancy and keys
+        else 0.0
+    )
+
+    if fb_rev and occupied_room_nights > 0:
+        base["fb_revenue_per_occupied_room"] = fb_rev / occupied_room_nights
+    if other_pool and rooms_rev and rooms_rev > 0:
+        # Cap the ratio at a sane upper bound so a partial extraction
+        # (rooms revenue missing, all other_pool present) can't blow up.
+        base["other_revenue_pct_of_rooms"] = min(0.30, other_pool / rooms_rev)
+
     if overrides:
         base.update(overrides)
     return base
@@ -308,6 +337,28 @@ _T12_REVENUE_FIELD_ALIASES: dict[str, str] = {
     "p_and_l_usali.operational_kpis.revpar_usd": "revpar",
     "revpar_usd": "revpar",
     "revpar": "revpar",
+    # Year-1 revenue dollar amounts. These let the loader derive the
+    # engine's per-occupied-room F&B and other-revenue-pct anchors from
+    # the actual T-12 instead of the Kimpton seed (~$88 F&B per occupied
+    # room, ~6.5% other), so the rooms / F&B / other lines on the
+    # Operating Statement reflect the real property's mix.
+    "p_and_l_usali.operating_revenue.rooms_revenue": "rooms_revenue",
+    "p_and_l_usali.operating_revenue.rooms_revenue_usd": "rooms_revenue",
+    "rooms_revenue_usd": "rooms_revenue",
+    "rooms_revenue": "rooms_revenue",
+    "p_and_l_usali.operating_revenue.food_beverage_revenue": "fb_revenue",
+    "p_and_l_usali.operating_revenue.fb_revenue": "fb_revenue",
+    "fb_revenue_usd": "fb_revenue",
+    "fb_revenue": "fb_revenue",
+    "food_beverage_revenue": "fb_revenue",
+    "p_and_l_usali.operating_revenue.other_revenue": "other_revenue",
+    "other_revenue_usd": "other_revenue",
+    "other_revenue": "other_revenue",
+    "p_and_l_usali.operating_revenue.resort_fees": "resort_fees",
+    "resort_fees_usd": "resort_fees",
+    "resort_fees": "resort_fees",
+    "p_and_l_usali.operating_revenue.misc_revenue": "misc_revenue",
+    "misc_revenue": "misc_revenue",
 }
 
 

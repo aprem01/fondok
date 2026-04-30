@@ -14,7 +14,13 @@ import { kimptonAnglerOverview } from '@/lib/mockData';
 import { fmtCurrency, fmtPct, cn } from '@/lib/format';
 import { useAssumptionsOptional } from '@/stores/assumptionsStore';
 import { getEngineField, useEngineOutputs } from '@/lib/hooks/useEngineOutputs';
+import { useDeal } from '@/lib/hooks/useDeal';
 import { IntroCard } from '@/components/help/IntroCard';
+
+// Expense engine year shape — mirrors apps/worker/app/engines/expense.py.
+// Only the fields we read on the Investment tab are typed here; the
+// canonical shape lives in PLTab.tsx.
+interface ExpenseYearLite { year: number; noi: number }
 
 const subTabs = ['Deal Summary', 'Sources & Uses', 'Timeline'];
 
@@ -27,20 +33,65 @@ export default function InvestmentTab({ projectId }: { projectId: number | strin
   const { toast } = useToast();
   const isKimptonDemo = projectId === 7;
   const { outputs, previous } = useEngineOutputs(dealId);
+  const { deal } = useDeal(dealId);
   const [computing, setComputing] = useState(false);
   const [runToken, setRunToken] = useState<number | null>(null);
 
-  // Detect whether the capital (Investment) engine has a persisted output.
-  // Sam QA #8: this tab always rendered the empty state for non-Kimpton
-  // deals — even after an OM was uploaded and engines had run. We now
-  // render the live UI as soon as ANY capital field has shipped, so a
-  // freshly-extracted OM unblocks the tab the same way the other engines
-  // unblock theirs.
+  // ─── Worker engine field reads ────────────────────────────────────
+  // Sam QA #8: the Investment tab used to render the Kimpton fixture
+  // (Miami Beach, 132 keys, $36.4M etc.) for every deal because every
+  // panel read from `o = kimptonAnglerOverview`. We now prefer worker
+  // engine output and fall back to the Kimpton fixture only on the
+  // demo deal (projectId === 7); other deals show '—' until the
+  // engine has produced the value.
   const wPurchase = getEngineField<number>(outputs, 'capital', 'purchase_price');
   const wPricePerKey = getEngineField<number>(outputs, 'capital', 'price_per_key');
   const wEntryCap = getEngineField<number>(outputs, 'capital', 'entry_cap_rate');
+  const wTotalCapital =
+    getEngineField<number>(outputs, 'capital', 'total_capital_usd') ??
+    getEngineField<number>(outputs, 'capital', 'total_capital');
+  const wTotalCapitalPerKey = getEngineField<number>(
+    outputs, 'capital', 'total_capital_per_key',
+  );
+  const wLtc = getEngineField<number>(outputs, 'capital', 'ltc');
+  const wLtv = getEngineField<number>(outputs, 'capital', 'ltv');
+  const wDebtAmount = getEngineField<number>(outputs, 'capital', 'debt_amount');
+
+  const wLoanAmount = getEngineField<number>(outputs, 'debt', 'loan_amount');
+  const wYearOneDscr = getEngineField<number>(outputs, 'debt', 'year_one_dscr');
+  const wYearOneDebtYield = getEngineField<number>(outputs, 'debt', 'year_one_debt_yield');
+  const wAnnualDebtService = getEngineField<number>(outputs, 'debt', 'annual_debt_service');
+
+  const wExpenseYears = getEngineField<ExpenseYearLite[]>(outputs, 'expense', 'years');
+  const wYearOneNoi = wExpenseYears && wExpenseYears.length > 0 ? wExpenseYears[0].noi : undefined;
+
+  const wGrossSale = getEngineField<number>(outputs, 'returns', 'gross_sale_price');
+  const wExitCap = getEngineField<number>(outputs, 'returns', 'exit_cap_rate');
+  const wTerminalNoi =
+    getEngineField<number>(outputs, 'returns', 'terminal_noi_usd') ??
+    getEngineField<number>(outputs, 'returns', 'terminal_noi');
+  const wSellingCosts = getEngineField<number>(outputs, 'returns', 'selling_costs');
+
   const hasCapitalOutput =
     wPurchase != null || wPricePerKey != null || wEntryCap != null;
+
+  // Display helpers: prefer worker → fixture (Kimpton demo only) → '—'.
+  // `valOrDash` picks the first non-null source; `pickNum` returns the
+  // raw number for arithmetic (per-key dividers, etc.).
+  const pickNum = (worker: number | undefined, fixture: number): number | undefined =>
+    worker != null ? worker : (isKimptonDemo ? fixture : undefined);
+  const fmtOrDash = (
+    n: number | undefined,
+    formatter: (v: number) => string,
+  ): string => (n != null ? formatter(n) : '—');
+
+  // Per-key keys count: prefer real deal keys, then the fixture only on
+  // the demo. Used as the divider when worker engine output omits the
+  // pre-computed per-key value.
+  const propertyKeys =
+    (deal?.keys && deal.keys > 0)
+      ? deal.keys
+      : (isKimptonDemo ? kimptonAnglerOverview.general.keys : undefined);
 
   if (!isKimptonDemo && !hasCapitalOutput) {
     return (
@@ -150,93 +201,168 @@ export default function InvestmentTab({ projectId }: { projectId: number | strin
 
       <div className={cn(computing && 'relative pointer-events-none opacity-60')}>
 
-      {tab === 'Deal Summary' && (
+      {tab === 'Deal Summary' && (() => {
+        // ─── Worker → fixture wiring for every panel below ──────
+        // Property Overview: name/location/keys come from the deal
+        // row (useDeal). Worker doesn't surface year_built / address
+        // yet, so those stay fixture-only on the demo.
+        const dealName = deal?.name ?? (isKimptonDemo ? o.general.name : undefined);
+        const dealLocation = deal?.city ?? (isKimptonDemo ? o.general.location : undefined);
+        const dealKeys = (deal?.keys && deal.keys > 0)
+          ? deal.keys
+          : (isKimptonDemo ? o.general.keys : undefined);
+        const dealType = isKimptonDemo ? o.general.type : undefined;
+        const dealYearBuilt = isKimptonDemo ? o.general.yearBuilt : undefined;
+        const dealGba = isKimptonDemo ? o.general.gba : undefined;
+
+        // Entry Valuation
+        const entryNoi = pickNum(wYearOneNoi, 2_481_478);
+        const entryCap = pickNum(wEntryCap, o.acquisition.entryCapRate);
+        const entryPurchase = pickNum(wPurchase, o.acquisition.purchasePrice);
+        const entryPricePerKey = pickNum(wPricePerKey, o.acquisition.pricePerKey);
+
+        // Exit Valuation
+        const exitTerminalNoi = pickNum(wTerminalNoi, o.reversion.terminalNOI);
+        const exitCap = pickNum(wExitCap, o.reversion.exitCapRate);
+        const exitGross = pickNum(wGrossSale, o.reversion.grossSalePrice);
+        const exitPerKey = (exitGross != null && propertyKeys && propertyKeys > 0)
+          ? exitGross / propertyKeys : undefined;
+        const exitSellingCosts = pickNum(wSellingCosts, o.reversion.sellingCosts);
+
+        // Renovation Budget — capital engine doesn't break out
+        // hard/soft/fees yet; sub-rows stay fixture-only on demo.
+        const renoBudget = isKimptonDemo ? o.investment.renovationBudget : undefined;
+        const renoPerKey = (renoBudget != null && propertyKeys && propertyKeys > 0)
+          ? renoBudget / propertyKeys : undefined;
+        const renoPerSf = (renoBudget != null && dealGba && dealGba > 0)
+          ? renoBudget / dealGba : undefined;
+        const renoContingency = isKimptonDemo ? o.investment.contingency : undefined;
+        const renoHard = isKimptonDemo ? 3_960_000 : undefined;
+        const renoSoft = isKimptonDemo ? 528_000 : undefined;
+        const renoFees = isKimptonDemo ? 264_000 : undefined;
+
+        // Valuation Assumptions
+        const totalCapital = pickNum(wTotalCapital, o.investment.totalCapital);
+        const totalCapitalPerKey = wTotalCapitalPerKey != null
+          ? wTotalCapitalPerKey
+          : (totalCapital != null && propertyKeys && propertyKeys > 0)
+            ? totalCapital / propertyKeys
+            : undefined;
+        const holdYears = isKimptonDemo ? o.returns.hold : undefined;
+
+        // Senior Loan Financing — prefer debt engine echo, fall
+        // back to capital engine debt_amount, then fixture.
+        const loanAmount = pickNum(wLoanAmount ?? wDebtAmount, o.financing.loanAmount);
+        const loanLtc = pickNum(wLtc, 0.65);
+        const loanLtv = pickNum(wLtv, o.financing.ltv);
+        const loanDebtYield = pickNum(wYearOneDebtYield, 0.181);
+        const loanAcqCost = loanAmount != null ? loanAmount * 0.015 : undefined;
+        const loanTerm = isKimptonDemo ? o.financing.term : undefined;
+        const loanAmort = isKimptonDemo ? o.financing.amortization : undefined;
+
+        return (
         <>
           <div className="grid grid-cols-2 gap-5">
             <Panel title="Property Overview" rows={[
-              ['Name', o.general.name], ['Type', o.general.type], ['Location', o.general.location],
-              ['Year Built', o.general.yearBuilt.toString()], ['Pre-Renovation Keys', o.general.keys.toString()],
-              ['Post-Renovation Keys', o.general.keys.toString()], ['Post-Renovation SF', o.general.gba.toLocaleString()],
+              ['Name', dealName ?? '—'],
+              ['Type', dealType ?? '—'],
+              ['Location', dealLocation ?? '—'],
+              ['Year Built', dealYearBuilt != null ? String(dealYearBuilt) : '—'],
+              ['Pre-Renovation Keys', dealKeys != null ? String(dealKeys) : '—'],
+              ['Post-Renovation Keys', dealKeys != null ? String(dealKeys) : '—'],
+              ['Post-Renovation SF', dealGba != null ? dealGba.toLocaleString() : '—'],
             ]} />
             <Panel title="Entry Valuation" rows={[
-              ['NOI', fmtCurrency(2_481_478)], ['Entry Cap Rate', fmtPct(o.acquisition.entryCapRate, 2)],
-              ['2025 Run-Rate NOI', '$2,481,478'], ['FTM Date', '12/31/2025'],
-              ['Hotel Purchase Price', fmtCurrency(o.acquisition.purchasePrice)],
-              ['Per Key', fmtCurrency(o.acquisition.pricePerKey)],
+              ['NOI', fmtOrDash(entryNoi, fmtCurrency)],
+              ['Entry Cap Rate', fmtOrDash(entryCap, v => fmtPct(v, 2))],
+              ['2025 Run-Rate NOI', fmtOrDash(entryNoi, fmtCurrency)],
+              ['FTM Date', isKimptonDemo ? '12/31/2025' : '—'],
+              ['Hotel Purchase Price', fmtOrDash(entryPurchase, fmtCurrency)],
+              ['Per Key', fmtOrDash(entryPricePerKey, fmtCurrency)],
             ]} />
             <Panel title="Exit Valuation" rows={[
-              ['Exit Month', '60'], ['Exit Date', '9/30/2030'], ['Fwd. 12 Mo NOI', fmtCurrency(o.reversion.terminalNOI)],
-              ['Exit Cap Rate', fmtPct(o.reversion.exitCapRate, 2)], ['Gross Exit Value', fmtCurrency(o.reversion.grossSalePrice)],
-              ['Per Key', fmtCurrency(o.reversion.grossSalePrice / o.general.keys)],
-              ['Exit Sales Cost', fmtCurrency(o.reversion.sellingCosts)], ['Transfer Tax', '0.6%'],
+              ['Exit Month', isKimptonDemo ? '60' : '—'],
+              ['Exit Date', isKimptonDemo ? '9/30/2030' : '—'],
+              ['Fwd. 12 Mo NOI', fmtOrDash(exitTerminalNoi, fmtCurrency)],
+              ['Exit Cap Rate', fmtOrDash(exitCap, v => fmtPct(v, 2))],
+              ['Gross Exit Value', fmtOrDash(exitGross, fmtCurrency)],
+              ['Per Key', fmtOrDash(exitPerKey, fmtCurrency)],
+              ['Exit Sales Cost', fmtOrDash(exitSellingCosts, fmtCurrency)],
+              ['Transfer Tax', isKimptonDemo ? '0.6%' : '—'],
             ]} />
             <Panel title="Renovation Budget" rows={[
-              ['Renovation Budget', fmtCurrency(o.investment.renovationBudget)],
-              ['Per Key', fmtCurrency(o.investment.renovationBudget / o.general.keys)],
-              ['Per SF', fmtCurrency(o.investment.renovationBudget / o.general.gba)],
-              ['Hard Costs (75%)', fmtCurrency(3_960_000)],
-              ['Soft Costs (20%)', fmtCurrency(528_000)],
-              ['Professional Fees (5%)', fmtCurrency(264_000)],
-              ['Contingency', fmtCurrency(o.investment.contingency)],
-              ['Total Renovation', fmtCurrency(o.investment.renovationBudget)],
+              ['Renovation Budget', fmtOrDash(renoBudget, fmtCurrency)],
+              ['Per Key', fmtOrDash(renoPerKey, fmtCurrency)],
+              ['Per SF', fmtOrDash(renoPerSf, fmtCurrency)],
+              ['Hard Costs (75%)', fmtOrDash(renoHard, fmtCurrency)],
+              ['Soft Costs (20%)', fmtOrDash(renoSoft, fmtCurrency)],
+              ['Professional Fees (5%)', fmtOrDash(renoFees, fmtCurrency)],
+              ['Contingency', fmtOrDash(renoContingency, fmtCurrency)],
+              ['Total Renovation', fmtOrDash(renoBudget, fmtCurrency)],
             ]} />
           </div>
           <div className="grid grid-cols-2 gap-5 mt-5">
             <Panel title="Valuation Assumptions" rows={[
-              ['Total Dev. Cost', fmtCurrency(o.investment.totalCapital)],
-              ['Per Key', fmtCurrency(o.investment.totalCapital / o.general.keys)],
-              ['Hold Years', `${o.returns.hold} yrs`],
-              ['Stabilized NOI FWD 12', fmtCurrency(o.reversion.terminalNOI)],
-              ['Exit Cap Rate', fmtPct(o.reversion.exitCapRate, 2)],
-              ['Sale Price', fmtCurrency(o.reversion.grossSalePrice)],
-              ['Disposition Fees', fmtCurrency(o.reversion.sellingCosts)],
+              ['Total Dev. Cost', fmtOrDash(totalCapital, fmtCurrency)],
+              ['Per Key', fmtOrDash(totalCapitalPerKey, fmtCurrency)],
+              ['Hold Years', holdYears != null ? `${holdYears} yrs` : '—'],
+              ['Stabilized NOI FWD 12', fmtOrDash(exitTerminalNoi, fmtCurrency)],
+              ['Exit Cap Rate', fmtOrDash(exitCap, v => fmtPct(v, 2))],
+              ['Sale Price', fmtOrDash(exitGross, fmtCurrency)],
+              ['Disposition Fees', fmtOrDash(exitSellingCosts, fmtCurrency)],
             ]} />
             <Panel title="Senior Loan Financing" rows={[
-              ['Month Funding', '0'],
-              ['Start Date', '9/30/2025'],
-              ['Term', `${o.financing.term} yrs`],
-              ['Maturity Date', '9/30/2030'],
-              ['Senior Acq. Cost', fmtCurrency(o.financing.loanAmount * 0.015)],
-              ['LTC Amount', fmtCurrency(o.financing.loanAmount)],
-              ['LTC %', fmtPct(0.65, 1)],
-              ['LTV Amount', fmtCurrency(o.financing.loanAmount)],
-              ['LTV %', fmtPct(o.financing.ltv, 1)],
-              ['DY Amount', fmtCurrency(4_280_000)],
-              ['DY Date', '12/31/2027'],
-              ['DY NOI', fmtCurrency(4_280_000)],
-              ['DY %', fmtPct(0.181, 1)],
-              ['Loan Amount', fmtCurrency(o.financing.loanAmount)],
-              ['Variable / Fixed', 'Variable'],
-              ['Spread over SOFR', '290 bps'],
-              ['SOFR Rate', fmtPct(0.035, 2)],
-              ['SOFR Floor', fmtPct(0, 2)],
-              ['SOFR Ceiling', fmtPct(0.045, 2)],
-              ['Interest Only Period', '24 mo'],
-              ['Amortization Period', `${o.financing.amortization} yrs`],
-              ['Origination Fee', fmtPct(0.015, 2)],
+              ['Month Funding', isKimptonDemo ? '0' : '—'],
+              ['Start Date', isKimptonDemo ? '9/30/2025' : '—'],
+              ['Term', loanTerm != null ? `${loanTerm} yrs` : '—'],
+              ['Maturity Date', isKimptonDemo ? '9/30/2030' : '—'],
+              ['Senior Acq. Cost', fmtOrDash(loanAcqCost, fmtCurrency)],
+              ['LTC Amount', fmtOrDash(loanAmount, fmtCurrency)],
+              ['LTC %', fmtOrDash(loanLtc, v => fmtPct(v, 1))],
+              ['LTV Amount', fmtOrDash(loanAmount, fmtCurrency)],
+              ['LTV %', fmtOrDash(loanLtv, v => fmtPct(v, 1))],
+              ['DY Amount', isKimptonDemo ? fmtCurrency(4_280_000) : '—'],
+              ['DY Date', isKimptonDemo ? '12/31/2027' : '—'],
+              ['DY NOI', isKimptonDemo ? fmtCurrency(4_280_000) : '—'],
+              ['DY %', fmtOrDash(loanDebtYield, v => fmtPct(v, 1))],
+              ['Loan Amount', fmtOrDash(loanAmount, fmtCurrency)],
+              ['Variable / Fixed', isKimptonDemo ? 'Variable' : '—'],
+              ['Spread over SOFR', isKimptonDemo ? '290 bps' : '—'],
+              ['SOFR Rate', isKimptonDemo ? fmtPct(0.035, 2) : '—'],
+              ['SOFR Floor', isKimptonDemo ? fmtPct(0, 2) : '—'],
+              ['SOFR Ceiling', isKimptonDemo ? fmtPct(0.045, 2) : '—'],
+              ['Interest Only Period', isKimptonDemo ? '24 mo' : '—'],
+              ['Amortization Period', loanAmort != null ? `${loanAmort} yrs` : '—'],
+              ['Origination Fee', isKimptonDemo ? fmtPct(0.015, 2) : '—'],
             ]} />
           </div>
           <div className="grid grid-cols-1 gap-5 mt-5">
             <Panel title="Senior Loan Refinancing" rows={[
-              ['Month Funding', '48'],
-              ['Start Date', '9/30/2029'],
-              ['Term', `${o.refi.refiTerm} yrs`],
-              ['Maturity Date', '9/30/2034'],
-              ['LTV Amount', fmtCurrency(31_200_000)],
-              ['LTV %', fmtPct(o.refi.refiLTV, 1)],
-              ['Loan Proceeds', fmtCurrency(31_200_000)],
-              ['Loan Payoff', fmtCurrency(o.financing.loanAmount)],
-              ['Cash Pulled Out', fmtCurrency(31_200_000 - o.financing.loanAmount)],
-              ['Variable / Fixed', 'Fixed'],
-              ['Interest Rate', fmtPct(o.refi.refiRate, 2)],
-              ['Interest Only Period', '12 mo'],
-              ['Amortization Period', `${o.refi.refiAmortization} yrs`],
-              ['Origination Fee', fmtPct(0.0125, 2)],
-              ['Refi Acq. Cost', fmtCurrency(31_200_000 * 0.0125)],
+              // Refi terms aren't in the worker engine output yet, so
+              // these stay fixture-only on the Kimpton demo and show
+              // '—' on real deals rather than leaking refi proceeds.
+              ['Month Funding', isKimptonDemo ? '48' : '—'],
+              ['Start Date', isKimptonDemo ? '9/30/2029' : '—'],
+              ['Term', isKimptonDemo ? `${o.refi.refiTerm} yrs` : '—'],
+              ['Maturity Date', isKimptonDemo ? '9/30/2034' : '—'],
+              ['LTV Amount', isKimptonDemo ? fmtCurrency(31_200_000) : '—'],
+              ['LTV %', isKimptonDemo ? fmtPct(o.refi.refiLTV, 1) : '—'],
+              ['Loan Proceeds', isKimptonDemo ? fmtCurrency(31_200_000) : '—'],
+              ['Loan Payoff', fmtOrDash(loanAmount, fmtCurrency)],
+              ['Cash Pulled Out', isKimptonDemo
+                ? fmtCurrency(31_200_000 - o.financing.loanAmount)
+                : '—'],
+              ['Variable / Fixed', isKimptonDemo ? 'Fixed' : '—'],
+              ['Interest Rate', isKimptonDemo ? fmtPct(o.refi.refiRate, 2) : '—'],
+              ['Interest Only Period', isKimptonDemo ? '12 mo' : '—'],
+              ['Amortization Period', isKimptonDemo ? `${o.refi.refiAmortization} yrs` : '—'],
+              ['Origination Fee', isKimptonDemo ? fmtPct(0.0125, 2) : '—'],
+              ['Refi Acq. Cost', isKimptonDemo ? fmtCurrency(31_200_000 * 0.0125) : '—'],
             ]} />
           </div>
         </>
-      )}
+        );
+      })()}
 
       {tab === 'Sources & Uses' && (ctx ? <LiveSourcesUses /> : <StaticSourcesUses />)}
 

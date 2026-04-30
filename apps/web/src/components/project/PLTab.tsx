@@ -263,6 +263,11 @@ export default function PLTab({ projectId }: { projectId: number | string }) {
   // statement on a real run. Worker wins; Kimpton mock is the demo fallback.
   const expenseYears = getEngineField<ExpenseYearWorker[]>(outputs, 'expense', 'years');
   const fbYears = getEngineField<FBYearWorker[]>(outputs, 'fb', 'years');
+  // Lines whose Y1 was lifted from the deal's T-12 extraction rather
+  // than synthesized at USALI ratios. Used to badge those rows on the
+  // Operating Statement so reviewers can tell real vs estimated at a
+  // glance (Sam QA: "tell me which lines are T-12 vs estimated").
+  const sourcedFromT12 = getEngineField<string[]>(outputs, 'expense', 'sourced_from_t12') ?? [];
   // Revenue engine emits occupancy / ADR / RevPAR per year — Sam QA #16:
   // before this, the Per-Key tab hardcoded a Kimpton-style occupancy
   // ramp [70.1, 73.8, …] and back-derived ADR from rooms revenue, which
@@ -402,7 +407,7 @@ export default function PLTab({ projectId }: { projectId: number | string }) {
       <EngineLegend />
 
       <div className={cn(computing && 'relative pointer-events-none opacity-60')}>
-        {tab === 'Operating Statement' && <OperatingStatement statement={stmt} sourceLabel={hasWorkerStatement ? 'worker' : 'mock'} />}
+        {tab === 'Operating Statement' && <OperatingStatement statement={stmt} sourceLabel={hasWorkerStatement ? 'worker' : 'mock'} sourcedFromT12={sourcedFromT12} />}
         {tab === 'Departmental' && <Departmental statement={stmt} keys={propertyKeys} />}
         {tab === 'Per-Key Metrics' && <PerKey statement={stmt} keys={propertyKeys} isKimptonDemo={isKimptonDemo} revenueYears={revenueYears ?? null} />}
         {tab === 'Historical vs Projected' && <HistoricalProjected statement={stmt} isKimptonDemo={isKimptonDemo} />}
@@ -422,8 +427,39 @@ export default function PLTab({ projectId }: { projectId: number | string }) {
   );
 }
 
-function OperatingStatement({ statement, sourceLabel }: { statement: StatementResult; sourceLabel: 'worker' | 'mock' }) {
+// Map worker expense-line keys to the UI row labels rendered on the
+// Operating Statement, so we can flag which Y1 lines came from the
+// deal's T-12 actuals (vs synthesized at USALI ratios).
+const T12_LINE_LABELS: Record<string, string> = {
+  rooms_dept_expense: 'Rooms Department',
+  fb_dept_expense: 'F&B Department',
+  other_dept_expense: 'Other Department',
+  administrative_general: 'Administrative & General',
+  information_telecom: 'Information & Telecom',
+  sales_marketing: 'Sales & Marketing',
+  property_operations: 'Property Operations & Maintenance',
+  utilities: 'Utilities',
+  mgmt_fee: 'Management Fee',
+  ffe_reserve: 'FF&E Reserve',
+  property_taxes: 'Property Taxes',
+  insurance: 'Insurance',
+};
+
+function OperatingStatement({
+  statement,
+  sourceLabel,
+  sourcedFromT12,
+}: {
+  statement: StatementResult;
+  sourceLabel: 'worker' | 'mock';
+  sourcedFromT12: string[];
+}) {
   const { rows } = statement;
+  const t12LabelSet = new Set(
+    sourcedFromT12
+      .map((k) => T12_LINE_LABELS[k])
+      .filter((l): l is string => Boolean(l))
+  );
   return (
     <Card className="p-5">
       <div className="flex items-baseline justify-between mb-3">
@@ -459,6 +495,7 @@ function OperatingStatement({ statement, sourceLabel }: { statement: StatementRe
               const isSubtotal = r.kind === 'subtotal';
               const isTotal = r.kind === 'total';
               const tint = i % 2 === 0 ? '' : 'bg-ink-300/5';
+              const isFromT12 = t12LabelSet.has(r.label);
               return (
                 <StatementRowR
                   key={r.label}
@@ -466,6 +503,7 @@ function OperatingStatement({ statement, sourceLabel }: { statement: StatementRe
                   tint={tint}
                   isSubtotal={isSubtotal}
                   isTotal={isTotal}
+                  fromT12={isFromT12}
                 />
               );
             })}
@@ -473,8 +511,21 @@ function OperatingStatement({ statement, sourceLabel }: { statement: StatementRe
         </table>
       </div>
       <div className="mt-4 pt-4 border-t border-border text-[11px] text-ink-500 space-y-1">
-        <div>• Departmental expenses synthesized at USALI ratios: Rooms 25% of room rev, F&B 75% of F&B rev, Other 50%.</div>
-        <div>• Undistributed operating expenses follow lifestyle-tier benchmarks (A&G 8%, S&M 7%, POM 4%, Utilities 4.5%, IT 1.5%).</div>
+        {t12LabelSet.size > 0 ? (
+          <>
+            <div>
+              • Lines marked <span className="inline-block px-1 py-0.5 rounded bg-success-50 text-success-700 text-[10px] font-semibold tabular-nums align-middle">T-12</span>{' '}
+              use Year-1 actuals from the deal&apos;s extracted T-12; remaining lines synthesized at USALI ratios.
+            </div>
+            <div>• Out-years grow the Year-1 anchor at the configured expense growth rate (default 3.5%).</div>
+          </>
+        ) : (
+          <>
+            <div>• Departmental expenses synthesized at USALI ratios: Rooms 25% of room rev, F&B 75% of F&B rev, Other 50%.</div>
+            <div>• Undistributed operating expenses follow lifestyle-tier benchmarks (A&G 8%, S&M 7%, POM 4%, Utilities 4.5%, IT 1.5%).</div>
+            <div>• Upload a T-12 to ground these lines on actual operating data.</div>
+          </>
+        )}
       </div>
     </Card>
   );
@@ -794,9 +845,9 @@ function Row({ k, v, bold }: { k: string; v: string; bold?: boolean }) {
 // Flashing the whole row on every refresh would be noisy; tying it to
 // the leading number is enough to signal "this just changed".
 function StatementRowR({
-  row, tint, isSubtotal, isTotal,
+  row, tint, isSubtotal, isTotal, fromT12,
 }: {
-  row: StatementRow; tint: string; isSubtotal: boolean; isTotal: boolean;
+  row: StatementRow; tint: string; isSubtotal: boolean; isTotal: boolean; fromT12?: boolean;
 }) {
   const flash = useFlash(row.values[0] ?? 0);
   return (
@@ -807,7 +858,19 @@ function StatementRowR({
       isTotal && 'font-semibold bg-success-50/40 border-t-2 border-border text-success-700',
       flash && 'value-flash',
     )}>
-      <td className={cn('py-1.5', !isSubtotal && !isTotal && 'pl-3')}>{row.label}</td>
+      <td className={cn('py-1.5', !isSubtotal && !isTotal && 'pl-3')}>
+        <span className="inline-flex items-center gap-1.5">
+          {row.label}
+          {fromT12 && (
+            <span
+              className="inline-block px-1 py-0.5 rounded bg-success-50 text-success-700 text-[10px] font-semibold tabular-nums leading-none"
+              title="Year-1 anchored on the deal's T-12 actual; out-years grown at expense_growth"
+            >
+              T-12
+            </span>
+          )}
+        </span>
+      </td>
       {row.values.map((v, vi) => (
         <td key={vi} className="text-right tabular-nums">{v.toLocaleString()}</td>
       ))}

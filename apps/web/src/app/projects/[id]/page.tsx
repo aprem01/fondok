@@ -508,5 +508,5 @@ export default function ProjectDetailPage() {
     </div>
   );
 
-  return id === 7 ? <AssumptionsProvider>{inner}</AssumptionsProvider> : inner;
+  return <AssumptionsProvider>{inner}</AssumptionsProvider>;
 }
