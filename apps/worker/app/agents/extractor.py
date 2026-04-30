@@ -129,6 +129,17 @@ Coverage targets per document type:
     comparable sales. Resort Fees, when broken out separately on the
     OM rent roll, MUST be its own field (``broker_proforma.resort_fees_usd``)
     — do NOT roll it into ``misc_revenue`` or ``other_revenue``.
+    NOI vintage matters: brokers commonly publish Year-1 underwritten
+    NOI alongside a stabilized (Year 3-5) NOI. When the OM shows
+    multiple NOI vintages, emit them as separate fields:
+    ``broker_proforma.noi_year_1_usd``, ``broker_proforma.noi_year_2_usd``,
+    ``broker_proforma.noi_year_3_usd``, ``broker_proforma.noi_year_5_usd``,
+    and ``broker_proforma.noi_stabilized_usd``. The bare
+    ``broker_proforma.noi_usd`` field is reserved for the broker's
+    HEADLINE NOI (whichever year they're pitching) so a downstream
+    reader has a single canonical broker number to compare against
+    T-12 actuals; if the OM clearly labels the headline as a specific
+    year, also emit the year-specific field.
   * **T12** — every USALI line in operating revenue, departmental
     expenses, undistributed expenses, fees & reserves, fixed charges,
     plus GOP and NOI rollups. Include the operational KPIs
