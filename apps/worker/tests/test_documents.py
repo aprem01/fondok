@@ -179,7 +179,15 @@ async def test_local_raw_store(tmp_path: Path) -> None:
 
 @pytest.mark.asyncio
 async def test_upload_pdf(sample_pdf_bytes: bytes, deal_id: str) -> None:
-    """Upload writes a documents row and parks the file in the raw store."""
+    """Upload writes a documents row, parks the file in the raw store,
+    and returns immediately with the row at status ``PARSING``.
+
+    The actual PDF parse + extraction runs as a background task so
+    dense uploads don't blow through the proxy's HTTP timeout. Per-row
+    fields populated synchronously: id, filename, content_hash,
+    storage_key, status. Fields populated asynchronously after parse:
+    page_count, parser, extraction_data.
+    """
     from httpx import ASGITransport, AsyncClient
 
     from app.main import app
@@ -200,10 +208,13 @@ async def test_upload_pdf(sample_pdf_bytes: bytes, deal_id: str) -> None:
     assert isinstance(body, list) and len(body) == 1
     rec = body[0]
     assert rec["filename"] == "sample_t12.pdf"
-    assert rec["status"] == "UPLOADED"
+    # Synchronous parts of the upload:
+    assert rec["status"] == "PARSING"
     assert rec["content_hash"] and len(rec["content_hash"]) == 64
-    assert rec["page_count"] >= 1
     assert rec["storage_key"].startswith("file://")
+    # Async parts haven't filled in yet (parse is in flight).
+    assert rec["page_count"] is None
+    assert rec["parser"] is None
 
     # File exists on disk where we said it would.
     store = get_raw_store()
@@ -245,22 +256,19 @@ async def test_extraction_flow_end_to_end(
         assert r.status_code == 200
         assert any(d["id"] == doc_id for d in r.json())
 
-        # Extract — fires a BackgroundTask
-        r = await client.post(
-            f"/deals/{deal_id}/documents/{doc_id}/extract"
-        )
-        assert r.status_code == 202, r.text
-        assert r.json()["status"] == "extraction_started"
-
-        # Poll for EXTRACTED.
+        # Upload now auto-chains parse → extract on its own background
+        # task — no explicit POST /extract needed. We just poll the
+        # extraction endpoint until status flips to EXTRACTED. (The
+        # explicit /extract route is still available as a manual
+        # re-run mechanism but doesn't need to fire on every upload.)
         final_status = None
-        for _ in range(40):  # ~4s budget
+        for _ in range(80):  # ~8s budget — async parse + extract
             r = await client.get(
                 f"/deals/{deal_id}/documents/{doc_id}/extraction"
             )
             assert r.status_code == 200, r.text
             final_status = r.json()["status"]
-            if final_status in ("EXTRACTED", "FAILED"):
+            if final_status in ("EXTRACTED", "FAILED", "PARSE_FAILED"):
                 break
             await asyncio.sleep(0.1)
 

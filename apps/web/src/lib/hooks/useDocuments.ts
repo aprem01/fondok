@@ -12,6 +12,10 @@ const LIST_POLL_MS = 2000;
 const EXTRACTION_POLL_MS = 2000;
 
 const ACTIVE_DOC_STATUSES = new Set([
+  // PARSING is the new initial state — upload returns immediately and a
+  // worker background task drives the row through the rest of the
+  // pipeline. We keep polling while we see any in-flight status.
+  'PARSING',
   'UPLOADED',
   'CLASSIFYING',
   'EXTRACTING',
@@ -92,6 +96,9 @@ export function useDocuments(dealId: string | null | undefined): DocumentsState 
     const cancels: Array<() => void> = [];
 
     documents.forEach((d) => {
+      // Skip docs that aren't extracted yet — the extraction record
+      // doesn't exist while the doc is still parsing or failed parse.
+      if (d.status === 'PARSING' || d.status === 'PARSE_FAILED') return;
       if (d.status === 'UPLOADED' || d.status === 'FAILED') return;
       // Poll until we have an EXTRACTED record.
       const existing = extractions[d.id];
@@ -126,17 +133,13 @@ export function useDocuments(dealId: string | null | undefined): DocumentsState 
       setUploading(true);
       try {
         const created = await api.documents.upload(idStr, files);
-        // Optimistically merge new docs into the list.
+        // Optimistically merge new docs into the list. The worker now
+        // auto-chains parse → extract on its own background task, so
+        // the frontend no longer needs to fire a separate /extract
+        // call — it would just race with the worker's pipeline.
         setDocuments((prev) => [...created, ...prev]);
-        // Auto-trigger extraction for each freshly uploaded doc.
-        await Promise.all(
-          created.map((d) =>
-            api.documents
-              .extract(idStr, d.id)
-              .catch((err) => console.warn('extract kickoff failed', d.id, err)),
-          ),
-        );
-        // Re-fetch the canonical list so statuses flip to CLASSIFYING.
+        // Re-fetch the canonical list so the polling loop picks up
+        // the PARSING → UPLOADED → CLASSIFYING transitions.
         refresh();
         return created;
       } finally {

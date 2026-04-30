@@ -53,11 +53,28 @@ router = APIRouter()
 # ─────────────────────────── status enum ───────────────────────────
 
 
-# Lifecycle: UPLOADED → CLASSIFYING → EXTRACTING → EXTRACTED (or FAILED)
+# Lifecycle:
+#   PARSING (upload accepted, LlamaParse / PyMuPDF in flight) →
+#   UPLOADED (parse done, ready for extraction)              →
+#   CLASSIFYING                                              →
+#   EXTRACTING                                               →
+#   EXTRACTED  (terminal success)
+#   PARSE_FAILED / FAILED (terminal failure)
+#
+# PARSING is new (Sam QA re-test #2): LlamaParse can take 30-60s on
+# dense PDFs, which exceeded the inline upload-request budget on
+# Vercel/Railway proxies — large OMs were timing out before parse
+# completed. Upload now returns 201 immediately at PARSING, and a
+# background task drives the row through PARSING → UPLOADED →
+# CLASSIFYING → EXTRACTING → EXTRACTED end-to-end. The frontend just
+# polls /documents until it sees EXTRACTED (or one of the failure
+# states) — no separate /extract trigger required.
+DOC_STATUS_PARSING = "PARSING"
 DOC_STATUS_UPLOADED = "UPLOADED"
 DOC_STATUS_CLASSIFYING = "CLASSIFYING"
 DOC_STATUS_EXTRACTING = "EXTRACTING"
 DOC_STATUS_EXTRACTED = "EXTRACTED"
+DOC_STATUS_PARSE_FAILED = "PARSE_FAILED"
 DOC_STATUS_FAILED = "FAILED"
 
 
@@ -206,16 +223,21 @@ def _coerce_dt(value: Any) -> datetime:
 )
 async def upload_documents(
     deal_id: UUID,
+    background_tasks: BackgroundTasks,
     session: Annotated[AsyncSession, Depends(get_session)],
     tenant_id: Annotated[UUID, Depends(get_tenant_id)],
     files: list[UploadFile] = File(...),
 ) -> list[DocumentRecord]:
-    """Persist and parse one-or-more PDFs against ``deal_id``.
+    """Persist one-or-more PDFs against ``deal_id`` and kick off
+    parse + extract in the background.
 
-    Each file is hashed, written to the raw store, parsed (LlamaParse
-    or PyMuPDF), and recorded as a ``documents`` row. The parse output
-    is cached on the row's ``extraction_data`` so the Extractor agent
-    can read raw page text without re-parsing the PDF.
+    Each file is hashed and written to the raw store synchronously
+    (cheap), but the actual PDF parse + LLM extraction runs as a
+    background task so dense OMs don't blow through the proxy's HTTP
+    timeout (Sam QA re-test #2). The route returns 201 immediately
+    with each row at status ``PARSING``; the background pipeline
+    drives the row through ``PARSING → UPLOADED → CLASSIFYING →
+    EXTRACTING → EXTRACTED``. The web app just polls /documents.
     """
     if not files:
         raise HTTPException(
@@ -227,6 +249,7 @@ async def upload_documents(
     tenant_id_str = str(tenant_id)
     store = get_raw_store(settings)
     records: list[DocumentRecord] = []
+    pending_parse: list[tuple[str, str, str, bytes]] = []
 
     for upload in files:
         body = await upload.read()
@@ -253,35 +276,6 @@ async def upload_documents(
                 detail=f"raw store write failed: {exc}",
             ) from exc
 
-        page_count: int | None = None
-        parser_label: str | None = None
-        extraction_data: dict[str, Any] | None = None
-        try:
-            parsed = await parse_pdf(body, filename)
-            page_count = parsed.total_pages
-            parser_label = parsed.parser
-            extraction_data = {
-                "parser": parsed.parser,
-                "total_pages": parsed.total_pages,
-                "content_hash": parsed.content_hash,
-                "parsed_at": parsed.parsed_at.isoformat(),
-                "pages": [
-                    {
-                        "page_num": p.page_num,
-                        "text": p.text,
-                        "tables": p.tables,
-                        "metadata": p.metadata,
-                    }
-                    for p in parsed.pages
-                ],
-            }
-        except ParseError as exc:
-            logger.warning(
-                "upload: parse failed for %s — recording UPLOADED w/o parse: %s",
-                filename,
-                exc,
-            )
-
         doc_id = uuid4()
         doc_type = _guess_doc_type(filename)
         uploaded_at = _now()
@@ -306,16 +300,14 @@ async def upload_documents(
                 "tenant_id": tenant_id_str,
                 "filename": filename,
                 "doc_type": doc_type,
-                "status": DOC_STATUS_UPLOADED,
+                "status": DOC_STATUS_PARSING,
                 "uploaded_at": uploaded_at,
                 "content_hash": content_hash,
                 "storage_key": storage_key,
                 "size_bytes": len(body),
-                "page_count": page_count,
-                "parser": parser_label,
-                "extraction_data": (
-                    json.dumps(extraction_data) if extraction_data else None
-                ),
+                "page_count": None,
+                "parser": None,
+                "extraction_data": None,
             },
         )
         await session.commit()
@@ -327,23 +319,153 @@ async def upload_documents(
                 tenant_id=tenant_id,
                 filename=filename,
                 doc_type=doc_type,
-                status=DOC_STATUS_UPLOADED,
+                status=DOC_STATUS_PARSING,
                 uploaded_at=uploaded_at,
                 content_hash=content_hash,
                 storage_key=storage_key,
                 size_bytes=len(body),
-                page_count=page_count,
-                parser=parser_label,
+                page_count=None,
+                parser=None,
             )
+        )
+        pending_parse.append((str(doc_id), str(deal_id), tenant_id_str, body))
+
+    # Schedule parse + auto-extract for every freshly inserted doc. The
+    # background task transitions PARSING → UPLOADED on parse success,
+    # then chains directly into the existing extraction pipeline so the
+    # web app sees a single linear status timeline (no second API call
+    # required from the client). Each file gets its own task — they
+    # run in parallel inside FastAPI's BackgroundTasks runner.
+    for doc_id, deal_id_str, tenant_id_str_, body_bytes in pending_parse:
+        background_tasks.add_task(
+            _run_parse_and_extract,
+            doc_id=doc_id,
+            deal_id=deal_id_str,
+            tenant_id=tenant_id_str_,
+            body=body_bytes,
+            filename=next(
+                r.filename for r in records if str(r.id) == doc_id
+            ),
         )
 
     logger.info(
-        "documents.upload: deal=%s tenant=%s files=%d",
+        "documents.upload: deal=%s tenant=%s files=%d (parse async)",
         deal_id,
         tenant_id_str,
         len(records),
     )
     return records
+
+
+async def _run_parse_and_extract(
+    *,
+    doc_id: str,
+    deal_id: str,
+    tenant_id: str,
+    body: bytes,
+    filename: str,
+) -> None:
+    """Background pipeline: parse → write extraction_data → run extraction.
+
+    Runs entirely off the request loop so a slow LlamaParse on a dense
+    OM never trips the proxy's HTTP timeout (Sam QA re-test #2). On
+    parse failure we mark the row ``PARSE_FAILED`` and stop — the
+    document is still queryable, just unusable for extraction until
+    re-uploaded or re-parsed manually.
+    """
+    factory = get_session_factory()
+    extraction_data_to_persist: dict[str, Any] | None = None
+    page_count_to_persist: int | None = None
+    parser_label_to_persist: str | None = None
+
+    try:
+        parsed = await parse_pdf(body, filename)
+        page_count_to_persist = parsed.total_pages
+        parser_label_to_persist = parsed.parser
+        extraction_data_to_persist = {
+            "parser": parsed.parser,
+            "total_pages": parsed.total_pages,
+            "content_hash": parsed.content_hash,
+            "parsed_at": parsed.parsed_at.isoformat(),
+            "pages": [
+                {
+                    "page_num": p.page_num,
+                    "text": p.text,
+                    "tables": p.tables,
+                    "metadata": p.metadata,
+                }
+                for p in parsed.pages
+            ],
+        }
+    except ParseError as exc:
+        logger.warning(
+            "parse_async: ParseError for doc=%s (%s) — marking PARSE_FAILED",
+            doc_id,
+            exc,
+        )
+        async with factory() as s:
+            try:
+                await s.execute(
+                    text("UPDATE documents SET status = :s WHERE id = :id"),
+                    {"s": DOC_STATUS_PARSE_FAILED, "id": doc_id},
+                )
+                await s.commit()
+            except Exception:  # noqa: BLE001
+                logger.exception("parse_async: failed to record PARSE_FAILED")
+        return
+    except Exception as exc:  # noqa: BLE001 — never crash a background task
+        logger.exception(
+            "parse_async: unexpected error for doc=%s — %s", doc_id, exc
+        )
+        async with factory() as s:
+            try:
+                await s.execute(
+                    text("UPDATE documents SET status = :s WHERE id = :id"),
+                    {"s": DOC_STATUS_PARSE_FAILED, "id": doc_id},
+                )
+                await s.commit()
+            except Exception:  # noqa: BLE001
+                logger.exception("parse_async: failed to record PARSE_FAILED")
+        return
+
+    # Persist parse result and flip status to UPLOADED.
+    async with factory() as s:
+        try:
+            await s.execute(
+                text(
+                    """
+                    UPDATE documents
+                       SET status = :s,
+                           page_count = :pc,
+                           parser = :parser,
+                           extraction_data = :data
+                     WHERE id = :id
+                    """
+                ),
+                {
+                    "s": DOC_STATUS_UPLOADED,
+                    "pc": page_count_to_persist,
+                    "parser": parser_label_to_persist,
+                    "data": json.dumps(extraction_data_to_persist),
+                    "id": doc_id,
+                },
+            )
+            await s.commit()
+        except Exception:  # noqa: BLE001
+            logger.exception(
+                "parse_async: failed to persist parsed data for doc=%s", doc_id
+            )
+            return
+
+    # Auto-chain extraction so the user sees a single status timeline
+    # without having to call a second endpoint. Failures inside
+    # ``_run_extraction_pipeline`` are already caught and recorded as
+    # ``FAILED`` on the row.
+    await _run_extraction_pipeline(
+        deal_id=deal_id,
+        doc_id=doc_id,
+        tenant_id=tenant_id,
+    )
 
 
 # ─────────────────────────── list ───────────────────────────

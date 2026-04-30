@@ -263,16 +263,21 @@ export default function PLTab({ projectId }: { projectId: number | string }) {
   const { toast } = useToast();
   const dealId = (params?.id as string | undefined) ?? '';
   const { outputs, previous } = useEngineOutputs(dealId);
-  const { deal } = useDeal(dealId);
+  const { deal, loading: dealLoading } = useDeal(dealId);
   const [computing, setComputing] = useState(false);
   const [runToken, setRunToken] = useState<number | null>(null);
   const isKimptonDemo = projectId === 7;
-  // Per-Key / Departmental dividers must use the real deal's room count,
-  // not a 100-key default. Sam QA #2: passing 100 for non-Kimpton deals
-  // made every per-key figure mathematically wrong on real uploads.
+  // Per-Key / Departmental dividers must use the real deal's room count.
+  // Sam QA re-test: when ``useDeal`` was still loading we silently fell
+  // back to 100, which then rendered "100 keys" on the Per-Key header
+  // and inflated every per-key figure. We now refuse to render the
+  // sub-tabs that depend on a known key count until the deal hydrates,
+  // so reviewers never see a wrong divisor.
+  const realKeys = deal?.keys && deal.keys > 0 ? deal.keys : null;
   const propertyKeys = isKimptonDemo
     ? kimptonAnglerOverview.general.keys
-    : (deal?.keys && deal.keys > 0 ? deal.keys : 100);
+    : (realKeys ?? 0);
+  const keysReady = isKimptonDemo || realKeys !== null;
 
   // Worker → expense engine years[] is the canonical source for the operating
   // statement on a real run. Worker wins; Kimpton mock is the demo fallback.
@@ -423,8 +428,16 @@ export default function PLTab({ projectId }: { projectId: number | string }) {
 
       <div className={cn(computing && 'relative pointer-events-none opacity-60')}>
         {tab === 'Operating Statement' && <OperatingStatement statement={stmt} sourceLabel={hasWorkerStatement ? 'worker' : 'mock'} sourcedFromT12={sourcedFromT12} />}
-        {tab === 'Departmental' && <Departmental statement={stmt} keys={propertyKeys} />}
-        {tab === 'Per-Key Metrics' && <PerKey statement={stmt} keys={propertyKeys} isKimptonDemo={isKimptonDemo} revenueYears={revenueYears ?? null} />}
+        {tab === 'Departmental' && (
+          keysReady
+            ? <Departmental statement={stmt} keys={propertyKeys} />
+            : <KeysLoadingState loading={dealLoading} />
+        )}
+        {tab === 'Per-Key Metrics' && (
+          keysReady
+            ? <PerKey statement={stmt} keys={propertyKeys} isKimptonDemo={isKimptonDemo} revenueYears={revenueYears ?? null} />
+            : <KeysLoadingState loading={dealLoading} />
+        )}
         {tab === 'Historical vs Projected' && <HistoricalProjected statement={stmt} isKimptonDemo={isKimptonDemo} />}
         {computing && (
           <div className="absolute inset-0 bg-bg/60 backdrop-blur-[1px] flex items-start justify-center pt-12 rounded-md">
@@ -859,6 +872,23 @@ function Row({ k, v, bold }: { k: string; v: string; bold?: boolean }) {
 // Operating-statement row with value-flash on the year-1 column.
 // Flashing the whole row on every refresh would be noisy; tying it to
 // the leading number is enough to signal "this just changed".
+// Empty-state shown on Departmental / Per-Key sub-tabs while the
+// deal record is still loading from the worker. Refusing to render
+// these tables with a synthetic divisor is the long-term fix for the
+// "100 keys" leak Sam caught on the re-test (rather than silently
+// falling through to 100, we wait for the canonical room count).
+function KeysLoadingState({ loading }: { loading: boolean }) {
+  return (
+    <Card className="p-12 text-center">
+      <div className="text-[12.5px] text-ink-500">
+        {loading
+          ? 'Loading deal data — per-key metrics will populate once the room count is known.'
+          : 'Per-key metrics need a room count on this deal. Open the deal’s settings and set the keys, or re-upload an OM so the property overview can extract it.'}
+      </div>
+    </Card>
+  );
+}
+
 function StatementRowR({
   row, tint, isSubtotal, isTotal, fromT12,
 }: {
