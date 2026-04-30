@@ -31,13 +31,18 @@ const fmtOrDash = (
 ): string => (n != null ? formatter(n) : '—');
 
 // Default Kimpton-fixture waterfall — only rendered for the demo deal.
+// Pref Return aligned to the 8% LP preferred used by every other layer
+// of the model (engine seed at engine_runner.py:144, web engine seed at
+// lib/engines/model.ts:51, Kimpton golden-set partnership.lp_pref_pct).
+// Sam QA #20 caught the 10% leak here — the display read had drifted
+// off the rest of the model.
 const kimptonWaterfall = [
-  { tier: 'Pref Return (10%)', gp: 10, lp: 100 },
-  { tier: 'Hurdle #2 (15%)', gp: 20, lp: 80 },
-  { tier: 'Hurdle #3 (20%)', gp: 25, lp: 75 },
-  { tier: 'Hurdle #4 (25%)', gp: 25, lp: 75 },
-  { tier: 'Hurdle #5 (30%)', gp: 25, lp: 75 },
-  { tier: 'Hurdle #6 (>30%)', gp: 50, lp: 50 },
+  { tier: 'Pref Return (8%)', gp: 0, lp: 100 },
+  { tier: 'Hurdle #1 (12%)', gp: 20, lp: 80 },
+  { tier: 'Hurdle #2 (15%)', gp: 25, lp: 75 },
+  { tier: 'Hurdle #3 (20%)', gp: 30, lp: 70 },
+  { tier: 'Hurdle #4 (25%)', gp: 35, lp: 65 },
+  { tier: 'Hurdle #5 (>25%)', gp: 50, lp: 50 },
 ];
 
 export default function PartnershipTab({ projectId }: { projectId: number | string }) {

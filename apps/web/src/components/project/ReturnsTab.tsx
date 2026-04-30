@@ -215,7 +215,7 @@ function LiveReturnsSummary({ outputs }: { outputs: ReturnType<typeof useEngineO
         <div className="grid grid-cols-2 gap-x-8 gap-y-3">
           <Slider
             label="Exit Cap Rate"
-            min={0.05} max={0.09} step={0.001}
+            min={0.04} max={0.12} step={0.001}
             value={assumptions.exitCapRate}
             onChange={v => setAssumption('exitCapRate', v)}
             format={v => fmtPct(v, 2)}
@@ -236,14 +236,14 @@ function LiveReturnsSummary({ outputs }: { outputs: ReturnType<typeof useEngineO
           />
           <Slider
             label="LTV"
-            min={0.50} max={0.75} step={0.01}
+            min={0.40} max={0.80} step={0.01}
             value={assumptions.ltv}
             onChange={v => setAssumption('ltv', v)}
             format={v => fmtPct(v, 0)}
           />
           <Slider
             label="Interest Rate"
-            min={0.045} max={0.085} step={0.00125}
+            min={0.04} max={0.10} step={0.00125}
             value={assumptions.interestRate}
             onChange={v => setAssumption('interestRate', v)}
             format={v => fmtPct(v, 3)}

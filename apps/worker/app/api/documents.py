@@ -136,13 +136,23 @@ def _now() -> datetime:
 
 
 def _guess_doc_type(filename: str) -> str:
-    """Cheap filename-driven hint. The Router agent overrides on extract."""
+    """Cheap filename-driven hint. The Router agent overrides on extract.
+
+    Live smoke test caught a regression: ``sample_OM.pdf`` was being
+    classified as T12 because the OM check required the ENTIRE base
+    name to equal "om". The looser ``"_om" in name`` / token check
+    correctly catches "sample_OM.pdf" and "Coral_Bay_OM_v2.pdf"
+    without false-matching benign substrings (the previous
+    ``"offering" in name`` check is preserved).
+    """
     name = (filename or "").lower()
+    base = name.rsplit(".", 1)[0]
+    tokens = set(base.replace("-", "_").split("_"))
     if "t12" in name or "t-12" in name:
         return "T12"
-    if "om" == name.split(".")[0] or "offering" in name:
+    if "om" in tokens or base == "om" or "offering" in name or "memorandum" in name:
         return "OM"
-    if "str" in name:
+    if "str" in tokens or "smith" in name:
         return "STR"
     if "rent" in name and "roll" in name:
         return "RENT_ROLL"
@@ -664,11 +674,17 @@ async def _run_extraction_pipeline(
             else:
                 extraction_data = raw_extraction_data
 
+            classified_doc_type: str | None = None
             if os.environ.get("EVALS_MOCK", "").lower() in ("1", "true", "yes"):
                 fields, confidence = _mock_extraction_payload()
                 agent_version = "mock-evals"
             else:
-                fields, confidence, agent_version = await _run_graph_extraction(
+                (
+                    fields,
+                    confidence,
+                    agent_version,
+                    classified_doc_type,
+                ) = await _run_graph_extraction(
                     deal_id=deal_id,
                     tenant_id=tenant_id,
                     storage_key=storage_key,
@@ -701,16 +717,36 @@ async def _run_extraction_pipeline(
                     "created": _now(),
                 },
             )
-            await session.execute(
-                text("UPDATE documents SET status = :s WHERE id = :id"),
-                {"s": DOC_STATUS_EXTRACTED, "id": doc_id},
-            )
+            # Persist the Router agent's classification back to the
+            # documents row when it differs from the filename-heuristic
+            # ``doc_type`` set at upload. The downstream
+            # ``_load_critic_inputs`` filters on ``doc_type IN ('T12','PNL')``
+            # — without this update an OM that was filename-classified as
+            # T12 would have its broker_proforma fields silently bucketed
+            # as actuals (Sam QA #10 root cause).
+            if classified_doc_type:
+                await session.execute(
+                    text(
+                        "UPDATE documents SET status = :s, doc_type = :dt WHERE id = :id"
+                    ),
+                    {
+                        "s": DOC_STATUS_EXTRACTED,
+                        "dt": classified_doc_type,
+                        "id": doc_id,
+                    },
+                )
+            else:
+                await session.execute(
+                    text("UPDATE documents SET status = :s WHERE id = :id"),
+                    {"s": DOC_STATUS_EXTRACTED, "id": doc_id},
+                )
             await session.commit()
             logger.info(
-                "extraction complete: doc=%s deal=%s fields=%d",
+                "extraction complete: doc=%s deal=%s fields=%d doc_type=%s",
                 doc_id,
                 deal_id,
                 len(fields),
+                classified_doc_type,
             )
 
             # Chain-of-verification — re-read each cited number against the
@@ -752,13 +788,15 @@ async def _run_graph_extraction(
     doc_id: str,
     filename: str,
     extraction_data: dict[str, Any] | None,
-) -> tuple[list[dict[str, Any]], dict[str, Any], str]:
+) -> tuple[list[dict[str, Any]], dict[str, Any], str, str]:
     """Drive Router → Extractor against a single uploaded document.
 
     Reads the parsed page text cached on the document row's
     ``extraction_data`` JSONB and feeds it to the Extractor as actual
     content (NOT a URI — the agent has no fetcher). Returns the
-    flattened field list + rolled-up confidence + agent version string.
+    flattened field list + rolled-up confidence + agent version string
+    + the Router's classified doc_type (so the caller can update the
+    documents row when the LLM disagrees with the filename heuristic).
     """
     from ..agents.extractor import (
         ExtractorDocument,
@@ -832,7 +870,7 @@ async def _run_graph_extraction(
         if cr:
             confidence = dict(cr) if not isinstance(cr, dict) else cr
 
-    return fields, confidence, f"router:{route};extractor"
+    return fields, confidence, f"router:{route};extractor", doc_type
 
 
 def _mock_extraction_payload() -> tuple[list[dict[str, Any]], dict[str, Any]]:

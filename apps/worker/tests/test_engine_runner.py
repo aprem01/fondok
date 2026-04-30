@@ -171,6 +171,7 @@ async def test_run_persists_to_db() -> None:
     from app.database import get_session_factory
     from app.services.engine_runner import (
         ENGINE_NAMES,
+        _coerce_uuid,
         get_run_status,
         run_all_engines,
     )
@@ -193,13 +194,16 @@ async def test_run_persists_to_db() -> None:
         )
 
         # Direct count to confirm one row per engine, no dupes.
+        # Producer coerces deal_id via _coerce_uuid before persisting,
+        # so the raw query parameter must be coerced the same way.
+        deal_id_db = str(_coerce_uuid(deal_id))
         count_row = (
             await session.execute(
                 text(
                     "SELECT COUNT(*) AS n FROM engine_outputs "
                     "WHERE deal_id = :deal AND run_id = :run"
                 ),
-                {"deal": deal_id, "run": run_id},
+                {"deal": deal_id_db, "run": run_id},
             )
         ).first()
         assert count_row is not None
