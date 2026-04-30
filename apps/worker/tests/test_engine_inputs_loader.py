@@ -191,8 +191,12 @@ async def test_load_engine_inputs_uses_t12_expense_and_revenue_actuals() -> None
     expected_fb_per_room = 5_500_000.0 / occupied
     assert base["fb_revenue_per_occupied_room"] == pytest.approx(expected_fb_per_room, rel=1e-3)
 
-    # Other-revenue pct includes resort_fees + misc on top of other_revenue.
-    expected_other_pct = (1_200_000.0 + 800_000.0) / 18_000_000.0
+    # Sam QA #11: when the T-12 carries Resort Fees as a distinct line,
+    # they get routed to ``starting_resort_fees`` and DROPPED from the
+    # other-revenue pool. The remaining other_revenue_pct_of_rooms only
+    # captures genuine "other" (1,200,000 / 18,000,000 = 6.67%).
+    assert base["starting_resort_fees"] == pytest.approx(800_000.0)
+    expected_other_pct = 1_200_000.0 / 18_000_000.0
     assert base["other_revenue_pct_of_rooms"] == pytest.approx(expected_other_pct, rel=1e-3)
 
     # T-12 expense actuals are stashed for the expense engine to consume.

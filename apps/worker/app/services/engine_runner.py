@@ -255,15 +255,24 @@ async def _load_engine_inputs(
     # per-occupied-room F&B anchor and the other-revenue ratio so the
     # Operating Statement's revenue mix reflects the real property
     # rather than the Kimpton seed (~$88 F&B/occupied room, ~6.5% other).
-    # Resort Fees are treated separately per modern USALI (Sam QA #11);
-    # we fold them into the "other" pool only when the T-12 doesn't
-    # break them out independently.
+    # Resort Fees get their OWN engine input (Sam QA #11); we only fold
+    # them into the "other" pool as a fallback when an older T-12
+    # extraction collapsed them.
     rooms_rev = revenue_actuals.get("rooms_revenue")
     fb_rev = revenue_actuals.get("fb_revenue")
     other_rev = revenue_actuals.get("other_revenue", 0.0) or 0.0
     resort_fees = revenue_actuals.get("resort_fees", 0.0) or 0.0
     misc_rev = revenue_actuals.get("misc_revenue", 0.0) or 0.0
-    other_pool = other_rev + resort_fees + misc_rev
+    # When the T-12 broke out Resort Fees as a distinct line, route it
+    # to the revenue engine's dedicated ``starting_resort_fees`` input
+    # so the Operating Statement renders it on its own row. The
+    # remaining "other_pool" then drops resort_fees out — otherwise
+    # we'd double-count revenue.
+    if resort_fees > 0:
+        base["starting_resort_fees"] = resort_fees
+        other_pool = other_rev + misc_rev
+    else:
+        other_pool = other_rev + misc_rev
 
     starting_occupancy = base.get("starting_occupancy", 0.0)
     keys = base.get("keys", 0)
@@ -724,6 +733,13 @@ def _build_input_for(
             adr_growth=base["adr_growth"],
             fb_revenue_per_occupied_room=base["fb_revenue_per_occupied_room"],
             other_revenue_pct_of_rooms=base["other_revenue_pct_of_rooms"],
+            # Sam QA #11: when the deal has an extracted T-12 with a
+            # distinct Resort Fees line, the loader stashes the Y1
+            # actual on ``base["starting_resort_fees"]``. Default 0
+            # leaves the engine emitting the Resort Fees column at
+            # zero so the UI hides the row on legacy deals.
+            starting_resort_fees=base.get("starting_resort_fees", 0.0),
+            resort_fees_growth=base.get("resort_fees_growth", base.get("revpar_growth", 0.03)),
             hold_years=base["hold_years"],
         )
 

@@ -49,8 +49,12 @@ extracted fields onto the canonical USALI buckets:
   Revenue
     rooms_revenue    ← "Rm Rev", "Rooms Revenue", "Guest Room Sales"
     fb_revenue       ← "F&B", "Food & Beverage", "Restaurant + Bar"
+    resort_fees      ← "Resort Fees", "Resort Charges", "Daily Resort
+                       Fee" (USALI 11th edition treats Resort Fees as a
+                       distinct revenue line — DO NOT roll into
+                       other_revenue. Sam QA #11.)
     other_revenue    ← spa, parking, telecom, miscellaneous income
-    total_revenue    ← sum of the three; verify the input rollup
+    total_revenue    ← sum of the four; verify the input rollup
 
   Departmental Expenses
     rooms            ← Rooms Department Expense / Direct Cost
@@ -147,6 +151,8 @@ class _USALINormalized(BaseModel):
 
     rooms_revenue: Annotated[float, Field(ge=0)]
     fb_revenue: Annotated[float, Field(ge=0)] = 0.0
+    # Resort Fees — distinct USALI 11th-edition line. Sam QA #11.
+    resort_fees: Annotated[float, Field(ge=0)] = 0.0
     other_revenue: Annotated[float, Field(ge=0)] = 0.0
     total_revenue: Annotated[float, Field(ge=0)]
 
@@ -216,12 +222,15 @@ def _validate_and_recompute(
     identities deterministically and accumulating warnings on drift."""
     warnings: list[str] = list(env.normalization_warnings)
 
-    # Revenue rollup
-    components = env.rooms_revenue + env.fb_revenue + env.other_revenue
+    # Revenue rollup — include resort_fees as a fourth distinct line
+    # per USALI 11th edition (Sam QA #11).
+    components = (
+        env.rooms_revenue + env.fb_revenue + env.resort_fees + env.other_revenue
+    )
     if env.total_revenue > 0 and not _within(env.total_revenue, components):
         warnings.append(
             f"REVENUE_SUM: total_revenue={env.total_revenue:,.0f} != "
-            f"sum(rooms+fb+other)={components:,.0f}"
+            f"sum(rooms+fb+resort_fees+other)={components:,.0f}"
         )
     total_revenue = env.total_revenue or components
 
@@ -309,6 +318,7 @@ def _validate_and_recompute(
         period_label=env.period_label,
         rooms_revenue=env.rooms_revenue,
         fb_revenue=env.fb_revenue,
+        resort_fees=env.resort_fees,
         other_revenue=env.other_revenue,
         total_revenue=total_revenue,
         dept_expenses=DepartmentalExpenses(

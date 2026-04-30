@@ -64,6 +64,14 @@ class RevenueEngineInput(BaseModel):
     adr_growth: Annotated[float, Field(ge=-0.50, le=0.50)] = 0.03
     fb_revenue_per_occupied_room: Annotated[float, Field(ge=0)] = 0.0
     other_revenue_pct_of_rooms: Annotated[float, Field(ge=0.0, le=1.0)] = 0.0
+    # Resort Fees Year-1 anchor (USD). Carried as a fixed dollar
+    # amount rather than a ratio because resort fees are typically
+    # billed per occupied room night and the OM publishes them as a
+    # full-year dollar figure. Out-years grow at ``resort_fees_growth``.
+    # 0.0 → engine emits 0 resort_fees on every year (default behavior
+    # when no T-12 anchor is present).
+    starting_resort_fees: Annotated[float, Field(ge=0)] = 0.0
+    resort_fees_growth: Annotated[float, Field(ge=-0.50, le=0.50)] = 0.03
     hold_years: Annotated[int, Field(ge=1, le=20)]
 
 
@@ -76,6 +84,8 @@ class RevenueProjectionYear(BaseModel):
     revpar: Annotated[float, Field(ge=0)]
     rooms_revenue: Annotated[float, Field(ge=0)]
     fb_revenue: Annotated[float, Field(ge=0)] = 0.0
+    # Resort Fees — separate USALI revenue line (Sam QA #11).
+    resort_fees: Annotated[float, Field(ge=0)] = 0.0
     other_revenue: Annotated[float, Field(ge=0)] = 0.0
     total_revenue: Annotated[float, Field(ge=0)]
 

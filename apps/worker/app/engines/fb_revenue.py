@@ -33,6 +33,12 @@ class FBRevenueYear(BaseModel):
     year: Annotated[int, Field(ge=1)]
     rooms_revenue: Annotated[float, Field(ge=0)]
     fb_revenue: Annotated[float, Field(ge=0)]
+    # Resort Fees — a distinct USALI 11th-edition revenue line. Sam QA
+    # #11: previously folded into other_revenue, hiding ~$1M/yr on real
+    # deals. Defaults to 0 so legacy payloads stay valid; populated
+    # when the upstream RevenueProjectionYear carries it (T-12 anchor)
+    # OR when fb_revenue's resort-fees ratio is supplied.
+    resort_fees: Annotated[float, Field(ge=0)] = 0.0
     other_revenue: Annotated[float, Field(ge=0)]
     total_revenue: Annotated[float, Field(ge=0)]
 
@@ -70,14 +76,20 @@ class FBRevenueEngine(BaseEngine[FBRevenueInput, FBRevenueOutput]):
         for proj in payload.revenue.years:
             rooms = proj.rooms_revenue
             fb = max(proj.fb_revenue, rooms * fb_ratio)
+            # Resort Fees pass through from the revenue projection (which
+            # the loader populates from T-12 actuals for Y1 and scales
+            # forward by RevPAR growth). Falls back to 0 when no T-12
+            # actual exists.
+            resort_fees = proj.resort_fees
             other = max(proj.other_revenue, rooms * other_ratio)
             years.append(
                 FBRevenueYear(
                     year=proj.year,
                     rooms_revenue=rooms,
                     fb_revenue=fb,
+                    resort_fees=resort_fees,
                     other_revenue=other,
-                    total_revenue=rooms + fb + other,
+                    total_revenue=rooms + fb + resort_fees + other,
                 )
             )
 

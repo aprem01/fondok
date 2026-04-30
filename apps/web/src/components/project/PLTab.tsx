@@ -55,6 +55,10 @@ interface FBYearWorker {
   year: number;
   rooms_revenue: number;
   fb_revenue: number;
+  // Resort Fees — distinct USALI 11th-edition revenue line. Optional
+  // because legacy worker payloads (pre-Sam-QA-#11) don't carry it;
+  // defaults to 0 in the buildStatementFromWorker accessor below.
+  resort_fees?: number;
   other_revenue: number;
   total_revenue: number;
 }
@@ -98,6 +102,11 @@ function buildStatementFromWorker(
   const fbBy = fbYears?.slice(0, 5) ?? [];
   const room = pad(fbBy.map(y => toThousands(y.rooms_revenue)), 0);
   const fb = pad(fbBy.map(y => toThousands(y.fb_revenue)), 0);
+  // Resort Fees — only render the row when at least one year is
+  // non-zero. Legacy worker payloads (pre Resort-Fees split) have
+  // no resort_fees field; we coerce undefined to 0 in toThousands.
+  const resortFees = pad(fbBy.map(y => toThousands(y.resort_fees ?? 0)), 0);
+  const showResortFees = resortFees.some(v => v > 0);
   const other = pad(fbBy.map(y => toThousands(y.other_revenue)), 0);
 
   const roomsDept = pad(ey.map(y => toThousands(y.dept_expenses.rooms)), 0);
@@ -124,6 +133,12 @@ function buildStatementFromWorker(
     { label: 'REVENUES', values: [], kind: 'group' },
     { label: 'Room Revenue', values: room, cagr: cagrCalc(room[0], room[4]), kind: 'detail' },
     { label: 'F&B Revenue', values: fb, cagr: cagrCalc(fb[0], fb[4]), kind: 'detail' },
+    ...(showResortFees ? [{
+      label: 'Resort Fees',
+      values: resortFees,
+      cagr: cagrCalc(resortFees[0], resortFees[4]),
+      kind: 'detail' as const,
+    }] : []),
     { label: 'Other Revenue', values: other, cagr: cagrCalc(other[0], other[4]), kind: 'detail' },
     { label: 'Total Revenue', values: totalRev, cagr: cagrCalc(totalRev[0], totalRev[4]), kind: 'subtotal' },
 

@@ -30,11 +30,13 @@ class RevenueEngine(BaseEngine[RevenueEngineInput, RevenueEngineOutput]):
 
         occ = payload.starting_occupancy
         adr = payload.starting_adr
+        resort_fees = payload.starting_resort_fees
 
         for y in range(1, payload.hold_years + 1):
             if y > 1:
                 occ = min(0.95, occ * (1.0 + payload.occupancy_growth))
                 adr = adr * (1.0 + payload.adr_growth)
+                resort_fees = resort_fees * (1.0 + payload.resort_fees_growth)
 
             occupied = rooms_available * occ
             rooms_revenue = occupied * adr
@@ -42,7 +44,7 @@ class RevenueEngine(BaseEngine[RevenueEngineInput, RevenueEngineOutput]):
 
             fb_revenue = occupied * payload.fb_revenue_per_occupied_room
             other_revenue = rooms_revenue * payload.other_revenue_pct_of_rooms
-            total_revenue = rooms_revenue + fb_revenue + other_revenue
+            total_revenue = rooms_revenue + fb_revenue + resort_fees + other_revenue
 
             years.append(
                 RevenueProjectionYear(
@@ -52,6 +54,7 @@ class RevenueEngine(BaseEngine[RevenueEngineInput, RevenueEngineOutput]):
                     revpar=revpar,
                     rooms_revenue=rooms_revenue,
                     fb_revenue=fb_revenue,
+                    resort_fees=resort_fees,
                     other_revenue=other_revenue,
                     total_revenue=total_revenue,
                 )

@@ -57,6 +57,13 @@ class USALIFinancials(BaseModel):
     # Revenue
     rooms_revenue: Annotated[float, Field(ge=0)]
     fb_revenue: Annotated[float, Field(ge=0)] = 0.0
+    # Resort Fees — broken out as a distinct USALI 11th edition revenue
+    # line. Sam QA #11: these were being aggregated into Misc / Other
+    # Income, hiding ~$1M of revenue per year on a real deal. Defaults
+    # to 0.0 so existing payloads stay valid; extractor + normalizer
+    # populate when the source document carries a separate Resort Fees
+    # line.
+    resort_fees: Annotated[float, Field(ge=0)] = 0.0
     other_revenue: Annotated[float, Field(ge=0)] = 0.0
     total_revenue: Annotated[float, Field(ge=0)]
 

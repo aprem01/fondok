@@ -1238,9 +1238,16 @@ async def _load_critic_inputs(
         total_rev = values.get("total_revenue") or values.get("total_revenue_usd")
         rooms = values.get("rooms_revenue") or values.get("rooms_revenue_usd") or 0.0
         fb = values.get("fb_revenue") or values.get("fb_revenue_usd") or 0.0
+        # Resort Fees — distinct USALI 11th-edition revenue line. Sam
+        # QA #11. Sum into total_revenue alongside rooms / fb / other.
+        resort_fees = (
+            values.get("resort_fees")
+            or values.get("resort_fees_usd")
+            or 0.0
+        )
         other = values.get("other_revenue") or values.get("other_revenue_usd") or 0.0
         if total_rev is None:
-            total_rev = rooms + fb + other
+            total_rev = rooms + fb + resort_fees + other
         if total_rev <= 0:
             return None
         noi = (
@@ -1256,6 +1263,7 @@ async def _load_critic_inputs(
                 period_label=label,
                 rooms_revenue=max(0.0, rooms),
                 fb_revenue=max(0.0, fb),
+                resort_fees=max(0.0, resort_fees),
                 other_revenue=max(0.0, other),
                 total_revenue=max(0.0, total_rev),
                 dept_expenses=DepartmentalExpenses(
