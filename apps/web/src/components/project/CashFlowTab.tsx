@@ -367,7 +367,7 @@ export default function CashFlowTab({ projectId }: { projectId: number | string 
 
       <div className={cn(computing && 'relative pointer-events-none opacity-60')}>
         {tab === 'Cash Flow Summary' && <Summary cf={cfd} />}
-        {tab === 'Levered Detail' && <LeveredDetail cf={cfd} />}
+        {tab === 'Levered Detail' && <LeveredDetail cf={cfd} isKimptonDemo={isKimptonDemo} />}
         {tab === 'Unlevered Detail' && <UnleveredDetail cf={cfd} isKimptonDemo={isKimptonDemo} outputs={outputs} />}
         {tab === 'Distributions' && <Distributions cf={cfd} equity={equity} outputs={outputs} isKimptonDemo={isKimptonDemo} />}
         {computing && (

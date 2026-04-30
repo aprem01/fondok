@@ -29,11 +29,14 @@ import {
 } from '@/lib/mockData';
 import { fmtCurrency, cn } from '@/lib/format';
 import VarianceTab from './VarianceTab';
-import { criticalCount } from '@/lib/varianceData';
+import { criticalCount as fixtureCriticalCount } from '@/lib/varianceData';
 import { Citation, type CitationData } from '@/components/citations/Citation';
 import { IntroCard } from '@/components/help/IntroCard';
 import { Term } from '@/components/help/Term';
 import { GLOSSARY } from '@/lib/glossary';
+import { useVariance } from '@/lib/hooks/useVariance';
+import { isWorkerConnected, workerUrl } from '@/lib/api';
+import type { VarianceFlag } from '@/lib/varianceData';
 
 const sensTabs = ['ADR Sensitivity', 'Occupancy Sensitivity', 'Exit Cap Rate'];
 
@@ -127,6 +130,8 @@ export default function AnalysisTab() {
   // state nudge until we wire live analysis fetching.
   const rawId = (params?.id as string | undefined) ?? '';
   const hasCannedAnalysis = /^\d+$/.test(rawId) && Number(rawId) === 7;
+  // Live deals (UUIDs) read from the worker; mock ids keep the fixture path.
+  const isLiveDeal = isWorkerConnected() && !!rawId && !/^\d+$/.test(rawId);
 
   // Sub-tab is driven by ?sub= so DataRoom / header pills can deep-link.
   const requested = (searchParams.get('sub') as SubTab | null) || 'summary';
@@ -135,6 +140,25 @@ export default function AnalysisTab() {
   );
   const [sensTab, setSensTab] = useState('ADR Sensitivity');
   const a = kimptonAnalysis;
+
+  // Live worker variance feeds the Risks sub-tab on real deals (the Variance
+  // sub-tab already uses the same hook via VarianceTab — this just lets us
+  // derive the rolled-up risk score without duplicating the fetch).
+  const variance = useVariance(rawId);
+  // Critical-flag count for the tab pill: live count when the worker has
+  // returned flags, fixture otherwise. Avoids the demo's "5 Critical" badge
+  // showing on every deal.
+  const criticalCount = variance.flags !== null
+    ? variance.critical
+    : (hasCannedAnalysis ? fixtureCriticalCount : 0);
+
+  // Live AI summary — pulled from the persisted IC memo's executive summary
+  // section if a memo run has completed. We deliberately skip narrative
+  // fabrication: when no memo exists we render the "Generate IC Memo" empty
+  // state instead of the Kimpton fixture paragraphs.
+  const liveSummary = useLiveMemoSummary(isLiveDeal ? rawId : null);
+  // Live Critic agent findings (cross-field issues). 404 → no run yet → empty.
+  const liveCritic = useLiveCriticReport(isLiveDeal ? rawId : null);
 
   useEffect(() => {
     const next = (searchParams.get('sub') as SubTab | null) || 'summary';
@@ -298,23 +322,6 @@ export default function AnalysisTab() {
         />
       )}
 
-      {sub === 'summary' && !hasCannedAnalysis && (
-        <Card className="p-8 text-center">
-          <div className="w-12 h-12 mx-auto rounded-lg bg-brand-50 flex items-center justify-center mb-3">
-            <Sparkles size={20} className="text-brand-500" />
-          </div>
-          <h3 className="text-[14px] font-semibold text-ink-900 mb-1">No analysis yet</h3>
-          <p className="text-[12.5px] text-ink-500 max-w-md mx-auto leading-relaxed">
-            Generate the IC memo to see AI investment summary, risk assessment, and variance flags.
-          </p>
-          <div className="mt-4">
-            <Button variant="primary" size="sm" onClick={() => setSubTab('memo')}>
-              <Sparkles size={12} /> Generate IC Memo
-            </Button>
-          </div>
-        </Card>
-      )}
-
       {sub === 'summary' && hasCannedAnalysis && (
         <Card className="p-5">
           <div className="flex items-center gap-2 mb-3">
@@ -348,9 +355,55 @@ export default function AnalysisTab() {
         </Card>
       )}
 
+      {sub === 'summary' && !hasCannedAnalysis && liveSummary.paragraphs && liveSummary.paragraphs.length > 0 && (
+        <Card className="p-5">
+          <div className="flex items-center gap-2 mb-3">
+            <Sparkles size={15} className="text-brand-500" />
+            <h3 className="text-[14px] font-semibold text-ink-900">AI Investment Summary</h3>
+            {liveSummary.generatedAt && (
+              <span title={`Memo generated ${liveSummary.generatedAt}`} className="inline-flex">
+                <Badge tone="gray">From IC memo</Badge>
+              </span>
+            )}
+          </div>
+          <div className="space-y-3 text-[12.5px] text-ink-700 leading-relaxed">
+            {liveSummary.paragraphs.map((p, i) => (
+              <p key={i}>{p}</p>
+            ))}
+          </div>
+          <div className="flex items-center gap-2 mt-4">
+            <Button variant="secondary" size="sm" onClick={() => setSubTab('memo')}>
+              <FileText size={12} /> Open IC Memo
+            </Button>
+            {criticalCount > 0 && (
+              <Button variant="secondary" size="sm" onClick={() => setSubTab('variance')}>
+                <FileSearch size={12} /> Review {criticalCount} Critical Variance Flag{criticalCount === 1 ? '' : 's'}
+              </Button>
+            )}
+          </div>
+        </Card>
+      )}
+
+      {sub === 'summary' && !hasCannedAnalysis && (!liveSummary.paragraphs || liveSummary.paragraphs.length === 0) && (
+        <Card className="p-8 text-center">
+          <div className="w-12 h-12 mx-auto rounded-lg bg-brand-50 flex items-center justify-center mb-3">
+            <Sparkles size={20} className="text-brand-500" />
+          </div>
+          <h3 className="text-[14px] font-semibold text-ink-900 mb-1">No analysis yet</h3>
+          <p className="text-[12.5px] text-ink-500 max-w-md mx-auto leading-relaxed">
+            Generate the IC memo to see the AI investment summary, risk assessment, and variance flags for this deal.
+          </p>
+          <div className="mt-4">
+            <Button variant="primary" size="sm" onClick={() => setSubTab('memo')}>
+              <Sparkles size={12} /> Generate IC Memo
+            </Button>
+          </div>
+        </Card>
+      )}
+
       {sub === 'memo' && <MemoStream dealId={rawId} />}
 
-      {sub === 'risks' && (
+      {sub === 'risks' && hasCannedAnalysis && (
         <div className="grid grid-cols-3 gap-5">
           <Card className="col-span-2 p-5">
             <div className="flex items-center justify-between mb-4">
@@ -394,6 +447,17 @@ export default function AnalysisTab() {
         </div>
       )}
 
+      {sub === 'risks' && !hasCannedAnalysis && (
+        <RisksFromVariance
+          flags={variance.flags}
+          critical={variance.critical}
+          warn={variance.warn}
+          info={variance.info}
+          onOpenVariance={() => setSubTab('variance')}
+          onOpenMemo={() => setSubTab('memo')}
+        />
+      )}
+
       {sub === 'variance' && (
         hasCannedAnalysis ? (
           <VarianceTab />
@@ -411,7 +475,7 @@ export default function AnalysisTab() {
         )
       )}
 
-      {sub === 'sensitivity' && (
+      {sub === 'sensitivity' && hasCannedAnalysis && (
         <Card className="p-5">
           <h3 className="text-[14px] font-semibold text-ink-900 mb-3">Sensitivity Analysis</h3>
           <div className="flex items-center gap-1 mb-4 border-b border-border">
@@ -446,29 +510,50 @@ export default function AnalysisTab() {
         </Card>
       )}
 
-      {sub === 'critic' && (
-        hasCannedAnalysis ? (
-          <CriticReview findings={kimptonCriticFindings} summary={kimptonCriticSummary} />
-        ) : (
-          <Card className="p-8 text-center">
-            <div className="w-12 h-12 mx-auto rounded-lg bg-brand-50 flex items-center justify-center mb-3">
-              <Eye size={20} className="text-brand-500" />
-            </div>
-            <h3 className="text-[14px] font-semibold text-ink-900 mb-1">
-              No cross-field issues detected
-            </h3>
-            <p className="text-[12.5px] text-ink-500 max-w-md mx-auto leading-relaxed">
-              The Critic agent runs after the Variance pass. Once both broker proforma
-              and T-12 documents are extracted, Fondok will surface narrative issues
-              spanning multiple fields here.
-            </p>
-          </Card>
-        )
+      {sub === 'sensitivity' && !hasCannedAnalysis && (
+        <Card className="p-8 text-center">
+          <div className="w-12 h-12 mx-auto rounded-lg bg-brand-50 flex items-center justify-center mb-3">
+            <TrendingUp size={20} className="text-brand-500" />
+          </div>
+          <h3 className="text-[14px] font-semibold text-ink-900 mb-1">Sensitivity not computed</h3>
+          <p className="text-[12.5px] text-ink-500 max-w-md mx-auto leading-relaxed">
+            Run the underwriting engines on this deal, then open the{' '}
+            <span className="font-medium text-brand-700">Returns</span> tab for live sliders
+            (exit cap, RevPAR growth, hold, LTV, rate). A snapshot table will appear here
+            once a base case has been generated.
+          </p>
+        </Card>
+      )}
+
+      {sub === 'critic' && hasCannedAnalysis && (
+        <CriticReview findings={kimptonCriticFindings} summary={kimptonCriticSummary} />
+      )}
+
+      {sub === 'critic' && !hasCannedAnalysis && liveCritic.findings && liveCritic.findings.length > 0 && (
+        <CriticReview findings={liveCritic.findings} summary={liveCritic.summary ?? ''} />
+      )}
+
+      {sub === 'critic' && !hasCannedAnalysis && (!liveCritic.findings || liveCritic.findings.length === 0) && (
+        <Card className="p-8 text-center">
+          <div className="w-12 h-12 mx-auto rounded-lg bg-brand-50 flex items-center justify-center mb-3">
+            <Eye size={20} className="text-brand-500" />
+          </div>
+          <h3 className="text-[14px] font-semibold text-ink-900 mb-1">
+            {liveCritic.status === 'ok'
+              ? 'No cross-field issues detected'
+              : 'No critic review yet'}
+          </h3>
+          <p className="text-[12.5px] text-ink-500 max-w-md mx-auto leading-relaxed">
+            {liveCritic.status === 'ok'
+              ? 'The Critic agent reviewed this deal and found no cross-field issues beyond the per-field Variance pass.'
+              : 'The Critic agent runs after the Variance pass. Once both a broker proforma and a T-12 are extracted, Fondok will surface cross-field narrative issues here.'}
+          </p>
+        </Card>
       )}
 
       {sub === 'cost' && <CostPanel />}
 
-      {sub === 'scenarios' && (
+      {sub === 'scenarios' && hasCannedAnalysis && (
         <Card className="p-5">
           <h3 className="text-[14px] font-semibold text-ink-900 mb-4">Scenario Comparison</h3>
           <div className="grid grid-cols-3 gap-4">
@@ -491,6 +576,24 @@ export default function AnalysisTab() {
                 </Card>
               );
             })}
+          </div>
+        </Card>
+      )}
+
+      {sub === 'scenarios' && !hasCannedAnalysis && (
+        <Card className="p-8 text-center">
+          <div className="w-12 h-12 mx-auto rounded-lg bg-brand-50 flex items-center justify-center mb-3">
+            <Layers size={20} className="text-brand-500" />
+          </div>
+          <h3 className="text-[14px] font-semibold text-ink-900 mb-1">No scenarios yet</h3>
+          <p className="text-[12.5px] text-ink-500 max-w-md mx-auto leading-relaxed">
+            Downside / base / upside scenario weightings are derived from the underwriting
+            engines and IC memo. Generate the memo to populate this comparison.
+          </p>
+          <div className="mt-4">
+            <Button variant="primary" size="sm" onClick={() => setSubTab('memo')}>
+              <Sparkles size={12} /> Generate IC Memo
+            </Button>
           </div>
         </Card>
       )}
@@ -757,6 +860,330 @@ function CriticReview({
             </Card>
           );
         })}
+      </div>
+    </div>
+  );
+}
+
+// ───────────── Live AI summary (from persisted IC memo) ─────────────
+// Pulls the latest persisted memo via GET /deals/{id}/memo and returns
+// just the executive-summary paragraphs. The memo's status discriminator
+// tells us whether the memo has actually been generated — anything other
+// than ``done`` (or partially streamed sections) yields no paragraphs so
+// the empty state renders.
+
+interface LiveSummaryState {
+  paragraphs: string[] | null;
+  generatedAt: string | null;
+  loading: boolean;
+}
+
+function useLiveMemoSummary(dealId: string | null): LiveSummaryState {
+  const [state, setState] = useState<LiveSummaryState>({
+    paragraphs: null,
+    generatedAt: null,
+    loading: false,
+  });
+  useEffect(() => {
+    if (!dealId) {
+      setState({ paragraphs: null, generatedAt: null, loading: false });
+      return;
+    }
+    const base = workerUrl();
+    if (!base) {
+      setState({ paragraphs: null, generatedAt: null, loading: false });
+      return;
+    }
+    const ctrl = new AbortController();
+    setState((s) => ({ ...s, loading: true }));
+    fetch(`${base}/deals/${dealId}/memo`, { signal: ctrl.signal })
+      .then((r) => (r.ok ? r.json() : Promise.reject(new Error(`HTTP ${r.status}`))))
+      .then((env: { sections?: Array<{ id?: string; title?: string; content?: string }>; status?: string; generated_at?: string | null }) => {
+        const sections = Array.isArray(env.sections) ? env.sections : [];
+        // Match the executive-summary section by id or title (the memo
+        // schema is loose enough that either may appear).
+        const summary = sections.find((s) => {
+          const id = (s.id ?? '').toLowerCase();
+          const title = (s.title ?? '').toLowerCase();
+          return id.includes('summary')
+            || id.includes('executive')
+            || title.includes('executive summary')
+            || title.includes('investment summary')
+            || title === 'summary';
+        });
+        const content = summary?.content?.trim() ?? '';
+        const paragraphs = content
+          ? content.split(/\n{2,}/).map((p) => p.trim()).filter(Boolean)
+          : [];
+        setState({
+          paragraphs: paragraphs.length > 0 ? paragraphs : null,
+          generatedAt: env.generated_at ?? null,
+          loading: false,
+        });
+      })
+      .catch((e) => {
+        if ((e as { name?: string })?.name === 'AbortError') return;
+        setState({ paragraphs: null, generatedAt: null, loading: false });
+      });
+    return () => ctrl.abort();
+  }, [dealId]);
+  return state;
+}
+
+// ───────────── Live Critic report ─────────────
+// GET /deals/{id}/critic returns the latest persisted CriticReport. 404
+// = no run yet (the empty state handles that). Maps the worker JSON shape
+// to the local KimptonCriticFinding shape so we can reuse <CriticReview>.
+
+interface LiveCriticState {
+  findings: KimptonCriticFinding[] | null;
+  summary: string | null;
+  status: 'loading' | 'ok' | 'empty' | 'error';
+}
+
+function useLiveCriticReport(dealId: string | null): LiveCriticState {
+  const [state, setState] = useState<LiveCriticState>({
+    findings: null,
+    summary: null,
+    status: 'loading',
+  });
+  useEffect(() => {
+    if (!dealId) {
+      setState({ findings: null, summary: null, status: 'empty' });
+      return;
+    }
+    const base = workerUrl();
+    if (!base) {
+      setState({ findings: null, summary: null, status: 'empty' });
+      return;
+    }
+    const ctrl = new AbortController();
+    setState({ findings: null, summary: null, status: 'loading' });
+    fetch(`${base}/deals/${dealId}/critic`, { signal: ctrl.signal })
+      .then((r) => {
+        if (r.status === 404) return null;
+        if (!r.ok) throw new Error(`HTTP ${r.status}`);
+        return r.json();
+      })
+      .then((data: {
+        summary?: string | null;
+        findings?: Array<Record<string, unknown>>;
+      } | null) => {
+        if (data == null) {
+          setState({ findings: [], summary: null, status: 'empty' });
+          return;
+        }
+        const rawFindings = Array.isArray(data.findings) ? data.findings : [];
+        const findings: KimptonCriticFinding[] = rawFindings.map((f, i) => {
+          const sevRaw = String(f.severity ?? '').toUpperCase();
+          const severity: KimptonCriticSeverity =
+            sevRaw === 'CRITICAL' ? 'CRITICAL'
+            : sevRaw === 'WARN' ? 'WARN'
+            : 'INFO';
+          const citedFieldsRaw = f.cited_fields ?? f.fields ?? [];
+          const citedPagesRaw = f.cited_pages ?? f.pages ?? [];
+          return {
+            id: String(f.id ?? f.rule_id ?? `live-critic-${i}`),
+            ruleId: String(f.rule_id ?? f.ruleId ?? 'CRITIC_FINDING'),
+            title: String(f.title ?? f.headline ?? 'Cross-field finding'),
+            narrative: String(f.narrative ?? f.note ?? f.description ?? ''),
+            severity,
+            citedFields: Array.isArray(citedFieldsRaw)
+              ? citedFieldsRaw.map((x) => String(x))
+              : [],
+            citedPages: Array.isArray(citedPagesRaw)
+              ? citedPagesRaw.map((x) => Number(x)).filter((n) => Number.isFinite(n))
+              : [],
+            citedDocumentId: typeof f.cited_document_id === 'string'
+              ? f.cited_document_id
+              : (typeof f.document_id === 'string' ? f.document_id : undefined),
+            citedDocumentName: typeof f.cited_document_name === 'string'
+              ? f.cited_document_name
+              : (typeof f.document_name === 'string' ? f.document_name : undefined),
+            impactEstimateUsd: typeof f.impact_estimate_usd === 'number'
+              ? f.impact_estimate_usd
+              : undefined,
+          };
+        });
+        setState({
+          findings,
+          summary: typeof data.summary === 'string' ? data.summary : null,
+          status: 'ok',
+        });
+      })
+      .catch((e) => {
+        if ((e as { name?: string })?.name === 'AbortError') return;
+        setState({ findings: null, summary: null, status: 'error' });
+      });
+    return () => ctrl.abort();
+  }, [dealId]);
+  return state;
+}
+
+// ───────────── Risks derived from variance flags ─────────────
+// For non-Kimpton deals we don't have a curated risk-tier matrix, but the
+// variance hook already gives us severity-bucketed flags. Surface those as
+// an honest "what we know so far" risk view, plus a CTA to dig in.
+
+function RisksFromVariance({
+  flags,
+  critical,
+  warn,
+  info,
+  onOpenVariance,
+  onOpenMemo,
+}: {
+  flags: VarianceFlag[] | null;
+  critical: number;
+  warn: number;
+  info: number;
+  onOpenVariance: () => void;
+  onOpenMemo: () => void;
+}) {
+  // No worker data yet: nudge toward generating the memo.
+  if (flags === null) {
+    return (
+      <Card className="p-8 text-center">
+        <div className="w-12 h-12 mx-auto rounded-lg bg-success-50 flex items-center justify-center mb-3">
+          <ShieldCheck size={20} className="text-success-500" />
+        </div>
+        <h3 className="text-[14px] font-semibold text-ink-900 mb-1">No risk assessment yet</h3>
+        <p className="text-[12.5px] text-ink-500 max-w-md mx-auto leading-relaxed">
+          Risk scoring is derived from the variance flags + IC memo. Generate the memo to
+          populate this view.
+        </p>
+        <div className="mt-4">
+          <Button variant="primary" size="sm" onClick={onOpenMemo}>
+            <Sparkles size={12} /> Generate IC Memo
+          </Button>
+        </div>
+      </Card>
+    );
+  }
+
+  const total = flags.length;
+  // Roll severity counts into a 0-100 risk score: critical weighs heaviest.
+  const score = Math.min(100, critical * 25 + warn * 10 + info * 3);
+  const tier = critical > 0 ? 'High Risk' : warn > 0 ? 'Medium Risk' : 'Low Risk';
+  const tone: 'red' | 'amber' | 'green' =
+    critical > 0 ? 'red' : warn > 0 ? 'amber' : 'green';
+
+  return (
+    <div className="grid grid-cols-3 gap-5">
+      <Card className="col-span-2 p-5">
+        <div className="flex items-center justify-between mb-4">
+          <div className="flex items-center gap-2">
+            <ShieldCheck size={15} className={
+              critical > 0 ? 'text-danger-500'
+              : warn > 0 ? 'text-warn-700'
+              : 'text-success-500'
+            } />
+            <h3 className="text-[14px] font-semibold text-ink-900">Risk Assessment</h3>
+          </div>
+          <Badge tone={tone}>{tier}</Badge>
+        </div>
+        <p className="text-[12px] text-ink-500 mb-4 leading-relaxed">
+          Derived from {total} variance flag{total === 1 ? '' : 's'} between the broker
+          pro forma and T-12 actuals. CRITICAL flags = high risk, WARN = medium,
+          INFO = low.
+        </p>
+        <div className="space-y-3">
+          <RiskRow name="Overall Risk Score" tier={tier} tone={tone} score={score} />
+          <RiskRow
+            name="Critical Variance Flags"
+            tier={critical > 0 ? 'High Risk' : 'Low Risk'}
+            tone={critical > 0 ? 'red' : 'green'}
+            score={Math.min(100, critical * 20)}
+            valueLabel={String(critical)}
+          />
+          <RiskRow
+            name="Warning Flags"
+            tier={warn > 2 ? 'Medium Risk' : 'Low Risk'}
+            tone={warn > 2 ? 'amber' : 'green'}
+            score={Math.min(100, warn * 10)}
+            valueLabel={String(warn)}
+          />
+          <RiskRow
+            name="Info Flags"
+            tier="Low Risk"
+            tone="green"
+            score={Math.min(100, info * 5)}
+            valueLabel={String(info)}
+          />
+        </div>
+        {total > 0 && (
+          <div className="mt-4">
+            <Button variant="secondary" size="sm" onClick={onOpenVariance}>
+              <FileSearch size={12} /> Review variance flags
+            </Button>
+          </div>
+        )}
+      </Card>
+
+      <Card className="p-5">
+        <h3 className="text-[14px] font-semibold text-ink-900 mb-4">Top Variance Flags</h3>
+        {flags.length === 0 ? (
+          <p className="text-[12px] text-ink-500 leading-relaxed">
+            No variance flags yet. Upload + extract a broker pro forma and T-12 to populate.
+          </p>
+        ) : (
+          <div className="space-y-3">
+            {[...flags]
+              .sort((a, b) => Math.abs(b.noi_impact_usd) - Math.abs(a.noi_impact_usd))
+              .slice(0, 4)
+              .map((f) => (
+                <div key={f.flag_id} className="border border-border rounded-md p-3">
+                  <div className="flex items-center justify-between mb-1">
+                    <div className="text-[12px] font-semibold text-ink-900">{f.field_label}</div>
+                    <Badge tone={
+                      f.severity === 'CRITICAL' ? 'red'
+                      : f.severity === 'WARN' ? 'amber'
+                      : 'blue'
+                    }>
+                      {f.severity[0] + f.severity.slice(1).toLowerCase()}
+                    </Badge>
+                  </div>
+                  <p className="text-[11.5px] text-ink-500 leading-relaxed">{f.explanation}</p>
+                </div>
+              ))}
+          </div>
+        )}
+      </Card>
+    </div>
+  );
+}
+
+function RiskRow({
+  name,
+  tier,
+  tone,
+  score,
+  valueLabel,
+}: {
+  name: string;
+  tier: string;
+  tone: 'red' | 'amber' | 'green';
+  score: number;
+  valueLabel?: string;
+}) {
+  const barColor = tone === 'red' ? 'bg-danger-500'
+    : tone === 'amber' ? 'bg-warn-500'
+    : 'bg-success-500';
+  return (
+    <div>
+      <div className="flex justify-between text-[12px] mb-1">
+        <span className={name === 'Overall Risk Score' ? 'font-semibold text-ink-900' : 'text-ink-700'}>
+          {name}
+        </span>
+        <div className="flex items-center gap-2">
+          <Badge tone={tone}>{tier}</Badge>
+          <span className="font-medium tabular-nums w-8 text-right">
+            {valueLabel ?? score}
+          </span>
+        </div>
+      </div>
+      <div className="h-1.5 bg-ink-300/30 rounded-full overflow-hidden">
+        <div className={cn('h-full', barColor)} style={{ width: `${score}%` }} />
       </div>
     </div>
   );

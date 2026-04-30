@@ -193,13 +193,19 @@ async def _load_engine_inputs(
         # fall through to defaults silently.
         row = None
 
+    # Track keys whose values originated on the ``deals`` row so the OM
+    # extraction layer below doesn't clobber a user-edited price with the
+    # broker's headline (deals table > OM actuals > Kimpton defaults).
+    deals_table_keys: set[str] = set()
     if row is not None:
         mapping = row._mapping
         if mapping.get("keys"):
             base["keys"] = int(mapping["keys"])
+            deals_table_keys.add("keys")
         if mapping.get("purchase_price"):
             try:
                 base["purchase_price"] = float(mapping["purchase_price"])
+                deals_table_keys.add("purchase_price")
             except (TypeError, ValueError):
                 pass
 
@@ -273,6 +279,29 @@ async def _load_engine_inputs(
         # Cap the ratio at a sane upper bound so a partial extraction
         # (rooms revenue missing, all other_pool present) can't blow up.
         base["other_revenue_pct_of_rooms"] = min(0.30, other_pool / rooms_rev)
+
+    # When the deal has an extracted OM, prefer the broker's published
+    # capital + debt numbers over the Kimpton seed so the capital stack
+    # and debt service reflect this property rather than the demo
+    # defaults. Override priority: deals table > OM actuals > Kimpton
+    # defaults — a user-edited purchase price on the deals row is never
+    # clobbered by the broker's headline. Best-effort — partial
+    # extraction degrades to Kimpton key-by-key.
+    capital_actuals = await _load_om_capital_actuals(
+        session, deal_id=deal_id
+    )
+    for key, value in capital_actuals.items():
+        if key in deals_table_keys:
+            continue
+        base[key] = value
+
+    debt_actuals = await _load_om_debt_actuals(
+        session, deal_id=deal_id
+    )
+    for key, value in debt_actuals.items():
+        if key in deals_table_keys:
+            continue
+        base[key] = value
 
     if overrides:
         base.update(overrides)
@@ -484,6 +513,192 @@ async def _load_t12_expense_actuals(
                 canonical = _T12_EXPENSE_FIELD_ALIASES.get(tail)
             if canonical and canonical not in actuals:
                 actuals[canonical] = float(value)
+    return actuals
+
+
+# Map extracted OM field paths onto the canonical capital-side keys the
+# capital engine recognizes. The Extractor agent emits OM fields under
+# the ``broker_proforma.*``, ``asking_price.*``, ``in_place_debt.*`` and
+# ``property_overview.*`` roots (see apps/worker/app/agents/extractor.py
+# SYSTEM_PROMPT). Both the dotted root paths and the bare last-segment
+# aliases are accepted so partial extractions still flow through.
+_OM_CAPITAL_FIELD_ALIASES: dict[str, str] = {
+    # Asking price → purchase price (the headline number on the OM).
+    "asking_price.headline_price_usd": "purchase_price",
+    "asking_price.purchase_price": "purchase_price",
+    "headline_price_usd": "purchase_price",
+    # Per-key price (informational; not consumed by the capital engine
+    # directly but threaded through so the assumption dict carries it).
+    "asking_price.price_per_key_usd": "price_per_key",
+    "price_per_key_usd": "price_per_key",
+    # Renovation budget — the broker's published PIP / capex budget.
+    "broker_proforma.renovation_budget_usd": "renovation_budget",
+    "renovation_budget_usd": "renovation_budget",
+    "renovation_budget": "renovation_budget",
+    # Entry cap rate — used by the capital engine when present.
+    "broker_proforma.entry_cap_rate": "entry_cap_rate",
+    "broker_proforma.cap_rate": "entry_cap_rate",
+    "entry_cap_rate": "entry_cap_rate",
+    "cap_rate": "entry_cap_rate",
+    # Year built (informational, for completeness).
+    "property_overview.year_built": "year_built",
+    "year_built": "year_built",
+}
+
+
+# Map extracted OM field paths onto the canonical debt-side keys the
+# debt engine recognizes. ``in_place_debt.*`` carries the broker's quote
+# of the seller's existing financing; we let it override the LTV-derived
+# default loan amount when the broker publishes a hard balance.
+_OM_DEBT_FIELD_ALIASES: dict[str, str] = {
+    "in_place_debt.loan_balance_usd": "loan_amount",
+    "loan_balance_usd": "loan_amount",
+    "in_place_debt.interest_rate_pct": "interest_rate",
+    "interest_rate_pct": "interest_rate",
+    "in_place_debt.amortization_years": "amortization_years",
+    "amortization_years": "amortization_years",
+    "in_place_debt.term_years": "term_years",
+    "term_years": "term_years",
+    "in_place_debt.ltv_pct": "ltv",
+    "ltv_pct": "ltv",
+}
+
+
+# Canonical keys whose extracted value lands in the assumption dict as a
+# 0..1 fraction. Extractors emit either a 0..1 ratio or a 0..100 percent;
+# we normalize defensively (mirrors the T-12 occupancy normalization).
+_OM_PERCENTAGE_KEYS: frozenset[str] = frozenset(
+    {"entry_cap_rate", "interest_rate", "ltv"}
+)
+
+
+async def _load_om_capital_actuals(
+    session: AsyncSession,
+    *,
+    deal_id: str,
+) -> dict[str, float]:
+    """Read capital-side broker numbers off the deal's most recent OM.
+
+    Returns ``{}`` (no overrides — engine falls back to the Kimpton seed)
+    when no OM has been extracted, when the deal id isn't a UUID, or
+    when the migrations haven't been applied to the test DB.
+
+    Percentage-style keys (``entry_cap_rate``) are normalized from a
+    ``0..100`` percent to a ``0..1`` fraction when the broker emitted the
+    raw percent.
+    """
+    try:
+        UUID(deal_id)
+    except (ValueError, TypeError):
+        return {}
+    try:
+        rows = await session.execute(
+            text(
+                """
+                SELECT er.fields, d.doc_type
+                  FROM extraction_results er
+                  JOIN documents d ON d.id = er.document_id
+                 WHERE er.deal_id = :deal AND d.doc_type = 'OM'
+                 ORDER BY er.created_at DESC
+                """
+            ),
+            {"deal": deal_id},
+        )
+    except Exception:
+        return {}
+
+    actuals: dict[str, float] = {}
+    for r in rows.fetchall():
+        raw_fields = r._mapping["fields"]
+        if isinstance(raw_fields, str):
+            try:
+                raw_fields = json.loads(raw_fields)
+            except (json.JSONDecodeError, TypeError):
+                continue
+        if not isinstance(raw_fields, list):
+            continue
+        for f in raw_fields:
+            if not isinstance(f, dict):
+                continue
+            name = (f.get("field_name") or "").strip().lower()
+            value = f.get("value")
+            if not name or not isinstance(value, (int, float)):
+                continue
+            canonical = _OM_CAPITAL_FIELD_ALIASES.get(name)
+            if canonical is None:
+                tail = name.rsplit(".", 1)[-1] if "." in name else name
+                canonical = _OM_CAPITAL_FIELD_ALIASES.get(tail)
+            if canonical is None or canonical in actuals:
+                continue
+            v = float(value)
+            if canonical in _OM_PERCENTAGE_KEYS and v > 1.0:
+                v = v / 100.0
+            actuals[canonical] = v
+    return actuals
+
+
+async def _load_om_debt_actuals(
+    session: AsyncSession,
+    *,
+    deal_id: str,
+) -> dict[str, float]:
+    """Read in-place debt terms off the deal's most recent OM extraction.
+
+    Returns ``{}`` (no overrides — engine falls back to the Kimpton seed)
+    when no OM has been extracted, when the deal id isn't a UUID, or
+    when the migrations haven't been applied to the test DB.
+
+    Percentage-style keys (``interest_rate``, ``ltv``) are normalized
+    from ``0..100`` percent to ``0..1`` fraction when the broker emitted
+    the raw percent.
+    """
+    try:
+        UUID(deal_id)
+    except (ValueError, TypeError):
+        return {}
+    try:
+        rows = await session.execute(
+            text(
+                """
+                SELECT er.fields, d.doc_type
+                  FROM extraction_results er
+                  JOIN documents d ON d.id = er.document_id
+                 WHERE er.deal_id = :deal AND d.doc_type = 'OM'
+                 ORDER BY er.created_at DESC
+                """
+            ),
+            {"deal": deal_id},
+        )
+    except Exception:
+        return {}
+
+    actuals: dict[str, float] = {}
+    for r in rows.fetchall():
+        raw_fields = r._mapping["fields"]
+        if isinstance(raw_fields, str):
+            try:
+                raw_fields = json.loads(raw_fields)
+            except (json.JSONDecodeError, TypeError):
+                continue
+        if not isinstance(raw_fields, list):
+            continue
+        for f in raw_fields:
+            if not isinstance(f, dict):
+                continue
+            name = (f.get("field_name") or "").strip().lower()
+            value = f.get("value")
+            if not name or not isinstance(value, (int, float)):
+                continue
+            canonical = _OM_DEBT_FIELD_ALIASES.get(name)
+            if canonical is None:
+                tail = name.rsplit(".", 1)[-1] if "." in name else name
+                canonical = _OM_DEBT_FIELD_ALIASES.get(tail)
+            if canonical is None or canonical in actuals:
+                continue
+            v = float(value)
+            if canonical in _OM_PERCENTAGE_KEYS and v > 1.0:
+                v = v / 100.0
+            actuals[canonical] = v
     return actuals
 
 
