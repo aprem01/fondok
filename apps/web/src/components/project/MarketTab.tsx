@@ -1,5 +1,6 @@
 'use client';
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
+import { useParams } from 'next/navigation';
 import Link from 'next/link';
 import {
   LineChart, Line, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip,
@@ -11,10 +12,26 @@ import { Button } from '@/components/ui/Button';
 import { Badge } from '@/components/ui/Badge';
 import { useToast } from '@/components/ui/Toast';
 import { miamiMarket } from '@/lib/mockData';
+import { isWorkerConnected, workerUrl } from '@/lib/api';
+import { useDeal } from '@/lib/hooks/useDeal';
 import { cn } from '@/lib/format';
 import { IntroCard } from '@/components/help/IntroCard';
 
 const subTabs = ['Market Overview', 'Transaction Comps'];
+
+// Worker `GET /market/{deal_id}/overview` shape — mirrors
+// apps/worker/app/api/market.py MarketOverview. Indices are null
+// until the STR/CoStar feed is wired up.
+interface WorkerMarketOverview {
+  deal_id: string;
+  market: string | null;
+  keys: number | null;
+  brand: string | null;
+  service: string | null;
+  occupancy_index: number | null;
+  adr_index: number | null;
+  revpar_index: number | null;
+}
 
 const tooltipStyle = {
   contentStyle: { background: '#fff', border: '1px solid #e5e7eb', borderRadius: 6, fontSize: 12 },
@@ -26,6 +43,32 @@ export default function MarketTab({ projectId }: { projectId: number | string })
   const m = miamiMarket;
   const isKimptonDemo = projectId === 7;
   const { toast } = useToast();
+  const params = useParams();
+  const dealId = (params?.id as string | undefined) ?? String(projectId);
+  const { deal } = useDeal(dealId);
+
+  // Worker market overview — populated for live deals once
+  // /market/{deal_id}/overview returns. Indices are null until the STR
+  // feed is wired in (TODO(str-integration) on the worker side), so we
+  // only use the response for the submarket label / keys readout.
+  const [workerMarket, setWorkerMarket] = useState<WorkerMarketOverview | null>(null);
+  useEffect(() => {
+    if (isKimptonDemo) return;
+    if (!isWorkerConnected()) return;
+    if (!dealId || /^\d+$/.test(dealId)) return; // mock id, no UUID
+    const ctrl = new AbortController();
+    fetch(`${workerUrl()}/market/${dealId}/overview`, { signal: ctrl.signal })
+      .then((res) => (res.ok ? res.json() : null))
+      .then((data) => { if (data) setWorkerMarket(data as WorkerMarketOverview); })
+      .catch(() => { /* silent — empty state covers it */ });
+    return () => ctrl.abort();
+  }, [dealId, isKimptonDemo]);
+
+  // Submarket label: deal.city wins for live deals; the Kimpton demo
+  // keeps the fixture's hand-tuned "Miami Beach / South Beach, FL".
+  const submarketLabel = isKimptonDemo
+    ? m.submarket
+    : (deal?.city ?? workerMarket?.market ?? null);
 
   // Sales-data export streams the demo's CoStar-style table to a CSV the
   // analyst can paste into Excel. We build it client-side from the same
@@ -83,6 +126,9 @@ export default function MarketTab({ projectId }: { projectId: number | string })
             <MapPinned size={20} className="text-ink-400" />
           </div>
           <h3 className="text-[15px] font-semibold text-ink-900">No market data yet</h3>
+          {submarketLabel && (
+            <p className="text-[12px] text-ink-700 mt-1.5 font-medium">{submarketLabel}</p>
+          )}
           <p className="text-[12.5px] text-ink-500 mt-1 max-w-md mx-auto leading-relaxed">
             We don&apos;t have benchmark data for this submarket yet. Open the
             <span className="font-medium"> Data Library</span> to add it (paste in an STR report or
@@ -136,7 +182,7 @@ export default function MarketTab({ projectId }: { projectId: number | string })
 
       {tab === 'Market Overview' && (
         <div className="space-y-5">
-          <div className="text-[13px] text-ink-700 font-medium mb-2">{m.submarket}</div>
+          <div className="text-[13px] text-ink-700 font-medium mb-2">{submarketLabel ?? m.submarket}</div>
 
           <div className="grid grid-cols-6 gap-3">
             <KPI label="Inventory" value={m.kpis.inventory.rooms.toLocaleString()} sub={`${m.kpis.inventory.hotels} hotels · +${m.kpis.inventory.yoy}% YoY`} />

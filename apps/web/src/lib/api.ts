@@ -22,6 +22,7 @@ export interface WorkerDeal {
   city: string | null;
   keys: number | null;
   service: string | null;
+  brand: string | null;
   status: string;
   deal_stage: string | null;
   risk: string | null;

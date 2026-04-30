@@ -15,6 +15,9 @@ export interface DealsState {
 
 /** Adapt a mockData Project row to the worker's DealSummary shape. */
 function projectToDeal(p: Project): WorkerDeal {
+  // Mock `Project` doesn't carry a brand; the Kimpton demo (id=7)
+  // alone gets a synthetic brand so brand-tier enrichment renders.
+  const brandFromName = p.id === 7 ? 'Kimpton' : null;
   return {
     id: String(p.id),
     tenant_id: 'mock-tenant',
@@ -22,6 +25,7 @@ function projectToDeal(p: Project): WorkerDeal {
     city: p.city,
     keys: p.keys,
     service: p.service,
+    brand: brandFromName,
     status: p.status,
     deal_stage: p.dealStage,
     risk: p.risk,

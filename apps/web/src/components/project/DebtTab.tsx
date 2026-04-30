@@ -15,6 +15,7 @@ import type { EngineOutputsResponse } from '@/lib/api';
 import { kimptonAnglerOverview } from '@/lib/mockData';
 import { fmtCurrency, fmtPct, cn } from '@/lib/format';
 import { getEngineField, useEngineOutputs } from '@/lib/hooks/useEngineOutputs';
+import { useDeal } from '@/lib/hooks/useDeal';
 import { useFlash } from '@/lib/hooks/useFlash';
 import { IntroCard } from '@/components/help/IntroCard';
 import { MetricLabel } from '@/components/help/MetricLabel';
@@ -30,21 +31,59 @@ export default function DebtTab({ projectId }: { projectId: number | string }) {
   const { toast } = useToast();
   const isKimptonDemo = projectId === 7;
   const { outputs, previous } = useEngineOutputs(dealId);
+  const { deal } = useDeal(dealId);
   const [computing, setComputing] = useState(false);
   const [runToken, setRunToken] = useState<number | null>(null);
 
-  // Worker overrides for the KPI strip — fall back to mock when missing.
+  // ─── Worker engine field reads ────────────────────────────────────
+  // Sam QA: panels used to read Kimpton fixture (`o.financing.*`,
+  // `o.investment.*`) for every deal. We now prefer worker engine output
+  // and fall back to the Kimpton fixture only on the demo deal
+  // (projectId === 7); other deals show '—' until the engine has
+  // produced the value.
   const wLoan = getEngineField<number>(outputs, 'debt', 'loan_amount');
   const wDscr = getEngineField<number>(outputs, 'debt', 'year_one_dscr');
   const wDy = getEngineField<number>(outputs, 'debt', 'year_one_debt_yield');
   const wLtc = getEngineField<number>(outputs, 'capital', 'ltc');
-  // Non-Kimpton deals get worker data only — no mock fallback.
-  const loanAmount = isKimptonDemo ? (wLoan ?? o.financing.loanAmount) : (wLoan ?? 0);
-  const ltc = isKimptonDemo ? (wLtc ?? o.financing.ltv) : (wLtc ?? 0);
-  const dscr = isKimptonDemo ? (wDscr ?? o.financing.dscr) : (wDscr ?? 0);
-  const debtYield = wDy != null
-    ? fmtPct(wDy, 1)
-    : (isKimptonDemo ? '6.8%' : '—');
+  const wLtv = getEngineField<number>(outputs, 'capital', 'ltv');
+  const wDebtAmount = getEngineField<number>(outputs, 'capital', 'debt_amount');
+  const wTotalCapital =
+    getEngineField<number>(outputs, 'capital', 'total_capital_usd') ??
+    getEngineField<number>(outputs, 'capital', 'total_capital');
+  const wPurchase = getEngineField<number>(outputs, 'capital', 'purchase_price');
+
+  // Display helpers: prefer worker → fixture (Kimpton demo only) → '—'.
+  const pickNum = (worker: number | undefined, fixture: number): number | undefined =>
+    worker != null ? worker : (isKimptonDemo ? fixture : undefined);
+  const fmtOrDash = (
+    n: number | undefined,
+    formatter: (v: number) => string,
+  ): string => (n != null ? formatter(n) : '—');
+
+  // Resolved values (undefined = no data → render '—').
+  const loanAmountN = pickNum(wLoan ?? wDebtAmount, o.financing.loanAmount);
+  const ltcN = pickNum(wLtc, o.financing.ltv);
+  const ltvN = pickNum(wLtv, o.financing.ltv);
+  const dscrN = pickNum(wDscr, o.financing.dscr);
+  const dyN = pickNum(wDy, 0.068);
+  const totalCapN = pickNum(wTotalCapital, o.investment.totalCapital);
+  const purchaseN = pickNum(wPurchase, o.acquisition.purchasePrice);
+
+  // Per-key keys count: prefer real deal keys, then fixture only on demo.
+  const propertyKeys =
+    (deal?.keys && deal.keys > 0) ? deal.keys : (isKimptonDemo ? o.general.keys : undefined);
+  const perKeyN =
+    loanAmountN != null && propertyKeys != null && propertyKeys > 0
+      ? loanAmountN / propertyKeys
+      : undefined;
+
+  // Display strings used in KPIs / Panels / Covenant rows.
+  const loanAmountStr = fmtOrDash(loanAmountN, (v) => fmtCurrency(v));
+  const loanCompactStr = fmtOrDash(loanAmountN, (v) => fmtCurrency(v, { compact: true }));
+  const ltcStr = fmtOrDash(ltcN, (v) => fmtPct(v, 1));
+  const ltvStr = fmtOrDash(ltvN, (v) => fmtPct(v, 1));
+  const dscrStr = fmtOrDash(dscrN, (v) => `${v.toFixed(2)}x`);
+  const debtYield = fmtOrDash(dyN, (v) => fmtPct(v, 1));
   const hasWorkerDebtOutput = wLoan != null;
 
   // Non-Kimpton deals: show empty placeholder until engines have run.
@@ -157,58 +196,70 @@ export default function DebtTab({ projectId }: { projectId: number | string }) {
       {tab === 'Debt Summary' && (
         <div className={cn(computing && 'relative pointer-events-none opacity-60')}>
           <div className="grid grid-cols-4 gap-4 mb-5">
-            <KPI label="Total Debt" tip="Total senior and mezzanine debt on the deal." value={fmtCurrency(loanAmount, { compact: true })} flashKey={loanAmount} />
-            <KPI label="LTC" tip={GLOSSARY['LTC']} value={fmtPct(ltc, 1)} flashKey={ltc} />
-            <KPI label="DSCR" tip={GLOSSARY['DSCR']} value={`${dscr.toFixed(2)}x`} tone="green" flashKey={dscr} />
+            <KPI label="Total Debt" tip="Total senior and mezzanine debt on the deal." value={loanCompactStr} flashKey={loanAmountN} />
+            <KPI label="LTC" tip={GLOSSARY['LTC']} value={ltcStr} flashKey={ltcN} />
+            <KPI label="DSCR" tip={GLOSSARY['DSCR']} value={dscrStr} tone="green" flashKey={dscrN} />
             <KPI label="Debt Yield" tip={GLOSSARY['Debt Yield']} value={debtYield} tone="amber" flashKey={debtYield} />
           </div>
           <div className="grid grid-cols-2 gap-5">
             <Panel title="Debt Summary" rows={[
-              ['Total Debt', fmtCurrency(loanAmount)],
-              ['Senior Loan', fmtCurrency(loanAmount)],
-              ['PACE Loan', '$0'],
-              ['LTC %', fmtPct(ltc, 1)],
+              ['Total Debt', loanAmountStr],
+              ['Senior Loan', loanAmountStr],
+              ['PACE Loan', isKimptonDemo ? '$0' : '—'],
+              ['LTC %', ltcStr],
               ['Debt Yield', debtYield],
-              ['DSCR', `${dscr.toFixed(2)}x`],
+              ['DSCR', dscrStr],
             ]} />
             <Panel title="Loan Identification" rows={[
               ['Borrower', isKimptonDemo ? 'Brookfield Hotel Holdings LLC' : '—'],
               ['Lender', isKimptonDemo ? 'Wells Fargo Real Estate' : '—'],
-              ['Loan Type', 'Acquisition'],
-              ['Property Name', isKimptonDemo ? o.general.name : '—'],
+              ['Loan Type', isKimptonDemo ? 'Acquisition' : '—'],
+              ['Property Name', deal?.name ?? (isKimptonDemo ? o.general.name : '—')],
             ]} />
             <Panel title="Senior Loan Terms" rows={[
-              ['Loan Amount', fmtCurrency(loanAmount)],
-              ['LTC Amount', fmtCurrency(loanAmount)],
-              ['Per Key', isKimptonDemo
-                ? fmtCurrency(loanAmount / o.general.keys)
+              ['Loan Amount', loanAmountStr],
+              ['LTC Amount', loanAmountStr],
+              ['Per Key', fmtOrDash(perKeyN, (v) => fmtCurrency(v))],
+              ['Origination Fee %', isKimptonDemo ? '1.5%' : '—'],
+              // Origination fee $ only when both loan amount and the
+              // (Kimpton-only) 1.5% assumption are available.
+              ['Origination Fee $', isKimptonDemo
+                ? fmtOrDash(loanAmountN, (v) => fmtCurrency(v * 0.015))
                 : '—'],
-              ['Origination Fee %', '1.5%'],
-              ['Origination Fee $', fmtCurrency(loanAmount * 0.015)],
             ]} />
             <Panel title="Valuation & Metrics" rows={[
-              ['Total Uses', isKimptonDemo
-                ? fmtCurrency(o.investment.totalCapital)
-                : (getEngineField<number>(outputs, 'capital', 'total_capital') != null
-                    ? fmtCurrency(getEngineField<number>(outputs, 'capital', 'total_capital')!)
-                    : '—')],
-              ['Hotel Purchase Price', isKimptonDemo
-                ? fmtCurrency(o.acquisition.purchasePrice)
-                : '—'],
-              ['LTV', fmtPct(ltc, 1)],
+              ['Total Uses', fmtOrDash(totalCapN, (v) => fmtCurrency(v))],
+              ['Hotel Purchase Price', fmtOrDash(purchaseN, (v) => fmtCurrency(v))],
+              ['LTV', ltvStr],
               ['DY (FTM NOI)', debtYield],
             ]} />
             <Panel title="Computed Values" rows={[
-              ['Interest Only Period', '48 Months'],
-              ['Amortization Period', '30 Years'],
-              ['Maturity Date', '9/30/2029'],
-              ['Cap. Interest Reserve', fmtCurrency(980_000)],
+              // No worker source for these terms today — Kimpton fixture only.
+              ['Interest Only Period', isKimptonDemo ? '48 Months' : '—'],
+              ['Amortization Period', isKimptonDemo ? '30 Years' : '—'],
+              ['Maturity Date', isKimptonDemo ? '9/30/2029' : '—'],
+              ['Cap. Interest Reserve', isKimptonDemo ? fmtCurrency(980_000) : '—'],
             ]} />
             <Card className="p-5">
               <h3 className="text-[13px] font-semibold text-ink-900 mb-3">Covenant Status</h3>
-              <CovenantRow label="DSCR Min 1.20x" pass={true} value="1.57x" />
-              <CovenantRow label="Debt Yield Min 10%" pass={false} value="6.8%" />
-              <CovenantRow label="LTV Max 75%" pass={true} value="65.0%" />
+              <CovenantRow
+                label="DSCR Min 1.20x"
+                pass={dscrN != null ? dscrN >= 1.2 : false}
+                value={dscrStr}
+                missing={dscrN == null}
+              />
+              <CovenantRow
+                label="Debt Yield Min 10%"
+                pass={dyN != null ? dyN >= 0.1 : false}
+                value={debtYield}
+                missing={dyN == null}
+              />
+              <CovenantRow
+                label="LTV Max 75%"
+                pass={ltvN != null ? ltvN <= 0.75 : false}
+                value={ltvStr}
+                missing={ltvN == null}
+              />
               <div className="mt-4 pt-3 border-t border-border text-[11px] text-ink-500">
                 Additional metrics available in Rates & Covenants tab
               </div>
@@ -228,30 +279,58 @@ export default function DebtTab({ projectId }: { projectId: number | string }) {
       {tab === 'Rates & Covenants' && (
         <>
           <div className="grid grid-cols-4 gap-4 mb-5">
-            <KPI label="Senior Rate" value="6.80%" />
-            <KPI label="PACE Rate" value="7.99%" />
-            <KPI label="Rate Cap" value="8.33%" />
-            <KPI label="Cap Expiry" value="9/30/2027" />
+            <KPI label="Senior Rate" value={isKimptonDemo ? '6.80%' : '—'} />
+            <KPI label="PACE Rate" value={isKimptonDemo ? '7.99%' : '—'} />
+            <KPI label="Rate Cap" value={isKimptonDemo ? '8.33%' : '—'} />
+            <KPI label="Cap Expiry" value={isKimptonDemo ? '9/30/2027' : '—'} />
           </div>
           <div className="grid grid-cols-2 gap-5">
             <Panel title="Rate Configuration" rows={[
-              ['Rate Type', 'Variable'], ['Spread over SOFR', '2.9%'],
-              ['SOFR Ceiling', '8.33%'], ['SOFR Floor', '0%'],
+              ['Rate Type', isKimptonDemo ? 'Variable' : '—'],
+              ['Spread over SOFR', isKimptonDemo ? '2.9%' : '—'],
+              ['SOFR Ceiling', isKimptonDemo ? '8.33%' : '—'],
+              ['SOFR Floor', isKimptonDemo ? '0%' : '—'],
             ]} />
             <Panel title="Rate Cap / Hedge" rows={[
-              ['Rate Cap', '8.33%'], ['Rate Cap Expiry', '9/30/2027'],
-              ['Rate Floor', 'N/A'], ['Effective Rate', '6.80%'], ['Swap Expiry Date', 'N/A'],
+              ['Rate Cap', isKimptonDemo ? '8.33%' : '—'],
+              ['Rate Cap Expiry', isKimptonDemo ? '9/30/2027' : '—'],
+              ['Rate Floor', isKimptonDemo ? 'N/A' : '—'],
+              ['Effective Rate', isKimptonDemo ? '6.80%' : '—'],
+              ['Swap Expiry Date', isKimptonDemo ? 'N/A' : '—'],
             ]} />
             <Panel title="Current Rate Summary" rows={[
-              ['SOFR Ceiling', '8.33%'], ['Floating SOFR', '3.5%'],
-              ['Spread over SOFR', '2.9%'], ['SOFR Floor', '0%'], ['Interest Rate Used', '6.8%'],
+              ['SOFR Ceiling', isKimptonDemo ? '8.33%' : '—'],
+              ['Floating SOFR', isKimptonDemo ? '3.5%' : '—'],
+              ['Spread over SOFR', isKimptonDemo ? '2.9%' : '—'],
+              ['SOFR Floor', isKimptonDemo ? '0%' : '—'],
+              ['Interest Rate Used', isKimptonDemo ? '6.8%' : '—'],
             ]} />
             <Card className="p-5">
               <h3 className="text-[13px] font-semibold text-ink-900 mb-3">Covenant Status</h3>
-              <CovenantRow label="DSCR Status 1.57x" pass={true} value="1.57x" />
-              <CovenantRow label="Debt Yield Status" pass={false} value="6.8%" />
-              <CovenantRow label="LTV Status" pass={true} value="65.0%" />
-              <CovenantRow label="Cash Trap" pass={true} value="Not Triggered" />
+              <CovenantRow
+                label="DSCR Status"
+                pass={dscrN != null ? dscrN >= 1.2 : false}
+                value={dscrStr}
+                missing={dscrN == null}
+              />
+              <CovenantRow
+                label="Debt Yield Status"
+                pass={dyN != null ? dyN >= 0.1 : false}
+                value={debtYield}
+                missing={dyN == null}
+              />
+              <CovenantRow
+                label="LTV Status"
+                pass={ltvN != null ? ltvN <= 0.75 : false}
+                value={ltvStr}
+                missing={ltvN == null}
+              />
+              <CovenantRow
+                label="Cash Trap"
+                pass={isKimptonDemo}
+                value={isKimptonDemo ? 'Not Triggered' : '—'}
+                missing={!isKimptonDemo}
+              />
             </Card>
           </div>
         </>
@@ -259,27 +338,45 @@ export default function DebtTab({ projectId }: { projectId: number | string }) {
 
       {tab === 'Term & Refinance' && (
         <>
+          {/*
+            Term & Refinance has no worker engine source today — refi_year /
+            refi_proceeds aren't on the debt engine output. For non-Kimpton
+            deals we render '—' across the board rather than leak the
+            Kimpton fixture (5-yr term, $32M proceeds, etc.) onto an
+            unrelated deal.
+          */}
           <div className="grid grid-cols-4 gap-4 mb-5">
-            <KPI label="Loan Term" value="5 Years" />
-            <KPI label="IO Period" value="4 Years" />
-            <KPI label="Maturity" value="3/31/2029" />
-            <KPI label="Refi Status" value="Disabled" tone="amber" />
+            <KPI label="Loan Term" value={isKimptonDemo ? '5 Years' : '—'} />
+            <KPI label="IO Period" value={isKimptonDemo ? '4 Years' : '—'} />
+            <KPI label="Maturity" value={isKimptonDemo ? '3/31/2029' : '—'} />
+            <KPI
+              label="Refi Status"
+              value={isKimptonDemo ? 'Disabled' : '—'}
+              tone={isKimptonDemo ? 'amber' : undefined}
+            />
           </div>
           <div className="grid grid-cols-2 gap-5">
             <Panel title="Key Dates" rows={[
-              ['Funding', '9/30/2025'], ['Origination', '3/31/2026'],
-              ['Initial Maturity', '3/31/2029'], ['Current Maturity', '3/31/2029'],
+              ['Funding', isKimptonDemo ? '9/30/2025' : '—'],
+              ['Origination', isKimptonDemo ? '3/31/2026' : '—'],
+              ['Initial Maturity', isKimptonDemo ? '3/31/2029' : '—'],
+              ['Current Maturity', isKimptonDemo ? '3/31/2029' : '—'],
             ]} />
             <Panel title="Amortization" rows={[
-              ['Amortization', '30 Years'], ['(Months)', '360'],
-              ['Funding Month', '0'], ['Payoff Month', '30'],
+              ['Amortization', isKimptonDemo ? '30 Years' : '—'],
+              ['(Months)', isKimptonDemo ? '360' : '—'],
+              ['Funding Month', isKimptonDemo ? '0' : '—'],
+              ['Payoff Month', isKimptonDemo ? '30' : '—'],
             ]} />
             <Panel title="Interest-Only" rows={[
-              ['IO Period', '4 Years'], ['IO (Months)', '48'], ['IO Status', 'Active'],
+              ['IO Period', isKimptonDemo ? '4 Years' : '—'],
+              ['IO (Months)', isKimptonDemo ? '48' : '—'],
+              ['IO Status', isKimptonDemo ? 'Active' : '—'],
             ]} />
             <Panel title="Extension Options" rows={[
-              ['Extension Options', 'Two 1-year terms'],
-              ['Open Prepay Date', '9/30/2027'], ['Lockout Date', 'N/A'],
+              ['Extension Options', isKimptonDemo ? 'Two 1-year terms' : '—'],
+              ['Open Prepay Date', isKimptonDemo ? '9/30/2027' : '—'],
+              ['Lockout Date', isKimptonDemo ? 'N/A' : '—'],
             ]} />
           </div>
         </>
@@ -325,13 +422,25 @@ function Panel({ title, rows }: { title: string; rows: string[][] }) {
   );
 }
 
-function CovenantRow({ label, pass, value }: { label: string; pass: boolean; value: string }) {
+function CovenantRow({
+  label,
+  pass,
+  value,
+  missing,
+}: {
+  label: string;
+  pass: boolean;
+  value: string;
+  missing?: boolean;
+}) {
   return (
     <div className="flex items-center justify-between py-2 border-b border-border/50 last:border-0">
       <span className="text-[12.5px] text-ink-700">{label}</span>
       <div className="flex items-center gap-2">
         <span className="text-[12px] tabular-nums">{value}</span>
-        <Badge tone={pass ? 'green' : 'red'}>{pass ? '✓' : '✗'}</Badge>
+        {missing
+          ? <Badge tone="amber">—</Badge>
+          : <Badge tone={pass ? 'green' : 'red'}>{pass ? '✓' : '✗'}</Badge>}
       </div>
     </div>
   );

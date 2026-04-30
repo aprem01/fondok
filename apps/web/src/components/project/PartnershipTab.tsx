@@ -19,7 +19,19 @@ import { GLOSSARY } from '@/lib/glossary';
 
 const subTabs = ['Summary', 'Waterfall Structure', 'Distribution Timeline', 'Returns Summary'];
 
-const waterfall = [
+// InvestmentTab-style display helpers.
+const pickNum = (
+  worker: number | undefined,
+  fixture: number,
+  isKimptonDemo: boolean,
+): number | undefined => (worker != null ? worker : (isKimptonDemo ? fixture : undefined));
+const fmtOrDash = (
+  n: number | undefined,
+  formatter: (v: number) => string,
+): string => (n != null ? formatter(n) : '—');
+
+// Default Kimpton-fixture waterfall — only rendered for the demo deal.
+const kimptonWaterfall = [
   { tier: 'Pref Return (10%)', gp: 10, lp: 100 },
   { tier: 'Hurdle #2 (15%)', gp: 20, lp: 80 },
   { tier: 'Hurdle #3 (20%)', gp: 25, lp: 75 },
@@ -38,8 +50,10 @@ export default function PartnershipTab({ projectId }: { projectId: number | stri
   const [computing, setComputing] = useState(false);
   const [runToken, setRunToken] = useState<number | null>(null);
 
-  // Worker partnership engine fields. Note: schema is `gp.irr` / `lp.irr`, not
-  // `gp_irr`. We support both shapes for forward compatibility.
+  // Worker partnership engine fields. The runtime engine returns nested
+  // `gp` / `lp` PartnerReturn objects; the export schema flattens them as
+  // `gp_equity_usd` / `lp_irr` / etc. We accept both shapes — whichever the
+  // worker produced for this deal.
   type PartnerReturn = {
     partner: string;
     contributed_equity: number;
@@ -53,32 +67,57 @@ export default function PartnershipTab({ projectId }: { projectId: number | stri
   const wGpFlows = getEngineField<number[]>(outputs, 'partnership', 'gp_cash_flows');
   const wLpFlows = getEngineField<number[]>(outputs, 'partnership', 'lp_cash_flows');
 
-  const wGpIrr = wGp?.irr;
-  const wLpIrr = wLp?.irr;
-  const wGpEquity = wGp?.contributed_equity;
-  const wLpEquity = wLp?.contributed_equity;
-  const wGpMultiple = wGp?.equity_multiple;
-  const wLpMultiple = wLp?.equity_multiple;
+  // Flat-schema reads (export-style fixtures: lp_equity_usd, gp_irr, ...).
+  const wGpEquityFlat = getEngineField<number>(outputs, 'partnership', 'gp_equity_usd');
+  const wLpEquityFlat = getEngineField<number>(outputs, 'partnership', 'lp_equity_usd');
+  const wTotalEquityFlat = getEngineField<number>(outputs, 'partnership', 'total_equity_usd');
+  const wLpPrefPct = getEngineField<number>(outputs, 'partnership', 'lp_pref_pct');
+  const wTier1Pct = getEngineField<number>(outputs, 'partnership', 'gp_promote_tier_1_pct');
+  const wTier1Hurdle = getEngineField<number>(outputs, 'partnership', 'gp_promote_tier_1_irr_hurdle');
+  const wTier2Pct = getEngineField<number>(outputs, 'partnership', 'gp_promote_tier_2_pct');
+  const wTier2Hurdle = getEngineField<number>(outputs, 'partnership', 'gp_promote_tier_2_irr_hurdle');
+  const wGpIrrFlat = getEngineField<number>(outputs, 'partnership', 'gp_irr')
+    ?? getEngineField<number>(outputs, 'partnership', 'gp_irr_after_promote');
+  const wLpIrrFlat = getEngineField<number>(outputs, 'partnership', 'lp_irr')
+    ?? getEngineField<number>(outputs, 'partnership', 'lp_irr_after_promote');
+  const wGpMultipleFlat = getEngineField<number>(outputs, 'partnership', 'gp_multiple')
+    ?? getEngineField<number>(outputs, 'partnership', 'gp_equity_multiple');
+  const wLpMultipleFlat = getEngineField<number>(outputs, 'partnership', 'lp_multiple')
+    ?? getEngineField<number>(outputs, 'partnership', 'lp_equity_multiple');
+
+  const wGpIrr = wGp?.irr ?? wGpIrrFlat;
+  const wLpIrr = wLp?.irr ?? wLpIrrFlat;
+  const wGpEquity = wGp?.contributed_equity ?? wGpEquityFlat;
+  const wLpEquity = wLp?.contributed_equity ?? wLpEquityFlat;
+  const wGpMultiple = wGp?.equity_multiple ?? wGpMultipleFlat;
+  const wLpMultiple = wLp?.equity_multiple ?? wLpMultipleFlat;
   const wGpDist = wGp?.distributions;
   const wLpDist = wLp?.distributions;
 
-  const hasWorkerPartnership = wGp != null || wLp != null;
-  const gpIrrLabel = wGpIrr != null
-    ? fmtPct(wGpIrr, 2)
-    : (isKimptonDemo ? '42.18%' : '—');
-  const lpIrrLabel = wLpIrr != null
-    ? fmtPct(wLpIrr, 2)
-    : (isKimptonDemo ? '20.45%' : '—');
-  const promoteLabel = wPromote != null
-    ? fmtCurrency(wPromote, { compact: true })
-    : (isKimptonDemo ? fmtCurrency(2_840_000, { compact: true }) : '—');
+  const hasWorkerPartnership = wGp != null || wLp != null
+    || wGpEquityFlat != null || wLpEquityFlat != null
+    || wGpIrrFlat != null || wLpIrrFlat != null;
+  // 0.4218 / 0.2045 are the Kimpton-fixture demo values; only rendered for
+  // the demo deal. fmtOrDash handles the '—' fallback for other deals.
+  const gpIrrPick = pickNum(wGpIrr, 0.4218, isKimptonDemo);
+  const lpIrrPick = pickNum(wLpIrr, 0.2045, isKimptonDemo);
+  const promotePick = pickNum(wPromote, 2_840_000, isKimptonDemo);
+  const gpIrrLabel = fmtOrDash(gpIrrPick, v => fmtPct(v, 2));
+  const lpIrrLabel = fmtOrDash(lpIrrPick, v => fmtPct(v, 2));
+  const promoteLabel = fmtOrDash(promotePick, v => fmtCurrency(v, { compact: true }));
 
   // Total deal profit = total cash returned to all equity - equity contributed.
+  // We can compute it when both distributions and equity are present from the
+  // engine; otherwise fall back to the Kimpton fixture for the demo only.
   const totalDistributions = (wGpDist ?? 0) + (wLpDist ?? 0);
-  const totalEquity = (wGpEquity ?? 0) + (wLpEquity ?? 0);
-  const dealProfitLabel = hasWorkerPartnership
-    ? fmtCurrency(Math.max(0, totalDistributions - totalEquity), { compact: true })
-    : (isKimptonDemo ? fmtCurrency(22_120_000, { compact: true }) : '—');
+  const totalEquityRuntime = (wGpEquity ?? 0) + (wLpEquity ?? 0);
+  const totalEquity = wTotalEquityFlat ?? totalEquityRuntime;
+  const canComputeDealProfit = wGpDist != null && wLpDist != null
+    && (wGpEquity != null || wLpEquity != null || wTotalEquityFlat != null);
+  const dealProfitPick = canComputeDealProfit
+    ? Math.max(0, totalDistributions - totalEquity)
+    : (isKimptonDemo ? 22_120_000 : undefined);
+  const dealProfitLabel = fmtOrDash(dealProfitPick, v => fmtCurrency(v, { compact: true }));
 
   if (!isKimptonDemo && !hasWorkerPartnership) {
     return (
@@ -210,27 +249,33 @@ export default function PartnershipTab({ projectId }: { projectId: number | stri
                 </thead>
                 <tbody>
                   {(() => {
-                    const gpEq = wGpEquity ?? (isKimptonDemo ? 1_388_960 : 0);
-                    const lpEq = wLpEquity ?? (isKimptonDemo ? 12_447_110 : 0);
-                    const total = gpEq + lpEq;
-                    const gpPct = total > 0 ? (gpEq / total) * 100 : 0;
-                    const lpPct = total > 0 ? (lpEq / total) * 100 : 0;
+                    const gpEqPick = pickNum(wGpEquity, 1_388_960, isKimptonDemo);
+                    const lpEqPick = pickNum(wLpEquity, 12_447_110, isKimptonDemo);
+                    const totalPick = (gpEqPick != null && lpEqPick != null)
+                      ? gpEqPick + lpEqPick
+                      : pickNum(wTotalEquityFlat, 13_836_070, isKimptonDemo);
+                    const gpPctStr = (gpEqPick != null && totalPick && totalPick > 0)
+                      ? `${((gpEqPick / totalPick) * 100).toFixed(1)}%`
+                      : '—';
+                    const lpPctStr = (lpEqPick != null && totalPick && totalPick > 0)
+                      ? `${((lpEqPick / totalPick) * 100).toFixed(1)}%`
+                      : '—';
                     return (
                       <>
                         <tr className="border-b border-border/50">
                           <td className="py-2">Sponsor / GP (General Partner)</td>
-                          <td className="text-right tabular-nums">{gpPct.toFixed(1)}%</td>
-                          <td className="text-right tabular-nums">{fmtCurrency(gpEq)}</td>
+                          <td className="text-right tabular-nums">{gpPctStr}</td>
+                          <td className="text-right tabular-nums">{fmtOrDash(gpEqPick, fmtCurrency)}</td>
                         </tr>
                         <tr className="border-b border-border/50">
                           <td className="py-2">LP Investors (Limited Partners)</td>
-                          <td className="text-right tabular-nums">{lpPct.toFixed(1)}%</td>
-                          <td className="text-right tabular-nums">{fmtCurrency(lpEq)}</td>
+                          <td className="text-right tabular-nums">{lpPctStr}</td>
+                          <td className="text-right tabular-nums">{fmtOrDash(lpEqPick, fmtCurrency)}</td>
                         </tr>
                         <tr className="font-semibold border-t border-border">
                           <td className="py-2">Total Equity</td>
-                          <td className="text-right tabular-nums">100.0%</td>
-                          <td className="text-right tabular-nums">{fmtCurrency(total)}</td>
+                          <td className="text-right tabular-nums">{totalPick != null ? '100.0%' : '—'}</td>
+                          <td className="text-right tabular-nums">{fmtOrDash(totalPick, fmtCurrency)}</td>
                         </tr>
                       </>
                     );
@@ -253,29 +298,29 @@ export default function PartnershipTab({ projectId }: { projectId: number | stri
                 <tbody>
                   {(() => {
                     // Profit = distributions - contributed equity for each partner.
-                    const gpProfit = (wGpDist ?? 0) - (wGpEquity ?? 0);
-                    const lpProfit = (wLpDist ?? 0) - (wLpEquity ?? 0);
-                    const gpMultiple = wGpMultiple ?? (isKimptonDemo ? 3.04 : 0);
-                    const lpMultiple = wLpMultiple ?? (isKimptonDemo ? 2.02 : 0);
-                    const gpProfitLabel = hasWorkerPartnership
-                      ? fmtCurrency(Math.max(0, gpProfit))
-                      : (isKimptonDemo ? fmtCurrency(2_840_000) : '—');
-                    const lpProfitLabel = hasWorkerPartnership
-                      ? fmtCurrency(Math.max(0, lpProfit))
-                      : (isKimptonDemo ? fmtCurrency(19_280_000) : '—');
+                    const gpProfitNum = (wGpDist != null && wGpEquity != null)
+                      ? Math.max(0, wGpDist - wGpEquity)
+                      : undefined;
+                    const lpProfitNum = (wLpDist != null && wLpEquity != null)
+                      ? Math.max(0, wLpDist - wLpEquity)
+                      : undefined;
+                    const gpProfitPick = pickNum(gpProfitNum, 2_840_000, isKimptonDemo);
+                    const lpProfitPick = pickNum(lpProfitNum, 19_280_000, isKimptonDemo);
+                    const gpMultiplePick = pickNum(wGpMultiple, 3.04, isKimptonDemo);
+                    const lpMultiplePick = pickNum(wLpMultiple, 2.02, isKimptonDemo);
                     return (
                       <>
                         <tr className="border-b border-border/50">
                           <td className="py-2">GP / Sponsor</td>
                           <td className="text-right tabular-nums">{gpIrrLabel}</td>
-                          <td className="text-right tabular-nums">{gpMultiple.toFixed(2)}x</td>
-                          <td className="text-right tabular-nums">{gpProfitLabel}</td>
+                          <td className="text-right tabular-nums">{fmtOrDash(gpMultiplePick, v => `${v.toFixed(2)}x`)}</td>
+                          <td className="text-right tabular-nums">{fmtOrDash(gpProfitPick, fmtCurrency)}</td>
                         </tr>
                         <tr>
                           <td className="py-2">LP / Investors</td>
                           <td className="text-right tabular-nums">{lpIrrLabel}</td>
-                          <td className="text-right tabular-nums">{lpMultiple.toFixed(2)}x</td>
-                          <td className="text-right tabular-nums">{lpProfitLabel}</td>
+                          <td className="text-right tabular-nums">{fmtOrDash(lpMultiplePick, v => `${v.toFixed(2)}x`)}</td>
+                          <td className="text-right tabular-nums">{fmtOrDash(lpProfitPick, fmtCurrency)}</td>
                         </tr>
                       </>
                     );
@@ -287,24 +332,62 @@ export default function PartnershipTab({ projectId }: { projectId: number | stri
 
           <Card className="p-5">
             <h3 className="text-[13px] font-semibold text-ink-900 mb-3">Cash Flow Waterfall</h3>
-            <table className="w-full text-[12.5px]">
-              <thead>
-                <tr className="text-ink-500 text-[11px] border-b border-border">
-                  <th className="text-left font-medium pb-2">Tier</th>
-                  <th className="text-right font-medium pb-2">GP Cash Flow</th>
-                  <th className="text-right font-medium pb-2">LP Cash Flow</th>
-                </tr>
-              </thead>
-              <tbody>
-                {waterfall.map(w => (
-                  <tr key={w.tier} className="border-b border-border/50">
-                    <td className="py-2">{w.tier}</td>
-                    <td className="text-right tabular-nums">{w.gp}%</td>
-                    <td className="text-right tabular-nums">{w.lp}%</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
+            {(() => {
+              // Build the waterfall tier table from worker fields when the
+              // export-style schema is present; fall back to the Kimpton
+              // fixture only on the demo deal so non-Kimpton deals render '—'
+              // instead of inheriting the demo's promote tiers.
+              type Tier = { tier: string; gp: number; lp: number };
+              const workerTiers: Tier[] | null = (() => {
+                const tiers: Tier[] = [];
+                if (wLpPrefPct != null) {
+                  tiers.push({ tier: `Pref Return (${(wLpPrefPct * 100).toFixed(0)}%)`, gp: 0, lp: 100 });
+                }
+                if (wTier1Pct != null && wTier1Hurdle != null) {
+                  tiers.push({
+                    tier: `Tier 1 — Promote above ${(wTier1Hurdle * 100).toFixed(0)}% LP IRR`,
+                    gp: Math.round(wTier1Pct * 100),
+                    lp: Math.round((1 - wTier1Pct) * 100),
+                  });
+                }
+                if (wTier2Pct != null && wTier2Hurdle != null) {
+                  tiers.push({
+                    tier: `Tier 2 — Promote above ${(wTier2Hurdle * 100).toFixed(0)}% LP IRR`,
+                    gp: Math.round(wTier2Pct * 100),
+                    lp: Math.round((1 - wTier2Pct) * 100),
+                  });
+                }
+                return tiers.length > 0 ? tiers : null;
+              })();
+              const rows = workerTiers ?? (isKimptonDemo ? kimptonWaterfall : null);
+              if (!rows) {
+                return (
+                  <div className="py-6 text-center text-[12px] text-ink-500">
+                    Waterfall tiers will populate once the Partnership engine emits tier splits.
+                  </div>
+                );
+              }
+              return (
+                <table className="w-full text-[12.5px]">
+                  <thead>
+                    <tr className="text-ink-500 text-[11px] border-b border-border">
+                      <th className="text-left font-medium pb-2">Tier</th>
+                      <th className="text-right font-medium pb-2">GP Cash Flow</th>
+                      <th className="text-right font-medium pb-2">LP Cash Flow</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {rows.map(w => (
+                      <tr key={w.tier} className="border-b border-border/50">
+                        <td className="py-2">{w.tier}</td>
+                        <td className="text-right tabular-nums">{w.gp}%</td>
+                        <td className="text-right tabular-nums">{w.lp}%</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              );
+            })()}
           </Card>
           {computing && (
             <div className="absolute inset-0 bg-bg/60 backdrop-blur-[1px] flex items-start justify-center pt-12 rounded-md">
@@ -320,19 +403,36 @@ export default function PartnershipTab({ projectId }: { projectId: number | stri
       {tab === 'Waterfall Structure' && (
         <Card className="p-5">
           <h3 className="text-[13px] font-semibold text-ink-900 mb-4">Equity Breakdown</h3>
-          <div className="grid grid-cols-2 gap-5">
-            {[
-              ['Sponsor / GP %', '10%'],
-              ['LP Investor %', '90%'],
-              ['GP Amount', fmtCurrency(1_388_960)],
-              ['LP Amount', fmtCurrency(12_447_110)],
-            ].map(([k, v]) => (
-              <div key={k}>
-                <label className="block text-[11.5px] text-ink-500 mb-1">{k}</label>
-                <input value={v} readOnly className="w-full px-3 py-2 text-[13px] border border-border rounded-md bg-ink-300/10" />
+          {(() => {
+            // Worker is preferred; fall back to Kimpton fixture only on demo.
+            const gpEqPick = pickNum(wGpEquity, 1_388_960, isKimptonDemo);
+            const lpEqPick = pickNum(wLpEquity, 12_447_110, isKimptonDemo);
+            const total = (gpEqPick != null && lpEqPick != null)
+              ? gpEqPick + lpEqPick
+              : pickNum(wTotalEquityFlat, 13_836_070, isKimptonDemo);
+            const gpPct = (gpEqPick != null && total && total > 0)
+              ? `${((gpEqPick / total) * 100).toFixed(0)}%`
+              : '—';
+            const lpPct = (lpEqPick != null && total && total > 0)
+              ? `${((lpEqPick / total) * 100).toFixed(0)}%`
+              : '—';
+            const fields: Array<[string, string]> = [
+              ['Sponsor / GP %', gpPct],
+              ['LP Investor %', lpPct],
+              ['GP Amount', fmtOrDash(gpEqPick, fmtCurrency)],
+              ['LP Amount', fmtOrDash(lpEqPick, fmtCurrency)],
+            ];
+            return (
+              <div className="grid grid-cols-2 gap-5">
+                {fields.map(([k, v]) => (
+                  <div key={k}>
+                    <label className="block text-[11.5px] text-ink-500 mb-1">{k}</label>
+                    <input value={v} readOnly className="w-full px-3 py-2 text-[13px] border border-border rounded-md bg-ink-300/10" />
+                  </div>
+                ))}
               </div>
-            ))}
-          </div>
+            );
+          })()}
           <div className="mt-5 text-[11.5px] text-ink-500">
             Adjust hurdle rates and split percentages to model promote scenarios.
           </div>
@@ -391,36 +491,37 @@ export default function PartnershipTab({ projectId }: { projectId: number | stri
         </Card>
       )}
 
-      {tab === 'Returns Summary' && (
-        <div className="grid grid-cols-2 gap-5">
-          <Card className="p-5">
-            <h3 className="text-[13px] font-semibold text-ink-900 mb-3">GP Returns</h3>
-            <div className="space-y-2 text-[12.5px]">
-              <Row k="LIRR" v={gpIrrLabel} />
-              <Row k="Equity Multiple" v={`${(wGpMultiple ?? (isKimptonDemo ? 3.04 : 0)).toFixed(2)}x`} />
-              <Row k="Promote" v={promoteLabel} />
-              <Row k="Total Distributions" v={
-                wGpDist != null
-                  ? fmtCurrency(wGpDist)
-                  : (isKimptonDemo ? fmtCurrency(2_840_000) : '—')
-              } />
-            </div>
-          </Card>
-          <Card className="p-5">
-            <h3 className="text-[13px] font-semibold text-ink-900 mb-3">LP Returns</h3>
-            <div className="space-y-2 text-[12.5px]">
-              <Row k="LIRR" v={lpIrrLabel} />
-              <Row k="Equity Multiple" v={`${(wLpMultiple ?? (isKimptonDemo ? 2.02 : 0)).toFixed(2)}x`} />
-              <Row k="Pref Met" v={hasWorkerPartnership ? (wLpIrr != null && wLpIrr >= 0.10 ? 'Yes' : 'No') : (isKimptonDemo ? 'Yes' : '—')} />
-              <Row k="Total Distributions" v={
-                wLpDist != null
-                  ? fmtCurrency(wLpDist)
-                  : (isKimptonDemo ? fmtCurrency(19_280_000) : '—')
-              } />
-            </div>
-          </Card>
-        </div>
-      )}
+      {tab === 'Returns Summary' && (() => {
+        const gpMultiplePick = pickNum(wGpMultiple, 3.04, isKimptonDemo);
+        const lpMultiplePick = pickNum(wLpMultiple, 2.02, isKimptonDemo);
+        const gpDistPick = pickNum(wGpDist, 2_840_000, isKimptonDemo);
+        const lpDistPick = pickNum(wLpDist, 19_280_000, isKimptonDemo);
+        const prefMet = wLpIrr != null
+          ? (wLpIrr >= 0.10 ? 'Yes' : 'No')
+          : (isKimptonDemo ? 'Yes' : '—');
+        return (
+          <div className="grid grid-cols-2 gap-5">
+            <Card className="p-5">
+              <h3 className="text-[13px] font-semibold text-ink-900 mb-3">GP Returns</h3>
+              <div className="space-y-2 text-[12.5px]">
+                <Row k="LIRR" v={gpIrrLabel} />
+                <Row k="Equity Multiple" v={fmtOrDash(gpMultiplePick, v => `${v.toFixed(2)}x`)} />
+                <Row k="Promote" v={promoteLabel} />
+                <Row k="Total Distributions" v={fmtOrDash(gpDistPick, fmtCurrency)} />
+              </div>
+            </Card>
+            <Card className="p-5">
+              <h3 className="text-[13px] font-semibold text-ink-900 mb-3">LP Returns</h3>
+              <div className="space-y-2 text-[12.5px]">
+                <Row k="LIRR" v={lpIrrLabel} />
+                <Row k="Equity Multiple" v={fmtOrDash(lpMultiplePick, v => `${v.toFixed(2)}x`)} />
+                <Row k="Pref Met" v={prefMet} />
+                <Row k="Total Distributions" v={fmtOrDash(lpDistPick, fmtCurrency)} />
+              </div>
+            </Card>
+          </div>
+        );
+      })()}
       <EngineRunHistory dealId={dealId} seedDemo />
       </div>
       <EngineRightRail />

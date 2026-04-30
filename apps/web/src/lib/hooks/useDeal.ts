@@ -19,6 +19,11 @@ const POLL_STATUSES = new Set([
 ]);
 
 function projectToDeal(p: Project): WorkerDeal {
+  // The mock `Project` shape doesn't carry a brand — for the Kimpton
+  // Angler demo (id=7) we fill it in from the project name so the
+  // Overview tab can render "Kimpton (Upper Upscale)" without leaking
+  // through the rest of the demo data.
+  const brandFromName = p.id === 7 ? 'Kimpton' : null;
   return {
     id: String(p.id),
     tenant_id: 'mock-tenant',
@@ -26,6 +31,7 @@ function projectToDeal(p: Project): WorkerDeal {
     city: p.city,
     keys: p.keys,
     service: p.service,
+    brand: brandFromName,
     status: p.status,
     deal_stage: p.dealStage,
     risk: p.risk,

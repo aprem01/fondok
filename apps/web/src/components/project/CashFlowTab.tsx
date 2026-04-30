@@ -23,6 +23,19 @@ import { GLOSSARY } from '@/lib/glossary';
 
 const subTabs = ['Cash Flow Summary', 'Levered Detail', 'Unlevered Detail', 'Distributions'];
 
+// InvestmentTab-style display helpers: prefer worker output over fixture.
+// `pickNum` returns the raw number for arithmetic; `fmtOrDash` formats it
+// or renders '—' when neither source is available.
+const pickNum = (
+  worker: number | undefined,
+  fixture: number,
+  isKimptonDemo: boolean,
+): number | undefined => (worker != null ? worker : (isKimptonDemo ? fixture : undefined));
+const fmtOrDash = (
+  n: number | undefined,
+  formatter: (v: number) => string,
+): string => (n != null ? formatter(n) : '—');
+
 const tooltipStyle = {
   contentStyle: { background: '#fff', border: '1px solid #e5e7eb', borderRadius: 6, fontSize: 12 },
   labelStyle: { color: '#64748b', fontSize: 11 },
@@ -440,7 +453,7 @@ function Summary({ cf }: { cf: CashFlowModel }) {
   );
 }
 
-function LeveredDetail({ cf }: { cf: CashFlowModel }) {
+function LeveredDetail({ cf, isKimptonDemo }: { cf: CashFlowModel; isKimptonDemo: boolean }) {
   const years = cf.noi.map((_, i) => `Year ${i + 1}`);
   const zeroes = cf.noi.map(() => 0);
 
@@ -467,7 +480,11 @@ function LeveredDetail({ cf }: { cf: CashFlowModel }) {
     <Card className="p-5">
       <div className="flex items-baseline justify-between mb-3">
         <h3 className="text-[13px] font-semibold text-ink-900">Levered Cash Flow Detail</h3>
-        <span className="text-[11px] text-ink-500">5-year hold · IO loan Y1-Y4 · refinance Y4 → amortizing Y5</span>
+        <span className="text-[11px] text-ink-500">
+          {isKimptonDemo
+            ? '5-year hold · IO loan Y1-Y4 · refinance Y4 → amortizing Y5'
+            : `${cf.noi.length}-year hold · derived from worker debt schedule`}
+        </span>
       </div>
       <div className="overflow-x-auto">
         <table className="w-full text-[12px] min-w-[700px]">
@@ -512,15 +529,15 @@ function UnleveredDetail({ cf, isKimptonDemo, outputs }: {
   type Row = { label: string; values: (number | string)[]; kind?: 'detail' | 'subtotal' | 'total' | 'header' };
 
   // Initial equity for unlevered = total capital (no debt). Prefer worker
-  // capital engine output; fall back to Kimpton mock for the demo.
+  // capital engine output; fall back to Kimpton mock for the demo via pickNum.
   const wTotalCapital = getEngineField<number>(outputs, 'capital', 'total_capital');
-  const totalCapital = wTotalCapital ?? (isKimptonDemo ? kimptonAnglerOverview.investment.totalCapital : 0);
+  const totalCapital = pickNum(wTotalCapital, kimptonAnglerOverview.investment.totalCapital, isKimptonDemo) ?? 0;
 
   // Use worker returns engine for the gross sale + selling costs when available.
   const wGrossSale = getEngineField<number>(outputs, 'returns', 'gross_sale_price');
   const wSellingCosts = getEngineField<number>(outputs, 'returns', 'selling_costs');
-  const grossSale = wGrossSale ?? (isKimptonDemo ? kimptonAnglerOverview.reversion.grossSalePrice : cf.exitNet);
-  const sellingCosts = wSellingCosts ?? (isKimptonDemo ? kimptonAnglerOverview.reversion.sellingCosts : 0);
+  const grossSale = pickNum(wGrossSale, kimptonAnglerOverview.reversion.grossSalePrice, isKimptonDemo) ?? cf.exitNet;
+  const sellingCosts = pickNum(wSellingCosts, kimptonAnglerOverview.reversion.sellingCosts, isKimptonDemo) ?? 0;
 
   const exitVec = cf.noi.map((_, i) => i === lastIdx ? grossSale : 0);
   const sellingVec = cf.noi.map((_, i) => i === lastIdx ? -sellingCosts : 0);
@@ -551,13 +568,13 @@ function UnleveredDetail({ cf, isKimptonDemo, outputs }: {
   ];
 
   const wUnleveredIRR = getEngineField<number>(outputs, 'returns', 'unlevered_irr');
-  const unleveredIRR = wUnleveredIRR ?? (isKimptonDemo ? kimptonAnglerOverview.returns.unleveredIRR : 0);
+  const unleveredIRRPick = pickNum(wUnleveredIRR, kimptonAnglerOverview.returns.unleveredIRR, isKimptonDemo);
 
   return (
     <Card className="p-5">
       <div className="flex items-baseline justify-between mb-3">
         <h3 className="text-[13px] font-semibold text-ink-900">Unlevered Cash Flow Detail</h3>
-        <span className="text-[11px] text-ink-500">No debt assumed · {(unleveredIRR * 100).toFixed(1)}% Unlevered IRR · Exit Year {cf.noi.length}</span>
+        <span className="text-[11px] text-ink-500">No debt assumed · {fmtOrDash(unleveredIRRPick, v => `${(v * 100).toFixed(1)}%`)} Unlevered IRR · Exit Year {cf.noi.length}</span>
       </div>
       <div className="overflow-x-auto">
         <table className="w-full text-[12px] min-w-[700px]">
@@ -736,9 +753,13 @@ function Distributions({ cf, equity, outputs, isKimptonDemo }: {
           </tbody>
         </table>
         <div className="mt-4 pt-4 border-t border-border text-[11px] text-ink-500 space-y-1">
-          <div>• LP Preferred Return: 10% on $19.6M equity = ${(prefTarget / 1e3).toFixed(0)}K/yr target. Y1-Y2 limited by DSCR cash trap.</div>
+          {isKimptonDemo ? (
+            <div>• LP Preferred Return: 10% on $19.6M equity = ${(prefTarget / 1e3).toFixed(0)}K/yr target. Y1-Y2 limited by DSCR cash trap.</div>
+          ) : (
+            <div>• LP Preferred Return: 10% on {fmtOrDash(equity > 0 ? equity : undefined, fmtCurrency)} equity = {fmtOrDash(prefTarget > 0 ? prefTarget : undefined, v => `$${(v / 1e3).toFixed(0)}K`)}/yr target.</div>
+          )}
           <div>• GP Promote tier accrues from Y4 onward as LP pref hurdle is satisfied.</div>
-          <div>• Y5 Exit Distribution = sale proceeds net of debt payoff and selling costs, distributed per waterfall.</div>
+          <div>• {isKimptonDemo ? 'Y5' : 'Final-year'} Exit Distribution = sale proceeds net of debt payoff and selling costs, distributed per waterfall.</div>
         </div>
       </Card>
     </>

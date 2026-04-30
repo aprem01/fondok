@@ -1,5 +1,5 @@
 'use client';
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useParams, useSearchParams, useRouter } from 'next/navigation';
 import dynamic from 'next/dynamic';
 import Link from 'next/link';
@@ -26,6 +26,8 @@ import DebtTab from '@/components/project/DebtTab';
 import ExportTab from '@/components/project/ExportTab';
 import TabLoadingSkeleton from '@/components/project/TabLoadingSkeleton';
 import { AssumptionsProvider } from '@/stores/assumptionsStore';
+import { useEngineOutputs } from '@/lib/hooks/useEngineOutputs';
+import { assumptionsFromDeal } from '@/lib/assumptions/fromDeal';
 
 // Heavy tabs (Recharts-bound) lazy-loaded so the initial /projects/[id]
 // JS bundle drops by the size of recharts + each tab's own code.
@@ -508,5 +510,29 @@ export default function ProjectDetailPage() {
     </div>
   );
 
-  return <AssumptionsProvider>{inner}</AssumptionsProvider>;
+  return <DealAssumptionsProvider deal={deal} dealId={rawId}>{inner}</DealAssumptionsProvider>;
+}
+
+// Hydrates the slider model with the deal's real data + persisted engine
+// outputs so the Live Assumptions panel opens at the right anchor (Y1
+// occupancy / ADR / OpEx ratio / LTV / exit cap on the deal in question)
+// instead of always starting from the Kimpton seed. Falls back to the
+// Kimpton defaults when no engine outputs exist yet — sliders still
+// work; they just open at the institutional baseline until the user
+// runs the model.
+function DealAssumptionsProvider({
+  deal,
+  dealId,
+  children,
+}: {
+  deal: ReturnType<typeof useDeal>['deal'];
+  dealId: string;
+  children: React.ReactNode;
+}) {
+  const { outputs } = useEngineOutputs(dealId);
+  const initial = useMemo(
+    () => assumptionsFromDeal(deal, outputs),
+    [deal, outputs],
+  );
+  return <AssumptionsProvider initial={initial}>{children}</AssumptionsProvider>;
 }

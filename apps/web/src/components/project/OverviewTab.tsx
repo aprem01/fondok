@@ -12,6 +12,7 @@ import {
 import { isWorkerConnected, workerUrl } from '@/lib/api';
 import { fmtCurrency, fmtPct, fmtMillions, fmtNumber, cn } from '@/lib/format';
 import { getEngineField, useEngineOutputs } from '@/lib/hooks/useEngineOutputs';
+import { useDeal } from '@/lib/hooks/useDeal';
 import { useFlash } from '@/lib/hooks/useFlash';
 import { IntroCard } from '@/components/help/IntroCard';
 import { MetricLabel } from '@/components/help/MetricLabel';
@@ -52,6 +53,7 @@ export default function OverviewTab({ projectId }: { projectId: number | string 
 
   // Pull worker output for the Sources/Uses, Proforma, Sensitivity sections.
   const { outputs } = useEngineOutputs(dealId);
+  const { deal } = useDeal(dealId);
   const wSources = getEngineField<SourceUseLine[]>(outputs, 'capital', 'sources');
   const wUses = getEngineField<SourceUseLine[]>(outputs, 'capital', 'uses');
   const wReturnsIrr = getEngineField<number>(outputs, 'returns', 'levered_irr');
@@ -87,16 +89,136 @@ export default function OverviewTab({ projectId }: { projectId: number | string 
   const o = kimptonAnglerOverview;
   const isKimptonDemo = projectId === 7;
 
-  // Brand tier enrichment: if the deal's brand string resolves to a known
-  // catalog brand, render "Kimpton (Upper Upscale)" instead of just "Kimpton".
-  const brandMatch = findBrand(o.general.brand);
-  const brandDisplay = brandMatch
-    ? `${o.general.brand} (${brandMatch.brand.tier})`
-    : o.general.brand;
+  // ─── Fixture-leak gate ───────────────────────────────────────────
+  // Same pattern as InvestmentTab.tsx: prefer worker engine output and
+  // fall back to the Kimpton fixture only on the demo deal (projectId
+  // === 7); other deals show '—' until the engine has produced the
+  // value. `pickNum` returns a raw number for arithmetic;
+  // `fmtOrDash` formats with a fallback to '—'.
+  const pickNum = (worker: number | undefined, fixture: number): number | undefined =>
+    worker != null ? worker : (isKimptonDemo ? fixture : undefined);
+  const fmtOrDash = (
+    n: number | undefined,
+    formatter: (v: number) => string,
+  ): string => (n != null ? formatter(n) : '—');
+
+  // ─── Property metadata from the deal row (useDeal) ───────────────
+  // Worker doesn't yet surface yearBuilt/gba/meetingSpace/parking/fbOutlets,
+  // so those stay fixture-only on the Kimpton demo and render '—' on
+  // real deals. On the Kimpton demo we pin to the fixture (name/type/
+  // location) for byte-identical demo output; on real deals we read
+  // from the deal row.
+  const propertyName = isKimptonDemo
+    ? o.general.name
+    : (deal?.name ?? undefined);
+  const propertyCity = isKimptonDemo
+    ? o.general.location
+    : (deal?.city ?? undefined);
+  const propertyKeys = isKimptonDemo
+    ? o.general.keys
+    : ((deal?.keys && deal.keys > 0) ? deal.keys : undefined);
+  const propertyBrand = isKimptonDemo
+    ? o.general.brand
+    : (deal?.brand ?? undefined);
+  const propertyService = isKimptonDemo
+    ? o.general.type
+    : (deal?.service ?? undefined);
+
+  // Brand tier enrichment: only valid when we have a brand string.
+  const brandMatch = propertyBrand ? findBrand(propertyBrand) : null;
+  const brandDisplay = propertyBrand
+    ? (brandMatch ? `${propertyBrand} (${brandMatch.brand.tier})` : propertyBrand)
+    : '—';
 
   // Investment Profile rows (return strategy, IRR target, positioning tier).
-  const profile = returnProfiles.find(r => r.id === o.investmentProfile.returnProfile);
-  const positioning = positioningTiers.find(p => p.id === o.investmentProfile.positioning);
+  // Profile / positioning live on the deal-creation wizard's enum and
+  // currently surface only on the Kimpton demo.
+  const profile = isKimptonDemo
+    ? returnProfiles.find(r => r.id === o.investmentProfile.returnProfile)
+    : undefined;
+  const positioning = isKimptonDemo
+    ? positioningTiers.find(p => p.id === o.investmentProfile.positioning)
+    : undefined;
+
+  // ─── Headline engine reads ───────────────────────────────────────
+  // Acquisition / Reversion / Investment / Financing / Refi tiles all
+  // map to capital + returns + debt engine fields. Per-key derivations
+  // use propertyKeys; arithmetic falls back to undefined when the
+  // divisor is missing.
+  const wPurchase = getEngineField<number>(outputs, 'capital', 'purchase_price');
+  const wPricePerKey = getEngineField<number>(outputs, 'capital', 'price_per_key');
+  const wEntryCap = getEngineField<number>(outputs, 'capital', 'entry_cap_rate');
+  const wTotalCapital =
+    getEngineField<number>(outputs, 'capital', 'total_capital_usd') ??
+    getEngineField<number>(outputs, 'capital', 'total_capital');
+  const wDebtAmount = getEngineField<number>(outputs, 'capital', 'debt_amount');
+  const wLtv = getEngineField<number>(outputs, 'capital', 'ltv');
+  const wExitCap = getEngineField<number>(outputs, 'returns', 'exit_cap_rate');
+  const wTerminalNoi =
+    getEngineField<number>(outputs, 'returns', 'terminal_noi_usd') ??
+    getEngineField<number>(outputs, 'returns', 'terminal_noi');
+  const wGrossSale = getEngineField<number>(outputs, 'returns', 'gross_sale_price');
+  const wSellingCosts = getEngineField<number>(outputs, 'returns', 'selling_costs');
+  const wUnleveredIrr = getEngineField<number>(outputs, 'returns', 'unlevered_irr');
+  const wEquityMultiple =
+    getEngineField<number>(outputs, 'returns', 'equity_multiple') ??
+    getEngineField<number>(outputs, 'returns', 'moic');
+  const wYearOneCoC = getEngineField<number>(outputs, 'returns', 'year_one_coc');
+  const wHold = getEngineField<number>(outputs, 'returns', 'hold_years');
+  const wLoanAmount = getEngineField<number>(outputs, 'debt', 'loan_amount');
+  const wInterestRate = getEngineField<number>(outputs, 'debt', 'interest_rate');
+  const wDscr = getEngineField<number>(outputs, 'debt', 'year_one_dscr');
+  const wAnnualDebtService = getEngineField<number>(outputs, 'debt', 'annual_debt_service');
+  const wDebtTerm = getEngineField<number>(outputs, 'debt', 'term_years');
+  const wDebtAmort = getEngineField<number>(outputs, 'debt', 'amortization_years');
+
+  // Acquisition Assumptions
+  const acqPurchase = pickNum(wPurchase, o.acquisition.purchasePrice);
+  const acqPricePerKey = wPricePerKey != null
+    ? wPricePerKey
+    : (acqPurchase != null && propertyKeys && propertyKeys > 0)
+      ? acqPurchase / propertyKeys
+      : (isKimptonDemo ? o.acquisition.pricePerKey : undefined);
+  const acqEntryCap = pickNum(wEntryCap, o.acquisition.entryCapRate);
+  const acqClosingCosts = isKimptonDemo ? o.acquisition.closingCosts : undefined;
+  const acqWorkingCapital = isKimptonDemo ? o.acquisition.workingCapital : undefined;
+
+  // Returns Summary
+  const retLeveredIrr = pickNum(wReturnsIrr, o.returns.leveredIRR);
+  const retUnleveredIrr = pickNum(wUnleveredIrr, o.returns.unleveredIRR);
+  const retEquityMultiple = pickNum(wEquityMultiple, o.returns.equityMultiple);
+  const retYearOneCoC = pickNum(wYearOneCoC, o.returns.yearOneCoC);
+  const retHold = pickNum(wHold, o.returns.hold);
+
+  // Reversion
+  const revExitCap = pickNum(wExitCap, o.reversion.exitCapRate);
+  const revExitYear = isKimptonDemo ? o.reversion.exitYear : undefined;
+  const revTerminalNoi = pickNum(wTerminalNoi, o.reversion.terminalNOI);
+  const revGrossSale = pickNum(wGrossSale, o.reversion.grossSalePrice);
+  const revSellingCosts = pickNum(wSellingCosts, o.reversion.sellingCosts);
+
+  // Investment (renovation breakdown sub-rows aren't on capital engine yet)
+  const invRenoBudget = isKimptonDemo ? o.investment.renovationBudget : undefined;
+  const invHardPerKey = isKimptonDemo ? o.investment.hardCostsPerKey : undefined;
+  const invSoftCosts = isKimptonDemo ? o.investment.softCosts : undefined;
+  const invContingency = isKimptonDemo ? o.investment.contingency : undefined;
+  const invTotalCapital = pickNum(wTotalCapital, o.investment.totalCapital);
+
+  // Acquisition Financing
+  const finLoanAmount = pickNum(wLoanAmount ?? wDebtAmount, o.financing.loanAmount);
+  const finLtv = pickNum(wLtv, o.financing.ltv);
+  const finInterestRate = pickNum(wInterestRate, o.financing.interestRate);
+  const finDscr = pickNum(wDscr, o.financing.dscr);
+  const finAnnualDebtService = pickNum(wAnnualDebtService, o.financing.annualDebtService);
+  const finTerm = pickNum(wDebtTerm, o.financing.term);
+  const finAmort = pickNum(wDebtAmort, o.financing.amortization);
+
+  // Refi (no worker engine output yet)
+  const refiYear = isKimptonDemo ? o.refi.refiYear : undefined;
+  const refiLtv = isKimptonDemo ? o.refi.refiLTV : undefined;
+  const refiRate = isKimptonDemo ? o.refi.refiRate : undefined;
+  const refiTerm = isKimptonDemo ? o.refi.refiTerm : undefined;
+  const refiAmort = isKimptonDemo ? o.refi.refiAmortization : undefined;
 
   return (
     <div className="space-y-5">
@@ -132,24 +254,24 @@ export default function OverviewTab({ projectId }: { projectId: number | string 
       <ModelSettings
         defaults={{
           dealType: 'acquisition',
-          returnProfile: o.investmentProfile.returnProfile,
-          brand: o.general.brand,
+          returnProfile: isKimptonDemo ? o.investmentProfile.returnProfile : 'value-add',
+          brand: propertyBrand ?? '',
           positioning: 'default',
         }}
       />
 
       <div className="grid grid-cols-2 gap-5">
         <Section title="General Information" rows={[
-          ['Property Name', o.general.name],
-          ['Location', o.general.location],
-          ['Type', o.general.type],
+          ['Property Name', propertyName ?? '—'],
+          ['Location', propertyCity ?? '—'],
+          ['Type', propertyService ?? '—'],
           ['Brand', brandDisplay],
-          ['Keys', fmtNumber(o.general.keys)],
-          ['Year Built', o.general.yearBuilt.toString()],
-          ['GBA (SF)', fmtNumber(o.general.gba)],
-          ['Meeting Space', o.general.meetingSpace],
-          ['Parking Spaces', o.general.parking.toString()],
-          ['F&B Outlets', o.general.fbOutlets.toString()],
+          ['Keys', propertyKeys != null ? fmtNumber(propertyKeys) : '—'],
+          ['Year Built', isKimptonDemo ? o.general.yearBuilt.toString() : '—'],
+          ['GBA (SF)', isKimptonDemo ? fmtNumber(o.general.gba) : '—'],
+          ['Meeting Space', isKimptonDemo ? o.general.meetingSpace : '—'],
+          ['Parking Spaces', isKimptonDemo ? o.general.parking.toString() : '—'],
+          ['F&B Outlets', isKimptonDemo ? o.general.fbOutlets.toString() : '—'],
         ]} />
 
         <Section title="Investment Profile" rows={[
@@ -161,11 +283,11 @@ export default function OverviewTab({ projectId }: { projectId: number | string 
 
       <div className="grid grid-cols-1 gap-5">
         <Section title="Acquisition Assumptions" rows={[
-          ['Purchase Price', fmtCurrency(o.acquisition.purchasePrice)],
-          ['Price/Key', fmtCurrency(o.acquisition.pricePerKey)],
-          ['Entry Cap Rate', fmtPct(o.acquisition.entryCapRate, 2)],
-          ['Closing Costs', fmtCurrency(o.acquisition.closingCosts)],
-          ['Working Capital', fmtCurrency(o.acquisition.workingCapital)],
+          ['Purchase Price', fmtOrDash(acqPurchase, fmtCurrency)],
+          ['Price/Key', fmtOrDash(acqPricePerKey, fmtCurrency)],
+          ['Entry Cap Rate', fmtOrDash(acqEntryCap, v => fmtPct(v, 2))],
+          ['Closing Costs', fmtOrDash(acqClosingCosts, fmtCurrency)],
+          ['Working Capital', fmtOrDash(acqWorkingCapital, fmtCurrency)],
         ]} />
       </div>
 
@@ -174,15 +296,15 @@ export default function OverviewTab({ projectId }: { projectId: number | string 
         <p className="text-[11.5px] text-ink-500 mb-4">What investors will earn over the hold period.</p>
         <div className="grid grid-cols-5 gap-4">
           {([
-            { label: 'Levered IRR', value: fmtPct(o.returns.leveredIRR, 2),
+            { label: 'Levered IRR', value: fmtOrDash(retLeveredIrr, v => fmtPct(v, 2)),
               tip: GLOSSARY['IRR'] + ' "Levered" means after debt service.' },
-            { label: 'Unlevered IRR', value: fmtPct(o.returns.unleveredIRR, 2),
+            { label: 'Unlevered IRR', value: fmtOrDash(retUnleveredIrr, v => fmtPct(v, 2)),
               tip: 'Asset-level IRR before debt — what you\'d earn if the hotel were paid for in cash.' },
-            { label: 'Equity Multiple', value: `${o.returns.equityMultiple.toFixed(2)}x`,
+            { label: 'Equity Multiple', value: fmtOrDash(retEquityMultiple, v => `${v.toFixed(2)}x`),
               tip: GLOSSARY['Equity Multiple'] },
-            { label: 'Year-1 CoC', value: fmtPct(o.returns.yearOneCoC, 1),
+            { label: 'Year-1 CoC', value: fmtOrDash(retYearOneCoC, v => fmtPct(v, 1)),
               tip: GLOSSARY['CoC'] + ' Year-1 is the first full year after acquisition.' },
-            { label: 'Hold Period', value: `${o.returns.hold} Years`,
+            { label: 'Hold Period', value: fmtOrDash(retHold, v => `${v} Years`),
               tip: GLOSSARY['Hold Period'] },
           ]).map(s => (
             <div key={s.label}>
@@ -197,39 +319,39 @@ export default function OverviewTab({ projectId }: { projectId: number | string 
 
       <div className="grid grid-cols-2 gap-5">
         <Section title="Reversion Assumptions" rows={[
-          ['Exit Cap Rate', fmtPct(o.reversion.exitCapRate, 2)],
-          ['Exit Year', `Year ${o.reversion.exitYear}`],
-          ['Terminal NOI', fmtCurrency(o.reversion.terminalNOI)],
-          ['Gross Sale Price', fmtCurrency(o.reversion.grossSalePrice)],
-          ['Selling Costs', fmtCurrency(o.reversion.sellingCosts)],
+          ['Exit Cap Rate', fmtOrDash(revExitCap, v => fmtPct(v, 2))],
+          ['Exit Year', revExitYear != null ? `Year ${revExitYear}` : '—'],
+          ['Terminal NOI', fmtOrDash(revTerminalNoi, fmtCurrency)],
+          ['Gross Sale Price', fmtOrDash(revGrossSale, fmtCurrency)],
+          ['Selling Costs', fmtOrDash(revSellingCosts, fmtCurrency)],
         ]} />
 
         <Section title="Investment Assumptions" rows={[
-          ['Renovation Budget', fmtCurrency(o.investment.renovationBudget)],
-          ['Hard Costs/Key', fmtCurrency(o.investment.hardCostsPerKey)],
-          ['Soft Costs', fmtCurrency(o.investment.softCosts)],
-          ['Contingency', fmtCurrency(o.investment.contingency)],
-          ['Total Capital', fmtCurrency(o.investment.totalCapital)],
+          ['Renovation Budget', fmtOrDash(invRenoBudget, fmtCurrency)],
+          ['Hard Costs/Key', fmtOrDash(invHardPerKey, fmtCurrency)],
+          ['Soft Costs', fmtOrDash(invSoftCosts, fmtCurrency)],
+          ['Contingency', fmtOrDash(invContingency, fmtCurrency)],
+          ['Total Capital', fmtOrDash(invTotalCapital, fmtCurrency)],
         ]} />
       </div>
 
       <div className="grid grid-cols-2 gap-5">
         <Section title="Acquisition Financing" rows={[
-          ['Loan Amount', fmtCurrency(o.financing.loanAmount)],
-          ['LTV', fmtPct(o.financing.ltv, 0)],
-          ['Interest Rate', fmtPct(o.financing.interestRate, 2)],
-          ['DSCR', `${o.financing.dscr.toFixed(2)}x`],
-          ['Annual Debt Service', fmtCurrency(o.financing.annualDebtService)],
-          ['Term', `${o.financing.term} Years`],
-          ['Amortization', `${o.financing.amortization} Years`],
+          ['Loan Amount', fmtOrDash(finLoanAmount, fmtCurrency)],
+          ['LTV', fmtOrDash(finLtv, v => fmtPct(v, 0))],
+          ['Interest Rate', fmtOrDash(finInterestRate, v => fmtPct(v, 2))],
+          ['DSCR', fmtOrDash(finDscr, v => `${v.toFixed(2)}x`)],
+          ['Annual Debt Service', fmtOrDash(finAnnualDebtService, fmtCurrency)],
+          ['Term', fmtOrDash(finTerm, v => `${v} Years`)],
+          ['Amortization', fmtOrDash(finAmort, v => `${v} Years`)],
         ]} />
 
         <Section title="Refinancing Assumptions" rows={[
-          ['Refi Year', `Year ${o.refi.refiYear}`],
-          ['Refi LTV', fmtPct(o.refi.refiLTV, 0)],
-          ['Refi Rate', fmtPct(o.refi.refiRate, 2)],
-          ['Refi Term', `${o.refi.refiTerm} Years`],
-          ['Amortization', `${o.refi.refiAmortization} Years`],
+          ['Refi Year', refiYear != null ? `Year ${refiYear}` : '—'],
+          ['Refi LTV', fmtOrDash(refiLtv, v => fmtPct(v, 0))],
+          ['Refi Rate', fmtOrDash(refiRate, v => fmtPct(v, 2))],
+          ['Refi Term', fmtOrDash(refiTerm, v => `${v} Years`)],
+          ['Amortization', fmtOrDash(refiAmort, v => `${v} Years`)],
         ]} />
       </div>
 
@@ -247,7 +369,7 @@ export default function OverviewTab({ projectId }: { projectId: number | string 
                   }))
                 : []
           }
-          keys={isKimptonDemo ? o.general.keys : 0}
+          keys={propertyKeys ?? 0}
           source={hasWorkerCapital ? 'worker' : 'mock'}
         />
         <UsesPanel
