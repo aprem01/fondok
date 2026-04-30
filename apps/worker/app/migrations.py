@@ -19,6 +19,7 @@ flow works locally without Postgres provisioning.
 from __future__ import annotations
 
 import logging
+import re
 
 from sqlalchemy import text
 
@@ -26,6 +27,27 @@ from .config import get_settings
 from .database import get_engine
 
 logger = logging.getLogger(__name__)
+
+
+# Matches `ALTER TABLE <name> ADD COLUMN <col> ...` (case-insensitive,
+# tolerant of whitespace/newlines). SQLite has no native
+# `ADD COLUMN IF NOT EXISTS`, so we synthesise the guard via
+# PRAGMA table_info.
+_SQLITE_ADD_COLUMN_RE = re.compile(
+    r"^\s*ALTER\s+TABLE\s+(?P<table>[A-Za-z_][A-Za-z0-9_]*)\s+"
+    r"ADD\s+(?:COLUMN\s+)?(?P<column>[A-Za-z_][A-Za-z0-9_]*)\b",
+    re.IGNORECASE | re.DOTALL,
+)
+
+
+async def _sqlite_column_exists(conn, table: str, column: str) -> bool:
+    """Return True if `column` already exists on `table` (SQLite only)."""
+    result = await conn.execute(text(f"PRAGMA table_info({table})"))
+    for row in result.fetchall():
+        # PRAGMA table_info columns: cid, name, type, notnull, dflt_value, pk
+        if row[1] == column:
+            return True
+    return False
 
 
 # Postgres-flavored DDL. SQLite (dev) skips these — see
@@ -739,13 +761,33 @@ async def run_startup_migrations() -> None:
         )
 
     engine = get_engine()
-    async with engine.begin() as conn:
-        for name, sql in entries:
-            try:
+    # NOTE: each migration runs in its OWN transaction so a single
+    # failure (e.g. an idempotent ALTER on a fresh DB) cannot poison
+    # the rest of the batch. SQLite gets an extra guard: we parse
+    # `ALTER TABLE … ADD COLUMN` and skip silently when the column is
+    # already present (PRAGMA table_info), which is the missing
+    # `ADD COLUMN IF NOT EXISTS` semantics on SQLite.
+    for name, sql in entries:
+        try:
+            async with engine.begin() as conn:
+                if is_sqlite:
+                    match = _SQLITE_ADD_COLUMN_RE.match(sql)
+                    if match:
+                        table = match.group("table")
+                        column = match.group("column")
+                        if await _sqlite_column_exists(conn, table, column):
+                            logger.debug(
+                                "migration skipped (column exists): %s "
+                                "(%s.%s)",
+                                name,
+                                table,
+                                column,
+                            )
+                            continue
                 await conn.execute(text(sql))
                 logger.info("migration applied: %s", name)
-            except Exception as exc:
-                logger.exception("migration failed: %s — %s", name, exc)
+        except Exception as exc:
+            logger.exception("migration failed: %s — %s", name, exc)
 
 
 __all__ = ["MIGRATIONS", "SQLITE_MIGRATIONS", "run_startup_migrations"]

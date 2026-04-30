@@ -59,6 +59,19 @@ interface FBYearWorker {
   total_revenue: number;
 }
 
+// Revenue engine projection year — mirrors fondok_schemas.RevenueProjectionYear.
+// Occupancy is a 0..1 ratio; ADR / RevPAR are dollars (not thousands).
+interface RevenueYearWorker {
+  year: number;
+  occupancy: number;
+  adr: number;
+  revpar: number;
+  rooms_revenue: number;
+  fb_revenue: number;
+  other_revenue: number;
+  total_revenue: number;
+}
+
 type RowKind = 'group' | 'subtotal' | 'detail' | 'total';
 interface StatementRow { label: string; values: number[]; cagr?: number; kind: RowKind }
 interface StatementResult {
@@ -250,6 +263,11 @@ export default function PLTab({ projectId }: { projectId: number | string }) {
   // statement on a real run. Worker wins; Kimpton mock is the demo fallback.
   const expenseYears = getEngineField<ExpenseYearWorker[]>(outputs, 'expense', 'years');
   const fbYears = getEngineField<FBYearWorker[]>(outputs, 'fb', 'years');
+  // Revenue engine emits occupancy / ADR / RevPAR per year — Sam QA #16:
+  // before this, the Per-Key tab hardcoded a Kimpton-style occupancy
+  // ramp [70.1, 73.8, …] and back-derived ADR from rooms revenue, which
+  // ignored T-12 actuals on real deals. We pass the real series through.
+  const revenueYears = getEngineField<RevenueYearWorker[]>(outputs, 'revenue', 'years');
   const hasWorkerStatement = Array.isArray(expenseYears) && expenseYears.length > 0;
   const statement = useMemo<StatementResult | null>(() => {
     if (hasWorkerStatement) {
@@ -386,7 +404,7 @@ export default function PLTab({ projectId }: { projectId: number | string }) {
       <div className={cn(computing && 'relative pointer-events-none opacity-60')}>
         {tab === 'Operating Statement' && <OperatingStatement statement={stmt} sourceLabel={hasWorkerStatement ? 'worker' : 'mock'} />}
         {tab === 'Departmental' && <Departmental statement={stmt} keys={propertyKeys} />}
-        {tab === 'Per-Key Metrics' && <PerKey statement={stmt} keys={propertyKeys} isKimptonDemo={isKimptonDemo} />}
+        {tab === 'Per-Key Metrics' && <PerKey statement={stmt} keys={propertyKeys} isKimptonDemo={isKimptonDemo} revenueYears={revenueYears ?? null} />}
         {tab === 'Historical vs Projected' && <HistoricalProjected statement={stmt} isKimptonDemo={isKimptonDemo} />}
         {computing && (
           <div className="absolute inset-0 bg-bg/60 backdrop-blur-[1px] flex items-start justify-center pt-12 rounded-md">
@@ -545,7 +563,17 @@ function Departmental({ statement, keys }: { statement: StatementResult; keys: n
   );
 }
 
-function PerKey({ statement, keys, isKimptonDemo }: { statement: StatementResult; keys: number; isKimptonDemo: boolean }) {
+function PerKey({
+  statement,
+  keys,
+  isKimptonDemo,
+  revenueYears,
+}: {
+  statement: StatementResult;
+  keys: number;
+  isKimptonDemo: boolean;
+  revenueYears: RevenueYearWorker[] | null;
+}) {
   const findRow = (label: string) =>
     statement.rows.find(r => r.label === label)?.values ?? [0, 0, 0, 0, 0];
   const room = findRow('Room Revenue');
@@ -555,18 +583,35 @@ function PerKey({ statement, keys, isKimptonDemo }: { statement: StatementResult
   const gopThousands = findRow('Gross Operating Profit (GOP)');
 
   const availableRoomNights = keys * 365;
-
-  // ADR/Occupancy schedule — Y1 ramp from renovation, stabilizes Y3 (still synthesized).
-  const occ = [0.701, 0.738, 0.762, 0.776, 0.787];
   const safeDiv = (a: number, b: number) => (b > 0 ? a / b : 0);
+  const padTo5 = <T,>(arr: T[], filler: T): T[] =>
+    arr.length >= 5 ? arr.slice(0, 5) : [...arr, ...Array(5 - arr.length).fill(filler)];
+
+  // Prefer the revenue engine's per-year occupancy / ADR / RevPAR (which
+  // are now grounded in T-12 actuals via _load_engine_inputs in the
+  // worker — Sam QA #16). Only fall back to the hardcoded Kimpton-style
+  // ramp when no engine output is available (i.e. the demo card or
+  // pre-run state).
+  const hasRevenueOutput = Array.isArray(revenueYears) && revenueYears.length > 0;
+  const occRamp = [0.701, 0.738, 0.762, 0.776, 0.787];
+  const occ = hasRevenueOutput
+    ? padTo5(revenueYears!.slice(0, 5).map(y => y.occupancy), 0)
+    : occRamp;
+  const adrSeries = hasRevenueOutput
+    ? padTo5(revenueYears!.slice(0, 5).map(y => y.adr), 0)
+    : room.map((v, i) => safeDiv(v * 1000, availableRoomNights * occRamp[i]));
+  const revparSeries = hasRevenueOutput
+    ? padTo5(revenueYears!.slice(0, 5).map(y => y.revpar), 0)
+    : room.map(v => safeDiv(v * 1000, availableRoomNights));
+
   const rows = [
     { label: 'Total Revenue / Key', vals: total.map(v => safeDiv(v * 1000, keys)), fmt: 'k' as const },
     { label: 'Rooms Revenue / Key', vals: room.map(v => safeDiv(v * 1000, keys)), fmt: 'k' as const },
     { label: 'F&B Revenue / Key', vals: fb.map(v => safeDiv(v * 1000, keys)), fmt: 'k' as const },
     { label: 'GOP / Key', vals: gopThousands.map(v => safeDiv(v * 1000, keys)), fmt: 'k' as const, bold: true },
     { label: 'NOI / Key', vals: noi.map(v => safeDiv(v * 1000, keys)), fmt: 'k' as const, bold: true },
-    { label: 'RevPAR', vals: room.map(v => safeDiv(v * 1000, availableRoomNights)), fmt: 'd' as const },
-    { label: 'ADR', vals: room.map((v, i) => safeDiv(v * 1000, availableRoomNights * occ[i])), fmt: 'd' as const },
+    { label: 'RevPAR', vals: revparSeries, fmt: 'd' as const },
+    { label: 'ADR', vals: adrSeries, fmt: 'd' as const },
     { label: 'Occupancy', vals: occ.map(v => v * 100), fmt: 'pct' as const },
   ];
 

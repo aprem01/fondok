@@ -213,6 +213,38 @@ async def _load_engine_inputs(
         session, deal_id=deal_id
     )
 
+    # Same idea on the revenue side (Sam QA #16): when a T-12 has been
+    # extracted, prefer the actual occupancy / ADR over the Kimpton seed
+    # so the Per-Key tab and downstream rooms-revenue projection reflect
+    # the real property instead of the demo defaults.
+    revenue_actuals = await _load_t12_revenue_actuals(
+        session, deal_id=deal_id
+    )
+    if "occupancy" in revenue_actuals:
+        base["starting_occupancy"] = revenue_actuals["occupancy"]
+    if "adr" in revenue_actuals:
+        base["starting_adr"] = revenue_actuals["adr"]
+    # RevPAR is occupancy × ADR — only consume the extracted RevPAR when
+    # one of the two underlying drivers wasn't itself extracted, to avoid
+    # contradicting them. (The engine doesn't take RevPAR directly; we
+    # back out the missing factor.)
+    if (
+        "revpar" in revenue_actuals
+        and "adr" not in revenue_actuals
+        and "occupancy" in revenue_actuals
+        and revenue_actuals["occupancy"] > 0
+    ):
+        base["starting_adr"] = revenue_actuals["revpar"] / revenue_actuals["occupancy"]
+    elif (
+        "revpar" in revenue_actuals
+        and "occupancy" not in revenue_actuals
+        and "adr" in revenue_actuals
+        and revenue_actuals["adr"] > 0
+    ):
+        base["starting_occupancy"] = min(
+            0.95, revenue_actuals["revpar"] / revenue_actuals["adr"]
+        )
+
     if overrides:
         base.update(overrides)
     return base
@@ -257,6 +289,93 @@ _T12_EXPENSE_FIELD_ALIASES: dict[str, str] = {
     "p_and_l_usali.fixed_charges.insurance": "insurance",
     "insurance": "insurance",
 }
+
+
+# Map extracted T-12 field paths onto the canonical revenue-side keys
+# the revenue engine recognizes. As with the expense aliases, we accept
+# both the dotted ``p_and_l_usali.operational_kpis.*`` paths the
+# Extractor agent emits and the bare aliases the legacy normalizer uses.
+_T12_REVENUE_FIELD_ALIASES: dict[str, str] = {
+    # Occupancy
+    "p_and_l_usali.operational_kpis.occupancy_pct": "occupancy",
+    "occupancy_pct": "occupancy",
+    "occupancy": "occupancy",
+    # ADR
+    "p_and_l_usali.operational_kpis.adr_usd": "adr",
+    "adr_usd": "adr",
+    "adr": "adr",
+    # RevPAR
+    "p_and_l_usali.operational_kpis.revpar_usd": "revpar",
+    "revpar_usd": "revpar",
+    "revpar": "revpar",
+}
+
+
+async def _load_t12_revenue_actuals(
+    session: AsyncSession,
+    *,
+    deal_id: str,
+) -> dict[str, float]:
+    """Read Year-1 occupancy / ADR / RevPAR off the deal's most recent T-12.
+
+    Returns ``{}`` (no overrides — engine falls back to the Kimpton seed)
+    when no T-12 has been extracted, when the deal id isn't a UUID, or
+    when the migrations haven't been applied to the test DB.
+
+    Occupancy is normalized to a 0..1 fraction (extractors sometimes emit
+    it as a percent like ``70.1`` and sometimes as a ratio like ``0.701``).
+    """
+    try:
+        UUID(deal_id)
+    except (ValueError, TypeError):
+        return {}
+    try:
+        rows = await session.execute(
+            text(
+                """
+                SELECT er.fields, d.doc_type
+                  FROM extraction_results er
+                  JOIN documents d ON d.id = er.document_id
+                 WHERE er.deal_id = :deal AND d.doc_type IN ('T12','PNL')
+                 ORDER BY er.created_at DESC
+                """
+            ),
+            {"deal": deal_id},
+        )
+    except Exception:
+        return {}
+
+    actuals: dict[str, float] = {}
+    for r in rows.fetchall():
+        raw_fields = r._mapping["fields"]
+        if isinstance(raw_fields, str):
+            try:
+                raw_fields = json.loads(raw_fields)
+            except (json.JSONDecodeError, TypeError):
+                continue
+        if not isinstance(raw_fields, list):
+            continue
+        for f in raw_fields:
+            if not isinstance(f, dict):
+                continue
+            name = (f.get("field_name") or "").strip().lower()
+            value = f.get("value")
+            if not name or not isinstance(value, (int, float)):
+                continue
+            canonical = _T12_REVENUE_FIELD_ALIASES.get(name)
+            if canonical is None:
+                tail = name.rsplit(".", 1)[-1] if "." in name else name
+                canonical = _T12_REVENUE_FIELD_ALIASES.get(tail)
+            if canonical is None or canonical in actuals:
+                continue
+            v = float(value)
+            if canonical == "occupancy":
+                # Extractors emit either a 0..1 ratio or a percent.
+                if v > 1.0:
+                    v = v / 100.0
+                v = max(0.0, min(0.99, v))
+            actuals[canonical] = v
+    return actuals
 
 
 async def _load_t12_expense_actuals(

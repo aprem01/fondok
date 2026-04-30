@@ -202,6 +202,13 @@ export default function AnalysisTab() {
         <>
           How much do the headline returns move when ADR, occupancy, or exit cap rate shift?
           A flat curve means the deal is robust; a steep one means small changes flip the IRR.
+          {' '}
+          <span className="font-medium">
+            For interactive what-ifs, open the <span className="text-brand-700">Returns</span>{' '}
+            tab — the &ldquo;Live Assumptions&rdquo; panel there exposes draggable sliders for
+            exit cap, RevPAR growth, hold, LTV and rate; IRR, multiple and exit value recompute
+            on every change. The table below is a static snapshot at base case.
+          </span>
         </>
       ),
     },

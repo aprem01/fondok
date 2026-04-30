@@ -300,7 +300,12 @@ class ExpenseEngine(BaseEngine[ExpenseEngineInput, ExpenseEngineOutput]):
                 )
             )
 
-        if len(years) >= 2 and years[0].noi > 0:
+        # CAGR math only makes sense between two same-sign positive endpoints.
+        # Negative terminal NOI (which can happen when extracted T-12 actuals
+        # land high and out-year expense growth eats into a thin margin)
+        # would otherwise raise a negative number to a fractional power and
+        # return a complex result Pydantic refuses to coerce to float.
+        if len(years) >= 2 and years[0].noi > 0 and years[-1].noi > 0:
             n = len(years) - 1
             noi_cagr = (years[-1].noi / years[0].noi) ** (1 / n) - 1
         else:
