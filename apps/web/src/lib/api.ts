@@ -300,7 +300,38 @@ export const api = {
         { signal },
       ),
   },
+  /** Context Data Product surface — deal dossier + grounded Q&A. */
+  dossier: {
+    get: (dealId: string, signal?: AbortSignal) =>
+      request<unknown>('GET', `/deals/${dealId}/dossier`, undefined, { signal }),
+    ask: (dealId: string, question: string, signal?: AbortSignal) =>
+      request<AskAnswerResult>(
+        'POST',
+        `/deals/${dealId}/ask`,
+        { question },
+        { signal },
+      ),
+  },
 };
+
+// ─── Ask / Researcher ───────────────────────────────────────────────
+// Mirrors AskResponse in apps/worker/app/api/dossier.py.
+
+export interface AskCitationResult {
+  document_id: string | null;
+  page: number | null;
+  field: string | null;
+  excerpt: string | null;
+}
+
+export interface AskAnswerResult {
+  deal_id: string;
+  question: string;
+  answer: string;
+  citations: AskCitationResult[];
+  confidence: number;
+  note: string | null;
+}
 
 // ─── Analysis ───────────────────────────────────────────────────────
 // Mirrors apps/worker/app/api/analysis.py VarianceReportResponse shape.

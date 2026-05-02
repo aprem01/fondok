@@ -3,7 +3,7 @@ import { useState, useEffect } from 'react';
 import {
   Sparkles, ArrowRight, RefreshCw, ShieldCheck, FileSearch,
   TrendingUp, Layers, DollarSign, FileText, Eye, AlertTriangle,
-  AlertCircle, Info,
+  AlertCircle, Info, MessageSquare,
 } from 'lucide-react';
 import dynamic from 'next/dynamic';
 import TabLoadingSkeleton from './TabLoadingSkeleton';
@@ -14,6 +14,10 @@ const CostPanel = dynamic(() => import('./CostPanel'), {
 });
 const MemoStream = dynamic(() => import('./MemoStream'), {
   loading: () => <TabLoadingSkeleton rows={6} />,
+  ssr: false,
+});
+const AskDeal = dynamic(() => import('./AskDeal'), {
+  loading: () => <TabLoadingSkeleton rows={3} />,
   ssr: false,
 });
 import { useSearchParams, useRouter, useParams } from 'next/navigation';
@@ -108,17 +112,18 @@ function CacheHitBadge() {
   );
 }
 
-type SubTab = 'summary' | 'memo' | 'risks' | 'variance' | 'critic' | 'sensitivity' | 'scenarios' | 'cost';
+type SubTab = 'summary' | 'memo' | 'ask' | 'risks' | 'variance' | 'critic' | 'sensitivity' | 'scenarios' | 'cost';
 
 const subTabs: { id: SubTab; label: string; icon: typeof Sparkles }[] = [
-  { id: 'summary',     label: 'AI Summary',     icon: Sparkles },
-  { id: 'memo',        label: 'IC Memo',        icon: FileText },
-  { id: 'risks',       label: 'Risks',          icon: ShieldCheck },
+  { id: 'summary',     label: 'AI Summary',      icon: Sparkles },
+  { id: 'memo',        label: 'IC Memo',         icon: FileText },
+  { id: 'ask',         label: 'Ask',             icon: MessageSquare },
+  { id: 'risks',       label: 'Risks',           icon: ShieldCheck },
   { id: 'variance',    label: 'Broker Variance', icon: FileSearch },
-  { id: 'critic',      label: 'Critic Review',  icon: Eye },
-  { id: 'sensitivity', label: 'Sensitivity',    icon: TrendingUp },
-  { id: 'scenarios',   label: 'Scenarios',      icon: Layers },
-  { id: 'cost',        label: 'Cost',           icon: DollarSign },
+  { id: 'critic',      label: 'Critic Review',   icon: Eye },
+  { id: 'sensitivity', label: 'Sensitivity',     icon: TrendingUp },
+  { id: 'scenarios',   label: 'Scenarios',       icon: Layers },
+  { id: 'cost',        label: 'Cost',            icon: DollarSign },
 ];
 
 export default function AnalysisTab() {
@@ -402,6 +407,8 @@ export default function AnalysisTab() {
       )}
 
       {sub === 'memo' && <MemoStream dealId={rawId} />}
+
+      {sub === 'ask' && <AskDeal dealId={rawId} />}
 
       {sub === 'risks' && hasCannedAnalysis && (
         <div className="grid grid-cols-3 gap-5">

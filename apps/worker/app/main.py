@@ -14,6 +14,7 @@ from .api import analysis as analysis_router
 from .api import data_library as data_library_router
 from .api import deals as deals_router
 from .api import documents as documents_router
+from .api import dossier as dossier_router
 from .api import export as export_router
 from .api import health as health_router
 from .api import market as market_router
@@ -108,6 +109,8 @@ def create_app() -> FastAPI:
     )
     app.include_router(market_router.router, prefix="/market", tags=["market"])
     app.include_router(analysis_router.router, prefix="/analysis", tags=["analysis"])
+    # /deals/{id}/dossier + /deals/{id}/ask — Context Data Product surface.
+    app.include_router(dossier_router.router, prefix="/deals", tags=["dossier"])
     app.include_router(export_router.router, prefix="/deals", tags=["export"])
     app.include_router(
         data_library_router.router, prefix="/data-library", tags=["data-library"]
