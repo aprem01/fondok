@@ -334,15 +334,25 @@ async def run_researcher(payload: ResearcherInput) -> ResearcherOutput:
     try:
         raw = await llm.ainvoke(messages, config={"callbacks": [usage]})
     except Exception as exc:  # noqa: BLE001
+        # Surface the actual error body for debugging — Anthropic's
+        # BadRequestError carries a structured ``message`` that explains
+        # exactly why the request was rejected (token limit, schema
+        # mismatch, malformed content block, etc).
+        detail = getattr(exc, "message", None) or str(exc)
+        body_attr = getattr(exc, "body", None)
+        if body_attr is not None:
+            detail = f"{detail} | body={body_attr}"
         logger.exception(
-            "researcher: LLM call failed for deal=%s", payload.deal_id
+            "researcher: LLM call failed for deal=%s detail=%s",
+            payload.deal_id,
+            detail,
         )
         return ResearcherOutput(
             deal_id=payload.deal_id,
             answer="",
             citations=[],
             confidence=0.0,
-            note=f"LLM call failed: {type(exc).__name__}",
+            note=f"LLM call failed: {type(exc).__name__}: {detail}"[:500],
             success=False,
             error=str(exc),
         )
