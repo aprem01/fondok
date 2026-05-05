@@ -148,7 +148,15 @@ export default function ReturnsTab({ projectId }: { projectId: number | string }
 
       <div className={cn(computing && 'relative pointer-events-none opacity-60')}>
         {tab === 'Returns Summary' && (
-          ctx ? <LiveReturnsSummary outputs={outputs} /> : <StaticReturnsSummary outputs={outputs} />
+          // AssumptionsProvider is now mounted universally on every
+          // deal page, so ``ctx`` is always non-null in production.
+          // The Static* fallbacks below leak Kimpton's hardcoded
+          // dealScenarios (Base 23.01%, etc.) onto unrelated deals
+          // when ctx briefly is null on first paint — Sam re-test
+          // saw a 36.92% headline next to a 23.01% Base Case via
+          // this exact path. We render Live unconditionally so the
+          // scenarios card always reconciles with the headline.
+          <LiveReturnsSummary outputs={outputs} />
         )}
         {tab === 'Sensitivities' && (ctx ? <LiveSensitivities /> : <StaticSensitivities />)}
         {computing && (

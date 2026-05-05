@@ -1323,9 +1323,18 @@ async def _load_source_documents(
             excerpts[page_num] = text_value
 
         if not excerpts:
-            # Skip documents with no usable page text — citing them
-            # produces broken deep-links.
-            continue
+            # Document is EXTRACTED on the worker but the parser cache
+            # didn't yield usable page text (image-heavy PDF, async parse
+            # still in flight, parse failure pre-LlamaParse-fix). Emit
+            # the document anyway with a placeholder excerpt so the
+            # Analyst can cite the document by id + filename — better
+            # than dropping the row and falling back to fixture
+            # filenames the deal never uploaded (Sam re-test #2).
+            excerpts = {
+                1: f"[no parsed text available for {m['filename']!s} — "
+                "the file uploaded successfully but the parser produced "
+                "no extractable page text. Cite by filename only.]"
+            }
 
         page_count_value = m.get("page_count")
         try:
