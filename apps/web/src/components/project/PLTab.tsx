@@ -438,7 +438,7 @@ export default function PLTab({ projectId }: { projectId: number | string }) {
             ? <PerKey statement={stmt} keys={propertyKeys} isKimptonDemo={isKimptonDemo} revenueYears={revenueYears ?? null} />
             : <KeysLoadingState loading={dealLoading} />
         )}
-        {tab === 'Historical vs Projected' && <HistoricalProjected statement={stmt} isKimptonDemo={isKimptonDemo} />}
+        {tab === 'Historical vs Projected' && <HistoricalProjected statement={stmt} isKimptonDemo={isKimptonDemo} hasWorkerStatement={hasWorkerStatement} />}
         {computing && (
           <div className="absolute inset-0 bg-bg/60 backdrop-blur-[1px] flex items-start justify-center pt-12 rounded-md">
             <span className="inline-flex items-center gap-2 px-3 py-1.5 bg-white border border-border rounded-md shadow-card text-[12.5px] font-medium text-ink-700">
@@ -736,10 +736,21 @@ function PerKey({
   );
 }
 
-function HistoricalProjected({ statement, isKimptonDemo }: { statement: StatementResult; isKimptonDemo: boolean }) {
-  // Historical: 3 years of pre-acquisition operating performance (in $000s).
-  // Real T-12 historical data isn't available outside the Kimpton demo, so
-  // the historical block is omitted for non-Kimpton deals — projection-only view.
+function HistoricalProjected({
+  statement,
+  isKimptonDemo,
+  hasWorkerStatement,
+}: {
+  statement: StatementResult;
+  isKimptonDemo: boolean;
+  hasWorkerStatement: boolean;
+}) {
+  // Historical: pre-acquisition operating performance (in $000s).
+  // Kimpton demo carries 3 years of mock T-3 history. Real deals have
+  // only the T-12 we extracted — so we render that as a single
+  // historical anchor point (Year 0 / period-end date) and project
+  // forward. Pre-acquisition T-3 data needs separate prior-year
+  // operating statement uploads — flagged in the chart subtitle.
   const findRow = (label: string) =>
     statement.rows.find(r => r.label === label)?.values ?? [0, 0, 0, 0, 0];
   const totalRev = findRow('Total Revenue');
@@ -753,14 +764,34 @@ function HistoricalProjected({ statement, isKimptonDemo }: { statement: Statemen
     gop: gopRow[i] ?? 0,
     kind: 'projected' as const,
   }));
-  const historical = isKimptonDemo
-    ? [
-        { year: '2023', revenue: 13_240, noi: 2_120, gop: 4_520, kind: 'historical' as const },
-        { year: '2024', revenue: 13_680, noi: 2_280, gop: 4_780, kind: 'historical' as const },
-        { year: '2025', revenue: 13_950, noi: 2_481, gop: 4_950, kind: 'historical' as const },
-      ]
-    : [];
+
+  // Historical line: when the worker has run on a real T-12, treat
+  // the engine's Y1 totals as the trailing twelve months baseline
+  // and plot it at "2025" (the period-end year). The Y1 projection
+  // proper starts at "2026" — same numerical anchor, but separated
+  // visually so reviewers see the historical-to-projected transition.
+  const historical: { year: string; revenue: number; noi: number; gop: number; kind: 'historical' }[] = [];
+  if (isKimptonDemo) {
+    historical.push(
+      { year: '2023', revenue: 13_240, noi: 2_120, gop: 4_520, kind: 'historical' as const },
+      { year: '2024', revenue: 13_680, noi: 2_280, gop: 4_780, kind: 'historical' as const },
+      { year: '2025', revenue: 13_950, noi: 2_481, gop: 4_950, kind: 'historical' as const },
+    );
+  } else if (hasWorkerStatement && totalRev[0] > 0) {
+    historical.push({
+      year: '2025 (T-12)',
+      revenue: totalRev[0],
+      noi: noi[0],
+      gop: gopRow[0],
+      kind: 'historical' as const,
+    });
+  }
   const data = [...historical, ...projected];
+  const subtitle = isKimptonDemo
+    ? 'Pre-acquisition T-3 (2023-2025) and underwritten projection (2026-2030) · $ in 000s'
+    : historical.length > 0
+      ? 'Trailing twelve months (T-12 actuals) and underwritten projection (2026-2030) · $ in 000s · upload prior-period operating statements for T-3 trend'
+      : 'Underwritten projection (2026-2030) · $ in 000s · upload a T-12 to anchor a historical baseline';
 
   return (
     <>
@@ -768,13 +799,7 @@ function HistoricalProjected({ statement, isKimptonDemo }: { statement: Statemen
         <div className="flex items-center justify-between mb-3">
           <div>
             <h3 className="text-[13px] font-semibold text-ink-900">Historical vs Projected Performance</h3>
-            <div className="text-[11px] text-ink-500 mt-0.5">
-              {historical.length > 0 ? (
-                <>Pre-acquisition T-3 (2023-2025) and underwritten projection (2026-2030) · $ in 000s</>
-              ) : (
-                <>Underwritten projection (2026-2030) · $ in 000s · upload prior-period operating statements to see the historical baseline</>
-              )}
-            </div>
+            <div className="text-[11px] text-ink-500 mt-0.5">{subtitle}</div>
           </div>
           <div className="flex items-center gap-3 text-[11px]">
             <span className="flex items-center gap-1.5"><span className="w-3 h-0.5 bg-[#0d9488]" /> Historical</span>

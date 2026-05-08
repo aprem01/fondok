@@ -9,7 +9,7 @@ import {
   Briefcase, MapPinned, FileSearch, Download, AlertTriangle,
 } from 'lucide-react';
 import { Button } from '@/components/ui/Button';
-import { StatusBadge } from '@/components/ui/Badge';
+import { Badge, StatusBadge } from '@/components/ui/Badge';
 import { ErrorBoundary } from '@/components/ui/ErrorBoundary';
 import KebabMenu from '@/components/ui/KebabMenu';
 import { useToast } from '@/components/ui/Toast';
@@ -52,18 +52,30 @@ const AnalysisTab = dynamic(() => import('@/components/project/AnalysisTab'), {
   loading: () => <TabLoadingSkeleton />,
 });
 
-const tabs = [
+// Per the May 7 scope alignment, five tabs are visually grayed in the tab
+// strip while the design partner demo focuses on the Data Room → P&L →
+// Market underwriting flow. The route still works on click — Returns in
+// particular keeps its Live Assumptions sliders functional — only the nav
+// pill is dimmed and labelled "Soon".
+type Tab = {
+  id: string;
+  label: string;
+  icon: typeof FolderOpen;
+  inactive?: boolean;
+};
+
+const tabs: Tab[] = [
   { id: '', label: 'Data Room', icon: FolderOpen },
   { id: 'overview', label: 'Overview', icon: FileText },
   { id: 'investment', label: 'Investment', icon: Briefcase },
   { id: 'pl', label: 'P&L', icon: BarChart3 },
-  { id: 'debt', label: 'Debt', icon: DollarSign },
-  { id: 'cash-flow', label: 'Cash Flow', icon: Activity },
-  { id: 'returns', label: 'Returns', icon: TrendingUp },
-  { id: 'partnership', label: 'Partnership', icon: Users },
+  { id: 'debt', label: 'Debt', icon: DollarSign, inactive: true },
+  { id: 'cash-flow', label: 'Cash Flow', icon: Activity, inactive: true },
+  { id: 'returns', label: 'Returns', icon: TrendingUp, inactive: true },
+  { id: 'partnership', label: 'Partnership', icon: Users, inactive: true },
   { id: 'market', label: 'Market', icon: MapPinned },
   { id: 'analysis', label: 'Analysis', icon: FileSearch },
-  { id: 'export', label: 'Export', icon: Download },
+  { id: 'export', label: 'Export', icon: Download, inactive: true },
 ];
 
 export default function ProjectDetailPage() {
@@ -391,6 +403,7 @@ export default function ProjectDetailPage() {
           {tabs.map(t => {
             const Icon = t.icon;
             const isActive = activeTab === t.id;
+            const isInactive = t.inactive === true;
             return (
               <button
                 key={t.id}
@@ -400,13 +413,20 @@ export default function ProjectDetailPage() {
                 aria-label={t.label}
                 tabIndex={isActive ? 0 : -1}
                 onClick={() => setTab(t.id)}
+                title={isInactive
+                  ? 'Available in the next release — currently focused on Data Room → P&L → Market underwriting flow'
+                  : undefined}
                 className={cn(
                   'flex items-center gap-1.5 px-3 py-2.5 text-[12.5px] border-b-2 whitespace-nowrap transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-500 rounded-t',
                   isActive
                     ? 'border-brand-500 text-brand-700 font-semibold'
-                    : 'border-transparent text-ink-700 hover:text-ink-900'
+                    : 'border-transparent text-ink-700 hover:text-ink-900',
+                  isInactive && !isActive && 'opacity-50'
                 )}>
                 <Icon size={13} aria-hidden="true" /> {t.label}
+                {isInactive && (
+                  <Badge tone="gray" className="ml-1 px-1.5 py-0 text-[10px]">Soon</Badge>
+                )}
               </button>
             );
           })}

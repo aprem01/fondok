@@ -248,8 +248,12 @@ export default function EngineHeader({
             >
               <Download size={12} /> Export to Excel
             </Button>
+            {/* Per-engine Run is a secondary affordance now that "Run Full
+                Underwriting" lives in the Data Room. Manual single-engine
+                re-runs are still useful, so we keep the button but in a
+                quieter visual weight. */}
             <Button
-              variant={complete ? 'primary' : 'premium'}
+              variant="secondary"
               size="sm"
               onClick={handleRun}
               loading={running}

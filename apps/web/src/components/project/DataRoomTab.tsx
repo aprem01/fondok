@@ -3,7 +3,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { useParams, useRouter } from 'next/navigation';
 import {
   UploadCloud, FolderOpen, Info, FileText, FileSpreadsheet,
-  CheckCircle2, Loader2, Circle, AlertTriangle, ArrowRight,
+  CheckCircle2, Loader2, Circle, AlertTriangle, ArrowRight, Play,
 } from 'lucide-react';
 import { Card } from '@/components/ui/Card';
 import { Button } from '@/components/ui/Button';
@@ -12,11 +12,33 @@ import KebabMenu from '@/components/ui/KebabMenu';
 import { ConfidenceBadge } from '@/components/ui/ConfidenceBadge';
 import { documentChecklist, engines, kimptonDocuments, templates } from '@/lib/mockData';
 import { criticalCount, warnCount, varianceFlags } from '@/lib/varianceData';
-import { isWorkerConnected, workerUrl, WorkerDocument, ExtractionField } from '@/lib/api';
+import {
+  isWorkerConnected,
+  workerUrl,
+  WorkerDocument,
+  ExtractionField,
+  EngineName,
+  EngineOutputResponse,
+} from '@/lib/api';
 import { useDocuments } from '@/lib/hooks/useDocuments';
+import { useEngineRun } from '@/lib/hooks/useEngineRun';
 import { useToast } from '@/components/ui/Toast';
+import EngineRunProgress from './EngineRunProgress';
 import { IntroCard } from '@/components/help/IntroCard';
 import { MetricLabel } from '@/components/help/MetricLabel';
+
+// Same dependency order EngineHeader uses for run-all fallbacks — mirrors the
+// worker's chain in apps/worker/app/api/model.py.
+const ENGINE_ORDER: EngineName[] = [
+  'revenue',
+  'fb',
+  'expense',
+  'capital',
+  'debt',
+  'returns',
+  'sensitivity',
+  'partnership',
+];
 
 // Documents with broker-vs-T12 variance flags raised against them.
 const VARIANCE_DOCS = new Set([
@@ -46,6 +68,18 @@ function formatBytes(bytes: number | null | undefined): string {
   if (bytes < 1024) return `${bytes} B`;
   if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
   return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
+}
+
+// Map a 0-100 confidence percent to the agreed three-tier rendering:
+//   ≥95 → green / "High"
+//   ≥85 → amber / "Medium"
+//   <85 → red   / "Needs review"
+// Kept colocated with DataRoomTab because it's purely a display-layer
+// concern and matches the thresholds already baked into ConfidenceBadge.
+function confidenceTier(pct: number): { tone: 'green' | 'amber' | 'red'; label: string } {
+  if (pct >= 95) return { tone: 'green', label: 'High' };
+  if (pct >= 85) return { tone: 'amber', label: 'Medium' };
+  return { tone: 'red', label: 'Needs review' };
 }
 
 function formatValue(v: unknown, unit: string | null): string {
@@ -79,9 +113,16 @@ export default function DataRoomTab({ projectId }: { projectId: number | string 
 
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [selectedDoc, setSelectedDoc] = useState<string | null>(null);
+  // Per-doc "Needs Review" filter — when true the right panel shows only
+  // fields with <85% confidence. Reset whenever the user switches docs.
+  const [needsReviewOnly, setNeedsReviewOnly] = useState(false);
   // Browse Templates popover — anchored to whichever button the user clicked.
   const [templatesAnchor, setTemplatesAnchor] = useState<'empty' | 'inline' | null>(null);
   const { toast } = useToast();
+
+  useEffect(() => {
+    setNeedsReviewOnly(false);
+  }, [selectedDoc]);
 
   // Close the templates popover on outside click / Escape.
   useEffect(() => {
@@ -210,6 +251,57 @@ export default function DataRoomTab({ projectId }: { projectId: number | string 
   const extracted = docs.filter((d) => d.status === 'Extracted').length;
   const processing = docs.filter((d) => d.status === 'Processing').length;
 
+  // ─── Run Full Underwriting (Data Room CTA) ─────────────────────────
+  // Mirrors EngineHeader's run-all wiring but lives at the Data Room level
+  // so users have a single, prominent kickoff after uploads land. Each
+  // engine tab still exposes a per-engine Run button as a secondary
+  // affordance for re-runs.
+  const [fullRunId, setFullRunId] = useState<string | null>(null);
+  const [fullRunRows, setFullRunRows] = useState<EngineOutputResponse[]>([]);
+  const [fullRunStartedAt, setFullRunStartedAt] = useState<number | null>(null);
+  const [fullRunExpected, setFullRunExpected] = useState<EngineName[]>([]);
+  const [fullRunNumber, setFullRunNumber] = useState(0);
+
+  // The hook must always be called (Rules of Hooks). When the deal id is
+  // not a real worker UUID we just never invoke `run()`.
+  const fullRun = useEngineRun(liveMode ? rawId : '', 'returns', {
+    runMode: 'all',
+    onRunAllStarted: (id, eng) => {
+      setFullRunId(id);
+      setFullRunRows([]);
+      setFullRunStartedAt(Date.now());
+      setFullRunExpected(eng.length > 0 ? eng : ENGINE_ORDER);
+      setFullRunNumber((n) => n + 1);
+      toast(
+        'Underwriting kicked off — switch to any engine tab to watch the results',
+        { type: 'success' },
+      );
+    },
+    onRunAllProgress: (rows) => {
+      setFullRunRows(rows);
+    },
+    onAllComplete: (rows) => {
+      setFullRunRows(rows);
+    },
+  });
+
+  // Live worker uses raw `EXTRACTED`; mock kimpton rows use `'Extracted'`.
+  const hasExtractedDoc = docs.some(
+    (d) => d.rawStatus === 'EXTRACTED' || d.rawStatus === 'Extracted',
+  );
+  const fullRunRunning = fullRun.status === 'running';
+  const fullRunDisabled = !hasExtractedDoc || fullRunRunning;
+  const fullRunTooltip = !hasExtractedDoc
+    ? 'Upload + extract a T-12 and OM first'
+    : fullRunRunning
+      ? 'Underwriting in progress…'
+      : 'Run all 8 engines in dependency order';
+
+  const onRunFullUnderwriting = () => {
+    if (fullRunDisabled) return;
+    void fullRun.run();
+  };
+
   const onPickFiles = () => fileInputRef.current?.click();
 
   const onFilesSelected = async (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -287,8 +379,37 @@ export default function DataRoomTab({ projectId }: { projectId: number | string 
               <ArrowRight size={12} />
             </button>
           )}
+          {/* Run Full Underwriting — single canonical kickoff for all 8
+              engines. Wraps the Button in a span so the native title
+              tooltip surfaces even when the button is `disabled` (browsers
+              suppress events on disabled controls). */}
+          <span title={fullRunTooltip} className="flex-shrink-0">
+            <Button
+              variant="primary"
+              size="lg"
+              onClick={onRunFullUnderwriting}
+              disabled={fullRunDisabled}
+              loading={fullRunRunning}
+              type="button"
+              aria-label="Run full underwriting"
+            >
+              {!fullRunRunning && <Play size={14} />}
+              {fullRunRunning ? 'Running underwriting…' : 'Run Full Underwriting'}
+            </Button>
+          </span>
         </div>
       </Card>
+
+      {/* Floating progress strip — appears bottom-right while the run-all
+          chain is in flight, auto-dismisses on completion. */}
+      <EngineRunProgress
+        runId={fullRunId}
+        expectedEngines={fullRunExpected}
+        rows={fullRunRows}
+        startedAt={fullRunStartedAt}
+        runNumber={fullRunNumber}
+        onClose={() => setFullRunId(null)}
+      />
 
       {liveMode && docs.length === 0 ? (
         <Card className="p-8">
@@ -524,10 +645,27 @@ export default function DataRoomTab({ projectId }: { projectId: number | string 
                         {d.status === 'Extracted' && (
                           <div className="flex items-center gap-3 mt-2">
                             {d.fields > 0 ? (
-                              <div className="text-[11px] text-ink-700">
-                                <span className="text-brand-700 font-medium">{d.fields}</span> fields extracted
-                                {' · '}<span className="font-medium">{d.confidence}%</span> confidence
-                              </div>
+                              (() => {
+                                // Color the avg-confidence percent + flag low
+                                // averages with a "Needs review" pill so the
+                                // doc card mirrors the field-level tiering.
+                                const tier = confidenceTier(d.confidence);
+                                const pctClass =
+                                  tier.tone === 'green' ? 'text-success-700'
+                                  : tier.tone === 'amber' ? 'text-warn-700'
+                                  : 'text-danger-700';
+                                return (
+                                  <div className="flex items-center gap-2 text-[11px] text-ink-700">
+                                    <span>
+                                      <span className="text-brand-700 font-medium">{d.fields}</span> fields extracted
+                                      {' · '}<span className={`font-medium ${pctClass}`}>{d.confidence}%</span> confidence
+                                    </span>
+                                    {tier.tone === 'red' && (
+                                      <Badge tone="red">Needs review</Badge>
+                                    )}
+                                  </div>
+                                );
+                              })()
                             ) : (
                               // The doc is EXTRACTED on the worker but the
                               // extraction results poll hasn't caught up yet,
@@ -590,30 +728,80 @@ export default function DataRoomTab({ projectId }: { projectId: number | string 
                     if (!selectedDocRow || selectedDocRow.status !== 'Extracted') {
                       return <div className="text-[11.5px] text-ink-500">Document still processing…</div>;
                     }
+
+                    // Build a uniform [{label, value, pct}] list so the
+                    // summary strip + filter logic doesn't fork between live
+                    // and mock branches.
+                    type FieldRow = { label: string; value: string; pct: number };
+                    let rows: FieldRow[];
                     if (liveMode && selectedDocRow.fieldList && selectedDocRow.fieldList.length > 0) {
-                      return (
-                        <div className="space-y-2 text-[11.5px]">
-                          {selectedDocRow.fieldList.slice(0, 12).map((f) => (
-                            <DataRow
-                              key={f.field_name}
-                              label={f.field_name}
-                              value={formatValue(f.value, f.unit)}
-                              confidence={Math.round((f.confidence ?? 0) * 100)}
-                            />
-                          ))}
-                        </div>
-                      );
+                      rows = selectedDocRow.fieldList.slice(0, 12).map((f) => ({
+                        label: f.field_name,
+                        value: formatValue(f.value, f.unit),
+                        pct: Math.round((f.confidence ?? 0) * 100),
+                      }));
+                    } else {
+                      rows = [
+                        { label: 'ADR', value: '$385', pct: 96 },
+                        { label: 'Occupancy', value: '76.2%', pct: 94 },
+                        { label: 'RevPAR', value: '$293', pct: 97 },
+                        { label: 'NOI (T-12)', value: '$4.28M', pct: 92 },
+                        { label: 'Gross Revenue', value: '$15.08M', pct: 95 },
+                        { label: 'Operating Expenses', value: '$9.32M', pct: 89 },
+                      ];
                     }
-                    // Mock fallback
+
+                    const high = rows.filter((r) => r.pct >= 95).length;
+                    const medium = rows.filter((r) => r.pct >= 85 && r.pct < 95).length;
+                    const low = rows.filter((r) => r.pct < 85).length;
+                    const visible = needsReviewOnly ? rows.filter((r) => r.pct < 85) : rows;
+
                     return (
-                      <div className="space-y-2 text-[11.5px]">
-                        <DataRow label="ADR" value="$385" confidence={96} />
-                        <DataRow label="Occupancy" value="76.2%" confidence={94} />
-                        <DataRow label="RevPAR" value="$293" confidence={97} />
-                        <DataRow label="NOI (T-12)" value="$4.28M" confidence={92} />
-                        <DataRow label="Gross Revenue" value="$15.08M" confidence={95} />
-                        <DataRow label="Operating Expenses" value="$9.32M" confidence={89} />
-                      </div>
+                      <>
+                        <div className="flex items-center gap-2 mb-3 text-[11px] text-ink-700 tabular-nums">
+                          <span className="inline-flex items-center gap-1">
+                            <span className="w-1.5 h-1.5 rounded-full bg-success-500" aria-hidden="true" />
+                            <span className="font-medium">{high}</span> high
+                          </span>
+                          <span className="text-ink-300" aria-hidden="true">·</span>
+                          <span className="inline-flex items-center gap-1">
+                            <span className="w-1.5 h-1.5 rounded-full bg-warn-500" aria-hidden="true" />
+                            <span className="font-medium">{medium}</span> medium
+                          </span>
+                          <span className="text-ink-300" aria-hidden="true">·</span>
+                          <button
+                            type="button"
+                            onClick={() => setNeedsReviewOnly((v) => !v)}
+                            disabled={low === 0}
+                            aria-pressed={needsReviewOnly}
+                            title={low === 0 ? 'No fields need review' : 'Filter to fields under 85% confidence'}
+                            className={`inline-flex items-center gap-1 rounded px-1.5 py-0.5 -my-0.5 transition-colors ${
+                              needsReviewOnly
+                                ? 'bg-danger-50 text-danger-700 border border-danger-500/25'
+                                : 'text-danger-700 hover:bg-danger-50 border border-transparent'
+                            } ${low === 0 ? 'opacity-50 cursor-not-allowed' : 'cursor-pointer'}`}
+                          >
+                            <span className="w-1.5 h-1.5 rounded-full bg-danger-500" aria-hidden="true" />
+                            <span className="font-medium">{low}</span> needs review
+                          </button>
+                        </div>
+                        {visible.length === 0 ? (
+                          <div className="text-[11.5px] text-ink-500 py-4 text-center">
+                            No fields match the current filter.
+                          </div>
+                        ) : (
+                          <div className="space-y-2 text-[11.5px]">
+                            {visible.map((r) => (
+                              <DataRow
+                                key={r.label}
+                                label={r.label}
+                                value={r.value}
+                                confidence={r.pct}
+                              />
+                            ))}
+                          </div>
+                        )}
+                      </>
                     );
                   })()}
                 </div>
@@ -631,11 +819,15 @@ export default function DataRoomTab({ projectId }: { projectId: number | string 
 }
 
 function DataRow({ label, value, confidence }: { label: string; value: string; confidence: number }) {
+  // Tier label sits next to the numeric ConfidenceBadge so analysts get the
+  // shared red/amber/green semantics at a glance without losing the precise %.
+  const tier = confidenceTier(confidence);
   return (
     <div className="flex items-center justify-between py-1.5 border-b border-border last:border-0">
       <span className="text-ink-500">{label}</span>
       <div className="flex items-center gap-2">
         <span className="font-medium tabular-nums text-ink-900">{value}</span>
+        <Badge tone={tier.tone}>{tier.label}</Badge>
         {/* `confidence` is a 0–100 percent at this row's call sites; convert
             to the 0–1 scale ConfidenceBadge expects so the same component
             grades to red/amber/green at the agreed-upon thresholds. */}
