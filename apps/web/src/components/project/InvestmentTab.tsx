@@ -1,7 +1,7 @@
 'use client';
-import { useState } from 'react';
+import { useState, type ReactNode } from 'react';
 import { useParams } from 'next/navigation';
-import { ChevronDown, ChevronUp, Briefcase } from 'lucide-react';
+import { ChevronDown, ChevronUp, Briefcase, Pencil, Check, X } from 'lucide-react';
 import { Card } from '@/components/ui/Card';
 import { Button } from '@/components/ui/Button';
 import { useToast } from '@/components/ui/Toast';
@@ -16,6 +16,7 @@ import { useAssumptionsOptional } from '@/stores/assumptionsStore';
 import { getEngineField, useEngineOutputs } from '@/lib/hooks/useEngineOutputs';
 import { useDeal } from '@/lib/hooks/useDeal';
 import { IntroCard } from '@/components/help/IntroCard';
+import { api, isWorkerConnected, WorkerError } from '@/lib/api';
 
 // Expense engine year shape — mirrors apps/worker/app/engines/expense.py.
 // Only the fields we read on the Investment tab are typed here; the
@@ -33,7 +34,7 @@ export default function InvestmentTab({ projectId }: { projectId: number | strin
   const { toast } = useToast();
   const isKimptonDemo = projectId === 7;
   const { outputs, previous } = useEngineOutputs(dealId);
-  const { deal } = useDeal(dealId);
+  const { deal, refresh: refreshDeal } = useDeal(dealId);
   const [computing, setComputing] = useState(false);
   const [runToken, setRunToken] = useState<number | null>(null);
 
@@ -262,7 +263,15 @@ export default function InvestmentTab({ projectId }: { projectId: number | strin
               ['Year Built', dealYearBuilt != null ? String(dealYearBuilt) : '—'],
               ['Labor', isKimptonDemo ? 'Union' : '—'],
               ['Title', isKimptonDemo ? 'Fee Simple' : '—'],
-              ['Pre-Renovation Keys', dealKeys != null ? String(dealKeys) : '—'],
+              [
+                'Pre-Renovation Keys',
+                <KeysOverride
+                  key="keys-override"
+                  dealId={dealId}
+                  currentKeys={dealKeys}
+                  onSaved={() => refreshDeal()}
+                />,
+              ],
               ['Post-Renovation Keys', dealKeys != null ? String(dealKeys) : '—'],
               ['Post-Renovation SF', dealGba != null ? dealGba.toLocaleString() : '—'],
             ]} />
@@ -700,18 +709,144 @@ function StaticSourcesUses() {
   );
 }
 
-function Panel({ title, rows }: { title: string; rows: string[][] }) {
+type PanelRow = [label: string, value: ReactNode];
+
+function Panel({ title, rows }: { title: string; rows: PanelRow[] }) {
   return (
     <Card className="p-5">
       <h3 className="text-[13px] font-semibold text-ink-900 mb-3">{title}</h3>
       <div className="space-y-1 text-[12.5px]">
-        {rows.map(([k, v]) => (
-          <div key={k} className="flex justify-between py-1.5 border-b border-border/50 last:border-0">
+        {rows.map(([k, v], idx) => (
+          <div
+            key={`${k}-${idx}`}
+            className="flex justify-between py-1.5 border-b border-border/50 last:border-0"
+          >
             <span className="text-ink-500">{k}</span>
             <span className="font-medium tabular-nums text-ink-900">{v}</span>
           </div>
         ))}
       </div>
     </Card>
+  );
+}
+
+/**
+ * Inline keys override.
+ *
+ * Auto-sync (docs > wizard) lands in apps/worker/.../documents.py via
+ * `_sync_deal_metadata_from_extraction`: when an OM extraction carries
+ * `property_overview.keys`, the deals row is updated and an audit_log
+ * entry is written. This widget is the user-facing escape hatch — when
+ * the OM was wrong (e.g. pre-renovation key count vs post-renovation),
+ * the analyst overrides here and the UI refreshes from the worker.
+ *
+ * Read-only when no worker connection (mock data flow). Reverts to
+ * read-only when the deal id isn't a UUID (numeric mock ids).
+ */
+function KeysOverride({
+  dealId,
+  currentKeys,
+  onSaved,
+}: {
+  dealId: string;
+  currentKeys: number | null | undefined;
+  onSaved: () => void;
+}) {
+  const { toast } = useToast();
+  const editable = isWorkerConnected() && !/^\d+$/.test(dealId) && dealId.length > 0;
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState<string>(
+    currentKeys != null ? String(currentKeys) : '',
+  );
+  const [saving, setSaving] = useState(false);
+
+  if (!editable) {
+    return (
+      <span className="font-medium tabular-nums text-ink-900">
+        {currentKeys != null ? String(currentKeys) : '—'}
+      </span>
+    );
+  }
+
+  const display = currentKeys != null ? String(currentKeys) : '—';
+
+  if (!editing) {
+    return (
+      <span className="inline-flex items-center gap-2">
+        <span className="font-medium tabular-nums text-ink-900">{display}</span>
+        <button
+          type="button"
+          aria-label="Override room count"
+          title="Override room count"
+          onClick={() => {
+            setDraft(currentKeys != null ? String(currentKeys) : '');
+            setEditing(true);
+          }}
+          className="text-ink-400 hover:text-ink-700 transition-colors"
+        >
+          <Pencil className="w-3 h-3" />
+        </button>
+      </span>
+    );
+  }
+
+  const submit = async () => {
+    const parsed = Number.parseInt(draft, 10);
+    if (!Number.isFinite(parsed) || parsed <= 0) {
+      toast('Enter a positive whole number for room count.', { type: 'error' });
+      return;
+    }
+    setSaving(true);
+    try {
+      await api.deals.update(dealId, { keys: parsed });
+      toast(`Room count saved: ${parsed} keys. Re-run engines to recompute.`, {
+        type: 'success',
+      });
+      setEditing(false);
+      onSaved();
+    } catch (err) {
+      const detail = err instanceof WorkerError ? err.body : String(err);
+      toast(`Failed to save room count: ${detail || 'worker rejected update'}`, {
+        type: 'error',
+      });
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <span className="inline-flex items-center gap-1.5">
+      <input
+        type="number"
+        min={1}
+        value={draft}
+        autoFocus
+        disabled={saving}
+        onChange={(e) => setDraft(e.target.value)}
+        onKeyDown={(e) => {
+          if (e.key === 'Enter') void submit();
+          if (e.key === 'Escape') setEditing(false);
+        }}
+        className="w-20 px-2 py-0.5 text-[12.5px] border border-border rounded text-right tabular-nums"
+      />
+      <button
+        type="button"
+        aria-label="Save room count override"
+        onClick={() => void submit()}
+        disabled={saving}
+        className="text-emerald-600 hover:text-emerald-800 disabled:opacity-50"
+      >
+        <Check className="w-3.5 h-3.5" />
+      </button>
+      <button
+        type="button"
+        aria-label="Cancel"
+        onClick={() => setEditing(false)}
+        disabled={saving}
+        className="text-ink-400 hover:text-ink-700 disabled:opacity-50"
+      >
+        <X className="w-3.5 h-3.5" />
+      </button>
+    </span>
   );
 }

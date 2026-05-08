@@ -18,16 +18,20 @@
 
 - Click into **Kimpton Angler — Miami**.
 - Default tab is **Data Room**.
-- *"This is what the analyst sees the morning after they drop the broker package in. Eight documents — OM, T-12, STR, term sheet, comp set, env reports — already classified and extracted."*
-- Click into the OM row to show extracted fields with confidence scores and the **citation chip** that opens the source page.
-- Key talking point: *"No copy-paste. No 'go check the OM again'. The number you see in the model is the number Fondok pulled, with a link back to the page it came from."*
+- *"This is what the analyst sees the morning after they drop the broker package in. Eight documents — OM, T-12, STR CoStar Trend, CBRE Hotel Horizons, P&L Benchmarker, term sheet, comp set, env reports — already classified and extracted."*
+- Hover the Document Checklist card on the right rail — 10 required doc types with green/red badges.
+- Click into the OM row to show extracted fields with confidence scores (green ≥95%, amber ≥85%, red <85%) and the **citation chip** that deep-links to the exact page (`/deals/{id}/documents/{id}/download#page=N`).
+- Key talking point: *"No copy-paste. No 'go check the OM again'. The number in the model is the number Fondok pulled, with a one-click link back to the source page it came from. The STR Trend ships as Excel — we ingest it natively, sheet-by-sheet, no conversion step."*
 
-## 2:30–4:00 — Analysis tab → Variance
+## 2:30–4:00 — Analysis tab → Variance + Due Diligence
 
 - Click **Analysis** tab → **Variance** sub-tab.
-- Headline finding: **"Broker NOI overstated by $1.0M"**.
-- Click into the row to expand: shows broker's stabilized NOI, Fondok's underwritten NOI, the delta, and the line items driving it (typically: optimistic ADR ramp + understated payroll inflation).
-- *"The variance agent doesn't just compute the number — it tells the analyst where to push back in the term-sheet negotiation."*
+- Two flag families to land:
+   - **`BROKER_VS_T12_*`** — broker proforma vs the T-12 actuals. Headline: *"Broker NOI overstated by $1.0M"*.
+   - **`BROKER_VS_CBRE_*`** — broker forward growth vs the CBRE Hotel Horizons published forecast. Headline example: *"Broker projects 8.0% Year-1 RevPAR growth; CBRE Seattle Q3 2024 forecasts 6.3%"*. ±5pt = Critical, ±2pt = Warn.
+- Click into a row to expand — shows broker number, Fondok-underwritten number, delta, line items driving it, and citation link to the source page.
+- Switch to **P&L → Due Diligence** sub-tab to show the AI-generated broker-question packet (filtered by priority + category, with batch Copy/Export/Mark as Sent).
+- *"The variance + due-diligence pair doesn't just compute the number — it gives the analyst the exact language to push back in the term-sheet negotiation."*
 
 ## 4:00–5:30 — Returns tab → live IRR slider
 

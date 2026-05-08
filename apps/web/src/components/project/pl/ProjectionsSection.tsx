@@ -20,16 +20,24 @@
  *   %Rev = Amount / Total Revenue   × 100
  */
 
-import { useMemo } from 'react';
-import { Sparkles, Download, FileText } from 'lucide-react';
+import { useMemo, useState } from 'react';
+import { Sparkles, Download, FileText, ExternalLink } from 'lucide-react';
 import { Card } from '@/components/ui/Card';
 import { Button } from '@/components/ui/Button';
 import { Badge } from '@/components/ui/Badge';
+import Modal from '@/components/ui/Modal';
 import { useToast } from '@/components/ui/Toast';
 import { cn } from '@/lib/format';
 import { getEngineField, useEngineOutputs } from '@/lib/hooks/useEngineOutputs';
 import { useDeal } from '@/lib/hooks/useDeal';
 import { kimptonAnglerOverview } from '@/lib/mockData';
+import {
+  api,
+  isWorkerConnected,
+  workerUrl,
+  WorkerError,
+  type AskAnswerResult,
+} from '@/lib/api';
 
 // ────────────────────────────────────────────────────────────────────
 // Worker output shapes — mirror PLTab.tsx (kept local so this file
@@ -127,9 +135,62 @@ export default function ProjectionsSection({
     );
   }
 
-  // ── Header / hero card ───────────────────────────────────────────
-  const onNoiSummary = () =>
-    toast('AI NOI Summary coming soon', { type: 'info' });
+  // ── AI NOI Summary modal ────────────────────────────────────────
+  // Hits the worker's grounded Q&A endpoint (`/deals/{id}/ask`),
+  // which returns answer + per-fact citations back to source PDF
+  // pages. The fixed prompt frames the question around the projection
+  // years rendered in this table — keeps the answer on-topic for the
+  // P&L tab without dragging in unrelated assumptions.
+  const [noiModalOpen, setNoiModalOpen] = useState(false);
+  const [noiLoading, setNoiLoading] = useState(false);
+  const [noiResult, setNoiResult] = useState<AskAnswerResult | null>(null);
+  const [noiError, setNoiError] = useState<string | null>(null);
+
+  const noiQuestion = useMemo(() => {
+    if (!years || years.length === 0) {
+      return 'Summarize the deal NOI trajectory across the projection horizon.';
+    }
+    const span = years.length - 1;
+    const baseYear = years[0]?.year;
+    const exitYear = years[years.length - 1]?.year;
+    const revSeries = years
+      .map(
+        (y) =>
+          `Year ${y.year}: Occ ${(y.occupancy * 100).toFixed(1)}%, ADR $${y.adr.toFixed(0)}, Rev $${y.totalRevenue.toLocaleString()}`,
+      )
+      .join('; ');
+    return [
+      `Summarize the NOI trajectory across this ${span}-year projection`,
+      `(${baseYear} → ${exitYear}). Underlying revenue series: ${revSeries}.`,
+      "Cover: (1) what's driving Year-1 NOI vs the broker proforma,",
+      '(2) the key revenue / expense levers in the ramp years,',
+      '(3) the terminal Year NOI vs entry, and (4) the top two risks',
+      'that would compress NOI below this trajectory. Cite source pages',
+      'when grounded.',
+    ].join(' ');
+  }, [years]);
+
+  const onNoiSummary = async () => {
+    if (!isWorkerConnected() || !dealId || /^\d+$/.test(dealId)) {
+      toast('AI NOI Summary needs a live deal — try the demo deal.', {
+        type: 'info',
+      });
+      return;
+    }
+    setNoiModalOpen(true);
+    setNoiLoading(true);
+    setNoiError(null);
+    setNoiResult(null);
+    try {
+      const res = await api.dossier.ask(dealId, noiQuestion);
+      setNoiResult(res);
+    } catch (err) {
+      const detail = err instanceof WorkerError ? err.body : String(err);
+      setNoiError(detail || 'Worker rejected the request.');
+    } finally {
+      setNoiLoading(false);
+    }
+  };
 
   const onExport = () => {
     const headers = [
@@ -188,31 +249,116 @@ export default function ProjectionsSection({
   };
 
   return (
-    <Card className="p-0 overflow-hidden">
-      {/* Header */}
-      <div className="flex items-start justify-between gap-3 px-5 py-4 border-b border-border bg-bg/40">
-        <div>
-          <div className="text-[10.5px] uppercase tracking-[0.12em] text-ink-500 font-semibold">
-            Preliminary Hotel Underwriting
+    <>
+      <Card className="p-0 overflow-hidden">
+        {/* Header */}
+        <div className="flex items-start justify-between gap-3 px-5 py-4 border-b border-border bg-bg/40">
+          <div>
+            <div className="text-[10.5px] uppercase tracking-[0.12em] text-ink-500 font-semibold">
+              Preliminary Hotel Underwriting
+            </div>
+            <h3 className="text-[15px] font-semibold text-ink-900 mt-0.5">
+              Proforma Projections
+            </h3>
           </div>
-          <h3 className="text-[15px] font-semibold text-ink-900 mt-0.5">
-            Proforma Projections
-          </h3>
+          <div className="flex items-center gap-2">
+            <Button variant="secondary" size="sm" onClick={onNoiSummary}>
+              <Sparkles size={11} />
+              NOI Summary
+              <Badge tone="blue" className="ml-1 !py-0 !px-1.5 !text-[9px]">AI</Badge>
+            </Button>
+            <Button variant="secondary" size="sm" onClick={onExport}>
+              <Download size={11} /> Export
+            </Button>
+          </div>
         </div>
-        <div className="flex items-center gap-2">
-          <Button variant="secondary" size="sm" onClick={onNoiSummary}>
-            <Sparkles size={11} />
-            NOI Summary
-            <Badge tone="blue" className="ml-1 !py-0 !px-1.5 !text-[9px]">AI</Badge>
-          </Button>
-          <Button variant="secondary" size="sm" onClick={onExport}>
-            <Download size={11} /> Export
-          </Button>
-        </div>
-      </div>
 
-      <ProjectionsTable years={years} />
-    </Card>
+        <ProjectionsTable years={years} />
+      </Card>
+
+      <Modal
+        open={noiModalOpen}
+        onClose={() => setNoiModalOpen(false)}
+        title="AI NOI Summary"
+        maxWidth="max-w-2xl"
+      >
+        <div className="px-5 py-4 space-y-3">
+          {noiLoading && (
+            <div className="text-[12.5px] text-ink-500 py-6 text-center">
+              <Sparkles className="inline-block w-3.5 h-3.5 mr-1.5 animate-pulse text-brand-500" />
+              Synthesizing NOI summary from extracted deal data…
+            </div>
+          )}
+
+          {noiError && (
+            <div className="text-[12.5px] text-error-700 bg-error-50 border border-error-200 rounded p-3">
+              <div className="font-semibold mb-1">Couldn&apos;t generate summary</div>
+              <div className="text-error-600">{noiError}</div>
+            </div>
+          )}
+
+          {noiResult && !noiLoading && (
+            <>
+              <div className="text-[12px] text-ink-500 leading-relaxed border-l-2 border-brand-200 pl-3 italic">
+                {noiQuestion}
+              </div>
+              <div className="text-[13px] text-ink-900 leading-relaxed whitespace-pre-wrap">
+                {noiResult.answer}
+              </div>
+              {noiResult.confidence != null && (
+                <div className="text-[11px] text-ink-500">
+                  Model confidence: {(noiResult.confidence * 100).toFixed(0)}%
+                  {noiResult.note && ` · ${noiResult.note}`}
+                </div>
+              )}
+              {noiResult.citations && noiResult.citations.length > 0 && (
+                <div className="border-t border-border pt-3">
+                  <div className="text-[10.5px] uppercase tracking-wide text-ink-500 font-semibold mb-2">
+                    Citations
+                  </div>
+                  <ul className="space-y-1.5 text-[11.5px] text-ink-700">
+                    {noiResult.citations.map((c, i) => {
+                      const href =
+                        c.document_id && c.page
+                          ? `${workerUrl()}/deals/${dealId}/documents/${c.document_id}/download#page=${c.page}`
+                          : null;
+                      return (
+                        <li key={`citation-${i}`} className="flex items-start gap-1.5">
+                          <FileText size={11} className="mt-0.5 text-ink-400 shrink-0" />
+                          <span>
+                            {href ? (
+                              <a
+                                href={href}
+                                target="_blank"
+                                rel="noreferrer"
+                                className="hover:underline inline-flex items-center gap-0.5"
+                              >
+                                {c.field ?? 'source'} (page {c.page})
+                                <ExternalLink size={10} />
+                              </a>
+                            ) : (
+                              <span className="text-ink-500">
+                                {c.field ?? 'source'}
+                              </span>
+                            )}
+                            {c.excerpt && (
+                              <span className="block text-[11px] text-ink-500 italic mt-0.5">
+                                &ldquo;{c.excerpt.slice(0, 200)}
+                                {c.excerpt.length > 200 ? '…' : ''}&rdquo;
+                              </span>
+                            )}
+                          </span>
+                        </li>
+                      );
+                    })}
+                  </ul>
+                </div>
+              )}
+            </>
+          )}
+        </div>
+      </Modal>
+    </>
   );
 }
 

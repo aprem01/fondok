@@ -7,7 +7,7 @@
 
 ## 1. Product summary
 
-Fondok AI is an AI-powered hotel acquisition underwriting platform. An analyst uploads deal documents (Offering Memorandum, T-12, STR reports, etc.); the system extracts financial fields, runs an underwriting model with multiple "engines" (Investment, P&L, Debt, Cash Flow, Returns, Partnership), produces market analysis, and exports IC memos / Excel models / PowerPoint decks. The persona is **Eshan Mehta — Senior Analyst** at **Brookfield Real Estate (Pro Plan)**.
+Fondok AI is an AI-powered hotel acquisition underwriting platform. An analyst uploads deal documents (OM, T-12, STR CoStar Trend, CBRE Hotel Horizons, USALI 11th P&L Benchmarker, term sheets); the system extracts financial fields with citations back to source pages, runs an underwriting model with eight deterministic engines (Revenue, F&B, Expense, Capital, Debt, Returns, Sensitivity, Partnership), produces market analysis, generates a broker due-diligence packet, and exports IC memos / Excel models / PowerPoint decks. The persona is **Eshan Mehta — Senior Analyst** at **Brookfield Real Estate (Pro Plan)**.
 
 ## 2. Top-level routes
 
@@ -22,7 +22,7 @@ Fondok AI is an AI-powered hotel acquisition underwriting platform. An analyst u
 | `/data-library` | Comp Sets / Market Data / Templates |
 | `/settings` | Team / Workspace / Notifications / Integrations |
 
-Tab values: `overview`, `investment`, `pl`, `debt`, `cash-flow`, `returns`, `partnership`, `market`, `analysis`, `export`. Default = Data Room.
+Tab values: `data-room`, `overview`, `investment`, `pl`, `market`, `analysis` are **active**. `debt`, `cash-flow`, `returns`, `partnership`, `export` are **grayed out** ("Soon" badge) per the May 7 scope decision. Default = Data Room.
 
 ## 3. Global layout
 
@@ -56,11 +56,21 @@ Hyatt Regency Waterfront has the "no documents" upload state.
 5. Positioning (Default / Luxury / Upscale / Economy)
 6. Review & Create Shell Deal
 
-## 7. Project detail tabs (11)
+## 7. Project detail tabs (6 active + 5 grayed-out)
 
-`Data Room` | `Overview` | `Investment` | `P&L` | `Debt` | `Cash Flow` | `Returns` | `Partnership` | `Market` | `Analysis` | `Export`
+**Active (May 7 scope):** `Data Room` | `Overview` | `Investment` | `P&L` | `Market` | `Analysis`
 
-Engine tabs share: header card, Outputs chips, Export to Excel, Run Model, sub-tabs, right rail, legend.
+**Grayed out ("Soon"):** `Debt` | `Cash Flow` | `Returns` | `Partnership` | `Export`
+
+The active tabs share a header card, Outputs chips, Export to Excel, Run Model, sub-tabs, right rail, and engine legend. Grayed-out tabs render with italic + strike-through label and an amber "Soon" badge — clicks no-op.
+
+**P&L sub-tabs** (Lovable parity, batch 2):
+1. **P&L Summary** — single-period operating statement
+2. **Historicals** — multi-year proforma with Amount / %Rev / $PAR / $POR per year
+3. **Projections** — base + 5-year forecast with AI NOI Summary button
+4. **Index Analysis** — subject vs CoStar comp set, 2019–2033 (15-year columns)
+5. **Competitive Set** — comp-set fan-out from STR Trend extraction
+6. **Due Diligence** — broker-question packet (filterable + Copy/Export/Mark as Sent)
 
 ## 8. Data Library
 

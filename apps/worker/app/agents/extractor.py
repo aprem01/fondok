@@ -80,6 +80,21 @@ include:
        * ``in_place_debt.loan_balance_usd``, ``in_place_debt.interest_rate_pct``,
          ``in_place_debt.maturity_date``.
        * ``market_overview_per_om.compset_revpar_usd``, etc.
+       * **Transaction comps** — most OMs ship a "Comparable Sales"
+         table with 3-7 recent hotel sales. Number them ``1``..``N``
+         in the order they appear. Anchor the analyst's exit-cap
+         conversation; treat as critical coverage. For each comp:
+           ``transaction_comps.<n>.name``         — hotel name,
+           ``transaction_comps.<n>.market``       — city / submarket,
+           ``transaction_comps.<n>.sale_date``    — ISO date if known,
+           ``transaction_comps.<n>.keys``         — room count,
+           ``transaction_comps.<n>.sale_price_usd`` — total transaction $,
+           ``transaction_comps.<n>.price_per_key_usd`` — $/key,
+           ``transaction_comps.<n>.cap_rate_pct`` — going-in cap rate,
+           ``transaction_comps.<n>.buyer_name``,
+           ``transaction_comps.<n>.buyer_type``   — REIT / PE Fund /
+             Institutional / Private / Owner Operator / Sovereign
+             Wealth / Family Office / Other.
      If a number could be either broker-projected or historical and
      the source doesn't clearly label it, prefer ``broker_proforma.*``.
      Year-vintage numbers can co-exist as ``broker_proforma.noi_year_1_usd``,
@@ -314,8 +329,10 @@ Coverage targets per document type:
     every line of the broker proforma (rooms/F&B/RESORT FEES/other
     revenue, departmental + undistributed expenses, GOP, mgmt fee,
     FF&E, fixed charges, NOI, cap rate), in-place debt, PIP scope,
-    market overview (subject + comp set indices), and the headline
-    comparable sales. Resort Fees, when broken out separately on the
+    market overview (subject + comp set indices), AND every row of
+    the comparable-sales table as ``transaction_comps.<n>.*`` —
+    the comp table anchors the exit-cap conversation in the IC memo,
+    so partial extraction is a regression. Resort Fees, when broken out separately on the
     OM rent roll, MUST be its own field (``broker_proforma.resort_fees_usd``)
     — do NOT roll it into ``misc_revenue`` or ``other_revenue``.
     NOI vintage matters: brokers commonly publish Year-1 underwritten

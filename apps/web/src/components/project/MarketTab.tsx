@@ -12,7 +12,12 @@ import { Button } from '@/components/ui/Button';
 import { Badge } from '@/components/ui/Badge';
 import { useToast } from '@/components/ui/Toast';
 import { miamiMarket } from '@/lib/mockData';
-import { isWorkerConnected, workerUrl } from '@/lib/api';
+import {
+  api,
+  isWorkerConnected,
+  workerUrl,
+  type TransactionCompsResult,
+} from '@/lib/api';
 import { useDeal } from '@/lib/hooks/useDeal';
 import { cn } from '@/lib/format';
 import { IntroCard } from '@/components/help/IntroCard';
@@ -60,6 +65,26 @@ export default function MarketTab({ projectId }: { projectId: number | string })
     fetch(`${workerUrl()}/market/${dealId}/overview`, { signal: ctrl.signal })
       .then((res) => (res.ok ? res.json() : null))
       .then((data) => { if (data) setWorkerMarket(data as WorkerMarketOverview); })
+      .catch(() => { /* silent — empty state covers it */ });
+    return () => ctrl.abort();
+  }, [dealId, isKimptonDemo]);
+
+  // Transaction comps — extracted from OMs by the worker. Sam called
+  // these "critical for anchoring exit cap rate" (May 7 call summary).
+  // For the Kimpton demo deal we keep the curated fixture so the demo
+  // story stays clean. For every other deal we hit the worker
+  // endpoint; an empty array surfaces the "awaiting OM extraction"
+  // empty state.
+  const [workerComps, setWorkerComps] =
+    useState<TransactionCompsResult | null>(null);
+  useEffect(() => {
+    if (isKimptonDemo) return;
+    if (!isWorkerConnected()) return;
+    if (!dealId || /^\d+$/.test(dealId)) return;
+    const ctrl = new AbortController();
+    api.market
+      .transactionComps(dealId, ctrl.signal)
+      .then((res) => setWorkerComps(res))
       .catch(() => { /* silent — empty state covers it */ });
     return () => ctrl.abort();
   }, [dealId, isKimptonDemo]);
@@ -359,33 +384,13 @@ export default function MarketTab({ projectId }: { projectId: number | string })
       )}
 
       {tab === 'Transaction Comps' && (
-        <Card className="p-5">
-          <h3 className="text-[13px] font-semibold text-ink-900 mb-3">Transaction Comparables</h3>
-          <table className="w-full text-[12px]">
-            <thead>
-              <tr className="text-ink-500 text-[10.5px] border-b border-border">
-                <th className="text-left font-medium pb-2">Property</th>
-                <th className="text-right font-medium pb-2">Keys</th>
-                <th className="text-right font-medium pb-2">Sale Price</th>
-                <th className="text-right font-medium pb-2">$/Key</th>
-                <th className="text-right font-medium pb-2">Cap Rate</th>
-                <th className="text-left font-medium pb-2">Buyer Type</th>
-              </tr>
-            </thead>
-            <tbody>
-              {m.sales.map(s => (
-                <tr key={s.name} className="border-b border-border/50">
-                  <td className="py-2 font-medium">{s.name}</td>
-                  <td className="text-right tabular-nums">{s.keys}</td>
-                  <td className="text-right tabular-nums">{s.price}</td>
-                  <td className="text-right tabular-nums">{s.perKey}</td>
-                  <td className="text-right tabular-nums">{s.cap}</td>
-                  <td className="text-ink-700">{s.buyer}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </Card>
+        <TransactionCompsSection
+          isKimptonDemo={isKimptonDemo}
+          workerComps={workerComps}
+          mockSales={m.sales}
+          mockAsOf={m.asOf}
+          dealId={dealId}
+        />
       )}
     </div>
   );
@@ -397,6 +402,231 @@ function KPI({ label, value, sub, positive }: { label: string; value: string; su
       <div className="text-[10px] text-ink-500 uppercase tracking-wide">{label}</div>
       <div className="text-[18px] font-semibold tabular-nums mt-0.5 text-ink-900">{value}</div>
       {sub && <div className={`text-[10.5px] mt-0.5 ${positive ? 'text-success-700' : 'text-ink-500'}`}>{sub}</div>}
+    </Card>
+  );
+}
+
+// Mock comp shape from miamiMarket.sales — strings like "$78M", "$340K"
+// already pre-formatted. The worker shape ships raw numbers we format
+// at the cell level. Section renders both backends behind a single UI
+// so the analyst sees the same table whether the source is a curated
+// fixture (Kimpton demo) or live OM extraction.
+interface MockSale {
+  name: string;
+  keys: number | string;
+  date: string;
+  price: string;
+  perKey: string;
+  cap: string;
+  buyer: string;
+}
+
+function fmtSalePrice(usd: number | null): string {
+  if (usd == null) return '—';
+  if (usd >= 1_000_000) return `$${(usd / 1_000_000).toFixed(1)}M`;
+  if (usd >= 1_000) return `$${(usd / 1_000).toFixed(0)}K`;
+  return `$${usd.toFixed(0)}`;
+}
+
+function fmtPerKey(usd: number | null): string {
+  if (usd == null) return '—';
+  if (usd >= 1_000_000) return `$${(usd / 1_000_000).toFixed(2)}M`;
+  return `$${usd.toLocaleString(undefined, { maximumFractionDigits: 0 })}`;
+}
+
+function fmtCapRate(pct: number | null): string {
+  if (pct == null) return '—';
+  return `${pct.toFixed(1)}%`;
+}
+
+function fmtSaleDate(s: string | null): string {
+  if (!s) return '—';
+  // Worker may emit ISO date or a free-form string; show first 10 chars
+  // when ISO, otherwise pass through trimmed.
+  const trimmed = s.trim();
+  return /^\d{4}-\d{2}-\d{2}/.test(trimmed) ? trimmed.slice(0, 10) : trimmed;
+}
+
+function TransactionCompsSection({
+  isKimptonDemo,
+  workerComps,
+  mockSales,
+  mockAsOf,
+  dealId,
+}: {
+  isKimptonDemo: boolean;
+  workerComps: TransactionCompsResult | null;
+  mockSales: MockSale[];
+  mockAsOf: string;
+  dealId: string;
+}) {
+  // Demo path — keep the curated CoStar-style table.
+  if (isKimptonDemo) {
+    return (
+      <Card className="p-5">
+        <h3 className="text-[13px] font-semibold text-ink-900 mb-3">
+          Transaction Comparables
+        </h3>
+        <table className="w-full text-[12px]">
+          <thead>
+            <tr className="text-ink-500 text-[10.5px] border-b border-border">
+              <th className="text-left font-medium pb-2">Property</th>
+              <th className="text-right font-medium pb-2">Keys</th>
+              <th className="text-right font-medium pb-2">Sale Price</th>
+              <th className="text-right font-medium pb-2">$/Key</th>
+              <th className="text-right font-medium pb-2">Cap Rate</th>
+              <th className="text-left font-medium pb-2">Buyer Type</th>
+            </tr>
+          </thead>
+          <tbody>
+            {mockSales.map((s) => (
+              <tr key={s.name} className="border-b border-border/50">
+                <td className="py-2 font-medium">{s.name}</td>
+                <td className="text-right tabular-nums">{s.keys}</td>
+                <td className="text-right tabular-nums">{s.price}</td>
+                <td className="text-right tabular-nums">{s.perKey}</td>
+                <td className="text-right tabular-nums">{s.cap}</td>
+                <td className="text-ink-700">{s.buyer}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+        <div className="text-[10.5px] text-ink-400 mt-2">
+          Source: CoStar comp set as of {mockAsOf}
+        </div>
+      </Card>
+    );
+  }
+
+  // Live deal path. Empty result + worker connected = OM not yet
+  // extracted. Null result = haven't fetched yet.
+  if (!workerComps) {
+    return (
+      <Card className="p-5">
+        <h3 className="text-[13px] font-semibold text-ink-900 mb-3">
+          Transaction Comparables
+        </h3>
+        <div className="text-[12px] text-ink-500 py-8 text-center">
+          Loading transaction comps…
+        </div>
+      </Card>
+    );
+  }
+
+  if (workerComps.comps.length === 0) {
+    return (
+      <Card className="p-5">
+        <h3 className="text-[13px] font-semibold text-ink-900 mb-3">
+          Transaction Comparables
+        </h3>
+        <div className="text-[12px] text-ink-500 py-8 text-center">
+          {workerComps.note ??
+            'No comparable sales extracted yet. Upload an OM with a Comparable Sales table to populate this view.'}
+        </div>
+      </Card>
+    );
+  }
+
+  return (
+    <Card className="p-5">
+      <div className="flex items-center justify-between mb-3">
+        <h3 className="text-[13px] font-semibold text-ink-900">
+          Transaction Comparables
+        </h3>
+        <div className="text-[10.5px] text-ink-500">
+          {workerComps.comps.length} comp
+          {workerComps.comps.length === 1 ? '' : 's'} from extracted OMs
+        </div>
+      </div>
+
+      {/* Headline anchors — median $/key + median cap rate. The exit-cap
+          conversation in the IC memo grounds on these two numbers. */}
+      <div className="grid grid-cols-2 gap-3 mb-4">
+        <Card className="p-3 bg-slate-50/50">
+          <div className="text-[10px] text-ink-500 uppercase tracking-wide">
+            Median $/Key
+          </div>
+          <div className="text-[18px] font-semibold tabular-nums mt-0.5 text-ink-900">
+            {fmtPerKey(workerComps.median_price_per_key)}
+          </div>
+          <div className="text-[10.5px] text-ink-500 mt-0.5">
+            Anchor for entry / exit valuation
+          </div>
+        </Card>
+        <Card className="p-3 bg-slate-50/50">
+          <div className="text-[10px] text-ink-500 uppercase tracking-wide">
+            Median Cap Rate
+          </div>
+          <div className="text-[18px] font-semibold tabular-nums mt-0.5 text-ink-900">
+            {fmtCapRate(workerComps.median_cap_rate_pct)}
+          </div>
+          <div className="text-[10.5px] text-ink-500 mt-0.5">
+            Anchor for exit-cap rate selection
+          </div>
+        </Card>
+      </div>
+
+      <table className="w-full text-[12px]">
+        <thead>
+          <tr className="text-ink-500 text-[10.5px] border-b border-border">
+            <th className="text-left font-medium pb-2">Property</th>
+            <th className="text-left font-medium pb-2">Market</th>
+            <th className="text-left font-medium pb-2">Sale Date</th>
+            <th className="text-right font-medium pb-2">Keys</th>
+            <th className="text-right font-medium pb-2">Sale Price</th>
+            <th className="text-right font-medium pb-2">$/Key</th>
+            <th className="text-right font-medium pb-2">Cap Rate</th>
+            <th className="text-left font-medium pb-2">Buyer</th>
+          </tr>
+        </thead>
+        <tbody>
+          {workerComps.comps.map((c, i) => {
+            const citationHref =
+              c.source_document_id && c.source_page
+                ? `${workerUrl()}/deals/${dealId}/documents/${c.source_document_id}/download#page=${c.source_page}`
+                : null;
+            return (
+              <tr key={`${c.name}-${i}`} className="border-b border-border/50">
+                <td className="py-2 font-medium">
+                  {citationHref ? (
+                    <Link
+                      href={citationHref}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="text-ink-900 hover:text-brand-700 underline-offset-2 hover:underline"
+                    >
+                      {c.name}
+                    </Link>
+                  ) : (
+                    c.name
+                  )}
+                </td>
+                <td className="text-ink-700">{c.market ?? '—'}</td>
+                <td className="text-ink-700">{fmtSaleDate(c.sale_date)}</td>
+                <td className="text-right tabular-nums">
+                  {c.keys != null ? c.keys.toLocaleString() : '—'}
+                </td>
+                <td className="text-right tabular-nums">
+                  {fmtSalePrice(c.sale_price_usd)}
+                </td>
+                <td className="text-right tabular-nums">
+                  {fmtPerKey(c.price_per_key_usd)}
+                </td>
+                <td className="text-right tabular-nums">
+                  {fmtCapRate(c.cap_rate_pct)}
+                </td>
+                <td className="text-ink-700">
+                  {c.buyer_name ?? c.buyer_type ?? '—'}
+                </td>
+              </tr>
+            );
+          })}
+        </tbody>
+      </table>
+      <div className="text-[10.5px] text-ink-400 mt-2">
+        Source: extracted from this deal&apos;s OM. Property names
+        deep-link to the source page in the OM.
+      </div>
     </Card>
   );
 }

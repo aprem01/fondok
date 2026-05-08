@@ -31,34 +31,39 @@ The router picks the cheapest model that meets each task's quality bar. Prompt c
 
 | Concern | Path |
 |---|---|
-| LangGraph state machine        | `apps/worker/app/graph.py` |
-| Engines (deterministic compute) | `apps/worker/app/engines/` |
-| Agents (LLM-backed reasoning)   | `apps/worker/app/agents/` |
-| Extraction pipeline             | `apps/worker/app/extraction/` |
-| Streaming / SSE                 | `apps/worker/app/streaming/` |
-| Excel / PDF / PPTX export       | `apps/worker/app/export/` |
-| HTTP API surface                | `apps/worker/app/api/` |
-| Persistence (SQLAlchemy async)  | `apps/worker/app/database.py`, `app/storage/` |
-| LLM client + budgets            | `apps/worker/app/llm.py`, `app/budget.py`, `app/costs.py` |
-| Audit / telemetry               | `apps/worker/app/audit.py`, `app/telemetry.py` |
+| LangGraph state machine            | `apps/worker/app/graph.py` |
+| Engines (deterministic compute, 8) | `apps/worker/app/engines/` (revenue, fb, expense, capital, debt, returns, sensitivity, partnership) |
+| Agents (LLM-backed reasoning)      | `apps/worker/app/agents/` (router, extractor, normalizer, critic, due_diligence, analyst) |
+| Extraction pipeline                | `apps/worker/app/extraction/` (PDF + .xls/.xlsx) |
+| Streaming / SSE memo synth         | `apps/worker/app/streaming/` |
+| Excel / PDF / PPTX export          | `apps/worker/app/export/` |
+| HTTP API surface                   | `apps/worker/app/api/` |
+| Variance / Due-Diligence / Dossier | `apps/worker/app/api/{analysis,due_diligence,dossier}.py` |
+| Market data (CBRE / STR / PNL)     | `apps/worker/app/api/documents.py` (`/deals/{id}/market-data`) |
+| Persistence (SQLAlchemy async)     | `apps/worker/app/database.py`, `app/storage/` |
+| LLM client + budgets               | `apps/worker/app/llm.py`, `app/budget.py`, `app/costs.py` |
+| Audit / telemetry                  | `apps/worker/app/audit.py`, `app/telemetry.py` |
 | Schemas (Python — source of truth) | `packages/schemas-py/` |
 | Schemas (TypeScript — must mirror) | `packages/schemas-ts/` |
-| Frontend tab system             | `apps/web/src/app/projects/[id]/page.tsx` |
-| Demo / mock fixtures            | `apps/web/src/lib/mockData.ts` |
-| Golden-set regression           | `evals/run.py`, `evals/cases/` |
+| Frontend tab system                | `apps/web/src/app/projects/[id]/page.tsx` |
+| Demo / mock fixtures               | `apps/web/src/lib/mockData.ts` |
+| Golden-set regression              | `evals/run.py`, `evals/golden-set/` |
+| External-report parse coverage     | `evals/external-reports/` |
 
 ---
 
 ## Request flow (happy path)
 
-1. Analyst drops a folder into the **Data Room** (web).
-2. Web POSTs each file to `/documents` on the worker; worker stores the bytes and enqueues a classifier run.
-3. **Router agent** classifies (T-12, OM, STR, term sheet…) using Haiku — cheap.
-4. **Extractor agent** pulls structured fields with Sonnet, returning citations to source pages.
-5. **Engines** (returns, variance, debt, capital, expense, partnership, sensitivity, F&B revenue) compute deterministically over extracted state. No LLM calls.
-6. **Variance agent** highlights divergences between the broker case and the underwritten case.
-7. On "Generate IC Memo", the **analyst agent** (Opus) synthesizes a 6-section memo and streams it back to the web via SSE.
-8. Excel / PDF / PPTX export endpoints stream files directly from the worker.
+1. Analyst drops a folder into the **Data Room** (web). Accepts `.pdf` (OMs, T-12s, CBRE Horizons, P&L Benchmarker) and `.xls` / `.xlsx` (STR CoStar Trend exports).
+2. Web POSTs each file to `/deals/{id}/documents/upload` on the worker. Worker writes bytes to the raw store synchronously; parsing + extraction run as a background task (`PARSING → UPLOADED → CLASSIFYING → EXTRACTING → EXTRACTED`).
+3. Parser branches on extension: PDF → LlamaParse (when configured) or PyMuPDF + pdfplumber. Excel → `xlrd` (.xls) or `openpyxl` (.xlsx); each sheet becomes one `ParsedPage`.
+4. **Router agent** classifies (Haiku, cheap) and **Extractor agent** pulls structured fields with Sonnet, citing source pages.
+5. **Engines** (revenue / fb / expense / capital / debt / returns / sensitivity / partnership) compute deterministically over extracted state. No LLM calls in the math path.
+6. **`/analysis/{id}/variance`** is a deterministic endpoint (not an agent) — flags `BROKER_VS_T12_*` and `BROKER_VS_CBRE_*` divergences.
+7. **Due-Diligence agent** generates a broker-question packet from the variance report + extracted fields (Sonnet, structured output).
+8. **`/deals/{id}/dossier`** + **`/deals/{id}/ask`** ground analyst Q&A in the deal corpus.
+9. On "Generate IC Memo" the **Analyst agent** (Opus) synthesizes a 6-section memo and streams it back via SSE; citations deep-link to source-PDF pages.
+10. Excel / PDF / PPTX export endpoints stream files directly from the worker.
 
 ---
 

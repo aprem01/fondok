@@ -212,6 +212,9 @@ export const api = {
       request<WorkerDeal>('GET', `/deals/${id}`, undefined, { signal }),
     status: (id: string, signal?: AbortSignal) =>
       request<WorkerDealStatus>('GET', `/deals/${id}/status`, undefined, { signal }),
+    /** Patch one-or-more deal fields (keys override, brand fix, etc.). */
+    update: (id: string, patch: Partial<Pick<WorkerDeal, 'name' | 'city' | 'keys' | 'service' | 'brand'>>) =>
+      request<WorkerDeal>('PATCH', `/deals/${id}`, patch),
   },
   documents: {
     list: (dealId: string, signal?: AbortSignal) =>
@@ -300,6 +303,16 @@ export const api = {
         { signal },
       ),
   },
+  /** Market intelligence — submarket overview, comp set, transaction comps. */
+  market: {
+    transactionComps: (dealId: string, signal?: AbortSignal) =>
+      request<TransactionCompsResult>(
+        'GET',
+        `/market/${dealId}/transaction-comps`,
+        undefined,
+        { signal },
+      ),
+  },
   /** AI-generated broker due-diligence question packet. */
   dueDiligence: {
     list: (dealId: string, signal?: AbortSignal) =>
@@ -381,6 +394,31 @@ export interface VarianceReportResult {
   warn_count: number;
   info_count: number;
   /** Set when no flags can be computed yet (e.g. only one of broker/T-12 is extracted). */
+  note: string | null;
+}
+
+// ─── Transaction Comps ──────────────────────────────────────────────
+// Mirrors apps/worker/app/api/market.py TransactionCompsResponse.
+
+export interface TransactionCompEntry {
+  name: string;
+  market: string | null;
+  sale_date: string | null;
+  keys: number | null;
+  sale_price_usd: number | null;
+  price_per_key_usd: number | null;
+  cap_rate_pct: number | null;
+  buyer_name: string | null;
+  buyer_type: string | null;
+  source_document_id: string | null;
+  source_page: number | null;
+}
+
+export interface TransactionCompsResult {
+  deal_id: string;
+  comps: TransactionCompEntry[];
+  median_price_per_key: number | null;
+  median_cap_rate_pct: number | null;
   note: string | null;
 }
 

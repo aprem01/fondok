@@ -257,11 +257,16 @@ async def test_status_aggregates_from_documents(
             )
             assert r.status_code == 201, r.text
 
-        # Right after upload (status=UPLOADED) → extracting bucket.
+        # Right after upload the row sits in the PARSING → UPLOADED →
+        # CLASSIFYING → EXTRACTING → EXTRACTED chain. Under EVALS_MOCK
+        # every step is sub-millisecond so the background task can
+        # finish before the next API call lands; in production the
+        # LLM calls keep us in 'extracting' for several seconds. Both
+        # are valid intermediate states.
         r = await client.get(f"/deals/{deal_id}/status")
         body = r.json()
         assert body["docs_total"] == 2
-        assert body["last_event"] in ("extracting",)
+        assert body["last_event"] in ("extracting", "ready")
 
         # Drive both docs through extraction.
         r = await client.get(f"/deals/{deal_id}/documents")
