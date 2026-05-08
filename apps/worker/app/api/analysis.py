@@ -226,6 +226,24 @@ async def get_variance(
             )
         )
 
+    # Broker vs market forecast (May 7 scope): compare broker-projected
+    # growth against CBRE Horizons' published submarket forecast and
+    # flag any line where the broker is meaningfully above the
+    # market's view. This is what makes Fondok an investment tool —
+    # not just T-12 reconciliation but discipline against the broker
+    # over-projecting forward growth.
+    market_flags = await _broker_vs_market_flags(
+        session, deal_id=str(deal_id), broker_proforma=broker, actuals=actuals
+    )
+    for mf in market_flags:
+        if mf.severity == "Critical":
+            crit += 1
+        elif mf.severity == "Warn":
+            warn += 1
+        else:
+            info += 1
+        out_flags.append(mf)
+
     return VarianceReportResponse(
         deal_id=deal_id,
         flags=out_flags,
@@ -233,3 +251,103 @@ async def get_variance(
         warn_count=warn,
         info_count=info,
     )
+
+
+async def _broker_vs_market_flags(
+    session: AsyncSession,
+    *,
+    deal_id: str,
+    broker_proforma: Any,
+    actuals: Any,
+) -> list[VarianceFlagOut]:
+    """Compare broker-projected ADR / RevPAR growth vs CBRE Horizons.
+
+    Reads the deal's CBRE Horizons extraction (when present) and
+    derives the published submarket CAGR for ADR and RevPAR. Compares
+    the broker's implied growth (broker Year-1 / T-12 - 1) against
+    the market forecast. Flags severity:
+      |delta| ≥ 5pts → Critical (broker over-projects market growth)
+      |delta| ≥ 2pts → Warn
+      otherwise     → Info
+
+    Returns ``[]`` when the CBRE report hasn't been extracted, the
+    deal id isn't a UUID, or the extraction doesn't carry enough
+    years to compute a CAGR.
+    """
+    from ..services.engine_runner import _load_cbre_horizons_overrides
+
+    market_overrides = await _load_cbre_horizons_overrides(
+        session, deal_id=deal_id
+    )
+    if not market_overrides:
+        return []
+
+    flags: list[VarianceFlagOut] = []
+    namespace_uuid = UUID("00000000-0000-0000-0000-000000000000")
+
+    # ADR comparison: broker Year-1 ADR / T-12 ADR - 1.
+    market_adr_growth = market_overrides.get("adr_growth")
+    if (
+        market_adr_growth is not None
+        and getattr(broker_proforma, "adr", None)
+        and getattr(actuals, "adr", None)
+        and actuals.adr > 0
+    ):
+        broker_adr_growth = (broker_proforma.adr / actuals.adr) - 1.0
+        delta = broker_adr_growth - market_adr_growth
+        severity = (
+            "Critical" if abs(delta) >= 0.05
+            else "Warn" if abs(delta) >= 0.02
+            else "Info"
+        )
+        flags.append(
+            VarianceFlagOut(
+                field="broker_adr_growth_vs_market",
+                rule_id="BROKER_VS_CBRE_ADR_GROWTH",
+                severity=severity,
+                actual=market_adr_growth,
+                broker=broker_adr_growth,
+                delta=delta,
+                delta_pct=delta,
+                source_page=None,
+                note=(
+                    f"Broker projects {broker_adr_growth:.1%} Y1 ADR growth vs CBRE "
+                    f"published submarket forecast of {market_adr_growth:.1%} ({delta:+.1%})"
+                ),
+            )
+        )
+
+    # RevPAR comparison: broker Year-1 RevPAR / T-12 RevPAR - 1.
+    market_revpar_growth = market_overrides.get("revpar_growth")
+    if (
+        market_revpar_growth is not None
+        and getattr(broker_proforma, "revpar", None)
+        and getattr(actuals, "revpar", None)
+        and actuals.revpar > 0
+    ):
+        broker_revpar_growth = (broker_proforma.revpar / actuals.revpar) - 1.0
+        delta = broker_revpar_growth - market_revpar_growth
+        severity = (
+            "Critical" if abs(delta) >= 0.05
+            else "Warn" if abs(delta) >= 0.02
+            else "Info"
+        )
+        flags.append(
+            VarianceFlagOut(
+                field="broker_revpar_growth_vs_market",
+                rule_id="BROKER_VS_CBRE_REVPAR_GROWTH",
+                severity=severity,
+                actual=market_revpar_growth,
+                broker=broker_revpar_growth,
+                delta=delta,
+                delta_pct=delta,
+                source_page=None,
+                note=(
+                    f"Broker projects {broker_revpar_growth:.1%} Y1 RevPAR growth vs "
+                    f"CBRE submarket forecast {market_revpar_growth:.1%} ({delta:+.1%})"
+                ),
+            )
+        )
+
+    _ = namespace_uuid  # reserved for future deterministic flag-id stable hashing
+    return flags
