@@ -312,6 +312,32 @@ async def _load_engine_inputs(
             continue
         base[key] = value
 
+    # External market reports (May 7 scope): when CBRE Horizons has
+    # been extracted, derive ADR + RevPAR growth from its 5-year
+    # forecast and use that as the revenue engine's growth rate. When
+    # the P&L benchmark has landed, use its margins as expense
+    # synthesis ratios so unit economics reflect peer-set norms
+    # rather than the Kimpton seed.
+    cbre_overrides = await _load_cbre_horizons_overrides(
+        session, deal_id=deal_id
+    )
+    for key, value in cbre_overrides.items():
+        base[key] = value
+
+    benchmark_overrides = await _load_pnl_benchmark_overrides(
+        session, deal_id=deal_id
+    )
+    if benchmark_overrides:
+        # Merge into the engine-defaults override channel so the
+        # expense engine's ``HOTEL_TYPE_DEFAULTS`` get patched line
+        # by line at run time (rooms_dept_pct, fb_dept_pct, etc.).
+        existing = dict(base.get("overrides") or {})
+        existing.update(benchmark_overrides.get("expense_overrides", {}))
+        base["overrides"] = existing
+        for top_level_key in ("mgmt_fee_pct", "ffe_reserve_pct"):
+            if top_level_key in benchmark_overrides:
+                base[top_level_key] = benchmark_overrides[top_level_key]
+
     if overrides:
         base.update(overrides)
     return base
@@ -709,6 +735,215 @@ async def _load_om_debt_actuals(
                 v = v / 100.0
             actuals[canonical] = v
     return actuals
+
+
+# ─────────────────── CBRE Horizons projection overrides ─────────────────
+
+
+async def _load_cbre_horizons_overrides(
+    session: AsyncSession, *, deal_id: str
+) -> dict[str, float]:
+    """Translate the deal's extracted CBRE Horizons report into engine
+    growth-rate overrides.
+
+    CBRE publishes per-year ADR + RevPAR projections by submarket; the
+    extractor emits them as ``cbre_horizons.year_{1..5}.adr_usd`` and
+    ``…revpar_usd``. We compute the implied CAGR over the visible
+    horizon and use it as the revenue engine's ``adr_growth``. RevPAR
+    growth is exposed too so downstream consumers (broker variance,
+    analyst memo) can compare broker projections against the published
+    market forecast (May 7 scope).
+
+    Returns ``{}`` on missing data, percentage normalization issues, or
+    when the projection horizon doesn't cover at least two years.
+    """
+    try:
+        UUID(deal_id)
+    except (TypeError, ValueError):
+        return {}
+    try:
+        rows = await session.execute(
+            text(
+                """
+                SELECT er.fields
+                  FROM extraction_results er
+                  JOIN documents d ON d.id = er.document_id
+                 WHERE er.deal_id = :deal
+                   AND UPPER(COALESCE(d.doc_type, '')) = 'CBRE_HORIZONS'
+                 ORDER BY er.created_at DESC
+                """
+            ),
+            {"deal": deal_id},
+        )
+    except Exception:
+        return {}
+
+    adr_by_year: dict[int, float] = {}
+    revpar_by_year: dict[int, float] = {}
+    for r in rows.fetchall():
+        raw = r._mapping["fields"]
+        if isinstance(raw, str):
+            try:
+                raw = json.loads(raw) if raw else None
+            except (json.JSONDecodeError, TypeError):
+                continue
+        if not isinstance(raw, list):
+            continue
+        for f in raw:
+            if not isinstance(f, dict):
+                continue
+            name = (f.get("field_name") or "").strip().lower()
+            value = f.get("value")
+            if not name.startswith("cbre_horizons.year_") or not isinstance(
+                value, (int, float)
+            ):
+                continue
+            # Pattern: cbre_horizons.year_<N>.<metric>
+            try:
+                _, year_part, metric = name.split(".", 2)
+                year_idx = int(year_part.split("_", 1)[1])
+            except (ValueError, IndexError):
+                continue
+            v = float(value)
+            if metric in ("adr_usd", "adr"):
+                adr_by_year.setdefault(year_idx, v)
+            elif metric in ("revpar_usd", "revpar"):
+                revpar_by_year.setdefault(year_idx, v)
+
+    out: dict[str, float] = {}
+
+    def _cagr(series: dict[int, float]) -> float | None:
+        if len(series) < 2:
+            return None
+        years_sorted = sorted(series)
+        start, end = series[years_sorted[0]], series[years_sorted[-1]]
+        n = years_sorted[-1] - years_sorted[0]
+        if start <= 0 or end <= 0 or n <= 0:
+            return None
+        return (end / start) ** (1.0 / n) - 1.0
+
+    adr_cagr = _cagr(adr_by_year)
+    if adr_cagr is not None and -0.20 <= adr_cagr <= 0.20:
+        out["adr_growth"] = adr_cagr
+    revpar_cagr = _cagr(revpar_by_year)
+    if revpar_cagr is not None and -0.20 <= revpar_cagr <= 0.20:
+        out["revpar_growth"] = revpar_cagr
+
+    # When CBRE provides a Year-1 ADR / RevPAR baseline and the deal
+    # has no T-12 starting_adr yet, we expose the CBRE Year-1 figure
+    # as a fallback. The T-12 actuals path takes precedence when both
+    # are present (handled in ``_load_engine_inputs``).
+    if 1 in adr_by_year and adr_by_year[1] > 0:
+        out["cbre_year_1_adr"] = adr_by_year[1]
+    if 1 in revpar_by_year and revpar_by_year[1] > 0:
+        out["cbre_year_1_revpar"] = revpar_by_year[1]
+
+    return out
+
+
+# ─────────────────── P&L Benchmark expense-ratio overrides ──────────────
+
+
+# Map extracted P&L benchmark fields onto the engine's hotel-type
+# default keys. The expense engine accepts an ``overrides`` dict that
+# patches HOTEL_TYPE_DEFAULTS line by line at run time, so when the
+# benchmark report has landed we route the published peer-set ratios
+# straight through without changing the engine signature.
+_PNL_BENCHMARK_TO_OVERRIDE: dict[str, str] = {
+    "pnl_benchmark.rooms_dept_pct": "rooms_dept_pct",
+    "pnl_benchmark.fb_dept_margin": "fb_dept_pct",  # margin → dept-pct conversion handled below
+    "pnl_benchmark.gop_margin": "gop_margin",
+    "pnl_benchmark.a_and_g_pct": "undistributed_pct_revenue",
+    "pnl_benchmark.sales_marketing_pct": "sales_marketing_pct",
+    "pnl_benchmark.utilities_pct": "utilities_pct",
+    "pnl_benchmark.property_taxes_pct": "property_taxes_pct",
+    "pnl_benchmark.insurance_pct": "insurance_pct",
+}
+
+
+async def _load_pnl_benchmark_overrides(
+    session: AsyncSession, *, deal_id: str
+) -> dict[str, Any]:
+    """Translate the deal's extracted P&L benchmark report into engine
+    expense overrides.
+
+    Returns a dict shaped as ``{ expense_overrides: {...}, mgmt_fee_pct,
+    ffe_reserve_pct }``. The caller folds ``expense_overrides`` into
+    the engine ``base["overrides"]`` channel and uses the top-level
+    keys to seed mgmt fee / FF&E reserve. Extracted percentages are
+    normalized 0..100 → 0..1 before returning.
+    """
+    try:
+        UUID(deal_id)
+    except (TypeError, ValueError):
+        return {}
+    try:
+        rows = await session.execute(
+            text(
+                """
+                SELECT er.fields
+                  FROM extraction_results er
+                  JOIN documents d ON d.id = er.document_id
+                 WHERE er.deal_id = :deal
+                   AND UPPER(COALESCE(d.doc_type, '')) = 'PNL_BENCHMARK'
+                 ORDER BY er.created_at DESC
+                """
+            ),
+            {"deal": deal_id},
+        )
+    except Exception:
+        return {}
+
+    raw_fields: dict[str, float] = {}
+    for r in rows.fetchall():
+        blob = r._mapping["fields"]
+        if isinstance(blob, str):
+            try:
+                blob = json.loads(blob) if blob else None
+            except (json.JSONDecodeError, TypeError):
+                continue
+        if not isinstance(blob, list):
+            continue
+        for f in blob:
+            if not isinstance(f, dict):
+                continue
+            name = (f.get("field_name") or "").strip().lower()
+            value = f.get("value")
+            if not isinstance(value, (int, float)):
+                continue
+            v = float(value)
+            # Normalize percentages emitted as 0..100.
+            if v > 1.0 and name.endswith(("_pct", "_margin")):
+                v = v / 100.0
+            raw_fields.setdefault(name, v)
+
+    if not raw_fields:
+        return {}
+
+    expense_overrides: dict[str, float] = {}
+    out: dict[str, Any] = {}
+
+    rooms_dept = raw_fields.get("pnl_benchmark.rooms_dept_pct")
+    if rooms_dept is not None and 0 < rooms_dept < 1.0:
+        expense_overrides["rooms_dept_pct"] = rooms_dept
+
+    fb_margin = raw_fields.get("pnl_benchmark.fb_dept_margin")
+    if fb_margin is not None and 0 < fb_margin < 1.0:
+        # F&B dept-pct = 1 - margin (margin is profit %, dept-pct is
+        # cost %; the engine takes the cost ratio).
+        expense_overrides["fb_dept_pct"] = max(0.05, 1.0 - fb_margin)
+
+    if expense_overrides:
+        out["expense_overrides"] = expense_overrides
+
+    mgmt = raw_fields.get("pnl_benchmark.mgmt_fee_pct")
+    if mgmt is not None and 0 < mgmt < 0.10:
+        out["mgmt_fee_pct"] = mgmt
+    ffe = raw_fields.get("pnl_benchmark.ffe_reserve_pct")
+    if ffe is not None and 0 < ffe < 0.10:
+        out["ffe_reserve_pct"] = ffe
+
+    return out
 
 
 # ─────────────────────────── Per-engine input ─────────────────────────

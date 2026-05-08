@@ -106,6 +106,65 @@ include:
        ``ttm_performance.subject.revpar_usd``,
        ``ttm_performance.indices.rgi_revpar_index``,
        ``comp_set.comp_set_size``.
+   * **STR_TREND (STR competitive-set / TREND report).** Subject hotel
+     plus 5-7 named competitor properties with TTM occupancy, ADR,
+     RevPAR, and the three penetration indices. Distinct from
+     ``STR_BENCHMARK`` (legacy ``STR``): the trend report fans out
+     across the comp set whereas the benchmark only carries aggregate
+     comp-set numbers. Use these field paths:
+       * Subject hotel TTM:
+           ``ttm_performance.subject.occupancy_pct``,
+           ``ttm_performance.subject.adr_usd``,
+           ``ttm_performance.subject.revpar_usd``.
+       * Each competitor (number them ``1`` … ``7`` in the order they
+         appear in the report):
+           ``ttm_performance.compset.<n>.name``,
+           ``ttm_performance.compset.<n>.keys``,
+           ``ttm_performance.compset.<n>.occupancy_pct``,
+           ``ttm_performance.compset.<n>.adr_usd``,
+           ``ttm_performance.compset.<n>.revpar_usd``.
+       * Penetration indices (subject vs comp set; 1.00 = parity):
+           ``ttm_performance.indices.rgi_revpar_index``,
+           ``ttm_performance.indices.ari_adr_index``,
+           ``ttm_performance.indices.mpi_occupancy_index``.
+       * Comp-set rollups:
+           ``comp_set.comp_set_size``,
+           ``comp_set.total_keys``.
+   * **CBRE_HORIZONS (CBRE Horizons forward forecast).** A 5-year
+     ADR + RevPAR projection by submarket and chain scale. Every
+     forecast year MUST be emitted as its own field so the forward
+     projection engine can read the full trajectory. Use:
+       * ``cbre_horizons.submarket`` — submarket name (e.g. "Miami Beach").
+       * ``cbre_horizons.chain_scale`` — chain scale segment (e.g.
+         "Upper Upscale").
+       * ``cbre_horizons.publication_date`` — report publication date.
+       * For each year ``n`` in ``{1, 2, 3, 4, 5}``:
+           ``cbre_horizons.year_<n>.occupancy_pct``,
+           ``cbre_horizons.year_<n>.adr_usd``,
+           ``cbre_horizons.year_<n>.revpar_usd``,
+           ``cbre_horizons.year_<n>.revpar_growth_pct``.
+   * **PNL_BENCHMARK (HotStats-equivalent P&L benchmark).** Line-item
+     departmental and expense ratios from a peer set. POR = per
+     occupied room, PAR = per available room. Use:
+       * ``pnl_benchmark.peer_set_size`` — number of hotels in the
+         benchmark set.
+       * Margin / expense ratios (decimal between 0 and 1):
+           ``pnl_benchmark.rooms_dept_pct``,
+           ``pnl_benchmark.fb_dept_margin``,
+           ``pnl_benchmark.gop_margin``,
+           ``pnl_benchmark.a_and_g_pct``,
+           ``pnl_benchmark.sales_marketing_pct``,
+           ``pnl_benchmark.utilities_pct``,
+           ``pnl_benchmark.property_taxes_pct``,
+           ``pnl_benchmark.insurance_pct``.
+       * USD per-key / per-room metrics:
+           ``pnl_benchmark.rooms_revenue_par`` (PAR — USD per
+             available room),
+           ``pnl_benchmark.total_revenue_par``,
+           ``pnl_benchmark.noi_par``,
+           ``pnl_benchmark.rooms_revenue_por`` (POR — USD per
+             occupied room),
+           ``pnl_benchmark.fb_revenue_por``.
 
 2. ``value``        — the extracted scalar (number, string, or bool).
                       Strip thousand-separators; use a decimal between
@@ -153,6 +212,16 @@ Coverage targets per document type:
   * **STR** — subject + comp-set occupancy/ADR/RevPAR for the TTM,
     the three penetration indices (MPI/ARI/RGI), comp-set size
     and total keys, and any forward outlook the report carries.
+  * **STR_TREND** — every named competitor MUST be emitted as a
+    separate ``ttm_performance.compset.<n>.*`` row (5-7 expected) in
+    addition to the subject + indices block. Comp-set size and total
+    keys are mandatory.
+  * **CBRE_HORIZONS** — emit ALL five forecast years; partial
+    trajectories make the forward projection unusable. Submarket and
+    chain scale are mandatory headers.
+  * **PNL_BENCHMARK** — emit every margin / ratio that appears in
+    the source plus all PAR / POR figures. Peer set size is required
+    so the variance reader knows how thin the comparison is.
 
 Tone: institutional. Never hallucinate a field that isn't in the
 source — silence is acceptable, fabrication is not.

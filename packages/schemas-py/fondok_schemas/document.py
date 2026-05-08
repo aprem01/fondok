@@ -14,6 +14,19 @@ class DocType(str, Enum):
     OM = "OM"
     T12 = "T12"
     STR = "STR"
+    # External market reports (May 7 scope alignment).
+    # ``STR_TREND`` is a STR competitive-set / TREND report (subject +
+    # 5-7 competitors with occupancy/ADR/RevPAR plus penetration
+    # indices). Distinct from the simpler ``STR`` benchmark to keep
+    # routing rules clean — the Market tab and forward-projection
+    # engine read the trend variant.
+    STR_TREND = "STR_TREND"
+    # CBRE Horizons 5-year ADR/RevPAR forecast by submarket and
+    # chain scale; feeds the forward-projection engine.
+    CBRE_HORIZONS = "CBRE_HORIZONS"
+    # HotStats-equivalent line-item P&L benchmark (POR/PAR ratios for
+    # departmental margins, expense ratios, GOP margin).
+    PNL_BENCHMARK = "PNL_BENCHMARK"
     PNL = "PNL"
     RENT_ROLL = "RENT_ROLL"
     MARKET_STUDY = "MARKET_STUDY"

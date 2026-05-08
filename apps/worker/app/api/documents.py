@@ -145,6 +145,108 @@ class ExtractionResultResponse(BaseModel):
     page_count: int | None = None
 
 
+# ─────────────────────────── market-data envelope ───────────────────────────
+
+
+class CompSetEntry(BaseModel):
+    """One competitor row inside a STR_TREND extraction."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    name: str | None = None
+    keys: int | None = None
+    occupancy_pct: float | None = None
+    adr_usd: float | None = None
+    revpar_usd: float | None = None
+
+
+class StrTrendBlock(BaseModel):
+    """Subject + comp set + indices, from a STR_TREND extraction."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    subject_occupancy_pct: float | None = None
+    subject_adr_usd: float | None = None
+    subject_revpar_usd: float | None = None
+    rgi_revpar_index: float | None = None
+    ari_adr_index: float | None = None
+    mpi_occupancy_index: float | None = None
+    comp_set_size: int | None = None
+    total_keys: int | None = None
+    compset: list[CompSetEntry] = Field(default_factory=list)
+
+
+class CbreYearProjection(BaseModel):
+    """One forecast year inside a CBRE Horizons extraction."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    year_index: int
+    occupancy_pct: float | None = None
+    adr_usd: float | None = None
+    revpar_usd: float | None = None
+    revpar_growth_pct: float | None = None
+
+
+class CbreHorizonsBlock(BaseModel):
+    """Five-year forward projection from a CBRE_HORIZONS extraction."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    submarket: str | None = None
+    chain_scale: str | None = None
+    publication_date: str | None = None
+    years: list[CbreYearProjection] = Field(default_factory=list)
+
+
+class PnlBenchmarkBlock(BaseModel):
+    """Peer-set ratios + PAR/POR figures from a PNL_BENCHMARK extraction."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    peer_set_size: int | None = None
+    rooms_dept_pct: float | None = None
+    fb_dept_margin: float | None = None
+    gop_margin: float | None = None
+    a_and_g_pct: float | None = None
+    sales_marketing_pct: float | None = None
+    utilities_pct: float | None = None
+    property_taxes_pct: float | None = None
+    insurance_pct: float | None = None
+    rooms_revenue_par: float | None = None
+    total_revenue_par: float | None = None
+    noi_par: float | None = None
+    rooms_revenue_por: float | None = None
+    fb_revenue_por: float | None = None
+
+
+class MarketDataResponse(BaseModel):
+    """Aggregated external-report envelope for the Market tab.
+
+    The web app's Market tab + the forward-projection engine read this
+    single endpoint instead of hitting three separate extraction
+    queries. Every block is optional — empty when the deal has no
+    extracted document of that type yet — so the frontend can render
+    "awaiting <doc>" cards without needing a separate 404 path.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    deal_id: UUID
+    str_trend: StrTrendBlock | None = None
+    cbre_horizons: CbreHorizonsBlock | None = None
+    pnl_benchmark: PnlBenchmarkBlock | None = None
+    sources: dict[str, list[UUID]] = Field(
+        default_factory=dict,
+        description=(
+            "Map from doc_type ('STR_TREND' / 'CBRE_HORIZONS' / "
+            "'PNL_BENCHMARK') to the document_ids whose extractions "
+            "fed each block. Lets the UI deep-link from a block back "
+            "to the underlying source PDF."
+        ),
+    )
+
+
 # ─────────────────────────── helpers ───────────────────────────
 
 
@@ -161,10 +263,42 @@ def _guess_doc_type(filename: str) -> str:
     correctly catches "sample_OM.pdf" and "Coral_Bay_OM_v2.pdf"
     without false-matching benign substrings (the previous
     ``"offering" in name`` check is preserved).
+
+    Order matters: more-specific external-report types
+    (``STR_TREND``, ``PNL_BENCHMARK``, ``CBRE_HORIZONS``) are checked
+    BEFORE the broader ``STR`` / ``PNL`` so a "STR_trend.pdf" doesn't
+    get mis-routed as a plain STR benchmark and lose its comp-set
+    fan-out.
     """
     name = (filename or "").lower()
     base = name.rsplit(".", 1)[0]
     tokens = set(base.replace("-", "_").split("_"))
+
+    # External market reports (May 7 scope) — check first so the more
+    # specific patterns win over the generic STR / PNL fallbacks.
+    if (
+        ("str" in tokens and "trend" in tokens)
+        or ("trend" in tokens and ("comp" in tokens or "compset" in tokens))
+        or "comp_set" in name
+        or "compset" in name
+        or "competitive_set" in name
+        or "competitiveset" in name
+        or ("str" in tokens and ("comp" in tokens or "competitive" in tokens))
+    ):
+        return "STR_TREND"
+    if "cbre" in tokens or "horizons" in tokens or "forecast" in tokens:
+        return "CBRE_HORIZONS"
+    if (
+        "benchmark" in tokens
+        or "hotstats" in tokens
+        or "por_par" in name
+        or "porpar" in name
+        or "industry_avg" in name
+        or "industryavg" in name
+        or ("industry" in tokens and "avg" in tokens)
+    ):
+        return "PNL_BENCHMARK"
+
     if "t12" in name or "t-12" in name:
         return "T12"
     if "om" in tokens or base == "om" or "offering" in name or "memorandum" in name:
@@ -491,6 +625,265 @@ async def list_documents(
         {"deal_id": str(deal_id)},
     )
     return [_row_to_record(dict(r._mapping)) for r in rows.fetchall()]
+
+
+# ─────────────────────────── market data aggregator ───────────────────────────
+
+
+def _coerce_float(v: Any) -> float | None:
+    """Best-effort numeric coerce for extraction values.
+
+    The Extractor agent normally emits numeric scalars, but we tolerate
+    string forms ("1.05", "75.4%", "$312") so a slightly off-spec
+    upstream agent doesn't blank out the Market tab.
+    """
+    if v is None:
+        return None
+    if isinstance(v, (int, float)) and not isinstance(v, bool):
+        return float(v)
+    if isinstance(v, str):
+        s = v.strip().replace(",", "").replace("$", "")
+        pct = s.endswith("%")
+        if pct:
+            s = s[:-1]
+        try:
+            f = float(s)
+        except ValueError:
+            return None
+        return f / 100.0 if pct else f
+    return None
+
+
+def _coerce_int(v: Any) -> int | None:
+    f = _coerce_float(v)
+    if f is None:
+        return None
+    try:
+        return int(round(f))
+    except (TypeError, ValueError):
+        return None
+
+
+def _aggregate_market_data(
+    rows: list[dict[str, Any]], deal_id: UUID
+) -> MarketDataResponse:
+    """Walk extraction_results × documents rows and bucket fields by
+    doc_type into the three external-report blocks.
+
+    Each input row is ``{"fields": <list>, "doc_type": <str>,
+    "document_id": <uuid>}``. Most-recent extraction for each doc_type
+    wins because the caller orders by ``created_at DESC`` and we only
+    set a slot the first time we see it.
+    """
+    str_trend_fields: dict[str, Any] = {}
+    cbre_fields: dict[str, Any] = {}
+    pnl_fields: dict[str, Any] = {}
+    # Comp-set rows are keyed by their numeric index (1..7).
+    compset_rows: dict[int, dict[str, Any]] = {}
+    sources: dict[str, list[UUID]] = {}
+
+    for row in rows:
+        doc_type = (row.get("doc_type") or "").upper()
+        doc_id_raw = row.get("document_id")
+        try:
+            doc_id_uuid = (
+                doc_id_raw if isinstance(doc_id_raw, UUID)
+                else UUID(str(doc_id_raw))
+            )
+        except (TypeError, ValueError):
+            doc_id_uuid = None
+
+        raw_fields = row.get("fields")
+        if isinstance(raw_fields, str):
+            try:
+                raw_fields = json.loads(raw_fields)
+            except json.JSONDecodeError:
+                continue
+        if not isinstance(raw_fields, list):
+            continue
+
+        if doc_type not in {"STR_TREND", "CBRE_HORIZONS", "PNL_BENCHMARK"}:
+            continue
+        if doc_id_uuid is not None:
+            sources.setdefault(doc_type, [])
+            if doc_id_uuid not in sources[doc_type]:
+                sources[doc_type].append(doc_id_uuid)
+
+        for f in raw_fields:
+            if not isinstance(f, dict):
+                continue
+            name = (f.get("field_name") or "").strip()
+            if not name:
+                continue
+            value = f.get("value")
+            if doc_type == "STR_TREND":
+                _bucket_str_trend(name, value, str_trend_fields, compset_rows)
+            elif doc_type == "CBRE_HORIZONS":
+                _bucket_cbre(name, value, cbre_fields)
+            elif doc_type == "PNL_BENCHMARK":
+                _bucket_pnl(name, value, pnl_fields)
+
+    str_trend = _build_str_trend_block(str_trend_fields, compset_rows)
+    cbre = _build_cbre_block(cbre_fields)
+    pnl = _build_pnl_block(pnl_fields)
+
+    return MarketDataResponse(
+        deal_id=deal_id,
+        str_trend=str_trend,
+        cbre_horizons=cbre,
+        pnl_benchmark=pnl,
+        sources=sources,
+    )
+
+
+def _bucket_str_trend(
+    name: str,
+    value: Any,
+    flat: dict[str, Any],
+    compset: dict[int, dict[str, Any]],
+) -> None:
+    """Sort STR_TREND field paths into the flat block or one of the
+    indexed compset rows."""
+    lname = name.lower()
+    # Compset rows look like ``ttm_performance.compset.<n>.<attr>``.
+    if lname.startswith("ttm_performance.compset."):
+        rest = lname[len("ttm_performance.compset.") :]
+        try:
+            idx_str, attr = rest.split(".", 1)
+            idx = int(idx_str)
+        except (ValueError, IndexError):
+            return
+        compset.setdefault(idx, {})[attr] = value
+        return
+    # Subject + indices + rollups land in the flat dict so the most
+    # recent extraction's value wins (don't overwrite if already set
+    # because rows arrive newest-first).
+    flat.setdefault(lname, value)
+
+
+def _bucket_cbre(name: str, value: Any, flat: dict[str, Any]) -> None:
+    flat.setdefault(name.lower(), value)
+
+
+def _bucket_pnl(name: str, value: Any, flat: dict[str, Any]) -> None:
+    flat.setdefault(name.lower(), value)
+
+
+def _build_str_trend_block(
+    flat: dict[str, Any],
+    compset: dict[int, dict[str, Any]],
+) -> StrTrendBlock | None:
+    if not flat and not compset:
+        return None
+    block = StrTrendBlock(
+        subject_occupancy_pct=_coerce_float(flat.get("ttm_performance.subject.occupancy_pct")),
+        subject_adr_usd=_coerce_float(flat.get("ttm_performance.subject.adr_usd")),
+        subject_revpar_usd=_coerce_float(flat.get("ttm_performance.subject.revpar_usd")),
+        rgi_revpar_index=_coerce_float(flat.get("ttm_performance.indices.rgi_revpar_index")),
+        ari_adr_index=_coerce_float(flat.get("ttm_performance.indices.ari_adr_index")),
+        mpi_occupancy_index=_coerce_float(flat.get("ttm_performance.indices.mpi_occupancy_index")),
+        comp_set_size=_coerce_int(flat.get("comp_set.comp_set_size")),
+        total_keys=_coerce_int(flat.get("comp_set.total_keys")),
+        compset=[
+            CompSetEntry(
+                name=str(compset[i].get("name")) if compset[i].get("name") is not None else None,
+                keys=_coerce_int(compset[i].get("keys")),
+                occupancy_pct=_coerce_float(compset[i].get("occupancy_pct")),
+                adr_usd=_coerce_float(compset[i].get("adr_usd")),
+                revpar_usd=_coerce_float(compset[i].get("revpar_usd")),
+            )
+            for i in sorted(compset.keys())
+        ],
+    )
+    return block
+
+
+def _build_cbre_block(flat: dict[str, Any]) -> CbreHorizonsBlock | None:
+    if not flat:
+        return None
+    years: list[CbreYearProjection] = []
+    for n in (1, 2, 3, 4, 5):
+        prefix = f"cbre_horizons.year_{n}."
+        occ = _coerce_float(flat.get(prefix + "occupancy_pct"))
+        adr = _coerce_float(flat.get(prefix + "adr_usd"))
+        revpar = _coerce_float(flat.get(prefix + "revpar_usd"))
+        growth = _coerce_float(flat.get(prefix + "revpar_growth_pct"))
+        if any(v is not None for v in (occ, adr, revpar, growth)):
+            years.append(
+                CbreYearProjection(
+                    year_index=n,
+                    occupancy_pct=occ,
+                    adr_usd=adr,
+                    revpar_usd=revpar,
+                    revpar_growth_pct=growth,
+                )
+            )
+    submarket = flat.get("cbre_horizons.submarket")
+    chain_scale = flat.get("cbre_horizons.chain_scale")
+    pub_date = flat.get("cbre_horizons.publication_date")
+    return CbreHorizonsBlock(
+        submarket=str(submarket) if submarket is not None else None,
+        chain_scale=str(chain_scale) if chain_scale is not None else None,
+        publication_date=str(pub_date) if pub_date is not None else None,
+        years=years,
+    )
+
+
+def _build_pnl_block(flat: dict[str, Any]) -> PnlBenchmarkBlock | None:
+    if not flat:
+        return None
+    return PnlBenchmarkBlock(
+        peer_set_size=_coerce_int(flat.get("pnl_benchmark.peer_set_size")),
+        rooms_dept_pct=_coerce_float(flat.get("pnl_benchmark.rooms_dept_pct")),
+        fb_dept_margin=_coerce_float(flat.get("pnl_benchmark.fb_dept_margin")),
+        gop_margin=_coerce_float(flat.get("pnl_benchmark.gop_margin")),
+        a_and_g_pct=_coerce_float(flat.get("pnl_benchmark.a_and_g_pct")),
+        sales_marketing_pct=_coerce_float(flat.get("pnl_benchmark.sales_marketing_pct")),
+        utilities_pct=_coerce_float(flat.get("pnl_benchmark.utilities_pct")),
+        property_taxes_pct=_coerce_float(flat.get("pnl_benchmark.property_taxes_pct")),
+        insurance_pct=_coerce_float(flat.get("pnl_benchmark.insurance_pct")),
+        rooms_revenue_par=_coerce_float(flat.get("pnl_benchmark.rooms_revenue_par")),
+        total_revenue_par=_coerce_float(flat.get("pnl_benchmark.total_revenue_par")),
+        noi_par=_coerce_float(flat.get("pnl_benchmark.noi_par")),
+        rooms_revenue_por=_coerce_float(flat.get("pnl_benchmark.rooms_revenue_por")),
+        fb_revenue_por=_coerce_float(flat.get("pnl_benchmark.fb_revenue_por")),
+    )
+
+
+@router.get("/{deal_id}/market-data", response_model=MarketDataResponse)
+async def get_market_data(
+    deal_id: UUID,
+    session: Annotated[AsyncSession, Depends(get_session)],
+) -> MarketDataResponse:
+    """Aggregate the deal's external-report extractions into one envelope.
+
+    Reads ``extraction_results`` joined to ``documents`` filtered to
+    ``doc_type IN ('STR_TREND', 'CBRE_HORIZONS', 'PNL_BENCHMARK')``
+    and folds the field rows into three typed blocks plus a sources
+    map for citation deep-links. Every block is optional — when the
+    deal has no extracted document of a given type the block is
+    ``null`` so the Market tab can render "awaiting <doc>" cards
+    without a 404 path.
+    """
+    rows = await session.execute(
+        text(
+            """
+            SELECT er.fields,
+                   er.document_id,
+                   d.doc_type
+              FROM extraction_results er
+              JOIN documents d ON d.id = er.document_id
+             WHERE er.deal_id = :deal
+               AND UPPER(COALESCE(d.doc_type, '')) IN (
+                   'STR_TREND', 'CBRE_HORIZONS', 'PNL_BENCHMARK'
+               )
+             ORDER BY er.created_at DESC
+            """
+        ),
+        {"deal": str(deal_id)},
+    )
+    materialized = [dict(r._mapping) for r in rows.fetchall()]
+    return _aggregate_market_data(materialized, deal_id)
 
 
 # ─────────────────────────── download ───────────────────────────
@@ -871,6 +1264,20 @@ async def _run_extraction_pipeline(
                 classified_doc_type,
             )
 
+            # Source-of-truth hierarchy (May 7 scope): documents >
+            # wizard. When the OM / T-12 surfaces a property metadata
+            # value (keys, brand, year_built, address) that contradicts
+            # the deals row, prefer the document and write the change
+            # to audit_log so a reviewer can see what shifted. The
+            # wizard input is treated as a stale guess once a real
+            # document arrives.
+            await _sync_deal_metadata_from_extraction(
+                session,
+                deal_id=deal_id,
+                tenant_id=tenant_id,
+                fields=fields,
+            )
+
             # Chain-of-verification — re-read each cited number against the
             # parser cache. Best-effort; never blocks completion.
             await _persist_verification_report(
@@ -1022,6 +1429,161 @@ def _mock_extraction_payload() -> tuple[list[dict[str, Any]], dict[str, Any]]:
         "requires_human_review": False,
     }
     return fields, confidence
+
+
+# ─────────────────────────── doc → deal metadata sync ───────────────────────────
+
+
+# Map property-metadata field names emitted by the Extractor onto the
+# canonical column on the ``deals`` table. Only fields that have a
+# 1:1 column mapping are listed; ad-hoc property attributes (year
+# built, GBA) live on the extraction row rather than the deals row
+# until they justify a column.
+_PROPERTY_METADATA_FIELD_TO_COL: dict[str, str] = {
+    "property_overview.keys": "keys",
+    "property_overview.brand": "brand",
+    "property_overview.address": "city",
+    "property_overview.submarket": "city",
+    "property_overview.location": "city",
+}
+
+
+async def _sync_deal_metadata_from_extraction(
+    session: AsyncSession,
+    *,
+    deal_id: str,
+    tenant_id: str,
+    fields: list[dict[str, Any]],
+) -> None:
+    """When an extracted document carries property-metadata values that
+    differ from the deals-table row, prefer the document. Best-effort.
+
+    Implements the May 7 scope rule: docs > wizard. The wizard input
+    is a stale guess; the OM / T-12 carries the property's actual
+    keys / brand / address. We update the deals row in place and
+    write an ``audit_log`` entry per change so a reviewer can see
+    what shifted. UUID guard, exception-tolerant — never blocks
+    extraction completion.
+    """
+    try:
+        UUID(deal_id)
+    except (TypeError, ValueError):
+        return
+
+    # Read the current deals row so we only UPDATE columns whose
+    # extracted value actually contradicts what's there.
+    try:
+        row = (
+            await session.execute(
+                text("SELECT keys, brand, city FROM deals WHERE id = :id"),
+                {"id": deal_id},
+            )
+        ).first()
+    except Exception:  # noqa: BLE001 - best-effort
+        return
+    if row is None:
+        return
+    current = row._mapping
+    proposed: dict[str, Any] = {}
+
+    for f in fields:
+        if not isinstance(f, dict):
+            continue
+        name = (f.get("field_name") or "").strip().lower()
+        col = _PROPERTY_METADATA_FIELD_TO_COL.get(name)
+        if col is None:
+            continue
+        value = f.get("value")
+        if value in (None, "", 0):
+            continue
+        # Coerce to the column's expected type. Keys is int, brand /
+        # city are text. Skip anything we can't cleanly cast.
+        if col == "keys":
+            try:
+                value = int(value)
+            except (TypeError, ValueError):
+                continue
+            if value <= 0:
+                continue
+        else:
+            value = str(value).strip()
+            if not value:
+                continue
+
+        existing = current.get(col)
+        if col == "keys":
+            try:
+                existing_int = int(existing) if existing is not None else None
+            except (TypeError, ValueError):
+                existing_int = None
+            if existing_int == value:
+                continue
+        else:
+            if existing and str(existing).strip().lower() == value.lower():
+                continue
+
+        # First write wins per column — if the OM and T-12 disagree
+        # the OM's value lands first (loop order = SELECT order).
+        proposed.setdefault(col, value)
+
+    if not proposed:
+        return
+
+    # Build a single UPDATE so the change is atomic.
+    set_clauses = ", ".join(f"{col} = :{col}" for col in proposed)
+    params = {"id": deal_id, **proposed}
+    try:
+        await session.execute(
+            text(f"UPDATE deals SET {set_clauses}, updated_at = NOW() WHERE id = :id")
+            if not str(get_settings().async_database_url).startswith("sqlite")
+            else text(
+                f"UPDATE deals SET {set_clauses}, updated_at = CURRENT_TIMESTAMP WHERE id = :id"
+            ),
+            params,
+        )
+        await session.commit()
+    except Exception:  # noqa: BLE001
+        logger.exception(
+            "deal_metadata_sync: failed to UPDATE deals for deal=%s changes=%s",
+            deal_id,
+            list(proposed.keys()),
+        )
+        return
+
+    # Audit log — one entry per column change so reviewers see
+    # provenance ("we changed keys from 200 → 132 because the OM
+    # said so").
+    try:
+        from ..audit import log_audit
+
+        for col, new_val in proposed.items():
+            old_val = current.get(col)
+            await log_audit(
+                session,
+                tenant_id=tenant_id,
+                action="deal.metadata_synced_from_extraction",
+                resource_type="deal",
+                resource_id=deal_id,
+                input_payload={
+                    "column": col,
+                    "old_value": (str(old_val) if old_val is not None else None),
+                    "new_value": (str(new_val) if new_val is not None else None),
+                    "rule": "docs > wizard (May 7 scope)",
+                },
+            )
+        await session.commit()
+    except Exception:  # noqa: BLE001
+        # Audit failure shouldn't roll back the metadata fix.
+        logger.warning(
+            "deal_metadata_sync: audit_log write failed for deal=%s — change still applied",
+            deal_id,
+        )
+
+    logger.info(
+        "deal_metadata_sync: deal=%s applied=%s",
+        deal_id,
+        list(proposed.keys()),
+    )
 
 
 # ─────────────────────────── verification ───────────────────────────
