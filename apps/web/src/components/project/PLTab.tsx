@@ -30,6 +30,9 @@ import { IntroCard } from '@/components/help/IntroCard';
 import { MetricLabel } from '@/components/help/MetricLabel';
 import { GLOSSARY } from '@/lib/glossary';
 import DueDiligenceSection from './pl/DueDiligenceSection';
+import ProjectionsSection from './pl/ProjectionsSection';
+import HistoricalsSection from './pl/HistoricalsSection';
+import IndexAnalysisSection from './pl/IndexAnalysisSection';
 
 // Lovable parity: six sub-tabs replace the prior four.
 const subTabs = [
@@ -462,15 +465,13 @@ export default function PLTab({ projectId }: { projectId: number | string }) {
             margin={margin}
           />
         )}
-        {tab === 'Historicals' && <HistoricalsPlaceholder />}
-        {tab === 'Projections' && (
-          <HistoricalProjected
-            statement={stmt}
-            isKimptonDemo={isKimptonDemo}
-            hasWorkerStatement={hasWorkerStatement}
-          />
+        {tab === 'Historicals' && (
+          <HistoricalsSection dealId={dealId} isKimptonDemo={isKimptonDemo} />
         )}
-        {tab === 'Index Analysis' && <IndexAnalysisPlaceholder />}
+        {tab === 'Projections' && (
+          <ProjectionsSection dealId={dealId} isKimptonDemo={isKimptonDemo} />
+        )}
+        {tab === 'Index Analysis' && <IndexAnalysisSection dealId={dealId} isKimptonDemo={isKimptonDemo} />}
         {tab === 'Competitive Set' && <CompetitiveSet dealId={dealId} isKimptonDemo={isKimptonDemo} />}
         {tab === 'Due Diligence' && <DueDiligenceSection dealId={dealId} />}
         {computing && (
@@ -1374,29 +1375,6 @@ function HistoricalsPlaceholder() {
           Multi-year historical table (Amount / % Rev / PAR / POR per year) coming
           with the next deploy. The trailing twelve months from your uploaded T-12
           is anchored in the <span className="font-medium text-ink-700">P&amp;L Summary</span> above.
-        </div>
-      </div>
-    </Card>
-  );
-}
-
-// ─────────────────────────── Index Analysis (placeholder) ───────────────────────────
-
-function IndexAnalysisPlaceholder() {
-  return (
-    <Card className="p-8 opacity-90">
-      <SectionCardHeader
-        Icon={TrendingUp}
-        iconTone="brand"
-        title="Subject vs Competitive Set Index"
-        subtitle="Historical and forecast index series, 2019–2033"
-        right={<Badge tone="gray" uppercase>Coming Soon</Badge>}
-      />
-      <div className="rounded-lg border border-dashed border-border bg-surface p-8 text-center">
-        <div className="text-[12.5px] text-ink-500 max-w-2xl mx-auto leading-relaxed">
-          Subject vs Competitive Set index analysis (historical + forecast 2019–2033)
-          coming with the next deploy. Today: see the{' '}
-          <span className="font-medium text-ink-700">Competitive Set</span> sub-tab for current STR indices.
         </div>
       </div>
     </Card>
