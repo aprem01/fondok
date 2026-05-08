@@ -1,13 +1,18 @@
 'use client';
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useParams } from 'next/navigation';
 import {
   LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend,
   ResponsiveContainer, ReferenceLine,
 } from 'recharts';
-import { BarChart3 } from 'lucide-react';
+import type { LucideIcon } from 'lucide-react';
+import {
+  BarChart3, DollarSign, PieChart as PieChartIcon, Layers, History,
+  TrendingUp, Building2, ClipboardList,
+} from 'lucide-react';
 import { Card } from '@/components/ui/Card';
 import { Button } from '@/components/ui/Button';
+import { Badge } from '@/components/ui/Badge';
 import { useToast } from '@/components/ui/Toast';
 import EngineHeader from './EngineHeader';
 import EngineRightRail from './EngineRightRail';
@@ -15,6 +20,7 @@ import EngineLegend from './EngineLegend';
 import EngineRunHistory from './EngineRunHistory';
 import WhatJustHappened from './WhatJustHappened';
 import type { EngineOutputsResponse } from '@/lib/api';
+import { isWorkerConnected, workerUrl } from '@/lib/api';
 import { kimptonAnglerOverview } from '@/lib/mockData';
 import { fmtCurrency, fmtMillions, cn } from '@/lib/format';
 import { getEngineField, useEngineOutputs } from '@/lib/hooks/useEngineOutputs';
@@ -23,8 +29,18 @@ import { useFlash } from '@/lib/hooks/useFlash';
 import { IntroCard } from '@/components/help/IntroCard';
 import { MetricLabel } from '@/components/help/MetricLabel';
 import { GLOSSARY } from '@/lib/glossary';
+import DueDiligenceSection from './pl/DueDiligenceSection';
 
-const subTabs = ['Operating Statement', 'Departmental', 'Per-Key Metrics', 'Historical vs Projected'];
+// Lovable parity: six sub-tabs replace the prior four.
+const subTabs = [
+  'P&L Summary',
+  'Historicals',
+  'Projections',
+  'Index Analysis',
+  'Competitive Set',
+  'Due Diligence',
+] as const;
+type SubTab = typeof subTabs[number];
 
 const tooltipStyle = {
   contentStyle: { background: '#fff', border: '1px solid #e5e7eb', borderRadius: 6, fontSize: 12 },
@@ -258,7 +274,7 @@ function buildStatement(): StatementResult {
 const kimptonStatement = buildStatement();
 
 export default function PLTab({ projectId }: { projectId: number | string }) {
-  const [tab, setTab] = useState('Operating Statement');
+  const [tab, setTab] = useState<SubTab>('P&L Summary');
   const params = useParams();
   const { toast } = useToast();
   const dealId = (params?.id as string | undefined) ?? '';
@@ -363,10 +379,21 @@ export default function PLTab({ projectId }: { projectId: number | string }) {
   const { totals } = stmt;
   const y1Rev = totals.totalRev[0] * 1000;
   const y1NOI = totals.noi[0] * 1000;
+  const y1GOP = totals.gop[0] * 1000;
   const margin = y1Rev ? y1NOI / y1Rev : 0;
   const noiCagr = totals.noi[0] > 0 && totals.noi[4] > 0
     ? Math.pow(totals.noi[4] / totals.noi[0], 1 / 4) - 1
     : 0;
+  // Y1 RevPAR: prefer worker revenue engine; otherwise derive from
+  // rooms revenue / available room nights when keys are known.
+  const y1RevPAR = useMemo(() => {
+    if (revenueYears && revenueYears.length > 0 && revenueYears[0].revpar > 0) {
+      return revenueYears[0].revpar;
+    }
+    const room = stmt.rows.find(r => r.label === 'Room Revenue')?.values?.[0] ?? 0;
+    if (propertyKeys > 0 && room > 0) return (room * 1000) / (propertyKeys * 365);
+    return 0;
+  }, [revenueYears, stmt, propertyKeys]);
 
   return (
     <div className="flex gap-4">
@@ -406,13 +433,6 @@ export default function PLTab({ projectId }: { projectId: number | string }) {
         runToken={runToken}
       />
 
-      <div className={cn('grid grid-cols-4 gap-4 mb-5', computing && 'pointer-events-none opacity-60')}>
-        <KPI label="Year 1 Revenue" tip="Total top-line revenue projected for the first full year of ownership — rooms, F&B, and other revenue combined." value={fmtMillions(y1Rev, 2)} flashKey={y1Rev} />
-        <KPI label="Year 1 NOI" tip={GLOSSARY['NOI']} value={fmtMillions(y1NOI, 2)} tone="green" flashKey={y1NOI} />
-        <KPI label="NOI Margin" tip="NOI as a percentage of total revenue. Higher margins mean a more efficient hotel — typical for select-service hotels: 30–40%." value={`${(margin * 100).toFixed(1)}%`} flashKey={margin} />
-        <KPI label="5-Year NOI CAGR" tip="Compound Annual Growth Rate of NOI over the five-year hold. How fast the hotel's earning power grows year-over-year." value={`${(noiCagr * 100).toFixed(1)}%`} tone="green" flashKey={noiCagr} />
-      </div>
-
       <div className="flex items-center gap-1 mb-3 border-b border-border">
         {subTabs.map(t => (
           <button key={t} onClick={() => setTab(t)}
@@ -427,18 +447,32 @@ export default function PLTab({ projectId }: { projectId: number | string }) {
       <EngineLegend />
 
       <div className={cn(computing && 'relative pointer-events-none opacity-60')}>
-        {tab === 'Operating Statement' && <OperatingStatement statement={stmt} sourceLabel={hasWorkerStatement ? 'worker' : 'mock'} sourcedFromT12={sourcedFromT12} />}
-        {tab === 'Departmental' && (
-          keysReady
-            ? <Departmental statement={stmt} keys={propertyKeys} />
-            : <KeysLoadingState loading={dealLoading} />
+        {tab === 'P&L Summary' && (
+          <PLSummary
+            stmt={stmt}
+            sourceLabel={hasWorkerStatement ? 'worker' : 'mock'}
+            sourcedFromT12={sourcedFromT12}
+            keysReady={keysReady}
+            propertyKeys={propertyKeys}
+            dealLoading={dealLoading}
+            y1Rev={y1Rev}
+            y1NOI={y1NOI}
+            y1GOP={y1GOP}
+            y1RevPAR={y1RevPAR}
+            margin={margin}
+          />
         )}
-        {tab === 'Per-Key Metrics' && (
-          keysReady
-            ? <PerKey statement={stmt} keys={propertyKeys} isKimptonDemo={isKimptonDemo} revenueYears={revenueYears ?? null} />
-            : <KeysLoadingState loading={dealLoading} />
+        {tab === 'Historicals' && <HistoricalsPlaceholder />}
+        {tab === 'Projections' && (
+          <HistoricalProjected
+            statement={stmt}
+            isKimptonDemo={isKimptonDemo}
+            hasWorkerStatement={hasWorkerStatement}
+          />
         )}
-        {tab === 'Historical vs Projected' && <HistoricalProjected statement={stmt} isKimptonDemo={isKimptonDemo} hasWorkerStatement={hasWorkerStatement} />}
+        {tab === 'Index Analysis' && <IndexAnalysisPlaceholder />}
+        {tab === 'Competitive Set' && <CompetitiveSet dealId={dealId} isKimptonDemo={isKimptonDemo} />}
+        {tab === 'Due Diligence' && <DueDiligenceSection dealId={dealId} />}
         {computing && (
           <div className="absolute inset-0 bg-bg/60 backdrop-blur-[1px] flex items-start justify-center pt-12 rounded-md">
             <span className="inline-flex items-center gap-2 px-3 py-1.5 bg-white border border-border rounded-md shadow-card text-[12.5px] font-medium text-ink-700">
@@ -948,5 +982,649 @@ function StatementRowR({
         {row.cagr !== undefined ? `${(row.cagr * 100).toFixed(1)}%` : '—'}
       </td>
     </tr>
+  );
+}
+
+// ─────────────────────────── Lovable-parity sub-tabs ───────────────────────────
+//
+// Visual language: each section card has a colored "icon mark" tile in
+// the top-left (rounded-lg, light tint, 10×10 / 11×11), a title, and an
+// optional subtitle. Mirrors the Lovable reference.
+
+function SectionCardHeader({
+  Icon,
+  iconTone = 'brand',
+  title,
+  subtitle,
+  right,
+}: {
+  Icon: LucideIcon;
+  iconTone?: 'brand' | 'amber' | 'success' | 'gold' | 'slate';
+  title: string;
+  subtitle?: string;
+  right?: React.ReactNode;
+}) {
+  const tile = {
+    brand: 'bg-brand-50 text-brand-700',
+    amber: 'bg-warn-50 text-warn-700',
+    success: 'bg-success-50 text-success-700',
+    gold: 'bg-gold-50 text-gold-700',
+    slate: 'bg-ink-100 text-ink-700',
+  }[iconTone];
+  return (
+    <div className="flex items-start justify-between mb-4">
+      <div className="flex items-start gap-3">
+        <div className={cn('w-10 h-10 rounded-lg flex items-center justify-center', tile)}>
+          <Icon size={18} />
+        </div>
+        <div>
+          <h3 className="text-[14px] font-semibold text-ink-900 leading-tight">{title}</h3>
+          {subtitle && <div className="text-[11.5px] text-ink-500 mt-0.5">{subtitle}</div>}
+        </div>
+      </div>
+      {right}
+    </div>
+  );
+}
+
+function PLSummary({
+  stmt,
+  sourceLabel,
+  sourcedFromT12,
+  keysReady,
+  propertyKeys,
+  dealLoading,
+  y1Rev,
+  y1NOI,
+  y1GOP,
+  y1RevPAR,
+  margin,
+}: {
+  stmt: StatementResult;
+  sourceLabel: 'worker' | 'mock';
+  sourcedFromT12: string[];
+  keysReady: boolean;
+  propertyKeys: number;
+  dealLoading: boolean;
+  y1Rev: number;
+  y1NOI: number;
+  y1GOP: number;
+  y1RevPAR: number;
+  margin: number;
+}) {
+  const hasRevPAR = y1RevPAR > 0;
+  return (
+    <div className="space-y-5">
+      {/* KPI strip */}
+      <div className="grid grid-cols-4 gap-4">
+        <KPI
+          label="Total Revenue"
+          tip="Total top-line revenue projected for the first full year of ownership — rooms, F&B, and other revenue combined."
+          value={fmtMillions(y1Rev, 2)}
+          flashKey={y1Rev}
+        />
+        <KPI
+          label="RevPAR"
+          tip="Revenue Per Available Room — rooms revenue divided by available room nights."
+          value={hasRevPAR ? `$${y1RevPAR.toFixed(0)}` : '—'}
+          flashKey={y1RevPAR}
+        />
+        <KPI
+          label="GOP"
+          tip="Gross Operating Profit — total revenue less departmental and undistributed operating expenses."
+          value={fmtMillions(y1GOP, 2)}
+          tone="green"
+          flashKey={y1GOP}
+        />
+        <KPI
+          label="NOI Margin"
+          tip="NOI as a percentage of total revenue. Higher margins mean a more efficient hotel — typical for select-service hotels: 30–40%."
+          value={`${(margin * 100).toFixed(1)}%`}
+          flashKey={margin}
+        />
+      </div>
+
+      {/* Profitability Summary card — wraps OperatingStatement */}
+      <Card className="p-5">
+        <SectionCardHeader
+          Icon={DollarSign}
+          iconTone="brand"
+          title="Profitability Summary"
+          subtitle={`USALI operating statement · $ in 000s, FYE Dec 31${sourceLabel === 'worker' ? ' · live engine output' : ''}`}
+        />
+        {/* Mini KPIs anchored above the table — same numbers, denser layout. */}
+        <div className="grid grid-cols-4 gap-3 mb-4">
+          <MiniKPI label="Total Revenue" value={fmtMillions(y1Rev, 2)} />
+          <MiniKPI label="GOP" value={fmtMillions(y1GOP, 2)} tone="green" />
+          <MiniKPI label="NOI" value={fmtMillions(y1NOI, 2)} tone="green" />
+          <MiniKPI label="NOI Margin" value={`${(margin * 100).toFixed(1)}%`} />
+        </div>
+        <OperatingStatementBare
+          statement={stmt}
+          sourceLabel={sourceLabel}
+          sourcedFromT12={sourcedFromT12}
+        />
+      </Card>
+
+      {/* Revenue Composition */}
+      <Card className="p-5">
+        <SectionCardHeader
+          Icon={PieChartIcon}
+          iconTone="success"
+          title="Revenue Composition"
+          subtitle="Year-1 mix across rooms, F&B, and other operating revenue"
+        />
+        {keysReady ? (
+          <DepartmentalRevMix statement={stmt} />
+        ) : (
+          <RevenueCompositionEmpty loading={dealLoading} />
+        )}
+      </Card>
+
+      {/* Expense Breakdown */}
+      <Card className="p-5">
+        <SectionCardHeader
+          Icon={Layers}
+          iconTone="amber"
+          title="Expense Breakdown"
+          subtitle="Departmental expense and profit by line"
+        />
+        {keysReady ? (
+          <DepartmentalCards statement={stmt} keys={propertyKeys} />
+        ) : (
+          <ExpenseBreakdownEmpty loading={dealLoading} />
+        )}
+      </Card>
+    </div>
+  );
+}
+
+function MiniKPI({ label, value, tone }: { label: string; value: string; tone?: 'green' }) {
+  return (
+    <div className="border border-border rounded-md px-3 py-2 bg-surface">
+      <div className="text-[10.5px] text-ink-500 uppercase tracking-wide">{label}</div>
+      <div
+        className={cn(
+          'text-[16px] font-semibold tabular-nums mt-0.5',
+          tone === 'green' ? 'text-success-700' : 'text-ink-900',
+        )}
+      >
+        {value}
+      </div>
+    </div>
+  );
+}
+
+function RevenueCompositionEmpty({ loading }: { loading: boolean }) {
+  return (
+    <div className="py-8 text-center">
+      <div className="text-[12.5px] text-ink-500">
+        {loading
+          ? 'Loading deal data — revenue composition will populate shortly.'
+          : 'No data available. Run underwriting to populate revenue composition.'}
+      </div>
+    </div>
+  );
+}
+
+function ExpenseBreakdownEmpty({ loading }: { loading: boolean }) {
+  return (
+    <div className="py-8 text-center">
+      <div className="text-[12.5px] text-ink-500">
+        {loading
+          ? 'Loading deal data — expense breakdown will populate shortly.'
+          : 'No data available. Run underwriting to populate expense breakdown.'}
+      </div>
+    </div>
+  );
+}
+
+// Operating-statement table without the outer Card chrome; rendered
+// inside the Profitability Summary section card on the new layout.
+function OperatingStatementBare({
+  statement,
+  sourceLabel,
+  sourcedFromT12,
+}: {
+  statement: StatementResult;
+  sourceLabel: 'worker' | 'mock';
+  sourcedFromT12: string[];
+}) {
+  const { rows } = statement;
+  const t12LabelSet = new Set(
+    sourcedFromT12
+      .map((k) => T12_LINE_LABELS[k])
+      .filter((l): l is string => Boolean(l)),
+  );
+  return (
+    <>
+      <div className="overflow-x-auto">
+        <table className="w-full text-[12px] min-w-[700px]">
+          <thead>
+            <tr className="text-ink-500 text-[10.5px] border-b border-border">
+              <th className="text-left font-medium pb-2 w-72">&nbsp;</th>
+              <th className="text-right font-medium pb-2">Year 1</th>
+              <th className="text-right font-medium pb-2">Year 2</th>
+              <th className="text-right font-medium pb-2">Year 3</th>
+              <th className="text-right font-medium pb-2">Year 4</th>
+              <th className="text-right font-medium pb-2">Year 5</th>
+              <th className="text-right font-medium pb-2">CAGR</th>
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map((r, i) => {
+              if (r.kind === 'group') {
+                return (
+                  <tr key={r.label}>
+                    <td colSpan={7} className="pt-3 pb-1.5 text-[10.5px] uppercase tracking-wide text-ink-500 font-semibold">
+                      {r.label}
+                    </td>
+                  </tr>
+                );
+              }
+              const isSubtotal = r.kind === 'subtotal';
+              const isTotal = r.kind === 'total';
+              const tint = i % 2 === 0 ? '' : 'bg-ink-300/5';
+              const isFromT12 = t12LabelSet.has(r.label);
+              return (
+                <StatementRowR
+                  key={r.label}
+                  row={r}
+                  tint={tint}
+                  isSubtotal={isSubtotal}
+                  isTotal={isTotal}
+                  fromT12={isFromT12}
+                />
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
+      <div className="mt-4 pt-4 border-t border-border text-[11px] text-ink-500 space-y-1">
+        {t12LabelSet.size > 0 ? (
+          <>
+            <div>
+              • Lines marked <span className="inline-block px-1 py-0.5 rounded bg-success-50 text-success-700 text-[10px] font-semibold tabular-nums align-middle">T-12</span>{' '}
+              use Year-1 actuals from the deal&apos;s extracted T-12; remaining lines synthesized at USALI ratios.
+            </div>
+            <div>• Out-years grow the Year-1 anchor at the configured expense growth rate (default 3.5%).</div>
+          </>
+        ) : (
+          <>
+            <div>• Departmental expenses synthesized at USALI ratios: Rooms 25% of room rev, F&B 75% of F&B rev, Other 50%.</div>
+            <div>• Undistributed operating expenses follow lifestyle-tier benchmarks (A&G 8%, S&M 7%, POM 4%, Utilities 4.5%, IT 1.5%).</div>
+            <div>• Upload a T-12 to ground these lines on actual operating data.</div>
+          </>
+        )}
+      </div>
+      <div className="text-[10.5px] text-ink-400 mt-2">Source: {sourceLabel === 'worker' ? 'Live engine output' : 'Demo fixture'}</div>
+    </>
+  );
+}
+
+// Year-1 revenue mix bar chart — extracted from the prior Departmental
+// component so it can render inside the Revenue Composition card.
+function DepartmentalRevMix({ statement }: { statement: StatementResult }) {
+  const findRow = (label: string) =>
+    statement.rows.find(r => r.label === label)?.values ?? [0, 0, 0, 0, 0];
+  const room = findRow('Room Revenue')[0];
+  const fb = findRow('F&B Revenue')[0];
+  const other = findRow('Other Revenue')[0];
+  const totalRev = findRow('Total Revenue')[0];
+  const depts: { name: string; revenue: number; tone: 'brand' | 'amber' | 'success' }[] = [
+    { name: 'Rooms', revenue: room, tone: 'brand' },
+    { name: 'Food & Beverage', revenue: fb, tone: 'amber' },
+    { name: 'Other Operating', revenue: other, tone: 'success' },
+  ];
+  return (
+    <div className="space-y-2">
+      {depts.map(d => {
+        const pct = totalRev > 0 ? (d.revenue / totalRev) * 100 : 0;
+        const fill =
+          d.tone === 'brand' ? 'bg-brand-500'
+          : d.tone === 'amber' ? 'bg-warn-500'
+          : 'bg-success-500';
+        return (
+          <div key={d.name}>
+            <div className="flex justify-between text-[11.5px] mb-1">
+              <span className="text-ink-700">{d.name}</span>
+              <span className="tabular-nums text-ink-500">{pct.toFixed(1)}% of revenue</span>
+            </div>
+            <div className="w-full h-2.5 bg-ink-300/20 rounded">
+              <div className={cn('h-2.5 rounded', fill)} style={{ width: `${pct}%` }} />
+            </div>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+// Year-1 departmental cards — the grid of four cards that previously
+// led the Departmental sub-tab. Now rendered inside Expense Breakdown.
+function DepartmentalCards({ statement, keys }: { statement: StatementResult; keys: number }) {
+  const findRow = (label: string) =>
+    statement.rows.find(r => r.label === label)?.values ?? [0, 0, 0, 0, 0];
+  const room = findRow('Room Revenue');
+  const fb = findRow('F&B Revenue');
+  const other = findRow('Other Revenue');
+  const total = findRow('Total Revenue');
+  const roomsDept = findRow('Rooms Department');
+  const fbDept = findRow('F&B Department');
+  const otherDept = findRow('Other Department');
+
+  const depts = [
+    { name: 'Rooms', revenue: room[0], expense: roomsDept[0] },
+    { name: 'Food & Beverage', revenue: fb[0], expense: fbDept[0] },
+    { name: 'Other Operating', revenue: other[0], expense: otherDept[0] },
+  ].map(d => ({
+    ...d,
+    profit: d.revenue - d.expense,
+    margin: d.revenue > 0 ? (d.revenue - d.expense) / d.revenue : 0,
+    profitPerKey: keys > 0 ? ((d.revenue - d.expense) * 1000) / keys : 0,
+  }));
+
+  const totalRev = total[0];
+  const totalExp = depts.reduce((s, d) => s + d.expense, 0);
+  const totalProfit = totalRev - totalExp;
+  const totalCard = {
+    name: 'Total',
+    revenue: totalRev,
+    expense: totalExp,
+    profit: totalProfit,
+    margin: totalRev > 0 ? totalProfit / totalRev : 0,
+    profitPerKey: keys > 0 ? (totalProfit * 1000) / keys : 0,
+  };
+
+  return (
+    <div className="grid grid-cols-4 gap-4">
+      {[...depts, totalCard].map(d => (
+        <Card key={d.name} className={cn('p-4', d.name === 'Total' && 'bg-brand-50 border-brand-100')}>
+          <div className="text-[11px] text-ink-500 uppercase tracking-wide">{d.name}</div>
+          <div className="text-[18px] font-semibold tabular-nums mt-1 text-ink-900">
+            {fmtMillions(d.revenue * 1000, 2)}
+          </div>
+          <div className="mt-3 space-y-1.5 text-[12px]">
+            <Row k="Revenue" v={`$${d.revenue.toLocaleString()}K`} />
+            <Row k="Direct Expense" v={`$${d.expense.toLocaleString()}K`} />
+            <Row k="Dept Profit" v={`$${d.profit.toLocaleString()}K`} bold />
+            <Row k="Profit Margin" v={`${(d.margin * 100).toFixed(1)}%`} />
+            <Row k="Profit / Key" v={`$${Math.round(d.profitPerKey).toLocaleString()}`} />
+          </div>
+        </Card>
+      ))}
+    </div>
+  );
+}
+
+// ─────────────────────────── Historicals (placeholder) ───────────────────────────
+
+function HistoricalsPlaceholder() {
+  return (
+    <Card className="p-8 opacity-90">
+      <SectionCardHeader
+        Icon={History}
+        iconTone="slate"
+        title="Multi-Year Historicals"
+        subtitle="Amount / % Rev / PAR / POR per year"
+        right={<Badge tone="gray" uppercase>Coming Soon</Badge>}
+      />
+      <div className="rounded-lg border border-dashed border-border bg-surface p-8 text-center">
+        <div className="text-[12.5px] text-ink-500 max-w-2xl mx-auto leading-relaxed">
+          Multi-year historical table (Amount / % Rev / PAR / POR per year) coming
+          with the next deploy. The trailing twelve months from your uploaded T-12
+          is anchored in the <span className="font-medium text-ink-700">P&amp;L Summary</span> above.
+        </div>
+      </div>
+    </Card>
+  );
+}
+
+// ─────────────────────────── Index Analysis (placeholder) ───────────────────────────
+
+function IndexAnalysisPlaceholder() {
+  return (
+    <Card className="p-8 opacity-90">
+      <SectionCardHeader
+        Icon={TrendingUp}
+        iconTone="brand"
+        title="Subject vs Competitive Set Index"
+        subtitle="Historical and forecast index series, 2019–2033"
+        right={<Badge tone="gray" uppercase>Coming Soon</Badge>}
+      />
+      <div className="rounded-lg border border-dashed border-border bg-surface p-8 text-center">
+        <div className="text-[12.5px] text-ink-500 max-w-2xl mx-auto leading-relaxed">
+          Subject vs Competitive Set index analysis (historical + forecast 2019–2033)
+          coming with the next deploy. Today: see the{' '}
+          <span className="font-medium text-ink-700">Competitive Set</span> sub-tab for current STR indices.
+        </div>
+      </div>
+    </Card>
+  );
+}
+
+// ─────────────────────────── Competitive Set ───────────────────────────
+
+interface CompSetEntryAPI {
+  name: string | null;
+  keys: number | null;
+  occupancy_pct: number | null;
+  adr_usd: number | null;
+  revpar_usd: number | null;
+  // Optional fields some extractions surface; tolerate when missing.
+  location?: string | null;
+  open_date?: string | null;
+  is_subject?: boolean | null;
+}
+
+interface StrTrendBlockAPI {
+  subject_occupancy_pct?: number | null;
+  subject_adr_usd?: number | null;
+  subject_revpar_usd?: number | null;
+  rgi_revpar_index?: number | null;
+  ari_adr_index?: number | null;
+  mpi_occupancy_index?: number | null;
+  comp_set_size?: number | null;
+  total_keys?: number | null;
+  compset?: CompSetEntryAPI[];
+  // Loose-typed metadata pass-through; not all worker payloads carry these.
+  str_number?: string | null;
+  report_month?: string | null;
+}
+
+interface MarketDataAPIResponse {
+  deal_id: string;
+  str_trend?: StrTrendBlockAPI | null;
+  cbre_horizons?: Record<string, unknown> | null;
+  pnl_benchmark?: Record<string, unknown> | null;
+  sources?: Record<string, string[]>;
+}
+
+function CompetitiveSet({ dealId, isKimptonDemo }: { dealId: string; isKimptonDemo: boolean }) {
+  const [data, setData] = useState<MarketDataAPIResponse | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!dealId) return;
+    if (!isWorkerConnected()) return;
+    // Mock numeric ids (Kimpton demo = 7) won't have a worker record;
+    // skip the fetch and rely on the empty-state copy.
+    if (/^\d+$/.test(dealId)) return;
+    const ctrl = new AbortController();
+    setLoading(true);
+    fetch(`${workerUrl()}/deals/${dealId}/market-data`, { signal: ctrl.signal })
+      .then(async (res) => {
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        return (await res.json()) as MarketDataAPIResponse;
+      })
+      .then((json) => {
+        setData(json);
+        setLoading(false);
+      })
+      .catch((e) => {
+        if ((e as Error).name === 'AbortError') return;
+        setError((e as Error).message);
+        setLoading(false);
+      });
+    return () => ctrl.abort();
+  }, [dealId]);
+
+  const str = data?.str_trend ?? null;
+  const hasStr = Boolean(
+    str && (str.compset?.length || str.mpi_occupancy_index || str.rgi_revpar_index || str.ari_adr_index),
+  );
+
+  if (loading) {
+    return (
+      <Card className="p-12 text-center">
+        <div className="text-[12.5px] text-ink-500">Loading STR competitive set…</div>
+      </Card>
+    );
+  }
+
+  if (!hasStr) {
+    return (
+      <Card className="p-12 text-center">
+        <div className="w-12 h-12 rounded-lg bg-ink-100 flex items-center justify-center mx-auto mb-3">
+          <Building2 size={20} className="text-ink-500" />
+        </div>
+        <h3 className="text-[14px] font-semibold text-ink-900 mb-1">No competitive set data</h3>
+        <p className="text-[12.5px] text-ink-500 max-w-md mx-auto leading-relaxed">
+          {isKimptonDemo
+            ? 'Demo deal — STR comp set fixture is not yet wired into the demo seed.'
+            : 'Upload an STR comp set / TREND report to populate.'}
+        </p>
+        {error && <div className="text-[10.5px] text-danger-700 mt-2">{error}</div>}
+      </Card>
+    );
+  }
+
+  // Index normalization — STR conventionally reports indices as
+  // 0..1 ratios in some payloads and 0..200-ish indices in others.
+  // If the value looks like a ratio (≤ 5), multiply by 100.
+  const norm = (v: number | null | undefined): number | null => {
+    if (v == null) return null;
+    return v <= 5 ? v * 100 : v;
+  };
+  const mpi = norm(str?.mpi_occupancy_index);
+  const ari = norm(str?.ari_adr_index);
+  const rgi = norm(str?.rgi_revpar_index);
+
+  const sourceLine = [
+    'CoStar Group / STR',
+    str?.str_number ? `STR #${str.str_number}` : null,
+    str?.report_month ? str.report_month : null,
+  ]
+    .filter(Boolean)
+    .join(' · ');
+
+  return (
+    <div className="space-y-5">
+      <div className="grid grid-cols-3 gap-4">
+        <IndexCard label="MPI (Occupancy Index)" value={mpi} />
+        <IndexCard label="ARI (ADR Index)" value={ari} />
+        <IndexCard label="RGI (RevPAR Index)" value={rgi} />
+      </div>
+
+      <Card className="p-5">
+        <SectionCardHeader
+          Icon={Building2}
+          iconTone="brand"
+          title="Competitive Set Properties"
+          subtitle={sourceLine || 'Source: STR comp set'}
+        />
+        <div className="overflow-x-auto">
+          <table className="w-full text-[12px] min-w-[640px]">
+            <thead>
+              <tr className="text-ink-500 text-[10.5px] border-b border-border">
+                <th className="text-left font-medium pb-2">Property</th>
+                <th className="text-left font-medium pb-2">Location</th>
+                <th className="text-right font-medium pb-2">Keys</th>
+                <th className="text-left font-medium pb-2">Open Date</th>
+                <th className="text-right font-medium pb-2">STR #</th>
+              </tr>
+            </thead>
+            <tbody>
+              {(str?.compset ?? []).map((row, i) => (
+                <tr key={`${row.name ?? 'row'}-${i}`} className={cn('border-b border-border/50', i % 2 === 1 && 'bg-ink-300/5')}>
+                  <td className="py-2 font-medium text-ink-900">
+                    <span className="inline-flex items-center gap-2">
+                      {row.name ?? '—'}
+                      {row.is_subject && <Badge tone="blue" uppercase>Subject</Badge>}
+                    </span>
+                  </td>
+                  <td className="text-ink-700">{row.location ?? '—'}</td>
+                  <td className="text-right tabular-nums">{row.keys ?? '—'}</td>
+                  <td className="text-ink-700">{row.open_date ?? '—'}</td>
+                  <td className="text-right tabular-nums text-ink-500">{str?.str_number ?? '—'}</td>
+                </tr>
+              ))}
+              {(!str?.compset || str.compset.length === 0) && (
+                <tr>
+                  <td colSpan={5} className="py-6 text-center text-[12px] text-ink-500">
+                    Comp set rows not present in this STR extraction.
+                  </td>
+                </tr>
+              )}
+            </tbody>
+          </table>
+        </div>
+        {sourceLine && (
+          <div className="text-[10.5px] text-ink-400 mt-3 italic">{sourceLine}</div>
+        )}
+      </Card>
+    </div>
+  );
+}
+
+function IndexCard({ label, value }: { label: string; value: number | null }) {
+  if (value == null) {
+    return (
+      <Card className="p-5 bg-ink-100/40 border-ink-200">
+        <div className="text-[10.5px] text-ink-500 uppercase tracking-wide">{label}</div>
+        <div className="text-[24px] font-semibold tabular-nums mt-1 text-ink-400">—</div>
+        <div className="text-[11px] text-ink-500 mt-0.5">Not reported</div>
+      </Card>
+    );
+  }
+  const above = value > 100;
+  const tone = above ? 'success' : 'amber';
+  const wrap = tone === 'success'
+    ? 'bg-success-50 border-success-500/25'
+    : 'bg-warn-50 border-warn-500/30';
+  const valueTone = tone === 'success' ? 'text-success-700' : 'text-warn-700';
+  return (
+    <Card className={cn('p-5', wrap)}>
+      <div className="text-[10.5px] text-ink-500 uppercase tracking-wide">{label}</div>
+      <div className={cn('text-[24px] font-semibold tabular-nums mt-1', valueTone)}>
+        {value.toFixed(1)}
+      </div>
+      <div className={cn('text-[11px] mt-0.5 font-medium', valueTone)}>
+        {above ? 'Above Fair Share' : 'Below Fair Share'}
+      </div>
+    </Card>
+  );
+}
+
+// ─────────────────────────── Due Diligence (placeholder) ───────────────────────────
+
+function DueDiligencePlaceholder() {
+  return (
+    <Card className="p-8 opacity-90">
+      <SectionCardHeader
+        Icon={ClipboardList}
+        iconTone="gold"
+        title="Due Diligence Questions"
+        subtitle="AI-generated, prioritized, source-cited"
+        right={<Badge tone="gray" uppercase>Coming Soon</Badge>}
+      />
+      <div className="rounded-lg border border-dashed border-border bg-surface p-8 text-center">
+        <div className="text-[12.5px] text-ink-500 max-w-2xl mx-auto leading-relaxed">
+          AI-generated due diligence questions for the broker, prioritized and
+          source-cited. Coming with the next deploy.
+        </div>
+      </div>
+    </Card>
   );
 }

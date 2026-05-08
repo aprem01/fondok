@@ -53,14 +53,8 @@ export default function InvestmentTab({ projectId }: { projectId: number | strin
   const wTotalCapitalPerKey = getEngineField<number>(
     outputs, 'capital', 'total_capital_per_key',
   );
-  const wLtc = getEngineField<number>(outputs, 'capital', 'ltc');
-  const wLtv = getEngineField<number>(outputs, 'capital', 'ltv');
   const wDebtAmount = getEngineField<number>(outputs, 'capital', 'debt_amount');
-
   const wLoanAmount = getEngineField<number>(outputs, 'debt', 'loan_amount');
-  const wYearOneDscr = getEngineField<number>(outputs, 'debt', 'year_one_dscr');
-  const wYearOneDebtYield = getEngineField<number>(outputs, 'debt', 'year_one_debt_yield');
-  const wAnnualDebtService = getEngineField<number>(outputs, 'debt', 'annual_debt_service');
 
   const wExpenseYears = getEngineField<ExpenseYearLite[]>(outputs, 'expense', 'years');
   const wYearOneNoi = wExpenseYears && wExpenseYears.length > 0 ? wExpenseYears[0].noi : undefined;
@@ -251,14 +245,12 @@ export default function InvestmentTab({ projectId }: { projectId: number | strin
         const holdYears = isKimptonDemo ? o.returns.hold : undefined;
 
         // Senior Loan Financing — prefer debt engine echo, fall
-        // back to capital engine debt_amount, then fixture.
+        // back to capital engine debt_amount, then fixture. The
+        // simplified Lovable layout only surfaces term here, but we
+        // keep loanAmount derived for completeness / future rows.
         const loanAmount = pickNum(wLoanAmount ?? wDebtAmount, o.financing.loanAmount);
-        const loanLtc = pickNum(wLtc, 0.65);
-        const loanLtv = pickNum(wLtv, o.financing.ltv);
-        const loanDebtYield = pickNum(wYearOneDebtYield, 0.181);
-        const loanAcqCost = loanAmount != null ? loanAmount * 0.015 : undefined;
         const loanTerm = isKimptonDemo ? o.financing.term : undefined;
-        const loanAmort = isKimptonDemo ? o.financing.amortization : undefined;
+        void loanAmount;
 
         return (
         <>
@@ -268,6 +260,8 @@ export default function InvestmentTab({ projectId }: { projectId: number | strin
               ['Type', dealType ?? '—'],
               ['Location', dealLocation ?? '—'],
               ['Year Built', dealYearBuilt != null ? String(dealYearBuilt) : '—'],
+              ['Labor', isKimptonDemo ? 'Union' : '—'],
+              ['Title', isKimptonDemo ? 'Fee Simple' : '—'],
               ['Pre-Renovation Keys', dealKeys != null ? String(dealKeys) : '—'],
               ['Post-Renovation Keys', dealKeys != null ? String(dealKeys) : '—'],
               ['Post-Renovation SF', dealGba != null ? dealGba.toLocaleString() : '—'],
@@ -301,7 +295,7 @@ export default function InvestmentTab({ projectId }: { projectId: number | strin
               ['Total Renovation', fmtOrDash(renoBudget, fmtCurrency)],
             ]} />
           </div>
-          <div className="grid grid-cols-2 gap-5 mt-5">
+          <div className="grid grid-cols-1 gap-5 mt-5">
             <Panel title="Valuation Assumptions" rows={[
               ['Total Dev. Cost', fmtOrDash(totalCapital, fmtCurrency)],
               ['Per Key', fmtOrDash(totalCapitalPerKey, fmtCurrency)],
@@ -311,53 +305,24 @@ export default function InvestmentTab({ projectId }: { projectId: number | strin
               ['Sale Price', fmtOrDash(exitGross, fmtCurrency)],
               ['Disposition Fees', fmtOrDash(exitSellingCosts, fmtCurrency)],
             ]} />
+          </div>
+          {/* Senior Loan Financing vs. Senior Loan Refinancing — rendered as
+              two side-by-side cards per Lovable's exact label/layout spec.
+              Each card shows the three core terms (Month Funding, Start
+              Date, Term); the larger detail panel that previously lived
+              here can be reintroduced in a follow-up if Lovable adds it. */}
+          <div className="grid grid-cols-2 gap-5 mt-5">
             <Panel title="Senior Loan Financing" rows={[
               ['Month Funding', isKimptonDemo ? '0' : '—'],
               ['Start Date', isKimptonDemo ? '9/30/2025' : '—'],
               ['Term', loanTerm != null ? `${loanTerm} yrs` : '—'],
-              ['Maturity Date', isKimptonDemo ? '9/30/2030' : '—'],
-              ['Senior Acq. Cost', fmtOrDash(loanAcqCost, fmtCurrency)],
-              ['LTC Amount', fmtOrDash(loanAmount, fmtCurrency)],
-              ['LTC %', fmtOrDash(loanLtc, v => fmtPct(v, 1))],
-              ['LTV Amount', fmtOrDash(loanAmount, fmtCurrency)],
-              ['LTV %', fmtOrDash(loanLtv, v => fmtPct(v, 1))],
-              ['DY Amount', isKimptonDemo ? fmtCurrency(4_280_000) : '—'],
-              ['DY Date', isKimptonDemo ? '12/31/2027' : '—'],
-              ['DY NOI', isKimptonDemo ? fmtCurrency(4_280_000) : '—'],
-              ['DY %', fmtOrDash(loanDebtYield, v => fmtPct(v, 1))],
-              ['Loan Amount', fmtOrDash(loanAmount, fmtCurrency)],
-              ['Variable / Fixed', isKimptonDemo ? 'Variable' : '—'],
-              ['Spread over SOFR', isKimptonDemo ? '290 bps' : '—'],
-              ['SOFR Rate', isKimptonDemo ? fmtPct(0.035, 2) : '—'],
-              ['SOFR Floor', isKimptonDemo ? fmtPct(0, 2) : '—'],
-              ['SOFR Ceiling', isKimptonDemo ? fmtPct(0.045, 2) : '—'],
-              ['Interest Only Period', isKimptonDemo ? '24 mo' : '—'],
-              ['Amortization Period', loanAmort != null ? `${loanAmort} yrs` : '—'],
-              ['Origination Fee', isKimptonDemo ? fmtPct(0.015, 2) : '—'],
             ]} />
-          </div>
-          <div className="grid grid-cols-1 gap-5 mt-5">
             <Panel title="Senior Loan Refinancing" rows={[
-              // Refi terms aren't in the worker engine output yet, so
-              // these stay fixture-only on the Kimpton demo and show
-              // '—' on real deals rather than leaking refi proceeds.
+              // Refi terms aren't in the worker engine output yet, so these
+              // stay fixture-only on the demo and render '—' otherwise.
               ['Month Funding', isKimptonDemo ? '48' : '—'],
               ['Start Date', isKimptonDemo ? '9/30/2029' : '—'],
               ['Term', isKimptonDemo ? `${o.refi.refiTerm} yrs` : '—'],
-              ['Maturity Date', isKimptonDemo ? '9/30/2034' : '—'],
-              ['LTV Amount', isKimptonDemo ? fmtCurrency(31_200_000) : '—'],
-              ['LTV %', isKimptonDemo ? fmtPct(o.refi.refiLTV, 1) : '—'],
-              ['Loan Proceeds', isKimptonDemo ? fmtCurrency(31_200_000) : '—'],
-              ['Loan Payoff', fmtOrDash(loanAmount, fmtCurrency)],
-              ['Cash Pulled Out', isKimptonDemo
-                ? fmtCurrency(31_200_000 - o.financing.loanAmount)
-                : '—'],
-              ['Variable / Fixed', isKimptonDemo ? 'Fixed' : '—'],
-              ['Interest Rate', isKimptonDemo ? fmtPct(o.refi.refiRate, 2) : '—'],
-              ['Interest Only Period', isKimptonDemo ? '12 mo' : '—'],
-              ['Amortization Period', isKimptonDemo ? `${o.refi.refiAmortization} yrs` : '—'],
-              ['Origination Fee', isKimptonDemo ? fmtPct(0.0125, 2) : '—'],
-              ['Refi Acq. Cost', isKimptonDemo ? fmtCurrency(31_200_000 * 0.0125) : '—'],
             ]} />
           </div>
         </>
@@ -366,45 +331,59 @@ export default function InvestmentTab({ projectId }: { projectId: number | strin
 
       {tab === 'Sources & Uses' && (ctx ? <LiveSourcesUses /> : <StaticSourcesUses />)}
 
-      {tab === 'Timeline' && (
-        <Card className="p-5">
-          <h3 className="text-[13px] font-semibold text-ink-900 mb-3">Transaction Timeline</h3>
-          <table className="w-full text-[12.5px]">
-            <thead>
-              <tr className="text-ink-500 text-[11px] border-b border-border">
-                <th className="text-left font-medium pb-2">Event</th>
-                <th className="text-right font-medium pb-2">Start</th>
-                <th className="text-right font-medium pb-2">Duration</th>
-                <th className="text-right font-medium pb-2">Finish</th>
-              </tr>
-            </thead>
-            <tbody>
-              {[
-                ['Hotel Purchase', '9/30/2025', '0 mo', '9/30/2025'],
-                ['Senior Loan Interest-Only Period', '9/30/2025', '48 mo', '9/30/2029'],
-                ['Senior Loan Perm Loan Payoff', '9/30/2029', '12 mo', '9/30/2030'],
-                ['Acq. To Renovation', '9/30/2025', '3 mo', '12/31/2025'],
-                ['Renovation', '1/1/2026', '12 mo', '12/31/2026'],
-                ['Completed Renovation', '1/1/2027', '—', '—'],
-                ['Receive Key Money', '1/1/2027', '1 mo', '2/1/2027'],
-                ['Ramp-Up Period', '1/1/2027', '12 mo', '12/31/2027'],
-                ['Senior Loan Refi', '9/30/2029', '—', '—'],
-                ['Disposition After Refi', '9/30/2030', '—', '—'],
-                ['Investment Hold Period', '9/30/2025', '60 mo', '9/30/2030'],
-                ['Practical Completion (FTM NOI, Value)', '12/31/2026', '—', '—'],
-                ['Stabilized (FTM NOI, Value)', '12/31/2027', '—', '—'],
-              ].map(row => (
-                <tr key={row[0]} className="border-b border-border/50">
-                  <td className="py-2">{row[0]}</td>
-                  <td className="text-right tabular-nums text-ink-700">{row[1]}</td>
-                  <td className="text-right tabular-nums text-ink-700">{row[2]}</td>
-                  <td className="text-right tabular-nums text-ink-700">{row[3]}</td>
+      {tab === 'Timeline' && (() => {
+        // ─── Transaction Timeline (Lovable spec) ─────────────────
+        // Render all 13 rows in fixed order with three numeric
+        // columns (START | DURATION | FINISH). Most rows have no
+        // engine source yet, so we surface fixture values on the
+        // demo and '—' otherwise — Lovable's screenshot keeps the
+        // row visible even when values are missing.
+        const TIMELINE: { event: string; start?: string; duration?: string; finish?: string }[] = [
+          { event: 'Hotel Purchase',                          start: '9/30/2025',  duration: '0 mo',  finish: '9/30/2025' },
+          { event: 'Senior Loan Interest-Only Period',        start: '9/30/2025',  duration: '48 mo', finish: '9/30/2029' },
+          { event: 'Senior Loan Perm Loan Payoff',            start: '9/30/2029',  duration: '12 mo', finish: '9/30/2030' },
+          { event: 'Acq. To Renovation',                      start: '9/30/2025',  duration: '3 mo',  finish: '12/31/2025' },
+          { event: 'Renovation',                              start: '1/1/2026',   duration: '12 mo', finish: '12/31/2026' },
+          { event: 'Completed Renovation',                    start: '1/1/2027' },
+          { event: 'Receive Key Money',                       start: '1/1/2027',   duration: '1 mo',  finish: '2/1/2027' },
+          { event: 'Ramp-Up Period',                          start: '1/1/2027',   duration: '12 mo', finish: '12/31/2027' },
+          { event: 'Senior Loan Refi',                        start: '9/30/2029' },
+          { event: 'Disposition After Refi',                  start: '9/30/2030' },
+          { event: 'Investment Hold Period',                  start: '9/30/2025',  duration: '60 mo', finish: '9/30/2030' },
+          { event: 'Practical Completion (FTM NOI, Value)',   start: '12/31/2026' },
+          { event: 'Stabilized (FTM NOI, Value)',             start: '12/31/2027' },
+        ];
+        const cell = (v: string | undefined) =>
+          v != null && v !== '' ? (isKimptonDemo ? v : '—') : '—';
+        return (
+          <Card className="p-5">
+            <h3 className="text-[13px] font-semibold text-ink-900 mb-3">Transaction Timeline</h3>
+            {/* Thin colored bar separator between title and column headers
+                — matches Lovable's reference screenshot. */}
+            <div className="h-1 w-full rounded bg-brand-500 mb-3" />
+            <table className="w-full text-[12.5px]">
+              <thead>
+                <tr className="text-ink-500 text-[11px] border-b border-border">
+                  <th className="text-left font-medium pb-2">Event</th>
+                  <th className="text-right font-medium pb-2">START</th>
+                  <th className="text-right font-medium pb-2">DURATION</th>
+                  <th className="text-right font-medium pb-2">FINISH</th>
                 </tr>
-              ))}
-            </tbody>
-          </table>
-        </Card>
-      )}
+              </thead>
+              <tbody>
+                {TIMELINE.map(row => (
+                  <tr key={row.event} className="border-b border-border/50">
+                    <td className="py-2">{row.event}</td>
+                    <td className="text-right tabular-nums text-ink-700">{cell(row.start)}</td>
+                    <td className="text-right tabular-nums text-ink-700">{cell(row.duration)}</td>
+                    <td className="text-right tabular-nums text-ink-700">{cell(row.finish)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </Card>
+        );
+      })()}
       {computing && (
         <div className="absolute inset-0 bg-bg/60 backdrop-blur-[1px] flex items-start justify-center pt-12 rounded-md">
           <span className="inline-flex items-center gap-2 px-3 py-1.5 bg-white border border-border rounded-md shadow-card text-[12.5px] font-medium text-ink-700">
@@ -430,6 +409,78 @@ export default function InvestmentTab({ projectId }: { projectId: number | strin
 
 interface CapitalLine { label: string; amount: number; pct?: number | null; is_total?: boolean }
 
+// ─── Sources & Uses label canonicalization (Lovable spec) ────────────
+// Lovable's reference shows an exact ordered set of rows on each side.
+// The worker capital engine emits a different but overlapping set of
+// labels (see apps/worker/app/engines/capital.py); a few Lovable rows
+// (Soft Costs Arch/Design, Lender Fees & Costs, Interest Reserve,
+// Op. Shortfall Reserve, Mezzanine, Sponsor Equity, LP Equity, Key
+// Money) are not yet emitted by the engine. We render the full Lovable
+// row list in order and fill from the engine where available, '—'
+// otherwise.
+const USES_ORDER: { label: string; aliases: string[] }[] = [
+  { label: 'Purchase Price', aliases: ['Purchase Price'] },
+  { label: 'Renovation Budget', aliases: ['Renovation Budget', 'Renovation'] },
+  { label: 'Soft Costs (Arch/Design)', aliases: ['Soft Costs (Arch/Design)', 'Soft Costs'] },
+  { label: 'Closing Costs', aliases: ['Closing Costs'] },
+  { label: 'Working Capital / Reserves', aliases: ['Working Capital / Reserves', 'Working Capital'] },
+  { label: 'Lender Fees & Costs', aliases: ['Lender Fees & Costs', 'Loan Costs'] },
+  { label: 'Interest Reserve', aliases: ['Interest Reserve'] },
+  { label: 'Op. Shortfall Reserve', aliases: ['Op. Shortfall Reserve', 'Operating Shortfall Reserve'] },
+];
+const SOURCES_ORDER: { label: string; aliases: string[] }[] = [
+  { label: 'Senior Loan', aliases: ['Senior Loan', 'Senior Debt'] },
+  { label: 'Mezzanine', aliases: ['Mezzanine'] },
+  { label: 'Sponsor Equity', aliases: ['Sponsor Equity'] },
+  { label: 'LP Equity', aliases: ['LP Equity'] },
+  { label: 'Key Money', aliases: ['Key Money'] },
+];
+
+interface CanonicalRow { label: string; amount: number | null; total: boolean; pct: number }
+
+function canonicalizeUses(raw: { label: string; amount: number; total?: boolean; pct?: number }[]): CanonicalRow[] {
+  const total = raw.find(r => r.total) ?? null;
+  const rows: CanonicalRow[] = USES_ORDER.map(({ label, aliases }) => {
+    const hit = raw.find(r => !r.total && aliases.includes(r.label));
+    return { label, amount: hit ? hit.amount : null, total: false, pct: hit?.pct ?? 0 };
+  });
+  rows.push({
+    label: 'Total Uses',
+    amount: total ? total.amount : rows.reduce((s, r) => s + (r.amount ?? 0), 0),
+    total: true,
+    pct: 1,
+  });
+  return rows;
+}
+
+function canonicalizeSources(raw: { label: string; amount: number; total?: boolean; pct?: number }[]): CanonicalRow[] {
+  const total = raw.find(r => r.total) ?? null;
+  const rows: CanonicalRow[] = SOURCES_ORDER.map(({ label, aliases }) => {
+    const hit = raw.find(r => !r.total && aliases.includes(r.label));
+    return { label, amount: hit ? hit.amount : null, total: false, pct: hit?.pct ?? 0 };
+  });
+  // The engine emits a single "Equity" line — surface it under
+  // "Sponsor Equity" if no LP/Sponsor split is provided.
+  const hasAnySource = rows.some(r => r.amount != null);
+  if (!hasAnySource) {
+    const equity = raw.find(r => !r.total && /^Equity$/i.test(r.label));
+    if (equity) {
+      const sponsorRow = rows.find(r => r.label === 'Sponsor Equity');
+      if (sponsorRow) {
+        sponsorRow.amount = equity.amount;
+        sponsorRow.pct = equity.pct ?? 0;
+      }
+    }
+  }
+  rows.push({
+    label: 'Total Sources',
+    amount: total ? total.amount : rows.reduce((s, r) => s + (r.amount ?? 0), 0),
+    total: true,
+    pct: 1,
+  });
+  return rows;
+}
+
 function LiveSourcesUses() {
   const { assumptions, setAssumption, model } = useAssumptionsOptional()!;
   const [edit, setEdit] = useState(false);
@@ -441,12 +492,14 @@ function LiveSourcesUses() {
   const wSources = getEngineField<CapitalLine[]>(outputs, 'capital', 'sources');
   const wUses = getEngineField<CapitalLine[]>(outputs, 'capital', 'uses');
 
-  const usesRows = (wUses && wUses.length > 0)
+  const rawUses = (wUses && wUses.length > 0)
     ? wUses.map(u => ({ label: u.label, amount: u.amount, total: !!u.is_total, pct: u.pct ?? 0 }))
     : model.sourcesAndUses.uses.map(u => ({ ...u, total: u.total ?? false, pct: 0 }));
-  const sourcesRows = (wSources && wSources.length > 0)
+  const rawSources = (wSources && wSources.length > 0)
     ? wSources.map(s => ({ label: s.label, amount: s.amount, total: !!s.is_total, pct: s.pct ?? 0 }))
-    : model.sourcesAndUses.sources;
+    : model.sourcesAndUses.sources.map(s => ({ ...s, total: s.total ?? false, pct: s.pct ?? 0 }));
+  const usesRows = canonicalizeUses(rawUses);
+  const sourcesRows = canonicalizeSources(rawSources);
   const usingWorker = (wSources && wSources.length > 0) || (wUses && wUses.length > 0);
 
   return (
@@ -465,7 +518,9 @@ function LiveSourcesUses() {
                 <tr key={u.label}
                   className={u.total ? 'font-semibold border-t border-border' : 'border-b border-border/50'}>
                   <td className="py-2">{u.label}</td>
-                  <td className="text-right tabular-nums">{fmtCurrency(u.amount)}</td>
+                  <td className="text-right tabular-nums">
+                    {u.amount != null ? fmtCurrency(u.amount) : '—'}
+                  </td>
                 </tr>
               ))}
             </tbody>
@@ -487,7 +542,9 @@ function LiveSourcesUses() {
                     {s.label}
                     {!s.total && s.pct ? <span className="ml-2 text-ink-500 text-[11px]">{(s.pct * 100).toFixed(1)}%</span> : null}
                   </td>
-                  <td className="text-right tabular-nums">{fmtCurrency(s.amount)}</td>
+                  <td className="text-right tabular-nums">
+                    {s.amount != null ? fmtCurrency(s.amount) : '—'}
+                  </td>
                 </tr>
               ))}
             </tbody>
@@ -587,12 +644,14 @@ function StaticSourcesUses() {
   const wUses = getEngineField<CapitalLine[]>(outputs, 'capital', 'uses');
 
   const o = kimptonAnglerOverview;
-  const uses = (wUses && wUses.length > 0)
-    ? wUses.map(u => ({ label: u.label, amount: u.amount, total: !!u.is_total }))
-    : o.uses;
-  const sources = (wSources && wSources.length > 0)
-    ? wSources.map(s => ({ label: s.label, amount: s.amount, total: !!s.is_total }))
-    : o.sources;
+  const rawUses = (wUses && wUses.length > 0)
+    ? wUses.map(u => ({ label: u.label, amount: u.amount, total: !!u.is_total, pct: u.pct ?? 0 }))
+    : o.uses.map(u => ({ ...u, total: u.total ?? false, pct: 0 }));
+  const rawSources = (wSources && wSources.length > 0)
+    ? wSources.map(s => ({ label: s.label, amount: s.amount, total: !!s.is_total, pct: s.pct ?? 0 }))
+    : o.sources.map(s => ({ ...s, total: s.total ?? false, pct: s.pct ?? 0 }));
+  const uses = canonicalizeUses(rawUses);
+  const sources = canonicalizeSources(rawSources);
   const usingWorker = (wSources && wSources.length > 0) || (wUses && wUses.length > 0);
 
   return (
@@ -609,7 +668,9 @@ function StaticSourcesUses() {
             {uses.map(u => (
               <tr key={u.label} className={u.total ? 'font-semibold border-t border-border' : 'border-b border-border/50'}>
                 <td className="py-2">{u.label}</td>
-                <td className="text-right tabular-nums">{fmtCurrency(u.amount)}</td>
+                <td className="text-right tabular-nums">
+                  {u.amount != null ? fmtCurrency(u.amount) : '—'}
+                </td>
               </tr>
             ))}
           </tbody>
@@ -627,7 +688,9 @@ function StaticSourcesUses() {
             {sources.map(s => (
               <tr key={s.label} className={s.total ? 'font-semibold border-t border-border' : 'border-b border-border/50'}>
                 <td className="py-2">{s.label}</td>
-                <td className="text-right tabular-nums">{fmtCurrency(s.amount)}</td>
+                <td className="text-right tabular-nums">
+                  {s.amount != null ? fmtCurrency(s.amount) : '—'}
+                </td>
               </tr>
             ))}
           </tbody>

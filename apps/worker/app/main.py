@@ -15,6 +15,7 @@ from .api import data_library as data_library_router
 from .api import deals as deals_router
 from .api import documents as documents_router
 from .api import dossier as dossier_router
+from .api import due_diligence as due_diligence_router
 from .api import export as export_router
 from .api import health as health_router
 from .api import market as market_router
@@ -112,6 +113,10 @@ def create_app() -> FastAPI:
     # /deals/{id}/dossier + /deals/{id}/ask — Context Data Product surface.
     app.include_router(dossier_router.router, prefix="/deals", tags=["dossier"])
     app.include_router(export_router.router, prefix="/deals", tags=["export"])
+    # /deals/{id}/due-diligence — Lovable parity broker-question packet.
+    app.include_router(
+        due_diligence_router.router, prefix="/deals", tags=["due-diligence"]
+    )
     app.include_router(
         data_library_router.router, prefix="/data-library", tags=["data-library"]
     )

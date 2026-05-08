@@ -444,6 +444,46 @@ MIGRATIONS: list[tuple[str, str]] = [
         ON engine_outputs (run_id)
         """,
     ),
+    # ─── Due Diligence broker questions (Lovable parity) ────────────
+    # The Due Diligence sub-tab on the P&L page renders a list of
+    # AI-generated broker questions with source citations, priority,
+    # and a status flow (pending → sent → answered). Persistence
+    # lives here so the analyst's "Mark as Sent" / "Mark Answered"
+    # actions survive across reloads.
+    (
+        "due_diligence_questions.create_table",
+        """
+        CREATE TABLE IF NOT EXISTS due_diligence_questions (
+            id                          UUID PRIMARY KEY,
+            deal_id                     UUID NOT NULL REFERENCES deals(id) ON DELETE CASCADE,
+            tenant_id                   UUID NOT NULL,
+            question                    TEXT NOT NULL,
+            narrative                   TEXT NOT NULL,
+            priority                    TEXT NOT NULL CHECK (priority IN ('high','medium','low')),
+            category                    TEXT NOT NULL CHECK (category IN ('revenue','expenses','operations','market','capex')),
+            source                      TEXT NOT NULL,
+            supporting_metric_key       TEXT,
+            supporting_metric_value     TEXT,
+            status                      TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending','sent','answered')),
+            created_at                  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+            sent_at                     TIMESTAMPTZ
+        )
+        """,
+    ),
+    (
+        "due_diligence_questions.idx_deal",
+        """
+        CREATE INDEX IF NOT EXISTS idx_due_diligence_questions_deal
+        ON due_diligence_questions (deal_id, created_at DESC)
+        """,
+    ),
+    (
+        "due_diligence_questions.idx_tenant",
+        """
+        CREATE INDEX IF NOT EXISTS idx_due_diligence_questions_tenant
+        ON due_diligence_questions (tenant_id)
+        """,
+    ),
 ]
 
 

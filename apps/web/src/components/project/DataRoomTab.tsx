@@ -4,13 +4,14 @@ import { useParams, useRouter } from 'next/navigation';
 import {
   UploadCloud, FolderOpen, Info, FileText, FileSpreadsheet,
   CheckCircle2, Loader2, Circle, AlertTriangle, ArrowRight, Play,
+  ClipboardList, Sparkles, Wallet, Receipt, Banknote, TrendingUp, Coins, Users2,
 } from 'lucide-react';
 import { Card } from '@/components/ui/Card';
 import { Button } from '@/components/ui/Button';
 import { Badge, StatusBadge } from '@/components/ui/Badge';
 import KebabMenu from '@/components/ui/KebabMenu';
 import { ConfidenceBadge } from '@/components/ui/ConfidenceBadge';
-import { documentChecklist, engines, kimptonDocuments, templates } from '@/lib/mockData';
+import { engines, kimptonDocuments, templates } from '@/lib/mockData';
 import { criticalCount, warnCount, varianceFlags } from '@/lib/varianceData';
 import {
   isWorkerConnected,
@@ -21,6 +22,7 @@ import {
   EngineOutputResponse,
 } from '@/lib/api';
 import { useDocuments } from '@/lib/hooks/useDocuments';
+import { useEngineOutputs } from '@/lib/hooks/useEngineOutputs';
 import { useEngineRun } from '@/lib/hooks/useEngineRun';
 import { useToast } from '@/components/ui/Toast';
 import EngineRunProgress from './EngineRunProgress';
@@ -45,6 +47,50 @@ const VARIANCE_DOCS = new Set([
   'Offering_Memorandum_Final.pdf',
   'T12_FinancialStatement.xlsx',
 ]);
+
+// Canonical 10-item required-document checklist surfaced in the Data Room.
+// Each row maps to zero or more upstream `doc_type` tokens — when a live
+// uploaded document carries a matching doc_type the row flips green and
+// drops its REQ badge. Items with an empty `match` set have no extractor
+// today and stay REQ until the worker learns them.
+const REQUIRED_CHECKLIST: { label: string; match: string[] }[] = [
+  { label: 'Offering Memorandum',           match: ['OM'] },
+  { label: 'T-12 / Trailing Twelve Months', match: ['T12', 'PNL'] },
+  { label: 'STR / Comp Set Report',         match: ['STR', 'STR_TREND'] },
+  { label: 'Insurance Records',             match: ['INSURANCE'] },
+  { label: 'Property Taxes',                match: ['PROPERTY_TAXES'] },
+  { label: 'Room Mix / Unit Mix',           match: [] },
+  { label: 'Historical CapEx',              match: [] },
+  { label: 'Basic Property Info',           match: [] },
+  { label: 'Leases & Agreements',           match: ['CONTRACT'] },
+  { label: 'Surveys & Reviews',             match: [] },
+];
+
+// Engine Status card mapping — UI label/icon plus the underlying worker
+// engine name(s) the readiness % is sourced from. Mirrors the canonical
+// six-engine column the Lovable reference renders.
+const ENGINE_STATUS_ROWS: {
+  id: string;
+  label: string;
+  icon: typeof Wallet;
+  engines: EngineName[];
+}[] = [
+  { id: 'investment',  label: 'Investment',  icon: Wallet,     engines: ['capital'] },
+  { id: 'pl',          label: 'P&L',         icon: Receipt,    engines: ['revenue', 'fb', 'expense'] },
+  { id: 'debt',        label: 'Debt',        icon: Banknote,   engines: ['debt'] },
+  { id: 'cash-flow',   label: 'Cash Flow',   icon: TrendingUp, engines: ['revenue', 'expense'] },
+  { id: 'returns',     label: 'Returns',     icon: Coins,      engines: ['returns'] },
+  { id: 'partnership', label: 'Partnership', icon: Users2,     engines: ['partnership'] },
+];
+
+// Status → readiness percent. We don't have a per-engine confidence on
+// the worker today, so use status as a proxy: complete=100, running/queued=50,
+// failed/missing=0. Averaged across the engine ids that back a UI row.
+function engineStatusReadiness(status: string | null | undefined): number {
+  if (status === 'complete') return 100;
+  if (status === 'running' || status === 'queued') return 50;
+  return 0;
+}
 
 // Map worker doc statuses to a single label the StatusBadge knows about.
 function statusLabel(s: string): string {
@@ -240,16 +286,55 @@ export default function DataRoomTab({ projectId }: { projectId: number | string 
     : [];
   const selectedCriticalCount = selectedVarianceFlags.filter((f) => f.severity === 'CRITICAL').length;
 
-  const checklist = documentChecklist.map((d, i) => ({
-    name: d,
-    complete: liveMode
-      ? i < docs.filter((x) => x.status === 'Extracted').length
-      : isFullDoc && i < 4,
+  // Build the required-doc checklist by intersecting our canonical 10-item
+  // list against the live `documents` array's doc_type values. An item
+  // flips to "complete" the moment any uploaded doc carries one of its
+  // mapped tokens. Mock mode (Kimpton id=7) sets the first four complete
+  // so the demo deal still shows progress without needing a live worker.
+  const uploadedDocTypes = useMemo(() => {
+    if (liveMode) {
+      return new Set(
+        documents
+          .map((d) => (d.doc_type ?? '').toUpperCase().trim())
+          .filter(Boolean),
+      );
+    }
+    if (isFullDoc) return new Set(['OM', 'T12', 'STR', 'STR_TREND']);
+    return new Set<string>();
+  }, [liveMode, documents, isFullDoc]);
+
+  const checklist = REQUIRED_CHECKLIST.map((item) => ({
+    name: item.label,
+    complete: item.match.some((m) => uploadedDocTypes.has(m)),
   }));
+
+  // "N/10" counter — counts uploaded docs that match a checklist category,
+  // capped at the checklist length so a deal with 4 OMs still shows 1/10.
+  const matchedCount = checklist.filter((c) => c.complete).length;
 
   const completeCount = checklist.filter((d) => d.complete).length;
   const extracted = docs.filter((d) => d.status === 'Extracted').length;
   const processing = docs.filter((d) => d.status === 'Processing').length;
+
+  // Engine readiness — derived from live engine outputs when available,
+  // otherwise the static mock progress per engine label.
+  const { outputs: engineOutputs } = useEngineOutputs(liveMode ? rawId : '');
+
+  const engineRows = ENGINE_STATUS_ROWS.map((row) => {
+    if (liveMode && engineOutputs?.engines) {
+      const pcts = row.engines.map((name) =>
+        engineStatusReadiness(engineOutputs.engines[name]?.status),
+      );
+      const avg = pcts.length
+        ? Math.round(pcts.reduce((a, b) => a + b, 0) / pcts.length)
+        : 0;
+      return { ...row, progress: avg };
+    }
+    // Mock fallback — re-use the existing mock engines list keyed by id
+    // so the visual stays identical for non-live deals.
+    const mock = engines.find((e) => e.id === row.id);
+    return { ...row, progress: mock?.progress ?? 0 };
+  });
 
   // ─── Run Full Underwriting (Data Room CTA) ─────────────────────────
   // Mirrors EngineHeader's run-all wiring but lives at the Data Room level
@@ -510,20 +595,32 @@ export default function DataRoomTab({ projectId }: { projectId: number | string 
         </Card>
       )}
 
-      <div className="grid grid-cols-3 gap-5">
-        {/* Document Checklist */}
-        <Card className="col-span-2 p-5">
+      <div className="grid grid-cols-2 gap-5">
+        {/* Document Checklist — required-doc list with N/10 counter +
+            "Underwriting Ready" progress bar. Items flip green and drop
+            their REQ badge as soon as a matching doc_type is uploaded. */}
+        <Card className="p-5">
           <div className="flex items-center justify-between mb-4">
-            <h3 className="text-[14px] font-semibold text-ink-900">Document Checklist</h3>
-            <span className="text-[12px] text-ink-500 tabular-nums">{completeCount}/{checklist.length}</span>
+            <div className="flex items-center gap-2">
+              <ClipboardList size={16} className="text-brand-500" />
+              <h3 className="text-[14px] font-semibold text-ink-900">Document Checklist</h3>
+            </div>
+            <span className="text-[12px] text-ink-500 tabular-nums">
+              {matchedCount}/{checklist.length}
+            </span>
           </div>
           <div className="mb-4">
             <div className="flex justify-between text-[11px] text-ink-500 mb-1">
               <span>Underwriting Ready</span>
-              <span>{Math.round((completeCount / checklist.length) * 100)}%</span>
+              <span className="tabular-nums">
+                {Math.round((completeCount / checklist.length) * 100)}%
+              </span>
             </div>
             <div className="h-1.5 bg-ink-300/30 rounded-full overflow-hidden">
-              <div className="h-full bg-success-500" style={{ width: `${(completeCount / checklist.length) * 100}%` }} />
+              <div
+                className="h-full bg-brand-500 transition-all"
+                style={{ width: `${(completeCount / checklist.length) * 100}%` }}
+              />
             </div>
           </div>
           <div className="space-y-2">
@@ -532,36 +629,56 @@ export default function DataRoomTab({ projectId }: { projectId: number | string 
                 {d.complete
                   ? <CheckCircle2 size={15} className="text-success-500 flex-shrink-0" />
                   : <Circle size={15} className="text-ink-300 flex-shrink-0" />}
-                <span className={`text-[12.5px] flex-1 ${d.complete ? 'text-ink-900' : 'text-ink-500'}`}>{d.name}</span>
-                <Badge tone="red">REQ</Badge>
+                <span
+                  className={`text-[12.5px] flex-1 ${d.complete ? 'text-ink-900' : 'text-ink-500'}`}
+                >
+                  {d.name}
+                </span>
+                {!d.complete && <Badge tone="red">REQ</Badge>}
               </div>
             ))}
           </div>
         </Card>
 
-        {/* Engine Status */}
+        {/* Engine Status — per-engine readiness derived from live worker
+            engine outputs when available, mock progress otherwise. */}
         <Card className="p-5">
-          <h3 className="text-[14px] font-semibold text-ink-900 mb-1">Engine Status</h3>
+          <div className="flex items-center gap-2 mb-1">
+            <Sparkles size={16} className="text-brand-500" />
+            <h3 className="text-[14px] font-semibold text-ink-900">Engine Status</h3>
+          </div>
           <p className="text-[11.5px] text-ink-500 mb-4 leading-relaxed">
             Each engine builds part of the model (P&amp;L, Debt, Returns, etc.). The
             percentage is how confident the engine is, based on which documents
             you&apos;ve uploaded.
           </p>
           <div className="space-y-3.5">
-            {engines.map((e) => (
-              <div key={e.id} title={`${e.label} is ${e.progress}% confident — climbs as you upload the documents this engine needs.`}>
-                <div className="flex items-center justify-between mb-1">
-                  <span className="text-[12px] text-ink-700 font-medium">{e.label}</span>
-                  <span className="text-[11px] text-ink-500 tabular-nums">{e.progress}%</span>
+            {engineRows.map((e) => {
+              const Icon = e.icon;
+              return (
+                <div
+                  key={e.id}
+                  title={`${e.label} is ${e.progress}% ready — climbs as you upload the documents this engine needs.`}
+                >
+                  <div className="flex items-center justify-between mb-1">
+                    <span className="inline-flex items-center gap-2 text-[12px] text-ink-700 font-medium">
+                      <Icon size={13} className="text-ink-500" />
+                      {e.label}
+                    </span>
+                    <span className="text-[11px] text-ink-500 tabular-nums">{e.progress}%</span>
+                  </div>
+                  <div className="h-1.5 bg-ink-300/30 rounded-full overflow-hidden">
+                    <div
+                      className="h-full bg-brand-500 transition-all"
+                      style={{ width: `${e.progress}%` }}
+                    />
+                  </div>
                 </div>
-                <div className="h-1.5 bg-ink-300/30 rounded-full overflow-hidden">
-                  <div className="h-full bg-brand-500" style={{ width: `${e.progress}%` }} />
-                </div>
-              </div>
-            ))}
+              );
+            })}
           </div>
           <div className="text-[11px] text-ink-500 mt-4 pt-4 border-t border-border">
-            Upload more documents to increase confidence
+            Upload more documents to increase confidence.
           </div>
         </Card>
       </div>

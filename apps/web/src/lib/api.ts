@@ -300,6 +300,31 @@ export const api = {
         { signal },
       ),
   },
+  /** AI-generated broker due-diligence question packet. */
+  dueDiligence: {
+    list: (dealId: string, signal?: AbortSignal) =>
+      request<DueDiligencePacket>(
+        'GET',
+        `/deals/${dealId}/due-diligence`,
+        undefined,
+        { signal },
+      ),
+    generate: (dealId: string) =>
+      request<{ deal_id: string; generated: number; error: string | null }>(
+        'POST',
+        `/deals/${dealId}/due-diligence/generate`,
+      ),
+    updateStatus: (
+      dealId: string,
+      questionId: string,
+      status: 'pending' | 'sent' | 'answered',
+    ) =>
+      request<DueDiligenceQuestion>(
+        'PATCH',
+        `/deals/${dealId}/due-diligence/${questionId}`,
+        { status },
+      ),
+  },
   /** Context Data Product surface — deal dossier + grounded Q&A. */
   dossier: {
     get: (dealId: string, signal?: AbortSignal) =>
@@ -356,5 +381,42 @@ export interface VarianceReportResult {
   warn_count: number;
   info_count: number;
   /** Set when no flags can be computed yet (e.g. only one of broker/T-12 is extracted). */
+  note: string | null;
+}
+
+// ─── Due Diligence ──────────────────────────────────────────────────
+// Mirrors apps/worker/app/api/due_diligence.py shapes.
+
+export type DueDiligencePriority = 'high' | 'medium' | 'low';
+export type DueDiligenceCategory =
+  | 'revenue'
+  | 'expenses'
+  | 'operations'
+  | 'market'
+  | 'capex';
+export type DueDiligenceStatus = 'pending' | 'sent' | 'answered';
+
+export interface DueDiligenceQuestion {
+  id: string;
+  deal_id: string;
+  question: string;
+  narrative: string;
+  priority: DueDiligencePriority;
+  category: DueDiligenceCategory;
+  source: string;
+  supporting_metric_key: string | null;
+  supporting_metric_value: string | null;
+  status: DueDiligenceStatus;
+  created_at: string;
+  sent_at: string | null;
+}
+
+export interface DueDiligencePacket {
+  deal_id: string;
+  questions: DueDiligenceQuestion[];
+  total: number;
+  high_priority: number;
+  pending: number;
+  answered: number;
   note: string | null;
 }
