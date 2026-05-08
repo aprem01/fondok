@@ -106,18 +106,36 @@ include:
        ``ttm_performance.subject.revpar_usd``,
        ``ttm_performance.indices.rgi_revpar_index``,
        ``comp_set.comp_set_size``.
-   * **STR_TREND (STR competitive-set / TREND report).** Subject hotel
-     plus 5-7 named competitor properties with TTM occupancy, ADR,
-     RevPAR, and the three penetration indices. Distinct from
-     ``STR_BENCHMARK`` (legacy ``STR``): the trend report fans out
-     across the comp set whereas the benchmark only carries aggregate
-     comp-set numbers. Use these field paths:
-       * Subject hotel TTM:
+   * **STR_TREND (STR / CoStar Trend Report).** Multi-tab Excel
+     workbook covering the subject property's monthly Occ / ADR /
+     RevPAR / Supply / Demand history, plus the comp set. Distinct
+     from ``STR_BENCHMARK`` (legacy ``STR``): the trend report fans
+     out across the comp set and across time. Use these field paths:
+       * Subject hotel identity + TTM rollup:
+           ``ttm_performance.subject.name`` — full subject hotel name
+             (extract from "Custom Trend: <name>" header),
            ``ttm_performance.subject.occupancy_pct``,
            ``ttm_performance.subject.adr_usd``,
            ``ttm_performance.subject.revpar_usd``.
-       * Each competitor (number them ``1`` … ``7`` in the order they
-         appear in the report):
+       * Subject monthly history (most-recent 12 months on the "By
+         Measure" or "Classic" tab; key by year + month):
+           ``ttm_performance.subject.monthly.<YYYY_MM>.occupancy_pct``,
+           ``ttm_performance.subject.monthly.<YYYY_MM>.adr_usd``,
+           ``ttm_performance.subject.monthly.<YYYY_MM>.revpar_usd``,
+           ``ttm_performance.subject.monthly.<YYYY_MM>.supply_rooms``,
+           ``ttm_performance.subject.monthly.<YYYY_MM>.demand_rooms``.
+       * Annual roll-ups (Total Year on the By Measure tab):
+           ``ttm_performance.subject.annual.<YYYY>.occupancy_pct``,
+           ``ttm_performance.subject.annual.<YYYY>.adr_usd``,
+           ``ttm_performance.subject.annual.<YYYY>.revpar_usd``.
+       * Day-of-week breakdown (Day of Week tab — Mon..Sun):
+           ``ttm_performance.subject.day_of_week.<dow>.occupancy_pct``,
+           ``ttm_performance.subject.day_of_week.<dow>.adr_usd``,
+           ``ttm_performance.subject.day_of_week.<dow>.revpar_usd``
+         where ``<dow>`` is one of ``mon``, ``tue``, ``wed``, ``thu``,
+         ``fri``, ``sat``, ``sun``.
+       * Each named competitor (number them ``1`` … ``7`` in the order
+         they appear in the report):
            ``ttm_performance.compset.<n>.name``,
            ``ttm_performance.compset.<n>.keys``,
            ``ttm_performance.compset.<n>.occupancy_pct``,
@@ -130,25 +148,136 @@ include:
        * Comp-set rollups:
            ``comp_set.comp_set_size``,
            ``comp_set.total_keys``.
-   * **CBRE_HORIZONS (CBRE Horizons forward forecast).** A 5-year
-     ADR + RevPAR projection by submarket and chain scale. Every
-     forecast year MUST be emitted as its own field so the forward
-     projection engine can read the full trajectory. Use:
-       * ``cbre_horizons.submarket`` — submarket name (e.g. "Miami Beach").
-       * ``cbre_horizons.chain_scale`` — chain scale segment (e.g.
-         "Upper Upscale").
-       * ``cbre_horizons.publication_date`` — report publication date.
-       * For each year ``n`` in ``{1, 2, 3, 4, 5}``:
-           ``cbre_horizons.year_<n>.occupancy_pct``,
-           ``cbre_horizons.year_<n>.adr_usd``,
-           ``cbre_horizons.year_<n>.revpar_usd``,
-           ``cbre_horizons.year_<n>.revpar_growth_pct``.
-   * **PNL_BENCHMARK (HotStats-equivalent P&L benchmark).** Line-item
-     departmental and expense ratios from a peer set. POR = per
-     occupied room, PAR = per available room. Use:
-       * ``pnl_benchmark.peer_set_size`` — number of hotels in the
-         benchmark set.
-       * Margin / expense ratios (decimal between 0 and 1):
+   * **CBRE_HORIZONS (CBRE Hotel Horizons forward forecast).** Real
+     CBRE reports carry FOUR forecast tables (All Hotels + three price
+     tiers), Guest-Paid ADR, source-of-business mix, length of stay,
+     and short-term-rental supply. Emit every grounded field — the
+     forward projection engine picks the right segment based on the
+     deal's positioning. Use:
+       * Headers (mandatory):
+           ``cbre_horizons.market`` — metro area (e.g. "Seattle, WA"),
+           ``cbre_horizons.submarket`` — submarket name when present,
+           ``cbre_horizons.chain_scale`` — chain scale segment (e.g.
+             "Upper Upscale"),
+           ``cbre_horizons.publication_date`` — quarter + year (e.g.
+             "Q3 2024" or ISO date).
+       * **Annual forecast by segment.** ``<scope>`` ∈ ``{all,
+         upper_priced, mid_priced, lower_priced}``. ``<n>`` is the
+         calendar year (e.g. ``2024``, ``2025``, ``2028``). Emit every
+         row that appears in the source — historical and forecast.
+         Mark forecast years by setting ``period`` to ``forecast``;
+         actuals get ``actual``.
+           ``cbre_horizons.segment_<scope>.<n>.occupancy_pct``,
+           ``cbre_horizons.segment_<scope>.<n>.occupancy_change_pct``,
+           ``cbre_horizons.segment_<scope>.<n>.adr_usd``,
+           ``cbre_horizons.segment_<scope>.<n>.adr_change_pct``,
+           ``cbre_horizons.segment_<scope>.<n>.revpar_usd``,
+           ``cbre_horizons.segment_<scope>.<n>.revpar_change_pct``,
+           ``cbre_horizons.segment_<scope>.<n>.supply_change_pct``,
+           ``cbre_horizons.segment_<scope>.<n>.demand_change_pct``,
+           ``cbre_horizons.segment_<scope>.<n>.period``.
+         For backwards compatibility, the All-Hotels segment may also
+         be emitted on the legacy ``cbre_horizons.year_<i>.*`` paths
+         where ``i`` is the 1-indexed forecast year (e.g. Year-1 of
+         the forecast, regardless of calendar year).
+       * **Long-run averages** (the next-4-quarters anchor block —
+         "Occupancy: 67.4%, ADR Change: 2.7%, RevPAR Change: 5.8%"):
+           ``cbre_horizons.long_run_avg.occupancy_pct``,
+           ``cbre_horizons.long_run_avg.adr_change_pct``,
+           ``cbre_horizons.long_run_avg.revpar_change_pct``,
+           ``cbre_horizons.long_run_avg.supply_change_pct``,
+           ``cbre_horizons.long_run_avg.demand_change_pct``.
+       * **Guest-Paid ADR** (net of distribution costs; separate from
+         advertised ADR). One row per scope per year:
+           ``cbre_horizons.guest_paid_adr.<scope>.<n>.adr_usd``,
+           ``cbre_horizons.guest_paid_adr.<scope>.<n>.change_pct``.
+       * **Source-of-Business mix** (Brand.com / Property Direct /
+         Voice / Internal Discounts / GDS / FIT/Wholesale / OTA /
+         Group). Channel slugs: ``brand_com``, ``property_direct``,
+         ``voice``, ``internal_discounts``, ``gds``, ``fit_wholesale``,
+         ``ota``, ``group``. Emit room-night share + ADR, ideally for
+         the most recent year and the prior year:
+           ``cbre_horizons.source_mix.<scope>.<channel>.room_nights_pct_<YYYY>``,
+           ``cbre_horizons.source_mix.<scope>.<channel>.adr_usd_<YYYY>``.
+       * **Length of Stay** (nights):
+           ``cbre_horizons.length_of_stay.<scope>.nights_<YYYY>``,
+           ``cbre_horizons.length_of_stay.<scope>.nights_<YYYY>_ytd``.
+       * **AirDNA short-term rental supply** (when the report carries
+         the AirDNA addendum):
+           ``cbre_horizons.short_term_rental.active_units``,
+           ``cbre_horizons.short_term_rental.available_supply``,
+           ``cbre_horizons.short_term_rental.units_sold``,
+           ``cbre_horizons.short_term_rental.total_revenue_usd``,
+           ``cbre_horizons.short_term_rental.adr_usd``,
+           ``cbre_horizons.short_term_rental.revpar_usd``,
+           ``cbre_horizons.short_term_rental.occupancy_pct``,
+           ``cbre_horizons.short_term_rental.units_sold_change_pct``.
+   * **PNL_BENCHMARK (CBRE Benchmarker / HotStats USALI 11th P&L).**
+     Real CBRE Benchmarker reports contain a Subject Property column
+     and a Comparative Set average column for EVERY USALI line, plus
+     $PAR (per available room/year) and $POR (per occupied room/day).
+     Emit values for both columns when present so the variance reader
+     can compute Subject vs Peer deltas. Use:
+       * Header / sample shape:
+           ``pnl_benchmark.peer_set_size`` — number of hotels,
+           ``pnl_benchmark.peer_set_avg_keys`` — avg rooms,
+           ``pnl_benchmark.peer_set_avg_occupancy_pct``,
+           ``pnl_benchmark.peer_set_avg_adr_usd``,
+           ``pnl_benchmark.peer_set_avg_revpar_usd``,
+           ``pnl_benchmark.subject_keys``,
+           ``pnl_benchmark.subject_occupancy_pct``,
+           ``pnl_benchmark.subject_adr_usd``,
+           ``pnl_benchmark.subject_revpar_usd``.
+       * **Per-line USALI breakdown.** ``<column>`` ∈ ``{peer, subject}``;
+         ``<line>`` is the USALI line slug. Emit ALL four metrics for
+         every USALI line that appears (Total $, Ratio-to-Revenue,
+         $PAR, $POR):
+           ``pnl_benchmark.<column>.<line>.total_usd``,
+           ``pnl_benchmark.<column>.<line>.ratio_pct``,
+           ``pnl_benchmark.<column>.<line>.par_usd``,
+           ``pnl_benchmark.<column>.<line>.por_usd``.
+         USALI line slugs (use these exact keys):
+           ``rooms_revenue``, ``fb_revenue``, ``other_operated_revenue``,
+           ``misc_revenue``, ``total_revenue``,
+           ``rooms_dept_expense``, ``fb_dept_expense``,
+           ``other_operated_expense``, ``total_dept_expense``,
+           ``total_dept_profit``,
+           ``a_and_g``, ``it``, ``sales_marketing``, ``maintenance``,
+           ``utilities``, ``total_undistributed``,
+           ``gop``, ``mgmt_fee``, ``income_before_non_operating``,
+           ``rent``, ``property_taxes``, ``insurance``, ``other_non_op``,
+           ``total_non_operating``, ``ebitda``.
+       * **F&B sub-classification** (USALI 11th — restaurant venues
+         vs room service vs mini-bar vs banquet, and separate
+         beverage). One row per column per channel:
+           ``pnl_benchmark.<column>.fb_revenue.food_venues_usd``,
+           ``pnl_benchmark.<column>.fb_revenue.food_room_service_usd``,
+           ``pnl_benchmark.<column>.fb_revenue.food_mini_bar_usd``,
+           ``pnl_benchmark.<column>.fb_revenue.food_banquet_usd``,
+           ``pnl_benchmark.<column>.fb_revenue.beverage_venues_usd``,
+           ``pnl_benchmark.<column>.fb_revenue.beverage_banquet_usd``,
+           ``pnl_benchmark.<column>.fb_cost.cost_of_food_sales_usd``,
+           ``pnl_benchmark.<column>.fb_cost.cost_of_beverage_sales_usd``.
+       * **Utilities sub-classification** (electricity / water-sewer /
+         steam / gas-fuel / other):
+           ``pnl_benchmark.<column>.utilities.electricity_usd``,
+           ``pnl_benchmark.<column>.utilities.water_sewer_usd``,
+           ``pnl_benchmark.<column>.utilities.steam_usd``,
+           ``pnl_benchmark.<column>.utilities.gas_fuel_usd``,
+           ``pnl_benchmark.<column>.utilities.other_usd``.
+       * **Labor by department** (USALI 11th breakdown — salaries
+         management vs non-mgmt, service-charge distribution,
+         contract labor, bonuses, payroll-related expenses). ``<dept>``
+         slug ∈ ``{rooms, fb, a_and_g, it, sales_marketing,
+         maintenance}``. ``<line>`` ∈ ``{salaries_management,
+         salaries_non_management, service_charge_distribution,
+         contract_labor, bonuses_incentives, unassigned_salaries,
+         payroll_related}``:
+           ``pnl_benchmark.<column>.labor.<dept>.<line>_usd``,
+           ``pnl_benchmark.<column>.labor.<dept>.<line>_par``,
+           ``pnl_benchmark.<column>.labor.<dept>.<line>_por``.
+       * **Legacy aliases** (kept for backwards compat — peer-set
+         margins as decimal 0..1):
            ``pnl_benchmark.rooms_dept_pct``,
            ``pnl_benchmark.fb_dept_margin``,
            ``pnl_benchmark.gop_margin``,
@@ -156,14 +285,11 @@ include:
            ``pnl_benchmark.sales_marketing_pct``,
            ``pnl_benchmark.utilities_pct``,
            ``pnl_benchmark.property_taxes_pct``,
-           ``pnl_benchmark.insurance_pct``.
-       * USD per-key / per-room metrics:
-           ``pnl_benchmark.rooms_revenue_par`` (PAR — USD per
-             available room),
+           ``pnl_benchmark.insurance_pct``,
+           ``pnl_benchmark.rooms_revenue_par``,
            ``pnl_benchmark.total_revenue_par``,
            ``pnl_benchmark.noi_par``,
-           ``pnl_benchmark.rooms_revenue_por`` (POR — USD per
-             occupied room),
+           ``pnl_benchmark.rooms_revenue_por``,
            ``pnl_benchmark.fb_revenue_por``.
 
 2. ``value``        — the extracted scalar (number, string, or bool).
@@ -212,16 +338,29 @@ Coverage targets per document type:
   * **STR** — subject + comp-set occupancy/ADR/RevPAR for the TTM,
     the three penetration indices (MPI/ARI/RGI), comp-set size
     and total keys, and any forward outlook the report carries.
-  * **STR_TREND** — every named competitor MUST be emitted as a
-    separate ``ttm_performance.compset.<n>.*`` row (5-7 expected) in
-    addition to the subject + indices block. Comp-set size and total
-    keys are mandatory.
-  * **CBRE_HORIZONS** — emit ALL five forecast years; partial
-    trajectories make the forward projection unusable. Submarket and
-    chain scale are mandatory headers.
-  * **PNL_BENCHMARK** — emit every margin / ratio that appears in
-    the source plus all PAR / POR figures. Peer set size is required
-    so the variance reader knows how thin the comparison is.
+  * **STR_TREND** — multi-tab Excel workbooks. Coverage:
+    subject hotel name, the most-recent 12 monthly rows
+    (Occ/ADR/RevPAR/Supply/Demand) on the subject, the annual roll-up
+    for every visible year, day-of-week breakdown (when the Day of
+    Week tab is present), every named competitor with keys + TTM
+    Occ/ADR/RevPAR (5-7 expected), the three penetration indices
+    (RGI/ARI/MPI), comp-set size and total keys.
+  * **CBRE_HORIZONS** — emit every visible year × segment cell. A
+    real Hotel Horizons report has FOUR forecast tables (All Hotels +
+    Upper-Priced + Mid-Priced + Lower-Priced) × ~10 years × Occ/ADR/
+    RevPAR/Supply/Demand — that's 100+ ``cbre_horizons.segment_*``
+    fields per report and they ALL go in. Plus: market header,
+    publication date, long-run averages, Guest-Paid ADR per scope,
+    source-of-business mix (8 channels), length of stay, and the
+    AirDNA short-term-rental block when present. A single-segment
+    extraction with 5 fields means the trajectory is unusable.
+  * **PNL_BENCHMARK** — emit BOTH columns (Subject + Peer) for every
+    USALI line in the source. A real CBRE Benchmarker has ~25 lines
+    × 2 columns × 4 metrics ($total / ratio / $PAR / $POR) = 200+
+    fields. Plus F&B sub-classification, Utilities sub-classification,
+    and per-department labor breakdown when present. Peer set size,
+    subject + peer keys / occupancy / ADR / RevPAR are mandatory
+    headers.
 
 Tone: institutional. Never hallucinate a field that isn't in the
 source — silence is acceptable, fabrication is not.

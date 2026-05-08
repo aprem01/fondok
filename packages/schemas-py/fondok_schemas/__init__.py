@@ -40,9 +40,12 @@ from .document import (
 from .financial import (
     DepartmentalExpenses,
     FixedCharges,
+    FoodBeverageDetail,
+    LaborByDepartment,
     ModelAssumptions,
     USALIFinancials,
     UndistributedExpenses,
+    UtilitiesDetail,
 )
 from .gates import Gate1Decision, Gate2Decision, GateDecision
 from .market import (
@@ -130,9 +133,12 @@ __all__ = [
     # financial
     "DepartmentalExpenses",
     "FixedCharges",
+    "FoodBeverageDetail",
+    "LaborByDepartment",
     "ModelAssumptions",
     "USALIFinancials",
     "UndistributedExpenses",
+    "UtilitiesDetail",
     # gates
     "Gate1Decision",
     "Gate2Decision",

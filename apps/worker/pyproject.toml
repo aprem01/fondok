@@ -39,6 +39,10 @@ dependencies = [
   "pymupdf>=1.24.0",
   "pdfplumber>=0.11.0",
   "llama-parse>=0.5.0",
+  # Excel parsing — STR Trend reports ship as legacy .xls (BIFF8) and
+  # CBRE benchmarker exports as .xlsx. xlrd handles .xls; openpyxl
+  # already loaded above handles .xlsx.
+  "xlrd>=2.0.1",
   # Object storage — boto3 for the S3RawStore backend.
   "boto3>=1.35.0",
   # Test fixture generation (sample PDFs) — used by tests/test_documents.py.

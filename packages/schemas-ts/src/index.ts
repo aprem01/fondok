@@ -151,11 +151,44 @@ export type Document = z.infer<typeof Document>;
 
 // ─────────────────────────── Financial (USALI) ───────────────────────────
 
+// USALI 11th-edition F&B four-way split. Optional — populated when the
+// source carries restaurant/room-service/mini-bar/banquet detail.
+export const FoodBeverageDetail = z.object({
+  venues: z.number().nonnegative().default(0),
+  room_service: z.number().nonnegative().default(0),
+  mini_bar: z.number().nonnegative().default(0),
+  banquet: z.number().nonnegative().default(0),
+});
+export type FoodBeverageDetail = z.infer<typeof FoodBeverageDetail>;
+
+// USALI 11th-edition utilities five-way split.
+export const UtilitiesDetail = z.object({
+  electricity: z.number().nonnegative().default(0),
+  water_sewer: z.number().nonnegative().default(0),
+  steam: z.number().nonnegative().default(0),
+  gas_fuel: z.number().nonnegative().default(0),
+  other: z.number().nonnegative().default(0),
+});
+export type UtilitiesDetail = z.infer<typeof UtilitiesDetail>;
+
+// Per-department labor breakdown (CBRE Benchmarker columns).
+export const LaborByDepartment = z.object({
+  salaries_management: z.number().nonnegative().default(0),
+  salaries_non_management: z.number().nonnegative().default(0),
+  service_charge_distribution: z.number().nonnegative().default(0),
+  contract_labor: z.number().nonnegative().default(0),
+  bonuses_incentives: z.number().nonnegative().default(0),
+  unassigned_salaries: z.number().nonnegative().default(0),
+  payroll_related: z.number().nonnegative().default(0),
+});
+export type LaborByDepartment = z.infer<typeof LaborByDepartment>;
+
 export const DepartmentalExpenses = z.object({
   rooms: z.number().nonnegative().default(0),
   food_beverage: z.number().nonnegative().default(0),
   other_operated: z.number().nonnegative().default(0),
   total: z.number().nonnegative().default(0),
+  fb_detail: FoodBeverageDetail.nullable().optional(),
 });
 export type DepartmentalExpenses = z.infer<typeof DepartmentalExpenses>;
 
@@ -165,7 +198,11 @@ export const UndistributedExpenses = z.object({
   sales_marketing: z.number().nonnegative().default(0),
   property_operations: z.number().nonnegative().default(0),
   utilities: z.number().nonnegative().default(0),
+  // USALI 11th edition standalone line — required for service-charge
+  // hotels (resorts, all-inclusives). Defaults to 0 for backwards compat.
+  service_charge_distribution: z.number().nonnegative().default(0),
   total: z.number().nonnegative().default(0),
+  utilities_detail: UtilitiesDetail.nullable().optional(),
 });
 export type UndistributedExpenses = z.infer<typeof UndistributedExpenses>;
 
@@ -182,6 +219,9 @@ export const USALIFinancials = z.object({
   period_label: z.string().min(1).max(80),
   rooms_revenue: z.number().nonnegative(),
   fb_revenue: z.number().nonnegative().default(0),
+  // Resort Fees as a distinct USALI revenue line — kept separate from
+  // misc / other income so a $1M+ resort-fee stream stays visible.
+  resort_fees: z.number().nonnegative().default(0),
   other_revenue: z.number().nonnegative().default(0),
   total_revenue: z.number().nonnegative(),
   dept_expenses: DepartmentalExpenses.default({
@@ -196,6 +236,7 @@ export const USALIFinancials = z.object({
     sales_marketing: 0,
     property_operations: 0,
     utilities: 0,
+    service_charge_distribution: 0,
     total: 0,
   }),
   mgmt_fee: z.number().nonnegative().default(0),
@@ -213,6 +254,9 @@ export const USALIFinancials = z.object({
   occupancy: z.number().min(0).max(1).nullable().optional(),
   adr: z.number().nonnegative().nullable().optional(),
   revpar: z.number().nonnegative().nullable().optional(),
+  // Optional per-department labor breakdown. Empty record when the
+  // source only carries rolled-up labor numbers.
+  labor_by_dept: z.record(z.string(), LaborByDepartment).default({}),
 });
 export type USALIFinancials = z.infer<typeof USALIFinancials>;
 

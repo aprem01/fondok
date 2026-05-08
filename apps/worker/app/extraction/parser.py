@@ -1,17 +1,23 @@
-"""PDF parsing — LlamaParse first, PyMuPDF + pdfplumber fallback.
+"""Document parsing — PDF (LlamaParse / PyMuPDF) and Excel (xlrd / openpyxl).
 
 Routing logic
 -------------
-1. If ``LLAMA_CLOUD_API_KEY`` is set in the environment, attempt
-   LlamaParse (page-aware, table-aware markdown extraction). On any
-   import / network / API failure we drop to the local fallback rather
-   than failing the upload.
-2. Otherwise (or after a LlamaParse failure) parse with PyMuPDF for
-   per-page text and pdfplumber for table cells.
+``parse_document`` dispatches on the filename extension:
 
-Both paths emit a ``ParsedDocument`` so callers don't branch on
-backend. ``parser`` and ``metadata`` carry provenance so we can
-diagnose extraction quality after the fact.
+* ``.pdf`` → PDF path. LlamaParse first when ``LLAMA_CLOUD_API_KEY`` is
+  set; PyMuPDF + pdfplumber fallback otherwise.
+* ``.xls`` (legacy BIFF8) → ``xlrd``. Each sheet becomes a
+  ``ParsedPage`` so the LLM extractor sees one "page" per sheet.
+* ``.xlsx`` (modern OOXML) → ``openpyxl``. Same per-sheet model.
+* Anything else → ``ParseError``.
+
+All paths emit a ``ParsedDocument`` so callers don't branch on backend.
+``parser`` and ``metadata`` carry provenance so we can diagnose
+extraction quality after the fact.
+
+The legacy ``parse_pdf`` entry point still exists (callers haven't
+migrated yet); it's now a thin alias that delegates to
+``parse_document``.
 """
 
 from __future__ import annotations
@@ -32,41 +38,77 @@ logger = logging.getLogger(__name__)
 # ──────────────────────────── public ────────────────────────────
 
 
-async def parse_pdf(file_bytes: bytes, filename: str) -> ParsedDocument:
+async def parse_document(file_bytes: bytes, filename: str) -> ParsedDocument:
     """Parse ``file_bytes`` into a ``ParsedDocument``.
 
-    Runs the actual parser in a thread to keep the FastAPI event loop
-    responsive — both PyMuPDF and pdfplumber are blocking C-extension
-    workloads.
+    Dispatches on filename extension:
+      * ``.pdf`` → LlamaParse (when configured) → PyMuPDF fallback.
+      * ``.xls`` → ``xlrd`` (legacy BIFF8 — STR/CoStar exports use this).
+      * ``.xlsx`` → ``openpyxl``.
+
+    Runs the blocking parser in a thread to keep the FastAPI event loop
+    responsive.
     """
     if not file_bytes:
         raise ParseError(f"empty file bytes for {filename}")
 
     content_hash = hashlib.sha256(file_bytes).hexdigest()
-    api_key = os.environ.get("LLAMA_CLOUD_API_KEY")
+    ext = (filename or "").rsplit(".", 1)[-1].lower() if "." in (filename or "") else ""
 
-    if api_key:
-        try:
-            return await asyncio.to_thread(
-                _parse_with_llamaparse,
-                file_bytes=file_bytes,
-                filename=filename,
-                content_hash=content_hash,
-                api_key=api_key,
-            )
-        except Exception as exc:  # noqa: BLE001 — fallback is the safety net
-            logger.warning(
-                "parse_pdf: LlamaParse failed for %s (%s); falling back to PyMuPDF",
-                filename,
-                exc,
-            )
+    if ext == "pdf":
+        api_key = os.environ.get("LLAMA_CLOUD_API_KEY")
+        if api_key:
+            try:
+                return await asyncio.to_thread(
+                    _parse_with_llamaparse,
+                    file_bytes=file_bytes,
+                    filename=filename,
+                    content_hash=content_hash,
+                    api_key=api_key,
+                )
+            except Exception as exc:  # noqa: BLE001 — fallback is the safety net
+                logger.warning(
+                    "parse_document: LlamaParse failed for %s (%s); falling back to PyMuPDF",
+                    filename,
+                    exc,
+                )
+        return await asyncio.to_thread(
+            _parse_with_pymupdf,
+            file_bytes=file_bytes,
+            filename=filename,
+            content_hash=content_hash,
+        )
 
-    return await asyncio.to_thread(
-        _parse_with_pymupdf,
-        file_bytes=file_bytes,
-        filename=filename,
-        content_hash=content_hash,
+    if ext == "xls":
+        return await asyncio.to_thread(
+            _parse_with_xlrd,
+            file_bytes=file_bytes,
+            filename=filename,
+            content_hash=content_hash,
+        )
+
+    if ext == "xlsx":
+        return await asyncio.to_thread(
+            _parse_with_openpyxl,
+            file_bytes=file_bytes,
+            filename=filename,
+            content_hash=content_hash,
+        )
+
+    raise ParseError(
+        f"unsupported file extension '.{ext}' for {filename}; "
+        "expected .pdf, .xls, or .xlsx"
     )
+
+
+async def parse_pdf(file_bytes: bytes, filename: str) -> ParsedDocument:
+    """Backwards-compatible alias for ``parse_document``.
+
+    Existing callers pass any document type through ``parse_pdf``;
+    dispatch happens on filename so XLS/XLSX uploads now flow through
+    the same single entry point.
+    """
+    return await parse_document(file_bytes, filename)
 
 
 # ──────────────────────────── llamaparse ────────────────────────────
@@ -283,4 +325,159 @@ def _parse_with_pymupdf(
     )
 
 
-__all__ = ["parse_pdf"]
+# ──────────────────────────── excel parsers ────────────────────────────
+#
+# Each sheet → one ``ParsedPage``. ``page_num`` reflects sheet order so
+# downstream citations ("source_page=3") map to "the third sheet". The
+# extractor's ``raw_text`` excerpt mechanism still works because each
+# page carries the sheet's plain-text serialization plus the structured
+# table grid.
+
+
+def _format_xls_cell(value: Any) -> str:
+    """Render an xlrd cell into a stable string.
+
+    xlrd surfaces floats for numbers, ints for booleans, and ``""`` for
+    empty cells. We normalize trailing-zero floats so "2.0" reads as "2"
+    and dates as floats stay as floats (caller can parse).
+    """
+    if value is None or value == "":
+        return ""
+    if isinstance(value, float):
+        return str(int(value)) if value.is_integer() else f"{value:g}"
+    return str(value).strip()
+
+
+def _xls_sheet_to_page(
+    *,
+    sheet_index: int,
+    sheet_name: str,
+    rows: list[list[str]],
+) -> ParsedPage:
+    """Serialize a 2D string grid into a ``ParsedPage``.
+
+    ``text`` is a tab-separated dump (one row per line) so the LLM
+    extractor sees the full grid as plain text. ``tables`` carries the
+    same content as a structured grid so downstream callers that prefer
+    cell-level access don't have to re-parse.
+    """
+    cleaned = [
+        [c for c in row]
+        for row in rows
+        if any(c.strip() for c in row)
+    ]
+    text = "\n".join("\t".join(row) for row in cleaned)
+    tables = [cleaned] if cleaned else []
+    return ParsedPage(
+        page_num=sheet_index,
+        text=text,
+        tables=tables,
+        metadata={"source": "xls", "sheet_name": sheet_name},
+    )
+
+
+def _parse_with_xlrd(
+    *,
+    file_bytes: bytes,
+    filename: str,
+    content_hash: str,
+) -> ParsedDocument:
+    """Synchronous xlrd path for legacy ``.xls`` (BIFF8) files.
+
+    STR / CoStar Trend Reports ship as 12-tab .xls workbooks; this is
+    the only ingestion path that reaches them.
+    """
+    try:
+        import xlrd  # type: ignore[import-untyped]
+    except ImportError as exc:  # pragma: no cover
+        raise ParseError(
+            "xlrd is not installed; cannot parse legacy .xls files"
+        ) from exc
+
+    try:
+        wb = xlrd.open_workbook(file_contents=file_bytes)
+    except Exception as exc:  # noqa: BLE001 — surface as ParseError
+        raise ParseError(f"xlrd failed to open {filename}: {exc}") from exc
+
+    pages: list[ParsedPage] = []
+    for idx, sheet in enumerate(wb.sheets(), start=1):
+        rows: list[list[str]] = []
+        for r in range(sheet.nrows):
+            row = [_format_xls_cell(sheet.cell_value(r, c)) for c in range(sheet.ncols)]
+            rows.append(row)
+        pages.append(
+            _xls_sheet_to_page(
+                sheet_index=idx,
+                sheet_name=sheet.name,
+                rows=rows,
+            )
+        )
+
+    return ParsedDocument(
+        filename=filename,
+        total_pages=len(pages),
+        pages=pages,
+        content_hash=content_hash,
+        parsed_at=datetime.now(UTC),
+        parser="xlrd",
+        metadata={"backend": "xlrd", "sheet_count": len(pages)},
+    )
+
+
+def _parse_with_openpyxl(
+    *,
+    file_bytes: bytes,
+    filename: str,
+    content_hash: str,
+) -> ParsedDocument:
+    """Synchronous openpyxl path for modern ``.xlsx`` workbooks."""
+    try:
+        from openpyxl import load_workbook
+    except ImportError as exc:  # pragma: no cover
+        raise ParseError(
+            "openpyxl is not installed; cannot parse .xlsx files"
+        ) from exc
+
+    import io
+
+    try:
+        wb = load_workbook(
+            io.BytesIO(file_bytes),
+            data_only=True,
+            read_only=True,
+        )
+    except Exception as exc:  # noqa: BLE001
+        raise ParseError(f"openpyxl failed to open {filename}: {exc}") from exc
+
+    pages: list[ParsedPage] = []
+    try:
+        for idx, sheet in enumerate(wb.worksheets, start=1):
+            rows: list[list[str]] = []
+            for row in sheet.iter_rows(values_only=True):
+                rendered = [_format_xls_cell(v) for v in row]
+                rows.append(rendered)
+            pages.append(
+                _xls_sheet_to_page(
+                    sheet_index=idx,
+                    sheet_name=sheet.title,
+                    rows=rows,
+                )
+            )
+    finally:
+        try:
+            wb.close()
+        except Exception:  # noqa: BLE001
+            pass
+
+    return ParsedDocument(
+        filename=filename,
+        total_pages=len(pages),
+        pages=pages,
+        content_hash=content_hash,
+        parsed_at=datetime.now(UTC),
+        parser="openpyxl",
+        metadata={"backend": "openpyxl", "sheet_count": len(pages)},
+    )
+
+
+__all__ = ["parse_pdf", "parse_document"]

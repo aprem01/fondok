@@ -1,0 +1,861 @@
+{
+  "version": "1",
+  "generated_at": "2026-05-08T02:08:01.362797+00:00",
+  "what_this_measures": "Per-field anchor coverage: does the parser surface enough raw text to ground each canonical extractor field path? This is a parse-stage check, not an extraction-accuracy check. The LLM extractor still has to read the surrounding context and emit the right value \u2014 ground-truth label comparison ships in a separate suite once Sam-annotated deal docs land.",
+  "overall": {
+    "total_expected": 54,
+    "found": 54,
+    "coverage_pct": 1.0,
+    "target_pct": 0.8
+  },
+  "reports": [
+    {
+      "filename": "sample_cbre_horizons.pdf",
+      "doc_type": "CBRE_HORIZONS",
+      "parser": "pymupdf+pdfplumber",
+      "pages": 25,
+      "expected_fields": [
+        {
+          "path": "cbre_horizons.market",
+          "anchors": [
+            "Seattle, WA",
+            "Hotel Horizons"
+          ],
+          "found_on_pages": [
+            1,
+            2,
+            3,
+            4,
+            5,
+            6,
+            7,
+            8,
+            9,
+            10,
+            11,
+            12,
+            13,
+            14,
+            15,
+            16,
+            17,
+            18,
+            19,
+            20,
+            21,
+            22,
+            23,
+            24,
+            25
+          ],
+          "status": "found"
+        },
+        {
+          "path": "cbre_horizons.publication_date",
+          "anchors": [
+            "Q3 2024",
+            "November 2024"
+          ],
+          "found_on_pages": [
+            1,
+            2,
+            3,
+            4,
+            5,
+            6,
+            7,
+            8,
+            9,
+            10,
+            11,
+            12,
+            13,
+            14,
+            15,
+            16,
+            17,
+            18,
+            19,
+            20,
+            21,
+            22,
+            23,
+            24,
+            25
+          ],
+          "status": "found"
+        },
+        {
+          "path": "cbre_horizons.long_run_avg.occupancy_pct",
+          "anchors": [
+            "Long Run Averages",
+            "67.4"
+          ],
+          "found_on_pages": [
+            2,
+            8,
+            10,
+            14,
+            16
+          ],
+          "status": "found"
+        },
+        {
+          "path": "cbre_horizons.long_run_avg.adr_change_pct",
+          "anchors": [
+            "ADR Change",
+            "2.7"
+          ],
+          "found_on_pages": [
+            2,
+            4,
+            5,
+            6,
+            7,
+            8,
+            9,
+            10,
+            14,
+            15,
+            16,
+            17,
+            18,
+            19,
+            24
+          ],
+          "status": "found"
+        },
+        {
+          "path": "cbre_horizons.long_run_avg.revpar_change_pct",
+          "anchors": [
+            "RevPAR Change",
+            "5.8"
+          ],
+          "found_on_pages": [
+            2,
+            3,
+            4,
+            5,
+            6,
+            7,
+            13,
+            14,
+            15,
+            16,
+            17,
+            18,
+            19,
+            20
+          ],
+          "status": "found"
+        },
+        {
+          "path": "cbre_horizons.segment_all.2024.occupancy_pct",
+          "anchors": [
+            "72.0",
+            "2024F"
+          ],
+          "found_on_pages": [
+            2,
+            4,
+            5,
+            6,
+            7,
+            8,
+            10,
+            14
+          ],
+          "status": "found"
+        },
+        {
+          "path": "cbre_horizons.segment_all.2024.adr_usd",
+          "anchors": [
+            "$176.93",
+            "176.93"
+          ],
+          "found_on_pages": [
+            2,
+            5
+          ],
+          "status": "found"
+        },
+        {
+          "path": "cbre_horizons.segment_all.2024.revpar_usd",
+          "anchors": [
+            "$127.35",
+            "127.35"
+          ],
+          "found_on_pages": [
+            2,
+            5
+          ],
+          "status": "found"
+        },
+        {
+          "path": "cbre_horizons.segment_all.2028.occupancy_pct",
+          "anchors": [
+            "74.1",
+            "2028F"
+          ],
+          "found_on_pages": [
+            2,
+            4,
+            5,
+            6,
+            7,
+            8,
+            15,
+            18
+          ],
+          "status": "found"
+        },
+        {
+          "path": "cbre_horizons.segment_all.2028.adr_usd",
+          "anchors": [
+            "$194.62",
+            "194.62"
+          ],
+          "found_on_pages": [
+            2,
+            5
+          ],
+          "status": "found"
+        },
+        {
+          "path": "cbre_horizons.segment_upper_priced.2024.adr_usd",
+          "anchors": [
+            "$237.40",
+            "237.40"
+          ],
+          "found_on_pages": [
+            6
+          ],
+          "status": "found"
+        },
+        {
+          "path": "cbre_horizons.segment_mid_priced.2024.adr_usd",
+          "anchors": [
+            "$166.53",
+            "166.53"
+          ],
+          "found_on_pages": [
+            6,
+            7
+          ],
+          "status": "found"
+        },
+        {
+          "path": "cbre_horizons.segment_lower_priced.2024.adr_usd",
+          "anchors": [
+            "$91.57",
+            "91.57"
+          ],
+          "found_on_pages": [
+            8
+          ],
+          "status": "found"
+        },
+        {
+          "path": "cbre_horizons.guest_paid_adr.all.2023.adr_usd",
+          "anchors": [
+            "Guest-Paid ADR",
+            "$176.60"
+          ],
+          "found_on_pages": [
+            5,
+            22
+          ],
+          "status": "found"
+        },
+        {
+          "path": "cbre_horizons.source_mix.brand_com.room_nights_pct_2024",
+          "anchors": [
+            "Brand.com",
+            "22.3"
+          ],
+          "found_on_pages": [
+            5,
+            7,
+            9,
+            14,
+            17,
+            23
+          ],
+          "status": "found"
+        },
+        {
+          "path": "cbre_horizons.source_mix.ota.room_nights_pct_2024",
+          "anchors": [
+            "OTA",
+            "19.6"
+          ],
+          "found_on_pages": [
+            2,
+            3,
+            5,
+            6,
+            7,
+            8,
+            9,
+            10,
+            12,
+            13,
+            14,
+            15,
+            16,
+            17,
+            18,
+            19,
+            20,
+            22,
+            23
+          ],
+          "status": "found"
+        },
+        {
+          "path": "cbre_horizons.source_mix.group.room_nights_pct_2024",
+          "anchors": [
+            "Group",
+            "13.4"
+          ],
+          "found_on_pages": [
+            7,
+            8,
+            9,
+            14,
+            23
+          ],
+          "status": "found"
+        },
+        {
+          "path": "cbre_horizons.length_of_stay.all.nights_2023",
+          "anchors": [
+            "Length of Stay",
+            "2.08"
+          ],
+          "found_on_pages": [
+            5,
+            18,
+            22
+          ],
+          "status": "found"
+        },
+        {
+          "path": "cbre_horizons.short_term_rental.active_units",
+          "anchors": [
+            "Short-Term Rental",
+            "AirDNA"
+          ],
+          "found_on_pages": [
+            10
+          ],
+          "status": "found"
+        },
+        {
+          "path": "cbre_horizons.short_term_rental.adr_usd",
+          "anchors": [
+            "$209.33",
+            "209.33"
+          ],
+          "found_on_pages": [
+            10
+          ],
+          "status": "found"
+        }
+      ],
+      "summary": {
+        "total_expected": 20,
+        "found": 20,
+        "missing": 0,
+        "coverage_pct": 1.0
+      }
+    },
+    {
+      "filename": "sample_pnl_benchmark.pdf",
+      "doc_type": "PNL_BENCHMARK",
+      "parser": "pymupdf+pdfplumber",
+      "pages": 9,
+      "expected_fields": [
+        {
+          "path": "pnl_benchmark.peer_set_size",
+          "anchors": [
+            "Number of Properties",
+            "Comparable"
+          ],
+          "found_on_pages": [
+            1
+          ],
+          "status": "found"
+        },
+        {
+          "path": "pnl_benchmark.peer_set_avg_keys",
+          "anchors": [
+            "Average Number of Rooms",
+            "203"
+          ],
+          "found_on_pages": [
+            1,
+            2,
+            3,
+            4,
+            5,
+            6,
+            7,
+            8,
+            9
+          ],
+          "status": "found"
+        },
+        {
+          "path": "pnl_benchmark.peer_set_avg_adr_usd",
+          "anchors": [
+            "Average ADR",
+            "$136.75"
+          ],
+          "found_on_pages": [
+            1,
+            2,
+            3,
+            4,
+            5,
+            6,
+            7,
+            8,
+            9
+          ],
+          "status": "found"
+        },
+        {
+          "path": "pnl_benchmark.subject_keys",
+          "anchors": [
+            "Number of Rooms",
+            "202"
+          ],
+          "found_on_pages": [
+            1,
+            2,
+            3,
+            4,
+            5,
+            6,
+            7,
+            8,
+            9
+          ],
+          "status": "found"
+        },
+        {
+          "path": "pnl_benchmark.subject_adr_usd",
+          "anchors": [
+            "$141.59"
+          ],
+          "found_on_pages": [
+            1,
+            2,
+            3,
+            4,
+            5,
+            6,
+            7,
+            8,
+            9
+          ],
+          "status": "found"
+        },
+        {
+          "path": "pnl_benchmark.peer.rooms_revenue.total_usd",
+          "anchors": [
+            "Rooms",
+            "$7,001,677"
+          ],
+          "found_on_pages": [
+            1,
+            2,
+            3,
+            4,
+            5,
+            6,
+            7,
+            8,
+            9
+          ],
+          "status": "found"
+        },
+        {
+          "path": "pnl_benchmark.peer.fb_revenue.total_usd",
+          "anchors": [
+            "Food and Beverage",
+            "$1,201,360"
+          ],
+          "found_on_pages": [
+            2,
+            4
+          ],
+          "status": "found"
+        },
+        {
+          "path": "pnl_benchmark.peer.total_revenue.total_usd",
+          "anchors": [
+            "Total Operating Revenue",
+            "$8,557,632"
+          ],
+          "found_on_pages": [
+            2
+          ],
+          "status": "found"
+        },
+        {
+          "path": "pnl_benchmark.peer.rooms_dept_expense.total_usd",
+          "anchors": [
+            "$1,611,568"
+          ],
+          "found_on_pages": [
+            2,
+            3
+          ],
+          "status": "found"
+        },
+        {
+          "path": "pnl_benchmark.peer.a_and_g.total_usd",
+          "anchors": [
+            "Administrative and General",
+            "$749,139"
+          ],
+          "found_on_pages": [
+            2,
+            5
+          ],
+          "status": "found"
+        },
+        {
+          "path": "pnl_benchmark.peer.utilities.total_usd",
+          "anchors": [
+            "Utility Costs",
+            "$349,909"
+          ],
+          "found_on_pages": [
+            2,
+            8
+          ],
+          "status": "found"
+        },
+        {
+          "path": "pnl_benchmark.peer.utilities.electricity_usd",
+          "anchors": [
+            "Electricity",
+            "$169,566"
+          ],
+          "found_on_pages": [
+            8
+          ],
+          "status": "found"
+        },
+        {
+          "path": "pnl_benchmark.peer.utilities.water_sewer_usd",
+          "anchors": [
+            "Water",
+            "$149,166"
+          ],
+          "found_on_pages": [
+            8
+          ],
+          "status": "found"
+        },
+        {
+          "path": "pnl_benchmark.peer.utilities.gas_fuel_usd",
+          "anchors": [
+            "Gas",
+            "$24,655"
+          ],
+          "found_on_pages": [
+            8
+          ],
+          "status": "found"
+        },
+        {
+          "path": "pnl_benchmark.peer.fb_revenue.food_venues_usd",
+          "anchors": [
+            "Venues",
+            "$272,767"
+          ],
+          "found_on_pages": [
+            2,
+            3,
+            4
+          ],
+          "status": "found"
+        },
+        {
+          "path": "pnl_benchmark.peer.fb_revenue.food_room_service_usd",
+          "anchors": [
+            "Room Service",
+            "$27,241"
+          ],
+          "found_on_pages": [
+            4
+          ],
+          "status": "found"
+        },
+        {
+          "path": "pnl_benchmark.peer.fb_revenue.food_banquet_usd",
+          "anchors": [
+            "Banquet",
+            "$420,945"
+          ],
+          "found_on_pages": [
+            4
+          ],
+          "status": "found"
+        },
+        {
+          "path": "pnl_benchmark.peer.labor.rooms.salaries_management_usd",
+          "anchors": [
+            "Salaries and Wages - Management",
+            "$23,054"
+          ],
+          "found_on_pages": [
+            3
+          ],
+          "status": "found"
+        },
+        {
+          "path": "pnl_benchmark.peer.labor.rooms.payroll_related_usd",
+          "anchors": [
+            "Payroll-Related",
+            "$255,669"
+          ],
+          "found_on_pages": [
+            3,
+            9
+          ],
+          "status": "found"
+        },
+        {
+          "path": "pnl_benchmark.peer.ebitda.total_usd",
+          "anchors": [
+            "EBITDA",
+            "$2,353,962"
+          ],
+          "found_on_pages": [
+            2
+          ],
+          "status": "found"
+        },
+        {
+          "path": "pnl_benchmark.subject.total_revenue.total_usd",
+          "anchors": [
+            "$8,515,636"
+          ],
+          "found_on_pages": [
+            2
+          ],
+          "status": "found"
+        },
+        {
+          "path": "pnl_benchmark.subject.ebitda.total_usd",
+          "anchors": [
+            "$1,971,583"
+          ],
+          "found_on_pages": [
+            2
+          ],
+          "status": "found"
+        },
+        {
+          "path": "pnl_benchmark.peer.gop.total_usd",
+          "anchors": [
+            "Gross Operating Profit",
+            "$3,346,545"
+          ],
+          "found_on_pages": [
+            2
+          ],
+          "status": "found"
+        },
+        {
+          "path": "pnl_benchmark.peer.mgmt_fee.total_usd",
+          "anchors": [
+            "Management Fees",
+            "$203,568"
+          ],
+          "found_on_pages": [
+            2
+          ],
+          "status": "found"
+        }
+      ],
+      "summary": {
+        "total_expected": 24,
+        "found": 24,
+        "missing": 0,
+        "coverage_pct": 1.0
+      }
+    },
+    {
+      "filename": "sample_str_trend.xls",
+      "doc_type": "STR_TREND",
+      "parser": "xlrd",
+      "pages": 12,
+      "expected_fields": [
+        {
+          "path": "ttm_performance.subject.name",
+          "anchors": [
+            "Custom Trend",
+            "Rosewood"
+          ],
+          "found_on_pages": [
+            1,
+            2,
+            3,
+            4,
+            5,
+            6,
+            7,
+            8,
+            9,
+            10
+          ],
+          "status": "found"
+        },
+        {
+          "path": "ttm_performance.subject.annual.2022.occupancy_pct",
+          "anchors": [
+            "2022",
+            "64.1"
+          ],
+          "found_on_pages": [
+            2,
+            3,
+            5,
+            6,
+            7,
+            8,
+            9,
+            10
+          ],
+          "status": "found"
+        },
+        {
+          "path": "ttm_performance.subject.annual.2022.adr_usd",
+          "anchors": [
+            "1220.24",
+            "1220"
+          ],
+          "found_on_pages": [
+            2,
+            5,
+            6,
+            9
+          ],
+          "status": "found"
+        },
+        {
+          "path": "ttm_performance.subject.annual.2019.occupancy_pct",
+          "anchors": [
+            "2019",
+            "67.85"
+          ],
+          "found_on_pages": [
+            2,
+            3,
+            5,
+            6,
+            9
+          ],
+          "status": "found"
+        },
+        {
+          "path": "ttm_performance.subject.monthly.2023_01.occupancy_pct",
+          "anchors": [
+            "Jan 23",
+            "68.65"
+          ],
+          "found_on_pages": [
+            2,
+            4,
+            6,
+            7,
+            8,
+            9
+          ],
+          "status": "found"
+        },
+        {
+          "path": "ttm_performance.subject.monthly.2022_12.adr_usd",
+          "anchors": [
+            "Dec 22",
+            "1672"
+          ],
+          "found_on_pages": [
+            2,
+            4,
+            6,
+            7,
+            8,
+            9
+          ],
+          "status": "found"
+        },
+        {
+          "path": "ttm_performance.subject.day_of_week.mon",
+          "anchors": [
+            "Day of Week"
+          ],
+          "found_on_pages": [
+            7
+          ],
+          "status": "found"
+        },
+        {
+          "path": "comp_set.comp_set_size",
+          "anchors": [
+            "Selected Properties"
+          ],
+          "found_on_pages": [
+            1,
+            2,
+            3,
+            4,
+            5,
+            6,
+            7,
+            8,
+            9,
+            10
+          ],
+          "status": "found"
+        },
+        {
+          "path": "ttm_performance.indices.rgi_revpar_index",
+          "anchors": [
+            "Index",
+            "Classic"
+          ],
+          "found_on_pages": [
+            9
+          ],
+          "status": "found"
+        },
+        {
+          "path": "ttm_performance.subject.annual.2023.occupancy_pct",
+          "anchors": [
+            "Feb YTD 2023",
+            "70.6"
+          ],
+          "found_on_pages": [
+            2,
+            7,
+            9
+          ],
+          "status": "found"
+        }
+      ],
+      "summary": {
+        "total_expected": 10,
+        "found": 10,
+        "missing": 0,
+        "coverage_pct": 1.0
+      }
+    }
+  ]
+}

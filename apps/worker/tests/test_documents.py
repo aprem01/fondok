@@ -151,6 +151,44 @@ async def test_parse_pymupdf_fallback(sample_pdf_bytes: bytes) -> None:
     assert parsed.content_hash and len(parsed.content_hash) == 64
 
 
+@pytest.mark.asyncio
+async def test_parse_xls_str_trend() -> None:
+    """STR CoStar Trend reports ship as legacy .xls — each sheet
+    becomes one ParsedPage, table grids preserved, parser='xlrd'.
+    """
+    from app.extraction import parse_document
+
+    xls_path = Path(__file__).parent / "fixtures" / "sample_str_trend.xls"
+    if not xls_path.exists():
+        pytest.skip("sample_str_trend.xls fixture not present")
+
+    body = xls_path.read_bytes()
+    parsed = await parse_document(body, "sample_str_trend.xls")
+
+    assert parsed.parser == "xlrd"
+    assert parsed.total_pages >= 8, "expected multi-sheet workbook"
+    assert all(p.metadata.get("sheet_name") for p in parsed.pages), (
+        "every page must carry its sheet name"
+    )
+    # By Measure sheet (sheet 2) carries the headline Occ/ADR/RevPAR table
+    by_measure = parsed.pages[1]
+    assert "Occupancy" in by_measure.text or "occupancy" in by_measure.text.lower()
+    assert by_measure.tables, "table grid must be preserved"
+    assert parsed.content_hash and len(parsed.content_hash) == 64
+
+
+@pytest.mark.asyncio
+async def test_parse_unsupported_extension_raises() -> None:
+    """Any extension other than pdf/xls/xlsx is a hard ParseError —
+    callers (the upload background task) catch this and mark the row
+    PARSE_FAILED rather than silently dropping the file.
+    """
+    from app.extraction import ParseError, parse_document
+
+    with pytest.raises(ParseError, match="unsupported file extension"):
+        await parse_document(b"some-bytes", "notes.txt")
+
+
 # ─────────────────────────── storage ───────────────────────────
 
 

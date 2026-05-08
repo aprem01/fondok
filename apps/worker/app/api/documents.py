@@ -42,7 +42,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..config import get_settings
 from ..database import get_session, get_session_factory
-from ..extraction import ParseError, parse_pdf
+from ..extraction import ParseError, parse_document
 from ..storage import StorageError, get_raw_store
 from .deals import get_tenant_id
 
@@ -362,16 +362,18 @@ async def upload_documents(
     tenant_id: Annotated[UUID, Depends(get_tenant_id)],
     files: list[UploadFile] = File(...),
 ) -> list[DocumentRecord]:
-    """Persist one-or-more PDFs against ``deal_id`` and kick off
+    """Persist one-or-more documents against ``deal_id`` and kick off
     parse + extract in the background.
 
-    Each file is hashed and written to the raw store synchronously
-    (cheap), but the actual PDF parse + LLM extraction runs as a
-    background task so dense OMs don't blow through the proxy's HTTP
-    timeout (Sam QA re-test #2). The route returns 201 immediately
-    with each row at status ``PARSING``; the background pipeline
-    drives the row through ``PARSING → UPLOADED → CLASSIFYING →
-    EXTRACTING → EXTRACTED``. The web app just polls /documents.
+    Accepts ``.pdf`` (OMs / T-12s / CBRE / benchmark reports) and
+    ``.xls`` / ``.xlsx`` (STR CoStar Trend exports). Each file is
+    hashed and written to the raw store synchronously (cheap), but the
+    actual parse + LLM extraction runs as a background task so dense
+    OMs don't blow through the proxy's HTTP timeout (Sam QA re-test
+    #2). The route returns 201 immediately with each row at status
+    ``PARSING``; the background pipeline drives the row through
+    ``PARSING → UPLOADED → CLASSIFYING → EXTRACTING → EXTRACTED``. The
+    web app just polls /documents.
     """
     if not files:
         raise HTTPException(
@@ -513,7 +515,7 @@ async def _run_parse_and_extract(
     parser_label_to_persist: str | None = None
 
     try:
-        parsed = await parse_pdf(body, filename)
+        parsed = await parse_document(body, filename)
         page_count_to_persist = parsed.total_pages
         parser_label_to_persist = parsed.parser
         extraction_data_to_persist = {

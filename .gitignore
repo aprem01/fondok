@@ -11,3 +11,4 @@ __pycache__
 .uv
 *.tsbuildinfo
 apps/worker/tests/fondok-costs.db
+apps/worker/tests/fondok-obs.db

@@ -746,16 +746,27 @@ async def _load_cbre_horizons_overrides(
     """Translate the deal's extracted CBRE Horizons report into engine
     growth-rate overrides.
 
-    CBRE publishes per-year ADR + RevPAR projections by submarket; the
-    extractor emits them as ``cbre_horizons.year_{1..5}.adr_usd`` and
-    ``…revpar_usd``. We compute the implied CAGR over the visible
-    horizon and use it as the revenue engine's ``adr_growth``. RevPAR
-    growth is exposed too so downstream consumers (broker variance,
-    analyst memo) can compare broker projections against the published
-    market forecast (May 7 scope).
+    Reads BOTH field-path conventions emitted by the extractor:
 
-    Returns ``{}`` on missing data, percentage normalization issues, or
-    when the projection horizon doesn't cover at least two years.
+    * Legacy: ``cbre_horizons.year_<i>.{adr_usd,revpar_usd}`` where ``i``
+      is the 1-indexed forecast year (older mock reports).
+    * Real CBRE Hotel Horizons: ``cbre_horizons.segment_<scope>.<YYYY>.{adr_usd,revpar_usd}``
+      where ``<scope>`` ∈ ``{all, upper_priced, mid_priced, lower_priced}``
+      and ``<YYYY>`` is the calendar year. We use ``segment_all`` as the
+      anchor today; positioning-based segment selection is a follow-up.
+
+    CAGR is computed over the FORECAST window — for the segment paths we
+    keep only years strictly greater than the most recent historical
+    year (forecast period) so backward-looking history doesn't pollute
+    the growth rate.
+
+    Also surfaces ``long_run_avg_revpar_growth`` (the next-4-quarters
+    Long Run Average block) for use by the broker-vs-market variance
+    flag — broker projections that exceed the long-run average by more
+    than 2 percentage points warrant a warning.
+
+    Returns ``{}`` on missing data or when neither path yields a
+    valid CAGR.
     """
     try:
         UUID(deal_id)
@@ -778,8 +789,18 @@ async def _load_cbre_horizons_overrides(
     except Exception:
         return {}
 
-    adr_by_year: dict[int, float] = {}
-    revpar_by_year: dict[int, float] = {}
+    # Legacy (1-indexed forecast-year) path
+    legacy_adr: dict[int, float] = {}
+    legacy_revpar: dict[int, float] = {}
+    # Real CBRE segmented path: segment_<scope>.<YYYY>.<metric>
+    segment_adr: dict[str, dict[int, float]] = {}
+    segment_revpar: dict[str, dict[int, float]] = {}
+    # ``period`` flag per (scope, year): "actual" vs "forecast"
+    segment_period: dict[str, dict[int, str]] = {}
+    long_run_revpar_growth: float | None = None
+    long_run_adr_change: float | None = None
+    long_run_occupancy: float | None = None
+
     for r in rows.fetchall():
         raw = r._mapping["fields"]
         if isinstance(raw, str):
@@ -794,21 +815,59 @@ async def _load_cbre_horizons_overrides(
                 continue
             name = (f.get("field_name") or "").strip().lower()
             value = f.get("value")
-            if not name.startswith("cbre_horizons.year_") or not isinstance(
+            if not name.startswith("cbre_horizons."):
+                continue
+
+            # Long run averages — anchor for variance flags.
+            if name == "cbre_horizons.long_run_avg.revpar_change_pct" and isinstance(
                 value, (int, float)
             ):
+                long_run_revpar_growth = _normalize_pct(float(value))
                 continue
-            # Pattern: cbre_horizons.year_<N>.<metric>
-            try:
-                _, year_part, metric = name.split(".", 2)
-                year_idx = int(year_part.split("_", 1)[1])
-            except (ValueError, IndexError):
+            if name == "cbre_horizons.long_run_avg.adr_change_pct" and isinstance(
+                value, (int, float)
+            ):
+                long_run_adr_change = _normalize_pct(float(value))
+                continue
+            if name == "cbre_horizons.long_run_avg.occupancy_pct" and isinstance(
+                value, (int, float)
+            ):
+                long_run_occupancy = _normalize_pct(float(value))
+                continue
+
+            if not isinstance(value, (int, float)):
                 continue
             v = float(value)
-            if metric in ("adr_usd", "adr"):
-                adr_by_year.setdefault(year_idx, v)
-            elif metric in ("revpar_usd", "revpar"):
-                revpar_by_year.setdefault(year_idx, v)
+
+            # Real segmented path: cbre_horizons.segment_<scope>.<YYYY>.<metric>
+            if name.startswith("cbre_horizons.segment_"):
+                try:
+                    _, scope_part, year_part, metric = name.split(".", 3)
+                    scope = scope_part.removeprefix("segment_")
+                    year_idx = int(year_part)
+                except (ValueError, IndexError):
+                    continue
+                if metric in ("adr_usd", "adr"):
+                    segment_adr.setdefault(scope, {}).setdefault(year_idx, v)
+                elif metric in ("revpar_usd", "revpar"):
+                    segment_revpar.setdefault(scope, {}).setdefault(year_idx, v)
+                elif metric == "period":
+                    # Stored numerically as 0/1 by some extractors; only
+                    # the segmented forecast filter uses this hint.
+                    segment_period.setdefault(scope, {}).setdefault(year_idx, str(v))
+                continue
+
+            # Legacy 1-indexed path: cbre_horizons.year_<i>.<metric>
+            if name.startswith("cbre_horizons.year_"):
+                try:
+                    _, year_part, metric = name.split(".", 2)
+                    year_idx = int(year_part.split("_", 1)[1])
+                except (ValueError, IndexError):
+                    continue
+                if metric in ("adr_usd", "adr"):
+                    legacy_adr.setdefault(year_idx, v)
+                elif metric in ("revpar_usd", "revpar"):
+                    legacy_revpar.setdefault(year_idx, v)
 
     out: dict[str, float] = {}
 
@@ -822,23 +881,75 @@ async def _load_cbre_horizons_overrides(
             return None
         return (end / start) ** (1.0 / n) - 1.0
 
-    adr_cagr = _cagr(adr_by_year)
-    if adr_cagr is not None and -0.20 <= adr_cagr <= 0.20:
-        out["adr_growth"] = adr_cagr
-    revpar_cagr = _cagr(revpar_by_year)
-    if revpar_cagr is not None and -0.20 <= revpar_cagr <= 0.20:
-        out["revpar_growth"] = revpar_cagr
+    # Prefer the segmented (real-report) path. Use ``segment_all`` as
+    # the headline market view; restrict to forecast years (strictly >
+    # max historical year) so the CAGR reflects the forward window
+    # rather than the post-COVID rebound.
+    primary_adr = segment_adr.get("all", {})
+    primary_revpar = segment_revpar.get("all", {})
+    if primary_adr or primary_revpar:
+        # When the report carries 5+ years history + 5y forecast, the
+        # forecast window starts at the second-highest year ≥ today.
+        all_years = sorted(set(primary_adr) | set(primary_revpar))
+        if all_years:
+            # Heuristic: drop the bottom half of years (treat them as
+            # historical). Real CBRE reports carry 2019..2028, and the
+            # forecast block begins at the report's vintage year.
+            cutoff = all_years[len(all_years) // 2]
+            forecast_adr = {y: v for y, v in primary_adr.items() if y >= cutoff}
+            forecast_revpar = {y: v for y, v in primary_revpar.items() if y >= cutoff}
+        else:
+            forecast_adr = primary_adr
+            forecast_revpar = primary_revpar
+        adr_cagr = _cagr(forecast_adr) or _cagr(primary_adr)
+        if adr_cagr is not None and -0.20 <= adr_cagr <= 0.20:
+            out["adr_growth"] = adr_cagr
+        revpar_cagr = _cagr(forecast_revpar) or _cagr(primary_revpar)
+        if revpar_cagr is not None and -0.20 <= revpar_cagr <= 0.20:
+            out["revpar_growth"] = revpar_cagr
+        # Year-1 baseline for the deal's starting ADR/RevPAR fallback
+        # is the first FORECAST year on the segment_all curve.
+        if forecast_adr:
+            first = sorted(forecast_adr)[0]
+            if forecast_adr[first] > 0:
+                out["cbre_year_1_adr"] = forecast_adr[first]
+        if forecast_revpar:
+            first = sorted(forecast_revpar)[0]
+            if forecast_revpar[first] > 0:
+                out["cbre_year_1_revpar"] = forecast_revpar[first]
+    else:
+        # Legacy path — only emit if no segmented data was present.
+        adr_cagr = _cagr(legacy_adr)
+        if adr_cagr is not None and -0.20 <= adr_cagr <= 0.20:
+            out["adr_growth"] = adr_cagr
+        revpar_cagr = _cagr(legacy_revpar)
+        if revpar_cagr is not None and -0.20 <= revpar_cagr <= 0.20:
+            out["revpar_growth"] = revpar_cagr
+        if 1 in legacy_adr and legacy_adr[1] > 0:
+            out["cbre_year_1_adr"] = legacy_adr[1]
+        if 1 in legacy_revpar and legacy_revpar[1] > 0:
+            out["cbre_year_1_revpar"] = legacy_revpar[1]
 
-    # When CBRE provides a Year-1 ADR / RevPAR baseline and the deal
-    # has no T-12 starting_adr yet, we expose the CBRE Year-1 figure
-    # as a fallback. The T-12 actuals path takes precedence when both
-    # are present (handled in ``_load_engine_inputs``).
-    if 1 in adr_by_year and adr_by_year[1] > 0:
-        out["cbre_year_1_adr"] = adr_by_year[1]
-    if 1 in revpar_by_year and revpar_by_year[1] > 0:
-        out["cbre_year_1_revpar"] = revpar_by_year[1]
+    if long_run_revpar_growth is not None and -0.20 <= long_run_revpar_growth <= 0.20:
+        out["long_run_avg_revpar_growth"] = long_run_revpar_growth
+    if long_run_adr_change is not None and -0.20 <= long_run_adr_change <= 0.20:
+        out["long_run_avg_adr_change"] = long_run_adr_change
+    if long_run_occupancy is not None and 0 < long_run_occupancy <= 1.0:
+        out["long_run_avg_occupancy"] = long_run_occupancy
 
     return out
+
+
+def _normalize_pct(v: float) -> float:
+    """Normalize a percentage value to the 0..1 decimal form.
+
+    Accepts both forms — 5.8 (as printed) and 0.058 (decimal). Anything
+    >1 is treated as a percent and divided by 100. ``-50`` becomes
+    ``-0.50``; ``0.058`` stays as-is.
+    """
+    if abs(v) > 1.0:
+        return v / 100.0
+    return v
 
 
 # ─────────────────── P&L Benchmark expense-ratio overrides ──────────────
