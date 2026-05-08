@@ -6,8 +6,8 @@
   "redirects": [
     {
       "source": "/:path*",
-      "has": [{ "type": "host", "value": "fondok-app.vercel.app" }],
-      "destination": "https://fondok-one.vercel.app/:path*",
+      "has": [{ "type": "host", "value": "fondok-one.vercel.app" }],
+      "destination": "https://fondok-app.vercel.app/:path*",
       "permanent": true
     }
   ]
