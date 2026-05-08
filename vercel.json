@@ -2,5 +2,13 @@
   "buildCommand": "cd apps/web && npx next build",
   "installCommand": "npm install",
   "outputDirectory": "apps/web/.next",
-  "framework": "nextjs"
+  "framework": "nextjs",
+  "redirects": [
+    {
+      "source": "/:path*",
+      "has": [{ "type": "host", "value": "fondok-app.vercel.app" }],
+      "destination": "https://fondok-one.vercel.app/:path*",
+      "permanent": true
+    }
+  ]
 }
