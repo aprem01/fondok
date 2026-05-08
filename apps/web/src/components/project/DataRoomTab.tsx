@@ -375,12 +375,21 @@ export default function DataRoomTab({ projectId }: { projectId: number | string 
     (d) => d.rawStatus === 'EXTRACTED' || d.rawStatus === 'Extracted',
   );
   const fullRunRunning = fullRun.status === 'running';
-  const fullRunDisabled = !hasExtractedDoc || fullRunRunning;
-  const fullRunTooltip = !hasExtractedDoc
-    ? 'Upload + extract a T-12 and OM first'
-    : fullRunRunning
-      ? 'Underwriting in progress…'
-      : 'Run all 8 engines in dependency order';
+  // Gate the button on liveMode so the Kimpton demo deal (numeric id)
+  // doesn't trigger the "Deal id missing — open the deal page first"
+  // toast: useEngineRun is constructed with an empty dealId in non-live
+  // mode, so .run() short-circuits to that error message. Mock deals
+  // already display pre-computed engine outputs so the button is moot.
+  const fullRunDisabled = !liveMode || !hasExtractedDoc || fullRunRunning;
+  const fullRunTooltip = !liveMode
+    ? isWorkerConnected()
+      ? 'Demo deal — engine outputs are pre-computed. Create a new project to run the full pipeline.'
+      : 'Worker not connected — engines are read-only on the demo'
+    : !hasExtractedDoc
+      ? 'Upload + extract a T-12 and OM first'
+      : fullRunRunning
+        ? 'Underwriting in progress…'
+        : 'Run all 8 engines in dependency order';
 
   const onRunFullUnderwriting = () => {
     if (fullRunDisabled) return;
