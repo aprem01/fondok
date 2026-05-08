@@ -172,20 +172,72 @@ export default function VarianceTab() {
     );
   }
 
-  // Live deals with real flags get a generic narrative since the canned
-  // Kimpton commentary (coastal insurance / occupancy uplift) won't
-  // describe the deal. Kimpton mock keeps its richer narrative.
+  // Live deals get a real-deal narrative — same shape as the Kimpton
+  // mock copy ("Most material: broker NOI overstated by $X (Y%), driven
+  // by …") but populated from the deal's actual flags. Drivers are the
+  // top-three flags by absolute NOI impact, prefixed with severity.
   const totalFlags = liveActive ? varianceFlags.length : varianceSummary.total_flags;
+
+  // Prefer the dedicated NOI flag for the headline overstate $; fall
+  // back to the sum of broker-vs-T12 deltas across flags so a deal
+  // without an explicit NOI flag still shows a directional anchor.
+  const liveNoiFlag = liveActive
+    ? varianceFlags.find((f) => f.metric.toLowerCase() === 'noi')
+    : undefined;
   const noiOverstateUsd = liveActive
-    ? varianceFlags.reduce((s, f) => s + Math.max(0, f.broker_value ?? 0) - Math.max(0, f.t12_value ?? 0), 0)
+    ? liveNoiFlag && liveNoiFlag.broker_value != null && liveNoiFlag.t12_value != null
+      ? liveNoiFlag.broker_value - liveNoiFlag.t12_value
+      : varianceFlags.reduce(
+          (s, f) =>
+            s + Math.max(0, f.broker_value ?? 0) - Math.max(0, f.t12_value ?? 0),
+          0,
+        )
     : varianceSummary.noi_overstate_usd;
   const noiOverstatePct = liveActive
-    ? (() => {
-        const noiFlag = varianceFlags.find((f) => f.metric.toLowerCase() === 'noi');
-        if (!noiFlag || !noiFlag.t12_value) return 0;
-        return (noiFlag.broker_value ?? 0) / noiFlag.t12_value - 1;
-      })()
+    ? liveNoiFlag && liveNoiFlag.t12_value
+      ? (liveNoiFlag.broker_value ?? 0) / liveNoiFlag.t12_value - 1
+      : 0
     : varianceSummary.noi_overstate_pct;
+
+  // Top three NOI drivers — sorted by absolute NOI impact, NOI flag
+  // itself excluded since it's the rollup. Each driver renders as a
+  // human-readable phrase ("ADR overstated", "RevPAR optimistic",
+  // "Insurance understated") derived from the metric name + delta sign.
+  const liveTopDrivers = liveActive
+    ? [...varianceFlags]
+        .filter((f) => f.metric.toLowerCase() !== 'noi')
+        .sort((a, b) => Math.abs(b.noi_impact_usd) - Math.abs(a.noi_impact_usd))
+        .slice(0, 3)
+        .map((f) => {
+          const direction =
+            (f.broker_value ?? 0) > (f.t12_value ?? 0)
+              ? f.metric.toLowerCase().includes('expense') ||
+                f.metric.toLowerCase().includes('insurance') ||
+                f.metric.toLowerCase().includes('opex')
+                ? 'understated'
+                : 'overstated'
+              : f.metric.toLowerCase().includes('expense') ||
+                f.metric.toLowerCase().includes('insurance') ||
+                f.metric.toLowerCase().includes('opex')
+                ? 'overstated'
+                : 'understated';
+          return `${f.metric} ${direction}`.toLowerCase();
+        })
+    : [];
+
+  const liveTopDriversPhrase =
+    liveTopDrivers.length === 0
+      ? ''
+      : liveTopDrivers.length === 1
+        ? liveTopDrivers[0]
+        : liveTopDrivers.length === 2
+          ? `${liveTopDrivers[0]} and ${liveTopDrivers[1]}`
+          : `${liveTopDrivers.slice(0, -1).join(', ')}, and ${liveTopDrivers[liveTopDrivers.length - 1]}`;
+
+  // Direction-aware verb so a broker who *understated* NOI (rare, but
+  // happens on stabilized refis) isn't framed as "overstated".
+  const noiVerb = noiOverstateUsd >= 0 ? 'overstated' : 'understated';
+  const showLiveNoiHeadline = liveActive && Math.abs(noiOverstateUsd) >= 1_000;
 
   return (
     <div className="space-y-5">
@@ -211,9 +263,26 @@ export default function VarianceTab() {
               </span>{' '}
               between the broker pro forma and T-12 actuals.
               {liveActive ? (
-                <>
-                  {' '}Each flag below cites the source page and rule it tripped.{' '}
-                </>
+                showLiveNoiHeadline ? (
+                  <>
+                    {' '}Most material: broker NOI {noiVerb} by{' '}
+                    <span className="font-semibold text-danger-700">
+                      {fmtCurrency(Math.abs(noiOverstateUsd), { compact: true })}
+                      {noiOverstatePct !== 0 && (
+                        <> ({(Math.abs(noiOverstatePct) * 100).toFixed(1)}%)</>
+                      )}
+                    </span>
+                    {liveTopDriversPhrase && (
+                      <>, driven by {liveTopDriversPhrase}</>
+                    )}
+                    .{' '}
+                  </>
+                ) : (
+                  <>
+                    {' '}Each flag below cites the source page and rule it
+                    tripped.{' '}
+                  </>
+                )
               ) : (
                 <>
                   {' '}Most material: broker NOI overstated by{' '}

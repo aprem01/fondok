@@ -2,13 +2,13 @@
 
 > Audience: institutional hotel investor or LP scout. Persona on screen: **Eshan Mehta — Senior Analyst at Brookfield Real Estate (Pro Plan)**. Demo deal: **Kimpton Angler — Miami**.
 >
-> Live URL: https://fondok-app.vercel.app/
+> Live URL: https://fondok-one.vercel.app/
 
 ---
 
 ## 0:00–1:00 — Landing → Dashboard
 
-- Open https://fondok-app.vercel.app/
+- Open https://fondok-one.vercel.app/
 - One sentence: *"Fondok takes a folder of broker materials and produces an IC-ready memo in 17 minutes — with every number cited back to the source page."*
 - Click **Try the demo** → lands on the Dashboard.
 - Point out the portfolio overview: pipeline value, deals in progress, deals closed.
