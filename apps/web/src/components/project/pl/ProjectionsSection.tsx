@@ -121,26 +121,18 @@ export default function ProjectionsSection({
     return null;
   }, [hasWorker, revenueYears, fbYears, expenseYears, keys, isKimptonDemo]);
 
-  if (!years || years.length === 0) {
-    return (
-      <Card className="p-12 text-center">
-        <Sparkles size={22} className="mx-auto text-brand-500 mb-3" />
-        <div className="text-[14px] font-semibold text-ink-900">
-          No projections yet
-        </div>
-        <p className="text-[12.5px] text-ink-500 mt-1.5 max-w-md mx-auto leading-relaxed">
-          Run Full Underwriting from the Data Room to populate projections.
-        </p>
-      </Card>
-    );
-  }
-
   // ── AI NOI Summary modal ────────────────────────────────────────
   // Hits the worker's grounded Q&A endpoint (`/deals/{id}/ask`),
   // which returns answer + per-fact citations back to source PDF
   // pages. The fixed prompt frames the question around the projection
   // years rendered in this table — keeps the answer on-topic for the
   // P&L tab without dragging in unrelated assumptions.
+  //
+  // CRITICAL: these hooks MUST be declared BEFORE the early-return
+  // empty-state guard below. React's Rules of Hooks require the same
+  // hook count on every render; placing them after the guard caused
+  // React error #310 when `years` flipped from null → populated
+  // between renders (2026-05-12 prod crash on the P&L tab).
   const [noiModalOpen, setNoiModalOpen] = useState(false);
   const [noiLoading, setNoiLoading] = useState(false);
   const [noiResult, setNoiResult] = useState<AskAnswerResult | null>(null);
@@ -169,6 +161,20 @@ export default function ProjectionsSection({
       'when grounded.',
     ].join(' ');
   }, [years]);
+
+  if (!years || years.length === 0) {
+    return (
+      <Card className="p-12 text-center">
+        <Sparkles size={22} className="mx-auto text-brand-500 mb-3" />
+        <div className="text-[14px] font-semibold text-ink-900">
+          No projections yet
+        </div>
+        <p className="text-[12.5px] text-ink-500 mt-1.5 max-w-md mx-auto leading-relaxed">
+          Run Full Underwriting from the Data Room to populate projections.
+        </p>
+      </Card>
+    );
+  }
 
   const onNoiSummary = async () => {
     if (!isWorkerConnected() || !dealId || /^\d+$/.test(dealId)) {
