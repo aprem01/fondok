@@ -1329,6 +1329,8 @@ async def _run_graph_extraction(
     + the Router's classified doc_type (so the caller can update the
     documents row when the LLM disagrees with the filename heuristic).
     """
+    from fondok_schemas import DocType
+
     from ..agents.extractor import (
         ExtractorDocument,
         ExtractorInput,
@@ -1371,6 +1373,26 @@ async def _run_graph_extraction(
         logger.warning("router failed for doc=%s — falling back to %s: %s", doc_id, hint, exc)
         doc_type = hint
         route = "extract-fallback"
+
+    # The router returns 'UNKNOWN' as a sentinel when the LLM call
+    # rate-limits, the credit balance is exhausted, or the model emits
+    # an off-list value. 'UNKNOWN' is not a valid DocType enum member,
+    # so passing it through to ExtractorDocument crashes Pydantic
+    # validation and the upload row lands FAILED. Fall back to the
+    # cheap filename hint instead so extraction still proceeds — the
+    # downstream verifier and the user-facing doc_type column on the
+    # documents row will reflect the hint, which is correct for the
+    # 90% case where the filename actually carries the type.
+    valid_types = {dt.value for dt in DocType}
+    if doc_type not in valid_types:
+        logger.warning(
+            "router returned invalid doc_type=%r for doc=%s — falling back to filename hint=%s",
+            doc_type,
+            doc_id,
+            hint,
+        )
+        doc_type = hint
+        route = "extract-hint-fallback"
 
     extractor_doc = ExtractorDocument(
         document_id=doc_id,

@@ -189,6 +189,46 @@ async def test_parse_unsupported_extension_raises() -> None:
         await parse_document(b"some-bytes", "notes.txt")
 
 
+def test_unknown_doc_type_falls_back_to_filename_hint() -> None:
+    """Regression: when the router returns ``UNKNOWN`` (LLM rate-limit,
+    credit-balance exhausted, off-list emission), the extraction
+    pipeline must fall back to the filename hint instead of crashing
+    on Pydantic enum validation.
+
+    The fix lives at apps/worker/app/api/documents.py
+    `_run_graph_extraction` — it now intersects the router output with
+    the valid DocType enum members and falls back to ``_guess_doc_type``
+    when there's no match. This test exercises both halves: the enum
+    set and the filename hint.
+    """
+    from fondok_schemas import DocType
+
+    from app.api.documents import _guess_doc_type
+
+    valid = {dt.value for dt in DocType}
+    assert "UNKNOWN" not in valid, (
+        "UNKNOWN must NOT appear as a real DocType — it's a sentinel "
+        "the router emits when it can't classify"
+    )
+
+    # The filename hint must always resolve to a valid DocType so the
+    # fallback never re-introduces the original crash.
+    for filename in [
+        "sample_OM.pdf",
+        "sample_T12.pdf",
+        "sample_str_trend.xls",
+        "sample_cbre_horizons.pdf",
+        "sample_pnl_benchmark.pdf",
+        "Random_File.pdf",  # falls back to T12 default
+    ]:
+        hint = _guess_doc_type(filename)
+        assert hint in valid, (
+            f"_guess_doc_type returned {hint!r} for {filename!r}, "
+            f"which is not a valid DocType — the UNKNOWN fallback "
+            f"would still crash"
+        )
+
+
 # ─────────────────────────── storage ───────────────────────────
 
 
