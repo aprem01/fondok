@@ -5,6 +5,13 @@ dockerfilePath = "apps/worker/Dockerfile"
 [deploy]
 # The Dockerfile CMD already binds 0.0.0.0:$PORT via `sh -c`; let it handle expansion.
 healthcheckPath = "/health"
-healthcheckTimeout = 30
+# Cold-start migrations run idempotently before uvicorn binds the
+# port — on a fresh Postgres with the full migration history this can
+# take ~2 minutes. 30s was too tight and caused Railway to mark the
+# deploy unhealthy + roll back to the previous build (observed
+# 2026-05-12). 240s gives migrations headroom; the health endpoint
+# itself is fast, so once the worker is up the healthcheck passes
+# instantly on later restarts.
+healthcheckTimeout = 240
 restartPolicyType = "ON_FAILURE"
 restartPolicyMaxRetries = 3
