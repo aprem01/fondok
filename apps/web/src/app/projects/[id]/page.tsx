@@ -67,7 +67,7 @@ type Tab = {
 const tabs: Tab[] = [
   { id: '', label: 'Data Room', icon: FolderOpen },
   { id: 'overview', label: 'Overview', icon: FileText },
-  { id: 'investment', label: 'Investment', icon: Briefcase },
+  { id: 'investment', label: 'Investment', icon: Briefcase, inactive: true },
   { id: 'pl', label: 'P&L', icon: BarChart3 },
   { id: 'debt', label: 'Debt', icon: DollarSign, inactive: true },
   { id: 'cash-flow', label: 'Cash Flow', icon: Activity, inactive: true },

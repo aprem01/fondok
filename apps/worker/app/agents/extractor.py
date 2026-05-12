@@ -534,7 +534,16 @@ def _to_canonical_fields(rows: list[_ExtractionRow]) -> list[ExtractionField]:
 
 
 def _build_llm() -> Any:
-    """Sonnet 4.6 with structured output bound to ``_ExtractorEnvelope``."""
+    """Sonnet 4.6 with structured output bound to ``_ExtractorEnvelope``.
+
+    ``include_raw=True`` so the caller can salvage JSON from the raw
+    AIMessage when the structured-output path returns an empty
+    envelope (observed on 45-page OMs — see Sam QA 2026-05-12). The
+    function-calling pathway in langchain_anthropic 1.4.x occasionally
+    drops the tool args dict, leaving the parsed object as
+    ``{}``-equivalent; pulling the raw text and re-parsing recovers
+    the fields.
+    """
     from ..llm import build_structured_llm
 
     return build_structured_llm(
@@ -546,21 +555,127 @@ def _build_llm() -> Any:
         max_tokens=16_384,
         timeout=240,
         temperature=0.0,
+        include_raw=True,
     )
 
 
 async def _invoke_llm(
     llm: Any, messages: list[Any], usage: Any | None = None
 ) -> _ExtractorEnvelope:
+    """Invoke the Sonnet extractor and return a validated envelope.
+
+    With ``include_raw=True`` the chain returns
+    ``{"raw": AIMessage, "parsed": SchemaT|None, "parsing_error": Exception|None}``.
+
+    Failure salvage path: when the parsed envelope is missing/empty
+    but the AIMessage content carries JSON (the LLM emitted text
+    instead of using the tool, OR the tool args came back malformed),
+    we manually extract the JSON object from the raw text and validate
+    it. Observed on Sam's 45-page Anglers OM where Sonnet's response
+    arrived as plain-text JSON without firing the structured-output
+    tool call.
+    """
     config = {"callbacks": [usage]} if usage is not None else None
     raw = await llm.ainvoke(messages, config=config)
+
+    # Path 1: legacy direct-return (include_raw=False) — keep working
+    # in case callers ever flip the flag off.
     if isinstance(raw, _ExtractorEnvelope):
         return raw
     if isinstance(raw, BaseModel):
         return _ExtractorEnvelope.model_validate(raw.model_dump())
+
+    # Path 2: include_raw=True wrapper.
+    if isinstance(raw, dict) and ("raw" in raw or "parsed" in raw):
+        parsed = raw.get("parsed")
+        if isinstance(parsed, _ExtractorEnvelope) and parsed.fields:
+            return parsed
+        if isinstance(parsed, BaseModel) and getattr(parsed, "fields", None):
+            return _ExtractorEnvelope.model_validate(parsed.model_dump())
+        # Parsed envelope is missing or has no fields — try to salvage
+        # JSON from the raw AIMessage content.
+        raw_msg = raw.get("raw")
+        salvaged = _salvage_envelope_from_raw(raw_msg)
+        if salvaged is not None:
+            logger.info(
+                "extractor: salvaged %d fields from raw AIMessage after empty parsed envelope",
+                len(salvaged.fields),
+            )
+            return salvaged
+        # Surface the underlying parsing_error if present so the caller
+        # logs a useful diagnostic instead of "Unexpected ... dict".
+        perr = raw.get("parsing_error")
+        if perr is not None:
+            raise perr
+        raise ValueError(
+            "Extractor LLM returned empty envelope and no salvageable raw JSON"
+        )
+
     if isinstance(raw, dict):
         return _ExtractorEnvelope.model_validate(raw)
     raise ValueError(f"Unexpected Extractor LLM return: {type(raw).__name__}")
+
+
+def _salvage_envelope_from_raw(raw_msg: Any) -> _ExtractorEnvelope | None:
+    """Pull a ``_ExtractorEnvelope``-shaped JSON out of the raw AIMessage.
+
+    Anthropic's tool-calling can occasionally drop the structured tool
+    args and emit the JSON envelope as the message's text content
+    instead. We try three patterns:
+
+    1. ``raw_msg.tool_calls[0].args`` — sometimes populated even when
+       LangChain's parser didn't pick it up.
+    2. ``raw_msg.content`` parsed as a JSON object.
+    3. JSON object embedded in the content (regex match for the
+       outermost ``{ ... "fields": [...] ... }``).
+
+    Returns ``None`` when nothing yields a valid envelope.
+    """
+    if raw_msg is None:
+        return None
+
+    # 1) tool_calls — newer langchain_anthropic surfaces these.
+    tool_calls = getattr(raw_msg, "tool_calls", None) or []
+    for tc in tool_calls:
+        args = tc.get("args") if isinstance(tc, dict) else getattr(tc, "args", None)
+        if isinstance(args, dict) and args.get("fields"):
+            try:
+                return _ExtractorEnvelope.model_validate(args)
+            except ValidationError:
+                pass
+
+    # 2) content as a single JSON object
+    content = getattr(raw_msg, "content", None)
+    text = content if isinstance(content, str) else None
+    if isinstance(content, list):
+        # Content blocks: concatenate text blocks.
+        text = "".join(
+            b.get("text", "") for b in content if isinstance(b, dict) and b.get("type") == "text"
+        )
+
+    if not text:
+        return None
+
+    # Try direct parse first.
+    try:
+        candidate = json.loads(text)
+        if isinstance(candidate, dict) and "fields" in candidate:
+            return _ExtractorEnvelope.model_validate(candidate)
+    except (json.JSONDecodeError, ValidationError):
+        pass
+
+    # 3) Greedy match for the outermost JSON object containing "fields".
+    import re
+
+    m = re.search(r'\{(?:[^{}]|(?:\{[^{}]*\}))*"fields"(?:[^{}]|(?:\{[^{}]*\}))*\}', text, re.DOTALL)
+    if m:
+        try:
+            candidate = json.loads(m.group(0))
+            return _ExtractorEnvelope.model_validate(candidate)
+        except (json.JSONDecodeError, ValidationError):
+            pass
+
+    return None
 
 
 # ─────────────────────── per-document runner ───────────────────────

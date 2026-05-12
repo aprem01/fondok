@@ -141,15 +141,24 @@ def build_structured_llm(
     max_tokens: int,
     timeout: int,
     temperature: float | None = None,
+    include_raw: bool = False,
 ) -> Any:
-    """Build a chat model with structured output bound to ``schema``."""
+    """Build a chat model with structured output bound to ``schema``.
+
+    When ``include_raw=True`` the runnable returns a dict
+    ``{"raw": AIMessage, "parsed": SchemaT|None, "parsing_error":
+    Exception|None}`` instead of the parsed object directly. Useful when
+    the structured-output path occasionally returns an empty envelope
+    on large inputs (observed on 45-page OMs) — the caller can inspect
+    the raw text response and salvage JSON manually.
+    """
     base = build_llm(
         role=role,
         max_tokens=max_tokens,
         timeout=timeout,
         temperature=temperature,
     )
-    return base.with_structured_output(schema)
+    return base.with_structured_output(schema, include_raw=include_raw)
 
 
 def cached_system_message_blocks(
