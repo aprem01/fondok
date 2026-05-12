@@ -346,6 +346,22 @@ export default function PLTab({ projectId }: { projectId: number | string }) {
     return null;
   }, [hasWorkerStatement, expenseYears, fbYears, isKimptonDemo]);
 
+  // Year-1 RevPAR — hoisted ABOVE the empty-state early return so the
+  // hook count stays stable when `statement` flips from null →
+  // populated (React error #310). Guards: when statement is null,
+  // returns 0; downstream code uses `hasRevPAR = y1RevPAR > 0` as the
+  // render gate so 0 is harmless.
+  const y1RevPAR = useMemo(() => {
+    if (revenueYears && revenueYears.length > 0 && revenueYears[0].revpar > 0) {
+      return revenueYears[0].revpar;
+    }
+    if (statement) {
+      const room = statement.rows.find(r => r.label === 'Room Revenue')?.values?.[0] ?? 0;
+      if (propertyKeys > 0 && room > 0) return (room * 1000) / (propertyKeys * 365);
+    }
+    return 0;
+  }, [revenueYears, statement, propertyKeys]);
+
   if (!isKimptonDemo && !statement) {
     return (
       <div className="flex gap-4">
@@ -412,16 +428,8 @@ export default function PLTab({ projectId }: { projectId: number | string }) {
   const noiCagr = totals.noi[0] > 0 && totals.noi[4] > 0
     ? Math.pow(totals.noi[4] / totals.noi[0], 1 / 4) - 1
     : 0;
-  // Y1 RevPAR: prefer worker revenue engine; otherwise derive from
-  // rooms revenue / available room nights when keys are known.
-  const y1RevPAR = useMemo(() => {
-    if (revenueYears && revenueYears.length > 0 && revenueYears[0].revpar > 0) {
-      return revenueYears[0].revpar;
-    }
-    const room = stmt.rows.find(r => r.label === 'Room Revenue')?.values?.[0] ?? 0;
-    if (propertyKeys > 0 && room > 0) return (room * 1000) / (propertyKeys * 365);
-    return 0;
-  }, [revenueYears, stmt, propertyKeys]);
+  // y1RevPAR is hoisted above the empty-state early return — see
+  // declaration earlier in this component for the hook-count fix.
 
   return (
     <div className="flex gap-4">
