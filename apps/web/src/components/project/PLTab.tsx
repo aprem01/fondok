@@ -117,35 +117,60 @@ function buildStatementFromWorker(
   const pad = <T,>(arr: T[], filler: T): T[] =>
     arr.length >= 5 ? arr.slice(0, 5) : [...arr, ...Array(5 - arr.length).fill(filler)];
 
-  const totalRev = pad(ey.map(y => toThousands(y.total_revenue)), 0);
+  // Every worker-output access is null-safe: when extraction is too
+  // thin to populate an engine's expected inputs, the engine may emit
+  // an ExpenseYear with one of the nested groups (dept_expenses /
+  // undistributed / fixed_charges) missing or partially populated.
+  // Pre-fix this would crash with "Cannot read properties of undefined
+  // (reading 'rooms')" inside the P&L tab — the ErrorBoundary then
+  // showed "Something went wrong" (Sam QA 2026-05-08). Defaulting to
+  // empty groups + 0 lets the table render with zeros and the rest
+  // of the page stays usable.
+  const safe = (n: number | null | undefined): number =>
+    typeof n === 'number' && Number.isFinite(n) ? n : 0;
+  const DE = { rooms: 0, food_beverage: 0, other_operated: 0, total: 0 };
+  const UN = {
+    administrative_general: 0,
+    information_telecom: 0,
+    sales_marketing: 0,
+    property_operations: 0,
+    utilities: 0,
+    total: 0,
+  };
+  const FC = { property_taxes: 0, insurance: 0, rent: 0, other_fixed: 0, total: 0 };
+
+  const totalRev = pad(ey.map(y => toThousands(safe(y.total_revenue))), 0);
   const fbBy = fbYears?.slice(0, 5) ?? [];
-  const room = pad(fbBy.map(y => toThousands(y.rooms_revenue)), 0);
-  const fb = pad(fbBy.map(y => toThousands(y.fb_revenue)), 0);
+  const room = pad(fbBy.map(y => toThousands(safe(y.rooms_revenue))), 0);
+  const fb = pad(fbBy.map(y => toThousands(safe(y.fb_revenue))), 0);
   // Resort Fees — only render the row when at least one year is
   // non-zero. Legacy worker payloads (pre Resort-Fees split) have
   // no resort_fees field; we coerce undefined to 0 in toThousands.
-  const resortFees = pad(fbBy.map(y => toThousands(y.resort_fees ?? 0)), 0);
+  const resortFees = pad(fbBy.map(y => toThousands(safe(y.resort_fees))), 0);
   const showResortFees = resortFees.some(v => v > 0);
-  const other = pad(fbBy.map(y => toThousands(y.other_revenue)), 0);
+  const other = pad(fbBy.map(y => toThousands(safe(y.other_revenue))), 0);
 
-  const roomsDept = pad(ey.map(y => toThousands(y.dept_expenses.rooms)), 0);
-  const fbDept = pad(ey.map(y => toThousands(y.dept_expenses.food_beverage)), 0);
-  const otherDept = pad(ey.map(y => toThousands(y.dept_expenses.other_operated)), 0);
+  const roomsDept = pad(ey.map(y => toThousands(safe((y.dept_expenses ?? DE).rooms))), 0);
+  const fbDept = pad(ey.map(y => toThousands(safe((y.dept_expenses ?? DE).food_beverage))), 0);
+  const otherDept = pad(ey.map(y => toThousands(safe((y.dept_expenses ?? DE).other_operated))), 0);
   const deptProfit = totalRev.map((tr, i) => tr - roomsDept[i] - fbDept[i] - otherDept[i]);
 
-  const ag = pad(ey.map(y => toThousands(y.undistributed.administrative_general)), 0);
-  const sm = pad(ey.map(y => toThousands(y.undistributed.sales_marketing)), 0);
-  const pom = pad(ey.map(y => toThousands(y.undistributed.property_operations)), 0);
-  const util = pad(ey.map(y => toThousands(y.undistributed.utilities)), 0);
-  const it = pad(ey.map(y => toThousands(y.undistributed.information_telecom)), 0);
-  const gop = pad(ey.map(y => toThousands(y.gop)), 0);
+  const ag = pad(ey.map(y => toThousands(safe((y.undistributed ?? UN).administrative_general))), 0);
+  const sm = pad(ey.map(y => toThousands(safe((y.undistributed ?? UN).sales_marketing))), 0);
+  const pom = pad(ey.map(y => toThousands(safe((y.undistributed ?? UN).property_operations))), 0);
+  const util = pad(ey.map(y => toThousands(safe((y.undistributed ?? UN).utilities))), 0);
+  const it = pad(ey.map(y => toThousands(safe((y.undistributed ?? UN).information_telecom))), 0);
+  const gop = pad(ey.map(y => toThousands(safe(y.gop))), 0);
 
-  const insurance = pad(ey.map(y => toThousands(y.fixed_charges.insurance)), 0);
-  const propTax = pad(ey.map(y => toThousands(y.fixed_charges.property_taxes)), 0);
-  const equipLease = pad(ey.map(y => toThousands(y.fixed_charges.other_fixed + y.fixed_charges.rent)), 0);
-  const ffe = pad(ey.map(y => toThousands(y.ffe_reserve)), 0);
-  const mgmt = pad(ey.map(y => toThousands(y.mgmt_fee)), 0);
-  const noiCalc = pad(ey.map(y => toThousands(y.noi)), 0);
+  const insurance = pad(ey.map(y => toThousands(safe((y.fixed_charges ?? FC).insurance))), 0);
+  const propTax = pad(ey.map(y => toThousands(safe((y.fixed_charges ?? FC).property_taxes))), 0);
+  const equipLease = pad(
+    ey.map(y => toThousands(safe((y.fixed_charges ?? FC).other_fixed) + safe((y.fixed_charges ?? FC).rent))),
+    0,
+  );
+  const ffe = pad(ey.map(y => toThousands(safe(y.ffe_reserve))), 0);
+  const mgmt = pad(ey.map(y => toThousands(safe(y.mgmt_fee))), 0);
+  const noiCalc = pad(ey.map(y => toThousands(safe(y.noi))), 0);
   const netIncome = noiCalc.map((n, i) => n - ffe[i] - mgmt[i]);
 
   const rows: StatementRow[] = [

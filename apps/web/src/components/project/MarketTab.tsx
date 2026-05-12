@@ -122,7 +122,15 @@ export default function MarketTab({ projectId }: { projectId: number | string })
     toast(`Downloaded ${rows.length} sales as CSV`, { type: 'success' });
   };
 
-  if (!isKimptonDemo) {
+  // Miami pre-seed: when the deal sits in any "miami*" submarket the
+  // curated CoStar comp set + supply pipeline + transaction comps from
+  // the miamiMarket fixture render as a default view. This lets Miami
+  // deals (the most common pilot geography) demo with real-looking
+  // market data even before an STR/Kalibri ingestion. A banner makes
+  // the source clear so a reviewer doesn't mistake it for live data.
+  const isMiamiMarket = !!(submarketLabel && /miami/i.test(submarketLabel));
+
+  if (!isKimptonDemo && !isMiamiMarket) {
     return (
       <div>
         <IntroCard
@@ -180,6 +188,17 @@ export default function MarketTab({ projectId }: { projectId: number | string })
           </>
         }
       />
+      {isMiamiMarket && !isKimptonDemo && (
+        <Card className="p-3 mb-3 border-l-4 border-l-brand-500 bg-brand-50/40">
+          <p className="text-[12px] text-ink-700">
+            <span className="font-semibold">Pre-seeded Miami comp set.</span>{' '}
+            Submarket performance, supply pipeline, and transaction comps below are
+            the curated CoStar / STR view for Miami Beach / South Beach. Upload an
+            STR or Kalibri report into the Data Room to replace with deal-specific
+            data.
+          </p>
+        </Card>
+      )}
       <Card className="p-5 mb-5">
         <div className="flex items-start justify-between">
           <div>
@@ -385,7 +404,7 @@ export default function MarketTab({ projectId }: { projectId: number | string })
 
       {tab === 'Transaction Comps' && (
         <TransactionCompsSection
-          isKimptonDemo={isKimptonDemo}
+          isKimptonDemo={isKimptonDemo || isMiamiMarket}
           workerComps={workerComps}
           mockSales={m.sales}
           mockAsOf={m.asOf}
