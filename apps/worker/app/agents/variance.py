@@ -408,6 +408,22 @@ def _broker_fields_from_extraction(
             continue
         if not isinstance(f.value, int | float):
             continue
+        # Scope guard (Sam QA 2026-05-13): drop period-scoped paths
+        # like `p_and_l_usali.monthly.2024_09.total_revenue` and
+        # `p_and_l_usali.quarterly.q3_2024.adr_usd` — comparing a
+        # single month against an annual T-12 produced 100+ garbage
+        # "Info" flags. Only annual-scope broker fields enter the
+        # comparison set.
+        lower = name.lower()
+        if (
+            ".monthly." in lower
+            or ".quarterly." in lower
+            or ".ytd." in lower
+            or ".ttm." in lower
+            or ".weekly." in lower
+            or ".daily." in lower
+        ):
+            continue
         out.append(
             VarianceBrokerField(
                 field=name,

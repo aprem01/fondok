@@ -212,6 +212,16 @@ async def generate_due_diligence(
             error=out.error or "due diligence agent failed",
         )
 
+    # Defensive rollback before mutating — a previous _summarize_*
+    # helper that swallowed an error could have left the asyncpg
+    # transaction in InFailedSQLTransactionError state; rolling back
+    # clears that and the DELETE+INSERT chain runs cleanly. Read-only
+    # helpers don't have prior writes to lose. (Sam QA 2026-05-13.)
+    try:
+        await session.rollback()
+    except Exception:  # noqa: BLE001
+        pass
+
     # Replace prior questions with the fresh set.
     try:
         await session.execute(
@@ -387,7 +397,14 @@ async def _load_deal_metadata(
                 {"id": deal_id},
             )
         ).first()
-    except Exception:  # noqa: BLE001
+    except Exception as exc:  # noqa: BLE001
+        logger.warning(
+            "due_diligence: _load_deal_metadata sql failed: %s", exc
+        )
+        try:
+            await session.rollback()
+        except Exception:  # noqa: BLE001
+            pass
         return {}
     if row is None:
         return {}
@@ -414,7 +431,19 @@ async def _summarize_extractions(
             ),
             {"deal": deal_id},
         )
-    except Exception:  # noqa: BLE001
+    except Exception as exc:  # noqa: BLE001
+        # Sam QA 2026-05-13: silent swallow was leaving the asyncpg
+        # transaction in a poisoned state, causing the downstream
+        # DELETE in generate_due_diligence to crash with
+        # InFailedSQLTransactionError. Rollback to clear bad state +
+        # log the actual error so it's visible.
+        logger.warning(
+            "due_diligence: _summarize_extractions sql failed: %s", exc
+        )
+        try:
+            await session.rollback()
+        except Exception:  # noqa: BLE001
+            pass
         return {}
 
     by_type: dict[str, dict[str, Any]] = {}
@@ -464,7 +493,14 @@ async def _summarize_engine_outputs(
             ),
             {"deal": deal_id},
         )
-    except Exception:  # noqa: BLE001
+    except Exception as exc:  # noqa: BLE001
+        logger.warning(
+            "due_diligence: _summarize_engine_outputs sql failed: %s", exc
+        )
+        try:
+            await session.rollback()
+        except Exception:  # noqa: BLE001
+            pass
         return {}
 
     out: dict[str, Any] = {}
@@ -508,7 +544,14 @@ async def _summarize_variance(
         broker, actuals, _market_context, _keys = await _load_critic_inputs(
             session, deal_id=deal_id
         )
-    except Exception:  # noqa: BLE001
+    except Exception as exc:  # noqa: BLE001
+        logger.warning(
+            "due_diligence: _summarize_variance(critic_inputs) failed: %s", exc
+        )
+        try:
+            await session.rollback()
+        except Exception:  # noqa: BLE001
+            pass
         return []
     if broker is None or actuals is None:
         return []
@@ -521,7 +564,14 @@ async def _summarize_variance(
             ),
             {"deal": deal_id},
         )
-    except Exception:  # noqa: BLE001
+    except Exception as exc:  # noqa: BLE001
+        logger.warning(
+            "due_diligence: _summarize_variance(fields-select) failed: %s", exc
+        )
+        try:
+            await session.rollback()
+        except Exception:  # noqa: BLE001
+            pass
         return []
     all_fields = []
     for r in rows.fetchall():
