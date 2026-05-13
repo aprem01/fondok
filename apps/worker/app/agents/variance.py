@@ -408,20 +408,53 @@ def _broker_fields_from_extraction(
             continue
         if not isinstance(f.value, int | float):
             continue
-        # Scope guard (Sam QA 2026-05-13): drop period-scoped paths
-        # like `p_and_l_usali.monthly.2024_09.total_revenue` and
-        # `p_and_l_usali.quarterly.q3_2024.adr_usd` — comparing a
-        # single month against an annual T-12 produced 100+ garbage
-        # "Info" flags. Only annual-scope broker fields enter the
-        # comparison set.
+        # Scope guard (Sam QA 2026-05-13): the variance comparison
+        # only makes sense between the broker's Year-1 proforma and
+        # the T-12 actual for the same line. Any field whose path
+        # implies a different time slice — monthly/quarterly/YTD/TTM,
+        # historical prior-year data, or forward forecast — would
+        # produce nonsense flags (single-month broker $702K vs annual
+        # T-12 $14M, etc.). Drop them up-front.
         lower = name.lower()
-        if (
-            ".monthly." in lower
-            or ".quarterly." in lower
-            or ".ytd." in lower
-            or ".ttm." in lower
-            or ".weekly." in lower
-            or ".daily." in lower
+        out_of_scope_prefixes = (
+            ".monthly.",
+            ".quarterly.",
+            ".ytd.",
+            ".ttm.",
+            ".weekly.",
+            ".daily.",
+        )
+        if any(p in lower for p in out_of_scope_prefixes):
+            continue
+        # Historical prior-year rows (e.g. ``historical_performance.2022.gop_usd``)
+        # and forward-forecast rows (``p_and_l_usali.forecast.*``,
+        # ``broker_proforma.year_3_*``) are also wrong-scope for the
+        # T-12-actuals comparison.
+        if lower.startswith("historical_performance.") or lower.startswith("historical."):
+            continue
+        if ".forecast." in lower or ".projection." in lower:
+            continue
+        # Multi-year broker projection rows: keep year-1, drop the rest.
+        # Naming conventions: ``broker_proforma.noi_year_2_usd``,
+        # ``broker_proforma.noi_year_3_usd``, ``…_stabilized_…``.
+        if any(
+            tag in lower
+            for tag in (
+                "_year_2_",
+                "_year_3_",
+                "_year_4_",
+                "_year_5_",
+                "_year2_",
+                "_year3_",
+                "_year4_",
+                "_year5_",
+                "_stabilized_",
+                "stabilized.",
+                "year_2.",
+                "year_3.",
+                "year_4.",
+                "year_5.",
+            )
         ):
             continue
         out.append(
