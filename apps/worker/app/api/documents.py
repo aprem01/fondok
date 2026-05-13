@@ -98,6 +98,14 @@ class DocumentRecord(BaseModel):
     size_bytes: int | None = None
     page_count: int | None = None
     parser: str | None = None
+    # Typed failure signal — populated on FAILED rows so the web UI can
+    # surface a meaningful banner instead of a vague "extraction failed"
+    # toast. Kind is one of: ``billing`` (Anthropic credit balance
+    # exhausted), ``auth`` (API key rejected), ``rate_limit``
+    # (Anthropic 429), ``parse`` (PDF/XLS parser couldn't read the
+    # file), ``other`` (anything else).
+    error_kind: str | None = None
+    error_message: str | None = None
 
 
 class ExtractionStartResponse(BaseModel):
@@ -317,6 +325,27 @@ def _guess_doc_type(filename: str) -> str:
 
 
 def _row_to_record(row: dict[str, Any]) -> DocumentRecord:
+    # Surface typed error info to the UI when present. The
+    # extraction_data JSON blob carries `error_kind` and
+    # `error_message` for FAILED rows (set on PARSE_FAILED or
+    # extraction-time 0-field empties). Web reads these to show an
+    # actionable banner instead of just "Pending" / "Failed".
+    error_kind: str | None = None
+    error_message: str | None = None
+    raw_ed = row.get("extraction_data")
+    if isinstance(raw_ed, str) and raw_ed:
+        try:
+            raw_ed = json.loads(raw_ed)
+        except (json.JSONDecodeError, TypeError):
+            raw_ed = None
+    if isinstance(raw_ed, dict):
+        ek = raw_ed.get("error_kind")
+        em = raw_ed.get("error_message")
+        if isinstance(ek, str):
+            error_kind = ek
+        if isinstance(em, str):
+            error_message = em
+
     return DocumentRecord(
         id=UUID(str(row["id"])),
         deal_id=UUID(str(row["deal_id"])),
@@ -330,6 +359,8 @@ def _row_to_record(row: dict[str, Any]) -> DocumentRecord:
         size_bytes=row.get("size_bytes"),
         page_count=row.get("page_count"),
         parser=row.get("parser"),
+        error_kind=error_kind,
+        error_message=error_message,
     )
 
 
@@ -618,7 +649,7 @@ async def list_documents(
             """
             SELECT id, deal_id, tenant_id, filename, doc_type, status,
                    uploaded_at, content_hash, storage_key, size_bytes,
-                   page_count, parser
+                   page_count, parser, extraction_data
               FROM documents
              WHERE deal_id = :deal_id
              ORDER BY uploaded_at DESC
@@ -1149,6 +1180,84 @@ async def get_extraction(
     )
 
 
+# ─────────────────────── extraction error classifier ───────────────────
+
+
+# User-facing copy for each error_kind. The web reads error_kind to pick
+# a banner tone and CTA; this dict is the canonical source for the body
+# text so we don't drift between server and client.
+ERROR_KIND_MESSAGES: dict[str, str] = {
+    "billing": (
+        "Anthropic API credit balance is exhausted. Extractions are "
+        "queued but cannot complete until the API key is topped up at "
+        "console.anthropic.com → Billing."
+    ),
+    "auth": (
+        "Anthropic API key is invalid or revoked. Update "
+        "ANTHROPIC_API_KEY on the worker environment to resume "
+        "extractions."
+    ),
+    "rate_limit": (
+        "Anthropic rate-limit hit — extractions will retry "
+        "automatically once the limit resets."
+    ),
+    "parse": (
+        "The file couldn't be parsed (corrupt PDF, password-protected, "
+        "or unsupported format). Re-upload or check the original file."
+    ),
+    "other": "Extraction failed. Check the worker logs for details.",
+}
+
+
+def _classify_extraction_error(exc: BaseException) -> tuple[str, str]:
+    """Map an exception bubbling out of the extraction pipeline to a
+    typed (error_kind, error_message) tuple the web UI can act on.
+
+    The classifier walks both the exception itself and its ``__cause__``
+    chain so an Anthropic API error wrapped by a higher-level
+    BudgetExceeded / ValidationError still surfaces with the right
+    kind. Falls back to ``other`` when no pattern matches.
+    """
+    cur: BaseException | None = exc
+    text_blob = ""
+    while cur is not None:
+        text_blob += " " + repr(cur) + " " + str(cur)
+        cur = cur.__cause__ or cur.__context__
+
+    low = text_blob.lower()
+    # Anthropic surfaces credit-balance as a 400 with a specific message.
+    if (
+        "credit balance is too low" in low
+        or "credit balance too low" in low
+        or "insufficient credit" in low
+        or "budgetexceeded" in low
+    ):
+        kind = "billing"
+    elif (
+        "authentication" in low
+        or "invalid x-api-key" in low
+        or "invalid api key" in low
+        or "401" in low and "anthropic" in low
+    ):
+        kind = "auth"
+    elif (
+        "rate_limit" in low
+        or "rate limit" in low
+        or "429" in low
+    ):
+        kind = "rate_limit"
+    elif (
+        "parseerror" in low
+        or "could not parse" in low
+        or "unsupported file extension" in low
+    ):
+        kind = "parse"
+    else:
+        kind = "other"
+
+    return kind, ERROR_KIND_MESSAGES[kind]
+
+
 # ─────────────────────────── background runner ───────────────────────────
 
 
@@ -1234,30 +1343,77 @@ async def _run_extraction_pipeline(
                     "created": _now(),
                 },
             )
-            # Persist the Router agent's classification back to the
-            # documents row when it differs from the filename-heuristic
-            # ``doc_type`` set at upload. The downstream
-            # ``_load_critic_inputs`` filters on ``doc_type IN ('T12','PNL')``
-            # — without this update an OM that was filename-classified as
-            # T12 would have its broker_proforma fields silently bucketed
-            # as actuals (Sam QA #10 root cause).
-            if classified_doc_type:
+            # Sam QA 2026-05-13: a 0-field extraction is not a success.
+            # Previously we marked the row EXTRACTED regardless of
+            # field count; the UI then showed a green "Extracted" pill
+            # and the right-panel fell back to mock KPIs ($385 ADR
+            # etc.), making it look like extraction worked when it
+            # hadn't. Now: zero fields → FAILED row with a typed
+            # error_kind ("empty_envelope") merged into extraction_data
+            # so the UI can surface the real reason.
+            if not fields:
+                kind = "empty_envelope"
+                friendly = (
+                    "The extractor agent ran successfully but emitted no "
+                    "grounded fields. This usually means the document is "
+                    "image-heavy without OCR'd text, the LLM hit a "
+                    "structured-output edge case on a large document, or "
+                    "the system prompt confused the model. Re-upload to "
+                    "retry, or check the worker logs for the raw "
+                    "AIMessage shape."
+                )
+                logger.warning(
+                    "extraction: doc=%s deal=%s produced 0 fields — "
+                    "marking FAILED with error_kind=%s",
+                    doc_id,
+                    deal_id,
+                    kind,
+                )
+                # Merge error info into existing extraction_data so the
+                # parse-stage payload (parser/total_pages/pages) stays
+                # intact for forensics.
+                existing_data: dict[str, Any] = {}
+                if isinstance(extraction_data, dict):
+                    existing_data = dict(extraction_data)
+                existing_data["error_kind"] = kind
+                existing_data["error_message"] = friendly
                 await session.execute(
                     text(
-                        "UPDATE documents SET status = :s, doc_type = :dt WHERE id = :id"
+                        "UPDATE documents SET status = :s, "
+                        "extraction_data = :d WHERE id = :id"
                     ),
                     {
-                        "s": DOC_STATUS_EXTRACTED,
-                        "dt": classified_doc_type,
+                        "s": DOC_STATUS_FAILED,
+                        "d": json.dumps(existing_data),
                         "id": doc_id,
                     },
                 )
+                await session.commit()
             else:
-                await session.execute(
-                    text("UPDATE documents SET status = :s WHERE id = :id"),
-                    {"s": DOC_STATUS_EXTRACTED, "id": doc_id},
-                )
-            await session.commit()
+                # Persist the Router agent's classification back to the
+                # documents row when it differs from the filename-heuristic
+                # ``doc_type`` set at upload. The downstream
+                # ``_load_critic_inputs`` filters on ``doc_type IN ('T12','PNL')``
+                # — without this update an OM that was filename-classified as
+                # T12 would have its broker_proforma fields silently bucketed
+                # as actuals (Sam QA #10 root cause).
+                if classified_doc_type:
+                    await session.execute(
+                        text(
+                            "UPDATE documents SET status = :s, doc_type = :dt WHERE id = :id"
+                        ),
+                        {
+                            "s": DOC_STATUS_EXTRACTED,
+                            "dt": classified_doc_type,
+                            "id": doc_id,
+                        },
+                    )
+                else:
+                    await session.execute(
+                        text("UPDATE documents SET status = :s WHERE id = :id"),
+                        {"s": DOC_STATUS_EXTRACTED, "id": doc_id},
+                    )
+                await session.commit()
             logger.info(
                 "extraction complete: doc=%s deal=%s fields=%d doc_type=%s",
                 doc_id,
@@ -1301,10 +1457,41 @@ async def _run_extraction_pipeline(
             )
         except Exception as exc:  # noqa: BLE001
             logger.exception("extraction failed: doc=%s — %s", doc_id, exc)
+            kind, friendly = _classify_extraction_error(exc)
             try:
+                # Merge the error info into existing extraction_data so
+                # the parse-stage payload (parser/total_pages/pages)
+                # stays intact for forensics.
+                existing_row = (
+                    await session.execute(
+                        text("SELECT extraction_data FROM documents WHERE id = :id"),
+                        {"id": doc_id},
+                    )
+                ).first()
+                existing_data: dict[str, Any] = {}
+                if existing_row is not None:
+                    raw_ed = existing_row._mapping.get("extraction_data")
+                    if isinstance(raw_ed, str) and raw_ed:
+                        try:
+                            existing_data = json.loads(raw_ed)
+                        except (json.JSONDecodeError, TypeError):
+                            existing_data = {}
+                    elif isinstance(raw_ed, dict):
+                        existing_data = raw_ed
+                existing_data["error_kind"] = kind
+                existing_data["error_message"] = friendly
+                existing_data["error_raw"] = str(exc)[:500]
                 await session.execute(
-                    text("UPDATE documents SET status = :s WHERE id = :id"),
-                    {"s": DOC_STATUS_FAILED, "id": doc_id},
+                    text(
+                        "UPDATE documents "
+                        "SET status = :s, extraction_data = :d "
+                        "WHERE id = :id"
+                    ),
+                    {
+                        "s": DOC_STATUS_FAILED,
+                        "d": json.dumps(existing_data),
+                        "id": doc_id,
+                    },
                 )
                 await session.commit()
             except Exception:  # noqa: BLE001

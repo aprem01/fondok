@@ -556,6 +556,11 @@ def _build_llm() -> Any:
         timeout=240,
         temperature=0.0,
         include_raw=True,
+        # json_schema is more resilient than function_calling for large
+        # structured outputs — the parser only needs valid JSON, not a
+        # successful tool invocation. Sam QA 2026-05-13: real Anglers
+        # OM repeatedly returned {} from function_calling parser.
+        method="json_schema",
     )
 
 
@@ -577,6 +582,17 @@ async def _invoke_llm(
     """
     config = {"callbacks": [usage]} if usage is not None else None
     raw = await llm.ainvoke(messages, config=config)
+
+    # Diagnostic: log the actual shape we got back so any future
+    # extraction regression has a starting trail. We log once per call;
+    # it's a single line so it doesn't blow up logs at scale.
+    raw_kind = type(raw).__name__
+    raw_keys = list(raw.keys()) if isinstance(raw, dict) else None
+    logger.info(
+        "extractor: ainvoke returned type=%s keys=%s",
+        raw_kind,
+        raw_keys,
+    )
 
     # Path 1: legacy direct-return (include_raw=False) — keep working
     # in case callers ever flip the flag off.
@@ -733,6 +749,24 @@ async def _extract_one(
         requires_human_review=envelope.requires_human_review or overall < 0.85,
     )
 
+    # No fields = effective failure. Sam QA 2026-05-13: previously
+    # `success=True` was set regardless of field count, so a doc that
+    # extracted zero fields landed EXTRACTED in the UI and the right
+    # panel filled with the mock fallback — looked successful, was
+    # not. Surface the empty result honestly so the docs pipeline can
+    # mark the row FAILED with a typed error_kind ("empty_envelope").
+    success = bool(fields)
+    error: str | None = None
+    if not success:
+        error = (
+            "extractor: structured-output returned 0 fields "
+            "(empty envelope) — see worker logs"
+        )
+        logger.warning(
+            "extractor: 0 fields extracted for %s — marking unsuccessful",
+            doc.filename,
+        )
+
     result = ExtractedDocumentResult(
         document_id=doc.document_id,
         filename=doc.filename,
@@ -740,7 +774,8 @@ async def _extract_one(
         fields=fields,
         confidence=confidence,
         notes=envelope.notes,
-        success=True,
+        success=success,
+        error=error,
     )
 
     completed = datetime.now(UTC)

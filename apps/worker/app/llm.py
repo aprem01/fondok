@@ -142,6 +142,7 @@ def build_structured_llm(
     timeout: int,
     temperature: float | None = None,
     include_raw: bool = False,
+    method: str = "function_calling",
 ) -> Any:
     """Build a chat model with structured output bound to ``schema``.
 
@@ -151,6 +152,15 @@ def build_structured_llm(
     the structured-output path occasionally returns an empty envelope
     on large inputs (observed on 45-page OMs) — the caller can inspect
     the raw text response and salvage JSON manually.
+
+    ``method`` selects langchain_anthropic's parser:
+      * ``function_calling`` (default) — uses Anthropic tool-calling.
+        Reliable for small outputs; on large structured envelopes it
+        sometimes drops the tool args dict, leaving the parsed object
+        empty (Sam QA 2026-05-13).
+      * ``json_schema`` — instructs the model to emit JSON inline in
+        the message body. More resilient on large outputs because the
+        parser only requires valid JSON, not a tool call.
     """
     base = build_llm(
         role=role,
@@ -158,7 +168,9 @@ def build_structured_llm(
         timeout=timeout,
         temperature=temperature,
     )
-    return base.with_structured_output(schema, include_raw=include_raw)
+    return base.with_structured_output(
+        schema, include_raw=include_raw, method=method
+    )
 
 
 def cached_system_message_blocks(

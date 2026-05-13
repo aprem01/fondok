@@ -51,13 +51,17 @@ export interface WorkerDocument {
   tenant_id: string;
   filename: string;
   doc_type: string | null;
-  status: string; // UPLOADED | CLASSIFYING | EXTRACTING | EXTRACTED | FAILED
+  status: string; // UPLOADED | CLASSIFYING | EXTRACTING | EXTRACTED | FAILED | PARSE_FAILED
   uploaded_at: string;
   content_hash: string | null;
   storage_key: string | null;
   size_bytes: number | null;
   page_count: number | null;
   parser: string | null;
+  /** Typed failure kind for FAILED rows (billing | auth | rate_limit | parse | empty_envelope | other). */
+  error_kind: string | null;
+  /** Friendly explanation the UI surfaces for FAILED docs. */
+  error_message: string | null;
 }
 
 export interface ExtractionField {

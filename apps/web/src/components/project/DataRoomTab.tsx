@@ -100,9 +100,15 @@ function statusLabel(s: string): string {
     case 'EXTRACTING':
     case 'CLASSIFYING':
     case 'PROCESSING':
+    case 'PARSING':
       return 'Processing';
     case 'FAILED':
-      return 'Pending';
+    case 'PARSE_FAILED':
+      // Previously mapped to 'Pending', which silently hid extraction
+      // failures (Sam QA 2026-05-13). 'Failed' surfaces the problem
+      // and the row's error_kind + error_message tell the user what
+      // to do next.
+      return 'Failed';
     case 'UPLOADED':
     default:
       return 'Pending';
@@ -230,6 +236,8 @@ export default function DataRoomTab({ projectId }: { projectId: number | string 
     confidence: number;
     populates: string[];
     fieldList?: ExtractionField[];
+    errorKind?: string | null;
+    errorMessage?: string | null;
   };
 
   const docs: Row[] = useMemo(() => {
@@ -250,6 +258,8 @@ export default function DataRoomTab({ projectId }: { projectId: number | string 
           confidence: Math.round(overall * 100),
           populates: [],
           fieldList,
+          errorKind: d.error_kind,
+          errorMessage: d.error_message,
         };
       });
     }
@@ -816,6 +826,28 @@ export default function DataRoomTab({ projectId }: { projectId: number | string 
                             <Loader2 size={11} className="animate-spin" /> Extracting…
                           </div>
                         )}
+                        {d.status === 'Failed' && d.errorMessage && (
+                          <div className="mt-2 flex items-start gap-1.5 text-[11px] text-danger-700">
+                            <AlertTriangle size={11} className="mt-0.5 shrink-0" />
+                            <span>
+                              <span className="font-semibold">
+                                {d.errorKind === 'billing'
+                                  ? 'API credit exhausted'
+                                  : d.errorKind === 'auth'
+                                    ? 'API key rejected'
+                                    : d.errorKind === 'rate_limit'
+                                      ? 'Rate limited'
+                                      : d.errorKind === 'parse'
+                                        ? 'Parser couldn’t read the file'
+                                        : d.errorKind === 'empty_envelope'
+                                          ? 'Extraction returned 0 fields'
+                                          : 'Extraction failed'}
+                                .
+                              </span>{' '}
+                              {d.errorMessage}
+                            </span>
+                          </div>
+                        )}
                       </div>
                       <div onClick={(e) => e.stopPropagation()}>
                         <KebabMenu items={rowMenu} />
@@ -866,7 +898,10 @@ export default function DataRoomTab({ projectId }: { projectId: number | string 
                         value: formatValue(f.value, f.unit),
                         pct: Math.round((f.confidence ?? 0) * 100),
                       }));
-                    } else {
+                    } else if (!liveMode) {
+                      // Demo / mock fallback (no live worker connection):
+                      // show curated KPIs so the Kimpton demo still
+                      // looks populated.
                       rows = [
                         { label: 'ADR', value: '$385', pct: 96 },
                         { label: 'Occupancy', value: '76.2%', pct: 94 },
@@ -875,6 +910,33 @@ export default function DataRoomTab({ projectId }: { projectId: number | string 
                         { label: 'Gross Revenue', value: '$15.08M', pct: 95 },
                         { label: 'Operating Expenses', value: '$9.32M', pct: 89 },
                       ];
+                    } else {
+                      // Live mode but the worker returned 0 fields — show
+                      // an honest empty state instead of the curated mock
+                      // KPIs that misled Sam into thinking extraction
+                      // worked (QA 2026-05-13).
+                      return (
+                        <div className="space-y-3 text-[11.5px]">
+                          <div className="flex items-start gap-2 p-3 rounded-md bg-warn-50 border border-warn-500/30">
+                            <AlertTriangle size={14} className="text-warn-700 mt-0.5 shrink-0" />
+                            <div>
+                              <div className="font-semibold text-ink-900">
+                                Extraction returned no fields
+                              </div>
+                              <div className="text-ink-700 mt-0.5">
+                                The worker parsed the document but the
+                                Extractor agent emitted an empty result.
+                                Common causes: the doc is image-heavy
+                                without enough OCR'd text, the LLM hit a
+                                structured-output edge case, or
+                                Anthropic API credits dipped mid-call.
+                                Re-upload to retry, or check the worker
+                                logs.
+                              </div>
+                            </div>
+                          </div>
+                        </div>
+                      );
                     }
 
                     const high = rows.filter((r) => r.pct >= 95).length;
