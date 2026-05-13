@@ -87,9 +87,15 @@ export default function NewProjectPage() {
       const created = await api.deals.create(body as Parameters<typeof api.deals.create>[0]);
       toast(`Deal created · ${created.name}`, { type: 'success' });
 
-      // If the wizard collected files in step 3, upload them to the new deal
-      // and kick off extraction. Each upload + extract call is best-effort —
-      // a failed upload doesn't block routing to the deal page.
+      // If the wizard collected files in step 3, upload them to the
+      // new deal. The worker's upload route now auto-chains
+      // parse → extract via a background task (see
+      // apps/worker/.../documents.py::_run_parse_and_extract). We
+      // intentionally DO NOT fire a separate /extract call here —
+      // doing so races with the auto-chain (flipping status from
+      // PARSING to CLASSIFYING mid-parse) and was the root cause of
+      // Sam QA 2026-05-13 #1: "T-12 uploaded in wizard renders 0
+      // fields, OM stuck in extracting/processing".
       if (data.docs.length > 0) {
         toast(
           `Uploading ${data.docs.length} document${data.docs.length === 1 ? '' : 's'}…`,
@@ -97,16 +103,10 @@ export default function NewProjectPage() {
         );
         try {
           const uploaded = await api.documents.upload(String(created.id), data.docs);
-          await Promise.all(
-            uploaded.map((d) =>
-              api.documents
-                .extract(String(created.id), d.id)
-                .catch((err) => console.warn('extract kickoff failed', d.id, err)),
-            ),
+          toast(
+            `Uploaded ${uploaded.length} · parsing + extraction running in the background`,
+            { type: 'success' },
           );
-          toast(`Uploaded ${uploaded.length} · extraction in progress`, {
-            type: 'success',
-          });
         } catch (uErr) {
           const uMsg = uErr instanceof Error ? uErr.message : String(uErr);
           toast(`Deal created, but upload failed: ${uMsg}`, { type: 'error' });
