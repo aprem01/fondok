@@ -4,7 +4,7 @@ Next.js 14 + Tailwind front end for the Fondok hotel-underwriting platform.
 
 ## Smoke test
 
-1. Visit https://fondok-app.vercel.app/projects → see live deals from worker
+1. Visit https://fondok-one.vercel.app/projects → see live deals from worker
 2. Click "+ New Project" → fill in wizard → click Create → land on new deal page
 3. Drop a real PDF in Data Room → see classification + extraction happen live
 4. Watch the IRR slider on Returns tab — recompute is instant (TS engine)

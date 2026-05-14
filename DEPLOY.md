@@ -6,7 +6,7 @@ Authoritative reference for the Fondok production deployment.
 
 | Tier | Host | URL |
 | --- | --- | --- |
-| Web (Next.js) | Vercel (`fondok` project) | https://fondok-app.vercel.app |
+| Web (Next.js) | Vercel (`fondok` project) | https://fondok-one.vercel.app |
 | Worker (FastAPI + LangGraph) | Railway (`fondok-worker` project) | https://fondok-worker-production.up.railway.app |
 | Postgres 18 (managed) | Railway (`Postgres` service) | Internal: `postgres.railway.internal:5432` |
 | Redis (managed) | Railway (`Redis` service) | Internal: `redis.railway.internal:6379` |
@@ -27,7 +27,7 @@ Set on `fondok-worker` service. Use `railway variables --service fondok-worker` 
 | `LLM_PROVIDER` | `anthropic` |
 | `DEFAULT_TENANT_ID` | `00000000-0000-0000-0000-000000000000` |
 | `DEFAULT_DEAL_BUDGET_USD` | `20.0` |
-| `CORS_ORIGINS` | `https://fondok-app.vercel.app,https://*.vercel.app` |
+| `CORS_ORIGINS` | `https://fondok-one.vercel.app,https://*.vercel.app` |
 | `ANTHROPIC_ROUTER_MODEL` | `claude-haiku-4-5-20251001` |
 | `ANTHROPIC_EXTRACTOR_MODEL` | `claude-sonnet-4-6` |
 | `ANTHROPIC_NORMALIZER_MODEL` | `claude-sonnet-4-6` |

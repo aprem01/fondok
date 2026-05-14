@@ -6,7 +6,7 @@
 
 | Surface | URL |
 |---|---|
-| Web app  | https://fondok-app.vercel.app/ |
+| Web app  | https://fondok-one.vercel.app/ |
 | Worker   | https://fondok-worker-production.up.railway.app/ |
 | Worker health | https://fondok-worker-production.up.railway.app/health |
 
@@ -15,7 +15,7 @@
 | What | Where |
 |---|---|
 | Worker logs / deploys | https://railway.com/project/4c62714e-3546-4779-8bdc-5600a086cac8 |
-| Web deploys           | https://vercel.com/aprem01s-projects/fondok-app |
+| Web deploys           | https://vercel.com/aprem01s-projects/fondok |
 | Auth / users          | https://dashboard.clerk.com |
 | LLM traces            | https://smith.langchain.com |
 | Anthropic spend       | https://console.anthropic.com |
@@ -75,7 +75,7 @@ git push origin main
 ### Web (Vercel)
 
 ```bash
-vercel alias set <previous-deploy>.vercel.app fondok-app.vercel.app
+vercel alias set <previous-deploy>.vercel.app fondok-one.vercel.app
 ```
 
 You can grab the previous deployment URL from the Vercel dashboard. The alias swap is instantaneous and doesn't trigger a rebuild.

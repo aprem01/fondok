@@ -4,7 +4,7 @@
 
 Fondok is decision infrastructure for institutional hotel investors. It ingests broker materials (OMs, T-12s, STR reports, term sheets), runs them through a multi-agent extraction + reasoning pipeline, and produces a fully-cited IC memo with live IRR, variance detection against the broker case, and exportable Excel / PDF / PPTX deliverables.
 
-**Live demo:** https://fondok-app.vercel.app/  
+**Live demo:** https://fondok-one.vercel.app/  
 **Inspiration:** https://fondokai.lovable.app/  
 **Worker API:** https://fondok-worker-production.up.railway.app/
 
@@ -98,4 +98,4 @@ uv run uvicorn app.main:app --reload --port 8000
 
 ## Diagnostics
 
-A non-linked diagnostics page is exposed at [/diag](https://fondok-app.vercel.app/diag) showing worker URL, `/health`, deal count, recent agent costs, and an in-browser smoke test runner.
+A non-linked diagnostics page is exposed at [/diag](https://fondok-one.vercel.app/diag) showing worker URL, `/health`, deal count, recent agent costs, and an in-browser smoke test runner.
