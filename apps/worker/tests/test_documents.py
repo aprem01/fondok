@@ -358,7 +358,14 @@ async def test_extraction_flow_end_to_end(
         assert body["fields"], "mock extraction should populate fields"
         # Mock payload always emits noi_year_1.
         assert any(f["field_name"] == "noi_year_1" for f in body["fields"])
-        assert body["confidence_report"]["overall"] == pytest.approx(0.9)
+        # The mock payload starts at overall 0.9, but the citation
+        # verifier runs after extraction and promotes any field it
+        # confirms verbatim against the source page (Sam QA 2026-05-14
+        # critic-promote). The mock T-12 fixture carries "Net Operating
+        # Income: $1,234,567" so noi_year_1 verifies MATCH and is
+        # floored to 0.98 — the rolled-up overall lands at-or-above the
+        # raw 0.9. Assert the floor, not an exact value.
+        assert body["confidence_report"]["overall"] >= 0.9
 
 
 # ─────────────────────────── graph ───────────────────────────

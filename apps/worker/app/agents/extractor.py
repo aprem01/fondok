@@ -39,6 +39,11 @@ from ..usali_rules import rules_as_prompt_block
 
 logger = logging.getLogger(__name__)
 
+# Max simultaneous Sonnet calls in a single run_extractor fan-out.
+# Chunked extraction of a 45-page OM fans out to ~9 docs; 4-wide keeps
+# wall time low without tripping Anthropic's per-minute rate limit.
+_EXTRACTOR_MAX_CONCURRENCY = 4
+
 
 # ─────────────────────── prompt ───────────────────────
 
@@ -846,14 +851,31 @@ async def run_extractor(payload: ExtractorInput) -> ExtractorOutput:
     # paying both the build cost and the cache miss cost.
     rules_as_prompt_block()
 
+    # Parallel fan-out across documents. Callers chunk a large source
+    # PDF into ~5-page ExtractorDocuments (see documents.py
+    # _run_graph_extraction) and pass them all in one payload — running
+    # them concurrently turns a 3-minute sequential 45-page extraction
+    # into ~30s wall time. A semaphore caps concurrency so a deal with
+    # many docs doesn't hammer Anthropic's rate limit.
+    import asyncio
+
+    sem = asyncio.Semaphore(_EXTRACTOR_MAX_CONCURRENCY)
+
+    async def _bounded(doc: ExtractorDocument) -> tuple[ExtractedDocumentResult, ModelCall | None]:
+        async with sem:
+            return await _extract_one(
+                doc,
+                deal_id=payload.deal_id,
+                system_blocks=system_blocks,
+            )
+
+    gathered = await asyncio.gather(
+        *(_bounded(doc) for doc in payload.documents)
+    )
+
     results: list[ExtractedDocumentResult] = []
     model_calls: list[ModelCall] = []
-    for doc in payload.documents:
-        result, call = await _extract_one(
-            doc,
-            deal_id=payload.deal_id,
-            system_blocks=system_blocks,
-        )
+    for result, call in gathered:
         results.append(result)
         if call is not None:
             model_calls.append(call)

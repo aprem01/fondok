@@ -1498,6 +1498,63 @@ async def _run_extraction_pipeline(
                 logger.exception("extraction: failed to record FAILED status")
 
 
+# Pages per extraction chunk. A 45-page OM → 9 chunks; a 3-page T-12
+# → 1 chunk (unchanged behavior). Tuned so each chunk's content stays
+# comfortably under the extractor prompt's content budget and the LLM
+# isn't reasoning over too many pages at once.
+_EXTRACTOR_CHUNK_PAGES = 5
+
+
+def _build_extractor_chunks(
+    *,
+    pages: list[dict[str, Any]],
+    doc_id: str,
+    filename: str,
+    doc_type: str,
+    make_doc: Any,
+) -> list[Any]:
+    """Split a parsed document's pages into ~5-page ExtractorDocuments.
+
+    All chunks share the same ``document_id`` / ``filename`` /
+    ``doc_type`` — they're the same source document, just sliced so the
+    extractor can fan out concurrently. ``make_doc`` is the
+    ``ExtractorDocument`` constructor passed in to avoid a module-level
+    import cycle. Returns at least one chunk even for an empty document
+    so the extractor still runs (and reports 0 fields honestly).
+    """
+    if not pages:
+        return [
+            make_doc(
+                document_id=doc_id,
+                filename=filename,
+                doc_type=doc_type,
+                content=f"(empty document: {filename})",
+                source_pages=[],
+            )
+        ]
+
+    chunks: list[Any] = []
+    for start in range(0, len(pages), _EXTRACTOR_CHUNK_PAGES):
+        batch = pages[start : start + _EXTRACTOR_CHUNK_PAGES]
+        content = "\n\n".join(
+            f"[Page {p.get('page_num', start + i + 1)}]\n{p.get('text', '')}".strip()
+            for i, p in enumerate(batch)
+        )
+        source_pages = [
+            int(p.get("page_num", start + i + 1)) for i, p in enumerate(batch)
+        ]
+        chunks.append(
+            make_doc(
+                document_id=doc_id,
+                filename=filename,
+                doc_type=doc_type,
+                content=content or f"(empty page range: {filename})",
+                source_pages=source_pages,
+            )
+        )
+    return chunks
+
+
 async def _run_graph_extraction(
     *,
     deal_id: str,
@@ -1532,14 +1589,13 @@ async def _run_graph_extraction(
             "extraction: no parsed pages cached for doc=%s — extractor will see empty content",
             doc_id,
         )
-        content = ""
-        source_pages: list[int] = []
-    else:
-        content = "\n\n".join(
-            f"[Page {p.get('page_num', i+1)}]\n{p.get('text', '')}".strip()
-            for i, p in enumerate(pages)
-        )
-        source_pages = [int(p.get("page_num", i + 1)) for i, p in enumerate(pages)]
+
+    # Small content sample for the Router classification — first ~2
+    # pages is plenty to recognize doc type without paying to
+    # serialize the whole document.
+    router_sample = "\n\n".join(
+        (p.get("text", "") or "") for p in pages[:2]
+    )[:2000]
 
     # Cheap filename-based doc-type hint passes to Router; agent confirms.
     hint = _guess_doc_type(filename)
@@ -1548,7 +1604,7 @@ async def _run_graph_extraction(
         tenant_id=tenant_id,
         deal_id=deal_id,
         filename=filename,
-        content_sample=content[:2000],
+        content_sample=router_sample,
     ) if "filename" in RouterInput.model_fields else RouterInput(
         tenant_id=tenant_id, deal_id=deal_id,
     )
@@ -1581,34 +1637,69 @@ async def _run_graph_extraction(
         doc_type = hint
         route = "extract-hint-fallback"
 
-    extractor_doc = ExtractorDocument(
-        document_id=doc_id,
+    # Chunked extraction (Sam QA 2026-05-14): split the document into
+    # ~5-page batches and build one ExtractorDocument per chunk. The
+    # extractor agent fans these out in parallel (capped concurrency),
+    # so a 45-page OM that used to be a single 3-minute Sonnet call
+    # becomes ~9 concurrent ~30s calls. Smaller per-call context also
+    # lifts per-field confidence — the model isn't juggling 45 pages
+    # at once. Small docs (≤ chunk size) produce a single chunk and
+    # behave exactly as before.
+    extractor_docs = _build_extractor_chunks(
+        pages=pages,
+        doc_id=doc_id,
         filename=filename,
         doc_type=doc_type,
-        content=content or f"(empty document: {filename})",
-        source_pages=source_pages,
+        make_doc=ExtractorDocument,
     )
     extractor_input = ExtractorInput(
         tenant_id=tenant_id,
         deal_id=deal_id,
-        documents=[extractor_doc],
+        documents=extractor_docs,
     )
     extractor_out = await run_extractor(extractor_input)
 
-    fields: list[dict[str, Any]] = []
-    confidence: dict[str, Any] = {
-        "overall": 0.0,
-        "by_field": {},
-        "low_confidence_fields": [],
-        "requires_human_review": True,
-    }
+    # Merge chunk results. Each chunk emits its own field list +
+    # confidence report; concatenating naively would double-count any
+    # field two adjacent chunks both saw (e.g. a property name in a
+    # header repeated across pages). Dedup by field_name, keeping the
+    # highest-confidence instance.
+    by_name: dict[str, dict[str, Any]] = {}
     for doc in extractor_out.extracted_documents or []:
         as_dict = doc.model_dump() if hasattr(doc, "model_dump") else dict(doc)
         for f in as_dict.get("fields", []) or []:
-            fields.append(dict(f) if not isinstance(f, dict) else f)
-        cr = as_dict.get("confidence")
-        if cr:
-            confidence = dict(cr) if not isinstance(cr, dict) else cr
+            fd = dict(f) if not isinstance(f, dict) else f
+            name = fd.get("field_name")
+            if not name:
+                continue
+            existing = by_name.get(name)
+            if existing is None or (
+                float(fd.get("confidence", 0) or 0)
+                > float(existing.get("confidence", 0) or 0)
+            ):
+                by_name[name] = fd
+    fields: list[dict[str, Any]] = list(by_name.values())
+
+    # Recompute the rolled-up confidence over the deduped field set so
+    # the documents-row confidence reflects the merged result, not a
+    # single chunk's report.
+    by_field_conf = {
+        f["field_name"]: float(f.get("confidence", 0) or 0)
+        for f in fields
+        if f.get("field_name")
+    }
+    overall_conf = (
+        sum(by_field_conf.values()) / len(by_field_conf)
+        if by_field_conf
+        else 0.0
+    )
+    low_conf = [n for n, c in by_field_conf.items() if c < 0.85]
+    confidence: dict[str, Any] = {
+        "overall": overall_conf,
+        "by_field": by_field_conf,
+        "low_confidence_fields": low_conf,
+        "requires_human_review": overall_conf < 0.85 or not fields,
+    }
 
     return fields, confidence, f"router:{route};extractor", doc_type
 
@@ -1899,12 +1990,146 @@ async def _persist_verification_report(
             report.pass_rate,
             len(report.checks),
         )
+
+        # Critic-promote (Sam QA 2026-05-14): the verifier just
+        # re-read every cited number against its source page. A field
+        # whose number was confirmed verbatim (MATCH) is as certain as
+        # extraction gets — promote its confidence. CLOSE = within
+        # tolerance, modest promote. MISMATCH = the cited number isn't
+        # on the page, demote hard so the UI flags it for review.
+        # UNVERIFIABLE (no parseable number on the page) is left
+        # untouched. Best-effort: a failure here never blocks
+        # extraction completion.
+        try:
+            await _apply_verification_to_confidence(
+                session,
+                deal_id=deal_id,
+                doc_id=doc_id,
+                fields=fields,
+                checks=report.checks,
+            )
+        except Exception as exc:  # noqa: BLE001
+            logger.warning(
+                "verification: confidence-promote failed for doc=%s: %s",
+                doc_id,
+                exc,
+            )
     except Exception as exc:  # noqa: BLE001 - never block extraction
         logger.warning(
             "verification: failed to persist report for doc=%s: %s",
             doc_id,
             exc,
         )
+
+
+# Confidence floors/ceilings applied after the citation verifier
+# re-reads each cited number against its source page.
+_VERIFY_PROMOTE_MATCH = 0.98   # number confirmed verbatim on the page
+_VERIFY_PROMOTE_CLOSE = 0.92   # confirmed within tolerance
+_VERIFY_DEMOTE_MISMATCH = 0.50  # cited number absent from the page
+
+
+async def _apply_verification_to_confidence(
+    session: AsyncSession,
+    *,
+    deal_id: str,
+    doc_id: str,
+    fields: list[dict[str, Any]],
+    checks: list[Any],
+) -> None:
+    """Re-write the extraction_results row with verifier-adjusted confidence.
+
+    For every field the citation verifier re-read:
+      * MATCH   → confidence floored to 0.98 (verbatim-confirmed)
+      * CLOSE   → confidence floored to 0.92 (within tolerance)
+      * MISMATCH→ confidence capped at 0.50 (cited number not on page)
+      * UNVERIFIABLE / not-checked → untouched
+
+    The row's ``confidence_report`` is recomputed over the adjusted
+    field set so the documents-list confidence badge reflects the
+    grounded score, not the raw LLM self-assessment.
+    """
+    from fondok_schemas import CitationStatus
+
+    # field_name → verifier status. A field can appear once per doc.
+    status_by_field: dict[str, Any] = {}
+    for c in checks:
+        fn = getattr(c, "field_name", None)
+        st = getattr(c, "status", None)
+        if fn and st is not None:
+            status_by_field[fn] = st
+
+    if not status_by_field:
+        return
+
+    adjusted = 0
+    for f in fields:
+        name = f.get("field_name")
+        st = status_by_field.get(name)
+        if st is None:
+            continue
+        cur = float(f.get("confidence", 0) or 0)
+        if st == CitationStatus.MATCH:
+            new = max(cur, _VERIFY_PROMOTE_MATCH)
+        elif st == CitationStatus.CLOSE:
+            new = max(cur, _VERIFY_PROMOTE_CLOSE)
+        elif st == CitationStatus.MISMATCH:
+            new = min(cur, _VERIFY_DEMOTE_MISMATCH)
+        else:  # UNVERIFIABLE — leave as-is
+            continue
+        if abs(new - cur) > 1e-9:
+            f["confidence"] = new
+            adjusted += 1
+
+    if adjusted == 0:
+        return
+
+    # Recompute the rolled-up confidence report over the adjusted set.
+    by_field_conf = {
+        f["field_name"]: float(f.get("confidence", 0) or 0)
+        for f in fields
+        if f.get("field_name")
+    }
+    overall = (
+        sum(by_field_conf.values()) / len(by_field_conf)
+        if by_field_conf
+        else 0.0
+    )
+    confidence_report = {
+        "overall": overall,
+        "by_field": by_field_conf,
+        "low_confidence_fields": [
+            n for n, c in by_field_conf.items() if c < 0.85
+        ],
+        "requires_human_review": overall < 0.85 or not by_field_conf,
+    }
+
+    # Update the most-recent extraction_results row for this document.
+    await session.execute(
+        text(
+            """
+            UPDATE extraction_results
+               SET fields = :fields,
+                   confidence_report = :cr
+             WHERE document_id = :doc
+               AND deal_id = :deal
+            """
+        ),
+        {
+            "fields": json.dumps(fields),
+            "cr": json.dumps(confidence_report),
+            "doc": doc_id,
+            "deal": deal_id,
+        },
+    )
+    await session.commit()
+    logger.info(
+        "verification: promoted/demoted %d field confidences for doc=%s "
+        "(new overall=%.3f)",
+        adjusted,
+        doc_id,
+        overall,
+    )
 
 
 # ─────────────────────────── critic ───────────────────────────
