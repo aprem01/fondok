@@ -120,6 +120,34 @@ function findField(fields: ExtractionField[], aliases: string[]): ExtractionFiel
 }
 
 /**
+ * Drop forward-looking fields before any historical building.
+ *
+ * Sam QA 2026-05-14: the T-12 doc carries BOTH actuals
+ * (``p_and_l_usali.period_ending`` = 2025-05-31) AND a forecast block
+ * (``forecast.period_ending`` = 2025-12-31). ``findField`` matches on
+ * the last dotted segment, so ``forecast.period_ending`` shadowed the
+ * real period_ending — the T-12 doc got mislabeled "2025" (December)
+ * instead of "T-12", and its data landed in the wrong column with the
+ * real T-12 column left blank. The Historicals tab is actuals-only;
+ * strip anything under a forecast/projection/budget namespace.
+ */
+function actualsOnly(fields: ExtractionField[]): ExtractionField[] {
+  return fields.filter((f) => {
+    const n = f.field_name.toLowerCase();
+    return !(
+      n.startsWith('forecast.') ||
+      n.startsWith('projection.') ||
+      n.startsWith('projected.') ||
+      n.startsWith('budget.') ||
+      n.includes('.forecast.') ||
+      n.includes('.projection.') ||
+      n.includes('.projected.') ||
+      n.includes('.budget.')
+    );
+  });
+}
+
+/**
  * Derive the calendar-year label for a P&L / T-12 document from its
  * extracted fields, falling back to the filename. Returns ``"T-12"``
  * for a trailing-twelve period that ends mid-year, or the 4-digit
@@ -324,7 +352,10 @@ export default function HistoricalsSection({
           for (const doc of sorted) {
             try {
               const ext = await api.documents.extraction(String(dealId), doc.id);
-              const fields = ext.fields ?? [];
+              // Historicals is actuals-only — strip the forecast block
+              // so forecast.period_ending / forecast.adr_usd can't
+              // shadow the real values (Sam QA 2026-05-14).
+              const fields = actualsOnly(ext.fields ?? []);
               const label = deriveYearLabel(fields, doc.filename ?? '');
               const built = buildHistYear(fields, keysForBuild, label);
               if (built) byYear.set(label, built);
