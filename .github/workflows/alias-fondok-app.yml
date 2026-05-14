@@ -21,6 +21,9 @@ name: Promote fondok-app alias
 on:
   push:
     branches: [main]
+  # Manual trigger — GitHub → Actions → "Promote fondok-app alias" →
+  # Run workflow. Useful to re-point fondok-app without a code push.
+  workflow_dispatch:
 
 # Don't pile up runs — only the newest commit's alias matters.
 concurrency:
