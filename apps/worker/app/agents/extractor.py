@@ -58,6 +58,17 @@ is unusable. A deal with 30+ extracted fields lets the Normalizer
 build a real spread. When in doubt, emit the field; the downstream
 verifier double-checks each one against the source page anyway.
 
+FORMAT IS NOT FIXED. Every client sends documents in a different
+layout — scanned-image PDFs vs text PDFs, single-tab vs multi-tab
+Excel, monthly-column vs annual-column P&Ls, different USALI
+conventions, different label wording, different sheet names. You are
+the format-agnostic layer: your job is to map ANY layout onto the
+canonical dotted field paths below. Never assume a fixed structure.
+Read the document, understand what each number means, and emit it
+under the right canonical path — that is the entire point of having
+an LLM here instead of a regex. Downstream code only ever sees the
+canonical paths; it must not have to guess at the client's format.
+
 Your output is a flat list of ``ExtractionField`` rows. Every row must
 include:
 
@@ -122,6 +133,34 @@ include:
        ``p_and_l_usali.fixed_charges.insurance``,
        ``p_and_l_usali.net_operating_income.noi_usd``,
        ``occupancy_pct``, ``adr_usd``, ``revpar_usd``.
+
+     **Format-agnostic period metadata — MANDATORY for every P&L /
+     T-12, no matter the layout.** Source documents vary wildly: a
+     clean Excel with a "FOR THE PERIOD ENDING…" header, twelve
+     monthly columns plus an annual-total column, a single annual
+     column, a trailing-twelve rollup, a scanned PDF with the period
+     buried in body text, a generically-named file with the period
+     only inside the sheet. Regardless of layout, ALWAYS emit:
+       * ``p_and_l_usali.period_ending`` — ISO date the statement
+         period ends (e.g. ``2023-12-31`` for a calendar year,
+         ``2025-05-31`` for a trailing-twelve ending in May). This is
+         the single most important field for downstream
+         year-attribution — find it even when it's only in a column
+         header, a title line, or a footnote.
+       * ``p_and_l_usali.period_start`` — ISO date the period begins,
+         when determinable.
+       * ``p_and_l_usali.period_type`` — one of ``annual``,
+         ``trailing_twelve``, ``ytd``, ``quarterly``, ``monthly``.
+         Annual = a full Jan–Dec calendar year. Trailing-twelve = any
+         rolling 12-month window not aligned to the calendar year.
+       * ``p_and_l_usali.period_label`` — the human label as printed
+         on the document (e.g. ``"FY2023"``, ``"TTM May 2025"``,
+         ``"Year Ended December 31, 2023"``).
+     When a workbook carries BOTH monthly columns AND an annual-total
+     column, extract the USALI lines from the **annual-total / full-
+     period column**, not a single month. If only monthly columns
+     exist, sum them and set ``period_type`` accordingly. Never guess
+     the period from the filename — read it from the document content.
    * **STR (STR / smith travel benchmark report).** Examples:
        ``ttm_performance.subject.revpar_usd``,
        ``ttm_performance.indices.rgi_revpar_index``,
@@ -356,7 +395,10 @@ Coverage targets per document type:
     plus GOP and NOI rollups. Include the operational KPIs
     (occupancy, ADR, RevPAR, available/occupied rooms). Resort Fees
     are a separate USALI revenue line (``p_and_l_usali.operating_revenue.resort_fees``)
-    — extract them distinctly from miscellaneous income.
+    — extract them distinctly from miscellaneous income. The period
+    metadata block (``period_ending``, ``period_start``,
+    ``period_type``, ``period_label``) is MANDATORY — a P&L without a
+    ``period_ending`` cannot be attributed to a year downstream.
   * **STR** — subject + comp-set occupancy/ADR/RevPAR for the TTM,
     the three penetration indices (MPI/ARI/RGI), comp-set size
     and total keys, and any forward outlook the report carries.

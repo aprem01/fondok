@@ -157,37 +157,56 @@ function deriveYearLabel(
   fields: ExtractionField[],
   filename: string,
 ): string {
-  // 1. period_ending — most reliable. "2023-12-31" → annual 2023;
-  //    "2025-05-31" → trailing-twelve, label T-12.
-  const periodField = findField(fields, [
-    'period_ending',
-    'p_and_l_usali.period_ending',
-    'period_end',
-    'statement_period_end',
-  ]);
-  const periodLabelField = findField(fields, [
-    'period_label',
-    'p_and_l_usali.period_label',
-  ]);
-  const raw =
-    (typeof periodField?.value === 'string' ? periodField.value : null) ??
-    (typeof periodLabelField?.value === 'string' ? periodLabelField.value : null);
-  if (raw) {
-    const isoMatch = raw.match(/(\d{4})-(\d{2})-(\d{2})/);
-    if (isoMatch) {
-      const [, yr, mo] = isoMatch;
-      // December-ending → full calendar year; otherwise trailing-12.
-      return mo === '12' ? yr : 'T-12';
+  // Resolution order — most authoritative first. The extractor is the
+  // format-agnostic layer (it now emits period metadata for any P&L
+  // layout); the filename is only a last-resort safety net.
+  const strVal = (f: ExtractionField | undefined): string | null =>
+    f && typeof f.value === 'string' ? f.value : null;
+
+  const periodEnding = strVal(findField(fields, [
+    'period_ending', 'p_and_l_usali.period_ending',
+    'period_end', 'statement_period_end',
+  ]));
+  const periodType = strVal(findField(fields, [
+    'period_type', 'p_and_l_usali.period_type',
+  ]));
+  const periodLabel = strVal(findField(fields, [
+    'period_label', 'p_and_l_usali.period_label',
+  ]));
+
+  // 1. period_type + period_ending — the cleanest signal. Annual →
+  //    the calendar year of period_ending. Anything rolling/partial
+  //    → "T-12".
+  if (periodType) {
+    const pt = periodType.toLowerCase();
+    if (pt === 'annual') {
+      const yr = (periodEnding ?? periodLabel ?? '').match(/(20\d{2})/);
+      if (yr) return yr[1];
     }
-    // "FY2023", "2023 Annual", "TTM" etc.
-    if (/ttm|trailing|t-?12/i.test(raw)) return 'T-12';
-    const bareYear = raw.match(/(20\d{2})/);
-    if (bareYear) return bareYear[1];
+    if (/trailing|ttm|t-?12|ytd|quarter|month/.test(pt)) return 'T-12';
   }
-  // 2. filename — "Angler's 2023 P&L.xlsx" → 2023.
+
+  // 2. period_ending alone — December-ending → calendar year;
+  //    mid-year-ending → trailing-twelve.
+  if (periodEnding) {
+    const iso = periodEnding.match(/(\d{4})-(\d{2})-(\d{2})/);
+    if (iso) return iso[2] === '12' ? iso[1] : 'T-12';
+    const yr = periodEnding.match(/(20\d{2})/);
+    if (yr) return yr[1];
+  }
+
+  // 3. period_label text — "FY2023", "Year Ended Dec 2023", "TTM …".
+  if (periodLabel) {
+    if (/ttm|trailing|t-?12/i.test(periodLabel)) return 'T-12';
+    const yr = periodLabel.match(/(20\d{2})/);
+    if (yr) return yr[1];
+  }
+
+  // 4. filename — last resort, e.g. "Angler's 2023 P&L.xlsx" → 2023.
   const fnYear = filename.match(/(20\d{2})/);
   if (fnYear) return fnYear[1];
-  // 3. fallback.
+
+  // 5. nothing usable — default to the T-12 slot.
   return 'T-12';
 }
 
