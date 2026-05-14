@@ -149,19 +149,34 @@ function actualsOnly(fields: ExtractionField[]): ExtractionField[] {
 
 /**
  * Derive the calendar-year label for a P&L / T-12 document from its
- * extracted fields, falling back to the filename. Returns ``"T-12"``
- * for a trailing-twelve period that ends mid-year, or the 4-digit
- * year for an annual statement ending in December.
+ * extracted fields, the document's classified ``doc_type``, and the
+ * filename (last resort). Returns ``"T-12"`` for a trailing-twelve
+ * period, or the 4-digit year for an annual statement.
+ *
+ * Sam QA 2026-05-14 (3rd report): the same T-12 file
+ * ("…May 2025 Financials.xlsx") extracted WITH period_ending on some
+ * deals and WITHOUT it on others (extractor non-determinism across
+ * builds). When period_ending was missing, the resolver fell through
+ * to the filename — which contains "2025" — and labeled the T-12 doc
+ * as a "2025" calendar column. The actual "T-12" column then had
+ * nothing in it. Fix: a doc classified ``T12`` is a trailing-twelve
+ * BY DEFINITION; it can never take a calendar-year label from a
+ * filename. Only annual P&L docs (``PNL``) use the filename-year
+ * fallback.
  */
 function deriveYearLabel(
   fields: ExtractionField[],
   filename: string,
+  docType: string | null | undefined,
 ): string {
   // Resolution order — most authoritative first. The extractor is the
   // format-agnostic layer (it now emits period metadata for any P&L
   // layout); the filename is only a last-resort safety net.
   const strVal = (f: ExtractionField | undefined): string | null =>
     f && typeof f.value === 'string' ? f.value : null;
+
+  const dt = (docType ?? '').toUpperCase();
+  const isT12Type = dt === 'T12' || dt === 'T-12' || dt.includes('T12');
 
   const periodEnding = strVal(findField(fields, [
     'period_ending', 'p_and_l_usali.period_ending',
@@ -202,7 +217,15 @@ function deriveYearLabel(
     if (yr) return yr[1];
   }
 
-  // 4. filename — last resort, e.g. "Angler's 2023 P&L.xlsx" → 2023.
+  // 3b. doc_type guard — a T12-classified doc is a trailing-twelve by
+  //     definition. With no period metadata, it MUST land in the
+  //     "T-12" column, never a calendar year pulled from the filename
+  //     (which often carries the period-END year, e.g.
+  //     "May 2025 Financials" → a T-12 ending May 2025, NOT FY2025).
+  if (isT12Type) return 'T-12';
+
+  // 4. filename — last resort for ANNUAL P&L docs only, e.g.
+  //    "Angler's 2023 P&L.xlsx" → 2023.
   const fnYear = filename.match(/(20\d{2})/);
   if (fnYear) return fnYear[1];
 
@@ -375,7 +398,12 @@ export default function HistoricalsSection({
               // so forecast.period_ending / forecast.adr_usd can't
               // shadow the real values (Sam QA 2026-05-14).
               const fields = actualsOnly(ext.fields ?? []);
-              const label = deriveYearLabel(fields, doc.filename ?? '');
+              // Pass doc_type — a T12-classified doc is a
+              // trailing-twelve by definition and must never be
+              // labeled by a year in its filename.
+              const label = deriveYearLabel(
+                fields, doc.filename ?? '', doc.doc_type,
+              );
               const built = buildHistYear(fields, keysForBuild, label);
               if (built) byYear.set(label, built);
             } catch {
