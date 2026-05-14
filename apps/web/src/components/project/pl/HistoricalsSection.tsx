@@ -88,38 +88,126 @@ function num(field: ExtractionField | undefined): number | null {
   return null;
 }
 
+/**
+ * Match an extracted field by alias. The extractor emits fields under
+ * dotted USALI paths (``p_and_l_usali.operating_revenue.rooms_revenue``)
+ * and with unit suffixes (``adr_usd``, ``occupancy_pct``). The old
+ * exact-normalized-match only caught bare names like ``occupancy_pct``,
+ * which is why the Historicals T-12 column showed Occupancy but blanked
+ * ADR / RevPAR / every revenue line (Sam QA 2026-05-14 #1).
+ *
+ * Matching strategy — for each field, try the full normalized name,
+ * the last dotted segment, and both with the unit suffix stripped.
+ */
 function findField(fields: ExtractionField[], aliases: string[]): ExtractionField | undefined {
-  const lc = (s: string) => s.toLowerCase().replace(/[^a-z0-9]/g, '');
-  const aSet = new Set(aliases.map(lc));
-  return fields.find(f => aSet.has(lc(f.field_name)));
+  const norm = (s: string) => s.toLowerCase().replace(/[^a-z0-9]/g, '');
+  const stripUnit = (s: string) => s.replace(/(usd|pct|percent|ratio|amount)$/i, '');
+  const aSet = new Set<string>();
+  for (const a of aliases) {
+    const n = norm(a);
+    aSet.add(n);
+    aSet.add(stripUnit(n));
+  }
+  for (const f of fields) {
+    const full = norm(f.field_name);
+    const segs = f.field_name.split('.');
+    const last = norm(segs[segs.length - 1] ?? '');
+    for (const cand of [full, stripUnit(full), last, stripUnit(last)]) {
+      if (cand && aSet.has(cand)) return f;
+    }
+  }
+  return undefined;
 }
 
-function buildT12Year(fields: ExtractionField[], keys: number): HistYear | null {
+/**
+ * Derive the calendar-year label for a P&L / T-12 document from its
+ * extracted fields, falling back to the filename. Returns ``"T-12"``
+ * for a trailing-twelve period that ends mid-year, or the 4-digit
+ * year for an annual statement ending in December.
+ */
+function deriveYearLabel(
+  fields: ExtractionField[],
+  filename: string,
+): string {
+  // 1. period_ending — most reliable. "2023-12-31" → annual 2023;
+  //    "2025-05-31" → trailing-twelve, label T-12.
+  const periodField = findField(fields, [
+    'period_ending',
+    'p_and_l_usali.period_ending',
+    'period_end',
+    'statement_period_end',
+  ]);
+  const periodLabelField = findField(fields, [
+    'period_label',
+    'p_and_l_usali.period_label',
+  ]);
+  const raw =
+    (typeof periodField?.value === 'string' ? periodField.value : null) ??
+    (typeof periodLabelField?.value === 'string' ? periodLabelField.value : null);
+  if (raw) {
+    const isoMatch = raw.match(/(\d{4})-(\d{2})-(\d{2})/);
+    if (isoMatch) {
+      const [, yr, mo] = isoMatch;
+      // December-ending → full calendar year; otherwise trailing-12.
+      return mo === '12' ? yr : 'T-12';
+    }
+    // "FY2023", "2023 Annual", "TTM" etc.
+    if (/ttm|trailing|t-?12/i.test(raw)) return 'T-12';
+    const bareYear = raw.match(/(20\d{2})/);
+    if (bareYear) return bareYear[1];
+  }
+  // 2. filename — "Angler's 2023 P&L.xlsx" → 2023.
+  const fnYear = filename.match(/(20\d{2})/);
+  if (fnYear) return fnYear[1];
+  // 3. fallback.
+  return 'T-12';
+}
+
+/**
+ * Build one historical-year column from a P&L / T-12 extraction.
+ * ``yearLabel`` comes from ``deriveYearLabel``; ``days`` is 365 for a
+ * T-12 and a real day count for an annual column.
+ */
+function buildHistYear(
+  fields: ExtractionField[],
+  keys: number,
+  yearLabel: string,
+): HistYear | null {
   if (!fields.length) return null;
 
   const occ = num(findField(fields, ['occupancy', 'occupancy_pct', 'occ', 't12_occupancy']));
-  const adr = num(findField(fields, ['adr', 'average_daily_rate', 't12_adr']));
-  const revpar = num(findField(fields, ['revpar', 't12_revpar']));
+  const adr = num(findField(fields, ['adr', 'adr_usd', 'average_daily_rate', 't12_adr']));
+  const revpar = num(findField(fields, ['revpar', 'revpar_usd', 't12_revpar']));
   const rooms = num(findField(fields, [
     'rooms_revenue', 'room_revenue', 'total_rooms_revenue', 't12_rooms_revenue',
   ]));
-  const fb = num(findField(fields, ['fb_revenue', 'food_beverage_revenue', 'fnb_revenue']));
+  const fb = num(findField(fields, [
+    'fb_revenue', 'food_beverage_revenue', 'fnb_revenue', 'food_beverage',
+  ]));
   const misc = num(findField(fields, [
-    'other_revenue', 'misc_revenue', 'misc_income', 'other_operated_revenue',
+    'other_revenue', 'misc_revenue', 'misc_income', 'miscellaneous_income',
+    'other_operated_revenue',
   ]));
 
-  // Need at least one of {rooms, occupancy} to render anything meaningful.
+  // Need at least one of {rooms, occupancy, adr} to render anything.
   if (rooms == null && occ == null && adr == null) return null;
+
+  // Annual columns use the real day count; T-12 is always 365.
+  const isAnnual = /^\d{4}$/.test(yearLabel);
+  const yearNum = isAnnual ? Number(yearLabel) : 0;
+  const days = isAnnual
+    ? (yearNum % 4 === 0 && (yearNum % 100 !== 0 || yearNum % 400 === 0) ? 366 : 365)
+    : 365;
 
   // Occupancy may have come in as a percent (e.g. 73.8) — normalize.
   const occNorm = occ == null ? 0 : occ > 1.5 ? occ / 100 : occ;
   const adrNorm = adr ?? 0;
   const revparNorm = revpar ?? (adrNorm * occNorm);
-  const roomsNorm = rooms ?? (keys > 0 ? revparNorm * keys * 365 : 0);
+  const roomsNorm = rooms ?? (keys > 0 ? revparNorm * keys * days : 0);
 
   return {
-    year: 'T-12',
-    days: 365,
+    year: yearLabel,
+    days,
     occupancyPct: occNorm,
     adr: adrNorm,
     revpar: revparNorm,
@@ -203,24 +291,100 @@ export default function HistoricalsSection({
         // Note: setLoading(false) handled in fallback path below.
       }
 
-      // T-12 fallback: pick the most recent EXTRACTED T-12 doc on the deal.
+      // Multi-doc fallback: build one historical column per EXTRACTED
+      // P&L / T-12 document on the deal. Sam QA 2026-05-14 #2: a
+      // separately-uploaded annual P&L (e.g. "Angler's 2023 P&L.xlsx")
+      // was being ignored entirely — the old code only ever looked at
+      // the single most-recent T12-typed doc and built one "T-12"
+      // column. Now every P&L/T12 doc maps to its own year column via
+      // the period_ending field (or filename year as a fallback).
       try {
         const docs = await api.documents.list(String(dealId)) as WorkerDocument[];
-        const t12 = (docs ?? [])
-          .filter(d => (d.doc_type ?? '').toUpperCase().includes('T12') ||
-                       (d.doc_type ?? '').toLowerCase() === 't-12')
-          .filter(d => d.status === 'EXTRACTED')
-          .sort((a, b) => (b.uploaded_at ?? '').localeCompare(a.uploaded_at ?? ''))[0];
-        if (t12 && deal?.keys) {
-          const ext = await api.documents.extraction(String(dealId), t12.id);
-          const t12Year = buildT12Year(ext.fields ?? [], deal.keys);
-          if (t12Year && !cancelled) {
-            // Pad earlier years as placeholders so the table still
-            // renders 5 columns with T-12 in the rightmost slot.
+        const keysForBuild = deal?.keys ?? 0;
+        const pnlDocs = (docs ?? [])
+          .filter(d => {
+            const dt = (d.doc_type ?? '').toUpperCase();
+            return (
+              dt.includes('T12') ||
+              dt === 'T-12' ||
+              dt === 'PNL' ||
+              dt === 'P&L' ||
+              dt.includes('PROFIT')
+            );
+          })
+          .filter(d => d.status === 'EXTRACTED');
+
+        if (pnlDocs.length > 0 && keysForBuild > 0) {
+          // Build a year-keyed map. When two docs land on the same
+          // label the most-recently-uploaded one wins.
+          const byYear = new Map<string, HistYear>();
+          const sorted = [...pnlDocs].sort(
+            (a, b) => (a.uploaded_at ?? '').localeCompare(b.uploaded_at ?? ''),
+          );
+          for (const doc of sorted) {
+            try {
+              const ext = await api.documents.extraction(String(dealId), doc.id);
+              const fields = ext.fields ?? [];
+              const label = deriveYearLabel(fields, doc.filename ?? '');
+              const built = buildHistYear(fields, keysForBuild, label);
+              if (built) byYear.set(label, built);
+            } catch {
+              // skip this doc — others may still populate.
+            }
+          }
+
+          if (byYear.size > 0 && !cancelled) {
+            // Lay out columns: up to 4 calendar-year columns
+            // (ascending), then a T-12 column on the far right.
+            const t12 = byYear.get('T-12') ?? null;
+            const annualYears = [...byYear.keys()]
+              .filter(y => /^\d{4}$/.test(y))
+              .sort();
+            // Skeleton fills any gaps so the table always shows a
+            // consistent column count with placeholders.
             const skel = emptyFiveYearSkeleton();
+            const skelAnnual = skel.years.slice(0, -1); // 4 placeholder cols
+
+            // Merge: prefer real annual data, else skeleton placeholder.
+            const annualCols: HistYear[] = [];
+            const realByYear = new Map(annualYears.map(y => [y, byYear.get(y)!]));
+            // Use the union of skeleton years + any real annual years,
+            // keeping the most recent 4.
+            const allAnnualLabels = new Set<string>([
+              ...skelAnnual.map(y => y.year),
+              ...annualYears,
+            ]);
+            const orderedAnnual = [...allAnnualLabels].sort().slice(-4);
+            for (const label of orderedAnnual) {
+              const real = realByYear.get(label);
+              if (real) {
+                annualCols.push(real);
+              } else {
+                const placeholder = skelAnnual.find(y => y.year === label);
+                annualCols.push(
+                  placeholder ?? {
+                    year: label,
+                    days: 365,
+                    occupancyPct: 0, adr: 0, revpar: 0,
+                    rooms: 0, fb: 0, misc: 0,
+                    populated: false,
+                  },
+                );
+              }
+            }
+
             const merged: HistData = {
-              keys: deal.keys,
-              years: [...skel.years.slice(0, -1), t12Year],
+              keys: keysForBuild,
+              years: [
+                ...annualCols,
+                t12 ?? {
+                  year: 'T-12',
+                  days: 365,
+                  occupancyPct: 0, adr: 0, revpar: 0,
+                  rooms: 0, fb: 0, misc: 0,
+                  populated: false,
+                },
+              ],
             };
             setData(merged);
             return;
