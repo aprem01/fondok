@@ -497,23 +497,28 @@ async def upload_documents(
         )
         pending_parse.append((str(doc_id), str(deal_id), tenant_id_str, body))
 
-    # Schedule parse + auto-extract for every freshly inserted doc. The
-    # background task transitions PARSING → UPLOADED on parse success,
-    # then chains directly into the existing extraction pipeline so the
-    # web app sees a single linear status timeline (no second API call
-    # required from the client). Each file gets its own task — they
-    # run in parallel inside FastAPI's BackgroundTasks runner.
-    for doc_id, deal_id_str, tenant_id_str_, body_bytes in pending_parse:
-        background_tasks.add_task(
-            _run_parse_and_extract,
-            doc_id=doc_id,
-            deal_id=deal_id_str,
-            tenant_id=tenant_id_str_,
-            body=body_bytes,
-            filename=next(
+    # Schedule parse + auto-extract for every freshly inserted doc.
+    #
+    # IMPORTANT: FastAPI's BackgroundTasks runs added tasks
+    # SEQUENTIALLY, not concurrently — N add_task() calls means doc 2
+    # waits for doc 1 to fully parse+extract before it even starts
+    # (Sam QA 2026-05-14: a 2-doc upload took 339s wall time because
+    # the OM and the P&L serialized). We schedule ONE batch task that
+    # fans out across all docs with asyncio.gather, so a 2-doc upload
+    # runs in max(doc1, doc2) wall time instead of the sum.
+    batch = [
+        {
+            "doc_id": doc_id,
+            "deal_id": deal_id_str,
+            "tenant_id": tenant_id_str_,
+            "body": body_bytes,
+            "filename": next(
                 r.filename for r in records if str(r.id) == doc_id
             ),
-        )
+        }
+        for doc_id, deal_id_str, tenant_id_str_, body_bytes in pending_parse
+    ]
+    background_tasks.add_task(_run_parse_and_extract_batch, batch=batch)
 
     logger.info(
         "documents.upload: deal=%s tenant=%s files=%d (parse async)",
@@ -522,6 +527,47 @@ async def upload_documents(
         len(records),
     )
     return records
+
+
+# Max documents parsed+extracted concurrently within one upload
+# batch. Each doc internally fans out its own chunked extraction
+# (4-wide), so 2 docs × 4 chunks = up to 8 concurrent Sonnet calls —
+# comfortably under Anthropic's rate limit while still cutting a
+# multi-doc upload's wall time to ~max(doc) instead of sum(docs).
+_PARSE_BATCH_CONCURRENCY = 2
+
+
+async def _run_parse_and_extract_batch(*, batch: list[dict[str, Any]]) -> None:
+    """Parse + extract every doc in an upload batch concurrently.
+
+    FastAPI BackgroundTasks runs scheduled tasks sequentially, so the
+    upload endpoint schedules exactly ONE of these per request and we
+    fan out internally with asyncio.gather + a concurrency cap. Each
+    doc is fully independent — a failure on one never blocks another
+    (``_run_parse_and_extract`` already swallows + records its own
+    errors).
+    """
+    import asyncio
+
+    sem = asyncio.Semaphore(_PARSE_BATCH_CONCURRENCY)
+
+    async def _one(item: dict[str, Any]) -> None:
+        async with sem:
+            try:
+                await _run_parse_and_extract(
+                    doc_id=item["doc_id"],
+                    deal_id=item["deal_id"],
+                    tenant_id=item["tenant_id"],
+                    body=item["body"],
+                    filename=item["filename"],
+                )
+            except Exception:  # noqa: BLE001 - never let one doc kill the batch
+                logger.exception(
+                    "parse_batch: unhandled error for doc=%s",
+                    item.get("doc_id"),
+                )
+
+    await asyncio.gather(*(_one(item) for item in batch))
 
 
 async def _run_parse_and_extract(
