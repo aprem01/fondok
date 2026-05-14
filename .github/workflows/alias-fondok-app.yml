@@ -1,0 +1,82 @@
+name: Promote fondok-app alias
+
+# Why this exists
+# ---------------
+# The Vercel project's auto-managed production domain is
+# fondok-one.vercel.app. fondok-app.vercel.app is a plain alias —
+# nothing promotes it on deploy, so it drifts onto stale builds after
+# every push (the source of repeated "still broken / hard-refresh"
+# reports). This workflow re-points fondok-app.vercel.app at the
+# production deployment for the just-pushed commit, so it always
+# serves latest.
+#
+# One-time setup: add a repo secret VERCEL_TOKEN
+#   GitHub → repo → Settings → Secrets and variables → Actions → New
+#   secret. Create the token at vercel.com/account/tokens (scope:
+#   aprem01s-projects).
+#
+# If VERCEL_TOKEN is absent the job no-ops with a clear message — it
+# never fails the push.
+
+on:
+  push:
+    branches: [main]
+
+# Don't pile up runs — only the newest commit's alias matters.
+concurrency:
+  group: alias-fondok-app
+  cancel-in-progress: true
+
+jobs:
+  alias:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Guard — VERCEL_TOKEN present
+        id: guard
+        run: |
+          if [ -z "${{ secrets.VERCEL_TOKEN }}" ]; then
+            echo "VERCEL_TOKEN not set — skipping alias promotion."
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "skip=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Install Vercel CLI
+        if: steps.guard.outputs.skip == 'false'
+        run: npm install -g vercel@latest
+
+      - name: Wait for this commit's production deploy, then alias
+        if: steps.guard.outputs.skip == 'false'
+        env:
+          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+          # orgId from .vercel/project.json — the CLI accepts the slug too.
+          SCOPE: aprem01s-projects
+        run: |
+          set -euo pipefail
+          # Poll up to ~15 min for the Ready deployment whose source
+          # commit matches this push. Vercel tags deployments with the
+          # git SHA; --meta filters to exactly that build so we never
+          # alias a stale or in-flight deployment.
+          for i in $(seq 1 90); do
+            URL=$(vercel ls fondok \
+                    --token "$VERCEL_TOKEN" --scope "$SCOPE" \
+                    --meta githubCommitSha="$GITHUB_SHA" 2>/dev/null \
+                  | grep -oE 'https://fondok-[a-z0-9]+-aprem01s-projects\.vercel\.app' \
+                  | head -1 || true)
+            if [ -n "${URL:-}" ]; then
+              STATE=$(vercel inspect "$URL" --token "$VERCEL_TOKEN" --scope "$SCOPE" 2>/dev/null \
+                      | grep -iE '^\s*status' | awk '{print $2}' || true)
+              if [ "${STATE:-}" = "Ready" ]; then
+                vercel alias set "$URL" fondok-app.vercel.app \
+                  --token "$VERCEL_TOKEN" --scope "$SCOPE"
+                echo "✅ fondok-app.vercel.app → $URL ($GITHUB_SHA)"
+                exit 0
+              fi
+              echo "[$i/90] deploy found, state=${STATE:-pending} — waiting…"
+            else
+              echo "[$i/90] no deployment for $GITHUB_SHA yet — waiting…"
+            fi
+            sleep 10
+          done
+          echo "::warning::No Ready deployment for $GITHUB_SHA after 15min — fondok-app left unchanged."
+          exit 0
