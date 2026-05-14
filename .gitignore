@@ -12,3 +12,8 @@ __pycache__
 *.tsbuildinfo
 apps/worker/tests/fondok-costs.db
 apps/worker/tests/fondok-obs.db
+
+# Sam's raw reference docs (large binaries) — the load-bearing files
+# are already checked in under apps/worker/tests/fixtures/ and
+# docs/data/issues/. data2/ is local reference material only.
+docs/data/data2/
