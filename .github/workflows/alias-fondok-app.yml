@@ -7,8 +7,16 @@ name: Promote fondok-app alias
 # nothing promotes it on deploy, so it drifts onto stale builds after
 # every push (the source of repeated "still broken / hard-refresh"
 # reports). This workflow re-points fondok-app.vercel.app at the
-# production deployment for the just-pushed commit, so it always
-# serves latest.
+# latest Ready production deployment so it always serves current.
+#
+# Strategy: we do NOT require the deployment to match this exact
+# commit SHA. Vercel skips builds for commits that don't touch
+# deployable files (a .github/ or docs-only change produces no new
+# deployment) — a SHA-strict workflow would then no-op forever. We
+# just alias fondok-app to whatever the newest Ready production
+# deployment is, which is correct in every case: a code push creates
+# a new latest; a CI/docs push leaves the previous latest in place
+# and re-aliasing to it is a harmless no-op.
 #
 # One-time setup: add a repo secret VERCEL_TOKEN
 #   GitHub → repo → Settings → Secrets and variables → Actions → New
@@ -48,38 +56,42 @@ jobs:
         if: steps.guard.outputs.skip == 'false'
         run: npm install -g vercel@latest
 
-      - name: Wait for this commit's production deploy, then alias
+      - name: Wait for a Ready production deploy, then alias fondok-app
         if: steps.guard.outputs.skip == 'false'
         env:
           VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
-          # orgId from .vercel/project.json — the CLI accepts the slug too.
           SCOPE: aprem01s-projects
         run: |
           set -euo pipefail
-          # Poll up to ~15 min for the Ready deployment whose source
-          # commit matches this push. Vercel tags deployments with the
-          # git SHA; --meta filters to exactly that build so we never
-          # alias a stale or in-flight deployment.
-          for i in $(seq 1 90); do
-            URL=$(vercel ls fondok \
-                    --token "$VERCEL_TOKEN" --scope "$SCOPE" \
-                    --meta githubCommitSha="$GITHUB_SHA" 2>/dev/null \
+          # A code push triggers a Vercel build that takes ~1-2 min to
+          # go Ready. Give it a short head start so we don't grab the
+          # *previous* deployment, then poll for the newest Ready one.
+          sleep 45
+          for i in $(seq 1 60); do
+            # `vercel ls fondok --prod` lists production deployments
+            # newest-first. Grab the first row whose state is Ready.
+            LINE=$(vercel ls fondok --prod \
+                     --token "$VERCEL_TOKEN" --scope "$SCOPE" 2>/dev/null \
+                   | grep -iE 'ready' | head -1 || true)
+            URL=$(echo "$LINE" \
                   | grep -oE 'https://fondok-[a-z0-9]+-aprem01s-projects\.vercel\.app' \
                   | head -1 || true)
             if [ -n "${URL:-}" ]; then
-              STATE=$(vercel inspect "$URL" --token "$VERCEL_TOKEN" --scope "$SCOPE" 2>/dev/null \
-                      | grep -iE '^\s*status' | awk '{print $2}' || true)
-              if [ "${STATE:-}" = "Ready" ]; then
-                vercel alias set "$URL" fondok-app.vercel.app \
-                  --token "$VERCEL_TOKEN" --scope "$SCOPE"
-                echo "✅ fondok-app.vercel.app → $URL ($GITHUB_SHA)"
+              CURRENT=$(vercel inspect fondok-app.vercel.app \
+                          --token "$VERCEL_TOKEN" --scope "$SCOPE" 2>/dev/null \
+                        | grep -oE 'https://fondok-[a-z0-9]+-aprem01s-projects\.vercel\.app' \
+                        | head -1 || true)
+              if [ "$URL" = "$CURRENT" ]; then
+                echo "✅ fondok-app.vercel.app already on latest ($URL) — no-op."
                 exit 0
               fi
-              echo "[$i/90] deploy found, state=${STATE:-pending} — waiting…"
-            else
-              echo "[$i/90] no deployment for $GITHUB_SHA yet — waiting…"
+              vercel alias set "$URL" fondok-app.vercel.app \
+                --token "$VERCEL_TOKEN" --scope "$SCOPE"
+              echo "✅ fondok-app.vercel.app → $URL"
+              exit 0
             fi
+            echo "[$i/60] no Ready production deployment yet — waiting…"
             sleep 10
           done
-          echo "::warning::No Ready deployment for $GITHUB_SHA after 15min — fondok-app left unchanged."
+          echo "::warning::No Ready production deployment found after ~11min — fondok-app left unchanged."
           exit 0
