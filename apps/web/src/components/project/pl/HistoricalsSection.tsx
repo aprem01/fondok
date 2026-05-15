@@ -29,6 +29,7 @@ import {
 } from '@/lib/api';
 import { useDeal } from '@/lib/hooks/useDeal';
 import { kimptonAnglerOverview } from '@/lib/mockData';
+import { downloadXlsx, type XlsxCell } from '@/lib/exportXlsx';
 
 // ─────────────────────────── Data shape ───────────────────────────
 // One historical year column. ``amount`` for Rooms / F&B / Misc are in
@@ -483,25 +484,26 @@ export default function HistoricalsSection({
     toast('Historicals notes — coming with the next deploy', { type: 'info' });
   };
 
-  const onExport = () => {
+  const onExport = async () => {
     if (!data) return;
-    const headers = ['Metric', ...data.years.flatMap(y => [
+    const headers: XlsxCell[] = ['Metric', ...data.years.flatMap(y => [
       `${y.year} Amount`, `${y.year} % Rev`, `${y.year} PAR`, `${y.year} POR`,
     ])];
-    const rows: string[][] = [];
+    const rows: XlsxCell[][] = [];
     const keys = data.keys;
     const fmtRow = (label: string, get: (y: HistYear) => number) => {
-      const row = [label];
+      const row: XlsxCell[] = [label];
       for (const y of data.years) {
         const v = get(y);
         const totalRev = y.rooms + y.fb + y.misc;
         const avail = keys * y.days;
         const occRooms = avail * y.occupancyPct;
+        // Keep numerics as numbers so Excel can re-sum / re-format them.
         row.push(
-          v ? v.toFixed(0) : '',
-          totalRev ? ((v / totalRev) * 100).toFixed(1) : '',
-          avail ? ((v / avail)).toFixed(2) : '',
-          occRooms ? ((v / occRooms)).toFixed(2) : '',
+          v ? Number(v.toFixed(0)) : '',
+          totalRev ? Number(((v / totalRev) * 100).toFixed(1)) : '',
+          avail ? Number((v / avail).toFixed(2)) : '',
+          occRooms ? Number((v / occRooms).toFixed(2)) : '',
         );
       }
       rows.push(row);
@@ -509,14 +511,9 @@ export default function HistoricalsSection({
     fmtRow('Rooms', y => y.rooms);
     fmtRow('Food & Beverage', y => y.fb);
     fmtRow('Misc. Income', y => y.misc);
-    const tsv = [headers, ...rows].map(r => r.join('\t')).join('\n');
-    const blob = new Blob([tsv], { type: 'text/tab-separated-values' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = `historicals-${dealId || 'deal'}.tsv`;
-    a.click();
-    URL.revokeObjectURL(url);
+    await downloadXlsx(`historicals-${dealId || 'deal'}`, [
+      { name: 'Historicals', rows: [headers, ...rows] },
+    ]);
   };
 
   const keys = isKimptonDemo

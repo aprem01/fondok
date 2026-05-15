@@ -38,6 +38,7 @@ import {
   WorkerError,
   type AskAnswerResult,
 } from '@/lib/api';
+import { downloadXlsx, type XlsxCell } from '@/lib/exportXlsx';
 
 // ────────────────────────────────────────────────────────────────────
 // Worker output shapes — mirror PLTab.tsx (kept local so this file
@@ -198,8 +199,8 @@ export default function ProjectionsSection({
     }
   };
 
-  const onExport = () => {
-    const headers = [
+  const onExport = async () => {
+    const headers: XlsxCell[] = [
       'Metric',
       ...years.flatMap((y, i) => {
         const label = i === 0 ? `Base Year ${y.year}` : `Year ${i} ${y.year}`;
@@ -211,31 +212,36 @@ export default function ProjectionsSection({
         ];
       }),
     ];
-    const lines: string[] = [headers.join('\t')];
+    const rows: XlsxCell[][] = [headers];
     const trMap = years.map(y => y.totalRevenue);
     const arMap = years.map(y => y.availableRooms);
     const orMap = years.map(y => y.occupiedRooms);
     const expand = (label: string, vals: number[], asPct = false) => {
-      const cells: string[] = [label];
+      const cells: XlsxCell[] = [label];
       vals.forEach((v, i) => {
-        const amount = asPct ? `${(v * 100).toFixed(1)}%` : v.toFixed(0);
+        // Keep numerics as numbers so Excel can re-sum / re-format. The
+        // % Rev / PAR / POR columns stay blank when the row itself is a
+        // percentage (e.g. Occupancy) — those derivations don't apply.
+        const amount = asPct
+          ? Number((v * 100).toFixed(1))
+          : Number(v.toFixed(0));
         const pctRev = trMap[i] > 0 && !asPct
-          ? ((v / trMap[i]) * 100).toFixed(1) + '%'
+          ? Number(((v / trMap[i]) * 100).toFixed(1))
           : '';
         const par = arMap[i] > 0 && !asPct
-          ? ((v / arMap[i]) * 1000).toFixed(2)
+          ? Number(((v / arMap[i]) * 1000).toFixed(2))
           : '';
         const por = orMap[i] > 0 && !asPct
-          ? ((v / orMap[i]) * 1000).toFixed(2)
+          ? Number(((v / orMap[i]) * 1000).toFixed(2))
           : '';
         cells.push(amount, pctRev, par, por);
       });
-      lines.push(cells.join('\t'));
+      rows.push(cells);
     };
-    lines.push(['Days', ...years.flatMap(y => [String(y.days), '', '', ''])].join('\t'));
-    lines.push(['Number of Rooms', ...years.flatMap(y => [String(y.rooms), '', '', ''])].join('\t'));
-    lines.push(['Available Rooms', ...years.flatMap(y => [String(y.availableRooms), '', '', ''])].join('\t'));
-    lines.push(['Occupied Rooms', ...years.flatMap(y => [String(y.occupiedRooms), '', '', ''])].join('\t'));
+    rows.push(['Days', ...years.flatMap(y => [y.days, '', '', '']) as XlsxCell[]]);
+    rows.push(['Number of Rooms', ...years.flatMap(y => [y.rooms, '', '', '']) as XlsxCell[]]);
+    rows.push(['Available Rooms', ...years.flatMap(y => [y.availableRooms, '', '', '']) as XlsxCell[]]);
+    rows.push(['Occupied Rooms', ...years.flatMap(y => [y.occupiedRooms, '', '', '']) as XlsxCell[]]);
     expand('Occupancy', years.map(y => y.occupancy), true);
     expand('Average Rate', years.map(y => y.adr));
     expand('RevPAR', years.map(y => y.revpar));
@@ -244,13 +250,9 @@ export default function ProjectionsSection({
     expand('Misc. Income', years.map(y => y.miscRevenue));
     expand('Total Revenue', years.map(y => y.totalRevenue));
 
-    const blob = new Blob([lines.join('\n')], { type: 'text/tab-separated-values' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = `projections-${dealId || 'deal'}.tsv`;
-    a.click();
-    URL.revokeObjectURL(url);
+    await downloadXlsx(`projections-${dealId || 'deal'}`, [
+      { name: 'Projections', rows },
+    ]);
     toast('Projections exported', { type: 'success' });
   };
 
