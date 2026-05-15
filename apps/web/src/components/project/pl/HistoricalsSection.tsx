@@ -412,27 +412,29 @@ export default function HistoricalsSection({
           }
 
           if (byYear.size > 0 && !cancelled) {
-            // Lay out columns: up to 4 calendar-year columns
-            // (ascending), then a T-12 column on the far right.
+            // Lay out columns: every uploaded calendar year (ascending),
+            // then a T-12 column on the far right. No upper cap — the
+            // table grows horizontally as the user adds older P&Ls.
+            // If fewer than 4 real years are present, fill from the
+            // skeleton so the empty/partial state still shows a
+            // consistent baseline.
             const t12 = byYear.get('T-12') ?? null;
             const annualYears = [...byYear.keys()]
               .filter(y => /^\d{4}$/.test(y))
               .sort();
-            // Skeleton fills any gaps so the table always shows a
-            // consistent column count with placeholders.
             const skel = emptyFiveYearSkeleton();
             const skelAnnual = skel.years.slice(0, -1); // 4 placeholder cols
 
-            // Merge: prefer real annual data, else skeleton placeholder.
-            const annualCols: HistYear[] = [];
             const realByYear = new Map(annualYears.map(y => [y, byYear.get(y)!]));
-            // Use the union of skeleton years + any real annual years,
-            // keeping the most recent 4.
-            const allAnnualLabels = new Set<string>([
-              ...skelAnnual.map(y => y.year),
-              ...annualYears,
-            ]);
-            const orderedAnnual = [...allAnnualLabels].sort().slice(-4);
+            // Always include every real year. Pad with skeleton
+            // placeholders only when we have fewer than 4 reals, so the
+            // baseline view is never narrower than the demo skeleton.
+            const labels = new Set<string>(annualYears);
+            if (annualYears.length < skelAnnual.length) {
+              for (const s of skelAnnual) labels.add(s.year);
+            }
+            const orderedAnnual = [...labels].sort();
+            const annualCols: HistYear[] = [];
             for (const label of orderedAnnual) {
               const real = realByYear.get(label);
               if (real) {
