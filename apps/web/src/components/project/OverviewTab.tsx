@@ -221,7 +221,7 @@ export default function OverviewTab({ projectId }: { projectId: number | string 
   const refiAmort = isKimptonDemo ? o.refi.refiAmortization : undefined;
 
   return (
-    <div className="space-y-5">
+    <div className="space-y-3">
       <IntroCard
         dismissKey="overview-intro"
         title="The complete underwriting model on one page"
@@ -234,7 +234,7 @@ export default function OverviewTab({ projectId }: { projectId: number | string 
         }
       />
 
-      <Card className="p-5">
+      <Card className="px-4 py-2">
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-5 text-[11.5px] text-ink-500">
             <span className="flex items-center gap-1.5">
@@ -260,7 +260,7 @@ export default function OverviewTab({ projectId }: { projectId: number | string 
         }}
       />
 
-      <div className="grid grid-cols-2 gap-5">
+      <div className="grid grid-cols-2 gap-3">
         <Section title="General Information" rows={[
           ['Property Name', propertyName ?? '—'],
           ['Location', propertyCity ?? '—'],
@@ -281,7 +281,7 @@ export default function OverviewTab({ projectId }: { projectId: number | string 
         ]} />
       </div>
 
-      <div className="grid grid-cols-1 gap-5">
+      <div className="grid grid-cols-1 gap-3">
         <Section title="Acquisition Assumptions" rows={[
           ['Purchase Price', fmtOrDash(acqPurchase, fmtCurrency)],
           ['Price/Key', fmtOrDash(acqPricePerKey, fmtCurrency)],
@@ -291,9 +291,8 @@ export default function OverviewTab({ projectId }: { projectId: number | string 
         ]} />
       </div>
 
-      <Card className="p-5 bg-brand-50 border-brand-100">
-        <h3 className="text-[13px] font-semibold text-ink-900 mb-1">Returns Summary</h3>
-        <p className="text-[11.5px] text-ink-500 mb-4">What investors will earn over the hold period.</p>
+      <Card className="p-3 bg-brand-50 border-brand-100">
+        <h3 className="text-[12px] font-semibold text-ink-900 uppercase tracking-wide mb-2">Returns Summary <span className="font-normal normal-case tracking-normal text-ink-500">— hold-period investor returns</span></h3>
         <div className="grid grid-cols-5 gap-4">
           {([
             { label: 'Levered IRR', value: fmtOrDash(retLeveredIrr, v => fmtPct(v, 2)),
@@ -317,7 +316,7 @@ export default function OverviewTab({ projectId }: { projectId: number | string 
         </div>
       </Card>
 
-      <div className="grid grid-cols-2 gap-5">
+      <div className="grid grid-cols-2 gap-3">
         <Section title="Reversion Assumptions" rows={[
           ['Exit Cap Rate', fmtOrDash(revExitCap, v => fmtPct(v, 2))],
           ['Exit Year', revExitYear != null ? `Year ${revExitYear}` : '—'],
@@ -335,7 +334,7 @@ export default function OverviewTab({ projectId }: { projectId: number | string 
         ]} />
       </div>
 
-      <div className="grid grid-cols-2 gap-5">
+      <div className="grid grid-cols-2 gap-3">
         <Section title="Acquisition Financing" rows={[
           ['Loan Amount', fmtOrDash(finLoanAmount, fmtCurrency)],
           ['LTV', fmtOrDash(finLtv, v => fmtPct(v, 0))],
@@ -355,7 +354,7 @@ export default function OverviewTab({ projectId }: { projectId: number | string 
         ]} />
       </div>
 
-      <div className="grid grid-cols-2 gap-5">
+      <div className="grid grid-cols-2 gap-3">
         <SourcesPanel
           sources={
             hasWorkerCapital
@@ -416,35 +415,42 @@ function ModelSettings({ defaults }: { defaults: ModelSettingsState }) {
     );
   }, []);
 
-  return (
-    <Card className="p-5">
-      <div className="flex items-center justify-between mb-4">
-        <h3 className="text-[14px] font-semibold text-ink-900">Model Settings</h3>
-        {changeCount === 0 ? (
-          <span className="px-2 py-0.5 text-[10.5px] font-medium rounded-full bg-ink-300/30 text-ink-700">
-            No Changes
-          </span>
-        ) : (
-          <span className="px-2 py-0.5 text-[10.5px] font-medium rounded-full bg-warn-50 text-warn-700 border border-warn-500/30">
-            {changeCount} Change{changeCount === 1 ? '' : 's'} Pending
-          </span>
-        )}
-      </div>
+  // Single-row compact toolbar — all four model settings inline so the
+  // Overview opens with General Info + Returns visible without scrolling.
+  // Labels live as small caps above each control to keep the row scannable.
+  const selectClass = 'px-2 py-1 text-[12px] bg-white border border-border rounded focus:outline-none focus:ring-2 focus:ring-brand-100 focus:border-brand-500';
 
-      <div className="grid grid-cols-2 gap-x-6 gap-y-4">
+  return (
+    <Card className="px-3 py-2">
+      <div className="flex flex-wrap items-end gap-x-4 gap-y-2">
+        <div className="flex items-center gap-2">
+          <span className="text-[10.5px] font-medium text-ink-500 uppercase tracking-wide">
+            Model
+          </span>
+          {changeCount === 0 ? (
+            <span className="px-1.5 py-0 text-[10px] font-medium rounded-full bg-ink-300/30 text-ink-700">
+              No Changes
+            </span>
+          ) : (
+            <span className="px-1.5 py-0 text-[10px] font-medium rounded-full bg-warn-50 text-warn-700 border border-warn-500/30">
+              {changeCount} Pending
+            </span>
+          )}
+        </div>
+
         {/* Deal Type pill toggle */}
-        <div>
-          <label className="block text-[11px] font-medium text-ink-700 uppercase tracking-wide mb-1.5">
+        <div className="flex flex-col">
+          <label className="text-[10px] font-medium text-ink-500 uppercase tracking-wide mb-0.5">
             Deal Type
           </label>
-          <div className="inline-flex bg-ink-300/15 p-0.5 rounded-md">
+          <div className="inline-flex bg-ink-300/15 p-0.5 rounded">
             {(['acquisition', 'development'] as const).map(opt => (
               <button
                 key={opt}
                 type="button"
                 onClick={() => setState(s => ({ ...s, dealType: opt }))}
                 className={cn(
-                  'px-3 py-1 text-[12px] rounded transition-colors capitalize',
+                  'px-2 py-0.5 text-[11.5px] rounded transition-colors capitalize',
                   state.dealType === opt
                     ? 'bg-white text-brand-700 font-medium shadow-sm'
                     : 'text-ink-500 hover:text-ink-900'
@@ -456,15 +462,14 @@ function ModelSettings({ defaults }: { defaults: ModelSettingsState }) {
           </div>
         </div>
 
-        {/* Returns Profile dropdown */}
-        <div>
-          <label className="block text-[11px] font-medium text-ink-700 uppercase tracking-wide mb-1.5">
+        <div className="flex flex-col">
+          <label className="text-[10px] font-medium text-ink-500 uppercase tracking-wide mb-0.5">
             Returns Profile
           </label>
           <select
             value={state.returnProfile}
             onChange={e => setState(s => ({ ...s, returnProfile: e.target.value }))}
-            className="w-full px-3 py-1.5 text-[13px] bg-white border border-border rounded-md focus:outline-none focus:ring-2 focus:ring-brand-100 focus:border-brand-500"
+            className={selectClass}
           >
             {returnProfiles.map(p => (
               <option key={p.id} value={p.id}>{p.label} ({p.target})</option>
@@ -472,18 +477,15 @@ function ModelSettings({ defaults }: { defaults: ModelSettingsState }) {
           </select>
         </div>
 
-        {/* Brand picker */}
-        <div>
-          <label className="block text-[11px] font-medium text-ink-700 uppercase tracking-wide mb-1.5">
+        <div className="flex flex-col">
+          <label className="text-[10px] font-medium text-ink-500 uppercase tracking-wide mb-0.5">
             Brand
           </label>
           <select
             value={state.brand}
             onChange={e => setState(s => ({ ...s, brand: e.target.value }))}
-            className="w-full px-3 py-1.5 text-[13px] bg-white border border-border rounded-md focus:outline-none focus:ring-2 focus:ring-brand-100 focus:border-brand-500"
+            className={selectClass}
           >
-            {/* Keep the deal's current brand string as the head option even if
-                it doesn't match a catalog entry exactly (e.g. "Kimpton"). */}
             {!brandOptions.some(b => b.value === state.brand) && (
               <option value={state.brand}>{state.brand}</option>
             )}
@@ -497,15 +499,14 @@ function ModelSettings({ defaults }: { defaults: ModelSettingsState }) {
           </select>
         </div>
 
-        {/* Positioning dropdown */}
-        <div>
-          <label className="block text-[11px] font-medium text-ink-700 uppercase tracking-wide mb-1.5">
+        <div className="flex flex-col">
+          <label className="text-[10px] font-medium text-ink-500 uppercase tracking-wide mb-0.5">
             Positioning
           </label>
           <select
             value={state.positioning}
             onChange={e => setState(s => ({ ...s, positioning: e.target.value }))}
-            className="w-full px-3 py-1.5 text-[13px] bg-white border border-border rounded-md focus:outline-none focus:ring-2 focus:ring-brand-100 focus:border-brand-500"
+            className={selectClass}
           >
             {positioningTiers.map(p => (
               <option key={p.id} value={p.id}>{p.label}</option>
@@ -748,11 +749,11 @@ function Heatmap({
 
 function Section({ title, rows }: { title: string; rows: string[][] }) {
   return (
-    <Card className="p-5">
-      <h3 className="text-[13px] font-semibold text-ink-900 mb-3">{title}</h3>
-      <div className="space-y-1.5 text-[12.5px]">
+    <Card className="p-3">
+      <h3 className="text-[12px] font-semibold text-ink-900 uppercase tracking-wide mb-1.5">{title}</h3>
+      <div className="text-[12.5px]">
         {rows.map(([k, v]) => (
-          <div key={k} className="flex items-center justify-between py-1.5 border-b border-border/50 last:border-0">
+          <div key={k} className="flex items-center justify-between py-1 border-b border-border/40 last:border-0">
             <span className="text-ink-500">{k}</span>
             <span className="font-medium tabular-nums text-ink-900">{v}</span>
           </div>

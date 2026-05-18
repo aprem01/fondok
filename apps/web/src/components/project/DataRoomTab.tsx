@@ -25,6 +25,7 @@ import { useDocuments } from '@/lib/hooks/useDocuments';
 import { useEngineOutputs } from '@/lib/hooks/useEngineOutputs';
 import { useEngineRun } from '@/lib/hooks/useEngineRun';
 import { useToast } from '@/components/ui/Toast';
+import { cn } from '@/lib/format';
 import EngineRunProgress from './EngineRunProgress';
 import { IntroCard } from '@/components/help/IntroCard';
 import { MetricLabel } from '@/components/help/MetricLabel';
@@ -41,6 +42,25 @@ const ENGINE_ORDER: EngineName[] = [
   'sensitivity',
   'partnership',
 ];
+
+// Engine Status panel is hidden until the per-engine confidence scores
+// are calibrated. Flip back to true once we trust what the bars say.
+const SHOW_ENGINE_STATUS = false;
+
+// Friendly labels for the doc-type breakdown shown in the checklist
+// header. Anything not in this map gets a Title-Cased fallback.
+const DOC_TYPE_LABEL: Record<string, string> = {
+  OM: 'OM',
+  T12: 'T-12',
+  PNL: 'P&L',
+  STR: 'STR',
+  STR_TREND: 'STR',
+  BUDGET: 'Budget',
+  DEBT: 'Debt',
+  INSURANCE: 'Insurance',
+  PROPERTY_TAXES: 'Prop. Taxes',
+  CONTRACT: 'Contract',
+};
 
 // Documents with broker-vs-T12 variance flags raised against them.
 const VARIANCE_DOCS = new Set([
@@ -318,11 +338,29 @@ export default function DataRoomTab({ projectId }: { projectId: number | string 
     complete: item.match.some((m) => uploadedDocTypes.has(m)),
   }));
 
-  // "N/10" counter — counts uploaded docs that match a checklist category,
-  // capped at the checklist length so a deal with 4 OMs still shows 1/10.
-  const matchedCount = checklist.filter((c) => c.complete).length;
-
   const completeCount = checklist.filter((d) => d.complete).length;
+
+  // Per-doc-type breakdown for the Document Checklist header — shows the
+  // actual document count (not the checklist-row count) so uploading a
+  // 2nd P&L visibly moves the number, and groups identical types.
+  const docCount = docs.length;
+  const typeBreakdown = useMemo(() => {
+    const counts = new Map<string, number>();
+    for (const d of docs) {
+      const raw = (d.type ?? '').toUpperCase().trim();
+      if (!raw || raw === '—') continue;
+      const label = DOC_TYPE_LABEL[raw] ?? raw
+        .toLowerCase()
+        .split('_')
+        .map((s) => s.charAt(0).toUpperCase() + s.slice(1))
+        .join(' ');
+      counts.set(label, (counts.get(label) ?? 0) + 1);
+    }
+    // Stable, readable ordering: by count desc, then label asc.
+    return [...counts.entries()]
+      .sort((a, b) => (b[1] - a[1]) || a[0].localeCompare(b[0]))
+      .map(([label, n]) => `${n} ${label}`);
+  }, [docs]);
   const extracted = docs.filter((d) => d.status === 'Extracted').length;
   const processing = docs.filter((d) => d.status === 'Processing').length;
 
@@ -406,6 +444,41 @@ export default function DataRoomTab({ projectId }: { projectId: number | string 
     void fullRun.run();
   };
 
+  // ─── Auto-run on extraction complete ───────────────────────────────
+  // Sam asked for engines to fire automatically once a document finishes
+  // extracting, instead of users having to click a CTA. We track the
+  // EXTRACTED count and trigger fullRun.run() whenever it ticks up,
+  // debounced 2.5s so a multi-doc upload only kicks off one run. The
+  // ref keeps the latest fullRun closure without forcing it into the
+  // effect dep list (which would re-fire on every render).
+  const extractedDocCount = docs.filter(
+    (d) => d.rawStatus === 'EXTRACTED' || d.rawStatus === 'Extracted',
+  ).length;
+  const autoRunRef = useRef<{
+    initialized: boolean;
+    lastSeen: number;
+    run: () => void;
+  }>({ initialized: false, lastSeen: 0, run: () => {} });
+  autoRunRef.current.run = onRunFullUnderwriting;
+
+  useEffect(() => {
+    if (!liveMode) return;
+    if (!autoRunRef.current.initialized) {
+      // First render — record the current count as baseline so we don't
+      // auto-fire on a page refresh against an already-extracted deal.
+      autoRunRef.current.initialized = true;
+      autoRunRef.current.lastSeen = extractedDocCount;
+      return;
+    }
+    if (extractedDocCount <= autoRunRef.current.lastSeen) return;
+    if (fullRunRunning || fullRunDisabled) return;
+    const t = setTimeout(() => {
+      autoRunRef.current.lastSeen = extractedDocCount;
+      autoRunRef.current.run();
+    }, 2500);
+    return () => clearTimeout(t);
+  }, [extractedDocCount, fullRunRunning, fullRunDisabled, liveMode]);
+
   const onPickFiles = () => fileInputRef.current?.click();
 
   const onFilesSelected = async (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -451,9 +524,8 @@ export default function DataRoomTab({ projectId }: { projectId: number | string 
           <>
             Drop your deal documents here. Our AI reads each PDF and Excel end-to-end and pulls
             out every number, every assumption, every risk — automatically. The
-            <span className="font-semibold"> Document Checklist</span> on the right tracks what
-            we still need to fully underwrite the deal; the
-            <span className="font-semibold"> Engine Status</span> bars climb as the AI gets more confident.
+            <span className="font-semibold"> Document Checklist</span> tracks what
+            we still need to fully underwrite the deal.
           </>
         }
       />
@@ -483,24 +555,16 @@ export default function DataRoomTab({ projectId }: { projectId: number | string 
               <ArrowRight size={12} />
             </button>
           )}
-          {/* Run Full Underwriting — single canonical kickoff for all 8
-              engines. Wraps the Button in a span so the native title
-              tooltip surfaces even when the button is `disabled` (browsers
-              suppress events on disabled controls). */}
-          <span title={fullRunTooltip} className="flex-shrink-0">
-            <Button
-              variant="primary"
-              size="lg"
-              onClick={onRunFullUnderwriting}
-              disabled={fullRunDisabled}
-              loading={fullRunRunning}
-              type="button"
-              aria-label="Run full underwriting"
-            >
-              {!fullRunRunning && <Play size={14} />}
-              {fullRunRunning ? 'Running underwriting…' : 'Run Full Underwriting'}
-            </Button>
-          </span>
+          {/* Underwriting kicks off automatically once any document
+              finishes extracting (debounced so a multi-doc upload only
+              fires one run). Each engine tab still exposes a "Re-run"
+              button in its header for manual refreshes. */}
+          {fullRunRunning && (
+            <span className="inline-flex items-center gap-2 text-[12px] text-ink-500">
+              <span className="inline-block w-2 h-2 rounded-full bg-brand-500 animate-pulse" />
+              Running underwriting…
+            </span>
+          )}
         </div>
       </Card>
 
@@ -614,19 +678,27 @@ export default function DataRoomTab({ projectId }: { projectId: number | string 
         </Card>
       )}
 
-      <div className="grid grid-cols-2 gap-5">
-        {/* Document Checklist — required-doc list with N/10 counter +
-            "Underwriting Ready" progress bar. Items flip green and drop
-            their REQ badge as soon as a matching doc_type is uploaded. */}
+      <div className={cn('grid gap-5', SHOW_ENGINE_STATUS ? 'grid-cols-2' : 'grid-cols-1')}>
+        {/* Document Checklist — required-doc list + actual upload count.
+            The counter is the total number of uploaded documents (with a
+            per-type breakdown line) rather than checklist-row coverage,
+            so a 2nd P&L upload visibly moves the number. */}
         <Card className="p-5">
-          <div className="flex items-center justify-between mb-4">
+          <div className="flex items-start justify-between mb-4 gap-3">
             <div className="flex items-center gap-2">
               <ClipboardList size={16} className="text-brand-500" />
               <h3 className="text-[14px] font-semibold text-ink-900">Document Checklist</h3>
             </div>
-            <span className="text-[12px] text-ink-500 tabular-nums">
-              {matchedCount}/{checklist.length}
-            </span>
+            <div className="text-right">
+              <div className="text-[12px] text-ink-700 tabular-nums">
+                {docCount} {docCount === 1 ? 'document' : 'documents'}
+              </div>
+              {typeBreakdown.length > 0 && (
+                <div className="text-[11px] text-ink-500 mt-0.5">
+                  {typeBreakdown.join(' · ')}
+                </div>
+              )}
+            </div>
           </div>
           <div className="mb-4">
             <div className="flex justify-between text-[11px] text-ink-500 mb-1">
@@ -660,7 +732,10 @@ export default function DataRoomTab({ projectId }: { projectId: number | string 
         </Card>
 
         {/* Engine Status — per-engine readiness derived from live worker
-            engine outputs when available, mock progress otherwise. */}
+            engine outputs when available, mock progress otherwise.
+            Currently hidden via SHOW_ENGINE_STATUS until confidence
+            scores are calibrated. */}
+        {SHOW_ENGINE_STATUS && (
         <Card className="p-5">
           <div className="flex items-center gap-2 mb-1">
             <Sparkles size={16} className="text-brand-500" />
@@ -700,6 +775,7 @@ export default function DataRoomTab({ projectId }: { projectId: number | string 
             Upload more documents to increase confidence.
           </div>
         </Card>
+        )}
       </div>
 
       {docs.length > 0 && (

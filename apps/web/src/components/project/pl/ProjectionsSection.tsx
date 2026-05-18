@@ -171,7 +171,7 @@ export default function ProjectionsSection({
           No projections yet
         </div>
         <p className="text-[12.5px] text-ink-500 mt-1.5 max-w-md mx-auto leading-relaxed">
-          Run Full Underwriting from the Data Room to populate projections.
+          Upload a T-12 or P&amp;L to populate projections — engines run automatically once extraction completes.
         </p>
       </Card>
     );

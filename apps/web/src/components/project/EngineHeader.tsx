@@ -248,10 +248,9 @@ export default function EngineHeader({
             >
               <Download size={12} /> Export to Excel
             </Button>
-            {/* Per-engine Run is a secondary affordance now that "Run Full
-                Underwriting" lives in the Data Room. Manual single-engine
-                re-runs are still useful, so we keep the button but in a
-                quieter visual weight. */}
+            {/* Per-engine Re-run — primary manual affordance now that
+                engines auto-fire on extraction. Sits top-right of each
+                engine card so users always have a one-click refresh. */}
             <Button
               variant="secondary"
               size="sm"
@@ -260,7 +259,7 @@ export default function EngineHeader({
               type="button"
             >
               {!running && (complete ? <RotateCcw size={12} /> : <Play size={12} />)}{' '}
-              {running ? 'Running…' : complete ? 'Run Again' : 'Run Model'}
+              {running ? 'Running…' : complete ? 'Re-run' : 'Run'}
             </Button>
           </div>
         </div>

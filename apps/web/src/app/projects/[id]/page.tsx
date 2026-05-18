@@ -9,7 +9,7 @@ import {
   Briefcase, MapPinned, FileSearch, Download, AlertTriangle,
 } from 'lucide-react';
 import { Button } from '@/components/ui/Button';
-import { Badge, StatusBadge } from '@/components/ui/Badge';
+import { StatusBadge } from '@/components/ui/Badge';
 import { ErrorBoundary } from '@/components/ui/ErrorBoundary';
 import KebabMenu from '@/components/ui/KebabMenu';
 import { useToast } from '@/components/ui/Toast';
@@ -413,20 +413,15 @@ export default function ProjectDetailPage() {
                 aria-label={t.label}
                 tabIndex={isActive ? 0 : -1}
                 onClick={() => setTab(t.id)}
-                title={isInactive
-                  ? 'Available in the next release — currently focused on Data Room → P&L → Market underwriting flow'
-                  : undefined}
+                title={isInactive ? 'Coming soon.' : undefined}
                 className={cn(
                   'flex items-center gap-1.5 px-3 py-2.5 text-[12.5px] border-b-2 whitespace-nowrap transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-500 rounded-t',
                   isActive
-                    ? (isInactive ? 'border-ink-300 text-ink-500 font-medium italic' : 'border-brand-500 text-brand-700 font-semibold')
-                    : (isInactive ? 'border-transparent text-ink-400 italic' : 'border-transparent text-ink-700 hover:text-ink-900'),
+                    ? (isInactive ? 'border-ink-200 text-ink-400' : 'border-brand-500 text-brand-700 font-semibold')
+                    : (isInactive ? 'border-transparent text-ink-400' : 'border-transparent text-ink-700 hover:text-ink-900'),
                 )}>
                 <Icon size={13} aria-hidden="true" className={isInactive ? 'opacity-60' : ''} />
-                <span className={isInactive ? 'line-through decoration-ink-300' : ''}>{t.label}</span>
-                {isInactive && (
-                  <Badge tone="amber" className="ml-1 px-1.5 py-0 text-[9.5px] uppercase tracking-wide">Soon</Badge>
-                )}
+                <span>{t.label}</span>
               </button>
             );
           })}
