@@ -1,5 +1,5 @@
 'use client';
-import { useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useRouter, useParams } from 'next/navigation';
 import { LayoutGrid, Download, Pencil, Link2 } from 'lucide-react';
 import { Card } from '@/components/ui/Card';
@@ -9,9 +9,11 @@ import {
   kimptonAnglerOverview, findBrand, returnProfiles, positioningTiers,
   brandFamilies,
 } from '@/lib/mockData';
-import { isWorkerConnected, workerUrl } from '@/lib/api';
+import { api, isWorkerConnected, workerUrl, type ExtractionField } from '@/lib/api';
 import { fmtCurrency, fmtPct, fmtMillions, fmtNumber, cn } from '@/lib/format';
 import { getEngineField, useEngineOutputs } from '@/lib/hooks/useEngineOutputs';
+import { useDocuments } from '@/lib/hooks/useDocuments';
+import { useEngineRun } from '@/lib/hooks/useEngineRun';
 import { useDeal } from '@/lib/hooks/useDeal';
 import { useFlash } from '@/lib/hooks/useFlash';
 import { IntroCard } from '@/components/help/IntroCard';
@@ -53,7 +55,85 @@ export default function OverviewTab({ projectId }: { projectId: number | string 
 
   // Pull worker output for the Sources/Uses, Proforma, Sensitivity sections.
   const { outputs } = useEngineOutputs(dealId);
-  const { deal } = useDeal(dealId);
+  const { deal, refresh: refreshDeal } = useDeal(dealId);
+
+  // ─── Inline-edit override state ────────────────────────────────────
+  // Mirrors the deal's `field_overrides` JSONB column. Edits PATCH the
+  // worker, hold an optimistic local copy so the UI reacts immediately,
+  // and kick off a debounced run-all so the engines re-derive any
+  // dependent numbers. Engine-linked rows (chain icon) stay read-only;
+  // only descriptive rows (pencil icon) wire an onSave.
+  const [overrides, setOverrides] = useState<Record<string, unknown>>({});
+  useEffect(() => {
+    // Hydrate from the deal record once it loads; later edits replace
+    // this map wholesale.
+    setOverrides((deal?.field_overrides as Record<string, unknown> | undefined) ?? {});
+  }, [deal?.field_overrides]);
+
+  const fullRun = useEngineRun(liveMode ? dealId : '', 'returns', { runMode: 'all' });
+  const rerunTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  useEffect(() => () => {
+    if (rerunTimerRef.current) clearTimeout(rerunTimerRef.current);
+  }, []);
+
+  const onSaveOverride = useCallback(
+    async (path: string, value: number | string | null) => {
+      if (!liveMode) {
+        toast('Inline edit is disabled on demo deals', { type: 'info' });
+        return;
+      }
+      // `deal.<col>` paths patch the deal row directly (those fields
+      // have real columns already — name/city/brand/keys/service).
+      // Other paths flow into the field_overrides JSONB column.
+      const isDealCol = path.startsWith('deal.');
+      try {
+        if (isDealCol) {
+          const col = path.slice('deal.'.length) as 'name' | 'city' | 'brand' | 'keys' | 'service';
+          const patch: Record<string, unknown> = {};
+          patch[col] = value;
+          await api.deals.update(dealId, patch as never);
+        } else {
+          const next = { ...overrides };
+          if (value === null || value === '') {
+            delete next[path];
+          } else {
+            next[path] = value;
+          }
+          setOverrides(next); // optimistic
+          await api.deals.update(dealId, { field_overrides: next });
+        }
+        toast('Saved — re-running engines', { type: 'success' });
+        void refreshDeal?.();
+        if (rerunTimerRef.current) clearTimeout(rerunTimerRef.current);
+        rerunTimerRef.current = setTimeout(() => {
+          void fullRun.run();
+        }, 1500);
+      } catch (err) {
+        // Roll back optimistic update on failure.
+        if (!isDealCol) setOverrides(overrides);
+        const msg = err instanceof Error ? err.message : 'Unknown error';
+        toast(`Save failed: ${msg}`, { type: 'error' });
+      }
+    },
+    [overrides, dealId, liveMode, toast, refreshDeal, fullRun],
+  );
+  // Property-detail fields (Year Built, GBA, Meeting Space, etc.) come from
+  // the OM extraction, not from any engine. We aggregate fields across all
+  // OM-classified docs and resolve each metadata key by trying a list of
+  // likely paths — the extractor doesn't enforce a strict schema for these
+  // descriptive fields, so different OMs use different names.
+  const { documents, extractions } = useDocuments(liveMode ? dealId : null);
+  const omExtractedFields = useMemo<ExtractionField[]>(() => {
+    if (!liveMode) return [];
+    const out: ExtractionField[] = [];
+    for (const d of documents) {
+      const dt = (d.doc_type ?? '').toUpperCase();
+      if (dt !== 'OM') continue;
+      const ex = extractions[d.id];
+      if (ex?.fields) out.push(...ex.fields);
+    }
+    return out;
+  }, [liveMode, documents, extractions]);
   const wSources = getEngineField<SourceUseLine[]>(outputs, 'capital', 'sources');
   const wUses = getEngineField<SourceUseLine[]>(outputs, 'capital', 'uses');
   const wReturnsIrr = getEngineField<number>(outputs, 'returns', 'levered_irr');
@@ -102,12 +182,13 @@ export default function OverviewTab({ projectId }: { projectId: number | string 
     formatter: (v: number) => string,
   ): string => (n != null ? formatter(n) : '—');
 
-  // ─── Property metadata from the deal row (useDeal) ───────────────
-  // Worker doesn't yet surface yearBuilt/gba/meetingSpace/parking/fbOutlets,
-  // so those stay fixture-only on the Kimpton demo and render '—' on
-  // real deals. On the Kimpton demo we pin to the fixture (name/type/
-  // location) for byte-identical demo output; on real deals we read
-  // from the deal row.
+  // ─── Property metadata ───────────────────────────────────────────
+  // Name/city/keys/brand live on the deal row (set by the create-deal
+  // wizard or patched via the API). The descriptive fields the OM
+  // typically carries — year_built, gba, meeting_space, parking,
+  // fb_outlets, property_type — are resolved from the OM extraction by
+  // trying a list of plausible aliases per field. Kimpton demo (id=7)
+  // keeps its fixture values so the canned demo stays byte-identical.
   const propertyName = isKimptonDemo
     ? o.general.name
     : (deal?.name ?? undefined);
@@ -120,9 +201,108 @@ export default function OverviewTab({ projectId }: { projectId: number | string 
   const propertyBrand = isKimptonDemo
     ? o.general.brand
     : (deal?.brand ?? undefined);
+
+  // Resolve a descriptive field by trying multiple alias paths against
+  // the OM extraction. Matches on the full dotted name, the last
+  // segment, and both with any trailing unit suffix stripped — the
+  // same shape HistoricalsSection uses.
+  const findOmField = (aliases: string[]): ExtractionField | undefined => {
+    const norm = (s: string) => s.toLowerCase().replace(/[^a-z0-9]/g, '');
+    const stripUnit = (s: string) =>
+      s.replace(/(usd|sqft|sf|pct|percent|count|spaces|outlets)$/i, '');
+    const aSet = new Set<string>();
+    for (const a of aliases) {
+      const n = norm(a);
+      aSet.add(n);
+      aSet.add(stripUnit(n));
+    }
+    for (const f of omExtractedFields) {
+      const full = norm(f.field_name);
+      const segs = f.field_name.split('.');
+      const last = norm(segs[segs.length - 1] ?? '');
+      for (const cand of [full, stripUnit(full), last, stripUnit(last)]) {
+        if (cand && aSet.has(cand)) return f;
+      }
+    }
+    return undefined;
+  };
+
+  const numFromField = (f: ExtractionField | undefined): number | undefined => {
+    if (!f || f.value == null) return undefined;
+    const n = typeof f.value === 'number' ? f.value : Number(f.value);
+    return Number.isFinite(n) ? n : undefined;
+  };
+  const strFromField = (f: ExtractionField | undefined): string | undefined => {
+    if (!f || f.value == null) return undefined;
+    const s = String(f.value).trim();
+    return s ? s : undefined;
+  };
+
+  // Resolve a descriptive field by first checking the analyst's
+  // override map (the canonical path = aliases[0]) and falling back to
+  // the OM extraction. Returns a tuple of (value, source) so the row
+  // metadata can flip from chain-linked to pencil-edited.
+  const overrideNum = (path: string): number | undefined => {
+    const v = overrides[path];
+    if (typeof v === 'number' && Number.isFinite(v)) return v;
+    if (typeof v === 'string' && v.trim() !== '') {
+      const n = Number(v);
+      return Number.isFinite(n) ? n : undefined;
+    }
+    return undefined;
+  };
+  const overrideStr = (path: string): string | undefined => {
+    const v = overrides[path];
+    if (v == null) return undefined;
+    const s = String(v).trim();
+    return s ? s : undefined;
+  };
+  const resolveNum = (aliases: string[]): number | undefined =>
+    overrideNum(aliases[0]) ?? numFromField(findOmField(aliases));
+  const resolveStr = (aliases: string[]): string | undefined =>
+    overrideStr(aliases[0]) ?? strFromField(findOmField(aliases));
+
+  // OM-derived descriptive fields. Aliases cover the canonical
+  // `property_overview.*` namespace from the extractor prompt plus the
+  // common variants real-world OMs use. The first alias is the
+  // canonical path the override map writes to.
+  const omYearBuilt = resolveNum([
+    'property_overview.year_built', 'year_built', 'built',
+  ]);
+  const omGba = resolveNum([
+    'property_overview.gba_sf', 'property_overview.gba_sqft',
+    'property_overview.gba', 'gba_sf', 'gba_sqft', 'gba',
+    'property_overview.gross_building_area',
+    'property_overview.total_sf',
+  ]);
+  const omMeetingSpace = resolveNum([
+    'property_overview.meeting_space_sf', 'property_overview.meeting_space_sqft',
+    'property_overview.meeting_space', 'meeting_space_sf', 'meeting_space_sqft',
+    'meeting_space', 'property_overview.function_space_sf',
+    'property_overview.function_space',
+  ]);
+  const omParking = resolveNum([
+    'property_overview.parking_spaces', 'property_overview.parking_count',
+    'property_overview.parking', 'parking_spaces', 'parking_count', 'parking',
+    'property_overview.parking_keys',
+  ]);
+  const omFbOutlets = resolveNum([
+    'property_overview.fb_outlets', 'property_overview.f_and_b_outlets',
+    'property_overview.food_beverage_outlets', 'property_overview.outlets',
+    'fb_outlets', 'f_and_b_outlets', 'outlets',
+  ]);
+  const omPropertyType = resolveStr([
+    'property_overview.property_type', 'property_overview.type',
+    'property_overview.service_level', 'property_type', 'service_level',
+    'property_overview.segment', 'property_overview.product_type',
+  ]);
+
+  // Service / Type: prefer the OM-extracted descriptor, fall back to
+  // the deal row (which the create-deal wizard captures as service
+  // level), then '—'.
   const propertyService = isKimptonDemo
     ? o.general.type
-    : (deal?.service ?? undefined);
+    : (omPropertyType ?? deal?.service ?? undefined);
 
   // Brand tier enrichment: only valid when we have a brand string.
   const brandMatch = propertyBrand ? findBrand(propertyBrand) : null;
@@ -261,18 +441,62 @@ export default function OverviewTab({ projectId }: { projectId: number | string 
       />
 
       <div className="grid grid-cols-2 gap-3">
-        <Section title="General Information" rows={[
-          ['Property Name', propertyName ?? '—'],
-          ['Location', propertyCity ?? '—'],
-          ['Type', propertyService ?? '—'],
-          ['Brand', brandDisplay],
-          ['Keys', propertyKeys != null ? fmtNumber(propertyKeys) : '—'],
-          ['Year Built', isKimptonDemo ? o.general.yearBuilt.toString() : '—'],
-          ['GBA (SF)', isKimptonDemo ? fmtNumber(o.general.gba) : '—'],
-          ['Meeting Space', isKimptonDemo ? o.general.meetingSpace : '—'],
-          ['Parking Spaces', isKimptonDemo ? o.general.parking.toString() : '—'],
-          ['F&B Outlets', isKimptonDemo ? o.general.fbOutlets.toString() : '—'],
-        ]} />
+        <Section
+          title="General Information"
+          onSaveOverride={onSaveOverride}
+          rows={[
+            { label: 'Property Name', kind: 'editable',
+              fieldPath: 'deal.name', inputType: 'text',
+              raw: propertyName,
+              value: propertyName ?? '—' },
+            { label: 'Location', kind: 'editable',
+              fieldPath: 'deal.city', inputType: 'text',
+              raw: propertyCity,
+              value: propertyCity ?? '—' },
+            { label: 'Type', kind: 'editable',
+              fieldPath: 'property_overview.property_type', inputType: 'text',
+              raw: propertyService,
+              value: propertyService ?? '—' },
+            { label: 'Brand', kind: 'editable',
+              fieldPath: 'deal.brand', inputType: 'text',
+              raw: propertyBrand,
+              value: brandDisplay },
+            { label: 'Keys', kind: 'editable',
+              fieldPath: 'deal.keys', inputType: 'number',
+              raw: propertyKeys,
+              value: propertyKeys != null ? fmtNumber(propertyKeys) : '—' },
+            { label: 'Year Built', kind: 'editable',
+              fieldPath: 'property_overview.year_built', inputType: 'number',
+              raw: omYearBuilt,
+              value: isKimptonDemo
+                ? o.general.yearBuilt.toString()
+                : (omYearBuilt != null ? String(Math.round(omYearBuilt)) : '—') },
+            { label: 'GBA (SF)', kind: 'editable',
+              fieldPath: 'property_overview.gba_sf', inputType: 'number',
+              raw: omGba,
+              value: isKimptonDemo
+                ? fmtNumber(o.general.gba)
+                : (omGba != null ? fmtNumber(Math.round(omGba)) : '—') },
+            { label: 'Meeting Space', kind: 'editable',
+              fieldPath: 'property_overview.meeting_space_sf', inputType: 'number',
+              raw: omMeetingSpace,
+              value: isKimptonDemo
+                ? o.general.meetingSpace
+                : (omMeetingSpace != null ? `${fmtNumber(Math.round(omMeetingSpace))} SF` : '—') },
+            { label: 'Parking Spaces', kind: 'editable',
+              fieldPath: 'property_overview.parking_spaces', inputType: 'number',
+              raw: omParking,
+              value: isKimptonDemo
+                ? o.general.parking.toString()
+                : (omParking != null ? fmtNumber(Math.round(omParking)) : '—') },
+            { label: 'F&B Outlets', kind: 'editable',
+              fieldPath: 'property_overview.fb_outlets', inputType: 'number',
+              raw: omFbOutlets,
+              value: isKimptonDemo
+                ? o.general.fbOutlets.toString()
+                : (omFbOutlets != null ? String(Math.round(omFbOutlets)) : '—') },
+          ]}
+        />
 
         <Section title="Investment Profile" rows={[
           ['Return Strategy', profile?.label ?? '—'],
@@ -283,11 +507,16 @@ export default function OverviewTab({ projectId }: { projectId: number | string 
 
       <div className="grid grid-cols-1 gap-3">
         <Section title="Acquisition Assumptions" rows={[
-          ['Purchase Price', fmtOrDash(acqPurchase, fmtCurrency)],
-          ['Price/Key', fmtOrDash(acqPricePerKey, fmtCurrency)],
-          ['Entry Cap Rate', fmtOrDash(acqEntryCap, v => fmtPct(v, 2))],
-          ['Closing Costs', fmtOrDash(acqClosingCosts, fmtCurrency)],
-          ['Working Capital', fmtOrDash(acqWorkingCapital, fmtCurrency)],
+          { label: 'Purchase Price', kind: 'linked',
+            value: fmtOrDash(acqPurchase, fmtCurrency) },
+          { label: 'Price/Key', kind: 'linked',
+            value: fmtOrDash(acqPricePerKey, fmtCurrency) },
+          { label: 'Entry Cap Rate', kind: 'linked',
+            value: fmtOrDash(acqEntryCap, v => fmtPct(v, 2)) },
+          { label: 'Closing Costs', kind: 'linked',
+            value: fmtOrDash(acqClosingCosts, fmtCurrency) },
+          { label: 'Working Capital', kind: 'linked',
+            value: fmtOrDash(acqWorkingCapital, fmtCurrency) },
         ]} />
       </div>
 
@@ -318,39 +547,61 @@ export default function OverviewTab({ projectId }: { projectId: number | string 
 
       <div className="grid grid-cols-2 gap-3">
         <Section title="Reversion Assumptions" rows={[
-          ['Exit Cap Rate', fmtOrDash(revExitCap, v => fmtPct(v, 2))],
-          ['Exit Year', revExitYear != null ? `Year ${revExitYear}` : '—'],
-          ['Terminal NOI', fmtOrDash(revTerminalNoi, fmtCurrency)],
-          ['Gross Sale Price', fmtOrDash(revGrossSale, fmtCurrency)],
-          ['Selling Costs', fmtOrDash(revSellingCosts, fmtCurrency)],
+          { label: 'Exit Cap Rate', kind: 'linked',
+            value: fmtOrDash(revExitCap, v => fmtPct(v, 2)) },
+          { label: 'Exit Year', kind: 'linked',
+            value: revExitYear != null ? `Year ${revExitYear}` : '—' },
+          { label: 'Terminal NOI', kind: 'linked',
+            value: fmtOrDash(revTerminalNoi, fmtCurrency) },
+          { label: 'Gross Sale Price', kind: 'linked',
+            value: fmtOrDash(revGrossSale, fmtCurrency) },
+          { label: 'Selling Costs', kind: 'linked',
+            value: fmtOrDash(revSellingCosts, fmtCurrency) },
         ]} />
 
         <Section title="Investment Assumptions" rows={[
-          ['Renovation Budget', fmtOrDash(invRenoBudget, fmtCurrency)],
-          ['Hard Costs/Key', fmtOrDash(invHardPerKey, fmtCurrency)],
-          ['Soft Costs', fmtOrDash(invSoftCosts, fmtCurrency)],
-          ['Contingency', fmtOrDash(invContingency, fmtCurrency)],
-          ['Total Capital', fmtOrDash(invTotalCapital, fmtCurrency)],
+          { label: 'Renovation Budget', kind: 'linked',
+            value: fmtOrDash(invRenoBudget, fmtCurrency) },
+          { label: 'Hard Costs/Key', kind: 'linked',
+            value: fmtOrDash(invHardPerKey, fmtCurrency) },
+          { label: 'Soft Costs', kind: 'linked',
+            value: fmtOrDash(invSoftCosts, fmtCurrency) },
+          { label: 'Contingency', kind: 'linked',
+            value: fmtOrDash(invContingency, fmtCurrency) },
+          { label: 'Total Capital', kind: 'linked',
+            value: fmtOrDash(invTotalCapital, fmtCurrency) },
         ]} />
       </div>
 
       <div className="grid grid-cols-2 gap-3">
         <Section title="Acquisition Financing" rows={[
-          ['Loan Amount', fmtOrDash(finLoanAmount, fmtCurrency)],
-          ['LTV', fmtOrDash(finLtv, v => fmtPct(v, 0))],
-          ['Interest Rate', fmtOrDash(finInterestRate, v => fmtPct(v, 2))],
-          ['DSCR', fmtOrDash(finDscr, v => `${v.toFixed(2)}x`)],
-          ['Annual Debt Service', fmtOrDash(finAnnualDebtService, fmtCurrency)],
-          ['Term', fmtOrDash(finTerm, v => `${v} Years`)],
-          ['Amortization', fmtOrDash(finAmort, v => `${v} Years`)],
+          { label: 'Loan Amount', kind: 'linked',
+            value: fmtOrDash(finLoanAmount, fmtCurrency) },
+          { label: 'LTV', kind: 'linked',
+            value: fmtOrDash(finLtv, v => fmtPct(v, 0)) },
+          { label: 'Interest Rate', kind: 'linked',
+            value: fmtOrDash(finInterestRate, v => fmtPct(v, 2)) },
+          { label: 'DSCR', kind: 'linked',
+            value: fmtOrDash(finDscr, v => `${v.toFixed(2)}x`) },
+          { label: 'Annual Debt Service', kind: 'linked',
+            value: fmtOrDash(finAnnualDebtService, fmtCurrency) },
+          { label: 'Term', kind: 'linked',
+            value: fmtOrDash(finTerm, v => `${v} Years`) },
+          { label: 'Amortization', kind: 'linked',
+            value: fmtOrDash(finAmort, v => `${v} Years`) },
         ]} />
 
         <Section title="Refinancing Assumptions" rows={[
-          ['Refi Year', refiYear != null ? `Year ${refiYear}` : '—'],
-          ['Refi LTV', fmtOrDash(refiLtv, v => fmtPct(v, 0))],
-          ['Refi Rate', fmtOrDash(refiRate, v => fmtPct(v, 2))],
-          ['Refi Term', fmtOrDash(refiTerm, v => `${v} Years`)],
-          ['Amortization', fmtOrDash(refiAmort, v => `${v} Years`)],
+          { label: 'Refi Year', kind: 'linked',
+            value: refiYear != null ? `Year ${refiYear}` : '—' },
+          { label: 'Refi LTV', kind: 'linked',
+            value: fmtOrDash(refiLtv, v => fmtPct(v, 0)) },
+          { label: 'Refi Rate', kind: 'linked',
+            value: fmtOrDash(refiRate, v => fmtPct(v, 2)) },
+          { label: 'Refi Term', kind: 'linked',
+            value: fmtOrDash(refiTerm, v => `${v} Years`) },
+          { label: 'Amortization', kind: 'linked',
+            value: fmtOrDash(refiAmort, v => `${v} Years`) },
         ]} />
       </div>
 
@@ -747,19 +998,157 @@ function Heatmap({
   );
 }
 
-function Section({ title, rows }: { title: string; rows: string[][] }) {
+// Per-row metadata for the Overview Section. Plain rows are
+// label/value pairs (read-only). `linked` rows render with a chain
+// icon and green tint — they're engine-derived and edited elsewhere.
+// `editable` rows render with a pencil icon and become inline-edit
+// cells on click; on commit they call `onSaveOverride(fieldPath, v)`.
+type SectionRowSpec =
+  | [string, string]
+  | {
+      label: string;
+      value: string;
+      kind: 'plain' | 'linked' | 'editable';
+      // Required for editable rows — the override path key.
+      fieldPath?: string;
+      // Raw value (number or string) to seed the input.
+      raw?: number | string;
+      // Format hint for the inline editor.
+      inputType?: 'number' | 'text';
+    };
+
+function Section({
+  title,
+  rows,
+  onSaveOverride,
+}: {
+  title: string;
+  rows: SectionRowSpec[];
+  onSaveOverride?: (path: string, value: number | string | null) => Promise<void>;
+}) {
   return (
     <Card className="p-3">
       <h3 className="text-[12px] font-semibold text-ink-900 uppercase tracking-wide mb-1.5">{title}</h3>
       <div className="text-[12.5px]">
-        {rows.map(([k, v]) => (
-          <div key={k} className="flex items-center justify-between py-1 border-b border-border/40 last:border-0">
-            <span className="text-ink-500">{k}</span>
-            <span className="font-medium tabular-nums text-ink-900">{v}</span>
-          </div>
-        ))}
+        {rows.map((row, idx) => {
+          // Normalize tuple → object so the rendering branch is uniform.
+          const spec = Array.isArray(row)
+            ? { label: row[0], value: row[1], kind: 'plain' as const }
+            : row;
+          return (
+            <SectionRow
+              key={`${spec.label}-${idx}`}
+              spec={spec}
+              onSave={onSaveOverride}
+            />
+          );
+        })}
       </div>
     </Card>
+  );
+}
+
+function SectionRow({
+  spec,
+  onSave,
+}: {
+  spec: Exclude<SectionRowSpec, [string, string]> | { label: string; value: string; kind: 'plain' };
+  onSave?: (path: string, value: number | string | null) => Promise<void>;
+}) {
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState<string>('');
+  const [saving, setSaving] = useState(false);
+  const inputRef = useRef<HTMLInputElement | null>(null);
+
+  const editable = spec.kind === 'editable' && !!spec.fieldPath && !!onSave;
+  const linked = spec.kind === 'linked';
+
+  useEffect(() => {
+    if (editing) inputRef.current?.focus();
+  }, [editing]);
+
+  const beginEdit = () => {
+    if (!editable) return;
+    setDraft(spec.raw != null ? String(spec.raw) : '');
+    setEditing(true);
+  };
+
+  const commit = async () => {
+    if (!editable || !spec.fieldPath || !onSave) {
+      setEditing(false);
+      return;
+    }
+    const trimmed = draft.trim();
+    let payload: number | string | null;
+    if (trimmed === '') {
+      payload = null; // clears the override
+    } else if (spec.inputType === 'number') {
+      // Strip $/% formatting noise so analysts can paste pretty values.
+      const cleaned = trimmed.replace(/[$,]/g, '').replace(/%$/, '');
+      const n = Number(cleaned);
+      if (!Number.isFinite(n)) {
+        setEditing(false);
+        return;
+      }
+      payload = n;
+    } else {
+      payload = trimmed;
+    }
+    setSaving(true);
+    try {
+      await onSave(spec.fieldPath, payload);
+    } finally {
+      setSaving(false);
+      setEditing(false);
+    }
+  };
+
+  const cancel = () => setEditing(false);
+
+  return (
+    <div className="flex items-center justify-between py-1 border-b border-border/40 last:border-0">
+      <span className="text-ink-500 inline-flex items-center gap-1.5">
+        {linked && <Link2 size={10} className="text-success-500" aria-label="Linked from engine" />}
+        {editable && !linked && <Pencil size={10} className="text-warn-500" aria-label="Editable" />}
+        {spec.label}
+      </span>
+      {editing ? (
+        <input
+          ref={inputRef}
+          value={draft}
+          onChange={(e) => setDraft(e.target.value)}
+          onBlur={() => { void commit(); }}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter') { void commit(); }
+            if (e.key === 'Escape') cancel();
+          }}
+          disabled={saving}
+          inputMode={('inputType' in spec && spec.inputType === 'number') ? 'decimal' : 'text'}
+          className="w-32 px-1.5 py-0.5 text-[12px] text-right border border-brand-500 rounded bg-white focus:outline-none focus:ring-2 focus:ring-brand-100 tabular-nums"
+        />
+      ) : editable ? (
+        <button
+          type="button"
+          onClick={beginEdit}
+          className={cn(
+            'font-medium tabular-nums px-1.5 py-0.5 rounded -mr-1.5 hover:bg-warn-50 transition-colors',
+            spec.raw != null ? 'text-warn-700' : 'text-ink-400 italic',
+          )}
+          title="Click to edit"
+        >
+          {spec.value}
+        </button>
+      ) : (
+        <span
+          className={cn(
+            'font-medium tabular-nums',
+            linked ? 'text-success-700' : 'text-ink-900',
+          )}
+        >
+          {spec.value}
+        </span>
+      )}
+    </div>
   );
 }
 

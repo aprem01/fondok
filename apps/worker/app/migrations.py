@@ -100,6 +100,15 @@ MIGRATIONS: list[tuple[str, str]] = [
         "ALTER TABLE deals ADD COLUMN IF NOT EXISTS assignee_id UUID",
     ),
     (
+        # Per-field analyst overrides surfaced from the Overview's inline
+        # editor. Keyed by canonical field path (e.g.
+        # ``property_overview.year_built``) → primitive value. The engine
+        # loaders layer this dict on top of extracted facts so an analyst
+        # edit can override what the OM said.
+        "deals.add_field_overrides",
+        "ALTER TABLE deals ADD COLUMN IF NOT EXISTS field_overrides JSONB NOT NULL DEFAULT '{}'::jsonb",
+    ),
+    (
         "documents.create_table",
         """
         CREATE TABLE IF NOT EXISTS documents (
@@ -540,6 +549,12 @@ SQLITE_MIGRATIONS: list[tuple[str, str]] = [
     (
         "deals.add_assignee_id_sqlite",
         "ALTER TABLE deals ADD COLUMN assignee_id TEXT",
+    ),
+    (
+        # SQLite stores JSON as TEXT — the API serializes via json.dumps
+        # and parses on read, same as the JSONB Postgres column.
+        "deals.add_field_overrides_sqlite",
+        "ALTER TABLE deals ADD COLUMN field_overrides TEXT NOT NULL DEFAULT '{}'",
     ),
     (
         "documents.create_table",

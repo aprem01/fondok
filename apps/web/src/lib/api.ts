@@ -27,6 +27,10 @@ export interface WorkerDeal {
   deal_stage: string | null;
   risk: string | null;
   ai_confidence: number | null;
+  // Per-field analyst overrides keyed by extractor field path
+  // (e.g. `property_overview.year_built`) → primitive value. May be
+  // omitted on older worker builds — always default to {} on read.
+  field_overrides?: Record<string, unknown>;
   created_at: string;
   updated_at: string;
 }
@@ -217,7 +221,12 @@ export const api = {
     status: (id: string, signal?: AbortSignal) =>
       request<WorkerDealStatus>('GET', `/deals/${id}/status`, undefined, { signal }),
     /** Patch one-or-more deal fields (keys override, brand fix, etc.). */
-    update: (id: string, patch: Partial<Pick<WorkerDeal, 'name' | 'city' | 'keys' | 'service' | 'brand'>>) =>
+    update: (
+      id: string,
+      patch: Partial<Pick<WorkerDeal, 'name' | 'city' | 'keys' | 'service' | 'brand'>> & {
+        field_overrides?: Record<string, unknown>;
+      },
+    ) =>
       request<WorkerDeal>('PATCH', `/deals/${id}`, patch),
   },
   documents: {

@@ -98,6 +98,11 @@ class UpdateDealBody(BaseModel):
     brand: str | None = None
     positioning: str | None = None
     purchase_price: float | None = Field(default=None, ge=0)
+    # Per-field analyst overrides (canonical extractor field path →
+    # primitive value). When present, this dict REPLACES the deal's
+    # current overrides — clients send the full merged map. Engines pick
+    # these up via the OM-actuals loader on next run.
+    field_overrides: dict[str, Any] | None = None
 
 
 class Gate1Body(BaseModel):
@@ -136,6 +141,10 @@ class DealRecord(BaseModel):
     brand: str | None = None
     positioning: str | None = None
     purchase_price: float | None = None
+    # Per-field analyst overrides — keyed by extractor field path (e.g.
+    # ``property_overview.year_built``) → primitive value. Empty dict
+    # means the deal is purely extracted/derived.
+    field_overrides: dict[str, Any] = Field(default_factory=dict)
     created_at: datetime
     updated_at: datetime
 
@@ -220,6 +229,25 @@ def _coerce_float(value: Any) -> float | None:
         return None
 
 
+def _coerce_overrides(value: Any) -> dict[str, Any]:
+    """Normalize JSONB column reads — Postgres may hand us a parsed
+    dict or a raw JSON string depending on driver/version. Anything
+    unexpected falls back to an empty map so the API never blows up
+    on a malformed row.
+    """
+    if value is None:
+        return {}
+    if isinstance(value, dict):
+        return value
+    if isinstance(value, str):
+        try:
+            parsed = json.loads(value)
+        except json.JSONDecodeError:
+            return {}
+        return parsed if isinstance(parsed, dict) else {}
+    return {}
+
+
 def _row_to_record(row: dict[str, Any]) -> DealRecord:
     return DealRecord(
         id=UUID(str(row["id"])),
@@ -236,6 +264,7 @@ def _row_to_record(row: dict[str, Any]) -> DealRecord:
         brand=row.get("brand"),
         positioning=row.get("positioning"),
         purchase_price=_coerce_float(row.get("purchase_price")),
+        field_overrides=_coerce_overrides(row.get("field_overrides")),
         created_at=_coerce_dt(row.get("created_at")),
         updated_at=_coerce_dt(row.get("updated_at")),
     )
@@ -244,7 +273,7 @@ def _row_to_record(row: dict[str, Any]) -> DealRecord:
 _DEAL_COLUMNS = (
     "id, tenant_id, name, city, keys, service, status, deal_stage, "
     "risk, ai_confidence, return_profile, brand, positioning, "
-    "purchase_price, created_at, updated_at"
+    "purchase_price, field_overrides, created_at, updated_at"
 )
 
 
@@ -443,9 +472,23 @@ async def update_deal(
 
     set_clauses: list[str] = []
     params: dict[str, Any] = {"id": str(deal_id), "tenant": tenant_id_str}
+    # Postgres stores `field_overrides` as JSONB and needs an explicit
+    # cast; SQLite (dev/test) stores it as TEXT and accepts a JSON
+    # string directly. Detect the dialect off the bound session.
+    is_sqlite = (session.bind is not None
+                 and session.bind.dialect.name == "sqlite")
     for field, value in changes.items():
-        set_clauses.append(f"{field} = :{field}")
-        params[field] = value
+        if field == "field_overrides":
+            # Drivers vary on whether they auto-serialize dicts. Force
+            # json.dumps so we never end up with a stringified Python repr.
+            if is_sqlite:
+                set_clauses.append(f"{field} = :{field}")
+            else:
+                set_clauses.append(f"{field} = CAST(:{field} AS JSONB)")
+            params[field] = json.dumps(value or {})
+        else:
+            set_clauses.append(f"{field} = :{field}")
+            params[field] = value
     now = _now()
     set_clauses.append("updated_at = :updated_at")
     params["updated_at"] = now

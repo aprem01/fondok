@@ -24,7 +24,7 @@ from __future__ import annotations
 import json
 import logging
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from datetime import UTC, datetime
 from typing import Any
 from uuid import UUID, uuid4
@@ -607,6 +607,76 @@ _OM_PERCENTAGE_KEYS: frozenset[str] = frozenset(
 )
 
 
+async def _load_deal_overrides(
+    session: AsyncSession,
+    *,
+    deal_id: str,
+) -> dict[str, Any]:
+    """Read the deal's `field_overrides` JSONB column.
+
+    Returns ``{}`` for non-UUID ids, missing rows, or schemas where the
+    migration hasn't run yet (test DBs). The column is keyed by canonical
+    extractor field path (e.g. ``property_overview.year_built``) →
+    primitive value.
+    """
+    try:
+        UUID(deal_id)
+    except (ValueError, TypeError):
+        return {}
+    try:
+        row = (
+            await session.execute(
+                text("SELECT field_overrides FROM deals WHERE id = :id"),
+                {"id": deal_id},
+            )
+        ).first()
+    except Exception:
+        return {}
+    if row is None:
+        return {}
+    raw = row._mapping.get("field_overrides")
+    if isinstance(raw, dict):
+        return raw
+    if isinstance(raw, str):
+        try:
+            parsed = json.loads(raw)
+        except json.JSONDecodeError:
+            return {}
+        return parsed if isinstance(parsed, dict) else {}
+    return {}
+
+
+def _apply_overrides(
+    actuals: dict[str, float],
+    overrides: Mapping[str, Any],
+    aliases: Mapping[str, str],
+    *,
+    percentage_keys: frozenset[str] = frozenset(),
+) -> None:
+    """Layer per-field overrides on top of extracted actuals in-place.
+
+    Each override key is run through the same alias map the extracted
+    loader uses, so an analyst editing ``property_overview.year_built``
+    on the Overview lands on the same canonical key the engine reads.
+    Non-numeric overrides are dropped silently — only the descriptive
+    OM fields are editable from the UI today.
+    """
+    for path, value in overrides.items():
+        if not isinstance(value, (int, float)):
+            continue
+        name = (path or "").strip().lower()
+        canonical = aliases.get(name)
+        if canonical is None:
+            tail = name.rsplit(".", 1)[-1] if "." in name else name
+            canonical = aliases.get(tail)
+        if canonical is None:
+            continue
+        v = float(value)
+        if canonical in percentage_keys and v > 1.0:
+            v = v / 100.0
+        actuals[canonical] = v
+
+
 async def _load_om_capital_actuals(
     session: AsyncSession,
     *,
@@ -669,6 +739,14 @@ async def _load_om_capital_actuals(
             if canonical in _OM_PERCENTAGE_KEYS and v > 1.0:
                 v = v / 100.0
             actuals[canonical] = v
+    # Analyst overrides win over extracted broker numbers.
+    overrides = await _load_deal_overrides(session, deal_id=deal_id)
+    _apply_overrides(
+        actuals,
+        overrides,
+        _OM_CAPITAL_FIELD_ALIASES,
+        percentage_keys=_OM_PERCENTAGE_KEYS,
+    )
     return actuals
 
 
@@ -734,6 +812,14 @@ async def _load_om_debt_actuals(
             if canonical in _OM_PERCENTAGE_KEYS and v > 1.0:
                 v = v / 100.0
             actuals[canonical] = v
+    # Analyst overrides win over extracted broker numbers.
+    overrides = await _load_deal_overrides(session, deal_id=deal_id)
+    _apply_overrides(
+        actuals,
+        overrides,
+        _OM_DEBT_FIELD_ALIASES,
+        percentage_keys=_OM_PERCENTAGE_KEYS,
+    )
     return actuals
 
 
