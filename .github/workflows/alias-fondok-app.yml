@@ -62,23 +62,49 @@ jobs:
           VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
           SCOPE: aprem01s-projects
         run: |
-          set -euo pipefail
+          set -uo pipefail
           # A code push triggers a Vercel build that takes ~1-2 min to
           # go Ready. Give it a short head start so we don't grab the
           # *previous* deployment, then poll for the newest Ready one.
           sleep 45
-          for i in $(seq 1 60); do
-            # `vercel ls fondok --prod` lists production deployments
-            # newest-first. Grab the first row whose state is Ready.
-            LINE=$(vercel ls fondok --prod \
-                     --token "$VERCEL_TOKEN" --scope "$SCOPE" 2>/dev/null \
-                   | grep -iE 'ready' | head -1 || true)
-            URL=$(echo "$LINE" \
+
+          # Strip ANSI escape codes (the Vercel CLI emits them even in
+          # non-TTY contexts). Earlier runs failed because the colored
+          # "● Ready" status code carried ANSI bytes that broke the
+          # column-position grep.
+          strip_ansi() {
+            sed -E 's/\x1b\[[0-9;]*[A-Za-z]//g; s/\x1b\([A-Za-z]//g'
+          }
+
+          for i in $(seq 1 90); do
+            # Don't swallow stderr — auth/network errors should show up
+            # in CI logs. `|| true` keeps the pipeline going on a
+            # transient failure so we re-poll.
+            RAW=$(vercel ls fondok --prod \
+                    --token "$VERCEL_TOKEN" --scope "$SCOPE" \
+                  2>&1 || true)
+            CLEAN=$(printf '%s\n' "$RAW" | strip_ansi)
+
+            # Dump the first two attempts so future failures are
+            # diagnosable from the workflow logs.
+            if [ "$i" -le 2 ]; then
+              echo "── vercel ls output (attempt $i) ──"
+              printf '%s\n' "$CLEAN" | head -10
+              echo "────────────────────────────────────"
+            fi
+
+            # Find the URL on any line that contains "Ready" anywhere
+            # (status column, with or without the bullet glyph).
+            URL=$(printf '%s\n' "$CLEAN" \
+                  | awk '/[Rr]eady/ {print}' \
                   | grep -oE 'https://fondok-[a-z0-9]+-aprem01s-projects\.vercel\.app' \
                   | head -1 || true)
+
             if [ -n "${URL:-}" ]; then
-              CURRENT=$(vercel inspect fondok-app.vercel.app \
-                          --token "$VERCEL_TOKEN" --scope "$SCOPE" 2>/dev/null \
+              CURRENT_RAW=$(vercel inspect fondok-app.vercel.app \
+                              --token "$VERCEL_TOKEN" --scope "$SCOPE" \
+                            2>&1 || true)
+              CURRENT=$(printf '%s\n' "$CURRENT_RAW" | strip_ansi \
                         | grep -oE 'https://fondok-[a-z0-9]+-aprem01s-projects\.vercel\.app' \
                         | head -1 || true)
               if [ "$URL" = "$CURRENT" ]; then
@@ -90,8 +116,8 @@ jobs:
               echo "✅ fondok-app.vercel.app → $URL"
               exit 0
             fi
-            echo "[$i/60] no Ready production deployment yet — waiting…"
+            echo "[$i/90] no Ready production deployment yet — waiting…"
             sleep 10
           done
-          echo "::warning::No Ready production deployment found after ~11min — fondok-app left unchanged."
+          echo "::warning::No Ready production deployment found after ~16min — fondok-app left unchanged."
           exit 0
