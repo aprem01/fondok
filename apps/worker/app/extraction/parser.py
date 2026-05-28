@@ -87,7 +87,11 @@ async def parse_document(file_bytes: bytes, filename: str) -> ParsedDocument:
             content_hash=content_hash,
         )
 
-    if ext == "xlsx":
+    # .xlsx and .xlsm both ride the openpyxl path — .xlsm is just a
+    # macro-enabled OOXML workbook; we don't need the macros, only the
+    # cell data. Rani's TTM uploads were arriving as .xlsm exports and
+    # the old branch raised ParseError before extraction even started.
+    if ext in {"xlsx", "xlsm"}:
         return await asyncio.to_thread(
             _parse_with_openpyxl,
             file_bytes=file_bytes,
@@ -97,7 +101,7 @@ async def parse_document(file_bytes: bytes, filename: str) -> ParsedDocument:
 
     raise ParseError(
         f"unsupported file extension '.{ext}' for {filename}; "
-        "expected .pdf, .xls, or .xlsx"
+        "expected .pdf, .xls, .xlsx, or .xlsm"
     )
 
 

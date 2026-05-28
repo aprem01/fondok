@@ -481,9 +481,11 @@ export default function DataRoomTab({ projectId }: { projectId: number | string 
 
   const onPickFiles = () => fileInputRef.current?.click();
 
-  const onFilesSelected = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const files = e.target.files ? Array.from(e.target.files) : [];
-    e.target.value = ''; // reset so same file can be re-picked
+  // Shared upload path used by both the <input> picker and the
+  // drag-and-drop handlers. The drop zone was previously visual-only
+  // (Rani's QA flagged "drag-and-drop stopped working" — it never had
+  // a real handler attached).
+  const handleUpload = async (files: File[]) => {
     if (files.length === 0) return;
     if (!liveMode) {
       toast(
@@ -506,13 +508,53 @@ export default function DataRoomTab({ projectId }: { projectId: number | string 
     }
   };
 
+  const onFilesSelected = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const files = e.target.files ? Array.from(e.target.files) : [];
+    e.target.value = ''; // reset so same file can be re-picked
+    await handleUpload(files);
+  };
+
+  // Drag-and-drop wiring. `isDragActive` flips the dashed-border zone
+  // to brand color while a drag is in progress so the user gets
+  // feedback before they drop.
+  const [isDragActive, setIsDragActive] = useState(false);
+  const dragCounterRef = useRef(0);
+  const onDragEnter = (e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    if (e.dataTransfer?.types?.includes('Files')) {
+      dragCounterRef.current += 1;
+      setIsDragActive(true);
+    }
+  };
+  const onDragOver = (e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    // Required for the drop event to fire on most browsers.
+    if (e.dataTransfer) e.dataTransfer.dropEffect = 'copy';
+  };
+  const onDragLeave = (e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    dragCounterRef.current = Math.max(0, dragCounterRef.current - 1);
+    if (dragCounterRef.current === 0) setIsDragActive(false);
+  };
+  const onDrop = async (e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    dragCounterRef.current = 0;
+    setIsDragActive(false);
+    const dropped = Array.from(e.dataTransfer?.files ?? []);
+    await handleUpload(dropped);
+  };
+
   return (
     <div className="space-y-5">
       <input
         ref={fileInputRef}
         type="file"
         multiple
-        accept=".pdf,.xlsx,.xls,.csv,.doc,.docx"
+        accept=".pdf,.xlsx,.xlsm,.xls,.csv,.doc,.docx,.ppt,.pptx"
         onChange={onFilesSelected}
         className="hidden"
       />
@@ -588,7 +630,16 @@ export default function DataRoomTab({ projectId }: { projectId: number | string 
             onKeyDown={(e) => {
               if (e.key === 'Enter' || e.key === ' ') onPickFiles();
             }}
-            className="cursor-pointer border-2 border-dashed border-ink-300 rounded-lg py-12 px-6 text-center hover:border-brand-500 hover:bg-brand-50/40 transition-colors"
+            onDragEnter={onDragEnter}
+            onDragOver={onDragOver}
+            onDragLeave={onDragLeave}
+            onDrop={onDrop}
+            className={cn(
+              'cursor-pointer border-2 border-dashed rounded-lg py-12 px-6 text-center transition-colors',
+              isDragActive
+                ? 'border-brand-500 bg-brand-50/60'
+                : 'border-ink-300 hover:border-brand-500 hover:bg-brand-50/40',
+            )}
           >
             <div className="w-14 h-14 mx-auto rounded-lg bg-brand-50 flex items-center justify-center mb-3">
               <UploadCloud size={26} className="text-brand-500" />
@@ -636,7 +687,16 @@ export default function DataRoomTab({ projectId }: { projectId: number | string 
           )}
         </Card>
       ) : (
-        <Card className="p-5">
+        <Card
+          className={cn(
+            'p-5 transition-colors',
+            isDragActive && 'ring-2 ring-brand-500 bg-brand-50/40',
+          )}
+          onDragEnter={onDragEnter}
+          onDragOver={onDragOver}
+          onDragLeave={onDragLeave}
+          onDrop={onDrop}
+        >
           <div className="flex items-center gap-4">
             <div className="w-14 h-14 rounded-lg bg-brand-50 flex items-center justify-center flex-shrink-0">
               <UploadCloud size={24} className="text-brand-500" />
