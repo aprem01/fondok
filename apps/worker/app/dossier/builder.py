@@ -218,7 +218,7 @@ async def build_dossier(
     )
 
     has_t12 = any(
-        (d.doc_type or "").upper() in {"T12", "PNL"}
+        (d.doc_type or "").upper() in {"T12", "PNL", "PNL_MONTHLY", "PNL_YTD"}
         for d in documents
     )
     has_om = any((d.doc_type or "").upper() == "OM" for d in documents)

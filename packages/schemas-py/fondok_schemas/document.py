@@ -28,6 +28,15 @@ class DocType(str, Enum):
     # departmental margins, expense ratios, GOP margin).
     PNL_BENCHMARK = "PNL_BENCHMARK"
     PNL = "PNL"
+    # Finer P&L distinctions assigned by the post-extraction
+    # reclassifier based on `p_and_l_usali.period_type`. The Router
+    # still emits the broad PNL / T12 tokens up front (it only sees
+    # filename + first ~2k chars). Once the Extractor runs and we
+    # know whether the doc is a single month, a year-to-date roll,
+    # or a true T-12, we narrow the doc_type in place. Rani's QA
+    # flagged a May-2024 monthly P&L being treated as a T-12.
+    PNL_MONTHLY = "PNL_MONTHLY"
+    PNL_YTD = "PNL_YTD"
     RENT_ROLL = "RENT_ROLL"
     MARKET_STUDY = "MARKET_STUDY"
     CONTRACT = "CONTRACT"

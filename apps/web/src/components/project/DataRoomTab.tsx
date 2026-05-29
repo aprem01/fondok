@@ -53,6 +53,8 @@ const DOC_TYPE_LABEL: Record<string, string> = {
   OM: 'OM',
   T12: 'T-12',
   PNL: 'P&L',
+  PNL_MONTHLY: 'Monthly P&L',
+  PNL_YTD: 'YTD P&L',
   STR: 'STR',
   STR_TREND: 'STR',
   BUDGET: 'Budget',
@@ -75,7 +77,8 @@ const VARIANCE_DOCS = new Set([
 // today and stay REQ until the worker learns them.
 const REQUIRED_CHECKLIST: { label: string; match: string[] }[] = [
   { label: 'Offering Memorandum',           match: ['OM'] },
-  { label: 'T-12 / Trailing Twelve Months', match: ['T12', 'PNL'] },
+  { label: 'T-12 / Trailing Twelve Months', match: ['T12'] },
+  { label: 'Annual / YTD / Monthly P&L',    match: ['PNL', 'PNL_MONTHLY', 'PNL_YTD'] },
   { label: 'STR / Comp Set Report',         match: ['STR', 'STR_TREND'] },
   { label: 'Insurance Records',             match: ['INSURANCE'] },
   { label: 'Property Taxes',                match: ['PROPERTY_TAXES'] },

@@ -516,7 +516,8 @@ async def _load_t12_revenue_actuals(
                 SELECT er.fields, d.doc_type
                   FROM extraction_results er
                   JOIN documents d ON d.id = er.document_id
-                 WHERE er.deal_id = :deal AND d.doc_type IN ('T12','PNL')
+                 WHERE er.deal_id = :deal
+                   AND d.doc_type IN ('T12','PNL','PNL_MONTHLY','PNL_YTD')
                  ORDER BY er.created_at DESC
                 """
             ),
@@ -574,7 +575,8 @@ async def _load_t12_expense_actuals(
                 SELECT er.fields, d.doc_type
                   FROM extraction_results er
                   JOIN documents d ON d.id = er.document_id
-                 WHERE er.deal_id = :deal AND d.doc_type IN ('T12','PNL')
+                 WHERE er.deal_id = :deal
+                   AND d.doc_type IN ('T12','PNL','PNL_MONTHLY','PNL_YTD')
                  ORDER BY er.created_at DESC
                 """
             ),

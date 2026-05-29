@@ -324,6 +324,68 @@ def _guess_doc_type(filename: str) -> str:
     return "T12"
 
 
+# Lower-cased period_type tokens the Extractor emits on P&L documents
+# under `p_and_l_usali.period_type`. Maps to the narrower DocType.
+_PERIOD_TYPE_TO_PNL_DOC_TYPE: dict[str, str] = {
+    "annual": "T12",
+    "fiscal_year": "T12",
+    "full_year": "T12",
+    "trailing_twelve": "T12",
+    "ttm": "T12",
+    "t12": "T12",
+    "rolling_twelve": "T12",
+    "ytd": "PNL_YTD",
+    "year_to_date": "PNL_YTD",
+    "monthly": "PNL_MONTHLY",
+    "month": "PNL_MONTHLY",
+    "single_month": "PNL_MONTHLY",
+    # Quarterly P&Ls are uncommon enough to leave broadly classified.
+    # They'll still pass the engine_runner SQL filter as PNL.
+}
+
+
+def _refine_pnl_doc_type(
+    classified: str | None, fields: list[dict[str, Any]]
+) -> str | None:
+    """Refine a P&L-ish doc_type using the extracted period_type.
+
+    The Router agent classifies docs from filename + first ~2k chars and
+    can't reliably distinguish a single-month P&L from a true trailing-
+    twelve. The Extractor pulls the period span off the table itself
+    under ``p_and_l_usali.period_type``. We use that to narrow the
+    persisted ``doc_type`` so downstream engines rank annual T-12s
+    above YTD/monthly rolls (Rani's QA: a May 2024 monthly was being
+    treated as a T-12).
+
+    Returns ``None`` to mean "no change" — the caller still falls back
+    to updating just the status. Non-P&L doc types (OM, STR, etc.)
+    pass through unchanged.
+    """
+    base = (classified or "").upper().strip() or None
+    # Only refine docs the Router landed in the P&L family.
+    if base not in {"T12", "PNL", "PNL_MONTHLY", "PNL_YTD"}:
+        return base
+    if not isinstance(fields, list):
+        return base
+    period_type = ""
+    for f in fields:
+        if not isinstance(f, dict):
+            continue
+        name = (f.get("field_name") or "").strip().lower()
+        if not name.endswith("period_type"):
+            continue
+        v = f.get("value")
+        if isinstance(v, str) and v.strip():
+            period_type = v.strip().lower()
+            break
+    if not period_type:
+        return base
+    refined = _PERIOD_TYPE_TO_PNL_DOC_TYPE.get(period_type)
+    if refined is None:
+        return base
+    return refined
+
+
 def _row_to_record(row: dict[str, Any]) -> DocumentRecord:
     # Surface typed error info to the UI when present. The
     # extraction_data JSON blob carries `error_kind` and
@@ -378,6 +440,73 @@ def _coerce_dt(value: Any) -> datetime:
     return _now()
 
 
+async def _find_duplicate_document(
+    session: AsyncSession,
+    *,
+    deal_id: str,
+    content_hash: str,
+) -> dict[str, Any] | None:
+    """Return the existing documents row matching (deal_id, content_hash),
+    or ``None`` if this is a fresh upload. Lets the batch upload loop
+    skip a re-upload without re-running parse/extract.
+    """
+    try:
+        row = (
+            await session.execute(
+                text(
+                    """
+                    SELECT id, deal_id, tenant_id, filename, doc_type,
+                           status, uploaded_at, content_hash,
+                           storage_key, size_bytes, page_count, parser,
+                           extraction_data
+                      FROM documents
+                     WHERE deal_id = :deal AND content_hash = :h
+                     ORDER BY uploaded_at DESC
+                     LIMIT 1
+                    """
+                ),
+                {"deal": deal_id, "h": content_hash},
+            )
+        ).first()
+    except Exception:
+        return None
+    if row is None:
+        return None
+    return dict(row._mapping)
+
+
+def _failed_upload_record(
+    *,
+    deal_id: UUID,
+    tenant_id: UUID,
+    filename: str,
+    error_kind: str,
+    error_message: str,
+) -> DocumentRecord:
+    """Build a synthetic FAILED DocumentRecord for an upload that never
+    made it into the documents table (empty body, storage failure,
+    DB insert failure). The web app reads ``error_kind`` / ``error_message``
+    and can surface a per-file row with a Retry button.
+    """
+    now = _now()
+    return DocumentRecord(
+        id=uuid4(),
+        deal_id=deal_id,
+        tenant_id=tenant_id,
+        filename=filename,
+        doc_type=_guess_doc_type(filename),
+        status=DOC_STATUS_FAILED,
+        uploaded_at=now,
+        content_hash=None,
+        storage_key=None,
+        size_bytes=0,
+        page_count=None,
+        parser=None,
+        error_kind=error_kind,
+        error_message=error_message,
+    )
+
+
 # ─────────────────────────── upload ───────────────────────────
 
 
@@ -418,15 +547,66 @@ async def upload_documents(
     records: list[DocumentRecord] = []
     pending_parse: list[tuple[str, str, str, bytes]] = []
 
+    # Per-file try/except — Rani's QA: uploading a batch that contained
+    # a previously-uploaded file would HTTPException mid-loop and leave
+    # the surviving files unprocessed. Now each file gets its own
+    # outcome (created / duplicate / empty / storage_failed) and the
+    # batch never aborts as a whole.
     for upload in files:
-        body = await upload.read()
-        if not body:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail=f"file {upload.filename!r} is empty",
-            )
         filename = upload.filename or "upload.pdf"
+        try:
+            body = await upload.read()
+        except Exception as exc:  # noqa: BLE001
+            logger.exception("upload: read failed for %s", filename)
+            records.append(
+                _failed_upload_record(
+                    deal_id=deal_id,
+                    tenant_id=tenant_id,
+                    filename=filename,
+                    error_kind="read_failed",
+                    error_message=str(exc) or "Failed to read uploaded file body.",
+                )
+            )
+            continue
+        if not body:
+            records.append(
+                _failed_upload_record(
+                    deal_id=deal_id,
+                    tenant_id=tenant_id,
+                    filename=filename,
+                    error_kind="empty",
+                    error_message="Uploaded file is empty — re-export and try again.",
+                )
+            )
+            continue
+
         content_hash = hashlib.sha256(body).hexdigest()
+
+        # Dedup by (deal_id, content_hash). Same bytes already uploaded
+        # for this deal → return the existing row with a "duplicate"
+        # marker so the UI can surface it without re-running extraction.
+        existing = await _find_duplicate_document(
+            session,
+            deal_id=str(deal_id),
+            content_hash=content_hash,
+        )
+        if existing is not None:
+            existing_record = _row_to_record(existing)
+            existing_record_dict = existing_record.model_dump()
+            # Don't disturb the existing row's status; just flag it so
+            # the UI can show "Already uploaded" without re-processing.
+            existing_record = DocumentRecord(**{
+                **existing_record_dict,
+                "error_kind": existing_record.error_kind or "duplicate",
+                "error_message": (
+                    existing_record.error_message
+                    or f"This file was already uploaded on "
+                    f"{existing.get('uploaded_at', 'a prior session')}. "
+                    "Skipped to avoid re-processing."
+                ),
+            })
+            records.append(existing_record)
+            continue
 
         try:
             storage_key = await store.put(
@@ -438,46 +618,66 @@ async def upload_documents(
             )
         except Exception as exc:  # noqa: BLE001
             logger.exception("upload: store put failed for %s", filename)
-            raise HTTPException(
-                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                detail=f"raw store write failed: {exc}",
-            ) from exc
+            records.append(
+                _failed_upload_record(
+                    deal_id=deal_id,
+                    tenant_id=tenant_id,
+                    filename=filename,
+                    error_kind="storage_failed",
+                    error_message=str(exc) or "Raw storage write failed.",
+                )
+            )
+            continue
 
         doc_id = uuid4()
         doc_type = _guess_doc_type(filename)
         uploaded_at = _now()
 
-        await session.execute(
-            text(
-                """
-                INSERT INTO documents (
-                    id, deal_id, tenant_id, filename, doc_type, status,
-                    uploaded_at, content_hash, storage_key, size_bytes,
-                    page_count, parser, extraction_data
-                ) VALUES (
-                    :id, :deal_id, :tenant_id, :filename, :doc_type, :status,
-                    :uploaded_at, :content_hash, :storage_key, :size_bytes,
-                    :page_count, :parser, :extraction_data
+        try:
+            await session.execute(
+                text(
+                    """
+                    INSERT INTO documents (
+                        id, deal_id, tenant_id, filename, doc_type, status,
+                        uploaded_at, content_hash, storage_key, size_bytes,
+                        page_count, parser, extraction_data
+                    ) VALUES (
+                        :id, :deal_id, :tenant_id, :filename, :doc_type, :status,
+                        :uploaded_at, :content_hash, :storage_key, :size_bytes,
+                        :page_count, :parser, :extraction_data
+                    )
+                    """
+                ),
+                {
+                    "id": str(doc_id),
+                    "deal_id": str(deal_id),
+                    "tenant_id": tenant_id_str,
+                    "filename": filename,
+                    "doc_type": doc_type,
+                    "status": DOC_STATUS_PARSING,
+                    "uploaded_at": uploaded_at,
+                    "content_hash": content_hash,
+                    "storage_key": storage_key,
+                    "size_bytes": len(body),
+                    "page_count": None,
+                    "parser": None,
+                    "extraction_data": None,
+                },
+            )
+            await session.commit()
+        except Exception as exc:  # noqa: BLE001
+            await session.rollback()
+            logger.exception("upload: INSERT failed for %s", filename)
+            records.append(
+                _failed_upload_record(
+                    deal_id=deal_id,
+                    tenant_id=tenant_id,
+                    filename=filename,
+                    error_kind="db_insert_failed",
+                    error_message=str(exc) or "Database insert failed.",
                 )
-                """
-            ),
-            {
-                "id": str(doc_id),
-                "deal_id": str(deal_id),
-                "tenant_id": tenant_id_str,
-                "filename": filename,
-                "doc_type": doc_type,
-                "status": DOC_STATUS_PARSING,
-                "uploaded_at": uploaded_at,
-                "content_hash": content_hash,
-                "storage_key": storage_key,
-                "size_bytes": len(body),
-                "page_count": None,
-                "parser": None,
-                "extraction_data": None,
-            },
-        )
-        await session.commit()
+            )
+            continue
 
         records.append(
             DocumentRecord(
@@ -1439,18 +1639,30 @@ async def _run_extraction_pipeline(
                 # Persist the Router agent's classification back to the
                 # documents row when it differs from the filename-heuristic
                 # ``doc_type`` set at upload. The downstream
-                # ``_load_critic_inputs`` filters on ``doc_type IN ('T12','PNL')``
+                # ``_load_critic_inputs`` filters on
+                # ``doc_type IN ('T12','PNL','PNL_MONTHLY','PNL_YTD')``
                 # — without this update an OM that was filename-classified as
                 # T12 would have its broker_proforma fields silently bucketed
                 # as actuals (Sam QA #10 root cause).
-                if classified_doc_type:
+                #
+                # Then: narrow PNL/T12 → PNL_MONTHLY / PNL_YTD / T12
+                # based on `p_and_l_usali.period_type` from the
+                # extraction. The Router only sees filename + ~2k chars,
+                # so it can't reliably distinguish a single month from
+                # a full T-12 — but the Extractor pulls the period_type
+                # off the table itself. Rani's QA flagged a May 2024
+                # monthly P&L being treated as a T-12.
+                refined_doc_type = _refine_pnl_doc_type(
+                    classified_doc_type, fields
+                )
+                if refined_doc_type:
                     await session.execute(
                         text(
                             "UPDATE documents SET status = :s, doc_type = :dt WHERE id = :id"
                         ),
                         {
                             "s": DOC_STATUS_EXTRACTED,
-                            "dt": classified_doc_type,
+                            "dt": refined_doc_type,
                             "id": doc_id,
                         },
                     )
