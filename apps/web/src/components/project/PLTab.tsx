@@ -67,7 +67,12 @@ interface ExpenseYearWorker {
   ffe_reserve: number;
   fixed_charges: { property_taxes: number; insurance: number; rent: number; other_fixed: number; total: number };
   gop: number;
+  // Legacy `noi` = gop - mgmt - ffe - fixed (after-reserves). Returns
+  // engine consumes this. UI prefers `noi_institutional` when present.
   noi: number;
+  // Institutional NOI = gop - mgmt - fixed (BEFORE FF&E reserve). Per
+  // US cap-rate convention. Older engine_outputs rows omit this field.
+  noi_institutional?: number | null;
 }
 
 interface FBYearWorker {
@@ -170,8 +175,19 @@ function buildStatementFromWorker(
   );
   const ffe = pad(ey.map(y => toThousands(safe(y.ffe_reserve))), 0);
   const mgmt = pad(ey.map(y => toThousands(safe(y.mgmt_fee))), 0);
-  const noiCalc = pad(ey.map(y => toThousands(safe(y.noi))), 0);
-  const netIncome = noiCalc.map((n, i) => n - ffe[i] - mgmt[i]);
+  // Prefer institutional NOI (GOP - mgmt fee - fixed charges, BEFORE
+  // FF&E reserve) when present; fall back to legacy `noi` (after FF&E)
+  // for older engine_outputs rows. The PLTab waterfall surfaces FF&E
+  // and Mgmt Fee as separate lines BELOW NOI, so the institutional
+  // definition is what reviewers expect to see at the NOI subtotal.
+  const noiCalc = pad(
+    ey.map(y => toThousands(safe(y.noi_institutional ?? y.noi))),
+    0,
+  );
+  // Net Income = NOI (institutional) - FF&E Reserve. Management fee
+  // is already subtracted inside the institutional NOI, so we don't
+  // deduct it again here.
+  const netIncome = noiCalc.map((n, i) => n - ffe[i]);
 
   const rows: StatementRow[] = [
     { label: 'REVENUES', values: [], kind: 'group' },
@@ -200,6 +216,8 @@ function buildStatementFromWorker(
     { label: 'Information & Telecom', values: it, cagr: cagrCalc(it[0], it[4]), kind: 'detail' },
     { label: 'Gross Operating Profit (GOP)', values: gop, cagr: cagrCalc(gop[0], gop[4]), kind: 'subtotal' },
 
+    { label: 'Management Fee', values: mgmt, cagr: cagrCalc(mgmt[0], mgmt[4]), kind: 'detail' },
+
     { label: 'FIXED CHARGES', values: [], kind: 'group' },
     { label: 'Insurance', values: insurance, cagr: cagrCalc(insurance[0], insurance[4]), kind: 'detail' },
     { label: 'Property Taxes', values: propTax, cagr: cagrCalc(propTax[0], propTax[4]), kind: 'detail' },
@@ -207,8 +225,7 @@ function buildStatementFromWorker(
     { label: 'Net Operating Income', values: noiCalc, cagr: cagrCalc(noiCalc[0], noiCalc[4]), kind: 'subtotal' },
 
     { label: 'FF&E Reserve', values: ffe, cagr: cagrCalc(ffe[0], ffe[4]), kind: 'detail' },
-    { label: 'Management Fee', values: mgmt, cagr: cagrCalc(mgmt[0], mgmt[4]), kind: 'detail' },
-    { label: 'Net Income', values: netIncome, cagr: cagrCalc(netIncome[0], netIncome[4]), kind: 'total' },
+    { label: 'Net Cash Flow', values: netIncome, cagr: cagrCalc(netIncome[0], netIncome[4]), kind: 'total' },
   ];
 
   return { rows, totals: { totalRev, noi: noiCalc, gop, deptProfit } };

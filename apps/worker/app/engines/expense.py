@@ -115,7 +115,17 @@ class ExpenseYear(BaseModel):
     ffe_reserve: Annotated[float, Field(ge=0)]
     fixed_charges: FixedCharges
     gop: float
+    # `noi` here is GOP - Mgmt Fee - FF&E Reserve - Fixed Charges, i.e.
+    # cash flow after reserves. That's what the returns engine consumes
+    # for cap-rate math today. Renaming/changing the math would shift
+    # every returns IRR/MOIC; we add `noi_institutional` instead.
     noi: float
+    # NOI per institutional cap-rate convention: GOP minus Management
+    # Fee minus Fixed Charges, BEFORE the FF&E reserve. This is what
+    # Eshan / Rani expect on the P&L statement (cap-rate basis). UI
+    # consumers should prefer this field for display labelled "NOI".
+    # Legacy persisted rows have `None`; UI falls back to `noi` then.
+    noi_institutional: float | None = None
 
 
 class ExpenseEngineOutput(BaseModel):
@@ -279,7 +289,13 @@ class ExpenseEngine(BaseEngine[ExpenseEngineInput, ExpenseEngineOutput]):
                 other_fixed=fixed_lines["other_fixed"],
                 total=fixed_total,
             )
+            # `noi` keeps its legacy meaning (after FF&E reserves) so
+            # the returns engine cap-rate math is unchanged.
             noi = gop - mgmt_fee - ffe - fixed_total
+            # Institutional NOI per US cap-rate convention: GOP minus
+            # Management Fee minus Fixed Charges, BEFORE the FF&E
+            # reserve. This is what UI consumers should label "NOI".
+            noi_institutional = gop - mgmt_fee - fixed_total
 
             years.append(
                 ExpenseYear(
@@ -297,6 +313,7 @@ class ExpenseEngine(BaseEngine[ExpenseEngineInput, ExpenseEngineOutput]):
                     fixed_charges=fixed,
                     gop=gop,
                     noi=noi,
+                    noi_institutional=noi_institutional,
                 )
             )
 

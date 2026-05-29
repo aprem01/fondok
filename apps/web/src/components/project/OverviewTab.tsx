@@ -1261,6 +1261,7 @@ function ProformaPanel({ outputs, isKimptonDemo }: {
     ffe_reserve: number;
     gop: number;
     noi: number;
+    noi_institutional?: number | null;
     dept_expenses: { total: number };
     undistributed: { total: number };
     fixed_charges: { total: number };
@@ -1286,7 +1287,9 @@ function ProformaPanel({ outputs, isKimptonDemo }: {
     const ey = expenseYears!.slice(0, 5);
     const k = (v: number) => Math.round(v / 1000);
     const totalRev = ey.map(y => k(y.total_revenue));
-    const noi = ey.map(y => k(y.noi));
+    // Prefer institutional NOI (GOP - mgmt - fixed, BEFORE FF&E) when
+    // present; legacy rows fall back to the after-reserves `noi` field.
+    const noi = ey.map(y => k(y.noi_institutional ?? y.noi));
     const opex = ey.map(y => k(y.dept_expenses.total + y.undistributed.total + y.fixed_charges.total));
     const mgmt = ey.map(y => k(y.mgmt_fee));
     const ffe = ey.map(y => k(y.ffe_reserve));
@@ -1301,6 +1304,11 @@ function ProformaPanel({ outputs, isKimptonDemo }: {
     const row = (label: string, vals: number[], bold = false): Row => ({
       label, vals, cagr: cagr(vals[0] ?? 0, vals[vals.length - 1] ?? 0), bold,
     });
+    // Net Cash Flow After Reserves = NOI (institutional) minus FF&E.
+    // We show FF&E below NOI per US cap-rate convention so the
+    // institutional reader can apply a cap rate to the NOI line directly.
+    const cashFlowAfterRes = noi.map((n, i) => n - (ffe[i] ?? 0));
+    const cfadInst = totalRev.map((_, i) => (cashFlowAfterRes[i] ?? 0) - (ds[i] ?? 0));
     rows = [
       row('Room Revenue', rooms),
       row('F&B Revenue', fb),
@@ -1308,10 +1316,11 @@ function ProformaPanel({ outputs, isKimptonDemo }: {
       row('Total Revenue', totalRev, true),
       row('Operating Expenses', opex),
       row('Management Fee', mgmt),
-      row('FF&E Reserve', ffe),
       row('Net Operating Income', noi, true),
+      row('FF&E Reserve', ffe),
+      row('Net Cash Flow', cashFlowAfterRes, true),
       row('Debt Service', ds),
-      row('Cash Flow After Debt', cfad, true),
+      row('Cash Flow After Debt', cfadInst, true),
     ];
   } else if (isKimptonDemo) {
     rows = kimptonAnglerOverview.proforma.map(p => ({

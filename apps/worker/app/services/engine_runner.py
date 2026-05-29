@@ -426,6 +426,71 @@ _T12_REVENUE_FIELD_ALIASES: dict[str, str] = {
 }
 
 
+# Rank P&L extraction rows by period_type so an annual T-12 always
+# wins over a YTD-through-May or single-month upload — even when the
+# monthly was extracted later. Eshan's QA found that a 5/2024 monthly
+# upload was clobbering the annual T-12 baseline (~89% YTD occupancy
+# vs ~81% true annual). Lower rank = preferred.
+_PERIOD_TYPE_RANK: dict[str, int] = {
+    "annual": 0,
+    "fiscal_year": 0,
+    "full_year": 0,
+    "trailing_twelve": 1,
+    "ttm": 1,
+    "t12": 1,
+    "rolling_twelve": 1,
+    "ytd": 5,
+    "year_to_date": 5,
+    "quarterly": 7,
+    "quarter": 7,
+    "monthly": 9,
+    "month": 9,
+}
+
+
+def _extract_period_type(raw_fields: list[Any]) -> str:
+    """Pull `p_and_l_usali.period_type` (or any `*.period_type`) off a
+    flat extraction-fields list. Lower-cases the value so the rank
+    map matches.
+    """
+    for f in raw_fields:
+        if not isinstance(f, dict):
+            continue
+        name = (f.get("field_name") or "").strip().lower()
+        if not name.endswith("period_type"):
+            continue
+        v = f.get("value")
+        if isinstance(v, str) and v.strip():
+            return v.strip().lower()
+    return ""
+
+
+def _rank_pnl_rows(rows: list[Any]) -> list[tuple[list[Any], str]]:
+    """Pre-parse + rank P&L extraction rows. Returns (raw_fields_list,
+    doc_type) tuples in preference order: best period_type first, then
+    newest created_at within a rank tier.
+    """
+    parsed: list[tuple[int, int, list[Any], str]] = []
+    for idx, r in enumerate(rows):
+        m = r._mapping
+        raw_fields = m["fields"]
+        if isinstance(raw_fields, str):
+            try:
+                raw_fields = json.loads(raw_fields)
+            except (json.JSONDecodeError, TypeError):
+                continue
+        if not isinstance(raw_fields, list):
+            continue
+        period_type = _extract_period_type(raw_fields)
+        rank = _PERIOD_TYPE_RANK.get(period_type, 50)
+        # The SQL ORDER BY created_at DESC already sorted by newest
+        # first, so `idx` is a stable created_at proxy — lower idx =
+        # newer. We negate it later via the sort key.
+        parsed.append((rank, idx, raw_fields, m.get("doc_type") or ""))
+    parsed.sort(key=lambda t: (t[0], t[1]))
+    return [(p[2], p[3]) for p in parsed]
+
+
 async def _load_t12_revenue_actuals(
     session: AsyncSession,
     *,
@@ -460,16 +525,10 @@ async def _load_t12_revenue_actuals(
     except Exception:
         return {}
 
+    # Rank-then-merge so a true annual T-12 wins over a YTD-monthly upload
+    # even when the monthly was extracted later.
     actuals: dict[str, float] = {}
-    for r in rows.fetchall():
-        raw_fields = r._mapping["fields"]
-        if isinstance(raw_fields, str):
-            try:
-                raw_fields = json.loads(raw_fields)
-            except (json.JSONDecodeError, TypeError):
-                continue
-        if not isinstance(raw_fields, list):
-            continue
+    for raw_fields, _doc_type in _rank_pnl_rows(rows.fetchall()):
         for f in raw_fields:
             if not isinstance(f, dict):
                 continue
@@ -524,16 +583,10 @@ async def _load_t12_expense_actuals(
     except Exception:
         return {}
 
+    # Rank-then-merge so an annual T-12's expense lines win over a
+    # partial-year YTD extract that's missing some buckets.
     actuals: dict[str, float] = {}
-    for r in rows.fetchall():
-        raw_fields = r._mapping["fields"]
-        if isinstance(raw_fields, str):
-            try:
-                raw_fields = json.loads(raw_fields)
-            except (json.JSONDecodeError, TypeError):
-                continue
-        if not isinstance(raw_fields, list):
-            continue
+    for raw_fields, _doc_type in _rank_pnl_rows(rows.fetchall()):
         for f in raw_fields:
             if not isinstance(f, dict):
                 continue
@@ -546,8 +599,20 @@ async def _load_t12_expense_actuals(
                 # Try the last segment of a dotted path as a fallback.
                 tail = name.rsplit(".", 1)[-1] if "." in name else name
                 canonical = _T12_EXPENSE_FIELD_ALIASES.get(tail)
-            if canonical and canonical not in actuals:
-                actuals[canonical] = float(value)
+            if canonical is None or canonical in actuals:
+                continue
+            v = float(value)
+            # Zero-leak guard (Eshan's NOI bug): every real hotel has
+            # admin & general, sales & marketing, utilities, property
+            # ops, mgmt fee, FF&E reserve, fixed charges. Extractor
+            # emits 0.0 when it can't find the line. If we honored that
+            # zero, the engine wrote it into the projection P&L and NOI
+            # collapsed to ~100% of revenue. Drop zeros and let the
+            # USALI ratio fallback supply the missing line. Negative
+            # values are nonsense for expenses.
+            if v <= 0.0:
+                continue
+            actuals[canonical] = v
     return actuals
 
 
@@ -1193,6 +1258,11 @@ def _build_input_for(
             ffe_reserve_pct=base["ffe_reserve_pct"],
             expense_growth=base["expense_growth"],
             grow_opex_independently=base["grow_opex_independently"],
+            # Benchmark overrides populated by `_load_engine_inputs`
+            # from the CBRE / brand catalog. Previously dropped before
+            # construction so brand-specific ratios never made it into
+            # the projection.
+            overrides=base.get("overrides") or {},
             # When the deal has an extracted T-12, the engine prefers
             # actuals over USALI benchmark ratios for Year 1. Loaded by
             # ``_load_engine_inputs`` below; absent on demo deals.

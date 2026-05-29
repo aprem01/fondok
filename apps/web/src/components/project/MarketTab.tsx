@@ -122,13 +122,15 @@ export default function MarketTab({ projectId }: { projectId: number | string })
     toast(`Downloaded ${rows.length} sales as CSV`, { type: 'success' });
   };
 
-  // Miami pre-seed: when the deal sits in any "miami*" submarket the
-  // curated CoStar comp set + supply pipeline + transaction comps from
-  // the miamiMarket fixture render as a default view. This lets Miami
-  // deals (the most common pilot geography) demo with real-looking
-  // market data even before an STR/Kalibri ingestion. A banner makes
-  // the source clear so a reviewer doesn't mistake it for live data.
-  const isMiamiMarket = !!(submarketLabel && /miami/i.test(submarketLabel));
+  // Miami pre-seed: previously rendered the curated comp set + supply
+  // pipeline + transaction comps for ANY deal in a Miami submarket.
+  // Rani/Eshan flagged that "CoStar Group" captions on a real deal
+  // look like live institutional data when they're actually mock
+  // fixtures. The Miami auto-load now only applies on the Kimpton
+  // demo deal — every other deal shows the empty-state Data Library
+  // CTA until real STR/CoStar data is uploaded.
+  const isMiamiMarket = isKimptonDemo
+    && !!(submarketLabel && /miami/i.test(submarketLabel));
 
   if (!isKimptonDemo && !isMiamiMarket) {
     return (
@@ -193,9 +195,9 @@ export default function MarketTab({ projectId }: { projectId: number | string })
           <p className="text-[12px] text-ink-700">
             <span className="font-semibold">Pre-seeded Miami comp set.</span>{' '}
             Submarket performance, supply pipeline, and transaction comps below are
-            the curated CoStar / STR view for Miami Beach / South Beach. Upload an
-            STR or Kalibri report into the Data Room to replace with deal-specific
-            data.
+            a curated demo view for Miami Beach / South Beach — not a live CoStar
+            or STR feed. Upload an STR or Kalibri report into the Data Room to
+            replace with deal-specific data.
           </p>
         </Card>
       )}
@@ -361,7 +363,7 @@ export default function MarketTab({ projectId }: { projectId: number | string })
           <Card className="p-5">
             <div className="flex items-center justify-between mb-3">
               <h3 className="text-[13px] font-semibold text-ink-900">Recent Hotel Sales</h3>
-              <span className="text-[11px] text-ink-500">Source: CoStar Group, As of {m.asOf}</span>
+              <span className="text-[11px] text-ink-500">Source: curated pre-seed comp set (demo) · as of {m.asOf}</span>
             </div>
             <div className="grid grid-cols-4 gap-3 mb-4">
               <KPI label="TTM Volume" value={m.salesTotals.ttmVolume} />
@@ -396,7 +398,7 @@ export default function MarketTab({ projectId }: { projectId: number | string })
               </tbody>
             </table>
             <div className="text-[10.5px] text-ink-500 mt-3 italic">
-              Source: CoStar Group · Includes sales of 100+ keys within Miami Beach / South Beach submarket
+              Source: curated pre-seed comp set (demo data, not CoStar) · sales of 100+ keys within Miami Beach / South Beach
             </div>
           </Card>
         </div>
