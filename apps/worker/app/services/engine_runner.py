@@ -323,6 +323,28 @@ async def _load_engine_inputs(
     )
     for key, value in cbre_overrides.items():
         base[key] = value
+    # Wire CBRE Year-1 ADR/RevPAR as the Year-1 anchor when the deal
+    # has no T-12 actual on those metrics. Previously cbre_year_1_adr
+    # was written to base but never read (Eshan's QA #5: the engine
+    # ignored CBRE forecasts even with a CBRE Horizons doc uploaded).
+    # T-12 actuals still win — they're analyst-trusted observed values
+    # — but in their absence the CBRE forecast is more grounded than
+    # the Kimpton seed.
+    if "adr" not in revenue_actuals and "cbre_year_1_adr" in cbre_overrides:
+        base["starting_adr"] = cbre_overrides["cbre_year_1_adr"]
+    if (
+        "occupancy" not in revenue_actuals
+        and "adr" not in revenue_actuals
+        and "cbre_year_1_revpar" in cbre_overrides
+        and base.get("starting_occupancy", 0) > 0
+    ):
+        # Back out a Y1 ADR from CBRE RevPAR + current occupancy
+        # baseline when ADR itself isn't surfaced separately.
+        starting_occ = base["starting_occupancy"]
+        if starting_occ > 0:
+            base["starting_adr"] = (
+                cbre_overrides["cbre_year_1_revpar"] / starting_occ
+            )
 
     benchmark_overrides = await _load_pnl_benchmark_overrides(
         session, deal_id=deal_id
@@ -337,6 +359,16 @@ async def _load_engine_inputs(
         for top_level_key in ("mgmt_fee_pct", "ffe_reserve_pct"):
             if top_level_key in benchmark_overrides:
                 base[top_level_key] = benchmark_overrides[top_level_key]
+
+    # OM-derived exit-cap anchor — the broker's "Comparable Sales"
+    # table gives us market-specific cap rates we should prefer over
+    # the 7.0% seed. Analyst overrides via field_overrides still win
+    # because they're applied last.
+    om_median_cap = await _load_om_transaction_comps_cap_rate(
+        session, deal_id=deal_id
+    )
+    if om_median_cap is not None:
+        base["exit_cap_rate"] = om_median_cap
 
     if overrides:
         base.update(overrides)
@@ -815,6 +847,82 @@ async def _load_om_capital_actuals(
         percentage_keys=_OM_PERCENTAGE_KEYS,
     )
     return actuals
+
+
+async def _load_om_transaction_comps_cap_rate(
+    session: AsyncSession,
+    *,
+    deal_id: str,
+) -> float | None:
+    """Derive a median exit-cap-rate anchor from OM transaction comps.
+
+    The Extractor emits ``transaction_comps.<n>.cap_rate_pct`` per
+    broker-published comp. When 3+ comps are present we take the median
+    as the exit-cap-rate prior — gives the deal a market-specific
+    anchor instead of the 7.0% Kimpton seed. Eshan's QA #5: "OM exit-
+    cap median wired up to market.py but never reaches ModelAssumptions."
+
+    Returns the median as a 0..1 fraction (extractor may emit either),
+    or ``None`` when fewer than 3 cap-rate-bearing comps are extracted.
+    """
+    try:
+        UUID(deal_id)
+    except (ValueError, TypeError):
+        return None
+    try:
+        rows = await session.execute(
+            text(
+                """
+                SELECT er.fields
+                  FROM extraction_results er
+                  JOIN documents d ON d.id = er.document_id
+                 WHERE er.deal_id = :deal AND d.doc_type = 'OM'
+                 ORDER BY er.created_at DESC
+                """
+            ),
+            {"deal": deal_id},
+        )
+    except Exception:
+        return None
+
+    cap_rates: list[float] = []
+    for r in rows.fetchall():
+        raw_fields = r._mapping["fields"]
+        if isinstance(raw_fields, str):
+            try:
+                raw_fields = json.loads(raw_fields)
+            except (json.JSONDecodeError, TypeError):
+                continue
+        if not isinstance(raw_fields, list):
+            continue
+        for f in raw_fields:
+            if not isinstance(f, dict):
+                continue
+            name = (f.get("field_name") or "").strip().lower()
+            value = f.get("value")
+            if not name.startswith("transaction_comps."):
+                continue
+            if not name.endswith(".cap_rate_pct") and not name.endswith(".cap_rate"):
+                continue
+            if not isinstance(value, (int, float)):
+                continue
+            v = float(value)
+            if v <= 0:
+                continue
+            # Normalize 0..100 percent → 0..1 fraction.
+            if v > 1.0:
+                v = v / 100.0
+            # Sanity bounds: any "cap rate" outside 3-15% is broken data.
+            if 0.03 <= v <= 0.15:
+                cap_rates.append(v)
+
+    if len(cap_rates) < 3:
+        return None
+    cap_rates.sort()
+    n = len(cap_rates)
+    if n % 2:
+        return cap_rates[n // 2]
+    return (cap_rates[n // 2 - 1] + cap_rates[n // 2]) / 2
 
 
 async def _load_om_debt_actuals(
