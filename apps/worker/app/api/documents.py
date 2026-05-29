@@ -440,6 +440,63 @@ def _coerce_dt(value: Any) -> datetime:
     return _now()
 
 
+async def _persist_parse_failure(
+    factory: Any,
+    *,
+    doc_id: str,
+    error_kind: str,
+    error_message: str,
+) -> None:
+    """Merge a typed parse-failure into the documents row.
+
+    Previously the parse failure path just flipped status to
+    PARSE_FAILED with no payload; the UI showed a vague "Failed" pill
+    and the user had no path to retry. Now we merge error_kind /
+    error_message into extraction_data so the web app can surface a
+    real reason + a working Retry button.
+    """
+    async with factory() as s:
+        try:
+            existing = (
+                await s.execute(
+                    text(
+                        "SELECT extraction_data FROM documents WHERE id = :id"
+                    ),
+                    {"id": doc_id},
+                )
+            ).first()
+            existing_data: dict[str, Any] = {}
+            if existing is not None:
+                raw = existing._mapping.get("extraction_data")
+                if isinstance(raw, dict):
+                    existing_data = dict(raw)
+                elif isinstance(raw, str) and raw:
+                    try:
+                        parsed = json.loads(raw)
+                        if isinstance(parsed, dict):
+                            existing_data = dict(parsed)
+                    except (json.JSONDecodeError, TypeError):
+                        pass
+            existing_data["error_kind"] = error_kind
+            existing_data["error_message"] = error_message
+            await s.execute(
+                text(
+                    "UPDATE documents SET status = :s, "
+                    "extraction_data = :d WHERE id = :id"
+                ),
+                {
+                    "s": DOC_STATUS_PARSE_FAILED,
+                    "d": json.dumps(existing_data),
+                    "id": doc_id,
+                },
+            )
+            await s.commit()
+        except Exception:  # noqa: BLE001
+            logger.exception(
+                "parse_async: failed to record PARSE_FAILED for %s", doc_id
+            )
+
+
 async def _find_duplicate_document(
     session: AsyncSession,
     *,
@@ -816,29 +873,32 @@ async def _run_parse_and_extract(
             doc_id,
             exc,
         )
-        async with factory() as s:
-            try:
-                await s.execute(
-                    text("UPDATE documents SET status = :s WHERE id = :id"),
-                    {"s": DOC_STATUS_PARSE_FAILED, "id": doc_id},
-                )
-                await s.commit()
-            except Exception:  # noqa: BLE001
-                logger.exception("parse_async: failed to record PARSE_FAILED")
+        await _persist_parse_failure(
+            factory,
+            doc_id=doc_id,
+            error_kind="parse",
+            error_message=(
+                str(exc)
+                or "The parser could not read this file. It may be image-"
+                "only / scanned, password-protected, or corrupt. Re-export "
+                "the file (or rotate to a text-based PDF) and click Retry."
+            ),
+        )
         return
     except Exception as exc:  # noqa: BLE001 — never crash a background task
         logger.exception(
             "parse_async: unexpected error for doc=%s — %s", doc_id, exc
         )
-        async with factory() as s:
-            try:
-                await s.execute(
-                    text("UPDATE documents SET status = :s WHERE id = :id"),
-                    {"s": DOC_STATUS_PARSE_FAILED, "id": doc_id},
-                )
-                await s.commit()
-            except Exception:  # noqa: BLE001
-                logger.exception("parse_async: failed to record PARSE_FAILED")
+        await _persist_parse_failure(
+            factory,
+            doc_id=doc_id,
+            error_kind="parse_unexpected",
+            error_message=(
+                str(exc)
+                or "An unexpected error occurred while parsing this file. "
+                "Check the worker logs for stack trace details, then click Retry."
+            ),
+        )
         return
 
     # Persist parse result and flip status to UPLOADED.
@@ -1251,6 +1311,98 @@ async def download_document(
 
 
 # ─────────────────────────── extract ───────────────────────────
+
+
+@router.post(
+    "/{deal_id}/documents/{doc_id}/reprocess",
+    response_model=ExtractionStartResponse,
+    status_code=status.HTTP_202_ACCEPTED,
+)
+async def reprocess_document(
+    deal_id: UUID,
+    doc_id: UUID,
+    background_tasks: BackgroundTasks,
+    session: Annotated[AsyncSession, Depends(get_session)],
+) -> ExtractionStartResponse:
+    """Re-run parse + extract for a doc that previously hit PARSE_FAILED
+    or FAILED. Pulls the body back from raw storage by content_hash and
+    re-fires `_run_parse_and_extract`. Returns 404 if the row or the
+    raw bytes are missing.
+
+    Sam's QA reported that documents stuck in PARSE_FAILED have no
+    user-driven retry path. This endpoint backs the Retry button in
+    the Data Room KebabMenu.
+    """
+    row = (
+        await session.execute(
+            text(
+                """
+                SELECT id, deal_id, tenant_id, filename, content_hash,
+                       storage_key, status
+                  FROM documents
+                 WHERE id = :id AND deal_id = :deal_id
+                """
+            ),
+            {"id": str(doc_id), "deal_id": str(deal_id)},
+        )
+    ).first()
+    if row is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"document {doc_id} not found on deal {deal_id}",
+        )
+    m = row._mapping
+    filename = m["filename"] or "upload.pdf"
+    content_hash = m["content_hash"]
+    tenant_id = str(m["tenant_id"])
+    storage_key = m["storage_key"]
+
+    if not content_hash or not storage_key:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=(
+                "document missing storage metadata — re-upload the file "
+                "instead of retrying."
+            ),
+        )
+
+    settings = get_settings()
+    store = get_raw_store(settings)
+    try:
+        body = await store.get(storage_key)
+    except Exception as exc:  # noqa: BLE001
+        logger.exception("reprocess: store fetch failed for %s", filename)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"could not fetch raw bytes from storage: {exc}",
+        ) from exc
+
+    # Flip the row back to PARSING so the UI shows immediate feedback.
+    # Clear any prior error_kind / error_message so a successful retry
+    # doesn't display the stale failure reason.
+    await session.execute(
+        text(
+            "UPDATE documents SET status = :s, extraction_data = NULL "
+            "WHERE id = :id"
+        ),
+        {"s": DOC_STATUS_PARSING, "id": str(doc_id)},
+    )
+    await session.commit()
+
+    job_id = uuid4()
+    background_tasks.add_task(
+        _run_parse_and_extract,
+        doc_id=str(doc_id),
+        deal_id=str(deal_id),
+        tenant_id=tenant_id,
+        body=body,
+        filename=filename,
+    )
+    return ExtractionStartResponse(
+        document_id=doc_id,
+        job_id=str(job_id),
+        status="reprocess_started",
+    )
 
 
 @router.post(

@@ -247,6 +247,13 @@ export const api = {
         'POST',
         `/deals/${dealId}/documents/${docId}/extract`,
       ),
+    /** Re-run parse + extract for a FAILED or PARSE_FAILED document.
+     *  Pulls bytes back from storage on the worker; user doesn't re-upload. */
+    reprocess: (dealId: string, docId: string) =>
+      request<ExtractionStartResponse>(
+        'POST',
+        `/deals/${dealId}/documents/${docId}/reprocess`,
+      ),
     extraction: (dealId: string, docId: string, signal?: AbortSignal) =>
       request<ExtractionResult>(
         'GET',

@@ -14,6 +14,7 @@ import { ConfidenceBadge } from '@/components/ui/ConfidenceBadge';
 import { engines, kimptonDocuments, templates } from '@/lib/mockData';
 import { criticalCount, warnCount, varianceFlags } from '@/lib/varianceData';
 import {
+  api,
   isWorkerConnected,
   workerUrl,
   WorkerDocument,
@@ -866,8 +867,14 @@ export default function DataRoomTab({ projectId }: { projectId: number | string 
                   : [];
                 const docCritical = flagsForDoc.filter((f) => f.severity === 'CRITICAL').length;
 
-                // Per-row kebab — Preview / Download / Delete. Delete & Preview
-                // are stubs until the worker exposes the matching routes.
+                // Per-row kebab — Preview / Download / Retry / Delete.
+                // Retry surfaces only on FAILED / PARSE_FAILED rows and
+                // re-fires parse + extract via the worker; the user
+                // doesn't have to re-upload (Sam QA: "no retry path
+                // when extraction fails"). Preview & Delete are stubs.
+                const canRetry =
+                  liveMode &&
+                  (d.rawStatus === 'FAILED' || d.rawStatus === 'PARSE_FAILED');
                 const rowMenu = [
                   {
                     label: 'Preview',
@@ -877,13 +884,25 @@ export default function DataRoomTab({ projectId }: { projectId: number | string 
                     label: 'Download',
                     onSelect: () => {
                       if (liveMode) {
-                        // Worker download endpoint may not exist yet — best-effort.
                         window.location.href = `${workerUrl()}/deals/${rawId}/documents/${d.id}/download`;
                       } else {
                         toast(`Download URL: ${d.id}`, { type: 'info' });
                       }
                     },
                   },
+                  ...(canRetry ? [{
+                    label: 'Retry',
+                    onSelect: async () => {
+                      try {
+                        await api.documents.reprocess(rawId, d.id);
+                        toast(`Reprocessing ${d.name}…`, { type: 'info' });
+                        refresh();
+                      } catch (err) {
+                        const msg = err instanceof Error ? err.message : String(err);
+                        toast(`Retry failed: ${msg}`, { type: 'error' });
+                      }
+                    },
+                  }] : []),
                   {
                     label: 'Delete',
                     danger: true,
