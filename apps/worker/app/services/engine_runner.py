@@ -409,6 +409,34 @@ async def _load_engine_inputs(
         base["exit_cap_rate"] = om_median_cap
         sources["exit_cap_rate"] = SOURCE_OM_COMPS
 
+    # Year-1 renovation displacement (Eshan v2 QA). When the deal has
+    # a non-trivial PIP, Y1 occupancy + ADR get knocked down to
+    # reflect rooms-out-of-service + disruption pricing. The 15% occ
+    # and 8% ADR defaults are mid-range institutional assumptions for
+    # a full-service hotel under a $5M+ PIP; analysts can override
+    # via field_overrides. Y2+ snap back to the stabilized baseline
+    # so a heavy PIP doesn't permanently depress the projection curve.
+    renovation_budget = base.get("renovation_budget", 0.0) or 0.0
+    keys_for_displacement = base.get("keys", 0) or 0
+    pip_per_key = (
+        renovation_budget / keys_for_displacement
+        if keys_for_displacement > 0
+        else 0.0
+    )
+    # Only displace when the PIP is material (>$5k per key — small
+    # capex like new mattresses doesn't take rooms offline). Pure
+    # cosmetic refreshes pass without displacement.
+    if renovation_budget > 0 and pip_per_key > 5_000:
+        base.setdefault("y1_occupancy_displacement_pct", 0.15)
+        base.setdefault("y1_adr_displacement_pct", 0.08)
+        sources["y1_occupancy_displacement_pct"] = SOURCE_SEED
+        sources["y1_adr_displacement_pct"] = SOURCE_SEED
+    else:
+        base.setdefault("y1_occupancy_displacement_pct", 0.0)
+        base.setdefault("y1_adr_displacement_pct", 0.0)
+        sources["y1_occupancy_displacement_pct"] = SOURCE_SEED
+        sources["y1_adr_displacement_pct"] = SOURCE_SEED
+
     if overrides:
         base.update(overrides)
         for k in overrides:
@@ -1390,6 +1418,17 @@ def _build_input_for(
             starting_resort_fees=base.get("starting_resort_fees", 0.0),
             resort_fees_growth=base.get("resort_fees_growth", base.get("revpar_growth", 0.03)),
             hold_years=base["hold_years"],
+            # Y1 renovation/PIP displacement (Eshan v2 QA). Defaults
+            # come from ``_load_engine_inputs`` which sets non-zero
+            # values when the capital engine carries a renovation
+            # budget. Pass 0 explicitly when there's no PIP so the
+            # engine behaves identically to pre-displacement code.
+            y1_occupancy_displacement_pct=base.get(
+                "y1_occupancy_displacement_pct", 0.0
+            ),
+            y1_adr_displacement_pct=base.get(
+                "y1_adr_displacement_pct", 0.0
+            ),
         )
 
     if engine_name == "fb":

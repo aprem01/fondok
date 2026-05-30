@@ -28,14 +28,30 @@ class RevenueEngine(BaseEngine[RevenueEngineInput, RevenueEngineOutput]):
         rooms_available = keys * DAYS_PER_YEAR
         years: list[RevenueProjectionYear] = []
 
-        occ = payload.starting_occupancy
-        adr = payload.starting_adr
+        # `starting_*` represents the STABILIZED baseline (typically
+        # the T-12 actual or the CBRE Year-1 forecast). Year 1 may be
+        # disrupted by renovation displacement; Year 2 onwards compound
+        # forward from the un-displaced baseline so a heavy PIP doesn't
+        # permanently depress the projection.
+        baseline_occ = payload.starting_occupancy
+        baseline_adr = payload.starting_adr
         resort_fees = payload.starting_resort_fees
+        y1_occ_disp = payload.y1_occupancy_displacement_pct
+        y1_adr_disp = payload.y1_adr_displacement_pct
 
         for y in range(1, payload.hold_years + 1):
-            if y > 1:
-                occ = min(0.95, occ * (1.0 + payload.occupancy_growth))
-                adr = adr * (1.0 + payload.adr_growth)
+            if y == 1:
+                occ = baseline_occ * (1.0 - y1_occ_disp)
+                adr = baseline_adr * (1.0 - y1_adr_disp)
+            else:
+                # Year 2+ compounds from the stabilized baseline,
+                # not from the displaced Y1, so PIP year doesn't
+                # cascade into permanently depressed out-years.
+                occ = min(
+                    0.95,
+                    baseline_occ * (1.0 + payload.occupancy_growth) ** (y - 1),
+                )
+                adr = baseline_adr * (1.0 + payload.adr_growth) ** (y - 1)
                 resort_fees = resort_fees * (1.0 + payload.resort_fees_growth)
 
             occupied = rooms_available * occ

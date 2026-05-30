@@ -73,6 +73,14 @@ class RevenueEngineInput(BaseModel):
     starting_resort_fees: Annotated[float, Field(ge=0)] = 0.0
     resort_fees_growth: Annotated[float, Field(ge=-0.50, le=0.50)] = 0.03
     hold_years: Annotated[int, Field(ge=1, le=20)]
+    # Year-1 renovation/PIP displacement (Eshan v2 QA). When the deal
+    # carries a renovation budget the engine treats Year-1 as a
+    # disrupted year — rooms out of service during construction depress
+    # occupancy, and disruption / soft-launch rates depress ADR. Year 2+
+    # compound forward from the UN-displaced stabilized baseline
+    # (``starting_*``), not from the depressed Y1. Pass 0.0 to disable.
+    y1_occupancy_displacement_pct: Annotated[float, Field(ge=0.0, le=0.50)] = 0.0
+    y1_adr_displacement_pct: Annotated[float, Field(ge=0.0, le=0.50)] = 0.0
 
 
 class RevenueProjectionYear(BaseModel):

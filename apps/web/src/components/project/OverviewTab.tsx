@@ -556,6 +556,18 @@ export default function OverviewTab({ projectId }: { projectId: number | string 
                   </span>
                 );
               })}
+              {/* PIP displacement — only render when it's actually
+                  applied (non-zero) so the line stays quiet on
+                  no-renovation deals. */}
+              {((assumptionSources.values['y1_occupancy_displacement_pct'] as number | undefined) ?? 0) > 0 && (
+                <span
+                  className="inline-flex items-center gap-1 whitespace-nowrap text-warn-700"
+                  title="Year-1 occupancy + ADR ramp-down applied because this deal carries a >$5k/key PIP. Overrideable via Overview inline edit."
+                >
+                  Y1 PIP: −{Math.round(((assumptionSources.values['y1_occupancy_displacement_pct'] as number) ?? 0) * 100)}% occ
+                  · −{Math.round(((assumptionSources.values['y1_adr_displacement_pct'] as number) ?? 0) * 100)}% ADR
+                </span>
+              )}
             </div>
           )}
         </div>
