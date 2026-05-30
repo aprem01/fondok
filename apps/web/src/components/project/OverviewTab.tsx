@@ -9,7 +9,7 @@ import {
   kimptonAnglerOverview, findBrand, returnProfiles, positioningTiers,
   brandFamilies,
 } from '@/lib/mockData';
-import { api, isWorkerConnected, workerUrl, type ExtractionField } from '@/lib/api';
+import { api, isWorkerConnected, workerUrl, type ExtractionField, type AssumptionSourcesResponse } from '@/lib/api';
 import { fmtCurrency, fmtPct, fmtMillions, fmtNumber, cn } from '@/lib/format';
 import { getEngineField, useEngineOutputs } from '@/lib/hooks/useEngineOutputs';
 import { useDocuments } from '@/lib/hooks/useDocuments';
@@ -17,6 +17,7 @@ import { useEngineRun } from '@/lib/hooks/useEngineRun';
 import { useDeal } from '@/lib/hooks/useDeal';
 import { useFlash } from '@/lib/hooks/useFlash';
 import { IntroCard } from '@/components/help/IntroCard';
+import { AssumptionBadge } from '@/components/help/AssumptionBadge';
 import { MetricLabel } from '@/components/help/MetricLabel';
 import { Term } from '@/components/help/Term';
 import { GLOSSARY } from '@/lib/glossary';
@@ -56,6 +57,19 @@ export default function OverviewTab({ projectId }: { projectId: number | string 
   // Pull worker output for the Sources/Uses, Proforma, Sensitivity sections.
   const { outputs } = useEngineOutputs(dealId);
   const { deal, refresh: refreshDeal } = useDeal(dealId);
+
+  // Provenance map for the key underwriting assumptions (Sam v2 #11).
+  // Loaded once on mount + after engine re-runs so the "Sources" strip
+  // on the Returns Summary card refreshes when overrides land.
+  const [assumptionSources, setAssumptionSources] = useState<AssumptionSourcesResponse | null>(null);
+  useEffect(() => {
+    if (!liveMode) { setAssumptionSources(null); return; }
+    const ac = new AbortController();
+    api.deals.assumptionSources(dealId, ac.signal)
+      .then(setAssumptionSources)
+      .catch(() => { /* best-effort; falls back to no badges */ });
+    return () => ac.abort();
+  }, [dealId, liveMode]);
 
   // ─── Inline-edit override state ────────────────────────────────────
   // Mirrors the deal's `field_overrides` JSONB column. Edits PATCH the
@@ -521,7 +535,30 @@ export default function OverviewTab({ projectId }: { projectId: number | string 
       </div>
 
       <Card className="p-3 bg-brand-50 border-brand-100">
-        <h3 className="text-[12px] font-semibold text-ink-900 uppercase tracking-wide mb-2">Returns Summary <span className="font-normal normal-case tracking-normal text-ink-500">— hold-period investor returns</span></h3>
+        <div className="flex items-start justify-between mb-2 gap-3">
+          <h3 className="text-[12px] font-semibold text-ink-900 uppercase tracking-wide">Returns Summary <span className="font-normal normal-case tracking-normal text-ink-500">— hold-period investor returns</span></h3>
+          {assumptionSources && Object.keys(assumptionSources.sources).length > 0 && (
+            <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-[10.5px] text-ink-500 max-w-[55%] justify-end">
+              {([
+                ['Y1 Occ', 'starting_occupancy'],
+                ['Y1 ADR', 'starting_adr'],
+                ['RevPAR g', 'revpar_growth'],
+                ['ADR g', 'adr_growth'],
+                ['Exit Cap', 'exit_cap_rate'],
+                ['Mgmt Fee %', 'mgmt_fee_pct'],
+              ] as const).map(([label, key]) => {
+                const src = assumptionSources.sources[key];
+                if (!src) return null;
+                return (
+                  <span key={key} className="inline-flex items-center gap-1 whitespace-nowrap">
+                    <span className="text-ink-700">{label}:</span>
+                    <AssumptionBadge source={src} />
+                  </span>
+                );
+              })}
+            </div>
+          )}
+        </div>
         <div className="grid grid-cols-5 gap-4">
           {([
             { label: 'Levered IRR', value: fmtOrDash(retLeveredIrr, v => fmtPct(v, 2)),

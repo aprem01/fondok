@@ -148,6 +148,20 @@ def _kimpton_assumptions() -> dict[str, Any]:
 # ──────────────────────────── Loading inputs ──────────────────────────
 
 
+# Source labels for the assumption-provenance map. The web app uses
+# them verbatim as badge text on the Returns / Investment / Overview
+# views so analysts can see which numbers are seed defaults vs which
+# are grounded in extracted/uploaded data.
+SOURCE_SEED = "seed"
+SOURCE_DEAL_ROW = "deal_row"
+SOURCE_T12_ACTUAL = "t12_actual"
+SOURCE_CBRE_HORIZONS = "cbre_horizons"
+SOURCE_PNL_BENCHMARK = "pnl_benchmark"
+SOURCE_OM_COMPS = "om_comps"
+SOURCE_OM_BROKER = "om_broker"
+SOURCE_ANALYST_OVERRIDE = "analyst_override"
+
+
 async def _load_engine_inputs(
     session: AsyncSession,
     deal_id: str,
@@ -160,11 +174,22 @@ async def _load_engine_inputs(
         2. Layer in caller overrides from the API request body.
         3. Fall back to the Kimpton fixture for everything missing.
 
+    Also populates ``base["__sources__"]`` — a parallel dict mapping
+    each canonical assumption key to its provenance label (one of the
+    ``SOURCE_*`` constants above). Callers that build engine inputs
+    pick specific keys with .get() and ignore the metadata; the
+    ``GET /deals/{id}/assumption_sources`` endpoint reads it.
+
     The web app's demo deal id (legacy int 7) does not parse as a UUID
     and never lands in the deals table; that path uses the pure Kimpton
     defaults.
     """
     base = _kimpton_assumptions()
+    # Every key starts marked as a seed; later steps overwrite the
+    # source label as data sources land. Only the subset of keys the
+    # web app surfaces gets badged — extras are tracked anyway so
+    # downstream callers can introspect freely.
+    sources: dict[str, str] = {k: SOURCE_SEED for k in base.keys()}
     try:
         # Only try DB lookup when the id is a valid UUID. The Kimpton
         # demo card uses an int-string id which is intentionally
@@ -173,6 +198,9 @@ async def _load_engine_inputs(
     except (ValueError, TypeError):
         if overrides:
             base.update(overrides)
+            for k in overrides:
+                sources[k] = SOURCE_ANALYST_OVERRIDE
+        base["__sources__"] = sources
         return base
 
     try:
@@ -202,10 +230,12 @@ async def _load_engine_inputs(
         if mapping.get("keys"):
             base["keys"] = int(mapping["keys"])
             deals_table_keys.add("keys")
+            sources["keys"] = SOURCE_DEAL_ROW
         if mapping.get("purchase_price"):
             try:
                 base["purchase_price"] = float(mapping["purchase_price"])
                 deals_table_keys.add("purchase_price")
+                sources["purchase_price"] = SOURCE_DEAL_ROW
             except (TypeError, ValueError):
                 pass
 
@@ -228,8 +258,10 @@ async def _load_engine_inputs(
     )
     if "occupancy" in revenue_actuals:
         base["starting_occupancy"] = revenue_actuals["occupancy"]
+        sources["starting_occupancy"] = SOURCE_T12_ACTUAL
     if "adr" in revenue_actuals:
         base["starting_adr"] = revenue_actuals["adr"]
+        sources["starting_adr"] = SOURCE_T12_ACTUAL
     # RevPAR is occupancy × ADR — only consume the extracted RevPAR when
     # one of the two underlying drivers wasn't itself extracted, to avoid
     # contradicting them. (The engine doesn't take RevPAR directly; we
@@ -241,6 +273,7 @@ async def _load_engine_inputs(
         and revenue_actuals["occupancy"] > 0
     ):
         base["starting_adr"] = revenue_actuals["revpar"] / revenue_actuals["occupancy"]
+        sources["starting_adr"] = SOURCE_T12_ACTUAL
     elif (
         "revpar" in revenue_actuals
         and "occupancy" not in revenue_actuals
@@ -250,6 +283,7 @@ async def _load_engine_inputs(
         base["starting_occupancy"] = min(
             0.95, revenue_actuals["revpar"] / revenue_actuals["adr"]
         )
+        sources["starting_occupancy"] = SOURCE_T12_ACTUAL
 
     # When the T-12 carries Y1 revenue dollars, derive the engine's
     # per-occupied-room F&B anchor and the other-revenue ratio so the
@@ -323,6 +357,7 @@ async def _load_engine_inputs(
     )
     for key, value in cbre_overrides.items():
         base[key] = value
+        sources[key] = SOURCE_CBRE_HORIZONS
     # Wire CBRE Year-1 ADR/RevPAR as the Year-1 anchor when the deal
     # has no T-12 actual on those metrics. Previously cbre_year_1_adr
     # was written to base but never read (Eshan's QA #5: the engine
@@ -332,6 +367,7 @@ async def _load_engine_inputs(
     # the Kimpton seed.
     if "adr" not in revenue_actuals and "cbre_year_1_adr" in cbre_overrides:
         base["starting_adr"] = cbre_overrides["cbre_year_1_adr"]
+        sources["starting_adr"] = SOURCE_CBRE_HORIZONS
     if (
         "occupancy" not in revenue_actuals
         and "adr" not in revenue_actuals
@@ -345,6 +381,7 @@ async def _load_engine_inputs(
             base["starting_adr"] = (
                 cbre_overrides["cbre_year_1_revpar"] / starting_occ
             )
+            sources["starting_adr"] = SOURCE_CBRE_HORIZONS
 
     benchmark_overrides = await _load_pnl_benchmark_overrides(
         session, deal_id=deal_id
@@ -359,6 +396,7 @@ async def _load_engine_inputs(
         for top_level_key in ("mgmt_fee_pct", "ffe_reserve_pct"):
             if top_level_key in benchmark_overrides:
                 base[top_level_key] = benchmark_overrides[top_level_key]
+                sources[top_level_key] = SOURCE_PNL_BENCHMARK
 
     # OM-derived exit-cap anchor — the broker's "Comparable Sales"
     # table gives us market-specific cap rates we should prefer over
@@ -369,9 +407,13 @@ async def _load_engine_inputs(
     )
     if om_median_cap is not None:
         base["exit_cap_rate"] = om_median_cap
+        sources["exit_cap_rate"] = SOURCE_OM_COMPS
 
     if overrides:
         base.update(overrides)
+        for k in overrides:
+            sources[k] = SOURCE_ANALYST_OVERRIDE
+    base["__sources__"] = sources
     return base
 
 

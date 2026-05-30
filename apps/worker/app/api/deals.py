@@ -168,6 +168,26 @@ class DealStatusResponse(BaseModel):
     ai_confidence: float | None = None
 
 
+class AssumptionSourcesResponse(BaseModel):
+    """Per-assumption provenance map.
+
+    Maps each canonical assumption key (``starting_adr``,
+    ``exit_cap_rate``, ``revpar_growth`` etc.) to the source label
+    that produced the current value: ``seed`` (Kimpton default),
+    ``deal_row`` (deals table), ``t12_actual`` (extracted T-12),
+    ``cbre_horizons``, ``pnl_benchmark``, ``om_comps``, or
+    ``analyst_override``. The web app surfaces these as small badges
+    on the Investment / Returns / Overview tabs so reviewers can see
+    which numbers are grounded vs which are still defaults.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    id: UUID
+    sources: dict[str, str] = Field(default_factory=dict)
+    values: dict[str, Any] = Field(default_factory=dict)
+
+
 class GateResponse(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -700,6 +720,65 @@ async def get_deal_status(
         docs_extracting=docs_extracting,
         docs_failed=docs_failed,
         ai_confidence=confidence,
+    )
+
+
+@router.get("/{deal_id}/assumption_sources", response_model=AssumptionSourcesResponse)
+async def get_assumption_sources(
+    deal_id: UUID,
+    session: Annotated[AsyncSession, Depends(get_session)],
+    tenant_id: Annotated[UUID, Depends(get_tenant_id)],
+) -> AssumptionSourcesResponse:
+    """Return the provenance map of underwriting assumptions.
+
+    Calls into ``engine_runner._load_engine_inputs`` to resolve the
+    current sources (seed / deal_row / t12_actual / cbre_horizons /
+    pnl_benchmark / om_comps / analyst_override) for each key, plus
+    the resolved value for each.
+
+    The web app uses this on Investment / Returns / Overview to
+    badge each headline number with its source so reviewers can see
+    at a glance which assumptions are grounded in extracted data vs
+    falling back to Kimpton seeds.
+    """
+    # Verify deal exists + tenant authorization.
+    row = (
+        await session.execute(
+            text(
+                "SELECT id FROM deals "
+                "WHERE id = :id AND tenant_id = :tenant"
+            ),
+            {"id": str(deal_id), "tenant": str(tenant_id)},
+        )
+    ).first()
+    if row is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"deal {deal_id} not found",
+        )
+
+    # Lazy import to avoid a top-level circular: engine_runner pulls
+    # in models from this module via the dossier path.
+    from ..services.engine_runner import _load_engine_inputs
+
+    base = await _load_engine_inputs(session, str(deal_id))
+    sources = base.pop("__sources__", {})
+    # Strip the t12_*_actuals dicts and other non-scalar fields from
+    # `values` — they're internal plumbing, not assumptions the UI
+    # would badge directly.
+    values: dict[str, Any] = {}
+    for k, v in base.items():
+        if k.startswith("__"):
+            continue
+        if isinstance(v, (int, float, str, bool)) or v is None:
+            values[k] = v
+    # Only return entries that have a tracked source AND a value the
+    # UI can read.
+    sources_filtered = {k: s for k, s in sources.items() if k in values}
+    return AssumptionSourcesResponse(
+        id=deal_id,
+        sources=sources_filtered,
+        values=values,
     )
 
 

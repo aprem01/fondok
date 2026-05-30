@@ -42,6 +42,26 @@ export interface WorkerDealStatus {
   last_event: string | null;
 }
 
+/** Per-assumption provenance map. Sources:
+ *    seed              — Kimpton fixture default
+ *    deal_row          — set on the deals table (keys, purchase_price)
+ *    t12_actual        — extracted from an uploaded T-12
+ *    cbre_horizons     — extracted from a CBRE Horizons forecast
+ *    pnl_benchmark     — extracted from a P&L benchmark (HotStats-style)
+ *    om_comps          — median of OM transaction comps (exit_cap_rate)
+ *    om_broker         — broker proforma value on the OM
+ *    analyst_override  — set via deal.field_overrides
+ */
+export type AssumptionSource =
+  | 'seed' | 'deal_row' | 't12_actual' | 'cbre_horizons'
+  | 'pnl_benchmark' | 'om_comps' | 'om_broker' | 'analyst_override';
+
+export interface AssumptionSourcesResponse {
+  id: string;
+  sources: Record<string, AssumptionSource | string>;
+  values: Record<string, number | string | boolean | null>;
+}
+
 export interface NewDealBody {
   name: string;
   city?: string | null;
@@ -220,6 +240,16 @@ export const api = {
       request<WorkerDeal>('GET', `/deals/${id}`, undefined, { signal }),
     status: (id: string, signal?: AbortSignal) =>
       request<WorkerDealStatus>('GET', `/deals/${id}/status`, undefined, { signal }),
+    /** Per-assumption provenance map — which numbers came from
+     *  Kimpton seed vs T-12 actual vs CBRE vs analyst override.
+     *  Sam v2 #11. */
+    assumptionSources: (id: string, signal?: AbortSignal) =>
+      request<AssumptionSourcesResponse>(
+        'GET',
+        `/deals/${id}/assumption_sources`,
+        undefined,
+        { signal },
+      ),
     /** Patch one-or-more deal fields (keys override, brand fix, etc.). */
     update: (
       id: string,
