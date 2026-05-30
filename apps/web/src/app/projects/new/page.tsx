@@ -230,11 +230,11 @@ function Step1({ data, update }: StepProps) {
   return (
     <div>
       <h2 className="text-[18px] font-semibold text-ink-900 mb-1">Create New Deal</h2>
-      <p className="text-[12.5px] text-ink-500 mb-3">Enter deal details for pipeline tracking. Documents can be added later.</p>
+      <p className="text-[12.5px] text-ink-500 mb-3">Capture deal identifiers for pipeline tracking. Supporting documentation can be attached at any point.</p>
       <div className="rounded-md bg-brand-50 border border-brand-100 p-3 text-[12px] text-ink-700 leading-relaxed mb-6">
-        Tell us the basics — what the asset is called, where it is, and how far along you are
-        in the acquisition process. Key count and other property metadata get pulled from the
-        OM the moment you upload one. Anything you enter here can be edited later.
+        Provide the deal identifiers (asset name, market, acquisition stage). Property metadata
+        — key count, year built, gross building area, brand — is extracted from the Offering
+        Memorandum when uploaded. All fields remain editable.
       </div>
 
       <div className="space-y-4">
@@ -242,9 +242,9 @@ function Step1({ data, update }: StepProps) {
         <Field label="City / Submarket *" value={data.city} onChange={v => update({ city: v })} placeholder="Chicago, IL" />
         <div className="grid grid-cols-2 gap-4">
           <Field label="Keys (optional)" value={data.keys} onChange={v => update({ keys: v })} placeholder="auto-detected from OM" type="number"
-            help="Number of guest rooms. Leave blank if you'll upload an OM — the extractor will pull it from `property_overview.keys` on the broker docs." />
-          <Select label="How far along are you in the acquisition process? *" value={data.stage} onChange={v => update({ stage: v })} options={dealStages}
-            help="Teaser = haven't even signed an NDA. Under NDA = NDA signed, accessing docs. LOI = letter of intent submitted. PSA = under purchase & sale agreement." />
+            help="Guest room count. Leave blank to source from the OM's `property_overview.keys` field on extraction." />
+          <Select label="Acquisition stage *" value={data.stage} onChange={v => update({ stage: v })} options={dealStages}
+            help="Teaser — pre-NDA screening. Under NDA — accessing the data room. LOI — letter of intent submitted. PSA — under purchase & sale agreement." />
         </div>
         <div className="grid grid-cols-2 gap-4">
           <Field label="Hotel Name (Optional)" value={data.hotelName} onChange={v => update({ hotelName: v })} placeholder="Marriott Chicago Downtown" />
@@ -254,7 +254,7 @@ function Step1({ data, update }: StepProps) {
           value={data.sourcing}
           onChange={v => update({ sourcing: v })}
           options={sourcingChannels.map(s => s.label)}
-          help="Where the deal came from. Used for pipeline analytics — which channel produces the highest-quality leads, which broker desk dominates." />
+          help="Deal origination channel for pipeline attribution — broker network, lender relationship, franchisor direct, operator, capital partner, or proprietary." />
       </div>
 
       <div className="mt-6 bg-warn-50 border border-warn-500/30 rounded-lg p-4 flex gap-3">
@@ -271,20 +271,22 @@ function Step1({ data, update }: StepProps) {
 }
 
 function Step2({ data, update }: StepProps) {
-  // Plain-English example for each return profile so 10th-graders can pick one.
+  // Institutional example for each return profile. Sam's v2: refine
+  // platform language to match institutional hotel-investment workflows
+  // rather than retail-investor primers.
   const example: Record<string, string> = {
-    core: 'Buying a stable Marriott in a major market — moderate returns, low risk.',
-    'value-add': 'Buying a tired hotel and renovating it — medium returns, medium risk.',
-    opportunistic: 'Converting an office building into a hotel — high returns, high risk.',
+    core: 'Stabilized institutional-quality asset in a primary market — risk-adjusted income.',
+    'value-add': 'Underperforming property with a credible PIP / repositioning thesis.',
+    opportunistic: 'Adaptive reuse, ground-up development, or distressed acquisition with execution risk.',
   };
   return (
     <div>
       <h2 className="text-[18px] font-semibold text-ink-900 mb-1">Return Requirements</h2>
       <p className="text-[12.5px] text-ink-500 mb-3">Select the investment strategy that matches your return targets.</p>
       <div className="rounded-md bg-brand-50 border border-brand-100 p-3 text-[12px] text-ink-700 leading-relaxed mb-6">
-        Different deals carry different risk-and-return profiles. Pick the strategy that
-        matches what you&apos;re trying to do — Fondok uses this to calibrate the model
-        (default leverage, exit cap, hurdles) and to grade the deal against your target return.
+        Selecting an investment profile calibrates the default capital structure (leverage,
+        debt cost), exit assumptions (hold, cap rate), and waterfall hurdles. Used as the
+        benchmark against which the deal&apos;s underwritten returns are evaluated.
       </div>
       <div className="grid grid-cols-3 gap-4">
         {returnProfiles.map(p => {
@@ -492,7 +494,7 @@ function Step4({ data, update }: StepProps) {
           </div>
           <div className="flex-1">
             <div className="text-[14px] font-semibold text-ink-900">Brand Agnostic</div>
-            <p className="text-[12px] text-ink-500 mt-1">Analyze without brand constraints — you'll select positioning manually</p>
+            <p className="text-[12px] text-ink-500 mt-1">Analyze without brand constraints — positioning tier selected manually below.</p>
           </div>
           {isAgnostic && <Check size={18} className="text-brand-500" />}
         </div>

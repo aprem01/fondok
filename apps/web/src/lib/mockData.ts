@@ -127,9 +127,9 @@ export const integrations = [
 export const dealStages: DealStage[] = ['Teaser', 'Under NDA', 'LOI', 'PSA'];
 
 export const returnProfiles = [
-  { id: 'core', label: 'Core', target: '8-12%', desc: 'Stable, income-focused investments with lower risk' },
-  { id: 'value-add', label: 'Value Add', target: '12-18%', desc: 'Moderate repositioning with upside potential' },
-  { id: 'opportunistic', label: 'Opportunistic', target: '18%+', desc: 'Higher risk/return with significant value creation' },
+  { id: 'core', label: 'Core', target: '8-12%', desc: 'Stabilized institutional cash flow with conservative leverage.' },
+  { id: 'value-add', label: 'Value Add', target: '12-18%', desc: 'Repositioning, PIP, or operating-leverage thesis with moderate execution risk.' },
+  { id: 'opportunistic', label: 'Opportunistic', target: '18%+', desc: 'Development, distress, or adaptive reuse with significant execution risk.' },
 ];
 
 // Standardized to the STR / CBRE chain-scale ladder Sam's review
@@ -138,7 +138,7 @@ export const returnProfiles = [
 // together which produced unrealistic ADR anchors on upper-midscale
 // brands). Order is bottom-up so the wizard renders cheapest first.
 export const positioningTiers = [
-  { id: 'default', label: 'Default', desc: 'Let the model determine optimal positioning' },
+  { id: 'default', label: 'Default', desc: 'Engine-derived from brand catalog + market comps.' },
   { id: 'economy', label: 'Economy', desc: 'Lowest ADR tier (e.g. Days Inn, Super 8)' },
   { id: 'midscale', label: 'Midscale', desc: 'Limited-service value tier (e.g. La Quinta, Wingate)' },
   { id: 'upper-midscale', label: 'Upper Midscale', desc: 'Select-service tier (e.g. Hampton Inn, Holiday Inn Express)' },

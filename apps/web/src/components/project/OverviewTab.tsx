@@ -1,9 +1,10 @@
 'use client';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useRouter, useParams } from 'next/navigation';
-import { LayoutGrid, Download, Pencil, Link2 } from 'lucide-react';
+import { LayoutGrid, Download, Pencil, Link2, Settings } from 'lucide-react';
 import { Card } from '@/components/ui/Card';
 import { Button } from '@/components/ui/Button';
+import Modal from '@/components/ui/Modal';
 import { useToast } from '@/components/ui/Toast';
 import {
   kimptonAnglerOverview, findBrand, returnProfiles, positioningTiers,
@@ -57,6 +58,8 @@ export default function OverviewTab({ projectId }: { projectId: number | string 
   // Pull worker output for the Sources/Uses, Proforma, Sensitivity sections.
   const { outputs } = useEngineOutputs(dealId);
   const { deal, refresh: refreshDeal } = useDeal(dealId);
+
+  const [modelSettingsOpen, setModelSettingsOpen] = useState(false);
 
   // Provenance map for the key underwriting assumptions (Sam v2 #11).
   // Loaded once on mount + after engine re-runs so the "Sources" strip
@@ -421,9 +424,10 @@ export default function OverviewTab({ projectId }: { projectId: number | string 
         title="The complete underwriting model on one page"
         body={
           <>
-            Acquisition assumptions, financing, returns — every input and output the AI built from
-            your documents. The colored dots in the legend below tell you which numbers you can edit
-            (amber), which are derived from other engines (green), and which are read-only.
+            Consolidated underwriting view — acquisition, financing, reversion, returns. Each
+            value carries a provenance badge so the source (T-12 actual, CBRE Horizons, OM
+            comps, analyst override) is visible at a glance. Editable fields are flagged with
+            a pencil; engine-derived fields show a chain icon and update on each model run.
           </>
         }
       />
@@ -441,18 +445,42 @@ export default function OverviewTab({ projectId }: { projectId: number | string 
               <span className="w-2.5 h-2.5 rounded bg-ink-300/40" /> Read-Only
             </span>
           </div>
-          <Button variant="secondary" size="sm" onClick={onExportExcel}><Download size={12} /> Export to Excel</Button>
+          <div className="flex items-center gap-2">
+            <Button
+              variant="secondary"
+              size="sm"
+              onClick={() => setModelSettingsOpen(true)}
+            >
+              <Settings size={12} /> Model Settings
+            </Button>
+            <Button variant="secondary" size="sm" onClick={onExportExcel}>
+              <Download size={12} /> Export to Excel
+            </Button>
+          </div>
         </div>
       </Card>
 
-      <ModelSettings
-        defaults={{
-          dealType: 'acquisition',
-          returnProfile: isKimptonDemo ? o.investmentProfile.returnProfile : 'value-add',
-          brand: propertyBrand ?? '',
-          positioning: 'default',
-        }}
-      />
+      {/* Model controls live in a dedicated settings panel (Sam v2:
+          "Move target returns, brands, and similar controls out of the
+          Overview header and into a dedicated settings/navigation
+          area"). Triggered from the Model Settings button above. */}
+      <Modal
+        open={modelSettingsOpen}
+        onClose={() => setModelSettingsOpen(false)}
+        title="Model Settings"
+        maxWidth="max-w-2xl"
+      >
+        <div className="p-5">
+          <ModelSettings
+            defaults={{
+              dealType: 'acquisition',
+              returnProfile: isKimptonDemo ? o.investmentProfile.returnProfile : 'value-add',
+              brand: propertyBrand ?? '',
+              positioning: 'default',
+            }}
+          />
+        </div>
+      </Modal>
 
       <div className="grid grid-cols-2 gap-3">
         <Section

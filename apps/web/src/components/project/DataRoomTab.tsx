@@ -565,13 +565,14 @@ export default function DataRoomTab({ projectId }: { projectId: number | string 
 
       <IntroCard
         dismissKey="dataroom-intro"
-        title="The Data Room"
+        title="Data Room"
         body={
           <>
-            Drop your deal documents here. Our AI reads each PDF and Excel end-to-end and pulls
-            out every number, every assumption, every risk — automatically. The
-            <span className="font-semibold"> Document Checklist</span> tracks what
-            we still need to fully underwrite the deal.
+            Drop deal documents — OM, T-12, monthly P&amp;Ls, STR / CoStar exports, CBRE
+            Horizons forecasts, third-party reports. The extractor reads every page and
+            structures the data into typed fields the engines consume directly. The
+            <span className="font-semibold"> Document Checklist</span> tracks coverage
+            against a full underwriting package.
           </>
         }
       />
@@ -649,12 +650,11 @@ export default function DataRoomTab({ projectId }: { projectId: number | string 
               <UploadCloud size={26} className="text-brand-500" />
             </div>
             <div className="text-[14px] font-semibold text-ink-900">
-              Upload an OM, T-12, or rent roll to start the AI underwriting flow
+              Upload OM, T-12, monthly P&amp;Ls, STR, or CBRE Horizons to begin underwriting
             </div>
             <div className="text-[12px] text-ink-500 mt-1 max-w-md mx-auto leading-relaxed">
-              Drag &amp; drop or click anywhere in this box. <span className="font-medium">OM</span> = Offering Memorandum
-              (the broker&apos;s pitch deck). <span className="font-medium">T-12</span> = the last 12 months of profit &amp;
-              loss. PDF, Excel, CSV, Word — all welcome.
+              Drag and drop, or click to select. Accepts PDF, .xlsx / .xlsm, .xls, and .csv —
+              extractor routes each file by type and writes structured fields to the deal record.
             </div>
             <div className="flex items-center justify-center gap-2 mt-4">
               <Button variant="primary" size="sm" disabled={uploading}>
