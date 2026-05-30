@@ -573,6 +573,12 @@ function OperatingStatement({
       .map((k) => T12_LINE_LABELS[k])
       .filter((l): l is string => Boolean(l))
   );
+  // Year-1 total revenue is the denominator for the "% of Rev" column.
+  // We rely on the canonical "Total Revenue" row label being present
+  // in every statement — both Historical and Projection paths produce
+  // it. Falling back to 0 means the column renders "—" gracefully.
+  const totalRevRow = rows.find(r => r.label === 'Total Revenue');
+  const y1TotalRev = totalRevRow?.values[0] ?? 0;
   return (
     <Card className="p-5">
       <div className="flex items-baseline justify-between mb-3">
@@ -582,7 +588,7 @@ function OperatingStatement({
         </span>
       </div>
       <div className="overflow-x-auto">
-        <table className="w-full text-[12px] min-w-[700px]">
+        <table className="w-full text-[12px] min-w-[760px]">
           <thead>
             <tr className="text-ink-500 text-[10.5px] border-b border-border">
               <th className="text-left font-medium pb-2 w-72">&nbsp;</th>
@@ -591,6 +597,7 @@ function OperatingStatement({
               <th className="text-right font-medium pb-2">Year 3</th>
               <th className="text-right font-medium pb-2">Year 4</th>
               <th className="text-right font-medium pb-2">Year 5</th>
+              <th className="text-right font-medium pb-2">% Rev<br/><span className="text-[9.5px] font-normal">(Y1)</span></th>
               <th className="text-right font-medium pb-2">CAGR</th>
             </tr>
           </thead>
@@ -599,7 +606,7 @@ function OperatingStatement({
               if (r.kind === 'group') {
                 return (
                   <tr key={r.label}>
-                    <td colSpan={7} className="pt-3 pb-1.5 text-[10.5px] uppercase tracking-wide text-ink-500 font-semibold">
+                    <td colSpan={8} className="pt-3 pb-1.5 text-[10.5px] uppercase tracking-wide text-ink-500 font-semibold">
                       {r.label}
                     </td>
                   </tr>
@@ -617,6 +624,7 @@ function OperatingStatement({
                   isSubtotal={isSubtotal}
                   isTotal={isTotal}
                   fromT12={isFromT12}
+                  y1TotalRev={y1TotalRev}
                 />
               );
             })}
@@ -1000,11 +1008,18 @@ function KeysLoadingState({ loading }: { loading: boolean }) {
 }
 
 function StatementRowR({
-  row, tint, isSubtotal, isTotal, fromT12,
+  row, tint, isSubtotal, isTotal, fromT12, y1TotalRev,
 }: {
   row: StatementRow; tint: string; isSubtotal: boolean; isTotal: boolean; fromT12?: boolean;
+  y1TotalRev?: number;
 }) {
   const flash = useFlash(row.values[0] ?? 0);
+  // % of Year-1 Revenue (Sam's QA: "Add ratios / margin metrics
+  // alongside annual figures across the P&L views"). Self-rows
+  // (Total Revenue) get suppressed since the value is always 100%.
+  const y1 = row.values[0] ?? 0;
+  const showPct = (y1TotalRev ?? 0) > 0 && row.label !== 'Total Revenue';
+  const pctOfRev = showPct ? (y1 / (y1TotalRev || 1)) * 100 : null;
   return (
     <tr className={cn(
       'border-b border-border/40',
@@ -1029,6 +1044,9 @@ function StatementRowR({
       {row.values.map((v, vi) => (
         <td key={vi} className="text-right tabular-nums">{v.toLocaleString()}</td>
       ))}
+      <td className="text-right tabular-nums text-ink-500">
+        {pctOfRev !== null ? `${pctOfRev.toFixed(1)}%` : '—'}
+      </td>
       <td className="text-right tabular-nums">
         {row.cagr !== undefined ? `${(row.cagr * 100).toFixed(1)}%` : '—'}
       </td>
@@ -1247,10 +1265,12 @@ function OperatingStatementBare({
       .map((k) => T12_LINE_LABELS[k])
       .filter((l): l is string => Boolean(l)),
   );
+  const totalRevRow = rows.find(r => r.label === 'Total Revenue');
+  const y1TotalRev = totalRevRow?.values[0] ?? 0;
   return (
     <>
       <div className="overflow-x-auto">
-        <table className="w-full text-[12px] min-w-[700px]">
+        <table className="w-full text-[12px] min-w-[760px]">
           <thead>
             <tr className="text-ink-500 text-[10.5px] border-b border-border">
               <th className="text-left font-medium pb-2 w-72">&nbsp;</th>
@@ -1259,6 +1279,7 @@ function OperatingStatementBare({
               <th className="text-right font-medium pb-2">Year 3</th>
               <th className="text-right font-medium pb-2">Year 4</th>
               <th className="text-right font-medium pb-2">Year 5</th>
+              <th className="text-right font-medium pb-2">% Rev<br/><span className="text-[9.5px] font-normal">(Y1)</span></th>
               <th className="text-right font-medium pb-2">CAGR</th>
             </tr>
           </thead>
@@ -1267,7 +1288,7 @@ function OperatingStatementBare({
               if (r.kind === 'group') {
                 return (
                   <tr key={r.label}>
-                    <td colSpan={7} className="pt-3 pb-1.5 text-[10.5px] uppercase tracking-wide text-ink-500 font-semibold">
+                    <td colSpan={8} className="pt-3 pb-1.5 text-[10.5px] uppercase tracking-wide text-ink-500 font-semibold">
                       {r.label}
                     </td>
                   </tr>
@@ -1285,6 +1306,7 @@ function OperatingStatementBare({
                   isSubtotal={isSubtotal}
                   isTotal={isTotal}
                   fromT12={isFromT12}
+                  y1TotalRev={y1TotalRev}
                 />
               );
             })}

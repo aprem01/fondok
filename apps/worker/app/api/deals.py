@@ -79,6 +79,9 @@ class CreateDealBody(BaseModel):
     brand: str | None = None
     positioning: str | None = None
     purchase_price: float | None = Field(default=None, ge=0)
+    # Sourcing channel for pipeline analytics (Sam's v2 ask):
+    # broker / lender / franchisor / operator / capital_partner / direct.
+    sourcing_channel: str | None = Field(default=None, max_length=40)
 
 
 class UpdateDealBody(BaseModel):
@@ -98,6 +101,7 @@ class UpdateDealBody(BaseModel):
     brand: str | None = None
     positioning: str | None = None
     purchase_price: float | None = Field(default=None, ge=0)
+    sourcing_channel: str | None = Field(default=None, max_length=40)
     # Per-field analyst overrides (canonical extractor field path →
     # primitive value). When present, this dict REPLACES the deal's
     # current overrides — clients send the full merged map. Engines pick
@@ -141,6 +145,7 @@ class DealRecord(BaseModel):
     brand: str | None = None
     positioning: str | None = None
     purchase_price: float | None = None
+    sourcing_channel: str | None = None
     # Per-field analyst overrides — keyed by extractor field path (e.g.
     # ``property_overview.year_built``) → primitive value. Empty dict
     # means the deal is purely extracted/derived.
@@ -264,6 +269,7 @@ def _row_to_record(row: dict[str, Any]) -> DealRecord:
         brand=row.get("brand"),
         positioning=row.get("positioning"),
         purchase_price=_coerce_float(row.get("purchase_price")),
+        sourcing_channel=row.get("sourcing_channel"),
         field_overrides=_coerce_overrides(row.get("field_overrides")),
         created_at=_coerce_dt(row.get("created_at")),
         updated_at=_coerce_dt(row.get("updated_at")),
@@ -273,7 +279,8 @@ def _row_to_record(row: dict[str, Any]) -> DealRecord:
 _DEAL_COLUMNS = (
     "id, tenant_id, name, city, keys, service, status, deal_stage, "
     "risk, ai_confidence, return_profile, brand, positioning, "
-    "purchase_price, field_overrides, created_at, updated_at"
+    "purchase_price, sourcing_channel, field_overrides, "
+    "created_at, updated_at"
 )
 
 
@@ -354,6 +361,7 @@ async def create_deal(
         "brand": body.brand,
         "positioning": body.positioning,
         "purchase_price": body.purchase_price,
+        "sourcing_channel": body.sourcing_channel,
         "created_at": now,
         "updated_at": now,
     }
@@ -364,12 +372,12 @@ async def create_deal(
             INSERT INTO deals (
                 id, tenant_id, name, city, keys, service, status,
                 deal_stage, risk, ai_confidence, return_profile,
-                brand, positioning, purchase_price,
+                brand, positioning, purchase_price, sourcing_channel,
                 created_at, updated_at
             ) VALUES (
                 :id, :tenant, :name, :city, :keys, :service, :status,
                 :deal_stage, :risk, :ai_confidence, :return_profile,
-                :brand, :positioning, :purchase_price,
+                :brand, :positioning, :purchase_price, :sourcing_channel,
                 :created_at, :updated_at
             )
             """
@@ -409,6 +417,7 @@ async def create_deal(
         brand=body.brand,
         positioning=body.positioning,
         purchase_price=body.purchase_price,
+        sourcing_channel=body.sourcing_channel,
         created_at=now,
         updated_at=now,
     )

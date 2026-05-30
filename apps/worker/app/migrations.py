@@ -109,6 +109,13 @@ MIGRATIONS: list[tuple[str, str]] = [
         "ALTER TABLE deals ADD COLUMN IF NOT EXISTS field_overrides JSONB NOT NULL DEFAULT '{}'::jsonb",
     ),
     (
+        # Where the deal originated (Sam's v2 ask): broker / lender /
+        # franchisor / operator / capital_partner / direct. Surfaced on
+        # the create-deal wizard and stored for pipeline analytics.
+        "deals.add_sourcing_channel",
+        "ALTER TABLE deals ADD COLUMN IF NOT EXISTS sourcing_channel TEXT",
+    ),
+    (
         "documents.create_table",
         """
         CREATE TABLE IF NOT EXISTS documents (
@@ -555,6 +562,10 @@ SQLITE_MIGRATIONS: list[tuple[str, str]] = [
         # and parses on read, same as the JSONB Postgres column.
         "deals.add_field_overrides_sqlite",
         "ALTER TABLE deals ADD COLUMN field_overrides TEXT NOT NULL DEFAULT '{}'",
+    ),
+    (
+        "deals.add_sourcing_channel_sqlite",
+        "ALTER TABLE deals ADD COLUMN sourcing_channel TEXT",
     ),
     (
         "documents.create_table",

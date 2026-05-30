@@ -9,7 +9,7 @@ import {
 } from 'lucide-react';
 import { Card } from '@/components/ui/Card';
 import { Button } from '@/components/ui/Button';
-import { dealStages, returnProfiles, positioningTiers, brandFamilies } from '@/lib/mockData';
+import { dealStages, returnProfiles, positioningTiers, brandFamilies, sourcingChannels } from '@/lib/mockData';
 import { cn } from '@/lib/format';
 import { api, isWorkerConnected } from '@/lib/api';
 import { useToast } from '@/components/ui/Toast';
@@ -41,6 +41,7 @@ export default function NewProjectPage() {
     brandSearch: '',
     expandedFamilies: ['Hilton'] as string[],
     positioning: 'default',
+    sourcing: 'Broker',
   });
 
   const update = (patch: Partial<typeof data>) => setData(d => ({ ...d, ...patch }));
@@ -64,11 +65,15 @@ export default function NewProjectPage() {
     }
     setSubmitting(true);
     try {
-      // Coerce keys to int (default 100 if blank or NaN). Worker rejects
-      // string keys; an empty <input type=number> ships as '' and would fail
-      // schema validation.
+      // Keys is now optional — the wizard's expectation is that the
+      // OM extraction fills it in (`property_overview.keys`). Send
+      // null when the analyst hasn't typed a number so the worker
+      // schema flows through cleanly instead of pinning a placeholder
+      // 100-key value that the deal will then surface as if it were
+      // real metadata.
       const parsedKeys = Number.parseInt(data.keys, 10);
-      const keysInt = Number.isFinite(parsedKeys) && parsedKeys > 0 ? parsedKeys : 100;
+      const keysInt =
+        Number.isFinite(parsedKeys) && parsedKeys > 0 ? parsedKeys : null;
       const brandValue = data.brand === 'agnostic' ? null : data.brand;
 
       // The worker's `NewDealBody` schema (apps/worker/app/api/deals.py) is
@@ -83,6 +88,12 @@ export default function NewProjectPage() {
         brand: brandValue,
         return_profile: data.returnProfile,
         positioning: data.positioning,
+        // Sourcing channel for pipeline analytics. Send the canonical
+        // lower-snake-case id (e.g. "capital_partner") not the display
+        // label so the worker can use it as an enum.
+        sourcing_channel:
+          (sourcingChannels.find(s => s.label === data.sourcing)?.id)
+          ?? data.sourcing.toLowerCase().replace(/\s+/g, '_'),
       };
       const created = await api.deals.create(body as Parameters<typeof api.deals.create>[0]);
       toast(`Deal created · ${created.name}`, { type: 'success' });
@@ -211,7 +222,7 @@ export default function NewProjectPage() {
 type WizardData = {
   dealName: string; city: string; keys: string; stage: string; hotelName: string; price: string;
   returnProfile: string; docs: File[]; brand: string; brandSearch: string;
-  expandedFamilies: string[]; positioning: string;
+  expandedFamilies: string[]; positioning: string; sourcing: string;
 };
 type StepProps = { data: WizardData; update: (patch: Partial<WizardData>) => void };
 
@@ -221,24 +232,29 @@ function Step1({ data, update }: StepProps) {
       <h2 className="text-[18px] font-semibold text-ink-900 mb-1">Create New Deal</h2>
       <p className="text-[12.5px] text-ink-500 mb-3">Enter deal details for pipeline tracking. Documents can be added later.</p>
       <div className="rounded-md bg-brand-50 border border-brand-100 p-3 text-[12px] text-ink-700 leading-relaxed mb-6">
-        Tell us the basics about the hotel — what it&apos;s called, where it is, how many rooms,
-        and how far along you are in the acquisition. We use this to set up the deal in your
-        pipeline. Anything you enter here can be edited later.
+        Tell us the basics — what the asset is called, where it is, and how far along you are
+        in the acquisition process. Key count and other property metadata get pulled from the
+        OM the moment you upload one. Anything you enter here can be edited later.
       </div>
 
       <div className="space-y-4">
         <Field label="Deal Name *" value={data.dealName} onChange={v => update({ dealName: v })} placeholder="Chicago Downtown Acquisition" />
         <Field label="City / Submarket *" value={data.city} onChange={v => update({ city: v })} placeholder="Chicago, IL" />
         <div className="grid grid-cols-2 gap-4">
-          <Field label="Keys *" value={data.keys} onChange={v => update({ keys: v })} placeholder="312" type="number"
-            help="Number of guest rooms. 'Keys' is industry shorthand for rooms." />
-          <Select label="Deal Stage *" value={data.stage} onChange={v => update({ stage: v })} options={dealStages}
+          <Field label="Keys (optional)" value={data.keys} onChange={v => update({ keys: v })} placeholder="auto-detected from OM" type="number"
+            help="Number of guest rooms. Leave blank if you'll upload an OM — the extractor will pull it from `property_overview.keys` on the broker docs." />
+          <Select label="How far along are you in the acquisition process? *" value={data.stage} onChange={v => update({ stage: v })} options={dealStages}
             help="Teaser = haven't even signed an NDA. Under NDA = NDA signed, accessing docs. LOI = letter of intent submitted. PSA = under purchase & sale agreement." />
         </div>
         <div className="grid grid-cols-2 gap-4">
           <Field label="Hotel Name (Optional)" value={data.hotelName} onChange={v => update({ hotelName: v })} placeholder="Marriott Chicago Downtown" />
           <Field label="Indicative Price (Optional)" value={data.price} onChange={v => update({ price: v })} placeholder="$120-140M" />
         </div>
+        <Select label="Sourcing channel *"
+          value={data.sourcing}
+          onChange={v => update({ sourcing: v })}
+          options={sourcingChannels.map(s => s.label)}
+          help="Where the deal came from. Used for pipeline analytics — which channel produces the highest-quality leads, which broker desk dominates." />
       </div>
 
       <div className="mt-6 bg-warn-50 border border-warn-500/30 rounded-lg p-4 flex gap-3">

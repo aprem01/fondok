@@ -132,11 +132,31 @@ export const returnProfiles = [
   { id: 'opportunistic', label: 'Opportunistic', target: '18%+', desc: 'Higher risk/return with significant value creation' },
 ];
 
+// Standardized to the STR / CBRE chain-scale ladder Sam's review
+// flagged (institutional positioning ranges from economy through
+// luxury — the prior 4-tier set lumped Upper Midscale + Upscale
+// together which produced unrealistic ADR anchors on upper-midscale
+// brands). Order is bottom-up so the wizard renders cheapest first.
 export const positioningTiers = [
   { id: 'default', label: 'Default', desc: 'Let the model determine optimal positioning' },
-  { id: 'luxury', label: 'Luxury', desc: 'Premium tier with highest ADR assumptions' },
-  { id: 'upscale', label: 'Upscale', desc: 'Upper-midscale to upscale tier' },
-  { id: 'economy', label: 'Economy', desc: 'Economy to midscale tier' },
+  { id: 'economy', label: 'Economy', desc: 'Lowest ADR tier (e.g. Days Inn, Super 8)' },
+  { id: 'midscale', label: 'Midscale', desc: 'Limited-service value tier (e.g. La Quinta, Wingate)' },
+  { id: 'upper-midscale', label: 'Upper Midscale', desc: 'Select-service tier (e.g. Hampton Inn, Holiday Inn Express)' },
+  { id: 'upscale', label: 'Upscale', desc: 'Full-service mid-market (e.g. Courtyard, Hyatt Place)' },
+  { id: 'upper-upscale', label: 'Upper Upscale', desc: 'Full-service luxury-adjacent (e.g. Marriott, Hilton, Sheraton)' },
+  { id: 'luxury', label: 'Luxury', desc: 'Premium tier (e.g. Ritz-Carlton, Four Seasons, St. Regis)' },
+];
+
+// Where the deal originated. Surfaced on the create-deal wizard and
+// stored on the deal record for sourcing-channel analytics. Order
+// matches institutional convention (broker-led deals lead the list).
+export const sourcingChannels = [
+  { id: 'broker', label: 'Broker' },
+  { id: 'lender', label: 'Lender' },
+  { id: 'franchisor', label: 'Franchisor' },
+  { id: 'operator', label: 'Operator' },
+  { id: 'capital_partner', label: 'Capital Partner' },
+  { id: 'direct', label: 'Direct' },
 ];
 
 export const projectStatuses: (ProjectStatus | 'All Status')[] = [
