@@ -173,6 +173,25 @@ export default function InvestmentTab({ projectId }: { projectId: number | strin
         }}
       />
 
+      {/* Sam v2: Asking Price and IRR should remain analyst-driven
+          until the investment engine is fully wired up with exit /
+          cap-rate assumptions. The Capital + Returns engines run
+          today but the values flow through default seeds where deal
+          data is missing — surface that explicitly so reviewers
+          don't take the numbers as committed. */}
+      {!isKimptonDemo && (
+        <Card className="p-3 mb-3 border-l-4 border-l-warn-500 bg-warn-50/40">
+          <p className="text-[12px] text-ink-700">
+            <span className="font-semibold">Preview — investment engine still being calibrated.</span>{' '}
+            Hotel Purchase Price, Entry Cap, Exit Cap, IRR and similar
+            outputs are currently driven by the Capital / Returns engines
+            with seed defaults where deal data is missing. Treat them as
+            analyst-overridable until the investment engine ships its
+            full exit / cap-rate assumption set.
+          </p>
+        </Card>
+      )}
+
       <WhatJustHappened
         engine="capital"
         engineLabel="Capital"
