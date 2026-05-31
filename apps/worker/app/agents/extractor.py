@@ -883,10 +883,32 @@ async def run_extractor(payload: ExtractorInput) -> ExtractorOutput:
     # blocks are stable across tenants and live in the cache prefix
     # so the second call inside the 5-min TTL hits cache.
     from ..llm import build_agent_system_blocks
+    from .extraction_schemas.loader import build_system_prompt as _dyn_prompt
+
+    # Phase 4 (dynamic-extensibility refactor): when
+    # EXTRACTOR_USE_DYNAMIC_SCHEMAS=1 is set AND the payload has a
+    # consistent doc_type, build the agent instructions from
+    # ``extraction_schemas/{doc_type}.md`` rather than the embedded
+    # SYSTEM_PROMPT constant. Falls back silently otherwise — the
+    # legacy prompt remains the production default until a regression
+    # corpus validates the dynamic path against Sam's pilot uploads.
+    payload_doc_types = {(d.doc_type or "").upper() for d in payload.documents}
+    payload_doc_types.discard("")
+    candidate_doc_type = (
+        next(iter(payload_doc_types)) if len(payload_doc_types) == 1 else None
+    )
+    dynamic = _dyn_prompt(candidate_doc_type) if candidate_doc_type else None
+    agent_instructions = dynamic if dynamic is not None else SYSTEM_PROMPT
+    if dynamic is not None:
+        logger.info(
+            "extractor: using dynamic schema prompt for doc_type=%s "
+            "(EXTRACTOR_USE_DYNAMIC_SCHEMAS=1)",
+            candidate_doc_type,
+        )
 
     system_blocks = build_agent_system_blocks(
         role="extractor",
-        agent_instructions=SYSTEM_PROMPT,
+        agent_instructions=agent_instructions,
     )
     # Pre-cache the catalog block so the lru_cache is warm before the
     # first parallel doc fan-out — keeps the very first call from
