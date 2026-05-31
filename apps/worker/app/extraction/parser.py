@@ -31,6 +31,7 @@ from datetime import UTC, datetime
 from typing import Any
 
 from .models import ParsedDocument, ParsedPage, ParseError
+from .registry import get_parser, register_parser, registered_extensions
 
 logger = logging.getLogger(__name__)
 
@@ -41,13 +42,13 @@ logger = logging.getLogger(__name__)
 async def parse_document(file_bytes: bytes, filename: str) -> ParsedDocument:
     """Parse ``file_bytes`` into a ``ParsedDocument``.
 
-    Dispatches on filename extension:
-      * ``.pdf`` → LlamaParse (when configured) → PyMuPDF fallback.
-      * ``.xls`` → ``xlrd`` (legacy BIFF8 — STR/CoStar exports use this).
-      * ``.xlsx`` → ``openpyxl``.
+    Dispatches via the parser registry — each extension is handled by
+    whichever function registered itself at module-import time. New
+    formats become "drop a parser into ``parsers/`` and call
+    ``register_parser``"; this dispatcher never changes.
 
-    Runs the blocking parser in a thread to keep the FastAPI event loop
-    responsive.
+    Runs the blocking parsers in a thread to keep the FastAPI event
+    loop responsive.
     """
     if not file_bytes:
         raise ParseError(f"empty file bytes for {filename}")
@@ -55,62 +56,8 @@ async def parse_document(file_bytes: bytes, filename: str) -> ParsedDocument:
     content_hash = hashlib.sha256(file_bytes).hexdigest()
     ext = (filename or "").rsplit(".", 1)[-1].lower() if "." in (filename or "") else ""
 
-    if ext == "pdf":
-        api_key = os.environ.get("LLAMA_CLOUD_API_KEY")
-        if api_key:
-            try:
-                return await asyncio.to_thread(
-                    _parse_with_llamaparse,
-                    file_bytes=file_bytes,
-                    filename=filename,
-                    content_hash=content_hash,
-                    api_key=api_key,
-                )
-            except Exception as exc:  # noqa: BLE001 — fallback is the safety net
-                logger.warning(
-                    "parse_document: LlamaParse failed for %s (%s); falling back to PyMuPDF",
-                    filename,
-                    exc,
-                )
-        return await asyncio.to_thread(
-            _parse_with_pymupdf,
-            file_bytes=file_bytes,
-            filename=filename,
-            content_hash=content_hash,
-        )
-
-    if ext == "xls":
-        return await asyncio.to_thread(
-            _parse_with_xlrd,
-            file_bytes=file_bytes,
-            filename=filename,
-            content_hash=content_hash,
-        )
-
-    # .xlsx and .xlsm both ride the openpyxl path — .xlsm is just a
-    # macro-enabled OOXML workbook; we don't need the macros, only the
-    # cell data. Rani's TTM uploads were arriving as .xlsm exports and
-    # the old branch raised ParseError before extraction even started.
-    if ext in {"xlsx", "xlsm"}:
-        return await asyncio.to_thread(
-            _parse_with_openpyxl,
-            file_bytes=file_bytes,
-            filename=filename,
-            content_hash=content_hash,
-        )
-
-    # PowerPoint decks — OM teasers, market updates, and asset summaries
-    # are routinely shared as .pptx (and occasionally .ppt). We pull the
-    # text frames slide-by-slide via python-pptx; each slide becomes a
-    # "page" so citations keep working. .ppt (legacy binary) is not
-    # supported by python-pptx and surfaces as an actionable error.
-    if ext == "pptx":
-        return await asyncio.to_thread(
-            _parse_with_pptx,
-            file_bytes=file_bytes,
-            filename=filename,
-            content_hash=content_hash,
-        )
+    # Legacy binary .ppt — python-pptx can't read it; surface an
+    # actionable error before we hit the registry.
     if ext == "ppt":
         raise ParseError(
             f"legacy binary .ppt ({filename}) is not supported — please "
@@ -118,9 +65,49 @@ async def parse_document(file_bytes: bytes, filename: str) -> ParsedDocument:
             "Presentation) and re-upload."
         )
 
-    raise ParseError(
-        f"unsupported file extension '.{ext}' for {filename}; "
-        "expected .pdf, .xls, .xlsx, .xlsm, or .pptx"
+    handler = get_parser(ext)
+    if handler is None:
+        accepted = ", ".join("." + e for e in registered_extensions())
+        raise ParseError(
+            f"unsupported file extension '.{ext}' for {filename}; "
+            f"expected one of: {accepted}"
+        )
+
+    return await asyncio.to_thread(
+        handler,
+        file_bytes=file_bytes,
+        filename=filename,
+        content_hash=content_hash,
+    )
+
+
+def _pdf_parser(*, file_bytes: bytes, filename: str, content_hash: str) -> ParsedDocument:
+    """PDF dispatch: LlamaParse when configured, PyMuPDF fallback.
+
+    Lives behind the registry as a single entry point so callers don't
+    branch on the LlamaParse availability themselves. The two-stage
+    fallback (cloud OCR with quality, local parser with reliability)
+    is the historical PDF pipeline; this just wraps it.
+    """
+    api_key = os.environ.get("LLAMA_CLOUD_API_KEY")
+    if api_key:
+        try:
+            return _parse_with_llamaparse(
+                file_bytes=file_bytes,
+                filename=filename,
+                content_hash=content_hash,
+                api_key=api_key,
+            )
+        except Exception as exc:  # noqa: BLE001 — fallback is the safety net
+            logger.warning(
+                "parse_document: LlamaParse failed for %s (%s); falling back to PyMuPDF",
+                filename,
+                exc,
+            )
+    return _parse_with_pymupdf(
+        file_bytes=file_bytes,
+        filename=filename,
+        content_hash=content_hash,
     )
 
 
@@ -606,4 +593,22 @@ def _parse_with_pptx(
     )
 
 
-__all__ = ["parse_pdf", "parse_document"]
+# ─────────────────────── parser registry wiring ───────────────────────
+# Module-level registrations so adding a new format becomes one line.
+# Re-imports stay idempotent because register_parser dedupes by ext.
+
+register_parser("pdf",  _pdf_parser)
+register_parser("xls",  _parse_with_xlrd)
+register_parser("xlsx", _parse_with_openpyxl)
+# .xlsm is just a macro-enabled OOXML workbook — openpyxl reads it.
+register_parser("xlsm", _parse_with_openpyxl)
+register_parser("pptx", _parse_with_pptx)
+
+
+__all__ = [
+    "parse_pdf",
+    "parse_document",
+    "register_parser",
+    "get_parser",
+    "registered_extensions",
+]
