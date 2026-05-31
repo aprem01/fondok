@@ -1087,6 +1087,155 @@ async def search_deal_chunks(
     )
 
 
+class BackfillEmbeddingsResponse(BaseModel):
+    """Response shape for the embeddings backfill endpoint."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    deal_id: UUID | None = None
+    chunks_total: int = 0
+    chunks_missing: int = 0
+    chunks_embedded: int = 0
+    chunks_failed: int = 0
+    skipped_reason: str | None = None
+
+
+@router.post(
+    "/{deal_id}/backfill_embeddings",
+    response_model=BackfillEmbeddingsResponse,
+)
+async def backfill_embeddings(
+    deal_id: UUID,
+    session: Annotated[AsyncSession, Depends(get_session)],
+    tenant_id: Annotated[UUID, Depends(get_tenant_id)],
+    batch_size: int = 64,
+) -> BackfillEmbeddingsResponse:
+    """Embed any chunks on this deal that still have NULL embedding.
+
+    Use case: chunks written before VOYAGE_API_KEY was set, or written
+    when a Voyage call failed (the chunking pipeline persists chunks
+    with embedding=NULL on failure so search still works via FTS).
+    This endpoint walks the deal's chunks in batches and writes the
+    missing embeddings back.
+
+    Idempotent — chunks whose embedding is already populated are
+    skipped silently.
+    """
+    from ..extraction import embeddings
+    from ..extraction.context_store import _table_exists, _to_vector_literal
+
+    if not await _table_exists(session):
+        return BackfillEmbeddingsResponse(
+            deal_id=deal_id,
+            skipped_reason="document_chunks table not present (SQLite or pgvector unavailable)",
+        )
+
+    if not embeddings.is_enabled():
+        return BackfillEmbeddingsResponse(
+            deal_id=deal_id,
+            skipped_reason="VOYAGE_API_KEY not set on the worker",
+        )
+
+    # Verify deal exists + tenant authorization.
+    row = (
+        await session.execute(
+            text(
+                "SELECT id FROM deals "
+                "WHERE id = :id AND tenant_id = :tenant"
+            ),
+            {"id": str(deal_id), "tenant": str(tenant_id)},
+        )
+    ).first()
+    if row is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"deal {deal_id} not found",
+        )
+
+    # Total + missing counts (for the response).
+    counts = (
+        await session.execute(
+            text(
+                """
+                SELECT COUNT(*) AS total,
+                       SUM(CASE WHEN embedding IS NULL THEN 1 ELSE 0 END) AS missing
+                  FROM document_chunks
+                 WHERE deal_id = :deal
+                """
+            ),
+            {"deal": str(deal_id)},
+        )
+    ).first()
+    total = int(counts._mapping["total"] or 0) if counts else 0
+    missing = int(counts._mapping["missing"] or 0) if counts else 0
+
+    embedded = 0
+    failed = 0
+    batch_size = max(1, min(batch_size, embeddings.VOYAGE_MAX_BATCH))
+
+    while True:
+        rows = (
+            await session.execute(
+                text(
+                    """
+                    SELECT id, chunk_text
+                      FROM document_chunks
+                     WHERE deal_id = :deal AND embedding IS NULL
+                     ORDER BY document_id, chunk_index
+                     LIMIT :n
+                    """
+                ),
+                {"deal": str(deal_id), "n": batch_size},
+            )
+        ).fetchall()
+        if not rows:
+            break
+
+        ids = [str(r._mapping["id"]) for r in rows]
+        texts = [r._mapping["chunk_text"] for r in rows]
+
+        try:
+            vectors = await embeddings.embed_batch(texts, input_type="document")
+        except Exception as exc:  # noqa: BLE001 — batch-level failure
+            logger.warning(
+                "backfill_embeddings: Voyage batch failed for deal=%s "
+                "(%s); skipping these %d chunks",
+                deal_id,
+                exc,
+                len(rows),
+            )
+            failed += len(rows)
+            # Mark these specific chunks as "tried" by inserting an
+            # empty-vector-equivalent? No — just break so we don't
+            # loop infinitely. Caller can retry.
+            break
+
+        for cid, vec in zip(ids, vectors, strict=True):
+            await session.execute(
+                text(
+                    "UPDATE document_chunks SET embedding = CAST(:vec AS vector) "
+                    "WHERE id = :id"
+                ),
+                {"id": cid, "vec": _to_vector_literal(vec)},
+            )
+        await session.commit()
+        embedded += len(rows)
+        logger.info(
+            "backfill_embeddings: deal=%s embedded=%d (this batch=%d)",
+            deal_id,
+            embedded,
+            len(rows),
+        )
+
+    return BackfillEmbeddingsResponse(
+        deal_id=deal_id,
+        chunks_total=total,
+        chunks_missing=missing,
+        chunks_embedded=embedded,
+        chunks_failed=failed,
+    )
+
+
 @router.get("/{deal_id}/documents", response_model=list[DocumentRecord])
 async def list_documents(
     deal_id: UUID,
