@@ -38,8 +38,18 @@ class DocType(str, Enum):
     PNL_MONTHLY = "PNL_MONTHLY"
     PNL_YTD = "PNL_YTD"
     RENT_ROLL = "RENT_ROLL"
+    # Room mix / unit mix lookup table — typically a 1-2 tab .xlsx that
+    # lists room count by category (king, double, suite) and floor.
+    # Surfaces in OM annexes and brand-system handoffs. Distinct from a
+    # P&L; classifying these as T12 ran the Extractor with the wrong
+    # USALI schema and returned 0 fields (Sam QA 2026-05-30).
+    ROOM_MIX = "ROOM_MIX"
     MARKET_STUDY = "MARKET_STUDY"
     CONTRACT = "CONTRACT"
+    # NOTE: ``UNKNOWN`` is intentionally NOT in this enum — it's a
+    # sentinel the Router agent emits when the LLM can't classify
+    # confidently. Persisted doc_type values are always one of the
+    # above; UNKNOWN gets resolved to the filename hint downstream.
 
 
 class DocumentStatus(str, Enum):

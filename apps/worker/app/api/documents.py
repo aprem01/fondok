@@ -262,7 +262,19 @@ def _now() -> datetime:
     return datetime.now(UTC)
 
 
-def _guess_doc_type(filename: str) -> str:
+# A .xlsx that's tiny is almost never a full-year P&L — real T-12s
+# carry 12 monthly columns × dozens of departmental lines and weigh
+# in around 80-300KB at the smallest. Anything materially below
+# that threshold is more likely a room-types lookup, a rate sheet,
+# or a one-tab summary. Falling through to the T12 default for
+# those wastes an extractor LLM call on the wrong USALI schema and
+# returns 0 fields (Sam QA 2026-05-30: ROOM TYPES COUNT LOCATION.xlsx
+# at 11KB classified as T12). Threshold tuned to admit thin annual
+# P&L exports from small properties while excluding lookup tables.
+_TINY_XLSX_BYTES = 30_000
+
+
+def _guess_doc_type(filename: str, size_bytes: int | None = None) -> str:
     """Cheap filename-driven hint. The Router agent overrides on extract.
 
     Live smoke test caught a regression: ``sample_OM.pdf`` was being
@@ -277,10 +289,41 @@ def _guess_doc_type(filename: str) -> str:
     BEFORE the broader ``STR`` / ``PNL`` so a "STR_trend.pdf" doesn't
     get mis-routed as a plain STR benchmark and lose its comp-set
     fan-out.
+
+    When ``size_bytes`` is provided AND the file is a tiny .xlsx
+    (< 30KB), the function refuses to fall through to the T12 default
+    and returns ``UNKNOWN`` instead — small Excel files are nearly
+    always lookups / rate sheets, not full P&Ls, and the Extractor
+    will burn an LLM call returning 0 fields if pointed at the
+    wrong schema.
     """
     name = (filename or "").lower()
     base = name.rsplit(".", 1)[0]
-    tokens = set(base.replace("-", "_").split("_"))
+    # Tokenize on underscore, hyphen, AND whitespace — uploads from
+    # broker pipelines sometimes carry literal-space filenames
+    # ("ROOM TYPES COUNT LOCATION.xlsx") that the old underscore-only
+    # split treated as one giant token, defeating every heuristic
+    # below (Sam QA 2026-05-30).
+    tokens = set(
+        base.replace("-", "_").replace(" ", "_").split("_")
+    )
+
+    # Room mix / unit mix lookup tables — usually thin Excel files.
+    # Check before the size guard so a "room_types_breakdown.xlsx"
+    # gets the correct ROOM_MIX label even when tiny.
+    if (
+        ("room" in tokens and ("types" in tokens or "type" in tokens))
+        or ("rooms" in tokens and ("types" in tokens or "type" in tokens))
+        or ("room" in tokens and "mix" in tokens)
+        or ("unit" in tokens and "mix" in tokens)
+        or "roommix" in name
+        or "unitmix" in name
+        or "room_count" in name
+        or "roomcount" in name
+        or "key_count" in name
+        or ("room" in tokens and "count" in tokens)
+    ):
+        return "ROOM_MIX"
 
     # External market reports (May 7 scope) — check first so the more
     # specific patterns win over the generic STR / PNL fallbacks.
@@ -321,6 +364,16 @@ def _guess_doc_type(filename: str) -> str:
         return "PNL"
     if "contract" in name:
         return "CONTRACT"
+
+    # Tiny-xlsx guard — don't fall through to the T12 default for
+    # spreadsheets too small to plausibly be a P&L.
+    if (
+        size_bytes is not None
+        and (name.endswith(".xlsx") or name.endswith(".xlsm"))
+        and size_bytes < _TINY_XLSX_BYTES
+    ):
+        return "UNKNOWN"
+
     return "T12"
 
 
@@ -687,7 +740,7 @@ async def upload_documents(
             continue
 
         doc_id = uuid4()
-        doc_type = _guess_doc_type(filename)
+        doc_type = _guess_doc_type(filename, size_bytes=len(body))
         uploaded_at = _now()
 
         try:
@@ -1750,21 +1803,47 @@ async def _run_extraction_pipeline(
             # error_kind ("empty_envelope") merged into extraction_data
             # so the UI can surface the real reason.
             if not fields:
-                kind = "empty_envelope"
-                friendly = (
-                    "The extractor agent ran successfully but emitted no "
-                    "grounded fields. This usually means the document is "
-                    "image-heavy without OCR'd text, the LLM hit a "
-                    "structured-output edge case on a large document, or "
-                    "the system prompt confused the model. Re-upload to "
-                    "retry, or check the worker logs for the raw "
-                    "AIMessage shape."
+                # Differentiate "the parser couldn't get text" from "the
+                # extractor ran on real text but found nothing matching
+                # the schema." Sam QA 2026-05-30 surfaced both under the
+                # same generic empty_envelope message which masked the
+                # actionable distinction (a scanned PDF needs OCR
+                # software; a misclassified xlsx needs reclassification).
+                parsed_pages = (
+                    extraction_data.get("pages", [])
+                    if isinstance(extraction_data, dict) else []
                 )
+                total_chars = sum(
+                    len((p.get("text", "") or "")) for p in parsed_pages
+                    if isinstance(p, dict)
+                )
+                if total_chars < 100:
+                    kind = "no_text"
+                    friendly = (
+                        "The parser couldn't extract any text from this "
+                        "document — usually a scanned or image-only PDF "
+                        "without an OCR layer. Run the file through an "
+                        "OCR tool (Adobe Acrobat, ABBYY, or Tesseract) "
+                        "and re-upload, or upload the source spreadsheet "
+                        "instead of a screenshot."
+                    )
+                else:
+                    kind = "empty_envelope"
+                    friendly = (
+                        "The extractor ran on real text but emitted no "
+                        "grounded fields. The document may be classified "
+                        "as the wrong type (e.g. a room-types lookup "
+                        "table classified as T12), or the LLM hit a "
+                        "structured-output edge case. Use Retry to "
+                        "re-run, or check the assigned doc type matches "
+                        "the content."
+                    )
                 logger.warning(
-                    "extraction: doc=%s deal=%s produced 0 fields — "
-                    "marking FAILED with error_kind=%s",
+                    "extraction: doc=%s deal=%s produced 0 fields "
+                    "(parsed_chars=%d) — marking FAILED with error_kind=%s",
                     doc_id,
                     deal_id,
+                    total_chars,
                     kind,
                 )
                 # Merge error info into existing extraction_data so the

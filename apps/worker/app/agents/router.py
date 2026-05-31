@@ -49,6 +49,11 @@ Available document types (use exactly one of these tokens):
                    indices (MPI/ARI/RGI), occupancy, ADR, RevPAR.
 - RENT_ROLL      — Multifamily/extended-stay tenant roster (rare for
                    hotels; surfaces with mixed-use deals).
+- ROOM_MIX       — Room types / unit mix / key-count lookup. Typically
+                   a thin 1-2 tab .xlsx listing room category × floor
+                   × count. NOT a P&L — has no revenue or expense lines.
+                   Filenames usually contain "room types", "room mix",
+                   "unit mix", or just "rooms".
 - PNL            — Generic profit-and-loss statement that is NOT a
                    12-month rollup (annual budget, monthly forecast).
 - MARKET_STUDY   — Third-party market/feasibility study; demand
@@ -88,8 +93,8 @@ class _RouterDecision(BaseModel):
         str,
         Field(
             description=(
-                "One of: OM, T12, STR, RENT_ROLL, PNL, MARKET_STUDY, "
-                "CONTRACT, UNKNOWN"
+                "One of: OM, T12, STR, RENT_ROLL, ROOM_MIX, PNL, "
+                "MARKET_STUDY, CONTRACT, UNKNOWN"
             )
         ),
     ]

@@ -99,9 +99,28 @@ async def parse_document(file_bytes: bytes, filename: str) -> ParsedDocument:
             content_hash=content_hash,
         )
 
+    # PowerPoint decks — OM teasers, market updates, and asset summaries
+    # are routinely shared as .pptx (and occasionally .ppt). We pull the
+    # text frames slide-by-slide via python-pptx; each slide becomes a
+    # "page" so citations keep working. .ppt (legacy binary) is not
+    # supported by python-pptx and surfaces as an actionable error.
+    if ext == "pptx":
+        return await asyncio.to_thread(
+            _parse_with_pptx,
+            file_bytes=file_bytes,
+            filename=filename,
+            content_hash=content_hash,
+        )
+    if ext == "ppt":
+        raise ParseError(
+            f"legacy binary .ppt ({filename}) is not supported — please "
+            "re-save the deck as .pptx (File → Save As → PowerPoint "
+            "Presentation) and re-upload."
+        )
+
     raise ParseError(
         f"unsupported file extension '.{ext}' for {filename}; "
-        "expected .pdf, .xls, .xlsx, or .xlsm"
+        "expected .pdf, .xls, .xlsx, .xlsm, or .pptx"
     )
 
 
@@ -481,6 +500,109 @@ def _parse_with_openpyxl(
         parsed_at=datetime.now(UTC),
         parser="openpyxl",
         metadata={"backend": "openpyxl", "sheet_count": len(pages)},
+    )
+
+
+def _parse_with_pptx(
+    *,
+    file_bytes: bytes,
+    filename: str,
+    content_hash: str,
+) -> ParsedDocument:
+    """Pull text frames + tables out of a .pptx deck via python-pptx.
+
+    OM teasers, market updates, and asset summaries routinely ship as
+    PowerPoint. We treat each slide as a "page" so the extractor's
+    citation paths (slide N) keep working downstream. Tables on the
+    slide get pulled as ``ParsedPage.tables`` for any structured
+    line-item the extractor needs to ground against.
+
+    Notes on the input:
+    * Speaker notes are included (they often carry deal context the
+      slide layout hides).
+    * Grouped shapes are walked recursively — a "title + value" stat
+      grouped inside a frame would otherwise be skipped.
+    * Image-only slides surface as empty pages; the empty-envelope
+      vs no-text differentiator downstream tells the user to OCR.
+    """
+    try:
+        from pptx import Presentation
+        from pptx.util import Inches  # noqa: F401 — keeps lint quiet
+    except ImportError as exc:  # pragma: no cover
+        raise ParseError(
+            "python-pptx is not installed; cannot parse .pptx files"
+        ) from exc
+
+    import io
+
+    try:
+        prs = Presentation(io.BytesIO(file_bytes))
+    except Exception as exc:  # noqa: BLE001 — surface as ParseError
+        raise ParseError(f"python-pptx failed to open {filename}: {exc}") from exc
+
+    def _walk_shapes(shapes: Any) -> tuple[list[str], list[list[list[str]]]]:
+        """Recursively collect text frames + tables from a shape tree.
+
+        Returns ``(text_chunks, tables)``. PowerPoint allows shapes
+        to be grouped, so we walk into ``shape_type == 6`` (GROUP)
+        recursively rather than reading the top-level iterator only.
+        """
+        texts: list[str] = []
+        tables: list[list[list[str]]] = []
+        for shape in shapes:
+            # Grouped shapes — recurse.
+            if getattr(shape, "shape_type", None) == 6 and hasattr(shape, "shapes"):
+                inner_t, inner_tb = _walk_shapes(shape.shapes)
+                texts.extend(inner_t)
+                tables.extend(inner_tb)
+                continue
+            # Text frames — paragraphs split into runs; join with spaces
+            # so multi-run lines (e.g. bolded numbers + plain labels)
+            # come through as readable strings.
+            if getattr(shape, "has_text_frame", False):
+                tf = shape.text_frame
+                for para in tf.paragraphs:
+                    line = "".join(run.text for run in para.runs).strip()
+                    if line:
+                        texts.append(line)
+            # Tables — emit as a list-of-rows so the same renderer
+            # the Excel parser uses can format them downstream.
+            if getattr(shape, "has_table", False):
+                tbl = shape.table
+                rows: list[list[str]] = []
+                for row in tbl.rows:
+                    rows.append([cell.text.strip() for cell in row.cells])
+                if rows:
+                    tables.append(rows)
+        return texts, tables
+
+    pages: list[ParsedPage] = []
+    for slide_index, slide in enumerate(prs.slides, start=1):
+        texts, tables = _walk_shapes(slide.shapes)
+        # Speaker notes carry deal context the layout hides — include
+        # them as a trailing block so the extractor can reference them.
+        if slide.has_notes_slide:
+            notes_text = (slide.notes_slide.notes_text_frame.text or "").strip()
+            if notes_text:
+                texts.append(f"[Speaker notes] {notes_text}")
+        body = "\n".join(texts)
+        pages.append(
+            ParsedPage(
+                page_num=slide_index,
+                text=body,
+                tables=tables,
+                metadata={"source": "pptx", "slide_index": slide_index},
+            )
+        )
+
+    return ParsedDocument(
+        filename=filename,
+        total_pages=len(pages),
+        pages=pages,
+        content_hash=content_hash,
+        parsed_at=datetime.now(UTC),
+        parser="python-pptx",
+        metadata={"backend": "python-pptx", "slide_count": len(pages)},
     )
 
 

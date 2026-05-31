@@ -63,6 +63,8 @@ const DOC_TYPE_LABEL: Record<string, string> = {
   INSURANCE: 'Insurance',
   PROPERTY_TAXES: 'Prop. Taxes',
   CONTRACT: 'Contract',
+  ROOM_MIX: 'Room Mix',
+  UNKNOWN: 'Uncategorized',
 };
 
 // Documents with broker-vs-T12 variance flags raised against them.
