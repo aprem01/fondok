@@ -1,0 +1,169 @@
+# Field catalog — externalized alias maps for the underwriting engines.
+#
+# Each top-level key is a "namespace" the engine_runner uses to translate
+# extracted Extractor-agent field paths onto the canonical keys the
+# engines themselves consume. Sources of truth for both ends:
+#
+#   * Extracted paths — apps/worker/app/agents/extractor.py SYSTEM_PROMPT
+#     (and increasingly the JSON-Schema files under extraction/schemas/
+#     once Phase 4 lands).
+#   * Canonical keys — apps/worker/app/engines/{revenue,expense,capital,
+#     debt}.py EngineInput dataclasses.
+#
+# Adding a new extracted alias for an existing canonical key: append to
+# the relevant list under that canonical. NO code change required.
+#
+# Adding a NEW canonical key: add it here AND in the engine input
+# dataclass AND wire it through engine_runner._build_engine_input.
+#
+# The loader (apps/worker/app/extraction/field_catalog.py) reads this
+# file once at import time and exposes flat alias→canonical dicts.
+
+# ─── T-12 expense lines → expense engine actuals ─────────────────────
+t12_expense:
+  rooms_dept_expense:
+    - p_and_l_usali.departmental_expenses.rooms
+    - rooms_dept_expense
+    - rooms_departmental_expenses
+  fb_dept_expense:
+    - p_and_l_usali.departmental_expenses.food_beverage
+    - fb_dept_expense
+    - food_beverage_departmental_expenses
+  other_dept_expense:
+    - p_and_l_usali.departmental_expenses.other_operated
+    - other_dept_expense
+  administrative_general:
+    - p_and_l_usali.undistributed.administrative_general
+    - administrative_general
+    - admin_general
+  information_telecom:
+    - p_and_l_usali.undistributed.information_telecom
+    - information_telecom
+  sales_marketing:
+    - p_and_l_usali.undistributed.sales_marketing
+    - sales_marketing
+  property_operations:
+    - p_and_l_usali.undistributed.property_operations
+    - property_operations
+    - repairs_maintenance
+  utilities:
+    - p_and_l_usali.undistributed.utilities
+    - utilities
+  mgmt_fee:
+    - p_and_l_usali.fees_and_reserves.mgmt_fee
+    - mgmt_fee
+    - management_fee
+  ffe_reserve:
+    - p_and_l_usali.fees_and_reserves.ffe_reserve
+    - ffe_reserve
+  property_taxes:
+    - p_and_l_usali.fixed_charges.property_taxes
+    - property_taxes
+  insurance:
+    - p_and_l_usali.fixed_charges.insurance
+    - insurance
+
+# ─── T-12 revenue / KPIs → revenue engine actuals ────────────────────
+t12_revenue:
+  occupancy:
+    - p_and_l_usali.operational_kpis.occupancy_pct
+    - occupancy_pct
+    - occupancy
+  adr:
+    - p_and_l_usali.operational_kpis.adr_usd
+    - adr_usd
+    - adr
+  revpar:
+    - p_and_l_usali.operational_kpis.revpar_usd
+    - revpar_usd
+    - revpar
+  rooms_revenue:
+    - p_and_l_usali.operating_revenue.rooms_revenue
+    - p_and_l_usali.operating_revenue.rooms_revenue_usd
+    - rooms_revenue_usd
+    - rooms_revenue
+  fb_revenue:
+    - p_and_l_usali.operating_revenue.food_beverage_revenue
+    - p_and_l_usali.operating_revenue.fb_revenue
+    - fb_revenue_usd
+    - fb_revenue
+    - food_beverage_revenue
+  other_revenue:
+    - p_and_l_usali.operating_revenue.other_revenue
+    - other_revenue_usd
+    - other_revenue
+  resort_fees:
+    - p_and_l_usali.operating_revenue.resort_fees
+    - resort_fees_usd
+    - resort_fees
+  misc_revenue:
+    - p_and_l_usali.operating_revenue.misc_revenue
+    - misc_revenue
+
+# ─── OM (broker proforma / asking price) → capital engine ────────────
+om_capital:
+  purchase_price:
+    - asking_price.headline_price_usd
+    - asking_price.purchase_price
+    - headline_price_usd
+  price_per_key:
+    - asking_price.price_per_key_usd
+    - price_per_key_usd
+  renovation_budget:
+    - broker_proforma.renovation_budget_usd
+    - renovation_budget_usd
+    - renovation_budget
+  entry_cap_rate:
+    - broker_proforma.entry_cap_rate
+    - broker_proforma.cap_rate
+    - entry_cap_rate
+    - cap_rate
+  year_built:
+    - property_overview.year_built
+    - year_built
+
+# ─── OM (in-place debt block) → debt engine ──────────────────────────
+om_debt:
+  loan_amount:
+    - in_place_debt.loan_balance_usd
+    - loan_balance_usd
+  interest_rate:
+    - in_place_debt.interest_rate_pct
+    - interest_rate_pct
+  amortization_years:
+    - in_place_debt.amortization_years
+    - amortization_years
+  term_years:
+    - in_place_debt.term_years
+    - term_years
+  ltv:
+    - in_place_debt.ltv_pct
+    - ltv_pct
+
+# ─── P&L row-ranking preference by period_type ───────────────────────
+# Lower rank = preferred. Annual T-12s outrank YTD / monthly so a
+# 5-month YTD upload can't clobber the full-year baseline. (Eshan's
+# QA: ~89% YTD occupancy was beating ~81% annual.)
+period_type_rank:
+  annual:           0
+  fiscal_year:      0
+  full_year:        0
+  trailing_twelve:  1
+  ttm:              1
+  t12:              1
+  rolling_twelve:   1
+  ytd:              5
+  year_to_date:     5
+  quarterly:        7
+  quarter:          7
+  monthly:          9
+  month:            9
+
+# ─── Percentage-style keys (0..100 → 0..1 normalization) ─────────────
+# Extractors emit either a 0..1 ratio or a 0..100 percent for these.
+# The loader divides by 100 when the value is > 1.0 so the engine
+# always sees a 0..1 fraction.
+percentage_keys:
+  - entry_cap_rate
+  - interest_rate
+  - ltv

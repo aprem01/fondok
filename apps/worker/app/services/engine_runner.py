@@ -36,6 +36,19 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from fondok_schemas.financial import ModelAssumptions
 from fondok_schemas.partnership import WaterfallTier
 
+# Field alias maps + period-type ranks are externalized to
+# apps/worker/app/extraction/field_catalog.yaml (Phase 2 of the
+# dynamic-extensibility refactor). Adding a new extracted-field
+# alias is a YAML edit; no Python change required.
+from ..extraction.field_catalog import (
+    OM_CAPITAL_FIELD_ALIASES as _CATALOG_OM_CAPITAL_FIELD_ALIASES,
+    OM_DEBT_FIELD_ALIASES as _CATALOG_OM_DEBT_FIELD_ALIASES,
+    OM_PERCENTAGE_KEYS as _CATALOG_OM_PERCENTAGE_KEYS,
+    PERIOD_TYPE_RANK as _CATALOG_PERIOD_TYPE_RANK,
+    T12_EXPENSE_FIELD_ALIASES as _CATALOG_T12_EXPENSE_FIELD_ALIASES,
+    T12_REVENUE_FIELD_ALIASES as _CATALOG_T12_REVENUE_FIELD_ALIASES,
+)
+
 from ..engines import (
     CapitalEngine,
     CapitalEngineInput,
@@ -449,83 +462,16 @@ async def _load_engine_inputs(
 # the expense engine recognizes. Both the dotted ``p_and_l_usali.*``
 # paths the Extractor agent emits and the bare lowercase aliases the
 # legacy normalizer uses are accepted.
-_T12_EXPENSE_FIELD_ALIASES: dict[str, str] = {
-    # Departmental
-    "p_and_l_usali.departmental_expenses.rooms": "rooms_dept_expense",
-    "rooms_dept_expense": "rooms_dept_expense",
-    "rooms_departmental_expenses": "rooms_dept_expense",
-    "p_and_l_usali.departmental_expenses.food_beverage": "fb_dept_expense",
-    "fb_dept_expense": "fb_dept_expense",
-    "food_beverage_departmental_expenses": "fb_dept_expense",
-    "p_and_l_usali.departmental_expenses.other_operated": "other_dept_expense",
-    "other_dept_expense": "other_dept_expense",
-    # Undistributed
-    "p_and_l_usali.undistributed.administrative_general": "administrative_general",
-    "administrative_general": "administrative_general",
-    "admin_general": "administrative_general",
-    "p_and_l_usali.undistributed.information_telecom": "information_telecom",
-    "information_telecom": "information_telecom",
-    "p_and_l_usali.undistributed.sales_marketing": "sales_marketing",
-    "sales_marketing": "sales_marketing",
-    "p_and_l_usali.undistributed.property_operations": "property_operations",
-    "property_operations": "property_operations",
-    "repairs_maintenance": "property_operations",
-    "p_and_l_usali.undistributed.utilities": "utilities",
-    "utilities": "utilities",
-    # Fees & reserves
-    "p_and_l_usali.fees_and_reserves.mgmt_fee": "mgmt_fee",
-    "mgmt_fee": "mgmt_fee",
-    "management_fee": "mgmt_fee",
-    "p_and_l_usali.fees_and_reserves.ffe_reserve": "ffe_reserve",
-    "ffe_reserve": "ffe_reserve",
-    # Fixed charges
-    "p_and_l_usali.fixed_charges.property_taxes": "property_taxes",
-    "property_taxes": "property_taxes",
-    "p_and_l_usali.fixed_charges.insurance": "insurance",
-    "insurance": "insurance",
-}
+# Alias map externalized to extraction/field_catalog.yaml.
+_T12_EXPENSE_FIELD_ALIASES: dict[str, str] = _CATALOG_T12_EXPENSE_FIELD_ALIASES
 
 
 # Map extracted T-12 field paths onto the canonical revenue-side keys
 # the revenue engine recognizes. As with the expense aliases, we accept
 # both the dotted ``p_and_l_usali.operational_kpis.*`` paths the
 # Extractor agent emits and the bare aliases the legacy normalizer uses.
-_T12_REVENUE_FIELD_ALIASES: dict[str, str] = {
-    # Occupancy
-    "p_and_l_usali.operational_kpis.occupancy_pct": "occupancy",
-    "occupancy_pct": "occupancy",
-    "occupancy": "occupancy",
-    # ADR
-    "p_and_l_usali.operational_kpis.adr_usd": "adr",
-    "adr_usd": "adr",
-    "adr": "adr",
-    # RevPAR
-    "p_and_l_usali.operational_kpis.revpar_usd": "revpar",
-    "revpar_usd": "revpar",
-    "revpar": "revpar",
-    # Year-1 revenue dollar amounts. These let the loader derive the
-    # engine's per-occupied-room F&B and other-revenue-pct anchors from
-    # the actual T-12 instead of the Kimpton seed (~$88 F&B per occupied
-    # room, ~6.5% other), so the rooms / F&B / other lines on the
-    # Operating Statement reflect the real property's mix.
-    "p_and_l_usali.operating_revenue.rooms_revenue": "rooms_revenue",
-    "p_and_l_usali.operating_revenue.rooms_revenue_usd": "rooms_revenue",
-    "rooms_revenue_usd": "rooms_revenue",
-    "rooms_revenue": "rooms_revenue",
-    "p_and_l_usali.operating_revenue.food_beverage_revenue": "fb_revenue",
-    "p_and_l_usali.operating_revenue.fb_revenue": "fb_revenue",
-    "fb_revenue_usd": "fb_revenue",
-    "fb_revenue": "fb_revenue",
-    "food_beverage_revenue": "fb_revenue",
-    "p_and_l_usali.operating_revenue.other_revenue": "other_revenue",
-    "other_revenue_usd": "other_revenue",
-    "other_revenue": "other_revenue",
-    "p_and_l_usali.operating_revenue.resort_fees": "resort_fees",
-    "resort_fees_usd": "resort_fees",
-    "resort_fees": "resort_fees",
-    "p_and_l_usali.operating_revenue.misc_revenue": "misc_revenue",
-    "misc_revenue": "misc_revenue",
-}
+# Alias map externalized to extraction/field_catalog.yaml.
+_T12_REVENUE_FIELD_ALIASES: dict[str, str] = _CATALOG_T12_REVENUE_FIELD_ALIASES
 
 
 # Rank P&L extraction rows by period_type so an annual T-12 always
@@ -533,21 +479,8 @@ _T12_REVENUE_FIELD_ALIASES: dict[str, str] = {
 # monthly was extracted later. Eshan's QA found that a 5/2024 monthly
 # upload was clobbering the annual T-12 baseline (~89% YTD occupancy
 # vs ~81% true annual). Lower rank = preferred.
-_PERIOD_TYPE_RANK: dict[str, int] = {
-    "annual": 0,
-    "fiscal_year": 0,
-    "full_year": 0,
-    "trailing_twelve": 1,
-    "ttm": 1,
-    "t12": 1,
-    "rolling_twelve": 1,
-    "ytd": 5,
-    "year_to_date": 5,
-    "quarterly": 7,
-    "quarter": 7,
-    "monthly": 9,
-    "month": 9,
-}
+# Externalized to extraction/field_catalog.yaml.
+_PERIOD_TYPE_RANK: dict[str, int] = _CATALOG_PERIOD_TYPE_RANK
 
 
 def _extract_period_type(raw_fields: list[Any]) -> str:
@@ -726,54 +659,23 @@ async def _load_t12_expense_actuals(
 # ``property_overview.*`` roots (see apps/worker/app/agents/extractor.py
 # SYSTEM_PROMPT). Both the dotted root paths and the bare last-segment
 # aliases are accepted so partial extractions still flow through.
-_OM_CAPITAL_FIELD_ALIASES: dict[str, str] = {
-    # Asking price → purchase price (the headline number on the OM).
-    "asking_price.headline_price_usd": "purchase_price",
-    "asking_price.purchase_price": "purchase_price",
-    "headline_price_usd": "purchase_price",
-    # Per-key price (informational; not consumed by the capital engine
-    # directly but threaded through so the assumption dict carries it).
-    "asking_price.price_per_key_usd": "price_per_key",
-    "price_per_key_usd": "price_per_key",
-    # Renovation budget — the broker's published PIP / capex budget.
-    "broker_proforma.renovation_budget_usd": "renovation_budget",
-    "renovation_budget_usd": "renovation_budget",
-    "renovation_budget": "renovation_budget",
-    # Entry cap rate — used by the capital engine when present.
-    "broker_proforma.entry_cap_rate": "entry_cap_rate",
-    "broker_proforma.cap_rate": "entry_cap_rate",
-    "entry_cap_rate": "entry_cap_rate",
-    "cap_rate": "entry_cap_rate",
-    # Year built (informational, for completeness).
-    "property_overview.year_built": "year_built",
-    "year_built": "year_built",
-}
+# Externalized to extraction/field_catalog.yaml.
+_OM_CAPITAL_FIELD_ALIASES: dict[str, str] = _CATALOG_OM_CAPITAL_FIELD_ALIASES
 
 
 # Map extracted OM field paths onto the canonical debt-side keys the
 # debt engine recognizes. ``in_place_debt.*`` carries the broker's quote
 # of the seller's existing financing; we let it override the LTV-derived
 # default loan amount when the broker publishes a hard balance.
-_OM_DEBT_FIELD_ALIASES: dict[str, str] = {
-    "in_place_debt.loan_balance_usd": "loan_amount",
-    "loan_balance_usd": "loan_amount",
-    "in_place_debt.interest_rate_pct": "interest_rate",
-    "interest_rate_pct": "interest_rate",
-    "in_place_debt.amortization_years": "amortization_years",
-    "amortization_years": "amortization_years",
-    "in_place_debt.term_years": "term_years",
-    "term_years": "term_years",
-    "in_place_debt.ltv_pct": "ltv",
-    "ltv_pct": "ltv",
-}
+# Externalized to extraction/field_catalog.yaml.
+_OM_DEBT_FIELD_ALIASES: dict[str, str] = _CATALOG_OM_DEBT_FIELD_ALIASES
 
 
 # Canonical keys whose extracted value lands in the assumption dict as a
 # 0..1 fraction. Extractors emit either a 0..1 ratio or a 0..100 percent;
 # we normalize defensively (mirrors the T-12 occupancy normalization).
-_OM_PERCENTAGE_KEYS: frozenset[str] = frozenset(
-    {"entry_cap_rate", "interest_rate", "ltv"}
-)
+# Externalized to extraction/field_catalog.yaml (percentage_keys).
+_OM_PERCENTAGE_KEYS: frozenset[str] = _CATALOG_OM_PERCENTAGE_KEYS
 
 
 async def _load_deal_overrides(
