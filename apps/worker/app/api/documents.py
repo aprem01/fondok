@@ -983,6 +983,27 @@ async def _run_parse_and_extract(
             )
             return
 
+    # Index the parsed pages into the context store (chunks + optional
+    # Voyage embeddings). Best-effort — failures are logged but don't
+    # block the rest of the extract pipeline; chunks can be backfilled
+    # by re-uploading or by a future repair job.
+    try:
+        from ..extraction.context_store import index_parsed_document
+        async with factory() as s:
+            await index_parsed_document(
+                s,
+                deal_id=deal_id,
+                tenant_id=tenant_id,
+                document_id=doc_id,
+                parsed=parsed,
+            )
+    except Exception:  # noqa: BLE001 — best-effort
+        logger.exception(
+            "parse_async: context_store indexing failed for doc=%s "
+            "(non-fatal — extraction continues)",
+            doc_id,
+        )
+
     # Auto-chain extraction so the user sees a single status timeline
     # without having to call a second endpoint. Failures inside
     # ``_run_extraction_pipeline`` are already caught and recorded as
@@ -995,6 +1016,75 @@ async def _run_parse_and_extract(
 
 
 # ─────────────────────────── list ───────────────────────────
+
+
+class SearchHit(BaseModel):
+    """One result from the deal's context-store search.
+
+    Returned by GET /deals/{deal_id}/search. Each hit points at a
+    specific chunk of a specific document so the UI can deep-link to
+    the source page for citation.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    id: str
+    document_id: str
+    chunk_index: int
+    chunk_text: str
+    source_page: int | None = None
+    score: float
+
+
+class SearchResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    deal_id: UUID
+    query: str
+    hits: list[SearchHit] = Field(default_factory=list)
+    # True when Voyage embeddings ran for this query (hybrid ranking).
+    # False when only FTS contributed — search still works but recall
+    # is lower for semantic-similarity queries.
+    embeddings_used: bool = False
+
+
+@router.get("/{deal_id}/search", response_model=SearchResponse)
+async def search_deal_chunks(
+    deal_id: UUID,
+    q: str,
+    session: Annotated[AsyncSession, Depends(get_session)],
+    k: int = 10,
+) -> SearchResponse:
+    """Search across every chunked document on a deal.
+
+    Phase 3 of the dynamic-extensibility refactor. Backs the data-room
+    search box + any future agent tool that needs to ground answers in
+    arbitrary document text.
+
+    Ranking:
+        * Always: Postgres FTS via ``plainto_tsquery('english', q)``.
+        * When VOYAGE_API_KEY is set + chunks have been embedded for
+          this deal: hybrid score = 0.6 × cosine + 0.4 × FTS rank.
+    """
+    from ..extraction import embeddings
+    from ..extraction.context_store import search_chunks
+
+    if not q or not q.strip():
+        return SearchResponse(deal_id=deal_id, query=q or "", hits=[])
+
+    k = max(1, min(k, 50))
+    hits = await search_chunks(
+        session,
+        deal_id=str(deal_id),
+        query=q.strip(),
+        k=k,
+    )
+    return SearchResponse(
+        deal_id=deal_id,
+        query=q.strip(),
+        hits=[SearchHit(**h) for h in hits],
+        embeddings_used=embeddings.is_enabled(),
+    )
 
 
 @router.get("/{deal_id}/documents", response_model=list[DocumentRecord])

@@ -177,6 +177,64 @@ MIGRATIONS: list[tuple[str, str]] = [
         ON extraction_results (document_id, created_at DESC)
         """,
     ),
+    # ─── Document chunks (context store, Phase 3) ────────────────────
+    # Try to enable pgvector. Idempotent — already-installed extensions
+    # are a no-op. Failing this migration (e.g. on a managed Postgres
+    # without pgvector available) should NOT block the worker boot;
+    # the chunks table falls back to FTS-only and the search endpoint
+    # skips vector ranking.
+    (
+        "pgvector.enable_extension",
+        "CREATE EXTENSION IF NOT EXISTS vector",
+    ),
+    (
+        # Chunks come from parsed documents. embedding is nullable so
+        # rows can land before the Voyage embed call (or when VOYAGE_API_KEY
+        # is unset). fts is a TSVECTOR generated column — Postgres FTS
+        # works regardless of whether embeddings are populated.
+        "document_chunks.create_table",
+        """
+        CREATE TABLE IF NOT EXISTS document_chunks (
+            id           UUID PRIMARY KEY,
+            deal_id      UUID NOT NULL REFERENCES deals(id) ON DELETE CASCADE,
+            document_id  UUID NOT NULL REFERENCES documents(id) ON DELETE CASCADE,
+            tenant_id    UUID NOT NULL,
+            chunk_index  INTEGER NOT NULL,
+            chunk_text   TEXT NOT NULL,
+            tokens       INTEGER NOT NULL DEFAULT 0,
+            source_page  INTEGER,
+            embedding    vector(1024),
+            fts          TSVECTOR
+                GENERATED ALWAYS AS (to_tsvector('english', chunk_text)) STORED,
+            created_at   TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        )
+        """,
+    ),
+    (
+        "document_chunks.idx_deal",
+        """
+        CREATE INDEX IF NOT EXISTS idx_document_chunks_deal
+        ON document_chunks (deal_id, document_id, chunk_index)
+        """,
+    ),
+    (
+        "document_chunks.idx_fts",
+        """
+        CREATE INDEX IF NOT EXISTS idx_document_chunks_fts
+        ON document_chunks USING GIN (fts)
+        """,
+    ),
+    (
+        # Approximate-nearest-neighbor index for the embedding column.
+        # IVFFLAT requires a table with rows for the lists parameter to
+        # matter, so we use HNSW (works on empty tables, slightly more
+        # memory). cosine distance matches voyage-3's normalized output.
+        "document_chunks.idx_embedding",
+        """
+        CREATE INDEX IF NOT EXISTS idx_document_chunks_embedding
+        ON document_chunks USING hnsw (embedding vector_cosine_ops)
+        """,
+    ),
     (
         "documents.idx_deal",
         """
