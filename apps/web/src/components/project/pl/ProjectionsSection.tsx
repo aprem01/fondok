@@ -67,9 +67,40 @@ interface FBYearWorker {
 interface ExpenseYearWorker {
   year: number;
   total_revenue: number;
+  dept_expenses?: {
+    rooms: number;
+    food_beverage: number;
+    other_operated: number;
+    total: number;
+  };
+  undistributed?: {
+    administrative_general: number;
+    information_telecom: number;
+    sales_marketing: number;
+    property_operations: number;
+    utilities: number;
+    total: number;
+  };
+  mgmt_fee?: number;
+  ffe_reserve?: number;
+  fixed_charges?: {
+    property_taxes: number;
+    insurance: number;
+    rent: number;
+    other_fixed: number;
+    total: number;
+  };
+  gop?: number;
+  noi?: number;
+  noi_institutional?: number | null;
 }
 
-// One year of normalized projection inputs — what the table renders.
+// One year of normalized projection inputs — what the table renders +
+// what the xlsx export emits. Sam's P4 ask: "Expand exports beyond
+// topline revenue. Ensure Other Operated Departments are reflected
+// appropriately." OOD revenue used to be collapsed into the Misc
+// bucket; it's now its own field so the USALI waterfall renders
+// honestly.
 interface ProjYear {
   year: number;
   // Available Rooms = keys × days (in days for the year).
@@ -82,8 +113,38 @@ interface ProjYear {
   revpar: number;        // dollars
   roomsRevenue: number;  // dollars
   fbRevenue: number;     // dollars
-  miscRevenue: number;   // dollars (Other Operating)
+  // USALI 11th: Other Operated Departments (spa, golf, parking,
+  // rentals — anything ancillary that runs as its own department)
+  // sits as its own revenue line. Distinct from Resort Fees and
+  // Misc. Income, both of which are smaller / non-departmental.
+  otherOperatedRevenue: number;
+  resortFees: number;
+  miscRevenue: number;   // dollars (Other Misc Income only — small ancillary)
   totalRevenue: number;  // dollars
+  // Optional expense + downstream lines (worker output only;
+  // demo path leaves them undefined and the export skips them).
+  deptRoomsExpense?: number;
+  deptFbExpense?: number;
+  deptOtherExpense?: number;
+  deptTotalExpense?: number;
+  undistAdminGeneral?: number;
+  undistInfoTelecom?: number;
+  undistSalesMarketing?: number;
+  undistPropertyOps?: number;
+  undistUtilities?: number;
+  undistTotal?: number;
+  mgmtFee?: number;
+  fixedPropertyTaxes?: number;
+  fixedInsurance?: number;
+  fixedRent?: number;
+  fixedOther?: number;
+  fixedTotal?: number;
+  gop?: number;
+  // Institutional NOI (GOP - mgmt fee - fixed charges, BEFORE FF&E reserve).
+  noiInstitutional?: number;
+  ffeReserve?: number;
+  // Net cash flow after FF&E reserve = NOI - FF&E.
+  netCashFlow?: number;
 }
 
 const isLeap = (y: number) => (y % 4 === 0 && y % 100 !== 0) || y % 400 === 0;
@@ -238,6 +299,19 @@ export default function ProjectionsSection({
       });
       rows.push(cells);
     };
+    // Emit a row of pure-numeric values (no % Rev / PAR / POR
+    // derivations) — used for headcount-style rows like Days,
+    // Rooms, and the institutional NOI summary block.
+    const plain = (label: string, vals: (number | undefined)[]) => {
+      if (vals.every(v => v === undefined)) return; // skip if engine didn't emit any year
+      rows.push([
+        label,
+        ...vals.flatMap(v =>
+          [v == null ? '' : Number(v.toFixed(0)), '', '', ''] as XlsxCell[],
+        ),
+      ]);
+    };
+
     rows.push(['Days', ...years.flatMap(y => [y.days, '', '', '']) as XlsxCell[]]);
     rows.push(['Number of Rooms', ...years.flatMap(y => [y.rooms, '', '', '']) as XlsxCell[]]);
     rows.push(['Available Rooms', ...years.flatMap(y => [y.availableRooms, '', '', '']) as XlsxCell[]]);
@@ -245,10 +319,54 @@ export default function ProjectionsSection({
     expand('Occupancy', years.map(y => y.occupancy), true);
     expand('Average Rate', years.map(y => y.adr));
     expand('RevPAR', years.map(y => y.revpar));
-    expand('Rooms', years.map(y => y.roomsRevenue));
-    expand('Food & Beverage', years.map(y => y.fbRevenue));
-    expand('Misc. Income', years.map(y => y.miscRevenue));
+
+    // REVENUES — USALI 11th order. Rooms → F&B → Other Operated
+    // Departments (its own line per Sam's P4 ask) → Resort Fees →
+    // Misc Income → Total Revenue.
+    expand('Rooms Revenue', years.map(y => y.roomsRevenue));
+    expand('Food & Beverage Revenue', years.map(y => y.fbRevenue));
+    expand('Other Operated Departments', years.map(y => y.otherOperatedRevenue));
+    if (years.some(y => y.resortFees > 0)) {
+      expand('Resort Fees', years.map(y => y.resortFees));
+    }
+    if (years.some(y => y.miscRevenue > 0)) {
+      expand('Miscellaneous Income', years.map(y => y.miscRevenue));
+    }
     expand('Total Revenue', years.map(y => y.totalRevenue));
+
+    // DEPARTMENTAL EXPENSES — only rendered when the engine emitted
+    // them (real worker deals; not on Kimpton demo or revenue-only
+    // engine output).
+    if (years.some(y => y.deptTotalExpense != null)) {
+      plain('Rooms Departmental Expense', years.map(y => y.deptRoomsExpense));
+      plain('Food & Beverage Departmental Expense', years.map(y => y.deptFbExpense));
+      plain('Other Operated Departmental Expense', years.map(y => y.deptOtherExpense));
+      plain('Total Departmental Expenses', years.map(y => y.deptTotalExpense));
+    }
+
+    // UNDISTRIBUTED EXPENSES
+    if (years.some(y => y.undistTotal != null)) {
+      plain('Administrative & General', years.map(y => y.undistAdminGeneral));
+      plain('Information & Telecom', years.map(y => y.undistInfoTelecom));
+      plain('Sales & Marketing', years.map(y => y.undistSalesMarketing));
+      plain('Property Operations & Maintenance', years.map(y => y.undistPropertyOps));
+      plain('Utilities', years.map(y => y.undistUtilities));
+      plain('Total Undistributed Expenses', years.map(y => y.undistTotal));
+    }
+
+    // SUBTOTALS + FIXED CHARGES + NOI + FCF
+    plain('Gross Operating Profit (GOP)', years.map(y => y.gop));
+    plain('Management Fee', years.map(y => y.mgmtFee));
+    if (years.some(y => y.fixedTotal != null)) {
+      plain('Property Taxes', years.map(y => y.fixedPropertyTaxes));
+      plain('Insurance', years.map(y => y.fixedInsurance));
+      plain('Equipment Lease / Rent', years.map(y => y.fixedRent));
+      plain('Other Fixed Charges', years.map(y => y.fixedOther));
+      plain('Total Fixed Charges', years.map(y => y.fixedTotal));
+    }
+    plain('Net Operating Income (NOI)', years.map(y => y.noiInstitutional));
+    plain('FF&E Reserve', years.map(y => y.ffeReserve));
+    plain('Net Cash Flow', years.map(y => y.netCashFlow));
 
     await downloadXlsx(`projections-${dealId || 'deal'}`, [
       { name: 'Projections', rows },
@@ -392,6 +510,17 @@ function buildFromWorker(
     const availableRooms = keys * days;
     const occupiedRooms = Math.round(availableRooms * (r.occupancy ?? 0));
     const totalRevenue = e?.total_revenue ?? r.total_revenue;
+    // OOD revenue is its own USALI line — split it out from the
+    // Misc bucket (Sam P4 ask). Resort fees are separate again.
+    const otherOperatedRevenue = f?.other_revenue ?? r.other_revenue ?? 0;
+    const resortFees = f?.resort_fees ?? 0;
+    // Pull the expense waterfall when the worker engine has emitted
+    // it. Older engine_outputs rows may not carry every field — fall
+    // back to undefined so the xlsx export simply skips those rows.
+    const noiInst = e?.noi_institutional ?? e?.noi;
+    const ffe = e?.ffe_reserve;
+    const netCashFlow =
+      noiInst != null && ffe != null ? noiInst - ffe : undefined;
     out.push({
       year: r.year,
       days,
@@ -403,8 +532,30 @@ function buildFromWorker(
       revpar: r.revpar ?? 0,
       roomsRevenue: f?.rooms_revenue ?? r.rooms_revenue ?? 0,
       fbRevenue: f?.fb_revenue ?? r.fb_revenue ?? 0,
-      miscRevenue: (f?.other_revenue ?? r.other_revenue ?? 0) + (f?.resort_fees ?? 0),
+      otherOperatedRevenue,
+      resortFees,
+      miscRevenue: 0, // Engine output doesn't carry a separate misc line yet.
       totalRevenue,
+      deptRoomsExpense: e?.dept_expenses?.rooms,
+      deptFbExpense: e?.dept_expenses?.food_beverage,
+      deptOtherExpense: e?.dept_expenses?.other_operated,
+      deptTotalExpense: e?.dept_expenses?.total,
+      undistAdminGeneral: e?.undistributed?.administrative_general,
+      undistInfoTelecom: e?.undistributed?.information_telecom,
+      undistSalesMarketing: e?.undistributed?.sales_marketing,
+      undistPropertyOps: e?.undistributed?.property_operations,
+      undistUtilities: e?.undistributed?.utilities,
+      undistTotal: e?.undistributed?.total,
+      mgmtFee: e?.mgmt_fee,
+      fixedPropertyTaxes: e?.fixed_charges?.property_taxes,
+      fixedInsurance: e?.fixed_charges?.insurance,
+      fixedRent: e?.fixed_charges?.rent,
+      fixedOther: e?.fixed_charges?.other_fixed,
+      fixedTotal: e?.fixed_charges?.total,
+      gop: e?.gop,
+      noiInstitutional: noiInst,
+      ffeReserve: ffe,
+      netCashFlow,
     });
   }
   return out;
@@ -457,7 +608,13 @@ function buildFromKimpton(): ProjYear[] {
       revpar,
       roomsRevenue: rooms$,
       fbRevenue: fb$,
-      miscRevenue: other$,
+      // Kimpton demo has no separate OOD line — surface "other"
+      // under the OOD bucket so the line at least renders, and
+      // leave Resort Fees / Misc at zero. The demo's purpose is to
+      // demonstrate the waterfall, not match a real USALI split.
+      otherOperatedRevenue: other$,
+      resortFees: 0,
+      miscRevenue: 0,
       totalRevenue: total$,
     };
   });
@@ -710,18 +867,51 @@ function ProjectionsTable({ years }: { years: ProjYear[] }) {
             par={par}
             por={por}
           />
-          {/* Misc. Income */}
+          {/* Other Operated Departments — USALI 11th line (spa, golf,
+              parking, rentals, ancillary departments that run as their
+              own profit centers). Sam's P4 ask: split this out from
+              the Misc bucket so it's institutionally honest. */}
           <FullRow
-            label="Misc. Income"
-            indexLabel={indexLabel('misc')}
+            label="Other Operated Departments"
+            indexLabel={indexLabel('other_operated')}
             unit="$"
             years={years}
-            amountOf={(y) => y.miscRevenue}
+            amountOf={(y) => y.otherOperatedRevenue}
             fmtAmount={fmtAmount}
             pctRev={pctRev}
             par={par}
             por={por}
           />
+          {/* Resort Fees — distinct from rooms and from OOD. Hidden
+              when zero across every year (most deals don't carry them). */}
+          {years.some((y) => y.resortFees > 0) && (
+            <FullRow
+              label="Resort Fees"
+              indexLabel={indexLabel('resort_fees')}
+              unit="$"
+              years={years}
+              amountOf={(y) => y.resortFees}
+              fmtAmount={fmtAmount}
+              pctRev={pctRev}
+              par={par}
+              por={por}
+            />
+          )}
+          {/* Misc. Income — only renders when present so the table
+              stays tight on deals that don't carry the bucket. */}
+          {years.some((y) => y.miscRevenue > 0) && (
+            <FullRow
+              label="Misc. Income"
+              indexLabel={indexLabel('misc')}
+              unit="$"
+              years={years}
+              amountOf={(y) => y.miscRevenue}
+              fmtAmount={fmtAmount}
+              pctRev={pctRev}
+              par={par}
+              por={por}
+            />
+          )}
           {/* Total Revenue */}
           <FullRow
             label="Total Revenue"

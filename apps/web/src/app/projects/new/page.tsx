@@ -243,7 +243,7 @@ function Step1({ data, update }: StepProps) {
         <div className="grid grid-cols-2 gap-4">
           <Field label="Keys (optional)" value={data.keys} onChange={v => update({ keys: v })} placeholder="auto-detected from OM" type="number"
             help="Guest room count. Leave blank to source from the OM's `property_overview.keys` field on extraction." />
-          <Select label="Acquisition stage *" value={data.stage} onChange={v => update({ stage: v })} options={dealStages}
+          <Select label="How far along are you in the acquisition process? *" value={data.stage} onChange={v => update({ stage: v })} options={dealStages}
             help="Teaser — pre-NDA screening. Under NDA — accessing the data room. LOI — letter of intent submitted. PSA — under purchase & sale agreement." />
         </div>
         <div className="grid grid-cols-2 gap-4">

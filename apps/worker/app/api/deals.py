@@ -186,6 +186,14 @@ class AssumptionSourcesResponse(BaseModel):
     id: UUID
     sources: dict[str, str] = Field(default_factory=dict)
     values: dict[str, Any] = Field(default_factory=dict)
+    # Per-assumption source document ids (Sam P3 doc-to-engine
+    # traceability). Maps each canonical key whose source label points
+    # at an uploaded doc (t12_actual / cbre_horizons / pnl_benchmark /
+    # om_comps / om_broker) to the document_id that most likely
+    # contributed the value. Seed / deal_row / analyst_override keys
+    # are omitted. The web UI uses these for "click NOI → jump to the
+    # T-12 row" deep links.
+    source_documents: dict[str, str] = Field(default_factory=dict)
 
 
 class GateResponse(BaseModel):
@@ -775,10 +783,22 @@ async def get_assumption_sources(
     # Only return entries that have a tracked source AND a value the
     # UI can read.
     sources_filtered = {k: s for k, s in sources.items() if k in values}
+
+    # Per-document provenance lookup. Best-effort — failures degrade
+    # to an empty map (the badge UI just doesn't render the link icon).
+    from ..services.engine_runner import _load_source_documents
+    try:
+        source_documents = await _load_source_documents(
+            session, deal_id=str(deal_id), sources=sources_filtered,
+        )
+    except Exception:
+        source_documents = {}
+
     return AssumptionSourcesResponse(
         id=deal_id,
         sources=sources_filtered,
         values=values,
+        source_documents=source_documents,
     )
 
 

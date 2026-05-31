@@ -577,10 +577,11 @@ export default function OverviewTab({ projectId }: { projectId: number | string 
               ] as const).map(([label, key]) => {
                 const src = assumptionSources.sources[key];
                 if (!src) return null;
+                const docId = assumptionSources.source_documents?.[key];
                 return (
                   <span key={key} className="inline-flex items-center gap-1 whitespace-nowrap">
                     <span className="text-ink-700">{label}:</span>
-                    <AssumptionBadge source={src} />
+                    <AssumptionBadge source={src} documentId={docId} dealId={dealId} />
                   </span>
                 );
               })}

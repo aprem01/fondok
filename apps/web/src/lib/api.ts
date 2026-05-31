@@ -60,6 +60,11 @@ export interface AssumptionSourcesResponse {
   id: string;
   sources: Record<string, AssumptionSource | string>;
   values: Record<string, number | string | boolean | null>;
+  /** Per-assumption document-id provenance (Sam P3). Maps the
+   *  canonical key to the document_id that most likely contributed
+   *  the value. Only populated for source labels backed by an
+   *  uploaded doc; seed / deal_row / analyst_override are omitted. */
+  source_documents?: Record<string, string>;
 }
 
 export interface NewDealBody {

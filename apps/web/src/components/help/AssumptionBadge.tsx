@@ -1,5 +1,6 @@
 'use client';
-import { Database, Sparkles, Pencil, FileText, BarChart3, Map } from 'lucide-react';
+import { Database, Sparkles, Pencil, FileText, BarChart3, Map, ExternalLink } from 'lucide-react';
+import { useRouter } from 'next/navigation';
 import { cn } from '@/lib/format';
 import type { AssumptionSource } from '@/lib/api';
 
@@ -16,25 +17,63 @@ import type { AssumptionSource } from '@/lib/api';
  */
 export function AssumptionBadge({
   source,
+  documentId,
+  dealId,
   className,
 }: {
   source: AssumptionSource | string | undefined;
+  /** Optional: when present, the badge becomes clickable and routes
+   *  to the Data Room with the contributing doc preselected.
+   *  Sam P3 doc-to-engine traceability — "click the badge → jump
+   *  to the document that produced this assumption." */
+  documentId?: string | null;
+  /** Optional deal id for the routing target. Falls back to no-op
+   *  when omitted (badge still renders, just not clickable). */
+  dealId?: string | null;
   className?: string;
 }) {
+  const router = useRouter();
   if (!source) return null;
   const cfg = SOURCE_META[source as AssumptionSource] ?? SOURCE_META.seed;
   const Icon = cfg.Icon;
-  return (
-    <span
-      className={cn(
-        'inline-flex items-center gap-0.5 px-1 py-0 rounded text-[9.5px] font-medium align-middle leading-none border tabular-nums whitespace-nowrap',
-        cfg.tone,
-        className,
-      )}
-      title={cfg.tooltip}
-    >
+  const clickable = !!(documentId && dealId);
+  const tooltip = clickable
+    ? `${cfg.tooltip} Click to open the source document.`
+    : cfg.tooltip;
+
+  const content = (
+    <>
       <Icon size={9} aria-hidden="true" />
       {cfg.label}
+      {clickable && <ExternalLink size={8} aria-hidden="true" className="opacity-70" />}
+    </>
+  );
+
+  const classes = cn(
+    'inline-flex items-center gap-0.5 px-1 py-0 rounded text-[9.5px] font-medium align-middle leading-none border tabular-nums whitespace-nowrap',
+    cfg.tone,
+    clickable && 'hover:underline cursor-pointer',
+    className,
+  );
+
+  if (clickable) {
+    return (
+      <button
+        type="button"
+        onClick={(e) => {
+          e.stopPropagation();
+          router.push(`/projects/${dealId}?tab=&doc=${documentId}`);
+        }}
+        title={tooltip}
+        className={classes}
+      >
+        {content}
+      </button>
+    );
+  }
+  return (
+    <span className={classes} title={tooltip}>
+      {content}
     </span>
   );
 }

@@ -526,6 +526,143 @@ def _rank_pnl_rows(rows: list[Any]) -> list[tuple[list[Any], str]]:
     return [(p[2], p[3]) for p in parsed]
 
 
+# Source-label → list of doc_types that produce that label. Used by
+# _load_source_documents to map each provenance-tagged assumption back
+# to the specific document_id that fed it.
+_SOURCE_TO_DOC_TYPES: dict[str, tuple[str, ...]] = {
+    SOURCE_T12_ACTUAL: ("T12", "PNL", "PNL_MONTHLY", "PNL_YTD"),
+    SOURCE_CBRE_HORIZONS: ("CBRE_HORIZONS",),
+    SOURCE_PNL_BENCHMARK: ("PNL_BENCHMARK",),
+    SOURCE_OM_COMPS: ("OM",),
+    SOURCE_OM_BROKER: ("OM",),
+}
+
+
+async def _load_source_documents(
+    session: AsyncSession,
+    *,
+    deal_id: str,
+    sources: Mapping[str, str],
+) -> dict[str, str]:
+    """For each provenance-tagged assumption key, return the
+    ``document_id`` that most likely contributed the value.
+
+    Approximate but useful: we don't track at value-write time which
+    individual extraction row supplied each canonical key, so this
+    function maps source labels back to doc_types and picks the
+    highest-ranked document of that type for the deal:
+
+      - P&L family (t12_actual) → highest-ranked by period_type
+        (annual > trailing_twelve > ytd > monthly), then newest.
+      - OM / CBRE / PNL_BENCHMARK → newest extracted doc of that type.
+
+    Source labels with no document provenance (seed / deal_row /
+    analyst_override) are omitted from the returned dict.
+
+    The web UI uses this for "click NOI → jump to the T-12 that
+    fed it" deep links.
+    """
+    out: dict[str, str] = {}
+    try:
+        UUID(deal_id)
+    except (ValueError, TypeError):
+        return out
+
+    # Build the by-doc-type pick once, then map source-tagged keys
+    # onto it. Keeps the SQL count to one round-trip regardless of how
+    # many assumption keys carry a source.
+    needed_doc_types: set[str] = set()
+    for src in sources.values():
+        for dt in _SOURCE_TO_DOC_TYPES.get(src, ()):
+            needed_doc_types.add(dt)
+    if not needed_doc_types:
+        return out
+
+    try:
+        rows = await session.execute(
+            text(
+                """
+                SELECT er.document_id, er.fields, d.doc_type, er.created_at
+                  FROM extraction_results er
+                  JOIN documents d ON d.id = er.document_id
+                 WHERE er.deal_id = :deal
+                   AND d.doc_type = ANY(:types)
+                 ORDER BY er.created_at DESC
+                """
+            ),
+            {"deal": deal_id, "types": list(needed_doc_types)},
+        )
+        all_rows = rows.fetchall()
+    except Exception:
+        # SQLite doesn't support ARRAY parameters — fall back to a
+        # plain IN-list. Best-effort; the API caller treats a missing
+        # map as a degraded UI signal, not a failure.
+        try:
+            placeholders = ",".join(f":t{i}" for i, _ in enumerate(needed_doc_types))
+            params: dict[str, Any] = {"deal": deal_id}
+            for i, t in enumerate(needed_doc_types):
+                params[f"t{i}"] = t
+            rows = await session.execute(
+                text(
+                    f"""
+                    SELECT er.document_id, er.fields, d.doc_type, er.created_at
+                      FROM extraction_results er
+                      JOIN documents d ON d.id = er.document_id
+                     WHERE er.deal_id = :deal AND d.doc_type IN ({placeholders})
+                     ORDER BY er.created_at DESC
+                    """
+                ),
+                params,
+            )
+            all_rows = rows.fetchall()
+        except Exception:
+            return out
+
+    # Group rows by doc_type, ranking the P&L family by period_type.
+    by_doc_type: dict[str, list[Any]] = {}
+    for r in all_rows:
+        dt = (r._mapping.get("doc_type") or "").upper()
+        by_doc_type.setdefault(dt, []).append(r)
+
+    # Pick the winner per doc_type.
+    winners: dict[str, str] = {}
+    pnl_family = {"T12", "PNL", "PNL_MONTHLY", "PNL_YTD"}
+    for dt, rs in by_doc_type.items():
+        if dt in pnl_family:
+            # Use the same period_type ranking as the loaders.
+            best_rank = 99
+            best_doc: str | None = None
+            for r in rs:
+                m = r._mapping
+                raw = m["fields"]
+                if isinstance(raw, str):
+                    try:
+                        raw = json.loads(raw)
+                    except (json.JSONDecodeError, TypeError):
+                        continue
+                if not isinstance(raw, list):
+                    continue
+                pt = _extract_period_type(raw)
+                rank = _PERIOD_TYPE_RANK.get(pt, 50)
+                if rank < best_rank:
+                    best_rank = rank
+                    best_doc = str(m["document_id"])
+            if best_doc:
+                winners[dt] = best_doc
+        else:
+            # OM / CBRE / PNL_BENCHMARK — newest doc by created_at.
+            winners[dt] = str(rs[0]._mapping["document_id"])
+
+    # Map each source-tagged key to whichever doc_type's winner applies.
+    for canonical, src in sources.items():
+        candidate_types = _SOURCE_TO_DOC_TYPES.get(src, ())
+        for dt in candidate_types:
+            if dt in winners:
+                out[canonical] = winners[dt]
+                break
+    return out
+
+
 async def _load_t12_revenue_actuals(
     session: AsyncSession,
     *,
