@@ -574,7 +574,13 @@ export default function DataRoomTab({ projectId }: { projectId: number | string 
             Horizons forecasts, third-party reports. The extractor reads every page and
             structures the data into typed fields the engines consume directly. The
             <span className="font-semibold"> Document Checklist</span> tracks coverage
-            against a full underwriting package.
+            against a full underwriting package.{' '}
+            <a
+              href="/methodology"
+              className="text-brand-700 underline hover:no-underline whitespace-nowrap"
+            >
+              How Fondok underwrites →
+            </a>
           </>
         }
       />

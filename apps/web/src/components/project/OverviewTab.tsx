@@ -427,7 +427,13 @@ export default function OverviewTab({ projectId }: { projectId: number | string 
             Consolidated underwriting view — acquisition, financing, reversion, returns. Each
             value carries a provenance badge so the source (T-12 actual, CBRE Horizons, OM
             comps, analyst override) is visible at a glance. Editable fields are flagged with
-            a pencil; engine-derived fields show a chain icon and update on each model run.
+            a pencil; engine-derived fields show a chain icon and update on each model run.{' '}
+            <a
+              href="/methodology"
+              className="text-brand-700 underline hover:no-underline whitespace-nowrap"
+            >
+              How Fondok underwrites →
+            </a>
           </>
         }
       />

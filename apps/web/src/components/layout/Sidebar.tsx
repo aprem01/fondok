@@ -3,7 +3,7 @@ import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
 import {
   LayoutGrid, FolderKanban, Database, Settings, ChevronDown, Building2,
-  Users, UserCog, LogOut, Plus, Check,
+  Users, UserCog, LogOut, Plus, Check, BookOpen,
 } from 'lucide-react';
 import { useState, useRef, useEffect } from 'react';
 import { OrganizationSwitcher } from '@clerk/nextjs';
@@ -22,6 +22,7 @@ const navItems = [
   { href: '/dashboard', label: 'Dashboard', icon: LayoutGrid },
   { href: '/projects', label: 'Projects', icon: FolderKanban },
   { href: '/data-library', label: 'Data Library', icon: Database },
+  { href: '/methodology', label: 'Methodology', icon: BookOpen },
   { href: '/settings', label: 'Settings', icon: Settings },
 ];
 
