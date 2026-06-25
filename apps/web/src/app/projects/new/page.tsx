@@ -5,7 +5,7 @@ import { useRouter } from 'next/navigation';
 import {
   Check, ChevronDown, Target, TrendingUp, Rocket, UploadCloud, Tag, Search,
   Sparkles, Crown, DollarSign, Pencil, AlertTriangle, ArrowLeft, ChevronRight,
-  Loader2,
+  Loader2, Star, Award,
 } from 'lucide-react';
 import { Card } from '@/components/ui/Card';
 import { Button } from '@/components/ui/Button';
@@ -24,7 +24,18 @@ const steps = [
 ];
 
 const iconForReturn: Record<string, any> = { core: Target, 'value-add': TrendingUp, opportunistic: Rocket };
-const iconForPos: Record<string, any> = { default: Sparkles, luxury: Crown, upscale: TrendingUp, economy: DollarSign };
+// Every positioningTiers id must map here. A missing id renders <undefined />
+// and crashes the wizard with React #130 — the `?? Sparkles` fallback at the
+// call site is belt-and-suspenders against future tier additions.
+const iconForPos: Record<string, any> = {
+  default: Sparkles,
+  economy: DollarSign,
+  midscale: Tag,
+  'upper-midscale': Star,
+  upscale: TrendingUp,
+  'upper-upscale': Award,
+  luxury: Crown,
+};
 
 export default function NewProjectPage() {
   const router = useRouter();
@@ -290,7 +301,7 @@ function Step2({ data, update }: StepProps) {
       </div>
       <div className="grid grid-cols-3 gap-4">
         {returnProfiles.map(p => {
-          const Icon = iconForReturn[p.id];
+          const Icon = iconForReturn[p.id] ?? Target;
           const selected = data.returnProfile === p.id;
           return (
             <button key={p.id} onClick={() => update({ returnProfile: p.id })}
@@ -603,7 +614,7 @@ function Step5({ data, update }: StepProps) {
       </div>
       <div className="grid grid-cols-2 gap-4">
         {positioningTiers.map(p => {
-          const Icon = iconForPos[p.id];
+          const Icon = iconForPos[p.id] ?? Sparkles;
           const selected = data.positioning === p.id;
           return (
             <button key={p.id} onClick={() => update({ positioning: p.id })}
