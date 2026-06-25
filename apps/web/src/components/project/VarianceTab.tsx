@@ -434,7 +434,7 @@ export default function VarianceTab() {
             <tbody>
               {varianceFlags.map(flag => {
                 const decision = decisions[flag.flag_id] || 'pending';
-                const Icon = severityIcon[flag.severity];
+                const Icon = severityIcon[flag.severity] ?? AlertTriangle;
                 const delta = formatDelta(flag);
                 const overstate = flag.broker_overstates && flag.severity !== 'INFO';
                 const rule = rulesById[flag.rule_id];

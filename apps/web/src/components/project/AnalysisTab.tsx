@@ -783,7 +783,7 @@ function CriticReview({
 
       <div className="space-y-3">
         {sorted.map((f) => {
-          const Icon = SEVERITY_ICON[f.severity];
+          const Icon = SEVERITY_ICON[f.severity] ?? AlertTriangle;
           return (
             <Card
               key={f.id}
