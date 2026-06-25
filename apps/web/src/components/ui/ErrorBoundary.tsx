@@ -3,6 +3,7 @@ import { Component, ReactNode } from 'react';
 import { AlertTriangle, RefreshCw } from 'lucide-react';
 import { Card } from './Card';
 import { Button } from './Button';
+import { reportToSentry } from '@/lib/sentry';
 
 interface State {
   hasError: boolean;
@@ -29,9 +30,15 @@ export class ErrorBoundary extends Component<Props, State> {
   }
 
   componentDidCatch(error: Error, info: { componentStack: string }) {
-    // Log to the console; a future hook can ship this to Sentry/Datadog.
+    // Local visibility while debugging.
     // eslint-disable-next-line no-console
     console.error('ErrorBoundary caught:', error, info.componentStack);
+    // Ship to Sentry when configured. No-ops when DSN unset.
+    void reportToSentry(error, {
+      componentStack: info.componentStack,
+      tabName: this.props.tabName,
+      boundary: 'tab',
+    });
   }
 
   reset = () => this.setState({ hasError: false, error: undefined });
