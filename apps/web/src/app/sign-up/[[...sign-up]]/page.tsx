@@ -6,7 +6,9 @@ import { Sparkles } from 'lucide-react';
 import { isClerkConfigured } from '@/lib/auth';
 
 export default function SignUpPage() {
-  if (!isClerkConfigured) {
+  // Treat a missing Clerk export the same as "not configured" so a
+  // partially-loaded SDK doesn't render <undefined> and crash with #130.
+  if (!isClerkConfigured || typeof SignUp !== 'function') {
     return (
       <main className="min-h-screen flex items-center justify-center bg-bg px-6">
         <div className="max-w-md w-full text-center">

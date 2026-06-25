@@ -6,7 +6,9 @@ import { Sparkles } from 'lucide-react';
 import { isClerkConfigured } from '@/lib/auth';
 
 export default function SignInPage() {
-  if (!isClerkConfigured) {
+  // Treat a missing Clerk export the same as "not configured" so a
+  // partially-loaded SDK doesn't render <undefined> and crash with #130.
+  if (!isClerkConfigured || typeof SignIn !== 'function') {
     // No auth backend wired — send the visitor to the dashboard.
     return (
       <main className="min-h-screen flex items-center justify-center bg-bg px-6">

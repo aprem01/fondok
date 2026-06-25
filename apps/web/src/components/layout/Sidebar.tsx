@@ -101,8 +101,12 @@ export default function Sidebar({
       </div>
 
       {/* Workspace switcher — Clerk OrganizationSwitcher when configured,
-          otherwise the static Brookfield Real Estate pill from mockData. */}
-      {isClerkConfigured ? (
+          otherwise the static Brookfield Real Estate pill from mockData.
+          The typeof guard defends against a Clerk bundle that loaded but
+          where the component export came back undefined (dev-key against
+          a prod origin can produce this) — without it, React throws #130
+          and the whole app tree crashes. */}
+      {isClerkConfigured && typeof OrganizationSwitcher === 'function' ? (
         <div className="px-3 pb-2">
           <div className="px-2 py-1">
             <OrganizationSwitcher

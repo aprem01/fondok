@@ -33,5 +33,14 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
       </body>
     </html>
   );
-  return isClerkConfigured ? <ClerkProvider>{tree}</ClerkProvider> : tree;
+  // Defensive: if the @clerk/nextjs bundle loaded but the named export
+  // came back undefined (dev-key against a prod origin can produce this),
+  // skip the provider entirely instead of rendering <undefined> and
+  // crashing the entire app tree with React #130.
+  const hasClerkProvider = typeof ClerkProvider === 'function';
+  return isClerkConfigured && hasClerkProvider ? (
+    <ClerkProvider>{tree}</ClerkProvider>
+  ) : (
+    tree
+  );
 }
