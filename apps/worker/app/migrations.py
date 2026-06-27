@@ -558,6 +558,44 @@ MIGRATIONS: list[tuple[str, str]] = [
         ON due_diligence_questions (tenant_id)
         """,
     ),
+    # ─────────────────── Wave 1 — June 2026 call ───────────────────
+    # Deal lifecycle state for the Onboarding → Validation separation
+    # Eshan asked for on 2026-06-25. State machine:
+    #   ONBOARDING (default) → VALIDATING → READY
+    # See docs/ROADMAP.md item #2.
+    (
+        "deals.add_state",
+        "ALTER TABLE deals ADD COLUMN IF NOT EXISTS state TEXT "
+        "NOT NULL DEFAULT 'ONBOARDING'",
+    ),
+    (
+        "deals.add_validation_started_at",
+        "ALTER TABLE deals ADD COLUMN IF NOT EXISTS validation_started_at "
+        "TIMESTAMPTZ",
+    ),
+    (
+        "deals.add_validation_complete_at",
+        "ALTER TABLE deals ADD COLUMN IF NOT EXISTS validation_complete_at "
+        "TIMESTAMPTZ",
+    ),
+    # Guided-onboarding wizard support. The wizard pre-categorizes each
+    # uploaded file (user picks "this is a 2024 detailed P&L") so the
+    # Router agent can confirm or flag the choice instead of guessing
+    # from filename. See docs/ROADMAP.md item #1.
+    (
+        "documents.add_user_provided_doc_type",
+        "ALTER TABLE documents ADD COLUMN IF NOT EXISTS "
+        "user_provided_doc_type TEXT",
+    ),
+    (
+        "documents.add_fiscal_year",
+        "ALTER TABLE documents ADD COLUMN IF NOT EXISTS fiscal_year INTEGER",
+    ),
+    (
+        "documents.add_misclassified",
+        "ALTER TABLE documents ADD COLUMN IF NOT EXISTS misclassified "
+        "BOOLEAN NOT NULL DEFAULT FALSE",
+    ),
 ]
 
 
@@ -863,6 +901,31 @@ SQLITE_MIGRATIONS: list[tuple[str, str]] = [
         CREATE INDEX IF NOT EXISTS idx_engine_outputs_run
         ON engine_outputs (run_id)
         """,
+    ),
+    # Wave 1 — June 2026 call. SQLite mirror of the Postgres ALTERs above.
+    (
+        "deals.add_state",
+        "ALTER TABLE deals ADD COLUMN state TEXT NOT NULL DEFAULT 'ONBOARDING'",
+    ),
+    (
+        "deals.add_validation_started_at",
+        "ALTER TABLE deals ADD COLUMN validation_started_at TEXT",
+    ),
+    (
+        "deals.add_validation_complete_at",
+        "ALTER TABLE deals ADD COLUMN validation_complete_at TEXT",
+    ),
+    (
+        "documents.add_user_provided_doc_type",
+        "ALTER TABLE documents ADD COLUMN user_provided_doc_type TEXT",
+    ),
+    (
+        "documents.add_fiscal_year",
+        "ALTER TABLE documents ADD COLUMN fiscal_year INTEGER",
+    ),
+    (
+        "documents.add_misclassified",
+        "ALTER TABLE documents ADD COLUMN misclassified INTEGER NOT NULL DEFAULT 0",
     ),
 ]
 

@@ -67,6 +67,29 @@ async def get_tenant_id(
 # ─────────────────────────── request bodies ───────────────────────────
 
 
+class FieldOverrideRecord(BaseModel):
+    """Structured analyst override with a mandatory justification note.
+
+    Roadmap item #6 (June 2026 call) — Eshan's exact ask: "you should
+    have a note when you hard-code something." The note is required at
+    the API layer so the IC review trail always has the reason behind
+    every analyst override.
+
+    Backward compatibility: legacy ``field_overrides`` rows in the DB
+    use the flat shape ``{path: value}``. The engine_runner loader
+    auto-migrates them on read (value preserved, note set to "",
+    overridden_by stamped as "legacy"). Going forward, the API accepts
+    only the structured shape so new overrides cannot skip the note.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    value: float | str | int | bool
+    note: str = Field(min_length=1, max_length=2000)
+    overridden_by: str | None = None  # stamped server-side from auth
+    overridden_at: datetime | None = None  # stamped server-side
+
+
 class CreateDealBody(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
