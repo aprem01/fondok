@@ -111,6 +111,15 @@ class DocumentRecord(BaseModel):
     # file), ``other`` (anything else).
     error_kind: str | None = None
     error_message: str | None = None
+    # USALI compliance scoring (ROADMAP #3). ``usali_score`` is a 0-100
+    # percentage written after a successful P&L-family extraction (T12,
+    # PNL_MONTHLY, PNL_YTD). ``None`` means "inconclusive" — fewer than
+    # 5 USALI rules were applicable; the UI shows that as a label
+    # instead of a misleading percent. ``usali_deviations`` carries the
+    # full JSONB shape: ``{inconclusive, applicable_count, passed_count,
+    # deviations: [...]}``.
+    usali_score: float | None = None
+    usali_deviations: list[dict] | dict | None = None
 
 
 class ExtractionStartResponse(BaseModel):
@@ -466,6 +475,28 @@ def _row_to_record(row: dict[str, Any]) -> DocumentRecord:
         if isinstance(em, str):
             error_message = em
 
+    # USALI compliance — score is nullable (inconclusive ⇒ NULL).
+    # Postgres stores deviations as JSONB (driver returns dict / list);
+    # SQLite stores it as TEXT (we json.dumps on write and parse here).
+    usali_score_raw = row.get("usali_score")
+    try:
+        usali_score: float | None = (
+            float(usali_score_raw) if usali_score_raw is not None else None
+        )
+    except (TypeError, ValueError):
+        usali_score = None
+    usali_deviations: list[dict] | dict | None = None
+    raw_dev = row.get("usali_deviations")
+    if isinstance(raw_dev, (list, dict)):
+        usali_deviations = raw_dev
+    elif isinstance(raw_dev, str) and raw_dev:
+        try:
+            parsed = json.loads(raw_dev)
+            if isinstance(parsed, (list, dict)):
+                usali_deviations = parsed
+        except (json.JSONDecodeError, TypeError):
+            usali_deviations = None
+
     return DocumentRecord(
         id=UUID(str(row["id"])),
         deal_id=UUID(str(row["deal_id"])),
@@ -481,6 +512,8 @@ def _row_to_record(row: dict[str, Any]) -> DocumentRecord:
         parser=row.get("parser"),
         error_kind=error_kind,
         error_message=error_message,
+        usali_score=usali_score,
+        usali_deviations=usali_deviations,
     )
 
 
@@ -573,7 +606,7 @@ async def _find_duplicate_document(
                     SELECT id, deal_id, tenant_id, filename, doc_type,
                            status, uploaded_at, content_hash,
                            storage_key, size_bytes, page_count, parser,
-                           extraction_data
+                           extraction_data, usali_score, usali_deviations
                       FROM documents
                      WHERE deal_id = :deal AND content_hash = :h
                      ORDER BY uploaded_at DESC
@@ -1253,7 +1286,8 @@ async def list_documents(
             """
             SELECT id, deal_id, tenant_id, filename, doc_type, status,
                    uploaded_at, content_hash, storage_key, size_bytes,
-                   page_count, parser, extraction_data
+                   page_count, parser, extraction_data,
+                   usali_score, usali_deviations
               FROM documents
              WHERE deal_id = :deal_id
                AND tenant_id = :tenant
@@ -2337,6 +2371,24 @@ async def _run_extraction_pipeline(
                 deal_id=deal_id,
                 tenant_id=tenant_id,
             )
+
+            # USALI compliance scoring (ROADMAP #3) — run the 66-rule
+            # catalog against this document's extracted fields and
+            # persist the score + deviations back onto the documents
+            # row. Only P&L-family uploads get scored; OMs/STRs/etc.
+            # don't carry the canonical P&L fields the rules check.
+            # Best-effort: a failure here never blocks completion.
+            scoring_doc_type = (
+                refined_doc_type if "refined_doc_type" in locals()
+                else (classified_doc_type or "")
+            )
+            await _persist_usali_score(
+                session,
+                deal_id=deal_id,
+                doc_id=doc_id,
+                doc_type=scoring_doc_type or "",
+                fields=fields,
+            )
         except Exception as exc:  # noqa: BLE001
             logger.exception("extraction failed: doc=%s — %s", doc_id, exc)
             kind, friendly = _classify_extraction_error(exc)
@@ -3012,6 +3064,120 @@ async def _apply_verification_to_confidence(
         doc_id,
         overall,
     )
+
+
+# ─────────────────────────── usali scoring ───────────────────────────
+
+
+# Doc types that carry the canonical P&L fields the USALI catalog
+# expects. Non-P&L docs (OMs, STR reports, market studies, …) lack the
+# revenue / expense lines the rules check, so we don't score them —
+# every applicable count would be 0 and the deviations list useless.
+_PNL_FAMILY_DOC_TYPES: frozenset[str] = frozenset(
+    {"T12", "PNL", "PNL_MONTHLY", "PNL_YTD"}
+)
+
+
+async def _persist_usali_score(
+    session: AsyncSession,
+    *,
+    deal_id: str,
+    doc_id: str,
+    doc_type: str,
+    fields: list[dict[str, Any]],
+) -> None:
+    """Score a P&L extraction against the USALI catalog and persist the
+    score + deviations back to the documents row.
+
+    Best-effort: any failure logs and returns silently — USALI scoring
+    is additive intelligence on top of extraction, never a gate.
+
+    The score persistence policy honors the Wave 1 product decision:
+
+    * Document has <5 applicable rules → store NULL score with the
+      ``inconclusive=True`` flag on the JSONB so the UI shows
+      "Inconclusive (N rules)" instead of a misleading percent.
+    * Document has ≥5 applicable rules → store the 0-100 percent.
+    * Deviations are persisted in both cases (a 3-rule doc can still
+      have a CRITICAL identity violation worth surfacing).
+    * Rules requiring market context the deal lacks (e.g. coastal
+      insurance benchmark) are excluded from the applicable count and
+      surfaced with ``requires_market_context=True``.
+    """
+    dt = (doc_type or "").upper()
+    if dt not in _PNL_FAMILY_DOC_TYPES:
+        return
+    if not fields:
+        return
+    try:
+        # Best-effort: pull a few deal-level context fields off the
+        # deals row so the scorer can resolve rules that probe property
+        # metadata (keys, purchase_price, coastal/seasonal flags). The
+        # extracted fields take precedence — context is only the fallback.
+        extra_context: dict[str, Any] = {}
+        try:
+            deal_row = (
+                await session.execute(
+                    text("SELECT keys, purchase_price FROM deals WHERE id = :id"),
+                    {"id": deal_id},
+                )
+            ).first()
+            if deal_row is not None:
+                m = deal_row._mapping
+                if m.get("keys") is not None:
+                    extra_context["keys"] = m["keys"]
+                if m.get("purchase_price") is not None:
+                    extra_context["purchase_price"] = m["purchase_price"]
+        except Exception:  # noqa: BLE001 - best-effort
+            pass
+
+        from ..services.usali_scorer import (
+            deviations_to_jsonb,
+            flatten_extraction_fields,
+            score_extraction,
+        )
+
+        flat = flatten_extraction_fields(fields, extra_context=extra_context)
+        result = score_extraction(flat)
+        payload = deviations_to_jsonb(result)
+
+        # SQLite stores JSONB as TEXT; we serialize once and let the
+        # driver write either way. ``usali_score`` is NULL on
+        # inconclusive (Wave 1 decision).
+        await session.execute(
+            text(
+                "UPDATE documents "
+                "SET usali_score = :score, usali_deviations = :dev "
+                "WHERE id = :id"
+            ),
+            {
+                "score": result.score,
+                "dev": json.dumps(payload),
+                "id": doc_id,
+            },
+        )
+        await session.commit()
+        logger.info(
+            "usali_score: deal=%s doc=%s score=%s applicable=%d "
+            "passed=%d deviations=%d inconclusive=%s",
+            deal_id,
+            doc_id,
+            (
+                f"{result.score:.2f}"
+                if result.score is not None
+                else "INCONCLUSIVE"
+            ),
+            result.applicable_count,
+            result.passed_count,
+            len(result.deviations),
+            result.inconclusive,
+        )
+    except Exception as exc:  # noqa: BLE001 - never block extraction
+        logger.warning(
+            "usali_score: failed to persist score for doc=%s: %s",
+            doc_id,
+            exc,
+        )
 
 
 # ─────────────────────────── critic ───────────────────────────

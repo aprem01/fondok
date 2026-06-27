@@ -596,19 +596,22 @@ MIGRATIONS: list[tuple[str, str]] = [
         "ALTER TABLE documents ADD COLUMN IF NOT EXISTS misclassified "
         "BOOLEAN NOT NULL DEFAULT FALSE",
     ),
-    # USALI compliance scoring on every extracted P&L. Roadmap §3
-    # (June 2026 call). Score is 0-100 (% of applicable rules passed),
-    # or NULL when inconclusive (< 5 applicable rules per the
-    # 2026-06-27 decision in project_fondok_wave1_decisions).
+    # USALI compliance scoring (ROADMAP #3). Every successful P&L
+    # extraction runs through ``services.usali_scorer.score_extraction``
+    # and writes the result back here. ``usali_score`` is NULL when the
+    # document had fewer than 5 applicable USALI rules — the Wave 1
+    # decision is to surface "Inconclusive" rather than a misleading
+    # 100%. ``usali_deviations`` carries the full deviation list (plus
+    # inconclusive flag + counts) for the UI's compliance badge.
     (
         "documents.add_usali_score",
-        "ALTER TABLE documents ADD COLUMN IF NOT EXISTS usali_score "
-        "NUMERIC(5,2)",
+        "ALTER TABLE documents ADD COLUMN IF NOT EXISTS "
+        "usali_score NUMERIC(5,2)",
     ),
     (
         "documents.add_usali_deviations",
-        "ALTER TABLE documents ADD COLUMN IF NOT EXISTS usali_deviations "
-        "JSONB",
+        "ALTER TABLE documents ADD COLUMN IF NOT EXISTS "
+        "usali_deviations JSONB",
     ),
 ]
 
@@ -941,6 +944,10 @@ SQLITE_MIGRATIONS: list[tuple[str, str]] = [
         "documents.add_misclassified",
         "ALTER TABLE documents ADD COLUMN misclassified INTEGER NOT NULL DEFAULT 0",
     ),
+    # USALI compliance score + deviations (ROADMAP #3). SQLite stores
+    # the score as REAL (matches the Postgres NUMERIC(5,2)) and the
+    # deviations blob as TEXT — same shape as ``extraction_data``: the
+    # API serializes via ``json.dumps`` and parses on read.
     (
         "documents.add_usali_score",
         "ALTER TABLE documents ADD COLUMN usali_score REAL",
