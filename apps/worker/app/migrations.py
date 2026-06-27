@@ -596,6 +596,20 @@ MIGRATIONS: list[tuple[str, str]] = [
         "ALTER TABLE documents ADD COLUMN IF NOT EXISTS misclassified "
         "BOOLEAN NOT NULL DEFAULT FALSE",
     ),
+    # USALI compliance scoring on every extracted P&L. Roadmap §3
+    # (June 2026 call). Score is 0-100 (% of applicable rules passed),
+    # or NULL when inconclusive (< 5 applicable rules per the
+    # 2026-06-27 decision in project_fondok_wave1_decisions).
+    (
+        "documents.add_usali_score",
+        "ALTER TABLE documents ADD COLUMN IF NOT EXISTS usali_score "
+        "NUMERIC(5,2)",
+    ),
+    (
+        "documents.add_usali_deviations",
+        "ALTER TABLE documents ADD COLUMN IF NOT EXISTS usali_deviations "
+        "JSONB",
+    ),
 ]
 
 
@@ -926,6 +940,14 @@ SQLITE_MIGRATIONS: list[tuple[str, str]] = [
     (
         "documents.add_misclassified",
         "ALTER TABLE documents ADD COLUMN misclassified INTEGER NOT NULL DEFAULT 0",
+    ),
+    (
+        "documents.add_usali_score",
+        "ALTER TABLE documents ADD COLUMN usali_score REAL",
+    ),
+    (
+        "documents.add_usali_deviations",
+        "ALTER TABLE documents ADD COLUMN usali_deviations TEXT",
     ),
 ]
 
