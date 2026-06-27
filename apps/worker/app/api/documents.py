@@ -1240,6 +1240,7 @@ async def backfill_embeddings(
 async def list_documents(
     deal_id: UUID,
     session: Annotated[AsyncSession, Depends(get_session)],
+    tenant_id: Annotated[UUID, Depends(get_tenant_id)],
 ) -> list[DocumentRecord]:
     """List documents on a deal in upload-recent order."""
     rows = await session.execute(
@@ -1250,10 +1251,11 @@ async def list_documents(
                    page_count, parser, extraction_data
               FROM documents
              WHERE deal_id = :deal_id
+               AND tenant_id = :tenant
              ORDER BY uploaded_at DESC
             """
         ),
-        {"deal_id": str(deal_id)},
+        {"deal_id": str(deal_id), "tenant": str(tenant_id)},
     )
     return [_row_to_record(dict(r._mapping)) for r in rows.fetchall()]
 
@@ -1485,6 +1487,7 @@ def _build_pnl_block(flat: dict[str, Any]) -> PnlBenchmarkBlock | None:
 async def get_market_data(
     deal_id: UUID,
     session: Annotated[AsyncSession, Depends(get_session)],
+    tenant_id: Annotated[UUID, Depends(get_tenant_id)],
 ) -> MarketDataResponse:
     """Aggregate the deal's external-report extractions into one envelope.
 
@@ -1505,13 +1508,15 @@ async def get_market_data(
               FROM extraction_results er
               JOIN documents d ON d.id = er.document_id
              WHERE er.deal_id = :deal
+               AND er.tenant_id = :tenant
+               AND d.tenant_id = :tenant
                AND UPPER(COALESCE(d.doc_type, '')) IN (
                    'STR_TREND', 'CBRE_HORIZONS', 'PNL_BENCHMARK'
                )
              ORDER BY er.created_at DESC
             """
         ),
-        {"deal": str(deal_id)},
+        {"deal": str(deal_id), "tenant": str(tenant_id)},
     )
     materialized = [dict(r._mapping) for r in rows.fetchall()]
     return _aggregate_market_data(materialized, deal_id)
@@ -1525,6 +1530,7 @@ async def download_document(
     deal_id: UUID,
     doc_id: UUID,
     session: Annotated[AsyncSession, Depends(get_session)],
+    tenant_id: Annotated[UUID, Depends(get_tenant_id)],
 ) -> Response:
     """Stream the raw uploaded file bytes back to the caller.
 
@@ -1539,10 +1545,12 @@ async def download_document(
                 """
                 SELECT filename, storage_key
                   FROM documents
-                 WHERE id = :id AND deal_id = :deal
+                 WHERE id = :id
+                   AND deal_id = :deal
+                   AND tenant_id = :tenant
                 """
             ),
-            {"id": str(doc_id), "deal": str(deal_id)},
+            {"id": str(doc_id), "deal": str(deal_id), "tenant": str(tenant_id)},
         )
     ).first()
     if row is None:

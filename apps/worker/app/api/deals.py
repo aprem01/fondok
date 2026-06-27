@@ -340,6 +340,39 @@ async def _write_audit(
     )
 
 
+async def _assert_deal_belongs_to_tenant(
+    session: AsyncSession,
+    *,
+    deal_id: str | UUID,
+    tenant_id: str | UUID,
+) -> None:
+    """Raise 404 if ``deal_id`` does not belong to ``tenant_id``.
+
+    Defense-in-depth check used by endpoints whose primary read path
+    doesn't already filter by tenant (in-process caches, SSE streams,
+    cost rollups). Returning 404 (not 403) is intentional — leaks no
+    information about whether the deal exists on another tenant.
+    """
+    row = (
+        await session.execute(
+            text(
+                """
+                SELECT 1
+                  FROM deals
+                 WHERE id = :id AND tenant_id = :tenant
+                 LIMIT 1
+                """
+            ),
+            {"id": str(deal_id), "tenant": str(tenant_id)},
+        )
+    ).first()
+    if row is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"deal {deal_id} not found",
+        )
+
+
 # ─────────────────────────── routes ───────────────────────────
 
 
@@ -884,7 +917,11 @@ async def gate2(
 
 
 @router.get("/{deal_id}/memo", response_model=MemoEnvelope)
-async def get_memo(deal_id: UUID) -> MemoEnvelope:
+async def get_memo(
+    deal_id: UUID,
+    session: Annotated[AsyncSession, Depends(get_session)],
+    tenant_id: Annotated[UUID, Depends(get_tenant_id)],
+) -> MemoEnvelope:
     """Final IC memo (JSON envelope).
 
     Backed by the in-process ``MemoCache`` that the Analyst's streaming
@@ -902,6 +939,9 @@ async def get_memo(deal_id: UUID) -> MemoEnvelope:
     Failures, in-progress runs, and successful runs all flow through
     the same shape, just with different ``status`` + ``sections``.
     """
+    await _assert_deal_belongs_to_tenant(
+        session, deal_id=deal_id, tenant_id=tenant_id
+    )
     from ..streaming.broadcast import get_memo_cache
 
     cache = get_memo_cache()
@@ -997,7 +1037,11 @@ async def get_critic_report(
 
 
 @router.get("/{deal_id}/costs", response_model=DealCostReport)
-async def get_deal_costs(deal_id: UUID) -> Any:
+async def get_deal_costs(
+    deal_id: UUID,
+    session: Annotated[AsyncSession, Depends(get_session)],
+    tenant_id: Annotated[UUID, Depends(get_tenant_id)],
+) -> Any:
     """Aggregated LLM cost dashboard for ``deal_id``.
 
     Reads ``ModelCall`` rows from the ``model_calls`` table (when
@@ -1005,6 +1049,9 @@ async def get_deal_costs(deal_id: UUID) -> Any:
     well-formed zeroed report when there's no activity yet so the UI
     can render the empty state without a separate code path.
     """
+    await _assert_deal_belongs_to_tenant(
+        session, deal_id=deal_id, tenant_id=tenant_id
+    )
     return await build_cost_report(str(deal_id))
 
 
@@ -1572,6 +1619,7 @@ async def trigger_memo_generation(
     deal_id: str,
     background_tasks: BackgroundTasks,
     session: Annotated[AsyncSession, Depends(get_session)],
+    tenant_id: Annotated[UUID, Depends(get_tenant_id)],
 ) -> dict[str, str]:
     """Kick off the streaming Opus memo draft. Returns immediately.
 
@@ -1594,6 +1642,9 @@ async def trigger_memo_generation(
     so any error inside the analyst is surfaced via the SSE channel
     (``event: error``) instead of leaving the stream hanging.
     """
+    await _assert_deal_belongs_to_tenant(
+        session, deal_id=deal_id, tenant_id=tenant_id
+    )
     try:
         payload = await _load_deal_payload(deal_id, session=session)
     except MemoInputMissing as exc:
@@ -1640,7 +1691,11 @@ async def trigger_memo_generation(
 
 
 @router.get("/{deal_id}/memo/stream")
-async def stream_memo(deal_id: str) -> StreamingResponse:
+async def stream_memo(
+    deal_id: str,
+    session: Annotated[AsyncSession, Depends(get_session)],
+    tenant_id: Annotated[UUID, Depends(get_tenant_id)],
+) -> StreamingResponse:
     """SSE stream of memo sections as the Analyst writes them.
 
     Lifecycle of an SSE response:
@@ -1663,6 +1718,9 @@ async def stream_memo(deal_id: str) -> StreamingResponse:
 
     A 5-minute absolute timeout guards against pathological hangs.
     """
+    await _assert_deal_belongs_to_tenant(
+        session, deal_id=deal_id, tenant_id=tenant_id
+    )
     from ..streaming.broadcast import (
         DONE_SENTINEL,
         ERROR_SENTINEL,
@@ -1885,6 +1943,7 @@ async def post_memo_edit(
 async def get_memo_edits(
     deal_id: UUID,
     session: Annotated[AsyncSession, Depends(get_session)],
+    tenant_id: Annotated[UUID, Depends(get_tenant_id)],
     section_id: str | None = None,
 ) -> list[MemoEditRecord]:
     """Return the chronological edit history for a deal's memo.
@@ -1892,6 +1951,9 @@ async def get_memo_edits(
     Pass ``section_id`` to scope to a single section; omit it to get
     every edit across the deal (newest first).
     """
+    await _assert_deal_belongs_to_tenant(
+        session, deal_id=deal_id, tenant_id=tenant_id
+    )
     rows = await list_edits(
         session, deal_id=str(deal_id), section_id=section_id
     )
