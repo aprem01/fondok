@@ -8,6 +8,17 @@ Measure" / "Classic" / "Day of Week" / "Custom Trend".
 
 ## Canonical field-path namespace
 
+### Document-level metadata
+- `str_trend.report_year` — integer year the STR report covers.
+  Extract from the report date / period-ending field on the cover
+  page or "By Measure" header. When the report covers a TTM that
+  spans two calendar years, use the year of the period_ending date
+  (e.g. TTM ending Mar-2025 → `2025`). Required for multi-year
+  comp-set drift detection (Wave 1 item #8): the drift service
+  sorts STR_TREND extractions by this field so consecutive-year
+  diffs can surface "Hilton South Beach replaced by W South Beach"
+  side-notes on the Market tab.
+
 ### Subject hotel identity + TTM rollup
 - `ttm_performance.subject.name` — full subject hotel name (extract
   from the "Custom Trend: <name>" header line at the top of the file).
