@@ -1564,6 +1564,110 @@ async def get_comp_set_drift(
     return drift_report_to_pydantic(report)
 
 
+# ─────────────────────────── document-coverage audit ───────────────────────────
+
+
+class CoverageGapOut(BaseModel):
+    """One gap entry — serialized shape of ``CoverageGap`` for the API.
+
+    Mirrors the dataclass in ``services.coverage_audit`` but lives here
+    so the OpenAPI schema renders without dragging the service layer
+    into the router import path.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    gap_type: str
+    year: int
+    message: str
+    severity: str
+    months_missing: list[int] | None = None
+    dismissible: bool = False
+
+
+class CoverageDocOut(BaseModel):
+    """One contributing document inside a year's coverage entry."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    doc_id: str | None = None
+    doc_type: str | None = None
+    period_type: str | None = None
+    period_ending: str | None = None
+
+
+class DocumentCoverageResponse(BaseModel):
+    """Full coverage rollup returned by GET /deals/{deal_id}/document_coverage."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    deal_id: UUID
+    year_coverage: dict[int, list[CoverageDocOut]] = Field(default_factory=dict)
+    gaps: list[CoverageGapOut] = Field(default_factory=list)
+    lookback_years: int
+
+
+@router.get(
+    "/{deal_id}/document_coverage",
+    response_model=DocumentCoverageResponse,
+)
+async def get_document_coverage(
+    deal_id: UUID,
+    session: Annotated[AsyncSession, Depends(get_session)],
+    tenant_id: Annotated[UUID, Depends(get_tenant_id)],
+    lookback_years: int = 5,
+) -> DocumentCoverageResponse:
+    """Sequential + detail-level gap detection on the deal's P&L uploads.
+
+    Roadmap item #7 — Sam's June 25 framing: "If I have financials from
+    2019 to 2025 but I'm missing detailed for 2024 to 2025, only summary
+    — that's a gap I'd want Fondok to flag." This endpoint backs the gap
+    chips strip on the Onboarding / Data Room view.
+
+    Query params
+    ------------
+    lookback_years
+        How far back (from the current year) to demand contiguous
+        coverage. Wave 1 default is 5 — analysts can pass a custom value
+        per deal when the property has a longer / shorter history.
+
+    Tenant scoping
+    --------------
+    Every query is tenant-scoped via ``X-Tenant-Id`` (see commit
+    ``2a8ed64`` for the P0 fix that hardened the previously-leaky
+    endpoints). A tenant can only see its own documents — cross-tenant
+    rows are filtered out at the SQL layer.
+    """
+    from ..services.coverage_audit import audit_document_coverage
+
+    coverage = await audit_document_coverage(
+        session,
+        deal_id=str(deal_id),
+        tenant_id=str(tenant_id),
+        lookback_years=lookback_years,
+    )
+
+    return DocumentCoverageResponse(
+        deal_id=deal_id,
+        year_coverage={
+            year: [CoverageDocOut(**entry) for entry in entries]
+            for year, entries in sorted(coverage.year_coverage.items())
+        },
+        gaps=[
+            CoverageGapOut(
+                gap_type=g.gap_type,
+                year=g.year,
+                message=g.message,
+                severity=g.severity,
+                months_missing=g.months_missing,
+                dismissible=g.dismissible,
+            )
+            for g in coverage.gaps
+        ],
+        lookback_years=coverage.lookback_years,
+    )
+
+
 # ─────────────────────────── download ───────────────────────────
 
 
