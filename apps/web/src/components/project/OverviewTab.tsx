@@ -19,6 +19,7 @@ import { useDeal } from '@/lib/hooks/useDeal';
 import { useFlash } from '@/lib/hooks/useFlash';
 import { IntroCard } from '@/components/help/IntroCard';
 import { AssumptionBadge } from '@/components/help/AssumptionBadge';
+import OverrideModal from '@/components/help/OverrideModal';
 import { MetricLabel } from '@/components/help/MetricLabel';
 import { Term } from '@/components/help/Term';
 import { GLOSSARY } from '@/lib/glossary';
@@ -134,6 +135,57 @@ export default function OverviewTab({ projectId }: { projectId: number | string 
     },
     [overrides, dealId, liveMode, toast, refreshDeal, fullRun],
   );
+
+  // ─── Modal-based override (with mandatory justification note) ───────
+  // Roadmap item #6 (June 2026 call). The badge-based override flow
+  // surfaces an OverrideModal that forces the analyst to record a
+  // reason. Written as the new structured shape: ``{value, note}``.
+  // Engines see it as a scalar via _normalize_override_shape on the
+  // worker side, so this is fully backward-compatible with existing
+  // flat-shape overrides.
+  const [overrideTarget, setOverrideTarget] = useState<{
+    path: string;
+    label: string;
+    currentValue: string | number | null | undefined;
+    currentSource: string;
+  } | null>(null);
+
+  const onSaveOverrideWithNote = useCallback(
+    async ({ value, note }: { value: string; note: string }) => {
+      if (!overrideTarget) return;
+      if (!liveMode) {
+        toast('Override is disabled on demo deals', { type: 'info' });
+        return;
+      }
+      const path = overrideTarget.path;
+      // Try to coerce numeric strings so engines can apply the override.
+      const asNumber = Number(value);
+      const coerced: number | string = Number.isFinite(asNumber) && value.trim() !== ''
+        ? asNumber
+        : value;
+      const next = {
+        ...overrides,
+        [path]: { value: coerced, note },
+      };
+      setOverrides(next); // optimistic
+      try {
+        await api.deals.update(dealId, { field_overrides: next });
+        toast('Override saved — re-running engines', { type: 'success' });
+        void refreshDeal?.();
+        if (rerunTimerRef.current) clearTimeout(rerunTimerRef.current);
+        rerunTimerRef.current = setTimeout(() => {
+          void fullRun.run();
+        }, 1500);
+      } catch (err) {
+        setOverrides(overrides); // rollback
+        const msg = err instanceof Error ? err.message : 'Unknown error';
+        toast(`Override failed: ${msg}`, { type: 'error' });
+        throw err;
+      }
+    },
+    [overrideTarget, overrides, dealId, liveMode, toast, refreshDeal, fullRun],
+  );
+
   // Property-detail fields (Year Built, GBA, Meeting Space, etc.) come from
   // the OM extraction, not from any engine. We aggregate fields across all
   // OM-classified docs and resolve each metadata key by trying a list of
@@ -584,10 +636,34 @@ export default function OverviewTab({ projectId }: { projectId: number | string 
                 const src = assumptionSources.sources[key];
                 if (!src) return null;
                 const docId = assumptionSources.source_documents?.[key];
+                const currentValue = assumptionSources.values?.[key] as number | string | null | undefined;
+                // Pull the existing note (if any) so the badge tooltip
+                // surfaces it without opening the modal.
+                const existing = overrides[key];
+                const existingNote =
+                  existing && typeof existing === 'object' && 'note' in existing
+                    ? String((existing as { note?: unknown }).note ?? '')
+                    : null;
                 return (
                   <span key={key} className="inline-flex items-center gap-1 whitespace-nowrap">
                     <span className="text-ink-700">{label}:</span>
-                    <AssumptionBadge source={src} documentId={docId} dealId={dealId} />
+                    <AssumptionBadge
+                      source={src}
+                      documentId={docId}
+                      dealId={dealId}
+                      overrideNote={existingNote}
+                      onOverride={
+                        liveMode
+                          ? () =>
+                              setOverrideTarget({
+                                path: key,
+                                label,
+                                currentValue,
+                                currentSource: src,
+                              })
+                          : undefined
+                      }
+                    />
                   </span>
                 );
               })}
@@ -721,6 +797,19 @@ export default function OverviewTab({ projectId }: { projectId: number | string 
       <ProformaPanel outputs={outputs} isKimptonDemo={isKimptonDemo} />
 
       <SensitivityAnalysis outputs={outputs} isKimptonDemo={isKimptonDemo} />
+
+      {/* Override modal — opens when an AssumptionBadge's onOverride
+          callback fires (Sources strip on the Returns Summary card).
+          Roadmap item #6 from the June 2026 call. */}
+      <OverrideModal
+        open={overrideTarget !== null}
+        fieldPath={overrideTarget?.path ?? ''}
+        fieldLabel={overrideTarget?.label ?? ''}
+        currentValue={overrideTarget?.currentValue}
+        currentSource={overrideTarget?.currentSource ?? ''}
+        onClose={() => setOverrideTarget(null)}
+        onSubmit={onSaveOverrideWithNote}
+      />
     </div>
   );
 }
