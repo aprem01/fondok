@@ -596,6 +596,55 @@ MIGRATIONS: list[tuple[str, str]] = [
         "ALTER TABLE documents ADD COLUMN IF NOT EXISTS misclassified "
         "BOOLEAN NOT NULL DEFAULT FALSE",
     ),
+    # ─────────────────── Wave 1 — Broker questions (#4) ───────────────
+    # YoY variance-driven follow-ups for the seller broker. Produced by
+    # the deterministic ``HistoricalVariance`` engine (NOT the LLM-
+    # orchestrated variance.py agent). See
+    # ``apps/worker/app/engines/historical_variance.py`` and roadmap
+    # item #4.
+    (
+        "broker_questions.create_table",
+        """
+        CREATE TABLE IF NOT EXISTS broker_questions (
+            id                  UUID PRIMARY KEY,
+            deal_id             UUID NOT NULL REFERENCES deals(id) ON DELETE CASCADE,
+            tenant_id           UUID NOT NULL,
+            line_item           TEXT NOT NULL,
+            period_key          TEXT NOT NULL,
+            variance_pct        NUMERIC(8,4) NOT NULL,
+            actual_prior        NUMERIC(14,2),
+            actual_current      NUMERIC(14,2),
+            threshold_pct       NUMERIC(6,4) NOT NULL,
+            severity            TEXT NOT NULL CHECK (severity IN ('CRITICAL','WARN','INFO')),
+            question_text       TEXT NOT NULL,
+            state               TEXT NOT NULL DEFAULT 'pending'
+                                  CHECK (state IN ('pending','dismissed','sent','answered')),
+            dismissal_reason    TEXT,
+            broker_response     TEXT,
+            created_at          TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+            updated_at          TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        )
+        """,
+    ),
+    (
+        "broker_questions.idx_tenant_deal",
+        """
+        CREATE INDEX IF NOT EXISTS idx_broker_questions_tenant_deal
+        ON broker_questions (tenant_id, deal_id, created_at DESC)
+        """,
+    ),
+    # Dedupe key for /refresh: one question per (deal, line, period_key)
+    # lives in the open queue. The partial unique index lets a question
+    # legitimately reappear after being dismissed/answered without
+    # blocking a re-emit on the next /refresh.
+    (
+        "broker_questions.uq_open_per_line",
+        """
+        CREATE UNIQUE INDEX IF NOT EXISTS uq_broker_questions_open_per_line
+        ON broker_questions (deal_id, line_item, period_key)
+        WHERE state IN ('pending', 'sent')
+        """,
+    ),
 ]
 
 
@@ -926,6 +975,41 @@ SQLITE_MIGRATIONS: list[tuple[str, str]] = [
     (
         "documents.add_misclassified",
         "ALTER TABLE documents ADD COLUMN misclassified INTEGER NOT NULL DEFAULT 0",
+    ),
+    # ─────────────────── Wave 1 — Broker questions (#4) ───────────────
+    # SQLite mirror of the Postgres broker_questions table. JSONB →
+    # TEXT, UUID → TEXT, no partial indexes (SQLite supports them but
+    # we enforce open-row uniqueness in the API layer to keep the dedupe
+    # SQL identical across dialects).
+    (
+        "broker_questions.create_table",
+        """
+        CREATE TABLE IF NOT EXISTS broker_questions (
+            id                  TEXT PRIMARY KEY,
+            deal_id             TEXT NOT NULL,
+            tenant_id           TEXT NOT NULL,
+            line_item           TEXT NOT NULL,
+            period_key          TEXT NOT NULL,
+            variance_pct        REAL NOT NULL,
+            actual_prior        REAL,
+            actual_current      REAL,
+            threshold_pct       REAL NOT NULL,
+            severity            TEXT NOT NULL,
+            question_text       TEXT NOT NULL,
+            state               TEXT NOT NULL DEFAULT 'pending',
+            dismissal_reason    TEXT,
+            broker_response     TEXT,
+            created_at          TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            updated_at          TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+        )
+        """,
+    ),
+    (
+        "broker_questions.idx_tenant_deal",
+        """
+        CREATE INDEX IF NOT EXISTS idx_broker_questions_tenant_deal
+        ON broker_questions (tenant_id, deal_id, created_at DESC)
+        """,
     ),
 ]
 

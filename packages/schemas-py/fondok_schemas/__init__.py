@@ -18,6 +18,7 @@ from .analysis import (
     RiskTier,
     ScenarioSummary,
 )
+from .broker_question import BrokerQuestion
 from .common import Money, ModelCall, Risk, Severity, TenantScoped
 from .confidence import ConfidenceReport
 from .cost import AgentCost, DealCostReport
@@ -103,6 +104,8 @@ __all__ = [
     "RiskCategoryName",
     "RiskTier",
     "ScenarioSummary",
+    # broker_question
+    "BrokerQuestion",
     # common
     "ModelCall",
     "Money",
