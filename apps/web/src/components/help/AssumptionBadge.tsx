@@ -13,6 +13,13 @@ import type { AssumptionSource } from '@/lib/api';
  * see whether the value is a seed, extracted from a real doc, or an
  * analyst override.
  *
+ * When ``onOverride`` is provided, the badge renders an extra small
+ * "Override" button alongside the source label so the analyst can
+ * hard-code the value with a mandatory justification note (roadmap
+ * item #6 from the June 2026 call). The callback opens the
+ * ``OverrideModal``; the page that owns the data is responsible for
+ * the actual PATCH + re-render.
+ *
  * Use inline: `Net Operating Income $4.2M <AssumptionBadge source="t12_actual"/>`
  */
 export function AssumptionBadge({
@@ -20,6 +27,8 @@ export function AssumptionBadge({
   documentId,
   dealId,
   className,
+  onOverride,
+  overrideNote,
 }: {
   source: AssumptionSource | string | undefined;
   /** Optional: when present, the badge becomes clickable and routes
@@ -31,15 +40,26 @@ export function AssumptionBadge({
    *  when omitted (badge still renders, just not clickable). */
   dealId?: string | null;
   className?: string;
+  /** When provided, renders an "Override" pencil button next to the
+   *  badge. The callback receives no args — the parent owns the field
+   *  identity and renders the modal. */
+  onOverride?: () => void;
+  /** When the active source is ``analyst_override``, surface the note
+   *  the analyst recorded in the badge tooltip. */
+  overrideNote?: string | null;
 }) {
   const router = useRouter();
   if (!source) return null;
   const cfg = SOURCE_META[source as AssumptionSource] ?? SOURCE_META.seed;
   const Icon = cfg.Icon;
   const clickable = !!(documentId && dealId);
-  const tooltip = clickable
-    ? `${cfg.tooltip} Click to open the source document.`
-    : cfg.tooltip;
+  let tooltip = cfg.tooltip;
+  if (clickable) {
+    tooltip = `${tooltip} Click to open the source document.`;
+  }
+  if (source === 'analyst_override' && overrideNote) {
+    tooltip = `${tooltip}\n\nNote: ${overrideNote}`;
+  }
 
   const content = (
     <>
@@ -56,24 +76,41 @@ export function AssumptionBadge({
     className,
   );
 
-  if (clickable) {
-    return (
+  const sourceEl = clickable ? (
+    <button
+      type="button"
+      onClick={(e) => {
+        e.stopPropagation();
+        router.push(`/projects/${dealId}?tab=&doc=${documentId}`);
+      }}
+      title={tooltip}
+      className={classes}
+    >
+      {content}
+    </button>
+  ) : (
+    <span className={classes} title={tooltip}>
+      {content}
+    </span>
+  );
+
+  if (!onOverride) return sourceEl;
+
+  return (
+    <span className="inline-flex items-center gap-1 align-middle">
+      {sourceEl}
       <button
         type="button"
         onClick={(e) => {
           e.stopPropagation();
-          router.push(`/projects/${dealId}?tab=&doc=${documentId}`);
+          onOverride();
         }}
-        title={tooltip}
-        className={classes}
+        title="Override this value with an analyst note"
+        className="inline-flex items-center justify-center w-4 h-4 rounded text-ink-500 hover:text-warn-700 hover:bg-warn-50 transition-colors"
+        aria-label="Override value"
       >
-        {content}
+        <Pencil size={9} aria-hidden="true" />
       </button>
-    );
-  }
-  return (
-    <span className={classes} title={tooltip}>
-      {content}
     </span>
   );
 }

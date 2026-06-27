@@ -815,6 +815,29 @@ _OM_DEBT_FIELD_ALIASES: dict[str, str] = _CATALOG_OM_DEBT_FIELD_ALIASES
 _OM_PERCENTAGE_KEYS: frozenset[str] = _CATALOG_OM_PERCENTAGE_KEYS
 
 
+def _normalize_override_shape(raw: dict[str, Any]) -> dict[str, Any]:
+    """Flatten both legacy and structured override shapes to ``{path: value}``.
+
+    Roadmap item #6 (June 2026 call). Two shapes coexist:
+
+    * Legacy (pre-2026-06): ``{"property_overview.year_built": 2005}``
+    * Structured (2026-06+): ``{"property_overview.year_built": {
+        "value": 2005, "note": "Major facade refresh per OM",
+        "overridden_by": "user:alice", "overridden_at": "..."}}``
+
+    Engines only need the scalar; the note + audit fields are surfaced
+    by the deal-row response shape and the IC memo's underwriting
+    section. Normalize here so ``_apply_overrides`` stays simple.
+    """
+    out: dict[str, Any] = {}
+    for path, val in raw.items():
+        if isinstance(val, dict) and "value" in val:
+            out[path] = val["value"]
+        else:
+            out[path] = val
+    return out
+
+
 async def _load_deal_overrides(
     session: AsyncSession,
     *,
@@ -825,7 +848,8 @@ async def _load_deal_overrides(
     Returns ``{}`` for non-UUID ids, missing rows, or schemas where the
     migration hasn't run yet (test DBs). The column is keyed by canonical
     extractor field path (e.g. ``property_overview.year_built``) →
-    primitive value.
+    primitive value. See ``_normalize_override_shape`` for the legacy /
+    structured shape handling.
     """
     try:
         UUID(deal_id)
@@ -844,13 +868,15 @@ async def _load_deal_overrides(
         return {}
     raw = row._mapping.get("field_overrides")
     if isinstance(raw, dict):
-        return raw
+        return _normalize_override_shape(raw)
     if isinstance(raw, str):
         try:
             parsed = json.loads(raw)
         except json.JSONDecodeError:
             return {}
-        return parsed if isinstance(parsed, dict) else {}
+        if not isinstance(parsed, dict):
+            return {}
+        return _normalize_override_shape(parsed)
     return {}
 
 

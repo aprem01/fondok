@@ -15,7 +15,7 @@ import json
 import logging
 from collections.abc import AsyncIterator
 from datetime import UTC, datetime
-from typing import Annotated, Any
+from typing import Annotated, Any, Literal
 from uuid import UUID, uuid4
 
 from fastapi import APIRouter, BackgroundTasks, Depends, Header, HTTPException, status
@@ -170,9 +170,16 @@ class DealRecord(BaseModel):
     purchase_price: float | None = None
     sourcing_channel: str | None = None
     # Per-field analyst overrides — keyed by extractor field path (e.g.
-    # ``property_overview.year_built``) → primitive value. Empty dict
-    # means the deal is purely extracted/derived.
+    # ``property_overview.year_built``) → either a scalar (legacy) or
+    # a ``FieldOverrideRecord``-shaped dict ``{value, note, overridden_by,
+    # overridden_at}``. New overrides land in the structured shape; the
+    # engine_runner reads either via ``_normalize_override_shape``.
     field_overrides: dict[str, Any] = Field(default_factory=dict)
+    # Deal lifecycle state for the Onboarding → Validation separation
+    # Eshan asked for. ONBOARDING (default) → VALIDATING → READY.
+    state: str = "ONBOARDING"
+    validation_started_at: datetime | None = None
+    validation_complete_at: datetime | None = None
     created_at: datetime
     updated_at: datetime
 
@@ -304,6 +311,16 @@ def _coerce_overrides(value: Any) -> dict[str, Any]:
     return {}
 
 
+def _coerce_dt_optional(value: Any) -> datetime | None:
+    """Like ``_coerce_dt`` but returns None for null/missing values."""
+    if value is None:
+        return None
+    try:
+        return _coerce_dt(value)
+    except Exception:
+        return None
+
+
 def _row_to_record(row: dict[str, Any]) -> DealRecord:
     return DealRecord(
         id=UUID(str(row["id"])),
@@ -322,6 +339,9 @@ def _row_to_record(row: dict[str, Any]) -> DealRecord:
         purchase_price=_coerce_float(row.get("purchase_price")),
         sourcing_channel=row.get("sourcing_channel"),
         field_overrides=_coerce_overrides(row.get("field_overrides")),
+        state=row.get("state") or "ONBOARDING",
+        validation_started_at=_coerce_dt_optional(row.get("validation_started_at")),
+        validation_complete_at=_coerce_dt_optional(row.get("validation_complete_at")),
         created_at=_coerce_dt(row.get("created_at")),
         updated_at=_coerce_dt(row.get("updated_at")),
     )
@@ -331,6 +351,7 @@ _DEAL_COLUMNS = (
     "id, tenant_id, name, city, keys, service, status, deal_stage, "
     "risk, ai_confidence, return_profile, brand, positioning, "
     "purchase_price, sourcing_channel, field_overrides, "
+    "state, validation_started_at, validation_complete_at, "
     "created_at, updated_at"
 )
 
@@ -937,6 +958,147 @@ async def gate2(
     return GateResponse(
         id=deal_id, gate="gate2", accepted=accepted, next_state=next_state
     )
+
+
+class TransitionBody(BaseModel):
+    """POST body for /{deal_id}/transition.
+
+    Drives the deal lifecycle: ONBOARDING → VALIDATING → READY. Notes
+    land in the audit log so the IC review trail captures who advanced
+    the deal at each gate and why.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    next_state: Literal["ONBOARDING", "VALIDATING", "READY"]
+    notes: str | None = None
+
+
+_ALLOWED_TRANSITIONS: dict[str, set[str]] = {
+    "ONBOARDING": {"VALIDATING"},
+    "VALIDATING": {"READY", "ONBOARDING"},  # can roll back to add more docs
+    "READY": {"VALIDATING"},  # can re-open for revisions
+}
+
+
+@router.post("/{deal_id}/transition", response_model=DealRecord)
+async def transition_deal_state(
+    deal_id: UUID,
+    body: TransitionBody,
+    session: Annotated[AsyncSession, Depends(get_session)],
+    tenant_id: Annotated[UUID, Depends(get_tenant_id)],
+) -> DealRecord:
+    """Advance a deal through the lifecycle state machine.
+
+    Roadmap item #2 (June 2026 call). Eshan asked for strict separation
+    between Onboarding (data collection) and Validation (gap/anomaly
+    review). This endpoint is how the deal moves between phases.
+
+    The state machine:
+
+        ONBOARDING (default) → VALIDATING → READY
+                            ←------------ ←-----
+
+    Backward transitions are allowed (e.g., ``VALIDATING → ONBOARDING``
+    when the analyst needs to add more documents) so the UI can offer
+    a "back to onboarding" CTA without minting a new deal.
+
+    Pre-condition gating (e.g., "must have all checklist items green
+    before VALIDATING → READY") is deferred — Sam needs to confirm the
+    exact criteria. For now this endpoint enforces only the topological
+    transition rules above and stamps the timestamp + audit trail.
+    """
+    current = (
+        await session.execute(
+            text(
+                """
+                SELECT state, validation_started_at, validation_complete_at
+                  FROM deals
+                 WHERE id = :id AND tenant_id = :tenant
+                """
+            ),
+            {"id": str(deal_id), "tenant": str(tenant_id)},
+        )
+    ).first()
+    if current is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"deal {deal_id} not found",
+        )
+    current_state = current._mapping.get("state") or "ONBOARDING"
+    if body.next_state not in _ALLOWED_TRANSITIONS.get(current_state, set()):
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=(
+                f"transition {current_state} → {body.next_state} not allowed"
+            ),
+        )
+
+    now = _now()
+    # Stamp timestamps only on the forward transitions; backward moves
+    # leave the prior timestamps intact so the audit trail captures the
+    # original validation window.
+    started_at_clause = ""
+    complete_at_clause = ""
+    params: dict[str, Any] = {
+        "id": str(deal_id),
+        "tenant": str(tenant_id),
+        "next_state": body.next_state,
+        "now": now,
+    }
+    if body.next_state == "VALIDATING" and current_state == "ONBOARDING":
+        started_at_clause = ", validation_started_at = :now"
+    if body.next_state == "READY":
+        complete_at_clause = ", validation_complete_at = :now"
+
+    await session.execute(
+        text(
+            f"""
+            UPDATE deals
+               SET state = :next_state,
+                   updated_at = :now
+                   {started_at_clause}
+                   {complete_at_clause}
+             WHERE id = :id AND tenant_id = :tenant
+            """
+        ),
+        params,
+    )
+    await log_audit(
+        session,
+        tenant_id=str(tenant_id),
+        actor_id="system",
+        action="deal.transition",
+        resource_type="deal",
+        resource_id=str(deal_id),
+        output_payload={
+            "from_state": current_state,
+            "to_state": body.next_state,
+            "notes": body.notes,
+        },
+    )
+    await session.commit()
+    logger.info(
+        "deal.transition: deal=%s %s → %s",
+        deal_id,
+        current_state,
+        body.next_state,
+    )
+
+    row = (
+        await session.execute(
+            text(
+                f"""
+                SELECT {_DEAL_COLUMNS}
+                  FROM deals
+                 WHERE id = :id AND tenant_id = :tenant
+                """
+            ),
+            {"id": str(deal_id), "tenant": str(tenant_id)},
+        )
+    ).first()
+    assert row is not None  # we just UPDATEd it
+    return _row_to_record(dict(row._mapping))
 
 
 @router.get("/{deal_id}/memo", response_model=MemoEnvelope)
