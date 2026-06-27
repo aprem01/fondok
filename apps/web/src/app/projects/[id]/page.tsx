@@ -6,7 +6,7 @@ import Link from 'next/link';
 import {
   ArrowLeft, MapPin, Building2, Calendar, Users, Share2, X,
   Sparkles, FolderOpen, FileText, DollarSign, TrendingUp, BarChart3, Activity,
-  Briefcase, MapPinned, FileSearch, Download, AlertTriangle,
+  Briefcase, MapPinned, FileSearch, Download, AlertTriangle, ShieldCheck,
 } from 'lucide-react';
 import { Button } from '@/components/ui/Button';
 import { StatusBadge } from '@/components/ui/Badge';
@@ -51,6 +51,9 @@ const MarketTab = dynamic(() => import('@/components/project/MarketTab'), {
 const AnalysisTab = dynamic(() => import('@/components/project/AnalysisTab'), {
   loading: () => <TabLoadingSkeleton />,
 });
+const ValidationTab = dynamic(() => import('@/components/project/ValidationTab'), {
+  loading: () => <TabLoadingSkeleton />,
+});
 
 // Per the May 7 scope alignment, five tabs are visually grayed in the tab
 // strip while the design partner demo focuses on the Data Room → P&L →
@@ -66,6 +69,7 @@ type Tab = {
 
 const tabs: Tab[] = [
   { id: '', label: 'Data Room', icon: FolderOpen },
+  { id: 'validation', label: 'Validation', icon: ShieldCheck },
   { id: 'overview', label: 'Overview', icon: FileText },
   { id: 'investment', label: 'Investment', icon: Briefcase, inactive: true },
   { id: 'pl', label: 'P&L', icon: BarChart3 },
@@ -432,6 +436,9 @@ export default function ProjectDetailPage() {
       <div className="p-8" role="tabpanel" aria-label={`${activeLabel} content`}>
         {activeTab === '' && (
           <ErrorBoundary tabName="Data Room"><DataRoomTab projectId={id} /></ErrorBoundary>
+        )}
+        {activeTab === 'validation' && (
+          <ErrorBoundary tabName="Validation"><ValidationTab dealId={String(id)} /></ErrorBoundary>
         )}
         {activeTab === 'overview' && (
           <ErrorBoundary tabName="Overview"><OverviewTab projectId={id} /></ErrorBoundary>
