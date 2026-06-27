@@ -43,6 +43,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from ..config import get_settings
 from ..database import get_session, get_session_factory
 from ..extraction import ParseError, parse_document
+from ..services.comp_set_drift import (
+    CompSetDriftReportOut,
+    compute_comp_set_drift,
+    drift_report_to_pydantic,
+)
 from ..storage import StorageError, get_raw_store
 from .deals import get_tenant_id
 
@@ -1520,6 +1525,43 @@ async def get_market_data(
     )
     materialized = [dict(r._mapping) for r in rows.fetchall()]
     return _aggregate_market_data(materialized, deal_id)
+
+
+# ─────────────────────────── comp-set drift ───────────────────────────
+
+
+@router.get("/{deal_id}/comp_set_drift", response_model=CompSetDriftReportOut)
+async def get_comp_set_drift(
+    deal_id: UUID,
+    session: Annotated[AsyncSession, Depends(get_session)],
+    tenant_id: Annotated[UUID, Depends(get_tenant_id)],
+) -> CompSetDriftReportOut:
+    """STR comp-set drift across years — Wave 1 roadmap item #8.
+
+    Walks every STR_TREND extraction for the deal, sorts by
+    ``str_trend.report_year`` (the schema field added alongside this
+    feature), and emits one diff per consecutive year pair. The
+    response surfaces ``added`` / ``removed`` / ``unchanged`` plus
+    ``uncertain_matches`` — fuzzy-name pairs above the 80% threshold
+    that an analyst should sanity-check before the side-note ships in
+    the memo.
+
+    Eshan's framing on the June 25 2026 call: "In 2024 you had Hilton
+    South Beach in your comp set; in 2025 it was replaced with W South
+    Beach. Fondok could make those notes on the side." This endpoint
+    backs that side-note.
+
+    Tenant-scoped; the underlying SQL filters on both the extraction
+    row's ``tenant_id`` and the document's ``tenant_id`` so a
+    cross-tenant deal_id guess produces an empty report (drifts=[])
+    rather than data leakage.
+    """
+    report = await compute_comp_set_drift(
+        session,
+        deal_id=str(deal_id),
+        tenant_id=str(tenant_id),
+    )
+    return drift_report_to_pydantic(report)
 
 
 # ─────────────────────────── download ───────────────────────────
