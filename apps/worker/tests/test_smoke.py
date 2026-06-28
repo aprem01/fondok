@@ -24,8 +24,14 @@ def test_app_imports() -> None:
     assert app is not None
 
 
-def test_settings_load() -> None:
+def test_settings_load(monkeypatch: pytest.MonkeyPatch) -> None:
     """Settings must load with defaults."""
+    # Other test modules (test_broker_responses_api, test_qa_*) set
+    # DEFAULT_DEAL_BUDGET_USD=0 at module-import time to disable the
+    # budget gate. If those modules are collected first the env var
+    # leaks into our Settings() instantiation. Clear it so we exercise
+    # the actual schema default.
+    monkeypatch.delenv("DEFAULT_DEAL_BUDGET_USD", raising=False)
     from app.config import Settings
 
     s = Settings()

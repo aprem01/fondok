@@ -109,7 +109,11 @@ async def test_oversize_file_is_rejected_with_too_large(deal_id: str) -> None:
             files=[("files", ("big.pdf", oversize, "application/pdf"))],
         )
 
-    assert r.status_code == 201, r.text
+    # All-failed batch: production returns 422 with the per-row payload
+    # (so the client can render the per-file error chips) — see the
+    # ``all_failed`` branch in app/api/documents.py upload_documents.
+    # Mixed-outcome batches still return 201.
+    assert r.status_code == 422, r.text
     rec = r.json()[0]
     assert rec["status"] == "FAILED"
     assert rec["error_kind"] == "too_large"
@@ -153,7 +157,8 @@ async def test_unsupported_extension_is_rejected(deal_id: str) -> None:
             files=[("files", ("phone_photo.heic", body, "image/heic"))],
         )
 
-    assert r.status_code == 201, r.text
+    # All-failed batch returns 422 (see test_oversize comment).
+    assert r.status_code == 422, r.text
     rec = r.json()[0]
     assert rec["status"] == "FAILED"
     assert rec["error_kind"] == "unsupported_type"

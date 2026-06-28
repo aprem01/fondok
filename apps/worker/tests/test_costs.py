@@ -173,6 +173,35 @@ def test_model_bucket_unknown_falls_back_to_other() -> None:
     assert float(report.by_model["other"].cost_usd) == 0.0
 
 
+_TEST_TENANT = "00000000-0000-0000-0000-000000000001"
+_TEST_TENANT_HEADERS = {"X-Tenant-Id": _TEST_TENANT}
+
+
+async def _insert_costs_test_deal(deal_id: str, tenant_id: str = _TEST_TENANT) -> None:
+    """Insert a stub deal row so ``_assert_deal_belongs_to_tenant`` resolves.
+
+    The costs endpoint added a tenant-scoping check (commit 2a8ed64 /
+    wave1-tenant-hardening) — calling it with a random UUID no longer
+    returns a zeroed empty report, it 404s. Insert the deal first.
+    """
+    from sqlalchemy import text
+
+    from app.database import get_session_factory
+
+    factory = get_session_factory()
+    async with factory() as session:
+        await session.execute(
+            text(
+                """
+                INSERT INTO deals (id, tenant_id, name, status, created_at, updated_at)
+                VALUES (:id, :tenant, 'costs-test', 'Draft', :ts, :ts)
+                """
+            ),
+            {"id": deal_id, "tenant": tenant_id, "ts": datetime.now(UTC)},
+        )
+        await session.commit()
+
+
 @pytest.mark.asyncio
 async def test_costs_endpoint_returns_well_formed_report() -> None:
     """``GET /deals/{id}/costs`` should return a typed report even with no rows."""
@@ -180,12 +209,16 @@ async def test_costs_endpoint_returns_well_formed_report() -> None:
 
     from app.main import app
 
+    await _ensure_schema()
     deal_id = str(uuid4())
+    await _insert_costs_test_deal(deal_id)
     async with AsyncClient(
-        transport=ASGITransport(app=app), base_url="http://test"
+        transport=ASGITransport(app=app),
+        base_url="http://test",
+        headers=_TEST_TENANT_HEADERS,
     ) as client:
         r = await client.get(f"/deals/{deal_id}/costs")
-        assert r.status_code == 200
+        assert r.status_code == 200, r.text
         body = r.json()
         assert body["deal_id"] == deal_id
         assert "total_cost_usd" in body
@@ -313,7 +346,11 @@ async def test_persist_then_aggregate_matches_endpoint() -> None:
     await _ensure_schema()
 
     deal_id = str(uuid4())
-    tenant_id = str(uuid4())
+    # Endpoint enforces tenant scoping (wave1-tenant-hardening); both the
+    # persisted model_calls and the deal row must carry the tenant the
+    # request header advertises.
+    tenant_id = _TEST_TENANT
+    await _insert_costs_test_deal(deal_id, tenant_id=tenant_id)
     calls = [
         _model_call_obj(agent="router", model="claude-haiku-4-5",
                         input_tokens=2_000, output_tokens=200),
@@ -326,10 +363,12 @@ async def test_persist_then_aggregate_matches_endpoint() -> None:
     assert inserted == 2
 
     async with AsyncClient(
-        transport=ASGITransport(app=app), base_url="http://test"
+        transport=ASGITransport(app=app),
+        base_url="http://test",
+        headers=_TEST_TENANT_HEADERS,
     ) as client:
         r = await client.get(f"/deals/{deal_id}/costs")
-        assert r.status_code == 200
+        assert r.status_code == 200, r.text
         body = r.json()
         assert body["deal_id"] == deal_id
         assert float(body["total_cost_usd"]) > 0

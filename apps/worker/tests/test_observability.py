@@ -93,11 +93,16 @@ async def test_cache_stats_endpoint(deal_id: str) -> None:
         )
         assert ingest.status_code == 201, ingest.text
 
-        # Pull back the most recent 5 calls — our row should dominate.
-        r = await client.get("/observability/cache-stats?n=5")
+        # Pull back the most recent 1 call — that's the row we just
+        # inserted. The earlier n=5 query was leaky: other test suites
+        # that share this sqlite DB push earlier rows into the window
+        # and dilute the hit rate. Scoping to n=1 keeps the assertion
+        # deterministic without changing what we're proving (the
+        # endpoint reads our ingested row + reports the right rate).
+        r = await client.get("/observability/cache-stats?n=1")
         assert r.status_code == 200, r.text
         body = r.json()
-        assert body["samples"] >= 1
+        assert body["samples"] == 1, body
         # 8000 / (8000 + 1000 + 1000) = 0.8
         assert body["cache_hit_rate"] >= 0.5, body
         agents = {a["agent"]: a for a in body["by_agent"]}
