@@ -36,7 +36,7 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..database import get_session
-from .deals import get_tenant_id
+from .deals import _assert_deal_belongs_to_tenant, get_tenant_id
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -106,7 +106,12 @@ class VarianceReportResponse(BaseModel):
 
 
 @router.post("/{deal_id}/analyze", response_model=AnalysisResponse)
-async def analyze(deal_id: UUID, body: AnalysisRequest) -> AnalysisResponse:
+async def analyze(
+    deal_id: UUID,
+    body: AnalysisRequest,
+    session: Annotated[AsyncSession, Depends(get_session)],
+    tenant_id: Annotated[UUID, Depends(get_tenant_id)],
+) -> AnalysisResponse:
     """Stub: kick off an Analyst run for a section or freeform prompt.
 
     TODO(analysis-job-runner): no backing job runner yet — the returned
@@ -114,7 +119,14 @@ async def analyze(deal_id: UUID, body: AnalysisRequest) -> AnalysisResponse:
     fire-and-forget until the deal-scoped Q&A flow is wired (will
     likely reuse the memo streaming broadcast under a different
     channel key).
+
+    Tenant-scoped: a cross-tenant ``deal_id`` returns 404 even though
+    the stub never reads any data — keeps the surface area uniform so
+    a future implementation can't accidentally regress to leaking.
     """
+    await _assert_deal_belongs_to_tenant(
+        session, deal_id=deal_id, tenant_id=tenant_id
+    )
     logger.info("analysis(stub): deal=%s section=%s", deal_id, body.section)
     return AnalysisResponse(deal_id=deal_id, job_id="stub-job")
 
@@ -136,7 +148,13 @@ async def get_variance(
     Returns an empty flag list (with a ``note`` explaining why) when
     either side of the comparison is missing — common until both an
     OM/broker proforma and a T-12 have been extracted on the deal.
+
+    Tenant-scoped: cross-tenant access returns 404 before the loader
+    reads any extraction data.
     """
+    await _assert_deal_belongs_to_tenant(
+        session, deal_id=deal_id, tenant_id=tenant_id
+    )
     # We reuse the documents module's loader so the broker / actual
     # mapping stays consistent with the Critic's input shape.
     from .documents import _load_critic_inputs  # local import: avoids cycle

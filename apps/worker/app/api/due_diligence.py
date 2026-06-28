@@ -23,7 +23,7 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..database import get_session
-from .deals import get_tenant_id
+from .deals import _assert_deal_belongs_to_tenant, get_tenant_id
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -127,13 +127,22 @@ def _coerce_dt(value: Any) -> datetime:
 async def get_due_diligence(
     deal_id: UUID,
     session: Annotated[AsyncSession, Depends(get_session)],
+    tenant_id: Annotated[UUID, Depends(get_tenant_id)],
 ) -> DueDiligencePacketResponse:
     """Return the latest persisted broker-question packet for ``deal_id``.
 
     Returns an empty packet (with a structured ``note``) when the agent
     hasn't run yet — the UI renders the "Generate Due Diligence
     Questions" empty state in that case.
+
+    Tenant-scoped — cross-tenant access returns 404 via the deal-belongs
+    gate. The ``due_diligence_questions`` query is filtered on
+    ``tenant_id`` so even a future code path that skips the gate
+    (somehow) cannot leak.
     """
+    await _assert_deal_belongs_to_tenant(
+        session, deal_id=deal_id, tenant_id=tenant_id
+    )
     rows = await session.execute(
         text(
             """
@@ -141,13 +150,13 @@ async def get_due_diligence(
                    category, source, supporting_metric_key,
                    supporting_metric_value, status, created_at, sent_at
               FROM due_diligence_questions
-             WHERE deal_id = :deal
+             WHERE deal_id = :deal AND tenant_id = :tenant
              ORDER BY
                  CASE priority WHEN 'high' THEN 0 WHEN 'medium' THEN 1 ELSE 2 END,
                  created_at DESC
             """
         ),
-        {"deal": str(deal_id)},
+        {"deal": str(deal_id), "tenant": str(tenant_id)},
     )
     fetched = rows.fetchall()
     if not fetched:
@@ -195,6 +204,9 @@ async def generate_due_diligence(
     most recent generation. This is the right contract for a "regenerate"
     button: deterministic single state, no merge logic to reason about.
     """
+    await _assert_deal_belongs_to_tenant(
+        session, deal_id=deal_id, tenant_id=tenant_id
+    )
     from ..agents.due_diligence import (
         DueDiligenceInput,
         run_due_diligence,
@@ -225,8 +237,11 @@ async def generate_due_diligence(
     # Replace prior questions with the fresh set.
     try:
         await session.execute(
-            text("DELETE FROM due_diligence_questions WHERE deal_id = :deal"),
-            {"deal": str(deal_id)},
+            text(
+                "DELETE FROM due_diligence_questions "
+                "WHERE deal_id = :deal AND tenant_id = :tenant"
+            ),
+            {"deal": str(deal_id), "tenant": str(tenant_id)},
         )
         for q in out.questions:
             await session.execute(
@@ -288,12 +303,19 @@ async def update_due_diligence_status(
     question_id: UUID,
     body: DueDiligenceStatusUpdate,
     session: Annotated[AsyncSession, Depends(get_session)],
+    tenant_id: Annotated[UUID, Depends(get_tenant_id)],
 ) -> DueDiligenceQuestionOut:
     """Move a question through the lifecycle (pending → sent → answered).
 
     Used by the UI's "Mark as Sent" batch action and the per-question
     answered toggle. Stamps ``sent_at`` when status flips to ``sent``.
+
+    Tenant-scoped: the UPDATE + SELECT filter on ``tenant_id`` so a
+    caller from a different tenant gets 404, not a mutated row.
     """
+    await _assert_deal_belongs_to_tenant(
+        session, deal_id=deal_id, tenant_id=tenant_id
+    )
     sent_at = _now() if body.status == "sent" else None
     result = await session.execute(
         text(
@@ -301,7 +323,7 @@ async def update_due_diligence_status(
             UPDATE due_diligence_questions
                SET status = :status,
                    sent_at = COALESCE(:sent_at, sent_at)
-             WHERE id = :id AND deal_id = :deal
+             WHERE id = :id AND deal_id = :deal AND tenant_id = :tenant
             """
         ),
         {
@@ -309,6 +331,7 @@ async def update_due_diligence_status(
             "sent_at": sent_at,
             "id": str(question_id),
             "deal": str(deal_id),
+            "tenant": str(tenant_id),
         },
     )
     if result.rowcount == 0:
@@ -326,10 +349,10 @@ async def update_due_diligence_status(
                        category, source, supporting_metric_key,
                        supporting_metric_value, status, created_at, sent_at
                   FROM due_diligence_questions
-                 WHERE id = :id
+                 WHERE id = :id AND tenant_id = :tenant
                 """
             ),
-            {"id": str(question_id)},
+            {"id": str(question_id), "tenant": str(tenant_id)},
         )
     ).first()
     if row is None:

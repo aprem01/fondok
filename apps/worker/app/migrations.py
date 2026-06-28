@@ -1067,6 +1067,38 @@ SQLITE_MIGRATIONS: list[tuple[str, str]] = [
         ON broker_questions (tenant_id, deal_id, created_at DESC)
         """,
     ),
+    # SQLite mirror of the Postgres ``due_diligence_questions`` table.
+    # Required by the tenant-isolation comprehensive test suite so the
+    # GET endpoint can return its empty-packet response instead of
+    # raising ``no such table``. TIMESTAMPTZ → TEXT, UUID → TEXT, no
+    # FK enforcement (matches the rest of the SQLite mirrors here).
+    (
+        "due_diligence_questions.create_table",
+        """
+        CREATE TABLE IF NOT EXISTS due_diligence_questions (
+            id                          TEXT PRIMARY KEY,
+            deal_id                     TEXT NOT NULL,
+            tenant_id                   TEXT NOT NULL,
+            question                    TEXT NOT NULL,
+            narrative                   TEXT NOT NULL,
+            priority                    TEXT NOT NULL,
+            category                    TEXT NOT NULL,
+            source                      TEXT NOT NULL,
+            supporting_metric_key       TEXT,
+            supporting_metric_value     TEXT,
+            status                      TEXT NOT NULL DEFAULT 'pending',
+            created_at                  TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            sent_at                     TEXT
+        )
+        """,
+    ),
+    (
+        "due_diligence_questions.idx_tenant_deal",
+        """
+        CREATE INDEX IF NOT EXISTS idx_due_diligence_questions_tenant_deal
+        ON due_diligence_questions (tenant_id, deal_id, created_at DESC)
+        """,
+    ),
 ]
 
 

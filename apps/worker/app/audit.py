@@ -152,4 +152,85 @@ async def log_audit(
         )
 
 
-__all__ = ["log_audit"]
+async def list_audit_log(
+    session: AsyncSession,
+    *,
+    tenant_id: UUID | str,
+    limit: int = 100,
+    actor_id: UUID | str | None = None,
+    action: str | None = None,
+    resource_type: str | None = None,
+    resource_id: UUID | str | None = None,
+) -> list[dict[str, Any]]:
+    """Return ``audit_log`` rows for ``tenant_id``, newest first.
+
+    **ALWAYS tenant-scoped.** No code path may read ``audit_log`` without
+    passing ``tenant_id`` — the signature enforces it by making the
+    argument keyword-only and required. This is the only sanctioned
+    reader; ad-hoc ``SELECT * FROM audit_log`` calls elsewhere in the
+    codebase are explicitly disallowed and will be caught by the
+    SQLAlchemy ``tenant_middleware`` listener.
+
+    The shape of the returned dicts mirrors the ``audit_log`` table:
+    ``id``, ``tenant_id``, ``deal_id``, ``actor_id``, ``action``,
+    ``resource_type``, ``resource_id``, ``input_hash``, ``output_hash``,
+    ``payload`` (JSONB or JSON string depending on dialect),
+    ``created_at``.
+
+    Parameters
+    ----------
+    tenant_id
+        Required. The query is rejected (``ValueError``) if missing or
+        empty — guards against ``None`` slipping in from an unauthenticated
+        code path.
+    limit
+        Hard-capped at 1000 to keep the dashboard query bounded.
+    actor_id, action, resource_type, resource_id
+        Optional filters. All match exactly; no LIKE / fuzzy.
+
+    Raises
+    ------
+    ValueError
+        If ``tenant_id`` is falsy. Better to crash than to return a
+        cross-tenant result set.
+    """
+    if not tenant_id:
+        raise ValueError(
+            "list_audit_log: tenant_id is required — cross-tenant reads disallowed"
+        )
+
+    limit = max(1, min(int(limit), 1000))
+
+    clauses: list[str] = ["tenant_id = :tenant"]
+    params: dict[str, Any] = {"tenant": str(tenant_id), "limit": limit}
+
+    if actor_id is not None:
+        clauses.append("actor_id = :actor")
+        params["actor"] = str(actor_id)
+    if action is not None:
+        clauses.append("action = :action")
+        params["action"] = action
+    if resource_type is not None:
+        clauses.append("resource_type = :rtype")
+        params["rtype"] = resource_type
+    if resource_id is not None:
+        clauses.append("resource_id = :rid")
+        params["rid"] = str(resource_id)
+
+    where = " AND ".join(clauses)
+    sql = text(
+        f"""
+        SELECT id, tenant_id, deal_id, actor_id, action,
+               resource_type, resource_id, input_hash, output_hash,
+               payload, created_at
+          FROM audit_log
+         WHERE {where}
+         ORDER BY created_at DESC
+         LIMIT :limit
+        """
+    )
+    rows = (await session.execute(sql, params)).all()
+    return [dict(r._mapping) for r in rows]
+
+
+__all__ = ["log_audit", "list_audit_log"]
