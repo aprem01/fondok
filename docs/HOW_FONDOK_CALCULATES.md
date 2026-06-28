@@ -94,6 +94,100 @@ are worse than no benchmark.
 * `apps/web/src/components/project/PLTab.tsx` — Operating Statement
   with per-row source badges and the "Precedence" coachmark.
 
+## Portfolio P&L Library — firm-level benchmarks (Wave 4 W4.1)
+
+Sam's June 2026 ask (extended): *"Apollo (and other capital partners)
+own hotels in the same market and want to upload THEIR P&Ls as
+benchmarks."* Wave 2 P2.7 added the `PORTFOLIO_PNL` doc type but it
+had to be uploaded into one specific deal's data room — which was
+wrong. Portfolio benchmarks are FIRM-LEVEL assets that apply across
+every deal that firm underwrites.
+
+W4.1 promotes portfolio P&Ls to a firm-level **Portfolio Library**.
+Analysts upload portfolio roll-ups once via Settings → Portfolio
+Library, tag them with chain scales + vintage years, and the engine
+automatically pulls them as `portfolio_pnl` candidates on every deal
+that firm underwrites.
+
+### Firm-level vs per-deal precedence
+
+For the `portfolio_pnl` tier of the precedence chain, two sources may
+contribute:
+
+1. **Per-deal `PORTFOLIO_PNL` document** — extracted from a doc
+   uploaded into THIS deal's data room. Always wins for the ratios it
+   covers (analyst intent on this specific deal beats firm-wide
+   benchmarks).
+2. **Library median** — the per-ratio median across every active
+   library entry whose `chain_scales_covered` overlaps the subject
+   deal's chain scale within the 3-year vintage look-back.
+
+If both supply the same ratio, the per-deal doc wins. If neither
+covers a ratio, the precedence chain falls through to `cbre_horizons`,
+then `pnl_benchmark`, then `seed`.
+
+### Vintage look-back
+
+Library entries with `vintage_year < current_year - 3` are excluded
+from the median. Portfolio benchmarks decay faster than three years —
+applying a 2018 roll-up to a 2026 deal would silently introduce stale
+labor costs, pre-COVID demand, and a fundamentally different
+brand-economic mix. The 3-year window matches Wave 1's product
+decision on op-ratio look-backs.
+
+### Chain-scale filtering
+
+Each library entry carries a `chain_scales_covered` list (e.g.
+`["Upper Upscale", "Upscale"]`). On every model run, the engine reads
+the subject deal's `positioning` column as its chain scale and
+includes only entries whose list overlaps (case + whitespace +
+underscore + hyphen insensitive match). An entry with an EMPTY
+`chain_scales_covered` is treated as "covers everything" — useful when
+a firm's portfolio is single-segment and they don't want to repeat
+the tag on every entry.
+
+### Worked example
+
+A firm uploads three library entries:
+
+| Entry | Vintage | Chain scales | Rooms-dept % |
+|---|---|---|---|
+| Apollo Select-Service Marriott | 2023 | Upper Upscale, Upscale | 24% |
+| IHG Full-Service | 2024 | Upper Upscale | 26% |
+| Independent boutique | 2024 | Independent | 31% |
+
+Now an Upper Upscale deal comes in:
+* Entry #1 covers Upper Upscale ✓ — included
+* Entry #2 covers Upper Upscale ✓ — included
+* Entry #3 covers Independent only ✗ — excluded
+* Library median rooms-dept % = (24% + 26%) / 2 = **25%**
+
+The engine writes `25%` into `base["overrides"]["rooms_dept_pct"]`
+with provenance `portfolio_pnl`. The Operating Statement renders the
+row with a "Portfolio" badge.
+
+If a 20-key boutique deal comes in instead (positioning =
+"Independent"):
+* Entry #1, #2 don't match ✗
+* Entry #3 covers Independent ✓ — only one entry
+* Library median rooms-dept % = **31%**
+
+### Where to look in code
+
+* `apps/worker/app/api/portfolio_library.py` — tenant-scoped CRUD +
+  upload-with-extraction endpoints.
+* `apps/worker/app/services/engine_runner.py` —
+  `_load_portfolio_library_overrides` queries active entries, filters
+  by chain scale + vintage, and returns the per-ratio median.
+* `packages/schemas-py/fondok_schemas/portfolio_library.py` —
+  `PortfolioLibraryEntry` shape.
+* `apps/worker/app/migrations.py` — `portfolio_library` table (Postgres
+  + SQLite mirror).
+* `apps/worker/tests/test_portfolio_library.py` — 14-test suite
+  covering CRUD + tenant isolation + engine integration + upload flow.
+* `apps/web/src/app/settings/portfolio-library/page.tsx` — analyst
+  surface for managing the library.
+
 ## Historical baseline — 3-5 year P&L walk (Wave 2 P2.6)
 
 Sam's June 2026 ask: "Institutional IC analysts will not approve a deal

@@ -85,6 +85,7 @@ from .partnership import (
     PartnershipOutput,
     WaterfallTier,
 )
+from .portfolio_library import PortfolioLibraryEntry
 from .scenario import Scenario, ScenarioOverride
 from .underwriting import (
     CapexPlan,
@@ -211,6 +212,8 @@ __all__ = [
     "PartnershipInput",
     "PartnershipOutput",
     "WaterfallTier",
+    # portfolio_library (Wave 4 W4.1 — firm-level portfolio P&L library)
+    "PortfolioLibraryEntry",
     # scenario (Wave 3 W3.2 — named what-if scenarios)
     "Scenario",
     "ScenarioOverride",

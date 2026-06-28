@@ -23,6 +23,7 @@ from .api import health as health_router
 from .api import market as market_router
 from .api import model as model_router
 from .api import observability as observability_router
+from .api import portfolio_library as portfolio_library_router
 from .api import scenarios as scenarios_router
 from .api import settings as settings_router
 from .config import get_settings
@@ -143,6 +144,16 @@ def create_app() -> FastAPI:
     )
     app.include_router(
         data_library_router.router, prefix="/data-library", tags=["data-library"]
+    )
+    # Wave 4 W4.1 — firm-level Portfolio P&L Library. Tenant-scoped via
+    # ``Depends(get_tenant_id)``; the engine_runner pulls active entries
+    # whose chain_scales_covered overlap the subject deal's chain scale
+    # and whose vintage_year falls inside the 3-year look-back to feed
+    # the portfolio_pnl tier of op_ratio_precedence.
+    app.include_router(
+        portfolio_library_router.router,
+        prefix="/portfolio-library",
+        tags=["portfolio-library"],
     )
     app.include_router(settings_router.router, prefix="/settings", tags=["settings"])
     app.include_router(

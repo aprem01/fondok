@@ -3,7 +3,7 @@ import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
 import {
   LayoutGrid, FolderKanban, Database, Settings, ChevronDown, Building2,
-  Users, UserCog, LogOut, Plus, Check, BookOpen, LineChart, History,
+  Users, UserCog, LogOut, Plus, Check, BookOpen, LineChart, History, Library,
 } from 'lucide-react';
 import { useState, useRef, useEffect } from 'react';
 import { OrganizationSwitcher } from '@clerk/nextjs';
@@ -194,17 +194,46 @@ export default function Sidebar({
             it.href === '/methodology' ? 'methodology' :
             it.href === '/settings' ? 'settings' : undefined;
           return (
-            <Link key={it.href} href={it.href}
-              data-tour={tourAttr}
-              className={cn(
-                'flex items-center gap-3 px-3 py-2 rounded-md text-[13px] mb-0.5 transition-colors',
-                isActive
-                  ? 'bg-brand-50 text-brand-700 font-semibold'
-                  : 'text-ink-700 hover:bg-ink-100'
-              )}>
-              <Icon size={16} className={isActive ? 'text-brand-500' : 'text-ink-500'} />
-              {it.label}
-            </Link>
+            <div key={it.href}>
+              <Link href={it.href}
+                data-tour={tourAttr}
+                className={cn(
+                  'flex items-center gap-3 px-3 py-2 rounded-md text-[13px] mb-0.5 transition-colors',
+                  isActive
+                    ? 'bg-brand-50 text-brand-700 font-semibold'
+                    : 'text-ink-700 hover:bg-ink-100'
+                )}>
+                <Icon size={16} className={isActive ? 'text-brand-500' : 'text-ink-500'} />
+                {it.label}
+              </Link>
+              {/* Wave 4 W4.1 — surface the Portfolio Library sub-link
+                  when the analyst is on /settings/*. Keeps the top-level
+                  nav uncluttered while making the new surface one click
+                  from anywhere inside Settings. */}
+              {it.href === '/settings' && pathname.startsWith('/settings') && (
+                <div className="ml-5 mb-1 border-l border-border pl-3 space-y-0.5">
+                  <Link
+                    href="/settings/portfolio-library"
+                    className={cn(
+                      'flex items-center gap-2 px-2.5 py-1.5 rounded-md text-[12.5px] transition-colors',
+                      pathname.startsWith('/settings/portfolio-library')
+                        ? 'bg-brand-50 text-brand-700 font-medium'
+                        : 'text-ink-700 hover:bg-ink-100'
+                    )}
+                  >
+                    <Library
+                      size={13}
+                      className={
+                        pathname.startsWith('/settings/portfolio-library')
+                          ? 'text-brand-500'
+                          : 'text-ink-500'
+                      }
+                    />
+                    Portfolio Library
+                  </Link>
+                </div>
+              )}
+            </div>
           );
         })}
       </nav>
