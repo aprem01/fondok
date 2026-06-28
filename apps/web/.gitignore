@@ -1,0 +1,6 @@
+.vercel
+
+# Playwright outputs — never commit test reports/traces.
+e2e/.report/
+test-results/
+playwright-report/
