@@ -2379,3 +2379,300 @@ async def get_memo_edits(
         session, deal_id=str(deal_id), section_id=section_id
     )
     return [MemoEditRecord(**r) for r in rows]
+
+
+# ════════════════════════════════════════════════════════════════════
+# Wave 3 W3.1 — Comparable Sales engine
+# ════════════════════════════════════════════════════════════════════
+#
+# Two endpoints:
+#   GET  /deals/{id}/comp-sales            → full CompSalesSet for the deal
+#   POST /deals/{id}/comp-sales/exclude    → pin a comp as excluded
+#
+# Both are tenant-scoped via Depends(get_tenant_id). The GET is the read
+# path the Investment tab's "Comps" sub-panel calls; the POST persists
+# an analyst's per-row "this comp doesn't reflect the deal" decision
+# onto the deal's field_overrides JSONB column under the
+# ``comp_sales.exclude_transaction_ids`` key.
+
+
+class _CompTransactionOut(BaseModel):
+    """One row of the OM's Comparable Sales table — API shape."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    property_name: str | None = None
+    city: str | None = None
+    state: str | None = None
+    sale_date: str | None = None
+    keys: int | None = None
+    sale_price_usd: float | None = None
+    sale_price_per_key_usd: float | None = None
+    noi_usd: float | None = None
+    cap_rate_pct: float | None = None
+    chain_scale: str | None = None
+    brand_family: str | None = None
+    flag: str | None = None
+    source_document_id: str
+    source_page_number: int | None = None
+    note: str | None = None
+    transaction_id: str | None = None
+
+
+class _CompSalesSetOut(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    deal_id: UUID
+    transactions: list[_CompTransactionOut] = Field(default_factory=list)
+    total_count: int = 0
+    derived_cap_rate_median: float | None = None
+    derived_cap_rate_weighted: float | None = None
+    derived_cap_rate_method: Literal["median", "weighted", "none"] = "none"
+    weighting_notes: list[str] = Field(default_factory=list)
+    coverage_quality: Literal["high", "medium", "low"] = "low"
+    subject_market: str | None = None
+    subject_chain_scale: str | None = None
+    lookback_years: int = 5
+
+
+class _CompSalesExcludeRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    transaction_id: str = Field(..., min_length=1, max_length=200)
+
+
+def _comp_set_to_out(deal_id: UUID, comp_set: Any) -> _CompSalesSetOut:
+    """Wrap a CompSalesSet for the API. ``sale_date`` → ISO string."""
+    rows: list[_CompTransactionOut] = []
+    for t in comp_set.transactions:
+        rows.append(
+            _CompTransactionOut(
+                property_name=t.property_name,
+                city=t.city,
+                state=t.state,
+                sale_date=t.sale_date.isoformat() if t.sale_date else None,
+                keys=t.keys,
+                sale_price_usd=t.sale_price_usd,
+                sale_price_per_key_usd=t.sale_price_per_key_usd,
+                noi_usd=t.noi_usd,
+                cap_rate_pct=t.cap_rate_pct,
+                chain_scale=t.chain_scale,
+                brand_family=t.brand_family,
+                flag=t.flag,
+                source_document_id=t.source_document_id,
+                source_page_number=t.source_page_number,
+                note=t.note,
+                transaction_id=t.transaction_id,
+            )
+        )
+    return _CompSalesSetOut(
+        deal_id=deal_id,
+        transactions=rows,
+        total_count=comp_set.total_count,
+        derived_cap_rate_median=comp_set.derived_cap_rate_median,
+        derived_cap_rate_weighted=comp_set.derived_cap_rate_weighted,
+        derived_cap_rate_method=comp_set.derived_cap_rate_method,
+        weighting_notes=list(comp_set.weighting_notes),
+        coverage_quality=comp_set.coverage_quality,
+        subject_market=comp_set.subject_market,
+        subject_chain_scale=comp_set.subject_chain_scale,
+        lookback_years=comp_set.lookback_years,
+    )
+
+
+async def _load_subject_market_and_chain(
+    session: AsyncSession,
+    *,
+    deal_id: UUID,
+    tenant_id: UUID,
+) -> tuple[str | None, str | None]:
+    """Pull the subject's ``"City, ST"`` market + chain-scale label.
+
+    Best-effort: the deals row carries ``city`` and (when present)
+    ``service`` we map onto a chain-scale bucket. Missing
+    fields are returned as ``None`` — the comp engine handles that by
+    falling back to recency-only weighting + reporting method=median.
+    """
+    row = (
+        await session.execute(
+            text(
+                "SELECT city, service FROM deals "
+                "WHERE id = :id AND tenant_id = :tenant"
+            ),
+            {"id": str(deal_id), "tenant": str(tenant_id)},
+        )
+    ).first()
+    if row is None:
+        return (None, None)
+    m = row._mapping
+    city = m.get("city") or None
+    # No state column on the deals row today; the API expects
+    # ``"City, ST"`` so we hand back just the city.
+    subject_market = str(city) if city else None
+    # Map ``service`` (Full Service / Select Service / Luxury / Resort)
+    # onto a chain-scale bucket. Approximate but enough to enable the
+    # chain-match weight; the analyst can refine via overrides.
+    service = (m.get("service") or "").strip().lower()
+    if service in ("luxury", "ultra luxury"):
+        chain_scale: str | None = "luxury"
+    elif service in ("full service", "full-service"):
+        chain_scale = "upper-upscale"
+    elif service in ("select service", "select-service"):
+        chain_scale = "upper-midscale"
+    elif service in ("limited service", "limited-service"):
+        chain_scale = "midscale"
+    elif service == "resort":
+        chain_scale = "upper-upscale"
+    else:
+        chain_scale = None
+    return (subject_market, chain_scale)
+
+
+@router.get(
+    "/{deal_id}/comp-sales",
+    response_model=_CompSalesSetOut,
+)
+async def get_comp_sales(
+    deal_id: UUID,
+    session: Annotated[AsyncSession, Depends(get_session)],
+    tenant_id: Annotated[UUID, Depends(get_tenant_id)],
+) -> _CompSalesSetOut:
+    """Return the deal's full CompSalesSet (transactions + derivation).
+
+    Read-only. Reads OM extraction results, layers analyst overrides
+    (exclude list), runs the deterministic Comparable Sales engine
+    in-memory, and hands back the structured set. Tenant-scoped 404
+    on cross-tenant deal ids.
+    """
+    await _assert_deal_belongs_to_tenant(
+        session, deal_id=deal_id, tenant_id=tenant_id
+    )
+
+    from ..services.engine_runner import _build_comp_sales_set
+
+    subject_market, subject_chain_scale = await _load_subject_market_and_chain(
+        session, deal_id=deal_id, tenant_id=tenant_id
+    )
+    comp_set = await _build_comp_sales_set(
+        session,
+        deal_id=str(deal_id),
+        subject_market=subject_market,
+        subject_chain_scale=subject_chain_scale,
+    )
+    return _comp_set_to_out(deal_id, comp_set)
+
+
+@router.post(
+    "/{deal_id}/comp-sales/exclude",
+    response_model=_CompSalesSetOut,
+)
+async def exclude_comp_transaction(
+    deal_id: UUID,
+    body: _CompSalesExcludeRequest,
+    session: Annotated[AsyncSession, Depends(get_session)],
+    tenant_id: Annotated[UUID, Depends(get_tenant_id)],
+) -> _CompSalesSetOut:
+    """Pin a comp as excluded from the derived cap rate.
+
+    Persists the transaction_id under the deal's ``field_overrides``
+    JSONB column at key ``comp_sales.exclude_transaction_ids``. The
+    value is the full sorted JSON array (idempotent — re-posting the
+    same transaction_id is a no-op).
+
+    Returns the refreshed CompSalesSet so the UI can render the new
+    derivation without a second round-trip.
+    """
+    await _assert_deal_belongs_to_tenant(
+        session, deal_id=deal_id, tenant_id=tenant_id
+    )
+
+    # Read the current field_overrides blob, layer this exclude on top,
+    # write back. We do this on the raw ``field_overrides`` column
+    # rather than going through PATCH /deals so the audit entry is
+    # scoped to the comp-sales action specifically.
+    row = (
+        await session.execute(
+            text(
+                "SELECT field_overrides FROM deals "
+                "WHERE id = :id AND tenant_id = :tenant"
+            ),
+            {"id": str(deal_id), "tenant": str(tenant_id)},
+        )
+    ).first()
+    if row is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"deal {deal_id} not found",
+        )
+    raw = row._mapping.get("field_overrides")
+    if isinstance(raw, str):
+        try:
+            overrides = json.loads(raw) or {}
+        except json.JSONDecodeError:
+            overrides = {}
+    elif isinstance(raw, dict):
+        overrides = dict(raw)
+    else:
+        overrides = {}
+
+    # Parse existing exclude list. May be a real list, a JSON-array
+    # string, or absent.
+    existing = overrides.get("comp_sales.exclude_transaction_ids")
+    current_ids: list[str] = []
+    if isinstance(existing, list):
+        current_ids = [str(x) for x in existing if x is not None]
+    elif isinstance(existing, str):
+        try:
+            parsed = json.loads(existing)
+        except json.JSONDecodeError:
+            parsed = None
+        if isinstance(parsed, list):
+            current_ids = [str(x) for x in parsed if x is not None]
+
+    if body.transaction_id not in current_ids:
+        current_ids.append(body.transaction_id)
+    # JSONB-friendly: write the list as JSON-string under the path so
+    # the override loader's coercion handles either shape uniformly.
+    overrides["comp_sales.exclude_transaction_ids"] = json.dumps(
+        sorted(current_ids)
+    )
+
+    is_sqlite = (
+        session.bind is not None
+        and session.bind.dialect.name == "sqlite"
+    )
+    if is_sqlite:
+        sql = (
+            "UPDATE deals SET field_overrides = :fo, "
+            "updated_at = CURRENT_TIMESTAMP "
+            "WHERE id = :id AND tenant_id = :tenant"
+        )
+    else:
+        sql = (
+            "UPDATE deals SET field_overrides = CAST(:fo AS JSONB), "
+            "updated_at = NOW() "
+            "WHERE id = :id AND tenant_id = :tenant"
+        )
+    await session.execute(
+        text(sql),
+        {
+            "fo": json.dumps(overrides),
+            "id": str(deal_id),
+            "tenant": str(tenant_id),
+        },
+    )
+    await session.commit()
+
+    # Re-derive and return.
+    from ..services.engine_runner import _build_comp_sales_set
+
+    subject_market, subject_chain_scale = await _load_subject_market_and_chain(
+        session, deal_id=deal_id, tenant_id=tenant_id
+    )
+    comp_set = await _build_comp_sales_set(
+        session,
+        deal_id=str(deal_id),
+        subject_market=subject_market,
+        subject_chain_scale=subject_chain_scale,
+    )
+    return _comp_set_to_out(deal_id, comp_set)

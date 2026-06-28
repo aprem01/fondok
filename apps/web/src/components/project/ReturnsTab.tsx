@@ -13,6 +13,7 @@ import WhatJustHappened from './WhatJustHappened';
 import PricingSensitivityPanel from './PricingSensitivityPanel';
 import MaxPricePanel from './MaxPricePanel';
 import LOIPanel from './LOIPanel';
+import CompSalesPanel from './CompSalesPanel';
 import { dealScenarios, kimptonAnglerOverview } from '@/lib/mockData';
 import { fmtPct, cn } from '@/lib/format';
 import { useAssumptionsOptional } from '@/stores/assumptionsStore';
@@ -25,7 +26,7 @@ import { MetricLabel } from '@/components/help/MetricLabel';
 import { CoachMark } from '@/components/help/CoachMark';
 import { GLOSSARY } from '@/lib/glossary';
 
-const subTabs = ['Returns Summary', 'Sensitivities', 'Pricing'];
+const subTabs = ['Returns Summary', 'Sensitivities', 'Pricing', 'Comps'];
 
 export default function ReturnsTab({ projectId }: { projectId: number | string }) {
   const [tab, setTab] = useState('Returns Summary');
@@ -168,6 +169,11 @@ export default function ReturnsTab({ projectId }: { projectId: number | string }
             <PricingSensitivityPanel dealId={dealId} />
             <MaxPricePanel dealId={dealId} />
             <LOIPanel dealId={dealId} />
+          </div>
+        )}
+        {tab === 'Comps' && (
+          <div className="flex flex-col gap-4">
+            <CompSalesPanel dealId={dealId} />
           </div>
         )}
         {computing && (
