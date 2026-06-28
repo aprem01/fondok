@@ -1,5 +1,5 @@
 'use client';
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useParams, useRouter } from 'next/navigation';
 import {
   UploadCloud, FolderOpen, Info, FileText, FileSpreadsheet,
@@ -35,6 +35,7 @@ import { MetricLabel } from '@/components/help/MetricLabel';
 import { UsaliBadge } from './validation/UsaliBadge';
 import { UsaliDeviationsAccordion } from './validation/UsaliDeviationsAccordion';
 import { GapChipsStrip } from './validation/GapChipsStrip';
+import { MisclassificationBanner } from './wizard/MisclassificationBanner';
 
 // Same dependency order EngineHeader uses for run-all fallbacks — mirrors the
 // worker's chain in apps/worker/app/api/model.py.
@@ -241,6 +242,29 @@ export default function DataRoomTab({ projectId }: { projectId: number | string 
   const { documents, uploading, upload, extractions, error: docsError, refresh } =
     useDocuments(rawId);
 
+  // Wave 1 #1 — resolve a misclassification banner. The worker keeps
+  // the analyst's tag until they explicitly accept Fondok's read, so
+  // the resolution call is a no-op on the rare race where two analysts
+  // click at once (last write wins, banner clears either way).
+  const resolveClassification = useCallback(
+    async (doc: WorkerDocument, useAi: boolean) => {
+      try {
+        await api.documents.acceptClassification(rawId, doc.id, useAi);
+        toast(
+          useAi
+            ? `Accepted Fondok’s classification for ${doc.filename}`
+            : `Kept your tag for ${doc.filename}`,
+          { type: 'success' },
+        );
+        refresh();
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        toast(`Couldn’t update classification: ${msg}`, { type: 'error' });
+      }
+    },
+    [rawId, refresh, toast],
+  );
+
   // Surface a toast each time a doc transitions to EXTRACTED.
   useEffect(() => {
     documents.forEach((d) => {
@@ -286,6 +310,13 @@ export default function DataRoomTab({ projectId }: { projectId: number | string 
      *  documents whose worker scoring has completed. */
     usaliScore?: number | null;
     usaliPayload?: WorkerUsaliPayload | WorkerUsaliDeviation[] | null;
+    /** Wizard ROADMAP #1 signals — surfaced on live docs only.
+     *  When ``misclassified`` is true, the row renders a
+     *  ``MisclassificationBanner`` between the row card and the
+     *  USALI accordion. */
+    userProvidedDocType?: string | null;
+    fiscalYear?: number | null;
+    misclassified?: boolean;
   };
 
   const docs: Row[] = useMemo(() => {
@@ -310,6 +341,9 @@ export default function DataRoomTab({ projectId }: { projectId: number | string 
           errorMessage: d.error_message,
           usaliScore: d.usali_score ?? null,
           usaliPayload: d.usali_deviations ?? null,
+          userProvidedDocType: d.user_provided_doc_type ?? null,
+          fiscalYear: d.fiscal_year ?? null,
+          misclassified: d.misclassified ?? false,
         };
       });
     }
@@ -1088,6 +1122,26 @@ export default function DataRoomTab({ projectId }: { projectId: number | string 
                       </div>
                     </div>
                     </div>
+                    {/* Misclassification banner — appears when the
+                        Router agent's read disagrees with the analyst's
+                        wizard tag. The user picks "Use Fondok's
+                        classification" or "Keep mine"; both clear the
+                        flag. We never silently overwrite user intent
+                        (locked Wave 1 product decision). */}
+                    {liveMode && d.misclassified && d.userProvidedDocType && (
+                      <MisclassificationBanner
+                        compact
+                        document={{
+                          id: d.id,
+                          filename: d.name,
+                          doc_type: d.type,
+                          user_provided_doc_type: d.userProvidedDocType,
+                          misclassified: true,
+                        }}
+                        onAcceptAi={(doc) => resolveClassification(doc as WorkerDocument, true)}
+                        onKeepMine={(doc) => resolveClassification(doc as WorkerDocument, false)}
+                      />
+                    )}
                     {/* USALI deviation accordion — collapsed by default.
                         Renders only when the badge has been clicked. */}
                     {usaliOpen && (

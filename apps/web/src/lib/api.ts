@@ -98,6 +98,38 @@ export interface WorkerDocument {
    *  passed_count, deviations}``) or just the flat deviation list. The badge
    *  + accordion normalize both. */
   usali_deviations?: WorkerUsaliPayload | WorkerUsaliDeviation[] | null;
+  /** Guided-onboarding wizard signals (ROADMAP #1).
+   *  - ``user_provided_doc_type`` — analyst's tag at upload time (T12, PNL_MONTHLY, …).
+   *  - ``fiscal_year`` — optional year the file represents (2025, 2024, …).
+   *  - ``misclassified`` — true when the Router disagrees with the user tag. The
+   *    DataRoomTab surfaces a MisclassificationBanner with "Use Fondok's
+   *    classification" / "Keep mine" choices. */
+  user_provided_doc_type?: string | null;
+  fiscal_year?: number | null;
+  misclassified?: boolean;
+}
+
+/** Wizard-step file payload — what the new-project guided onboarding hands to
+ *  ``api.documents.upload``. The category drives the right-rail checklist; the
+ *  worker only reads ``user_doc_type`` + ``fiscal_year``. */
+export type WizardCategory = 'om' | 'financials' | 'str' | 'other';
+export type WizardUserDocType =
+  | 'OM'
+  | 'T12'
+  | 'PNL_MONTHLY'
+  | 'PNL_YTD'
+  | 'STR_TREND'
+  | 'STR';
+
+export interface WizardFile {
+  file: File;
+  category: WizardCategory;
+  /** Analyst's pre-categorization. ``null`` when the analyst picked
+   *  "Not sure" — the worker falls back to filename + Router. */
+  user_doc_type?: WizardUserDocType | null;
+  /** Fiscal year for financials. Optional even for the financials category
+   *  (year prompt is OPTIONAL per locked Wave 1 product decision). */
+  fiscal_year?: number | null;
 }
 
 // ─── USALI compliance ─────────────────────────────────────────────────
@@ -297,9 +329,32 @@ export const api = {
   documents: {
     list: (dealId: string, signal?: AbortSignal) =>
       request<WorkerDocument[]>('GET', `/deals/${dealId}/documents`, undefined, { signal }),
-    upload: (dealId: string, files: File[]) => {
+    /** Upload one-or-more files. Accepts the legacy ``File[]`` payload
+     *  (Data Room bulk drop) and the wizard ``WizardFile[]`` payload
+     *  (guided onboarding). Wizard items carry an analyst-picked
+     *  ``user_doc_type`` ("Annual / T-12", "Monthly", …) and an optional
+     *  ``fiscal_year``; both are sent as positionally-aligned form
+     *  arrays so the worker can map ``files[i] → user_doc_types[i] →
+     *  fiscal_years[i]``. */
+    upload: (dealId: string, files: File[] | WizardFile[]) => {
       const fd = new FormData();
-      files.forEach((f) => fd.append('files', f, f.name));
+      const isWizard = files.length > 0 && 'file' in (files[0] as object);
+      if (isWizard) {
+        for (const w of files as WizardFile[]) {
+          fd.append('files', w.file, w.file.name);
+          // Send empty strings for nullables so the index alignment
+          // holds — the worker treats "" the same as missing. Sending
+          // ``undefined`` here would drop the slot and shift every
+          // subsequent file's metadata one to the left.
+          fd.append('user_doc_types', w.user_doc_type ?? '');
+          fd.append(
+            'fiscal_years',
+            w.fiscal_year != null ? String(w.fiscal_year) : '',
+          );
+        }
+      } else {
+        (files as File[]).forEach((f) => fd.append('files', f, f.name));
+      }
       return request<WorkerDocument[]>(
         'POST',
         `/deals/${dealId}/documents/upload`,
@@ -307,6 +362,19 @@ export const api = {
         { formData: fd },
       );
     },
+    /** Resolve a misclassification banner (Wave 1 #1).
+     *  ``use_ai`` true accepts Fondok's classification; false keeps the
+     *  analyst's wizard tag. Either way, ``misclassified`` is cleared. */
+    acceptClassification: (
+      dealId: string,
+      docId: string,
+      useAi: boolean,
+    ) =>
+      request<WorkerDocument>(
+        'POST',
+        `/deals/${dealId}/documents/${docId}/accept_classification`,
+        { use_ai_classification: useAi },
+      ),
     extract: (dealId: string, docId: string) =>
       request<ExtractionStartResponse>(
         'POST',

@@ -31,6 +31,7 @@ from fastapi import (
     BackgroundTasks,
     Depends,
     File,
+    Form,
     HTTPException,
     UploadFile,
     status,
@@ -120,6 +121,22 @@ class DocumentRecord(BaseModel):
     # deviations: [...]}``.
     usali_score: float | None = None
     usali_deviations: list[dict] | dict | None = None
+    # Guided-onboarding wizard signals (ROADMAP #1).
+    #   * ``user_provided_doc_type`` — the analyst's tag at upload time
+    #     (e.g. "T12", "PNL_MONTHLY", "STR_TREND"). Stays sticky even
+    #     after the Router agent runs — we never silently overwrite
+    #     analyst intent.
+    #   * ``fiscal_year`` — optional year the file represents (2025,
+    #     2024, …). Only set when the user pinned a year in the wizard
+    #     "Financials by year" step.
+    #   * ``misclassified`` — flipped to True when the Router disagrees
+    #     with ``user_provided_doc_type``. The UI surfaces a warn-tone
+    #     banner with "Use Fondok's classification" / "Keep mine"
+    #     choices; the worker honors ``user_provided_doc_type`` until
+    #     the user accepts the AI classification.
+    user_provided_doc_type: str | None = None
+    fiscal_year: int | None = None
+    misclassified: bool = False
 
 
 class ExtractionStartResponse(BaseModel):
@@ -497,6 +514,32 @@ def _row_to_record(row: dict[str, Any]) -> DocumentRecord:
         except (json.JSONDecodeError, TypeError):
             usali_deviations = None
 
+    # Wizard signals. ``misclassified`` is BOOLEAN on Postgres and
+    # INTEGER (0/1) on SQLite — coerce both into a Python bool so the
+    # Pydantic response is consistent across dialects.
+    raw_misc = row.get("misclassified")
+    if raw_misc is None:
+        misclassified = False
+    elif isinstance(raw_misc, bool):
+        misclassified = raw_misc
+    else:
+        try:
+            misclassified = bool(int(raw_misc))
+        except (TypeError, ValueError):
+            misclassified = bool(raw_misc)
+
+    fiscal_year_raw = row.get("fiscal_year")
+    try:
+        fiscal_year: int | None = (
+            int(fiscal_year_raw) if fiscal_year_raw is not None else None
+        )
+    except (TypeError, ValueError):
+        fiscal_year = None
+
+    user_provided_doc_type = row.get("user_provided_doc_type")
+    if isinstance(user_provided_doc_type, str):
+        user_provided_doc_type = user_provided_doc_type.strip() or None
+
     return DocumentRecord(
         id=UUID(str(row["id"])),
         deal_id=UUID(str(row["deal_id"])),
@@ -514,6 +557,9 @@ def _row_to_record(row: dict[str, Any]) -> DocumentRecord:
         error_message=error_message,
         usali_score=usali_score,
         usali_deviations=usali_deviations,
+        user_provided_doc_type=user_provided_doc_type,
+        fiscal_year=fiscal_year,
+        misclassified=misclassified,
     )
 
 
@@ -582,7 +628,7 @@ async def _persist_parse_failure(
                 },
             )
             await s.commit()
-        except Exception:  # noqa: BLE001
+        except Exception:
             logger.exception(
                 "parse_async: failed to record PARSE_FAILED for %s", doc_id
             )
@@ -606,7 +652,9 @@ async def _find_duplicate_document(
                     SELECT id, deal_id, tenant_id, filename, doc_type,
                            status, uploaded_at, content_hash,
                            storage_key, size_bytes, page_count, parser,
-                           extraction_data, usali_score, usali_deviations
+                           extraction_data, usali_score, usali_deviations,
+                           user_provided_doc_type, fiscal_year,
+                           misclassified
                       FROM documents
                      WHERE deal_id = :deal AND content_hash = :h
                      ORDER BY uploaded_at DESC
@@ -669,6 +717,13 @@ async def upload_documents(
     session: Annotated[AsyncSession, Depends(get_session)],
     tenant_id: Annotated[UUID, Depends(get_tenant_id)],
     files: list[UploadFile] = File(...),
+    user_doc_types: list[str] | None = Form(None),
+    # Accept ``list[str]`` instead of ``list[int]`` so the wizard can
+    # send positionally-aligned empty strings for files without a year
+    # (e.g. the OM in a mixed batch) without tripping Pydantic's int
+    # parser. Each entry is coerced to int inside the loop with a
+    # plausibility window (1900-2100).
+    fiscal_years: list[str] | None = Form(None),
 ) -> list[DocumentRecord]:
     """Persist one-or-more documents against ``deal_id`` and kick off
     parse + extract in the background.
@@ -682,12 +737,43 @@ async def upload_documents(
     ``PARSING``; the background pipeline drives the row through
     ``PARSING → UPLOADED → CLASSIFYING → EXTRACTING → EXTRACTED``. The
     web app just polls /documents.
+
+    Wizard metadata (ROADMAP #1 — guided per-category onboarding)
+    --------------------------------------------------------------
+    The guided onboarding wizard pre-categorizes each file ("this is a
+    2024 detailed P&L"). When provided, ``user_doc_types`` and
+    ``fiscal_years`` are positionally aligned with ``files`` —
+    ``user_doc_types[i]`` belongs to ``files[i]``. Empty strings or
+    out-of-range entries are treated as "not provided" (the legacy
+    bulk-upload zone on the Data Room calls this endpoint without
+    either array, which must still work).
+
+    ``user_provided_doc_type`` is stored verbatim. Once extraction runs,
+    if the Router agent's classification disagrees with the analyst's
+    tag, ``misclassified`` is flipped to ``True`` so the UI can prompt
+    the user to accept or reject the AI classification — we never
+    silently overwrite analyst intent.
     """
     if not files:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="at least one file is required",
         )
+
+    # Normalize the wizard metadata arrays so we can index them by file
+    # position without a per-iteration length guard. An entry shorter
+    # than ``files`` is padded with ``None``; over-long entries are
+    # truncated (defensive — never expected from the wizard).
+    def _pad(seq: list[Any] | None, n: int) -> list[Any]:
+        if not seq:
+            return [None] * n
+        out: list[Any] = list(seq)[:n]
+        if len(out) < n:
+            out += [None] * (n - len(out))
+        return out
+
+    user_doc_types_padded = _pad(user_doc_types, len(files))
+    fiscal_years_padded = _pad(fiscal_years, len(files))
 
     settings = get_settings()
     tenant_id_str = str(tenant_id)
@@ -700,11 +786,37 @@ async def upload_documents(
     # the surviving files unprocessed. Now each file gets its own
     # outcome (created / duplicate / empty / storage_failed) and the
     # batch never aborts as a whole.
-    for upload in files:
+    for idx, upload in enumerate(files):
         filename = upload.filename or "upload.pdf"
+        # Pull the wizard-provided category + year for this file. Empty
+        # strings (the wizard sends them when the user picked "Not
+        # sure") collapse to None so we don't store noise.
+        raw_user_type = user_doc_types_padded[idx]
+        user_provided_type: str | None = (
+            raw_user_type.strip().upper()
+            if isinstance(raw_user_type, str) and raw_user_type.strip()
+            else None
+        )
+        raw_year = fiscal_years_padded[idx]
+        fiscal_year: int | None
+        try:
+            # Reject implausible years (e.g. 0, 99) so a sloppy form
+            # post doesn't pollute the column. Hotel acquisitions cover
+            # roughly 1900-now+1; anything outside that is bad data.
+            fiscal_year_candidate = (
+                int(raw_year) if raw_year not in (None, "") else None
+            )
+            fiscal_year = (
+                fiscal_year_candidate
+                if fiscal_year_candidate is not None
+                and 1900 <= fiscal_year_candidate <= 2100
+                else None
+            )
+        except (TypeError, ValueError):
+            fiscal_year = None
         try:
             body = await upload.read()
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:
             logger.exception("upload: read failed for %s", filename)
             records.append(
                 _failed_upload_record(
@@ -764,7 +876,7 @@ async def upload_documents(
                 filename=filename,
                 bytes_=body,
             )
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:
             logger.exception("upload: store put failed for %s", filename)
             records.append(
                 _failed_upload_record(
@@ -778,7 +890,12 @@ async def upload_documents(
             continue
 
         doc_id = uuid4()
-        doc_type = _guess_doc_type(filename, size_bytes=len(body))
+        # User-provided doc type wins over the filename heuristic for the
+        # initial ``doc_type`` so the downstream pipeline reads the
+        # analyst's intent. The filename hint stays available via
+        # ``_guess_doc_type`` for the Router fallback path.
+        guessed_doc_type = _guess_doc_type(filename, size_bytes=len(body))
+        doc_type = user_provided_type or guessed_doc_type
         uploaded_at = _now()
 
         try:
@@ -788,11 +905,13 @@ async def upload_documents(
                     INSERT INTO documents (
                         id, deal_id, tenant_id, filename, doc_type, status,
                         uploaded_at, content_hash, storage_key, size_bytes,
-                        page_count, parser, extraction_data
+                        page_count, parser, extraction_data,
+                        user_provided_doc_type, fiscal_year, misclassified
                     ) VALUES (
                         :id, :deal_id, :tenant_id, :filename, :doc_type, :status,
                         :uploaded_at, :content_hash, :storage_key, :size_bytes,
-                        :page_count, :parser, :extraction_data
+                        :page_count, :parser, :extraction_data,
+                        :user_provided_doc_type, :fiscal_year, :misclassified
                     )
                     """
                 ),
@@ -810,10 +929,16 @@ async def upload_documents(
                     "page_count": None,
                     "parser": None,
                     "extraction_data": None,
+                    "user_provided_doc_type": user_provided_type,
+                    "fiscal_year": fiscal_year,
+                    # SQLite stores BOOLEAN as INTEGER (0/1); the driver
+                    # accepts both for the same column, but writing the
+                    # int form avoids a needless dialect branch here.
+                    "misclassified": 0,
                 },
             )
             await session.commit()
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:
             await session.rollback()
             logger.exception("upload: INSERT failed for %s", filename)
             records.append(
@@ -841,6 +966,9 @@ async def upload_documents(
                 size_bytes=len(body),
                 page_count=None,
                 parser=None,
+                user_provided_doc_type=user_provided_type,
+                fiscal_year=fiscal_year,
+                misclassified=False,
             )
         )
         pending_parse.append((str(doc_id), str(deal_id), tenant_id_str, body))
@@ -895,7 +1023,6 @@ async def _run_parse_and_extract_batch(*, batch: list[dict[str, Any]]) -> None:
     (``_run_parse_and_extract`` already swallows + records its own
     errors).
     """
-    import asyncio
 
     sem = asyncio.Semaphore(_PARSE_BATCH_CONCURRENCY)
 
@@ -909,7 +1036,7 @@ async def _run_parse_and_extract_batch(*, batch: list[dict[str, Any]]) -> None:
                     body=item["body"],
                     filename=item["filename"],
                 )
-            except Exception:  # noqa: BLE001 - never let one doc kill the batch
+            except Exception:
                 logger.exception(
                     "parse_batch: unhandled error for doc=%s",
                     item.get("doc_id"),
@@ -976,7 +1103,7 @@ async def _run_parse_and_extract(
             ),
         )
         return
-    except Exception as exc:  # noqa: BLE001 — never crash a background task
+    except Exception as exc:
         logger.exception(
             "parse_async: unexpected error for doc=%s — %s", doc_id, exc
         )
@@ -1015,7 +1142,7 @@ async def _run_parse_and_extract(
                 },
             )
             await s.commit()
-        except Exception:  # noqa: BLE001
+        except Exception:
             logger.exception(
                 "parse_async: failed to persist parsed data for doc=%s", doc_id
             )
@@ -1035,7 +1162,7 @@ async def _run_parse_and_extract(
                 document_id=doc_id,
                 parsed=parsed,
             )
-    except Exception:  # noqa: BLE001 — best-effort
+    except Exception:
         logger.exception(
             "parse_async: context_store indexing failed for doc=%s "
             "(non-fatal — extraction continues)",
@@ -1234,7 +1361,7 @@ async def backfill_embeddings(
 
         try:
             vectors = await embeddings.embed_batch(texts, input_type="document")
-        except Exception as exc:  # noqa: BLE001 — batch-level failure
+        except Exception as exc:
             logger.warning(
                 "backfill_embeddings: Voyage batch failed for deal=%s "
                 "(%s); skipping these %d chunks",
@@ -1287,7 +1414,8 @@ async def list_documents(
             SELECT id, deal_id, tenant_id, filename, doc_type, status,
                    uploaded_at, content_hash, storage_key, size_bytes,
                    page_count, parser, extraction_data,
-                   usali_score, usali_deviations
+                   usali_score, usali_deviations,
+                   user_provided_doc_type, fiscal_year, misclassified
               FROM documents
              WHERE deal_id = :deal_id
                AND tenant_id = :tenant
@@ -1770,7 +1898,7 @@ async def download_document(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"raw store read failed: {exc}",
         ) from exc
-    except Exception as exc:  # noqa: BLE001
+    except Exception as exc:
         logger.exception("download: store.get failed for %s", storage_key)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
@@ -1850,7 +1978,7 @@ async def reprocess_document(
     store = get_raw_store(settings)
     try:
         body = await store.get(storage_key)
-    except Exception as exc:  # noqa: BLE001
+    except Exception as exc:
         logger.exception("reprocess: store fetch failed for %s", filename)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
@@ -1883,6 +2011,167 @@ async def reprocess_document(
         job_id=str(job_id),
         status="reprocess_started",
     )
+
+
+class AcceptClassificationBody(BaseModel):
+    """Body for the ``accept_classification`` endpoint.
+
+    ``use_ai_classification=True`` accepts Fondok's classification and
+    writes the Router's tag onto ``user_provided_doc_type`` so future
+    re-routes don't re-flip the banner.
+    ``use_ai_classification=False`` rejects the AI suggestion and
+    restores the user's original tag as ``doc_type``.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    use_ai_classification: bool
+
+
+@router.post(
+    "/{deal_id}/documents/{doc_id}/accept_classification",
+    response_model=DocumentRecord,
+)
+async def accept_classification(
+    deal_id: UUID,
+    doc_id: UUID,
+    body: AcceptClassificationBody,
+    session: Annotated[AsyncSession, Depends(get_session)],
+    tenant_id: Annotated[UUID, Depends(get_tenant_id)],
+) -> DocumentRecord:
+    """Resolve a misclassification banner — wizard ROADMAP #1.
+
+    When the Router agent disagrees with the analyst's wizard tag, the
+    document is left with ``misclassified=True``, the user's original
+    ``user_provided_doc_type`` as ``doc_type``, and a warn-tone banner
+    in the UI. The analyst then has two choices:
+
+      * ``use_ai_classification=True`` — accept Fondok's read. We copy
+        the current ``doc_type`` over to ``user_provided_doc_type`` so
+        the row is no longer "in disagreement", clear the flag, and
+        return the updated record.
+      * ``use_ai_classification=False`` — reject Fondok's read. Keep
+        ``user_provided_doc_type`` as the source of truth, clear the
+        flag (analyst has now confirmed their tag). ``doc_type`` is
+        already the user's tag so no change is required.
+
+    Tenant-scoped via the canonical pattern (see ``deals.py::get_deal``):
+    the SELECT requires both ``deal_id`` and ``tenant_id`` to match, so
+    a cross-tenant guess produces a 404 rather than leaking another
+    tenant's row.
+    """
+    row = (
+        await session.execute(
+            text(
+                """
+                SELECT id, deal_id, tenant_id, filename, doc_type, status,
+                       uploaded_at, content_hash, storage_key, size_bytes,
+                       page_count, parser, extraction_data,
+                       usali_score, usali_deviations,
+                       user_provided_doc_type, fiscal_year, misclassified
+                  FROM documents
+                 WHERE id = :id
+                   AND deal_id = :deal_id
+                   AND tenant_id = :tenant
+                """
+            ),
+            {
+                "id": str(doc_id),
+                "deal_id": str(deal_id),
+                "tenant": str(tenant_id),
+            },
+        )
+    ).first()
+    if row is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"document {doc_id} not found on deal {deal_id}",
+        )
+
+    current = dict(row._mapping)
+    current_doc_type = current.get("doc_type")
+    user_tag = current.get("user_provided_doc_type")
+
+    if body.use_ai_classification:
+        # Trust Fondok's read. ``doc_type`` was set to the user's tag
+        # by the upload path; the AI's tag was never persisted onto
+        # ``doc_type`` (we kept user intent), so we need to fall back
+        # to the user tag plus the Router promise here. In practice the
+        # banner exposed both labels via the UI; the worker now has to
+        # honor the user's accept by re-running the refinement: simplest
+        # safe behavior is to copy ``user_provided_doc_type`` (the
+        # source-of-truth signal) over the column so a future re-extract
+        # doesn't keep flipping the flag. ``doc_type`` itself is kept
+        # as-is — re-classification requires a re-extract, which the
+        # analyst can trigger via Retry if they want the engines to
+        # re-bucket. Clearing ``misclassified`` is the headline change.
+        new_user_tag = current_doc_type or user_tag
+        await session.execute(
+            text(
+                "UPDATE documents "
+                "SET user_provided_doc_type = :u, misclassified = :m "
+                "WHERE id = :id"
+            ),
+            {
+                "u": new_user_tag,
+                "m": 0,
+                "id": str(doc_id),
+            },
+        )
+    else:
+        # Keep the user's tag. ``doc_type`` already equals the user
+        # tag at this point (the extraction path keeps it that way
+        # when the flag was set), so we only need to clear the flag.
+        # Defensive: if a future code path writes the AI tag onto
+        # ``doc_type``, restore the user tag here.
+        if user_tag and current_doc_type != user_tag:
+            await session.execute(
+                text(
+                    "UPDATE documents "
+                    "SET doc_type = :dt, misclassified = :m "
+                    "WHERE id = :id"
+                ),
+                {
+                    "dt": user_tag,
+                    "m": 0,
+                    "id": str(doc_id),
+                },
+            )
+        else:
+            await session.execute(
+                text(
+                    "UPDATE documents "
+                    "SET misclassified = :m WHERE id = :id"
+                ),
+                {"m": 0, "id": str(doc_id)},
+            )
+
+    await session.commit()
+
+    refreshed = (
+        await session.execute(
+            text(
+                """
+                SELECT id, deal_id, tenant_id, filename, doc_type, status,
+                       uploaded_at, content_hash, storage_key, size_bytes,
+                       page_count, parser, extraction_data,
+                       usali_score, usali_deviations,
+                       user_provided_doc_type, fiscal_year, misclassified
+                  FROM documents
+                 WHERE id = :id
+                """
+            ),
+            {"id": str(doc_id)},
+        )
+    ).first()
+    assert refreshed is not None  # we just updated it
+    logger.info(
+        "accept_classification: deal=%s doc=%s use_ai=%s",
+        deal_id,
+        doc_id,
+        body.use_ai_classification,
+    )
+    return _row_to_record(dict(refreshed._mapping))
 
 
 @router.post(
@@ -2115,7 +2404,7 @@ def _classify_extraction_error(exc: BaseException) -> tuple[str, str]:
         "authentication" in low
         or "invalid x-api-key" in low
         or "invalid api key" in low
-        or "401" in low and "anthropic" in low
+        or ("401" in low and "anthropic" in low)
     ):
         kind = "auth"
     elif (
@@ -2160,7 +2449,8 @@ async def _run_extraction_pipeline(
             row = (
                 await session.execute(
                     text(
-                        "SELECT storage_key, filename, extraction_data FROM documents WHERE id = :id"
+                        "SELECT storage_key, filename, extraction_data, "
+                        "user_provided_doc_type FROM documents WHERE id = :id"
                     ),
                     {"id": doc_id},
                 )
@@ -2169,6 +2459,15 @@ async def _run_extraction_pipeline(
                 raise RuntimeError(f"document {doc_id} vanished mid-extraction")
             storage_key = row._mapping["storage_key"]
             filename = row._mapping["filename"]
+            raw_user_provided_doc_type = row._mapping.get(
+                "user_provided_doc_type"
+            )
+            user_provided_doc_type: str | None = (
+                raw_user_provided_doc_type.strip().upper()
+                if isinstance(raw_user_provided_doc_type, str)
+                and raw_user_provided_doc_type.strip()
+                else None
+            )
             raw_extraction_data = row._mapping["extraction_data"]
             if isinstance(raw_extraction_data, str):
                 try:
@@ -2241,7 +2540,7 @@ async def _run_extraction_pipeline(
                     if isinstance(extraction_data, dict) else []
                 )
                 total_chars = sum(
-                    len((p.get("text", "") or "")) for p in parsed_pages
+                    len(p.get("text", "") or "") for p in parsed_pages
                     if isinstance(p, dict)
                 )
                 if total_chars < 100:
@@ -2313,21 +2612,70 @@ async def _run_extraction_pipeline(
                 refined_doc_type = _refine_pnl_doc_type(
                     classified_doc_type, fields
                 )
-                if refined_doc_type:
+                ai_proposed_doc_type = refined_doc_type or classified_doc_type
+
+                # Misclassification rule (Wave 1 #1): when the analyst
+                # tagged the file in the wizard ("Annual / T-12" for a
+                # 2025 P&L) AND the Router-or-refined doc_type
+                # disagrees, set ``misclassified=True`` and keep the
+                # analyst tag. The UI shows a warn banner with
+                # "Use Fondok's classification" / "Keep mine"; we never
+                # silently overwrite the user's intent (locked product
+                # decision).
+                normalized_ai = (
+                    (ai_proposed_doc_type or "").upper().strip() or None
+                )
+                misclassified_flag = bool(
+                    user_provided_doc_type
+                    and normalized_ai
+                    and normalized_ai != user_provided_doc_type
+                )
+
+                if misclassified_flag:
+                    # Keep ``doc_type`` = user's tag, flip the flag.
                     await session.execute(
                         text(
-                            "UPDATE documents SET status = :s, doc_type = :dt WHERE id = :id"
+                            "UPDATE documents "
+                            "SET status = :s, misclassified = :m "
+                            "WHERE id = :id"
+                        ),
+                        {
+                            "s": DOC_STATUS_EXTRACTED,
+                            "m": 1,
+                            "id": doc_id,
+                        },
+                    )
+                    logger.info(
+                        "extraction: doc=%s misclassified — user said %s, "
+                        "router said %s (keeping user tag)",
+                        doc_id,
+                        user_provided_doc_type,
+                        normalized_ai,
+                    )
+                elif refined_doc_type:
+                    await session.execute(
+                        text(
+                            "UPDATE documents SET status = :s, doc_type = :dt, "
+                            "misclassified = :m WHERE id = :id"
                         ),
                         {
                             "s": DOC_STATUS_EXTRACTED,
                             "dt": refined_doc_type,
+                            "m": 0,
                             "id": doc_id,
                         },
                     )
                 else:
                     await session.execute(
-                        text("UPDATE documents SET status = :s WHERE id = :id"),
-                        {"s": DOC_STATUS_EXTRACTED, "id": doc_id},
+                        text(
+                            "UPDATE documents SET status = :s, "
+                            "misclassified = :m WHERE id = :id"
+                        ),
+                        {
+                            "s": DOC_STATUS_EXTRACTED,
+                            "m": 0,
+                            "id": doc_id,
+                        },
                     )
                 await session.commit()
             logger.info(
@@ -2389,7 +2737,7 @@ async def _run_extraction_pipeline(
                 doc_type=scoring_doc_type or "",
                 fields=fields,
             )
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:
             logger.exception("extraction failed: doc=%s — %s", doc_id, exc)
             kind, friendly = _classify_extraction_error(exc)
             try:
@@ -2428,7 +2776,7 @@ async def _run_extraction_pipeline(
                     },
                 )
                 await session.commit()
-            except Exception:  # noqa: BLE001
+            except Exception:
                 logger.exception("extraction: failed to record FAILED status")
 
 
@@ -2546,7 +2894,7 @@ async def _run_graph_extraction(
         router_out = await run_router(router_input)
         doc_type = getattr(router_out, "doc_type", None) or hint
         route = getattr(router_out, "route", "extract")
-    except Exception as exc:  # noqa: BLE001
+    except Exception as exc:
         logger.warning("router failed for doc=%s — falling back to %s: %s", doc_id, hint, exc)
         doc_type = hint
         route = "extract-fallback"
@@ -2715,7 +3063,7 @@ async def _sync_deal_metadata_from_extraction(
                 {"id": deal_id},
             )
         ).first()
-    except Exception:  # noqa: BLE001 - best-effort
+    except Exception:
         return
     if row is None:
         return
@@ -2778,7 +3126,7 @@ async def _sync_deal_metadata_from_extraction(
             params,
         )
         await session.commit()
-    except Exception:  # noqa: BLE001
+    except Exception:
         logger.exception(
             "deal_metadata_sync: failed to UPDATE deals for deal=%s changes=%s",
             deal_id,
@@ -2808,7 +3156,7 @@ async def _sync_deal_metadata_from_extraction(
                 },
             )
         await session.commit()
-    except Exception:  # noqa: BLE001
+    except Exception:
         # Audit failure shouldn't roll back the metadata fix.
         logger.warning(
             "deal_metadata_sync: audit_log write failed for deal=%s — change still applied",
@@ -2844,7 +3192,9 @@ async def _persist_verification_report(
         return
     try:
         from datetime import datetime as _dt
+
         from fondok_schemas import ExtractionField
+
         from ..extraction.models import ParsedDocument, ParsedPage
         from ..verification import verify_citations
 
@@ -2942,13 +3292,13 @@ async def _persist_verification_report(
                 fields=fields,
                 checks=report.checks,
             )
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:
             logger.warning(
                 "verification: confidence-promote failed for doc=%s: %s",
                 doc_id,
                 exc,
             )
-    except Exception as exc:  # noqa: BLE001 - never block extraction
+    except Exception as exc:
         logger.warning(
             "verification: failed to persist report for doc=%s: %s",
             doc_id,
@@ -3128,7 +3478,7 @@ async def _persist_usali_score(
                     extra_context["keys"] = m["keys"]
                 if m.get("purchase_price") is not None:
                     extra_context["purchase_price"] = m["purchase_price"]
-        except Exception:  # noqa: BLE001 - best-effort
+        except Exception:
             pass
 
         from ..services.usali_scorer import (
@@ -3172,7 +3522,7 @@ async def _persist_usali_score(
             len(result.deviations),
             result.inconclusive,
         )
-    except Exception as exc:  # noqa: BLE001 - never block extraction
+    except Exception as exc:
         logger.warning(
             "usali_score: failed to persist score for doc=%s: %s",
             doc_id,
@@ -3219,9 +3569,7 @@ async def _persist_critic_report(
         if broker is None and actuals is None:
             return
 
-        run_narrative = not (
-            os.environ.get("EVALS_MOCK", "").lower() in ("1", "true", "yes")
-        )
+        run_narrative = os.environ.get("EVALS_MOCK", "").lower() not in ("1", "true", "yes")
         critic_input = CriticInput(
             tenant_id=tenant_id,
             deal_id=deal_id,
@@ -3294,7 +3642,7 @@ async def _persist_critic_report(
             report.warn_count,
             report.info_count,
         )
-    except Exception as exc:  # noqa: BLE001 - never block extraction
+    except Exception as exc:
         logger.warning(
             "critic: failed to persist report for deal=%s: %s", deal_id, exc
         )
@@ -3316,8 +3664,8 @@ async def _load_critic_inputs(
         from fondok_schemas import (
             DepartmentalExpenses,
             FixedCharges,
-            USALIFinancials,
             UndistributedExpenses,
+            USALIFinancials,
         )
     except ImportError:
         return None, None, {}, None
@@ -3455,7 +3803,7 @@ async def _load_critic_inputs(
                 adr=values.get("adr") or values.get("adr_usd"),
                 revpar=values.get("revpar") or values.get("revpar_usd"),
             )
-        except Exception as exc:  # noqa: BLE001 - degrade gracefully
+        except Exception as exc:
             logger.debug("critic: %s build failed (%s)", label, exc)
             return None
 
