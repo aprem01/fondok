@@ -30,6 +30,15 @@ from .comp_sales import CompSalesSet, CompTransaction
 from .confidence import ConfidenceReport
 from .cost import AgentCost, DealCostReport
 from .critic import CriticFinding, CriticReport
+from .debt_stack import (
+    DebtStackInput,
+    DebtStackOutput,
+    DebtTranche,
+    RefiTestResult,
+    TrancheAmortYear,
+    TrancheName,
+    TrancheSchedule,
+)
 from .deal import (
     Deal,
     DealStage,
@@ -151,6 +160,14 @@ __all__ = [
     # critic
     "CriticFinding",
     "CriticReport",
+    # debt stack v2 (Wave 4 W4.4 — senior + mezz + pref equity)
+    "DebtStackInput",
+    "DebtStackOutput",
+    "DebtTranche",
+    "RefiTestResult",
+    "TrancheAmortYear",
+    "TrancheName",
+    "TrancheSchedule",
     # deal
     "Deal",
     "DealStage",
