@@ -3,6 +3,7 @@ import { Database, Sparkles, Pencil, FileText, BarChart3, Map, ExternalLink } fr
 import { useRouter } from 'next/navigation';
 import { cn } from '@/lib/format';
 import type { AssumptionSource } from '@/lib/api';
+import { Tooltip } from './Tooltip';
 
 /**
  * Tiny badge that explains where an assumption value came from.
@@ -76,22 +77,29 @@ export function AssumptionBadge({
     className,
   );
 
+  const tooltipBody = (
+    <span className="whitespace-pre-wrap leading-relaxed">{tooltip}</span>
+  );
+
   const sourceEl = clickable ? (
-    <button
-      type="button"
-      onClick={(e) => {
-        e.stopPropagation();
-        router.push(`/projects/${dealId}?tab=&doc=${documentId}`);
-      }}
-      title={tooltip}
-      className={classes}
-    >
-      {content}
-    </button>
+    <Tooltip content={tooltipBody} side="top" learnMoreHref="/methodology#sources">
+      <button
+        type="button"
+        onClick={(e) => {
+          e.stopPropagation();
+          router.push(`/projects/${dealId}?tab=&doc=${documentId}`);
+        }}
+        className={classes}
+      >
+        {content}
+      </button>
+    </Tooltip>
   ) : (
-    <span className={classes} title={tooltip}>
-      {content}
-    </span>
+    <Tooltip content={tooltipBody} side="top" learnMoreHref="/methodology#sources">
+      <span className={classes} tabIndex={0}>
+        {content}
+      </span>
+    </Tooltip>
   );
 
   if (!onOverride) return sourceEl;
@@ -99,18 +107,19 @@ export function AssumptionBadge({
   return (
     <span className="inline-flex items-center gap-1 align-middle">
       {sourceEl}
-      <button
-        type="button"
-        onClick={(e) => {
-          e.stopPropagation();
-          onOverride();
-        }}
-        title="Override this value with an analyst note"
-        className="inline-flex items-center justify-center w-4 h-4 rounded text-ink-500 hover:text-warn-700 hover:bg-warn-50 transition-colors"
-        aria-label="Override value"
-      >
-        <Pencil size={9} aria-hidden="true" />
-      </button>
+      <Tooltip content="Override this value with an analyst note" side="top">
+        <button
+          type="button"
+          onClick={(e) => {
+            e.stopPropagation();
+            onOverride();
+          }}
+          className="inline-flex items-center justify-center w-4 h-4 rounded text-ink-500 hover:text-warn-700 hover:bg-warn-50 transition-colors"
+          aria-label="Override value"
+        >
+          <Pencil size={9} aria-hidden="true" />
+        </button>
+      </Tooltip>
     </span>
   );
 }

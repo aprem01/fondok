@@ -99,3 +99,127 @@ export const GLOSSARY: Record<string, string> = {
 export function getDefinition(term: string): string | undefined {
   return GLOSSARY[term];
 }
+
+/**
+ * Metric-id → plain-English definition + methodology anchor.
+ *
+ * Used by `MetricHint` (the small `Info` icon next to every metric in
+ * Returns Summary, Investment Summary, Project Status, etc.). Keys are
+ * stable ids — never rename without updating the call sites.
+ *
+ * `learnMoreAnchor` should match an id in `/methodology` so the
+ * "Learn more →" link in the tooltip body jumps to the relevant section.
+ */
+export const GLOSSARY_DEFINITIONS: Record<
+  string,
+  { definition: string; learnMoreAnchor: string }
+> = {
+  // ─── Returns Summary ─────────────────────────────────────────────────
+  levered_irr: {
+    definition:
+      'Levered IRR — annualized return on the equity stack after debt service. The headline number every IC reads first.',
+    learnMoreAnchor: '/methodology#engines',
+  },
+  unlevered_irr: {
+    definition:
+      'Unlevered IRR — the pure asset return as if the hotel were bought in cash. Strips out the effect of leverage.',
+    learnMoreAnchor: '/methodology#engines',
+  },
+  equity_multiple: {
+    definition:
+      'Total cash returned to equity divided by equity invested. 2.0x means investors got back twice their money over the hold.',
+    learnMoreAnchor: '/methodology#engines',
+  },
+  year1_coc: {
+    definition:
+      'Year-1 Cash-on-Cash — annual cash flow to equity in Year 1 divided by equity invested. A go/no-go floor for many sponsors.',
+    learnMoreAnchor: '/methodology#engines',
+  },
+  hold_period: {
+    definition:
+      'How many years you own the hotel before selling. Typically 3–7 years for hotels.',
+    learnMoreAnchor: '/methodology#engines',
+  },
+  exit_cap: {
+    definition:
+      'Exit Cap Rate — the cap rate assumed at sale. Determines the exit price. Sourced from OM transaction comps when available, else seed.',
+    learnMoreAnchor: '/methodology#projection',
+  },
+
+  // ─── Investment Summary ──────────────────────────────────────────────
+  total_capital: {
+    definition:
+      'Total Capital — purchase price + closing costs + renovation budget + working capital. Everything you have to fund at close.',
+    learnMoreAnchor: '/methodology#engines',
+  },
+  price_per_key: {
+    definition:
+      'Purchase price divided by guest rooms. The quickest yardstick for whether you are paying a market clearing price.',
+    learnMoreAnchor: '/methodology#engines',
+  },
+  entry_cap: {
+    definition:
+      'Entry Cap Rate — Year-1 NOI divided by purchase price. The unlevered yield on day one.',
+    learnMoreAnchor: '/methodology#engines',
+  },
+  closing_costs: {
+    definition:
+      'One-time costs at acquisition — title, legal, transfer tax, lender fees. Usually 1–3% of purchase price.',
+    learnMoreAnchor: '/methodology#engines',
+  },
+  working_capital: {
+    definition:
+      'Cash the buyer leaves on the books at close to fund day-one operations (payroll, vendor float).',
+    learnMoreAnchor: '/methodology#engines',
+  },
+
+  // ─── Project Status ──────────────────────────────────────────────────
+  docs_count: {
+    definition:
+      'Documents uploaded across the 11 IC-required categories. More coverage means tighter underwriting.',
+    learnMoreAnchor: '/methodology#extraction',
+  },
+  ic_confidence: {
+    definition:
+      'IC readiness score — the share of required categories with at least one verified document. 80%+ is the institutional bar.',
+    learnMoreAnchor: '/methodology#extraction',
+  },
+  risk_score: {
+    definition:
+      'Risk score — a synthesis of variance flags, USALI deviations, and gap chips. Red means an IC reviewer should expect questions.',
+    learnMoreAnchor: '/methodology#extraction',
+  },
+  ai_confidence: {
+    definition:
+      'AI confidence — Critic-verified field accuracy. Verified numbers float at 0.98; un-grounded extractions drop to 0.50.',
+    learnMoreAnchor: '/methodology#extraction',
+  },
+
+  // ─── Data Room / USALI ───────────────────────────────────────────────
+  usali_score: {
+    definition:
+      'USALI compliance score — how cleanly the P&L follows the hospitality accounting standard. 90+ is institutional-grade.',
+    learnMoreAnchor: '/methodology#projection',
+  },
+
+  // ─── Debt tab ────────────────────────────────────────────────────────
+  dscr: {
+    definition:
+      'Debt Service Coverage Ratio — NOI divided by debt service. Lenders typically require 1.20x or higher.',
+    learnMoreAnchor: '/methodology#engines',
+  },
+  debt_yield: {
+    definition:
+      'Year-1 NOI divided by the loan amount. A floor metric lenders use — typically 8–10% — to size the loan.',
+    learnMoreAnchor: '/methodology#engines',
+  },
+  ltv: {
+    definition:
+      'Loan to Value — loan amount as a percentage of hotel value. Higher LTV means more leverage and more risk.',
+    learnMoreAnchor: '/methodology#engines',
+  },
+};
+
+export function getMetricDefinition(metricId: string) {
+  return GLOSSARY_DEFINITIONS[metricId];
+}

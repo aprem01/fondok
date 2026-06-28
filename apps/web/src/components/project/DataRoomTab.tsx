@@ -32,6 +32,7 @@ import { cn } from '@/lib/format';
 import EngineRunProgress from './EngineRunProgress';
 import { IntroCard } from '@/components/help/IntroCard';
 import { MetricLabel } from '@/components/help/MetricLabel';
+import { CoachMark } from '@/components/help/CoachMark';
 import { UsaliBadge } from './validation/UsaliBadge';
 import { UsaliDeviationsAccordion } from './validation/UsaliDeviationsAccordion';
 import { GapChipsStrip } from './validation/GapChipsStrip';
@@ -689,11 +690,21 @@ export default function DataRoomTab({ projectId }: { projectId: number | string 
           start scrolling through the upload list. The same component
           also renders on the Validation tab (different mount, same
           backend). Auto-hides for mock/numeric ids. */}
-      <GapChipsStrip
-        dealId={rawId}
-        surface="dataroom"
-        onUploadClick={() => onPickFiles()}
-      />
+      <CoachMark
+        anchorId="dataroom-gap-chips"
+        viewKey="dataroom"
+        order={0}
+        title="Coverage gaps you can fix in one click"
+        body="Coverage gaps surface missing years and partial months. Click any chip to upload the specific document we're missing — Fondok routes it to the right extractor automatically."
+        side="bottom"
+        learnMoreHref="/methodology#extraction"
+      >
+        <GapChipsStrip
+          dealId={rawId}
+          surface="dataroom"
+          onUploadClick={() => onPickFiles()}
+        />
+      </CoachMark>
 
       <IntroCard
         dismissKey="dataroom-intro"
@@ -997,7 +1008,7 @@ export default function DataRoomTab({ projectId }: { projectId: number | string 
 
           <div className="grid grid-cols-3 gap-5">
             <div className="col-span-2 space-y-2">
-              {docs.map((d) => {
+              {docs.map((d, _docIdx) => {
                 const hasVariance = VARIANCE_DOCS.has(d.name);
                 const flagsForDoc = hasVariance
                   ? varianceFlags.filter((f) =>
@@ -1082,15 +1093,38 @@ export default function DataRoomTab({ projectId }: { projectId: number | string 
                               when the worker has scored this document; click
                               toggles the deviation accordion rendered just
                               below the card. */}
-                          <UsaliBadge
-                            doc={{
-                              filename: d.name,
-                              usali_score: d.usaliScore ?? null,
-                              usali_deviations: d.usaliPayload ?? null,
-                            }}
-                            open={usaliOpen}
-                            onToggle={() => toggleUsali(d.id)}
-                          />
+                          {_docIdx === 0 ? (
+                            <CoachMark
+                              anchorId="dataroom-usali-badge"
+                              viewKey="dataroom"
+                              order={1}
+                              title="USALI compliance — at a glance"
+                              body="A score for how cleanly the P&L follows the hospitality accounting standard. 90+ is institutional-grade. Click the badge to see the specific deviations Fondok flagged."
+                              side="bottom"
+                              layout="inline"
+                              learnMoreHref="/methodology#projection"
+                            >
+                              <UsaliBadge
+                                doc={{
+                                  filename: d.name,
+                                  usali_score: d.usaliScore ?? null,
+                                  usali_deviations: d.usaliPayload ?? null,
+                                }}
+                                open={usaliOpen}
+                                onToggle={() => toggleUsali(d.id)}
+                              />
+                            </CoachMark>
+                          ) : (
+                            <UsaliBadge
+                              doc={{
+                                filename: d.name,
+                                usali_score: d.usaliScore ?? null,
+                                usali_deviations: d.usaliPayload ?? null,
+                              }}
+                              open={usaliOpen}
+                              onToggle={() => toggleUsali(d.id)}
+                            />
+                          )}
                           {docCritical > 0 && (
                             <span
                               role="button"

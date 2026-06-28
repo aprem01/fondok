@@ -632,7 +632,7 @@ function EmptyState({
     all: {
       title: 'No broker questions yet',
       body:
-        'Once Fondok detects year-over-year variances on the deal\'s historical P&Ls, broker-ready questions land here. Click Refresh to run detection now.',
+        'Fondok generates these from year-over-year variance once you have uploaded two or more years of financials. Upload an Annual P&L for a prior year, then click Refresh — material moves on revenue or expense lines surface here as broker-ready prompts.',
     },
     pending: hasAny
       ? {

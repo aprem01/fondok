@@ -24,6 +24,7 @@ import { cn } from '@/lib/format';
 import { Citation as CitationChip } from '@/components/citations/Citation';
 import { useDocuments } from '@/lib/hooks/useDocuments';
 import type { WorkerDocument } from '@/lib/api';
+import { CoachMark } from '@/components/help/CoachMark';
 
 const WORKER_URL = process.env.NEXT_PUBLIC_WORKER_URL ?? '';
 
@@ -250,6 +251,15 @@ export default function MemoStream({ dealId }: { dealId: string }) {
 
   return (
     <div className="space-y-4">
+      <CoachMark
+        anchorId="memo-streaming"
+        viewKey="memo"
+        order={0}
+        title="Section-by-section, with citations"
+        body="The memo streams as Opus drafts each section. Every claim cites the source document at a specific page — click any citation to jump back to the original PDF."
+        side="top"
+        learnMoreHref="/methodology#extraction"
+      >
       <Card className="p-5">
         <div className="flex items-center justify-between">
           <div>
@@ -307,6 +317,7 @@ export default function MemoStream({ dealId }: { dealId: string }) {
           </div>
         </div>
       </Card>
+      </CoachMark>
 
       {orderedSections.map(sec => (
         <SectionCard
