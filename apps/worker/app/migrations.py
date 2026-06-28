@@ -873,14 +873,7 @@ MIGRATIONS: list[tuple[str, str]] = [
     # ─────────────────── Wave 4 W4.1 — Portfolio P&L Library ───────────────
     # Firm-level benchmark roll-ups. Sam's June 2026 ask: "Apollo (and
     # other capital partners) own hotels in the same market and want to
-    # upload THEIR P&Ls as benchmarks." Wave 2 P2.7 added the
-    # ``PORTFOLIO_PNL`` doc type per-deal; W4.1 promotes it to a
-    # firm-level library that applies across every deal the tenant
-    # underwrites. Engine_runner queries entries whose
-    # ``chain_scales_covered`` overlaps the subject deal's chain scale
-    # and whose ``vintage_year`` is within the 3-year look-back, then
-    # computes a median per ratio to feed the ``portfolio_pnl`` tier of
-    # the precedence chain.
+    # upload THEIR P&Ls as benchmarks."
     (
         "portfolio_library.create_table",
         """
@@ -909,6 +902,65 @@ MIGRATIONS: list[tuple[str, str]] = [
         """
         CREATE INDEX IF NOT EXISTS idx_portfolio_library_tenant_active_vintage
         ON portfolio_library (tenant_id, is_active, vintage_year DESC)
+        """,
+    ),
+    # ────────── Wave 4 W4.5 — Saved pipeline views + digests ─────────
+    (
+        "saved_pipeline_views.create_table",
+        """
+        CREATE TABLE IF NOT EXISTS saved_pipeline_views (
+            id                 UUID PRIMARY KEY,
+            tenant_id          UUID NOT NULL,
+            name               TEXT NOT NULL,
+            description        TEXT,
+            filter             JSONB NOT NULL DEFAULT '{}'::jsonb,
+            is_owner_default   BOOLEAN NOT NULL DEFAULT FALSE,
+            created_by         TEXT,
+            created_at         TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+            updated_at         TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+            UNIQUE (tenant_id, name)
+        )
+        """,
+    ),
+    (
+        "saved_pipeline_views.idx_tenant",
+        """
+        CREATE INDEX IF NOT EXISTS idx_saved_pipeline_views_tenant
+        ON saved_pipeline_views (tenant_id)
+        """,
+    ),
+    (
+        "pipeline_digest_schedules.create_table",
+        """
+        CREATE TABLE IF NOT EXISTS pipeline_digest_schedules (
+            id                          UUID PRIMARY KEY,
+            tenant_id                   UUID NOT NULL,
+            name                        TEXT NOT NULL,
+            saved_view_id               UUID,
+            cadence                     TEXT NOT NULL DEFAULT 'daily',
+            weekday                     INTEGER,
+            hour_utc                    INTEGER NOT NULL DEFAULT 13,
+            delivery                    TEXT NOT NULL DEFAULT 'slack',
+            slack_webhook_url           TEXT,
+            email_recipients            JSONB NOT NULL DEFAULT '[]'::jsonb,
+            include_kpi_summary         BOOLEAN NOT NULL DEFAULT TRUE,
+            include_recently_mutated    BOOLEAN NOT NULL DEFAULT TRUE,
+            include_deals_meeting_target BOOLEAN NOT NULL DEFAULT TRUE,
+            include_full_table          BOOLEAN NOT NULL DEFAULT FALSE,
+            is_active                   BOOLEAN NOT NULL DEFAULT TRUE,
+            last_run_at                 TIMESTAMPTZ,
+            next_run_at                 TIMESTAMPTZ,
+            created_at                  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+            updated_at                  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+            UNIQUE (tenant_id, name)
+        )
+        """,
+    ),
+    (
+        "pipeline_digest_schedules.idx_tenant_active",
+        """
+        CREATE INDEX IF NOT EXISTS idx_pipeline_digest_schedules_active
+        ON pipeline_digest_schedules (tenant_id, is_active, next_run_at)
         """,
     ),
 ]
@@ -1479,10 +1531,6 @@ SQLITE_MIGRATIONS: list[tuple[str, str]] = [
         """,
     ),
     # ─────────────────── Wave 4 W4.1 — Portfolio P&L Library ───────────────
-    # SQLite mirror of the Postgres ``portfolio_library`` table. JSONB
-    # collapses to TEXT (JSON-encoded chain_scales_covered / msa_coverage
-    # / expense_ratios / revenue_mix); BOOLEAN → INTEGER 0/1; UUIDs →
-    # TEXT; no FK enforcement.
     (
         "portfolio_library.create_table",
         """
@@ -1511,6 +1559,65 @@ SQLITE_MIGRATIONS: list[tuple[str, str]] = [
         """
         CREATE INDEX IF NOT EXISTS idx_portfolio_library_tenant_active_vintage
         ON portfolio_library (tenant_id, is_active, vintage_year DESC)
+        """,
+    ),
+    # ────────── Wave 4 W4.5 — Saved pipeline views + digests ─────────
+    (
+        "saved_pipeline_views.create_table",
+        """
+        CREATE TABLE IF NOT EXISTS saved_pipeline_views (
+            id                 TEXT PRIMARY KEY,
+            tenant_id          TEXT NOT NULL,
+            name               TEXT NOT NULL,
+            description        TEXT,
+            filter             TEXT NOT NULL DEFAULT '{}',
+            is_owner_default   INTEGER NOT NULL DEFAULT 0,
+            created_by         TEXT,
+            created_at         TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            updated_at         TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            UNIQUE (tenant_id, name)
+        )
+        """,
+    ),
+    (
+        "saved_pipeline_views.idx_tenant",
+        """
+        CREATE INDEX IF NOT EXISTS idx_saved_pipeline_views_tenant
+        ON saved_pipeline_views (tenant_id)
+        """,
+    ),
+    (
+        "pipeline_digest_schedules.create_table",
+        """
+        CREATE TABLE IF NOT EXISTS pipeline_digest_schedules (
+            id                          TEXT PRIMARY KEY,
+            tenant_id                   TEXT NOT NULL,
+            name                        TEXT NOT NULL,
+            saved_view_id               TEXT,
+            cadence                     TEXT NOT NULL DEFAULT 'daily',
+            weekday                     INTEGER,
+            hour_utc                    INTEGER NOT NULL DEFAULT 13,
+            delivery                    TEXT NOT NULL DEFAULT 'slack',
+            slack_webhook_url           TEXT,
+            email_recipients            TEXT NOT NULL DEFAULT '[]',
+            include_kpi_summary         INTEGER NOT NULL DEFAULT 1,
+            include_recently_mutated    INTEGER NOT NULL DEFAULT 1,
+            include_deals_meeting_target INTEGER NOT NULL DEFAULT 1,
+            include_full_table          INTEGER NOT NULL DEFAULT 0,
+            is_active                   INTEGER NOT NULL DEFAULT 1,
+            last_run_at                 TEXT,
+            next_run_at                 TEXT,
+            created_at                  TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            updated_at                  TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            UNIQUE (tenant_id, name)
+        )
+        """,
+    ),
+    (
+        "pipeline_digest_schedules.idx_tenant_active",
+        """
+        CREATE INDEX IF NOT EXISTS idx_pipeline_digest_schedules_active
+        ON pipeline_digest_schedules (tenant_id, is_active, next_run_at)
         """,
     ),
 ]

@@ -3,7 +3,7 @@ import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
 import {
   LayoutGrid, FolderKanban, Database, Settings, ChevronDown, Building2,
-  Users, UserCog, LogOut, Plus, Check, BookOpen, LineChart, History, Library,
+  Users, UserCog, LogOut, Plus, Check, BookOpen, LineChart, History, Library, Bell,
 } from 'lucide-react';
 import { useState, useRef, useEffect } from 'react';
 import { OrganizationSwitcher } from '@clerk/nextjs';
@@ -32,6 +32,11 @@ const navItems = [
   { href: '/audit', label: 'Audit', icon: History },
   { href: '/data-library', label: 'Data Library', icon: Database },
   { href: '/methodology', label: 'Methodology', icon: BookOpen },
+  // Wave 4 W4.5 — recurring Slack/email pipeline summaries. Grouped
+  // under Settings in concept (it's a tenant-level config surface)
+  // but mounted as a top-level nav item so executives who only ever
+  // touch digests don't have to dive through Settings to find them.
+  { href: '/pipeline-digests', label: 'Digests', icon: Bell },
   { href: '/settings', label: 'Settings', icon: Settings },
 ];
 

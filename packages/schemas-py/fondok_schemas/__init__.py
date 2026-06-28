@@ -85,6 +85,11 @@ from .partnership import (
     PartnershipOutput,
     WaterfallTier,
 )
+from .pipeline_filter import (
+    PipelineDigestSchedule,
+    PipelineFilter,
+    SavedPipelineView,
+)
 from .portfolio_library import PortfolioLibraryEntry
 from .scenario import Scenario, ScenarioOverride
 from .underwriting import (
@@ -212,6 +217,10 @@ __all__ = [
     "PartnershipInput",
     "PartnershipOutput",
     "WaterfallTier",
+    # pipeline_filter (Wave 4 W4.5 — saved filters + scheduled digests)
+    "PipelineDigestSchedule",
+    "PipelineFilter",
+    "SavedPipelineView",
     # portfolio_library (Wave 4 W4.1 — firm-level portfolio P&L library)
     "PortfolioLibraryEntry",
     # scenario (Wave 3 W3.2 — named what-if scenarios)

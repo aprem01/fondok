@@ -1176,3 +1176,120 @@ the operational guidance is:
   tests (13 tests: schema columns, filters, pagination, tenant
   isolation, per-mutation emits, severity propagation, explorer
   search).
+
+---
+
+## Pipeline digests (Wave 4 W4.5)
+
+### Why we add this
+
+Analysts open the Pipeline page (W3.5) dozens of times per day to
+apply the SAME filter set ("active US deals over $30M", "closing this
+quarter"). And executives want a daily / weekly summary of pipeline
+state without logging in. W4.5 ships two persisted, tenant-scoped
+artifacts that compose into a single workflow:
+
+* **Saved pipeline views** — named filter + sort presets. The analyst
+  pins one as their landing filter on ``/pipeline`` via
+  ``POST /pipeline-views/{id}/set-default``.
+* **Pipeline digest schedules** — recurring Slack and/or email
+  summaries. Each schedule can reference a saved view so the digest
+  applies the same filter the analyst sees in the UI.
+
+### Cadence semantics
+
+All cadence math is in UTC; the UI is responsible for converting to
+the operator's local time when it displays a schedule. The
+``next_run_at`` column is precomputed on every write so the scheduler
+loop is a single indexed query:
+
+* **daily** — fires every day at ``hour_utc`` (0–23). ``weekday`` is
+  ignored.
+* **weekly** — fires on ``weekday`` (0 = Monday … 6 = Sunday) at
+  ``hour_utc``. Missing ``weekday`` defaults to Monday.
+* **monthly** — fires on the 1st of each month at ``hour_utc``.
+
+The lookback window for "recently mutated deals" tracks the cadence:
+24h for daily, 7 days for weekly, 30 days for monthly. This keeps the
+section meaningful — a daily digest doesn't want to repeat the same
+12 deals every morning, and a monthly digest shouldn't drop deals
+that moved 3 weeks ago.
+
+### Slack Block Kit shape
+
+``services.pipeline_digest.format_slack_message`` returns a Slack
+``chat.postMessage``-compatible JSON envelope:
+
+```json
+{
+  "text": "Pipeline digest — 2026-06-28",
+  "blocks": [
+    {"type": "header", "text": {"type": "plain_text", "text": "Pipeline digest — 2026-06-28"}},
+    {"type": "context", "elements": [
+      {"type": "mrkdwn", "text": "*US Deals over $30M · 7 deal(s)*"},
+      {"type": "mrkdwn", "text": "Cadence: `daily`"}
+    ]},
+    {"type": "divider"},
+    {"type": "section", "text": {"type": "mrkdwn", "text":
+      "*Deals:* 7\n*Median IRR:* 18.4%\n*Median $/key:* $182,000\n*Median cap rate:* 7.4%\n*Meeting target:* 4 / 6"}},
+    {"type": "divider"},
+    {"type": "section", "text": {"type": "mrkdwn", "text":
+      ":zap: *Recently mutated*\n• *Kimpton Aspen* — IRR 22.1%, EM 2.30x"}},
+    {"type": "divider"},
+    {"type": "section", "text": {"type": "mrkdwn", "text":
+      ":dart: *Deals meeting target IRR (top 5)*\n• *Marriott Charleston* — 24.3% (target 18.0%)"}}
+  ]
+}
+```
+
+The top-level ``text`` is the notification fallback shown in the
+system tray. Block types are limited to ``header`` / ``context`` /
+``divider`` / ``section`` for broad Slack-client compatibility.
+
+### Email backend
+
+``EMAIL_BACKEND`` (default ``log_only``) selects the delivery
+implementation:
+
+* ``log_only`` — writes the rendered HTML body + recipient list to
+  the worker log and returns success. Useful for dev / CI; the
+  default backend in every test.
+* ``sendgrid`` — POSTs to the SendGrid v3 ``/mail/send`` endpoint
+  using ``SENDGRID_API_KEY``, ``EMAIL_FROM_ADDRESS``, and
+  ``EMAIL_FROM_NAME``. Failures are logged and surfaced via the
+  ``RunNowResponse.email_error`` field but never raised.
+* ``ses`` — TODO. Wire AWS creds when the first customer asks for
+  it; today falls back to the ``log_only`` path with a warning.
+
+### Scheduler
+
+``services.digest_scheduler`` spins up an asyncio task on FastAPI
+startup that ticks every ``DIGEST_SCHEDULER_TICK_SECONDS`` (default
+60s). On each tick it ``SELECT``s schedules whose
+``next_run_at <= NOW()``, dispatches them via ``dispatch_digest``,
+and recomputes ``next_run_at`` from the cadence.
+
+The in-process loop is intentionally minimal. Production deployments
+with multiple worker replicas should swap this for an external cron
+(Celery beat, SQS-driven worker) — running the loop on every replica
+would dispatch the same schedule N times per tick. Today every Fondok
+deploy runs a single worker process so this is fine.
+
+### Where to look in code
+
+* `packages/schemas-py/fondok_schemas/pipeline_filter.py` —
+  `PipelineFilter`, `SavedPipelineView`, `PipelineDigestSchedule`.
+* `apps/worker/app/services/pipeline_digest.py` — payload builder,
+  Slack / email formatters, dispatch, cadence math.
+* `apps/worker/app/services/digest_scheduler.py` — in-process loop +
+  `tick_once` test harness.
+* `apps/worker/app/api/pipeline_filters.py` — `/pipeline-views` and
+  `/pipeline-digests` CRUD + `set-default` + `run-now`.
+* `apps/worker/tests/test_pipeline_digests.py` — 14 tests covering
+  CRUD, default-pinning, cadence math, payload composition, Slack
+  Block Kit shape, dispatch no-op + 500 + log_only paths, and the
+  scheduler picking up an overdue schedule.
+* `apps/web/src/components/pipeline/SavedViewSelector.tsx` —
+  dropdown at the top of the pipeline page with save / pin / delete.
+* `apps/web/src/app/pipeline-digests/page.tsx` — schedule management
+  page mounted at `/pipeline-digests`.
