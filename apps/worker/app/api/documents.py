@@ -137,6 +137,15 @@ class DocumentRecord(BaseModel):
     user_provided_doc_type: str | None = None
     fiscal_year: int | None = None
     misclassified: bool = False
+    # Sam QA Bug #2 v2 (June 2026) — the Router-or-refined doc_type the
+    # AI proposed at extraction time. Kept SEPARATE from ``doc_type``
+    # (which stays equal to the analyst tag when ``misclassified=True``)
+    # so the banner can render BOTH sides distinctly. Without this the
+    # banner displayed ``doc_type`` for both ``userLabel`` and
+    # ``aiLabel`` and showed "T-12 vs T-12" because they resolved to
+    # the same persisted value.
+    # NULL when ``misclassified=False`` (no conflict to display).
+    ai_proposed_doc_type: str | None = None
     # Wave 1 — year-mismatch banner (June 2026).
     #   * ``year_mismatch`` — True when the analyst pinned a fiscal_year
     #     in the wizard AND the Extractor pulled a ``period_ending``
@@ -742,6 +751,16 @@ def _row_to_record(row: dict[str, Any]) -> DocumentRecord:
     if isinstance(user_provided_doc_type, str):
         user_provided_doc_type = user_provided_doc_type.strip() or None
 
+    # Sam QA Bug #2 v2 — Router's proposal at extraction time. Stays
+    # NULL when no conflict surfaced.
+    ai_proposed_doc_type = row.get("ai_proposed_doc_type")
+    if isinstance(ai_proposed_doc_type, str):
+        ai_proposed_doc_type = ai_proposed_doc_type.strip() or None
+    elif ai_proposed_doc_type is not None:
+        # Defensive — non-string non-null shouldn't happen but log
+        # silently so we don't crash on a bad cache.
+        ai_proposed_doc_type = None
+
     # Year-mismatch flag (Wave 1). Same BOOLEAN/INTEGER dialect dance as
     # ``misclassified``.
     raw_ym = row.get("year_mismatch")
@@ -782,6 +801,7 @@ def _row_to_record(row: dict[str, Any]) -> DocumentRecord:
         user_provided_doc_type=user_provided_doc_type,
         fiscal_year=fiscal_year,
         misclassified=misclassified,
+        ai_proposed_doc_type=ai_proposed_doc_type,
         year_mismatch=year_mismatch,
         extracted_period_year=extracted_period_year,
     )
@@ -878,8 +898,8 @@ async def _find_duplicate_document(
                            storage_key, size_bytes, page_count, parser,
                            extraction_data, usali_score, usali_deviations,
                            user_provided_doc_type, fiscal_year,
-                           misclassified, year_mismatch,
-                           extracted_period_year
+                           misclassified, ai_proposed_doc_type,
+                           year_mismatch, extracted_period_year
                       FROM documents
                      WHERE deal_id = :deal AND content_hash = :h
                      ORDER BY uploaded_at DESC
@@ -1198,12 +1218,14 @@ async def upload_documents(
                         uploaded_at, content_hash, storage_key, size_bytes,
                         page_count, parser, extraction_data,
                         user_provided_doc_type, fiscal_year, misclassified,
+                        ai_proposed_doc_type,
                         year_mismatch, extracted_period_year
                     ) VALUES (
                         :id, :deal_id, :tenant_id, :filename, :doc_type, :status,
                         :uploaded_at, :content_hash, :storage_key, :size_bytes,
                         :page_count, :parser, :extraction_data,
                         :user_provided_doc_type, :fiscal_year, :misclassified,
+                        :ai_proposed_doc_type,
                         :year_mismatch, :extracted_period_year
                     )
                     """
@@ -1231,6 +1253,10 @@ async def upload_documents(
                     # coercion is one-way; False round-trips fine on
                     # both dialects.
                     "misclassified": False,
+                    # Sam QA Bug #2 v2 — Router has not run at INSERT
+                    # time; this column is filled by the extraction
+                    # completion block only when a conflict is detected.
+                    "ai_proposed_doc_type": None,
                     "year_mismatch": False,
                     "extracted_period_year": None,
                 },
@@ -1749,6 +1775,7 @@ async def list_documents(
                    page_count, parser, extraction_data,
                    usali_score, usali_deviations,
                    user_provided_doc_type, fiscal_year, misclassified,
+                   ai_proposed_doc_type,
                    year_mismatch, extracted_period_year
               FROM documents
              WHERE deal_id = :deal_id
@@ -2417,6 +2444,7 @@ async def accept_classification(
                        page_count, parser, extraction_data,
                        usali_score, usali_deviations,
                        user_provided_doc_type, fiscal_year, misclassified,
+                       ai_proposed_doc_type,
                        year_mismatch, extracted_period_year
                   FROM documents
                  WHERE id = :id
@@ -2454,11 +2482,14 @@ async def accept_classification(
         # as-is — re-classification requires a re-extract, which the
         # analyst can trigger via Retry if they want the engines to
         # re-bucket. Clearing ``misclassified`` is the headline change.
+        # Bug #2 v2: also clear ``ai_proposed_doc_type`` so the row no
+        # longer carries the v2 conflict signal.
         new_user_tag = current_doc_type or user_tag
         await session.execute(
             text(
                 "UPDATE documents "
-                "SET user_provided_doc_type = :u, misclassified = :m "
+                "SET user_provided_doc_type = :u, misclassified = :m, "
+                "ai_proposed_doc_type = NULL "
                 "WHERE id = :id"
             ),
             {
@@ -2473,11 +2504,13 @@ async def accept_classification(
         # when the flag was set), so we only need to clear the flag.
         # Defensive: if a future code path writes the AI tag onto
         # ``doc_type``, restore the user tag here.
+        # Bug #2 v2: clear ``ai_proposed_doc_type`` on either branch.
         if user_tag and current_doc_type != user_tag:
             await session.execute(
                 text(
                     "UPDATE documents "
-                    "SET doc_type = :dt, misclassified = :m "
+                    "SET doc_type = :dt, misclassified = :m, "
+                    "ai_proposed_doc_type = NULL "
                     "WHERE id = :id"
                 ),
                 {
@@ -2490,7 +2523,9 @@ async def accept_classification(
             await session.execute(
                 text(
                     "UPDATE documents "
-                    "SET misclassified = :m WHERE id = :id"
+                    "SET misclassified = :m, "
+                    "ai_proposed_doc_type = NULL "
+                    "WHERE id = :id"
                 ),
                 {"m": False, "id": str(doc_id)},
             )
@@ -2506,6 +2541,7 @@ async def accept_classification(
                        page_count, parser, extraction_data,
                        usali_score, usali_deviations,
                        user_provided_doc_type, fiscal_year, misclassified,
+                       ai_proposed_doc_type,
                        year_mismatch, extracted_period_year
                   FROM documents
                  WHERE id = :id
@@ -2618,6 +2654,7 @@ async def accept_year(
                        page_count, parser, extraction_data,
                        usali_score, usali_deviations,
                        user_provided_doc_type, fiscal_year, misclassified,
+                       ai_proposed_doc_type,
                        year_mismatch, extracted_period_year
                   FROM documents
                  WHERE id = :id
@@ -3342,10 +3379,17 @@ async def _run_extraction_pipeline(
                     # updated regardless of the misclassification branch
                     # so the banner stays accurate even if the analyst
                     # ignores the doc-type mismatch.
+                    #
+                    # Sam QA Bug #2 v2: also persist
+                    # ``ai_proposed_doc_type`` = the Router's read
+                    # (normalized_ai). The banner reads this column
+                    # for ``aiLabel`` — without it both sides resolved
+                    # from ``doc_type`` and rendered "T-12 vs T-12".
                     await session.execute(
                         text(
                             "UPDATE documents "
                             "SET status = :s, misclassified = :m, "
+                            "ai_proposed_doc_type = :apdt, "
                             "year_mismatch = :ym, "
                             "extracted_period_year = :epy "
                             "WHERE id = :id"
@@ -3358,6 +3402,7 @@ async def _run_extraction_pipeline(
                             # bug, silently failing every doc after
                             # upload survived.
                             "m": True,
+                            "apdt": normalized_ai,
                             "ym": bool(year_mismatch_flag),
                             "epy": extracted_period_year,
                             "id": doc_id,
@@ -3371,10 +3416,15 @@ async def _run_extraction_pipeline(
                         normalized_ai,
                     )
                 elif refined_doc_type:
+                    # No conflict — clear the AI proposal column so a
+                    # PREVIOUSLY-misclassified row that's been re-run
+                    # doesn't leave a stale value behind.
                     await session.execute(
                         text(
                             "UPDATE documents SET status = :s, doc_type = :dt, "
-                            "misclassified = :m, year_mismatch = :ym, "
+                            "misclassified = :m, "
+                            "ai_proposed_doc_type = NULL, "
+                            "year_mismatch = :ym, "
                             "extracted_period_year = :epy WHERE id = :id"
                         ),
                         {
@@ -3390,7 +3440,9 @@ async def _run_extraction_pipeline(
                     await session.execute(
                         text(
                             "UPDATE documents SET status = :s, "
-                            "misclassified = :m, year_mismatch = :ym, "
+                            "misclassified = :m, "
+                            "ai_proposed_doc_type = NULL, "
+                            "year_mismatch = :ym, "
                             "extracted_period_year = :epy WHERE id = :id"
                         ),
                         {

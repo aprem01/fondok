@@ -27,7 +27,17 @@ import type { WorkerDocument } from '@/lib/api';
 export interface MisclassificationBannerProps {
   document: Pick<
     WorkerDocument,
-    'id' | 'filename' | 'doc_type' | 'user_provided_doc_type' | 'misclassified'
+    | 'id'
+    | 'filename'
+    | 'doc_type'
+    | 'user_provided_doc_type'
+    | 'misclassified'
+    /* Sam QA Bug #2 v2 (June 2026): the Router's proposal at extraction
+     * time, stored SEPARATELY from ``doc_type`` (which carries the
+     * analyst tag when ``misclassified=true``). The banner reads this
+     * for ``aiLabel`` — previously both sides resolved from ``doc_type``
+     * and rendered "T-12 vs T-12" on every misclassified row. */
+    | 'ai_proposed_doc_type'
   >;
   onAcceptAi: (doc: MisclassificationBannerProps['document']) => Promise<void> | void;
   onKeepMine: (doc: MisclassificationBannerProps['document']) => Promise<void> | void;
@@ -94,8 +104,29 @@ export function MisclassificationBanner({
 }: MisclassificationBannerProps) {
   const [pending, setPending] = useState<'ai' | 'mine' | null>(null);
 
+  // Sam QA Bug #2 v2 (June 2026): pre-v2 rows had ``misclassified=true``
+  // but no ``ai_proposed_doc_type`` (the column didn't exist).
+  // Rendering the banner from ``doc.doc_type`` showed "T-12 vs T-12"
+  // because both sides resolved from the same persisted value (the
+  // worker keeps ``doc_type`` = user tag when the flag fires).
+  //
+  // Behavior: when the AI proposal is missing/empty (legacy data),
+  // silently hide the banner. The migration ``reset_misclassified_v2``
+  // clears stale ``misclassified=true`` flags on rows that match the
+  // v1 shape so the UI doesn't dangle in this state long.
+  const aiProposal = doc.ai_proposed_doc_type?.trim() || null;
+  if (!aiProposal) return null;
+
   const userLabel = labelFor(doc.user_provided_doc_type);
-  const aiLabel = labelFor(doc.doc_type);
+  const aiLabel = labelFor(aiProposal);
+
+  // Defensive: if labelFor collapses both sides to the same friendly
+  // string (e.g. user tagged "T-12" and the AI canonicalized to
+  // "T12" — both render as "T-12 / Trailing Twelve Months"), the
+  // backend's canonical compare ALREADY filtered this out (Sam Bug #2
+  // v1 fix), but we double-check here so a future drift in the alias
+  // list doesn't put us back in the "T-12 vs T-12" hole.
+  if (userLabel === aiLabel) return null;
 
   const handle = async (which: 'ai' | 'mine') => {
     if (pending) return;

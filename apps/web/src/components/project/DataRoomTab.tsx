@@ -348,6 +348,9 @@ export default function DataRoomTab({ projectId }: { projectId: number | string 
     userProvidedDocType?: string | null;
     fiscalYear?: number | null;
     misclassified?: boolean;
+    /** Sam QA Bug #2 v2 — Router's read at extraction time, kept
+     *  separate from ``type`` so the banner renders both sides. */
+    aiProposedDocType?: string | null;
     /** Wave 1 #4 signals. ``yearMismatch`` true triggers a
      *  YearMismatchBanner alongside the category banner so the analyst
      *  can resolve both with one accept/keep round-trip. */
@@ -380,6 +383,7 @@ export default function DataRoomTab({ projectId }: { projectId: number | string 
           userProvidedDocType: d.user_provided_doc_type ?? null,
           fiscalYear: d.fiscal_year ?? null,
           misclassified: d.misclassified ?? false,
+          aiProposedDocType: d.ai_proposed_doc_type ?? null,
           yearMismatch: d.year_mismatch ?? false,
           extractedPeriodYear: d.extracted_period_year ?? null,
         };
@@ -1204,6 +1208,11 @@ export default function DataRoomTab({ projectId }: { projectId: number | string 
                           doc_type: d.type,
                           user_provided_doc_type: d.userProvidedDocType,
                           misclassified: true,
+                          // Sam QA Bug #2 v2 — passes the Router's
+                          // read. When the row is pre-v2 / legacy
+                          // (column NULL), the banner short-circuits
+                          // and renders nothing.
+                          ai_proposed_doc_type: d.aiProposedDocType ?? null,
                         }}
                         onAcceptAi={(doc) => resolveClassification(doc as WorkerDocument, true)}
                         onKeepMine={(doc) => resolveClassification(doc as WorkerDocument, false)}

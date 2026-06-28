@@ -162,24 +162,124 @@ def _parse_iso_date(value: Any) -> date | None:
     return None
 
 
-def _extract_period_ending(raw_fields: list[Any]) -> date | None:
-    """Pull ``p_and_l_usali.period_ending`` (or any ``*.period_ending``)
-    off a flat extraction-fields list and parse to a ``date``.
+# Field-name suffixes that indicate "this is the period-end DATE"
+# the Extractor surfaced. We accept ALL of these because the prod
+# Extractor doesn't emit one canonical path — it tracks the workbook's
+# nomenclature. Real Sam-prod evidence (June 2026, anglers_*.xlsx):
+#
+#   * T-12     emits ``p_and_l_usali.period_ending``  ✓ (schema-canonical)
+#   * Annual P&L emits ``p_and_l_usali.period.end_date``
+#                + ``property_overview.statement_period``
+#   * (Other observed shapes documented in schemas — period_end,
+#     fiscal_year_end, report_period — we cover them too.)
+#
+# A suffix match (rather than equality) keeps us tolerant of bucket
+# nesting variants (``p_and_l_usali.period.end_date`` ≡
+# ``broker_proforma.period.end_date``).
+_PERIOD_DATE_SUFFIXES: tuple[str, ...] = (
+    "period_ending",
+    "period_end",
+    "period_end_date",
+    "period.end_date",
+    "fiscal_year_end",
+    "fiscal_year_ending",
+    "report_period",
+    "statement_period",
+    "reporting_period_end",
+    "as_of_date",
+)
 
-    Mirrors ``engine_runner._extract_period_type`` so we use the same
-    convention everywhere — Extractor agent emits a dotted path under
-    ``p_and_l_usali``; we accept any field whose name ends with
-    ``period_ending``.
+# Field-name suffixes that indicate "this is the period-end YEAR only"
+# (a bare ``int`` like 2024). Sam's annual P&Ls occasionally surface
+# only a year (no day/month) — we derive Dec-31-of-year so downstream
+# consumers (Broker Questions, HistoricalVariance) still get a date.
+_PERIOD_YEAR_SUFFIXES: tuple[str, ...] = (
+    "period.year",
+    "period_year",
+    "report_year",
+    "fiscal_year",
+    "statement_year",
+)
+
+
+def _extract_period_ending(raw_fields: list[Any]) -> date | None:
+    """Pull the document's period-ending date off a flat extraction list.
+
+    Returns the parsed ``date`` for the first field whose name matches
+    one of the suffixes in ``_PERIOD_DATE_SUFFIXES``. When the Extractor
+    surfaced only a YEAR (no date — e.g. ``report_year=2024``), we
+    derive Dec-31 of that year so callers downstream can attribute the
+    document.
+
+    Sam QA Bug #4 (June 2026, v2): the previous fix only matched
+    ``*.period_ending`` (T-12 schema-canonical), missing the annual
+    P&L's ``p_and_l_usali.period.end_date`` and the
+    ``property_overview.statement_period`` fallback the real production
+    extractor emits. Result: every annual P&L upload landed with
+    ``extracted_period_year=NULL``, silently breaking broker-question
+    follow-ups + the year-mismatch banner. The widened suffix list +
+    bare-year fallback is empirically verified against the prod payload
+    saved at ``tests/fixtures/real_payloads/anglers_annual_pnl_real.json``.
     """
-    for f in raw_fields:
-        if not isinstance(f, dict):
-            continue
-        name = (f.get("field_name") or "").strip().lower()
-        if not name.endswith("period_ending"):
-            continue
-        parsed = _parse_iso_date(f.get("value"))
-        if parsed is not None:
-            return parsed
+    # Pass 1 — exact-date paths win unconditionally. We honor the
+    # suffix priority order in ``_PERIOD_DATE_SUFFIXES`` (the canonical
+    # ``period_ending`` ranks above the ``statement_period`` fallback
+    # observed on the T-12 prod payload — both can co-exist and we want
+    # the schema-canonical one to win).
+    for suf in _PERIOD_DATE_SUFFIXES:
+        for f in raw_fields:
+            if not isinstance(f, dict):
+                continue
+            name = (f.get("field_name") or "").strip().lower()
+            if not name or not name.endswith(suf):
+                continue
+            parsed = _parse_iso_date(f.get("value"))
+            if parsed is not None:
+                return parsed
+
+    # Pass 2 — fall back to a bare-year emission. We use Dec-31 of the
+    # year so the resulting date is unambiguous (every consumer treats
+    # period_ending as a closing date, not an opening date).
+    for suf in _PERIOD_YEAR_SUFFIXES:
+        for f in raw_fields:
+            if not isinstance(f, dict):
+                continue
+            name = (f.get("field_name") or "").strip().lower()
+            if not name or not name.endswith(suf):
+                continue
+            year = _coerce_year(f.get("value"))
+            if year is not None:
+                return date(year, 12, 31)
+    return None
+
+
+def _coerce_year(value: Any) -> int | None:
+    """Parse an int / float / numeric string into a 4-digit year.
+
+    Returns ``None`` for anything outside ``[1900, 2100]`` so a stray
+    "rooms_sold=2024" line (different field family, accidentally
+    suffixed) can't masquerade as a year. Booleans rejected.
+    """
+    if value is None or isinstance(value, bool):
+        return None
+    if isinstance(value, int):
+        year = value
+    elif isinstance(value, float):
+        if not value.is_integer():
+            return None
+        year = int(value)
+    elif isinstance(value, str):
+        s = value.strip()
+        if not s:
+            return None
+        try:
+            year = int(s)
+        except ValueError:
+            return None
+    else:
+        return None
+    if 1900 <= year <= 2100:
+        return year
     return None
 
 

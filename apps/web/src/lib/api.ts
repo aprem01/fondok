@@ -104,6 +104,14 @@ export interface WorkerDocument {
    *  - ``misclassified`` — true when the Router disagrees with the user tag. The
    *    DataRoomTab surfaces a MisclassificationBanner with "Use Fondok's
    *    classification" / "Keep mine" choices.
+   *  - ``ai_proposed_doc_type`` — Sam QA Bug #2 v2 (June 2026): the Router's
+   *    proposal at extraction time, kept SEPARATE from ``doc_type`` (which
+   *    stays equal to the analyst tag when ``misclassified=true``). The banner
+   *    reads this column for ``aiLabel`` — without it both sides resolved from
+   *    ``doc_type`` and rendered "T-12 vs T-12". NULL on non-misclassified
+   *    rows and on pre-v2 legacy data (a one-time migration clears stale
+   *    ``misclassified=true`` flags so the banner stays hidden until a
+   *    re-extraction populates the v2 columns).
    *  - ``year_mismatch`` — Wave 1 #4: true when the Extractor's
    *    ``period_ending`` year disagrees with the analyst's ``fiscal_year``.
    *    The Data Room surfaces a sibling YearMismatchBanner with the same
@@ -113,6 +121,7 @@ export interface WorkerDocument {
   user_provided_doc_type?: string | null;
   fiscal_year?: number | null;
   misclassified?: boolean;
+  ai_proposed_doc_type?: string | null;
   year_mismatch?: boolean;
   extracted_period_year?: number | null;
 }

@@ -614,6 +614,38 @@ MIGRATIONS: list[tuple[str, str]] = [
         "ALTER TABLE documents ADD COLUMN IF NOT EXISTS "
         "extracted_period_year INTEGER",
     ),
+    # Sam QA Bug #2 v2 (June 2026) — the Router-or-refined doc_type the
+    # AI proposed, kept SEPARATE from ``doc_type`` (which stays equal to
+    # the analyst tag when ``misclassified=True``). Previously the banner
+    # derived both sides from ``doc_type`` and rendered "T-12 vs T-12"
+    # even when the comparison ran on the true Router output. Storing
+    # this lets the banner render the AI's actual proposal.
+    # NULL on:
+    #   * Non-misclassified extractions (no conflict to surface).
+    #   * Pre-fix legacy rows (we clear ``misclassified=False`` for
+    #     them in a follow-up migration so the banner stays hidden).
+    (
+        "documents.add_ai_proposed_doc_type",
+        "ALTER TABLE documents ADD COLUMN IF NOT EXISTS "
+        "ai_proposed_doc_type TEXT",
+    ),
+    # One-time stale-flag reset (Sam QA Bug #2 v2): every PRE-v2
+    # ``misclassified=true`` row had no ``ai_proposed_doc_type`` set
+    # (the column didn't exist). The dedup loop returns the existing
+    # row on re-upload, so without this reset Sam keeps seeing the
+    # banner on files that ARE correctly tagged.
+    #
+    # We clear ONLY rows that match the v1 stale shape
+    # ``misclassified=true AND ai_proposed_doc_type IS NULL`` —
+    # legitimate v2 misclassifications carry BOTH columns set, so they
+    # don't match the WHERE and the reboot is a no-op on them. The
+    # next successful extraction overwrites the row anyway.
+    (
+        "documents.reset_misclassified_v2",
+        "UPDATE documents "
+        "SET misclassified = FALSE "
+        "WHERE misclassified = TRUE AND ai_proposed_doc_type IS NULL",
+    ),
     # USALI compliance scoring (ROADMAP #3). Every successful P&L
     # extraction runs through ``services.usali_scorer.score_extraction``
     # and writes the result back here. ``usali_score`` is NULL when the
@@ -1063,6 +1095,20 @@ SQLITE_MIGRATIONS: list[tuple[str, str]] = [
     (
         "documents.add_extracted_period_year",
         "ALTER TABLE documents ADD COLUMN extracted_period_year INTEGER",
+    ),
+    # Sam QA Bug #2 v2 — SQLite mirror.
+    (
+        "documents.add_ai_proposed_doc_type",
+        "ALTER TABLE documents ADD COLUMN ai_proposed_doc_type TEXT",
+    ),
+    # SQLite mirror of the stale-flag reset (Postgres BOOLEAN, SQLite
+    # INTEGER 0/1). Same v1-stale-shape predicate so legitimate v2
+    # misclassifications are spared on each reboot.
+    (
+        "documents.reset_misclassified_v2",
+        "UPDATE documents "
+        "SET misclassified = 0 "
+        "WHERE misclassified = 1 AND ai_proposed_doc_type IS NULL",
     ),
     # USALI compliance score + deviations (ROADMAP #3). SQLite stores
     # the score as REAL (matches the Postgres NUMERIC(5,2)) and the
