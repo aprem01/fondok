@@ -450,10 +450,32 @@ async def _load_engine_inputs(
         sources["y1_occupancy_displacement_pct"] = SOURCE_SEED
         sources["y1_adr_displacement_pct"] = SOURCE_SEED
 
+    # Caller-supplied overrides from the API request body (the
+    # ``assumptions`` payload on ``POST /deals/{id}/engines/run``).
     if overrides:
         base.update(overrides)
         for k in overrides:
             sources[k] = SOURCE_ANALYST_OVERRIDE
+
+    # Persisted analyst overrides from the deal's ``field_overrides``
+    # JSONB column (Roadmap item #6, June 2026 — see
+    # ``_normalize_override_shape``). These are the structured
+    # ``{value, note}`` records the OverridePanel writes via
+    # ``PATCH /deals/{id}`` and they MUST be applied to the headline
+    # assumptions (starting_occupancy, starting_adr, exit_cap_rate,
+    # mgmt_fee_pct, etc.) — without this step the override was a no-op
+    # because nothing in the engine chain read ``field_overrides`` for
+    # these top-level keys. Applied last so analyst intent beats every
+    # other data source (T12 actuals, CBRE, OM comps, deal row, seed).
+    persisted_overrides = await _load_deal_overrides(session, deal_id=deal_id)
+    if persisted_overrides:
+        for path, value in persisted_overrides.items():
+            # We only apply scalars to base; non-scalars (objects, arrays)
+            # belong to specialized loaders that already consume the
+            # structured shape on their own.
+            if isinstance(value, (int, float, str, bool)):
+                base[path] = value
+                sources[path] = SOURCE_ANALYST_OVERRIDE
     base["__sources__"] = sources
     return base
 
