@@ -30,6 +30,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from ..audit import log_audit
 from ..database import get_session
 from ..services.engine_runner import (
     ENGINE_NAMES,
@@ -467,6 +468,29 @@ async def create_scenario(
             "updated_at": now,
         },
     )
+    # Wave 4 W4.3 — audit emit BEFORE commit so the row + audit entry
+    # land in the same transaction. log_audit only flushes (commit
+    # ownership stays with this endpoint).
+    after_snapshot = {
+        "name": body.name,
+        "description": body.description,
+        "overrides": [o.model_dump() for o in body.overrides],
+    }
+    await log_audit(
+        session,
+        tenant_id=str(tenant_id),
+        action="scenario.created",
+        resource_type="scenario",
+        resource_id=str(scenario_id),
+        output_payload=after_snapshot,
+        after=after_snapshot,
+        diff_summary=(
+            f"created scenario {body.name!r} "
+            f"with {len(body.overrides)} override(s)"
+        ),
+        tags=["scenario", "wave3"],
+        metadata={"deal_id": str(deal_id)},
+    )
     await session.commit()
     row = await _load_scenario(
         session, scenario_id=scenario_id, deal_id=deal_id, tenant_id=tenant_id
@@ -518,9 +542,15 @@ async def update_scenario(
         session, deal_id=deal_id, tenant_id=tenant_id
     )
     # 404 guard up front so we don't half-write.
-    await _load_scenario(
+    existing_row = await _load_scenario(
         session, scenario_id=scenario_id, deal_id=deal_id, tenant_id=tenant_id
     )
+    existing_record = _row_to_record(existing_row)
+    before_snapshot = {
+        "name": existing_record.name,
+        "description": existing_record.description,
+        "overrides": [o.model_dump() for o in existing_record.overrides],
+    }
 
     changes = body.model_dump(exclude_unset=True)
     if not changes:
@@ -593,6 +623,33 @@ async def update_scenario(
         ),
         params,
     )
+    # Audit the diff BEFORE commit so it lands in the same txn.
+    updated_record = _row_to_record(
+        await _load_scenario(
+            session,
+            scenario_id=scenario_id,
+            deal_id=deal_id,
+            tenant_id=tenant_id,
+        )
+    )
+    after_snapshot = {
+        "name": updated_record.name,
+        "description": updated_record.description,
+        "overrides": [o.model_dump() for o in updated_record.overrides],
+    }
+    await log_audit(
+        session,
+        tenant_id=str(tenant_id),
+        action="scenario.updated",
+        resource_type="scenario",
+        resource_id=str(scenario_id),
+        input_payload={"changes": sorted(changes.keys())},
+        output_payload=after_snapshot,
+        before=before_snapshot,
+        after=after_snapshot,
+        tags=["scenario", "wave3"],
+        metadata={"deal_id": str(deal_id)},
+    )
     await session.commit()
     row = await _load_scenario(
         session, scenario_id=scenario_id, deal_id=deal_id, tenant_id=tenant_id
@@ -637,6 +694,23 @@ async def delete_scenario(
             "deal": str(deal_id),
             "tenant": str(tenant_id),
         },
+    )
+    deleted_snapshot = {
+        "name": record.name,
+        "description": record.description,
+        "overrides": [o.model_dump() for o in record.overrides],
+    }
+    await log_audit(
+        session,
+        tenant_id=str(tenant_id),
+        action="scenario.deleted",
+        resource_type="scenario",
+        resource_id=str(scenario_id),
+        output_payload=deleted_snapshot,
+        before=deleted_snapshot,
+        diff_summary=f"deleted scenario {record.name!r}",
+        tags=["scenario", "wave3"],
+        metadata={"deal_id": str(deal_id)},
     )
     await session.commit()
     logger.info("scenarios.delete: deal=%s scenario=%s", deal_id, scenario_id)
@@ -688,6 +762,28 @@ async def run_scenario(
             "run_id": str(run_id),
             "id": str(scenario_id),
             "updated_at": _now(),
+        },
+    )
+    # Wave 4 W4.3 — engine_run audit so the Activity Feed surfaces every
+    # what-if run alongside the override edits that drove it.
+    await log_audit(
+        session,
+        tenant_id=str(tenant_id),
+        action="engine_run.ran_with_scenario",
+        resource_type="engine_run",
+        resource_id=str(run_id),
+        output_payload={
+            "engines": sorted(results.keys()),
+            "engine_count": len(results),
+        },
+        diff_summary=(
+            f"ran {len(results)} engine(s) "
+            f"with scenario {scenario_id}"
+        ),
+        tags=["engine_run", "scenario"],
+        metadata={
+            "deal_id": str(deal_id),
+            "scenario_id": str(scenario_id),
         },
     )
     await session.commit()

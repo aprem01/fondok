@@ -842,14 +842,55 @@ async def update_deal(
         params,
     )
 
-    await _write_audit(
-        session,
-        tenant_id=tenant_id_str,
-        deal_id=str(deal_id),
-        actor_id="system",
-        action="deal.updated",
-        payload={"changes": changes},
-    )
+    # Wave 4 W4.3 — when ``field_overrides`` is in the changeset, audit
+    # as an ``override.set`` event with a one-line diff per changed field
+    # so the Activity Feed renders "exit_cap_rate: 0.07 → 0.075" instead
+    # of an opaque "deal.updated". Other patches keep the legacy shape.
+    prior_overrides = _coerce_overrides(existing._mapping.get("field_overrides"))
+    if "field_overrides" in changes:
+        new_overrides = changes.get("field_overrides") or {}
+        # Both sides flattened to ``{path: value}`` for a clean diff.
+        before_flat = {
+            k: (v.get("value") if isinstance(v, dict) else v)
+            for k, v in prior_overrides.items()
+        }
+        after_flat = {
+            k: (v.get("value") if isinstance(v, dict) else v)
+            for k, v in new_overrides.items()
+        }
+        await log_audit(
+            session,
+            tenant_id=tenant_id_str,
+            actor_id="system",
+            action="override.set",
+            resource_type="override",
+            resource_id=str(deal_id),
+            input_payload={"changes": changes},
+            output_payload={"field_overrides": new_overrides},
+            before=before_flat,
+            after=after_flat,
+            tags=["override", "wave1"],
+            metadata={"deal_id": str(deal_id)},
+        )
+        # Still emit the legacy deal.updated trail so existing dashboards
+        # that filter on action='deal.updated' keep firing.
+        await _write_audit(
+            session,
+            tenant_id=tenant_id_str,
+            deal_id=str(deal_id),
+            actor_id="system",
+            action="deal.updated",
+            payload={"changes": list(changes.keys())},
+        )
+    else:
+        await _write_audit(
+            session,
+            tenant_id=tenant_id_str,
+            deal_id=str(deal_id),
+            actor_id="system",
+            action="deal.updated",
+            payload={"changes": changes},
+        )
     await session.commit()
     # Wave 3 W3.5 — pipeline-view cache invalidation.
     from ..services.pipeline import invalidate as _pipeline_invalidate
@@ -2660,6 +2701,34 @@ async def exclude_comp_transaction(
             "id": str(deal_id),
             "tenant": str(tenant_id),
         },
+    )
+    # Wave 4 W4.3 — comp-exclude is a manual override on the IRR derivation
+    # path. Surface it in the Activity Feed with the transaction id + the
+    # before/after exclude list so the IT-review can trace why a deal's
+    # cap rate moved.
+    before_ids = sorted(
+        x for x in (existing if isinstance(existing, list) else [])
+        if x is not None
+    )
+    after_ids = sorted(current_ids)
+    await log_audit(
+        session,
+        tenant_id=str(tenant_id),
+        action="comp_transaction.excluded",
+        resource_type="comp_transaction",
+        resource_id=body.transaction_id,
+        output_payload={
+            "transaction_id": body.transaction_id,
+            "exclude_count": len(after_ids),
+        },
+        before={"exclude_transaction_ids": before_ids},
+        after={"exclude_transaction_ids": after_ids},
+        diff_summary=(
+            f"excluded comp transaction {body.transaction_id} "
+            f"({len(before_ids)} → {len(after_ids)} total)"
+        ),
+        tags=["comp_sales", "override"],
+        metadata={"deal_id": str(deal_id)},
     )
     await session.commit()
 

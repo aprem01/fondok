@@ -299,6 +299,61 @@ MIGRATIONS: list[tuple[str, str]] = [
         "audit_log.add_output_hash",
         "ALTER TABLE audit_log ADD COLUMN IF NOT EXISTS output_hash TEXT",
     ),
+    # ─────────────────── Wave 4 W4.3 — Activity Feed columns ───────────
+    # Every column added below is nullable so the existing log_audit
+    # callers (Wave 1/2/3) continue to work unchanged. Newer mutating
+    # endpoints set these to populate the per-deal Activity Feed and the
+    # tenant-wide Compliance Explorer with the metadata IT review will
+    # ask for (who, from where, with what severity, before → after).
+    (
+        "audit_log.add_actor_email",
+        "ALTER TABLE audit_log ADD COLUMN IF NOT EXISTS actor_email TEXT",
+    ),
+    (
+        "audit_log.add_actor_ip",
+        "ALTER TABLE audit_log ADD COLUMN IF NOT EXISTS actor_ip TEXT",
+    ),
+    (
+        "audit_log.add_user_agent",
+        "ALTER TABLE audit_log ADD COLUMN IF NOT EXISTS user_agent TEXT",
+    ),
+    (
+        "audit_log.add_before",
+        "ALTER TABLE audit_log ADD COLUMN IF NOT EXISTS before JSONB",
+    ),
+    (
+        "audit_log.add_after",
+        "ALTER TABLE audit_log ADD COLUMN IF NOT EXISTS after JSONB",
+    ),
+    (
+        "audit_log.add_diff_summary",
+        "ALTER TABLE audit_log ADD COLUMN IF NOT EXISTS diff_summary TEXT",
+    ),
+    # ``severity`` is NOT NULL with a default at the DB level so legacy
+    # rows back-fill to 'info' on read; the Pydantic shape treats it as
+    # an enum with the same default so the API contract matches.
+    (
+        "audit_log.add_severity",
+        "ALTER TABLE audit_log ADD COLUMN IF NOT EXISTS severity TEXT "
+        "NOT NULL DEFAULT 'info'",
+    ),
+    (
+        "audit_log.add_tags",
+        "ALTER TABLE audit_log ADD COLUMN IF NOT EXISTS tags JSONB",
+    ),
+    # Compliance Explorer hits these two filters most — actor_id +
+    # severity. Tenant-scoped lookups already use the existing
+    # (tenant_id, created_at) index so we don't add a third here.
+    (
+        "audit_log.idx_actor",
+        "CREATE INDEX IF NOT EXISTS idx_audit_log_actor "
+        "ON audit_log (tenant_id, actor_id, created_at DESC)",
+    ),
+    (
+        "audit_log.idx_severity",
+        "CREATE INDEX IF NOT EXISTS idx_audit_log_severity "
+        "ON audit_log (tenant_id, severity, created_at DESC)",
+    ),
     (
         "memo_edits.create_table",
         """
@@ -999,6 +1054,53 @@ SQLITE_MIGRATIONS: list[tuple[str, str]] = [
     (
         "audit_log.add_output_hash_sqlite",
         "ALTER TABLE audit_log ADD COLUMN output_hash TEXT",
+    ),
+    # Wave 4 W4.3 — SQLite mirror of the Activity-Feed columns. JSONB → TEXT
+    # (we always serialize/deserialize via json.dumps/json.loads at the
+    # boundary). The `ALTER TABLE ... ADD COLUMN` calls are routed through
+    # the dialect-aware "ADD COLUMN IF NOT EXISTS" shim in
+    # ``run_startup_migrations`` so re-running is safe.
+    (
+        "audit_log.add_actor_email_sqlite",
+        "ALTER TABLE audit_log ADD COLUMN actor_email TEXT",
+    ),
+    (
+        "audit_log.add_actor_ip_sqlite",
+        "ALTER TABLE audit_log ADD COLUMN actor_ip TEXT",
+    ),
+    (
+        "audit_log.add_user_agent_sqlite",
+        "ALTER TABLE audit_log ADD COLUMN user_agent TEXT",
+    ),
+    (
+        "audit_log.add_before_sqlite",
+        "ALTER TABLE audit_log ADD COLUMN before TEXT",
+    ),
+    (
+        "audit_log.add_after_sqlite",
+        "ALTER TABLE audit_log ADD COLUMN after TEXT",
+    ),
+    (
+        "audit_log.add_diff_summary_sqlite",
+        "ALTER TABLE audit_log ADD COLUMN diff_summary TEXT",
+    ),
+    (
+        "audit_log.add_severity_sqlite",
+        "ALTER TABLE audit_log ADD COLUMN severity TEXT NOT NULL DEFAULT 'info'",
+    ),
+    (
+        "audit_log.add_tags_sqlite",
+        "ALTER TABLE audit_log ADD COLUMN tags TEXT",
+    ),
+    (
+        "audit_log.idx_actor_sqlite",
+        "CREATE INDEX IF NOT EXISTS idx_audit_log_actor "
+        "ON audit_log (tenant_id, actor_id, created_at DESC)",
+    ),
+    (
+        "audit_log.idx_severity_sqlite",
+        "CREATE INDEX IF NOT EXISTS idx_audit_log_severity "
+        "ON audit_log (tenant_id, severity, created_at DESC)",
     ),
     (
         "memo_edits.create_table",

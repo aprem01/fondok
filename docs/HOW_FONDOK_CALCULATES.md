@@ -966,3 +966,119 @@ test suite covers this in
   covering presence/absence of each conditional sheet, the 5×5 grid +
   color-scale rules, DSCR-breach cell comments, the 48-row STR
   forecast table, and the Cover section-list omission.
+
+---
+
+## Audit log & Activity Feed (Wave 4 W4.3)
+
+Every state-changing operation in the worker writes an append-only
+``audit_log`` row via :func:`app.audit.log_audit`. These rows are the
+single source of truth for "who changed what when" — Brookfield /
+Apollo / Blackstone IT review can replay any deal's history end-to-end
+from this table.
+
+### What's audited
+
+| Action                                  | Entity                  | When                                |
+|---|---|---|
+| `deal.created`                          | deal                    | POST /deals                         |
+| `deal.updated`                          | deal                    | PATCH /deals/{id}                   |
+| `override.set`                          | override                | PATCH /deals/{id} (field_overrides) |
+| `deal.archived`                         | deal                    | DELETE /deals/{id}                  |
+| `deal.transition`                       | deal                    | POST /deals/{id}/transition         |
+| `deal.metadata_synced_from_extraction`  | deal                    | docs → wizard reconciler            |
+| `gate1.decision`                        | deal                    | POST /deals/{id}/gate1              |
+| `gate2.decision`                        | deal                    | POST /deals/{id}/gate2              |
+| `memo.edited`                           | memo                    | POST /deals/{id}/memo/{sec}/edits   |
+| `scenario.created`                      | scenario                | POST /deals/{id}/scenarios          |
+| `scenario.updated`                      | scenario                | PATCH /scenarios/{sid}              |
+| `scenario.deleted`                      | scenario                | DELETE /scenarios/{sid}             |
+| `engine_run.ran_with_scenario`          | engine_run              | POST /scenarios/{sid}/run           |
+| `engine_run.kicked_off`                 | engine_run              | POST /deals/{id}/engines/run        |
+| `comp_transaction.excluded`             | comp_transaction        | POST /deals/{id}/comp-sales/exclude |
+| `export.excel_downloaded`               | export                  | GET /deals/{id}/export/excel        |
+| `export.memo_pdf_downloaded`            | export                  | GET /deals/{id}/export/memo.pdf     |
+| `export.pptx_downloaded`                | export                  | GET /deals/{id}/export/presentation.pptx |
+
+### Row shape
+
+```
+id            UUID            row identifier
+tenant_id     UUID NOT NULL   tenant scope (ALWAYS set)
+deal_id       UUID            populated for both deal-resource rows and
+                              non-deal rows whose metadata['deal_id']
+                              points back to one (scenarios, exports,
+                              engine_runs, overrides, comp_transactions)
+actor_id      TEXT            'system' for back-fills; Clerk user id
+                              once auth is wired
+actor_email   TEXT            display side-of-house identity
+actor_ip      TEXT            request IP at the time of the event
+user_agent    TEXT            request UA
+action        TEXT NOT NULL   dotted verb (see table above)
+resource_type TEXT NOT NULL   one of: deal | scenario | override |
+                              document | engine_run | export |
+                              comp_transaction | portfolio_library_entry
+                              | memo
+resource_id   TEXT            the concrete entity id
+input_hash    TEXT            SHA-256 of the canonical input payload
+output_hash   TEXT            SHA-256 of the canonical output payload
+payload       JSONB           {input, output, metadata}
+before        JSONB           prior-state snapshot for diff display
+after         JSONB           new-state snapshot for diff display
+diff_summary  TEXT            one-line "field: x → y" rendered in row
+severity      TEXT NOT NULL   info | warning | critical (default: info)
+tags          JSONB           free-form labels for filtering
+created_at    TIMESTAMPTZ     server clock at write time
+```
+
+### Tamper-evidence
+
+* **Postgres trigger** `audit_log_no_update_delete` blocks ``UPDATE`` /
+  ``DELETE`` on every row. The migration runner installs the trigger
+  on startup; SQLite (dev) can't enforce the trigger but mirrors the
+  schema.
+* **SHA-256 input/output hashes** are stamped on write. A reviewer can
+  recompute the canonical hash of the persisted payload and compare —
+  any silent edit downstream of the original write breaks the hash.
+* The **only sanctioned reader** is :func:`app.audit.list_audit_log`
+  (per-deal + filters) and :func:`app.audit.search_audit_log`
+  (tenant-wide). Both require a ``tenant_id`` keyword argument — calling
+  without one raises ``ValueError`` rather than returning a cross-tenant
+  result. The SQLAlchemy ``tenant_middleware`` listener flags ad-hoc
+  ``SELECT * FROM audit_log`` calls at run time.
+
+### Data retention (stub)
+
+Retention is currently **unbounded** — the audit table is intended to
+hold the full deal history for the IT-review window. A future
+migration will introduce a TTL policy (likely 7 years to align with
+SEC/FINRA recordkeeping rules for institutional investment data) and
+a cold-storage tier (e.g. monthly snapshots to S3 Glacier with the
+``payload`` JSONB removed but the SHA-256 hashes retained). For now
+the operational guidance is:
+
+* Keep the ``audit_log`` table on the same Postgres tier as ``deals``.
+* Back it up at the same cadence as ``deals``.
+* When a deal is archived (soft-delete), the audit rows stay.
+* Hard-deleting a tenant requires a manual `DELETE FROM audit_log
+  WHERE tenant_id = ...` — `audit_log_no_update_delete` is bypassed
+  via session role, see :mod:`app.tenant_middleware` for the
+  permitted escape hatch.
+
+### Where to look in code
+
+* `apps/worker/app/audit.py` — `log_audit`, `list_audit_log`,
+  `search_audit_log`, `build_diff_summary`.
+* `apps/worker/app/api/audit.py` — `/deals/{id}/audit` +
+  `/audit/explorer` HTTP surface.
+* `apps/worker/app/migrations.py` — `audit_log.*` migrations
+  (Postgres + SQLite mirror).
+* `apps/web/src/components/project/ActivityFeed.tsx` — per-deal
+  Activity tab.
+* `apps/web/src/app/audit/page.tsx` — tenant-wide Compliance
+  Explorer at `/audit` (admin-gated).
+* `apps/worker/tests/test_audit.py` — Wave 1 contract tests.
+* `apps/worker/tests/test_activity_feed.py` — Wave 4 W4.3 surface
+  tests (13 tests: schema columns, filters, pagination, tenant
+  isolation, per-mutation emits, severity propagation, explorer
+  search).

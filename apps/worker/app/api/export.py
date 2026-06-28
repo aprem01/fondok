@@ -27,9 +27,11 @@ from fastapi.responses import FileResponse
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from ..audit import log_audit
 from ..database import get_session
 from ..export import build_excel, build_memo_pdf, build_pptx
 from ..export.fixtures import load_demo_payload
+from .deals import get_tenant_id
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -117,10 +119,51 @@ def _tmp_path(deal_id: str, suffix: str) -> Path:
     return base / f"{_safe_filename_part(deal_id)}{suffix}"
 
 
+async def _audit_export(
+    session: AsyncSession,
+    *,
+    tenant_id: UUID,
+    deal_id: str,
+    action: str,
+    file_path: Path,
+    file_label: str,
+) -> None:
+    """Write one ``export.*_downloaded`` audit row.
+
+    Best-effort — wraps log_audit's never-raises contract. Captures the
+    rendered file size so the IT-review trail can spot anomalous exports
+    (a tiny memo PDF after a healthy run usually means an empty memo).
+    """
+    try:
+        size = file_path.stat().st_size if file_path.exists() else None
+    except OSError:
+        size = None
+    await log_audit(
+        session,
+        tenant_id=str(tenant_id),
+        action=action,
+        resource_type="export",
+        resource_id=deal_id,
+        output_payload={
+            "file_label": file_label,
+            "size_bytes": size,
+            "filename": file_path.name,
+        },
+        diff_summary=(
+            f"downloaded {file_label} "
+            f"({size or 0:,} bytes)"
+        ),
+        tags=["export", "download"],
+        metadata={"deal_id": deal_id},
+    )
+    await session.commit()
+
+
 @router.get("/{deal_id}/export/excel")
 async def export_excel(
     deal_id: str,
     session: Annotated[AsyncSession, Depends(get_session)],
+    tenant_id: Annotated[UUID, Depends(get_tenant_id)],
 ) -> FileResponse:
     """Build and stream the multi-tab Excel acquisition model."""
     deal_uuid = _coerce_deal_uuid(deal_id)
@@ -128,7 +171,14 @@ async def export_excel(
     out = _tmp_path(deal_id, ".xlsx")
     build_excel(deal_uuid, model, out)
     logger.info("excel export built deal=%s size=%s", deal_id, out.stat().st_size)
-    _ = session  # reserved for future DB-backed model swap
+    await _audit_export(
+        session,
+        tenant_id=tenant_id,
+        deal_id=deal_id,
+        action="export.excel_downloaded",
+        file_path=out,
+        file_label="Excel acquisition model",
+    )
     return FileResponse(
         path=str(out),
         media_type=XLSX_MIME,
@@ -140,6 +190,7 @@ async def export_excel(
 async def export_memo_pdf(
     deal_id: str,
     session: Annotated[AsyncSession, Depends(get_session)],
+    tenant_id: Annotated[UUID, Depends(get_tenant_id)],
 ) -> FileResponse:
     """Build and stream the IC memo PDF."""
     _coerce_deal_uuid(deal_id)
@@ -149,6 +200,14 @@ async def export_memo_pdf(
     out = _tmp_path(deal_id, "-memo.pdf")
     build_memo_pdf(memo, model, out)
     logger.info("memo pdf built deal=%s size=%s", deal_id, out.stat().st_size)
+    await _audit_export(
+        session,
+        tenant_id=tenant_id,
+        deal_id=deal_id,
+        action="export.memo_pdf_downloaded",
+        file_path=out,
+        file_label="IC memo PDF",
+    )
     return FileResponse(
         path=str(out),
         media_type=PDF_MIME,
@@ -160,6 +219,7 @@ async def export_memo_pdf(
 async def export_pptx(
     deal_id: str,
     session: Annotated[AsyncSession, Depends(get_session)],
+    tenant_id: Annotated[UUID, Depends(get_tenant_id)],
 ) -> FileResponse:
     """Build and stream the 8-slide IC presentation."""
     _coerce_deal_uuid(deal_id)
@@ -169,6 +229,14 @@ async def export_pptx(
     out = _tmp_path(deal_id, "-deck.pptx")
     build_pptx(deal, model, memo, out)
     logger.info("pptx built deal=%s size=%s", deal_id, out.stat().st_size)
+    await _audit_export(
+        session,
+        tenant_id=tenant_id,
+        deal_id=deal_id,
+        action="export.pptx_downloaded",
+        file_path=out,
+        file_label="IC presentation PPTX",
+    )
     return FileResponse(
         path=str(out),
         media_type=PPTX_MIME,

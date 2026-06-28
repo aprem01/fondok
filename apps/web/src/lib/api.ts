@@ -461,6 +461,72 @@ export interface ScenarioCompareResponse {
   scenarios: ScenarioCompareCell[];
 }
 
+// ─────────────────────────── audit feed (Wave 4 W4.3) ───────────────
+//
+// Mirrors apps/worker/app/api/audit.py. One row = one append-only event
+// in the audit log. The per-deal Activity Feed surfaces the deal-scoped
+// slice; the Compliance Explorer surfaces the tenant-wide search.
+
+export type AuditSeverity = 'info' | 'warning' | 'critical';
+
+export interface AuditEntry {
+  id: string;
+  tenant_id: string;
+  deal_id: string | null;
+  actor_id: string | null;
+  actor_email: string | null;
+  actor_ip: string | null;
+  user_agent: string | null;
+  action: string;
+  resource_type: string;
+  resource_id: string | null;
+  severity: AuditSeverity;
+  diff_summary: string | null;
+  before: Record<string, unknown> | null;
+  after: Record<string, unknown> | null;
+  tags: string[] | null;
+  payload: Record<string, unknown> | null;
+  input_hash: string | null;
+  output_hash: string | null;
+  created_at: string;
+}
+
+export interface DealAuditResponse {
+  deal_id: string;
+  limit: number;
+  offset: number;
+  total: number;
+  entries: AuditEntry[];
+}
+
+export interface ExplorerResponse {
+  limit: number;
+  offset: number;
+  total: number;
+  entries: AuditEntry[];
+}
+
+export interface DealAuditQuery {
+  action?: string;
+  entity_type?: string;
+  severity?: AuditSeverity;
+  since?: string;
+  until?: string;
+  limit?: number;
+  offset?: number;
+}
+
+export interface ExplorerQuery {
+  q?: string;
+  actor?: string;
+  entity_type?: string;
+  severity?: AuditSeverity;
+  since?: string;
+  until?: string;
+  limit?: number;
+  offset?: number;
+}
+
 // ─────────────────────────── core fetcher ───────────────────────────
 
 interface RequestOpts {
@@ -1023,6 +1089,46 @@ export const api = {
         `/deals/${dealId}/scenarios/compare`,
         { scenario_ids: scenarioIds },
       ),
+  },
+  /** Wave 4 W4.3 — Activity Feed (per-deal) + Compliance Explorer
+   *  (tenant-wide). Surfaces the existing append-only audit log to the
+   *  analyst UI so "who changed what when" is one click away. */
+  audit: {
+    deal: (dealId: string, q: DealAuditQuery = {}, signal?: AbortSignal) => {
+      const params = new URLSearchParams();
+      if (q.action) params.set('action', q.action);
+      if (q.entity_type) params.set('entity_type', q.entity_type);
+      if (q.severity) params.set('severity', q.severity);
+      if (q.since) params.set('since', q.since);
+      if (q.until) params.set('until', q.until);
+      if (q.limit != null) params.set('limit', String(q.limit));
+      if (q.offset != null) params.set('offset', String(q.offset));
+      const qs = params.toString();
+      return request<DealAuditResponse>(
+        'GET',
+        `/deals/${dealId}/audit${qs ? `?${qs}` : ''}`,
+        undefined,
+        { signal },
+      );
+    },
+    explorer: (q: ExplorerQuery = {}, signal?: AbortSignal) => {
+      const params = new URLSearchParams();
+      if (q.q) params.set('q', q.q);
+      if (q.actor) params.set('actor', q.actor);
+      if (q.entity_type) params.set('entity_type', q.entity_type);
+      if (q.severity) params.set('severity', q.severity);
+      if (q.since) params.set('since', q.since);
+      if (q.until) params.set('until', q.until);
+      if (q.limit != null) params.set('limit', String(q.limit));
+      if (q.offset != null) params.set('offset', String(q.offset));
+      const qs = params.toString();
+      return request<ExplorerResponse>(
+        'GET',
+        `/audit/explorer${qs ? `?${qs}` : ''}`,
+        undefined,
+        { signal },
+      );
+    },
   },
 };
 

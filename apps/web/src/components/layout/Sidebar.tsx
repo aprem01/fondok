@@ -3,7 +3,7 @@ import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
 import {
   LayoutGrid, FolderKanban, Database, Settings, ChevronDown, Building2,
-  Users, UserCog, LogOut, Plus, Check, BookOpen, LineChart,
+  Users, UserCog, LogOut, Plus, Check, BookOpen, LineChart, History,
 } from 'lucide-react';
 import { useState, useRef, useEffect } from 'react';
 import { OrganizationSwitcher } from '@clerk/nextjs';
@@ -26,6 +26,10 @@ const navItems = [
   // meeting target). Sits between Projects (single-deal drill-down)
   // and Data Library (global benchmarks).
   { href: '/pipeline', label: 'Pipeline', icon: LineChart },
+  // Wave 4 W4.3 — tenant-wide Compliance Explorer over the append-only
+  // audit log. Sits between Pipeline (multi-deal) and Data Library
+  // (global benchmarks) since both are tenant-scoped surfaces.
+  { href: '/audit', label: 'Audit', icon: History },
   { href: '/data-library', label: 'Data Library', icon: Database },
   { href: '/methodology', label: 'Methodology', icon: BookOpen },
   { href: '/settings', label: 'Settings', icon: Settings },
