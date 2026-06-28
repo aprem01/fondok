@@ -2349,6 +2349,254 @@ async def get_historical_baseline(
     )
 
 
+# ──────────────────── STR forward forecast (Wave 3 W3.3) ────────────────────
+
+
+class _STRMonthOut(BaseModel):
+    """Wire-format row for one historical-or-forecast STR month.
+
+    Mirrors ``fondok_schemas.str_forecast.STRMonth`` 1:1; defined here
+    so the OpenAPI spec is self-contained (the engine schema lives in
+    the cross-package ``fondok_schemas`` module). Field semantics:
+
+    * ``period`` — YYYY-MM
+    * ``occupancy`` — 0..1 (NOT a percent)
+    * ``adr`` — USD
+    * ``revpar`` — USD (== occupancy × adr at write-time)
+    * ``comp_set_revpar`` — USD comp-set RevPAR for the same period
+    * ``revpar_index`` — subject revpar / comp_set_revpar
+    * ``is_historical`` — True for ingested rows, False for forecast
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    period: str
+    occupancy: float
+    adr: float
+    revpar: float
+    comp_set_revpar: float
+    revpar_index: float
+    is_historical: bool
+
+
+class _STRForecastScenarioOut(BaseModel):
+    """Wire-format scenario settings (defaults OR analyst overrides)."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    name: str
+    revpar_cagr_pct: float
+    revpar_index_target: float
+    occupancy_floor: float
+    adr_floor: float
+    notes: list[str] = Field(default_factory=list)
+
+
+class _STRForecastResultOut(BaseModel):
+    """GET /deals/{id}/str-forecast response envelope."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    deal_id: UUID
+    historical_months: list[_STRMonthOut] = Field(default_factory=list)
+    forecast_months: dict[str, list[_STRMonthOut]] = Field(default_factory=dict)
+    scenario_settings: list[_STRForecastScenarioOut] = Field(default_factory=list)
+    coverage_quality: str = "low"
+
+
+class _STRForecastScenarioOverride(BaseModel):
+    """Partial scenario override accepted on POST.
+
+    Every field but ``name`` is optional. Omitted fields fall back to
+    the default for that scenario, so callers can flex just one
+    knob (e.g. lift the base scenario's RevPAR CAGR) without re-
+    declaring the full scenario.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    name: str
+    revpar_cagr_pct: float | None = None
+    revpar_index_target: float | None = None
+    occupancy_floor: float | None = None
+    adr_floor: float | None = None
+    notes: list[str] | None = None
+
+
+class _STRForecastScenariosRequest(BaseModel):
+    """POST /deals/{id}/str-forecast/scenarios body."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    scenarios: list[_STRForecastScenarioOverride] = Field(default_factory=list)
+
+
+def _str_month_out(m: Any) -> _STRMonthOut:
+    return _STRMonthOut(
+        period=m.period,
+        occupancy=m.occupancy,
+        adr=m.adr,
+        revpar=m.revpar,
+        comp_set_revpar=m.comp_set_revpar,
+        revpar_index=m.revpar_index,
+        is_historical=m.is_historical,
+    )
+
+
+def _str_scenario_out(s: Any) -> _STRForecastScenarioOut:
+    return _STRForecastScenarioOut(
+        name=s.name,
+        revpar_cagr_pct=s.revpar_cagr_pct,
+        revpar_index_target=s.revpar_index_target,
+        occupancy_floor=s.occupancy_floor,
+        adr_floor=s.adr_floor,
+        notes=list(s.notes or []),
+    )
+
+
+def _str_forecast_to_out(deal_id: UUID, forecast: Any) -> _STRForecastResultOut:
+    return _STRForecastResultOut(
+        deal_id=deal_id,
+        historical_months=[_str_month_out(m) for m in forecast.historical_months],
+        forecast_months={
+            k: [_str_month_out(m) for m in v]
+            for k, v in forecast.forecast_months.items()
+        },
+        scenario_settings=[_str_scenario_out(s) for s in forecast.scenario_settings],
+        coverage_quality=forecast.coverage_quality,
+    )
+
+
+def _merge_scenario_overrides(
+    overrides: list[_STRForecastScenarioOverride] | None,
+) -> list[Any] | None:
+    """Project the partial overrides onto full STRForecastScenario.
+
+    Returns None when no overrides are supplied. Unknown scenario
+    names are ignored (defensive — caller can only override
+    downside / base / upside).
+    """
+    if not overrides:
+        return None
+    from ..engines.str_forecast import default_scenarios
+    from fondok_schemas.str_forecast import STRForecastScenario
+
+    defaults_by_name = {s.name: s for s in default_scenarios()}
+    merged: list[STRForecastScenario] = []
+    for ov in overrides:
+        if ov.name not in defaults_by_name:
+            continue
+        base = defaults_by_name[ov.name]
+        merged.append(
+            STRForecastScenario(
+                name=ov.name,  # type: ignore[arg-type]
+                revpar_cagr_pct=(
+                    ov.revpar_cagr_pct
+                    if ov.revpar_cagr_pct is not None
+                    else base.revpar_cagr_pct
+                ),
+                revpar_index_target=(
+                    ov.revpar_index_target
+                    if ov.revpar_index_target is not None
+                    else base.revpar_index_target
+                ),
+                occupancy_floor=(
+                    ov.occupancy_floor
+                    if ov.occupancy_floor is not None
+                    else base.occupancy_floor
+                ),
+                adr_floor=(
+                    ov.adr_floor if ov.adr_floor is not None else base.adr_floor
+                ),
+                notes=ov.notes if ov.notes is not None else base.notes,
+            )
+        )
+    return merged or None
+
+
+@router.get(
+    "/{deal_id}/str-forecast",
+    response_model=_STRForecastResultOut,
+)
+async def get_str_forecast(
+    deal_id: UUID,
+    session: Annotated[AsyncSession, Depends(get_session)],
+    tenant_id: Annotated[UUID, Depends(get_tenant_id)],
+) -> _STRForecastResultOut:
+    """Return the 24-month forward STR forecast (3 scenarios) for the deal.
+
+    Wave 3 W3.3 — Sam's June 2026 ask. Pulls every STR_TREND extraction
+    for ``(deal_id, tenant_id)``, materializes the trailing 24 months of
+    subject + comp-set monthly RevPAR / Occ / ADR, runs the forecast
+    engine with default downside / base / upside scenarios, and returns
+    historical + forward rows for all three branches.
+
+    Tenant-scoped: the cross-tenant deal_id returns 404 (the deal-belongs
+    gate fires first) and the STR_TREND query is filtered on both the
+    extraction row's tenant_id AND the document's tenant_id.
+
+    When the deal has < 12 historical months on file, the response sets
+    ``coverage_quality = "low"`` and ``forecast_months`` is keyed but
+    empty per scenario. The UI is expected to render an "Awaiting more
+    history" banner in that case.
+    """
+    await _assert_deal_belongs_to_tenant(
+        session, deal_id=deal_id, tenant_id=tenant_id
+    )
+
+    from ..engines.str_forecast import build_str_forecast
+    from ..services.str_forecast_loader import load_str_history_for_deal
+
+    history = await load_str_history_for_deal(
+        session, deal_id=str(deal_id), tenant_id=str(tenant_id)
+    )
+    forecast = build_str_forecast(
+        deal_id=str(deal_id),
+        historical_months=history,
+    )
+    return _str_forecast_to_out(deal_id, forecast)
+
+
+@router.post(
+    "/{deal_id}/str-forecast/scenarios",
+    response_model=_STRForecastResultOut,
+)
+async def update_str_forecast_scenarios(
+    deal_id: UUID,
+    body: _STRForecastScenariosRequest,
+    session: Annotated[AsyncSession, Depends(get_session)],
+    tenant_id: Annotated[UUID, Depends(get_tenant_id)],
+) -> _STRForecastResultOut:
+    """Recompute the STR forecast with caller-supplied scenario overrides.
+
+    The body's ``scenarios`` list may contain a partial override for any
+    of ``downside`` / ``base`` / ``upside``. Missing fields on an
+    overridden scenario inherit from the engine's default for that
+    scenario, so callers can flex one knob (e.g. push the upside
+    scenario's CAGR to 7%) without re-declaring every field.
+
+    Same tenant gate as GET. Same coverage-quality semantics — the
+    response shape is identical.
+    """
+    await _assert_deal_belongs_to_tenant(
+        session, deal_id=deal_id, tenant_id=tenant_id
+    )
+
+    from ..engines.str_forecast import build_str_forecast
+    from ..services.str_forecast_loader import load_str_history_for_deal
+
+    history = await load_str_history_for_deal(
+        session, deal_id=str(deal_id), tenant_id=str(tenant_id)
+    )
+    overrides = _merge_scenario_overrides(body.scenarios)
+    forecast = build_str_forecast(
+        deal_id=str(deal_id),
+        historical_months=history,
+        scenario_overrides=overrides,
+    )
+    return _str_forecast_to_out(deal_id, forecast)
+
+
 def _year_dict(year: HistoricalYear) -> dict[str, Any]:
     """Convert a ``HistoricalYear`` dataclass into the wire-shape dict.
 

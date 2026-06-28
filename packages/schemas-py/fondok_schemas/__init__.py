@@ -102,6 +102,13 @@ from .underwriting import (
     SegmentYear,
     SourceUseLine,
 )
+from .str_forecast import (
+    CoverageQuality,
+    STRForecastResult,
+    STRForecastScenario,
+    STRForecastScenarioName,
+    STRMonth,
+)
 from .variance import VarianceFlag, VarianceReport
 from .verification import (
     CitationStatus,
@@ -208,6 +215,12 @@ __all__ = [
     "ScenarioName",
     "SegmentYear",
     "SourceUseLine",
+    # str_forecast (Wave 3 W3.3 — STR forward forecast)
+    "CoverageQuality",
+    "STRForecastResult",
+    "STRForecastScenario",
+    "STRForecastScenarioName",
+    "STRMonth",
     # variance
     "VarianceFlag",
     "VarianceReport",

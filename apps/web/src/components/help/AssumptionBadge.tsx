@@ -197,4 +197,15 @@ const SOURCE_META: Record<AssumptionSource, SourceMeta> = {
       'Analyst override set via the Overview inline editor. Wins over every other source.',
     Icon: Pencil,
   },
+  // Wave 3 W3.3 — STR forward-forecast seed. When the analyst opts in
+  // (revenue_seed_from_str_forecast=True), starting_occupancy and
+  // starting_adr are pulled from the BASE scenario's Month-12 forecast
+  // point so the revenue engine inherits the forecast's bottom-up math.
+  str_forecast: {
+    label: 'STR Fcst',
+    tone: 'bg-brand-50 text-brand-700 border-brand-500/30',
+    tooltip:
+      'Seeded from the BASE STR forward-forecast scenario (Month 12). The forecast engine projects 24 months ahead off the trailing STR Trend history; turn off via the Forecasting tab to fall back to T-12 / CBRE / seed defaults.',
+    Icon: BarChart3,
+  },
 };
