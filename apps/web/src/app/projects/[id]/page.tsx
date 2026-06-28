@@ -7,6 +7,7 @@ import {
   ArrowLeft, MapPin, Building2, Calendar, Users, Share2, X,
   Sparkles, FolderOpen, FileText, DollarSign, TrendingUp, BarChart3, Activity,
   Briefcase, MapPinned, FileSearch, Download, AlertTriangle, ShieldCheck,
+  GitCompareArrows,
 } from 'lucide-react';
 import { Button } from '@/components/ui/Button';
 import { StatusBadge } from '@/components/ui/Badge';
@@ -24,7 +25,11 @@ import OverviewTab from '@/components/project/OverviewTab';
 import InvestmentTab from '@/components/project/InvestmentTab';
 import DebtTab from '@/components/project/DebtTab';
 import ExportTab from '@/components/project/ExportTab';
+import ScenarioSelector from '@/components/project/ScenarioSelector';
+import ScenarioComparePanel from '@/components/project/ScenarioComparePanel';
+import ScenarioEditor from '@/components/project/ScenarioEditor';
 import TabLoadingSkeleton from '@/components/project/TabLoadingSkeleton';
+import { api as workerApi, type ScenarioRecord } from '@/lib/api';
 import { AssumptionsProvider } from '@/stores/assumptionsStore';
 import { useEngineOutputs } from '@/lib/hooks/useEngineOutputs';
 import { assumptionsFromDeal } from '@/lib/assumptions/fromDeal';
@@ -79,6 +84,7 @@ const tabs: Tab[] = [
   { id: 'partnership', label: 'Partnership', icon: Users, inactive: true },
   { id: 'market', label: 'Market', icon: MapPinned },
   { id: 'analysis', label: 'Analysis', icon: FileSearch },
+  { id: 'scenarios', label: 'Scenarios', icon: GitCompareArrows },
   { id: 'export', label: 'Export', icon: Download, inactive: true },
 ];
 
@@ -236,6 +242,47 @@ export default function ProjectDetailPage() {
   const setTab = (tab: string) => {
     const url = tab ? `/projects/${id}?tab=${tab}` : `/projects/${id}`;
     router.push(url, { scroll: false });
+  };
+
+  // Wave 3 W3.2 — named scenarios. Only loaded for real (UUID) deals;
+  // mock deals get an empty list and the selector hides itself.
+  const [scenarios, setScenarios] = useState<ScenarioRecord[]>([]);
+  const [activeScenarioId, setActiveScenarioId] = useState<string | null>(null);
+  const [scenarioEditor, setScenarioEditor] = useState<
+    { open: boolean; scenario: ScenarioRecord | null }
+  >({ open: false, scenario: null });
+
+  useEffect(() => {
+    if (!liveMode) return;
+    let cancelled = false;
+    workerApi.scenarios
+      .list(rawId)
+      .then((list) => {
+        if (cancelled) return;
+        setScenarios(list);
+        // Default to base on first load.
+        if (!activeScenarioId) {
+          const base = list.find((s) => s.is_base);
+          if (base) setActiveScenarioId(base.id);
+        }
+      })
+      .catch(() => {
+        /* worker not connected or older build — no-op */
+      });
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [liveMode, rawId]);
+
+  const refreshScenarios = async () => {
+    if (!liveMode) return;
+    try {
+      const list = await workerApi.scenarios.list(rawId);
+      setScenarios(list);
+    } catch {
+      /* no-op */
+    }
   };
 
   // Only the Kimpton Angler deal (id=7) has the live assumption sliders wired.
@@ -432,6 +479,20 @@ export default function ProjectDetailPage() {
         </nav>
       </div>
 
+      {/* Wave 3 W3.2 — scenario selector. Mounts below the tab nav so
+          the active what-if pill is visible on every tab. Hides for
+          mock deals (no worker → no scenarios). */}
+      {liveMode && scenarios.length > 0 && (
+        <ScenarioSelector
+          scenarios={scenarios}
+          activeScenarioId={activeScenarioId}
+          onSelect={(id) => setActiveScenarioId(id)}
+          onCreate={() =>
+            setScenarioEditor({ open: true, scenario: null })
+          }
+        />
+      )}
+
       {/* Tab content */}
       <div className="p-8" role="tabpanel" aria-label={`${activeLabel} content`}>
         {activeTab === '' && (
@@ -466,6 +527,17 @@ export default function ProjectDetailPage() {
         )}
         {activeTab === 'analysis' && (
           <ErrorBoundary tabName="Analysis"><AnalysisTab /></ErrorBoundary>
+        )}
+        {activeTab === 'scenarios' && (
+          <ErrorBoundary tabName="Scenarios">
+            {liveMode ? (
+              <ScenarioComparePanel dealId={rawId} scenarios={scenarios} />
+            ) : (
+              <div className="text-[13px] text-ink-500">
+                Named scenarios are available on worker-connected deals.
+              </div>
+            )}
+          </ErrorBoundary>
         )}
         {activeTab === 'export' && (
           <ErrorBoundary tabName="Export"><ExportTab project={project} /></ErrorBoundary>
@@ -528,6 +600,23 @@ export default function ProjectDetailPage() {
             </div>
           </aside>
         </>
+      )}
+
+      {/* Wave 3 W3.2 — scenario editor side panel (NO modal). */}
+      {liveMode && (
+        <ScenarioEditor
+          open={scenarioEditor.open}
+          dealId={rawId}
+          scenario={scenarioEditor.scenario}
+          onClose={() => setScenarioEditor({ open: false, scenario: null })}
+          onSaved={(s) => {
+            setActiveScenarioId(s.id);
+            void refreshScenarios();
+          }}
+          onRan={() => {
+            void refreshScenarios();
+          }}
+        />
       )}
     </div>
   );

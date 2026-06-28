@@ -240,6 +240,7 @@ async def _load_engine_inputs(
     session: AsyncSession,
     deal_id: str,
     overrides: dict[str, Any] | None = None,
+    scenario_id: str | None = None,
 ) -> dict[str, Any]:
     """Resolve the underwriting assumptions for ``deal_id``.
 
@@ -257,6 +258,13 @@ async def _load_engine_inputs(
     The web app's demo deal id (legacy int 7) does not parse as a UUID
     and never lands in the deals table; that path uses the pure Kimpton
     defaults.
+
+    Wave 3 W3.2: when ``scenario_id`` is set, the scenario's overrides
+    merge on top of the deal's persisted ``field_overrides`` and feed
+    the same override-routing loop the deal overrides use. Without a
+    ``scenario_id`` the path is unchanged — running with the deal's
+    base scenario id is byte-identical to running with no scenario_id
+    at all (the base scenario carries an empty override list).
     """
     base = _kimpton_assumptions()
     # Every key starts marked as a seed; later steps overwrite the
@@ -526,6 +534,17 @@ async def _load_engine_inputs(
         pre_load_seg_overrides_raw = await _load_deal_overrides(
             session, deal_id=deal_id
         )
+        if scenario_id:
+            # Wave 3 W3.2 — scenario overrides win over deal-level
+            # overrides on conflicts (same precedence model as the
+            # below ``persisted_overrides`` merge).
+            scenario_overrides_pre = await _load_scenario_overrides(
+                session, scenario_id=scenario_id
+            )
+            pre_load_seg_overrides_raw = {
+                **pre_load_seg_overrides_raw,
+                **scenario_overrides_pre,
+            }
         pre_load_seg_overrides: dict[str, dict[str, float]] = {}
         for path, value in pre_load_seg_overrides_raw.items():
             if not isinstance(value, (int, float)):
@@ -571,6 +590,15 @@ async def _load_engine_inputs(
     # these top-level keys. Applied last so analyst intent beats every
     # other data source (T12 actuals, CBRE, OM comps, deal row, seed).
     persisted_overrides = await _load_deal_overrides(session, deal_id=deal_id)
+    if scenario_id:
+        # Wave 3 W3.2 — overlay the scenario's overrides on top of the
+        # deal's persisted overrides; scenario values win on conflict
+        # so the analyst can flex any base assumption inside a what-if.
+        scenario_overrides = await _load_scenario_overrides(
+            session, scenario_id=scenario_id
+        )
+        if scenario_overrides:
+            persisted_overrides = {**persisted_overrides, **scenario_overrides}
     if persisted_overrides:
         for path, value in persisted_overrides.items():
             # Wave 2 P2.5 — capex array overrides land first because
@@ -1231,6 +1259,57 @@ def _normalize_override_shape(raw: dict[str, Any]) -> dict[str, Any]:
             out[path] = val["value"]
         else:
             out[path] = val
+    return out
+
+
+async def _load_scenario_overrides(
+    session: AsyncSession,
+    *,
+    scenario_id: str,
+) -> dict[str, Any]:
+    """Read a scenario's overrides as a flat ``{field_path: value}`` map.
+
+    Wave 3 W3.2. Scenarios store overrides as a JSONB array of
+    ``{field_path, value, source}`` objects (see
+    :class:`apps.worker.app.api.scenarios.ScenarioOverrideBody`); we
+    flatten here so the engine input loader's existing override-routing
+    loop accepts the same shape it already understands.
+
+    Returns ``{}`` for non-UUID ids, missing rows, malformed payloads,
+    or test DBs where the migration hasn't run yet.
+    """
+    try:
+        UUID(scenario_id)
+    except (ValueError, TypeError):
+        return {}
+    try:
+        row = (
+            await session.execute(
+                text("SELECT overrides FROM scenarios WHERE id = :id"),
+                {"id": scenario_id},
+            )
+        ).first()
+    except Exception:
+        return {}
+    if row is None:
+        return {}
+    raw = row._mapping.get("overrides")
+    if isinstance(raw, str):
+        try:
+            parsed = json.loads(raw)
+        except json.JSONDecodeError:
+            return {}
+        raw = parsed
+    if not isinstance(raw, list):
+        return {}
+    out: dict[str, Any] = {}
+    for entry in raw:
+        if not isinstance(entry, dict):
+            continue
+        path = entry.get("field_path")
+        if not isinstance(path, str) or not path:
+            continue
+        out[path] = entry.get("value")
     return out
 
 
@@ -2478,10 +2557,16 @@ async def run_single_engine(
     overrides: dict[str, Any] | None = None,
     accumulated: dict[str, BaseModel] | None = None,
     base_inputs: dict[str, Any] | None = None,
+    scenario_id: str | None = None,
 ) -> dict[str, Any]:
     """Run a single engine and persist the output.
 
     Returns a serializable dict suitable for the API response.
+
+    Wave 3 W3.2: ``scenario_id`` (when set) layers a named scenario's
+    overrides on top of the deal's persisted ``field_overrides`` before
+    the engine input is built. Without ``scenario_id`` the path is
+    unchanged.
     """
     if engine_name not in ENGINE_REGISTRY:
         raise ValueError(
@@ -2492,7 +2577,7 @@ async def run_single_engine(
     run_id = run_id or str(uuid4())
     accumulated = accumulated if accumulated is not None else {}
     base_inputs = base_inputs or await _load_engine_inputs(
-        session, deal_id, overrides
+        session, deal_id, overrides, scenario_id=scenario_id
     )
 
     # Some engines need upstream outputs. When called in single-engine
@@ -2509,6 +2594,7 @@ async def run_single_engine(
                 overrides=overrides,
                 accumulated=accumulated,
                 base_inputs=base_inputs,
+                scenario_id=scenario_id,
             )
 
     started_at = _now()
@@ -2586,6 +2672,7 @@ async def run_all_engines(
     run_id: str,
     overrides: dict[str, Any] | None = None,
     on_complete: Callable[[str, dict[str, Any]], None] | None = None,
+    scenario_id: str | None = None,
 ) -> dict[str, dict[str, Any]]:
     """Run the full 8-engine chain; persist each output as it lands.
 
@@ -2597,8 +2684,16 @@ async def run_all_engines(
     ``status='failed'`` and a ``skipped: <upstream>`` error). Engines
     independent of the failure keep running so the user sees partial
     progress instead of a blank page.
+
+    Wave 3 W3.2: ``scenario_id`` (when set) layers the named scenario's
+    overrides on top of the deal's persisted ``field_overrides`` so the
+    same run_id chain reflects the scenario-specific assumptions. The
+    base scenario carries an empty override list — a run against it is
+    byte-identical to a run without ``scenario_id``.
     """
-    base_inputs = await _load_engine_inputs(session, deal_id, overrides)
+    base_inputs = await _load_engine_inputs(
+        session, deal_id, overrides, scenario_id=scenario_id
+    )
     accumulated: dict[str, BaseModel] = {}
     results: dict[str, dict[str, Any]] = {}
 
@@ -2638,6 +2733,7 @@ async def run_all_engines(
             overrides=overrides,
             accumulated=accumulated,
             base_inputs=base_inputs,
+            scenario_id=scenario_id,
         )
         results[name] = result
         if on_complete:

@@ -22,6 +22,7 @@ from .api import health as health_router
 from .api import market as market_router
 from .api import model as model_router
 from .api import observability as observability_router
+from .api import scenarios as scenarios_router
 from .api import settings as settings_router
 from .config import get_settings
 from .database import dispose_engine, get_engine
@@ -132,6 +133,12 @@ def create_app() -> FastAPI:
     # /deals/{id}/due-diligence — Lovable parity broker-question packet.
     app.include_router(
         due_diligence_router.router, prefix="/deals", tags=["due-diligence"]
+    )
+    # Wave 3 W3.2 — named what-if scenarios per deal. Mounted under
+    # /deals so every route inherits the deal-scoped path parameter and
+    # tenant resolution model the rest of the deal API uses.
+    app.include_router(
+        scenarios_router.router, prefix="/deals", tags=["scenarios"]
     )
     app.include_router(
         data_library_router.router, prefix="/data-library", tags=["data-library"]

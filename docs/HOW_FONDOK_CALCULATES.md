@@ -191,3 +191,120 @@ missing year as "Missing 2023".
   baseline query on Postgres; SQLite gets a non-partial
   `(deal_id, fiscal_year)` index.
 
+
+## Named scenarios — save/load/diff (Wave 3 W3.2)
+
+Every IC committee opens with the same question: *what does the
+downside look like, and what does the upside look like?* A point
+estimate isn't enough; analysts need to compare the base case against
+a named "downside", "upside", "broker high case", "IC stress test", etc.
+without forking the deal or screenshotting outputs into a deck.
+
+A **scenario** is a named layer of per-field overrides on top of the
+deal's persisted `field_overrides`. The same engine_runner that backs
+the Run Model button accepts an optional `scenario_id`; when set, the
+input loader merges the scenario's overrides on top of the deal-level
+overrides BEFORE the existing override-routing logic fires. That means
+every override path the deal-level OverridePanel already supports —
+top-level keys (`exit_cap_rate`, `starting_occupancy`), structured
+overrides (`pip_displacement.brand`,
+`segments.transient_ota.adr`, `capex_plan.pip.total_usd`) — works
+identically inside a scenario.
+
+### Data model
+
+```python
+class ScenarioOverride(BaseModel):
+    field_path: str          # e.g. "exit_cap_rate" or "pip_displacement.brand"
+    value: Any               # scalar or JSON-compatible
+    source: str = "analyst_override"
+
+class Scenario(BaseModel):
+    id: str
+    deal_id: str
+    tenant_id: str
+    name: str                # "Base", "downside", "Apollo IC target"
+    description: str | None
+    is_base: bool = False    # exactly one base per deal
+    overrides: list[ScenarioOverride]
+    created_at: datetime
+    updated_at: datetime
+    last_run_id: str | None  # most recent engine_outputs.run_id
+```
+
+The `scenarios` table mirrors this shape:
+
+* Postgres — `id UUID PK`, `deal_id UUID NOT NULL REFERENCES deals(id) ON DELETE CASCADE`,
+  `tenant_id UUID NOT NULL`, `name TEXT NOT NULL`,
+  `description TEXT NULL`, `is_base BOOLEAN NOT NULL DEFAULT false`,
+  `overrides JSONB NOT NULL DEFAULT '[]'`, `last_run_id UUID NULL`,
+  `created_at`, `updated_at`, `UNIQUE (deal_id, name)`,
+  index on `(deal_id, tenant_id)`.
+* SQLite mirror — `BOOLEAN → INTEGER 0/1`, `JSONB → TEXT` (API
+  json.dumps / json.loads), `UUID → TEXT`, no FK enforcement (matches
+  the rest of the dev mirror).
+
+### Auto-created base scenario
+
+Every freshly created deal (`POST /deals`) gets a single
+`is_base=true` scenario inserted in the same transaction via
+`apps/worker/app/api/scenarios.create_base_scenario_for_deal`. The
+base scenario carries an empty override list — running the engine
+chain with `scenario_id = base.id` is byte-identical to running with
+no `scenario_id` at all. That's the test
+`test_run_scenario_without_overrides_matches_base` pins, so we never
+silently diverge the two code paths.
+
+### Override precedence
+
+Scenario overrides win on conflict with deal-level overrides; analyst
+intent at the scenario level beats everything else (T-12 actuals,
+CBRE Horizons, OM comps, deal-row values, Kimpton seed). The
+provenance badge keeps reading `analyst_override` because both layers
+carry the same source label.
+
+```
+seed
+  ← deal_row (purchase_price, keys)
+  ← OM / T-12 / CBRE / portfolio P&L (when extracted)
+  ← deal.field_overrides (OverridePanel)
+  ← scenarios.overrides   ← WINS  (Wave 3 W3.2)
+```
+
+### Engine runs
+
+`POST /deals/{id}/scenarios/{scenario_id}/run` runs the full 8-engine
+chain synchronously with the scenario applied, stamps the run id back
+into `scenarios.last_run_id`, and returns the engine output map. The
+UI uses `last_run_id` to deep-link back into `engine_outputs` without
+re-running the math.
+
+`POST /deals/{id}/scenarios/compare` accepts up to 4 scenario ids and
+returns one column per scenario. Scenarios that haven't been run yet
+are auto-run inline so the side-by-side never renders an empty column.
+Every scenario id is verified to belong to the deal + tenant; mixing
+in a scenario id from another tenant returns 404.
+
+### Where to look in code
+
+* `packages/schemas-py/fondok_schemas/scenario.py` — `Scenario` +
+  `ScenarioOverride` (Pydantic v2).
+* `apps/worker/app/api/scenarios.py` — 7 endpoints
+  (`list / create / get / patch / delete / run / compare`) +
+  `create_base_scenario_for_deal` helper used by `deals.create_deal`.
+* `apps/worker/app/services/engine_runner.py` —
+  `_load_scenario_overrides`, `_load_engine_inputs(..., scenario_id=)`,
+  `run_single_engine(..., scenario_id=)`,
+  `run_all_engines(..., scenario_id=)`.
+* `apps/worker/app/migrations.py` — `scenarios.create_table` +
+  `scenarios.idx_deal_tenant`, both Postgres and SQLite mirrors.
+* `apps/worker/tests/test_scenarios.py` — 15 tests covering
+  auto-base creation, tenant scoping, override routing through PIP /
+  segment / capex paths, compare side-by-side, base-undeletable,
+  unique-name-per-deal, last_run_id stamping.
+* `apps/web/src/components/project/ScenarioSelector.tsx` — pill row
+  at the top of the project workspace.
+* `apps/web/src/components/project/ScenarioComparePanel.tsx` —
+  side-by-side compare table on the Scenarios tab.
+* `apps/web/src/components/project/ScenarioEditor.tsx` — side panel
+  for editing overrides (NO modal; Wave 1 no-popups rule).

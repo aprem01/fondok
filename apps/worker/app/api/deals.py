@@ -504,6 +504,23 @@ async def create_deal(
             "deal_stage": body.deal_stage,
         },
     )
+    # Wave 3 W3.2 — every deal gets a Base scenario at create time so
+    # the UI's scenario selector always has a default pill to highlight
+    # and engine runs without a scenario_id stay byte-identical to a
+    # run against the base.
+    try:
+        from .scenarios import create_base_scenario_for_deal
+
+        await create_base_scenario_for_deal(
+            session,
+            deal_id=deal_id,
+            tenant_id=tenant_id_str,
+        )
+    except Exception as exc:  # noqa: BLE001 — never block deal create
+        logger.warning(
+            "deals.create: base-scenario insert failed for deal=%s: %s",
+            deal_id, exc,
+        )
     await session.commit()
 
     logger.info("deals.create: deal=%s tenant=%s name=%r", deal_id, tenant_id_str, body.name)
