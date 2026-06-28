@@ -105,6 +105,11 @@ class CreateDealBody(BaseModel):
     # Sourcing channel for pipeline analytics (Sam's v2 ask):
     # broker / lender / franchisor / operator / capital_partner / direct.
     sourcing_channel: str | None = Field(default=None, max_length=40)
+    # Wave 3 W3.5 — analyst-declared target levered IRR. The Pipeline
+    # view uses this to badge each deal as meeting / missing target.
+    # NULL means "no opinion yet" — UI shows a dash and the summary
+    # aggregates skip the deal in the meets-target tally.
+    target_irr: float | None = Field(default=None, ge=-0.5, le=2.0)
 
 
 class UpdateDealBody(BaseModel):
@@ -125,6 +130,10 @@ class UpdateDealBody(BaseModel):
     positioning: str | None = None
     purchase_price: float | None = Field(default=None, ge=0)
     sourcing_channel: str | None = Field(default=None, max_length=40)
+    # Wave 3 W3.5 — patch the per-deal target levered IRR. Pass null to
+    # clear it ("no opinion") or a fraction in [-0.5, 2.0] (e.g. 0.18 =
+    # 18% IRR threshold).
+    target_irr: float | None = Field(default=None, ge=-0.5, le=2.0)
     # Per-field analyst overrides (canonical extractor field path →
     # primitive value). When present, this dict REPLACES the deal's
     # current overrides — clients send the full merged map. Engines pick
@@ -169,6 +178,11 @@ class DealRecord(BaseModel):
     positioning: str | None = None
     purchase_price: float | None = None
     sourcing_channel: str | None = None
+    # Wave 3 W3.5 — analyst-declared target levered IRR (fraction).
+    # NULL when the analyst hasn't set a threshold yet. The Pipeline
+    # view's "deals meeting target IRR" KPI ignores deals with no
+    # target rather than counting them as misses.
+    target_irr: float | None = None
     # Per-field analyst overrides — keyed by extractor field path (e.g.
     # ``property_overview.year_built``) → either a scalar (legacy) or
     # a ``FieldOverrideRecord``-shaped dict ``{value, note, overridden_by,
@@ -233,6 +247,84 @@ class GateResponse(BaseModel):
     gate: str
     accepted: bool = True
     next_state: str | None = None
+
+
+# ─────────────────────────── pipeline view ───────────────────────────
+# Wave 3 W3.5 — multi-deal Pipeline view. One row per deal, enriched
+# with the deal's LATEST engine output snapshot (returns / debt /
+# capital). Analysts open this view dozens of times a day, so the
+# endpoint pre-computes summary KPIs and supports server-side
+# sort + filter + pagination.
+
+
+class PipelineDealRow(BaseModel):
+    """Single row in the pipeline table.
+
+    Numbers carry their natural units: prices in USD, IRRs and cap
+    rates as fractions (0.18 = 18%), equity multiples as raw ratios.
+    Any field that requires an engine run we don't yet have is NULL —
+    the UI dashes those cells rather than rendering zeroes.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    deal_id: UUID
+    name: str
+    state: str  # ONBOARDING / VALIDATING / READY
+    status: str  # Draft / Active / Archived (legacy status column)
+    city: str | None = None
+    brand: str | None = None
+    deal_stage: str | None = None
+    keys: int | None = None
+    purchase_price: float | None = None
+    price_per_key: float | None = None
+    noi_y1: float | None = None
+    noi_stabilized: float | None = None
+    exit_cap_rate: float | None = None
+    levered_irr: float | None = None
+    equity_multiple: float | None = None
+    dscr_y1: float | None = None
+    document_count: int = 0
+    last_engine_run_at: datetime | None = None
+    last_activity_at: datetime
+    pip_total_usd: float | None = None  # convenience pull from capex_plan
+    target_irr: float | None = None
+    target_irr_met: bool | None = None  # NULL when no target on the deal
+
+
+class PipelineSummary(BaseModel):
+    """Portfolio-level rollup over the rows in this response.
+
+    All percentiles are computed over the deals that have a usable
+    ``levered_irr`` (post-engine-run). ``deals_meeting_target_irr``
+    counts only deals whose ``target_irr`` is set AND whose
+    ``levered_irr`` meets/exceeds the threshold — deals with no target
+    are excluded from the tally entirely so a sparse pipeline doesn't
+    inflate the miss rate.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    deal_count: int
+    median_irr: float | None = None
+    p25_irr: float | None = None
+    p75_irr: float | None = None
+    median_em: float | None = None
+    median_per_key: float | None = None
+    median_cap_rate: float | None = None
+    deals_meeting_target_irr: int = 0
+    deals_with_target_irr: int = 0
+    deals_by_state: dict[str, int] = Field(default_factory=dict)
+
+
+class PipelineResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    deals: list[PipelineDealRow] = Field(default_factory=list)
+    summary: PipelineSummary
+    total_count: int  # deals matching filters before pagination
+    limit: int
+    offset: int
 
 
 class MemoEnvelope(BaseModel):
@@ -338,6 +430,7 @@ def _row_to_record(row: dict[str, Any]) -> DealRecord:
         positioning=row.get("positioning"),
         purchase_price=_coerce_float(row.get("purchase_price")),
         sourcing_channel=row.get("sourcing_channel"),
+        target_irr=_coerce_float(row.get("target_irr")),
         field_overrides=_coerce_overrides(row.get("field_overrides")),
         state=row.get("state") or "ONBOARDING",
         validation_started_at=_coerce_dt_optional(row.get("validation_started_at")),
@@ -350,7 +443,7 @@ def _row_to_record(row: dict[str, Any]) -> DealRecord:
 _DEAL_COLUMNS = (
     "id, tenant_id, name, city, keys, service, status, deal_stage, "
     "risk, ai_confidence, return_profile, brand, positioning, "
-    "purchase_price, sourcing_channel, field_overrides, "
+    "purchase_price, sourcing_channel, target_irr, field_overrides, "
     "state, validation_started_at, validation_complete_at, "
     "created_at, updated_at"
 )
@@ -467,6 +560,7 @@ async def create_deal(
         "positioning": body.positioning,
         "purchase_price": body.purchase_price,
         "sourcing_channel": body.sourcing_channel,
+        "target_irr": body.target_irr,
         "created_at": now,
         "updated_at": now,
     }
@@ -478,12 +572,12 @@ async def create_deal(
                 id, tenant_id, name, city, keys, service, status,
                 deal_stage, risk, ai_confidence, return_profile,
                 brand, positioning, purchase_price, sourcing_channel,
-                created_at, updated_at
+                target_irr, created_at, updated_at
             ) VALUES (
                 :id, :tenant, :name, :city, :keys, :service, :status,
                 :deal_stage, :risk, :ai_confidence, :return_profile,
                 :brand, :positioning, :purchase_price, :sourcing_channel,
-                :created_at, :updated_at
+                :target_irr, :created_at, :updated_at
             )
             """
         ),
@@ -505,6 +599,10 @@ async def create_deal(
         },
     )
     await session.commit()
+    # Wave 3 W3.5 — invalidate the pipeline-view cache so a freshly
+    # created deal shows up immediately on the analyst's next visit.
+    from ..services.pipeline import invalidate as _pipeline_invalidate
+    _pipeline_invalidate(tenant_id)
 
     logger.info("deals.create: deal=%s tenant=%s name=%r", deal_id, tenant_id_str, body.name)
     return DealRecord(
@@ -523,8 +621,117 @@ async def create_deal(
         positioning=body.positioning,
         purchase_price=body.purchase_price,
         sourcing_channel=body.sourcing_channel,
+        target_irr=body.target_irr,
         created_at=now,
         updated_at=now,
+    )
+
+
+@router.get("/pipeline", response_model=PipelineResponse)
+async def get_pipeline(
+    session: Annotated[AsyncSession, Depends(get_session)],
+    tenant_id: Annotated[UUID, Depends(get_tenant_id)],
+    sort: str = "last_activity_desc",
+    state: str | None = None,
+    deal_stage: str | None = None,
+    min_irr: float | None = None,
+    max_irr: float | None = None,
+    min_per_key: float | None = None,
+    max_per_key: float | None = None,
+    target_met: bool | None = None,
+    limit: int = 50,
+    offset: int = 0,
+) -> PipelineResponse:
+    """Multi-deal pipeline view (Wave 3 W3.5).
+
+    Returns one row per non-archived deal in the current tenant
+    enriched with the LATEST engine output snapshot per engine
+    (returns / debt / capital / expense). The endpoint is the data
+    backing for the ``/pipeline`` page in the web app — analysts open
+    this view dozens of times a day, so the per-tenant snapshot is
+    cached for 60 seconds and invalidated by any engine run or deal
+    mutation (see ``services.pipeline.invalidate``).
+
+    Filtering & sorting both happen in Python after a single tenant-
+    scoped pull (deals + window-function-latest engine rows + grouped
+    document counts). Pagination caps at 200 rows so an unbounded
+    fetch can never overrun the response budget.
+    """
+    from ..services.pipeline import (
+        DEFAULT_SORT,
+        SORT_KEYS,
+        apply_filters,
+        apply_sort,
+        build_pipeline_snapshot,
+        build_summary,
+    )
+
+    # Clamp pagination so a forgotten limit query-arg can't bring back
+    # the entire firm's portfolio in one call.
+    limit = max(1, min(int(limit), 200))
+    offset = max(0, int(offset))
+    # Reject unknown sort tokens loudly — silently downgrading to the
+    # default would confuse the analyst (the column header looks sorted
+    # but the rows aren't).
+    if sort not in SORT_KEYS:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=(
+                f"unknown sort {sort!r} — expected one of "
+                f"{sorted(SORT_KEYS.keys())} or '{DEFAULT_SORT}'"
+            ),
+        )
+
+    snapshot = await build_pipeline_snapshot(session, tenant_id=tenant_id)
+    filtered = apply_filters(
+        snapshot,
+        state=state,
+        min_irr=min_irr,
+        max_irr=max_irr,
+        min_per_key=min_per_key,
+        max_per_key=max_per_key,
+        deal_stage=deal_stage,
+        target_met=target_met,
+    )
+    summary_dict = build_summary(filtered)
+    sorted_rows = apply_sort(filtered, sort)
+    page = sorted_rows[offset : offset + limit]
+
+    deal_rows: list[PipelineDealRow] = []
+    for row in page:
+        deal_rows.append(
+            PipelineDealRow(
+                deal_id=UUID(row["deal_id"]),
+                name=row["name"],
+                state=row["state"],
+                status=row["status"],
+                city=row.get("city"),
+                brand=row.get("brand"),
+                deal_stage=row.get("deal_stage"),
+                keys=row.get("keys"),
+                purchase_price=row.get("purchase_price"),
+                price_per_key=row.get("price_per_key"),
+                noi_y1=row.get("noi_y1"),
+                noi_stabilized=row.get("noi_stabilized"),
+                exit_cap_rate=row.get("exit_cap_rate"),
+                levered_irr=row.get("levered_irr"),
+                equity_multiple=row.get("equity_multiple"),
+                dscr_y1=row.get("dscr_y1"),
+                document_count=row.get("document_count", 0),
+                last_engine_run_at=row.get("last_engine_run_at"),
+                last_activity_at=row["last_activity_at"],
+                pip_total_usd=row.get("pip_total_usd"),
+                target_irr=row.get("target_irr"),
+                target_irr_met=row.get("target_irr_met"),
+            )
+        )
+
+    return PipelineResponse(
+        deals=deal_rows,
+        summary=PipelineSummary(**summary_dict),
+        total_count=len(filtered),
+        limit=limit,
+        offset=offset,
     )
 
 
@@ -627,6 +834,9 @@ async def update_deal(
         payload={"changes": changes},
     )
     await session.commit()
+    # Wave 3 W3.5 — pipeline-view cache invalidation.
+    from ..services.pipeline import invalidate as _pipeline_invalidate
+    _pipeline_invalidate(tenant_id)
 
     refreshed = (
         await session.execute(
@@ -687,6 +897,9 @@ async def archive_deal(
         payload={"previous_status": existing._mapping.get("status")},
     )
     await session.commit()
+    # Wave 3 W3.5 — pipeline-view cache invalidation.
+    from ..services.pipeline import invalidate as _pipeline_invalidate
+    _pipeline_invalidate(tenant_id)
 
     refreshed = (
         await session.execute(

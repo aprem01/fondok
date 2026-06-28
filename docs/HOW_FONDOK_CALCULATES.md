@@ -191,3 +191,88 @@ missing year as "Missing 2023".
   baseline query on Postgres; SQLite gets a non-partial
   `(deal_id, fiscal_year)` index.
 
+
+## Pipeline view (Wave 3 W3.5)
+
+Every analyst runs 30+ deals/year and the per-deal drill-down can
+hide the obvious portfolio question: *which of my live deals
+actually pencil?* The Pipeline page (`/pipeline`, backed by
+`GET /deals/pipeline`) puts every active deal on one screen with
+its headline returns from the most-recent engine run, plus a
+portfolio-level KPI strip at the top.
+
+### What each KPI means
+
+* **Deals in Pipeline.** Count of non-archived deals in the tenant.
+  The sub-line breaks it down by lifecycle state (`Onboarding`
+  while docs are uploading, `Validating` during gap/anomaly review,
+  `Ready` once IC-grade).
+* **Median Levered IRR.** Midpoint of `levered_irr` across deals
+  that have run the Returns engine — half higher, half lower. The
+  sub-line shows the p25 / p75 band so an analyst sees the IRR
+  *distribution*, not just the centre. Computed by linear-
+  interpolation percentile (sorted index → fractional position).
+* **Median $/Key.** Midpoint of `price_per_key` across the visible
+  rows. Reads the Capital engine's computed value first; falls
+  back to `purchase_price / keys` when the engine hasn't run. Best
+  read with the *Median exit cap* sub-line for the
+  price-vs-yield trade-off across the book.
+* **Meeting Target IRR.** `deals_meeting_target_irr /
+  deals_with_target_irr` — only deals whose analyst has set a
+  `target_irr` count toward either side, so a sparse pipeline
+  doesn't inflate the miss rate. A deal "meets target" when its
+  latest `levered_irr ≥ target_irr`.
+
+### Per-row metrics
+
+Each row shows: name + city + brand + keys / lifecycle state /
+$/key / Y1 NOI / exit cap rate / levered IRR / equity multiple /
+Y1 DSCR / target IRR / last activity. Numbers come from the LATEST
+row per engine (ROW_NUMBER OVER PARTITION) so re-running the
+model on a deal replaces its rollup without affecting peers.
+NULL cells render as dashes — that's "no engine run yet", not
+zero.
+
+### Where to look in code
+
+* `apps/worker/app/api/deals.py` —
+  `GET /deals/pipeline` endpoint. Models `PipelineDealRow`,
+  `PipelineSummary`, `PipelineResponse`. Tenant-scoped via
+  `get_tenant_id`; clamps `limit` to 200; rejects unknown sort
+  tokens with 400.
+* `apps/worker/app/services/pipeline.py` — the aggregator:
+  `build_pipeline_snapshot` runs one tenant-scoped SQL pull
+  (deals + window-function-latest engine rows + grouped doc
+  counts) and caches the projected list for 60 s per tenant.
+  Mutations on deals or engines call `invalidate(tenant_id)`.
+* `apps/worker/tests/test_pipeline.py` — 14 tests covering
+  empty, tenant-scoping, latest-run-per-deal join, every sort
+  token, every filter, pagination, summary p25/p50/p75 IRR, and
+  `target_irr_met` semantics.
+* `apps/web/src/app/pipeline/page.tsx` — the page. Sticky-header
+  table, click-to-sort column headers, filter bar (state / min
+  IRR / max $/key / sort). Sidebar nav link added in
+  `apps/web/src/components/layout/Sidebar.tsx`.
+
+### Why a window-function join (not a materialized view)
+
+The latest-run-per-engine join is the trickiest piece: every
+engine writes one row per run, and the Pipeline view needs the
+most-recent row per (deal_id, engine_name) for several engines
+at once. Two options:
+
+1. **Materialized view** `deal_pipeline_snapshot` refreshed on
+   every engine completion. Cheapest at read time but adds a
+   migration + cross-dialect divergence (no PG-style materialized
+   views on SQLite) and another piece of state to keep in sync.
+2. **Window-function pull** with a 60 s in-process LRU cache.
+   Portable to SQLite (which supports window functions since
+   3.25), one query per Pipeline open, cache-busted on writes.
+
+We chose option 2 for this sprint: the analyst's pipeline is
+typically O(100) deals, the window-function plan is sub-200ms
+on Postgres + SQLite alike, and the cache absorbs click-storms
+without the operational tax of a materialized view. The code is
+laid out so a future swap to a materialized view is a single
+function-replacement in `services/pipeline.py`.
+

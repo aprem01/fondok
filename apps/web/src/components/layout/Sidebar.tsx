@@ -3,7 +3,7 @@ import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
 import {
   LayoutGrid, FolderKanban, Database, Settings, ChevronDown, Building2,
-  Users, UserCog, LogOut, Plus, Check, BookOpen,
+  Users, UserCog, LogOut, Plus, Check, BookOpen, LineChart,
 } from 'lucide-react';
 import { useState, useRef, useEffect } from 'react';
 import { OrganizationSwitcher } from '@clerk/nextjs';
@@ -21,6 +21,11 @@ import {
 const navItems = [
   { href: '/dashboard', label: 'Dashboard', icon: LayoutGrid },
   { href: '/projects', label: 'Projects', icon: FolderKanban },
+  // Wave 3 W3.5 — multi-deal Pipeline view. Sortable + filterable
+  // analyst table with portfolio KPIs (median IRR, p25/p75, deals
+  // meeting target). Sits between Projects (single-deal drill-down)
+  // and Data Library (global benchmarks).
+  { href: '/pipeline', label: 'Pipeline', icon: LineChart },
   { href: '/data-library', label: 'Data Library', icon: Database },
   { href: '/methodology', label: 'Methodology', icon: BookOpen },
   { href: '/settings', label: 'Settings', icon: Settings },

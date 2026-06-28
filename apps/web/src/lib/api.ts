@@ -31,6 +31,10 @@ export interface WorkerDeal {
   // (e.g. `property_overview.year_built`) → primitive value. May be
   // omitted on older worker builds — always default to {} on read.
   field_overrides?: Record<string, unknown>;
+  // Wave 3 W3.5 — analyst-declared target levered IRR (fraction). NULL
+  // when no opinion is set. Surfaced on the Pipeline view's "meeting
+  // target" badge + summary KPI.
+  target_irr?: number | null;
   created_at: string;
   updated_at: string;
 }
@@ -59,6 +63,80 @@ export interface WorkerDealStatus {
 export type AssumptionSource =
   | 'seed' | 'deal_row' | 't12_actual' | 'cbre_horizons'
   | 'pnl_benchmark' | 'portfolio_pnl' | 'om_comps' | 'om_broker' | 'analyst_override';
+
+/** Multi-deal pipeline row (Wave 3 W3.5). One per active deal in the
+ *  current tenant, enriched with the LATEST engine-output snapshot per
+ *  engine. Numbers carry natural units: prices in USD, IRR + cap rate as
+ *  fractions (0.18 = 18%), EM as a raw multiple. NULL fields are
+ *  meaningful: "no engine run yet" — the UI dashes those cells.
+ */
+export interface PipelineDealRow {
+  deal_id: string;
+  name: string;
+  state: string; // ONBOARDING / VALIDATING / READY
+  status: string; // Draft / Active / …
+  city: string | null;
+  brand: string | null;
+  deal_stage: string | null;
+  keys: number | null;
+  purchase_price: number | null;
+  price_per_key: number | null;
+  noi_y1: number | null;
+  noi_stabilized: number | null;
+  exit_cap_rate: number | null;
+  levered_irr: number | null;
+  equity_multiple: number | null;
+  dscr_y1: number | null;
+  document_count: number;
+  last_engine_run_at: string | null;
+  last_activity_at: string;
+  pip_total_usd: number | null;
+  target_irr: number | null;
+  target_irr_met: boolean | null;
+}
+
+export interface PipelineSummary {
+  deal_count: number;
+  median_irr: number | null;
+  p25_irr: number | null;
+  p75_irr: number | null;
+  median_em: number | null;
+  median_per_key: number | null;
+  median_cap_rate: number | null;
+  deals_meeting_target_irr: number;
+  deals_with_target_irr: number;
+  deals_by_state: Record<string, number>;
+}
+
+export interface PipelineResponse {
+  deals: PipelineDealRow[];
+  summary: PipelineSummary;
+  total_count: number;
+  limit: number;
+  offset: number;
+}
+
+export type PipelineSort =
+  | 'irr_desc' | 'irr_asc'
+  | 'em_desc' | 'em_asc'
+  | 'per_key_asc' | 'per_key_desc'
+  | 'cap_rate_asc' | 'cap_rate_desc'
+  | 'noi_y1_desc' | 'noi_y1_asc'
+  | 'name_asc' | 'name_desc'
+  | 'last_activity_desc' | 'last_activity_asc';
+
+export interface PipelineQuery {
+  sort?: PipelineSort;
+  state?: string;
+  deal_stage?: string;
+  min_irr?: number;
+  max_irr?: number;
+  min_per_key?: number;
+  max_per_key?: number;
+  target_met?: boolean;
+  limit?: number;
+  offset?: number;
+}
 
 export interface AssumptionSourcesResponse {
   id: string;
@@ -387,6 +465,31 @@ export const api = {
   deals: {
     list: (signal?: AbortSignal) =>
       request<WorkerDeal[]>('GET', '/deals', undefined, { signal }),
+    /** Multi-deal Pipeline view (Wave 3 W3.5) — sortable / filterable
+     *  table of every active deal in the tenant, enriched with the
+     *  latest engine-output snapshot per deal + portfolio-level KPIs
+     *  (median IRR, p25/p75, deals meeting target). Backed by a 60s
+     *  per-tenant cache so analyst click-storms don't hammer the DB. */
+    pipeline: (q: PipelineQuery = {}, signal?: AbortSignal) => {
+      const params = new URLSearchParams();
+      if (q.sort) params.set('sort', q.sort);
+      if (q.state) params.set('state', q.state);
+      if (q.deal_stage) params.set('deal_stage', q.deal_stage);
+      if (q.min_irr != null) params.set('min_irr', String(q.min_irr));
+      if (q.max_irr != null) params.set('max_irr', String(q.max_irr));
+      if (q.min_per_key != null) params.set('min_per_key', String(q.min_per_key));
+      if (q.max_per_key != null) params.set('max_per_key', String(q.max_per_key));
+      if (q.target_met != null) params.set('target_met', String(q.target_met));
+      if (q.limit != null) params.set('limit', String(q.limit));
+      if (q.offset != null) params.set('offset', String(q.offset));
+      const qs = params.toString();
+      return request<PipelineResponse>(
+        'GET',
+        `/deals/pipeline${qs ? `?${qs}` : ''}`,
+        undefined,
+        { signal },
+      );
+    },
     create: (deal: NewDealBody) => request<WorkerDeal>('POST', '/deals', deal),
     get: (id: string, signal?: AbortSignal) =>
       request<WorkerDeal>('GET', `/deals/${id}`, undefined, { signal }),
