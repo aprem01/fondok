@@ -88,6 +88,103 @@ class SegmentYear(BaseModel):
     net_revenue: Annotated[float, Field(ge=0.0)]
 
 
+# ─────────────── Capex Three-Bucket Plan (Wave 2 P2.5) ───────────────
+#
+# Institutional hotel underwriting splits capex into three buckets:
+#
+#   1. PIP (Property Improvement Plan) - brand-mandated, hard timeline
+#      (typically Y1-Y2), non-discretionary, hits balance sheet at
+#      closing for IRR / equity-multiple purposes and Y1 NOI via
+#      displacement (already modeled on RevenueEngineInput).
+#
+#   2. Non-PIP / FF&E Reserve - ongoing 3-4% of revenue reserve that
+#      smooths over the hold period. Already deducted ABOVE the cap-
+#      rate line by the Expense engine via ``ffe_reserve_pct`` - the
+#      new ``NonPIPCapex`` model just adds the per-key floor.
+#
+#   3. ROI capex - discretionary investments (energy retrofits, F&B
+#      build-outs, conference centers) that drive incremental NOI.
+#      Modeled with their own annual lift x linear ramp.
+#
+# When ``CapexPlan`` is left at defaults AND the legacy
+# ``ffe_reserve_pct`` field is present, the engine renders BYTE-IDENTICAL
+# numbers to pre-P2.5 code - Non-PIP collapses into the existing FF&E
+# reserve, PIP into the existing ``renovation_budget`` on the capital
+# engine, and ROI projects are absent.
+
+
+class PIPCapex(BaseModel):
+    """Property Improvement Plan capex - brand-mandated, time-bound."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    total_usd: Annotated[float, Field(ge=0)]
+    per_key_usd: Annotated[float, Field(ge=0)] | None = None
+    timing_pct_by_year: list[Annotated[float, Field(ge=0.0, le=1.0)]] = Field(
+        default_factory=lambda: [1.0]
+    )
+    completion_quarter: Annotated[int, Field(ge=1, le=8)] | None = None
+    source: Annotated[str, Field(min_length=1, max_length=40)] = "analyst_override"
+
+    @model_validator(mode="after")
+    def _check_timing_sums_to_one(self) -> "PIPCapex":
+        if not self.timing_pct_by_year:
+            raise ValueError("timing_pct_by_year must have at least one entry")
+        total = sum(self.timing_pct_by_year)
+        if abs(total - 1.0) > 0.001:
+            raise ValueError(
+                f"timing_pct_by_year must sum to 1.0 (+/- 0.001); "
+                f"got {total:.6f}"
+            )
+        return self
+
+
+class NonPIPCapex(BaseModel):
+    """Ongoing FF&E reserve - % of revenue with a per-key per-year floor."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    annual_pct_of_revenue: Annotated[float, Field(ge=0.0, le=0.10)] = 0.04
+    minimum_per_key_per_year: Annotated[float, Field(ge=0)] = 1500.0
+    source: Annotated[str, Field(min_length=1, max_length=40)] = "industry_default"
+
+
+class ROICapex(BaseModel):
+    """Discretionary capex with its own NOI lift curve."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    project_name: Annotated[str, Field(min_length=1, max_length=80)]
+    initial_investment_usd: Annotated[float, Field(ge=0)]
+    investment_year: Annotated[int, Field(ge=1)]
+    annual_noi_lift_usd: Annotated[float, Field(ge=0)] = 0.0
+    ramp_months: Annotated[int, Field(ge=1, le=36)] = 12
+    source: Annotated[str, Field(min_length=1, max_length=40)] = "analyst_override"
+
+
+class CapexPlan(BaseModel):
+    """Three-bucket capex plan - PIP, ongoing FF&E reserve, ROI projects."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    pip: PIPCapex | None = None
+    non_pip: NonPIPCapex = Field(default_factory=NonPIPCapex)
+    roi_projects: list[ROICapex] = Field(default_factory=list)
+
+
+class CapexScheduleYear(BaseModel):
+    """One year of the materialized capex schedule."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    year: Annotated[int, Field(ge=1)]
+    pip_usd: Annotated[float, Field(ge=0)] = 0.0
+    non_pip_usd: Annotated[float, Field(ge=0)] = 0.0
+    roi_investment_usd: Annotated[float, Field(ge=0)] = 0.0
+    roi_noi_lift_usd: Annotated[float, Field(ge=0)] = 0.0
+    total_capex_usd: Annotated[float, Field(ge=0)] = 0.0
+
+
 # ─────────────── Investment Engine ───────────────
 
 

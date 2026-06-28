@@ -214,6 +214,12 @@ SOURCE_ANALYST_OVERRIDE = "analyst_override"
 # tags each segment field with this provenance label so the UI badge
 # shows "STR Segmentation" instead of "seed".
 SOURCE_STR_SEGMENTATION_DEFAULT = "str_segmentation_default"
+# Wave 2 P2.5 - capex three-bucket provenance. Tagged on each
+# ``capex_plan.*`` assumption key by the override router below.
+SOURCE_PIP_OM = "pip_om"
+SOURCE_PIP_USER = "pip_user"
+SOURCE_CAPEX_FFE_DEFAULT = "capex_ffe_default"
+SOURCE_ROI_USER = "roi_user"
 
 
 async def _load_engine_inputs(
@@ -553,6 +559,26 @@ async def _load_engine_inputs(
     persisted_overrides = await _load_deal_overrides(session, deal_id=deal_id)
     if persisted_overrides:
         for path, value in persisted_overrides.items():
+            # Wave 2 P2.5 - capex array overrides land first because
+            # they're the only override paths that legitimately carry a
+            # JSON list (``roi_projects``, ``timing_pct_by_year``). The
+            # scalar guard below would otherwise skip them.
+            if path in _OVERRIDE_CAPEX_LIST_KEYS:
+                if path == "capex_plan.roi_projects" and isinstance(value, list):
+                    capex_overrides = base.setdefault("capex_plan_overrides", {})
+                    capex_overrides["roi_projects"] = value
+                    sources[path] = SOURCE_ROI_USER
+                    continue
+                if (
+                    path == "capex_plan.pip.timing_pct_by_year"
+                    and isinstance(value, list)
+                ):
+                    capex_overrides = base.setdefault("capex_plan_overrides", {})
+                    capex_overrides.setdefault("pip", {})[
+                        "timing_pct_by_year"
+                    ] = value
+                    sources[path] = SOURCE_PIP_USER
+                    continue
             # We only apply scalars to base; non-scalars (objects, arrays)
             # belong to specialized loaders that already consume the
             # structured shape on their own.
@@ -582,6 +608,20 @@ async def _load_engine_inputs(
                     seg_name, field = parsed
                     seg_overrides = base.setdefault("segments_overrides", {})
                     seg_overrides.setdefault(seg_name, {})[field] = value
+            elif path in _OVERRIDE_CAPEX_SCALAR_KEYS:
+                # Wave 2 P2.5 - capex three-bucket scalar override.
+                # ``capex_plan.<bucket>.<field>`` lands in a nested
+                # map the build_capex_plan() helper consumes.
+                parts = path.split(".")
+                if len(parts) == 3:
+                    _, bucket, field = parts
+                    capex_overrides = base.setdefault("capex_plan_overrides", {})
+                    capex_overrides.setdefault(bucket, {})[field] = value
+                    sources[path] = (
+                        SOURCE_PIP_USER if bucket == "pip"
+                        else SOURCE_CAPEX_FFE_DEFAULT
+                    )
+                    continue
             else:
                 base[path] = value
             sources[path] = SOURCE_ANALYST_OVERRIDE
@@ -645,6 +685,23 @@ _OVERRIDE_SEGMENT_KEYS: frozenset[str] = frozenset({
     for field in _SEGMENT_FIELDS
 })
 
+
+
+
+# Wave 2 P2.5 - capex three-bucket override paths. Scalars route into
+# the canonical ``capex_plan.*`` map; ``roi_projects`` is a full-array
+# replacement (analysts add/remove projects explicitly).
+_OVERRIDE_CAPEX_SCALAR_KEYS: frozenset[str] = frozenset({
+    "capex_plan.pip.total_usd",
+    "capex_plan.pip.per_key_usd",
+    "capex_plan.pip.completion_quarter",
+    "capex_plan.non_pip.annual_pct_of_revenue",
+    "capex_plan.non_pip.minimum_per_key_per_year",
+})
+_OVERRIDE_CAPEX_LIST_KEYS: frozenset[str] = frozenset({
+    "capex_plan.pip.timing_pct_by_year",
+    "capex_plan.roi_projects",
+})
 
 def _parse_segment_override_path(path: str) -> tuple[str, str] | None:
     """Split ``segments.<name>.<field>`` into ``(name, field)``.

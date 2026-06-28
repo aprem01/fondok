@@ -10,6 +10,7 @@ import EngineRightRail from './EngineRightRail';
 import EngineLegend from './EngineLegend';
 import EngineRunHistory from './EngineRunHistory';
 import WhatJustHappened from './WhatJustHappened';
+import CapexPlanPanel, { DEFAULT_CAPEX_PLAN, type CapexPlanState } from './CapexPlanPanel';
 import { kimptonAnglerOverview } from '@/lib/mockData';
 import { fmtCurrency, fmtPct, cn } from '@/lib/format';
 import { useAssumptionsOptional } from '@/stores/assumptionsStore';
@@ -22,6 +23,9 @@ import { api, isWorkerConnected, WorkerError } from '@/lib/api';
 // Only the fields we read on the Investment tab are typed here; the
 // canonical shape lives in PLTab.tsx.
 interface ExpenseYearLite { year: number; noi: number }
+
+// Revenue engine year shape - only the fields the capex panel reads.
+interface RevenueYearLite { year: number; total_revenue: number }
 
 const subTabs = ['Deal Summary', 'Sources & Uses', 'Timeline'];
 
@@ -37,6 +41,10 @@ export default function InvestmentTab({ projectId }: { projectId: number | strin
   const { deal, refresh: refreshDeal } = useDeal(dealId);
   const [computing, setComputing] = useState(false);
   const [runToken, setRunToken] = useState<number | null>(null);
+  // Wave 2 P2.5 - local capex plan state. The worker's ``capex_plan``
+  // engine output isn't wired into useEngineOutputs yet; until it is,
+  // the panel owns the source of truth in memory.
+  const [capexPlan, setCapexPlan] = useState<CapexPlanState>(DEFAULT_CAPEX_PLAN);
 
   // ─── Worker engine field reads ────────────────────────────────────
   // Sam QA #8: the Investment tab used to render the Kimpton fixture
@@ -333,6 +341,21 @@ export default function InvestmentTab({ projectId }: { projectId: number | strin
               ['Sale Price', fmtOrDash(exitGross, fmtCurrency)],
               ['Disposition Fees', fmtOrDash(exitSellingCosts, fmtCurrency)],
             ]} />
+          </div>
+          {/* Wave 2 P2.5 - three-bucket capex plan (PIP / Non-PIP / ROI). */}
+          <div className="grid grid-cols-1 gap-5 mt-5">
+            <CapexPlanPanel
+              keys={propertyKeys}
+              revenueByYear={(() => {
+                const wRevYears = getEngineField<RevenueYearLite[]>(
+                  outputs, 'revenue', 'years',
+                );
+                return (wRevYears ?? []).map(y => y.total_revenue);
+              })()}
+              holdYears={(holdYears as number | undefined) ?? 5}
+              state={capexPlan}
+              onChange={setCapexPlan}
+            />
           </div>
           {/* Senior Loan Financing vs. Senior Loan Refinancing — rendered as
               two side-by-side cards per Lovable's exact label/layout spec.
