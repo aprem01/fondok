@@ -191,3 +191,82 @@ missing year as "Missing 2023".
   baseline query on Postgres; SQLite gets a non-partial
   `(deal_id, fiscal_year)` index.
 
+---
+
+## IC Memo PDF — content map
+
+The exported IC memo (`GET /deals/{deal_id}/export/memo.pdf`) is
+assembled by `apps/worker/app/export/memo_pdf.py` from two inputs:
+the structured `memo` dict (executive summary + thesis + risks +
+recommendation) and the `model` dict that carries every engine
+output. Each section is **conditional** — it renders only when its
+backing data is present, so a barebones deal still produces a clean
+memo without empty placeholders.
+
+| Memo Section            | Source on `model[...]`                     | Engine / module                                                |
+| ----------------------- | ------------------------------------------ | -------------------------------------------------------------- |
+| Header chip + KPIs      | `investment_engine`, `returns_engine`      | `engines/returns.py`, `engines/capital.py`                     |
+| Executive Summary       | `memo["sections"][executive_summary]`      | `agents/memo_writer` (Claude-drafted)                          |
+| Investment Thesis       | `memo["sections"][investment_thesis]`      | `agents/memo_writer`                                           |
+| Highlights / Risks      | `memo["sections"][key_insights, risk_…]`   | `agents/memo_writer` + `engines/sensitivity.py`                |
+| **Revenue Mix (Y1)**    | `segments_by_year` (or `revenue_engine.…`) | `engines/revenue.py` — P2.1 segmentation                       |
+| **Renovation Plan**     | `pip_displacement`                         | `engines/revenue.py` — P2.4 PIP displacement v2                |
+| **Historical Walk**     | `historical_baseline` (`years`, `walk`)    | `engines/historical_baseline.py` — P2.6 3-yr baseline          |
+| Sources & Uses          | `sources`                                  | `engines/capital.py`                                           |
+| Returns Summary         | `returns_engine`, `debt_engine`            | `engines/returns.py`, `engines/debt.py`                        |
+| **Capital Plan**        | `capex_schedule`                           | `engines/capex_plan.py` — P2.5 three-bucket                    |
+| **Op-Ratio Provenance** | `op_ratio_provenance.lines[]`              | `services/op_ratio_precedence.py` — P2.7 precedence resolver   |
+| **Pricing Sensitivity** | `sensitivity_grid` (`cells`, `breakeven`)  | `engines/pricing_sensitivity.py` — P2.8 5x5 grid               |
+| **Max-Price Findings**  | `max_price`                                | `engines/price_solver.py` — P2.8 bisection solver              |
+| Variance Disclosure     | `memo["sections"][variance_disclosure]`    | `engines/historical_variance.py`                               |
+| **LOI Draft Appendix**  | `loi_draft.rendered_markdown`              | `engines/loi_generator.py` — P2.8 LOI template                 |
+| Footer (docs + engines) | `memo["appendix"]`                         | `agents/memo_writer` + `api/export.py` real-docs patch         |
+
+Bolded sections are the Wave 3 W3.4 additions.
+
+### How the aggregator decides what to render
+
+`_aggregate_wave2_for_memo(model)` (in `memo_pdf.py`) normalizes every
+Wave 2 slot into a clean shape and returns `None` for any section whose
+data is missing or trivially empty:
+
+* `segments` — needs a non-empty `segments_by_year[0].segment_breakdown`.
+* `pip` — needs `closure_strategy != "none"`. The fixture `"none"`
+  placeholder is treated as "no renovation" and the section is omitted.
+* `capex_schedule` — needs a non-empty list.
+* `op_ratio_provenance` — needs `lines` to be non-empty.
+* `sensitivity_grid` — needs at least one cell. Cell colour follows the
+  same green / amber / red scale as the UI heatmap, against the grid's
+  declared `target_irr` (default 15%). DSCR-breach cells render red
+  with a `!` marker.
+* `max_price` — needs the dict to be present. `binding_constraint`
+  picks the lower of the two prices for the headline chip.
+* `historical_baseline` — needs `coverage_pct > 0`. The walk panel
+  reads the top YoY swings off `walk[]`.
+* `loi_draft` — needs a non-empty `rendered_markdown`. The body is
+  converted to inline HTML by `_markdown_to_html` (a tiny dependency-free
+  converter that handles headings, bold, `---` hr, and bulleted lists).
+
+### Where to look in code
+
+* `apps/worker/app/export/memo_pdf.py` — the builder. Holds
+  `CSS` (the @page + .callout + .grid styling), `_aggregate_wave2_for_memo`,
+  the eight per-section renderers (`_render_revenue_mix`,
+  `_render_pip_plan`, `_render_capex_plan`,
+  `_render_op_ratio_provenance`, `_render_sensitivity_grid`,
+  `_render_max_price_callout`, `_render_historical_walk`,
+  `_render_loi_appendix`), and the `build_memo_pdf` entrypoint that
+  pushes the HTML through WeasyPrint.
+* `apps/worker/app/export/fixtures.py` — the Kimpton Angler demo
+  payload. Carries fully-populated Wave 2 fixture data so the export
+  works end-to-end before the DB-backed Wave 2 outputs land.
+* `apps/worker/app/api/export.py` — the FastAPI router. Three
+  endpoints: `export/excel`, `export/memo.pdf`, `export/presentation.pptx`.
+  All patch `memo.appendix.documents_reviewed` with the real uploaded
+  filenames before invoking the builder.
+* `apps/worker/tests/test_memo_pdf_wave2_sections.py` — the 12 W3.4
+  tests (one per section + backward-compat + end-to-end PDF).
+* `apps/web/src/app/projects/[id]/page.tsx` — the "Export memo"
+  button. Redirects to the worker endpoint; no changes required by
+  W3.4 because `build_memo_pdf`'s signature is unchanged.
+
