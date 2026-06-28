@@ -686,3 +686,127 @@ deals are unaffected.
   toggle.
 * `apps/web/src/components/project/ForecastingTab.tsx` — tab host
   mounted on the Project Detail page as the **Forecasting** tab.
+
+
+## Excel acquisition model — sheet catalog (Wave 4 W4.2)
+
+The Excel export (`GET /deals/{id}/export/excel`) ships the same
+institutional workbook IC analysts have used since launch, plus every
+Wave 2/3 analytical artifact as a **conditional** sheet — each new
+sheet renders only when its source data is present on the engine
+outputs dict. A barebones deal still produces a valid 9-sheet workbook;
+the Kimpton fixture (all engines run) ships 19 sheets.
+
+### Always-on sheets
+
+| # | Sheet | Source data | Notes |
+|---|-------|-------------|-------|
+| 1 | Cover | (all engines) | Quick Read (6 headline KPIs) + Key Metrics + Sections Included list (mirrors which Wave 2/3 sheets shipped) + Generated-by timestamp |
+| 2 | Assumptions | `investment_engine`, `debt_engine`, `refi_engine`, `returns_engine` | Acquisition, debt, refi, reversion sections |
+| 3 | Sources & Uses | `sources`, `uses`, `investment_engine`, `debt_engine` | Auto-totals via SUM formulas |
+| 4 | Operating Proforma | `p_and_l_engine_proforma` | 5-year proforma with CAGR column |
+| 5 | Debt Schedule | `debt_engine` | Month-by-month amortization through term |
+| 6 | Returns | `returns_engine`, `cash_flow_engine`, `debt_engine` | Reversion math + 5yr CF waterfall |
+| 7 | Partnership | `partnership_engine`, `cash_flow_engine` | Waterfall tiers + LP/GP year-by-year split estimate |
+| 8 | Variance | `variance_flags` | Severity-coloured rows with recommended actions |
+| 9 | Market Comps | `market_comps` | UI chrome — comp-set transactions list |
+
+### Wave 2/3 conditional sheets
+
+| # | Sheet | Triggered when | Wave |
+|---|-------|----------------|------|
+| 10 | Revenue Mix | `segments_by_year` non-empty | 2 (revenue segmentation) |
+| 11 | Renovation Plan | `pip_displacement.closure_strategy` ≠ `"none"` | 2 (PIP displacement v2) |
+| 12 | Capital Plan | `capex_schedule` non-empty | 2 (three-bucket capex) |
+| 13 | Op-Ratio Provenance | `op_ratio_provenance.lines` non-empty | 2 (op-ratio precedence) |
+| 14 | Pricing Sensitivity | `sensitivity_grid.cells` non-empty | 2 (pricing sensitivity grid) |
+| 15 | Comparable Sales | `comp_sales.transactions` non-empty | 3 W3.1 |
+| 16 | Historical Baseline | `historical_baseline.years` non-empty + coverage_pct > 0 | 2 (3-5 year baseline) |
+| 17 | STR Forecast | `str_forecast` carries historical or forecast months | 3 W3.3 |
+| 18 | Named Scenarios | `named_scenarios` has ≥ 2 scenarios | 3 W3.2 |
+| 19 | LOI Appendix | `loi_draft.rendered_markdown` non-empty | 2 (LOI generator) |
+
+### Sheet-level details
+
+**Revenue Mix.** One sub-block per hold year, segment-by-segment rows
+with Mix %, ADR, Gross Revenue, Channel Cost %, Net Revenue. Rows with
+channel cost ≥ 15% (OTA-heavy) get an amber fill so analysts can spot
+distribution-drag segments at a glance. Year-total and grand-total
+rows.
+
+**Renovation Plan.** Summary block (closure strategy, brand, recovery
+months, post-reno RevPAR index, Y1 displacement $) + brand recovery
+multiplier reference table + month-by-month % rooms offline + Y2
+recovery curve.
+
+**Capital Plan (3-bucket).** Replaces the legacy single capex line in
+Assumptions. Cols: PIP / Non-PIP FF&E / ROI Investment / ROI NOI Lift
+/ Total Capex. Rows = hold years + Total. Cell comments
+(`override_note`) attach analyst-provenance notes on a per-cell basis.
+
+**Op-Ratio Provenance.** One row per operating expense ratio. Cols:
+Field, Value, Source, Document / Note. Rows are tinted by source
+(T-12 = green, Portfolio = blue, CBRE = amber, HOST = neutral,
+Override = pink). Legend row at bottom shows the precedence chain.
+
+**Pricing Sensitivity.** Replaces the legacy Sensitivity sheet. Two
+5×5 grids stacked: the Levered IRR grid on top, the Equity Multiple
+grid below. Each carries a real `ColorScaleRule` (3-color, red →
+amber → green) so analysts see the rule under Excel's "Manage Rules"
+dialog. DSCR-breach cells get a red fill + medium red border + a `!`
+cell comment over both grids. Top of the sheet shows the Max-Price
+findings (max price for IRR target, max price for EM target, binding
+constraint, breakeven exit cap, breakeven NOI multiplier).
+
+**Comparable Sales.** Derivation summary callouts (Method, Coverage,
+Median Cap, Weighted Cap) + Weighting Notes block + per-transaction
+table. Excluded comps (`excluded: true`) get a red row fill.
+
+**Historical Baseline.** Coverage banner at top + gaps callout
+(missing fiscal years) + horizontal P&L table (rows = USALI line
+items, cols = fiscal years). YoY Walk section lists the top 5 swings
+with a color-scale rule on the YoY % column.
+
+**STR Forecast.** 48 data rows: 24 historical + 24 forecast. Cols:
+Month, Historical RevPAR, Downside RevPAR, Base RevPAR, Upside
+RevPAR, Comp Set RevPAR, Subject Index. Historical rows leave the
+three scenario cols blank; forecast rows leave the Historical RevPAR
+col blank.
+
+**Named Scenarios.** Side-by-side compare. Cols are paired (Scenario,
+Δ vs Base) per scenario. Rows are the 6 IC headline KPIs: Levered IRR,
+Equity Multiple, Year 1 NOI, Stabilized NOI, Exit Cap Rate, Year 1
+DSCR. Base scenario's Δ column is blank.
+
+**LOI Appendix.** Plain-text rendering of the LOI markdown body, one
+line per row in a wide column. H1/H2/H3 markdown headings get
+bold-size formatting; `---` rules become row breaks.
+
+### Backward compat
+
+Every Wave 2/3 sheet builder no-ops when its source data is missing
+or empty. A barebones deal (no Wave 2/3 keys on the engine outputs
+dict) produces a 9-sheet workbook; the Cover sheet's "Sections
+Included" list reflects only the sheets that actually rendered. The
+test suite covers this in
+`apps/worker/tests/test_excel_wave2_3_sections.py::test_barebones_deal_still_produces_valid_xlsx`.
+
+### Where to look in code
+
+* `apps/worker/app/export/excel.py` — the builder. Top-level
+  `build_excel(deal_id, model, output_path)` runs the always-on
+  builders, then iterates the Wave 2/3 builders gated on
+  `_aggregate_wave2_3_for_excel(model)`, then renders the Cover sheet
+  with the final section list. Each Wave 2/3 builder returns `True`
+  iff it added a sheet.
+* `apps/worker/app/api/export.py` — the
+  `GET /deals/{id}/export/excel` endpoint. No signature change from
+  W4.2; the endpoint streams the workbook with the right MIME type.
+* `apps/worker/app/export/fixtures.py` — the Kimpton fixture. W4.2
+  added `comp_sales`, `str_forecast`, and `named_scenarios` blocks +
+  expanded `segments_by_year` to 5 hold years.
+* `apps/worker/tests/test_excel_wave2_3_sections.py` — 14 tests
+  covering presence/absence of each conditional sheet, the 5×5 grid +
+  color-scale rules, DSCR-breach cell comments, the 48-row STR
+  forecast table, and the Cover section-list omission.
+

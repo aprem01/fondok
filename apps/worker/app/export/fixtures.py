@@ -217,55 +217,56 @@ def kimpton_model() -> dict[str, Any]:
         # template reads them straight through ``_aggregate_wave2_for_memo``.
         "segments_by_year": [
             {
-                "year": 1,
+                "year": year,
                 "segment_breakdown": [
                     {
                         "name": "transient_bar",
                         "mix_pct": 0.40,
-                        "occupied_rooms": 14_658.0,
-                        "adr": 412.0,
+                        "occupied_rooms": 14_658.0 * (1.0 + 0.03 * (year - 1)),
+                        "adr": 412.0 * (1.05 ** (year - 1)),
                         "channel_cost_pct": 0.02,
-                        "gross_revenue": 6_039_096,
-                        "net_revenue": 5_918_314,
+                        "gross_revenue": 6_039_096 * (1.05 ** (year - 1)),
+                        "net_revenue": 5_918_314 * (1.05 ** (year - 1)),
                     },
                     {
                         "name": "transient_ota",
                         "mix_pct": 0.25,
-                        "occupied_rooms": 9_161.25,
-                        "adr": 365.0,
+                        "occupied_rooms": 9_161.25 * (1.0 + 0.02 * (year - 1)),
+                        "adr": 365.0 * (1.04 ** (year - 1)),
                         "channel_cost_pct": 0.18,
-                        "gross_revenue": 3_343_856,
-                        "net_revenue": 2_741_962,
+                        "gross_revenue": 3_343_856 * (1.04 ** (year - 1)),
+                        "net_revenue": 2_741_962 * (1.04 ** (year - 1)),
                     },
                     {
                         "name": "corporate",
                         "mix_pct": 0.20,
-                        "occupied_rooms": 7_329.0,
-                        "adr": 295.0,
+                        "occupied_rooms": 7_329.0 * (1.0 + 0.025 * (year - 1)),
+                        "adr": 295.0 * (1.045 ** (year - 1)),
                         "channel_cost_pct": 0.05,
-                        "gross_revenue": 2_162_055,
-                        "net_revenue": 2_053_952,
+                        "gross_revenue": 2_162_055 * (1.045 ** (year - 1)),
+                        "net_revenue": 2_053_952 * (1.045 ** (year - 1)),
                     },
                     {
                         "name": "group",
                         "mix_pct": 0.10,
-                        "occupied_rooms": 3_664.5,
-                        "adr": 248.0,
+                        "occupied_rooms": 3_664.5 * (1.0 + 0.025 * (year - 1)),
+                        "adr": 248.0 * (1.04 ** (year - 1)),
                         "channel_cost_pct": 0.08,
-                        "gross_revenue": 908_796,
-                        "net_revenue": 836_092,
+                        "gross_revenue": 908_796 * (1.04 ** (year - 1)),
+                        "net_revenue": 836_092 * (1.04 ** (year - 1)),
                     },
                     {
                         "name": "contract",
                         "mix_pct": 0.05,
                         "occupied_rooms": 1_832.25,
-                        "adr": 195.0,
+                        "adr": 195.0 * (1.02 ** (year - 1)),
                         "channel_cost_pct": 0.0,
-                        "gross_revenue": 357_289,
-                        "net_revenue": 357_289,
+                        "gross_revenue": 357_289 * (1.02 ** (year - 1)),
+                        "net_revenue": 357_289 * (1.02 ** (year - 1)),
                     },
                 ],
             }
+            for year in range(1, 6)
         ],
         "pip_displacement": {
             "closure_strategy": "rolling",
@@ -482,6 +483,188 @@ def kimpton_model() -> dict[str, Any]:
                  "value": 4_181_000, "yoy_abs": -469_000, "yoy_pct": -0.1009},
             ],
         },
+        # ────────────── Wave 3 artifacts (W4.2 excel refresh) ─────────────
+        # comp_sales: derived exit-cap from 6 transactions (W3.1).
+        "comp_sales": {
+            "transactions": [
+                {
+                    "property_name": "The Setai Miami Beach", "city": "Miami Beach",
+                    "state": "FL", "sale_date": "2025-08-15", "keys": 130,
+                    "sale_price_usd": 245_000_000, "sale_price_per_key_usd": 1_884_615,
+                    "noi_usd": 11_760_000, "cap_rate_pct": 4.8,
+                    "chain_scale": "luxury", "brand_family": None,
+                    "source_document_id": "OM_setai.pdf", "transaction_id": "tx-1",
+                    "note": None, "excluded": False,
+                },
+                {
+                    "property_name": "Nautilus by Arlo", "city": "Miami Beach",
+                    "state": "FL", "sale_date": "2025-05-10", "keys": 250,
+                    "sale_price_usd": 98_000_000, "sale_price_per_key_usd": 392_000,
+                    "noi_usd": 6_076_000, "cap_rate_pct": 6.2,
+                    "chain_scale": "upper-upscale", "brand_family": "Arlo",
+                    "source_document_id": "OM_nautilus.pdf", "transaction_id": "tx-2",
+                    "note": None, "excluded": False,
+                },
+                {
+                    "property_name": "Loews Miami Beach", "city": "Miami Beach",
+                    "state": "FL", "sale_date": "2025-03-20", "keys": 790,
+                    "sale_price_usd": 520_000_000, "sale_price_per_key_usd": 658_228,
+                    "noi_usd": 28_080_000, "cap_rate_pct": 5.4,
+                    "chain_scale": "upscale", "brand_family": "Loews",
+                    "source_document_id": "OM_loews.pdf", "transaction_id": "tx-3",
+                    "note": None, "excluded": False,
+                },
+                {
+                    "property_name": "W South Beach", "city": "Miami Beach",
+                    "state": "FL", "sale_date": "2025-02-18", "keys": 408,
+                    "sale_price_usd": 425_000_000, "sale_price_per_key_usd": 1_041_667,
+                    "noi_usd": 21_675_000, "cap_rate_pct": 5.1,
+                    "chain_scale": "luxury", "brand_family": "Marriott",
+                    "source_document_id": "OM_w.pdf", "transaction_id": "tx-4",
+                    "note": None, "excluded": False,
+                },
+                {
+                    "property_name": "SLS South Beach", "city": "Miami Beach",
+                    "state": "FL", "sale_date": "2024-12-05", "keys": 140,
+                    "sale_price_usd": 95_000_000, "sale_price_per_key_usd": 678_571,
+                    "noi_usd": 5_700_000, "cap_rate_pct": 6.0,
+                    "chain_scale": "luxury", "brand_family": "Ennismore",
+                    "source_document_id": "OM_sls.pdf", "transaction_id": "tx-5",
+                    "note": None, "excluded": False,
+                },
+                {
+                    "property_name": "Cadillac Hotel & Beach Club", "city": "Miami Beach",
+                    "state": "FL", "sale_date": "2024-11-12", "keys": 357,
+                    "sale_price_usd": 130_000_000, "sale_price_per_key_usd": 364_146,
+                    "noi_usd": 8_840_000, "cap_rate_pct": 6.8,
+                    "chain_scale": "upper-upscale", "brand_family": "Marriott",
+                    "source_document_id": "OM_cadillac.pdf", "transaction_id": "tx-6",
+                    "note": "Excluded — far outside chain scale",
+                    "excluded": True,
+                },
+            ],
+            "total_count": 6,
+            "derived_cap_rate_median": 5.55,
+            "derived_cap_rate_weighted": 5.32,
+            "derived_cap_rate_method": "weighted",
+            "weighting_notes": [
+                "Recency weight: 0.7 * recency_score",
+                "Market weight: 0.2 * MSA match (Miami Beach)",
+                "Chain weight: 0.1 * chain_scale match (luxury)",
+            ],
+            "coverage_quality": "medium",
+            "subject_market": "Miami Beach",
+            "subject_chain_scale": "luxury",
+            "lookback_years": 5,
+        },
+        # str_forecast: 24 historical + 24 forecast months × 3 scenarios (W3.3).
+        "str_forecast": {
+            "deal_id": "kimpton-angler-2026",
+            "coverage_quality": "high",
+            "historical_months": [
+                {
+                    "period": f"{(2024 + (i // 12))}-{((i % 12) + 1):02d}",
+                    "occupancy": 0.74 + 0.005 * (i % 6 - 3),
+                    "adr": 372 + 1.2 * i,
+                    "revpar": (0.74 + 0.005 * (i % 6 - 3)) * (372 + 1.2 * i),
+                    "comp_set_revpar": (0.74 + 0.005 * (i % 6 - 3)) * (372 + 1.2 * i) / 0.96,
+                    "revpar_index": 0.96,
+                    "is_historical": True,
+                }
+                for i in range(24)
+            ],
+            "forecast_months": {
+                "downside": [
+                    {
+                        "period": f"{(2026 + (i // 12))}-{((i % 12) + 1):02d}",
+                        "occupancy": 0.68,
+                        "adr": 380 - 0.5 * i,
+                        "revpar": 0.68 * (380 - 0.5 * i),
+                        "comp_set_revpar": (0.68 * (380 - 0.5 * i)) / 0.92,
+                        "revpar_index": 0.92,
+                        "is_historical": False,
+                    }
+                    for i in range(24)
+                ],
+                "base": [
+                    {
+                        "period": f"{(2026 + (i // 12))}-{((i % 12) + 1):02d}",
+                        "occupancy": 0.76,
+                        "adr": 395 + 0.8 * i,
+                        "revpar": 0.76 * (395 + 0.8 * i),
+                        "comp_set_revpar": 0.76 * (395 + 0.8 * i),
+                        "revpar_index": 1.00,
+                        "is_historical": False,
+                    }
+                    for i in range(24)
+                ],
+                "upside": [
+                    {
+                        "period": f"{(2026 + (i // 12))}-{((i % 12) + 1):02d}",
+                        "occupancy": 0.81,
+                        "adr": 412 + 1.5 * i,
+                        "revpar": 0.81 * (412 + 1.5 * i),
+                        "comp_set_revpar": 0.81 * (412 + 1.5 * i) / 1.06,
+                        "revpar_index": 1.06,
+                        "is_historical": False,
+                    }
+                    for i in range(24)
+                ],
+            },
+            "scenario_settings": [
+                {"name": "downside", "revpar_cagr_pct": -0.02,
+                 "revpar_index_target": 0.92, "occupancy_floor": 0.55,
+                 "adr_floor": 0.80, "notes": ["Recessionary cycle"]},
+                {"name": "base", "revpar_cagr_pct": 0.025,
+                 "revpar_index_target": 1.00, "occupancy_floor": 0.60,
+                 "adr_floor": 0.88, "notes": ["Mid-cycle"]},
+                {"name": "upside", "revpar_cagr_pct": 0.05,
+                 "revpar_index_target": 1.06, "occupancy_floor": 0.65,
+                 "adr_floor": 0.92, "notes": ["Post-PIP RevPAR lift"]},
+            ],
+        },
+        # named_scenarios: saved what-if scenarios (W3.2).
+        "named_scenarios": [
+            {
+                "name": "Base Case",
+                "is_base": True,
+                "kpis": {
+                    "levered_irr": 0.2348, "equity_multiple": 2.12,
+                    "year1_noi_usd": 4_705_000, "stabilized_noi_usd": 6_302_000,
+                    "exit_cap_pct": 0.07, "year1_dscr": 1.57,
+                },
+            },
+            {
+                "name": "PIP Skinny",
+                "is_base": False,
+                "description": "$3M PIP only — defer non-PIP FF&E to Y3.",
+                "kpis": {
+                    "levered_irr": 0.2580, "equity_multiple": 2.28,
+                    "year1_noi_usd": 4_950_000, "stabilized_noi_usd": 6_180_000,
+                    "exit_cap_pct": 0.07, "year1_dscr": 1.69,
+                },
+            },
+            {
+                "name": "Aggressive Exit",
+                "is_base": False,
+                "description": "6.25% exit cap (vs 7% base).",
+                "kpis": {
+                    "levered_irr": 0.2710, "equity_multiple": 2.35,
+                    "year1_noi_usd": 4_705_000, "stabilized_noi_usd": 6_302_000,
+                    "exit_cap_pct": 0.0625, "year1_dscr": 1.57,
+                },
+            },
+            {
+                "name": "Downside Stress",
+                "is_base": False,
+                "description": "10% RevPAR haircut + 50bp cap expansion.",
+                "kpis": {
+                    "levered_irr": 0.1180, "equity_multiple": 1.55,
+                    "year1_noi_usd": 4_180_000, "stabilized_noi_usd": 5_400_000,
+                    "exit_cap_pct": 0.075, "year1_dscr": 1.32,
+                },
+            },
+        ],
         "loi_draft": {
             "asset_name": "Kimpton Angler Hotel",
             "asset_address": "660 Washington Ave, Miami Beach, FL 33139",

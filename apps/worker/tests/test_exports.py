@@ -26,7 +26,15 @@ def tmp_out() -> Path:
 
 
 def test_excel_builds(tmp_out: Path) -> None:
-    """Excel builder produces a 10-sheet workbook with non-zero size."""
+    """Excel builder produces the enriched W4.2 workbook.
+
+    Wave 4 W4.2 swapped the legacy 10-sheet workbook for a conditional
+    layout: 9 always-on sheets + 10 Wave 2/3 sheets that render only
+    when their source data is present. The Kimpton fixture carries
+    every Wave 2/3 artifact so the full 19-sheet workbook ships.
+    Barebones-deal backward compat is covered in
+    test_excel_wave2_3_sections.py.
+    """
     from openpyxl import load_workbook
 
     from app.export import build_excel
@@ -39,13 +47,25 @@ def test_excel_builds(tmp_out: Path) -> None:
     assert out.stat().st_size > 8_000, "xlsx is suspiciously small"
 
     wb = load_workbook(out, read_only=True)
-    expected = {
+    always_on = {
         "Cover", "Assumptions", "Sources & Uses", "Operating Proforma",
-        "Debt Schedule", "Returns", "Sensitivity", "Partnership",
-        "Variance", "Market Comps",
+        "Debt Schedule", "Returns", "Partnership", "Variance", "Market Comps",
     }
-    assert set(wb.sheetnames) == expected, f"sheet mismatch: got {wb.sheetnames}"
-    assert len(wb.sheetnames) == 10
+    assert always_on.issubset(set(wb.sheetnames)), (
+        f"missing always-on sheets: {always_on - set(wb.sheetnames)}"
+    )
+    wave_sheets = {
+        "Revenue Mix", "Renovation Plan", "Capital Plan",
+        "Op-Ratio Provenance", "Pricing Sensitivity", "Comparable Sales",
+        "Historical Baseline", "STR Forecast", "Named Scenarios",
+        "LOI Appendix",
+    }
+    assert wave_sheets.issubset(set(wb.sheetnames)), (
+        f"missing Wave 2/3 sheets: {wave_sheets - set(wb.sheetnames)}"
+    )
+    assert len(wb.sheetnames) == 19, (
+        f"expected 19 sheets, got {len(wb.sheetnames)}: {wb.sheetnames}"
+    )
     wb.close()
 
 
