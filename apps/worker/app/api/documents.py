@@ -605,6 +605,31 @@ _PERIOD_TYPE_TO_PNL_DOC_TYPE: dict[str, str] = {
 }
 
 
+def _canonical_doc_type(value: str | None) -> str:
+    """Collapse a doc-type token to its canonical comparison form.
+
+    Two stores feed the misclassification check:
+      * ``user_provided_doc_type`` — wizard-supplied canonical enum
+        ``T12``, but legacy uploads / external clients sometimes
+        emit ``"T-12"``, ``"t 12"``, or ``"PNL_MONTHLY"`` with mixed
+        case. The Router-or-refined ``doc_type`` is always canonical
+        enum form.
+      * The Router-or-refined ``doc_type`` is canonical enum form.
+
+    Sam QA (Bug #2, June 2026): a banner fired on a correctly
+    categorized T-12 because the user-supplied string and the AI
+    label compared as plain strings: ``"T-12" != "T12"``. This helper
+    canonicalizes both sides — uppercases, strips, and drops
+    hyphens / spaces / underscores so the three common surface forms
+    (``T-12`` / ``T 12`` / ``T_12`` / ``T12``) collapse to ``T12``.
+    Returns ``""`` for empty input so the misclassified check can
+    short-circuit on missing tags via truthiness.
+    """
+    if value is None:
+        return ""
+    return value.upper().replace("-", "").replace(" ", "").replace("_", "").strip()
+
+
 def _refine_pnl_doc_type(
     classified: str | None, fields: list[dict[str, Any]]
 ) -> str | None:
@@ -3246,10 +3271,17 @@ async def _run_extraction_pipeline(
                 normalized_ai = (
                     (ai_proposed_doc_type or "").upper().strip() or None
                 )
+                # Canonicalize BOTH sides through ``_canonical_doc_type``
+                # so ``T-12`` / ``T12`` / ``t 12`` / ``PNL_MONTHLY`` /
+                # ``PNL MONTHLY`` collapse to a single comparison key
+                # (Sam QA Bug #2 — banner was firing on a correctly
+                # categorized T-12 because the raw strings differed).
+                canonical_user = _canonical_doc_type(user_provided_doc_type)
+                canonical_ai = _canonical_doc_type(normalized_ai)
                 misclassified_flag = bool(
-                    user_provided_doc_type
-                    and normalized_ai
-                    and normalized_ai != user_provided_doc_type
+                    canonical_user
+                    and canonical_ai
+                    and canonical_user != canonical_ai
                 )
 
                 # Wave 1 year-mismatch (B4). When the analyst pinned a
@@ -3259,13 +3291,24 @@ async def _run_extraction_pipeline(
                 # ``coverage_audit._extract_period_ending`` helper so we
                 # parse the date with the same conventions as every
                 # other consumer.
+                #
+                # Sam QA Bug #4 (June 2026): ALWAYS derive
+                # ``extracted_period_year`` when the Extractor surfaced
+                # a ``period_ending`` — not just when the user pinned a
+                # ``fiscal_year``. Downstream consumers
+                # (Broker Questions multi-year detection,
+                # HistoricalVarianceEngine year-mapping, document
+                # coverage audit) all read this column to decide
+                # whether they can compare apples-to-apples across
+                # documents; gating it on user_fiscal_year leaves it
+                # NULL for the common case where the analyst skipped
+                # the year prompt, breaking those features silently.
                 from ..services.coverage_audit import _extract_period_ending
 
                 extracted_period_year: int | None = None
-                if user_fiscal_year is not None:
-                    period_end = _extract_period_ending(fields)
-                    if period_end is not None:
-                        extracted_period_year = period_end.year
+                period_end = _extract_period_ending(fields)
+                if period_end is not None:
+                    extracted_period_year = period_end.year
                 year_mismatch_flag = bool(
                     user_fiscal_year is not None
                     and extracted_period_year is not None

@@ -125,36 +125,182 @@ _INCONCLUSIVE_FLOOR = 5
 # extractor`` and the ``_load_critic_inputs`` resolver in
 # ``api/documents.py`` for the same kind of soft-resolution).
 _ALIASES: dict[str, tuple[str, ...]] = {
-    # Top-line ops KPIs.
-    "revpar": ("revpar_usd", "p_and_l_usali.revpar", "p_and_l_usali.revpar_usd"),
-    "occupancy": ("occupancy_pct", "p_and_l_usali.occupancy", "p_and_l_usali.occupancy_pct"),
-    "adr": ("adr_usd", "p_and_l_usali.adr", "p_and_l_usali.adr_usd"),
-    # Revenue rollups.
-    "total_revenue": ("total_revenue_usd", "p_and_l_usali.total_revenue", "p_and_l_usali.total_revenue_usd"),
-    "rooms_revenue": ("rooms_revenue_usd", "p_and_l_usali.rooms_revenue"),
-    "fb_revenue": ("fb_revenue_usd", "food_beverage_revenue", "p_and_l_usali.fb_revenue"),
-    "other_revenue": ("other_revenue_usd", "p_and_l_usali.other_revenue"),
-    "resort_fees": ("resort_fees_usd", "p_and_l_usali.resort_fees"),
-    # Departmental.
-    "total_dept_expense": ("departmental_expenses", "dept_expenses", "p_and_l_usali.dept_expenses"),
-    "dept_expenses": ("departmental_expenses", "total_dept_expense", "p_and_l_usali.dept_expenses"),
-    "undistributed_expenses": ("p_and_l_usali.undistributed_expenses", "undistributed"),
-    # GOP / NOI.
-    "gop": ("gop_usd", "p_and_l_usali.gop", "gross_operating_profit"),
-    "noi": ("noi_usd", "p_and_l_usali.noi", "net_operating_income"),
-    # Fees / reserves / fixed.
-    "mgmt_fee": ("management_fee", "mgmt_fee_usd", "p_and_l_usali.mgmt_fee"),
-    "ffe_reserve": ("ffe_reserve_usd", "p_and_l_usali.ffe_reserve"),
-    "fixed_charges": ("fixed_charges_usd", "p_and_l_usali.fixed_charges"),
-    "insurance_expense": ("insurance", "insurance_usd", "p_and_l_usali.insurance"),
-    "property_tax": ("property_taxes", "property_tax_usd", "p_and_l_usali.property_taxes"),
-    "utilities_expense": ("utilities", "p_and_l_usali.utilities"),
-    "marketing_expense": ("marketing", "sales_marketing", "p_and_l_usali.marketing"),
-    "rm_expense": ("repairs_maintenance", "rm", "p_and_l_usali.repairs_maintenance"),
-    "ag_expense": ("admin_general", "a_and_g", "p_and_l_usali.admin_general"),
-    "total_labor": ("labor", "labor_cost", "p_and_l_usali.total_labor"),
+    # Top-line ops KPIs. The Extractor emits bare ``revpar_usd`` /
+    # ``adr_usd`` / ``occupancy_pct`` per ``extraction_schemas/t12.md``
+    # AND occasionally the fully-namespaced
+    # ``p_and_l_usali.operational_kpis.*`` form when the LLM mirrors
+    # the prompt's hierarchy. List both.
+    "revpar": (
+        "revpar_usd",
+        "p_and_l_usali.revpar",
+        "p_and_l_usali.revpar_usd",
+        "p_and_l_usali.operational_kpis.revpar",
+        "p_and_l_usali.operational_kpis.revpar_usd",
+    ),
+    "occupancy": (
+        "occupancy_pct",
+        "p_and_l_usali.occupancy",
+        "p_and_l_usali.occupancy_pct",
+        "p_and_l_usali.operational_kpis.occupancy",
+        "p_and_l_usali.operational_kpis.occupancy_pct",
+    ),
+    "adr": (
+        "adr_usd",
+        "p_and_l_usali.adr",
+        "p_and_l_usali.adr_usd",
+        "p_and_l_usali.operational_kpis.adr",
+        "p_and_l_usali.operational_kpis.adr_usd",
+    ),
+    # Revenue rollups. ``total_revenue`` is derived in
+    # ``flatten_extraction_fields`` from the operating_revenue
+    # components when the extractor doesn't emit it directly.
+    "total_revenue": (
+        "total_revenue_usd",
+        "p_and_l_usali.total_revenue",
+        "p_and_l_usali.total_revenue_usd",
+        "p_and_l_usali.operating_revenue.total_revenue",
+        "p_and_l_usali.operating_revenue.total",
+    ),
+    "rooms_revenue": (
+        "rooms_revenue_usd",
+        "p_and_l_usali.rooms_revenue",
+        "p_and_l_usali.operating_revenue.rooms_revenue",
+        "p_and_l_usali.operating_revenue.rooms_revenue_usd",
+    ),
+    "fb_revenue": (
+        "fb_revenue_usd",
+        "food_beverage_revenue",
+        "p_and_l_usali.fb_revenue",
+        "p_and_l_usali.operating_revenue.food_beverage_revenue",
+        "p_and_l_usali.operating_revenue.fb_revenue",
+    ),
+    "other_revenue": (
+        "other_revenue_usd",
+        "p_and_l_usali.other_revenue",
+        "p_and_l_usali.operating_revenue.other_revenue",
+    ),
+    "resort_fees": (
+        "resort_fees_usd",
+        "p_and_l_usali.resort_fees",
+        "p_and_l_usali.operating_revenue.resort_fees",
+    ),
+    # Departmental — the extractor emits PER-LINE departmental expenses
+    # under ``p_and_l_usali.departmental_expenses.{rooms,food_beverage,other_operated}``;
+    # ``total_dept_expense`` is the synthesized roll-up.
+    "total_dept_expense": (
+        "departmental_expenses",
+        "dept_expenses",
+        "p_and_l_usali.dept_expenses",
+        "p_and_l_usali.departmental_expenses.total",
+    ),
+    "dept_expenses": (
+        "departmental_expenses",
+        "total_dept_expense",
+        "p_and_l_usali.dept_expenses",
+        "p_and_l_usali.departmental_expenses.total",
+    ),
+    "rooms_dept_expense": (
+        "p_and_l_usali.departmental_expenses.rooms",
+    ),
+    "fb_dept_expense": (
+        "p_and_l_usali.departmental_expenses.food_beverage",
+        "food_beverage_dept_expense",
+    ),
+    "other_dept_expense": (
+        "p_and_l_usali.departmental_expenses.other_operated",
+        "other_operated_dept_expense",
+    ),
+    # Undistributed roll-up — derived from the five undistributed
+    # line items when not emitted directly.
+    "undistributed_expenses": (
+        "p_and_l_usali.undistributed_expenses",
+        "undistributed",
+        "p_and_l_usali.undistributed.total",
+    ),
+    # GOP / NOI. The extractor emits NOI under
+    # ``p_and_l_usali.net_operating_income.noi_usd``; GOP is derived
+    # in ``flatten_extraction_fields`` from
+    # ``total_revenue - dept_expenses - undistributed_expenses``.
+    "gop": (
+        "gop_usd",
+        "p_and_l_usali.gop",
+        "gross_operating_profit",
+        "p_and_l_usali.gross_operating_profit",
+        "p_and_l_usali.gross_operating_profit.gop_usd",
+    ),
+    "noi": (
+        "noi_usd",
+        "p_and_l_usali.noi",
+        "net_operating_income",
+        "p_and_l_usali.net_operating_income",
+        "p_and_l_usali.net_operating_income.noi_usd",
+    ),
+    # Fees / reserves / fixed — extractor uses the bucketed form
+    # ``p_and_l_usali.fees_and_reserves.*`` and ``fixed_charges.*``.
+    "mgmt_fee": (
+        "management_fee",
+        "mgmt_fee_usd",
+        "p_and_l_usali.mgmt_fee",
+        "p_and_l_usali.fees_and_reserves.mgmt_fee",
+        "p_and_l_usali.fees_and_reserves.management_fee",
+    ),
+    "ffe_reserve": (
+        "ffe_reserve_usd",
+        "p_and_l_usali.ffe_reserve",
+        "p_and_l_usali.fees_and_reserves.ffe_reserve",
+    ),
+    "fixed_charges": (
+        "fixed_charges_usd",
+        "p_and_l_usali.fixed_charges",
+        "p_and_l_usali.fixed_charges.total",
+    ),
+    "insurance_expense": (
+        "insurance",
+        "insurance_usd",
+        "p_and_l_usali.insurance",
+        "p_and_l_usali.fixed_charges.insurance",
+    ),
+    "property_tax": (
+        "property_taxes",
+        "property_tax_usd",
+        "p_and_l_usali.property_taxes",
+        "p_and_l_usali.fixed_charges.property_taxes",
+    ),
+    "utilities_expense": (
+        "utilities",
+        "p_and_l_usali.utilities",
+        "p_and_l_usali.undistributed.utilities",
+    ),
+    "marketing_expense": (
+        "marketing",
+        "sales_marketing",
+        "p_and_l_usali.marketing",
+        "p_and_l_usali.undistributed.sales_marketing",
+    ),
+    "rm_expense": (
+        "repairs_maintenance",
+        "rm",
+        "p_and_l_usali.repairs_maintenance",
+        "p_and_l_usali.undistributed.property_operations",
+        "property_operations",
+    ),
+    "ag_expense": (
+        "admin_general",
+        "a_and_g",
+        "p_and_l_usali.admin_general",
+        "p_and_l_usali.undistributed.administrative_general",
+        "administrative_general",
+    ),
+    "total_labor": (
+        "labor",
+        "labor_cost",
+        "p_and_l_usali.total_labor",
+        "p_and_l_usali.labor.total",
+    ),
     "labor_cost_per_occupied_room": ("labor_per_or", "labor_por"),
-    # Department margins.
+    # Department margins. Extractor emits revenue + expense per
+    # department; ``rooms_dept_profit`` is derived in
+    # ``flatten_extraction_fields`` (rooms_revenue - rooms_dept_expense).
     "rooms_dept_profit": ("rooms_profit", "p_and_l_usali.rooms_dept_profit"),
     "fb_dept_profit": ("fb_profit", "p_and_l_usali.fb_dept_profit"),
     "incentive_mgmt_fee": ("incentive_fee", "p_and_l_usali.incentive_mgmt_fee"),
@@ -739,7 +885,196 @@ def flatten_extraction_fields(
             if v is None:
                 continue
             flat[k] = v
+
+    # ─── Derive USALI roll-ups from line items ───
+    #
+    # Sam QA Bug #3 (June 2026): real T-12s (200+ extracted fields)
+    # were scoring "Inconclusive — too few applicable rules" because
+    # the catalog rules reference ``total_revenue``, ``gop``,
+    # ``dept_expenses``, ``undistributed_expenses``, ``fixed_charges``,
+    # and the dept-profit margins — fields the extractor does NOT
+    # emit directly (it emits per-line items per
+    # ``extraction_schemas/t12.md``). Synthesize them here so the
+    # scorer can evaluate margin / ratio / identity rules. Each
+    # derived field uses ``setdefault`` so a direct extractor emission
+    # always wins.
+    _derive_usali_rollups(flat)
     return flat
+
+
+def _coerce_for_sum(v: Any) -> float | None:
+    """Numeric coerce for the roll-up derivations (rejects booleans /
+    NaN). Kept private + duplicated from ``_coerce_number`` so it's
+    easy to inline in the hot path without import gymnastics."""
+    if v is None or isinstance(v, bool):
+        return None
+    if isinstance(v, (int, float)):
+        f = float(v)
+        return f if math.isfinite(f) else None
+    if isinstance(v, str):
+        s = v.strip().replace(",", "").replace("$", "")
+        pct = s.endswith("%")
+        if pct:
+            s = s[:-1]
+        try:
+            f = float(s)
+        except ValueError:
+            return None
+        if not math.isfinite(f):
+            return None
+        return f / 100.0 if pct else f
+    return None
+
+
+def _derive_usali_rollups(flat: dict[str, Any]) -> None:
+    """Compute roll-up totals from extractor line items, in place.
+
+    Called from ``flatten_extraction_fields`` AFTER the per-record
+    flatten pass + tail-write so every derivation sees the full
+    component set. Each write is ``setdefault`` so an extractor-emitted
+    canonical value (rare but possible — e.g. a synthesized T-12
+    workbook with a "Total Revenue" row) always wins.
+    """
+
+    def _get(*keys: str) -> float | None:
+        for k in keys:
+            v = _coerce_for_sum(flat.get(k))
+            if v is not None:
+                return v
+        return None
+
+    # total_revenue = rooms_revenue + fb_revenue + other_revenue
+    #                 + resort_fees + misc_revenue
+    rooms_rev = _get(
+        "rooms_revenue",
+        "p_and_l_usali.operating_revenue.rooms_revenue",
+        "rooms_revenue_usd",
+    )
+    fb_rev = _get(
+        "fb_revenue",
+        "p_and_l_usali.operating_revenue.food_beverage_revenue",
+        "food_beverage_revenue",
+        "fb_revenue_usd",
+    )
+    other_rev = _get(
+        "other_revenue",
+        "p_and_l_usali.operating_revenue.other_revenue",
+        "other_revenue_usd",
+    )
+    resort_fees = _get(
+        "resort_fees",
+        "p_and_l_usali.operating_revenue.resort_fees",
+        "resort_fees_usd",
+    ) or 0.0
+    misc_rev = _get(
+        "misc_revenue",
+        "p_and_l_usali.operating_revenue.misc_revenue",
+        "misc_revenue_usd",
+    ) or 0.0
+    components = [v for v in (rooms_rev, fb_rev, other_rev) if v is not None]
+    if len(components) >= 2:
+        # We need at least two components to call a synthesized total
+        # meaningful. Resort fees + misc add on when present.
+        flat.setdefault(
+            "total_revenue",
+            sum(components) + resort_fees + misc_rev,
+        )
+
+    # dept_expenses = rooms_dept_expense + fb_dept_expense + other_dept_expense
+    rooms_dept_exp = _get(
+        "rooms_dept_expense",
+        "p_and_l_usali.departmental_expenses.rooms",
+    )
+    fb_dept_exp = _get(
+        "fb_dept_expense",
+        "p_and_l_usali.departmental_expenses.food_beverage",
+        "food_beverage_dept_expense",
+    )
+    other_dept_exp = _get(
+        "other_dept_expense",
+        "p_and_l_usali.departmental_expenses.other_operated",
+    ) or 0.0
+    dept_parts = [v for v in (rooms_dept_exp, fb_dept_exp) if v is not None]
+    if dept_parts:
+        total_dept = sum(dept_parts) + other_dept_exp
+        flat.setdefault("dept_expenses", total_dept)
+        flat.setdefault("total_dept_expense", total_dept)
+        flat.setdefault(
+            "dept_expenses_by_line",
+            [v for v in (rooms_dept_exp, fb_dept_exp, other_dept_exp)
+             if v is not None and v != 0],
+        )
+
+    # undistributed_expenses = sum of the five undistributed lines
+    a_g = _get(
+        "ag_expense",
+        "administrative_general",
+        "p_and_l_usali.undistributed.administrative_general",
+    )
+    it = _get(
+        "information_telecom",
+        "p_and_l_usali.undistributed.information_telecom",
+    )
+    sm = _get(
+        "marketing_expense",
+        "sales_marketing",
+        "p_and_l_usali.undistributed.sales_marketing",
+    )
+    prop_ops = _get(
+        "rm_expense",
+        "property_operations",
+        "p_and_l_usali.undistributed.property_operations",
+        "repairs_maintenance",
+    )
+    utilities = _get(
+        "utilities_expense",
+        "utilities",
+        "p_and_l_usali.undistributed.utilities",
+    )
+    undist_parts = [v for v in (a_g, it, sm, prop_ops, utilities) if v is not None]
+    if len(undist_parts) >= 2:
+        flat.setdefault("undistributed_expenses", sum(undist_parts))
+
+    # fixed_charges = property_taxes + insurance (+ ground rent etc.)
+    prop_tax = _get(
+        "property_tax",
+        "property_taxes",
+        "p_and_l_usali.fixed_charges.property_taxes",
+    )
+    insurance = _get(
+        "insurance_expense",
+        "insurance",
+        "p_and_l_usali.fixed_charges.insurance",
+    )
+    fixed_parts = [v for v in (prop_tax, insurance) if v is not None]
+    if fixed_parts:
+        flat.setdefault("fixed_charges", sum(fixed_parts))
+
+    # gop = total_revenue - dept_expenses - undistributed_expenses
+    tr = _get("total_revenue")
+    de = _get("dept_expenses", "total_dept_expense")
+    ue = _get("undistributed_expenses")
+    if tr is not None and de is not None and ue is not None:
+        flat.setdefault("gop", tr - de - ue)
+
+    # noi can be back-derived if gop + mgmt_fee + ffe_reserve + fixed_charges are known.
+    gop_val = _get("gop")
+    mgmt_fee = _get("mgmt_fee")
+    ffe = _get("ffe_reserve")
+    fixed = _get("fixed_charges")
+    if (
+        gop_val is not None
+        and mgmt_fee is not None
+        and ffe is not None
+        and fixed is not None
+    ):
+        flat.setdefault("noi", gop_val - mgmt_fee - ffe - fixed)
+
+    # Department profits — needed for ROOMS_DEPT_MARGIN_* and FB_DEPT_MARGIN_*.
+    if rooms_rev is not None and rooms_dept_exp is not None:
+        flat.setdefault("rooms_dept_profit", rooms_rev - rooms_dept_exp)
+    if fb_rev is not None and fb_dept_exp is not None:
+        flat.setdefault("fb_dept_profit", fb_rev - fb_dept_exp)
 
 
 __all__ = [

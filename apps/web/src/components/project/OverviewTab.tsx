@@ -314,8 +314,21 @@ export default function OverviewTab({ projectId }: { projectId: number | string 
   // override map (the canonical path = aliases[0]) and falling back to
   // the OM extraction. Returns a tuple of (value, source) so the row
   // metadata can flip from chain-linked to pencil-edited.
+  // Overrides land in TWO shapes (Roadmap item #6, June 2026):
+  //   legacy:     overrides['property_overview.year_built'] = 2005
+  //   structured: overrides['property_overview.year_built'] = {value: 2005, note: 'Per OM facade refresh'}
+  // Engines see the scalar (the worker normalizes via
+  // `_normalize_override_shape`); the UI also needs the scalar so
+  // resolve* helpers can flip badges to the override value AND show
+  // it instead of the OM-extracted number.
+  const unwrapOverride = (v: unknown): unknown => {
+    if (v && typeof v === 'object' && !Array.isArray(v) && 'value' in v) {
+      return (v as { value: unknown }).value;
+    }
+    return v;
+  };
   const overrideNum = (path: string): number | undefined => {
-    const v = overrides[path];
+    const v = unwrapOverride(overrides[path]);
     if (typeof v === 'number' && Number.isFinite(v)) return v;
     if (typeof v === 'string' && v.trim() !== '') {
       const n = Number(v);
@@ -324,7 +337,7 @@ export default function OverviewTab({ projectId }: { projectId: number | string 
     return undefined;
   };
   const overrideStr = (path: string): string | undefined => {
-    const v = overrides[path];
+    const v = unwrapOverride(overrides[path]);
     if (v == null) return undefined;
     const s = String(v).trim();
     return s ? s : undefined;
