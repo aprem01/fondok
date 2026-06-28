@@ -66,7 +66,11 @@ from ..engines import (
     SensitivityEngine,
     SensitivityInput,
 )
-from fondok_schemas.underwriting import RevenueEngineInput, RevenueSegment
+from fondok_schemas.underwriting import (
+    PIPDisplacement,
+    RevenueEngineInput,
+    RevenueSegment,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -214,6 +218,11 @@ SOURCE_ANALYST_OVERRIDE = "analyst_override"
 # tags each segment field with this provenance label so the UI badge
 # shows "STR Segmentation" instead of "seed".
 SOURCE_STR_SEGMENTATION_DEFAULT = "str_segmentation_default"
+# Wave 2 P2.4 — structured PIP displacement. Tagged on every
+# ``pip_displacement.*`` key the analyst overrides via
+# ``field_overrides`` so the UI badge can distinguish the new
+# structured input from the legacy flat-pct path.
+SOURCE_PIP_USER = "pip_user"
 
 
 async def _load_engine_inputs(
@@ -553,10 +562,14 @@ async def _load_engine_inputs(
     persisted_overrides = await _load_deal_overrides(session, deal_id=deal_id)
     if persisted_overrides:
         for path, value in persisted_overrides.items():
-            # We only apply scalars to base; non-scalars (objects, arrays)
-            # belong to specialized loaders that already consume the
-            # structured shape on their own.
-            if not isinstance(value, (int, float, str, bool)):
+            # Wave 2 P2.4 — PIP overrides include a list field
+            # (``pct_rooms_offline_by_month``). Accept it as either a
+            # JSON-array string or a real list; everything else still
+            # has to be a scalar.
+            is_pip_key = path in _OVERRIDE_PIP_KEYS
+            if not is_pip_key and not isinstance(
+                value, (int, float, str, bool)
+            ):
                 continue
             # Route overrides to the right consumer based on key family.
             # Top-level base keys (starting_occupancy, exit_cap_rate,
@@ -582,6 +595,19 @@ async def _load_engine_inputs(
                     seg_name, field = parsed
                     seg_overrides = base.setdefault("segments_overrides", {})
                     seg_overrides.setdefault(seg_name, {})[field] = value
+            elif is_pip_key:
+                # Wave 2 P2.4 — PIP displacement override. Park each
+                # field on ``base['pip_displacement_overrides']`` as a
+                # flat dict; ``_build_input_for('revenue')`` reads it
+                # and materializes a ``PIPDisplacement`` object.
+                pip_field = path.split(".", 1)[1]
+                pip_value = _coerce_pip_override_value(pip_field, value)
+                if pip_value is not None:
+                    base.setdefault("pip_displacement_overrides", {})[
+                        pip_field
+                    ] = pip_value
+                    sources[path] = SOURCE_PIP_USER
+                continue
             else:
                 base[path] = value
             sources[path] = SOURCE_ANALYST_OVERRIDE
@@ -661,6 +687,110 @@ def _parse_segment_override_path(path: str) -> tuple[str, str] | None:
     if name not in _SEGMENT_NAMES or field not in _SEGMENT_FIELDS:
         return None
     return name, field
+
+
+# Wave 2 P2.4 — structured PIP displacement overrides. The OverridePanel
+# writes scalar keys (and one JSON-array key for the month-by-month
+# schedule) under the ``pip_displacement.*`` path prefix; we route them
+# into ``base['pip_displacement_overrides']`` so the revenue builder can
+# materialize a ``PIPDisplacement``.
+_OVERRIDE_PIP_KEYS: frozenset[str] = frozenset({
+    "pip_displacement.closure_strategy",
+    "pip_displacement.brand",
+    "pip_displacement.revpar_index_post_reno",
+    "pip_displacement.occupancy_recovery_months",
+    "pip_displacement.pct_rooms_offline_by_month",
+})
+
+
+def _coerce_pip_override_value(field: str, value: Any) -> Any:
+    """Best-effort coercion of a PIP override value to its native type.
+
+    The ``pct_rooms_offline_by_month`` field comes in as a JSON-array
+    string from the OverridePanel (the underlying ``field_overrides``
+    JSONB column carries scalars in the Roadmap-#6 design). Other PIP
+    fields are scalars. Returns ``None`` to skip the override on a
+    malformed value rather than crash the run.
+    """
+    if field == "pct_rooms_offline_by_month":
+        if isinstance(value, list):
+            try:
+                return [float(x) for x in value]
+            except (TypeError, ValueError):
+                return None
+        if isinstance(value, str):
+            try:
+                parsed = json.loads(value)
+            except (json.JSONDecodeError, TypeError):
+                return None
+            if isinstance(parsed, list):
+                try:
+                    return [float(x) for x in parsed]
+                except (TypeError, ValueError):
+                    return None
+            return None
+        return None
+    if field == "occupancy_recovery_months":
+        try:
+            return int(value)
+        except (TypeError, ValueError):
+            return None
+    if field == "revpar_index_post_reno":
+        try:
+            return float(value)
+        except (TypeError, ValueError):
+            return None
+    if field == "closure_strategy":
+        if isinstance(value, str) and value in (
+            "rolling",
+            "full_closure",
+            "wing_by_wing",
+            "none",
+        ):
+            return value
+        return None
+    if field == "brand":
+        return str(value) if value is not None else None
+    return None
+
+
+def _build_pip_displacement(
+    base: dict[str, Any],
+) -> "PIPDisplacement | None":
+    """Materialize a ``PIPDisplacement`` from the override map.
+
+    Returns ``None`` unless the analyst has supplied at least
+    ``closure_strategy`` (the gating field — without a strategy the
+    engine has no way to interpret the rest). All other fields fall
+    back to the schema defaults. Validation errors (e.g. inconsistent
+    strategy/schedule) are swallowed at this layer so a malformed
+    override doesn't crash the whole run; the caller sees ``None`` and
+    we fall back to the legacy flat-pct path.
+    """
+    overrides = base.get("pip_displacement_overrides") or {}
+    if not overrides or not overrides.get("closure_strategy"):
+        return None
+    kwargs: dict[str, Any] = {
+        "closure_strategy": overrides["closure_strategy"],
+    }
+    if "brand" in overrides:
+        kwargs["brand"] = overrides["brand"]
+    if "revpar_index_post_reno" in overrides:
+        kwargs["revpar_index_post_reno"] = overrides["revpar_index_post_reno"]
+    if "occupancy_recovery_months" in overrides:
+        kwargs["occupancy_recovery_months"] = overrides["occupancy_recovery_months"]
+    if "pct_rooms_offline_by_month" in overrides:
+        kwargs["pct_rooms_offline_by_month"] = overrides[
+            "pct_rooms_offline_by_month"
+        ]
+    try:
+        return PIPDisplacement(**kwargs)
+    except Exception:  # noqa: BLE001 - intentional swallow
+        logger.warning(
+            "failed to materialize PIPDisplacement from overrides: %r",
+            overrides,
+        )
+        return None
 
 
 # Map extracted T-12 field paths onto the canonical expense-line keys
@@ -1969,6 +2099,7 @@ def _build_input_for(
                 "y1_adr_displacement_pct", 0.0
             ),
             segments=segments,
+            pip_displacement=_build_pip_displacement(base),
         )
 
     if engine_name == "fb":
