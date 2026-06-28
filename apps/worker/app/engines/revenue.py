@@ -3,6 +3,15 @@
 Pure deterministic math. Given a starting occupancy and ADR, projects rooms,
 F&B and ancillary revenue forward over the underwriting hold. Year 1 is
 treated as the post-PIP stabilized year.
+
+Wave 2 P2.1 — institutional revenue segmentation. When
+``RevenueEngineInput.segments`` is non-empty, the engine projects rooms
+revenue as Σ over five demand segments — transient_bar, transient_ota,
+corporate, group, contract — each with its own ADR, mix share, and
+channel-cost percentage. The canonical ``rooms_revenue`` line becomes NET
+of channel cost so downstream P&L / Returns engines never double-count
+distribution drag. When ``segments == []`` the engine runs the original
+single-line path with byte-identical math; every legacy test still passes.
 """
 
 from __future__ import annotations
@@ -11,6 +20,7 @@ from fondok_schemas.underwriting import (
     RevenueEngineInput,
     RevenueEngineOutput,
     RevenueProjectionYear,
+    SegmentYear,
 )
 
 from .base import BaseEngine
@@ -38,6 +48,7 @@ class RevenueEngine(BaseEngine[RevenueEngineInput, RevenueEngineOutput]):
         resort_fees = payload.starting_resort_fees
         y1_occ_disp = payload.y1_occupancy_displacement_pct
         y1_adr_disp = payload.y1_adr_displacement_pct
+        use_segments = bool(payload.segments)
 
         for y in range(1, payload.hold_years + 1):
             if y == 1:
@@ -55,7 +66,57 @@ class RevenueEngine(BaseEngine[RevenueEngineInput, RevenueEngineOutput]):
                 resort_fees = resort_fees * (1.0 + payload.resort_fees_growth)
 
             occupied = rooms_available * occ
-            rooms_revenue = occupied * adr
+
+            # ─── Rooms revenue: segmented vs. single-line ───
+            segment_breakdown: list[SegmentYear] = []
+            if use_segments:
+                # Per-segment yearly math. Each segment carries its own
+                # ADR (post growth + Y1 displacement) and a channel-cost
+                # percentage that captures OTA commissions, TMC fees,
+                # group attrition, etc. Aggregate `rooms_revenue` is
+                # NET of channel cost — this is the canonical line the
+                # downstream P&L / Returns engines read.
+                gross_total = 0.0
+                net_total = 0.0
+                for seg in payload.segments:
+                    seg_g = (
+                        seg.adr_growth
+                        if seg.adr_growth is not None
+                        else payload.adr_growth
+                    )
+                    if y == 1:
+                        # Y1 displacement applies inside each segment.
+                        # ``starting_adr`` baseline; segment ADR uses
+                        # its own anchor with same displacement %.
+                        seg_adr_yn = seg.adr * (1.0 - y1_adr_disp)
+                    else:
+                        seg_adr_yn = seg.adr * (1.0 + seg_g) ** (y - 1)
+                    seg_occupied = occupied * seg.mix_pct
+                    seg_gross = seg_occupied * seg_adr_yn
+                    seg_channel = seg_gross * seg.channel_cost_pct
+                    seg_net = seg_gross - seg_channel
+                    gross_total += seg_gross
+                    net_total += seg_net
+                    segment_breakdown.append(
+                        SegmentYear(
+                            name=seg.name,
+                            mix_pct=seg.mix_pct,
+                            occupied_rooms=seg_occupied,
+                            adr=seg_adr_yn,
+                            channel_cost_pct=seg.channel_cost_pct,
+                            gross_revenue=seg_gross,
+                            net_revenue=seg_net,
+                        )
+                    )
+                gross_rooms_revenue = gross_total
+                rooms_revenue = net_total
+                channel_cost_total = gross_total - net_total
+            else:
+                # Legacy single-line path — byte-identical to pre-Wave-2.
+                rooms_revenue = occupied * adr
+                gross_rooms_revenue = rooms_revenue
+                channel_cost_total = 0.0
+
             revpar = rooms_revenue / rooms_available if rooms_available else 0.0
 
             fb_revenue = occupied * payload.fb_revenue_per_occupied_room
@@ -73,6 +134,9 @@ class RevenueEngine(BaseEngine[RevenueEngineInput, RevenueEngineOutput]):
                     resort_fees=resort_fees,
                     other_revenue=other_revenue,
                     total_revenue=total_revenue,
+                    segment_breakdown=segment_breakdown,
+                    gross_rooms_revenue=gross_rooms_revenue,
+                    channel_cost_total=channel_cost_total,
                 )
             )
 

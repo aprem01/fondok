@@ -66,9 +66,44 @@ from ..engines import (
     SensitivityEngine,
     SensitivityInput,
 )
-from fondok_schemas.underwriting import RevenueEngineInput
+from fondok_schemas.underwriting import RevenueEngineInput, RevenueSegment
 
 logger = logging.getLogger(__name__)
+
+
+# Wave 2 P2.1 — institutional channel-cost defaults per demand segment.
+# These become the engine defaults when an STR_SEGMENTATION extraction
+# exists for the deal; analyst overrides via ``field_overrides`` win.
+#
+#   transient_bar   2%  — direct + brand.com — credit-card fees only
+#   transient_ota  20%  — OTA / opaque — the big one, IC always asks
+#   corporate       8%  — LRA / RFP rates — commissions + TMC fees
+#   group           5%  — conferences / weddings — commissions + attrition
+#   contract        2%  — crew / sports / airline — low-rate baseline
+#
+# Sources: STR Market Segmentation Practice Guide (2024); CBRE Hotels
+# Insights "OTA Commission Drag on Independent Hotels" (Q4 2024).
+_INSTITUTIONAL_CHANNEL_COST_DEFAULTS: dict[str, float] = {
+    "transient_bar": 0.02,
+    "transient_ota": 0.20,
+    "corporate": 0.08,
+    "group": 0.05,
+    "contract": 0.02,
+}
+
+# Default per-segment ADR ratios applied to the property-overall ADR
+# when the STR Segmentation report doesn't break ADR down by segment.
+# Corporate trades at ~10% below BAR (LRA discount), group ~8% below
+# (volume + attrition allowances), contract ~35% below (low-rate steady
+# demand). These come from STR Hotel News Now's 2024 segment ADR survey
+# and match what Eshan signed off on for the Kimpton fixture.
+_DEFAULT_SEGMENT_ADR_RATIO: dict[str, float] = {
+    "transient_bar": 1.00,
+    "transient_ota": 1.00,
+    "corporate": 0.90,
+    "group": 0.92,
+    "contract": 0.65,
+}
 
 
 # Canonical engine identifiers — match what the web app posts.
@@ -173,6 +208,12 @@ SOURCE_PNL_BENCHMARK = "pnl_benchmark"
 SOURCE_OM_COMPS = "om_comps"
 SOURCE_OM_BROKER = "om_broker"
 SOURCE_ANALYST_OVERRIDE = "analyst_override"
+# Wave 2 P2.1 — institutional revenue segmentation. When the deal has
+# an STR_SEGMENTATION extraction the loader seeds a default
+# ``segments: list[RevenueSegment]`` on the revenue engine input and
+# tags each segment field with this provenance label so the UI badge
+# shows "STR Segmentation" instead of "seed".
+SOURCE_STR_SEGMENTATION_DEFAULT = "str_segmentation_default"
 
 
 async def _load_engine_inputs(
@@ -450,6 +491,48 @@ async def _load_engine_inputs(
         sources["y1_occupancy_displacement_pct"] = SOURCE_SEED
         sources["y1_adr_displacement_pct"] = SOURCE_SEED
 
+    # Wave 2 P2.1 — when the deal has an STR_SEGMENTATION extraction,
+    # build a default ``segments`` list on the revenue engine input. The
+    # analyst's segment-field overrides (loaded below) merge on top so
+    # an analyst tweak survives a re-run.
+    str_seg_payload = await _load_str_segmentation_payload(
+        session, deal_id=deal_id
+    )
+    if str_seg_payload:
+        # The analyst's segment-field overrides — read once here so
+        # the seed builder can apply them in-place. The override-routing
+        # loop below ALSO updates ``base["segments_overrides"]`` but the
+        # seed needs them up-front to compute correct provenance.
+        pre_load_seg_overrides_raw = await _load_deal_overrides(
+            session, deal_id=deal_id
+        )
+        pre_load_seg_overrides: dict[str, dict[str, float]] = {}
+        for path, value in pre_load_seg_overrides_raw.items():
+            if not isinstance(value, (int, float)):
+                continue
+            parsed = _parse_segment_override_path(path)
+            if parsed:
+                seg_name, field = parsed
+                pre_load_seg_overrides.setdefault(seg_name, {})[field] = float(value)
+        # Property-overall ADR (post any T-12 / CBRE / OM override that
+        # already landed on ``base["starting_adr"]``).
+        overall_adr = float(base.get("starting_adr") or 0.0)
+        if overall_adr > 0:
+            seeded_segments, seg_sources = _build_segments_from_str(
+                payload=str_seg_payload,
+                overall_adr=overall_adr,
+                overrides=pre_load_seg_overrides or None,
+            )
+            if seeded_segments:
+                base["segments"] = seeded_segments
+                # Stash the pre-applied analyst-override map so the
+                # below override-routing loop doesn't re-apply (no-op
+                # safe, but explicit is clearer).
+                if pre_load_seg_overrides:
+                    base["segments_overrides"] = pre_load_seg_overrides
+                for k, src in seg_sources.items():
+                    sources[k] = src
+
     # Caller-supplied overrides from the API request body (the
     # ``assumptions`` payload on ``POST /deals/{id}/engines/run``).
     if overrides:
@@ -489,6 +572,16 @@ async def _load_engine_inputs(
                 base.setdefault("t12_expense_actuals", {})[path] = value
             elif path in _OVERRIDE_RATIO_KEYS:
                 base.setdefault("overrides", {})[path] = value
+            elif path in _OVERRIDE_SEGMENT_KEYS:
+                # Wave 2 P2.1 — segment field override
+                # ``segments.<name>.<field>``. Park in a nested map; the
+                # segment builder layers these over the STR_SEGMENTATION
+                # defaults (analyst always wins).
+                parsed = _parse_segment_override_path(path)
+                if parsed:
+                    seg_name, field = parsed
+                    seg_overrides = base.setdefault("segments_overrides", {})
+                    seg_overrides.setdefault(seg_name, {})[field] = value
             else:
                 base[path] = value
             sources[path] = SOURCE_ANALYST_OVERRIDE
@@ -525,6 +618,49 @@ _OVERRIDE_RATIO_KEYS: frozenset[str] = frozenset({
     "undistributed_pct_revenue",
     "fixed_pct_revenue",
 })
+
+
+# Wave 2 P2.1 — segment overrides. The analyst can override any of the
+# 5 segments × 4 fields (mix_pct, adr, channel_cost_pct, adr_growth)
+# via the OverridePanel. We route these into ``base["segments_overrides"]``
+# as a nested ``{segment_name: {field: value}}`` dict; the segment
+# builder consumes that map after layering on the STR_SEGMENTATION
+# defaults so analyst intent wins regardless of seed source.
+_SEGMENT_NAMES: tuple[str, ...] = (
+    "transient_bar",
+    "transient_ota",
+    "corporate",
+    "group",
+    "contract",
+)
+_SEGMENT_FIELDS: tuple[str, ...] = (
+    "mix_pct",
+    "adr",
+    "channel_cost_pct",
+    "adr_growth",
+)
+_OVERRIDE_SEGMENT_KEYS: frozenset[str] = frozenset({
+    f"segments.{seg}.{field}"
+    for seg in _SEGMENT_NAMES
+    for field in _SEGMENT_FIELDS
+})
+
+
+def _parse_segment_override_path(path: str) -> tuple[str, str] | None:
+    """Split ``segments.<name>.<field>`` into ``(name, field)``.
+
+    Returns ``None`` for paths that aren't segment overrides — caller
+    treats those as legacy top-level keys.
+    """
+    if not path.startswith("segments."):
+        return None
+    parts = path.split(".", 2)
+    if len(parts) != 3:
+        return None
+    _, name, field = parts
+    if name not in _SEGMENT_NAMES or field not in _SEGMENT_FIELDS:
+        return None
+    return name, field
 
 
 # Map extracted T-12 field paths onto the canonical expense-line keys
@@ -1417,6 +1553,251 @@ def _normalize_pct(v: float) -> float:
     return v
 
 
+# ─────────────────── STR Segmentation → segment defaults ──────────────
+
+
+async def _load_str_segmentation_payload(
+    session: AsyncSession, *, deal_id: str
+) -> dict[str, Any]:
+    """Read the deal's most recent STR_SEGMENTATION extraction into a
+    flat namespace dict shaped as ``{<path>: value}``.
+
+    Returns ``{}`` when no STR_SEGMENTATION extraction exists, when the
+    deal id isn't a UUID, or when the migrations haven't been applied.
+    """
+    try:
+        UUID(deal_id)
+    except (TypeError, ValueError):
+        return {}
+    try:
+        rows = await session.execute(
+            text(
+                """
+                SELECT er.fields
+                  FROM extraction_results er
+                  JOIN documents d ON d.id = er.document_id
+                 WHERE er.deal_id = :deal
+                   AND UPPER(COALESCE(d.doc_type, '')) = 'STR_SEGMENTATION'
+                 ORDER BY er.created_at DESC
+                """
+            ),
+            {"deal": deal_id},
+        )
+    except Exception:
+        return {}
+
+    out: dict[str, Any] = {}
+    for r in rows.fetchall():
+        raw = r._mapping["fields"]
+        if isinstance(raw, str):
+            try:
+                raw = json.loads(raw) if raw else None
+            except (json.JSONDecodeError, TypeError):
+                continue
+        if not isinstance(raw, list):
+            continue
+        for f in raw:
+            if not isinstance(f, dict):
+                continue
+            name = (f.get("field_name") or "").strip().lower()
+            value = f.get("value")
+            if not name or value is None:
+                continue
+            # First-write wins (we sort newest first; the freshest
+            # extraction's value lands first and stays).
+            out.setdefault(name, value)
+    return out
+
+
+def _seg_pct(value: Any) -> float | None:
+    """Coerce a percentage / ratio into the 0..1 form.
+
+    Returns ``None`` when the value isn't numeric or rounds to 0. We
+    treat values strictly > 1 as 0..100 percentages (the extractor
+    sometimes emits them in either form).
+    """
+    if not isinstance(value, (int, float)):
+        return None
+    v = float(value)
+    if v <= 0:
+        return None
+    if v > 1.0:
+        v = v / 100.0
+    if v <= 0 or v > 1.0:
+        return None
+    return v
+
+
+def _select_segmentation_period(payload: dict[str, Any]) -> str | None:
+    """Pick the best STR Segmentation period — TTM > YTD > MTD.
+
+    Returns the canonical prefix (e.g. ``"str_segmentation.ttm"``) or
+    ``None`` when no transient mix is present in any period.
+    """
+    for period in ("ttm", "ytd", "mtd"):
+        prefix = f"str_segmentation.{period}"
+        transient_mix = _seg_pct(payload.get(f"{prefix}.transient.mix_pct"))
+        if transient_mix is not None and transient_mix > 0:
+            return prefix
+    return None
+
+
+def _build_segments_from_str(
+    *,
+    payload: dict[str, Any],
+    overall_adr: float,
+    overrides: Mapping[str, Mapping[str, float]] | None = None,
+) -> tuple[list[dict[str, Any]], dict[str, str]]:
+    """Translate an STR_SEGMENTATION extraction into a default list of
+    ``RevenueSegment``-shaped dicts plus a provenance map.
+
+    The five segments are always emitted in canonical order (transient_bar,
+    transient_ota, corporate, group, contract). Empty buckets get
+    ``mix_pct=0`` so the engine can short-circuit. The mix shares are
+    re-normalized to sum to 1.0 within ±0.001 tolerance so analyst-rounded
+    inputs survive the validator.
+
+    Returns a tuple ``(segments, sources_by_field)`` where
+    ``sources_by_field`` keys look like ``segments.transient_ota.mix_pct``
+    so the assumption-source map matches the override-routing path
+    naming.
+
+    ``overrides`` (if provided) lets the analyst's persisted segment-field
+    overrides take priority; they're applied AFTER the seed so analyst
+    intent wins regardless of seed source.
+    """
+    period_prefix = _select_segmentation_period(payload)
+
+    # Mix shares (room-night basis)
+    if period_prefix:
+        transient_mix = _seg_pct(payload.get(f"{period_prefix}.transient.mix_pct")) or 0.0
+        group_mix = _seg_pct(payload.get(f"{period_prefix}.group.mix_pct")) or 0.0
+        contract_mix = _seg_pct(payload.get(f"{period_prefix}.contract.mix_pct")) or 0.0
+    else:
+        # No useful STR Segmentation data — return empty so the engine
+        # stays on the legacy single-line path.
+        return [], {}
+
+    # When mix shares already saturate room nights, leave the contract
+    # bucket empty (most real reports don't break out contract demand).
+    declared_total = transient_mix + group_mix + contract_mix
+    if declared_total <= 0:
+        return [], {}
+
+    # Channel mix WITHIN transient demand: if the report carries the
+    # Direct / OTA / Brand / Voice block, use it to split transient
+    # into BAR / OTA / Corporate; otherwise fall back to a 60/30/10
+    # default (institutional default for lifestyle / select-service).
+    ota_pct: float | None = None
+    corporate_within_transient_pct: float | None = None
+    if period_prefix:
+        ota_pct = _seg_pct(payload.get(f"{period_prefix}.channel_mix.ota_pct"))
+        corporate_within_transient_pct = _seg_pct(
+            payload.get(f"{period_prefix}.channel_mix.corporate_pct")
+        )
+
+    if ota_pct is not None or corporate_within_transient_pct is not None:
+        ota = ota_pct or 0.0
+        corp_in_t = corporate_within_transient_pct or 0.0
+        # BAR = whatever remains; Voice + Direct + Brand.com all roll up
+        # into BAR for the engine's purposes (CC-fee-only channel).
+        bar = max(0.0, 1.0 - ota - corp_in_t)
+        transient_bar_mix = transient_mix * bar
+        transient_ota_mix = transient_mix * ota
+        corporate_mix = transient_mix * corp_in_t
+    else:
+        # 60/30/10 default within transient.
+        transient_bar_mix = transient_mix * 0.60
+        transient_ota_mix = transient_mix * 0.30
+        corporate_mix = transient_mix * 0.10
+
+    # Per-segment ADRs: prefer the segment-level numbers when the report
+    # carries them; otherwise apply default ratios to the property
+    # overall ADR.
+    def _adr_for(seg_name: str, str_field: str | None) -> float:
+        if period_prefix and str_field is not None:
+            extracted = payload.get(f"{period_prefix}.{str_field}.adr_usd")
+            if isinstance(extracted, (int, float)) and extracted > 0:
+                return float(extracted)
+        return overall_adr * _DEFAULT_SEGMENT_ADR_RATIO[seg_name]
+
+    transient_adr = _adr_for("transient_bar", "transient")
+    group_adr = _adr_for("group", "group")
+    contract_adr = _adr_for("contract", "contract")
+
+    segments: list[dict[str, Any]] = [
+        {
+            "name": "transient_bar",
+            "mix_pct": transient_bar_mix,
+            "adr": transient_adr,
+            "channel_cost_pct": _INSTITUTIONAL_CHANNEL_COST_DEFAULTS["transient_bar"],
+        },
+        {
+            "name": "transient_ota",
+            "mix_pct": transient_ota_mix,
+            "adr": transient_adr,
+            "channel_cost_pct": _INSTITUTIONAL_CHANNEL_COST_DEFAULTS["transient_ota"],
+        },
+        {
+            "name": "corporate",
+            "mix_pct": corporate_mix,
+            "adr": overall_adr * _DEFAULT_SEGMENT_ADR_RATIO["corporate"],
+            "channel_cost_pct": _INSTITUTIONAL_CHANNEL_COST_DEFAULTS["corporate"],
+        },
+        {
+            "name": "group",
+            "mix_pct": group_mix,
+            "adr": group_adr,
+            "channel_cost_pct": _INSTITUTIONAL_CHANNEL_COST_DEFAULTS["group"],
+        },
+        {
+            "name": "contract",
+            "mix_pct": contract_mix,
+            "adr": contract_adr,
+            "channel_cost_pct": _INSTITUTIONAL_CHANNEL_COST_DEFAULTS["contract"],
+        },
+    ]
+
+    # Renormalize mix shares to 1.0 — analyst-rounded STR percentages
+    # frequently sum to 0.998 or 1.002, which the validator rejects.
+    total_mix = sum(s["mix_pct"] for s in segments)
+    if total_mix <= 0:
+        return [], {}
+    for s in segments:
+        s["mix_pct"] = s["mix_pct"] / total_mix
+
+    # Apply analyst overrides (segment-field grain). Overrides win over
+    # the STR seed unconditionally.
+    if overrides:
+        for s in segments:
+            seg_overrides = overrides.get(s["name"])
+            if not seg_overrides:
+                continue
+            for field, val in seg_overrides.items():
+                if field not in _SEGMENT_FIELDS:
+                    continue
+                s[field] = val
+        # Re-normalize if mix overrides made the total drift outside
+        # tolerance. We don't force-rescale — that would silently
+        # rewrite analyst intent — but if the sum is within 0.5% we
+        # nudge it back, otherwise we leave it for the validator.
+        total_mix = sum(s["mix_pct"] for s in segments)
+        if 0 < total_mix and abs(total_mix - 1.0) <= 0.005 and total_mix != 1.0:
+            for s in segments:
+                s["mix_pct"] = s["mix_pct"] / total_mix
+
+    sources_by_field: dict[str, str] = {}
+    for s in segments:
+        for field in _SEGMENT_FIELDS:
+            key = f"segments.{s['name']}.{field}"
+            if overrides and s["name"] in overrides and field in overrides[s["name"]]:
+                sources_by_field[key] = SOURCE_ANALYST_OVERRIDE
+            else:
+                sources_by_field[key] = SOURCE_STR_SEGMENTATION_DEFAULT
+
+    return segments, sources_by_field
+
+
 # ─────────────────── P&L Benchmark expense-ratio overrides ──────────────
 
 
@@ -1535,6 +1916,30 @@ def _build_input_for(
     deal_uuid = _coerce_uuid(deal_id)
 
     if engine_name == "revenue":
+        # Wave 2 P2.1 — institutional revenue segmentation. The loader
+        # populates ``base["segments"]`` with a list[dict] when the
+        # deal has an STR_SEGMENTATION extraction; otherwise it's
+        # empty and the engine runs the legacy single-line path.
+        seg_dicts = base.get("segments") or []
+        # Analyst overrides that landed AFTER the seed (rare — the
+        # loader already merged them when building the seed) get
+        # re-applied here so a late-arriving override on a deal that
+        # didn't have an STR Segmentation report at seed time still
+        # surfaces. When no seed exists and only an override is
+        # present we can't synthesize a partial segment list — the
+        # validator would reject mix_pct < 1.0 — so a standalone
+        # override without an STR extraction is a no-op (analyst
+        # needs to upload the STR report first).
+        post_seed_overrides = base.get("segments_overrides") or {}
+        if seg_dicts and post_seed_overrides:
+            for s in seg_dicts:
+                seg_overrides = post_seed_overrides.get(s["name"])
+                if not seg_overrides:
+                    continue
+                for field, value in seg_overrides.items():
+                    if field in _SEGMENT_FIELDS:
+                        s[field] = value
+        segments = [RevenueSegment(**s) for s in seg_dicts]
         return RevenueEngineInput(
             deal_id=deal_uuid,
             keys=base["keys"],
@@ -1563,6 +1968,7 @@ def _build_input_for(
             y1_adr_displacement_pct=base.get(
                 "y1_adr_displacement_pct", 0.0
             ),
+            segments=segments,
         )
 
     if engine_name == "fb":

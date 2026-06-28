@@ -47,6 +47,11 @@ Available document types (use exactly one of these tokens):
                    Monthly revenue, departmental expenses, NOI lines.
 - STR            — STR/STAR market report. Subject vs. comp set
                    indices (MPI/ARI/RGI), occupancy, ADR, RevPAR.
+- STR_SEGMENTATION — STR Segmentation report — per-segment demand share
+                   with transient vs. group split (sometimes channel-split
+                   into Direct / OTA / Brand.com / Voice). NOT to be
+                   confused with STR Trend (TTM property-level
+                   RevPAR/ADR only).
 - RENT_ROLL      — Multifamily/extended-stay tenant roster (rare for
                    hotels; surfaces with mixed-use deals).
 - ROOM_MIX       — Room types / unit mix / key-count lookup. Typically
@@ -107,11 +112,11 @@ class _RouterDecision(BaseModel):
         str,
         Field(
             description=(
-                "One of: OM, T12, STR, STR_TREND, CBRE_HORIZONS, "
-                "PNL_BENCHMARK, PNL, PNL_MONTHLY, PNL_YTD, RENT_ROLL, "
-                "ROOM_MIX, MARKET_STUDY, CONTRACT, INSURANCE, "
-                "PROPERTY_TAX, CAPEX, PROPERTY_INFO, LEASES, SURVEYS, "
-                "UNKNOWN"
+                "One of: OM, T12, STR, STR_TREND, STR_SEGMENTATION, "
+                "CBRE_HORIZONS, PNL_BENCHMARK, PNL, PNL_MONTHLY, "
+                "PNL_YTD, RENT_ROLL, ROOM_MIX, MARKET_STUDY, CONTRACT, "
+                "INSURANCE, PROPERTY_TAX, CAPEX, PROPERTY_INFO, LEASES, "
+                "SURVEYS, UNKNOWN"
             )
         ),
     ]

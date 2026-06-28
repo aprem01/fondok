@@ -251,6 +251,40 @@ export type EngineName =
 
 export type EngineStatus = 'queued' | 'running' | 'complete' | 'failed';
 
+// ─────────────────────── revenue segmentation (Wave 2 P2.1) ───────────
+//
+// Mirrors fondok_schemas.underwriting.RevenueSegment / SegmentYear.
+// Empty `segment_breakdown` arrays mean the deal is on the legacy
+// single-line revenue path and the PLTab hides the segmentation
+// sub-section. When populated, the engine ran the 5-segment model
+// and `rooms_revenue` is NET of channel cost.
+
+export type RevenueSegmentName =
+  | 'transient_bar'
+  | 'transient_ota'
+  | 'corporate'
+  | 'group'
+  | 'contract';
+
+export interface RevenueSegmentInput {
+  name: RevenueSegmentName;
+  mix_pct: number;
+  adr: number;
+  channel_cost_pct: number;
+  adr_growth: number | null;
+}
+
+export interface SegmentYearOutput {
+  name: RevenueSegmentName;
+  mix_pct: number;
+  occupied_rooms: number;
+  /** Post-growth, post-Y1-displacement effective ADR for this year. */
+  adr: number;
+  channel_cost_pct: number;
+  gross_revenue: number;
+  net_revenue: number;
+}
+
 export interface EngineOutputResponse {
   deal_id: string;
   engine: EngineName;
