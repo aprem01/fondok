@@ -62,7 +62,8 @@ export interface WorkerDealStatus {
  */
 export type AssumptionSource =
   | 'seed' | 'deal_row' | 't12_actual' | 'cbre_horizons'
-  | 'pnl_benchmark' | 'portfolio_pnl' | 'om_comps' | 'om_broker' | 'analyst_override';
+  | 'pnl_benchmark' | 'portfolio_pnl' | 'om_comps' | 'om_broker' | 'analyst_override'
+  | 'str_forecast';
 
 /** Multi-deal pipeline row (Wave 3 W3.5). One per active deal in the
  *  current tenant, enriched with the LATEST engine-output snapshot per
@@ -909,6 +910,27 @@ export const api = {
         undefined,
         { signal },
       ),
+    /** Wave 3 W3.3 — STR forward forecast (24 months × 3 scenarios).
+     *  GET pulls the engine result computed from the deal's STR_TREND
+     *  monthly extractions. POST overrides one or more scenarios'
+     *  knobs and returns the recomputed forecast.
+     */
+    strForecast: (dealId: string, signal?: AbortSignal) =>
+      request<STRForecastResponse>(
+        'GET',
+        `/deals/${dealId}/str-forecast`,
+        undefined,
+        { signal },
+      ),
+    updateStrForecastScenarios: (
+      dealId: string,
+      body: STRForecastScenariosRequest,
+    ) =>
+      request<STRForecastResponse>(
+        'POST',
+        `/deals/${dealId}/str-forecast/scenarios`,
+        body,
+      ),
   },
   /** Market intelligence — submarket overview, comp set, transaction comps. */
   market: {
@@ -1393,6 +1415,57 @@ export interface HistoricalBaselineResponse {
   coverage_pct: number;
   /** YoY walk projection; biggest abs(yoy_pct) first. */
   walk: YoYDelta[];
+}
+
+// ─── STR Forward Forecast (Wave 3 W3.3) ─────────────────────────────
+// Mirrors apps/worker/app/api/documents.py _STRForecastResultOut.
+
+export type STRForecastScenarioName = 'downside' | 'base' | 'upside';
+
+export interface STRMonth {
+  /** YYYY-MM. */
+  period: string;
+  /** 0..1 (NOT a percent). */
+  occupancy: number;
+  adr: number;
+  revpar: number;
+  comp_set_revpar: number;
+  /** subject revpar / comp_set_revpar. */
+  revpar_index: number;
+  /** True for ingested STR Trend rows, False for forecast rows. */
+  is_historical: boolean;
+}
+
+export interface STRForecastScenario {
+  name: STRForecastScenarioName;
+  revpar_cagr_pct: number;
+  revpar_index_target: number;
+  occupancy_floor: number;
+  /** Multiplier on trailing-12 ADR. */
+  adr_floor: number;
+  notes: string[];
+}
+
+export interface STRForecastResponse {
+  deal_id: string;
+  historical_months: STRMonth[];
+  /** Keyed by scenario name → 24 forward months. */
+  forecast_months: Record<string, STRMonth[]>;
+  scenario_settings: STRForecastScenario[];
+  coverage_quality: 'high' | 'medium' | 'low';
+}
+
+export interface STRForecastScenarioOverride {
+  name: STRForecastScenarioName;
+  revpar_cagr_pct?: number;
+  revpar_index_target?: number;
+  occupancy_floor?: number;
+  adr_floor?: number;
+  notes?: string[];
+}
+
+export interface STRForecastScenariosRequest {
+  scenarios: STRForecastScenarioOverride[];
 }
 
 // ─── Due Diligence ──────────────────────────────────────────────────

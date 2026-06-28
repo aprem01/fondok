@@ -234,6 +234,13 @@ SOURCE_PIP_OM = "pip_om"
 SOURCE_PIP_USER = "pip_user"
 SOURCE_CAPEX_FFE_DEFAULT = "capex_ffe_default"
 SOURCE_ROI_USER = "roi_user"
+# Wave 3 W3.3 — STR forward-forecast seed. When the analyst opts in via
+# ``revenue_seed_from_str_forecast=True`` the revenue engine's
+# ``starting_occupancy`` + ``starting_adr`` are seeded from the BASE
+# scenario's Month-12 STRMonth so the rooms-revenue projection inherits
+# the forecast's bottom-up math (rather than the T-12 / Kimpton seed).
+# Default is OFF — no regression to existing deals.
+SOURCE_STR_FORECAST = "str_forecast"
 
 
 async def _load_engine_inputs(
@@ -705,6 +712,30 @@ async def _load_engine_inputs(
             else:
                 base[path] = value
             sources[path] = SOURCE_ANALYST_OVERRIDE
+
+    # Wave 3 W3.3 — optional STR forward-forecast seed. When the analyst
+    # has flipped ``revenue_seed_from_str_forecast`` to True (default is
+    # False so existing deals are unaffected), seed the revenue engine's
+    # ``starting_occupancy`` + ``starting_adr`` from the BASE scenario's
+    # Month-12 forecast point. Implemented as a no-op when:
+    #   * the flag is False / absent (default — no regression);
+    #   * the STR Trend extraction is missing or below coverage;
+    #   * the load fails (best-effort — analyst sees badge stay at the
+    #     prior source rather than a 500).
+    if base.get("revenue_seed_from_str_forecast") is True:
+        try:
+            forecast = await _load_str_forecast_for_seed(
+                session, deal_id=deal_id
+            )
+        except Exception:
+            forecast = None
+        if forecast is not None:
+            seed_occ, seed_adr = forecast
+            base["starting_occupancy"] = seed_occ
+            base["starting_adr"] = seed_adr
+            sources["starting_occupancy"] = SOURCE_STR_FORECAST
+            sources["starting_adr"] = SOURCE_STR_FORECAST
+
     base["__sources__"] = sources
     return base
 
@@ -2515,6 +2546,45 @@ async def _load_pnl_benchmark_overrides(
         out["ffe_reserve_pct"] = ffe
 
     return out
+
+
+async def _load_str_forecast_for_seed(
+    session: AsyncSession, *, deal_id: str
+) -> tuple[float, float] | None:
+    """Seed (starting_occupancy, starting_adr) from the BASE STR forecast.
+
+    Wave 3 W3.3 — when the analyst opts in
+    (``base["revenue_seed_from_str_forecast"] is True``), the loader
+    pulls the deal's STR Trend monthly history, runs the forecast
+    engine with default scenarios, and returns the BASE scenario's
+    Month-12 ``(occupancy, ADR)`` so the revenue engine can ground Y1
+    on the forecast rather than the T-12 / Kimpton seed.
+
+    Returns ``None`` when the deal has no STR_TREND extraction, when
+    coverage is ``"low"`` (< 12 historical months → forecast disabled),
+    or when the base forecast list is empty for any reason. Caller
+    leaves the prior ``starting_occupancy`` / ``starting_adr`` (and
+    their source badges) untouched in those cases.
+    """
+    try:
+        UUID(deal_id)
+    except (TypeError, ValueError):
+        return None
+
+    from ..engines.str_forecast import build_str_forecast
+    from .str_forecast_loader import load_str_history_for_deal
+
+    history = await load_str_history_for_deal(session, deal_id=deal_id)
+    if not history:
+        return None
+    forecast = build_str_forecast(deal_id=deal_id, historical_months=history)
+    if forecast.coverage_quality == "low":
+        return None
+    base_months = forecast.forecast_months.get("base") or []
+    if len(base_months) < 12:
+        return None
+    month12 = base_months[11]
+    return (month12.occupancy, month12.adr)
 
 
 # ─────────────────────────── Per-engine input ─────────────────────────

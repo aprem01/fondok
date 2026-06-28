@@ -584,3 +584,105 @@ more comps".
   view + median/weighted toggle + per-row exclusion checkbox.
   Source badge (`om_comps`) and coverage-quality chip in the header.
   Mounted in `ReturnsTab` under the new "Comps" sub-tab.
+
+---
+
+## STR forward forecast — 24-month, 3-scenario projection (Wave 3 W3.3)
+
+Sam's June 2026 ask: institutional analysts won't approve a deal
+without seeing a forward RevPAR forecast across multiple scenarios.
+The historical baseline above looks backward at the property's own
+P&L; the STR Forward Forecast looks **forward** at the property's
+RevPAR vs the comp set across 24 months in three branches.
+
+### Inputs
+
+The engine consumes the trailing 24 months of subject + comp-set
+monthly RevPAR / Occ / ADR from the deal's STR_TREND extractions
+(see `apps/worker/app/agents/extraction_schemas/str_trend.md`). The
+loader (`apps/worker/app/services/str_forecast_loader.py`) reads
+every STR_TREND extraction for the deal, normalizes the
+`ttm_performance.subject.monthly.<YYYY_MM>.*` field paths into
+`STRMonth` records, and derives the comp-set RevPAR from the
+trailing-12 comp rows (the STR Trend report doesn't publish per-
+month comp data — only trailing aggregates).
+
+### Three default scenarios
+
+* **downside** — RevPAR CAGR `-2.0%`, subject index target `0.92`
+  (subject loses share to comp set), occupancy floor `0.55`, ADR
+  floor `0.80` (80% of trailing-12 ADR).
+* **base** — RevPAR CAGR `+2.5%`, index target `1.00` (subject
+  matches comp set), occupancy floor `0.60`, ADR floor `0.88`.
+* **upside** — RevPAR CAGR `+5.0%`, index target `1.06` (subject
+  pulls ahead by 6%), occupancy floor `0.65`, ADR floor `0.92`.
+
+Analysts can override any scenario's knobs via
+`POST /deals/{id}/str-forecast/scenarios`. Omitted fields inherit
+from the default.
+
+### Per-month math
+
+For each scenario and each forward month `m` in 1..24:
+
+1. **Comp-set RevPAR** — projected at the scenario's CAGR off the
+   trailing-12 average comp RevPAR. The monthly factor is
+   `(1 + CAGR) ** (m / 12)` — annualized growth distributed across
+   the horizon.
+2. **Subject RevPAR Index** — linearly interpolated from the
+   trailing-12 subject index to the scenario's
+   `revpar_index_target` over the 24-month horizon. Month 1 nudges
+   off the starting index; month 24 lands at the target.
+3. **Subject RevPAR** — `comp_revpar[m] × subject_index[m]`.
+4. **Decompose into Occ × ADR** — preserves the trailing-12 occ:adr
+   ratio `r`. With `occ × adr = revpar` and `occ / adr = r` we solve
+   `occ = sqrt(revpar × r)`, `adr = sqrt(revpar / r)`.
+5. **Clip to floors** — if the decomposed occupancy is below the
+   scenario's `occupancy_floor` we hold occupancy at the floor and
+   solve ADR back out. Same for the ADR floor (interpreted as a
+   multiplier on the trailing-12 ADR). When both floors bite, the
+   resulting RevPAR equals the floor product (a deliberate
+   guardrail, not a math bug).
+
+### Coverage tiers
+
+* `high` — 24+ historical months on file (full STR Trend window).
+* `medium` — 12-23 months.
+* `low` — < 12 months. Forecast is disabled; the engine returns
+  empty `forecast_months` per scenario and the UI renders an
+  "Awaiting more STR Trend history" banner.
+
+### Optional revenue-engine seed
+
+When the analyst flips `revenue_seed_from_str_forecast` to True on
+the deal's `field_overrides`, the engine_runner seeds
+`RevenueEngineInput.starting_occupancy` and `starting_adr` from the
+BASE scenario's Month-12 forecast point. Both fields then tag with
+`SOURCE_STR_FORECAST` in the assumption-provenance map; the
+`AssumptionBadge` UI renders "STR Fcst". Default is OFF — existing
+deals are unaffected.
+
+### Where to look in code
+
+* `packages/schemas-py/fondok_schemas/str_forecast.py` — Pydantic
+  schemas (`STRMonth`, `STRForecastScenario`, `STRForecastResult`).
+* `apps/worker/app/engines/str_forecast.py` — the engine. Exports
+  `build_str_forecast` (pure function) and `default_scenarios`.
+* `apps/worker/app/services/str_forecast_loader.py` — DB loader
+  that materializes monthly STR Trend rows into `STRMonth`s.
+* `apps/worker/app/api/documents.py` —
+  `GET /deals/{deal_id}/str-forecast` and
+  `POST /deals/{deal_id}/str-forecast/scenarios`. Both tenant-scoped.
+* `apps/worker/app/services/engine_runner.py` —
+  `_load_str_forecast_for_seed` + `SOURCE_STR_FORECAST` source tag.
+* `apps/worker/tests/test_str_forecast.py` — 14 tests covering
+  coverage tiers, scenario defaults, monotonic RevPAR ordering,
+  linear-index interpolation, occupancy + ADR floors, comp-set
+  growth math, subject = comp × index identity, endpoint tenant
+  scoping, and the revenue-engine seed flag.
+* `apps/web/src/components/project/STRForecastPanel.tsx` — the
+  panel. Renders the 24-month historical + forecast chart, three
+  scenario cards with inline edit, and the revenue-engine seed
+  toggle.
+* `apps/web/src/components/project/ForecastingTab.tsx` — tab host
+  mounted on the Project Detail page as the **Forecasting** tab.

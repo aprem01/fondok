@@ -59,6 +59,10 @@ const AnalysisTab = dynamic(() => import('@/components/project/AnalysisTab'), {
 const ValidationTab = dynamic(() => import('@/components/project/ValidationTab'), {
   loading: () => <TabLoadingSkeleton />,
 });
+// Wave 3 W3.3 — Forecasting tab hosts the STR forward-forecast panel.
+const ForecastingTab = dynamic(() => import('@/components/project/ForecastingTab'), {
+  loading: () => <TabLoadingSkeleton />,
+});
 
 // Per the May 7 scope alignment, five tabs are visually grayed in the tab
 // strip while the design partner demo focuses on the Data Room → P&L →
@@ -83,6 +87,7 @@ const tabs: Tab[] = [
   { id: 'returns', label: 'Returns', icon: TrendingUp, inactive: true },
   { id: 'partnership', label: 'Partnership', icon: Users, inactive: true },
   { id: 'market', label: 'Market', icon: MapPinned },
+  { id: 'forecasting', label: 'Forecasting', icon: TrendingUp },
   { id: 'analysis', label: 'Analysis', icon: FileSearch },
   { id: 'scenarios', label: 'Scenarios', icon: GitCompareArrows },
   { id: 'export', label: 'Export', icon: Download, inactive: true },
@@ -524,6 +529,9 @@ export default function ProjectDetailPage() {
         )}
         {activeTab === 'market' && (
           <ErrorBoundary tabName="Market"><MarketTab projectId={id} /></ErrorBoundary>
+        )}
+        {activeTab === 'forecasting' && (
+          <ErrorBoundary tabName="Forecasting"><ForecastingTab projectId={id} /></ErrorBoundary>
         )}
         {activeTab === 'analysis' && (
           <ErrorBoundary tabName="Analysis"><AnalysisTab /></ErrorBoundary>
