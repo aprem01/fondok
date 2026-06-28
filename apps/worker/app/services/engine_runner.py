@@ -473,11 +473,58 @@ async def _load_engine_inputs(
             # We only apply scalars to base; non-scalars (objects, arrays)
             # belong to specialized loaders that already consume the
             # structured shape on their own.
-            if isinstance(value, (int, float, str, bool)):
+            if not isinstance(value, (int, float, str, bool)):
+                continue
+            # Route overrides to the right consumer based on key family.
+            # Top-level base keys (starting_occupancy, exit_cap_rate,
+            # mgmt_fee_pct, revpar_growth, ...) feed the engine inputs
+            # directly. Expense-line dollar overrides need to flow into
+            # ``t12_expense_actuals`` so the Expense engine treats them
+            # as Y1 anchors. Ratio overrides land in ``overrides`` so
+            # they beat the hotel-type defaults. Without this routing
+            # an analyst override on ``rooms_dept_expense`` or
+            # ``rooms_dept_pct`` would land at ``base[path]`` and never
+            # be read by any engine.
+            if path in _OVERRIDE_EXPENSE_ACTUAL_KEYS:
+                base.setdefault("t12_expense_actuals", {})[path] = value
+            elif path in _OVERRIDE_RATIO_KEYS:
+                base.setdefault("overrides", {})[path] = value
+            else:
                 base[path] = value
-                sources[path] = SOURCE_ANALYST_OVERRIDE
+            sources[path] = SOURCE_ANALYST_OVERRIDE
     base["__sources__"] = sources
     return base
+
+
+# Canonical T-12 expense-actual keys (per-line dollar amounts). When the
+# analyst overrides one of these, route it into ``t12_expense_actuals``
+# so the Expense engine sees it as a Y1 anchor instead of a stray
+# top-level field. Keep in sync with `T12_EXPENSE_FIELD_ALIASES` keys.
+_OVERRIDE_EXPENSE_ACTUAL_KEYS: frozenset[str] = frozenset({
+    "rooms_dept_expense",
+    "fb_dept_expense",
+    "other_dept_expense",
+    "administrative_general",
+    "information_telecom",
+    "sales_marketing",
+    "property_operations",
+    "utilities",
+    "property_taxes",
+    "insurance",
+    "mgmt_fee",
+    "ffe_reserve",
+})
+
+# Hotel-type ratio overrides — these beat the HOTEL_TYPE_DEFAULTS dict
+# on the Expense engine. Land them in ``base['overrides']`` so the
+# engine's existing override-merge path picks them up.
+_OVERRIDE_RATIO_KEYS: frozenset[str] = frozenset({
+    "rooms_dept_pct",
+    "fb_dept_pct",
+    "other_dept_pct",
+    "undistributed_pct_revenue",
+    "fixed_pct_revenue",
+})
 
 
 # Map extracted T-12 field paths onto the canonical expense-line keys
