@@ -23,9 +23,10 @@ from .api import model as model_router
 from .api import observability as observability_router
 from .api import settings as settings_router
 from .config import get_settings
-from .database import dispose_engine
+from .database import dispose_engine, get_engine
 from .migrations import run_startup_migrations
 from .telemetry import setup_langsmith, setup_telemetry
+from .tenant_middleware import register_tenant_safety_listener
 
 logging.basicConfig(
     level=logging.INFO,
@@ -56,6 +57,14 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
         await run_startup_migrations()
     except Exception as exc:
         logger.exception("startup migrations failed: %s", exc)
+    # Defense-in-depth tenant-isolation listener — installed AFTER
+    # migrations so the schema bootstrap (which legitimately runs
+    # CREATE TABLE + a handful of unscoped SELECTs against system
+    # catalogs) doesn't trip the listener.
+    try:
+        register_tenant_safety_listener(get_engine())
+    except Exception as exc:
+        logger.exception("tenant safety listener registration failed: %s", exc)
     try:
         yield
     finally:

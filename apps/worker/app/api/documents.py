@@ -50,7 +50,7 @@ from ..services.comp_set_drift import (
     drift_report_to_pydantic,
 )
 from ..storage import StorageError, get_raw_store
-from .deals import get_tenant_id
+from .deals import _assert_deal_belongs_to_tenant, get_tenant_id
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -1733,7 +1733,14 @@ async def list_documents(
     session: Annotated[AsyncSession, Depends(get_session)],
     tenant_id: Annotated[UUID, Depends(get_tenant_id)],
 ) -> list[DocumentRecord]:
-    """List documents on a deal in upload-recent order."""
+    """List documents on a deal in upload-recent order.
+
+    Tenant-scoped: cross-tenant access returns 404 via the deal-belongs
+    gate, plus the SQL filters on ``tenant_id`` for belt-and-suspenders.
+    """
+    await _assert_deal_belongs_to_tenant(
+        session, deal_id=deal_id, tenant_id=tenant_id
+    )
     rows = await session.execute(
         text(
             """
@@ -1992,7 +1999,13 @@ async def get_market_data(
     deal has no extracted document of a given type the block is
     ``null`` so the Market tab can render "awaiting <doc>" cards
     without a 404 path.
+
+    Tenant-scoped: cross-tenant access returns 404 before any join
+    runs, plus the join itself filters on ``tenant_id``.
     """
+    await _assert_deal_belongs_to_tenant(
+        session, deal_id=deal_id, tenant_id=tenant_id
+    )
     rows = await session.execute(
         text(
             """
@@ -2043,8 +2056,12 @@ async def get_comp_set_drift(
     Tenant-scoped; the underlying SQL filters on both the extraction
     row's ``tenant_id`` and the document's ``tenant_id`` so a
     cross-tenant deal_id guess produces an empty report (drifts=[])
-    rather than data leakage.
+    rather than data leakage. The deal-belongs gate runs first so the
+    response is a clean 404 rather than an empty 200 envelope.
     """
+    await _assert_deal_belongs_to_tenant(
+        session, deal_id=deal_id, tenant_id=tenant_id
+    )
     report = await compute_comp_set_drift(
         session,
         deal_id=str(deal_id),
@@ -2125,8 +2142,12 @@ async def get_document_coverage(
     Every query is tenant-scoped via ``X-Tenant-Id`` (see commit
     ``2a8ed64`` for the P0 fix that hardened the previously-leaky
     endpoints). A tenant can only see its own documents — cross-tenant
-    rows are filtered out at the SQL layer.
+    rows are filtered out at the SQL layer. The deal-belongs gate
+    short-circuits any cross-tenant request to 404.
     """
+    await _assert_deal_belongs_to_tenant(
+        session, deal_id=deal_id, tenant_id=tenant_id
+    )
     from ..services.coverage_audit import audit_document_coverage
 
     coverage = await audit_document_coverage(

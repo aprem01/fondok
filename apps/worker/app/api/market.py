@@ -33,7 +33,7 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..database import get_session
-from .deals import get_tenant_id
+from .deals import _assert_deal_belongs_to_tenant, get_tenant_id
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -117,14 +117,25 @@ async def market_overview(
 
 
 @router.get("/{deal_id}/comps", response_model=CompsResponse)
-async def market_comps(deal_id: UUID) -> CompsResponse:
+async def market_comps(
+    deal_id: UUID,
+    session: Annotated[AsyncSession, Depends(get_session)],
+    tenant_id: Annotated[UUID, Depends(get_tenant_id)],
+) -> CompsResponse:
     """Comp-set endpoint.
 
     TODO(str-integration): pull comp set from the STR/CoStar feed
     keyed off the deal's city. Until then we return an empty list +
     a metadata flag so the UI renders an "awaiting market data" panel
     rather than a blank page.
+
+    Tenant-scoped: even though the stub returns no data, a cross-tenant
+    ``deal_id`` returns 404 so the surface stays uniform with the
+    future STR-integrated implementation.
     """
+    await _assert_deal_belongs_to_tenant(
+        session, deal_id=deal_id, tenant_id=tenant_id
+    )
     return CompsResponse(
         deal_id=deal_id,
         comps=[],
@@ -247,7 +258,14 @@ async def transaction_comps(
     name, sale date, keys, sale price, $/key, and cap rate. The extractor
     emits each row as ``transaction_comps.<n>.<field>``. We aggregate
     them, derive median $/key + median cap rate, and return.
+
+    Tenant-scoped: ``deal_id`` is gated by the deal-belongs check, and
+    the underlying join is filtered by ``d.tenant_id`` for belt-and-
+    suspenders coverage.
     """
+    await _assert_deal_belongs_to_tenant(
+        session, deal_id=deal_id, tenant_id=tenant_id
+    )
     try:
         rows = (
             await session.execute(

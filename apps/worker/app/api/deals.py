@@ -893,6 +893,9 @@ async def gate1(
     engines run. The graph state-machine is wired separately; this
     route is the canonical record of the decision.
     """
+    await _assert_deal_belongs_to_tenant(
+        session, deal_id=deal_id, tenant_id=tenant_id
+    )
     accepted = body.decision == "approve"
     next_state = "run_engines" if accepted else "halt"
     await log_audit(
@@ -932,6 +935,9 @@ async def gate2(
     ``audit_log``. The downstream finalize step (memo lock + export)
     reads the latest ``gate2.decision`` row to know whether to proceed.
     """
+    await _assert_deal_belongs_to_tenant(
+        session, deal_id=deal_id, tenant_id=tenant_id
+    )
     accepted = body.recommendation in ("go", "conditional")
     next_state = "finalize" if accepted else "decline"
     await log_audit(

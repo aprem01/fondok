@@ -33,7 +33,7 @@ from ..services.engine_runner import (
     run_all_engines,
     run_single_engine,
 )
-from .deals import get_tenant_id
+from .deals import _assert_deal_belongs_to_tenant, get_tenant_id
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -245,6 +245,7 @@ async def _background_run_one(
 async def kickoff_run_all(
     deal_id: str,
     background_tasks: BackgroundTasks,
+    session: Annotated[AsyncSession, Depends(get_session)],
     tenant_id: Annotated[UUID, Depends(get_tenant_id)],
     body: EngineRunBody | None = None,
 ) -> EngineRunKickoff:
@@ -252,7 +253,14 @@ async def kickoff_run_all(
 
     Returns immediately with a ``run_id`` the client can poll via
     ``GET /deals/{id}/engines/run/{run_id}``.
+
+    Tenant-scoped: cross-tenant access returns 404 before the
+    background task is scheduled — otherwise an attacker could
+    enqueue compute against another tenant's deal.
     """
+    await _assert_deal_belongs_to_tenant(
+        session, deal_id=deal_id, tenant_id=tenant_id
+    )
     run_id = str(uuid4())
     started_at = datetime.now(UTC)
     overrides = body.assumptions if body else None
@@ -294,6 +302,9 @@ async def kickoff_run_one(
     ``BackgroundTasks`` parameter is kept on the signature so future
     long-running engines can flip a single line to defer.
     """
+    await _assert_deal_belongs_to_tenant(
+        session, deal_id=deal_id, tenant_id=tenant_id
+    )
     _validate_engine_name(name)
     overrides = body.assumptions if body else None
     run_id = str(uuid4())
@@ -332,9 +343,11 @@ async def list_engine_outputs(
     tenant_id: Annotated[UUID, Depends(get_tenant_id)],
 ) -> EngineOutputsResponse:
     """Return the latest persisted output per engine for ``deal_id``."""
+    await _assert_deal_belongs_to_tenant(
+        session, deal_id=deal_id, tenant_id=tenant_id
+    )
     rows = await get_latest_outputs(session, deal_id=deal_id)
     engines = {name: EngineOutputResponse(**row) for name, row in rows.items()}
-    _ = tenant_id  # tenant filtering is already implicit in deal_id scope
     return EngineOutputsResponse(deal_id=deal_id, engines=engines)
 
 
@@ -349,8 +362,10 @@ async def get_engine_run_status(
     tenant_id: Annotated[UUID, Depends(get_tenant_id)],
 ) -> EngineRunStatusResponse:
     """Return every engine row associated with ``run_id``."""
+    await _assert_deal_belongs_to_tenant(
+        session, deal_id=deal_id, tenant_id=tenant_id
+    )
     rows = await get_run_status(session, deal_id=deal_id, run_id=run_id)
-    _ = tenant_id
     return EngineRunStatusResponse(
         deal_id=deal_id,
         run_id=run_id,
@@ -369,6 +384,9 @@ async def get_engine_output(
     tenant_id: Annotated[UUID, Depends(get_tenant_id)],
 ) -> EngineOutputResponse:
     """Return the latest persisted row for one engine on ``deal_id``."""
+    await _assert_deal_belongs_to_tenant(
+        session, deal_id=deal_id, tenant_id=tenant_id
+    )
     _validate_engine_name(name)
     row = await get_latest_output(session, deal_id=deal_id, engine_name=name)
     if row is None:
@@ -376,5 +394,4 @@ async def get_engine_output(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"no output found for engine {name!r} on deal {deal_id}",
         )
-    _ = tenant_id
     return EngineOutputResponse(**row)

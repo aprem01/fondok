@@ -20,7 +20,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..database import get_session
 from ..dossier import DealDossier, build_dossier
-from .deals import get_tenant_id
+from .deals import _assert_deal_belongs_to_tenant, get_tenant_id
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -44,7 +44,15 @@ async def get_dossier(
     ``include_page_excerpts=false`` trims the per-page text snapshots
     on each document (useful when the caller only needs structured
     fields, not raw narrative).
+
+    Tenant-scoped: ``build_dossier`` filters extractions / engine
+    outputs by ``tenant_id``, but the underlying ``_fetch_deal_row``
+    helper reads from ``deals`` without that filter, so we gate at
+    the API layer with the standard 404-on-miss check.
     """
+    await _assert_deal_belongs_to_tenant(
+        session, deal_id=deal_id, tenant_id=tenant_id
+    )
     return await build_dossier(
         session,
         deal_id=deal_id,
@@ -102,7 +110,13 @@ async def ask_deal(
     and returns a single grounded answer with citations. Empty-state
     response carries a structured ``note`` when the dossier doesn't
     have enough material yet (e.g. no extracted documents).
+
+    Tenant-scoped: cross-tenant access returns 404 via the deal-belongs
+    gate.
     """
+    await _assert_deal_belongs_to_tenant(
+        session, deal_id=deal_id, tenant_id=tenant_id
+    )
     dossier = await build_dossier(
         session,
         deal_id=deal_id,
