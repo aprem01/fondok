@@ -136,6 +136,14 @@ select {
   animation: confetti-burst 1.2s ease-out forwards;
 }
 
+/* Wizard sub-stage swap — 120ms opacity fade so the content panel
+   doesn't snap-replace when the analyst clicks a sidebar row. */
+@keyframes wizard-fade-in {
+  0%   { opacity: 0; }
+  100% { opacity: 1; }
+}
+.wizard-fade-in { animation: wizard-fade-in 120ms ease-out; }
+
 /* Scrollbar — slim, warm. */
 .scrollbar-thin::-webkit-scrollbar { width: 6px; height: 6px; }
 .scrollbar-thin::-webkit-scrollbar-thumb { background: #d0d5dd; border-radius: 3px; }

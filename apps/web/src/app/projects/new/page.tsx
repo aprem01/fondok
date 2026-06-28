@@ -62,6 +62,10 @@ export default function NewProjectPage() {
   // product decision. ``DocumentsStep`` reports this back via
   // onCanContinueChange whenever the WizardFile[] changes.
   const [docsCanContinue, setDocsCanContinue] = useState(false);
+  // Step-3 gate-warning surfaces only after the analyst attempts a
+  // disabled Next. Idle state = quiet panel; nudge state = WARN banner
+  // appears under the panel exactly once per attempt.
+  const [docsGateNudge, setDocsGateNudge] = useState(false);
 
   const update = (patch: Partial<typeof data>) => setData(d => ({ ...d, ...patch }));
   const setDocs = useCallback(
@@ -69,13 +73,23 @@ export default function NewProjectPage() {
     [],
   );
   // Step 3 (Documents) is gated on financials being present. Other steps
-  // advance freely. Wrapping in useCallback so the child can be a pure
-  // component on this prop.
+  // advance freely. When the analyst clicks Next on Step 3 without
+  // financials, we don't silently no-op — we surface the WARN banner
+  // inside DocumentsStep so the gate is visible (rather than the Next
+  // button just refusing to move).
   const next = () => {
-    if (step === 3 && !docsCanContinue) return;
+    if (step === 3 && !docsCanContinue) {
+      setDocsGateNudge(true);
+      return;
+    }
+    if (step === 3) setDocsGateNudge(false);
     setStep(s => Math.min(6, s + 1));
   };
   const back = () => setStep(s => Math.max(1, s - 1));
+  // Visual disabled cue (color + cursor) stays, but the button still
+  // fires the click handler so we can surface the WARN — `disabled`
+  // would swallow the click and leave the analyst confused why
+  // nothing happened.
   const nextDisabled = step === 3 && !docsCanContinue;
 
   const onCreate = async () => {
@@ -216,8 +230,14 @@ export default function NewProjectPage() {
         {step === 3 && (
           <Step3Documents
             files={data.docs}
-            onChange={setDocs}
+            onChange={(files) => {
+              setDocs(files);
+              // Drop the gate-nudge as soon as something lands — the
+              // banner only fires on the next gated attempt.
+              if (docsGateNudge) setDocsGateNudge(false);
+            }}
             onCanContinueChange={setDocsCanContinue}
+            showGateWarning={docsGateNudge && !docsCanContinue}
           />
         )}
         {step === 4 && <Step4 data={data} update={update} />}
@@ -255,7 +275,12 @@ export default function NewProjectPage() {
           <Button
             variant="primary"
             onClick={next}
-            disabled={nextDisabled}
+            // Visual disabled (aria + styling) but click still fires
+            // so the gated-Next click can trigger the WARN banner
+            // inside DocumentsStep. The handler short-circuits when
+            // gated — no spurious advances.
+            aria-disabled={nextDisabled || undefined}
+            className={cn(nextDisabled && 'opacity-60 cursor-not-allowed')}
             title={
               nextDisabled
                 ? 'Add at least one financial document to continue'
@@ -403,23 +428,26 @@ function Step3Documents({
   files,
   onChange,
   onCanContinueChange,
+  showGateWarning,
 }: {
   files: WizardFile[];
   onChange: (files: WizardFile[]) => void;
   onCanContinueChange: (ok: boolean) => void;
+  showGateWarning: boolean;
 }) {
   const { toast } = useToast();
   // Layout: the DocumentsStep owns its own internal sidebar + content
-  // column (11 categories don't fit cleanly into 4/8 columns at the
-  // page level). The right-rail checklist hangs off the page so it
-  // can stay sticky during long category drilldowns.
+  // column. The right-rail completeness ring shows only at xl (≥1280px);
+  // below that the main panel takes the full width so the sidebar +
+  // content panel never get squeezed.
   return (
     <div className="grid grid-cols-12 gap-6">
-      <div className="col-span-12 lg:col-span-9">
+      <div className="col-span-12 xl:col-span-9">
         <DocumentsStep
           files={files}
           onChange={onChange}
           onCanContinueChange={onCanContinueChange}
+          showGateWarning={showGateWarning}
           onUnsupportedFile={(filename) =>
             toast(
               `${filename}: unsupported file type — Fondok accepts PDF, Excel, CSV, Word.`,
@@ -428,7 +456,7 @@ function Step3Documents({
           }
         />
       </div>
-      <aside className="col-span-12 lg:col-span-3">
+      <aside className="hidden xl:block xl:col-span-3">
         <CoachMark
           anchorId="wizard-step3-checklist"
           viewKey="wizard-step3"

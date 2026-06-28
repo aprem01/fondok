@@ -32,12 +32,11 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
-  AlertCircle,
   ArrowLeft,
   ArrowRight,
   Briefcase,
   Building2,
-  Check,
+  ChevronRight,
   ClipboardCheck,
   FileSearch,
   FileSpreadsheet,
@@ -50,7 +49,6 @@ import {
   Trash2,
   UploadCloud,
 } from 'lucide-react';
-import { Badge } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
 import { cn } from '@/lib/format';
 import type {
@@ -91,6 +89,10 @@ function isAllowedFile(file: File): boolean {
 type WizardCategorySpec = {
   id: WizardCategory;
   label: string;
+  /** Tight single-line label used in the sidebar (falls back to
+   *  `label` when undefined). Keep ≤ 24 chars so the row never
+   *  truncates at standard sidebar widths. */
+  sidebarLabel?: string;
   /** Recommended for IC — false only for SURVEYS. */
   requiredForIc: boolean;
   /** Whether this category accepts multiple files (almost everything does). */
@@ -123,6 +125,7 @@ export const WIZARD_CATEGORIES: WizardCategorySpec[] = [
   {
     id: 'om',
     label: 'Offering Memorandum',
+    sidebarLabel: 'Offering Memorandum',
     requiredForIc: true,
     multiFile: false,
     Icon: FileText,
@@ -140,6 +143,7 @@ export const WIZARD_CATEGORIES: WizardCategorySpec[] = [
   {
     id: 't12',
     label: 'T-12 / Trailing Twelve Months',
+    sidebarLabel: 'T-12',
     requiredForIc: true,
     multiFile: true,
     Icon: FileSpreadsheet,
@@ -157,6 +161,7 @@ export const WIZARD_CATEGORIES: WizardCategorySpec[] = [
   {
     id: 'historical_pnl',
     label: 'Annual / YTD / Monthly P&L',
+    sidebarLabel: 'Annual / Monthly P&L',
     requiredForIc: true,
     multiFile: true,
     Icon: FileSpreadsheet,
@@ -199,6 +204,7 @@ export const WIZARD_CATEGORIES: WizardCategorySpec[] = [
   {
     id: 'str',
     label: 'STR / Comp Set Report',
+    sidebarLabel: 'STR / Comp Set',
     requiredForIc: true,
     multiFile: true,
     Icon: ClipboardCheck,
@@ -304,6 +310,7 @@ export const WIZARD_CATEGORIES: WizardCategorySpec[] = [
   {
     id: 'property_info',
     label: 'Basic Property Info',
+    sidebarLabel: 'Property Info',
     requiredForIc: true,
     multiFile: true,
     Icon: Briefcase,
@@ -321,6 +328,7 @@ export const WIZARD_CATEGORIES: WizardCategorySpec[] = [
   {
     id: 'leases',
     label: 'Leases & Agreements',
+    sidebarLabel: 'Leases',
     requiredForIc: true,
     multiFile: true,
     Icon: FileText,
@@ -338,6 +346,7 @@ export const WIZARD_CATEGORIES: WizardCategorySpec[] = [
   {
     id: 'surveys',
     label: 'Surveys & Reviews',
+    sidebarLabel: 'Surveys',
     requiredForIc: false,
     multiFile: true,
     Icon: FileSearch,
@@ -362,6 +371,14 @@ export interface DocumentsStepProps {
    *  file. The wizard page wires this to ``useToast`` so the toast lives
    *  on the same surface as the upload errors. */
   onUnsupportedFile?: (filename: string) => void;
+  /** When true (the page flips this only after the user attempts a
+   *  gated Next), the inline WARN banner appears under the panel.
+   *  Otherwise the surface stays quiet — the right-rail completeness
+   *  ring is the only ambient cue. */
+  showGateWarning?: boolean;
+  /** Active sub-stage — exposed so the right-rail can mirror the
+   *  current selection without owning the state. */
+  onStageChange?: (stage: WizardCategory) => void;
 }
 
 const dedupeKey = (f: WizardFile) =>
@@ -378,16 +395,29 @@ export function DocumentsStep({
   onChange,
   onCanContinueChange,
   onUnsupportedFile,
+  showGateWarning = false,
+  onStageChange,
 }: DocumentsStepProps) {
-  // Default landing stage: the first FINANCIAL stage (T-12) so the user
-  // lands on the one that gates the wizard. Falls back to the first
-  // category if the catalog is ever reordered.
-  const [stage, setStage] = useState<WizardCategory>(
-    WIZARD_CATEGORIES.find((c) => c.id === 't12')?.id ?? WIZARD_CATEGORIES[0].id,
+  // Default landing stage: Offering Memorandum. Natural reading order —
+  // when a broker sends a deal an analyst opens the OM first. Financials
+  // still gate the wizard (Next stays disabled until a T-12 or
+  // historical P&L lands) but they don't need to be the first screen.
+  const [stage, setStageState] = useState<WizardCategory>(
+    WIZARD_CATEGORIES.find((c) => c.id === 'om')?.id ?? WIZARD_CATEGORIES[0].id,
   );
-  const [skipNoticeShown, setSkipNoticeShown] = useState<Set<WizardCategory>>(
-    new Set(),
+  const setStage = useCallback(
+    (next: WizardCategory) => {
+      setStageState(next);
+      onStageChange?.(next);
+    },
+    [onStageChange],
   );
+  // Tell the parent about the initial landing stage on first paint so
+  // the right rail and any external mirrors stay in sync from frame 1.
+  useEffect(() => {
+    onStageChange?.(stage);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const filesByCategory = useMemo(() => {
     const m = {} as Record<WizardCategory, WizardFile[]>;
@@ -481,106 +511,81 @@ export function DocumentsStep({
   };
 
   const onSkip = () => {
-    if (filesByCategory[stage].length === 0) {
-      setSkipNoticeShown((prev) => new Set(prev).add(stage));
-    }
+    // Quiet skip — the sidebar dot signals "missing" and the right-rail
+    // ring tracks coverage, so a separate skip-warning banner under the
+    // panel is redundant noise.
     goNextStage();
   };
 
   return (
     <div>
-      <h2 className="text-[18px] font-semibold text-ink-900 mb-1">
-        Add documents
+      <h2 className="text-[18px] font-semibold text-ink-900 mb-5">
+        Documents
       </h2>
-      <p className="text-[12.5px] text-ink-500 mb-3">
-        Walk the 11 categories on the left. Financials are required to
-        advance; nine more are recommended for IC; Surveys &amp; Reviews
-        is optional. Anything you skip can be added later from the
-        Data Room.
-      </p>
-      <div className="rounded-md bg-brand-50 border border-brand-100 p-3 text-[12px] text-ink-700 leading-relaxed mb-5">
-        Drop documents into the matching section so Fondok can route them
-        to the right extractor. Year-tagging the financials powers the
-        coverage line and the historical-variance detector — everything
-        else is single-bucket.
-      </div>
 
       <div className="grid grid-cols-12 gap-5">
-        {/* ─────────────── Vertical sidebar ─────────────── */}
+        {/* ─────────────── Vertical sidebar — single-row, status dot ─────────────── */}
         <nav
           aria-label="Document categories"
           className="col-span-12 lg:col-span-4 xl:col-span-3"
         >
           <ul
-            className="sticky top-4 space-y-1.5 max-h-[calc(100vh-8rem)] overflow-y-auto pr-1 scrollbar-thin"
+            className="sticky top-4 space-y-0.5 max-h-[calc(100vh-8rem)] overflow-y-auto pr-1 scrollbar-thin"
             role="list"
           >
             {WIZARD_CATEGORIES.map((spec) => {
               const count = filesByCategory[spec.id].length;
               const active = spec.id === stage;
               const covered = count > 0;
-              const Icon = spec.Icon;
               const missing = !covered && spec.requiredForIc;
+              // Status dot IS the status. Green = covered, red =
+              // required-and-missing, gray = optional / not-yet-touched.
+              const dotClass = covered
+                ? 'bg-success-500'
+                : missing
+                  ? 'bg-danger-500/80'
+                  : 'bg-ink-300';
               const triggerBtn = (
-                  <button
-                    type="button"
-                    onClick={() => setStage(spec.id)}
-                    aria-pressed={active}
-                    aria-label={`${spec.label} (${covered ? `${count} file${count === 1 ? '' : 's'}` : spec.requiredForIc ? 'missing' : 'optional'})`}
+                <button
+                  type="button"
+                  onClick={() => setStage(spec.id)}
+                  aria-pressed={active}
+                  aria-label={`${spec.label} (${covered ? `${count} file${count === 1 ? '' : 's'}` : spec.requiredForIc ? 'missing' : 'optional'})`}
+                  className={cn(
+                    'w-full text-left pl-3 pr-2 py-2 rounded-md flex items-center gap-2.5',
+                    'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-500',
+                    'border-l-[2px] transition-[background-color,border-color] duration-150 motion-reduce:transition-none',
+                    active
+                      ? 'bg-brand-50 border-l-brand-500'
+                      : 'bg-transparent border-l-transparent hover:bg-ink-100/60',
+                  )}
+                >
+                  <span
                     className={cn(
-                      'w-full text-left px-3 py-2 rounded-md border flex items-start gap-2.5',
-                      'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-500',
-                      'transition-colors motion-reduce:transition-none',
+                      'inline-block w-1.5 h-1.5 rounded-full flex-shrink-0',
+                      dotClass,
+                    )}
+                    aria-hidden="true"
+                  />
+                  <span
+                    className={cn(
+                      'flex-1 min-w-0 text-[12.5px] leading-tight truncate',
                       active
-                        ? 'bg-brand-50 border-brand-500 border-l-[3px] shadow-sm'
-                        : 'bg-white border-border hover:bg-ink-100 border-l-[3px] border-l-transparent',
+                        ? 'font-semibold text-brand-700'
+                        : 'font-medium text-ink-900',
                     )}
                   >
-                    <span
-                      className={cn(
-                        'mt-0.5 inline-flex items-center justify-center w-5 h-5 rounded',
-                        active
-                          ? 'bg-brand-500 text-white'
-                          : covered
-                            ? 'bg-success-50 text-success-700'
-                            : missing
-                              ? 'bg-danger-50 text-danger-700'
-                              : 'bg-ink-100 text-ink-500',
-                      )}
-                      aria-hidden="true"
-                    >
-                      {covered ? (
-                        <Check size={11} strokeWidth={3} />
-                      ) : (
-                        <Icon size={11} />
-                      )}
-                    </span>
-                    <div className="flex-1 min-w-0">
-                      <div
-                        className={cn(
-                          'text-[12.5px] font-medium leading-tight truncate',
-                          active ? 'text-brand-700' : 'text-ink-900',
-                        )}
-                      >
-                        {spec.label}
-                      </div>
-                      <div className="mt-1">
-                        {covered ? (
-                          <span className="inline-flex items-center px-1.5 py-0 rounded text-[10.5px] tabular-nums font-medium bg-success-50 text-success-700 border border-success-500/30">
-                            {count} file{count === 1 ? '' : 's'}
-                          </span>
-                        ) : missing ? (
-                          <span className="inline-flex items-center px-1.5 py-0 rounded text-[10.5px] font-medium bg-danger-50 text-danger-700 border border-danger-500/30">
-                            Missing
-                          </span>
-                        ) : (
-                          <span className="inline-flex items-center px-1.5 py-0 rounded text-[10.5px] font-medium bg-ink-100 text-ink-500 border border-border">
-                            Optional
-                          </span>
-                        )}
-                      </div>
-                    </div>
-                  </button>
+                    {spec.sidebarLabel ?? spec.label}
+                  </span>
+                  <ChevronRight
+                    size={12}
+                    className={cn(
+                      'flex-shrink-0',
+                      active ? 'text-brand-500' : 'text-ink-300',
+                    )}
+                    aria-hidden="true"
+                  />
+                </button>
               );
               return (
                 <li key={spec.id} role="listitem">
@@ -607,16 +612,20 @@ export function DocumentsStep({
 
         {/* ─────────────── Content panel ─────────────── */}
         <div className="col-span-12 lg:col-span-8 xl:col-span-9">
-          <CategoryPanel
-            spec={activeSpec}
-            files={filesByCategory[activeSpec.id]}
-            onAdd={(fs, meta) =>
-              addFiles(fs, activeSpec.id, meta ?? {})
-            }
-            onRemove={removeAt}
-            onUpdate={updateFile}
-            skipNoticed={skipNoticeShown.has(activeSpec.id)}
-          />
+          {/* key={stage} re-mounts on sub-stage switch so the fade-in
+              animation plays each time. Replaces the previous jarring
+              snap-replace. */}
+          <div key={stage} className="wizard-fade-in">
+            {/* The .wizard-fade-in keyframe is opt-out via the
+                prefers-reduced-motion rule in globals.css. */}
+            <CategoryPanel
+              spec={activeSpec}
+              files={filesByCategory[activeSpec.id]}
+              onAdd={(fs, meta) => addFiles(fs, activeSpec.id, meta ?? {})}
+              onRemove={removeAt}
+              onUpdate={updateFile}
+            />
+          </div>
 
           {/* Stage navigation */}
           <div className="mt-6 flex items-center justify-between">
@@ -651,14 +660,17 @@ export function DocumentsStep({
             </div>
           </div>
 
-          {!canContinue && (
+          {/* WARN banner fires only after the analyst attempts the
+              page-level Next while the financials gate is locked.
+              Otherwise the surface stays quiet. */}
+          {showGateWarning && !canContinue && (
             <div
               role="alert"
               className="mt-4 px-3 py-2 rounded-md bg-warn-50 border border-warn-500/30 text-[12px] text-warn-700 flex items-center gap-2"
             >
               <Info size={13} aria-hidden="true" />
               Add at least one financial (T-12 or Annual / YTD / Monthly
-              P&amp;L) to continue. Year tagging is optional but recommended.
+              P&amp;L) to continue.
             </div>
           )}
         </div>
@@ -675,7 +687,6 @@ function CategoryPanel({
   onAdd,
   onRemove,
   onUpdate,
-  skipNoticed,
 }: {
   spec: WizardCategorySpec;
   files: WizardFile[];
@@ -688,28 +699,28 @@ function CategoryPanel({
   ) => void;
   onRemove: (file: WizardFile) => void;
   onUpdate: (file: WizardFile, patch: Partial<WizardFile>) => void;
-  skipNoticed: boolean;
 }) {
   const Icon = spec.Icon;
+  // Required-for-IC cue lives on the sidebar dot — drop it from the
+  // sub-stage header. Description trims to one tight line; the
+  // exampleChip carries the concrete "what this looks like".
   return (
     <section aria-label={spec.label}>
       <header className="mb-3">
-        <div className="flex items-center gap-2 flex-wrap">
+        <div className="flex items-center gap-2">
           <Icon size={16} className="text-brand-500" aria-hidden="true" />
-          <h3 className="text-[18px] font-semibold text-ink-900">
+          <h3 className="text-[14px] font-semibold text-ink-900">
             {spec.label}
           </h3>
-          {spec.requiredForIc ? (
-            <Badge tone="red">Required for IC</Badge>
-          ) : (
-            <Badge tone="gray">Optional</Badge>
-          )}
         </div>
-        <p className="text-[12.5px] text-ink-500 mt-2 leading-relaxed max-w-[640px]">
+        <p className="text-[12.5px] text-ink-500 mt-1.5 leading-snug max-w-[640px] line-clamp-2">
           {spec.description}
         </p>
-        <div className="mt-2.5 inline-flex items-center gap-1.5 text-[11.5px] text-ink-500 italic">
-          <span className="inline-block w-1 h-1 rounded-full bg-ink-400" aria-hidden="true" />
+        <div className="mt-2 inline-flex items-center gap-1.5 text-[11px] text-ink-500 italic">
+          <span
+            className="inline-block w-1 h-1 rounded-full bg-ink-400"
+            aria-hidden="true"
+          />
           {spec.exampleChip}
         </div>
       </header>
@@ -734,9 +745,11 @@ function CategoryPanel({
       )}
 
       {files.length === 0 ? (
-        <div className="mt-3 px-4 py-5 rounded-md border border-dashed border-border bg-bg text-[12px] text-ink-500 leading-relaxed">
-          {spec.emptyState}
-        </div>
+        // Quiet empty-state — one line, no callout. The dropzone above
+        // already explains "what to do here".
+        <p className="mt-3 text-[11px] text-ink-500">
+          Drop a {spec.label.toLowerCase()} here or skip for now.
+        </p>
       ) : (
         <ul
           className="mt-3 space-y-2"
@@ -754,16 +767,6 @@ function CategoryPanel({
             </li>
           ))}
         </ul>
-      )}
-
-      {skipNoticed && files.length === 0 && (
-        <div
-          role="status"
-          className="mt-4 px-3 py-2 rounded-md bg-warn-50 border border-warn-500/30 text-[12px] text-warn-700 flex items-start gap-2"
-        >
-          <AlertCircle size={13} className="mt-0.5 shrink-0" aria-hidden="true" />
-          <span>{spec.skipWarning}</span>
-        </div>
       )}
     </section>
   );
