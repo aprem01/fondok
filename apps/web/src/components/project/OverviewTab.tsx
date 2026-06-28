@@ -11,18 +11,15 @@ import {
   brandFamilies,
 } from '@/lib/mockData';
 import { api, isWorkerConnected, workerUrl, type ExtractionField, type AssumptionSourcesResponse } from '@/lib/api';
-import { fmtCurrency, fmtPct, fmtMillions, fmtNumber, cn } from '@/lib/format';
+import { fmtCurrency, fmtPct, fmtNumber, cn } from '@/lib/format';
 import { getEngineField, useEngineOutputs } from '@/lib/hooks/useEngineOutputs';
 import { useDocuments } from '@/lib/hooks/useDocuments';
 import { useEngineRun } from '@/lib/hooks/useEngineRun';
 import { useDeal } from '@/lib/hooks/useDeal';
 import { useFlash } from '@/lib/hooks/useFlash';
-import { IntroCard } from '@/components/help/IntroCard';
 import { AssumptionBadge } from '@/components/help/AssumptionBadge';
 import OverridePanel from '@/components/help/OverridePanel';
 import { MetricLabel } from '@/components/help/MetricLabel';
-import { MetricHint } from '@/components/help/MetricHint';
-import { Term } from '@/components/help/Term';
 import { CoachMark } from '@/components/help/CoachMark';
 import { GLOSSARY } from '@/lib/glossary';
 
@@ -487,52 +484,35 @@ export default function OverviewTab({ projectId }: { projectId: number | string 
 
   return (
     <div className="space-y-3">
-      <IntroCard
-        dismissKey="overview-intro"
-        title="The complete underwriting model on one page"
-        body={
-          <>
-            Consolidated underwriting view — acquisition, financing, reversion, returns. Each
-            value carries a provenance badge so the source (T-12 actual, CBRE Horizons, OM
-            comps, analyst override) is visible at a glance. Editable fields are flagged with
-            a pencil; engine-derived fields show a chain icon and update on each model run.{' '}
-            <a
-              href="/methodology"
-              className="text-brand-700 underline hover:no-underline whitespace-nowrap"
-            >
-              How Fondok underwrites →
-            </a>
-          </>
-        }
-      />
-
-      <Card className="px-4 py-2">
-        <div className="flex items-center justify-between">
-          <div className="flex items-center gap-5 text-[11.5px] text-ink-500">
-            <span className="flex items-center gap-1.5">
-              <Pencil size={11} className="text-warn-500" /> Editable
-            </span>
-            <span className="flex items-center gap-1.5">
-              <Link2 size={11} className="text-success-500" /> Linked
-            </span>
-            <span className="flex items-center gap-1.5">
-              <span className="w-2.5 h-2.5 rounded bg-ink-300/40" /> Read-Only
-            </span>
-          </div>
-          <div className="flex items-center gap-2">
-            <Button
-              variant="secondary"
-              size="sm"
-              onClick={() => setModelSettingsOpen(true)}
-            >
-              <Settings size={12} /> Model Settings
-            </Button>
-            <Button variant="secondary" size="sm" onClick={onExportExcel}>
-              <Download size={12} /> Export to Excel
-            </Button>
-          </div>
+      {/* Toolbar — legend + actions on a single hairline row. The
+          standalone IntroCard and its wrapper Card were removed (Wave 1
+          UX reduction): provenance icons get a one-line legend instead
+          of a teaching banner, and CoachMark covers the rest. */}
+      <div className="flex items-center justify-between py-1">
+        <div className="flex items-center gap-5 text-[11px] text-ink-500">
+          <span className="flex items-center gap-1.5">
+            <Pencil size={11} className="text-warn-500" /> Editable
+          </span>
+          <span className="flex items-center gap-1.5">
+            <Link2 size={11} className="text-success-500" /> Linked
+          </span>
+          <span className="flex items-center gap-1.5">
+            <span className="w-2.5 h-2.5 rounded bg-ink-300/40" /> Read-Only
+          </span>
         </div>
-      </Card>
+        <div className="flex items-center gap-2">
+          <Button
+            variant="secondary"
+            size="sm"
+            onClick={() => setModelSettingsOpen(true)}
+          >
+            <Settings size={12} /> Model Settings
+          </Button>
+          <Button variant="secondary" size="sm" onClick={onExportExcel}>
+            <Download size={12} /> Export to Excel
+          </Button>
+        </div>
+      </div>
 
       {/* Model controls live in a dedicated settings panel (Sam v2:
           "Move target returns, brands, and similar controls out of the
@@ -640,8 +620,8 @@ export default function OverviewTab({ projectId }: { projectId: number | string 
         <div className="flex items-start justify-between mb-2 gap-3">
           <h3 className="text-[12px] font-semibold text-ink-900 uppercase tracking-wide">Returns Summary <span className="font-normal normal-case tracking-normal text-ink-500">— hold-period investor returns</span></h3>
           {assumptionSources && Object.keys(assumptionSources.sources).length === 0 && liveMode && (
-            <div className="text-[10.5px] text-ink-500 max-w-[55%] text-right leading-relaxed">
-              Source badges appear once Fondok extracts your documents. Upload an OM and a T-12 from the Data Room to populate them.
+            <div className="text-[10.5px] text-ink-500">
+              Upload an OM + T-12 to populate source badges.
             </div>
           )}
           {assumptionSources && Object.keys(assumptionSources.sources).length > 0 && (
@@ -833,8 +813,10 @@ export default function OverviewTab({ projectId }: { projectId: number | string 
         />
       </div>
 
-      <ProformaPanel outputs={outputs} isKimptonDemo={isKimptonDemo} />
-
+      {/* ProformaPanel removed from Overview (Wave 1 UX reduction) —
+          the P&L tab carries the full USALI operating statement, so
+          a second proforma here was redundant. Sensitivity Analysis
+          stays: it's a returns-summary surface, not a P&L view. */}
       <SensitivityAnalysis outputs={outputs} isKimptonDemo={isKimptonDemo} />
 
       {/* Override panel — right-anchored drawer that slides in when an

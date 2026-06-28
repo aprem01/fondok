@@ -2,8 +2,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useParams, useRouter } from 'next/navigation';
 import {
-  UploadCloud, FolderOpen, Info, FileText, FileSpreadsheet,
-  CheckCircle2, Loader2, Circle, AlertTriangle, ArrowRight, Play,
+  UploadCloud, FileText, FileSpreadsheet,
+  CheckCircle2, Loader2, Circle, AlertTriangle, ArrowRight,
   ClipboardList, Sparkles, Wallet, Receipt, Banknote, TrendingUp, Coins, Users2,
 } from 'lucide-react';
 import { Card } from '@/components/ui/Card';
@@ -30,8 +30,6 @@ import { useEngineRun } from '@/lib/hooks/useEngineRun';
 import { useToast } from '@/components/ui/Toast';
 import { cn } from '@/lib/format';
 import EngineRunProgress from './EngineRunProgress';
-import { IntroCard } from '@/components/help/IntroCard';
-import { MetricLabel } from '@/components/help/MetricLabel';
 import { CoachMark } from '@/components/help/CoachMark';
 import { UsaliBadge } from './validation/UsaliBadge';
 import { UsaliDeviationsAccordion } from './validation/UsaliDeviationsAccordion';
@@ -465,8 +463,6 @@ export default function DataRoomTab({ projectId }: { projectId: number | string 
       .sort((a, b) => (b[1] - a[1]) || a[0].localeCompare(b[0]))
       .map(([label, n]) => `${n} ${label}`);
   }, [docs]);
-  const extracted = docs.filter((d) => d.status === 'Extracted').length;
-  const processing = docs.filter((d) => d.status === 'Processing').length;
 
   // Engine readiness — derived from live engine outputs when available,
   // otherwise the static mock progress per engine label.
@@ -706,40 +702,16 @@ export default function DataRoomTab({ projectId }: { projectId: number | string 
         />
       </CoachMark>
 
-      <IntroCard
-        dismissKey="dataroom-intro"
-        title="Data Room"
-        body={
-          <>
-            Drop deal documents — OM, T-12, monthly P&amp;Ls, STR / CoStar exports, CBRE
-            Horizons forecasts, third-party reports. The extractor reads every page and
-            structures the data into typed fields the engines consume directly. The
-            <span className="font-semibold"> Document Checklist</span> tracks coverage
-            against a full underwriting package.{' '}
-            <a
-              href="/methodology"
-              className="text-brand-700 underline hover:no-underline whitespace-nowrap"
-            >
-              How Fondok underwrites →
-            </a>
-          </>
-        }
-      />
-
-      <Card className="p-5">
-        <div className="flex items-start gap-3">
-          <FolderOpen size={20} className="text-brand-500 mt-0.5" />
-          <div className="flex-1">
-            <div className="flex items-center gap-2">
-              <h2 className="text-[15px] font-semibold text-ink-900">Data Room</h2>
-              <Info size={13} className="text-ink-400" />
-            </div>
-            <p className="text-[12.5px] text-ink-500 mt-1">
-              Upload and manage deal documents for AI-powered extraction and underwriting automation.
-              {' '}({extracted} of {checklist.length} extracted)
-            </p>
-          </div>
-          {isFullDoc && criticalCount > 0 && (
+      {/* Critical-variance / running-underwriting strip — single inline
+          row that surfaces the two cross-cutting signals without
+          consuming a full Card. The intro/header card and the
+          "Data Room" title were deleted (Wave 1 UX reduction): the
+          tab nav already labels the surface, the Document Checklist
+          carries the "X extracted of Y required" progress, and the
+          per-row pills carry per-doc status. */}
+      {((isFullDoc && criticalCount > 0) || fullRunRunning) && (
+        <div className="flex items-center justify-between gap-3 -mb-1">
+          {isFullDoc && criticalCount > 0 ? (
             <button
               onClick={goToVariance}
               className="inline-flex items-center gap-2 px-3 py-1.5 rounded-md bg-danger-50 hover:bg-danger-500 hover:text-white text-danger-700 border border-danger-500/30 transition-colors group"
@@ -750,11 +722,7 @@ export default function DataRoomTab({ projectId }: { projectId: number | string 
               </span>
               <ArrowRight size={12} />
             </button>
-          )}
-          {/* Underwriting kicks off automatically once any document
-              finishes extracting (debounced so a multi-doc upload only
-              fires one run). Each engine tab still exposes a "Re-run"
-              button in its header for manual refreshes. */}
+          ) : <span />}
           {fullRunRunning && (
             <span className="inline-flex items-center gap-2 text-[12px] text-ink-500">
               <span className="inline-block w-2 h-2 rounded-full bg-brand-500 animate-pulse" />
@@ -762,7 +730,7 @@ export default function DataRoomTab({ projectId }: { projectId: number | string 
             </span>
           )}
         </div>
-      </Card>
+      )}
 
       {/* Floating progress strip — appears bottom-right while the run-all
           chain is in flight, auto-dismisses on completion. */}
@@ -998,12 +966,11 @@ export default function DataRoomTab({ projectId }: { projectId: number | string 
 
       {docs.length > 0 && (
         <Card className="p-5">
+          {/* Documents header — count only. Per-row StatusBadge carries
+              extracted/processing state, so the duplicate header pills
+              were removed (Wave 1 UX reduction). */}
           <div className="flex items-center justify-between mb-4">
-            <div className="flex items-center gap-3">
-              <h3 className="text-[14px] font-semibold text-ink-900">Documents ({docs.length})</h3>
-              <Badge tone="green">{extracted} Extracted</Badge>
-              {processing > 0 && <Badge tone="blue">{processing} Processing</Badge>}
-            </div>
+            <h3 className="text-[14px] font-semibold text-ink-900">Documents ({docs.length})</h3>
           </div>
 
           <div className="grid grid-cols-3 gap-5">
