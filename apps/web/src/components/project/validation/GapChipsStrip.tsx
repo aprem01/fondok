@@ -8,9 +8,11 @@
  * I'd want Fondok to flag." This component is the flag.
  *
  * Horizontal, scrollable strip of severity-colored chips. Mounts at the
- * top of the Data Room and Validation tabs. Click a chip → modal with
- * the full gap detail + an "Upload this year's financials" CTA that
- * jumps to the upload zone (toast for now; wizard ships in next sprint).
+ * top of the Data Room and Validation tabs. Click a chip → anchored
+ * popover with the full gap detail + an "Upload this year's financials"
+ * CTA that jumps to the upload zone (toast for now; wizard ships in next
+ * sprint). The popover flips vertically to stay within the viewport and
+ * closes on outside-click or ESC — no backdrop overlay.
  *
  * Dismissibles persist to localStorage keyed by ``{dealId}:{gap_type}:{year}``
  * — non-calendar fiscal year deals get this affordance per the Wave 1
@@ -32,7 +34,7 @@ import {
 } from 'lucide-react';
 import { Card } from '@/components/ui/Card';
 import { Button } from '@/components/ui/Button';
-import Modal from '@/components/ui/Modal';
+import { Popover } from '@/components/help/Popover';
 import { useToast } from '@/components/ui/Toast';
 import { api, isWorkerConnected, CoverageGap, CoverageResponse } from '@/lib/api';
 import { cn } from '@/lib/format';
@@ -155,7 +157,9 @@ export function GapChipsStrip({
     error: null,
   });
   const [dismissed, setDismissed] = useState<Set<string>>(new Set());
-  const [openGap, setOpenGap] = useState<CoverageGap | null>(null);
+  // Single "open popover" id so two chips never have their popovers open
+  // at once. Keyed by the same composite the listitem uses.
+  const [openGapKey, setOpenGapKey] = useState<string | null>(null);
   const [refreshSeq, setRefreshSeq] = useState(0);
   const liveDeal = isLiveDealId(dealId);
 
@@ -346,6 +350,7 @@ export function GapChipsStrip({
           const meta = SEV_META[sev];
           const Icon = meta.Icon;
           const key = `${g.gap_type}-${g.year}-${(g.months_missing ?? []).join(',')}`;
+          const isOpen = openGapKey === key;
           return (
             <div key={key} role="listitem" className="flex-shrink-0">
               <div
@@ -356,15 +361,51 @@ export function GapChipsStrip({
                   'transition-colors',
                 )}
               >
-                <button
-                  type="button"
-                  onClick={() => setOpenGap(g)}
-                  className="inline-flex items-center gap-1.5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-500 rounded"
-                  aria-label={`${meta.label}: ${chipLabel(g)}. Click for details.`}
+                {/* Popover anchored to the chip's label button — no
+                    backdrop overlay, viewport-flips to bottom when
+                    overflowing top (Wave 1 UX refactor). */}
+                <Popover
+                  open={isOpen}
+                  onOpenChange={(next) => setOpenGapKey(next ? key : null)}
+                  side="top"
+                  align="center"
+                  maxWidthClass="max-w-[320px]"
+                  content={
+                    <GapDetail
+                      gap={g}
+                      lookbackYears={state.data?.lookback_years ?? lookbackYears}
+                      onUpload={() => {
+                        setOpenGapKey(null);
+                        if (onUploadClick) {
+                          onUploadClick(g);
+                          return;
+                        }
+                        toast(
+                          'Per-year upload wizard ships next sprint — for now, drop the missing financials into the Data Room zone.',
+                          { type: 'info', duration: 6000 },
+                        );
+                      }}
+                      onDismiss={
+                        g.dismissible
+                          ? () => {
+                              dismissGap(g);
+                              setOpenGapKey(null);
+                            }
+                          : undefined
+                      }
+                      onClose={() => setOpenGapKey(null)}
+                    />
+                  }
                 >
-                  <Icon size={11} className={meta.iconColor} aria-hidden="true" />
-                  <span className="font-medium">{chipLabel(g)}</span>
-                </button>
+                  <button
+                    type="button"
+                    className="inline-flex items-center gap-1.5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-500 rounded"
+                    aria-label={`${meta.label}: ${chipLabel(g)}. Click for details.`}
+                  >
+                    <Icon size={11} className={meta.iconColor} aria-hidden="true" />
+                    <span className="font-medium">{chipLabel(g)}</span>
+                  </button>
+                </Popover>
                 {g.dismissible && (
                   <button
                     type="button"
@@ -381,40 +422,6 @@ export function GapChipsStrip({
           );
         })}
       </div>
-
-      <Modal
-        open={!!openGap}
-        onClose={() => setOpenGap(null)}
-        title={openGap ? chipLabel(openGap) : ''}
-        maxWidth="max-w-lg"
-      >
-        {openGap && (
-          <GapDetail
-            gap={openGap}
-            lookbackYears={state.data?.lookback_years ?? lookbackYears}
-            onUpload={() => {
-              setOpenGap(null);
-              if (onUploadClick) {
-                onUploadClick(openGap);
-                return;
-              }
-              toast(
-                'Per-year upload wizard ships next sprint — for now, drop the missing financials into the Data Room zone.',
-                { type: 'info', duration: 6000 },
-              );
-            }}
-            onDismiss={
-              openGap.dismissible
-                ? () => {
-                    dismissGap(openGap);
-                    setOpenGap(null);
-                  }
-                : undefined
-            }
-            onClose={() => setOpenGap(null)}
-          />
-        )}
-      </Modal>
     </div>
   );
 }
@@ -436,40 +443,42 @@ function GapDetail({
   const meta = SEV_META[sev];
   const Icon = meta.Icon;
   return (
-    <div className="p-5 space-y-4">
-      <div className="flex items-start gap-3">
+    // Sized for the popover surface (max 320px). Tighter than the modal
+    // version it replaced but the same content density (Wave 1 UX refactor).
+    <div className="p-3 space-y-3 w-[320px]">
+      <div className="flex items-start gap-2.5">
         <div
           className={cn(
-            'w-9 h-9 rounded-md flex items-center justify-center flex-shrink-0 border',
+            'w-7 h-7 rounded-md flex items-center justify-center flex-shrink-0 border',
             meta.chip,
           )}
         >
-          <Icon size={16} className={meta.iconColor} aria-hidden="true" />
+          <Icon size={13} className={meta.iconColor} aria-hidden="true" />
         </div>
         <div className="flex-1 min-w-0">
-          <div className="flex items-center gap-2 text-[11px] uppercase tracking-wider text-ink-500 font-semibold">
+          <div className="flex items-center gap-1.5 text-[10.5px] uppercase tracking-wider text-ink-500 font-semibold">
             <span>{meta.label}</span>
             <span className="text-ink-300" aria-hidden="true">·</span>
             <span className="tabular-nums">{gap.year}</span>
             <span className="text-ink-300" aria-hidden="true">·</span>
-            <span className="font-mono text-[10.5px]">{gap.gap_type}</span>
+            <span className="font-mono text-[10px]">{gap.gap_type}</span>
           </div>
-          <p className="text-[13px] text-ink-700 mt-1.5 leading-relaxed">
+          <p className="text-[12.5px] text-ink-700 mt-1 leading-relaxed">
             {gap.message}
           </p>
         </div>
       </div>
 
       {gap.months_missing && gap.months_missing.length > 0 && (
-        <div className="rounded-md bg-bg border border-border px-3 py-2.5">
-          <div className="text-[11px] uppercase tracking-wider text-ink-500 font-semibold mb-1.5">
+        <div className="rounded-md bg-bg border border-border px-2.5 py-2">
+          <div className="text-[10.5px] uppercase tracking-wider text-ink-500 font-semibold mb-1">
             Months missing
           </div>
-          <div className="flex flex-wrap gap-1.5">
+          <div className="flex flex-wrap gap-1">
             {gap.months_missing.map((m) => (
               <span
                 key={m}
-                className="inline-flex items-center px-2 py-0.5 rounded bg-warn-50 text-warn-700 border border-warn-500/30 text-[11px] font-medium tabular-nums"
+                className="inline-flex items-center px-1.5 py-0.5 rounded bg-warn-50 text-warn-700 border border-warn-500/30 text-[10.5px] font-medium tabular-nums"
               >
                 {formatMonths([m])}
               </span>
@@ -478,11 +487,10 @@ function GapDetail({
         </div>
       )}
 
-      <div className="text-[11.5px] text-ink-500 leading-relaxed">
-        Coverage audit looked back {lookbackYears} years from today. Fondok
-        flags both sequential gaps (a year with zero P&L coverage) and
-        detail-level gaps (a year with annual coverage but no monthly
-        breakdown).
+      <div className="text-[11px] text-ink-500 leading-relaxed">
+        Coverage audit looked back {lookbackYears} years. Fondok flags both
+        sequential gaps (a year with zero P&L coverage) and detail-level
+        gaps (annual coverage but no monthly breakdown).
       </div>
 
       <div className="flex items-center justify-between gap-2 pt-2 border-t border-border">
@@ -498,13 +506,13 @@ function GapDetail({
         ) : (
           <span />
         )}
-        <div className="flex items-center gap-2">
-          <Button size="sm" variant="secondary" onClick={onClose}>
+        <div className="flex items-center gap-1.5">
+          <Button size="sm" variant="ghost" onClick={onClose}>
             Close
           </Button>
           <Button size="sm" variant="primary" onClick={onUpload}>
-            <Upload size={12} aria-hidden="true" />
-            Upload {gap.year} financials
+            <Upload size={11} aria-hidden="true" />
+            Upload {gap.year}
           </Button>
         </div>
       </div>

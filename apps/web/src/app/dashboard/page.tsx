@@ -16,7 +16,7 @@ import { fmtCurrency } from '@/lib/format';
 import { useToast } from '@/components/ui/Toast';
 import { IntroCard } from '@/components/help/IntroCard';
 import { MetricLabel } from '@/components/help/MetricLabel';
-import { AppTour } from '@/components/help/AppTour';
+import { GettingStartedSidebar } from '@/components/help/GettingStartedSidebar';
 
 type StatTone = 'default' | 'luxe';
 
@@ -67,7 +67,7 @@ export default function DashboardPage() {
   ];
   return (
     <div className="px-8 py-8 max-w-[1440px]">
-      <AppTour />
+      <GettingStartedSidebar />
       <PageHeader
         eyebrow={`Portfolio · ${dashboardStats.activeProjects} active deals`}
         title="Dashboard"

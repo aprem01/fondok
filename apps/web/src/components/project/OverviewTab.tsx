@@ -19,7 +19,7 @@ import { useDeal } from '@/lib/hooks/useDeal';
 import { useFlash } from '@/lib/hooks/useFlash';
 import { IntroCard } from '@/components/help/IntroCard';
 import { AssumptionBadge } from '@/components/help/AssumptionBadge';
-import OverrideModal from '@/components/help/OverrideModal';
+import OverridePanel from '@/components/help/OverridePanel';
 import { MetricLabel } from '@/components/help/MetricLabel';
 import { MetricHint } from '@/components/help/MetricHint';
 import { Term } from '@/components/help/Term';
@@ -138,10 +138,11 @@ export default function OverviewTab({ projectId }: { projectId: number | string 
     [overrides, dealId, liveMode, toast, refreshDeal, fullRun],
   );
 
-  // ─── Modal-based override (with mandatory justification note) ───────
+  // ─── Override flow (with mandatory justification note) ─────────────
   // Roadmap item #6 (June 2026 call). The badge-based override flow
-  // surfaces an OverrideModal that forces the analyst to record a
-  // reason. Written as the new structured shape: ``{value, note}``.
+  // surfaces an OverridePanel — right-anchored drawer (Wave 1 UX
+  // refactor replaced the centered modal) that forces the analyst to
+  // record a reason. Written as the new structured shape: ``{value, note}``.
   // Engines see it as a scalar via _normalize_override_shape on the
   // worker side, so this is fully backward-compatible with existing
   // flat-shape overrides.
@@ -823,10 +824,11 @@ export default function OverviewTab({ projectId }: { projectId: number | string 
 
       <SensitivityAnalysis outputs={outputs} isKimptonDemo={isKimptonDemo} />
 
-      {/* Override modal — opens when an AssumptionBadge's onOverride
-          callback fires (Sources strip on the Returns Summary card).
-          Roadmap item #6 from the June 2026 call. */}
-      <OverrideModal
+      {/* Override panel — right-anchored drawer that slides in when an
+          AssumptionBadge's onOverride callback fires (Sources strip on
+          the Returns Summary card). Replaces the centered OverrideModal
+          (Wave 1 UX refactor). Roadmap item #6 from the June 2026 call. */}
+      <OverridePanel
         open={overrideTarget !== null}
         fieldPath={overrideTarget?.path ?? ''}
         fieldLabel={overrideTarget?.label ?? ''}

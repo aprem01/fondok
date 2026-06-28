@@ -179,7 +179,8 @@ export default function Sidebar({
         {navItems.map(it => {
           const isActive = pathname === it.href || (it.href !== '/dashboard' && pathname.startsWith(it.href));
           const Icon = it.icon;
-          // Surface tour anchors on the two nav rows the AppTour points at.
+          // Surface tour anchors on the two nav rows the GettingStarted
+          // sidebar points its "Show me" pulse at (replaces AppTour).
           const tourAttr =
             it.href === '/methodology' ? 'methodology' :
             it.href === '/settings' ? 'settings' : undefined;

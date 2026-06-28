@@ -18,14 +18,16 @@
  *   - Filter pills: All / Pending / Sent / Answered / Dismissed.
  *   - Row: left severity stripe, line item + period, broker-ready
  *     question text in display serif, prior → current chip, kebab menu.
- *   - Inline modals on Sent / Answered / Dismissed transitions —
- *     Answered + Dismissed require a justification textarea.
+ *   - Inline expand-in-place (Wave 1 UX refactor): "Mark Answered" /
+ *     "Dismiss" expand a textarea + Save/Cancel inside the row itself.
+ *     "Mark Sent" fires immediately (no field needed). At most one row
+ *     stays expanded at a time. ESC collapses; respects reduced motion.
  *   - Answered rows show the broker's response collapsed below the
  *     question text, expandable.
  *   - Empty state per filter.
  */
 
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   AlertTriangle,
   AlertCircle,
@@ -43,7 +45,6 @@ import { Card } from '@/components/ui/Card';
 import { Button } from '@/components/ui/Button';
 import { Badge } from '@/components/ui/Badge';
 import KebabMenu from '@/components/ui/KebabMenu';
-import Modal from '@/components/ui/Modal';
 import { useToast } from '@/components/ui/Toast';
 import {
   api,
@@ -157,9 +158,12 @@ interface PanelState {
 
 type ActionKind = 'sent' | 'answered' | 'dismissed';
 
-interface PendingAction {
-  question: BrokerQuestion;
-  kind: ActionKind;
+// Inline action state — keyed by question id + kind so each row hosts
+// its own expand-in-place form. Only one inline action open at a time
+// (clicking a second collapses the first — see ``openInline``).
+interface InlineAction {
+  questionId: string;
+  kind: Extract<ActionKind, 'answered' | 'dismissed'>;
 }
 
 export function BrokerQuestionsPanel({ dealId }: { dealId: string }) {
@@ -172,7 +176,7 @@ export function BrokerQuestionsPanel({ dealId }: { dealId: string }) {
   });
   const [filter, setFilter] = useState<FilterKey>('pending');
   const [refreshing, setRefreshing] = useState(false);
-  const [pendingAction, setPendingAction] = useState<PendingAction | null>(null);
+  const [inlineAction, setInlineAction] = useState<InlineAction | null>(null);
   const [expandedAnswers, setExpandedAnswers] = useState<Set<string>>(new Set());
   const liveDeal = isLiveDealId(dealId);
 
@@ -240,40 +244,78 @@ export function BrokerQuestionsPanel({ dealId }: { dealId: string }) {
     }
   }, [dealId, liveDeal, refreshing, toast]);
 
-  const onSubmitAction = useCallback(
-    async (action: PendingAction, text: string) => {
+  const submitTransition = useCallback(
+    async (
+      question: BrokerQuestion,
+      kind: ActionKind,
+      text: string,
+    ): Promise<boolean> => {
       const body =
-        action.kind === 'sent'
+        kind === 'sent'
           ? { next_state: 'sent' as const }
-          : action.kind === 'answered'
+          : kind === 'answered'
             ? { next_state: 'answered' as const, broker_response: text }
             : { next_state: 'dismissed' as const, dismissal_reason: text };
       try {
         const updated = await api.validation.brokerQuestions.patch(
           dealId,
-          action.question.id,
+          question.id,
           body,
         );
         setState((s) => ({
           ...s,
           rows: s.rows.map((r) => (r.id === updated.id ? updated : r)),
         }));
-        setPendingAction(null);
         toast(
-          action.kind === 'sent'
+          kind === 'sent'
             ? 'Marked as sent — awaiting broker response.'
-            : action.kind === 'answered'
+            : kind === 'answered'
               ? 'Answer recorded — question moves to Answered.'
               : 'Question dismissed.',
           { type: 'success' },
         );
+        return true;
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
         toast(`Update failed: ${msg}`, { type: 'error' });
+        return false;
       }
     },
     [dealId, toast],
   );
+
+  // "Mark Sent" requires no field — fire immediately.
+  const onMarkSent = useCallback(
+    (q: BrokerQuestion) => {
+      void submitTransition(q, 'sent', '');
+    },
+    [submitTransition],
+  );
+
+  // Open the inline form for Mark Answered / Dismiss. If another row's
+  // inline form is open, the state swap collapses it automatically.
+  const openInline = useCallback(
+    (q: BrokerQuestion, kind: InlineAction['kind']) => {
+      setInlineAction({ questionId: q.id, kind });
+    },
+    [],
+  );
+
+  const closeInline = useCallback(() => setInlineAction(null), []);
+
+  // ESC collapses the inline section, matching the Override panel's
+  // keyboard contract.
+  useEffect(() => {
+    if (!inlineAction) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        e.preventDefault();
+        closeInline();
+      }
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [inlineAction, closeInline]);
 
   const onCopyQuestion = useCallback(
     (q: BrokerQuestion) => {
@@ -432,26 +474,31 @@ export function BrokerQuestionsPanel({ dealId }: { dealId: string }) {
         <EmptyState filter={filter} hasAny={state.rows.length > 0} />
       ) : (
         <div className="space-y-2.5">
-          {filteredRows.map((q) => (
-            <QuestionRow
-              key={q.id}
-              question={q}
-              expanded={expandedAnswers.has(q.id)}
-              onToggleAnswer={() => toggleAnswer(q.id)}
-              onCopyQuestion={() => onCopyQuestion(q)}
-              onMarkSent={() => setPendingAction({ question: q, kind: 'sent' })}
-              onMarkAnswered={() => setPendingAction({ question: q, kind: 'answered' })}
-              onDismiss={() => setPendingAction({ question: q, kind: 'dismissed' })}
-            />
-          ))}
+          {filteredRows.map((q) => {
+            const inlineKind =
+              inlineAction?.questionId === q.id ? inlineAction.kind : null;
+            return (
+              <QuestionRow
+                key={q.id}
+                question={q}
+                expanded={expandedAnswers.has(q.id)}
+                inlineKind={inlineKind}
+                onToggleAnswer={() => toggleAnswer(q.id)}
+                onCopyQuestion={() => onCopyQuestion(q)}
+                onMarkSent={() => onMarkSent(q)}
+                onMarkAnswered={() => openInline(q, 'answered')}
+                onDismiss={() => openInline(q, 'dismissed')}
+                onCancelInline={closeInline}
+                onSubmitInline={async (kind, text) => {
+                  const ok = await submitTransition(q, kind, text);
+                  if (ok) closeInline();
+                  return ok;
+                }}
+              />
+            );
+          })}
         </div>
       )}
-
-      <ActionModal
-        action={pendingAction}
-        onClose={() => setPendingAction(null)}
-        onSubmit={onSubmitAction}
-      />
     </Card>
   );
 }
@@ -459,19 +506,29 @@ export function BrokerQuestionsPanel({ dealId }: { dealId: string }) {
 function QuestionRow({
   question,
   expanded,
+  inlineKind,
   onToggleAnswer,
   onCopyQuestion,
   onMarkSent,
   onMarkAnswered,
   onDismiss,
+  onCancelInline,
+  onSubmitInline,
 }: {
   question: BrokerQuestion;
   expanded: boolean;
+  /** Non-null when this row's inline form is open (Wave 1 UX refactor). */
+  inlineKind: 'answered' | 'dismissed' | null;
   onToggleAnswer: () => void;
   onCopyQuestion: () => void;
   onMarkSent: () => void;
   onMarkAnswered: () => void;
   onDismiss: () => void;
+  onCancelInline: () => void;
+  onSubmitInline: (
+    kind: 'answered' | 'dismissed',
+    text: string,
+  ) => Promise<boolean>;
 }) {
   const sev = SEV_META[question.severity] ?? SEV_META.INFO;
   const stateMeta = STATE_META[question.state];
@@ -587,6 +644,15 @@ function QuestionRow({
                 {question.dismissal_reason}
               </div>
             )}
+
+            {/* Inline expand-in-place form (Wave 1 UX refactor) — replaces
+                the centered modal. Animated open via the existing
+                ``fade-in-up`` keyframe + max-height transition. */}
+            <InlineActionForm
+              kind={inlineKind}
+              onCancel={onCancelInline}
+              onSubmit={onSubmitInline}
+            />
           </div>
 
           {/* Action menu */}
@@ -677,138 +743,124 @@ function EmptyState({
   );
 }
 
-function ActionModal({
-  action,
-  onClose,
+// ─────────────────────────────────────────────────────────────────────────
+// InlineActionForm — expand-in-place answer/dismiss form.
+//
+// Linear/Figma pattern: when the user clicks "Mark Answered" or "Dismiss"
+// the row itself becomes the input surface. No second surface, no modal,
+// no popover. Save/Cancel are inline. Animation uses ``fade-in-up`` (in
+// globals.css) and respects ``prefers-reduced-motion`` via the existing
+// ``motion-reduce:animate-none`` utility.
+// ─────────────────────────────────────────────────────────────────────────
+function InlineActionForm({
+  kind,
+  onCancel,
   onSubmit,
 }: {
-  action: PendingAction | null;
-  onClose: () => void;
-  onSubmit: (action: PendingAction, text: string) => Promise<void>;
+  kind: 'answered' | 'dismissed' | null;
+  onCancel: () => void;
+  onSubmit: (
+    kind: 'answered' | 'dismissed',
+    text: string,
+  ) => Promise<boolean>;
 }) {
   const [text, setText] = useState('');
   const [submitting, setSubmitting] = useState(false);
+  const textareaRef = useRef<HTMLTextAreaElement | null>(null);
 
-  // Reset text whenever a fresh action lands.
+  // Reset whenever the row's kind flips (e.g. switched from Answered to
+  // Dismissed before submitting).
   useEffect(() => {
     setText('');
     setSubmitting(false);
-  }, [action?.question.id, action?.kind]);
+  }, [kind]);
 
-  if (!action) return null;
+  // Autofocus the textarea when the form opens. ``kind`` toggles drive
+  // the visibility, so we tie the focus to that.
+  useEffect(() => {
+    if (kind) {
+      const t = setTimeout(() => textareaRef.current?.focus(), 50);
+      return () => clearTimeout(t);
+    }
+  }, [kind]);
 
-  const config = {
-    sent: {
-      title: 'Mark question sent',
-      description:
-        'Records that this question went to the broker. The next step (Answered) requires their response.',
-      requiresText: false,
-      cta: 'Mark Sent',
-      placeholder: '',
-      icon: Send,
-    },
-    answered: {
-      title: 'Record broker response',
-      description:
-        'Paste the broker\'s exact reply. Fondok stores it with the question for the IC audit trail.',
-      requiresText: true,
-      cta: 'Save Response',
-      placeholder: 'The broker explained that the F&B drop was driven by a closed-for-renovation kitchen for 11 weeks…',
-      icon: CheckCheck,
-    },
-    dismissed: {
-      title: 'Dismiss question',
-      description:
-        'Required reason — what did the deal team conclude that makes this question moot? (Stored on the audit trail.)',
-      requiresText: true,
-      cta: 'Dismiss',
-      placeholder: 'Non-comparable period — 2024 was pre-renovation operations under a different brand.',
-      icon: XCircle,
-    },
-  }[action.kind];
+  if (!kind) return null;
+
+  const config =
+    kind === 'answered'
+      ? {
+          label: "Broker's reply",
+          placeholder:
+            "The broker explained that the F&B drop was driven by a closed-for-renovation kitchen for 11 weeks…",
+          cta: 'Save Response',
+          icon: CheckCheck,
+          variant: 'primary' as const,
+          maxLength: 4000,
+        }
+      : {
+          label: 'Reason for dismissing',
+          placeholder:
+            'Non-comparable period — 2024 was pre-renovation operations under a different brand.',
+          cta: 'Dismiss',
+          icon: XCircle,
+          variant: 'danger' as const,
+          maxLength: 2000,
+        };
+
   const Icon = config.icon;
-  const canSubmit = !config.requiresText || text.trim().length > 0;
+  const canSubmit = text.trim().length > 0 && !submitting;
 
   const handleSubmit = async () => {
-    if (!canSubmit || submitting) return;
+    if (!canSubmit) return;
     setSubmitting(true);
     try {
-      await onSubmit(action, text.trim());
+      await onSubmit(kind, text.trim());
     } finally {
       setSubmitting(false);
     }
   };
 
   return (
-    <Modal open onClose={onClose} title={config.title} maxWidth="max-w-lg">
-      <div className="p-5 space-y-4">
-        <div className="flex items-start gap-3">
-          <div className="w-9 h-9 rounded-md bg-brand-50 flex items-center justify-center flex-shrink-0">
-            <Icon size={16} className="text-brand-700" aria-hidden="true" />
-          </div>
-          <div className="flex-1 min-w-0">
-            <div className="text-[11px] uppercase tracking-wider text-ink-500 font-semibold">
-              {action.question.line_item} · {formatPeriod(action.question.period_key)}
-            </div>
-            <p className="font-serif text-[13px] text-ink-900 mt-1 leading-relaxed">
-              {action.question.question_text}
-            </p>
-          </div>
-        </div>
-        <p className="text-[12.5px] text-ink-700 leading-relaxed">
-          {config.description}
-        </p>
-        {config.requiresText && (
-          <div>
-            <label
-              htmlFor="broker-action-text"
-              className="block text-[11px] uppercase tracking-wider text-ink-500 font-semibold mb-1.5"
-            >
-              {action.kind === 'answered' ? 'Broker response' : 'Dismissal reason'}
-            </label>
-            <textarea
-              id="broker-action-text"
-              autoFocus
-              value={text}
-              onChange={(e) => setText(e.target.value)}
-              placeholder={config.placeholder}
-              rows={5}
-              className="w-full px-3 py-2 rounded-md border border-border text-[13px] leading-relaxed text-ink-900 placeholder:text-ink-400 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-500"
-              required
-              maxLength={action.kind === 'answered' ? 4000 : 2000}
-            />
-            <div className="mt-1 flex items-center justify-between text-[11px] text-ink-500">
-              <span>Required.</span>
-              <span className="tabular-nums">
-                {text.length}/{action.kind === 'answered' ? 4000 : 2000}
-              </span>
-            </div>
-          </div>
-        )}
-        <div className="flex items-center justify-end gap-2 pt-2 border-t border-border">
-          <Button size="sm" variant="ghost" onClick={onClose} disabled={submitting}>
+    <div
+      className="mt-3 p-3 rounded-md border border-brand-500/30 bg-brand-50/30 fade-in-up motion-reduce:animate-none"
+      role="group"
+      aria-label={config.label}
+    >
+      <label className="block text-[11px] uppercase tracking-wider text-ink-500 font-semibold mb-1.5">
+        {config.label}
+      </label>
+      <textarea
+        ref={textareaRef}
+        value={text}
+        onChange={(e) => setText(e.target.value)}
+        placeholder={config.placeholder}
+        rows={3}
+        disabled={submitting}
+        maxLength={config.maxLength}
+        className="w-full px-2.5 py-2 rounded-md border border-border bg-white text-[12.5px] leading-relaxed text-ink-900 placeholder:text-ink-400 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-500 focus-visible:border-brand-500 disabled:opacity-50 resize-y"
+        required
+      />
+      <div className="mt-2 flex items-center justify-between gap-2">
+        <span className="text-[11px] text-ink-500 tabular-nums">
+          {text.length}/{config.maxLength}
+        </span>
+        <div className="flex items-center gap-2">
+          <Button size="sm" variant="ghost" onClick={onCancel} disabled={submitting}>
             Cancel
           </Button>
           <Button
             size="sm"
-            variant={action.kind === 'dismissed' ? 'danger' : 'primary'}
+            variant={config.variant}
             onClick={handleSubmit}
             loading={submitting}
-            disabled={!canSubmit || submitting}
-            aria-label={config.cta}
+            disabled={!canSubmit}
           >
-            {!submitting && (
-              action.kind === 'dismissed'
-                ? <XCircle size={11} aria-hidden="true" />
-                : action.kind === 'answered'
-                  ? <CheckCheck size={11} aria-hidden="true" />
-                  : <Send size={11} aria-hidden="true" />
-            )}
+            {!submitting && <Icon size={11} aria-hidden="true" />}
             {config.cta}
           </Button>
         </div>
       </div>
-    </Modal>
+    </div>
   );
 }
 

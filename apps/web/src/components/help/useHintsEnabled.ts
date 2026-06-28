@@ -4,7 +4,7 @@
  * Global "Show contextual coach marks" preference.
  *
  * Stored under `fondok:coachmarks:disabled` so a single localStorage key
- * gates every CoachMark + AppTour render. We listen to the `storage` event
+ * gates every CoachMark + GettingStartedSidebar render. We listen to the `storage` event
  * so toggling in one tab updates every open tab — and dispatch a custom
  * event for same-tab updates because `storage` only fires cross-tab.
  */
@@ -53,8 +53,8 @@ export function useHintsEnabled(): {
   return { enabled: !disabled, setEnabled };
 }
 
-/** Synchronous read for components that need a one-shot check (e.g. AppTour
- *  before mount). Returns true if hints should render. */
+/** Synchronous read for components that need a one-shot check (e.g. the
+ *  GettingStartedSidebar before mount). Returns true if hints should render. */
 export function hintsEnabled(): boolean {
   return !readDisabled();
 }

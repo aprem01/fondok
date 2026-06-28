@@ -18,8 +18,8 @@ import { Tooltip } from './Tooltip';
  * "Override" button alongside the source label so the analyst can
  * hard-code the value with a mandatory justification note (roadmap
  * item #6 from the June 2026 call). The callback opens the
- * ``OverrideModal``; the page that owns the data is responsible for
- * the actual PATCH + re-render.
+ * ``OverridePanel`` (right-anchored drawer); the page that owns the
+ * data is responsible for the actual PATCH + re-render.
  *
  * Use inline: `Net Operating Income $4.2M <AssumptionBadge source="t12_actual"/>`
  */
