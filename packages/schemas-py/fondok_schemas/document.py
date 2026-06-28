@@ -34,6 +34,16 @@ class DocType(str, Enum):
     # HotStats-equivalent line-item P&L benchmark (POR/PAR ratios for
     # departmental margins, expense ratios, GOP margin).
     PNL_BENCHMARK = "PNL_BENCHMARK"
+    # Wave 2 P2.7 — analyst's in-house portfolio P&L benchmark
+    # (Sam's June 2026 ask: "Wants op-ratios extracted from CBRE/in-house
+    # portfolio P&Ls (not HOST defaults)."). Aggregated peer-set ratios
+    # rolled up across the analyst firm's existing hotel investments —
+    # the same chain scales / markets as the subject. Sits ABOVE the
+    # generic ``PNL_BENCHMARK`` (HostStats default) and ``CBRE_HORIZONS``
+    # in the op-ratio precedence chain — a firm's own portfolio is the
+    # most credible peer set when it covers the subject chain scale. See
+    # ``apps/worker/app/services/op_ratio_precedence.py``.
+    PORTFOLIO_PNL = "PORTFOLIO_PNL"
     PNL = "PNL"
     # Finer P&L distinctions assigned by the post-extraction
     # reclassifier based on `p_and_l_usali.period_type`. The Router

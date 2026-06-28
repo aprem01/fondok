@@ -209,6 +209,14 @@ SOURCE_DEAL_ROW = "deal_row"
 SOURCE_T12_ACTUAL = "t12_actual"
 SOURCE_CBRE_HORIZONS = "cbre_horizons"
 SOURCE_PNL_BENCHMARK = "pnl_benchmark"
+# Wave 2 P2.7 — analyst's in-house portfolio benchmark. Outranks
+# ``pnl_benchmark`` (generic HostStats default) and ``cbre_horizons``
+# (market-wide CBRE Horizons benchmark) for op-ratios because a firm's
+# own portfolio P&L is the most credible peer set for hotels they
+# already operate. Outranked only by ``t12_actual`` (subject's own
+# historical P&L) and ``analyst_override`` (explicit analyst intent).
+# See ``apps/worker/app/services/op_ratio_precedence.py``.
+SOURCE_PORTFOLIO_PNL = "portfolio_pnl"
 SOURCE_OM_COMPS = "om_comps"
 SOURCE_OM_BROKER = "om_broker"
 SOURCE_ANALYST_OVERRIDE = "analyst_override"

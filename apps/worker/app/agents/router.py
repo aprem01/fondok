@@ -65,6 +65,13 @@ Available document types (use exactly one of these tokens):
                    generators, supply pipeline, ADR/RevPAR forecasts.
 - CONTRACT       — Purchase-and-sale, franchise, management, or other
                    binding agreement.
+- PORTFOLIO_PNL  — Analyst's in-house portfolio P&L benchmark (Wave 2 P2.7).
+                   An AGGREGATED multi-hotel P&L roll-up with USALI line
+                   ratios across the FIRM's existing investments — NOT a
+                   single-property statement. Filenames typically contain
+                   "portfolio", "in-house benchmark", "peer set", "roll-up",
+                   "comp set average" (no Subject column). Distinct from
+                   PNL_BENCHMARK (HotStats-style third-party benchmark).
 - INSURANCE      — Hotel insurance records — COI / certificate of
                    insurance, property + liability policy declarations,
                    loss runs, premium schedules.
@@ -113,10 +120,10 @@ class _RouterDecision(BaseModel):
         Field(
             description=(
                 "One of: OM, T12, STR, STR_TREND, STR_SEGMENTATION, "
-                "CBRE_HORIZONS, PNL_BENCHMARK, PNL, PNL_MONTHLY, "
-                "PNL_YTD, RENT_ROLL, ROOM_MIX, MARKET_STUDY, CONTRACT, "
-                "INSURANCE, PROPERTY_TAX, CAPEX, PROPERTY_INFO, LEASES, "
-                "SURVEYS, UNKNOWN"
+                "CBRE_HORIZONS, PNL_BENCHMARK, PORTFOLIO_PNL, PNL, "
+                "PNL_MONTHLY, PNL_YTD, RENT_ROLL, ROOM_MIX, MARKET_STUDY, "
+                "CONTRACT, INSURANCE, PROPERTY_TAX, CAPEX, PROPERTY_INFO, "
+                "LEASES, SURVEYS, UNKNOWN"
             )
         ),
     ]
