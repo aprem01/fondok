@@ -209,6 +209,319 @@ def kimpton_model() -> dict[str, Any]:
                 "Comp Set Avg Cap": "6.1%",
             },
         },
+        # ────────────── Wave 2 artifacts (W3.4 memo refresh) ─────────────
+        # These feed the new IC memo sections (revenue mix, renovation
+        # plan, capex 3-bucket, op-ratio provenance, sensitivity grid,
+        # max-price, historical baseline walk, LOI appendix). Each block
+        # mirrors the relevant engine's dataclass shape so the memo
+        # template reads them straight through ``_aggregate_wave2_for_memo``.
+        "segments_by_year": [
+            {
+                "year": 1,
+                "segment_breakdown": [
+                    {
+                        "name": "transient_bar",
+                        "mix_pct": 0.40,
+                        "occupied_rooms": 14_658.0,
+                        "adr": 412.0,
+                        "channel_cost_pct": 0.02,
+                        "gross_revenue": 6_039_096,
+                        "net_revenue": 5_918_314,
+                    },
+                    {
+                        "name": "transient_ota",
+                        "mix_pct": 0.25,
+                        "occupied_rooms": 9_161.25,
+                        "adr": 365.0,
+                        "channel_cost_pct": 0.18,
+                        "gross_revenue": 3_343_856,
+                        "net_revenue": 2_741_962,
+                    },
+                    {
+                        "name": "corporate",
+                        "mix_pct": 0.20,
+                        "occupied_rooms": 7_329.0,
+                        "adr": 295.0,
+                        "channel_cost_pct": 0.05,
+                        "gross_revenue": 2_162_055,
+                        "net_revenue": 2_053_952,
+                    },
+                    {
+                        "name": "group",
+                        "mix_pct": 0.10,
+                        "occupied_rooms": 3_664.5,
+                        "adr": 248.0,
+                        "channel_cost_pct": 0.08,
+                        "gross_revenue": 908_796,
+                        "net_revenue": 836_092,
+                    },
+                    {
+                        "name": "contract",
+                        "mix_pct": 0.05,
+                        "occupied_rooms": 1_832.25,
+                        "adr": 195.0,
+                        "channel_cost_pct": 0.0,
+                        "gross_revenue": 357_289,
+                        "net_revenue": 357_289,
+                    },
+                ],
+            }
+        ],
+        "pip_displacement": {
+            "closure_strategy": "rolling",
+            "pct_rooms_offline_by_month": [
+                0.25, 0.40, 0.40, 0.35, 0.30, 0.20,
+                0.15, 0.10, 0.05, 0.0, 0.0, 0.0,
+            ],
+            "brand": "Independent",
+            "revpar_index_post_reno": 1.08,
+            "occupancy_recovery_months": 6,
+            "y1_displacement_usd": 1_180_000,
+            "y2_recovery_curve": [0.82, 0.88, 0.93, 0.97],
+        },
+        "capex_schedule": [
+            {"year": 1, "pip_usd": 4_224_000, "non_pip_usd": 603_200,
+             "roi_investment_usd": 0, "roi_noi_lift_usd": 0,
+             "total_capex_usd": 4_827_200},
+            {"year": 2, "pip_usd": 1_056_000, "non_pip_usd": 633_360,
+             "roi_investment_usd": 750_000, "roi_noi_lift_usd": 0,
+             "total_capex_usd": 2_439_360},
+            {"year": 3, "pip_usd": 0, "non_pip_usd": 665_040,
+             "roi_investment_usd": 0, "roi_noi_lift_usd": 90_000,
+             "total_capex_usd": 665_040},
+            {"year": 4, "pip_usd": 0, "non_pip_usd": 698_280,
+             "roi_investment_usd": 0, "roi_noi_lift_usd": 180_000,
+             "total_capex_usd": 698_280},
+            {"year": 5, "pip_usd": 0, "non_pip_usd": 733_200,
+             "roi_investment_usd": 0, "roi_noi_lift_usd": 180_000,
+             "total_capex_usd": 733_200},
+        ],
+        "op_ratio_provenance": {
+            "lines": [
+                {"field": "Rooms Dept Exp %",
+                 "value": 0.245, "source": "t12_actual",
+                 "document_id": "T12_FinancialStatement.xlsx"},
+                {"field": "F&B Dept Exp %",
+                 "value": 0.741, "source": "t12_actual",
+                 "document_id": "T12_FinancialStatement.xlsx"},
+                {"field": "A&G %",
+                 "value": 0.082, "source": "portfolio_pnl",
+                 "document_id": "Portfolio_2025_Lifestyle.xlsx"},
+                {"field": "Sales & Marketing %",
+                 "value": 0.061, "source": "cbre_horizons",
+                 "document_id": "CBRE_Horizons_2025_UpperUpscale.pdf"},
+                {"field": "Property Ops & Maintenance %",
+                 "value": 0.046, "source": "cbre_horizons",
+                 "document_id": "CBRE_Horizons_2025_UpperUpscale.pdf"},
+                {"field": "Utilities %",
+                 "value": 0.038, "source": "pnl_benchmark",
+                 "document_id": None},
+                {"field": "Management Fee %",
+                 "value": 0.030, "source": "analyst_override",
+                 "document_id": "Override_Note_2026_04_19.txt"},
+                {"field": "Property Tax / Key",
+                 "value": 4200.0, "source": "t12_actual",
+                 "document_id": "T12_FinancialStatement.xlsx"},
+            ],
+        },
+        "sensitivity_grid": {
+            "base_exit_cap_pct": 0.07,
+            "base_stabilized_noi": 4_705_000,
+            "target_irr": 0.15,
+            "cells": [
+                # NOI 1.15x row (top — green leaning)
+                {"exit_cap_pct": 0.06, "noi_multiplier": 1.15,
+                 "levered_irr": 0.30, "equity_multiple": 2.58,
+                 "going_in_cap_rate": 0.149, "dscr_y1": 1.80,
+                 "breaches_dscr_floor": False},
+                {"exit_cap_pct": 0.065, "noi_multiplier": 1.15,
+                 "levered_irr": 0.27, "equity_multiple": 2.40,
+                 "going_in_cap_rate": 0.149, "dscr_y1": 1.80,
+                 "breaches_dscr_floor": False},
+                {"exit_cap_pct": 0.07, "noi_multiplier": 1.15,
+                 "levered_irr": 0.245, "equity_multiple": 2.22,
+                 "going_in_cap_rate": 0.149, "dscr_y1": 1.80,
+                 "breaches_dscr_floor": False},
+                {"exit_cap_pct": 0.075, "noi_multiplier": 1.15,
+                 "levered_irr": 0.225, "equity_multiple": 2.10,
+                 "going_in_cap_rate": 0.149, "dscr_y1": 1.80,
+                 "breaches_dscr_floor": False},
+                {"exit_cap_pct": 0.08, "noi_multiplier": 1.15,
+                 "levered_irr": 0.205, "equity_multiple": 2.00,
+                 "going_in_cap_rate": 0.149, "dscr_y1": 1.80,
+                 "breaches_dscr_floor": False},
+                # NOI 1.075x row
+                {"exit_cap_pct": 0.06, "noi_multiplier": 1.075,
+                 "levered_irr": 0.265, "equity_multiple": 2.30,
+                 "going_in_cap_rate": 0.139, "dscr_y1": 1.68,
+                 "breaches_dscr_floor": False},
+                {"exit_cap_pct": 0.065, "noi_multiplier": 1.075,
+                 "levered_irr": 0.245, "equity_multiple": 2.20,
+                 "going_in_cap_rate": 0.139, "dscr_y1": 1.68,
+                 "breaches_dscr_floor": False},
+                {"exit_cap_pct": 0.07, "noi_multiplier": 1.075,
+                 "levered_irr": 0.225, "equity_multiple": 2.10,
+                 "going_in_cap_rate": 0.139, "dscr_y1": 1.68,
+                 "breaches_dscr_floor": False},
+                {"exit_cap_pct": 0.075, "noi_multiplier": 1.075,
+                 "levered_irr": 0.205, "equity_multiple": 2.00,
+                 "going_in_cap_rate": 0.139, "dscr_y1": 1.68,
+                 "breaches_dscr_floor": False},
+                {"exit_cap_pct": 0.08, "noi_multiplier": 1.075,
+                 "levered_irr": 0.185, "equity_multiple": 1.90,
+                 "going_in_cap_rate": 0.139, "dscr_y1": 1.68,
+                 "breaches_dscr_floor": False},
+                # NOI 1.0x row (base case)
+                {"exit_cap_pct": 0.06, "noi_multiplier": 1.0,
+                 "levered_irr": 0.245, "equity_multiple": 2.20,
+                 "going_in_cap_rate": 0.129, "dscr_y1": 1.57,
+                 "breaches_dscr_floor": False},
+                {"exit_cap_pct": 0.065, "noi_multiplier": 1.0,
+                 "levered_irr": 0.235, "equity_multiple": 2.15,
+                 "going_in_cap_rate": 0.129, "dscr_y1": 1.57,
+                 "breaches_dscr_floor": False},
+                {"exit_cap_pct": 0.07, "noi_multiplier": 1.0,
+                 "levered_irr": 0.2348, "equity_multiple": 2.12,
+                 "going_in_cap_rate": 0.129, "dscr_y1": 1.57,
+                 "breaches_dscr_floor": False},
+                {"exit_cap_pct": 0.075, "noi_multiplier": 1.0,
+                 "levered_irr": 0.185, "equity_multiple": 1.85,
+                 "going_in_cap_rate": 0.129, "dscr_y1": 1.57,
+                 "breaches_dscr_floor": False},
+                {"exit_cap_pct": 0.08, "noi_multiplier": 1.0,
+                 "levered_irr": 0.165, "equity_multiple": 1.75,
+                 "going_in_cap_rate": 0.129, "dscr_y1": 1.57,
+                 "breaches_dscr_floor": False},
+                # NOI 0.925x row (downside)
+                {"exit_cap_pct": 0.06, "noi_multiplier": 0.925,
+                 "levered_irr": 0.205, "equity_multiple": 1.95,
+                 "going_in_cap_rate": 0.120, "dscr_y1": 1.45,
+                 "breaches_dscr_floor": False},
+                {"exit_cap_pct": 0.065, "noi_multiplier": 0.925,
+                 "levered_irr": 0.185, "equity_multiple": 1.85,
+                 "going_in_cap_rate": 0.120, "dscr_y1": 1.45,
+                 "breaches_dscr_floor": False},
+                {"exit_cap_pct": 0.07, "noi_multiplier": 0.925,
+                 "levered_irr": 0.165, "equity_multiple": 1.75,
+                 "going_in_cap_rate": 0.120, "dscr_y1": 1.45,
+                 "breaches_dscr_floor": False},
+                {"exit_cap_pct": 0.075, "noi_multiplier": 0.925,
+                 "levered_irr": 0.140, "equity_multiple": 1.65,
+                 "going_in_cap_rate": 0.120, "dscr_y1": 1.45,
+                 "breaches_dscr_floor": False},
+                {"exit_cap_pct": 0.08, "noi_multiplier": 0.925,
+                 "levered_irr": 0.115, "equity_multiple": 1.55,
+                 "going_in_cap_rate": 0.120, "dscr_y1": 1.45,
+                 "breaches_dscr_floor": False},
+                # NOI 0.85x row (deep downside — DSCR breach)
+                {"exit_cap_pct": 0.06, "noi_multiplier": 0.85,
+                 "levered_irr": 0.165, "equity_multiple": 1.70,
+                 "going_in_cap_rate": 0.110, "dscr_y1": 0.95,
+                 "breaches_dscr_floor": True},
+                {"exit_cap_pct": 0.065, "noi_multiplier": 0.85,
+                 "levered_irr": 0.140, "equity_multiple": 1.60,
+                 "going_in_cap_rate": 0.110, "dscr_y1": 0.95,
+                 "breaches_dscr_floor": True},
+                {"exit_cap_pct": 0.07, "noi_multiplier": 0.85,
+                 "levered_irr": 0.110, "equity_multiple": 1.50,
+                 "going_in_cap_rate": 0.110, "dscr_y1": 0.95,
+                 "breaches_dscr_floor": True},
+                {"exit_cap_pct": 0.075, "noi_multiplier": 0.85,
+                 "levered_irr": 0.080, "equity_multiple": 1.35,
+                 "going_in_cap_rate": 0.110, "dscr_y1": 0.95,
+                 "breaches_dscr_floor": True},
+                {"exit_cap_pct": 0.08, "noi_multiplier": 0.85,
+                 "levered_irr": 0.050, "equity_multiple": 1.25,
+                 "going_in_cap_rate": 0.110, "dscr_y1": 0.95,
+                 "breaches_dscr_floor": True},
+            ],
+            "breakeven_exit_cap_pct": 0.0782,
+            "breakeven_noi_multiplier": 0.872,
+        },
+        "max_price": {
+            "target_irr": 0.15,
+            "target_em": 1.8,
+            "max_price_for_irr": 42_800_000,
+            "max_price_for_em": 44_100_000,
+            "binding_constraint": "irr",
+            "final_price_per_key": 324_242,
+            "iters": 34,
+        },
+        "historical_baseline": {
+            "look_back_years": 5,
+            "coverage_pct": 0.6,
+            "gaps": [2020],
+            "years": [
+                {"fiscal_year": 2022,
+                 "occupancy": 0.682, "adr": 348.0, "revpar": 237.0,
+                 "rooms_revenue": 11_420_000, "fnb_revenue": 2_980_000,
+                 "other_revenue": 640_000, "total_revenue": 15_040_000,
+                 "gop": 6_180_000, "noi": 4_140_000,
+                 "source_document_ids": ["Monthly_PL_2022.xlsx"]},
+                {"fiscal_year": 2023,
+                 "occupancy": 0.735, "adr": 372.0, "revpar": 273.0,
+                 "rooms_revenue": 13_140_000, "fnb_revenue": 3_140_000,
+                 "other_revenue": 690_000, "total_revenue": 16_970_000,
+                 "gop": 6_950_000, "noi": 4_650_000,
+                 "source_document_ids": ["Monthly_PL_2023.xlsx"]},
+                {"fiscal_year": 2024,
+                 "occupancy": 0.762, "adr": 385.0, "revpar": 294.0,
+                 "rooms_revenue": 14_180_000, "fnb_revenue": 3_240_000,
+                 "other_revenue": 720_000, "total_revenue": 18_140_000,
+                 "gop": 7_280_000, "noi": 4_181_000,
+                 "source_document_ids": ["T12_FinancialStatement.xlsx"]},
+            ],
+            "walk": [
+                {"line": "rooms_revenue", "year": 2023,
+                 "value": 13_140_000, "yoy_abs": 1_720_000, "yoy_pct": 0.1506},
+                {"line": "noi", "year": 2023,
+                 "value": 4_650_000, "yoy_abs": 510_000, "yoy_pct": 0.1232},
+                {"line": "total_revenue", "year": 2024,
+                 "value": 18_140_000, "yoy_abs": 1_170_000, "yoy_pct": 0.0689},
+                {"line": "noi", "year": 2024,
+                 "value": 4_181_000, "yoy_abs": -469_000, "yoy_pct": -0.1009},
+            ],
+        },
+        "loi_draft": {
+            "asset_name": "Kimpton Angler Hotel",
+            "asset_address": "660 Washington Ave, Miami Beach, FL 33139",
+            "rooms": 132,
+            "proposed_price": 42_800_000,
+            "proposed_price_per_key": 324_242,
+            "binding_constraint": "irr",
+            "rendered_markdown": (
+                "# LETTER OF INTENT\n\n"
+                "**To:** [Seller TBD]\n"
+                "**From:** [Buyer Entity TBD]\n"
+                "**Re:** Proposed Acquisition of Kimpton Angler Hotel\n"
+                "**Property Address:** 660 Washington Ave, Miami Beach, FL 33139\n\n"
+                "## 1. Property\n\n"
+                "The Property consists of the Kimpton Angler Hotel comprising "
+                "132 guest rooms, together with all related fixtures, FF&E, "
+                "intangibles, operating licenses, and books and records.\n\n"
+                "## 2. Purchase Price\n\n"
+                "Buyer offers a purchase price of **$42,800,000** "
+                "($324,242 per key), payable in cash at closing.\n\n"
+                "## 3. Earnest Money\n\n"
+                "Within three (3) business days of mutual execution of a "
+                "Purchase and Sale Agreement, Buyer will deposit earnest "
+                "money equal to 1.0% of the purchase price ($428,000).\n\n"
+                "## 4. Due Diligence\n\n"
+                "Buyer will have 30 days from PA execution to conduct "
+                "customary due diligence.\n\n"
+                "## 5. Closing\n\n"
+                "Closing shall occur on or before 60 days following PA "
+                "execution, subject to satisfaction of all closing "
+                "conditions.\n\n"
+                "## 6. Contingencies\n\n"
+                "Buyer's obligation to close is contingent upon:\n"
+                "   - Satisfactory Phase I ESA\n"
+                "   - Satisfactory PIP estimate\n"
+                "   - Title commitment review\n\n"
+                "## 7. Validity\n\n"
+                "This offer is valid until **10 business days from issuance**."
+            ),
+        },
     }
 
 
