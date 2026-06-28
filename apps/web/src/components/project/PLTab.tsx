@@ -87,6 +87,20 @@ interface FBYearWorker {
   total_revenue: number;
 }
 
+// Wave 2 P2.1 — per-segment per-year breakdown (mirrors
+// fondok_schemas.underwriting.SegmentYear). Empty array on legacy
+// (non-segmented) deals; populated when the engine ran the 5-segment
+// path with an STR_SEGMENTATION extraction or analyst overrides.
+interface SegmentYearWorker {
+  name: 'transient_bar' | 'transient_ota' | 'corporate' | 'group' | 'contract';
+  mix_pct: number;
+  occupied_rooms: number;
+  adr: number;
+  channel_cost_pct: number;
+  gross_revenue: number;
+  net_revenue: number;
+}
+
 // Revenue engine projection year — mirrors fondok_schemas.RevenueProjectionYear.
 // Occupancy is a 0..1 ratio; ADR / RevPAR are dollars (not thousands).
 interface RevenueYearWorker {
@@ -98,6 +112,12 @@ interface RevenueYearWorker {
   fb_revenue: number;
   other_revenue: number;
   total_revenue: number;
+  // Wave 2 P2.1 — gross of channel cost (== rooms_revenue when no
+  // segments). `channel_cost_total` lets reviewers see OTA drag at
+  // a glance. `segment_breakdown` powers the per-segment sub-section.
+  segment_breakdown?: SegmentYearWorker[];
+  gross_rooms_revenue?: number;
+  channel_cost_total?: number;
 }
 
 type RowKind = 'group' | 'subtotal' | 'detail' | 'total';
@@ -513,6 +533,7 @@ export default function PLTab({ projectId }: { projectId: number | string }) {
             y1GOP={y1GOP}
             y1RevPAR={y1RevPAR}
             margin={margin}
+            revenueYears={revenueYears ?? null}
           />
         )}
         {tab === 'Historicals' && (
@@ -1108,6 +1129,7 @@ function PLSummary({
   y1GOP,
   y1RevPAR,
   margin,
+  revenueYears,
 }: {
   stmt: StatementResult;
   sourceLabel: 'worker' | 'mock';
@@ -1120,6 +1142,7 @@ function PLSummary({
   y1GOP: number;
   y1RevPAR: number;
   margin: number;
+  revenueYears: RevenueYearWorker[] | null;
 }) {
   const hasRevPAR = y1RevPAR > 0;
   return (
@@ -1173,6 +1196,7 @@ function PLSummary({
           sourceLabel={sourceLabel}
           sourcedFromT12={sourcedFromT12}
         />
+        <RevenueSegmentBreakdown revenueYears={revenueYears} />
       </Card>
 
       {/* Revenue Composition */}
@@ -1332,6 +1356,258 @@ function OperatingStatementBare({
       </div>
       <div className="text-[10.5px] text-ink-400 mt-2">Source: {sourceLabel === 'worker' ? 'Live engine output' : 'Demo fixture'}</div>
     </>
+  );
+}
+
+// Wave 2 P2.1 — Revenue Segmentation breakdown.
+//
+// Renders a Year-1 per-segment table directly under the Operating
+// Statement when the worker's revenue engine output carries a
+// non-empty `segment_breakdown`. Legacy single-line deals get no
+// new chrome — the component returns null and the layout is
+// unchanged.
+//
+// Per the no-modals directive (wave1-no-modals): the mix-pct cells
+// are inline edit-in-place; clicking the value swaps in a numeric
+// input that commits on blur / Enter. Hooking the commit handler
+// into the persisted overrides PATCH is a follow-up — the
+// componentry is here so the wire-up is a one-line addition.
+const SEGMENT_LABEL: Record<SegmentYearWorker['name'], string> = {
+  transient_bar: 'BAR (Direct + Brand.com)',
+  transient_ota: 'OTA / Opaque',
+  corporate: 'Corporate / LRA',
+  group: 'Group / Conference',
+  contract: 'Contract / Crew',
+};
+
+const SEGMENT_SHORT_LABEL: Record<SegmentYearWorker['name'], string> = {
+  transient_bar: 'BAR',
+  transient_ota: 'OTA',
+  corporate: 'Corp',
+  group: 'Group',
+  contract: 'Contract',
+};
+
+function RevenueSegmentBreakdown({
+  revenueYears,
+}: {
+  revenueYears: RevenueYearWorker[] | null;
+}) {
+  // Y1 segmentation is the institutional view IC reviewers expect.
+  const y1 = revenueYears?.[0];
+  const breakdown = y1?.segment_breakdown ?? [];
+  if (!breakdown || breakdown.length === 0) return null;
+
+  const totalGross = breakdown.reduce((s, r) => s + r.gross_revenue, 0);
+  const totalChannel = breakdown.reduce(
+    (s, r) => s + (r.gross_revenue - r.net_revenue),
+    0,
+  );
+  const totalNet = breakdown.reduce((s, r) => s + r.net_revenue, 0);
+
+  const otaSegment = breakdown.find((b) => b.name === 'transient_ota');
+  const otaMix = otaSegment?.mix_pct ?? 0;
+  const highOtaDependency = otaMix >= 0.35;
+
+  const fmtDollars = (v: number) =>
+    `$${Math.round(v).toLocaleString('en-US')}`;
+
+  return (
+    <div className="mt-5 pt-4 border-t border-border">
+      <div className="flex items-center justify-between mb-3">
+        <div className="flex items-center gap-2">
+          <h4 className="text-[12.5px] font-semibold text-ink-900">
+            Year-1 Rooms Revenue by Segment
+          </h4>
+          <span
+            className="inline-flex items-center px-1.5 py-0.5 rounded bg-ink-100 text-ink-600 text-[9.5px] font-medium uppercase tracking-wide"
+            title="Default segment mix seeded from STR Segmentation report; override any mix % to drive the model."
+          >
+            STR Segmentation
+          </span>
+          {highOtaDependency && (
+            <span
+              className="inline-flex items-center gap-1 px-2 py-0.5 rounded bg-warn-50 text-warn-700 text-[10px] font-medium border border-warn-200"
+              title="OTA share at or above 35% signals high distribution-cost exposure; institutional reviewers expect a discussion of brand.com migration strategy."
+            >
+              <span className="w-1.5 h-1.5 rounded-full bg-warn-500" />
+              High OTA dependency
+              <a
+                href="#methodology"
+                className="ml-1 underline decoration-warn-300 hover:decoration-warn-700"
+                onClick={(e) => e.preventDefault()}
+              >
+                Learn more
+              </a>
+            </span>
+          )}
+        </div>
+        <span className="text-[10.5px] text-ink-500">
+          Rooms revenue is reported NET of channel cost
+        </span>
+      </div>
+      <div className="overflow-x-auto">
+        <table className="w-full text-[11.5px] min-w-[600px]">
+          <thead>
+            <tr className="text-ink-500 text-[10px] border-b border-border">
+              <th className="text-left font-medium pb-1.5 w-40">Segment</th>
+              <th className="text-right font-medium pb-1.5">Mix</th>
+              <th className="text-right font-medium pb-1.5">ADR</th>
+              <th className="text-right font-medium pb-1.5">Net ADR</th>
+              <th className="text-right font-medium pb-1.5">Gross Revenue</th>
+              <th className="text-right font-medium pb-1.5">Channel Cost</th>
+              <th className="text-right font-medium pb-1.5">Net Revenue</th>
+            </tr>
+          </thead>
+          <tbody>
+            {breakdown.map((seg) => {
+              const channelCost = seg.gross_revenue - seg.net_revenue;
+              const netAdr = seg.adr * (1 - seg.channel_cost_pct);
+              const isOta = seg.name === 'transient_ota';
+              const warnTone = seg.channel_cost_pct >= 0.15;
+              const isEmpty = seg.mix_pct <= 0;
+              return (
+                <tr
+                  key={seg.name}
+                  className={cn(
+                    'border-b border-border/40',
+                    warnTone && 'bg-warn-50/50',
+                    isEmpty && 'text-ink-400',
+                  )}
+                >
+                  <td className="py-1.5">
+                    <span className="inline-flex items-center gap-1.5">
+                      <span className="font-medium text-ink-900">
+                        {SEGMENT_SHORT_LABEL[seg.name]}
+                      </span>
+                      <span className="text-[10px] text-ink-500">
+                        {SEGMENT_LABEL[seg.name]}
+                      </span>
+                      {isOta && warnTone && (
+                        <span
+                          className="text-warn-600 text-[11px]"
+                          aria-label="High channel cost"
+                        >
+                          ⚠
+                        </span>
+                      )}
+                    </span>
+                  </td>
+                  <td className="text-right tabular-nums py-1.5">
+                    <SegmentMixCell mixPct={seg.mix_pct} />
+                  </td>
+                  <td className="text-right tabular-nums">
+                    {isEmpty ? '—' : `$${Math.round(seg.adr).toLocaleString()}`}
+                  </td>
+                  <td className="text-right tabular-nums">
+                    {isEmpty ? '—' : `$${Math.round(netAdr).toLocaleString()}`}
+                  </td>
+                  <td className="text-right tabular-nums">
+                    {isEmpty ? '—' : fmtDollars(seg.gross_revenue)}
+                  </td>
+                  <td
+                    className={cn(
+                      'text-right tabular-nums',
+                      warnTone && 'text-warn-700 font-medium',
+                    )}
+                  >
+                    {isEmpty ? '—' : fmtDollars(channelCost)}
+                  </td>
+                  <td className="text-right tabular-nums font-medium text-ink-900">
+                    {isEmpty ? '—' : fmtDollars(seg.net_revenue)}
+                  </td>
+                </tr>
+              );
+            })}
+            <tr className="border-t-2 border-border bg-brand-50/40">
+              <td className="py-2 font-semibold text-ink-900">Total</td>
+              <td className="text-right tabular-nums py-2 font-semibold">
+                100%
+              </td>
+              <td />
+              <td />
+              <td className="text-right tabular-nums py-2 font-semibold">
+                {fmtDollars(totalGross)}
+              </td>
+              <td className="text-right tabular-nums py-2 font-semibold text-warn-700">
+                {fmtDollars(totalChannel)}
+              </td>
+              <td className="text-right tabular-nums py-2 font-semibold">
+                {fmtDollars(totalNet)}
+              </td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+      <div className="mt-3 text-[10.5px] text-ink-500 leading-relaxed">
+        • Net ADR = Gross ADR × (1 − channel cost %). The canonical
+        rooms-revenue line above is the sum of per-segment net revenue
+        — distribution drag is never double-counted downstream.
+        {totalChannel > 0 && (
+          <>
+            {' '}Channel cost drag this year:{' '}
+            <span className="font-medium text-ink-900">
+              {fmtDollars(totalChannel)}
+            </span>{' '}
+            (
+            {totalGross > 0
+              ? ((totalChannel / totalGross) * 100).toFixed(1)
+              : '0.0'}
+            % of gross).
+          </>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// Inline edit-in-place mix percentage. Per the no-modals directive:
+// clicking the cell swaps in a small numeric input that commits on
+// blur / Enter, no dialog opens. The commit handler is a stub today —
+// wiring it through to PATCH /deals/{id} field_overrides is a 1-line
+// addition once the analyst-override flow has a hook for non-scalar
+// segment paths.
+function SegmentMixCell({ mixPct }: { mixPct: number }) {
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState((mixPct * 100).toFixed(1));
+  useEffect(() => {
+    setDraft((mixPct * 100).toFixed(1));
+  }, [mixPct]);
+  const commit = () => {
+    setEditing(false);
+    // TODO(wave2-p2.1): PATCH /deals/{id} field_overrides with
+    // {`segments.${name}.mix_pct`: parsed/100}. Stub today — the
+    // worker-side override-routing already accepts this path family
+    // (see `_OVERRIDE_SEGMENT_KEYS` in engine_runner.py).
+  };
+  if (editing) {
+    return (
+      <input
+        type="number"
+        step="0.1"
+        min="0"
+        max="100"
+        autoFocus
+        value={draft}
+        onChange={(e) => setDraft(e.target.value)}
+        onBlur={commit}
+        onKeyDown={(e) => {
+          if (e.key === 'Enter') commit();
+          if (e.key === 'Escape') setEditing(false);
+        }}
+        className="w-14 px-1 py-0 text-right text-[11px] border border-brand-400 rounded tabular-nums"
+      />
+    );
+  }
+  return (
+    <button
+      type="button"
+      onClick={() => setEditing(true)}
+      className="hover:bg-brand-50 px-1 rounded text-right tabular-nums"
+      title="Click to override mix %"
+    >
+      {(mixPct * 100).toFixed(1)}%
+    </button>
   );
 }
 

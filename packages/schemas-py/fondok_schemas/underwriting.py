@@ -9,9 +9,83 @@ from __future__ import annotations
 from typing import Annotated
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from .financial import ModelAssumptions, USALIFinancials
+
+
+# ─────────────── Revenue Segmentation (Wave 2 P2.1) ───────────────
+#
+# Institutional revenue model splits rooms revenue into five demand
+# segments — transient (BAR + OTA), corporate, group, contract — each
+# with its own ADR, mix share, and channel-cost percentage (commissions
+# / OTA fees / TMC fees / attrition). Aggregating gross_revenue - channel
+# cost yields the canonical `rooms_revenue` the downstream P&L / Returns
+# engines consume.
+#
+# When ``RevenueEngineInput.segments`` is empty the engine runs the
+# legacy single-line path (occupied × ADR) unchanged. Every existing
+# test continues to pass — segmentation is purely additive.
+
+# Allowed segment ids — keep in lockstep with the engine defaults
+# tabled in `apps/worker/app/services/engine_runner.py`.
+ALLOWED_SEGMENT_NAMES: frozenset[str] = frozenset({
+    "transient_bar",
+    "transient_ota",
+    "corporate",
+    "group",
+    "contract",
+})
+
+
+class RevenueSegment(BaseModel):
+    """One demand segment in the institutional revenue model.
+
+    ``mix_pct`` is the share of OCCUPIED rooms in this segment (not of
+    available rooms). ``channel_cost_pct`` captures OTA commissions /
+    TMC fees / group attrition as a percentage of gross segment revenue;
+    the engine deducts it before reporting `rooms_revenue` so the canonical
+    revenue line is net of distribution cost.
+
+    ``adr_growth`` overrides the engine-level `adr_growth` for this
+    segment only — useful when, for example, OTA pricing is expected
+    to grow more slowly than corporate due to channel discipline.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    name: Annotated[str, Field(min_length=1, max_length=40)]
+    mix_pct: Annotated[float, Field(ge=0.0, le=1.0)]
+    adr: Annotated[float, Field(ge=0.0)]
+    channel_cost_pct: Annotated[float, Field(ge=0.0, le=0.50)] = 0.0
+    adr_growth: Annotated[float, Field(ge=-0.50, le=0.50)] | None = None
+
+    @model_validator(mode="after")
+    def _check_name_in_allowed(self) -> "RevenueSegment":
+        if self.name not in ALLOWED_SEGMENT_NAMES:
+            raise ValueError(
+                f"segment name {self.name!r} not in allowed set: "
+                f"{sorted(ALLOWED_SEGMENT_NAMES)}"
+            )
+        return self
+
+
+class SegmentYear(BaseModel):
+    """Per-segment per-year output emitted alongside the projection."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    name: str
+    mix_pct: Annotated[float, Field(ge=0.0, le=1.0)]
+    occupied_rooms: Annotated[float, Field(ge=0.0)]
+    # ``adr`` here is the segment's effective ADR AFTER growth and Y1
+    # displacement — i.e. the per-year ADR the gross revenue was
+    # computed at. Audit-grade: lets a reviewer back-compute every
+    # segment's gross_revenue without re-running the engine.
+    adr: Annotated[float, Field(ge=0.0)]
+    channel_cost_pct: Annotated[float, Field(ge=0.0, le=0.50)]
+    gross_revenue: Annotated[float, Field(ge=0.0)]
+    net_revenue: Annotated[float, Field(ge=0.0)]
 
 
 # ─────────────── Investment Engine ───────────────
@@ -82,6 +156,28 @@ class RevenueEngineInput(BaseModel):
     y1_occupancy_displacement_pct: Annotated[float, Field(ge=0.0, le=0.50)] = 0.0
     y1_adr_displacement_pct: Annotated[float, Field(ge=0.0, le=0.50)] = 0.0
 
+    # Wave 2 P2.1 — institutional revenue segmentation. Empty list (the
+    # default) preserves the legacy single-line path: occupied × ADR with
+    # no channel cost. Populated, the engine runs the five-segment model
+    # — see ``RevenueSegment`` and ``apps/worker/app/engines/revenue.py``.
+    segments: list[RevenueSegment] = Field(default_factory=list)
+
+    @model_validator(mode="after")
+    def _check_segment_mix_sums_to_one(self) -> "RevenueEngineInput":
+        if not self.segments:
+            return self
+        total = sum(seg.mix_pct for seg in self.segments)
+        # 0.1% tolerance covers analyst rounding (e.g. 0.45 + 0.30 +
+        # 0.15 + 0.10 = 1.00 exactly; 0.451 + 0.30 + 0.149 + 0.10 also
+        # passes). Tighter than that and we'd reject defensible analyst
+        # inputs; looser and we'd accept a silently broken mix that
+        # mis-scales rooms revenue by several percent.
+        if abs(total - 1.0) > 0.001:
+            raise ValueError(
+                f"segment mix_pct must sum to 1.0 (±0.001); got {total:.6f}"
+            )
+        return self
+
 
 class RevenueProjectionYear(BaseModel):
     model_config = ConfigDict(extra="forbid")
@@ -96,6 +192,16 @@ class RevenueProjectionYear(BaseModel):
     resort_fees: Annotated[float, Field(ge=0)] = 0.0
     other_revenue: Annotated[float, Field(ge=0)] = 0.0
     total_revenue: Annotated[float, Field(ge=0)]
+    # Wave 2 P2.1 — per-segment breakdown for this year. Empty on legacy
+    # single-line deals so the UI hides the segmentation sub-section.
+    segment_breakdown: list[SegmentYear] = Field(default_factory=list)
+    # GROSS rooms revenue (before channel cost). When `segment_breakdown`
+    # is empty, equals `rooms_revenue`; when populated, equals the sum of
+    # per-segment gross_revenue. The IC memo cites both numbers so OTA
+    # commission drag is visible side-by-side.
+    gross_rooms_revenue: Annotated[float, Field(ge=0)] = 0.0
+    # Aggregate channel cost = gross_rooms_revenue - rooms_revenue.
+    channel_cost_total: Annotated[float, Field(ge=0)] = 0.0
 
 
 class RevenueEngineOutput(BaseModel):

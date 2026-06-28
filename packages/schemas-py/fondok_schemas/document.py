@@ -21,6 +21,13 @@ class DocType(str, Enum):
     # routing rules clean — the Market tab and forward-projection
     # engine read the trend variant.
     STR_TREND = "STR_TREND"
+    # STR Segmentation report (Wave 2 P2.1) — per-segment demand share
+    # (transient vs. group; sometimes channel-split into Direct / OTA /
+    # Brand.com / Voice). Feeds the institutional revenue model so
+    # rooms_revenue can be projected as Σ five segments × channel-cost
+    # NET contribution margin. Distinct from STR / STR_TREND, which only
+    # carry property-level Occ/ADR/RevPAR.
+    STR_SEGMENTATION = "STR_SEGMENTATION"
     # CBRE Horizons 5-year ADR/RevPAR forecast by submarket and
     # chain scale; feeds the forward-projection engine.
     CBRE_HORIZONS = "CBRE_HORIZONS"
