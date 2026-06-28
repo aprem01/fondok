@@ -927,3 +927,670 @@ async def refresh_broker_questions(
         {"deal": str(deal_id), "tenant": str(tenant_id)},
     )
     return [_row_to_broker_question(r._mapping) for r in rows.fetchall()]
+
+
+# ════════════════════════════════════════════════════════════════════
+#                   Q&A re-ingestion loop (Wave 1 #5)
+# ════════════════════════════════════════════════════════════════════
+#
+# Three endpoints:
+#
+#   POST   /{deal_id}/broker_responses                — submit broker
+#          reply + run the QA Resolver agent.
+#   GET    /{deal_id}/qa_history                      — list QA pairs.
+#   PATCH  /{deal_id}/broker_responses/{qa_pair_id}/apply
+#                                                     — analyst confirms
+#          which proposed overrides land in ``deals.field_overrides``.
+#
+# Trust model (Wave 1 decision — never deviate): the analyst confirms
+# every override. The PATCH endpoint NEVER auto-triggers engine runs —
+# the analyst hits "Run Model" themselves on the next page so the
+# applied overrides flow through the existing engine pipeline.
+
+
+# ────────────────────────── response shapes ─────────────────────────
+
+
+class ProposedOverrideOut(BaseModel):
+    """One proposed engine-input override emitted by the QA Resolver."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    field_path: str
+    value: float | str
+    rationale: str
+    confidence: Literal["high", "medium", "low"]
+
+
+class BrokerQAPairOut(BaseModel):
+    """Persisted Q&A round-trip row — the shape the UI renders + filters on."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    id: UUID
+    deal_id: UUID
+    tenant_id: UUID
+    broker_question_id: UUID
+    analyst_question: str
+    broker_response: str
+    resolver_verdict: Literal[
+        "resolved", "partially_resolved", "still_concerning"
+    ] | None = None
+    resolver_summary: str | None = None
+    proposed_overrides: list[ProposedOverrideOut] = Field(default_factory=list)
+    applied_overrides: list[ProposedOverrideOut] | None = None
+    audit_note: str | None = None
+    created_at: datetime
+    updated_at: datetime
+
+
+class SubmitBrokerResponseBody(BaseModel):
+    """POST body for ``submit_broker_response``.
+
+    ``broker_question_id`` must reference an open question on this deal.
+    ``broker_response`` is the raw paste from the analyst — we never edit
+    it; the agent reads it verbatim.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    broker_question_id: UUID
+    broker_response: str = Field(min_length=1, max_length=8000)
+
+
+class ApplyOverridesBody(BaseModel):
+    """PATCH body for ``apply_proposed_overrides``.
+
+    ``override_indexes_to_apply`` is the analyst's selection from the
+    persisted ``proposed_overrides`` list (0-indexed). Sending an empty
+    list is the explicit "skip all" choice — the row's
+    ``applied_overrides`` flips from ``None`` (pending decision) to
+    ``[]`` (analyst reviewed + skipped) so the UI shows the resolved
+    state instead of an indefinite "needs decision" badge.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    override_indexes_to_apply: list[int] = Field(default_factory=list)
+
+
+# ──────────────────────────── row helpers ────────────────────────────
+
+
+_BROKER_QA_COLUMNS = (
+    "id, deal_id, tenant_id, broker_question_id, analyst_question, "
+    "broker_response, resolver_verdict, resolver_summary, "
+    "proposed_overrides, applied_overrides, audit_note, "
+    "created_at, updated_at"
+)
+
+
+def _coerce_json_blob(raw: Any) -> Any:
+    """Parse a JSON blob that may be a Python object (Postgres) or string (SQLite).
+
+    Returns ``None`` on bad input — callers default to the empty case.
+    """
+    if raw is None:
+        return None
+    if isinstance(raw, (dict, list)):
+        return raw
+    if isinstance(raw, str):
+        try:
+            return json.loads(raw)
+        except json.JSONDecodeError:
+            return None
+    return None
+
+
+def _coerce_overrides_list(raw: Any) -> list[ProposedOverrideOut]:
+    """Normalize a stored proposed/applied overrides blob to the response shape."""
+    parsed = _coerce_json_blob(raw)
+    if not isinstance(parsed, list):
+        return []
+    out: list[ProposedOverrideOut] = []
+    for item in parsed:
+        if not isinstance(item, dict):
+            continue
+        try:
+            out.append(ProposedOverrideOut.model_validate(item))
+        except Exception:  # noqa: BLE001 - best-effort, defensive
+            continue
+    return out
+
+
+def _row_to_qa_pair(row_mapping: Any) -> BrokerQAPairOut:
+    """SQL row → response shape (SQLite + Postgres tolerant)."""
+    applied_raw = row_mapping.get("applied_overrides")
+    applied = (
+        _coerce_overrides_list(applied_raw) if applied_raw is not None else None
+    )
+    return BrokerQAPairOut(
+        id=UUID(str(row_mapping["id"])),
+        deal_id=UUID(str(row_mapping["deal_id"])),
+        tenant_id=UUID(str(row_mapping["tenant_id"])),
+        broker_question_id=UUID(str(row_mapping["broker_question_id"])),
+        analyst_question=row_mapping["analyst_question"],
+        broker_response=row_mapping["broker_response"],
+        resolver_verdict=row_mapping.get("resolver_verdict"),
+        resolver_summary=row_mapping.get("resolver_summary"),
+        proposed_overrides=_coerce_overrides_list(
+            row_mapping.get("proposed_overrides")
+        ),
+        applied_overrides=applied,
+        audit_note=row_mapping.get("audit_note"),
+        created_at=_coerce_dt(row_mapping["created_at"]),
+        updated_at=_coerce_dt(row_mapping["updated_at"]),
+    )
+
+
+def _serialize_overrides_for_db(
+    overrides: list[Any], *, is_sqlite: bool
+) -> Any:
+    """Serialize an overrides list for the dialect.
+
+    Postgres takes a parsed list directly when bound through the JSONB
+    cast in the INSERT/UPDATE statement; SQLite stores TEXT, so we
+    json.dumps. ``overrides`` may be ProposedOverride pydantic models or
+    plain dicts.
+    """
+    payload = []
+    for o in overrides:
+        if hasattr(o, "model_dump"):
+            payload.append(o.model_dump())
+        elif isinstance(o, dict):
+            payload.append(o)
+    return json.dumps(payload) if is_sqlite else payload
+
+
+# ─────────────────── endpoints ────────────────────
+
+
+@router.post(
+    "/{deal_id}/broker_responses",
+    response_model=BrokerQAPairOut,
+    status_code=status.HTTP_201_CREATED,
+)
+async def submit_broker_response(
+    deal_id: UUID,
+    body: SubmitBrokerResponseBody,
+    session: Annotated[AsyncSession, Depends(get_session)],
+    tenant_id: Annotated[UUID, Depends(get_tenant_id)],
+) -> BrokerQAPairOut:
+    """Submit a broker reply + run the QA Resolver agent.
+
+    Pipeline:
+
+    1. Verify the question exists and is on this tenant + deal.
+    2. Snapshot the question text + supporting variance data.
+    3. Load the deal's CURRENT engine assumptions so the agent can
+       avoid restating overrides that are already in place.
+    4. Run the QA Resolver (Sonnet 4.6, allow-listed override paths,
+       per-deal budget guard).
+    5. Persist the resulting row with verdict + summary + proposed
+       overrides + audit_note (``applied_overrides`` stays NULL).
+    6. Flip the broker_question state to ``answered`` AND copy the
+       raw reply onto the question row (mirrors the existing
+       ``broker_questions PATCH`` semantics — keeps the question list
+       single source of truth for "did the broker reply yet?").
+    """
+    await _assert_deal_in_tenant(session, deal_id=deal_id, tenant_id=tenant_id)
+
+    # 1. Verify the question exists + belongs to this tenant + deal.
+    qrow = (
+        await session.execute(
+            text(
+                f"""
+                SELECT {_BROKER_QUESTION_COLUMNS}
+                  FROM broker_questions
+                 WHERE id = :id
+                   AND deal_id = :deal
+                   AND tenant_id = :tenant
+                """
+            ),
+            {
+                "id": str(body.broker_question_id),
+                "deal": str(deal_id),
+                "tenant": str(tenant_id),
+            },
+        )
+    ).first()
+    if qrow is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"broker question {body.broker_question_id} not found",
+        )
+
+    qmap = qrow._mapping
+    current_state = qmap["state"]
+    # 'pending' is also accepted because the analyst pasting a reply
+    # implicitly marks the question as both sent + answered in one move.
+    if current_state in {"dismissed"}:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=(
+                f"cannot submit response: question state is "
+                f"{current_state!r} (terminal)"
+            ),
+        )
+
+    # 2. Snapshot the question + supporting data.
+    analyst_question = qmap["question_text"]
+    supporting_data = {
+        "line_item": qmap["line_item"],
+        "period_key": qmap["period_key"],
+        "variance_pct": float(qmap["variance_pct"]),
+        "actual_prior": (
+            float(qmap["actual_prior"])
+            if qmap.get("actual_prior") is not None
+            else None
+        ),
+        "actual_current": (
+            float(qmap["actual_current"])
+            if qmap.get("actual_current") is not None
+            else None
+        ),
+        "threshold_pct": float(qmap["threshold_pct"]),
+    }
+
+    # 3. Pull the deal's current engine assumptions for prompt context.
+    from ..services.engine_runner import _load_engine_inputs
+
+    current_assumptions: dict[str, float] = {}
+    try:
+        loaded = await _load_engine_inputs(session, str(deal_id))
+        for k, v in loaded.items():
+            if k.startswith("__"):
+                continue
+            if isinstance(v, (int, float)):
+                current_assumptions[k] = float(v)
+    except Exception as exc:  # noqa: BLE001 - best-effort context
+        logger.debug(
+            "submit_broker_response: _load_engine_inputs failed (%s) — "
+            "proceeding with empty assumptions",
+            exc,
+        )
+
+    # 4. Run the resolver agent. Budget exhaustion → 402.
+    from ..agents.qa_resolver import QAResolverInput, run_qa_resolver
+    from ..budget import BudgetExceededError
+
+    try:
+        result = await run_qa_resolver(
+            QAResolverInput(
+                deal_id=str(deal_id),
+                tenant_id=str(tenant_id),
+                broker_question_id=str(body.broker_question_id),
+                analyst_question=analyst_question,
+                broker_response=body.broker_response,
+                supporting_data=supporting_data,
+                current_assumptions=current_assumptions,
+            )
+        )
+    except BudgetExceededError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_402_PAYMENT_REQUIRED,
+            detail=(
+                f"QA resolver: deal budget exhausted "
+                f"(${exc.spent_usd:.2f} of ${exc.budget_usd:.2f}). "
+                "Raise the budget in Settings or contact admin."
+            ),
+        ) from exc
+
+    if not result.success:
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail=f"QA resolver failed: {result.error or 'unknown error'}",
+        )
+
+    # 5. Persist the row.
+    is_sqlite = _is_sqlite(session)
+    qa_id = uuid4()
+    now = _now()
+    proposed_payload = _serialize_overrides_for_db(
+        result.proposed_overrides, is_sqlite=is_sqlite
+    )
+
+    if is_sqlite:
+        await session.execute(
+            text(
+                """
+                INSERT INTO broker_qa_pairs (
+                    id, deal_id, tenant_id, broker_question_id,
+                    analyst_question, broker_response,
+                    resolver_verdict, resolver_summary,
+                    proposed_overrides, applied_overrides, audit_note,
+                    created_at, updated_at
+                ) VALUES (
+                    :id, :deal, :tenant, :question_id,
+                    :analyst_question, :broker_response,
+                    :verdict, :summary,
+                    :proposed, NULL, :audit_note,
+                    :now, :now
+                )
+                """
+            ),
+            {
+                "id": str(qa_id),
+                "deal": str(deal_id),
+                "tenant": str(tenant_id),
+                "question_id": str(body.broker_question_id),
+                "analyst_question": analyst_question,
+                "broker_response": body.broker_response,
+                "verdict": result.verdict,
+                "summary": result.summary,
+                "proposed": proposed_payload,
+                "audit_note": result.audit_note,
+                "now": now,
+            },
+        )
+    else:
+        await session.execute(
+            text(
+                """
+                INSERT INTO broker_qa_pairs (
+                    id, deal_id, tenant_id, broker_question_id,
+                    analyst_question, broker_response,
+                    resolver_verdict, resolver_summary,
+                    proposed_overrides, applied_overrides, audit_note,
+                    created_at, updated_at
+                ) VALUES (
+                    :id, :deal, :tenant, :question_id,
+                    :analyst_question, :broker_response,
+                    :verdict, :summary,
+                    CAST(:proposed AS JSONB), NULL, :audit_note,
+                    :now, :now
+                )
+                """
+            ),
+            {
+                "id": str(qa_id),
+                "deal": str(deal_id),
+                "tenant": str(tenant_id),
+                "question_id": str(body.broker_question_id),
+                "analyst_question": analyst_question,
+                "broker_response": body.broker_response,
+                "verdict": result.verdict,
+                "summary": result.summary,
+                "proposed": json.dumps(proposed_payload),
+                "audit_note": result.audit_note,
+                "now": now,
+            },
+        )
+
+    # 6. Flip the broker_question to answered + copy the reply onto it.
+    # We bypass the state-transition allow-list here intentionally:
+    # this endpoint is the canonical "answered" path that knows the
+    # reply exists and has been resolver-processed. The "answered"
+    # state on the parent question is what the existing
+    # ``broker_questions`` list / panel reads, so we keep it the single
+    # source of truth.
+    await session.execute(
+        text(
+            """
+            UPDATE broker_questions
+               SET state = 'answered',
+                   broker_response = :response,
+                   updated_at = :now
+             WHERE id = :id AND deal_id = :deal AND tenant_id = :tenant
+            """
+        ),
+        {
+            "response": body.broker_response,
+            "now": now,
+            "id": str(body.broker_question_id),
+            "deal": str(deal_id),
+            "tenant": str(tenant_id),
+        },
+    )
+
+    await session.commit()
+
+    refreshed = (
+        await session.execute(
+            text(
+                f"""
+                SELECT {_BROKER_QA_COLUMNS}
+                  FROM broker_qa_pairs
+                 WHERE id = :id
+                """
+            ),
+            {"id": str(qa_id)},
+        )
+    ).first()
+    assert refreshed is not None
+    return _row_to_qa_pair(refreshed._mapping)
+
+
+@router.get(
+    "/{deal_id}/qa_history",
+    response_model=list[BrokerQAPairOut],
+)
+async def get_qa_history(
+    deal_id: UUID,
+    session: Annotated[AsyncSession, Depends(get_session)],
+    tenant_id: Annotated[UUID, Depends(get_tenant_id)],
+    state: Annotated[
+        str | None,
+        Query(
+            description=(
+                "Optional verdict filter: resolved / partially_resolved / "
+                "still_concerning"
+            )
+        ),
+    ] = None,
+) -> list[BrokerQAPairOut]:
+    """List broker Q&A pairs for a deal, newest first.
+
+    Optional ``?state=`` filters on ``resolver_verdict``. Unknown values
+    are ignored (we return data instead of 422 on a typo'd UI query).
+    """
+    await _assert_deal_in_tenant(session, deal_id=deal_id, tenant_id=tenant_id)
+
+    sql = f"""
+        SELECT {_BROKER_QA_COLUMNS}
+          FROM broker_qa_pairs
+         WHERE deal_id = :deal AND tenant_id = :tenant
+    """
+    params: dict[str, Any] = {
+        "deal": str(deal_id),
+        "tenant": str(tenant_id),
+    }
+    if state in {"resolved", "partially_resolved", "still_concerning"}:
+        sql += " AND resolver_verdict = :state"
+        params["state"] = state
+    sql += " ORDER BY created_at DESC"
+
+    rows = await session.execute(text(sql), params)
+    return [_row_to_qa_pair(r._mapping) for r in rows.fetchall()]
+
+
+@router.patch(
+    "/{deal_id}/broker_responses/{qa_pair_id}/apply",
+    response_model=BrokerQAPairOut,
+)
+async def apply_proposed_overrides(
+    deal_id: UUID,
+    qa_pair_id: UUID,
+    body: ApplyOverridesBody,
+    session: Annotated[AsyncSession, Depends(get_session)],
+    tenant_id: Annotated[UUID, Depends(get_tenant_id)],
+) -> BrokerQAPairOut:
+    """Analyst confirms which proposed overrides should land in field_overrides.
+
+    Behavior:
+
+    * Reads the QA pair's stored ``proposed_overrides`` and subsets by
+      the indexes the analyst chose.
+    * For each chosen override, merges a structured ``FieldOverrideRecord``
+      ``{value, note=rationale, overridden_by='broker_qa_resolver',
+      overridden_at=<now>}`` into the deal's ``field_overrides`` JSONB.
+    * Persists the chosen subset as ``applied_overrides`` on the QA row
+      (an empty list is the explicit "skip all" choice — distinct from
+      ``None`` which means "pending decision").
+    * Does NOT auto-trigger engine runs — the analyst hits "Run Model"
+      themselves so the overrides flow through the existing pipeline.
+
+    Returns the updated QA pair.
+    """
+    await _assert_deal_in_tenant(session, deal_id=deal_id, tenant_id=tenant_id)
+
+    is_sqlite = _is_sqlite(session)
+
+    # Read the QA pair.
+    qa_row = (
+        await session.execute(
+            text(
+                f"""
+                SELECT {_BROKER_QA_COLUMNS}
+                  FROM broker_qa_pairs
+                 WHERE id = :id
+                   AND deal_id = :deal
+                   AND tenant_id = :tenant
+                """
+            ),
+            {
+                "id": str(qa_pair_id),
+                "deal": str(deal_id),
+                "tenant": str(tenant_id),
+            },
+        )
+    ).first()
+    if qa_row is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"qa pair {qa_pair_id} not found",
+        )
+
+    proposed = _coerce_overrides_list(qa_row._mapping.get("proposed_overrides"))
+    chosen: list[ProposedOverrideOut] = []
+    for idx in body.override_indexes_to_apply:
+        if 0 <= idx < len(proposed):
+            chosen.append(proposed[idx])
+        else:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=(
+                    f"override index {idx} out of range "
+                    f"(0..{len(proposed) - 1})"
+                ),
+            )
+
+    # Read the current deal.field_overrides and merge in the chosen rows.
+    deal_row = (
+        await session.execute(
+            text(
+                "SELECT field_overrides FROM deals "
+                "WHERE id = :id AND tenant_id = :tenant"
+            ),
+            {"id": str(deal_id), "tenant": str(tenant_id)},
+        )
+    ).first()
+    assert deal_row is not None  # _assert_deal_in_tenant already checked
+    current_overrides = _coerce_json_blob(deal_row._mapping.get("field_overrides")) or {}
+    if not isinstance(current_overrides, dict):
+        current_overrides = {}
+
+    now = _now()
+    now_iso = now.isoformat()
+    for o in chosen:
+        current_overrides[o.field_path] = {
+            "value": o.value,
+            "note": o.rationale,
+            "overridden_by": "broker_qa_resolver",
+            "overridden_at": now_iso,
+        }
+
+    if is_sqlite:
+        await session.execute(
+            text(
+                """
+                UPDATE deals
+                   SET field_overrides = :overrides,
+                       updated_at = :now
+                 WHERE id = :id AND tenant_id = :tenant
+                """
+            ),
+            {
+                "overrides": json.dumps(current_overrides),
+                "now": now,
+                "id": str(deal_id),
+                "tenant": str(tenant_id),
+            },
+        )
+    else:
+        await session.execute(
+            text(
+                """
+                UPDATE deals
+                   SET field_overrides = CAST(:overrides AS JSONB),
+                       updated_at = :now
+                 WHERE id = :id AND tenant_id = :tenant
+                """
+            ),
+            {
+                "overrides": json.dumps(current_overrides),
+                "now": now,
+                "id": str(deal_id),
+                "tenant": str(tenant_id),
+            },
+        )
+
+    # Persist the chosen subset on the QA pair. Empty list is the
+    # explicit "skip all" choice — distinct from NULL ("pending").
+    applied_payload_raw = [o.model_dump() for o in chosen]
+    if is_sqlite:
+        await session.execute(
+            text(
+                """
+                UPDATE broker_qa_pairs
+                   SET applied_overrides = :applied,
+                       updated_at = :now
+                 WHERE id = :id
+                """
+            ),
+            {
+                "applied": json.dumps(applied_payload_raw),
+                "now": now,
+                "id": str(qa_pair_id),
+            },
+        )
+    else:
+        await session.execute(
+            text(
+                """
+                UPDATE broker_qa_pairs
+                   SET applied_overrides = CAST(:applied AS JSONB),
+                       updated_at = :now
+                 WHERE id = :id
+                """
+            ),
+            {
+                "applied": json.dumps(applied_payload_raw),
+                "now": now,
+                "id": str(qa_pair_id),
+            },
+        )
+
+    await session.commit()
+
+    refreshed = (
+        await session.execute(
+            text(
+                f"""
+                SELECT {_BROKER_QA_COLUMNS}
+                  FROM broker_qa_pairs
+                 WHERE id = :id
+                """
+            ),
+            {"id": str(qa_pair_id)},
+        )
+    ).first()
+    assert refreshed is not None
+    logger.info(
+        "qa.apply: deal=%s qa_pair=%s applied=%d/%d",
+        deal_id,
+        qa_pair_id,
+        len(chosen),
+        len(proposed),
+    )
+    return _row_to_qa_pair(refreshed._mapping)

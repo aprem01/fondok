@@ -18,6 +18,12 @@ from .analysis import (
     RiskTier,
     ScenarioSummary,
 )
+from .broker_qa import (
+    BrokerQAPair,
+    ProposedOverride,
+    ProposedOverrideConfidence,
+    ResolverVerdict,
+)
 from .broker_question import BrokerQuestion
 from .common import Money, ModelCall, Risk, Severity, TenantScoped
 from .confidence import ConfidenceReport
@@ -104,6 +110,11 @@ __all__ = [
     "RiskCategoryName",
     "RiskTier",
     "ScenarioSummary",
+    # broker_qa (Wave 1 #5 — seller Q&A re-ingestion)
+    "BrokerQAPair",
+    "ProposedOverride",
+    "ProposedOverrideConfidence",
+    "ResolverVerdict",
     # broker_question
     "BrokerQuestion",
     # common
