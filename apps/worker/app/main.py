@@ -12,6 +12,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from . import __version__
 from .alerting import init_sentry
 from .api import analysis as analysis_router
+from .api import audit as audit_router
 from .api import data_library as data_library_router
 from .api import deals as deals_router
 from .api import documents as documents_router
@@ -148,6 +149,16 @@ def create_app() -> FastAPI:
         observability_router.router,
         prefix="/observability",
         tags=["observability"],
+    )
+    # Wave 4 W4.3 — Activity Feed (per-deal stream) + Compliance Explorer
+    # (tenant-wide). Per-deal mounts under /deals so it shares the same
+    # path-parameter contract as the rest of the deal API; the explorer
+    # mounts at /audit so the UI route + the API surface line up.
+    app.include_router(
+        audit_router.router, prefix="/deals", tags=["audit"]
+    )
+    app.include_router(
+        audit_router.explorer_router, prefix="/audit", tags=["audit"]
     )
     return app
 

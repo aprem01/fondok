@@ -7,7 +7,7 @@ import {
   ArrowLeft, MapPin, Building2, Calendar, Users, Share2, X,
   Sparkles, FolderOpen, FileText, DollarSign, TrendingUp, BarChart3, Activity,
   Briefcase, MapPinned, FileSearch, Download, AlertTriangle, ShieldCheck,
-  GitCompareArrows,
+  GitCompareArrows, History,
 } from 'lucide-react';
 import { Button } from '@/components/ui/Button';
 import { StatusBadge } from '@/components/ui/Badge';
@@ -63,6 +63,12 @@ const ValidationTab = dynamic(() => import('@/components/project/ValidationTab')
 const ForecastingTab = dynamic(() => import('@/components/project/ForecastingTab'), {
   loading: () => <TabLoadingSkeleton />,
 });
+// Wave 4 W4.3 — Activity Feed (per-deal audit log) lives in its own tab
+// so the underwriting workflow tabs stay focused on the model. Lazy
+// loaded for the same bundle-size reasons as the other heavy panels.
+const ActivityFeed = dynamic(() => import('@/components/project/ActivityFeed'), {
+  loading: () => <TabLoadingSkeleton />,
+});
 
 // Per the May 7 scope alignment, five tabs are visually grayed in the tab
 // strip while the design partner demo focuses on the Data Room → P&L →
@@ -90,6 +96,10 @@ const tabs: Tab[] = [
   { id: 'forecasting', label: 'Forecasting', icon: TrendingUp },
   { id: 'analysis', label: 'Analysis', icon: FileSearch },
   { id: 'scenarios', label: 'Scenarios', icon: GitCompareArrows },
+  // Wave 4 W4.3 — every audited mutation (override / scenario / engine
+  // run / export) shows up in this stream so analysts have a single
+  // "what changed on this deal" surface.
+  { id: 'activity', label: 'Activity', icon: History },
   { id: 'export', label: 'Export', icon: Download, inactive: true },
 ];
 
@@ -545,6 +555,11 @@ export default function ProjectDetailPage() {
                 Named scenarios are available on worker-connected deals.
               </div>
             )}
+          </ErrorBoundary>
+        )}
+        {activeTab === 'activity' && (
+          <ErrorBoundary tabName="Activity">
+            <ActivityFeed dealId={String(id)} />
           </ErrorBoundary>
         )}
         {activeTab === 'export' && (

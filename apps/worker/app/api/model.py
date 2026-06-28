@@ -23,6 +23,7 @@ from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, status
 from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from ..audit import log_audit
 from ..database import get_session, get_session_factory
 from ..services.engine_runner import (
     ENGINE_NAMES,
@@ -269,6 +270,25 @@ async def kickoff_run_all(
         _background_run_all,
         deal_id, str(tenant_id), run_id, overrides,
     )
+
+    # Wave 4 W4.3 — engine_run audit fires at kickoff so the Activity
+    # Feed surfaces the scheduled run even if the background task later
+    # fails. Pairs with the scenario.run audit emitted by run_scenario.
+    await log_audit(
+        session,
+        tenant_id=str(tenant_id),
+        action="engine_run.kicked_off",
+        resource_type="engine_run",
+        resource_id=run_id,
+        output_payload={
+            "engine_count": len(ENGINE_NAMES),
+            "had_overrides": overrides is not None,
+        },
+        diff_summary=f"kicked off run of {len(ENGINE_NAMES)} engines",
+        tags=["engine_run", "kickoff"],
+        metadata={"deal_id": deal_id},
+    )
+    await session.commit()
 
     logger.info(
         "engines/run_all scheduled deal=%s run=%s tenant=%s",
