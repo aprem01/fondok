@@ -1,18 +1,21 @@
 'use client';
-import { useRef, useState } from 'react';
+import { useCallback, useState } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import {
-  Check, ChevronDown, Target, TrendingUp, Rocket, UploadCloud, Tag, Search,
+  Check, ChevronDown, Target, TrendingUp, Rocket, Tag, Search,
   Sparkles, Crown, DollarSign, Pencil, AlertTriangle, ArrowLeft, ChevronRight,
   Loader2, Star, Award,
 } from 'lucide-react';
 import { Card } from '@/components/ui/Card';
 import { Button } from '@/components/ui/Button';
+import { Badge } from '@/components/ui/Badge';
 import { dealStages, returnProfiles, positioningTiers, brandFamilies, sourcingChannels } from '@/lib/mockData';
 import { cn } from '@/lib/format';
-import { api, isWorkerConnected } from '@/lib/api';
+import { api, isWorkerConnected, WizardFile } from '@/lib/api';
 import { useToast } from '@/components/ui/Toast';
+import { DocumentsStep } from '@/components/project/wizard/DocumentsStep';
+import { DocumentsChecklist } from '@/components/project/wizard/DocumentsChecklist';
 
 const steps = [
   { n: 1, label: 'Deal Details' },
@@ -47,17 +50,32 @@ export default function NewProjectPage() {
   const [data, setData] = useState({
     dealName: '', city: '', keys: '', stage: 'Teaser', hotelName: '', price: '',
     returnProfile: 'value-add',
-    docs: [] as File[],
+    docs: [] as WizardFile[],
     brand: 'agnostic',
     brandSearch: '',
     expandedFamilies: ['Hilton'] as string[],
     positioning: 'default',
     sourcing: 'Broker',
   });
+  // Gate for Step 3 → Step 4: financials are required per locked Wave 1
+  // product decision. ``DocumentsStep`` reports this back via
+  // onCanContinueChange whenever the WizardFile[] changes.
+  const [docsCanContinue, setDocsCanContinue] = useState(false);
 
   const update = (patch: Partial<typeof data>) => setData(d => ({ ...d, ...patch }));
-  const next = () => setStep(s => Math.min(6, s + 1));
+  const setDocs = useCallback(
+    (docs: WizardFile[]) => setData(d => ({ ...d, docs })),
+    [],
+  );
+  // Step 3 (Documents) is gated on financials being present. Other steps
+  // advance freely. Wrapping in useCallback so the child can be a pure
+  // component on this prop.
+  const next = () => {
+    if (step === 3 && !docsCanContinue) return;
+    setStep(s => Math.min(6, s + 1));
+  };
   const back = () => setStep(s => Math.max(1, s - 1));
+  const nextDisabled = step === 3 && !docsCanContinue;
 
   const onCreate = async () => {
     setSubmitError(null);
@@ -124,7 +142,16 @@ export default function NewProjectPage() {
           { type: 'info' },
         );
         try {
-          const uploaded = await api.documents.upload(String(created.id), data.docs);
+          // Send the wizard payload — the worker reads
+          // ``user_doc_types[]`` + ``fiscal_years[]`` index-aligned with
+          // ``files[]`` and persists them onto the document row, so the
+          // Router agent's downstream classification can flag a mismatch
+          // against the analyst's intent instead of silently
+          // overwriting it.
+          const uploaded = await api.documents.upload(
+            String(created.id),
+            data.docs,
+          );
           toast(
             `Uploaded ${uploaded.length} · parsing + extraction running in the background`,
             { type: 'success' },
@@ -185,7 +212,13 @@ export default function NewProjectPage() {
       <Card className="p-7">
         {step === 1 && <Step1 data={data} update={update} />}
         {step === 2 && <Step2 data={data} update={update} />}
-        {step === 3 && <Step3 data={data} update={update} />}
+        {step === 3 && (
+          <Step3Documents
+            files={data.docs}
+            onChange={setDocs}
+            onCanContinueChange={setDocsCanContinue}
+          />
+        )}
         {step === 4 && <Step4 data={data} update={update} />}
         {step === 5 && <Step5 data={data} update={update} />}
         {step === 6 && <Step6 data={data} jumpTo={setStep} />}
@@ -218,11 +251,22 @@ export default function NewProjectPage() {
           <ArrowLeft size={13} /> Back
         </Button>
         {step < 6 ? (
-          <Button variant="primary" onClick={next}>Next <ChevronRight size={13} /></Button>
+          <Button
+            variant="primary"
+            onClick={next}
+            disabled={nextDisabled}
+            title={
+              nextDisabled
+                ? 'Add at least one financial document to continue'
+                : undefined
+            }
+          >
+            Next <ChevronRight size={13} />
+          </Button>
         ) : (
           <Button variant="primary" onClick={onCreate} disabled={submitting}>
             {submitting && <Loader2 size={13} className="animate-spin" />}
-            {submitting ? 'Creating…' : 'Create Shell Deal'}
+            {submitting ? 'Creating…' : 'Create Deal'}
           </Button>
         )}
       </div>
@@ -232,7 +276,7 @@ export default function NewProjectPage() {
 
 type WizardData = {
   dealName: string; city: string; keys: string; stage: string; hotelName: string; price: string;
-  returnProfile: string; docs: File[]; brand: string; brandSearch: string;
+  returnProfile: string; docs: WizardFile[]; brand: string; brandSearch: string;
   expandedFamilies: string[]; positioning: string; sourcing: string;
 };
 type StepProps = { data: WizardData; update: (patch: Partial<WizardData>) => void };
@@ -331,137 +375,47 @@ function Step2({ data, update }: StepProps) {
   );
 }
 
-function Step3({ data, update }: StepProps) {
-  const inputRef = useRef<HTMLInputElement>(null);
-  const [dragOver, setDragOver] = useState(false);
-
-  const accept = '.pdf,.xls,.xlsx,.csv,.doc,.docx,application/pdf';
-
-  const addFiles = (files: FileList | File[] | null) => {
-    if (!files) return;
-    const next = Array.from(files);
-    if (!next.length) return;
-    // Dedupe by name + size so picking the same files twice doesn't double up.
-    const existing = new Set(data.docs.map(f => `${f.name}::${f.size}`));
-    const merged = [...data.docs];
-    for (const f of next) {
-      const key = `${f.name}::${f.size}`;
-      if (!existing.has(key)) {
-        merged.push(f);
-        existing.add(key);
-      }
-    }
-    update({ docs: merged });
-  };
-
-  const removeAt = (idx: number) => {
-    const next = [...data.docs];
-    next.splice(idx, 1);
-    update({ docs: next });
-  };
-
-  const onDrop = (e: React.DragEvent<HTMLDivElement>) => {
-    e.preventDefault();
-    setDragOver(false);
-    addFiles(e.dataTransfer.files);
-  };
-
+function Step3Documents({
+  files,
+  onChange,
+  onCanContinueChange,
+}: {
+  files: WizardFile[];
+  onChange: (files: WizardFile[]) => void;
+  onCanContinueChange: (ok: boolean) => void;
+}) {
+  // Layout: two-column. Left = the multi-stage sub-wizard.
+  // Right = persistent checklist (sticky on tall viewports).
+  const omCount = files.filter((f) => f.category === 'om').length;
+  const financialCount = files.filter((f) => f.category === 'financials').length;
+  const strCount = files.filter((f) => f.category === 'str').length;
+  const otherCount = files.filter((f) => f.category === 'other').length;
+  const financialYears = Array.from(
+    new Set(
+      files
+        .filter((f) => f.category === 'financials')
+        .map((f) => f.fiscal_year)
+        .filter((y): y is number => typeof y === 'number'),
+    ),
+  );
   return (
-    <div>
-      <h2 className="text-[18px] font-semibold text-ink-900 mb-1">Upload Documents</h2>
-      <p className="text-[12.5px] text-ink-500 mb-3">Add your deal documents to the data room for AI extraction.</p>
-      <div className="rounded-md bg-brand-50 border border-brand-100 p-3 text-[12px] text-ink-700 leading-relaxed mb-6">
-        Drop in any PDF or Excel files for this deal: the offering memorandum (the broker&apos;s pitch
-        deck), the trailing-12-month financials (T-12), STR market reports, rent rolls, PIP estimates.
-        Our AI will read each one end-to-end and pull out every number we need to build the model.
-        You can skip this step and add documents later from the Data Room tab.
+    <div className="grid grid-cols-12 gap-6">
+      <div className="col-span-12 lg:col-span-8">
+        <DocumentsStep
+          files={files}
+          onChange={onChange}
+          onCanContinueChange={onCanContinueChange}
+        />
       </div>
-
-      <input
-        ref={inputRef}
-        type="file"
-        multiple
-        accept={accept}
-        className="hidden"
-        onChange={(e) => {
-          addFiles(e.target.files);
-          // Reset so picking the same file again still fires onChange.
-          e.target.value = '';
-        }}
-      />
-
-      <div
-        role="button"
-        tabIndex={0}
-        onClick={() => inputRef.current?.click()}
-        onKeyDown={(e) => {
-          if (e.key === 'Enter' || e.key === ' ') {
-            e.preventDefault();
-            inputRef.current?.click();
-          }
-        }}
-        onDragOver={(e) => { e.preventDefault(); setDragOver(true); }}
-        onDragLeave={() => setDragOver(false)}
-        onDrop={onDrop}
-        className={cn(
-          'border-2 border-dashed rounded-lg py-12 px-6 text-center cursor-pointer transition-colors',
-          dragOver ? 'border-brand-500 bg-brand-50' : 'border-ink-300 hover:border-brand-500 hover:bg-brand-50/40',
-        )}
-      >
-        <UploadCloud size={36} className="text-ink-400 mx-auto mb-3" />
-        <div className="text-[14px] font-medium text-ink-900">
-          {dragOver ? 'Drop to add files' : 'Drag & drop files here'}
-        </div>
-        <div className="text-[12px] text-ink-500 mt-1">or click anywhere in this box to browse</div>
-        <Button
-          variant="primary"
-          size="sm"
-          className="mt-4"
-          onClick={(e) => {
-            e.stopPropagation();
-            inputRef.current?.click();
-          }}
-        >
-          Select Files
-        </Button>
-        <div className="text-[11px] text-ink-500 mt-3">Supported: PDF, Excel, CSV, Word</div>
-      </div>
-
-      {data.docs.length > 0 && (
-        <div className="mt-5">
-          <div className="text-[11.5px] font-semibold text-ink-700 mb-2 uppercase tracking-wide">
-            Selected · {data.docs.length} file{data.docs.length === 1 ? '' : 's'}
-          </div>
-          <div className="space-y-1.5">
-            {data.docs.map((f, i) => (
-              <div
-                key={`${f.name}-${f.size}-${i}`}
-                className="flex items-center gap-3 px-3 py-2 bg-white border border-border rounded-md"
-              >
-                <UploadCloud size={14} className="text-brand-500 flex-shrink-0" />
-                <div className="flex-1 min-w-0">
-                  <div className="text-[12.5px] font-medium text-ink-900 truncate">{f.name}</div>
-                  <div className="text-[11px] text-ink-500">
-                    {(f.size / 1024).toFixed(1)} KB
-                  </div>
-                </div>
-                <button
-                  type="button"
-                  onClick={() => removeAt(i)}
-                  className="text-ink-400 hover:text-danger-700 text-[11.5px] px-2 py-1"
-                  aria-label={`Remove ${f.name}`}
-                >
-                  Remove
-                </button>
-              </div>
-            ))}
-          </div>
-        </div>
-      )}
-
-      <p className="text-[12px] text-ink-500 mt-4 text-center">
-        Files upload automatically after you click <strong>Create Shell Deal</strong> on the review step. You can also add more from the Data Room tab later.
-      </p>
+      <aside className="col-span-12 lg:col-span-4">
+        <DocumentsChecklist
+          omCount={omCount}
+          financialYears={financialYears}
+          financialCount={financialCount}
+          strCount={strCount}
+          otherCount={otherCount}
+        />
+      </aside>
     </div>
   );
 }
@@ -648,7 +602,27 @@ function Step5({ data, update }: StepProps) {
 function Step6({ data, jumpTo }: { data: WizardData; jumpTo: (step: number) => void }) {
   const profile = returnProfiles.find(r => r.id === data.returnProfile);
   const positioning = positioningTiers.find(p => p.id === data.positioning);
-  const noDocs = data.docs.length === 0;
+
+  // Per-category counts power the inline checklist summary so the
+  // analyst can see what they staged + which years they covered before
+  // committing. Mirrors the right-rail checklist on Step 3.
+  const omCount = data.docs.filter(f => f.category === 'om').length;
+  const financialCount = data.docs.filter(f => f.category === 'financials').length;
+  const strCount = data.docs.filter(f => f.category === 'str').length;
+  const otherCount = data.docs.filter(f => f.category === 'other').length;
+  const financialYears = Array.from(
+    new Set(
+      data.docs
+        .filter(f => f.category === 'financials')
+        .map(f => f.fiscal_year)
+        .filter((y): y is number => typeof y === 'number'),
+    ),
+  ).sort((a, b) => b - a);
+
+  const docsSummary =
+    financialCount > 0
+      ? `${data.docs.length} file${data.docs.length === 1 ? '' : 's'} · ${financialCount} financial${financialCount === 1 ? '' : 's'}${financialYears.length > 0 ? ` (${financialYears.join(', ')})` : ''}`
+      : 'No financials staged';
 
   const rows = [
     { label: 'Deal Name', value: data.dealName || 'Untitled', step: 1 },
@@ -657,7 +631,7 @@ function Step6({ data, jumpTo }: { data: WizardData; jumpTo: (step: number) => v
     { label: 'Keys / Indicative Price', value: `${data.keys || '—'} keys / ${data.price || '—'}`, step: 1 },
     { label: 'Deal Stage', value: data.stage, step: 1 },
     { label: 'Return Requirements', value: profile ? `${profile.label} (${profile.target})` : '—', step: 2 },
-    { label: 'Documents', value: noDocs ? 'No documents (can add later)' : `${data.docs.length} files`, step: 3 },
+    { label: 'Documents', value: docsSummary, step: 3 },
     { label: 'Brand', value: data.brand === 'agnostic' ? 'Brand Agnostic' : data.brand, step: 4 },
     { label: 'Positioning', value: positioning?.label || '—', step: 5 },
   ];
@@ -668,21 +642,79 @@ function Step6({ data, jumpTo }: { data: WizardData; jumpTo: (step: number) => v
       <p className="text-[12.5px] text-ink-500 mb-3">Last check before we create the deal.</p>
       <div className="rounded-md bg-brand-50 border border-brand-100 p-3 text-[12px] text-ink-700 leading-relaxed mb-6">
         Confirm everything looks right. Click any row to edit a section. Once you click
-        <span className="font-medium"> Create Shell Deal</span>, the deal goes into your pipeline and you can start
-        uploading documents from the Data Room tab.
+        <span className="font-medium"> Create Deal</span>, the deal goes into your pipeline,
+        files start uploading in the background, and Fondok routes each one to the right extractor.
       </div>
 
-      {noDocs && (
+      {financialCount === 0 && (
         <div className="bg-warn-50 border border-warn-500/30 rounded-lg p-4 mb-5 flex gap-3">
           <AlertTriangle size={16} className="text-warn-700 flex-shrink-0 mt-0.5" />
           <div>
-            <div className="text-[12.5px] font-semibold text-warn-700">Shell Deal</div>
+            <div className="text-[12.5px] font-semibold text-warn-700">No financials staged</div>
             <p className="text-[12px] text-warn-700/90 mt-1 leading-relaxed">
-              No documents uploaded. The deal will be created for pipeline tracking. Financial modeling will unlock after document upload.
+              Financials are required for engine output. Go back to Step 3 to add at least one
+              P&amp;L — or proceed and upload from the Data Room (modeling stays locked until they
+              land).
             </p>
           </div>
         </div>
       )}
+
+      {/* Document checklist summary — mirrors Step 3's right-rail so the
+          analyst can confirm coverage at a glance without bouncing back. */}
+      <Card className="p-4 mb-4" aria-label="Document staging summary">
+        <div className="flex items-center justify-between mb-3">
+          <div className="text-[12px] uppercase tracking-wider text-ink-500 font-semibold">
+            Staged documents
+          </div>
+          <button
+            onClick={() => jumpTo(3)}
+            className="flex items-center gap-1 text-[11.5px] text-brand-500 hover:text-brand-700 font-medium"
+            aria-label="Edit documents step"
+          >
+            <Pencil size={10} /> Edit
+          </button>
+        </div>
+        <ul className="grid grid-cols-2 gap-x-6 gap-y-2.5" role="list">
+          <SummaryRow
+            label="Offering Memorandum"
+            count={omCount}
+            required={false}
+            detail={null}
+          />
+          <SummaryRow
+            label="Financials by year"
+            count={financialCount}
+            required
+            detail={
+              financialYears.length > 0 ? (
+                <div className="flex flex-wrap gap-1 mt-1">
+                  {financialYears.map(y => (
+                    <span
+                      key={y}
+                      className="inline-flex items-center px-1.5 py-0 rounded text-[10.5px] tabular-nums font-medium bg-success-50 text-success-700 border border-success-500/30"
+                    >
+                      {y}
+                    </span>
+                  ))}
+                </div>
+              ) : null
+            }
+          />
+          <SummaryRow
+            label="STR comp-set"
+            count={strCount}
+            required={false}
+            detail={null}
+          />
+          <SummaryRow
+            label="Other"
+            count={otherCount}
+            required={false}
+            detail={null}
+          />
+        </ul>
+      </Card>
 
       <div className="space-y-2">
         {rows.map(r => (
@@ -698,11 +730,51 @@ function Step6({ data, jumpTo }: { data: WizardData; jumpTo: (step: number) => v
           </div>
         ))}
       </div>
-
-      <div className="mt-6 text-center text-[12px] text-ink-500">
-        Ready to create Shell Deal — Add documents from the Data Room to unlock modeling capabilities
-      </div>
     </div>
+  );
+}
+
+function SummaryRow({
+  label,
+  count,
+  required,
+  detail,
+}: {
+  label: string;
+  count: number;
+  required: boolean;
+  detail: React.ReactNode;
+}) {
+  const done = count > 0;
+  return (
+    <li className="flex items-start gap-2" role="listitem">
+      <span
+        className={cn(
+          'inline-flex items-center justify-center w-5 h-5 rounded-full text-[10px] font-semibold flex-shrink-0 mt-0.5',
+          done
+            ? 'bg-success-50 text-success-700 border border-success-500/30'
+            : required
+              ? 'bg-danger-50 text-danger-700 border border-danger-500/30'
+              : 'bg-ink-100 text-ink-500 border border-border',
+        )}
+        aria-hidden="true"
+      >
+        {done ? <Check size={10} /> : count}
+      </span>
+      <div className="flex-1 min-w-0">
+        <div className="text-[12.5px] font-medium text-ink-900">{label}</div>
+        <div className="text-[11px] text-ink-500 tabular-nums">
+          {done ? (
+            `${count} file${count === 1 ? '' : 's'}`
+          ) : required ? (
+            <Badge tone="red">Required</Badge>
+          ) : (
+            'None'
+          )}
+        </div>
+        {detail}
+      </div>
+    </li>
   );
 }
 
