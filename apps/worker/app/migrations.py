@@ -781,6 +781,40 @@ MIGRATIONS: list[tuple[str, str]] = [
           AND fiscal_year IS NOT NULL
         """,
     ),
+    # ─────────────────── Wave 3 W3.2 — Named scenarios ───────────────
+    # Save/load/diff named what-if scenarios per deal. Every deal has
+    # exactly one ``is_base=true`` row (auto-created on deal insert)
+    # plus any number of analyst-defined rows. ``overrides`` is a JSONB
+    # array of ``{field_path, value, source}`` objects — when a scenario
+    # is run, the engine_runner merges these on top of
+    # ``deals.field_overrides`` and feeds the result to the engine
+    # chain. ``last_run_id`` deep-links into ``engine_outputs`` so the
+    # UI can fetch the most recent run without re-executing the math.
+    (
+        "scenarios.create_table",
+        """
+        CREATE TABLE IF NOT EXISTS scenarios (
+            id              UUID PRIMARY KEY,
+            deal_id         UUID NOT NULL REFERENCES deals(id) ON DELETE CASCADE,
+            tenant_id       UUID NOT NULL,
+            name            TEXT NOT NULL,
+            description     TEXT,
+            is_base         BOOLEAN NOT NULL DEFAULT FALSE,
+            overrides       JSONB NOT NULL DEFAULT '[]'::jsonb,
+            last_run_id     UUID,
+            created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+            updated_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+            UNIQUE (deal_id, name)
+        )
+        """,
+    ),
+    (
+        "scenarios.idx_deal_tenant",
+        """
+        CREATE INDEX IF NOT EXISTS idx_scenarios_deal_tenant
+        ON scenarios (deal_id, tenant_id)
+        """,
+    ),
 ]
 
 
@@ -1269,6 +1303,36 @@ SQLITE_MIGRATIONS: list[tuple[str, str]] = [
         """
         CREATE INDEX IF NOT EXISTS idx_documents_deal_fy
         ON documents (deal_id, fiscal_year)
+        """,
+    ),
+    # ─────────────────── Wave 3 W3.2 — Named scenarios ───────────────
+    # SQLite mirror. JSONB → TEXT (API serializes the override array
+    # via json.dumps and parses on read); BOOLEAN → INTEGER 0/1; UUID
+    # → TEXT; no FK enforcement (matches the rest of the SQLite
+    # mirrors here).
+    (
+        "scenarios.create_table",
+        """
+        CREATE TABLE IF NOT EXISTS scenarios (
+            id              TEXT PRIMARY KEY,
+            deal_id         TEXT NOT NULL,
+            tenant_id       TEXT NOT NULL,
+            name            TEXT NOT NULL,
+            description     TEXT,
+            is_base         INTEGER NOT NULL DEFAULT 0,
+            overrides       TEXT NOT NULL DEFAULT '[]',
+            last_run_id     TEXT,
+            created_at      TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            updated_at      TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            UNIQUE (deal_id, name)
+        )
+        """,
+    ),
+    (
+        "scenarios.idx_deal_tenant",
+        """
+        CREATE INDEX IF NOT EXISTS idx_scenarios_deal_tenant
+        ON scenarios (deal_id, tenant_id)
         """,
     ),
 ]

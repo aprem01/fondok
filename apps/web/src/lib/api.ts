@@ -400,6 +400,66 @@ export interface EngineRunStatusResponse {
   engines: EngineOutputResponse[];
 }
 
+// ─────────────────────────── scenarios (Wave 3 W3.2) ────────────────
+//
+// Mirrors apps/worker/app/api/scenarios.py. A scenario is a named
+// what-if layer of overrides on top of the deal's persisted
+// ``field_overrides`` — engines run with the scenario applied without
+// disturbing the base deal.
+
+export interface ScenarioOverride {
+  field_path: string;
+  value: unknown;
+  source?: string;
+}
+
+export interface ScenarioRecord {
+  id: string;
+  deal_id: string;
+  tenant_id: string;
+  name: string;
+  description: string | null;
+  is_base: boolean;
+  overrides: ScenarioOverride[];
+  last_run_id: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface CreateScenarioBody {
+  name: string;
+  description?: string | null;
+  overrides: ScenarioOverride[];
+}
+
+export interface UpdateScenarioBody {
+  name?: string;
+  description?: string | null;
+  overrides?: ScenarioOverride[];
+}
+
+export interface ScenarioRunResponse {
+  scenario_id: string;
+  deal_id: string;
+  run_id: string;
+  started_at: string;
+  engines: Record<string, EngineOutputResponse>;
+}
+
+export interface ScenarioCompareCell {
+  scenario_id: string;
+  scenario_name: string;
+  is_base: boolean;
+  last_run_id: string | null;
+  engines: Record<string, EngineOutputResponse>;
+}
+
+export interface ScenarioCompareResponse {
+  deal_id: string;
+  base_scenario_id: string | null;
+  scenarios: ScenarioCompareCell[];
+}
+
 // ─────────────────────────── core fetcher ───────────────────────────
 
 interface RequestOpts {
@@ -874,6 +934,51 @@ export const api = {
         `/deals/${dealId}/ask`,
         { question },
         { signal },
+      ),
+  },
+  /** Wave 3 W3.2 — named what-if scenarios per deal. */
+  scenarios: {
+    list: (dealId: string, signal?: AbortSignal) =>
+      request<ScenarioRecord[]>(
+        'GET',
+        `/deals/${dealId}/scenarios`,
+        undefined,
+        { signal },
+      ),
+    create: (dealId: string, body: CreateScenarioBody) =>
+      request<ScenarioRecord>(
+        'POST',
+        `/deals/${dealId}/scenarios`,
+        body,
+      ),
+    get: (dealId: string, scenarioId: string, signal?: AbortSignal) =>
+      request<ScenarioRecord>(
+        'GET',
+        `/deals/${dealId}/scenarios/${scenarioId}`,
+        undefined,
+        { signal },
+      ),
+    update: (dealId: string, scenarioId: string, patch: UpdateScenarioBody) =>
+      request<ScenarioRecord>(
+        'PATCH',
+        `/deals/${dealId}/scenarios/${scenarioId}`,
+        patch,
+      ),
+    delete: (dealId: string, scenarioId: string) =>
+      request<ScenarioRecord>(
+        'DELETE',
+        `/deals/${dealId}/scenarios/${scenarioId}`,
+      ),
+    run: (dealId: string, scenarioId: string) =>
+      request<ScenarioRunResponse>(
+        'POST',
+        `/deals/${dealId}/scenarios/${scenarioId}/run`,
+      ),
+    compare: (dealId: string, scenarioIds: string[]) =>
+      request<ScenarioCompareResponse>(
+        'POST',
+        `/deals/${dealId}/scenarios/compare`,
+        { scenario_ids: scenarioIds },
       ),
   },
 };

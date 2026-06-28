@@ -75,6 +75,7 @@ from .partnership import (
     PartnershipOutput,
     WaterfallTier,
 )
+from .scenario import Scenario, ScenarioOverride
 from .underwriting import (
     CapexPlan,
     CapexScheduleYear,
@@ -182,6 +183,9 @@ __all__ = [
     "PartnershipInput",
     "PartnershipOutput",
     "WaterfallTier",
+    # scenario (Wave 3 W3.2 — named what-if scenarios)
+    "Scenario",
+    "ScenarioOverride",
     # underwriting
     "CapexPlan",
     "CapexScheduleYear",
