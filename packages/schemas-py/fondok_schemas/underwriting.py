@@ -6,10 +6,10 @@ Partnership lives in `partnership.py` because it composes returns + waterfall.
 
 from __future__ import annotations
 
-from typing import Annotated
+from typing import Annotated, Literal
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from .financial import ModelAssumptions, USALIFinancials
 
@@ -88,6 +88,95 @@ class SegmentYear(BaseModel):
     net_revenue: Annotated[float, Field(ge=0.0)]
 
 
+# ─────────────── PIP Displacement v2 (Wave 2 P2.4) ───────────────
+#
+# Hospitality IC analysts don't model renovation displacement as a single
+# flat Y1 percentage. They model it as: a closure strategy (rolling /
+# full / wing-by-wing), a month-by-month inventory-offline schedule, a
+# brand-specific recovery curve, and a post-PIP RevPAR uplift. The flat
+# ``y1_occupancy_displacement_pct`` / ``y1_adr_displacement_pct`` fields
+# stay on ``RevenueEngineInput`` as the legacy single-pct path; the new
+# ``pip_displacement`` object wins whenever it's set.
+
+PIPClosureStrategy = Literal["rolling", "full_closure", "wing_by_wing", "none"]
+
+
+class PIPDisplacement(BaseModel):
+    """Structured PIP / renovation displacement spec.
+
+    Closure strategy semantics:
+
+    * ``rolling`` — rooms taken offline in batches; remaining inventory
+      operates at normal ADR. ``pct_rooms_offline_by_month`` carries the
+      fraction of inventory offline each month (0.0 .. 1.0).
+    * ``full_closure`` — the hotel is shut. Every month in the reno
+      window must be 1.0 (= 100% offline); off-window months 0.0.
+    * ``wing_by_wing`` — one wing at a time, capped at 50% offline; a
+      5% ADR drag on operating rooms reflects construction nuisance.
+    * ``none`` — no PIP. Equivalent to leaving ``pip_displacement`` as
+      ``None`` on the engine input.
+
+    ``brand`` — when set, picks brand-specific multipliers on
+    ``occupancy_recovery_months`` and ``revpar_index_post_reno`` from
+    ``_BRAND_DISPLACEMENT_MULTIPLIERS`` inside the revenue engine.
+    Marriott / Hilton are the industry baseline (×1.0 / ×1.0); IHG
+    recovers slightly slower; Hyatt slightly faster; Independent /
+    soft-brand recovers fastest. These are STR / CBRE Horizons rules
+    of thumb — not hard data — analysts can override per-deal.
+
+    ``revpar_index_post_reno`` — Y2+ ADR multiplier (default 1.05 =
+    +5%). The whole point of a PIP is to charge more after.
+
+    ``occupancy_recovery_months`` — how many months Y2+ occupancy
+    takes to ramp linearly from Y1 ending occupancy back to the
+    stabilized baseline. Capped at 12 inside Y2.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    closure_strategy: PIPClosureStrategy = "none"
+    pct_rooms_offline_by_month: Annotated[
+        list[float], Field(default_factory=list, max_length=36)
+    ]
+    brand: str | None = None
+    revpar_index_post_reno: Annotated[float, Field(ge=0.5, le=2.0)] = 1.05
+    occupancy_recovery_months: Annotated[int, Field(ge=0, le=36)] = 12
+
+    @field_validator("pct_rooms_offline_by_month")
+    @classmethod
+    def _check_each_pct_in_unit_interval(cls, v: list[float]) -> list[float]:
+        for i, pct in enumerate(v):
+            if pct < 0.0 or pct > 1.0:
+                raise ValueError(
+                    f"pct_rooms_offline_by_month[{i}] = {pct} must be in [0.0, 1.0]"
+                )
+        return v
+
+    @model_validator(mode="after")
+    def _check_strategy_consistency(self) -> "PIPDisplacement":
+        if self.closure_strategy == "full_closure":
+            # Every month in the schedule must be a clean 1.0 (full
+            # closure) or 0.0 (off-window). A partial closure under
+            # the full_closure label is an analyst error — flag it
+            # rather than silently degrade to a rolling schedule.
+            for i, pct in enumerate(self.pct_rooms_offline_by_month):
+                if pct not in (0.0, 1.0):
+                    raise ValueError(
+                        "full_closure strategy requires each "
+                        f"pct_rooms_offline_by_month entry to be 0.0 or 1.0; "
+                        f"got {pct} at index {i}"
+                    )
+        if self.closure_strategy == "none":
+            for i, pct in enumerate(self.pct_rooms_offline_by_month):
+                if pct != 0.0:
+                    raise ValueError(
+                        "closure_strategy='none' requires every "
+                        f"pct_rooms_offline_by_month entry to be 0.0; "
+                        f"got {pct} at index {i}"
+                    )
+        return self
+
+
 # ─────────────── Investment Engine ───────────────
 
 
@@ -161,6 +250,15 @@ class RevenueEngineInput(BaseModel):
     # no channel cost. Populated, the engine runs the five-segment model
     # — see ``RevenueSegment`` and ``apps/worker/app/engines/revenue.py``.
     segments: list[RevenueSegment] = Field(default_factory=list)
+
+    # Wave 2 P2.4 — structured PIP displacement (closure strategy +
+    # % rooms offline + brand recovery curve). When ``None`` (or set to
+    # the ``none`` strategy), the engine falls back to the flat-pct
+    # ``y1_*_displacement_pct`` math above byte-identically. When set
+    # with a real strategy, this object overrides the flat-pct path
+    # entirely. See ``PIPDisplacement`` and
+    # ``apps/worker/app/engines/revenue.py``.
+    pip_displacement: PIPDisplacement | None = None
 
     @model_validator(mode="after")
     def _check_segment_mix_sums_to_one(self) -> "RevenueEngineInput":
