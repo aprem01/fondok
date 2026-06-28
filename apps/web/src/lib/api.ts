@@ -47,14 +47,18 @@ export interface WorkerDealStatus {
  *    deal_row          — set on the deals table (keys, purchase_price)
  *    t12_actual        — extracted from an uploaded T-12
  *    cbre_horizons     — extracted from a CBRE Horizons forecast
- *    pnl_benchmark     — extracted from a P&L benchmark (HotStats-style)
+ *    pnl_benchmark     — extracted from a generic P&L benchmark (HotStats-style)
+ *    portfolio_pnl     — analyst's in-house portfolio P&L benchmark
+ *                        (Wave 2 P2.7; outranks pnl_benchmark + cbre_horizons
+ *                         for op-ratios because the firm's own portfolio is
+ *                         the most credible peer set)
  *    om_comps          — median of OM transaction comps (exit_cap_rate)
  *    om_broker         — broker proforma value on the OM
  *    analyst_override  — set via deal.field_overrides
  */
 export type AssumptionSource =
   | 'seed' | 'deal_row' | 't12_actual' | 'cbre_horizons'
-  | 'pnl_benchmark' | 'om_comps' | 'om_broker' | 'analyst_override';
+  | 'pnl_benchmark' | 'portfolio_pnl' | 'om_comps' | 'om_broker' | 'analyst_override';
 
 export interface AssumptionSourcesResponse {
   id: string;

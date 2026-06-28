@@ -167,6 +167,15 @@ const SOURCE_META: Record<AssumptionSource, SourceMeta> = {
       'Industry benchmark margin (HotStats-equivalent P&L benchmark doc) applied as a USALI ratio override.',
     Icon: BarChart3,
   },
+  // Wave 2 P2.7 — analyst's in-house portfolio P&L roll-up. Outranks
+  // PNL Bench (generic HostStats) and CBRE Horizons for op-ratios.
+  portfolio_pnl: {
+    label: 'Portfolio',
+    tone: 'bg-brand-50 text-brand-700 border-brand-500/30',
+    tooltip:
+      "Ratio sourced from your firm's in-house portfolio P&L benchmark — aggregated across hotels you already operate at this chain scale. Outranks generic HostStats / CBRE because you own the underlying P&Ls.",
+    Icon: BarChart3,
+  },
   om_comps: {
     label: 'OM Comps',
     tone: 'bg-brand-50 text-brand-700 border-brand-500/30',
