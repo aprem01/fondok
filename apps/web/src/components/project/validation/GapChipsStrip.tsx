@@ -264,6 +264,28 @@ export function GapChipsStrip({
   }
 
   if (visibleGaps.length === 0) {
+    // Distinguish "nothing analyzed yet" from "fully covered". The
+    // backend returns ``year_coverage`` keyed by every year the deal
+    // has a financial doc for; empty means no financials uploaded.
+    // Without this guard we'd cheerfully tell the user "5-year history
+    // is complete" when the truth is the upload pipeline returned zero
+    // documents.
+    const coveredYearCount = Object.keys(state.data?.year_coverage ?? {}).length;
+    if (coveredYearCount === 0) {
+      return (
+        <div
+          className="flex items-center gap-2 px-3 py-2 rounded-md bg-ink-100/60 border border-border text-[12px] text-ink-700"
+          role="status"
+          aria-label="No financial coverage analyzed yet"
+        >
+          <Info size={13} aria-hidden="true" />
+          <span>
+            No financials uploaded yet — coverage analysis will run once
+            you add at least one P&amp;L document.
+          </span>
+        </div>
+      );
+    }
     return (
       <div
         className="flex items-center gap-2 px-3 py-2 rounded-md bg-success-50/60 border border-success-500/20 text-[12px] text-success-700"

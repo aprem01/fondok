@@ -1139,11 +1139,14 @@ async def upload_documents(
                     "extraction_data": None,
                     "user_provided_doc_type": user_provided_type,
                     "fiscal_year": fiscal_year,
-                    # SQLite stores BOOLEAN as INTEGER (0/1); the driver
-                    # accepts both for the same column, but writing the
-                    # int form avoids a needless dialect branch here.
-                    "misclassified": 0,
-                    "year_mismatch": 0,
+                    # Postgres (asyncpg) strictly rejects int for a
+                    # BOOLEAN column — every prod upload silently
+                    # failed with ``db_insert_failed`` until this was
+                    # changed from 0 to False. SQLite's bool→int
+                    # coercion is one-way; False round-trips fine on
+                    # both dialects.
+                    "misclassified": False,
+                    "year_mismatch": False,
                     "extracted_period_year": None,
                 },
             )
@@ -1212,6 +1215,34 @@ async def upload_documents(
         tenant_id_str,
         len(records),
     )
+
+    # If EVERY document failed (db_insert, read_failed, too_large,
+    # unsupported_type, empty, etc.) the previous behaviour was a
+    # cheerful 201 with a list of FAILED rows — the UI rendered "2 docs
+    # uploaded" while the truth was zero docs survived. Distinguish the
+    # whole-batch failure case so the client can surface the actual
+    # outcome. Mixed outcomes (some FAILED + some PARSING) still return
+    # 201; the UI shows per-row error chips in that case.
+    failed_kinds = {
+        "db_insert_failed",
+        "read_failed",
+        "too_large",
+        "unsupported_type",
+        "empty",
+        "storage_failed",
+    }
+    all_failed = bool(records) and all(
+        (rec.error_kind or "") in failed_kinds for rec in records
+    )
+    if all_failed:
+        # Per-row payload still useful for the client error banner.
+        from fastapi.responses import JSONResponse
+
+        return JSONResponse(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            content=[rec.model_dump(mode="json") for rec in records],
+        )
+
     return records
 
 
