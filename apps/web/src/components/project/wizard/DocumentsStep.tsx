@@ -494,8 +494,9 @@ export function DocumentsStep({
       </h2>
       <p className="text-[12.5px] text-ink-500 mb-3">
         Walk the 11 categories on the left. Financials are required to
-        advance — the other nine are recommended for IC and can be added
-        later from the Data Room.
+        advance; nine more are recommended for IC; Surveys &amp; Reviews
+        is optional. Anything you skip can be added later from the
+        Data Room.
       </p>
       <div className="rounded-md bg-brand-50 border border-brand-100 p-3 text-[12px] text-ink-700 leading-relaxed mb-5">
         Drop documents into the matching section so Fondok can route them

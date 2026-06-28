@@ -345,6 +345,43 @@ _ALLOWED_MIME_PREFIXES = (
 )
 
 
+def _content_matches_extension(filename: str, body: bytes) -> bool:
+    """Magic-byte sniff: does the leading byte signature match what
+    the filename's extension implies?
+
+    Sam QA: a ``.exe`` renamed to ``.pdf`` slipped through the
+    extension/MIME allowlist (the MIME side is intentionally permissive
+    so broker-stripped uploads aren't blocked). This second pass reads
+    the first few bytes and rejects anything whose magic doesn't match.
+
+    Permissive on .csv and .doc — CSVs have no magic and legacy .doc
+    has weak heuristics; we accept whatever the allowlist passed for
+    those. Everything else (PDF / xlsx / xlsm / xls) has a well-known
+    magic and we enforce it.
+    """
+    if not body or len(body) < 4:
+        return False
+    name = (filename or "").lower()
+    dot = name.rfind(".")
+    ext = name[dot:] if dot >= 0 else ""
+    head = body[:8]
+    if ext == ".pdf":
+        # PDF spec: every conforming file starts with ``%PDF-`` in the
+        # first 1024 bytes. We require it in the first 8 — every PDF
+        # I've ever seen lands it at offset 0.
+        return head.startswith(b"%PDF-")
+    if ext in (".xlsx", ".xlsm", ".docx"):
+        # ZIP archive (Office Open XML) — starts with ``PK\x03\x04``.
+        return head.startswith(b"PK\x03\x04") or head.startswith(b"PK\x05\x06")
+    if ext == ".xls":
+        # Legacy OLE Compound Document — starts with the well-known
+        # ``D0 CF 11 E0 A1 B1 1A E1`` signature.
+        return head.startswith(b"\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1")
+    # .csv (no magic, just text) and .doc (weak magic, varied) — trust
+    # the extension/MIME pass.
+    return True
+
+
 def _is_allowed_upload(filename: str, content_type: str | None) -> bool:
     """Return True when ``filename`` extension OR ``content_type``
     matches the Wave 1 allowlist. Reject only when BOTH fail.
@@ -1041,6 +1078,29 @@ async def upload_documents(
                         "Fondok accepts PDF, Excel, CSV, and Word "
                         "documents only. Re-export this file as one of "
                         "those formats and try again."
+                    ),
+                )
+            )
+            continue
+
+        # Magic-byte sniff (Sam QA): a renamed .exe → .pdf passes the
+        # extension/MIME allowlist above (browser sends content_type
+        # ``application/octet-stream`` or worse, ``application/x-msdownload``,
+        # but the extension says ``.pdf``). The allowlist trusts that —
+        # by design, to tolerate broker-stripped MIME types — so we
+        # cross-check the actual leading bytes against the declared
+        # type before handing the file to LlamaParse / openpyxl.
+        if not _content_matches_extension(filename, body):
+            records.append(
+                _failed_upload_record(
+                    deal_id=deal_id,
+                    tenant_id=tenant_id,
+                    filename=filename,
+                    error_kind="unsupported_type",
+                    error_message=(
+                        "This file's contents don't match its extension. "
+                        "Re-export the original document as a PDF, Excel, "
+                        "CSV, or Word file and re-upload."
                     ),
                 )
             )
