@@ -22,11 +22,13 @@ from .api import health as health_router
 from .api import market as market_router
 from .api import model as model_router
 from .api import observability as observability_router
+from .api import pipeline_filters as pipeline_filters_router
 from .api import scenarios as scenarios_router
 from .api import settings as settings_router
 from .config import get_settings
 from .database import dispose_engine, get_engine
 from .migrations import run_startup_migrations
+from .services.digest_scheduler import start_scheduler, stop_scheduler
 from .telemetry import setup_langsmith, setup_telemetry
 from .tenant_middleware import register_tenant_safety_listener
 
@@ -73,10 +75,21 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
         register_tenant_safety_listener(get_engine())
     except Exception as exc:
         logger.exception("tenant safety listener registration failed: %s", exc)
+    # Wave 4 W4.5 — in-process pipeline-digest scheduler. No-op when
+    # ``DIGEST_SCHEDULER_ENABLED=False`` (tests, multi-replica deploys
+    # that drive cron externally). Never raises out of lifespan.
+    try:
+        start_scheduler()
+    except Exception as exc:
+        logger.exception("digest scheduler start failed: %s", exc)
     try:
         yield
     finally:
         logger.info("fondok-worker shutting down")
+        try:
+            await stop_scheduler()
+        except Exception as exc:
+            logger.warning("digest scheduler stop failed: %s", exc)
         await dispose_engine()
 
 
@@ -144,6 +157,13 @@ def create_app() -> FastAPI:
         data_library_router.router, prefix="/data-library", tags=["data-library"]
     )
     app.include_router(settings_router.router, prefix="/settings", tags=["settings"])
+    # Wave 4 W4.5 — saved pipeline filters + scheduled digests. Mounted
+    # at the root so URLs are ``/pipeline-views`` and ``/pipeline-digests``
+    # (siblings of ``/deals``), matching the analyst's mental model:
+    # views and digests are tenant-level constructs, not per-deal.
+    app.include_router(
+        pipeline_filters_router.router, tags=["pipeline-digests"]
+    )
     app.include_router(
         observability_router.router,
         prefix="/observability",

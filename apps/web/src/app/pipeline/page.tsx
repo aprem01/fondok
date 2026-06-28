@@ -21,9 +21,10 @@ import PageHeader from '@/components/ui/PageHeader';
 import { Card } from '@/components/ui/Card';
 import { Button } from '@/components/ui/Button';
 import { StatusBadge } from '@/components/ui/Badge';
+import SavedViewSelector from '@/components/pipeline/SavedViewSelector';
 import {
-  api, isWorkerConnected, PipelineDealRow, PipelineQuery, PipelineResponse,
-  PipelineSort,
+  api, isWorkerConnected, PipelineDealRow, PipelineFilterBody,
+  PipelineQuery, PipelineResponse, PipelineSort, SavedViewRecord,
 } from '@/lib/api';
 import { cn, fmtCurrency, fmtPct } from '@/lib/format';
 import { MetricLabel } from '@/components/help/MetricLabel';
@@ -164,6 +165,29 @@ export default function PipelinePage() {
         subtitle="Every active deal at a glance — sortable, filterable, with portfolio-level returns at the top."
         action={
           <div className="flex items-center gap-2">
+            {/* W4.5 — saved view dropdown. The "Save current filter as"
+             *  panel persists the active ``filters`` state verbatim. */}
+            <SavedViewSelector
+              currentFilter={{
+                state: filters.state === 'all' ? null : [filters.state],
+                min_irr: filters.minIrr,
+                max_per_key: filters.maxPerKey,
+                sort: filters.sort,
+              }}
+              onApply={(view: SavedViewRecord) => {
+                const f = view.filter;
+                setFilters((prev) => ({
+                  ...prev,
+                  state:
+                    f.state && f.state.length === 1
+                      ? (f.state[0] as State)
+                      : 'all',
+                  minIrr: f.min_irr ?? null,
+                  maxPerKey: f.max_per_key ?? null,
+                  sort: (f.sort as PipelineSort) ?? prev.sort,
+                }));
+              }}
+            />
             <Button
               variant="secondary"
               onClick={() => void load()}

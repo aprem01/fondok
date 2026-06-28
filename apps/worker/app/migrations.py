@@ -815,6 +815,79 @@ MIGRATIONS: list[tuple[str, str]] = [
         ON scenarios (deal_id, tenant_id)
         """,
     ),
+    # ────────── Wave 4 W4.5 — Saved pipeline views + digests ─────────
+    # Named filter presets persisted per tenant. ``filter`` is a JSONB
+    # blob shaped like :class:`fondok_schemas.PipelineFilter` (state
+    # list, min/max IRR, etc.). ``is_owner_default`` pins the view as
+    # the actor's landing filter on /pipeline; uniqueness is enforced
+    # at the API layer via a "unset the prior default in the same txn"
+    # pattern (no DB-side partial index — keeps the schema portable to
+    # SQLite). ``created_by`` is the actor id (Clerk user / service).
+    (
+        "saved_pipeline_views.create_table",
+        """
+        CREATE TABLE IF NOT EXISTS saved_pipeline_views (
+            id                 UUID PRIMARY KEY,
+            tenant_id          UUID NOT NULL,
+            name               TEXT NOT NULL,
+            description        TEXT,
+            filter             JSONB NOT NULL DEFAULT '{}'::jsonb,
+            is_owner_default   BOOLEAN NOT NULL DEFAULT FALSE,
+            created_by         TEXT,
+            created_at         TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+            updated_at         TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+            UNIQUE (tenant_id, name)
+        )
+        """,
+    ),
+    (
+        "saved_pipeline_views.idx_tenant",
+        """
+        CREATE INDEX IF NOT EXISTS idx_saved_pipeline_views_tenant
+        ON saved_pipeline_views (tenant_id)
+        """,
+    ),
+    # Pipeline digest schedules — recurring Slack/email pipeline
+    # summaries. ``cadence`` is daily/weekly/monthly, ``weekday`` only
+    # meaningful for weekly. ``slack_webhook_url`` is stored verbatim
+    # in the DB (already a per-tenant secret URL); ``email_recipients``
+    # is a JSONB array of strings. ``next_run_at`` is precomputed on
+    # write so the scheduler can ``WHERE next_run_at <= NOW()`` without
+    # re-deriving the cadence on every tick.
+    (
+        "pipeline_digest_schedules.create_table",
+        """
+        CREATE TABLE IF NOT EXISTS pipeline_digest_schedules (
+            id                          UUID PRIMARY KEY,
+            tenant_id                   UUID NOT NULL,
+            name                        TEXT NOT NULL,
+            saved_view_id               UUID,
+            cadence                     TEXT NOT NULL DEFAULT 'daily',
+            weekday                     INTEGER,
+            hour_utc                    INTEGER NOT NULL DEFAULT 13,
+            delivery                    TEXT NOT NULL DEFAULT 'slack',
+            slack_webhook_url           TEXT,
+            email_recipients            JSONB NOT NULL DEFAULT '[]'::jsonb,
+            include_kpi_summary         BOOLEAN NOT NULL DEFAULT TRUE,
+            include_recently_mutated    BOOLEAN NOT NULL DEFAULT TRUE,
+            include_deals_meeting_target BOOLEAN NOT NULL DEFAULT TRUE,
+            include_full_table          BOOLEAN NOT NULL DEFAULT FALSE,
+            is_active                   BOOLEAN NOT NULL DEFAULT TRUE,
+            last_run_at                 TIMESTAMPTZ,
+            next_run_at                 TIMESTAMPTZ,
+            created_at                  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+            updated_at                  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+            UNIQUE (tenant_id, name)
+        )
+        """,
+    ),
+    (
+        "pipeline_digest_schedules.idx_tenant_active",
+        """
+        CREATE INDEX IF NOT EXISTS idx_pipeline_digest_schedules_active
+        ON pipeline_digest_schedules (tenant_id, is_active, next_run_at)
+        """,
+    ),
 ]
 
 
@@ -1333,6 +1406,68 @@ SQLITE_MIGRATIONS: list[tuple[str, str]] = [
         """
         CREATE INDEX IF NOT EXISTS idx_scenarios_deal_tenant
         ON scenarios (deal_id, tenant_id)
+        """,
+    ),
+    # ────────── Wave 4 W4.5 — Saved pipeline views + digests ─────────
+    # SQLite mirrors. JSONB → TEXT, BOOLEAN → INTEGER 0/1, UUID → TEXT,
+    # TIMESTAMPTZ → TEXT. Same uniqueness contracts as the Postgres
+    # tables.
+    (
+        "saved_pipeline_views.create_table",
+        """
+        CREATE TABLE IF NOT EXISTS saved_pipeline_views (
+            id                 TEXT PRIMARY KEY,
+            tenant_id          TEXT NOT NULL,
+            name               TEXT NOT NULL,
+            description        TEXT,
+            filter             TEXT NOT NULL DEFAULT '{}',
+            is_owner_default   INTEGER NOT NULL DEFAULT 0,
+            created_by         TEXT,
+            created_at         TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            updated_at         TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            UNIQUE (tenant_id, name)
+        )
+        """,
+    ),
+    (
+        "saved_pipeline_views.idx_tenant",
+        """
+        CREATE INDEX IF NOT EXISTS idx_saved_pipeline_views_tenant
+        ON saved_pipeline_views (tenant_id)
+        """,
+    ),
+    (
+        "pipeline_digest_schedules.create_table",
+        """
+        CREATE TABLE IF NOT EXISTS pipeline_digest_schedules (
+            id                          TEXT PRIMARY KEY,
+            tenant_id                   TEXT NOT NULL,
+            name                        TEXT NOT NULL,
+            saved_view_id               TEXT,
+            cadence                     TEXT NOT NULL DEFAULT 'daily',
+            weekday                     INTEGER,
+            hour_utc                    INTEGER NOT NULL DEFAULT 13,
+            delivery                    TEXT NOT NULL DEFAULT 'slack',
+            slack_webhook_url           TEXT,
+            email_recipients            TEXT NOT NULL DEFAULT '[]',
+            include_kpi_summary         INTEGER NOT NULL DEFAULT 1,
+            include_recently_mutated    INTEGER NOT NULL DEFAULT 1,
+            include_deals_meeting_target INTEGER NOT NULL DEFAULT 1,
+            include_full_table          INTEGER NOT NULL DEFAULT 0,
+            is_active                   INTEGER NOT NULL DEFAULT 1,
+            last_run_at                 TEXT,
+            next_run_at                 TEXT,
+            created_at                  TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            updated_at                  TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            UNIQUE (tenant_id, name)
+        )
+        """,
+    ),
+    (
+        "pipeline_digest_schedules.idx_tenant_active",
+        """
+        CREATE INDEX IF NOT EXISTS idx_pipeline_digest_schedules_active
+        ON pipeline_digest_schedules (tenant_id, is_active, next_run_at)
         """,
     ),
 ]

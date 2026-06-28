@@ -139,6 +139,103 @@ export interface PipelineQuery {
   offset?: number;
 }
 
+// ─── Saved pipeline views + digests (Wave 4 W4.5) ────────────────────
+// Mirrors apps/worker/app/api/pipeline_filters.py.
+
+export interface PipelineFilterBody {
+  state?: string[] | null;
+  min_irr?: number | null;
+  max_irr?: number | null;
+  min_per_key?: number | null;
+  max_per_key?: number | null;
+  max_cap_rate?: number | null;
+  chain_scales?: string[] | null;
+  sort?: PipelineSort | string;
+}
+
+export interface SavedViewRecord {
+  id: string;
+  tenant_id: string;
+  name: string;
+  description: string | null;
+  filter: PipelineFilterBody;
+  is_owner_default: boolean;
+  created_by: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface CreateSavedViewBody {
+  name: string;
+  description?: string | null;
+  filter: PipelineFilterBody;
+  is_owner_default?: boolean;
+  created_by?: string | null;
+}
+
+export interface UpdateSavedViewBody {
+  name?: string;
+  description?: string | null;
+  filter?: PipelineFilterBody;
+  is_owner_default?: boolean;
+}
+
+export type DigestCadence = 'daily' | 'weekly' | 'monthly';
+export type DigestDelivery = 'slack' | 'email' | 'both';
+
+export interface DigestScheduleRecord {
+  id: string;
+  tenant_id: string;
+  name: string;
+  saved_view_id: string | null;
+  cadence: DigestCadence;
+  weekday: number | null;
+  hour_utc: number;
+  delivery: DigestDelivery;
+  slack_webhook_url: string | null;
+  email_recipients: string[];
+  include_kpi_summary: boolean;
+  include_recently_mutated: boolean;
+  include_deals_meeting_target: boolean;
+  include_full_table: boolean;
+  is_active: boolean;
+  last_run_at: string | null;
+  next_run_at: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface CreateDigestScheduleBody {
+  name: string;
+  saved_view_id?: string | null;
+  cadence?: DigestCadence;
+  weekday?: number | null;
+  hour_utc?: number;
+  delivery?: DigestDelivery;
+  slack_webhook_url?: string | null;
+  email_recipients?: string[];
+  include_kpi_summary?: boolean;
+  include_recently_mutated?: boolean;
+  include_deals_meeting_target?: boolean;
+  include_full_table?: boolean;
+  is_active?: boolean;
+}
+
+export interface UpdateDigestScheduleBody extends Partial<CreateDigestScheduleBody> {}
+
+export interface RunNowResponse {
+  schedule_id: string;
+  dispatched_at: string;
+  slack_attempted: boolean;
+  slack_succeeded: boolean;
+  slack_error: string | null;
+  email_attempted: boolean;
+  email_succeeded: boolean;
+  email_error: string | null;
+  no_op_reason: string | null;
+  deal_count: number;
+}
+
 export interface AssumptionSourcesResponse {
   id: string;
   sources: Record<string, AssumptionSource | string>;
@@ -978,6 +1075,36 @@ export const api = {
         { question },
         { signal },
       ),
+  },
+  /** Wave 4 W4.5 — saved pipeline filters. Named filter + sort
+   *  presets the analyst recalls from the pipeline page.
+   *  ``is_owner_default`` pins as the actor's landing filter. */
+  pipelineViews: {
+    list: (signal?: AbortSignal) =>
+      request<SavedViewRecord[]>('GET', '/pipeline-views', undefined, { signal }),
+    create: (body: CreateSavedViewBody) =>
+      request<SavedViewRecord>('POST', '/pipeline-views', body),
+    get: (id: string, signal?: AbortSignal) =>
+      request<SavedViewRecord>('GET', `/pipeline-views/${id}`, undefined, { signal }),
+    update: (id: string, patch: UpdateSavedViewBody) =>
+      request<SavedViewRecord>('PATCH', `/pipeline-views/${id}`, patch),
+    delete: (id: string) =>
+      request<void>('DELETE', `/pipeline-views/${id}`),
+    setDefault: (id: string) =>
+      request<SavedViewRecord>('POST', `/pipeline-views/${id}/set-default`),
+  },
+  /** Wave 4 W4.5 — recurring Slack/email pipeline digests. */
+  pipelineDigests: {
+    list: (signal?: AbortSignal) =>
+      request<DigestScheduleRecord[]>('GET', '/pipeline-digests', undefined, { signal }),
+    create: (body: CreateDigestScheduleBody) =>
+      request<DigestScheduleRecord>('POST', '/pipeline-digests', body),
+    update: (id: string, patch: UpdateDigestScheduleBody) =>
+      request<DigestScheduleRecord>('PATCH', `/pipeline-digests/${id}`, patch),
+    delete: (id: string) =>
+      request<void>('DELETE', `/pipeline-digests/${id}`),
+    runNow: (id: string) =>
+      request<RunNowResponse>('POST', `/pipeline-digests/${id}/run-now`),
   },
   /** Wave 3 W3.2 — named what-if scenarios per deal. */
   scenarios: {

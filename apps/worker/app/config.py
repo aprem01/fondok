@@ -106,6 +106,25 @@ class Settings(BaseSettings):
     )
     SLACK_ALERT_CHANNEL: str | None = Field(default=None)
 
+    # ── Email backend (W4.5 — pipeline digests) ─────────────────────
+    # ``log_only`` (default) writes the rendered email to the worker
+    # log and returns success — useful for dev / CI and the only
+    # backend exercised by the test suite. ``sendgrid`` honors
+    # ``SENDGRID_API_KEY`` and POSTs to the SendGrid v3 API.
+    # ``ses`` is a TODO — wire AWS creds when the first customer
+    # asks for it.
+    EMAIL_BACKEND: Literal["log_only", "sendgrid", "ses"] = Field(default="log_only")
+    SENDGRID_API_KEY: SecretStr | None = Field(default=None)
+    EMAIL_FROM_ADDRESS: str = Field(default="digests@fondok.app")
+    EMAIL_FROM_NAME: str = Field(default="Fondok Digests")
+
+    # ── Digest scheduler (W4.5) ─────────────────────────────────────
+    # In-process scheduler tick interval. Tests fake-tick the loop;
+    # production should swap to a real beat scheduler (see
+    # services.digest_scheduler module docstring).
+    DIGEST_SCHEDULER_ENABLED: bool = Field(default=True)
+    DIGEST_SCHEDULER_TICK_SECONDS: float = Field(default=60.0, gt=0.0)
+
     @property
     def async_database_url(self) -> str:
         """SQLAlchemy expects ``postgresql+asyncpg://`` for the asyncpg driver."""

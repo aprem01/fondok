@@ -76,6 +76,11 @@ from .partnership import (
     PartnershipOutput,
     WaterfallTier,
 )
+from .pipeline_filter import (
+    PipelineDigestSchedule,
+    PipelineFilter,
+    SavedPipelineView,
+)
 from .scenario import Scenario, ScenarioOverride
 from .underwriting import (
     CapexPlan,
@@ -194,6 +199,10 @@ __all__ = [
     "PartnershipInput",
     "PartnershipOutput",
     "WaterfallTier",
+    # pipeline_filter (Wave 4 W4.5 — saved filters + scheduled digests)
+    "PipelineDigestSchedule",
+    "PipelineFilter",
+    "SavedPipelineView",
     # scenario (Wave 3 W3.2 — named what-if scenarios)
     "Scenario",
     "ScenarioOverride",
