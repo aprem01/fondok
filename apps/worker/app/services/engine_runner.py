@@ -2538,6 +2538,20 @@ async def run_single_engine(
         logger.exception(
             "engine %s failed deal=%s runtime=%dms", engine_name, deal_id, runtime_ms
         )
+        try:
+            from ..alerting import report_alert
+
+            report_alert(
+                severity="error",
+                title=f"Engine run failure: {engine_name}",
+                deal_id=str(deal_id),
+                tenant_id=tenant_id,
+                stage=f"engine.{engine_name}",
+                exc=exc,
+                extra={"runtime_ms": runtime_ms, "run_id": run_id},
+            )
+        except Exception:
+            pass
         await _persist_failed(session, row_id=row_id, error=str(exc))
         return {
             "engine": engine_name,

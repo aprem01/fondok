@@ -89,6 +89,23 @@ class Settings(BaseSettings):
     # automatically when the Redis service is added.
     REDIS_URL: str | None = Field(default=None)
 
+    # ── Sentry (worker) ─────────────────────────────────────────────
+    # Off by default — set SENTRY_DSN_WORKER to enable. Different DSN
+    # from the web app so prod / dev pipelines can be tuned independently.
+    SENTRY_DSN_WORKER: str | None = Field(default=None)
+    SENTRY_TRACES_SAMPLE_RATE: float = Field(default=0.05, ge=0.0, le=1.0)
+    SENTRY_PROFILES_SAMPLE_RATE: float = Field(default=0.0, ge=0.0, le=1.0)
+    SENTRY_RELEASE: str | None = Field(default=None)
+
+    # ── Slack alerting ──────────────────────────────────────────────
+    # Off by default — set SLACK_ALERT_WEBHOOK_URL to enable. Only
+    # severities >= SLACK_ALERT_MIN_SEVERITY ship to Slack.
+    SLACK_ALERT_WEBHOOK_URL: SecretStr | None = Field(default=None)
+    SLACK_ALERT_MIN_SEVERITY: Literal["info", "warning", "error", "critical"] = (
+        Field(default="error")
+    )
+    SLACK_ALERT_CHANNEL: str | None = Field(default=None)
+
     @property
     def async_database_url(self) -> str:
         """SQLAlchemy expects ``postgresql+asyncpg://`` for the asyncpg driver."""

@@ -10,6 +10,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from . import __version__
+from .alerting import init_sentry
 from .api import analysis as analysis_router
 from .api import data_library as data_library_router
 from .api import deals as deals_router
@@ -44,6 +45,12 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
         settings.LLM_PROVIDER,
         settings.DEFAULT_DEAL_BUDGET_USD,
     )
+    # Sentry — no-op when SENTRY_DSN_WORKER is unset. Init FIRST so
+    # any subsequent setup crash gets reported.
+    try:
+        init_sentry()
+    except Exception as exc:
+        logger.warning("sentry init failed: %s", exc)
     # LangSmith tracing — no-op when LANGSMITH_API_KEY is unset.
     # Must run before the first agent call so the LangChain client
     # picks up the tracing env vars on instantiation.

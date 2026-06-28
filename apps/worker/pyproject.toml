@@ -27,6 +27,10 @@ dependencies = [
   "opentelemetry-instrumentation-sqlalchemy>=0.48b0",
   "opentelemetry-instrumentation-httpx>=0.48b0",
   "opentelemetry-instrumentation-asyncpg>=0.48b0",
+  # Sentry error reporting + Slack alerts (Wave 2 P2.9). SDK is optional
+  # at runtime — alerting.init_sentry() no-ops when SENTRY_DSN_WORKER is
+  # unset — but we declare the dep so prod has the SDK available.
+  "sentry-sdk[fastapi,starlette,asyncpg,httpx]>=2.0.0",
   # Real export builders — Excel acquisition model, IC memo PDF, IC deck PPTX.
   # NOTE: weasyprint requires system libraries (cairo, pango, gdk-pixbuf, libffi).
   #   macOS:        brew install cairo pango gdk-pixbuf libffi
