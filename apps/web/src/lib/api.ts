@@ -91,6 +91,36 @@ export interface WorkerDocument {
   error_kind: string | null;
   /** Friendly explanation the UI surfaces for FAILED docs. */
   error_message: string | null;
+  /** USALI compliance score (0-100). NULL → inconclusive (< 5 applicable
+   *  rules) or "no P&L data on this doc" — UI surfaces them differently. */
+  usali_score?: number | null;
+  /** Either the full ``USALIScore`` shape (``{inconclusive, applicable_count,
+   *  passed_count, deviations}``) or just the flat deviation list. The badge
+   *  + accordion normalize both. */
+  usali_deviations?: WorkerUsaliPayload | WorkerUsaliDeviation[] | null;
+}
+
+// ─── USALI compliance ─────────────────────────────────────────────────
+// Mirrors ``services.usali_scorer.USALIDeviation`` + ``USALIScore`` JSON.
+
+export type UsaliSeverity = 'CRITICAL' | 'WARN' | 'INFO';
+
+export interface WorkerUsaliDeviation {
+  rule_id: string;
+  rule_name: string;
+  severity: UsaliSeverity;
+  message: string;
+  actual_value: number | null;
+  threshold_min: number | null;
+  threshold_max: number | null;
+  requires_market_context?: boolean;
+}
+
+export interface WorkerUsaliPayload {
+  inconclusive?: boolean;
+  applicable_count?: number;
+  passed_count?: number;
+  deviations?: WorkerUsaliDeviation[];
 }
 
 export interface ExtractionField {
@@ -358,6 +388,66 @@ export const api = {
         { signal },
       ),
   },
+  /** Wave 1 Validation surface — gap chips, USALI compliance, broker
+   *  questions, comp-set drift. The four endpoints below back the
+   *  ValidationTab + DataRoomTab badges. */
+  validation: {
+    /** Document coverage gap audit (ROADMAP #7).
+     *  ``lookback_years`` defaults to 5 server-side. */
+    coverage: (dealId: string, lookbackYears?: number, signal?: AbortSignal) => {
+      const qs =
+        lookbackYears && lookbackYears > 0
+          ? `?lookback_years=${lookbackYears}`
+          : '';
+      return request<CoverageResponse>(
+        'GET',
+        `/deals/${dealId}/document_coverage${qs}`,
+        undefined,
+        { signal },
+      );
+    },
+    brokerQuestions: {
+      /** ``state`` filters to one of pending/sent/answered/dismissed. */
+      list: (
+        dealId: string,
+        state?: BrokerQuestionState,
+        signal?: AbortSignal,
+      ) => {
+        const qs = state ? `?state=${state}` : '';
+        return request<BrokerQuestion[]>(
+          'GET',
+          `/analysis/${dealId}/broker_questions${qs}`,
+          undefined,
+          { signal },
+        );
+      },
+      patch: (
+        dealId: string,
+        questionId: string,
+        body: BrokerQuestionPatchBody,
+      ) =>
+        request<BrokerQuestion>(
+          'PATCH',
+          `/analysis/${dealId}/broker_questions/${questionId}`,
+          body,
+        ),
+      /** Re-runs the deterministic detector against current P&L
+       *  extractions and returns the up-to-date list. */
+      refresh: (dealId: string) =>
+        request<BrokerQuestion[]>(
+          'POST',
+          `/analysis/${dealId}/broker_questions/refresh`,
+          {},
+        ),
+    },
+    compSetDrift: (dealId: string, signal?: AbortSignal) =>
+      request<CompSetDriftResponse>(
+        'GET',
+        `/deals/${dealId}/comp_set_drift`,
+        undefined,
+        { signal },
+      ),
+  },
   /** Market intelligence — submarket overview, comp set, transaction comps. */
   market: {
     transactionComps: (dealId: string, signal?: AbortSignal) =>
@@ -475,6 +565,106 @@ export interface TransactionCompsResult {
   median_price_per_key: number | null;
   median_cap_rate_pct: number | null;
   note: string | null;
+}
+
+// ─── Document Coverage (ROADMAP #7) ─────────────────────────────────
+// Mirrors apps/worker/app/api/documents.py DocumentCoverageResponse.
+
+export type CoverageGapType =
+  | 'year_missing'
+  | 'month_partial'
+  | 'annual_no_detail'
+  | 'summary_only';
+
+/** Worker emits lowercase ``error|warn|info``. */
+export type CoverageGapSeverity = 'error' | 'warn' | 'info';
+
+export interface CoverageGap {
+  gap_type: CoverageGapType | string;
+  year: number;
+  message: string;
+  severity: CoverageGapSeverity | string;
+  months_missing: number[] | null;
+  dismissible: boolean;
+}
+
+export interface CoverageDoc {
+  doc_id: string | null;
+  doc_type: string | null;
+  period_type: string | null;
+  period_ending: string | null;
+}
+
+export interface CoverageResponse {
+  deal_id: string;
+  /** year → contributing docs (object keys are stringified ints on the wire). */
+  year_coverage: Record<string, CoverageDoc[]>;
+  gaps: CoverageGap[];
+  lookback_years: number;
+}
+
+// ─── Broker Questions (ROADMAP #4) ──────────────────────────────────
+// Mirrors apps/worker/app/api/analysis.py BrokerQuestionOut + UpdateStateBody.
+
+export type BrokerQuestionState =
+  | 'pending'
+  | 'dismissed'
+  | 'sent'
+  | 'answered';
+
+export type BrokerQuestionSeverity = 'CRITICAL' | 'WARN' | 'INFO';
+
+export interface BrokerQuestion {
+  id: string;
+  deal_id: string;
+  line_item: string;
+  period_key: string;
+  variance_pct: number;
+  actual_prior: number | null;
+  actual_current: number | null;
+  threshold_pct: number;
+  severity: BrokerQuestionSeverity;
+  question_text: string;
+  state: BrokerQuestionState;
+  dismissal_reason: string | null;
+  broker_response: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface BrokerQuestionPatchBody {
+  next_state: BrokerQuestionState;
+  dismissal_reason?: string;
+  broker_response?: string;
+}
+
+// ─── Comp Set Drift (ROADMAP #8) ────────────────────────────────────
+// Mirrors apps/worker/app/services/comp_set_drift.CompSetDriftReportOut.
+
+export interface CompSetEntry {
+  name: string;
+  keys: number | null;
+}
+
+export interface CompSetUncertainMatch {
+  from_name: string;
+  to_name: string;
+  /** 0–1, ≥ 0.80 by construction. */
+  similarity: number;
+}
+
+export interface CompSetDrift {
+  year_from: number;
+  year_to: number;
+  added: CompSetEntry[];
+  removed: CompSetEntry[];
+  unchanged: CompSetEntry[];
+  uncertain_matches: CompSetUncertainMatch[];
+}
+
+export interface CompSetDriftResponse {
+  deal_id: string;
+  drifts: CompSetDrift[];
 }
 
 // ─── Due Diligence ──────────────────────────────────────────────────
