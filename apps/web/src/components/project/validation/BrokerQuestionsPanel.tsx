@@ -49,11 +49,13 @@ import { useToast } from '@/components/ui/Toast';
 import {
   api,
   isWorkerConnected,
+  BrokerQAPair,
   BrokerQuestion,
   BrokerQuestionState,
   BrokerQuestionSeverity,
 } from '@/lib/api';
 import { cn } from '@/lib/format';
+import { QAResolutionInline } from './QAResolutionInline';
 
 type FilterKey = 'all' | BrokerQuestionState;
 
@@ -156,6 +158,11 @@ interface PanelState {
   lastRefreshedAt: string | null;
 }
 
+/** Wave 1 #5 — keyed by broker_question_id so the row's inline Q&A
+ *  surface can read its existing pair (verdict + summary + applied
+ *  overrides) without re-fetching on every expand. */
+type QAPairsByQuestion = Record<string, BrokerQAPair>;
+
 type ActionKind = 'sent' | 'answered' | 'dismissed';
 
 // Inline action state — keyed by question id + kind so each row hosts
@@ -178,6 +185,10 @@ export function BrokerQuestionsPanel({ dealId }: { dealId: string }) {
   const [refreshing, setRefreshing] = useState(false);
   const [inlineAction, setInlineAction] = useState<InlineAction | null>(null);
   const [expandedAnswers, setExpandedAnswers] = useState<Set<string>>(new Set());
+  // Wave 1 #5 — index of QA pairs by broker_question_id so each row's
+  // QAResolutionInline surface can read its existing pair without an
+  // extra round-trip.
+  const [qaPairs, setQAPairs] = useState<QAPairsByQuestion>({});
   const liveDeal = isLiveDealId(dealId);
 
   const fetchAll = useCallback(
@@ -197,16 +208,32 @@ export function BrokerQuestionsPanel({ dealId }: { dealId: string }) {
       }
       // No ``state`` filter so the panel can pivot client-side without
       // re-fetching every time the analyst flips a pill.
-      api.validation.brokerQuestions
-        .list(dealId, undefined, ctrl.signal)
-        .then((rows) =>
+      // Fetch the broker-question list AND the Q&A pair history in
+      // parallel — the row component reads both to decide whether to
+      // render the textarea or the resolver verdict surface.
+      Promise.all([
+        api.validation.brokerQuestions.list(dealId, undefined, ctrl.signal),
+        api.validation.brokerQA
+          .list(dealId, undefined, ctrl.signal)
+          .catch(() => [] as BrokerQAPair[]),
+      ])
+        .then(([rows, pairs]) => {
+          const indexed: QAPairsByQuestion = {};
+          for (const p of pairs) {
+            // Keep the most recent QA pair per question (list is DESC by
+            // created_at — first wins).
+            if (!indexed[p.broker_question_id]) {
+              indexed[p.broker_question_id] = p;
+            }
+          }
+          setQAPairs(indexed);
           setState({
             loading: false,
             rows,
             error: null,
             lastRefreshedAt: new Date().toISOString(),
-          }),
-        )
+          });
+        })
         .catch((err: unknown) => {
           if ((err as { name?: string })?.name === 'AbortError') return;
           const msg = err instanceof Error ? err.message : String(err);
@@ -302,6 +329,26 @@ export function BrokerQuestionsPanel({ dealId }: { dealId: string }) {
   );
 
   const closeInline = useCallback(() => setInlineAction(null), []);
+
+  // QA pair upsert (Wave 1 #5). Called when a row's
+  // QAResolutionInline surface either creates a new pair (via submit)
+  // or updates one (via apply). Also flips the parent question state to
+  // 'answered' locally so the panel re-renders without a server fetch.
+  const upsertQAPair = useCallback((pair: BrokerQAPair) => {
+    setQAPairs((prev) => ({ ...prev, [pair.broker_question_id]: pair }));
+    setState((s) => ({
+      ...s,
+      rows: s.rows.map((r) =>
+        r.id === pair.broker_question_id
+          ? {
+              ...r,
+              state: 'answered' as const,
+              broker_response: pair.broker_response,
+            }
+          : r,
+      ),
+    }));
+  }, []);
 
   // ESC collapses the inline section, matching the Override panel's
   // keyboard contract.
@@ -480,7 +527,9 @@ export function BrokerQuestionsPanel({ dealId }: { dealId: string }) {
             return (
               <QuestionRow
                 key={q.id}
+                dealId={dealId}
                 question={q}
+                qaPair={qaPairs[q.id] ?? null}
                 expanded={expandedAnswers.has(q.id)}
                 inlineKind={inlineKind}
                 onToggleAnswer={() => toggleAnswer(q.id)}
@@ -494,6 +543,7 @@ export function BrokerQuestionsPanel({ dealId }: { dealId: string }) {
                   if (ok) closeInline();
                   return ok;
                 }}
+                onQAPairUpsert={upsertQAPair}
               />
             );
           })}
@@ -504,7 +554,9 @@ export function BrokerQuestionsPanel({ dealId }: { dealId: string }) {
 }
 
 function QuestionRow({
+  dealId,
   question,
+  qaPair,
   expanded,
   inlineKind,
   onToggleAnswer,
@@ -514,8 +566,13 @@ function QuestionRow({
   onDismiss,
   onCancelInline,
   onSubmitInline,
+  onQAPairUpsert,
 }: {
+  dealId: string;
   question: BrokerQuestion;
+  /** Wave 1 #5 — pre-loaded QA pair (verdict + summary + overrides)
+   *  for this question if any has been processed yet. */
+  qaPair: BrokerQAPair | null;
   expanded: boolean;
   /** Non-null when this row's inline form is open (Wave 1 UX refactor). */
   inlineKind: 'answered' | 'dismissed' | null;
@@ -529,6 +586,8 @@ function QuestionRow({
     kind: 'answered' | 'dismissed',
     text: string,
   ) => Promise<boolean>;
+  /** Wave 1 #5 — bubble new/updated QA pair rows up to the panel state. */
+  onQAPairUpsert: (pair: BrokerQAPair) => void;
 }) {
   const sev = SEV_META[question.severity] ?? SEV_META.INFO;
   const stateMeta = STATE_META[question.state];
@@ -653,6 +712,26 @@ function QuestionRow({
               onCancel={onCancelInline}
               onSubmit={onSubmitInline}
             />
+
+            {/* Q&A re-ingestion surface (Wave 1 #5). Mounts when the
+                question is in ``sent`` or ``answered`` state:
+                  * sent     → render the broker-reply textarea + CTA
+                  * answered → render the resolver verdict + summary +
+                               proposed-overrides apply UI (or the
+                               collapsed confirmation if applied).
+                Suppressed when the inline answer/dismiss form is open
+                so only one surface is interactive at a time. */}
+            {(question.state === 'sent' ||
+              (question.state === 'answered' && qaPair)) &&
+              inlineKind === null && (
+                <QAResolutionInline
+                  dealId={dealId}
+                  question={question}
+                  existing={qaPair}
+                  onResolved={onQAPairUpsert}
+                  onApplied={onQAPairUpsert}
+                />
+              )}
           </div>
 
           {/* Action menu */}
@@ -668,17 +747,13 @@ function QuestionRow({
                 Mark Sent
               </Button>
             )}
-            {question.state === 'sent' && (
-              <Button
-                size="sm"
-                variant="primary"
-                onClick={onMarkAnswered}
-                aria-label="Record the broker's answer"
-              >
-                <CheckCheck size={11} aria-hidden="true" />
-                Record Answer
-              </Button>
-            )}
+            {/* Wave 1 #5: the "Record Answer" button is intentionally
+                omitted on ``sent`` rows — the QAResolutionInline
+                textarea below is the canonical answer-recording surface
+                and offers richer feedback (verdict + proposed overrides).
+                The "Mark Answered (manual)" path lives in the kebab as
+                a fallback for analysts who want to record the reply
+                without running the resolver. */}
             <KebabMenu items={kebabItems} />
           </div>
         </div>

@@ -680,6 +680,50 @@ MIGRATIONS: list[tuple[str, str]] = [
         WHERE state IN ('pending', 'sent')
         """,
     ),
+    # ─────────────────── Wave 1 — Q&A re-ingestion (#5) ───────────────
+    # Persists the closed loop between a sent broker question and the
+    # broker's pasted email reply: the QA Resolver agent reads the
+    # question + the reply + surrounding deal context, emits a verdict
+    # (resolved / partially_resolved / still_concerning), an audit-note
+    # the IC memo can cite, and a list of *proposed* engine-input
+    # overrides. ``applied_overrides`` stays NULL until the analyst
+    # confirms the subset they want to land in ``deals.field_overrides``
+    # — the Wave 1 trust-model decision was NEVER to auto-apply
+    # (see ``project_fondok_wave1_decisions.md``).
+    (
+        "broker_qa_pairs.create_table",
+        """
+        CREATE TABLE IF NOT EXISTS broker_qa_pairs (
+            id                    UUID PRIMARY KEY,
+            deal_id               UUID NOT NULL REFERENCES deals(id) ON DELETE CASCADE,
+            tenant_id             UUID NOT NULL,
+            broker_question_id    UUID NOT NULL REFERENCES broker_questions(id) ON DELETE CASCADE,
+            analyst_question      TEXT NOT NULL,
+            broker_response       TEXT NOT NULL,
+            resolver_verdict      TEXT,
+            resolver_summary      TEXT,
+            proposed_overrides    JSONB,
+            applied_overrides     JSONB,
+            audit_note            TEXT,
+            created_at            TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+            updated_at            TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        )
+        """,
+    ),
+    (
+        "broker_qa_pairs.idx_tenant_deal_created",
+        """
+        CREATE INDEX IF NOT EXISTS idx_broker_qa_pairs_tenant_deal_created
+        ON broker_qa_pairs (tenant_id, deal_id, created_at DESC)
+        """,
+    ),
+    (
+        "broker_qa_pairs.idx_question",
+        """
+        CREATE INDEX IF NOT EXISTS idx_broker_qa_pairs_question
+        ON broker_qa_pairs (broker_question_id)
+        """,
+    ),
 ]
 
 
@@ -1065,6 +1109,77 @@ SQLITE_MIGRATIONS: list[tuple[str, str]] = [
         """
         CREATE INDEX IF NOT EXISTS idx_broker_questions_tenant_deal
         ON broker_questions (tenant_id, deal_id, created_at DESC)
+        """,
+    ),
+    # ─────────────────── Wave 1 — Q&A re-ingestion (#5) ───────────────
+    # SQLite mirror of the Postgres broker_qa_pairs table. JSONB → TEXT
+    # (the API json.dumps / json.loads to round-trip); UUID → TEXT; no
+    # FK enforcement in the lite schema (matches the rest of the
+    # SQLite mirrors here).
+    (
+        "broker_qa_pairs.create_table",
+        """
+        CREATE TABLE IF NOT EXISTS broker_qa_pairs (
+            id                    TEXT PRIMARY KEY,
+            deal_id               TEXT NOT NULL,
+            tenant_id             TEXT NOT NULL,
+            broker_question_id    TEXT NOT NULL,
+            analyst_question      TEXT NOT NULL,
+            broker_response       TEXT NOT NULL,
+            resolver_verdict      TEXT,
+            resolver_summary      TEXT,
+            proposed_overrides    TEXT,
+            applied_overrides     TEXT,
+            audit_note            TEXT,
+            created_at            TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            updated_at            TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+        )
+        """,
+    ),
+    (
+        "broker_qa_pairs.idx_tenant_deal_created",
+        """
+        CREATE INDEX IF NOT EXISTS idx_broker_qa_pairs_tenant_deal_created
+        ON broker_qa_pairs (tenant_id, deal_id, created_at DESC)
+        """,
+    ),
+    (
+        "broker_qa_pairs.idx_question",
+        """
+        CREATE INDEX IF NOT EXISTS idx_broker_qa_pairs_question
+        ON broker_qa_pairs (broker_question_id)
+        """,
+    ),
+    # SQLite mirror of the Postgres ``due_diligence_questions`` table.
+    # Required by the tenant-isolation comprehensive test suite so the
+    # GET endpoint can return its empty-packet response instead of
+    # raising ``no such table``. TIMESTAMPTZ → TEXT, UUID → TEXT, no
+    # FK enforcement (matches the rest of the SQLite mirrors here).
+    (
+        "due_diligence_questions.create_table",
+        """
+        CREATE TABLE IF NOT EXISTS due_diligence_questions (
+            id                          TEXT PRIMARY KEY,
+            deal_id                     TEXT NOT NULL,
+            tenant_id                   TEXT NOT NULL,
+            question                    TEXT NOT NULL,
+            narrative                   TEXT NOT NULL,
+            priority                    TEXT NOT NULL,
+            category                    TEXT NOT NULL,
+            source                      TEXT NOT NULL,
+            supporting_metric_key       TEXT,
+            supporting_metric_value     TEXT,
+            status                      TEXT NOT NULL DEFAULT 'pending',
+            created_at                  TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            sent_at                     TEXT
+        )
+        """,
+    ),
+    (
+        "due_diligence_questions.idx_tenant_deal",
+        """
+        CREATE INDEX IF NOT EXISTS idx_due_diligence_questions_tenant_deal
+        ON due_diligence_questions (tenant_id, deal_id, created_at DESC)
         """,
     ),
 ]

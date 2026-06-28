@@ -181,6 +181,15 @@ class AnalystInput(BaseModel):
     engine_results: dict[str, Any] = Field(default_factory=dict)
     variance_report: VarianceReport | None = None
     source_documents: list[AnalystSourceDocument] = Field(default_factory=list)
+    # Wave 1 #5 — Q&A re-ingestion loop audit notes. Each entry is a
+    # one-sentence wrap of a broker reply that the QA Resolver agent
+    # decided resolved (or partially resolved) an open variance question.
+    # The memo template surfaces these as numbered footnotes in the
+    # underwriting section so a Brookfield reader can trace WHY an
+    # assumption was overridden (e.g. "F&B contract reset Nov-24 — broker
+    # confirmed self-management since"). Order matches the footnote
+    # numbering: ``audit_notes[0]`` becomes ``[footnote 1]``.
+    broker_qa_audit_notes: list[str] = Field(default_factory=list)
 
 
 class AnalystOutput(BaseModel):
@@ -275,6 +284,35 @@ def _format_sources(docs: list[AnalystSourceDocument]) -> str:
     return "\n".join(parts)
 
 
+def _format_qa_audit_notes(notes: list[str]) -> str:
+    """Render the broker Q&A audit notes as a numbered footnote block.
+
+    Empty list returns the section header so the prompt stays cache-
+    stable (Sonnet's cache hit ratio degrades when conditional blocks
+    are present-or-absent from one call to the next). The instruction
+    line tells the LLM to cite each note as ``[footnote N]`` inline in
+    the underwriting section and enumerate them at the bottom of the
+    memo body — same pattern hotel-IC analysts use in their own decks.
+    """
+    if not notes:
+        return (
+            "=== BROKER Q&A AUDIT NOTES ===\n"
+            "(no resolved broker Q&A pairs — no footnotes needed)"
+        )
+    lines = [
+        "=== BROKER Q&A AUDIT NOTES (cite inline as [footnote N]) ==="
+    ]
+    for i, note in enumerate(notes, start=1):
+        lines.append(f"  {i}. {note.strip()}")
+    lines.append(
+        "\nWhen one of these notes explains a number you reference in the "
+        "underwriting section, cite it inline as ``[footnote N]`` and end "
+        "the section's body with a numbered footnotes block listing each "
+        "cited entry verbatim."
+    )
+    return "\n".join(lines)
+
+
 def _build_user_prompt(payload: AnalystInput) -> str:
     parts: list[str] = [
         f"tenant: {payload.tenant_id}",
@@ -286,6 +324,7 @@ def _build_user_prompt(payload: AnalystInput) -> str:
         parts.append(_format_spread(payload.normalized_spread))
     parts.append(_format_engines(payload.engine_results))
     parts.append(_format_variance(payload.variance_report))
+    parts.append(_format_qa_audit_notes(payload.broker_qa_audit_notes))
     parts.append(_format_sources(payload.source_documents))
     parts.append(
         "\nDraft the full investment memo now. Each of the six required "

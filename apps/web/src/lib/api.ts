@@ -567,6 +567,56 @@ export const api = {
           {},
         ),
     },
+    /** Wave 1 #5 — Seller Q&A re-ingestion loop.
+     *
+     * Analyst pastes the broker's emailed reply → ``submit`` runs the
+     * QA Resolver agent and persists the round-trip row. The agent's
+     * proposed overrides do NOT auto-apply: the analyst confirms a
+     * subset via ``apply``. ``list`` returns every QA pair on the deal
+     * for the history panel.
+     */
+    brokerQA: {
+      /** POST a broker reply + run the QA Resolver agent.
+       *  Returns 402 when the per-deal budget is exhausted. */
+      submit: (
+        dealId: string,
+        body: SubmitBrokerResponseBody,
+      ) =>
+        request<BrokerQAPair>(
+          'POST',
+          `/analysis/${dealId}/broker_responses`,
+          body,
+        ),
+      /** List Q&A pairs for a deal, newest first. ``state`` filters on
+       *  the resolver verdict (resolved / partially_resolved /
+       *  still_concerning). */
+      list: (
+        dealId: string,
+        state?: BrokerQAVerdict,
+        signal?: AbortSignal,
+      ) => {
+        const qs = state ? `?state=${state}` : '';
+        return request<BrokerQAPair[]>(
+          'GET',
+          `/analysis/${dealId}/qa_history${qs}`,
+          undefined,
+          { signal },
+        );
+      },
+      /** Analyst confirms the subset of proposed overrides to apply.
+       *  Empty list ``[]`` is the explicit "skip all" choice (different
+       *  from never having called this endpoint). */
+      apply: (
+        dealId: string,
+        qaPairId: string,
+        body: ApplyOverridesBody,
+      ) =>
+        request<BrokerQAPair>(
+          'PATCH',
+          `/analysis/${dealId}/broker_responses/${qaPairId}/apply`,
+          body,
+        ),
+    },
     compSetDrift: (dealId: string, signal?: AbortSignal) =>
       request<CompSetDriftResponse>(
         'GET',
@@ -763,6 +813,59 @@ export interface BrokerQuestionPatchBody {
   next_state: BrokerQuestionState;
   dismissal_reason?: string;
   broker_response?: string;
+}
+
+// ─── Broker Q&A re-ingestion (Wave 1 #5) ──────────────────────────────
+//
+// Mirrors:
+//   - apps/worker/app/api/analysis.BrokerQAPairOut
+//   - apps/worker/app/api/analysis.ProposedOverrideOut
+//   - apps/worker/app/api/analysis.SubmitBrokerResponseBody
+//   - apps/worker/app/api/analysis.ApplyOverridesBody
+//
+// Wire-shape only — UI helpers (verdict tone, badge label, etc.) live
+// next to the QAResolutionInline component, not here.
+
+export type BrokerQAVerdict =
+  | 'resolved'
+  | 'partially_resolved'
+  | 'still_concerning';
+
+export type ProposedOverrideConfidence = 'high' | 'medium' | 'low';
+
+export interface ProposedOverride {
+  field_path: string;
+  value: number | string;
+  rationale: string;
+  confidence: ProposedOverrideConfidence;
+}
+
+export interface BrokerQAPair {
+  id: string;
+  deal_id: string;
+  tenant_id: string;
+  broker_question_id: string;
+  analyst_question: string;
+  broker_response: string;
+  resolver_verdict: BrokerQAVerdict | null;
+  resolver_summary: string | null;
+  proposed_overrides: ProposedOverride[];
+  /** ``null`` = pending decision; ``[]`` = analyst reviewed + skipped all;
+   *  non-empty list = chosen subset that landed in
+   *  ``deals.field_overrides``. */
+  applied_overrides: ProposedOverride[] | null;
+  audit_note: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface SubmitBrokerResponseBody {
+  broker_question_id: string;
+  broker_response: string;
+}
+
+export interface ApplyOverridesBody {
+  override_indexes_to_apply: number[];
 }
 
 // ─── Comp Set Drift (ROADMAP #8) ────────────────────────────────────
