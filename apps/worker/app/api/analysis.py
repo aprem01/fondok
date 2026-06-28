@@ -1594,3 +1594,376 @@ async def apply_proposed_overrides(
         len(proposed),
     )
     return _row_to_qa_pair(refreshed._mapping)
+
+
+# ════════════════════════════════════════════════════════════════════
+# Wave 2 P2.8 — Pricing sensitivity grid + max-price + LOI draft
+# ════════════════════════════════════════════════════════════════════
+#
+# Three deterministic, side-effect-free endpoints. None of them touches
+# the deal's persisted state — they run the existing engine chain in
+# memory, flex the parameters, and return data. The LOI draft is a
+# pure template fill; no LLM call, no document insert.
+#
+# Tenant-scoped via ``Depends(get_tenant_id)`` for parity with the rest
+# of the file.
+
+
+class _SensitivityRequest(BaseModel):
+    """POST body for ``/pricing/sensitivity``."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    target_irr: float = Field(default=0.15, ge=-0.5, le=2.0)
+    target_em: float = Field(default=1.8, ge=0.0, le=20.0)
+    cap_axis: list[float] | None = Field(
+        default=None,
+        description=(
+            "Optional explicit exit-cap rates (absolute, e.g. [0.06, 0.07, "
+            "0.08]). When omitted the default ±100bp window anchored at "
+            "the deal's base exit cap is used."
+        ),
+    )
+    noi_axis: list[float] | None = Field(
+        default=None,
+        description=(
+            "Optional explicit NOI multipliers (e.g. [0.9, 1.0, 1.1]). "
+            "When omitted the default 0.85–1.15 window is used."
+        ),
+    )
+
+
+class _SensitivityCellOut(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    exit_cap_pct: float
+    noi_multiplier: float
+    levered_irr: float
+    equity_multiple: float
+    going_in_cap_rate: float
+    dscr_y1: float
+    breaches_dscr_floor: bool
+
+
+class _SensitivityGridOut(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    deal_id: UUID
+    base_exit_cap_pct: float
+    base_stabilized_noi: float
+    cells: list[_SensitivityCellOut]
+    breakeven_exit_cap_pct: float | None
+    breakeven_noi_multiplier: float | None
+
+
+class _MaxPriceRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    target_irr: float = Field(default=0.15, ge=-0.5, le=2.0)
+    target_em: float = Field(default=1.8, ge=0.0, le=20.0)
+
+
+class _MaxPriceOut(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    deal_id: UUID
+    target_irr: float
+    target_em: float
+    max_price_for_irr: float
+    max_price_for_em: float
+    binding_constraint: Literal["irr", "em", "both"]
+    final_price_per_key: float
+    iters: int
+
+
+class _LOIRequest(BaseModel):
+    """POST body for ``/pricing/loi``. Every field is optional; the
+    engine fills sensible defaults so the analyst's one-click path
+    produces a copy-paste-ready draft.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    target_irr: float = Field(default=0.15, ge=-0.5, le=2.0)
+    target_em: float = Field(default=1.8, ge=0.0, le=20.0)
+    buyer: str | None = Field(default=None, max_length=200)
+    seller: str | None = Field(default=None, max_length=200)
+    earnest_money_pct: float = Field(default=0.01, ge=0.0, le=0.10)
+    due_diligence_days: int = Field(default=30, ge=1, le=180)
+    closing_days_from_pa: int = Field(default=60, ge=1, le=365)
+    financing_contingency: str = Field(
+        default="60 days from PA execution", max_length=200
+    )
+    exclusivity_days: int = Field(default=21, ge=0, le=180)
+    representation: str | None = Field(default=None, max_length=200)
+    valid_until: str = Field(
+        default="10 business days from issuance", max_length=200
+    )
+    contingencies: list[str] | None = Field(default=None, max_length=20)
+    proposed_price_override: float | None = Field(
+        default=None,
+        ge=0,
+        description=(
+            "When omitted, the draft uses ``max_price_for_irr``. Caller "
+            "can pin a specific price (e.g. negotiation-room below the "
+            "max) without re-solving."
+        ),
+    )
+
+
+class _LOIOut(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    deal_id: UUID
+    buyer: str
+    seller: str
+    asset_name: str
+    asset_address: str
+    rooms: int
+    proposed_price: float
+    proposed_price_per_key: float
+    earnest_money_pct: float
+    deposit_at_pa: float
+    due_diligence_days: int
+    closing_days_from_pa: int
+    financing_contingency: str
+    exclusivity_days: int
+    representation: str
+    valid_until: str
+    contingencies: list[str]
+    rendered_markdown: str
+
+
+async def _build_returns_input_for_deal(
+    session: AsyncSession,
+    *,
+    deal_id: UUID,
+    tenant_id: UUID,
+) -> Any:
+    """Run the engine chain in-memory and return the materialized
+    ``ReturnsEngineInputExt``.
+
+    The pricing endpoints all hang off the *base* returns input — the
+    sensitivity grid flexes it, the price solver bisects on it, the LOI
+    consumes the solver's output. Rather than persist the run, we walk
+    revenue → fb → expense → capital → debt and stop just before
+    returns — exactly what ``_build_input_for("returns", ...)`` needs.
+
+    No DB writes. No engine_outputs row. This is the safety guarantee
+    we promise the UI: viewing the pricing tab cannot mutate the deal.
+    """
+    from ..services.engine_runner import (
+        ENGINE_REGISTRY,
+        _build_input_for,
+        _load_engine_inputs,
+    )
+
+    base = await _load_engine_inputs(session, str(deal_id))
+    accumulated: dict[str, Any] = {}
+    # Walk the chain up through capital + debt so the returns input
+    # builder has the loan amount + debt service + equity it needs.
+    for engine_name in ("revenue", "fb", "expense", "capital", "debt"):
+        engine_input = _build_input_for(
+            engine_name, str(deal_id), base, accumulated
+        )
+        engine = ENGINE_REGISTRY[engine_name]()
+        accumulated[engine_name] = engine.run(engine_input)
+
+    return _build_input_for("returns", str(deal_id), base, accumulated)
+
+
+async def _load_asset_facts(
+    session: AsyncSession, *, deal_id: UUID, tenant_id: UUID
+) -> tuple[str, str, int]:
+    """Pull ``(asset_name, asset_address, rooms)`` for the LOI body.
+
+    Falls back to placeholders when a deal row is incomplete (defensive
+    — the LOI is meant to be edited anyway, and a missing field should
+    show as ``[TBD]`` not 500).
+    """
+    row = (
+        await session.execute(
+            text(
+                "SELECT name, city, keys FROM deals "
+                "WHERE id = :id AND tenant_id = :tenant"
+            ),
+            {"id": str(deal_id), "tenant": str(tenant_id)},
+        )
+    ).first()
+    if row is None:
+        return ("[Asset TBD]", "[Address TBD]", 0)
+    m = row._mapping
+    name = (m.get("name") or "[Asset TBD]") + ""
+    city = m.get("city") or "[City TBD]"
+    address = f"{city}"  # full street address isn't on the deals row yet
+    rooms = int(m.get("keys") or 0)
+    return (name, address, rooms)
+
+
+@router.post(
+    "/{deal_id}/pricing/sensitivity",
+    response_model=_SensitivityGridOut,
+)
+async def get_pricing_sensitivity(
+    deal_id: UUID,
+    body: _SensitivityRequest,
+    session: Annotated[AsyncSession, Depends(get_session)],
+    tenant_id: Annotated[UUID, Depends(get_tenant_id)],
+) -> _SensitivityGridOut:
+    """Compute the 5x5 exit-cap × NOI-multiplier sensitivity grid.
+
+    Read-only: walks the engine chain in memory, flexes per cell, never
+    touches ``engine_outputs`` or ``deals``. Tenant-scoped 404 on cross-
+    tenant deal ids.
+    """
+    await _assert_deal_belongs_to_tenant(
+        session, deal_id=deal_id, tenant_id=tenant_id
+    )
+
+    from ..engines.pricing_sensitivity import run_sensitivity_grid
+
+    base_input = await _build_returns_input_for_deal(
+        session, deal_id=deal_id, tenant_id=tenant_id
+    )
+    grid = run_sensitivity_grid(
+        base_input,
+        target_irr=body.target_irr,
+        cap_axis=body.cap_axis,
+        noi_axis=body.noi_axis,
+    )
+    return _SensitivityGridOut(
+        deal_id=deal_id,
+        base_exit_cap_pct=grid.base_exit_cap_pct,
+        base_stabilized_noi=grid.base_stabilized_noi,
+        cells=[
+            _SensitivityCellOut(
+                exit_cap_pct=c.exit_cap_pct,
+                noi_multiplier=c.noi_multiplier,
+                levered_irr=c.levered_irr,
+                equity_multiple=c.equity_multiple,
+                going_in_cap_rate=c.going_in_cap_rate,
+                dscr_y1=c.dscr_y1,
+                breaches_dscr_floor=c.breaches_dscr_floor,
+            )
+            for c in grid.cells
+        ],
+        breakeven_exit_cap_pct=grid.breakeven_exit_cap_pct,
+        breakeven_noi_multiplier=grid.breakeven_noi_multiplier,
+    )
+
+
+@router.post(
+    "/{deal_id}/pricing/max-price",
+    response_model=_MaxPriceOut,
+)
+async def get_pricing_max_price(
+    deal_id: UUID,
+    body: _MaxPriceRequest,
+    session: Annotated[AsyncSession, Depends(get_session)],
+    tenant_id: Annotated[UUID, Depends(get_tenant_id)],
+) -> _MaxPriceOut:
+    """Bisect-search the max purchase price hitting ``target_irr`` AND
+    ``target_em``. Returns both prices + binding-constraint chip.
+    """
+    await _assert_deal_belongs_to_tenant(
+        session, deal_id=deal_id, tenant_id=tenant_id
+    )
+
+    from ..engines.price_solver import solve_max_price
+
+    base_input = await _build_returns_input_for_deal(
+        session, deal_id=deal_id, tenant_id=tenant_id
+    )
+    _name, _address, rooms = await _load_asset_facts(
+        session, deal_id=deal_id, tenant_id=tenant_id
+    )
+    res = solve_max_price(
+        base_input,
+        target_irr=body.target_irr,
+        target_em=body.target_em,
+        rooms=rooms or None,
+    )
+    return _MaxPriceOut(
+        deal_id=deal_id,
+        target_irr=res.target_irr,
+        target_em=res.target_em,
+        max_price_for_irr=res.max_price_for_irr,
+        max_price_for_em=res.max_price_for_em,
+        binding_constraint=res.binding_constraint,
+        final_price_per_key=res.final_price_per_key,
+        iters=res.iters,
+    )
+
+
+@router.post(
+    "/{deal_id}/pricing/loi",
+    response_model=_LOIOut,
+)
+async def get_pricing_loi(
+    deal_id: UUID,
+    body: _LOIRequest,
+    session: Annotated[AsyncSession, Depends(get_session)],
+    tenant_id: Annotated[UUID, Depends(get_tenant_id)],
+) -> _LOIOut:
+    """Build an LOI draft using the max-price-for-IRR scalar.
+
+    The draft is a copy-paste artifact — this endpoint NEVER inserts a
+    document or persists any state; the analyst clicks Save in the UI
+    to land it in the documents table.
+    """
+    await _assert_deal_belongs_to_tenant(
+        session, deal_id=deal_id, tenant_id=tenant_id
+    )
+
+    from ..engines.loi_generator import draft_loi
+    from ..engines.price_solver import solve_max_price
+
+    base_input = await _build_returns_input_for_deal(
+        session, deal_id=deal_id, tenant_id=tenant_id
+    )
+    asset_name, asset_address, rooms = await _load_asset_facts(
+        session, deal_id=deal_id, tenant_id=tenant_id
+    )
+    mpr = solve_max_price(
+        base_input,
+        target_irr=body.target_irr,
+        target_em=body.target_em,
+        rooms=rooms or None,
+    )
+    draft = draft_loi(
+        asset_name=asset_name,
+        asset_address=asset_address,
+        rooms=rooms,
+        max_price_result=mpr,
+        buyer=body.buyer,
+        seller=body.seller,
+        earnest_money_pct=body.earnest_money_pct,
+        due_diligence_days=body.due_diligence_days,
+        closing_days_from_pa=body.closing_days_from_pa,
+        financing_contingency=body.financing_contingency,
+        exclusivity_days=body.exclusivity_days,
+        representation=body.representation,
+        valid_until=body.valid_until,
+        contingencies=body.contingencies,
+        proposed_price_override=body.proposed_price_override,
+    )
+    return _LOIOut(
+        deal_id=deal_id,
+        buyer=draft.buyer,
+        seller=draft.seller,
+        asset_name=draft.asset_name,
+        asset_address=draft.asset_address,
+        rooms=draft.rooms,
+        proposed_price=draft.proposed_price,
+        proposed_price_per_key=draft.proposed_price_per_key,
+        earnest_money_pct=draft.earnest_money_pct,
+        deposit_at_pa=draft.deposit_at_pa,
+        due_diligence_days=draft.due_diligence_days,
+        closing_days_from_pa=draft.closing_days_from_pa,
+        financing_contingency=draft.financing_contingency,
+        exclusivity_days=draft.exclusivity_days,
+        representation=draft.representation,
+        valid_until=draft.valid_until,
+        contingencies=draft.contingencies,
+        rendered_markdown=draft.rendered_markdown,
+    )

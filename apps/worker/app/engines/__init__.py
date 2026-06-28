@@ -11,10 +11,19 @@ from .capital import CapitalEngine, CapitalEngineInput, CapitalEngineOutput
 from .debt import DebtEngine, DebtEngineInputExt, DebtEngineOutputExt, pmt
 from .expense import ExpenseEngine, ExpenseEngineInput, ExpenseEngineOutput
 from .fb_revenue import FBRevenueEngine, FBRevenueInput, FBRevenueOutput
+from .loi_generator import LOIDraft, draft_loi
 from .partnership import (
     PartnershipEngine,
     PartnershipInputExt,
     PartnershipOutputExt,
+)
+from .price_solver import MaxPriceResult, solve_max_price
+from .pricing_sensitivity import (
+    SensitivityCell as PricingSensitivityCell,
+)
+from .pricing_sensitivity import (
+    SensitivityGrid,
+    run_sensitivity_grid,
 )
 from .returns import (
     ReturnsEngine,
@@ -47,18 +56,25 @@ __all__ = [
     "FBRevenueEngine",
     "FBRevenueInput",
     "FBRevenueOutput",
+    "LOIDraft",
+    "MaxPriceResult",
     "PartnershipEngine",
     "PartnershipInputExt",
     "PartnershipOutputExt",
+    "PricingSensitivityCell",
     "ReturnsEngine",
     "ReturnsEngineInputExt",
     "ReturnsEngineOutputExt",
     "RevenueEngine",
     "SensitivityCell",
     "SensitivityEngine",
+    "SensitivityGrid",
     "SensitivityInput",
     "SensitivityOutput",
+    "draft_loi",
     "irr",
     "npv",
     "pmt",
+    "run_sensitivity_grid",
+    "solve_max_price",
 ]
