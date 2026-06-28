@@ -10,6 +10,9 @@ import EngineRightRail from './EngineRightRail';
 import EngineLegend from './EngineLegend';
 import EngineRunHistory from './EngineRunHistory';
 import WhatJustHappened from './WhatJustHappened';
+import PricingSensitivityPanel from './PricingSensitivityPanel';
+import MaxPricePanel from './MaxPricePanel';
+import LOIPanel from './LOIPanel';
 import { dealScenarios, kimptonAnglerOverview } from '@/lib/mockData';
 import { fmtPct, cn } from '@/lib/format';
 import { useAssumptionsOptional } from '@/stores/assumptionsStore';
@@ -22,7 +25,7 @@ import { MetricLabel } from '@/components/help/MetricLabel';
 import { CoachMark } from '@/components/help/CoachMark';
 import { GLOSSARY } from '@/lib/glossary';
 
-const subTabs = ['Returns Summary', 'Sensitivities'];
+const subTabs = ['Returns Summary', 'Sensitivities', 'Pricing'];
 
 export default function ReturnsTab({ projectId }: { projectId: number | string }) {
   const [tab, setTab] = useState('Returns Summary');
@@ -160,6 +163,13 @@ export default function ReturnsTab({ projectId }: { projectId: number | string }
           <LiveReturnsSummary outputs={outputs} />
         )}
         {tab === 'Sensitivities' && (ctx ? <LiveSensitivities /> : <StaticSensitivities />)}
+        {tab === 'Pricing' && (
+          <div className="flex flex-col gap-4">
+            <PricingSensitivityPanel dealId={dealId} />
+            <MaxPricePanel dealId={dealId} />
+            <LOIPanel dealId={dealId} />
+          </div>
+        )}
         {computing && (
           <div className="absolute inset-0 bg-bg/60 backdrop-blur-[1px] flex items-center justify-center text-[12.5px] font-medium text-ink-700 rounded-md">
             <span className="inline-flex items-center gap-2 px-3 py-1.5 bg-white border border-border rounded-md shadow-card">

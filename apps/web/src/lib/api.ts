@@ -561,6 +561,47 @@ export const api = {
         undefined,
         { signal },
       ),
+    /** Wave 2 P2.8 — Pricing sensitivity / max-price / LOI draft.
+     *
+     * All three are read-only with respect to the deal: they walk the
+     * engine chain in memory, flex parameters, return data. None persist
+     * to ``engine_outputs`` or mutate the deal row.
+     */
+    pricing: {
+      sensitivity: (
+        dealId: string,
+        body: PricingSensitivityBody,
+        signal?: AbortSignal,
+      ) =>
+        request<PricingSensitivityResponse>(
+          'POST',
+          `/analysis/${dealId}/pricing/sensitivity`,
+          body,
+          { signal },
+        ),
+      maxPrice: (
+        dealId: string,
+        body: PricingMaxPriceBody,
+        signal?: AbortSignal,
+      ) =>
+        request<PricingMaxPriceResponse>(
+          'POST',
+          `/analysis/${dealId}/pricing/max-price`,
+          body,
+          { signal },
+        ),
+      loi: (
+        dealId: string,
+        body: PricingLOIBody,
+        signal?: AbortSignal,
+      ) =>
+        request<PricingLOIResponse>(
+          'POST',
+          `/analysis/${dealId}/pricing/loi`,
+          body,
+          { signal },
+        ),
+    },
   },
   /** Wave 1 Validation surface — gap chips, USALI compliance, broker
    *  questions, comp-set drift. The four endpoints below back the
@@ -764,6 +805,88 @@ export interface VarianceReportResult {
   info_count: number;
   /** Set when no flags can be computed yet (e.g. only one of broker/T-12 is extracted). */
   note: string | null;
+}
+
+// ─── Pricing — Wave 2 P2.8 ──────────────────────────────────────────
+// Mirrors apps/worker/app/api/analysis.py pricing endpoints.
+
+export interface PricingSensitivityBody {
+  target_irr?: number;
+  target_em?: number;
+  cap_axis?: number[];
+  noi_axis?: number[];
+}
+
+export interface PricingSensitivityCell {
+  exit_cap_pct: number;
+  noi_multiplier: number;
+  levered_irr: number;
+  equity_multiple: number;
+  going_in_cap_rate: number;
+  dscr_y1: number;
+  breaches_dscr_floor: boolean;
+}
+
+export interface PricingSensitivityResponse {
+  deal_id: string;
+  base_exit_cap_pct: number;
+  base_stabilized_noi: number;
+  cells: PricingSensitivityCell[];
+  breakeven_exit_cap_pct: number | null;
+  breakeven_noi_multiplier: number | null;
+}
+
+export interface PricingMaxPriceBody {
+  target_irr?: number;
+  target_em?: number;
+}
+
+export interface PricingMaxPriceResponse {
+  deal_id: string;
+  target_irr: number;
+  target_em: number;
+  max_price_for_irr: number;
+  max_price_for_em: number;
+  binding_constraint: 'irr' | 'em' | 'both';
+  final_price_per_key: number;
+  iters: number;
+}
+
+export interface PricingLOIBody {
+  target_irr?: number;
+  target_em?: number;
+  buyer?: string;
+  seller?: string;
+  earnest_money_pct?: number;
+  due_diligence_days?: number;
+  closing_days_from_pa?: number;
+  financing_contingency?: string;
+  exclusivity_days?: number;
+  representation?: string;
+  valid_until?: string;
+  contingencies?: string[];
+  proposed_price_override?: number;
+}
+
+export interface PricingLOIResponse {
+  deal_id: string;
+  buyer: string;
+  seller: string;
+  asset_name: string;
+  asset_address: string;
+  rooms: number;
+  proposed_price: number;
+  proposed_price_per_key: number;
+  earnest_money_pct: number;
+  deposit_at_pa: number;
+  due_diligence_days: number;
+  closing_days_from_pa: number;
+  financing_contingency: string;
+  exclusivity_days: number;
+  representation: string;
+  valid_until: string;
+  contingencies: string[];
+  rendered_markdown: string;
 }
 
 // ─── Transaction Comps ──────────────────────────────────────────────
