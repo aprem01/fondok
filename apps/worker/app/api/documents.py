@@ -2357,7 +2357,7 @@ async def accept_classification(
             ),
             {
                 "u": new_user_tag,
-                "m": 0,
+                "m": False,
                 "id": str(doc_id),
             },
         )
@@ -2376,7 +2376,7 @@ async def accept_classification(
                 ),
                 {
                     "dt": user_tag,
-                    "m": 0,
+                    "m": False,
                     "id": str(doc_id),
                 },
             )
@@ -2386,7 +2386,7 @@ async def accept_classification(
                     "UPDATE documents "
                     "SET misclassified = :m WHERE id = :id"
                 ),
-                {"m": 0, "id": str(doc_id)},
+                {"m": False, "id": str(doc_id)},
             )
 
     await session.commit()
@@ -2491,7 +2491,7 @@ async def accept_year(
                 "SET fiscal_year = :fy, year_mismatch = :ym "
                 "WHERE id = :id"
             ),
-            {"fy": epy, "ym": 0, "id": str(doc_id)},
+            {"fy": epy, "ym": False, "id": str(doc_id)},
         )
     else:
         await session.execute(
@@ -2499,7 +2499,7 @@ async def accept_year(
                 "UPDATE documents "
                 "SET year_mismatch = :ym WHERE id = :id"
             ),
-            {"ym": 0, "id": str(doc_id)},
+            {"ym": False, "id": str(doc_id)},
         )
     await session.commit()
 
@@ -3228,8 +3228,13 @@ async def _run_extraction_pipeline(
                         ),
                         {
                             "s": DOC_STATUS_EXTRACTED,
-                            "m": 1,
-                            "ym": 1 if year_mismatch_flag else 0,
+                            # asyncpg rejects int for BOOLEAN — Sam
+                            # caught this at INSERT (commit 6e1ad56)
+                            # but the extraction UPDATEs had the same
+                            # bug, silently failing every doc after
+                            # upload survived.
+                            "m": True,
+                            "ym": bool(year_mismatch_flag),
                             "epy": extracted_period_year,
                             "id": doc_id,
                         },
@@ -3251,8 +3256,8 @@ async def _run_extraction_pipeline(
                         {
                             "s": DOC_STATUS_EXTRACTED,
                             "dt": refined_doc_type,
-                            "m": 0,
-                            "ym": 1 if year_mismatch_flag else 0,
+                            "m": False,
+                            "ym": bool(year_mismatch_flag),
                             "epy": extracted_period_year,
                             "id": doc_id,
                         },
@@ -3266,8 +3271,8 @@ async def _run_extraction_pipeline(
                         ),
                         {
                             "s": DOC_STATUS_EXTRACTED,
-                            "m": 0,
-                            "ym": 1 if year_mismatch_flag else 0,
+                            "m": False,
+                            "ym": bool(year_mismatch_flag),
                             "epy": extracted_period_year,
                             "id": doc_id,
                         },
