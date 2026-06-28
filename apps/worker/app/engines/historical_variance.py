@@ -266,6 +266,20 @@ def _format_question(
 def _normalize_pnl(pnl: dict[str, Any]) -> dict[str, float]:
     """Project a flat P&L dict into ``{canonical_line_item: value}``.
 
+    Resolution chain (Sam QA Bug #3 v3, June 2026):
+
+    1. **Direct alias** — ``_LINE_ITEM_ALIASES`` covers the schema-doc
+       paths and the bare canonical names.
+    2. **USALI scorer fallback** — the canonical line items the engine
+       tracks (``rooms_revenue``, ``gop``, ``noi``, …) are a strict
+       subset of the canonicals the scorer's ``_resolve_field``
+       resolves. Reusing it picks up the prod paths
+       (``p_and_l_usali.rooms.revenue_usd``,
+       ``p_and_l_usali.gross_operating_profit_usd``, …) the engine's
+       own alias map doesn't enumerate. This is the same v3
+       token-aware resolver that unblocked the USALI compliance score
+       — the broker-questions panel now benefits too.
+
     Drops keys that don't map to a tracked line-item, drops non-numeric
     values, deduplicates aliases (last-write-wins is fine — the loader
     is expected to dedupe upstream; this is a safety net).
@@ -279,6 +293,34 @@ def _normalize_pnl(pnl: dict[str, Any]) -> dict[str, float]:
         if coerced is None:
             continue
         out[canonical] = coerced
+
+    # USALI scorer fallback: for every tracked line item that didn't
+    # resolve via the direct alias map, ask the scorer's resolver to
+    # find it. The scorer's canonical names differ slightly from the
+    # engine's (``rooms_dept_expense`` here ↔ ``rooms_dept_expense``
+    # there — they match for the tracked subset; ``other_operated_*``
+    # here maps to ``other_revenue`` / ``other_dept_expense`` on the
+    # scorer side — handled below).
+    from ..services.usali_scorer import _resolve_field as _scorer_resolve
+
+    scorer_canonical_map = {
+        "rooms_revenue": "rooms_revenue",
+        "rooms_dept_expense": "rooms_dept_expense",
+        "fb_revenue": "fb_revenue",
+        "fb_dept_expense": "fb_dept_expense",
+        "other_operated_revenue": "other_revenue",
+        "other_operated_expense": "other_dept_expense",
+        "noi": "noi",
+        "gop": "gop",
+        "total_revenue": "total_revenue",
+    }
+    for engine_canonical, scorer_canonical in scorer_canonical_map.items():
+        if engine_canonical in out:
+            continue
+        v = _scorer_resolve(pnl, scorer_canonical)
+        coerced = _coerce_value(v)
+        if coerced is not None:
+            out[engine_canonical] = coerced
     return out
 
 
