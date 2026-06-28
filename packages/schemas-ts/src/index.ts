@@ -650,6 +650,43 @@ export const CompSet = z.object({
 });
 export type CompSet = z.infer<typeof CompSet>;
 
+// ─────────────────────── Comp Sales (Wave 3 W3.1) ───────────────
+// Mirrors packages/schemas-py/fondok_schemas/comp_sales.py.
+
+export const CompTransaction = z.object({
+  property_name: z.string().nullable().optional(),
+  city: z.string().nullable().optional(),
+  state: z.string().nullable().optional(),
+  sale_date: z.string().nullable().optional(), // ISO date
+  keys: z.number().int().positive().nullable().optional(),
+  sale_price_usd: z.number().nonnegative().nullable().optional(),
+  sale_price_per_key_usd: z.number().nonnegative().nullable().optional(),
+  noi_usd: z.number().nonnegative().nullable().optional(),
+  cap_rate_pct: z.number().min(0).max(30).nullable().optional(),
+  chain_scale: z.string().nullable().optional(),
+  brand_family: z.string().nullable().optional(),
+  flag: z.string().nullable().optional(),
+  source_document_id: z.string(),
+  source_page_number: z.number().int().nullable().optional(),
+  note: z.string().nullable().optional(),
+  transaction_id: z.string().nullable().optional(),
+});
+export type CompTransaction = z.infer<typeof CompTransaction>;
+
+export const CompSalesSet = z.object({
+  transactions: z.array(CompTransaction).default([]),
+  total_count: z.number().int().nonnegative().default(0),
+  derived_cap_rate_median: z.number().nullable().optional(),
+  derived_cap_rate_weighted: z.number().nullable().optional(),
+  derived_cap_rate_method: z.enum(["median", "weighted", "none"]).default("none"),
+  weighting_notes: z.array(z.string()).default([]),
+  coverage_quality: z.enum(["high", "medium", "low"]).default("low"),
+  subject_market: z.string().nullable().optional(),
+  subject_chain_scale: z.string().nullable().optional(),
+  lookback_years: z.number().int().min(1).max(20).default(5),
+});
+export type CompSalesSet = z.infer<typeof CompSalesSet>;
+
 // ─────────────────────────── Analysis ───────────────────────────
 
 export const RiskTier = z.enum(["Low Risk", "Medium Risk", "High Risk"]);

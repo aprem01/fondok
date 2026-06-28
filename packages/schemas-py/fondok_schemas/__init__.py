@@ -26,6 +26,7 @@ from .broker_qa import (
 )
 from .broker_question import BrokerQuestion
 from .common import Money, ModelCall, Risk, Severity, TenantScoped
+from .comp_sales import CompSalesSet, CompTransaction
 from .confidence import ConfidenceReport
 from .cost import AgentCost, DealCostReport
 from .critic import CriticFinding, CriticReport
@@ -131,6 +132,9 @@ __all__ = [
     "Risk",
     "Severity",
     "TenantScoped",
+    # comp_sales (Wave 3 W3.1 — Comparable Sales engine)
+    "CompSalesSet",
+    "CompTransaction",
     # confidence
     "ConfidenceReport",
     # cost

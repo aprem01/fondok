@@ -596,9 +596,14 @@ async def _load_engine_inputs(
             # Wave 2 P2.4 — PIP-displacement overrides include a list field
             # (``pct_rooms_offline_by_month``). Accept it as JSON-array
             # string or real list; everything else has to be a scalar.
+            # Wave 3 W3.1 — comp_sales overrides similarly include a
+            # list field (``exclude_transaction_ids``); same exemption.
             is_pip_key = path in _OVERRIDE_PIP_KEYS
-            if not is_pip_key and not isinstance(
-                value, (int, float, str, bool)
+            is_comps_key = path in _OVERRIDE_COMPS_KEYS
+            if (
+                not is_pip_key
+                and not is_comps_key
+                and not isinstance(value, (int, float, str, bool))
             ):
                 continue
             # Route overrides to the right consumer based on key family.
@@ -652,6 +657,23 @@ async def _load_engine_inputs(
                         else SOURCE_CAPEX_FFE_DEFAULT
                     )
                     continue
+            elif is_comps_key:
+                # Wave 3 W3.1 — Comparable Sales override. Two paths:
+                # ``comp_sales.derived_cap_rate_override`` pins a manual
+                # cap rate (0..100 percent); ``comp_sales.exclude_transaction_ids``
+                # marks specific comp rows as excluded from derivation.
+                # Both land on ``base['comp_sales_overrides']`` so the
+                # comp-sales loader can consume them transparently.
+                comps_field = path.split(".", 1)[1]
+                comps_value = _coerce_comp_sales_override_value(
+                    comps_field, value
+                )
+                if comps_value is not None:
+                    base.setdefault("comp_sales_overrides", {})[
+                        comps_field
+                    ] = comps_value
+                    sources[path] = SOURCE_OM_COMPS
+                continue
             else:
                 base[path] = value
             sources[path] = SOURCE_ANALYST_OVERRIDE
@@ -762,6 +784,57 @@ _OVERRIDE_PIP_KEYS: frozenset[str] = frozenset({
     "pip_displacement.occupancy_recovery_months",
     "pip_displacement.pct_rooms_offline_by_month",
 })
+
+
+# Wave 3 W3.1 — Comparable Sales overrides. The analyst pins a manual
+# derived cap rate (``derived_cap_rate_override``, 0..100 percent) or
+# marks specific comp rows as excluded from the derivation
+# (``exclude_transaction_ids``, JSON array of transaction_id strings).
+# Both land on ``base['comp_sales_overrides']`` and the comp-sales
+# engine consumes them when building the CompSalesSet.
+_OVERRIDE_COMPS_KEYS: frozenset[str] = frozenset({
+    "comp_sales.derived_cap_rate_override",
+    "comp_sales.exclude_transaction_ids",
+})
+
+
+def _coerce_comp_sales_override_value(field: str, value: Any) -> Any:
+    """Best-effort coercion of a comp_sales override value to its native type.
+
+    ``derived_cap_rate_override`` is a scalar percent (0..100 — Sam's
+    pilots write the value the same way the OM publishes it). The
+    exclude list comes in either as a real Python list (PATCH from a
+    typed client) or a JSON-array string (the OverridePanel writes the
+    JSONB value as a string). Returns ``None`` to skip a malformed
+    override rather than crash the run.
+    """
+    if field == "exclude_transaction_ids":
+        if isinstance(value, list):
+            return [str(x) for x in value if x is not None]
+        if isinstance(value, str):
+            try:
+                parsed = json.loads(value)
+            except (json.JSONDecodeError, TypeError):
+                return None
+            if isinstance(parsed, list):
+                return [str(x) for x in parsed if x is not None]
+            return None
+        return None
+    if field == "derived_cap_rate_override":
+        try:
+            v = float(value)
+        except (TypeError, ValueError):
+            return None
+        # Tolerate 0..1 fractions (analyst typed "0.0725") or 0..100
+        # percents (analyst typed "7.25"). Treat anything ≤ 0.30 as a
+        # fraction and rescale to percent — keeps the engine math
+        # uniformly in percent space.
+        if 0 < v <= 0.30:
+            v = v * 100.0
+        if 0 < v <= 30.0:
+            return v
+        return None
+    return None
 
 
 def _coerce_pip_override_value(field: str, value: Any) -> Any:
@@ -1454,6 +1527,277 @@ async def _load_om_transaction_comps_cap_rate(
     if n % 2:
         return cap_rates[n // 2]
     return (cap_rates[n // 2 - 1] + cap_rates[n // 2]) / 2
+
+
+async def _load_comp_transactions(
+    session: AsyncSession,
+    *,
+    deal_id: str,
+) -> list[Any]:
+    """Build the list of ``CompTransaction`` rows for a deal.
+
+    Reads OM extraction results and assembles per-comp records keyed
+    on the row's 1-based index. Reads BOTH the rich ``comparable_sales.<n>.*``
+    namespace (Wave 3 W3.1) and the legacy ``transaction_comps.<n>.*``
+    namespace (pre-W3.1) — both produce a ``CompTransaction``. When a
+    comp appears under both namespaces, the richer ``comparable_sales.*``
+    fields win.
+
+    Returns an empty list for non-UUID deal ids and for deals with no
+    OM extraction (degrades gracefully — the engine then reports
+    ``coverage_quality="low"`` with no derivation).
+    """
+    from fondok_schemas.comp_sales import CompTransaction
+
+    try:
+        UUID(deal_id)
+    except (ValueError, TypeError):
+        return []
+    try:
+        rows = await session.execute(
+            text(
+                """
+                SELECT er.fields, er.document_id
+                  FROM extraction_results er
+                  JOIN documents d ON d.id = er.document_id
+                 WHERE er.deal_id = :deal AND d.doc_type = 'OM'
+                 ORDER BY er.created_at DESC
+                """
+            ),
+            {"deal": deal_id},
+        )
+    except Exception:
+        return []
+
+    # Each comp is keyed by (document_id, index) so two OMs uploaded
+    # for the same deal don't collide on comp #1. ``slot`` is a dict
+    # the schema fields land into; we convert to ``CompTransaction``
+    # at the end.
+    comps: dict[tuple[str, int], dict[str, Any]] = {}
+
+    for r in rows.fetchall():
+        raw_fields = r._mapping["fields"]
+        doc_id = str(r._mapping.get("document_id") or "")
+        if isinstance(raw_fields, str):
+            try:
+                raw_fields = json.loads(raw_fields)
+            except (json.JSONDecodeError, TypeError):
+                continue
+        if not isinstance(raw_fields, list):
+            continue
+        for f in raw_fields:
+            if not isinstance(f, dict):
+                continue
+            name = (f.get("field_name") or "").strip().lower()
+            value = f.get("value")
+            page = f.get("page_number") if isinstance(f.get("page_number"), int) else None
+
+            # Match both namespaces. Skip anything that isn't structured
+            # as ``<prefix>.<index>.<field>``.
+            prefix: str
+            if name.startswith("comparable_sales."):
+                prefix = "comparable_sales"
+            elif name.startswith("transaction_comps."):
+                prefix = "transaction_comps"
+            else:
+                continue
+            parts = name.split(".", 2)
+            if len(parts) != 3:
+                continue
+            try:
+                idx = int(parts[1])
+            except (TypeError, ValueError):
+                continue
+            field = parts[2]
+
+            key = (doc_id, idx)
+            slot = comps.setdefault(key, {
+                "_doc_id": doc_id,
+                "_idx": idx,
+                "_page": page,
+                "_namespace_priority": 0,
+            })
+            # Track namespace priority. ``comparable_sales`` (priority 1)
+            # wins over ``transaction_comps`` (priority 0) when both
+            # produce the same field.
+            ns_priority = 1 if prefix == "comparable_sales" else 0
+
+            # Field aliasing: the legacy namespace uses ``name`` /
+            # ``market`` / ``sale_date`` / ``buyer_name`` / ``buyer_type``;
+            # the new namespace uses ``property_name`` / ``city`` /
+            # ``state`` / ``brand_family`` / ``flag`` / ``chain_scale`` /
+            # ``note``. Reconcile here.
+            field_canonical = {
+                # legacy → new
+                "name": "property_name",
+                "market": "city",
+                "sale_date": "sale_date",
+                "keys": "keys",
+                "sale_price_usd": "sale_price_usd",
+                "price_per_key_usd": "sale_price_per_key_usd",
+                "sale_price_per_key_usd": "sale_price_per_key_usd",
+                "cap_rate_pct": "cap_rate_pct",
+                "cap_rate": "cap_rate_pct",
+                # new namespace fields pass through
+                "property_name": "property_name",
+                "city": "city",
+                "state": "state",
+                "noi_usd": "noi_usd",
+                "chain_scale": "chain_scale",
+                "brand_family": "brand_family",
+                "flag": "flag",
+                "note": "note",
+            }.get(field)
+            if field_canonical is None:
+                continue
+
+            # Apply priority: only overwrite if the incoming row's
+            # namespace is at least as authoritative.
+            if (
+                field_canonical in slot
+                and slot.get("_namespace_priority", 0) > ns_priority
+            ):
+                continue
+
+            # Type coerce per-field.
+            if field_canonical in (
+                "keys",
+            ):
+                try:
+                    slot[field_canonical] = int(value)
+                except (TypeError, ValueError):
+                    continue
+            elif field_canonical in (
+                "sale_price_usd",
+                "sale_price_per_key_usd",
+                "noi_usd",
+                "cap_rate_pct",
+            ):
+                try:
+                    fv = float(value)
+                except (TypeError, ValueError):
+                    continue
+                # cap_rate_pct: tolerate 0..1 fractions from the legacy
+                # extractor (transaction_comps.<n>.cap_rate).
+                if field_canonical == "cap_rate_pct" and 0 < fv <= 1.0:
+                    fv = fv * 100.0
+                slot[field_canonical] = fv
+            elif field_canonical == "sale_date":
+                if isinstance(value, str):
+                    try:
+                        from datetime import date as _date
+
+                        slot[field_canonical] = _date.fromisoformat(value[:10])
+                    except (ValueError, TypeError):
+                        continue
+            else:
+                # All other fields are str | None on the schema.
+                if value is None:
+                    continue
+                slot[field_canonical] = str(value)
+            slot["_namespace_priority"] = ns_priority
+            if page is not None and slot.get("_page") is None:
+                slot["_page"] = page
+
+    out: list[Any] = []
+    for (doc_id, idx), slot in comps.items():
+        # transaction_id is a stable per-deal identifier — the analyst
+        # exclude-list keys off this. Use ``<doc-tail>:<idx>`` so two
+        # OMs uploaded for the same deal don't collide.
+        doc_tail = (doc_id or "doc")[:8] or "doc"
+        transaction_id = f"{doc_tail}:{idx}"
+        try:
+            out.append(
+                CompTransaction(
+                    property_name=slot.get("property_name"),
+                    city=slot.get("city"),
+                    state=slot.get("state"),
+                    sale_date=slot.get("sale_date"),
+                    keys=slot.get("keys"),
+                    sale_price_usd=slot.get("sale_price_usd"),
+                    sale_price_per_key_usd=slot.get("sale_price_per_key_usd"),
+                    noi_usd=slot.get("noi_usd"),
+                    cap_rate_pct=slot.get("cap_rate_pct"),
+                    chain_scale=slot.get("chain_scale"),
+                    brand_family=slot.get("brand_family"),
+                    flag=slot.get("flag"),
+                    source_document_id=doc_id or "",
+                    source_page_number=slot.get("_page"),
+                    note=slot.get("note"),
+                    transaction_id=transaction_id,
+                )
+            )
+        except Exception:  # noqa: BLE001 - silent skip malformed rows
+            logger.warning(
+                "comp_sales: skipping malformed extracted comp idx=%s doc=%s",
+                idx,
+                doc_id,
+            )
+            continue
+    # Sort by sale_date desc with no-date rows last — keeps the table
+    # view stable across runs.
+    out.sort(
+        key=lambda t: (
+            t.sale_date is None,
+            -(t.sale_date.toordinal() if t.sale_date else 0),
+        )
+    )
+    return out
+
+
+async def _build_comp_sales_set(
+    session: AsyncSession,
+    *,
+    deal_id: str,
+    subject_market: str | None = None,
+    subject_chain_scale: str | None = None,
+    lookback_years: int = 5,
+) -> Any:
+    """Run the comp-sales engine for a deal, end-to-end.
+
+    Reads comp transactions from extraction, layers analyst overrides
+    (exclude list + manual cap rate pin) on top, and returns the
+    ``CompSalesSet`` Pydantic model. The API endpoint hands it back to
+    the web UI as-is.
+
+    When a ``derived_cap_rate_override`` is pinned, both the median +
+    weighted derivations are recomputed normally — the override stays
+    on the side as a "pinned" indicator the UI surfaces; the engine
+    runner is responsible for actually wiring the pinned number to
+    ``exit_cap_rate``.
+    """
+    from app.engines.comp_sales import build_comp_set
+
+    transactions = await _load_comp_transactions(session, deal_id=deal_id)
+    overrides = await _load_deal_overrides(session, deal_id=deal_id)
+
+    # Pull comp_sales overrides off the persisted map (analyst exclude
+    # list + manual cap pin).
+    exclude_ids_raw = overrides.get("comp_sales.exclude_transaction_ids")
+    if isinstance(exclude_ids_raw, list):
+        exclude_ids = [str(x) for x in exclude_ids_raw if x is not None]
+    elif isinstance(exclude_ids_raw, str):
+        try:
+            parsed = json.loads(exclude_ids_raw)
+        except (json.JSONDecodeError, TypeError):
+            parsed = None
+        exclude_ids = (
+            [str(x) for x in parsed if x is not None]
+            if isinstance(parsed, list)
+            else []
+        )
+    else:
+        exclude_ids = []
+
+    comp_set = build_comp_set(
+        deal_id=deal_id,
+        transactions=transactions,
+        subject_market=subject_market,
+        subject_chain_scale=subject_chain_scale,
+        lookback_years=lookback_years,
+        exclude_transaction_ids=exclude_ids,
+    )
+    return comp_set
 
 
 async def _load_om_debt_actuals(

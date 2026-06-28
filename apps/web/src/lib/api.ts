@@ -421,6 +421,27 @@ export const api = {
       },
     ) =>
       request<WorkerDeal>('PATCH', `/deals/${id}`, patch),
+    /** Wave 3 W3.1 — full Comparable Sales set for the deal:
+     *  the raw extracted comp rows + the derived median/weighted cap
+     *  rate + analyst-readable weighting notes. The Investment tab's
+     *  "Comps" sub-panel renders this. */
+    compSales: (id: string, signal?: AbortSignal) =>
+      request<CompSalesSetResponse>(
+        'GET',
+        `/deals/${id}/comp-sales`,
+        undefined,
+        { signal },
+      ),
+    /** Wave 3 W3.1 — mark a specific comp row as excluded from the
+     *  derived cap rate. Idempotent — re-submitting the same id is a
+     *  no-op. Returns the refreshed CompSalesSet so the UI can
+     *  re-render the derivation without a second round-trip. */
+    excludeComp: (id: string, transactionId: string) =>
+      request<CompSalesSetResponse>(
+        'POST',
+        `/deals/${id}/comp-sales/exclude`,
+        { transaction_id: transactionId },
+      ),
   },
   documents: {
     list: (dealId: string, signal?: AbortSignal) =>
@@ -900,6 +921,42 @@ export interface PricingLOIResponse {
   valid_until: string;
   contingencies: string[];
   rendered_markdown: string;
+}
+
+// ─── Comparable Sales (Wave 3 W3.1) ─────────────────────────────────
+// Mirrors apps/worker/app/api/deals.py CompSalesSetOut.
+
+export interface CompTransactionRow {
+  property_name: string | null;
+  city: string | null;
+  state: string | null;
+  sale_date: string | null;
+  keys: number | null;
+  sale_price_usd: number | null;
+  sale_price_per_key_usd: number | null;
+  noi_usd: number | null;
+  cap_rate_pct: number | null;
+  chain_scale: string | null;
+  brand_family: string | null;
+  flag: string | null;
+  source_document_id: string;
+  source_page_number: number | null;
+  note: string | null;
+  transaction_id: string | null;
+}
+
+export interface CompSalesSetResponse {
+  deal_id: string;
+  transactions: CompTransactionRow[];
+  total_count: number;
+  derived_cap_rate_median: number | null;
+  derived_cap_rate_weighted: number | null;
+  derived_cap_rate_method: 'median' | 'weighted' | 'none';
+  weighting_notes: string[];
+  coverage_quality: 'high' | 'medium' | 'low';
+  subject_market: string | null;
+  subject_chain_scale: string | null;
+  lookback_years: number;
 }
 
 // ─── Transaction Comps ──────────────────────────────────────────────

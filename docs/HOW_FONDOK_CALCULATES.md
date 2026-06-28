@@ -191,3 +191,111 @@ missing year as "Missing 2023".
   baseline query on Postgres; SQLite gets a non-partial
   `(deal_id, fiscal_year)` index.
 
+## Comparable Sales cap rate derivation (Wave 3 W3.1)
+
+Sam's #1 institutional-credibility question is "where does your exit
+cap rate come from?" Pre-W3.1, the answer was a deal-row column, the
+median of a flat `transaction_comps.<n>.cap_rate_pct` list, or the
+7.0% Kimpton seed. W3.1 upgrades the answer to a transparent comp-set
+derivation: every transaction the engine considered, every comp it
+filtered out, every weight it applied, and two derived numbers
+(median + weighted) the analyst can pick between.
+
+### Filter rules (applied in order)
+
+1. **Analyst exclude** — rows whose `transaction_id` appears in
+   `comp_sales.exclude_transaction_ids` are dropped before any
+   derivation. The analyst made an explicit "this comp doesn't
+   reflect the deal" call.
+2. **Look-back** — drop comps with a `sale_date` older than
+   `lookback_years` (default 5). Comps with no `sale_date` are *kept*
+   (we can't prove they're stale) but tagged "no sale_date — recency
+   bucketed as unknown" in `weighting_notes`.
+3. **Cap-rate presence** — drop comps with no `cap_rate_pct`. A row
+   can't contribute to a cap-rate average if it doesn't have one.
+
+### Median derivation
+
+Simple median of the surviving `cap_rate_pct` values, in percent
+(e.g. `7.25` for 7.25%). Always computed when ≥1 comp survives. The
+institutional fallback when subject metadata isn't available.
+
+### Weighted derivation
+
+Each surviving comp gets a per-row weight:
+
+    weight = 0.7 * recency_score
+           + 0.2 * market_match
+           + 0.1 * chain_match
+
+Where:
+
+* **recency_score** — `1.0` if ≤ 2 yrs, `0.7` if ≤ 4 yrs, `0.4` if
+  ≤ 6 yrs, `0.0` beyond. Comps with no `sale_date` get `0.4` (middle
+  bucket — neither penalized nor rewarded).
+* **market_match** — `1.0` if same MSA (approximated as same-city),
+  `0.5` if same state, `0.0` otherwise. The MSA lookup is roadmapped;
+  same-city is a reasonable proxy for institutional comp sets.
+* **chain_match** — `1.0` if same chain-scale label, `0.5` if
+  adjacent (`upscale ↔ upper-upscale`, `midscale ↔ upper-midscale`,
+  `economy ↔ midscale`, `upper-upscale ↔ luxury`), `0.0` otherwise.
+
+    weighted_cap = Σ(cap_rate * weight) / Σ(weight)
+
+The 70/20/10 split reflects how hospitality IC anchors exit cap:
+recency dominates because the market is moving (rate volatility
+2023-2025), then market specificity, then chain-scale fit. An
+analyst-driven re-weight is roadmapped but not in W3.1.
+
+The weighted derivation is **emitted as the headline method only
+when** the analyst provided a subject market or subject chain-scale.
+Without either, the formula collapses to recency-only and we report
+`method=median` (no information gain over the simple median).
+
+### Coverage quality
+
+Coverage label = `high` when ≥ 8 qualifying comps, `medium` when 4-7,
+`low` when < 4. Surfaced in the UI as a colour-coded chip — a `low`
+coverage label is the engine telling the analyst "this anchor is too
+thin to ride; consider an analyst override or asking the broker for
+more comps".
+
+### Where to look in code
+
+* `packages/schemas-py/fondok_schemas/comp_sales.py` — the
+  `CompTransaction` + `CompSalesSet` Pydantic models.
+* `apps/worker/app/engines/comp_sales.py` — `build_comp_set()`, the
+  pure deterministic engine. No DB, no LLM, no I/O. Constants
+  `W_RECENCY`, `W_MARKET`, `W_CHAIN`, `RECENCY_LE_2YR` etc are
+  exported on the module so tests can pin the bucket boundaries.
+* `apps/worker/app/agents/extraction_schemas/comparable_sales.md` —
+  the extractor schema. Documents the
+  `comparable_sales.<n>.{property_name, city, state, sale_date,
+  keys, sale_price_usd, sale_price_per_key_usd, noi_usd,
+  cap_rate_pct, chain_scale, brand_family, flag}` namespace.
+* `apps/worker/app/services/engine_runner.py` —
+  `_load_comp_transactions()` reads both the new
+  `comparable_sales.<n>.*` namespace and the legacy
+  `transaction_comps.<n>.*` namespace off OM extraction results.
+  `_build_comp_sales_set()` is the high-level orchestrator the API
+  calls. `_OVERRIDE_COMPS_KEYS` routes the two analyst override
+  paths (`comp_sales.derived_cap_rate_override`,
+  `comp_sales.exclude_transaction_ids`).
+* `apps/worker/app/api/deals.py` —
+  `GET /deals/{deal_id}/comp-sales` returns the full `CompSalesSet`
+  for the deal (tenant-scoped 404). `POST
+  /deals/{deal_id}/comp-sales/exclude` with body
+  `{"transaction_id": "..."}` pins a row as excluded and returns the
+  refreshed set.
+* `apps/worker/tests/test_comp_sales.py` — 12 tests covering:
+  empty-set fallback, median of 5 comps, weighted-recency-dominates,
+  weighted-component-validation (0.7/0.2/0.1), coverage-quality
+  thresholds, look-back filter, exclude-list, adjacent-chain-scale
+  half-weight, weighting-notes emission, fallback method when no
+  subject metadata, two endpoint tests (tenant-scoped + full
+  derivation round-trip).
+* `apps/web/src/components/project/CompSalesPanel.tsx` — the table
+  view + median/weighted toggle + per-row exclusion checkbox.
+  Source badge (`om_comps`) and coverage-quality chip in the header.
+  Mounted in `ReturnsTab` under the new "Comps" sub-tab.
+
