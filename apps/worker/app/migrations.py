@@ -116,6 +116,15 @@ MIGRATIONS: list[tuple[str, str]] = [
         "ALTER TABLE deals ADD COLUMN IF NOT EXISTS sourcing_channel TEXT",
     ),
     (
+        # Wave 3 W3.5 — multi-deal pipeline view. Per-deal target levered
+        # IRR threshold so the pipeline table can render a "meets target"
+        # flag without baking the threshold into every render. NULL means
+        # "no opinion yet"; the pipeline aggregator omits the flag in
+        # summary stats when the deal hasn't set a target.
+        "deals.add_target_irr",
+        "ALTER TABLE deals ADD COLUMN IF NOT EXISTS target_irr NUMERIC(6,4)",
+    ),
+    (
         "documents.create_table",
         """
         CREATE TABLE IF NOT EXISTS documents (
@@ -838,6 +847,11 @@ SQLITE_MIGRATIONS: list[tuple[str, str]] = [
     (
         "deals.add_sourcing_channel_sqlite",
         "ALTER TABLE deals ADD COLUMN sourcing_channel TEXT",
+    ),
+    (
+        # Wave 3 W3.5 — SQLite mirror of the Postgres ALTER above.
+        "deals.add_target_irr_sqlite",
+        "ALTER TABLE deals ADD COLUMN target_irr REAL",
     ),
     (
         "documents.create_table",
