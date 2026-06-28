@@ -480,7 +480,9 @@ async def test_dossier_endpoint_returns_typed_payload() -> None:
     await _seed_full_deal(deal_id)
 
     async with AsyncClient(
-        transport=ASGITransport(app=app), base_url="http://test"
+        transport=ASGITransport(app=app),
+        base_url="http://test",
+        headers={"X-Tenant-Id": _TENANT},
     ) as client:
         r = await client.get(f"/deals/{deal_id}/dossier")
         assert r.status_code == 200, r.text
@@ -525,7 +527,9 @@ async def test_ask_endpoint_empty_state_when_no_extractions() -> None:
         await session.commit()
 
     async with AsyncClient(
-        transport=ASGITransport(app=app), base_url="http://test"
+        transport=ASGITransport(app=app),
+        base_url="http://test",
+        headers={"X-Tenant-Id": _TENANT},
     ) as client:
         r = await client.post(
             f"/deals/{deal_id}/ask",

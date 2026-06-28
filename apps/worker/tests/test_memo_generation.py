@@ -36,6 +36,15 @@ if _TMP_DB.exists():
     _TMP_DB.unlink()
 os.environ["DATABASE_URL"] = f"sqlite+aiosqlite:///{_TMP_DB}"
 
+# Tenant used by every fixture insert in this file. Endpoints under
+# test depend on Depends(get_tenant_id), which falls back to
+# settings.DEFAULT_TENANT_ID (loaded from .env — currently the all-zero
+# id). To stay hermetic regardless of which .env the workstation runs,
+# every AsyncClient below sends an X-Tenant-Id header matching what the
+# fixtures stamp on the row.
+_TENANT = "00000000-0000-0000-0000-000000000001"
+_TENANT_HEADERS = {"X-Tenant-Id": _TENANT}
+
 
 # ─────────────────────────── fixtures ───────────────────────────
 
@@ -159,7 +168,9 @@ async def test_memo_generate_400_when_no_proforma() -> None:
     await _insert_deal(deal_id)
 
     async with AsyncClient(
-        transport=ASGITransport(app=app), base_url="http://test"
+        transport=ASGITransport(app=app),
+        base_url="http://test",
+        headers=_TENANT_HEADERS,
     ) as client:
         r = await client.post(f"/deals/{deal_id}/memo/generate")
 
@@ -219,7 +230,9 @@ async def test_memo_stream_emits_error_on_generator_failure(
     from app.main import app
 
     async with AsyncClient(
-        transport=ASGITransport(app=app), base_url="http://test"
+        transport=ASGITransport(app=app),
+        base_url="http://test",
+        headers=_TENANT_HEADERS,
     ) as client:
         r = await client.post(f"/deals/{deal_id}/memo/generate")
         assert r.status_code == 200, r.text
@@ -302,7 +315,9 @@ async def test_memo_stream_heartbeats_during_long_runs(
     from app.main import app
 
     async with AsyncClient(
-        transport=ASGITransport(app=app), base_url="http://test"
+        transport=ASGITransport(app=app),
+        base_url="http://test",
+        headers=_TENANT_HEADERS,
     ) as client:
         r = await client.post(f"/deals/{deal_id}/memo/generate")
         assert r.status_code == 200, r.text
@@ -340,7 +355,9 @@ async def test_memo_get_404_when_not_generated() -> None:
     await _insert_deal(deal_id)
 
     async with AsyncClient(
-        transport=ASGITransport(app=app), base_url="http://test"
+        transport=ASGITransport(app=app),
+        base_url="http://test",
+        headers=_TENANT_HEADERS,
     ) as client:
         r = await client.get(f"/deals/{deal_id}/memo")
 
@@ -445,7 +462,9 @@ async def test_memo_persists_after_successful_run(
     from app.main import app
 
     async with AsyncClient(
-        transport=ASGITransport(app=app), base_url="http://test"
+        transport=ASGITransport(app=app),
+        base_url="http://test",
+        headers=_TENANT_HEADERS,
     ) as client:
         r = await client.post(f"/deals/{deal_id}/memo/generate")
         assert r.status_code == 200, r.text

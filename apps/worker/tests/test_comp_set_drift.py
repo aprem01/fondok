@@ -424,16 +424,21 @@ async def test_tenant_scoping_enforced() -> None:
             f"/deals/{deal_id}/comp_set_drift",
             headers={"X-Tenant-Id": TENANT_A},
         )
-        assert ra.status_code == 200
+        assert ra.status_code == 200, ra.text
         assert len(ra.json()["drifts"]) == 1
 
-        # Tenant B with the same deal_id: empty report.
+        # Tenant B with the same deal_id: the endpoint now returns 404
+        # (deal-belongs gate fires before the report is computed — see
+        # the docstring on ``get_comp_set_drift``: "the response is a
+        # clean 404 rather than an empty 200 envelope"). The SQL-layer
+        # report would still be empty under tenant B, but the API
+        # surface refuses to acknowledge the deal at all — better
+        # cross-tenant info hygiene.
         rb = await client.get(
             f"/deals/{deal_id}/comp_set_drift",
             headers={"X-Tenant-Id": TENANT_B},
         )
-        assert rb.status_code == 200
-        assert rb.json()["drifts"] == []
+        assert rb.status_code == 404, rb.text
 
 
 @pytest.mark.asyncio

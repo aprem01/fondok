@@ -28,6 +28,10 @@ if _TMP_DB.exists():
 os.environ["DATABASE_URL"] = f"sqlite+aiosqlite:///{_TMP_DB}"
 
 
+_TENANT = "00000000-0000-0000-0000-000000000001"
+_TENANT_HEADERS = {"X-Tenant-Id": _TENANT}
+
+
 @pytest.fixture(autouse=True)
 async def _reset_db() -> None:
     from app.database import get_session_factory
@@ -36,13 +40,33 @@ async def _reset_db() -> None:
     await run_startup_migrations()
     factory = get_session_factory()
     async with factory() as session:
-        for tbl in ("memo_edits", "audit_log"):
+        for tbl in ("memo_edits", "audit_log", "deals"):
             try:
                 await session.execute(text(f"DELETE FROM {tbl}"))
             except Exception:  # noqa: BLE001
                 pass
         await session.commit()
     yield
+
+
+async def _insert_memo_edit_test_deal(deal_id: str) -> None:
+    """Stamp a deal row so the GET endpoint's tenant-scope check resolves."""
+    from datetime import UTC, datetime
+
+    from app.database import get_session_factory
+
+    factory = get_session_factory()
+    async with factory() as session:
+        await session.execute(
+            text(
+                """
+                INSERT INTO deals (id, tenant_id, name, status, created_at, updated_at)
+                VALUES (:id, :tenant, 'memo-edit-test', 'Draft', :ts, :ts)
+                """
+            ),
+            {"id": deal_id, "tenant": _TENANT, "ts": datetime.now(UTC)},
+        )
+        await session.commit()
 
 
 @pytest.mark.asyncio
@@ -117,9 +141,12 @@ async def test_memo_edit_endpoint_writes_audit() -> None:
     from app.main import app
 
     deal_id = str(uuid4())
+    await _insert_memo_edit_test_deal(deal_id)
 
     async with AsyncClient(
-        transport=ASGITransport(app=app), base_url="http://test"
+        transport=ASGITransport(app=app),
+        base_url="http://test",
+        headers=_TENANT_HEADERS,
     ) as client:
         r = await client.post(
             f"/deals/{deal_id}/memo/investment_thesis/edits",

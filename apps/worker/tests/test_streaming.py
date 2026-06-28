@@ -22,6 +22,36 @@ os.environ.setdefault("DATABASE_URL", "sqlite+aiosqlite:///./fondok.db")
 # ───────────────────────── helpers ─────────────────────────
 
 
+async def _insert_streaming_test_deal(deal_id: str, tenant_id: str) -> None:
+    """Persist a deal row so the SSE endpoint's tenant-scope check resolves."""
+    from datetime import UTC, datetime
+
+    from sqlalchemy import text
+
+    from app.database import get_session_factory
+    from app.migrations import run_startup_migrations
+
+    await run_startup_migrations()
+    factory = get_session_factory()
+    async with factory() as session:
+        # Idempotent — the SQLite db file is the dev one shared across
+        # runs; just overwrite the row if it's already there.
+        await session.execute(
+            text("DELETE FROM deals WHERE id = :id"),
+            {"id": deal_id},
+        )
+        await session.execute(
+            text(
+                """
+                INSERT INTO deals (id, tenant_id, name, status, created_at, updated_at)
+                VALUES (:id, :tenant, 'streaming-test', 'Draft', :ts, :ts)
+                """
+            ),
+            {"id": deal_id, "tenant": tenant_id, "ts": datetime.now(UTC)},
+        )
+        await session.commit()
+
+
 def _canned_sections() -> list[dict[str, Any]]:
     """Six fake memo sections — one per required ``MemoSectionId``."""
     return [
@@ -98,6 +128,8 @@ async def test_memo_stream_endpoint_returns_sse(monkeypatch: pytest.MonkeyPatch)
 
     The Analyst is mocked so no Anthropic call fires.
     """
+    from uuid import uuid4
+
     from httpx import ASGITransport, AsyncClient
 
     from app.api import deals as deals_module
@@ -106,7 +138,13 @@ async def test_memo_stream_endpoint_returns_sse(monkeypatch: pytest.MonkeyPatch)
     reset_broadcast_for_test()
 
     sections = _canned_sections()
-    deal_id = "stream-test-deal"
+    # Endpoint now enforces tenant-scoping via _assert_deal_belongs_to_tenant
+    # (commit 2a8ed64 / wave1-tenant-hardening), which queries the deals
+    # table — so a real UUID + a real deal row + a matching tenant header
+    # are all required. The header value is what the API will compare to.
+    tenant_id = "00000000-0000-0000-0000-000000000001"
+    deal_id = str(uuid4())
+    await _insert_streaming_test_deal(deal_id, tenant_id)
 
     # FastAPI's BackgroundTasks awaits the task before completing the
     # response — that interleaving is fine in production but it would
@@ -172,10 +210,12 @@ async def test_memo_stream_endpoint_returns_sse(monkeypatch: pytest.MonkeyPatch)
     from app.main import app
 
     async with AsyncClient(
-        transport=ASGITransport(app=app), base_url="http://test"
+        transport=ASGITransport(app=app),
+        base_url="http://test",
+        headers={"X-Tenant-Id": tenant_id},
     ) as client:
         r = await client.post(f"/deals/{deal_id}/memo/generate")
-        assert r.status_code == 200
+        assert r.status_code == 200, r.text
         assert r.json() == {"status": "started", "deal_id": deal_id}
 
         async with client.stream("GET", f"/deals/{deal_id}/memo/stream") as resp:

@@ -249,11 +249,18 @@ async def test_status_aggregates_from_documents(
         assert body["last_event"] == "draft"
         assert body["docs_total"] == 0
 
-        # Upload 2 docs.
+        # Upload 2 docs. The upload pipeline dedupes by
+        # (deal_id, content_hash) — so we must vary the bytes per file
+        # or the second upload silently collapses into the first and
+        # docs_total never gets above 1.
         for fname in ("doc1.pdf", "doc2.pdf"):
+            # Append a per-file tail comment so the content_hash differs
+            # without breaking the PDF structure (PDF readers ignore
+            # trailing bytes after %%EOF).
+            varied = sample_pdf_bytes + f"\n%fondok-test-{fname}\n".encode()
             r = await client.post(
                 f"/deals/{deal_id}/documents/upload",
-                files={"files": (fname, sample_pdf_bytes, "application/pdf")},
+                files={"files": (fname, varied, "application/pdf")},
             )
             assert r.status_code == 201, r.text
 
@@ -286,9 +293,17 @@ async def test_status_aggregates_from_documents(
 
         assert body["docs_extracted"] == 2
         assert body["last_event"] == "ready"
-        # Confidence rollup picks up the mocked 0.9 overall.
+        # Confidence rollup picks up extraction confidence after the
+        # citation verifier has run. The mock extractor reports each
+        # field at 0.9, but the verifier re-reads the cited numbers
+        # against the parsed PDF text — and the sample PDF doesn't
+        # contain "$1,234,567" or "74%", so both fields get demoted to
+        # 0.50 (_VERIFY_DEMOTE_MISMATCH). The status rollup averages
+        # the verified confidence, so we expect ~0.5 here. A higher
+        # value would mean verification stopped running; a lower one
+        # would mean the field set shrunk. Both are real regressions.
         assert body["ai_confidence"] is not None
-        assert body["ai_confidence"] == pytest.approx(0.9, rel=0.05)
+        assert body["ai_confidence"] == pytest.approx(0.5, abs=0.05)
 
 
 @pytest.mark.asyncio
