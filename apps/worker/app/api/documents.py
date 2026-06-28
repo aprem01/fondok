@@ -43,6 +43,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..config import get_settings
 from ..database import get_session, get_session_factory
+from ..engines.historical_baseline import (
+    HistoricalYear,
+    YoYDelta,
+    build_historical_baseline,
+    walk_yoy,
+)
 from ..extraction import ParseError, parse_document
 from ..services.comp_set_drift import (
     CompSetDriftReportOut,
@@ -2220,6 +2226,145 @@ async def get_document_coverage(
         ],
         lookback_years=coverage.lookback_years,
     )
+
+
+# ─────────────────────────── historical baseline (Wave 2 P2.6) ───────────────────────────
+
+
+class HistoricalYearOut(BaseModel):
+    """One historical fiscal year's P&L roll-up — wire shape.
+
+    Mirrors the ``HistoricalYear`` dataclass in
+    ``engines.historical_baseline`` but lives here so the OpenAPI
+    schema renders without dragging the engine import into the router
+    docs. Numeric fields are ``float | None`` (None = extractor didn't
+    ship that line; UI renders an em-dash).
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    fiscal_year: int
+    occupancy: float | None = None
+    adr: float | None = None
+    revpar: float | None = None
+    rooms_revenue: float | None = None
+    fnb_revenue: float | None = None
+    other_revenue: float | None = None
+    total_revenue: float | None = None
+    rooms_dept_expense: float | None = None
+    fnb_dept_expense: float | None = None
+    other_dept_expense: float | None = None
+    undistributed: float | None = None
+    gop: float | None = None
+    fixed_expenses: float | None = None
+    noi: float | None = None
+    source_document_ids: list[str] = Field(default_factory=list)
+
+
+class YoYDeltaOut(BaseModel):
+    """One above-noise YoY swing on a single line + year — wire shape.
+
+    ``yoy_pct=None`` rows are first-year-of-series entries (no prior
+    year to compare against) or zero-prior-year divisions. The walk
+    is sorted by ``abs(yoy_pct) DESC`` with None entries last.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    line: str
+    year: int
+    value: float
+    yoy_abs: float | None = None
+    yoy_pct: float | None = None
+
+
+class HistoricalBaselineResponse(BaseModel):
+    """Full envelope returned by GET /deals/{deal_id}/historical-baseline.
+
+    Sam's June 2026 ask (Wave 2 P2.6): "Institutional IC analysts will
+    not approve a deal without seeing the multi-year trend." The
+    ``years`` list backs the side-by-side table; ``walk`` carries the
+    top YoY swings as broker-question candidates; ``coverage_pct`` +
+    ``gaps`` drive the "Coverage 3/5 yrs — Missing 2020-2021" chip.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    deal_id: UUID
+    years: list[HistoricalYearOut] = Field(default_factory=list)
+    gaps: list[int] = Field(default_factory=list)
+    look_back_years: int = 5
+    coverage_pct: float = 0.0
+    walk: list[YoYDeltaOut] = Field(default_factory=list)
+
+
+@router.get(
+    "/{deal_id}/historical-baseline",
+    response_model=HistoricalBaselineResponse,
+)
+async def get_historical_baseline(
+    deal_id: UUID,
+    session: Annotated[AsyncSession, Depends(get_session)],
+    tenant_id: Annotated[UUID, Depends(get_tenant_id)],
+    lookback_years: int = 5,
+) -> HistoricalBaselineResponse:
+    """3-5 year historical baseline of the subject property — Wave 2 P2.6.
+
+    Aggregates the property's OWN historical P&L extractions (every
+    T12/PNL/PNL_MONTHLY/PNL_YTD doc with a ``documents.fiscal_year``
+    set) into a year-by-year roll-up. Reuses the USALI scorer's alias
+    map + ``_derive_usali_rollups`` so synthesized totals
+    (``total_revenue`` / ``gop`` / ``noi``) land alongside directly-
+    extracted line items.
+
+    ``walk`` is the YoY-delta projection sorted by ``abs(yoy_pct)
+    DESC`` with a 0.5% noise floor — feeds the UI's "biggest swings"
+    chips that each click-to-create a Broker Question (Wave 1 #4).
+
+    Tenant-scoped: the underlying SQL filters on both the extraction
+    row's ``tenant_id`` and the deal-belongs gate runs first. A
+    cross-tenant deal_id returns 404 rather than leaking data.
+    """
+    await _assert_deal_belongs_to_tenant(
+        session, deal_id=deal_id, tenant_id=tenant_id
+    )
+    # Clamp the lookback window to a sane range. Anything < 2 yrs is
+    # not a "walk" (you need at least 2 years for a YoY); > 10 is more
+    # history than any institutional UW model bothers with.
+    lookback = max(2, min(10, lookback_years))
+    baseline = await build_historical_baseline(
+        session,
+        deal_id=str(deal_id),
+        tenant_id=str(tenant_id),
+        lookback_years=lookback,
+    )
+    walk = walk_yoy(baseline)
+    return HistoricalBaselineResponse(
+        deal_id=deal_id,
+        years=[HistoricalYearOut(**_year_dict(y)) for y in baseline.years],
+        gaps=list(baseline.gaps),
+        look_back_years=baseline.look_back_years,
+        coverage_pct=baseline.coverage_pct,
+        walk=[YoYDeltaOut(**_delta_dict(d)) for d in walk],
+    )
+
+
+def _year_dict(year: HistoricalYear) -> dict[str, Any]:
+    """Convert a ``HistoricalYear`` dataclass into the wire-shape dict.
+
+    Plain ``asdict`` would be enough but inline keeps the conversion
+    local to the API module without expanding the import surface.
+    """
+    from dataclasses import asdict
+
+    return asdict(year)
+
+
+def _delta_dict(delta: YoYDelta) -> dict[str, Any]:
+    """Convert a ``YoYDelta`` dataclass into the wire-shape dict."""
+    from dataclasses import asdict
+
+    return asdict(delta)
 
 
 # ─────────────────────────── download ───────────────────────────

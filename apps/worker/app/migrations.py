@@ -756,6 +756,22 @@ MIGRATIONS: list[tuple[str, str]] = [
         ON broker_qa_pairs (broker_question_id)
         """,
     ),
+    # ─────────────────── Wave 2 P2.6 — historical baseline ───────────────
+    # Covering partial index for the build_historical_baseline query.
+    # The engine filters on (deal_id, doc_type IN P&L family, status =
+    # Extracted, fiscal_year NOT NULL); a partial index keeps the b-tree
+    # small (only rows the query actually scans sit in it).
+    (
+        "documents.idx_deal_fy_pnl_family",
+        """
+        CREATE INDEX IF NOT EXISTS idx_documents_deal_fy_pnl_family
+        ON documents (deal_id, fiscal_year)
+        WHERE UPPER(COALESCE(doc_type, '')) IN
+              ('T12', 'PNL', 'PNL_MONTHLY', 'PNL_YTD')
+          AND UPPER(COALESCE(status, '')) IN ('EXTRACTED', 'EXTRACT')
+          AND fiscal_year IS NOT NULL
+        """,
+    ),
 ]
 
 
@@ -1226,6 +1242,19 @@ SQLITE_MIGRATIONS: list[tuple[str, str]] = [
         """
         CREATE INDEX IF NOT EXISTS idx_due_diligence_questions_tenant_deal
         ON due_diligence_questions (tenant_id, deal_id, created_at DESC)
+        """,
+    ),
+    # ─────────────────── Wave 2 P2.6 — historical baseline ───────────────
+    # SQLite mirror of the Postgres partial index — partial indexes ARE
+    # supported by SQLite, but we drop the WHERE clause's UPPER() call
+    # because SQLite's UPPER on NULL returns NULL (Postgres returns '').
+    # A non-partial (deal_id, fiscal_year) index is plenty fast on the
+    # small dev DB and avoids the dialect divergence.
+    (
+        "documents.idx_deal_fy",
+        """
+        CREATE INDEX IF NOT EXISTS idx_documents_deal_fy
+        ON documents (deal_id, fiscal_year)
         """,
     ),
 ]
