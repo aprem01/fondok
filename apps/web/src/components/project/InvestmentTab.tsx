@@ -11,6 +11,7 @@ import EngineLegend from './EngineLegend';
 import EngineRunHistory from './EngineRunHistory';
 import WhatJustHappened from './WhatJustHappened';
 import CapexPlanPanel, { DEFAULT_CAPEX_PLAN, type CapexPlanState } from './CapexPlanPanel';
+import DebtStackPanel, { DEFAULT_DEBT_STACK, type DebtStackState } from './DebtStackPanel';
 import HistoricalBaselinePanel from './HistoricalBaselinePanel';
 import { useHistoricalBaseline } from '@/lib/hooks/useHistoricalBaseline';
 import { kimptonAnglerOverview } from '@/lib/mockData';
@@ -49,6 +50,10 @@ export default function InvestmentTab({ projectId }: { projectId: number | strin
   // engine output isn't wired into useEngineOutputs yet; until it is,
   // the panel owns the source of truth in memory.
   const [capexPlan, setCapexPlan] = useState<CapexPlanState>(DEFAULT_CAPEX_PLAN);
+  // Wave 4 W4.4 — debt stack v2 local state. Worker debt-stack engine
+  // output isn't wired through useEngineOutputs yet; the panel owns
+  // the in-memory source of truth and previews the math client-side.
+  const [debtStack, setDebtStack] = useState<DebtStackState>(DEFAULT_DEBT_STACK);
 
   // ─── Worker engine field reads ────────────────────────────────────
   // Sam QA #8: the Investment tab used to render the Kimpton fixture
@@ -388,24 +393,19 @@ export default function InvestmentTab({ projectId }: { projectId: number | strin
               })()}
             />
           </div>
-          {/* Senior Loan Financing vs. Senior Loan Refinancing — rendered as
-              two side-by-side cards per Lovable's exact label/layout spec.
-              Each card shows the three core terms (Month Funding, Start
-              Date, Term); the larger detail panel that previously lived
-              here can be reintroduced in a follow-up if Lovable adds it. */}
-          <div className="grid grid-cols-2 gap-5 mt-5">
-            <Panel title="Senior Loan Financing" rows={[
-              ['Month Funding', isKimptonDemo ? '0' : '—'],
-              ['Start Date', isKimptonDemo ? '9/30/2025' : '—'],
-              ['Term', loanTerm != null ? `${loanTerm} yrs` : '—'],
-            ]} />
-            <Panel title="Senior Loan Refinancing" rows={[
-              // Refi terms aren't in the worker engine output yet, so these
-              // stay fixture-only on the demo and render '—' otherwise.
-              ['Month Funding', isKimptonDemo ? '48' : '—'],
-              ['Start Date', isKimptonDemo ? '9/30/2029' : '—'],
-              ['Term', isKimptonDemo ? `${o.refi.refiTerm} yrs` : '—'],
-            ]} />
+          {/* Wave 4 W4.4 — Debt Stack v2 panel.
+              Replaces the legacy Senior Loan Financing / Refinancing
+              side-by-side cards with a full institutional capital
+              stack (senior + mezz + pref equity) + refi test. */}
+          <div className="grid grid-cols-1 gap-5 mt-5">
+            <DebtStackPanel
+              purchasePrice={pickNum(wPurchase, o.acquisition.purchasePrice) ?? 0}
+              totalCapital={totalCapital}
+              noiByYear={(wExpenseYears ?? []).map(y => y.noi)}
+              termYears={(holdYears as number | undefined) ?? 5}
+              state={debtStack}
+              onChange={setDebtStack}
+            />
           </div>
         </>
         );

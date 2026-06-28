@@ -686,3 +686,157 @@ deals are unaffected.
   toggle.
 * `apps/web/src/components/project/ForecastingTab.tsx` — tab host
   mounted on the Project Detail page as the **Forecasting** tab.
+
+## Debt stack v2 (Wave 4 W4.4)
+
+Pre-W4.4 Fondok modeled debt as a single senior loan: LTV × purchase
+price, an annual interest rate, an optional interest-only stub, and
+a 30-year amortization. Real institutional hotel deals layer the
+capital stack — senior first-lien at 55-65% LTV, mezzanine at the
+65-75% LTC band, preferred equity at 75-80% — each with its own
+rate, IO horizon, and amortization. The Y1 DSCR and debt yield IC
+analysts read off the memo are *blended* metrics across the entire
+stack, not just the senior. Year-N (typically Y3 or Y5) the deal
+has to clear a refinance test against market debt yield and DSCR.
+
+### Tranche schema
+
+`packages/schemas-py/fondok_schemas/debt_stack.py` defines the
+canonical shapes:
+
+* `DebtTranche` — one slice of the stack. Fields: `name` (senior /
+  mezz / pref_equity), `principal_usd`, `rate_pct`,
+  `io_period_months`, `amortization_months`, `upfront_fee_pct`,
+  `exit_fee_pct`, `is_senior`, `priority_rank`. Validators pin
+  `is_senior=True ↔ priority_rank=1` and reject ranks > 3 or rank
+  conflicts within the same stack.
+
+* `DebtStackInput` — engine input. Requires `tranches` (length ≥ 1
+  with exactly one senior) plus `noi_by_year`, `term_years`, the
+  refi test knobs (`refi_test_year`, `refi_market_debt_yield_pct`,
+  `refi_market_dscr_min`, `refi_market_rate_pct`,
+  `refi_market_cap_rate`, `exit_cap_rate`).
+
+### Engine math
+
+`apps/worker/app/engines/debt.py` exposes three pure helpers:
+
+1. **`build_amort_schedule(tranche, term_years=N)`** — replicates
+   the legacy single-loan path on a per-tranche basis. IO stub
+   (zero principal) until `io_period_months`, then standard P&I
+   PMT. Exit fees land on the FINAL month's payment so the
+   per-year roll-up captures them in Y5 DS — they aren't
+   capitalized to a new principal balance.
+
+2. **`build_stack_schedule(payload)`** — runs every tranche through
+   `build_amort_schedule`, then aggregates:
+
+   * `total_ds_by_year[y]` = Σ over tranches of `debt_service_usd[y]`
+   * `debt_yield_by_year[y]` = `noi[y] / Σ ending_balance[y]`
+     (EOP balance — bank-credit convention)
+   * `dscr_by_year_per_tranche[name][y]` — cumulative through that
+     tranche's `priority_rank`. Rank 1 (senior) sees senior DS
+     only; rank 2 (mezz) sees senior + mezz DS; rank 3 (pref) sees
+     the entire stack.
+   * `dscr_blended_by_year[y]` = `noi[y] / total_ds_by_year[y]`
+   * `cumulative_ltc` = `total_debt / purchase_price`
+   * `weighted_avg_rate_pct` — principal-weighted across tranches
+
+3. **`run_refi_test(payload, schedule)`** — at `refi_test_year`:
+
+   * `refi_noi` = `noi[refi_test_year]` (next-year NOI — what the
+     lender underwrites against, not trailing)
+   * `refi_property_value` = `refi_noi / market_cap_rate`
+     (fallback: deal's `exit_cap_rate`)
+   * `max_debt_dy` = `refi_noi / market_debt_yield_pct`
+   * `max_debt_dscr` = `refi_noi / (dscr_floor × refi_rate_pct)`
+     (assumes IO-equivalent debt service for the constraint;
+     `refi_rate_pct` defaults to the senior tranche's rate)
+   * `max_refi_debt` = `min(max_debt_dy, max_debt_dscr)` — the
+     binding constraint wins
+   * `outstanding` = Σ ending balances across tranches at the END
+     of `refi_test_year`
+   * `can_refi` = `(max_debt_dy ≥ outstanding) AND
+     (dscr_at_outstanding ≥ dscr_floor)`
+   * `cash_to_close_equity` = `max(0, outstanding - max_refi_debt)`
+     — the sponsor cash-in required to refi at market terms
+
+### Backward compatibility
+
+A single-tranche stack with the senior matching the legacy loan's
+principal, rate, and amortization reproduces the pre-W4.4 monthly
+schedule byte-for-byte. Verified by
+`test_single_senior_tranche_matches_legacy_single_loan` in
+`apps/worker/tests/test_debt_stack_v2.py`. The legacy `DebtEngine`
+class is preserved unchanged.
+
+### Returns engine integration
+
+`ReturnsEngineInputExt` now accepts an optional
+`debt_service_by_year: list[float]`. When non-empty the levered
+CFAD series uses year-by-year DS (the full stack); when empty the
+legacy scalar `annual_debt_service` path runs unchanged. The
+engine_runner can wire the new path once the debt-stack engine is
+registered in the `ENGINE_REGISTRY`; for now the panel previews
+the math client-side and only the returns engine is impacted on
+deals that surface a stacked DS series.
+
+### Worked example
+
+$40M deal, $24M senior @ 6.0% / 30-yr amort, $8M mezz @ 11% / 60-mo
+IO, $4M pref equity @ 14% / 60-mo IO. NOI Y1 = $3.50M, Y5 = $4.50M.
+
+* Total debt = $36M; LTC = 90%; weighted rate ≈ 8.0%.
+* Y1 senior DS ≈ $1.73M, Y1 mezz interest ≈ $0.88M, Y1 pref
+  interest ≈ $0.56M. **Total Y1 DS ≈ $3.17M.**
+* **Blended Y1 DSCR ≈ 1.10x**, **Y1 debt yield ≈ 9.9%** against
+  ~$35.4M EOP balance.
+* Refi test Y5: refi NOI = ~$4.80M (next year). At 9% market DY,
+  `max_debt_dy` = $53.3M; outstanding ≈ $35.0M → `can_refi=True`,
+  cash-to-close = $0.
+
+### Override paths
+
+Routed by `engine_runner._OVERRIDE_DEBT_KEYS`:
+
+* `debt_stack.tranches.<idx>.rate_pct`
+* `debt_stack.tranches.<idx>.principal_usd`
+* `debt_stack.tranches.<idx>.amortization_months`
+* `debt_stack.tranches.<idx>.io_period_months`
+* `debt_stack.tranches.<idx>.upfront_fee_pct`
+* `debt_stack.tranches.<idx>.exit_fee_pct`
+* `debt_stack.refi_test_year`
+* `debt_stack.refi_market_debt_yield_pct`
+* `debt_stack.refi_market_dscr_min`
+* `debt_stack.refi_market_cap_rate`
+* `debt_stack.refi_market_rate_pct`
+
+All tagged `SOURCE_ANALYST_OVERRIDE` and parked under
+`base["debt_stack_overrides"]` for the future engine_runner debt-
+stack builder to consume.
+
+### Where to look in code
+
+* `packages/schemas-py/fondok_schemas/debt_stack.py` — Pydantic
+  schemas (`DebtTranche`, `DebtStackInput`, `DebtStackOutput`,
+  `RefiTestResult`).
+* `apps/worker/app/engines/debt.py` — engine (legacy `DebtEngine`
+  + `build_amort_schedule` / `build_stack_schedule` /
+  `run_refi_test`).
+* `apps/worker/app/engines/returns.py` — accepts
+  `debt_service_by_year` for the levered cash-flow series.
+* `apps/worker/app/services/engine_runner.py` —
+  `_OVERRIDE_DEBT_KEYS` + `_parse_debt_stack_override_path`.
+* `apps/worker/tests/test_debt_stack_v2.py` — 16 tests covering
+  byte-identity, IO stub, P&I after IO, debt yield EOP convention,
+  blended DSCR, refi pass/fail/cash-in, rank invariant, upfront +
+  exit fees, empty-tranche rejection, returns engine integration,
+  and a 5×5 DSCR sensitivity grid.
+* `apps/web/src/components/project/DebtStackPanel.tsx` — UI panel
+  with KPI strip, three collapsible tranche sections, refi-test
+  card with status pill, and five institutional templates (Senior
+  Only, Senior + Mezz 15%, Senior + Mezz 20%, Senior + Mezz +
+  Pref, Bridge Debt).
+* `apps/web/src/components/project/InvestmentTab.tsx` — mounts
+  `DebtStackPanel` between Valuation Assumptions and the timeline
+  (replacing the former Senior Loan Financing card).

@@ -8,7 +8,15 @@ re-implements their math.
 
 from .base import BaseEngine, EngineInput, EngineOutput
 from .capital import CapitalEngine, CapitalEngineInput, CapitalEngineOutput
-from .debt import DebtEngine, DebtEngineInputExt, DebtEngineOutputExt, pmt
+from .debt import (
+    DebtEngine,
+    DebtEngineInputExt,
+    DebtEngineOutputExt,
+    build_amort_schedule,
+    build_stack_schedule,
+    pmt,
+    run_refi_test,
+)
 from .expense import ExpenseEngine, ExpenseEngineInput, ExpenseEngineOutput
 from .fb_revenue import FBRevenueEngine, FBRevenueInput, FBRevenueOutput
 from .loi_generator import LOIDraft, draft_loi
@@ -71,10 +79,13 @@ __all__ = [
     "SensitivityGrid",
     "SensitivityInput",
     "SensitivityOutput",
+    "build_amort_schedule",
+    "build_stack_schedule",
     "draft_loi",
     "irr",
     "npv",
     "pmt",
+    "run_refi_test",
     "run_sensitivity_grid",
     "solve_max_price",
 ]

@@ -111,6 +111,13 @@ class ReturnsEngineInputExt(BaseModel):
     loan_balance_at_exit: Annotated[float, Field(ge=0)] | None = None
     equity: Annotated[float, Field(gt=0)]
     noi_by_year: list[Annotated[float, Field(ge=0)]] = Field(default_factory=list)
+    # Wave 4 W4.4 — full debt-stack DS series. When set, the engine
+    # uses these year-by-year debt service totals (senior + mezz + pref
+    # equity aggregate) instead of the scalar ``annual_debt_service``.
+    # Empty list preserves the legacy single-DS path byte-identically.
+    debt_service_by_year: list[Annotated[float, Field(ge=0)]] = Field(
+        default_factory=list
+    )
     terminal_noi_override: Annotated[float, Field(gt=0)] | None = Field(
         default=None,
         description=(
@@ -169,8 +176,19 @@ class ReturnsEngine(BaseEngine[ReturnsEngineInputExt, ReturnsEngineOutputExt]):
         )
         net_proceeds_to_equity = gross_sale - selling_costs - loan_balance_at_exit
 
-        # Levered cash flow stream (Year 0 = -equity).
-        cfad_series = [n - payload.annual_debt_service for n in noi_series]
+        # Levered cash flow stream (Year 0 = -equity). When the
+        # caller supplies a full debt-stack DS series (Wave 4 W4.4)
+        # we honor it year-by-year; otherwise we fall back to the
+        # scalar ``annual_debt_service`` (the legacy single-loan
+        # path — preserved byte-identically).
+        ds_series: list[float]
+        if payload.debt_service_by_year:
+            ds_series = list(payload.debt_service_by_year[:hold])
+            while len(ds_series) < hold:
+                ds_series.append(payload.annual_debt_service)
+        else:
+            ds_series = [payload.annual_debt_service] * hold
+        cfad_series = [n - ds for n, ds in zip(noi_series, ds_series)]
         levered_flows = [-payload.equity] + cfad_series[:-1] + [
             cfad_series[-1] + net_proceeds_to_equity
         ]

@@ -709,6 +709,37 @@ async def _load_engine_inputs(
                     ] = comps_value
                     sources[path] = SOURCE_OM_COMPS
                 continue
+            elif path in _OVERRIDE_DEBT_KEYS:
+                # Wave 4 W4.4 — debt stack v2 override. Tranche-indexed
+                # scalars (``debt_stack.tranches.<idx>.<field>``) land
+                # in ``base['debt_stack_overrides']['tranches'][idx]``;
+                # stack-level scalars (refi knobs) land at the top of
+                # that map. The debt-stack builder reads from this
+                # nested dict after seeding the default stack.
+                parsed_debt = _parse_debt_stack_override_path(path)
+                if parsed_debt is not None:
+                    kind, idx, field = parsed_debt
+                    debt_overrides = base.setdefault("debt_stack_overrides", {})
+                    if kind == "tranche" and idx is not None:
+                        tranche_overrides = debt_overrides.setdefault(
+                            "tranches", {}
+                        )
+                        try:
+                            num_value = float(value) if isinstance(value, (int, float, str)) else None
+                        except (TypeError, ValueError):
+                            num_value = None
+                        if num_value is not None:
+                            tranche_overrides.setdefault(idx, {})[field] = num_value
+                            sources[path] = SOURCE_ANALYST_OVERRIDE
+                    elif kind == "stack":
+                        try:
+                            num_value = float(value) if isinstance(value, (int, float, str)) else None
+                        except (TypeError, ValueError):
+                            num_value = None
+                        if num_value is not None:
+                            debt_overrides[field] = num_value
+                            sources[path] = SOURCE_ANALYST_OVERRIDE
+                continue
             else:
                 base[path] = value
             sources[path] = SOURCE_ANALYST_OVERRIDE
@@ -855,6 +886,61 @@ _OVERRIDE_COMPS_KEYS: frozenset[str] = frozenset({
     "comp_sales.derived_cap_rate_override",
     "comp_sales.exclude_transaction_ids",
 })
+
+
+# Wave 4 W4.4 — debt stack v2 overrides. The OverridePanel writes
+# tranche-indexed scalars (``debt_stack.tranches.<idx>.<field>``) for
+# rate/principal/amort along with the stack-level refi knobs. Every
+# override here lands on ``base['debt_stack_overrides']`` as a nested
+# map the debt-stack builder consumes; provenance is tagged
+# SOURCE_ANALYST_OVERRIDE so the UI badge reads "Analyst override".
+_DEBT_STACK_TRANCHE_FIELDS: tuple[str, ...] = (
+    "rate_pct",
+    "principal_usd",
+    "amortization_months",
+    "io_period_months",
+    "upfront_fee_pct",
+    "exit_fee_pct",
+)
+_DEBT_STACK_TRANCHE_INDEXES: tuple[int, ...] = (0, 1, 2)
+_OVERRIDE_DEBT_KEYS: frozenset[str] = frozenset(
+    {
+        f"debt_stack.tranches.{idx}.{field}"
+        for idx in _DEBT_STACK_TRANCHE_INDEXES
+        for field in _DEBT_STACK_TRANCHE_FIELDS
+    }
+    | {
+        "debt_stack.refi_test_year",
+        "debt_stack.refi_market_debt_yield_pct",
+        "debt_stack.refi_market_dscr_min",
+        "debt_stack.refi_market_cap_rate",
+        "debt_stack.refi_market_rate_pct",
+    }
+)
+
+
+def _parse_debt_stack_override_path(path: str) -> tuple[str, int | None, str] | None:
+    """Split a ``debt_stack.*`` override path into (kind, index, field).
+
+    Returns ``("tranche", idx, field)`` for tranche scalar paths and
+    ``("stack", None, field)`` for stack-level scalars; ``None`` for
+    paths that don't fit either pattern.
+    """
+    if not path.startswith("debt_stack."):
+        return None
+    parts = path.split(".")
+    if len(parts) == 4 and parts[1] == "tranches":
+        try:
+            idx = int(parts[2])
+        except ValueError:
+            return None
+        field = parts[3]
+        if field not in _DEBT_STACK_TRANCHE_FIELDS:
+            return None
+        return ("tranche", idx, field)
+    if len(parts) == 2:
+        return ("stack", None, parts[1])
+    return None
 
 
 def _coerce_comp_sales_override_value(field: str, value: Any) -> Any:
