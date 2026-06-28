@@ -18,6 +18,8 @@ import {
   isWorkerConnected,
   workerUrl,
   WorkerDocument,
+  WorkerUsaliPayload,
+  WorkerUsaliDeviation,
   ExtractionField,
   EngineName,
   EngineOutputResponse,
@@ -30,6 +32,9 @@ import { cn } from '@/lib/format';
 import EngineRunProgress from './EngineRunProgress';
 import { IntroCard } from '@/components/help/IntroCard';
 import { MetricLabel } from '@/components/help/MetricLabel';
+import { UsaliBadge } from './validation/UsaliBadge';
+import { UsaliDeviationsAccordion } from './validation/UsaliDeviationsAccordion';
+import { GapChipsStrip } from './validation/GapChipsStrip';
 
 // Same dependency order EngineHeader uses for run-all fallbacks — mirrors the
 // worker's chain in apps/worker/app/api/model.py.
@@ -194,6 +199,19 @@ export default function DataRoomTab({ projectId }: { projectId: number | string 
   // Per-doc "Needs Review" filter — when true the right panel shows only
   // fields with <85% confidence. Reset whenever the user switches docs.
   const [needsReviewOnly, setNeedsReviewOnly] = useState(false);
+  // Per-document USALI deviation accordion. Driven by the doc id (not
+  // the filename) so identically-named uploads don't collide.
+  const [usaliAccordionOpen, setUsaliAccordionOpen] = useState<Set<string>>(
+    new Set(),
+  );
+  const toggleUsali = (docId: string) => {
+    setUsaliAccordionOpen((prev) => {
+      const next = new Set(prev);
+      if (next.has(docId)) next.delete(docId);
+      else next.add(docId);
+      return next;
+    });
+  };
   // Browse Templates popover — anchored to whichever button the user clicked.
   const [templatesAnchor, setTemplatesAnchor] = useState<'empty' | 'inline' | null>(null);
   const { toast } = useToast();
@@ -264,6 +282,10 @@ export default function DataRoomTab({ projectId }: { projectId: number | string 
     fieldList?: ExtractionField[];
     errorKind?: string | null;
     errorMessage?: string | null;
+    /** USALI compliance scoring (ROADMAP #3). Only populated for live
+     *  documents whose worker scoring has completed. */
+    usaliScore?: number | null;
+    usaliPayload?: WorkerUsaliPayload | WorkerUsaliDeviation[] | null;
   };
 
   const docs: Row[] = useMemo(() => {
@@ -286,6 +308,8 @@ export default function DataRoomTab({ projectId }: { projectId: number | string 
           fieldList,
           errorKind: d.error_kind,
           errorMessage: d.error_message,
+          usaliScore: d.usali_score ?? null,
+          usaliPayload: d.usali_deviations ?? null,
         };
       });
     }
@@ -563,6 +587,17 @@ export default function DataRoomTab({ projectId }: { projectId: number | string 
         accept=".pdf,.xlsx,.xlsm,.xls,.csv,.doc,.docx,.ppt,.pptx"
         onChange={onFilesSelected}
         className="hidden"
+      />
+
+      {/* Coverage gap chips — wave 1 ROADMAP #7. Sits at the top of the
+          Data Room so missing-year flags greet the user before they
+          start scrolling through the upload list. The same component
+          also renders on the Validation tab (different mount, same
+          backend). Auto-hides for mock/numeric ids. */}
+      <GapChipsStrip
+        dealId={rawId}
+        surface="dataroom"
+        onUploadClick={() => onPickFiles()}
       />
 
       <IntroCard
@@ -917,11 +952,23 @@ export default function DataRoomTab({ projectId }: { projectId: number | string 
                     onSelect: () => toast('Document removal available on enterprise plans', { type: 'info' }),
                   },
                 ];
+                const usaliOpen = usaliAccordionOpen.has(d.id);
                 return (
-                  <button key={d.id} onClick={() => setSelectedDoc(d.name)}
-                    className={`w-full text-left p-3 rounded-md border transition-colors ${
-                      selectedDoc === d.name ? 'bg-brand-50 border-brand-500' : 'border-border hover:bg-ink-300/10'
-                    }`}>
+                  <div key={d.id} className="space-y-1.5">
+                    <div
+                      role="button"
+                      tabIndex={0}
+                      onClick={() => setSelectedDoc(d.name)}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter' || e.key === ' ') {
+                          e.preventDefault();
+                          setSelectedDoc(d.name);
+                        }
+                      }}
+                      aria-label={`Open ${d.name} extraction details`}
+                      className={`w-full text-left p-3 rounded-md border transition-colors cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-500 ${
+                        selectedDoc === d.name ? 'bg-brand-50 border-brand-500' : 'border-border hover:bg-ink-300/10'
+                      }`}>
                     <div className="flex items-start gap-3">
                       <div className="w-9 h-9 rounded bg-ink-300/30 flex items-center justify-center flex-shrink-0">
                         {d.name.endsWith('.xlsx') ? <FileSpreadsheet size={16} className="text-success-700" /> : <FileText size={16} className="text-ink-700" />}
@@ -931,10 +978,31 @@ export default function DataRoomTab({ projectId }: { projectId: number | string 
                           <div className="text-[12.5px] font-medium text-ink-900 truncate">{d.name}</div>
                           <StatusBadge value={d.status} />
                           <Badge tone="gray">{d.type}</Badge>
+                          {/* USALI compliance badge (ROADMAP #3). Renders only
+                              when the worker has scored this document; click
+                              toggles the deviation accordion rendered just
+                              below the card. */}
+                          <UsaliBadge
+                            doc={{
+                              filename: d.name,
+                              usali_score: d.usaliScore ?? null,
+                              usali_deviations: d.usaliPayload ?? null,
+                            }}
+                            open={usaliOpen}
+                            onToggle={() => toggleUsali(d.id)}
+                          />
                           {docCritical > 0 && (
                             <span
                               role="button"
+                              tabIndex={0}
                               onClick={(e) => { e.stopPropagation(); goToVariance(); }}
+                              onKeyDown={(e) => {
+                                if (e.key === 'Enter' || e.key === ' ') {
+                                  e.preventDefault();
+                                  e.stopPropagation();
+                                  goToVariance();
+                                }
+                              }}
                               className="inline-flex items-center gap-1 px-2 py-0.5 text-[10.5px] font-semibold rounded-md bg-danger-50 text-danger-700 border border-danger-500/30 hover:bg-danger-500 hover:text-white transition-colors cursor-pointer"
                               title="Open Broker Variance tab"
                             >
@@ -1019,7 +1087,16 @@ export default function DataRoomTab({ projectId }: { projectId: number | string 
                         <KebabMenu items={rowMenu} />
                       </div>
                     </div>
-                  </button>
+                    </div>
+                    {/* USALI deviation accordion — collapsed by default.
+                        Renders only when the badge has been clicked. */}
+                    {usaliOpen && (
+                      <UsaliDeviationsAccordion
+                        score={d.usaliScore ?? null}
+                        payload={d.usaliPayload ?? null}
+                      />
+                    )}
+                  </div>
                 );
               })}
             </div>
