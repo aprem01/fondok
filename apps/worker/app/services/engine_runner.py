@@ -248,6 +248,8 @@ async def _load_engine_inputs(
     deal_id: str,
     overrides: dict[str, Any] | None = None,
     scenario_id: str | None = None,
+    *,
+    tenant_id: str | None = None,
 ) -> dict[str, Any]:
     """Resolve the underwriting assumptions for ``deal_id``.
 
@@ -297,7 +299,7 @@ async def _load_engine_inputs(
             await session.execute(
                 text(
                     """
-                    SELECT keys, purchase_price
+                    SELECT keys, purchase_price, positioning, brand
                       FROM deals
                      WHERE id = :id
                     """
@@ -314,6 +316,13 @@ async def _load_engine_inputs(
     # extraction layer below doesn't clobber a user-edited price with the
     # broker's headline (deals table > OM actuals > Kimpton defaults).
     deals_table_keys: set[str] = set()
+    # Subject chain scale — Wave 4 W4.1 uses this to filter portfolio
+    # library entries to the ones whose ``chain_scales_covered`` overlap.
+    # Best-effort: positioning carries the chain-scale tier today; when
+    # unset the library loader degrades to "no chain-scale filter" so an
+    # entry with empty ``chain_scales_covered`` (tenant didn't tag) can
+    # still contribute.
+    subject_chain_scale: str | None = None
     if row is not None:
         mapping = row._mapping
         if mapping.get("keys"):
@@ -327,6 +336,9 @@ async def _load_engine_inputs(
                 sources["purchase_price"] = SOURCE_DEAL_ROW
             except (TypeError, ValueError):
                 pass
+        pos = mapping.get("positioning")
+        if isinstance(pos, str) and pos.strip():
+            subject_chain_scale = pos.strip()
 
     # Pull Year-1 T-12 expense actuals from the deal's extraction results
     # so the expense engine can ground synthesis on real numbers (Sam QA
@@ -486,6 +498,43 @@ async def _load_engine_inputs(
             if top_level_key in benchmark_overrides:
                 base[top_level_key] = benchmark_overrides[top_level_key]
                 sources[top_level_key] = SOURCE_PNL_BENCHMARK
+
+    # Wave 4 W4.1 — firm-level Portfolio P&L Library. When the tenant
+    # has uploaded active library entries that cover the subject deal's
+    # chain scale (within the 3-year vintage look-back), the engine
+    # uses the per-ratio median as the portfolio_pnl candidate. This
+    # OUTRANKS pnl_benchmark + cbre_horizons (per
+    # ``op_ratio_precedence``) so we layer it AFTER those steps.
+    # Per-deal PORTFOLIO_PNL docs take precedence over the library
+    # median for the same chain scale (analyst intent on this specific
+    # deal beats firm-wide benchmarks).
+    if tenant_id is not None:
+        library_overrides = await _load_portfolio_library_overrides(
+            session,
+            tenant_id=tenant_id,
+            subject_chain_scale=subject_chain_scale,
+        )
+    else:
+        library_overrides = {}
+    per_deal_portfolio = await _load_per_deal_portfolio_pnl_overrides(
+        session, deal_id=deal_id
+    )
+    # Per-deal docs overlay the library median (same chain scale wins
+    # per-deal). Both feed into ``SOURCE_PORTFOLIO_PNL`` provenance.
+    portfolio_overrides: dict[str, float] = {}
+    portfolio_overrides.update(library_overrides)
+    portfolio_overrides.update(per_deal_portfolio)
+    if portfolio_overrides:
+        existing = dict(base.get("overrides") or {})
+        existing.update(portfolio_overrides)
+        base["overrides"] = existing
+        for key, value in portfolio_overrides.items():
+            # Promote the top-level engine keys (mgmt_fee_pct, ffe_reserve_pct)
+            # AND tag the per-ratio overrides so the UI badges render
+            # "Portfolio" instead of "Seed" / "PnL Bench".
+            if key in ("mgmt_fee_pct", "ffe_reserve_pct"):
+                base[key] = value
+            sources[key] = SOURCE_PORTFOLIO_PNL
 
     # OM-derived exit-cap anchor — the broker's "Comparable Sales"
     # table gives us market-specific cap rates we should prefer over
@@ -2548,6 +2597,231 @@ async def _load_pnl_benchmark_overrides(
     return out
 
 
+# ────────────── Portfolio P&L Library + per-deal PORTFOLIO_PNL ───────────
+
+
+# Map PORTFOLIO_PNL extraction field_names → canonical engine ratio keys.
+# Mirrors ``apps/worker/app/api/portfolio_library.py::_PORTFOLIO_FIELD_MAP``
+# (kept in sync — they're the same paths defined in the schema MD).
+_PORTFOLIO_PNL_FIELD_MAP: dict[str, str] = {
+    "portfolio_pnl.rooms_dept_pct": "rooms_dept_pct",
+    "portfolio_pnl.fb_dept_pct": "fb_dept_pct",
+    "portfolio_pnl.other_ops_dept_pct": "other_ops_dept_pct",
+    "portfolio_pnl.admin_pct": "admin_pct",
+    "portfolio_pnl.sales_pct": "sales_pct",
+    "portfolio_pnl.prop_ops_pct": "prop_ops_pct",
+    "portfolio_pnl.utilities_pct": "utilities_pct",
+    "portfolio_pnl.marketing_pct": "marketing_pct",
+    "portfolio_pnl.management_fee_pct": "mgmt_fee_pct",
+    "portfolio_pnl.property_tax_pct": "property_tax_pct",
+    "portfolio_pnl.insurance_pct": "insurance_pct",
+    "portfolio_pnl.ffe_reserve_pct": "ffe_reserve_pct",
+    "portfolio_pnl.gop_margin": "gop_margin",
+    "portfolio_pnl.noi_margin": "noi_margin",
+}
+
+# Vintage look-back window — Wave 1 product decision (2026-06-27):
+# 5-year gap look-back for op-ratios is too stale; portfolio benchmarks
+# decay faster than that. The library defaults to a 3-year window
+# (current_year - vintage_year <= 3) so analysts can't accidentally
+# apply a 2018 portfolio roll-up to a 2026 deal.
+_PORTFOLIO_LIBRARY_LOOKBACK_YEARS = 3
+
+
+def _normalize_chain_scale_for_library(value: str | None) -> str | None:
+    if not isinstance(value, str):
+        return None
+    s = value.strip()
+    if not s:
+        return None
+    return s.lower().replace("_", " ").replace("-", " ")
+
+
+def _current_year_for_library() -> int:
+    return datetime.now(UTC).year
+
+
+async def _load_portfolio_library_overrides(
+    session: AsyncSession,
+    *,
+    tenant_id: str,
+    subject_chain_scale: str | None,
+) -> dict[str, float]:
+    """Aggregate firm-level Portfolio Library entries into per-ratio medians.
+
+    Strategy:
+        1. Query every active library entry for the tenant whose
+           ``vintage_year`` is within the 3-year look-back window.
+        2. Filter to entries whose ``chain_scales_covered`` overlap the
+           subject deal's chain scale. An entry with an EMPTY
+           ``chain_scales_covered`` list is treated as "covers
+           everything" (analyst opt-in to apply across all deals).
+        3. For each ratio present in ANY qualifying entry, compute the
+           median across entries that define that ratio.
+        4. Return the median map keyed by canonical engine ratio name.
+
+    Returns ``{}`` when no qualifying entries exist — the engine then
+    falls through to per-deal PORTFOLIO_PNL docs, then CBRE, etc.
+    """
+    try:
+        UUID(tenant_id)
+    except (TypeError, ValueError):
+        return {}
+    min_vintage = _current_year_for_library() - _PORTFOLIO_LIBRARY_LOOKBACK_YEARS
+    try:
+        rows = await session.execute(
+            text(
+                """
+                SELECT chain_scales_covered, expense_ratios
+                  FROM portfolio_library
+                 WHERE tenant_id = :tenant
+                   AND is_active = :is_active
+                   AND vintage_year >= :min_vintage
+                """
+            ),
+            {
+                "tenant": tenant_id,
+                "is_active": True,
+                "min_vintage": min_vintage,
+            },
+        )
+    except Exception:
+        return {}
+
+    normalized_subject = _normalize_chain_scale_for_library(subject_chain_scale)
+    per_ratio_values: dict[str, list[float]] = {}
+    for r in rows.fetchall():
+        m = r._mapping
+        chain_scales_raw = m.get("chain_scales_covered")
+        # JSONB parsed by asyncpg arrives as list; SQLite as TEXT.
+        if isinstance(chain_scales_raw, str):
+            try:
+                chain_scales = json.loads(chain_scales_raw)
+            except (json.JSONDecodeError, TypeError):
+                chain_scales = []
+        elif isinstance(chain_scales_raw, list):
+            chain_scales = chain_scales_raw
+        else:
+            chain_scales = []
+
+        # Chain-scale gate: empty list ⇒ entry covers everything; non-
+        # empty ⇒ at least one element must match the subject (loose
+        # equality). When the subject's chain scale is unknown we accept
+        # every entry (degraded matching beats no library at all).
+        if chain_scales:
+            normalized_entries = [
+                _normalize_chain_scale_for_library(s) for s in chain_scales
+            ]
+            normalized_entries = [x for x in normalized_entries if x]
+            if normalized_subject is not None and normalized_entries:
+                if normalized_subject not in normalized_entries:
+                    continue
+
+        ratios_raw = m.get("expense_ratios")
+        if isinstance(ratios_raw, str):
+            try:
+                ratios = json.loads(ratios_raw)
+            except (json.JSONDecodeError, TypeError):
+                ratios = {}
+        elif isinstance(ratios_raw, dict):
+            ratios = ratios_raw
+        else:
+            ratios = {}
+        if not isinstance(ratios, dict):
+            continue
+
+        for k, v in ratios.items():
+            if not isinstance(v, (int, float)):
+                continue
+            value = float(v)
+            # Normalize 0..100 → 0..1 when the analyst stored as percent.
+            if value > 1.0 and value <= 100.0:
+                value = value / 100.0
+            if not (0.0 < value < 1.5):
+                # Reject obvious garbage (negatives, > 150% are not ratios).
+                continue
+            per_ratio_values.setdefault(str(k), []).append(value)
+
+    out: dict[str, float] = {}
+    for key, values in per_ratio_values.items():
+        if not values:
+            continue
+        sorted_vals = sorted(values)
+        n = len(sorted_vals)
+        mid = n // 2
+        median = (
+            (sorted_vals[mid - 1] + sorted_vals[mid]) / 2
+            if n % 2 == 0
+            else sorted_vals[mid]
+        )
+        out[key] = median
+    return out
+
+
+async def _load_per_deal_portfolio_pnl_overrides(
+    session: AsyncSession,
+    *,
+    deal_id: str,
+) -> dict[str, float]:
+    """Translate per-deal PORTFOLIO_PNL extractions into engine overrides.
+
+    Per-deal docs always outrank the library median for the same chain
+    scale (analyst intent on this specific deal beats firm-wide
+    benchmarks). The loader merges every PORTFOLIO_PNL extraction for
+    the deal onto a single ``{ratio: value}`` dict — when multiple docs
+    cover the same ratio we keep the first non-None value (most-recent
+    first via ``ORDER BY created_at DESC``).
+    """
+    try:
+        UUID(deal_id)
+    except (TypeError, ValueError):
+        return {}
+    try:
+        rows = await session.execute(
+            text(
+                """
+                SELECT er.fields
+                  FROM extraction_results er
+                  JOIN documents d ON d.id = er.document_id
+                 WHERE er.deal_id = :deal
+                   AND UPPER(COALESCE(d.doc_type, '')) = 'PORTFOLIO_PNL'
+                 ORDER BY er.created_at DESC
+                """
+            ),
+            {"deal": deal_id},
+        )
+    except Exception:
+        return {}
+
+    out: dict[str, float] = {}
+    for r in rows.fetchall():
+        blob = r._mapping["fields"]
+        if isinstance(blob, str):
+            try:
+                blob = json.loads(blob) if blob else None
+            except (json.JSONDecodeError, TypeError):
+                continue
+        if not isinstance(blob, list):
+            continue
+        for f in blob:
+            if not isinstance(f, dict):
+                continue
+            name = (f.get("field_name") or "").strip().lower()
+            value = f.get("value")
+            if not isinstance(value, (int, float)):
+                continue
+            canonical = _PORTFOLIO_PNL_FIELD_MAP.get(name)
+            if canonical is None:
+                continue
+            v = float(value)
+            if v > 1.0 and v <= 100.0:
+                v = v / 100.0
+            if not (0.0 < v < 1.5):
+                continue
+            out.setdefault(canonical, v)
+    return out
+
+
 async def _load_str_forecast_for_seed(
     session: AsyncSession, *, deal_id: str
 ) -> tuple[float, float] | None:
@@ -2991,7 +3265,8 @@ async def run_single_engine(
     run_id = run_id or str(uuid4())
     accumulated = accumulated if accumulated is not None else {}
     base_inputs = base_inputs or await _load_engine_inputs(
-        session, deal_id, overrides, scenario_id=scenario_id
+        session, deal_id, overrides, scenario_id=scenario_id,
+        tenant_id=tenant_id,
     )
 
     # Some engines need upstream outputs. When called in single-engine
@@ -3106,7 +3381,8 @@ async def run_all_engines(
     byte-identical to a run without ``scenario_id``.
     """
     base_inputs = await _load_engine_inputs(
-        session, deal_id, overrides, scenario_id=scenario_id
+        session, deal_id, overrides, scenario_id=scenario_id,
+        tenant_id=tenant_id,
     )
     accumulated: dict[str, BaseModel] = {}
     results: dict[str, dict[str, Any]] = {}

@@ -461,6 +461,58 @@ export interface ScenarioCompareResponse {
   scenarios: ScenarioCompareCell[];
 }
 
+// ─── Portfolio Library — Wave 4 W4.1 ────────────────────────────────
+// Mirrors apps/worker/app/api/portfolio_library.py PortfolioLibraryEntryRecord.
+
+export interface PortfolioLibraryEntry {
+  id: string;
+  tenant_id: string;
+  name: string;
+  description: string | null;
+  vintage_year: number;
+  asset_count: number;
+  total_rooms_modeled: number;
+  chain_scales_covered: string[];
+  msa_coverage: string[] | null;
+  expense_ratios: Record<string, number>;
+  revenue_mix: Record<string, number> | null;
+  source_document_id: string | null;
+  is_active: boolean;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface CreatePortfolioLibraryEntryBody {
+  name: string;
+  description?: string | null;
+  vintage_year: number;
+  asset_count: number;
+  total_rooms_modeled: number;
+  chain_scales_covered: string[];
+  msa_coverage?: string[] | null;
+  expense_ratios: Record<string, number>;
+  revenue_mix?: Record<string, number> | null;
+  source_document_id?: string | null;
+}
+
+export interface UpdatePortfolioLibraryEntryBody {
+  name?: string;
+  description?: string | null;
+  vintage_year?: number;
+  asset_count?: number;
+  total_rooms_modeled?: number;
+  chain_scales_covered?: string[];
+  msa_coverage?: string[] | null;
+  expense_ratios?: Record<string, number>;
+  revenue_mix?: Record<string, number> | null;
+  is_active?: boolean;
+}
+
+export interface PortfolioLibraryListQuery {
+  is_active?: boolean;
+  chain_scale?: string;
+}
+
 // ─────────────────────────── core fetcher ───────────────────────────
 
 interface RequestOpts {
@@ -1022,6 +1074,55 @@ export const api = {
         'POST',
         `/deals/${dealId}/scenarios/compare`,
         { scenario_ids: scenarioIds },
+      ),
+  },
+  /** Wave 4 W4.1 — firm-level Portfolio P&L Library. Tenant-scoped via
+   *  the X-Tenant-Id header (mirrors the active Clerk org). The engine
+   *  pulls every active entry whose ``chain_scales_covered`` overlaps
+   *  the subject deal's chain scale within the 3-year vintage look-back
+   *  and feeds the per-ratio median as the portfolio_pnl candidate. */
+  portfolioLibrary: {
+    list: (q: PortfolioLibraryListQuery = {}, signal?: AbortSignal) => {
+      const params = new URLSearchParams();
+      if (q.is_active !== undefined) params.set('is_active', String(q.is_active));
+      if (q.chain_scale) params.set('chain_scale', q.chain_scale);
+      const qs = params.toString();
+      const path = qs ? `/portfolio-library?${qs}` : '/portfolio-library';
+      return request<PortfolioLibraryEntry[]>('GET', path, undefined, { signal });
+    },
+    create: (body: CreatePortfolioLibraryEntryBody) =>
+      request<PortfolioLibraryEntry>('POST', '/portfolio-library', body),
+    get: (id: string, signal?: AbortSignal) =>
+      request<PortfolioLibraryEntry>(
+        'GET',
+        `/portfolio-library/${id}`,
+        undefined,
+        { signal },
+      ),
+    update: (id: string, patch: UpdatePortfolioLibraryEntryBody) =>
+      request<PortfolioLibraryEntry>(
+        'PATCH',
+        `/portfolio-library/${id}`,
+        patch,
+      ),
+    deactivate: (id: string) =>
+      request<PortfolioLibraryEntry>(
+        'POST',
+        `/portfolio-library/${id}/deactivate`,
+      ),
+    activate: (id: string) =>
+      request<PortfolioLibraryEntry>(
+        'POST',
+        `/portfolio-library/${id}/activate`,
+      ),
+    delete: (id: string) =>
+      request<PortfolioLibraryEntry>('DELETE', `/portfolio-library/${id}`),
+    upload: (form: FormData) =>
+      request<PortfolioLibraryEntry>(
+        'POST',
+        '/portfolio-library/upload',
+        undefined,
+        { formData: form },
       ),
   },
 };

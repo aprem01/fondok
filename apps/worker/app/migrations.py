@@ -815,6 +815,47 @@ MIGRATIONS: list[tuple[str, str]] = [
         ON scenarios (deal_id, tenant_id)
         """,
     ),
+    # ─────────────────── Wave 4 W4.1 — Portfolio P&L Library ───────────────
+    # Firm-level benchmark roll-ups. Sam's June 2026 ask: "Apollo (and
+    # other capital partners) own hotels in the same market and want to
+    # upload THEIR P&Ls as benchmarks." Wave 2 P2.7 added the
+    # ``PORTFOLIO_PNL`` doc type per-deal; W4.1 promotes it to a
+    # firm-level library that applies across every deal the tenant
+    # underwrites. Engine_runner queries entries whose
+    # ``chain_scales_covered`` overlaps the subject deal's chain scale
+    # and whose ``vintage_year`` is within the 3-year look-back, then
+    # computes a median per ratio to feed the ``portfolio_pnl`` tier of
+    # the precedence chain.
+    (
+        "portfolio_library.create_table",
+        """
+        CREATE TABLE IF NOT EXISTS portfolio_library (
+            id                      UUID PRIMARY KEY,
+            tenant_id               UUID NOT NULL,
+            name                    TEXT NOT NULL,
+            description             TEXT,
+            vintage_year            INT NOT NULL,
+            asset_count             INT NOT NULL,
+            total_rooms_modeled     INT NOT NULL,
+            chain_scales_covered    JSONB NOT NULL DEFAULT '[]'::jsonb,
+            msa_coverage            JSONB,
+            expense_ratios          JSONB NOT NULL DEFAULT '{}'::jsonb,
+            revenue_mix             JSONB,
+            source_document_id      UUID,
+            is_active               BOOLEAN NOT NULL DEFAULT TRUE,
+            created_at              TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+            updated_at              TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+            UNIQUE (tenant_id, name)
+        )
+        """,
+    ),
+    (
+        "portfolio_library.idx_tenant_active_vintage",
+        """
+        CREATE INDEX IF NOT EXISTS idx_portfolio_library_tenant_active_vintage
+        ON portfolio_library (tenant_id, is_active, vintage_year DESC)
+        """,
+    ),
 ]
 
 
@@ -1333,6 +1374,41 @@ SQLITE_MIGRATIONS: list[tuple[str, str]] = [
         """
         CREATE INDEX IF NOT EXISTS idx_scenarios_deal_tenant
         ON scenarios (deal_id, tenant_id)
+        """,
+    ),
+    # ─────────────────── Wave 4 W4.1 — Portfolio P&L Library ───────────────
+    # SQLite mirror of the Postgres ``portfolio_library`` table. JSONB
+    # collapses to TEXT (JSON-encoded chain_scales_covered / msa_coverage
+    # / expense_ratios / revenue_mix); BOOLEAN → INTEGER 0/1; UUIDs →
+    # TEXT; no FK enforcement.
+    (
+        "portfolio_library.create_table",
+        """
+        CREATE TABLE IF NOT EXISTS portfolio_library (
+            id                      TEXT PRIMARY KEY,
+            tenant_id               TEXT NOT NULL,
+            name                    TEXT NOT NULL,
+            description             TEXT,
+            vintage_year            INTEGER NOT NULL,
+            asset_count             INTEGER NOT NULL,
+            total_rooms_modeled     INTEGER NOT NULL,
+            chain_scales_covered    TEXT NOT NULL DEFAULT '[]',
+            msa_coverage            TEXT,
+            expense_ratios          TEXT NOT NULL DEFAULT '{}',
+            revenue_mix             TEXT,
+            source_document_id      TEXT,
+            is_active               INTEGER NOT NULL DEFAULT 1,
+            created_at              TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            updated_at              TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            UNIQUE (tenant_id, name)
+        )
+        """,
+    ),
+    (
+        "portfolio_library.idx_tenant_active_vintage",
+        """
+        CREATE INDEX IF NOT EXISTS idx_portfolio_library_tenant_active_vintage
+        ON portfolio_library (tenant_id, is_active, vintage_year DESC)
         """,
     ),
 ]
