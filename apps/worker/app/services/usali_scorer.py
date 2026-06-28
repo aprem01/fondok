@@ -130,12 +130,21 @@ _ALIASES: dict[str, tuple[str, ...]] = {
     # AND occasionally the fully-namespaced
     # ``p_and_l_usali.operational_kpis.*`` form when the LLM mirrors
     # the prompt's hierarchy. List both.
+    #
+    # Sam QA Bug #3 v2 (June 2026): the REAL prod T-12 (saved as
+    # ``tests/fixtures/real_payloads/anglers_t12_real.json``) emits ops
+    # KPIs at ``ttm_summary_per_om.{occupancy_pct, adr_usd, revpar_usd}``
+    # — completely orthogonal to the schema doc. Listed below as the
+    # bare-extractor fallback so the rule catalog can resolve them.
     "revpar": (
         "revpar_usd",
         "p_and_l_usali.revpar",
         "p_and_l_usali.revpar_usd",
         "p_and_l_usali.operational_kpis.revpar",
         "p_and_l_usali.operational_kpis.revpar_usd",
+        # Real prod payload: TTM summary block.
+        "ttm_summary_per_om.revpar_usd",
+        "ttm_summary_per_om.revpar",
     ),
     "occupancy": (
         "occupancy_pct",
@@ -143,6 +152,8 @@ _ALIASES: dict[str, tuple[str, ...]] = {
         "p_and_l_usali.occupancy_pct",
         "p_and_l_usali.operational_kpis.occupancy",
         "p_and_l_usali.operational_kpis.occupancy_pct",
+        "ttm_summary_per_om.occupancy_pct",
+        "ttm_summary_per_om.occupancy",
     ),
     "adr": (
         "adr_usd",
@@ -150,20 +161,40 @@ _ALIASES: dict[str, tuple[str, ...]] = {
         "p_and_l_usali.adr_usd",
         "p_and_l_usali.operational_kpis.adr",
         "p_and_l_usali.operational_kpis.adr_usd",
+        "ttm_summary_per_om.adr_usd",
+        "ttm_summary_per_om.adr",
     ),
     # Revenue rollups. ``total_revenue`` is derived in
     # ``flatten_extraction_fields`` from the operating_revenue
     # components when the extractor doesn't emit it directly.
+    #
+    # Sam QA Bug #3 v2: real prod emits the canonical totals DIRECTLY
+    # at the bucket-root level (``p_and_l_usali.total_revenues_usd``)
+    # OR under a ``revenues.`` namespace (the annual P&L flavor).
+    # Listed first so we don't have to synthesize when the extractor
+    # already did.
     "total_revenue": (
         "total_revenue_usd",
+        "total_revenues_usd",
         "p_and_l_usali.total_revenue",
         "p_and_l_usali.total_revenue_usd",
+        "p_and_l_usali.total_revenues_usd",  # T-12 prod
+        "p_and_l_usali.revenues.total_revenues_usd",  # annual P&L prod
+        "p_and_l_usali.revenues.total_revenue",
         "p_and_l_usali.operating_revenue.total_revenue",
         "p_and_l_usali.operating_revenue.total",
     ),
     "rooms_revenue": (
         "rooms_revenue_usd",
         "p_and_l_usali.rooms_revenue",
+        # T-12 prod: per-dept bucket carries revenue under ``.revenue_usd``.
+        "p_and_l_usali.rooms.revenue_usd",
+        "p_and_l_usali.rooms.revenue",
+        # Annual P&L prod: revenues namespace.
+        "p_and_l_usali.revenues.rooms_usd",
+        "p_and_l_usali.revenues.rooms",
+        "p_and_l_usali.revenues.rooms_revenue",
+        # Schema-doc canonical (legacy fixture path).
         "p_and_l_usali.operating_revenue.rooms_revenue",
         "p_and_l_usali.operating_revenue.rooms_revenue_usd",
     ),
@@ -171,62 +202,130 @@ _ALIASES: dict[str, tuple[str, ...]] = {
         "fb_revenue_usd",
         "food_beverage_revenue",
         "p_and_l_usali.fb_revenue",
+        # T-12 prod
+        "p_and_l_usali.food_and_beverage.revenue_usd",
+        "p_and_l_usali.food_and_beverage.revenue",
+        # Annual P&L prod
+        "p_and_l_usali.revenues.fb_usd",
+        "p_and_l_usali.revenues.fb",
+        "p_and_l_usali.revenues.food_beverage_revenue",
+        # Schema-doc canonical
         "p_and_l_usali.operating_revenue.food_beverage_revenue",
         "p_and_l_usali.operating_revenue.fb_revenue",
     ),
     "other_revenue": (
         "other_revenue_usd",
         "p_and_l_usali.other_revenue",
+        # T-12 prod
+        "p_and_l_usali.other_operated_departments.revenue_usd",
+        "p_and_l_usali.other_operated_departments.revenue",
+        # Annual P&L prod
+        "p_and_l_usali.revenues.other_operated_departments_usd",
+        "p_and_l_usali.revenues.other_operated_departments",
+        "p_and_l_usali.revenues.other_revenue",
+        # Schema-doc canonical
         "p_and_l_usali.operating_revenue.other_revenue",
+    ),
+    "misc_revenue": (
+        "misc_revenue_usd",
+        # T-12 prod
+        "p_and_l_usali.miscellaneous_income.revenue_usd",
+        "p_and_l_usali.miscellaneous_income.revenue",
+        # Annual P&L prod
+        "p_and_l_usali.revenues.miscellaneous_income_usd",
+        "p_and_l_usali.revenues.misc_revenue",
+        # Schema-doc canonical
+        "p_and_l_usali.operating_revenue.misc_revenue",
     ),
     "resort_fees": (
         "resort_fees_usd",
         "p_and_l_usali.resort_fees",
         "p_and_l_usali.operating_revenue.resort_fees",
+        "p_and_l_usali.revenues.resort_fees",
+        "p_and_l_usali.revenues.resort_fees_usd",
     ),
-    # Departmental — the extractor emits PER-LINE departmental expenses
-    # under ``p_and_l_usali.departmental_expenses.{rooms,food_beverage,other_operated}``;
-    # ``total_dept_expense`` is the synthesized roll-up.
+    # Departmental — extractor flavors:
+    #   * T-12 prod: ``p_and_l_usali.{rooms,food_and_beverage,other_operated_departments}.expense_usd``
+    #                OR same path with ``.departmental_expense_usd`` suffix.
+    #   * Annual P&L prod: ``p_and_l_usali.departmental_expense.{rooms,fb,other_operated_departments}_usd``.
+    #   * Schema doc: ``p_and_l_usali.departmental_expenses.{rooms,food_beverage,other_operated}``.
+    # All listed so the rule resolver hits one of them.
     "total_dept_expense": (
         "departmental_expenses",
         "dept_expenses",
+        "total_dept_expense_usd",
         "p_and_l_usali.dept_expenses",
+        "p_and_l_usali.total_departmental_expense_usd",  # T-12 prod
+        "p_and_l_usali.departmental_expense.total_usd",  # annual P&L prod
         "p_and_l_usali.departmental_expenses.total",
     ),
     "dept_expenses": (
         "departmental_expenses",
         "total_dept_expense",
         "p_and_l_usali.dept_expenses",
+        "p_and_l_usali.total_departmental_expense_usd",
+        "p_and_l_usali.departmental_expense.total_usd",
         "p_and_l_usali.departmental_expenses.total",
     ),
     "rooms_dept_expense": (
         "p_and_l_usali.departmental_expenses.rooms",
+        # T-12 prod (two flavors observed on the SAME workbook —
+        # both ``.expense_usd`` and ``.departmental_expense_usd``).
+        "p_and_l_usali.rooms.expense_usd",
+        "p_and_l_usali.rooms.departmental_expense_usd",
+        # Annual P&L prod
+        "p_and_l_usali.departmental_expense.rooms_usd",
+        "p_and_l_usali.departmental_expense.rooms",
     ),
     "fb_dept_expense": (
         "p_and_l_usali.departmental_expenses.food_beverage",
         "food_beverage_dept_expense",
+        # T-12 prod
+        "p_and_l_usali.food_and_beverage.expense_usd",
+        "p_and_l_usali.food_and_beverage.departmental_expense_usd",
+        # Annual P&L prod
+        "p_and_l_usali.departmental_expense.fb_usd",
+        "p_and_l_usali.departmental_expense.fb",
+        "p_and_l_usali.departmental_expense.food_beverage_usd",
     ),
     "other_dept_expense": (
         "p_and_l_usali.departmental_expenses.other_operated",
         "other_operated_dept_expense",
+        # T-12 prod
+        "p_and_l_usali.other_operated_departments.expense_usd",
+        "p_and_l_usali.other_operated_departments.departmental_expense_usd",
+        # Annual P&L prod
+        "p_and_l_usali.departmental_expense.other_operated_departments_usd",
+        "p_and_l_usali.departmental_expense.other_operated_usd",
     ),
     # Undistributed roll-up — derived from the five undistributed
     # line items when not emitted directly.
+    #
+    # Sam QA Bug #3 v2: real prod emits the rollup DIRECTLY at
+    # ``p_and_l_usali.total_undistributed_expenses_usd`` (T-12) and
+    # ``p_and_l_usali.undistributed_expenses.total_usd`` (annual P&L).
     "undistributed_expenses": (
         "p_and_l_usali.undistributed_expenses",
         "undistributed",
         "p_and_l_usali.undistributed.total",
+        "p_and_l_usali.total_undistributed_expenses_usd",  # T-12 prod
+        "p_and_l_usali.undistributed_expenses.total_usd",  # annual P&L prod
+        "total_undistributed_expenses_usd",
     ),
-    # GOP / NOI. The extractor emits NOI under
-    # ``p_and_l_usali.net_operating_income.noi_usd``; GOP is derived
-    # in ``flatten_extraction_fields`` from
-    # ``total_revenue - dept_expenses - undistributed_expenses``.
+    # GOP / NOI. Both real prod flavors emit GOP directly; we honor it
+    # before falling back to the synthesis path in
+    # ``_derive_usali_rollups``.
     "gop": (
         "gop_usd",
         "p_and_l_usali.gop",
         "gross_operating_profit",
         "p_and_l_usali.gross_operating_profit",
         "p_and_l_usali.gross_operating_profit.gop_usd",
+        # T-12 prod
+        "p_and_l_usali.gross_operating_profit_usd",
+        # Annual P&L prod
+        "p_and_l_usali.gross_operating_profit.total_usd",
+        "p_and_l_usali.gross_operating_profit.total",
     ),
     "noi": (
         "noi_usd",
@@ -234,48 +333,93 @@ _ALIASES: dict[str, tuple[str, ...]] = {
         "net_operating_income",
         "p_and_l_usali.net_operating_income",
         "p_and_l_usali.net_operating_income.noi_usd",
+        # Real prod emits EBITDA-less-reserve which is a reasonable
+        # NOI proxy when the doc never publishes a NOI line directly
+        # (the rule catalog's NOI margin band is generous enough that
+        # EBITDA-less-reserve falls inside it).
+        "p_and_l_usali.ebitda_less_replacement_reserve_usd",
+        "p_and_l_usali.ebitda_less_replacement_reserve.total_usd",
     ),
-    # Fees / reserves / fixed — extractor uses the bucketed form
-    # ``p_and_l_usali.fees_and_reserves.*`` and ``fixed_charges.*``.
+    # Fees / reserves / fixed — schema-doc emits under
+    # ``p_and_l_usali.fees_and_reserves.*`` + ``fixed_charges.*``; real
+    # prod emits ``p_and_l_usali.management_fees_usd`` (T-12) and
+    # ``p_and_l_usali.management_fees.total_usd`` (annual P&L).
     "mgmt_fee": (
         "management_fee",
         "mgmt_fee_usd",
         "p_and_l_usali.mgmt_fee",
         "p_and_l_usali.fees_and_reserves.mgmt_fee",
         "p_and_l_usali.fees_and_reserves.management_fee",
+        # T-12 prod
+        "p_and_l_usali.management_fees_usd",
+        # Annual P&L prod
+        "p_and_l_usali.management_fees.total_usd",
+        "p_and_l_usali.management_fees.total",
     ),
     "ffe_reserve": (
         "ffe_reserve_usd",
         "p_and_l_usali.ffe_reserve",
         "p_and_l_usali.fees_and_reserves.ffe_reserve",
+        # T-12 prod
+        "p_and_l_usali.ffe_replacement_reserve_usd",
+        # Annual P&L prod
+        "p_and_l_usali.ffe_reserve.proforma_calculation_usd",
+        "p_and_l_usali.ffe_reserve.total_usd",
     ),
+    # Fixed charges = property tax + insurance. Real prod buckets these
+    # under ``non_operating`` (not ``fixed_charges``) — covered by the
+    # individual aliases for ``insurance_expense`` and ``property_tax``;
+    # the rollup is synthesized in ``_derive_usali_rollups``.
     "fixed_charges": (
         "fixed_charges_usd",
         "p_and_l_usali.fixed_charges",
         "p_and_l_usali.fixed_charges.total",
+        # Real prod treats fixed charges as the non-operating bucket
+        # total (insurance + taxes + rent + other). Match the rollup
+        # field name when the extractor emits it.
+        "p_and_l_usali.total_non_operating_expenses_usd",
+        "p_and_l_usali.non_operating.total_usd",
     ),
     "insurance_expense": (
         "insurance",
         "insurance_usd",
         "p_and_l_usali.insurance",
         "p_and_l_usali.fixed_charges.insurance",
+        # Real prod (both T-12 and annual P&L bucket insurance under
+        # non_operating, not fixed_charges).
+        "p_and_l_usali.non_operating.insurance_usd",
+        "p_and_l_usali.non_operating.insurance",
     ),
     "property_tax": (
         "property_taxes",
         "property_tax_usd",
         "p_and_l_usali.property_taxes",
         "p_and_l_usali.fixed_charges.property_taxes",
+        # Real prod paths
+        "p_and_l_usali.non_operating.property_and_other_taxes_usd",
+        "p_and_l_usali.non_operating.property_other_taxes_usd",
+        "p_and_l_usali.non_operating.property_taxes",
     ),
     "utilities_expense": (
         "utilities",
         "p_and_l_usali.utilities",
         "p_and_l_usali.undistributed.utilities",
+        # T-12 prod (per-dept bucket carries the expense).
+        "p_and_l_usali.utilities.expense_usd",
+        "p_and_l_usali.undistributed.utilities_usd",
+        # Annual P&L prod
+        "p_and_l_usali.undistributed_expenses.utilities_usd",
     ),
     "marketing_expense": (
         "marketing",
         "sales_marketing",
         "p_and_l_usali.marketing",
         "p_and_l_usali.undistributed.sales_marketing",
+        # T-12 prod
+        "p_and_l_usali.sales_and_marketing.expense_usd",
+        "p_and_l_usali.undistributed.sales_and_marketing_usd",
+        # Annual P&L prod
+        "p_and_l_usali.undistributed_expenses.sales_marketing_usd",
     ),
     "rm_expense": (
         "repairs_maintenance",
@@ -283,6 +427,11 @@ _ALIASES: dict[str, tuple[str, ...]] = {
         "p_and_l_usali.repairs_maintenance",
         "p_and_l_usali.undistributed.property_operations",
         "property_operations",
+        # T-12 prod
+        "p_and_l_usali.property_operations_and_maintenance.expense_usd",
+        "p_and_l_usali.undistributed.property_operations_and_maintenance_usd",
+        # Annual P&L prod
+        "p_and_l_usali.undistributed_expenses.property_operations_maintenance_usd",
     ),
     "ag_expense": (
         "admin_general",
@@ -290,6 +439,23 @@ _ALIASES: dict[str, tuple[str, ...]] = {
         "p_and_l_usali.admin_general",
         "p_and_l_usali.undistributed.administrative_general",
         "administrative_general",
+        # T-12 prod
+        "p_and_l_usali.administrative_and_general.expense_usd",
+        "p_and_l_usali.undistributed.administrative_and_general_usd",
+        # Annual P&L prod
+        "p_and_l_usali.undistributed_expenses.administrative_general_usd",
+    ),
+    # Information & telecom (one of the 5 undistributed lines — needed
+    # for the undistributed rollup synthesis).
+    "information_telecom": (
+        "information_and_telecom",
+        # T-12 prod
+        "p_and_l_usali.information_and_telecom.expense_usd",
+        "p_and_l_usali.undistributed.information_and_telecom_usd",
+        # Annual P&L prod
+        "p_and_l_usali.undistributed_expenses.information_telecom_systems_usd",
+        # Schema doc
+        "p_and_l_usali.undistributed.information_telecom",
     ),
     "total_labor": (
         "labor",
@@ -875,7 +1041,23 @@ def flatten_extraction_fields(
         # ``p_and_l_usali.revpar_usd`` becomes resolvable under
         # ``revpar_usd`` (which the alias map already maps to
         # canonical ``revpar``).
+        #
+        # Sam QA Bug #3 v2: SKIP the tail-write for monthly / per-page
+        # records. The real prod T-12 ships dozens of
+        # ``p_and_l_usali.monthly.jan_2025.rooms_revenue_usd`` entries
+        # — tail-writing them clobbers ``rooms_revenue_usd`` with a
+        # single-month figure, which then leaks through the alias map
+        # and lands as the per-period ``rooms_revenue`` (1M instead of
+        # the 9M actual TTM total). The monthly/page namespaces are
+        # subordinate slices, never the period total.
         if "." in name:
+            lowered = name.lower()
+            if (
+                ".monthly." in lowered
+                or ".page" in lowered  # ``.page5.`` is a real prod alias
+                or ".per_month." in lowered
+            ):
+                continue
             tail = name.rsplit(".", 1)[-1]
             # First write wins so a direct flat hit (e.g. "revpar") on
             # a later record doesn't clobber an earlier one.
@@ -943,34 +1125,30 @@ def _derive_usali_rollups(flat: dict[str, Any]) -> None:
                 return v
         return None
 
+    # ── Resolver helper that uses the FULL alias map ──
+    #
+    # ``_get`` above only walks a literal keys list. For the roll-up
+    # synthesis we want to honor every alias for a canonical name —
+    # otherwise the synthesis can return None even when the extractor
+    # DID emit a value under a less-common alias. ``_via_alias`` walks
+    # the canonical → aliases chain in ``_ALIASES``.
+    def _via_alias(canonical: str) -> float | None:
+        v = _coerce_for_sum(flat.get(canonical))
+        if v is not None:
+            return v
+        for alias in _ALIASES.get(canonical, ()):
+            v = _coerce_for_sum(flat.get(alias))
+            if v is not None:
+                return v
+        return None
+
     # total_revenue = rooms_revenue + fb_revenue + other_revenue
     #                 + resort_fees + misc_revenue
-    rooms_rev = _get(
-        "rooms_revenue",
-        "p_and_l_usali.operating_revenue.rooms_revenue",
-        "rooms_revenue_usd",
-    )
-    fb_rev = _get(
-        "fb_revenue",
-        "p_and_l_usali.operating_revenue.food_beverage_revenue",
-        "food_beverage_revenue",
-        "fb_revenue_usd",
-    )
-    other_rev = _get(
-        "other_revenue",
-        "p_and_l_usali.operating_revenue.other_revenue",
-        "other_revenue_usd",
-    )
-    resort_fees = _get(
-        "resort_fees",
-        "p_and_l_usali.operating_revenue.resort_fees",
-        "resort_fees_usd",
-    ) or 0.0
-    misc_rev = _get(
-        "misc_revenue",
-        "p_and_l_usali.operating_revenue.misc_revenue",
-        "misc_revenue_usd",
-    ) or 0.0
+    rooms_rev = _via_alias("rooms_revenue")
+    fb_rev = _via_alias("fb_revenue")
+    other_rev = _via_alias("other_revenue")
+    resort_fees = _via_alias("resort_fees") or 0.0
+    misc_rev = _via_alias("misc_revenue") or 0.0
     components = [v for v in (rooms_rev, fb_rev, other_rev) if v is not None]
     if len(components) >= 2:
         # We need at least two components to call a synthesized total
@@ -981,19 +1159,9 @@ def _derive_usali_rollups(flat: dict[str, Any]) -> None:
         )
 
     # dept_expenses = rooms_dept_expense + fb_dept_expense + other_dept_expense
-    rooms_dept_exp = _get(
-        "rooms_dept_expense",
-        "p_and_l_usali.departmental_expenses.rooms",
-    )
-    fb_dept_exp = _get(
-        "fb_dept_expense",
-        "p_and_l_usali.departmental_expenses.food_beverage",
-        "food_beverage_dept_expense",
-    )
-    other_dept_exp = _get(
-        "other_dept_expense",
-        "p_and_l_usali.departmental_expenses.other_operated",
-    ) or 0.0
+    rooms_dept_exp = _via_alias("rooms_dept_expense")
+    fb_dept_exp = _via_alias("fb_dept_expense")
+    other_dept_exp = _via_alias("other_dept_expense") or 0.0
     dept_parts = [v for v in (rooms_dept_exp, fb_dept_exp) if v is not None]
     if dept_parts:
         total_dept = sum(dept_parts) + other_dept_exp
@@ -1006,62 +1174,37 @@ def _derive_usali_rollups(flat: dict[str, Any]) -> None:
         )
 
     # undistributed_expenses = sum of the five undistributed lines
-    a_g = _get(
-        "ag_expense",
-        "administrative_general",
-        "p_and_l_usali.undistributed.administrative_general",
-    )
-    it = _get(
-        "information_telecom",
-        "p_and_l_usali.undistributed.information_telecom",
-    )
-    sm = _get(
-        "marketing_expense",
-        "sales_marketing",
-        "p_and_l_usali.undistributed.sales_marketing",
-    )
-    prop_ops = _get(
-        "rm_expense",
-        "property_operations",
-        "p_and_l_usali.undistributed.property_operations",
-        "repairs_maintenance",
-    )
-    utilities = _get(
-        "utilities_expense",
-        "utilities",
-        "p_and_l_usali.undistributed.utilities",
-    )
+    a_g = _via_alias("ag_expense")
+    it = _via_alias("information_telecom")
+    sm = _via_alias("marketing_expense")
+    prop_ops = _via_alias("rm_expense")
+    utilities = _via_alias("utilities_expense")
     undist_parts = [v for v in (a_g, it, sm, prop_ops, utilities) if v is not None]
     if len(undist_parts) >= 2:
         flat.setdefault("undistributed_expenses", sum(undist_parts))
 
     # fixed_charges = property_taxes + insurance (+ ground rent etc.)
-    prop_tax = _get(
-        "property_tax",
-        "property_taxes",
-        "p_and_l_usali.fixed_charges.property_taxes",
-    )
-    insurance = _get(
-        "insurance_expense",
-        "insurance",
-        "p_and_l_usali.fixed_charges.insurance",
-    )
+    prop_tax = _via_alias("property_tax")
+    insurance = _via_alias("insurance_expense")
     fixed_parts = [v for v in (prop_tax, insurance) if v is not None]
     if fixed_parts:
         flat.setdefault("fixed_charges", sum(fixed_parts))
 
-    # gop = total_revenue - dept_expenses - undistributed_expenses
-    tr = _get("total_revenue")
-    de = _get("dept_expenses", "total_dept_expense")
-    ue = _get("undistributed_expenses")
+    # gop = total_revenue - dept_expenses - undistributed_expenses.
+    # We honor a direct GOP emission first (real prod ships it under
+    # ``p_and_l_usali.gross_operating_profit_usd`` / ``.total_usd``);
+    # the synthesis only fires when it isn't directly emitted.
+    tr = _via_alias("total_revenue")
+    de = _via_alias("dept_expenses") or _via_alias("total_dept_expense")
+    ue = _via_alias("undistributed_expenses")
     if tr is not None and de is not None and ue is not None:
         flat.setdefault("gop", tr - de - ue)
 
     # noi can be back-derived if gop + mgmt_fee + ffe_reserve + fixed_charges are known.
-    gop_val = _get("gop")
-    mgmt_fee = _get("mgmt_fee")
-    ffe = _get("ffe_reserve")
-    fixed = _get("fixed_charges")
+    gop_val = _via_alias("gop")
+    mgmt_fee = _via_alias("mgmt_fee")
+    ffe = _via_alias("ffe_reserve")
+    fixed = _via_alias("fixed_charges")
     if (
         gop_val is not None
         and mgmt_fee is not None
@@ -1075,6 +1218,15 @@ def _derive_usali_rollups(flat: dict[str, Any]) -> None:
         flat.setdefault("rooms_dept_profit", rooms_rev - rooms_dept_exp)
     if fb_rev is not None and fb_dept_exp is not None:
         flat.setdefault("fb_dept_profit", fb_rev - fb_dept_exp)
+
+    # Total labor — needed for the LABOR_PCT_REVENUE_* range rules.
+    # Real prod doesn't emit a labor line directly (it's embedded in
+    # the per-dept expenses), so the rule will skip when missing —
+    # that's correct behavior. Kept as a placeholder synthesis in case
+    # a future extractor flavor ships a ``total_labor_usd`` line.
+    total_labor = _via_alias("total_labor")
+    if total_labor is not None:
+        flat.setdefault("total_labor", total_labor)
 
 
 __all__ = [
