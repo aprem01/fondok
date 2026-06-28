@@ -1,131 +1,98 @@
 'use client';
 
 /**
- * DocumentsChecklist — persistent right-rail for the guided-onboarding
- * wizard Step 3.
+ * DocumentsChecklist — Wave 1 expansion (June 2026).
+ *
+ * Right-rail of the new-project wizard's Step 3. Surfaces the canonical
+ * 11-category IC checklist with per-category status:
+ *
+ *   * Green ✓ N files → covered
+ *   * Red Missing      → required_for_ic and uncovered
+ *   * Gray Optional    → required_for_ic=false (SURVEYS only)
  *
  * Eshan's framing on the June 25 design-partner call: "It's kind of
  * dashboard, says done, done, done — financial document, three years
- * got it. Then they know what's missing."
+ * got it. Then they know what's missing." This is that dashboard.
  *
- * The checklist reflects the wizard's four sub-stages:
- *   - 3.1 OM (optional)
- *   - 3.2 Financials by year (REQUIRED)
- *   - 3.3 STR comps (optional)
- *   - 3.4 Catch-all bucket (optional)
- *
- * Financials get a year list under their row so the user sees which
- * years they've staged. The row tones:
- *   - success → at least one file dropped in that category
- *   - danger  → required and empty (only financials)
- *   - gray    → optional and empty
+ * Locked product decision — only Financials is hard-required to advance
+ * the wizard. The other nine "Required for IC" rows still surface red
+ * Missing pills but DON'T block the Next button; the wizard's gate
+ * lives in DocumentsStep + page.tsx.
  */
 
-import { CheckCircle2, Circle, AlertCircle, FileText, FileSpreadsheet, BarChart3, FolderOpen } from 'lucide-react';
+import { CheckCircle2, AlertCircle, Circle } from 'lucide-react';
 import { Card } from '@/components/ui/Card';
 import { Badge } from '@/components/ui/Badge';
 import { cn } from '@/lib/format';
+import type { WizardCategory, WizardFile } from '@/lib/api';
+import { WIZARD_CATEGORIES } from './DocumentsStep';
 
 export interface DocumentsChecklistProps {
-  omCount: number;
-  financialYears: number[]; // distinct years user has staged
-  financialCount: number; // total file count regardless of year
-  strCount: number;
-  otherCount: number;
-}
-
-interface Row {
-  key: string;
-  label: string;
-  Icon: typeof FileText;
-  required: boolean;
-  done: boolean;
-  countLabel: string;
-  detail?: React.ReactNode;
+  files: WizardFile[];
+  /** Optional callback when a row is clicked — wizard page jumps to
+   *  that sub-stage. The Card stays presentational; the parent owns
+   *  the actual stage state. */
+  onJumpTo?: (category: WizardCategory) => void;
+  /** Optional: which category is currently active in the content
+   *  panel. Used to mirror the brand-50 active state from the sidebar
+   *  here so the user always sees a single source of truth. */
+  activeCategory?: WizardCategory | null;
 }
 
 export function DocumentsChecklist({
-  omCount,
-  financialYears,
-  financialCount,
-  strCount,
-  otherCount,
+  files,
+  onJumpTo,
+  activeCategory,
 }: DocumentsChecklistProps) {
-  const rows: Row[] = [
-    {
-      key: 'om',
-      label: 'Offering Memorandum',
-      Icon: FileText,
-      required: false,
-      done: omCount > 0,
-      countLabel:
-        omCount === 0
-          ? 'Optional'
-          : `${omCount} file${omCount === 1 ? '' : 's'}`,
-    },
-    {
-      key: 'financials',
-      label: 'Financials by year',
-      Icon: FileSpreadsheet,
-      required: true,
-      done: financialCount > 0,
-      countLabel:
-        financialCount === 0
-          ? 'Required'
-          : `${financialCount} file${financialCount === 1 ? '' : 's'}`,
-      detail: financialYears.length > 0 && (
-        <div className="flex flex-wrap gap-1 mt-1.5">
-          {financialYears
-            .slice()
-            .sort((a, b) => b - a)
-            .map((y) => (
-              <span
-                key={y}
-                className="inline-flex items-center px-1.5 py-0 rounded text-[10.5px] tabular-nums font-medium bg-success-50 text-success-700 border border-success-500/30"
-              >
-                {y}
-              </span>
-            ))}
-        </div>
-      ),
-    },
-    {
-      key: 'str',
-      label: 'STR comp-set reports',
-      Icon: BarChart3,
-      required: false,
-      done: strCount > 0,
-      countLabel:
-        strCount === 0
-          ? 'Optional'
-          : `${strCount} file${strCount === 1 ? '' : 's'}`,
-    },
-    {
-      key: 'other',
-      label: 'Other documents',
-      Icon: FolderOpen,
-      required: false,
-      done: otherCount > 0,
-      countLabel:
-        otherCount === 0
-          ? 'Optional'
-          : `${otherCount} file${otherCount === 1 ? '' : 's'}`,
-    },
-  ];
+  const counts = {} as Record<WizardCategory, number>;
+  for (const c of WIZARD_CATEGORIES) counts[c.id] = 0;
+  for (const f of files) {
+    if (counts[f.category] !== undefined) counts[f.category] += 1;
+  }
 
-  const doneCount = rows.filter((r) => r.done).length;
-  const totalCount = rows.length;
-  const pct = Math.round((doneCount / totalCount) * 100);
+  // Split into Required vs Recommended-for-IC vs Optional sections. The
+  // Required section is the financials gate; the Recommended-for-IC
+  // section is the nine other required-for-IC categories; Optional is
+  // SURVEYS alone.
+  const financialIds: WizardCategory[] = ['t12', 'historical_pnl'];
+  const financialRows = WIZARD_CATEGORIES.filter((c) =>
+    financialIds.includes(c.id),
+  );
+  const recommendedRows = WIZARD_CATEGORIES.filter(
+    (c) => c.requiredForIc && !financialIds.includes(c.id),
+  );
+  const optionalRows = WIZARD_CATEGORIES.filter((c) => !c.requiredForIc);
+
+  const ficovered = financialRows.some((c) => counts[c.id] > 0);
+  const recCoveredCount = recommendedRows.filter((c) => counts[c.id] > 0).length;
+  const totalIc = financialRows.length + recommendedRows.length; // 10
+  const coveredIc =
+    (ficovered ? 1 : 0) +
+    (financialRows.filter((c) => counts[c.id] > 0).length - (ficovered ? 1 : 0)) +
+    recCoveredCount;
+  // Cleaner: just count distinct covered required-for-IC categories.
+  const icCovered = [...financialRows, ...recommendedRows].filter(
+    (c) => counts[c.id] > 0,
+  ).length;
+  const pct = Math.round((icCovered / totalIc) * 100);
 
   return (
     <Card className="p-4 sticky top-4" aria-label="Document checklist">
       <div className="flex items-center justify-between mb-3">
-        <h3 className="text-[13px] font-semibold text-ink-900">Checklist</h3>
+        <div>
+          <h3 className="text-[13px] font-semibold text-ink-900">
+            IC Checklist
+          </h3>
+          <div className="text-[10.5px] text-ink-500 mt-0.5 leading-tight">
+            10 categories underwriters expect
+          </div>
+        </div>
         <span className="text-[11px] text-ink-500 tabular-nums">
-          {doneCount} / {totalCount}
+          {icCovered} / {totalIc}
         </span>
       </div>
-      {/* Progress bar — matches DataRoomTab visual idiom. */}
+
+      {/* Progress bar — IC coverage. */}
       <div className="mb-4">
         <div className="h-1.5 bg-ink-300/30 rounded-full overflow-hidden">
           <div
@@ -135,50 +102,147 @@ export function DocumentsChecklist({
           />
         </div>
       </div>
-      <ul className="space-y-2.5" role="list">
-        {rows.map((r) => {
-          const Icon = r.Icon;
-          const StatusIcon = r.done
+
+      <ChecklistSection
+        title="Required — Financials"
+        subtitle="Either T-12 or Historical P&L satisfies the wizard gate."
+        rows={financialRows}
+        counts={counts}
+        onJumpTo={onJumpTo}
+        activeCategory={activeCategory ?? null}
+        tone="gate"
+      />
+      <ChecklistSection
+        title="Recommended for IC"
+        subtitle="Missing items surface as red flags on the deal workspace."
+        rows={recommendedRows}
+        counts={counts}
+        onJumpTo={onJumpTo}
+        activeCategory={activeCategory ?? null}
+        tone="ic"
+      />
+      <ChecklistSection
+        title="Optional"
+        subtitle="Expected by closing — broker often drips these in."
+        rows={optionalRows}
+        counts={counts}
+        onJumpTo={onJumpTo}
+        activeCategory={activeCategory ?? null}
+        tone="optional"
+      />
+    </Card>
+  );
+}
+
+function ChecklistSection({
+  title,
+  subtitle,
+  rows,
+  counts,
+  onJumpTo,
+  activeCategory,
+  tone,
+}: {
+  title: string;
+  subtitle: string;
+  rows: typeof WIZARD_CATEGORIES;
+  counts: Record<WizardCategory, number>;
+  onJumpTo?: (category: WizardCategory) => void;
+  activeCategory: WizardCategory | null;
+  tone: 'gate' | 'ic' | 'optional';
+}) {
+  if (rows.length === 0) return null;
+  return (
+    <div className="mb-4 last:mb-0">
+      <div className="flex items-center justify-between mb-1">
+        <div className="text-[10.5px] uppercase tracking-wider text-ink-500 font-semibold">
+          {title}
+        </div>
+        {tone === 'gate' && (
+          <Badge tone="red" className="text-[9.5px]">
+            REQUIRED
+          </Badge>
+        )}
+      </div>
+      <div className="text-[10.5px] text-ink-500 mb-2 leading-tight">
+        {subtitle}
+      </div>
+      <ul className="space-y-1.5" role="list">
+        {rows.map((spec) => {
+          const count = counts[spec.id];
+          const covered = count > 0;
+          const active = activeCategory === spec.id;
+          const StatusIcon = covered
             ? CheckCircle2
-            : r.required
-              ? AlertCircle
-              : Circle;
-          const statusClass = r.done
+            : tone === 'optional'
+              ? Circle
+              : AlertCircle;
+          const statusClass = covered
             ? 'text-success-500'
-            : r.required
-              ? 'text-danger-700'
-              : 'text-ink-300';
-          return (
-            <li key={r.key} className="flex items-start gap-2.5" role="listitem">
+            : tone === 'optional'
+              ? 'text-ink-300'
+              : 'text-danger-700';
+          const row = (
+            <div
+              className={cn(
+                'flex items-start gap-2 px-2 py-1.5 rounded-md',
+                active
+                  ? 'bg-brand-50 border border-brand-500/40'
+                  : 'border border-transparent hover:bg-ink-100/50',
+                onJumpTo ? 'cursor-pointer' : '',
+              )}
+            >
               <StatusIcon
-                size={14}
+                size={13}
                 className={cn('flex-shrink-0 mt-0.5', statusClass)}
                 aria-hidden="true"
               />
               <div className="flex-1 min-w-0">
-                <div className="flex items-center gap-2">
-                  <Icon size={12} className="text-ink-500 flex-shrink-0" aria-hidden="true" />
-                  <div className="text-[12px] font-medium text-ink-900 truncate">
-                    {r.label}
-                  </div>
+                <div
+                  className={cn(
+                    'text-[12px] font-medium leading-tight truncate',
+                    active ? 'text-brand-700' : 'text-ink-900',
+                  )}
+                >
+                  {spec.label}
                 </div>
-                <div className="mt-0.5 flex items-center gap-2">
-                  {r.done ? (
-                    <span className="text-[11px] text-success-700 tabular-nums font-medium">
-                      {r.countLabel}
+                <div className="mt-0.5">
+                  {covered ? (
+                    <span className="text-[10.5px] tabular-nums font-medium text-success-700">
+                      {count} file{count === 1 ? '' : 's'}
                     </span>
-                  ) : r.required ? (
-                    <Badge tone="red">{r.countLabel}</Badge>
+                  ) : tone === 'optional' ? (
+                    <span className="text-[10.5px] text-ink-500">Optional</span>
                   ) : (
-                    <span className="text-[11px] text-ink-500">{r.countLabel}</span>
+                    <Badge tone="red" className="text-[9.5px]">
+                      Missing
+                    </Badge>
                   )}
                 </div>
-                {r.detail}
               </div>
+            </div>
+          );
+          if (onJumpTo) {
+            return (
+              <li key={spec.id} role="listitem">
+                <button
+                  type="button"
+                  onClick={() => onJumpTo(spec.id)}
+                  aria-label={`Jump to ${spec.label}`}
+                  className="w-full text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-500 rounded-md"
+                >
+                  {row}
+                </button>
+              </li>
+            );
+          }
+          return (
+            <li key={spec.id} role="listitem">
+              {row}
             </li>
           );
         })}
       </ul>
-    </Card>
+    </div>
   );
 }

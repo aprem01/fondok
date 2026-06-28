@@ -384,37 +384,28 @@ function Step3Documents({
   onChange: (files: WizardFile[]) => void;
   onCanContinueChange: (ok: boolean) => void;
 }) {
-  // Layout: two-column. Left = the multi-stage sub-wizard.
-  // Right = persistent checklist (sticky on tall viewports).
-  const omCount = files.filter((f) => f.category === 'om').length;
-  const financialCount = files.filter((f) => f.category === 'financials').length;
-  const strCount = files.filter((f) => f.category === 'str').length;
-  const otherCount = files.filter((f) => f.category === 'other').length;
-  const financialYears = Array.from(
-    new Set(
-      files
-        .filter((f) => f.category === 'financials')
-        .map((f) => f.fiscal_year)
-        .filter((y): y is number => typeof y === 'number'),
-    ),
-  );
+  const { toast } = useToast();
+  // Layout: the DocumentsStep owns its own internal sidebar + content
+  // column (11 categories don't fit cleanly into 4/8 columns at the
+  // page level). The right-rail checklist hangs off the page so it
+  // can stay sticky during long category drilldowns.
   return (
     <div className="grid grid-cols-12 gap-6">
-      <div className="col-span-12 lg:col-span-8">
+      <div className="col-span-12 lg:col-span-9">
         <DocumentsStep
           files={files}
           onChange={onChange}
           onCanContinueChange={onCanContinueChange}
+          onUnsupportedFile={(filename) =>
+            toast(
+              `${filename}: unsupported file type — Fondok accepts PDF, Excel, CSV, Word.`,
+              { type: 'error' },
+            )
+          }
         />
       </div>
-      <aside className="col-span-12 lg:col-span-4">
-        <DocumentsChecklist
-          omCount={omCount}
-          financialYears={financialYears}
-          financialCount={financialCount}
-          strCount={strCount}
-          otherCount={otherCount}
-        />
+      <aside className="col-span-12 lg:col-span-3">
+        <DocumentsChecklist files={files} />
       </aside>
     </div>
   );
@@ -605,15 +596,22 @@ function Step6({ data, jumpTo }: { data: WizardData; jumpTo: (step: number) => v
 
   // Per-category counts power the inline checklist summary so the
   // analyst can see what they staged + which years they covered before
-  // committing. Mirrors the right-rail checklist on Step 3.
+  // committing. Wave 1 (June 2026): we collapse the 11 categories into
+  // four headline groups for the review page so the summary stays
+  // scannable — the deal workspace surfaces a full CompletenessCard.
   const omCount = data.docs.filter(f => f.category === 'om').length;
-  const financialCount = data.docs.filter(f => f.category === 'financials').length;
+  const financialCount = data.docs.filter(
+    f => f.category === 't12' || f.category === 'historical_pnl',
+  ).length;
   const strCount = data.docs.filter(f => f.category === 'str').length;
-  const otherCount = data.docs.filter(f => f.category === 'other').length;
+  // Everything else (insurance / taxes / room mix / capex / property
+  // info / leases / surveys) rolls up under "Other supporting docs"
+  // for the summary headline.
+  const otherCount = data.docs.length - omCount - financialCount - strCount;
   const financialYears = Array.from(
     new Set(
       data.docs
-        .filter(f => f.category === 'financials')
+        .filter(f => f.category === 't12' || f.category === 'historical_pnl')
         .map(f => f.fiscal_year)
         .filter((y): y is number => typeof y === 'number'),
     ),
@@ -708,7 +706,7 @@ function Step6({ data, jumpTo }: { data: WizardData; jumpTo: (step: number) => v
             detail={null}
           />
           <SummaryRow
-            label="Other"
+            label="Other supporting docs"
             count={otherCount}
             required={false}
             detail={null}

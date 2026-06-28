@@ -47,26 +47,37 @@ function labelFor(token: string | null | undefined): string {
     case 'OM':
       return 'Offering Memorandum';
     case 'T12':
-      return 'Annual / T-12';
+      return 'T-12 / Trailing Twelve Months';
     case 'PNL_MONTHLY':
       return 'Monthly P&L';
     case 'PNL_YTD':
       return 'Year-to-Date P&L';
     case 'PNL':
-      return 'P&L';
+      return 'Annual P&L';
     case 'STR':
     case 'STR_TREND':
-      return 'STR Comp Set';
+      return 'STR / Comp Set Report';
     case 'CBRE_HORIZONS':
       return 'CBRE Horizons';
     case 'PNL_BENCHMARK':
       return 'P&L Benchmark';
     case 'ROOM_MIX':
-      return 'Room Mix';
+      return 'Room Mix / Unit Mix';
     case 'RENT_ROLL':
       return 'Rent Roll';
     case 'CONTRACT':
-      return 'Contract';
+    case 'LEASES':
+      return 'Leases & Agreements';
+    case 'INSURANCE':
+      return 'Insurance Records';
+    case 'PROPERTY_TAX':
+      return 'Property Taxes';
+    case 'CAPEX':
+      return 'Historical CapEx';
+    case 'PROPERTY_INFO':
+      return 'Basic Property Info';
+    case 'SURVEYS':
+      return 'Surveys & Reviews';
     case 'MARKET_STUDY':
       return 'Market Study';
     default:
@@ -124,15 +135,18 @@ export function MisclassificationBanner({
         />
         <div className="flex-1 min-w-0">
           <div className="text-[12.5px] font-semibold text-warn-700">
-            Fondok read this differently
+            Category mismatch — pick the right bucket
           </div>
           <p className="text-[12px] text-warn-700/90 mt-1 leading-relaxed">
+            You uploaded{' '}
             <span className="font-medium text-ink-900">{doc.filename}</span>{' '}
-            was tagged as{' '}
-            <span className="font-semibold tabular-nums">{userLabel}</span> in
-            the wizard, but Fondok&rsquo;s classifier read it as{' '}
-            <span className="font-semibold tabular-nums">{aiLabel}</span>.
-            Choose which to trust — we won&rsquo;t change it silently.
+            under{' '}
+            <span className="font-semibold">{userLabel}</span>, but Fondok thinks
+            it&rsquo;s a{' '}
+            <span className="font-semibold">{aiLabel}</span>. Engines route on
+            category, so this changes which extractor reads it and which
+            assumptions it feeds. Choose which to trust — we won&rsquo;t change
+            it silently.
           </p>
           <div className="flex flex-wrap items-center gap-2 mt-3">
             <Button

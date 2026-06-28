@@ -596,6 +596,24 @@ MIGRATIONS: list[tuple[str, str]] = [
         "ALTER TABLE documents ADD COLUMN IF NOT EXISTS misclassified "
         "BOOLEAN NOT NULL DEFAULT FALSE",
     ),
+    # Wave 1 — year-mismatch warning (June 2026). When the analyst
+    # pinned a fiscal_year in the wizard AND the Extractor pulled a
+    # period_ending date whose year disagrees, we flip this flag and
+    # the UI surfaces a YearMismatchBanner with "Use Fondok's year" /
+    # "Keep mine" choices — same UX pattern as ``misclassified``.
+    (
+        "documents.add_year_mismatch",
+        "ALTER TABLE documents ADD COLUMN IF NOT EXISTS year_mismatch "
+        "BOOLEAN NOT NULL DEFAULT FALSE",
+    ),
+    # Extracted period-end year (cached so the banner can read it back
+    # without re-walking the extraction_results JSON). NULL when no
+    # period_ending was extractable.
+    (
+        "documents.add_extracted_period_year",
+        "ALTER TABLE documents ADD COLUMN IF NOT EXISTS "
+        "extracted_period_year INTEGER",
+    ),
     # USALI compliance scoring (ROADMAP #3). Every successful P&L
     # extraction runs through ``services.usali_scorer.score_extraction``
     # and writes the result back here. ``usali_score`` is NULL when the
@@ -992,6 +1010,15 @@ SQLITE_MIGRATIONS: list[tuple[str, str]] = [
     (
         "documents.add_misclassified",
         "ALTER TABLE documents ADD COLUMN misclassified INTEGER NOT NULL DEFAULT 0",
+    ),
+    # Wave 1 — year-mismatch warning (SQLite mirror).
+    (
+        "documents.add_year_mismatch",
+        "ALTER TABLE documents ADD COLUMN year_mismatch INTEGER NOT NULL DEFAULT 0",
+    ),
+    (
+        "documents.add_extracted_period_year",
+        "ALTER TABLE documents ADD COLUMN extracted_period_year INTEGER",
     ),
     # USALI compliance score + deviations (ROADMAP #3). SQLite stores
     # the score as REAL (matches the Postgres NUMERIC(5,2)) and the

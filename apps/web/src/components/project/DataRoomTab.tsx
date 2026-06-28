@@ -36,6 +36,8 @@ import { UsaliBadge } from './validation/UsaliBadge';
 import { UsaliDeviationsAccordion } from './validation/UsaliDeviationsAccordion';
 import { GapChipsStrip } from './validation/GapChipsStrip';
 import { MisclassificationBanner } from './wizard/MisclassificationBanner';
+import { YearMismatchBanner } from './wizard/YearMismatchBanner';
+import { CompletenessCard } from './wizard/CompletenessCard';
 
 // Same dependency order EngineHeader uses for run-all fallbacks — mirrors the
 // worker's chain in apps/worker/app/api/model.py.
@@ -62,14 +64,22 @@ const DOC_TYPE_LABEL: Record<string, string> = {
   PNL: 'P&L',
   PNL_MONTHLY: 'Monthly P&L',
   PNL_YTD: 'YTD P&L',
+  PNL_BENCHMARK: 'P&L Benchmark',
   STR: 'STR',
   STR_TREND: 'STR',
+  CBRE_HORIZONS: 'CBRE',
   BUDGET: 'Budget',
   DEBT: 'Debt',
   INSURANCE: 'Insurance',
-  PROPERTY_TAXES: 'Prop. Taxes',
+  PROPERTY_TAX: 'Prop. Tax',
+  CAPEX: 'CapEx',
+  PROPERTY_INFO: 'Property Info',
+  LEASES: 'Leases',
   CONTRACT: 'Contract',
+  SURVEYS: 'Surveys',
   ROOM_MIX: 'Room Mix',
+  RENT_ROLL: 'Rent Roll',
+  MARKET_STUDY: 'Market Study',
   UNKNOWN: 'Uncategorized',
 };
 
@@ -79,23 +89,24 @@ const VARIANCE_DOCS = new Set([
   'T12_FinancialStatement.xlsx',
 ]);
 
-// Canonical 10-item required-document checklist surfaced in the Data Room.
-// Each row maps to zero or more upstream `doc_type` tokens — when a live
-// uploaded document carries a matching doc_type the row flips green and
-// drops its REQ badge. Items with an empty `match` set have no extractor
-// today and stay REQ until the worker learns them.
+// Canonical 11-item Data Room checklist — mirrors the wizard's
+// COMPLETENESS_CATEGORIES so the two surfaces never drift. Each row
+// maps to one or more upstream `doc_type` tokens; when any live
+// uploaded document carries a matching token the row flips green and
+// drops its REQ badge. Wave 1 expanded the DocType enum to cover every
+// category — Surveys is the only one marked optional.
 const REQUIRED_CHECKLIST: { label: string; match: string[] }[] = [
   { label: 'Offering Memorandum',           match: ['OM'] },
   { label: 'T-12 / Trailing Twelve Months', match: ['T12'] },
-  { label: 'Annual / YTD / Monthly P&L',    match: ['PNL', 'PNL_MONTHLY', 'PNL_YTD'] },
+  { label: 'Annual / YTD / Monthly P&L',    match: ['PNL', 'PNL_MONTHLY', 'PNL_YTD', 'PNL_BENCHMARK'] },
   { label: 'STR / Comp Set Report',         match: ['STR', 'STR_TREND'] },
   { label: 'Insurance Records',             match: ['INSURANCE'] },
-  { label: 'Property Taxes',                match: ['PROPERTY_TAXES'] },
-  { label: 'Room Mix / Unit Mix',           match: [] },
-  { label: 'Historical CapEx',              match: [] },
-  { label: 'Basic Property Info',           match: [] },
-  { label: 'Leases & Agreements',           match: ['CONTRACT'] },
-  { label: 'Surveys & Reviews',             match: [] },
+  { label: 'Property Taxes',                match: ['PROPERTY_TAX'] },
+  { label: 'Room Mix / Unit Mix',           match: ['ROOM_MIX'] },
+  { label: 'Historical CapEx',              match: ['CAPEX'] },
+  { label: 'Basic Property Info',           match: ['PROPERTY_INFO'] },
+  { label: 'Leases & Agreements',           match: ['LEASES', 'CONTRACT'] },
+  { label: 'Surveys & Reviews',             match: ['SURVEYS'] },
 ];
 
 // Engine Status card mapping — UI label/icon plus the underlying worker
@@ -265,6 +276,27 @@ export default function DataRoomTab({ projectId }: { projectId: number | string 
     [rawId, refresh, toast],
   );
 
+  // Wave 1 #4 — resolve a year-mismatch banner. Symmetric with the
+  // classification flow above: either side clears ``year_mismatch``.
+  const resolveYear = useCallback(
+    async (doc: WorkerDocument, useAi: boolean) => {
+      try {
+        await api.documents.acceptYear(rawId, doc.id, useAi);
+        toast(
+          useAi
+            ? `Adopted Fondok’s year for ${doc.filename}`
+            : `Kept your year for ${doc.filename}`,
+          { type: 'success' },
+        );
+        refresh();
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        toast(`Couldn’t update year: ${msg}`, { type: 'error' });
+      }
+    },
+    [rawId, refresh, toast],
+  );
+
   // Surface a toast each time a doc transitions to EXTRACTED.
   useEffect(() => {
     documents.forEach((d) => {
@@ -317,6 +349,11 @@ export default function DataRoomTab({ projectId }: { projectId: number | string 
     userProvidedDocType?: string | null;
     fiscalYear?: number | null;
     misclassified?: boolean;
+    /** Wave 1 #4 signals. ``yearMismatch`` true triggers a
+     *  YearMismatchBanner alongside the category banner so the analyst
+     *  can resolve both with one accept/keep round-trip. */
+    yearMismatch?: boolean;
+    extractedPeriodYear?: number | null;
   };
 
   const docs: Row[] = useMemo(() => {
@@ -344,6 +381,8 @@ export default function DataRoomTab({ projectId }: { projectId: number | string 
           userProvidedDocType: d.user_provided_doc_type ?? null,
           fiscalYear: d.fiscal_year ?? null,
           misclassified: d.misclassified ?? false,
+          yearMismatch: d.year_mismatch ?? false,
+          extractedPeriodYear: d.extracted_period_year ?? null,
         };
       });
     }
@@ -549,6 +588,14 @@ export default function DataRoomTab({ projectId }: { projectId: number | string 
   // drag-and-drop handlers. The drop zone was previously visual-only
   // (Rani's QA flagged "drag-and-drop stopped working" — it never had
   // a real handler attached).
+  //
+  // Wave 1 B3: filter drag-drop input by extension before staging so
+  // a stray .heic / .mov / .zip never even hits the worker. The
+  // <input accept=> attribute only filters the picker dialog, NOT
+  // drag-drop, on every browser.
+  const ALLOWED_DROP_EXTENSIONS = new Set([
+    '.pdf', '.xls', '.xlsx', '.xlsm', '.csv', '.doc', '.docx',
+  ]);
   const handleUpload = async (files: File[]) => {
     if (files.length === 0) return;
     if (!liveMode) {
@@ -560,11 +607,25 @@ export default function DataRoomTab({ projectId }: { projectId: number | string 
       );
       return;
     }
-    files.forEach((f) =>
+    const allowed: File[] = [];
+    for (const f of files) {
+      const dot = f.name.lastIndexOf('.');
+      const ext = dot >= 0 ? f.name.slice(dot).toLowerCase() : '';
+      if (ALLOWED_DROP_EXTENSIONS.has(ext)) {
+        allowed.push(f);
+      } else {
+        toast(
+          `${f.name}: unsupported file type — Fondok accepts PDF, Excel, CSV, Word.`,
+          { type: 'error' },
+        );
+      }
+    }
+    if (allowed.length === 0) return;
+    allowed.forEach((f) =>
       toast(`Uploading ${f.name}…`, { type: 'info', duration: 2500 }),
     );
     try {
-      await upload(files);
+      await upload(allowed);
     } catch (err) {
       console.error('upload failed', err);
       const msg = err instanceof Error ? err.message : String(err);
@@ -818,6 +879,11 @@ export default function DataRoomTab({ projectId }: { projectId: number | string 
           )}
         </Card>
       )}
+
+      {/* Wave 1 — workspace CompletenessCard. Live worker only; demo
+          deals render a quiet "Demo" state. Sits above the legacy
+          checklist so Sam's pre-IC reviewers see the percent first. */}
+      {liveMode && <CompletenessCard dealId={rawId} />}
 
       <div className={cn('grid gap-5', SHOW_ENGINE_STATUS ? 'grid-cols-2' : 'grid-cols-1')}>
         {/* Document Checklist — required-doc list + actual upload count.
@@ -1140,6 +1206,23 @@ export default function DataRoomTab({ projectId }: { projectId: number | string 
                         }}
                         onAcceptAi={(doc) => resolveClassification(doc as WorkerDocument, true)}
                         onKeepMine={(doc) => resolveClassification(doc as WorkerDocument, false)}
+                      />
+                    )}
+                    {/* Year-mismatch banner — sibling to category mismatch.
+                        Appears whenever the worker's extracted_period_year
+                        disagrees with the analyst's wizard fiscal_year. */}
+                    {liveMode && d.yearMismatch && (
+                      <YearMismatchBanner
+                        compact
+                        document={{
+                          id: d.id,
+                          filename: d.name,
+                          fiscal_year: d.fiscalYear ?? null,
+                          extracted_period_year: d.extractedPeriodYear ?? null,
+                          year_mismatch: true,
+                        }}
+                        onAcceptAi={(doc) => resolveYear(doc as WorkerDocument, true)}
+                        onKeepMine={(doc) => resolveYear(doc as WorkerDocument, false)}
                       />
                     )}
                     {/* USALI deviation accordion — collapsed by default.

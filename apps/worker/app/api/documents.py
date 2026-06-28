@@ -137,6 +137,16 @@ class DocumentRecord(BaseModel):
     user_provided_doc_type: str | None = None
     fiscal_year: int | None = None
     misclassified: bool = False
+    # Wave 1 — year-mismatch banner (June 2026).
+    #   * ``year_mismatch`` — True when the analyst pinned a fiscal_year
+    #     in the wizard AND the Extractor pulled a ``period_ending``
+    #     whose year disagrees. Cleared by ``POST .../accept_year``.
+    #   * ``extracted_period_year`` — the year inferred from
+    #     ``p_and_l_usali.period_ending`` (or any ``*.period_ending``).
+    #     Surfaced so the banner can render Fondok's read without
+    #     re-walking the extraction_results JSON.
+    year_mismatch: bool = False
+    extracted_period_year: int | None = None
 
 
 class ExtractionStartResponse(BaseModel):
@@ -293,6 +303,68 @@ def _now() -> datetime:
     return datetime.now(UTC)
 
 
+# ─────────────────────────── upload validation ───────────────────────────
+#
+# Wave 1 hardening (June 2026). Reject obvious garbage at the
+# request boundary so a stray 500 MB MOV / 200 MB PDF doesn't drag
+# the worker into a 60-second LlamaParse spiral that's guaranteed
+# to FAIL. Numbers are deliberately loose — the largest legit OM
+# Sam has shipped was 38 MB, biggest workbook 18 MB.
+
+_MAX_UPLOAD_BYTES = 50 * 1024 * 1024  # 50 MB / file
+
+# Lower-cased file extensions Fondok accepts. PDF for OMs / reports,
+# Excel for P&Ls / room mixes, CSV for raw exports, Word for the
+# rare narrative spec sheet.
+_ALLOWED_EXTENSIONS = {
+    ".pdf",
+    ".xls",
+    ".xlsx",
+    ".xlsm",
+    ".csv",
+    ".doc",
+    ".docx",
+}
+
+# Lower-cased Content-Type prefixes. We match by prefix so the
+# vendor-specific ``application/vnd.openxmlformats-officedocument…``
+# Office MIME types pass without a full enumeration. Browsers and
+# Excel exports also sometimes send ``application/octet-stream`` for
+# .xlsm — we don't allowlist that, but the extension check above
+# catches it.
+_ALLOWED_MIME_PREFIXES = (
+    "application/pdf",
+    "application/vnd.openxmlformats",  # .xlsx / .docx / .pptx family
+    "application/vnd.ms-excel",  # .xls
+    "application/vnd.ms-excel.sheet.macroenabled",  # .xlsm
+    "application/msword",  # .doc
+    "text/csv",
+    # Some browsers / OSes send no explicit MIME for legitimate
+    # .csv uploads ("application/octet-stream" or ""); the extension
+    # check covers those — they don't need to appear here.
+)
+
+
+def _is_allowed_upload(filename: str, content_type: str | None) -> bool:
+    """Return True when ``filename`` extension OR ``content_type``
+    matches the Wave 1 allowlist. Reject only when BOTH fail.
+
+    Why permissive: real-world broker uploads occasionally arrive
+    with stripped or generic content-types (e.g. ``application/octet-stream``)
+    even though the file is a legit PDF. Insisting on both checks would
+    block uploads that obviously belong here. A spreadsheet with a
+    ``.pdf`` extension is similarly rare — we trade a sliver of false-
+    accept risk for far fewer false-rejects.
+    """
+    name = (filename or "").lower()
+    dot = name.rfind(".")
+    ext = name[dot:] if dot >= 0 else ""
+    ext_ok = ext in _ALLOWED_EXTENSIONS
+    ct = (content_type or "").lower().strip()
+    ct_ok = any(ct.startswith(prefix) for prefix in _ALLOWED_MIME_PREFIXES)
+    return ext_ok or ct_ok
+
+
 # A .xlsx that's tiny is almost never a full-year P&L — real T-12s
 # carry 12 monthly columns × dozens of departmental lines and weigh
 # in around 80-300KB at the smallest. Anything materially below
@@ -381,6 +453,74 @@ def _guess_doc_type(filename: str, size_bytes: int | None = None) -> str:
     ):
         return "PNL_BENCHMARK"
 
+    # Wave 1 — 11-category guided onboarding additions. Each filename
+    # hint maps onto a recommended-for-IC category so a "coi_2025.pdf"
+    # or "phase1_environmental.pdf" gets bucketed correctly even when
+    # the Router LLM is offline. Order matters — more-specific tokens
+    # before generic fall-throughs.
+    if (
+        "insurance" in tokens
+        or "coi" in tokens
+        or "policy" in tokens and "ins" in name
+        or ("certificate" in tokens and ("insurance" in name or "liability" in name))
+        or "loss_run" in name
+        or "lossrun" in name
+    ):
+        return "INSURANCE"
+    if (
+        ("property" in tokens and ("tax" in tokens or "taxes" in tokens))
+        or "property_tax" in name
+        or "propertytax" in name
+        or "tax_bill" in name
+        or "taxbill" in name
+        or "assessor" in tokens
+        or "assessment" in tokens
+    ):
+        return "PROPERTY_TAX"
+    if (
+        "capex" in tokens
+        or "capital_expenditure" in name
+        or "capitalexpenditure" in name
+        or ("pip" in tokens and ("scope" in tokens or "budget" in tokens))
+        or "ffe_reserve" in name
+        or "ffereserve" in name
+        or "renovation_budget" in name
+    ):
+        return "CAPEX"
+    if (
+        "floorplan" in tokens
+        or "floor_plan" in name
+        or "site_plan" in name
+        or "siteplan" in name
+        or "franchise_agreement" in name
+        or "brand_standards" in name
+        or "property_info" in name
+        or "propertyinfo" in name
+    ):
+        return "PROPERTY_INFO"
+    if (
+        "lease" in tokens
+        or "leases" in tokens
+        or "ground_lease" in name
+        or "groundlease" in name
+        or "management_agreement" in name
+        or "operator_agreement" in name
+    ):
+        return "LEASES"
+    if (
+        "alta" in tokens
+        or "phase1" in tokens
+        or "phase_1" in name
+        or "phase2" in tokens
+        or "phase_2" in name
+        or "environmental" in tokens
+        or "pca" in tokens
+        or "engineering_report" in name
+        or "structural_report" in name
+        or "survey" in tokens
+        or "surveys" in tokens
+    ):
+        return "SURVEYS"
     if "t12" in name or "t-12" in name:
         return "T12"
     if "om" in tokens or base == "om" or "offering" in name or "memorandum" in name:
@@ -540,6 +680,26 @@ def _row_to_record(row: dict[str, Any]) -> DocumentRecord:
     if isinstance(user_provided_doc_type, str):
         user_provided_doc_type = user_provided_doc_type.strip() or None
 
+    # Year-mismatch flag (Wave 1). Same BOOLEAN/INTEGER dialect dance as
+    # ``misclassified``.
+    raw_ym = row.get("year_mismatch")
+    if raw_ym is None:
+        year_mismatch = False
+    elif isinstance(raw_ym, bool):
+        year_mismatch = raw_ym
+    else:
+        try:
+            year_mismatch = bool(int(raw_ym))
+        except (TypeError, ValueError):
+            year_mismatch = bool(raw_ym)
+    epy_raw = row.get("extracted_period_year")
+    try:
+        extracted_period_year: int | None = (
+            int(epy_raw) if epy_raw is not None else None
+        )
+    except (TypeError, ValueError):
+        extracted_period_year = None
+
     return DocumentRecord(
         id=UUID(str(row["id"])),
         deal_id=UUID(str(row["deal_id"])),
@@ -560,6 +720,8 @@ def _row_to_record(row: dict[str, Any]) -> DocumentRecord:
         user_provided_doc_type=user_provided_doc_type,
         fiscal_year=fiscal_year,
         misclassified=misclassified,
+        year_mismatch=year_mismatch,
+        extracted_period_year=extracted_period_year,
     )
 
 
@@ -654,7 +816,8 @@ async def _find_duplicate_document(
                            storage_key, size_bytes, page_count, parser,
                            extraction_data, usali_score, usali_deviations,
                            user_provided_doc_type, fiscal_year,
-                           misclassified
+                           misclassified, year_mismatch,
+                           extracted_period_year
                       FROM documents
                      WHERE deal_id = :deal AND content_hash = :h
                      ORDER BY uploaded_at DESC
@@ -840,6 +1003,49 @@ async def upload_documents(
             )
             continue
 
+        # Wave 1 size guard (B1). Reject >50 MB at the boundary so we
+        # don't burn LlamaParse credits + Sonnet tokens on a file that
+        # can never realistically be a hotel doc. Numbers are tuned to
+        # leave a comfortable 12 MB head-room above the largest legit
+        # OM Sam has shipped.
+        if len(body) > _MAX_UPLOAD_BYTES:
+            mb = len(body) / 1024 / 1024
+            records.append(
+                _failed_upload_record(
+                    deal_id=deal_id,
+                    tenant_id=tenant_id,
+                    filename=filename,
+                    error_kind="too_large",
+                    error_message=(
+                        f"File is {mb:.1f} MB — Fondok accepts files up to "
+                        "50 MB. Compress the PDF or split the workbook and "
+                        "re-upload."
+                    ),
+                )
+            )
+            continue
+
+        # Wave 1 MIME / extension allowlist (B2). Rejects any file
+        # whose extension AND content_type are both outside the hotel-
+        # doc envelope (PDF / Excel / CSV / Word). Either-or so a
+        # broker-stripped MIME ("application/octet-stream") on a real
+        # PDF still passes.
+        if not _is_allowed_upload(filename, upload.content_type):
+            records.append(
+                _failed_upload_record(
+                    deal_id=deal_id,
+                    tenant_id=tenant_id,
+                    filename=filename,
+                    error_kind="unsupported_type",
+                    error_message=(
+                        "Fondok accepts PDF, Excel, CSV, and Word "
+                        "documents only. Re-export this file as one of "
+                        "those formats and try again."
+                    ),
+                )
+            )
+            continue
+
         content_hash = hashlib.sha256(body).hexdigest()
 
         # Dedup by (deal_id, content_hash). Same bytes already uploaded
@@ -906,12 +1112,14 @@ async def upload_documents(
                         id, deal_id, tenant_id, filename, doc_type, status,
                         uploaded_at, content_hash, storage_key, size_bytes,
                         page_count, parser, extraction_data,
-                        user_provided_doc_type, fiscal_year, misclassified
+                        user_provided_doc_type, fiscal_year, misclassified,
+                        year_mismatch, extracted_period_year
                     ) VALUES (
                         :id, :deal_id, :tenant_id, :filename, :doc_type, :status,
                         :uploaded_at, :content_hash, :storage_key, :size_bytes,
                         :page_count, :parser, :extraction_data,
-                        :user_provided_doc_type, :fiscal_year, :misclassified
+                        :user_provided_doc_type, :fiscal_year, :misclassified,
+                        :year_mismatch, :extracted_period_year
                     )
                     """
                 ),
@@ -935,6 +1143,8 @@ async def upload_documents(
                     # accepts both for the same column, but writing the
                     # int form avoids a needless dialect branch here.
                     "misclassified": 0,
+                    "year_mismatch": 0,
+                    "extracted_period_year": None,
                 },
             )
             await session.commit()
@@ -1415,7 +1625,8 @@ async def list_documents(
                    uploaded_at, content_hash, storage_key, size_bytes,
                    page_count, parser, extraction_data,
                    usali_score, usali_deviations,
-                   user_provided_doc_type, fiscal_year, misclassified
+                   user_provided_doc_type, fiscal_year, misclassified,
+                   year_mismatch, extracted_period_year
               FROM documents
              WHERE deal_id = :deal_id
                AND tenant_id = :tenant
@@ -2068,7 +2279,8 @@ async def accept_classification(
                        uploaded_at, content_hash, storage_key, size_bytes,
                        page_count, parser, extraction_data,
                        usali_score, usali_deviations,
-                       user_provided_doc_type, fiscal_year, misclassified
+                       user_provided_doc_type, fiscal_year, misclassified,
+                       year_mismatch, extracted_period_year
                   FROM documents
                  WHERE id = :id
                    AND deal_id = :deal_id
@@ -2156,7 +2368,8 @@ async def accept_classification(
                        uploaded_at, content_hash, storage_key, size_bytes,
                        page_count, parser, extraction_data,
                        usali_score, usali_deviations,
-                       user_provided_doc_type, fiscal_year, misclassified
+                       user_provided_doc_type, fiscal_year, misclassified,
+                       year_mismatch, extracted_period_year
                   FROM documents
                  WHERE id = :id
                 """
@@ -2172,6 +2385,311 @@ async def accept_classification(
         body.use_ai_classification,
     )
     return _row_to_record(dict(refreshed._mapping))
+
+
+# ─────────────────── accept_year — Wave 1 #4 ───────────────────
+
+
+class AcceptYearBody(BaseModel):
+    """Body for the ``accept_year`` endpoint.
+
+    Same UX pattern as ``accept_classification``: the user either
+    accepts Fondok's read of the period_ending year or keeps their
+    own wizard tag. Either way the banner clears.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    use_ai_year: bool
+
+
+@router.post(
+    "/{deal_id}/documents/{doc_id}/accept_year",
+    response_model=DocumentRecord,
+)
+async def accept_year(
+    deal_id: UUID,
+    doc_id: UUID,
+    body: AcceptYearBody,
+    session: Annotated[AsyncSession, Depends(get_session)],
+    tenant_id: Annotated[UUID, Depends(get_tenant_id)],
+) -> DocumentRecord:
+    """Resolve a year-mismatch banner — Wave 1 B4.
+
+    The Extractor read a ``period_ending`` whose year disagrees with
+    the analyst's wizard ``fiscal_year``. The analyst now picks:
+
+      * ``use_ai_year=True`` — accept Fondok's read. Overwrite
+        ``fiscal_year`` with ``extracted_period_year`` and clear the
+        flag so a re-extract doesn't re-flip the banner.
+      * ``use_ai_year=False`` — reject Fondok's read. Keep
+        ``fiscal_year`` as-is, clear the flag (analyst has confirmed).
+
+    Tenant-scoped via the canonical pattern.
+    """
+    row = (
+        await session.execute(
+            text(
+                """
+                SELECT id, deal_id, fiscal_year, extracted_period_year
+                  FROM documents
+                 WHERE id = :id
+                   AND deal_id = :deal_id
+                   AND tenant_id = :tenant
+                """
+            ),
+            {
+                "id": str(doc_id),
+                "deal_id": str(deal_id),
+                "tenant": str(tenant_id),
+            },
+        )
+    ).first()
+    if row is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"document {doc_id} not found on deal {deal_id}",
+        )
+
+    current = dict(row._mapping)
+    if body.use_ai_year:
+        epy = current.get("extracted_period_year")
+        await session.execute(
+            text(
+                "UPDATE documents "
+                "SET fiscal_year = :fy, year_mismatch = :ym "
+                "WHERE id = :id"
+            ),
+            {"fy": epy, "ym": 0, "id": str(doc_id)},
+        )
+    else:
+        await session.execute(
+            text(
+                "UPDATE documents "
+                "SET year_mismatch = :ym WHERE id = :id"
+            ),
+            {"ym": 0, "id": str(doc_id)},
+        )
+    await session.commit()
+
+    refreshed = (
+        await session.execute(
+            text(
+                """
+                SELECT id, deal_id, tenant_id, filename, doc_type, status,
+                       uploaded_at, content_hash, storage_key, size_bytes,
+                       page_count, parser, extraction_data,
+                       usali_score, usali_deviations,
+                       user_provided_doc_type, fiscal_year, misclassified,
+                       year_mismatch, extracted_period_year
+                  FROM documents
+                 WHERE id = :id
+                """
+            ),
+            {"id": str(doc_id)},
+        )
+    ).first()
+    assert refreshed is not None  # we just updated it
+    logger.info(
+        "accept_year: deal=%s doc=%s use_ai=%s",
+        deal_id,
+        doc_id,
+        body.use_ai_year,
+    )
+    return _row_to_record(dict(refreshed._mapping))
+
+
+# ─────────────────── completeness — Wave 1 #1 ───────────────────
+
+
+class CompletenessCategory(BaseModel):
+    """One row in the deal-completeness response."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    id: str
+    label: str
+    covered: bool
+    doc_count: int
+    required_for_ic: bool
+
+
+class CompletenessResponse(BaseModel):
+    """``GET /deals/{deal_id}/completeness`` — Wave 1 #1.
+
+    Surfaces "how IC-ready is this deal?" as a single percent +
+    per-category breakdown. The 10 ``required_for_ic`` categories
+    define the denominator; ``SURVEYS`` is recommended only and
+    excluded from the percent. The wizard's right-rail and the
+    CompletenessCard on the deal workspace both consume this.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    deal_id: UUID
+    completeness_pct: int
+    categories: list[CompletenessCategory] = Field(default_factory=list)
+
+
+# Canonical 11-category checklist. Source of truth for the wizard
+# right-rail AND the workspace CompletenessCard so the two never drift.
+# ``doc_types`` maps each category to the DocType enum tokens that
+# count as "covered". Order matches the wizard sidebar exactly.
+COMPLETENESS_CATEGORIES: list[dict[str, Any]] = [
+    {
+        "id": "om",
+        "label": "Offering Memorandum",
+        "doc_types": {"OM"},
+        "required_for_ic": True,
+    },
+    {
+        "id": "t12",
+        "label": "T-12 / Trailing Twelve Months",
+        "doc_types": {"T12"},
+        "required_for_ic": True,
+    },
+    {
+        "id": "historical_pnl",
+        "label": "Annual / YTD / Monthly P&L",
+        "doc_types": {"PNL", "PNL_MONTHLY", "PNL_YTD", "PNL_BENCHMARK"},
+        "required_for_ic": True,
+    },
+    {
+        "id": "str",
+        "label": "STR / Comp Set Report",
+        "doc_types": {"STR", "STR_TREND"},
+        "required_for_ic": True,
+    },
+    {
+        "id": "insurance",
+        "label": "Insurance Records",
+        "doc_types": {"INSURANCE"},
+        "required_for_ic": True,
+    },
+    {
+        "id": "property_tax",
+        "label": "Property Taxes",
+        "doc_types": {"PROPERTY_TAX"},
+        "required_for_ic": True,
+    },
+    {
+        "id": "room_mix",
+        "label": "Room Mix / Unit Mix",
+        "doc_types": {"ROOM_MIX"},
+        "required_for_ic": True,
+    },
+    {
+        "id": "capex",
+        "label": "Historical CapEx",
+        "doc_types": {"CAPEX"},
+        "required_for_ic": True,
+    },
+    {
+        "id": "property_info",
+        "label": "Basic Property Info",
+        "doc_types": {"PROPERTY_INFO"},
+        "required_for_ic": True,
+    },
+    {
+        "id": "leases",
+        "label": "Leases & Agreements",
+        # CONTRACT is the legacy token broker agreements were classified
+        # under before LEASES landed; honor both so a redeployed worker
+        # against a backfilled DB still scores correctly.
+        "doc_types": {"LEASES", "CONTRACT"},
+        "required_for_ic": True,
+    },
+    {
+        "id": "surveys",
+        "label": "Surveys & Reviews",
+        "doc_types": {"SURVEYS"},
+        "required_for_ic": False,
+    },
+]
+
+
+@router.get(
+    "/{deal_id}/completeness",
+    response_model=CompletenessResponse,
+)
+async def get_deal_completeness(
+    deal_id: UUID,
+    session: Annotated[AsyncSession, Depends(get_session)],
+    tenant_id: Annotated[UUID, Depends(get_tenant_id)],
+) -> CompletenessResponse:
+    """Return the per-category coverage map for a deal.
+
+    Tenant-scoped: a cross-tenant guess returns 404 just like the
+    other read endpoints. ``completeness_pct`` is rounded to the
+    nearest whole percent over the 10 required-for-IC categories
+    (SURVEYS is recommended only and excluded from the denominator).
+    """
+    # Tenant gate — confirm the deal exists under this tenant first
+    # so we don't leak a category list for someone else's deal.
+    deal_row = (
+        await session.execute(
+            text(
+                "SELECT id FROM deals "
+                "WHERE id = :id AND tenant_id = :tenant"
+            ),
+            {"id": str(deal_id), "tenant": str(tenant_id)},
+        )
+    ).first()
+    if deal_row is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"deal {deal_id} not found",
+        )
+
+    rows = await session.execute(
+        text(
+            """
+            SELECT doc_type
+              FROM documents
+             WHERE deal_id = :deal_id
+               AND tenant_id = :tenant
+            """
+        ),
+        {"deal_id": str(deal_id), "tenant": str(tenant_id)},
+    )
+    uploaded: dict[str, int] = {}
+    for r in rows.fetchall():
+        dt = (r._mapping.get("doc_type") or "").upper().strip()
+        if not dt:
+            continue
+        uploaded[dt] = uploaded.get(dt, 0) + 1
+
+    categories: list[CompletenessCategory] = []
+    required_total = 0
+    required_covered = 0
+    for spec in COMPLETENESS_CATEGORIES:
+        doc_types: set[str] = spec["doc_types"]
+        count = sum(uploaded.get(dt, 0) for dt in doc_types)
+        covered = count > 0
+        required = bool(spec["required_for_ic"])
+        if required:
+            required_total += 1
+            if covered:
+                required_covered += 1
+        categories.append(
+            CompletenessCategory(
+                id=spec["id"],
+                label=spec["label"],
+                covered=covered,
+                doc_count=count,
+                required_for_ic=required,
+            )
+        )
+    pct = (
+        round((required_covered / required_total) * 100)
+        if required_total > 0
+        else 0
+    )
+    return CompletenessResponse(
+        deal_id=deal_id,
+        completeness_pct=pct,
+        categories=categories,
+    )
 
 
 @router.post(
@@ -2450,7 +2968,8 @@ async def _run_extraction_pipeline(
                 await session.execute(
                     text(
                         "SELECT storage_key, filename, extraction_data, "
-                        "user_provided_doc_type FROM documents WHERE id = :id"
+                        "user_provided_doc_type, fiscal_year "
+                        "FROM documents WHERE id = :id"
                     ),
                     {"id": doc_id},
                 )
@@ -2468,6 +2987,17 @@ async def _run_extraction_pipeline(
                 and raw_user_provided_doc_type.strip()
                 else None
             )
+            # Wizard fiscal_year — used by the Wave 1 year-mismatch flag
+            # below. NULL when the analyst skipped year-tagging.
+            raw_user_fiscal_year = row._mapping.get("fiscal_year")
+            try:
+                user_fiscal_year: int | None = (
+                    int(raw_user_fiscal_year)
+                    if raw_user_fiscal_year is not None
+                    else None
+                )
+            except (TypeError, ValueError):
+                user_fiscal_year = None
             raw_extraction_data = row._mapping["extraction_data"]
             if isinstance(raw_extraction_data, str):
                 try:
@@ -2631,17 +3161,45 @@ async def _run_extraction_pipeline(
                     and normalized_ai != user_provided_doc_type
                 )
 
+                # Wave 1 year-mismatch (B4). When the analyst pinned a
+                # ``fiscal_year`` AND the Extractor pulled a
+                # ``p_and_l_usali.period_ending`` whose year disagrees,
+                # surface a YearMismatchBanner. Use the existing
+                # ``coverage_audit._extract_period_ending`` helper so we
+                # parse the date with the same conventions as every
+                # other consumer.
+                from ..services.coverage_audit import _extract_period_ending
+
+                extracted_period_year: int | None = None
+                if user_fiscal_year is not None:
+                    period_end = _extract_period_ending(fields)
+                    if period_end is not None:
+                        extracted_period_year = period_end.year
+                year_mismatch_flag = bool(
+                    user_fiscal_year is not None
+                    and extracted_period_year is not None
+                    and extracted_period_year != user_fiscal_year
+                )
+
                 if misclassified_flag:
                     # Keep ``doc_type`` = user's tag, flip the flag.
+                    # ``year_mismatch`` / ``extracted_period_year`` are
+                    # updated regardless of the misclassification branch
+                    # so the banner stays accurate even if the analyst
+                    # ignores the doc-type mismatch.
                     await session.execute(
                         text(
                             "UPDATE documents "
-                            "SET status = :s, misclassified = :m "
+                            "SET status = :s, misclassified = :m, "
+                            "year_mismatch = :ym, "
+                            "extracted_period_year = :epy "
                             "WHERE id = :id"
                         ),
                         {
                             "s": DOC_STATUS_EXTRACTED,
                             "m": 1,
+                            "ym": 1 if year_mismatch_flag else 0,
+                            "epy": extracted_period_year,
                             "id": doc_id,
                         },
                     )
@@ -2656,12 +3214,15 @@ async def _run_extraction_pipeline(
                     await session.execute(
                         text(
                             "UPDATE documents SET status = :s, doc_type = :dt, "
-                            "misclassified = :m WHERE id = :id"
+                            "misclassified = :m, year_mismatch = :ym, "
+                            "extracted_period_year = :epy WHERE id = :id"
                         ),
                         {
                             "s": DOC_STATUS_EXTRACTED,
                             "dt": refined_doc_type,
                             "m": 0,
+                            "ym": 1 if year_mismatch_flag else 0,
+                            "epy": extracted_period_year,
                             "id": doc_id,
                         },
                     )
@@ -2669,11 +3230,14 @@ async def _run_extraction_pipeline(
                     await session.execute(
                         text(
                             "UPDATE documents SET status = :s, "
-                            "misclassified = :m WHERE id = :id"
+                            "misclassified = :m, year_mismatch = :ym, "
+                            "extracted_period_year = :epy WHERE id = :id"
                         ),
                         {
                             "s": DOC_STATUS_EXTRACTED,
                             "m": 0,
+                            "ym": 1 if year_mismatch_flag else 0,
+                            "epy": extracted_period_year,
                             "id": doc_id,
                         },
                     )
