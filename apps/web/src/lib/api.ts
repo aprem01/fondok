@@ -671,6 +671,19 @@ export const api = {
         undefined,
         { signal },
       ),
+    /** Wave 2 P2.6 — 3-5 year historical baseline (Sam's ask).
+     *
+     *  Returns the per-year P&L roll-up + the YoY walk (sorted by
+     *  abs(yoy_pct) DESC with a 0.5% noise floor). The UI hides the
+     *  panel when ``coverage_pct === 0`` (no historical docs uploaded).
+     */
+    historicalBaseline: (dealId: string, signal?: AbortSignal) =>
+      request<HistoricalBaselineResponse>(
+        'GET',
+        `/deals/${dealId}/historical-baseline`,
+        undefined,
+        { signal },
+      ),
   },
   /** Market intelligence — submarket overview, comp set, transaction comps. */
   market: {
@@ -942,6 +955,56 @@ export interface CompSetDrift {
 export interface CompSetDriftResponse {
   deal_id: string;
   drifts: CompSetDrift[];
+}
+
+// ─── Historical Baseline (Wave 2 P2.6) ──────────────────────────────
+// Mirrors apps/worker/app/api/documents.py HistoricalBaselineResponse +
+// HistoricalYearOut + YoYDeltaOut. Sam's June 2026 ask: "Institutional
+// IC analysts will not approve a deal without seeing the multi-year
+// trend." Every numeric is ``number | null`` — null means the
+// extractor didn't ship that line (UI renders an em-dash).
+export interface HistoricalYear {
+  fiscal_year: number;
+  occupancy: number | null;
+  adr: number | null;
+  revpar: number | null;
+  rooms_revenue: number | null;
+  fnb_revenue: number | null;
+  other_revenue: number | null;
+  total_revenue: number | null;
+  rooms_dept_expense: number | null;
+  fnb_dept_expense: number | null;
+  other_dept_expense: number | null;
+  /** A&G + sales/mkt + utilities + prop_ops + info/telecom. */
+  undistributed: number | null;
+  gop: number | null;
+  /** property_tax + insurance + mgmt_fee (institutional fixed-block). */
+  fixed_expenses: number | null;
+  noi: number | null;
+  source_document_ids: string[];
+}
+
+export interface YoYDelta {
+  line: string;
+  year: number;
+  value: number;
+  yoy_abs: number | null;
+  /** Signed decimal — ``-0.05`` = down 5%. ``null`` for the first
+   *  year of the series (no prior to compare). The walk is sorted by
+   *  ``abs(yoy_pct) DESC`` with ``null`` entries pushed to the end. */
+  yoy_pct: number | null;
+}
+
+export interface HistoricalBaselineResponse {
+  deal_id: string;
+  years: HistoricalYear[];
+  /** Missing fiscal years between min and max (inclusive). */
+  gaps: number[];
+  look_back_years: number;
+  /** ``years.length / look_back_years`` — UI hides the panel at 0. */
+  coverage_pct: number;
+  /** YoY walk projection; biggest abs(yoy_pct) first. */
+  walk: YoYDelta[];
 }
 
 // ─── Due Diligence ──────────────────────────────────────────────────

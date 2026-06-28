@@ -11,6 +11,8 @@ import EngineLegend from './EngineLegend';
 import EngineRunHistory from './EngineRunHistory';
 import WhatJustHappened from './WhatJustHappened';
 import CapexPlanPanel, { DEFAULT_CAPEX_PLAN, type CapexPlanState } from './CapexPlanPanel';
+import HistoricalBaselinePanel from './HistoricalBaselinePanel';
+import { useHistoricalBaseline } from '@/lib/hooks/useHistoricalBaseline';
 import { kimptonAnglerOverview } from '@/lib/mockData';
 import { fmtCurrency, fmtPct, cn } from '@/lib/format';
 import { useAssumptionsOptional } from '@/stores/assumptionsStore';
@@ -39,6 +41,8 @@ export default function InvestmentTab({ projectId }: { projectId: number | strin
   const isKimptonDemo = projectId === 7;
   const { outputs, previous } = useEngineOutputs(dealId);
   const { deal, refresh: refreshDeal } = useDeal(dealId);
+  // Wave 2 P2.6 — historical baseline (Sam's multi-year walk ask).
+  const { baseline: historicalBaseline } = useHistoricalBaseline(dealId);
   const [computing, setComputing] = useState(false);
   const [runToken, setRunToken] = useState<number | null>(null);
   // Wave 2 P2.5 - local capex plan state. The worker's ``capex_plan``
@@ -355,6 +359,33 @@ export default function InvestmentTab({ projectId }: { projectId: number | strin
               holdYears={(holdYears as number | undefined) ?? 5}
               state={capexPlan}
               onChange={setCapexPlan}
+            />
+          </div>
+          {/* Wave 2 P2.6 — historical baseline (multi-year P&L walk).
+              Silent when coverage_pct === 0 (no historical docs uploaded). */}
+          <div className="grid grid-cols-1 gap-5 mt-5">
+            <HistoricalBaselinePanel
+              baseline={historicalBaseline}
+              dealId={dealId}
+              forecastY1={(() => {
+                // Pull Y1 forecast cells from the worker engine output —
+                // revenue.years[0] + expense.years[0] feed the rightmost
+                // "Y1 Forecast" column on the panel. We only map the
+                // canonical fields the panel renders; the rest fall back
+                // to em-dashes.
+                const rev = getEngineField<RevenueYearLite[]>(
+                  outputs, 'revenue', 'years',
+                );
+                const exp = getEngineField<ExpenseYearLite[]>(
+                  outputs, 'expense', 'years',
+                );
+                const r0 = rev?.[0];
+                const e0 = exp?.[0];
+                return {
+                  total_revenue: r0?.total_revenue ?? null,
+                  noi: e0?.noi ?? null,
+                };
+              })()}
             />
           </div>
           {/* Senior Loan Financing vs. Senior Loan Refinancing — rendered as

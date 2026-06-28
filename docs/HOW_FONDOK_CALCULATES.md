@@ -93,3 +93,101 @@ are worse than no benchmark.
   Seed, Override).
 * `apps/web/src/components/project/PLTab.tsx` — Operating Statement
   with per-row source badges and the "Precedence" coachmark.
+
+## Historical baseline — 3-5 year P&L walk (Wave 2 P2.6)
+
+Sam's June 2026 ask: "Institutional IC analysts will not approve a deal
+without seeing the multi-year trend." Today Fondok renders only the
+forward proforma (Y1..Y5); the historical-baseline endpoint backs the
+HistoricalBaselinePanel that stacks the property's OWN historical
+actuals (3-5 prior years) side-by-side with the Y1 forecast.
+
+### Lookback window
+
+Default `lookback_years=5` per the Wave 1 product-decision doc
+(`project_fondok_wave1_decisions.md` #5: "5-yr gap look-back"). The
+engine surfaces `coverage_pct = years_with_data / lookback_years` so the
+UI can render a "Coverage 3/5 yrs · Missing 2020-2021" chip without
+having to re-derive the math. The endpoint clamps to `[2, 10]` years so
+a malformed query string can't produce a 0-year walk or scan more
+history than any institutional UW model bothers with.
+
+### Document selection
+
+The engine reads `documents` joined to `extraction_results` filtered
+to the P&L family (`T12 / PNL / PNL_MONTHLY / PNL_YTD`),
+`status='Extracted'`, and `fiscal_year IS NOT NULL`. Per-year selection
+rule: the highest-confidence extraction wins — proxied by the USALI
+deviation count (fewer = cleaner). Ties break on `created_at DESC` so
+the most-recent extraction is canonical when two docs land on the
+same year with equal scoring.
+
+### Derived vs extracted fields
+
+Every numeric field in the `HistoricalYear` dataclass is `float |
+None`. `None` means the extractor didn't ship that line (UI renders
+an em-dash). Fields the engine derives when missing:
+
+* **`revpar`** — institutional shorthand `occupancy × ADR`. Computed
+  when occ + ADR are both present and revpar wasn't extracted
+  directly. RevPAR drift > 0.5% from this identity is an extraction
+  bug.
+* **`total_revenue`** — `rooms_revenue + fnb_revenue + other_revenue
+  (+ resort_fees + misc_revenue)`. Synthesized by
+  `services.usali_scorer._derive_usali_rollups` when at least 2 of the
+  3 main components landed.
+* **`undistributed`** — A&G + sales/mkt + utilities + prop_ops +
+  info/telecom (5 buckets). Same USALI rollup honors a direct
+  emission first; falls through to the 5-line sum when at least 2
+  components are present.
+* **`gop`** — `total_revenue − dept_expenses − undistributed`. Honored
+  from a direct emission when the extractor ships
+  `p_and_l_usali.gross_operating_profit_usd`; synthesized otherwise.
+* **`fixed_expenses`** — `property_tax + insurance + mgmt_fee`.
+  Institutional IC convention bundles mgmt fee into the fixed block
+  (USALI's `fixed_charges` only covers tax + insurance, with mgmt_fee
+  sitting between GOP and NOI — same dollars either way).
+* **`noi`** — `gop − fixed_expenses` when both are derivable;
+  otherwise honored from a direct emission.
+
+### YoY walk
+
+`walk_yoy(baseline)` projects consecutive-year deltas as a flat list
+ordered by `abs(yoy_pct) DESC` so the UI's "Walk" chips render the
+biggest swings first. A 0.5% noise floor (`_YOY_NOISE_FLOOR = 0.005`)
+drops swings whose magnitude is below 0.5% — those are extractor
+rounding artifacts, not analytical signal. The first year of the
+series yields `yoy_pct=None` entries (no prior to compare) that sort
+last.
+
+### Gap detection
+
+The engine walks `min(fiscal_year)..max(fiscal_year)` inclusive and
+returns every year not represented in the result set as a gap. The UI
+labels a contiguous gap range as "Missing 2020-2021" and a single
+missing year as "Missing 2023".
+
+### Where to look in code
+
+* `apps/worker/app/engines/historical_baseline.py` — the engine.
+  Exports `build_historical_baseline` (async, DB-backed),
+  `build_baseline_from_pnls` (pure-function, used by tests), and
+  `walk_yoy` (YoY projection).
+* `apps/worker/app/api/documents.py` — `GET
+  /deals/{deal_id}/historical-baseline` endpoint. Tenant-scoped via
+  `_assert_deal_belongs_to_tenant`. Returns
+  `HistoricalBaselineResponse` carrying `years` + `gaps` +
+  `coverage_pct` + `walk`.
+* `apps/worker/tests/test_historical_baseline.py` — 13 tests:
+  empty-coverage, 3-year happy path, gap detection (single + multi),
+  USALI deviation tie-break, derived RevPAR, walk ordering, noise
+  floor, null prior, undistributed rollup, tenant isolation, endpoint
+  happy path, endpoint empty.
+* `apps/web/src/components/project/HistoricalBaselinePanel.tsx` — the
+  panel. Hides itself when `coverage_pct === 0` (no historical docs
+  uploaded). Mounted on InvestmentTab below the CapexPlanPanel.
+* `apps/worker/app/migrations.py` —
+  `documents.idx_deal_fy_pnl_family` partial index covers the
+  baseline query on Postgres; SQLite gets a non-partial
+  `(deal_id, fiscal_year)` index.
+
