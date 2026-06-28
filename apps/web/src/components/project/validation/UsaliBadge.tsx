@@ -28,6 +28,7 @@ import type {
   WorkerUsaliPayload,
   WorkerUsaliDeviation,
 } from '@/lib/api';
+import { Tooltip } from '@/components/help/Tooltip';
 
 type Tier = 'compliant' | 'review' | 'high_risk' | 'inconclusive';
 
@@ -167,32 +168,43 @@ export function UsaliBadge({
 
   if (!onToggle) {
     return (
-      <span
-        className={baseClasses}
-        title={tooltip}
-        role="img"
-        aria-label={meta.aria(normalized)}
+      <Tooltip
+        content={<span className="whitespace-pre-wrap leading-relaxed">{tooltip}</span>}
+        side="top"
+        learnMoreHref="/methodology#projection"
       >
-        <Icon size={11} aria-hidden="true" />
-        {label}
-      </span>
+        <span
+          className={baseClasses}
+          role="img"
+          aria-label={meta.aria(normalized)}
+          tabIndex={0}
+        >
+          <Icon size={11} aria-hidden="true" />
+          {label}
+        </span>
+      </Tooltip>
     );
   }
 
   return (
-    <button
-      type="button"
-      onClick={(e) => {
-        e.stopPropagation();
-        onToggle();
-      }}
-      className={baseClasses}
-      title={tooltip}
-      aria-expanded={!!open}
-      aria-label={`${meta.aria(normalized)}. ${open ? 'Collapse' : 'Expand'} deviation list.`}
+    <Tooltip
+      content={<span className="whitespace-pre-wrap leading-relaxed">{tooltip}</span>}
+      side="top"
+      learnMoreHref="/methodology#projection"
     >
-      <Icon size={11} aria-hidden="true" />
-      {label}
-    </button>
+      <button
+        type="button"
+        onClick={(e) => {
+          e.stopPropagation();
+          onToggle();
+        }}
+        className={baseClasses}
+        aria-expanded={!!open}
+        aria-label={`${meta.aria(normalized)}. ${open ? 'Collapse' : 'Expand'} deviation list.`}
+      >
+        <Icon size={11} aria-hidden="true" />
+        {label}
+      </button>
+    </Tooltip>
   );
 }

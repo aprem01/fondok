@@ -21,7 +21,9 @@ import { IntroCard } from '@/components/help/IntroCard';
 import { AssumptionBadge } from '@/components/help/AssumptionBadge';
 import OverrideModal from '@/components/help/OverrideModal';
 import { MetricLabel } from '@/components/help/MetricLabel';
+import { MetricHint } from '@/components/help/MetricHint';
 import { Term } from '@/components/help/Term';
+import { CoachMark } from '@/components/help/CoachMark';
 import { GLOSSARY } from '@/lib/glossary';
 
 interface SourceUseLine {
@@ -623,6 +625,11 @@ export default function OverviewTab({ projectId }: { projectId: number | string 
       <Card className="p-3 bg-brand-50 border-brand-100">
         <div className="flex items-start justify-between mb-2 gap-3">
           <h3 className="text-[12px] font-semibold text-ink-900 uppercase tracking-wide">Returns Summary <span className="font-normal normal-case tracking-normal text-ink-500">— hold-period investor returns</span></h3>
+          {assumptionSources && Object.keys(assumptionSources.sources).length === 0 && liveMode && (
+            <div className="text-[10.5px] text-ink-500 max-w-[55%] text-right leading-relaxed">
+              Source badges appear once Fondok extracts your documents. Upload an OM and a T-12 from the Data Room to populate them.
+            </div>
+          )}
           {assumptionSources && Object.keys(assumptionSources.sources).length > 0 && (
             <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-[10.5px] text-ink-500 max-w-[55%] justify-end">
               {([
@@ -632,7 +639,7 @@ export default function OverviewTab({ projectId }: { projectId: number | string 
                 ['ADR g', 'adr_growth'],
                 ['Exit Cap', 'exit_cap_rate'],
                 ['Mgmt Fee %', 'mgmt_fee_pct'],
-              ] as const).map(([label, key]) => {
+              ] as const).map(([label, key], idx) => {
                 const src = assumptionSources.sources[key];
                 if (!src) return null;
                 const docId = assumptionSources.source_documents?.[key];
@@ -644,26 +651,44 @@ export default function OverviewTab({ projectId }: { projectId: number | string 
                   existing && typeof existing === 'object' && 'note' in existing
                     ? String((existing as { note?: unknown }).note ?? '')
                     : null;
+                const badge = (
+                  <AssumptionBadge
+                    source={src}
+                    documentId={docId}
+                    dealId={dealId}
+                    overrideNote={existingNote}
+                    onOverride={
+                      liveMode
+                        ? () =>
+                            setOverrideTarget({
+                              path: key,
+                              label,
+                              currentValue,
+                              currentSource: src,
+                            })
+                        : undefined
+                    }
+                  />
+                );
                 return (
                   <span key={key} className="inline-flex items-center gap-1 whitespace-nowrap">
                     <span className="text-ink-700">{label}:</span>
-                    <AssumptionBadge
-                      source={src}
-                      documentId={docId}
-                      dealId={dealId}
-                      overrideNote={existingNote}
-                      onOverride={
-                        liveMode
-                          ? () =>
-                              setOverrideTarget({
-                                path: key,
-                                label,
-                                currentValue,
-                                currentSource: src,
-                              })
-                          : undefined
-                      }
-                    />
+                    {idx === 0 ? (
+                      <CoachMark
+                        anchorId="overview-source-badge"
+                        viewKey="overview"
+                        order={0}
+                        title="Every number carries a source"
+                        body="Hover any source badge to see where the value came from. Click the pencil to override with a justification note — required for IC review trails."
+                        side="bottom"
+                        layout="inline"
+                        learnMoreHref="/methodology#sources"
+                      >
+                        {badge}
+                      </CoachMark>
+                    ) : (
+                      badge
+                    )}
                   </span>
                 );
               })}

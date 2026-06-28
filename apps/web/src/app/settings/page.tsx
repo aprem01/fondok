@@ -11,6 +11,8 @@ import { cn } from '@/lib/format';
 import { useToast } from '@/components/ui/Toast';
 import { api, isWorkerConnected, WorkerError } from '@/lib/api';
 import { IntroCard } from '@/components/help/IntroCard';
+import { useHintsEnabled, resetAllCoachMarks } from '@/components/help/useHintsEnabled';
+import { Sparkles, RotateCcw } from 'lucide-react';
 
 const tabs = ['Team', 'Workspace', 'Notifications', 'Integrations'];
 
@@ -283,6 +285,8 @@ export default function SettingsPage() {
             <Button variant="primary" onClick={onSaveDefaults}>Save Defaults</Button>
           </Card>
 
+          <HintsSection />
+
           {workerConnected && showDangerZone && (
             <Card className="p-5 border-danger-500/40">
               <div className="flex items-center gap-2 mb-1">
@@ -462,6 +466,46 @@ function Field({
         />
       </div>
     </div>
+  );
+}
+
+function HintsSection() {
+  const { enabled, setEnabled } = useHintsEnabled();
+  const { toast } = useToast();
+  const onReset = () => {
+    const removed = resetAllCoachMarks();
+    toast(`Reset ${removed} dismissed hint${removed === 1 ? '' : 's'} — they will reappear on next visit.`, {
+      type: 'success',
+    });
+  };
+  return (
+    <Card className="p-5">
+      <div className="flex items-center gap-2 mb-1">
+        <Sparkles size={14} className="text-brand-500" aria-hidden="true" />
+        <h3 className="text-[14px] font-semibold text-ink-900">Hints &amp; coaching</h3>
+      </div>
+      <p className="text-[12px] text-ink-500 mb-4 leading-relaxed">
+        Fondok ships with one-time contextual hints that appear next to UI you have
+        not interacted with yet. Turn them off if your analysts already know the workflow,
+        or reset them so dismissed hints reappear during onboarding.
+      </p>
+      <div className="flex items-center justify-between py-2 border-b border-border">
+        <div>
+          <div className="text-[13px] font-medium text-ink-900">Show contextual coach marks</div>
+          <div className="text-[12px] text-ink-500 mt-0.5">When off, every coach mark and the first-visit tour are silenced for this browser.</div>
+        </div>
+        <Toggle on={enabled} onChange={setEnabled} />
+      </div>
+      <div className="flex items-center justify-between py-3">
+        <div>
+          <div className="text-[13px] font-medium text-ink-900">Reset all coach marks</div>
+          <div className="text-[12px] text-ink-500 mt-0.5">Clears every "dismissed" record so the hints surface again — useful for onboarding a new teammate.</div>
+        </div>
+        <Button variant="secondary" size="sm" onClick={onReset}>
+          <RotateCcw size={12} aria-hidden="true" /> Reset hints
+        </Button>
+      </div>
+    </Card>
   );
 }
 

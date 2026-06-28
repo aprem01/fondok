@@ -20,6 +20,7 @@ import { Card } from '@/components/ui/Card';
 import { GapChipsStrip } from './validation/GapChipsStrip';
 import { BrokerQuestionsPanel } from './validation/BrokerQuestionsPanel';
 import { CompSetDriftCallout } from './validation/CompSetDriftCallout';
+import { CoachMark } from '@/components/help/CoachMark';
 
 export default function ValidationTab({ dealId }: { dealId: string }) {
   return (
@@ -50,7 +51,17 @@ export default function ValidationTab({ dealId }: { dealId: string }) {
       <GapChipsStrip dealId={dealId} surface="validation" />
 
       {/* Broker Questions — the marquee panel. */}
-      <BrokerQuestionsPanel dealId={dealId} />
+      <CoachMark
+        anchorId="validation-broker-questions"
+        viewKey="validation"
+        order={0}
+        title="Auto-generated broker questions"
+        body="Fondok writes broker-ready questions from year-over-year variances in the financials. Mark them sent when you've emailed the broker, then paste the reply to close the loop — the engine re-ingests the answer."
+        side="bottom"
+        learnMoreHref="/methodology#extraction"
+      >
+        <BrokerQuestionsPanel dealId={dealId} />
+      </CoachMark>
 
       {/* Comp-set drift side-note — silent when no drifts. */}
       <CompSetDriftCallout dealId={dealId} />

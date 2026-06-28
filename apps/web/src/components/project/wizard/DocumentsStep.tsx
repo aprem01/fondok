@@ -59,6 +59,7 @@ import type {
   WizardUserDocType,
 } from '@/lib/api';
 import { YearCoverageHint } from './YearCoverageHint';
+import { CoachMark } from '@/components/help/CoachMark';
 
 // ─────────────────────────── allowlist (B3) ───────────────────────────
 // Mirrors the worker's _ALLOWED_EXTENSIONS in apps/worker/app/api/documents.py.
@@ -519,8 +520,7 @@ export function DocumentsStep({
               const covered = count > 0;
               const Icon = spec.Icon;
               const missing = !covered && spec.requiredForIc;
-              return (
-                <li key={spec.id} role="listitem">
+              const triggerBtn = (
                   <button
                     type="button"
                     onClick={() => setStage(spec.id)}
@@ -580,6 +580,24 @@ export function DocumentsStep({
                       </div>
                     </div>
                   </button>
+              );
+              return (
+                <li key={spec.id} role="listitem">
+                  {active && spec.id === 't12' ? (
+                    <CoachMark
+                      anchorId="wizard-step3-sidebar-required"
+                      viewKey="wizard-step3"
+                      order={0}
+                      title="Only Financials are required"
+                      body="Other categories surface as 'Missing' until covered — that's by design, not a block. You can advance the wizard as soon as you've added either a T-12 or a historical P&L and circle back to the rest later from the Data Room."
+                      side="right"
+                      learnMoreHref="/methodology#extraction"
+                    >
+                      {triggerBtn}
+                    </CoachMark>
+                  ) : (
+                    triggerBtn
+                  )}
                 </li>
               );
             })}
@@ -698,10 +716,21 @@ function CategoryPanel({
       {/* Financials carry the year-coverage line above the drop zone. */}
       {spec.showYearTagging && <FinancialYearHint files={files} />}
 
-      <DropZone
-        spec={spec}
-        onFiles={(fs) => onAdd(fs)}
-      />
+      {spec.id === 't12' ? (
+        <CoachMark
+          anchorId="wizard-step3-dropzone-t12"
+          viewKey="wizard-step3"
+          order={1}
+          title="Drop your most recent T-12 here"
+          body="Drop the most recent 12 months of operating data. Fondok extracts USALI line items, scores compliance, and uses this as your Year 1 baseline."
+          side="bottom"
+          learnMoreHref="/methodology#extraction"
+        >
+          <DropZone spec={spec} onFiles={(fs) => onAdd(fs)} />
+        </CoachMark>
+      ) : (
+        <DropZone spec={spec} onFiles={(fs) => onAdd(fs)} />
+      )}
 
       {files.length === 0 ? (
         <div className="mt-3 px-4 py-5 rounded-md border border-dashed border-border bg-bg text-[12px] text-ink-500 leading-relaxed">

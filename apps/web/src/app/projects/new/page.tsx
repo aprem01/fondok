@@ -16,6 +16,7 @@ import { api, isWorkerConnected, WizardFile } from '@/lib/api';
 import { useToast } from '@/components/ui/Toast';
 import { DocumentsStep } from '@/components/project/wizard/DocumentsStep';
 import { DocumentsChecklist } from '@/components/project/wizard/DocumentsChecklist';
+import { CoachMark } from '@/components/help/CoachMark';
 
 const steps = [
   { n: 1, label: 'Deal Details' },
@@ -305,11 +306,21 @@ function Step1({ data, update }: StepProps) {
           <Field label="Hotel Name (Optional)" value={data.hotelName} onChange={v => update({ hotelName: v })} placeholder="Marriott Chicago Downtown" />
           <Field label="Indicative Price (Optional)" value={data.price} onChange={v => update({ price: v })} placeholder="$120-140M" />
         </div>
-        <Select label="Sourcing channel *"
-          value={data.sourcing}
-          onChange={v => update({ sourcing: v })}
-          options={sourcingChannels.map(s => s.label)}
-          help="Deal origination channel for pipeline attribution — broker network, lender relationship, franchisor direct, operator, capital partner, or proprietary." />
+        <CoachMark
+          anchorId="wizard-step1-sourcing"
+          viewKey="wizard-step1"
+          order={0}
+          title="Why we ask for sourcing channel"
+          body="Sourcing channel tracks deal origin (broker, lender, franchisor, capital partner, proprietary) so we can analyze your pipeline by source over time. Pick the closest match — Fondok rolls these up on the Dashboard."
+          side="right"
+          learnMoreHref="/methodology#sources"
+        >
+          <Select label="Sourcing channel *"
+            value={data.sourcing}
+            onChange={v => update({ sourcing: v })}
+            options={sourcingChannels.map(s => s.label)}
+            help="Deal origination channel for pipeline attribution — broker network, lender relationship, franchisor direct, operator, capital partner, or proprietary." />
+        </CoachMark>
       </div>
 
       <div className="mt-6 bg-warn-50 border border-warn-500/30 rounded-lg p-4 flex gap-3">
@@ -343,6 +354,18 @@ function Step2({ data, update }: StepProps) {
         debt cost), exit assumptions (hold, cap rate), and waterfall hurdles. Used as the
         benchmark against which the deal&apos;s underwritten returns are evaluated.
       </div>
+      <CoachMark
+        anchorId="wizard-step2-profile-cards"
+        viewKey="wizard-step2"
+        title="What this picks"
+        body={<>
+          Return profile sets target IRR thresholds and the default capital structure.
+          <span className="block mt-1.5"><b>Core</b> 8–12% · <b>Value-Add</b> 12–18% · <b>Opportunistic</b> 18%+.</span>
+          You can fine-tune leverage and exit cap on the Returns tab.
+        </>}
+        side="top"
+        learnMoreHref="/methodology#engines"
+      >
       <div className="grid grid-cols-3 gap-4">
         {returnProfiles.map(p => {
           const Icon = iconForReturn[p.id] ?? Target;
@@ -371,6 +394,7 @@ function Step2({ data, update }: StepProps) {
           );
         })}
       </div>
+      </CoachMark>
     </div>
   );
 }
@@ -405,7 +429,16 @@ function Step3Documents({
         />
       </div>
       <aside className="col-span-12 lg:col-span-3">
-        <DocumentsChecklist files={files} />
+        <CoachMark
+          anchorId="wizard-step3-checklist"
+          viewKey="wizard-step3"
+          order={2}
+          title="Your IC readiness scorecard"
+          body="This is the same checklist your IC reviewer will see. The percentage in the workspace later reflects how many categories you've covered. Aim for ≥80% before generating the memo."
+          side="left"
+        >
+          <DocumentsChecklist files={files} />
+        </CoachMark>
       </aside>
     </div>
   );
@@ -557,6 +590,14 @@ function Step5({ data, update }: StepProps) {
         point and amenities. The tier shapes what comp set we benchmark against and which
         operating ratios are reasonable.
       </div>
+      <CoachMark
+        anchorId="wizard-step5-tier"
+        viewKey="wizard-step5"
+        title="Why tier matters"
+        body="Position the asset on the chain-scale ladder. Affects which USALI benchmarks, F&B ratios, and labor productivity expectations Fondok applies — getting this wrong skews expense ratios materially."
+        side="top"
+        learnMoreHref="/methodology#projection"
+      >
       <div className="grid grid-cols-2 gap-4">
         {positioningTiers.map(p => {
           const Icon = iconForPos[p.id] ?? Sparkles;
@@ -586,6 +627,7 @@ function Step5({ data, update }: StepProps) {
           );
         })}
       </div>
+      </CoachMark>
     </div>
   );
 }

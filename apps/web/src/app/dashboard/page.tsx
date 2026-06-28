@@ -16,6 +16,7 @@ import { fmtCurrency } from '@/lib/format';
 import { useToast } from '@/components/ui/Toast';
 import { IntroCard } from '@/components/help/IntroCard';
 import { MetricLabel } from '@/components/help/MetricLabel';
+import { AppTour } from '@/components/help/AppTour';
 
 type StatTone = 'default' | 'luxe';
 
@@ -66,12 +67,13 @@ export default function DashboardPage() {
   ];
   return (
     <div className="px-8 py-8 max-w-[1440px]">
+      <AppTour />
       <PageHeader
         eyebrow={`Portfolio · ${dashboardStats.activeProjects} active deals`}
         title="Dashboard"
         subtitle={`Welcome back, ${currentUser.name.split(' ')[0]}. Here's your portfolio overview.`}
         action={
-          <Link href="/projects/new">
+          <Link href="/projects/new" data-tour="new-deal">
             <Button variant="primary"><Plus size={14} /> New Project</Button>
           </Link>
         }
@@ -145,6 +147,7 @@ export default function DashboardPage() {
           <div>
             {projects.map((p, i) => (
               <Link key={p.id} href={`/projects/${p.id}`}
+                data-tour={i === 0 ? 'project-card' : undefined}
                 className={`flex items-center gap-3 px-5 py-3.5 hover:bg-ink-100 transition-colors ${i < projects.length - 1 ? 'border-b hairline' : ''}`}>
                 <div className="w-9 h-9 rounded-md bg-brand-50 flex items-center justify-center flex-shrink-0">
                   <Building2 size={16} className="text-brand-500" strokeWidth={1.75} />

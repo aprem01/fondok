@@ -56,6 +56,7 @@ export default function MethodologyPage() {
 
       {/* ─── 1. Extraction workflow ────────────────────────────────── */}
       <Section
+        id="extraction"
         number="1"
         title="Extraction workflow"
         intro="Every uploaded document moves through five stages — parse, classify, extract, verify, reclassify. The pipeline is format-agnostic by design: a single OM may be a text PDF, scanned image, multi-tab Excel, or PowerPoint deck."
@@ -96,6 +97,7 @@ export default function MethodologyPage() {
 
       {/* ─── 2. Projection methodology ─────────────────────────────── */}
       <Section
+        id="projection"
         number="2"
         title="Projection methodology"
         intro="Year-1 anchors source from the deal's actual extracted data when available; out-years compound from the un-displaced baseline so a heavy PIP doesn't permanently depress the curve. The full precedence chain by metric:"
@@ -140,6 +142,7 @@ export default function MethodologyPage() {
 
       {/* ─── 3. Market-data assumptions ────────────────────────────── */}
       <Section
+        id="sources"
         number="3"
         title="Market-data assumptions"
         intro="Every assumption surfaced on the Overview carries a provenance badge telling you exactly where the value came from. The legend below explains each source label and its precedence."
@@ -183,6 +186,7 @@ export default function MethodologyPage() {
 
       {/* ─── 4. Engine architecture ────────────────────────────────── */}
       <Section
+        id="engines"
         number="4"
         title="Engine architecture"
         intro="Eight deterministic engines run in dependency order. Engine outputs persist as typed payloads; the web app reads them via /deals/{id}/engine_outputs."
@@ -225,12 +229,14 @@ export default function MethodologyPage() {
 }
 
 function Section({
-  number, title, intro, children,
+  number, title, intro, children, id,
 }: {
   number: string; title: string; intro: string; children: React.ReactNode;
+  /** Anchor id so external "Learn more →" links can scroll-jump here. */
+  id?: string;
 }) {
   return (
-    <section className="mb-10">
+    <section id={id} className="mb-10 scroll-mt-24">
       <div className="flex items-baseline gap-3 mb-2">
         <span className="text-[11px] font-semibold text-brand-500 uppercase tracking-wide tabular-nums">
           Section {number}

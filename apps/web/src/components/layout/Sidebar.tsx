@@ -175,12 +175,17 @@ export default function Sidebar({
       )}
 
       {/* Nav */}
-      <nav className="flex-1 px-3 pt-2">
+      <nav className="flex-1 px-3 pt-2" data-tour="sidebar">
         {navItems.map(it => {
           const isActive = pathname === it.href || (it.href !== '/dashboard' && pathname.startsWith(it.href));
           const Icon = it.icon;
+          // Surface tour anchors on the two nav rows the AppTour points at.
+          const tourAttr =
+            it.href === '/methodology' ? 'methodology' :
+            it.href === '/settings' ? 'settings' : undefined;
           return (
             <Link key={it.href} href={it.href}
+              data-tour={tourAttr}
               className={cn(
                 'flex items-center gap-3 px-3 py-2 rounded-md text-[13px] mb-0.5 transition-colors',
                 isActive

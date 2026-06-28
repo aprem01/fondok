@@ -19,6 +19,7 @@ import { getEngineField, useEngineOutputs } from '@/lib/hooks/useEngineOutputs';
 import { useFlash } from '@/lib/hooks/useFlash';
 import { IntroCard } from '@/components/help/IntroCard';
 import { MetricLabel } from '@/components/help/MetricLabel';
+import { CoachMark } from '@/components/help/CoachMark';
 import { GLOSSARY } from '@/lib/glossary';
 
 const subTabs = ['Returns Summary', 'Sensitivities'];
@@ -209,7 +210,17 @@ function LiveReturnsSummary({ outputs }: { outputs: ReturnType<typeof useEngineO
   return (
     <>
       <div className="grid grid-cols-4 gap-4 mb-5">
-        <KPI label="Levered IRR" tip={GLOSSARY['IRR']} value={fmtPct(irr, 2)} flashKey={irr} />
+        <CoachMark
+          anchorId="returns-levered-irr"
+          viewKey="returns"
+          order={0}
+          title="Why this number leads"
+          body="Levered IRR is the most institutionally cited return — it captures what your equity actually earns after debt service. Fondok solves it with Newton's method and a bisection fallback for numerical stability, same approach Argus uses."
+          side="top"
+          learnMoreHref="/methodology#engines"
+        >
+          <KPI label="Levered IRR" tip={GLOSSARY['IRR']} value={fmtPct(irr, 2)} flashKey={irr} />
+        </CoachMark>
         <KPI label="Equity Multiple" tip={GLOSSARY['Equity Multiple']} value={`${mult.toFixed(2)}x`} flashKey={mult} />
         <KPI label="Cash-on-Cash" tip={GLOSSARY['CoC']} value={fmtPct(coc, 2)} flashKey={coc} />
         <KPI label="Hold Period" tip={GLOSSARY['Hold Period']} value={`${assumptions.holdYears} Years`} flashKey={assumptions.holdYears} />
