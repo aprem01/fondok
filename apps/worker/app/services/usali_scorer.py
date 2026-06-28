@@ -539,8 +539,342 @@ _MARKET_CONTEXT_RULES: dict[str, tuple[tuple[str, ...], str]] = {
 # ─────────────────────────── field resolution ───────────────────────────
 
 
+# Sam QA Bug #3 v3 (June 28 2026) — token-aware fallback resolver
+# ─────────────────────────────────────────────────────────────────
+#
+# Background. v1 expanded the alias map against schema docs. v2 expanded
+# it against the saved-fixture prod paths. Both still left Sam's
+# day-of-QA upload at "Inconclusive" because the Extractor LLM emits a
+# slightly different namespace on every run (``p_and_l_usali.rooms.revenue_usd``
+# one day, ``p_and_l_usali.revenues.rooms_usd`` the next, ``p_and_l.rooms_dept.revenue_usd``
+# the day after — see the divergence between the T-12 and annual
+# fixtures already saved under ``tests/fixtures/real_payloads/``).
+#
+# A path-by-path alias chase is a losing battle. v3 instead generalizes
+# by tokenizing both the canonical name and every flat-payload key on
+# ``.``/``_``, expanding canonical tokens through a small synonym map
+# (``rooms`` ↔ ``rooms_dept``, ``mgmt`` ↔ ``management``, ``fb`` ↔
+# ``food_beverage``, …) and finding the flat key whose token bag is the
+# tightest match. Three scoring rules, in order:
+#
+#   1. Every canonical concept-token must appear in the candidate key's
+#      tokens (after synonym expansion). Otherwise the candidate is
+#      discarded.
+#   2. Discriminator tokens (``revenue`` vs ``expense`` vs ``profit``,
+#      ``rooms`` vs ``fb`` vs ``other``) act as REQUIRED filters AND as
+#      forbidden filters — a canonical with ``revenue`` rejects keys
+#      containing ``expense`` / ``profit``, and vice versa.
+#   3. Tie-break: prefer the candidate with the fewest extra tokens,
+#      then the shortest path string. Deterministic.
+#
+# Monthly / page / quarterly / per-month namespaces are dropped entirely
+# (they're subordinate slices, never the period total — same exclusion
+# logic ``flatten_extraction_fields`` already applies).
+
+
+# Token synonyms — canonical token → set of acceptable variants. The
+# canonical token itself is always a match; the set lists alternate
+# spellings the LLM might pick. Conservative — every entry is grounded
+# in observed prod payloads or USALI vocabulary.
+_TOKEN_SYNONYMS: dict[str, frozenset[str]] = {
+    # Departments
+    "rooms": frozenset({"rooms", "room"}),
+    "fb": frozenset({"fb", "food", "beverage", "fnb"}),
+    "other": frozenset({"other", "operated", "miscellaneous", "misc"}),
+    "telecom": frozenset({"telecom", "telecommunications", "information"}),
+    # Functional groups
+    "dept": frozenset({"dept", "departmental", "department"}),
+    "undistributed": frozenset({"undistributed", "undist"}),
+    "fixed": frozenset({"fixed", "nonoperating", "non"}),
+    # Money tokens
+    "revenue": frozenset({"revenue", "revenues", "income", "sales"}),
+    "expense": frozenset({"expense", "expenses", "cost", "costs"}),
+    "profit": frozenset({"profit", "profits", "margin"}),
+    # Operations / KPIs
+    "occupancy": frozenset({"occupancy", "occ"}),
+    "adr": frozenset({"adr"}),
+    "revpar": frozenset({"revpar"}),
+    # Fees / reserves
+    "mgmt": frozenset({"mgmt", "management"}),
+    "ffe": frozenset({"ffe", "ff", "replacement", "fixturesandequipment"}),
+    "reserve": frozenset({"reserve", "reserves", "replacement"}),
+    "fee": frozenset({"fee", "fees"}),
+    "incentive": frozenset({"incentive"}),
+    "royalty": frozenset({"royalty"}),
+    "franchise": frozenset({"franchise"}),
+    "marketing": frozenset({"marketing", "sales"}),
+    # Charges
+    "insurance": frozenset({"insurance"}),
+    "property": frozenset({"property"}),
+    "tax": frozenset({"tax", "taxes"}),
+    "utilities": frozenset({"utilities", "utility"}),
+    "labor": frozenset({"labor", "payroll", "wages"}),
+    # Roll-ups
+    "gop": frozenset({"gop", "grossoperatingprofit"}),
+    "noi": frozenset({"noi", "netoperatingincome"}),
+    "total": frozenset({"total", "summary", "grand"}),
+    # Repairs & maintenance / A&G
+    "rm": frozenset({"rm", "repairs", "maintenance", "operations"}),
+    "ag": frozenset({"ag", "administrative", "admin", "general"}),
+    "resort": frozenset({"resort"}),
+    # Variance pairs (broker/t12 references — handled by direct alias).
+}
+
+
+# Each canonical name → ordered list of "concept tokens" it represents
+# (after splitting on _, lowercase). Used by the token-match resolver.
+# The order is meaningful only for documentation — matching is bag-based.
+#
+# Concept tokens are STRICT: every entry must appear in the candidate
+# key (after synonym expansion). "Discriminator" tokens are listed
+# under ``_TOKEN_DISCRIMINATORS`` and disqualify candidates that don't
+# carry the right discriminator — e.g. ``rooms_revenue`` rejects keys
+# with ``expense`` / ``profit`` even though the rest of the tokens
+# match.
+def _split_tokens(name: str) -> list[str]:
+    """Tokenize a flat-path key like
+    ``p_and_l_usali.rooms.revenue_usd`` into
+    ``['p', 'and', 'l', 'usali', 'rooms', 'revenue', 'usd']``."""
+    return [t for t in name.replace(".", "_").lower().split("_") if t]
+
+
+# Forbidden-token rules. When the canonical name contains a token from
+# the left column, candidate flat keys MUST NOT contain any token from
+# the right column — keeps ``rooms_revenue`` from matching
+# ``rooms_dept_expense`` just because two tokens overlap.
+_TOKEN_FORBIDDEN: dict[str, frozenset[str]] = {
+    "revenue": frozenset({"expense", "expenses", "cost", "costs", "profit", "margin"}),
+    "expense": frozenset({"revenue", "revenues", "income", "profit", "margin", "sales"}),
+    "profit": frozenset({"revenue", "revenues", "income", "expense", "expenses", "cost"}),
+    "fee": frozenset({"profit", "margin"}),
+    "reserve": frozenset({"profit", "margin"}),
+}
+
+
+def _expand_with_synonyms(token: str) -> frozenset[str]:
+    """Token → its synonym set (always includes the token itself)."""
+    syns = _TOKEN_SYNONYMS.get(token)
+    if syns is None:
+        return frozenset({token})
+    return syns
+
+
+def _has_subordinate_namespace(key: str) -> bool:
+    """``True`` for monthly / page / quarterly / per-month slices that
+    must never be matched as a period total."""
+    lowered = key.lower()
+    return (
+        ".monthly." in lowered
+        or ".page" in lowered
+        or ".per_month." in lowered
+        or ".quarterly." in lowered
+        or ".q1." in lowered
+        or ".q2." in lowered
+        or ".q3." in lowered
+        or ".q4." in lowered
+    )
+
+
+# "Soft" concept tokens. When the canonical contains one of these, the
+# candidate match doesn't strictly require it — a candidate with the
+# right discriminator tokens but no explicit ``expense`` token still
+# counts IF the candidate has a money indicator (``usd``/``dollar``/
+# ``amount``) instead. The LLM sometimes emits a money line under an
+# expense-flavored bucket without repeating the ``expense`` word, e.g.
+# ``p_and_l.utilities_usd`` or ``p_and_l.admin_general_usd`` — both
+# carry implicit expense semantics.
+#
+# Soft tokens still participate in the FORBIDDEN check (we still reject
+# candidates with ``revenue`` / ``profit``).
+_SOFT_CANONICAL_TOKENS: frozenset[str] = frozenset({
+    "expense",
+    "revenue",
+    "fee",
+    "reserve",
+    "cost",
+})
+
+# Money indicator tokens — when a candidate is missing the soft token
+# but has one of these, count it as a soft-match. Keeps ``rooms_sold``
+# from matching ``rooms_revenue`` (no money indicator).
+_MONEY_INDICATOR_TOKENS: frozenset[str] = frozenset({
+    "usd",
+    "dollar",
+    "dollars",
+    "amount",
+    "value",
+})
+
+
+def _token_match_candidates(
+    canonical: str,
+    fields: dict[str, Any],
+) -> list[tuple[int, int, str, Any]]:
+    """Find every flat-key candidate that satisfies the canonical's
+    token bag and the forbidden-token rules. Returns
+    ``[(extras, len_path, key, value)]`` so a caller can pick the
+    tightest match (fewer extras first, then shorter path)."""
+    canonical_tokens = _split_tokens(canonical)
+    if not canonical_tokens:
+        return []
+    # Expand each canonical token to its synonym set. We accept the
+    # candidate if every HARD concept token has SOME synonym present
+    # in the candidate tokens; SOFT concept tokens (expense/revenue/
+    # fee/reserve) only enforce the forbidden filter — see
+    # ``_SOFT_CANONICAL_TOKENS``.
+    hard_tokens: list[str] = [
+        t for t in canonical_tokens if t not in _SOFT_CANONICAL_TOKENS
+    ]
+    soft_tokens: list[str] = [
+        t for t in canonical_tokens if t in _SOFT_CANONICAL_TOKENS
+    ]
+    hard_expanded: list[frozenset[str]] = [
+        _expand_with_synonyms(t) for t in hard_tokens
+    ]
+    if not hard_expanded and not soft_tokens:
+        return []
+    if not hard_expanded:
+        # A canonical made of only soft tokens (e.g. bare ``revenue``) is
+        # too ambiguous to safely resolve via tokens.
+        return []
+    # Build the forbidden bag — tokens that must NOT appear in any
+    # candidate (e.g. ``revenue`` forbids ``expense``). Both hard AND
+    # soft canonical tokens contribute forbidden tokens.
+    forbidden: set[str] = set()
+    for t in canonical_tokens:
+        forbidden |= _TOKEN_FORBIDDEN.get(t, frozenset())
+    # Don't let synonyms of canonical's own tokens count as forbidden
+    # (e.g. canonical contains ``revenue`` AND ``income`` is a synonym —
+    # we still want it to match keys with ``income``).
+    own_token_synonym_bag: set[str] = set()
+    for syns in hard_expanded:
+        own_token_synonym_bag |= syns
+    for t in soft_tokens:
+        own_token_synonym_bag |= _expand_with_synonyms(t)
+    forbidden -= own_token_synonym_bag
+
+    candidates: list[tuple[int, int, str, Any]] = []
+    for key, value in fields.items():
+        if value is None:
+            continue
+        if _has_subordinate_namespace(key):
+            continue
+        key_tokens = _split_tokens(key)
+        if not key_tokens:
+            continue
+        key_token_set = set(key_tokens)
+        # Forbidden filter — reject if any forbidden token present.
+        if forbidden & key_token_set:
+            continue
+        # Required filter — every HARD canonical concept token must
+        # have a synonym present in the candidate's token set.
+        if not all(syns & key_token_set for syns in hard_expanded):
+            continue
+        # Soft-token gate — when the canonical has soft tokens
+        # (revenue/expense/fee/reserve/cost), the candidate must EITHER
+        # carry the soft token (or a synonym) OR carry a money
+        # indicator (usd/dollar/amount/value). Without one of those
+        # signals the candidate is too ambiguous (e.g. ``rooms_sold``
+        # has the ``rooms`` token but no money signal, so it's not a
+        # valid match for ``rooms_revenue``).
+        soft_bonus = 0
+        if soft_tokens:
+            soft_hit = False
+            money_hit = bool(_MONEY_INDICATOR_TOKENS & key_token_set)
+            for t in soft_tokens:
+                if _expand_with_synonyms(t) & key_token_set:
+                    soft_hit = True
+                    soft_bonus -= 2
+                    break
+            if not soft_hit and not money_hit:
+                continue
+            if not soft_hit and money_hit:
+                soft_bonus -= 1
+        # Score:
+        #   - prefer candidates whose token set ALSO contains the soft
+        #     token (or one of its synonyms) — they're a tighter match
+        #     than candidates relying only on the money indicator.
+        #     Encoded as a negative bonus in the "extras" tally.
+        #   - fewer extra tokens (tokens not contributing to the
+        #     match) → tighter.
+        #   - shorter path → tighter on ties.
+        match_pool = own_token_synonym_bag
+        extras = sum(1 for t in key_tokens if t not in match_pool)
+        # ``soft_bonus`` is negative when the soft token matches, so it
+        # lowers the sort key (better candidate).
+        score = extras + soft_bonus
+        candidates.append((score, len(key), key, value))
+    return candidates
+
+
+def _resolve_via_tokens(fields: dict[str, Any], canonical: str) -> Any | None:
+    """Token-match fallback — returns the value from the tightest
+    candidate or ``None`` if nothing matches. Pure; safe to call on
+    every rule eval."""
+    cands = _token_match_candidates(canonical, fields)
+    if not cands:
+        return None
+    cands.sort(key=lambda c: (c[0], c[1]))
+    return cands[0][3]
+
+
+# Canonicals that the token resolver MUST NOT try — they're either
+# multi-word concept phrases the LLM never emits as a path
+# (``broker_noi_yoy_growth_with_flat_opex_ratio``) or context-only
+# names whose tokens would over-match the payload (e.g. ``keys`` would
+# match every ``rooms_sold_total`` / ``available_rooms`` line).
+#
+# These names are resolved only via the explicit alias map (or direct
+# ``fields[name]`` hit). Listed by exact canonical name.
+_TOKEN_RESOLVE_BLOCKLIST: frozenset[str] = frozenset({
+    # Single-token names whose token is overly common in P&L paths.
+    "keys",
+    "monthly_revpar",
+    # Multi-word cross-field synthetic checks — these never appear as
+    # paths in any extractor flavor; they're computed inputs the
+    # critic agent fills in separately.
+    "broker_noi_yoy_growth_with_flat_opex_ratio",
+    "coastal_insurance_yoy_increase",
+    "debt_yield_growth_with_dscr_shrinkage",
+    "labor_yoy_growth_vs_market_wage_growth",
+    "q1_q3_revpar_swing_in_seasonal_market",
+    "revenue_growth_in_flat_demand_market",
+    "fb_margin_on_select_service_property",
+    "year_one_noi_dip_during_pip",
+    # Roll-up totals — the token resolver can't disambiguate
+    # "total dept expense" from a single per-dept expense line because
+    # both share the ``dept`` + ``expense`` token bag. The explicit
+    # alias map covers the canonical TOTAL paths
+    # (``p_and_l_usali.total_departmental_expense_usd``,
+    # ``p_and_l_usali.departmental_expense.total_usd``); when neither
+    # alias hits, the synthesis sums the per-dept components instead.
+    # Listed here so the token resolver doesn't grab a single per-dept
+    # line and mis-report it as the rollup.
+    "dept_expenses",
+    "total_dept_expense",
+    "dept_expenses_by_line",
+    "undistributed_expenses",
+    "fixed_charges",
+    # Cross-field math-identity drift fields used by some catalog
+    # rules — none ever appear as a literal extractor path.
+})
+
+
 def _resolve_field(fields: dict[str, Any], canonical: str) -> Any | None:
-    """Look up ``canonical`` on ``fields``, then walk the alias list.
+    """Look up ``canonical`` on ``fields``, then walk the alias list,
+    then fall back to the v3 token-match resolver.
+
+    Resolution order (first non-``None`` wins):
+
+    1. Direct hit: ``fields[canonical]``.
+    2. Explicit alias map: each entry in ``_ALIASES[canonical]``.
+    3. Token-match resolver (v3): tokenize canonical + payload keys,
+       require synonym-aware coverage of every concept token, reject
+       on discriminator forbidden tokens, pick tightest candidate.
+
+    Step 3 is gated by ``_TOKEN_RESOLVE_BLOCKLIST`` to keep
+    single-token / synthetic / list-typed canonicals from over-matching
+    the payload.
 
     Tolerates dotted paths the extractor uses
     (``p_and_l_usali.revpar_usd``) at the top level of ``fields`` —
@@ -548,7 +882,8 @@ def _resolve_field(fields: dict[str, Any], canonical: str) -> Any | None:
     dicts, so a single ``fields.get(name)`` covers both.
 
     Returns the raw value (caller numeric-coerces). ``None`` only when
-    neither the canonical key nor any alias produced a value.
+    neither the canonical key, any alias, NOR a token-match produced a
+    value.
     """
     val = fields.get(canonical)
     if val is not None:
@@ -557,7 +892,12 @@ def _resolve_field(fields: dict[str, Any], canonical: str) -> Any | None:
         val = fields.get(alias)
         if val is not None:
             return val
-    return None
+    # v3 fallback — token-aware match. Skipped for names on the
+    # blocklist to keep ``keys`` / synthetic-cross-field names from
+    # over-matching.
+    if canonical in _TOKEN_RESOLVE_BLOCKLIST:
+        return None
+    return _resolve_via_tokens(fields, canonical)
 
 
 def _coerce_number(v: Any) -> float | None:
@@ -898,8 +1238,16 @@ def score_extraction(
 
         try:
             value = _evaluate(tree, fields)
-        except _MissingFieldError:
+        except _MissingFieldError as exc:
             # Missing inputs ⇒ not applicable; don't penalize.
+            # Debug-log the canonical name that didn't resolve so a
+            # future QA cycle can see exactly which alias / token
+            # match needs widening.
+            logger.debug(
+                "usali_scorer: rule %s skipped — %s not resolved on payload",
+                rule.rule_id,
+                exc.name,
+            )
             continue
         except _UnsupportedFormulaError as exc:
             # Catalog rule references an AST shape we don't model — skip
@@ -1125,22 +1473,40 @@ def _derive_usali_rollups(flat: dict[str, Any]) -> None:
                 return v
         return None
 
-    # ── Resolver helper that uses the FULL alias map ──
+    # ── Resolver helper that uses the FULL resolution chain ──
     #
     # ``_get`` above only walks a literal keys list. For the roll-up
-    # synthesis we want to honor every alias for a canonical name —
-    # otherwise the synthesis can return None even when the extractor
-    # DID emit a value under a less-common alias. ``_via_alias`` walks
-    # the canonical → aliases chain in ``_ALIASES``.
+    # synthesis we want to honor every alias for a canonical name AND
+    # the v3 token-match fallback — otherwise the synthesis can return
+    # None on a payload shape the explicit alias map doesn't cover but
+    # the token resolver does. ``_via_alias`` runs the canonical →
+    # aliases chain in ``_ALIASES`` and then the token resolver.
     def _via_alias(canonical: str) -> float | None:
-        v = _coerce_for_sum(flat.get(canonical))
-        if v is not None:
-            return v
-        for alias in _ALIASES.get(canonical, ()):
-            v = _coerce_for_sum(flat.get(alias))
-            if v is not None:
-                return v
-        return None
+        return _coerce_for_sum(_resolve_field(flat, canonical))
+
+    # ``_setdefault_synth`` is the synthesis-aware setter: we only write
+    # the synthesized value if the canonical name does NOT already
+    # resolve through any path (direct hit / explicit alias / token
+    # match). Otherwise the synthesis would mask the LLM's actual
+    # emission on a non-canonical path (e.g. ``p_and_l.gop_usd`` ⇒
+    # token-resolves to ``gop``; the synthesis must defer).
+    #
+    # NOTE: We compare against the value-presence on the canonical key
+    # itself when writing — once we write it, ``flat[canonical]``
+    # exists; future synthesis steps that read via ``_via_alias`` will
+    # pick up the cached canonical value (so the call order matters).
+    def _setdefault_synth(canonical: str, value: float | int) -> None:
+        if canonical in flat:
+            return
+        # Check the full resolution chain: if the canonical resolves via
+        # any path, don't overwrite with the synthesis. We DO still
+        # write the canonical key (cached) so downstream synthesis
+        # steps don't have to re-traverse the chain.
+        existing = _resolve_field(flat, canonical)
+        if existing is not None:
+            flat[canonical] = existing
+            return
+        flat[canonical] = value
 
     # total_revenue = rooms_revenue + fb_revenue + other_revenue
     #                 + resort_fees + misc_revenue
@@ -1153,7 +1519,7 @@ def _derive_usali_rollups(flat: dict[str, Any]) -> None:
     if len(components) >= 2:
         # We need at least two components to call a synthesized total
         # meaningful. Resort fees + misc add on when present.
-        flat.setdefault(
+        _setdefault_synth(
             "total_revenue",
             sum(components) + resort_fees + misc_rev,
         )
@@ -1165,8 +1531,10 @@ def _derive_usali_rollups(flat: dict[str, Any]) -> None:
     dept_parts = [v for v in (rooms_dept_exp, fb_dept_exp) if v is not None]
     if dept_parts:
         total_dept = sum(dept_parts) + other_dept_exp
-        flat.setdefault("dept_expenses", total_dept)
-        flat.setdefault("total_dept_expense", total_dept)
+        _setdefault_synth("dept_expenses", total_dept)
+        _setdefault_synth("total_dept_expense", total_dept)
+        # dept_expenses_by_line is list-typed; never extractor-emitted —
+        # safe to write directly with setdefault semantics.
         flat.setdefault(
             "dept_expenses_by_line",
             [v for v in (rooms_dept_exp, fb_dept_exp, other_dept_exp)
@@ -1181,14 +1549,14 @@ def _derive_usali_rollups(flat: dict[str, Any]) -> None:
     utilities = _via_alias("utilities_expense")
     undist_parts = [v for v in (a_g, it, sm, prop_ops, utilities) if v is not None]
     if len(undist_parts) >= 2:
-        flat.setdefault("undistributed_expenses", sum(undist_parts))
+        _setdefault_synth("undistributed_expenses", sum(undist_parts))
 
     # fixed_charges = property_taxes + insurance (+ ground rent etc.)
     prop_tax = _via_alias("property_tax")
     insurance = _via_alias("insurance_expense")
     fixed_parts = [v for v in (prop_tax, insurance) if v is not None]
     if fixed_parts:
-        flat.setdefault("fixed_charges", sum(fixed_parts))
+        _setdefault_synth("fixed_charges", sum(fixed_parts))
 
     # gop = total_revenue - dept_expenses - undistributed_expenses.
     # We honor a direct GOP emission first (real prod ships it under
@@ -1198,7 +1566,7 @@ def _derive_usali_rollups(flat: dict[str, Any]) -> None:
     de = _via_alias("dept_expenses") or _via_alias("total_dept_expense")
     ue = _via_alias("undistributed_expenses")
     if tr is not None and de is not None and ue is not None:
-        flat.setdefault("gop", tr - de - ue)
+        _setdefault_synth("gop", tr - de - ue)
 
     # noi can be back-derived if gop + mgmt_fee + ffe_reserve + fixed_charges are known.
     gop_val = _via_alias("gop")
@@ -1211,13 +1579,13 @@ def _derive_usali_rollups(flat: dict[str, Any]) -> None:
         and ffe is not None
         and fixed is not None
     ):
-        flat.setdefault("noi", gop_val - mgmt_fee - ffe - fixed)
+        _setdefault_synth("noi", gop_val - mgmt_fee - ffe - fixed)
 
     # Department profits — needed for ROOMS_DEPT_MARGIN_* and FB_DEPT_MARGIN_*.
     if rooms_rev is not None and rooms_dept_exp is not None:
-        flat.setdefault("rooms_dept_profit", rooms_rev - rooms_dept_exp)
+        _setdefault_synth("rooms_dept_profit", rooms_rev - rooms_dept_exp)
     if fb_rev is not None and fb_dept_exp is not None:
-        flat.setdefault("fb_dept_profit", fb_rev - fb_dept_exp)
+        _setdefault_synth("fb_dept_profit", fb_rev - fb_dept_exp)
 
     # Total labor — needed for the LABOR_PCT_REVENUE_* range rules.
     # Real prod doesn't emit a labor line directly (it's embedded in
@@ -1226,7 +1594,7 @@ def _derive_usali_rollups(flat: dict[str, Any]) -> None:
     # a future extractor flavor ships a ``total_labor_usd`` line.
     total_labor = _via_alias("total_labor")
     if total_labor is not None:
-        flat.setdefault("total_labor", total_labor)
+        _setdefault_synth("total_labor", total_labor)
 
 
 __all__ = [
