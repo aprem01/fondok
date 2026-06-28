@@ -255,6 +255,25 @@ def _enforce_tenant_filter(
     ) % (sorted(referenced), _truncate(stripped))
     logger.critical(msg)
 
+    # Page on every unscoped query regardless of mode — the warn-mode
+    # production path STILL needs a human paged because a tenant leak
+    # is the worst possible failure for a multi-tenant SaaS.
+    try:
+        from .alerting import report_alert
+
+        report_alert(
+            severity="critical",
+            title="Tenant isolation breach — SQL without tenant_id predicate",
+            stage="db.query",
+            extra={
+                "tables": sorted(referenced),
+                "mode": mode,
+                "statement_sample": _truncate(stripped, 300),
+            },
+        )
+    except Exception:
+        pass
+
     if mode == "raise":
         raise MissingTenantFilterError(msg)
 

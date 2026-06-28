@@ -1349,6 +1349,23 @@ async def upload_documents(
         # Per-row payload still useful for the client error banner.
         from fastapi.responses import JSONResponse
 
+        try:
+            from ..alerting import report_alert
+
+            report_alert(
+                severity="error",
+                title="Batch upload — all documents failed validation",
+                deal_id=deal_id,
+                stage="upload.batch",
+                extra={
+                    "doc_count": len(records),
+                    "error_kinds": sorted({(rec.error_kind or "") for rec in records}),
+                    "filenames": [rec.filename for rec in records][:10],
+                },
+            )
+        except Exception:
+            pass
+
         return JSONResponse(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             content=[rec.model_dump(mode="json") for rec in records],
@@ -3516,6 +3533,19 @@ async def _run_extraction_pipeline(
         except Exception as exc:
             logger.exception("extraction failed: doc=%s — %s", doc_id, exc)
             kind, friendly = _classify_extraction_error(exc)
+            try:
+                from ..alerting import report_alert
+
+                report_alert(
+                    severity="warning",
+                    title="Extraction failure",
+                    deal_id=deal_id,
+                    stage="extraction",
+                    exc=exc,
+                    extra={"doc_id": doc_id, "doc_type": scoring_doc_type or "", "error_kind": kind},
+                )
+            except Exception:
+                pass
             try:
                 # Merge the error info into existing extraction_data so
                 # the parse-stage payload (parser/total_pages/pages)

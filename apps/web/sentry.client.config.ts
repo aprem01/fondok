@@ -37,6 +37,27 @@ if (dsn) {
         replaysSessionSampleRate: 0.0,
         replaysOnErrorSampleRate: 1.0,
         release: process.env.NEXT_PUBLIC_BUILD_SHA ?? undefined,
+        // Wave 2 P2.9 — drop the browser noise that dominates every
+        // Sentry inbox for no actionable signal. ResizeObserver and the
+        // CORS-opaque "Script error" are well-known browser quirks;
+        // ChunkLoadError is the user clicking around mid-deploy (the
+        // bundle URL it requested is gone); the rest are network hiccups
+        // on the client side that an infra fix can't help with.
+        ignoreErrors: [
+          'ResizeObserver loop limit exceeded',
+          'ResizeObserver loop completed with undelivered notifications',
+          'Script error.',
+          'Non-Error promise rejection captured',
+          /^ChunkLoadError/,
+          /NetworkError when attempting to fetch resource/,
+          /Failed to fetch/,
+        ],
+        denyUrls: [
+          /^chrome-extension:\/\//,
+          /^moz-extension:\/\//,
+          /^safari-extension:\/\//,
+          /^webkit-masked-url:\/\//,
+        ],
       });
     })
     .catch(() => {
