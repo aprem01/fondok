@@ -103,23 +103,61 @@ export interface WorkerDocument {
    *  - ``fiscal_year`` — optional year the file represents (2025, 2024, …).
    *  - ``misclassified`` — true when the Router disagrees with the user tag. The
    *    DataRoomTab surfaces a MisclassificationBanner with "Use Fondok's
-   *    classification" / "Keep mine" choices. */
+   *    classification" / "Keep mine" choices.
+   *  - ``year_mismatch`` — Wave 1 #4: true when the Extractor's
+   *    ``period_ending`` year disagrees with the analyst's ``fiscal_year``.
+   *    The Data Room surfaces a sibling YearMismatchBanner with the same
+   *    "Use Fondok's year" / "Keep mine" UX.
+   *  - ``extracted_period_year`` — Fondok's read of the period_ending year
+   *    so the banner can render both values without a second fetch. */
   user_provided_doc_type?: string | null;
   fiscal_year?: number | null;
   misclassified?: boolean;
+  year_mismatch?: boolean;
+  extracted_period_year?: number | null;
 }
 
 /** Wizard-step file payload — what the new-project guided onboarding hands to
  *  ``api.documents.upload``. The category drives the right-rail checklist; the
  *  worker only reads ``user_doc_type`` + ``fiscal_year``. */
-export type WizardCategory = 'om' | 'financials' | 'str' | 'other';
+/**
+ * Wave 1 expansion (June 2026) — 11 wizard sub-stages, one per IC-grade
+ * doc category. The wizard collapses the legacy four-bucket pattern
+ * (`om | financials | str | other`) into the 11 below; the worker reads
+ * ``user_doc_type`` directly, so the category id is purely a UI grouping
+ * and the worker treats every entry the same. ``surveys`` is the only
+ * category marked "recommended" rather than "required for IC" — it
+ * shows up gray instead of red in the right-rail until covered.
+ */
+export type WizardCategory =
+  | 'om'
+  | 't12'
+  | 'historical_pnl'
+  | 'str'
+  | 'insurance'
+  | 'property_tax'
+  | 'room_mix'
+  | 'capex'
+  | 'property_info'
+  | 'leases'
+  | 'surveys';
+
 export type WizardUserDocType =
   | 'OM'
   | 'T12'
+  | 'PNL'
   | 'PNL_MONTHLY'
   | 'PNL_YTD'
+  | 'PNL_BENCHMARK'
   | 'STR_TREND'
-  | 'STR';
+  | 'STR'
+  | 'INSURANCE'
+  | 'PROPERTY_TAX'
+  | 'ROOM_MIX'
+  | 'CAPEX'
+  | 'PROPERTY_INFO'
+  | 'LEASES'
+  | 'SURVEYS';
 
 export interface WizardFile {
   file: File;
@@ -307,6 +345,17 @@ export const api = {
       request<WorkerDeal>('GET', `/deals/${id}`, undefined, { signal }),
     status: (id: string, signal?: AbortSignal) =>
       request<WorkerDealStatus>('GET', `/deals/${id}/status`, undefined, { signal }),
+    /** Per-category coverage score for the workspace CompletenessCard
+     *  + wizard right-rail (Wave 1 #1). Returns the 11 canonical
+     *  categories with covered/doc_count/required_for_ic. The percent
+     *  is over 10 required-for-IC items (SURVEYS excluded). */
+    completeness: (id: string, signal?: AbortSignal) =>
+      request<CompletenessResponse>(
+        'GET',
+        `/deals/${id}/completeness`,
+        undefined,
+        { signal },
+      ),
     /** Per-assumption provenance map — which numbers came from
      *  Kimpton seed vs T-12 actual vs CBRE vs analyst override.
      *  Sam v2 #11. */
@@ -374,6 +423,16 @@ export const api = {
         'POST',
         `/deals/${dealId}/documents/${docId}/accept_classification`,
         { use_ai_classification: useAi },
+      ),
+    /** Resolve a year-mismatch banner (Wave 1 #4).
+     *  ``useAi=true`` overwrites ``fiscal_year`` with Fondok's
+     *  ``extracted_period_year``; ``false`` keeps the analyst's tag.
+     *  Either way, ``year_mismatch`` is cleared. */
+    acceptYear: (dealId: string, docId: string, useAi: boolean) =>
+      request<WorkerDocument>(
+        'POST',
+        `/deals/${dealId}/documents/${docId}/accept_year`,
+        { use_ai_year: useAi },
       ),
     extract: (dealId: string, docId: string) =>
       request<ExtractionStartResponse>(
@@ -770,4 +829,29 @@ export interface DueDiligencePacket {
   pending: number;
   answered: number;
   note: string | null;
+}
+
+// ─── Deal completeness (Wave 1 #1) ──────────────────────────────────
+// Mirrors apps/worker/app/api/documents.py CompletenessResponse.
+
+export interface CompletenessCategory {
+  /** Stable id — matches WizardCategory above. */
+  id: WizardCategory;
+  /** Display label ("Offering Memorandum", "Property Taxes", …). */
+  label: string;
+  /** At least one document of any matching doc_type has been uploaded. */
+  covered: boolean;
+  /** Total document count contributing to this category. */
+  doc_count: number;
+  /** Categories with ``required_for_ic=false`` count as Recommended
+   *  rather than Missing — currently only Surveys & Reviews. */
+  required_for_ic: boolean;
+}
+
+export interface CompletenessResponse {
+  deal_id: string;
+  /** 0-100 percent over the 10 required-for-IC categories (Surveys
+   *  excluded). Rounded server-side. */
+  completeness_pct: number;
+  categories: CompletenessCategory[];
 }

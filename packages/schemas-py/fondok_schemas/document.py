@@ -46,6 +46,17 @@ class DocType(str, Enum):
     ROOM_MIX = "ROOM_MIX"
     MARKET_STUDY = "MARKET_STUDY"
     CONTRACT = "CONTRACT"
+    # Wave 1 — 11-category guided onboarding (June 2026). Each of the
+    # additions below maps 1:1 to a wizard sub-stage and is "Recommended
+    # for IC" rather than hard-required. The Router agent's
+    # classification prompt was extended at the same time so it can
+    # actually emit these tokens. See ``apps/worker/app/agents/router.py``.
+    INSURANCE = "INSURANCE"
+    PROPERTY_TAX = "PROPERTY_TAX"
+    CAPEX = "CAPEX"
+    PROPERTY_INFO = "PROPERTY_INFO"
+    LEASES = "LEASES"
+    SURVEYS = "SURVEYS"
     # NOTE: ``UNKNOWN`` is intentionally NOT in this enum — it's a
     # sentinel the Router agent emits when the LLM can't classify
     # confidently. Persisted doc_type values are always one of the

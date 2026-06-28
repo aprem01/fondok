@@ -60,6 +60,20 @@ Available document types (use exactly one of these tokens):
                    generators, supply pipeline, ADR/RevPAR forecasts.
 - CONTRACT       — Purchase-and-sale, franchise, management, or other
                    binding agreement.
+- INSURANCE      — Hotel insurance records — COI / certificate of
+                   insurance, property + liability policy declarations,
+                   loss runs, premium schedules.
+- PROPERTY_TAX   — Property-tax bills, assessment notices, tax-abatement
+                   agreements, county assessor statements.
+- CAPEX          — Historical capital-expenditure schedules, PIP scopes
+                   priced out, FF&E reserve reports, renovation budgets.
+- PROPERTY_INFO  — Basic property metadata — floorplans, photos, brand
+                   standards, franchise agreements, PIP letters.
+- LEASES         — Operator / management agreements, ground leases,
+                   tenant or sublease agreements, license agreements.
+- SURVEYS        — Third-party reports: ALTA survey, structural /
+                   engineering report, Phase I environmental, PCA
+                   (property condition assessment), Phase II.
 - UNKNOWN        — Cannot confidently classify; downstream HITL gate.
 
 Rules:
@@ -93,8 +107,11 @@ class _RouterDecision(BaseModel):
         str,
         Field(
             description=(
-                "One of: OM, T12, STR, RENT_ROLL, ROOM_MIX, PNL, "
-                "MARKET_STUDY, CONTRACT, UNKNOWN"
+                "One of: OM, T12, STR, STR_TREND, CBRE_HORIZONS, "
+                "PNL_BENCHMARK, PNL, PNL_MONTHLY, PNL_YTD, RENT_ROLL, "
+                "ROOM_MIX, MARKET_STUDY, CONTRACT, INSURANCE, "
+                "PROPERTY_TAX, CAPEX, PROPERTY_INFO, LEASES, SURVEYS, "
+                "UNKNOWN"
             )
         ),
     ]
