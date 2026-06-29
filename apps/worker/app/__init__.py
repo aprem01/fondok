@@ -1,3 +1,3 @@
 """Fondok worker — FastAPI + LangGraph runtime for hotel-underwriting agents."""
 
-__version__ = "0.5.0"  # USALI v4 + reliability + structural recognizer; healthcheck timeout 600s for migration headroom
+__version__ = "0.5.1"  # USALI rules CSV now copied into Docker image (was missing on prod; scorer was returning empty applicable count)

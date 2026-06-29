@@ -13,6 +13,15 @@ WORKDIR /workspace
 # The schemas package is a path dep; copy it before resolving.
 COPY packages/schemas-py /workspace/packages/schemas-py
 
+# The USALI rules catalog lives at evals/golden-set/usali-rules.csv and
+# is resolved at runtime via Path(__file__).resolve().parents[3] /
+# "evals" / "golden-set" / "usali-rules.csv". Without it,
+# load_usali_rules() returns [] silently and every doc scores
+# applicable=0 / score=null (Sam QA 2026-06-29: structural recognizer
+# fires correctly but USALI score was always null on prod because the
+# image never carried the rules CSV).
+COPY evals /workspace/evals
+
 WORKDIR /workspace/apps/worker
 
 COPY apps/worker/pyproject.toml apps/worker/uv.lock* ./
