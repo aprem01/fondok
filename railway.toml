@@ -7,11 +7,12 @@ dockerfilePath = "apps/worker/Dockerfile"
 healthcheckPath = "/health"
 # Cold-start migrations run idempotently before uvicorn binds the
 # port — on a fresh Postgres with the full migration history this can
-# take ~2 minutes. 30s was too tight and caused Railway to mark the
-# deploy unhealthy + roll back to the previous build (observed
-# 2026-05-12). 240s gives migrations headroom; the health endpoint
-# itself is fast, so once the worker is up the healthcheck passes
-# instantly on later restarts.
-healthcheckTimeout = 240
+# take 2-5 minutes. 240s was too tight after Wave 4 added the
+# portfolio_library / saved_pipeline_views / pipeline_digest_schedules /
+# documents.add_structural_pnl_score migrations — caused USALI v4
+# deploy to fail healthcheck + roll back (observed 2026-06-29).
+# 600s gives full headroom; once the worker is up the healthcheck
+# passes instantly on later restarts.
+healthcheckTimeout = 600
 restartPolicyType = "ON_FAILURE"
 restartPolicyMaxRetries = 3
