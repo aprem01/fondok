@@ -3859,12 +3859,22 @@ async def _run_extraction_pipeline_inner(
                     # (not the Router's PROPERTY_INFO) into doc_type.
                     normalized_ai = canonical_user
                     refined_doc_type = canonical_user
-                elif structural_signals.is_pnl and not user_tag_is_pnl:
+                elif (
+                    structural_signals.is_pnl
+                    and canonical_user
+                    and not user_tag_is_pnl
+                ):
                     # Analyst uploaded a P&L under a non-P&L tag —
                     # the structural signal wins the conflict. Flag
                     # misclassified WITH the recognizer's verdict as
                     # the AI label so the banner shows a meaningful
                     # alternative ("Fondok thinks this is a P&L").
+                    # Requires a non-null user tag — if the analyst
+                    # never tagged (bulk upload to the Data Room with
+                    # no per-doc category), there's no conflict to flag
+                    # (Sam QA 2026-06-29: bulk-uploaded annuals were
+                    # all getting misclassified=True even though there
+                    # was no analyst intent to disagree with).
                     misclassified_flag = True
                     if not normalized_ai:
                         normalized_ai = "T12"  # generic P&L lane
