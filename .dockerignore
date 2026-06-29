@@ -26,7 +26,11 @@ apps/worker/*.sqlite3
 # vulnerability scanner from inspecting the Next.js web app.
 apps/web
 docs
-/evals
+# evals/ INTENTIONALLY NOT EXCLUDED. The USALI rules catalog at
+# evals/golden-set/usali-rules.csv is loaded at runtime by
+# app.usali_rules.load_usali_rules() — without it every P&L scores
+# applicable=0 / inconclusive (Sam QA 2026-06-29). Total evals/
+# footprint is ~280 KB; the cost of including it is negligible.
 package-lock.json
 pnpm-lock.yaml
 
