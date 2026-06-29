@@ -129,8 +129,19 @@ export default function PipelinePage() {
         const res = await api.deals.pipeline(query, signal);
         setData(res);
       } catch (e) {
-        if ((e as { name?: string }).name === 'AbortError') return;
-        setError(e instanceof Error ? e.message : String(e));
+        const name = (e as { name?: string }).name;
+        if (name === 'AbortError') return;
+        // Wave 4 reliability fix (Bug #3) — show a friendly message
+        // when the worker is mid-extraction and the fetch timed out
+        // client-side. Raw error text confused Sam QA on the 16-doc
+        // upload — the page just looked broken.
+        if (name === 'TimeoutError') {
+          setError(
+            'The worker is busy — your upload is still extracting. Try again in 30 seconds.',
+          );
+        } else {
+          setError(e instanceof Error ? e.message : String(e));
+        }
       } finally {
         setLoading(false);
       }

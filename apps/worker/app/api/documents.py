@@ -1547,7 +1547,11 @@ async def _run_parse_and_extract(
     # Auto-chain extraction so the user sees a single status timeline
     # without having to call a second endpoint. Failures inside
     # ``_run_extraction_pipeline`` are already caught and recorded as
-    # ``FAILED`` on the row.
+    # ``FAILED`` on the row. The process-level
+    # ``acquire_extractor_slot()`` semaphore lives INSIDE
+    # ``_run_extraction_pipeline`` so the cap also applies to the
+    # standalone ``POST .../extract`` endpoint that bypasses this
+    # function (Wave 4 reliability fix — Bug #2).
     await _run_extraction_pipeline(
         deal_id=deal_id,
         doc_id=doc_id,
@@ -3538,6 +3542,30 @@ async def _run_extraction_pipeline(
     On any failure the document row is marked ``FAILED`` and the error
     is logged. ``EVALS_MOCK=true`` short-circuits the agents so CI can
     exercise the wiring without spending tokens.
+
+    Wave 4 reliability fix (Bug #2): every entrypoint into the LLM
+    extraction fan-out passes through ``acquire_extractor_slot()`` so
+    the process-wide cap (``EXTRACTOR_MAX_CONCURRENT_DOCS``, default 4)
+    binds regardless of whether the caller is the auto-chain off
+    upload or the standalone ``POST .../extract`` retry endpoint. Slot
+    is released even when the body raises — ``async with`` guarantees
+    cleanup on the exception path.
+    """
+    from ..services.extractor_throttle import acquire_extractor_slot
+
+    async with acquire_extractor_slot():
+        await _run_extraction_pipeline_inner(
+            deal_id=deal_id, doc_id=doc_id, tenant_id=tenant_id,
+        )
+
+
+async def _run_extraction_pipeline_inner(
+    *, deal_id: str, doc_id: str, tenant_id: str
+) -> None:
+    """Inner body of ``_run_extraction_pipeline`` after the process-wide
+    extractor-slot semaphore has been acquired. Split out so the slot
+    wrapper stays tiny + so tests can exercise the cap by patching
+    the wrapper without re-implementing the LangGraph driver.
     """
     factory = get_session_factory()
     async with factory() as session:

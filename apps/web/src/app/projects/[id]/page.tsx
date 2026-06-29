@@ -114,7 +114,7 @@ export default function ProjectDetailPage() {
   // (UUID) deals we keep the raw string so children can pass it to API
   // calls without ever stringifying NaN into a URL path.
   const id: number | string = isMockId ? Number(rawId) : rawId;
-  const { deal } = useDeal(rawId);
+  const { deal, loading: dealLoading, error: dealError, refresh: refreshDeal } = useDeal(rawId);
   const mockMatch = isMockId
     ? projects.find(p => p.id === Number(rawId))
     : undefined;
@@ -171,7 +171,18 @@ export default function ProjectDetailPage() {
   // Build a unified Project-shaped record so the existing UI keeps working.
   // For real (UUID) deals we synthesize a minimal record from the worker payload.
   // (Hoisted above the header-pill / confidence helpers below so they can read it.)
-  const project = mockMatch ?? (deal ? {
+  //
+  // CRITICAL — UUID deals MUST NEVER fall back to ``projects[0]``: when the
+  // worker fetch is in flight or errored, a stale fallback would render the
+  // wrong deal's name/city/brand (data-leak adjacent — Sam QA Wave 4). For
+  // UUID deals we render explicit loading / error states below before
+  // reaching the main UI; ``project`` is only consumed when ``deal`` exists.
+  //
+  // Mock ids still legitimately resolve to ``projects.find(...)`` and we
+  // leave ``projects[0]`` as the last-resort fallback for unknown mock ids
+  // (existing behavior — the only mock entry that matters for the demo is
+  // Kimpton id=7).
+  const projectOrNull = mockMatch ?? (deal ? {
     id: 0,
     name: deal.name,
     city: deal.city ?? '—',
@@ -188,7 +199,7 @@ export default function ProjectDetailPage() {
     updatedAt: deal.updated_at ? new Date(deal.updated_at).toLocaleDateString() : '—',
     createdAt: deal.created_at ? new Date(deal.created_at).toLocaleDateString() : undefined,
     noDocs: true,
-  } : projects[0]);
+  } : (isMockId ? projects[0] : null));
 
   // Header pill state — popovers/drawers/tooltips. We keep all four
   // independent so opening one doesn't smash the others. Each closes on
@@ -219,7 +230,7 @@ export default function ProjectDetailPage() {
   const EXPECTED_DOC_COUNT = 5;
   const liveDocsLabel = liveMode
     ? `${liveDocs.length}/${Math.max(EXPECTED_DOC_COUNT, liveDocs.length)}`
-    : project.docs;
+    : (projectOrNull?.docs ?? '0/0');
 
   // Esc closes any open header overlay.
   useEffect(() => {
@@ -247,7 +258,7 @@ export default function ProjectDetailPage() {
   // Confidence breakdown — derive from project shape. Mock projects keep
   // their static numbers; live deals lean on the worker payload via useDeal.
   const docCount = drawerDocs.length;
-  const avgFieldConfidence = project.aiConfidence;
+  const avgFieldConfidence = projectOrNull?.aiConfidence ?? 0;
   // Mock variance flag count is global today; only Kimpton (id=7) has real flags.
   const varianceFlagCount = id === 7 ? varianceCriticalCount : 0;
 
@@ -299,6 +310,86 @@ export default function ProjectDetailPage() {
       /* no-op */
     }
   };
+
+  // ─── UUID deal load gate (Wave 4 reliability fix — Bug #1) ─────────
+  // UUID deals MUST resolve to a real worker payload before rendering
+  // the project chrome. The previous fallback to ``projects[0]`` (=
+  // mock Hilton Garden Inn Austin) under fetch-in-flight or fetch-error
+  // conditions surfaced a completely different deal at /projects/<uuid>,
+  // which is data-leak-adjacent (Sam QA reproduced across tabs).
+  //
+  // We early-return a deal-id-scoped skeleton on load and an error card
+  // on failure. Both render the requested ``rawId`` at the top so the
+  // analyst can confirm the URL is the deal they meant to open — and
+  // neither leaks any mock-data names. Mock-id deals (digit-only ``id``)
+  // keep the legacy projects[0] fallback so demo URLs continue to work.
+  if (!isMockId && !projectOrNull) {
+    return (
+      <DealAssumptionsProvider deal={null} dealId={rawId}>
+        <div className="px-8 pt-7 pb-8">
+          <Link
+            href="/projects"
+            className="inline-flex items-center gap-1 text-[12px] text-ink-500 hover:text-ink-900 mb-4 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-500 rounded eyebrow normal-case tracking-wide"
+          >
+            <ArrowLeft size={13} aria-hidden="true" /> Back to Projects
+          </Link>
+          {dealError ? (
+            <div
+              role="alert"
+              data-testid="deal-load-error"
+              className="rounded-md border border-danger-200 bg-danger-50 p-5"
+            >
+              <div className="flex items-start gap-3">
+                <AlertTriangle size={18} className="text-danger-700 mt-0.5" aria-hidden="true" />
+                <div className="flex-1 min-w-0">
+                  <div className="text-[14px] font-semibold text-ink-900">
+                    Could not load this deal
+                  </div>
+                  <div className="text-[12.5px] text-ink-700 mt-1 break-all">
+                    Deal id: <span className="font-mono">{rawId}</span>
+                  </div>
+                  <div className="text-[12.5px] text-ink-700 mt-2">
+                    {/^TimeoutError|timed out|timeout/i.test(dealError)
+                      ? 'The worker is busy — your upload is still extracting. Try again in 30 seconds.'
+                      : dealError}
+                  </div>
+                  <div className="mt-3 flex items-center gap-2">
+                    <Button size="sm" variant="secondary" onClick={() => refreshDeal()}>
+                      Retry
+                    </Button>
+                  </div>
+                </div>
+              </div>
+            </div>
+          ) : (
+            <div
+              role="status"
+              aria-live="polite"
+              data-testid="deal-load-skeleton"
+              className="space-y-4"
+            >
+              <div className="text-[12.5px] text-ink-500">
+                Loading deal <span className="font-mono">{rawId}</span>…
+              </div>
+              <div className="h-8 w-2/5 rounded bg-ink-100 animate-pulse" />
+              <div className="h-4 w-1/3 rounded bg-ink-100 animate-pulse" />
+              <div className="grid grid-cols-3 gap-4 pt-4">
+                <div className="h-24 rounded bg-ink-100 animate-pulse" />
+                <div className="h-24 rounded bg-ink-100 animate-pulse" />
+                <div className="h-24 rounded bg-ink-100 animate-pulse" />
+              </div>
+            </div>
+          )}
+        </div>
+      </DealAssumptionsProvider>
+    );
+  }
+
+  // Past the gate, ``projectOrNull`` is guaranteed non-null: mock ids
+  // fell through to ``projects.find(...) ?? projects[0]``; UUID ids
+  // only reached here when ``deal`` resolved. Tying ``project`` to the
+  // narrowed value keeps the existing JSX downstream unchanged.
+  const project = projectOrNull as NonNullable<typeof projectOrNull>;
 
   // Only the Kimpton Angler deal (id=7) has the live assumption sliders wired.
   // For other deals we render without the provider; tabs that need it use the
