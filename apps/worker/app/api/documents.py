@@ -4963,11 +4963,51 @@ async def _persist_usali_score(
             result.inconclusive,
         )
     except Exception as exc:
-        logger.warning(
-            "usali_score: failed to persist score for doc=%s: %s",
+        # Sam QA 2026-06-29 — replace silent WARN with loud surfacing:
+        # 1) Full traceback in logs (not just one-line WARN)
+        # 2) Persist error_kind + error_message on the doc row so the
+        #    UI can show "USALI scoring failed — retry available" and
+        #    operators can find the doc via `WHERE error_kind LIKE 'usali_%'`
+        # 3) report_alert at severity=error so Sentry/Slack catches it
+        # The OVERALL extraction stays EXTRACTED (this is a post-extraction
+        # scoring pass, not the extraction itself) — we just annotate
+        # the doc with the additional failure signal.
+        logger.exception(
+            "usali_score: scoring crashed for doc=%s deal=%s",
             doc_id,
-            exc,
+            deal_id,
         )
+        try:
+            await session.execute(
+                text(
+                    "UPDATE documents SET "
+                    "error_kind = COALESCE(error_kind, 'usali_scorer_crash'), "
+                    "error_message = COALESCE(error_message, :msg) "
+                    "WHERE id = :id"
+                ),
+                {
+                    "msg": f"USALI scoring failed ({type(exc).__name__}): "
+                           f"{str(exc)[:300]}. "
+                           "Retry via POST /deals/<id>/documents/<doc_id>/rescore-usali",
+                    "id": doc_id,
+                },
+            )
+            await session.commit()
+        except Exception:
+            logger.exception("usali_score: also failed to persist error annotation")
+        try:
+            from ..alerting import report_alert
+
+            report_alert(
+                severity="error",
+                title=f"USALI scoring crashed: {type(exc).__name__}",
+                deal_id=str(deal_id),
+                stage="usali_scoring",
+                exc=exc,
+                extra={"doc_id": str(doc_id), "doc_type": doc_type},
+            )
+        except Exception:
+            pass
 
 
 # ─────────────────────────── critic ───────────────────────────

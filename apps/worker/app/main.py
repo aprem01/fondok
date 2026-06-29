@@ -41,6 +41,21 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 
+# Worker startup-state observability (Sam QA 2026-06-29 — no more
+# silent failures). Populated by ``lifespan`` once on boot and read
+# by ``/health`` so operators can see degraded-but-running state at
+# a glance instead of debugging via API behavior.
+_STARTUP_STATE: dict[str, object] = {
+    "usali_rules_loaded": None,  # int count, -1 on load error, None pre-boot
+    "structural_recognizer_available": None,  # bool, None pre-boot
+}
+
+
+def get_startup_state() -> dict[str, object]:
+    """Snapshot of boot-time invariants. Consumed by /health."""
+    return dict(_STARTUP_STATE)
+
+
 @asynccontextmanager
 async def lifespan(_: FastAPI) -> AsyncIterator[None]:
     settings = get_settings()
@@ -77,6 +92,41 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
         register_tenant_safety_listener(get_engine())
     except Exception as exc:
         logger.exception("tenant safety listener registration failed: %s", exc)
+    # Sam QA 2026-06-29: USALI catalog file (evals/golden-set/usali-rules.csv)
+    # was missing from the prod Docker image — load_usali_rules() silently
+    # returned [] and every P&L scored applicable=0 / score=null.
+    # Surface this at boot so missing-catalog crashes the deploy instead
+    # of silently degrading. We DO NOT raise — Railway already times out
+    # on /health, and crashing here loses observability. Instead we record
+    # the count on a module-level state so /health can flag the worker as
+    # degraded.
+    try:
+        from .usali_rules import load_usali_rules
+        rules = load_usali_rules()
+        _STARTUP_STATE["usali_rules_loaded"] = len(rules)
+        if not rules:
+            logger.error(
+                "STARTUP DEGRADED: USALI catalog missing or empty. "
+                "Check evals/golden-set/usali-rules.csv is present in image. "
+                "All P&L docs will score applicable=0 / inconclusive until "
+                "this is fixed."
+            )
+        else:
+            logger.info("usali-rules: %d rules loaded at startup", len(rules))
+    except Exception as exc:
+        logger.exception("usali-rules: catalog load failed: %s", exc)
+        _STARTUP_STATE["usali_rules_loaded"] = -1  # -1 signals error
+    # Structural recognizer importability probe — caught the
+    # post-USALI-v4 deploy where the recognizer module shipped but
+    # imports were failing silently in a swallowed try block.
+    try:
+        from .services.structural_recognizer import (  # noqa: F401
+            classify_structure,
+        )
+        _STARTUP_STATE["structural_recognizer_available"] = True
+    except Exception as exc:
+        logger.exception("structural_recognizer: import failed: %s", exc)
+        _STARTUP_STATE["structural_recognizer_available"] = False
     # Wave 4 W4.5 — in-process pipeline-digest scheduler. No-op when
     # ``DIGEST_SCHEDULER_ENABLED=False`` (tests, multi-replica deploys
     # that drive cron externally). Never raises out of lifespan.
