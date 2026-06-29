@@ -165,15 +165,15 @@ export default function ProjectsPage() {
 
   const { deals, loading, error, fromMock, refresh } = useDeals();
 
-  // Always show the mock projects so the demo deals (Kimpton Angler etc.) stay
-  // available alongside any real worker deals while we're still mid-migration.
+  // Worker-connected mode (the real deployment) shows ONLY worker
+  // deals — the seeded demos (Kimpton Angler etc.) were confusing
+  // institutional users into thinking they had pre-existing data on
+  // the platform. The mocks still render in pure-mock fallback mode
+  // (no worker URL configured) so the marketing/demo build keeps
+  // something on screen.
   const display: DisplayDeal[] = useMemo(() => {
-    const workerRows = deals.map(fromWorkerDeal);
-    const mockRows = mockProjects.map(fromMockProject);
-    if (fromMock) return mockRows;
-    // De-dupe by id (worker uses uuid, mock uses numeric).
-    const seen = new Set(workerRows.map((d) => d.id));
-    return [...workerRows, ...mockRows.filter((m) => !seen.has(m.id))];
+    if (fromMock) return mockProjects.map(fromMockProject);
+    return deals.map(fromWorkerDeal);
   }, [deals, fromMock]);
 
   const filtered = display.filter((p) =>
