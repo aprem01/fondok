@@ -681,6 +681,10 @@ export interface PortfolioLibraryListQuery {
 interface RequestOpts {
   formData?: FormData;
   signal?: AbortSignal;
+  /** Override the per-method default timeout (ms). Pass 0 to disable
+   *  the client-side timeout entirely — only do this for explicitly
+   *  long-running streams (none today). */
+  timeoutMs?: number;
 }
 
 export class WorkerError extends Error {
@@ -692,6 +696,78 @@ export class WorkerError extends Error {
     this.status = status;
     this.body = body;
   }
+}
+
+/** Thrown when the request exceeds the configured client-side timeout.
+ *
+ *  Wave 4 reliability fix (Bug #3): the worker can hang under
+ *  extraction load (Bug #2 root cause), and an un-timed fetch leaves
+ *  the UI stuck on a skeleton forever. ``TimeoutError`` lets hooks /
+ *  pages render a "worker is busy" affordance instead of swallowing
+ *  the failure.
+ *
+ *  ``name === 'TimeoutError'`` is the contract — callers should check
+ *  the name string and not ``instanceof`` (the constructor isn't
+ *  re-exported on every codepath, and Next's RSC boundary can break
+ *  prototype identity).
+ */
+export class TimeoutError extends Error {
+  timeoutMs: number;
+  method: string;
+  path: string;
+  constructor(message: string, method: string, path: string, timeoutMs: number) {
+    super(message);
+    this.name = 'TimeoutError';
+    this.method = method;
+    this.path = path;
+    this.timeoutMs = timeoutMs;
+  }
+}
+
+// Per-method client-side timeout defaults (ms). Reads small enough
+// that an analyst notices a stuck worker before they switch tabs;
+// writes/uploads get more headroom because file uploads + extraction
+// kickoff legitimately take longer.
+const DEFAULT_TIMEOUT_GET_MS = 20_000;
+const DEFAULT_TIMEOUT_WRITE_MS = 60_000;
+
+function _defaultTimeoutFor(method: string, hasFormData: boolean): number {
+  if (hasFormData) return DEFAULT_TIMEOUT_WRITE_MS;
+  return method === 'GET' ? DEFAULT_TIMEOUT_GET_MS : DEFAULT_TIMEOUT_WRITE_MS;
+}
+
+/**
+ * Combine an optional caller signal with the timeout signal so either
+ * abort path triggers ``fetch``'s cancellation. Prefers the native
+ * ``AbortSignal.any`` (Node 20+ / modern browsers) and falls back to a
+ * manual fan-in for older runtimes.
+ */
+function _combineSignals(
+  caller: AbortSignal | undefined,
+  timeoutSignal: AbortSignal,
+): AbortSignal {
+  if (!caller) return timeoutSignal;
+  // Modern path — keeps reason propagation correct on either side.
+  const anyFn = (
+    AbortSignal as unknown as { any?: (sigs: AbortSignal[]) => AbortSignal }
+  ).any;
+  if (typeof anyFn === 'function') {
+    return anyFn.call(AbortSignal, [caller, timeoutSignal]);
+  }
+  const ctrl = new AbortController();
+  const onAbort = (reason: unknown) => {
+    if (!ctrl.signal.aborted) ctrl.abort(reason);
+  };
+  if (caller.aborted) onAbort(caller.reason);
+  else caller.addEventListener('abort', () => onAbort(caller.reason), { once: true });
+  if (timeoutSignal.aborted) onAbort(timeoutSignal.reason);
+  else
+    timeoutSignal.addEventListener(
+      'abort',
+      () => onAbort(timeoutSignal.reason),
+      { once: true },
+    );
+  return ctrl.signal;
 }
 
 async function request<T>(
@@ -713,25 +789,69 @@ async function request<T>(
   // request to it. Worker falls back to DEFAULT_TENANT_ID when absent.
   const orgId = getCurrentOrgId();
   if (orgId) headers['X-Tenant-Id'] = orgId;
-  const init: RequestInit = { method, headers, signal: opts?.signal };
+
+  // ─── Client-side timeout (Wave 4 reliability fix — Bug #3) ───────
+  // Every fetch is wrapped in an AbortController that fires after the
+  // per-method default (overridable via ``opts.timeoutMs``). If the
+  // caller also passed a signal (e.g. ``useDeal`` unmount cleanup),
+  // we combine both so either abort path cancels the fetch.
+  const hasFormData = !!opts?.formData;
+  const timeoutMs =
+    opts?.timeoutMs ?? _defaultTimeoutFor(method, hasFormData);
+  const timeoutCtrl = new AbortController();
+  let timeoutFired = false;
+  const timeoutHandle =
+    timeoutMs > 0
+      ? setTimeout(() => {
+          timeoutFired = true;
+          timeoutCtrl.abort(
+            new TimeoutError(
+              `Request timed out after ${timeoutMs}ms: ${method} ${path}`,
+              method,
+              path,
+              timeoutMs,
+            ),
+          );
+        }, timeoutMs)
+      : null;
+  const signal = _combineSignals(opts?.signal, timeoutCtrl.signal);
+
+  const init: RequestInit = { method, headers, signal };
   if (opts?.formData) {
     init.body = opts.formData;
   } else if (body !== undefined) {
     headers['Content-Type'] = 'application/json';
     init.body = JSON.stringify(body);
   }
-  const res = await fetch(url, init);
-  if (!res.ok) {
-    const text = await res.text().catch(() => '');
-    throw new WorkerError(
-      `${method} ${path} → ${res.status}`,
-      res.status,
-      text,
-    );
+  try {
+    const res = await fetch(url, init);
+    if (!res.ok) {
+      const text = await res.text().catch(() => '');
+      throw new WorkerError(
+        `${method} ${path} → ${res.status}`,
+        res.status,
+        text,
+      );
+    }
+    // Some 204s have no body
+    if (res.status === 204) return undefined as T;
+    return (await res.json()) as T;
+  } catch (err) {
+    // Distinguish our timeout from caller-driven aborts. ``fetch``
+    // raises a ``DOMException`` of name ``AbortError`` on either, so
+    // we use the captured flag to decide which one to surface.
+    if (timeoutFired) {
+      throw new TimeoutError(
+        `Request timed out after ${timeoutMs}ms: ${method} ${path}`,
+        method,
+        path,
+        timeoutMs,
+      );
+    }
+    throw err;
+  } finally {
+    if (timeoutHandle !== null) clearTimeout(timeoutHandle);
   }
-  // Some 204s have no body
-  if (res.status === 204) return undefined as T;
-  return (await res.json()) as T;
 }
 
 // ─────────────────────────── public api ───────────────────────────

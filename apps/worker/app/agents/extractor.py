@@ -39,10 +39,25 @@ from ..usali_rules import rules_as_prompt_block
 
 logger = logging.getLogger(__name__)
 
-# Max simultaneous Sonnet calls in a single run_extractor fan-out.
-# Chunked extraction of a 45-page OM fans out to ~9 docs; 4-wide keeps
-# wall time low without tripping Anthropic's per-minute rate limit.
-_EXTRACTOR_MAX_CONCURRENCY = 4
+# Max simultaneous Sonnet calls per ``run_extractor`` fan-out (i.e.
+# per document).  Wave 4 reliability fix (Bug #2): the per-doc cap is
+# read from the same EXTRACTOR_CHUNK_CONCURRENCY env var that the
+# process-level extractor semaphore uses, and defaults to 2 (down from
+# the legacy 4) so the stacked cap with EXTRACTOR_MAX_CONCURRENT_DOCS
+# is 4 docs × 2 chunks = 8 concurrent Sonnet calls — well clear of the
+# Anthropic per-minute rate limit even when 16 docs upload at once.
+def _read_chunk_concurrency_env() -> int:
+    import os as _os
+    raw = _os.environ.get("EXTRACTOR_CHUNK_CONCURRENCY")
+    if not raw:
+        return 2
+    try:
+        return max(1, int(raw))
+    except (TypeError, ValueError):
+        return 2
+
+
+_EXTRACTOR_MAX_CONCURRENCY = _read_chunk_concurrency_env()
 
 
 # ─────────────────────── prompt ───────────────────────

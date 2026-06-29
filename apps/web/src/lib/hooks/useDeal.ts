@@ -93,9 +93,21 @@ export function useDeal(id: string | number | null | undefined): DealState {
         setStatus(s);
         setError(null);
       } catch (err: unknown) {
-        if ((err as { name?: string })?.name === 'AbortError') return;
-        const msg = err instanceof Error ? err.message : String(err);
-        setError(msg);
+        const errName = (err as { name?: string })?.name;
+        if (errName === 'AbortError') return;
+        // Wave 4 reliability fix (Bug #3) — map worker-timeout into a
+        // friendly, actionable message instead of the raw stack text.
+        // The deal page reads this string and renders it in the error
+        // card (UUID load gate). Keep ``TimeoutError`` as the prefix
+        // so downstream callers can still pattern-match on it.
+        if (errName === 'TimeoutError') {
+          setError(
+            'TimeoutError: The worker is busy — your upload is still extracting. Try again in 30 seconds.',
+          );
+        } else {
+          const msg = err instanceof Error ? err.message : String(err);
+          setError(msg);
+        }
       } finally {
         setLoading(false);
       }
