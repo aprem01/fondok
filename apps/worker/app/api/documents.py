@@ -2916,17 +2916,17 @@ async def reprocess_document(
             detail=f"could not fetch raw bytes from storage: {exc}",
         ) from exc
 
-    # Flip the row back to PARSING so the UI shows immediate feedback,
-    # and clear the prior error_kind / error_message so a successful
-    # retry doesn't display the stale failure reason.
+    # Flip the row back to PARSING so the UI shows immediate feedback.
+    # `error_kind` / `error_message` are stored *inside* the
+    # extraction_data JSON blob (not separate columns) so setting
+    # extraction_data = NULL clears the stale failure reason in one
+    # shot — the previous "also clear error_kind/error_message"
+    # variant tried to update non-existent columns and crashed the
+    # endpoint with UndefinedColumnError.
     await session.execute(
         text(
-            "UPDATE documents "
-            "   SET status = :s, "
-            "       extraction_data = NULL, "
-            "       error_kind = NULL, "
-            "       error_message = NULL "
-            " WHERE id = :id"
+            "UPDATE documents SET status = :s, extraction_data = NULL "
+            "WHERE id = :id"
         ),
         {"s": DOC_STATUS_PARSING, "id": str(doc_id)},
     )
