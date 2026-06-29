@@ -23,6 +23,7 @@ import {
   ExtractionField,
   EngineName,
   EngineOutputResponse,
+  WorkerError,
 } from '@/lib/api';
 import { useDocuments } from '@/lib/hooks/useDocuments';
 import { useEngineOutputs } from '@/lib/hooks/useEngineOutputs';
@@ -1025,6 +1026,18 @@ export default function DataRoomTab({ projectId }: { projectId: number | string 
                         toast(`Reprocessing ${d.name}…`, { type: 'info' });
                         refresh();
                       } catch (err) {
+                        // 410 Gone — raw bytes were wiped (Railway
+                        // /tmp is ephemeral). Tell the user to
+                        // re-upload instead of pretending it's a
+                        // server bug. Trim the worker prose so the
+                        // toast stays one line.
+                        if (err instanceof WorkerError && err.status === 410) {
+                          toast(
+                            `${d.name}: original upload no longer in storage — please re-upload to retry.`,
+                            { type: 'error' },
+                          );
+                          return;
+                        }
                         const msg = err instanceof Error ? err.message : String(err);
                         toast(`Retry failed: ${msg}`, { type: 'error' });
                       }

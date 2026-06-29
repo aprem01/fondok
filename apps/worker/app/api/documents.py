@@ -2887,6 +2887,28 @@ async def reprocess_document(
     store = get_raw_store(settings)
     try:
         body = await store.get(storage_key)
+    except (FileNotFoundError, StorageError) as exc:
+        # Raw bytes are gone — almost always because the worker is on
+        # the ephemeral-/tmp LocalRawStore and Railway wiped the disk
+        # on a redeploy. Surface as 410 Gone with an actionable
+        # message instead of a generic 500 ("server bug"): the user
+        # needs to re-upload, not file a bug.
+        msg = str(exc).lower()
+        if isinstance(exc, FileNotFoundError) or "missing" in msg:
+            raise HTTPException(
+                status_code=status.HTTP_410_GONE,
+                detail=(
+                    "Raw bytes for this document are no longer in storage "
+                    "(typically because the worker was redeployed and the "
+                    "ephemeral disk was wiped). Please re-upload the file "
+                    "to retry."
+                ),
+            ) from exc
+        logger.exception("reprocess: store fetch failed for %s", filename)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"could not fetch raw bytes from storage: {exc}",
+        ) from exc
     except Exception as exc:
         logger.exception("reprocess: store fetch failed for %s", filename)
         raise HTTPException(
@@ -2894,13 +2916,17 @@ async def reprocess_document(
             detail=f"could not fetch raw bytes from storage: {exc}",
         ) from exc
 
-    # Flip the row back to PARSING so the UI shows immediate feedback.
-    # Clear any prior error_kind / error_message so a successful retry
-    # doesn't display the stale failure reason.
+    # Flip the row back to PARSING so the UI shows immediate feedback,
+    # and clear the prior error_kind / error_message so a successful
+    # retry doesn't display the stale failure reason.
     await session.execute(
         text(
-            "UPDATE documents SET status = :s, extraction_data = NULL "
-            "WHERE id = :id"
+            "UPDATE documents "
+            "   SET status = :s, "
+            "       extraction_data = NULL, "
+            "       error_kind = NULL, "
+            "       error_message = NULL "
+            " WHERE id = :id"
         ),
         {"s": DOC_STATUS_PARSING, "id": str(doc_id)},
     )
