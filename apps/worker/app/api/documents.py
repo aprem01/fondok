@@ -162,6 +162,14 @@ class DocumentRecord(BaseModel):
     #     re-walking the extraction_results JSON.
     year_mismatch: bool = False
     extracted_period_year: int | None = None
+    # Wave 4 USALI v4 — structural P&L recognizer confidence (0.0-1.0).
+    # Written during extraction by the recognizer in
+    # ``app.services.structural_recognizer.classify_structure``. Used by
+    # the misclassification override (v4 trusts the user's tag when this
+    # is high) and surfaced to the UI for analysts who want to see why
+    # the recognizer made its call. NULL on docs extracted before v4 OR
+    # on non-P&L docs the recognizer ignored.
+    structural_pnl_score: float | None = None
 
 
 class ExtractionStartResponse(BaseModel):
@@ -786,6 +794,13 @@ def _row_to_record(row: dict[str, Any]) -> DocumentRecord:
         )
     except (TypeError, ValueError):
         extracted_period_year = None
+    sps_raw = row.get("structural_pnl_score")
+    try:
+        structural_pnl_score: float | None = (
+            float(sps_raw) if sps_raw is not None else None
+        )
+    except (TypeError, ValueError):
+        structural_pnl_score = None
 
     return DocumentRecord(
         id=UUID(str(row["id"])),
@@ -810,6 +825,7 @@ def _row_to_record(row: dict[str, Any]) -> DocumentRecord:
         ai_proposed_doc_type=ai_proposed_doc_type,
         year_mismatch=year_mismatch,
         extracted_period_year=extracted_period_year,
+        structural_pnl_score=structural_pnl_score,
     )
 
 
@@ -905,7 +921,8 @@ async def _find_duplicate_document(
                            extraction_data, usali_score, usali_deviations,
                            user_provided_doc_type, fiscal_year,
                            misclassified, ai_proposed_doc_type,
-                           year_mismatch, extracted_period_year
+                           year_mismatch, extracted_period_year,
+                           structural_pnl_score
                       FROM documents
                      WHERE deal_id = :deal AND content_hash = :h
                      ORDER BY uploaded_at DESC
@@ -1803,7 +1820,8 @@ async def list_documents(
                    usali_score, usali_deviations,
                    user_provided_doc_type, fiscal_year, misclassified,
                    ai_proposed_doc_type,
-                   year_mismatch, extracted_period_year
+                   year_mismatch, extracted_period_year,
+                   structural_pnl_score
               FROM documents
              WHERE deal_id = :deal_id
                AND tenant_id = :tenant
@@ -2859,7 +2877,8 @@ async def accept_classification(
                        usali_score, usali_deviations,
                        user_provided_doc_type, fiscal_year, misclassified,
                        ai_proposed_doc_type,
-                       year_mismatch, extracted_period_year
+                       year_mismatch, extracted_period_year,
+                       structural_pnl_score
                   FROM documents
                  WHERE id = :id
                    AND deal_id = :deal_id
@@ -2956,7 +2975,8 @@ async def accept_classification(
                        usali_score, usali_deviations,
                        user_provided_doc_type, fiscal_year, misclassified,
                        ai_proposed_doc_type,
-                       year_mismatch, extracted_period_year
+                       year_mismatch, extracted_period_year,
+                       structural_pnl_score
                   FROM documents
                  WHERE id = :id
                 """
@@ -3069,7 +3089,8 @@ async def accept_year(
                        usali_score, usali_deviations,
                        user_provided_doc_type, fiscal_year, misclassified,
                        ai_proposed_doc_type,
-                       year_mismatch, extracted_period_year
+                       year_mismatch, extracted_period_year,
+                       structural_pnl_score
                   FROM documents
                  WHERE id = :id
                 """
