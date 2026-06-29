@@ -57,11 +57,34 @@ async def health(
     if recognizer_ok is False:
         degraded_reasons.append("structural_recognizer_unavailable")
 
+    # Storage backend snapshot — surfaces which RawStore class the
+    # worker actually instantiated, so a misconfigured S3 cutover
+    # (env var didn't propagate, boto3 missing, etc.) is visible
+    # without tailing Railway logs.
+    raw_store_kind = "unknown"
+    raw_store_bucket: str | None = None
+    raw_store_region: str | None = None
+    try:
+        from ..storage import get_raw_store
+
+        store = get_raw_store()
+        raw_store_kind = type(store).__name__
+        raw_store_bucket = getattr(store, "bucket", None)
+        raw_store_region = getattr(store, "region", None)
+    except Exception as exc:
+        raw_store_kind = f"error:{type(exc).__name__}"
+        degraded_reasons.append("raw_store_init_failed")
+
     return {
         "status": "ok" if not degraded_reasons else "degraded",
         "version": __version__,
         "db": db_status,
         "usali_rules": rules_loaded,
         "structural_recognizer": recognizer_ok,
+        "raw_store": {
+            "kind": raw_store_kind,
+            "bucket": raw_store_bucket,
+            "region": raw_store_region,
+        },
         "degraded_reasons": degraded_reasons,
     }
