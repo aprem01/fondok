@@ -854,6 +854,38 @@ async def refresh_broker_questions(
 
     findings = detect_yoy_variances(historical)
 
+    # Defensive guard against extraction-noise findings whose magnitudes
+    # would overflow the broker_questions column constraints
+    # (variance_pct NUMERIC(8,4) → ±9999.9999; actual_* NUMERIC(14,2)
+    # → ±$999B). The engine can legitimately surface a 100,000% YoY
+    # ratio when an extracted prior is near-zero ($0.01 → $1M), but
+    # that's almost always a misparsed decimal, not a real signal.
+    # Dropping the finding and logging keeps the endpoint working while
+    # surfacing the data-quality issue for the analyst.
+    VARIANCE_RATIO_CAP = 9000.0  # ratio, NOT percent — 900,000% YoY
+    DOLLAR_AMOUNT_CAP = 999_000_000_000.0  # $999B headroom
+    safe_findings: list[Any] = []
+    for f in findings:
+        if abs(f.variance_pct) > VARIANCE_RATIO_CAP:
+            logger.warning(
+                "broker_questions/refresh: dropping pathological variance "
+                "on deal=%s line=%s period=%s ratio=%.2f prior=%.2f current=%.2f "
+                "(likely extraction noise — column overflow guard)",
+                deal_id, f.line_item, f.period_key,
+                f.variance_pct, f.actual_prior, f.actual_current,
+            )
+            continue
+        if abs(f.actual_prior) > DOLLAR_AMOUNT_CAP or abs(f.actual_current) > DOLLAR_AMOUNT_CAP:
+            logger.warning(
+                "broker_questions/refresh: dropping over-cap dollar values "
+                "on deal=%s line=%s period=%s prior=%.2f current=%.2f",
+                deal_id, f.line_item, f.period_key,
+                f.actual_prior, f.actual_current,
+            )
+            continue
+        safe_findings.append(f)
+    findings = safe_findings
+
     if findings:
         # Pull existing open rows once so the dedupe check is a set
         # lookup, not N+1 SELECTs.
