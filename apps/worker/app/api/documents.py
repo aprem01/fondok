@@ -3302,6 +3302,112 @@ async def get_deal_completeness(
 
 
 @router.post(
+    "/{deal_id}/documents/{doc_id}/rescore-usali",
+)
+async def rescore_usali(
+    deal_id: UUID,
+    doc_id: UUID,
+    session: Annotated[AsyncSession, Depends(get_session)],
+    tenant_id: Annotated[UUID, Depends(get_tenant_id)],
+) -> dict[str, Any]:
+    """Re-score a doc's USALI compliance from its persisted extraction
+    without re-fetching the source bytes.
+
+    Sam QA 2026-06-29: docs extracted under the broken v4 deploy window
+    have ``usali_score=null`` because the scorer hit a swallowed
+    exception. This endpoint reloads the most-recent ``extraction_results``
+    row for the document, calls the live (post-v4) scorer, persists the
+    result, and RETURNS any exception verbatim so we can debug the
+    silent-failure path without grepping Railway logs.
+    """
+    await _assert_deal_belongs_to_tenant(session, deal_id=deal_id, tenant_id=tenant_id)
+    doc_row = (
+        await session.execute(
+            text(
+                "SELECT id, doc_type FROM documents "
+                "WHERE id = :id AND deal_id = :deal AND tenant_id = :tenant"
+            ),
+            {"id": str(doc_id), "deal": str(deal_id), "tenant": str(tenant_id)},
+        )
+    ).first()
+    if doc_row is None:
+        raise HTTPException(status_code=404, detail=f"document {doc_id} not found")
+    dt = (doc_row._mapping.get("doc_type") or "").upper()
+    if dt not in _PNL_FAMILY_DOC_TYPES:
+        return {
+            "ok": False,
+            "reason": f"doc_type {dt!r} not in P&L family ({sorted(_PNL_FAMILY_DOC_TYPES)})",
+            "score": None,
+        }
+    extraction_row = (
+        await session.execute(
+            text(
+                "SELECT fields FROM extraction_results "
+                "WHERE document_id = :id "
+                "ORDER BY created_at DESC LIMIT 1"
+            ),
+            {"id": str(doc_id)},
+        )
+    ).first()
+    if extraction_row is None:
+        return {"ok": False, "reason": "no extraction_results row", "score": None}
+
+    fields_raw = extraction_row._mapping.get("fields")
+    if isinstance(fields_raw, str):
+        try:
+            fields = json.loads(fields_raw)
+        except json.JSONDecodeError as exc:
+            return {"ok": False, "reason": f"fields not valid JSON: {exc}", "score": None}
+    else:
+        fields = fields_raw
+    if not isinstance(fields, list) or not fields:
+        return {"ok": False, "reason": "fields empty or not a list", "score": None}
+
+    try:
+        from ..services.usali_scorer import (
+            deviations_to_jsonb,
+            flatten_extraction_fields,
+            score_extraction,
+        )
+
+        flat = flatten_extraction_fields(fields, extra_context={})
+        result = score_extraction(flat)
+        payload = deviations_to_jsonb(result)
+        await session.execute(
+            text(
+                "UPDATE documents "
+                "SET usali_score = :score, usali_deviations = :dev "
+                "WHERE id = :id"
+            ),
+            {
+                "score": result.score,
+                "dev": json.dumps(payload),
+                "id": str(doc_id),
+            },
+        )
+        await session.commit()
+        return {
+            "ok": True,
+            "doc_id": str(doc_id),
+            "score": result.score,
+            "applicable": result.applicable_count,
+            "passed": result.passed_count,
+            "inconclusive": result.inconclusive,
+            "deviations": len(result.deviations),
+            "flat_keys": len(flat),
+        }
+    except Exception as exc:
+        import traceback
+
+        return {
+            "ok": False,
+            "error_type": type(exc).__name__,
+            "error": str(exc),
+            "traceback": traceback.format_exc().splitlines()[-15:],
+        }
+
+
+@router.post(
     "/{deal_id}/documents/{doc_id}/extract",
     response_model=ExtractionStartResponse,
     status_code=status.HTTP_202_ACCEPTED,
