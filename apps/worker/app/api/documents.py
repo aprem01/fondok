@@ -3752,6 +3752,74 @@ async def _run_extraction_pipeline(
                     and canonical_user != canonical_ai
                 )
 
+                # Sam QA Bug #2 v4 (June 28 2026) — structural override.
+                #
+                # On Wave 4 Sam caught a 181-field T-12 being flagged
+                # "misclassified" because the LLM Router landed on
+                # PROPERTY_INFO (the filename + first 2k chars didn't
+                # carry enough P&L signal for it). With the analyst's
+                # ``user_provided_doc_type`` = T12 AND a structurally
+                # confirmed P&L payload, the misclassification banner
+                # is wrong — and it cascades (the engine_runner SQL
+                # filters T12/PNL/PNL_MONTHLY/PNL_YTD, so a
+                # ``doc_type=PROPERTY_INFO`` row drops out of every
+                # downstream YoY / variance / broker-question call).
+                #
+                # Rules (the structural recognizer is the tiebreaker):
+                #
+                # 1. user_tag in P&L family + recognizer says is_pnl →
+                #    NOT misclassified. We trust the user's tag and let
+                #    USALI scoring + YoY engines run normally.
+                # 2. user_tag in PROPERTY_INFO/OM/etc. + recognizer
+                #    says is_pnl → DO flag misclassified. The analyst
+                #    uploaded a P&L under the wrong wizard bucket and
+                #    the structural signal is the right tiebreaker.
+                # 3. user_tag in P&L family + recognizer says NOT P&L →
+                #    NOT misclassified (keep current Router decision
+                #    flow). Could be a thin P&L the recognizer didn't
+                #    pick up; safer to preserve the user's intent than
+                #    to surprise them with a banner.
+                from ..services.structural_recognizer import (
+                    classify_structure,
+                )
+
+                structural_signals = classify_structure(fields)
+                structural_pnl_score = float(structural_signals.pnl_score)
+
+                _PNL_TAG_CANONICALS = {"T12", "PNL", "PNLMONTHLY", "PNLYTD"}
+                user_tag_is_pnl = canonical_user in _PNL_TAG_CANONICALS
+
+                if structural_signals.is_pnl and user_tag_is_pnl:
+                    # Trust the user's tag — recognizer confirms shape.
+                    # Override the Router's possibly-wrong PROPERTY_INFO
+                    # read so downstream queries see the P&L doc_type
+                    # the analyst actually meant.
+                    if misclassified_flag:
+                        logger.info(
+                            "router v4: doc=%s structural override — "
+                            "user tagged %s, router said %s, recognizer "
+                            "confirms P&L (%s). Clearing misclassified.",
+                            doc_id,
+                            user_provided_doc_type,
+                            normalized_ai,
+                            structural_signals.reason,
+                        )
+                    misclassified_flag = False
+                    # Adopt the user's tag as the AI label so the
+                    # downstream UPDATE writes the canonical P&L value
+                    # (not the Router's PROPERTY_INFO) into doc_type.
+                    normalized_ai = canonical_user
+                    refined_doc_type = canonical_user
+                elif structural_signals.is_pnl and not user_tag_is_pnl:
+                    # Analyst uploaded a P&L under a non-P&L tag —
+                    # the structural signal wins the conflict. Flag
+                    # misclassified WITH the recognizer's verdict as
+                    # the AI label so the banner shows a meaningful
+                    # alternative ("Fondok thinks this is a P&L").
+                    misclassified_flag = True
+                    if not normalized_ai:
+                        normalized_ai = "T12"  # generic P&L lane
+
                 # Wave 1 year-mismatch (B4). When the analyst pinned a
                 # ``fiscal_year`` AND the Extractor pulled a
                 # ``p_and_l_usali.period_ending`` whose year disagrees,
@@ -3801,7 +3869,8 @@ async def _run_extraction_pipeline(
                             "SET status = :s, misclassified = :m, "
                             "ai_proposed_doc_type = :apdt, "
                             "year_mismatch = :ym, "
-                            "extracted_period_year = :epy "
+                            "extracted_period_year = :epy, "
+                            "structural_pnl_score = :sps "
                             "WHERE id = :id"
                         ),
                         {
@@ -3815,15 +3884,18 @@ async def _run_extraction_pipeline(
                             "apdt": normalized_ai,
                             "ym": bool(year_mismatch_flag),
                             "epy": extracted_period_year,
+                            "sps": structural_pnl_score,
                             "id": doc_id,
                         },
                     )
                     logger.info(
                         "extraction: doc=%s misclassified — user said %s, "
-                        "router said %s (keeping user tag)",
+                        "router said %s (keeping user tag); "
+                        "structural_pnl_score=%.2f",
                         doc_id,
                         user_provided_doc_type,
                         normalized_ai,
+                        structural_pnl_score,
                     )
                 elif refined_doc_type:
                     # No conflict — clear the AI proposal column so a
@@ -3835,7 +3907,8 @@ async def _run_extraction_pipeline(
                             "misclassified = :m, "
                             "ai_proposed_doc_type = NULL, "
                             "year_mismatch = :ym, "
-                            "extracted_period_year = :epy WHERE id = :id"
+                            "extracted_period_year = :epy, "
+                            "structural_pnl_score = :sps WHERE id = :id"
                         ),
                         {
                             "s": DOC_STATUS_EXTRACTED,
@@ -3843,6 +3916,7 @@ async def _run_extraction_pipeline(
                             "m": False,
                             "ym": bool(year_mismatch_flag),
                             "epy": extracted_period_year,
+                            "sps": structural_pnl_score,
                             "id": doc_id,
                         },
                     )
@@ -3853,13 +3927,15 @@ async def _run_extraction_pipeline(
                             "misclassified = :m, "
                             "ai_proposed_doc_type = NULL, "
                             "year_mismatch = :ym, "
-                            "extracted_period_year = :epy WHERE id = :id"
+                            "extracted_period_year = :epy, "
+                            "structural_pnl_score = :sps WHERE id = :id"
                         ),
                         {
                             "s": DOC_STATUS_EXTRACTED,
                             "m": False,
                             "ym": bool(year_mismatch_flag),
                             "epy": extracted_period_year,
+                            "sps": structural_pnl_score,
                             "id": doc_id,
                         },
                     )

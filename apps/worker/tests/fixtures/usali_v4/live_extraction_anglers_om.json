@@ -1,0 +1,92 @@
+{
+  "document_id": "synthetic-om-anglers",
+  "status": "EXTRACTED",
+  "fields": [
+    {
+      "field_name": "property_overview.name",
+      "value": "Angler's Hotel"
+    },
+    {
+      "field_name": "property_overview.brand",
+      "value": "Kimpton"
+    },
+    {
+      "field_name": "property_overview.market",
+      "value": "Islamorada FL"
+    },
+    {
+      "field_name": "property_overview.keys",
+      "value": 87
+    },
+    {
+      "field_name": "broker_proforma.asking_price_usd",
+      "value": 80000000
+    },
+    {
+      "field_name": "broker_proforma.price_per_key_usd",
+      "value": 919540
+    },
+    {
+      "field_name": "broker_proforma.stabilized_noi_usd",
+      "value": 5500000
+    },
+    {
+      "field_name": "broker_proforma.entry_cap_rate",
+      "value": 0.069
+    },
+    {
+      "field_name": "broker_proforma.exit_cap_rate",
+      "value": 0.075
+    },
+    {
+      "field_name": "market_overview.comp_set_avg_occupancy",
+      "value": 0.78
+    },
+    {
+      "field_name": "market_overview.comp_set_avg_adr_usd",
+      "value": 305
+    },
+    {
+      "field_name": "market_overview.compset_avg_revpar_usd",
+      "value": 237
+    },
+    {
+      "field_name": "broker_proforma.year_5_occupancy",
+      "value": 0.81
+    },
+    {
+      "field_name": "broker_proforma.year_5_adr_usd",
+      "value": 340
+    },
+    {
+      "field_name": "property_overview.year_built",
+      "value": 2009
+    },
+    {
+      "field_name": "broker_proforma.average_daily_rate_usd",
+      "value": 312
+    },
+    {
+      "field_name": "broker_proforma.revpar_usd",
+      "value": 245
+    },
+    {
+      "field_name": "capex.pip_budget_usd",
+      "value": 8000000
+    },
+    {
+      "field_name": "transaction.broker",
+      "value": "JLL Hotels"
+    },
+    {
+      "field_name": "transaction.bid_date",
+      "value": "2026-03-15"
+    }
+  ],
+  "confidence_report": {
+    "overall": 0.85,
+    "per_field": []
+  },
+  "agent_version": "v4-synthetic-om",
+  "page_count": 25
+}
