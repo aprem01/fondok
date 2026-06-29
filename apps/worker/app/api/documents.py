@@ -3373,6 +3373,48 @@ async def rescore_usali(
         flat = flatten_extraction_fields(fields, extra_context={})
         result = score_extraction(flat)
         payload = deviations_to_jsonb(result)
+
+        # Sam QA 2026-06-29: also re-evaluate misclassification with
+        # the v4 logic. The 5 OG annual PNLs on deal f3152107... were
+        # wrongly flagged misclassified=True under pre-fix code (the
+        # null-tag bug). Now that scoring proves they're real P&Ls
+        # (score is not None, applicable_count >= 5), clear the flag
+        # when the user never tagged it (so there's no real conflict
+        # to surface). This keeps rescore idempotent + ensures the
+        # post-fix state is internally consistent across docs that
+        # extracted under broken vs fixed code.
+        also_cleared_misclassified = False
+        if (
+            result.score is not None
+            and not result.inconclusive
+        ):
+            # Look up user_provided_doc_type — clear misclassified
+            # ONLY when there's no conflict to surface.
+            doc_check = (
+                await session.execute(
+                    text(
+                        "SELECT user_provided_doc_type, misclassified "
+                        "FROM documents WHERE id = :id"
+                    ),
+                    {"id": str(doc_id)},
+                )
+            ).first()
+            if (
+                doc_check is not None
+                and doc_check._mapping.get("misclassified")
+                and not doc_check._mapping.get("user_provided_doc_type")
+            ):
+                await session.execute(
+                    text(
+                        "UPDATE documents "
+                        "SET misclassified = :m, "
+                        "ai_proposed_doc_type = NULL "
+                        "WHERE id = :id"
+                    ),
+                    {"m": False, "id": str(doc_id)},
+                )
+                also_cleared_misclassified = True
+
         await session.execute(
             text(
                 "UPDATE documents "
@@ -3395,6 +3437,7 @@ async def rescore_usali(
             "inconclusive": result.inconclusive,
             "deviations": len(result.deviations),
             "flat_keys": len(flat),
+            "also_cleared_misclassified": also_cleared_misclassified,
         }
     except Exception as exc:
         import traceback
