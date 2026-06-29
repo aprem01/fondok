@@ -593,6 +593,129 @@ def _parse_with_pptx(
     )
 
 
+def _parse_with_docx(
+    *,
+    file_bytes: bytes,
+    filename: str,
+    content_hash: str,
+) -> ParsedDocument:
+    """Pull paragraphs + tables out of a .docx file via python-docx.
+
+    Business Plans, HMA summaries, leases, and operating agreements
+    ship as Word docs. We treat the document as a single page since
+    .docx is a flowing format with no native page concept (pagination
+    is renderer-driven). Headings stay inline in the paragraph stream
+    so the LLM extractor can use them as structural cues.
+
+    Notes on the input:
+    * Body paragraphs in document order.
+    * Tables are emitted in ``ParsedPage.tables`` and ALSO interleaved
+      as tab-separated text in the body stream so the LLM sees them
+      where they actually appear in the doc.
+    * Headers + footers are appended at the end (often carry property
+      name / page numbers — useful for cross-reference).
+    * No image OCR (Word images would need a separate OCR pass).
+    """
+    try:
+        from docx import Document  # type: ignore[import-untyped]
+    except ImportError as exc:  # pragma: no cover
+        raise ParseError(
+            "python-docx is not installed; cannot parse .docx files"
+        ) from exc
+
+    import io
+
+    try:
+        doc = Document(io.BytesIO(file_bytes))
+    except Exception as exc:  # noqa: BLE001 — surface as ParseError
+        raise ParseError(f"python-docx failed to open {filename}: {exc}") from exc
+
+    # Body in order. python-docx exposes paragraphs + tables as
+    # separate collections; we walk doc.element.body to keep document
+    # order so a table that lives between paragraphs reads correctly.
+    text_chunks: list[str] = []
+    tables: list[list[list[str]]] = []
+    try:
+        from docx.oxml.ns import qn  # type: ignore[import-untyped]
+    except ImportError:
+        qn = None  # type: ignore[assignment]
+
+    if qn is not None:
+        para_tag = qn("w:p")
+        table_tag = qn("w:tbl")
+        # Maps from element id() -> python-docx object for O(1) lookup.
+        para_by_elem = {id(p._element): p for p in doc.paragraphs}
+        table_by_elem = {id(t._element): t for t in doc.tables}
+        for child in doc.element.body.iterchildren():
+            if child.tag == para_tag:
+                p = para_by_elem.get(id(child))
+                if p is None:
+                    continue
+                line = p.text.strip()
+                if line:
+                    text_chunks.append(line)
+            elif child.tag == table_tag:
+                t = table_by_elem.get(id(child))
+                if t is None:
+                    continue
+                rows = [
+                    [cell.text.strip() for cell in row.cells]
+                    for row in t.rows
+                ]
+                if rows:
+                    tables.append(rows)
+                    # Also fold the table into the text stream as tab-
+                    # separated rows so the LLM sees it positionally.
+                    text_chunks.append(
+                        "\n".join("\t".join(row) for row in rows)
+                    )
+    else:
+        # Fallback when oxml.ns is unavailable: read paragraphs and
+        # tables out of order, but better than nothing.
+        for p in doc.paragraphs:
+            line = p.text.strip()
+            if line:
+                text_chunks.append(line)
+        for t in doc.tables:
+            rows = [
+                [cell.text.strip() for cell in row.cells] for row in t.rows
+            ]
+            if rows:
+                tables.append(rows)
+                text_chunks.append("\n".join("\t".join(row) for row in rows))
+
+    # Headers + footers — often carry property name / page numbers.
+    for section in doc.sections:
+        for hf in (section.header, section.footer):
+            if hf is None:
+                continue
+            for para in hf.paragraphs:
+                line = para.text.strip()
+                if line:
+                    text_chunks.append(line)
+
+    body = "\n".join(text_chunks)
+    page = ParsedPage(
+        page_num=1,
+        text=body,
+        tables=tables,
+        metadata={
+            "source": "docx",
+            "paragraph_count": len(doc.paragraphs),
+            "table_count": len(doc.tables),
+        },
+    )
+    return ParsedDocument(
+        filename=filename,
+        total_pages=1,
+        pages=[page],
+        content_hash=content_hash,
+        parsed_at=datetime.now(UTC),
+        parser="python-docx",
+        metadata={"backend": "python-docx"},
+    )
+
+
 # ─────────────────────── parser registry wiring ───────────────────────
 # Module-level registrations so adding a new format becomes one line.
 # Re-imports stay idempotent because register_parser dedupes by ext.
@@ -603,6 +726,7 @@ register_parser("xlsx", _parse_with_openpyxl)
 # .xlsm is just a macro-enabled OOXML workbook — openpyxl reads it.
 register_parser("xlsm", _parse_with_openpyxl)
 register_parser("pptx", _parse_with_pptx)
+register_parser("docx", _parse_with_docx)
 
 
 __all__ = [

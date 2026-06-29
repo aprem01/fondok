@@ -38,6 +38,11 @@ dependencies = [
   "openpyxl>=3.1.2",
   "weasyprint>=63.0",
   "python-pptx>=1.0.0",
+  # Word documents (.docx) — Business Plans, HMA summaries, leases.
+  # Same Office Open XML container family as .pptx and .xlsx so it's
+  # a tiny pure-Python lib (Sam QA 2026-06-29: 2024 Business Plan +
+  # HMA Summary docs were failing as "unsupported file extension").
+  "python-docx>=1.1.0",
   # PDF parsing — PyMuPDF for text + pdfplumber for tables. LlamaParse
   # is optional; only used when ``LLAMA_CLOUD_API_KEY`` is set.
   "pymupdf>=1.24.0",

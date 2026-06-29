@@ -179,7 +179,7 @@ async def test_parse_xls_str_trend() -> None:
 
 @pytest.mark.asyncio
 async def test_parse_unsupported_extension_raises() -> None:
-    """Any extension other than pdf/xls/xlsx is a hard ParseError —
+    """Any extension other than the registered set is a hard ParseError —
     callers (the upload background task) catch this and mark the row
     PARSE_FAILED rather than silently dropping the file.
     """
@@ -187,6 +187,64 @@ async def test_parse_unsupported_extension_raises() -> None:
 
     with pytest.raises(ParseError, match="unsupported file extension"):
         await parse_document(b"some-bytes", "notes.txt")
+
+
+@pytest.mark.asyncio
+async def test_parse_docx_extracts_paragraphs_and_tables() -> None:
+    """Sam QA 2026-06-29: HMA Summary + Business Plan docs were
+    failing as 'unsupported file extension .docx'. python-docx now
+    handles them — paragraphs in document order, tables both as
+    structured grids AND folded into the text stream so the LLM
+    extractor sees them positionally.
+    """
+    pytest.importorskip("docx")
+    from io import BytesIO
+
+    from docx import Document  # type: ignore[import-untyped]
+
+    from app.extraction import parse_document
+
+    d = Document()
+    d.add_heading("Anglers HMA Summary", 0)
+    d.add_paragraph("Term: 25 years from 2018.")
+    t = d.add_table(rows=2, cols=2)
+    t.rows[0].cells[0].text = "Base fee"
+    t.rows[0].cells[1].text = "3.0% of gross"
+    t.rows[1].cells[0].text = "Incentive"
+    t.rows[1].cells[1].text = "15% of GOP"
+    buf = BytesIO()
+    d.save(buf)
+    body = buf.getvalue()
+
+    parsed = await parse_document(body, "hma.docx")
+
+    assert parsed.parser == "python-docx"
+    assert parsed.total_pages == 1
+    page = parsed.pages[0]
+    assert "Anglers HMA Summary" in page.text
+    assert "25 years" in page.text
+    # Table folded into text + preserved as structured grid.
+    assert "Base fee" in page.text
+    assert "3.0% of gross" in page.text
+    assert len(page.tables) == 1
+    table = page.tables[0]
+    assert ["Base fee", "3.0% of gross"] in table
+    assert ["Incentive", "15% of GOP"] in table
+    assert parsed.content_hash and len(parsed.content_hash) == 64
+
+
+@pytest.mark.asyncio
+async def test_parse_docx_corrupt_file_surfaces_clear_error() -> None:
+    """A non-OOXML payload uploaded as .docx must surface a clean
+    ParseError instead of crashing or hanging. (Sam QA: a couple of
+    staged .docx files were corrupted 'not a zip file' — the no-
+    silent-failures pass requires this to read as actionable.)
+    """
+    pytest.importorskip("docx")
+    from app.extraction import ParseError, parse_document
+
+    with pytest.raises(ParseError, match="python-docx failed to open"):
+        await parse_document(b"not a real docx", "broken.docx")
 
 
 def test_unknown_doc_type_falls_back_to_filename_hint() -> None:
