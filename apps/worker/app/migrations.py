@@ -727,6 +727,20 @@ MIGRATIONS: list[tuple[str, str]] = [
         "ALTER TABLE documents ADD COLUMN IF NOT EXISTS "
         "usali_deviations JSONB",
     ),
+    # Wave 4 USALI/Router v4 (Sam QA Bug #3 v4, June 28 2026) —
+    # structural-recognizer confidence. Persisted so the UI can show
+    # "this doc was recognized as a P&L with confidence X" alongside
+    # the user's tag and the Router's classification. NULL when the
+    # recognizer hasn't been run (legacy rows + non-P&L-family docs).
+    # Used by the Router fix to trust the user's T-12/PNL tag even
+    # when the LLM Router falls back to PROPERTY_INFO on a generic
+    # filename — provided the structural signal confirms a P&L
+    # shape.
+    (
+        "documents.add_structural_pnl_score",
+        "ALTER TABLE documents ADD COLUMN IF NOT EXISTS "
+        "structural_pnl_score DOUBLE PRECISION",
+    ),
     # ─────────────────── Wave 1 — Broker questions (#4) ───────────────
     # YoY variance-driven follow-ups for the seller broker. Produced by
     # the deterministic ``HistoricalVariance`` engine (NOT the LLM-
@@ -1380,6 +1394,12 @@ SQLITE_MIGRATIONS: list[tuple[str, str]] = [
     (
         "documents.add_usali_deviations",
         "ALTER TABLE documents ADD COLUMN usali_deviations TEXT",
+    ),
+    # Wave 4 v4 structural_pnl_score — see the Postgres migration of
+    # the same name for purpose. SQLite uses REAL for the float column.
+    (
+        "documents.add_structural_pnl_score",
+        "ALTER TABLE documents ADD COLUMN structural_pnl_score REAL",
     ),
     # ─────────────────── Wave 1 — Broker questions (#4) ───────────────
     # SQLite mirror of the Postgres broker_questions table. JSONB →

@@ -1373,8 +1373,47 @@ def flatten_extraction_fields(
     ``extra_context`` is merged in last and wins over extractor values
     when both are present — it carries deal-level fields like
     ``coastal``, ``keys`` from the deals row, ``purchase_price``, etc.
+
+    Sam QA Bug #3 v4 (June 28 2026) — structural recognizer pre-pass:
+    BEFORE the path-flattening + alias map + token resolver chain runs,
+    we ask the structural recognizer (``services/structural_recognizer``)
+    to walk the raw payload and surface every canonical USALI line item
+    it can find via regex-on-key-names at any nesting depth. The
+    recognizer's surfaced canonical values are written to the flat dict
+    under their canonical names (``rooms_revenue``, ``property_tax``,
+    ``gop``, …) before any other key. This is the v4 fix: the rule
+    catalog's formulas reference canonical names directly — once the
+    recognizer has populated them, the resolver chain becomes a
+    fallback, not the main load-bearing path. The v3 token resolver is
+    still wired in below to backstop any concept the structural
+    recognizer's pattern catalog hasn't memorialized yet (defensive).
     """
     flat: dict[str, Any] = {}
+
+    # ── v4 structural-recognizer pre-pass ──
+    #
+    # Pull every recognizable canonical line item out of the raw
+    # payload BEFORE the path-flattening pass. The recognizer doesn't
+    # care which namespace the LLM picked — it matches regex on key
+    # names at every depth — so even when the LLM ships a freshly
+    # invented namespace (e.g. ``hotel_revenues.rooms_segment.gross``)
+    # the canonical concept gets surfaced. Writing the canonical
+    # values FIRST means the rule catalog's formulas resolve
+    # immediately without going through the alias map / token
+    # resolver — the v3 chain becomes a backstop instead of the
+    # main load-bearing path. Import-locally so callers that skip
+    # ``flatten_extraction_fields`` don't pay the import cost.
+    try:
+        from .structural_recognizer import classify_structure
+
+        signals = classify_structure(fields)
+        for cname, cval in signals.canonical_values.items():
+            flat[cname] = cval
+    except Exception as exc:  # noqa: BLE001 - defensive
+        # Recognizer failure is never a gate — the v1/v2/v3 chain still
+        # runs below. Logged so a future schema change is observable.
+        logger.debug("usali_scorer: structural recognizer failed: %s", exc)
+
     for f in fields or []:
         if not isinstance(f, dict):
             continue
@@ -1384,6 +1423,11 @@ def flatten_extraction_fields(
         value = f.get("value")
         if value is None:
             continue
+        # Raw extractor paths (e.g. ``p_and_l_usali.rooms.revenue_usd``)
+        # are written under their literal name — the recognizer wrote
+        # under the canonical name (``rooms_revenue``), so the two don't
+        # collide. The dotted-path key is still needed for direct hits
+        # the alias map enumerates AND for the v3 token resolver.
         flat[name] = value
         # Also expose the last path component so a payload using
         # ``p_and_l_usali.revpar_usd`` becomes resolvable under
