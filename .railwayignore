@@ -33,4 +33,9 @@ apps/worker/.venv/
 .turbo/
 .vercel/
 docs/
-/evals/
+
+# evals/ INTENTIONALLY KEPT in the build context (was excluded prior
+# to 2026-06-29). The USALI rules catalog at
+# evals/golden-set/usali-rules.csv is loaded at runtime by
+# app.usali_rules.load_usali_rules() — without it every P&L scores
+# applicable=0 / inconclusive. Total evals/ footprint is ~280 KB.
