@@ -2640,6 +2640,108 @@ def _delta_dict(delta: YoYDelta) -> dict[str, Any]:
 # ─────────────────────────── download ───────────────────────────
 
 
+@router.delete(
+    "/{deal_id}/documents/{doc_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+)
+async def delete_document(
+    deal_id: UUID,
+    doc_id: UUID,
+    session: Annotated[AsyncSession, Depends(get_session)],
+    tenant_id: Annotated[UUID, Depends(get_tenant_id)],
+) -> Response:
+    """Hard-delete a single document and its derived artifacts.
+
+    Cascade:
+      * ``extraction_results`` rows for this doc (extracted fields,
+        confidence report, model-call manifest).
+      * Object-store blob (best-effort; storage errors are logged but
+        do not block DB deletion — we'd rather have an orphaned blob
+        than a stuck row).
+      * ``documents`` row itself.
+
+    Tenant-isolated: cross-tenant guesses return 404. Audit-logged so
+    a future review can answer "who deleted X?". Irreversible.
+    """
+    await _assert_deal_belongs_to_tenant(
+        session, deal_id=deal_id, tenant_id=tenant_id
+    )
+    doc_row = (
+        await session.execute(
+            text(
+                "SELECT id, filename, storage_key FROM documents "
+                "WHERE id = :id AND deal_id = :deal AND tenant_id = :tenant"
+            ),
+            {
+                "id": str(doc_id),
+                "deal": str(deal_id),
+                "tenant": str(tenant_id),
+            },
+        )
+    ).first()
+    if doc_row is None:
+        raise HTTPException(
+            status_code=404, detail=f"document {doc_id} not found"
+        )
+    storage_key = doc_row._mapping.get("storage_key")
+    filename = doc_row._mapping.get("filename")
+
+    # Order: extraction_results first (FK to documents), then the doc.
+    await session.execute(
+        text("DELETE FROM extraction_results WHERE document_id = :id"),
+        {"id": str(doc_id)},
+    )
+    await session.execute(
+        text(
+            "DELETE FROM documents "
+            "WHERE id = :id AND deal_id = :deal AND tenant_id = :tenant"
+        ),
+        {
+            "id": str(doc_id),
+            "deal": str(deal_id),
+            "tenant": str(tenant_id),
+        },
+    )
+
+    # Audit BEFORE commit so a crash still leaves the audit row.
+    try:
+        from ..audit import log_audit
+
+        await log_audit(
+            session,
+            tenant_id=str(tenant_id),
+            deal_id=str(deal_id),
+            actor_id=None,
+            action="document.deleted",
+            resource_type="document",
+            resource_id=str(doc_id),
+            metadata={"filename": filename, "storage_key": storage_key},
+        )
+    except Exception:
+        logger.exception("delete_document: audit log failed for doc=%s", doc_id)
+
+    await session.commit()
+
+    # Best-effort object-store cleanup. We don't roll back DB on
+    # storage failure — orphaned blobs are an ops nuisance, not a
+    # correctness bug.
+    if storage_key:
+        try:
+            from ..storage import get_store
+
+            store = get_store()
+            await asyncio.to_thread(store.delete, storage_key)
+        except Exception:
+            logger.exception(
+                "delete_document: storage delete failed for key=%s (doc=%s); "
+                "doc row already deleted, blob orphaned",
+                storage_key,
+                doc_id,
+            )
+
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
 @router.get("/{deal_id}/documents/{doc_id}/download")
 async def download_document(
     deal_id: UUID,

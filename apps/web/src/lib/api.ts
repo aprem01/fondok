@@ -941,6 +941,18 @@ export const api = {
         `/deals/${id}/comp-sales/exclude`,
         { transaction_id: transactionId },
       ),
+    /** Soft-archive a deal (DELETE /deals/{id}). Flips status to
+     *  ``Archived`` — recoverable via direct SQL. The Pipeline view
+     *  + Projects list both hide archived deals; the deal page still
+     *  loads if you have its UUID. */
+    archive: (id: string) =>
+      request<WorkerDeal>('DELETE', `/deals/${id}`),
+    /** HARD-delete a deal (DELETE /deals/{id}/hard). Cascades:
+     *  documents, extraction_results, broker_questions, broker_qa_pairs,
+     *  scenarios, engine_outputs. Object-store blobs are NOT deleted
+     *  (orphan-tolerant). Audit-logged at severity=warning. Irreversible. */
+    delete: (id: string) =>
+      request<void>('DELETE', `/deals/${id}/hard`),
   },
   documents: {
     list: (dealId: string, signal?: AbortSignal) =>
@@ -1027,6 +1039,13 @@ export const api = {
       const url = `${base}/deals/${dealId}/documents/${docId}/download`;
       return page && page > 0 ? `${url}#page=${page}` : url;
     },
+    /** Hard-delete one document. Cascades extraction_results + object-
+     *  store blob (best-effort on storage). Audit-logged. Irreversible. */
+    delete: (dealId: string, docId: string) =>
+      request<void>(
+        'DELETE',
+        `/deals/${dealId}/documents/${docId}`,
+      ),
   },
   engines: {
     /** Run all 8 engines in dependency order (background task on the worker). */

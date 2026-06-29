@@ -145,9 +145,7 @@ export default function ProjectDetailPage() {
   const onArchive = async () => {
     if (workerConnected && !isMockId) {
       try {
-        // No typed delete on api.deals yet — use the raw fetch path the
-        // worker exposes. Settings page does the same dance.
-        await fetch(`${workerUrl()}/deals/${rawId}`, { method: 'DELETE' });
+        await workerApi.deals.archive(rawId);
         toast('Project archived', { type: 'success' });
         router.push('/projects');
       } catch (err) {
@@ -160,12 +158,45 @@ export default function ProjectDetailPage() {
       });
     }
   };
+  const onDeleteForever = async () => {
+    if (!workerConnected || isMockId) {
+      toast('Delete available once worker is connected to this deal', {
+        type: 'info',
+      });
+      return;
+    }
+    // Two-step confirm: hard-delete cascades documents + extractions +
+    // broker_questions + scenarios + engine_outputs. No undo. We
+    // require the user to type the project name so a misclick or a
+    // missed kebab tap can't wipe a deal mid-IC.
+    const expected = (deal?.name || `deal ${rawId}`).trim();
+    const typed = window.prompt(
+      `Permanently delete "${expected}" and ALL its documents, ` +
+        'extractions, broker questions, scenarios, and engine runs?\n\n' +
+        `Type the project name to confirm:`,
+      '',
+    );
+    if (typed == null) return;
+    if (typed.trim() !== expected) {
+      toast('Project name did not match — delete cancelled', { type: 'info' });
+      return;
+    }
+    try {
+      await workerApi.deals.delete(rawId);
+      toast(`"${expected}" permanently deleted`, { type: 'success' });
+      router.push('/projects');
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      toast(`Delete failed: ${msg}`, { type: 'error' });
+    }
+  };
 
   const headerMenu = [
     { label: 'Export Excel', onSelect: onExportExcel },
     { label: 'Export IC Memo', onSelect: onExportMemo },
     { label: 'Mark as IC Ready', onSelect: onMarkICReady },
     { label: 'Archive Project', onSelect: onArchive, danger: true },
+    { label: 'Delete Forever…', onSelect: onDeleteForever, danger: true },
   ];
 
   // Build a unified Project-shaped record so the existing UI keeps working.

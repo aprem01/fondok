@@ -13,7 +13,7 @@ import KebabMenu from '@/components/ui/KebabMenu';
 import { projects as mockProjects, projectStatuses, Project } from '@/lib/mockData';
 import { cn } from '@/lib/format';
 import { useDeals } from '@/lib/hooks/useDeals';
-import { WorkerDeal, isWorkerConnected, workerUrl } from '@/lib/api';
+import { WorkerDeal, api, isWorkerConnected, workerUrl } from '@/lib/api';
 import { useToast } from '@/components/ui/Toast';
 import { IntroCard } from '@/components/help/IntroCard';
 import { MetricLabel } from '@/components/help/MetricLabel';
@@ -23,6 +23,7 @@ import { MetricLabel } from '@/components/help/MetricLabel';
 // names the export plus a Data Room nudge so the affordance still reads.
 const buildProjectMenu = (
   id: string,
+  name: string,
   isMock: boolean,
   toast: (m: string, opts?: { type?: 'success' | 'error' | 'info' }) => void,
   onArchived: () => void,
@@ -44,12 +45,36 @@ const buildProjectMenu = (
       return;
     }
     try {
-      const r = await fetch(`${workerUrl()}/deals/${id}`, { method: 'DELETE' });
-      if (!r.ok) throw new Error(`HTTP ${r.status}`);
+      await api.deals.archive(id);
       toast('Project archived', { type: 'success' });
       onArchived();
     } catch (err) {
       toast(`Archive failed: ${err instanceof Error ? err.message : String(err)}`, { type: 'error' });
+    }
+  };
+  const onDeleteForever = async () => {
+    if (!liveMode) {
+      toast('Delete available on worker-backed deals', { type: 'info' });
+      return;
+    }
+    const expected = (name || 'this project').trim();
+    const typed = window.prompt(
+      `Permanently delete "${expected}" and ALL its documents, ` +
+        'extractions, broker questions, scenarios, and engine runs?\n\n' +
+        'Type the project name to confirm:',
+      '',
+    );
+    if (typed == null) return;
+    if (typed.trim() !== expected) {
+      toast('Project name did not match — delete cancelled', { type: 'info' });
+      return;
+    }
+    try {
+      await api.deals.delete(id);
+      toast(`"${expected}" permanently deleted`, { type: 'success' });
+      onArchived();
+    } catch (err) {
+      toast(`Delete failed: ${err instanceof Error ? err.message : String(err)}`, { type: 'error' });
     }
   };
   return [
@@ -57,6 +82,7 @@ const buildProjectMenu = (
     { label: 'Export Excel', onSelect: onExport('excel') },
     { label: 'Export Memo', onSelect: onExport('memo.pdf') },
     { label: 'Archive', onSelect: onArchive, danger: true },
+    { label: 'Delete Forever…', onSelect: onDeleteForever, danger: true },
   ];
 };
 
@@ -406,7 +432,7 @@ export default function ProjectsPage() {
               <div className="text-[12px] tabular-nums w-14 text-right text-ink-700">{p.docs}</div>
               <div className="text-[11.5px] w-16 text-right text-ink-500">{p.updatedAt}</div>
               <div className="w-7 h-7 rounded-full bg-ink-300/30 flex items-center justify-center text-[10px] font-semibold">{p.assignee}</div>
-              <KebabMenu items={buildProjectMenu(p.id, p.isMock, toast, refresh)} />
+              <KebabMenu items={buildProjectMenu(p.id, p.name, p.isMock, toast, refresh)} />
             </Link>
           ))}
         </Card>

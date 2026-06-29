@@ -19,7 +19,7 @@ from typing import Annotated, Any, Literal
 from uuid import UUID, uuid4
 
 from fastapi import APIRouter, BackgroundTasks, Depends, Header, HTTPException, status
-from fastapi.responses import StreamingResponse
+from fastapi.responses import Response, StreamingResponse
 from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -908,6 +908,120 @@ async def update_deal(
     assert refreshed is not None  # we just updated it
     logger.info("deals.update: deal=%s changes=%s", deal_id, list(changes.keys()))
     return _row_to_record(dict(refreshed._mapping))
+
+
+@router.delete(
+    "/{deal_id}/hard",
+    status_code=status.HTTP_204_NO_CONTENT,
+)
+async def hard_delete_deal(
+    deal_id: UUID,
+    session: Annotated[AsyncSession, Depends(get_session)],
+    tenant_id: Annotated[UUID, Depends(get_tenant_id)],
+) -> Response:
+    """Hard-delete a deal and every related row. Irreversible.
+
+    Cascade order (FK-safest order — children before parents):
+      * broker_questions / broker_qa_pairs
+      * scenarios
+      * engine_outputs
+      * extraction_results (via documents)
+      * documents
+      * audit_log entries scoped to this deal
+      * deals row itself
+
+    Tenant-isolated: cross-tenant guesses 404. Audit-logged at the
+    tenant level (not deal — the deal_id stops existing mid-call)
+    so a future review can find "tenant X deleted deal Y at T".
+    """
+    tenant_id_str = str(tenant_id)
+    deal_id_str = str(deal_id)
+    existing = (
+        await session.execute(
+            text(
+                f"SELECT {_DEAL_COLUMNS} FROM deals "
+                "WHERE id = :id AND tenant_id = :tenant"
+            ),
+            {"id": deal_id_str, "tenant": tenant_id_str},
+        )
+    ).first()
+    if existing is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"deal {deal_id} not found",
+        )
+    deal_name = existing._mapping.get("name")
+
+    # Cascade. Each table either has FK ON DELETE CASCADE OR we
+    # delete explicitly. Doing it explicitly is safer — Postgres +
+    # SQLite agree on order without needing FK plumbing to be perfect.
+    cascade_sql = [
+        # Children of documents (extraction_results FK -> documents.id).
+        (
+            "DELETE FROM extraction_results "
+            "WHERE document_id IN ("
+            "  SELECT id FROM documents WHERE deal_id = :deal AND tenant_id = :tenant"
+            ")",
+            "extraction_results",
+        ),
+        # Direct-children of deal.
+        ("DELETE FROM broker_questions WHERE deal_id = :deal AND tenant_id = :tenant", "broker_questions"),
+        ("DELETE FROM broker_qa_pairs WHERE deal_id = :deal AND tenant_id = :tenant", "broker_qa_pairs"),
+        ("DELETE FROM scenarios WHERE deal_id = :deal AND tenant_id = :tenant", "scenarios"),
+        ("DELETE FROM engine_outputs WHERE deal_id = :deal AND tenant_id = :tenant", "engine_outputs"),
+        ("DELETE FROM documents WHERE deal_id = :deal AND tenant_id = :tenant", "documents"),
+        # audit_log: scoped narrowly to this deal so we don't delete
+        # tenant-wide audit history. Keep these even after deal delete
+        # for compliance forensics — but the original Wave 1 audit
+        # schema doesn't carry deal_id on every row, so this is a
+        # best-effort match on the deal_id column when present.
+        # NB: we KEEP audit entries that mention the deal_id in
+        # metadata/payload — those are usually scoped to actor/system
+        # actions and survive deletion for compliance.
+    ]
+
+    deleted_counts: dict[str, int] = {}
+    bind = {"deal": deal_id_str, "tenant": tenant_id_str}
+    for sql, label in cascade_sql:
+        result = await session.execute(text(sql), bind)
+        deleted_counts[label] = result.rowcount or 0
+
+    # The deal itself.
+    await session.execute(
+        text("DELETE FROM deals WHERE id = :id AND tenant_id = :tenant"),
+        {"id": deal_id_str, "tenant": tenant_id_str},
+    )
+    deleted_counts["deals"] = 1
+
+    # Audit BEFORE commit so a partial cascade still leaves a trail.
+    try:
+        from ..audit import log_audit
+
+        await log_audit(
+            session,
+            tenant_id=tenant_id_str,
+            deal_id=deal_id_str,
+            actor_id=None,
+            action="deal.hard_deleted",
+            resource_type="deal",
+            resource_id=deal_id_str,
+            severity="warning",
+            metadata={
+                "name": deal_name,
+                "cascade_counts": deleted_counts,
+            },
+        )
+    except Exception:
+        logger.exception(
+            "hard_delete_deal: audit log failed for deal=%s", deal_id
+        )
+
+    await session.commit()
+
+    from ..services.pipeline import invalidate as _pipeline_invalidate
+    _pipeline_invalidate(tenant_id)
+
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
 @router.delete("/{deal_id}", response_model=DealRecord)

@@ -996,7 +996,9 @@ export default function DataRoomTab({ projectId }: { projectId: number | string 
                 // Retry surfaces only on FAILED / PARSE_FAILED rows and
                 // re-fires parse + extract via the worker; the user
                 // doesn't have to re-upload (Sam QA: "no retry path
-                // when extraction fails"). Preview & Delete are stubs.
+                // when extraction fails"). Delete hard-removes the doc
+                // and its extraction_results row; engine outputs are
+                // left until the user re-runs. Preview is a stub.
                 const canRetry =
                   liveMode &&
                   (d.rawStatus === 'FAILED' || d.rawStatus === 'PARSE_FAILED');
@@ -1031,7 +1033,28 @@ export default function DataRoomTab({ projectId }: { projectId: number | string 
                   {
                     label: 'Delete',
                     danger: true,
-                    onSelect: () => toast('Document removal available on enterprise plans', { type: 'info' }),
+                    onSelect: async () => {
+                      if (!liveMode) {
+                        toast('Delete available on worker-backed deals', { type: 'info' });
+                        return;
+                      }
+                      const ok = window.confirm(
+                        `Permanently delete "${d.name}"?\n\n` +
+                          'This removes the file and its extraction results. ' +
+                          'Engine outputs that ran against this document remain ' +
+                          'until you re-run the underwriting.',
+                      );
+                      if (!ok) return;
+                      try {
+                        await api.documents.delete(rawId, d.id);
+                        toast(`"${d.name}" deleted`, { type: 'success' });
+                        if (selectedDoc === d.name) setSelectedDoc(null);
+                        refresh();
+                      } catch (err) {
+                        const msg = err instanceof Error ? err.message : String(err);
+                        toast(`Delete failed: ${msg}`, { type: 'error' });
+                      }
+                    },
                   },
                 ];
                 const usaliOpen = usaliAccordionOpen.has(d.id);
