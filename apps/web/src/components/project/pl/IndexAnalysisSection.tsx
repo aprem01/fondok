@@ -26,9 +26,15 @@ import { TrendingUp } from 'lucide-react';
 import { Card } from '@/components/ui/Card';
 import { Badge } from '@/components/ui/Badge';
 import { cn } from '@/lib/format';
-import { isWorkerConnected, workerUrl, EngineOutputsResponse } from '@/lib/api';
+import {
+  isWorkerConnected,
+  workerUrl,
+  EngineOutputsResponse,
+  HistoricalBaselineResponse,
+} from '@/lib/api';
 import { getEngineField, useEngineOutputs } from '@/lib/hooks/useEngineOutputs';
 import { useDeal } from '@/lib/hooks/useDeal';
+import { useHistoricalBaseline } from '@/lib/hooks/useHistoricalBaseline';
 import { kimptonAnglerOverview } from '@/lib/mockData';
 
 const HISTORICAL_YEARS = [2019, 2020, 2021, 2022, 2023, 2024];
@@ -78,11 +84,18 @@ function isLeapYear(y: number): boolean {
   return (y % 4 === 0 && y % 100 !== 0) || y % 400 === 0;
 }
 
-// Build the subject-property year series. Historical is sparse — we
-// only have the T-12 anchor (most recent historical year) on real
-// deals; demo fills earlier years from the Kimpton fixture.
+// Build the subject-property year series. Historical years pull from
+// the historical_baseline engine (multi-year P&L roll-up — Sam's Wave 2
+// P2.6 ask); forecast years pull from the revenue engine years[].
+//
+// The revenue engine only seeds from T-12 (most recent year), so without
+// the baseline blend the 2019-2023 historical columns would be blank
+// even when the Historicals tab is fully populated. Blending in the
+// baseline.years[] (keyed by fiscal_year) populates every historical
+// column the extractor actually shipped.
 function buildSubjectSeries(
   outputs: EngineOutputsResponse | null,
+  baseline: HistoricalBaselineResponse | null,
   isKimptonDemo: boolean,
 ): YearSeries {
   const series: YearSeries = {
@@ -115,16 +128,38 @@ function buildSubjectSeries(
     return series;
   }
 
+  // Historical years — pull from historical_baseline.years[] by matching
+  // fiscal_year to the column year. RevPAR falls back to occ × ADR when
+  // the baseline didn't ship it directly (same identity the engine uses).
+  if (baseline?.years && baseline.years.length > 0) {
+    const byYear = new Map<number, (typeof baseline.years)[number]>();
+    for (const y of baseline.years) byYear.set(y.fiscal_year, y);
+    HISTORICAL_YEARS.forEach((yr, i) => {
+      const row = byYear.get(yr);
+      if (!row) return;
+      series.occupancy[i] = row.occupancy;
+      series.adr[i] = row.adr;
+      series.revpar[i] =
+        row.revpar ??
+        (row.occupancy != null && row.adr != null
+          ? row.occupancy * row.adr
+          : null);
+    });
+  }
+
   // Live deal: revenue engine years[] starts at the post-T-12 stabilized
-  // year (treated as the most recent historical anchor here).
+  // year and projects forward. Use it for forecast columns only; the
+  // anchor (latest historical column) is left to the baseline above
+  // when present, otherwise revenue years[0] serves as the fallback
+  // anchor (preserves pre-baseline behavior for deals without P&L docs).
   const revYears = getEngineField<RevenueYear[]>(outputs, 'revenue', 'years');
   if (revYears && revYears.length > 0) {
-    // Place revYears[0] at the latest historical column (index 5),
-    // revYears[1..] at forecast columns.
     const anchorIdx = HISTORICAL_YEARS.length - 1;
-    series.occupancy[anchorIdx] = revYears[0].occupancy;
-    series.adr[anchorIdx] = revYears[0].adr;
-    series.revpar[anchorIdx] = revYears[0].revpar;
+    if (series.occupancy[anchorIdx] == null) {
+      series.occupancy[anchorIdx] = revYears[0].occupancy;
+      series.adr[anchorIdx] = revYears[0].adr;
+      series.revpar[anchorIdx] = revYears[0].revpar;
+    }
     for (let i = 1; i < revYears.length && i <= FORECAST_YEARS.length; i++) {
       const idx = anchorIdx + i;
       series.occupancy[idx] = revYears[i].occupancy;
@@ -437,6 +472,10 @@ export default function IndexAnalysisSection({
 }) {
   const { outputs } = useEngineOutputs(dealId);
   const { deal } = useDeal(dealId);
+  // Wave 2 P2.6 — multi-year historical baseline. Without it, the
+  // 2019-2023 historical columns would render blank because the
+  // revenue engine only seeds from T-12 (most recent year only).
+  const { baseline: historicalBaseline } = useHistoricalBaseline(dealId);
   const [marketData, setMarketData] = useState<MarketDataAPIResponse | null>(null);
   const [loading, setLoading] = useState(false);
 
@@ -467,8 +506,8 @@ export default function IndexAnalysisSection({
     : (deal?.keys && deal.keys > 0 ? deal.keys : 0);
 
   const subjectSeries = useMemo(
-    () => buildSubjectSeries(outputs, isKimptonDemo),
-    [outputs, isKimptonDemo],
+    () => buildSubjectSeries(outputs, historicalBaseline, isKimptonDemo),
+    [outputs, historicalBaseline, isKimptonDemo],
   );
   const compSeries = useMemo(
     () => buildCompSeries(marketData, isKimptonDemo),
