@@ -132,6 +132,39 @@ function num(field: ExtractionField | undefined): number | null {
 }
 
 /**
+ * ``true`` for monthly / page / quarterly / per-month slices that must
+ * never be matched as a period total.
+ *
+ * MUST stay in sync with ``_has_subordinate_namespace`` in
+ * ``apps/worker/app/services/usali_scorer.py`` — both layers see the
+ * same flat extraction payload and need to reject the same subordinate
+ * namespaces before annual-canonical lookups. If you add a new
+ * subordinate prefix on the worker side, mirror it here.
+ *
+ * Sam QA 2026-06-30 (deal b5f532ad…): the real prod T-12 ships
+ * ``p_and_l_usali.monthly.jan.rooms_revenue_usd`` (and 11 sibling
+ * months). ``findField`` matched the last dotted segment
+ * (``rooms_revenue_usd`` → unit-stripped ``rooms_revenue``), so the
+ * JANUARY value ($1,086) was shown as both 2023 and 2025 Rooms revenue
+ * across the Historicals tab. The worker resolver
+ * (``_token_match_candidates``) already filters subordinate namespaces
+ * out of its candidate pool; this is the matching frontend filter.
+ */
+function hasSubordinateNamespace(key: string): boolean {
+  const lowered = key.toLowerCase();
+  return (
+    lowered.includes('.monthly.') ||
+    lowered.includes('.page') ||
+    lowered.includes('.per_month.') ||
+    lowered.includes('.quarterly.') ||
+    lowered.includes('.q1.') ||
+    lowered.includes('.q2.') ||
+    lowered.includes('.q3.') ||
+    lowered.includes('.q4.')
+  );
+}
+
+/**
  * Match an extracted field by alias. The extractor emits fields under
  * dotted USALI paths (``p_and_l_usali.operating_revenue.rooms_revenue``)
  * and with unit suffixes (``adr_usd``, ``occupancy_pct``). The old
@@ -141,8 +174,15 @@ function num(field: ExtractionField | undefined): number | null {
  *
  * Matching strategy — for each field, try the full normalized name,
  * the last dotted segment, and both with the unit suffix stripped.
+ *
+ * Subordinate-namespace guard — fields under ``.monthly.`` / ``.page`` /
+ * ``.quarterly.`` / ``.q1.`` etc. are skipped BEFORE the alias match,
+ * because their tail segment looks identical to the annual canonical
+ * (``monthly.jan.rooms_revenue_usd`` → ``rooms_revenue``). See
+ * ``hasSubordinateNamespace`` and the matching worker helper
+ * ``_has_subordinate_namespace``.
  */
-function findField(fields: ExtractionField[], aliases: string[]): ExtractionField | undefined {
+export function findField(fields: ExtractionField[], aliases: string[]): ExtractionField | undefined {
   const norm = (s: string) => s.toLowerCase().replace(/[^a-z0-9]/g, '');
   const stripUnit = (s: string) => s.replace(/(usd|pct|percent|ratio|amount)$/i, '');
   const aSet = new Set<string>();
@@ -152,6 +192,9 @@ function findField(fields: ExtractionField[], aliases: string[]): ExtractionFiel
     aSet.add(stripUnit(n));
   }
   for (const f of fields) {
+    // Skip per-month / per-page / quarterly slices — their tail segment
+    // collides with the annual canonical (see ``hasSubordinateNamespace``).
+    if (hasSubordinateNamespace(f.field_name)) continue;
     const full = norm(f.field_name);
     const segs = f.field_name.split('.');
     const last = norm(segs[segs.length - 1] ?? '');
