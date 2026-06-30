@@ -628,6 +628,13 @@ export default function DataRoomTab({ projectId }: { projectId: number | string 
   const ALLOWED_DROP_EXTENSIONS = new Set([
     '.pdf', '.xls', '.xlsx', '.xlsm', '.csv', '.doc', '.docx',
   ]);
+  // Mirrors the worker's MAX_UPLOAD_MB default (apps/worker/app/config.py).
+  // Client-side check is purely a UX shortcut — the server is still the
+  // source of truth, so a tenant bumping MAX_UPLOAD_MB above 50 will
+  // still see the upload land (the toast just fires pre-flight at the
+  // old cap until the constant here is bumped to match).
+  const MAX_UPLOAD_MB = 50;
+  const MAX_UPLOAD_BYTES = MAX_UPLOAD_MB * 1024 * 1024;
   const handleUpload = async (files: File[]) => {
     if (files.length === 0) return;
     if (!liveMode) {
@@ -643,14 +650,22 @@ export default function DataRoomTab({ projectId }: { projectId: number | string 
     for (const f of files) {
       const dot = f.name.lastIndexOf('.');
       const ext = dot >= 0 ? f.name.slice(dot).toLowerCase() : '';
-      if (ALLOWED_DROP_EXTENSIONS.has(ext)) {
-        allowed.push(f);
-      } else {
+      if (!ALLOWED_DROP_EXTENSIONS.has(ext)) {
         toast(
           `${f.name}: unsupported file type — Fondok accepts PDF, Excel, CSV, Word.`,
           { type: 'error' },
         );
+        continue;
       }
+      if (f.size > MAX_UPLOAD_BYTES) {
+        const mb = (f.size / 1024 / 1024).toFixed(1);
+        toast(
+          `${f.name}: ${mb} MB exceeds the ${MAX_UPLOAD_MB} MB upload cap — compress the PDF or split the workbook.`,
+          { type: 'error' },
+        );
+        continue;
+      }
+      allowed.push(f);
     }
     if (allowed.length === 0) return;
     allowed.forEach((f) =>

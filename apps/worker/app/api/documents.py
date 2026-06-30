@@ -333,8 +333,20 @@ def _now() -> datetime:
 # the worker into a 60-second LlamaParse spiral that's guaranteed
 # to FAIL. Numbers are deliberately loose — the largest legit OM
 # Sam has shipped was 38 MB, biggest workbook 18 MB.
+#
+# Cap is env-overridable via ``MAX_UPLOAD_MB`` (default 50). Read
+# lazily so a test that bumps the setting via env or monkeypatch
+# takes effect without reloading the module.
 
-_MAX_UPLOAD_BYTES = 50 * 1024 * 1024  # 50 MB / file
+
+def _max_upload_bytes() -> int:
+    return get_settings().MAX_UPLOAD_MB * 1024 * 1024
+
+
+# Module-level alias preserved for tests + readability at the call
+# site. Computed at import — bumping the env after worker boot
+# requires a restart, which matches every other Settings field.
+_MAX_UPLOAD_BYTES = _max_upload_bytes()
 
 # Lower-cased file extensions Fondok accepts. PDF for OMs / reports,
 # Excel for P&Ls / room mixes, CSV for raw exports, Word for the
@@ -1108,13 +1120,14 @@ async def upload_documents(
             )
             continue
 
-        # Wave 1 size guard (B1). Reject >50 MB at the boundary so we
-        # don't burn LlamaParse credits + Sonnet tokens on a file that
-        # can never realistically be a hotel doc. Numbers are tuned to
-        # leave a comfortable 12 MB head-room above the largest legit
-        # OM Sam has shipped.
+        # Wave 1 size guard (B1). Reject oversize uploads at the boundary
+        # so we don't burn LlamaParse credits + Sonnet tokens on a file
+        # that can never realistically be a hotel doc. Cap is
+        # env-overridable via ``MAX_UPLOAD_MB`` (default 50, set in
+        # ``app/config.py``).
         if len(body) > _MAX_UPLOAD_BYTES:
             mb = len(body) / 1024 / 1024
+            cap_mb = _MAX_UPLOAD_BYTES // (1024 * 1024)
             records.append(
                 _failed_upload_record(
                     deal_id=deal_id,
@@ -1123,8 +1136,8 @@ async def upload_documents(
                     error_kind="too_large",
                     error_message=(
                         f"File is {mb:.1f} MB — Fondok accepts files up to "
-                        "50 MB. Compress the PDF or split the workbook and "
-                        "re-upload."
+                        f"{cap_mb} MB. Compress the PDF or split the workbook "
+                        "and re-upload."
                     ),
                 )
             )

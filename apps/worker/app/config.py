@@ -63,6 +63,16 @@ class Settings(BaseSettings):
     S3_KMS_KEY_ID: str | None = Field(default=None)
     S3_PREFIX: str = Field(default="fondok")
 
+    # ── Upload size cap (per file) ──────────────────────────────────
+    # Default 50 MB leaves comfortable head-room above the largest
+    # legit OM Sam has shipped (~38 MB) and the real 19.7 MB OM that
+    # blocked the Due Diligence tab in June 2026. Env-overridable so
+    # an enterprise tenant with bigger broker packets can bump it
+    # without a code change. S3 storage means no local-disk floor;
+    # the practical ceiling is LlamaParse + FastAPI in-memory body
+    # buffering — keep well under 200 MB until chunked upload lands.
+    MAX_UPLOAD_MB: int = Field(default=50, gt=0)
+
     # ── CORS ────────────────────────────────────────────────────────
     # Comma-separated origin list; default permissive for dev.
     CORS_ORIGINS: str = Field(default="*")
