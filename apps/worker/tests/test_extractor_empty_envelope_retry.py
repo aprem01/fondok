@@ -482,3 +482,196 @@ def test_extractor_max_retries_env_var_wires_through() -> None:
         clear=False,
     ):
         assert _resolve_max_retries("extractor", None) == 6
+
+
+# ─────────────────── Bug J — structural-contradiction fail-fast ──────
+
+
+def _make_doc_with_content(*, doc_type: Any, content: str) -> Any:
+    """Variant of ``_make_doc`` that lets tests pass arbitrary parsed
+    text — needed so the Bug J guard sees realistic STR markers."""
+    from app.agents.extractor import ExtractorDocument
+
+    return ExtractorDocument(
+        document_id="doc-bug-j-test",
+        filename="56387_str_trend_misrouted.xlsx",
+        doc_type=doc_type,
+        content=content,
+        source_pages=[1],
+    )
+
+
+def _str_trend_text() -> str:
+    """Representative parsed-text dump of an STR Trend / CoStar Excel
+    file. Hits ≥ 4 of ``_STR_TEXT_MARKERS`` and zero P&L markers, so
+    the fail-fast guard's STR-dominance check trips cleanly."""
+    return (
+        "Custom Trend Report — Sample Hotel\n"
+        "Source: Smith Travel Research / CoStar STR Trend Report\n"
+        "Tabs: By Measure / Classic / Day of Week / Response Report\n"
+        "Comp Set: 5 properties, total keys 712\n"
+        "Penetration Index — Occupancy Index, ADR Index, RevPAR Index\n"
+        "MPI: 108.5    ARI: 97.2    RGI: 105.4\n"
+        "Weekly Performance summary — Mon Tue Wed Thu Fri Sat Sun rollup.\n"
+    )
+
+
+async def test_extractor_skips_when_doc_type_contradicts_signals() -> None:
+    """The primary Bug J fail-fast contract: when the doc_type says
+    P&L (T12) but the parsed text is unambiguously STR Trend, the
+    extractor must NOT call the LLM. It returns a typed
+    ``structural_contradiction:`` error with ``success=False``, and
+    the in-band retry loop does NOT retry (the contradiction is
+    structural, retrying with the same wrong doc_type would just keep
+    failing the same way and burn the bumped retry budget).
+
+    Pre-fix shape Sam observed: T12 extractor on STR content hung in
+    EXTRACTING for ~6 minutes burning the full retry budget before
+    any error surfaced. Post-fix: failure within milliseconds.
+    """
+    from fondok_schemas import DocType
+
+    from app.agents import extractor
+
+    doc = _make_doc_with_content(
+        doc_type=DocType.T12,
+        content=_str_trend_text(),
+    )
+
+    call_count = {"n": 0}
+
+    async def fake_invoke(llm: Any, messages: Any, usage: Any = None) -> Any:
+        call_count["n"] += 1
+        return _envelope(fields=5)
+
+    with patch.object(extractor, "_invoke_llm", side_effect=fake_invoke):
+        with patch.object(extractor, "_build_llm", return_value=object()):
+            result, model_call = await extractor._extract_one(
+                doc,
+                deal_id="deal-bug-j-fail-fast",
+                system_blocks=["instructions"],
+            )
+
+    assert call_count["n"] == 0, (
+        f"fail-fast guard must skip the LLM entirely; got "
+        f"{call_count['n']} LLM call(s) — this is the regression that "
+        f"burned 6 minutes on Sam's 56387-…xlsx"
+    )
+    assert result.success is False
+    assert result.error is not None
+    assert result.error.startswith("structural_contradiction:"), (
+        f"expected typed structural_contradiction error; got {result.error!r}"
+    )
+    assert model_call is None
+    assert result.fields == []
+
+
+async def test_extractor_skips_for_all_pnl_doc_types_on_str_content() -> None:
+    """The guard's allowlist must cover every P&L lane the Router can
+    land on — PNL / PNL_MONTHLY / PNL_YTD as well as T12. If any one
+    lane bypassed the guard, the production bug would still fire on
+    the next non-T12 misrouting."""
+    from fondok_schemas import DocType
+
+    from app.agents import extractor
+
+    for dt in (DocType.T12, DocType.PNL, DocType.PNL_MONTHLY, DocType.PNL_YTD):
+        doc = _make_doc_with_content(doc_type=dt, content=_str_trend_text())
+
+        async def fake_invoke(llm: Any, messages: Any, usage: Any = None) -> Any:
+            raise AssertionError(
+                f"LLM must not be called for {dt.value!r} on STR content"
+            )
+
+        with patch.object(extractor, "_invoke_llm", side_effect=fake_invoke):
+            with patch.object(extractor, "_build_llm", return_value=object()):
+                result, _ = await extractor._extract_one(
+                    doc,
+                    deal_id=f"deal-bug-j-{dt.value}",
+                    system_blocks=["instructions"],
+                )
+
+        assert result.success is False, (
+            f"{dt.value} extractor on STR content must fail fast"
+        )
+        assert result.error and "structural_contradiction" in result.error
+
+
+async def test_extractor_runs_normally_on_om_content() -> None:
+    """The guard only fires for P&L doc_types — every other lane
+    (OM, STR_TREND itself, ROOM_MIX, …) must run the LLM as usual.
+    Otherwise a STR Trend file CORRECTLY routed as STR_TREND would
+    refuse to extract."""
+    from fondok_schemas import DocType
+
+    from app.agents import extractor
+
+    # Correctly routed STR_TREND doc with STR content — must NOT
+    # short-circuit, the doc is being extracted on its right lane.
+    doc = _make_doc_with_content(
+        doc_type=DocType.STR_TREND,
+        content=_str_trend_text(),
+    )
+
+    call_count = {"n": 0}
+
+    async def fake_invoke(llm: Any, messages: Any, usage: Any = None) -> Any:
+        call_count["n"] += 1
+        return _envelope(fields=7)
+
+    with patch.object(extractor, "_invoke_llm", side_effect=fake_invoke):
+        with patch.object(extractor, "_build_llm", return_value=object()):
+            with patch.object(
+                extractor, "_EMPTY_ENVELOPE_RETRY_DELAY_MIN_S", 0.0
+            ), patch.object(
+                extractor, "_EMPTY_ENVELOPE_RETRY_DELAY_MAX_S", 0.0
+            ):
+                result, _ = await extractor._extract_one(
+                    doc,
+                    deal_id="deal-bug-j-correctly-routed",
+                    system_blocks=["instructions"],
+                )
+
+    assert call_count["n"] == 1, "correctly routed STR_TREND must run LLM"
+    assert result.success is True
+
+
+async def test_extractor_does_not_skip_on_real_pnl_content() -> None:
+    """When the doc_type is T12 AND the content is a real P&L (no
+    STR markers, P&L vocab present), the guard must stay silent and
+    the extractor proceeds normally. This is the no-false-positives
+    contract — the regression risk is the guard mis-firing on a
+    legitimate P&L that happens to mention 'comp set' in a sidebar."""
+    from fondok_schemas import DocType
+
+    from app.agents import extractor
+
+    pnl_content = (
+        "Trailing 12 Months P&L Summary (USALI)\n"
+        "Rooms Revenue: $9,300,000\n"
+        "Food and Beverage Revenue: $1,200,000\n"
+        "Departmental Expenses, Undistributed Operating Expenses, GOP,\n"
+        "NOI, EBITDA, Property Tax $215,000, Management Fee $290,000,\n"
+        "FFE Reserve $300,000. (Cover page references comp set ADR once.)\n"
+    )
+    doc = _make_doc_with_content(doc_type=DocType.T12, content=pnl_content)
+
+    call_count = {"n": 0}
+
+    async def fake_invoke(llm: Any, messages: Any, usage: Any = None) -> Any:
+        call_count["n"] += 1
+        return _envelope(fields=12)
+
+    with patch.object(extractor, "_invoke_llm", side_effect=fake_invoke):
+        with patch.object(extractor, "_build_llm", return_value=object()):
+            result, _ = await extractor._extract_one(
+                doc,
+                deal_id="deal-bug-j-real-pnl",
+                system_blocks=["instructions"],
+            )
+
+    assert call_count["n"] == 1, (
+        "guard must not fire on a real P&L; single 'comp set' mention "
+        "in a cover-page narrative is well below the dominance threshold"
+    )
+    assert result.success is True

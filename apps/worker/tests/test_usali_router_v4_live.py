@@ -446,6 +446,259 @@ def test_router_property_info_override_respects_period_type():
     assert _refine_pnl_doc_type("T12", ytd_fields) == "PNL_YTD"
 
 
+# ─────────────────────── Bug J — Router T12 → STR_TREND override ────────
+
+
+def _synthetic_str_trend_fields() -> list[dict]:
+    """Hand-built STR Trend extraction shape (mirrors the str_trend.md
+    canonical paths). Used by the Bug J override tests so we don't
+    need a real prod fixture committed alongside this branch.
+
+    Field set covers the three signal families the recognizer keys on:
+      * Subject TTM Occ/ADR/RevPAR (``ttm_performance.subject.*``)
+      * Penetration indices MPI / ARI / RGI (``ttm_performance.indices.*``)
+      * Per-competitor compset rows (``ttm_performance.compset.<n>.*``)
+      * Comp-set rollup (``comp_set.comp_set_size``, ``comp_set.total_keys``)
+    """
+    fields: list[dict] = [
+        # Subject TTM rollup
+        {"field_name": "ttm_performance.subject.name", "value": "Sample Hotel"},
+        {"field_name": "ttm_performance.subject.occupancy_pct", "value": 0.72},
+        {"field_name": "ttm_performance.subject.adr_usd", "value": 215.5},
+        {"field_name": "ttm_performance.subject.revpar_usd", "value": 155.16},
+        # Penetration indices (the STR-exclusive vocabulary)
+        {"field_name": "ttm_performance.indices.mpi_occupancy_index", "value": 1.08},
+        {"field_name": "ttm_performance.indices.ari_adr_index", "value": 0.97},
+        {"field_name": "ttm_performance.indices.rgi_revpar_index", "value": 1.05},
+        # Comp-set rollup
+        {"field_name": "comp_set.comp_set_size", "value": 5},
+        {"field_name": "comp_set.total_keys", "value": 712},
+    ]
+    # Per-competitor rows (compset.1..5 with name + keys + Occ/ADR/RevPAR).
+    for n in range(1, 6):
+        fields.extend([
+            {"field_name": f"ttm_performance.compset.{n}.name", "value": f"Competitor {n}"},
+            {"field_name": f"ttm_performance.compset.{n}.keys", "value": 140 + n},
+            {"field_name": f"ttm_performance.compset.{n}.occupancy_pct", "value": 0.68 + 0.01 * n},
+            {"field_name": f"ttm_performance.compset.{n}.adr_usd", "value": 200.0 + 5 * n},
+            {"field_name": f"ttm_performance.compset.{n}.revpar_usd", "value": 140.0 + 4 * n},
+        ])
+    return fields
+
+
+def test_recognizer_classifies_str_trend_payload_as_str():
+    """The recognizer surfaces enough STR-canonical concepts on a
+    standard STR Trend payload to flip ``is_str`` and clear the
+    ``str_score`` threshold the override gates on."""
+    fields = _synthetic_str_trend_fields()
+    signals = classify_structure(fields)
+
+    assert signals.is_str is True, (
+        f"recognizer must flag STR on a standard STR Trend payload: "
+        f"reason={signals.reason}, str_keys={signals.str_keys_matched}"
+    )
+    assert signals.str_score >= 0.85, (
+        f"str_score={signals.str_score} below override threshold 0.85 "
+        f"(matched: {signals.str_keys_matched})"
+    )
+    # STR Trend is NOT a P&L — the reverse override's ``not is_pnl``
+    # belt-and-braces gate would refuse to fire if this changed.
+    assert signals.is_pnl is False, (
+        f"STR Trend payload incorrectly flagged is_pnl: {signals.reason}"
+    )
+    # The three STR-exclusive penetration indices must surface — they
+    # are the strongest single-marker signal the override leans on.
+    for marker in ("mpi_occupancy_index", "ari_adr_index", "rgi_revpar_index"):
+        assert marker in signals.str_keys_matched, (
+            f"penetration index {marker!r} should have matched on synthetic "
+            f"STR fixture; matched={signals.str_keys_matched}"
+        )
+
+
+def test_router_t12_override_promotes_to_str_trend():
+    """Bug J — Router said T12 on what's actually an STR Trend file
+    (the 56387-…xlsx misfire Sam caught 2026-06-30). The reverse
+    override flips doc_type to STR_TREND so the comp-set / Index
+    Analysis pipeline (which keys on STR / STR_TREND) sees the row,
+    and preserves the Router's original call on ``ai_proposed_doc_type``.
+    """
+    fields = _synthetic_str_trend_fields()
+    signals = classify_structure(fields)
+    assert signals.is_str is True
+    assert signals.str_score >= 0.85
+    assert signals.is_pnl is False
+
+    # Constants must stay in lock-step with documents.py — inline so
+    # any drift surfaces here.
+    FINANCIAL_ROUTER_LABELS = {"T12", "PNL", "PNL_MONTHLY", "PNL_YTD"}
+    STR_OVERRIDE_THRESHOLD = 0.85
+
+    router_call = "T12"  # the Sam prod misfire
+    assert router_call in FINANCIAL_ROUTER_LABELS
+
+    # Mirror the documents.py decision tree.
+    if (
+        router_call in FINANCIAL_ROUTER_LABELS
+        and signals.is_str
+        and signals.str_score >= STR_OVERRIDE_THRESHOLD
+        and not signals.is_pnl
+    ):
+        final_doc_type = "STR_TREND"
+        ai_proposed = router_call
+    else:
+        final_doc_type = router_call
+        ai_proposed = None
+
+    assert final_doc_type == "STR_TREND", (
+        "Override must promote T12 → STR_TREND so the comp-set / "
+        "Index Analysis pipeline (which filters STR / STR_TREND) "
+        "actually sees the row."
+    )
+    assert ai_proposed == "T12", (
+        "Router's original call must be preserved on ai_proposed_doc_type "
+        "so the misclassification banner can show what changed (Sam's "
+        "no-silent-rewrites rule)."
+    )
+
+
+def test_router_pnl_monthly_override_also_promotes_to_str_trend():
+    """The override allowlist covers all four P&L lanes, not just T12 —
+    Router can land on PNL_MONTHLY / PNL_YTD just as easily."""
+    fields = _synthetic_str_trend_fields()
+    signals = classify_structure(fields)
+
+    FINANCIAL_ROUTER_LABELS = {"T12", "PNL", "PNL_MONTHLY", "PNL_YTD"}
+    THRESHOLD = 0.85
+
+    for router_call in FINANCIAL_ROUTER_LABELS:
+        triggered = (
+            router_call in FINANCIAL_ROUTER_LABELS
+            and signals.is_str
+            and signals.str_score >= THRESHOLD
+            and not signals.is_pnl
+        )
+        assert triggered, (
+            f"Override should fire for router_call={router_call!r} on "
+            f"an STR Trend payload"
+        )
+
+
+def test_router_t12_on_real_pnl_is_not_overridden_to_str(t12_payload):
+    """Belt-and-braces: when the Router CORRECTLY classifies a real
+    P&L as T12, the reverse override must NOT fire. The ``is_str``
+    gate uses STR-exclusive vocabulary (MPI/ARI/RGI/compset rows)
+    that real P&L payloads don't carry, and the ``not is_pnl`` gate
+    blocks any pathological doc that somehow trips both."""
+    signals = classify_structure(t12_payload)
+    assert signals.is_pnl is True, "Sam's T-12 fixture must still be P&L"
+    assert signals.is_str is False, (
+        f"T-12 payload incorrectly flagged is_str=True — STR-vocab gates "
+        f"are not strict enough. matched={signals.str_keys_matched}, "
+        f"reason={signals.reason}"
+    )
+
+    FINANCIAL_ROUTER_LABELS = {"T12", "PNL", "PNL_MONTHLY", "PNL_YTD"}
+    router_call = "T12"
+    triggered = (
+        router_call in FINANCIAL_ROUTER_LABELS
+        and signals.is_str
+        and signals.str_score >= 0.85
+        and not signals.is_pnl
+    )
+    assert triggered is False, (
+        "Reverse override must NOT fire on a real T-12 — would clobber "
+        "the correct classification and route the file to STR_TREND "
+        "where it would extract zero comp-set rows."
+    )
+
+
+def test_router_om_is_not_overridden_to_str(om_payload):
+    """Mirror of the Bug H non-override test: the reverse override
+    only fires for Router calls in the FINANCIAL_ROUTER_LABELS set.
+    An OM stays OM regardless of structural signal."""
+    signals = classify_structure(om_payload)
+
+    FINANCIAL_ROUTER_LABELS = {"T12", "PNL", "PNL_MONTHLY", "PNL_YTD"}
+    router_call = "OM"
+    assert router_call not in FINANCIAL_ROUTER_LABELS
+
+    triggered = (
+        router_call in FINANCIAL_ROUTER_LABELS
+        and signals.is_str
+        and signals.str_score >= 0.85
+        and not signals.is_pnl
+    )
+    assert triggered is False
+
+
+# ─────────────────────── Bug J — text-level fail-fast guard ──────────────
+
+
+def test_text_level_str_detector_fires_on_costar_dump():
+    """The fail-fast guard's text-level sniff must light up on a
+    representative CoStar / STR Trend Excel text dump. This is the
+    sniff that runs BEFORE the LLM call so we can refuse to extract
+    when the doc was routed wrong — the post-``5507923`` retry budget
+    would otherwise burn ~6 minutes."""
+    from app.services.structural_recognizer import detect_text_signals
+
+    str_text = (
+        "Custom Trend Report — Sample Hotel\n"
+        "STR Trend / By Measure / Day of Week / Response Report\n"
+        "Comp Set: 5 properties (712 rooms)\n"
+        "MPI: 108.5    ARI: 97.2    RGI: 105.4\n"
+        "Penetration Index — Occupancy Index, ADR Index, RevPAR Index\n"
+        "Source: Smith Travel Research / CoStar\n"
+        "Weekly Performance summary and Day of Week breakdown.\n"
+    )
+
+    signals = detect_text_signals(str_text)
+    assert signals.looks_str is True, (
+        f"text-level STR sniff should fire on CoStar dump: "
+        f"str_hits={signals.str_marker_hits}, pnl_hits={signals.pnl_marker_hits}"
+    )
+    assert signals.str_marker_hits >= 4
+
+
+def test_text_level_str_detector_does_not_fire_on_pnl_dump():
+    """A real P&L's text dump must NOT trip the STR text sniff — the
+    P&L vocabulary count plus the STR-marker floor keep the guard
+    quiet on legitimate financial extractions."""
+    from app.services.structural_recognizer import detect_text_signals
+
+    pnl_text = (
+        "Trailing 12 Months P&L Summary (USALI)\n"
+        "Rooms Revenue: $9,300,000\n"
+        "Food and Beverage Revenue: $1,200,000\n"
+        "Departmental Expenses: $3,200,000\n"
+        "Undistributed Operating Expenses\n"
+        "Property Tax: $215,000\n"
+        "Management Fee: $290,000\n"
+        "Gross Operating Profit (GOP): $4,800,000\n"
+        "FFE Reserve: $300,000\n"
+        "NOI: $4,200,000  EBITDA: $4,500,000\n"
+        "Comp set average ADR cited in the cover page narrative for context.\n"
+    )
+
+    signals = detect_text_signals(pnl_text)
+    assert signals.looks_str is False, (
+        f"STR sniff incorrectly flagged a P&L dump: "
+        f"str_hits={signals.str_marker_hits}, pnl_hits={signals.pnl_marker_hits}, "
+        f"matched={signals.str_markers_matched}"
+    )
+
+
+def test_text_level_str_detector_handles_empty_input():
+    """Empty / non-string content returns a neutral signal — never
+    raises and never trips ``looks_str``."""
+    from app.services.structural_recognizer import detect_text_signals
+
+    for empty in ("", None):
+        signals = detect_text_signals(empty)  # type: ignore[arg-type]
+        assert signals.looks_str is False
+        assert signals.str_marker_hits == 0
+
+
 # ─────────────────────────── broker-question YoY guarantee ───────────────
 
 

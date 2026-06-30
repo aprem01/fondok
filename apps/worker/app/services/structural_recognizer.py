@@ -139,6 +139,27 @@ class StructuralSignals:
     canonical_values: dict[str, float] = field(default_factory=dict)
     reason: str = ""
 
+    # ── STR Trend / comp-set detection (Sam QA Bug J, June 30 2026) ──
+    # Mirror of the P&L gates: ``is_str`` is the recognizer's hard
+    # verdict that the payload is an STR / CoStar Trend report (subject
+    # + comp set + penetration indices), and ``str_score`` is the 0..1
+    # confidence (count of distinct STR-canonical concepts surfaced
+    # divided by the cap). Used by ``documents.py`` to flip a Router
+    # T12/PNL mis-classification onto the ``STR_TREND`` lane so the
+    # comp-set / Index Analysis pipeline (which keys on STR_TREND /
+    # STR) actually sees the row. The signal vocabulary is
+    # unmistakably STR:
+    #   * ``comp_set.*`` / ``compset.<n>.*`` (rollups + per-competitor)
+    #   * ``ttm_performance.subject.*`` (subject Occ/ADR/RevPAR)
+    #   * ``mpi_occupancy_index`` / ``ari_adr_index`` /
+    #     ``rgi_revpar_index`` (penetration indices — STR-only)
+    #   * ``weekly_performance.*`` / ``day_of_week.*`` (CoStar slice tabs)
+    # None of these credibly appear on a P&L payload, so a high
+    # ``str_score`` is a strong signal the Router got it wrong.
+    is_str: bool = False
+    str_score: float = 0.0
+    str_keys_matched: list[str] = field(default_factory=list)
+
 
 # ─────────────────────────── concept patterns ───────────────────────────
 
@@ -370,6 +391,124 @@ _CONCEPT_PATTERNS: tuple[_ConceptPattern, ...] = (
         required_all=(_re(r"\bebitda\b"),),
         forbidden_any=("yoy", "growth", "broker"),
         family="rollup",
+    ),
+)
+
+
+# ─────────────────────── STR / CoStar Trend concepts ───────────────────
+#
+# Sam QA Bug J (June 30 2026) — when the Router mis-routes an STR Trend
+# Excel file as ``T12`` (the mirror of Bug H), two downstream effects:
+#
+#   1. The doc never reaches the comp-set / Index Analysis pipeline,
+#      which keys on ``doc_type IN ('STR', 'STR_TREND')``.
+#   2. The T12 extractor runs against STR-shaped content, hangs in
+#      EXTRACTING for ~6 minutes burning the post-``5507923`` retry
+#      budget before any error surfaces (the LLM keeps trying to find
+#      P&L lines that aren't there).
+#
+# These patterns are the STR / CoStar Trend vocabulary the str_trend
+# extraction schema authoritatively defines (see
+# ``apps/worker/app/agents/extraction_schemas/str_trend.md``):
+# ``ttm_performance.subject.*`` (subject Occ/ADR/RevPAR + monthly
+# slices), ``ttm_performance.compset.<n>.*`` (per-competitor names +
+# rooms + Occ/ADR/RevPAR), ``ttm_performance.indices.*`` (penetration
+# indices), ``comp_set.comp_set_size`` / ``comp_set.total_keys``
+# (rollups), and the optional ``weekly_performance.*`` /
+# ``day_of_week.*`` slice tabs CoStar emits. None of these credibly
+# appear on a P&L payload, so the recognizer can use them to flip a
+# Router T12/PNL miscall onto the STR_TREND lane with high confidence.
+_STR_CONCEPT_PATTERNS: tuple[_ConceptPattern, ...] = (
+    # ── Penetration indices (subject vs comp set; STR-only vocab) ────
+    _ConceptPattern(
+        name="mpi_occupancy_index",
+        required_all=(_re(r"\b(mpi|occupancy_index)\b"),),
+        forbidden_any=(),
+        family="kpi",
+    ),
+    _ConceptPattern(
+        name="ari_adr_index",
+        required_all=(_re(r"\b(ari|adr_index)\b"),),
+        forbidden_any=(),
+        family="kpi",
+    ),
+    _ConceptPattern(
+        name="rgi_revpar_index",
+        required_all=(_re(r"\b(rgi|revpar_index)\b"),),
+        forbidden_any=(),
+        family="kpi",
+    ),
+    # ── Comp-set rollups ─────────────────────────────────────────────
+    _ConceptPattern(
+        name="comp_set_size",
+        required_all=(_re(r"\bcomp_?set\b"), _re(r"\bsize\b")),
+        forbidden_any=(),
+        family="meta",
+    ),
+    _ConceptPattern(
+        name="comp_set_total_keys",
+        required_all=(
+            _re(r"\bcomp_?set\b"),
+            _re(r"\b(total_)?(keys|rooms)\b"),
+        ),
+        forbidden_any=("revenue", "revenues", "income", "expense"),
+        family="meta",
+    ),
+    # ── Per-competitor rows (compset.1.*, compset.2.*, …) ────────────
+    # Matches paths like ``ttm_performance.compset.3.adr_usd`` or
+    # ``ttm_performance.compset.5.keys``. The numeric token discriminates
+    # this from the rollup ``comp_set.*`` shape.
+    _ConceptPattern(
+        name="compset_competitor_rows",
+        required_all=(_re(r"\bcompset\b"), _re(r"\b\d+\b")),
+        forbidden_any=(),
+        family="meta",
+    ),
+    # ── Subject TTM Occ/ADR/RevPAR (STR-shape signal — distinct from
+    # the same trio appearing inside an OM where it'd be a one-off
+    # underwriting input rather than a full ttm_performance tree.) ───
+    _ConceptPattern(
+        name="ttm_subject_occupancy",
+        required_all=(
+            _re(r"\bttm_performance\b"),
+            _re(r"\bsubject\b"),
+            _re(r"\b(occupancy|occ)\b"),
+        ),
+        forbidden_any=(),
+        family="kpi",
+    ),
+    _ConceptPattern(
+        name="ttm_subject_adr",
+        required_all=(
+            _re(r"\bttm_performance\b"),
+            _re(r"\bsubject\b"),
+            _re(r"\badr\b"),
+        ),
+        forbidden_any=(),
+        family="kpi",
+    ),
+    _ConceptPattern(
+        name="ttm_subject_revpar",
+        required_all=(
+            _re(r"\bttm_performance\b"),
+            _re(r"\bsubject\b"),
+            _re(r"\brevpar\b"),
+        ),
+        forbidden_any=(),
+        family="kpi",
+    ),
+    # ── CoStar slice tabs (weekly / day-of-week) — strong STR signal ──
+    _ConceptPattern(
+        name="weekly_performance",
+        required_all=(_re(r"\bweekly_performance\b"),),
+        forbidden_any=(),
+        family="meta",
+    ),
+    _ConceptPattern(
+        name="day_of_week_breakdown",
+        required_all=(_re(r"\bday_of_week\b"),),
+        forbidden_any=(),
+        family="meta",
     ),
 )
 
@@ -610,6 +749,37 @@ _MIN_DOLLAR_FIELDS = 15
 _MIN_DISTINCT_CANONICALS = 6
 
 
+# STR Trend / CoStar confidence thresholds (Sam QA Bug J).
+#
+# The STR vocabulary is narrower than P&L (a typical STR Trend report
+# carries ~3 indices + 5-7 compset rows + 3 subject TTM lines + maybe
+# weekly/day-of-week slices). Three distinct STR concepts is the floor
+# at which the recognizer is confident the payload is structurally
+# STR-shaped — that's roughly "all three indices" OR "indices + subject
+# TTM + compset rollup". A typical full STR Trend extraction surfaces
+# 6-9 of these concepts, comfortably above the threshold.
+_MIN_STR_DISTINCT_CANONICALS = 3
+
+
+# The "strong" STR markers — concept names from ``_STR_CONCEPT_PATTERNS``
+# that are essentially impossible to see on a P&L payload. At least one
+# of these must hit before ``is_str`` flips True; this prevents a stray
+# ``adr`` or ``revpar`` field on an OM from triggering an STR_TREND
+# override. The penetration indices (MPI/ARI/RGI) are STR-exclusive
+# vocabulary; ``compset_*`` and ``weekly_performance`` / ``day_of_week``
+# are CoStar Trend report shape signals.
+_STR_STRONG_MARKERS: tuple[str, ...] = (
+    "mpi_occupancy_index",
+    "ari_adr_index",
+    "rgi_revpar_index",
+    "comp_set_size",
+    "comp_set_total_keys",
+    "compset_competitor_rows",
+    "weekly_performance",
+    "day_of_week_breakdown",
+)
+
+
 def classify_structure(payload: Any) -> StructuralSignals:
     """Walk the extracted payload and emit structural signals.
 
@@ -705,6 +875,45 @@ def classify_structure(payload: Any) -> StructuralSignals:
         and enough_distinct
     )
 
+    # ── STR Trend / CoStar detection (Bug J) ────────────────────────
+    #
+    # Mirror of the P&L gates above, against the STR concept patterns.
+    # The recognizer runs the same tightest-match logic over the STR
+    # pattern set; subordinate-namespace filtering is intentionally
+    # the same (the monthly subject slices live under
+    # ``ttm_performance.subject.monthly.<YYYY_MM>.*`` which is a
+    # year/month-named subordinate path and gets filtered, but the
+    # TTM rollup + indices + compset rows all live at the
+    # non-subordinate root and surface cleanly).
+    str_keys_matched: list[str] = []
+    for pattern in _STR_CONCEPT_PATTERNS:
+        candidates = _candidate_paths_for(leaves, pattern)
+        if not candidates:
+            continue
+        best = _pick_tightest(candidates, pattern.name)
+        if best is None:
+            continue
+        if pattern.name in str_keys_matched:
+            continue
+        str_keys_matched.append(pattern.name)
+
+    str_distinct = len(str_keys_matched)
+    str_score = min(1.0, str_distinct / float(_MIN_STR_DISTINCT_CANONICALS))
+
+    # ``is_str`` requires ≥ 3 distinct STR concepts AND at least one of
+    # the "strong" markers (penetration index, compset row, or CoStar
+    # slice-tab signal). The strong-marker gate prevents a P&L that
+    # happens to mention ADR/RevPAR in a KPI sidebar from flipping to
+    # STR_TREND — those would surface ``ttm_subject_*`` but never
+    # ``mpi_*`` / ``compset_*`` / ``weekly_performance``.
+    has_strong_str_marker = any(
+        n in str_keys_matched for n in _STR_STRONG_MARKERS
+    )
+    is_str = bool(
+        str_distinct >= _MIN_STR_DISTINCT_CANONICALS
+        and has_strong_str_marker
+    )
+
     # Human-readable explanation. Walked through in the deviation log
     # so QA can debug recognizer misses without re-instrumenting code.
     parts: list[str] = []
@@ -715,6 +924,8 @@ def classify_structure(payload: Any) -> StructuralSignals:
     parts.append(f"rooms_rev={has_rooms_revenue}")
     parts.append(f"rollup={has_gop_or_noi or 'total_revenue' in canonical_values}")
     parts.append(f"is_pnl={is_pnl}")
+    parts.append(f"str_distinct={str_distinct}")
+    parts.append(f"is_str={is_str}")
     reason = ", ".join(parts)
 
     return StructuralSignals(
@@ -731,6 +942,9 @@ def classify_structure(payload: Any) -> StructuralSignals:
         canonical_keys_matched=canonical_keys_matched,
         canonical_values=canonical_values,
         reason=reason,
+        is_str=is_str,
+        str_score=str_score,
+        str_keys_matched=str_keys_matched,
     )
 
 
@@ -762,11 +976,146 @@ def canonical_payload_from_signals(
     return out
 
 
+# ─────────────────────── text-level STR sniff (Bug J) ─────────────────
+
+
+# Markers we look for in the RAW parsed text of an uploaded doc — used
+# by the extractor's fail-fast guard (it doesn't have an extracted
+# field tree yet, so the regex-on-key-name classifier above can't run).
+#
+# These are tokens that show up in the actual STR Trend Excel file
+# text (column headers, sheet labels, glossary footers, …) but
+# essentially never appear in a P&L's text dump. The threshold below
+# is intentionally high — only a clear majority of these markers
+# triggers the contradiction guard, so an OM that mentions "comp set"
+# in a single paragraph doesn't get flagged.
+_STR_TEXT_MARKERS: tuple[re.Pattern[str], ...] = (
+    re.compile(r"\bcomp[\s_-]?set\b", re.IGNORECASE),
+    re.compile(r"\bcompetitive[\s_-]?set\b", re.IGNORECASE),
+    re.compile(r"\bweekly[\s_-]?performance\b", re.IGNORECASE),
+    re.compile(r"\bday[\s_-]?of[\s_-]?week\b", re.IGNORECASE),
+    re.compile(r"\bmpi\b", re.IGNORECASE),
+    re.compile(r"\bari\b", re.IGNORECASE),
+    re.compile(r"\brgi\b", re.IGNORECASE),
+    re.compile(r"\bsmith[\s_-]?travel\b", re.IGNORECASE),
+    re.compile(r"\bcostar\b", re.IGNORECASE),
+    re.compile(r"\bstr[\s_-]?trend\b", re.IGNORECASE),
+    re.compile(r"\boccupancy[\s_-]?index\b", re.IGNORECASE),
+    re.compile(r"\badr[\s_-]?index\b", re.IGNORECASE),
+    re.compile(r"\brevpar[\s_-]?index\b", re.IGNORECASE),
+    re.compile(r"\bpenetration[\s_-]?index\b", re.IGNORECASE),
+    re.compile(r"\bby[\s_-]?measure\b", re.IGNORECASE),  # CoStar tab name
+    re.compile(r"\bclassic\b.*\btrend\b", re.IGNORECASE),  # CoStar tab name
+)
+
+
+# Tokens that, if abundant, suggest this is genuinely a P&L (so we should
+# NOT fail-fast even if a stray "comp set" mention appears). Two-stage
+# guard: STR markers count as STR signal AND P&L vocab counts AS P&L
+# signal — fail-fast only when STR signal dominates.
+_PNL_TEXT_MARKERS: tuple[re.Pattern[str], ...] = (
+    re.compile(r"\b(rooms?[\s_-]?(revenue|income))\b", re.IGNORECASE),
+    re.compile(r"\b(food[\s_-]?(and|&)[\s_-]?beverage|f&b)\b", re.IGNORECASE),
+    re.compile(r"\bdepartmental[\s_-]?(expense|profit)\b", re.IGNORECASE),
+    re.compile(r"\b(undistributed[\s_-]?operating[\s_-]?expense|operating[\s_-]?expense)\b", re.IGNORECASE),
+    re.compile(r"\bgross[\s_-]?operating[\s_-]?profit\b", re.IGNORECASE),
+    re.compile(r"\bgop\b", re.IGNORECASE),
+    re.compile(r"\bnoi\b", re.IGNORECASE),
+    re.compile(r"\bebitda\b", re.IGNORECASE),
+    re.compile(r"\bproperty[\s_-]?tax\b", re.IGNORECASE),
+    re.compile(r"\bmanagement[\s_-]?fee\b", re.IGNORECASE),
+    re.compile(r"\bffe[\s_-]?reserve\b", re.IGNORECASE),
+    re.compile(r"\busali\b", re.IGNORECASE),
+)
+
+
+# Minimum number of distinct STR text markers required before the
+# extractor fail-fast guard considers the doc "structurally STR-shaped".
+# 4 is conservative: a real STR Trend report's first sheet alone
+# (Custom Trend / By Measure) typically hits ≥ 8 of the markers above.
+_STR_TEXT_MIN_HITS = 4
+
+# Only fail-fast when STR markers OUTWEIGH P&L markers by at least 2x.
+# Belt-and-braces: a real P&L that happens to mention "comp set" once
+# in a single paragraph won't trigger the guard because the P&L vocab
+# would dominate.
+_STR_TEXT_VS_PNL_RATIO = 2.0
+
+
+@dataclass(frozen=True)
+class TextSignals:
+    """Lightweight text-level signal counts for the extractor's
+    fail-fast guard. Computed BEFORE the LLM call, so the classifier
+    above (which needs an extracted field tree) cannot be used.
+
+    Fields:
+        str_marker_hits: number of distinct STR markers matched in the
+            raw text (each pattern counts at most once even if it
+            appears many times).
+        pnl_marker_hits: number of distinct P&L markers matched.
+        looks_str: True when STR markers cross the floor AND outweigh
+            P&L markers by ``_STR_TEXT_VS_PNL_RATIO``.
+        str_markers_matched: ordered list of marker source patterns
+            (for the deviation log).
+    """
+
+    str_marker_hits: int
+    pnl_marker_hits: int
+    looks_str: bool
+    str_markers_matched: list[str] = field(default_factory=list)
+
+
+def detect_text_signals(content: str) -> TextSignals:
+    """Sniff raw extracted text for STR Trend / CoStar markers.
+
+    Used by the extractor's fail-fast guard (Bug J): when a doc has
+    been routed to T12 / PNL but the parsed text is unambiguously STR-
+    shaped, refuse to run the LLM and surface a typed
+    ``structural_contradiction`` failure within milliseconds rather than
+    burning the 6-minute extractor retry budget.
+
+    ``content`` is the same text the extractor will hand to the LLM
+    (post-parse, post-truncation). Empty / non-string input returns a
+    neutral ``TextSignals`` (``looks_str=False``).
+    """
+    if not isinstance(content, str) or not content:
+        return TextSignals(
+            str_marker_hits=0,
+            pnl_marker_hits=0,
+            looks_str=False,
+            str_markers_matched=[],
+        )
+
+    str_hits: list[str] = []
+    for rx in _STR_TEXT_MARKERS:
+        if rx.search(content):
+            str_hits.append(rx.pattern)
+
+    pnl_hits = sum(1 for rx in _PNL_TEXT_MARKERS if rx.search(content))
+
+    looks_str = (
+        len(str_hits) >= _STR_TEXT_MIN_HITS
+        and (
+            pnl_hits == 0
+            or (len(str_hits) / float(pnl_hits)) >= _STR_TEXT_VS_PNL_RATIO
+        )
+    )
+
+    return TextSignals(
+        str_marker_hits=len(str_hits),
+        pnl_marker_hits=pnl_hits,
+        looks_str=looks_str,
+        str_markers_matched=str_hits,
+    )
+
+
 # ─────────────────────────── exports ───────────────────────────────────
 
 
 __all__ = [
     "StructuralSignals",
+    "TextSignals",
     "classify_structure",
     "canonical_payload_from_signals",
+    "detect_text_signals",
 ]

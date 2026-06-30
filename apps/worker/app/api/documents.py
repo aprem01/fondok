@@ -3835,6 +3835,17 @@ ERROR_KIND_MESSAGES: dict[str, str] = {
         "The file couldn't be parsed (corrupt PDF, password-protected, "
         "or unsupported format). Re-upload or check the original file."
     ),
+    # Sam QA Bug J (2026-06-30) — the extractor refused to run because
+    # the routed doc_type contradicts the parsed content (e.g. routed
+    # as T12 but the text is unambiguously STR Trend / CoStar). The
+    # analyst's next step is to re-classify via the wizard and re-run.
+    "structural_contradiction": (
+        "The document was classified as a P&L but its content looks "
+        "like an STR Trend / CoStar comp-set report. Re-classify the "
+        "document type in the wizard (likely STR_TREND) and re-run "
+        "extraction — running the wrong extractor would have hung for "
+        "minutes without producing fields."
+    ),
     "other": "Extraction failed. Check the worker logs for details.",
 }
 
@@ -4042,7 +4053,27 @@ async def _run_extraction_pipeline_inner(
                     len(p.get("text", "") or "") for p in parsed_pages
                     if isinstance(p, dict)
                 )
-                if total_chars < 100:
+                # Bug J: surface the fail-fast structural-contradiction
+                # path with its own error_kind so the analyst gets a
+                # clear "re-classify this doc" CTA instead of the
+                # generic "use Retry" message that's wrong here
+                # (re-running with the same wrong doc_type would just
+                # hit the same fail-fast guard).
+                chunk_errors = (
+                    (confidence or {}).get("chunk_errors") or []
+                    if isinstance(confidence, dict) else []
+                )
+                contradiction_hit = any(
+                    isinstance(e, str)
+                    and e.startswith("structural_contradiction:")
+                    for e in chunk_errors
+                )
+                if contradiction_hit:
+                    kind = "structural_contradiction"
+                    friendly = ERROR_KIND_MESSAGES[
+                        "structural_contradiction"
+                    ]
+                elif total_chars < 100:
                     kind = "no_text"
                     friendly = (
                         "The parser couldn't extract any text from this "
@@ -4172,7 +4203,21 @@ async def _run_extraction_pipeline_inner(
                     "SURVEYS",
                     "ROOM_MIX",
                 }
+                # Sam QA Bug J (June 30 2026) — mirror of Bug H in the
+                # OPPOSITE direction. Router landed on a financial label
+                # (T12 / PNL*) but the structural recognizer says the
+                # payload is unmistakably STR Trend / CoStar (subject +
+                # comp set + MPI/ARI/RGI indices). Override the doc_type
+                # to STR_TREND so the comp-set / Index Analysis pipeline
+                # (which keys on ``doc_type IN ('STR', 'STR_TREND')``)
+                # actually sees the row. Without this the STR file
+                # silently sat as a T12 row and the Market tab showed
+                # "no comp-set data".
+                _FINANCIAL_ROUTER_LABELS = {
+                    "T12", "PNL", "PNL_MONTHLY", "PNL_YTD"
+                }
                 _STRUCTURAL_PNL_OVERRIDE_THRESHOLD = 0.85
+                _STRUCTURAL_STR_OVERRIDE_THRESHOLD = 0.85
 
                 router_overridden_original: str | None = None
                 router_call_for_override = (
@@ -4202,6 +4247,31 @@ async def _run_extraction_pipeline_inner(
                     )
                     refined_doc_type = overridden
                     classified_doc_type = overridden
+                elif (
+                    router_call_for_override in _FINANCIAL_ROUTER_LABELS
+                    and structural_signals.is_str
+                    and float(structural_signals.str_score)
+                    >= _STRUCTURAL_STR_OVERRIDE_THRESHOLD
+                    and not structural_signals.is_pnl
+                ):
+                    # Sam QA Bug J: STR Trend mis-classified as T12.
+                    # The ``not is_pnl`` guard belt-and-braces against a
+                    # pathological doc that somehow trips BOTH gates —
+                    # ambiguity stays on the Router's call rather than
+                    # the recognizer flipping it. In practice STR Trend
+                    # reports never satisfy ``is_pnl`` (no revenue +
+                    # expense + rollup) so this gate is decisive.
+                    router_overridden_original = router_call_for_override
+                    logger.info(
+                        "structural_recognizer overrode Router (Bug J): "
+                        "%s → STR_TREND (str_score=%.2f, %s) doc=%s",
+                        router_call_for_override,
+                        float(structural_signals.str_score),
+                        structural_signals.reason,
+                        doc_id,
+                    )
+                    refined_doc_type = "STR_TREND"
+                    classified_doc_type = "STR_TREND"
 
                 ai_proposed_doc_type = refined_doc_type or classified_doc_type
 
@@ -4623,6 +4693,14 @@ async def _run_graph_extraction(
     flattened field list + rolled-up confidence + agent version string
     + the Router's classified doc_type (so the caller can update the
     documents row when the LLM disagrees with the filename heuristic).
+
+    Sam QA Bug J (2026-06-30): per-chunk errors from the Extractor are
+    now surfaced on ``confidence["chunk_errors"]`` so the 0-fields
+    branch can distinguish the new ``structural_contradiction`` failure
+    (typed prefix in the chunk error message) from the generic
+    ``empty_envelope`` shape. Without this surface the contradiction
+    would be reported as a generic empty envelope and the analyst
+    would have no signal that the doc just needs re-classification.
     """
     from fondok_schemas import DocType
 
@@ -4716,8 +4794,17 @@ async def _run_graph_extraction(
     # header repeated across pages). Dedup by field_name, keeping the
     # highest-confidence instance.
     by_name: dict[str, dict[str, Any]] = {}
+    # Bug J: collect per-chunk errors so the 0-fields branch downstream
+    # can identify ``structural_contradiction`` failures (the fail-fast
+    # guard's typed error string) and surface the right error_kind on
+    # the documents row.
+    chunk_errors: list[str] = []
     for doc in extractor_out.extracted_documents or []:
         as_dict = doc.model_dump() if hasattr(doc, "model_dump") else dict(doc)
+        if not as_dict.get("success", True):
+            err = as_dict.get("error")
+            if err:
+                chunk_errors.append(str(err))
         for f in as_dict.get("fields", []) or []:
             fd = dict(f) if not isinstance(f, dict) else f
             name = fd.get("field_name")
@@ -4750,6 +4837,10 @@ async def _run_graph_extraction(
         "by_field": by_field_conf,
         "low_confidence_fields": low_conf,
         "requires_human_review": overall_conf < 0.85 or not fields,
+        # Bug J: surfaced so the 0-fields branch can pattern-match the
+        # typed ``structural_contradiction:`` prefix and pick a
+        # specific error_kind. Empty list when every chunk succeeded.
+        "chunk_errors": chunk_errors,
     }
 
     return fields, confidence, f"router:{route};extractor", doc_type

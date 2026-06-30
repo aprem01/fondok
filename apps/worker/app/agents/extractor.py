@@ -820,6 +820,71 @@ def _salvage_envelope_from_raw(raw_msg: Any) -> _ExtractorEnvelope | None:
 # ─────────────────────── per-document runner ───────────────────────
 
 
+_FINANCIAL_DOC_TYPES_FOR_GUARD: frozenset[str] = frozenset(
+    {"T12", "PNL", "PNL_MONTHLY", "PNL_YTD"}
+)
+
+
+def _structural_contradiction_check(
+    doc: ExtractorDocument,
+) -> str | None:
+    """Sam QA Bug J (2026-06-30) — fail-fast guard against running the
+    wrong extractor against contradicting content.
+
+    Symptom: an STR Trend Excel file was Router-classified as ``T12``.
+    The T12 extractor then ran against STR-shaped text (no P&L lines
+    to find), and after commit ``5507923`` bumped the extractor retry
+    budget the doc hung in EXTRACTING for ~6 minutes burning the full
+    SDK retry budget before any error surfaced. Pre-``5507923`` it
+    would have failed fast.
+
+    This check is the floor: when the doc is being extracted as a P&L
+    (``T12`` / ``PNL`` / ``PNL_MONTHLY`` / ``PNL_YTD``) AND the parsed
+    text is unambiguously STR-shaped (4+ distinct STR markers, STR
+    vocab outweighs P&L vocab ≥ 2x), refuse to run the LLM and return
+    a typed ``structural_contradiction`` error string immediately. The
+    docs pipeline will surface this as a FAILED row with a clear
+    explanation, and the analyst can re-classify the doc as STR_TREND
+    and re-run extraction in seconds rather than waiting 6 minutes for
+    the retry budget to exhaust.
+
+    Returns ``None`` when no contradiction is detected (extractor
+    should proceed normally). Returns a human-readable error message
+    when the guard fires; caller short-circuits the LLM call and marks
+    the result FAILED with ``error_kind='structural_contradiction'``.
+    """
+    if doc.doc_type is None:
+        return None
+    doc_type_value = (
+        doc.doc_type.value
+        if hasattr(doc.doc_type, "value")
+        else str(doc.doc_type)
+    ).upper()
+    if doc_type_value not in _FINANCIAL_DOC_TYPES_FOR_GUARD:
+        return None
+
+    # Lazy import — keeps the module import graph cycle-free and only
+    # pays the regex-compile cost the first time a P&L extraction runs.
+    from ..services.structural_recognizer import detect_text_signals
+
+    signals = detect_text_signals(doc.content)
+    if not signals.looks_str:
+        return None
+
+    return (
+        "structural_contradiction: doc_type=%s but parsed text is "
+        "unambiguously STR Trend / CoStar (str_markers=%d, "
+        "pnl_markers=%d, matched=%s). Re-classify as STR_TREND and "
+        "re-run extraction; running the P&L extractor against STR "
+        "content burns the retry budget without producing fields."
+    ) % (
+        doc_type_value,
+        signals.str_marker_hits,
+        signals.pnl_marker_hits,
+        ", ".join(signals.str_markers_matched[:5]),
+    )
+
+
 async def _attempt_extract(
     doc: ExtractorDocument,
     *,
@@ -838,6 +903,40 @@ async def _attempt_extract(
     the in-band retry loop without duplicating the result-building
     bookkeeping.
     """
+    # Sam QA Bug J — fail-fast guard. Cheap regex sniff on the parsed
+    # text BEFORE any LLM call: if we're being asked to extract a P&L
+    # from content that's unambiguously STR Trend, return a typed
+    # failure with ``retry_eligible=False`` so the post-``5507923``
+    # retry budget doesn't burn ~6 minutes searching for P&L lines
+    # that aren't there.
+    contradiction_msg = _structural_contradiction_check(doc)
+    if contradiction_msg is not None:
+        logger.warning(
+            "extractor: fail-fast structural contradiction for %s "
+            "(doc_type=%s) — %s",
+            doc.filename,
+            doc.doc_type,
+            contradiction_msg,
+        )
+        result = ExtractedDocumentResult(
+            document_id=doc.document_id,
+            filename=doc.filename,
+            doc_type=doc.doc_type,
+            fields=[],
+            confidence=ConfidenceReport(
+                overall=0.0,
+                low_confidence_fields=[],
+                requires_human_review=True,
+            ),
+            notes=None,
+            success=False,
+            error=contradiction_msg,
+        )
+        # Not retry-eligible: the contradiction is structural, retrying
+        # the same content with the same wrong doc_type will keep
+        # failing the same way. The analyst needs to re-classify.
+        return result, None, False
+
     started = datetime.now(UTC)
 
     from ..llm import cached_system_message_blocks
