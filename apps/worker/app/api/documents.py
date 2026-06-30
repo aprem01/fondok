@@ -4068,11 +4068,40 @@ async def _run_extraction_pipeline_inner(
                     and e.startswith("structural_contradiction:")
                     for e in chunk_errors
                 )
+                # Sam QA 2026-06-30: when the Anthropic API key is
+                # invalid/expired/revoked, every LLM call returns 401
+                # and (after retries also 401) the extractor accepts
+                # failure → 0 fields. Without this check we surface the
+                # generic empty_envelope message which reads as "the
+                # extractor returned no fields" — invisible that the
+                # real problem is auth. Surface auth as its own
+                # error_kind so the ops fix is obvious.
+                auth_hit = any(
+                    isinstance(e, str)
+                    and (
+                        "401" in e
+                        or "invalid x-api-key" in e
+                        or "authentication_error" in e
+                        or "AuthenticationError" in e
+                    )
+                    for e in chunk_errors
+                )
                 if contradiction_hit:
                     kind = "structural_contradiction"
                     friendly = ERROR_KIND_MESSAGES[
                         "structural_contradiction"
                     ]
+                elif auth_hit:
+                    kind = "auth"
+                    friendly = (
+                        "Anthropic API key rejected (HTTP 401). The "
+                        "extractor LLM couldn't authenticate, so no "
+                        "fields could be extracted. Rotate the "
+                        "ANTHROPIC_API_KEY environment variable on the "
+                        "worker (Railway → Variables) and hit Retry on "
+                        "this document — the raw bytes are still in S3 "
+                        "and re-extraction will pick them up cleanly."
+                    )
                 elif total_chars < 100:
                     kind = "no_text"
                     friendly = (
