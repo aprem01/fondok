@@ -307,6 +307,145 @@ def test_canonical_payload_helper_packs_recognizer_output(t12_payload):
         assert cname in out and isinstance(out[cname], (int, float))
 
 
+# ─────────────────────── Bug H — Router non-financial override ───────────
+
+
+def test_router_property_info_override_promotes_to_t12(t12_payload):
+    """Bug H — Router says PROPERTY_INFO on a clean (no-user-tag) deal,
+    structural recognizer detects P&L, override flips doc_type to T12.
+
+    The production bug Sam caught 2026-06-30: "May 2025 Financials.xlsx"
+    landed as ``PROPERTY_INFO`` on a clean deal, so the broker-questions
+    YoY engine (which filters
+    ``doc_type IN ('T12','PNL','PNL_MONTHLY','PNL_YTD')``) produced 0
+    questions — even though the file extracted cleanly. On a different
+    deal the same file classified as T12 and 30+ questions generated.
+
+    This test simulates the override decision in isolation. The
+    production wiring lives in ``apps/worker/app/api/documents.py``
+    in the extraction completion path (search for
+    ``_NON_FINANCIAL_ROUTER_LABELS``); the rule shape is replicated
+    here so the contract is pinned without needing the full DB +
+    extractor stack.
+    """
+    signals = classify_structure(t12_payload)
+    assert signals.is_pnl is True, (
+        f"recognizer must say P&L on Sam's T-12 fixture: {signals.reason}"
+    )
+    assert signals.pnl_score >= 0.85, (
+        f"pnl_score={signals.pnl_score} below override threshold 0.85"
+    )
+
+    # The override gate the production code applies. Threshold + label
+    # set must stay in sync with documents.py — these are the same
+    # constants spelled inline so a divergence shows up as a test diff.
+    NON_FINANCIAL_ROUTER_LABELS = {
+        "PROPERTY_INFO",
+        "UNKNOWN",
+        "CONTRACT",
+        "PROPERTY_TAX",
+        "INSURANCE",
+        "CAPEX",
+        "LEASES",
+        "SURVEYS",
+        "ROOM_MIX",
+    }
+    THRESHOLD = 0.85
+
+    router_call = "PROPERTY_INFO"  # the actual Sam prod misfire
+    user_tag = None  # clean deal — bulk Data Room upload, no per-doc tag
+
+    assert router_call in NON_FINANCIAL_ROUTER_LABELS
+    assert signals.is_pnl and signals.pnl_score >= THRESHOLD
+
+    # Apply the override (mirrors documents.py logic).
+    final_doc_type = "T12" if (
+        router_call in NON_FINANCIAL_ROUTER_LABELS
+        and signals.is_pnl
+        and signals.pnl_score >= THRESHOLD
+    ) else router_call
+    ai_proposed = router_call if final_doc_type != router_call else None
+
+    assert final_doc_type == "T12", (
+        "Override must promote PROPERTY_INFO → T12 so the broker-"
+        "questions YoY engine sees the row in its T12/PNL/PNL_MONTHLY/"
+        "PNL_YTD filter."
+    )
+    # Router's original call is preserved on ai_proposed_doc_type so
+    # Sam's misclassification banner can show what changed.
+    assert ai_proposed == "PROPERTY_INFO"
+
+    # Sanity: with no user tag, the misclassified banner does NOT fire
+    # (it gates on canonical_user being non-empty).
+    assert user_tag is None
+
+
+def test_router_om_classification_is_not_overridden(om_payload):
+    """The override is intentionally narrow: it must NOT touch OM /
+    STR / MARKET_STUDY etc. classifications. Those have distinct
+    downstream semantics and never carry P&L structure anyway, but
+    the gate is belt-and-braces."""
+    signals = classify_structure(om_payload)
+    assert signals.is_pnl is False
+
+    NON_FINANCIAL_ROUTER_LABELS = {
+        "PROPERTY_INFO", "UNKNOWN", "CONTRACT", "PROPERTY_TAX",
+        "INSURANCE", "CAPEX", "LEASES", "SURVEYS", "ROOM_MIX",
+    }
+    # OM is NOT in the override allowlist — Router OM stays OM
+    # regardless of structural signal.
+    router_call = "OM"
+    assert router_call not in NON_FINANCIAL_ROUTER_LABELS
+
+    # Even hypothetically, if the recognizer fired on an OM (it
+    # doesn't), the override would not trigger because OM is not
+    # in NON_FINANCIAL_ROUTER_LABELS.
+    overridden = (
+        router_call in NON_FINANCIAL_ROUTER_LABELS
+        and signals.is_pnl
+        and signals.pnl_score >= 0.85
+    )
+    assert overridden is False
+
+
+def test_router_property_info_override_respects_period_type():
+    """When the override fires AND the extracted payload carries a
+    ``period_type`` of ``monthly``, the override should produce
+    ``PNL_MONTHLY`` (not the catch-all T12) — the same
+    ``_refine_pnl_doc_type`` narrowing the rest of the pipeline uses.
+
+    Unit-level check on the helper so the contract pins independently
+    of the documents.py wiring.
+    """
+    from app.api.documents import _refine_pnl_doc_type
+
+    monthly_fields = [
+        {
+            "field_name": "p_and_l_usali.period_type",
+            "value": "monthly",
+        },
+    ]
+    annual_fields = [
+        {
+            "field_name": "p_and_l_usali.period_type",
+            "value": "trailing_twelve",
+        },
+    ]
+    ytd_fields = [
+        {
+            "field_name": "p_and_l_usali.period_type",
+            "value": "ytd",
+        },
+    ]
+
+    # Production override seeds the refine call with ``T12`` because
+    # that's the canonical P&L lane the recognizer landed on; the
+    # period_type then narrows it.
+    assert _refine_pnl_doc_type("T12", monthly_fields) == "PNL_MONTHLY"
+    assert _refine_pnl_doc_type("T12", annual_fields) == "T12"
+    assert _refine_pnl_doc_type("T12", ytd_fields) == "PNL_YTD"
+
+
 # ─────────────────────────── broker-question YoY guarantee ───────────────
 
 

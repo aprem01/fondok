@@ -4111,6 +4111,98 @@ async def _run_extraction_pipeline_inner(
                 refined_doc_type = _refine_pnl_doc_type(
                     classified_doc_type, fields
                 )
+
+                # Sam QA Bug H (June 30 2026) — structural override for
+                # Router non-financial misfires.
+                #
+                # Symptom Sam caught on a CLEAN deal (no user tag):
+                # "May 2025 Financials.xlsx" → Router classified as
+                # PROPERTY_INFO. Without a ``T12``-typed row, the broker-
+                # questions YoY engine produces ZERO questions (its SQL
+                # filters ``doc_type IN ('T12','PNL','PNL_MONTHLY',
+                # 'PNL_YTD')``) — even though the file extracts cleanly.
+                # On a different deal the same file classified as T12 and
+                # 30+ broker questions generated. Pure Router non-
+                # determinism.
+                #
+                # The existing v4 block below handles the misclassified-
+                # banner case (analyst tagged correctly, Router was
+                # wrong) AND the inverse (analyst tagged a P&L as
+                # PROPERTY_INFO). Neither branch fires when there is NO
+                # user tag (bulk Data Room upload) because both gate on
+                # ``canonical_user`` being non-empty. This override
+                # patches that gap: when the Router lands on a known
+                # non-financial label AND the structural recognizer is
+                # confident the payload IS a P&L, rewrite the doc_type
+                # to T12/PNL/PNL_MONTHLY/PNL_YTD so downstream engines
+                # see the row.
+                #
+                # Scope is intentionally narrow (Option B):
+                #   * Router said one of NON_FINANCIAL_ROUTER_LABELS —
+                #     OM, STR_*, MARKET_STUDY, PORTFOLIO_PNL, etc. all
+                #     have distinct downstream semantics and STAY put.
+                #   * structural_signals.is_pnl must be True (the
+                #     recognizer's combined gate: revenue + expense +
+                #     rollup + dollar-field count + ≥ 6 distinct
+                #     canonical concepts).
+                #   * pnl_score ≥ 0.85 floor (belt-and-braces; is_pnl
+                #     implies score = 1.0 today but the threshold pins
+                #     the contract if the recognizer's gates ever
+                #     soften).
+                #
+                # Router's original call is preserved on
+                # ``ai_proposed_doc_type`` so Sam's misclassification
+                # banner can render "Router thought PROPERTY_INFO, we
+                # overrode to T12" — no silent rewrites.
+                from ..services.structural_recognizer import (
+                    classify_structure,
+                )
+
+                structural_signals = classify_structure(fields)
+                structural_pnl_score = float(structural_signals.pnl_score)
+
+                _NON_FINANCIAL_ROUTER_LABELS = {
+                    "PROPERTY_INFO",
+                    "UNKNOWN",
+                    "CONTRACT",
+                    "PROPERTY_TAX",
+                    "INSURANCE",
+                    "CAPEX",
+                    "LEASES",
+                    "SURVEYS",
+                    "ROOM_MIX",
+                }
+                _STRUCTURAL_PNL_OVERRIDE_THRESHOLD = 0.85
+
+                router_overridden_original: str | None = None
+                router_call_for_override = (
+                    (refined_doc_type or classified_doc_type or "")
+                    .upper()
+                    .strip()
+                )
+                if (
+                    router_call_for_override in _NON_FINANCIAL_ROUTER_LABELS
+                    and structural_signals.is_pnl
+                    and structural_pnl_score
+                    >= _STRUCTURAL_PNL_OVERRIDE_THRESHOLD
+                ):
+                    # Re-run the period-type narrowing against the
+                    # structural override so a single-month upload lands
+                    # as PNL_MONTHLY rather than the catch-all T12.
+                    overridden = _refine_pnl_doc_type("T12", fields) or "T12"
+                    router_overridden_original = router_call_for_override
+                    logger.info(
+                        "structural_recognizer overrode Router: %s → %s "
+                        "(signal=%.2f, %s) doc=%s",
+                        router_call_for_override,
+                        overridden,
+                        structural_pnl_score,
+                        structural_signals.reason,
+                        doc_id,
+                    )
+                    refined_doc_type = overridden
+                    classified_doc_type = overridden
+
                 ai_proposed_doc_type = refined_doc_type or classified_doc_type
 
                 # Misclassification rule (Wave 1 #1): when the analyst
@@ -4164,13 +4256,11 @@ async def _run_extraction_pipeline_inner(
                 #    flow). Could be a thin P&L the recognizer didn't
                 #    pick up; safer to preserve the user's intent than
                 #    to surprise them with a banner.
-                from ..services.structural_recognizer import (
-                    classify_structure,
-                )
-
-                structural_signals = classify_structure(fields)
-                structural_pnl_score = float(structural_signals.pnl_score)
-
+                #
+                # NOTE: ``structural_signals`` / ``structural_pnl_score``
+                # are computed once above (the Bug H override block) and
+                # reused here — the recognizer is deterministic over a
+                # given payload so a second call would just duplicate work.
                 _PNL_TAG_CANONICALS = {"T12", "PNL", "PNLMONTHLY", "PNLYTD"}
                 user_tag_is_pnl = canonical_user in _PNL_TAG_CANONICALS
 
@@ -4296,11 +4386,19 @@ async def _run_extraction_pipeline_inner(
                     # No conflict — clear the AI proposal column so a
                     # PREVIOUSLY-misclassified row that's been re-run
                     # doesn't leave a stale value behind.
+                    #
+                    # Bug H exception: when the structural recognizer
+                    # overrode the Router's non-financial classification
+                    # to a P&L lane, preserve the Router's ORIGINAL call
+                    # on ``ai_proposed_doc_type`` so Sam's banner can
+                    # surface "Router said PROPERTY_INFO, we overrode
+                    # to T12" — silent rewrites are explicitly not
+                    # acceptable per the locked product decision.
                     await session.execute(
                         text(
                             "UPDATE documents SET status = :s, doc_type = :dt, "
                             "misclassified = :m, "
-                            "ai_proposed_doc_type = NULL, "
+                            "ai_proposed_doc_type = :apdt, "
                             "year_mismatch = :ym, "
                             "extracted_period_year = :epy, "
                             "structural_pnl_score = :sps WHERE id = :id"
@@ -4309,6 +4407,7 @@ async def _run_extraction_pipeline_inner(
                             "s": DOC_STATUS_EXTRACTED,
                             "dt": refined_doc_type,
                             "m": False,
+                            "apdt": router_overridden_original,
                             "ym": bool(year_mismatch_flag),
                             "epy": extracted_period_year,
                             "sps": structural_pnl_score,
