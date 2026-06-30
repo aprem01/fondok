@@ -730,9 +730,17 @@ export class TimeoutError extends Error {
 // kickoff legitimately take longer.
 const DEFAULT_TIMEOUT_GET_MS = 20_000;
 const DEFAULT_TIMEOUT_WRITE_MS = 60_000;
+// File uploads need much more headroom than other writes — the body
+// transmission itself takes real time on residential/office upload
+// speeds. Sam QA 2026-06-30: the 19.7 MB OM uploads in 2.2s on a
+// fast pipe but would silently abort at 60s on a 2-Mbps connection
+// (~80s transmission). 5 min covers a 50 MB upload on a 1.5 Mbps
+// link with headroom, while still failing fast enough that a
+// genuinely stuck server doesn't make the analyst wait forever.
+const DEFAULT_TIMEOUT_UPLOAD_MS = 300_000;
 
 function _defaultTimeoutFor(method: string, hasFormData: boolean): number {
-  if (hasFormData) return DEFAULT_TIMEOUT_WRITE_MS;
+  if (hasFormData) return DEFAULT_TIMEOUT_UPLOAD_MS;
   return method === 'GET' ? DEFAULT_TIMEOUT_GET_MS : DEFAULT_TIMEOUT_WRITE_MS;
 }
 
