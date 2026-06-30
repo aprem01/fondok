@@ -261,3 +261,128 @@ def test_finding_dataclass_round_trips() -> None:
     y2 = _row(2025, fb_revenue=800_000.0)  # -20%
     findings = detect_yoy_variances([y1, y2])
     assert all(isinstance(f, YoYVarianceFinding) for f in findings)
+
+
+def test_dict_valued_gop_is_skipped_not_coerced_to_zero() -> None:
+    """Sam QA 2026-06-29 (batch B, GOP-zero canary).
+
+    The 2022 P&L extraction landed ``p_and_l_usali.gop`` as a NESTED
+    OBJECT (``{gop_margin: 0.30, monthly: {apr_2022: {gop: 0}, ...}}``)
+    instead of a scalar. The engine used to fall through to ``return
+    None`` on dict via the coercer's catch-all, which was fine for THIS
+    layout — but a scorer fallback that returned the dict at a different
+    key could still leak. We now reject structured payloads explicitly
+    BEFORE coercing, both in the alias-walk loop and in the scorer
+    fallback, so a dict-year is skipped (no GOP key in the normalized
+    output for that year) — never silently zero-filled.
+
+    Without this guard the variance engine would emit
+    "GOP $4.85M → $0 (-100%)" — a bogus broker question that
+    Sam flagged on his 2026-06-25 call.
+    """
+    # 2021: clean scalar GOP via the dot-flattened USALI path.
+    y2021 = {
+        "year": 2021,
+        "p_and_l_usali.gross_operating_profit_usd": 4_850_000.0,
+        "rooms_revenue": 5_000_000.0,
+    }
+    # 2022: GOP arrived as a nested object — exactly the shape Sam's
+    # bad extraction shipped. ``gop_margin`` is a ratio, not a $ amount;
+    # ``monthly`` is a per-month dict that's irrelevant for the YoY
+    # rollup. Engine must NOT coerce this into a scalar.
+    y2022 = {
+        "year": 2022,
+        "p_and_l_usali.gop": {
+            "gop_margin": 0.30,
+            "monthly": {"apr_2022": {"gop": 0}, "may_2022": {"gop": 0}},
+        },
+        "rooms_revenue": 5_000_000.0,
+    }
+    findings = detect_yoy_variances([y2021, y2022])
+
+    # The headline assertion: no bogus GOP finding for the 2021↔2022 pair.
+    gop_findings = [f for f in findings if f.line_item == "gop"]
+    assert gop_findings == [], (
+        "GOP-zero canary: the engine emitted a bogus finding for a "
+        f"dict-valued 2022 GOP — got {gop_findings!r}"
+    )
+
+
+def test_dict_valued_at_bare_canonical_is_skipped() -> None:
+    """Sister case to ``test_dict_valued_gop_is_skipped_not_coerced_to_zero``
+    — the dict lands on the BARE canonical key (``gop``) rather than
+    the dotted USALI path. Same coerce-or-skip contract: skip the year.
+    """
+    y2023 = _row(2023)
+    y2024 = {
+        "year": 2024,
+        # The extractor occasionally shoves a nested object straight
+        # onto the bare canonical when it tried to "normalize" the
+        # source workbook's GOP block.
+        "gop": {"gop_margin": 0.32, "monthly": {}},
+        "rooms_revenue": 5_000_000.0,
+    }
+    findings = detect_yoy_variances([y2023, y2024])
+    gop_findings = [f for f in findings if f.line_item == "gop"]
+    assert gop_findings == [], (
+        f"dict at bare 'gop' must be skipped — got {gop_findings!r}"
+    )
+
+
+def test_list_and_nonparseable_string_are_skipped() -> None:
+    """``_coerce_value`` and ``_normalize_pnl`` both reject list/tuple/set
+    and strings that don't parse as a number. The engine should never
+    emit a finding from any of these — they're all "data quality, skip"
+    not "the line went to zero".
+    """
+    y1 = _row(2024)
+    # Pile of garbage shapes on the 2025 row's GOP slot.
+    for bad in ([1, 2, 3], (1, 2), {1, 2}, "not a number", "$$"):
+        y2 = _row(2025)
+        y2["gop"] = bad  # type: ignore[assignment]
+        findings = detect_yoy_variances([y1, y2])
+        gop_findings = [f for f in findings if f.line_item == "gop"]
+        assert gop_findings == [], (
+            f"bad gop value {bad!r} must be skipped — got {gop_findings!r}"
+        )
+
+
+def test_nan_and_inf_values_are_skipped() -> None:
+    """NaN / ±inf are numerically coercible (``float('nan')`` returns
+    nan) but propagate into a nonsense variance. The coercer rejects
+    non-finite values so the engine never emits ``inf% YoY`` findings.
+    """
+    y1 = _row(2024)
+    for bad in (float("nan"), float("inf"), float("-inf")):
+        y2 = _row(2025)
+        y2["gop"] = bad
+        findings = detect_yoy_variances([y1, y2])
+        gop_findings = [f for f in findings if f.line_item == "gop"]
+        assert gop_findings == [], (
+            f"non-finite gop value {bad!r} must be skipped — got {gop_findings!r}"
+        )
+
+
+def test_scalar_year_still_emits_finding_alongside_dict_year() -> None:
+    """When ONE year has the bad nested-dict GOP and the next has a
+    clean scalar, the dict-year is dropped from the GOP key but its
+    OTHER line items (e.g. ``rooms_revenue``) still participate in the
+    next-year pairing. Coerce-or-skip is per-line, not per-year.
+    """
+    y1 = _row(2023)
+    y2 = {
+        "year": 2024,
+        # GOP arrives as junk dict → skipped for the GOP key only.
+        "gop": {"gop_margin": 0.30},
+        # Rooms revenue still scalar → still in play.
+        "rooms_revenue": 6_000_000.0,  # +20% vs y1's 5M baseline
+    }
+    y3 = _row(2025, rooms_revenue=6_000_000.0)  # flat vs y2
+
+    findings = detect_yoy_variances([y1, y2, y3])
+    rooms_findings = [f for f in findings if f.line_item == "rooms_revenue"]
+    # 2023→2024 rooms swing trips the 10% threshold; 2024→2025 doesn't.
+    assert len(rooms_findings) == 1
+    assert rooms_findings[0].period_key == "2023_vs_2024"
+    # And no GOP finding leaks from the dict-year side.
+    assert [f for f in findings if f.line_item == "gop"] == []

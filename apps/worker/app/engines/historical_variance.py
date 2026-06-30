@@ -40,9 +40,13 @@ Question text template (Eshan's framing, productized)
 
 from __future__ import annotations
 
+import logging
+import math
 import re
 from dataclasses import dataclass
 from typing import Any
+
+logger = logging.getLogger(__name__)
 
 # ──────────────────────────── thresholds ─────────────────────────────
 
@@ -223,22 +227,43 @@ def _extract_year(pnl: dict[str, Any]) -> int | None:
 def _coerce_value(raw: Any) -> float | None:
     """Best-effort numeric coercion. Returns ``None`` on garbage so the
     engine cleanly skips a missing/non-numeric line rather than raise.
+
+    Sam QA 2026-06-29 (GOP-zero canary, batch B): some extractions store
+    a USALI line as a NESTED OBJECT (e.g. ``p_and_l_usali.gop`` →
+    ``{gop_margin: 0.30, monthly: {...}}``) instead of a scalar. The
+    earlier implementation fell through to ``return None`` on dict/list
+    via the catch-all tail; we now reject them up front + log so an
+    operator can see we declined to coerce. Same coerce-or-skip contract
+    commit 273c908 codified on historical_baseline._coerce_num — anything
+    not numerically meaningful is dropped, never silently zero-filled.
+
+    Also rejects NaN / ±inf — the engine would otherwise propagate them
+    into a YoY variance and emit a nonsense ``-inf%`` finding.
     """
     if raw is None:
         return None
     if isinstance(raw, bool):  # bool is a subclass of int — skip
         return None
+    # Coerce-or-skip guard: never try to numerify a structured payload.
+    # The extractor sometimes ships a USALI line as a nested object (e.g.
+    # ``gop`` → ``{gop_margin, monthly, ...}``). Falling through to a
+    # ``float(...)`` attempt would either raise or, worse, sum a list to
+    # the wrong magnitude. Explicit reject keeps the contract obvious.
+    if isinstance(raw, (dict, list, tuple, set)):
+        return None
     if isinstance(raw, (int, float)):
-        return float(raw)
+        f = float(raw)
+        return f if math.isfinite(f) else None
     if isinstance(raw, str):
         cleaned = raw.replace(",", "").replace("$", "").strip()
         # Parenthesized negatives — accountants love these.
         if cleaned.startswith("(") and cleaned.endswith(")"):
             cleaned = "-" + cleaned[1:-1]
         try:
-            return float(cleaned)
+            f = float(cleaned)
         except ValueError:
             return None
+        return f if math.isfinite(f) else None
     return None
 
 
@@ -289,6 +314,22 @@ def _normalize_pnl(pnl: dict[str, Any]) -> dict[str, float]:
         canonical = _canonicalize(str(raw_key))
         if canonical is None:
             continue
+        # Coerce-or-skip (Sam QA 2026-06-29, batch B): the extractor
+        # occasionally lands a USALI line as a nested object — Sam's
+        # 2022 deal stored ``p_and_l_usali.gop`` as
+        # ``{gop_margin: 0.30, monthly: {apr_2022: {gop: 0}, ...}}``
+        # instead of a scalar. Coercing that to 0 produced the bogus
+        # "GOP $4.85M → $0 (-100%)" broker question. Reject structured
+        # payloads explicitly (BEFORE calling _coerce_value) so a future
+        # numeric extension to the coercer can't accidentally start
+        # summing list values.
+        if isinstance(raw_val, (dict, list, tuple, set)):
+            logger.debug(
+                "historical_variance/_normalize_pnl: skipping %r — "
+                "value is %s, not a scalar (line_item=%s)",
+                raw_key, type(raw_val).__name__, canonical,
+            )
+            continue
         coerced = _coerce_value(raw_val)
         if coerced is None:
             continue
@@ -318,6 +359,17 @@ def _normalize_pnl(pnl: dict[str, Any]) -> dict[str, float]:
         if engine_canonical in out:
             continue
         v = _scorer_resolve(pnl, scorer_canonical)
+        # Same coerce-or-skip guard on the scorer-resolved value. The v3
+        # token resolver returns the raw value from the matched key, so
+        # a nested-object payload pointed at the canonical name (e.g.
+        # ``p_and_l_usali.gop`` carrying a dict) would land here too.
+        if isinstance(v, (dict, list, tuple, set)):
+            logger.debug(
+                "historical_variance/_normalize_pnl: scorer-resolved %s "
+                "is %s, not a scalar — skipping",
+                scorer_canonical, type(v).__name__,
+            )
+            continue
         coerced = _coerce_value(v)
         if coerced is not None:
             out[engine_canonical] = coerced
