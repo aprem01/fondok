@@ -4769,6 +4769,45 @@ async def _run_graph_extraction(
         doc_type = pre_router_str_override
         route = "extract-pre-router-structural-override"
         router_out = None
+        # UX: also persist the override to the documents row NOW so the
+        # data-room shows the correct doc_type during the ~minutes-long
+        # extraction window. Without this the column would keep
+        # displaying whatever filename-hint label was written at upload
+        # time (typically the misclassified one) until extraction
+        # completes and the success-state UPDATE rewrites doc_type.
+        # Sam QA 2026-06-30: he saw the STR row "stuck as T12 EXTRACTING"
+        # and concluded J failed — actually J had pinned STR_TREND in
+        # memory but the column wouldn't reflect that until extraction
+        # finished ~3 min later (verified via "extraction complete:
+        # doc=X fields=730 doc_type=STR_TREND" log).
+        try:
+            from sqlalchemy import text as _sa_text
+            from ..database import get_session_factory
+
+            _Session = get_session_factory()
+            async with _Session() as _early_sess:
+                await _early_sess.execute(
+                    _sa_text(
+                        "UPDATE documents "
+                        "   SET doc_type = :dt, "
+                        "       ai_proposed_doc_type = COALESCE(ai_proposed_doc_type, doc_type) "
+                        " WHERE id = :id AND tenant_id = :tenant"
+                    ),
+                    {
+                        "dt": pre_router_str_override,
+                        "id": doc_id,
+                        "tenant": tenant_id,
+                    },
+                )
+                await _early_sess.commit()
+        except Exception as exc:
+            logger.warning(
+                "pre-router override: failed to persist early doc_type "
+                "update for doc=%s (%s); column will still update at "
+                "success-state UPDATE",
+                doc_id,
+                exc,
+            )
     else:
         router_input = RouterInput(
             tenant_id=tenant_id,
