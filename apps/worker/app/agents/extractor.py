@@ -209,7 +209,17 @@ include:
          where ``<dow>`` is one of ``mon``, ``tue``, ``wed``, ``thu``,
          ``fri``, ``sat``, ``sun``.
        * Each named competitor (number them ``1`` … ``7`` in the order
-         they appear in the report):
+         they appear in the report). The authoritative roster lives on
+         the **Response** tab (Tab 22 — Response Report). That sheet
+         carries a "Monthly Data" or "Segmentation Data" block whose
+         columns are ``STR#``, ``Name``, ``City, State``, ``Zip``,
+         ``Phone``, ``Rooms``. The first row (matching the subject
+         property's STR#) is the subject — skip it for the compset.
+         Every other row is one named competitor: extract its ``Name``
+         and ``Rooms`` count. Without these per-property ``keys`` the
+         downstream Available-Rooms math collapses to zero, so prefer
+         the Response tab over any cleaner-looking summary that omits
+         room counts.
            ``ttm_performance.compset.<n>.name``,
            ``ttm_performance.compset.<n>.keys``,
            ``ttm_performance.compset.<n>.occupancy_pct``,

@@ -57,6 +57,13 @@ interface CbreYear {
   revpar_usd: number | null;
   revpar_growth_pct: number | null;
 }
+interface CompSetEntryAPI {
+  name?: string | null;
+  keys?: number | null;
+  occupancy_pct?: number | null;
+  adr_usd?: number | null;
+  revpar_usd?: number | null;
+}
 interface MarketDataAPIResponse {
   deal_id: string;
   str_trend?: {
@@ -65,6 +72,9 @@ interface MarketDataAPIResponse {
     subject_revpar_usd?: number | null;
     indices?: unknown;
     report_month?: string | null;
+    comp_set_size?: number | null;
+    total_keys?: number | null;
+    compset?: CompSetEntryAPI[];
   } | null;
   cbre_horizons?: {
     submarket?: string | null;
@@ -514,11 +524,28 @@ export default function IndexAnalysisSection({
     [marketData, isKimptonDemo],
   );
 
-  // Comp-set "keys" row uses the total comp-set room count (subject inclusive)
-  // when STR carries it; demo and unknown fall back to a representative value.
+  // Comp-set "keys" row uses the total comp-set room count.
+  //
+  // Source priority for live deals:
+  //   1. `str_trend.total_keys` — extracted from the STR Trend
+  //      "Response" tab roster (or summed from `compset[i].keys` when
+  //      the rollup row was missing — see _build_str_trend_block).
+  //   2. Sum of `str_trend.compset[i].keys` — defensive fallback if
+  //      the backend somehow lost the rollup mid-flight.
+  //   3. 0 — last resort; the Available-Rooms row will render zeros
+  //      and the empty-state copy elsewhere tells the user to upload
+  //      an STR Trend report.
   const compKeys = isKimptonDemo
     ? 1240
-    : 0;
+    : (() => {
+        const fromRollup = marketData?.str_trend?.total_keys;
+        if (typeof fromRollup === 'number' && fromRollup > 0) return fromRollup;
+        const fromRoster = (marketData?.str_trend?.compset ?? []).reduce(
+          (acc, row) => acc + (typeof row.keys === 'number' && row.keys > 0 ? row.keys : 0),
+          0,
+        );
+        return fromRoster > 0 ? fromRoster : 0;
+      })();
 
   // Empty state — no engine outputs and no market data (and not Kimpton demo).
   const subjectHasAny =

@@ -1994,6 +1994,44 @@ def _build_str_trend_block(
 ) -> StrTrendBlock | None:
     if not flat and not compset:
         return None
+    compset_entries: list[CompSetEntry] = [
+        CompSetEntry(
+            name=str(compset[i].get("name")) if compset[i].get("name") is not None else None,
+            keys=_coerce_int(compset[i].get("keys")),
+            occupancy_pct=_coerce_float(compset[i].get("occupancy_pct")),
+            adr_usd=_coerce_float(compset[i].get("adr_usd")),
+            revpar_usd=_coerce_float(compset[i].get("revpar_usd")),
+        )
+        for i in sorted(compset.keys())
+    ]
+
+    # `comp_set.total_keys` is the sum of room counts across every
+    # property in the comp set. STR's "Response" tab carries it as the
+    # last row of the property roster; many older extractions skip the
+    # explicit rollup but DO emit the indexed compset rows. Fall back
+    # to summing the per-property `keys` so the frontend Index-Analysis
+    # table can compute Available Rooms = days × total_keys instead of
+    # rendering a row of zeros. The subject keys live on the deal
+    # record so we leave them out of this comp-set rollup.
+    extracted_total_keys = _coerce_int(flat.get("comp_set.total_keys"))
+    if extracted_total_keys is None or extracted_total_keys <= 0:
+        keys_sum = sum(e.keys for e in compset_entries if e.keys and e.keys > 0)
+        derived_total_keys: int | None = keys_sum if keys_sum > 0 else None
+    else:
+        derived_total_keys = extracted_total_keys
+
+    # comp_set_size: prefer the extracted value; otherwise count rows
+    # that have *any* identifying detail (name or keys). An empty
+    # roster correctly stays None.
+    extracted_size = _coerce_int(flat.get("comp_set.comp_set_size"))
+    if extracted_size is None or extracted_size <= 0:
+        derived_size: int | None = (
+            sum(1 for e in compset_entries if e.name or (e.keys and e.keys > 0))
+            or None
+        )
+    else:
+        derived_size = extracted_size
+
     block = StrTrendBlock(
         subject_occupancy_pct=_coerce_float(flat.get("ttm_performance.subject.occupancy_pct")),
         subject_adr_usd=_coerce_float(flat.get("ttm_performance.subject.adr_usd")),
@@ -2001,18 +2039,9 @@ def _build_str_trend_block(
         rgi_revpar_index=_coerce_float(flat.get("ttm_performance.indices.rgi_revpar_index")),
         ari_adr_index=_coerce_float(flat.get("ttm_performance.indices.ari_adr_index")),
         mpi_occupancy_index=_coerce_float(flat.get("ttm_performance.indices.mpi_occupancy_index")),
-        comp_set_size=_coerce_int(flat.get("comp_set.comp_set_size")),
-        total_keys=_coerce_int(flat.get("comp_set.total_keys")),
-        compset=[
-            CompSetEntry(
-                name=str(compset[i].get("name")) if compset[i].get("name") is not None else None,
-                keys=_coerce_int(compset[i].get("keys")),
-                occupancy_pct=_coerce_float(compset[i].get("occupancy_pct")),
-                adr_usd=_coerce_float(compset[i].get("adr_usd")),
-                revpar_usd=_coerce_float(compset[i].get("revpar_usd")),
-            )
-            for i in sorted(compset.keys())
-        ],
+        comp_set_size=derived_size,
+        total_keys=derived_total_keys,
+        compset=compset_entries,
     )
     return block
 

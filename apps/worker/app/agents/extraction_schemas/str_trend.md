@@ -50,6 +50,16 @@ Key by year + month: `<YYYY_MM>`, e.g. `2025_03`.
 ### Comp set (per-competitor)
 Number them `1`..`7` in the order they appear in the report.
 
+The authoritative property roster — names + room counts — lives on the
+**Response** tab (Tab 22 / "Response Report"). That tab has a "Monthly
+Data" and "Segmentation Data" block with columns `STR#`, `Name`,
+`City, State`, `Zip`, `Phone`, `Rooms`. The row whose `STR#` matches
+the subject property is the subject itself; skip it. The remaining
+rows are the named competitors — extract `Name` and `Rooms` for each.
+The Summary / Glance tabs aggregate the comp-set but do not list the
+underlying properties, so the Response tab is the only ground-truth
+source for `keys`.
+
 - `ttm_performance.compset.<n>.name`
 - `ttm_performance.compset.<n>.keys`
 - `ttm_performance.compset.<n>.occupancy_pct`
