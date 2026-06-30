@@ -692,7 +692,7 @@ async def _summarize_market_data(
                   JOIN documents d ON d.id = er.document_id
                  WHERE er.deal_id = :deal
                    AND UPPER(COALESCE(d.doc_type, '')) IN (
-                       'STR_TREND', 'CBRE_HORIZONS', 'PNL_BENCHMARK'
+                       'STR', 'STR_TREND', 'CBRE_HORIZONS', 'PNL_BENCHMARK'
                    )
                  ORDER BY er.created_at DESC
                 """

@@ -208,7 +208,7 @@ async def load_str_history_for_deal(
               FROM extraction_results er
               JOIN documents d ON d.id = er.document_id
              WHERE er.deal_id = :deal
-               AND UPPER(COALESCE(d.doc_type, '')) = 'STR_TREND'
+               AND UPPER(COALESCE(d.doc_type, '')) IN ('STR', 'STR_TREND')
              ORDER BY er.created_at DESC
         """
         params = {"deal": deal_id}
@@ -220,7 +220,7 @@ async def load_str_history_for_deal(
              WHERE er.deal_id = :deal
                AND er.tenant_id = :tenant
                AND d.tenant_id = :tenant
-               AND UPPER(COALESCE(d.doc_type, '')) = 'STR_TREND'
+               AND UPPER(COALESCE(d.doc_type, '')) IN ('STR', 'STR_TREND')
              ORDER BY er.created_at DESC
         """
         params = {"deal": deal_id, "tenant": tenant_id}

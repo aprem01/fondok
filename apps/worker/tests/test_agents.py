@@ -617,3 +617,32 @@ async def test_analyst_drafts_six_section_memo(
         assert (
             len(sec.citations) >= 1
         ), f"section {sec.section_id.value} has no citations"
+
+
+# ─────────────────────── doc_type taxonomy canonicalization ───────────────────────
+
+
+def test_coerce_doc_type_str_collapses_to_str_trend() -> None:
+    """Sam QA 2026-06-30: the Router LLM non-deterministically emits
+    'STR' vs 'STR_TREND' for the same file across deals (the 'star
+    report' synonym dance). Every downstream consumer
+    (comp_set_drift, str_forecast_loader, IndexAnalysisSection,
+    documents._build_str_trend_block, due_diligence) matches on
+    STR_TREND. Collapse at the coercer so the classifier emits one
+    canonical label per family.
+    """
+    from app.agents.router import _coerce_doc_type
+
+    # The bare 'STR' label must collapse to STR_TREND now.
+    assert _coerce_doc_type("STR") == "STR_TREND"
+    assert _coerce_doc_type("str") == "STR_TREND"
+    assert _coerce_doc_type("Str") == "STR_TREND"
+    # Known synonyms also collapse.
+    assert _coerce_doc_type("STR_REPORT") == "STR_TREND"
+    assert _coerce_doc_type("STAR_REPORT") == "STR_TREND"
+    # STR_TREND itself passes through unchanged.
+    assert _coerce_doc_type("STR_TREND") == "STR_TREND"
+    # Unrelated docs are not touched.
+    assert _coerce_doc_type("OM") == "OM"
+    assert _coerce_doc_type("T12") == "T12"
+    assert _coerce_doc_type("STR_SEGMENTATION") == "STR_SEGMENTATION"

@@ -356,7 +356,7 @@ async def compute_comp_set_drift(
              WHERE er.deal_id = :deal
                AND er.tenant_id = :tenant
                AND d.tenant_id = :tenant
-               AND UPPER(COALESCE(d.doc_type, '')) = 'STR_TREND'
+               AND UPPER(COALESCE(d.doc_type, '')) IN ('STR', 'STR_TREND')
              ORDER BY er.created_at DESC
             """
         ),

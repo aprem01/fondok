@@ -340,10 +340,22 @@ _ALIASES: dict[str, tuple[str, ...]] = {
         "net_operating_income",
         "p_and_l_usali.net_operating_income",
         "p_and_l_usali.net_operating_income.noi_usd",
-        # Same nested-sibling pattern as gop above.
+        # Nested-sibling pattern. Sam QA 2026-06-30 noted NOI blank
+        # on certain years on the clean deal — the extractor lands
+        # NOI under varied nestings per-year. These paths cover the
+        # common variants; the gop-style siblings come first so the
+        # explicit alias hits before the v3 token-match fallback.
         "p_and_l_usali.noi.noi_usd",
         "p_and_l_usali.noi.net_operating_income_usd",
         "p_and_l_usali.noi.total_usd",
+        "p_and_l_usali.noi.net_operating_income",
+        "p_and_l_usali.net_operating_income.net_operating_income_usd",
+        "p_and_l_usali.net_operating_income.total_usd",
+        "p_and_l_usali.net_operating_income.total",
+        # Some real-prod schemas bury NOI under an income_statement
+        # rollup parent.
+        "p_and_l_usali.income_statement.noi_usd",
+        "p_and_l_usali.income_statement.net_operating_income_usd",
         # Real prod emits EBITDA-less-reserve which is a reasonable
         # NOI proxy when the doc never publishes a NOI line directly
         # (the rule catalog's NOI margin band is generous enough that

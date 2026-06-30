@@ -189,8 +189,19 @@ def _coerce_doc_type(raw: str) -> str:
         "TRAILING_TWELVE": "T12",
         "T_12": "T12",
         "T-12": "T12",
-        "STR_REPORT": "STR",
-        "STAR_REPORT": "STR",
+        # STR family canonicalization (Sam QA 2026-06-30): the LLM
+        # non-deterministically emits "STR" vs "STR_TREND" for the
+        # same file across deals. Every downstream consumer
+        # (comp_set_drift, str_forecast_loader, IndexAnalysis,
+        # documents._build_str_trend_block, due_diligence,
+        # str_trend extraction wiring) matches on STR_TREND.
+        # Collapse here so the classifier emits one canonical label
+        # — consumers are also widened to accept ('STR', 'STR_TREND')
+        # as belt-and-braces for legacy rows already persisted with
+        # the bare STR label.
+        "STR": "STR_TREND",
+        "STR_REPORT": "STR_TREND",
+        "STAR_REPORT": "STR_TREND",
         "P_AND_L": "PNL",
         "P_L": "PNL",
         "INCOME_STATEMENT": "PNL",

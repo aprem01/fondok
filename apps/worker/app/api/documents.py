@@ -1921,6 +1921,13 @@ def _aggregate_market_data(
         if not isinstance(raw_fields, list):
             continue
 
+        # Bucket the legacy bare 'STR' label alongside STR_TREND so a
+        # row classified before the router canonicalization fix still
+        # contributes its comp-set + per-property keys to the STR
+        # block (Sam QA 2026-06-30 — same file emitted STR on one
+        # deal and STR_TREND on another).
+        if doc_type == "STR":
+            doc_type = "STR_TREND"
         if doc_type not in {"STR_TREND", "CBRE_HORIZONS", "PNL_BENCHMARK"}:
             continue
         if doc_id_uuid is not None:
@@ -2132,7 +2139,7 @@ async def get_market_data(
                AND er.tenant_id = :tenant
                AND d.tenant_id = :tenant
                AND UPPER(COALESCE(d.doc_type, '')) IN (
-                   'STR_TREND', 'CBRE_HORIZONS', 'PNL_BENCHMARK'
+                   'STR', 'STR_TREND', 'CBRE_HORIZONS', 'PNL_BENCHMARK'
                )
              ORDER BY er.created_at DESC
             """
