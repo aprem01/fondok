@@ -173,6 +173,12 @@ function findField(fields: ExtractionField[], aliases: string[]): ExtractionFiel
  * instead of "T-12", and its data landed in the wrong column with the
  * real T-12 column left blank. The Historicals tab is actuals-only;
  * strip anything under a forecast/projection/budget namespace.
+ *
+ * Sam QA 2026-06-30: also drop subordinate-period namespaces (monthly /
+ * page / quarterly / per_month / q1-q4) so a stray
+ * ``p_and_l_usali.monthly.jan_2025.fb_revenue_usd`` slice never wins
+ * over the period total. Mirrors ``_has_subordinate_namespace`` in
+ * ``apps/worker/app/services/usali_scorer.py``.
  */
 function actualsOnly(fields: ExtractionField[]): ExtractionField[] {
   return fields.filter((f) => {
@@ -185,7 +191,16 @@ function actualsOnly(fields: ExtractionField[]): ExtractionField[] {
       n.includes('.forecast.') ||
       n.includes('.projection.') ||
       n.includes('.projected.') ||
-      n.includes('.budget.')
+      n.includes('.budget.') ||
+      // Subordinate-period slices — never a period total.
+      n.includes('.monthly.') ||
+      n.includes('.page') ||
+      n.includes('.per_month.') ||
+      n.includes('.quarterly.') ||
+      n.includes('.q1.') ||
+      n.includes('.q2.') ||
+      n.includes('.q3.') ||
+      n.includes('.q4.')
     );
   });
 }
@@ -288,63 +303,189 @@ function buildHistYear(
 ): HistYear | null {
   if (!fields.length) return null;
 
-  const occ = num(findField(fields, ['occupancy', 'occupancy_pct', 'occ', 't12_occupancy']));
-  const adr = num(findField(fields, ['adr', 'adr_usd', 'average_daily_rate', 't12_adr']));
-  const revpar = num(findField(fields, ['revpar', 'revpar_usd', 't12_revpar']));
+  // ─── Alias lists mirror the canonical map in ───
+  //   ``apps/worker/app/services/usali_scorer.py:_ALIASES``
+  // The extractor is non-deterministic across years: 2022 may emit
+  // ``p_and_l_usali.revenue.fb_revenue_usd``, 2023 may emit
+  // ``p_and_l_usali.food_and_beverage.revenue_usd``, and 2019/2021 may
+  // emit yet another shape. ``findField`` matches both the full
+  // normalized name and the last dotted segment (with unit suffix
+  // stripped), so the deep USALI paths below cover their variants via
+  // segment fallback too.
+  //
+  // FUTURE DRIFT WARNING: when the backend ``_ALIASES`` map grows a new
+  // path variant, this list needs to grow in lockstep. The backend file
+  // is the source of truth; this is an explicit duplicate to ship the
+  // bugfix in <1 hr (Wave 1, 2026-06-30 Sam QA). The right long-term
+  // fix is a worker ``GET /deals/{id}/historicals/normalized`` endpoint
+  // that runs the backend resolver server-side.
+  const occ = num(findField(fields, [
+    'occupancy', 'occupancy_pct', 'occ', 't12_occupancy',
+    'p_and_l_usali.occupancy', 'p_and_l_usali.occupancy_pct',
+    'p_and_l_usali.operational_kpis.occupancy',
+    'p_and_l_usali.operational_kpis.occupancy_pct',
+    'ttm_summary_per_om.occupancy_pct', 'ttm_summary_per_om.occupancy',
+  ]));
+  const adr = num(findField(fields, [
+    'adr', 'adr_usd', 'average_daily_rate', 't12_adr',
+    'p_and_l_usali.adr', 'p_and_l_usali.adr_usd',
+    'p_and_l_usali.operational_kpis.adr',
+    'p_and_l_usali.operational_kpis.adr_usd',
+    'ttm_summary_per_om.adr_usd', 'ttm_summary_per_om.adr',
+  ]));
+  const revpar = num(findField(fields, [
+    'revpar', 'revpar_usd', 't12_revpar',
+    'p_and_l_usali.revpar', 'p_and_l_usali.revpar_usd',
+    'p_and_l_usali.operational_kpis.revpar',
+    'p_and_l_usali.operational_kpis.revpar_usd',
+    'ttm_summary_per_om.revpar_usd', 'ttm_summary_per_om.revpar',
+  ]));
   const rooms = num(findField(fields, [
-    'rooms_revenue', 'room_revenue', 'total_rooms_revenue', 't12_rooms_revenue',
+    'rooms_revenue', 'room_revenue', 'total_rooms_revenue',
+    't12_rooms_revenue', 'rooms_revenue_usd',
+    'p_and_l_usali.rooms_revenue',
+    // T-12 prod: per-dept bucket carries revenue under ``.revenue_usd``.
+    'p_and_l_usali.rooms.revenue_usd',
+    'p_and_l_usali.rooms.revenue',
+    // Annual P&L prod: revenues namespace.
+    'p_and_l_usali.revenues.rooms_usd',
+    'p_and_l_usali.revenues.rooms',
+    'p_and_l_usali.revenues.rooms_revenue',
+    // Schema-doc canonical (legacy fixture path).
+    'p_and_l_usali.operating_revenue.rooms_revenue',
+    'p_and_l_usali.operating_revenue.rooms_revenue_usd',
+    // 2022 variant Sam hit
+    'p_and_l_usali.revenue.rooms_revenue_usd',
+    'p_and_l_usali.revenue.rooms_revenue',
   ]));
   const fb = num(findField(fields, [
     'fb_revenue', 'food_beverage_revenue', 'fnb_revenue', 'food_beverage',
+    'fb_revenue_usd',
+    'p_and_l_usali.fb_revenue',
+    // T-12 prod
+    'p_and_l_usali.food_and_beverage.revenue_usd',
+    'p_and_l_usali.food_and_beverage.revenue',
+    // Annual P&L prod
+    'p_and_l_usali.revenues.fb_usd',
+    'p_and_l_usali.revenues.fb',
+    'p_and_l_usali.revenues.food_beverage_revenue',
+    // Schema-doc canonical
+    'p_and_l_usali.operating_revenue.food_beverage_revenue',
+    'p_and_l_usali.operating_revenue.fb_revenue',
+    // 2022 variant Sam hit
+    'p_and_l_usali.revenue.fb_revenue_usd',
+    'p_and_l_usali.revenue.fb_revenue',
   ]));
+  // Misc/other-revenue: backend splits ``other_revenue`` (other
+  // operated departments) and ``misc_revenue`` (miscellaneous income).
+  // Historicals collapses them into a single "Misc. Income" column,
+  // so we accept paths from BOTH canonicals.
   const misc = num(findField(fields, [
     'other_revenue', 'misc_revenue', 'misc_income', 'miscellaneous_income',
-    'other_operated_revenue',
+    'other_operated_revenue', 'other_revenue_usd', 'misc_revenue_usd',
+    'p_and_l_usali.other_revenue',
+    // T-12 prod
+    'p_and_l_usali.other_operated_departments.revenue_usd',
+    'p_and_l_usali.other_operated_departments.revenue',
+    'p_and_l_usali.miscellaneous_income.revenue_usd',
+    'p_and_l_usali.miscellaneous_income.revenue',
+    // Annual P&L prod
+    'p_and_l_usali.revenues.other_operated_departments_usd',
+    'p_and_l_usali.revenues.other_operated_departments',
+    'p_and_l_usali.revenues.other_revenue',
+    'p_and_l_usali.revenues.miscellaneous_income_usd',
+    'p_and_l_usali.revenues.misc_revenue',
+    // Schema-doc canonical
+    'p_and_l_usali.operating_revenue.other_revenue',
+    'p_and_l_usali.operating_revenue.misc_revenue',
+    // 2022 variant Sam hit
+    'p_and_l_usali.revenue.other_revenue_usd',
+    'p_and_l_usali.revenue.misc_revenue_usd',
+    'p_and_l_usali.revenue.misc_income_usd',
   ]));
 
-  // ─── Expenses / profitability (Task C 2026-06-29) ───
-  // Aliases mirror the canonical alias map in
-  // ``apps/worker/app/services/usali_scorer.py`` (the SAME map the
-  // historical_baseline engine reads from), so anything the engine
-  // surfaces, the Historicals tab surfaces too. ``findField`` matches
-  // the last dotted segment (and its unit-stripped variant) so the
-  // bare slugs cover the deep USALI paths via segment fallback.
+  // ─── Expenses / profitability (Task C 2026-06-29; aliases expanded 2026-06-30) ───
   const roomsDept = num(findField(fields, [
     'rooms_dept_expense', 'rooms_departmental_expense',
     'p_and_l_usali.departmental_expenses.rooms',
+    // T-12 prod (two flavors observed on the SAME workbook).
     'p_and_l_usali.rooms.expense_usd',
     'p_and_l_usali.rooms.departmental_expense_usd',
+    // Annual P&L prod
+    'p_and_l_usali.departmental_expense.rooms_usd',
+    'p_and_l_usali.departmental_expense.rooms',
   ]));
   const fbDept = num(findField(fields, [
     'fb_dept_expense', 'food_beverage_dept_expense', 'fnb_dept_expense',
     'p_and_l_usali.departmental_expenses.food_beverage',
+    // T-12 prod
     'p_and_l_usali.food_and_beverage.expense_usd',
     'p_and_l_usali.food_and_beverage.departmental_expense_usd',
+    // Annual P&L prod
+    'p_and_l_usali.departmental_expense.fb_usd',
+    'p_and_l_usali.departmental_expense.fb',
+    'p_and_l_usali.departmental_expense.food_beverage_usd',
   ]));
   const otherDept = num(findField(fields, [
     'other_dept_expense', 'other_operated_dept_expense',
     'p_and_l_usali.departmental_expenses.other_operated',
+    // T-12 prod
     'p_and_l_usali.other_operated_departments.expense_usd',
+    'p_and_l_usali.other_operated_departments.departmental_expense_usd',
+    // Annual P&L prod
+    'p_and_l_usali.departmental_expense.other_operated_departments_usd',
+    'p_and_l_usali.departmental_expense.other_operated_usd',
   ]));
   const undistributed = num(findField(fields, [
     'undistributed_expenses', 'undistributed',
     'total_undistributed_expenses_usd',
     'p_and_l_usali.undistributed_expenses',
+    'p_and_l_usali.undistributed.total',
+    // T-12 prod
     'p_and_l_usali.total_undistributed_expenses_usd',
+    // Annual P&L prod
+    'p_and_l_usali.undistributed_expenses.total_usd',
   ]));
   const gop = num(findField(fields, [
     'gop', 'gop_usd', 'gross_operating_profit',
-    'p_and_l_usali.gop', 'p_and_l_usali.gross_operating_profit_usd',
+    'p_and_l_usali.gop', 'p_and_l_usali.gross_operating_profit',
+    'p_and_l_usali.gross_operating_profit.gop_usd',
+    // T-12 prod
+    'p_and_l_usali.gross_operating_profit_usd',
+    // Annual P&L prod (nested-sibling pattern).
+    'p_and_l_usali.gop.gross_operating_profit_usd',
+    'p_and_l_usali.gop.gop_usd',
+    'p_and_l_usali.gop.total_usd',
+    'p_and_l_usali.gross_operating_profit.total_usd',
+    'p_and_l_usali.gross_operating_profit.total',
   ]));
   const propTax = num(findField(fields, [
-    'property_tax', 'property_taxes', 'p_and_l_usali.property_tax',
+    'property_tax', 'property_taxes', 'property_tax_usd',
+    'p_and_l_usali.property_tax', 'p_and_l_usali.property_taxes',
+    'p_and_l_usali.fixed_charges.property_taxes',
+    // Real prod: bucketed under non_operating, not fixed_charges.
+    'p_and_l_usali.non_operating.property_and_other_taxes_usd',
+    'p_and_l_usali.non_operating.property_other_taxes_usd',
+    'p_and_l_usali.non_operating.property_taxes',
   ]));
   const insurance = num(findField(fields, [
-    'insurance_expense', 'insurance', 'p_and_l_usali.insurance',
+    'insurance_expense', 'insurance', 'insurance_usd',
+    'p_and_l_usali.insurance',
+    'p_and_l_usali.fixed_charges.insurance',
+    // Real prod
+    'p_and_l_usali.non_operating.insurance_usd',
+    'p_and_l_usali.non_operating.insurance',
   ]));
   const mgmtFee = num(findField(fields, [
     'mgmt_fee', 'management_fee', 'mgmt_fee_usd',
+    'p_and_l_usali.mgmt_fee',
+    'p_and_l_usali.fees_and_reserves.mgmt_fee',
+    'p_and_l_usali.fees_and_reserves.management_fee',
+    // T-12 prod
     'p_and_l_usali.management_fees_usd',
+    // Annual P&L prod
+    'p_and_l_usali.management_fees.total_usd',
+    'p_and_l_usali.management_fees.total',
   ]));
   const fixedParts = [propTax, insurance, mgmtFee].filter(
     (v): v is number => v != null,
@@ -352,7 +493,16 @@ function buildHistYear(
   const fixedExpenses = fixedParts.length ? fixedParts.reduce((a, b) => a + b, 0) : null;
   const noi = num(findField(fields, [
     'noi', 'noi_usd', 'net_operating_income',
-    'p_and_l_usali.noi', 'p_and_l_usali.net_operating_income.noi_usd',
+    'p_and_l_usali.noi', 'p_and_l_usali.net_operating_income',
+    'p_and_l_usali.net_operating_income.noi_usd',
+    // Nested-sibling pattern (mirrors GOP).
+    'p_and_l_usali.noi.noi_usd',
+    'p_and_l_usali.noi.net_operating_income_usd',
+    'p_and_l_usali.noi.total_usd',
+    // EBITDA-less-reserve as a reasonable NOI proxy when the doc
+    // never publishes a NOI line directly.
+    'p_and_l_usali.ebitda_less_replacement_reserve_usd',
+    'p_and_l_usali.ebitda_less_replacement_reserve.total_usd',
   ]));
 
   // Need at least one of {rooms, occupancy, adr} to render anything.
