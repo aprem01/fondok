@@ -32,9 +32,15 @@ import { kimptonAnglerOverview } from '@/lib/mockData';
 import { downloadXlsx, type XlsxCell } from '@/lib/exportXlsx';
 
 // ─────────────────────────── Data shape ───────────────────────────
-// One historical year column. ``amount`` for Rooms / F&B / Misc are in
-// raw dollars (not thousands) so the display layer handles the /1000
-// scaling consistently with PAR / POR math.
+// One historical year column. ``amount`` for Rooms / F&B / Misc / dept
+// expenses / GOP / NOI are in raw dollars (not thousands) so the display
+// layer handles the /1000 scaling consistently with PAR / POR math.
+//
+// Expense / GOP / NOI fields use the SAME canonical field-name slugs the
+// historical_baseline engine ships (rooms_dept_expense, fb_dept_expense,
+// other_dept_expense, undistributed, gop, fixed_expenses, noi) so when
+// the per-deal /historicals endpoint ships a HistoricalYear payload from
+// the engine, no key remapping is needed — see task C 2026-06-29.
 interface HistYear {
   /** Calendar year label, e.g. 2023 or "T-12". */
   year: string;
@@ -46,6 +52,20 @@ interface HistYear {
   rooms: number;        // $ (top-of-house)
   fb: number;           // $
   misc: number;         // $
+  // ─── Expenses / profitability (Task C 2026-06-29) ───
+  // Engine-canonical slugs, ``null`` when the extractor didn't ship the
+  // line (renders em-dash). USALI convention: expenses are POSITIVE
+  // numbers (the GOP/NOI math subtracts them); a negative here would be
+  // an extraction bug.
+  rooms_dept_expense: number | null;
+  fb_dept_expense: number | null;
+  other_dept_expense: number | null;
+  /** A&G + sales/mkt + utilities + prop_ops + info/telecom rollup. */
+  undistributed: number | null;
+  gop: number | null;
+  /** property_tax + insurance + mgmt_fee (institutional fixed-block). */
+  fixed_expenses: number | null;
+  noi: number | null;
   /** ``true`` when all numeric series are present; ``false`` for placeholder/empty columns. */
   populated: boolean;
 }
@@ -57,20 +77,42 @@ interface HistData {
 
 // ─────────────────────────── Mock fallback ───────────────────────────
 // Kimpton Angler — 2021-2025. Numbers are illustrative but internally
-// consistent (RevPAR = ADR × occupancy, total rev ≈ rooms / (1 - 0.27)).
+// consistent (RevPAR = ADR × occupancy, total rev ≈ rooms / (1 - 0.27),
+// dept expense ratios ~ rooms 24% / F&B 75% / other 70%, undist ~ 22%
+// of total rev, fixed ~ 7% of total rev).
 const KIMPTON_HISTORICAL: HistData = {
   keys: kimptonAnglerOverview.general.keys, // 132
   years: [
     { year: '2021', days: 365, occupancyPct: 0.581, adr: 245, revpar: 142,
-      rooms: 6_854_000, fb: 1_998_000, misc: 444_000, populated: true },
+      rooms: 6_854_000, fb: 1_998_000, misc: 444_000,
+      rooms_dept_expense: 1_645_000, fb_dept_expense: 1_499_000,
+      other_dept_expense: 311_000, undistributed: 2_046_000,
+      gop: 1_795_000, fixed_expenses: 651_000, noi: 1_144_000,
+      populated: true },
     { year: '2022', days: 365, occupancyPct: 0.681, adr: 271, revpar: 184,
-      rooms: 8_870_000, fb: 2_586_000, misc: 575_000, populated: true },
+      rooms: 8_870_000, fb: 2_586_000, misc: 575_000,
+      rooms_dept_expense: 2_129_000, fb_dept_expense: 1_940_000,
+      other_dept_expense: 403_000, undistributed: 2_646_000,
+      gop: 2_913_000, fixed_expenses: 842_000, noi: 2_071_000,
+      populated: true },
     { year: '2023', days: 365, occupancyPct: 0.715, adr: 287, revpar: 205,
-      rooms: 9_881_000, fb: 2_881_000, misc: 640_000, populated: true },
+      rooms: 9_881_000, fb: 2_881_000, misc: 640_000,
+      rooms_dept_expense: 2_371_000, fb_dept_expense: 2_161_000,
+      other_dept_expense: 448_000, undistributed: 2_948_000,
+      gop: 3_474_000, fixed_expenses: 938_000, noi: 2_536_000,
+      populated: true },
     { year: '2024', days: 366, occupancyPct: 0.738, adr: 294, revpar: 217,
-      rooms: 10_493_000, fb: 3_059_000, misc: 680_000, populated: true },
+      rooms: 10_493_000, fb: 3_059_000, misc: 680_000,
+      rooms_dept_expense: 2_518_000, fb_dept_expense: 2_294_000,
+      other_dept_expense: 476_000, undistributed: 3_130_000,
+      gop: 3_814_000, fixed_expenses: 995_000, noi: 2_819_000,
+      populated: true },
     { year: '2025', days: 365, occupancyPct: 0.762, adr: 312, revpar: 238,
-      rooms: 11_472_000, fb: 3_344_000, misc: 743_000, populated: true },
+      rooms: 11_472_000, fb: 3_344_000, misc: 743_000,
+      rooms_dept_expense: 2_753_000, fb_dept_expense: 2_508_000,
+      other_dept_expense: 520_000, undistributed: 3_421_000,
+      gop: 4_357_000, fixed_expenses: 1_088_000, noi: 3_269_000,
+      populated: true },
   ],
 };
 
@@ -260,6 +302,59 @@ function buildHistYear(
     'other_operated_revenue',
   ]));
 
+  // ─── Expenses / profitability (Task C 2026-06-29) ───
+  // Aliases mirror the canonical alias map in
+  // ``apps/worker/app/services/usali_scorer.py`` (the SAME map the
+  // historical_baseline engine reads from), so anything the engine
+  // surfaces, the Historicals tab surfaces too. ``findField`` matches
+  // the last dotted segment (and its unit-stripped variant) so the
+  // bare slugs cover the deep USALI paths via segment fallback.
+  const roomsDept = num(findField(fields, [
+    'rooms_dept_expense', 'rooms_departmental_expense',
+    'p_and_l_usali.departmental_expenses.rooms',
+    'p_and_l_usali.rooms.expense_usd',
+    'p_and_l_usali.rooms.departmental_expense_usd',
+  ]));
+  const fbDept = num(findField(fields, [
+    'fb_dept_expense', 'food_beverage_dept_expense', 'fnb_dept_expense',
+    'p_and_l_usali.departmental_expenses.food_beverage',
+    'p_and_l_usali.food_and_beverage.expense_usd',
+    'p_and_l_usali.food_and_beverage.departmental_expense_usd',
+  ]));
+  const otherDept = num(findField(fields, [
+    'other_dept_expense', 'other_operated_dept_expense',
+    'p_and_l_usali.departmental_expenses.other_operated',
+    'p_and_l_usali.other_operated_departments.expense_usd',
+  ]));
+  const undistributed = num(findField(fields, [
+    'undistributed_expenses', 'undistributed',
+    'total_undistributed_expenses_usd',
+    'p_and_l_usali.undistributed_expenses',
+    'p_and_l_usali.total_undistributed_expenses_usd',
+  ]));
+  const gop = num(findField(fields, [
+    'gop', 'gop_usd', 'gross_operating_profit',
+    'p_and_l_usali.gop', 'p_and_l_usali.gross_operating_profit_usd',
+  ]));
+  const propTax = num(findField(fields, [
+    'property_tax', 'property_taxes', 'p_and_l_usali.property_tax',
+  ]));
+  const insurance = num(findField(fields, [
+    'insurance_expense', 'insurance', 'p_and_l_usali.insurance',
+  ]));
+  const mgmtFee = num(findField(fields, [
+    'mgmt_fee', 'management_fee', 'mgmt_fee_usd',
+    'p_and_l_usali.management_fees_usd',
+  ]));
+  const fixedParts = [propTax, insurance, mgmtFee].filter(
+    (v): v is number => v != null,
+  );
+  const fixedExpenses = fixedParts.length ? fixedParts.reduce((a, b) => a + b, 0) : null;
+  const noi = num(findField(fields, [
+    'noi', 'noi_usd', 'net_operating_income',
+    'p_and_l_usali.noi', 'p_and_l_usali.net_operating_income.noi_usd',
+  ]));
+
   // Need at least one of {rooms, occupancy, adr} to render anything.
   if (rooms == null && occ == null && adr == null) return null;
 
@@ -285,6 +380,13 @@ function buildHistYear(
     rooms: roomsNorm,
     fb: fb ?? 0,
     misc: misc ?? 0,
+    rooms_dept_expense: roomsDept,
+    fb_dept_expense: fbDept,
+    other_dept_expense: otherDept,
+    undistributed,
+    gop,
+    fixed_expenses: fixedExpenses,
+    noi,
     populated: true,
   };
 }
@@ -302,6 +404,9 @@ function emptyFiveYearSkeleton(): HistData {
       days: y % 4 === 0 && (y % 100 !== 0 || y % 400 === 0) ? 366 : 365,
       occupancyPct: 0, adr: 0, revpar: 0,
       rooms: 0, fb: 0, misc: 0,
+      rooms_dept_expense: null, fb_dept_expense: null,
+      other_dept_expense: null, undistributed: null,
+      gop: null, fixed_expenses: null, noi: null,
       populated: false,
     });
   }
@@ -448,6 +553,9 @@ export default function HistoricalsSection({
                     days: 365,
                     occupancyPct: 0, adr: 0, revpar: 0,
                     rooms: 0, fb: 0, misc: 0,
+                    rooms_dept_expense: null, fb_dept_expense: null,
+                    other_dept_expense: null, undistributed: null,
+                    gop: null, fixed_expenses: null, noi: null,
                     populated: false,
                   },
                 );
@@ -463,6 +571,9 @@ export default function HistoricalsSection({
                   days: 365,
                   occupancyPct: 0, adr: 0, revpar: 0,
                   rooms: 0, fb: 0, misc: 0,
+                  rooms_dept_expense: null, fb_dept_expense: null,
+                  other_dept_expense: null, undistributed: null,
+                  gop: null, fixed_expenses: null, noi: null,
                   populated: false,
                 },
               ],
@@ -491,19 +602,22 @@ export default function HistoricalsSection({
     ])];
     const rows: XlsxCell[][] = [];
     const keys = data.keys;
-    const fmtRow = (label: string, get: (y: HistYear) => number) => {
+    const fmtRow = (label: string, get: (y: HistYear) => number | null) => {
       const row: XlsxCell[] = [label];
       for (const y of data.years) {
-        const v = get(y);
+        const raw = get(y);
+        const v = raw ?? 0;
         const totalRev = y.rooms + y.fb + y.misc;
         const avail = keys * y.days;
         const occRooms = avail * y.occupancyPct;
         // Keep numerics as numbers so Excel can re-sum / re-format them.
+        // Null source values render as blank cells so analysts can spot
+        // unextracted lines vs. legitimate zeros.
         row.push(
-          v ? Number(v.toFixed(0)) : '',
-          totalRev ? Number(((v / totalRev) * 100).toFixed(1)) : '',
-          avail ? Number((v / avail).toFixed(2)) : '',
-          occRooms ? Number((v / occRooms).toFixed(2)) : '',
+          raw != null ? Number(v.toFixed(0)) : '',
+          raw != null && totalRev ? Number(((v / totalRev) * 100).toFixed(1)) : '',
+          raw != null && avail ? Number((v / avail).toFixed(2)) : '',
+          raw != null && occRooms ? Number((v / occRooms).toFixed(2)) : '',
         );
       }
       rows.push(row);
@@ -511,6 +625,13 @@ export default function HistoricalsSection({
     fmtRow('Rooms', y => y.rooms);
     fmtRow('Food & Beverage', y => y.fb);
     fmtRow('Misc. Income', y => y.misc);
+    fmtRow('Rooms Expense', y => y.rooms_dept_expense);
+    fmtRow('Food & Beverage Expense', y => y.fb_dept_expense);
+    fmtRow('Other Operated Expense', y => y.other_dept_expense);
+    fmtRow('Undistributed Expenses', y => y.undistributed);
+    fmtRow('GOP', y => y.gop);
+    fmtRow('Fixed Expenses', y => y.fixed_expenses);
+    fmtRow('NOI', y => y.noi);
     await downloadXlsx(`historicals-${dealId || 'deal'}`, [
       { name: 'Historicals', rows: [headers, ...rows] },
     ]);
@@ -617,10 +738,20 @@ function HistoricalsTable({
     </tr>
   );
 
-  // Full row — Amount / %Rev / PAR / POR per year. Used for revenue lines.
+  // Full row — Amount / %Rev / PAR / POR per year. Used for revenue,
+  // expense, GOP, and NOI lines. ``get`` may return ``null`` for lines
+  // the extractor didn't ship on a given year (renders em-dash even
+  // when the column itself is populated).
+  //
+  // NOTE on expense sign convention: per the historical_baseline
+  // engine, expenses ship as POSITIVE numbers (the engine subtracts
+  // them in the GOP/NOI math). The ``fmt$`` formatter renders the
+  // absolute magnitude — a negative value would surface as "—" via
+  // the ``amount > 0`` guard, which is the right behavior for a sign
+  // anomaly (caller should see an em-dash and dig into extraction).
   const FullRow = ({ label, get, idx }: {
     label: string;
-    get: (y: HistYear) => number;
+    get: (y: HistYear) => number | null;
     idx: number;
   }) => (
     <tr className={cn(idx % 2 === 1 && 'bg-ink-300/5')}>
@@ -628,13 +759,15 @@ function HistoricalsTable({
         {label}
       </td>
       {years.map((y, i) => {
-        const amount = y.populated ? get(y) : 0;
+        const raw = y.populated ? get(y) : 0;
+        const amount = raw ?? 0;
+        const cellPopulated = y.populated && raw != null;
         const d = derived[i];
         return (
           <Cells
             key={y.year}
             amount={amount}
-            populated={y.populated}
+            populated={cellPopulated}
             totalRev={d.totalRev}
             avail={d.avail}
             occRooms={d.occRooms}
@@ -737,6 +870,49 @@ function HistoricalsTable({
             <FullRow label="Rooms" idx={10} get={(y) => y.rooms} />
             <FullRow label="Food & Beverage" idx={11} get={(y) => y.fb} />
             <FullRow label="Misc. Income" idx={12} get={(y) => y.misc} />
+
+            {/* DEPARTMENTAL EXPENSES band — engine-canonical slugs
+                ``rooms_dept_expense`` / ``fb_dept_expense`` /
+                ``other_dept_expense`` from historical_baseline.py. */}
+            <tr>
+              <td
+                colSpan={1 + years.length * colsPerYear}
+                className="bg-brand-50 border-y border-brand-100 px-3 py-1.5 text-[10.5px] uppercase tracking-[0.1em] font-semibold text-brand-700"
+              >
+                Departmental Expenses
+              </td>
+            </tr>
+            <FullRow label="Rooms Expense" idx={14} get={(y) => y.rooms_dept_expense} />
+            <FullRow label="Food & Beverage Expense" idx={15} get={(y) => y.fb_dept_expense} />
+            <FullRow label="Other Operated Expense" idx={16} get={(y) => y.other_dept_expense} />
+
+            {/* GROSS OPERATING PROFIT band — Undistributed rollup + GOP.
+                Engine slugs: ``undistributed`` (A&G + sales/mkt +
+                utilities + prop_ops + IT) and ``gop``. */}
+            <tr>
+              <td
+                colSpan={1 + years.length * colsPerYear}
+                className="bg-brand-50 border-y border-brand-100 px-3 py-1.5 text-[10.5px] uppercase tracking-[0.1em] font-semibold text-brand-700"
+              >
+                Gross Operating Profit
+              </td>
+            </tr>
+            <FullRow label="Undistributed Expenses" idx={18} get={(y) => y.undistributed} />
+            <FullRow label="GOP" idx={19} get={(y) => y.gop} />
+
+            {/* NET OPERATING INCOME band — Fixed (property tax +
+                insurance + mgmt fee) and NOI. Engine slugs:
+                ``fixed_expenses`` and ``noi``. */}
+            <tr>
+              <td
+                colSpan={1 + years.length * colsPerYear}
+                className="bg-brand-50 border-y border-brand-100 px-3 py-1.5 text-[10.5px] uppercase tracking-[0.1em] font-semibold text-brand-700"
+              >
+                Net Operating Income
+              </td>
+            </tr>
+            <FullRow label="Fixed Expenses" idx={21} get={(y) => y.fixed_expenses} />
+            <FullRow label="NOI" idx={22} get={(y) => y.noi} />
 
             {/* Empty-state overlay row */}
             {!hasAnyData && (
