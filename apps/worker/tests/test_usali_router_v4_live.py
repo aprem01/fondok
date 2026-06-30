@@ -731,3 +731,91 @@ def test_yoy_engine_emits_findings_on_sam_fixtures(
         f"structural recognizer surfaces enough lines. "
         f"Lines emitted: {[f.line_item for f in findings]}"
     )
+
+
+# ───────────────────────── Bug J round 2 (2026-06-30) ─────────────────────────
+
+
+def test_pre_router_str_detection_uses_full_text() -> None:
+    """Sam QA 2026-06-30 burst-test round 3 follow-up.
+
+    The post-extraction classify_structure override + the per-chunk
+    extractor contradiction guard both have failure modes for
+    misclassified STR Trend xlsx files:
+      - classify_structure(fields) runs ONLY post-extraction. When
+        the wrong (T12) extractor returned zero fields, there's
+        nothing to identify is_str from — override never fires.
+      - The per-chunk extractor guard runs on ~5-page slices. STR
+        markers (MPI/ARI/RGI/comp_set) appear on later worksheets,
+        not the first slice — guard never trips.
+
+    Fix: pre-Router structural check on the FULL parsed text. When
+    looks_str=True on the whole document, pin doc_type=STR_TREND and
+    skip the Router LLM call entirely.
+
+    This test asserts the detector returns looks_str=True on a
+    realistic STR Trend payload (compset + weekly_performance +
+    MPI/ARI/RGI tokens), proving the pre-Router check would catch
+    the case the per-chunk guard misses.
+    """
+    from app.services.structural_recognizer import detect_text_signals
+
+    # Realistic STR Trend text — markers spread across what would be
+    # multiple worksheets in a real xlsx, concatenated as the pre-
+    # Router check now sees it.
+    realistic_str_text = """
+    [Page 1] Hotel: Kimpton Anglers
+    Inventory: 132 rooms
+
+    [Page 5] Weekly Performance
+    Day of Week analysis: Mon Tue Wed Thu Fri Sat Sun
+    Occupancy Index (MPI): 109.0
+    ADR Index (ARI): 79.1
+    RevPAR Index (RGI): 86.2
+
+    [Page 8] Comp Set Roster
+    Competitive Set members:
+      - Property A (87 rooms)
+      - Property B (107 rooms)
+      - Property C (75 rooms)
+
+    [Page 12] CoStar / Smith Travel data sourced from Custom Trend.
+    Penetration index by measure.
+    """
+
+    sig = detect_text_signals(realistic_str_text)
+    assert sig.looks_str, (
+        f"detector should mark realistic STR Trend text as looks_str=True "
+        f"(matched={sig.str_markers_matched}, pnl={sig.pnl_marker_hits})"
+    )
+    assert sig.str_marker_hits >= 4, (
+        f"expected >= 4 distinct STR markers, got {sig.str_marker_hits}"
+    )
+
+
+def test_pre_router_str_detection_ignores_pnl_with_stray_str_word() -> None:
+    """Guard against false-positive: a P&L that mentions 'comp set'
+    once in a sidebar shouldn't get flagged as STR.
+    """
+    from app.services.structural_recognizer import detect_text_signals
+
+    pnl_text_with_one_str_mention = """
+    [Page 1] Trailing Twelve Months P&L
+    Rooms Revenue: $6,340,000
+    Food and Beverage: $1,028,000
+    Departmental Expense: $2,450,000
+    Undistributed Operating Expense: $1,800,000
+    Gross Operating Profit: $4,851,000
+    GOP margin: 30.5%
+    NOI: $2,200,000
+    Property Tax: $230,000
+    Management Fee: $185,000
+    FFE Reserve: $180,000
+
+    Note: see comp set analysis in the appendix.
+    """
+    sig = detect_text_signals(pnl_text_with_one_str_mention)
+    assert not sig.looks_str, (
+        f"P&L with a single 'comp set' mention should NOT flag as STR "
+        f"(str={sig.str_marker_hits}, pnl={sig.pnl_marker_hits})"
+    )

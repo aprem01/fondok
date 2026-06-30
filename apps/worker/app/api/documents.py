@@ -4729,22 +4729,63 @@ async def _run_graph_extraction(
     # Cheap filename-based doc-type hint passes to Router; agent confirms.
     hint = _guess_doc_type(filename)
 
-    router_input = RouterInput(
-        tenant_id=tenant_id,
-        deal_id=deal_id,
-        filename=filename,
-        content_sample=router_sample,
-    ) if "filename" in RouterInput.model_fields else RouterInput(
-        tenant_id=tenant_id, deal_id=deal_id,
+    # Sam QA Bug J round 2 (2026-06-30): the post-extraction structural
+    # override at ~line 4192 runs `classify_structure(fields)` on the
+    # extracted field set. For STR Trend xlsx files misclassified as
+    # T12, the T12 extractor returns ZERO fields (no P&L to find),
+    # which leaves `classify_structure` with nothing to identify
+    # is_str from — so the override never fires. Meanwhile the
+    # in-extractor contradiction guard runs per-chunk on ~5 pages of
+    # content; STR markers (MPI/ARI/RGI/comp_set) typically appear on
+    # later worksheets / pages, not the first 5.
+    #
+    # Fix: pre-compute structural text signals on the FULL parsed
+    # text (every page, all 253K+ chars for a multi-sheet xlsx)
+    # BEFORE the Router runs. If the full document is unambiguously
+    # STR-shaped (4+ markers, outweighs P&L vocab 2x — same gates as
+    # the per-chunk guard), bypass the Router entirely and pin
+    # doc_type to STR_TREND. The Router's prospective call gets logged
+    # for telemetry but the LLM call is skipped, saving the round-trip
+    # and the 6-minute retry burn an STR-as-T12 misextraction costs.
+    from ..services.structural_recognizer import detect_text_signals as _detect_text_signals
+
+    full_text_for_recognizer = "\n\n".join(
+        (p.get("text", "") or "") for p in pages
     )
-    try:
-        router_out = await run_router(router_input)
-        doc_type = getattr(router_out, "doc_type", None) or hint
-        route = getattr(router_out, "route", "extract")
-    except Exception as exc:
-        logger.warning("router failed for doc=%s — falling back to %s: %s", doc_id, hint, exc)
-        doc_type = hint
-        route = "extract-fallback"
+    pre_router_text_signals = _detect_text_signals(full_text_for_recognizer)
+    pre_router_str_override: str | None = None
+    if pre_router_text_signals.looks_str:
+        pre_router_str_override = "STR_TREND"
+        logger.info(
+            "pre-router structural override: doc=%s str_markers=%d pnl_markers=%d "
+            "matched=%s — pinning doc_type=STR_TREND, skipping Router LLM call",
+            doc_id,
+            pre_router_text_signals.str_marker_hits,
+            pre_router_text_signals.pnl_marker_hits,
+            ", ".join(pre_router_text_signals.str_markers_matched[:5]),
+        )
+
+    if pre_router_str_override is not None:
+        doc_type = pre_router_str_override
+        route = "extract-pre-router-structural-override"
+        router_out = None
+    else:
+        router_input = RouterInput(
+            tenant_id=tenant_id,
+            deal_id=deal_id,
+            filename=filename,
+            content_sample=router_sample,
+        ) if "filename" in RouterInput.model_fields else RouterInput(
+            tenant_id=tenant_id, deal_id=deal_id,
+        )
+        try:
+            router_out = await run_router(router_input)
+            doc_type = getattr(router_out, "doc_type", None) or hint
+            route = getattr(router_out, "route", "extract")
+        except Exception as exc:
+            logger.warning("router failed for doc=%s — falling back to %s: %s", doc_id, hint, exc)
+            doc_type = hint
+            route = "extract-fallback"
 
     # The router returns 'UNKNOWN' as a sentinel when the LLM call
     # rate-limits, the credit balance is exhausted, or the model emits
