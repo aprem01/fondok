@@ -386,3 +386,84 @@ def test_scalar_year_still_emits_finding_alongside_dict_year() -> None:
     assert rooms_findings[0].period_key == "2023_vs_2024"
     # And no GOP finding leaks from the dict-year side.
     assert [f for f in findings if f.line_item == "gop"] == []
+
+
+def test_gop_dollar_resolves_over_sibling_margin_pct() -> None:
+    """Sam QA 2026-06-29 follow-up (post-287f602).
+
+    The 287f602 dict/list/NaN guard only catches non-numeric values.
+    The 2022 extraction Sam re-ran shipped a NUMERIC sibling at
+    ``p_and_l_usali.gop.gop_margin_pct`` (0.3975) alongside the real
+    dollar field at ``p_and_l_usali.gop.gross_operating_profit_usd``
+    ($5.86M). The token-match v3 fallback picked the shorter / tighter
+    margin field first → variance engine read 0.40 as GOP, compared
+    to 2021's $4.85M, and emitted a bogus "GOP -100% ($4.85M → $0)"
+    finding (the $0 in the message is the rounded-down formatter on
+    a $0.40 value).
+
+    Fix: the explicit alias chain for ``gop`` now lists
+    ``p_and_l_usali.gop.gross_operating_profit_usd`` so the resolver
+    finds the dollar field before token-match runs. The
+    ``_TOKEN_FORBIDDEN`` map also rejects ``margin``/``pct`` candidates
+    for ``gop`` / ``noi`` canonicals as belt-and-braces.
+
+    This test reproduces Sam's exact extraction shape (dollar + margin
+    siblings on the same nested object) and asserts the engine
+    reads the dollar number, not the margin ratio.
+    """
+    y2021 = {
+        "year": 2021,
+        "p_and_l_usali.gop.gross_operating_profit_usd": 4_851_110.0,
+        "rooms_revenue": 5_000_000.0,
+    }
+    y2022 = {
+        "year": 2022,
+        # Both siblings present, exactly as the re-extracted 2022 doc.
+        "p_and_l_usali.gop.gross_operating_profit_usd": 5_855_510.0,
+        "p_and_l_usali.gop.gop_margin_pct": 0.3975,
+        "rooms_revenue": 5_000_000.0,
+    }
+    findings = detect_yoy_variances([y2021, y2022])
+
+    gop_findings = [f for f in findings if f.line_item == "gop"]
+    # 2021→2022 GOP went from $4.85M to $5.86M = +20.7%. Threshold is
+    # 10% for GOP so it should fire as WARN. The KEY assertion is that
+    # variance is positive and ~+0.21, NOT -1.00 (which is what the
+    # margin-leak bug emitted).
+    assert len(gop_findings) == 1, (
+        f"expected exactly one GOP 2021↔2022 finding, got {gop_findings!r}"
+    )
+    f = gop_findings[0]
+    assert f.period_key == "2021_vs_2022"
+    assert f.actual_prior == 4_851_110.0
+    assert f.actual_current == 5_855_510.0, (
+        f"actual_current must be the $5.86M dollar field, not the "
+        f"0.3975 margin ratio — got {f.actual_current}"
+    )
+    assert 0.15 < f.variance_pct < 0.30, (
+        f"variance_pct should be ~+21% (5.86M vs 4.85M), got {f.variance_pct}"
+    )
+
+
+def test_noi_dollar_resolves_over_sibling_margin_pct() -> None:
+    """Same margin-leak protection for NOI as for GOP — both canonicals
+    are listed in ``_TOKEN_FORBIDDEN`` rejecting ``margin``/``pct``.
+    """
+    y2023 = {
+        "year": 2023,
+        "p_and_l_usali.noi.net_operating_income_usd": 2_000_000.0,
+        "rooms_revenue": 5_000_000.0,
+    }
+    y2024 = {
+        "year": 2024,
+        "p_and_l_usali.noi.net_operating_income_usd": 2_500_000.0,
+        "p_and_l_usali.noi.noi_margin_pct": 0.40,
+        "rooms_revenue": 5_000_000.0,
+    }
+    findings = detect_yoy_variances([y2023, y2024])
+    noi_findings = [f for f in findings if f.line_item == "noi"]
+    assert len(noi_findings) == 1
+    f = noi_findings[0]
+    assert f.actual_current == 2_500_000.0, (
+        f"NOI actual_current must be $2.5M, not the 0.40 margin — got {f.actual_current}"
+    )

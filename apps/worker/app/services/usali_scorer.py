@@ -323,7 +323,14 @@ _ALIASES: dict[str, tuple[str, ...]] = {
         "p_and_l_usali.gross_operating_profit.gop_usd",
         # T-12 prod
         "p_and_l_usali.gross_operating_profit_usd",
-        # Annual P&L prod
+        # Annual P&L prod (the 2022 schema variant Sam hit — the
+        # extractor nests dollar + margin siblings under
+        # `p_and_l_usali.gop.*`; the explicit dollar alias here means
+        # the token-match v3 fallback never runs and `gop_margin_pct`
+        # can't beat the dollar field on path length).
+        "p_and_l_usali.gop.gross_operating_profit_usd",
+        "p_and_l_usali.gop.gop_usd",
+        "p_and_l_usali.gop.total_usd",
         "p_and_l_usali.gross_operating_profit.total_usd",
         "p_and_l_usali.gross_operating_profit.total",
     ),
@@ -333,6 +340,10 @@ _ALIASES: dict[str, tuple[str, ...]] = {
         "net_operating_income",
         "p_and_l_usali.net_operating_income",
         "p_and_l_usali.net_operating_income.noi_usd",
+        # Same nested-sibling pattern as gop above.
+        "p_and_l_usali.noi.noi_usd",
+        "p_and_l_usali.noi.net_operating_income_usd",
+        "p_and_l_usali.noi.total_usd",
         # Real prod emits EBITDA-less-reserve which is a reasonable
         # NOI proxy when the doc never publishes a NOI line directly
         # (the rule catalog's NOI margin band is generous enough that
@@ -648,6 +659,15 @@ _TOKEN_FORBIDDEN: dict[str, frozenset[str]] = {
     "profit": frozenset({"revenue", "revenues", "income", "expense", "expenses", "cost"}),
     "fee": frozenset({"profit", "margin"}),
     "reserve": frozenset({"profit", "margin"}),
+    # GOP / NOI dollar-canonicals must reject margin / pct / ratio
+    # candidates. Without this, the token-match v3 fallback prefers
+    # `p_and_l_usali.gop.gop_margin_pct` (shorter path, "gop" token
+    # appears twice) over `p_and_l_usali.gop.gross_operating_profit_usd`
+    # — Sam QA 2026-06-29 saw the broker engine emit
+    # "GOP $4.85M → $0" because 0.40 is a valid float and slipped past
+    # the dict/list/NaN guard (commit 287f602).
+    "gop": frozenset({"margin", "pct", "percent", "percentage", "ratio"}),
+    "noi": frozenset({"margin", "pct", "percent", "percentage", "ratio"}),
 }
 
 
