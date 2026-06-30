@@ -89,18 +89,66 @@ def _normalize(raw: str) -> Provider:
     return "anthropic"
 
 
+def _resolve_max_retries(role: Role, override: int | None) -> int:
+    """Resolve the SDK-level ``max_retries`` for ``role``.
+
+    Priority:
+        1. Explicit ``override`` passed by the caller (used by tests).
+        2. ``<ROLE>_LLM_MAX_RETRIES`` (e.g. ``EXTRACTOR_LLM_MAX_RETRIES``).
+        3. ``LLM_MAX_RETRIES``.
+        4. Per-role hardcoded default: ``extractor`` → 6 (Sam QA 2026-06-30:
+           burst uploads of 8 docs triggered Anthropic ``overloaded_error``
+           (HTTP 529) bursts; the default 2 retries with exp-backoff was
+           insufficient and 3/8 docs landed FAILED with ``empty_envelope``).
+           All other roles inherit langchain_anthropic's default of 2.
+
+    The Anthropic SDK already retries 408/409/429 + every 5xx with an
+    exponential backoff + jitter (~0.5s, ~1s, ~2s, ~4s …), so bumping
+    this is essentially "wait longer before giving up under overload";
+    it does NOT cause retries on hard 4xx (validation, auth, etc.).
+    """
+    if override is not None:
+        return max(0, int(override))
+    role_key = f"{role.upper()}_LLM_MAX_RETRIES"
+    raw = os.environ.get(role_key) or os.environ.get("LLM_MAX_RETRIES")
+    if raw is not None and raw.strip() != "":
+        try:
+            return max(0, int(raw))
+        except (TypeError, ValueError):
+            logger.warning(
+                "llm: %s=%r is not an int — falling back to per-role default",
+                role_key, raw,
+            )
+    # Per-role defaults: extractor pays the price of burst-load
+    # overload errors more than any other agent (Sam QA 2026-06-30
+    # empty_envelope investigation), so it gets the most aggressive
+    # retry budget. Other roles keep langchain_anthropic's default 2.
+    if role == "extractor":
+        return 6
+    return 2
+
+
 def build_llm(
     *,
     role: Role,
     max_tokens: int,
     timeout: int,
     temperature: float | None = None,
+    max_retries: int | None = None,
 ) -> Any:
     """Construct a configured chat model for ``role``.
 
     Returns a LangChain chat runnable. Callers usually chain
     ``.with_structured_output(SchemaT)`` on top via
     ``build_structured_llm``.
+
+    ``max_retries`` overrides the SDK-level retry count for transient
+    failures (429 / 5xx / 529 overloaded). When ``None``, falls back to
+    :func:`_resolve_max_retries` which reads
+    ``<ROLE>_LLM_MAX_RETRIES`` / ``LLM_MAX_RETRIES`` from the env and
+    defaults to 6 for ``extractor`` (Sam QA 2026-06-30 empty_envelope
+    investigation — burst-load overload errors exceeded the previous
+    default of 2).
     """
     # Imported lazily so test runs that never call build_llm don't
     # require langchain_anthropic to be installed.
@@ -114,22 +162,25 @@ def build_llm(
         )
 
     model = _role_model(role, provider)
+    resolved_retries = _resolve_max_retries(role, max_retries)
     kwargs: dict[str, Any] = {
         "model": model,
         "api_key": settings.ANTHROPIC_API_KEY,
         "max_tokens": max_tokens,
         "timeout": timeout,
+        "max_retries": resolved_retries,
     }
     # Opus 4.7 rejects the temperature parameter; set only on others.
     if temperature is not None and "opus-4-7" not in model:
         kwargs["temperature"] = temperature
 
     logger.info(
-        "llm: role=%s provider=%s model=%s max_tokens=%d",
+        "llm: role=%s provider=%s model=%s max_tokens=%d max_retries=%d",
         role,
         provider,
         model,
         max_tokens,
+        resolved_retries,
     )
     return ChatAnthropic(**kwargs)  # type: ignore[arg-type]
 
@@ -143,6 +194,7 @@ def build_structured_llm(
     temperature: float | None = None,
     include_raw: bool = False,
     method: str = "function_calling",
+    max_retries: int | None = None,
 ) -> Any:
     """Build a chat model with structured output bound to ``schema``.
 
@@ -167,6 +219,7 @@ def build_structured_llm(
         max_tokens=max_tokens,
         timeout=timeout,
         temperature=temperature,
+        max_retries=max_retries,
     )
     return base.with_structured_output(
         schema, include_raw=include_raw, method=method

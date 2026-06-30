@@ -60,6 +60,57 @@ def _read_chunk_concurrency_env() -> int:
 _EXTRACTOR_MAX_CONCURRENCY = _read_chunk_concurrency_env()
 
 
+# In-band retry budget for a single per-chunk extraction (Sam QA
+# 2026-06-30): when 8 docs were uploaded simultaneously to a fresh deal
+# 3/8 failed on first pass with ``error_kind='empty_envelope'`` and ALL
+# 3 recovered on a manual reprocess against the same input. Two causes
+# stacked: (a) Anthropic ``overloaded_error`` (HTTP 529) bursts under
+# load, only retried twice by the SDK default; (b) the structured-output
+# parser intermittently returns an empty envelope on a successful API
+# call when the model emits prose ("I cannot find structured data…")
+# instead of the JSON tool args, especially under load.
+#
+# The fix bumps the SDK retry budget at the LLM layer (see
+# ``EXTRACTOR_LLM_MAX_RETRIES`` in ``app.llm``) AND adds exactly ONE
+# in-band retry here. The two layers cover different failure modes —
+# SDK retries handle 5xx/429 where the API itself failed; this in-band
+# retry handles the case where the API returned 200 OK but with an
+# unusable empty body.
+#
+# Hard cap: 1. The second attempt's outcome is final, so a doc that
+# legitimately has nothing to extract still lands FAILED on the same
+# request (no infinite loop, no wasted spend). Override with
+# ``EXTRACTOR_EMPTY_ENVELOPE_RETRIES`` (0 disables the in-band retry
+# entirely; values >1 are clamped to 1 to keep the per-doc budget bounded).
+def _read_empty_envelope_retry_budget() -> int:
+    import os as _os
+    raw = _os.environ.get("EXTRACTOR_EMPTY_ENVELOPE_RETRIES")
+    if raw is None or raw.strip() == "":
+        return 1
+    try:
+        val = int(raw)
+    except (TypeError, ValueError):
+        return 1
+    # Clamp: in-band retries beyond 1 stack unbounded spend (think 8
+    # concurrent docs × 3 retries each × cached prompt) for marginal
+    # extra recovery. If 2 attempts can't pull a single field, the doc
+    # almost certainly needs human reclassification, not another LLM round.
+    return max(0, min(1, val))
+
+
+_EXTRACTOR_EMPTY_ENVELOPE_RETRY_BUDGET = _read_empty_envelope_retry_budget()
+
+
+# Backoff window for the in-band retry. Jittered to avoid 8 concurrent
+# retries firing in lockstep and re-creating the original thundering
+# herd on the second attempt. Lower bound is 1s (long enough that an
+# Anthropic ``overloaded_error`` propagation can clear); upper is 3s
+# (short enough that the analyst doesn't notice — they're already
+# waiting on the slowest chunk).
+_EMPTY_ENVELOPE_RETRY_DELAY_MIN_S = 1.0
+_EMPTY_ENVELOPE_RETRY_DELAY_MAX_S = 3.0
+
+
 # ─────────────────────── prompt ───────────────────────
 
 
@@ -769,13 +820,24 @@ def _salvage_envelope_from_raw(raw_msg: Any) -> _ExtractorEnvelope | None:
 # ─────────────────────── per-document runner ───────────────────────
 
 
-async def _extract_one(
+async def _attempt_extract(
     doc: ExtractorDocument,
     *,
     deal_id: str,
     system_blocks: list[Any],
-) -> tuple[ExtractedDocumentResult, ModelCall | None]:
-    """Run one LLM call for one document. Errors return success=False."""
+) -> tuple[ExtractedDocumentResult, ModelCall | None, bool]:
+    """One LLM round-trip for one document chunk.
+
+    Returns ``(result, model_call, retry_eligible)`` where
+    ``retry_eligible`` is True iff the failure mode is plausibly
+    transient (LLM raised, or the envelope came back with zero fields
+    after the salvage pass). A successful result returns
+    ``retry_eligible=False`` because there's nothing to retry.
+
+    Split out of :func:`_extract_one` so the caller can wrap it in
+    the in-band retry loop without duplicating the result-building
+    bookkeeping.
+    """
     started = datetime.now(UTC)
 
     from ..llm import cached_system_message_blocks
@@ -808,7 +870,11 @@ async def _extract_one(
             success=False,
             error=f"{type(exc).__name__}: {exc}",
         )
-        return result, None
+        # An exception path is always retry-eligible — most LLM
+        # exceptions we hit here are transient (timeout, overloaded,
+        # rate-limit overflow past SDK retries). A persistent
+        # validation/auth failure will still cap at 1 in-band retry.
+        return result, None, True
 
     fields = _to_canonical_fields(envelope.fields)
     by_field = {f.field_name: f.confidence for f in fields}
@@ -864,6 +930,89 @@ async def _extract_one(
         cache_read_input_tokens=usage.cache_read_input_tokens,
         agent_name="extractor",
     )
+    # An empty envelope is retry-eligible (the API call succeeded but
+    # came back with nothing — most often a transient structured-output
+    # parser hiccup under burst load). A populated envelope is not.
+    return result, model_call, not success
+
+
+async def _extract_one(
+    doc: ExtractorDocument,
+    *,
+    deal_id: str,
+    system_blocks: list[Any],
+) -> tuple[ExtractedDocumentResult, ModelCall | None]:
+    """Run one LLM call for one document, with a single in-band retry.
+
+    Sam QA 2026-06-30: a burst of 8 simultaneously uploaded docs hit
+    37.5% first-pass ``empty_envelope`` failures (3/8 docs), all of
+    which recovered on a manual reprocess. Two stacked causes:
+
+    1. Anthropic ``overloaded_error`` (HTTP 529) bursts under load that
+       blew through the SDK's default 2 retries. The retry budget on
+       the Anthropic client was bumped to 6 (see
+       :func:`app.llm._resolve_max_retries`).
+
+    2. The structured-output parser intermittently returns an empty
+       envelope on a successful API call when the model emits prose
+       instead of the JSON tool args — observed even after the salvage
+       path runs. One in-band retry with a short jittered backoff
+       recovers these. Cap is hard-set at 1 so a doc that genuinely
+       can't be extracted still lands FAILED on the same upload
+       (no infinite loop, no recursive retry budget).
+
+    The retry uses a fresh ``UsageCapture`` + ``_build_llm`` so the
+    second attempt's token + model bookkeeping is independent and the
+    cost ledger sees both calls.
+    """
+    import asyncio as _asyncio
+    import random as _random
+
+    result, model_call, retry_eligible = await _attempt_extract(
+        doc, deal_id=deal_id, system_blocks=system_blocks,
+    )
+
+    # Single in-band retry on transient failure modes. The retry is
+    # idempotent — same input, same system blocks, same deal_id — and
+    # capped at exactly one attempt regardless of outcome.
+    if (
+        retry_eligible
+        and _EXTRACTOR_EMPTY_ENVELOPE_RETRY_BUDGET >= 1
+    ):
+        delay = _random.uniform(
+            _EMPTY_ENVELOPE_RETRY_DELAY_MIN_S,
+            _EMPTY_ENVELOPE_RETRY_DELAY_MAX_S,
+        )
+        logger.info(
+            "extractor: retrying %s after %.2fs backoff "
+            "(first attempt: success=%s, error=%r)",
+            doc.filename,
+            delay,
+            result.success,
+            result.error,
+        )
+        await _asyncio.sleep(delay)
+        retry_result, retry_call, _ = await _attempt_extract(
+            doc, deal_id=deal_id, system_blocks=system_blocks,
+        )
+        if retry_result.success:
+            logger.info(
+                "extractor: retry recovered %s (fields=%d)",
+                doc.filename,
+                len(retry_result.fields),
+            )
+        else:
+            logger.warning(
+                "extractor: retry also failed for %s — accepting failure "
+                "(error=%r)",
+                doc.filename,
+                retry_result.error,
+            )
+        # ALWAYS take the retry outcome — even when it's also a failure.
+        # Otherwise a transient empty envelope followed by a clear
+        # failure would mask the second (more informative) error.
+        return retry_result, retry_call
+
     return result, model_call
 
 
