@@ -3692,18 +3692,28 @@ async def get_extraction(
     deal_id: UUID,
     doc_id: UUID,
     session: Annotated[AsyncSession, Depends(get_session)],
+    tenant_id: Annotated[UUID, Depends(get_tenant_id)],
 ) -> ExtractionResultResponse:
-    """Return the latest extraction result for a document."""
+    """Return the latest extraction result for a document.
+
+    Sam 2026-06-30: the prior version didn't take tenant_id at all
+    and both its queries missed the tenant predicate, which
+    (a) lit up tenant_middleware with CRITICAL "cross-tenant leak
+    risk" lines on every poll (heavy log noise — this endpoint
+    fires per-doc per-poll), and (b) was a real defense gap:
+    statistically near-zero with v4 UUIDs but a uuid-guess bypass
+    existed. Both queries now carry `AND tenant_id = :tenant`.
+    """
     doc_row = (
         await session.execute(
             text(
                 """
                 SELECT status, page_count, extraction_data
                   FROM documents
-                 WHERE id = :id AND deal_id = :d
+                 WHERE id = :id AND deal_id = :d AND tenant_id = :tenant
                 """
             ),
-            {"id": str(doc_id), "d": str(deal_id)},
+            {"id": str(doc_id), "d": str(deal_id), "tenant": str(tenant_id)},
         )
     ).first()
     if doc_row is None:
@@ -3751,12 +3761,12 @@ async def get_extraction(
                 """
                 SELECT id, fields, confidence_report, agent_version, created_at
                   FROM extraction_results
-                 WHERE document_id = :id
+                 WHERE document_id = :id AND tenant_id = :tenant
                  ORDER BY created_at DESC
                  LIMIT 1
                 """
             ),
-            {"id": str(doc_id)},
+            {"id": str(doc_id), "tenant": str(tenant_id)},
         )
     ).first()
 
