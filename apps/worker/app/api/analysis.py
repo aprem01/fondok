@@ -596,6 +596,7 @@ async def _load_historical_pnls(
             """
             SELECT er.fields,
                    d.fiscal_year,
+                   d.extracted_period_year,
                    d.doc_type,
                    er.created_at
               FROM extraction_results er
@@ -626,13 +627,28 @@ async def _load_historical_pnls(
                 continue
             flat[name] = f.get("value")
 
-        # Year resolution priority: explicit fiscal_year column →
-        # ``p_and_l_usali.period_label`` → ``period_ending`` → bare
-        # ``period_ending`` (no prefix, OM-style).
+        # Year resolution priority (Sam QA 2026-06-30):
+        #   1. analyst's wizard tag (``fiscal_year`` column)
+        #   2. extractor's parsed period (``extracted_period_year``
+        #      column) — wired in via the period-year backfill task
+        #      and populated for every doc whose extraction produced
+        #      a parseable date even if the analyst skipped the
+        #      wizard year-prompt
+        #   3. flatten-fields fallback (legacy path for rows
+        #      predating the extracted_period_year column)
+        # Sam saw broker_questions/refresh return [] on fresh deals
+        # because fiscal_year was null AND the flatten-fields paths
+        # below weren't populated by the new extraction schema —
+        # the Historicals tab rendered fine via extracted_period_year
+        # but the broker series-builder didn't read that column.
         year: int | None = None
         fiscal = m.get("fiscal_year")
         if isinstance(fiscal, int) and 1900 < fiscal < 2100:
             year = fiscal
+        if year is None:
+            extracted = m.get("extracted_period_year")
+            if isinstance(extracted, int) and 1900 < extracted < 2100:
+                year = extracted
         if year is None:
             for key in (
                 "p_and_l_usali.period_label",
