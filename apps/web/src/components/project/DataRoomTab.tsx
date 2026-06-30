@@ -30,7 +30,6 @@ import { useEngineOutputs } from '@/lib/hooks/useEngineOutputs';
 import { useEngineRun } from '@/lib/hooks/useEngineRun';
 import { useToast } from '@/components/ui/Toast';
 import { cn } from '@/lib/format';
-import EngineRunProgress from './EngineRunProgress';
 import { CoachMark } from '@/components/help/CoachMark';
 import { UsaliBadge } from './validation/UsaliBadge';
 import { UsaliDeviationsAccordion } from './validation/UsaliDeviationsAccordion';
@@ -297,22 +296,26 @@ export default function DataRoomTab({ projectId }: { projectId: number | string 
     [rawId, refresh, toast],
   );
 
-  // Surface a toast each time a doc transitions to EXTRACTED.
+  // Enterprise toast policy (Sam QA 2026-06-29):
+  //   • Successes: NEVER fire per-doc. The doc row already shows
+  //     "N fields · X% confidence" — the row IS the status surface.
+  //     A 16-doc upload should produce 0 success toasts, not 16
+  //     stacked ones covering the page.
+  //   • Failures: DO fire. They need attention and bypass the
+  //     aggregation rule. We dedupe via the ref so a flaky polling
+  //     loop doesn't re-toast the same failure.
   useEffect(() => {
     documents.forEach((d) => {
       if (extractionToastedRef.current.has(d.id)) return;
       const ex = extractions[d.id];
       if (ex && ex.status === 'EXTRACTED') {
+        // Mark seen so the failure branch below doesn't fire later
+        // if the row transitions back through a state machine, and
+        // so any future aggregate-toast logic doesn't double-count.
         extractionToastedRef.current.add(d.id);
-        const fieldCount = ex.fields?.length ?? 0;
-        toast(`Extracted ${fieldCount} field${fieldCount === 1 ? '' : 's'} from ${d.filename}`, {
-          type: 'success',
-        });
       } else if (d.status === 'FAILED') {
-        if (!extractionToastedRef.current.has(d.id)) {
-          extractionToastedRef.current.add(d.id);
-          toast(`Extraction failed for ${d.filename}`, { type: 'error' });
-        }
+        extractionToastedRef.current.add(d.id);
+        toast(`Extraction failed for ${d.filename}`, { type: 'error' });
       }
     });
   }, [documents, extractions, toast]);
@@ -502,6 +505,18 @@ export default function DataRoomTab({ projectId }: { projectId: number | string 
 
   // The hook must always be called (Rules of Hooks). When the deal id is
   // not a real worker UUID we just never invoke `run()`.
+  // Enterprise notification policy (Sam QA 2026-06-29 — "i want
+  // enterprise standard only"):
+  //   • Run start: SILENT. The inline "Running underwriting…"
+  //     strip below renders progress. No kickoff toast.
+  //   • Run complete (cached, all runtime_ms ~0): SILENT. Data
+  //     just appears on the Engines tab. Don't celebrate 0ms.
+  //   • Run complete (real): ONE concise toast pointing at the
+  //     Engines tab. No headline metric in the toast (it would
+  //     duplicate what the user is about to see) — just a clean
+  //     "go look" signal.
+  //   • Run failure: ONE toast with the failure summary
+  //     (failures bypass aggregation — they need attention).
   const fullRun = useEngineRun(liveMode ? rawId : '', 'returns', {
     runMode: 'all',
     onRunAllStarted: (id, eng) => {
@@ -510,16 +525,31 @@ export default function DataRoomTab({ projectId }: { projectId: number | string 
       setFullRunStartedAt(Date.now());
       setFullRunExpected(eng.length > 0 ? eng : ENGINE_ORDER);
       setFullRunNumber((n) => n + 1);
-      toast(
-        'Underwriting kicked off — switch to any engine tab to watch the results',
-        { type: 'success' },
-      );
     },
     onRunAllProgress: (rows) => {
       setFullRunRows(rows);
     },
     onAllComplete: (rows) => {
       setFullRunRows(rows);
+      // Cached runs return effectively instantly. Sum the
+      // per-engine runtimes (null → 0). If the total is under
+      // half a second, this was a no-op refresh — stay silent.
+      const totalRuntimeMs = rows.reduce(
+        (sum, r) => sum + (r.runtime_ms ?? 0),
+        0,
+      );
+      if (totalRuntimeMs < 500) return;
+      const failed = rows.filter((r) => r.status === 'failed').length;
+      if (failed > 0) {
+        toast(
+          `Underwriting finished with ${failed} engine${failed === 1 ? '' : 's'} failing — open the Engines tab to inspect`,
+          { type: 'error' },
+        );
+      } else {
+        toast('Underwriting complete — results on the Engines tab', {
+          type: 'success',
+        });
+      }
     },
   });
 
@@ -731,22 +761,26 @@ export default function DataRoomTab({ projectId }: { projectId: number | string 
           {fullRunRunning && (
             <span className="inline-flex items-center gap-2 text-[12px] text-ink-500">
               <span className="inline-block w-2 h-2 rounded-full bg-brand-500 animate-pulse" />
-              Running underwriting…
+              Running underwriting · {fullRunRows.filter((r) => r.status === 'complete').length}/{fullRunExpected.length || 8} complete
+              {fullRunStartedAt
+                ? ` · ${((Date.now() - fullRunStartedAt) / 1000).toFixed(0)}s`
+                : ''}
             </span>
           )}
         </div>
       )}
 
-      {/* Floating progress strip — appears bottom-right while the run-all
-          chain is in flight, auto-dismisses on completion. */}
-      <EngineRunProgress
-        runId={fullRunId}
-        expectedEngines={fullRunExpected}
-        rows={fullRunRows}
-        startedAt={fullRunStartedAt}
-        runNumber={fullRunNumber}
-        onClose={() => setFullRunId(null)}
-      />
+      {/* Engine-run progress lives inline above (single status line on
+          this tab) and on the Engines tab itself. The old
+          bottom-right floating panel was deleted (Sam QA 2026-06-29
+          — "i want enterprise standard only"): institutional users
+          expect inline status, not consumer-app overlays that block
+          content. Status surfaces:
+            • this tab while running → inline strip above
+            • completion → ONE concise success toast (see
+              onAllComplete handler) — cached runs stay silent
+            • Engines tab → per-engine rows render live as they
+              finish, no duplication needed. */}
 
       {liveMode && docs.length === 0 ? (
         <Card className="p-8">
@@ -978,8 +1012,16 @@ export default function DataRoomTab({ projectId }: { projectId: number | string 
             <h3 className="text-[14px] font-semibold text-ink-900">Documents ({docs.length})</h3>
           </div>
 
-          <div className="grid grid-cols-3 gap-5">
-            <div className="col-span-2 space-y-2">
+          {/* Enterprise master-detail (Sam QA 2026-06-29 — "i want
+              enterprise standard only"): 5/7 split favors the detail
+              pane (the source of truth) over the list (which is just
+              for scanning + selection). Linear / Notion / Stripe all
+              ship this shape. List rows stay compact — banners and
+              accordions move into the detail pane to stop the list
+              from blowing up vertically as the analyst clicks
+              through 16+ docs. */}
+          <div className="grid grid-cols-12 gap-5">
+            <div className="col-span-5 space-y-1.5">
               {docs.map((d, _docIdx) => {
                 const hasVariance = VARIANCE_DOCS.has(d.name);
                 const flagsForDoc = hasVariance
@@ -1296,12 +1338,40 @@ export default function DataRoomTab({ projectId }: { projectId: number | string 
                 practice. `max-h-[calc(100vh-2rem)]` + inner scroll
                 keeps the panel itself usable when the extracted-field
                 list is long. */}
-            <div className="col-span-1">
+            <div className="col-span-7">
               <Card className="p-4 bg-ink-300/5 sticky top-4 max-h-[calc(100vh-2rem)] overflow-y-auto">
-              <h4 className="text-[12px] font-semibold text-ink-900 mb-2">Extracted Data</h4>
-              {selectedDoc ? (
+              {selectedDoc && selectedDocRow ? (
                 <div>
-                  <div className="text-[11px] text-ink-500 mb-3 truncate">{selectedDoc}</div>
+                  {/* Detail-pane header (enterprise pattern: persistent
+                      context for the selected entity — filename,
+                      doc_type, status, USALI). Replaces the tiny
+                      "Extracted Data" label + filename micro-text. */}
+                  <div className="-mx-4 -mt-4 mb-4 px-4 pt-3 pb-3 border-b border-border bg-white sticky top-0 z-10">
+                    <div className="text-[13px] font-semibold text-ink-900 truncate" title={selectedDocRow.name}>
+                      {selectedDocRow.name}
+                    </div>
+                    <div className="flex items-center gap-2 mt-1.5 flex-wrap">
+                      <StatusBadge value={selectedDocRow.status} />
+                      <Badge tone="gray">{selectedDocRow.type}</Badge>
+                      {selectedDocRow.usaliScore != null && (
+                        <UsaliBadge
+                          doc={{
+                            filename: selectedDocRow.name,
+                            usali_score: selectedDocRow.usaliScore ?? null,
+                            usali_deviations: selectedDocRow.usaliPayload ?? null,
+                          }}
+                          open={false}
+                          onToggle={() => toggleUsali(selectedDocRow.id)}
+                        />
+                      )}
+                      {selectedDocRow.fiscalYear != null && (
+                        <Badge tone="blue">FY {selectedDocRow.fiscalYear}</Badge>
+                      )}
+                      <span className="text-[11px] text-ink-500 ml-auto tabular-nums">
+                        {selectedDocRow.size} · {selectedDocRow.date}
+                      </span>
+                    </div>
+                  </div>
                   {selectedHasVariance && selectedVarianceFlags.length > 0 && (
                     <button
                       onClick={goToVariance}
@@ -1332,7 +1402,11 @@ export default function DataRoomTab({ projectId }: { projectId: number | string 
                     type FieldRow = { label: string; value: string; pct: number };
                     let rows: FieldRow[];
                     if (liveMode && selectedDocRow.fieldList && selectedDocRow.fieldList.length > 0) {
-                      rows = selectedDocRow.fieldList.slice(0, 12).map((f) => ({
+                      // Show ALL extracted fields, not just the first 12.
+                      // Enterprise pattern: the detail pane is the source
+                      // of truth, not a teaser. Inner scroll on the Card
+                      // keeps the page from blowing up.
+                      rows = selectedDocRow.fieldList.map((f) => ({
                         label: f.field_name,
                         value: formatValue(f.value, f.unit),
                         pct: Math.round((f.confidence ?? 0) * 100),
