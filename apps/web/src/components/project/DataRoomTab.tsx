@@ -1284,7 +1284,15 @@ export default function DataRoomTab({ projectId }: { projectId: number | string 
               })}
             </div>
 
-            <Card className="p-4 bg-ink-300/5">
+            {/* Sticky right pane — keeps the Extracted Data panel
+                visible while the analyst clicks through a long doc
+                list (Sam QA 2026-06-29: at 16 docs you'd click a row
+                near the bottom and have to scroll back up to see if
+                the panel actually updated). `top-4` clears the page
+                header padding; `max-h-[calc(100vh-2rem)]` + inner
+                scroll keeps the panel itself usable even when the
+                extracted-field list is long. */}
+            <Card className="p-4 bg-ink-300/5 sticky top-4 self-start max-h-[calc(100vh-2rem)] overflow-y-auto">
               <h4 className="text-[12px] font-semibold text-ink-900 mb-2">Extracted Data</h4>
               {selectedDoc ? (
                 <div>
