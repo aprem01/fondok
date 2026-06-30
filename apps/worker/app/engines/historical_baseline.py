@@ -69,7 +69,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 # baseline reads the SAME canonical fields the compliance scorer does.
 # Keeping a single source of truth means a new alias added for a future
 # extractor flavor lights up both the scorer and the baseline at once.
-from ..services.usali_scorer import _ALIASES, _derive_usali_rollups
+from ..services.usali_scorer import _derive_usali_rollups
 
 logger = logging.getLogger(__name__)
 
@@ -211,19 +211,27 @@ def _coerce_num(v: Any) -> float | None:
 
 
 def _resolve(flat: dict[str, Any], canonical: str) -> float | None:
-    """Look ``canonical`` up on ``flat`` then walk the USALI alias map.
+    """Look ``canonical`` up on ``flat`` via the full USALI scorer
+    resolution chain.
 
-    Same resolution chain the USALI scorer uses (single source of
-    truth) — see ``apps/worker/app/services/usali_scorer.py::_ALIASES``.
+    Sam QA 2026-06-29: this used to do only ``flat.get(canonical)``
+    + alias-map walk, while the broker-questions engine
+    (``historical_variance._normalize_pnl``) also called
+    ``usali_scorer._resolve_field`` as a final fallback. Result:
+    same extraction_data, two different readings — the broker
+    engine saw 2019 F&B = $1,028,110 while the P&L Historicals tab
+    rendered blank because the flat dict didn't carry a bare
+    ``fb_revenue`` key for that year, only the nested
+    ``p_and_l_usali.operating_revenue.food_beverage_revenue`` path.
+
+    Delegating to ``_resolve_field`` makes the scorer the single
+    source of truth across all consumers: direct key → alias map
+    → v3 token-match fallback. Whatever the broker engine sees,
+    the historical baseline now sees too.
     """
-    val = _coerce_num(flat.get(canonical))
-    if val is not None:
-        return val
-    for alias in _ALIASES.get(canonical, ()):
-        val = _coerce_num(flat.get(alias))
-        if val is not None:
-            return val
-    return None
+    from ..services.usali_scorer import _resolve_field as _scorer_resolve
+
+    return _coerce_num(_scorer_resolve(flat, canonical))
 
 
 def _flatten_fields(fields: list[dict[str, Any]] | str | None) -> dict[str, Any]:
