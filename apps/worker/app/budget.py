@@ -47,8 +47,11 @@ _PRICING: dict[str, tuple[float, float]] = {
     "claude-sonnet-4-6": (3.00, 15.00),
     "claude-sonnet-4-5": (3.00, 15.00),
     "claude-sonnet-4": (3.00, 15.00),
-    "claude-haiku-4-5": (1.00, 5.00),
-    "claude-haiku-4": (1.00, 5.00),
+    # Haiku 4.5 pricing per Anthropic's 2026 rate card ($0.80 in / $4 out).
+    # Task Q (2026-07) corrected the previous placeholder of $1/$5 that had
+    # never been reconciled against the public price list.
+    "claude-haiku-4-5": (0.80, 4.00),
+    "claude-haiku-4": (0.80, 4.00),
     # Legacy 3.x — kept so an old override doesn't silently price at 0.
     "claude-3-5-sonnet": (3.00, 15.00),
     "claude-3-5-haiku": (0.80, 4.00),

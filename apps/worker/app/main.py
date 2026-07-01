@@ -11,6 +11,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from . import __version__
 from .alerting import init_sentry
+from .api import admin_cost as admin_cost_router
 from .api import analysis as analysis_router
 from .api import audit as audit_router
 from .api import data_library as data_library_router
@@ -230,6 +231,15 @@ def create_app() -> FastAPI:
         observability_router.router,
         prefix="/observability",
         tags=["observability"],
+    )
+    # Task Q (2026-07) — tenant-scoped cost + cache rollup for Sam's
+    # cost-optimization measurement loop. Complements /observability
+    # (recent-N view) with 24h/7d/30d windows + per-agent/model/deal
+    # breakdown + a backfill verb for zero-cost historical rows.
+    app.include_router(
+        admin_cost_router.router,
+        prefix="/admin",
+        tags=["admin-cost"],
     )
     # Wave 4 W4.3 — Activity Feed (per-deal stream) + Compliance Explorer
     # (tenant-wide). Per-deal mounts under /deals so it shares the same
