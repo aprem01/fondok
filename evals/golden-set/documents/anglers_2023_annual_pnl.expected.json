@@ -1,0 +1,29 @@
+{
+  "case_id": "anglers_2023_annual_pnl",
+  "description": "Angler's Hotel — 2023 monthly-broken-out annual P&L (real Sam fixture)",
+  "fixture_path": "apps/worker/tests/fixtures/sam_anglers_2023_pnl.xlsx",
+  "extraction_payload_path": "apps/worker/tests/fixtures/real_payloads/anglers_annual_pnl_real.json",
+  "expected_doc_type": "PNL",
+  "parse": {
+    "parser": "openpyxl",
+    "total_pages_min": 1,
+    "total_pages_max": 4,
+    "total_chars_min": 3000,
+    "total_chars_max": 20000,
+    "min_tables": 1
+  },
+  "usali": {
+    "keys": 132,
+    "canonical_fields": {
+      "rooms_revenue": 9807990.0,
+      "total_revenue": 12940200.0,
+      "gop": 4736470.0,
+      "noi": 1957310.0,
+      "revpar": 203.57,
+      "adr": 247.078,
+      "occupancy": 0.82391
+    },
+    "score_range": [65.0, 90.0],
+    "min_applicable_rules": 15
+  }
+}

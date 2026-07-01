@@ -1,0 +1,18 @@
+{
+  "version": 1,
+  "description": "Golden-set regression fixtures — 5 representative doc types for the extraction pipeline. Each entry references a canonical fixture already checked in under apps/worker/tests/fixtures/ so we don't duplicate large binaries in git. Expected canonical outputs live in <case_id>.expected.json.",
+  "cases": [
+    "anglers_t12",
+    "anglers_2023_annual_pnl",
+    "sample_str_trend",
+    "sample_cbre_horizons",
+    "anglers_om"
+  ],
+  "doc_type_coverage": {
+    "T12": "anglers_t12",
+    "PNL": "anglers_2023_annual_pnl",
+    "STR_TREND": "sample_str_trend",
+    "CBRE_HORIZONS": "sample_cbre_horizons",
+    "OM": "anglers_om"
+  }
+}

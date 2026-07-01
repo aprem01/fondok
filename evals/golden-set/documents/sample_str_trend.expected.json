@@ -1,0 +1,20 @@
+{
+  "case_id": "sample_str_trend",
+  "description": "CoStar STR Trend market report (12 sheets, subject + competitors, per-measure Occ/ADR/RevPAR)",
+  "fixture_path": "apps/worker/tests/fixtures/sample_str_trend.xls",
+  "extraction_payload_path": null,
+  "expected_doc_type": "STR_TREND",
+  "parse": {
+    "parser": "xlrd",
+    "total_pages_min": 8,
+    "total_pages_max": 20,
+    "total_chars_min": 40000,
+    "total_chars_max": 200000,
+    "min_tables": 8
+  },
+  "text_signals": {
+    "min_str_marker_hits": 2,
+    "expected_markers_any_of": ["costar", "by_measure", "by measure", "trend"]
+  },
+  "usali": null
+}

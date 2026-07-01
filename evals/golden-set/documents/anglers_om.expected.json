@@ -1,0 +1,18 @@
+{
+  "case_id": "anglers_om",
+  "description": "Angler's Hotel Offering Memorandum (Eastdil, real Sam fixture, 45pp)",
+  "fixture_path": "apps/worker/tests/fixtures/sam_anglers_om.pdf",
+  "extraction_payload_path": null,
+  "expected_doc_type": "OM",
+  "parse": {
+    "parser_prefix": "pymupdf",
+    "total_pages_min": 30,
+    "total_pages_max": 100,
+    "total_chars_min": 30000,
+    "total_chars_max": 200000,
+    "min_tables": 30
+  },
+  "usali": null,
+  "slow": true,
+  "notes": "Full PDF parse takes ~60s. Gated behind pytest.mark.slow so the golden-set suite stays fast in CI."
+}

@@ -87,6 +87,10 @@ asyncio_mode = "auto"
 testpaths = ["tests"]
 python_files = ["test_*.py"]
 addopts = "-ra --strict-markers"
+markers = [
+  "live_llm: opt-in end-to-end regression tests that hit the real Anthropic API (require ANTHROPIC_API_KEY). Skipped by default.",
+  "slow: parse/extract jobs that take >10s on a laptop (e.g. the full OM PDF). Skipped from the default CI suite.",
+]
 
 [tool.ruff]
 line-length = 100

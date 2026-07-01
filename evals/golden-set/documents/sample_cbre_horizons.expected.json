@@ -1,0 +1,16 @@
+{
+  "case_id": "sample_cbre_horizons",
+  "description": "CBRE Hotel Horizons submarket 5-year ADR / RevPAR forecast (real published report)",
+  "fixture_path": "apps/worker/tests/fixtures/sample_cbre_horizons.pdf",
+  "extraction_payload_path": null,
+  "expected_doc_type": "CBRE_HORIZONS",
+  "parse": {
+    "parser_prefix": "pymupdf",
+    "total_pages_min": 15,
+    "total_pages_max": 60,
+    "total_chars_min": 30000,
+    "total_chars_max": 200000,
+    "min_tables": 20
+  },
+  "usali": null
+}

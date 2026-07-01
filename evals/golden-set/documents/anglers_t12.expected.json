@@ -1,0 +1,29 @@
+{
+  "case_id": "anglers_t12",
+  "description": "Angler's Hotel — T-12 P&L exported from IHG data warehouse (June 2026, real Sam fixture)",
+  "fixture_path": "apps/worker/tests/fixtures/sam_anglers_t12.xlsx",
+  "extraction_payload_path": "apps/worker/tests/fixtures/real_payloads/anglers_t12_real.json",
+  "expected_doc_type": "T12",
+  "parse": {
+    "parser": "openpyxl",
+    "total_pages_min": 5,
+    "total_pages_max": 8,
+    "total_chars_min": 200000,
+    "total_chars_max": 1500000,
+    "min_tables": 5
+  },
+  "usali": {
+    "keys": 132,
+    "canonical_fields": {
+      "rooms_revenue": 9322920.0,
+      "total_revenue": 14009800.0,
+      "gop": 5081540.0,
+      "noi": 1948560.0,
+      "revpar": 193.502,
+      "adr": 233.446,
+      "occupancy": 0.828892
+    },
+    "score_range": [65.0, 90.0],
+    "min_applicable_rules": 15
+  }
+}
