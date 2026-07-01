@@ -75,6 +75,19 @@ async def health(
         raw_store_kind = f"error:{type(exc).__name__}"
         degraded_reasons.append("raw_store_init_failed")
 
+    # Content-hash extraction cache metrics (Sam cost-opt 2026-07). A
+    # per-tenant hit/miss/hit_rate breakdown so ops can eyeball how much
+    # LLM spend the cache is deflecting. Process-local — restart zeros
+    # the gauge; the long-term aggregate lives in extraction_results.
+    extraction_cache: dict[str, Any] = {}
+    try:
+        from .documents import get_extraction_cache_metrics
+
+        extraction_cache = get_extraction_cache_metrics()
+    except Exception as exc:
+        logger.warning("health: extraction cache metrics failed: %s", exc)
+        extraction_cache = {"error": type(exc).__name__}
+
     return {
         "status": "ok" if not degraded_reasons else "degraded",
         "version": __version__,
@@ -86,5 +99,6 @@ async def health(
             "bucket": raw_store_bucket,
             "region": raw_store_region,
         },
+        "extraction_cache": extraction_cache,
         "degraded_reasons": degraded_reasons,
     }

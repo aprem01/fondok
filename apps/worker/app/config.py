@@ -58,6 +58,16 @@ class Settings(BaseSettings):
     # is lost; only the LLM's view of the doc changes.
     PARSER_COMPACTION_ENABLED: bool = Field(default=True)
 
+    # Cost-optimization pass N (2026-07): content-hash extraction cache.
+    # When True (default), an upload whose bytes SHA-256 matches a prior
+    # successful extraction on the SAME tenant + SAME pipeline version
+    # skips the Router → Extractor → Normalizer → Verifier chain and
+    # clones the prior result into a new extraction_results row. Zero
+    # LLM cost. Cross-tenant lookups are hard-blocked. Flip to False
+    # when debugging a suspected stale-cache issue so every doc runs
+    # the full extractor for one deploy.
+    EXTRACTION_CACHE_ENABLED: bool = Field(default=True)
+
     # ── Tenancy ─────────────────────────────────────────────────────
     # UUID-shaped string for dev. Real tenants are provisioned in DB.
     DEFAULT_TENANT_ID: str = Field(

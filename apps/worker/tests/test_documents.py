@@ -453,3 +453,561 @@ def test_graph_compiles_with_real_nodes() -> None:
         "finalize",
     }
     assert expected.issubset(set(g.nodes))
+
+
+# ─────────────────── content-hash extraction cache ──────────────────
+#
+# Sam cost-opt 2026-07: every upload used to run Router → Extractor →
+# Normalizer → Verifier against Claude even when the exact same bytes
+# were extracted last week. At $6-10 per deal in LLM tokens this is
+# the biggest waste. The cache short-circuits identical-content
+# re-uploads to zero LLM cost. Safety gates: same-tenant only, same
+# pipeline version only, source row must be status=EXTRACTED. These
+# tests seed the DB directly so they exercise the cache-check gate
+# without going through the upload endpoint.
+
+
+async def _seed_deal_and_document(
+    *,
+    tenant_id: str,
+    content_hash: str,
+    filename: str = "cached.pdf",
+    status: str = "EXTRACTED",
+) -> tuple[str, str]:
+    """Insert a stub deal + a stub document with the given content_hash.
+
+    Returns ``(deal_id, doc_id)``. The document row carries a minimal
+    ``extraction_data`` payload (one page with realistic text) so the
+    downstream USALI-scoring / structural-recognizer post-processing
+    inside ``_run_extraction_pipeline_inner`` has something to chew on
+    without crashing.
+    """
+    import json as _json
+    from uuid import uuid4
+
+    from sqlalchemy import text
+
+    from app.database import get_session_factory
+    from app.migrations import run_startup_migrations
+
+    await run_startup_migrations()
+    factory = get_session_factory()
+
+    deal_id = str(uuid4())
+    doc_id = str(uuid4())
+    extraction_data = {
+        "parser": "test-fixture",
+        "total_pages": 1,
+        "content_hash": content_hash,
+        "parsed_at": "2026-07-01T00:00:00+00:00",
+        "pages": [
+            {"page_num": 1, "text": "Test doc", "tables": [], "metadata": {}}
+        ],
+    }
+    async with factory() as session:
+        await session.execute(
+            text(
+                """
+                INSERT INTO deals (id, tenant_id, name, status,
+                                   created_at, updated_at)
+                VALUES (:id, :tenant, :name, 'Draft', :ts, :ts)
+                """
+            ),
+            {
+                "id": deal_id,
+                "tenant": tenant_id,
+                "name": "Cache Test Hotel",
+                "ts": "2026-07-01 00:00:00",
+            },
+        )
+        await session.execute(
+            text(
+                """
+                INSERT INTO documents (
+                    id, deal_id, tenant_id, filename, doc_type, status,
+                    uploaded_at, content_hash, storage_key, size_bytes,
+                    page_count, parser, extraction_data
+                ) VALUES (
+                    :id, :deal, :tenant, :filename, :dt, :status,
+                    :uploaded_at, :h, :sk, :size,
+                    :pages, :parser, :ed
+                )
+                """
+            ),
+            {
+                "id": doc_id,
+                "deal": deal_id,
+                "tenant": tenant_id,
+                "filename": filename,
+                "dt": "T12",
+                "status": status,
+                "uploaded_at": "2026-07-01 00:00:00",
+                "h": content_hash,
+                "sk": "file:///tmp/dummy",
+                "size": 1024,
+                "pages": 1,
+                "parser": "test-fixture",
+                "ed": _json.dumps(extraction_data),
+            },
+        )
+        await session.commit()
+    return deal_id, doc_id
+
+
+async def _seed_extraction_result(
+    *,
+    doc_id: str,
+    deal_id: str,
+    tenant_id: str,
+    agent_version: str,
+) -> str:
+    """Insert a canned extraction_results row for cache-lookup tests."""
+    import json as _json
+    from uuid import uuid4
+
+    from sqlalchemy import text
+
+    from app.database import get_session_factory
+
+    factory = get_session_factory()
+    ext_id = str(uuid4())
+    fields = [
+        {
+            "field_name": "noi_year_1",
+            "value": 999999.0,
+            "unit": "USD",
+            "source_page": 1,
+            "confidence": 0.9,
+            "raw_text": "Cached NOI",
+        }
+    ]
+    confidence = {
+        "overall": 0.9,
+        "by_field": {"noi_year_1": 0.9},
+        "low_confidence_fields": [],
+        "requires_human_review": False,
+    }
+    async with factory() as session:
+        await session.execute(
+            text(
+                """
+                INSERT INTO extraction_results (
+                    id, document_id, deal_id, tenant_id,
+                    fields, confidence_report, agent_version, created_at
+                ) VALUES (
+                    :id, :doc, :deal, :tenant,
+                    :fields, :cr, :ver, :created
+                )
+                """
+            ),
+            {
+                "id": ext_id,
+                "doc": doc_id,
+                "deal": deal_id,
+                "tenant": tenant_id,
+                "fields": _json.dumps(fields),
+                "cr": _json.dumps(confidence),
+                "ver": agent_version,
+                "created": "2026-07-01 00:00:00",
+            },
+        )
+        await session.commit()
+    return ext_id
+
+
+@pytest.mark.asyncio
+async def test_extraction_cache_hit_reuses_prior_result_no_llm_call() -> None:
+    """Same tenant, same content_hash, same pipeline version →
+    ``_run_extraction_pipeline`` skips ``_run_graph_extraction`` entirely
+    and clones the prior fields + confidence_report into a new row.
+
+    Guardrail: we patch ``_run_graph_extraction`` to raise so any code
+    path that actually invokes the LLM chain would blow the test up.
+    """
+    from unittest.mock import AsyncMock, patch
+
+    from sqlalchemy import text
+
+    from app.api import documents as docs_module
+    from app.config import get_settings
+    from app.database import get_session_factory
+
+    # EVALS_MOCK would ALSO short-circuit — clear it so we prove the
+    # cache branch itself is doing the work.
+    os.environ.pop("EVALS_MOCK", None)
+    docs_module._reset_extraction_cache_metrics()
+
+    settings = get_settings()
+    tenant_id = settings.DEFAULT_TENANT_ID
+    content_hash = "a" * 64
+    src_agent_version = f"router:T12;extractor;pv={docs_module.EXTRACTION_PIPELINE_VERSION}"
+
+    # Seed the source (already-extracted) doc + its result row.
+    src_deal, src_doc = await _seed_deal_and_document(
+        tenant_id=tenant_id,
+        content_hash=content_hash,
+        filename="source.pdf",
+    )
+    src_ext_id = await _seed_extraction_result(
+        doc_id=src_doc,
+        deal_id=src_deal,
+        tenant_id=tenant_id,
+        agent_version=src_agent_version,
+    )
+
+    # Seed the NEW doc (same content_hash, freshly UPLOADED — awaiting extraction).
+    new_deal, new_doc = await _seed_deal_and_document(
+        tenant_id=tenant_id,
+        content_hash=content_hash,
+        filename="dupe.pdf",
+        status="UPLOADED",
+    )
+
+    # Guardrail: if the cache-check gate misses and we fall through to
+    # the real extractor, this mock explodes and the test fails loudly.
+    boom = AsyncMock(
+        side_effect=AssertionError(
+            "cache HIT should have short-circuited — _run_graph_extraction "
+            "must NOT be called"
+        )
+    )
+    with patch.object(docs_module, "_run_graph_extraction", boom):
+        await docs_module._run_extraction_pipeline(
+            deal_id=new_deal, doc_id=new_doc, tenant_id=tenant_id,
+        )
+
+    boom.assert_not_awaited()
+
+    # The new doc landed EXTRACTED with a cloned extraction_results row.
+    factory = get_session_factory()
+    async with factory() as session:
+        r = (
+            await session.execute(
+                text("SELECT status FROM documents WHERE id = :id"),
+                {"id": new_doc},
+            )
+        ).first()
+        assert r._mapping["status"] == "EXTRACTED"
+
+        r = (
+            await session.execute(
+                text(
+                    "SELECT id, agent_version, fields FROM extraction_results "
+                    "WHERE document_id = :id"
+                ),
+                {"id": new_doc},
+            )
+        ).first()
+        assert r is not None, "cache HIT must still persist a per-doc row"
+        # Distinct row (tenant-scoped per-doc queries still work).
+        assert str(r._mapping["id"]) != src_ext_id
+        assert r._mapping["agent_version"] == src_agent_version
+        # Cloned field payload — same value the source row carried.
+        cloned = r._mapping["fields"]
+        if isinstance(cloned, str):
+            import json as _json
+
+            cloned = _json.loads(cloned)
+        assert cloned[0]["field_name"] == "noi_year_1"
+        assert cloned[0]["value"] == 999999.0
+
+    metrics = docs_module.get_extraction_cache_metrics()
+    assert metrics["per_tenant"][tenant_id]["hits"] == 1
+    assert metrics["per_tenant"][tenant_id]["misses"] == 0
+
+
+@pytest.mark.asyncio
+async def test_extraction_cache_miss_on_different_content_hash() -> None:
+    """Different content_hash → no cache hit → extractor runs."""
+    from unittest.mock import AsyncMock, patch
+
+    from app.api import documents as docs_module
+    from app.config import get_settings
+
+    os.environ.pop("EVALS_MOCK", None)
+    docs_module._reset_extraction_cache_metrics()
+
+    settings = get_settings()
+    tenant_id = settings.DEFAULT_TENANT_ID
+
+    # Seed a prior extracted doc with hash A.
+    src_deal, src_doc = await _seed_deal_and_document(
+        tenant_id=tenant_id, content_hash="a" * 64, filename="A.pdf",
+    )
+    await _seed_extraction_result(
+        doc_id=src_doc,
+        deal_id=src_deal,
+        tenant_id=tenant_id,
+        agent_version=f"router:T12;extractor;pv={docs_module.EXTRACTION_PIPELINE_VERSION}",
+    )
+
+    # New doc with hash B — must MISS.
+    new_deal, new_doc = await _seed_deal_and_document(
+        tenant_id=tenant_id,
+        content_hash="b" * 64,
+        filename="B.pdf",
+        status="UPLOADED",
+    )
+
+    async def _stub_extractor(**_kwargs):
+        # Return a minimal envelope that mimics the real extractor's
+        # shape so the post-processing tail (structural override, USALI
+        # scoring) can run cleanly.
+        return (
+            [
+                {
+                    "field_name": "noi_year_1",
+                    "value": 111.0,
+                    "unit": "USD",
+                    "source_page": 1,
+                    "confidence": 0.9,
+                    "raw_text": "fresh",
+                }
+            ],
+            {
+                "overall": 0.9,
+                "by_field": {"noi_year_1": 0.9},
+                "low_confidence_fields": [],
+                "requires_human_review": False,
+            },
+            "router:T12;extractor",
+            "T12",
+        )
+
+    mock_extractor = AsyncMock(side_effect=_stub_extractor)
+    with patch.object(docs_module, "_run_graph_extraction", mock_extractor):
+        await docs_module._run_extraction_pipeline(
+            deal_id=new_deal, doc_id=new_doc, tenant_id=tenant_id,
+        )
+
+    mock_extractor.assert_awaited_once()
+
+    metrics = docs_module.get_extraction_cache_metrics()
+    assert metrics["per_tenant"][tenant_id]["hits"] == 0
+    assert metrics["per_tenant"][tenant_id]["misses"] == 1
+
+
+@pytest.mark.asyncio
+async def test_extraction_cache_miss_on_different_agent_version() -> None:
+    """Same content_hash but the prior row was written by an OLDER pipeline
+    version (``pv=v0``) → MISS. Prevents stale-cache serves after an
+    extractor redeploy.
+    """
+    from unittest.mock import AsyncMock, patch
+
+    from app.api import documents as docs_module
+    from app.config import get_settings
+
+    os.environ.pop("EVALS_MOCK", None)
+    docs_module._reset_extraction_cache_metrics()
+
+    settings = get_settings()
+    tenant_id = settings.DEFAULT_TENANT_ID
+    content_hash = "c" * 64
+
+    src_deal, src_doc = await _seed_deal_and_document(
+        tenant_id=tenant_id, content_hash=content_hash, filename="old.pdf",
+    )
+    # Legacy pipeline version — must NOT satisfy the lookup.
+    await _seed_extraction_result(
+        doc_id=src_doc,
+        deal_id=src_deal,
+        tenant_id=tenant_id,
+        agent_version="router:T12;extractor;pv=v0",
+    )
+
+    new_deal, new_doc = await _seed_deal_and_document(
+        tenant_id=tenant_id,
+        content_hash=content_hash,
+        filename="new.pdf",
+        status="UPLOADED",
+    )
+
+    async def _stub_extractor(**_kwargs):
+        return (
+            [
+                {
+                    "field_name": "noi_year_1",
+                    "value": 222.0,
+                    "unit": "USD",
+                    "source_page": 1,
+                    "confidence": 0.9,
+                    "raw_text": "fresh",
+                }
+            ],
+            {
+                "overall": 0.9,
+                "by_field": {"noi_year_1": 0.9},
+                "low_confidence_fields": [],
+                "requires_human_review": False,
+            },
+            "router:T12;extractor",
+            "T12",
+        )
+
+    mock_extractor = AsyncMock(side_effect=_stub_extractor)
+    with patch.object(docs_module, "_run_graph_extraction", mock_extractor):
+        await docs_module._run_extraction_pipeline(
+            deal_id=new_deal, doc_id=new_doc, tenant_id=tenant_id,
+        )
+
+    mock_extractor.assert_awaited_once()
+
+    metrics = docs_module.get_extraction_cache_metrics()
+    assert metrics["per_tenant"][tenant_id]["misses"] == 1
+    assert metrics["per_tenant"][tenant_id]["hits"] == 0
+
+
+@pytest.mark.asyncio
+async def test_extraction_cache_isolates_tenants() -> None:
+    """A cached extraction on tenant A must NEVER short-circuit an
+    upload on tenant B — hard security requirement.
+    """
+    from unittest.mock import AsyncMock, patch
+
+    from app.api import documents as docs_module
+
+    os.environ.pop("EVALS_MOCK", None)
+    docs_module._reset_extraction_cache_metrics()
+
+    tenant_a = "11111111-1111-1111-1111-111111111111"
+    tenant_b = "22222222-2222-2222-2222-222222222222"
+    content_hash = "d" * 64
+    src_agent_version = (
+        f"router:T12;extractor;pv={docs_module.EXTRACTION_PIPELINE_VERSION}"
+    )
+
+    # Tenant A: seed an already-extracted doc with the shared content_hash.
+    a_deal, a_doc = await _seed_deal_and_document(
+        tenant_id=tenant_a, content_hash=content_hash, filename="A.pdf",
+    )
+    await _seed_extraction_result(
+        doc_id=a_doc,
+        deal_id=a_deal,
+        tenant_id=tenant_a,
+        agent_version=src_agent_version,
+    )
+
+    # Tenant B: new upload of the SAME bytes. Must NOT cache-hit.
+    b_deal, b_doc = await _seed_deal_and_document(
+        tenant_id=tenant_b,
+        content_hash=content_hash,
+        filename="B.pdf",
+        status="UPLOADED",
+    )
+
+    async def _stub_extractor(**_kwargs):
+        return (
+            [
+                {
+                    "field_name": "noi_year_1",
+                    "value": 333.0,
+                    "unit": "USD",
+                    "source_page": 1,
+                    "confidence": 0.9,
+                    "raw_text": "fresh-b",
+                }
+            ],
+            {
+                "overall": 0.9,
+                "by_field": {"noi_year_1": 0.9},
+                "low_confidence_fields": [],
+                "requires_human_review": False,
+            },
+            "router:T12;extractor",
+            "T12",
+        )
+
+    mock_extractor = AsyncMock(side_effect=_stub_extractor)
+    with patch.object(docs_module, "_run_graph_extraction", mock_extractor):
+        await docs_module._run_extraction_pipeline(
+            deal_id=b_deal, doc_id=b_doc, tenant_id=tenant_b,
+        )
+
+    # The extractor ran for tenant B (no cross-tenant cache hit).
+    mock_extractor.assert_awaited_once()
+
+    metrics = docs_module.get_extraction_cache_metrics()
+    # Tenant B took a miss; tenant A never appears in the counters (its
+    # doc was seeded directly, not routed through the pipeline).
+    assert metrics["per_tenant"][tenant_b]["misses"] == 1
+    assert metrics["per_tenant"].get(tenant_b, {}).get("hits", 0) == 0
+    assert tenant_a not in metrics["per_tenant"]
+
+
+@pytest.mark.asyncio
+async def test_extraction_cache_disabled_flag_bypasses_lookup() -> None:
+    """``EXTRACTION_CACHE_ENABLED=False`` disables the cache entirely —
+    the extractor runs even when a valid cached row exists. Ops uses
+    this as a kill switch when debugging a suspected stale-cache issue.
+    """
+    from unittest.mock import AsyncMock, patch
+
+    from app.api import documents as docs_module
+    from app.config import Settings, get_settings
+
+    os.environ.pop("EVALS_MOCK", None)
+    docs_module._reset_extraction_cache_metrics()
+
+    settings = get_settings()
+    tenant_id = settings.DEFAULT_TENANT_ID
+    content_hash = "e" * 64
+    src_agent_version = (
+        f"router:T12;extractor;pv={docs_module.EXTRACTION_PIPELINE_VERSION}"
+    )
+
+    src_deal, src_doc = await _seed_deal_and_document(
+        tenant_id=tenant_id, content_hash=content_hash, filename="src.pdf",
+    )
+    await _seed_extraction_result(
+        doc_id=src_doc,
+        deal_id=src_deal,
+        tenant_id=tenant_id,
+        agent_version=src_agent_version,
+    )
+
+    new_deal, new_doc = await _seed_deal_and_document(
+        tenant_id=tenant_id,
+        content_hash=content_hash,
+        filename="new.pdf",
+        status="UPLOADED",
+    )
+
+    # Flip the flag OFF via a patched settings instance.
+    disabled = Settings(EXTRACTION_CACHE_ENABLED=False)
+
+    async def _stub_extractor(**_kwargs):
+        return (
+            [
+                {
+                    "field_name": "noi_year_1",
+                    "value": 444.0,
+                    "unit": "USD",
+                    "source_page": 1,
+                    "confidence": 0.9,
+                    "raw_text": "fresh",
+                }
+            ],
+            {
+                "overall": 0.9,
+                "by_field": {"noi_year_1": 0.9},
+                "low_confidence_fields": [],
+                "requires_human_review": False,
+            },
+            "router:T12;extractor",
+            "T12",
+        )
+
+    mock_extractor = AsyncMock(side_effect=_stub_extractor)
+    with patch.object(docs_module, "get_settings", return_value=disabled), \
+         patch.object(docs_module, "_run_graph_extraction", mock_extractor):
+        await docs_module._run_extraction_pipeline(
+            deal_id=new_deal, doc_id=new_doc, tenant_id=tenant_id,
+        )
+
+    # Cache was reachable but the flag disabled it — extractor ran.
+    mock_extractor.assert_awaited_once()
+
+    metrics = docs_module.get_extraction_cache_metrics()
+    assert metrics["per_tenant"][tenant_id]["misses"] == 1
+    assert metrics["per_tenant"][tenant_id]["hits"] == 0

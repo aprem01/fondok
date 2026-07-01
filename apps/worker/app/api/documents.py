@@ -90,6 +90,183 @@ DOC_STATUS_PARSE_FAILED = "PARSE_FAILED"
 DOC_STATUS_FAILED = "FAILED"
 
 
+# ─────────────────── extraction-cache versioning ────────────────────
+#
+# Sam cost-opt (2026-07): the Router → Extractor → Normalizer chain is
+# the single biggest LLM spend on a deal — $6-10 in tokens even when
+# the exact same file bytes were extracted last week for a different
+# deal or in a QA reprocess. The content-hash cache short-circuits
+# every re-upload of previously-extracted content at zero LLM cost.
+#
+# ``EXTRACTION_PIPELINE_VERSION`` is a bump-me-when-the-agents-change
+# tag baked into every persisted ``extraction_results.agent_version``
+# so a change to the schema addendum, USALI rules, or extractor
+# prompt-template auto-invalidates the cache without a manual purge.
+# The lookup requires an EXACT match on both ``content_hash`` and
+# this pipeline version, so:
+#
+#   * Same content, same version → HIT (clone the prior row; no LLM).
+#   * Same content, older version → MISS (run the extractor fresh).
+#   * Different content, any version → MISS (obviously).
+#
+# When bumping this constant, bump the trailing integer. Old cache
+# rows stay in place (they're still real extractions) but they no
+# longer satisfy the ``LIKE '%;pv=vN'`` filter and every doc runs the
+# full pipeline once against the new agents.
+EXTRACTION_PIPELINE_VERSION = "v1"
+
+
+# Per-tenant cache-hit counter surfaced via /health so ops can eyeball
+# cache efficiency (Sam: "I want to know how much we're saving each
+# week"). Process-local — sums are reset on worker restart, which is
+# fine for a "current running total" gauge; long-term aggregate lives
+# in the DB via the extraction_results rows themselves (``cached_from``
+# column would be a natural next step if we start reporting weekly $
+# saved). Keyed by tenant_id string.
+_EXTRACTION_CACHE_HITS: dict[str, int] = {}
+_EXTRACTION_CACHE_MISSES: dict[str, int] = {}
+
+
+def _record_cache_hit(tenant_id: str) -> None:
+    """Bump the per-tenant HIT counter surfaced by ``GET /health``."""
+    _EXTRACTION_CACHE_HITS[tenant_id] = _EXTRACTION_CACHE_HITS.get(tenant_id, 0) + 1
+
+
+def _record_cache_miss(tenant_id: str) -> None:
+    """Bump the per-tenant MISS counter surfaced by ``GET /health``."""
+    _EXTRACTION_CACHE_MISSES[tenant_id] = (
+        _EXTRACTION_CACHE_MISSES.get(tenant_id, 0) + 1
+    )
+
+
+def get_extraction_cache_metrics() -> dict[str, Any]:
+    """Snapshot of the per-tenant cache-hit counters for ``/health``.
+
+    Returns a mapping ``{tenant_id: {"hits": int, "misses": int,
+    "hit_rate": float}}`` plus a rolled-up ``total`` block. Read-only —
+    safe to expose over an unauthenticated liveness probe (numbers only,
+    no doc IDs or tenant PII).
+    """
+    all_tenants = set(_EXTRACTION_CACHE_HITS) | set(_EXTRACTION_CACHE_MISSES)
+    per_tenant: dict[str, dict[str, Any]] = {}
+    total_hits = 0
+    total_misses = 0
+    for tid in sorted(all_tenants):
+        h = _EXTRACTION_CACHE_HITS.get(tid, 0)
+        m = _EXTRACTION_CACHE_MISSES.get(tid, 0)
+        total_hits += h
+        total_misses += m
+        denom = h + m
+        per_tenant[tid] = {
+            "hits": h,
+            "misses": m,
+            "hit_rate": (h / denom) if denom else 0.0,
+        }
+    denom_total = total_hits + total_misses
+    return {
+        "pipeline_version": EXTRACTION_PIPELINE_VERSION,
+        "total": {
+            "hits": total_hits,
+            "misses": total_misses,
+            "hit_rate": (total_hits / denom_total) if denom_total else 0.0,
+        },
+        "per_tenant": per_tenant,
+    }
+
+
+def _reset_extraction_cache_metrics() -> None:
+    """Zero out the counters — for test isolation."""
+    _EXTRACTION_CACHE_HITS.clear()
+    _EXTRACTION_CACHE_MISSES.clear()
+
+
+def _parse_route_from_agent_version(agent_version: str | None) -> str | None:
+    """Pull the Router's route out of an ``agent_version`` string.
+
+    Real extractor rows use the format ``router:{route};extractor;pv=vN``
+    (see the tail of ``_run_graph_extraction``); mock rows use
+    ``mock-evals;pv=vN`` and carry no route. Returns ``None`` when the
+    string doesn't carry a ``router:`` segment — the cache-hit branch
+    then falls through to the same "no classified type" behavior the
+    mock path uses.
+    """
+    if not agent_version:
+        return None
+    for segment in agent_version.split(";"):
+        segment = segment.strip()
+        if segment.startswith("router:"):
+            route = segment[len("router:"):].strip()
+            return route or None
+    return None
+
+
+def _tag_agent_version(base: str) -> str:
+    """Suffix an agent_version string with the current pipeline version.
+
+    The cache lookup filters on this suffix so a code change that bumps
+    ``EXTRACTION_PIPELINE_VERSION`` invalidates every prior row without
+    a manual purge. Idempotent — re-applying the suffix is a no-op.
+    """
+    suffix = f";pv={EXTRACTION_PIPELINE_VERSION}"
+    if base.endswith(suffix):
+        return base
+    return f"{base}{suffix}"
+
+
+async def _lookup_extraction_cache(
+    session: AsyncSession,
+    *,
+    tenant_id: str,
+    content_hash: str,
+) -> dict[str, Any] | None:
+    """Look for a prior extraction on the same content_hash + tenant.
+
+    Returns ``None`` on cache miss (no prior row, or every prior row
+    was written by a different pipeline version). Returns a dict with
+    ``id``, ``fields``, ``confidence_report``, ``agent_version`` on
+    hit — enough for the caller to clone into a new extraction_results
+    row for the current doc.
+
+    Safety gates enforced here:
+      * ``tenant_id`` is a hard filter (cross-tenant lookups impossible).
+      * ``content_hash`` must match exactly.
+      * ``agent_version`` must end with the current pipeline version
+        suffix, so a redeploy with an updated extractor doesn't serve
+        stale results.
+      * ``documents.status = 'EXTRACTED'`` — never cache-hit off a
+        FAILED / PARSE_FAILED row.
+    """
+    if not content_hash or not tenant_id:
+        return None
+    suffix = f"%;pv={EXTRACTION_PIPELINE_VERSION}"
+    row = (
+        await session.execute(
+            text(
+                """
+                SELECT er.id, er.fields, er.confidence_report, er.agent_version
+                  FROM extraction_results er
+                  JOIN documents d ON d.id = er.document_id
+                 WHERE er.tenant_id = :tenant
+                   AND d.content_hash = :h
+                   AND d.status = :status
+                   AND er.agent_version LIKE :suffix
+                 ORDER BY er.created_at DESC
+                 LIMIT 1
+                """
+            ),
+            {
+                "tenant": tenant_id,
+                "h": content_hash,
+                "status": DOC_STATUS_EXTRACTED,
+                "suffix": suffix,
+            },
+        )
+    ).first()
+    if row is None:
+        return None
+    return dict(row._mapping)
+
+
 # ─────────────────────────── response shapes ───────────────────────────
 
 
@@ -3948,7 +4125,7 @@ async def _run_extraction_pipeline_inner(
                 await session.execute(
                     text(
                         "SELECT storage_key, filename, extraction_data, "
-                        "user_provided_doc_type, fiscal_year "
+                        "user_provided_doc_type, fiscal_year, content_hash "
                         "FROM documents WHERE id = :id"
                     ),
                     {"id": doc_id},
@@ -3958,6 +4135,7 @@ async def _run_extraction_pipeline_inner(
                 raise RuntimeError(f"document {doc_id} vanished mid-extraction")
             storage_key = row._mapping["storage_key"]
             filename = row._mapping["filename"]
+            content_hash = row._mapping.get("content_hash")
             raw_user_provided_doc_type = row._mapping.get(
                 "user_provided_doc_type"
             )
@@ -3988,9 +4166,71 @@ async def _run_extraction_pipeline_inner(
                 extraction_data = raw_extraction_data
 
             classified_doc_type: str | None = None
-            if os.environ.get("EVALS_MOCK", "").lower() in ("1", "true", "yes"):
+            cache_hit_source_id: str | None = None
+
+            # ── Content-hash extraction cache (cost-opt) ───────────────
+            # Before spending any LLM tokens, check whether the SAME
+            # bytes have already been extracted on this tenant with the
+            # current pipeline version. If so, clone the prior result
+            # into a new extraction_results row for this doc and skip
+            # the Router → Extractor → Normalizer → Verifier chain.
+            #
+            # Same-tenant only — the JOIN in ``_lookup_extraction_cache``
+            # filters ``er.tenant_id = :tenant`` so a doc uploaded to
+            # tenant A can never satisfy the lookup from tenant B.
+            settings = get_settings()
+            cached: dict[str, Any] | None = None
+            if settings.EXTRACTION_CACHE_ENABLED and content_hash:
+                cached = await _lookup_extraction_cache(
+                    session,
+                    tenant_id=tenant_id,
+                    content_hash=content_hash,
+                )
+
+            if cached is not None:
+                cached_fields = cached["fields"]
+                if isinstance(cached_fields, str):
+                    cached_fields = (
+                        json.loads(cached_fields) if cached_fields else []
+                    )
+                cached_cr = cached["confidence_report"]
+                if isinstance(cached_cr, str):
+                    cached_cr = json.loads(cached_cr) if cached_cr else {}
+                fields = list(cached_fields or [])
+                # ConfidenceReportOut is Pydantic ``extra='forbid'`` so we
+                # must not add breadcrumb keys here; the log line below
+                # is the ops-visible audit surface for the clone (docs
+                # can be joined back to the source via content_hash if
+                # forensics ever needs the origin row).
+                confidence = dict(cached_cr or {})
+                agent_version = cached["agent_version"]
+                # Recover the Router's original classification from the
+                # cached agent_version string — format is
+                # ``router:{route};extractor;pv=vN``. Post-extraction
+                # override logic (structural recognizer, misclassified,
+                # year-mismatch) runs deterministically over ``fields``
+                # so it re-produces the SAME final doc_type without any
+                # LLM call.
+                classified_doc_type = _parse_route_from_agent_version(
+                    agent_version
+                )
+                cache_hit_source_id = str(cached["id"])
+                _record_cache_hit(tenant_id)
+                logger.info(
+                    "extraction cache HIT: doc=%s content_hash=%s "
+                    "cloned_from=%s zero LLM cost",
+                    doc_id,
+                    content_hash,
+                    cache_hit_source_id,
+                )
+            elif os.environ.get("EVALS_MOCK", "").lower() in (
+                "1",
+                "true",
+                "yes",
+            ):
                 fields, confidence = _mock_extraction_payload()
-                agent_version = "mock-evals"
+                agent_version = _tag_agent_version("mock-evals")
+                _record_cache_miss(tenant_id)
             else:
                 (
                     fields,
@@ -4005,6 +4245,8 @@ async def _run_extraction_pipeline_inner(
                     filename=filename,
                     extraction_data=extraction_data,
                 )
+                agent_version = _tag_agent_version(agent_version)
+                _record_cache_miss(tenant_id)
 
             ext_id = uuid4()
             await session.execute(
