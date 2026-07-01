@@ -240,12 +240,16 @@ def cached_system_message_blocks(
       * ``{"text": str, "cache": bool}`` dict — same as above
 
     Block-tuning recipe (the layout the agents pass in):
-      1. Agent-specific instructions    — small (~500 tok), changes per
-         agent, NO cache (would invalidate downstream blocks anyway).
+      1. Agent-specific instructions    — static per role/doc-type
+         (Extractor's is ~5.8k tokens) → CACHE.
       2. USALI rules catalog            — stable across tenants → CACHE.
       3. Brand catalog                  — stable across tenants → CACHE.
       4. Per-agent extraction schema /
          hotel-specific addendum        — stable per role → CACHE.
+
+    All 4 blocks fit inside Anthropic's 4-breakpoint cap. Callers that
+    add a 5th cache-eligible block will have the earliest cache marker
+    demoted (see the cap-enforcement below).
 
     The Anthropic cap is 4 breakpoints; we tag the LAST contiguous run
     of cache-eligible blocks (up to 4) with ``cache_control`` and emit
@@ -419,10 +423,31 @@ def build_agent_system_blocks(
     """Assemble the canonical 4-block system prompt for an agent.
 
     Block order (matches the cache-tuning recipe in the docstring):
-      1. Agent instructions  — uncached (per-agent, small).
-      2. USALI rules catalog — cached.
-      3. Brand catalog       — cached.
-      4. Schema addendum     — cached.
+      1. Agent instructions  — CACHED. Static per role/doc-type. The
+         Extractor's SYSTEM_PROMPT alone is ~5.8k tokens and is
+         re-issued once per chunked ExtractorDocument (a 45-page OM
+         fans out to ~9 chunks). Explicitly marking a breakpoint here
+         gives the instructions block its own cache slot so the prefix
+         still hits when a downstream block (rules / brand / schema
+         addendum) shifts.
+      2. USALI rules catalog — CACHED.
+      3. Brand catalog       — CACHED.
+      4. Schema addendum     — CACHED.
+
+    Anthropic caps ``cache_control`` at 4 breakpoints per request; the
+    four blocks above land exactly at the cap. ``cached_system_message_blocks``
+    also enforces the cap defensively (demoting oldest cache-eligible
+    blocks to plain text if a caller passes more than 4).
+
+    Cost-opt 2026-06-27 (batch O): the agent-instructions block was
+    previously marked ``cache=False`` on the theory that it was
+    "small" and "changes per agent". Both are wrong for the Extractor
+    (largest agent instructions in the codebase, ~5.8k tokens, static
+    per doc_type) and for streaming Analyst (6 sequential per-section
+    calls with byte-identical system prompt). Marking a breakpoint on
+    the instructions block gives 90% savings on the instructions
+    tokens across the second and subsequent calls in the 5-minute
+    ephemeral TTL — the dominant cost driver on multi-chunk extractions.
 
     Callers should pass the result straight to
     ``cached_system_message_blocks(blocks, role=role)``.
@@ -431,7 +456,7 @@ def build_agent_system_blocks(
     from .usali_rules import rules_as_prompt_block
 
     blocks: list[tuple[str, bool]] = []
-    blocks.append((agent_instructions, False))
+    blocks.append((agent_instructions, True))
     if include_rules:
         blocks.append((rules_as_prompt_block(), True))
     if include_brand:
