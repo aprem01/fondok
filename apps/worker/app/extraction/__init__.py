@@ -11,6 +11,7 @@ agents (Extractor, Normalizer) operate on a single shape regardless of
 which parser ran.
 """
 
+from .compaction import compact_for_prompt
 from .models import ParsedDocument, ParsedPage, ParseError
 from .parser import parse_document, parse_pdf
 
@@ -18,6 +19,7 @@ __all__ = [
     "ParsedDocument",
     "ParsedPage",
     "ParseError",
+    "compact_for_prompt",
     "parse_document",
     "parse_pdf",
 ]

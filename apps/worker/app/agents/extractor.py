@@ -34,6 +34,7 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from ..budget import check_budget
 from ..config import get_settings
+from ..extraction.compaction import compact_for_prompt
 from ..telemetry import trace_agent
 from ..usali_rules import rules_as_prompt_block
 
@@ -602,12 +603,31 @@ def _content_for_prompt(content: str, *, max_chars: int = 30_000) -> str:
 
     JSON-extracted docs tend to ship the most important fields up top
     plus tables-by-page at the end; keeping both ends preserves both.
+
+    Cost-optimization pass R (2026-07): before truncating we compact
+    the parsed text — collapse whitespace runs, drop decorative
+    separator lines, deduplicate consecutive ``[Page N]`` headers. The
+    parsed cache on the document row stays lossless; only the prompt
+    input pays the compaction. Char-count savings are logged at INFO
+    so Sam can measure the actual token-spend reduction per doc.
     """
-    if len(content) <= max_chars:
-        return content
-    head = content[: max_chars // 2]
-    tail = content[-max_chars // 2 :]
-    return f"{head}\n…[truncated {len(content) - max_chars} chars]…\n{tail}"
+    compacted, stats = compact_for_prompt(content)
+    if stats["chars_saved"] > 0:
+        logger.info(
+            "extractor.compaction: chars_before=%d chars_after=%d chars_saved=%d pct_saved=%.1f",
+            stats["chars_before"],
+            stats["chars_after"],
+            stats["chars_saved"],
+            (stats["chars_saved"] / stats["chars_before"] * 100.0)
+            if stats["chars_before"]
+            else 0.0,
+        )
+
+    if len(compacted) <= max_chars:
+        return compacted
+    head = compacted[: max_chars // 2]
+    tail = compacted[-max_chars // 2 :]
+    return f"{head}\n…[truncated {len(compacted) - max_chars} chars]…\n{tail}"
 
 
 def _build_user_prompt(doc: ExtractorDocument) -> str:

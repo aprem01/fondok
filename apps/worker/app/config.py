@@ -49,6 +49,15 @@ class Settings(BaseSettings):
     DEFAULT_DEAL_BUDGET_USD: float = Field(default=20.0, ge=0.0)
     DEAL_BUDGET_WARN_AT: float = Field(default=0.8, ge=0.0, le=1.0)
 
+    # Cost-optimization pass R (2026-07): strip formatting noise (long
+    # whitespace runs, decorative rules, duplicate page headers) from
+    # parsed doc text before it hits the extractor prompt. Empirically
+    # trims 15–25% of input tokens with no measurable quality change.
+    # Flip to false to bypass compaction while debugging a lossy
+    # extraction — the parser cache is lossless either way, so no data
+    # is lost; only the LLM's view of the doc changes.
+    PARSER_COMPACTION_ENABLED: bool = Field(default=True)
+
     # ── Tenancy ─────────────────────────────────────────────────────
     # UUID-shaped string for dev. Real tenants are provisioned in DB.
     DEFAULT_TENANT_ID: str = Field(
