@@ -159,7 +159,7 @@ async def _bench_one_rep(
         flat = flatten_extraction_fields(merged_fields)
         score = score_extraction(flat)
         usali_score = score.score
-        applicable = score.applicable_rules
+        applicable = score.applicable_count
 
     # Token accounting from model_calls.
     in_tok = sum(int(getattr(c, "input_tokens", 0) or 0) for c in out.model_calls)
