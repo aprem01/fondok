@@ -113,6 +113,21 @@ class Settings(BaseSettings):
         }
     )
 
+    # Cost-optimization pass S (2026-07): structural pre-filter.
+    # Drops chunks that carry no P&L / STR / currency signal before we
+    # spend Sonnet tokens on them. A typical STR Trend xlsx workbook
+    # ships 26 sheets — 20+ are "Cover", "Notes", "SetUp", "Help",
+    # "Glossary" tabs the extractor confidently returns empty_envelope
+    # on at ~$0.10-0.30 apiece. Filter is doc-type-aware: aggressive
+    # for tabular reports (T12 / PNL / STR / CBRE), light for
+    # PROPERTY_INFO / ROOM_MIX, disabled for prose-heavy docs (OM /
+    # MARKET_STUDY / SURVEYS). Safety-clamped so we never drop the last
+    # remaining chunk (there is always ≥1 doc sent to the extractor).
+    # Flip to false to bypass the filter while debugging a suspected
+    # missed-chunk regression — the parser cache is lossless, so all
+    # pages are still on disk; only the extractor's view changes.
+    STRUCTURAL_PREFILTER_ENABLED: bool = Field(default=True)
+
     # ── Tenancy ─────────────────────────────────────────────────────
     # UUID-shaped string for dev. Real tenants are provisioned in DB.
     DEFAULT_TENANT_ID: str = Field(

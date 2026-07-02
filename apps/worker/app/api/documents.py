@@ -4977,6 +4977,351 @@ def _build_extractor_chunks(
     return chunks
 
 
+# ─────────────────────── Structural pre-filter (cost-opt pass S) ─────────
+#
+# The extractor is charged per-chunk. On a 26-sheet STR Trend xlsx, 20+
+# sheets are Cover / Help / Glossary / Notes / SetUp / Instructions —
+# none of them carry a P&L line, an STR index, or a dollar figure.
+# The extractor confidently returns empty_envelope on each at ~$0.10-
+# $0.30 apiece. This filter drops those chunks BEFORE the Sonnet call.
+#
+# Design constraints:
+#   1. Never drop the last chunk. Zero-chunk extractions crash downstream
+#      (the merger assumes ≥1 doc). Fall back to keeping the highest-
+#      scoring chunk when every chunk fails the signal gate.
+#   2. Prose-heavy docs (OM / MARKET_STUDY / SURVEYS) OPT OUT entirely.
+#      A 45-page OM has legitimately low-signal pages (broker headshot,
+#      table of contents, disclosure boilerplate) that STILL matter for
+#      context — e.g. sponsor / brand / location surface only on those
+#      pages. Filtering there = data loss.
+#   3. Doc types where the extractor's schema is narrow (T12, PNL*,
+#      STR*, CBRE_HORIZONS, PNL_BENCHMARK, PORTFOLIO_PNL) use the strict
+#      gate — no dollar/P&L/STR signal = drop.
+#   4. Light gate (PROPERTY_INFO / ROOM_MIX): keep any chunk with tabular
+#      signals (looks like a grid) even if no dollar values — those doc
+#      types carry things like room counts / floor plates that aren't
+#      currency-shaped.
+
+
+# Doc types where the filter is disabled entirely. Prose-heavy — every
+# chunk potentially matters (broker narrative, market context, etc.).
+_PREFILTER_SKIP_DOC_TYPES: frozenset[str] = frozenset({
+    "OM",
+    "MARKET_STUDY",
+    "SURVEYS",
+    "LEASES",
+    "CONTRACT",
+    "INSURANCE",
+    "PROPERTY_TAX",
+    "CAPEX",
+})
+
+# Doc types where the strict gate applies — tabular, narrow schema, low-
+# signal sheets are safe to drop.
+_PREFILTER_STRICT_DOC_TYPES: frozenset[str] = frozenset({
+    "T12",
+    "PNL",
+    "PNL_MONTHLY",
+    "PNL_YTD",
+    "PNL_BENCHMARK",
+    "PORTFOLIO_PNL",
+    "STR",
+    "STR_TREND",
+    "STR_SEGMENTATION",
+    "CBRE_HORIZONS",
+    "RENT_ROLL",
+})
+
+# Doc types where a lighter filter applies — keep any chunk with tabular
+# (grid-shaped) content even if no dollar / P&L vocab appears.
+_PREFILTER_LIGHT_DOC_TYPES: frozenset[str] = frozenset({
+    "PROPERTY_INFO",
+    "ROOM_MIX",
+})
+
+# Any chunk whose content is shorter than this after stripping the
+# ``[Page N]`` / whitespace / tab-delimiter noise is a candidate for
+# dropping (subject to signal gates). Anything above this floor is
+# probably at least a partial data table and worth keeping.
+_MIN_MEANINGFUL_CHARS = 200
+
+# Currency / dollar detector — catches "$1,234,567", "1,234,567.89 USD",
+# "$4.2M", etc. Used by both the strict and light gates.
+_CURRENCY_RE = __import__("re").compile(
+    r"(\$\s*[\d,]+(?:\.\d+)?(?:\s*[KMB])?"
+    r"|\b\d{1,3}(?:,\d{3})+(?:\.\d+)?\b"
+    r"|\b\d+(?:\.\d+)?\s*(?:USD|usd|dollars?)\b)",
+)
+
+# Boilerplate-y content that shows up on Cover / Help / Notes / SetUp
+# tabs and adds char-count without adding signal. We strip it out
+# before comparing against ``_MIN_MEANINGFUL_CHARS`` so a "Help" tab
+# with 400 chars of instruction text still trips the drop threshold.
+_BOILERPLATE_RE = __import__("re").compile(
+    r"(?im)^\s*(?:"
+    r"cover(?:\s*sheet)?|"
+    r"table\s+of\s+contents|"
+    r"instructions?|"
+    r"how\s+to\s+use|"
+    r"read\s+me|"
+    r"notes?|"
+    r"disclaimer|"
+    r"about\s+this\s+(?:report|workbook|template)|"
+    r"help|"
+    r"glossary|"
+    r"legend|"
+    r"definitions?|"
+    r"assumptions?|"
+    r"set[\s_-]?up|"
+    r"index"
+    r")\b.*$",
+)
+
+
+def _extract_sheet_names(pages: list[dict[str, Any]]) -> list[str]:
+    """Pull ``metadata.sheet_name`` out of each parsed page.
+
+    Returns an empty string in position ``i`` when the source is a PDF /
+    docx / other non-workbook format that doesn't carry sheet names.
+    """
+    out: list[str] = []
+    for p in pages:
+        meta = p.get("metadata") if isinstance(p, dict) else None
+        name = ""
+        if isinstance(meta, dict):
+            sn = meta.get("sheet_name")
+            if isinstance(sn, str):
+                name = sn
+        out.append(name)
+    return out
+
+
+def _chunk_signal_score(
+    *,
+    content: str,
+    doc_type: str,
+) -> tuple[int, str]:
+    """Rate a chunk's signal density on a small integer scale.
+
+    Returns ``(score, reason)`` where ``score`` is 0..N (higher =
+    stronger signal) and ``reason`` is a compact human-readable
+    breakdown for the drop-log. The scoring rubric is intentionally
+    simple / conservative:
+
+    * +3 for any P&L text-marker hit
+    * +3 for any STR text-marker hit
+    * +2 for a currency / dollar figure
+    * +2 for tabular-shape signal (≥ 3 tab-delimited rows) — this is the
+      "meaningful signal" gate for the light doc types (ROOM_MIX,
+      PROPERTY_INFO), which don't carry dollars but do carry grids.
+    * +1 for meaningful (non-boilerplate) content ≥ 200 chars — weakest
+      signal; alone this does NOT rescue a chunk under the light gate,
+      because a Help tab's instructional prose passes the char floor
+      while carrying no data.
+
+    A chunk with score 0 in strict mode is a drop candidate. The light
+    gate (used for ROOM_MIX / PROPERTY_INFO) requires score >= 2, so
+    tabular structure or currency alone survives but instructional
+    boilerplate does not.
+    """
+    # Lazy import to avoid a module-load-order cycle.
+    from ..services.structural_recognizer import (
+        _PNL_TEXT_MARKERS,
+        _STR_TEXT_MARKERS,
+    )
+
+    if not isinstance(content, str):
+        return 0, "non-string content"
+
+    score = 0
+    hits: list[str] = []
+
+    # P&L vocabulary — rooms revenue, F&B, GOP, NOI, EBITDA, etc.
+    pnl_hits = sum(1 for rx in _PNL_TEXT_MARKERS if rx.search(content))
+    if pnl_hits:
+        score += 3
+        hits.append(f"pnl={pnl_hits}")
+
+    # STR / CoStar vocabulary — MPI, ARI, RGI, comp set, penetration index.
+    str_hits = sum(1 for rx in _STR_TEXT_MARKERS if rx.search(content))
+    if str_hits:
+        score += 3
+        hits.append(f"str={str_hits}")
+
+    # Currency / dollar figures.
+    currency_hits = len(_CURRENCY_RE.findall(content))
+    if currency_hits >= 1:
+        score += 2
+        hits.append(f"$={currency_hits}")
+
+    # Tabular-shape signal — parser emits sheet rows as tab-separated,
+    # PDF tables also normalize to whitespace-delimited grids. Count
+    # lines that look grid-shaped (≥ 3 whitespace-separated columns).
+    tabular_lines = 0
+    for line in content.splitlines():
+        if "\t" in line:
+            if line.count("\t") >= 2:
+                tabular_lines += 1
+        elif len(line.split()) >= 4 and any(c.isdigit() for c in line):
+            tabular_lines += 1
+        if tabular_lines >= 3:
+            break
+    if tabular_lines >= 3:
+        score += 2
+        hits.append(f"grid={tabular_lines}+")
+
+    # Non-boilerplate character count. Strip common instructional
+    # patterns first so a "Help" tab with 400 chars of instructions
+    # doesn't accidentally score as "meaningful".
+    stripped = _BOILERPLATE_RE.sub("", content)
+    meaningful_chars = len(stripped.strip())
+    if meaningful_chars >= _MIN_MEANINGFUL_CHARS:
+        score += 1
+        hits.append(f"chars={meaningful_chars}")
+
+    reason = ",".join(hits) if hits else "none"
+    return score, reason
+
+
+def _filter_chunks_by_signal(
+    *,
+    chunks: list[Any],
+    pages: list[dict[str, Any]],
+    doc_type: str,
+    doc_id: str,
+    filename: str,
+) -> list[Any]:
+    """Drop low-signal chunks before we spend Sonnet tokens on them.
+
+    Doc-type aware:
+
+    * Prose-heavy types (OM / MARKET_STUDY / …): filter DISABLED — every
+      chunk is kept regardless of signal density. Prose docs have low-
+      signal pages (broker narrative, sponsor bio, TOC) that still
+      carry entities the Extractor needs (property name, keys, sponsor).
+    * Tabular types (T12 / PNL* / STR* / CBRE_HORIZONS / …): strict
+      gate — a chunk with zero P&L / STR / currency hits AND fewer than
+      ``_MIN_MEANINGFUL_CHARS`` of non-boilerplate content is dropped.
+    * Light types (PROPERTY_INFO / ROOM_MIX): a chunk needs either
+      tabular shape OR meaningful non-boilerplate content to survive.
+
+    Safety: at least one chunk is always returned. If EVERY chunk fails
+    the gate (pathological case — full workbook is boilerplate), the
+    highest-scoring chunk is kept anyway so the extractor still runs
+    and honestly reports 0 fields.
+
+    Every drop is logged with the chunk's sheet name(s) + page range +
+    reason so an operator can audit the filter after the fact.
+    """
+    settings = get_settings()
+    if not settings.STRUCTURAL_PREFILTER_ENABLED:
+        return chunks
+    if not chunks:
+        return chunks
+    if doc_type in _PREFILTER_SKIP_DOC_TYPES:
+        # Prose-heavy — filter disabled by policy. Log once so the
+        # operator can see we intentionally left chunks in place.
+        logger.info(
+            "structural pre-filter: doc=%s doc_type=%s — SKIPPED (prose-heavy policy) "
+            "chunks_kept=%d",
+            doc_id, doc_type, len(chunks),
+        )
+        return chunks
+
+    # Map page_num → sheet_name (empty for PDFs) so we can name drops
+    # with what an operator will recognize.
+    sheet_by_page: dict[int, str] = {}
+    for i, p in enumerate(pages):
+        if not isinstance(p, dict):
+            continue
+        pn = int(p.get("page_num", i + 1))
+        meta = p.get("metadata")
+        if isinstance(meta, dict):
+            sn = meta.get("sheet_name")
+            if isinstance(sn, str) and sn:
+                sheet_by_page[pn] = sn
+
+    kept: list[Any] = []
+    dropped_names: list[str] = []
+    strict = doc_type in _PREFILTER_STRICT_DOC_TYPES
+    light = doc_type in _PREFILTER_LIGHT_DOC_TYPES
+    # Default = strict when caller passed an unfamiliar doc_type. Better
+    # to over-drop and let the fallback safety keep the best chunk.
+    if not strict and not light:
+        strict = True
+
+    scores: list[tuple[int, Any, str, str]] = []  # score, chunk, label, reason
+    for chunk in chunks:
+        content = getattr(chunk, "content", "") or ""
+        source_pages = list(getattr(chunk, "source_pages", []) or [])
+        # Label combines sheet names (unique) + page range for the log.
+        sheets = [sheet_by_page.get(pn, "") for pn in source_pages]
+        uniq_sheets = [s for s in dict.fromkeys(sheets) if s]
+        page_range = (
+            f"pages={source_pages[0]}-{source_pages[-1]}"
+            if source_pages else "pages=?"
+        )
+        sheet_label = (
+            f"sheets={'/'.join(uniq_sheets)}"
+            if uniq_sheets else page_range
+        )
+
+        score, reason = _chunk_signal_score(content=content, doc_type=doc_type)
+
+        # Gate:
+        #  strict — keep iff score >= 2 (currency alone, or grid, or any
+        #  P&L/STR marker); light — keep iff score >= 2 as well, but the
+        #  scoring rubric gives grid +2 (light-type docs like ROOM_MIX
+        #  earn survival from tabular structure alone). Meaningful char
+        #  count is only worth +1, so a Help tab that only has prose
+        #  fails both gates. A score of 0-1 drops.
+        threshold = 2
+        if score >= threshold:
+            kept.append(chunk)
+        else:
+            dropped_names.append(f"{sheet_label} [score={score} {reason}]")
+
+        scores.append((score, chunk, sheet_label, reason))
+
+    # Safety: never send zero chunks. Keep the top-scoring chunk when
+    # every one failed the gate — the extractor will report 0 fields
+    # honestly, which is better than crashing the pipeline.
+    if not kept:
+        scores.sort(key=lambda t: t[0], reverse=True)
+        top = scores[0]
+        logger.warning(
+            "structural pre-filter: doc=%s doc_type=%s — ALL %d chunks failed "
+            "signal gate; keeping top-scoring chunk (score=%d %s %s) as safety fallback",
+            doc_id, doc_type, len(chunks), top[0], top[2], top[3],
+        )
+        kept = [top[1]]
+        # Recompute dropped_names to exclude the safety-kept chunk.
+        dropped_names = [
+            f"{lbl} [score={sc} {rsn}]"
+            for sc, ch, lbl, rsn in scores if ch is not top[1]
+        ]
+
+    if dropped_names:
+        # Log names truncated at 8 to keep the line readable when a
+        # 26-sheet workbook drops 22 of them.
+        preview = "; ".join(dropped_names[:8])
+        suffix = f" (+{len(dropped_names) - 8} more)" if len(dropped_names) > 8 else ""
+        logger.info(
+            "structural pre-filter: doc=%s doc_type=%s chunks_before=%d "
+            "chunks_after=%d chunks_dropped=%d dropped=[%s%s]",
+            doc_id, doc_type, len(chunks), len(kept), len(dropped_names),
+            preview, suffix,
+        )
+    else:
+        logger.info(
+            "structural pre-filter: doc=%s doc_type=%s — no chunks dropped "
+            "(chunks_kept=%d)",
+            doc_id, doc_type, len(kept),
+        )
+
+    return kept
+
+
 async def _run_graph_extraction(
     *,
     deal_id: str,
@@ -5163,6 +5508,18 @@ async def _run_graph_extraction(
         filename=filename,
         doc_type=doc_type,
         make_doc=ExtractorDocument,
+    )
+    # Cost-opt pass S: drop chunks that carry no financial / STR / dollar
+    # signal before we spend Sonnet tokens on them. Doc-type-aware:
+    # aggressive on tabular reports (T12 / PNL* / STR* / CBRE_HORIZONS),
+    # light on PROPERTY_INFO / ROOM_MIX, disabled on prose (OM /
+    # MARKET_STUDY / SURVEYS). Safety-clamped: never returns 0 chunks.
+    extractor_docs = _filter_chunks_by_signal(
+        chunks=extractor_docs,
+        pages=pages,
+        doc_type=doc_type,
+        doc_id=doc_id,
+        filename=filename,
     )
     extractor_input = ExtractorInput(
         tenant_id=tenant_id,
