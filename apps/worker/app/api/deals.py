@@ -16,7 +16,7 @@ import logging
 from collections.abc import AsyncIterator
 from datetime import UTC, datetime
 from typing import Annotated, Any, Literal
-from uuid import UUID, uuid4
+from uuid import UUID, uuid4, uuid5
 
 from fastapi import APIRouter, BackgroundTasks, Depends, Header, HTTPException, status
 from fastapi.responses import Response, StreamingResponse
@@ -42,25 +42,70 @@ router = APIRouter()
 # ─────────────────────────── tenant resolution ───────────────────────────
 
 
+# UUIDv5 namespace for Clerk organization IDs. Generated once with
+# ``uuid.uuid5(uuid.NAMESPACE_URL, "fondok.app/clerk/org")`` — pinned
+# here so a namespace change is a deliberate DB migration, not a
+# silent bug that reshuffles every tenant's data. Never rotate this
+# without a plan to migrate `tenant_id` columns across the schema.
+_CLERK_ORG_UUID_NAMESPACE = UUID("6c7bd9b0-3c8a-5a24-9b2a-3c4d4d0f8e9a")
+
+
+def _coerce_tenant_id(raw: str) -> UUID | None:
+    """Map an X-Tenant-Id header value to a UUID.
+
+    Sam QA 2026-07-02: the frontend passes Clerk's ``org_XXXXX...``
+    organization id verbatim, but the worker's tenant column is UUID.
+    Prior behavior rejected the header and fell back to
+    ``DEFAULT_TENANT_ID``, so every real user's data landed on the
+    catch-all default tenant — the extraction cache never hit
+    (tenant-scoped), the /admin/cost aggregation was misleading, and
+    cross-tenant isolation was effectively unenforced.
+
+    Accepted formats (in priority order):
+      1. Already a valid UUID string → parsed as-is.
+      2. Clerk-style ``org_...`` (or ``user_...``) prefix → hashed
+         to a deterministic UUIDv5 via ``_CLERK_ORG_UUID_NAMESPACE``.
+         Same Clerk org id always produces the same UUID, so cached
+         extractions + audit trails stay linked to the tenant across
+         requests without any DB lookup.
+      3. Anything else → ``None`` (caller falls back to default).
+    """
+    if not raw:
+        return None
+    stripped = raw.strip()
+    if not stripped:
+        return None
+    try:
+        return UUID(stripped)
+    except ValueError:
+        pass
+    if stripped.startswith(("org_", "user_", "acc_")):
+        return uuid5(_CLERK_ORG_UUID_NAMESPACE, stripped)
+    return None
+
+
 async def get_tenant_id(
     x_tenant_id: Annotated[str | None, Header(alias="X-Tenant-Id")] = None,
 ) -> UUID:
     """Resolve the tenant for this request.
 
     Reads the ``X-Tenant-Id`` header set by the web app's `lib/api.ts`
-    (mirrors the active Clerk Organization id). When the header is
-    missing or unparseable we fall back to ``settings.DEFAULT_TENANT_ID``
-    so the unauthenticated demo persona keeps working end-to-end.
+    (mirrors the active Clerk Organization id). Uses ``_coerce_tenant_id``
+    to accept either a raw UUID (server-side callers, tests, curl) or
+    a Clerk ``org_...`` id (real logged-in browser traffic). When the
+    header is missing or in an unrecognized shape we fall back to
+    ``settings.DEFAULT_TENANT_ID`` so the unauthenticated demo persona
+    keeps working end-to-end.
     """
     settings = get_settings()
     if x_tenant_id:
-        try:
-            return UUID(x_tenant_id)
-        except ValueError:
-            logger.warning(
-                "get_tenant_id: malformed X-Tenant-Id header %r — using default",
-                x_tenant_id,
-            )
+        coerced = _coerce_tenant_id(x_tenant_id)
+        if coerced is not None:
+            return coerced
+        logger.warning(
+            "get_tenant_id: unrecognized X-Tenant-Id header %r — using default",
+            x_tenant_id,
+        )
     return UUID(settings.DEFAULT_TENANT_ID)
 
 
