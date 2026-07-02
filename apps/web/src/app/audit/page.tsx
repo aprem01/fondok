@@ -21,7 +21,7 @@ import { Button } from '@/components/ui/Button';
 import PageHeader from '@/components/ui/PageHeader';
 import { Card } from '@/components/ui/Card';
 import { useToast } from '@/components/ui/Toast';
-import { useCurrentUser } from '@/lib/auth';
+import { useCurrentUser, useCurrentRole } from '@/lib/auth';
 import { api, isWorkerConnected, WorkerError } from '@/lib/api';
 import type {
   AuditEntry,
@@ -38,15 +38,25 @@ const ENTITY_TYPES = [
 
 const SEVERITIES: AuditSeverity[] = ['info', 'warning', 'critical'];
 
-const ADMIN_ROLES = new Set([
-  'admin', 'principal', 'senior analyst', 'senior_analyst',
-]);
+// Wave 5 RBAC reconciliation (Sam QA 2026-07-02): the audit page
+// used to check `useCurrentUser().role` (a legacy custom
+// publicMetadata field defaulting to 'Analyst') against a
+// {admin, principal, senior_analyst} allowlist. That predates the
+// Clerk-org membership RBAC we shipped for delete gates, and gave
+// contradictory verdicts — Sam was tagged 'Analyst' here but had
+// the sidebar 'Admin' pill from Clerk. Unified on Clerk's org
+// membership: `useCurrentRole()` returns `org:admin` /
+// `org:member` from `useOrganization().membership.role`. Now every
+// admin gate in the app resolves against one source of truth.
+
+const ADMIN_ROLES = new Set(['org:admin']);
 
 export default function AuditExplorerPage() {
   const currentUser = useCurrentUser();
+  const currentRole = useCurrentRole();
   const isAdmin = useMemo(
-    () => ADMIN_ROLES.has((currentUser.role || '').trim().toLowerCase()),
-    [currentUser.role],
+    () => ADMIN_ROLES.has(currentRole),
+    [currentRole],
   );
 
   // ─── filter state ───
@@ -132,7 +142,7 @@ export default function AuditExplorerPage() {
           <p className="mt-3 text-[11.5px] text-ink-500">
             Current role:{' '}
             <code className="rounded-sm bg-ink-100 px-1 py-0.5">
-              {currentUser.role || 'unknown'}
+              {currentRole || 'unknown'}
             </code>
           </p>
         </Card>

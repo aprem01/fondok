@@ -281,7 +281,13 @@ export default function Sidebar({
                 </span>
               )}
             </div>
-            <div className="text-[11px] text-ink-500">{currentUser.role}</div>
+            {/* Sam QA 2026-07-02: hide the legacy publicMetadata.role
+                text ("Analyst" by default) — it disagrees with the
+                Clerk-role pill above (which reads
+                useOrganization().membership.role). Two role sources
+                gave contradictory signals in the same sidebar; keep
+                the authoritative Clerk pill, drop the stale text. */}
+            <div className="text-[11px] text-ink-500">{currentUser.email}</div>
           </div>
           <ChevronDown size={13} className="text-ink-400" />
         </button>
