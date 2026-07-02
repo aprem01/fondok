@@ -43,9 +43,9 @@ from uuid import UUID
 from fastapi import APIRouter, Depends
 from sqlalchemy import text
 
+from ..auth import AuthContext, require_role
 from ..budget import _price_for
 from ..database import get_engine
-from .deals import get_tenant_id
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -190,7 +190,7 @@ def _window_total(rows: list[dict[str, Any]], *, since: datetime) -> dict[str, A
 
 @router.get("/cost")
 async def admin_cost(
-    tenant_id: Annotated[UUID, Depends(get_tenant_id)],
+    auth: Annotated[AuthContext, Depends(require_role("admin"))],
 ) -> dict[str, Any]:
     """Cost + cache rollup for the calling tenant.
 
@@ -215,7 +215,12 @@ async def admin_cost(
     window we publish and the one Sam quotes when he wants the "big
     number". If the ``model_calls`` table is empty (fresh install) we
     return zeros, not 500, so the admin UI can render an empty state.
+
+    Wave RBAC 2026-07 — gated on ``role="admin"``. The header/default
+    trusted-caller escape hatch still passes so ops can hit the
+    endpoint from a scripted context.
     """
+    tenant_id = auth.tenant_id
     now = datetime.now(UTC)
     since_30d = now - timedelta(days=30)
     since_7d = now - timedelta(days=7)
@@ -315,7 +320,7 @@ async def admin_cost(
 
 @router.post("/cost/backfill")
 async def admin_cost_backfill(
-    tenant_id: Annotated[UUID, Depends(get_tenant_id)],
+    auth: Annotated[AuthContext, Depends(require_role("admin"))],
 ) -> dict[str, Any]:
     """Recompute ``cost_usd`` for tenant rows where it's still zero.
 
@@ -323,7 +328,11 @@ async def admin_cost_backfill(
     alone, so calling this on a cron ("every hour, catch any drift")
     doesn't clobber caller-supplied costs. Returns the number of rows
     updated so ops can spot outliers in the log.
+
+    Wave RBAC 2026-07 — gated on ``role="admin"``. Cron / ops-runbook
+    callers use the header path and pass the escape hatch.
     """
+    tenant_id = auth.tenant_id
     engine = get_engine()
     select_sql = text(
         """

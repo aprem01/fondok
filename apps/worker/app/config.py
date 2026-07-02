@@ -176,6 +176,41 @@ class Settings(BaseSettings):
         default="00000000-0000-0000-0000-000000000001"
     )
 
+    # ── Clerk (auth + RBAC) ─────────────────────────────────────────
+    # Wave RBAC 2026-07 — the worker verifies Clerk session JWTs on
+    # every request that carries ``Authorization: Bearer <jwt>``. The
+    # JWT is signed with Clerk's rotating RS256 keys; we fetch the
+    # JWKS from ``CLERK_JWKS_URL`` and cache it in-process for
+    # ``CLERK_JWKS_CACHE_TTL_S``. When both env vars are unset the
+    # verifier fails-closed (returns None) and the caller falls back
+    # to the ``X-Tenant-Id`` header path, so dev/tests/curl keep
+    # working without a Clerk config.
+    #
+    # ``CLERK_SECRET_KEY`` is optional here — PyJWT verifies with the
+    # JWKS public key, not the secret — but we accept it so the
+    # Railway env can carry the same var name as the Vercel side and
+    # so a future ``users.me`` REST call can authenticate with it.
+    CLERK_JWKS_URL: str = Field(
+        default="https://api.clerk.com/v1/jwks"
+    )
+    CLERK_SECRET_KEY: SecretStr | None = Field(default=None)
+    # Clerk publishes rotated JWKS every ~24h; a 5-minute in-process
+    # cache is short enough to catch a rotation within the SLA and
+    # long enough that a hot path (one call per request) doesn't hit
+    # Clerk's public JWKS endpoint on every mutation. On a signature
+    # miss we bust the cache and re-fetch once — the standard
+    # "key-not-found → refresh" pattern from PyJWKClient.
+    CLERK_JWKS_CACHE_TTL_S: int = Field(default=300, gt=0)
+    # Expected ``iss`` claim on the Clerk JWT. When unset, the
+    # verifier skips the issuer check (dev/test). Prod sets this to
+    # e.g. ``https://<tenant>.clerk.accounts.dev`` so a token minted
+    # on a different Clerk instance is rejected outright.
+    CLERK_JWT_ISSUER: str | None = Field(default=None)
+    # Expected ``aud`` claim, when present. Clerk session tokens
+    # historically didn't carry an audience; leave unset so we skip
+    # the check unless the operator explicitly opts in.
+    CLERK_JWT_AUDIENCE: str | None = Field(default=None)
+
     # ── Object store (uploaded OMs, STRs, P&Ls) ─────────────────────
     OBJECT_STORE_BACKEND: Literal["local", "s3"] = Field(default="local")
     DOCUMENT_STORAGE_ROOT: str = Field(default="/tmp/fondok")

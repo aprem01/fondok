@@ -25,6 +25,7 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..audit import log_audit
+from ..auth import AuthContext, require_role
 from ..config import get_settings
 from ..costs import build_cost_report
 from ..database import get_session
@@ -85,28 +86,32 @@ def _coerce_tenant_id(raw: str) -> UUID | None:
 
 
 async def get_tenant_id(
+    authorization: Annotated[str | None, Header()] = None,
     x_tenant_id: Annotated[str | None, Header(alias="X-Tenant-Id")] = None,
 ) -> UUID:
     """Resolve the tenant for this request.
 
-    Reads the ``X-Tenant-Id`` header set by the web app's `lib/api.ts`
-    (mirrors the active Clerk Organization id). Uses ``_coerce_tenant_id``
-    to accept either a raw UUID (server-side callers, tests, curl) or
-    a Clerk ``org_...`` id (real logged-in browser traffic). When the
-    header is missing or in an unrecognized shape we fall back to
-    ``settings.DEFAULT_TENANT_ID`` so the unauthenticated demo persona
-    keeps working end-to-end.
+    Wave RBAC 2026-07 — this is now a thin wrapper around
+    :func:`app.auth.get_current_auth`. The frontend has started sending
+    ``Authorization: Bearer <clerk_session_jwt>`` on every request; when
+    the JWT verifies we pull the tenant from its ``org_id`` claim (via
+    :func:`_coerce_tenant_id`). When the JWT is absent we fall back to
+    the pre-existing ``X-Tenant-Id`` header path — server-side callers,
+    tests, and curl runbooks continue to work without a code change.
+
+    Signature is unchanged from an endpoint's perspective (still a
+    dependency injectable with ``Depends``); we only added the
+    ``Authorization`` header binding so FastAPI validates it as a
+    header parameter rather than an unexpected body arg.
     """
-    settings = get_settings()
-    if x_tenant_id:
-        coerced = _coerce_tenant_id(x_tenant_id)
-        if coerced is not None:
-            return coerced
-        logger.warning(
-            "get_tenant_id: unrecognized X-Tenant-Id header %r — using default",
-            x_tenant_id,
-        )
-    return UUID(settings.DEFAULT_TENANT_ID)
+    # Lazy import so ``deals.py`` can be imported before
+    # ``app.auth`` — auth resolves ``_coerce_tenant_id`` at call time.
+    from ..auth import get_current_auth
+
+    auth = await get_current_auth(
+        authorization=authorization, x_tenant_id=x_tenant_id
+    )
+    return auth.tenant_id
 
 
 # ─────────────────────────── request bodies ───────────────────────────
@@ -962,7 +967,7 @@ async def update_deal(
 async def hard_delete_deal(
     deal_id: UUID,
     session: Annotated[AsyncSession, Depends(get_session)],
-    tenant_id: Annotated[UUID, Depends(get_tenant_id)],
+    auth: Annotated[AuthContext, Depends(require_role("admin"))],
 ) -> Response:
     """Hard-delete a deal and every related row. Irreversible.
 
@@ -978,7 +983,12 @@ async def hard_delete_deal(
     Tenant-isolated: cross-tenant guesses 404. Audit-logged at the
     tenant level (not deal — the deal_id stops existing mid-call)
     so a future review can find "tenant X deleted deal Y at T".
+
+    Wave RBAC 2026-07 — gated on ``role="admin"``. Real Clerk
+    ``org:member`` sessions get 403; the header/default trusted-caller
+    paths still pass so ops runbooks and tests keep working.
     """
+    tenant_id = auth.tenant_id
     tenant_id_str = str(tenant_id)
     deal_id_str = str(deal_id)
     existing = (
@@ -1046,7 +1056,7 @@ async def hard_delete_deal(
             session,
             tenant_id=tenant_id_str,
             deal_id=deal_id_str,
-            actor_id=None,
+            actor_id=auth.user_id,
             action="deal.hard_deleted",
             resource_type="deal",
             resource_id=deal_id_str,
@@ -1054,6 +1064,7 @@ async def hard_delete_deal(
             metadata={
                 "name": deal_name,
                 "cascade_counts": deleted_counts,
+                "auth_source": auth.source,
             },
         )
     except Exception:

@@ -61,6 +61,12 @@ dependencies = [
   # Redis backend is the only way the SSE subscriber sees publishes
   # from a different worker pod.
   "redis>=5.0.0",
+  # Clerk JWT verification (RS256 via JWKS). Wave RBAC 2026-07 — the
+  # frontend now sends Authorization: Bearer <clerk_session_jwt> on
+  # every worker request; we verify signature + claims, extract
+  # sub/org_id/org_role, and gate admin endpoints. ``cryptography`` is
+  # pulled in transitively by ``pyjwt[crypto]`` for RS256 support.
+  "pyjwt[crypto]>=2.8.0",
 ]
 
 [project.optional-dependencies]

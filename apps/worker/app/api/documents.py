@@ -56,6 +56,7 @@ from ..services.comp_set_drift import (
     drift_report_to_pydantic,
 )
 from ..storage import StorageError, get_raw_store
+from ..auth import AuthContext, require_role
 from .deals import _assert_deal_belongs_to_tenant, get_tenant_id
 
 logger = logging.getLogger(__name__)
@@ -2884,7 +2885,7 @@ async def delete_document(
     deal_id: UUID,
     doc_id: UUID,
     session: Annotated[AsyncSession, Depends(get_session)],
-    tenant_id: Annotated[UUID, Depends(get_tenant_id)],
+    auth: Annotated[AuthContext, Depends(require_role("admin"))],
 ) -> Response:
     """Hard-delete a single document and its derived artifacts.
 
@@ -2898,7 +2899,12 @@ async def delete_document(
 
     Tenant-isolated: cross-tenant guesses return 404. Audit-logged so
     a future review can answer "who deleted X?". Irreversible.
+
+    Wave RBAC 2026-07 — gated on ``role="admin"``. Real Clerk
+    ``org:member`` sessions get 403; the header/default trusted-caller
+    paths still pass so ops runbooks and tests keep working.
     """
+    tenant_id = auth.tenant_id
     await _assert_deal_belongs_to_tenant(
         session, deal_id=deal_id, tenant_id=tenant_id
     )
@@ -2947,11 +2953,15 @@ async def delete_document(
             session,
             tenant_id=str(tenant_id),
             deal_id=str(deal_id),
-            actor_id=None,
+            actor_id=auth.user_id,
             action="document.deleted",
             resource_type="document",
             resource_id=str(doc_id),
-            metadata={"filename": filename, "storage_key": storage_key},
+            metadata={
+                "filename": filename,
+                "storage_key": storage_key,
+                "auth_source": auth.source,
+            },
         )
     except Exception:
         logger.exception("delete_document: audit log failed for doc=%s", doc_id)
