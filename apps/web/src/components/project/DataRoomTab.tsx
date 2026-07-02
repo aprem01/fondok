@@ -1060,11 +1060,14 @@ export default function DataRoomTab({ projectId }: { projectId: number | string 
                 const canRetry =
                   liveMode &&
                   (d.rawStatus === 'FAILED' || d.rawStatus === 'PARSE_FAILED');
+                // Sam QA 2026-07-02: 'Preview' item removed. The
+                // placeholder toast said "available on enterprise
+                // plans" but neither a viewer component nor an
+                // enterprise SKU actually exists. Rather than keep
+                // aspirational marketing framing, delete the option;
+                // add it back with a real inline PDF/xlsx viewer
+                // when preview is genuinely on the roadmap.
                 const rowMenu = [
-                  {
-                    label: 'Preview',
-                    onSelect: () => toast('Preview available on enterprise plans', { type: 'info' }),
-                  },
                   {
                     label: 'Download',
                     onSelect: () => {

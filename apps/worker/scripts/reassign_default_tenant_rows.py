@@ -130,7 +130,13 @@ async def main() -> int:
     print("=" * 70)
 
     settings = get_settings()
-    engine = create_async_engine(settings.DATABASE_URL, echo=False)
+    # Same DSN normalization the worker uses at runtime — the raw
+    # DATABASE_URL from Railway is `postgresql://...` which SQLAlchemy
+    # would route to psycopg2 (not installed in the worker venv).
+    # ``settings.async_database_url`` rewrites the scheme to
+    # ``postgresql+asyncpg://...`` so create_async_engine finds the
+    # driver we actually ship.
+    engine = create_async_engine(settings.async_database_url, echo=False)
 
     total_default = 0
     total_would_move = 0
