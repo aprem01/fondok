@@ -14,6 +14,7 @@ import { projects as mockProjects, projectStatuses, Project } from '@/lib/mockDa
 import { cn } from '@/lib/format';
 import { useDeals } from '@/lib/hooks/useDeals';
 import { WorkerDeal, api, isWorkerConnected, workerUrl } from '@/lib/api';
+import { useCurrentRole } from '@/lib/auth';
 import { useToast } from '@/components/ui/Toast';
 import { IntroCard } from '@/components/help/IntroCard';
 import { MetricLabel } from '@/components/help/MetricLabel';
@@ -27,6 +28,7 @@ const buildProjectMenu = (
   isMock: boolean,
   toast: (m: string, opts?: { type?: 'success' | 'error' | 'info' }) => void,
   onArchived: () => void,
+  isAdmin: boolean,
 ) => {
   const liveMode = isWorkerConnected() && !isMock;
   const onExport = (path: 'excel' | 'memo.pdf') => () => {
@@ -82,7 +84,10 @@ const buildProjectMenu = (
     { label: 'Export Excel', onSelect: onExport('excel') },
     { label: 'Export Memo', onSelect: onExport('memo.pdf') },
     { label: 'Archive', onSelect: onArchive, danger: true },
-    { label: 'Delete Forever…', onSelect: onDeleteForever, danger: true },
+    // Wave 5 RBAC — hard-delete gated to org:admin.
+    ...(isAdmin
+      ? [{ label: 'Delete Forever…', onSelect: onDeleteForever, danger: true }]
+      : []),
   ];
 };
 
@@ -162,6 +167,9 @@ export default function ProjectsPage() {
   const [search, setSearch] = useState('');
   const [filterOpen, setFilterOpen] = useState(false);
   const { toast } = useToast();
+  // Wave 5 RBAC — hard-delete admin gate.
+  const currentRole = useCurrentRole();
+  const isAdmin = currentRole === 'org:admin';
 
   const { deals, loading, error, fromMock, refresh } = useDeals();
 
@@ -432,7 +440,7 @@ export default function ProjectsPage() {
               <div className="text-[12px] tabular-nums w-14 text-right text-ink-700">{p.docs}</div>
               <div className="text-[11.5px] w-16 text-right text-ink-500">{p.updatedAt}</div>
               <div className="w-7 h-7 rounded-full bg-ink-300/30 flex items-center justify-center text-[10px] font-semibold">{p.assignee}</div>
-              <KebabMenu items={buildProjectMenu(p.id, p.name, p.isMock, toast, refresh)} />
+              <KebabMenu items={buildProjectMenu(p.id, p.name, p.isMock, toast, refresh, isAdmin)} />
             </Link>
           ))}
         </Card>

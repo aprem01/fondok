@@ -14,6 +14,7 @@ import {
   isClerkConfigured,
   setCurrentOrgId,
   useCurrentOrg,
+  useCurrentRole,
   useCurrentUser,
   useSignOut,
 } from '@/lib/auth';
@@ -60,7 +61,17 @@ export default function Sidebar({
   // Clerk is configured they hydrate from the active session/org.
   const currentUser = useCurrentUser();
   const workspace = useCurrentOrg();
+  const currentRole = useCurrentRole();
   const signOut = useSignOut();
+
+  // Wave 5 RBAC — human-facing badge next to the analyst's name. Demo
+  // persona resolves to ``org:admin`` (see ``useCurrentRole`` note).
+  // ``unknown`` maps to no badge — safer than surfacing "Member" for a
+  // pre-hydrated Clerk state that hasn't loaded ``membership`` yet.
+  const roleBadge =
+    currentRole === 'org:admin' ? 'Admin' :
+    currentRole === 'org:member' ? 'Member' :
+    null;
 
   // Mirror the active org id into the api.ts singleton so X-Tenant-Id
   // is attached to outbound worker requests on every render where the
@@ -253,7 +264,23 @@ export default function Sidebar({
             {currentUser.initials}
           </div>
           <div className="flex-1 min-w-0 text-left">
-            <div className="text-[12.5px] font-semibold text-ink-900 truncate">{currentUser.name}</div>
+            <div className="flex items-center gap-1.5">
+              <span className="text-[12.5px] font-semibold text-ink-900 truncate">{currentUser.name}</span>
+              {roleBadge && (
+                <span
+                  className={cn(
+                    'text-[9.5px] font-semibold uppercase tracking-wide px-1.5 py-0.5 rounded',
+                    roleBadge === 'Admin'
+                      ? 'bg-brand-50 text-brand-700'
+                      : 'bg-ink-300/30 text-ink-700',
+                  )}
+                  aria-label={`Role: ${roleBadge}`}
+                  title={`Role: ${roleBadge}`}
+                >
+                  {roleBadge}
+                </span>
+              )}
+            </div>
             <div className="text-[11px] text-ink-500">{currentUser.role}</div>
           </div>
           <ChevronDown size={13} className="text-ink-400" />

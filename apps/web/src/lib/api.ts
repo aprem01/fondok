@@ -4,7 +4,7 @@
 // When NEXT_PUBLIC_WORKER_URL is unset, `isWorkerConnected()` returns false
 // and consumers should fall back to `lib/mockData.ts`.
 
-import { getCurrentOrgId } from './auth';
+import { getCurrentOrgId, getClerkSessionToken } from './auth';
 
 const BASE = (process.env.NEXT_PUBLIC_WORKER_URL ?? '').replace(/\/+$/, '');
 
@@ -793,6 +793,15 @@ async function request<T>(
   }
   const url = `${BASE}${path}`;
   const headers: Record<string, string> = {};
+  // Wave 5 RBAC: attach Clerk session JWT when configured. Backend
+  // contract is ``Authorization: Bearer <clerk_session_jwt>`` on every
+  // worker request; the backend also continues to accept the legacy
+  // ``X-Tenant-Id`` header for backwards compat. Attached BEFORE the
+  // org-id lookup so both headers travel together when Clerk is
+  // active. Returns null in demo mode (no Clerk) — the worker's
+  // header-trust fallback keeps the demo flow working.
+  const token = await getClerkSessionToken();
+  if (token) headers['Authorization'] = `Bearer ${token}`;
   // Multi-tenant header: when an active Clerk org is set, scope every
   // request to it. Worker falls back to DEFAULT_TENANT_ID when absent.
   const orgId = getCurrentOrgId();

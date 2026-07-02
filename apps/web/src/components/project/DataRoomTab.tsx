@@ -29,6 +29,7 @@ import { useDocuments } from '@/lib/hooks/useDocuments';
 import { useEngineOutputs } from '@/lib/hooks/useEngineOutputs';
 import { useEngineRun } from '@/lib/hooks/useEngineRun';
 import { useToast } from '@/components/ui/Toast';
+import { useCurrentRole } from '@/lib/auth';
 import { cn } from '@/lib/format';
 import { CoachMark } from '@/components/help/CoachMark';
 import { UsaliBadge } from './validation/UsaliBadge';
@@ -226,6 +227,9 @@ export default function DataRoomTab({ projectId }: { projectId: number | string 
   // Browse Templates popover — anchored to whichever button the user clicked.
   const [templatesAnchor, setTemplatesAnchor] = useState<'empty' | 'inline' | null>(null);
   const { toast } = useToast();
+  // Wave 5 RBAC — per-document hard-delete admin gate.
+  const currentRole = useCurrentRole();
+  const isAdmin = currentRole === 'org:admin';
 
   useEffect(() => {
     setNeedsReviewOnly(false);
@@ -1103,7 +1107,8 @@ export default function DataRoomTab({ projectId }: { projectId: number | string 
                       }
                     },
                   }] : []),
-                  {
+                  // Wave 5 RBAC — per-document hard-delete admin-only.
+                  ...(isAdmin ? [{
                     label: 'Delete',
                     danger: true,
                     onSelect: async () => {
@@ -1128,7 +1133,7 @@ export default function DataRoomTab({ projectId }: { projectId: number | string 
                         toast(`Delete failed: ${msg}`, { type: 'error' });
                       }
                     },
-                  },
+                  }] : []),
                 ];
                 const usaliOpen = usaliAccordionOpen.has(d.id);
                 return (

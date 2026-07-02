@@ -33,6 +33,7 @@ import { api as workerApi, type ScenarioRecord } from '@/lib/api';
 import { AssumptionsProvider } from '@/stores/assumptionsStore';
 import { useEngineOutputs } from '@/lib/hooks/useEngineOutputs';
 import { assumptionsFromDeal } from '@/lib/assumptions/fromDeal';
+import { useCurrentRole } from '@/lib/auth';
 
 // Heavy tabs (Recharts-bound) lazy-loaded so the initial /projects/[id]
 // JS bundle drops by the size of recharts + each tab's own code.
@@ -108,6 +109,10 @@ export default function ProjectDetailPage() {
   const searchParams = useSearchParams();
   const router = useRouter();
   const { toast } = useToast();
+  // Wave 5 RBAC — hard-delete is admin-only. Demo persona resolves to
+  // ``org:admin`` so the affordance still renders for the local flow.
+  const currentRole = useCurrentRole();
+  const isAdmin = currentRole === 'org:admin';
   const rawId = (params?.id as string | undefined) ?? '';
   const isMockId = /^\d+$/.test(rawId);
   // For mock ids we want the numeric form for === 7 checks. For real
@@ -196,7 +201,11 @@ export default function ProjectDetailPage() {
     { label: 'Export IC Memo', onSelect: onExportMemo },
     { label: 'Mark as IC Ready', onSelect: onMarkICReady },
     { label: 'Archive Project', onSelect: onArchive, danger: true },
-    { label: 'Delete Forever…', onSelect: onDeleteForever, danger: true },
+    // Wave 5 RBAC — hard-delete gated to org:admin. Non-admins get the
+    // item omitted entirely (cleaner than a disabled row).
+    ...(isAdmin
+      ? [{ label: 'Delete Forever…', onSelect: onDeleteForever, danger: true }]
+      : []),
   ];
 
   // Build a unified Project-shaped record so the existing UI keeps working.

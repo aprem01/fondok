@@ -5,12 +5,17 @@ import Sidebar from './Sidebar';
 import FondokMark from '@/components/brand/FondokMark';
 import { ToastProvider } from '@/components/ui/Toast';
 import SourceDocPane from '@/components/citations/SourceDocPane';
+import { ClerkTokenBridge } from '@/lib/auth';
 
 export default function AppShell({ children }: { children: React.ReactNode }) {
   const [mobileOpen, setMobileOpen] = useState(false);
 
   return (
     <ToastProvider>
+    {/* Wave 5 RBAC — mirrors Clerk's ``useAuth().getToken`` into a
+        module-level singleton so ``lib/api.ts`` can attach the JWT to
+        outbound worker requests. No-op in demo mode. */}
+    <ClerkTokenBridge />
     <div className="flex min-h-screen">
       <Sidebar mobileOpen={mobileOpen} onCloseMobile={() => setMobileOpen(false)} />
       <main role="main" className="flex-1 md:ml-[216px] min-h-screen bg-bg flex flex-col">
