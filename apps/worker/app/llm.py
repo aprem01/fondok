@@ -33,7 +33,16 @@ from .config import get_settings
 logger = logging.getLogger(__name__)
 
 Provider = Literal["anthropic"]
-Role = Literal["router", "extractor", "normalizer", "analyst", "variance", "critic"]
+Role = Literal[
+    "router",
+    "extractor",
+    "normalizer",
+    "analyst",
+    "variance",
+    "critic",
+    "qa_resolver",
+    "due_diligence",
+]
 
 
 def _default_model(provider: Provider, role: Role) -> str:
@@ -45,6 +54,10 @@ def _default_model(provider: Provider, role: Role) -> str:
             return settings.ANTHROPIC_EXTRACTOR_MODEL
         if role == "normalizer":
             return settings.ANTHROPIC_NORMALIZER_MODEL
+        if role == "qa_resolver":
+            return settings.ANTHROPIC_QA_RESOLVER_MODEL
+        if role == "due_diligence":
+            return settings.ANTHROPIC_DUE_DILIGENCE_MODEL
         if role in ("analyst", "variance", "critic"):
             return settings.ANTHROPIC_ANALYST_MODEL
         return settings.ANTHROPIC_MODEL
@@ -226,6 +239,151 @@ def build_structured_llm(
     )
 
 
+async def invoke_with_escalation(
+    *,
+    role: Role,
+    schema: Any,
+    messages: list[Any],
+    max_tokens: int,
+    timeout: int,
+    temperature: float | None = None,
+    method: str = "function_calling",
+    usage: Any | None = None,
+    escalation_threshold: int | None = None,
+    llm: Any | None = None,
+) -> tuple[Any, str]:
+    """Invoke a structured-output LLM with parse-failure escalation.
+
+    Cost-opt pass T (2026-07): several agents were downgraded from Sonnet
+    to Haiku (Normalizer, QA Resolver). Haiku occasionally fumbles a
+    JSON envelope on gnarly inputs — this helper wraps the invoke with
+    an escalation lane so the *specific* call that fails N times in a
+    row re-issues on Sonnet before surfacing the failure to the caller.
+
+    Behavior:
+      1. Build a structured LLM for ``role`` (whatever model the role's
+         env var points at — Haiku for downgraded roles). Callers can
+         pass a pre-built ``llm`` (used by agents that want to preserve
+         their existing ``_build_llm`` mock seams for unit tests).
+      2. Invoke it. If it returns a schema-typed object, return.
+      3. On ValidationError / ValueError / structured-output parse
+         failure, count the miss and retry on the same LLM up to
+         ``escalation_threshold - 1`` times. Anthropic 5xx/429 are
+         already handled inside the SDK layer's ``max_retries`` and
+         do NOT count toward this budget.
+      4. If misses reach ``escalation_threshold``, escalate: rebuild
+         the LLM with ``ANTHROPIC_ESCALATION_MODEL`` (Sonnet) and
+         invoke once more. Return that result (or raise the parse
+         error if Sonnet also fails).
+
+    Returns ``(parsed_result, model_used)`` — the caller can log or
+    persist ``model_used`` so cost dashboards see when escalation fired.
+
+    ``usage`` is the shared UsageCapture the caller uses to bookkeep
+    tokens. Passed as ``config={"callbacks": [usage]}`` to every call
+    so the token ledger is unbroken across escalation.
+    """
+    from pydantic import ValidationError as _ValidationError
+
+    settings = get_settings()
+    threshold = (
+        escalation_threshold
+        if escalation_threshold is not None
+        else settings.LLM_ESCALATION_THRESHOLD
+    )
+    threshold = max(1, int(threshold))
+
+    if llm is None:
+        llm = build_structured_llm(
+            role=role,
+            schema=schema,
+            max_tokens=max_tokens,
+            timeout=timeout,
+            temperature=temperature,
+            method=method,
+        )
+    config = {"callbacks": [usage]} if usage is not None else None
+    model_used = _role_model(role, _provider_for(role))
+    misses = 0
+    last_exc: Exception | None = None
+
+    while misses < threshold:
+        try:
+            raw = await llm.ainvoke(messages, config=config)
+        except (_ValidationError, ValueError) as exc:
+            last_exc = exc
+            misses += 1
+            logger.warning(
+                "llm: parse miss %d/%d on role=%s model=%s (%s)",
+                misses,
+                threshold,
+                role,
+                model_used,
+                exc,
+            )
+            continue
+        # Some LLM clients return a dict / BaseModel that needs coercion.
+        # A non-None, non-error return is treated as success — the caller
+        # is responsible for schema-shaping post-return.
+        if raw is None:
+            last_exc = ValueError("structured-output returned None")
+            misses += 1
+            logger.warning(
+                "llm: empty structured envelope %d/%d on role=%s model=%s",
+                misses,
+                threshold,
+                role,
+                model_used,
+            )
+            continue
+        return raw, model_used
+
+    # Escalate to the fallback (Sonnet) — same schema + prompt, stronger model.
+    escalation_model = settings.ANTHROPIC_ESCALATION_MODEL
+    if escalation_model == model_used:
+        # No escalation to make — the role is already on the escalation
+        # model. Surface the last error verbatim.
+        raise last_exc or ValueError(
+            f"llm: role={role} failed {threshold} times, no escalation available"
+        )
+
+    logger.warning(
+        "llm: escalating role=%s from %s → %s after %d parse misses",
+        role,
+        model_used,
+        escalation_model,
+        misses,
+    )
+    # Rebuild with an explicit env override so the escalation path uses
+    # the fallback model without mutating the process-wide env var
+    # (which would poison other agents' subsequent calls). We reach past
+    # ``build_structured_llm`` and construct ChatAnthropic directly with
+    # the escalation model id.
+    from langchain_anthropic import ChatAnthropic  # imported lazily
+
+    if settings.ANTHROPIC_API_KEY is None:
+        raise RuntimeError(
+            "ANTHROPIC_API_KEY is not set — cannot escalate LLM call"
+        )
+    kwargs: dict[str, Any] = {
+        "model": escalation_model,
+        "api_key": settings.ANTHROPIC_API_KEY,
+        "max_tokens": max_tokens,
+        "timeout": timeout,
+        "max_retries": _resolve_max_retries(role, None),
+    }
+    if temperature is not None and "opus-4-7" not in escalation_model:
+        kwargs["temperature"] = temperature
+    base = ChatAnthropic(**kwargs)  # type: ignore[arg-type]
+    escalated = base.with_structured_output(schema, method=method)
+    raw = await escalated.ainvoke(messages, config=config)
+    if raw is None:
+        raise last_exc or ValueError(
+            f"llm: escalation to {escalation_model} also returned empty envelope"
+        )
+    return raw, escalation_model
+
+
 def cached_system_message_blocks(
     blocks: list[str | tuple[str, bool] | dict],
     *,
@@ -402,6 +560,23 @@ _EXTRACTION_SCHEMA_BLOCKS: dict[str, str] = {
         "narrative is plain hotel-underwriting English, <=400 words,\n"
         "  reads like a senior IC reviewer wrote it."
     ),
+    "qa_resolver": (
+        "=== QA RESOLVER SCHEMA ADDENDUM ===\n"
+        "Emit one ResolverEnvelope: {verdict, summary, proposed_overrides[],\n"
+        "  audit_note}. Verdict is resolved|partially_resolved|still_concerning.\n"
+        "field_path MUST come from the allow-list in the user prompt — any\n"
+        "  off-catalog path is dropped downstream, so name a path exactly.\n"
+        "value: 0..1 fraction for cap_rate/ltv/occupancy/interest_rate;\n"
+        "  raw USD otherwise. confidence ∈ {high, medium, low}."
+    ),
+    "due_diligence": (
+        "=== DUE DILIGENCE SCHEMA ADDENDUM ===\n"
+        "Emit DueDiligenceEnvelope.questions[] — target 8-15 rows.\n"
+        "Each row: {question, narrative, priority, category, source,\n"
+        "  supporting_metric_key, supporting_metric_value}.\n"
+        "priority ∈ {high, medium, low}; category ∈ {Revenue, Expenses,\n"
+        "  Operations, Market, CapEx}. question ends with '?'."
+    ),
 }
 
 
@@ -476,4 +651,5 @@ __all__ = [
     "cached_system_message",
     "cached_system_message_blocks",
     "extraction_schema_block",
+    "invoke_with_escalation",
 ]

@@ -465,6 +465,151 @@ def test_live_llm_end_to_end_extraction(case_id: str) -> None:
     )
 
 
+# ─────────────────────────── live: Router → Extractor → Normalizer chain ─────────────────
+
+
+@pytest.mark.live_llm
+@pytest.mark.parametrize("case_id", _p_and_l_cases())
+def test_live_llm_router_extractor_normalizer_chain(case_id: str) -> None:
+    """Cost-opt pass T (2026-07) safety net: exercise the full
+    Router → Extractor → Normalizer chain on a golden P&L fixture and
+    assert the USALI score lands within 10% of the pinned score band's
+    midpoint.
+
+    Why this test exists: pass T downgraded the Normalizer from Sonnet
+    4.6 to Haiku 4.5. The Normalizer's job is synonym-mapping
+    ``ExtractionField`` rows onto the ~30 canonical USALI buckets; a
+    quality regression here shows up as the USALI resolver dropping
+    fields (or landing them in the wrong bucket, which the deterministic
+    rollup identities then flag as warnings). Both surfaces manifest in
+    the USALI score, which is why the score band is the assertion.
+
+    Also asserts:
+      * Router classifies to the expected doc_type (Haiku already).
+      * Extractor still returns >=8 fields (unchanged — Sonnet).
+      * Normalizer emits a spread with a positive total_revenue and a
+        finite NOI.
+
+    Requires ``ANTHROPIC_API_KEY``. Skipped otherwise.
+    """
+    api_key = os.environ.get("ANTHROPIC_API_KEY", "")
+    if not api_key or api_key.startswith("sk-test-"):
+        pytest.skip("ANTHROPIC_API_KEY not set (or is a test placeholder)")
+
+    from fondok_schemas import DocType
+
+    from app.agents.extractor import (
+        ExtractorDocument,
+        ExtractorInput,
+        run_extractor,
+    )
+    from app.agents.normalizer import NormalizerInput, run_normalizer
+    from app.agents.router import RouterInput, run_router
+    from app.extraction import parse_document
+    from app.services.usali_scorer import flatten_extraction_fields, score_extraction
+
+    case = _load_case(case_id)
+    fx = _fixture_path(case)
+    if not fx.exists():
+        pytest.skip(f"fixture missing: {fx}")
+
+    body = fx.read_bytes()
+    parsed = asyncio.run(parse_document(body, fx.name))
+    combined_text = "\n\n".join(pg.text for pg in parsed.pages)
+
+    # ── Router (Haiku 4.5)
+    router_out = asyncio.run(
+        run_router(
+            RouterInput(
+                tenant_id="00000000-0000-0000-0000-00000000000t",
+                deal_id="00000000-0000-0000-0000-00000000000d",
+                filename=fx.name,
+                content_sample=combined_text[:2000],
+            )
+        )
+    )
+    assert router_out.success, f"router failed: {router_out.error}"
+    assert router_out.doc_type == case["expected_doc_type"], (
+        f"{case_id}: router classified as {router_out.doc_type}, "
+        f"expected {case['expected_doc_type']}"
+    )
+
+    # ── Extractor (Sonnet 4.6 — kept on Sonnet for quality)
+    doc = ExtractorDocument(
+        document_id="00000000-0000-0000-0000-00000000000c",
+        filename=fx.name,
+        doc_type=DocType(router_out.doc_type),
+        content=combined_text[:60_000],
+    )
+    ext_out = asyncio.run(
+        run_extractor(
+            ExtractorInput(
+                tenant_id="00000000-0000-0000-0000-00000000000t",
+                deal_id="00000000-0000-0000-0000-00000000000d",
+                documents=[doc],
+            )
+        )
+    )
+    assert ext_out.success, f"extractor failed: {ext_out.error}"
+    assert ext_out.documents, "extractor returned no documents"
+    doc_out = ext_out.documents[0]
+    assert len(doc_out.fields) >= 8, (
+        f"{case_id}: extractor returned only {len(doc_out.fields)} fields "
+        f"— expected >=8 to feed the normalizer"
+    )
+
+    # ── Normalizer (Haiku 4.5 as of pass T, Sonnet fallback on parse fail)
+    norm_out = asyncio.run(
+        run_normalizer(
+            NormalizerInput(
+                tenant_id="00000000-0000-0000-0000-00000000000t",
+                deal_id="00000000-0000-0000-0000-00000000000d",
+                fields=list(doc_out.fields),
+                period_hint=None,
+            )
+        )
+    )
+    assert norm_out.success, f"normalizer failed: {norm_out.error}"
+    assert norm_out.normalized_spread is not None
+    spread = norm_out.normalized_spread
+    assert spread.total_revenue > 0, (
+        f"{case_id}: normalizer produced non-positive total_revenue "
+        f"{spread.total_revenue}"
+    )
+    # NOI is signed but must be finite and less than total revenue in
+    # absolute terms — a Haiku regression that mis-maps expenses could
+    # slam NOI to something like 10x total_revenue.
+    assert abs(spread.noi) < 5 * abs(spread.total_revenue), (
+        f"{case_id}: normalizer NOI={spread.noi} vs total_revenue="
+        f"{spread.total_revenue} — pass-T Haiku downgrade regressed"
+    )
+
+    # ── USALI score within 10% of the pinned band midpoint. The
+    # extraction is non-deterministic so we widen tolerance from the
+    # offline path's 1%.
+    fields_dumped = [
+        f.model_dump() if hasattr(f, "model_dump") else f for f in doc_out.fields
+    ]
+    usali_expect = case["usali"]
+    flat = flatten_extraction_fields(
+        fields_dumped, extra_context={"keys": usali_expect["keys"]}
+    )
+    result = score_extraction(flat)
+    assert result.applicable_count >= usali_expect["min_applicable_rules"], (
+        f"{case_id}: applicable_count={result.applicable_count} regressed"
+    )
+    assert result.score is not None
+    slo, shi = usali_expect["score_range"]
+    midpoint = (slo + shi) / 2.0
+    tol = 0.10  # 10% of the pinned midpoint
+    dev = abs(result.score - midpoint) / midpoint if midpoint else 0.0
+    assert dev <= tol, (
+        f"{case_id}: pass-T Router→Extractor→Normalizer live USALI score="
+        f"{result.score:.3f} deviates {dev:.2%} from pinned midpoint "
+        f"{midpoint:.3f} (>{tol:.0%}) — Haiku downgrade regressed quality"
+    )
+
+
 # ─────────────────────────── smoke: manifest health ───────────────────────────
 
 

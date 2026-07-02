@@ -384,7 +384,11 @@ def _build_user_prompt(payload: NormalizerInput) -> str:
 
 
 def _build_llm() -> Any:
-    """Sonnet 4.6 with structured output bound to ``_USALINormalized``."""
+    """Haiku 4.5 (cost-opt pass T) with structured output bound to
+    ``_USALINormalized``. Falls back to Sonnet 4.6 via the escalation
+    helper when Haiku fumbles the JSON envelope more than
+    ``LLM_ESCALATION_THRESHOLD`` times on a single call.
+    """
     from ..llm import build_structured_llm
 
     return build_structured_llm(
@@ -396,11 +400,7 @@ def _build_llm() -> Any:
     )
 
 
-async def _invoke_llm(
-    llm: Any, messages: list[Any], usage: Any | None = None
-) -> _USALINormalized:
-    config = {"callbacks": [usage]} if usage is not None else None
-    raw = await llm.ainvoke(messages, config=config)
+def _coerce_envelope(raw: Any) -> _USALINormalized:
     if isinstance(raw, _USALINormalized):
         return raw
     if isinstance(raw, BaseModel):
@@ -408,6 +408,48 @@ async def _invoke_llm(
     if isinstance(raw, dict):
         return _USALINormalized.model_validate(raw)
     raise ValueError(f"Unexpected Normalizer LLM return: {type(raw).__name__}")
+
+
+async def _invoke_llm(
+    llm: Any, messages: list[Any], usage: Any | None = None
+) -> _USALINormalized:
+    """Legacy invoke path retained for tests that mock ``_build_llm``.
+
+    The production path calls ``_invoke_with_escalation`` instead so a
+    Haiku parse miss auto-escalates to Sonnet without a caller change.
+    """
+    config = {"callbacks": [usage]} if usage is not None else None
+    raw = await llm.ainvoke(messages, config=config)
+    return _coerce_envelope(raw)
+
+
+async def _invoke_with_escalation(
+    messages: list[Any], usage: Any | None = None
+) -> tuple[_USALINormalized, str]:
+    """Invoke the Normalizer with Haiku → Sonnet auto-escalation.
+
+    Uses ``_build_llm`` for the primary call so unit tests that
+    monkeypatch ``_build_llm`` still exercise the escalation wrapper
+    without a stub-surface change.
+
+    Returns ``(envelope, model_used)`` so the caller can record which
+    model actually produced the row in ``ModelCall.model`` — the cost
+    dashboard needs to see escalation events.
+    """
+    from ..llm import invoke_with_escalation
+
+    llm = _build_llm()
+    raw, model_used = await invoke_with_escalation(
+        role="normalizer",
+        schema=_USALINormalized,
+        messages=messages,
+        max_tokens=4096,
+        timeout=120,
+        temperature=0.0,
+        usage=usage,
+        llm=llm,
+    )
+    return _coerce_envelope(raw), model_used
 
 
 # ─────────────────────── public entry point ───────────────────────
@@ -462,9 +504,15 @@ async def run_normalizer(payload: NormalizerInput) -> NormalizerOutput:
     ]
     usage = UsageCapture()
 
+    # Cost-opt pass T: try Haiku first via the escalation helper. If the
+    # structured envelope fails schema validation ``LLM_ESCALATION_THRESHOLD``
+    # times in a row we fall back to Sonnet 4.6 for THIS call — the
+    # ``model_used`` we then persist reflects the model that actually
+    # produced the row so the cost ledger stays honest.
+    envelope: _USALINormalized | None = None
+    model_used: str | None = None
     try:
-        llm = _build_llm()
-        envelope = await _invoke_llm(llm, messages, usage=usage)
+        envelope, model_used = await _invoke_with_escalation(messages, usage=usage)
     except (ValidationError, Exception) as exc:  # noqa: BLE001 - error path
         logger.warning("normalizer: LLM call failed (%s)", exc)
         return NormalizerOutput(
@@ -488,8 +536,14 @@ async def run_normalizer(payload: NormalizerInput) -> NormalizerOutput:
     completed = datetime.now(UTC)
     elapsed_ms = int((time.monotonic() - t0) * 1000)
     settings = get_settings()
+    # Prefer the exact model UsageCapture saw on the wire; fall back to
+    # the escalation helper's report (Haiku vs. Sonnet on escalation);
+    # last resort the configured default.
+    resolved_model = (
+        usage.model or model_used or settings.ANTHROPIC_NORMALIZER_MODEL
+    )
     model_call = ModelCall(
-        model=usage.model or settings.ANTHROPIC_NORMALIZER_MODEL,
+        model=resolved_model,
         input_tokens=usage.input_tokens,
         output_tokens=usage.output_tokens,
         cost_usd=0.0,

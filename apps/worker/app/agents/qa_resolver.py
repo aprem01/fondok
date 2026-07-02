@@ -337,11 +337,19 @@ def _build_user_prompt(payload: QAResolverInput) -> str:
 
 
 def _build_llm() -> Any:
-    """Sonnet 4.6 with structured output bound to ``_ResolverEnvelope``."""
+    """Haiku 4.5 (cost-opt pass T) with structured output bound to
+    ``_ResolverEnvelope``. Prior to pass T the resolver piggybacked on
+    the ``variance`` role (Opus/Sonnet). The reply-parsing → allow-list
+    proposal task is classification-shaped (the ~30 canonical paths are
+    already fenced in by ``ALLOWED_OVERRIDE_PATHS``), so Haiku carries
+    the throughput at ~4x lower $/call. ``invoke_with_escalation`` in
+    the runtime path re-issues on Sonnet when Haiku fails schema
+    validation ``LLM_ESCALATION_THRESHOLD`` times.
+    """
     from ..llm import build_structured_llm
 
     return build_structured_llm(
-        role="variance",  # shares the variance/analyst pricing track
+        role="qa_resolver",
         schema=_ResolverEnvelope,
         max_tokens=2048,
         timeout=120,
@@ -349,11 +357,7 @@ def _build_llm() -> Any:
     )
 
 
-async def _invoke_llm(
-    llm: Any, messages: list[Any], usage: Any | None = None
-) -> _ResolverEnvelope:
-    config = {"callbacks": [usage]} if usage is not None else None
-    raw = await llm.ainvoke(messages, config=config)
+def _coerce_envelope(raw: Any) -> _ResolverEnvelope:
     if isinstance(raw, _ResolverEnvelope):
         return raw
     if isinstance(raw, BaseModel):
@@ -361,6 +365,45 @@ async def _invoke_llm(
     if isinstance(raw, dict):
         return _ResolverEnvelope.model_validate(raw)
     raise ValueError(f"Unexpected QAResolver LLM return: {type(raw).__name__}")
+
+
+async def _invoke_llm(
+    llm: Any, messages: list[Any], usage: Any | None = None
+) -> _ResolverEnvelope:
+    """Legacy path retained for tests that monkeypatch ``_build_llm``.
+
+    Production calls ``_invoke_with_escalation`` so Haiku parse misses
+    fall back to Sonnet 4.6 automatically.
+    """
+    config = {"callbacks": [usage]} if usage is not None else None
+    raw = await llm.ainvoke(messages, config=config)
+    return _coerce_envelope(raw)
+
+
+async def _invoke_with_escalation(
+    messages: list[Any], usage: Any | None = None
+) -> tuple[_ResolverEnvelope, str]:
+    """Run the Haiku call with Sonnet-fallback escalation.
+
+    We call ``_build_llm()`` explicitly (not via the helper's factory)
+    so the existing unit-test monkeypatch on ``_build_llm`` still routes
+    stub envelopes through the escalation wrapper without any test
+    surface change.
+    """
+    from ..llm import invoke_with_escalation
+
+    llm = _build_llm()
+    raw, model_used = await invoke_with_escalation(
+        role="qa_resolver",
+        schema=_ResolverEnvelope,
+        messages=messages,
+        max_tokens=2048,
+        timeout=120,
+        temperature=0.1,
+        usage=usage,
+        llm=llm,
+    )
+    return _coerce_envelope(raw), model_used
 
 
 # ─────────────────────── validation + filtering ───────────────────────
@@ -464,26 +507,27 @@ async def run_qa_resolver(payload: QAResolverInput) -> QAResolverOutput:
     from ..llm import build_agent_system_blocks, cached_system_message_blocks
     from ..usage import UsageCapture
 
-    # 4-block system prompt mirrors the variance agent — agent
-    # instructions (uncached, ~2KB) + USALI rules + brand catalog +
-    # schema addendum. The allow-listed paths go in the user prompt so
-    # they're easy to reorder when we add new paths without busting the
-    # system-prompt cache.
+    # 4-block system prompt: agent instructions (cached, ~2KB) + USALI
+    # rules + brand catalog + qa_resolver schema addendum. The
+    # allow-listed paths go in the user prompt so they're easy to
+    # reorder when we add new paths without busting the system-prompt
+    # cache. ``role="qa_resolver"`` steers the LLM factory to
+    # ``ANTHROPIC_QA_RESOLVER_MODEL`` (Haiku on cost-opt pass T).
     system_blocks = build_agent_system_blocks(
-        role="variance",
+        role="qa_resolver",
         agent_instructions=SYSTEM_PROMPT,
     )
     messages = [
-        cached_system_message_blocks(system_blocks, role="variance"),
+        cached_system_message_blocks(system_blocks, role="qa_resolver"),
         HumanMessage(content=_build_user_prompt(payload)),
     ]
     usage = UsageCapture()
 
     envelope: _ResolverEnvelope | None = None
     llm_error: str | None = None
+    model_used: str | None = None
     try:
-        llm = _build_llm()
-        envelope = await _invoke_llm(llm, messages, usage=usage)
+        envelope, model_used = await _invoke_with_escalation(messages, usage=usage)
     except (ValidationError, Exception) as exc:  # noqa: BLE001 - error path
         logger.warning("qa_resolver: LLM call failed (%s)", exc)
         llm_error = f"{type(exc).__name__}: {exc}"
@@ -506,13 +550,17 @@ async def run_qa_resolver(payload: QAResolverInput) -> QAResolverOutput:
     proposed = _filter_overrides(envelope.proposed_overrides)
 
     settings = get_settings()
+    # Cost-opt pass T: prefer the on-the-wire model UsageCapture saw
+    # (accurate under escalation), then the escalation helper's own
+    # report, then the configured Haiku default.
     fallback_model = (
-        getattr(settings, "ANTHROPIC_VARIANCE_MODEL", None)
-        or settings.ANTHROPIC_ANALYST_MODEL
+        usage.model
+        or model_used
+        or settings.ANTHROPIC_QA_RESOLVER_MODEL
     )
     model_calls: list[ModelCall] = [
         ModelCall(
-            model=usage.model or fallback_model,
+            model=fallback_model,
             input_tokens=usage.input_tokens,
             output_tokens=usage.output_tokens,
             cost_usd=0.0,

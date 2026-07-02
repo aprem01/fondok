@@ -36,11 +36,37 @@ class Settings(BaseSettings):
     # ── Anthropic models per agent role ─────────────────────────────
     # Router uses Haiku — cheap classification of incoming docs / requests.
     ANTHROPIC_ROUTER_MODEL: str = Field(default="claude-haiku-4-5-20251001")
-    # Extractor + Normalizer use Sonnet — STR/P&L parsing needs reasoning.
+    # Extractor uses Sonnet — primary field extraction, quality-critical.
     ANTHROPIC_EXTRACTOR_MODEL: str = Field(default="claude-sonnet-4-6")
-    ANTHROPIC_NORMALIZER_MODEL: str = Field(default="claude-sonnet-4-6")
+    # Cost-opt pass T (2026-07): Normalizer downgraded from Sonnet 4.6
+    # to Haiku 4.5. The Normalizer's job is synonym-mapping extracted
+    # line items onto the ~30 canonical USALI buckets — a classification
+    # task, not a reasoning task. Rollup identities (GOP, NOI, RevPAR)
+    # are recomputed deterministically in ``_validate_and_recompute``,
+    # so the LLM's numerical error surface is bounded to "picked the
+    # wrong bucket for this line item", which Haiku handles well on
+    # the golden set. On repeated JSON-parse or ValidationError the
+    # ``escalate_on_parse_failure`` helper re-issues the call with
+    # Sonnet 4.6 as an escape hatch.
+    ANTHROPIC_NORMALIZER_MODEL: str = Field(default="claude-haiku-4-5-20251001")
+    # QA Resolver — reads a broker's Q&A reply and proposes overrides
+    # against a ~30-path allow-list. Downstream ``_filter_overrides``
+    # drops any off-catalog path, so the LLM's degrees of freedom are
+    # already fenced in. Classification-shaped → Haiku.
+    ANTHROPIC_QA_RESOLVER_MODEL: str = Field(default="claude-haiku-4-5-20251001")
+    # Due Diligence — generates 8-15 open-ended broker questions with
+    # narratives. Reasoning-heavier than a pure classifier and shipped
+    # to institutional buyers, so we keep it on Sonnet for now. Kept
+    # as an explicit setting so we can flip it to Haiku after the next
+    # golden-set sweep proves quality is preserved.
+    ANTHROPIC_DUE_DILIGENCE_MODEL: str = Field(default="claude-sonnet-4-6")
     # Analyst uses Opus — IC memo writing + variance reasoning.
     ANTHROPIC_ANALYST_MODEL: str = Field(default="claude-opus-4-7")
+    # Escalation model — when a Haiku-downgraded agent fails JSON parse
+    # ``LLM_ESCALATION_THRESHOLD`` times in a row on a single call, the
+    # ``escalate_on_parse_failure`` helper re-issues on this model.
+    ANTHROPIC_ESCALATION_MODEL: str = Field(default="claude-sonnet-4-6")
+    LLM_ESCALATION_THRESHOLD: int = Field(default=2, ge=1)
     # Catch-all fallback when a per-role var isn't set.
     ANTHROPIC_MODEL: str = Field(default="claude-sonnet-4-6")
 
