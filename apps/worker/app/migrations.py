@@ -977,6 +977,41 @@ MIGRATIONS: list[tuple[str, str]] = [
         ON pipeline_digest_schedules (tenant_id, is_active, next_run_at)
         """,
     ),
+    # Cost-opt V (2026-07): Message Batches API tracking.
+    # One row per submitted batch — persists the Anthropic batch_id so
+    # the polling worker can pick it up on the next tick and ingest
+    # results when the batch ends. ``status`` transitions:
+    #   queued → in_progress → complete | failed | expired
+    (
+        "pending_batches.create_table",
+        """
+        CREATE TABLE IF NOT EXISTS pending_batches (
+            id            UUID PRIMARY KEY,
+            batch_id      TEXT NOT NULL UNIQUE,
+            deal_id       UUID NOT NULL,
+            tenant_id     UUID NOT NULL,
+            agent_name    TEXT NOT NULL DEFAULT 'analyst',
+            status        TEXT NOT NULL DEFAULT 'queued',
+            submitted_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+            completed_at  TIMESTAMPTZ,
+            error         TEXT
+        )
+        """,
+    ),
+    (
+        "pending_batches.idx_status_submitted",
+        """
+        CREATE INDEX IF NOT EXISTS idx_pending_batches_status_submitted
+        ON pending_batches (status, submitted_at ASC)
+        """,
+    ),
+    (
+        "pending_batches.idx_tenant_deal",
+        """
+        CREATE INDEX IF NOT EXISTS idx_pending_batches_tenant_deal
+        ON pending_batches (tenant_id, deal_id, submitted_at DESC)
+        """,
+    ),
 ]
 
 
@@ -1638,6 +1673,39 @@ SQLITE_MIGRATIONS: list[tuple[str, str]] = [
         """
         CREATE INDEX IF NOT EXISTS idx_pipeline_digest_schedules_active
         ON pipeline_digest_schedules (tenant_id, is_active, next_run_at)
+        """,
+    ),
+    # Cost-opt V (2026-07): SQLite mirror of the ``pending_batches``
+    # table used by :mod:`app.agents.analyst_batch`. Same columns as
+    # the Postgres form; TIMESTAMPTZ collapses to TEXT.
+    (
+        "pending_batches.create_table",
+        """
+        CREATE TABLE IF NOT EXISTS pending_batches (
+            id            TEXT PRIMARY KEY,
+            batch_id      TEXT NOT NULL UNIQUE,
+            deal_id       TEXT NOT NULL,
+            tenant_id     TEXT NOT NULL,
+            agent_name    TEXT NOT NULL DEFAULT 'analyst',
+            status        TEXT NOT NULL DEFAULT 'queued',
+            submitted_at  TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            completed_at  TEXT,
+            error         TEXT
+        )
+        """,
+    ),
+    (
+        "pending_batches.idx_status_submitted",
+        """
+        CREATE INDEX IF NOT EXISTS idx_pending_batches_status_submitted
+        ON pending_batches (status, submitted_at ASC)
+        """,
+    ),
+    (
+        "pending_batches.idx_tenant_deal",
+        """
+        CREATE INDEX IF NOT EXISTS idx_pending_batches_tenant_deal
+        ON pending_batches (tenant_id, deal_id, submitted_at DESC)
         """,
     ),
 ]

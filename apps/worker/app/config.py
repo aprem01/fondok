@@ -170,6 +170,21 @@ class Settings(BaseSettings):
     # ``MemoBroadcast`` so the UI can render the memo as it builds.
     MEMO_STREAMING_ENABLED: bool = Field(default=False)
 
+    # ── Analyst batch API (cost-opt V, 2026-07) ─────────────────────
+    # When True, the memo lane routes through Anthropic's Message
+    # Batches API (``POST /v1/messages/batches``) which charges 50% of
+    # the standard input+output rate in exchange for up to 24h of
+    # turnaround. Ships DARK — flip on per-tenant once the poller has
+    # baked in staging. The interactive sync path stays intact and is
+    # the fallback when this flag is false or the submit fails. See
+    # ``app.agents.analyst_batch`` for the runtime contract.
+    ANALYST_BATCH_API_ENABLED: bool = Field(default=False)
+
+    # Poller cadence — the background task that checks Anthropic for
+    # ended batches. 5 minutes matches the SDK's recommended polling
+    # interval and keeps API cost negligible (a HEAD-style status call).
+    ANALYST_BATCH_POLL_SECONDS: float = Field(default=300.0, gt=0.0)
+
     # ── Pub/sub backend ─────────────────────────────────────────────
     # When set, ``MemoBroadcast`` uses Redis pub/sub instead of the
     # single-process in-memory queue. Required for multi-replica
