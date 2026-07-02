@@ -287,6 +287,125 @@ def test_unknown_doc_type_falls_back_to_filename_hint() -> None:
         )
 
 
+# ────────────── chunk-size config (Task U — cost-opt-tier2) ──────────────
+
+
+def test_build_extractor_chunks_honors_per_doctype_config() -> None:
+    """``_build_extractor_chunks`` must slice pages using the size
+    configured on ``Settings.EXTRACTOR_CHUNK_PAGES_BY_DOCTYPE`` for the
+    doc's type, falling back to ``EXTRACTOR_CHUNK_PAGES_DEFAULT`` when
+    the type isn't listed.
+
+    This is the load-bearing check for cost-opt pass U — if the config
+    stops routing per doc-type (or a rename drops a key), chunk counts
+    silently drift back to the uniform 5-page baseline and we lose the
+    tuned tokens × latency profile.
+    """
+    from app.api.documents import _build_extractor_chunks, _resolve_chunk_pages
+    from app.config import get_settings
+
+    settings = get_settings()
+    overrides = settings.EXTRACTOR_CHUNK_PAGES_BY_DOCTYPE
+    default = settings.EXTRACTOR_CHUNK_PAGES_DEFAULT
+
+    # The tuned defaults MUST cover the highest-volume doc types Sam
+    # ships — losing one drops back to the uniform-5 baseline that
+    # motivated pass U in the first place.
+    for required_key in ("OM", "T12", "STR_TREND", "PNL"):
+        assert required_key in overrides, (
+            f"EXTRACTOR_CHUNK_PAGES_BY_DOCTYPE missing {required_key!r} — "
+            "chunk-size tuning regressed to uniform default for that type"
+        )
+
+    # A dummy "document" (24 pages) → verify each configured doc-type
+    # produces the expected chunk count.
+    pages = [{"page_num": i + 1, "text": f"page {i + 1} body"} for i in range(24)]
+
+    class _Doc:
+        def __init__(self, **kwargs):  # noqa: ANN001,ANN002 — throw-away test double
+            self.__dict__.update(kwargs)
+
+    expectations = {
+        "OM": overrides["OM"],
+        "T12": overrides["T12"],
+        "STR_TREND": overrides["STR_TREND"],
+        "PNL": overrides["PNL"],
+        # Unknown type falls back to the default.
+        "SOME_UNKNOWN_TYPE": default,
+    }
+
+    for doc_type, expected_k in expectations.items():
+        # Sanity check the resolver too — the bench script and
+        # production both funnel through it.
+        assert _resolve_chunk_pages(doc_type) == expected_k
+
+        chunks = _build_extractor_chunks(
+            pages=pages,
+            doc_id="d1",
+            filename=f"{doc_type.lower()}.pdf",
+            doc_type=doc_type,
+            make_doc=_Doc,
+        )
+        expected_count = (len(pages) + expected_k - 1) // expected_k
+        assert len(chunks) == expected_count, (
+            f"{doc_type}: got {len(chunks)} chunks at k={expected_k}, "
+            f"expected {expected_count} (pages={len(pages)})"
+        )
+        # Each chunk (except possibly the last) carries exactly k pages.
+        for c in chunks[:-1]:
+            assert len(c.source_pages) == expected_k
+        # Last chunk holds the remainder — never > k, never < 1.
+        assert 1 <= len(chunks[-1].source_pages) <= expected_k
+
+
+def test_build_extractor_chunks_explicit_chunk_pages_overrides_config() -> None:
+    """The ``chunk_pages`` kwarg lets the bench harness force a size
+    without mutating global settings. Production still passes None
+    (config-driven), so this only affects the bench path.
+    """
+    from app.api.documents import _build_extractor_chunks
+
+    pages = [{"page_num": i + 1, "text": f"p{i}"} for i in range(20)]
+
+    class _Doc:
+        def __init__(self, **kwargs):  # noqa: ANN001,ANN002 — throw-away test double
+            self.__dict__.update(kwargs)
+
+    # Force k=7 regardless of what T12's config says.
+    chunks = _build_extractor_chunks(
+        pages=pages,
+        doc_id="d1",
+        filename="t.xlsx",
+        doc_type="T12",
+        make_doc=_Doc,
+        chunk_pages=7,
+    )
+    assert len(chunks) == 3  # ceil(20 / 7)
+    assert len(chunks[0].source_pages) == 7
+    assert len(chunks[-1].source_pages) == 6
+
+
+def test_build_extractor_chunks_empty_document_returns_single_chunk() -> None:
+    """Regression: an empty ``pages`` list still produces one placeholder
+    chunk so the extractor runs and reports 0 fields honestly.
+    """
+    from app.api.documents import _build_extractor_chunks
+
+    class _Doc:
+        def __init__(self, **kwargs):  # noqa: ANN001,ANN002 — throw-away test double
+            self.__dict__.update(kwargs)
+
+    chunks = _build_extractor_chunks(
+        pages=[],
+        doc_id="d1",
+        filename="empty.pdf",
+        doc_type="OM",
+        make_doc=_Doc,
+    )
+    assert len(chunks) == 1
+    assert "empty document" in chunks[0].content
+
+
 # ─────────────────────────── storage ───────────────────────────
 
 

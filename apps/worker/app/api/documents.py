@@ -4890,11 +4890,34 @@ async def _run_extraction_pipeline_inner(
                 logger.exception("extraction: failed to record FAILED status")
 
 
-# Pages per extraction chunk. A 45-page OM → 9 chunks; a 3-page T-12
-# → 1 chunk (unchanged behavior). Tuned so each chunk's content stays
-# comfortably under the extractor prompt's content budget and the LLM
-# isn't reasoning over too many pages at once.
-_EXTRACTOR_CHUNK_PAGES = 5
+# Pages per extraction chunk. Cost-opt pass U (2026-07): the default +
+# per-doc-type overrides live on ``Settings`` (see
+# ``EXTRACTOR_CHUNK_PAGES_DEFAULT`` / ``EXTRACTOR_CHUNK_PAGES_BY_DOCTYPE``)
+# so operators can tune without a code change. Historical default was a
+# uniform 5 pages / chunk — a 45-page OM → 9 chunks, a 3-page T-12 → 1
+# chunk. The bench in ``scripts/bench_chunk_size.py`` measures
+# tokens × wall-time × USALI score across candidate sizes so shifts
+# aren't guesses.
+def _resolve_chunk_pages(doc_type: str | None) -> int:
+    """Return the configured page-per-chunk size for ``doc_type``.
+
+    Looks up the per-doc-type override first, falls back to the global
+    default. Kept as a small helper (rather than inline) so the bench
+    script + the unit test can exercise the same lookup as production.
+    """
+    settings = get_settings()
+    default = int(settings.EXTRACTOR_CHUNK_PAGES_DEFAULT)
+    if not doc_type:
+        return default
+    overrides = settings.EXTRACTOR_CHUNK_PAGES_BY_DOCTYPE or {}
+    try:
+        size = int(overrides.get(str(doc_type), default))
+    except (TypeError, ValueError):
+        size = default
+    # Guard against a bad env override slipping past pydantic (e.g. a
+    # JSON value that decoded to 0). Any non-positive size collapses
+    # to the default so the extractor never hits an infinite loop.
+    return size if size > 0 else default
 
 
 def _build_extractor_chunks(
@@ -4904,16 +4927,23 @@ def _build_extractor_chunks(
     filename: str,
     doc_type: str,
     make_doc: Any,
+    chunk_pages: int | None = None,
 ) -> list[Any]:
-    """Split a parsed document's pages into ~5-page ExtractorDocuments.
+    """Split a parsed document's pages into per-doc-type-sized chunks.
 
     All chunks share the same ``document_id`` / ``filename`` /
     ``doc_type`` — they're the same source document, just sliced so the
     extractor can fan out concurrently. ``make_doc`` is the
     ``ExtractorDocument`` constructor passed in to avoid a module-level
-    import cycle. Returns at least one chunk even for an empty document
-    so the extractor still runs (and reports 0 fields honestly).
+    import cycle. ``chunk_pages`` lets a caller (e.g. the benchmark
+    harness) force a size; when ``None`` (production path) the size is
+    resolved from settings via ``_resolve_chunk_pages(doc_type)``.
+    Returns at least one chunk even for an empty document so the
+    extractor still runs (and reports 0 fields honestly).
     """
+    if chunk_pages is None:
+        chunk_pages = _resolve_chunk_pages(doc_type)
+
     if not pages:
         return [
             make_doc(
@@ -4926,8 +4956,8 @@ def _build_extractor_chunks(
         ]
 
     chunks: list[Any] = []
-    for start in range(0, len(pages), _EXTRACTOR_CHUNK_PAGES):
-        batch = pages[start : start + _EXTRACTOR_CHUNK_PAGES]
+    for start in range(0, len(pages), chunk_pages):
+        batch = pages[start : start + chunk_pages]
         content = "\n\n".join(
             f"[Page {p.get('page_num', start + i + 1)}]\n{p.get('text', '')}".strip()
             for i, p in enumerate(batch)
@@ -5117,14 +5147,16 @@ async def _run_graph_extraction(
         doc_type = hint
         route = "extract-hint-fallback"
 
-    # Chunked extraction (Sam QA 2026-05-14): split the document into
-    # ~5-page batches and build one ExtractorDocument per chunk. The
-    # extractor agent fans these out in parallel (capped concurrency),
-    # so a 45-page OM that used to be a single 3-minute Sonnet call
-    # becomes ~9 concurrent ~30s calls. Smaller per-call context also
-    # lifts per-field confidence — the model isn't juggling 45 pages
-    # at once. Small docs (≤ chunk size) produce a single chunk and
-    # behave exactly as before.
+    # Chunked extraction (Sam QA 2026-05-14, tuned pass U 2026-07):
+    # split the document into per-doc-type-sized batches and build one
+    # ExtractorDocument per chunk. The extractor agent fans these out
+    # in parallel (capped concurrency), so a 45-page OM that used to be
+    # a single 3-minute Sonnet call becomes ~6-9 concurrent ~30s calls.
+    # Smaller per-call context also lifts per-field confidence — the
+    # model isn't juggling 45 pages at once. Small docs (≤ chunk size)
+    # produce a single chunk and behave exactly as before. Sizes come
+    # from ``EXTRACTOR_CHUNK_PAGES_BY_DOCTYPE`` (see config.py) so
+    # operators can tune without redeploying.
     extractor_docs = _build_extractor_chunks(
         pages=pages,
         doc_id=doc_id,

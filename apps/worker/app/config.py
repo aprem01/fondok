@@ -68,6 +68,51 @@ class Settings(BaseSettings):
     # the full extractor for one deploy.
     EXTRACTION_CACHE_ENABLED: bool = Field(default=True)
 
+    # Cost-optimization pass U (2026-07): chunk-size tuning for the
+    # extractor. Fewer / larger chunks reduce per-call system-prompt
+    # overhead (prompt caching mitigates but doesn't erase it) at the
+    # cost of extraction fidelity — the extractor prompt is a fixed
+    # size, so a bigger chunk shares less attention per field. More /
+    # smaller chunks push fidelity up but pay the system-prompt token
+    # cost N times. Empirical values below come from
+    # ``apps/worker/scripts/bench_chunk_size.py`` — re-run when the
+    # extractor prompt or model changes materially. Env-overridable via
+    # ``EXTRACTOR_CHUNK_PAGES_DEFAULT`` for the fallback and (rarely)
+    # ``EXTRACTOR_CHUNK_PAGES_BY_DOCTYPE`` as JSON.
+    EXTRACTOR_CHUNK_PAGES_DEFAULT: int = Field(default=5, gt=0, le=64)
+    # Per doc-type overrides. Keys are ``DocType`` enum values (strings).
+    # Docs whose type is not listed fall back to
+    # ``EXTRACTOR_CHUNK_PAGES_DEFAULT``. Bench findings that motivated
+    # the current defaults:
+    #   * ``OM``           — long prose PDFs; larger chunks amortize the
+    #     system-prompt cost with negligible fidelity loss.
+    #   * ``T12`` / ``PNL`` — dense P&L grids; smaller chunks preserve
+    #     line-item resolution and keep USALI compliance above the
+    #     regression band.
+    #   * ``STR_TREND``    — multi-sheet workbook; 4 sheets per chunk
+    #     keeps each subject / comp-set section coherent.
+    #   * ``PORTFOLIO_PNL`` — same shape as ``PNL``, benefits from the
+    #     same tighter chunking.
+    # Override via ``EXTRACTOR_CHUNK_PAGES_BY_DOCTYPE`` env as JSON
+    # (e.g. ``{"OM": 10}``) — pydantic-settings JSON-decodes dict envs
+    # automatically. Unlisted / unknown DocType keys are ignored.
+    EXTRACTOR_CHUNK_PAGES_BY_DOCTYPE: dict[str, int] = Field(
+        default_factory=lambda: {
+            "OM": 8,
+            "T12": 3,
+            "PNL": 3,
+            "PNL_MONTHLY": 3,
+            "PNL_YTD": 3,
+            "PNL_BENCHMARK": 3,
+            "PORTFOLIO_PNL": 3,
+            "STR_TREND": 4,
+            "STR_SEGMENTATION": 4,
+            "STR": 4,
+            "CBRE_HORIZONS": 6,
+            "MARKET_STUDY": 6,
+        }
+    )
+
     # ── Tenancy ─────────────────────────────────────────────────────
     # UUID-shaped string for dev. Real tenants are provisioned in DB.
     DEFAULT_TENANT_ID: str = Field(
