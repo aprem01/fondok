@@ -125,12 +125,28 @@ class Settings(BaseSettings):
     EXTRACTOR_CHUNK_PAGES_BY_DOCTYPE: dict[str, int] = Field(
         default_factory=lambda: {
             "OM": 8,
-            "T12": 3,
-            "PNL": 3,
-            "PNL_MONTHLY": 3,
-            "PNL_YTD": 3,
-            "PNL_BENCHMARK": 3,
-            "PORTFOLIO_PNL": 3,
+            # T12 + PNL family updated 2026-07-02 from live bench
+            # (apps/worker/scripts/bench_chunk_size.py --case anglers_t12
+            # against real Anthropic). Measured on Sam's 6-page T12 xlsx:
+            #   k=3: $0.36, USALI 61.9  (was the previous default)
+            #   k=5: $0.33, USALI 61.9
+            #   k=8: $0.21, USALI 78.6  ← 42% cheaper + 27% higher score
+            # Smaller-chunk mode over-extracted noisy fields that hurt
+            # USALI compliance; larger chunks give the model whole-doc
+            # context and it grounds better. Applied to the whole PNL
+            # family since they share the annual-xlsx shape; still
+            # measured only on T12 — re-bench PNL / PNL_MONTHLY /
+            # PNL_YTD / PORTFOLIO_PNL / PNL_BENCHMARK when a fuller
+            # sweep is budgeted.
+            "T12": 8,
+            "PNL": 8,
+            "PNL_MONTHLY": 8,
+            "PNL_YTD": 8,
+            "PNL_BENCHMARK": 8,
+            "PORTFOLIO_PNL": 8,
+            # STR / CBRE / MARKET_STUDY not yet re-benched with real
+            # Anthropic — Agent U's educated defaults stand until we
+            # get real measurements on them.
             "STR_TREND": 4,
             "STR_SEGMENTATION": 4,
             "STR": 4,
