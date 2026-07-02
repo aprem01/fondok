@@ -2241,15 +2241,29 @@ async def trigger_memo_generation(
     background_tasks: BackgroundTasks,
     session: Annotated[AsyncSession, Depends(get_session)],
     tenant_id: Annotated[UUID, Depends(get_tenant_id)],
-) -> dict[str, str]:
-    """Kick off the streaming Opus memo draft. Returns immediately.
+) -> Response:
+    """Kick off the memo draft. Returns immediately.
 
-    The Analyst publishes one section at a time to the in-process
-    ``MemoBroadcast`` keyed by ``memo:{deal_id}``; clients should
-    immediately open ``GET /deals/{deal_id}/memo/stream`` to receive
-    the sections via SSE.
+    Two transport lanes, gated by ``ANALYST_BATCH_API_ENABLED``:
 
-    Failure modes:
+    * **Sync (default, flag off)** — spawns
+      :func:`_safe_run_analyst_streaming` as a FastAPI background task.
+      The Analyst publishes one section at a time to the in-process
+      ``MemoBroadcast`` keyed by ``memo:{deal_id}``; clients should
+      immediately open ``GET /deals/{deal_id}/memo/stream`` to receive
+      the sections via SSE. Response body:
+      ``200 {"status": "started", "deal_id": ...}``.
+
+    * **Batch (flag on)** — submits the memo to Anthropic's Message
+      Batches API (50% discount, up to 24h turnaround). Response is
+      ``202 Accepted`` with ``{"status": "queued", "batch_id": ...,
+      "deal_id": ...}`` so the frontend polls ``GET /memo/status``
+      instead of subscribing to SSE. If the submit itself fails
+      (network, ANTHROPIC_API_KEY missing) we fall back to the sync
+      streaming path so the user never sees a broken draft flow — the
+      batch lane is a cost optimization, not a correctness gate.
+
+    Failure modes (shared across both lanes):
 
     * ``400 Bad Request`` — the deal exists in the DB but has no
       extracted documents yet. Body is ``{"detail": "...",
@@ -2259,9 +2273,10 @@ async def trigger_memo_generation(
       itself blew up unexpectedly (DB outage, etc.). The actual
       exception is logged for Railway log-grep.
 
-    The background task is wrapped in :func:`_safe_run_analyst_streaming`
-    so any error inside the analyst is surfaced via the SSE channel
-    (``event: error``) instead of leaving the stream hanging.
+    The sync background task is wrapped in
+    :func:`_safe_run_analyst_streaming` so any error inside the
+    analyst is surfaced via the SSE channel (``event: error``)
+    instead of leaving the stream hanging.
     """
     await _assert_deal_belongs_to_tenant(
         session, deal_id=deal_id, tenant_id=tenant_id
@@ -2306,9 +2321,62 @@ async def trigger_memo_generation(
     if snapshot is not None and snapshot["status"] in ("failed", "done"):
         await cache.clear(deal_id)
 
+    settings = get_settings()
+    if settings.ANALYST_BATCH_API_ENABLED:
+        # Batch lane — dark by default. Flip ``ANALYST_BATCH_API_ENABLED=true``
+        # in Railway to save 50% on memo cost with a 24h SLA.
+        from ..agents.analyst_batch import run_analyst_batch
+
+        try:
+            result = await run_analyst_batch(payload)
+        except Exception as exc:  # noqa: BLE001 - fall back on submit failure
+            logger.exception(
+                "memo/generate: batch submit crashed for deal=%s — "
+                "falling back to sync streaming path",
+                deal_id,
+            )
+            result = None
+            fallback_reason = f"{type(exc).__name__}: {exc}"
+        else:
+            fallback_reason = None
+
+        if result is not None and result.status == "queued" and result.batch_id:
+            logger.info(
+                "memo/generate: queued batch draft for deal=%s batch_id=%s",
+                deal_id,
+                result.batch_id,
+            )
+            return Response(
+                content=json.dumps(
+                    {
+                        "status": "queued",
+                        "batch_id": result.batch_id,
+                        "deal_id": deal_id,
+                    }
+                ),
+                media_type="application/json",
+                status_code=status.HTTP_202_ACCEPTED,
+            )
+        # Anything other than a clean queue → sync fallback. This
+        # covers status='error' (submit raised), status='disabled'
+        # (settings flipped mid-flight), and the raw-exception path
+        # above. The user still gets a memo, just via the interactive
+        # path.
+        logger.warning(
+            "memo/generate: batch submit did not queue for deal=%s "
+            "(status=%s error=%s) — falling back to sync streaming",
+            deal_id,
+            None if result is None else result.status,
+            (result.error if result is not None else fallback_reason),
+        )
+
     background_tasks.add_task(_safe_run_analyst_streaming, payload)
     logger.info("memo/generate: scheduled streaming draft for deal=%s", deal_id)
-    return {"status": "started", "deal_id": deal_id}
+    return Response(
+        content=json.dumps({"status": "started", "deal_id": deal_id}),
+        media_type="application/json",
+        status_code=status.HTTP_200_OK,
+    )
 
 
 @router.get("/{deal_id}/memo/stream")
@@ -2449,6 +2517,160 @@ async def stream_memo(
             "X-Accel-Buffering": "no",  # Disable nginx buffering
         },
     )
+
+
+# ─────────────────────── memo batch status (poll endpoint) ───────────────────────
+
+
+class MemoStatusResponse(BaseModel):
+    """Client-poll shape for :func:`memo_status`.
+
+    Mirrors the extraction-status polling pattern the web app already
+    knows. The frontend hits this every N seconds while a batch draft
+    is outstanding; it stops polling once ``status`` moves to a
+    terminal value (``complete`` / ``failed`` / ``expired``).
+
+    * ``status`` — one of ``pending`` / ``in_progress`` / ``complete``
+      / ``failed`` / ``expired`` / ``not_queued``.
+    * ``batch_id`` — Anthropic batch id, populated for every state
+      except ``not_queued``.
+    * ``memo`` — the drafted memo envelope (deal_id / sections /
+      citations / status / generated_at), populated iff
+      ``status == 'complete'``.
+    * ``error`` — human-readable failure reason for ``failed`` /
+      ``expired``.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    status: Literal[
+        "pending", "in_progress", "complete", "failed", "expired", "not_queued"
+    ]
+    batch_id: str | None = None
+    memo: MemoEnvelope | None = None
+    error: str | None = None
+
+
+@router.get("/{deal_id}/memo/status", response_model=MemoStatusResponse)
+async def memo_status(
+    deal_id: str,
+    session: Annotated[AsyncSession, Depends(get_session)],
+    tenant_id: Annotated[UUID, Depends(get_tenant_id)],
+) -> MemoStatusResponse:
+    """Poll the batch-lane draft status for ``deal_id``.
+
+    Contract (in order of preference):
+
+    1. If a ``pending_batches`` row exists for ``deal_id`` we surface
+       its status:
+       * ``queued``/``in_progress`` → ``status='pending'`` (client keeps
+         polling).
+       * ``complete`` → ``status='complete'`` with the drafted memo
+         loaded from the memo cache. If the cache is empty (poller wrote
+         the row but not the memo — should never happen) we report
+         ``status='failed'`` with a diagnostic error.
+       * ``failed``/``expired`` → surfaced as-is with the DB ``error``
+         column.
+    2. If no ``pending_batches`` row exists AND the memo cache is
+       populated (sync path completed), report ``status='complete'``
+       with the cached memo — same client contract regardless of lane.
+    3. Otherwise ``status='not_queued'`` — no draft in flight; the
+       client should hit ``POST /memo/generate`` to start one.
+
+    Multi-batch note: when a deal has multiple pending batches (a rare
+    corner case, e.g. re-generate before the first ended), we pick the
+    most recent submission — that's the one the analyst is waiting on.
+    """
+    await _assert_deal_belongs_to_tenant(
+        session, deal_id=deal_id, tenant_id=tenant_id
+    )
+    from ..streaming.broadcast import get_memo_cache
+
+    row = (
+        await session.execute(
+            text(
+                """
+                SELECT batch_id, status, error
+                  FROM pending_batches
+                 WHERE deal_id = :d
+                 ORDER BY submitted_at DESC
+                 LIMIT 1
+                """
+            ),
+            {"d": deal_id},
+        )
+    ).first()
+
+    memo_cache = get_memo_cache()
+
+    if row is not None:
+        batch_id = row._mapping["batch_id"]
+        db_status = row._mapping["status"]
+        db_error = row._mapping["error"]
+
+        if db_status in ("queued", "in_progress"):
+            wire_status: Literal[
+                "pending", "in_progress"
+            ] = "in_progress" if db_status == "in_progress" else "pending"
+            return MemoStatusResponse(status=wire_status, batch_id=batch_id)
+
+        if db_status == "complete":
+            snapshot = await memo_cache.get(deal_id)
+            if snapshot is None:
+                return MemoStatusResponse(
+                    status="failed",
+                    batch_id=batch_id,
+                    error="batch marked complete but memo cache is empty",
+                )
+            try:
+                deal_uuid = UUID(deal_id)
+            except (TypeError, ValueError):
+                deal_uuid = uuid5(_CLERK_ORG_UUID_NAMESPACE, deal_id)
+            memo = MemoEnvelope(
+                deal_id=deal_uuid,
+                sections=snapshot["sections"],
+                citations=snapshot["citations"],
+                status=snapshot["status"],
+                error=snapshot["error"],
+                generated_at=snapshot["generated_at"],
+            )
+            return MemoStatusResponse(
+                status="complete", batch_id=batch_id, memo=memo
+            )
+
+        if db_status == "failed":
+            return MemoStatusResponse(
+                status="failed", batch_id=batch_id, error=db_error
+            )
+        if db_status == "expired":
+            return MemoStatusResponse(
+                status="expired", batch_id=batch_id, error=db_error
+            )
+
+    # No pending row — fall back to the memo cache so a sync-path deal
+    # can also be polled via this endpoint without special-casing on
+    # the client. Keeps the frontend contract lane-agnostic.
+    snapshot = await memo_cache.get(deal_id)
+    if snapshot is not None and snapshot["status"] == "done":
+        try:
+            deal_uuid = UUID(deal_id)
+        except (TypeError, ValueError):
+            deal_uuid = uuid5(_CLERK_ORG_UUID_NAMESPACE, deal_id)
+        memo = MemoEnvelope(
+            deal_id=deal_uuid,
+            sections=snapshot["sections"],
+            citations=snapshot["citations"],
+            status=snapshot["status"],
+            error=snapshot["error"],
+            generated_at=snapshot["generated_at"],
+        )
+        return MemoStatusResponse(status="complete", memo=memo)
+    if snapshot is not None and snapshot["status"] == "failed":
+        return MemoStatusResponse(
+            status="failed",
+            error=snapshot.get("error") or "sync memo draft failed",
+        )
+    return MemoStatusResponse(status="not_queued")
 
 
 # ─────────────────────── memo edit history ───────────────────────

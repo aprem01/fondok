@@ -31,6 +31,7 @@ from .api import settings as settings_router
 from .config import get_settings
 from .database import dispose_engine, get_engine
 from .migrations import run_startup_migrations
+from .services.batch_scheduler import start_poller, stop_poller
 from .services.digest_scheduler import start_scheduler, stop_scheduler
 from .telemetry import setup_langsmith, setup_telemetry
 from .tenant_middleware import register_tenant_safety_listener
@@ -135,6 +136,18 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
         start_scheduler()
     except Exception as exc:
         logger.exception("digest scheduler start failed: %s", exc)
+    # Task V (2026-07) — in-process poller for the Anthropic Message
+    # Batches API. No-op when ``ANALYST_BATCH_API_ENABLED=False``
+    # (the default). When flipped on in Railway env, this loop drives
+    # ``poll_pending_batches`` every ``ANALYST_BATCH_POLL_SECONDS``
+    # (default 5 min) so ended batches get drained into the memo cache
+    # without waiting on manual re-triggers. Never raises out of
+    # lifespan — a startup failure is logged and the sync path stays
+    # functional as the fallback.
+    try:
+        start_poller()
+    except Exception as exc:
+        logger.exception("analyst batch poller start failed: %s", exc)
     try:
         yield
     finally:
@@ -143,6 +156,10 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
             await stop_scheduler()
         except Exception as exc:
             logger.warning("digest scheduler stop failed: %s", exc)
+        try:
+            await stop_poller()
+        except Exception as exc:
+            logger.warning("analyst batch poller stop failed: %s", exc)
         await dispose_engine()
 
 
