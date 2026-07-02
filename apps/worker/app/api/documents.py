@@ -369,12 +369,22 @@ class ExtractionFieldOut(BaseModel):
 
 
 class ConfidenceReportOut(BaseModel):
-    model_config = ConfigDict(extra="forbid")
+    # Sam QA 2026-07-02: the /extraction read path was 500-ing on any
+    # doc whose confidence blob carried the chunk_errors payload the
+    # extractor added in June (structural_contradiction + rate-limit
+    # error surfacing). Loosen to extra="ignore" so a write-side
+    # schema addition can never brick the read path again.
+    model_config = ConfigDict(extra="ignore")
 
     overall: float = 0.0
     by_field: dict[str, float] = Field(default_factory=dict)
     low_confidence_fields: list[str] = Field(default_factory=list)
     requires_human_review: bool = False
+    # Explicitly modeled so the field survives into the JSON response.
+    # Present when the extractor hit per-chunk failures (auth, rate
+    # limit, structural_contradiction) so the UI can surface a real
+    # error message instead of a bare "0 fields" empty envelope.
+    chunk_errors: list[str] = Field(default_factory=list)
 
 
 class ExtractionResultResponse(BaseModel):

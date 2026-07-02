@@ -104,21 +104,57 @@ export function useDocuments(dealId: string | null | undefined): DocumentsState 
       const existing = extractions[d.id];
       if (existing && existing.status === 'EXTRACTED') return;
 
+      // Sam QA 2026-07-02 — the polling loop was hammering the
+      // /extraction endpoint even after docs were EXTRACTED, and
+      // silently swallowing 500s so a single broken doc would 500 20
+      // times before we noticed. Two guards below:
+      //   1. Self-terminate the interval when the response indicates
+      //      the doc is done (EXTRACTED / FAILED / PARSE_FAILED) —
+      //      the mount-time check catches the initial state; this
+      //      one catches transitions after the interval started.
+      //   2. After 3 consecutive errors, stop polling this doc — the
+      //      user's next page interaction (refresh, tab change) will
+      //      rebuild the effect and start fresh. Without this, a 500
+      //      on the extraction row (bad confidence blob, etc.) burns
+      //      real worker cycles until the tab is closed.
       const ctrl = new AbortController();
+      let errorStreak = 0;
+      let stopped = false;
+      const stop = () => {
+        if (stopped) return;
+        stopped = true;
+        clearInterval(t);
+        ctrl.abort();
+      };
       const fetchOnce = () => {
         api.documents
           .extraction(idStr, d.id, ctrl.signal)
           .then((r) => {
+            errorStreak = 0;
             setExtractions((prev) => ({ ...prev, [d.id]: r }));
+            const finalStatus = r?.status as string | undefined;
+            if (
+              finalStatus === 'EXTRACTED' ||
+              finalStatus === 'FAILED' ||
+              finalStatus === 'PARSE_FAILED'
+            ) {
+              stop();
+            }
           })
-          .catch(() => {});
+          .catch((err) => {
+            if ((err as { name?: string })?.name === 'AbortError') return;
+            errorStreak += 1;
+            if (errorStreak >= 3) {
+              // Give up on this doc for the lifetime of the effect —
+              // any user interaction that changes the docs list will
+              // rebuild the effect and start over.
+              stop();
+            }
+          });
       };
       fetchOnce();
       const t = setInterval(fetchOnce, EXTRACTION_POLL_MS);
-      cancels.push(() => {
-        clearInterval(t);
-        ctrl.abort();
-      });
+      cancels.push(stop);
     });
 
     return () => cancels.forEach((c) => c());
