@@ -873,8 +873,53 @@ async function request<T>(
 
 // ─────────────────────────── public api ───────────────────────────
 
+// ────────────────────────────── admin cost ──────────────────────────────
+// Response shape of GET /admin/cost — mirrors the FastAPI model on the
+// worker (apps/worker/app/api/admin_cost.py). Kept narrow: only fields
+// the dashboard renders.
+
+export interface AdminCostWindow {
+  calls: number;
+  cost_usd: number;
+  input_tokens: number;
+  output_tokens: number;
+  cache_read_tokens: number;
+  cache_creation_tokens: number;
+  cache_hit_rate: number;
+}
+export interface AdminCostByAgent {
+  agent: string;
+  calls: number;
+  cost_usd: number;
+  cache_hit_rate: number;
+}
+export interface AdminCostByModel {
+  model: string;
+  calls: number;
+  cost_usd: number;
+}
+export interface AdminCostByDeal {
+  deal_id: string;
+  calls: number;
+  cost_usd: number;
+}
+export interface AdminCostResponse {
+  tenant_id: string;
+  generated_at: string;
+  windows: Record<'24h' | '7d' | '30d', AdminCostWindow>;
+  by_agent: AdminCostByAgent[];
+  by_model: AdminCostByModel[];
+  by_deal: AdminCostByDeal[];
+}
+
 export const api = {
   health: () => request<{ status: string; version: string; db: string }>('GET', '/health'),
+  admin: {
+    /** Tenant-scoped LLM cost + cache hit-rate rollup. Requires
+     *  ``org:admin`` role on the worker side (gated via require_role). */
+    cost: (signal?: AbortSignal) =>
+      request<AdminCostResponse>('GET', '/admin/cost', undefined, { signal }),
+  },
   deals: {
     list: (signal?: AbortSignal) =>
       request<WorkerDeal[]>('GET', '/deals', undefined, { signal }),

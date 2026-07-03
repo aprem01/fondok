@@ -4,6 +4,7 @@ import { usePathname, useRouter } from 'next/navigation';
 import {
   LayoutGrid, FolderKanban, Database, Settings, ChevronDown, Building2,
   Users, UserCog, LogOut, Plus, Check, BookOpen, LineChart, History, Library, Bell,
+  DollarSign,
 } from 'lucide-react';
 import { useState, useRef, useEffect } from 'react';
 import { OrganizationSwitcher } from '@clerk/nextjs';
@@ -31,6 +32,10 @@ const navItems = [
   // audit log. Sits between Pipeline (multi-deal) and Data Library
   // (global benchmarks) since both are tenant-scoped surfaces.
   { href: '/audit', label: 'Audit', icon: History },
+  // Wave 5 RBAC — admin-only Cost Dashboard. Sidebar gates it via
+  // useCurrentRole() below so members don't see the link at all
+  // (backend still enforces via require_role("admin")).
+  { href: '/admin/cost', label: 'Cost', icon: DollarSign, adminOnly: true },
   { href: '/data-library', label: 'Data Library', icon: Database },
   { href: '/methodology', label: 'Methodology', icon: BookOpen },
   // Wave 4 W4.5 — recurring Slack/email pipeline summaries. Grouped
@@ -201,7 +206,7 @@ export default function Sidebar({
 
       {/* Nav */}
       <nav className="flex-1 px-3 pt-2" data-tour="sidebar">
-        {navItems.map(it => {
+        {navItems.filter(it => !it.adminOnly || currentRole === 'org:admin').map(it => {
           const isActive = pathname === it.href || (it.href !== '/dashboard' && pathname.startsWith(it.href));
           const Icon = it.icon;
           // Surface tour anchors on the two nav rows the GettingStarted
