@@ -281,6 +281,15 @@ async def _load_engine_inputs(
     # web app surfaces gets badged — extras are tracked anyway so
     # downstream callers can introspect freely.
     sources: dict[str, str] = {k: SOURCE_SEED for k in base.keys()}
+    # Resolve tenant_id up-front so every helper below can scope its
+    # SELECT — production callers always pass one; test / demo callers
+    # (Kimpton fixture) fall back to the seed tenant.
+    if tenant_id is None:
+        from ..config import get_settings as _get_settings
+
+        effective_tenant = str(_get_settings().DEFAULT_TENANT_ID)
+    else:
+        effective_tenant = str(tenant_id)
     try:
         # Only try DB lookup when the id is a valid UUID. The Kimpton
         # demo card uses an int-string id which is intentionally
@@ -298,13 +307,14 @@ async def _load_engine_inputs(
         row = (
             await session.execute(
                 text(
+                    # tenant-scope predicate required by tenant_middleware
                     """
                     SELECT keys, purchase_price, positioning, brand
                       FROM deals
-                     WHERE id = :id
+                     WHERE id = :id AND tenant_id = :tenant
                     """
                 ),
-                {"id": deal_id},
+                {"id": deal_id, "tenant": effective_tenant},
             )
         ).first()
     except Exception:
@@ -347,7 +357,7 @@ async def _load_engine_inputs(
     # / per-key metrics). Best-effort — partial extraction degrades to
     # ratio synthesis line-by-line.
     base["t12_expense_actuals"] = await _load_t12_expense_actuals(
-        session, deal_id=deal_id
+        session, deal_id=deal_id, tenant_id=effective_tenant
     )
 
     # Same idea on the revenue side (Sam QA #16): when a T-12 has been
@@ -355,7 +365,7 @@ async def _load_engine_inputs(
     # so the Per-Key tab and downstream rooms-revenue projection reflect
     # the real property instead of the demo defaults.
     revenue_actuals = await _load_t12_revenue_actuals(
-        session, deal_id=deal_id
+        session, deal_id=deal_id, tenant_id=effective_tenant
     )
     if "occupancy" in revenue_actuals:
         base["starting_occupancy"] = revenue_actuals["occupancy"]
@@ -432,7 +442,7 @@ async def _load_engine_inputs(
     # clobbered by the broker's headline. Best-effort — partial
     # extraction degrades to Kimpton key-by-key.
     capital_actuals = await _load_om_capital_actuals(
-        session, deal_id=deal_id
+        session, deal_id=deal_id, tenant_id=effective_tenant
     )
     for key, value in capital_actuals.items():
         if key in deals_table_keys:
@@ -440,7 +450,7 @@ async def _load_engine_inputs(
         base[key] = value
 
     debt_actuals = await _load_om_debt_actuals(
-        session, deal_id=deal_id
+        session, deal_id=deal_id, tenant_id=effective_tenant
     )
     for key, value in debt_actuals.items():
         if key in deals_table_keys:
@@ -454,7 +464,7 @@ async def _load_engine_inputs(
     # synthesis ratios so unit economics reflect peer-set norms
     # rather than the Kimpton seed.
     cbre_overrides = await _load_cbre_horizons_overrides(
-        session, deal_id=deal_id
+        session, deal_id=deal_id, tenant_id=effective_tenant
     )
     for key, value in cbre_overrides.items():
         base[key] = value
@@ -485,7 +495,7 @@ async def _load_engine_inputs(
             sources["starting_adr"] = SOURCE_CBRE_HORIZONS
 
     benchmark_overrides = await _load_pnl_benchmark_overrides(
-        session, deal_id=deal_id
+        session, deal_id=deal_id, tenant_id=effective_tenant
     )
     if benchmark_overrides:
         # Merge into the engine-defaults override channel so the
@@ -517,7 +527,7 @@ async def _load_engine_inputs(
     else:
         library_overrides = {}
     per_deal_portfolio = await _load_per_deal_portfolio_pnl_overrides(
-        session, deal_id=deal_id
+        session, deal_id=deal_id, tenant_id=effective_tenant
     )
     # Per-deal docs overlay the library median (same chain scale wins
     # per-deal). Both feed into ``SOURCE_PORTFOLIO_PNL`` provenance.
@@ -541,7 +551,7 @@ async def _load_engine_inputs(
     # the 7.0% seed. Analyst overrides via field_overrides still win
     # because they're applied last.
     om_median_cap = await _load_om_transaction_comps_cap_rate(
-        session, deal_id=deal_id
+        session, deal_id=deal_id, tenant_id=effective_tenant
     )
     if om_median_cap is not None:
         base["exit_cap_rate"] = om_median_cap
@@ -580,7 +590,7 @@ async def _load_engine_inputs(
     # analyst's segment-field overrides (loaded below) merge on top so
     # an analyst tweak survives a re-run.
     str_seg_payload = await _load_str_segmentation_payload(
-        session, deal_id=deal_id
+        session, deal_id=deal_id, tenant_id=effective_tenant
     )
     if str_seg_payload:
         # The analyst's segment-field overrides — read once here so
@@ -588,7 +598,7 @@ async def _load_engine_inputs(
         # loop below ALSO updates ``base["segments_overrides"]`` but the
         # seed needs them up-front to compute correct provenance.
         pre_load_seg_overrides_raw = await _load_deal_overrides(
-            session, deal_id=deal_id
+            session, deal_id=deal_id, tenant_id=effective_tenant
         )
         if scenario_id:
             # Wave 3 W3.2 — scenario overrides win over deal-level
@@ -645,7 +655,9 @@ async def _load_engine_inputs(
     # because nothing in the engine chain read ``field_overrides`` for
     # these top-level keys. Applied last so analyst intent beats every
     # other data source (T12 actuals, CBRE, OM comps, deal row, seed).
-    persisted_overrides = await _load_deal_overrides(session, deal_id=deal_id)
+    persisted_overrides = await _load_deal_overrides(
+        session, deal_id=deal_id, tenant_id=effective_tenant
+    )
     if scenario_id:
         # Wave 3 W3.2 — overlay the scenario's overrides on top of the
         # deal's persisted overrides; scenario values win on conflict
@@ -805,7 +817,7 @@ async def _load_engine_inputs(
     if base.get("revenue_seed_from_str_forecast") is True:
         try:
             forecast = await _load_str_forecast_for_seed(
-                session, deal_id=deal_id
+                session, deal_id=deal_id, tenant_id=effective_tenant
             )
         except Exception:
             forecast = None
@@ -1206,6 +1218,7 @@ async def _load_source_documents(
     *,
     deal_id: str,
     sources: Mapping[str, str],
+    tenant_id: str,
 ) -> dict[str, str]:
     """For each provenance-tagged assumption key, return the
     ``document_id`` that most likely contributed the value.
@@ -1244,16 +1257,19 @@ async def _load_source_documents(
     try:
         rows = await session.execute(
             text(
+                # tenant-scope predicate required by tenant_middleware
                 """
                 SELECT er.document_id, er.fields, d.doc_type, er.created_at
                   FROM extraction_results er
                   JOIN documents d ON d.id = er.document_id
                  WHERE er.deal_id = :deal
+                   AND er.tenant_id = :tenant
+                   AND d.tenant_id = :tenant
                    AND d.doc_type = ANY(:types)
                  ORDER BY er.created_at DESC
                 """
             ),
-            {"deal": deal_id, "types": list(needed_doc_types)},
+            {"deal": deal_id, "tenant": tenant_id, "types": list(needed_doc_types)},
         )
         all_rows = rows.fetchall()
     except Exception:
@@ -1262,16 +1278,20 @@ async def _load_source_documents(
         # map as a degraded UI signal, not a failure.
         try:
             placeholders = ",".join(f":t{i}" for i, _ in enumerate(needed_doc_types))
-            params: dict[str, Any] = {"deal": deal_id}
+            params: dict[str, Any] = {"deal": deal_id, "tenant": tenant_id}
             for i, t in enumerate(needed_doc_types):
                 params[f"t{i}"] = t
             rows = await session.execute(
                 text(
+                    # tenant-scope predicate required by tenant_middleware
                     f"""
                     SELECT er.document_id, er.fields, d.doc_type, er.created_at
                       FROM extraction_results er
                       JOIN documents d ON d.id = er.document_id
-                     WHERE er.deal_id = :deal AND d.doc_type IN ({placeholders})
+                     WHERE er.deal_id = :deal
+                       AND er.tenant_id = :tenant
+                       AND d.tenant_id = :tenant
+                       AND d.doc_type IN ({placeholders})
                      ORDER BY er.created_at DESC
                     """
                 ),
@@ -1330,6 +1350,7 @@ async def _load_t12_revenue_actuals(
     session: AsyncSession,
     *,
     deal_id: str,
+    tenant_id: str,
 ) -> dict[str, float]:
     """Read Year-1 occupancy / ADR / RevPAR off the deal's most recent T-12.
 
@@ -1347,16 +1368,19 @@ async def _load_t12_revenue_actuals(
     try:
         rows = await session.execute(
             text(
+                # tenant-scope predicate required by tenant_middleware
                 """
                 SELECT er.fields, d.doc_type
                   FROM extraction_results er
                   JOIN documents d ON d.id = er.document_id
                  WHERE er.deal_id = :deal
+                   AND er.tenant_id = :tenant
+                   AND d.tenant_id = :tenant
                    AND d.doc_type IN ('T12','PNL','PNL_MONTHLY','PNL_YTD')
                  ORDER BY er.created_at DESC
                 """
             ),
-            {"deal": deal_id},
+            {"deal": deal_id, "tenant": tenant_id},
         )
     except Exception:
         return {}
@@ -1392,6 +1416,7 @@ async def _load_t12_expense_actuals(
     session: AsyncSession,
     *,
     deal_id: str,
+    tenant_id: str,
 ) -> dict[str, float]:
     """Read Year-1 expense actuals off the deal's most recent T-12 extraction.
 
@@ -1406,16 +1431,19 @@ async def _load_t12_expense_actuals(
     try:
         rows = await session.execute(
             text(
+                # tenant-scope predicate required by tenant_middleware
                 """
                 SELECT er.fields, d.doc_type
                   FROM extraction_results er
                   JOIN documents d ON d.id = er.document_id
                  WHERE er.deal_id = :deal
+                   AND er.tenant_id = :tenant
+                   AND d.tenant_id = :tenant
                    AND d.doc_type IN ('T12','PNL','PNL_MONTHLY','PNL_YTD')
                  ORDER BY er.created_at DESC
                 """
             ),
-            {"deal": deal_id},
+            {"deal": deal_id, "tenant": tenant_id},
         )
     except Exception:
         return {}
@@ -1556,6 +1584,7 @@ async def _load_deal_overrides(
     session: AsyncSession,
     *,
     deal_id: str,
+    tenant_id: str,
 ) -> dict[str, Any]:
     """Read the deal's `field_overrides` JSONB column.
 
@@ -1572,8 +1601,12 @@ async def _load_deal_overrides(
     try:
         row = (
             await session.execute(
-                text("SELECT field_overrides FROM deals WHERE id = :id"),
-                {"id": deal_id},
+                text(
+                    # tenant-scope predicate required by tenant_middleware
+                    "SELECT field_overrides FROM deals "
+                    "WHERE id = :id AND tenant_id = :tenant"
+                ),
+                {"id": deal_id, "tenant": tenant_id},
             )
         ).first()
     except Exception:
@@ -1629,6 +1662,7 @@ async def _load_om_capital_actuals(
     session: AsyncSession,
     *,
     deal_id: str,
+    tenant_id: str,
 ) -> dict[str, float]:
     """Read capital-side broker numbers off the deal's most recent OM.
 
@@ -1647,15 +1681,19 @@ async def _load_om_capital_actuals(
     try:
         rows = await session.execute(
             text(
+                # tenant-scope predicate required by tenant_middleware
                 """
                 SELECT er.fields, d.doc_type
                   FROM extraction_results er
                   JOIN documents d ON d.id = er.document_id
-                 WHERE er.deal_id = :deal AND d.doc_type = 'OM'
+                 WHERE er.deal_id = :deal
+                   AND er.tenant_id = :tenant
+                   AND d.tenant_id = :tenant
+                   AND d.doc_type = 'OM'
                  ORDER BY er.created_at DESC
                 """
             ),
-            {"deal": deal_id},
+            {"deal": deal_id, "tenant": tenant_id},
         )
     except Exception:
         return {}
@@ -1688,7 +1726,9 @@ async def _load_om_capital_actuals(
                 v = v / 100.0
             actuals[canonical] = v
     # Analyst overrides win over extracted broker numbers.
-    overrides = await _load_deal_overrides(session, deal_id=deal_id)
+    overrides = await _load_deal_overrides(
+        session, deal_id=deal_id, tenant_id=tenant_id
+    )
     _apply_overrides(
         actuals,
         overrides,
@@ -1702,6 +1742,7 @@ async def _load_om_transaction_comps_cap_rate(
     session: AsyncSession,
     *,
     deal_id: str,
+    tenant_id: str,
 ) -> float | None:
     """Derive a median exit-cap-rate anchor from OM transaction comps.
 
@@ -1721,15 +1762,19 @@ async def _load_om_transaction_comps_cap_rate(
     try:
         rows = await session.execute(
             text(
+                # tenant-scope predicate required by tenant_middleware
                 """
                 SELECT er.fields
                   FROM extraction_results er
                   JOIN documents d ON d.id = er.document_id
-                 WHERE er.deal_id = :deal AND d.doc_type = 'OM'
+                 WHERE er.deal_id = :deal
+                   AND er.tenant_id = :tenant
+                   AND d.tenant_id = :tenant
+                   AND d.doc_type = 'OM'
                  ORDER BY er.created_at DESC
                 """
             ),
-            {"deal": deal_id},
+            {"deal": deal_id, "tenant": tenant_id},
         )
     except Exception:
         return None
@@ -1778,6 +1823,7 @@ async def _load_comp_transactions(
     session: AsyncSession,
     *,
     deal_id: str,
+    tenant_id: str,
 ) -> list[Any]:
     """Build the list of ``CompTransaction`` rows for a deal.
 
@@ -1801,15 +1847,19 @@ async def _load_comp_transactions(
     try:
         rows = await session.execute(
             text(
+                # tenant-scope predicate required by tenant_middleware
                 """
                 SELECT er.fields, er.document_id
                   FROM extraction_results er
                   JOIN documents d ON d.id = er.document_id
-                 WHERE er.deal_id = :deal AND d.doc_type = 'OM'
+                 WHERE er.deal_id = :deal
+                   AND er.tenant_id = :tenant
+                   AND d.tenant_id = :tenant
+                   AND d.doc_type = 'OM'
                  ORDER BY er.created_at DESC
                 """
             ),
-            {"deal": deal_id},
+            {"deal": deal_id, "tenant": tenant_id},
         )
     except Exception:
         return []
@@ -1994,6 +2044,7 @@ async def _build_comp_sales_set(
     session: AsyncSession,
     *,
     deal_id: str,
+    tenant_id: str,
     subject_market: str | None = None,
     subject_chain_scale: str | None = None,
     lookback_years: int = 5,
@@ -2013,8 +2064,12 @@ async def _build_comp_sales_set(
     """
     from app.engines.comp_sales import build_comp_set
 
-    transactions = await _load_comp_transactions(session, deal_id=deal_id)
-    overrides = await _load_deal_overrides(session, deal_id=deal_id)
+    transactions = await _load_comp_transactions(
+        session, deal_id=deal_id, tenant_id=tenant_id
+    )
+    overrides = await _load_deal_overrides(
+        session, deal_id=deal_id, tenant_id=tenant_id
+    )
 
     # Pull comp_sales overrides off the persisted map (analyst exclude
     # list + manual cap pin).
@@ -2049,6 +2104,7 @@ async def _load_om_debt_actuals(
     session: AsyncSession,
     *,
     deal_id: str,
+    tenant_id: str,
 ) -> dict[str, float]:
     """Read in-place debt terms off the deal's most recent OM extraction.
 
@@ -2067,15 +2123,19 @@ async def _load_om_debt_actuals(
     try:
         rows = await session.execute(
             text(
+                # tenant-scope predicate required by tenant_middleware
                 """
                 SELECT er.fields, d.doc_type
                   FROM extraction_results er
                   JOIN documents d ON d.id = er.document_id
-                 WHERE er.deal_id = :deal AND d.doc_type = 'OM'
+                 WHERE er.deal_id = :deal
+                   AND er.tenant_id = :tenant
+                   AND d.tenant_id = :tenant
+                   AND d.doc_type = 'OM'
                  ORDER BY er.created_at DESC
                 """
             ),
-            {"deal": deal_id},
+            {"deal": deal_id, "tenant": tenant_id},
         )
     except Exception:
         return {}
@@ -2108,7 +2168,9 @@ async def _load_om_debt_actuals(
                 v = v / 100.0
             actuals[canonical] = v
     # Analyst overrides win over extracted broker numbers.
-    overrides = await _load_deal_overrides(session, deal_id=deal_id)
+    overrides = await _load_deal_overrides(
+        session, deal_id=deal_id, tenant_id=tenant_id
+    )
     _apply_overrides(
         actuals,
         overrides,
@@ -2122,7 +2184,7 @@ async def _load_om_debt_actuals(
 
 
 async def _load_cbre_horizons_overrides(
-    session: AsyncSession, *, deal_id: str
+    session: AsyncSession, *, deal_id: str, tenant_id: str
 ) -> dict[str, float]:
     """Translate the deal's extracted CBRE Horizons report into engine
     growth-rate overrides.
@@ -2156,16 +2218,19 @@ async def _load_cbre_horizons_overrides(
     try:
         rows = await session.execute(
             text(
+                # tenant-scope predicate required by tenant_middleware
                 """
                 SELECT er.fields
                   FROM extraction_results er
                   JOIN documents d ON d.id = er.document_id
                  WHERE er.deal_id = :deal
+                   AND er.tenant_id = :tenant
+                   AND d.tenant_id = :tenant
                    AND UPPER(COALESCE(d.doc_type, '')) = 'CBRE_HORIZONS'
                  ORDER BY er.created_at DESC
                 """
             ),
-            {"deal": deal_id},
+            {"deal": deal_id, "tenant": tenant_id},
         )
     except Exception:
         return {}
@@ -2337,7 +2402,7 @@ def _normalize_pct(v: float) -> float:
 
 
 async def _load_str_segmentation_payload(
-    session: AsyncSession, *, deal_id: str
+    session: AsyncSession, *, deal_id: str, tenant_id: str
 ) -> dict[str, Any]:
     """Read the deal's most recent STR_SEGMENTATION extraction into a
     flat namespace dict shaped as ``{<path>: value}``.
@@ -2352,16 +2417,19 @@ async def _load_str_segmentation_payload(
     try:
         rows = await session.execute(
             text(
+                # tenant-scope predicate required by tenant_middleware
                 """
                 SELECT er.fields
                   FROM extraction_results er
                   JOIN documents d ON d.id = er.document_id
                  WHERE er.deal_id = :deal
+                   AND er.tenant_id = :tenant
+                   AND d.tenant_id = :tenant
                    AND UPPER(COALESCE(d.doc_type, '')) = 'STR_SEGMENTATION'
                  ORDER BY er.created_at DESC
                 """
             ),
-            {"deal": deal_id},
+            {"deal": deal_id, "tenant": tenant_id},
         )
     except Exception:
         return {}
@@ -2599,7 +2667,7 @@ _PNL_BENCHMARK_TO_OVERRIDE: dict[str, str] = {
 
 
 async def _load_pnl_benchmark_overrides(
-    session: AsyncSession, *, deal_id: str
+    session: AsyncSession, *, deal_id: str, tenant_id: str
 ) -> dict[str, Any]:
     """Translate the deal's extracted P&L benchmark report into engine
     expense overrides.
@@ -2617,16 +2685,19 @@ async def _load_pnl_benchmark_overrides(
     try:
         rows = await session.execute(
             text(
+                # tenant-scope predicate required by tenant_middleware
                 """
                 SELECT er.fields
                   FROM extraction_results er
                   JOIN documents d ON d.id = er.document_id
                  WHERE er.deal_id = :deal
+                   AND er.tenant_id = :tenant
+                   AND d.tenant_id = :tenant
                    AND UPPER(COALESCE(d.doc_type, '')) = 'PNL_BENCHMARK'
                  ORDER BY er.created_at DESC
                 """
             ),
-            {"deal": deal_id},
+            {"deal": deal_id, "tenant": tenant_id},
         )
     except Exception:
         return {}
@@ -2848,6 +2919,7 @@ async def _load_per_deal_portfolio_pnl_overrides(
     session: AsyncSession,
     *,
     deal_id: str,
+    tenant_id: str,
 ) -> dict[str, float]:
     """Translate per-deal PORTFOLIO_PNL extractions into engine overrides.
 
@@ -2865,16 +2937,19 @@ async def _load_per_deal_portfolio_pnl_overrides(
     try:
         rows = await session.execute(
             text(
+                # tenant-scope predicate required by tenant_middleware
                 """
                 SELECT er.fields
                   FROM extraction_results er
                   JOIN documents d ON d.id = er.document_id
                  WHERE er.deal_id = :deal
+                   AND er.tenant_id = :tenant
+                   AND d.tenant_id = :tenant
                    AND UPPER(COALESCE(d.doc_type, '')) = 'PORTFOLIO_PNL'
                  ORDER BY er.created_at DESC
                 """
             ),
-            {"deal": deal_id},
+            {"deal": deal_id, "tenant": tenant_id},
         )
     except Exception:
         return {}
@@ -2909,7 +2984,7 @@ async def _load_per_deal_portfolio_pnl_overrides(
 
 
 async def _load_str_forecast_for_seed(
-    session: AsyncSession, *, deal_id: str
+    session: AsyncSession, *, deal_id: str, tenant_id: str
 ) -> tuple[float, float] | None:
     """Seed (starting_occupancy, starting_adr) from the BASE STR forecast.
 
@@ -2934,7 +3009,10 @@ async def _load_str_forecast_for_seed(
     from ..engines.str_forecast import build_str_forecast
     from .str_forecast_loader import load_str_history_for_deal
 
-    history = await load_str_history_for_deal(session, deal_id=deal_id)
+    # tenant-scope predicate required by tenant_middleware — pass through
+    history = await load_str_history_for_deal(
+        session, deal_id=deal_id, tenant_id=tenant_id
+    )
     if not history:
         return None
     forecast = build_str_forecast(deal_id=deal_id, historical_months=history)
@@ -3567,6 +3645,7 @@ async def get_latest_outputs(
     session: AsyncSession,
     *,
     deal_id: str,
+    tenant_id: str,
 ) -> dict[str, dict[str, Any]]:
     """Return the latest row per engine for ``deal_id``.
 
@@ -3574,16 +3653,17 @@ async def get_latest_outputs(
     """
     rows = await session.execute(
         text(
+            # tenant-scope predicate required by tenant_middleware
             """
             SELECT id, deal_id, tenant_id, run_id, engine_name,
                    status, inputs, outputs, error,
                    started_at, completed_at, runtime_ms
               FROM engine_outputs
-             WHERE deal_id = :deal
+             WHERE deal_id = :deal AND tenant_id = :tenant
              ORDER BY started_at DESC
             """
         ),
-        {"deal": str(_coerce_uuid(deal_id))},
+        {"deal": str(_coerce_uuid(deal_id)), "tenant": str(tenant_id)},
     )
     seen: dict[str, dict[str, Any]] = {}
     for r in rows.fetchall():
@@ -3600,20 +3680,22 @@ async def get_run_status(
     *,
     deal_id: str,
     run_id: str,
+    tenant_id: str,
 ) -> list[dict[str, Any]]:
     """Return every engine row tagged with ``run_id`` for ``deal_id``."""
     rows = await session.execute(
         text(
+            # tenant-scope predicate required by tenant_middleware
             """
             SELECT id, deal_id, tenant_id, run_id, engine_name,
                    status, inputs, outputs, error,
                    started_at, completed_at, runtime_ms
               FROM engine_outputs
-             WHERE deal_id = :deal AND run_id = :run
+             WHERE deal_id = :deal AND run_id = :run AND tenant_id = :tenant
              ORDER BY started_at ASC
             """
         ),
-        {"deal": str(_coerce_uuid(deal_id)), "run": run_id},
+        {"deal": str(_coerce_uuid(deal_id)), "run": run_id, "tenant": str(tenant_id)},
     )
     return [_row_to_dict(r._mapping) for r in rows.fetchall()]
 

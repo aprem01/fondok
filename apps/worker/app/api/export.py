@@ -38,7 +38,7 @@ router = APIRouter()
 
 
 async def _real_documents_reviewed(
-    session: AsyncSession, *, deal_id: str
+    session: AsyncSession, *, deal_id: str, tenant_id: str
 ) -> list[str]:
     """Return the actual filenames uploaded to ``deal_id``.
 
@@ -58,14 +58,15 @@ async def _real_documents_reviewed(
     try:
         rows = await session.execute(
             text(
+                # tenant-scope predicate required by tenant_middleware
                 """
                 SELECT filename
                   FROM documents
-                 WHERE deal_id = :id
+                 WHERE deal_id = :id AND tenant_id = :tenant
                  ORDER BY uploaded_at ASC
                 """
             ),
-            {"id": deal_id},
+            {"id": deal_id, "tenant": tenant_id},
         )
     except Exception:  # noqa: BLE001 - degrade gracefully
         return []
@@ -195,7 +196,9 @@ async def export_memo_pdf(
     """Build and stream the IC memo PDF."""
     _coerce_deal_uuid(deal_id)
     _deal, model, memo = load_demo_payload(deal_id)
-    real_docs = await _real_documents_reviewed(session, deal_id=deal_id)
+    real_docs = await _real_documents_reviewed(
+        session, deal_id=deal_id, tenant_id=str(tenant_id)
+    )
     _patch_memo_appendix(memo, real_docs)
     out = _tmp_path(deal_id, "-memo.pdf")
     build_memo_pdf(memo, model, out)
@@ -224,7 +227,9 @@ async def export_pptx(
     """Build and stream the 8-slide IC presentation."""
     _coerce_deal_uuid(deal_id)
     deal, model, memo = load_demo_payload(deal_id)
-    real_docs = await _real_documents_reviewed(session, deal_id=deal_id)
+    real_docs = await _real_documents_reviewed(
+        session, deal_id=deal_id, tenant_id=str(tenant_id)
+    )
     _patch_memo_appendix(memo, real_docs)
     out = _tmp_path(deal_id, "-deck.pptx")
     build_pptx(deal, model, memo, out)

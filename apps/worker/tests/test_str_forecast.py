@@ -470,7 +470,9 @@ async def test_seed_revenue_from_forecast_month_12_when_flag_set() -> None:
     factory = get_session_factory()
     async with factory() as session:
         # Flag OFF (default) — sources should NOT be SOURCE_STR_FORECAST.
-        baseline = await _load_engine_inputs(session, deal_id=deal_id)
+        baseline = await _load_engine_inputs(
+            session, deal_id=deal_id, tenant_id=TENANT_A
+        )
         assert baseline["__sources__"].get("starting_occupancy") != SOURCE_STR_FORECAST
         baseline_occ = baseline["starting_occupancy"]
         baseline_adr = baseline["starting_adr"]
@@ -484,6 +486,7 @@ async def test_seed_revenue_from_forecast_month_12_when_flag_set() -> None:
             session,
             deal_id=deal_id,
             overrides={"revenue_seed_from_str_forecast": True},
+            tenant_id=TENANT_A,
         )
         assert seeded["__sources__"].get("starting_occupancy") == SOURCE_STR_FORECAST
         assert seeded["__sources__"].get("starting_adr") == SOURCE_STR_FORECAST

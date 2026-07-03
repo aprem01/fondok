@@ -160,7 +160,7 @@ async def get_variance(
     from .documents import _load_critic_inputs  # local import: avoids cycle
 
     broker, actuals, _market_context, _keys = await _load_critic_inputs(
-        session, deal_id=str(deal_id)
+        session, deal_id=str(deal_id), tenant_id=str(tenant_id)
     )
 
     if actuals is None or broker is None:
@@ -1245,7 +1245,9 @@ async def submit_broker_response(
 
     current_assumptions: dict[str, float] = {}
     try:
-        loaded = await _load_engine_inputs(session, str(deal_id))
+        loaded = await _load_engine_inputs(
+            session, str(deal_id), tenant_id=str(tenant_id)
+        )
         for k, v in loaded.items():
             if k.startswith("__"):
                 continue
@@ -1814,7 +1816,9 @@ async def _build_returns_input_for_deal(
         _load_engine_inputs,
     )
 
-    base = await _load_engine_inputs(session, str(deal_id))
+    base = await _load_engine_inputs(
+        session, str(deal_id), tenant_id=str(tenant_id)
+    )
     accumulated: dict[str, Any] = {}
     # Walk the chain up through capital + debt so the returns input
     # builder has the loan amount + debt service + equity it needs.

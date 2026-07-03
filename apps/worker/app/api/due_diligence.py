@@ -380,13 +380,19 @@ async def _build_due_diligence_input(
     """
     from ..agents.due_diligence import DueDiligenceInput
 
-    deal_data = await _load_deal_metadata(session, deal_id=deal_id)
-    extracted_summary = await _summarize_extractions(session, deal_id=deal_id)
-    engine_outputs = await _summarize_engine_outputs(session, deal_id=deal_id)
+    deal_data = await _load_deal_metadata(session, deal_id=deal_id, tenant_id=tenant_id)
+    extracted_summary = await _summarize_extractions(
+        session, deal_id=deal_id, tenant_id=tenant_id
+    )
+    engine_outputs = await _summarize_engine_outputs(
+        session, deal_id=deal_id, tenant_id=tenant_id
+    )
     variance_flags = await _summarize_variance(
         session, deal_id=deal_id, tenant_id=tenant_id
     )
-    market_data = await _summarize_market_data(session, deal_id=deal_id)
+    market_data = await _summarize_market_data(
+        session, deal_id=deal_id, tenant_id=tenant_id
+    )
 
     return DueDiligenceInput(
         tenant_id=tenant_id,
@@ -400,7 +406,7 @@ async def _build_due_diligence_input(
 
 
 async def _load_deal_metadata(
-    session: AsyncSession, *, deal_id: str
+    session: AsyncSession, *, deal_id: str, tenant_id: str
 ) -> dict[str, Any]:
     try:
         UUID(deal_id)
@@ -410,14 +416,15 @@ async def _load_deal_metadata(
         row = (
             await session.execute(
                 text(
+                    # tenant-scope predicate required by tenant_middleware
                     """
                     SELECT name, city, keys, brand, service, deal_stage,
                            return_profile
                       FROM deals
-                     WHERE id = :id
+                     WHERE id = :id AND tenant_id = :tenant
                     """
                 ),
-                {"id": deal_id},
+                {"id": deal_id, "tenant": tenant_id},
             )
         ).first()
     except Exception as exc:  # noqa: BLE001
@@ -435,7 +442,7 @@ async def _load_deal_metadata(
 
 
 async def _summarize_extractions(
-    session: AsyncSession, *, deal_id: str
+    session: AsyncSession, *, deal_id: str, tenant_id: str
 ) -> dict[str, Any]:
     try:
         UUID(deal_id)
@@ -444,15 +451,19 @@ async def _summarize_extractions(
     try:
         rows = await session.execute(
             text(
+                # tenant-scope predicate required by tenant_middleware
+                # (both er and d carry tenant_id — scope both)
                 """
                 SELECT er.fields, d.doc_type
                   FROM extraction_results er
                   JOIN documents d ON d.id = er.document_id
                  WHERE er.deal_id = :deal
+                   AND er.tenant_id = :tenant
+                   AND d.tenant_id = :tenant
                  ORDER BY er.created_at DESC
                 """
             ),
-            {"deal": deal_id},
+            {"deal": deal_id, "tenant": tenant_id},
         )
     except Exception as exc:  # noqa: BLE001
         # Sam QA 2026-05-13: silent swallow was leaving the asyncpg
@@ -499,7 +510,7 @@ async def _summarize_extractions(
 
 
 async def _summarize_engine_outputs(
-    session: AsyncSession, *, deal_id: str
+    session: AsyncSession, *, deal_id: str, tenant_id: str
 ) -> dict[str, Any]:
     try:
         UUID(deal_id)
@@ -508,13 +519,16 @@ async def _summarize_engine_outputs(
     try:
         rows = await session.execute(
             text(
+                # tenant-scope predicate required by tenant_middleware
                 """
                 SELECT engine_name, summary, outputs
                   FROM engine_outputs
-                 WHERE deal_id = :deal AND status = 'complete'
+                 WHERE deal_id = :deal
+                   AND tenant_id = :tenant
+                   AND status = 'complete'
                 """
             ),
-            {"deal": deal_id},
+            {"deal": deal_id, "tenant": tenant_id},
         )
     except Exception as exc:  # noqa: BLE001
         logger.warning(
@@ -565,7 +579,7 @@ async def _summarize_variance(
 
     try:
         broker, actuals, _market_context, _keys = await _load_critic_inputs(
-            session, deal_id=deal_id
+            session, deal_id=deal_id, tenant_id=tenant_id
         )
     except Exception as exc:  # noqa: BLE001
         logger.warning(
@@ -583,9 +597,11 @@ async def _summarize_variance(
     try:
         rows = await session.execute(
             text(
-                "SELECT fields FROM extraction_results WHERE deal_id = :deal"
+                # tenant-scope predicate required by tenant_middleware
+                "SELECT fields FROM extraction_results "
+                "WHERE deal_id = :deal AND tenant_id = :tenant"
             ),
-            {"deal": deal_id},
+            {"deal": deal_id, "tenant": tenant_id},
         )
     except Exception as exc:  # noqa: BLE001
         logger.warning(
@@ -668,7 +684,7 @@ def _is_uuid(value: str) -> bool:
 
 
 async def _summarize_market_data(
-    session: AsyncSession, *, deal_id: str
+    session: AsyncSession, *, deal_id: str, tenant_id: str
 ) -> dict[str, Any]:
     """Pull the deal's STR / CBRE / benchmark blocks via the existing endpoint logic."""
     try:
@@ -684,6 +700,8 @@ async def _summarize_market_data(
     try:
         rows = await session.execute(
             text(
+                # tenant-scope predicate required by tenant_middleware
+                # (both er and d carry tenant_id — scope both)
                 """
                 SELECT er.fields,
                        er.document_id,
@@ -691,13 +709,15 @@ async def _summarize_market_data(
                   FROM extraction_results er
                   JOIN documents d ON d.id = er.document_id
                  WHERE er.deal_id = :deal
+                   AND er.tenant_id = :tenant
+                   AND d.tenant_id = :tenant
                    AND UPPER(COALESCE(d.doc_type, '')) IN (
                        'STR', 'STR_TREND', 'CBRE_HORIZONS', 'PNL_BENCHMARK'
                    )
                  ORDER BY er.created_at DESC
                 """
             ),
-            {"deal": deal_id},
+            {"deal": deal_id, "tenant": tenant_id},
         )
     except Exception:  # noqa: BLE001
         return {}

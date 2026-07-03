@@ -190,7 +190,7 @@ async def test_run_persists_to_db() -> None:
         )
 
         rows = await get_run_status(
-            session, deal_id=deal_id, run_id=run_id
+            session, deal_id=deal_id, run_id=run_id, tenant_id=tenant_id
         )
 
         # Direct count to confirm one row per engine, no dupes.
@@ -240,7 +240,9 @@ async def test_get_latest_outputs_returns_per_engine_map() -> None:
             tenant_id=tenant_id,
             run_id=run_id,
         )
-        outputs = await get_latest_outputs(session, deal_id=deal_id)
+        outputs = await get_latest_outputs(
+            session, deal_id=deal_id, tenant_id=tenant_id
+        )
 
     assert set(outputs) == set(ENGINE_NAMES)
     for name, row in outputs.items():

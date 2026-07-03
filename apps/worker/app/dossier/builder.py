@@ -51,14 +51,18 @@ async def build_dossier(
     as an LLM input where the agent only needs structured fields, not
     raw narrative text.
     """
-    deal_row = await _fetch_deal_row(session, deal_id=deal_id)
+    deal_row = await _fetch_deal_row(session, deal_id=deal_id, tenant_id=tenant_id)
     deal_data = _coerce_deal_row(deal_row) if deal_row is not None else {}
     if "id" not in deal_data:
         deal_data["id"] = deal_id
 
-    doc_rows = await _fetch_document_rows(session, deal_id=deal_id)
-    extraction_rows = await _fetch_extraction_rows(session, deal_id=deal_id)
-    engine_rows = await _fetch_engine_rows(session, deal_id=deal_id)
+    doc_rows = await _fetch_document_rows(session, deal_id=deal_id, tenant_id=tenant_id)
+    extraction_rows = await _fetch_extraction_rows(
+        session, deal_id=deal_id, tenant_id=tenant_id
+    )
+    engine_rows = await _fetch_engine_rows(
+        session, deal_id=deal_id, tenant_id=tenant_id
+    )
 
     # Build a doc_id → DocumentRow lookup so we can join extraction
     # rows back to filename / doc_type / page_count for citations.
@@ -214,7 +218,7 @@ async def build_dossier(
     # Spread actuals / broker — reuse _load_critic_inputs so the
     # dossier matches what the Critic + memo Analyst already see.
     spread_actuals, spread_broker = await _build_spreads(
-        session, deal_id=deal_id
+        session, deal_id=deal_id, tenant_id=tenant_id
     )
 
     has_t12 = any(
@@ -254,7 +258,7 @@ async def build_dossier(
 
 
 async def _fetch_deal_row(
-    session: AsyncSession, *, deal_id: str
+    session: AsyncSession, *, deal_id: str, tenant_id: str
 ) -> dict[str, Any] | None:
     try:
         UUID(deal_id)
@@ -264,16 +268,17 @@ async def _fetch_deal_row(
         row = (
             await session.execute(
                 text(
+                    # tenant-scope predicate required by tenant_middleware
                     """
                     SELECT id, name, city, keys, brand, service, status,
                            deal_stage, return_profile, positioning,
                            purchase_price, ai_confidence, created_at,
                            updated_at
                       FROM deals
-                     WHERE id = :id
+                     WHERE id = :id AND tenant_id = :tenant
                     """
                 ),
-                {"id": deal_id},
+                {"id": deal_id, "tenant": tenant_id},
             )
         ).first()
     except Exception:
@@ -317,20 +322,21 @@ def _coerce_deal_row(row: dict[str, Any]) -> dict[str, Any]:
 
 
 async def _fetch_document_rows(
-    session: AsyncSession, *, deal_id: str
+    session: AsyncSession, *, deal_id: str, tenant_id: str
 ) -> list[dict[str, Any]]:
     try:
         rows = await session.execute(
             text(
+                # tenant-scope predicate required by tenant_middleware
                 """
                 SELECT id, filename, doc_type, status, page_count, parser,
                        extraction_data
                   FROM documents
-                 WHERE deal_id = :deal
+                 WHERE deal_id = :deal AND tenant_id = :tenant
                  ORDER BY uploaded_at ASC
                 """
             ),
-            {"deal": deal_id},
+            {"deal": deal_id, "tenant": tenant_id},
         )
     except Exception:
         return []
@@ -338,20 +344,21 @@ async def _fetch_document_rows(
 
 
 async def _fetch_extraction_rows(
-    session: AsyncSession, *, deal_id: str
+    session: AsyncSession, *, deal_id: str, tenant_id: str
 ) -> list[dict[str, Any]]:
     try:
         rows = await session.execute(
             text(
+                # tenant-scope predicate required by tenant_middleware
                 """
                 SELECT er.document_id, er.fields, er.confidence_report,
                        er.created_at
                   FROM extraction_results er
-                 WHERE er.deal_id = :deal
+                 WHERE er.deal_id = :deal AND er.tenant_id = :tenant
                  ORDER BY er.created_at DESC
                 """
             ),
-            {"deal": deal_id},
+            {"deal": deal_id, "tenant": tenant_id},
         )
     except Exception:
         return []
@@ -359,13 +366,15 @@ async def _fetch_extraction_rows(
 
 
 async def _fetch_engine_rows(
-    session: AsyncSession, *, deal_id: str
+    session: AsyncSession, *, deal_id: str, tenant_id: str
 ) -> list[dict[str, Any]]:
     """Latest row per engine (engine_name)."""
     from ..services.engine_runner import _coerce_uuid, get_latest_outputs
 
     try:
-        latest = await get_latest_outputs(session, deal_id=deal_id)
+        latest = await get_latest_outputs(
+            session, deal_id=deal_id, tenant_id=tenant_id
+        )
     except Exception:
         return []
     out: list[dict[str, Any]] = []
@@ -400,7 +409,7 @@ async def _build_variance(
         )
 
         broker, actuals, _market, _keys = await _load_critic_inputs(
-            session, deal_id=deal_id
+            session, deal_id=deal_id, tenant_id=tenant_id
         )
         if broker is None or actuals is None:
             return [], counts
@@ -467,7 +476,7 @@ async def _build_variance(
 
 
 async def _build_spreads(
-    session: AsyncSession, *, deal_id: str
+    session: AsyncSession, *, deal_id: str, tenant_id: str
 ) -> tuple[dict[str, Any] | None, dict[str, Any] | None]:
     """Project the broker + T-12 ``USALIFinancials`` snapshots into
     plain dicts so the dossier stays self-describing."""
@@ -475,7 +484,7 @@ async def _build_spreads(
         from ..api.documents import _load_critic_inputs
 
         broker, actuals, _m, _k = await _load_critic_inputs(
-            session, deal_id=deal_id
+            session, deal_id=deal_id, tenant_id=tenant_id
         )
 
         def _serialize(spread: Any) -> dict[str, Any] | None:

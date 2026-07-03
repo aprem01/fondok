@@ -1178,14 +1178,15 @@ async def get_deal_status(
 
     doc_rows = await session.execute(
         text(
+            # tenant-scope predicate required by tenant_middleware
             """
             SELECT status, COUNT(*) AS n
               FROM documents
-             WHERE deal_id = :id
+             WHERE deal_id = :id AND tenant_id = :tenant
              GROUP BY status
             """
         ),
-        {"id": str(deal_id)},
+        {"id": str(deal_id), "tenant": tenant_id_str},
     )
     counts: dict[str, int] = {}
     for r in doc_rows.fetchall():
@@ -1212,13 +1213,14 @@ async def get_deal_status(
     if docs_extracted:
         cr_rows = await session.execute(
             text(
+                # tenant-scope predicate required by tenant_middleware
                 """
                 SELECT confidence_report
                   FROM extraction_results
-                 WHERE deal_id = :id
+                 WHERE deal_id = :id AND tenant_id = :tenant
                 """
             ),
-            {"id": str(deal_id)},
+            {"id": str(deal_id), "tenant": tenant_id_str},
         )
         scores: list[float] = []
         for r in cr_rows.fetchall():
@@ -1287,7 +1289,9 @@ async def get_assumption_sources(
     # in models from this module via the dossier path.
     from ..services.engine_runner import _load_engine_inputs
 
-    base = await _load_engine_inputs(session, str(deal_id))
+    base = await _load_engine_inputs(
+        session, str(deal_id), tenant_id=str(tenant_id)
+    )
     sources = base.pop("__sources__", {})
     # Strip the t12_*_actuals dicts and other non-scalar fields from
     # `values` — they're internal plumbing, not assumptions the UI
@@ -1307,7 +1311,10 @@ async def get_assumption_sources(
     from ..services.engine_runner import _load_source_documents
     try:
         source_documents = await _load_source_documents(
-            session, deal_id=str(deal_id), sources=sources_filtered,
+            session,
+            deal_id=str(deal_id),
+            sources=sources_filtered,
+            tenant_id=str(tenant_id),
         )
     except Exception:
         source_documents = {}
@@ -1776,7 +1783,7 @@ class MemoInputMissing(Exception):
 
 
 async def _count_extracted_documents(
-    session: AsyncSession, *, deal_id: str
+    session: AsyncSession, *, deal_id: str, tenant_id: str
 ) -> tuple[int, int]:
     """Return ``(docs_total, docs_extracted)`` for ``deal_id``.
 
@@ -1788,14 +1795,15 @@ async def _count_extracted_documents(
     """
     rows = await session.execute(
         text(
+            # tenant-scope predicate required by tenant_middleware
             """
             SELECT status, COUNT(*) AS n
               FROM documents
-             WHERE deal_id = :id
+             WHERE deal_id = :id AND tenant_id = :tenant
              GROUP BY status
             """
         ),
-        {"id": deal_id},
+        {"id": deal_id, "tenant": tenant_id},
     )
     counts: dict[str, int] = {}
     for r in rows.fetchall():
@@ -1804,7 +1812,10 @@ async def _count_extracted_documents(
 
 
 async def _load_deal_payload(
-    deal_id: str, *, session: AsyncSession | None = None
+    deal_id: str,
+    *,
+    session: AsyncSession | None = None,
+    tenant_id: str | None = None,
 ) -> Any:
     """Build an ``AnalystInput`` from the persisted deal + engine state.
 
@@ -1847,15 +1858,20 @@ async def _load_deal_payload(
         # think about loading inputs. Routes already 404 on missing
         # deals, but we double-check here so the agent layer never
         # silently materializes a fixture for a deleted deal.
+        # Fall back to the seed tenant when a caller (test fixture, demo
+        # streaming path) omits tenant_id — production callers always
+        # pass it through from Depends(get_tenant_id).
+        effective_tenant = tenant_id or str(get_settings().DEFAULT_TENANT_ID)
         deal_row = (
             await session.execute(
-                text("SELECT id FROM deals WHERE id = :id"),
-                {"id": deal_id},
+                # tenant-scope predicate required by tenant_middleware
+                text("SELECT id FROM deals WHERE id = :id AND tenant_id = :tenant"),
+                {"id": deal_id, "tenant": effective_tenant},
             )
         ).first()
         if deal_row is not None:
             docs_total, docs_extracted = await _count_extracted_documents(
-                session, deal_id=deal_id
+                session, deal_id=deal_id, tenant_id=effective_tenant
             )
             if docs_total == 0:
                 raise MemoInputMissing(
@@ -1874,7 +1890,7 @@ async def _load_deal_payload(
                 )
             # Hydrate real source documents from the persisted parser cache.
             real_source_docs = await _load_source_documents(
-                session, deal_id=deal_id
+                session, deal_id=deal_id, tenant_id=effective_tenant
             )
             # Hydrate the rest of the Analyst payload (deal metadata,
             # spread, engine outputs, deterministic variance report)
@@ -1882,7 +1898,7 @@ async def _load_deal_payload(
             # so the Analyst never grounds its numbers in the fixture
             # while citing pages of a real T-12.
             real_payload_fields = await _build_real_analyst_fields(
-                session, deal_id=deal_id
+                session, deal_id=deal_id, tenant_id=effective_tenant
             )
 
     deal = kimpton_deal()
@@ -1935,7 +1951,7 @@ async def _load_deal_payload(
 
 
 async def _build_real_analyst_fields(
-    session: AsyncSession, *, deal_id: str
+    session: AsyncSession, *, deal_id: str, tenant_id: str
 ) -> dict[str, Any]:
     """Hydrate the non-source-document fields of an ``AnalystInput`` from
     real DB state.
@@ -1953,14 +1969,15 @@ async def _build_real_analyst_fields(
     deal_row = (
         await session.execute(
             text(
+                # tenant-scope predicate required by tenant_middleware
                 """
                 SELECT name, city, keys, brand, service, positioning,
                        deal_stage, return_profile, purchase_price, status
                   FROM deals
-                 WHERE id = :id
+                 WHERE id = :id AND tenant_id = :tenant
                 """
             ),
-            {"id": deal_id},
+            {"id": deal_id, "tenant": tenant_id},
         )
     ).first()
     if deal_row is not None:
@@ -2005,7 +2022,7 @@ async def _build_real_analyst_fields(
     from .documents import _load_critic_inputs
 
     broker, actuals, _market_context, _keys = await _load_critic_inputs(
-        session, deal_id=deal_id
+        session, deal_id=deal_id, tenant_id=tenant_id
     )
 
     # Prefer T-12 actuals as the locked spread; fall back to broker so
@@ -2019,7 +2036,9 @@ async def _build_real_analyst_fields(
     # (not the run wrapper) keyed by engine name.
     from ..services.engine_runner import get_latest_outputs
 
-    raw_engines = await get_latest_outputs(session, deal_id=deal_id)
+    raw_engines = await get_latest_outputs(
+        session, deal_id=deal_id, tenant_id=tenant_id
+    )
     engine_results: dict[str, Any] = {}
     for name, envelope in raw_engines.items():
         if not isinstance(envelope, dict):
@@ -2103,7 +2122,7 @@ _SOURCE_DOC_PAGE_CHAR_CAP = 3000
 
 
 async def _load_source_documents(
-    session: AsyncSession, *, deal_id: str
+    session: AsyncSession, *, deal_id: str, tenant_id: str
 ) -> list[Any]:
     """Build ``AnalystSourceDocument`` list from real ``EXTRACTED`` rows.
 
@@ -2116,14 +2135,17 @@ async def _load_source_documents(
 
     rows = await session.execute(
         text(
+            # tenant-scope predicate required by tenant_middleware
             """
             SELECT id, filename, doc_type, page_count, extraction_data
               FROM documents
-             WHERE deal_id = :deal AND status = 'EXTRACTED'
+             WHERE deal_id = :deal
+               AND tenant_id = :tenant
+               AND status = 'EXTRACTED'
              ORDER BY uploaded_at ASC
             """
         ),
-        {"deal": deal_id},
+        {"deal": deal_id, "tenant": tenant_id},
     )
 
     out: list[AnalystSourceDocument] = []
@@ -2989,6 +3011,7 @@ async def get_comp_sales(
     comp_set = await _build_comp_sales_set(
         session,
         deal_id=str(deal_id),
+        tenant_id=str(tenant_id),
         subject_market=subject_market,
         subject_chain_scale=subject_chain_scale,
     )
@@ -3133,6 +3156,7 @@ async def exclude_comp_transaction(
     comp_set = await _build_comp_sales_set(
         session,
         deal_id=str(deal_id),
+        tenant_id=str(tenant_id),
         subject_market=subject_market,
         subject_chain_scale=subject_chain_scale,
     )

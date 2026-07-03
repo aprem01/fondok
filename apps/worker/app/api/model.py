@@ -366,7 +366,7 @@ async def list_engine_outputs(
     await _assert_deal_belongs_to_tenant(
         session, deal_id=deal_id, tenant_id=tenant_id
     )
-    rows = await get_latest_outputs(session, deal_id=deal_id)
+    rows = await get_latest_outputs(session, deal_id=deal_id, tenant_id=str(tenant_id))
     engines = {name: EngineOutputResponse(**row) for name, row in rows.items()}
     return EngineOutputsResponse(deal_id=deal_id, engines=engines)
 
@@ -385,7 +385,9 @@ async def get_engine_run_status(
     await _assert_deal_belongs_to_tenant(
         session, deal_id=deal_id, tenant_id=tenant_id
     )
-    rows = await get_run_status(session, deal_id=deal_id, run_id=run_id)
+    rows = await get_run_status(
+        session, deal_id=deal_id, run_id=run_id, tenant_id=str(tenant_id)
+    )
     return EngineRunStatusResponse(
         deal_id=deal_id,
         run_id=run_id,

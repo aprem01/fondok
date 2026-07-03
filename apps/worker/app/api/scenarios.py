@@ -889,7 +889,9 @@ async def compare_scenarios(
         # Read the persisted engine outputs back out so every column
         # reflects what the DB carries (the source of truth the UI is
         # already polling for elsewhere).
-        engines = await get_latest_outputs(session, deal_id=str(deal_id))
+        engines = await get_latest_outputs(
+            session, deal_id=str(deal_id), tenant_id=str(tenant_id)
+        )
         # Filter to the rows whose run_id matches this scenario's
         # ``last_run_id`` — defends against compare picking up a stale
         # row from a different scenario's older run.

@@ -1930,14 +1930,15 @@ async def backfill_embeddings(
     counts = (
         await session.execute(
             text(
+                # tenant-scope predicate required by tenant_middleware
                 """
                 SELECT COUNT(*) AS total,
                        SUM(CASE WHEN embedding IS NULL THEN 1 ELSE 0 END) AS missing
                   FROM document_chunks
-                 WHERE deal_id = :deal
+                 WHERE deal_id = :deal AND tenant_id = :tenant
                 """
             ),
-            {"deal": str(deal_id)},
+            {"deal": str(deal_id), "tenant": str(tenant_id)},
         )
     ).first()
     total = int(counts._mapping["total"] or 0) if counts else 0
@@ -1951,15 +1952,18 @@ async def backfill_embeddings(
         rows = (
             await session.execute(
                 text(
+                    # tenant-scope predicate required by tenant_middleware
                     """
                     SELECT id, chunk_text
                       FROM document_chunks
-                     WHERE deal_id = :deal AND embedding IS NULL
+                     WHERE deal_id = :deal
+                       AND tenant_id = :tenant
+                       AND embedding IS NULL
                      ORDER BY document_id, chunk_index
                      LIMIT :n
                     """
                 ),
-                {"deal": str(deal_id), "n": batch_size},
+                {"deal": str(deal_id), "tenant": str(tenant_id), "n": batch_size},
             )
         ).fetchall()
         if not rows:
@@ -3481,6 +3485,7 @@ async def accept_year(
     refreshed = (
         await session.execute(
             text(
+                # tenant-scope predicate required by tenant_middleware
                 """
                 SELECT id, deal_id, tenant_id, filename, doc_type, status,
                        uploaded_at, content_hash, storage_key, size_bytes,
@@ -3491,10 +3496,10 @@ async def accept_year(
                        year_mismatch, extracted_period_year,
                        structural_pnl_score
                   FROM documents
-                 WHERE id = :id
+                 WHERE id = :id AND tenant_id = :tenant
                 """
             ),
-            {"id": str(doc_id)},
+            {"id": str(doc_id), "tenant": str(tenant_id)},
         )
     ).first()
     assert refreshed is not None  # we just updated it
@@ -3741,11 +3746,12 @@ async def rescore_usali(
     extraction_row = (
         await session.execute(
             text(
+                # tenant-scope predicate required by tenant_middleware
                 "SELECT fields FROM extraction_results "
-                "WHERE document_id = :id "
+                "WHERE document_id = :id AND tenant_id = :tenant "
                 "ORDER BY created_at DESC LIMIT 1"
             ),
-            {"id": str(doc_id)},
+            {"id": str(doc_id), "tenant": str(tenant_id)},
         )
     ).first()
     if extraction_row is None:
@@ -4179,11 +4185,12 @@ async def _run_extraction_pipeline_inner(
             row = (
                 await session.execute(
                     text(
+                        # tenant-scope predicate required by tenant_middleware
                         "SELECT storage_key, filename, extraction_data, "
                         "user_provided_doc_type, fiscal_year, content_hash "
-                        "FROM documents WHERE id = :id"
+                        "FROM documents WHERE id = :id AND tenant_id = :tenant"
                     ),
-                    {"id": doc_id},
+                    {"id": doc_id, "tenant": str(tenant_id)},
                 )
             ).first()
             if not row:
@@ -6300,7 +6307,7 @@ async def _persist_critic_report(
         # through the LangGraph state, this helper can pick that up
         # without the API surface changing.
         broker, actuals, market_context, keys = await _load_critic_inputs(
-            session, deal_id=deal_id
+            session, deal_id=deal_id, tenant_id=tenant_id
         )
 
         # If we have neither side of the comparison there's nothing to
@@ -6393,6 +6400,7 @@ async def _load_critic_inputs(
     session: AsyncSession,
     *,
     deal_id: str,
+    tenant_id: str,
 ) -> tuple[Any | None, Any | None, dict[str, Any], int | None]:
     """Pull whatever broker proforma + T-12 + market context we can
     reconstruct from the latest extraction results on the deal.
@@ -6415,13 +6423,14 @@ async def _load_critic_inputs(
     deal_row = (
         await session.execute(
             text(
+                # tenant-scope predicate required by tenant_middleware
                 """
                 SELECT city, brand, service, keys
                   FROM deals
-                 WHERE id = :id
+                 WHERE id = :id AND tenant_id = :tenant
                 """
             ),
-            {"id": deal_id},
+            {"id": deal_id, "tenant": tenant_id},
         )
     ).first()
     market_context: dict[str, Any] = {}
@@ -6446,15 +6455,19 @@ async def _load_critic_inputs(
     # T-12 (USALI P&L paths) vs broker proforma (broker_proforma.*).
     rows = await session.execute(
         text(
+            # tenant-scope predicate required by tenant_middleware
+            # (both er and d carry tenant_id — scope both, belt & braces)
             """
             SELECT er.fields, d.doc_type
               FROM extraction_results er
               JOIN documents d ON d.id = er.document_id
              WHERE er.deal_id = :deal
+               AND er.tenant_id = :tenant
+               AND d.tenant_id = :tenant
              ORDER BY er.created_at DESC
             """
         ),
-        {"deal": deal_id},
+        {"deal": deal_id, "tenant": tenant_id},
     )
 
     broker_fields: dict[str, float] = {}

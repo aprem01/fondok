@@ -199,7 +199,7 @@ async def test_load_engine_inputs_consumes_persisted_override() -> None:
         )
         await session.commit()
 
-        base = await _load_engine_inputs(session, deal_id)
+        base = await _load_engine_inputs(session, deal_id, tenant_id=tenant_id)
 
     # The engine sees the OVERRIDE, not the 0.762 Kimpton seed.
     assert base["starting_occupancy"] == 0.55, (

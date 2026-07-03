@@ -203,7 +203,7 @@ async def test_str_segmentation_extraction_seeds_segments_with_provenance() -> N
 
     factory = get_session_factory()
     async with factory() as session:
-        base = await _load_engine_inputs(session, str(deal_id))
+        base = await _load_engine_inputs(session, str(deal_id), tenant_id=_TENANT)
 
     segments = base.get("segments") or []
     assert len(segments) == 5
@@ -269,7 +269,7 @@ async def test_channel_mix_extraction_splits_transient_using_report_shares() -> 
 
     factory = get_session_factory()
     async with factory() as session:
-        base = await _load_engine_inputs(session, str(deal_id))
+        base = await _load_engine_inputs(session, str(deal_id), tenant_id=_TENANT)
 
     by_name = {s["name"]: s for s in (base.get("segments") or [])}
     # Transient = 80%; OTA share within transient = 30%; Corporate
@@ -317,7 +317,7 @@ async def test_analyst_override_on_segment_channel_cost_beats_str_seed() -> None
 
     factory = get_session_factory()
     async with factory() as session:
-        base = await _load_engine_inputs(session, str(deal_id))
+        base = await _load_engine_inputs(session, str(deal_id), tenant_id=_TENANT)
 
     by_name = {s["name"]: s for s in (base.get("segments") or [])}
     assert by_name["transient_ota"]["channel_cost_pct"] == pytest.approx(0.12)
@@ -365,7 +365,7 @@ async def test_two_patch_cycles_first_override_survives_second_unrelated_patch()
     # Cycle 1 — verify the override is in effect.
     factory = get_session_factory()
     async with factory() as session:
-        base = await _load_engine_inputs(session, str(deal_id))
+        base = await _load_engine_inputs(session, str(deal_id), tenant_id=_TENANT)
     by_name = {s["name"]: s for s in base["segments"]}
     assert by_name["transient_ota"]["channel_cost_pct"] == pytest.approx(0.15)
 
@@ -381,7 +381,7 @@ async def test_two_patch_cycles_first_override_survives_second_unrelated_patch()
         },
     )
     async with factory() as session:
-        base2 = await _load_engine_inputs(session, str(deal_id))
+        base2 = await _load_engine_inputs(session, str(deal_id), tenant_id=_TENANT)
     by_name2 = {s["name"]: s for s in base2["segments"]}
     # The original OTA override survives unchanged.
     assert by_name2["transient_ota"]["channel_cost_pct"] == pytest.approx(0.15)
@@ -402,7 +402,7 @@ async def test_no_str_segmentation_extraction_degrades_to_single_line_path() -> 
 
     factory = get_session_factory()
     async with factory() as session:
-        base = await _load_engine_inputs(session, str(deal_id))
+        base = await _load_engine_inputs(session, str(deal_id), tenant_id=_TENANT)
 
     # No segments seeded → engine input ``segments=[]`` → legacy path.
     assert base.get("segments", []) == []
