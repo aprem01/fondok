@@ -278,26 +278,38 @@ async def _update_pending_status(
     session: AsyncSession,
     *,
     batch_id: str,
+    tenant_id: str,
     status: str,
     error: str | None = None,
     completed: bool = False,
 ) -> None:
-    params: dict[str, Any] = {"batch_id": batch_id, "status": status, "error": error}
+    params: dict[str, Any] = {
+        "batch_id": batch_id,
+        "tenant": str(tenant_id),
+        "status": status,
+        "error": error,
+    }
     if completed:
         params["completed_at"] = datetime.now(UTC).isoformat()
+        # tenant_id predicate keeps tenant_middleware / Sentry quiet — see
+        # apps/worker/app/tenant_middleware.py.
         sql = """
             UPDATE pending_batches
                SET status = :status,
                    error = :error,
                    completed_at = :completed_at
              WHERE batch_id = :batch_id
+               AND tenant_id = :tenant
         """
     else:
+        # tenant_id predicate keeps tenant_middleware / Sentry quiet — see
+        # apps/worker/app/tenant_middleware.py.
         sql = """
             UPDATE pending_batches
                SET status = :status,
                    error = :error
              WHERE batch_id = :batch_id
+               AND tenant_id = :tenant
         """
     await session.execute(text(sql), params)
     await session.commit()
@@ -517,7 +529,10 @@ async def poll_pending_batches(
             if processing_status in ("in_progress", "canceling"):
                 if row.status != "in_progress":
                     await _update_pending_status(
-                        session, batch_id=row.batch_id, status="in_progress"
+                        session,
+                        batch_id=row.batch_id,
+                        tenant_id=row.tenant_id,
+                        status="in_progress",
                     )
                 tally["pending"] += 1
                 continue
@@ -526,6 +541,7 @@ async def poll_pending_batches(
                 await _update_pending_status(
                     session,
                     batch_id=row.batch_id,
+                    tenant_id=row.tenant_id,
                     status="expired",
                     error="batch expired without completion",
                     completed=True,
@@ -552,6 +568,7 @@ async def poll_pending_batches(
                 await _update_pending_status(
                     session,
                     batch_id=row.batch_id,
+                    tenant_id=row.tenant_id,
                     status="failed",
                     error=f"results fetch failed: {exc}",
                     completed=True,
@@ -566,6 +583,7 @@ async def poll_pending_batches(
                 await _update_pending_status(
                     session,
                     batch_id=row.batch_id,
+                    tenant_id=row.tenant_id,
                     status="complete",
                     completed=True,
                 )
@@ -574,6 +592,7 @@ async def poll_pending_batches(
                 await _update_pending_status(
                     session,
                     batch_id=row.batch_id,
+                    tenant_id=row.tenant_id,
                     status="failed",
                     error="no memo parsed from batch results",
                     completed=True,

@@ -344,11 +344,16 @@ async def admin_cost_backfill(
           AND (cost_usd IS NULL OR cost_usd = 0)
         """
     )
+    # tenant_id predicate keeps tenant_middleware / Sentry quiet — see
+    # apps/worker/app/tenant_middleware.py. Also strictly prevents a
+    # cross-tenant write under concurrent backfill runs (the id filter
+    # alone would leak if two tenants shared an id namespace).
     update_sql = text(
         """
         UPDATE model_calls
            SET cost_usd = :cost_usd
          WHERE id = :id
+           AND tenant_id = :tenant_id
         """
     )
     updated = 0
@@ -368,7 +373,12 @@ async def admin_cost_backfill(
                     # with another zero on every run.
                     continue
                 await conn.execute(
-                    update_sql, {"cost_usd": round(cost, 6), "id": d["id"]}
+                    update_sql,
+                    {
+                        "cost_usd": round(cost, 6),
+                        "id": d["id"],
+                        "tenant_id": str(tenant_id),
+                    },
                 )
                 updated += 1
     except Exception as exc:  # noqa: BLE001

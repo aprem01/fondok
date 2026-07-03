@@ -751,16 +751,20 @@ async def run_scenario(
     )
 
     await session.execute(
+        # tenant_id predicate keeps tenant_middleware / Sentry quiet — see
+        # apps/worker/app/tenant_middleware.py.
         text(
             """
             UPDATE scenarios
                SET last_run_id = :run_id, updated_at = :updated_at
              WHERE id = :id
+               AND tenant_id = :tenant
             """
         ),
         {
             "run_id": str(run_id),
             "id": str(scenario_id),
+            "tenant": str(tenant_id),
             "updated_at": _now(),
         },
     )
@@ -862,16 +866,20 @@ async def compare_scenarios(
                 scenario_id=str(sid),
             )
             await session.execute(
+                # tenant_id predicate keeps tenant_middleware / Sentry quiet
+                # — see apps/worker/app/tenant_middleware.py.
                 text(
                     """
                     UPDATE scenarios
                        SET last_run_id = :run_id, updated_at = :updated_at
                      WHERE id = :id
+                       AND tenant_id = :tenant
                     """
                 ),
                 {
                     "run_id": str(run_id),
                     "id": str(sid),
+                    "tenant": str(tenant_id),
                     "updated_at": _now(),
                 },
             )

@@ -114,6 +114,7 @@ async def _mark_dispatched(
     session: AsyncSession,
     *,
     schedule_id: str,
+    tenant_id: str,
     cadence: str,
     hour_utc: int,
     weekday: int | None,
@@ -126,6 +127,8 @@ async def _mark_dispatched(
         now=now,
     )
     await session.execute(
+        # tenant_id predicate keeps tenant_middleware / Sentry quiet — see
+        # apps/worker/app/tenant_middleware.py.
         text(
             """
             UPDATE pipeline_digest_schedules
@@ -133,9 +136,15 @@ async def _mark_dispatched(
                    next_run_at = :next_run,
                    updated_at = :now
              WHERE id = :id
+               AND tenant_id = :tenant
             """
         ),
-        {"id": schedule_id, "now": now, "next_run": next_run},
+        {
+            "id": schedule_id,
+            "tenant": str(tenant_id),
+            "now": now,
+            "next_run": next_run,
+        },
     )
     await session.commit()
 
@@ -172,6 +181,7 @@ async def tick_once(now: datetime | None = None) -> int:
                 await _mark_dispatched(
                     session,
                     schedule_id=str(schedule_id),
+                    tenant_id=str(tenant_id),
                     cadence=schedule.get("cadence", "daily"),
                     hour_utc=int(schedule.get("hour_utc") or 13),
                     weekday=schedule.get("weekday"),

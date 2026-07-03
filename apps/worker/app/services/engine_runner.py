@@ -3233,11 +3233,14 @@ async def _persist_complete(
     session: AsyncSession,
     *,
     row_id: str,
+    tenant_id: str,
     output: BaseModel,
     inputs: BaseModel | dict[str, Any] | None,
     runtime_ms: int,
 ) -> None:
     await session.execute(
+        # tenant_id predicate keeps tenant_middleware / Sentry quiet — see
+        # apps/worker/app/tenant_middleware.py.
         text(
             """
             UPDATE engine_outputs
@@ -3247,10 +3250,12 @@ async def _persist_complete(
                    completed_at = :ts,
                    runtime_ms = :runtime_ms
              WHERE id = :id
+               AND tenant_id = :tenant
             """
         ),
         {
             "id": row_id,
+            "tenant": str(tenant_id),
             "inputs": _json_dumps(inputs),
             "outputs": _json_dumps(output),
             "ts": _now(),
@@ -3264,9 +3269,12 @@ async def _persist_failed(
     session: AsyncSession,
     *,
     row_id: str,
+    tenant_id: str,
     error: str,
 ) -> None:
     await session.execute(
+        # tenant_id predicate keeps tenant_middleware / Sentry quiet — see
+        # apps/worker/app/tenant_middleware.py.
         text(
             """
             UPDATE engine_outputs
@@ -3274,9 +3282,10 @@ async def _persist_failed(
                    error = :error,
                    completed_at = :ts
              WHERE id = :id
+               AND tenant_id = :tenant
             """
         ),
-        {"id": row_id, "error": error, "ts": _now()},
+        {"id": row_id, "tenant": str(tenant_id), "error": error, "ts": _now()},
     )
     await session.commit()
 
@@ -3413,7 +3422,9 @@ async def run_single_engine(
             )
         except Exception:
             pass
-        await _persist_failed(session, row_id=row_id, error=str(exc))
+        await _persist_failed(
+            session, row_id=row_id, tenant_id=tenant_id, error=str(exc)
+        )
         return {
             "engine": engine_name,
             "status": "failed",
@@ -3426,6 +3437,7 @@ async def run_single_engine(
     await _persist_complete(
         session,
         row_id=row_id,
+        tenant_id=tenant_id,
         output=output,
         inputs=engine_input,
         runtime_ms=runtime_ms,
@@ -3489,7 +3501,9 @@ async def run_all_engines(
                 started_at=started_at,
             )
             err = f"skipped: upstream {', '.join(missing)} did not complete"
-            await _persist_failed(session, row_id=row_id, error=err)
+            await _persist_failed(
+                session, row_id=row_id, tenant_id=tenant_id, error=err
+            )
             results[name] = {
                 "engine": name,
                 "status": "failed",

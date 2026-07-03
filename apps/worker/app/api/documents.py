@@ -1047,6 +1047,7 @@ async def _persist_parse_failure(
     factory: Any,
     *,
     doc_id: str,
+    tenant_id: str,
     error_kind: str,
     error_message: str,
 ) -> None:
@@ -1063,9 +1064,10 @@ async def _persist_parse_failure(
             existing = (
                 await s.execute(
                     text(
-                        "SELECT extraction_data FROM documents WHERE id = :id"
+                        "SELECT extraction_data FROM documents "
+                        "WHERE id = :id AND tenant_id = :tenant"
                     ),
-                    {"id": doc_id},
+                    {"id": doc_id, "tenant": str(tenant_id)},
                 )
             ).first()
             existing_data: dict[str, Any] = {}
@@ -1083,14 +1085,18 @@ async def _persist_parse_failure(
             existing_data["error_kind"] = error_kind
             existing_data["error_message"] = error_message
             await s.execute(
+                # tenant_id predicate keeps tenant_middleware / Sentry quiet
+                # — see apps/worker/app/tenant_middleware.py.
                 text(
                     "UPDATE documents SET status = :s, "
-                    "extraction_data = :d WHERE id = :id"
+                    "extraction_data = :d "
+                    "WHERE id = :id AND tenant_id = :tenant"
                 ),
                 {
                     "s": DOC_STATUS_PARSE_FAILED,
                     "d": json.dumps(existing_data),
                     "id": doc_id,
+                    "tenant": str(tenant_id),
                 },
             )
             await s.commit()
@@ -1687,6 +1693,7 @@ async def _run_parse_and_extract(
         await _persist_parse_failure(
             factory,
             doc_id=doc_id,
+            tenant_id=tenant_id,
             error_kind="parse",
             error_message=(
                 str(exc)
@@ -1703,6 +1710,7 @@ async def _run_parse_and_extract(
         await _persist_parse_failure(
             factory,
             doc_id=doc_id,
+            tenant_id=tenant_id,
             error_kind="parse_unexpected",
             error_message=(
                 str(exc)
@@ -1716,6 +1724,8 @@ async def _run_parse_and_extract(
     async with factory() as s:
         try:
             await s.execute(
+                # tenant_id predicate keeps tenant_middleware / Sentry quiet
+                # — see apps/worker/app/tenant_middleware.py.
                 text(
                     """
                     UPDATE documents
@@ -1724,6 +1734,7 @@ async def _run_parse_and_extract(
                            parser = :parser,
                            extraction_data = :data
                      WHERE id = :id
+                       AND tenant_id = :tenant
                     """
                 ),
                 {
@@ -1732,6 +1743,7 @@ async def _run_parse_and_extract(
                     "parser": parser_label_to_persist,
                     "data": json.dumps(extraction_data_to_persist),
                     "id": doc_id,
+                    "tenant": str(tenant_id),
                 },
             )
             await s.commit()
@@ -3293,16 +3305,19 @@ async def accept_classification(
         # longer carries the v2 conflict signal.
         new_user_tag = current_doc_type or user_tag
         await session.execute(
+            # tenant_id predicate keeps tenant_middleware / Sentry quiet — see
+            # apps/worker/app/tenant_middleware.py.
             text(
                 "UPDATE documents "
                 "SET user_provided_doc_type = :u, misclassified = :m, "
                 "ai_proposed_doc_type = NULL "
-                "WHERE id = :id"
+                "WHERE id = :id AND tenant_id = :tenant"
             ),
             {
                 "u": new_user_tag,
                 "m": False,
                 "id": str(doc_id),
+                "tenant": str(tenant_id),
             },
         )
     else:
@@ -3314,27 +3329,32 @@ async def accept_classification(
         # Bug #2 v2: clear ``ai_proposed_doc_type`` on either branch.
         if user_tag and current_doc_type != user_tag:
             await session.execute(
+                # tenant_id predicate keeps tenant_middleware / Sentry quiet
+                # — see apps/worker/app/tenant_middleware.py.
                 text(
                     "UPDATE documents "
                     "SET doc_type = :dt, misclassified = :m, "
                     "ai_proposed_doc_type = NULL "
-                    "WHERE id = :id"
+                    "WHERE id = :id AND tenant_id = :tenant"
                 ),
                 {
                     "dt": user_tag,
                     "m": False,
                     "id": str(doc_id),
+                    "tenant": str(tenant_id),
                 },
             )
         else:
             await session.execute(
+                # tenant_id predicate keeps tenant_middleware / Sentry quiet
+                # — see apps/worker/app/tenant_middleware.py.
                 text(
                     "UPDATE documents "
                     "SET misclassified = :m, "
                     "ai_proposed_doc_type = NULL "
-                    "WHERE id = :id"
+                    "WHERE id = :id AND tenant_id = :tenant"
                 ),
-                {"m": False, "id": str(doc_id)},
+                {"m": False, "id": str(doc_id), "tenant": str(tenant_id)},
             )
 
     await session.commit()
@@ -3436,20 +3456,25 @@ async def accept_year(
     if body.use_ai_year:
         epy = current.get("extracted_period_year")
         await session.execute(
+            # tenant_id predicate keeps tenant_middleware / Sentry quiet — see
+            # apps/worker/app/tenant_middleware.py.
             text(
                 "UPDATE documents "
                 "SET fiscal_year = :fy, year_mismatch = :ym "
-                "WHERE id = :id"
+                "WHERE id = :id AND tenant_id = :tenant"
             ),
-            {"fy": epy, "ym": False, "id": str(doc_id)},
+            {"fy": epy, "ym": False, "id": str(doc_id), "tenant": str(tenant_id)},
         )
     else:
         await session.execute(
+            # tenant_id predicate keeps tenant_middleware / Sentry quiet — see
+            # apps/worker/app/tenant_middleware.py.
             text(
                 "UPDATE documents "
-                "SET year_mismatch = :ym WHERE id = :id"
+                "SET year_mismatch = :ym "
+                "WHERE id = :id AND tenant_id = :tenant"
             ),
-            {"ym": False, "id": str(doc_id)},
+            {"ym": False, "id": str(doc_id), "tenant": str(tenant_id)},
         )
     await session.commit()
 
@@ -4137,8 +4162,17 @@ async def _run_extraction_pipeline_inner(
     async with factory() as session:
         try:
             await session.execute(
-                text("UPDATE documents SET status = :s WHERE id = :id"),
-                {"s": DOC_STATUS_EXTRACTING, "id": doc_id},
+                # tenant_id predicate keeps tenant_middleware / Sentry quiet
+                # — see apps/worker/app/tenant_middleware.py.
+                text(
+                    "UPDATE documents SET status = :s "
+                    "WHERE id = :id AND tenant_id = :tenant"
+                ),
+                {
+                    "s": DOC_STATUS_EXTRACTING,
+                    "id": doc_id,
+                    "tenant": str(tenant_id),
+                },
             )
             await session.commit()
 
@@ -4403,14 +4437,18 @@ async def _run_extraction_pipeline_inner(
                 existing_data["error_kind"] = kind
                 existing_data["error_message"] = friendly
                 await session.execute(
+                    # tenant_id predicate keeps tenant_middleware / Sentry
+                    # quiet — see apps/worker/app/tenant_middleware.py.
                     text(
                         "UPDATE documents SET status = :s, "
-                        "extraction_data = :d WHERE id = :id"
+                        "extraction_data = :d "
+                        "WHERE id = :id AND tenant_id = :tenant"
                     ),
                     {
                         "s": DOC_STATUS_FAILED,
                         "d": json.dumps(existing_data),
                         "id": doc_id,
+                        "tenant": str(tenant_id),
                     },
                 )
                 await session.commit()
@@ -4711,6 +4749,8 @@ async def _run_extraction_pipeline_inner(
                     # for ``aiLabel`` — without it both sides resolved
                     # from ``doc_type`` and rendered "T-12 vs T-12".
                     await session.execute(
+                        # tenant_id predicate keeps tenant_middleware / Sentry
+                        # quiet — see apps/worker/app/tenant_middleware.py.
                         text(
                             "UPDATE documents "
                             "SET status = :s, misclassified = :m, "
@@ -4718,7 +4758,7 @@ async def _run_extraction_pipeline_inner(
                             "year_mismatch = :ym, "
                             "extracted_period_year = :epy, "
                             "structural_pnl_score = :sps "
-                            "WHERE id = :id"
+                            "WHERE id = :id AND tenant_id = :tenant"
                         ),
                         {
                             "s": DOC_STATUS_EXTRACTED,
@@ -4733,6 +4773,7 @@ async def _run_extraction_pipeline_inner(
                             "epy": extracted_period_year,
                             "sps": structural_pnl_score,
                             "id": doc_id,
+                            "tenant": str(tenant_id),
                         },
                     )
                     logger.info(
@@ -4757,13 +4798,16 @@ async def _run_extraction_pipeline_inner(
                     # to T12" — silent rewrites are explicitly not
                     # acceptable per the locked product decision.
                     await session.execute(
+                        # tenant_id predicate keeps tenant_middleware / Sentry
+                        # quiet — see apps/worker/app/tenant_middleware.py.
                         text(
                             "UPDATE documents SET status = :s, doc_type = :dt, "
                             "misclassified = :m, "
                             "ai_proposed_doc_type = :apdt, "
                             "year_mismatch = :ym, "
                             "extracted_period_year = :epy, "
-                            "structural_pnl_score = :sps WHERE id = :id"
+                            "structural_pnl_score = :sps "
+                            "WHERE id = :id AND tenant_id = :tenant"
                         ),
                         {
                             "s": DOC_STATUS_EXTRACTED,
@@ -4774,17 +4818,21 @@ async def _run_extraction_pipeline_inner(
                             "epy": extracted_period_year,
                             "sps": structural_pnl_score,
                             "id": doc_id,
+                            "tenant": str(tenant_id),
                         },
                     )
                 else:
                     await session.execute(
+                        # tenant_id predicate keeps tenant_middleware / Sentry
+                        # quiet — see apps/worker/app/tenant_middleware.py.
                         text(
                             "UPDATE documents SET status = :s, "
                             "misclassified = :m, "
                             "ai_proposed_doc_type = NULL, "
                             "year_mismatch = :ym, "
                             "extracted_period_year = :epy, "
-                            "structural_pnl_score = :sps WHERE id = :id"
+                            "structural_pnl_score = :sps "
+                            "WHERE id = :id AND tenant_id = :tenant"
                         ),
                         {
                             "s": DOC_STATUS_EXTRACTED,
@@ -4793,6 +4841,7 @@ async def _run_extraction_pipeline_inner(
                             "epy": extracted_period_year,
                             "sps": structural_pnl_score,
                             "id": doc_id,
+                            "tenant": str(tenant_id),
                         },
                     )
                 await session.commit()
@@ -4878,8 +4927,11 @@ async def _run_extraction_pipeline_inner(
                 # stays intact for forensics.
                 existing_row = (
                     await session.execute(
-                        text("SELECT extraction_data FROM documents WHERE id = :id"),
-                        {"id": doc_id},
+                        text(
+                            "SELECT extraction_data FROM documents "
+                            "WHERE id = :id AND tenant_id = :tenant"
+                        ),
+                        {"id": doc_id, "tenant": str(tenant_id)},
                     )
                 ).first()
                 existing_data: dict[str, Any] = {}
@@ -4896,15 +4948,18 @@ async def _run_extraction_pipeline_inner(
                 existing_data["error_message"] = friendly
                 existing_data["error_raw"] = str(exc)[:500]
                 await session.execute(
+                    # tenant_id predicate keeps tenant_middleware / Sentry
+                    # quiet — see apps/worker/app/tenant_middleware.py.
                     text(
                         "UPDATE documents "
                         "SET status = :s, extraction_data = :d "
-                        "WHERE id = :id"
+                        "WHERE id = :id AND tenant_id = :tenant"
                     ),
                     {
                         "s": DOC_STATUS_FAILED,
                         "d": json.dumps(existing_data),
                         "id": doc_id,
+                        "tenant": str(tenant_id),
                     },
                 )
                 await session.commit()
@@ -5681,8 +5736,11 @@ async def _sync_deal_metadata_from_extraction(
     try:
         row = (
             await session.execute(
-                text("SELECT keys, brand, city FROM deals WHERE id = :id"),
-                {"id": deal_id},
+                text(
+                    "SELECT keys, brand, city FROM deals "
+                    "WHERE id = :id AND tenant_id = :tenant"
+                ),
+                {"id": deal_id, "tenant": str(tenant_id)},
             )
         ).first()
     except Exception:
@@ -5736,14 +5794,21 @@ async def _sync_deal_metadata_from_extraction(
         return
 
     # Build a single UPDATE so the change is atomic.
+    # tenant_id predicate keeps tenant_middleware / Sentry quiet — see
+    # apps/worker/app/tenant_middleware.py.
     set_clauses = ", ".join(f"{col} = :{col}" for col in proposed)
-    params = {"id": deal_id, **proposed}
+    params = {"id": deal_id, "tenant": str(tenant_id), **proposed}
     try:
         await session.execute(
-            text(f"UPDATE deals SET {set_clauses}, updated_at = NOW() WHERE id = :id")
+            text(
+                f"UPDATE deals SET {set_clauses}, updated_at = NOW() "
+                "WHERE id = :id AND tenant_id = :tenant"
+            )
             if not str(get_settings().async_database_url).startswith("sqlite")
             else text(
-                f"UPDATE deals SET {set_clauses}, updated_at = CURRENT_TIMESTAMP WHERE id = :id"
+                f"UPDATE deals SET {set_clauses}, "
+                "updated_at = CURRENT_TIMESTAMP "
+                "WHERE id = :id AND tenant_id = :tenant"
             ),
             params,
         )
@@ -5910,6 +5975,7 @@ async def _persist_verification_report(
             await _apply_verification_to_confidence(
                 session,
                 deal_id=deal_id,
+                tenant_id=tenant_id,
                 doc_id=doc_id,
                 fields=fields,
                 checks=report.checks,
@@ -5939,6 +6005,7 @@ async def _apply_verification_to_confidence(
     session: AsyncSession,
     *,
     deal_id: str,
+    tenant_id: str,
     doc_id: str,
     fields: list[dict[str, Any]],
     checks: list[Any],
@@ -6011,6 +6078,8 @@ async def _apply_verification_to_confidence(
     }
 
     # Update the most-recent extraction_results row for this document.
+    # tenant_id predicate keeps tenant_middleware / Sentry quiet — see
+    # apps/worker/app/tenant_middleware.py.
     await session.execute(
         text(
             """
@@ -6019,6 +6088,7 @@ async def _apply_verification_to_confidence(
                    confidence_report = :cr
              WHERE document_id = :doc
                AND deal_id = :deal
+               AND tenant_id = :tenant
             """
         ),
         {
@@ -6026,6 +6096,7 @@ async def _apply_verification_to_confidence(
             "cr": json.dumps(confidence_report),
             "doc": doc_id,
             "deal": deal_id,
+            "tenant": str(tenant_id),
         },
     )
     await session.commit()
@@ -6091,8 +6162,11 @@ async def _persist_usali_score(
         try:
             deal_row = (
                 await session.execute(
-                    text("SELECT keys, purchase_price FROM deals WHERE id = :id"),
-                    {"id": deal_id},
+                    text(
+                        "SELECT keys, purchase_price FROM deals "
+                        "WHERE id = :id AND tenant_id = :tenant"
+                    ),
+                    {"id": deal_id, "tenant": str(tenant_id)},
                 )
             ).first()
             if deal_row is not None:
@@ -6163,17 +6237,20 @@ async def _persist_usali_score(
         )
         try:
             await session.execute(
+                # tenant_id predicate keeps tenant_middleware / Sentry quiet
+                # — see apps/worker/app/tenant_middleware.py.
                 text(
                     "UPDATE documents SET "
                     "error_kind = COALESCE(error_kind, 'usali_scorer_crash'), "
                     "error_message = COALESCE(error_message, :msg) "
-                    "WHERE id = :id"
+                    "WHERE id = :id AND tenant_id = :tenant"
                 ),
                 {
                     "msg": f"USALI scoring failed ({type(exc).__name__}): "
                            f"{str(exc)[:300]}. "
                            "Retry via POST /deals/<id>/documents/<doc_id>/rescore-usali",
                     "id": doc_id,
+                    "tenant": str(tenant_id),
                 },
             )
             await session.commit()

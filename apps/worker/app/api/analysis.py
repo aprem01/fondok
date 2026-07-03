@@ -1588,34 +1588,42 @@ async def apply_proposed_overrides(
     applied_payload_raw = [o.model_dump() for o in chosen]
     if is_sqlite:
         await session.execute(
+            # tenant_id predicate keeps tenant_middleware / Sentry quiet — see
+            # apps/worker/app/tenant_middleware.py.
             text(
                 """
                 UPDATE broker_qa_pairs
                    SET applied_overrides = :applied,
                        updated_at = :now
                  WHERE id = :id
+                   AND tenant_id = :tenant
                 """
             ),
             {
                 "applied": json.dumps(applied_payload_raw),
                 "now": now,
                 "id": str(qa_pair_id),
+                "tenant": str(tenant_id),
             },
         )
     else:
         await session.execute(
+            # tenant_id predicate keeps tenant_middleware / Sentry quiet — see
+            # apps/worker/app/tenant_middleware.py.
             text(
                 """
                 UPDATE broker_qa_pairs
                    SET applied_overrides = CAST(:applied AS JSONB),
                        updated_at = :now
                  WHERE id = :id
+                   AND tenant_id = :tenant
                 """
             ),
             {
                 "applied": json.dumps(applied_payload_raw),
                 "now": now,
                 "id": str(qa_pair_id),
+                "tenant": str(tenant_id),
             },
         )
 
