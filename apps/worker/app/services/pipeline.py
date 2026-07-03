@@ -324,16 +324,21 @@ async def build_pipeline_snapshot(
 
     # 3) Per-deal document counts so the table row can show "12 docs".
     # One small grouped query keeps this O(1) DB round-trips per call.
+    # tenant_id predicate satisfies tenant_middleware (Sam Sentry
+    # 2026-07-03 fe07db42) — the deal_ids in `placeholders` come from
+    # the deals table which is already tenant-filtered upstream, so this
+    # is a belt-and-braces guard, not a semantics change.
     doc_rows = await session.execute(
         text(
             f"""
             SELECT deal_id, COUNT(*) AS n
               FROM documents
              WHERE deal_id IN ({placeholders})
+               AND tenant_id = :tenant
              GROUP BY deal_id
             """
         ),
-        params,
+        {**params, "tenant": tenant_id_str},
     )
     doc_counts: dict[str, int] = {
         str(r._mapping["deal_id"]): int(r._mapping["n"])
