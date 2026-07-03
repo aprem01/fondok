@@ -560,7 +560,7 @@ async def test_load_deal_payload_uses_real_extracted_documents() -> None:
         )
         await session.commit()
 
-        payload = await _load_deal_payload(str(deal_id), session=session)
+        payload = await _load_deal_payload(str(deal_id), session=session, tenant_id=_TENANT)
 
     # The payload must carry exactly the real document, not the Kimpton
     # fixture appendix (which has multiple synthetic ``doc-NN`` entries).
@@ -804,7 +804,7 @@ async def test_load_deal_payload_hydrates_real_spread_engines_variance() -> None
         )
         await session.commit()
 
-        payload = await _load_deal_payload(str(deal_id), session=session)
+        payload = await _load_deal_payload(str(deal_id), session=session, tenant_id=_TENANT)
 
     # ── deal_data must be the real deal, not Kimpton ───────────────────
     assert payload.deal_data["name"] == "Coral Bay Resort", payload.deal_data

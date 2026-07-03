@@ -176,7 +176,7 @@ async def test_load_engine_inputs_uses_t12_expense_and_revenue_actuals() -> None
 
     factory = get_session_factory()
     async with factory() as session:
-        base = await _load_engine_inputs(session, str(deal_id))
+        base = await _load_engine_inputs(session, str(deal_id), tenant_id=_TENANT)
 
     # Deal-level overrides come through.
     assert base["keys"] == 214
@@ -230,7 +230,7 @@ async def test_load_engine_inputs_partial_t12_falls_back_to_kimpton() -> None:
 
     factory = get_session_factory()
     async with factory() as session:
-        base = await _load_engine_inputs(session, str(deal_id))
+        base = await _load_engine_inputs(session, str(deal_id), tenant_id=_TENANT)
 
     # Occupancy + ADR overrode the seed.
     assert base["starting_occupancy"] == pytest.approx(0.71)
@@ -261,7 +261,7 @@ async def test_load_engine_inputs_no_extraction_uses_full_kimpton_seed() -> None
 
     factory = get_session_factory()
     async with factory() as session:
-        base = await _load_engine_inputs(session, str(deal_id))
+        base = await _load_engine_inputs(session, str(deal_id), tenant_id=_TENANT)
 
     seed = _kimpton_assumptions()
     # Every Kimpton-seeded value should be present unchanged.
@@ -301,7 +301,7 @@ async def test_load_engine_inputs_normalizes_percent_occupancy() -> None:
 
     factory = get_session_factory()
     async with factory() as session:
-        base = await _load_engine_inputs(session, str(deal_id))
+        base = await _load_engine_inputs(session, str(deal_id), tenant_id=_TENANT)
 
     # Coerced down to a 0..1 ratio and clamped under 0.99.
     assert 0.0 < base["starting_occupancy"] < 1.0
