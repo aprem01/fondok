@@ -3793,12 +3793,13 @@ async def rescore_usali(
             text(
                 "UPDATE documents "
                 "SET usali_score = :score, usali_deviations = :dev "
-                "WHERE id = :id"
+                "WHERE id = :id AND tenant_id = :tenant"
             ),
             {
                 "score": result.score,
                 "dev": json.dumps(payload),
                 "id": str(doc_id),
+                "tenant": str(tenant_id),
             },
         )
         await session.commit()
@@ -4851,6 +4852,7 @@ async def _run_extraction_pipeline_inner(
                 session,
                 deal_id=deal_id,
                 doc_id=doc_id,
+                tenant_id=tenant_id,
                 doc_type=scoring_doc_type or "",
                 fields=fields,
             )
@@ -6053,6 +6055,7 @@ async def _persist_usali_score(
     *,
     deal_id: str,
     doc_id: str,
+    tenant_id: str,
     doc_type: str,
     fields: list[dict[str, Any]],
 ) -> None:
@@ -6118,12 +6121,13 @@ async def _persist_usali_score(
             text(
                 "UPDATE documents "
                 "SET usali_score = :score, usali_deviations = :dev "
-                "WHERE id = :id"
+                "WHERE id = :id AND tenant_id = :tenant"
             ),
             {
                 "score": result.score,
                 "dev": json.dumps(payload),
                 "id": doc_id,
+                "tenant": tenant_id,
             },
         )
         await session.commit()
