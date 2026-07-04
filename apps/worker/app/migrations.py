@@ -223,7 +223,7 @@ MIGRATIONS: list[tuple[str, str]] = [
     ),
     (
         "extraction_results.add_catalog_version",
-        "ALTER TABLE extraction_results ADD COLUMN IF NOT EXISTS catalog_version INTEGER DEFAULT 1",
+        "ALTER TABLE extraction_results ADD COLUMN catalog_version INTEGER DEFAULT 1",
     ),
     # ─── Document chunks (context store, Phase 3) ────────────────────
     # Try to enable pgvector. Idempotent — already-installed extensions
@@ -1217,7 +1217,7 @@ SQLITE_MIGRATIONS: list[tuple[str, str]] = [
     ),
     (
         "extraction_results.add_catalog_version",
-        "ALTER TABLE extraction_results ADD COLUMN IF NOT EXISTS catalog_version INTEGER DEFAULT 1",
+        "ALTER TABLE extraction_results ADD COLUMN catalog_version INTEGER DEFAULT 1",
     ),
     (
         "model_calls.create_table",

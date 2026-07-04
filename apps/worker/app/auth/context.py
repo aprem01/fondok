@@ -64,6 +64,10 @@ class AuthContext:
         Raw Clerk org id (``org_XXXXX...``) when the JWT carries an
         active organization. ``None`` for personal-account JWTs +
         header + default. Preserved for audit + future use.
+    email
+        User's email address (from custom JWT claim) when a valid JWT
+        was presented; ``None`` for header-only, default paths, or if
+        the JWT template doesn't include email.
     """
 
     tenant_id: UUID
@@ -71,6 +75,7 @@ class AuthContext:
     role: str
     source: str
     org_id: str | None = None
+    email: str | None = None
 
 
 def normalize_clerk_role(raw: str | None) -> str:

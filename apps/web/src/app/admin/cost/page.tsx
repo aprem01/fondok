@@ -1,13 +1,13 @@
 'use client';
-// Wave 5 RBAC — admin-only Cost Dashboard.
+// Wave 5 RBAC — email-restricted Cost Dashboard.
 //
 // Renders `GET /admin/cost` from the worker: total spend across
-// 24h/7d/30d, top agents, model split, and top deals by cost. Same
-// RBAC pattern as /audit — Clerk org:admin required; anyone else sees
-// the honest "admin only" panel.
+// 24h/7d/30d, top agents, model split, and top deals by cost.
+// Gated to org:admin + email == kpremks@gmail.com.
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Lock, DollarSign, Bot, Cpu, TrendingUp, RefreshCw } from 'lucide-react';
+import { useUser } from '@clerk/nextjs';
 import PageHeader from '@/components/ui/PageHeader';
 import { Card } from '@/components/ui/Card';
 import { Button } from '@/components/ui/Button';
@@ -28,6 +28,9 @@ const fmtPct = (r: number) =>
 export default function AdminCostPage() {
   const currentRole = useCurrentRole();
   const isAdmin = currentRole === 'org:admin';
+  const { user } = useUser();
+  const userEmail = user?.primaryEmailAddress?.emailAddress || '';
+  const isAuthorized = isAdmin && userEmail === 'kpremks@gmail.com';
 
   const [data, setData] = useState<AdminCostResponse | null>(null);
   const [loading, setLoading] = useState(true);
@@ -48,11 +51,11 @@ export default function AdminCostPage() {
   }, []);
 
   useEffect(() => {
-    if (!isAdmin) return;
+    if (!isAuthorized) return;
     const ctl = new AbortController();
     void load(ctl.signal);
     return () => ctl.abort();
-  }, [isAdmin, load]);
+  }, [isAuthorized, load]);
 
   // ─────────── RBAC lock ───────────
   if (!isAdmin) {
@@ -68,6 +71,25 @@ export default function AdminCostPage() {
           <p className="mt-3 text-[11.5px] text-ink-500">
             Current role:{' '}
             <code className="rounded-sm bg-ink-100 px-1 py-0.5">{currentRole || 'unknown'}</code>
+          </p>
+        </Card>
+      </div>
+    );
+  }
+
+  if (!isAuthorized) {
+    return (
+      <div className="px-8 py-8 max-w-[1024px]">
+        <PageHeader eyebrow="Ops" title="Cost Dashboard" subtitle="LLM spend + cache hit rate for this tenant." />
+        <Card className="mt-6 p-10 text-center">
+          <Lock className="mx-auto h-10 w-10 text-ink-300" />
+          <h2 className="mt-4 text-[15px] font-semibold text-ink-900">Access restricted</h2>
+          <p className="mt-2 text-[12.5px] text-ink-500">
+            Cost data is available only to kpremks@gmail.com.
+          </p>
+          <p className="mt-3 text-[11.5px] text-ink-500">
+            Your email:{' '}
+            <code className="rounded-sm bg-ink-100 px-1 py-0.5">{userEmail}</code>
           </p>
         </Card>
       </div>

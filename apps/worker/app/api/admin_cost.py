@@ -40,7 +40,7 @@ from datetime import UTC, datetime, timedelta
 from typing import Annotated, Any
 from uuid import UUID
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import text
 
 from ..auth import AuthContext, require_role
@@ -218,8 +218,17 @@ async def admin_cost(
 
     Wave RBAC 2026-07 — gated on ``role="admin"``. The header/default
     trusted-caller escape hatch still passes so ops can hit the
-    endpoint from a scripted context.
+    endpoint from a scripted context. JWT auth additionally gated on
+    email == "kpremks@gmail.com".
     """
+    # Email-based access control (2026-07-03): only kpremks@gmail.com can
+    # view costs via JWT. Header/default paths (ops/scripts) bypass this.
+    if auth.source == "jwt" and auth.email != "kpremks@gmail.com":
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="cost dashboard access restricted",
+        )
+
     tenant_id = auth.tenant_id
     now = datetime.now(UTC)
     since_30d = now - timedelta(days=30)
@@ -330,8 +339,17 @@ async def admin_cost_backfill(
     updated so ops can spot outliers in the log.
 
     Wave RBAC 2026-07 — gated on ``role="admin"``. Cron / ops-runbook
-    callers use the header path and pass the escape hatch.
+    callers use the header path and pass the escape hatch. JWT auth
+    additionally gated on email == "kpremks@gmail.com".
     """
+    # Email-based access control (2026-07-03): only kpremks@gmail.com can
+    # modify costs via JWT. Header/default paths (ops/scripts) bypass this.
+    if auth.source == "jwt" and auth.email != "kpremks@gmail.com":
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="cost dashboard access restricted",
+        )
+
     tenant_id = auth.tenant_id
     engine = get_engine()
     select_sql = text(

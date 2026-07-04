@@ -101,6 +101,7 @@ async def get_current_auth(
         user_id = claims.get("sub")
         org_id = claims.get("org_id")
         org_role_raw = claims.get("org_role")
+        email = claims.get("email")
         role = normalize_clerk_role(org_role_raw)
 
         # Tenant resolution: prefer the JWT's org_id (canonical). If
@@ -121,6 +122,7 @@ async def get_current_auth(
             role=role,
             source="jwt",
             org_id=str(org_id) if org_id else None,
+            email=str(email) if email else None,
         )
 
     # No JWT — try the header path.
