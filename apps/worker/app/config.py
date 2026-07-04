@@ -170,6 +170,19 @@ class Settings(BaseSettings):
     # pages are still on disk; only the extractor's view changes.
     STRUCTURAL_PREFILTER_ENABLED: bool = Field(default=True)
 
+    # Cost-optimization pass W (2026-07): deterministic template
+    # extraction for standardized report formats. STR / CoStar Trend
+    # reports ship the same tab structure on every report, so a
+    # label-anchored parser reads the exact fields the LLM extractor
+    # would emit (subject TTM + monthly series, comp-set roster/keys,
+    # MPI/ARI/RGI) directly from the ``ParsedPage.tables`` cell grids —
+    # $0 per document instead of ~$0.30, and no hallucination/drift on
+    # a file family that has caused repeated misclassification bugs.
+    # Detection is conservative: any doubt returns None and the doc
+    # falls through to the unchanged LLM path, so flipping this to
+    # false only changes cost, never coverage.
+    TEMPLATE_EXTRACTION_ENABLED: bool = Field(default=True)
+
     # ── Tenancy ─────────────────────────────────────────────────────
     # UUID-shaped string for dev. Real tenants are provisioned in DB.
     DEFAULT_TENANT_ID: str = Field(

@@ -5406,6 +5406,64 @@ def _filter_chunks_by_signal(
     return kept
 
 
+def _try_template_extraction(
+    *,
+    extraction_data: dict[str, Any] | None,
+    filename: str,
+    doc_id: str,
+    doc_type: str,
+) -> Any | None:
+    """Deterministic template-extraction attempt (cost-opt pass W).
+
+    STR / CoStar Trend reports are a standardized format — same tabs,
+    same labels, every report — so a label-anchored parser reads the
+    exact fields the LLM extractor would emit at $0 and with zero
+    hallucination risk. Reconstructs the lossless ``ParsedPage.tables``
+    grids from the parser cache on ``extraction_data`` and hands them
+    to ``try_template_extract``. Returns a ``TemplateExtractResult``
+    on a confident match, ``None`` otherwise (caller falls through to
+    the unchanged LLM path). Never raises.
+    """
+    if (doc_type or "").upper() not in ("STR", "STR_TREND"):
+        return None
+    if not get_settings().TEMPLATE_EXTRACTION_ENABLED:
+        return None
+    try:
+        from ..extraction.models import ParsedDocument, ParsedPage
+        from ..extraction.template_extractors import try_template_extract
+
+        data = extraction_data if isinstance(extraction_data, dict) else {}
+        pages = [
+            ParsedPage(
+                page_num=int(p.get("page_num") or i + 1),
+                text=p.get("text") or "",
+                tables=p.get("tables") or [],
+                metadata=p.get("metadata") or {},
+            )
+            for i, p in enumerate(data.get("pages") or [])
+            if isinstance(p, dict)
+        ]
+        if not pages:
+            return None
+        parsed = ParsedDocument(
+            filename=filename,
+            total_pages=int(data.get("total_pages") or len(pages)),
+            pages=pages,
+            content_hash=str(data.get("content_hash") or ""),
+            parsed_at=datetime.now(UTC),
+            parser=str(data.get("parser") or "unknown"),
+        )
+        return try_template_extract(parsed, doc_type)
+    except Exception:  # noqa: BLE001 — template miss must never break extraction
+        logger.warning(
+            "template extraction: error while probing doc=%s — "
+            "falling back to LLM",
+            doc_id,
+            exc_info=True,
+        )
+        return None
+
+
 async def _run_graph_extraction(
     *,
     deal_id: str,
@@ -5575,6 +5633,58 @@ async def _run_graph_extraction(
         )
         doc_type = hint
         route = "extract-hint-fallback"
+
+    # Cost-opt pass W (2026-07): deterministic template extraction.
+    # STR Trend workbooks are a standardized industry format, so once
+    # the doc_type is pinned to STR/STR_TREND we try the $0 template
+    # parser BEFORE spending Sonnet tokens. On a confident hit the
+    # entire LLM extraction is skipped — every field was read straight
+    # from known cells of the ``ParsedPage.tables`` grids with
+    # confidence 1.0. On None (any doubt at all) the LLM path below
+    # runs completely unchanged.
+    template_result = _try_template_extraction(
+        extraction_data=extraction_data,
+        filename=filename,
+        doc_id=doc_id,
+        doc_type=doc_type,
+    )
+    if template_result is not None and template_result.fields:
+        logger.info(
+            "template extraction HIT: doc=%s template=%s fields=%d "
+            "zero LLM cost",
+            doc_id,
+            template_result.template_name,
+            len(template_result.fields),
+        )
+        t_by_field = {
+            f["field_name"]: float(f.get("confidence", 1.0) or 1.0)
+            for f in template_result.fields
+            if f.get("field_name")
+        }
+        t_confidence: dict[str, Any] = {
+            "overall": (
+                sum(t_by_field.values()) / len(t_by_field)
+                if t_by_field
+                else 1.0
+            ),
+            "by_field": t_by_field,
+            "low_confidence_fields": [
+                n for n, c in t_by_field.items() if c < 0.85
+            ],
+            "requires_human_review": False,
+            "chunk_errors": [],
+            "template": template_result.template_name,
+            "coverage_note": template_result.coverage_note,
+        }
+        # Base version string; the caller's ``_tag_agent_version``
+        # appends ``;pv=vN`` so the content-hash cache logic keeps
+        # working on template-extracted rows.
+        return (
+            template_result.fields,
+            t_confidence,
+            f"template:{template_result.template_name}:v1",
+            "STR_TREND",
+        )
 
     # Chunked extraction (Sam QA 2026-05-14, tuned pass U 2026-07):
     # split the document into per-doc-type-sized batches and build one
