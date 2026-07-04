@@ -86,15 +86,16 @@ class TemplateExtractResult:
 def try_template_extract(
     parsed: ParsedDocument, doc_type: str
 ) -> TemplateExtractResult | None:
-    """Attempt deterministic extraction for a known template.
+    """Attempt deterministic extraction for STR Trend.
 
     Returns ``None`` unless the document unambiguously matches a known
     STR Trend layout AND every structural anchor resolves. The caller
     treats ``None`` as "fall through to the LLM extractor".
+
+    Note: This is called via the dispatcher in __init__.py, which first
+    checks the doc_type matches ("STR" / "STR_TREND").
     """
     try:
-        if (doc_type or "").upper() not in ("STR", "STR_TREND"):
-            return None
         return _try_str_trend(parsed)
     except Exception:  # noqa: BLE001 — template misread must never break extraction
         logger.warning(

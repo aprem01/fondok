@@ -5497,7 +5497,7 @@ def _try_template_extraction(
     on a confident match, ``None`` otherwise (caller falls through to
     the unchanged LLM path). Never raises.
     """
-    if (doc_type or "").upper() not in ("STR", "STR_TREND"):
+    if (doc_type or "").upper() not in ("STR", "STR_TREND", "CBRE_HORIZONS"):
         return None
     if not get_settings().TEMPLATE_EXTRACTION_ENABLED:
         return None
@@ -5752,11 +5752,13 @@ async def _run_graph_extraction(
         # Base version string; the caller's ``_tag_agent_version``
         # appends ``;pv=vN`` so the content-hash cache logic keeps
         # working on template-extracted rows.
+        # Use the detected doc_type (which may differ from input for CBRE).
+        template_doc_type = "STR_TREND" if template_result.template_name == "str_trend" else doc_type
         return (
             template_result.fields,
             t_confidence,
             f"template:{template_result.template_name}:v1",
-            "STR_TREND",
+            template_doc_type,
         )
 
     # Chunked extraction (Sam QA 2026-05-14, tuned pass U 2026-07):

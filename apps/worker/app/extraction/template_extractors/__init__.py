@@ -23,6 +23,20 @@ Contract:
   works unchanged.
 """
 
-from .str_trend import TemplateExtractResult, try_template_extract
+from . import cbre_horizons, str_trend
+from .str_trend import TemplateExtractResult
 
 __all__ = ["TemplateExtractResult", "try_template_extract"]
+
+
+def try_template_extract(parsed, doc_type: str) -> TemplateExtractResult | None:
+    """Dispatch to the appropriate template extractor based on doc_type.
+
+    Returns None unless the document unambiguously matches a known template
+    with high confidence. The caller falls through to LLM extraction on None.
+    """
+    if (doc_type or "").upper() in ("STR", "STR_TREND"):
+        return str_trend.try_template_extract(parsed, doc_type)
+    elif (doc_type or "").upper() == "CBRE_HORIZONS":
+        return cbre_horizons.try_template_extract(parsed, doc_type)
+    return None
