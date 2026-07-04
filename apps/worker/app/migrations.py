@@ -221,6 +221,10 @@ MIGRATIONS: list[tuple[str, str]] = [
         ON extraction_results (document_id, created_at DESC)
         """,
     ),
+    (
+        "extraction_results.add_catalog_version",
+        "ALTER TABLE extraction_results ADD COLUMN IF NOT EXISTS catalog_version INTEGER DEFAULT 1",
+    ),
     # ─── Document chunks (context store, Phase 3) ────────────────────
     # Try to enable pgvector. Idempotent — already-installed extensions
     # are a no-op. Failing this migration (e.g. on a managed Postgres
@@ -1198,6 +1202,10 @@ SQLITE_MIGRATIONS: list[tuple[str, str]] = [
         CREATE INDEX IF NOT EXISTS idx_extraction_results_document
         ON extraction_results (document_id, created_at DESC)
         """,
+    ),
+    (
+        "extraction_results.add_catalog_version",
+        "ALTER TABLE extraction_results ADD COLUMN IF NOT EXISTS catalog_version INTEGER DEFAULT 1",
     ),
     (
         "model_calls.create_table",

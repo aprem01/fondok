@@ -4379,15 +4379,19 @@ async def _run_extraction_pipeline_inner(
                         )
 
             ext_id = uuid4()
+            # Compress fields to terse format if enabled
+            from ..extraction.terse_schema import compress_extraction_result, CATALOG_VERSION
+            terse_fields, catalog_version = compress_extraction_result(fields)
+
             await session.execute(
                 text(
                     """
                     INSERT INTO extraction_results (
                         id, document_id, deal_id, tenant_id,
-                        fields, confidence_report, agent_version, created_at
+                        fields, confidence_report, agent_version, catalog_version, created_at
                     ) VALUES (
                         :id, :doc, :deal, :tenant,
-                        :fields, :cr, :ver, :created
+                        :fields, :cr, :ver, :cv, :created
                     )
                     """
                 ),
@@ -4396,9 +4400,10 @@ async def _run_extraction_pipeline_inner(
                     "doc": doc_id,
                     "deal": deal_id,
                     "tenant": tenant_id,
-                    "fields": json.dumps(fields),
+                    "fields": json.dumps(terse_fields),
                     "cr": json.dumps(confidence),
                     "ver": agent_version,
+                    "cv": catalog_version,
                     "created": _now(),
                 },
             )

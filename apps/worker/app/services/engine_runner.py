@@ -1370,7 +1370,7 @@ async def _load_t12_revenue_actuals(
             text(
                 # tenant-scope predicate required by tenant_middleware
                 """
-                SELECT er.fields, d.doc_type
+                SELECT er.fields, d.doc_type, er.catalog_version
                   FROM extraction_results er
                   JOIN documents d ON d.id = er.document_id
                  WHERE er.deal_id = :deal
@@ -1387,28 +1387,35 @@ async def _load_t12_revenue_actuals(
 
     # Rank-then-merge so a true annual T-12 wins over a YTD-monthly upload
     # even when the monthly was extracted later.
+    from ..extraction.terse_schema import expand_extraction_result
+    import asyncio
     actuals: dict[str, float] = {}
-    for raw_fields, _doc_type in _rank_pnl_rows(rows.fetchall()):
-        for f in raw_fields:
-            if not isinstance(f, dict):
-                continue
-            name = (f.get("field_name") or "").strip().lower()
-            value = f.get("value")
-            if not name or not isinstance(value, (int, float)):
-                continue
-            canonical = _T12_REVENUE_FIELD_ALIASES.get(name)
-            if canonical is None:
-                tail = name.rsplit(".", 1)[-1] if "." in name else name
-                canonical = _T12_REVENUE_FIELD_ALIASES.get(tail)
-            if canonical is None or canonical in actuals:
-                continue
-            v = float(value)
-            if canonical == "occupancy":
-                # Extractors emit either a 0..1 ratio or a percent.
-                if v > 1.0:
-                    v = v / 100.0
-                v = max(0.0, min(0.99, v))
-            actuals[canonical] = v
+    for row in rows.fetchall():
+        raw_fields, _doc_type, catalog_version = row[0], row[1], row[2] if len(row) > 2 else None
+        # Expand terse fields if needed
+        if raw_fields and isinstance(raw_fields, list) and raw_fields and "fid" in raw_fields[0]:
+            raw_fields = asyncio.run(expand_extraction_result(raw_fields, catalog_version))
+        for ranked_fields, _ in _rank_pnl_rows([(raw_fields, _doc_type)]):
+            for f in ranked_fields:
+                if not isinstance(f, dict):
+                    continue
+                name = (f.get("field_name") or "").strip().lower()
+                value = f.get("value")
+                if not name or not isinstance(value, (int, float)):
+                    continue
+                canonical = _T12_REVENUE_FIELD_ALIASES.get(name)
+                if canonical is None:
+                    tail = name.rsplit(".", 1)[-1] if "." in name else name
+                    canonical = _T12_REVENUE_FIELD_ALIASES.get(tail)
+                if canonical is None or canonical in actuals:
+                    continue
+                v = float(value)
+                if canonical == "occupancy":
+                    # Extractors emit either a 0..1 ratio or a percent.
+                    if v > 1.0:
+                        v = v / 100.0
+                    v = max(0.0, min(0.99, v))
+                actuals[canonical] = v
     return actuals
 
 
@@ -1433,7 +1440,7 @@ async def _load_t12_expense_actuals(
             text(
                 # tenant-scope predicate required by tenant_middleware
                 """
-                SELECT er.fields, d.doc_type
+                SELECT er.fields, d.doc_type, er.catalog_version
                   FROM extraction_results er
                   JOIN documents d ON d.id = er.document_id
                  WHERE er.deal_id = :deal
@@ -1450,34 +1457,41 @@ async def _load_t12_expense_actuals(
 
     # Rank-then-merge so an annual T-12's expense lines win over a
     # partial-year YTD extract that's missing some buckets.
+    from ..extraction.terse_schema import expand_extraction_result
+    import asyncio
     actuals: dict[str, float] = {}
-    for raw_fields, _doc_type in _rank_pnl_rows(rows.fetchall()):
-        for f in raw_fields:
-            if not isinstance(f, dict):
-                continue
-            name = (f.get("field_name") or "").strip().lower()
-            value = f.get("value")
-            if not name or not isinstance(value, (int, float)):
-                continue
-            canonical = _T12_EXPENSE_FIELD_ALIASES.get(name)
-            if canonical is None:
-                # Try the last segment of a dotted path as a fallback.
-                tail = name.rsplit(".", 1)[-1] if "." in name else name
-                canonical = _T12_EXPENSE_FIELD_ALIASES.get(tail)
-            if canonical is None or canonical in actuals:
-                continue
-            v = float(value)
-            # Zero-leak guard (Eshan's NOI bug): every real hotel has
-            # admin & general, sales & marketing, utilities, property
-            # ops, mgmt fee, FF&E reserve, fixed charges. Extractor
-            # emits 0.0 when it can't find the line. If we honored that
-            # zero, the engine wrote it into the projection P&L and NOI
-            # collapsed to ~100% of revenue. Drop zeros and let the
-            # USALI ratio fallback supply the missing line. Negative
-            # values are nonsense for expenses.
-            if v <= 0.0:
-                continue
-            actuals[canonical] = v
+    for row in rows.fetchall():
+        raw_fields, _doc_type, catalog_version = row[0], row[1], row[2] if len(row) > 2 else None
+        # Expand terse fields if needed
+        if raw_fields and isinstance(raw_fields, list) and raw_fields and "fid" in raw_fields[0]:
+            raw_fields = asyncio.run(expand_extraction_result(raw_fields, catalog_version))
+        for ranked_fields, _ in _rank_pnl_rows([(raw_fields, _doc_type)]):
+            for f in ranked_fields:
+                if not isinstance(f, dict):
+                    continue
+                name = (f.get("field_name") or "").strip().lower()
+                value = f.get("value")
+                if not name or not isinstance(value, (int, float)):
+                    continue
+                canonical = _T12_EXPENSE_FIELD_ALIASES.get(name)
+                if canonical is None:
+                    # Try the last segment of a dotted path as a fallback.
+                    tail = name.rsplit(".", 1)[-1] if "." in name else name
+                    canonical = _T12_EXPENSE_FIELD_ALIASES.get(tail)
+                if canonical is None or canonical in actuals:
+                    continue
+                v = float(value)
+                # Zero-leak guard (Eshan's NOI bug): every real hotel has
+                # admin & general, sales & marketing, utilities, property
+                # ops, mgmt fee, FF&E reserve, fixed charges. Extractor
+                # emits 0.0 when it can't find the line. If we honored that
+                # zero, the engine wrote it into the projection P&L and NOI
+                # collapsed to ~100% of revenue. Drop zeros and let the
+                # USALI ratio fallback supply the missing line. Negative
+                # values are nonsense for expenses.
+                if v <= 0.0:
+                    continue
+                actuals[canonical] = v
     return actuals
 
 
