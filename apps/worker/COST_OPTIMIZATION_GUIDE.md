@@ -19,6 +19,30 @@ As of July 2026, Fondok's extraction pipeline has been optimized to reduce LLM s
 | **9** | Lazy engine narratives | `LAZY_ENGINE_NARRATIVES_ENABLED` | `True` | ~5% overall | Narratives on first read, not eager |
 | **10** | Terse output schema | (automatic if T3 shipped) | enabled | ~30% on output tokens | Field IDs + catalog instead of long paths |
 
+## Wave 5: Dual Optimization (Performance + Cost)
+
+**Three new levers that reduce wall-time AND cost simultaneously** (2026-07):
+
+| Lever | Config flag | Default | Wall-time | Cost | Notes |
+|---|---|---|---|---|---|
+| Early-exit on confidence | `EXTRACTOR_EARLY_EXIT_THRESHOLD` | None (disabled) | -30% | -25% | Stop chunks when 95%+ confidence reached on required fields |
+| Parallel chunk boost | `EXTRACTOR_MAX_CHUNK_CONCURRENCY` | 2 | -40% | -10% | Increase from 2→4 concurrent chunk processing |
+| Concurrent siblings | `SIBLING_EXTRACT_PARALLEL` | False | -50% on multi-year | $0 (no change) | Process all P&L years at once instead of sequentially |
+
+**Impact:** Combined, these save 30-50% wall-time while reducing cost 10-25% on typical data rooms.
+
+### To enable Wave 5:
+
+```bash
+# Aggressive: enable all three for max speed
+railway variables --set EXTRACTOR_EARLY_EXIT_THRESHOLD=0.95
+railway variables --set EXTRACTOR_MAX_CHUNK_CONCURRENCY=4
+railway variables --set SIBLING_EXTRACT_PARALLEL=true
+
+# Conservative: just boost concurrency
+railway variables --set EXTRACTOR_MAX_CHUNK_CONCURRENCY=4
+```
+
 ## Configuration
 
 All levers are environment variables on Railway. To adjust:

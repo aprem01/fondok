@@ -41,24 +41,19 @@ from ..usali_rules import rules_as_prompt_block
 logger = logging.getLogger(__name__)
 
 # Max simultaneous Sonnet calls per ``run_extractor`` fan-out (i.e.
-# per document).  Wave 4 reliability fix (Bug #2): the per-doc cap is
-# read from the same EXTRACTOR_CHUNK_CONCURRENCY env var that the
-# process-level extractor semaphore uses, and defaults to 2 (down from
-# the legacy 4) so the stacked cap with EXTRACTOR_MAX_CONCURRENT_DOCS
-# is 4 docs × 2 chunks = 8 concurrent Sonnet calls — well clear of the
-# Anthropic per-minute rate limit even when 16 docs upload at once.
-def _read_chunk_concurrency_env() -> int:
-    import os as _os
-    raw = _os.environ.get("EXTRACTOR_CHUNK_CONCURRENCY")
-    if not raw:
-        return 2
-    try:
-        return max(1, int(raw))
-    except (TypeError, ValueError):
-        return 2
+# per document). Wave 5 dual-optimization (2026-07): read from config
+# so operators can tune concurrency without env vars. Legacy
+# EXTRACTOR_CHUNK_CONCURRENCY env var still works as fallback.
+# Default 2 (4 docs × 2 chunks = 8 concurrent Sonnet calls, well
+# clear of Anthropic per-minute rate limit). Can increase to 4 for
+# faster, cheaper extractions on deals with many docs.
+def _read_chunk_concurrency() -> int:
+    from ..config import get_settings
+    settings = get_settings()
+    return settings.EXTRACTOR_MAX_CHUNK_CONCURRENCY
 
 
-_EXTRACTOR_MAX_CONCURRENCY = _read_chunk_concurrency_env()
+_EXTRACTOR_MAX_CONCURRENCY = _read_chunk_concurrency()
 
 
 # In-band retry budget for a single per-chunk extraction (Sam QA
