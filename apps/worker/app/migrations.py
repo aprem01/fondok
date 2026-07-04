@@ -621,6 +621,18 @@ MIGRATIONS: list[tuple[str, str]] = [
         ON engine_outputs (run_id)
         """,
     ),
+    (
+        "engine_outputs.add_narrative_columns",
+        """
+        ALTER TABLE engine_outputs ADD COLUMN IF NOT EXISTS narrative TEXT
+        """,
+    ),
+    (
+        "engine_outputs.add_narrative_generated_at",
+        """
+        ALTER TABLE engine_outputs ADD COLUMN IF NOT EXISTS narrative_generated_at TIMESTAMPTZ
+        """,
+    ),
     # ─── Due Diligence broker questions (Lovable parity) ────────────
     # The Due Diligence sub-tab on the P&L page renders a list of
     # AI-generated broker questions with source citations, priority,

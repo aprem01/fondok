@@ -193,6 +193,14 @@ class Settings(BaseSettings):
     # false only changes cost, never coverage.
     TEMPLATE_EXTRACTION_ENABLED: bool = Field(default=True)
 
+    # Cost-optimization TASK T5 (2026-07): lazy engine narratives.
+    # When True (default), engine narrative generation is deferred until
+    # first read (via ``get_or_generate_narrative``). Engines store
+    # ``narrative=NULL`` and ``narrative_generated_at=NULL`` on every run.
+    # Flip to False to revert to eager narrative generation (for debugging
+    # or testing legacy behavior).
+    LAZY_ENGINE_NARRATIVES_ENABLED: bool = Field(default=True)
+
     # ── Tenancy ─────────────────────────────────────────────────────
     # UUID-shaped string for dev. Real tenants are provisioned in DB.
     DEFAULT_TENANT_ID: str = Field(
