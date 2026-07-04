@@ -94,6 +94,16 @@ class Settings(BaseSettings):
     # the full extractor for one deploy.
     EXTRACTION_CACHE_ENABLED: bool = Field(default=True)
 
+    # Cost-opt TASK T2 (2026-07): sibling-template extraction reuse.
+    # When True (default), a workbook whose template fingerprint matches
+    # a previously LLM-extracted doc on the SAME tenant gets its fields
+    # located deterministically via the learned label-anchored cell
+    # mapping — zero LLM cost AND zero schema drift across sibling
+    # years. Guarded by a coverage floor + USALI identity-score gate;
+    # any gate failure or exception falls back to the normal LLM
+    # extraction. See ``app/services/sibling_template.py``.
+    SIBLING_TEMPLATE_REUSE_ENABLED: bool = Field(default=True)
+
     # Cost-optimization pass U (2026-07): chunk-size tuning for the
     # extractor. Fewer / larger chunks reduce per-call system-prompt
     # overhead (prompt caching mitigates but doesn't erase it) at the

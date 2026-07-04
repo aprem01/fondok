@@ -165,6 +165,41 @@ MIGRATIONS: list[tuple[str, str]] = [
         "ALTER TABLE documents ADD COLUMN IF NOT EXISTS parser TEXT",
     ),
     (
+        # TASK T2 — sibling-template reuse. Workbook template
+        # fingerprint (sorted digit-stripped visible sheet names,
+        # ``tplv1:<sha256>``) populated at parse time. NULL for
+        # non-workbook docs and legacy parses. See
+        # ``app/services/sibling_template.py``.
+        "documents.add_template_fingerprint",
+        "ALTER TABLE documents ADD COLUMN IF NOT EXISTS template_fingerprint TEXT",
+    ),
+    (
+        # TASK T2 — one learned cell-mapping per (tenant, fingerprint).
+        # ``mapping_json`` carries the label-anchored entries plus the
+        # source doc's USALI score for the sibling verification gate.
+        # Kept separate from extraction_results so the pre-LLM dispatch
+        # lookup is O(1) and pipeline-version cache bumps (";pv=vN")
+        # never invalidate still-valid anchors.
+        "template_mappings.create_table",
+        """
+        CREATE TABLE IF NOT EXISTS template_mappings (
+            id             UUID PRIMARY KEY,
+            tenant_id      UUID NOT NULL,
+            fingerprint    TEXT NOT NULL,
+            source_doc_id  UUID,
+            mapping_json   JSONB NOT NULL,
+            created_at     TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        )
+        """,
+    ),
+    (
+        "template_mappings.uq_tenant_fingerprint",
+        """
+        CREATE UNIQUE INDEX IF NOT EXISTS uq_template_mappings_tenant_fp
+        ON template_mappings (tenant_id, fingerprint)
+        """,
+    ),
+    (
         "extraction_results.create_table",
         """
         CREATE TABLE IF NOT EXISTS extraction_results (
@@ -1102,6 +1137,36 @@ SQLITE_MIGRATIONS: list[tuple[str, str]] = [
             parser           TEXT,
             extraction_data  TEXT
         )
+        """,
+    ),
+    (
+        # TASK T2 — SQLite mirror of the Postgres ALTER above. Legacy
+        # dev DBs created before the column landed get it added here;
+        # fresh DBs get it via the add-column too (the runner swallows
+        # duplicate-column errors, same as every other sqlite ALTER).
+        "documents.add_template_fingerprint_sqlite",
+        "ALTER TABLE documents ADD COLUMN template_fingerprint TEXT",
+    ),
+    (
+        # TASK T2 — sibling-template mapping store (see the Postgres
+        # entry for semantics). JSON serialized as TEXT on SQLite.
+        "template_mappings.create_table",
+        """
+        CREATE TABLE IF NOT EXISTS template_mappings (
+            id             TEXT PRIMARY KEY,
+            tenant_id      TEXT NOT NULL,
+            fingerprint    TEXT NOT NULL,
+            source_doc_id  TEXT,
+            mapping_json   TEXT NOT NULL,
+            created_at     TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+        )
+        """,
+    ),
+    (
+        "template_mappings.uq_tenant_fingerprint",
+        """
+        CREATE UNIQUE INDEX IF NOT EXISTS uq_template_mappings_tenant_fp
+        ON template_mappings (tenant_id, fingerprint)
         """,
     ),
     (

@@ -466,13 +466,21 @@ def _parse_with_openpyxl(
             for row in sheet.iter_rows(values_only=True):
                 rendered = [_format_xls_cell(v) for v in row]
                 rows.append(rendered)
-            pages.append(
-                _xls_sheet_to_page(
-                    sheet_index=idx,
-                    sheet_name=sheet.title,
-                    rows=rows,
-                )
+            page = _xls_sheet_to_page(
+                sheet_index=idx,
+                sheet_name=sheet.title,
+                rows=rows,
             )
+            # Sheet visibility ("visible" / "hidden" / "veryHidden") —
+            # the sibling-template fingerprint skips non-visible sheets
+            # (SAP BPC/EVDRE workbooks carry dozens of veryHidden
+            # GUID-named macro sheets that would break template
+            # grouping). Additive metadata; other consumers ignore it.
+            try:
+                page.metadata["sheet_state"] = sheet.sheet_state
+            except Exception:  # noqa: BLE001 — visibility is best-effort
+                pass
+            pages.append(page)
     finally:
         try:
             wb.close()

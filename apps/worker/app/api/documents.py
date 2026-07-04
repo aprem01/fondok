@@ -1720,6 +1720,24 @@ async def _run_parse_and_extract(
         )
         return
 
+    # Template fingerprint (TASK T2 — sibling-template reuse). Computed
+    # from the parsed grid at parse time so the extraction dispatch can
+    # find same-template siblings with a plain equality lookup. NULL for
+    # non-workbook docs. Best-effort — a fingerprint failure must never
+    # block the parse.
+    template_fingerprint: str | None = None
+    try:
+        from ..services.sibling_template import compute_template_fingerprint
+
+        template_fingerprint = compute_template_fingerprint(
+            parsed.pages, parser=parsed.parser
+        )
+    except Exception:  # noqa: BLE001 — fingerprint is additive intelligence
+        logger.exception(
+            "parse_async: template fingerprint failed for doc=%s (non-fatal)",
+            doc_id,
+        )
+
     # Persist parse result and flip status to UPLOADED.
     async with factory() as s:
         try:
@@ -1732,6 +1750,7 @@ async def _run_parse_and_extract(
                        SET status = :s,
                            page_count = :pc,
                            parser = :parser,
+                           template_fingerprint = :tfp,
                            extraction_data = :data
                      WHERE id = :id
                        AND tenant_id = :tenant
@@ -1741,6 +1760,7 @@ async def _run_parse_and_extract(
                     "s": DOC_STATUS_UPLOADED,
                     "pc": page_count_to_persist,
                     "parser": parser_label_to_persist,
+                    "tfp": template_fingerprint,
                     "data": json.dumps(extraction_data_to_persist),
                     "id": doc_id,
                     "tenant": str(tenant_id),
@@ -4294,21 +4314,69 @@ async def _run_extraction_pipeline_inner(
                 agent_version = _tag_agent_version("mock-evals")
                 _record_cache_miss(tenant_id)
             else:
-                (
-                    fields,
-                    confidence,
-                    agent_version,
-                    classified_doc_type,
-                ) = await _run_graph_extraction(
-                    deal_id=deal_id,
-                    tenant_id=tenant_id,
-                    storage_key=storage_key,
-                    doc_id=doc_id,
-                    filename=filename,
-                    extraction_data=extraction_data,
-                )
-                agent_version = _tag_agent_version(agent_version)
-                _record_cache_miss(tenant_id)
+                # ── Sibling-template reuse (TASK T2) ────────────────
+                # Before spending LLM tokens: if a cell-mapping was
+                # learned from a same-template workbook on this tenant
+                # (same ``documents.template_fingerprint``), apply it
+                # deterministically. Gated on coverage + USALI identity
+                # score inside ``try_sibling_reuse``; any gate failure
+                # or exception returns None and we fall through to the
+                # normal LLM chain. Zero LLM cost on a HIT — and zero
+                # schema drift, because the sibling reuses the source
+                # doc's exact field names.
+                sibling_hit = None
+                if settings.SIBLING_TEMPLATE_REUSE_ENABLED:
+                    from ..services.sibling_template import (
+                        SIBLING_AGENT_VERSION_BASE,
+                        try_sibling_reuse,
+                    )
+
+                    sibling_hit = await try_sibling_reuse(
+                        session,
+                        tenant_id=tenant_id,
+                        doc_id=doc_id,
+                        extraction_data=extraction_data,
+                    )
+                if sibling_hit is not None:
+                    fields, confidence, sibling_doc_type = sibling_hit
+                    classified_doc_type = sibling_doc_type
+                    agent_version = _tag_agent_version(
+                        SIBLING_AGENT_VERSION_BASE
+                    )
+                    _record_cache_miss(tenant_id)
+                else:
+                    (
+                        fields,
+                        confidence,
+                        agent_version,
+                        classified_doc_type,
+                    ) = await _run_graph_extraction(
+                        deal_id=deal_id,
+                        tenant_id=tenant_id,
+                        storage_key=storage_key,
+                        doc_id=doc_id,
+                        filename=filename,
+                        extraction_data=extraction_data,
+                    )
+                    agent_version = _tag_agent_version(agent_version)
+                    _record_cache_miss(tenant_id)
+                    # Learn a template mapping from this fresh LLM
+                    # extraction so the NEXT same-template sibling can
+                    # skip the LLM. Best-effort + idempotent (one
+                    # mapping per tenant+fingerprint); never raises.
+                    if fields:
+                        from ..services.sibling_template import (
+                            maybe_learn_mapping,
+                        )
+
+                        await maybe_learn_mapping(
+                            session,
+                            tenant_id=tenant_id,
+                            doc_id=doc_id,
+                            doc_type=classified_doc_type,
+                            fields=fields,
+                            extraction_data=extraction_data,
+                        )
 
             ext_id = uuid4()
             await session.execute(
