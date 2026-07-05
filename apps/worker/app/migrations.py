@@ -1437,7 +1437,15 @@ SQLITE_MIGRATIONS: list[tuple[str, str]] = [
             error           TEXT,
             started_at      TEXT NOT NULL,
             completed_at    TEXT,
-            runtime_ms      INTEGER
+            runtime_ms      INTEGER,
+            -- Lazy narratives (T5, 2026-07-04). The PG side got these
+            -- via engine_outputs.add_narrative_columns ALTERs, but
+            -- that used PG-only "ADD COLUMN IF NOT EXISTS" and was
+            -- never mirrored here — sqlite test DBs lacked the
+            -- columns and engine_narratives crashed with
+            -- "no such column: narrative" (hotfix 2026-07-05).
+            narrative               TEXT,
+            narrative_generated_at  TEXT
         )
         """,
     ),

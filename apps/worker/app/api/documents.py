@@ -4379,9 +4379,22 @@ async def _run_extraction_pipeline_inner(
                         )
 
             ext_id = uuid4()
-            # Compress fields to terse format if enabled
-            from ..extraction.terse_schema import compress_extraction_result, CATALOG_VERSION
-            terse_fields, catalog_version = compress_extraction_result(fields)
+            # HOTFIX 2026-07-05: terse compression-on-write shipped
+            # ungated in 4fa867b while every downstream consumer of
+            # extraction_results.fields (get_extraction response
+            # model, memo analyst, USALI scorer, QA overrides,
+            # sibling-template learner) still reads long-form
+            # field_name rows — new extractions 500'd the Validation
+            # screen and silently produced zero fields everywhere
+            # else. Gate the write behind a flag that defaults OFF
+            # until every read path expands terse (or reads through
+            # a shared expander). Zero terse rows existed in prod at
+            # gate time, so no backfill needed.
+            if get_settings().TERSE_OUTPUT_SCHEMA_ENABLED:
+                from ..extraction.terse_schema import compress_extraction_result
+                terse_fields, catalog_version = compress_extraction_result(fields)
+            else:
+                terse_fields, catalog_version = fields, None
 
             await session.execute(
                 text(

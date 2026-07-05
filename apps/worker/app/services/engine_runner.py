@@ -1182,7 +1182,12 @@ def _rank_pnl_rows(rows: list[Any]) -> list[tuple[list[Any], str]]:
     """
     parsed: list[tuple[int, int, list[Any], str]] = []
     for idx, r in enumerate(rows):
-        m = r._mapping
+        # Accept both SQLAlchemy Row objects and plain dict shims —
+        # the terse-expansion call sites pre-process rows (await the
+        # async expander) and hand us {"fields", "doc_type"} dicts
+        # (hotfix 2026-07-05; 4fa867b passed bare tuples here which
+        # crashed on ._mapping for every P&L deal).
+        m = r._mapping if hasattr(r, "_mapping") else r
         raw_fields = m["fields"]
         if isinstance(raw_fields, str):
             try:
@@ -1387,35 +1392,49 @@ async def _load_t12_revenue_actuals(
 
     # Rank-then-merge so a true annual T-12 wins over a YTD-monthly upload
     # even when the monthly was extracted later.
+    # HOTFIX 2026-07-05: 4fa867b fed bare (fields, doc_type) tuples into
+    # _rank_pnl_rows one row at a time — crashing on ._mapping AND
+    # destroying the rank-across-rows semantics — and called
+    # asyncio.run() inside this async function (RuntimeError on any
+    # terse row). Restored: expand terse first (await), then rank all
+    # rows together via dict shims.
     from ..extraction.terse_schema import expand_extraction_result
-    import asyncio
-    actuals: dict[str, float] = {}
+
+    shims: list[dict[str, Any]] = []
     for row in rows.fetchall():
-        raw_fields, _doc_type, catalog_version = row[0], row[1], row[2] if len(row) > 2 else None
-        # Expand terse fields if needed
-        if raw_fields and isinstance(raw_fields, list) and raw_fields and "fid" in raw_fields[0]:
-            raw_fields = asyncio.run(expand_extraction_result(raw_fields, catalog_version))
-        for ranked_fields, _ in _rank_pnl_rows([(raw_fields, _doc_type)]):
-            for f in ranked_fields:
-                if not isinstance(f, dict):
-                    continue
-                name = (f.get("field_name") or "").strip().lower()
-                value = f.get("value")
-                if not name or not isinstance(value, (int, float)):
-                    continue
-                canonical = _T12_REVENUE_FIELD_ALIASES.get(name)
-                if canonical is None:
-                    tail = name.rsplit(".", 1)[-1] if "." in name else name
-                    canonical = _T12_REVENUE_FIELD_ALIASES.get(tail)
-                if canonical is None or canonical in actuals:
-                    continue
-                v = float(value)
-                if canonical == "occupancy":
-                    # Extractors emit either a 0..1 ratio or a percent.
-                    if v > 1.0:
-                        v = v / 100.0
-                    v = max(0.0, min(0.99, v))
-                actuals[canonical] = v
+        raw_fields = row[0]
+        catalog_version = row[2] if len(row) > 2 else None
+        if (
+            isinstance(raw_fields, list)
+            and raw_fields
+            and isinstance(raw_fields[0], dict)
+            and "fid" in raw_fields[0]
+        ):
+            raw_fields = await expand_extraction_result(raw_fields, catalog_version)
+        shims.append({"fields": raw_fields, "doc_type": row[1]})
+
+    actuals: dict[str, float] = {}
+    for ranked_fields, _ in _rank_pnl_rows(shims):
+        for f in ranked_fields:
+            if not isinstance(f, dict):
+                continue
+            name = (f.get("field_name") or "").strip().lower()
+            value = f.get("value")
+            if not name or not isinstance(value, (int, float)):
+                continue
+            canonical = _T12_REVENUE_FIELD_ALIASES.get(name)
+            if canonical is None:
+                tail = name.rsplit(".", 1)[-1] if "." in name else name
+                canonical = _T12_REVENUE_FIELD_ALIASES.get(tail)
+            if canonical is None or canonical in actuals:
+                continue
+            v = float(value)
+            if canonical == "occupancy":
+                # Extractors emit either a 0..1 ratio or a percent.
+                if v > 1.0:
+                    v = v / 100.0
+                v = max(0.0, min(0.99, v))
+            actuals[canonical] = v
     return actuals
 
 
@@ -1457,41 +1476,51 @@ async def _load_t12_expense_actuals(
 
     # Rank-then-merge so an annual T-12's expense lines win over a
     # partial-year YTD extract that's missing some buckets.
+    # HOTFIX 2026-07-05: same restore as _load_t12_revenue_actuals —
+    # see comment there (4fa867b tuple/_mapping + asyncio.run bugs).
     from ..extraction.terse_schema import expand_extraction_result
-    import asyncio
-    actuals: dict[str, float] = {}
+
+    shims: list[dict[str, Any]] = []
     for row in rows.fetchall():
-        raw_fields, _doc_type, catalog_version = row[0], row[1], row[2] if len(row) > 2 else None
-        # Expand terse fields if needed
-        if raw_fields and isinstance(raw_fields, list) and raw_fields and "fid" in raw_fields[0]:
-            raw_fields = asyncio.run(expand_extraction_result(raw_fields, catalog_version))
-        for ranked_fields, _ in _rank_pnl_rows([(raw_fields, _doc_type)]):
-            for f in ranked_fields:
-                if not isinstance(f, dict):
-                    continue
-                name = (f.get("field_name") or "").strip().lower()
-                value = f.get("value")
-                if not name or not isinstance(value, (int, float)):
-                    continue
-                canonical = _T12_EXPENSE_FIELD_ALIASES.get(name)
-                if canonical is None:
-                    # Try the last segment of a dotted path as a fallback.
-                    tail = name.rsplit(".", 1)[-1] if "." in name else name
-                    canonical = _T12_EXPENSE_FIELD_ALIASES.get(tail)
-                if canonical is None or canonical in actuals:
-                    continue
-                v = float(value)
-                # Zero-leak guard (Eshan's NOI bug): every real hotel has
-                # admin & general, sales & marketing, utilities, property
-                # ops, mgmt fee, FF&E reserve, fixed charges. Extractor
-                # emits 0.0 when it can't find the line. If we honored that
-                # zero, the engine wrote it into the projection P&L and NOI
-                # collapsed to ~100% of revenue. Drop zeros and let the
-                # USALI ratio fallback supply the missing line. Negative
-                # values are nonsense for expenses.
-                if v <= 0.0:
-                    continue
-                actuals[canonical] = v
+        raw_fields = row[0]
+        catalog_version = row[2] if len(row) > 2 else None
+        if (
+            isinstance(raw_fields, list)
+            and raw_fields
+            and isinstance(raw_fields[0], dict)
+            and "fid" in raw_fields[0]
+        ):
+            raw_fields = await expand_extraction_result(raw_fields, catalog_version)
+        shims.append({"fields": raw_fields, "doc_type": row[1]})
+
+    actuals: dict[str, float] = {}
+    for ranked_fields, _ in _rank_pnl_rows(shims):
+        for f in ranked_fields:
+            if not isinstance(f, dict):
+                continue
+            name = (f.get("field_name") or "").strip().lower()
+            value = f.get("value")
+            if not name or not isinstance(value, (int, float)):
+                continue
+            canonical = _T12_EXPENSE_FIELD_ALIASES.get(name)
+            if canonical is None:
+                # Try the last segment of a dotted path as a fallback.
+                tail = name.rsplit(".", 1)[-1] if "." in name else name
+                canonical = _T12_EXPENSE_FIELD_ALIASES.get(tail)
+            if canonical is None or canonical in actuals:
+                continue
+            v = float(value)
+            # Zero-leak guard (Eshan's NOI bug): every real hotel has
+            # admin & general, sales & marketing, utilities, property
+            # ops, mgmt fee, FF&E reserve, fixed charges. Extractor
+            # emits 0.0 when it can't find the line. If we honored that
+            # zero, the engine wrote it into the projection P&L and NOI
+            # collapsed to ~100% of revenue. Drop zeros and let the
+            # USALI ratio fallback supply the missing line. Negative
+            # values are nonsense for expenses.
+            if v <= 0.0:
+                continue
+            actuals[canonical] = v
     return actuals
 
 

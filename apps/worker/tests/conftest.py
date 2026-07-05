@@ -1,10 +1,12 @@
 """Pytest configuration and fixtures for Fondok worker tests."""
 
 import asyncio
+
 import pytest
-from sqlalchemy.ext.asyncio import AsyncSession
-from app.database import Base, get_engine, get_session_factory
-from app.migrations import MIGRATIONS
+from sqlalchemy import text
+
+from app.database import get_engine
+from app.migrations import SQLITE_MIGRATIONS
 
 
 @pytest.fixture(scope="session")
@@ -17,55 +19,53 @@ def event_loop():
 
 @pytest.fixture(scope="session", autouse=True)
 async def setup_test_database():
-    """Set up test database schema by running all migrations."""
+    """Set up the shared test schema by running the sqlite migrations.
+
+    HOTFIX 2026-07-05: the original version (d632c37) passed raw
+    strings to ``conn.execute`` — SQLAlchemy 2.x requires ``text()``,
+    so every statement raised AttributeError. Setup swallowed those in
+    a bare ``except`` (i.e. the whole fixture silently no-op'd), while
+    teardown had NO try/except and crashed the alphabetically-last
+    test module's teardown. It also iterated the Postgres-flavored
+    ``MIGRATIONS`` list against sqlite; the sqlite set exists
+    precisely for this.
+    """
     engine = get_engine()
     async with engine.begin() as conn:
-        # Run all migrations to set up the schema
-        # MIGRATIONS is a list of (name, statement) tuples
-        for name, stmt in MIGRATIONS:
-            # SQLite doesn't support IF NOT EXISTS on ALTER TABLE ADD COLUMN
-            if "ALTER TABLE" in stmt and "IF NOT EXISTS" in stmt:
-                # Skip for now; we'll add columns manually after CREATE TABLE
-                continue
+        for _name, stmt in SQLITE_MIGRATIONS:
             try:
-                await conn.execute(stmt)
+                await conn.execute(text(stmt))
             except Exception:
-                # Some migrations may fail if they're idempotent (e.g., CREATE TABLE IF NOT EXISTS)
-                # or if the table already exists. That's OK — we just want the schema set up.
-                pass
-
-        # Manually add new columns for SQLite (since ALTER TABLE IF NOT EXISTS doesn't work)
-        # These match the new columns from T3, T5, and other recent migrations
-        new_columns = [
-            ("extraction_results", "catalog_version", "INTEGER DEFAULT 1"),
-            ("extraction_results", "template_fingerprint", "TEXT"),
-            ("documents", "template_fingerprint", "TEXT"),
-            ("engine_outputs", "narrative", "TEXT"),
-            ("engine_outputs", "narrative_generated_at", "TIMESTAMPTZ"),
-            ("template_mappings", "id", "UUID PRIMARY KEY"),  # Ensure table exists
-        ]
-
-        for table, column, col_def in new_columns:
-            try:
-                # Try to add the column; ignore if it already exists
-                await conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {col_def}")
-            except Exception:
-                # Column already exists or table doesn't exist yet, skip
+                # Idempotency: table/column may already exist because a
+                # test module created its own schema first. Best-effort.
                 pass
     yield
-    # Teardown: drop all tables after tests
-    async with engine.begin() as conn:
-        await conn.execute("DROP TABLE IF EXISTS template_mappings")
-        await conn.execute("DROP TABLE IF EXISTS engine_outputs")
-        await conn.execute("DROP TABLE IF EXISTS extraction_results")
-        await conn.execute("DROP TABLE IF EXISTS documents")
-        await conn.execute("DROP TABLE IF EXISTS deals")
-        await conn.execute("DROP TABLE IF EXISTS audit_log")
-        await conn.execute("DROP TABLE IF EXISTS model_calls")
-        await conn.execute("DROP TABLE IF EXISTS broker_questions")
-        await conn.execute("DROP TABLE IF EXISTS broker_qa_pairs")
-        await conn.execute("DROP TABLE IF EXISTS scenarios")
-        await conn.execute("DROP TABLE IF EXISTS saved_pipeline_views")
-        await conn.execute("DROP TABLE IF EXISTS pipeline_digest_schedules")
-        await conn.execute("DROP TABLE IF EXISTS portfolio_library")
-        await conn.execute("DROP TABLE IF EXISTS field_catalog")
+    # Teardown: best-effort drops. Never raise out of a session
+    # finalizer — a failed DROP must not fail the last test module.
+    drop_tables = [
+        "template_mappings",
+        "engine_outputs",
+        "extraction_results",
+        "documents",
+        "deals",
+        "audit_log",
+        "model_calls",
+        "broker_questions",
+        "broker_qa_pairs",
+        "scenarios",
+        "saved_pipeline_views",
+        "pipeline_digest_schedules",
+        "portfolio_library",
+        "field_catalog",
+        "pending_batches",
+        "due_diligence_questions",
+    ]
+    try:
+        async with engine.begin() as conn:
+            for table in drop_tables:
+                try:
+                    await conn.execute(text(f"DROP TABLE IF EXISTS {table}"))
+                except Exception:
+                    pass
+    except Exception:
+        pass
