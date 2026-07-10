@@ -202,7 +202,7 @@ async def test_memo_stream_endpoint_returns_sse(monkeypatch: pytest.MonkeyPatch)
     # Also stub the payload loader so we don't pay a fixture build cost.
     # ``session`` is now a keyword-only path the real loader uses to
     # validate inputs; the fake just ignores it.
-    async def fake_load_payload(d: str, *, session: Any = None) -> dict[str, Any]:
+    async def fake_load_payload(d: str, *, session: Any = None, tenant_id: Any = None) -> dict[str, Any]:
         return {"deal_id": d}
 
     monkeypatch.setattr(deals_module, "_load_deal_payload", fake_load_payload)

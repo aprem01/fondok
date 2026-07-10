@@ -206,7 +206,7 @@ async def test_memo_stream_emits_error_on_generator_failure(
     await _insert_deal(deal_id)
     await _insert_extracted_document(deal_id)
 
-    async def fake_load_payload(d: str, *, session: Any = None) -> Any:
+    async def fake_load_payload(d: str, *, session: Any = None, tenant_id: Any = None) -> Any:
         # Bypass the fixture builder; the analyst is mocked anyway.
         from app.agents.analyst import AnalystInput
 
@@ -285,7 +285,7 @@ async def test_memo_stream_heartbeats_during_long_runs(
     await _insert_deal(deal_id)
     await _insert_extracted_document(deal_id)
 
-    async def fake_load_payload(d: str, *, session: Any = None) -> Any:
+    async def fake_load_payload(d: str, *, session: Any = None, tenant_id: Any = None) -> Any:
         from app.agents.analyst import AnalystInput
 
         return AnalystInput(
@@ -391,7 +391,7 @@ async def test_memo_persists_after_successful_run(
     await _insert_deal(deal_id)
     await _insert_extracted_document(deal_id)
 
-    async def fake_load_payload(d: str, *, session: Any = None) -> Any:
+    async def fake_load_payload(d: str, *, session: Any = None, tenant_id: Any = None) -> Any:
         from app.agents.analyst import AnalystInput
 
         return AnalystInput(

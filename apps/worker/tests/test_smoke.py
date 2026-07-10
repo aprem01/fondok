@@ -76,20 +76,29 @@ def test_engines_importable() -> None:
 
 @pytest.mark.asyncio
 async def test_health_endpoint() -> None:
-    """GET /health returns 200."""
+    """GET /health returns 200 and reports ``ok`` once startup ran.
+
+    ``ASGITransport`` does NOT run the app's lifespan, so the startup
+    probe that populates ``usali_rules_loaded`` / ``structural_recognizer``
+    never fires and /health reports ``degraded`` (reason
+    ``usali_rules_not_probed``) — a test artifact, not a real health
+    problem. Drive the lifespan explicitly so we exercise the real
+    ``ok`` path prod actually serves (2026-07-10).
+    """
     from httpx import ASGITransport, AsyncClient
 
     from app.main import app
 
-    async with AsyncClient(
-        transport=ASGITransport(app=app), base_url="http://test"
-    ) as client:
-        r = await client.get("/health")
-        assert r.status_code == 200
-        body = r.json()
-        assert body["status"] == "ok"
-        assert "version" in body
-        assert "db" in body
+    async with app.router.lifespan_context(app):
+        async with AsyncClient(
+            transport=ASGITransport(app=app), base_url="http://test"
+        ) as client:
+            r = await client.get("/health")
+            assert r.status_code == 200
+            body = r.json()
+            assert body["status"] == "ok", body.get("degraded_reasons")
+            assert "version" in body
+            assert "db" in body
 
 
 @pytest.mark.asyncio

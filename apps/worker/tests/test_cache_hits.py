@@ -69,11 +69,12 @@ pytestmark = [
         not os.environ.get("RUN_LIVE_LLM_TESTS"),
         reason=(
             "RUN_LIVE_LLM_TESTS unset — live cache-hit test gated to "
-            "avoid burning tokens. Tracked separately: extractor cache "
-            "breakpoints are emitting 0 cache_creation_tokens against "
-            "the live Anthropic API (regression to investigate "
-            "alongside the prompt-cache rebuild). Re-enable here when "
-            "that's fixed."
+            "avoid burning tokens. NOTE (2026-07-10): the '0 "
+            "cache_creation_tokens' symptom this used to track was a "
+            "telemetry bug (langchain_anthropic 1.4 splits cache "
+            "creation into ephemeral_5m/1h keys), fixed in app/usage.py "
+            "— prompt caching itself was always working. Re-enable to "
+            "spot-check live cache behavior."
         ),
     ),
 ]

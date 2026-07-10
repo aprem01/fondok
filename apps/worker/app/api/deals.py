@@ -2315,7 +2315,17 @@ async def trigger_memo_generation(
         session, deal_id=deal_id, tenant_id=tenant_id
     )
     try:
-        payload = await _load_deal_payload(deal_id, session=session)
+        # Thread the request tenant through — without it the loader
+        # resolves the deal under DEFAULT_TENANT_ID, doesn't find a
+        # real Clerk-org deal, skips the proforma/T-12 precheck AND the
+        # real-source-doc hydration, and silently falls through to the
+        # Kimpton fixture. That means every memo for a real multi-tenant
+        # deal was being generated from SEED data, and the "no
+        # proforma → 400" guard never fired. (Surfaced by
+        # test_memo_generate_400_when_no_proforma, 2026-07-10.)
+        payload = await _load_deal_payload(
+            deal_id, session=session, tenant_id=str(tenant_id)
+        )
     except MemoInputMissing as exc:
         logger.info(
             "memo/generate: input precondition failed for deal=%s code=%s",

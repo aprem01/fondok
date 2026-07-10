@@ -17,3 +17,7 @@ apps/worker/tests/fondok-obs.db
 # are already checked in under apps/worker/tests/fixtures/ and
 # docs/data/issues/. data2/ is local reference material only.
 docs/data/data2/
+
+# test-run artifacts + agent worktrees (never source)
+evals/test-results.xml
+.claude/worktrees/
