@@ -54,13 +54,51 @@ FALLBACK_NARRATIVE = (
     "Please review the engine outputs and key metrics manually."
 )
 
+# Static persona for the narrative call. Kept as a module constant so it is
+# byte-identical across calls and therefore eligible for Anthropic prompt
+# caching when routed through ``cached_system_message_blocks`` (see
+# ``_generate_narrative_via_analyst``).
+NARRATIVE_SYSTEM_PROMPT = (
+    "You are a senior hotel acquisitions analyst. Given a financial engine's "
+    "numeric output, write a concise 1-2 sentence narrative explaining what "
+    "the numbers mean in plain English for the deal. Focus on the headline "
+    "metrics and their implications. Omit technical jargon and citations, and "
+    "keep it under 200 words."
+)
+
+
+def _content_to_text(msg: Any) -> str:
+    """Extract plain text from a LangChain ``AIMessage`` (or its ``content``).
+
+    Anthropic / Opus responses frequently arrive as a *list* of content-block
+    dicts (``[{"type": "text", "text": "..."}]``) rather than a bare string.
+    A naive ``isinstance(content, str)`` check therefore misses the common
+    case and callers fall back to ``str(msg)`` — persisting the full
+    ``AIMessage`` repr as the narrative. This helper mirrors the extraction
+    pattern used in ``app/agents/extractor.py`` (no shared helper exists to
+    import): return the concatenated text of the text-type blocks, and never
+    return the message repr.
+    """
+    content = getattr(msg, "content", msg)
+    if isinstance(content, str):
+        return content
+    if isinstance(content, list):
+        return "".join(
+            b.get("text", "")
+            for b in content
+            if isinstance(b, dict) and b.get("type") == "text"
+        )
+    # Neither str nor a content-block list — return empty rather than the
+    # AIMessage repr so a malformed response never gets stored verbatim.
+    return ""
+
 
 async def get_or_generate_narrative(
     session: AsyncSession,
     engine_output_id: UUID,
     engine_name: str,
     math_payload: dict[str, Any],
-    tenant_id: str | None = None,
+    tenant_id: str,
 ) -> str:
     """Get or generate the narrative for an engine output.
 
@@ -73,7 +111,9 @@ async def get_or_generate_narrative(
         engine_output_id: UUID of the engine_outputs row.
         engine_name: Name of the engine (e.g., 'returns', 'expense').
         math_payload: The engine's ``outputs`` JSONB (numbers, metrics).
-        tenant_id: Tenant ID for scope (optional; inferred from DB if needed).
+        tenant_id: Tenant ID for scope. Required — ``engine_outputs`` is a
+            tenant-scoped table, so every query MUST carry a tenant predicate
+            or the tenant middleware trips a CRITICAL.
 
     Returns:
         The narrative string (either cached or freshly generated).
@@ -94,9 +134,10 @@ async def get_or_generate_narrative(
                 SELECT narrative, narrative_generated_at
                   FROM engine_outputs
                  WHERE id = :id
+                   AND tenant_id = :tenant
                 """
             ),
-            {"id": str(engine_output_id)},
+            {"id": str(engine_output_id), "tenant": tenant_id},
         )
         row = result.first()
         if row is None:
@@ -139,10 +180,12 @@ async def get_or_generate_narrative(
                    SET narrative = :narrative,
                        narrative_generated_at = :ts
                  WHERE id = :id
+                   AND tenant_id = :tenant
                 """
             ),
             {
                 "id": str(engine_output_id),
+                "tenant": tenant_id,
                 "narrative": narrative,
                 "ts": now,
             },
@@ -182,26 +225,38 @@ async def _generate_narrative_via_analyst(
     """
     from langchain_core.messages import HumanMessage
 
-    settings = get_settings()
-
     # Format the math payload as readable JSON.
     math_display = json.dumps(math_payload, indent=2, default=str)
 
-    prompt = f"""You are a senior hotel acquisitions analyst.
-A financial engine just produced the following {engine_name} output:
+    user_prompt = f"""A financial engine just produced the following \
+{engine_name} output:
 
 ```json
 {math_display}
 ```
 
-Write a concise 1-2 sentence narrative explaining what these numbers mean
-in plain English. Focus on the headline metrics and their implications for
-the deal. Omit technical jargon and citations — keep it under 200 words.
-"""
+Write the narrative now."""
 
-    # Build a lightweight LLM client (no structured output, just plain text).
-    # Use the Analyst model (Opus) so the narrative is high-quality.
-    from ..llm import build_llm
+    # Build a lightweight LLM client (no structured output, just plain text)
+    # on the Analyst model (Opus) so the narrative is high-quality.
+    from ..llm import build_llm, cached_system_message_blocks
+
+    # Route the static persona through the shared cached_system_message_blocks
+    # so the system prefix hits Anthropic's prompt cache on repeat calls — the
+    # cost win this lazy-narrative design claims. We keep the persona minimal
+    # rather than pulling the full analyst context: build_agent_system_blocks
+    # adds the USALI rules / brand / schema blocks, which a 1-2 sentence numeric
+    # gloss does not need.
+    #
+    # TODO(wave5): if narratives ever need deal/OM context, route the whole
+    # call through the shared analyst plumbing (build_agent_system_blocks +
+    # invoke_with_escalation) so it inherits the 4-block cache layout and
+    # parse-escalation lane instead of this bare ainvoke + divergent persona.
+    # invoke_with_escalation is structured-output only today, so it is not a
+    # drop-in for a plain-text narrative.
+    system_message = cached_system_message_blocks(
+        [NARRATIVE_SYSTEM_PROMPT], role="analyst"
+    )
 
     llm = build_llm(
         role="analyst",
@@ -209,18 +264,16 @@ the deal. Omit technical jargon and citations — keep it under 200 words.
         timeout=30,
     )
 
-    # Call the LLM and extract the text response.
-    result = await llm.ainvoke([HumanMessage(content=prompt)])
-
-    # result.content is the text response from the LLM.
-    if hasattr(result, "content"):
-        text = result.content
-        if isinstance(text, str):
-            return text
-
-    # Fallback if the response is malformed.
-    logger.warning(f"Unexpected LLM response type: {type(result)}")
-    return str(result)
+    # Call the LLM and extract the text response. Opus content is frequently a
+    # list of content-block dicts, so use the robust extractor rather than an
+    # isinstance(str) check that would fall through to the AIMessage repr.
+    result = await llm.ainvoke(
+        [system_message, HumanMessage(content=user_prompt)]
+    )
+    text = _content_to_text(result)
+    if not text:
+        logger.warning(f"Empty/unexpected LLM response: {type(result)}")
+    return text
 
 
 __all__ = ["get_or_generate_narrative", "FALLBACK_NARRATIVE"]

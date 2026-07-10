@@ -27,6 +27,29 @@ if _TMP_DB.exists():
 os.environ["DATABASE_URL"] = f"sqlite+aiosqlite:///{_TMP_DB}"
 
 
+class _FakeAIMessage:
+    """Minimal stand-in for a LangChain AIMessage.
+
+    ``content`` may be a plain string OR — as Anthropic/Opus commonly returns —
+    a list of content-block dicts (``[{"type": "text", "text": "..."}]``).
+    """
+
+    def __init__(self, content: object) -> None:
+        self.content = content
+
+
+class _FakeLLM:
+    """Offline stand-in for the ChatAnthropic runnable returned by build_llm."""
+
+    def __init__(self, content: object) -> None:
+        self._content = content
+        self.calls = 0
+
+    async def ainvoke(self, messages, *args, **kwargs):  # noqa: ANN001
+        self.calls += 1
+        return _FakeAIMessage(self._content)
+
+
 @pytest.fixture(autouse=True)
 async def _reset_db() -> None:
     """Recreate the schema before each test."""
@@ -98,7 +121,14 @@ async def test_engine_run_produces_null_narratives() -> None:
 
 @pytest.mark.asyncio
 async def test_first_read_generates_narrative() -> None:
-    """First call to get_or_generate_narrative triggers LLM generation."""
+    """First call to get_or_generate_narrative triggers LLM generation.
+
+    The LLM is mocked (offline) and returns Anthropic-style *list* content so
+    this also asserts DEFECT 1: the list-of-blocks response is flattened to
+    plain text rather than being persisted as the raw AIMessage repr.
+    """
+    from unittest.mock import patch
+
     from app.database import get_session_factory
     from app.services.engine_narratives import get_or_generate_narrative
     from app.services.engine_runner import run_all_engines
@@ -137,25 +167,42 @@ async def test_first_read_generates_narrative() -> None:
     output_id, engine_name, outputs_json = row
     math_payload = json.loads(outputs_json) if outputs_json else {}
 
-    # Call get_or_generate_narrative for the first time.
-    # This should trigger LLM generation.
-    async with factory() as session:
-        narrative = await get_or_generate_narrative(
-            session,
-            engine_output_id=output_id,
-            engine_name=engine_name,
-            math_payload=math_payload,
-            tenant_id=tenant_id,
-        )
-
-    assert narrative is not None
-    # The narrative should not be the fallback (unless LLM failed).
-    # For a robust test, we just check it's non-empty.
-    assert len(narrative) > 0, (
-        f"Generated narrative is empty for engine {engine_name}"
+    # Anthropic/Opus commonly returns a LIST of content-block dicts. The
+    # extractor must flatten these to the joined text (DEFECT 1).
+    list_content = [
+        {"type": "text", "text": "The projected returns clear the target "},
+        {"type": "text", "text": "hurdle, signalling a viable acquisition."},
+    ]
+    expected = (
+        "The projected returns clear the target hurdle, "
+        "signalling a viable acquisition."
     )
 
-    # Verify that the DB row now has the cached narrative.
+    # Call get_or_generate_narrative for the first time with the LLM mocked.
+    # build_llm is imported lazily inside _generate_narrative_via_analyst, so
+    # patch it at its source module (app.llm.build_llm).
+    fake_llm = _FakeLLM(list_content)
+    with patch("app.llm.build_llm", return_value=fake_llm):
+        async with factory() as session:
+            narrative = await get_or_generate_narrative(
+                session,
+                engine_output_id=output_id,
+                engine_name=engine_name,
+                math_payload=math_payload,
+                tenant_id=tenant_id,
+            )
+
+    # The LLM was called exactly once, and its list-content was flattened to
+    # plain text (never the AIMessage repr).
+    assert fake_llm.calls == 1, "LLM should be called once on first read"
+    assert narrative == expected, (
+        f"list-content should flatten to plain text, got: {narrative!r}"
+    )
+    assert "content=" not in narrative and "AIMessage" not in narrative, (
+        "narrative must not contain the raw AIMessage repr"
+    )
+
+    # Verify that the DB row now has the cached narrative (tenant-scoped read).
     async with factory() as session:
         cached_row = (
             await session.execute(
@@ -164,12 +211,14 @@ async def test_first_read_generates_narrative() -> None:
                     SELECT narrative, narrative_generated_at
                       FROM engine_outputs
                      WHERE id = :id
+                       AND tenant_id = :tenant
                     """
                 ),
-                {"id": str(output_id)},
+                {"id": str(output_id), "tenant": tenant_id},
             )
         ).first()
 
+    assert cached_row is not None, "tenant-scoped row should be found"
     cached_narrative, generated_at = cached_row
     assert cached_narrative == narrative, (
         "Cached narrative does not match generated narrative"
@@ -222,15 +271,19 @@ async def test_second_read_uses_cache() -> None:
     output_id, engine_name, outputs_json = row
     math_payload = json.loads(outputs_json) if outputs_json else {}
 
-    # First read: generates narrative.
-    async with factory() as session:
-        narrative_1 = await get_or_generate_narrative(
-            session,
-            engine_output_id=output_id,
-            engine_name=engine_name,
-            math_payload=math_payload,
-            tenant_id=tenant_id,
-        )
+    # First read: generates narrative (LLM mocked, offline).
+    fake_llm = _FakeLLM("A cached narrative for this engine.")
+    with patch("app.llm.build_llm", return_value=fake_llm):
+        async with factory() as session:
+            narrative_1 = await get_or_generate_narrative(
+                session,
+                engine_output_id=output_id,
+                engine_name=engine_name,
+                math_payload=math_payload,
+                tenant_id=tenant_id,
+            )
+    assert fake_llm.calls == 1
+    assert narrative_1 == "A cached narrative for this engine."
 
     # Mock the LLM call so we can verify it's NOT called on the second read.
     with patch(
