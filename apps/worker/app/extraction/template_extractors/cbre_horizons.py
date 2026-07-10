@@ -349,12 +349,42 @@ def _parse_forecast_table_within_section(
     )
 
 
-def _extract_from_tables(sheets: list[_Sheet]) -> tuple[list[dict[str, Any]], str] | None:
+def _as_of_year_from_pub_date(pub_date: str | None) -> int | None:
+    """Report base / as-of year, parsed from the publication date.
+
+    CBRE Hotel Horizons treats the publication year (partial actual +
+    forward projection) as the FIRST forecast year; every calendar year
+    strictly earlier is a historical actual. We take the 4-digit year
+    out of the publication string ("Q3 2024", "2024-08-01", …) as the
+    historical-vs-forecast boundary.
+
+    Returns ``None`` when no year can be parsed. In that case the caller
+    conservatively treats every row as forecast (the pre-fix behaviour),
+    since without an anchor we cannot tell which rows are actuals.
+    """
+    if not pub_date:
+        return None
+    m = re.search(r"(?:19|20)\d{2}", pub_date)
+    return int(m.group(0)) if m else None
+
+
+def _extract_from_tables(
+    sheets: list[_Sheet], as_of_year: int | None = None
+) -> tuple[list[dict[str, Any]], str] | None:
     """Extract fields from forecast tables in all sheets.
 
     Looks for forecast tables across all sheets and emits fields for each.
     Since multiple tables can be on one sheet, we parse the grid sequentially
     looking for scope headers and their associated tables.
+
+    ``as_of_year`` is the report's base year (from the publication date).
+    Rows with ``year >= as_of_year`` are forecast; earlier rows are
+    historical actuals. The legacy 1-indexed ``cbre_horizons.year_<i>``
+    sequence numbers the FIRST FORECAST year as ``year_1`` (contract:
+    Year 1 = first forecast year, never an earlier historical actual) and
+    excludes historical rows entirely. When ``as_of_year`` is None we
+    can't locate the boundary, so every row is treated as forecast.
+
     Returns (fields, coverage_note) on success, None on failure.
     """
     fields: list[dict[str, Any]] = []
@@ -370,25 +400,32 @@ def _extract_from_tables(sheets: list[_Sheet]) -> tuple[list[dict[str, Any]], st
 
     # Emit fields for each table
     for table in tables_found:
-        for year in sorted(table.rows.keys()):
+        sorted_years = sorted(table.rows.keys())
+        # Forecast years are those at/after the report's as-of year.
+        # Without an anchor we conservatively treat every year as forecast.
+        forecast_years = [
+            y for y in sorted_years if as_of_year is None or y >= as_of_year
+        ]
+        for year in sorted_years:
             values = table.rows[year]
+            is_forecast = as_of_year is None or year >= as_of_year
             for metric_label, value in values.items():
                 if metric_label not in _METRIC_MAP:
                     continue
                 field_base, unit = _METRIC_MAP[metric_label]
                 field_name = f"cbre_horizons.segment_{table.scope}.{year}.{field_base}"
                 fields.append(_field(field_name, value, unit=unit, page=table.page_num))
-                # Also emit on legacy year_N path for "all" scope (backwards compat).
-                # Year 1 = first forecast year in data
-                if table.scope == "all":
-                    sorted_years = sorted(table.rows.keys())
-                    year_idx = sorted_years.index(year) + 1  # 1-indexed
+                # Also emit on legacy year_N path for "all" scope (backwards
+                # compat). Year 1 = FIRST FORECAST year; historical actuals
+                # are excluded from the year_N sequence so year_1 never maps
+                # to an earlier actual.
+                if table.scope == "all" and is_forecast:
+                    year_idx = forecast_years.index(year) + 1  # 1-indexed
                     legacy_name = f"cbre_horizons.year_{year_idx}.{field_base}"
                     fields.append(_field(legacy_name, value, unit=unit, page=table.page_num))
 
-            # Determine if year is actual or forecast
-            # (conservative: mark as forecast if no clear indicator)
-            period = "forecast"
+            # Label the row historical vs forecast off the as-of boundary.
+            period = "forecast" if is_forecast else "historical"
             fields.append(
                 _field(f"cbre_horizons.segment_{table.scope}.{year}.period", period, page=table.page_num)
             )
@@ -426,7 +463,13 @@ def _try_cbre_horizons(parsed: ParsedDocument) -> TemplateExtractResult | None:
         # Not a Horizons report, probably
         return None
 
-    result = _extract_from_tables(sheets)
+    # Resolve the publication date first — its year anchors the
+    # historical-vs-forecast boundary used when numbering the legacy
+    # year_N sequence and labelling each row's ``period``.
+    pub_date = _publication_date_from_header(sheets)
+    as_of_year = _as_of_year_from_pub_date(pub_date)
+
+    result = _extract_from_tables(sheets, as_of_year=as_of_year)
     if result is None:
         return None
 
@@ -437,7 +480,6 @@ def _try_cbre_horizons(parsed: ParsedDocument) -> TemplateExtractResult | None:
     if market:
         fields.insert(0, _field("cbre_horizons.market", market, page=sheets[0].page_num))
 
-    pub_date = _publication_date_from_header(sheets)
     if pub_date:
         fields.insert(0, _field("cbre_horizons.publication_date", pub_date, page=sheets[0].page_num))
 

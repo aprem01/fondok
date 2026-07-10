@@ -42,8 +42,12 @@ logger = logging.getLogger(__name__)
 
 # Max simultaneous Sonnet calls per ``run_extractor`` fan-out (i.e.
 # per document). Wave 5 dual-optimization (2026-07): read from config
-# so operators can tune concurrency without env vars. Legacy
-# EXTRACTOR_CHUNK_CONCURRENCY env var still works as fallback.
+# so operators can tune concurrency without code changes. This is the
+# single source of truth ``settings.EXTRACTOR_MAX_CHUNK_CONCURRENCY``,
+# which also accepts the legacy ``EXTRACTOR_CHUNK_CONCURRENCY`` env
+# name via a validation alias (see app.config.Settings). The
+# process-wide throttle in app.services.extractor_throttle reads the
+# SAME field, so both caps move together under either env name.
 # Default 2 (4 docs × 2 chunks = 8 concurrent Sonnet calls, well
 # clear of Anthropic per-minute rate limit). Can increase to 4 for
 # faster, cheaper extractions on deals with many docs.

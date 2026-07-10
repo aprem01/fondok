@@ -10,7 +10,7 @@ from __future__ import annotations
 from functools import lru_cache
 from typing import Literal
 
-from pydantic import Field, SecretStr
+from pydantic import AliasChoices, Field, SecretStr
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -212,27 +212,27 @@ class Settings(BaseSettings):
     # or testing legacy behavior).
     LAZY_ENGINE_NARRATIVES_ENABLED: bool = Field(default=True)
 
-    # Wave 5 (2026-07): dual-optimization — faster + cheaper extractions.
-    # Three levers reduce wall-time + cost simultaneously:
+    # Wave 5 (2026-07): per-document chunk-concurrency knob. Raising it
+    # from 2→4 lets each document's ~5-page chunks process 4-wide instead
+    # of 2-wide (~40% less wall-time, ~10% less cost from fewer retries).
+    # Capped at 4 (le=4) to avoid Anthropic rate-limit thrashing.
     #
-    # (1) Early-exit on confidence: When EXTRACTOR_EARLY_EXIT_THRESHOLD
-    #     (default None = disabled) is set to a float ∈ (0, 1], stop
-    #     processing chunks once we reach that confidence on required
-    #     fields. Saves ~30% wall-time on simple docs + ~25% cost.
-    #
-    # (2) Parallel chunk boost: When EXTRACTOR_MAX_CHUNK_CONCURRENCY
-    #     (default 2) is increased to 4, chunks process 4-wide instead
-    #     of 2-wide. Saves ~40% wall-time + ~10% cost (fewer retries).
-    #     Capped at 4 to avoid Anthropic rate-limit thrashing.
-    #
-    # (3) Concurrent sibling extraction: When
-    #     SIBLING_EXTRACT_PARALLEL=True, all P&L years process in
-    #     parallel instead of sequentially. Saves ~50% wall-time on
-    #     multi-year data rooms (no cost impact; already $0/year after
-    #     Lever 3).
-    EXTRACTOR_EARLY_EXIT_THRESHOLD: float | None = Field(default=None, ge=0.0, le=1.0)
-    EXTRACTOR_MAX_CHUNK_CONCURRENCY: int = Field(default=2, ge=1, le=4)
-    SIBLING_EXTRACT_PARALLEL: bool = Field(default=False)
+    # SINGLE SOURCE OF TRUTH for both concurrency caps: the per-doc
+    # fan-out in ``app.agents.extractor`` and the process-wide throttle
+    # in ``app.services.extractor_throttle`` both read this one field, so
+    # an ops throttle during a rate-limit incident applies to both halves
+    # at once. The legacy env name ``EXTRACTOR_CHUNK_CONCURRENCY`` is
+    # still honored via the validation alias below (same le=4 clamp), so
+    # setting either name works.
+    EXTRACTOR_MAX_CHUNK_CONCURRENCY: int = Field(
+        default=2,
+        ge=1,
+        le=4,
+        validation_alias=AliasChoices(
+            "EXTRACTOR_MAX_CHUNK_CONCURRENCY",
+            "EXTRACTOR_CHUNK_CONCURRENCY",
+        ),
+    )
 
     # ── Tenancy ─────────────────────────────────────────────────────
     # UUID-shaped string for dev. Real tenants are provisioned in DB.

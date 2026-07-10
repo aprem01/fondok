@@ -15,8 +15,11 @@ This module installs a **process-level** semaphore that caps the number
 of documents actively in the extraction phase ACROSS all uploads:
 
 * ``EXTRACTOR_MAX_CONCURRENT_DOCS`` (default 4) — global doc cap.
-* ``EXTRACTOR_CHUNK_CONCURRENCY``    (default 2) — per-doc chunk cap;
-  read by :mod:`apps.worker.app.agents.extractor`.
+* ``EXTRACTOR_MAX_CHUNK_CONCURRENCY`` (default 2) — per-doc chunk cap;
+  the single source of truth also read by
+  :mod:`apps.worker.app.agents.extractor`. The legacy env name
+  ``EXTRACTOR_CHUNK_CONCURRENCY`` is still accepted for it via a
+  pydantic validation alias (see :class:`app.config.Settings`).
 
 Combined cap: 4 docs × 2 chunks = 8 concurrent Sonnet calls regardless
 of how many docs the analyst uploaded in one batch.
@@ -34,6 +37,8 @@ import os
 import time
 from contextlib import asynccontextmanager
 from typing import AsyncIterator
+
+from ..config import get_settings
 
 logger = logging.getLogger(__name__)
 
@@ -62,9 +67,16 @@ def _read_int_env(name: str, default: int, *, minimum: int = 1) -> int:
 EXTRACTOR_MAX_CONCURRENT_DOCS: int = _read_int_env(
     "EXTRACTOR_MAX_CONCURRENT_DOCS", default=4
 )
-EXTRACTOR_CHUNK_CONCURRENCY: int = _read_int_env(
-    "EXTRACTOR_CHUNK_CONCURRENCY", default=2
-)
+# Per-doc chunk cap. Single source of truth: the pydantic settings
+# field ``EXTRACTOR_MAX_CHUNK_CONCURRENCY`` (which also accepts the
+# legacy ``EXTRACTOR_CHUNK_CONCURRENCY`` env name via a validation
+# alias — see :class:`app.config.Settings`). Sourcing it here rather
+# than reading ``os.environ["EXTRACTOR_CHUNK_CONCURRENCY"]`` keeps this
+# process-wide throttle and the per-doc fan-out in
+# :mod:`app.agents.extractor` bound to the SAME knob, so an ops
+# throttle during a rate-limit incident applies to both halves. The
+# config field is clamped ge=1/le=4; that is the authoritative cap.
+EXTRACTOR_CHUNK_CONCURRENCY: int = get_settings().EXTRACTOR_MAX_CHUNK_CONCURRENCY
 
 _EXTRACTOR_SEM: asyncio.Semaphore = asyncio.Semaphore(EXTRACTOR_MAX_CONCURRENT_DOCS)
 

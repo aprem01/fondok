@@ -190,6 +190,87 @@ async def test_cbre_horizons_xlsx_positive() -> None:
     assert values["cbre_horizons.segment_lower_priced.2025.occupancy_pct"] == pytest.approx(75.8)
 
 
+def _cbre_horizons_with_history_xlsx_bytes() -> bytes:
+    """CBRE Horizons workbook whose All-Hotels table mixes historical
+    actuals (2022-2023) with forecast years (2024-2026).
+
+    Publication is Q1 2024, so 2024 is the first forecast year. The
+    legacy ``cbre_horizons.year_1.*`` path MUST map to 2024 (first
+    forecast), NOT to 2022 (the earliest historical actual).
+    """
+    from openpyxl import Workbook
+
+    wb = Workbook()
+    sheet = wb.active
+    sheet.title = "Forecast"
+
+    sheet.cell(row=1, column=1, value="CBRE Hotel Market Analysis")
+    sheet.cell(row=2, column=1, value="Denver, CO - Hotel Horizons Forecast")
+    sheet.cell(row=3, column=1, value="Publication Date: Q1 2024")
+    sheet.cell(row=4, column=1, value="")
+
+    r = 5
+    sheet.cell(row=r, column=1, value="All Hotels")
+    sheet.cell(row=r + 1, column=1, value="Year")
+    sheet.cell(row=r + 1, column=2, value="Occupancy")
+    sheet.cell(row=r + 1, column=3, value="ADR")
+    sheet.cell(row=r + 1, column=4, value="RevPAR")
+    # 2022-2023 are historical actuals; 2024-2026 are forecast.
+    data_all = [
+        (2022, 60.0, 150.00, 90.00),
+        (2023, 65.0, 160.00, 104.00),
+        (2024, 72.5, 185.50, 134.49),
+        (2025, 73.1, 189.25, 138.25),
+        (2026, 74.0, 193.75, 143.37),
+    ]
+    for idx, (year, occ, adr, revpar) in enumerate(data_all, start=1):
+        row_num = r + 1 + idx
+        sheet.cell(row=row_num, column=1, value=int(year))
+        sheet.cell(row=row_num, column=2, value=occ)
+        sheet.cell(row=row_num, column=3, value=adr)
+        sheet.cell(row=row_num, column=4, value=revpar)
+
+    buf = io.BytesIO()
+    wb.save(buf)
+    return buf.getvalue()
+
+
+async def test_cbre_horizons_year_1_is_first_forecast_not_earliest_historical() -> None:
+    """Regression: the legacy year_N sequence must start at the first
+    FORECAST year, never at an earlier historical actual."""
+    parsed = await parse_document(
+        file_bytes=_cbre_horizons_with_history_xlsx_bytes(),
+        filename="denver-horizons-q1-2024.xlsx",
+    )
+    result = try_template_extract(parsed, "CBRE_HORIZONS")
+    assert result is not None
+    values = _by_name(result)
+
+    # year_1 = first forecast year (2024), NOT the earliest historical (2022).
+    assert values["cbre_horizons.year_1.adr_usd"] == pytest.approx(185.50)
+    assert values["cbre_horizons.year_1.occupancy_pct"] == pytest.approx(72.5)
+    assert values["cbre_horizons.year_2.adr_usd"] == pytest.approx(189.25)
+    assert values["cbre_horizons.year_3.adr_usd"] == pytest.approx(193.75)
+
+    # Historical actuals (2022, 2023) must NOT appear on any year_N path.
+    assert "cbre_horizons.year_4.adr_usd" not in values
+    assert "cbre_horizons.year_5.adr_usd" not in values
+    for name, val in values.items():
+        if name.startswith("cbre_horizons.year_") and name.endswith(".adr_usd"):
+            assert val not in (150.00, 160.00), (
+                f"{name}={val} is a historical actual leaking into year_N"
+            )
+
+    # period labels reflect the historical/forecast boundary.
+    assert values["cbre_horizons.segment_all.2022.period"] == "historical"
+    assert values["cbre_horizons.segment_all.2023.period"] == "historical"
+    assert values["cbre_horizons.segment_all.2024.period"] == "forecast"
+    assert values["cbre_horizons.segment_all.2026.period"] == "forecast"
+
+    # Historical segment cells are still emitted (just labelled correctly).
+    assert values["cbre_horizons.segment_all.2022.adr_usd"] == pytest.approx(150.00)
+
+
 async def test_field_shape_matches_llm_extractor_contract() -> None:
     parsed = await parse_document(
         file_bytes=_cbre_horizons_xlsx_bytes(), filename="seattle-horizons-q3-2024.xlsx"
