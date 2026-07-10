@@ -145,6 +145,29 @@ def _numeric_cell_value(s: str | None) -> float | None:
     return -v if neg else v
 
 
+# Metric fields the schema constrains to a 0..1 ratio (the extractor
+# emits e.g. 0.74, never 74). usali_scorer exposes no clean ratio-field
+# set, so this small local list stands in per the task note. Used only
+# as a belt-and-braces guard in apply_mapping against a percent grid
+# cell (74.0) leaking through un-scaled.
+_RATIO_METRIC_LEAVES = {"occupancy", "gop_margin", "noi_margin"}
+
+
+def _is_ratio_field(field_name: str) -> bool:
+    """True when the field is a known 0..1 ratio metric.
+
+    Matches the leaf segment (dotted paths like
+    ``ttm_summary_per_om.occupancy_pct``) against a small canonical set
+    plus the ``*_pct`` / ``*_margin`` naming conventions.
+    """
+    leaf = (field_name or "").lower().rsplit(".", 1)[-1]
+    return (
+        leaf in _RATIO_METRIC_LEAVES
+        or leaf.endswith("_pct")
+        or leaf.endswith("_margin")
+    )
+
+
 def _normalize_label(s: str | None) -> str:
     """Digit-stripped, whitespace-collapsed, lowercased label text.
 
@@ -357,11 +380,18 @@ def learn_mapping(
             stats["ambiguous"] += 1
             continue
         # (grid_value, mapping_scale): mapping stores grid → field scale
+        # (``field_value = grid_value * scale``). The ×100/÷100 variants
+        # bridge the percent↔ratio mismatch: the extractor emits
+        # occupancy/margins as a 0..1 ratio (0.74, schema ge=0,le=1) but
+        # the grid cell reads ``74%`` → ``74.0`` (see _numeric_cell_value),
+        # so a ratio field only matches its grid cell at scale 0.01.
         candidates: list[tuple[tuple[str, str, str, str], float]] = []
         for grid_val, scale in (
             (target, 1.0),
             (round(target / 1000.0, 2), 1000.0),
             (round(target * 1000.0, 2), 0.001),
+            (round(target / 100.0, 2), 100.0),
+            (round(target * 100.0, 2), 0.01),
         ):
             for key in by_value.get(grid_val, ()):
                 candidates.append((key, scale))
@@ -432,6 +462,11 @@ def apply_mapping(
             stats["conflict"] += 1
             continue
         value = next(iter(resolved)) * float(entry.get("scale") or 1.0)
+        # Belt-and-braces: a known 0..1 ratio metric that still lands
+        # above 1.5 came from a percent cell (74.0) whose scale wasn't
+        # applied — treat it as a percent and divide back to a ratio.
+        if _is_ratio_field(name) and value > 1.5:
+            value = value / 100.0
         anchor = entry["keys"][0]
         fields.append(
             {
