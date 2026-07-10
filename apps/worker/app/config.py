@@ -275,6 +275,16 @@ class Settings(BaseSettings):
     # the check unless the operator explicitly opts in.
     CLERK_JWT_AUDIENCE: str | None = Field(default=None)
 
+    # Extra email allowlist for the cost dashboard (/admin/cost) on top
+    # of the require_role("admin") gate. Comma-separated; empty by
+    # default = role gate only (no extra restriction). HOTFIX
+    # 2026-07-10: the original gate hardcoded a single personal Gmail
+    # AND compared against auth.email, which is None unless the Clerk
+    # JWT template carries a custom `email` claim — so every browser
+    # admin (including the founder) got 403'd. Empty-default means the
+    # admin role is sufficient; set this only to further restrict.
+    ADMIN_COST_EMAIL_ALLOWLIST: str = Field(default="")
+
     # ── Object store (uploaded OMs, STRs, P&Ls) ─────────────────────
     OBJECT_STORE_BACKEND: Literal["local", "s3"] = Field(default="local")
     DOCUMENT_STORAGE_ROOT: str = Field(default="/tmp/fondok")

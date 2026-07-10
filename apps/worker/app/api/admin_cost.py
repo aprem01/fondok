@@ -45,10 +45,42 @@ from sqlalchemy import text
 
 from ..auth import AuthContext, require_role
 from ..budget import _price_for
+from ..config import get_settings
 from ..database import get_engine
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
+
+
+def _enforce_cost_email_allowlist(auth: AuthContext) -> None:
+    """Optional email allowlist on top of require_role("admin").
+
+    HOTFIX 2026-07-10: the prior gate hardcoded a single Gmail and
+    compared against ``auth.email`` — which is None unless the Clerk
+    JWT template includes a custom ``email`` claim (auth/context.py
+    documents this). Result: every browser admin, founder included,
+    got 403'd. Now the allowlist is config-driven and EMPTY BY
+    DEFAULT, so the admin role alone suffices. When the operator does
+    set ``ADMIN_COST_EMAIL_ALLOWLIST``, header/default (ops/script)
+    callers still bypass — only JWT callers with a resolvable email
+    are checked, and a JWT that carries no email claim is NOT locked
+    out (that was the whole bug).
+    """
+    raw = (get_settings().ADMIN_COST_EMAIL_ALLOWLIST or "").strip()
+    if not raw:
+        return  # role gate only
+    if auth.source != "jwt":
+        return  # trusted ops/script path
+    if auth.email is None:
+        # No email claim to check against — role gate already passed,
+        # don't lock out a legitimately admin-roled session.
+        return
+    allowed = {e.strip().lower() for e in raw.split(",") if e.strip()}
+    if auth.email.strip().lower() not in allowed:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="cost dashboard access restricted",
+        )
 
 
 # ─────────────────────── pricing helpers ───────────────────────
@@ -221,13 +253,7 @@ async def admin_cost(
     endpoint from a scripted context. JWT auth additionally gated on
     email == "kpremks@gmail.com".
     """
-    # Email-based access control (2026-07-03): only kpremks@gmail.com can
-    # view costs via JWT. Header/default paths (ops/scripts) bypass this.
-    if auth.source == "jwt" and auth.email != "kpremks@gmail.com":
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="cost dashboard access restricted",
-        )
+    _enforce_cost_email_allowlist(auth)
 
     tenant_id = auth.tenant_id
     now = datetime.now(UTC)
@@ -342,13 +368,7 @@ async def admin_cost_backfill(
     callers use the header path and pass the escape hatch. JWT auth
     additionally gated on email == "kpremks@gmail.com".
     """
-    # Email-based access control (2026-07-03): only kpremks@gmail.com can
-    # modify costs via JWT. Header/default paths (ops/scripts) bypass this.
-    if auth.source == "jwt" and auth.email != "kpremks@gmail.com":
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="cost dashboard access restricted",
-        )
+    _enforce_cost_email_allowlist(auth)
 
     tenant_id = auth.tenant_id
     engine = get_engine()
