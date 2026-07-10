@@ -30,6 +30,8 @@ from dataclasses import dataclass
 from typing import Any
 
 from ..models import ParsedDocument
+from ..numeric import coerce_cell_number
+from ._common import TemplateExtractResult, _field, _Sheet, sheets_of
 
 logger = logging.getLogger(__name__)
 
@@ -61,14 +63,6 @@ _METRIC_MAP = {
 }
 
 
-@dataclass
-class TemplateExtractResult:
-    """Outcome of a successful template extraction."""
-    fields: list[dict[str, Any]]
-    template_name: str
-    coverage_note: str
-
-
 def try_template_extract(
     parsed: ParsedDocument, doc_type: str
 ) -> TemplateExtractResult | None:
@@ -92,76 +86,18 @@ def try_template_extract(
 
 
 # ── shared plumbing ──────────────────────────────────────────────────
-
-
-def _to_float(cell: str) -> float | None:
-    """Parse a grid cell into a float, or None."""
-    s = (cell or "").strip().replace(",", "").replace("%", "")
-    if not s:
-        return None
-    try:
-        return float(s)
-    except ValueError:
-        return None
-
-
-def _to_int(cell: str) -> int | None:
-    v = _to_float(cell)
-    if v is None or not float(v).is_integer():
-        return None
-    return int(v)
-
-
-def _field(
-    name: str,
-    value: Any,
-    *,
-    unit: str | None = None,
-    page: int | None = None,
-) -> dict[str, Any]:
-    """One extraction-field row in the LLM extractor's wire shape."""
-    out: dict[str, Any] = {
-        "field_name": name,
-        "value": value,
-        "confidence": 1.0,
-        "unit": unit,
-    }
-    if page is not None:
-        out["source_page"] = page
-    return out
-
-
-@dataclass
-class _Sheet:
-    name: str
-    grid: list[list[str]]
-    page_num: int
-
-    def cell(self, r: int, c: int) -> str:
-        try:
-            return self.grid[r][c]
-        except IndexError:
-            return ""
+# ``TemplateExtractResult``, ``_field``, the ``_Sheet`` grid wrapper and
+# the visible-sheet ``sheets_of`` iterator are shared with str_trend via
+# ``._common``; numeric cell parsing is shared with the sibling learner
+# via ``..numeric.coerce_cell_number``.
 
 
 def _sheets_of(parsed: ParsedDocument) -> list[_Sheet] | None:
-    """Materialize per-sheet grids; None when not a sheet-per-page workbook.
+    """Visible per-sheet grids; None when not a sheet-per-page workbook.
 
     For CBRE we prefer xlsx/xls (pdfplumber tables less reliable).
     """
-    if parsed.parser not in ("xlrd", "openpyxl"):
-        return None
-    sheets: list[_Sheet] = []
-    for page in parsed.pages:
-        name = (page.metadata or {}).get("sheet_name")
-        if not name:
-            continue
-        grid = page.tables[0] if page.tables else []
-        sheets.append(_Sheet(name=str(name), grid=grid, page_num=page.page_num))
-    # A CBRE workbook ships multiple tabs; anything smaller is suspect.
-    if len(sheets) < 1:
-        return None
-    return sheets
+    return sheets_of(parsed, min_sheets=1)
 
 
 def _find_label(
@@ -331,7 +267,7 @@ def _parse_forecast_table_within_section(
         values: dict[str, Any] = {}
         for metric_label, col in metric_cols.items():
             if col < len(row):
-                val = _to_float(row[col])
+                val = coerce_cell_number(row[col])
                 if val is not None:
                     values[metric_label] = val
         if values:

@@ -95,6 +95,8 @@ import logging
 import re
 from typing import Any
 
+from ..extraction.numeric import coerce_cell_number
+
 logger = logging.getLogger(__name__)
 
 MAPPING_VERSION = "v1"
@@ -126,23 +128,15 @@ _HEADER_K = 3
 def _numeric_cell_value(s: str | None) -> float | None:
     """Parse a grid cell into a float, or None if it reads as a label.
 
-    Handles ``$1,234.56``, ``(1,234)`` negatives, ``74%``, and plain
-    floats. Date-shaped strings are labels (month headers), not values.
+    Thin wrapper over the shared ``coerce_cell_number`` (in
+    ``extraction/numeric``) so the learner, the STR-trend extractor and
+    the CBRE extractor all read a cell the same way — ``$(1,234)`` is
+    ``-1234.0`` on every path, never ``None`` on one and a number on
+    another. Handles ``$1,234.56``, ``(1,234)`` negatives, ``74%``, and
+    plain floats; date-shaped strings are labels (month headers), not
+    values.
     """
-    s = (s or "").strip()
-    if not s:
-        return None
-    if _DATE_RE.match(s):
-        return None
-    neg = s.startswith("(") and s.endswith(")")
-    t = s.strip("()").replace("$", "").replace(",", "").replace("%", "").strip()
-    if not t:
-        return None
-    try:
-        v = float(t)
-    except ValueError:
-        return None
-    return -v if neg else v
+    return coerce_cell_number(s)
 
 
 # Metric fields the schema constrains to a 0..1 ratio (the extractor
@@ -534,6 +528,28 @@ def passes_gates(
 # dialect-neutral (works on Postgres and the SQLite dev path).
 
 
+async def _fingerprint_for(session, tenant_id: str, doc_id: str) -> str | None:
+    """The workbook's stored ``template_fingerprint`` (or None).
+
+    Shared preamble for both orchestrators below — keeps the
+    tenant-scoping predicate (``tenant_middleware`` requires it) in one
+    place so the two paths can never drift on how they resolve a doc's
+    fingerprint.
+    """
+    from sqlalchemy import text
+
+    row = (
+        await session.execute(
+            text(
+                "SELECT template_fingerprint FROM documents "
+                "WHERE id = :id AND tenant_id = :tenant"
+            ),
+            {"id": str(doc_id), "tenant": str(tenant_id)},
+        )
+    ).first()
+    return row._mapping["template_fingerprint"] if row else None
+
+
 async def maybe_learn_mapping(
     session,
     *,
@@ -561,16 +577,7 @@ async def maybe_learn_mapping(
         pages = extraction_data.get("pages") or []
         if not pages:
             return
-        row = (
-            await session.execute(
-                text(
-                    "SELECT template_fingerprint FROM documents "
-                    "WHERE id = :id AND tenant_id = :tenant"
-                ),
-                {"id": str(doc_id), "tenant": str(tenant_id)},
-            )
-        ).first()
-        fingerprint = row._mapping["template_fingerprint"] if row else None
+        fingerprint = await _fingerprint_for(session, tenant_id, doc_id)
         if not fingerprint:
             return
         existing = (
@@ -673,16 +680,7 @@ async def try_sibling_reuse(
         pages = extraction_data.get("pages") or []
         if not pages:
             return None
-        row = (
-            await session.execute(
-                text(
-                    "SELECT template_fingerprint FROM documents "
-                    "WHERE id = :id AND tenant_id = :tenant"
-                ),
-                {"id": str(doc_id), "tenant": str(tenant_id)},
-            )
-        ).first()
-        fingerprint = row._mapping["template_fingerprint"] if row else None
+        fingerprint = await _fingerprint_for(session, tenant_id, doc_id)
         if not fingerprint:
             return None
         mrow = (
@@ -704,6 +702,21 @@ async def try_sibling_reuse(
             return None
         raw_mj = mrow._mapping["mapping_json"]
         mapping_json = json.loads(raw_mj) if isinstance(raw_mj, str) else raw_mj
+        # A version bump must actually invalidate stale mappings: skip
+        # any mapping whose stored ``version`` predates the current
+        # anchor/scale semantics rather than applying it blind (a
+        # version lever that silently does nothing is a footgun).
+        mapping_version = mapping_json.get("version")
+        if mapping_version != MAPPING_VERSION:
+            logger.info(
+                "sibling template MISS: doc=%s fingerprint=%s "
+                "reason=stale_mapping_version (%s != %s)",
+                doc_id,
+                fingerprint,
+                mapping_version,
+                MAPPING_VERSION,
+            )
+            return None
         source_doc_id = mrow._mapping["source_doc_id"]
         if str(source_doc_id) == str(doc_id):
             # A reprocess of the source doc itself must re-run the LLM

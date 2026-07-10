@@ -24,7 +24,7 @@ Contract:
 """
 
 from . import cbre_horizons, str_trend
-from .str_trend import TemplateExtractResult
+from ._common import TemplateExtractResult
 
 __all__ = ["TemplateExtractResult", "try_template_extract"]
 

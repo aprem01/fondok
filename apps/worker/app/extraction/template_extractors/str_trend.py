@@ -45,6 +45,8 @@ from dataclasses import dataclass
 from typing import Any
 
 from ..models import ParsedDocument
+from ..numeric import coerce_cell_number
+from ._common import TemplateExtractResult, _field, _Sheet, _to_int, sheets_of
 
 logger = logging.getLogger(__name__)
 
@@ -67,20 +69,6 @@ _YEAR_RE = re.compile(r"^(19|20)\d{2}$")
 _ROSTER_ID_LABELS = {"str#", "str id", "str code"}
 _ROSTER_NAME_LABELS = {"name", "name of establishment"}
 _ROSTER_ROOMS_LABEL = "rooms"
-
-
-@dataclass
-class TemplateExtractResult:
-    """Outcome of a successful template extraction.
-
-    ``fields`` uses the exact shape the LLM extractor emits so the
-    caller can persist it through the same ``extraction_results``
-    insert path with no translation.
-    """
-
-    fields: list[dict[str, Any]]
-    template_name: str
-    coverage_note: str
 
 
 def try_template_extract(
@@ -107,79 +95,20 @@ def try_template_extract(
 
 
 # ── shared plumbing ──────────────────────────────────────────────────
-
-
-def _to_float(cell: str) -> float | None:
-    """Parse a grid cell into a float, or ``None``."""
-    s = (cell or "").strip().replace(",", "")
-    if not s:
-        return None
-    try:
-        return float(s)
-    except ValueError:
-        return None
-
-
-def _to_int(cell: str) -> int | None:
-    v = _to_float(cell)
-    if v is None or not float(v).is_integer():
-        return None
-    return int(v)
-
-
-def _field(
-    name: str,
-    value: Any,
-    *,
-    unit: str | None = None,
-    page: int | None = None,
-) -> dict[str, Any]:
-    """One extraction-field row in the LLM extractor's wire shape.
-
-    ``confidence=1.0`` — the value was read deterministically from a
-    known cell of a standardized report, not inferred.
-    """
-    out: dict[str, Any] = {
-        "field_name": name,
-        "value": value,
-        "confidence": 1.0,
-        "unit": unit,
-    }
-    if page is not None:
-        out["source_page"] = page
-    return out
-
-
-@dataclass
-class _Sheet:
-    name: str
-    grid: list[list[str]]
-    page_num: int
-
-    def cell(self, r: int, c: int) -> str:
-        try:
-            return self.grid[r][c]
-        except IndexError:
-            return ""
+# The result envelope, ``_field`` / ``_to_int`` helpers, the ``_Sheet``
+# grid wrapper and the visible-sheet ``sheets_of`` iterator now live in
+# ``._common`` (shared with cbre_horizons); numeric cell parsing lives
+# in ``..numeric.coerce_cell_number`` (shared with the sibling learner).
 
 
 def _sheets_of(parsed: ParsedDocument) -> list[_Sheet] | None:
-    """Materialize per-sheet grids; ``None`` when this isn't a
-    sheet-per-page workbook parse (pdf, docx, …)."""
-    if parsed.parser not in ("xlrd", "openpyxl"):
-        return None
-    sheets: list[_Sheet] = []
-    for page in parsed.pages:
-        name = (page.metadata or {}).get("sheet_name")
-        if not name:
-            continue
-        grid = page.tables[0] if page.tables else []
-        sheets.append(_Sheet(name=str(name), grid=grid, page_num=page.page_num))
-    # A trend workbook always ships several tabs; anything smaller is
-    # not what we think it is.
-    if len(sheets) < 3:
-        return None
-    return sheets
+    """Visible per-sheet grids; ``None`` when this isn't a workbook
+    parse (pdf, docx, …) or ships fewer than 3 tabs.
+
+    A trend workbook always ships several tabs, so anything smaller is
+    not what we think it is.
+    """
+    return sheets_of(parsed, min_sheets=3)
 
 
 def _find_label(
@@ -372,7 +301,7 @@ def _extract_monthly_glance(sheet: _Sheet) -> list[dict[str, Any]] | None:
         return None
 
     def _at(col: int) -> float | None:
-        return _to_float(ttm[col]) if col < len(ttm) else None
+        return coerce_cell_number(ttm[col]) if col < len(ttm) else None
 
     occ = _at(my_prop_col["occ"])
     adr = _at(my_prop_col["adr"])
@@ -458,7 +387,7 @@ def _extract_monthly_series_from_comp(sheet: _Sheet) -> list[dict[str, Any]]:
             if head != "My Property":
                 continue
             for c, (year, month) in sorted(col_period.items()):
-                val = _to_float(vrow[c]) if c < len(vrow) else None
+                val = coerce_cell_number(vrow[c]) if c < len(vrow) else None
                 if val is not None:
                     fields.append(
                         _field(
@@ -522,11 +451,11 @@ def _extract_by_measure(sheet: _Sheet) -> list[dict[str, Any]]:
                 break
             year = int(head)
             for c, month in month_cols.items():
-                val = _to_float(vrow[c]) if c < len(vrow) else None
+                val = coerce_cell_number(vrow[c]) if c < len(vrow) else None
                 if val is not None:
                     monthly_points.append((year, month, val))
             if total_year_col is not None and total_year_col < len(vrow):
-                annual = _to_float(vrow[total_year_col])
+                annual = coerce_cell_number(vrow[total_year_col])
                 if annual is not None:
                     fields.append(
                         _field(

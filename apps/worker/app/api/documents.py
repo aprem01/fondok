@@ -5524,9 +5524,13 @@ def _try_template_extraction(
     to ``try_template_extract``. Returns a ``TemplateExtractResult``
     on a confident match, ``None`` otherwise (caller falls through to
     the unchanged LLM path). Never raises.
+
+    The doc_type routing table is owned entirely by the dispatcher in
+    ``template_extractors/__init__.py`` (one source of truth) — it
+    returns ``None`` for any type it doesn't handle, so an unhandled
+    doc_type falls through to the LLM path exactly as before. We only
+    gate on the feature flag here.
     """
-    if (doc_type or "").upper() not in ("STR", "STR_TREND", "CBRE_HORIZONS"):
-        return None
     if not get_settings().TEMPLATE_EXTRACTION_ENABLED:
         return None
     try:
