@@ -55,8 +55,24 @@ class UsageCapture(AsyncCallbackHandler):
                         self.input_tokens += inp
                         self.output_tokens += out
                         details = usage.get("input_token_details") or {}
-                        self.cache_creation_input_tokens += int(
-                            details.get("cache_creation", 0) or 0
+                        # langchain_anthropic >= 1.4 splits cache-creation
+                        # tokens by TTL. When the Anthropic response carries
+                        # the ``cache_creation`` breakdown object (it does on
+                        # every real cache-write), the wrapper ZEROES the
+                        # generic ``cache_creation`` key and moves the real
+                        # count under ``ephemeral_5m_input_tokens`` /
+                        # ``ephemeral_1h_input_tokens`` (see
+                        # ``_create_usage_metadata`` in chat_models.py). Reading
+                        # only ``cache_creation`` therefore records 0 creation
+                        # on every cached call even though the cache WAS
+                        # written — the reason model_calls showed 0
+                        # cache_creation_tokens. Sum all three; the wrapper
+                        # guarantees they never double-count (generic is set to
+                        # 0 whenever the TTL-specific keys are populated).
+                        self.cache_creation_input_tokens += (
+                            int(details.get("cache_creation", 0) or 0)
+                            + int(details.get("ephemeral_5m_input_tokens", 0) or 0)
+                            + int(details.get("ephemeral_1h_input_tokens", 0) or 0)
                         )
                         self.cache_read_input_tokens += int(
                             details.get("cache_read", 0) or 0
