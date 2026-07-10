@@ -91,11 +91,17 @@ class TestFieldNameToIdMapping:
         assert fid in FIELD_ID_CATALOG
 
     def test_field_name_to_id_unknown_path(self):
-        """Mapping an unknown path should auto-generate a short ID."""
+        """Mapping a non-catalog path must return None.
+
+        Updated for the Wave 5 tersefix (BUG 1): field_name_to_id no
+        longer auto-generates an ID for unknown paths. Auto-generation
+        made the long-form fallback in compress_extraction_result dead
+        code, let 2-segment paths collide with catalog fids (foo.adr ->
+        "adr"), and lost novel paths to __unknown__ on expand. Non-catalog
+        fields are now stored verbatim in long form instead.
+        """
         fid = field_name_to_id("unknown.path.not.in.catalog")
-        assert fid is not None
-        assert isinstance(fid, str)
-        assert len(fid) <= 12
+        assert fid is None
 
     def test_field_id_to_name_known_id(self):
         """Reverse mapping should work."""

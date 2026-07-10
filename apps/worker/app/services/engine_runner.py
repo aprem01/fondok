@@ -1320,6 +1320,8 @@ async def _load_source_documents(
             # Use the same period_type ranking as the loaders.
             best_rank = 99
             best_doc: str | None = None
+            from ..extraction.terse_schema import read_extraction_fields
+
             for r in rs:
                 m = r._mapping
                 raw = m["fields"]
@@ -1330,6 +1332,11 @@ async def _load_source_documents(
                         continue
                 if not isinstance(raw, list):
                     continue
+                # Expand terse rows to long-form before reading period_type.
+                # Without this a terse P&L row yields period_type "" for
+                # every doc → wrong provenance winner (the two T12 loaders
+                # were hotfixed for this; this sibling was missed).
+                raw = read_extraction_fields(raw)
                 pt = _extract_period_type(raw)
                 rank = _PERIOD_TYPE_RANK.get(pt, 50)
                 if rank < best_rank:
@@ -1396,21 +1403,19 @@ async def _load_t12_revenue_actuals(
     # _rank_pnl_rows one row at a time — crashing on ._mapping AND
     # destroying the rank-across-rows semantics — and called
     # asyncio.run() inside this async function (RuntimeError on any
-    # terse row). Restored: expand terse first (await), then rank all
-    # rows together via dict shims.
-    from ..extraction.terse_schema import expand_extraction_result
+    # terse row). Restored: expand terse first, then rank all rows
+    # together via dict shims. Now routed through the shared sync
+    # ``read_extraction_fields`` accessor (expansion is pure in-memory,
+    # so awaiting per row was pointless) — same accessor every read path
+    # uses, so terse/long/mixed all resolve identically.
+    from ..extraction.terse_schema import read_extraction_fields
 
     shims: list[dict[str, Any]] = []
     for row in rows.fetchall():
         raw_fields = row[0]
         catalog_version = row[2] if len(row) > 2 else None
-        if (
-            isinstance(raw_fields, list)
-            and raw_fields
-            and isinstance(raw_fields[0], dict)
-            and "fid" in raw_fields[0]
-        ):
-            raw_fields = await expand_extraction_result(raw_fields, catalog_version)
+        if isinstance(raw_fields, list):
+            raw_fields = read_extraction_fields(raw_fields, catalog_version)
         shims.append({"fields": raw_fields, "doc_type": row[1]})
 
     actuals: dict[str, float] = {}
@@ -1478,19 +1483,16 @@ async def _load_t12_expense_actuals(
     # partial-year YTD extract that's missing some buckets.
     # HOTFIX 2026-07-05: same restore as _load_t12_revenue_actuals —
     # see comment there (4fa867b tuple/_mapping + asyncio.run bugs).
-    from ..extraction.terse_schema import expand_extraction_result
+    # Now routed through the shared sync ``read_extraction_fields``
+    # accessor (see the revenue loader for rationale).
+    from ..extraction.terse_schema import read_extraction_fields
 
     shims: list[dict[str, Any]] = []
     for row in rows.fetchall():
         raw_fields = row[0]
         catalog_version = row[2] if len(row) > 2 else None
-        if (
-            isinstance(raw_fields, list)
-            and raw_fields
-            and isinstance(raw_fields[0], dict)
-            and "fid" in raw_fields[0]
-        ):
-            raw_fields = await expand_extraction_result(raw_fields, catalog_version)
+        if isinstance(raw_fields, list):
+            raw_fields = read_extraction_fields(raw_fields, catalog_version)
         shims.append({"fields": raw_fields, "doc_type": row[1]})
 
     actuals: dict[str, float] = {}

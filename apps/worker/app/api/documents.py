@@ -244,7 +244,8 @@ async def _lookup_extraction_cache(
         await session.execute(
             text(
                 """
-                SELECT er.id, er.fields, er.confidence_report, er.agent_version
+                SELECT er.id, er.fields, er.confidence_report, er.agent_version,
+                       er.catalog_version
                   FROM extraction_results er
                   JOIN documents d ON d.id = er.document_id
                  WHERE er.tenant_id = :tenant
@@ -4278,7 +4279,21 @@ async def _run_extraction_pipeline_inner(
                 cached_cr = cached["confidence_report"]
                 if isinstance(cached_cr, str):
                     cached_cr = json.loads(cached_cr) if cached_cr else {}
-                fields = list(cached_fields or [])
+                # The cached rows may be TERSE (if the source doc was
+                # extracted while TERSE_OUTPUT_SCHEMA_ENABLED was on). Every
+                # downstream consumer — including the shared INSERT below
+                # (which re-compresses when the flag is on) and the 0-field
+                # guard — expects LONG-FORM. Expand through the shared
+                # accessor so a terse-cached hit never zero-drops into a
+                # FAILED doc. No-op on long-form rows (flag OFF).
+                from ..extraction.terse_schema import read_extraction_fields
+
+                fields = list(
+                    read_extraction_fields(
+                        list(cached_fields or []),
+                        cached.get("catalog_version"),
+                    )
+                )
                 # ConfidenceReportOut is Pydantic ``extra='forbid'`` so we
                 # must not add breadcrumb keys here; the log line below
                 # is the ops-visible audit surface for the clone (docs

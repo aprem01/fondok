@@ -559,30 +559,34 @@ CATALOG_VERSION: int = 1
 def field_name_to_id(field_name: str) -> str | None:
     """Look up field_id for a canonical field_name.
 
-    For paths in the catalog, returns the canonical ID.
-    For unknown paths (new doc types, LLM variants), generates a deterministic ID
-    by taking the last 2–3 segments of the dotted path, abbreviated to 2–8 chars.
+    Returns the catalog ID for a KNOWN path, and ``None`` for anything
+    not in the catalog.
+
+    We deliberately do NOT auto-generate an ID for non-catalog paths.
+    An auto-generated ID (e.g. ``parts[-1][:12]``) is unsafe on three
+    counts, all of which corrupted the terse round-trip:
+
+      * It made this function never return ``None``, so the long-form
+        fallback in :func:`compress_extraction_result` was dead code —
+        every field was force-compressed.
+      * A 2-segment path like ``foo.adr`` produced fid ``adr``, which
+        COLLIDES with the real catalog entry ``adr`` and decoded back to
+        the wrong canonical path.
+      * Genuinely-novel paths had no catalog entry to decode against, so
+        they expanded to ``__unknown__<fid>`` — permanently losing the
+        original path.
+
+    By returning ``None`` here, non-catalog fields are stored verbatim in
+    their original long form (see :func:`compress_extraction_result`), so
+    they round-trip losslessly and can never collide with a catalog fid.
 
     Args:
         field_name: dotted path like "p_and_l_usali.operating_revenue.rooms_revenue"
 
     Returns:
-        Short field ID (e.g., "rooms_rev") or auto-generated fallback if not found.
+        Short field ID (e.g., "rooms_rev") for a catalog path, else ``None``.
     """
-    # First, check the catalog
-    if field_name in FULL_PATH_TO_ID:
-        return FULL_PATH_TO_ID[field_name]
-
-    # Fallback: auto-generate an ID for new paths
-    # This allows the catalog to grow without code changes
-    parts = field_name.split(".")
-    if len(parts) >= 3:
-        # Take last 2 parts, abbreviate to fit
-        last_two = "_".join(p[:4] for p in parts[-2:])
-        return last_two[:12]
-    elif len(parts) >= 1:
-        return parts[-1][:12]
-    return None
+    return FULL_PATH_TO_ID.get(field_name)
 
 
 def field_id_to_name(field_id: str) -> str | None:
@@ -601,13 +605,86 @@ def field_id_to_name(field_id: str) -> str | None:
     return entry["full_path"] if entry else None
 
 
+def _expand_terse_row(
+    field: dict[str, Any], catalog_version: int | None = None
+) -> dict[str, Any]:
+    """Expand a single terse row ({"fid","v","c","u","sp","rt"}) to long form."""
+    fid = field["fid"]
+    full_path = field_id_to_name(fid)
+    if not full_path:
+        # Field ID not in catalog — log warning and emit a fallback
+        # field_name so downstream doesn't break. With the new
+        # field_name_to_id (never auto-generates), the write path can no
+        # longer PRODUCE such an fid; this only guards hand-crafted or
+        # forward-version rows.
+        logger.warning(f"Field ID '{fid}' not in catalog v{catalog_version or 1}")
+        full_path = f"__unknown__{fid}"
+    return {
+        "field_name": full_path,
+        "value": field.get("v"),
+        "confidence": field.get("c", 0.0),
+        "unit": field.get("u"),
+        "source_page": field.get("sp", 1),
+        "raw_text": field.get("rt"),
+    }
+
+
+def read_extraction_fields(
+    raw_fields: list[dict[str, Any]] | None, catalog_version: int | None = None
+) -> list[dict[str, Any]]:
+    """Return LONG-FORM extraction fields regardless of how they're stored.
+
+    This is the single shared accessor every read path routes through, so
+    callers never need to know whether the persisted rows are terse
+    ({"fid": ...}) or long ({"field_name": ...}), and mixed lists (some
+    terse, some long — which happens once non-catalog fields are stored
+    verbatim alongside compressed catalog fields) are handled per-row.
+
+    Behavior is a strict superset of the old per-list logic:
+
+      * ``None`` / empty            → ``[]``
+      * all long-form (flag OFF)    → returned UNCHANGED (same object) —
+                                      identical to today's no-op default.
+      * any terse row present       → each terse row expanded, each
+                                      long-form row passed through untouched.
+
+    This is a pure in-memory transform (catalog dict lookups only, no
+    I/O), so it is synchronous — callers no longer need to ``await``.
+    """
+    if not raw_fields:
+        return []
+
+    # Fast path: nothing terse → return the list unchanged. Keeps the
+    # flag-OFF default a true no-op and preserves object identity for
+    # legacy long-form callers.
+    if not any(isinstance(f, dict) and "fid" in f for f in raw_fields):
+        return raw_fields
+
+    expanded: list[dict[str, Any]] = []
+    for field in raw_fields:
+        if not isinstance(field, dict):
+            # Unrecognized element — keep as-is.
+            expanded.append(field)
+        elif "field_name" in field:
+            # Already long-form — pass through untouched (mixed-row safe).
+            expanded.append(field)
+        elif "fid" in field:
+            expanded.append(_expand_terse_row(field, catalog_version))
+        else:
+            # Unrecognized dict shape — keep as-is.
+            expanded.append(field)
+    return expanded
+
+
 async def expand_extraction_result(
     fields: list[dict[str, Any]], catalog_version: int | None = None
 ) -> list[dict[str, Any]]:
-    """Expand terse extraction fields back to canonical form.
+    """Expand terse extraction fields back to canonical (long) form.
 
-    If fields are already in long form (field_name present), return as-is.
-    If fields are in terse form (fid present), expand using the catalog.
+    Async wrapper retained for backward compatibility with existing
+    callers/tests. The work is pure in-memory (see
+    :func:`read_extraction_fields`), so this just delegates to the sync
+    accessor — mixed terse/long lists expand per-row.
 
     Args:
         fields: list of extraction field dicts
@@ -617,49 +694,7 @@ async def expand_extraction_result(
     Returns:
         List of fields with field_name (canonical path), value, confidence, unit, etc.
     """
-    if not fields:
-        return []
-
-    # Check if fields are already long-form
-    if fields and "field_name" in fields[0]:
-        return fields
-
-    # Terse form: expand each one
-    expanded = []
-    for field in fields:
-        if "fid" not in field:
-            # Unrecognized format, keep as-is
-            expanded.append(field)
-            continue
-
-        fid = field["fid"]
-        full_path = field_id_to_name(fid)
-
-        if not full_path:
-            # Field ID not in catalog — log warning and emit the short form
-            # with a fallback field_name so downstream doesn't break
-            logger.warning(f"Field ID '{fid}' not in catalog v{catalog_version or 1}")
-            expanded.append({
-                "field_name": f"__unknown__{fid}",
-                "value": field.get("v"),
-                "confidence": field.get("c", 0.0),
-                "unit": field.get("u"),
-                "source_page": field.get("sp", 1),
-                "raw_text": field.get("rt"),
-            })
-            continue
-
-        # Expand to canonical form
-        expanded.append({
-            "field_name": full_path,
-            "value": field.get("v"),
-            "confidence": field.get("c", 0.0),
-            "unit": field.get("u"),
-            "source_page": field.get("sp", 1),
-            "raw_text": field.get("rt"),
-        })
-
-    return expanded
+    return read_extraction_fields(fields, catalog_version)
 
 
 def compress_extraction_result(
@@ -713,5 +748,6 @@ __all__ = [
     "field_name_to_id",
     "field_id_to_name",
     "expand_extraction_result",
+    "read_extraction_fields",
     "compress_extraction_result",
 ]
