@@ -84,15 +84,19 @@ class Settings(BaseSettings):
     # is lost; only the LLM's view of the doc changes.
     PARSER_COMPACTION_ENABLED: bool = Field(default=True)
 
-    # Terse output schema (cost-opt Lever 10, commit 4fa867b). When
-    # True, extraction_results.fields are persisted in the compressed
-    # {fid, v, c, u} form. SHIPPED UNGATED and broke every long-form
-    # reader (get_extraction 500s, memo/USALI/QA silently saw zero
-    # fields) — hotfixed 2026-07-05 to default OFF. Do not flip to
-    # True until every consumer of extraction_results.fields reads
-    # through a shared terse expander; see tests in
-    # test_terse_output_schema.py + the triage notes in the hotfix
-    # commit message.
+    # Terse output schema (cost-opt "Lever 10", commit 4fa867b).
+    # KEEP OFF — permanently, unless the design changes. Live-verified
+    # 2026-07-10: enabling it 500'd /extraction on the first upload
+    # (get_extraction was the ~28th read site the expander sweep
+    # missed). More fundamentally, the advertised "field-ID compression
+    # cost lever" is a misnomer: compress_extraction_result runs
+    # POST-extraction (documents.py write site), so the LLM has already
+    # spent every output token before compression happens — terse saves
+    # DB row BYTES, not LLM cost. That's a micro storage optimization on
+    # a cheap table, not worth routing an expander through ~28
+    # extraction_results.fields readers (and it caused 3 prod incidents
+    # trying). To ever enable: (1) sweep ALL readers through
+    # terse_schema.read_extraction_fields, (2) accept it's storage-only.
     TERSE_OUTPUT_SCHEMA_ENABLED: bool = Field(default=False)
 
     # Cost-optimization pass N (2026-07): content-hash extraction cache.

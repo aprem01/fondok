@@ -4039,7 +4039,17 @@ async def get_extraction(
     fields_blob = mapping["fields"]
     if isinstance(fields_blob, str):
         fields_blob = json.loads(fields_blob) if fields_blob else []
-    fields = [ExtractionFieldOut.model_validate(f) for f in (fields_blob or [])]
+    # Expand any terse rows ({fid,v,c,u}) to long form BEFORE validating
+    # against ExtractionFieldOut (which is extra="forbid" and only knows
+    # field_name/value/...). This was the ONE read site the July-2026
+    # terse fix missed — with TERSE_OUTPUT_SCHEMA_ENABLED on, every new
+    # doc's /extraction call 500'd here (live-verify 2026-07-10). The
+    # shared accessor is a no-op on long-form rows, so this is safe with
+    # the flag off too.
+    from ..extraction.terse_schema import read_extraction_fields
+
+    fields_blob = read_extraction_fields(fields_blob or [])
+    fields = [ExtractionFieldOut.model_validate(f) for f in fields_blob]
 
     cr_blob = mapping["confidence_report"]
     if isinstance(cr_blob, str):
