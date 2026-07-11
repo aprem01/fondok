@@ -1128,6 +1128,118 @@ def refine_doc_type_post_extraction(
     )
 
 
+async def classify_for_extraction(
+    *,
+    filename: str,
+    pages: list[dict[str, Any]],
+    tenant_id: str,
+    deal_id: str,
+    doc_id: str,
+) -> ClassificationDecision:
+    """Phase 1 (pre-extraction) doc-type decision.
+
+    Ordered strategies (byte-identical route sentinels + log lines to the
+    inline block it replaces):
+
+      1. pre-router structural override — ``detect_text_signals`` over the
+         FULL parsed text says ``looks_str`` → pin STR_TREND and skip the
+         Router LLM call entirely (``route=extract-pre-router-structural-
+         override``, ``source=pre-router-override``). The caller performs
+         the early ``UPDATE documents SET doc_type`` side-effect when it
+         sees this source — kept OUT of this pure decision function.
+      2. Router LLM (``run_router``) — ``route`` from the router, or
+         ``extract-fallback`` if the call raises.
+      3. filename-hint fallback (``_guess_doc_type``) — when the router
+         returns an invalid / off-enum doc_type (``UNKNOWN`` sentinel,
+         rate-limit, off-list) → ``route=extract-hint-fallback``.
+
+    Template extraction (which does real work + re-derives doc_type) stays
+    at the call site, driven by ``ClassificationDecision.doc_type``.
+    """
+    from fondok_schemas import DocType
+
+    from ..agents.router import RouterInput, run_router
+
+    # Small content sample for the Router classification — first ~2
+    # pages is plenty to recognize doc type without paying to
+    # serialize the whole document.
+    router_sample = "\n\n".join(
+        (p.get("text", "") or "") for p in pages[:2]
+    )[:2000]
+
+    # Cheap filename-based doc-type hint passes to Router; agent confirms.
+    hint = _guess_doc_type(filename)
+
+    # Pre-compute structural text signals on the FULL parsed text BEFORE
+    # the Router runs. If the full document is unambiguously STR-shaped,
+    # bypass the Router entirely and pin doc_type to STR_TREND.
+    from ..services.structural_recognizer import (
+        detect_text_signals as _detect_text_signals,
+    )
+
+    full_text_for_recognizer = "\n\n".join(
+        (p.get("text", "") or "") for p in pages
+    )
+    pre_router_text_signals = _detect_text_signals(full_text_for_recognizer)
+    pre_router_str_override: str | None = None
+    if pre_router_text_signals.looks_str:
+        pre_router_str_override = "STR_TREND"
+        logger.info(
+            "pre-router structural override: doc=%s str_markers=%d pnl_markers=%d "
+            "matched=%s — pinning doc_type=STR_TREND, skipping Router LLM call",
+            doc_id,
+            pre_router_text_signals.str_marker_hits,
+            pre_router_text_signals.pnl_marker_hits,
+            ", ".join(pre_router_text_signals.str_markers_matched[:5]),
+        )
+
+    if pre_router_str_override is not None:
+        doc_type = pre_router_str_override
+        route = "extract-pre-router-structural-override"
+        source = "pre-router-override"
+    else:
+        router_input = RouterInput(
+            tenant_id=tenant_id,
+            deal_id=deal_id,
+            filename=filename,
+            content_sample=router_sample,
+        ) if "filename" in RouterInput.model_fields else RouterInput(
+            tenant_id=tenant_id, deal_id=deal_id,
+        )
+        try:
+            router_out = await run_router(router_input)
+            doc_type = getattr(router_out, "doc_type", None) or hint
+            route = getattr(router_out, "route", "extract")
+            source = "router"
+        except Exception as exc:
+            logger.warning("router failed for doc=%s — falling back to %s: %s", doc_id, hint, exc)
+            doc_type = hint
+            route = "extract-fallback"
+            source = "router-fallback"
+
+    # The router returns 'UNKNOWN' as a sentinel when the LLM call
+    # rate-limits, the credit balance is exhausted, or the model emits
+    # an off-list value. 'UNKNOWN' is not a valid DocType enum member,
+    # so passing it through to ExtractorDocument crashes Pydantic
+    # validation and the upload row lands FAILED. Fall back to the
+    # cheap filename hint instead so extraction still proceeds.
+    valid_types = {dt.value for dt in DocType}
+    if doc_type not in valid_types:
+        logger.warning(
+            "router returned invalid doc_type=%r for doc=%s — falling back to filename hint=%s",
+            doc_type,
+            doc_id,
+            hint,
+        )
+        doc_type = hint
+        route = "extract-hint-fallback"
+        source = "hint-fallback"
+
+    return ClassificationDecision(
+        doc_type=doc_type, route=route, source=source
+    )
+
+
 def _row_to_record(row: dict[str, Any]) -> DocumentRecord:
     # Surface typed error info to the UI when present. The
     # extraction_data JSON blob carries `error_kind` and
