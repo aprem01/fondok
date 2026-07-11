@@ -22,6 +22,7 @@ import hashlib
 import json
 import logging
 import os
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Annotated, Any
 from uuid import UUID, uuid4
@@ -894,6 +895,91 @@ def _refine_pnl_doc_type(
     if refined is None:
         return base
     return refined
+
+
+# ── Document-type classification (Wave 5 dispatch refactor) ──────────
+#
+# Two phases of doc-type classification, previously inlined in
+# ``_run_graph_extraction`` (pre-extraction, decides which extractor to
+# run) and the extraction success-branch (post-extraction refinement,
+# needs the extracted ``fields``). Extracted into ``classify_for_extraction``
+# and ``refine_doc_type_post_extraction`` respectively. Zero behavior
+# change — the label sets / thresholds below were duplicated inline in
+# both the Bug H override block and the misclassification-banner block;
+# they now live here ONCE.
+
+# Router labels whose downstream semantics are non-financial. When the
+# Router lands here but the structural recognizer is confident the
+# payload is a P&L (Bug H), the doc_type is rewritten to a P&L lane so
+# the YoY / broker-question engines (which filter T12/PNL/PNL_MONTHLY/
+# PNL_YTD) actually see the row.
+_NON_FINANCIAL_ROUTER_LABELS = {
+    "PROPERTY_INFO",
+    "UNKNOWN",
+    "CONTRACT",
+    "PROPERTY_TAX",
+    "INSURANCE",
+    "CAPEX",
+    "LEASES",
+    "SURVEYS",
+    "ROOM_MIX",
+}
+# Router financial labels. When the Router lands here but the recognizer
+# is confident the payload is an STR Trend / CoStar report (Bug J),
+# rewrite to STR_TREND so the comp-set / Index Analysis pipeline sees it.
+_FINANCIAL_ROUTER_LABELS = {"T12", "PNL", "PNL_MONTHLY", "PNL_YTD"}
+# Structural-recognizer confidence floors for the Bug H / Bug J overrides.
+_STRUCTURAL_PNL_OVERRIDE_THRESHOLD = 0.85
+_STRUCTURAL_STR_OVERRIDE_THRESHOLD = 0.85
+
+
+@dataclass
+class ClassificationDecision:
+    """Phase 1 (pre-extraction) doc-type decision.
+
+    ``doc_type`` — the doc_type to hand the extractor.
+    ``route`` — the byte-identical route sentinel embedded into the
+        agent_version string (``router:{route};extractor``), parsed back
+        out by ``_parse_route_from_agent_version``.
+    ``source`` — which strategy won (``pre-router-override`` / ``router``
+        / ``router-fallback`` / ``hint-fallback``). The call site keys the
+        early ``UPDATE documents SET doc_type`` side-effect off
+        ``pre-router-override``.
+    """
+
+    doc_type: str
+    route: str
+    source: str
+
+
+@dataclass
+class RefinedClassification:
+    """Phase 2 (post-extraction) doc-type refinement result.
+
+    ``doc_type`` — the refined doc_type to persist (may be ``None`` when
+        the refinement produced no change and the caller only updates
+        status).
+    ``ai_proposed_doc_type`` — the value bound to the ``ai_proposed_doc_type``
+        column: the Router's read (``normalized_ai``) when misclassified,
+        the Router's overridden-original call when a structural override
+        rewrote the type, else ``None``.
+    ``misclassified`` — the analyst-tag-vs-AI disagreement flag.
+    ``route`` — threaded through unchanged (Phase 2 does not alter it).
+    Extra fields carry state the call-site UPDATE branches / logging need:
+    ``classified_doc_type`` (mutated by the Bug H/J overrides),
+    ``structural_pnl_score`` (persisted on every branch),
+    ``normalized_ai`` (banner label + misclassified-branch apdt),
+    ``router_overridden_original`` (refined-branch apdt).
+    """
+
+    doc_type: str | None
+    ai_proposed_doc_type: str | None
+    misclassified: bool
+    route: str | None
+    classified_doc_type: str | None
+    structural_pnl_score: float
+    normalized_ai: str | None
+    router_overridden_original: str | None
 
 
 def _row_to_record(row: dict[str, Any]) -> DocumentRecord:
