@@ -5734,14 +5734,11 @@ async def _run_graph_extraction(
     would be reported as a generic empty envelope and the analyst
     would have no signal that the doc just needs re-classification.
     """
-    from fondok_schemas import DocType
-
     from ..agents.extractor import (
         ExtractorDocument,
         ExtractorInput,
         run_extractor,
     )
-    from ..agents.router import RouterInput, run_router
 
     # Reconstruct page text from parser cache.
     pages = (extraction_data or {}).get("pages") or []
@@ -5751,67 +5748,28 @@ async def _run_graph_extraction(
             doc_id,
         )
 
-    # Small content sample for the Router classification — first ~2
-    # pages is plenty to recognize doc type without paying to
-    # serialize the whole document.
-    router_sample = "\n\n".join(
-        (p.get("text", "") or "") for p in pages[:2]
-    )[:2000]
-
-    # Cheap filename-based doc-type hint passes to Router; agent confirms.
-    hint = _guess_doc_type(filename)
-
-    # Sam QA Bug J round 2 (2026-06-30): the post-extraction structural
-    # override at ~line 4192 runs `classify_structure(fields)` on the
-    # extracted field set. For STR Trend xlsx files misclassified as
-    # T12, the T12 extractor returns ZERO fields (no P&L to find),
-    # which leaves `classify_structure` with nothing to identify
-    # is_str from — so the override never fires. Meanwhile the
-    # in-extractor contradiction guard runs per-chunk on ~5 pages of
-    # content; STR markers (MPI/ARI/RGI/comp_set) typically appear on
-    # later worksheets / pages, not the first 5.
-    #
-    # Fix: pre-compute structural text signals on the FULL parsed
-    # text (every page, all 253K+ chars for a multi-sheet xlsx)
-    # BEFORE the Router runs. If the full document is unambiguously
-    # STR-shaped (4+ markers, outweighs P&L vocab 2x — same gates as
-    # the per-chunk guard), bypass the Router entirely and pin
-    # doc_type to STR_TREND. The Router's prospective call gets logged
-    # for telemetry but the LLM call is skipped, saving the round-trip
-    # and the 6-minute retry burn an STR-as-T12 misextraction costs.
-    from ..services.structural_recognizer import detect_text_signals as _detect_text_signals
-
-    full_text_for_recognizer = "\n\n".join(
-        (p.get("text", "") or "") for p in pages
+    # Phase 1 (pre-extraction) doc-type decision — pre-router
+    # structural override → Router LLM → filename-hint fallback. See
+    # ``classify_for_extraction``.
+    decision = await classify_for_extraction(
+        filename=filename,
+        pages=pages,
+        tenant_id=tenant_id,
+        deal_id=deal_id,
+        doc_id=doc_id,
     )
-    pre_router_text_signals = _detect_text_signals(full_text_for_recognizer)
-    pre_router_str_override: str | None = None
-    if pre_router_text_signals.looks_str:
-        pre_router_str_override = "STR_TREND"
-        logger.info(
-            "pre-router structural override: doc=%s str_markers=%d pnl_markers=%d "
-            "matched=%s — pinning doc_type=STR_TREND, skipping Router LLM call",
-            doc_id,
-            pre_router_text_signals.str_marker_hits,
-            pre_router_text_signals.pnl_marker_hits,
-            ", ".join(pre_router_text_signals.str_markers_matched[:5]),
-        )
+    doc_type = decision.doc_type
+    route = decision.route
 
-    if pre_router_str_override is not None:
-        doc_type = pre_router_str_override
-        route = "extract-pre-router-structural-override"
-        router_out = None
-        # UX: also persist the override to the documents row NOW so the
+    if decision.source == "pre-router-override":
+        # UX: persist the override to the documents row NOW so the
         # data-room shows the correct doc_type during the ~minutes-long
         # extraction window. Without this the column would keep
         # displaying whatever filename-hint label was written at upload
         # time (typically the misclassified one) until extraction
         # completes and the success-state UPDATE rewrites doc_type.
-        # Sam QA 2026-06-30: he saw the STR row "stuck as T12 EXTRACTING"
-        # and concluded J failed — actually J had pinned STR_TREND in
-        # memory but the column wouldn't reflect that until extraction
-        # finished ~3 min later (verified via "extraction complete:
-        # doc=X fields=730 doc_type=STR_TREND" log).
+        # Kept OUT of the pure decision fn — this is a side-effect; the
+        # frontend polls documents.doc_type mid-extraction.
         try:
             from sqlalchemy import text as _sa_text
             from ..database import get_session_factory
@@ -5826,7 +5784,7 @@ async def _run_graph_extraction(
                         " WHERE id = :id AND tenant_id = :tenant"
                     ),
                     {
-                        "dt": pre_router_str_override,
+                        "dt": doc_type,
                         "id": doc_id,
                         "tenant": tenant_id,
                     },
@@ -5840,43 +5798,6 @@ async def _run_graph_extraction(
                 doc_id,
                 exc,
             )
-    else:
-        router_input = RouterInput(
-            tenant_id=tenant_id,
-            deal_id=deal_id,
-            filename=filename,
-            content_sample=router_sample,
-        ) if "filename" in RouterInput.model_fields else RouterInput(
-            tenant_id=tenant_id, deal_id=deal_id,
-        )
-        try:
-            router_out = await run_router(router_input)
-            doc_type = getattr(router_out, "doc_type", None) or hint
-            route = getattr(router_out, "route", "extract")
-        except Exception as exc:
-            logger.warning("router failed for doc=%s — falling back to %s: %s", doc_id, hint, exc)
-            doc_type = hint
-            route = "extract-fallback"
-
-    # The router returns 'UNKNOWN' as a sentinel when the LLM call
-    # rate-limits, the credit balance is exhausted, or the model emits
-    # an off-list value. 'UNKNOWN' is not a valid DocType enum member,
-    # so passing it through to ExtractorDocument crashes Pydantic
-    # validation and the upload row lands FAILED. Fall back to the
-    # cheap filename hint instead so extraction still proceeds — the
-    # downstream verifier and the user-facing doc_type column on the
-    # documents row will reflect the hint, which is correct for the
-    # 90% case where the filename actually carries the type.
-    valid_types = {dt.value for dt in DocType}
-    if doc_type not in valid_types:
-        logger.warning(
-            "router returned invalid doc_type=%r for doc=%s — falling back to filename hint=%s",
-            doc_type,
-            doc_id,
-            hint,
-        )
-        doc_type = hint
-        route = "extract-hint-fallback"
 
     # Cost-opt pass W (2026-07): deterministic template extraction.
     # STR Trend workbooks are a standardized industry format, so once
