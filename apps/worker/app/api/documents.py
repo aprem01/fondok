@@ -4819,241 +4819,26 @@ async def _run_extraction_pipeline_inner(
                 # a full T-12 — but the Extractor pulls the period_type
                 # off the table itself. Rani's QA flagged a May 2024
                 # monthly P&L being treated as a T-12.
-                refined_doc_type = _refine_pnl_doc_type(
-                    classified_doc_type, fields
+                # Phase 2 (post-extraction) refinement — narrow the
+                # P&L family from the extracted period_type, apply the
+                # Bug H / Bug J structural overrides, and resolve the
+                # misclassification banner. See
+                # ``refine_doc_type_post_extraction``.
+                refinement = refine_doc_type_post_extraction(
+                    classified_doc_type=classified_doc_type,
+                    route=None,
+                    fields=fields,
+                    user_provided_doc_type=user_provided_doc_type,
+                    doc_id=doc_id,
                 )
-
-                # Sam QA Bug H (June 30 2026) — structural override for
-                # Router non-financial misfires.
-                #
-                # Symptom Sam caught on a CLEAN deal (no user tag):
-                # "May 2025 Financials.xlsx" → Router classified as
-                # PROPERTY_INFO. Without a ``T12``-typed row, the broker-
-                # questions YoY engine produces ZERO questions (its SQL
-                # filters ``doc_type IN ('T12','PNL','PNL_MONTHLY',
-                # 'PNL_YTD')``) — even though the file extracts cleanly.
-                # On a different deal the same file classified as T12 and
-                # 30+ broker questions generated. Pure Router non-
-                # determinism.
-                #
-                # The existing v4 block below handles the misclassified-
-                # banner case (analyst tagged correctly, Router was
-                # wrong) AND the inverse (analyst tagged a P&L as
-                # PROPERTY_INFO). Neither branch fires when there is NO
-                # user tag (bulk Data Room upload) because both gate on
-                # ``canonical_user`` being non-empty. This override
-                # patches that gap: when the Router lands on a known
-                # non-financial label AND the structural recognizer is
-                # confident the payload IS a P&L, rewrite the doc_type
-                # to T12/PNL/PNL_MONTHLY/PNL_YTD so downstream engines
-                # see the row.
-                #
-                # Scope is intentionally narrow (Option B):
-                #   * Router said one of NON_FINANCIAL_ROUTER_LABELS —
-                #     OM, STR_*, MARKET_STUDY, PORTFOLIO_PNL, etc. all
-                #     have distinct downstream semantics and STAY put.
-                #   * structural_signals.is_pnl must be True (the
-                #     recognizer's combined gate: revenue + expense +
-                #     rollup + dollar-field count + ≥ 6 distinct
-                #     canonical concepts).
-                #   * pnl_score ≥ 0.85 floor (belt-and-braces; is_pnl
-                #     implies score = 1.0 today but the threshold pins
-                #     the contract if the recognizer's gates ever
-                #     soften).
-                #
-                # Router's original call is preserved on
-                # ``ai_proposed_doc_type`` so Sam's misclassification
-                # banner can render "Router thought PROPERTY_INFO, we
-                # overrode to T12" — no silent rewrites.
-                from ..services.structural_recognizer import (
-                    classify_structure,
+                refined_doc_type = refinement.doc_type
+                classified_doc_type = refinement.classified_doc_type
+                structural_pnl_score = refinement.structural_pnl_score
+                misclassified_flag = refinement.misclassified
+                normalized_ai = refinement.normalized_ai
+                router_overridden_original = (
+                    refinement.router_overridden_original
                 )
-
-                structural_signals = classify_structure(fields)
-                structural_pnl_score = float(structural_signals.pnl_score)
-
-                _NON_FINANCIAL_ROUTER_LABELS = {
-                    "PROPERTY_INFO",
-                    "UNKNOWN",
-                    "CONTRACT",
-                    "PROPERTY_TAX",
-                    "INSURANCE",
-                    "CAPEX",
-                    "LEASES",
-                    "SURVEYS",
-                    "ROOM_MIX",
-                }
-                # Sam QA Bug J (June 30 2026) — mirror of Bug H in the
-                # OPPOSITE direction. Router landed on a financial label
-                # (T12 / PNL*) but the structural recognizer says the
-                # payload is unmistakably STR Trend / CoStar (subject +
-                # comp set + MPI/ARI/RGI indices). Override the doc_type
-                # to STR_TREND so the comp-set / Index Analysis pipeline
-                # (which keys on ``doc_type IN ('STR', 'STR_TREND')``)
-                # actually sees the row. Without this the STR file
-                # silently sat as a T12 row and the Market tab showed
-                # "no comp-set data".
-                _FINANCIAL_ROUTER_LABELS = {
-                    "T12", "PNL", "PNL_MONTHLY", "PNL_YTD"
-                }
-                _STRUCTURAL_PNL_OVERRIDE_THRESHOLD = 0.85
-                _STRUCTURAL_STR_OVERRIDE_THRESHOLD = 0.85
-
-                router_overridden_original: str | None = None
-                router_call_for_override = (
-                    (refined_doc_type or classified_doc_type or "")
-                    .upper()
-                    .strip()
-                )
-                if (
-                    router_call_for_override in _NON_FINANCIAL_ROUTER_LABELS
-                    and structural_signals.is_pnl
-                    and structural_pnl_score
-                    >= _STRUCTURAL_PNL_OVERRIDE_THRESHOLD
-                ):
-                    # Re-run the period-type narrowing against the
-                    # structural override so a single-month upload lands
-                    # as PNL_MONTHLY rather than the catch-all T12.
-                    overridden = _refine_pnl_doc_type("T12", fields) or "T12"
-                    router_overridden_original = router_call_for_override
-                    logger.info(
-                        "structural_recognizer overrode Router: %s → %s "
-                        "(signal=%.2f, %s) doc=%s",
-                        router_call_for_override,
-                        overridden,
-                        structural_pnl_score,
-                        structural_signals.reason,
-                        doc_id,
-                    )
-                    refined_doc_type = overridden
-                    classified_doc_type = overridden
-                elif (
-                    router_call_for_override in _FINANCIAL_ROUTER_LABELS
-                    and structural_signals.is_str
-                    and float(structural_signals.str_score)
-                    >= _STRUCTURAL_STR_OVERRIDE_THRESHOLD
-                    and not structural_signals.is_pnl
-                ):
-                    # Sam QA Bug J: STR Trend mis-classified as T12.
-                    # The ``not is_pnl`` guard belt-and-braces against a
-                    # pathological doc that somehow trips BOTH gates —
-                    # ambiguity stays on the Router's call rather than
-                    # the recognizer flipping it. In practice STR Trend
-                    # reports never satisfy ``is_pnl`` (no revenue +
-                    # expense + rollup) so this gate is decisive.
-                    router_overridden_original = router_call_for_override
-                    logger.info(
-                        "structural_recognizer overrode Router (Bug J): "
-                        "%s → STR_TREND (str_score=%.2f, %s) doc=%s",
-                        router_call_for_override,
-                        float(structural_signals.str_score),
-                        structural_signals.reason,
-                        doc_id,
-                    )
-                    refined_doc_type = "STR_TREND"
-                    classified_doc_type = "STR_TREND"
-
-                ai_proposed_doc_type = refined_doc_type or classified_doc_type
-
-                # Misclassification rule (Wave 1 #1): when the analyst
-                # tagged the file in the wizard ("Annual / T-12" for a
-                # 2025 P&L) AND the Router-or-refined doc_type
-                # disagrees, set ``misclassified=True`` and keep the
-                # analyst tag. The UI shows a warn banner with
-                # "Use Fondok's classification" / "Keep mine"; we never
-                # silently overwrite the user's intent (locked product
-                # decision).
-                normalized_ai = (
-                    (ai_proposed_doc_type or "").upper().strip() or None
-                )
-                # Canonicalize BOTH sides through ``_canonical_doc_type``
-                # so ``T-12`` / ``T12`` / ``t 12`` / ``PNL_MONTHLY`` /
-                # ``PNL MONTHLY`` collapse to a single comparison key
-                # (Sam QA Bug #2 — banner was firing on a correctly
-                # categorized T-12 because the raw strings differed).
-                canonical_user = _canonical_doc_type(user_provided_doc_type)
-                canonical_ai = _canonical_doc_type(normalized_ai)
-                misclassified_flag = bool(
-                    canonical_user
-                    and canonical_ai
-                    and canonical_user != canonical_ai
-                )
-
-                # Sam QA Bug #2 v4 (June 28 2026) — structural override.
-                #
-                # On Wave 4 Sam caught a 181-field T-12 being flagged
-                # "misclassified" because the LLM Router landed on
-                # PROPERTY_INFO (the filename + first 2k chars didn't
-                # carry enough P&L signal for it). With the analyst's
-                # ``user_provided_doc_type`` = T12 AND a structurally
-                # confirmed P&L payload, the misclassification banner
-                # is wrong — and it cascades (the engine_runner SQL
-                # filters T12/PNL/PNL_MONTHLY/PNL_YTD, so a
-                # ``doc_type=PROPERTY_INFO`` row drops out of every
-                # downstream YoY / variance / broker-question call).
-                #
-                # Rules (the structural recognizer is the tiebreaker):
-                #
-                # 1. user_tag in P&L family + recognizer says is_pnl →
-                #    NOT misclassified. We trust the user's tag and let
-                #    USALI scoring + YoY engines run normally.
-                # 2. user_tag in PROPERTY_INFO/OM/etc. + recognizer
-                #    says is_pnl → DO flag misclassified. The analyst
-                #    uploaded a P&L under the wrong wizard bucket and
-                #    the structural signal is the right tiebreaker.
-                # 3. user_tag in P&L family + recognizer says NOT P&L →
-                #    NOT misclassified (keep current Router decision
-                #    flow). Could be a thin P&L the recognizer didn't
-                #    pick up; safer to preserve the user's intent than
-                #    to surprise them with a banner.
-                #
-                # NOTE: ``structural_signals`` / ``structural_pnl_score``
-                # are computed once above (the Bug H override block) and
-                # reused here — the recognizer is deterministic over a
-                # given payload so a second call would just duplicate work.
-                _PNL_TAG_CANONICALS = {"T12", "PNL", "PNLMONTHLY", "PNLYTD"}
-                user_tag_is_pnl = canonical_user in _PNL_TAG_CANONICALS
-
-                if structural_signals.is_pnl and user_tag_is_pnl:
-                    # Trust the user's tag — recognizer confirms shape.
-                    # Override the Router's possibly-wrong PROPERTY_INFO
-                    # read so downstream queries see the P&L doc_type
-                    # the analyst actually meant.
-                    if misclassified_flag:
-                        logger.info(
-                            "router v4: doc=%s structural override — "
-                            "user tagged %s, router said %s, recognizer "
-                            "confirms P&L (%s). Clearing misclassified.",
-                            doc_id,
-                            user_provided_doc_type,
-                            normalized_ai,
-                            structural_signals.reason,
-                        )
-                    misclassified_flag = False
-                    # Adopt the user's tag as the AI label so the
-                    # downstream UPDATE writes the canonical P&L value
-                    # (not the Router's PROPERTY_INFO) into doc_type.
-                    normalized_ai = canonical_user
-                    refined_doc_type = canonical_user
-                elif (
-                    structural_signals.is_pnl
-                    and canonical_user
-                    and not user_tag_is_pnl
-                ):
-                    # Analyst uploaded a P&L under a non-P&L tag —
-                    # the structural signal wins the conflict. Flag
-                    # misclassified WITH the recognizer's verdict as
-                    # the AI label so the banner shows a meaningful
-                    # alternative ("Fondok thinks this is a P&L").
-                    # Requires a non-null user tag — if the analyst
-                    # never tagged (bulk upload to the Data Room with
-                    # no per-doc category), there's no conflict to flag
-                    # (Sam QA 2026-06-29: bulk-uploaded annuals were
-                    # all getting misclassified=True even though there
-                    # was no analyst intent to disagree with).
-                    misclassified_flag = True
-                    if not normalized_ai:
-                        normalized_ai = "T12"  # generic P&L lane
 
                 # Wave 1 year-mismatch (B4). When the analyst pinned a
                 # ``fiscal_year`` AND the Extractor pulled a
