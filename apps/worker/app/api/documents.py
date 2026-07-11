@@ -982,6 +982,152 @@ class RefinedClassification:
     router_overridden_original: str | None
 
 
+def refine_doc_type_post_extraction(
+    *,
+    classified_doc_type: str | None,
+    route: str | None,
+    fields: list[dict[str, Any]],
+    user_provided_doc_type: str | None,
+    doc_id: str,
+) -> RefinedClassification:
+    """Phase 2: refine the doc_type using the extracted ``fields``.
+
+    Same ordered strategies (and byte-identical log lines) as the inline
+    extraction success-branch it replaces:
+
+      1. ``_refine_pnl_doc_type`` — narrow T12 ↔ PNL_MONTHLY/PNL_YTD from
+         the extracted ``period_type``.
+      2. Bug H — Router non-financial label + recognizer confident P&L
+         (``is_pnl`` and ``pnl_score >= 0.85``) → rewrite to a P&L lane.
+      3. Bug J — Router financial label + recognizer confident STR
+         (``is_str`` and ``str_score >= 0.85`` and not ``is_pnl``) →
+         rewrite to STR_TREND.
+      4. Misclassification banner (Wave 1 #1 + Bug #2 v4 structural
+         override): compare the analyst tag against the AI proposal and
+         set/clear ``misclassified`` + ``ai_proposed_doc_type``.
+
+    Pure decision function — the caller owns the persistence UPDATE and
+    the year-mismatch derivation.
+    """
+    from ..services.structural_recognizer import classify_structure
+
+    refined_doc_type = _refine_pnl_doc_type(classified_doc_type, fields)
+
+    structural_signals = classify_structure(fields)
+    structural_pnl_score = float(structural_signals.pnl_score)
+
+    router_overridden_original: str | None = None
+    router_call_for_override = (
+        (refined_doc_type or classified_doc_type or "")
+        .upper()
+        .strip()
+    )
+    if (
+        router_call_for_override in _NON_FINANCIAL_ROUTER_LABELS
+        and structural_signals.is_pnl
+        and structural_pnl_score
+        >= _STRUCTURAL_PNL_OVERRIDE_THRESHOLD
+    ):
+        # Re-run the period-type narrowing against the structural
+        # override so a single-month upload lands as PNL_MONTHLY rather
+        # than the catch-all T12.
+        overridden = _refine_pnl_doc_type("T12", fields) or "T12"
+        router_overridden_original = router_call_for_override
+        logger.info(
+            "structural_recognizer overrode Router: %s → %s "
+            "(signal=%.2f, %s) doc=%s",
+            router_call_for_override,
+            overridden,
+            structural_pnl_score,
+            structural_signals.reason,
+            doc_id,
+        )
+        refined_doc_type = overridden
+        classified_doc_type = overridden
+    elif (
+        router_call_for_override in _FINANCIAL_ROUTER_LABELS
+        and structural_signals.is_str
+        and float(structural_signals.str_score)
+        >= _STRUCTURAL_STR_OVERRIDE_THRESHOLD
+        and not structural_signals.is_pnl
+    ):
+        # Sam QA Bug J: STR Trend mis-classified as T12.
+        router_overridden_original = router_call_for_override
+        logger.info(
+            "structural_recognizer overrode Router (Bug J): "
+            "%s → STR_TREND (str_score=%.2f, %s) doc=%s",
+            router_call_for_override,
+            float(structural_signals.str_score),
+            structural_signals.reason,
+            doc_id,
+        )
+        refined_doc_type = "STR_TREND"
+        classified_doc_type = "STR_TREND"
+
+    ai_proposed_doc_type = refined_doc_type or classified_doc_type
+
+    normalized_ai = (
+        (ai_proposed_doc_type or "").upper().strip() or None
+    )
+    canonical_user = _canonical_doc_type(user_provided_doc_type)
+    canonical_ai = _canonical_doc_type(normalized_ai)
+    misclassified_flag = bool(
+        canonical_user
+        and canonical_ai
+        and canonical_user != canonical_ai
+    )
+
+    _PNL_TAG_CANONICALS = {"T12", "PNL", "PNLMONTHLY", "PNLYTD"}
+    user_tag_is_pnl = canonical_user in _PNL_TAG_CANONICALS
+
+    if structural_signals.is_pnl and user_tag_is_pnl:
+        # Trust the user's tag — recognizer confirms shape.
+        if misclassified_flag:
+            logger.info(
+                "router v4: doc=%s structural override — "
+                "user tagged %s, router said %s, recognizer "
+                "confirms P&L (%s). Clearing misclassified.",
+                doc_id,
+                user_provided_doc_type,
+                normalized_ai,
+                structural_signals.reason,
+            )
+        misclassified_flag = False
+        normalized_ai = canonical_user
+        refined_doc_type = canonical_user
+    elif (
+        structural_signals.is_pnl
+        and canonical_user
+        and not user_tag_is_pnl
+    ):
+        # Analyst uploaded a P&L under a non-P&L tag — structural wins.
+        misclassified_flag = True
+        if not normalized_ai:
+            normalized_ai = "T12"  # generic P&L lane
+
+    # Resolve the value the persistence branches bind to
+    # ``ai_proposed_doc_type``: normalized_ai when misclassified, the
+    # Router's overridden-original call when a structural override
+    # rewrote the type, else NULL.
+    if misclassified_flag:
+        resolved_apdt = normalized_ai
+    elif refined_doc_type:
+        resolved_apdt = router_overridden_original
+    else:
+        resolved_apdt = None
+
+    return RefinedClassification(
+        doc_type=refined_doc_type,
+        ai_proposed_doc_type=resolved_apdt,
+        misclassified=misclassified_flag,
+        route=route,
+        classified_doc_type=classified_doc_type,
+        structural_pnl_score=structural_pnl_score,
+        normalized_ai=normalized_ai,
+        router_overridden_original=router_overridden_original,
+    )
+
+
 def _row_to_record(row: dict[str, Any]) -> DocumentRecord:
     # Surface typed error info to the UI when present. The
     # extraction_data JSON blob carries `error_kind` and
