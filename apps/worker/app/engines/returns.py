@@ -13,6 +13,7 @@ from uuid import UUID
 from pydantic import BaseModel, ConfigDict, Field
 
 from fondok_schemas.financial import ModelAssumptions
+from fondok_schemas.provenance import ValueInput, ValueTrace
 from fondok_schemas.underwriting import (
     CashFlowEngineOutput,
     CashFlowYear,
@@ -21,6 +22,79 @@ from fondok_schemas.underwriting import (
 )
 
 from .base import BaseEngine
+
+
+def _exit_value_provenance(
+    *,
+    terminal_noi: float,
+    exit_cap_rate: float,
+    gross_sale: float,
+    selling_costs_pct: float,
+    selling_costs: float,
+    loan_balance_at_exit: float,
+    net_proceeds: float,
+    total_distributions: float,
+    equity: float,
+    equity_multiple: float,
+) -> dict[str, ValueTrace]:
+    """Shared exit-value trace map for both returns construction paths.
+
+    Traces the exit-value chain analysts most want to interrogate:
+    gross_sale_price → net_proceeds → equity_multiple.
+    """
+    return {
+        "gross_sale_price": ValueTrace(
+            value=gross_sale,
+            formula="gross_sale_price = terminal_noi ÷ exit_cap_rate",
+            inputs=[
+                ValueInput(name="terminal_noi", value=terminal_noi),
+                ValueInput(name="exit_cap_rate", value=exit_cap_rate),
+            ],
+            note="Direct-cap terminal value at the end of the hold.",
+        ),
+        "selling_costs": ValueTrace(
+            value=selling_costs,
+            formula="selling_costs = gross_sale_price × selling_costs_pct",
+            inputs=[
+                ValueInput(
+                    name="gross_sale_price",
+                    value=gross_sale,
+                    traces_to="gross_sale_price",
+                ),
+                ValueInput(name="selling_costs_pct", value=selling_costs_pct),
+            ],
+        ),
+        "net_proceeds": ValueTrace(
+            value=net_proceeds,
+            formula="net_proceeds = gross_sale_price − selling_costs − loan_balance_at_exit",
+            inputs=[
+                ValueInput(
+                    name="gross_sale_price",
+                    value=gross_sale,
+                    traces_to="gross_sale_price",
+                ),
+                ValueInput(
+                    name="selling_costs",
+                    value=selling_costs,
+                    traces_to="selling_costs",
+                ),
+                ValueInput(name="loan_balance_at_exit", value=loan_balance_at_exit),
+            ],
+            note="Equity proceeds at sale, after debt payoff.",
+        ),
+        "equity_multiple": ValueTrace(
+            value=equity_multiple,
+            formula="equity_multiple = total_distributions ÷ equity",
+            inputs=[
+                ValueInput(name="total_distributions", value=total_distributions),
+                ValueInput(name="equity", value=equity),
+            ],
+            note=(
+                "total_distributions = Σ annual cash-flow-after-debt "
+                "+ net_proceeds at exit."
+            ),
+        ),
+    }
 
 
 # ─────────────── IRR helpers ───────────────
@@ -227,6 +301,18 @@ class ReturnsEngine(BaseEngine[ReturnsEngineInputExt, ReturnsEngineOutputExt]):
             hold_years=hold,
             cash_flows=levered_flows,
             cash_flows_unlevered=unlevered_flows,
+            provenance=_exit_value_provenance(
+                terminal_noi=terminal_noi,
+                exit_cap_rate=assumptions.exit_cap_rate,
+                gross_sale=gross_sale,
+                selling_costs_pct=assumptions.selling_costs_pct,
+                selling_costs=selling_costs,
+                loan_balance_at_exit=loan_balance_at_exit,
+                net_proceeds=net_proceeds_to_equity,
+                total_distributions=total_distributions,
+                equity=payload.equity,
+                equity_multiple=equity_multiple,
+            ),
         )
 
 
@@ -256,11 +342,12 @@ def returns_from_cash_flow(
     ]
 
     total_distributions = sum(cfad) + net_proceeds
+    equity_multiple = total_distributions / equity if equity else 0.0
     return ReturnsEngineOutputExt(
         deal_id=payload.deal_id,
         levered_irr=irr(levered_flows),
         unlevered_irr=irr(unlevered_flows),
-        equity_multiple=total_distributions / equity if equity else 0.0,
+        equity_multiple=equity_multiple,
         year_one_coc=cfad[0] / equity if equity and cfad else 0.0,
         avg_coc=(sum(cfad) / len(cfad)) / equity if equity and cfad else 0.0,
         gross_sale_price=gross_sale,
@@ -269,6 +356,18 @@ def returns_from_cash_flow(
         hold_years=hold,
         cash_flows=levered_flows,
         cash_flows_unlevered=unlevered_flows,
+        provenance=_exit_value_provenance(
+            terminal_noi=payload.terminal_noi,
+            exit_cap_rate=assumptions.exit_cap_rate,
+            gross_sale=gross_sale,
+            selling_costs_pct=assumptions.selling_costs_pct,
+            selling_costs=selling_costs,
+            loan_balance_at_exit=loan_balance_at_exit,
+            net_proceeds=net_proceeds,
+            total_distributions=total_distributions,
+            equity=equity,
+            equity_multiple=equity_multiple,
+        ),
     )
 
 

@@ -91,6 +91,7 @@ from .pipeline_filter import (
     SavedPipelineView,
 )
 from .portfolio_library import PortfolioLibraryEntry
+from .provenance import ProvenanceMap, ValueInput, ValueTrace
 from .scenario import Scenario, ScenarioOverride
 from .underwriting import (
     CapexPlan,
@@ -223,6 +224,10 @@ __all__ = [
     "SavedPipelineView",
     # portfolio_library (Wave 4 W4.1 — firm-level portfolio P&L library)
     "PortfolioLibraryEntry",
+    # provenance (FON-25 / FON-27 — modeled-value provenance & rationale)
+    "ProvenanceMap",
+    "ValueInput",
+    "ValueTrace",
     # scenario (Wave 3 W3.2 — named what-if scenarios)
     "Scenario",
     "ScenarioOverride",

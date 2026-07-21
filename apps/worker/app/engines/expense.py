@@ -20,6 +20,7 @@ from uuid import UUID
 from pydantic import BaseModel, ConfigDict, Field
 
 from fondok_schemas.financial import DepartmentalExpenses, FixedCharges, UndistributedExpenses
+from fondok_schemas.provenance import ValueInput, ValueTrace
 
 from .base import BaseEngine
 from .fb_revenue import FBRevenueOutput
@@ -138,6 +139,9 @@ class ExpenseEngineOutput(BaseModel):
     # The web app surfaces this list as a footnote on the Operating
     # Statement so reviewers know which numbers are real vs synthesized.
     sourced_from_t12: list[str] = Field(default_factory=list)
+    # FON-25 — per-value provenance sidecar (see provenance.py). Keyed by
+    # dotted output path, e.g. "years[0].noi". Empty by default.
+    provenance: dict[str, ValueTrace] = Field(default_factory=dict)
 
 
 class ExpenseEngine(BaseEngine[ExpenseEngineInput, ExpenseEngineOutput]):
@@ -191,6 +195,8 @@ class ExpenseEngine(BaseEngine[ExpenseEngineInput, ExpenseEngineOutput]):
             return fixed_total * FIXED_WEIGHTS[line]
 
         years: list[ExpenseYear] = []
+        # FON-25 — per-value provenance sidecar for the P&L waterfall.
+        prov: dict[str, ValueTrace] = {}
         # Year-1 anchors used when growing opex independently of revenue.
         y1_dept_rooms = y1_dept_fb = y1_dept_other = 0.0
         y1_undist_lines: dict[str, float] = {}
@@ -297,6 +303,34 @@ class ExpenseEngine(BaseEngine[ExpenseEngineInput, ExpenseEngineOutput]):
             # reserve. This is what UI consumers should label "NOI".
             noi_institutional = gop - mgmt_fee - fixed_total
 
+            # ─── Provenance for the two P&L waterfall values analysts most
+            # want to explain: GOP and NOI (FON-25) ───
+            idx = len(years)
+            prov[f"years[{idx}].gop"] = ValueTrace(
+                value=gop,
+                formula="gop = total_revenue − departmental_expenses − undistributed_expenses",
+                inputs=[
+                    ValueInput(name="total_revenue", value=total),
+                    ValueInput(name="departmental_expenses", value=dept_total),
+                    ValueInput(name="undistributed_expenses", value=undist_total),
+                ],
+                note="Gross Operating Profit — USALI line above management fee.",
+            )
+            prov[f"years[{idx}].noi"] = ValueTrace(
+                value=noi,
+                formula="noi = gop − management_fee − ffe_reserve − fixed_charges",
+                inputs=[
+                    ValueInput(name="gop", value=gop, traces_to=f"years[{idx}].gop"),
+                    ValueInput(name="management_fee", value=mgmt_fee),
+                    ValueInput(name="ffe_reserve", value=ffe),
+                    ValueInput(name="fixed_charges", value=fixed_total),
+                ],
+                note=(
+                    "NOI after FF&E reserve (legacy cap-rate convention). "
+                    "noi_institutional excludes the FF&E reserve."
+                ),
+            )
+
             years.append(
                 ExpenseYear(
                     year=rev_year.year,
@@ -333,6 +367,7 @@ class ExpenseEngine(BaseEngine[ExpenseEngineInput, ExpenseEngineOutput]):
             years=years,
             noi_cagr=noi_cagr,
             sourced_from_t12=sourced,
+            provenance=prov,
         )
 
 

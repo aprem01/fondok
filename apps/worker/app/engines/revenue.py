@@ -26,6 +26,7 @@ legacy ``y1_*_displacement_pct`` math byte-for-byte.
 
 from __future__ import annotations
 
+from fondok_schemas.provenance import ValueInput, ValueTrace
 from fondok_schemas.underwriting import (
     PIPDisplacement,
     RevenueEngineInput,
@@ -183,6 +184,11 @@ class RevenueEngine(BaseEngine[RevenueEngineInput, RevenueEngineOutput]):
         keys = payload.keys
         rooms_available = keys * DAYS_PER_YEAR
         years: list[RevenueProjectionYear] = []
+        # FON-25 — per-value provenance sidecar, keyed by dotted output path.
+        # Populated per year as the canonical revenue lines are computed so
+        # an analyst can trace any projected number back to its formula and
+        # inputs. Emitted alongside the typed output (never mutates it).
+        prov: dict[str, ValueTrace] = {}
 
         # `starting_*` represents the STABILIZED baseline (typically
         # the T-12 actual or the CBRE Year-1 forecast). Year 1 may be
@@ -324,6 +330,54 @@ class RevenueEngine(BaseEngine[RevenueEngineInput, RevenueEngineOutput]):
             other_revenue = rooms_revenue * payload.other_revenue_pct_of_rooms
             total_revenue = rooms_revenue + fb_revenue + resort_fees + other_revenue
 
+            # ─── Provenance for this year's canonical revenue lines ───
+            idx = y - 1
+            if use_segments:
+                rooms_trace = ValueTrace(
+                    value=rooms_revenue,
+                    formula="rooms_revenue = Σ segment (gross_revenue − channel_cost)",
+                    inputs=[
+                        ValueInput(name="gross_rooms_revenue", value=gross_rooms_revenue),
+                        ValueInput(name="channel_cost_total", value=channel_cost_total),
+                    ],
+                    note=(
+                        f"Net of channel cost across {len(segment_breakdown)} demand "
+                        "segments; see segment_breakdown for the per-segment split."
+                    ),
+                )
+            else:
+                rooms_trace = ValueTrace(
+                    value=rooms_revenue,
+                    formula="rooms_revenue = occupied_rooms × ADR",
+                    inputs=[
+                        ValueInput(name="occupied_rooms", value=occupied),
+                        ValueInput(name="adr", value=adr),
+                    ],
+                    note=(
+                        f"occupied_rooms = keys ({keys}) × {DAYS_PER_YEAR} days × "
+                        f"occupancy ({occ:.4f}); occupancy and ADR chain back to the "
+                        "starting_occupancy / starting_adr assumptions."
+                    ),
+                )
+            prov[f"years[{idx}].rooms_revenue"] = rooms_trace
+            prov[f"years[{idx}].total_revenue"] = ValueTrace(
+                value=total_revenue,
+                formula=(
+                    "total_revenue = rooms_revenue + fb_revenue + resort_fees "
+                    "+ other_revenue"
+                ),
+                inputs=[
+                    ValueInput(
+                        name="rooms_revenue",
+                        value=rooms_revenue,
+                        traces_to=f"years[{idx}].rooms_revenue",
+                    ),
+                    ValueInput(name="fb_revenue", value=fb_revenue),
+                    ValueInput(name="resort_fees", value=resort_fees),
+                    ValueInput(name="other_revenue", value=other_revenue),
+                ],
+            )
+
             years.append(
                 RevenueProjectionYear(
                     year=y,
@@ -351,6 +405,7 @@ class RevenueEngine(BaseEngine[RevenueEngineInput, RevenueEngineOutput]):
             deal_id=payload.deal_id,
             years=years,
             total_revenue_cagr=cagr,
+            provenance=prov,
         )
 
 

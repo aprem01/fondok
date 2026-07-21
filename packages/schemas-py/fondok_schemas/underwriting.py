@@ -12,6 +12,7 @@ from uuid import UUID
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from .financial import ModelAssumptions, USALIFinancials
+from .provenance import ValueTrace
 
 
 # ─────────────── Revenue Segmentation (Wave 2 P2.1) ───────────────
@@ -405,6 +406,11 @@ class RevenueEngineOutput(BaseModel):
     deal_id: UUID
     years: list[RevenueProjectionYear]
     total_revenue_cagr: float
+    # FON-25 — per-value provenance sidecar. Keyed by dotted output path
+    # (e.g. "years[0].rooms_revenue") → ValueTrace(formula, inputs, source).
+    # Empty by default so legacy callers/tests are unaffected; the UI reads
+    # it the same way it reads the assumption ``__sources__`` badge map.
+    provenance: dict[str, ValueTrace] = Field(default_factory=dict)
 
 
 # ─────────────── P&L Engine ───────────────
@@ -462,6 +468,9 @@ class DebtEngineOutput(BaseModel):
     annual_debt_service: Annotated[float, Field(ge=0)]
     schedule: list[DebtServiceYear]
     avg_dscr: Annotated[float, Field(ge=0)] | None = None
+    # FON-25 — per-value provenance sidecar (see provenance.py). Keyed by
+    # dotted output path, e.g. "schedule[0].debt_service". Empty by default.
+    provenance: dict[str, ValueTrace] = Field(default_factory=dict)
 
 
 # ─────────────── Cash Flow Engine ───────────────
@@ -517,6 +526,9 @@ class ReturnsEngineOutput(BaseModel):
     selling_costs: Annotated[float, Field(ge=0)]
     net_proceeds: float
     hold_years: Annotated[int, Field(ge=1, le=20)]
+    # FON-25 — per-value provenance sidecar (see provenance.py). Keyed by
+    # dotted output path, e.g. "equity_multiple". Empty by default.
+    provenance: dict[str, ValueTrace] = Field(default_factory=dict)
 
 
 # ─────────────── Scenario Bundles ───────────────

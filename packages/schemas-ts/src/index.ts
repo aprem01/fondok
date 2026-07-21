@@ -334,10 +334,36 @@ export const RevenueProjectionYear = z.object({
 });
 export type RevenueProjectionYear = z.infer<typeof RevenueProjectionYear>;
 
+// FON-25 / FON-27 — modeled-value provenance & calculation rationale.
+// Sidecar to the assumption `__sources__` badge map; the UI reads both the
+// same way. See packages/schemas-py/fondok_schemas/provenance.py.
+export const ValueInput = z.object({
+  name: z.string(),
+  value: z.number(),
+  assumption_key: z.string().nullable().optional(),
+  source: z.string().nullable().optional(),
+  traces_to: z.string().nullable().optional(),
+});
+export type ValueInput = z.infer<typeof ValueInput>;
+
+export const ValueTrace = z.object({
+  value: z.number(),
+  formula: z.string().nullable().optional(),
+  inputs: z.array(ValueInput).default([]),
+  source: z.string().nullable().optional(),
+  note: z.string().nullable().optional(),
+});
+export type ValueTrace = z.infer<typeof ValueTrace>;
+
+// Keyed by dotted output path, e.g. "years[0].rooms_revenue".
+export const ProvenanceMap = z.record(z.string(), ValueTrace);
+export type ProvenanceMap = z.infer<typeof ProvenanceMap>;
+
 export const RevenueEngineOutput = z.object({
   deal_id: z.string().uuid(),
   years: z.array(RevenueProjectionYear),
   total_revenue_cagr: z.number(),
+  provenance: ProvenanceMap.default({}),
 });
 export type RevenueEngineOutput = z.infer<typeof RevenueEngineOutput>;
 
@@ -384,6 +410,7 @@ export const DebtEngineOutput = z.object({
   annual_debt_service: z.number().nonnegative(),
   schedule: z.array(DebtServiceYear),
   avg_dscr: z.number().nonnegative().nullable().optional(),
+  provenance: ProvenanceMap.default({}),
 });
 export type DebtEngineOutput = z.infer<typeof DebtEngineOutput>;
 
@@ -428,6 +455,7 @@ export const ReturnsEngineOutput = z.object({
   selling_costs: z.number().nonnegative(),
   net_proceeds: z.number(),
   hold_years: z.number().int().min(1).max(20),
+  provenance: ProvenanceMap.default({}),
 });
 export type ReturnsEngineOutput = z.infer<typeof ReturnsEngineOutput>;
 

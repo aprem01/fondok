@@ -26,6 +26,7 @@ from fondok_schemas.debt_stack import (
     TrancheAmortYear,
     TrancheSchedule,
 )
+from fondok_schemas.provenance import ValueInput, ValueTrace
 from fondok_schemas.underwriting import (
     DebtEngineInput,
     DebtEngineOutput,
@@ -126,6 +127,8 @@ class DebtEngine(BaseEngine[DebtEngineInputExt, DebtEngineOutputExt]):
 
         # Roll up to annual schedule.
         schedule: list[DebtServiceYear] = []
+        # FON-25 — per-value provenance sidecar for the debt schedule.
+        prov: dict[str, ValueTrace] = {}
         for y in range(1, payload.term_years + 1):
             window = monthly_schedule[(y - 1) * 12 : y * 12]
             if not window:
@@ -140,6 +143,33 @@ class DebtEngine(BaseEngine[DebtEngineInputExt, DebtEngineOutputExt]):
                 else None
             )
             dscr = (noi_y / ds) if (noi_y is not None and ds > 0) else None
+            idx = len(schedule)
+            prov[f"schedule[{idx}].debt_service"] = ValueTrace(
+                value=ds,
+                formula="debt_service = interest + principal",
+                inputs=[
+                    ValueInput(name="interest", value=interest_sum),
+                    ValueInput(name="principal", value=principal_sum),
+                ],
+                note=(
+                    "Annual roll-up of the monthly amortization schedule "
+                    f"(12 months of year {y})."
+                ),
+            )
+            if dscr is not None:
+                prov[f"schedule[{idx}].dscr"] = ValueTrace(
+                    value=dscr,
+                    formula="dscr = noi ÷ debt_service",
+                    inputs=[
+                        ValueInput(name="noi", value=noi_y),
+                        ValueInput(
+                            name="debt_service",
+                            value=ds,
+                            traces_to=f"schedule[{idx}].debt_service",
+                        ),
+                    ],
+                    note="Debt Service Coverage Ratio — lender's cushion test.",
+                )
             schedule.append(
                 DebtServiceYear(
                     year=y,
@@ -170,6 +200,7 @@ class DebtEngine(BaseEngine[DebtEngineInputExt, DebtEngineOutputExt]):
             monthly_schedule=monthly_schedule,
             year_one_dscr=year1_dscr,
             year_one_debt_yield=year1_dy,
+            provenance=prov,
         )
 
 
