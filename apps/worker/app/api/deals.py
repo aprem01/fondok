@@ -30,6 +30,7 @@ from ..config import get_settings
 from ..costs import build_cost_report
 from ..database import get_session
 from ..memo_edits import list_edits, record_edit
+from fondok_schemas import ValueTrace
 
 try:
     from fondok_schemas import DealCostReport
@@ -288,6 +289,26 @@ class AssumptionSourcesResponse(BaseModel):
     # are omitted. The web UI uses these for "click NOI → jump to the
     # T-12 row" deep links.
     source_documents: dict[str, str] = Field(default_factory=dict)
+
+
+class DealProvenanceResponse(BaseModel):
+    """Per-value provenance & calculation rationale (FON-25 / FON-27).
+
+    Companion to :class:`AssumptionSourcesResponse`: where that badges the
+    *input assumptions*, this exposes, for each engine's *modeled outputs*,
+    the formula + inputs that produced every headline value. Keyed
+    ``engine name → {dotted output path → ValueTrace}`` — e.g.
+    ``engines["expense"]["years[0].noi"]``. The web app renders a
+    "where did this number come from?" popover from it.
+
+    Empty for engines whose latest persisted run predates the provenance
+    spine — provenance appears on the next analysis run.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    deal_id: UUID
+    engines: dict[str, dict[str, ValueTrace]] = Field(default_factory=dict)
 
 
 class GateResponse(BaseModel):
@@ -1325,6 +1346,52 @@ async def get_assumption_sources(
         values=values,
         source_documents=source_documents,
     )
+
+
+@router.get("/{deal_id}/provenance", response_model=DealProvenanceResponse)
+async def get_deal_provenance(
+    deal_id: UUID,
+    session: Annotated[AsyncSession, Depends(get_session)],
+    tenant_id: Annotated[UUID, Depends(get_tenant_id)],
+) -> DealProvenanceResponse:
+    """Return per-value provenance for the deal's latest engine outputs.
+
+    Reads the persisted ``engine_outputs`` (no re-run) and surfaces each
+    engine's ``provenance`` sidecar — ``{engine: {output_path: ValueTrace}}``.
+    Engines whose latest run predates the provenance spine (or that don't
+    emit traces) are simply omitted. See :class:`DealProvenanceResponse`.
+    """
+    # Verify deal exists + tenant authorization (same pattern as
+    # get_assumption_sources — a cross-tenant id must 404, not leak).
+    row = (
+        await session.execute(
+            text("SELECT id FROM deals WHERE id = :id AND tenant_id = :tenant"),
+            {"id": str(deal_id), "tenant": str(tenant_id)},
+        )
+    ).first()
+    if row is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"deal {deal_id} not found",
+        )
+
+    from ..services.engine_runner import get_latest_outputs
+
+    raw = await get_latest_outputs(
+        session, deal_id=str(deal_id), tenant_id=str(tenant_id)
+    )
+    engines: dict[str, dict[str, Any]] = {}
+    for name, envelope in raw.items():
+        if not isinstance(envelope, dict):
+            continue
+        outputs = envelope.get("outputs")
+        if not isinstance(outputs, dict):
+            continue
+        prov = outputs.get("provenance")
+        if isinstance(prov, dict) and prov:
+            engines[name] = prov
+
+    return DealProvenanceResponse(deal_id=deal_id, engines=engines)
 
 
 @router.post("/{deal_id}/gate1", response_model=GateResponse)
