@@ -226,7 +226,21 @@ async def get_deal_audit(
     Tenant-scoped: cross-tenant deal ids return an empty feed rather
     than 404 — both shapes leak the same info, and the empty feed
     keeps the UI's state machine simpler.
+
+    Legacy/demo deals carry non-UUID ids (e.g. "9"). audit_log.deal_id is
+    a UUID column in Postgres, so binding a non-UUID into the WHERE clause
+    raises (invalid uuid syntax) → 500. Such an id can't match any audit
+    row anyway, so short-circuit to an empty feed WITHOUT querying — the
+    same graceful-degradation contract, and consistent across the SQLite
+    (TEXT column) dev DB and Postgres prod.
     """
+    try:
+        UUID(str(deal_id))
+    except (ValueError, AttributeError, TypeError):
+        return DealAuditResponse(
+            deal_id=str(deal_id), limit=limit, offset=offset, total=0, entries=[]
+        )
+
     rows = await list_audit_log(
         session,
         tenant_id=str(tenant_id),
