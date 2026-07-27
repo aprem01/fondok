@@ -261,6 +261,21 @@ async def test_audit_log_tenant_scoped() -> None:
             await list_audit_log(session, tenant_id="")
 
 
+# 5b. --------------------------------------------------------------
+@pytest.mark.asyncio
+async def test_non_uuid_deal_id_returns_empty_feed_not_422() -> None:
+    """Regression: the web app's legacy/demo deals carry non-UUID ids
+    (e.g. "9"). GET /deals/9/audit must degrade to an empty feed, not
+    422 at the path layer (which broke the Activity Feed panel)."""
+    async with _client() as client:
+        r = await client.get("/deals/9/audit?limit=200")
+        assert r.status_code == 200, r.text
+        body = r.json()
+        assert body["deal_id"] == "9"
+        assert body["entries"] == []
+        assert body["total"] == 0
+
+
 # 6. ---------------------------------------------------------------
 @pytest.mark.asyncio
 async def test_scenario_create_emits_audit_entry() -> None:

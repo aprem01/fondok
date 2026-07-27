@@ -77,7 +77,11 @@ class DealAuditResponse(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    deal_id: UUID
+    # str, not UUID: the web app's demo/legacy deals carry non-UUID ids
+    # (e.g. "9"). Those never land in audit_log (its rows are keyed by real
+    # UUIDs), so they resolve to an empty feed rather than 422-ing at the
+    # path layer — matching this endpoint's degrade-gracefully contract.
+    deal_id: str
     limit: int
     offset: int
     total: int
@@ -164,7 +168,7 @@ def _row_to_entry(row: dict[str, Any]) -> AuditEntry:
 
 
 async def _count_deal_audit(
-    session: AsyncSession, *, tenant_id: UUID, deal_id: UUID, **filters: Any
+    session: AsyncSession, *, tenant_id: UUID, deal_id: str | UUID, **filters: Any
 ) -> int:
     """COUNT(*) matching the same filters as the listing query.
 
@@ -206,7 +210,7 @@ async def _count_deal_audit(
     response_model=DealAuditResponse,
 )
 async def get_deal_audit(
-    deal_id: UUID,
+    deal_id: str,
     session: Annotated[AsyncSession, Depends(get_session)],
     tenant_id: Annotated[UUID, Depends(get_tenant_id)],
     action: Annotated[str | None, Query()] = None,
