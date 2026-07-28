@@ -1,7 +1,7 @@
 'use client';
 import { useState, useEffect } from 'react';
 import {
-  Sparkles, ArrowRight, RefreshCw, ShieldCheck, FileSearch,
+  Sparkles, ArrowRight, ArrowUpRight, RefreshCw, ShieldCheck, FileSearch,
   TrendingUp, Layers, DollarSign, FileText, Eye, AlertTriangle,
   AlertCircle, Info, MessageSquare,
 } from 'lucide-react';
@@ -177,6 +177,16 @@ export default function AnalysisTab() {
     setSub(id);
     const url = `/projects/${rawId}?tab=analysis&sub=${id}`;
     router.replace(url, { scroll: false });
+  };
+
+  // FON-24: from a validation finding's cited field, jump to the Data Room
+  // and open that field's review row (DataRoomTab reads reviewDoc/reviewField).
+  const reviewFieldInDataRoom = (docId: string | null, field: string) => {
+    // The Data Room is the default tab (no ?tab= param), so we omit tab
+    // and just carry the review target.
+    const qp = new URLSearchParams({ reviewField: field });
+    if (docId) qp.set('reviewDoc', docId);
+    router.push(`/projects/${rawId}?${qp.toString()}`, { scroll: false });
   };
 
   // Sub-tab specific intro cards. Variance gets the prominent "why this
@@ -533,11 +543,19 @@ export default function AnalysisTab() {
       )}
 
       {sub === 'critic' && hasCannedAnalysis && (
-        <CriticReview findings={kimptonCriticFindings} summary={kimptonCriticSummary} />
+        <CriticReview
+          findings={kimptonCriticFindings}
+          summary={kimptonCriticSummary}
+          onReviewField={reviewFieldInDataRoom}
+        />
       )}
 
       {sub === 'critic' && !hasCannedAnalysis && liveCritic.findings && liveCritic.findings.length > 0 && (
-        <CriticReview findings={liveCritic.findings} summary={liveCritic.summary ?? ''} />
+        <CriticReview
+          findings={liveCritic.findings}
+          summary={liveCritic.summary ?? ''}
+          onReviewField={reviewFieldInDataRoom}
+        />
       )}
 
       {sub === 'critic' && !hasCannedAnalysis && (!liveCritic.findings || liveCritic.findings.length === 0) && (
@@ -720,9 +738,12 @@ const SEVERITY_ICON: Record<KimptonCriticSeverity, typeof AlertTriangle> = {
 function CriticReview({
   findings,
   summary,
+  onReviewField,
 }: {
   findings: KimptonCriticFinding[];
   summary: string;
+  // FON-24: jump from a cited field to its review row in the Data Room.
+  onReviewField?: (docId: string | null, field: string) => void;
 }) {
   if (findings.length === 0) {
     return (
@@ -821,14 +842,28 @@ function CriticReview({
                     >
                       {f.ruleId}
                     </span>
-                    {f.citedFields.map((field) => (
-                      <span
-                        key={field}
-                        className="inline-flex items-center px-1.5 py-0.5 rounded text-[10.5px] font-mono text-ink-500 bg-ink-50"
-                      >
-                        {field}
-                      </span>
-                    ))}
+                    {f.citedFields.map((field) =>
+                      onReviewField ? (
+                        // FON-24: click a cited field → open its review row.
+                        <button
+                          key={field}
+                          type="button"
+                          onClick={() => onReviewField(f.citedDocumentId ?? null, field)}
+                          title="Review this field in the Data Room"
+                          className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10.5px] font-mono text-brand-700 bg-brand-50 border border-brand-500/30 hover:bg-brand-100 transition-colors"
+                        >
+                          {field}
+                          <ArrowUpRight size={10} aria-hidden="true" />
+                        </button>
+                      ) : (
+                        <span
+                          key={field}
+                          className="inline-flex items-center px-1.5 py-0.5 rounded text-[10.5px] font-mono text-ink-500 bg-ink-50"
+                        >
+                          {field}
+                        </span>
+                      ),
+                    )}
                   </div>
 
                   <p className="text-[12.5px] text-ink-700 leading-relaxed mb-3">

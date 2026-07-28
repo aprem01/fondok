@@ -1,6 +1,6 @@
 'use client';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { useParams, useRouter } from 'next/navigation';
+import { useParams, useRouter, useSearchParams } from 'next/navigation';
 import {
   UploadCloud, FileText, FileSpreadsheet,
   CheckCircle2, Loader2, Circle, AlertTriangle, ArrowRight,
@@ -212,7 +212,11 @@ export default function DataRoomTab({ projectId }: { projectId: number | string 
   const isFullDoc = isMockId && Number(rawId) === 7; // Kimpton Angler
 
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const searchParams = useSearchParams();
   const [selectedDoc, setSelectedDoc] = useState<string | null>(null);
+  // FON-24: field name a validation finding deep-linked to (via
+  // ?reviewField=…). The matching review row highlights + scrolls into view.
+  const [highlightField, setHighlightField] = useState<string | null>(null);
   // Per-doc "Needs Review" filter — when true the right panel shows only
   // fields with <85% confidence. Reset whenever the user switches docs.
   const [needsReviewOnly, setNeedsReviewOnly] = useState(false);
@@ -260,6 +264,26 @@ export default function DataRoomTab({ projectId }: { projectId: number | string 
 
   const { documents, uploading, upload, extractions, error: docsError, refresh, refreshExtraction } =
     useDocuments(rawId);
+
+  // FON-24: deep-link from a validation finding → open the cited doc's
+  // review and highlight the cited field. A finding on the Analysis tab
+  // routes here with ?reviewDoc=<docId>&reviewField=<field_name>.
+  useEffect(() => {
+    const reviewDoc = searchParams.get('reviewDoc');
+    const reviewField = searchParams.get('reviewField');
+    if (!reviewDoc && !reviewField) return;
+    if (reviewDoc) {
+      const doc = documents.find((d) => d.id === reviewDoc);
+      if (doc) setSelectedDoc(doc.filename);
+    }
+    setHighlightField(reviewField);
+    // Clear the highlight after a few seconds so it reads as a transient
+    // "here it is" cue, not a permanent selection.
+    if (reviewField) {
+      const t = setTimeout(() => setHighlightField(null), 6000);
+      return () => clearTimeout(t);
+    }
+  }, [searchParams, documents]);
 
   // Wave 1 #1 — resolve a misclassification banner. The worker keeps
   // the analyst's tag until they explicitly accept Fondok's read, so
@@ -1591,6 +1615,7 @@ export default function DataRoomTab({ projectId }: { projectId: number | string 
                                 confidence={r.pct}
                                 rawLabel={r.raw}
                                 reviewed={r.reviewed}
+                                highlight={highlightField != null && r.raw === highlightField}
                                 onReview={
                                   liveMode && r.raw && selectedDocRow?.id
                                     ? (action, value) =>
@@ -1625,6 +1650,7 @@ function DataRow({
   confidence,
   rawLabel,
   reviewed,
+  highlight,
   onReview,
 }: {
   label: string;
@@ -1632,6 +1658,8 @@ function DataRow({
   confidence: number;
   rawLabel?: string;
   reviewed?: string | null;
+  // FON-24: true when a validation finding deep-linked to this field.
+  highlight?: boolean;
   // FON-23: present only for live low-confidence rows. Runs the
   // accept/edit/reject action and resolves once the refetch lands.
   onReview?: (action: 'accept' | 'edit' | 'reject', value?: string) => Promise<void>;
@@ -1643,6 +1671,13 @@ function DataRow({
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(value);
   const [busy, setBusy] = useState(false);
+  const rowRef = useRef<HTMLDivElement>(null);
+  // FON-24: scroll the deep-linked field into view when a finding links here.
+  useEffect(() => {
+    if (highlight && rowRef.current) {
+      rowRef.current.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    }
+  }, [highlight]);
 
   const act = async (action: 'accept' | 'edit' | 'reject', v?: string) => {
     if (!onReview) return;
@@ -1656,7 +1691,13 @@ function DataRow({
   };
 
   return (
-    <div className="py-1.5 border-b border-border last:border-0">
+    <div
+      ref={rowRef}
+      className={cn(
+        'py-1.5 border-b border-border last:border-0 transition-colors',
+        highlight && 'bg-brand-50 ring-2 ring-brand-500/40 rounded-md -mx-1.5 px-1.5',
+      )}
+    >
       <div className="flex items-center justify-between">
         {/* FON-21: analyst-facing label; raw schema path on hover. */}
         <span className="text-ink-500 flex items-center gap-1.5" title={rawLabel && rawLabel !== label ? rawLabel : undefined}>
