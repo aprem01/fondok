@@ -31,6 +31,7 @@ import { useEngineRun } from '@/lib/hooks/useEngineRun';
 import { useToast } from '@/components/ui/Toast';
 import { useCurrentRole } from '@/lib/auth';
 import { cn } from '@/lib/format';
+import { humanizeFieldName } from '@/lib/fieldLabels';
 import { CoachMark } from '@/components/help/CoachMark';
 import { UsaliBadge } from './validation/UsaliBadge';
 import { UsaliDeviationsAccordion } from './validation/UsaliDeviationsAccordion';
@@ -326,6 +327,22 @@ export default function DataRoomTab({ projectId }: { projectId: number | string 
 
   // When we're on a real (UUID) deal, use live documents; otherwise mock.
   const liveMode = isWorkerConnected() && !isMockId;
+
+  // FON-19: how many financial docs are still moving through the pipeline
+  // (parse → classify → extract). Feeds the coverage strip so it says
+  // "processing N statements" instead of "no financials uploaded yet" when
+  // uploads have landed but extraction hasn't finished. Not-yet-classified
+  // docs (doc_type null while parsing/classifying) are counted too — they
+  // may resolve to a P&L.
+  const processingFinancialsCount = useMemo(() => {
+    const PROCESSING = new Set(['PARSING', 'UPLOADED', 'CLASSIFYING', 'EXTRACTING']);
+    const FINANCIAL = new Set(['T12', 'PNL', 'PNL_MONTHLY', 'PNL_YTD', 'PNL_BENCHMARK']);
+    return documents.filter((d) => {
+      if (!PROCESSING.has((d.status || '').toUpperCase())) return false;
+      const dt = (d.doc_type || '').toUpperCase();
+      return dt === '' || FINANCIAL.has(dt);
+    }).length;
+  }, [documents]);
 
   const goToVariance = () =>
     router.push(`/projects/${rawId}?tab=analysis&sub=variance`, { scroll: false });
@@ -753,6 +770,7 @@ export default function DataRoomTab({ projectId }: { projectId: number | string 
           dealId={rawId}
           surface="dataroom"
           onUploadClick={() => onPickFiles()}
+          processingCount={processingFinancialsCount}
         />
       </CoachMark>
 
@@ -1422,17 +1440,21 @@ export default function DataRoomTab({ projectId }: { projectId: number | string 
                     // Build a uniform [{label, value, pct}] list so the
                     // summary strip + filter logic doesn't fork between live
                     // and mock branches.
-                    type FieldRow = { label: string; value: string; pct: number };
+                    type FieldRow = { label: string; value: string; pct: number; raw?: string };
                     let rows: FieldRow[];
                     if (liveMode && selectedDocRow.fieldList && selectedDocRow.fieldList.length > 0) {
                       // Show ALL extracted fields, not just the first 12.
                       // Enterprise pattern: the detail pane is the source
                       // of truth, not a teaser. Inner scroll on the Card
                       // keeps the page from blowing up.
+                      // FON-21: label with the analyst-facing business term
+                      // (Rooms Revenue, ADR, Occupancy…) instead of the raw
+                      // schema path; keep the path on `raw` for a debug tooltip.
                       rows = selectedDocRow.fieldList.map((f) => ({
-                        label: f.field_name,
+                        label: humanizeFieldName(f.field_name),
                         value: formatValue(f.value, f.unit),
                         pct: Math.round((f.confidence ?? 0) * 100),
+                        raw: f.field_name,
                       }));
                     } else if (!liveMode) {
                       // Demo / mock fallback (no live worker connection):
@@ -1517,10 +1539,11 @@ export default function DataRoomTab({ projectId }: { projectId: number | string 
                           <div className="space-y-2 text-[11.5px]">
                             {visible.map((r) => (
                               <DataRow
-                                key={r.label}
+                                key={r.raw ?? r.label}
                                 label={r.label}
                                 value={r.value}
                                 confidence={r.pct}
+                                rawLabel={r.raw}
                               />
                             ))}
                           </div>
@@ -1543,13 +1566,15 @@ export default function DataRoomTab({ projectId }: { projectId: number | string 
   );
 }
 
-function DataRow({ label, value, confidence }: { label: string; value: string; confidence: number }) {
+function DataRow({ label, value, confidence, rawLabel }: { label: string; value: string; confidence: number; rawLabel?: string }) {
   // Tier label sits next to the numeric ConfidenceBadge so analysts get the
   // shared red/amber/green semantics at a glance without losing the precise %.
   const tier = confidenceTier(confidence);
   return (
     <div className="flex items-center justify-between py-1.5 border-b border-border last:border-0">
-      <span className="text-ink-500">{label}</span>
+      {/* FON-21: analyst-facing label; the raw schema path is available on
+          hover for debugging without cluttering the row. */}
+      <span className="text-ink-500" title={rawLabel && rawLabel !== label ? rawLabel : undefined}>{label}</span>
       <div className="flex items-center gap-2">
         <span className="font-medium tabular-nums text-ink-900">{value}</span>
         <Badge tone={tier.tone}>{tier.label}</Badge>

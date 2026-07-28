@@ -144,11 +144,17 @@ export function GapChipsStrip({
   /** Hook the modal's "Upload" CTA into the parent — most useful on
    *  the Data Room where we want to scroll to the actual drop zone. */
   onUploadClick,
+  /** Count of documents still moving through the extraction pipeline
+   *  (parse → classify → extract). FON-19: when coverage is empty but
+   *  docs are processing, the strip must say "processing" rather than
+   *  "no financials uploaded yet" (which reads as an upload failure). */
+  processingCount = 0,
 }: {
   dealId: string;
   lookbackYears?: number;
   surface?: 'dataroom' | 'validation';
   onUploadClick?: (gap: CoverageGap) => void;
+  processingCount?: number;
 }) {
   const { toast } = useToast();
   const [state, setState] = useState<State>({
@@ -276,6 +282,27 @@ export function GapChipsStrip({
     // documents.
     const coveredYearCount = Object.keys(state.data?.year_coverage ?? {}).length;
     if (coveredYearCount === 0) {
+      // FON-19: financials may already be uploaded and simply still
+      // extracting (async pipeline → year_coverage is empty until a doc
+      // reaches EXTRACTED). Reassure the user their upload succeeded
+      // instead of implying nothing was recognized.
+      if (processingCount > 0) {
+        return (
+          <div
+            className="flex items-center gap-2 px-3 py-2 rounded-md bg-brand-50/60 border border-brand-500/20 text-[12px] text-brand-700"
+            role="status"
+            aria-label="Financial statements are being processed"
+          >
+            <RefreshCw size={13} aria-hidden="true" className="animate-spin" />
+            <span>
+              Processing {processingCount} financial{' '}
+              {processingCount === 1 ? 'statement' : 'statements'}… Historical
+              coverage and analysis will appear automatically once extraction
+              completes.
+            </span>
+          </div>
+        );
+      }
       return (
         <div
           className="flex items-center gap-2 px-3 py-2 rounded-md bg-ink-100/60 border border-border text-[12px] text-ink-700"
