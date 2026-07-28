@@ -435,8 +435,9 @@ export default function PLTab({ projectId }: { projectId: number | string }) {
             </div>
             <h3 className="text-[15px] font-semibold text-ink-900">No P&L output yet</h3>
             <p className="text-[12.5px] text-ink-500 mt-1 max-w-md mx-auto leading-relaxed">
-              We need a <span className="font-medium">T-12</span> (the last 12 months of profit &amp; loss) to project
-              forward revenue and expenses. Drop it into the Data Room, then run the model.
+              We need a <span className="font-medium">financial statement</span> — a T-12 or an
+              annual / monthly P&amp;L — to project forward revenue and expenses. Drop one into the
+              Data Room, then run the model.
             </p>
             <Button
               variant="primary"

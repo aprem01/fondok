@@ -591,6 +591,25 @@ export default function ProjectDetailPage() {
           <div className="flex items-center gap-1.5"><Calendar size={12} className="text-ink-400" aria-hidden="true" /> Created {project.createdAt || 'Apr 2026'}</div>
         </div>
 
+        {/* Demo-deal banner — numeric (seeded) deal ids render a fixed
+            sample dataset regardless of uploads. Without this, uploading
+            real docs to a demo deal looks like a broken model (the QA
+            "FON-13 regression" was exactly this confusion). */}
+        {isMockId && (
+          <div className="flex items-start gap-2.5 px-3.5 py-2.5 my-3 rounded-lg bg-warn-50 border border-warn-500/30 text-[12.5px] text-warn-800">
+            <AlertTriangle size={15} className="text-warn-600 mt-0.5 shrink-0" aria-hidden="true" />
+            <div>
+              <span className="font-semibold">Demo deal — sample data.</span>{' '}
+              This project shows a fixed example dataset to illustrate the product.
+              Documents uploaded here are <strong>not</strong> used to drive the model.{' '}
+              <a href="/projects/new" className="underline font-medium hover:text-warn-900">
+                Create a new project
+              </a>{' '}
+              to analyze your own documents with live extraction.
+            </div>
+          </div>
+        )}
+
         {/* Tabs */}
         <nav
           role="tablist"
