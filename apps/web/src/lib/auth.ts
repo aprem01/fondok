@@ -320,7 +320,37 @@ export function ClerkTokenBridge(): null {
   const { getToken, sessionId } = useAuth();
   // eslint-disable-next-line react-hooks/rules-of-hooks
   const { organization } = useOrganization();
+  // eslint-disable-next-line react-hooks/rules-of-hooks
+  const { user } = useUser();
+  // eslint-disable-next-line react-hooks/rules-of-hooks
+  const clerk = useClerk();
   const orgId = organization?.id ?? null;
+
+  // FON-20: guarantee an ACTIVE organization in the Clerk session. When a
+  // user belongs to an org but none is active, Clerk mints session tokens
+  // with NO ``org_id`` claim, so the worker can't resolve the org tenant —
+  // the user's own extracted documents then 404 ("document not found on
+  // deal") and the backend (post-fix) returns 409 no_active_organization.
+  // If no org is active but the user is a member of one, activate the
+  // first membership so every subsequent token carries ``org_id``.
+  // eslint-disable-next-line react-hooks/rules-of-hooks
+  useEffect(() => {
+    if (organization) return; // already active — nothing to do
+    const firstOrg = user?.organizationMemberships?.[0]?.organization;
+    if (firstOrg && clerk?.setActive) {
+      void clerk.setActive({ organization: firstOrg.id });
+    }
+  }, [organization, user, clerk]);
+
+  // Mirror the active org id into the api.ts singleton at the shell level
+  // (AppShell mounts ClerkTokenBridge before any page), so ``X-Tenant-Id``
+  // is attached from the first request rather than only after the Sidebar
+  // effect runs — closing the race that left early requests org-less.
+  // eslint-disable-next-line react-hooks/rules-of-hooks
+  useEffect(() => {
+    setCurrentOrgId(orgId);
+  }, [orgId]);
+
   // Re-install the getter whenever the session or active org changes;
   // Clerk's ``getToken`` closes over the current session, so a cached
   // reference silently returns tokens for the wrong org after a
