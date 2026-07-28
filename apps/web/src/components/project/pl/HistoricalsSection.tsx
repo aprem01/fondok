@@ -332,7 +332,17 @@ function deriveYearLabel(
   //     Palms historicals showed 2023 metrics in the T-12 column). "FY" is
   //     an unambiguous fiscal-year signal — unlike a bare year, which can
   //     be a period-END ("May 2025 Financials" → a T-12, not FY2025).
-  const fyYear = filename.match(/\bFY[\s_-]?(20\d{2})\b/i)?.[1];
+  //
+  //     The "FY" must be preceded by start-of-string or a separator
+  //     ([\s_.-]) — NOT ``\bFY``: a word boundary fails on the common
+  //     "_FY2023" (underscore is a word char, so there's no boundary
+  //     before F), which was silently dropping this match and leaving the
+  //     Summary in the T-12 column (QA re-run #2 repro).
+  //     Trailing ``(?![0-9])`` (not ``\b``): the year is often followed by
+  //     "_" ("FY2024_PL"), and "4_" has no word boundary either — a
+  //     not-a-digit lookahead accepts "_", ".", or end while still
+  //     rejecting a longer run like "FY20245".
+  const fyYear = filename.match(/(?:^|[\s_.-])FY[\s_.-]?(20\d{2})(?![0-9])/i)?.[1];
   if (fyYear) return fyYear;
 
   // 3c. doc_type guard — a genuine T12-classified doc with no period
