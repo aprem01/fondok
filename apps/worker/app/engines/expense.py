@@ -179,19 +179,44 @@ class ExpenseEngine(BaseEngine[ExpenseEngineInput, ExpenseEngineOutput]):
             "insurance": 0.40,
             "other_fixed": 0.05,
         }
+        # A category is treated as fully grounded by the T-12 (so omitted
+        # sub-lines are folded, not ratio-synthesized) once its captured
+        # lines cover at least this share of the canonical weight. Set high
+        # enough that a comprehensive T-12 (Harbor Palms: 0.93 undist / 0.95
+        # fixed) grounds, while a sparse extraction (one or two lines) does
+        # not and keeps synthesizing the rest.
+        _CATEGORY_GROUNDED_MIN_WEIGHT = 0.80
 
         def _undist_from_actuals_or_share(
-            line: str, undist_total: float, *, use_actual: bool
+            line: str, undist_total: float, *, category_grounded: bool
         ) -> float:
-            if use_actual and line in actuals:
+            # A line the T-12 itemized always takes its actual value. The
+            # ``category_grounded`` flag only governs OMITTED lines: when the
+            # T-12 comprehensively itemized the category, an omitted sub-line
+            # (e.g. ``information_telecom`` folded into admin & general on a
+            # smaller-hotel P&L) is treated as already captured (0) rather
+            # than re-synthesized at a ratio. Injecting a phantom line there
+            # double-counts cost and pushes Y1 NOI BELOW the T-12's own
+            # stated NOI (Harbor Palms: a $236K phantom IT line understated
+            # NOI by ~1.8pts). A sparse extraction is NOT grounded, so its
+            # missing lines still synthesize from the weighted share.
+            if line in actuals:
                 return float(actuals[line])
+            if category_grounded:
+                return 0.0
             return undist_total * UNDIST_WEIGHTS[line]
 
         def _fixed_from_actuals_or_share(
-            line: str, fixed_total: float, *, use_actual: bool
+            line: str, fixed_total: float, *, category_grounded: bool
         ) -> float:
-            if use_actual and line in actuals:
+            # Same contract as undistributed: a captured line always uses its
+            # actual; once the T-12 comprehensively breaks out fixed charges
+            # (property taxes + insurance), a missing ``other_fixed`` folds to
+            # 0 instead of synthesizing a ratio share.
+            if line in actuals:
                 return float(actuals[line])
+            if category_grounded:
+                return 0.0
             return fixed_total * FIXED_WEIGHTS[line]
 
         years: list[ExpenseYear] = []
@@ -239,22 +264,39 @@ class ExpenseEngine(BaseEngine[ExpenseEngineInput, ExpenseEngineOutput]):
                 )
 
                 # Undistributed: build per-line first so actual overrides
-                # take effect; fall back to weighted share of the synth
-                # total for missing lines. The total is then the sum.
+                # take effect. A category counts as "grounded" only when the
+                # T-12 captured most of its expected weight (>= 0.80 of the
+                # USALI mix). Then omitted lines are folded (0), not
+                # ratio-synthesized — the T-12 already accounts for them. A
+                # sparse extraction (one or two lines) stays below the bar and
+                # still synthesizes the missing lines, so we never zero out a
+                # real cost just because it wasn't itemized.
+                undist_captured = sum(
+                    UNDIST_WEIGHTS[line]
+                    for line in UNDIST_WEIGHTS
+                    if line in actuals
+                )
+                undist_grounded = use_actuals and undist_captured >= _CATEGORY_GROUNDED_MIN_WEIGHT
                 undist_pool_total = total * defaults["undistributed_pct_revenue"]
                 undist_lines = {
                     line: _undist_from_actuals_or_share(
-                        line, undist_pool_total, use_actual=use_actuals
+                        line, undist_pool_total, category_grounded=undist_grounded
                     )
                     for line in UNDIST_WEIGHTS
                 }
                 undist_total = sum(undist_lines.values())
 
-                # Fixed charges: same pattern.
+                # Fixed charges: same weight-coverage gate.
+                fixed_captured = sum(
+                    FIXED_WEIGHTS[line]
+                    for line in FIXED_WEIGHTS
+                    if line in actuals
+                )
+                fixed_grounded = use_actuals and fixed_captured >= _CATEGORY_GROUNDED_MIN_WEIGHT
                 fixed_pool_total = total * defaults["fixed_pct_revenue"]
                 fixed_lines = {
                     line: _fixed_from_actuals_or_share(
-                        line, fixed_pool_total, use_actual=use_actuals
+                        line, fixed_pool_total, category_grounded=fixed_grounded
                     )
                     for line in FIXED_WEIGHTS
                 }

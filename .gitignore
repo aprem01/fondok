@@ -21,3 +21,4 @@ docs/data/data2/
 # test-run artifacts + agent worktrees (never source)
 evals/test-results.xml
 .claude/worktrees/
+.gstack/

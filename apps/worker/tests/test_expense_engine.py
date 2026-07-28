@@ -127,6 +127,43 @@ def test_t12_actuals_override_fixed_charges_and_fees() -> None:
     assert set(out.sourced_from_t12) == set(actuals.keys())
 
 
+def test_comprehensive_t12_folds_omitted_undist_line_not_synthesize() -> None:
+    """Harbor Palms: when the T-12 comprehensively itemizes undistributed
+    (>= 0.80 of the weight), an omitted line like information_telecom must
+    be FOLDED (0), not synthesized at a ratio. A phantom IT line pushed Y1
+    NOI ~$236K below the T-12's own stated NOI. property_operations is
+    supplied here so the four captured lines cover 0.93 of the weight.
+    """
+    actuals = {
+        "administrative_general": 1_065_462.0,
+        "sales_marketing": 883_555.0,
+        "utilities": 571_711.0,
+        "property_operations": 532_730.0,
+        # information_telecom deliberately omitted — folded into admin.
+    }
+    out = ExpenseEngine().run(_base_input(t12_actuals=actuals))
+    y1 = out.years[0]
+    assert y1.undistributed.information_telecom == pytest.approx(0.0), (
+        "a comprehensively-itemized T-12 must fold the omitted IT line, "
+        "not synthesize a phantom ratio estimate"
+    )
+    # The captured lines still take their exact T-12 values.
+    assert y1.undistributed.administrative_general == pytest.approx(1_065_462.0)
+    assert y1.undistributed.utilities == pytest.approx(571_711.0)
+
+
+def test_comprehensive_t12_folds_omitted_other_fixed_not_synthesize() -> None:
+    """When the T-12 gives both property taxes and insurance (0.95 of the
+    fixed weight), the omitted other_fixed line folds to 0 rather than
+    synthesizing a ratio share."""
+    actuals = {"property_taxes": 428_784.0, "insurance": 272_861.0}
+    out = ExpenseEngine().run(_base_input(t12_actuals=actuals))
+    y1 = out.years[0]
+    assert y1.fixed_charges.other_fixed == pytest.approx(0.0)
+    assert y1.fixed_charges.property_taxes == pytest.approx(428_784.0)
+    assert y1.fixed_charges.insurance == pytest.approx(272_861.0)
+
+
 def test_t12_actuals_partial_override_falls_back_to_ratio() -> None:
     """When only some lines are supplied, the rest still come from the
     synthesized share — graceful degradation per partial extraction."""
