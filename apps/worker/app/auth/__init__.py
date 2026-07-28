@@ -114,7 +114,26 @@ async def get_current_auth(
         if tenant_id is None and x_tenant_id:
             tenant_id = _coerce_tenant_id(x_tenant_id)
         if tenant_id is None:
-            tenant_id = UUID(settings.DEFAULT_TENANT_ID)
+            # FON-20: an authenticated user with NO resolvable org must
+            # NOT silently fall to the shared DEFAULT_TENANT_ID. Doing so
+            # scatters their data onto a catch-all tenant and — worse —
+            # makes their own org-scoped documents 404 ("document not
+            # found on deal") the instant the active org isn't set in the
+            # session (a race: the frontend mirrors the org into the JWT /
+            # X-Tenant-Id only after Clerk resolves it). Fail loud with a
+            # machine-readable code so the client establishes an active
+            # organization and retries with org_id, instead of silently
+            # reading/writing the wrong tenant.
+            logger.warning(
+                "get_current_auth: verified JWT (sub=%s) carried no org_id "
+                "and no X-Tenant-Id — refusing DEFAULT_TENANT_ID fallback "
+                "(FON-20). Client must set an active organization.",
+                user_id,
+            )
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="no_active_organization",
+            )
 
         return AuthContext(
             tenant_id=tenant_id,

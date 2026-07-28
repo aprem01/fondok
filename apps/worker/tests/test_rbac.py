@@ -333,6 +333,32 @@ async def test_personal_clerk_user_passes_member_endpoint(_rsa_key) -> None:
 
 
 @pytest.mark.asyncio
+async def test_authed_no_org_no_header_returns_409(_rsa_key) -> None:
+    """FON-20: a verified JWT with NO org_id AND NO X-Tenant-Id must 409
+    ``no_active_organization`` — NOT silently fall to DEFAULT_TENANT_ID.
+
+    This is the exact failure that made a user's own extracted document
+    404 ("document not found on deal"): the active org wasn't set, so the
+    request resolved the wrong tenant. Failing loud lets the client set an
+    active org and retry, instead of silently reading the wrong tenant.
+    """
+    from httpx import ASGITransport, AsyncClient
+
+    from app.main import app
+
+    await _ensure_schema()
+    token = _sign(_rsa_key, {"sub": "user_noorg"})  # no org_id, no header
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://test"
+    ) as client:
+        r = await client.get(
+            "/deals", headers={"Authorization": f"Bearer {token}"}
+        )
+    assert r.status_code == 409, r.text
+    assert r.json()["detail"] == "no_active_organization"
+
+
+@pytest.mark.asyncio
 async def test_personal_clerk_user_403_on_admin_endpoint(_rsa_key) -> None:
     """A personal-account JWT (no org_role) → 403 on /admin/cost.
 
