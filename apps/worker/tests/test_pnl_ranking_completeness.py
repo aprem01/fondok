@@ -87,6 +87,47 @@ def test_detailed_pnl_wins_within_same_period() -> None:
     assert "p_and_l_usali.utilities" in names
 
 
+def _dated(period_type: str, period_ending: str, adr: float) -> list[dict]:
+    return [
+        _field("p_and_l_usali.period_type", period_type),
+        _field("p_and_l_usali.period_ending", period_ending),
+        _field("p_and_l_usali.operational_kpis.occupancy_pct", 0.80),
+        _field("p_and_l_usali.operational_kpis.adr_usd", adr),
+        _field("p_and_l_usali.operating_revenue.rooms_revenue_usd", "9,000,000"),
+    ]
+
+
+def test_current_ttm_beats_stale_annual() -> None:
+    """Harbor Palms retest: a current TTM (period_ending 2025-06-30) must
+    drive the base year over a 2-year-old calendar annual (2023-12-31) —
+    both are full-year, so the most RECENT period wins, not the label."""
+    rows = [
+        {"fields": _dated("annual", "2023-12-31", 265.0), "doc_type": "T12"},
+        {"fields": _dated("trailing_twelve", "2025-06-30", 283.96), "doc_type": "T12"},
+    ]
+    ranked = _rank_pnl_rows(rows)
+    primary_fields, _ = ranked[0]
+    adr = next(
+        f["value"] for f in primary_fields if f["field_name"].endswith("adr_usd")
+    )
+    assert adr == 283.96, "the current TTM must win over the stale annual"
+
+
+def test_full_year_still_beats_partial_period() -> None:
+    """A recent MONTHLY must NOT beat an older full-year annual (Eshan's QA:
+    a May-YTD/monthly was clobbering the annual T-12 base)."""
+    rows = [
+        {"fields": _dated("monthly", "2025-05-31", 300.0), "doc_type": "PNL_MONTHLY"},
+        {"fields": _dated("annual", "2024-12-31", 265.0), "doc_type": "T12"},
+    ]
+    ranked = _rank_pnl_rows(rows)
+    primary_fields, _ = ranked[0]
+    adr = next(
+        f["value"] for f in primary_fields if f["field_name"].endswith("adr_usd")
+    )
+    assert adr == 265.0, "full-year annual must beat a recent monthly"
+
+
 def test_period_type_still_dominates_completeness() -> None:
     """An annual SUMMARY must still beat a monthly DETAILED — a richer
     monthly must not clobber the true annual baseline (Eshan's QA)."""
