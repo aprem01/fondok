@@ -258,7 +258,7 @@ export default function DataRoomTab({ projectId }: { projectId: number | string 
   // re-fire as the polling loop re-emits the same EXTRACTED record.
   const extractionToastedRef = useRef<Set<string>>(new Set());
 
-  const { documents, uploading, upload, extractions, error: docsError, refresh } =
+  const { documents, uploading, upload, extractions, error: docsError, refresh, refreshExtraction } =
     useDocuments(rawId);
 
   // Wave 1 #1 — resolve a misclassification banner. The worker keeps
@@ -303,6 +303,36 @@ export default function DataRoomTab({ projectId }: { projectId: number | string 
       }
     },
     [rawId, refresh, toast],
+  );
+
+  // FON-23 — accept / edit / reject a low-confidence extracted field.
+  // Awaits the mutation + a refetch so the row's confidence badge and
+  // "Verified/Edited" marker reflect the new state before controls re-enable.
+  const handleReviewField = useCallback(
+    async (
+      docId: string,
+      fieldName: string,
+      action: 'accept' | 'edit' | 'reject',
+      value?: string,
+    ) => {
+      try {
+        await api.documents.reviewField(rawId, docId, {
+          field_name: fieldName,
+          action,
+          ...(action === 'edit' ? { value } : {}),
+        });
+        const verb =
+          action === 'accept' ? 'Accepted' : action === 'edit' ? 'Updated' : 'Rejected';
+        toast(`${verb} ${humanizeFieldName(fieldName)}`, { type: 'success' });
+        // Force-refetch this doc's extraction so the row reflects the new
+        // confidence / value (the poll loop skips already-EXTRACTED docs).
+        await refreshExtraction(docId);
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        toast(`Couldn’t ${action} field: ${msg}`, { type: 'error' });
+      }
+    },
+    [rawId, refreshExtraction, toast],
   );
 
   // Enterprise toast policy (Sam QA 2026-06-29):
@@ -1455,7 +1485,7 @@ export default function DataRoomTab({ projectId }: { projectId: number | string 
                     // Build a uniform [{label, value, pct}] list so the
                     // summary strip + filter logic doesn't fork between live
                     // and mock branches.
-                    type FieldRow = { label: string; value: string; pct: number; raw?: string };
+                    type FieldRow = { label: string; value: string; pct: number; raw?: string; reviewed?: string | null };
                     let rows: FieldRow[];
                     if (liveMode && selectedDocRow.fieldList && selectedDocRow.fieldList.length > 0) {
                       // Show ALL extracted fields, not just the first 12.
@@ -1470,6 +1500,7 @@ export default function DataRoomTab({ projectId }: { projectId: number | string 
                         value: formatValue(f.value, f.unit),
                         pct: Math.round((f.confidence ?? 0) * 100),
                         raw: f.field_name,
+                        reviewed: f.reviewed ?? null,
                       }));
                     } else if (!liveMode) {
                       // Demo / mock fallback (no live worker connection):
@@ -1559,6 +1590,13 @@ export default function DataRoomTab({ projectId }: { projectId: number | string 
                                 value={r.value}
                                 confidence={r.pct}
                                 rawLabel={r.raw}
+                                reviewed={r.reviewed}
+                                onReview={
+                                  liveMode && r.raw && selectedDocRow?.id
+                                    ? (action, value) =>
+                                        handleReviewField(selectedDocRow.id, r.raw!, action, value)
+                                    : undefined
+                                }
                               />
                             ))}
                           </div>
@@ -1581,23 +1619,123 @@ export default function DataRoomTab({ projectId }: { projectId: number | string 
   );
 }
 
-function DataRow({ label, value, confidence, rawLabel }: { label: string; value: string; confidence: number; rawLabel?: string }) {
+function DataRow({
+  label,
+  value,
+  confidence,
+  rawLabel,
+  reviewed,
+  onReview,
+}: {
+  label: string;
+  value: string;
+  confidence: number;
+  rawLabel?: string;
+  reviewed?: string | null;
+  // FON-23: present only for live low-confidence rows. Runs the
+  // accept/edit/reject action and resolves once the refetch lands.
+  onReview?: (action: 'accept' | 'edit' | 'reject', value?: string) => Promise<void>;
+}) {
   // Tier label sits next to the numeric ConfidenceBadge so analysts get the
   // shared red/amber/green semantics at a glance without losing the precise %.
   const tier = confidenceTier(confidence);
+  const reviewable = !!onReview && confidence < 85 && !reviewed;
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState(value);
+  const [busy, setBusy] = useState(false);
+
+  const act = async (action: 'accept' | 'edit' | 'reject', v?: string) => {
+    if (!onReview) return;
+    setBusy(true);
+    try {
+      await onReview(action, v);
+    } finally {
+      setBusy(false);
+      setEditing(false);
+    }
+  };
+
   return (
-    <div className="flex items-center justify-between py-1.5 border-b border-border last:border-0">
-      {/* FON-21: analyst-facing label; the raw schema path is available on
-          hover for debugging without cluttering the row. */}
-      <span className="text-ink-500" title={rawLabel && rawLabel !== label ? rawLabel : undefined}>{label}</span>
-      <div className="flex items-center gap-2">
-        <span className="font-medium tabular-nums text-ink-900">{value}</span>
-        <Badge tone={tier.tone}>{tier.label}</Badge>
-        {/* `confidence` is a 0–100 percent at this row's call sites; convert
-            to the 0–1 scale ConfidenceBadge expects so the same component
-            grades to red/amber/green at the agreed-upon thresholds. */}
-        <ConfidenceBadge value={confidence / 100} />
+    <div className="py-1.5 border-b border-border last:border-0">
+      <div className="flex items-center justify-between">
+        {/* FON-21: analyst-facing label; raw schema path on hover. */}
+        <span className="text-ink-500 flex items-center gap-1.5" title={rawLabel && rawLabel !== label ? rawLabel : undefined}>
+          {label}
+          {/* FON-23: analyst-verified marker. */}
+          {reviewed && (
+            <span className="text-[9.5px] uppercase tracking-wide text-success-700 bg-success-50 border border-success-500/30 rounded px-1 py-px">
+              {reviewed === 'edited' ? 'Edited' : 'Verified'}
+            </span>
+          )}
+        </span>
+        <div className="flex items-center gap-2">
+          {editing ? (
+            <input
+              autoFocus
+              value={draft}
+              onChange={(e) => setDraft(e.target.value)}
+              className="w-28 text-right font-medium tabular-nums text-ink-900 border border-brand-500/40 rounded px-1.5 py-0.5 text-[11.5px] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-500"
+              aria-label={`Corrected value for ${label}`}
+            />
+          ) : (
+            <span className="font-medium tabular-nums text-ink-900">{value}</span>
+          )}
+          <Badge tone={tier.tone}>{tier.label}</Badge>
+          <ConfidenceBadge value={confidence / 100} />
+        </div>
       </div>
+      {/* FON-23: inline accept/edit/reject for Needs-Review fields. */}
+      {reviewable && (
+        <div className="flex items-center gap-1.5 mt-1.5 justify-end">
+          {editing ? (
+            <>
+              <button
+                type="button"
+                disabled={busy}
+                onClick={() => act('edit', draft)}
+                className="text-[10.5px] font-medium px-2 py-0.5 rounded bg-brand-600 text-white hover:bg-brand-700 disabled:opacity-50"
+              >
+                Save
+              </button>
+              <button
+                type="button"
+                disabled={busy}
+                onClick={() => { setEditing(false); setDraft(value); }}
+                className="text-[10.5px] font-medium px-2 py-0.5 rounded border border-border text-ink-600 hover:bg-ink-100"
+              >
+                Cancel
+              </button>
+            </>
+          ) : (
+            <>
+              <button
+                type="button"
+                disabled={busy}
+                onClick={() => act('accept')}
+                className="text-[10.5px] font-medium px-2 py-0.5 rounded bg-success-50 text-success-700 border border-success-500/30 hover:bg-success-100 disabled:opacity-50"
+              >
+                Accept
+              </button>
+              <button
+                type="button"
+                disabled={busy}
+                onClick={() => { setDraft(value); setEditing(true); }}
+                className="text-[10.5px] font-medium px-2 py-0.5 rounded border border-border text-ink-600 hover:bg-ink-100 disabled:opacity-50"
+              >
+                Edit
+              </button>
+              <button
+                type="button"
+                disabled={busy}
+                onClick={() => act('reject')}
+                className="text-[10.5px] font-medium px-2 py-0.5 rounded bg-danger-50 text-danger-700 border border-danger-500/30 hover:bg-danger-100 disabled:opacity-50"
+              >
+                Reject
+              </button>
+            </>
+          )}
+        </div>
+      )}
     </div>
   );
 }

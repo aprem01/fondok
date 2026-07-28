@@ -389,6 +389,8 @@ export interface ExtractionField {
   source_page: number | null;
   confidence: number | null;
   raw_text: string | null;
+  /** FON-23: "accepted" / "edited" once an analyst has reviewed the field. */
+  reviewed?: string | null;
 }
 
 export interface ExtractionConfidenceReport {
@@ -1093,6 +1095,19 @@ export const api = {
         `/deals/${dealId}/documents/${docId}/extraction`,
         undefined,
         { signal },
+      ),
+    /** FON-23: accept / edit / reject a low-confidence extracted field.
+     *  ``value`` is required only for ``edit``. Returns the updated
+     *  extraction result (recomputed confidence report). */
+    reviewField: (
+      dealId: string,
+      docId: string,
+      body: { field_name: string; action: 'accept' | 'edit' | 'reject'; value?: unknown },
+    ) =>
+      request<ExtractionResult>(
+        'PATCH',
+        `/deals/${dealId}/documents/${docId}/fields`,
+        body,
       ),
     /** Direct URL to the raw uploaded file — citation deep-links use ``#page=N``. */
     downloadUrl: (dealId: string, docId: string, page?: number): string => {

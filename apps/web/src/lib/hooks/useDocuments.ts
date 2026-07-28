@@ -30,6 +30,8 @@ export interface DocumentsState {
   /** Per-doc extraction results, keyed by document id. */
   extractions: Record<string, ExtractionResult | undefined>;
   refresh: () => void;
+  /** FON-23: force-refetch one doc's extraction after an analyst review. */
+  refreshExtraction: (docId: string) => Promise<void>;
   upload: (files: File[]) => Promise<WorkerDocument[]>;
 }
 
@@ -71,6 +73,22 @@ export function useDocuments(dealId: string | null | undefined): DocumentsState 
       });
     return () => ctrl.abort();
   }, [idStr]);
+
+  // FON-23: force a refetch of ONE doc's extraction after an analyst
+  // review. The polling loop skips already-EXTRACTED docs, so a plain
+  // refresh() wouldn't pick up the corrected fields / confidence.
+  const refreshExtraction = useCallback(
+    async (docId: string) => {
+      if (!isWorkerConnected() || !idStr || /^\d+$/.test(idStr)) return;
+      try {
+        const r = await api.documents.extraction(idStr, docId);
+        setExtractions((prev) => ({ ...prev, [docId]: r }));
+      } catch {
+        // Best-effort — the row keeps its prior state on failure.
+      }
+    },
+    [idStr],
+  );
 
   useEffect(() => {
     refresh();
@@ -185,5 +203,14 @@ export function useDocuments(dealId: string | null | undefined): DocumentsState 
     [idStr, refresh],
   );
 
-  return { documents, loading, error, uploading, extractions, refresh, upload };
+  return {
+    documents,
+    loading,
+    error,
+    uploading,
+    extractions,
+    refresh,
+    refreshExtraction,
+    upload,
+  };
 }
