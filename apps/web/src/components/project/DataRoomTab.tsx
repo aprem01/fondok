@@ -90,7 +90,7 @@ const VARIANCE_DOCS = new Set([
   'T12_FinancialStatement.xlsx',
 ]);
 
-// Canonical 11-item Data Room checklist — mirrors the wizard's
+// Canonical 10-item Data Room checklist — mirrors the wizard's
 // COMPLETENESS_CATEGORIES so the two surfaces never drift. Each row
 // maps to one or more upstream `doc_type` tokens; when any live
 // uploaded document carries a matching token the row flips green and
@@ -98,8 +98,12 @@ const VARIANCE_DOCS = new Set([
 // category — Surveys is the only one marked optional.
 const REQUIRED_CHECKLIST: { label: string; match: string[] }[] = [
   { label: 'Offering Memorandum',           match: ['OM'] },
-  { label: 'T-12 / Trailing Twelve Months', match: ['T12'] },
-  { label: 'Annual / YTD / Monthly P&L',    match: ['PNL', 'PNL_MONTHLY', 'PNL_YTD', 'PNL_BENCHMARK'] },
+  // FON-18: a single "Financial Statements" requirement satisfied by ANY
+  // financial doc (T-12 OR Annual/YTD/Monthly P&L). Previously T-12 and
+  // P&L were separate required rows, so uploading a P&L still left
+  // "T-12 Missing" — analysts shouldn't need to know Fondok's internal
+  // taxonomy to clear the financials requirement.
+  { label: 'Financial Statements (T-12 or P&L)', match: ['T12', 'PNL', 'PNL_MONTHLY', 'PNL_YTD', 'PNL_BENCHMARK'] },
   { label: 'STR / Comp Set Report',         match: ['STR', 'STR_TREND'] },
   { label: 'Insurance Records',             match: ['INSURANCE'] },
   { label: 'Property Taxes',                match: ['PROPERTY_TAX'] },
@@ -334,14 +338,24 @@ export default function DataRoomTab({ projectId }: { projectId: number | string 
   // uploads have landed but extraction hasn't finished. Not-yet-classified
   // docs (doc_type null while parsing/classifying) are counted too — they
   // may resolve to a P&L.
-  const processingFinancialsCount = useMemo(() => {
+  const { processingFinancialsCount, failedFinancialsCount } = useMemo(() => {
     const PROCESSING = new Set(['PARSING', 'UPLOADED', 'CLASSIFYING', 'EXTRACTING']);
+    const FAILED = new Set(['FAILED', 'PARSE_FAILED']);
     const FINANCIAL = new Set(['T12', 'PNL', 'PNL_MONTHLY', 'PNL_YTD', 'PNL_BENCHMARK']);
-    return documents.filter((d) => {
-      if (!PROCESSING.has((d.status || '').toUpperCase())) return false;
+    const isFin = (d: (typeof documents)[number]) => {
       const dt = (d.doc_type || '').toUpperCase();
       return dt === '' || FINANCIAL.has(dt);
-    }).length;
+    };
+    let processing = 0;
+    let failed = 0;
+    for (const d of documents) {
+      const s = (d.status || '').toUpperCase();
+      if (PROCESSING.has(s) && isFin(d)) processing += 1;
+      // FON-26: failed financial extractions explain an empty coverage
+      // year that isn't simply "not uploaded".
+      else if (FAILED.has(s) && (d.doc_type || '').toUpperCase() !== 'OM') failed += 1;
+    }
+    return { processingFinancialsCount: processing, failedFinancialsCount: failed };
   }, [documents]);
 
   const goToVariance = () =>
@@ -771,6 +785,7 @@ export default function DataRoomTab({ projectId }: { projectId: number | string 
           surface="dataroom"
           onUploadClick={() => onPickFiles()}
           processingCount={processingFinancialsCount}
+          failedCount={failedFinancialsCount}
         />
       </CoachMark>
 

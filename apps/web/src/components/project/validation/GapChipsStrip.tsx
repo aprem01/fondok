@@ -149,12 +149,16 @@ export function GapChipsStrip({
    *  docs are processing, the strip must say "processing" rather than
    *  "no financials uploaded yet" (which reads as an upload failure). */
   processingCount = 0,
+  /** Count of financial docs whose extraction FAILED. FON-26: explains an
+   *  empty coverage year that is a failure, not just "not uploaded". */
+  failedCount = 0,
 }: {
   dealId: string;
   lookbackYears?: number;
   surface?: 'dataroom' | 'validation';
   onUploadClick?: (gap: CoverageGap) => void;
   processingCount?: number;
+  failedCount?: number;
 }) {
   const { toast } = useToast();
   const [state, setState] = useState<State>({
@@ -299,6 +303,26 @@ export function GapChipsStrip({
               {processingCount === 1 ? 'statement' : 'statements'}… Historical
               coverage and analysis will appear automatically once extraction
               completes.
+              {failedCount > 0 &&
+                ` (${failedCount} failed extraction — re-upload to retry.)`}
+            </span>
+          </div>
+        );
+      }
+      // FON-26: empty coverage because extraction FAILED, not because
+      // nothing was uploaded — say so, and point at the fix.
+      if (failedCount > 0) {
+        return (
+          <div
+            className="flex items-center gap-2 px-3 py-2 rounded-md bg-danger-50/60 border border-danger-500/20 text-[12px] text-danger-700"
+            role="status"
+            aria-label="Financial extraction failed"
+          >
+            <AlertCircle size={13} aria-hidden="true" />
+            <span>
+              {failedCount} financial{' '}
+              {failedCount === 1 ? 'document' : 'documents'} failed extraction —
+              no historical coverage yet. Re-upload the file(s) to retry.
             </span>
           </div>
         );
