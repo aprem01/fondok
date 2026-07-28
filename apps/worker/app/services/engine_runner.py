@@ -1175,12 +1175,39 @@ def _extract_period_type(raw_fields: list[Any]) -> str:
     return ""
 
 
+def _pnl_completeness_score(raw_fields: list[Any]) -> int:
+    """Count of distinct populated *numeric* line items in a P&L extraction.
+
+    A proxy for financial detail (FON-22): a Detailed P&L breaks out many
+    USALI line items (departmental expenses, undistributed by category —
+    A&G / S&M / utilities / R&M / IT — fixed charges by type) while a
+    Summary P&L of the same period aggregates them into a handful of
+    totals, so the Detailed doc scores higher. ``coerce_cell_number``
+    is the canonical numeric parser, so text metadata (property name,
+    period label, dates) is naturally excluded — only real financial
+    line items count.
+    """
+    from ..extraction.numeric import coerce_cell_number
+
+    seen: set[str] = set()
+    for f in raw_fields:
+        if not isinstance(f, dict):
+            continue
+        name = (f.get("field_name") or "").strip().lower()
+        if not name or name.endswith("period_type"):
+            continue
+        if coerce_cell_number(f.get("value")) is not None:
+            seen.add(name)
+    return len(seen)
+
+
 def _rank_pnl_rows(rows: list[Any]) -> list[tuple[list[Any], str]]:
     """Pre-parse + rank P&L extraction rows. Returns (raw_fields_list,
-    doc_type) tuples in preference order: best period_type first, then
-    newest created_at within a rank tier.
+    doc_type) tuples in preference order: best period_type first, then —
+    FON-22 — the most *detailed* doc within a period tier, then newest
+    created_at as the final tiebreaker.
     """
-    parsed: list[tuple[int, int, list[Any], str]] = []
+    parsed: list[tuple[int, int, int, list[Any], str]] = []
     for idx, r in enumerate(rows):
         # Accept both SQLAlchemy Row objects and plain dict shims —
         # the terse-expansion call sites pre-process rows (await the
@@ -1198,12 +1225,17 @@ def _rank_pnl_rows(rows: list[Any]) -> list[tuple[list[Any], str]]:
             continue
         period_type = _extract_period_type(raw_fields)
         rank = _PERIOD_TYPE_RANK.get(period_type, 50)
-        # The SQL ORDER BY created_at DESC already sorted by newest
-        # first, so `idx` is a stable created_at proxy — lower idx =
-        # newer. We negate it later via the sort key.
-        parsed.append((rank, idx, raw_fields, m.get("doc_type") or ""))
-    parsed.sort(key=lambda t: (t[0], t[1]))
-    return [(p[2], p[3]) for p in parsed]
+        # FON-22: within a period-type tier, prefer the MORE DETAILED
+        # P&L (a Detailed P&L of FY2023 must beat a Summary P&L of the
+        # same period so the richest operating data drives the engines).
+        # Negated so higher completeness sorts first. The SQL ORDER BY
+        # created_at DESC already sorted newest-first, so `idx` is a
+        # stable recency proxy — the final tiebreaker within equal
+        # (period_type, completeness).
+        completeness = _pnl_completeness_score(raw_fields)
+        parsed.append((rank, -completeness, idx, raw_fields, m.get("doc_type") or ""))
+    parsed.sort(key=lambda t: (t[0], t[1], t[2]))
+    return [(p[3], p[4]) for p in parsed]
 
 
 # Source-label → list of doc_types that produce that label. Used by
