@@ -24,7 +24,7 @@ import logging
 import os
 from dataclasses import dataclass
 from datetime import UTC, datetime
-from typing import Annotated, Any
+from typing import Annotated, Any, Literal
 from uuid import UUID, uuid4
 
 from fastapi import (
@@ -57,7 +57,7 @@ from ..services.comp_set_drift import (
     drift_report_to_pydantic,
 )
 from ..storage import StorageError, get_raw_store
-from ..auth import AuthContext, require_role
+from ..auth import AuthContext, get_current_auth, require_role
 from .deals import _assert_deal_belongs_to_tenant, get_tenant_id
 
 logger = logging.getLogger(__name__)
@@ -369,6 +369,11 @@ class ExtractionFieldOut(BaseModel):
     source_page: int | None = None
     confidence: float | None = None
     raw_text: str | None = None
+    # FON-23: set when an analyst has reviewed this field via the
+    # accept/edit workflow. "accepted" (value confirmed as-is) or
+    # "edited" (value corrected). Distinguishes analyst-verified High
+    # Confidence from AI-high-confidence; None for un-reviewed fields.
+    reviewed: str | None = None
 
 
 class ConfidenceReportOut(BaseModel):
@@ -4501,6 +4506,181 @@ def _classify_extraction_error(exc: BaseException) -> tuple[str, str]:
         kind = "other"
 
     return kind, ERROR_KIND_MESSAGES[kind]
+
+
+class FieldReviewBody(BaseModel):
+    """FON-23 — one analyst action on a single extracted field."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    field_name: str
+    action: Literal["accept", "edit", "reject"]
+    # Required only for ``edit`` — the corrected value.
+    value: Any | None = None
+
+
+@router.patch(
+    "/{deal_id}/documents/{doc_id}/fields",
+    response_model=ExtractionResultResponse,
+)
+async def review_extraction_field(
+    deal_id: UUID,
+    doc_id: UUID,
+    body: FieldReviewBody,
+    session: Annotated[AsyncSession, Depends(get_session)],
+    auth: Annotated[AuthContext, Depends(get_current_auth)],
+) -> ExtractionResultResponse:
+    """FON-23: accept / edit / reject a low-confidence extracted field.
+
+    * ``accept`` — confirm the value as-is → confidence 1.0, ``reviewed="accepted"``.
+    * ``edit``   — correct the value → value replaced, confidence 1.0, ``reviewed="edited"``.
+    * ``reject`` — drop the field (a bad extraction).
+
+    The confidence report is recomputed so an accepted/edited field leaves
+    ``low_confidence_fields`` (moves to High Confidence) and downstream
+    validation re-runs against the corrected value on the next engine run.
+    Analyst-verified fields are marked ``reviewed`` so they're distinct from
+    AI-high-confidence ones.
+    """
+    from ..audit import log_audit
+    from ..extraction.terse_schema import read_extraction_fields
+
+    tenant_id = auth.tenant_id
+
+    row = (
+        await session.execute(
+            text(
+                """
+                SELECT er.id, er.fields, er.confidence_report,
+                       er.catalog_version, d.status
+                  FROM extraction_results er
+                  JOIN documents d ON d.id = er.document_id
+                 WHERE er.document_id = :doc
+                   AND er.deal_id = :deal
+                   AND er.tenant_id = :tenant
+                   AND d.tenant_id = :tenant
+                 ORDER BY er.created_at DESC
+                 LIMIT 1
+                """
+            ),
+            {"doc": str(doc_id), "deal": str(deal_id), "tenant": str(tenant_id)},
+        )
+    ).first()
+    if row is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"no extraction for document {doc_id} on deal {deal_id}",
+        )
+
+    m = row._mapping
+    raw_fields = m["fields"]
+    if isinstance(raw_fields, str):
+        try:
+            raw_fields = json.loads(raw_fields)
+        except json.JSONDecodeError:
+            raw_fields = []
+    # Expand terse → long-form so we mutate a stable, catalog-agnostic
+    # shape; the terse WRITE path is gated off, so we persist long-form.
+    fields = read_extraction_fields(raw_fields or [], m.get("catalog_version"))
+
+    idx = next(
+        (
+            i
+            for i, f in enumerate(fields)
+            if isinstance(f, dict) and f.get("field_name") == body.field_name
+        ),
+        None,
+    )
+    if idx is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"field {body.field_name!r} not found on this extraction",
+        )
+
+    before_value = fields[idx].get("value")
+    if body.action == "reject":
+        fields.pop(idx)
+    elif body.action == "accept":
+        fields[idx]["confidence"] = 1.0
+        fields[idx]["reviewed"] = "accepted"
+    else:  # edit
+        if body.value is None:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="edit requires a value",
+            )
+        fields[idx]["value"] = body.value
+        fields[idx]["confidence"] = 1.0
+        fields[idx]["reviewed"] = "edited"
+
+    # Recompute the rolled-up confidence report (mirror the verification
+    # promoter): a field at 1.0 drops out of low_confidence_fields.
+    by_field_conf = {
+        f["field_name"]: float(f.get("confidence", 0) or 0)
+        for f in fields
+        if f.get("field_name")
+    }
+    overall = (
+        sum(by_field_conf.values()) / len(by_field_conf) if by_field_conf else 0.0
+    )
+    confidence_report = {
+        "overall": overall,
+        "by_field": by_field_conf,
+        "low_confidence_fields": [n for n, c in by_field_conf.items() if c < 0.85],
+        "requires_human_review": overall < 0.85 or not by_field_conf,
+    }
+
+    await session.execute(
+        text(
+            """
+            UPDATE extraction_results
+               SET fields = :fields,
+                   confidence_report = :cr
+             WHERE id = :id
+               AND deal_id = :deal
+               AND tenant_id = :tenant
+            """
+        ),
+        {
+            "fields": json.dumps(fields),
+            "cr": json.dumps(confidence_report),
+            "id": str(m["id"]),
+            "deal": str(deal_id),
+            "tenant": str(tenant_id),
+        },
+    )
+    try:
+        await log_audit(
+            session,
+            tenant_id=str(tenant_id),
+            actor_id=auth.user_id,
+            actor_email=auth.email,
+            action=f"extraction_field.{body.action}",
+            resource_type="extraction_field",
+            resource_id=str(doc_id),
+            before={"field": body.field_name, "value": before_value},
+            after={"field": body.field_name, "value": fields[idx]["value"]}
+            if body.action != "reject"
+            else {"field": body.field_name, "rejected": True},
+        )
+    except Exception:  # noqa: BLE001 — audit is best-effort
+        logger.warning("review_extraction_field: audit log failed", exc_info=True)
+    await session.commit()
+
+    logger.info(
+        "review_extraction_field: %s %r on doc=%s (overall=%.3f)",
+        body.action,
+        body.field_name,
+        doc_id,
+        overall,
+    )
+
+    return ExtractionResultResponse(
+        document_id=doc_id,
+        status=m["status"],
+        fields=[ExtractionFieldOut.model_validate(f) for f in fields],
+        confidence_report=ConfidenceReportOut.model_validate(confidence_report),
+    )
 
 
 # ─────────────────────────── background runner ───────────────────────────
