@@ -191,16 +191,23 @@ export function findField(fields: ExtractionField[], aliases: string[]): Extract
     aSet.add(n);
     aSet.add(stripUnit(n));
   }
-  for (const f of fields) {
-    // Skip per-month / per-page / quarterly slices — their tail segment
-    // collides with the annual canonical (see ``hasSubordinateNamespace``).
-    if (hasSubordinateNamespace(f.field_name)) continue;
+  const usable = fields.filter((f) => !hasSubordinateNamespace(f.field_name));
+  // Pass 1 — exact FULL-PATH match. This must win over a loose last-segment
+  // match: a bare alias like "food_beverage" (F&B revenue) otherwise matched
+  // the last segment of an EXPENSE field (…expenses.food_beverage), so F&B
+  // Revenue rendered the F&B expense value (QA #2 misplacement). A specific
+  // revenue path (…food_and_beverage.revenue_usd) now resolves first.
+  for (const f of usable) {
     const full = norm(f.field_name);
+    if (aSet.has(full) || aSet.has(stripUnit(full))) return f;
+  }
+  // Pass 2 — last-segment fallback for flat extractions where field_name is
+  // the bare token (e.g. "fb_revenue"). Only reached when no full-path
+  // matched, so the specific-path collision above can't happen here.
+  for (const f of usable) {
     const segs = f.field_name.split('.');
     const last = norm(segs[segs.length - 1] ?? '');
-    for (const cand of [full, stripUnit(full), last, stripUnit(last)]) {
-      if (cand && aSet.has(cand)) return f;
-    }
+    if (last && (aSet.has(last) || aSet.has(stripUnit(last)))) return f;
   }
   return undefined;
 }
