@@ -182,9 +182,29 @@ function confidenceTier(pct: number): { tone: 'green' | 'amber' | 'red'; label: 
   return { tone: 'red', label: 'Needs review' };
 }
 
-function formatValue(v: unknown, unit: string | null): string {
+function formatValue(v: unknown, unit: string | null, fieldName?: string): string {
   if (v == null) return '—';
+  const fn = (fieldName ?? '').toLowerCase();
+  // FON retest #5 — string values: humanize a raw period_type
+  // ("trailing_twelve" → "Trailing Twelve") instead of surfacing the enum.
+  if (typeof v === 'string') {
+    if (fn.endsWith('period_type')) {
+      return v.replace(/[_-]+/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase());
+    }
+    return v;
+  }
   if (typeof v === 'number') {
+    // FON retest #5 — occupancy / margin / *_pct come in as a 0..1 ratio;
+    // show them as a percent (79%, not 0.79). GOP/NOI are normally dollars,
+    // but when the extractor emits a margin (≤1.5) treat it as a percent.
+    const pctField =
+      fn.includes('occupancy') ||
+      fn.endsWith('_pct') ||
+      fn.endsWith('margin') ||
+      ((fn.includes('gop') || fn.includes('noi')) && Math.abs(v) <= 1.5);
+    if (pctField && Math.abs(v) <= 1.5) {
+      return `${(v * 100).toFixed(1)}%`;
+    }
     if (unit === 'USD') {
       const abs = Math.abs(v);
       if (abs >= 1_000_000) return `$${(v / 1_000_000).toFixed(2)}M`;
@@ -1521,7 +1541,7 @@ export default function DataRoomTab({ projectId }: { projectId: number | string 
                       // schema path; keep the path on `raw` for a debug tooltip.
                       rows = selectedDocRow.fieldList.map((f) => ({
                         label: humanizeFieldName(f.field_name),
-                        value: formatValue(f.value, f.unit),
+                        value: formatValue(f.value, f.unit, f.field_name),
                         pct: Math.round((f.confidence ?? 0) * 100),
                         raw: f.field_name,
                         reviewed: f.reviewed ?? null,

@@ -318,11 +318,18 @@ function deriveYearLabel(
     if (yr) return yr[1];
   }
 
-  // 3b. doc_type guard — a T12-classified doc is a trailing-twelve by
-  //     definition. With no period metadata, it MUST land in the
-  //     "T-12" column, never a calendar year pulled from the filename
-  //     (which often carries the period-END year, e.g.
-  //     "May 2025 Financials" → a T-12 ending May 2025, NOT FY2025).
+  // 3b. Explicit fiscal-year filename marker (e.g. "…_PL_FY2023") beats the
+  //     blunt T-12 fallback below. A Summary P&L that failed to extract
+  //     period metadata was being classified T12 and clobbering the real
+  //     trailing-twelve column with an older annual's numbers (QA: Harbor
+  //     Palms historicals showed 2023 metrics in the T-12 column). "FY" is
+  //     an unambiguous fiscal-year signal — unlike a bare year, which can
+  //     be a period-END ("May 2025 Financials" → a T-12, not FY2025).
+  const fyYear = filename.match(/\bFY[\s_-]?(20\d{2})\b/i)?.[1];
+  if (fyYear) return fyYear;
+
+  // 3c. doc_type guard — a genuine T12-classified doc with no period
+  //     metadata is a trailing-twelve by definition, so it lands in "T-12".
   if (isT12Type) return 'T-12';
 
   // 4. filename — last resort for ANNUAL P&L docs only, e.g.

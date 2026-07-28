@@ -818,9 +818,17 @@ def _guess_doc_type(filename: str, size_bytes: int | None = None) -> str:
 # Lower-cased period_type tokens the Extractor emits on P&L documents
 # under `p_and_l_usali.period_type`. Maps to the narrower DocType.
 _PERIOD_TYPE_TO_PNL_DOC_TYPE: dict[str, str] = {
-    "annual": "T12",
-    "fiscal_year": "T12",
-    "full_year": "T12",
+    # A calendar/fiscal ANNUAL P&L is a PNL, not a T-12. Only a genuine
+    # trailing-twelve maps to T12. Previously all full-year periods mapped
+    # to T12, which conflated an FY2023 annual with the current TTM — that
+    # emptied the "Annual/Monthly P&L" checklist bucket, blocked FON-22's
+    # primary-source ranking, and (via the frontend doc_type fallback)
+    # forced annual P&Ls into the T-12 historicals column. Engine grounding
+    # is unaffected: the loaders filter T12/PNL/... and rank by the
+    # extracted period_type field + period recency, not by this label.
+    "annual": "PNL",
+    "fiscal_year": "PNL",
+    "full_year": "PNL",
     "trailing_twelve": "T12",
     "ttm": "T12",
     "t12": "T12",
