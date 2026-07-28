@@ -574,7 +574,18 @@ async def _load_engine_inputs(
     # Only displace when the PIP is material (>$5k per key — small
     # capex like new mattresses doesn't take rooms offline). Pure
     # cosmetic refreshes pass without displacement.
-    if renovation_budget > 0 and pip_per_key > 5_000:
+    #
+    # CRITICAL (QA Harbor Palms): only displace when the renovation is
+    # DEAL-SPECIFIC. ``renovation_budget`` seeds to the Kimpton fixture's
+    # $5.28M and is never overwritten by extracted data, so without this
+    # guard EVERY real deal inherited a $5.28M PIP and got a spurious
+    # 15%/8% Year-1 haircut (Harbor Palms base-year 68.8% = 81% x 0.85).
+    # A genuine renovation arrives via field_overrides / deal_row, which
+    # flips the source off ``SOURCE_SEED``.
+    reno_is_deal_specific = (
+        sources.get("renovation_budget", SOURCE_SEED) != SOURCE_SEED
+    )
+    if renovation_budget > 0 and pip_per_key > 5_000 and reno_is_deal_specific:
         base.setdefault("y1_occupancy_displacement_pct", 0.15)
         base.setdefault("y1_adr_displacement_pct", 0.08)
         sources["y1_occupancy_displacement_pct"] = SOURCE_SEED

@@ -5280,6 +5280,48 @@ async def _run_extraction_pipeline_inner(
                         },
                     )
                 await session.commit()
+
+            # Path-independent doc-type reconciliation (QA Harbor Palms).
+            # A fresh re-upload cache-hit / template path can leave doc_type
+            # un-refined — the deployed annual->PNL fix proved correct in
+            # isolation yet the persisted row stayed T12. Re-derive the
+            # doc_type from the SAME period_type in the fields we just
+            # persisted, so an annual P&L lands as PNL and a trailing-twelve
+            # as T12 no matter which extraction path ran. Idempotent and
+            # best-effort — never blocks completion.
+            try:
+                _cur = (
+                    await session.execute(
+                        text(
+                            "SELECT doc_type FROM documents "
+                            "WHERE id = :id AND tenant_id = :tenant"
+                        ),
+                        {"id": doc_id, "tenant": str(tenant_id)},
+                    )
+                ).first()
+                _cur_dt = _cur._mapping["doc_type"] if _cur else None
+                _reconciled = _refine_pnl_doc_type(_cur_dt, fields)
+                if _reconciled and _reconciled != _cur_dt:
+                    await session.execute(
+                        text(
+                            "UPDATE documents SET doc_type = :dt "
+                            "WHERE id = :id AND tenant_id = :tenant"
+                        ),
+                        {"dt": _reconciled, "id": doc_id, "tenant": str(tenant_id)},
+                    )
+                    await session.commit()
+                    logger.info(
+                        "doc-type reconciled: doc=%s %s -> %s (from period_type)",
+                        doc_id,
+                        _cur_dt,
+                        _reconciled,
+                    )
+                    classified_doc_type = _reconciled
+            except Exception:  # noqa: BLE001 — reconciliation is best-effort
+                logger.warning(
+                    "doc-type reconciliation failed for doc=%s", doc_id, exc_info=True
+                )
+
             logger.info(
                 "extraction complete: doc=%s deal=%s fields=%d doc_type=%s",
                 doc_id,
