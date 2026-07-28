@@ -75,13 +75,24 @@ class FBRevenueEngine(BaseEngine[FBRevenueInput, FBRevenueOutput]):
         years: list[FBRevenueYear] = []
         for proj in payload.revenue.years:
             rooms = proj.rooms_revenue
-            fb = max(proj.fb_revenue, rooms * fb_ratio)
+            # Prefer the revenue projection's GROUNDED F&B (derived from the
+            # T-12's actual F&B-per-occupied-room) over a ratio estimate.
+            # The prior ``max()`` let a SEED-default fb_ratio (0.29) override
+            # a real, lower actual (~0.24), overstating total revenue and
+            # inflating Year-1 NOI margin (QA Harbor Palms: $2.42M actual →
+            # $2.92M, $12.99M → $13.60M, 30.0% → 34.7%). Fall back to the
+            # ratio only when the projection carries no F&B (no T-12 actual).
+            fb = proj.fb_revenue if proj.fb_revenue > 0 else rooms * fb_ratio
             # Resort Fees pass through from the revenue projection (which
             # the loader populates from T-12 actuals for Y1 and scales
             # forward by RevPAR growth). Falls back to 0 when no T-12
             # actual exists.
             resort_fees = proj.resort_fees
-            other = max(proj.other_revenue, rooms * other_ratio)
+            other = (
+                proj.other_revenue
+                if proj.other_revenue > 0
+                else rooms * other_ratio
+            )
             years.append(
                 FBRevenueYear(
                     year=proj.year,
