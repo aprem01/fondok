@@ -167,6 +167,10 @@ async def test_empty_deal_is_zero_percent() -> None:
     for c in body["categories"]:
         assert c["covered"] is False
         assert c["doc_count"] == 0
+    # FON-31 — no financials → model cannot run.
+    assert body["can_run_model"] is False
+    assert body["model_gate"]["met"] is False
+    assert body["model_gate"]["satisfied_by"] is None
 
 
 @pytest.mark.asyncio
@@ -200,6 +204,10 @@ async def test_three_required_covered_is_thirty_percent() -> None:
     assert by_id["t12"]["covered"] is True
     assert by_id["str"]["covered"] is True
     assert by_id["insurance"]["covered"] is False
+    # FON-31 — a T-12 clears the run-the-model gate.
+    assert body["can_run_model"] is True
+    assert body["model_gate"]["met"] is True
+    assert body["model_gate"]["satisfied_by"] == "t12"
 
 
 @pytest.mark.asyncio
@@ -270,6 +278,65 @@ async def test_doc_count_aggregates_within_category() -> None:
     assert by_id["historical_pnl"]["doc_count"] == 3
     # The T-12 row stays uncovered — PNL_MONTHLY / PNL do NOT count there.
     assert by_id["t12"]["covered"] is False
+    # FON-31 — a P&L (no T-12) clears the gate, satisfied by historical_pnl.
+    assert body["can_run_model"] is True
+    assert body["model_gate"]["satisfied_by"] == "historical_pnl"
+
+
+@pytest.mark.asyncio
+async def test_om_only_cannot_run_model() -> None:
+    """FON-31 — an OM (or any non-financial doc) does NOT clear the gate.
+    Only Financials let the engines produce an underwrite."""
+    from httpx import ASGITransport, AsyncClient
+
+    from app.main import app
+
+    deal_id = str(uuid4())
+    await _seed_deal(deal_id=deal_id, tenant_id=TENANT_A)
+    await _seed_document(deal_id=deal_id, tenant_id=TENANT_A, doc_type="OM")
+
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://test"
+    ) as client:
+        r = await client.get(
+            f"/deals/{deal_id}/completeness",
+            headers={"X-Tenant-Id": TENANT_A},
+        )
+
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["can_run_model"] is False
+    assert body["model_gate"]["satisfied_by"] is None
+
+
+@pytest.mark.asyncio
+async def test_gate_prefers_t12_when_both_present() -> None:
+    """FON-31 — with a T-12 AND a P&L, the gate reports ``t12`` as the
+    satisfier (T-12 is the higher-quality base for the engines)."""
+    from httpx import ASGITransport, AsyncClient
+
+    from app.main import app
+
+    deal_id = str(uuid4())
+    await _seed_deal(deal_id=deal_id, tenant_id=TENANT_A)
+    await _seed_document(deal_id=deal_id, tenant_id=TENANT_A, doc_type="T12")
+    await _seed_document(
+        deal_id=deal_id, tenant_id=TENANT_A, doc_type="PNL",
+        filename="annual.pdf",
+    )
+
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://test"
+    ) as client:
+        r = await client.get(
+            f"/deals/{deal_id}/completeness",
+            headers={"X-Tenant-Id": TENANT_A},
+        )
+
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["can_run_model"] is True
+    assert body["model_gate"]["satisfied_by"] == "t12"
 
 
 @pytest.mark.asyncio

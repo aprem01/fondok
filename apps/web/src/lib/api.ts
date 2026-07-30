@@ -2072,10 +2072,24 @@ export interface CompletenessCategory {
   required_for_ic: boolean;
 }
 
+/** FON-31 Tier 1 — the minimum-to-run-the-model gate. The engines only
+ *  need Financials (a T-12 OR any Annual / YTD / Monthly P&L) to produce
+ *  an underwrite; everything else sharpens it but doesn't block a run. */
+export interface ModelGate {
+  met: boolean;
+  /** Which financial bucket cleared the gate ('t12' | 'historical_pnl'),
+   *  or null when unmet. Prefers 't12' when both are present. */
+  satisfied_by: WizardCategory | null;
+}
+
 export interface CompletenessResponse {
   deal_id: string;
   /** 0-100 percent over the 10 required-for-IC categories (Surveys
    *  excluded). Rounded server-side. */
   completeness_pct: number;
+  /** FON-31 — convenience mirror of ``model_gate.met``. */
+  can_run_model: boolean;
+  /** FON-31 — the run-the-model gate (Tier 1). */
+  model_gate: ModelGate;
   categories: CompletenessCategory[];
 }

@@ -3905,6 +3905,30 @@ class CompletenessCategory(BaseModel):
     required_for_ic: bool
 
 
+class ModelGate(BaseModel):
+    """The minimum-to-run-the-model gate (FON-31 Tier 1).
+
+    Distinct from IC completeness: the engines only need Financials to
+    produce an underwrite — a T-12 OR any Annual / YTD / Monthly P&L.
+    One upload in either bucket clears the gate. Everything else in the
+    checklist sharpens the underwrite but does not block a run. This is
+    the signal the user actually needs ("can I run the model yet?"),
+    which the IC-readiness percent was drowning out.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    met: bool
+    # Which financial bucket cleared the gate, or ``None`` when unmet.
+    # Prefers ``t12`` when both are present.
+    satisfied_by: str | None = None
+
+
+# Category ids whose coverage satisfies the run-the-model gate. Mirrors
+# the wizard's Wave 1 gate (DocumentsStep.tsx) so the two never drift.
+_MODEL_GATE_CATEGORY_IDS: tuple[str, ...] = ("t12", "historical_pnl")
+
+
 class CompletenessResponse(BaseModel):
     """``GET /deals/{deal_id}/completeness`` — Wave 1 #1.
 
@@ -3913,12 +3937,20 @@ class CompletenessResponse(BaseModel):
     define the denominator; ``SURVEYS`` is recommended only and
     excluded from the percent. The wizard's right-rail and the
     CompletenessCard on the deal workspace both consume this.
+
+    FON-31: also carries the run-the-model gate so both surfaces can
+    lead with "ready to run" instead of an alarming sub-100% percent.
     """
 
     model_config = ConfigDict(extra="forbid")
 
     deal_id: UUID
     completeness_pct: int
+    # FON-31 Tier 1 — the minimum-to-run gate. ``can_run_model`` is a
+    # convenience mirror of ``model_gate.met`` so clients can branch
+    # without reaching into the nested object.
+    can_run_model: bool = False
+    model_gate: ModelGate = Field(default_factory=lambda: ModelGate(met=False))
     categories: list[CompletenessCategory] = Field(default_factory=list)
 
 
@@ -4076,9 +4108,19 @@ async def get_deal_completeness(
         if required_total > 0
         else 0
     )
+    # FON-31 Tier 1 — the run-the-model gate. Covered financials (T-12
+    # first, then any P&L) clear it; unmet leaves ``satisfied_by`` None.
+    covered_ids = {c.id for c in categories if c.covered}
+    satisfied_by = next(
+        (cid for cid in _MODEL_GATE_CATEGORY_IDS if cid in covered_ids),
+        None,
+    )
+    gate = ModelGate(met=satisfied_by is not None, satisfied_by=satisfied_by)
     return CompletenessResponse(
         deal_id=deal_id,
         completeness_pct=pct,
+        can_run_model=gate.met,
+        model_gate=gate,
         categories=categories,
     )
 
