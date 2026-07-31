@@ -43,6 +43,66 @@ const FINANCIAL_LABEL: Record<string, string> = {
   historical_pnl: 'P&L',
 };
 
+/** A checklist row as rendered. ``id`` is widened to ``string`` because
+ *  the merged "Financial Statements" row is synthetic — it has no single
+ *  worker category behind it. */
+interface DisplayCategory {
+  id: string;
+  label: string;
+  covered: boolean;
+  doc_count: number;
+  required_for_ic: boolean;
+}
+
+// The two worker categories that collapse into one display row (FON-18).
+const FINANCIAL_ROW_IDS = new Set(['t12', 'historical_pnl']);
+
+function toDisplay(c: CompletenessCategory): DisplayCategory {
+  return {
+    id: c.id,
+    label: c.label,
+    covered: c.covered,
+    doc_count: c.doc_count,
+    required_for_ic: c.required_for_ic,
+  };
+}
+
+/**
+ * FON-18 — collapse the separate "T-12" and "Annual / YTD / Monthly P&L"
+ * rows into ONE "Financial Statements (T-12 or P&L)" row, positioned
+ * where the first financial row was. Covered when EITHER is present,
+ * matching the run-the-model gate. This is why a deal with only a P&L
+ * stops showing a standalone "T-12 Missing": there is no longer a
+ * separate T-12 row to be missing. Display-only — the gate still reads
+ * the raw per-bucket coverage.
+ */
+function mergeFinancialRows(
+  categories: readonly CompletenessCategory[],
+): DisplayCategory[] {
+  const financials = categories.filter((c) => FINANCIAL_ROW_IDS.has(c.id));
+  if (financials.length === 0) return categories.map(toDisplay);
+  const merged: DisplayCategory = {
+    id: 'financials',
+    label: 'Financial Statements (T-12 or P&L)',
+    covered: financials.some((c) => c.covered),
+    doc_count: financials.reduce((sum, c) => sum + c.doc_count, 0),
+    required_for_ic: financials.some((c) => c.required_for_ic),
+  };
+  const out: DisplayCategory[] = [];
+  let inserted = false;
+  for (const c of categories) {
+    if (FINANCIAL_ROW_IDS.has(c.id)) {
+      if (!inserted) {
+        out.push(merged);
+        inserted = true;
+      }
+      continue;
+    }
+    out.push(toDisplay(c));
+  }
+  return out;
+}
+
 export function DealReadinessSummary({
   data,
   variant = 'card',
@@ -66,8 +126,13 @@ export function DealReadinessSummary({
       : null;
   const canRun = data.can_run_model ?? derivedSatisfiedBy !== null;
   const satisfiedBy = data.model_gate?.satisfied_by ?? derivedSatisfiedBy;
-  const required = data.categories.filter((c) => c.required_for_ic);
-  const optional = data.categories.filter((c) => !c.required_for_ic);
+
+  // FON-18 — the T-12 and P&L rows collapse into one "Financial
+  // Statements" row for display; the gate above already read the raw
+  // per-bucket coverage, so merging here can't affect it.
+  const displayCategories = mergeFinancialRows(data.categories);
+  const required = displayCategories.filter((c) => c.required_for_ic);
+  const optional = displayCategories.filter((c) => !c.required_for_ic);
   const missing = required.filter((c) => !c.covered).length;
   const coveredCount = required.length - missing;
 
@@ -228,7 +293,7 @@ function ReadinessRow({
   category,
   gateMet,
 }: {
-  category: CompletenessCategory;
+  category: DisplayCategory;
   gateMet: boolean;
 }) {
   const covered = category.covered;
