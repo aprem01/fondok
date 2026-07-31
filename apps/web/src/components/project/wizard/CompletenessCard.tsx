@@ -33,12 +33,17 @@ export interface CompletenessCardProps {
    *  + ring only. */
   showDetail?: boolean;
   className?: string;
+  /** FON-18 / FON-31 — optional doc count + per-type breakdown, folded
+   *  into the readiness card header. This is the information the retired
+   *  Document Checklist card used to own. */
+  docSummary?: { count: number; breakdown: string[] };
 }
 
 export function CompletenessCard({
   dealId,
   showDetail = true,
   className,
+  docSummary,
 }: CompletenessCardProps) {
   const [data, setData] = useState<CompletenessResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -126,6 +131,7 @@ export function CompletenessCard({
       data={data}
       showDetail={showDetail}
       className={className}
+      docSummary={docSummary}
     />
   );
 }

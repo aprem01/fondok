@@ -36,6 +36,10 @@ export interface DealReadinessSummaryProps {
   /** Show the per-category IC breakdown (Tier 2 detail)? Card only. */
   showDetail?: boolean;
   className?: string;
+  /** FON-18 / FON-31 — optional doc count + per-type breakdown rendered in
+   *  the card header. Folds in what the retired Document Checklist card used
+   *  to show ("5 documents · 3 P&L Monthly · 1 OM"). Card variant only. */
+  docSummary?: { count: number; breakdown: string[] };
 }
 
 const FINANCIAL_LABEL: Record<string, string> = {
@@ -108,6 +112,7 @@ export function DealReadinessSummary({
   variant = 'card',
   showDetail = true,
   className,
+  docSummary,
 }: DealReadinessSummaryProps) {
   // Gate resolution — prefer the worker's fields, but derive from the
   // categories when they're absent. This keeps the workspace card correct
@@ -186,6 +191,20 @@ export function DealReadinessSummary({
           <span>IC docs</span>
         </span>
       </div>
+
+      {/* FON-18 / FON-31 — the doc count + per-type breakdown the retired
+          Document Checklist card used to own, now folded in here. */}
+      {docSummary && docSummary.count > 0 && (
+        <div className="-mt-1 mb-3 text-[11px] text-ink-500 leading-relaxed">
+          <span className="font-medium text-ink-700 tabular-nums">
+            {docSummary.count}
+          </span>{' '}
+          {docSummary.count === 1 ? 'document' : 'documents'}
+          {docSummary.breakdown.length > 0 && (
+            <span> · {docSummary.breakdown.join(' · ')}</span>
+          )}
+        </div>
+      )}
 
       {/* Tier 1 — the gate that actually blocks a model run. */}
       <GateBanner canRun={canRun} satisfiedBy={satisfiedBy} />

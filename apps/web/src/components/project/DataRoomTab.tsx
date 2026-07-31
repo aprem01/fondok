@@ -57,6 +57,11 @@ const ENGINE_ORDER: EngineName[] = [
 // are calibrated. Flip back to true once we trust what the bars say.
 const SHOW_ENGINE_STATUS = false;
 
+// FON-33 — the per-document USALI compliance badge is hidden for now
+// (scoring not yet calibrated for prod). Flip back to true to restore
+// the badge + its deviation accordion. Same escape-hatch as ENGINE_STATUS.
+const SHOW_USALI_BADGE = false;
+
 // Friendly labels for the doc-type breakdown shown in the checklist
 // header. Anything not in this map gets a Title-Cased fallback.
 const DOC_TYPE_LABEL: Record<string, string> = {
@@ -1024,16 +1029,23 @@ export default function DataRoomTab({ projectId }: { projectId: number | string 
         </Card>
       )}
 
-      {/* Wave 1 — workspace CompletenessCard. Live worker only; demo
-          deals render a quiet "Demo" state. Sits above the legacy
-          checklist so Sam's pre-IC reviewers see the percent first. */}
-      {liveMode && <CompletenessCard dealId={rawId} />}
+      {/* FON-18 / FON-31 — ONE readiness summary. On a live deal the
+          worker-fed Deal Readiness card is the single source of truth; the
+          legacy Document Checklist below now renders ONLY for demo deals
+          (which have no worker coverage signal). The doc count + per-type
+          breakdown the checklist used to own rides in the readiness card
+          header via docSummary, so no information is lost. */}
+      {liveMode && (
+        <CompletenessCard
+          dealId={rawId}
+          docSummary={{ count: docCount, breakdown: typeBreakdown }}
+        />
+      )}
 
       <div className={cn('grid gap-5', SHOW_ENGINE_STATUS ? 'grid-cols-2' : 'grid-cols-1')}>
-        {/* Document Checklist — required-doc list + actual upload count.
-            The counter is the total number of uploaded documents (with a
-            per-type breakdown line) rather than checklist-row coverage,
-            so a 2nd P&L upload visibly moves the number. */}
+        {/* Document Checklist — demo-deal fallback only. Live deals use the
+            unified Deal Readiness card above (FON-18 / FON-31). */}
+        {!liveMode && (
         <Card className="p-5">
           <div className="flex items-start justify-between mb-4 gap-3">
             <div className="flex items-center gap-2">
@@ -1081,6 +1093,7 @@ export default function DataRoomTab({ projectId }: { projectId: number | string 
             ))}
           </div>
         </Card>
+        )}
 
         {/* Engine Status — per-engine readiness derived from live worker
             engine outputs when available, mock progress otherwise.
@@ -1271,8 +1284,9 @@ export default function DataRoomTab({ projectId }: { projectId: number | string 
                           {/* USALI compliance badge (ROADMAP #3). Renders only
                               when the worker has scored this document; click
                               toggles the deviation accordion rendered just
-                              below the card. */}
-                          {_docIdx === 0 ? (
+                              below the card. FON-33 — hidden behind
+                              SHOW_USALI_BADGE until the scoring is calibrated. */}
+                          {SHOW_USALI_BADGE && (_docIdx === 0 ? (
                             <CoachMark
                               anchorId="dataroom-usali-badge"
                               viewKey="dataroom"
@@ -1303,7 +1317,7 @@ export default function DataRoomTab({ projectId }: { projectId: number | string 
                               open={usaliOpen}
                               onToggle={() => toggleUsali(d.id)}
                             />
-                          )}
+                          ))}
                           {docCritical > 0 && (
                             <span
                               role="button"
