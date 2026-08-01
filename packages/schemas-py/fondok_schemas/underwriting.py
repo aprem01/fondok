@@ -519,7 +519,7 @@ class ReturnsEngineOutput(BaseModel):
     deal_id: UUID
     levered_irr: float
     unlevered_irr: float
-    equity_multiple: Annotated[float, Field(ge=0)]
+    equity_multiple: float  # may be < 0 on a loss-making deal — do NOT constrain (crashed the engine on underwater deals)
     year_one_coc: float
     avg_coc: float
     gross_sale_price: Annotated[float, Field(ge=0)]
@@ -543,7 +543,7 @@ class ScenarioName(BaseModel):
     probability: Annotated[float, Field(ge=0.0, le=1.0)] | None = None
     irr: float
     unlevered_irr: float | None = None
-    equity_multiple: Annotated[float, Field(ge=0)]
+    equity_multiple: float  # may be < 0 on a loss-making deal — do NOT constrain (crashed the engine on underwater deals)
     avg_coc: float
     exit_value: Annotated[float, Field(ge=0)] | None = None
     is_base: bool = False

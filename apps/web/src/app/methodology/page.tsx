@@ -176,10 +176,35 @@ export default function MethodologyPage() {
           </div>
         </Card>
 
+        <Card className="p-5 mb-4">
+          <h4 className="text-[13px] font-semibold text-ink-900 mb-3">Hover any number to trace it</h4>
+          <p className="text-[12.5px] text-ink-500 leading-relaxed mb-3">
+            Provenance runs on two levels, and every figure on the platform carries one or the other:
+          </p>
+          <ul className="space-y-2.5 text-[12.5px] text-ink-600 leading-relaxed">
+            <li>
+              <span className="font-semibold text-ink-900">Inputs — “where did this come from?”</span>{' '}
+              Assumptions (occupancy, ADR, growth rates, LTV, rate, exit cap) show a source badge / dotted underline colored by origin: green when grounded in the deal&apos;s own docs (T-12, OM, CBRE), amber when it&apos;s still a seed/benchmark default, violet when an analyst overrode it. When it&apos;s backed by a document the badge is clickable — a <Link2 size={10} className="inline" /> jumps you to that source in the Data Room.
+            </li>
+            <li>
+              <span className="font-semibold text-ink-900">Outputs — “how was this computed?”</span>{' '}
+              Modeled values (rooms &amp; total revenue, NOI, GOP, debt service, DSCR, equity multiple, gross sale, IRR) hover to show the exact formula plus every named input, and each input chains one hop further — back to a source document, a seed/benchmark, an analyst override, or another computed value. Follow any number to ground.
+            </li>
+            <li>
+              <span className="font-semibold text-ink-900">IRR is calculated, and says so.</span>{' '}
+              IRR has no closed form — it&apos;s the discount rate that sets the NPV of the equity cash flows to zero, solved iteratively (Newton&apos;s method, bisection fallback). Its hover states that explicitly and lists the year-by-year cash-flow stream the solver ran over.
+            </li>
+            <li>
+              <span className="font-semibold text-ink-900">Primary financial source.</span>{' '}
+              When several statements cover the same periods, Fondok ranks them — full-year sources over partial (monthly / YTD), most-recent period, then most-detailed — and badges the winner “Primary source” in the Data Room so it&apos;s clear which statement drives the historicals.
+            </li>
+          </ul>
+        </Card>
+
         <Card className="p-5">
-          <h4 className="text-[13px] font-semibold text-ink-900 mb-3">Click-to-trace</h4>
+          <h4 className="text-[13px] font-semibold text-ink-900 mb-3">The full ledger</h4>
           <p className="text-[12.5px] text-ink-500 leading-relaxed">
-            When a badge is backed by an uploaded document, it becomes clickable — a small <Link2 size={10} className="inline" /> link icon appears and clicking the badge jumps you to the Data Room with the source document preselected. This is the doc-to-engine traceability path: every model output can be traced back to the specific T-12, OM, or CBRE Horizons row that produced it.
+            Analysis → Sources lists every modeled assumption, its value, and its origin in one table — filter to the ungrounded set to see exactly what&apos;s still riding on a default, and export the whole ledger to CSV so every figure in the IC memo is defensible.
           </p>
         </Card>
       </Section>
@@ -199,7 +224,7 @@ export default function MethodologyPage() {
               ['Expense', 'USALI 11th departmental + undistributed + management fee + FF&E reserve + fixed charges → GOP, NOI (institutional), Net Cash Flow.'],
               ['Capital', 'Purchase price + closing costs + renovation budget + working capital → total capital; Sources & Uses.'],
               ['Debt', 'Senior loan amortization with hand-rolled IRR (Newton method, bisection fallback); DSCR; refi optionality.'],
-              ['Returns', 'Levered + unlevered IRR, equity multiple, Year-1 CoC, terminal value via exit cap × terminal NOI.'],
+              ['Returns', 'Levered + unlevered IRR, equity multiple, Year-1 CoC, terminal value via exit cap × terminal NOI. Handles loss-making (underwater) deals — a negative IRR or sub-1x multiple is reported honestly, not floored or crashed.'],
               ['Sensitivity', 'IRR heatmap across exit cap × hold years (or other configurable pairs).'],
               ['Partnership', 'GP / LP waterfall with preferred return, catch-up, promote tiers.'],
             ].map(([name, desc]) => (
@@ -209,6 +234,13 @@ export default function MethodologyPage() {
               </li>
             ))}
           </ul>
+        </Card>
+
+        <Card className="p-5 mt-4">
+          <h4 className="text-[13px] font-semibold text-ink-900 mb-2">When an engine can&apos;t finish</h4>
+          <p className="text-[12.5px] text-ink-500 leading-relaxed">
+            Engines are deterministic and independent, so one can fail without taking down the rest. When one does, the deal shows a clear red banner naming the model, a plain-language reason, and a one-click Re-run — the numbers it feeds read as an explicit error, never as silent “—” dashes that look like missing data. Engines are also hardened against valid-but-extreme inputs (a deeply negative-return scenario, a zero base), so an ugly deal computes rather than crashes.
+          </p>
         </Card>
       </Section>
 

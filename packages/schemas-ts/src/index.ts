@@ -448,7 +448,7 @@ export const ReturnsEngineOutput = z.object({
   deal_id: z.string().uuid(),
   levered_irr: z.number(),
   unlevered_irr: z.number(),
-  equity_multiple: z.number().nonnegative(),
+  equity_multiple: z.number(), // may be < 0 on a loss-making deal (mirror of schemas-py relax)
   year_one_coc: z.number(),
   avg_coc: z.number(),
   gross_sale_price: z.number().nonnegative(),
@@ -464,7 +464,7 @@ export const ScenarioName = z.object({
   probability: z.number().min(0).max(1).nullable().optional(),
   irr: z.number(),
   unlevered_irr: z.number().nullable().optional(),
-  equity_multiple: z.number().nonnegative(),
+  equity_multiple: z.number(), // may be < 0 on a loss-making deal (mirror of schemas-py relax)
   avg_coc: z.number(),
   exit_value: z.number().nonnegative().nullable().optional(),
   is_base: z.boolean().default(false),
@@ -502,7 +502,7 @@ export const PartnerReturn = z.object({
   contributed_equity: z.number().nonnegative(),
   distributions: z.number().nonnegative(),
   irr: z.number(),
-  equity_multiple: z.number().nonnegative(),
+  equity_multiple: z.number(), // may be < 0 on a loss-making deal (mirror of schemas-py relax)
 });
 export type PartnerReturn = z.infer<typeof PartnerReturn>;
 

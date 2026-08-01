@@ -49,7 +49,7 @@ class PartnerReturn(BaseModel):
     contributed_equity: Annotated[float, Field(ge=0)]
     distributions: Annotated[float, Field(ge=0)]
     irr: float
-    equity_multiple: Annotated[float, Field(ge=0)]
+    equity_multiple: float  # loss-making partner position can be < 0
 
 
 class PartnershipOutput(BaseModel):

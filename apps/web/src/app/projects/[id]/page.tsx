@@ -20,6 +20,7 @@ import { cn } from '@/lib/format';
 import { useDeal } from '@/lib/hooks/useDeal';
 import { ProvenanceProvider } from '@/lib/hooks/useDealProvenance';
 import { ValueTraceProvider } from '@/lib/hooks/useValueTrace';
+import { EngineFailuresBanner } from '@/components/project/EngineFailuresBanner';
 import { useDocuments } from '@/lib/hooks/useDocuments';
 import { isWorkerConnected, workerUrl } from '@/lib/api';
 import DataRoomTab from '@/components/project/DataRoomTab';
@@ -126,6 +127,9 @@ export default function ProjectDetailPage() {
     ? projects.find(p => p.id === Number(rawId))
     : undefined;
   const workerConnected = isWorkerConnected();
+  // Page-level engine outputs — powers the failure banner so a crashed
+  // engine is loud on EVERY tab, not silently dashed.
+  const { outputs: pageEngineOutputs } = useEngineOutputs(rawId);
 
   // Header kebab actions — Export Excel / Export IC Memo / Mark IC Ready /
   // Archive Project. Worker-backed deals (UUID rawId) actually hit the worker;
@@ -666,6 +670,7 @@ export default function ProjectDetailPage() {
       <ProvenanceProvider dealId={rawId}>
       <ValueTraceProvider dealId={rawId}>
       <div className="p-8" role="tabpanel" aria-label={`${activeLabel} content`}>
+        {!isMockId && <EngineFailuresBanner outputs={pageEngineOutputs} dealId={rawId} />}
         {activeTab === '' && (
           <ErrorBoundary tabName="Data Room"><DataRoomTab projectId={id} /></ErrorBoundary>
         )}
