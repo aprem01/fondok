@@ -8,6 +8,7 @@ import {
 import dynamic from 'next/dynamic';
 import TabLoadingSkeleton from './TabLoadingSkeleton';
 import { ProvenanceLedger } from './ProvenanceLedger';
+import { LiveScenarioBoard } from './LiveScenarioBoard';
 
 const CostPanel = dynamic(() => import('./CostPanel'), {
   loading: () => <TabLoadingSkeleton rows={4} />,
@@ -610,21 +611,7 @@ export default function AnalysisTab() {
       )}
 
       {sub === 'scenarios' && !hasCannedAnalysis && (
-        <Card className="p-8 text-center">
-          <div className="w-12 h-12 mx-auto rounded-lg bg-brand-50 flex items-center justify-center mb-3">
-            <Layers size={20} className="text-brand-500" />
-          </div>
-          <h3 className="text-[14px] font-semibold text-ink-900 mb-1">No scenarios yet</h3>
-          <p className="text-[12.5px] text-ink-500 max-w-md mx-auto leading-relaxed">
-            Downside / base / upside scenario weightings are derived from the underwriting
-            engines and IC memo. Generate the memo to populate this comparison.
-          </p>
-          <div className="mt-4">
-            <Button variant="primary" size="sm" onClick={() => setSubTab('memo')}>
-              <Sparkles size={12} /> Generate IC Memo
-            </Button>
-          </div>
-        </Card>
+        <LiveScenarioBoard dealId={rawId} />
       )}
     </div>
   );
