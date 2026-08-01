@@ -202,6 +202,24 @@ def _parse_route_from_agent_version(agent_version: str | None) -> str | None:
     return None
 
 
+def _parse_doc_type_from_agent_version(agent_version: str | None) -> str | None:
+    """Pull the persisted doc_type out of an ``agent_version`` string.
+
+    Format ``router:{route};dt:{doc_type};extractor;pv=vN``. The ``dt:``
+    segment was added after the cache-hit path was found reading the graph
+    ROUTE ("extractor") back as the doc_type — which stamped the bogus
+    "EXTRACTOR" token onto every cloned doc. Legacy rows carry no ``dt:``
+    segment → returns None so the caller can fall back to the filename guess.
+    """
+    if not agent_version:
+        return None
+    for segment in agent_version.split(";"):
+        segment = segment.strip()
+        if segment.startswith("dt:"):
+            return segment[len("dt:"):].strip() or None
+    return None
+
+
 def _tag_agent_version(base: str) -> str:
     """Suffix an agent_version string with the current pipeline version.
 
@@ -1106,8 +1124,14 @@ def refine_doc_type_post_extraction(
                 structural_signals.reason,
             )
         misclassified_flag = False
-        normalized_ai = canonical_user
-        refined_doc_type = canonical_user
+        # FON-18 root cause: bind the REAL enum value (with separators),
+        # NOT ``canonical_user`` — that's the underscore-stripped COMPARISON
+        # form (_canonical_doc_type), so using it as the persisted doc_type
+        # turned "PNL_MONTHLY" into "PNLMONTHLY", which matches no DocType
+        # member and silently dropped the doc from coverage + ranking.
+        resolved_user = (user_provided_doc_type or "").upper().strip()
+        normalized_ai = resolved_user
+        refined_doc_type = resolved_user
     elif (
         structural_signals.is_pnl
         and canonical_user
@@ -5035,9 +5059,19 @@ async def _run_extraction_pipeline_inner(
                 # year-mismatch) runs deterministically over ``fields``
                 # so it re-produces the SAME final doc_type without any
                 # LLM call.
-                classified_doc_type = _parse_route_from_agent_version(
-                    agent_version
-                )
+                # Recover the doc_type from the cached agent_version's dt:
+                # segment. Legacy rows only carry the graph route in the
+                # router: segment — reading THAT as the doc_type is what
+                # stamped "EXTRACTOR" onto cloned docs — so when dt: is
+                # absent or not a real DocType, fall back to the filename
+                # guess instead of the route (FON-18 EXTRACTOR bug).
+                from fondok_schemas import DocType as _DocType
+
+                _cached_dt = _parse_doc_type_from_agent_version(agent_version)
+                if _cached_dt and _cached_dt in {d.value for d in _DocType}:
+                    classified_doc_type = _cached_dt
+                else:
+                    classified_doc_type = _guess_doc_type(filename)
                 cache_hit_source_id = str(cached["id"])
                 _record_cache_hit(tenant_id)
                 logger.info(
@@ -6359,7 +6393,10 @@ async def _run_graph_extraction(
         "chunk_errors": chunk_errors,
     }
 
-    return fields, confidence, f"router:{route};extractor", doc_type
+    # Encode the doc_type (dt:) alongside the route so a later cache hit
+    # recovers the real classification instead of misreading the route as
+    # the doc_type (the "EXTRACTOR" bug — FON-18).
+    return fields, confidence, f"router:{route};dt:{doc_type};extractor", doc_type
 
 
 def _mock_extraction_payload() -> tuple[list[dict[str, Any]], dict[str, Any]]:
