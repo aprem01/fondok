@@ -18,6 +18,7 @@ import { projects, kimptonDocuments } from '@/lib/mockData';
 import { criticalCount as varianceCriticalCount } from '@/lib/varianceData';
 import { cn } from '@/lib/format';
 import { useDeal } from '@/lib/hooks/useDeal';
+import { ProvenanceProvider } from '@/lib/hooks/useDealProvenance';
 import { useDocuments } from '@/lib/hooks/useDocuments';
 import { isWorkerConnected, workerUrl } from '@/lib/api';
 import DataRoomTab from '@/components/project/DataRoomTab';
@@ -658,7 +659,9 @@ export default function ProjectDetailPage() {
         />
       )}
 
-      {/* Tab content */}
+      {/* Tab content — wrapped in ProvenanceProvider so any <Sourced> on any
+          tab resolves where a value came from (one assumption_sources fetch). */}
+      <ProvenanceProvider dealId={rawId}>
       <div className="p-8" role="tabpanel" aria-label={`${activeLabel} content`}>
         {activeTab === '' && (
           <ErrorBoundary tabName="Data Room"><DataRoomTab projectId={id} /></ErrorBoundary>
@@ -716,6 +719,7 @@ export default function ProjectDetailPage() {
           <ErrorBoundary tabName="Export"><ExportTab project={project} /></ErrorBoundary>
         )}
       </div>
+      </ProvenanceProvider>
 
       {/* Docs side drawer — slides in from the right when the Docs pill is
           clicked. Mock deals show kimptonDocuments; live (UUID) deals pull
