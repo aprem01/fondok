@@ -5,7 +5,7 @@ import {
   UploadCloud, FileText, FileSpreadsheet,
   CheckCircle2, Loader2, Circle, AlertTriangle, ArrowRight,
   ClipboardList, Sparkles, Wallet, Receipt, Banknote, TrendingUp, Coins, Users2,
-  Search, X as CloseIcon,
+  Search, X as CloseIcon, Star,
 } from 'lucide-react';
 import { Card } from '@/components/ui/Card';
 import { Button } from '@/components/ui/Button';
@@ -579,6 +579,8 @@ export default function DataRoomTab({ projectId }: { projectId: number | string 
      *  can resolve both with one accept/keep round-trip. */
     yearMismatch?: boolean;
     extractedPeriodYear?: number | null;
+    /** FON-22 — the primary financial source of truth for this deal. */
+    primaryFinancialSource?: boolean;
   };
 
   const docs: Row[] = useMemo(() => {
@@ -609,6 +611,7 @@ export default function DataRoomTab({ projectId }: { projectId: number | string 
           aiProposedDocType: d.ai_proposed_doc_type ?? null,
           yearMismatch: d.year_mismatch ?? false,
           extractedPeriodYear: d.extracted_period_year ?? null,
+          primaryFinancialSource: d.primary_financial_source ?? false,
         };
       });
     }
@@ -1417,7 +1420,14 @@ export default function DataRoomTab({ projectId }: { projectId: number | string 
                         <div className="flex items-center gap-2 flex-wrap">
                           <div className="text-[12.5px] font-medium text-ink-900 truncate">{d.name}</div>
                           <StatusBadge value={d.status} />
-                          <Badge tone="gray">{d.type}</Badge>
+                          {/* FON-18 — human doc-type label, not the raw token. */}
+                          <Badge tone="gray">{DOC_TYPE_LABEL[d.type] ?? d.type}</Badge>
+                          {/* FON-22 — primary financial source of truth. */}
+                          {d.primaryFinancialSource && (
+                            <Badge tone="green">
+                              <Star size={10} className="fill-current" /> Primary
+                            </Badge>
+                          )}
                           {/* USALI compliance badge (ROADMAP #3). Renders only
                               when the worker has scored this document; click
                               toggles the deviation accordion rendered just
@@ -1633,8 +1643,16 @@ export default function DataRoomTab({ projectId }: { projectId: number | string 
                     </div>
                     <div className="flex items-center gap-2 mt-1.5 flex-wrap">
                       <StatusBadge value={selectedDocRow.status} />
-                      <Badge tone="gray">{selectedDocRow.type}</Badge>
-                      {selectedDocRow.usaliScore != null && (
+                      {/* FON-18 — human doc-type label ("P&L", "T-12") not the raw token. */}
+                      <Badge tone="gray">{DOC_TYPE_LABEL[selectedDocRow.type] ?? selectedDocRow.type}</Badge>
+                      {/* FON-22 — flag the source of truth the engines model from. */}
+                      {selectedDocRow.primaryFinancialSource && (
+                        <Badge tone="green">
+                          <Star size={10} className="fill-current" /> Primary source
+                        </Badge>
+                      )}
+                      {/* FON-33 — USALI badge hidden until the score is calibrated. */}
+                      {SHOW_USALI_BADGE && selectedDocRow.usaliScore != null && (
                         <UsaliBadge
                           doc={{
                             filename: selectedDocRow.name,

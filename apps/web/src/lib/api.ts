@@ -271,6 +271,11 @@ export interface WorkerDocument {
   error_kind: string | null;
   /** Friendly explanation the UI surfaces for FAILED docs. */
   error_message: string | null;
+  /** FON-22 — true on the single financial statement the engines treat as
+   *  the primary source of truth for historical modeling (full-year >
+   *  partial period, then most recent, then most detailed). Derived
+   *  server-side on every list; the DataRoom badges it "Primary source". */
+  primary_financial_source?: boolean;
   /** USALI compliance score (0-100). NULL → inconclusive (< 5 applicable
    *  rules) or "no P&L data on this doc" — UI surfaces them differently. */
   usali_score?: number | null;

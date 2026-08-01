@@ -368,6 +368,52 @@ class DocumentRecord(BaseModel):
     # the recognizer made its call. NULL on docs extracted before v4 OR
     # on non-P&L docs the recognizer ignored.
     structural_pnl_score: float | None = None
+    # FON-22 — True on the single financial statement the engines treat as
+    # the primary source of truth for historical modeling. Computed across
+    # the deal's financial docs (full-year > partial period, then most
+    # recent period, then most complete/detailed) so the UI can badge it
+    # "Primary source" and mark the rest as supplemental. Purely derived —
+    # not persisted; recomputed on every list.
+    primary_financial_source: bool = False
+
+
+# doc_type families for the FON-22 primary-source ranking. Full-year
+# sources (annual T-12 / annual P&L) outrank partial-period statements
+# (monthly / YTD); everything else is not a financial-history source.
+_FINANCIAL_DOC_TYPES = {"T12", "PNL", "PNL_MONTHLY", "PNL_YTD"}
+_FULL_YEAR_DOC_TYPES = {"T12", "PNL"}
+
+
+def _mark_primary_financial(records: list["DocumentRecord"]) -> None:
+    """Flag the primary financial source in-place (FON-22).
+
+    Mirrors ``engine_runner._rank_pnl_rows`` using the columns the list
+    endpoint already loads: prefer full-year sources, then the most
+    recent period, then the most complete/detailed statement, then the
+    most recently uploaded. Only EXTRACTED financial docs are eligible;
+    nothing is flagged when the deal has no financials yet.
+    """
+    eligible = [
+        r
+        for r in records
+        if (r.doc_type or "").upper() in _FINANCIAL_DOC_TYPES
+        and r.status == DOC_STATUS_EXTRACTED
+    ]
+    if not eligible:
+        return
+
+    def sort_key(r: "DocumentRecord") -> tuple[int, int, float]:
+        dt = (r.doc_type or "").upper()
+        tier = 0 if dt in _FULL_YEAR_DOC_TYPES else 1
+        year = r.extracted_period_year or r.fiscal_year or 0
+        score = r.structural_pnl_score or 0.0
+        # tier ascending (full-year first); year + score descending.
+        return (tier, -year, -score)
+
+    # ``records`` is already uploaded_at DESC, so a stable sort keeps the
+    # newest upload as the final tiebreaker.
+    winner = min(eligible, key=sort_key)
+    winner.primary_financial_source = True
 
 
 class ExtractionStartResponse(BaseModel):
@@ -2449,7 +2495,10 @@ async def list_documents(
         ),
         {"deal_id": str(deal_id), "tenant": str(tenant_id)},
     )
-    return [_row_to_record(dict(r._mapping)) for r in rows.fetchall()]
+    records = [_row_to_record(dict(r._mapping)) for r in rows.fetchall()]
+    # FON-22 — badge the primary financial source across the doc set.
+    _mark_primary_financial(records)
+    return records
 
 
 # ─────────────────────────── market data aggregator ───────────────────────────
