@@ -244,7 +244,10 @@ export default function DataRoomTab({ projectId }: { projectId: number | string 
   const [highlightField, setHighlightField] = useState<string | null>(null);
   // Per-doc "Needs Review" filter — when true the right panel shows only
   // fields with <85% confidence. Reset whenever the user switches docs.
-  const [needsReviewOnly, setNeedsReviewOnly] = useState(false);
+  // Default ON: when a doc has fields needing review, land the analyst on
+  // THOSE (worst-first) instead of scrolling past hundreds of verified
+  // fields. Falls back to showing all when nothing needs review.
+  const [needsReviewOnly, setNeedsReviewOnly] = useState(true);
   // Per-document USALI deviation accordion. Driven by the doc id (not
   // the filename) so identically-named uploads don't collide.
   const [usaliAccordionOpen, setUsaliAccordionOpen] = useState<Set<string>>(
@@ -266,7 +269,8 @@ export default function DataRoomTab({ projectId }: { projectId: number | string 
   const isAdmin = currentRole === 'org:admin';
 
   useEffect(() => {
-    setNeedsReviewOnly(false);
+    // Re-arm the needs-review focus each time a new doc is opened.
+    setNeedsReviewOnly(true);
   }, [selectedDoc]);
 
   // Close the templates popover on outside click / Escape.
@@ -1698,7 +1702,16 @@ export default function DataRoomTab({ projectId }: { projectId: number | string 
                     const high = rows.filter((r) => r.pct >= 95).length;
                     const medium = rows.filter((r) => r.pct >= 85 && r.pct < 95).length;
                     const low = rows.filter((r) => r.pct < 85).length;
-                    const visible = needsReviewOnly ? rows.filter((r) => r.pct < 85) : rows;
+                    // Land on the needs-review fields, worst-confidence
+                    // first, when the filter is on AND there's anything to
+                    // review; otherwise show every field (so a fully-clean
+                    // doc doesn't render an empty "0 match" state).
+                    const visible =
+                      needsReviewOnly && low > 0
+                        ? rows
+                            .filter((r) => r.pct < 85)
+                            .sort((a, b) => a.pct - b.pct)
+                        : rows;
 
                     return (
                       <>
@@ -1769,6 +1782,8 @@ export default function DataRoomTab({ projectId }: { projectId: number | string 
                                 confidence={r.pct}
                                 rawLabel={r.raw}
                                 reviewed={r.reviewed}
+                                snippet={r.snippet}
+                                sourcePage={r.sourcePage}
                                 highlight={highlightField != null && r.raw === highlightField}
                                 onReview={
                                   liveMode && r.raw && selectedDocRow?.id
@@ -1819,6 +1834,8 @@ function DataRow({
   confidence,
   rawLabel,
   reviewed,
+  snippet,
+  sourcePage,
   highlight,
   onReview,
   onViewSource,
@@ -1835,6 +1852,10 @@ function DataRow({
   onReview?: (action: 'accept' | 'edit' | 'reject', value?: string) => Promise<void>;
   // FON-23 — opens the source document at this field's page for validation.
   onViewSource?: () => void;
+  // FON-23 — source snippet + page shown inline on needs-review rows so the
+  // analyst can validate against the document without opening the pane.
+  snippet?: string | null;
+  sourcePage?: number | null;
 }) {
   // Tier label sits next to the numeric ConfidenceBadge so analysts get the
   // shared red/amber/green semantics at a glance without losing the precise %.
@@ -1909,6 +1930,16 @@ function DataRow({
         </div>
       </div>
       {/* FON-23: inline accept/edit/reject for Needs-Review fields. */}
+      {reviewable && snippet && !editing && (
+        <div className="mt-1.5 text-[10.5px] text-ink-500 bg-ink-300/10 rounded px-2 py-1 leading-snug">
+          {sourcePage != null && (
+            <span className="font-mono text-ink-700">p.{sourcePage} · </span>
+          )}
+          <span className="italic">
+            &ldquo;{snippet.length > 140 ? `${snippet.slice(0, 140)}…` : snippet}&rdquo;
+          </span>
+        </div>
+      )}
       {reviewable && (
         <div className="flex items-center gap-1.5 mt-1.5 justify-end">
           {onViewSource && !editing && (
