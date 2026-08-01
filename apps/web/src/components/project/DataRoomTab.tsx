@@ -926,7 +926,16 @@ export default function DataRoomTab({ projectId }: { projectId: number | string 
           onReclassify={handleReclassify}
           onOpenDoc={(docId) => {
             const d = docs.find((x) => x.id === docId);
-            if (d) setSelectedDoc(d.name);
+            if (!d) return;
+            setSelectedDoc(d.name);
+            // The Extracted-Data / review pane is far below the coverage
+            // card — scroll it into view so "View P&L" visibly does
+            // something (selection alone changed nothing on screen).
+            requestAnimationFrame(() => {
+              document
+                .getElementById('dataroom-documents-anchor')
+                ?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+            });
           }}
           busyDocId={reclassifyingDoc}
         />
@@ -1220,6 +1229,9 @@ export default function DataRoomTab({ projectId }: { projectId: number | string 
         )}
       </div>
 
+      {/* Scroll target for DocumentCoverage's "View P&L" — the detail/review
+          pane lives here, far below the coverage card. */}
+      <div id="dataroom-documents-anchor" aria-hidden="true" />
       {docs.length > 0 && (
         <Card className="p-5">
           {/* Documents header — count only. Per-row StatusBadge carries
