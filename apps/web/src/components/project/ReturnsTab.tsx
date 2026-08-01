@@ -235,7 +235,8 @@ function LiveReturnsSummary({ outputs }: { outputs: ReturnType<typeof useEngineO
           side="top"
           learnMoreHref="/methodology#engines"
         >
-          <KPI label="Levered IRR" tip={GLOSSARY['IRR']} value={fmtPct(irr, 2)} flashKey={irr} />
+          <KPI label="Levered IRR" tip={GLOSSARY['IRR']} flashKey={irr}
+            value={<Traced engine="returns" path="levered_irr">{fmtPct(irr, 2)}</Traced>} />
         </CoachMark>
         <KPI label="Equity Multiple" tip={GLOSSARY['Equity Multiple']} flashKey={mult}
           value={<Traced engine="returns" path="equity_multiple">{`${mult.toFixed(2)}x`}</Traced>} />

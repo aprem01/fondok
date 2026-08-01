@@ -709,9 +709,11 @@ export default function OverviewTab({ projectId }: { projectId: number | string 
         </div>
         <div className="grid grid-cols-5 gap-4">
           {([
-            { label: 'Levered IRR', value: fmtOrDash(retLeveredIrr, v => fmtPct(v, 2)),
+            { label: 'Levered IRR',
+              value: <Traced engine="returns" path="levered_irr">{fmtOrDash(retLeveredIrr, v => fmtPct(v, 2))}</Traced>,
               tip: GLOSSARY['IRR'] + ' "Levered" means after debt service.' },
-            { label: 'Unlevered IRR', value: fmtOrDash(retUnleveredIrr, v => fmtPct(v, 2)),
+            { label: 'Unlevered IRR',
+              value: <Traced engine="returns" path="unlevered_irr">{fmtOrDash(retUnleveredIrr, v => fmtPct(v, 2))}</Traced>,
               tip: 'Asset-level IRR before debt — what you\'d earn if the hotel were paid for in cash.' },
             { label: 'Equity Multiple',
               value: <Traced engine="returns" path="equity_multiple">{fmtOrDash(retEquityMultiple, v => `${v.toFixed(2)}x`)}</Traced>,

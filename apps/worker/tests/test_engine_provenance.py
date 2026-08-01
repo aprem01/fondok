@@ -199,3 +199,28 @@ def test_returns_net_proceeds_chains_to_gross_sale() -> None:
     np_tr = out.provenance["net_proceeds"]
     gs_inp = next(inp for inp in np_tr.inputs if inp.name == "gross_sale_price")
     assert gs_inp.traces_to == "gross_sale_price"
+
+
+def test_returns_irr_traced_as_calculated() -> None:
+    """IRR has no closed form, but it's still a genuine calculation — the
+    trace says so (formula-as-definition + a note it's solved iteratively)
+    and lists the exact cash-flow stream the solver ran over."""
+    out = ReturnsEngine().run(_returns_input())
+    prov = out.provenance
+    assert {"levered_irr", "unlevered_irr"} <= set(prov)
+
+    lev = prov["levered_irr"]
+    # Value reconciles with the engine output.
+    assert abs(lev.value - out.levered_irr) < 1e-9
+    # It reads as calculated, not sourced.
+    assert lev.formula and "r" in lev.formula
+    assert lev.note and "iterativ" in lev.note.lower()
+    assert lev.source is None
+    # The inputs ARE the cash-flow series the solver zeroed the NPV of.
+    assert len(lev.inputs) == len(out.cash_flows)
+    assert abs(lev.inputs[0].value - out.cash_flows[0]) < TOL
+    # Unlevered mirrors it over the unlevered stream.
+    unl = prov["unlevered_irr"]
+    assert abs(unl.value - out.unlevered_irr) < 1e-9
+    assert len(unl.inputs) == len(out.cash_flows_unlevered)
+    _assert_no_dangling(prov)

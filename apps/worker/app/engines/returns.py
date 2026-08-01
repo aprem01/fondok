@@ -97,6 +97,53 @@ def _exit_value_provenance(
     }
 
 
+def _irr_provenance(
+    *,
+    levered_irr: float,
+    levered_flows: list[float],
+    unlevered_irr: float,
+    unlevered_flows: list[float],
+) -> dict[str, ValueTrace]:
+    """Provenance for the two IRRs.
+
+    IRR has no closed form: it's the discount rate that sets the NPV of the
+    cash-flow series to zero, solved iteratively (Newton's method, bisection
+    fallback — see :func:`irr`). We express that *definition* as the formula
+    and list the exact cash-flow stream the solver ran over, so an analyst
+    can see it's a genuine calculation and which flows drove the rate.
+    """
+
+    def _flow_inputs(flows: list[float]) -> list[ValueInput]:
+        return [
+            ValueInput(name=f"cash_flow_year_{i}", value=float(cf))
+            for i, cf in enumerate(flows)
+        ]
+
+    return {
+        "levered_irr": ValueTrace(
+            value=levered_irr,
+            formula="levered_irr = rate r where Σ CFₜ ÷ (1 + r)ᵗ = 0",
+            inputs=_flow_inputs(levered_flows),
+            note=(
+                "Calculated, not read from a document. Solved iteratively "
+                "(Newton's method — no closed form) as the rate that zeroes the "
+                "NPV of the equity cash flows: Year 0 = −equity invested, "
+                "Years 1…N = cash flow after debt service, plus net sale "
+                "proceeds at exit."
+            ),
+        ),
+        "unlevered_irr": ValueTrace(
+            value=unlevered_irr,
+            formula="unlevered_irr = rate r where Σ CFₜ ÷ (1 + r)ᵗ = 0",
+            inputs=_flow_inputs(unlevered_flows),
+            note=(
+                "Calculated asset-level IRR before debt — same iterative solve. "
+                "Year 0 = −purchase price, Years 1…N = NOI, plus net sale at exit."
+            ),
+        ),
+    }
+
+
 # ─────────────── IRR helpers ───────────────
 
 
@@ -301,18 +348,26 @@ class ReturnsEngine(BaseEngine[ReturnsEngineInputExt, ReturnsEngineOutputExt]):
             hold_years=hold,
             cash_flows=levered_flows,
             cash_flows_unlevered=unlevered_flows,
-            provenance=_exit_value_provenance(
-                terminal_noi=terminal_noi,
-                exit_cap_rate=assumptions.exit_cap_rate,
-                gross_sale=gross_sale,
-                selling_costs_pct=assumptions.selling_costs_pct,
-                selling_costs=selling_costs,
-                loan_balance_at_exit=loan_balance_at_exit,
-                net_proceeds=net_proceeds_to_equity,
-                total_distributions=total_distributions,
-                equity=payload.equity,
-                equity_multiple=equity_multiple,
-            ),
+            provenance={
+                **_exit_value_provenance(
+                    terminal_noi=terminal_noi,
+                    exit_cap_rate=assumptions.exit_cap_rate,
+                    gross_sale=gross_sale,
+                    selling_costs_pct=assumptions.selling_costs_pct,
+                    selling_costs=selling_costs,
+                    loan_balance_at_exit=loan_balance_at_exit,
+                    net_proceeds=net_proceeds_to_equity,
+                    total_distributions=total_distributions,
+                    equity=payload.equity,
+                    equity_multiple=equity_multiple,
+                ),
+                **_irr_provenance(
+                    levered_irr=levered_irr,
+                    levered_flows=levered_flows,
+                    unlevered_irr=unlevered_irr,
+                    unlevered_flows=unlevered_flows,
+                ),
+            },
         )
 
 
@@ -343,10 +398,12 @@ def returns_from_cash_flow(
 
     total_distributions = sum(cfad) + net_proceeds
     equity_multiple = total_distributions / equity if equity else 0.0
+    lev_irr = irr(levered_flows)
+    unl_irr = irr(unlevered_flows)
     return ReturnsEngineOutputExt(
         deal_id=payload.deal_id,
-        levered_irr=irr(levered_flows),
-        unlevered_irr=irr(unlevered_flows),
+        levered_irr=lev_irr,
+        unlevered_irr=unl_irr,
         equity_multiple=equity_multiple,
         year_one_coc=cfad[0] / equity if equity and cfad else 0.0,
         avg_coc=(sum(cfad) / len(cfad)) / equity if equity and cfad else 0.0,
@@ -356,18 +413,26 @@ def returns_from_cash_flow(
         hold_years=hold,
         cash_flows=levered_flows,
         cash_flows_unlevered=unlevered_flows,
-        provenance=_exit_value_provenance(
-            terminal_noi=payload.terminal_noi,
-            exit_cap_rate=assumptions.exit_cap_rate,
-            gross_sale=gross_sale,
-            selling_costs_pct=assumptions.selling_costs_pct,
-            selling_costs=selling_costs,
-            loan_balance_at_exit=loan_balance_at_exit,
-            net_proceeds=net_proceeds,
-            total_distributions=total_distributions,
-            equity=equity,
-            equity_multiple=equity_multiple,
-        ),
+        provenance={
+            **_exit_value_provenance(
+                terminal_noi=payload.terminal_noi,
+                exit_cap_rate=assumptions.exit_cap_rate,
+                gross_sale=gross_sale,
+                selling_costs_pct=assumptions.selling_costs_pct,
+                selling_costs=selling_costs,
+                loan_balance_at_exit=loan_balance_at_exit,
+                net_proceeds=net_proceeds,
+                total_distributions=total_distributions,
+                equity=equity,
+                equity_multiple=equity_multiple,
+            ),
+            **_irr_provenance(
+                levered_irr=lev_irr,
+                levered_flows=levered_flows,
+                unlevered_irr=unl_irr,
+                unlevered_flows=unlevered_flows,
+            ),
+        },
     )
 
 
