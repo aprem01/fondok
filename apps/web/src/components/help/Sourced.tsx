@@ -23,6 +23,7 @@ import {
   sourceKind,
   sourceLabel,
   sourceExplanation,
+  formatAssumptionValue,
   KIND_TONE,
 } from '@/lib/provenance';
 import { useSource } from '@/lib/hooks/useDealProvenance';
@@ -86,7 +87,7 @@ export function Sourced({
       {open && (
         <span
           role="tooltip"
-          className="absolute z-50 left-1/2 -translate-x-1/2 top-full mt-1.5 w-60 rounded-lg border border-border bg-card shadow-card-hover p-3 text-left"
+          className="absolute z-50 left-1/2 -translate-x-1/2 top-full mt-1.5 w-60 rounded-lg border border-border bg-card shadow-card-hover p-3 text-left whitespace-normal"
         >
           <span className="flex items-center gap-1.5 mb-1">
             <span className={cn('w-2 h-2 rounded-full', tone.dot)} aria-hidden="true" />
@@ -114,5 +115,37 @@ export function Sourced({
         </span>
       )}
     </span>
+  );
+}
+
+/**
+ * SourcedValue — render a live deal's ACTUAL assumption value (from the
+ * provenance provider) with the source hover, falling back to `fallback`
+ * ('—' by default) when the deal has no value for the key. This is the
+ * "activate the dashes" primitive: on a real deal it shows the real
+ * number instead of a placeholder, and every number carries its source.
+ *
+ *   {isKimptonDemo ? '6.80%' : <SourcedValue sourceKey="interest_rate" fmt={pct} />}
+ */
+export function SourcedValue({
+  sourceKey,
+  fmt,
+  fallback = '—',
+  className,
+}: {
+  sourceKey: string;
+  fmt?: (v: number | string | boolean) => ReactNode;
+  fallback?: ReactNode;
+  className?: string;
+}) {
+  const resolved = useSource(sourceKey);
+  if (!resolved || resolved.value == null || resolved.value === '') {
+    return <>{fallback}</>;
+  }
+  const shown = fmt ? fmt(resolved.value) : formatAssumptionValue(sourceKey, resolved.value);
+  return (
+    <Sourced sourceKey={sourceKey} className={className}>
+      {shown}
+    </Sourced>
   );
 }

@@ -18,11 +18,15 @@ import { getEngineField, useEngineOutputs } from '@/lib/hooks/useEngineOutputs';
 import { useDeal } from '@/lib/hooks/useDeal';
 import { useFlash } from '@/lib/hooks/useFlash';
 import { IntroCard } from '@/components/help/IntroCard';
-import { Sourced } from '@/components/help/Sourced';
+import { Sourced, SourcedValue } from '@/components/help/Sourced';
 import { MetricLabel } from '@/components/help/MetricLabel';
 import { GLOSSARY } from '@/lib/glossary';
 
 const subTabs = ['Debt Summary', 'Rates & Covenants', 'Term & Refinance', 'Debt Schedule'];
+
+// Formatters for <SourcedValue> on term inputs (years / months).
+const yrs = (v: number | string | boolean) => `${Number(v)} ${Number(v) === 1 ? 'Year' : 'Years'}`;
+const months = (v: number | string | boolean) => `${Math.round(Number(v) * 12)}`;
 
 export default function DebtTab({ projectId }: { projectId: number | string }) {
   const [tab, setTab] = useState('Debt Summary');
@@ -235,9 +239,11 @@ export default function DebtTab({ projectId }: { projectId: number | string }) {
               ['DY (FTM NOI)', debtYield],
             ]} />
             <Panel title="Computed Values" rows={[
-              // No worker source for these terms today — Kimpton fixture only.
-              ['Interest Only Period', isKimptonDemo ? '48 Months' : '—'],
-              ['Amortization Period', isKimptonDemo ? '30 Years' : '—'],
+              // Term inputs come from the deal's assumptions (seed default
+              // until debt actuals are extracted) — sourced on hover. Dates
+              // have no worker source yet, so they stay Kimpton-fixture only.
+              ['Interest Only Period', isKimptonDemo ? '48 Months' : <SourcedValue key="io" sourceKey="interest_only_years" fmt={yrs} />],
+              ['Amortization Period', isKimptonDemo ? '30 Years' : <SourcedValue key="am" sourceKey="amortization_years" fmt={yrs} />],
               ['Maturity Date', isKimptonDemo ? '9/30/2029' : '—'],
               ['Cap. Interest Reserve', isKimptonDemo ? fmtCurrency(980_000) : '—'],
             ]} />
@@ -280,7 +286,7 @@ export default function DebtTab({ projectId }: { projectId: number | string }) {
       {tab === 'Rates & Covenants' && (
         <>
           <div className="grid grid-cols-4 gap-4 mb-5">
-            <KPI label="Senior Rate" value={isKimptonDemo ? '6.80%' : '—'} />
+            <KPI label="Senior Rate" flashKey="senior-rate" value={isKimptonDemo ? '6.80%' : <SourcedValue sourceKey="interest_rate" />} />
             <KPI label="PACE Rate" value={isKimptonDemo ? '7.99%' : '—'} />
             <KPI label="Rate Cap" value={isKimptonDemo ? '8.33%' : '—'} />
             <KPI label="Cap Expiry" value={isKimptonDemo ? '9/30/2027' : '—'} />
@@ -296,7 +302,7 @@ export default function DebtTab({ projectId }: { projectId: number | string }) {
               ['Rate Cap', isKimptonDemo ? '8.33%' : '—'],
               ['Rate Cap Expiry', isKimptonDemo ? '9/30/2027' : '—'],
               ['Rate Floor', isKimptonDemo ? 'N/A' : '—'],
-              ['Effective Rate', isKimptonDemo ? '6.80%' : '—'],
+              ['Effective Rate', isKimptonDemo ? '6.80%' : <SourcedValue key="er" sourceKey="interest_rate" />],
               ['Swap Expiry Date', isKimptonDemo ? 'N/A' : '—'],
             ]} />
             <Panel title="Current Rate Summary" rows={[
@@ -304,7 +310,7 @@ export default function DebtTab({ projectId }: { projectId: number | string }) {
               ['Floating SOFR', isKimptonDemo ? '3.5%' : '—'],
               ['Spread over SOFR', isKimptonDemo ? '2.9%' : '—'],
               ['SOFR Floor', isKimptonDemo ? '0%' : '—'],
-              ['Interest Rate Used', isKimptonDemo ? '6.8%' : '—'],
+              ['Interest Rate Used', isKimptonDemo ? '6.8%' : <SourcedValue key="iru" sourceKey="interest_rate" />],
             ]} />
             <Card className="p-5">
               <h3 className="text-[13px] font-semibold text-ink-900 mb-3">Covenant Status</h3>
@@ -347,8 +353,8 @@ export default function DebtTab({ projectId }: { projectId: number | string }) {
             unrelated deal.
           */}
           <div className="grid grid-cols-4 gap-4 mb-5">
-            <KPI label="Loan Term" value={isKimptonDemo ? '5 Years' : '—'} />
-            <KPI label="IO Period" value={isKimptonDemo ? '4 Years' : '—'} />
+            <KPI label="Loan Term" flashKey="loan-term" value={isKimptonDemo ? '5 Years' : <SourcedValue sourceKey="term_years" fmt={yrs} />} />
+            <KPI label="IO Period" flashKey="io-period" value={isKimptonDemo ? '4 Years' : <SourcedValue sourceKey="interest_only_years" fmt={yrs} />} />
             <KPI label="Maturity" value={isKimptonDemo ? '3/31/2029' : '—'} />
             <KPI
               label="Refi Status"
@@ -364,14 +370,14 @@ export default function DebtTab({ projectId }: { projectId: number | string }) {
               ['Current Maturity', isKimptonDemo ? '3/31/2029' : '—'],
             ]} />
             <Panel title="Amortization" rows={[
-              ['Amortization', isKimptonDemo ? '30 Years' : '—'],
-              ['(Months)', isKimptonDemo ? '360' : '—'],
+              ['Amortization', isKimptonDemo ? '30 Years' : <SourcedValue key="am2" sourceKey="amortization_years" fmt={yrs} />],
+              ['(Months)', isKimptonDemo ? '360' : <SourcedValue key="amm" sourceKey="amortization_years" fmt={months} />],
               ['Funding Month', isKimptonDemo ? '0' : '—'],
               ['Payoff Month', isKimptonDemo ? '30' : '—'],
             ]} />
             <Panel title="Interest-Only" rows={[
-              ['IO Period', isKimptonDemo ? '4 Years' : '—'],
-              ['IO (Months)', isKimptonDemo ? '48' : '—'],
+              ['IO Period', isKimptonDemo ? '4 Years' : <SourcedValue key="io2" sourceKey="interest_only_years" fmt={yrs} />],
+              ['IO (Months)', isKimptonDemo ? '48' : <SourcedValue key="iom" sourceKey="interest_only_years" fmt={months} />],
               ['IO Status', isKimptonDemo ? 'Active' : '—'],
             ]} />
             <Panel title="Extension Options" rows={[
@@ -393,7 +399,7 @@ export default function DebtTab({ projectId }: { projectId: number | string }) {
   );
 }
 
-function KPI({ label, value, tone, flashKey, tip }: { label: string; value: string; tone?: 'green' | 'amber' | 'red'; flashKey?: unknown; tip?: string }) {
+function KPI({ label, value, tone, flashKey, tip }: { label: string; value: ReactNode; tone?: 'green' | 'amber' | 'red'; flashKey?: unknown; tip?: string }) {
   const flash = useFlash(flashKey ?? value);
   return (
     <Card className={cn('p-4', flash && 'value-flash')}>
