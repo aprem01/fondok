@@ -1109,6 +1109,20 @@ export const api = {
         `/deals/${dealId}/documents/${docId}/fields`,
         body,
       ),
+    /** FON-18 / FON-22: reclassify a document post-upload from the
+     *  DocumentCoverage dropdowns. Sets doc_type (T12 / PNL / PNL_MONTHLY
+     *  / PNL_YTD…) and/or fiscal_year; clears the misclassification flags.
+     *  Re-buckets the doc for coverage + ranking on next load. */
+    reclassify: (
+      dealId: string,
+      docId: string,
+      body: { doc_type?: string; fiscal_year?: number },
+    ) =>
+      request<WorkerDocument>(
+        'PATCH',
+        `/deals/${dealId}/documents/${docId}/classification`,
+        body,
+      ),
     /** Direct URL to the raw uploaded file — citation deep-links use ``#page=N``. */
     downloadUrl: (dealId: string, docId: string, page?: number): string => {
       const base = workerUrl();

@@ -3770,6 +3770,149 @@ async def accept_classification(
     return _row_to_record(dict(refreshed._mapping))
 
 
+# ─────────── reclassify — FON-18 / FON-22 DocumentCoverage ───────────
+
+
+class ReclassifyBody(BaseModel):
+    """Body for the DocumentCoverage inline reclassify dropdowns.
+
+    Lets an analyst correct a document's canonical ``doc_type`` (and
+    optionally its reporting ``fiscal_year``) from the Data Room after
+    upload — e.g. re-tagging a file the Router read as a monthly P&L as
+    the annual T-12 that actually drives the engines. Any field left
+    ``None`` is unchanged.
+
+    ``doc_type`` carries BOTH the family (T-12 vs P&L) and the period the
+    UI's two dropdowns encode: ``T12`` / ``PNL`` (annual) / ``PNL_MONTHLY``
+    / ``PNL_YTD``. The frontend composes the final token; the worker
+    validates it against the DocType enum.
+
+    Classification-only: it re-buckets the doc for coverage + primary-
+    source ranking on the next load. It does NOT re-run extraction (the
+    extracted fields are unchanged) or the engines — the analyst triggers
+    a recompute separately.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    doc_type: str | None = None
+    fiscal_year: int | None = None
+
+
+@router.patch(
+    "/{deal_id}/documents/{doc_id}/classification",
+    response_model=DocumentRecord,
+)
+async def reclassify_document(
+    deal_id: UUID,
+    doc_id: UUID,
+    body: ReclassifyBody,
+    session: Annotated[AsyncSession, Depends(get_session)],
+    tenant_id: Annotated[UUID, Depends(get_tenant_id)],
+) -> DocumentRecord:
+    """Set a document's ``doc_type`` / ``fiscal_year`` post-upload.
+
+    The analyst's explicit reclassify becomes the source of truth: we
+    mirror ``doc_type`` onto ``user_provided_doc_type`` and clear the
+    misclassification / AI-proposal / year-mismatch signals so no banner
+    re-litigates the choice. Tenant-scoped (cross-tenant guess → 404).
+    """
+    from fondok_schemas import DocType
+
+    new_doc_type: str | None = None
+    if body.doc_type is not None:
+        candidate = body.doc_type.upper().strip()
+        if candidate not in {dt.value for dt in DocType}:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail=f"unknown doc_type '{body.doc_type}'",
+            )
+        new_doc_type = candidate
+
+    if new_doc_type is None and body.fiscal_year is None:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="nothing to update: provide doc_type and/or fiscal_year",
+        )
+
+    # Tenant gate — confirm the doc exists under this tenant first so we
+    # don't leak or mutate another tenant's row.
+    row = (
+        await session.execute(
+            text(
+                "SELECT id FROM documents "
+                "WHERE id = :id AND deal_id = :deal_id AND tenant_id = :tenant"
+            ),
+            {
+                "id": str(doc_id),
+                "deal_id": str(deal_id),
+                "tenant": str(tenant_id),
+            },
+        )
+    ).first()
+    if row is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"document {doc_id} not found on deal {deal_id}",
+        )
+
+    sets: list[str] = []
+    params: dict[str, Any] = {
+        "id": str(doc_id),
+        "tenant": str(tenant_id),
+        "false": False,
+    }
+    if new_doc_type is not None:
+        sets += [
+            "doc_type = :dt",
+            "user_provided_doc_type = :dt",
+            "misclassified = :false",
+            "ai_proposed_doc_type = NULL",
+        ]
+        params["dt"] = new_doc_type
+    if body.fiscal_year is not None:
+        sets += ["fiscal_year = :fy", "year_mismatch = :false"]
+        params["fy"] = int(body.fiscal_year)
+
+    await session.execute(
+        text(
+            f"UPDATE documents SET {', '.join(sets)} "
+            "WHERE id = :id AND tenant_id = :tenant"
+        ),
+        params,
+    )
+    await session.commit()
+
+    refreshed = (
+        await session.execute(
+            text(
+                """
+                SELECT id, deal_id, tenant_id, filename, doc_type, status,
+                       uploaded_at, content_hash, storage_key, size_bytes,
+                       page_count, parser, extraction_data,
+                       usali_score, usali_deviations,
+                       user_provided_doc_type, fiscal_year, misclassified,
+                       ai_proposed_doc_type,
+                       year_mismatch, extracted_period_year,
+                       structural_pnl_score
+                  FROM documents
+                 WHERE id = :id
+                """
+            ),
+            {"id": str(doc_id)},
+        )
+    ).first()
+    assert refreshed is not None  # we just updated it
+    logger.info(
+        "reclassify_document: deal=%s doc=%s doc_type=%s fiscal_year=%s",
+        deal_id,
+        doc_id,
+        new_doc_type,
+        body.fiscal_year,
+    )
+    return _row_to_record(dict(refreshed._mapping))
+
+
 # ─────────────────── accept_year — Wave 1 #4 ───────────────────
 
 
