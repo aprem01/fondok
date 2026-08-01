@@ -1,5 +1,5 @@
 'use client';
-import { useState } from 'react';
+import { useState, type ReactNode } from 'react';
 import { useParams } from 'next/navigation';
 import { DollarSign } from 'lucide-react';
 import { Card } from '@/components/ui/Card';
@@ -18,6 +18,7 @@ import { getEngineField, useEngineOutputs } from '@/lib/hooks/useEngineOutputs';
 import { useDeal } from '@/lib/hooks/useDeal';
 import { useFlash } from '@/lib/hooks/useFlash';
 import { IntroCard } from '@/components/help/IntroCard';
+import { Sourced } from '@/components/help/Sourced';
 import { MetricLabel } from '@/components/help/MetricLabel';
 import { GLOSSARY } from '@/lib/glossary';
 
@@ -229,8 +230,8 @@ export default function DebtTab({ projectId }: { projectId: number | string }) {
             ]} />
             <Panel title="Valuation & Metrics" rows={[
               ['Total Uses', fmtOrDash(totalCapN, (v) => fmtCurrency(v))],
-              ['Hotel Purchase Price', fmtOrDash(purchaseN, (v) => fmtCurrency(v))],
-              ['LTV', ltvStr],
+              ['Hotel Purchase Price', <Sourced key="pp" sourceKey="purchase_price">{fmtOrDash(purchaseN, (v) => fmtCurrency(v))}</Sourced>],
+              ['LTV', <Sourced key="ltv" sourceKey="ltv">{ltvStr}</Sourced>],
               ['DY (FTM NOI)', debtYield],
             ]} />
             <Panel title="Computed Values" rows={[
@@ -406,7 +407,7 @@ function KPI({ label, value, tone, flashKey, tip }: { label: string; value: stri
   );
 }
 
-function Panel({ title, rows }: { title: string; rows: string[][] }) {
+function Panel({ title, rows }: { title: string; rows: [string, ReactNode][] }) {
   return (
     <Card className="p-5">
       <h3 className="text-[13px] font-semibold text-ink-900 mb-3">{title}</h3>
