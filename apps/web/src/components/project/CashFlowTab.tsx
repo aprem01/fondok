@@ -613,12 +613,17 @@ function UnleveredDetail({ cf, isKimptonDemo, outputs }: {
                       return <td key={vi} className="text-right tabular-nums text-ink-400">—</td>;
                     }
                     const num = v as number;
-                    // Provenance: the NOI row's per-year cells trace to the
-                    // expense engine's computed years[vi].noi (1:1 index).
+                    // Provenance: NOI cells trace to expense.years[vi].noi and
+                    // Total Debt Service cells to debt.schedule[vi].debt_service
+                    // (both 1:1 with the year columns). <Traced> no-ops if a
+                    // path is absent, so partial runs degrade cleanly.
                     const cell = num < 0 ? `(${fmtCurrency(-num)})` : fmtCurrency(num);
-                    const traced = r.label === 'Net Operating Income'
-                      ? <Traced engine="expense" path={`years[${vi}].noi`}>{cell}</Traced>
-                      : cell;
+                    const traced =
+                      r.label === 'Net Operating Income'
+                        ? <Traced engine="expense" path={`years[${vi}].noi`}>{cell}</Traced>
+                        : r.label === 'Total Debt Service'
+                          ? <Traced engine="debt" path={`schedule[${vi}].debt_service`}>{cell}</Traced>
+                          : cell;
                     return (
                       <td key={vi} className={cn(
                         'text-right tabular-nums',

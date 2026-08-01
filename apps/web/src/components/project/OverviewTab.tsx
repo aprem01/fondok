@@ -1,5 +1,5 @@
 'use client';
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { useRouter, useParams } from 'next/navigation';
 import { LayoutGrid, Download, Pencil, Link2, Settings } from 'lucide-react';
 import { Card } from '@/components/ui/Card';
@@ -740,9 +740,11 @@ export default function OverviewTab({ projectId }: { projectId: number | string 
           { label: 'Terminal NOI', kind: 'linked',
             value: fmtOrDash(revTerminalNoi, fmtCurrency) },
           { label: 'Gross Sale Price', kind: 'linked',
-            value: fmtOrDash(revGrossSale, fmtCurrency) },
+            value: fmtOrDash(revGrossSale, fmtCurrency),
+            display: <Traced engine="returns" path="gross_sale_price">{fmtOrDash(revGrossSale, fmtCurrency)}</Traced> },
           { label: 'Selling Costs', kind: 'linked',
-            value: fmtOrDash(revSellingCosts, fmtCurrency) },
+            value: fmtOrDash(revSellingCosts, fmtCurrency),
+            display: <Traced engine="returns" path="selling_costs">{fmtOrDash(revSellingCosts, fmtCurrency)}</Traced> },
         ]} />
 
         <Section title="Investment Assumptions" rows={[
@@ -1217,6 +1219,10 @@ type SectionRowSpec =
       raw?: number | string;
       // Format hint for the inline editor.
       inputType?: 'number' | 'text';
+      // Optional provenance-wrapped display for the read-only view (a
+      // <Traced> around the same value). Purely visual — `value`/`raw`
+      // still drive editing + formatting. Only used on non-editable rows.
+      display?: ReactNode;
     };
 
 function Section({
@@ -1347,7 +1353,7 @@ function SectionRow({
             linked ? 'text-success-700' : 'text-ink-900',
           )}
         >
-          {spec.value}
+          {('display' in spec && spec.display) ? spec.display : spec.value}
         </span>
       )}
     </div>

@@ -1,5 +1,5 @@
 'use client';
-import { useMemo, useState } from 'react';
+import { useMemo, useState, type ReactNode } from 'react';
 import { useParams } from 'next/navigation';
 import { TrendingDown, Minus, TrendingUp } from 'lucide-react';
 import { Card } from '@/components/ui/Card';
@@ -23,6 +23,7 @@ import { useFlash } from '@/lib/hooks/useFlash';
 import { IntroCard } from '@/components/help/IntroCard';
 import { MetricLabel } from '@/components/help/MetricLabel';
 import { CoachMark } from '@/components/help/CoachMark';
+import { Traced } from '@/components/help/Traced';
 import { GLOSSARY } from '@/lib/glossary';
 
 const subTabs = ['Returns Summary', 'Sensitivities', 'Pricing', 'Comps'];
@@ -236,7 +237,8 @@ function LiveReturnsSummary({ outputs }: { outputs: ReturnType<typeof useEngineO
         >
           <KPI label="Levered IRR" tip={GLOSSARY['IRR']} value={fmtPct(irr, 2)} flashKey={irr} />
         </CoachMark>
-        <KPI label="Equity Multiple" tip={GLOSSARY['Equity Multiple']} value={`${mult.toFixed(2)}x`} flashKey={mult} />
+        <KPI label="Equity Multiple" tip={GLOSSARY['Equity Multiple']} flashKey={mult}
+          value={<Traced engine="returns" path="equity_multiple">{`${mult.toFixed(2)}x`}</Traced>} />
         <KPI label="Cash-on-Cash" tip={GLOSSARY['CoC']} value={fmtPct(coc, 2)} flashKey={coc} />
         <KPI label="Hold Period" tip={GLOSSARY['Hold Period']} value={`${assumptions.holdYears} Years`} flashKey={assumptions.holdYears} />
       </div>
@@ -532,7 +534,7 @@ function StaticSensitivities() {
 // Shared bits
 // ───────────────────────────────────────────────────────────────────
 
-function KPI({ label, value, flashKey, tip }: { label: string; value: string; flashKey?: unknown; tip?: string }) {
+function KPI({ label, value, flashKey, tip }: { label: string; value: ReactNode; flashKey?: unknown; tip?: string }) {
   const flash = useFlash(flashKey ?? value);
   return (
     <Card className={cn('p-4', flash && 'value-flash')}>
