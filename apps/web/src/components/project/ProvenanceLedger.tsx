@@ -20,64 +20,13 @@ import { Card } from '@/components/ui/Card';
 import { cn } from '@/lib/format';
 import { api, isWorkerConnected } from '@/lib/api';
 import type { AssumptionSourcesResponse } from '@/lib/api';
-
-// Source label → kind. Grounded = from THIS deal's documents; benchmark =
-// a market/seed default (not this deal); override = analyst-set.
-const GROUNDED = new Set([
-  't12_actual',
-  'deal_row',
-  'om_comps',
-  'om_broker',
-  'portfolio_pnl',
-  'str_forecast',
-]);
-const OVERRIDE = new Set(['analyst_override']);
-
-type Kind = 'grounded' | 'benchmark' | 'override';
-function sourceKind(s: string): Kind {
-  if (OVERRIDE.has(s)) return 'override';
-  if (GROUNDED.has(s)) return 'grounded';
-  return 'benchmark'; // seed / cbre_horizons / pnl_benchmark / *_default
-}
-
-const SOURCE_LABEL: Record<string, string> = {
-  seed: 'Seed default',
-  deal_row: 'Deal entry',
-  t12_actual: 'T-12 actual',
-  cbre_horizons: 'CBRE benchmark',
-  pnl_benchmark: 'Industry benchmark',
-  portfolio_pnl: 'Portfolio P&L',
-  om_comps: 'OM comps',
-  om_broker: 'OM broker',
-  analyst_override: 'Analyst override',
-  str_forecast: 'STR forecast',
-};
-
-function humanizeKey(k: string): string {
-  return k
-    .replace(/_pct$/, ' %')
-    .replace(/_usd$/, '')
-    .split('_')
-    .map((s) => (s.length <= 3 ? s.toUpperCase() : s.charAt(0).toUpperCase() + s.slice(1)))
-    .join(' ');
-}
-
-function fmtValue(k: string, v: number | string | boolean | null): string {
-  if (v == null) return '—';
-  if (typeof v === 'boolean') return v ? 'Yes' : 'No';
-  if (typeof v === 'string') return v;
-  const key = k.toLowerCase();
-  const isPct = /_pct|growth|occupancy|cap_rate|margin|ratio/.test(key);
-  if (isPct) {
-    const pct = Math.abs(v) <= 1 ? v * 100 : v;
-    return `${pct.toFixed(1)}%`;
-  }
-  const abs = Math.abs(v);
-  if (abs >= 1_000_000) return `$${(v / 1_000_000).toFixed(2)}M`;
-  if (abs >= 1_000) return `$${Math.round(v / 1_000)}K`;
-  if (abs >= 100) return `$${Math.round(v)}`;
-  return String(v);
-}
+import {
+  sourceKind,
+  sourceLabel,
+  humanizeAssumptionKey,
+  formatAssumptionValue,
+  type SourceKind,
+} from '@/lib/provenance';
 
 interface Row {
   key: string;
@@ -85,7 +34,7 @@ interface Row {
   value: string;
   source: string;
   sourceLabel: string;
-  kind: Kind;
+  kind: SourceKind;
   docId?: string;
 }
 
@@ -125,10 +74,10 @@ export function ProvenanceLedger({ dealId }: { dealId: string }) {
         const source = typeof srcRaw === 'string' ? srcRaw : String(srcRaw);
         return {
           key,
-          label: humanizeKey(key),
-          value: fmtValue(key, data.values?.[key] ?? null),
+          label: humanizeAssumptionKey(key),
+          value: formatAssumptionValue(key, data.values?.[key] ?? null),
           source,
-          sourceLabel: SOURCE_LABEL[source] ?? source,
+          sourceLabel: sourceLabel(source),
           kind: sourceKind(source),
           docId: data.source_documents?.[key],
         };
@@ -315,7 +264,7 @@ function FilterChip({
   );
 }
 
-function KindChip({ kind, children }: { kind: Kind; children: React.ReactNode }) {
+function KindChip({ kind, children }: { kind: SourceKind; children: React.ReactNode }) {
   const cls =
     kind === 'grounded'
       ? 'bg-success-50 text-success-700'
