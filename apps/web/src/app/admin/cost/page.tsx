@@ -7,12 +7,11 @@
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Lock, DollarSign, Bot, Cpu, TrendingUp, RefreshCw } from 'lucide-react';
-import { useUser } from '@clerk/nextjs';
 import PageHeader from '@/components/ui/PageHeader';
 import { Card } from '@/components/ui/Card';
 import { Button } from '@/components/ui/Button';
 import { api, AdminCostResponse } from '@/lib/api';
-import { useCurrentRole } from '@/lib/auth';
+import { useCurrentRole, useCurrentUser } from '@/lib/auth';
 import { cn } from '@/lib/format';
 
 const fmtUSD = (n: number) =>
@@ -28,8 +27,11 @@ const fmtPct = (r: number) =>
 export default function AdminCostPage() {
   const currentRole = useCurrentRole();
   const isAdmin = currentRole === 'org:admin';
-  const { user } = useUser();
-  const userEmail = user?.primaryEmailAddress?.emailAddress || '';
+  // Use the auth.ts shim (guards Clerk hooks behind isClerkConfigured) so
+  // this page prerenders cleanly when no Clerk key is set, instead of
+  // throwing "useUser must be within ClerkProvider" during static export.
+  const currentUser = useCurrentUser();
+  const userEmail = currentUser.email;
   const isAuthorized = isAdmin && userEmail === 'kpremks@gmail.com';
 
   const [data, setData] = useState<AdminCostResponse | null>(null);
