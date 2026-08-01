@@ -187,6 +187,43 @@ function confidenceTier(pct: number): { tone: 'green' | 'amber' | 'red'; label: 
   return { tone: 'red', label: 'Needs review' };
 }
 
+// FON-23 — map an extracted field name to its USALI statement section so the
+// review pane can render the extraction AS the P&L (grouped, statement-order)
+// instead of a flat 375-row list. Keyed off the 2nd path segment of the
+// dotted USALI field name (``p_and_l_usali.<section>.…``).
+const _PL_SECTIONS: Record<string, { label: string; order: number }> = {
+  rooms: { label: 'Rooms', order: 20 },
+  rooms_occupied: { label: 'Rooms', order: 20 },
+  rooms_revenue_group: { label: 'Rooms', order: 20 },
+  rooms_revenue_other: { label: 'Rooms', order: 20 },
+  rooms_allowances: { label: 'Rooms', order: 20 },
+  operating_revenue: { label: 'Operating Revenue', order: 10 },
+  monthly_revenue: { label: 'Operating Revenue', order: 10 },
+  food_beverage: { label: 'Food & Beverage', order: 30 },
+  fb_detail: { label: 'Food & Beverage', order: 30 },
+  other_operated: { label: 'Other Operated Departments', order: 40 },
+  departmental_expenses: { label: 'Departmental Expenses', order: 50 },
+  payroll: { label: 'Payroll', order: 60 },
+  reservations: { label: 'Reservations & Marketing', order: 65 },
+  undistributed: { label: 'Undistributed Expenses', order: 70 },
+  fixed: { label: 'Fixed Charges', order: 80 },
+  fixed_charges: { label: 'Fixed Charges', order: 80 },
+  net_operating_income: { label: 'Net Operating Income', order: 90 },
+  budget: { label: 'Budget', order: 100 },
+  prior_year: { label: 'Prior Year', order: 105 },
+  department: { label: 'Department', order: 110 },
+  ttm_summary_per_om: { label: 'TTM Summary', order: 115 },
+  property_overview: { label: 'Property', order: 120 },
+};
+const _PL_KEY_METRICS = new Set(['adr_usd', 'revpar_usd', 'occupancy_pct']);
+
+function plSection(raw?: string | null): { label: string; order: number } {
+  const n = (raw || '').toLowerCase();
+  const seg = n.startsWith('p_and_l_usali.') ? n.split('.')[1] : n.split('.')[0];
+  if (_PL_KEY_METRICS.has(seg)) return { label: 'Key Metrics', order: 0 };
+  return _PL_SECTIONS[seg] ?? { label: 'Other', order: 999 };
+}
+
 function formatValue(v: unknown, unit: string | null, fieldName?: string): string {
   if (v == null) return '—';
   const fn = (fieldName ?? '').toLowerCase();
@@ -1712,6 +1749,23 @@ export default function DataRoomTab({ projectId }: { projectId: number | string 
                             .filter((r) => r.pct < 85)
                             .sort((a, b) => a.pct - b.pct)
                         : rows;
+                    // FON-23 — group the visible fields into USALI statement
+                    // sections so the pane renders the extraction AS the P&L
+                    // (grouped, statement-order) rather than a flat list.
+                    const groupedSections = Array.from(
+                      visible
+                        .reduce<Map<string, { order: number; rows: FieldRow[] }>>(
+                          (m, r) => {
+                            const s = plSection(r.raw);
+                            const g = m.get(s.label) ?? { order: s.order, rows: [] };
+                            g.rows.push(r);
+                            m.set(s.label, g);
+                            return m;
+                          },
+                          new Map(),
+                        )
+                        .entries(),
+                    ).sort((a, b) => a[1].order - b[1].order);
 
                     return (
                       <>
@@ -1773,40 +1827,55 @@ export default function DataRoomTab({ projectId }: { projectId: number | string 
                             No fields match the current filter.
                           </div>
                         ) : (
-                          <div className="space-y-2 text-[11.5px]">
-                            {visible.map((r) => (
-                              <DataRow
-                                key={r.raw ?? r.label}
-                                label={r.label}
-                                value={r.value}
-                                confidence={r.pct}
-                                rawLabel={r.raw}
-                                reviewed={r.reviewed}
-                                snippet={r.snippet}
-                                sourcePage={r.sourcePage}
-                                highlight={highlightField != null && r.raw === highlightField}
-                                onReview={
-                                  liveMode && r.raw && selectedDocRow?.id
-                                    ? (action, value) =>
-                                        handleReviewField(selectedDocRow.id, r.raw!, action, value)
-                                    : undefined
-                                }
-                                onViewSource={
-                                  r.sourcePage != null && selectedDocRow?.id
-                                    ? () =>
-                                        window.dispatchEvent(
-                                          new CustomEvent('fondok:citation-focus', {
-                                            detail: {
-                                              documentId: selectedDocRow.id,
-                                              page: r.sourcePage as number,
-                                              field: r.label,
-                                              excerpt: r.snippet ?? undefined,
-                                            },
-                                          }),
-                                        )
-                                    : undefined
-                                }
-                              />
+                          <div className="space-y-4 text-[11.5px]">
+                            {groupedSections.map(([sectionLabel, grp]) => (
+                              <div key={sectionLabel}>
+                                {/* USALI statement section header */}
+                                <div className="flex items-center justify-between mb-1.5 pb-1 border-b border-border">
+                                  <span className="text-[10px] uppercase tracking-wider text-ink-500 font-semibold">
+                                    {sectionLabel}
+                                  </span>
+                                  <span className="text-[10px] tabular-nums text-ink-400">
+                                    {grp.rows.length}
+                                  </span>
+                                </div>
+                                <div className="space-y-2">
+                                  {grp.rows.map((r) => (
+                                    <DataRow
+                                      key={r.raw ?? r.label}
+                                      label={r.label}
+                                      value={r.value}
+                                      confidence={r.pct}
+                                      rawLabel={r.raw}
+                                      reviewed={r.reviewed}
+                                      snippet={r.snippet}
+                                      sourcePage={r.sourcePage}
+                                      highlight={highlightField != null && r.raw === highlightField}
+                                      onReview={
+                                        liveMode && r.raw && selectedDocRow?.id
+                                          ? (action, value) =>
+                                              handleReviewField(selectedDocRow.id, r.raw!, action, value)
+                                          : undefined
+                                      }
+                                      onViewSource={
+                                        r.sourcePage != null && selectedDocRow?.id
+                                          ? () =>
+                                              window.dispatchEvent(
+                                                new CustomEvent('fondok:citation-focus', {
+                                                  detail: {
+                                                    documentId: selectedDocRow.id,
+                                                    page: r.sourcePage as number,
+                                                    field: r.label,
+                                                    excerpt: r.snippet ?? undefined,
+                                                  },
+                                                }),
+                                              )
+                                          : undefined
+                                      }
+                                    />
+                                  ))}
+                                </div>
+                              </div>
                             ))}
                           </div>
                         )}
