@@ -150,6 +150,56 @@ export function useSignOut(): () => Promise<void> {
   };
 }
 
+export interface OrgMember {
+  id: string;
+  name: string;
+  email: string;
+  initials: string;
+  role: AuthRole;
+  pending: boolean;
+}
+
+export interface OrgMembersState {
+  members: OrgMember[];
+  loading: boolean;
+  /** True in demo mode (no Clerk) — caller shows an honest empty state
+   *  instead of a fabricated team roster. */
+  demo: boolean;
+}
+
+/**
+ * Real organization roster from Clerk. In demo mode (no Clerk) returns
+ * an empty list flagged `demo` so the caller renders an honest empty
+ * state rather than the old mock `teamMembers` fixture.
+ */
+export function useOrgMembers(): OrgMembersState {
+  if (!isClerkConfigured) {
+    return { members: [], loading: false, demo: true };
+  }
+  // eslint-disable-next-line react-hooks/rules-of-hooks
+  const { memberships, isLoaded } = useOrganization({ memberships: true });
+  if (!isLoaded) {
+    return { members: [], loading: true, demo: false };
+  }
+  const rows = memberships?.data ?? [];
+  const members: OrgMember[] = rows.map((m) => {
+    const pud = m.publicUserData;
+    const first = pud?.firstName ?? '';
+    const last = pud?.lastName ?? '';
+    const email = pud?.identifier ?? '';
+    const name = [first, last].filter(Boolean).join(' ') || email || 'Member';
+    return {
+      id: m.id,
+      name,
+      email,
+      initials: deriveInitials(first, last, email),
+      role: (m.role as AuthRole) ?? 'unknown',
+      pending: false,
+    };
+  });
+  return { members, loading: false, demo: false };
+}
+
 // ────────────────────── imperative org id (for fetch) ──────────────────────
 //
 // `lib/api.ts` is plain TS (not React) so it can't call `useOrganization`.

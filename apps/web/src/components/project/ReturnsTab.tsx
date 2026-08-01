@@ -14,7 +14,6 @@ import PricingSensitivityPanel from './PricingSensitivityPanel';
 import MaxPricePanel from './MaxPricePanel';
 import LOIPanel from './LOIPanel';
 import CompSalesPanel from './CompSalesPanel';
-import { dealScenarios, kimptonAnglerOverview } from '@/lib/mockData';
 import { fmtPct, cn } from '@/lib/format';
 import { useAssumptionsOptional } from '@/stores/assumptionsStore';
 import { defaultSensitivities, SensitivityMatrix } from '@/lib/engines';
@@ -480,56 +479,6 @@ function SensitivityCard({ matrix, title, source = 'ts' }: { matrix: Sensitivity
         </tbody>
       </table>
     </Card>
-  );
-}
-
-// ───────────────────────────────────────────────────────────────────
-// Static fallback for non-Kimpton deals (preserves original look).
-// ───────────────────────────────────────────────────────────────────
-
-function StaticReturnsSummary({ outputs }: { outputs: ReturnType<typeof useEngineOutputs>['outputs'] }) {
-  const o = kimptonAnglerOverview;
-  const wIrr = getEngineField<number>(outputs, 'returns', 'levered_irr');
-  const wMult = getEngineField<number>(outputs, 'returns', 'equity_multiple');
-  const wCoC = getEngineField<number>(outputs, 'returns', 'cash_on_cash_year_one');
-  const irr = wIrr ?? o.returns.leveredIRR;
-  const mult = wMult ?? o.returns.equityMultiple;
-  const cocLabel = wCoC != null ? fmtPct(wCoC, 2) : '4.6%';
-  return (
-    <>
-      <div className="grid grid-cols-4 gap-4 mb-5">
-        <KPI label="Levered IRR" tip={GLOSSARY['IRR']} value={fmtPct(irr, 2)} flashKey={irr} />
-        <KPI label="Equity Multiple" tip={GLOSSARY['Equity Multiple']} value={`${mult.toFixed(2)}x`} flashKey={mult} />
-        <KPI label="Cash-on-Cash" tip={GLOSSARY['CoC']} value={cocLabel} flashKey={cocLabel} />
-        <KPI label="Hold Period" tip={GLOSSARY['Hold Period']} value={`${o.returns.hold} Years`} flashKey={o.returns.hold} />
-      </div>
-      <Card className="p-5">
-        <h3 className="text-[14px] font-semibold text-ink-900 mb-4">Scenario Analysis</h3>
-        <div className="grid grid-cols-3 gap-4">
-          {dealScenarios.map(s => {
-            const Icon = s.name === 'Downside' ? TrendingDown : s.name.includes('Base') ? Minus : TrendingUp;
-            const tone = s.name === 'Downside' ? 'text-danger-700' : s.name.includes('Base') ? 'text-ink-700' : 'text-success-700';
-            return (
-              <div key={s.name} className={cn(
-                'p-4 rounded-lg border-2',
-                s.base ? 'border-brand-500 bg-brand-50' : 'border-border'
-              )}>
-                <div className="flex items-center gap-2 mb-3">
-                  <Icon size={16} className={tone} />
-                  <div className="text-[13px] font-semibold text-ink-900">{s.name}</div>
-                </div>
-                <div className="space-y-2 text-[12.5px]">
-                  <Row k="Levered IRR" v={`${s.irr.toFixed(2)}%`} />
-                  <Row k="Unlevered IRR" v={`${s.unleveredIrr.toFixed(2)}%`} />
-                  <Row k="Multiple" v={`${s.multiple.toFixed(2)}x`} />
-                  <Row k="Avg CoC" v={`${s.avgCoC.toFixed(1)}%`} />
-                </div>
-              </div>
-            );
-          })}
-        </div>
-      </Card>
-    </>
   );
 }
 

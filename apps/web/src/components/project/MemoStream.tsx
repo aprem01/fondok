@@ -19,7 +19,6 @@ import {
 import { Card } from '@/components/ui/Card';
 import { Button } from '@/components/ui/Button';
 import { Badge } from '@/components/ui/Badge';
-import { kimptonAnalysis } from '@/lib/mockData';
 import { cn } from '@/lib/format';
 import { Citation as CitationChip } from '@/components/citations/Citation';
 import { useDocuments } from '@/lib/hooks/useDocuments';
@@ -240,10 +239,10 @@ export default function MemoStream({ dealId }: { dealId: string }) {
           <Sparkles size={15} className="text-brand-500" />
           <h3 className="text-[14px] font-semibold text-ink-900">IC Memo</h3>
         </div>
-        <div className="space-y-3 text-[12.5px] text-ink-700 leading-relaxed">
-          {kimptonAnalysis.summary.map((p, i) => (
-            <p key={i}>{p}</p>
-          ))}
+        <div className="text-[12.5px] text-ink-600 leading-relaxed">
+          Live IC memo generation runs on the connected worker. This preview build
+          isn&rsquo;t attached to one, so streaming is disabled here — open the deal on the
+          full deployment to draft the memo section-by-section with citations.
         </div>
       </Card>
     );

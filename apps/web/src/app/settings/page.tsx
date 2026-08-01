@@ -6,10 +6,11 @@ import { Card } from '@/components/ui/Card';
 import { Button } from '@/components/ui/Button';
 import { Badge } from '@/components/ui/Badge';
 import KebabMenu from '@/components/ui/KebabMenu';
-import { workspace, teamMembers, notificationDefaults, integrations } from '@/lib/mockData';
+import { notificationDefaults, integrations } from '@/lib/mockData';
 import { cn } from '@/lib/format';
 import { useToast } from '@/components/ui/Toast';
 import { api, isWorkerConnected, WorkerError } from '@/lib/api';
+import { useCurrentOrg, useOrgMembers } from '@/lib/auth';
 import { IntroCard } from '@/components/help/IntroCard';
 import { useHintsEnabled, resetAllCoachMarks } from '@/components/help/useHintsEnabled';
 import { Sparkles, RotateCcw } from 'lucide-react';
@@ -24,6 +25,9 @@ export default function SettingsPage() {
   const [tab, setTab] = useState('Team');
   const [notifs, setNotifs] = useState(notificationDefaults);
   const { toast } = useToast();
+  // Real workspace + roster from Clerk (empty + flagged in demo mode).
+  const org = useCurrentOrg();
+  const { members, loading: membersLoading, demo: membersDemo } = useOrgMembers();
   const [confirmReset, setConfirmReset] = useState<{ count: number } | null>(null);
   const [resetting, setResetting] = useState(false);
   const workerConnected = isWorkerConnected();
@@ -36,11 +40,21 @@ export default function SettingsPage() {
   const [inviteEmail, setInviteEmail] = useState('');
   const [inviteRole, setInviteRole] = useState('Analyst');
 
-  // Workspace fields are bound so we can fire a "saved" toast on blur.
-  // No real persistence — the mock workspace object is read-only — but the
-  // affordance ships now so the wiring is in place for the worker route.
-  const [workspaceName, setWorkspaceName] = useState(workspace.name);
-  const [workspaceUrl, setWorkspaceUrl] = useState(workspace.url);
+  // Workspace fields seed from the real Clerk org once it hydrates.
+  // (Renaming an org needs Clerk's admin API — not wired yet — so edits
+  // stay local + toast; the field at least shows the true workspace.)
+  const [workspaceName, setWorkspaceName] = useState('');
+  const [workspaceUrl, setWorkspaceUrl] = useState('');
+  const wsSeeded = useRef(false);
+  useEffect(() => {
+    if (wsSeeded.current) return;
+    const nm = (org.name || '').trim();
+    if (nm) {
+      setWorkspaceName(org.name);
+      setWorkspaceUrl(org.url || '');
+      wsSeeded.current = true;
+    }
+  }, [org.name, org.url]);
   const [defaultLtv, setDefaultLtv] = useState('65%');
   const [defaultRate, setDefaultRate] = useState('6.25%');
 
@@ -208,31 +222,58 @@ export default function SettingsPage() {
 
           <Card>
             <div className="px-5 py-4 border-b border-border">
-              <h3 className="text-[14px] font-semibold text-ink-900">Team Members ({teamMembers.length})</h3>
+              <h3 className="text-[14px] font-semibold text-ink-900">
+                Team Members{!membersLoading && members.length > 0 ? ` (${members.length})` : ''}
+              </h3>
             </div>
-            {teamMembers.map((m, i) => (
-              <div key={m.email} className={cn('flex items-center gap-3 px-5 py-4', i < teamMembers.length - 1 && 'border-b border-border')}>
-                <div className="w-9 h-9 rounded-full bg-ink-300/30 flex items-center justify-center text-[11px] font-semibold text-ink-700">
-                  {m.initials}
-                </div>
-                <div className="flex-1">
-                  <div className="flex items-center gap-2">
-                    <div className="text-[13px] font-medium text-ink-900">{m.name}</div>
-                    {m.pending && <Badge tone="amber">Pending</Badge>}
+            {membersLoading ? (
+              <div className="px-5 py-6 space-y-3">
+                {[0, 1].map((i) => (
+                  <div key={i} className="flex items-center gap-3 animate-pulse">
+                    <div className="w-9 h-9 rounded-full bg-ink-300/30" />
+                    <div className="flex-1">
+                      <div className="h-3 bg-ink-300/30 rounded w-1/3 mb-1.5" />
+                      <div className="h-2.5 bg-ink-300/20 rounded w-1/4" />
+                    </div>
                   </div>
-                  <div className="text-[11.5px] text-ink-500">{m.email}</div>
-                </div>
-                <select defaultValue={m.role} className="px-2.5 py-1.5 text-[12px] bg-white border border-border rounded-md">
-                  <option>Analyst</option><option>Principal</option><option>Admin</option>
-                </select>
-                <KebabMenu
-                  items={[
-                    { label: 'Edit', onSelect: () => toast('Member edits available on enterprise plans', { type: 'info' }) },
-                    { label: 'Remove', danger: true, onSelect: () => toast('Member removal available on enterprise plans', { type: 'info' }) },
-                  ]}
-                />
+                ))}
               </div>
-            ))}
+            ) : members.length === 0 ? (
+              <div className="px-5 py-8 text-center">
+                <div className="text-[13px] font-medium text-ink-900">
+                  {membersDemo ? 'Sign in to manage your team' : 'No teammates yet'}
+                </div>
+                <p className="text-[12px] text-ink-500 mt-1 max-w-sm mx-auto leading-relaxed">
+                  {membersDemo
+                    ? 'Team management runs through your organization once you sign in.'
+                    : 'Invite a colleague above — they’ll appear here once they accept.'}
+                </p>
+              </div>
+            ) : (
+              members.map((m, i) => {
+                const roleLabel = m.role === 'org:admin' ? 'Admin' : m.role === 'org:member' ? 'Member' : '—';
+                return (
+                  <div key={m.id} className={cn('flex items-center gap-3 px-5 py-4', i < members.length - 1 && 'border-b border-border')}>
+                    <div className="w-9 h-9 rounded-full bg-ink-300/30 flex items-center justify-center text-[11px] font-semibold text-ink-700">
+                      {m.initials}
+                    </div>
+                    <div className="flex-1">
+                      <div className="flex items-center gap-2">
+                        <div className="text-[13px] font-medium text-ink-900">{m.name}</div>
+                        {m.pending && <Badge tone="amber">Pending</Badge>}
+                      </div>
+                      <div className="text-[11.5px] text-ink-500">{m.email}</div>
+                    </div>
+                    <Badge tone={m.role === 'org:admin' ? 'blue' : 'gray'}>{roleLabel}</Badge>
+                    <KebabMenu
+                      items={[
+                        { label: 'Manage in organization', onSelect: () => toast('Roles are managed in your organization settings', { type: 'info' }) },
+                      ]}
+                    />
+                  </div>
+                );
+              })
+            )}
           </Card>
         </div>
       )}

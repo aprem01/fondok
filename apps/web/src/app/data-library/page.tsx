@@ -7,13 +7,32 @@ import { Button } from '@/components/ui/Button';
 import KebabMenu from '@/components/ui/KebabMenu';
 import Modal from '@/components/ui/Modal';
 import { useToast } from '@/components/ui/Toast';
-import { compSets, marketDataLib, templates } from '@/lib/mockData';
 import { cn } from '@/lib/format';
 import { IntroCard } from '@/components/help/IntroCard';
 
 const tabs = ['Comp Sets', 'Market Data', 'Templates'];
 
 type ModalKind = null | 'comp-set' | 'market' | 'template';
+
+// The Data Library isn't backed by a worker endpoint yet, so instead of
+// shipping fabricated comp sets / market rows / templates that a real user
+// never created, we render honest empty states + the working create modals.
+// When the backend lands, these become live fetches.
+interface CompSet {
+  name: string; properties: number; description?: string;
+  usedIn?: string[]; updated: string; starred?: boolean; hidden?: boolean;
+}
+interface MarketRow {
+  market: string; submarket: string; revpar: number; adr: number;
+  occ: number; yoy: number; source: string;
+}
+interface TemplateRow {
+  name: string; description: string; hold: string; ltv: string;
+  exitCap: string; usedIn: number;
+}
+const compSets: CompSet[] = [];
+const marketDataLib: MarketRow[] = [];
+const templates: TemplateRow[] = [];
 
 export default function DataLibraryPage() {
   const [tab, setTab] = useState('Comp Sets');
@@ -249,6 +268,19 @@ export default function DataLibraryPage() {
               </tr>
             </thead>
             <tbody>
+              {filteredMarkets.length === 0 && (
+                <tr>
+                  <td colSpan={7} className="px-5 py-10 text-center">
+                    <MapPinned size={26} className="text-ink-400 mx-auto mb-2" strokeWidth={1.5} />
+                    <div className="text-[13px] font-medium text-ink-900">
+                      {q ? 'No markets match your search' : 'No saved market data yet'}
+                    </div>
+                    <p className="text-[12px] text-ink-500 mt-1">
+                      {q ? 'Try a different market or submarket.' : 'Add a market to benchmark RevPAR, ADR, and occupancy across your deals.'}
+                    </p>
+                  </td>
+                </tr>
+              )}
               {filteredMarkets.map(m => (
                 <tr key={m.market + m.submarket} className="border-b border-border/50 hover:bg-ink-300/10">
                   <td className="px-5 py-3">
