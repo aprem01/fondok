@@ -3,10 +3,11 @@ import { useState, useEffect } from 'react';
 import {
   Sparkles, ArrowRight, ArrowUpRight, RefreshCw, ShieldCheck, FileSearch,
   TrendingUp, Layers, DollarSign, FileText, Eye, AlertTriangle,
-  AlertCircle, Info, MessageSquare,
+  AlertCircle, Info, MessageSquare, ScrollText,
 } from 'lucide-react';
 import dynamic from 'next/dynamic';
 import TabLoadingSkeleton from './TabLoadingSkeleton';
+import { ProvenanceLedger } from './ProvenanceLedger';
 
 const CostPanel = dynamic(() => import('./CostPanel'), {
   loading: () => <TabLoadingSkeleton rows={4} />,
@@ -112,7 +113,7 @@ function CacheHitBadge() {
   );
 }
 
-type SubTab = 'summary' | 'memo' | 'ask' | 'risks' | 'variance' | 'critic' | 'sensitivity' | 'scenarios' | 'cost';
+type SubTab = 'summary' | 'memo' | 'ask' | 'risks' | 'variance' | 'sources' | 'critic' | 'sensitivity' | 'scenarios' | 'cost';
 
 const subTabs: { id: SubTab; label: string; icon: typeof Sparkles }[] = [
   { id: 'summary',     label: 'AI Summary',      icon: Sparkles },
@@ -120,6 +121,7 @@ const subTabs: { id: SubTab; label: string; icon: typeof Sparkles }[] = [
   { id: 'ask',         label: 'Ask',             icon: MessageSquare },
   { id: 'risks',       label: 'Risks',           icon: ShieldCheck },
   { id: 'variance',    label: 'Broker Variance', icon: FileSearch },
+  { id: 'sources',     label: 'Sources',         icon: ScrollText },
   { id: 'critic',      label: 'Critic Review',   icon: Eye },
   { id: 'sensitivity', label: 'Sensitivity',     icon: TrendingUp },
   { id: 'scenarios',   label: 'Scenarios',       icon: Layers },
@@ -577,6 +579,8 @@ export default function AnalysisTab() {
       )}
 
       {sub === 'cost' && <CostPanel />}
+
+      {sub === 'sources' && <ProvenanceLedger dealId={rawId} />}
 
       {sub === 'scenarios' && hasCannedAnalysis && (
         <Card className="p-5">
