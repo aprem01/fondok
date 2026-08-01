@@ -21,6 +21,7 @@ import { AssumptionBadge } from '@/components/help/AssumptionBadge';
 import OverridePanel from '@/components/help/OverridePanel';
 import { MetricLabel } from '@/components/help/MetricLabel';
 import { CoachMark } from '@/components/help/CoachMark';
+import { VarianceHero } from './VarianceHero';
 import { GLOSSARY } from '@/lib/glossary';
 
 interface SourceUseLine {
@@ -513,6 +514,10 @@ export default function OverviewTab({ projectId }: { projectId: number | string 
           </Button>
         </div>
       </div>
+
+      {/* Big bet #2 — variance-as-hero: answer "is this deal as good as the
+          broker says?" at the top, not buried in the Variance tab. */}
+      {liveMode && <VarianceHero dealId={dealId} />}
 
       {/* Model controls live in a dedicated settings panel (Sam v2:
           "Move target returns, brands, and similar controls out of the
