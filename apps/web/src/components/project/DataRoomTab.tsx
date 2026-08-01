@@ -5,6 +5,7 @@ import {
   UploadCloud, FileText, FileSpreadsheet,
   CheckCircle2, Loader2, Circle, AlertTriangle, ArrowRight,
   ClipboardList, Sparkles, Wallet, Receipt, Banknote, TrendingUp, Coins, Users2,
+  Search, X as CloseIcon,
 } from 'lucide-react';
 import { Card } from '@/components/ui/Card';
 import { Button } from '@/components/ui/Button';
@@ -285,6 +286,10 @@ export default function DataRoomTab({ projectId }: { projectId: number | string 
   // THOSE (worst-first) instead of scrolling past hundreds of verified
   // fields. Falls back to showing all when nothing needs review.
   const [needsReviewOnly, setNeedsReviewOnly] = useState(true);
+  // FON-23 — free-text search across the extracted fields (label / raw
+  // name / value). A live query overrides the needs-review filter so you
+  // can jump to ANY field among the hundreds, not just low-confidence ones.
+  const [fieldQuery, setFieldQuery] = useState('');
   // Per-document USALI deviation accordion. Driven by the doc id (not
   // the filename) so identically-named uploads don't collide.
   const [usaliAccordionOpen, setUsaliAccordionOpen] = useState<Set<string>>(
@@ -306,8 +311,9 @@ export default function DataRoomTab({ projectId }: { projectId: number | string 
   const isAdmin = currentRole === 'org:admin';
 
   useEffect(() => {
-    // Re-arm the needs-review focus each time a new doc is opened.
+    // Re-arm the needs-review focus + clear search each time a new doc opens.
     setNeedsReviewOnly(true);
+    setFieldQuery('');
   }, [selectedDoc]);
 
   // Close the templates popover on outside click / Escape.
@@ -1743,8 +1749,19 @@ export default function DataRoomTab({ projectId }: { projectId: number | string 
                     // first, when the filter is on AND there's anything to
                     // review; otherwise show every field (so a fully-clean
                     // doc doesn't render an empty "0 match" state).
-                    const visible =
-                      needsReviewOnly && low > 0
+                    // Search overrides the needs-review filter: a query
+                    // matches ANY field by label, raw path, or value so the
+                    // analyst can jump straight to "insurance", "mgmt fee",
+                    // or a specific number among hundreds of fields.
+                    const q = fieldQuery.trim().toLowerCase();
+                    const visible = q
+                      ? rows.filter(
+                          (r) =>
+                            r.label.toLowerCase().includes(q) ||
+                            (r.raw ?? '').toLowerCase().includes(q) ||
+                            r.value.toLowerCase().includes(q),
+                        )
+                      : needsReviewOnly && low > 0
                         ? rows
                             .filter((r) => r.pct < 85)
                             .sort((a, b) => a.pct - b.pct)
@@ -1769,6 +1786,38 @@ export default function DataRoomTab({ projectId }: { projectId: number | string 
 
                     return (
                       <>
+                        {/* FON-23 — search across all extracted fields. */}
+                        <div className="relative mb-3">
+                          <Search
+                            size={13}
+                            className="absolute left-2.5 top-1/2 -translate-y-1/2 text-ink-400 pointer-events-none"
+                            aria-hidden="true"
+                          />
+                          <input
+                            type="text"
+                            value={fieldQuery}
+                            onChange={(e) => setFieldQuery(e.target.value)}
+                            placeholder="Search fields — e.g. management fee, insurance, 88,150"
+                            aria-label="Search extracted fields"
+                            className="w-full text-[11.5px] rounded-md border border-border bg-card pl-8 pr-8 py-1.5 text-ink-900 placeholder:text-ink-400 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-500"
+                          />
+                          {fieldQuery && (
+                            <button
+                              type="button"
+                              onClick={() => setFieldQuery('')}
+                              aria-label="Clear search"
+                              className="absolute right-2 top-1/2 -translate-y-1/2 text-ink-400 hover:text-ink-700"
+                            >
+                              <CloseIcon size={13} />
+                            </button>
+                          )}
+                        </div>
+                        {fieldQuery.trim() ? (
+                          <div className="mb-3 text-[11px] text-ink-500 tabular-nums">
+                            {visible.length} result{visible.length === 1 ? '' : 's'} for
+                            &ldquo;{fieldQuery.trim()}&rdquo;
+                          </div>
+                        ) : (
                         <div className="flex items-center gap-2 mb-3 text-[11px] text-ink-700 tabular-nums">
                           <span className="inline-flex items-center gap-1">
                             <span className="w-1.5 h-1.5 rounded-full bg-success-500" aria-hidden="true" />
@@ -1796,9 +1845,11 @@ export default function DataRoomTab({ projectId }: { projectId: number | string 
                             <span className="font-medium">{low}</span> needs review
                           </button>
                         </div>
+                        )}
                         {/* FON-23 — scale escape-hatch: clear the whole review
-                            tail in one click after spot-checking against source. */}
-                        {liveMode && selectedDocRow?.id && low > 0 && (
+                            tail in one click after spot-checking against source.
+                            Hidden while searching (search spans all fields). */}
+                        {!fieldQuery.trim() && liveMode && selectedDocRow?.id && low > 0 && (
                           <div className="flex items-center justify-between gap-2 mb-3 -mt-1">
                             <span className="text-[11px] text-ink-500">
                               {low} field{low === 1 ? '' : 's'} left to review
@@ -1824,7 +1875,9 @@ export default function DataRoomTab({ projectId }: { projectId: number | string 
                         )}
                         {visible.length === 0 ? (
                           <div className="text-[11.5px] text-ink-500 py-4 text-center">
-                            No fields match the current filter.
+                            {fieldQuery.trim()
+                              ? `No fields match “${fieldQuery.trim()}”.`
+                              : 'No fields match the current filter.'}
                           </div>
                         ) : (
                           <div className="space-y-4 text-[11.5px]">
