@@ -20,6 +20,7 @@ import { useAssumptionsOptional } from '@/stores/assumptionsStore';
 import { getEngineField, useEngineOutputs } from '@/lib/hooks/useEngineOutputs';
 import { useDeal } from '@/lib/hooks/useDeal';
 import { IntroCard } from '@/components/help/IntroCard';
+import { Sourced } from '@/components/help/Sourced';
 import { api, isWorkerConnected, WorkerError } from '@/lib/api';
 
 // Expense engine year shape — mirrors apps/worker/app/engines/expense.py.
@@ -316,21 +317,21 @@ export default function InvestmentTab({ projectId }: { projectId: number | strin
               ['Entry Cap Rate', fmtOrDash(entryCap, v => fmtPct(v, 2))],
               ['2025 Run-Rate NOI', fmtOrDash(entryNoi, fmtCurrency)],
               ['FTM Date', isKimptonDemo ? '12/31/2025' : '—'],
-              ['Hotel Purchase Price', fmtOrDash(entryPurchase, fmtCurrency)],
+              ['Hotel Purchase Price', <Sourced key="pp" sourceKey="purchase_price">{fmtOrDash(entryPurchase, fmtCurrency)}</Sourced>],
               ['Per Key', fmtOrDash(entryPricePerKey, fmtCurrency)],
             ]} />
             <Panel title="Exit Valuation" rows={[
               ['Exit Month', isKimptonDemo ? '60' : '—'],
               ['Exit Date', isKimptonDemo ? '9/30/2030' : '—'],
               ['Fwd. 12 Mo NOI', fmtOrDash(exitTerminalNoi, fmtCurrency)],
-              ['Exit Cap Rate', fmtOrDash(exitCap, v => fmtPct(v, 2))],
+              ['Exit Cap Rate', <Sourced key="xc" sourceKey="exit_cap_rate">{fmtOrDash(exitCap, v => fmtPct(v, 2))}</Sourced>],
               ['Gross Exit Value', fmtOrDash(exitGross, fmtCurrency)],
               ['Per Key', fmtOrDash(exitPerKey, fmtCurrency)],
               ['Exit Sales Cost', fmtOrDash(exitSellingCosts, fmtCurrency)],
               ['Transfer Tax', isKimptonDemo ? '0.6%' : '—'],
             ]} />
             <Panel title="Renovation Budget" rows={[
-              ['Renovation Budget', fmtOrDash(renoBudget, fmtCurrency)],
+              ['Renovation Budget', <Sourced key="rb" sourceKey="renovation_budget">{fmtOrDash(renoBudget, fmtCurrency)}</Sourced>],
               ['Per Key', fmtOrDash(renoPerKey, fmtCurrency)],
               ['Per SF', fmtOrDash(renoPerSf, fmtCurrency)],
               ['Hard Costs (75%)', fmtOrDash(renoHard, fmtCurrency)],
@@ -344,9 +345,9 @@ export default function InvestmentTab({ projectId }: { projectId: number | strin
             <Panel title="Valuation Assumptions" rows={[
               ['Total Dev. Cost', fmtOrDash(totalCapital, fmtCurrency)],
               ['Per Key', fmtOrDash(totalCapitalPerKey, fmtCurrency)],
-              ['Hold Years', holdYears != null ? `${holdYears} yrs` : '—'],
+              ['Hold Years', <Sourced key="hy" sourceKey="hold_years">{holdYears != null ? `${holdYears} yrs` : '—'}</Sourced>],
               ['Stabilized NOI FWD 12', fmtOrDash(exitTerminalNoi, fmtCurrency)],
-              ['Exit Cap Rate', fmtOrDash(exitCap, v => fmtPct(v, 2))],
+              ['Exit Cap Rate', <Sourced key="xc" sourceKey="exit_cap_rate">{fmtOrDash(exitCap, v => fmtPct(v, 2))}</Sourced>],
               ['Sale Price', fmtOrDash(exitGross, fmtCurrency)],
               ['Disposition Fees', fmtOrDash(exitSellingCosts, fmtCurrency)],
             ]} />
