@@ -384,6 +384,43 @@ export default function DataRoomTab({ projectId }: { projectId: number | string 
     [rawId, refreshExtraction, toast],
   );
 
+  // FON-23 — bulk-accept every remaining needs-review field on a doc in one
+  // action, then refetch ONCE. This is the scale escape-hatch: after an
+  // analyst spot-checks a few against the source, they clear the tail with a
+  // single click instead of N per-row accepts. In-flight state disables the
+  // button so a slow batch can't be double-fired.
+  const [bulkAcceptingDoc, setBulkAcceptingDoc] = useState<string | null>(null);
+  const handleAcceptAllLowConfidence = useCallback(
+    async (docId: string, fieldNames: string[]) => {
+      if (fieldNames.length === 0 || bulkAcceptingDoc) return;
+      setBulkAcceptingDoc(docId);
+      let ok = 0;
+      try {
+        for (const fn of fieldNames) {
+          try {
+            await api.documents.reviewField(rawId, docId, {
+              field_name: fn,
+              action: 'accept',
+            });
+            ok += 1;
+          } catch {
+            // Keep going — one bad field shouldn't abort the batch.
+          }
+        }
+        await refreshExtraction(docId);
+        toast(
+          ok === fieldNames.length
+            ? `Accepted ${ok} field${ok === 1 ? '' : 's'}`
+            : `Accepted ${ok} of ${fieldNames.length} — ${fieldNames.length - ok} failed`,
+          { type: ok === fieldNames.length ? 'success' : 'error' },
+        );
+      } finally {
+        setBulkAcceptingDoc(null);
+      }
+    },
+    [rawId, refreshExtraction, toast, bulkAcceptingDoc],
+  );
+
   // Enterprise toast policy (Sam QA 2026-06-29):
   //   • Successes: NEVER fire per-doc. The doc row already shows
   //     "N fields · X% confidence" — the row IS the status surface.
@@ -1543,7 +1580,7 @@ export default function DataRoomTab({ projectId }: { projectId: number | string 
                     // Build a uniform [{label, value, pct}] list so the
                     // summary strip + filter logic doesn't fork between live
                     // and mock branches.
-                    type FieldRow = { label: string; value: string; pct: number; raw?: string; reviewed?: string | null };
+                    type FieldRow = { label: string; value: string; pct: number; raw?: string; reviewed?: string | null; sourcePage?: number | null; snippet?: string | null };
                     let rows: FieldRow[];
                     if (liveMode && selectedDocRow.fieldList && selectedDocRow.fieldList.length > 0) {
                       // Show ALL extracted fields, not just the first 12.
@@ -1559,6 +1596,10 @@ export default function DataRoomTab({ projectId }: { projectId: number | string 
                         pct: Math.round((f.confidence ?? 0) * 100),
                         raw: f.field_name,
                         reviewed: f.reviewed ?? null,
+                        // FON-23 — carry the source location so each row can
+                        // open the actual document at its page for validation.
+                        sourcePage: f.source_page ?? null,
+                        snippet: f.raw_text ?? null,
                       }));
                     } else if (!liveMode) {
                       // Demo / mock fallback (no live worker connection):
@@ -1635,6 +1676,32 @@ export default function DataRoomTab({ projectId }: { projectId: number | string 
                             <span className="font-medium">{low}</span> needs review
                           </button>
                         </div>
+                        {/* FON-23 — scale escape-hatch: clear the whole review
+                            tail in one click after spot-checking against source. */}
+                        {liveMode && selectedDocRow?.id && low > 0 && (
+                          <div className="flex items-center justify-between gap-2 mb-3 -mt-1">
+                            <span className="text-[11px] text-ink-500">
+                              {low} field{low === 1 ? '' : 's'} left to review
+                            </span>
+                            <button
+                              type="button"
+                              disabled={bulkAcceptingDoc === selectedDocRow.id}
+                              onClick={() =>
+                                handleAcceptAllLowConfidence(
+                                  selectedDocRow.id,
+                                  rows
+                                    .filter((r) => r.pct < 85 && r.raw && !r.reviewed)
+                                    .map((r) => r.raw!),
+                                )
+                              }
+                              className="text-[10.5px] font-medium px-2.5 py-1 rounded bg-success-50 text-success-700 border border-success-500/30 hover:bg-success-100 disabled:opacity-50"
+                            >
+                              {bulkAcceptingDoc === selectedDocRow.id
+                                ? 'Accepting…'
+                                : `Accept all ${low}`}
+                            </button>
+                          </div>
+                        )}
                         {visible.length === 0 ? (
                           <div className="text-[11.5px] text-ink-500 py-4 text-center">
                             No fields match the current filter.
@@ -1654,6 +1721,21 @@ export default function DataRoomTab({ projectId }: { projectId: number | string 
                                   liveMode && r.raw && selectedDocRow?.id
                                     ? (action, value) =>
                                         handleReviewField(selectedDocRow.id, r.raw!, action, value)
+                                    : undefined
+                                }
+                                onViewSource={
+                                  r.sourcePage != null && selectedDocRow?.id
+                                    ? () =>
+                                        window.dispatchEvent(
+                                          new CustomEvent('fondok:citation-focus', {
+                                            detail: {
+                                              documentId: selectedDocRow.id,
+                                              page: r.sourcePage as number,
+                                              field: r.label,
+                                              excerpt: r.snippet ?? undefined,
+                                            },
+                                          }),
+                                        )
                                     : undefined
                                 }
                               />
@@ -1686,6 +1768,7 @@ function DataRow({
   reviewed,
   highlight,
   onReview,
+  onViewSource,
 }: {
   label: string;
   value: string;
@@ -1697,6 +1780,8 @@ function DataRow({
   // FON-23: present only for live low-confidence rows. Runs the
   // accept/edit/reject action and resolves once the refetch lands.
   onReview?: (action: 'accept' | 'edit' | 'reject', value?: string) => Promise<void>;
+  // FON-23 — opens the source document at this field's page for validation.
+  onViewSource?: () => void;
 }) {
   // Tier label sits next to the numeric ConfidenceBadge so analysts get the
   // shared red/amber/green semantics at a glance without losing the precise %.
@@ -1755,6 +1840,17 @@ function DataRow({
           ) : (
             <span className="font-medium tabular-nums text-ink-900">{value}</span>
           )}
+          {onViewSource && (
+            <button
+              type="button"
+              onClick={onViewSource}
+              title="View in source document"
+              aria-label={`View ${label} in source document`}
+              className="text-ink-400 hover:text-brand-600 transition-colors p-0.5 -m-0.5 rounded focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-500"
+            >
+              <FileText size={12} aria-hidden="true" />
+            </button>
+          )}
           <Badge tone={tier.tone}>{tier.label}</Badge>
           <ConfidenceBadge value={confidence / 100} />
         </div>
@@ -1762,6 +1858,15 @@ function DataRow({
       {/* FON-23: inline accept/edit/reject for Needs-Review fields. */}
       {reviewable && (
         <div className="flex items-center gap-1.5 mt-1.5 justify-end">
+          {onViewSource && !editing && (
+            <button
+              type="button"
+              onClick={onViewSource}
+              className="text-[10.5px] font-medium px-2 py-0.5 rounded border border-brand-500/30 text-brand-700 hover:bg-brand-50 mr-auto inline-flex items-center gap-1"
+            >
+              <FileText size={11} aria-hidden="true" /> View source
+            </button>
+          )}
           {editing ? (
             <>
               <button
