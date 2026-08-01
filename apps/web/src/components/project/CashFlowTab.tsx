@@ -19,6 +19,7 @@ import { getEngineField, useEngineOutputs } from '@/lib/hooks/useEngineOutputs';
 import { useFlash } from '@/lib/hooks/useFlash';
 import { IntroCard } from '@/components/help/IntroCard';
 import { MetricLabel } from '@/components/help/MetricLabel';
+import { Traced } from '@/components/help/Traced';
 import { GLOSSARY } from '@/lib/glossary';
 
 const subTabs = ['Cash Flow Summary', 'Levered Detail', 'Unlevered Detail', 'Distributions'];
@@ -612,12 +613,18 @@ function UnleveredDetail({ cf, isKimptonDemo, outputs }: {
                       return <td key={vi} className="text-right tabular-nums text-ink-400">—</td>;
                     }
                     const num = v as number;
+                    // Provenance: the NOI row's per-year cells trace to the
+                    // expense engine's computed years[vi].noi (1:1 index).
+                    const cell = num < 0 ? `(${fmtCurrency(-num)})` : fmtCurrency(num);
+                    const traced = r.label === 'Net Operating Income'
+                      ? <Traced engine="expense" path={`years[${vi}].noi`}>{cell}</Traced>
+                      : cell;
                     return (
                       <td key={vi} className={cn(
                         'text-right tabular-nums',
                         num < 0 && !isSubtotal && !isTotal && 'text-danger-700'
                       )}>
-                        {num < 0 ? `(${fmtCurrency(-num)})` : fmtCurrency(num)}
+                        {traced}
                       </td>
                     );
                   })}

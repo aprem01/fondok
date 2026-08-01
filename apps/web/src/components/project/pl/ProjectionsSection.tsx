@@ -20,7 +20,7 @@
  *   %Rev = Amount / Total Revenue   × 100
  */
 
-import { useMemo, useState } from 'react';
+import { useMemo, useState, type ReactNode } from 'react';
 import { Sparkles, Download, FileText, ExternalLink } from 'lucide-react';
 import { Card } from '@/components/ui/Card';
 import { Button } from '@/components/ui/Button';
@@ -28,6 +28,7 @@ import { Badge } from '@/components/ui/Badge';
 import Modal from '@/components/ui/Modal';
 import { useToast } from '@/components/ui/Toast';
 import { cn } from '@/lib/format';
+import { Traced } from '@/components/help/Traced';
 import { getEngineField, useEngineOutputs } from '@/lib/hooks/useEngineOutputs';
 import { useDeal } from '@/lib/hooks/useDeal';
 import { kimptonAnglerOverview } from '@/lib/mockData';
@@ -854,6 +855,8 @@ function ProjectionsTable({ years }: { years: ProjYear[] }) {
             pctRev={pctRev}
             par={par}
             por={por}
+            traceEngine="revenue"
+            tracePath={(i) => `years[${i}].rooms_revenue`}
           />
           {/* Food & Beverage */}
           <FullRow
@@ -924,6 +927,8 @@ function ProjectionsTable({ years }: { years: ProjYear[] }) {
             par={par}
             por={por}
             bold
+            traceEngine="revenue"
+            tracePath={(i) => `years[${i}].total_revenue`}
           />
         </tbody>
       </table>
@@ -1001,6 +1006,8 @@ function FullRow({
   par,
   por,
   bold = false,
+  traceEngine,
+  tracePath,
 }: {
   label: string;
   indexLabel: string;
@@ -1012,6 +1019,12 @@ function FullRow({
   par: (v: number, available: number) => number;
   por: (v: number, occupied: number) => number;
   bold?: boolean;
+  // Provenance: when set, the Amount cell for column i is wrapped in
+  // <Traced> so hovering shows the formula behind the computed value.
+  // `tracePath(i)` maps the column index to the engine's dotted output
+  // path (ProjYear[i] ↔ engine years[i], 1:1 from buildFromWorker).
+  traceEngine?: string;
+  tracePath?: (i: number) => string;
 }) {
   return (
     <tr
@@ -1033,6 +1046,12 @@ function FullRow({
       </td>
       {years.map((y, i) => {
         const amt = amountOf(y);
+        const tracedAmount =
+          traceEngine && tracePath ? (
+            <Traced engine={traceEngine} path={tracePath(i)}>
+              {fmtAmount(amt, { prefix: '$' })}
+            </Traced>
+          ) : undefined;
         return (
           <SubCells
             key={`fr-${label}-${i}`}
@@ -1041,6 +1060,7 @@ function FullRow({
             par={par(amt, y.availableRooms)}
             por={por(amt, y.occupiedRooms)}
             fmtAmount={fmtAmount}
+            tracedAmount={tracedAmount}
           />
         );
       })}
@@ -1054,17 +1074,20 @@ function SubCells({
   par,
   por,
   fmtAmount,
+  tracedAmount,
 }: {
   amount: number;
   pctRev: number;
   par: number;
   por: number;
   fmtAmount: (v: number, opts?: { decimals?: number; prefix?: string }) => string;
+  /** Provenance-wrapped Amount cell content; falls back to plain text. */
+  tracedAmount?: ReactNode;
 }) {
   const td = 'px-2 py-2 text-right text-[11px] text-ink-900 tabular-nums border-l border-border';
   return (
     <>
-      <td className={td}>{fmtAmount(amount, { prefix: '$' })}</td>
+      <td className={td}>{tracedAmount ?? fmtAmount(amount, { prefix: '$' })}</td>
       <td className={cn(td, 'text-ink-500')}>{pctRev > 0 ? `${pctRev.toFixed(1)}%` : '—'}</td>
       <td className={cn(td, 'text-ink-700')}>{par > 0 ? fmtAmount(par, { decimals: 0, prefix: '$' }) : '—'}</td>
       <td className={cn(td, 'text-ink-700')}>{por > 0 ? fmtAmount(por, { decimals: 0, prefix: '$' }) : '—'}</td>
