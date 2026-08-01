@@ -38,7 +38,6 @@ import { UsaliDeviationsAccordion } from './validation/UsaliDeviationsAccordion'
 import { GapChipsStrip } from './validation/GapChipsStrip';
 import { MisclassificationBanner } from './wizard/MisclassificationBanner';
 import { YearMismatchBanner } from './wizard/YearMismatchBanner';
-import { CompletenessCard } from './wizard/CompletenessCard';
 import { DocumentCoverage, type CoverageFile } from './DocumentCoverage';
 
 // Same dependency order EngineHeader uses for run-all fallbacks — mirrors the
@@ -904,11 +903,12 @@ export default function DataRoomTab({ projectId }: { projectId: number | string 
         className="hidden"
       />
 
-      {/* FON-18 / FON-22 / FON-31 — DocumentCoverage preview. Behind
-          ?coverage=1 so the live Data Room is untouched for current users
-          until the layout is signed off; then it replaces the readiness
-          card + flat doc list below. */}
-      {liveMode && searchParams.get('coverage') === '1' && (
+      {/* FON-18 / FON-22 / FON-31 — DocumentCoverage is the single coverage
+          surface on a live deal: header + run-the-model gate, category rows
+          with expandable files + inline reclassify, confidence, review, and
+          View P&L. Replaces the old Deal-readiness card (removed below).
+          Demo deals fall through to the Document Checklist card. */}
+      {liveMode && (
         <DocumentCoverage
           files={docs.map(
             (d): CoverageFile => ({
@@ -1116,22 +1116,13 @@ export default function DataRoomTab({ projectId }: { projectId: number | string 
         </Card>
       )}
 
-      {/* FON-18 / FON-31 — ONE readiness summary. On a live deal the
-          worker-fed Deal Readiness card is the single source of truth; the
-          legacy Document Checklist below now renders ONLY for demo deals
-          (which have no worker coverage signal). The doc count + per-type
-          breakdown the checklist used to own rides in the readiness card
-          header via docSummary, so no information is lost. */}
-      {liveMode && (
-        <CompletenessCard
-          dealId={rawId}
-          docSummary={{ count: docCount, breakdown: typeBreakdown }}
-        />
-      )}
-
+      {/* FON-18 / FON-31 — a live deal's coverage now lives entirely in the
+          DocumentCoverage surface at the top; the old worker-fed Deal
+          Readiness card is retired here to avoid two coverage cards. Demo
+          deals (no worker signal) still get the Document Checklist below. */}
       <div className={cn('grid gap-5', SHOW_ENGINE_STATUS ? 'grid-cols-2' : 'grid-cols-1')}>
         {/* Document Checklist — demo-deal fallback only. Live deals use the
-            unified Deal Readiness card above (FON-18 / FON-31). */}
+            unified DocumentCoverage surface above (FON-18 / FON-31). */}
         {!liveMode && (
         <Card className="p-5">
           <div className="flex items-start justify-between mb-4 gap-3">
