@@ -19,6 +19,7 @@ import { criticalCount as varianceCriticalCount } from '@/lib/varianceData';
 import { cn } from '@/lib/format';
 import { useDeal } from '@/lib/hooks/useDeal';
 import { ProvenanceProvider } from '@/lib/hooks/useDealProvenance';
+import { ValueTraceProvider } from '@/lib/hooks/useValueTrace';
 import { useDocuments } from '@/lib/hooks/useDocuments';
 import { isWorkerConnected, workerUrl } from '@/lib/api';
 import DataRoomTab from '@/components/project/DataRoomTab';
@@ -659,9 +660,11 @@ export default function ProjectDetailPage() {
         />
       )}
 
-      {/* Tab content — wrapped in ProvenanceProvider so any <Sourced> on any
-          tab resolves where a value came from (one assumption_sources fetch). */}
+      {/* Tab content — wrapped in ProvenanceProvider (input assumptions →
+          <Sourced>) and ValueTraceProvider (computed outputs → <Traced>) so
+          any number on any tab can explain itself from one pair of fetches. */}
       <ProvenanceProvider dealId={rawId}>
+      <ValueTraceProvider dealId={rawId}>
       <div className="p-8" role="tabpanel" aria-label={`${activeLabel} content`}>
         {activeTab === '' && (
           <ErrorBoundary tabName="Data Room"><DataRoomTab projectId={id} /></ErrorBoundary>
@@ -719,6 +722,7 @@ export default function ProjectDetailPage() {
           <ErrorBoundary tabName="Export"><ExportTab project={project} /></ErrorBoundary>
         )}
       </div>
+      </ValueTraceProvider>
       </ProvenanceProvider>
 
       {/* Docs side drawer — slides in from the right when the Docs pill is

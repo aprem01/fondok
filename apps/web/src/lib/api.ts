@@ -247,6 +247,39 @@ export interface AssumptionSourcesResponse {
   source_documents?: Record<string, string>;
 }
 
+/** One named input that fed a modeled value's formula (FON-25/27).
+ *  Mirrors fondok_schemas.provenance.ValueInput. */
+export interface ValueInput {
+  name: string;
+  value: number;
+  /** __sources__ key when the input is an underwriting assumption —
+   *  lets the UI chain a computed value back to its assumption badge. */
+  assumption_key?: string | null;
+  /** Terminal SOURCE_* label when known directly for this input. */
+  source?: string | null;
+  /** Dotted path to another ValueTrace in the same engine map when this
+   *  input is itself a computed value. */
+  traces_to?: string | null;
+}
+
+/** Provenance + calculation rationale for one modeled output value. */
+export interface ValueTrace {
+  value: number;
+  /** Human formula, e.g. "noi = gop − management_fee − ffe_reserve". */
+  formula?: string | null;
+  inputs: ValueInput[];
+  /** SOURCE_* label for values read straight from a source (not computed). */
+  source?: string | null;
+  note?: string | null;
+}
+
+/** GET /deals/{id}/provenance — per-value calculation provenance for the
+ *  deal's latest engine outputs, keyed engine → dotted output path → trace. */
+export interface DealProvenanceResponse {
+  deal_id: string;
+  engines: Record<string, Record<string, ValueTrace>>;
+}
+
 export interface NewDealBody {
   name: string;
   city?: string | null;
@@ -978,6 +1011,17 @@ export const api = {
       request<AssumptionSourcesResponse>(
         'GET',
         `/deals/${id}/assumption_sources`,
+        undefined,
+        { signal },
+      ),
+    /** Per-VALUE provenance — the formula + inputs behind each modeled
+     *  output (NOI, GOP, DSCR, equity multiple …), keyed engine → dotted
+     *  output path → ValueTrace. Powers the <Traced> hover on computed
+     *  numbers (FON-25/27). */
+    provenance: (id: string, signal?: AbortSignal) =>
+      request<DealProvenanceResponse>(
+        'GET',
+        `/deals/${id}/provenance`,
         undefined,
         { signal },
       ),

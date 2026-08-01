@@ -20,6 +20,7 @@ import { useFlash } from '@/lib/hooks/useFlash';
 import { AssumptionBadge } from '@/components/help/AssumptionBadge';
 import OverridePanel from '@/components/help/OverridePanel';
 import { MetricLabel } from '@/components/help/MetricLabel';
+import { Traced } from '@/components/help/Traced';
 import { CoachMark } from '@/components/help/CoachMark';
 import { VarianceHero } from './VarianceHero';
 import { GLOSSARY } from '@/lib/glossary';
@@ -712,7 +713,8 @@ export default function OverviewTab({ projectId }: { projectId: number | string 
               tip: GLOSSARY['IRR'] + ' "Levered" means after debt service.' },
             { label: 'Unlevered IRR', value: fmtOrDash(retUnleveredIrr, v => fmtPct(v, 2)),
               tip: 'Asset-level IRR before debt — what you\'d earn if the hotel were paid for in cash.' },
-            { label: 'Equity Multiple', value: fmtOrDash(retEquityMultiple, v => `${v.toFixed(2)}x`),
+            { label: 'Equity Multiple',
+              value: <Traced engine="returns" path="equity_multiple">{fmtOrDash(retEquityMultiple, v => `${v.toFixed(2)}x`)}</Traced>,
               tip: GLOSSARY['Equity Multiple'] },
             { label: 'Year-1 CoC', value: fmtOrDash(retYearOneCoC, v => fmtPct(v, 1)),
               tip: GLOSSARY['CoC'] + ' Year-1 is the first full year after acquisition.' },

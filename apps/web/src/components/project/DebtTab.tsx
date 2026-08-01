@@ -19,6 +19,7 @@ import { useDeal } from '@/lib/hooks/useDeal';
 import { useFlash } from '@/lib/hooks/useFlash';
 import { IntroCard } from '@/components/help/IntroCard';
 import { Sourced, SourcedValue } from '@/components/help/Sourced';
+import { Traced } from '@/components/help/Traced';
 import { MetricLabel } from '@/components/help/MetricLabel';
 import { GLOSSARY } from '@/lib/glossary';
 
@@ -213,7 +214,7 @@ export default function DebtTab({ projectId }: { projectId: number | string }) {
               ['PACE Loan', isKimptonDemo ? '$0' : '—'],
               ['LTC %', ltcStr],
               ['Debt Yield', debtYield],
-              ['DSCR', dscrStr],
+              ['DSCR', <Traced key="dscr" engine="debt" path="schedule[0].dscr">{dscrStr}</Traced>],
             ]} />
             <Panel title="Loan Identification" rows={[
               ['Borrower', isKimptonDemo ? 'Brookfield Hotel Holdings LLC' : '—'],
