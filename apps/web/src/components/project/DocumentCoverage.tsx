@@ -112,6 +112,32 @@ const YEARS: number[] = (() => {
   return out;
 })();
 
+// Normalize a doc_type for matching: uppercase, drop separators. The stored
+// data sometimes carries non-canonical spellings ("PNLMONTHLY" for
+// "PNL_MONTHLY", "T 12" for "T12"); normalizing both sides means those still
+// land in the right category instead of vanishing from coverage.
+function normToken(t: string | null | undefined): string {
+  return (t ?? '').toUpperCase().replace(/[-_ ]/g, '');
+}
+
+// Full doc-type picker for the "Needs classification" bucket, so a mis-tagged
+// file (e.g. an OM stored as "EXTRACTOR") can be set to the right type.
+const DOC_TYPE_OPTIONS: { value: string; label: string }[] = [
+  { value: 'OM', label: 'Offering Memorandum' },
+  { value: 'T12', label: 'T-12' },
+  { value: 'PNL', label: 'Annual P&L' },
+  { value: 'PNL_MONTHLY', label: 'Monthly P&L' },
+  { value: 'PNL_YTD', label: 'YTD P&L' },
+  { value: 'STR_TREND', label: 'STR / Comp Set' },
+  { value: 'INSURANCE', label: 'Insurance Records' },
+  { value: 'PROPERTY_TAX', label: 'Property Taxes' },
+  { value: 'ROOM_MIX', label: 'Room Mix / Unit Mix' },
+  { value: 'CAPEX', label: 'Historical CapEx' },
+  { value: 'PROPERTY_INFO', label: 'Basic Property Info' },
+  { value: 'LEASES', label: 'Leases & Agreements' },
+  { value: 'SURVEYS', label: 'Surveys & Reviews' },
+];
+
 export function DocumentCoverage({
   files,
   onReclassify,
@@ -121,10 +147,14 @@ export function DocumentCoverage({
 }: DocumentCoverageProps) {
   const byCategory = new Map<string, CoverageFile[]>();
   for (const c of CATEGORIES) byCategory.set(c.id, []);
+  const unclassified: CoverageFile[] = [];
   for (const f of files) {
-    const t = (f.docType ?? '').toUpperCase();
-    const cat = CATEGORIES.find((c) => c.match.includes(t));
+    const t = normToken(f.docType);
+    const cat = t
+      ? CATEGORIES.find((c) => c.match.some((m) => normToken(m) === t))
+      : undefined;
     if (cat) byCategory.get(cat.id)!.push(f);
+    else unclassified.push(f);
   }
 
   const coveredRequired = CATEGORIES.filter(
@@ -136,12 +166,12 @@ export function DocumentCoverage({
   const canRun = (byCategory.get('financials')!.length ?? 0) > 0;
   const pct = Math.round((coveredRequired / REQUIRED_TOTAL) * 100);
 
-  // Start with covered categories expanded so the analyst sees files first.
-  const [expanded, setExpanded] = useState<Set<string>>(
-    () => new Set(CATEGORIES.filter((c) => byCategory.get(c.id)!.length > 0).map((c) => c.id)),
-  );
+  // Covered categories are open by default; we track only what the analyst
+  // explicitly COLLAPSED. This way async-loaded files show without a click
+  // (a lazy expanded-set initializer would miss files that arrive later).
+  const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
   const toggle = (id: string) =>
-    setExpanded((prev) => {
+    setCollapsed((prev) => {
       const next = new Set(prev);
       next.has(id) ? next.delete(id) : next.add(id);
       return next;
@@ -197,7 +227,7 @@ export function DocumentCoverage({
         {CATEGORIES.map((cat) => {
           const catFiles = byCategory.get(cat.id)!;
           const covered = catFiles.length > 0;
-          const isOpen = expanded.has(cat.id);
+          const isOpen = covered && !collapsed.has(cat.id);
           return (
             <li key={cat.id} className="border-b border-border last:border-0">
               <button
@@ -265,7 +295,96 @@ export function DocumentCoverage({
           );
         })}
       </ul>
+
+      {/* Mis-tagged files (doc_type matched no category — e.g. an OM stored
+          as "EXTRACTOR"). Surfaced so they don't vanish from coverage; set
+          the right type to make them count. */}
+      {unclassified.length > 0 && (
+        <div className="border-t border-border">
+          <div className="flex items-center gap-2 px-5 py-2.5 bg-warn-50/50">
+            <AlertCircle size={15} className="text-warn-700 flex-shrink-0" />
+            <span className="text-[13px] font-medium text-ink-900">Needs classification</span>
+            <span className="text-[11px] text-ink-500">
+              {unclassified.length} file{unclassified.length === 1 ? '' : 's'} Fondok
+              couldn&rsquo;t categorize — set the type so they count toward coverage.
+            </span>
+          </div>
+          <ul role="list" className="bg-warn-50/20">
+            {unclassified.map((f) => (
+              <UnclassifiedRow
+                key={f.id}
+                file={f}
+                busy={busyDocId === f.id}
+                onReclassify={onReclassify}
+                onOpenDoc={onOpenDoc}
+              />
+            ))}
+          </ul>
+        </div>
+      )}
     </Card>
+  );
+}
+
+function UnclassifiedRow({
+  file,
+  busy,
+  onReclassify,
+  onOpenDoc,
+}: {
+  file: CoverageFile;
+  busy: boolean;
+  onReclassify: DocumentCoverageProps['onReclassify'];
+  onOpenDoc: DocumentCoverageProps['onOpenDoc'];
+}) {
+  return (
+    <li className="flex flex-wrap items-center gap-x-3 gap-y-2 px-5 py-3 pl-12 border-t border-border/60">
+      <FileText size={14} className="text-ink-500 flex-shrink-0" aria-hidden="true" />
+      <span
+        className="text-[12.5px] text-ink-900 font-medium truncate max-w-[220px]"
+        title={file.name}
+      >
+        {file.name}
+      </span>
+      {file.docType && (
+        <span
+          className="text-[10px] text-ink-500"
+          title="Current (unrecognized) type"
+        >
+          {file.docType}
+        </span>
+      )}
+      <select
+        aria-label={`Set document type for ${file.name}`}
+        className="text-[11px] rounded border border-warn-500/40 bg-card px-1.5 py-0.5 text-ink-900 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-500 disabled:opacity-50"
+        defaultValue=""
+        disabled={busy}
+        onChange={(e) => {
+          if (e.target.value) onReclassify(file.id, { doc_type: e.target.value });
+        }}
+      >
+        <option value="" disabled>
+          Set type…
+        </option>
+        {DOC_TYPE_OPTIONS.map((o) => (
+          <option key={o.value} value={o.value}>
+            {o.label}
+          </option>
+        ))}
+      </select>
+      <div className="ml-auto flex items-center gap-3 text-[11px] tabular-nums">
+        <span className="text-ink-500">
+          {file.fields} field{file.fields === 1 ? '' : 's'}
+        </span>
+        <button
+          type="button"
+          onClick={() => onOpenDoc(file.id)}
+          className="text-[10.5px] font-medium px-2.5 py-1 rounded border border-border text-ink-700 hover:bg-ink-100"
+        >
+          View
+        </button>
+      </div>
+    </li>
   );
 }
 
