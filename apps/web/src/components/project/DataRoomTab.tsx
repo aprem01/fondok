@@ -39,6 +39,7 @@ import { GapChipsStrip } from './validation/GapChipsStrip';
 import { MisclassificationBanner } from './wizard/MisclassificationBanner';
 import { YearMismatchBanner } from './wizard/YearMismatchBanner';
 import { CompletenessCard } from './wizard/CompletenessCard';
+import { DocumentCoverage, type CoverageFile } from './DocumentCoverage';
 
 // Same dependency order EngineHeader uses for run-all fallbacks — mirrors the
 // worker's chain in apps/worker/app/api/model.py.
@@ -419,6 +420,27 @@ export default function DataRoomTab({ projectId }: { projectId: number | string 
       }
     },
     [rawId, refreshExtraction, toast, bulkAcceptingDoc],
+  );
+
+  // FON-18 / FON-22 — reclassify a document post-upload from the
+  // DocumentCoverage dropdowns. Refetches the documents list so the new
+  // doc_type / year re-buckets coverage + ranking immediately.
+  const [reclassifyingDoc, setReclassifyingDoc] = useState<string | null>(null);
+  const handleReclassify = useCallback(
+    async (docId: string, body: { doc_type?: string; fiscal_year?: number }) => {
+      setReclassifyingDoc(docId);
+      try {
+        await api.documents.reclassify(rawId, docId, body);
+        toast('Reclassified document', { type: 'success' });
+        refresh();
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        toast(`Couldn’t reclassify: ${msg}`, { type: 'error' });
+      } finally {
+        setReclassifyingDoc(null);
+      }
+    },
+    [rawId, refresh, toast],
   );
 
   // Enterprise toast policy (Sam QA 2026-06-29):
@@ -881,6 +903,34 @@ export default function DataRoomTab({ projectId }: { projectId: number | string 
         onChange={onFilesSelected}
         className="hidden"
       />
+
+      {/* FON-18 / FON-22 / FON-31 — DocumentCoverage preview. Behind
+          ?coverage=1 so the live Data Room is untouched for current users
+          until the layout is signed off; then it replaces the readiness
+          card + flat doc list below. */}
+      {liveMode && searchParams.get('coverage') === '1' && (
+        <DocumentCoverage
+          files={docs.map(
+            (d): CoverageFile => ({
+              id: d.id,
+              name: d.name,
+              docType: d.type === '—' ? '' : d.type,
+              fields: d.fields,
+              confidence: d.confidence,
+              toReview: (d.fieldList ?? []).filter(
+                (f) => Math.round((f.confidence ?? 0) * 100) < 85 && !f.reviewed,
+              ).length,
+              fiscalYear: d.fiscalYear ?? null,
+            }),
+          )}
+          onReclassify={handleReclassify}
+          onOpenDoc={(docId) => {
+            const d = docs.find((x) => x.id === docId);
+            if (d) setSelectedDoc(d.name);
+          }}
+          busyDocId={reclassifyingDoc}
+        />
+      )}
 
       {/* Coverage gap chips — wave 1 ROADMAP #7. Sits at the top of the
           Data Room so missing-year flags greet the user before they
