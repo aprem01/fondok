@@ -224,3 +224,16 @@ def test_returns_irr_traced_as_calculated() -> None:
     assert abs(unl.value - out.unlevered_irr) < 1e-9
     assert len(unl.inputs) == len(out.cash_flows_unlevered)
     _assert_no_dangling(prov)
+
+
+def test_unlevered_basis_is_total_capital_not_purchase() -> None:
+    """Unlevered Year-0 outflow must be TOTAL invested capital (equity + loan),
+    not just purchase_price. Using purchase_price understated the basis and
+    made leverage look negative even when the asset out-yields the debt."""
+    inp = _returns_input()
+    out = ReturnsEngine().run(inp)
+    year0 = out.cash_flows_unlevered[0]  # negative Year-0 outflow
+    expected = -(inp.equity + inp.loan_amount)
+    assert abs(year0 - expected) < TOL, (year0, expected)
+    # And it must NOT be the old -purchase_price basis.
+    assert abs(year0 + inp.assumptions.purchase_price) > 1.0

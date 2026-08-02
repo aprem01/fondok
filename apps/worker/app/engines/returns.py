@@ -314,9 +314,14 @@ class ReturnsEngine(BaseEngine[ReturnsEngineInputExt, ReturnsEngineOutputExt]):
             cfad_series[-1] + net_proceeds_to_equity
         ]
 
-        # Unlevered cash flow stream (Year 0 = -purchase price).
-        purchase = assumptions.purchase_price
-        unlevered_flows = [-purchase] + noi_series[:-1] + [
+        # Unlevered cash flow stream. Year 0 = TOTAL invested capital
+        # (equity + loan = purchase + renovation + closing + working
+        # capital), NOT just the purchase price — an all-cash buyer funds
+        # the whole project. Using purchase_price understated the basis and
+        # inflated unlevered IRR, which made leverage look negative even
+        # when the asset yield exceeded the debt cost.
+        total_capital = payload.equity + payload.loan_amount
+        unlevered_flows = [-total_capital] + noi_series[:-1] + [
             noi_series[-1] + gross_sale - selling_costs
         ]
 
@@ -391,8 +396,17 @@ def returns_from_cash_flow(
     net_proceeds = gross_sale - selling_costs - loan_balance_at_exit
 
     levered_flows = [-equity] + cfad[:-1] + [cfad[-1] + net_proceeds]
-    purchase = assumptions.purchase_price
-    unlevered_flows = [-purchase] + noi_series[:-1] + [
+    # Unlevered basis = total invested capital an all-cash buyer funds
+    # (purchase + closing + renovation + soft + contingency + working
+    # capital), NOT just purchase_price — see the ReturnsEngine.run note.
+    # This adapter lacks the loan amount, so derive from the assumptions'
+    # capital components (loan costs excluded — an all-cash buyer has none).
+    a = assumptions
+    total_capital = (
+        a.purchase_price * (1.0 + a.closing_costs_pct)
+        + a.renovation_budget + a.soft_costs + a.contingency + a.working_capital
+    )
+    unlevered_flows = [-total_capital] + noi_series[:-1] + [
         noi_series[-1] + gross_sale - selling_costs
     ]
 
