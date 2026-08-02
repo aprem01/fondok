@@ -53,12 +53,18 @@ export function Sourced({
 
   const kind = sourceKind(src);
   const tone = KIND_TONE[kind];
-  const borderColor =
+  const decoColor =
     kind === 'grounded'
-      ? 'border-success-500/60'
+      ? 'decoration-success-500'
       : kind === 'override'
-        ? 'border-brand-500/60'
-        : 'border-warn-500/70';
+        ? 'decoration-brand-500'
+        : 'decoration-warn-500';
+  const hoverBg =
+    kind === 'grounded'
+      ? 'bg-success-50'
+      : kind === 'override'
+        ? 'bg-brand-50'
+        : 'bg-warn-50';
 
   const openDoc = () => {
     if (!doc || typeof window === 'undefined') return;
@@ -76,7 +82,11 @@ export function Sourced({
       onMouseLeave={() => setOpen(false)}
     >
       <span
-        className={cn('border-b border-dotted cursor-help', borderColor)}
+        className={cn(
+          'cursor-help rounded-sm px-0.5 -mx-0.5 underline decoration-dotted decoration-2 underline-offset-[3px] transition-colors',
+          decoColor,
+          open && hoverBg,
+        )}
         tabIndex={0}
         onFocus={() => setOpen(true)}
         onBlur={() => setOpen(false)}

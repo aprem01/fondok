@@ -21,6 +21,7 @@ import { useDeal } from '@/lib/hooks/useDeal';
 import { ProvenanceProvider } from '@/lib/hooks/useDealProvenance';
 import { ValueTraceProvider } from '@/lib/hooks/useValueTrace';
 import { EngineFailuresBanner } from '@/components/project/EngineFailuresBanner';
+import { IntroCard } from '@/components/help/IntroCard';
 import { useDocuments } from '@/lib/hooks/useDocuments';
 import { isWorkerConnected, workerUrl } from '@/lib/api';
 import DataRoomTab from '@/components/project/DataRoomTab';
@@ -671,6 +672,22 @@ export default function ProjectDetailPage() {
       <ValueTraceProvider dealId={rawId}>
       <div className="p-8" role="tabpanel" aria-label={`${activeLabel} content`}>
         {!isMockId && <EngineFailuresBanner outputs={pageEngineOutputs} dealId={rawId} />}
+        {!isMockId && (
+          <IntroCard
+            dismissKey="trace-hint"
+            title="Every number traces back"
+            body={
+              <>
+                Figures with a{' '}
+                <span className="underline decoration-dotted decoration-2 decoration-brand-500 underline-offset-2">dotted underline</span>{' '}
+                are traceable — hover one (or tab to it) to see where it came from. A{' '}
+                <span className="text-success-700 font-medium">green</span> underline means it&apos;s grounded in your uploaded documents,{' '}
+                <span className="text-warn-700 font-medium">amber</span> a seed / benchmark default, and{' '}
+                <span className="text-brand-700 font-medium">blue</span> a computed value (the tooltip shows the formula + every input). The full list is in Analysis → Sources.
+              </>
+            }
+          />
+        )}
         {activeTab === '' && (
           <ErrorBoundary tabName="Data Room"><DataRoomTab projectId={id} /></ErrorBoundary>
         )}
