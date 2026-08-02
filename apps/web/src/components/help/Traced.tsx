@@ -54,8 +54,8 @@ export function Traced({
     >
       <span
         className={cn(
-          'cursor-help rounded-sm px-0.5 -mx-0.5 underline decoration-dotted decoration-brand-500 decoration-2 underline-offset-[3px] transition-colors',
-          open && 'bg-brand-50',
+          'cursor-help rounded-sm px-0.5 -mx-0.5 underline decoration-dotted decoration-sky-500 decoration-2 underline-offset-[3px] transition-colors',
+          open && 'bg-sky-50',
         )}
         tabIndex={0}
         onFocus={() => setOpen(true)}

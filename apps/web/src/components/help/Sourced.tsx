@@ -55,16 +55,16 @@ export function Sourced({
   const tone = KIND_TONE[kind];
   const decoColor =
     kind === 'grounded'
-      ? 'decoration-success-500'
+      ? 'decoration-emerald-500'
       : kind === 'override'
-        ? 'decoration-brand-500'
-        : 'decoration-warn-500';
+        ? 'decoration-violet-500'
+        : 'decoration-amber-500';
   const hoverBg =
     kind === 'grounded'
-      ? 'bg-success-50'
+      ? 'bg-emerald-50'
       : kind === 'override'
-        ? 'bg-brand-50'
-        : 'bg-warn-50';
+        ? 'bg-violet-50'
+        : 'bg-amber-50';
 
   const openDoc = () => {
     if (!doc || typeof window === 'undefined') return;

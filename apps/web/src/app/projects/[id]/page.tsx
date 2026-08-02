@@ -679,11 +679,11 @@ export default function ProjectDetailPage() {
             body={
               <>
                 Figures with a{' '}
-                <span className="underline decoration-dotted decoration-2 decoration-brand-500 underline-offset-2">dotted underline</span>{' '}
+                <span className="underline decoration-dotted decoration-2 decoration-sky-500 underline-offset-2">dotted underline</span>{' '}
                 are traceable — hover one (or tab to it) to see where it came from. A{' '}
-                <span className="text-success-700 font-medium">green</span> underline means it&apos;s grounded in your uploaded documents,{' '}
-                <span className="text-warn-700 font-medium">amber</span> a seed / benchmark default, and{' '}
-                <span className="text-brand-700 font-medium">blue</span> a computed value (the tooltip shows the formula + every input). The full list is in Analysis → Sources.
+                <span className="underline decoration-dotted decoration-2 decoration-emerald-500 text-emerald-700 font-medium">green</span> underline means it&apos;s grounded in your uploaded documents,{' '}
+                <span className="underline decoration-dotted decoration-2 decoration-amber-500 text-amber-700 font-medium">amber</span> a seed / benchmark default, and{' '}
+                <span className="underline decoration-dotted decoration-2 decoration-sky-500 text-sky-700 font-medium">blue</span> a computed value (the tooltip shows the formula + every input). The full list is in Analysis → Sources.
               </>
             }
           />
