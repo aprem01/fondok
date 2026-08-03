@@ -92,7 +92,7 @@ const tabs: Tab[] = [
   { id: 'validation', label: 'Validation', icon: ShieldCheck },
   { id: 'overview', label: 'Overview', icon: FileText },
   { id: 'investment', label: 'Investment', icon: Briefcase, inactive: true },
-  { id: 'pl', label: 'P&L', icon: BarChart3 },
+  { id: 'pl', label: 'Financials', icon: BarChart3 },
   { id: 'debt', label: 'Debt', icon: DollarSign, inactive: true },
   { id: 'cash-flow', label: 'Cash Flow', icon: Activity, inactive: true },
   { id: 'returns', label: 'Returns', icon: TrendingUp, inactive: true },

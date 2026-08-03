@@ -1,6 +1,6 @@
 'use client';
 import { useEffect, useMemo, useState } from 'react';
-import { useParams } from 'next/navigation';
+import { useParams, useSearchParams } from 'next/navigation';
 import {
   LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend,
   ResponsiveContainer, ReferenceLine,
@@ -341,7 +341,11 @@ function buildStatement(): StatementResult {
 const kimptonStatement = buildStatement();
 
 export default function PLTab({ projectId }: { projectId: number | string }) {
-  const [tab, setTab] = useState<SubTab>('P&L Summary');
+  const searchParams = useSearchParams();
+  // Deep-link from the Data Room's "review financials" CTA lands on Review.
+  const [tab, setTab] = useState<SubTab>(
+    searchParams?.get('fin') === 'review' ? 'Review' : 'P&L Summary',
+  );
   const params = useParams();
   const { toast } = useToast();
   const dealId = (params?.id as string | undefined) ?? '';
@@ -407,7 +411,7 @@ export default function PLTab({ projectId }: { projectId: number | string }) {
         <div className="flex-1 min-w-0">
           <IntroCard
             dismissKey="pl-intro"
-            title="The P&L Engine"
+            title="Financial Statements"
             body={
               <>
                 Profit and Loss — every dollar of revenue and expense across the hold period,
@@ -417,7 +421,7 @@ export default function PLTab({ projectId }: { projectId: number | string }) {
             }
           />
           <EngineHeader
-            name="P&L Engine"
+            name="Financial Statements"
             desc="Models room revenue, F&B, and operating expenses across the projection period in USALI format."
             outputs={['Total Revenue', 'NOI', 'GOP', 'Margin']}
             dependsOn={null}
@@ -476,7 +480,7 @@ export default function PLTab({ projectId }: { projectId: number | string }) {
       <div className="flex-1 min-w-0">
       <IntroCard
         dismissKey="pl-intro"
-        title="The P&L Engine"
+        title="Financial Statements"
         body={
           <>
             Profit and Loss — every dollar of revenue and expense across the hold period,
@@ -486,7 +490,7 @@ export default function PLTab({ projectId }: { projectId: number | string }) {
         }
       />
       <EngineHeader
-        name="P&L Engine"
+        name="Financial Statements"
         desc="Models room revenue, F&B, and operating expenses across the projection period in USALI format."
         outputs={['Total Revenue', 'NOI', 'GOP', 'Margin']}
         dependsOn={null}

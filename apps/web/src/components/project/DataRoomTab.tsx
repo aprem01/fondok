@@ -942,6 +942,22 @@ export default function DataRoomTab({ projectId }: { projectId: number | string 
     await handleUpload(dropped);
   };
 
+  // Data Room → Financials: count low-confidence values on financial docs so
+  // we can route the analyst into the guided Review on the Financials tab
+  // (validation lives there now, not a duplicate P&L here — team sync 2026-08).
+  const flaggedFinancialCount = useMemo(() => {
+    if (!liveMode) return 0;
+    const FIN = new Set(['T12', 'PNL', 'PNL_MONTHLY', 'PNL_YTD', 'PNL_BENCHMARK']);
+    let n = 0;
+    for (const d of documents) {
+      if (!FIN.has((d.doc_type ?? '').toUpperCase())) continue;
+      for (const f of extractions[d.id]?.fields ?? []) {
+        if (!f.reviewed && (f.confidence ?? 1) < 0.85) n += 1;
+      }
+    }
+    return n;
+  }, [liveMode, documents, extractions]);
+
   return (
     <div className="space-y-5">
       <input
@@ -952,6 +968,29 @@ export default function DataRoomTab({ projectId }: { projectId: number | string 
         onChange={onFilesSelected}
         className="hidden"
       />
+
+      {/* Route financial-data validation to the Financials tab's guided
+          Review (source doc + line for each flagged value). */}
+      {liveMode && flaggedFinancialCount > 0 && (
+        <button
+          type="button"
+          onClick={() => router.push(`/projects/${rawId}?tab=pl&fin=review`, { scroll: false })}
+          className="w-full flex items-center gap-3 px-4 py-3 rounded-lg border border-warn-500/40 bg-warn-50 hover:bg-warn-100 transition-colors text-left"
+        >
+          <ClipboardList size={18} className="text-warn-700 flex-shrink-0" aria-hidden="true" />
+          <div className="flex-1 min-w-0">
+            <div className="text-[13px] font-semibold text-warn-700">
+              {flaggedFinancialCount} financial value{flaggedFinancialCount === 1 ? '' : 's'} need your review
+            </div>
+            <div className="text-[12px] text-warn-700/80">
+              Validate them one at a time in Financials — each shows the source document + line.
+            </div>
+          </div>
+          <span className="inline-flex items-center gap-1 text-[12.5px] font-medium text-warn-700 flex-shrink-0">
+            Review in Financials <ArrowRight size={14} />
+          </span>
+        </button>
+      )}
 
       {/* FON-18 / FON-22 / FON-31 — DocumentCoverage is the single coverage
           surface on a live deal: header + run-the-model gate, category rows
