@@ -32,6 +32,7 @@ import { GLOSSARY } from '@/lib/glossary';
 import DueDiligenceSection from './pl/DueDiligenceSection';
 import ProjectionsSection from './pl/ProjectionsSection';
 import PLReviewSection from './pl/PLReviewSection';
+import GroundedWorksheet from './pl/GroundedWorksheet';
 import HistoricalsSection from './pl/HistoricalsSection';
 import IndexAnalysisSection from './pl/IndexAnalysisSection';
 
@@ -528,7 +529,10 @@ export default function PLTab({ projectId }: { projectId: number | string }) {
 
       <div className={cn(computing && 'relative pointer-events-none opacity-60')}>
         {tab === 'Review' && (
-          <PLReviewSection dealId={dealId} isKimptonDemo={isKimptonDemo} />
+          <div className="space-y-5">
+            <GroundedWorksheet dealId={dealId} isKimptonDemo={isKimptonDemo} />
+            <PLReviewSection dealId={dealId} isKimptonDemo={isKimptonDemo} />
+          </div>
         )}
         {tab === 'P&L Summary' && (
           <PLSummary
