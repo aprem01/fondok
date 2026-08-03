@@ -358,6 +358,10 @@ export interface WorkerDocument {
  */
 export type WizardCategory =
   | 'om'
+  // 'financials' is the merged wizard staging bucket (FON-34); 't12' and
+  // 'historical_pnl' remain as the worker's separate COVERAGE ids that the
+  // readiness scorecard still reads (and collapses for display).
+  | 'financials'
   | 't12'
   | 'historical_pnl'
   | 'str'

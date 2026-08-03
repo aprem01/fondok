@@ -671,7 +671,7 @@ function Step6({ data, jumpTo }: { data: WizardData; jumpTo: (step: number) => v
   // scannable — the deal workspace surfaces a full CompletenessCard.
   const omCount = data.docs.filter(f => f.category === 'om').length;
   const financialCount = data.docs.filter(
-    f => f.category === 't12' || f.category === 'historical_pnl',
+    f => f.category === 'financials',
   ).length;
   const strCount = data.docs.filter(f => f.category === 'str').length;
   // Everything else (insurance / taxes / room mix / capex / property
@@ -681,7 +681,7 @@ function Step6({ data, jumpTo }: { data: WizardData; jumpTo: (step: number) => v
   const financialYears = Array.from(
     new Set(
       data.docs
-        .filter(f => f.category === 't12' || f.category === 'historical_pnl')
+        .filter(f => f.category === 'financials')
         .map(f => f.fiscal_year)
         .filter((y): y is number => typeof y === 'number'),
     ),

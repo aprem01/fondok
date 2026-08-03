@@ -141,50 +141,40 @@ export const WIZARD_CATEGORIES: WizardCategorySpec[] = [
     showYearTagging: false,
   },
   {
-    id: 't12',
-    label: 'T-12 / Trailing Twelve Months',
-    sidebarLabel: 'T-12',
+    // FON-34 — one merged "Financial Statements" category (matches the Data
+    // Room). The old split T-12 vs Annual/Monthly buckets confused users; now
+    // every P&L family drops here and the per-file picker tags the type.
+    id: 'financials',
+    label: 'Financial Statements',
+    sidebarLabel: 'Financial Statements',
     requiredForIc: true,
     multiFile: true,
     Icon: FileSpreadsheet,
     description:
-      'Trailing-twelve-month P&L. Drives revenue, departmental expense, and GOP/NOI engines. Tag the year so the historical-variance detector can align it to the prior period.',
-    exampleChip: 'e.g. T-12 ending Mar 2026, rolling-twelve P&L',
-    defaultDocType: 'T12',
-    emptyState:
-      'No T-12 staged. A trailing-twelve-month P&L is the single most load-bearing input — every NOI projection grounds against it.',
-    dropHint: 'Multiple files welcome · PDF / Excel / CSV.',
-    skipWarning:
-      'Financials are required to advance — drop either a T-12 here or an Annual / YTD / Monthly P&L in the next stage.',
-    showYearTagging: true,
-  },
-  {
-    id: 'historical_pnl',
-    label: 'Annual / YTD / Monthly P&L',
-    sidebarLabel: 'Annual / Monthly P&L',
-    requiredForIc: true,
-    multiFile: true,
-    Icon: FileSpreadsheet,
-    description:
-      'Calendar-year actuals, year-to-date rolls, and monthly detail. Use the picker to disambiguate so the engines bucket each file correctly — annuals become baseline years, YTDs become partial rolls, monthlies feed the seasonality model.',
-    exampleChip: 'e.g. 2024 annual P&L, May 2025 monthly, YTD through Q1',
+      'T-12, full-year, YTD, and monthly P&Ls — the load-bearing inputs. Tag each file so the engines bucket it correctly: a T-12 or full year anchors the NOI baseline, YTDs are partial rolls, monthlies feed seasonality. Tag the year (and for a T-12, the month it ends).',
+    exampleChip: 'e.g. T-12 ending Mar 2026, 2024 full-year P&L, May 2025 monthly',
     picker: {
-      label: 'Period type',
+      label: 'Statement type',
       options: [
         {
+          value: 'T12',
+          label: 'T-12 (trailing 12mo)',
+          help: 'Rolling twelve months ending in a given month — your Year-1 baseline.',
+        },
+        {
           value: 'PNL',
-          label: 'Annual',
-          help: 'Full-year actuals (Jan-Dec or fiscal year).',
+          label: 'Full Year',
+          help: 'A complete calendar or fiscal year (Jan–Dec).',
+        },
+        {
+          value: 'PNL_MONTHLY',
+          label: 'Monthly',
+          help: 'A single month or month-by-month detail.',
         },
         {
           value: 'PNL_YTD',
           label: 'Year-to-Date',
           help: 'Partial-year roll-up through the most recent close.',
-        },
-        {
-          value: 'PNL_MONTHLY',
-          label: 'Monthly',
-          help: 'Single month or month-by-month detail.',
         },
         {
           value: '',
@@ -195,10 +185,10 @@ export const WIZARD_CATEGORIES: WizardCategorySpec[] = [
     },
     defaultDocType: null,
     emptyState:
-      'No historical P&Ls staged. Two-to-three prior years lets the historical-variance engine flag broker-vs-actual divergence at the line-item level.',
+      'No financial statements staged. A T-12 or P&L is the single most load-bearing input — every NOI projection grounds against it.',
     dropHint: 'Multiple files welcome · PDF / Excel / CSV.',
     skipWarning:
-      'Financials are required to advance — drop a T-12 or an Annual / YTD / Monthly P&L to continue.',
+      'Financials are required to advance — drop at least one T-12 or P&L.',
     showYearTagging: true,
   },
   {
@@ -428,11 +418,9 @@ export function DocumentsStep({
     return m;
   }, [files]);
 
-  // Wave 1 gate — financials = T-12 OR historical P&L. ONE upload in
-  // either bucket clears the gate.
-  const canContinue =
-    filesByCategory.t12.length > 0 ||
-    filesByCategory.historical_pnl.length > 0;
+  // Wave 1 gate — financials required. ONE upload in the merged
+  // Financial Statements bucket (T-12 / full year / monthly / YTD) clears it.
+  const canContinue = (filesByCategory.financials?.length ?? 0) > 0;
   useEffect(() => {
     onCanContinueChange(canContinue);
   }, [canContinue, onCanContinueChange]);
@@ -589,13 +577,13 @@ export function DocumentsStep({
               );
               return (
                 <li key={spec.id} role="listitem">
-                  {active && spec.id === 't12' ? (
+                  {active && spec.id === 'financials' ? (
                     <CoachMark
                       anchorId="wizard-step3-sidebar-required"
                       viewKey="wizard-step3"
                       order={0}
                       title="Only Financials are required"
-                      body="Other categories surface as 'Missing' until covered — that's by design, not a block. You can advance the wizard as soon as you've added either a T-12 or a historical P&L and circle back to the rest later from the Data Room."
+                      body="Other categories surface as 'Missing' until covered — that's by design, not a block. You can advance as soon as you've added at least one financial statement (T-12 or P&L) and circle back to the rest later from the Data Room."
                       side="right"
                       learnMoreHref="/methodology#extraction"
                     >
@@ -728,13 +716,13 @@ function CategoryPanel({
       {/* Financials carry the year-coverage line above the drop zone. */}
       {spec.showYearTagging && <FinancialYearHint files={files} />}
 
-      {spec.id === 't12' ? (
+      {spec.id === 'financials' ? (
         <CoachMark
           anchorId="wizard-step3-dropzone-t12"
           viewKey="wizard-step3"
           order={1}
-          title="Drop your most recent T-12 here"
-          body="Drop the most recent 12 months of operating data. Fondok extracts USALI line items, scores compliance, and uses this as your Year 1 baseline."
+          title="Drop your financial statements here"
+          body="T-12, full-year, monthly, or YTD P&Ls — drop them all here and tag each with its type. Fondok extracts USALI line items, scores compliance, and grounds your Year-1 baseline on them."
           side="bottom"
           learnMoreHref="/methodology#extraction"
         >
