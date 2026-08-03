@@ -31,11 +31,13 @@ import { MetricLabel } from '@/components/help/MetricLabel';
 import { GLOSSARY } from '@/lib/glossary';
 import DueDiligenceSection from './pl/DueDiligenceSection';
 import ProjectionsSection from './pl/ProjectionsSection';
+import PLReviewSection from './pl/PLReviewSection';
 import HistoricalsSection from './pl/HistoricalsSection';
 import IndexAnalysisSection from './pl/IndexAnalysisSection';
 
 // Lovable parity: six sub-tabs replace the prior four.
 const subTabs = [
+  'Review',
   'P&L Summary',
   'Historicals',
   'Projections',
@@ -521,6 +523,9 @@ export default function PLTab({ projectId }: { projectId: number | string }) {
       <EngineLegend />
 
       <div className={cn(computing && 'relative pointer-events-none opacity-60')}>
+        {tab === 'Review' && (
+          <PLReviewSection dealId={dealId} isKimptonDemo={isKimptonDemo} />
+        )}
         {tab === 'P&L Summary' && (
           <PLSummary
             stmt={stmt}
