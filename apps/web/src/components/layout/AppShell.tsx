@@ -18,7 +18,7 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
     <ClerkTokenBridge />
     <div className="flex min-h-screen">
       <Sidebar mobileOpen={mobileOpen} onCloseMobile={() => setMobileOpen(false)} />
-      <main role="main" className="flex-1 md:ml-[216px] min-h-screen bg-bg flex flex-col">
+      <main role="main" className="flex-1 min-w-0 md:ml-[216px] min-h-screen bg-bg flex flex-col overflow-x-clip">
         {/* Mobile top bar */}
         <div className="md:hidden sticky top-0 z-20 flex items-center gap-3 px-4 py-3 bg-white border-b hairline">
           <button
@@ -31,7 +31,7 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
           </button>
           <FondokMark size="sm" />
         </div>
-        <div className="flex-1">{children}</div>
+        <div className="flex-1 min-w-0">{children}</div>
       </main>
       {/* Globally mounted citation viewer — listens for fondok:citation-focus
           events from anywhere in the app and slides in from the right. */}
