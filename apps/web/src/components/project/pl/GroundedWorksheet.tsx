@@ -53,6 +53,7 @@ interface RowDef {
   label: string;
   kind: RowKind;
   overrideKey?: string;    // editable model-column key
+  reviewKey?: string;      // canonical extraction field for read-only rows (revenue) — reviewable at source
   y1Read?: string[];       // dotted path into the y1Src engine's years[0]
   y1Src?: 'expense' | 'fb' | 'revenue'; // which engine feeds the Model column (default expense)
   fmt?: RowFmt;            // cell number format (default currency)
@@ -81,9 +82,9 @@ const ROWS: RowDef[] = [
   { id: 'revpar', label: 'RevPAR', kind: 'input', fmt: 'dollar', y1Src: 'revenue', y1Read: ['revpar'] },
 
   { id: 's_rev', label: 'Revenue', kind: 'section' },
-  { id: 'rooms_rev', label: 'Rooms Revenue', kind: 'input', y1Src: 'fb', y1Read: ['rooms_revenue'] },
-  { id: 'fb_rev', label: 'Food & Beverage Revenue', kind: 'input', y1Src: 'fb', y1Read: ['fb_revenue'] },
-  { id: 'other_rev', label: 'Other Revenue', kind: 'input', y1Src: 'fb', y1Read: ['other_revenue'] },
+  { id: 'rooms_rev', label: 'Rooms Revenue', kind: 'input', y1Src: 'fb', y1Read: ['rooms_revenue'], reviewKey: 'rooms_revenue' },
+  { id: 'fb_rev', label: 'Food & Beverage Revenue', kind: 'input', y1Src: 'fb', y1Read: ['fb_revenue'], reviewKey: 'fb_revenue' },
+  { id: 'other_rev', label: 'Other Revenue', kind: 'input', y1Src: 'fb', y1Read: ['other_revenue'], reviewKey: 'other_revenue' },
   { id: 'total_rev', label: 'Total Revenue', kind: 'subtotal',
     compute: (v) => v.rooms_rev + v.fb_rev + v.other_rev },
 
@@ -179,6 +180,7 @@ interface InspectTarget {
   kind: 'grounded' | 'benchmark' | 'override' | 'computed';
   value: number;
   overrideKey?: string;
+  reviewKey?: string;
   docIds: string[];
   formula?: string;
   review?: { docId: string; field: string; confidence: number };
@@ -270,9 +272,10 @@ export default function GroundedWorksheet({
       for (const f of ex.fields) {
         if (f.confidence == null || f.confidence >= 0.85 || f.reviewed) continue;
         for (const r of ROWS) {
-          if (!r.overrideKey || out[r.overrideKey]) continue;
-          if (fieldMatchesKey(f.field_name, r.overrideKey)) {
-            out[r.overrideKey] = { docId: d.id, field: f.field_name, confidence: f.confidence };
+          const rk = r.overrideKey ?? r.reviewKey;
+          if (!rk || out[rk]) continue;
+          if (fieldMatchesKey(f.field_name, rk)) {
+            out[rk] = { docId: d.id, field: f.field_name, confidence: f.confidence };
             break;
           }
         }
@@ -293,6 +296,24 @@ export default function GroundedWorksheet({
       }
     },
     [rawId, refreshExtraction, toast],
+  );
+
+  // Correct a wrong extracted value AT SOURCE (reviewField edit) — the fix path
+  // for read-only cells like revenue, whose model value is computed and can't be
+  // inline-overridden. Re-runs so the grounded model reflects the correction.
+  const editExtraction = useCallback(
+    async (docId: string, field: string, value: number) => {
+      try {
+        await api.documents.reviewField(rawId, docId, { field_name: field, action: 'edit', value });
+        await refreshExtraction(docId);
+        await run();
+        await refresh();
+        toast('Corrected + re-modeled', { type: 'success' });
+      } catch (err) {
+        toast(`Couldn’t update: ${err instanceof Error ? err.message : String(err)}`, { type: 'error' });
+      }
+    },
+    [rawId, refreshExtraction, run, refresh, toast],
   );
 
   const labelOf = useCallback(
@@ -563,7 +584,7 @@ export default function GroundedWorksheet({
                       histYear={c.year}
                       modelLive={modelLive}
                       overridden={!c.historical && isOverridden(row.overrideKey)}
-                      review={!c.historical && row.overrideKey ? reviewMap[row.overrideKey] : undefined}
+                      review={!c.historical ? reviewMap[row.overrideKey ?? row.reviewKey ?? ''] : undefined}
                       draft={row.overrideKey ? draft[row.overrideKey] : undefined}
                       saving={!!row.overrideKey && savingKey === row.overrideKey}
                       onDraft={(s) => row.overrideKey && setDraft((d) => ({ ...d, [row.overrideKey!]: s }))}
@@ -594,6 +615,7 @@ export default function GroundedWorksheet({
           onAccept={inspect.review
             ? () => { const r = inspect.review!; acceptReview(r.docId, r.field); setInspect(null); }
             : undefined}
+          onEdit={(docId, field, value) => { editExtraction(docId, field, value); setInspect(null); }}
           onReset={inspect.overrideKey && isOverridden(inspect.overrideKey)
             ? () => { reset(inspect.overrideKey!); setInspect(null); }
             : undefined}
@@ -658,6 +680,7 @@ function WorksheetCell({
       kind,
       value,
       overrideKey: !historical ? row.overrideKey : undefined,
+      reviewKey: !historical ? (row.overrideKey ?? row.reviewKey) : undefined,
       docIds: review ? [review.docId, ...docIds.filter((id) => id !== review.docId)] : docIds,
       formula: row.kind === 'computed' || row.kind === 'subtotal' ? formulaFor(row.id) : undefined,
       review,
@@ -702,6 +725,15 @@ function WorksheetCell({
             )}
           >
             {saving ? <Loader2 size={11} className="animate-spin inline" /> : fmtRowValue(value, row.fmt)}
+          </button>
+        ) : (!historical && row.reviewKey) ? (
+          <button
+            type="button"
+            onClick={openInspect}
+            title={review ? `Low confidence (${Math.round(review.confidence * 100)}%) — click to check or correct` : 'Click to see source or correct'}
+            className={cn('tabular-nums px-1 rounded hover:bg-brand-50', review ? 'ring-1 ring-warn-400 bg-warn-50 text-warn-800' : 'text-ink-700')}
+          >
+            {fmtRowValue(value, row.fmt)}
           </button>
         ) : (
           <span className={cn('tabular-nums', (row.kind === 'computed' || row.kind === 'subtotal') ? 'font-semibold text-ink-900' : 'text-ink-700')}>
@@ -848,7 +880,7 @@ function formulaFor(id: string): string {
 
 // ── Click-to-source slide-over ─────────────────────────────────────────
 function SourcePanel({
-  target, documents, extractions, overrides, onClose, onReset, onAccept,
+  target, documents, extractions, overrides, onClose, onReset, onAccept, onEdit,
 }: {
   target: InspectTarget;
   documents: WorkerDocument[];
@@ -857,19 +889,22 @@ function SourcePanel({
   onClose: () => void;
   onReset?: () => void;
   onAccept?: () => void;
+  onEdit?: (docId: string, field: string, value: number) => void;
 }) {
+  const [editVal, setEditVal] = useState<string | null>(null);
   const docs = target.docIds
     .map((id) => documents.find((d) => d.id === id))
     .filter((d): d is WorkerDocument => Boolean(d));
 
-  // Try to locate the exact extracted field behind a model-column key.
-  const field: (ExtractionField & { docName: string }) | null = (() => {
-    if (!target.overrideKey) return null;
+  // Try to locate the exact extracted field behind a model-column / review key.
+  const key = target.reviewKey ?? target.overrideKey;
+  const field: (ExtractionField & { docName: string; docId: string }) | null = (() => {
+    if (!key) return null;
     for (const d of documents) {
       const ex = extractions[d.id];
       if (!ex?.fields) continue;
-      const f = ex.fields.find((ff) => fieldMatchesKey(ff.field_name, target.overrideKey!));
-      if (f) return { ...f, docName: d.filename };
+      const f = ex.fields.find((ff) => fieldMatchesKey(ff.field_name, key));
+      if (f) return { ...f, docName: d.filename, docId: d.id };
     }
     return null;
   })();
@@ -987,6 +1022,40 @@ function SourcePanel({
             </div>
           )}
 
+          {field && onEdit && (
+            <div className="rounded-lg border border-border px-3 py-2.5 space-y-2">
+              <div className="text-[10.5px] uppercase tracking-wide text-ink-500 font-semibold">Correct at source</div>
+              {editVal == null ? (
+                <button
+                  type="button"
+                  onClick={() => setEditVal(String(typeof field.value === 'number' ? Math.round(field.value) : Math.round(target.value)))}
+                  className="text-[12px] text-brand-700 hover:text-brand-500 font-medium"
+                >
+                  Fix this value on the document →
+                </button>
+              ) : (
+                <div className="flex flex-wrap items-center gap-2">
+                  <input
+                    autoFocus
+                    value={editVal}
+                    onChange={(e) => setEditVal(e.target.value)}
+                    onKeyDown={(e) => { if (e.key === 'Escape') setEditVal(null); }}
+                    className="w-32 px-2 py-1 text-[12.5px] text-right tabular-nums border border-brand-500 rounded focus:outline-none focus:ring-2 focus:ring-brand-100"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => { const n = Number(editVal.replace(/[$,\s]/g, '')); if (Number.isFinite(n)) onEdit(field.docId, field.field_name, n); }}
+                    className="text-[12px] font-medium px-2.5 py-1 rounded-md bg-brand-600 text-white hover:bg-brand-700"
+                  >
+                    Save + re-model
+                  </button>
+                  <button type="button" onClick={() => setEditVal(null)} className="text-[12px] text-ink-500 hover:text-ink-900">Cancel</button>
+                </div>
+              )}
+              <p className="text-[11px] text-ink-500 leading-relaxed">Updates the extracted value on {field.docName} and re-grounds the model.</p>
+            </div>
+          )}
+
           {onReset && (
             <button
               type="button"
@@ -1012,6 +1081,9 @@ function fieldMatchesKey(fieldName: string, key: string): boolean {
     property_taxes: ['propertytax', 'propertytaxes', 'realestatetax'],
     mgmt_fee: ['managementfee', 'mgmtfee', 'basemanagementfee'],
     ffe_reserve: ['ffereserve', 'ffe', 'reservereplacement', 'replacementreserve'],
+    rooms_revenue: ['roomsrevenue', 'roomrevenue', 'roomsdepartmentrevenue'],
+    fb_revenue: ['foodbeveragerevenue', 'fbrevenue', 'foodandbeveragerevenue'],
+    other_revenue: ['otherrevenue', 'otheroperatedrevenue', 'miscincome', 'miscellaneousrevenue'],
     administrative_general: ['administrativegeneral', 'adminandgeneral'],
     sales_marketing: ['salesmarketing', 'salesandmarketing'],
     property_operations: ['propertyoperations', 'propertyoperationsmaintenance'],
