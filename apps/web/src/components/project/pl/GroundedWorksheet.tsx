@@ -21,8 +21,9 @@
  * we show the totals we have and the Y1 detail you can edit.
  */
 
-import { useMemo, useState, useCallback } from 'react';
+import { useMemo, useState, useEffect, useRef, useCallback } from 'react';
 import type { ReactNode } from 'react';
+import { useSearchParams } from 'next/navigation';
 import {
   Loader2, RotateCcw, X, FileText, Info, SlidersHorizontal,
   EyeOff, Eye, ChevronUp, ChevronDown, Plus, Scissors, Trash2, Check,
@@ -209,6 +210,7 @@ export default function GroundedWorksheet({
   const { run, status } = useEngineRun(rawId, 'returns', { runMode: 'all' });
   const running = status === 'running' || status === 'queued';
 
+  const searchParams = useSearchParams();
   const wl = useWorksheetLayout(rawId);
   const [customize, setCustomize] = useState(false);
   const [draft, setDraft] = useState<Record<string, string>>({});
@@ -357,6 +359,28 @@ export default function GroundedWorksheet({
     }
     return items;
   }, [wl.layout, customize, modelLive]);
+
+  // Deep-link focus: a "→ Financials" jump from the Data Room field review
+  // carries ?focus=<field_name>. Resolve it to a worksheet row and scroll +
+  // pulse it so the analyst lands exactly on the value that needs attention.
+  const focusField = searchParams?.get('focus') ?? null;
+  const focusRowId = useMemo(() => {
+    if (!focusField) return null;
+    for (const r of ROWS) {
+      const rk = r.overrideKey ?? r.reviewKey;
+      if (rk && fieldMatchesKey(focusField, rk)) return r.id;
+    }
+    return null;
+  }, [focusField]);
+  const focusRowRef = useRef<HTMLTableRowElement>(null);
+  const [pulse, setPulse] = useState(false);
+  useEffect(() => {
+    if (!focusRowId || !focusRowRef.current) return;
+    focusRowRef.current.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    setPulse(true);
+    const t = setTimeout(() => setPulse(false), 2400);
+    return () => clearTimeout(t);
+  }, [focusRowId, rendered]);
 
   const save = useCallback(
     async (key: string) => {
@@ -546,8 +570,18 @@ export default function GroundedWorksheet({
               const emphatic = row.kind === 'computed' || row.kind === 'subtotal';
               const isInput = item.type === 'input';
               const hidden = isInput && wl.layout.hidden.includes(row.id);
+              const focused = row.id === focusRowId;
               return (
-                <tr key={`row-${row.id}-${idx}`} className={cn('border-t border-border hover:bg-ink-100/30 group', emphatic && 'bg-brand-50/25', hidden && 'opacity-45')}>
+                <tr
+                  key={`row-${row.id}-${idx}`}
+                  ref={focused ? focusRowRef : undefined}
+                  className={cn(
+                    'border-t border-border hover:bg-ink-100/30 group transition-colors',
+                    emphatic && 'bg-brand-50/25',
+                    hidden && 'opacity-45',
+                    focused && pulse && 'bg-warn-100 ring-2 ring-warn-400',
+                  )}
+                >
                   <td className={cn('px-5 py-1.5 text-ink-800 sticky left-0 z-10', emphatic ? 'font-semibold text-ink-900 bg-brand-50/25' : 'pl-9 bg-bg')}>
                     {customize && isInput ? (
                       <RowControls

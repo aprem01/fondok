@@ -634,10 +634,12 @@ export default function DataRoomTab({ projectId }: { projectId: number | string 
     return [];
   }, [liveMode, documents, extractions, isFullDoc]);
 
-  // Deep-link a reviewed field to the screen where its data is seeded/used.
+  // Deep-link a reviewed field to the screen where its data is seeded/used —
+  // with an optional focus field so the destination can highlight it.
   const goToScreen = useCallback(
-    (tab: string) => {
-      const q = tab === 'pl' ? '?tab=pl&fin=historicals' : `?tab=${tab}`;
+    (tab: string, focus?: string) => {
+      let q = tab === 'pl' ? '?tab=pl&fin=historicals' : `?tab=${tab}`;
+      if (focus) q += `&focus=${encodeURIComponent(focus)}`;
       router.push(`/projects/${rawId}${q}`, { scroll: false });
     },
     [router, rawId],
@@ -2026,7 +2028,7 @@ export default function DataRoomTab({ projectId }: { projectId: number | string 
           doc={reviewDocRow}
           liveMode={liveMode}
           onClose={() => setReviewDocId(null)}
-          onGoTo={(t) => { setReviewDocId(null); goToScreen(t); }}
+          onGoTo={(t, focus) => { setReviewDocId(null); goToScreen(t, focus); }}
           onReview={handleReviewField}
         />
       )}
@@ -2044,7 +2046,7 @@ function DocumentReviewDrawer({
   doc: { id: string; name: string; type: string; confidence: number; fieldList?: ExtractionField[] };
   liveMode: boolean;
   onClose: () => void;
-  onGoTo: (tab: string) => void;
+  onGoTo: (tab: string, focus?: string) => void;
   onReview: (docId: string, fieldName: string, action: 'accept' | 'edit' | 'reject', value?: string) => Promise<void>;
 }) {
   const fields = doc.fieldList ?? [];
@@ -2191,7 +2193,7 @@ function DataRow({
   sourcePage?: number | null;
   // Where this field's data is seeded/used — deep-link to that screen.
   destination?: { tab: string; label: string } | null;
-  onGoTo?: (tab: string) => void;
+  onGoTo?: (tab: string, focus?: string) => void;
 }) {
   // Tier label sits next to the numeric ConfidenceBadge so analysts get the
   // shared red/amber/green semantics at a glance without losing the precise %.
@@ -2240,7 +2242,7 @@ function DataRow({
           {destination && onGoTo && (
             <button
               type="button"
-              onClick={() => onGoTo(destination.tab)}
+              onClick={() => onGoTo(destination.tab, rawLabel)}
               title={`See where this is used — ${destination.label}`}
               className="text-[9.5px] text-brand-700 hover:text-brand-500 inline-flex items-center gap-0.5 rounded focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-500"
             >

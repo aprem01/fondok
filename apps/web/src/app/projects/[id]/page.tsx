@@ -670,7 +670,7 @@ export default function ProjectDetailPage() {
           any number on any tab can explain itself from one pair of fetches. */}
       <ProvenanceProvider dealId={rawId}>
       <ValueTraceProvider dealId={rawId}>
-      <div className="p-8" role="tabpanel" aria-label={`${activeLabel} content`}>
+      <div className="p-8 max-w-[1440px] mx-auto w-full" role="tabpanel" aria-label={`${activeLabel} content`}>
         {!isMockId && <EngineFailuresBanner outputs={pageEngineOutputs} dealId={rawId} />}
         {!isMockId && (
           <IntroCard
