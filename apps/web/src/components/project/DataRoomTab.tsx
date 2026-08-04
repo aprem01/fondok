@@ -632,6 +632,15 @@ export default function DataRoomTab({ projectId }: { projectId: number | string 
     return [];
   }, [liveMode, documents, extractions, isFullDoc]);
 
+  // Deep-link a reviewed field to the screen where its data is seeded/used.
+  const goToScreen = useCallback(
+    (tab: string) => {
+      const q = tab === 'pl' ? '?tab=pl&fin=historicals' : `?tab=${tab}`;
+      router.push(`/projects/${rawId}${q}`, { scroll: false });
+    },
+    [router, rawId],
+  );
+
   const selectedDocRow = useMemo(
     () => docs.find((d) => d.name === selectedDoc) ?? null,
     [docs, selectedDoc],
@@ -1967,6 +1976,8 @@ export default function DataRoomTab({ projectId }: { projectId: number | string 
                                       snippet={r.snippet}
                                       sourcePage={r.sourcePage}
                                       highlight={highlightField != null && r.raw === highlightField}
+                                      destination={fieldDestination(r.raw)}
+                                      onGoTo={goToScreen}
                                       onReview={
                                         liveMode && r.raw && selectedDocRow?.id
                                           ? (action, value) =>
@@ -2013,6 +2024,30 @@ export default function DataRoomTab({ projectId }: { projectId: number | string 
   );
 }
 
+// Map an extracted field to the screen where its data is seeded / used, so the
+// review pane can deep-link any field straight to where it lands — for ANY
+// document type. Prefix-first (authoritative), keyword fallback second.
+function fieldDestination(fieldName?: string): { tab: string; label: string } | null {
+  if (!fieldName) return null;
+  const n = fieldName.toLowerCase();
+  const FIN = { tab: 'pl', label: 'Financials' };
+  // Prefix routing (the field's schema section is the strongest signal).
+  if (n.startsWith('p_and_l_usali') || n.startsWith('fb_operations') || n.startsWith('parking_operations')) return FIN;
+  if (n.startsWith('ttm_performance')) return { tab: 'forecasting', label: 'Forecasting' };
+  if (n.startsWith('in_place_debt')) return { tab: 'debt', label: 'Debt' };
+  if (n.startsWith('transaction_comps') || n.startsWith('comparable_sales') || n.startsWith('market_overview')) return { tab: 'market', label: 'Market' };
+  if (n.startsWith('broker_proforma') || n.startsWith('asking_price')) return { tab: 'investment', label: 'Investment' };
+  if (n.startsWith('property_overview') || n.startsWith('ttm_summary_per_om')) return { tab: 'overview', label: 'Overview' };
+  if (n.startsWith('capex') || n.startsWith('capital_plan')) return { tab: 'investment', label: 'Investment' };
+  // Keyword fallback for flat/legacy field names.
+  if (/(occupancy|adr|revpar|revenue|expense|\bnoi\b|\bgop\b|insurance|property_tax|mgmt|ffe|departmental|undistributed|fixed_charge)/.test(n)) return FIN;
+  if (/(loan|interest_rate|amortization|\bltv\b|debt)/.test(n)) return { tab: 'debt', label: 'Debt' };
+  if (/(cap_rate|comp_|comparable)/.test(n)) return { tab: 'market', label: 'Market' };
+  if (/(purchase|price_per_key|renovation|asking)/.test(n)) return { tab: 'investment', label: 'Investment' };
+  if (/(keys|year_built|chain_scale|brand)/.test(n)) return { tab: 'overview', label: 'Overview' };
+  return null;
+}
+
 function DataRow({
   label,
   value,
@@ -2024,6 +2059,8 @@ function DataRow({
   highlight,
   onReview,
   onViewSource,
+  destination,
+  onGoTo,
 }: {
   label: string;
   value: string;
@@ -2041,6 +2078,9 @@ function DataRow({
   // analyst can validate against the document without opening the pane.
   snippet?: string | null;
   sourcePage?: number | null;
+  // Where this field's data is seeded/used — deep-link to that screen.
+  destination?: { tab: string; label: string } | null;
+  onGoTo?: (tab: string) => void;
 }) {
   // Tier label sits next to the numeric ConfidenceBadge so analysts get the
   // shared red/amber/green semantics at a glance without losing the precise %.
@@ -2085,6 +2125,16 @@ function DataRow({
             <span className="text-[9.5px] uppercase tracking-wide text-success-700 bg-success-50 border border-success-500/30 rounded px-1 py-px">
               {reviewed === 'edited' ? 'Edited' : 'Verified'}
             </span>
+          )}
+          {destination && onGoTo && (
+            <button
+              type="button"
+              onClick={() => onGoTo(destination.tab)}
+              title={`See where this is used — ${destination.label}`}
+              className="text-[9.5px] text-brand-700 hover:text-brand-500 inline-flex items-center gap-0.5 rounded focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-500"
+            >
+              → {destination.label}
+            </button>
           )}
         </span>
         <div className="flex items-center gap-2">
