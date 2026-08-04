@@ -282,6 +282,149 @@ async def test_load_engine_inputs_no_extraction_uses_full_kimpton_seed() -> None
 
 
 @pytest.mark.asyncio
+async def test_revenue_actuals_median_corroborates_across_full_year_docs() -> None:
+    """Corroboration fix (real deal 7a9928e0): when 2+ FULL-YEAR statements
+    supply the same revenue line but one is mis-extracted, the grounded
+    value must be the MEDIAN of the full-year values — not the first-ranked
+    (blindly frozen) outlier.
+
+    Scenario: an annual T-12 read F&B as $96,528 while a second annual and a
+    TTM read the correct ~$2.7-2.9M. First-wins had frozen the $96,528.
+    """
+    from app.database import get_session_factory
+    from app.services.engine_runner import _load_t12_revenue_actuals
+
+    deal_id = uuid4()
+    await _insert_deal(deal_id, name="Corroboration Deal", keys=300, purchase=90_000_000)
+
+    # Doc A — annual, F&B mis-extracted as $96,528 (the outlier).
+    await _insert_t12_extraction(
+        deal_id,
+        fields=[
+            {"field_name": "p_and_l_usali.period_type", "value": "annual"},
+            {"field_name": "p_and_l_usali.operating_revenue.rooms_revenue", "value": 9_500_000.0},
+            {"field_name": "p_and_l_usali.operating_revenue.food_beverage_revenue", "value": 96_528.0},
+        ],
+    )
+    # Doc B — annual, correct F&B $2,737,410.
+    await _insert_t12_extraction(
+        deal_id,
+        fields=[
+            {"field_name": "p_and_l_usali.period_type", "value": "annual"},
+            {"field_name": "p_and_l_usali.operating_revenue.rooms_revenue", "value": 9_500_000.0},
+            {"field_name": "p_and_l_usali.operating_revenue.food_beverage_revenue", "value": 2_737_410.0},
+        ],
+    )
+    # Doc C — TTM, correct F&B $2,914,380.
+    await _insert_t12_extraction(
+        deal_id,
+        fields=[
+            {"field_name": "p_and_l_usali.period_type", "value": "ttm"},
+            {"field_name": "p_and_l_usali.operating_revenue.rooms_revenue", "value": 9_500_000.0},
+            {"field_name": "p_and_l_usali.operating_revenue.food_beverage_revenue", "value": 2_914_380.0},
+        ],
+    )
+
+    factory = get_session_factory()
+    async with factory() as session:
+        actuals = await _load_t12_revenue_actuals(
+            session, deal_id=str(deal_id), tenant_id=_TENANT
+        )
+
+    # Median of [96_528, 2_737_410, 2_914_380] == 2_737_410 — the mis-read
+    # outlier can no longer freeze Year-1 F&B.
+    assert actuals["fb_revenue"] == pytest.approx(2_737_410.0)
+    assert actuals["fb_revenue"] != pytest.approx(96_528.0)
+    assert 2_700_000.0 <= actuals["fb_revenue"] <= 2_950_000.0
+    # Rooms corroborates identically across all three → unchanged at $9.5M.
+    assert actuals["rooms_revenue"] == pytest.approx(9_500_000.0)
+
+
+@pytest.mark.asyncio
+async def test_revenue_actuals_single_full_year_doc_unchanged() -> None:
+    """Single-source guard: with only ONE full-year doc supplying F&B, the
+    loader keeps prior first-wins behavior (no median) — so single-source
+    deals can never regress, even when the lone value is unusual.
+    """
+    from app.database import get_session_factory
+    from app.services.engine_runner import _load_t12_revenue_actuals
+
+    deal_id = uuid4()
+    await _insert_deal(deal_id, name="Single Full-Year Deal", keys=200, purchase=40_000_000)
+
+    await _insert_t12_extraction(
+        deal_id,
+        fields=[
+            {"field_name": "p_and_l_usali.period_type", "value": "annual"},
+            {"field_name": "p_and_l_usali.operating_revenue.rooms_revenue", "value": 9_500_000.0},
+            {"field_name": "p_and_l_usali.operating_revenue.food_beverage_revenue", "value": 96_528.0},
+        ],
+    )
+
+    factory = get_session_factory()
+    async with factory() as session:
+        actuals = await _load_t12_revenue_actuals(
+            session, deal_id=str(deal_id), tenant_id=_TENANT
+        )
+
+    # Only one full-year source — first-wins, value passed through as-is.
+    assert actuals["fb_revenue"] == pytest.approx(96_528.0)
+    assert actuals["rooms_revenue"] == pytest.approx(9_500_000.0)
+
+
+@pytest.mark.asyncio
+async def test_expense_actuals_median_corroboration_respects_zero_guard() -> None:
+    """Expense corroboration mirrors revenue AND respects the ≤0 drop guard:
+    a zero-valued line never enters the candidate pool, so the median is
+    taken over real positive full-year values only. A single-source line
+    still passes through first-wins.
+    """
+    from app.database import get_session_factory
+    from app.services.engine_runner import _load_t12_expense_actuals
+
+    deal_id = uuid4()
+    await _insert_deal(deal_id, name="Expense Corroboration Deal", keys=250, purchase=60_000_000)
+
+    # Doc A — annual, insurance MISSING (extractor emitted 0.0) + utilities.
+    await _insert_t12_extraction(
+        deal_id,
+        fields=[
+            {"field_name": "p_and_l_usali.period_type", "value": "annual"},
+            {"field_name": "p_and_l_usali.fixed_charges.insurance", "value": 0.0},
+            {"field_name": "p_and_l_usali.undistributed.utilities", "value": 290_000.0},
+        ],
+    )
+    # Doc B — annual, insurance $1,160,000.
+    await _insert_t12_extraction(
+        deal_id,
+        fields=[
+            {"field_name": "p_and_l_usali.period_type", "value": "annual"},
+            {"field_name": "p_and_l_usali.fixed_charges.insurance", "value": 1_160_000.0},
+        ],
+    )
+    # Doc C — TTM, insurance $1,200,000.
+    await _insert_t12_extraction(
+        deal_id,
+        fields=[
+            {"field_name": "p_and_l_usali.period_type", "value": "ttm"},
+            {"field_name": "p_and_l_usali.fixed_charges.insurance", "value": 1_200_000.0},
+        ],
+    )
+
+    factory = get_session_factory()
+    async with factory() as session:
+        actuals = await _load_t12_expense_actuals(
+            session, deal_id=str(deal_id), tenant_id=_TENANT
+        )
+
+    # The 0.0 was dropped; median of the two real full-year values used.
+    assert actuals["insurance"] == pytest.approx(1_180_000.0)
+    assert actuals["insurance"] != pytest.approx(0.0)
+    # Utilities appears on a single doc — first-wins, unchanged.
+    assert actuals["utilities"] == pytest.approx(290_000.0)
+
+
+@pytest.mark.asyncio
 async def test_load_engine_inputs_normalizes_percent_occupancy() -> None:
     """Extractor sometimes emits occupancy as 71.0 (percent) and sometimes
     as 0.71 (ratio). The loader must coerce to a 0..1 ratio either way —

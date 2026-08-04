@@ -45,13 +45,22 @@ Available document types (use exactly one of these tokens):
                    asking price, market overview, comparable sales.
 - T12            — Trailing-twelve-month profit-and-loss statement.
                    Monthly revenue, departmental expenses, NOI lines.
-- STR            — STR/STAR market report. Subject vs. comp set
-                   indices (MPI/ARI/RGI), occupancy, ADR, RevPAR.
+- STR_TREND      — STR/STAR TREND report. Subject vs. comp set
+                   indices (MPI/ARI/RGI), occupancy, ADR, RevPAR at the
+                   property level (TTM). Also the answer for a bare
+                   "STR" / "STAR" market benchmark.
 - STR_SEGMENTATION — STR Segmentation report — per-segment demand share
                    with transient vs. group split (sometimes channel-split
                    into Direct / OTA / Brand.com / Voice). NOT to be
                    confused with STR Trend (TTM property-level
                    RevPAR/ADR only).
+- CBRE_HORIZONS  — CBRE Hotel Horizons forecast. Multi-year (usually
+                   5-year) ADR / RevPAR / occupancy forecast by submarket
+                   and chain scale; feeds the forward-projection engine.
+- PNL_BENCHMARK  — HotStats / industry benchmark P&L. Line-item POR/PAR
+                   ratios (departmental margins, expense ratios, GOP
+                   margin) for a chain scale or market — NOT the subject
+                   property's own statement.
 - RENT_ROLL      — Multifamily/extended-stay tenant roster (rare for
                    hotels; surfaces with mixed-use deals).
 - ROOM_MIX       — Room types / unit mix / key-count lookup. Typically
@@ -61,6 +70,12 @@ Available document types (use exactly one of these tokens):
                    "unit mix", or just "rooms".
 - PNL            — Generic profit-and-loss statement that is NOT a
                    12-month rollup (annual budget, monthly forecast).
+- PNL_MONTHLY    — Single-month P&L (one calendar month of revenue and
+                   departmental expenses), e.g. "May 2024 Operating
+                   Statement". Not a year-to-date roll or a T-12.
+- PNL_YTD        — Year-to-date P&L covering a partial year from January
+                   through the statement month (e.g. a 5-month YTD). A
+                   partial period — ranks below a full-year T-12.
 - MARKET_STUDY   — Third-party market/feasibility study; demand
                    generators, supply pipeline, ADR/RevPAR forecasts.
 - CONTRACT       — Purchase-and-sale, franchise, management, or other

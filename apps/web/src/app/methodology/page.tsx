@@ -198,6 +198,10 @@ export default function MethodologyPage() {
               <span className="font-semibold text-ink-900">Primary financial source.</span>{' '}
               When several statements cover the same periods, Fondok ranks them — full-year sources over partial (monthly / YTD), most-recent period, then most-detailed — and badges the winner “Primary source” in the Data Room so it&apos;s clear which statement drives the historicals.
             </li>
+            <li>
+              <span className="font-semibold text-ink-900">Cross-checked across statements.</span>{' '}
+              When more than one full-year statement is uploaded, Fondok doesn&apos;t just trust the top-ranked one — it cross-checks each revenue and expense line across all of them and grounds Year-1 on the corroborated (median) value. So if a single statement mis-reads one line — say F&amp;B revenue comes through an order of magnitude low — the other full-year statements outvote it and the model isn&apos;t skewed by one bad extraction. A line reported by only one statement is used as-is.
+            </li>
           </ul>
         </Card>
 

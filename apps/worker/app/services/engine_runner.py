@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import json
 import logging
+import statistics
 import time
 from collections.abc import Callable, Mapping
 from datetime import UTC, datetime
@@ -1508,8 +1509,28 @@ async def _load_t12_revenue_actuals(
             raw_fields = read_extraction_fields(raw_fields, catalog_version)
         shims.append({"fields": raw_fields, "doc_type": row[1]})
 
-    actuals: dict[str, float] = {}
+    # Corroboration-based grounding (2026-08 fix): instead of blindly
+    # freezing the first (top-ranked) doc's value for each canonical line,
+    # gather every doc's candidate value tagged with its period tier, then
+    # choose. When 2+ FULL-YEAR statements (annual / fiscal_year / ttm /
+    # t12 — see ``_FULL_YEAR_PERIOD_TYPES``) supply the same line, use the
+    # MEDIAN of those full-year values so a single mis-read statement can't
+    # skew Year-1 (real deal 7a9928e0: one T-12 extracted F&B as $96,528
+    # while two other full-year docs read $2.74M and $2.91M — first-wins had
+    # frozen the $96,528). When only one full-year doc (or only partial
+    # docs) supplies the line we keep the prior first-wins behavior, so
+    # single-source deals can't regress.
+    #
+    # ``_rank_pnl_rows`` returns rows best-first (full-year + most-recent
+    # ahead of partial periods), so ``cands[0]`` is exactly the legacy
+    # first-wins value. The per-row tier is recomputed via
+    # ``_extract_period_type`` — the cleanest read that leaves the shared
+    # ``_rank_pnl_rows`` signature (also used by the provenance loader)
+    # untouched.
+    candidates: dict[str, list[tuple[float, bool]]] = {}
     for ranked_fields, _ in _rank_pnl_rows(shims):
+        is_full_year = _extract_period_type(ranked_fields) in _FULL_YEAR_PERIOD_TYPES
+        seen_in_row: set[str] = set()
         for f in ranked_fields:
             if not isinstance(f, dict):
                 continue
@@ -1521,15 +1542,24 @@ async def _load_t12_revenue_actuals(
             if canonical is None:
                 tail = name.rsplit(".", 1)[-1] if "." in name else name
                 canonical = _T12_REVENUE_FIELD_ALIASES.get(tail)
-            if canonical is None or canonical in actuals:
+            if canonical is None or canonical in seen_in_row:
                 continue
+            seen_in_row.add(canonical)
             v = float(value)
             if canonical == "occupancy":
                 # Extractors emit either a 0..1 ratio or a percent.
                 if v > 1.0:
                     v = v / 100.0
                 v = max(0.0, min(0.99, v))
-            actuals[canonical] = v
+            candidates.setdefault(canonical, []).append((v, is_full_year))
+
+    actuals: dict[str, float] = {}
+    for canonical, cands in candidates.items():
+        full_year_vals = [v for v, is_fy in cands if is_fy]
+        if len(full_year_vals) >= 2:
+            actuals[canonical] = float(statistics.median(full_year_vals))
+        else:
+            actuals[canonical] = cands[0][0]
     return actuals
 
 
@@ -1585,8 +1615,18 @@ async def _load_t12_expense_actuals(
             raw_fields = read_extraction_fields(raw_fields, catalog_version)
         shims.append({"fields": raw_fields, "doc_type": row[1]})
 
-    actuals: dict[str, float] = {}
+    # Corroboration-based grounding — mirrors ``_load_t12_revenue_actuals``:
+    # gather each doc's candidate value per canonical line (tagged with its
+    # period tier), then use the MEDIAN across full-year statements when 2+
+    # agree, else first-wins. Only diverging multi-full-year deals change;
+    # single-source deals are untouched. The zero-leak guard below still
+    # applies — non-positive values never enter the candidate pool, so the
+    # median is taken over real positive lines only and the USALI ratio
+    # fallback still supplies any dropped line.
+    candidates: dict[str, list[tuple[float, bool]]] = {}
     for ranked_fields, _ in _rank_pnl_rows(shims):
+        is_full_year = _extract_period_type(ranked_fields) in _FULL_YEAR_PERIOD_TYPES
+        seen_in_row: set[str] = set()
         for f in ranked_fields:
             if not isinstance(f, dict):
                 continue
@@ -1599,7 +1639,7 @@ async def _load_t12_expense_actuals(
                 # Try the last segment of a dotted path as a fallback.
                 tail = name.rsplit(".", 1)[-1] if "." in name else name
                 canonical = _T12_EXPENSE_FIELD_ALIASES.get(tail)
-            if canonical is None or canonical in actuals:
+            if canonical is None or canonical in seen_in_row:
                 continue
             v = float(value)
             # Zero-leak guard (Eshan's NOI bug): every real hotel has
@@ -1612,7 +1652,16 @@ async def _load_t12_expense_actuals(
             # values are nonsense for expenses.
             if v <= 0.0:
                 continue
-            actuals[canonical] = v
+            seen_in_row.add(canonical)
+            candidates.setdefault(canonical, []).append((v, is_full_year))
+
+    actuals: dict[str, float] = {}
+    for canonical, cands in candidates.items():
+        full_year_vals = [v for v, is_fy in cands if is_fy]
+        if len(full_year_vals) >= 2:
+            actuals[canonical] = float(statistics.median(full_year_vals))
+        else:
+            actuals[canonical] = cands[0][0]
     return actuals
 
 
