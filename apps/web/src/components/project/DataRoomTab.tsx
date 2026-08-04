@@ -974,7 +974,7 @@ export default function DataRoomTab({ projectId }: { projectId: number | string 
       {liveMode && flaggedFinancialCount > 0 && (
         <button
           type="button"
-          onClick={() => router.push(`/projects/${rawId}?tab=pl&fin=review`, { scroll: false })}
+          onClick={() => router.push(`/projects/${rawId}?tab=pl&fin=historicals`, { scroll: false })}
           className="w-full flex items-center gap-3 px-4 py-3 rounded-lg border border-warn-500/40 bg-warn-50 hover:bg-warn-100 transition-colors text-left"
         >
           <ClipboardList size={18} className="text-warn-700 flex-shrink-0" aria-hidden="true" />
@@ -983,11 +983,11 @@ export default function DataRoomTab({ projectId }: { projectId: number | string 
               {flaggedFinancialCount} financial value{flaggedFinancialCount === 1 ? '' : 's'} need your review
             </div>
             <div className="text-[12px] text-warn-700/80">
-              Validate them one at a time in Financials — each shows the source document + line.
+              Fix them in place on the Historicals worksheet — flagged cells show the source document + line.
             </div>
           </div>
           <span className="inline-flex items-center gap-1 text-[12.5px] font-medium text-warn-700 flex-shrink-0">
-            Review in Financials <ArrowRight size={14} />
+            Open Historicals <ArrowRight size={14} />
           </span>
         </button>
       )}

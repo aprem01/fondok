@@ -172,6 +172,7 @@ interface InspectTarget {
   overrideKey?: string;
   docIds: string[];
   formula?: string;
+  review?: { docId: string; field: string; confidence: number };
 }
 
 type RenderItem =
@@ -191,7 +192,7 @@ export default function GroundedWorksheet({
   const rawId = String(dealId);
   const { outputs, refresh } = useEngineOutputs(rawId);
   const { deal, refresh: refreshDeal } = useDeal(rawId);
-  const { documents, extractions } = useDocuments(rawId);
+  const { documents, extractions, refreshExtraction } = useDocuments(rawId);
   const { toast } = useToast();
   const { run, status } = useEngineRun(rawId, 'returns', { runMode: 'all' });
   const running = status === 'running' || status === 'queued';
@@ -262,6 +263,42 @@ export default function GroundedWorksheet({
 
   const overrides = (deal?.field_overrides ?? {}) as Record<string, unknown>;
   const isOverridden = (key?: string) => !!key && key in overrides;
+
+  // Low-confidence review, folded IN (no separate screen): map each editable
+  // model key to its unreviewed low-confidence extracted field, so the cell can
+  // flag it amber and the source panel can accept/edit it in place.
+  const reviewMap = useMemo<Record<string, { docId: string; field: string; confidence: number }>>(() => {
+    const out: Record<string, { docId: string; field: string; confidence: number }> = {};
+    for (const d of documents) {
+      const ex = extractions[d.id];
+      if (!ex?.fields) continue;
+      for (const f of ex.fields) {
+        if (f.confidence == null || f.confidence >= 0.85 || f.reviewed) continue;
+        for (const r of ROWS) {
+          if (!r.overrideKey || out[r.overrideKey]) continue;
+          if (fieldMatchesKey(f.field_name, r.overrideKey)) {
+            out[r.overrideKey] = { docId: d.id, field: f.field_name, confidence: f.confidence };
+            break;
+          }
+        }
+      }
+    }
+    return out;
+  }, [documents, extractions]);
+  const reviewCount = Object.keys(reviewMap).length;
+
+  const acceptReview = useCallback(
+    async (docId: string, field: string) => {
+      try {
+        await api.documents.reviewField(rawId, docId, { field_name: field, action: 'accept' });
+        await refreshExtraction(docId);
+        toast('Marked reviewed', { type: 'success' });
+      } catch (err) {
+        toast(`Couldn’t accept: ${err instanceof Error ? err.message : String(err)}`, { type: 'error' });
+      }
+    },
+    [rawId, refreshExtraction, toast],
+  );
 
   const labelOf = useCallback(
     (id: string, fallback: string) => wl.layout.relabels[id] ?? fallback,
@@ -412,6 +449,15 @@ export default function GroundedWorksheet({
           <Info size={11} /> Rename, hide, reorder, add lines, or split a line into parts. This changes how the statement <em>reads</em> — never the numbers the model computes. Saved on this device.
         </div>
       )}
+      {!customize && reviewCount > 0 && (
+        <div className="px-5 py-2 bg-warn-50 border-b border-warn-500/30 text-[11.5px] text-warn-800 flex items-center gap-1.5">
+          <Info size={11} className="shrink-0" />
+          <span>
+            <span className="font-semibold">{reviewCount}</span> value{reviewCount === 1 ? '' : 's'} came in low-confidence —
+            they’re flagged <span className="text-warn-700 font-medium">amber</span> below. Click one to check its source and accept or edit it.
+          </span>
+        </div>
+      )}
 
       <div className="overflow-x-auto">
         <table className="w-full text-[12.5px]" style={{ minWidth: 320 + cols.length * 110 }}>
@@ -518,6 +564,7 @@ export default function GroundedWorksheet({
                       histYear={c.year}
                       modelLive={modelLive}
                       overridden={!c.historical && isOverridden(row.overrideKey)}
+                      review={!c.historical && row.overrideKey ? reviewMap[row.overrideKey] : undefined}
                       draft={row.overrideKey ? draft[row.overrideKey] : undefined}
                       saving={!!row.overrideKey && savingKey === row.overrideKey}
                       onDraft={(s) => row.overrideKey && setDraft((d) => ({ ...d, [row.overrideKey!]: s }))}
@@ -545,6 +592,9 @@ export default function GroundedWorksheet({
           extractions={extractions}
           overrides={overrides}
           onClose={() => setInspect(null)}
+          onAccept={inspect.review
+            ? () => { const r = inspect.review!; acceptReview(r.docId, r.field); setInspect(null); }
+            : undefined}
           onReset={inspect.overrideKey && isOverridden(inspect.overrideKey)
             ? () => { reset(inspect.overrideKey!); setInspect(null); }
             : undefined}
@@ -556,7 +606,7 @@ export default function GroundedWorksheet({
 
 // ── One cell (historical read-only, model editable, computed) ──────────
 function WorksheetCell({
-  row, historical, histYear, modelLive, overridden, draft, saving, colLabel,
+  row, historical, histYear, modelLive, overridden, review, draft, saving, colLabel,
   onDraft, onSave, onCancel, onInspect,
 }: {
   row: RowDef;
@@ -564,6 +614,7 @@ function WorksheetCell({
   histYear: HistYear | null;
   modelLive: Record<string, number>;
   overridden: boolean;
+  review?: { docId: string; field: string; confidence: number };
   draft: string | undefined;
   saving: boolean;
   colLabel: string;
@@ -608,8 +659,9 @@ function WorksheetCell({
       kind,
       value,
       overrideKey: !historical ? row.overrideKey : undefined,
-      docIds,
+      docIds: review ? [review.docId, ...docIds.filter((id) => id !== review.docId)] : docIds,
       formula: row.kind === 'computed' || row.kind === 'subtotal' ? formulaFor(row.id) : undefined,
+      review,
     });
   };
 
@@ -643,8 +695,11 @@ function WorksheetCell({
             type="button"
             onClick={() => onDraft(String(Math.round(value!)))}
             disabled={saving}
-            title="Click to edit"
-            className={cn('tabular-nums px-1 rounded hover:bg-brand-50', overridden ? 'text-violet-700 font-medium' : 'text-ink-900')}
+            title={review ? `Low confidence (${Math.round(review.confidence * 100)}%) — click to check or edit` : 'Click to edit'}
+            className={cn(
+              'tabular-nums px-1 rounded hover:bg-brand-50',
+              review ? 'ring-1 ring-warn-400 bg-warn-50 text-warn-800' : overridden ? 'text-violet-700 font-medium' : 'text-ink-900',
+            )}
           >
             {saving ? <Loader2 size={11} className="animate-spin inline" /> : fmtCurrency(value, { compact: true })}
           </button>
@@ -793,7 +848,7 @@ function formulaFor(id: string): string {
 
 // ── Click-to-source slide-over ─────────────────────────────────────────
 function SourcePanel({
-  target, documents, extractions, overrides, onClose, onReset,
+  target, documents, extractions, overrides, onClose, onReset, onAccept,
 }: {
   target: InspectTarget;
   documents: WorkerDocument[];
@@ -801,6 +856,7 @@ function SourcePanel({
   overrides: Record<string, unknown>;
   onClose: () => void;
   onReset?: () => void;
+  onAccept?: () => void;
 }) {
   const docs = target.docIds
     .map((id) => documents.find((d) => d.id === id))
@@ -911,6 +967,22 @@ function SourcePanel({
           )}
           {target.kind === 'benchmark' && (
             <p className="text-[11.5px] text-ink-500 leading-relaxed">{sourceExplanation('seed')}</p>
+          )}
+
+          {target.review && onAccept && (
+            <div className="rounded-lg bg-warn-50 border border-warn-500/30 px-3 py-2.5 space-y-2">
+              <div className="text-[11.5px] text-warn-800">
+                This value came in at <span className="font-semibold">{Math.round(target.review.confidence * 100)}%</span> confidence.
+                Check it against the source above, then accept it or edit the value in the Model column.
+              </div>
+              <button
+                type="button"
+                onClick={onAccept}
+                className="inline-flex items-center gap-1.5 text-[12px] font-medium px-2.5 py-1 rounded-md bg-emerald-600 text-white hover:bg-emerald-700"
+              >
+                <Check size={12} /> Looks right — accept
+              </button>
+            </div>
           )}
 
           {onReset && (

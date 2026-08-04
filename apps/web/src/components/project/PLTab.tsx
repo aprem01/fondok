@@ -31,14 +31,13 @@ import { MetricLabel } from '@/components/help/MetricLabel';
 import { GLOSSARY } from '@/lib/glossary';
 import DueDiligenceSection from './pl/DueDiligenceSection';
 import ProjectionsSection from './pl/ProjectionsSection';
-import PLReviewSection from './pl/PLReviewSection';
 import GroundedWorksheet from './pl/GroundedWorksheet';
 import HistoricalsSection from './pl/HistoricalsSection';
 import IndexAnalysisSection from './pl/IndexAnalysisSection';
 
-// Lovable parity: six sub-tabs replace the prior four.
+// Review is NOT its own screen — it lives inside Historicals, where the
+// financial data already is (upload → fix/review in place → use the app).
 const subTabs = [
-  'Review',
   'P&L Summary',
   'Historicals',
   'Projections',
@@ -343,9 +342,11 @@ const kimptonStatement = buildStatement();
 
 export default function PLTab({ projectId }: { projectId: number | string }) {
   const searchParams = useSearchParams();
-  // Deep-link from the Data Room's "review financials" CTA lands on Review.
+  // Deep-link from the Data Room's "review financials" CTA lands on Historicals
+  // (the review now lives inside the historical data screen — no separate tab).
+  const finParam = searchParams?.get('fin');
   const [tab, setTab] = useState<SubTab>(
-    searchParams?.get('fin') === 'review' ? 'Review' : 'P&L Summary',
+    finParam === 'review' || finParam === 'historicals' ? 'Historicals' : 'P&L Summary',
   );
   const params = useParams();
   const { toast } = useToast();
@@ -528,12 +529,6 @@ export default function PLTab({ projectId }: { projectId: number | string }) {
       <EngineLegend />
 
       <div className={cn(computing && 'relative pointer-events-none opacity-60')}>
-        {tab === 'Review' && (
-          <div className="space-y-5">
-            <GroundedWorksheet dealId={dealId} isKimptonDemo={isKimptonDemo} />
-            <PLReviewSection dealId={dealId} isKimptonDemo={isKimptonDemo} />
-          </div>
-        )}
         {tab === 'P&L Summary' && (
           <PLSummary
             stmt={stmt}
@@ -551,7 +546,14 @@ export default function PLTab({ projectId }: { projectId: number | string }) {
           />
         )}
         {tab === 'Historicals' && (
-          <HistoricalsSection dealId={dealId} isKimptonDemo={isKimptonDemo} />
+          <div className="space-y-5">
+            {/* The worksheet IS the review+edit surface: multi-year grounded,
+                inline-editable Model column, click-to-source, low-confidence
+                flags. The detail table below carries operating stats + the
+                robust multi-doc historical fallback. */}
+            <GroundedWorksheet dealId={dealId} isKimptonDemo={isKimptonDemo} />
+            <HistoricalsSection dealId={dealId} isKimptonDemo={isKimptonDemo} />
+          </div>
         )}
         {tab === 'Projections' && (
           <ProjectionsSection dealId={dealId} isKimptonDemo={isKimptonDemo} />
