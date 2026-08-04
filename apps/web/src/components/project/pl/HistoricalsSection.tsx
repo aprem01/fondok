@@ -41,7 +41,7 @@ import { downloadXlsx, type XlsxCell } from '@/lib/exportXlsx';
 // other_dept_expense, undistributed, gop, fixed_expenses, noi) so when
 // the per-deal /historicals endpoint ships a HistoricalYear payload from
 // the engine, no key remapping is needed — see task C 2026-06-29.
-interface HistYear {
+export interface HistYear {
   /** Calendar year label, e.g. 2023 or "T-12". */
   year: string;
   /** Days in the period (365/366 for a calendar year, 365 for T-12). */
@@ -70,7 +70,7 @@ interface HistYear {
   populated: boolean;
 }
 
-interface HistData {
+export interface HistData {
   keys: number;
   years: HistYear[];
 }
@@ -230,7 +230,7 @@ export function findField(fields: ExtractionField[], aliases: string[]): Extract
  * over the period total. Mirrors ``_has_subordinate_namespace`` in
  * ``apps/worker/app/services/usali_scorer.py``.
  */
-function actualsOnly(fields: ExtractionField[]): ExtractionField[] {
+export function actualsOnly(fields: ExtractionField[]): ExtractionField[] {
   return fields.filter((f) => {
     const n = f.field_name.toLowerCase();
     return !(
@@ -272,7 +272,7 @@ function actualsOnly(fields: ExtractionField[]): ExtractionField[] {
  * filename. Only annual P&L docs (``PNL``) use the filename-year
  * fallback.
  */
-function deriveYearLabel(
+export function deriveYearLabel(
   fields: ExtractionField[],
   filename: string,
   docType: string | null | undefined,
@@ -363,7 +363,7 @@ function deriveYearLabel(
  * ``yearLabel`` comes from ``deriveYearLabel``; ``days`` is 365 for a
  * T-12 and a real day count for an annual column.
  */
-function buildHistYear(
+export function buildHistYear(
   fields: ExtractionField[],
   keys: number,
   yearLabel: string,
@@ -611,7 +611,7 @@ function buildHistYear(
 // Default 5-year window when nothing is extractable yet — used as the
 // scaffold for the "empty" rendering so reviewers still see column
 // headers and row labels.
-function emptyFiveYearSkeleton(): HistData {
+export function emptyFiveYearSkeleton(): HistData {
   const thisYear = new Date().getFullYear();
   const years: HistYear[] = [];
   for (let i = 4; i >= 0; i--) {

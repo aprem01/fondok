@@ -21,7 +21,7 @@
  * we show the totals we have and the Y1 detail you can edit.
  */
 
-import { useMemo, useState, useEffect, useCallback } from 'react';
+import { useMemo, useState, useCallback } from 'react';
 import type { ReactNode } from 'react';
 import {
   Loader2, RotateCcw, X, FileText, Info, SlidersHorizontal,
@@ -30,12 +30,14 @@ import {
 import { Card } from '@/components/ui/Card';
 import { cn, fmtCurrency } from '@/lib/format';
 import { useToast } from '@/components/ui/Toast';
-import { api, isWorkerConnected, workerUrl } from '@/lib/api';
+import { api } from '@/lib/api';
 import type { ExtractionField, ExtractionResult, WorkerDocument } from '@/lib/api';
 import { getEngineField, useEngineOutputs } from '@/lib/hooks/useEngineOutputs';
 import { useEngineRun } from '@/lib/hooks/useEngineRun';
 import { useDeal } from '@/lib/hooks/useDeal';
 import { useDocuments } from '@/lib/hooks/useDocuments';
+import { useHistoricals } from '@/lib/hooks/useHistoricals';
+import type { HistYear } from '@/components/project/pl/HistoricalsSection';
 import { useSource } from '@/lib/hooks/useDealProvenance';
 import { sourceKind, sourceExplanation } from '@/lib/provenance';
 import { useWorksheetLayout } from '@/lib/hooks/useWorksheetLayout';
@@ -45,14 +47,24 @@ import type { SplitChild, CuratedLine } from '@/lib/hooks/useWorksheetLayout';
 // Historical values are mapped by row id in histValue(); overrideKey (present
 // → editable in the Model column) is the canonical field_overrides key.
 type RowKind = 'section' | 'input' | 'subtotal' | 'computed';
+type RowFmt = 'currency' | 'pct' | 'dollar';
 interface RowDef {
   id: string;
   label: string;
   kind: RowKind;
   overrideKey?: string;    // editable model-column key
-  y1Read?: string[];       // dotted path into expense engine years[0]
-  y1Rev?: boolean;         // read revenue line from fb engine years[0] instead
+  y1Read?: string[];       // dotted path into the y1Src engine's years[0]
+  y1Src?: 'expense' | 'fb' | 'revenue'; // which engine feeds the Model column (default expense)
+  fmt?: RowFmt;            // cell number format (default currency)
   compute?: (v: Record<string, number>) => number; // model-col derived value
+}
+
+// Cell number format. Occupancy is a 0..1 ratio shown as %; ADR/RevPAR are
+// plain dollars-per-unit; everything else is compact currency.
+function fmtRowValue(v: number, fmt: RowFmt | undefined): string {
+  if (fmt === 'pct') return `${(v * 100).toFixed(1)}%`;
+  if (fmt === 'dollar') return `$${Math.round(v).toLocaleString()}`;
+  return fmtCurrency(v, { compact: true });
 }
 
 const sumKeys = (v: Record<string, number>, keys: string[]) =>
@@ -63,10 +75,15 @@ const FIXED_FEE_IDS = ['mgmt', 'ffe', 'taxes', 'insurance'];
 const DEPT_IDS = ['rooms_dept', 'fb_dept', 'other_dept'];
 
 const ROWS: RowDef[] = [
+  { id: 's_ops', label: 'Operating Statistics', kind: 'section' },
+  { id: 'occ', label: 'Occupancy', kind: 'input', fmt: 'pct', y1Src: 'revenue', y1Read: ['occupancy'] },
+  { id: 'adr', label: 'ADR', kind: 'input', fmt: 'dollar', y1Src: 'revenue', y1Read: ['adr'] },
+  { id: 'revpar', label: 'RevPAR', kind: 'input', fmt: 'dollar', y1Src: 'revenue', y1Read: ['revpar'] },
+
   { id: 's_rev', label: 'Revenue', kind: 'section' },
-  { id: 'rooms_rev', label: 'Rooms Revenue', kind: 'input', y1Rev: true, y1Read: ['rooms_revenue'] },
-  { id: 'fb_rev', label: 'Food & Beverage Revenue', kind: 'input', y1Rev: true, y1Read: ['fb_revenue'] },
-  { id: 'other_rev', label: 'Other Revenue', kind: 'input', y1Rev: true, y1Read: ['other_revenue'] },
+  { id: 'rooms_rev', label: 'Rooms Revenue', kind: 'input', y1Src: 'fb', y1Read: ['rooms_revenue'] },
+  { id: 'fb_rev', label: 'Food & Beverage Revenue', kind: 'input', y1Src: 'fb', y1Read: ['fb_revenue'] },
+  { id: 'other_rev', label: 'Other Revenue', kind: 'input', y1Src: 'fb', y1Read: ['other_revenue'] },
   { id: 'total_rev', label: 'Total Revenue', kind: 'subtotal',
     compute: (v) => v.rooms_rev + v.fb_rev + v.other_rev },
 
@@ -117,32 +134,17 @@ const INPUT_BY_ID: Record<string, RowDef> = Object.fromEntries(
 
 const num = (x: unknown): number => (typeof x === 'number' && Number.isFinite(x) ? x : 0);
 
-// Shape returned by GET /deals/{id}/historicals (see HistoricalsSection).
-// Revenue lines are rooms / fb / misc; expense detail below GOP is a single
-// `undistributed` + `fixed_expenses` rollup (no per-line breakout).
-interface HistYear {
-  year: string;
-  rooms: number | null;
-  fb: number | null;
-  misc: number | null;
-  rooms_dept_expense: number | null;
-  fb_dept_expense: number | null;
-  other_dept_expense: number | null;
-  undistributed: number | null;
-  gop: number | null;
-  fixed_expenses: number | null;
-  noi: number | null;
-  populated?: boolean;
-}
-
 const nOrNull = (x: unknown): number | null =>
   typeof x === 'number' && Number.isFinite(x) ? x : null;
 
-// Historical value for a worksheet row from one /historicals year. Detail
-// rows (A&G, insurance, mgmt fee, …) return null — the source P&Ls only
+// Historical value for a worksheet row from one HistYear (see useHistoricals).
+// Detail rows (A&G, insurance, mgmt fee, …) return null — the source P&Ls only
 // carry the rolled-up subtotals, so those cells render "—".
 function histValue(rowId: string, h: HistYear): number | null {
   switch (rowId) {
+    case 'occ': return nOrNull(h.occupancyPct);
+    case 'adr': return nOrNull(h.adr);
+    case 'revpar': return nOrNull(h.revpar);
     case 'rooms_rev': return nOrNull(h.rooms);
     case 'fb_rev': return nOrNull(h.fb);
     case 'other_rev': return nOrNull(h.misc);
@@ -173,6 +175,7 @@ interface InspectTarget {
   docIds: string[];
   formula?: string;
   review?: { docId: string; field: string; confidence: number };
+  fmt?: RowFmt;
 }
 
 type RenderItem =
@@ -205,29 +208,13 @@ export default function GroundedWorksheet({
 
   const expY0 = useMemo(() => (getEngineField<Record<string, unknown>[]>(outputs, 'expense', 'years') ?? [])[0] ?? {}, [outputs]);
   const fbY0 = useMemo(() => (getEngineField<Record<string, unknown>[]>(outputs, 'fb', 'years') ?? [])[0] ?? {}, [outputs]);
+  const revY0 = useMemo(() => (getEngineField<Record<string, unknown>[]>(outputs, 'revenue', 'years') ?? [])[0] ?? {}, [outputs]);
 
-  // Multi-year grounded columns come from GET /deals/{id}/historicals (the
-  // same source HistoricalsSection uses). Absent / 404 → we render the Model
-  // column alone. Keep the last 4 populated years.
-  const [histYears, setHistYears] = useState<HistYear[]>([]);
-  useEffect(() => {
-    const isMockId = /^\d+$/.test(rawId);
-    if (isKimptonDemo || isMockId || !isWorkerConnected()) return;
-    let cancelled = false;
-    (async () => {
-      try {
-        const res = await fetch(`${workerUrl()}/deals/${rawId}/historicals`);
-        if (!res.ok) return;
-        const json = (await res.json()) as { years?: HistYear[] } | null;
-        if (!cancelled && Array.isArray(json?.years)) {
-          setHistYears(json!.years.filter(histHasData).slice(-4));
-        }
-      } catch {
-        /* worker offline / route absent — model column still renders */
-      }
-    })();
-    return () => { cancelled = true; };
-  }, [rawId, isKimptonDemo]);
+  // Multi-year grounded columns — reuses HistoricalsSection's tested loader
+  // (endpoint + multi-doc fallback) via useHistoricals. Keep the last 4
+  // populated years; empty on deals with no extracted P&Ls (Model col alone).
+  const { years: allHistYears } = useHistoricals(rawId, { keys: deal?.keys });
+  const histYears = useMemo(() => allHistYears.filter(histHasData).slice(-4), [allHistYears]);
 
   // Model-column base (pre-edit) values per row id.
   const modelBase = useMemo<Record<string, number>>(() => {
@@ -236,13 +223,14 @@ export default function GroundedWorksheet({
       for (const p of path) cur = (cur as Record<string, unknown>)?.[p];
       return num(cur);
     };
+    const srcOf = (s: RowDef['y1Src']) => (s === 'fb' ? fbY0 : s === 'revenue' ? revY0 : expY0);
     const v: Record<string, number> = {};
     for (const r of ROWS) {
       if (!r.y1Read) continue;
-      v[r.id] = readPath(r.y1Rev ? fbY0 : expY0, r.y1Read);
+      v[r.id] = readPath(srcOf(r.y1Src), r.y1Read);
     }
     return v;
-  }, [expY0, fbY0]);
+  }, [expY0, fbY0, revY0]);
 
   // Model-column live values (base + draft edits), then derived rows.
   const modelLive = useMemo<Record<string, number>>(() => {
@@ -662,6 +650,7 @@ function WorksheetCell({
       docIds: review ? [review.docId, ...docIds.filter((id) => id !== review.docId)] : docIds,
       formula: row.kind === 'computed' || row.kind === 'subtotal' ? formulaFor(row.id) : undefined,
       review,
+      fmt: row.fmt,
     });
   };
 
@@ -701,11 +690,11 @@ function WorksheetCell({
               review ? 'ring-1 ring-warn-400 bg-warn-50 text-warn-800' : overridden ? 'text-violet-700 font-medium' : 'text-ink-900',
             )}
           >
-            {saving ? <Loader2 size={11} className="animate-spin inline" /> : fmtCurrency(value, { compact: true })}
+            {saving ? <Loader2 size={11} className="animate-spin inline" /> : fmtRowValue(value, row.fmt)}
           </button>
         ) : (
           <span className={cn('tabular-nums', (row.kind === 'computed' || row.kind === 'subtotal') ? 'font-semibold text-ink-900' : 'text-ink-700')}>
-            {fmtCurrency(value, { compact: true })}
+            {fmtRowValue(value, row.fmt)}
           </span>
         )}
       </span>
@@ -903,7 +892,9 @@ function SourcePanel({
           <div>
             <div className="text-[10.5px] uppercase tracking-wider text-ink-500">{target.colLabel}</div>
             <h4 className="text-[15px] font-semibold text-ink-900 mt-0.5">{target.rowLabel}</h4>
-            <div className="text-[19px] font-semibold tabular-nums text-ink-900 mt-1">{fmtCurrency(target.value)}</div>
+            <div className="text-[19px] font-semibold tabular-nums text-ink-900 mt-1">
+              {target.fmt === 'pct' ? `${(target.value * 100).toFixed(1)}%` : target.fmt === 'dollar' ? `$${Math.round(target.value).toLocaleString()}` : fmtCurrency(target.value)}
+            </div>
           </div>
           <button type="button" onClick={onClose} className="p-1 text-ink-400 hover:text-ink-900">
             <X size={16} />

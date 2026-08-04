@@ -32,7 +32,6 @@ import { GLOSSARY } from '@/lib/glossary';
 import DueDiligenceSection from './pl/DueDiligenceSection';
 import ProjectionsSection from './pl/ProjectionsSection';
 import GroundedWorksheet from './pl/GroundedWorksheet';
-import HistoricalsSection from './pl/HistoricalsSection';
 import IndexAnalysisSection from './pl/IndexAnalysisSection';
 
 // Review is NOT its own screen — it lives inside Historicals, where the
@@ -546,14 +545,12 @@ export default function PLTab({ projectId }: { projectId: number | string }) {
           />
         )}
         {tab === 'Historicals' && (
-          <div className="space-y-5">
-            {/* The worksheet IS the review+edit surface: multi-year grounded,
-                inline-editable Model column, click-to-source, low-confidence
-                flags. The detail table below carries operating stats + the
-                robust multi-doc historical fallback. */}
-            <GroundedWorksheet dealId={dealId} isKimptonDemo={isKimptonDemo} />
-            <HistoricalsSection dealId={dealId} isKimptonDemo={isKimptonDemo} />
-          </div>
+          // One table: the grounded worksheet is the single financial-data
+          // surface — multi-year grounded columns (incl. Occupancy/ADR/RevPAR),
+          // inline-editable Model column, click-to-source, low-confidence flags,
+          // and structure editing. It reuses HistoricalsSection's loader via
+          // useHistoricals, so nothing was lost by retiring the old table here.
+          <GroundedWorksheet dealId={dealId} isKimptonDemo={isKimptonDemo} />
         )}
         {tab === 'Projections' && (
           <ProjectionsSection dealId={dealId} isKimptonDemo={isKimptonDemo} />
