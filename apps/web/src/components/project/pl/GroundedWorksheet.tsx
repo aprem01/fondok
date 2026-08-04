@@ -163,8 +163,15 @@ function histValue(rowId: string, h: HistYear): number | null {
   }
 }
 
+// A year earns a column only if it carries REAL data — skeleton placeholders
+// (populated:false) and all-zero years are dropped so the grid isn't padded
+// with empty $0 columns.
 const histHasData = (h: HistYear) =>
-  [h.noi, h.gop, h.rooms, h.fb].some((x) => nOrNull(x) != null);
+  h.populated !== false &&
+  [h.rooms, h.fb, h.gop, h.noi].some((x) => {
+    const n = nOrNull(x);
+    return n != null && n !== 0;
+  });
 
 interface InspectTarget {
   rowLabel: string;
@@ -448,12 +455,16 @@ export default function GroundedWorksheet({
       )}
 
       <div className="overflow-x-auto">
-        <table className="w-full text-[12.5px]" style={{ minWidth: 320 + cols.length * 110 }}>
+        <table className="w-full table-fixed text-[12.5px]" style={{ minWidth: 300 + cols.length * 96 }}>
+          <colgroup>
+            <col style={{ width: 300 }} />
+            {cols.map((c) => <col key={c.id} />)}
+          </colgroup>
           <thead>
             <tr className="text-ink-500 text-[10px] uppercase tracking-wider border-b border-border">
               <th className="text-left font-semibold px-5 py-2 sticky left-0 bg-bg z-10">Line item</th>
               {cols.map((c) => (
-                <th key={c.id} className={cn('text-right font-semibold px-3 py-2 w-[110px]', !c.historical && 'text-brand-700')}>
+                <th key={c.id} className={cn('text-right font-semibold px-3 py-2', !c.historical && 'text-brand-700')}>
                   {c.label}
                 </th>
               ))}

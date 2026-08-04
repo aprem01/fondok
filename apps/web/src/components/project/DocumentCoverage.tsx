@@ -48,7 +48,7 @@ export interface DocumentCoverageProps {
     body: { doc_type?: string; fiscal_year?: number },
   ) => void;
   /** Open a file's extracted-data / review panel. */
-  onOpenDoc: (docId: string) => void;
+  onOpenDoc: (docId: string, financial?: boolean) => void;
   /** Doc id whose reclassify is in flight (disables its controls). */
   busyDocId?: string | null;
   className?: string;
@@ -484,10 +484,10 @@ function CoverageFileRow({
         )}
         <button
           type="button"
-          onClick={() => onOpenDoc(file.id)}
+          onClick={() => onOpenDoc(file.id, financial)}
           className="text-[10.5px] font-medium px-2.5 py-1 rounded bg-brand-600 text-white hover:bg-brand-700"
         >
-          {financial ? 'View P&L' : 'View data'}
+          {financial ? 'View in Financials' : 'View data'}
         </button>
       </div>
     </li>

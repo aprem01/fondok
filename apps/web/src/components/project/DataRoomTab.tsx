@@ -1013,13 +1013,19 @@ export default function DataRoomTab({ projectId }: { projectId: number | string 
             }),
           )}
           onReclassify={handleReclassify}
-          onOpenDoc={(docId) => {
+          onOpenDoc={(docId, financial) => {
+            // Financial docs open the ONE financial-data screen (Financials →
+            // Historicals worksheet) — same destination as the "needs review"
+            // CTA, so there's a single place to fix/review/trace the numbers.
+            if (financial) {
+              router.push(`/projects/${rawId}?tab=pl&fin=historicals`, { scroll: false });
+              return;
+            }
+            // Non-financial docs (e.g. the OM) show their extracted fields in
+            // the inline pane below the coverage card.
             const d = docs.find((x) => x.id === docId);
             if (!d) return;
             setSelectedDoc(d.name);
-            // The Extracted-Data / review pane is far below the coverage
-            // card — scroll it into view so "View P&L" visibly does
-            // something (selection alone changed nothing on screen).
             requestAnimationFrame(() => {
               document
                 .getElementById('dataroom-documents-anchor')
