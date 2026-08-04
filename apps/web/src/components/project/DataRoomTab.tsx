@@ -277,6 +277,8 @@ export default function DataRoomTab({ projectId }: { projectId: number | string 
   const fileInputRef = useRef<HTMLInputElement>(null);
   const searchParams = useSearchParams();
   const [selectedDoc, setSelectedDoc] = useState<string | null>(null);
+  // Focused field-review drawer (opened by "View data" on any document).
+  const [reviewDocId, setReviewDocId] = useState<string | null>(null);
   // FON-24: field name a validation finding deep-linked to (via
   // ?reviewField=…). The matching review row highlights + scrolls into view.
   const [highlightField, setHighlightField] = useState<string | null>(null);
@@ -644,6 +646,10 @@ export default function DataRoomTab({ projectId }: { projectId: number | string 
   const selectedDocRow = useMemo(
     () => docs.find((d) => d.name === selectedDoc) ?? null,
     [docs, selectedDoc],
+  );
+  const reviewDocRow = useMemo(
+    () => docs.find((d) => d.id === reviewDocId) ?? null,
+    [docs, reviewDocId],
   );
   const selectedHasVariance = selectedDoc !== null && VARIANCE_DOCS.has(selectedDoc);
   const selectedVarianceFlags = selectedHasVariance
@@ -1030,16 +1036,10 @@ export default function DataRoomTab({ projectId }: { projectId: number | string 
               router.push(`/projects/${rawId}?tab=pl&fin=historicals`, { scroll: false });
               return;
             }
-            // Non-financial docs (e.g. the OM) show their extracted fields in
-            // the inline pane below the coverage card.
-            const d = docs.find((x) => x.id === docId);
-            if (!d) return;
-            setSelectedDoc(d.name);
-            requestAnimationFrame(() => {
-              document
-                .getElementById('dataroom-documents-anchor')
-                ?.scrollIntoView({ behavior: 'smooth', block: 'start' });
-            });
+            // Non-financial docs (e.g. the OM) open a focused field-review
+            // drawer in place — each field deep-links to the screen where it's
+            // used — instead of scrolling to the distant documents section.
+            setReviewDocId(docId);
           }}
           busyDocId={reclassifyingDoc}
         />
@@ -2020,6 +2020,89 @@ export default function DataRoomTab({ projectId }: { projectId: number | string 
           </div>
         </Card>
       )}
+
+      {reviewDocRow && (
+        <DocumentReviewDrawer
+          doc={reviewDocRow}
+          liveMode={liveMode}
+          onClose={() => setReviewDocId(null)}
+          onGoTo={(t) => { setReviewDocId(null); goToScreen(t); }}
+          onReview={handleReviewField}
+        />
+      )}
+    </div>
+  );
+}
+
+// Focused, in-place field review — opens as a right-side drawer from "View
+// data" so the analyst reviews a document AND jumps to where each field is used,
+// without scrolling to a distant section. Reuses DataRow (accept/edit + the
+// per-field "→ Screen" deep-link).
+function DocumentReviewDrawer({
+  doc, liveMode, onClose, onGoTo, onReview,
+}: {
+  doc: { id: string; name: string; type: string; confidence: number; fieldList?: ExtractionField[] };
+  liveMode: boolean;
+  onClose: () => void;
+  onGoTo: (tab: string) => void;
+  onReview: (docId: string, fieldName: string, action: 'accept' | 'edit' | 'reject', value?: string) => Promise<void>;
+}) {
+  const fields = doc.fieldList ?? [];
+  // Needs-review first (low-confidence, unreviewed), then by confidence asc.
+  const sorted = useMemo(
+    () => [...fields].sort((a, b) => (a.confidence ?? 1) - (b.confidence ?? 1)),
+    [fields],
+  );
+  const low = fields.filter((f) => (f.confidence ?? 1) < 0.85 && !f.reviewed).length;
+
+  return (
+    <div className="fixed inset-0 z-50 flex justify-end" onClick={onClose}>
+      <div className="absolute inset-0 bg-ink-900/25" />
+      <div
+        className="relative w-full max-w-md h-full bg-card border-l border-border shadow-xl overflow-y-auto"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="sticky top-0 z-10 bg-card border-b border-border px-5 py-4 flex items-start justify-between">
+          <div className="min-w-0">
+            <div className="text-[10.5px] uppercase tracking-wider text-ink-500">Field review</div>
+            <h4 className="text-[14px] font-semibold text-ink-900 truncate" title={doc.name}>{doc.name}</h4>
+            <div className="flex items-center gap-2 mt-1 text-[11px] text-ink-500">
+              <Badge tone="gray">{DOC_TYPE_LABEL[doc.type] ?? doc.type}</Badge>
+              <span className="tabular-nums">{fields.length} fields</span>
+              {low > 0 && <span className="text-warn-700 tabular-nums">· {low} to review</span>}
+            </div>
+          </div>
+          <button type="button" onClick={onClose} aria-label="Close" className="p-1 text-ink-400 hover:text-ink-900">
+            <CloseIcon size={16} />
+          </button>
+        </div>
+        <div className="px-5 py-2.5 text-[11px] text-ink-500 border-b border-border">
+          Each field links to the screen where its data is used — click <span className="text-brand-700 font-medium">→</span> to go there.
+        </div>
+        <div className="px-4 py-2">
+          {!liveMode ? (
+            <div className="text-[11.5px] text-ink-500 py-6 text-center">Field review is available on live deals.</div>
+          ) : sorted.length === 0 ? (
+            <div className="text-[11.5px] text-ink-500 py-6 text-center">No extracted fields on this document.</div>
+          ) : (
+            sorted.map((f) => (
+              <DataRow
+                key={f.field_name}
+                label={humanizeFieldName(f.field_name)}
+                value={formatValue(f.value, f.unit, f.field_name)}
+                confidence={Math.round((f.confidence ?? 0) * 100)}
+                rawLabel={f.field_name}
+                reviewed={f.reviewed ?? null}
+                snippet={f.raw_text ?? null}
+                sourcePage={f.source_page ?? null}
+                destination={fieldDestination(f.field_name)}
+                onGoTo={onGoTo}
+                onReview={(action, value) => onReview(doc.id, f.field_name, action, value)}
+              />
+            ))
+          )}
+        </div>
+      </div>
     </div>
   );
 }
