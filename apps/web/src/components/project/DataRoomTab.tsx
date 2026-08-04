@@ -2072,7 +2072,7 @@ function DocumentReviewDrawer({
     <div className="fixed inset-0 z-50 flex justify-end" onClick={onClose}>
       <div className="absolute inset-0 bg-ink-900/25" />
       <div
-        className="relative w-full max-w-md h-full bg-card border-l border-border shadow-xl overflow-y-auto"
+        className="relative w-full max-w-[540px] h-full bg-card border-l border-border shadow-xl overflow-y-auto"
         onClick={(e) => e.stopPropagation()}
       >
         <div className="sticky top-0 z-10 bg-card border-b border-border px-5 py-4 flex items-start justify-between">
@@ -2109,7 +2109,7 @@ function DocumentReviewDrawer({
         <div className="px-5 py-2.5 text-[11px] text-ink-500 border-b border-border">
           Or click any field’s <span className="text-brand-700 font-medium">→</span> to jump to exactly where it’s used.
         </div>
-        <div className="px-4 py-2">
+        <div className="px-5 pb-6">
           {!liveMode ? (
             <div className="text-[11.5px] text-ink-500 py-6 text-center">Field review is available on live deals.</div>
           ) : sorted.length === 0 ? (
@@ -2225,44 +2225,28 @@ function DataRow({
     <div
       ref={rowRef}
       className={cn(
-        'py-1.5 border-b border-border last:border-0 transition-colors',
+        'py-2.5 border-b border-border last:border-0 transition-colors',
         highlight && 'bg-brand-50 ring-2 ring-brand-500/40 rounded-md -mx-1.5 px-1.5',
       )}
     >
-      <div className="flex items-center justify-between">
-        {/* FON-21: analyst-facing label; raw schema path on hover. */}
-        <span className="text-ink-500 flex items-center gap-1.5" title={rawLabel && rawLabel !== label ? rawLabel : undefined}>
+      {/* Line 1 — label + value only, so neither gets crowded. */}
+      <div className="flex items-start justify-between gap-3">
+        <span className="text-[12.5px] font-medium text-ink-800 leading-snug" title={rawLabel && rawLabel !== label ? rawLabel : undefined}>
           {label}
-          {/* FON-23: analyst-verified marker. */}
-          {reviewed && (
-            <span className="text-[9.5px] uppercase tracking-wide text-success-700 bg-success-50 border border-success-500/30 rounded px-1 py-px">
-              {reviewed === 'edited' ? 'Edited' : 'Verified'}
-            </span>
-          )}
-          {destination && onGoTo && (
-            <button
-              type="button"
-              onClick={() => onGoTo(destination.tab, rawLabel)}
-              title={`See where this is used — ${destination.label}`}
-              className="text-[9.5px] text-brand-700 hover:text-brand-500 inline-flex items-center gap-0.5 rounded focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-500"
-            >
-              → {destination.label}
-            </button>
-          )}
         </span>
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-1.5 shrink-0">
           {editing ? (
             <input
               autoFocus
               value={draft}
               onChange={(e) => setDraft(e.target.value)}
-              className="w-28 text-right font-medium tabular-nums text-ink-900 border border-brand-500/40 rounded px-1.5 py-0.5 text-[11.5px] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-500"
+              className="w-28 text-right font-semibold tabular-nums text-ink-900 border border-brand-500/40 rounded px-1.5 py-0.5 text-[12.5px] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-500"
               aria-label={`Corrected value for ${label}`}
             />
           ) : (
-            <span className="font-medium tabular-nums text-ink-900">{value}</span>
+            <span className="font-semibold tabular-nums text-ink-900 text-[13px] whitespace-nowrap">{value}</span>
           )}
-          {onViewSource && (
+          {onViewSource && !editing && (
             <button
               type="button"
               onClick={onViewSource}
@@ -2273,9 +2257,28 @@ function DataRow({
               <FileText size={12} aria-hidden="true" />
             </button>
           )}
-          <Badge tone={tier.tone}>{tier.label}</Badge>
-          <ConfidenceBadge value={confidence / 100} />
         </div>
+      </div>
+      {/* Line 2 — meta: where it's used, confidence, review status. */}
+      <div className="flex items-center gap-2 flex-wrap mt-1.5">
+        {destination && onGoTo && (
+          <button
+            type="button"
+            onClick={() => onGoTo(destination.tab, rawLabel)}
+            title={`See where this is used — ${destination.label}`}
+            className="text-[10px] px-2 py-0.5 rounded-full border border-border text-brand-700 hover:border-brand-500 hover:text-brand-500 transition-colors inline-flex items-center gap-0.5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-500"
+          >
+            {destination.label} <ArrowRight size={9} aria-hidden="true" />
+          </button>
+        )}
+        <ConfidenceBadge value={confidence / 100} />
+        {reviewed ? (
+          <span className="text-[9.5px] uppercase tracking-wide text-success-700 bg-success-50 border border-success-500/30 rounded px-1.5 py-0.5">
+            {reviewed === 'edited' ? 'Edited' : 'Verified'}
+          </span>
+        ) : (
+          <Badge tone={tier.tone}>{tier.label}</Badge>
+        )}
       </div>
       {/* FON-23: inline accept/edit/reject for Needs-Review fields. */}
       {reviewable && snippet && !editing && (
