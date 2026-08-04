@@ -60,11 +60,14 @@ export function useHistoricals(
         /* worker offline / route absent — fall through */
       }
 
-      // 2) multi-doc fallback: one column per extracted P&L / T-12 doc.
+      // 2) multi-doc fallback: one column per extracted P&L / T-12 doc, PLUS
+      //    any multi-year P&L embedded in an OM (p_and_l_usali.YYYY.*).
       try {
         const docs = (await api.documents.list(String(dealId))) as WorkerDocument[];
-        const pnlDocs = (docs ?? []).filter(isPnlDoc).filter((d) => d.status === 'EXTRACTED');
-        if (pnlDocs.length > 0 && keysHint > 0) {
+        const extracted = (docs ?? []).filter((d) => d.status === 'EXTRACTED');
+        const pnlDocs = extracted.filter(isPnlDoc);
+        const omDocs = extracted.filter((d) => (d.doc_type ?? '').toUpperCase() === 'OM');
+        if ((pnlDocs.length > 0 || omDocs.length > 0) && keysHint > 0) {
           const byYear = new Map<string, HistYear>();
           const sorted = [...pnlDocs].sort((a, b) => (a.uploaded_at ?? '').localeCompare(b.uploaded_at ?? ''));
           for (const doc of sorted) {
@@ -76,6 +79,22 @@ export function useHistoricals(
               if (built) byYear.set(label, built);
             } catch {
               /* skip this doc — others may still populate */
+            }
+          }
+          // OM-embedded prior years fill gaps a standalone statement doesn't
+          // cover (e.g. an OM's own 2021-2023 P&L). Actual statements always
+          // win on a shared year — the OM only backfills missing history.
+          for (const doc of omDocs) {
+            try {
+              const ext = await api.documents.extraction(String(dealId), doc.id);
+              const embedded = extractEmbeddedYears(ext.fields ?? []);
+              for (const [yr, vals] of Object.entries(embedded)) {
+                if (!byYear.has(yr) && Object.keys(vals).length >= 6) {
+                  byYear.set(yr, omYearToHistYear(vals, yr));
+                }
+              }
+            } catch {
+              /* skip — OM may lack an embedded P&L */
             }
           }
           if (byYear.size > 0 && !cancelled) {
@@ -115,5 +134,51 @@ function blankYear(year: string): HistYear {
     rooms_dept_expense: null, fb_dept_expense: null, other_dept_expense: null,
     undistributed: null, gop: null, fixed_expenses: null, noi: null,
     populated: false,
+  };
+}
+
+// Pull multi-year P&L blocks embedded in a document's extraction, keyed
+// `p_and_l_usali.<YYYY>.<line>` — an OM typically reproduces the property's own
+// 2-3 year operating history this way. Returns { year: { line: value } }.
+function extractEmbeddedYears(
+  fields: { field_name?: string; value?: unknown }[],
+): Record<string, Record<string, number>> {
+  const out: Record<string, Record<string, number>> = {};
+  const re = /^p_and_l_usali\.((?:19|20)\d\d)\.(.+)$/;
+  for (const f of fields) {
+    const m = re.exec(f.field_name ?? '');
+    if (!m) continue;
+    const v = f.value;
+    if (typeof v !== 'number' || !Number.isFinite(v)) continue;
+    (out[m[1]] ??= {})[m[2]] = v;
+  }
+  return out;
+}
+
+// Map one OM-embedded year's USALI lines (all `*_usd`, in dollars) to a HistYear.
+function omYearToHistYear(v: Record<string, number>, year: string): HistYear {
+  const n = (x: unknown): number | null => (typeof x === 'number' && Number.isFinite(x) ? x : null);
+  const num = (x: unknown): number => n(x) ?? 0;
+  return {
+    year,
+    days: 365,
+    occupancyPct: num(v.occupancy_pct),
+    adr: num(v.adr_usd),
+    revpar: num(v.revpar_usd),
+    rooms: num(v.rooms_revenue_usd),
+    fb: num(v.fb_revenue_usd),
+    misc: num(v.other_operated_depts_revenue_usd) + num(v.miscellaneous_revenue_usd),
+    rooms_dept_expense: n(v.rooms_dept_expense_usd),
+    fb_dept_expense: n(v.fb_dept_expense_usd),
+    other_dept_expense: n(v.other_operated_depts_expense_usd),
+    undistributed: n(v.total_undistributed_expense_usd),
+    gop: n(v.gop_usd),
+    // Fees & fixed = mgmt + FF&E + property tax + insurance + rent (matches the
+    // worksheet's Model "Total Fees & Fixed" so the columns reconcile).
+    fixed_expenses:
+      num(v.management_fee_usd) + num(v.ffe_reserve_usd) + num(v.property_tax_usd) +
+      num(v.insurance_expense_usd) + num(v.rent_usd),
+    noi: n(v.noi_usd),
+    populated: true,
   };
 }

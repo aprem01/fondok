@@ -2054,6 +2054,17 @@ function DocumentReviewDrawer({
     [fields],
   );
   const low = fields.filter((f) => (f.confidence ?? 1) < 0.85 && !f.reviewed).length;
+  // Distinct screens this document feeds — a multi-destination doc (the OM)
+  // can jump to any of them directly, not just per-field.
+  const dests = useMemo(() => {
+    const ORDER = ['overview', 'investment', 'pl', 'debt', 'market', 'forecasting'];
+    const seen = new Map<string, { tab: string; label: string }>();
+    for (const f of fields) {
+      const d = fieldDestination(f.field_name);
+      if (d && !seen.has(d.tab)) seen.set(d.tab, d);
+    }
+    return [...seen.values()].sort((a, b) => ORDER.indexOf(a.tab) - ORDER.indexOf(b.tab));
+  }, [fields]);
 
   return (
     <div className="fixed inset-0 z-50 flex justify-end" onClick={onClose}>
@@ -2076,8 +2087,25 @@ function DocumentReviewDrawer({
             <CloseIcon size={16} />
           </button>
         </div>
+        {dests.length > 0 && (
+          <div className="px-5 py-3 border-b border-border">
+            <div className="text-[10px] uppercase tracking-wider text-ink-500 mb-1.5">Feeds these screens</div>
+            <div className="flex flex-wrap gap-1.5">
+              {dests.map((d) => (
+                <button
+                  key={d.tab}
+                  type="button"
+                  onClick={() => onGoTo(d.tab)}
+                  className="text-[11px] px-2.5 py-1 rounded-full border border-border text-ink-700 hover:border-brand-500 hover:text-brand-700 transition-colors inline-flex items-center gap-1"
+                >
+                  {d.label} <ArrowRight size={11} />
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
         <div className="px-5 py-2.5 text-[11px] text-ink-500 border-b border-border">
-          Each field links to the screen where its data is used — click <span className="text-brand-700 font-medium">→</span> to go there.
+          Or click any field’s <span className="text-brand-700 font-medium">→</span> to jump to exactly where it’s used.
         </div>
         <div className="px-4 py-2">
           {!liveMode ? (
