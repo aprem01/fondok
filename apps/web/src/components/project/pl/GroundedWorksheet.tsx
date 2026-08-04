@@ -22,7 +22,11 @@
  */
 
 import { useMemo, useState, useEffect, useCallback } from 'react';
-import { Loader2, RotateCcw, X, FileText, Info } from 'lucide-react';
+import type { ReactNode } from 'react';
+import {
+  Loader2, RotateCcw, X, FileText, Info, SlidersHorizontal,
+  EyeOff, Eye, ChevronUp, ChevronDown, Plus, Scissors, Trash2, Check,
+} from 'lucide-react';
 import { Card } from '@/components/ui/Card';
 import { cn, fmtCurrency } from '@/lib/format';
 import { useToast } from '@/components/ui/Toast';
@@ -34,16 +38,17 @@ import { useDeal } from '@/lib/hooks/useDeal';
 import { useDocuments } from '@/lib/hooks/useDocuments';
 import { useSource } from '@/lib/hooks/useDealProvenance';
 import { sourceKind, sourceExplanation } from '@/lib/provenance';
+import { useWorksheetLayout } from '@/lib/hooks/useWorksheetLayout';
+import type { SplitChild, CuratedLine } from '@/lib/hooks/useWorksheetLayout';
 
 // ── Row model ──────────────────────────────────────────────────────────
-// histField = key on a historical_baseline year (null → no historical value).
-// overrideKey = canonical field_overrides key (present → editable in Model col).
+// Historical values are mapped by row id in histValue(); overrideKey (present
+// → editable in the Model column) is the canonical field_overrides key.
 type RowKind = 'section' | 'input' | 'subtotal' | 'computed';
 interface RowDef {
   id: string;
   label: string;
   kind: RowKind;
-  histField?: string;      // field on HistoricalYear
   overrideKey?: string;    // editable model-column key
   y1Read?: string[];       // dotted path into expense engine years[0]
   y1Rev?: boolean;         // read revenue line from fb engine years[0] instead
@@ -59,16 +64,16 @@ const DEPT_IDS = ['rooms_dept', 'fb_dept', 'other_dept'];
 
 const ROWS: RowDef[] = [
   { id: 's_rev', label: 'Revenue', kind: 'section' },
-  { id: 'rooms_rev', label: 'Rooms Revenue', kind: 'input', histField: 'rooms_revenue', y1Rev: true, y1Read: ['rooms_revenue'] },
-  { id: 'fb_rev', label: 'Food & Beverage Revenue', kind: 'input', histField: 'fnb_revenue', y1Rev: true, y1Read: ['fb_revenue'] },
-  { id: 'other_rev', label: 'Other Revenue', kind: 'input', histField: 'other_revenue', y1Rev: true, y1Read: ['other_revenue'] },
-  { id: 'total_rev', label: 'Total Revenue', kind: 'subtotal', histField: 'total_revenue',
+  { id: 'rooms_rev', label: 'Rooms Revenue', kind: 'input', y1Rev: true, y1Read: ['rooms_revenue'] },
+  { id: 'fb_rev', label: 'Food & Beverage Revenue', kind: 'input', y1Rev: true, y1Read: ['fb_revenue'] },
+  { id: 'other_rev', label: 'Other Revenue', kind: 'input', y1Rev: true, y1Read: ['other_revenue'] },
+  { id: 'total_rev', label: 'Total Revenue', kind: 'subtotal',
     compute: (v) => v.rooms_rev + v.fb_rev + v.other_rev },
 
   { id: 's_dept', label: 'Departmental Expenses', kind: 'section' },
-  { id: 'rooms_dept', label: 'Rooms', kind: 'input', histField: 'rooms_dept_expense', overrideKey: 'rooms_dept_expense', y1Read: ['dept_expenses', 'rooms'] },
-  { id: 'fb_dept', label: 'Food & Beverage', kind: 'input', histField: 'fnb_dept_expense', overrideKey: 'fb_dept_expense', y1Read: ['dept_expenses', 'food_beverage'] },
-  { id: 'other_dept', label: 'Other Operated', kind: 'input', histField: 'other_dept_expense', overrideKey: 'other_dept_expense', y1Read: ['dept_expenses', 'other_operated'] },
+  { id: 'rooms_dept', label: 'Rooms', kind: 'input', overrideKey: 'rooms_dept_expense', y1Read: ['dept_expenses', 'rooms'] },
+  { id: 'fb_dept', label: 'Food & Beverage', kind: 'input', overrideKey: 'fb_dept_expense', y1Read: ['dept_expenses', 'food_beverage'] },
+  { id: 'other_dept', label: 'Other Operated', kind: 'input', overrideKey: 'other_dept_expense', y1Read: ['dept_expenses', 'other_operated'] },
 
   { id: 's_undist', label: 'Undistributed Operating Expenses', kind: 'section' },
   { id: 'ag', label: 'Administrative & General', kind: 'input', overrideKey: 'administrative_general', y1Read: ['undistributed', 'administrative_general'] },
@@ -76,10 +81,10 @@ const ROWS: RowDef[] = [
   { id: 'pom', label: 'Property Operations', kind: 'input', overrideKey: 'property_operations', y1Read: ['undistributed', 'property_operations'] },
   { id: 'util', label: 'Utilities', kind: 'input', overrideKey: 'utilities', y1Read: ['undistributed', 'utilities'] },
   { id: 'it', label: 'Information & Telecom', kind: 'input', overrideKey: 'information_telecom', y1Read: ['undistributed', 'information_telecom'] },
-  { id: 'undist_total', label: 'Total Undistributed', kind: 'subtotal', histField: 'undistributed',
+  { id: 'undist_total', label: 'Total Undistributed', kind: 'subtotal',
     compute: (v) => sumKeys(v, UNDIST_IDS) },
 
-  { id: 'gop', label: 'Gross Operating Profit (GOP)', kind: 'computed', histField: 'gop',
+  { id: 'gop', label: 'Gross Operating Profit (GOP)', kind: 'computed',
     compute: (v) => v.total_rev - sumKeys(v, DEPT_IDS) - sumKeys(v, UNDIST_IDS) },
 
   { id: 's_fixed', label: 'Management Fee & Fixed Charges', kind: 'section' },
@@ -87,12 +92,28 @@ const ROWS: RowDef[] = [
   { id: 'ffe', label: 'FF&E Reserve', kind: 'input', overrideKey: 'ffe_reserve', y1Read: ['ffe_reserve'] },
   { id: 'taxes', label: 'Property Taxes', kind: 'input', overrideKey: 'property_taxes', y1Read: ['fixed_charges', 'property_taxes'] },
   { id: 'insurance', label: 'Insurance', kind: 'input', overrideKey: 'insurance', y1Read: ['fixed_charges', 'insurance'] },
-  { id: 'fixed_total', label: 'Total Fees & Fixed', kind: 'subtotal', histField: 'fixed_expenses',
+  { id: 'fixed_total', label: 'Total Fees & Fixed', kind: 'subtotal',
     compute: (v) => sumKeys(v, FIXED_FEE_IDS) },
 
-  { id: 'noi', label: 'Net Operating Income (NOI)', kind: 'computed', histField: 'noi',
+  { id: 'noi', label: 'Net Operating Income (NOI)', kind: 'computed',
     compute: (v) => v.total_rev - sumKeys(v, DEPT_IDS) - sumKeys(v, UNDIST_IDS) - sumKeys(v, FIXED_FEE_IDS) },
 ];
+
+// Input (editable) member rows per section, and a row lookup — used by the
+// presentation layer (reorder / hide / add-curated / split) to keep canonical
+// subtotals + computed rows anchored while detail lines stay flexible.
+const SECTION_INPUTS: Record<string, string[]> = (() => {
+  const out: Record<string, string[]> = {};
+  let cur = '';
+  for (const r of ROWS) {
+    if (r.kind === 'section') { cur = r.id; out[cur] = []; }
+    else if (r.kind === 'input') out[cur]?.push(r.id);
+  }
+  return out;
+})();
+const INPUT_BY_ID: Record<string, RowDef> = Object.fromEntries(
+  ROWS.filter((r) => r.kind === 'input').map((r) => [r.id, r]),
+);
 
 const num = (x: unknown): number => (typeof x === 'number' && Number.isFinite(x) ? x : 0);
 
@@ -153,6 +174,13 @@ interface InspectTarget {
   formula?: string;
 }
 
+type RenderItem =
+  | { type: 'section'; id: string; label: string }
+  | { type: 'anchor'; row: RowDef }
+  | { type: 'input'; row: RowDef; sectionId: string; siblings: string[]; splitDelta: number | null }
+  | { type: 'split'; parentId: string; child: SplitChild }
+  | { type: 'curated'; line: CuratedLine };
+
 export default function GroundedWorksheet({
   dealId,
   isKimptonDemo,
@@ -168,6 +196,8 @@ export default function GroundedWorksheet({
   const { run, status } = useEngineRun(rawId, 'returns', { runMode: 'all' });
   const running = status === 'running' || status === 'queued';
 
+  const wl = useWorksheetLayout(rawId);
+  const [customize, setCustomize] = useState(false);
   const [draft, setDraft] = useState<Record<string, string>>({});
   const [savingKey, setSavingKey] = useState<string | null>(null);
   const [inspect, setInspect] = useState<InspectTarget | null>(null);
@@ -232,6 +262,48 @@ export default function GroundedWorksheet({
 
   const overrides = (deal?.field_overrides ?? {}) as Record<string, unknown>;
   const isOverridden = (key?: string) => !!key && key in overrides;
+
+  const labelOf = useCallback(
+    (id: string, fallback: string) => wl.layout.relabels[id] ?? fallback,
+    [wl.layout.relabels],
+  );
+
+  // The presentation tree: canonical rows in ROWS order, but with per-section
+  // reordering, hidden lines, curated memo lines, and split children applied.
+  // Subtotals + computed rows stay anchored in their canonical position.
+  const rendered = useMemo<RenderItem[]>(() => {
+    const items: RenderItem[] = [];
+    const curatedBySection: Record<string, CuratedLine[]> = {};
+    for (const c of wl.layout.curated) (curatedBySection[c.section] ??= []).push(c);
+
+    for (const row of ROWS) {
+      if (row.kind === 'section') {
+        items.push({ type: 'section', id: row.id, label: row.label });
+        const defaults = SECTION_INPUTS[row.id] ?? [];
+        const curated = curatedBySection[row.id] ?? [];
+        const universe = [...defaults, ...curated.map((c) => c.id)];
+        const saved = wl.layout.order[row.id];
+        const ordered = saved
+          ? [...saved.filter((id) => universe.includes(id)), ...universe.filter((id) => !saved.includes(id))]
+          : universe;
+        for (const id of ordered) {
+          const cur = curated.find((c) => c.id === id);
+          if (cur) { items.push({ type: 'curated', line: cur }); continue; }
+          const r = INPUT_BY_ID[id];
+          if (!r) continue;
+          if (wl.layout.hidden.includes(id) && !customize) continue;
+          const kids = wl.layout.splits[id];
+          const splitDelta = kids?.length ? (modelLive[id] ?? 0) - kids.reduce((s, k) => s + k.value, 0) : null;
+          items.push({ type: 'input', row: r, sectionId: row.id, siblings: ordered, splitDelta });
+          if (kids?.length) for (const k of kids) items.push({ type: 'split', parentId: id, child: k });
+        }
+        continue;
+      }
+      if (row.kind === 'input') continue; // emitted under its section header
+      items.push({ type: 'anchor', row });
+    }
+    return items;
+  }, [wl.layout, customize, modelLive]);
 
   const save = useCallback(
     async (key: string) => {
@@ -307,12 +379,39 @@ export default function GroundedWorksheet({
             click any expense line to edit, or any cell’s dot to see its source.
           </p>
         </div>
-        {running && (
-          <span className="inline-flex items-center gap-1.5 text-[11.5px] text-brand-700">
-            <Loader2 size={12} className="animate-spin" /> Re-modeling…
-          </span>
-        )}
+        <div className="flex items-center gap-3">
+          {running && (
+            <span className="inline-flex items-center gap-1.5 text-[11.5px] text-brand-700">
+              <Loader2 size={12} className="animate-spin" /> Re-modeling…
+            </span>
+          )}
+          {customize && wl.isCustomized && (
+            <button
+              type="button"
+              onClick={wl.reset}
+              className="text-[11.5px] text-ink-500 hover:text-danger-700"
+            >
+              Reset layout
+            </button>
+          )}
+          <button
+            type="button"
+            onClick={() => setCustomize((c) => !c)}
+            className={cn(
+              'inline-flex items-center gap-1.5 text-[11.5px] px-2.5 py-1 rounded-md border transition-colors',
+              customize ? 'border-brand-500 text-brand-700 bg-brand-50' : 'border-border text-ink-600 hover:text-ink-900',
+            )}
+          >
+            {customize ? <Check size={12} /> : <SlidersHorizontal size={12} />}
+            {customize ? 'Done' : 'Customize'}
+          </button>
+        </div>
       </div>
+      {customize && (
+        <div className="px-5 py-2 bg-brand-50/40 border-b border-border text-[11px] text-brand-800 flex items-center gap-1.5">
+          <Info size={11} /> Rename, hide, reorder, add lines, or split a line into parts. This changes how the statement <em>reads</em> — never the numbers the model computes. Saved on this device.
+        </div>
+      )}
 
       <div className="overflow-x-auto">
         <table className="w-full text-[12.5px]" style={{ minWidth: 320 + cols.length * 110 }}>
@@ -327,21 +426,89 @@ export default function GroundedWorksheet({
             </tr>
           </thead>
           <tbody>
-            {ROWS.map((row) => {
-              if (row.kind === 'section') {
+            {rendered.map((item, idx) => {
+              if (item.type === 'section') {
                 return (
-                  <tr key={row.id} className="bg-ink-100/50">
-                    <td colSpan={cols.length + 1} className="px-5 py-1.5 text-[10.5px] font-semibold uppercase tracking-wide text-ink-600">
-                      {row.label}
+                  <tr key={`sec-${item.id}`} className="bg-ink-100/50">
+                    <td className="px-5 py-1.5 text-[10.5px] font-semibold uppercase tracking-wide text-ink-600 sticky left-0 bg-ink-100/50 z-10">
+                      {item.label}
+                    </td>
+                    <td colSpan={cols.length} className="px-3 py-1.5 text-right">
+                      {customize && (
+                        <button
+                          type="button"
+                          onClick={() => wl.addCurated(item.id, 'New line', 0)}
+                          className="inline-flex items-center gap-1 text-[10.5px] text-brand-700 hover:text-brand-500"
+                        >
+                          <Plus size={11} /> Add line
+                        </button>
+                      )}
                     </td>
                   </tr>
                 );
               }
+
+              if (item.type === 'split') {
+                return (
+                  <SplitChildRow
+                    key={`split-${item.child.id}`}
+                    child={item.child}
+                    colCount={cols.length}
+                    customize={customize}
+                    onLabel={(v) => wl.updateSplitChild(item.parentId, item.child.id, { label: v })}
+                    onValue={(v) => wl.updateSplitChild(item.parentId, item.child.id, { value: v })}
+                    onRemove={() => wl.removeSplitChild(item.parentId, item.child.id)}
+                  />
+                );
+              }
+
+              if (item.type === 'curated') {
+                return (
+                  <CuratedRow
+                    key={`cur-${item.line.id}`}
+                    line={item.line}
+                    colCount={cols.length}
+                    customize={customize}
+                    onLabel={(v) => wl.updateCurated(item.line.id, { label: v })}
+                    onValue={(v) => wl.updateCurated(item.line.id, { value: v })}
+                    onRemove={() => wl.removeCurated(item.line.id)}
+                  />
+                );
+              }
+
+              const row = item.row;
               const emphatic = row.kind === 'computed' || row.kind === 'subtotal';
+              const isInput = item.type === 'input';
+              const hidden = isInput && wl.layout.hidden.includes(row.id);
               return (
-                <tr key={row.id} className={cn('border-t border-border hover:bg-ink-100/30 group', emphatic && 'bg-brand-50/25')}>
+                <tr key={`row-${row.id}-${idx}`} className={cn('border-t border-border hover:bg-ink-100/30 group', emphatic && 'bg-brand-50/25', hidden && 'opacity-45')}>
                   <td className={cn('px-5 py-1.5 text-ink-800 sticky left-0 z-10', emphatic ? 'font-semibold text-ink-900 bg-brand-50/25' : 'pl-9 bg-bg')}>
-                    {row.label}
+                    {customize && isInput ? (
+                      <RowControls
+                        label={labelOf(row.id, row.label)}
+                        hidden={hidden}
+                        onRename={(v) => wl.setLabel(row.id, v)}
+                        onHide={() => wl.toggleHidden(row.id)}
+                        onUp={() => wl.move(item.sectionId, row.id, -1, item.siblings)}
+                        onDown={() => wl.move(item.sectionId, row.id, 1, item.siblings)}
+                        onSplit={() => wl.addSplitChild(row.id, `${labelOf(row.id, row.label)} — part`, 0)}
+                      />
+                    ) : (
+                      <span className="inline-flex items-center gap-2">
+                        {labelOf(row.id, row.label)}
+                        {isInput && item.splitDelta != null && (
+                          <span
+                            title="Split parts vs this line"
+                            className={cn(
+                              'text-[10px] px-1.5 py-0.5 rounded tabular-nums',
+                              Math.abs(item.splitDelta) < 1 ? 'bg-success-50 text-success-700' : 'bg-warn-50 text-warn-700',
+                            )}
+                          >
+                            {Math.abs(item.splitDelta) < 1 ? '✓ reconciles' : `Δ ${fmtCurrency(item.splitDelta, { compact: true })}`}
+                          </span>
+                        )}
+                      </span>
+                    )}
                   </td>
                   {cols.map((c) => (
                     <WorksheetCell
@@ -488,6 +655,128 @@ function WorksheetCell({
         )}
       </span>
     </td>
+  );
+}
+
+// ── Structure-editing sub-rows (customize mode) ────────────────────────
+function IconBtn({ title, onClick, children }: { title: string; onClick: () => void; children: ReactNode }) {
+  return (
+    <button type="button" title={title} onClick={onClick} className="p-1 rounded text-ink-400 hover:text-ink-900 hover:bg-ink-100">
+      {children}
+    </button>
+  );
+}
+
+function RowControls({
+  label, hidden, onRename, onHide, onUp, onDown, onSplit,
+}: {
+  label: string; hidden: boolean;
+  onRename: (v: string) => void; onHide: () => void; onUp: () => void; onDown: () => void; onSplit: () => void;
+}) {
+  return (
+    <span className="inline-flex items-center gap-1">
+      <input
+        key={label}
+        defaultValue={label}
+        onBlur={(e) => { const v = e.target.value.trim(); if (v && v !== label) onRename(v); }}
+        onKeyDown={(e) => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur(); }}
+        className="w-40 px-1.5 py-0.5 text-[12px] border border-border rounded bg-bg focus:outline-none focus:ring-2 focus:ring-brand-100"
+      />
+      <IconBtn title="Move up" onClick={onUp}><ChevronUp size={12} /></IconBtn>
+      <IconBtn title="Move down" onClick={onDown}><ChevronDown size={12} /></IconBtn>
+      <IconBtn title="Split into parts" onClick={onSplit}><Scissors size={12} /></IconBtn>
+      <IconBtn title={hidden ? 'Show' : 'Hide'} onClick={onHide}>{hidden ? <Eye size={12} /> : <EyeOff size={12} />}</IconBtn>
+    </span>
+  );
+}
+
+// A split part (Model column only). Value is presentation-only — it never
+// reaches the engine; the parent's canonical value still drives the model.
+function SplitChildRow({
+  child, colCount, customize, onLabel, onValue, onRemove,
+}: {
+  child: SplitChild; colCount: number; customize: boolean;
+  onLabel: (v: string) => void; onValue: (v: number) => void; onRemove: () => void;
+}) {
+  return (
+    <tr className="border-t border-border/60 bg-violet-50/20">
+      <td className="pl-14 pr-5 py-1 sticky left-0 bg-violet-50/20 z-10">
+        <span className="inline-flex items-center gap-1.5">
+          <span className="w-1.5 h-1.5 rounded-full bg-violet-400" />
+          {customize ? (
+            <input
+              key={child.label}
+              defaultValue={child.label}
+              onBlur={(e) => { const v = e.target.value.trim(); if (v && v !== child.label) onLabel(v); }}
+              className="w-36 px-1.5 py-0.5 text-[12px] border border-border rounded bg-bg focus:outline-none focus:ring-2 focus:ring-brand-100"
+            />
+          ) : (
+            <span className="text-[12px] text-ink-600">{child.label}</span>
+          )}
+          {customize && <IconBtn title="Remove" onClick={onRemove}><Trash2 size={12} /></IconBtn>}
+        </span>
+      </td>
+      {Array.from({ length: colCount - 1 }).map((_, i) => (
+        <td key={i} className="px-3 py-1 text-right text-ink-300">—</td>
+      ))}
+      <td className="px-3 py-1 text-right">
+        {customize ? (
+          <input
+            key={child.value}
+            defaultValue={String(Math.round(child.value))}
+            onBlur={(e) => { const n = Number(e.target.value.replace(/[$,\s]/g, '')); if (Number.isFinite(n)) onValue(n); }}
+            className="w-24 px-1.5 py-0.5 text-[12px] text-right tabular-nums border border-border rounded bg-bg focus:outline-none focus:ring-2 focus:ring-brand-100"
+          />
+        ) : (
+          <span className="tabular-nums text-ink-600">{fmtCurrency(child.value, { compact: true })}</span>
+        )}
+      </td>
+    </tr>
+  );
+}
+
+// A curated memo line — the analyst's own annotation. Informational only.
+function CuratedRow({
+  line, colCount, customize, onLabel, onValue, onRemove,
+}: {
+  line: CuratedLine; colCount: number; customize: boolean;
+  onLabel: (v: string) => void; onValue: (v: number) => void; onRemove: () => void;
+}) {
+  return (
+    <tr className="border-t border-border/60">
+      <td className="pl-9 pr-5 py-1 sticky left-0 bg-bg z-10">
+        <span className="inline-flex items-center gap-1.5">
+          <span className="w-1.5 h-1.5 rounded-full bg-ink-400" />
+          {customize ? (
+            <input
+              key={line.label}
+              defaultValue={line.label}
+              onBlur={(e) => { const v = e.target.value.trim(); if (v && v !== line.label) onLabel(v); }}
+              className="w-36 px-1.5 py-0.5 text-[12px] border border-border rounded bg-bg focus:outline-none focus:ring-2 focus:ring-brand-100"
+            />
+          ) : (
+            <span className="text-[12px] text-ink-700">{line.label}</span>
+          )}
+          <span className="text-[9px] uppercase tracking-wide px-1 py-0.5 rounded bg-ink-100 text-ink-500">memo</span>
+          {customize && <IconBtn title="Remove" onClick={onRemove}><Trash2 size={12} /></IconBtn>}
+        </span>
+      </td>
+      {Array.from({ length: colCount - 1 }).map((_, i) => (
+        <td key={i} className="px-3 py-1 text-right text-ink-300">—</td>
+      ))}
+      <td className="px-3 py-1 text-right">
+        {customize ? (
+          <input
+            key={line.value}
+            defaultValue={String(Math.round(line.value))}
+            onBlur={(e) => { const n = Number(e.target.value.replace(/[$,\s]/g, '')); if (Number.isFinite(n)) onValue(n); }}
+            className="w-24 px-1.5 py-0.5 text-[12px] text-right tabular-nums border border-border rounded bg-bg focus:outline-none focus:ring-2 focus:ring-brand-100"
+          />
+        ) : (
+          <span className="tabular-nums text-ink-700">{fmtCurrency(line.value, { compact: true })}</span>
+        )}
+      </td>
+    </tr>
   );
 }
 
