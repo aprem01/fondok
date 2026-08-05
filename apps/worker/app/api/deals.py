@@ -245,6 +245,11 @@ class DealRecord(BaseModel):
     state: str = "ONBOARDING"
     validation_started_at: datetime | None = None
     validation_complete_at: datetime | None = None
+    # Count of uploaded documents for this deal (any status). Populated by
+    # list_deals via a correlated subquery so the projects grid shows
+    # "No documents uploaded" only when a deal genuinely has none (FON-35).
+    # Defaults to 0 on endpoints that don't join the documents table.
+    document_count: int = 0
     created_at: datetime
     updated_at: datetime
 
@@ -506,6 +511,7 @@ def _row_to_record(row: dict[str, Any]) -> DealRecord:
         state=row.get("state") or "ONBOARDING",
         validation_started_at=_coerce_dt_optional(row.get("validation_started_at")),
         validation_complete_at=_coerce_dt_optional(row.get("validation_complete_at")),
+        document_count=int(row.get("document_count") or 0),
         created_at=_coerce_dt(row.get("created_at")),
         updated_at=_coerce_dt(row.get("updated_at")),
     )
@@ -593,7 +599,10 @@ async def list_deals(
     rows = await session.execute(
         text(
             f"""
-            SELECT {_DEAL_COLUMNS}
+            SELECT {_DEAL_COLUMNS},
+                   (SELECT COUNT(*) FROM documents d
+                     WHERE d.deal_id = deals.id
+                       AND d.tenant_id = deals.tenant_id) AS document_count
               FROM deals
              WHERE tenant_id = :tenant
              ORDER BY created_at DESC

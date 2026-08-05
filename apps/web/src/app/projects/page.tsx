@@ -154,9 +154,9 @@ function fromWorkerDeal(d: WorkerDeal): DisplayDeal {
     risk: d.risk,
     aiConfidence: Math.round((d.ai_confidence ?? 0) * 100),
     assignee: '—',
-    docs: '0/0',
+    docs: String(d.document_count ?? 0),
     updatedAt: d.updated_at ? new Date(d.updated_at).toLocaleDateString() : '—',
-    noDocs: true,
+    noDocs: (d.document_count ?? 0) === 0,
     isMock: false,
   };
 }

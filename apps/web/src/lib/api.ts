@@ -35,6 +35,10 @@ export interface WorkerDeal {
   // when no opinion is set. Surfaced on the Pipeline view's "meeting
   // target" badge + summary KPI.
   target_irr?: number | null;
+  // Count of uploaded documents (any status). Populated by the deal-list
+  // endpoint so the projects grid only shows "No documents uploaded" when a
+  // deal genuinely has none (FON-35). Omitted on older worker builds → 0.
+  document_count?: number;
   created_at: string;
   updated_at: string;
 }
