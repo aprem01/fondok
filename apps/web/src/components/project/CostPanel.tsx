@@ -11,7 +11,7 @@ import {
 import { Card } from '@/components/ui/Card';
 import { Button } from '@/components/ui/Button';
 import { Badge } from '@/components/ui/Badge';
-import { api, isWorkerConnected, WorkerError } from '@/lib/api';
+import { api, isWorkerConnected } from '@/lib/api';
 import { fmtPctRaw, cn } from '@/lib/format';
 
 // ─── Types — narrow mirror of fondok_schemas.DealCostReport ────────────
@@ -129,14 +129,10 @@ async function fetchCosts(dealId: string, signal?: AbortSignal): Promise<DealCos
   if (!isWorkerConnected()) {
     return demoReport(dealId);
   }
-  // The api wrapper doesn't yet have a costs() helper — use a raw fetch
-  // so we don't have to widen the public surface here.
-  const url = `${process.env.NEXT_PUBLIC_WORKER_URL?.replace(/\/+$/, '')}/deals/${dealId}/costs`;
-  const res = await fetch(url, { signal });
-  if (!res.ok) {
-    throw new WorkerError(`GET /deals/${dealId}/costs → ${res.status}`, res.status, await res.text().catch(() => ''));
-  }
-  return (await res.json()) as DealCostReport;
+  // Route through the authed api client — it attaches Authorization (Clerk JWT)
+  // + X-Tenant-Id. A raw fetch sent neither, so the tenant-scoped endpoint
+  // resolved the wrong tenant and 404'd.
+  return (await api.deals.costs(dealId, signal)) as DealCostReport;
 }
 
 // ─── Component ─────────────────────────────────────────────────────────

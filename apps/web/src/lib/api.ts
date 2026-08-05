@@ -1029,6 +1029,11 @@ export const api = {
         undefined,
         { signal },
       ),
+    /** Per-deal LLM cost report. MUST go through the authed client — the
+     *  endpoint is tenant-scoped, so a raw fetch (no Authorization /
+     *  X-Tenant-Id) resolves the wrong tenant and 404s. */
+    costs: (id: string, signal?: AbortSignal) =>
+      request<unknown>('GET', `/deals/${id}/costs`, undefined, { signal }),
     /** Patch one-or-more deal fields (keys override, brand fix, etc.). */
     update: (
       id: string,
