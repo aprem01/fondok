@@ -72,11 +72,13 @@ _ANNUAL_PERIOD_TYPES = frozenset(
 )
 _MONTHLY_PERIOD_TYPES = frozenset({"monthly", "month", "single_month"})
 
-# doc_type values that count as P&L family — same list engine_runner uses
-# for its T-12 loader. Quarterly P&Ls (which would be PNL_QTD) are not
-# yet a distinct doc_type, so we leave them out — they'd pass through as
-# PNL_MONTHLY or PNL_YTD via period_type refinement.
-_PNL_DOC_TYPES = ("T12", "PNL_MONTHLY", "PNL_YTD")
+# doc_type values that count as P&L family. FON-19: the bare ``PNL`` type
+# — what the classifier stamps on a plain annual P&L — was missing here, so
+# annual P&Ls were silently excluded from coverage entirely (an uploaded,
+# EXTRACTED 2022/2023 P&L produced an empty ``year_coverage``, which the UI
+# then rendered as "No financials uploaded yet"). Quarterly P&Ls (PNL_QTD)
+# aren't a distinct doc_type yet — they pass through as PNL_MONTHLY / PNL_YTD.
+_PNL_DOC_TYPES = ("T12", "PNL", "PNL_MONTHLY", "PNL_YTD")
 
 
 # ─────────────────────────── dataclasses ───────────────────────────
@@ -303,15 +305,45 @@ def _coerce_fields_list(raw_fields: Any) -> list[Any] | None:
 # ─────────────────────────── core logic ───────────────────────────
 
 
+def _period_type_from_doc_type(doc_type: str | None) -> str | None:
+    """Infer a period_type from the doc_type when the extraction fields
+    don't carry one — used only on the fiscal-year fallback path so a
+    bare annual ``PNL`` still counts as annual (not ``summary_only``)."""
+    dt = (doc_type or "").upper()
+    if dt == "T12":
+        return "ttm"
+    if dt == "PNL":
+        return "annual"
+    if dt == "PNL_MONTHLY":
+        return "monthly"
+    if dt == "PNL_YTD":
+        return "ytd"
+    return None
+
+
+def _coerce_year(value: Any) -> int | None:
+    """Parse a fiscal-year-ish value (int, ``"2023"``, ``2023.0``) → int."""
+    if value is None:
+        return None
+    try:
+        year = int(value)
+    except (TypeError, ValueError):
+        return None
+    return year if 1900 <= year <= 2100 else None
+
+
 def _bucket_docs_by_year(
     extracted_rows: Iterable[dict[str, Any]],
 ) -> dict[int, list[dict[str, Any]]]:
-    """Group extraction rows by ``period_ending.year``.
+    """Group extraction rows by year.
 
-    Each input row must look like ``{"document_id": str|UUID, "doc_type":
-    str, "fields": list|str}``. Rows without a discoverable period_ending
-    are silently dropped from the year map (they still exist as
-    documents — the UI just can't attribute them to a year).
+    Each input row looks like ``{"document_id", "doc_type", "fields",
+    "fiscal_year", "extracted_period_year"}``. The year comes from the
+    extraction's ``period_ending`` when present; otherwise (FON-19) we fall
+    back to the document's own ``extracted_period_year`` / ``fiscal_year``
+    so an annual P&L whose extraction didn't emit a period_ending still
+    attributes to a year instead of vanishing from coverage. Only rows with
+    no discoverable year at all are dropped.
     """
     by_year: dict[int, list[dict[str, Any]]] = {}
     for row in extracted_rows:
@@ -319,17 +351,31 @@ def _bucket_docs_by_year(
         if fields is None:
             continue
         period_ending = _extract_period_ending(fields)
-        if period_ending is None:
-            continue
-        period_type = _extract_period_type(fields) or "unknown"
+        if period_ending is not None:
+            year = period_ending.year
+            period_type = _extract_period_type(fields) or "unknown"
+        else:
+            # Fallback: the document's declared year. extracted_period_year
+            # (Fondok's read of the statement period) wins over the
+            # analyst-set fiscal_year.
+            year = _coerce_year(row.get("extracted_period_year")) or _coerce_year(
+                row.get("fiscal_year")
+            )
+            if year is None:
+                continue
+            period_type = (
+                _extract_period_type(fields)
+                or _period_type_from_doc_type(row.get("doc_type"))
+                or "unknown"
+            )
         doc_id = row.get("document_id")
         entry: dict[str, Any] = {
             "doc_id": str(doc_id) if doc_id is not None else None,
             "doc_type": (row.get("doc_type") or "").upper() or None,
             "period_type": period_type,
-            "period_ending": period_ending.isoformat(),
+            "period_ending": period_ending.isoformat() if period_ending else None,
         }
-        by_year.setdefault(period_ending.year, []).append(entry)
+        by_year.setdefault(year, []).append(entry)
     return by_year
 
 
@@ -542,7 +588,9 @@ async def _load_extraction_rows(
             SELECT er.document_id,
                    er.fields,
                    d.doc_type,
-                   d.status
+                   d.status,
+                   d.fiscal_year,
+                   d.extracted_period_year
               FROM extraction_results er
               JOIN documents d ON d.id = er.document_id
              WHERE er.deal_id = :deal

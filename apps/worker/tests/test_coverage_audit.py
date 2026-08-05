@@ -510,3 +510,129 @@ async def test_summary_only_year_flagged() -> None:
         f"{[(g.gap_type, g.year) for g in coverage.gaps]}"
     )
     assert summary_only[0].severity == "warn"
+
+
+async def _seed_pnl_no_period_ending(
+    deal_id: UUID,
+    *,
+    tenant_id: str = _TENANT_A,
+    doc_type: str,
+    fiscal_year: int,
+    extracted_period_year: int | None = None,
+) -> UUID:
+    """Insert an EXTRACTED P&L whose extraction carries USALI lines but NO
+    ``period_ending`` field — only the document row's ``fiscal_year`` /
+    ``extracted_period_year`` tell us the year. This is the FON-19 shape:
+    an annual P&L (``PNL``) uploaded to a new deal (Sam Test 123's
+    ``Angler's 2022 P&L.xlsx``, fiscal_year=2022, extracted_period_year=NULL).
+    """
+    from app.database import get_session_factory
+
+    factory = get_session_factory()
+    doc_id = uuid4()
+    er_id = uuid4()
+    now = datetime.now(UTC)
+
+    async with factory() as session:
+        await session.execute(
+            text(
+                """
+                INSERT INTO documents (
+                    id, deal_id, tenant_id, filename, doc_type, status,
+                    uploaded_at, page_count, parser, extraction_data,
+                    fiscal_year, extracted_period_year
+                ) VALUES (
+                    :id, :deal, :tenant, :filename, :doc_type,
+                    'EXTRACTED', :ts, 1, 'test', NULL, :fy, :epy
+                )
+                """
+            ),
+            {
+                "id": str(doc_id),
+                "deal": str(deal_id),
+                "tenant": tenant_id,
+                "filename": f"Angler_s {fiscal_year} P&L.xlsx",
+                "doc_type": doc_type,
+                "ts": now,
+                "fy": fiscal_year,
+                "epy": extracted_period_year,
+            },
+        )
+        # USALI revenue line only — deliberately NO period_ending / period_type.
+        fields = [
+            {
+                "field_name": "p_and_l_usali.rooms.revenue_usd",
+                "value": 4_200_000,
+                "source_page": 1,
+                "confidence": 0.95,
+            },
+        ]
+        await session.execute(
+            text(
+                """
+                INSERT INTO extraction_results (
+                    id, document_id, deal_id, tenant_id, fields,
+                    confidence_report, agent_version, created_at
+                ) VALUES (
+                    :id, :doc, :deal, :tenant, :fields, '{}', 'test', :ts
+                )
+                """
+            ),
+            {
+                "id": str(er_id),
+                "doc": str(doc_id),
+                "deal": str(deal_id),
+                "tenant": tenant_id,
+                "fields": json.dumps(fields),
+                "ts": now,
+            },
+        )
+        await session.commit()
+    return doc_id
+
+
+@pytest.mark.asyncio
+async def test_annual_pnl_without_period_ending_is_covered() -> None:
+    """FON-19 regression: two bare ``PNL`` docs (Sam Test 123 —
+    Angler's 2022 & 2023 P&Ls) land as EXTRACTED but their extractions
+    don't emit a ``period_ending``. They must STILL populate
+    ``year_coverage`` (from the document's fiscal_year) — otherwise the UI
+    shows "No financials uploaded yet" on a deal that clearly has financials.
+
+    This pins both halves of the bug: ``PNL`` being absent from the
+    coverage doc-type allow-list, and the bucketer dropping any row with no
+    extraction period_ending.
+    """
+    from app.database import get_session_factory
+    from app.services.coverage_audit import audit_document_coverage
+
+    deal_id = uuid4()
+    await _seed_deal(deal_id)
+    # 2022: fiscal_year only (extracted_period_year NULL) — the doc the old
+    # code dropped entirely. 2023: both set.
+    await _seed_pnl_no_period_ending(deal_id, doc_type="PNL", fiscal_year=2022)
+    await _seed_pnl_no_period_ending(
+        deal_id, doc_type="PNL", fiscal_year=2023, extracted_period_year=2023
+    )
+
+    factory = get_session_factory()
+    async with factory() as session:
+        coverage = await audit_document_coverage(
+            session,
+            deal_id=str(deal_id),
+            tenant_id=_TENANT_A,
+            current_year=2024,
+        )
+
+    assert set(coverage.year_coverage.keys()) >= {2022, 2023}, (
+        "annual PNLs with a known fiscal_year but no extraction period_ending "
+        f"must appear in year_coverage; got {sorted(coverage.year_coverage.keys())}"
+    )
+    # And they should count as ANNUAL coverage (not summary_only), so no
+    # summary_only gap is raised for either year.
+    summary_gaps = [
+        g.year for g in coverage.gaps if g.gap_type == "summary_only"
+    ]
+    assert 2022 not in summary_gaps and 2023 not in summary_gaps, (
+        f"annual PNL should not read as summary-only; got summary gaps {summary_gaps}"
+    )
