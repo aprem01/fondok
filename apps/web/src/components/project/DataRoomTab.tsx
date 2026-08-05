@@ -1258,6 +1258,23 @@ function DocumentReviewDrawer({
     return [...seen.values()].sort((a, b) => ORDER.indexOf(a.tab) - ORDER.indexOf(b.tab));
   }, [fields, doc.type]);
 
+  // The document's dominant per-field destination. A field only shows its
+  // "→ Screen" chip when it DIFFERS from this, so a P&L (every field →
+  // Financials) isn't a wall of identical chips, while the OM still flags the
+  // fields that land somewhere unexpected. The top "Feeds these screens" row
+  // carries the always-visible navigation.
+  const dominantTab = useMemo(() => {
+    const tally = new Map<string, number>();
+    for (const f of fields) {
+      const d = fieldDestination(f.field_name);
+      if (d) tally.set(d.tab, (tally.get(d.tab) ?? 0) + 1);
+    }
+    let best: string | null = null;
+    let max = 0;
+    for (const [tab, n] of tally) if (n > max) { max = n; best = tab; }
+    return best;
+  }, [fields]);
+
   // Search across all extracted fields (label, raw path, or value) — a doc can
   // carry hundreds of fields, so jumping to "insurance" / "mgmt fee" / a number
   // matters.
@@ -1353,6 +1370,7 @@ function DocumentReviewDrawer({
                 sourcePage={f.source_page ?? null}
                 highlight={highlightField != null && f.field_name === highlightField}
                 destination={fieldDestination(f.field_name)}
+                dominantTab={dominantTab}
                 onGoTo={onGoTo}
                 onReview={(action, value) => onReview(doc.id, f.field_name, action, value)}
               />
@@ -1388,6 +1406,16 @@ function fieldDestination(fieldName?: string): { tab: string; label: string } | 
   return null;
 }
 
+// Reformat scientific-notation numbers (4.30618e+06) inside a source snippet
+// into readable, comma-grouped integers so the grounding quote reads like the
+// document, not a machine dump.
+function formatSnippet(s: string): string {
+  return s.replace(/\b\d+(?:\.\d+)?e[+-]?\d+\b/gi, (m) => {
+    const n = Number(m);
+    return Number.isFinite(n) ? Math.round(n).toLocaleString() : m;
+  });
+}
+
 function DataRow({
   label,
   value,
@@ -1400,6 +1428,7 @@ function DataRow({
   onReview,
   onViewSource,
   destination,
+  dominantTab,
   onGoTo,
 }: {
   label: string;
@@ -1420,6 +1449,9 @@ function DataRow({
   sourcePage?: number | null;
   // Where this field's data is seeded/used — deep-link to that screen.
   destination?: { tab: string; label: string } | null;
+  // Only show this field's "→ Screen" chip when its destination differs from
+  // the document's dominant one (avoids an identical chip on every P&L row).
+  dominantTab?: string | null;
   onGoTo?: (tab: string, focus?: string) => void;
 }) {
   const reviewable = !!onReview && confidence < 85 && !reviewed;
@@ -1485,7 +1517,7 @@ function DataRow({
       </div>
       {/* Line 2 — meta: where it's used, confidence, review status. */}
       <div className="flex items-center gap-2 flex-wrap mt-1.5">
-        {destination && onGoTo && (
+        {destination && onGoTo && destination.tab !== dominantTab && (
           <button
             type="button"
             onClick={() => onGoTo(destination.tab, rawLabel)}
@@ -1516,7 +1548,7 @@ function DataRow({
             <span className="font-mono text-ink-700">p.{sourcePage} · </span>
           )}
           <span className="italic">
-            &ldquo;{snippet.length > 140 ? `${snippet.slice(0, 140)}…` : snippet}&rdquo;
+            &ldquo;{(() => { const s = formatSnippet(snippet); return s.length > 140 ? `${s.slice(0, 140)}…` : s; })()}&rdquo;
           </span>
         </div>
       )}

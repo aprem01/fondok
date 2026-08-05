@@ -88,13 +88,21 @@ export function humanizeFieldName(raw: string): string {
   }
   if (LEAF_LABELS[base]) return LEAF_LABELS[base];
 
-  // 3. Generic revenue/expense leaf → borrow the parent segment for context
-  //    so ``p_and_l_usali.rooms.revenue_usd`` reads "Rooms Revenue".
-  if ((base === 'revenue' || base === 'expense') && segs.length >= 2) {
+  // 3. Generic aggregation / department leaf → borrow the parent segment for
+  //    context so a bare ``…undistributed.total`` reads "Total Undistributed"
+  //    (not an ambiguous "Total") and ``…rooms.revenue_usd`` reads "Rooms
+  //    Revenue". Aggregation words lead the parent; department words trail it.
+  if (segs.length >= 2) {
     const parent = segs[segs.length - 2].toLowerCase();
     const parentLabel = LEAF_LABELS[parent] ?? humanizeWord(parent);
-    const suffix = base === 'revenue' ? 'Revenue' : 'Expense';
-    return `${parentLabel} ${suffix}`.trim();
+    if (base === 'total' || base === 'subtotal' || base === 'net' || base === 'gross') {
+      return `${humanizeWord(base)} ${parentLabel}`.trim();
+    }
+    const DEPT: Record<string, string> = {
+      revenue: 'Revenue', expense: 'Expense', expenses: 'Expenses',
+      profit: 'Profit', income: 'Income',
+    };
+    if (DEPT[base]) return `${parentLabel} ${DEPT[base]}`.trim();
   }
 
   // 4. Fallback: split into words, expand acronyms, title-case.
