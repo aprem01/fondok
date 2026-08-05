@@ -29,6 +29,9 @@ import Modal from '@/components/ui/Modal';
 import { useToast } from '@/components/ui/Toast';
 import { cn } from '@/lib/format';
 import { Traced } from '@/components/help/Traced';
+import { Sourced } from '@/components/help/Sourced';
+import { useSource } from '@/lib/hooks/useDealProvenance';
+import { sourceKind, KIND_TONE } from '@/lib/provenance';
 import { getEngineField, useEngineOutputs } from '@/lib/hooks/useEngineOutputs';
 import { useDeal } from '@/lib/hooks/useDeal';
 import { kimptonAnglerOverview } from '@/lib/mockData';
@@ -398,6 +401,24 @@ export default function ProjectionsSection({
               <Download size={11} /> Export
             </Button>
           </div>
+        </div>
+
+        {/* FON-27: provenance legend — makes the per-assumption source
+            affordance discoverable. Occupancy/ADR carry an input-source dot,
+            revenue lines a computed-trace underline; hover any for the full
+            rationale (source doc, formula, inputs). */}
+        <div className="px-5 py-2 border-b border-border bg-surface-2/20 flex flex-wrap items-center gap-x-3 gap-y-1 text-[10.5px] text-ink-500">
+          <span className="uppercase tracking-wider font-semibold">Provenance</span>
+          <span>Hover an underlined value for its source &amp; formula.</span>
+          <span className="inline-flex items-center gap-1 ml-auto">
+            <span className="w-1.5 h-1.5 rounded-full bg-success-500" aria-hidden="true" /> grounded actual
+          </span>
+          <span className="inline-flex items-center gap-1">
+            <span className="w-1.5 h-1.5 rounded-full bg-warn-500" aria-hidden="true" /> benchmark / seed
+          </span>
+          <span className="inline-flex items-center gap-1">
+            <span className="w-1.5 h-1.5 rounded-full bg-sky-500" aria-hidden="true" /> calculated
+          </span>
         </div>
 
         <ProjectionsTable years={years} />
@@ -779,7 +800,8 @@ function ProjectionsTable({ years }: { years: ProjYear[] }) {
             fmt={(v) => v.toLocaleString()}
           />
 
-          {/* Occupancy */}
+          {/* Occupancy — base-year driver grounded in the T-12/historical
+              actual (starting_occupancy); later years grow at occupancy_growth. */}
           <SimpleRow
             label="Occupancy"
             indexLabel={indexLabel('occupancy')}
@@ -787,9 +809,11 @@ function ProjectionsTable({ years }: { years: ProjYear[] }) {
             years={years}
             value={(y) => y.occupancy * 100}
             fmt={(v) => `${v.toFixed(1)}%`}
+            sourceKey="starting_occupancy"
           />
 
-          {/* Average Rate */}
+          {/* Average Rate (ADR) — base-year driver grounded in the T-12/detailed
+              P&L actual (starting_adr); later years grow at adr_growth. */}
           <SimpleRow
             label="Average Rate"
             indexLabel={indexLabel('adr')}
@@ -797,9 +821,10 @@ function ProjectionsTable({ years }: { years: ProjYear[] }) {
             years={years}
             value={(y) => y.adr}
             fmt={(v) => `$${v.toFixed(2)}`}
+            sourceKey="starting_adr"
           />
 
-          {/* RevPAR */}
+          {/* RevPAR — derived, not sourced: Occupancy × ADR. */}
           <SimpleRow
             label="RevPAR"
             indexLabel={indexLabel('revpar')}
@@ -807,6 +832,7 @@ function ProjectionsTable({ years }: { years: ProjYear[] }) {
             years={years}
             value={(y) => y.revpar}
             fmt={(v) => `$${v.toFixed(2)}`}
+            computedNote="Calculated: RevPAR = Occupancy × ADR"
           />
 
           {/* Annual RevPAR Growth */}
@@ -958,6 +984,38 @@ function SubHeaderGroup({ dim }: { dim: boolean }) {
 
 // Simple single-cell row (Days, Rooms, Occupancy, ADR, etc.) — value
 // is rendered once per year, spanning all 4 sub-columns.
+// FON-27: provenance affordance for a driver assumption's base-year value.
+// A dot colored by source kind (🟢 grounded · 🟡 seed/benchmark · 🟣 override)
+// plus the shared <Sourced> hover (source label, one-line explanation, "view
+// source document"). Renders the value untouched when the deal has no
+// resolvable source for the key — safe on mock deals / missing provider.
+function DriverValue({ sourceKey, children }: { sourceKey?: string; children: ReactNode }) {
+  const resolved = useSource(sourceKey);
+  if (!sourceKey || !resolved?.source) return <>{children}</>;
+  const tone = KIND_TONE[sourceKind(resolved.source)];
+  return (
+    <span className="inline-flex items-center gap-1">
+      <span className={cn('w-1.5 h-1.5 rounded-full shrink-0', tone.dot)} aria-hidden="true" />
+      <Sourced sourceKey={sourceKey}>{children}</Sourced>
+    </span>
+  );
+}
+
+// FON-27: a purely-derived assumption (RevPAR = Occupancy × ADR) has no source
+// document — show a sky "calculated" dot + the derivation on hover so the
+// analyst still sees WHY the number is what it is.
+function ComputedValue({ note, children }: { note?: string; children: ReactNode }) {
+  if (!note) return <>{children}</>;
+  return (
+    <span className="inline-flex items-center gap-1" title={note}>
+      <span className="w-1.5 h-1.5 rounded-full shrink-0 bg-sky-500" aria-hidden="true" />
+      <span className="underline decoration-dotted decoration-2 decoration-sky-500 underline-offset-[3px] cursor-help">
+        {children}
+      </span>
+    </span>
+  );
+}
+
 function SimpleRow({
   label,
   indexLabel,
@@ -965,6 +1023,8 @@ function SimpleRow({
   years,
   value,
   fmt,
+  sourceKey,
+  computedNote,
 }: {
   label: string;
   indexLabel: string;
@@ -972,6 +1032,11 @@ function SimpleRow({
   years: ProjYear[];
   value: (y: ProjYear) => number;
   fmt: (v: number) => string;
+  // FON-27 provenance (base-year anchor only): input source key OR a
+  // derived-value note. Later years are grown off the base, so attributing
+  // them to the same source would misread.
+  sourceKey?: string;
+  computedNote?: string;
 }) {
   return (
     <tr className="border-b border-border/60 hover:bg-ink-300/5">
@@ -981,15 +1046,26 @@ function SimpleRow({
       <td className="px-3 py-2 text-[11px] text-ink-500 border-r border-border bg-bg/30">
         {indexLabel || unit}
       </td>
-      {years.map((y, i) => (
-        <td
-          key={`sr-${i}`}
-          colSpan={4}
-          className="px-2 py-2 text-center text-[11px] text-ink-900 tabular-nums border-l border-border"
-        >
-          {fmt(value(y))}
-        </td>
-      ))}
+      {years.map((y, i) => {
+        const shown = fmt(value(y));
+        const cell =
+          i === 0 && sourceKey ? (
+            <DriverValue sourceKey={sourceKey}>{shown}</DriverValue>
+          ) : i === 0 && computedNote ? (
+            <ComputedValue note={computedNote}>{shown}</ComputedValue>
+          ) : (
+            shown
+          );
+        return (
+          <td
+            key={`sr-${i}`}
+            colSpan={4}
+            className="px-2 py-2 text-center text-[11px] text-ink-900 tabular-nums border-l border-border"
+          >
+            {cell}
+          </td>
+        );
+      })}
     </tr>
   );
 }
