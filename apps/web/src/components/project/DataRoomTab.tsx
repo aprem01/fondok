@@ -90,12 +90,6 @@ const DOC_TYPE_LABEL: Record<string, string> = {
   UNKNOWN: 'Uncategorized',
 };
 
-// Documents with broker-vs-T12 variance flags raised against them.
-const VARIANCE_DOCS = new Set([
-  'Offering_Memorandum_Final.pdf',
-  'T12_FinancialStatement.xlsx',
-]);
-
 // Canonical 10-item Data Room checklist — mirrors the wizard's
 // COMPLETENESS_CATEGORIES so the two surfaces never drift. Each row
 // maps to one or more upstream `doc_type` tokens; when any live
@@ -276,47 +270,17 @@ export default function DataRoomTab({ projectId }: { projectId: number | string 
 
   const fileInputRef = useRef<HTMLInputElement>(null);
   const searchParams = useSearchParams();
-  const [selectedDoc, setSelectedDoc] = useState<string | null>(null);
   // Focused field-review drawer (opened by "View data" on any document).
   const [reviewDocId, setReviewDocId] = useState<string | null>(null);
   // FON-24: field name a validation finding deep-linked to (via
   // ?reviewField=…). The matching review row highlights + scrolls into view.
   const [highlightField, setHighlightField] = useState<string | null>(null);
-  // Per-doc "Needs Review" filter — when true the right panel shows only
-  // fields with <85% confidence. Reset whenever the user switches docs.
-  // Default ON: when a doc has fields needing review, land the analyst on
-  // THOSE (worst-first) instead of scrolling past hundreds of verified
-  // fields. Falls back to showing all when nothing needs review.
-  const [needsReviewOnly, setNeedsReviewOnly] = useState(true);
-  // FON-23 — free-text search across the extracted fields (label / raw
-  // name / value). A live query overrides the needs-review filter so you
-  // can jump to ANY field among the hundreds, not just low-confidence ones.
-  const [fieldQuery, setFieldQuery] = useState('');
-  // Per-document USALI deviation accordion. Driven by the doc id (not
-  // the filename) so identically-named uploads don't collide.
-  const [usaliAccordionOpen, setUsaliAccordionOpen] = useState<Set<string>>(
-    new Set(),
-  );
-  const toggleUsali = (docId: string) => {
-    setUsaliAccordionOpen((prev) => {
-      const next = new Set(prev);
-      if (next.has(docId)) next.delete(docId);
-      else next.add(docId);
-      return next;
-    });
-  };
   // Browse Templates popover — anchored to whichever button the user clicked.
   const [templatesAnchor, setTemplatesAnchor] = useState<'empty' | 'inline' | null>(null);
   const { toast } = useToast();
   // Wave 5 RBAC — per-document hard-delete admin gate.
   const currentRole = useCurrentRole();
   const isAdmin = currentRole === 'org:admin';
-
-  useEffect(() => {
-    // Re-arm the needs-review focus + clear search each time a new doc opens.
-    setNeedsReviewOnly(true);
-    setFieldQuery('');
-  }, [selectedDoc]);
 
   // Close the templates popover on outside click / Escape.
   useEffect(() => {
@@ -440,37 +404,6 @@ export default function DataRoomTab({ projectId }: { projectId: number | string 
   // analyst spot-checks a few against the source, they clear the tail with a
   // single click instead of N per-row accepts. In-flight state disables the
   // button so a slow batch can't be double-fired.
-  const [bulkAcceptingDoc, setBulkAcceptingDoc] = useState<string | null>(null);
-  const handleAcceptAllLowConfidence = useCallback(
-    async (docId: string, fieldNames: string[]) => {
-      if (fieldNames.length === 0 || bulkAcceptingDoc) return;
-      setBulkAcceptingDoc(docId);
-      let ok = 0;
-      try {
-        for (const fn of fieldNames) {
-          try {
-            await api.documents.reviewField(rawId, docId, {
-              field_name: fn,
-              action: 'accept',
-            });
-            ok += 1;
-          } catch {
-            // Keep going — one bad field shouldn't abort the batch.
-          }
-        }
-        await refreshExtraction(docId);
-        toast(
-          ok === fieldNames.length
-            ? `Accepted ${ok} field${ok === 1 ? '' : 's'}`
-            : `Accepted ${ok} of ${fieldNames.length} — ${fieldNames.length - ok} failed`,
-          { type: ok === fieldNames.length ? 'success' : 'error' },
-        );
-      } finally {
-        setBulkAcceptingDoc(null);
-      }
-    },
-    [rawId, refreshExtraction, toast, bulkAcceptingDoc],
-  );
 
   // FON-18 / FON-22 — reclassify a document post-upload from the
   // DocumentCoverage dropdowns. Refetches the documents list so the new
@@ -647,25 +580,10 @@ export default function DataRoomTab({ projectId }: { projectId: number | string 
     [router, rawId],
   );
 
-  const selectedDocRow = useMemo(
-    () => docs.find((d) => d.name === selectedDoc) ?? null,
-    [docs, selectedDoc],
-  );
   const reviewDocRow = useMemo(
     () => docs.find((d) => d.id === reviewDocId) ?? null,
     [docs, reviewDocId],
   );
-  const selectedHasVariance = selectedDoc !== null && VARIANCE_DOCS.has(selectedDoc);
-  const selectedVarianceFlags = selectedHasVariance
-    ? varianceFlags.filter((f) =>
-        f.source_documents.some(
-          (s) =>
-            (selectedDoc === 'Offering_Memorandum_Final.pdf' && s.document_id === 'kimpton-angler-om-2026') ||
-            (selectedDoc === 'T12_FinancialStatement.xlsx' && s.document_id === 'kimpton-angler-t12-2026q1'),
-        ),
-      )
-    : [];
-  const selectedCriticalCount = selectedVarianceFlags.filter((f) => f.severity === 'CRITICAL').length;
 
   // Build the required-doc checklist by intersecting our canonical 10-item
   // list against the live `documents` array's doc_type values. An item
