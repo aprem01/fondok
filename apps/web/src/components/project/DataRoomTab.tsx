@@ -347,8 +347,10 @@ export default function DataRoomTab({ projectId }: { projectId: number | string 
     const reviewField = searchParams.get('reviewField');
     if (!reviewDoc && !reviewField) return;
     if (reviewDoc) {
+      // Open the field-review drawer for the cited doc (the master-detail pane
+      // was retired — the drawer is the single review surface now).
       const doc = documents.find((d) => d.id === reviewDoc);
-      if (doc) setSelectedDoc(doc.filename);
+      if (doc) setReviewDocId(doc.id);
     }
     setHighlightField(reviewField);
     // Clear the highlight after a few seconds so it reads as a transient
@@ -1329,698 +1331,11 @@ export default function DataRoomTab({ projectId }: { projectId: number | string 
         )}
       </div>
 
-      {/* Scroll target for DocumentCoverage's "View P&L" — the detail/review
-          pane lives here, far below the coverage card. */}
-      <div id="dataroom-documents-anchor" aria-hidden="true" />
-      {docs.length > 0 && (
-        <Card className="p-5">
-          {/* Documents header — count only. Per-row StatusBadge carries
-              extracted/processing state, so the duplicate header pills
-              were removed (Wave 1 UX reduction). */}
-          <div className="flex items-center justify-between mb-4">
-            <h3 className="text-[14px] font-semibold text-ink-900">Documents ({docs.length})</h3>
-          </div>
-
-          {/* Enterprise master-detail (Sam QA 2026-06-29 — "i want
-              enterprise standard only"): 5/7 split favors the detail
-              pane (the source of truth) over the list (which is just
-              for scanning + selection). Linear / Notion / Stripe all
-              ship this shape. List rows stay compact — banners and
-              accordions move into the detail pane to stop the list
-              from blowing up vertically as the analyst clicks
-              through 16+ docs. */}
-          <div className="grid grid-cols-12 gap-5">
-            <div className="col-span-5 space-y-1.5">
-              {docs.map((d, _docIdx) => {
-                const hasVariance = VARIANCE_DOCS.has(d.name);
-                const flagsForDoc = hasVariance
-                  ? varianceFlags.filter((f) =>
-                      f.source_documents.some(
-                        (s) =>
-                          (d.name === 'Offering_Memorandum_Final.pdf' && s.document_id === 'kimpton-angler-om-2026') ||
-                          (d.name === 'T12_FinancialStatement.xlsx' && s.document_id === 'kimpton-angler-t12-2026q1'),
-                      ),
-                    )
-                  : [];
-                const docCritical = flagsForDoc.filter((f) => f.severity === 'CRITICAL').length;
-
-                // Per-row kebab — Preview / Download / Retry / Delete.
-                // Retry surfaces only on FAILED / PARSE_FAILED rows and
-                // re-fires parse + extract via the worker; the user
-                // doesn't have to re-upload (Sam QA: "no retry path
-                // when extraction fails"). Delete hard-removes the doc
-                // and its extraction_results row; engine outputs are
-                // left until the user re-runs. Preview is a stub.
-                const canRetry =
-                  liveMode &&
-                  (d.rawStatus === 'FAILED' || d.rawStatus === 'PARSE_FAILED');
-                // Sam QA 2026-07-02: 'Preview' item removed. The
-                // placeholder toast said "available on enterprise
-                // plans" but neither a viewer component nor an
-                // enterprise SKU actually exists. Rather than keep
-                // aspirational marketing framing, delete the option;
-                // add it back with a real inline PDF/xlsx viewer
-                // when preview is genuinely on the roadmap.
-                const rowMenu = [
-                  {
-                    label: 'Download',
-                    onSelect: () => {
-                      if (liveMode) {
-                        window.location.href = `${workerUrl()}/deals/${rawId}/documents/${d.id}/download`;
-                      } else {
-                        toast(`Download URL: ${d.id}`, { type: 'info' });
-                      }
-                    },
-                  },
-                  ...(canRetry ? [{
-                    label: 'Retry',
-                    onSelect: async () => {
-                      try {
-                        await api.documents.reprocess(rawId, d.id);
-                        toast(`Reprocessing ${d.name}…`, { type: 'info' });
-                        refresh();
-                      } catch (err) {
-                        // 410 Gone — raw bytes were wiped (Railway
-                        // /tmp is ephemeral). Tell the user to
-                        // re-upload instead of pretending it's a
-                        // server bug. Trim the worker prose so the
-                        // toast stays one line.
-                        if (err instanceof WorkerError && err.status === 410) {
-                          toast(
-                            `${d.name}: original upload no longer in storage — please re-upload to retry.`,
-                            { type: 'error' },
-                          );
-                          return;
-                        }
-                        const msg = err instanceof Error ? err.message : String(err);
-                        toast(`Retry failed: ${msg}`, { type: 'error' });
-                      }
-                    },
-                  }] : []),
-                  // Wave 5 RBAC — per-document hard-delete admin-only.
-                  ...(isAdmin ? [{
-                    label: 'Delete',
-                    danger: true,
-                    onSelect: async () => {
-                      if (!liveMode) {
-                        toast('Delete available on worker-backed deals', { type: 'info' });
-                        return;
-                      }
-                      const ok = window.confirm(
-                        `Permanently delete "${d.name}"?\n\n` +
-                          'This removes the file and its extraction results. ' +
-                          'Engine outputs that ran against this document remain ' +
-                          'until you re-run the underwriting.',
-                      );
-                      if (!ok) return;
-                      try {
-                        await api.documents.delete(rawId, d.id);
-                        toast(`"${d.name}" deleted`, { type: 'success' });
-                        if (selectedDoc === d.name) setSelectedDoc(null);
-                        refresh();
-                      } catch (err) {
-                        const msg = err instanceof Error ? err.message : String(err);
-                        toast(`Delete failed: ${msg}`, { type: 'error' });
-                      }
-                    },
-                  }] : []),
-                ];
-                const usaliOpen = usaliAccordionOpen.has(d.id);
-                return (
-                  <div key={d.id} className="space-y-1.5">
-                    <div
-                      role="button"
-                      tabIndex={0}
-                      onClick={() => setSelectedDoc(d.name)}
-                      onKeyDown={(e) => {
-                        if (e.key === 'Enter' || e.key === ' ') {
-                          e.preventDefault();
-                          setSelectedDoc(d.name);
-                        }
-                      }}
-                      aria-label={`Open ${d.name} extraction details`}
-                      className={`w-full text-left p-3 rounded-md border transition-colors cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-500 ${
-                        selectedDoc === d.name ? 'bg-brand-50 border-brand-500' : 'border-border hover:bg-ink-300/10'
-                      }`}>
-                    <div className="flex items-start gap-3">
-                      <div className="w-9 h-9 rounded bg-ink-300/30 flex items-center justify-center flex-shrink-0">
-                        {d.name.endsWith('.xlsx') ? <FileSpreadsheet size={16} className="text-success-700" /> : <FileText size={16} className="text-ink-700" />}
-                      </div>
-                      <div className="flex-1 min-w-0">
-                        <div className="flex items-center gap-2 flex-wrap">
-                          <div className="text-[12.5px] font-medium text-ink-900 truncate">{d.name}</div>
-                          <StatusBadge value={d.status} />
-                          {/* FON-18 — human doc-type label, not the raw token. */}
-                          <Badge tone="gray">{DOC_TYPE_LABEL[d.type] ?? d.type}</Badge>
-                          {/* FON-22 — primary financial source of truth. */}
-                          {d.primaryFinancialSource && (
-                            <Badge tone="green">
-                              <Star size={10} className="fill-current" /> Primary
-                            </Badge>
-                          )}
-                          {/* USALI compliance badge (ROADMAP #3). Renders only
-                              when the worker has scored this document; click
-                              toggles the deviation accordion rendered just
-                              below the card. FON-33 — hidden behind
-                              SHOW_USALI_BADGE until the scoring is calibrated. */}
-                          {SHOW_USALI_BADGE && (_docIdx === 0 ? (
-                            <CoachMark
-                              anchorId="dataroom-usali-badge"
-                              viewKey="dataroom"
-                              order={1}
-                              title="USALI compliance — at a glance"
-                              body="A score for how cleanly the P&L follows the hospitality accounting standard. 90+ is institutional-grade. Click the badge to see the specific deviations Fondok flagged."
-                              side="bottom"
-                              layout="inline"
-                              learnMoreHref="/methodology#projection"
-                            >
-                              <UsaliBadge
-                                doc={{
-                                  filename: d.name,
-                                  usali_score: d.usaliScore ?? null,
-                                  usali_deviations: d.usaliPayload ?? null,
-                                }}
-                                open={usaliOpen}
-                                onToggle={() => toggleUsali(d.id)}
-                              />
-                            </CoachMark>
-                          ) : (
-                            <UsaliBadge
-                              doc={{
-                                filename: d.name,
-                                usali_score: d.usaliScore ?? null,
-                                usali_deviations: d.usaliPayload ?? null,
-                              }}
-                              open={usaliOpen}
-                              onToggle={() => toggleUsali(d.id)}
-                            />
-                          ))}
-                          {docCritical > 0 && (
-                            <span
-                              role="button"
-                              tabIndex={0}
-                              onClick={(e) => { e.stopPropagation(); goToVariance(); }}
-                              onKeyDown={(e) => {
-                                if (e.key === 'Enter' || e.key === ' ') {
-                                  e.preventDefault();
-                                  e.stopPropagation();
-                                  goToVariance();
-                                }
-                              }}
-                              className="inline-flex items-center gap-1 px-2 py-0.5 text-[10.5px] font-semibold rounded-md bg-danger-50 text-danger-700 border border-danger-500/30 hover:bg-danger-500 hover:text-white transition-colors cursor-pointer"
-                              title="Open Broker Variance tab"
-                            >
-                              <AlertTriangle size={10} />
-                              {docCritical} critical variance flag{docCritical === 1 ? '' : 's'}
-                            </span>
-                          )}
-                        </div>
-                        <div className="text-[11px] text-ink-500 mt-1">{d.size} · {d.date}</div>
-                        {d.status === 'Extracted' && (
-                          <div className="flex items-center gap-3 mt-2">
-                            {d.fields > 0 ? (
-                              (() => {
-                                // Color the avg-confidence percent + flag low
-                                // averages with a "Needs review" pill so the
-                                // doc card mirrors the field-level tiering.
-                                const tier = confidenceTier(d.confidence);
-                                const pctClass =
-                                  tier.tone === 'green' ? 'text-success-700'
-                                  : tier.tone === 'amber' ? 'text-warn-700'
-                                  : 'text-danger-700';
-                                return (
-                                  <div className="flex items-center gap-2 text-[11px] text-ink-700">
-                                    <span>
-                                      <span className="text-brand-700 font-medium">{d.fields}</span> fields extracted
-                                      {' · '}<span className={`font-medium ${pctClass}`}>{d.confidence}%</span> confidence
-                                    </span>
-                                    {tier.tone === 'red' && (
-                                      <Badge tone="red">Needs review</Badge>
-                                    )}
-                                  </div>
-                                );
-                              })()
-                            ) : (
-                              // The doc is EXTRACTED on the worker but the
-                              // extraction results poll hasn't caught up yet,
-                              // OR the LLM Extractor returned 0 scalar fields
-                              // for a narrative-heavy OM. Don't show
-                              // "0 fields · 0% confidence" — that contradicts
-                              // the right panel which shows the same data.
-                              <div className="flex items-center gap-1.5 text-[11px] text-ink-500">
-                                <Loader2 size={11} className="animate-spin" />
-                                Loading extraction details…
-                              </div>
-                            )}
-                            {d.populates.length > 0 && (
-                              <div className="flex gap-1">
-                                {d.populates.map((p) => <Badge key={p} tone="blue">{p}</Badge>)}
-                              </div>
-                            )}
-                          </div>
-                        )}
-                        {d.status === 'Processing' && (
-                          <div className="flex items-center gap-1.5 mt-2 text-[11px] text-brand-700">
-                            <Loader2 size={11} className="animate-spin" /> Extracting…
-                          </div>
-                        )}
-                        {d.status === 'Failed' && d.errorMessage && (
-                          <div className="mt-2 flex items-start gap-1.5 text-[11px] text-danger-700">
-                            <AlertTriangle size={11} className="mt-0.5 shrink-0" />
-                            <span>
-                              <span className="font-semibold">
-                                {d.errorKind === 'billing'
-                                  ? 'API credit exhausted'
-                                  : d.errorKind === 'auth'
-                                    ? 'API key rejected'
-                                    : d.errorKind === 'rate_limit'
-                                      ? 'Rate limited'
-                                      : d.errorKind === 'parse'
-                                        ? 'Parser couldn’t read the file'
-                                        : d.errorKind === 'empty_envelope'
-                                          ? 'Extraction returned 0 fields'
-                                          : 'Extraction failed'}
-                                .
-                              </span>{' '}
-                              {d.errorMessage}
-                            </span>
-                          </div>
-                        )}
-                      </div>
-                      <div onClick={(e) => e.stopPropagation()}>
-                        <KebabMenu items={rowMenu} />
-                      </div>
-                    </div>
-                    </div>
-                    {/* Misclassification banner — appears when the
-                        Router agent's read disagrees with the analyst's
-                        wizard tag. The user picks "Use Fondok's
-                        classification" or "Keep mine"; both clear the
-                        flag. We never silently overwrite user intent
-                        (locked Wave 1 product decision). */}
-                    {liveMode && d.misclassified && d.userProvidedDocType && (
-                      <MisclassificationBanner
-                        compact
-                        document={{
-                          id: d.id,
-                          filename: d.name,
-                          doc_type: d.type,
-                          user_provided_doc_type: d.userProvidedDocType,
-                          misclassified: true,
-                          // Sam QA Bug #2 v2 — passes the Router's
-                          // read. When the row is pre-v2 / legacy
-                          // (column NULL), the banner short-circuits
-                          // and renders nothing.
-                          ai_proposed_doc_type: d.aiProposedDocType ?? null,
-                        }}
-                        onAcceptAi={(doc) => resolveClassification(doc as WorkerDocument, true)}
-                        onKeepMine={(doc) => resolveClassification(doc as WorkerDocument, false)}
-                      />
-                    )}
-                    {/* Year-mismatch banner — sibling to category mismatch.
-                        Appears whenever the worker's extracted_period_year
-                        disagrees with the analyst's wizard fiscal_year. */}
-                    {liveMode && d.yearMismatch && (
-                      <YearMismatchBanner
-                        compact
-                        document={{
-                          id: d.id,
-                          filename: d.name,
-                          fiscal_year: d.fiscalYear ?? null,
-                          extracted_period_year: d.extractedPeriodYear ?? null,
-                          year_mismatch: true,
-                        }}
-                        onAcceptAi={(doc) => resolveYear(doc as WorkerDocument, true)}
-                        onKeepMine={(doc) => resolveYear(doc as WorkerDocument, false)}
-                      />
-                    )}
-                    {/* USALI deviation accordion — collapsed by default.
-                        Renders only when the badge has been clicked. */}
-                    {usaliOpen && (
-                      <UsaliDeviationsAccordion
-                        score={d.usaliScore ?? null}
-                        payload={d.usaliPayload ?? null}
-                      />
-                    )}
-                  </div>
-                );
-              })}
-            </div>
-
-            {/* Sticky right pane — keeps the Extracted Data panel
-                visible while the analyst clicks through a long doc
-                list (Sam QA 2026-06-29: at 16 docs you'd click a row
-                near the bottom and have to scroll back up to see if
-                the panel actually updated). Wrapper div is the grid
-                child (col-span-1); the Card inside is sticky with
-                `top-4`. The wrapper makes sticky behavior reliable
-                across browsers — putting sticky directly on a grid
-                item is theoretically supported but quirky in
-                practice. `max-h-[calc(100vh-2rem)]` + inner scroll
-                keeps the panel itself usable when the extracted-field
-                list is long. */}
-            <div className="col-span-7">
-              <Card className="p-4 bg-ink-300/5 sticky top-4 max-h-[calc(100vh-2rem)] overflow-y-auto">
-              {selectedDoc && selectedDocRow ? (
-                <div>
-                  {/* Detail-pane header (enterprise pattern: persistent
-                      context for the selected entity — filename,
-                      doc_type, status, USALI). Replaces the tiny
-                      "Extracted Data" label + filename micro-text. */}
-                  <div className="-mx-4 -mt-4 mb-4 px-4 pt-3 pb-3 border-b border-border bg-white sticky top-0 z-10">
-                    <div className="text-[13px] font-semibold text-ink-900 truncate" title={selectedDocRow.name}>
-                      {selectedDocRow.name}
-                    </div>
-                    <div className="flex items-center gap-2 mt-1.5 flex-wrap">
-                      <StatusBadge value={selectedDocRow.status} />
-                      {/* FON-18 — human doc-type label ("P&L", "T-12") not the raw token. */}
-                      <Badge tone="gray">{DOC_TYPE_LABEL[selectedDocRow.type] ?? selectedDocRow.type}</Badge>
-                      {/* FON-22 — flag the source of truth the engines model from. */}
-                      {selectedDocRow.primaryFinancialSource && (
-                        <Badge tone="green">
-                          <Star size={10} className="fill-current" /> Primary source
-                        </Badge>
-                      )}
-                      {/* FON-33 — USALI badge hidden until the score is calibrated. */}
-                      {SHOW_USALI_BADGE && selectedDocRow.usaliScore != null && (
-                        <UsaliBadge
-                          doc={{
-                            filename: selectedDocRow.name,
-                            usali_score: selectedDocRow.usaliScore ?? null,
-                            usali_deviations: selectedDocRow.usaliPayload ?? null,
-                          }}
-                          open={false}
-                          onToggle={() => toggleUsali(selectedDocRow.id)}
-                        />
-                      )}
-                      {selectedDocRow.fiscalYear != null && (
-                        <Badge tone="blue">FY {selectedDocRow.fiscalYear}</Badge>
-                      )}
-                      <span className="text-[11px] text-ink-500 ml-auto tabular-nums">
-                        {selectedDocRow.size} · {selectedDocRow.date}
-                      </span>
-                    </div>
-                  </div>
-                  {selectedHasVariance && selectedVarianceFlags.length > 0 && (
-                    <button
-                      onClick={goToVariance}
-                      className="w-full mb-3 p-2.5 rounded-md border border-danger-500/40 bg-danger-50 hover:bg-danger-500 hover:text-white group transition-colors text-left"
-                    >
-                      <div className="flex items-start gap-2">
-                        <AlertTriangle size={13} className="text-danger-700 group-hover:text-white mt-0.5 flex-shrink-0" />
-                        <div className="flex-1 min-w-0">
-                          <div className="text-[11.5px] font-semibold text-danger-700 group-hover:text-white">
-                            {selectedCriticalCount} critical · {selectedVarianceFlags.length - selectedCriticalCount} other variance flags
-                          </div>
-                          <div className="text-[10.5px] text-danger-700/80 group-hover:text-white/90 mt-0.5">
-                            Broker pro forma vs T-12 actuals diverge materially. View Variance tab.
-                          </div>
-                        </div>
-                        <ArrowRight size={12} className="text-danger-700 group-hover:text-white mt-0.5" />
-                      </div>
-                    </button>
-                  )}
-                  {(() => {
-                    if (!selectedDocRow || selectedDocRow.status !== 'Extracted') {
-                      return <div className="text-[11.5px] text-ink-500">Document still processing…</div>;
-                    }
-
-                    // Build a uniform [{label, value, pct}] list so the
-                    // summary strip + filter logic doesn't fork between live
-                    // and mock branches.
-                    type FieldRow = { label: string; value: string; pct: number; raw?: string; reviewed?: string | null; sourcePage?: number | null; snippet?: string | null };
-                    let rows: FieldRow[];
-                    if (liveMode && selectedDocRow.fieldList && selectedDocRow.fieldList.length > 0) {
-                      // Show ALL extracted fields, not just the first 12.
-                      // Enterprise pattern: the detail pane is the source
-                      // of truth, not a teaser. Inner scroll on the Card
-                      // keeps the page from blowing up.
-                      // FON-21: label with the analyst-facing business term
-                      // (Rooms Revenue, ADR, Occupancy…) instead of the raw
-                      // schema path; keep the path on `raw` for a debug tooltip.
-                      rows = selectedDocRow.fieldList.map((f) => ({
-                        label: humanizeFieldName(f.field_name),
-                        value: formatValue(f.value, f.unit, f.field_name),
-                        pct: Math.round((f.confidence ?? 0) * 100),
-                        raw: f.field_name,
-                        reviewed: f.reviewed ?? null,
-                        // FON-23 — carry the source location so each row can
-                        // open the actual document at its page for validation.
-                        sourcePage: f.source_page ?? null,
-                        snippet: f.raw_text ?? null,
-                      }));
-                    } else if (!liveMode) {
-                      // Demo / mock fallback (no live worker connection):
-                      // show curated KPIs so the Kimpton demo still
-                      // looks populated.
-                      rows = [
-                        { label: 'ADR', value: '$385', pct: 96 },
-                        { label: 'Occupancy', value: '76.2%', pct: 94 },
-                        { label: 'RevPAR', value: '$293', pct: 97 },
-                        { label: 'NOI (T-12)', value: '$4.28M', pct: 92 },
-                        { label: 'Gross Revenue', value: '$15.08M', pct: 95 },
-                        { label: 'Operating Expenses', value: '$9.32M', pct: 89 },
-                      ];
-                    } else {
-                      // Live mode but the worker returned 0 fields — show
-                      // an honest empty state instead of the curated mock
-                      // KPIs that misled Sam into thinking extraction
-                      // worked (QA 2026-05-13).
-                      return (
-                        <div className="space-y-3 text-[11.5px]">
-                          <div className="flex items-start gap-2 p-3 rounded-md bg-warn-50 border border-warn-500/30">
-                            <AlertTriangle size={14} className="text-warn-700 mt-0.5 shrink-0" />
-                            <div>
-                              <div className="font-semibold text-ink-900">
-                                Extraction returned no fields
-                              </div>
-                              <div className="text-ink-700 mt-0.5">
-                                The worker parsed the document but the
-                                Extractor agent emitted an empty result.
-                                Common causes: the doc is image-heavy
-                                without enough OCR'd text, the LLM hit a
-                                structured-output edge case, or
-                                Anthropic API credits dipped mid-call.
-                                Re-upload to retry, or check the worker
-                                logs.
-                              </div>
-                            </div>
-                          </div>
-                        </div>
-                      );
-                    }
-
-                    const high = rows.filter((r) => r.pct >= 95).length;
-                    const medium = rows.filter((r) => r.pct >= 85 && r.pct < 95).length;
-                    const low = rows.filter((r) => r.pct < 85).length;
-                    // Land on the needs-review fields, worst-confidence
-                    // first, when the filter is on AND there's anything to
-                    // review; otherwise show every field (so a fully-clean
-                    // doc doesn't render an empty "0 match" state).
-                    // Search overrides the needs-review filter: a query
-                    // matches ANY field by label, raw path, or value so the
-                    // analyst can jump straight to "insurance", "mgmt fee",
-                    // or a specific number among hundreds of fields.
-                    const q = fieldQuery.trim().toLowerCase();
-                    const visible = q
-                      ? rows.filter(
-                          (r) =>
-                            r.label.toLowerCase().includes(q) ||
-                            (r.raw ?? '').toLowerCase().includes(q) ||
-                            r.value.toLowerCase().includes(q),
-                        )
-                      : needsReviewOnly && low > 0
-                        ? rows
-                            .filter((r) => r.pct < 85)
-                            .sort((a, b) => a.pct - b.pct)
-                        : rows;
-                    // FON-23 — group the visible fields into USALI statement
-                    // sections so the pane renders the extraction AS the P&L
-                    // (grouped, statement-order) rather than a flat list.
-                    const groupedSections = Array.from(
-                      visible
-                        .reduce<Map<string, { order: number; rows: FieldRow[] }>>(
-                          (m, r) => {
-                            const s = plSection(r.raw);
-                            const g = m.get(s.label) ?? { order: s.order, rows: [] };
-                            g.rows.push(r);
-                            m.set(s.label, g);
-                            return m;
-                          },
-                          new Map(),
-                        )
-                        .entries(),
-                    ).sort((a, b) => a[1].order - b[1].order);
-
-                    return (
-                      <>
-                        {/* FON-23 — search across all extracted fields. */}
-                        <div className="relative mb-3">
-                          <Search
-                            size={13}
-                            className="absolute left-2.5 top-1/2 -translate-y-1/2 text-ink-400 pointer-events-none"
-                            aria-hidden="true"
-                          />
-                          <input
-                            type="text"
-                            value={fieldQuery}
-                            onChange={(e) => setFieldQuery(e.target.value)}
-                            placeholder="Search fields — e.g. management fee, insurance, 88,150"
-                            aria-label="Search extracted fields"
-                            className="w-full text-[11.5px] rounded-md border border-border bg-card pl-8 pr-8 py-1.5 text-ink-900 placeholder:text-ink-400 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-500"
-                          />
-                          {fieldQuery && (
-                            <button
-                              type="button"
-                              onClick={() => setFieldQuery('')}
-                              aria-label="Clear search"
-                              className="absolute right-2 top-1/2 -translate-y-1/2 text-ink-400 hover:text-ink-700"
-                            >
-                              <CloseIcon size={13} />
-                            </button>
-                          )}
-                        </div>
-                        {fieldQuery.trim() ? (
-                          <div className="mb-3 text-[11px] text-ink-500 tabular-nums">
-                            {visible.length} result{visible.length === 1 ? '' : 's'} for
-                            &ldquo;{fieldQuery.trim()}&rdquo;
-                          </div>
-                        ) : (
-                        <div className="flex items-center gap-2 mb-3 text-[11px] text-ink-700 tabular-nums">
-                          <span className="inline-flex items-center gap-1">
-                            <span className="w-1.5 h-1.5 rounded-full bg-success-500" aria-hidden="true" />
-                            <span className="font-medium">{high}</span> high
-                          </span>
-                          <span className="text-ink-300" aria-hidden="true">·</span>
-                          <span className="inline-flex items-center gap-1">
-                            <span className="w-1.5 h-1.5 rounded-full bg-warn-500" aria-hidden="true" />
-                            <span className="font-medium">{medium}</span> medium
-                          </span>
-                          <span className="text-ink-300" aria-hidden="true">·</span>
-                          <button
-                            type="button"
-                            onClick={() => setNeedsReviewOnly((v) => !v)}
-                            disabled={low === 0}
-                            aria-pressed={needsReviewOnly}
-                            title={low === 0 ? 'No fields need review' : 'Filter to fields under 85% confidence'}
-                            className={`inline-flex items-center gap-1 rounded px-1.5 py-0.5 -my-0.5 transition-colors ${
-                              needsReviewOnly
-                                ? 'bg-danger-50 text-danger-700 border border-danger-500/25'
-                                : 'text-danger-700 hover:bg-danger-50 border border-transparent'
-                            } ${low === 0 ? 'opacity-50 cursor-not-allowed' : 'cursor-pointer'}`}
-                          >
-                            <span className="w-1.5 h-1.5 rounded-full bg-danger-500" aria-hidden="true" />
-                            <span className="font-medium">{low}</span> needs review
-                          </button>
-                        </div>
-                        )}
-                        {/* FON-23 — scale escape-hatch: clear the whole review
-                            tail in one click after spot-checking against source.
-                            Hidden while searching (search spans all fields). */}
-                        {!fieldQuery.trim() && liveMode && selectedDocRow?.id && low > 0 && (
-                          <div className="flex items-center justify-between gap-2 mb-3 -mt-1">
-                            <span className="text-[11px] text-ink-500">
-                              {low} field{low === 1 ? '' : 's'} left to review
-                            </span>
-                            <button
-                              type="button"
-                              disabled={bulkAcceptingDoc === selectedDocRow.id}
-                              onClick={() =>
-                                handleAcceptAllLowConfidence(
-                                  selectedDocRow.id,
-                                  rows
-                                    .filter((r) => r.pct < 85 && r.raw && !r.reviewed)
-                                    .map((r) => r.raw!),
-                                )
-                              }
-                              className="text-[10.5px] font-medium px-2.5 py-1 rounded bg-success-50 text-success-700 border border-success-500/30 hover:bg-success-100 disabled:opacity-50"
-                            >
-                              {bulkAcceptingDoc === selectedDocRow.id
-                                ? 'Accepting…'
-                                : `Accept all ${low}`}
-                            </button>
-                          </div>
-                        )}
-                        {visible.length === 0 ? (
-                          <div className="text-[11.5px] text-ink-500 py-4 text-center">
-                            {fieldQuery.trim()
-                              ? `No fields match “${fieldQuery.trim()}”.`
-                              : 'No fields match the current filter.'}
-                          </div>
-                        ) : (
-                          <div className="space-y-4 text-[11.5px]">
-                            {groupedSections.map(([sectionLabel, grp]) => (
-                              <div key={sectionLabel}>
-                                {/* USALI statement section header */}
-                                <div className="flex items-center justify-between mb-1.5 pb-1 border-b border-border">
-                                  <span className="text-[10px] uppercase tracking-wider text-ink-500 font-semibold">
-                                    {sectionLabel}
-                                  </span>
-                                  <span className="text-[10px] tabular-nums text-ink-400">
-                                    {grp.rows.length}
-                                  </span>
-                                </div>
-                                <div className="space-y-2">
-                                  {grp.rows.map((r) => (
-                                    <DataRow
-                                      key={r.raw ?? r.label}
-                                      label={r.label}
-                                      value={r.value}
-                                      confidence={r.pct}
-                                      rawLabel={r.raw}
-                                      reviewed={r.reviewed}
-                                      snippet={r.snippet}
-                                      sourcePage={r.sourcePage}
-                                      highlight={highlightField != null && r.raw === highlightField}
-                                      destination={fieldDestination(r.raw)}
-                                      onGoTo={goToScreen}
-                                      onReview={
-                                        liveMode && r.raw && selectedDocRow?.id
-                                          ? (action, value) =>
-                                              handleReviewField(selectedDocRow.id, r.raw!, action, value)
-                                          : undefined
-                                      }
-                                      onViewSource={
-                                        r.sourcePage != null && selectedDocRow?.id
-                                          ? () =>
-                                              window.dispatchEvent(
-                                                new CustomEvent('fondok:citation-focus', {
-                                                  detail: {
-                                                    documentId: selectedDocRow.id,
-                                                    page: r.sourcePage as number,
-                                                    field: r.label,
-                                                    excerpt: r.snippet ?? undefined,
-                                                  },
-                                                }),
-                                              )
-                                          : undefined
-                                      }
-                                    />
-                                  ))}
-                                </div>
-                              </div>
-                            ))}
-                          </div>
-                        )}
-                      </>
-                    );
-                  })()}
-                </div>
-              ) : (
-                <div className="text-center py-8">
-                  <div className="text-[11.5px] text-ink-500">Select a document to view extracted data</div>
-                </div>
-              )}
-              </Card>
-            </div>
-          </div>
-        </Card>
-      )}
-
       {reviewDocRow && (
         <DocumentReviewDrawer
           doc={reviewDocRow}
           liveMode={liveMode}
+          highlightField={highlightField}
           onClose={() => setReviewDocId(null)}
           onGoTo={(t, focus) => { setReviewDocId(null); goToScreen(t, focus); }}
           onReview={handleReviewField}
@@ -2035,10 +1350,11 @@ export default function DataRoomTab({ projectId }: { projectId: number | string 
 // without scrolling to a distant section. Reuses DataRow (accept/edit + the
 // per-field "→ Screen" deep-link).
 function DocumentReviewDrawer({
-  doc, liveMode, onClose, onGoTo, onReview,
+  doc, liveMode, highlightField, onClose, onGoTo, onReview,
 }: {
   doc: { id: string; name: string; type: string; confidence: number; fieldList?: ExtractionField[] };
   liveMode: boolean;
+  highlightField?: string | null;
   onClose: () => void;
   onGoTo: (tab: string, focus?: string) => void;
   onReview: (docId: string, fieldName: string, action: 'accept' | 'edit' | 'reject', value?: string) => Promise<void>;
@@ -2073,6 +1389,20 @@ function DocumentReviewDrawer({
     }
     return [...seen.values()].sort((a, b) => ORDER.indexOf(a.tab) - ORDER.indexOf(b.tab));
   }, [fields, doc.type]);
+
+  // Search across all extracted fields (label, raw path, or value) — a doc can
+  // carry hundreds of fields, so jumping to "insurance" / "mgmt fee" / a number
+  // matters.
+  const [q, setQ] = useState('');
+  const query = q.trim().toLowerCase();
+  const visible = useMemo(() => {
+    if (!query) return sorted;
+    return sorted.filter((f) => (
+      humanizeFieldName(f.field_name).toLowerCase().includes(query) ||
+      (f.field_name ?? '').toLowerCase().includes(query) ||
+      String(formatValue(f.value, f.unit, f.field_name)).toLowerCase().includes(query)
+    ));
+  }, [sorted, query]);
 
   return (
     <div className="fixed inset-0 z-50 flex justify-end" onClick={onClose}>
@@ -2112,16 +1442,38 @@ function DocumentReviewDrawer({
             </div>
           </div>
         )}
-        <div className="px-5 py-2.5 text-[11px] text-ink-500 border-b border-border">
-          Or click any field’s <span className="text-brand-700 font-medium">→</span> to jump to exactly where it’s used.
+        <div className="px-5 py-2.5 border-b border-border bg-card sticky top-0 z-[5]">
+          <div className="relative">
+            <Search size={13} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-ink-400 pointer-events-none" aria-hidden="true" />
+            <input
+              type="text"
+              value={q}
+              onChange={(e) => setQ(e.target.value)}
+              placeholder="Search fields — e.g. insurance, mgmt fee, 88,150"
+              aria-label="Search extracted fields"
+              className="w-full text-[11.5px] rounded-md border border-border bg-card pl-8 pr-8 py-1.5 text-ink-900 placeholder:text-ink-400 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-500"
+            />
+            {q && (
+              <button type="button" onClick={() => setQ('')} aria-label="Clear search" className="absolute right-2 top-1/2 -translate-y-1/2 text-ink-400 hover:text-ink-700">
+                <CloseIcon size={13} />
+              </button>
+            )}
+          </div>
+          <div className="text-[10.5px] text-ink-500 mt-1.5">
+            {query
+              ? `${visible.length} result${visible.length === 1 ? '' : 's'} for “${q.trim()}”`
+              : <>Click any field’s <span className="text-brand-700 font-medium">→</span> to jump to exactly where it’s used.</>}
+          </div>
         </div>
         <div className="px-5 pb-6">
           {!liveMode ? (
             <div className="text-[11.5px] text-ink-500 py-6 text-center">Field review is available on live deals.</div>
-          ) : sorted.length === 0 ? (
-            <div className="text-[11.5px] text-ink-500 py-6 text-center">No extracted fields on this document.</div>
+          ) : visible.length === 0 ? (
+            <div className="text-[11.5px] text-ink-500 py-6 text-center">
+              {query ? `No fields match “${q.trim()}”.` : 'No extracted fields on this document.'}
+            </div>
           ) : (
-            sorted.map((f) => (
+            visible.map((f) => (
               <DataRow
                 key={f.field_name}
                 label={humanizeFieldName(f.field_name)}
@@ -2131,6 +1483,7 @@ function DocumentReviewDrawer({
                 reviewed={f.reviewed ?? null}
                 snippet={f.raw_text ?? null}
                 sourcePage={f.source_page ?? null}
+                highlight={highlightField != null && f.field_name === highlightField}
                 destination={fieldDestination(f.field_name)}
                 onGoTo={onGoTo}
                 onReview={(action, value) => onReview(doc.id, f.field_name, action, value)}
