@@ -20,7 +20,7 @@
  *   %Rev = Amount / Total Revenue   × 100
  */
 
-import { useMemo, useState, type ReactNode } from 'react';
+import { useMemo, useState, useCallback, useContext, createContext, type ReactNode } from 'react';
 import { Sparkles, Download, FileText, ExternalLink } from 'lucide-react';
 import { Card } from '@/components/ui/Card';
 import { Button } from '@/components/ui/Button';
@@ -31,8 +31,9 @@ import { cn } from '@/lib/format';
 import { Traced } from '@/components/help/Traced';
 import { Sourced } from '@/components/help/Sourced';
 import { useSource } from '@/lib/hooks/useDealProvenance';
-import { sourceKind, KIND_TONE } from '@/lib/provenance';
+import { sourceKind, sourceLabel, sourceExplanation, KIND_TONE } from '@/lib/provenance';
 import { getEngineField, useEngineOutputs } from '@/lib/hooks/useEngineOutputs';
+import { useEngineRun } from '@/lib/hooks/useEngineRun';
 import { useDeal } from '@/lib/hooks/useDeal';
 import { kimptonAnglerOverview } from '@/lib/mockData';
 import {
@@ -162,7 +163,53 @@ export default function ProjectionsSection({
 }) {
   const { toast } = useToast();
   const { outputs } = useEngineOutputs(dealId);
-  const { deal } = useDeal(dealId);
+  const { deal, refresh: refreshDeal } = useDeal(dealId);
+
+  // FON-27: inline override of a driver assumption. Writes the deal's
+  // field_overrides (the engine reads starting_occupancy / starting_adr from
+  // there — analyst intent wins over every data source) then re-runs the
+  // model. useEngineOutputs auto-refreshes when the run completes.
+  const { run, status: runStatus } = useEngineRun(dealId, 'returns', { runMode: 'all' });
+  const overrides = useMemo(
+    () => (deal?.field_overrides ?? {}) as Record<string, unknown>,
+    [deal],
+  );
+  const applyOverride = useCallback(
+    async (key: string, value: number, note: string) => {
+      try {
+        await api.deals.update(dealId, { field_overrides: { ...overrides, [key]: { value, note } } });
+        refreshDeal();
+        await run();
+        toast('Override applied — re-modeled', { type: 'success' });
+      } catch {
+        toast('Could not apply override', { type: 'error' });
+      }
+    },
+    [overrides, dealId, refreshDeal, run, toast],
+  );
+  const resetOverride = useCallback(
+    async (key: string) => {
+      const { [key]: _drop, ...rest } = overrides;
+      try {
+        await api.deals.update(dealId, { field_overrides: rest });
+        refreshDeal();
+        await run();
+        toast('Reset to source — re-modeled', { type: 'success' });
+      } catch {
+        toast('Could not reset override', { type: 'error' });
+      }
+    },
+    [overrides, dealId, refreshDeal, run, toast],
+  );
+  const overrideCtx = useMemo<OverrideCtx>(
+    () => ({
+      overrides,
+      apply: applyOverride,
+      reset: resetOverride,
+      running: runStatus === 'running' || runStatus === 'queued',
+    }),
+    [overrides, applyOverride, resetOverride, runStatus],
+  );
 
   // Resolve key count: Kimpton mock or real deal.keys; default 0 until known.
   const keys = isKimptonDemo
@@ -421,7 +468,9 @@ export default function ProjectionsSection({
           </span>
         </div>
 
-        <ProjectionsTable years={years} />
+        <AssumptionOverrideContext.Provider value={overrideCtx}>
+          <ProjectionsTable years={years} />
+        </AssumptionOverrideContext.Provider>
       </Card>
 
       <Modal
@@ -810,6 +859,8 @@ function ProjectionsTable({ years }: { years: ProjYear[] }) {
             value={(y) => y.occupancy * 100}
             fmt={(v) => `${v.toFixed(1)}%`}
             sourceKey="starting_occupancy"
+            overrideKey="starting_occupancy"
+            overrideUnit="pct"
           />
 
           {/* Average Rate (ADR) — base-year driver grounded in the T-12/detailed
@@ -822,6 +873,8 @@ function ProjectionsTable({ years }: { years: ProjYear[] }) {
             value={(y) => y.adr}
             fmt={(v) => `$${v.toFixed(2)}`}
             sourceKey="starting_adr"
+            overrideKey="starting_adr"
+            overrideUnit="dollar"
           />
 
           {/* RevPAR — derived, not sourced: Occupancy × ADR. */}
@@ -984,6 +1037,173 @@ function SubHeaderGroup({ dim }: { dim: boolean }) {
 
 // Simple single-cell row (Days, Rooms, Occupancy, ADR, etc.) — value
 // is rendered once per year, spanning all 4 sub-columns.
+// FON-27: shared context so the deep-nested driver cells can persist an
+// override + re-run without prop-drilling through ProjectionsTable/SimpleRow.
+interface OverrideCtx {
+  overrides: Record<string, unknown>;
+  apply: (key: string, value: number, note: string) => Promise<void>;
+  reset: (key: string) => Promise<void>;
+  running: boolean;
+}
+const AssumptionOverrideContext = createContext<OverrideCtx | null>(null);
+
+// FON-27: click-open provenance + override panel for a driver assumption's
+// base-year value. Shows where the number came from (source label, one-line
+// explanation, "view source document") AND lets the analyst override it — the
+// override persists to the deal's field_overrides and re-runs the model
+// (the engine reads starting_occupancy / starting_adr from field_overrides;
+// analyst intent wins over every source). Renders plain when there's no
+// resolvable source and no provider — safe on mock / un-run deals.
+function AssumptionCell({
+  sourceKey,
+  overrideKey,
+  label,
+  display,
+  editValue,
+  unit,
+}: {
+  sourceKey: string;
+  overrideKey: string;
+  label: string;
+  display: ReactNode;
+  editValue: number;
+  unit: 'pct' | 'dollar';
+}) {
+  const ctx = useContext(AssumptionOverrideContext);
+  const resolved = useSource(sourceKey);
+  const [open, setOpen] = useState(false);
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState('');
+  const [note, setNote] = useState('');
+  const [saving, setSaving] = useState(false);
+
+  const overridden = !!ctx && overrideKey in ctx.overrides;
+  const src = overridden ? 'analyst_override' : resolved?.source;
+  if (!ctx || !src) return <>{display}</>;
+
+  const kind = sourceKind(src);
+  const tone = KIND_TONE[kind];
+  const decoColor =
+    kind === 'grounded' ? 'decoration-success-500'
+      : kind === 'override' ? 'decoration-brand-500'
+        : 'decoration-warn-500';
+
+  const openPanel = () => {
+    setDraft(unit === 'pct' ? editValue.toFixed(1) : editValue.toFixed(2));
+    setNote('');
+    setEditing(false);
+    setOpen(true);
+  };
+  const openDoc = () => {
+    if (!resolved?.docId || typeof window === 'undefined') return;
+    window.dispatchEvent(
+      new CustomEvent('fondok:citation-focus', {
+        detail: { documentId: resolved.docId, page: 1, field: sourceKey },
+      }),
+    );
+  };
+  const apply = async () => {
+    const n = Number(draft.replace(/[$,%\s]/g, ''));
+    if (!Number.isFinite(n)) return;
+    setSaving(true);
+    try {
+      await ctx.apply(overrideKey, unit === 'pct' ? n / 100 : n, note.trim() || 'Overridden on the Projections page');
+      setOpen(false);
+    } finally {
+      setSaving(false);
+    }
+  };
+  const reset = async () => {
+    setSaving(true);
+    try {
+      await ctx.reset(overrideKey);
+      setOpen(false);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const btn = 'text-[11px] font-medium rounded-md px-2 py-1 transition-colors disabled:opacity-50';
+
+  return (
+    <span className="relative inline-flex items-center gap-1">
+      <span className={cn('w-1.5 h-1.5 rounded-full shrink-0', tone.dot)} aria-hidden="true" />
+      <button
+        type="button"
+        onClick={openPanel}
+        className={cn('rounded-sm px-0.5 -mx-0.5 underline decoration-dotted decoration-2 underline-offset-[3px] cursor-pointer hover:opacity-80', decoColor)}
+        aria-label={`${label}: ${sourceLabel(src)} — click for source and override`}
+      >
+        {display}
+      </button>
+      {open && (
+        <>
+          <span className="fixed inset-0 z-40" onClick={() => setOpen(false)} aria-hidden="true" />
+          <span
+            role="dialog"
+            aria-label={`${label} provenance`}
+            className="absolute z-50 left-1/2 -translate-x-1/2 top-full mt-1.5 w-72 rounded-lg border border-border bg-card shadow-card-hover p-3 text-left whitespace-normal"
+          >
+            <span className="flex items-center gap-1.5 mb-1">
+              <span className={cn('w-2 h-2 rounded-full', tone.dot)} aria-hidden="true" />
+              <span className={cn('text-[11px] font-semibold', tone.text)}>{sourceLabel(src)}</span>
+              <span className="ml-auto text-[10px] uppercase tracking-wide text-ink-400">{label}</span>
+            </span>
+            <span className="block text-[11.5px] text-ink-600 leading-snug mb-2">{sourceExplanation(src)}</span>
+            {resolved?.docId && kind === 'grounded' && (
+              <button type="button" onClick={openDoc} className="mb-2 inline-flex items-center gap-1 text-[11px] font-medium text-brand-700 hover:text-brand-500">
+                View source document →
+              </button>
+            )}
+            {!editing ? (
+              <span className="flex items-center gap-2 border-t border-border pt-2">
+                <button type="button" onClick={() => setEditing(true)} className={cn(btn, 'text-brand-700 bg-brand-50 hover:bg-brand-100')}>
+                  {overridden ? 'Edit override' : 'Override…'}
+                </button>
+                {overridden && (
+                  <button type="button" onClick={reset} disabled={saving} className={cn(btn, 'text-ink-600 hover:text-danger-700')}>
+                    Reset to source
+                  </button>
+                )}
+              </span>
+            ) : (
+              <span className="block border-t border-border pt-2 space-y-1.5">
+                <span className="flex items-center gap-1.5">
+                  <span className="text-[11px] text-ink-500">{unit === 'pct' ? '%' : '$'}</span>
+                  <input
+                    value={draft}
+                    onChange={(e) => setDraft(e.target.value)}
+                    inputMode="decimal"
+                    autoFocus
+                    className="w-24 rounded-md border border-border px-2 py-1 text-[12px] tabular-nums focus:outline-none focus:ring-2 focus:ring-brand-100 focus:border-brand-500"
+                  />
+                </span>
+                <input
+                  value={note}
+                  onChange={(e) => setNote(e.target.value)}
+                  placeholder="Why? (note, optional)"
+                  className="w-full rounded-md border border-border px-2 py-1 text-[11px] focus:outline-none focus:ring-2 focus:ring-brand-100 focus:border-brand-500"
+                />
+                <span className="flex items-center gap-2">
+                  <button type="button" onClick={apply} disabled={saving} className={cn(btn, 'text-white bg-brand-600 hover:bg-brand-700')}>
+                    {saving ? 'Applying…' : 'Apply & re-model'}
+                  </button>
+                  <button type="button" onClick={() => setEditing(false)} className={cn(btn, 'text-ink-500 hover:text-ink-900')}>
+                    Cancel
+                  </button>
+                </span>
+              </span>
+            )}
+            {ctx.running && (
+              <span className="block mt-2 text-[10.5px] text-brand-700">Re-modeling…</span>
+            )}
+          </span>
+        </>
+      )}
+    </span>
+  );
+}
+
 // FON-27: provenance affordance for a driver assumption's base-year value.
 // A dot colored by source kind (🟢 grounded · 🟡 seed/benchmark · 🟣 override)
 // plus the shared <Sourced> hover (source label, one-line explanation, "view
@@ -1024,6 +1244,8 @@ function SimpleRow({
   value,
   fmt,
   sourceKey,
+  overrideKey,
+  overrideUnit,
   computedNote,
 }: {
   label: string;
@@ -1032,10 +1254,13 @@ function SimpleRow({
   years: ProjYear[];
   value: (y: ProjYear) => number;
   fmt: (v: number) => string;
-  // FON-27 provenance (base-year anchor only): input source key OR a
-  // derived-value note. Later years are grown off the base, so attributing
-  // them to the same source would misread.
+  // FON-27 provenance (base-year anchor only): a source key + optional
+  // override key (→ click-open source/override panel), OR a derived-value
+  // note (→ "calculated" hint). Later years are grown off the base, so
+  // attributing them to the same source would misread.
   sourceKey?: string;
+  overrideKey?: string;
+  overrideUnit?: 'pct' | 'dollar';
   computedNote?: string;
 }) {
   return (
@@ -1049,7 +1274,16 @@ function SimpleRow({
       {years.map((y, i) => {
         const shown = fmt(value(y));
         const cell =
-          i === 0 && sourceKey ? (
+          i === 0 && sourceKey && overrideKey ? (
+            <AssumptionCell
+              sourceKey={sourceKey}
+              overrideKey={overrideKey}
+              unit={overrideUnit ?? 'dollar'}
+              label={label}
+              display={shown}
+              editValue={value(y)}
+            />
+          ) : i === 0 && sourceKey ? (
             <DriverValue sourceKey={sourceKey}>{shown}</DriverValue>
           ) : i === 0 && computedNote ? (
             <ComputedValue note={computedNote}>{shown}</ComputedValue>
