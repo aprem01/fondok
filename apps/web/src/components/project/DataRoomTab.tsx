@@ -1030,17 +1030,11 @@ export default function DataRoomTab({ projectId }: { projectId: number | string 
             }),
           )}
           onReclassify={handleReclassify}
-          onOpenDoc={(docId, financial) => {
-            // Financial docs open the ONE financial-data screen (Financials →
-            // Historicals worksheet) — same destination as the "needs review"
-            // CTA, so there's a single place to fix/review/trace the numbers.
-            if (financial) {
-              router.push(`/projects/${rawId}?tab=pl&fin=historicals`, { scroll: false });
-              return;
-            }
-            // Non-financial docs (e.g. the OM) open a focused field-review
-            // drawer in place — each field deep-links to the screen where it's
-            // used — instead of scrolling to the distant documents section.
+          onOpenDoc={(docId) => {
+            // EVERY document opens the same focused field-review drawer for a
+            // consistent experience. From there, each field's "→ Screen" link
+            // and the "Feeds these screens" chips jump to where the data lands
+            // (a financial line → Financials worksheet with the row highlighted).
             setReviewDocId(docId);
           }}
           busyDocId={reclassifyingDoc}
@@ -2059,14 +2053,26 @@ function DocumentReviewDrawer({
   // Distinct screens this document feeds — a multi-destination doc (the OM)
   // can jump to any of them directly, not just per-field.
   const dests = useMemo(() => {
-    const ORDER = ['overview', 'investment', 'pl', 'debt', 'market', 'forecasting'];
+    const ORDER = ['overview', 'investment', 'pl', 'debt', 'cash-flow', 'returns', 'market', 'forecasting'];
     const seen = new Map<string, { tab: string; label: string }>();
     for (const f of fields) {
       const d = fieldDestination(f.field_name);
       if (d && !seen.has(d.tab)) seen.set(d.tab, d);
     }
+    // A financial statement doesn't only feed Financials — its NOI / GOP drive
+    // Cash Flow, Returns, Debt (DSCR) and the Overview KPIs. Surface that reach.
+    const dt = (doc.type ?? '').toUpperCase();
+    if (['T12', 'PNL', 'PNL_MONTHLY', 'PNL_YTD'].includes(dt)) {
+      for (const d of [
+        { tab: 'pl', label: 'Financials' },
+        { tab: 'overview', label: 'Overview' },
+        { tab: 'cash-flow', label: 'Cash Flow' },
+        { tab: 'returns', label: 'Returns' },
+        { tab: 'debt', label: 'Debt' },
+      ]) if (!seen.has(d.tab)) seen.set(d.tab, d);
+    }
     return [...seen.values()].sort((a, b) => ORDER.indexOf(a.tab) - ORDER.indexOf(b.tab));
-  }, [fields]);
+  }, [fields, doc.type]);
 
   return (
     <div className="fixed inset-0 z-50 flex justify-end" onClick={onClose}>

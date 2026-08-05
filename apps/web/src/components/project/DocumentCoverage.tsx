@@ -487,7 +487,7 @@ function CoverageFileRow({
           onClick={() => onOpenDoc(file.id, financial)}
           className="text-[10.5px] font-medium px-2.5 py-1 rounded bg-brand-600 text-white hover:bg-brand-700"
         >
-          {financial ? 'View in Financials' : 'View data'}
+          View data
         </button>
       </div>
     </li>
