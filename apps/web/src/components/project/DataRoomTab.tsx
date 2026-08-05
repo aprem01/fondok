@@ -11,7 +11,6 @@ import { Card } from '@/components/ui/Card';
 import { Button } from '@/components/ui/Button';
 import { Badge, StatusBadge } from '@/components/ui/Badge';
 import KebabMenu from '@/components/ui/KebabMenu';
-import { ConfidenceBadge } from '@/components/ui/ConfidenceBadge';
 import { engines, kimptonDocuments, templates } from '@/lib/mockData';
 import { criticalCount, warnCount, varianceFlags } from '@/lib/varianceData';
 import {
@@ -168,55 +167,6 @@ function formatBytes(bytes: number | null | undefined): string {
   if (bytes < 1024) return `${bytes} B`;
   if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
   return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
-}
-
-// Map a 0-100 confidence percent to the agreed three-tier rendering:
-//   ≥95 → green / "High"
-//   ≥85 → amber / "Medium"
-//   <85 → red   / "Needs review"
-// Kept colocated with DataRoomTab because it's purely a display-layer
-// concern and matches the thresholds already baked into ConfidenceBadge.
-function confidenceTier(pct: number): { tone: 'green' | 'amber' | 'red'; label: string } {
-  if (pct >= 95) return { tone: 'green', label: 'High' };
-  if (pct >= 85) return { tone: 'amber', label: 'Medium' };
-  return { tone: 'red', label: 'Needs review' };
-}
-
-// FON-23 — map an extracted field name to its USALI statement section so the
-// review pane can render the extraction AS the P&L (grouped, statement-order)
-// instead of a flat 375-row list. Keyed off the 2nd path segment of the
-// dotted USALI field name (``p_and_l_usali.<section>.…``).
-const _PL_SECTIONS: Record<string, { label: string; order: number }> = {
-  rooms: { label: 'Rooms', order: 20 },
-  rooms_occupied: { label: 'Rooms', order: 20 },
-  rooms_revenue_group: { label: 'Rooms', order: 20 },
-  rooms_revenue_other: { label: 'Rooms', order: 20 },
-  rooms_allowances: { label: 'Rooms', order: 20 },
-  operating_revenue: { label: 'Operating Revenue', order: 10 },
-  monthly_revenue: { label: 'Operating Revenue', order: 10 },
-  food_beverage: { label: 'Food & Beverage', order: 30 },
-  fb_detail: { label: 'Food & Beverage', order: 30 },
-  other_operated: { label: 'Other Operated Departments', order: 40 },
-  departmental_expenses: { label: 'Departmental Expenses', order: 50 },
-  payroll: { label: 'Payroll', order: 60 },
-  reservations: { label: 'Reservations & Marketing', order: 65 },
-  undistributed: { label: 'Undistributed Expenses', order: 70 },
-  fixed: { label: 'Fixed Charges', order: 80 },
-  fixed_charges: { label: 'Fixed Charges', order: 80 },
-  net_operating_income: { label: 'Net Operating Income', order: 90 },
-  budget: { label: 'Budget', order: 100 },
-  prior_year: { label: 'Prior Year', order: 105 },
-  department: { label: 'Department', order: 110 },
-  ttm_summary_per_om: { label: 'TTM Summary', order: 115 },
-  property_overview: { label: 'Property', order: 120 },
-};
-const _PL_KEY_METRICS = new Set(['adr_usd', 'revpar_usd', 'occupancy_pct']);
-
-function plSection(raw?: string | null): { label: string; order: number } {
-  const n = (raw || '').toLowerCase();
-  const seg = n.startsWith('p_and_l_usali.') ? n.split('.')[1] : n.split('.')[0];
-  if (_PL_KEY_METRICS.has(seg)) return { label: 'Key Metrics', order: 0 };
-  return _PL_SECTIONS[seg] ?? { label: 'Other', order: 999 };
 }
 
 function formatValue(v: unknown, unit: string | null, fieldName?: string): string {
@@ -1472,9 +1422,6 @@ function DataRow({
   destination?: { tab: string; label: string } | null;
   onGoTo?: (tab: string, focus?: string) => void;
 }) {
-  // Tier label sits next to the numeric ConfidenceBadge so analysts get the
-  // shared red/amber/green semantics at a glance without losing the precise %.
-  const tier = confidenceTier(confidence);
   const reviewable = !!onReview && confidence < 85 && !reviewed;
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(value);
@@ -1521,7 +1468,7 @@ function DataRow({
               aria-label={`Corrected value for ${label}`}
             />
           ) : (
-            <span className="font-semibold tabular-nums text-ink-900 text-[13px] whitespace-nowrap">{value}</span>
+            <span className="font-semibold tabular-nums text-ink-900 text-[14px] whitespace-nowrap">{value}</span>
           )}
           {onViewSource && !editing && (
             <button
@@ -1548,13 +1495,18 @@ function DataRow({
             {destination.label} <ArrowRight size={9} aria-hidden="true" />
           </button>
         )}
-        <ConfidenceBadge value={confidence / 100} />
         {reviewed ? (
-          <span className="text-[9.5px] uppercase tracking-wide text-success-700 bg-success-50 border border-success-500/30 rounded px-1.5 py-0.5">
-            {reviewed === 'edited' ? 'Edited' : 'Verified'}
+          <span className="text-[10px] font-medium px-2 py-0.5 rounded-full bg-success-50 text-success-700 border border-success-500/25">
+            {reviewed === 'edited' ? '✓ Edited' : '✓ Verified'}
+          </span>
+        ) : confidence < 85 ? (
+          <span className="text-[10px] font-medium px-2 py-0.5 rounded-full bg-warn-50 text-warn-700 border border-warn-500/25 tabular-nums">
+            Needs review · {confidence}%
           </span>
         ) : (
-          <Badge tone={tier.tone}>{tier.label}</Badge>
+          <span className="text-[10px] px-2 py-0.5 rounded-full bg-ink-300/10 text-ink-500 tabular-nums">
+            {confidence}%
+          </span>
         )}
       </div>
       {/* FON-23: inline accept/edit/reject for Needs-Review fields. */}
@@ -1569,23 +1521,14 @@ function DataRow({
         </div>
       )}
       {reviewable && (
-        <div className="flex items-center gap-1.5 mt-1.5 justify-end">
-          {onViewSource && !editing && (
-            <button
-              type="button"
-              onClick={onViewSource}
-              className="text-[10.5px] font-medium px-2 py-0.5 rounded border border-brand-500/30 text-brand-700 hover:bg-brand-50 mr-auto inline-flex items-center gap-1"
-            >
-              <FileText size={11} aria-hidden="true" /> View source
-            </button>
-          )}
+        <div className="flex items-center gap-1 mt-1.5 justify-end">
           {editing ? (
             <>
               <button
                 type="button"
                 disabled={busy}
                 onClick={() => act('edit', draft)}
-                className="text-[10.5px] font-medium px-2 py-0.5 rounded bg-brand-600 text-white hover:bg-brand-700 disabled:opacity-50"
+                className="text-[10.5px] font-medium px-2.5 py-1 rounded-md bg-brand-600 text-white hover:bg-brand-700 disabled:opacity-50"
               >
                 Save
               </button>
@@ -1593,18 +1536,20 @@ function DataRow({
                 type="button"
                 disabled={busy}
                 onClick={() => { setEditing(false); setDraft(value); }}
-                className="text-[10.5px] font-medium px-2 py-0.5 rounded border border-border text-ink-600 hover:bg-ink-100"
+                className="text-[10.5px] font-medium px-2 py-1 rounded-md text-ink-600 hover:bg-ink-100 disabled:opacity-50"
               >
                 Cancel
               </button>
             </>
           ) : (
             <>
+              {/* Accept is the primary action → soft filled. Edit / Reject are
+                  quiet ghosts so the value stays the hero, not the buttons. */}
               <button
                 type="button"
                 disabled={busy}
                 onClick={() => act('accept')}
-                className="text-[10.5px] font-medium px-2 py-0.5 rounded bg-success-50 text-success-700 border border-success-500/30 hover:bg-success-100 disabled:opacity-50"
+                className="text-[10.5px] font-medium px-2.5 py-1 rounded-md bg-success-50 text-success-700 border border-success-500/25 hover:bg-success-100 disabled:opacity-50"
               >
                 Accept
               </button>
@@ -1612,7 +1557,7 @@ function DataRow({
                 type="button"
                 disabled={busy}
                 onClick={() => { setDraft(value); setEditing(true); }}
-                className="text-[10.5px] font-medium px-2 py-0.5 rounded border border-border text-ink-600 hover:bg-ink-100 disabled:opacity-50"
+                className="text-[10.5px] font-medium px-2 py-1 rounded-md text-ink-600 hover:bg-ink-100 disabled:opacity-50"
               >
                 Edit
               </button>
@@ -1620,7 +1565,7 @@ function DataRow({
                 type="button"
                 disabled={busy}
                 onClick={() => act('reject')}
-                className="text-[10.5px] font-medium px-2 py-0.5 rounded bg-danger-50 text-danger-700 border border-danger-500/30 hover:bg-danger-100 disabled:opacity-50"
+                className="text-[10.5px] font-medium px-2 py-1 rounded-md text-danger-700 hover:bg-danger-50 disabled:opacity-50"
               >
                 Reject
               </button>
