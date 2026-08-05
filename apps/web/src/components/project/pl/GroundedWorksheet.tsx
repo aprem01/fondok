@@ -175,6 +175,84 @@ const histHasData = (h: HistYear) =>
     return n != null && n !== 0;
   });
 
+// FON-26: historical-coverage strip. The worksheet drops years that carry no
+// data, which left analysts unable to tell a missing year apart from one that
+// is still extracting or that failed. This surfaces every financial year the
+// deal touches with an explicit status instead of a silent gap.
+type CoverState = 'uploaded' | 'processing' | 'failed' | 'gap';
+
+// P&L family that represents a specific year of actuals (benchmark/comp docs
+// excluded — they don't stand in for an operating year).
+const isFinancialPnlDoc = (d: WorkerDocument) => {
+  const dt = (d.doc_type ?? '').toUpperCase();
+  return (
+    dt.includes('T12') || dt === 'T-12' || dt === 'PNL' || dt === 'P&L' ||
+    dt === 'PNL_MONTHLY' || dt === 'PNL_YTD' || dt.includes('PROFIT')
+  );
+};
+
+const coverStateFromStatus = (status: string): CoverState => {
+  if (status === 'EXTRACTED') return 'uploaded';
+  if (status === 'FAILED' || status === 'PARSE_FAILED') return 'failed';
+  return 'processing'; // UPLOADED / PARSING / CLASSIFYING / EXTRACTING
+};
+
+const COVER_RANK: Record<CoverState, number> = { uploaded: 3, processing: 2, failed: 1, gap: 0 };
+const COVER_TONE: Record<CoverState, string> = {
+  uploaded: 'border-emerald-500/30 bg-emerald-50 text-emerald-700',
+  processing: 'border-amber-500/30 bg-amber-50 text-amber-700',
+  failed: 'border-danger-500/30 bg-danger-50 text-danger-700',
+  gap: 'border-ink-300 bg-ink-100/40 text-ink-500',
+};
+const COVER_DOT: Record<CoverState, string> = {
+  uploaded: 'bg-emerald-500',
+  processing: 'bg-amber-500 animate-pulse',
+  failed: 'bg-danger-500',
+  gap: 'bg-ink-300',
+};
+const COVER_TITLE: Record<CoverState, string> = {
+  uploaded: 'Uploaded — this year’s P&L is extracted and feeding the model.',
+  processing: 'Processing — a statement for this year is still extracting.',
+  failed: 'Extraction failed — re-upload or open this year’s statement to retry.',
+  gap: 'Not uploaded — no statement for this year in the operating history.',
+};
+
+// Build the ordered year → status list from the deal's financial docs, folding
+// in years already populated in the worksheet (incl. OM-embedded history) and
+// filling interior gaps so a missing middle year reads as "not uploaded".
+function buildCoverage(docs: WorkerDocument[], populatedYears: HistYear[]): { year: string; state: CoverState }[] {
+  const byYear = new Map<string, CoverState>();
+  const bump = (yr: string, s: CoverState) => {
+    const prev = byYear.get(yr);
+    if (!prev || COVER_RANK[s] > COVER_RANK[prev]) byYear.set(yr, s);
+  };
+  for (const d of docs) {
+    if (!isFinancialPnlDoc(d)) continue;
+    const dt = (d.doc_type ?? '').toUpperCase();
+    const isT12 = dt.includes('T12') || dt === 'T-12';
+    const yr = isT12 ? 'T-12' : String(d.fiscal_year ?? d.extracted_period_year ?? '').trim();
+    if (!yr) continue;
+    bump(yr, coverStateFromStatus(d.status));
+  }
+  // A year that made it into the grid is uploaded regardless of doc source
+  // (an OM-embedded P&L has no standalone financial doc of its own).
+  for (const y of populatedYears) {
+    if (/^\d{4}$/.test(y.year) || y.year === 'T-12') bump(y.year, 'uploaded');
+  }
+  const numeric = [...byYear.keys()].filter((y) => /^\d{4}$/.test(y)).map(Number).sort((a, b) => a - b);
+  if (numeric.length >= 2) {
+    for (let y = numeric[0]; y <= numeric[numeric.length - 1]; y++) {
+      if (!byYear.has(String(y))) byYear.set(String(y), 'gap');
+    }
+  }
+  const order = [...byYear.keys()].sort((a, b) => {
+    if (a === 'T-12') return 1;
+    if (b === 'T-12') return -1;
+    return Number(a) - Number(b);
+  });
+  return order.map((year) => ({ year, state: byYear.get(year)! }));
+}
+
 interface InspectTarget {
   rowLabel: string;
   colLabel: string;
@@ -225,7 +303,9 @@ export default function GroundedWorksheet({
   // (endpoint + multi-doc fallback) via useHistoricals. Keep the last 4
   // populated years; empty on deals with no extracted P&Ls (Model col alone).
   const { years: allHistYears } = useHistoricals(rawId, { keys: deal?.keys });
-  const histYears = useMemo(() => allHistYears.filter(histHasData).slice(-4), [allHistYears]);
+  const populatedHistYears = useMemo(() => allHistYears.filter(histHasData), [allHistYears]);
+  const histYears = useMemo(() => populatedHistYears.slice(-4), [populatedHistYears]);
+  const coverage = useMemo(() => buildCoverage(documents, populatedHistYears), [documents, populatedHistYears]);
 
   // Model-column base (pre-edit) values per row id.
   const modelBase = useMemo<Record<string, number>>(() => {
@@ -495,6 +575,27 @@ export default function GroundedWorksheet({
           <span>
             <span className="font-semibold">{reviewCount}</span> value{reviewCount === 1 ? '' : 's'} came in low-confidence —
             they’re flagged <span className="text-warn-700 font-medium">amber</span> below. Click one to check its source and accept or edit it.
+          </span>
+        </div>
+      )}
+      {coverage.length > 0 && (
+        <div className="px-5 py-2.5 border-b border-border bg-surface-2/20 flex flex-wrap items-center gap-x-2 gap-y-1.5">
+          <span className="text-[10px] uppercase tracking-wider text-ink-500 font-semibold mr-1">Historical coverage</span>
+          {coverage.map((c) => (
+            <span
+              key={c.year}
+              title={COVER_TITLE[c.state]}
+              className={cn('inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-[11px] font-medium border tabular-nums', COVER_TONE[c.state])}
+            >
+              <span className={cn('w-1.5 h-1.5 rounded-full', COVER_DOT[c.state])} />
+              {c.year}
+            </span>
+          ))}
+          <span className="text-[10.5px] text-ink-400 ml-auto hidden md:inline">
+            <span className="text-emerald-500">●</span> uploaded ·{' '}
+            <span className="text-amber-500">●</span> processing ·{' '}
+            <span className="text-danger-500">●</span> failed ·{' '}
+            <span className="text-ink-400">●</span> not uploaded
           </span>
         </div>
       )}
