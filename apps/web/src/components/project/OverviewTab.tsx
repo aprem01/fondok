@@ -6,6 +6,7 @@ import { Card } from '@/components/ui/Card';
 import { Button } from '@/components/ui/Button';
 import Modal from '@/components/ui/Modal';
 import { useToast } from '@/components/ui/Toast';
+import { DataKeyLegend } from './DataKeyLegend';
 import {
   kimptonAnglerOverview, findBrand, returnProfiles, positioningTiers,
   brandFamilies,
@@ -490,19 +491,9 @@ export default function OverviewTab({ projectId }: { projectId: number | string 
           standalone IntroCard and its wrapper Card were removed (Wave 1
           UX reduction): provenance icons get a one-line legend instead
           of a teaching banner, and CoachMark covers the rest. */}
-      <div className="flex items-center justify-between py-1">
-        <div className="flex items-center gap-5 text-[11px] text-ink-500">
-          <span className="flex items-center gap-1.5">
-            <Pencil size={11} className="text-warn-500" /> Editable
-          </span>
-          <span className="flex items-center gap-1.5">
-            <Link2 size={11} className="text-success-500" /> Linked
-          </span>
-          <span className="flex items-center gap-1.5">
-            <span className="w-2.5 h-2.5 rounded bg-ink-300/40" /> Read-Only
-          </span>
-        </div>
-        <div className="flex items-center gap-2">
+      <div className="flex items-center justify-between py-1 gap-4">
+        <DataKeyLegend variant="overview" />
+        <div className="flex items-center gap-2 shrink-0">
           <Button
             variant="secondary"
             size="sm"
@@ -1237,9 +1228,13 @@ function Section({
   onSaveOverride?: (path: string, value: number | string | null) => Promise<void>;
 }) {
   return (
-    <Card className="p-3">
-      <h3 className="text-[12px] font-semibold text-ink-900 uppercase tracking-wide mb-1.5">{title}</h3>
-      <div className="text-[12.5px]">
+    <Card className="p-0 overflow-hidden">
+      {/* Design sync: dark-navy header bar with a white title (was a light
+          in-card heading). */}
+      <div className="bg-ink-900 px-4 py-2.5">
+        <h3 className="text-[12.5px] font-semibold text-white">{title}</h3>
+      </div>
+      <div className="p-4 text-[12.5px]">
         {rows.map((row, idx) => {
           // Normalize tuple → object so the rendering branch is uniform.
           const spec = Array.isArray(row)

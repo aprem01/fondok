@@ -450,24 +450,6 @@ export default function ProjectionsSection({
           </div>
         </div>
 
-        {/* FON-27: provenance legend — makes the per-assumption source
-            affordance discoverable. Occupancy/ADR carry an input-source dot,
-            revenue lines a computed-trace underline; hover any for the full
-            rationale (source doc, formula, inputs). */}
-        <div className="px-5 py-2 border-b border-border bg-surface-2/20 flex flex-wrap items-center gap-x-3 gap-y-1 text-[10.5px] text-ink-500">
-          <span className="uppercase tracking-wider font-semibold">Provenance</span>
-          <span>Hover an underlined value for its source &amp; formula.</span>
-          <span className="inline-flex items-center gap-1 ml-auto">
-            <span className="w-1.5 h-1.5 rounded-full bg-success-500" aria-hidden="true" /> grounded actual
-          </span>
-          <span className="inline-flex items-center gap-1">
-            <span className="w-1.5 h-1.5 rounded-full bg-warn-500" aria-hidden="true" /> benchmark / seed
-          </span>
-          <span className="inline-flex items-center gap-1">
-            <span className="w-1.5 h-1.5 rounded-full bg-sky-500" aria-hidden="true" /> calculated
-          </span>
-        </div>
-
         <AssumptionOverrideContext.Provider value={overrideCtx}>
           <ProjectionsTable years={years} />
         </AssumptionOverrideContext.Provider>

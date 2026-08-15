@@ -17,6 +17,7 @@ import { useToast } from '@/components/ui/Toast';
 import EngineHeader from './EngineHeader';
 import EngineRightRail from './EngineRightRail';
 import EngineLegend from './EngineLegend';
+import { DataKeyLegend } from './DataKeyLegend';
 import EngineRunHistory from './EngineRunHistory';
 import WhatJustHappened from './WhatJustHappened';
 import type { EngineOutputsResponse } from '@/lib/api';
@@ -36,8 +37,10 @@ import IndexAnalysisSection from './pl/IndexAnalysisSection';
 
 // Review is NOT its own screen — it lives inside Historicals, where the
 // financial data already is (upload → fix/review in place → use the app).
+// Design sync: the mockup leads with Historicals + Projections (P&L Summary
+// was folded into Historicals when review moved in-place). The analytical
+// tabs stay available after the two primary financial views.
 const subTabs = [
-  'P&L Summary',
   'Historicals',
   'Projections',
   'Index Analysis',
@@ -345,7 +348,7 @@ export default function PLTab({ projectId }: { projectId: number | string }) {
   // (the review now lives inside the historical data screen — no separate tab).
   const finParam = searchParams?.get('fin');
   const [tab, setTab] = useState<SubTab>(
-    finParam === 'review' || finParam === 'historicals' ? 'Historicals' : 'P&L Summary',
+    finParam === 'projections' ? 'Projections' : 'Historicals',
   );
   const params = useParams();
   const { toast } = useToast();
@@ -525,25 +528,13 @@ export default function PLTab({ projectId }: { projectId: number | string }) {
           </button>
         ))}
       </div>
-      <EngineLegend />
+      {tab === 'Historicals' || tab === 'Projections' ? (
+        <DataKeyLegend variant="financials" className="mb-4" />
+      ) : (
+        <EngineLegend />
+      )}
 
       <div className={cn(computing && 'relative pointer-events-none opacity-60')}>
-        {tab === 'P&L Summary' && (
-          <PLSummary
-            stmt={stmt}
-            sourceLabel={hasWorkerStatement ? 'worker' : 'mock'}
-            sourcedFromT12={sourcedFromT12}
-            keysReady={keysReady}
-            propertyKeys={propertyKeys}
-            dealLoading={dealLoading}
-            y1Rev={y1Rev}
-            y1NOI={y1NOI}
-            y1GOP={y1GOP}
-            y1RevPAR={y1RevPAR}
-            margin={margin}
-            revenueYears={revenueYears ?? null}
-          />
-        )}
         {tab === 'Historicals' && (
           // One table: the grounded worksheet is the single financial-data
           // surface — multi-year grounded columns (incl. Occupancy/ADR/RevPAR),
