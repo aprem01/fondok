@@ -570,11 +570,11 @@ export default function GroundedWorksheet({
         </div>
       )}
       {!customize && reviewCount > 0 && (
-        <div className="px-5 py-2 bg-warn-50 border-b border-warn-500/30 text-[11.5px] text-warn-800 flex items-center gap-1.5">
+        <div className="px-5 py-2 bg-red-50 border-b border-red-500/30 text-[11.5px] text-red-800 flex items-center gap-1.5">
           <Info size={11} className="shrink-0" />
           <span>
             <span className="font-semibold">{reviewCount}</span> value{reviewCount === 1 ? '' : 's'} came in low-confidence —
-            they’re flagged <span className="text-warn-700 font-medium">amber</span> below. Click one to check its source and accept or edit it.
+            they’re flagged <span className="text-red-700 font-medium">red</span> below. Click one to check its source and accept or edit it.
           </span>
         </div>
       )}
@@ -607,10 +607,10 @@ export default function GroundedWorksheet({
             {cols.map((c) => <col key={c.id} />)}
           </colgroup>
           <thead>
-            <tr className="text-ink-500 text-[10px] uppercase tracking-wider border-b border-border">
-              <th className="text-left font-semibold px-5 py-2 sticky left-0 bg-bg z-10">Line item</th>
+            <tr className="bg-ink-900 text-white text-[10px] uppercase tracking-wider">
+              <th className="text-left font-semibold px-5 py-2.5 sticky left-0 bg-ink-900 z-10">Line item</th>
               {cols.map((c) => (
-                <th key={c.id} className={cn('text-right font-semibold px-3 py-2', !c.historical && 'text-brand-700')}>
+                <th key={c.id} className={cn('text-right font-semibold px-3 py-2.5', !c.historical && 'text-brand-200')}>
                   {c.label}
                 </th>
               ))}
@@ -798,11 +798,12 @@ function WorksheetCell({
     const k = resolved?.source ? sourceKind(resolved.source) : null;
     kind = k ?? 'benchmark';
   }
+  // Design taxonomy: grounded/extracted = green, input/assumption
+  // (override + benchmark) = blue, calculated = gray.
   const dotCls =
     kind === 'grounded' ? 'bg-emerald-500'
-    : kind === 'override' ? 'bg-violet-500'
-    : kind === 'computed' ? 'bg-sky-500'
-    : 'bg-amber-500';
+    : kind === 'computed' ? 'bg-slate-400'
+    : 'bg-blue-500';
 
   const openInspect = () => {
     if (value == null) return;
@@ -856,7 +857,7 @@ function WorksheetCell({
             title={review ? `Low confidence (${Math.round(review.confidence * 100)}%) — click to check or edit` : 'Click to edit'}
             className={cn(
               'tabular-nums px-1 rounded hover:bg-brand-50',
-              review ? 'ring-1 ring-warn-400 bg-warn-50 text-warn-800' : overridden ? 'text-violet-700 font-medium' : 'text-ink-900',
+              review ? 'ring-1 ring-red-400 bg-red-50 text-red-700' : overridden ? 'text-blue-700 font-medium' : 'text-ink-900',
             )}
           >
             {saving ? <Loader2 size={11} className="animate-spin inline" /> : fmtRowValue(value, row.fmt)}
@@ -866,7 +867,7 @@ function WorksheetCell({
             type="button"
             onClick={openInspect}
             title={review ? `Low confidence (${Math.round(review.confidence * 100)}%) — click to check or correct` : 'Click to see source or correct'}
-            className={cn('tabular-nums px-1 rounded hover:bg-brand-50', review ? 'ring-1 ring-warn-400 bg-warn-50 text-warn-800' : 'text-ink-700')}
+            className={cn('tabular-nums px-1 rounded hover:bg-brand-50', review ? 'ring-1 ring-red-400 bg-red-50 text-red-700' : 'text-ink-700')}
           >
             {fmtRowValue(value, row.fmt)}
           </button>
