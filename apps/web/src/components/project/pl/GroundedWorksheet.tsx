@@ -25,7 +25,7 @@ import { useMemo, useState, useEffect, useRef, useCallback } from 'react';
 import type { ReactNode } from 'react';
 import { useSearchParams } from 'next/navigation';
 import {
-  Loader2, RotateCcw, X, FileText, Info, SlidersHorizontal,
+  Loader2, RotateCcw, X, FileText, Info, SlidersHorizontal, Search, AlertTriangle,
   EyeOff, Eye, ChevronUp, ChevronDown, Plus, Scissors, Trash2, Check,
 } from 'lucide-react';
 import { Card } from '@/components/ui/Card';
@@ -55,6 +55,7 @@ interface RowDef {
   kind: RowKind;
   overrideKey?: string;    // editable model-column key
   reviewKey?: string;      // canonical extraction field for read-only rows (revenue) — reviewable at source
+  metaKey?: string;        // HistYear.meta key — per-year source/confidence for historical-cell review flags
   y1Read?: string[];       // dotted path into the y1Src engine's years[0]
   y1Src?: 'expense' | 'fb' | 'revenue'; // which engine feeds the Model column (default expense)
   fmt?: RowFmt;            // cell number format (default currency)
@@ -83,9 +84,9 @@ const ROWS: RowDef[] = [
   { id: 'revpar', label: 'RevPAR', kind: 'input', fmt: 'dollar', y1Src: 'revenue', y1Read: ['revpar'] },
 
   { id: 's_rev', label: 'Revenue', kind: 'section' },
-  { id: 'rooms_rev', label: 'Rooms Revenue', kind: 'input', y1Src: 'fb', y1Read: ['rooms_revenue'], reviewKey: 'rooms_revenue' },
-  { id: 'fb_rev', label: 'Food & Beverage Revenue', kind: 'input', y1Src: 'fb', y1Read: ['fb_revenue'], reviewKey: 'fb_revenue' },
-  { id: 'other_rev', label: 'Other Revenue', kind: 'input', y1Src: 'fb', y1Read: ['other_revenue'], reviewKey: 'other_revenue' },
+  { id: 'rooms_rev', label: 'Rooms Revenue', kind: 'input', y1Src: 'fb', y1Read: ['rooms_revenue'], reviewKey: 'rooms_revenue', metaKey: 'rooms' },
+  { id: 'fb_rev', label: 'Food & Beverage Revenue', kind: 'input', y1Src: 'fb', y1Read: ['fb_revenue'], reviewKey: 'fb_revenue', metaKey: 'fb' },
+  { id: 'other_rev', label: 'Other Revenue', kind: 'input', y1Src: 'fb', y1Read: ['other_revenue'], reviewKey: 'other_revenue', metaKey: 'misc' },
   { id: 'total_rev', label: 'Total Revenue', kind: 'subtotal',
     compute: (v) => v.rooms_rev + v.fb_rev + v.other_rev },
 
@@ -290,10 +291,15 @@ export default function GroundedWorksheet({
 
   const searchParams = useSearchParams();
   const wl = useWorksheetLayout(rawId);
-  const [customize, setCustomize] = useState(false);
+  // Design rewire: structure-editing (Customize) removed from Historicals —
+  // the layout hooks stay wired but the mode is never entered.
+  const customize = false;
   const [draft, setDraft] = useState<Record<string, string>>({});
   const [savingKey, setSavingKey] = useState<string | null>(null);
   const [inspect, setInspect] = useState<InspectTarget | null>(null);
+  // Design rewire: year-pill filtering + line-item search.
+  const [hiddenYears, setHiddenYears] = useState<Set<string>>(new Set());
+  const [search, setSearch] = useState('');
 
   const expY0 = useMemo(() => (getEngineField<Record<string, unknown>[]>(outputs, 'expense', 'years') ?? [])[0] ?? {}, [outputs]);
   const fbY0 = useMemo(() => (getEngineField<Record<string, unknown>[]>(outputs, 'fb', 'years') ?? [])[0] ?? {}, [outputs]);
@@ -306,6 +312,18 @@ export default function GroundedWorksheet({
   const populatedHistYears = useMemo(() => allHistYears.filter(histHasData), [allHistYears]);
   const histYears = useMemo(() => populatedHistYears.slice(-4), [populatedHistYears]);
   const coverage = useMemo(() => buildCoverage(documents, populatedHistYears), [documents, populatedHistYears]);
+  // Design rewire: overall extraction confidence chip — average of the
+  // per-line confidences captured on the historical years.
+  const avgConfidence = useMemo(() => {
+    const vals: number[] = [];
+    for (const y of histYears) {
+      if (!y.meta) continue;
+      for (const m of Object.values(y.meta)) {
+        if (typeof m.confidence === 'number') vals.push(m.confidence);
+      }
+    }
+    return vals.length ? vals.reduce((a, b) => a + b, 0) / vals.length : null;
+  }, [histYears]);
 
   // Model-column base (pre-edit) values per row id.
   const modelBase = useMemo<Record<string, number>>(() => {
@@ -440,6 +458,20 @@ export default function GroundedWorksheet({
     return items;
   }, [wl.layout, customize, modelLive]);
 
+  // Design rewire: line-item search filters the rendered rows by label.
+  const visibleRendered = useMemo(() => {
+    const q = search.trim().toLowerCase();
+    if (!q) return rendered;
+    return rendered.filter((item) => {
+      if (item.type === 'section') return false;
+      const label =
+        item.type === 'split' ? item.child.label
+        : item.type === 'curated' ? item.line.label
+        : item.row.label;
+      return label.toLowerCase().includes(q);
+    });
+  }, [rendered, search]);
+
   // Deep-link focus: a "→ Financials" jump from the Data Room field review
   // carries ?focus=<field_name>. Resolve it to a worksheet row and scroll +
   // pulse it so the analyst lands exactly on the value that needs attention.
@@ -516,60 +548,78 @@ export default function GroundedWorksheet({
     );
   }
 
-  const cols = [
-    ...histYears.map((y, i) => ({
-      id: `h${y.year}-${i}`,
-      label: y.year,
-      historical: true as const,
-      year: y,
-    })),
-    { id: 'model', label: 'Year 1 · Model', historical: false as const, year: null },
-  ];
+  // Design rewire: Historicals shows historical actuals only — the forward
+  // model lives in Projections. Year pills filter which years render.
+  const shownYears = histYears.filter((y) => !hiddenYears.has(y.year));
+  const cols = shownYears.map((y, i) => ({
+    id: `h${y.year}-${i}`,
+    label: y.year,
+    historical: true as const,
+    year: y,
+  }));
 
   return (
     <Card className="p-0 overflow-hidden">
-      <div className="flex items-center justify-between px-5 py-3 border-b border-border bg-surface-2/40">
+      <div className="flex flex-wrap items-center justify-between gap-3 px-5 py-3 border-b border-border bg-surface-2/40">
         <div>
-          <h3 className="text-[14px] font-semibold text-ink-900">Operating worksheet</h3>
+          <h3 className="text-[14px] font-semibold text-ink-900">Financials</h3>
           <p className="text-[11.5px] text-ink-500 mt-0.5">
-            Historical years are grounded facts · <span className="text-brand-700 font-medium">Year 1 · Model</span> is editable —
-            click any expense line to edit, or any cell’s dot to see its source.
+            Historical operating actuals — click any cell’s dot to see its source, or a red-flagged value to review it.
           </p>
         </div>
-        <div className="flex items-center gap-3">
+        <div className="flex items-center gap-2">
           {running && (
             <span className="inline-flex items-center gap-1.5 text-[11.5px] text-brand-700">
-              <Loader2 size={12} className="animate-spin" /> Re-modeling…
+              <Loader2 size={12} className="animate-spin" /> Working…
             </span>
           )}
-          {customize && wl.isCustomized && (
-            <button
-              type="button"
-              onClick={wl.reset}
-              className="text-[11.5px] text-ink-500 hover:text-danger-700"
-            >
-              Reset layout
-            </button>
+          {avgConfidence != null && (
+            <span className="inline-flex items-center gap-1 text-[11px] font-medium text-success-700 bg-success-50 border border-success-500/25 rounded-full px-2 py-0.5 tabular-nums">
+              {Math.round(avgConfidence * 100)}% extraction confidence
+            </span>
           )}
-          <button
-            type="button"
-            onClick={() => setCustomize((c) => !c)}
-            className={cn(
-              'inline-flex items-center gap-1.5 text-[11.5px] px-2.5 py-1 rounded-md border transition-colors',
-              customize ? 'border-brand-500 text-brand-700 bg-brand-50' : 'border-border text-ink-600 hover:text-ink-900',
-            )}
-          >
-            {customize ? <Check size={12} /> : <SlidersHorizontal size={12} />}
-            {customize ? 'Done' : 'Customize'}
-          </button>
         </div>
       </div>
-      {customize && (
-        <div className="px-5 py-2 bg-brand-50/40 border-b border-border text-[11px] text-brand-800 flex items-center gap-1.5">
-          <Info size={11} /> Rename, hide, reorder, add lines, or split a line into parts. This changes how the statement <em>reads</em> — never the numbers the model computes. Saved on this device.
+      {histYears.length > 0 && (
+        <div className="flex flex-wrap items-center gap-3 px-5 py-2 border-b border-border">
+          <span className="text-[10px] uppercase tracking-wider text-ink-500 font-semibold">Years</span>
+          <div className="flex items-center gap-1">
+            {histYears.map((y) => {
+              const hidden = hiddenYears.has(y.year);
+              return (
+                <button
+                  key={y.year}
+                  type="button"
+                  onClick={() =>
+                    setHiddenYears((prev) => {
+                      const n = new Set(prev);
+                      if (n.has(y.year)) n.delete(y.year);
+                      else n.add(y.year);
+                      return n;
+                    })
+                  }
+                  className={cn(
+                    'px-2.5 py-1 rounded-md text-[11.5px] font-medium tabular-nums border transition-colors',
+                    hidden ? 'border-border text-ink-400' : 'border-ink-900 bg-ink-900 text-white',
+                  )}
+                >
+                  {y.year}
+                </button>
+              );
+            })}
+          </div>
+          <div className="relative ml-auto">
+            <Search size={12} className="absolute left-2 top-1/2 -translate-y-1/2 text-ink-400" aria-hidden="true" />
+            <input
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              placeholder="Search line items…"
+              className="w-48 pl-7 pr-2 py-1 text-[11.5px] rounded-md border border-border focus:outline-none focus:ring-2 focus:ring-brand-100 focus:border-brand-500"
+            />
+          </div>
         </div>
       )}
-      {!customize && reviewCount > 0 && (
+      {reviewCount > 0 && (
         <div className="px-5 py-2 bg-red-50 border-b border-red-500/30 text-[11.5px] text-red-800 flex items-center gap-1.5">
           <Info size={11} className="shrink-0" />
           <span>
@@ -617,7 +667,7 @@ export default function GroundedWorksheet({
             </tr>
           </thead>
           <tbody>
-            {rendered.map((item, idx) => {
+            {visibleRendered.map((item, idx) => {
               if (item.type === 'section') {
                 return (
                   <tr key={`sec-${item.id}`} className="bg-ink-100/50">
@@ -789,6 +839,16 @@ function WorksheetCell({
     value = modelLive[row.id] ?? 0;
   }
 
+  // Design rewire: historical cells flag from per-cell extraction confidence
+  // captured on HistYear.meta (low confidence → red, opens the SOURCE panel at
+  // that year's document). Model cells keep the passed-in `review`.
+  const histMeta = historical && row.metaKey ? histYear?.meta?.[row.metaKey] : undefined;
+  const histReview =
+    histMeta && histMeta.docId && histMeta.confidence < 0.85
+      ? { docId: histMeta.docId, field: histMeta.field, confidence: histMeta.confidence }
+      : undefined;
+  const effReview = review ?? histReview;
+
   // Provenance kind for the dot.
   let kind: InspectTarget['kind'];
   if (row.kind === 'computed' || row.kind === 'subtotal') kind = 'computed';
@@ -808,7 +868,7 @@ function WorksheetCell({
   const openInspect = () => {
     if (value == null) return;
     const docIds = historical
-      ? []
+      ? (effReview?.docId ? [effReview.docId] : [])
       : (resolved?.docId ? [resolved.docId] : []);
     onInspect({
       rowLabel: row.label,
@@ -816,10 +876,10 @@ function WorksheetCell({
       kind,
       value,
       overrideKey: !historical ? row.overrideKey : undefined,
-      reviewKey: !historical ? (row.overrideKey ?? row.reviewKey) : undefined,
-      docIds: review ? [review.docId, ...docIds.filter((id) => id !== review.docId)] : docIds,
+      reviewKey: !historical ? (row.overrideKey ?? row.reviewKey) : (effReview?.field ?? undefined),
+      docIds: effReview ? [effReview.docId, ...docIds.filter((id) => id !== effReview.docId)] : docIds,
       formula: row.kind === 'computed' || row.kind === 'subtotal' ? formulaFor(row.id) : undefined,
-      review,
+      review: effReview,
       fmt: row.fmt,
     });
   };
@@ -868,6 +928,28 @@ function WorksheetCell({
             onClick={openInspect}
             title={review ? `Low confidence (${Math.round(review.confidence * 100)}%) — click to check or correct` : 'Click to see source or correct'}
             className={cn('tabular-nums px-1 rounded hover:bg-brand-50', review ? 'ring-1 ring-red-400 bg-red-50 text-red-700' : 'text-ink-700')}
+          >
+            {fmtRowValue(value, row.fmt)}
+          </button>
+        ) : (historical && effReview) ? (
+          // Design rewire: low-confidence historical cell — red flag, opens the
+          // SOURCE panel at its document.
+          <button
+            type="button"
+            onClick={openInspect}
+            title={`Low confidence (${Math.round(effReview.confidence * 100)}%) — click to review its source`}
+            className="tabular-nums px-1 rounded ring-1 ring-red-400 bg-red-50 text-red-700 inline-flex items-center gap-1"
+          >
+            {fmtRowValue(value, row.fmt)}
+            <AlertTriangle size={10} className="shrink-0" aria-hidden="true" />
+          </button>
+        ) : (historical && histMeta) ? (
+          // Extracted historical value with known source — green, click for source.
+          <button
+            type="button"
+            onClick={openInspect}
+            title="Extracted — click to see its source"
+            className="tabular-nums px-1 rounded text-emerald-700 underline decoration-dotted decoration-emerald-500/60 underline-offset-2 hover:bg-emerald-50"
           >
             {fmtRowValue(value, row.fmt)}
           </button>

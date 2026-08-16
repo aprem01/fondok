@@ -75,7 +75,7 @@ export function useHistoricals(
               const ext = await api.documents.extraction(String(dealId), doc.id);
               const fields = actualsOnly(ext.fields ?? []);
               const label = deriveYearLabel(fields, doc.filename ?? '', doc.doc_type);
-              const built = buildHistYear(fields, keysHint, label);
+              const built = buildHistYear(fields, keysHint, label, doc.id);
               if (built) byYear.set(label, built);
             } catch {
               /* skip this doc — others may still populate */

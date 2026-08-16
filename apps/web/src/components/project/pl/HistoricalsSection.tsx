@@ -68,6 +68,17 @@ export interface HistYear {
   noi: number | null;
   /** ``true`` when all numeric series are present; ``false`` for placeholder/empty columns. */
   populated: boolean;
+  /** Design rewire: per-line source metadata for review flagging — worksheet
+   *  line id → { extraction confidence 0..1, matched field name, source doc
+   *  id }. Populated for the reviewable lines so historical cells can flag
+   *  low-confidence values and open the SOURCE panel at the right document. */
+  meta?: Record<string, HistLineMeta>;
+}
+
+export interface HistLineMeta {
+  confidence: number;
+  field: string;
+  docId?: string;
 }
 
 export interface HistData {
@@ -367,8 +378,23 @@ export function buildHistYear(
   fields: ExtractionField[],
   keys: number,
   yearLabel: string,
+  docId?: string,
 ): HistYear | null {
   if (!fields.length) return null;
+
+  // Design rewire: capture per-line source metadata (confidence + matched
+  // field + doc) as we resolve each value, so historical cells can flag
+  // low-confidence extractions and open the SOURCE panel. `pick` is a thin
+  // wrapper over findField that records meta then returns the numeric value —
+  // the value logic below is unchanged.
+  const meta: Record<string, HistLineMeta> = {};
+  const pick = (key: string, aliases: string[]): number | null => {
+    const f = findField(fields, aliases);
+    if (f && typeof f.confidence === 'number') {
+      meta[key] = { confidence: f.confidence, field: f.field_name, docId };
+    }
+    return num(f);
+  };
 
   // ─── Alias lists mirror the canonical map in ───
   //   ``apps/worker/app/services/usali_scorer.py:_ALIASES``
@@ -407,7 +433,7 @@ export function buildHistYear(
     'p_and_l_usali.operational_kpis.revpar_usd',
     'ttm_summary_per_om.revpar_usd', 'ttm_summary_per_om.revpar',
   ]));
-  const rooms = num(findField(fields, [
+  const rooms = pick('rooms', [
     'rooms_revenue', 'room_revenue', 'total_rooms_revenue',
     't12_rooms_revenue', 'rooms_revenue_usd',
     'p_and_l_usali.rooms_revenue',
@@ -424,8 +450,8 @@ export function buildHistYear(
     // 2022 variant Sam hit
     'p_and_l_usali.revenue.rooms_revenue_usd',
     'p_and_l_usali.revenue.rooms_revenue',
-  ]));
-  const fb = num(findField(fields, [
+  ]);
+  const fb = pick('fb', [
     'fb_revenue', 'food_beverage_revenue', 'fnb_revenue', 'food_beverage',
     'fb_revenue_usd',
     'p_and_l_usali.fb_revenue',
@@ -442,12 +468,12 @@ export function buildHistYear(
     // 2022 variant Sam hit
     'p_and_l_usali.revenue.fb_revenue_usd',
     'p_and_l_usali.revenue.fb_revenue',
-  ]));
+  ]);
   // Misc/other-revenue: backend splits ``other_revenue`` (other
   // operated departments) and ``misc_revenue`` (miscellaneous income).
   // Historicals collapses them into a single "Misc. Income" column,
   // so we accept paths from BOTH canonicals.
-  const misc = num(findField(fields, [
+  const misc = pick('misc', [
     'other_revenue', 'misc_revenue', 'misc_income', 'miscellaneous_income',
     'other_operated_revenue', 'other_revenue_usd', 'misc_revenue_usd',
     'p_and_l_usali.other_revenue',
@@ -469,7 +495,7 @@ export function buildHistYear(
     'p_and_l_usali.revenue.other_revenue_usd',
     'p_and_l_usali.revenue.misc_revenue_usd',
     'p_and_l_usali.revenue.misc_income_usd',
-  ]));
+  ]);
 
   // ─── Expenses / profitability (Task C 2026-06-29; aliases expanded 2026-06-30) ───
   const roomsDept = num(findField(fields, [
@@ -605,6 +631,7 @@ export function buildHistYear(
     fixed_expenses: fixedExpenses,
     noi,
     populated: true,
+    meta,
   };
 }
 
