@@ -54,8 +54,8 @@ export function Traced({
     >
       <span
         className={cn(
-          'cursor-help rounded-sm px-0.5 -mx-0.5 underline decoration-dotted decoration-sky-500 decoration-2 underline-offset-[3px] transition-colors',
-          open && 'bg-sky-50',
+          'cursor-help rounded-sm px-0.5 -mx-0.5 underline decoration-dotted decoration-slate-400 decoration-2 underline-offset-[3px] transition-colors',
+          open && 'bg-slate-50',
         )}
         tabIndex={0}
         onFocus={() => setOpen(true)}
@@ -70,8 +70,8 @@ export function Traced({
           className="absolute z-50 left-1/2 -translate-x-1/2 top-full mt-1.5 w-72 rounded-lg border border-border bg-card shadow-card-hover p-3 text-left whitespace-normal"
         >
           <span className="flex items-center gap-1.5 mb-1.5">
-            <span className="w-2 h-2 rounded-full bg-brand-500" aria-hidden="true" />
-            <span className="text-[11px] font-semibold text-brand-700">Computed value</span>
+            <span className="w-2 h-2 rounded-full bg-slate-400" aria-hidden="true" />
+            <span className="text-[11px] font-semibold text-slate-600">Computed value</span>
           </span>
           {/* The formula. Rendered mono so operators line up. */}
           <span className="block text-[11.5px] font-mono text-ink-800 leading-snug mb-2">

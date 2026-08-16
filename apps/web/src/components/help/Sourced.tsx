@@ -53,18 +53,10 @@ export function Sourced({
 
   const kind = sourceKind(src);
   const tone = KIND_TONE[kind];
-  const decoColor =
-    kind === 'grounded'
-      ? 'decoration-emerald-500'
-      : kind === 'override'
-        ? 'decoration-violet-500'
-        : 'decoration-amber-500';
-  const hoverBg =
-    kind === 'grounded'
-      ? 'bg-emerald-50'
-      : kind === 'override'
-        ? 'bg-violet-50'
-        : 'bg-amber-50';
+  // Design taxonomy: grounded/extracted = green, everything else
+  // (benchmark + override = input/assumption) = blue.
+  const decoColor = kind === 'grounded' ? 'decoration-emerald-500' : 'decoration-blue-500';
+  const hoverBg = kind === 'grounded' ? 'bg-emerald-50' : 'bg-blue-50';
 
   const openDoc = () => {
     if (!doc || typeof window === 'undefined') return;

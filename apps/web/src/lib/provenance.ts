@@ -71,10 +71,14 @@ export function sourceExplanation(source: string): string {
   }
 }
 
+// Design-mockup taxonomy: green = linked / extracted (this deal's data),
+// blue = user input / assumption (seed defaults + analyst overrides),
+// gray = calculated. "Needs review" (red) is a per-value flag, not a
+// SourceKind. Benchmark + override both read as blue "input / assumption".
 export const KIND_TONE: Record<SourceKind, { text: string; bg: string; dot: string }> = {
   grounded: { text: 'text-success-700', bg: 'bg-success-50', dot: 'bg-success-500' },
-  benchmark: { text: 'text-warn-700', bg: 'bg-warn-50', dot: 'bg-warn-500' },
-  override: { text: 'text-brand-700', bg: 'bg-brand-50', dot: 'bg-brand-500' },
+  benchmark: { text: 'text-blue-700', bg: 'bg-blue-50', dot: 'bg-blue-500' },
+  override: { text: 'text-blue-700', bg: 'bg-blue-50', dot: 'bg-blue-500' },
 };
 
 /** Humanize an assumption key: strip the USALI prefix, expand _pct/_usd,

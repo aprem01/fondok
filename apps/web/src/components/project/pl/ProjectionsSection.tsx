@@ -1210,8 +1210,8 @@ function ComputedValue({ note, children }: { note?: string; children: ReactNode 
   if (!note) return <>{children}</>;
   return (
     <span className="inline-flex items-center gap-1" title={note}>
-      <span className="w-1.5 h-1.5 rounded-full shrink-0 bg-sky-500" aria-hidden="true" />
-      <span className="underline decoration-dotted decoration-2 decoration-sky-500 underline-offset-[3px] cursor-help">
+      <span className="w-1.5 h-1.5 rounded-full shrink-0 bg-slate-400" aria-hidden="true" />
+      <span className="underline decoration-dotted decoration-2 decoration-slate-400 underline-offset-[3px] cursor-help">
         {children}
       </span>
     </span>
