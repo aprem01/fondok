@@ -125,6 +125,13 @@ MIGRATIONS: list[tuple[str, str]] = [
         "ALTER TABLE deals ADD COLUMN IF NOT EXISTS target_irr NUMERIC(6,4)",
     ),
     (
+        # FON-46 — Deal Type (acquisition / development / redevelopment).
+        # Foundational project attribute set in the onboarding wizard;
+        # downstream it scopes which engines / assumptions apply.
+        "deals.add_deal_type",
+        "ALTER TABLE deals ADD COLUMN IF NOT EXISTS deal_type TEXT",
+    ),
+    (
         "documents.create_table",
         """
         CREATE TABLE IF NOT EXISTS documents (
@@ -1134,6 +1141,11 @@ SQLITE_MIGRATIONS: list[tuple[str, str]] = [
         # Wave 3 W3.5 — SQLite mirror of the Postgres ALTER above.
         "deals.add_target_irr_sqlite",
         "ALTER TABLE deals ADD COLUMN target_irr REAL",
+    ),
+    (
+        # FON-46 — SQLite mirror of the Postgres deal_type ALTER above.
+        "deals.add_deal_type_sqlite",
+        "ALTER TABLE deals ADD COLUMN deal_type TEXT",
     ),
     (
         "documents.create_table",

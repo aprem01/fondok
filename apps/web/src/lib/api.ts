@@ -22,6 +22,8 @@ export interface WorkerDeal {
   city: string | null;
   keys: number | null;
   service: string | null;
+  // FON-46 — deal classification (acquisition / development / redevelopment).
+  deal_type?: string | null;
   brand: string | null;
   status: string;
   deal_stage: string | null;
@@ -289,6 +291,8 @@ export interface NewDealBody {
   city?: string | null;
   keys?: number | null;
   service?: string | null;
+  // FON-46 — deal classification set in the onboarding wizard.
+  deal_type?: string | null;
 }
 
 export interface WorkerDocument {

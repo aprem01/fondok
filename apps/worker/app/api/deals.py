@@ -148,6 +148,9 @@ class CreateDealBody(BaseModel):
     city: str | None = None
     keys: int | None = Field(default=None, ge=1)
     service: str | None = None
+    # FON-46 — Deal Type set in the onboarding wizard: acquisition /
+    # development / redevelopment. Foundational; scopes downstream engines.
+    deal_type: str | None = Field(default=None, max_length=40)
     deal_stage: str | None = None
     return_profile: str | None = None
     brand: str | None = None
@@ -220,6 +223,8 @@ class DealRecord(BaseModel):
     city: str | None = None
     keys: int | None = None
     service: str | None = None
+    # FON-46 — deal classification (acquisition / development / redevelopment).
+    deal_type: str | None = None
     status: str = "Draft"
     deal_stage: str | None = None
     risk: str | None = None
@@ -497,6 +502,7 @@ def _row_to_record(row: dict[str, Any]) -> DealRecord:
         city=row.get("city"),
         keys=row.get("keys"),
         service=row.get("service"),
+        deal_type=row.get("deal_type"),
         status=row.get("status") or "Draft",
         deal_stage=row.get("deal_stage"),
         risk=row.get("risk"),
@@ -518,7 +524,7 @@ def _row_to_record(row: dict[str, Any]) -> DealRecord:
 
 
 _DEAL_COLUMNS = (
-    "id, tenant_id, name, city, keys, service, status, deal_stage, "
+    "id, tenant_id, name, city, keys, service, deal_type, status, deal_stage, "
     "risk, ai_confidence, return_profile, brand, positioning, "
     "purchase_price, sourcing_channel, target_irr, field_overrides, "
     "state, validation_started_at, validation_complete_at, "
@@ -631,6 +637,7 @@ async def create_deal(
         "city": body.city,
         "keys": body.keys,
         "service": body.service,
+        "deal_type": body.deal_type,
         "status": "Draft",
         "deal_stage": body.deal_stage,
         "risk": None,
@@ -649,12 +656,12 @@ async def create_deal(
         text(
             """
             INSERT INTO deals (
-                id, tenant_id, name, city, keys, service, status,
+                id, tenant_id, name, city, keys, service, deal_type, status,
                 deal_stage, risk, ai_confidence, return_profile,
                 brand, positioning, purchase_price, sourcing_channel,
                 target_irr, created_at, updated_at
             ) VALUES (
-                :id, :tenant, :name, :city, :keys, :service, :status,
+                :id, :tenant, :name, :city, :keys, :service, :deal_type, :status,
                 :deal_stage, :risk, :ai_confidence, :return_profile,
                 :brand, :positioning, :purchase_price, :sourcing_channel,
                 :target_irr, :created_at, :updated_at

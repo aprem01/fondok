@@ -50,6 +50,7 @@ export default function NewProjectPage() {
   const [savedLocally, setSavedLocally] = useState(false);
   const [data, setData] = useState({
     dealName: '', city: '', keys: '', stage: 'Teaser', hotelName: '', price: '',
+    dealType: 'acquisition',
     returnProfile: 'value-add',
     docs: [] as WizardFile[],
     brand: 'agnostic',
@@ -129,6 +130,7 @@ export default function NewProjectPage() {
         city: data.city.trim() || null,
         keys: keysInt,
         service: null,
+        deal_type: data.dealType,
         brand: brandValue,
         return_profile: data.returnProfile,
         positioning: data.positioning,
@@ -302,9 +304,22 @@ export default function NewProjectPage() {
 
 type WizardData = {
   dealName: string; city: string; keys: string; stage: string; hotelName: string; price: string;
+  dealType: string;
   returnProfile: string; docs: WizardFile[]; brand: string; brandSearch: string;
   expandedFamilies: string[]; positioning: string; sourcing: string;
 };
+
+// FON-46 — Deal Type classifies the project so Fondok applies the right
+// engines, assumptions, and workflows downstream.
+const DEAL_TYPES = [
+  { id: 'acquisition', label: 'Acquisition', desc: 'Purchase of an existing hotel' },
+  { id: 'development', label: 'Development / New Build', desc: 'Ground-up hotel development' },
+  { id: 'redevelopment', label: 'Redevelopment / Adaptive Reuse', desc: 'Reposition or convert an existing asset' },
+] as const;
+
+function dealTypeLabel(id: string | null | undefined): string {
+  return DEAL_TYPES.find((d) => d.id === id)?.label ?? '—';
+}
 type StepProps = { data: WizardData; update: (patch: Partial<WizardData>) => void };
 
 function Step1({ data, update }: StepProps) {
@@ -319,6 +334,30 @@ function Step1({ data, update }: StepProps) {
       </div>
 
       <div className="space-y-4">
+        <div>
+          <label className="block text-[12.5px] font-medium text-ink-700 mb-1.5">Deal Type *</label>
+          <div className="grid grid-cols-3 gap-2">
+            {DEAL_TYPES.map((dt) => {
+              const active = data.dealType === dt.id;
+              return (
+                <button
+                  key={dt.id}
+                  type="button"
+                  onClick={() => update({ dealType: dt.id })}
+                  aria-pressed={active}
+                  className={cn(
+                    'text-left rounded-md border p-3 transition-colors',
+                    active ? 'border-brand-500 bg-brand-50 ring-1 ring-brand-500' : 'border-border hover:border-ink-300',
+                  )}
+                >
+                  <div className={cn('text-[12.5px] font-semibold', active ? 'text-brand-700' : 'text-ink-900')}>{dt.label}</div>
+                  <div className="text-[11px] text-ink-500 mt-0.5 leading-snug">{dt.desc}</div>
+                </button>
+              );
+            })}
+          </div>
+          <p className="text-[11px] text-ink-400 mt-1.5">Classifies the deal so Fondok applies the right engines and assumptions.</p>
+        </div>
         <Field label="Deal Name *" value={data.dealName} onChange={v => update({ dealName: v })} placeholder="Chicago Downtown Acquisition" />
         <Field label="City / Submarket *" value={data.city} onChange={v => update({ city: v })} placeholder="Chicago, IL" />
         <div className="grid grid-cols-2 gap-4">
@@ -694,6 +733,7 @@ function Step6({ data, jumpTo }: { data: WizardData; jumpTo: (step: number) => v
 
   const rows = [
     { label: 'Deal Name', value: data.dealName || 'Untitled', step: 1 },
+    { label: 'Deal Type', value: dealTypeLabel(data.dealType), step: 1 },
     { label: 'Hotel Name', value: data.hotelName || 'Not specified', step: 1 },
     { label: 'Location', value: data.city || 'Not specified', step: 1 },
     { label: 'Keys / Indicative Price', value: `${data.keys || '—'} keys / ${data.price || '—'}`, step: 1 },
