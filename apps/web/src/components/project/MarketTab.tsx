@@ -6,7 +6,7 @@ import {
   LineChart, Line, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip,
   Legend, ResponsiveContainer,
 } from 'recharts';
-import { Calendar, Download, MapPinned } from 'lucide-react';
+import { Calendar, Download, MapPinned, Loader2 } from 'lucide-react';
 import { Card } from '@/components/ui/Card';
 import { Button } from '@/components/ui/Button';
 import { Badge } from '@/components/ui/Badge';
@@ -19,8 +19,36 @@ import {
   type TransactionCompsResult,
 } from '@/lib/api';
 import { useDeal } from '@/lib/hooks/useDeal';
+import { useEngineRun } from '@/lib/hooks/useEngineRun';
 import { cn } from '@/lib/format';
 import { IntroCard } from '@/components/help/IntroCard';
+
+// FON-47 — real STR/CoStar market data served by /deals/{id}/market-data
+// (apps/worker/app/api/documents.py _aggregate_market_data). Populated once an
+// STR_TREND / CoStar report is uploaded + extracted.
+interface StrCompRow {
+  name: string;
+  keys: number | null;
+  occupancy_pct: number | null;
+  adr_usd: number | null;
+  revpar_usd: number | null;
+}
+interface StrTrend {
+  subject_occupancy_pct: number | null;
+  subject_adr_usd: number | null;
+  subject_revpar_usd: number | null;
+  rgi_revpar_index: number | null;
+  ari_adr_index: number | null;
+  mpi_occupancy_index: number | null;
+  comp_set_size: number | null;
+  total_keys: number | null;
+  compset: StrCompRow[];
+}
+interface MarketDataResp {
+  deal_id: string;
+  str_trend: StrTrend | null;
+  sources?: Record<string, unknown>;
+}
 
 const subTabs = ['Market Overview', 'Transaction Comps'];
 
@@ -50,7 +78,53 @@ export default function MarketTab({ projectId }: { projectId: number | string })
   const { toast } = useToast();
   const params = useParams();
   const dealId = (params?.id as string | undefined) ?? String(projectId);
-  const { deal } = useDeal(dealId);
+  const { deal, refresh: refreshDeal } = useDeal(dealId);
+
+  // FON-47 (a) — fetch the REAL aggregated STR/CoStar market data. The tab
+  // previously only hit /market/overview (indices null) and showed an empty
+  // state even when an STR report was uploaded.
+  const [marketData, setMarketData] = useState<MarketDataResp | null>(null);
+  useEffect(() => {
+    if (isKimptonDemo || !isWorkerConnected() || !dealId || /^\d+$/.test(dealId)) return;
+    const ctrl = new AbortController();
+    fetch(`${workerUrl()}/deals/${dealId}/market-data`, { signal: ctrl.signal })
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d) => { if (d) setMarketData(d as MarketDataResp); })
+      .catch(() => { /* silent — empty state covers it */ });
+    return () => ctrl.abort();
+  }, [dealId, isKimptonDemo]);
+  const strTrend = marketData?.str_trend ?? null;
+  const hasStr = !!(strTrend && (strTrend.subject_occupancy_pct != null || strTrend.subject_adr_usd != null));
+
+  // FON-47 (b) — let the analyst drive the model's Year-1 occupancy/ADR from
+  // the STR market rates. The revenue engine already reads
+  // `revenue_seed_from_str_forecast` from field_overrides (default off); this
+  // toggles that override + re-runs (same mechanism as the FON-27 overrides).
+  const { run, status: runStatus } = useEngineRun(dealId, 'returns', { runMode: 'all' });
+  const strRunning = runStatus === 'running' || runStatus === 'queued';
+  const overrides = (deal?.field_overrides ?? {}) as Record<string, unknown>;
+  const rawSeed = overrides['revenue_seed_from_str_forecast'];
+  const strSeeded =
+    rawSeed === true ||
+    (typeof rawSeed === 'object' && rawSeed !== null && (rawSeed as { value?: unknown }).value === true);
+  const toggleStrSeed = async () => {
+    const next = { ...overrides };
+    if (strSeeded) delete next['revenue_seed_from_str_forecast'];
+    // Same {value, note} shape the FON-27 overrides use (engine reads it via
+    // _normalize_override_shape → base["revenue_seed_from_str_forecast"]).
+    else next['revenue_seed_from_str_forecast'] = { value: true, note: 'STR market rates enabled from the Market tab' };
+    try {
+      await api.deals.update(dealId, { field_overrides: next });
+      refreshDeal();
+      await run();
+      toast(
+        strSeeded ? 'Reverted Year-1 to the T-12 actuals' : 'Year-1 occupancy & ADR now driven by STR market rates — re-modeled',
+        { type: 'success' },
+      );
+    } catch {
+      toast('Could not update the model', { type: 'error' });
+    }
+  };
 
   // Worker market overview — populated for live deals once
   // /market/{deal_id}/overview returns. Indices are null until the STR
@@ -156,23 +230,95 @@ export default function MarketTab({ projectId }: { projectId: number | string })
             </div>
           </div>
         </Card>
-        <Card className="p-16 text-center">
-          <div className="w-12 h-12 rounded-lg bg-ink-300/20 flex items-center justify-center mx-auto mb-4">
-            <MapPinned size={20} className="text-ink-400" />
-          </div>
-          <h3 className="text-[15px] font-semibold text-ink-900">No market data yet</h3>
-          {submarketLabel && (
-            <p className="text-[12px] text-ink-700 mt-1.5 font-medium">{submarketLabel}</p>
-          )}
-          <p className="text-[12.5px] text-ink-500 mt-1 max-w-md mx-auto leading-relaxed">
-            We don&apos;t have benchmark data for this submarket yet. Open the
-            <span className="font-medium"> Data Library</span> to add it (paste in an STR report or
-            attach a saved market).
-          </p>
-          <Link href="/data-library?tab=market" className="inline-block mt-4">
-            <Button variant="primary" size="sm">Open Data Library</Button>
-          </Link>
-        </Card>
+        {hasStr && strTrend ? (
+          // FON-47 — real STR/CoStar market data, live from /market-data.
+          <Card className="p-0 overflow-hidden">
+            <div className="flex flex-wrap items-center justify-between gap-3 px-5 py-3 border-b border-border bg-surface-2/40">
+              <div>
+                <h3 className="text-[14px] font-semibold text-ink-900">STR market data</h3>
+                <p className="text-[11.5px] text-ink-500 mt-0.5">
+                  Extracted from this deal&apos;s uploaded STR / CoStar Trend report
+                  {strTrend.comp_set_size ? ` · ${strTrend.comp_set_size}-property comp set` : ''}
+                  {strTrend.total_keys ? ` · ${strTrend.total_keys.toLocaleString()} keys` : ''}.
+                </p>
+              </div>
+            </div>
+            <div className="grid grid-cols-3 divide-x divide-border border-b border-border">
+              {[
+                { label: 'Occupancy', value: strTrend.subject_occupancy_pct != null ? `${(strTrend.subject_occupancy_pct * 100).toFixed(1)}%` : '—' },
+                { label: 'ADR', value: strTrend.subject_adr_usd != null ? `$${strTrend.subject_adr_usd.toFixed(2)}` : '—' },
+                { label: 'RevPAR', value: strTrend.subject_revpar_usd != null ? `$${strTrend.subject_revpar_usd.toFixed(2)}` : '—' },
+              ].map((mm) => (
+                <div key={mm.label} className="px-5 py-4">
+                  <div className="text-[10px] uppercase tracking-wide text-ink-500">{mm.label} <span className="text-ink-400 normal-case">· subject</span></div>
+                  <div className="text-[20px] font-semibold text-ink-900 tabular-nums mt-0.5">{mm.value}</div>
+                </div>
+              ))}
+            </div>
+            <div className="flex flex-wrap items-center justify-between gap-3 px-5 py-3 border-b border-border bg-brand-50/30">
+              <div className="text-[12px] text-ink-700 max-w-xl">
+                <span className="font-semibold">Drive Year-1 from STR rates.</span>{' '}
+                {strSeeded
+                  ? 'The model is using these STR market rates for Year-1 occupancy & ADR.'
+                  : 'By default Year-1 uses the T-12 actuals. Switch to these STR market rates instead.'}
+              </div>
+              <div className="flex items-center gap-2 shrink-0">
+                {strRunning && (
+                  <span className="inline-flex items-center gap-1.5 text-[11.5px] text-brand-700">
+                    <Loader2 size={12} className="animate-spin" /> Re-modeling…
+                  </span>
+                )}
+                <Button variant={strSeeded ? 'secondary' : 'primary'} size="sm" onClick={toggleStrSeed} disabled={strRunning}>
+                  {strSeeded ? 'Revert to T-12 actuals' : 'Use STR rates in the model'}
+                </Button>
+              </div>
+            </div>
+            {strTrend.compset && strTrend.compset.length > 0 && (
+              <div className="overflow-x-auto">
+                <table className="w-full text-[12px]">
+                  <thead>
+                    <tr className="text-ink-500 text-[10px] uppercase tracking-wide border-b border-border">
+                      <th className="text-left font-semibold px-5 py-2">Comp set</th>
+                      <th className="text-right font-semibold px-3 py-2">Keys</th>
+                      <th className="text-right font-semibold px-3 py-2">Occupancy</th>
+                      <th className="text-right font-semibold px-3 py-2">ADR</th>
+                      <th className="text-right font-semibold px-5 py-2">RevPAR</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {strTrend.compset.map((c, i) => (
+                      <tr key={`${c.name}-${i}`} className="border-b border-border/60">
+                        <td className="px-5 py-2 text-ink-800">{c.name}</td>
+                        <td className="px-3 py-2 text-right tabular-nums text-ink-700">{c.keys ?? '—'}</td>
+                        <td className="px-3 py-2 text-right tabular-nums text-ink-700">{c.occupancy_pct != null ? `${(c.occupancy_pct * 100).toFixed(1)}%` : '—'}</td>
+                        <td className="px-3 py-2 text-right tabular-nums text-ink-700">{c.adr_usd != null ? `$${c.adr_usd.toFixed(0)}` : '—'}</td>
+                        <td className="px-5 py-2 text-right tabular-nums text-ink-700">{c.revpar_usd != null ? `$${c.revpar_usd.toFixed(0)}` : '—'}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </Card>
+        ) : (
+          <Card className="p-16 text-center">
+            <div className="w-12 h-12 rounded-lg bg-ink-300/20 flex items-center justify-center mx-auto mb-4">
+              <MapPinned size={20} className="text-ink-400" />
+            </div>
+            <h3 className="text-[15px] font-semibold text-ink-900">No market data yet</h3>
+            {submarketLabel && (
+              <p className="text-[12px] text-ink-700 mt-1.5 font-medium">{submarketLabel}</p>
+            )}
+            <p className="text-[12.5px] text-ink-500 mt-1 max-w-md mx-auto leading-relaxed">
+              We don&apos;t have benchmark data for this submarket yet. Open the
+              <span className="font-medium"> Data Library</span> to add it (paste in an STR report or
+              attach a saved market).
+            </p>
+            <Link href="/data-library?tab=market" className="inline-block mt-4">
+              <Button variant="primary" size="sm">Open Data Library</Button>
+            </Link>
+          </Card>
+        )}
       </div>
     );
   }
