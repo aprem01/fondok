@@ -900,12 +900,15 @@ export default function DataRoomTab({ projectId }: { projectId: number | string 
             }),
           )}
           onReclassify={handleReclassify}
-          onOpenDoc={(docId) => {
-            // EVERY document opens the same focused field-review drawer for a
-            // consistent experience. From there, each field's "→ Screen" link
-            // and the "Feeds these screens" chips jump to where the data lands
-            // (a financial line → Financials worksheet with the row highlighted).
-            setReviewDocId(docId);
+          onOpenDoc={(docId, financial) => {
+            // Sam QA 8/21: Financial Statements' "View data" jumps straight to
+            // the Financials tab (where their data lands); other documents open
+            // the focused field-review drawer.
+            if (financial) {
+              router.push(`/projects/${rawId}?tab=pl&fin=historicals`, { scroll: false });
+            } else {
+              setReviewDocId(docId);
+            }
           }}
           busyDocId={reclassifyingDoc}
         />
