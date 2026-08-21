@@ -455,6 +455,11 @@ export function buildHistYear(
     'fb_revenue', 'food_beverage_revenue', 'fnb_revenue', 'food_beverage',
     'fb_revenue_usd',
     'p_and_l_usali.fb_revenue',
+    // Abbreviated per-dept bucket (mirrors rooms.revenue_usd) — some P&Ls emit
+    // ``p_and_l_usali.fb.revenue_usd`` rather than the full food_and_beverage
+    // namespace (Sam QA 8/21 — F&B was rendering "—" on Kimpton Test 8/21).
+    'p_and_l_usali.fb.revenue_usd',
+    'p_and_l_usali.fb.revenue',
     // T-12 prod
     'p_and_l_usali.food_and_beverage.revenue_usd',
     'p_and_l_usali.food_and_beverage.revenue',
@@ -511,6 +516,9 @@ export function buildHistYear(
   const fbDept = num(findField(fields, [
     'fb_dept_expense', 'food_beverage_dept_expense', 'fnb_dept_expense',
     'p_and_l_usali.departmental_expenses.food_beverage',
+    // Abbreviated per-dept bucket (mirrors rooms.expense_usd).
+    'p_and_l_usali.fb.expense_usd',
+    'p_and_l_usali.fb.departmental_expense_usd',
     // T-12 prod
     'p_and_l_usali.food_and_beverage.expense_usd',
     'p_and_l_usali.food_and_beverage.departmental_expense_usd',

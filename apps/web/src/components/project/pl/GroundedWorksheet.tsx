@@ -867,8 +867,12 @@ function WorksheetCell({
 
   const openInspect = () => {
     if (value == null) return;
+    // Historical cells carry their source doc via histMeta (extracted) — both
+    // green (in-confidence) and red (flagged) cells open the SOURCE panel at
+    // that document; only flagged cells get the review Accept/Edit flow.
+    const histDocId = historical ? histMeta?.docId : undefined;
     const docIds = historical
-      ? (effReview?.docId ? [effReview.docId] : [])
+      ? (histDocId ? [histDocId] : [])
       : (resolved?.docId ? [resolved.docId] : []);
     onInspect({
       rowLabel: row.label,
@@ -876,7 +880,7 @@ function WorksheetCell({
       kind,
       value,
       overrideKey: !historical ? row.overrideKey : undefined,
-      reviewKey: !historical ? (row.overrideKey ?? row.reviewKey) : (effReview?.field ?? undefined),
+      reviewKey: !historical ? (row.overrideKey ?? row.reviewKey) : (effReview?.field ?? histMeta?.field),
       docIds: effReview ? [effReview.docId, ...docIds.filter((id) => id !== effReview.docId)] : docIds,
       formula: row.kind === 'computed' || row.kind === 'subtotal' ? formulaFor(row.id) : undefined,
       review: effReview,
