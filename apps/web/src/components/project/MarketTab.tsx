@@ -87,8 +87,8 @@ export default function MarketTab({ projectId }: { projectId: number | string })
   useEffect(() => {
     if (isKimptonDemo || !isWorkerConnected() || !dealId || /^\d+$/.test(dealId)) return;
     const ctrl = new AbortController();
-    fetch(`${workerUrl()}/deals/${dealId}/market-data`, { signal: ctrl.signal })
-      .then((r) => (r.ok ? r.json() : null))
+    api.market
+      .data(dealId, ctrl.signal)
       .then((d) => { if (d) setMarketData(d as MarketDataResp); })
       .catch(() => { /* silent — empty state covers it */ });
     return () => ctrl.abort();

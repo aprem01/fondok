@@ -1452,6 +1452,11 @@ export const api = {
         undefined,
         { signal },
       ),
+    /** FON-47 — aggregated STR/CoStar market data. Routed through the authed
+     *  request() (attaches Authorization + X-Tenant-Id); a raw fetch resolved
+     *  the wrong tenant on the deployed app and returned empty. */
+    data: (dealId: string, signal?: AbortSignal) =>
+      request<unknown>('GET', `/deals/${dealId}/market-data`, undefined, { signal }),
   },
   /** AI-generated broker due-diligence question packet. */
   dueDiligence: {
