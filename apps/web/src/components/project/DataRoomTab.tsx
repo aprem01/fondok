@@ -879,41 +879,6 @@ export default function DataRoomTab({ projectId }: { projectId: number | string 
         </button>
       )}
 
-      {/* FON-18 / FON-22 / FON-31 — DocumentCoverage is the single coverage
-          surface on a live deal: header + run-the-model gate, category rows
-          with expandable files + inline reclassify, confidence, review, and
-          View P&L. Replaces the old Deal-readiness card (removed below).
-          Demo deals fall through to the Document Checklist card. */}
-      {liveMode && (
-        <DocumentCoverage
-          files={docs.map(
-            (d): CoverageFile => ({
-              id: d.id,
-              name: d.name,
-              docType: d.type === '—' ? '' : d.type,
-              fields: d.fields,
-              confidence: d.confidence,
-              toReview: (d.fieldList ?? []).filter(
-                (f) => Math.round((f.confidence ?? 0) * 100) < 85 && !f.reviewed,
-              ).length,
-              fiscalYear: d.fiscalYear ?? null,
-            }),
-          )}
-          onReclassify={handleReclassify}
-          onOpenDoc={(docId, financial) => {
-            // Sam QA 8/21: Financial Statements' "View data" jumps straight to
-            // the Financials tab (where their data lands); other documents open
-            // the focused field-review drawer.
-            if (financial) {
-              router.push(`/projects/${rawId}?tab=pl&fin=historicals`, { scroll: false });
-            } else {
-              setReviewDocId(docId);
-            }
-          }}
-          busyDocId={reclassifyingDoc}
-        />
-      )}
-
       {/* Coverage gap chips — wave 1 ROADMAP #7. Sits at the top of the
           Data Room so missing-year flags greet the user before they
           start scrolling through the upload list. The same component
@@ -1098,10 +1063,40 @@ export default function DataRoomTab({ projectId }: { projectId: number | string 
         </Card>
       )}
 
-      {/* FON-18 / FON-31 — a live deal's coverage now lives entirely in the
-          DocumentCoverage surface at the top; the old worker-fed Deal
-          Readiness card is retired here to avoid two coverage cards. Demo
-          deals (no worker signal) still get the Document Checklist below. */}
+      {/* Sam QA 8/21 — Upload + Coverage gaps now sit at the top; the document
+          coverage list (category rows + files + reclassify + review) follows. */}
+      {liveMode && (
+        <DocumentCoverage
+          files={docs.map(
+            (d): CoverageFile => ({
+              id: d.id,
+              name: d.name,
+              docType: d.type === '—' ? '' : d.type,
+              fields: d.fields,
+              confidence: d.confidence,
+              toReview: (d.fieldList ?? []).filter(
+                (f) => Math.round((f.confidence ?? 0) * 100) < 85 && !f.reviewed,
+              ).length,
+              fiscalYear: d.fiscalYear ?? null,
+            }),
+          )}
+          onReclassify={handleReclassify}
+          onOpenDoc={(docId, financial) => {
+            // Sam QA 8/21: Financial Statements' "View data" jumps straight to
+            // the Financials tab (where their data lands); other documents open
+            // a dedicated document-detail screen.
+            if (financial) {
+              router.push(`/projects/${rawId}?tab=pl&fin=historicals`, { scroll: false });
+            } else {
+              router.push(`/projects/${rawId}/documents/${docId}`, { scroll: false });
+            }
+          }}
+          busyDocId={reclassifyingDoc}
+        />
+      )}
+
+      {/* FON-18 / FON-31 — the old worker-fed Deal Readiness card is retired
+          to avoid two coverage cards. Demo deals still get the Checklist. */}
       <div className={cn('grid gap-5', SHOW_ENGINE_STATUS ? 'grid-cols-2' : 'grid-cols-1')}>
         {/* Document Checklist — demo-deal fallback only. Live deals use the
             unified DocumentCoverage surface above (FON-18 / FON-31). */}

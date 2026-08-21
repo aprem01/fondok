@@ -1314,7 +1314,7 @@ function SectionRow({
     <div className="flex items-center justify-between py-1 border-b border-border/40 last:border-0">
       <span className="text-ink-500 inline-flex items-center gap-1.5">
         {linked && <Link2 size={10} className="text-success-500" aria-label="Linked from engine" />}
-        {editable && !linked && <Pencil size={10} className="text-warn-500" aria-label="Editable" />}
+        {editable && !linked && <Pencil size={10} className="text-blue-500" aria-label="Editable" />}
         {spec.label}
       </span>
       {editing ? (
@@ -1336,8 +1336,11 @@ function SectionRow({
           type="button"
           onClick={beginEdit}
           className={cn(
-            'font-medium tabular-nums px-1.5 py-0.5 rounded -mr-1.5 hover:bg-warn-50 transition-colors',
-            spec.raw != null ? 'text-warn-700' : 'text-ink-400 italic',
+            // Sam QA 8/21: editable = blue (matches "assumption / input" in the
+            // DATA KEY) + a dotted "click to edit" underline, distinct from the
+            // green "linked" values — was an off-legend amber.
+            'font-medium tabular-nums px-1.5 py-0.5 rounded -mr-1.5 underline decoration-dotted decoration-blue-400 underline-offset-2 hover:bg-blue-50 transition-colors',
+            spec.raw != null ? 'text-blue-700' : 'text-ink-400 italic',
           )}
           title="Click to edit"
         >
