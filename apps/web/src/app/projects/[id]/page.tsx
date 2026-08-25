@@ -661,10 +661,12 @@ export default function ProjectDetailPage() {
         </nav>
       </div>
 
-      {/* Wave 3 W3.2 — scenario selector. Mounts below the tab nav so
-          the active what-if pill is visible on every tab. Hides for
-          mock deals (no worker → no scenarios). */}
-      {liveMode && scenarios.length > 0 && (
+      {/* Scenario selector — the active what-if pill sits below the tab nav on
+          the modeling tabs. FON-57 — hidden on the Data Room home screen (the
+          Base / New-scenario buttons don't belong on the document-intake view);
+          scenario management lives in Scenario Analysis. Hidden for mock deals
+          (no worker → no scenarios). */}
+      {liveMode && scenarios.length > 0 && activeTab !== '' && (
         <ScenarioSelector
           scenarios={scenarios}
           activeScenarioId={activeScenarioId}

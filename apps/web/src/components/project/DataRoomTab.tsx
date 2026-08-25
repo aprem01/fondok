@@ -1078,6 +1078,7 @@ export default function DataRoomTab({ projectId }: { projectId: number | string 
                 (f) => Math.round((f.confidence ?? 0) * 100) < 85 && !f.reviewed,
               ).length,
               fiscalYear: d.fiscalYear ?? null,
+              status: d.rawStatus,
             }),
           )}
           onReclassify={handleReclassify}

@@ -38,6 +38,24 @@ export interface CoverageFile {
   /** Count of fields still needing review (<85%, not yet accepted). */
   toReview: number;
   fiscalYear: number | null;
+  /** Upstream doc status (UPLOADED / EXTRACTED / FAILED / …) — drives the
+   *  processing-state badge (FON-40). */
+  status?: string;
+}
+
+// FON-40 — a single processing state per document, so a parsing file reads
+// "Processing" rather than "0 fields", and a done file tells the user whether
+// review is recommended.
+function docStatusState(
+  file: CoverageFile,
+): { label: string; tone: 'gray' | 'blue' | 'amber' | 'green' | 'red' } {
+  const s = (file.status ?? '').toUpperCase();
+  if (s === 'FAILED' || s === 'PARSE_FAILED') return { label: 'Processing Failed', tone: 'red' };
+  if (s === 'UPLOADING') return { label: 'Uploading', tone: 'gray' };
+  const extracted = s === 'EXTRACTED' || file.fields > 0;
+  if (!extracted) return { label: 'Processing', tone: 'blue' };
+  if (file.toReview > 0) return { label: 'Review Recommended', tone: 'amber' };
+  return { label: 'Ready for Review', tone: 'green' };
 }
 
 export interface DocumentCoverageProps {
@@ -373,9 +391,14 @@ function UnclassifiedRow({
         ))}
       </select>
       <div className="ml-auto flex items-center gap-3 text-[11px] tabular-nums">
-        <span className="text-ink-500">
-          {file.fields} field{file.fields === 1 ? '' : 's'}
-        </span>
+        <Badge tone={docStatusState(file).tone} className="text-[10px]">
+          {docStatusState(file).label}
+        </Badge>
+        {file.fields > 0 && (
+          <span className="text-ink-500">
+            {file.fields} field{file.fields === 1 ? '' : 's'}
+          </span>
+        )}
         <button
           type="button"
           onClick={() => onOpenDoc(file.id)}
@@ -403,6 +426,7 @@ function CoverageFileRow({
 }) {
   const family = familyOf(file.docType);
   const period = periodOf(file.docType);
+  const state = docStatusState(file);
   const confTone =
     file.confidence >= 95 ? 'text-success-700' : file.confidence >= 85 ? 'text-warn-700' : 'text-danger-700';
 
@@ -465,15 +489,37 @@ function CoverageFileRow({
           </select>
         </div>
       ) : (
-        <Badge tone="gray" className="text-[10px]">
-          {file.docType}
-        </Badge>
+        // FON-58 — any classified document can be re-typed inline (e.g. an OM
+        // mis-tagged as a comp set → STR / Comp Set). Extracted data is kept;
+        // the reclassify endpoint just re-buckets it.
+        <select
+          aria-label={`Document type for ${file.name}`}
+          className={selectCls}
+          value={file.docType}
+          disabled={busy}
+          onChange={(e) => {
+            if (e.target.value && e.target.value !== file.docType) {
+              onReclassify(file.id, { doc_type: e.target.value });
+            }
+          }}
+        >
+          {DOC_TYPE_OPTIONS.map((o) => (
+            <option key={o.value} value={o.value}>
+              {o.label}
+            </option>
+          ))}
+        </select>
       )}
 
       <div className="ml-auto flex items-center gap-3 text-[11px] tabular-nums">
-        <span className="text-ink-500">
-          {file.fields} field{file.fields === 1 ? '' : 's'}
-        </span>
+        <Badge tone={state.tone} className="text-[10px]">
+          {state.label}
+        </Badge>
+        {file.fields > 0 && (
+          <span className="text-ink-500">
+            {file.fields} field{file.fields === 1 ? '' : 's'}
+          </span>
+        )}
         {file.confidence > 0 && (
           <span className={confTone}>{file.confidence}% confidence</span>
         )}
@@ -487,7 +533,7 @@ function CoverageFileRow({
           onClick={() => onOpenDoc(file.id, financial)}
           className="text-[10.5px] font-medium px-2.5 py-1 rounded bg-brand-600 text-white hover:bg-brand-700"
         >
-          View data
+          {financial ? 'View Financials' : 'View data'}
         </button>
       </div>
     </li>
