@@ -14,6 +14,7 @@ from uuid import UUID
 from pydantic import BaseModel, ConfigDict, Field
 
 from .base import BaseEngine
+from .debt import DebtEngine, DebtEngineInputExt
 from .returns import ReturnsEngine, ReturnsEngineInputExt
 
 
@@ -24,6 +25,7 @@ SensitivityVariable = Literal[
     "interest_rate",
     "hold_years",
     "purchase_price",
+    "loan_amount",
 ]
 
 SensitivityMetric = Literal[
@@ -51,6 +53,13 @@ class SensitivitySpec(BaseModel):
     col_variable: SensitivityVariable
     col_values: list[float] = Field(min_length=2, max_length=11)
     metric: SensitivityMetric = "levered_irr"
+    # "returns" (default) flexes assumptions on the returns input directly.
+    # "financing" re-sizes the senior loan per cell: it re-runs the Debt engine
+    # (row = loan_amount, col = interest_rate/spread), recomputes equity from the
+    # fixed total capital, and feeds the fresh debt service into the returns
+    # engine — so leverage sensitivities are real, not the flat grid you get
+    # from flexing LTV on the returns input alone.
+    mode: Literal["returns", "financing"] = "returns"
 
 
 class SensitivityInput(BaseModel):
@@ -67,6 +76,11 @@ class SensitivityInput(BaseModel):
     # The top-level row/col/metric above still mirror the primary matrix so the
     # existing single-matrix consumers keep working.
     specs: list[SensitivitySpec] | None = None
+    # Required only when any spec uses mode="financing" — the base debt terms to
+    # re-size per cell, and the deal's total capitalization (debt + equity) so
+    # equity can be backed out as total_capital − loan_amount.
+    base_debt_input: DebtEngineInputExt | None = None
+    total_capital: float | None = None
 
 
 class SensitivityCell(BaseModel):
@@ -177,6 +191,65 @@ class SensitivityEngine(BaseEngine[SensitivityInput, SensitivityOutput]):
                 )
         return cells
 
+    def _compute_financing_cells(
+        self,
+        returns_engine: ReturnsEngine,
+        debt_engine: DebtEngine,
+        base_input: ReturnsEngineInputExt,
+        base_debt_input: DebtEngineInputExt,
+        total_capital: float,
+        loan_values: list[float],
+        rate_values: list[float],
+        metric: SensitivityMetric,
+    ) -> list[SensitivityCell]:
+        """Leverage sensitivity — re-size the loan (rows) and reprice it (cols).
+
+        For each cell we re-run the Debt engine with the flexed loan amount and
+        interest rate, back equity out of the fixed total capital, and feed the
+        fresh debt service + exit balance into a copy of the returns input.
+        """
+        base_loan = base_debt_input.loan_amount
+        base_rate = base_debt_input.interest_rate
+        cells: list[SensitivityCell] = []
+        for loan in loan_values:
+            for rate in rate_values:
+                debt_out = debt_engine.run(
+                    base_debt_input.model_copy(
+                        update={"loan_amount": loan, "interest_rate": rate}
+                    )
+                )
+                equity = max(1.0, total_capital - loan)
+                exit_balance = (
+                    debt_out.schedule[-1].ending_balance
+                    if debt_out.schedule
+                    else loan
+                )
+                trial = base_input.model_copy(
+                    update={
+                        "loan_amount": loan,
+                        "annual_debt_service": debt_out.annual_debt_service,
+                        "debt_service_by_year": [],  # use the fresh scalar
+                        "loan_balance_at_exit": exit_balance,
+                        "equity": equity,
+                        "assumptions": base_input.assumptions.model_copy(
+                            update={"interest_rate": rate}
+                        ),
+                    }
+                )
+                result = returns_engine.run(trial)
+                cells.append(
+                    SensitivityCell(
+                        row_value=loan,
+                        col_value=rate,
+                        value=getattr(result, metric),
+                        is_base=(
+                            abs(loan - base_loan) < 1.0
+                            and abs(rate - base_rate) < 1e-9
+                        ),
+                    )
+                )
+        return cells
+
     def run(self, payload: SensitivityInput) -> SensitivityOutput:
         returns_engine = ReturnsEngine()
         snap = _snapshot(payload.base_returns_input)
@@ -191,12 +264,24 @@ class SensitivityEngine(BaseEngine[SensitivityInput, SensitivityOutput]):
         # FON-53 — full set of named matrices for the Scenario Analysis dropdown.
         matrices: list[SensitivityMatrix] = []
         specs = payload.specs or []
+        debt_engine = DebtEngine()
         for spec in specs:
-            cells = self._compute_cells(
-                returns_engine, payload.base_returns_input, snap,
-                spec.row_variable, spec.row_values,
-                spec.col_variable, spec.col_values, spec.metric,
-            )
+            if spec.mode == "financing":
+                # Skip if the caller didn't supply the debt basis needed to
+                # re-size the loan — better an omitted grid than a wrong one.
+                if payload.base_debt_input is None or payload.total_capital is None:
+                    continue
+                cells = self._compute_financing_cells(
+                    returns_engine, debt_engine, payload.base_returns_input,
+                    payload.base_debt_input, payload.total_capital,
+                    spec.row_values, spec.col_values, spec.metric,
+                )
+            else:
+                cells = self._compute_cells(
+                    returns_engine, payload.base_returns_input, snap,
+                    spec.row_variable, spec.row_values,
+                    spec.col_variable, spec.col_values, spec.metric,
+                )
             matrices.append(
                 SensitivityMatrix(
                     key=spec.key,

@@ -3401,18 +3401,29 @@ def _build_input_for(
                     a.revpar_growth + 0.01, a.revpar_growth + 0.02], -0.49, 0.49)
         pp_v = _cl([a.purchase_price * m for m in (0.95, 0.975, 1.0, 1.025, 1.05)],
                    1.0, 1e13)
-        # FON-53 — the six sensitivities the Scenario Analysis dropdown offers.
-        # Each axis is a lever the returns engine actually re-prices on: exit
-        # cap, RevPAR growth, and entry basis (purchase price) — the core
-        # value-add underwriting questions (exit risk, demand risk, basis risk),
-        # each shown for both Levered IRR and Equity Multiple.
+
+        # Financing axes (FON-53). Re-sizing the loan changes equity, so the
+        # loan range is clamped to keep equity positive (≤ 90% of total capital).
+        capital_out = accumulated["capital"]
+        total_capital = capital_out.total_capital
+        base_loan = capital_out.debt_amount
+        debt_input = _build_input_for("debt", deal_id, base, accumulated)
+        assert isinstance(debt_input, DebtEngineInputExt)
+        loan_v = _cl([base_loan * m for m in (0.9, 0.95, 1.0, 1.05, 1.1)],
+                     1.0, 0.9 * total_capital)
+        rate_v = _cl([a.interest_rate - 0.01, a.interest_rate - 0.005, a.interest_rate,
+                      a.interest_rate + 0.005, a.interest_rate + 0.01], 0.02, 0.12)
+
+        # FON-53 — the sensitivities the Scenario Analysis dropdown offers. The
+        # first six flex levers the returns engine re-prices on directly (exit
+        # cap, RevPAR growth, entry basis). The last two are true financing
+        # grids: mode="financing" re-runs the Debt engine per cell (loan amount ×
+        # rate), recomputing equity + debt service — not the flat grid you'd get
+        # flexing LTV on the returns input alone.
         #
-        # Financing sensitivity (Senior Loan Amount × Spread) and WDP are NOT
-        # included yet: the returns engine consumes a pre-computed debt schedule,
-        # so flexing LTV / rate on the returns input alone is inert, and WDP
-        # requires the partnership waterfall in the per-cell loop. Both are a
-        # fast follow that needs the debt + partnership engines re-run per cell —
-        # tracked rather than shipped as a misleading flat grid.
+        # Still pending Sam's definitions (asked on FON-53): WDP (needs the
+        # partnership waterfall per cell + which metric it maps to) and the
+        # literal "Sale Price" axis semantics.
         specs = [
             SensitivitySpec(key="irr_exit_revpar",
                             label="Levered IRR — Exit Cap × RevPAR Growth",
@@ -3444,6 +3455,16 @@ def _build_input_for(
                             row_variable="purchase_price", row_values=pp_v,
                             col_variable="revpar_growth", col_values=rp_v,
                             metric="equity_multiple"),
+            SensitivitySpec(key="irr_loan_rate",
+                            label="Levered IRR — Loan Amount × Loan Rate",
+                            row_variable="loan_amount", row_values=loan_v,
+                            col_variable="interest_rate", col_values=rate_v,
+                            metric="levered_irr", mode="financing"),
+            SensitivitySpec(key="em_loan_rate",
+                            label="Equity Multiple — Loan Amount × Loan Rate",
+                            row_variable="loan_amount", row_values=loan_v,
+                            col_variable="interest_rate", col_values=rate_v,
+                            metric="equity_multiple", mode="financing"),
         ]
         return SensitivityInput(
             deal_id=deal_uuid,
@@ -3454,6 +3475,8 @@ def _build_input_for(
             col_values=rp_v,
             metric="levered_irr",
             specs=specs,
+            base_debt_input=debt_input,
+            total_capital=total_capital,
         )
 
     if engine_name == "partnership":

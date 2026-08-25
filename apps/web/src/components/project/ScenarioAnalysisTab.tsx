@@ -40,13 +40,16 @@ const VAR_LABEL: Record<string, string> = {
   exit_cap_rate: 'Exit Cap',
   revpar_growth: 'RevPAR Growth',
   purchase_price: 'Purchase Price',
+  loan_amount: 'Loan Amount',
   ltv: 'Leverage (LTV)',
   interest_rate: 'Loan Rate',
   hold_years: 'Hold Period',
 };
 
 function fmtAxis(variable: string, v: number): string {
-  if (variable === 'purchase_price') return fmtCurrency(v, { compact: true });
+  if (variable === 'purchase_price' || variable === 'loan_amount') {
+    return fmtCurrency(v, { compact: true });
+  }
   if (variable === 'hold_years') return `${Math.round(v)}y`;
   // Exit cap wants 2 decimals (6.50%), growth 1 (3.5%).
   return fmtPct(v, variable === 'exit_cap_rate' ? 2 : 1);
@@ -210,9 +213,9 @@ export default function ScenarioAnalysisTab({ dealId }: { dealId: string }) {
         </div>
 
         <p className="text-[11px] text-ink-400 mt-3 leading-relaxed">
-          Grids are computed live by the sensitivity engine, which re-runs the returns model across
-          each cell. Financing (loan amount × spread) and partner-distribution sensitivities are
-          coming next.
+          Grids are computed live by the sensitivity engine, which re-runs the underwriting model
+          across each cell — including the Debt engine for the loan-amount × rate grids.
+          Partner-distribution (WDP) sensitivities are coming next.
         </p>
       </Card>
     </div>
