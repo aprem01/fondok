@@ -35,6 +35,24 @@ SensitivityMetric = Literal[
 ]
 
 
+class SensitivitySpec(BaseModel):
+    """One named sensitivity: a metric flexed across two assumption axes.
+
+    FON-53 — the Scenario Analysis tab lets the investor pick from several of
+    these. Each spec re-runs the returns engine across its own row×col grid.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    key: str
+    label: str
+    row_variable: SensitivityVariable
+    row_values: list[float] = Field(min_length=2, max_length=11)
+    col_variable: SensitivityVariable
+    col_values: list[float] = Field(min_length=2, max_length=11)
+    metric: SensitivityMetric = "levered_irr"
+
+
 class SensitivityInput(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -45,6 +63,10 @@ class SensitivityInput(BaseModel):
     col_variable: SensitivityVariable
     col_values: list[float] = Field(min_length=2, max_length=11)
     metric: SensitivityMetric = "levered_irr"
+    # FON-53 — when provided, the engine computes each spec into ``matrices``.
+    # The top-level row/col/metric above still mirror the primary matrix so the
+    # existing single-matrix consumers keep working.
+    specs: list[SensitivitySpec] | None = None
 
 
 class SensitivityCell(BaseModel):
@@ -54,6 +76,21 @@ class SensitivityCell(BaseModel):
     col_value: float
     value: float
     is_base: bool = False
+
+
+class SensitivityMatrix(BaseModel):
+    """A single named grid — one entry in the Scenario Analysis dropdown."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    key: str
+    label: str
+    metric: SensitivityMetric
+    row_variable: SensitivityVariable
+    col_variable: SensitivityVariable
+    rows: list[float]
+    cols: list[float]
+    cells: list[SensitivityCell]
 
 
 class SensitivityOutput(BaseModel):
@@ -66,6 +103,8 @@ class SensitivityOutput(BaseModel):
     rows: list[float]
     cols: list[float]
     cells: list[SensitivityCell]
+    # FON-53 — the full set of named sensitivities (includes the primary one).
+    matrices: list[SensitivityMatrix] = Field(default_factory=list)
 
 
 @dataclass
@@ -106,30 +145,85 @@ class SensitivityEngine(BaseEngine[SensitivityInput, SensitivityOutput]):
 
     name = "sensitivity"
 
-    def run(self, payload: SensitivityInput) -> SensitivityOutput:
-        returns_engine = ReturnsEngine()
-        snap = _snapshot(payload.base_returns_input)
-        base_row_value = getattr(snap, payload.row_variable)
-        base_col_value = getattr(snap, payload.col_variable)
-
+    def _compute_cells(
+        self,
+        returns_engine: ReturnsEngine,
+        base_input: ReturnsEngineInputExt,
+        snap: _BaseSnapshot,
+        row_variable: SensitivityVariable,
+        row_values: list[float],
+        col_variable: SensitivityVariable,
+        col_values: list[float],
+        metric: SensitivityMetric,
+    ) -> list[SensitivityCell]:
+        base_row_value = getattr(snap, row_variable)
+        base_col_value = getattr(snap, col_variable)
         cells: list[SensitivityCell] = []
-        for r in payload.row_values:
-            for c in payload.col_values:
-                trial = _flex(payload.base_returns_input, payload.row_variable, r)
-                trial = _flex(trial, payload.col_variable, c)
+        for r in row_values:
+            for c in col_values:
+                trial = _flex(base_input, row_variable, r)
+                trial = _flex(trial, col_variable, c)
                 result = returns_engine.run(trial)
-                value = getattr(result, payload.metric)
                 cells.append(
                     SensitivityCell(
                         row_value=r,
                         col_value=c,
-                        value=value,
+                        value=getattr(result, metric),
                         is_base=(
                             abs(r - base_row_value) < 1e-9
                             and abs(c - base_col_value) < 1e-9
                         ),
                     )
                 )
+        return cells
+
+    def run(self, payload: SensitivityInput) -> SensitivityOutput:
+        returns_engine = ReturnsEngine()
+        snap = _snapshot(payload.base_returns_input)
+
+        # Primary matrix — the top-level fields the legacy consumers read.
+        primary_cells = self._compute_cells(
+            returns_engine, payload.base_returns_input, snap,
+            payload.row_variable, payload.row_values,
+            payload.col_variable, payload.col_values, payload.metric,
+        )
+
+        # FON-53 — full set of named matrices for the Scenario Analysis dropdown.
+        matrices: list[SensitivityMatrix] = []
+        specs = payload.specs or []
+        for spec in specs:
+            cells = self._compute_cells(
+                returns_engine, payload.base_returns_input, snap,
+                spec.row_variable, spec.row_values,
+                spec.col_variable, spec.col_values, spec.metric,
+            )
+            matrices.append(
+                SensitivityMatrix(
+                    key=spec.key,
+                    label=spec.label,
+                    metric=spec.metric,
+                    row_variable=spec.row_variable,
+                    col_variable=spec.col_variable,
+                    rows=list(spec.row_values),
+                    cols=list(spec.col_values),
+                    cells=cells,
+                )
+            )
+        # Even with no specs, expose the primary as a matrix so the UI has a
+        # uniform surface to render.
+        if not matrices:
+            matrices.append(
+                SensitivityMatrix(
+                    key="primary",
+                    label="Levered IRR — Exit Cap × RevPAR Growth",
+                    metric=payload.metric,
+                    row_variable=payload.row_variable,
+                    col_variable=payload.col_variable,
+                    rows=list(payload.row_values),
+                    cols=list(payload.col_values),
+                    cells=primary_cells,
+                )
+            )
 
         return SensitivityOutput(
             deal_id=payload.deal_id,
@@ -138,7 +232,8 @@ class SensitivityEngine(BaseEngine[SensitivityInput, SensitivityOutput]):
             metric=payload.metric,
             rows=list(payload.row_values),
             cols=list(payload.col_values),
-            cells=cells,
+            cells=primary_cells,
+            matrices=matrices,
         )
 
 
@@ -147,6 +242,8 @@ __all__ = [
     "SensitivityInput",
     "SensitivityOutput",
     "SensitivityCell",
+    "SensitivityMatrix",
+    "SensitivitySpec",
     "SensitivityVariable",
     "SensitivityMetric",
 ]

@@ -45,7 +45,9 @@ from .sensitivity import (
     SensitivityCell,
     SensitivityEngine,
     SensitivityInput,
+    SensitivityMatrix,
     SensitivityOutput,
+    SensitivitySpec,
 )
 
 __all__ = [
@@ -78,7 +80,9 @@ __all__ = [
     "SensitivityEngine",
     "SensitivityGrid",
     "SensitivityInput",
+    "SensitivityMatrix",
     "SensitivityOutput",
+    "SensitivitySpec",
     "build_amort_schedule",
     "build_stack_schedule",
     "draft_loi",

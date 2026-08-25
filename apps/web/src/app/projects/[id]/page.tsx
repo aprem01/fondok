@@ -31,6 +31,7 @@ import DebtTab from '@/components/project/DebtTab';
 import ExportTab from '@/components/project/ExportTab';
 import ScenarioSelector from '@/components/project/ScenarioSelector';
 import ScenarioComparePanel from '@/components/project/ScenarioComparePanel';
+import ScenarioAnalysisTab from '@/components/project/ScenarioAnalysisTab';
 import ScenarioEditor from '@/components/project/ScenarioEditor';
 import TabLoadingSkeleton from '@/components/project/TabLoadingSkeleton';
 import { api as workerApi, type ScenarioRecord } from '@/lib/api';
@@ -732,15 +733,14 @@ export default function ProjectDetailPage() {
         {activeTab === 'analysis' && (
           <ErrorBoundary tabName="Analysis"><AnalysisTab /></ErrorBoundary>
         )}
+        {/* FON-53 — Scenario Analysis: the sensitivity experience (moved off
+            Overview) up top, named-scenario comparison kept below. */}
         {activeTab === 'scenarios' && (
-          <ErrorBoundary tabName="Scenarios">
-            {liveMode ? (
-              <ScenarioComparePanel dealId={rawId} scenarios={scenarios} />
-            ) : (
-              <div className="text-[13px] text-ink-500">
-                Named scenarios are available on worker-connected deals.
-              </div>
-            )}
+          <ErrorBoundary tabName="Scenario Analysis">
+            <div className="space-y-6">
+              <ScenarioAnalysisTab dealId={String(id)} />
+              {liveMode && <ScenarioComparePanel dealId={rawId} scenarios={scenarios} />}
+            </div>
           </ErrorBoundary>
         )}
         {activeTab === 'activity' && (

@@ -66,6 +66,7 @@ from ..engines import (
     RevenueEngine,
     SensitivityEngine,
     SensitivityInput,
+    SensitivitySpec,
 )
 from fondok_schemas.underwriting import (
     PIPDisplacement,
@@ -3380,29 +3381,79 @@ def _build_input_for(
         )
 
     if engine_name == "sensitivity":
-        # Reuse the returns engine input as the base; flex exit cap × revpar.
+        # Reuse the returns engine input as the base; flex two assumptions per
+        # spec and re-run the returns engine across each grid.
         returns_input = _build_input_for(
             "returns", deal_id, base, accumulated
         )
         # mypy: returns_input is ReturnsEngineInputExt by construction
         assert isinstance(returns_input, ReturnsEngineInputExt)
-        ec = base["exit_cap_rate"]
-        rp = base["revpar_growth"]
-        row_values = [round(ec - 0.01, 4), round(ec - 0.005, 4), ec,
-                      round(ec + 0.005, 4), round(ec + 0.01, 4)]
-        col_values = [round(rp - 0.02, 4), round(rp - 0.01, 4), rp,
-                      round(rp + 0.01, 4), round(rp + 0.02, 4)]
-        # Clamp to engine bounds (exit_cap > 0).
-        row_values = [max(0.001, v) for v in row_values]
-        col_values = [max(-0.49, min(0.49, v)) for v in col_values]
+        a = returns_input.assumptions
+
+        def _cl(vals: list[float], lo: float, hi: float) -> list[float]:
+            return [max(lo, min(hi, round(v, 6))) for v in vals]
+
+        # Symmetric 5-point ranges centred on the base value, so the base case
+        # is always the middle cell (highlighted in the UI).
+        ec_v = _cl([a.exit_cap_rate - 0.01, a.exit_cap_rate - 0.005, a.exit_cap_rate,
+                    a.exit_cap_rate + 0.005, a.exit_cap_rate + 0.01], 0.001, 0.5)
+        rp_v = _cl([a.revpar_growth - 0.02, a.revpar_growth - 0.01, a.revpar_growth,
+                    a.revpar_growth + 0.01, a.revpar_growth + 0.02], -0.49, 0.49)
+        pp_v = _cl([a.purchase_price * m for m in (0.95, 0.975, 1.0, 1.025, 1.05)],
+                   1.0, 1e13)
+        # FON-53 — the six sensitivities the Scenario Analysis dropdown offers.
+        # Each axis is a lever the returns engine actually re-prices on: exit
+        # cap, RevPAR growth, and entry basis (purchase price) — the core
+        # value-add underwriting questions (exit risk, demand risk, basis risk),
+        # each shown for both Levered IRR and Equity Multiple.
+        #
+        # Financing sensitivity (Senior Loan Amount × Spread) and WDP are NOT
+        # included yet: the returns engine consumes a pre-computed debt schedule,
+        # so flexing LTV / rate on the returns input alone is inert, and WDP
+        # requires the partnership waterfall in the per-cell loop. Both are a
+        # fast follow that needs the debt + partnership engines re-run per cell —
+        # tracked rather than shipped as a misleading flat grid.
+        specs = [
+            SensitivitySpec(key="irr_exit_revpar",
+                            label="Levered IRR — Exit Cap × RevPAR Growth",
+                            row_variable="exit_cap_rate", row_values=ec_v,
+                            col_variable="revpar_growth", col_values=rp_v,
+                            metric="levered_irr"),
+            SensitivitySpec(key="em_exit_revpar",
+                            label="Equity Multiple — Exit Cap × RevPAR Growth",
+                            row_variable="exit_cap_rate", row_values=ec_v,
+                            col_variable="revpar_growth", col_values=rp_v,
+                            metric="equity_multiple"),
+            SensitivitySpec(key="irr_price_exit",
+                            label="Levered IRR — Purchase Price × Exit Cap",
+                            row_variable="purchase_price", row_values=pp_v,
+                            col_variable="exit_cap_rate", col_values=ec_v,
+                            metric="levered_irr"),
+            SensitivitySpec(key="em_price_exit",
+                            label="Equity Multiple — Purchase Price × Exit Cap",
+                            row_variable="purchase_price", row_values=pp_v,
+                            col_variable="exit_cap_rate", col_values=ec_v,
+                            metric="equity_multiple"),
+            SensitivitySpec(key="irr_price_revpar",
+                            label="Levered IRR — Purchase Price × RevPAR Growth",
+                            row_variable="purchase_price", row_values=pp_v,
+                            col_variable="revpar_growth", col_values=rp_v,
+                            metric="levered_irr"),
+            SensitivitySpec(key="em_price_revpar",
+                            label="Equity Multiple — Purchase Price × RevPAR Growth",
+                            row_variable="purchase_price", row_values=pp_v,
+                            col_variable="revpar_growth", col_values=rp_v,
+                            metric="equity_multiple"),
+        ]
         return SensitivityInput(
             deal_id=deal_uuid,
             base_returns_input=returns_input,
             row_variable="exit_cap_rate",
-            row_values=row_values,
+            row_values=ec_v,
             col_variable="revpar_growth",
-            col_values=col_values,
+            col_values=rp_v,
             metric="levered_irr",
+            specs=specs,
         )
 
     if engine_name == "partnership":
