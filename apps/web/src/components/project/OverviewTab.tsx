@@ -436,17 +436,41 @@ export default function OverviewTab({ projectId }: { projectId: number | string 
   const wAnnualDebtService = getEngineField<number>(outputs, 'debt', 'annual_debt_service');
   const wDebtTerm = getEngineField<number>(outputs, 'debt', 'term_years');
   const wDebtAmort = getEngineField<number>(outputs, 'debt', 'amortization_years');
+  const wLtc = getEngineField<number>(outputs, 'capital', 'ltc');
+
+  // FON-59 — the capital engine carries the acquisition + investment line items
+  // in ``uses`` (Purchase Price / Closing Costs / Renovation / Working Capital /
+  // Soft Costs / Contingency …), and the Year-1 NOI comes off the expense
+  // engine. Read them by label so the Overview populates for LIVE deals, not
+  // only the Kimpton demo fixture (the prior reads used top-level capital paths
+  // that don't exist, so everything fell back to "—").
+  const capUses =
+    getEngineField<Array<{ label?: string; amount?: number }>>(outputs, 'capital', 'uses') ?? [];
+  const useAmt = (re: RegExp): number | undefined => {
+    const row = capUses.find((u) => re.test(String(u?.label ?? '')));
+    return typeof row?.amount === 'number' ? row.amount : undefined;
+  };
+  const usePurchase = useAmt(/purchase/i);
+  const wExpenseY1 = getEngineField<Array<{ noi?: number; noi_institutional?: number }>>(
+    outputs, 'expense', 'years',
+  )?.[0];
+  const y1Noi = wExpenseY1 ? (wExpenseY1.noi_institutional ?? wExpenseY1.noi) : undefined;
 
   // Acquisition Assumptions
-  const acqPurchase = pickNum(wPurchase, o.acquisition.purchasePrice);
+  const acqPurchase = pickNum(wPurchase ?? usePurchase, o.acquisition.purchasePrice);
   const acqPricePerKey = wPricePerKey != null
     ? wPricePerKey
     : (acqPurchase != null && propertyKeys && propertyKeys > 0)
       ? acqPurchase / propertyKeys
       : (isKimptonDemo ? o.acquisition.pricePerKey : undefined);
-  const acqEntryCap = pickNum(wEntryCap, o.acquisition.entryCapRate);
-  const acqClosingCosts = isKimptonDemo ? o.acquisition.closingCosts : undefined;
-  const acqWorkingCapital = isKimptonDemo ? o.acquisition.workingCapital : undefined;
+  // Entry cap = going-in (Year-1) NOI / purchase price when the engine doesn't
+  // publish it directly.
+  const acqEntryCap = pickNum(
+    wEntryCap ?? (y1Noi != null && acqPurchase ? y1Noi / acqPurchase : undefined),
+    o.acquisition.entryCapRate,
+  );
+  const acqClosingCosts = pickNum(useAmt(/closing/i), o.acquisition.closingCosts);
+  const acqWorkingCapital = pickNum(useAmt(/working/i), o.acquisition.workingCapital);
 
   // Returns Summary
   const retLeveredIrr = pickNum(wReturnsIrr, o.returns.leveredIRR);
@@ -457,21 +481,31 @@ export default function OverviewTab({ projectId }: { projectId: number | string 
 
   // Reversion
   const revExitCap = pickNum(wExitCap, o.reversion.exitCapRate);
-  const revExitYear = isKimptonDemo ? o.reversion.exitYear : undefined;
+  // Exit year = the hold period (Year N); worker doesn't emit an exit-year field.
+  const revExitYear = pickNum(retHold, o.reversion.exitYear);
   const revTerminalNoi = pickNum(wTerminalNoi, o.reversion.terminalNOI);
   const revGrossSale = pickNum(wGrossSale, o.reversion.grossSalePrice);
   const revSellingCosts = pickNum(wSellingCosts, o.reversion.sellingCosts);
 
-  // Investment (renovation breakdown sub-rows aren't on capital engine yet)
-  const invRenoBudget = isKimptonDemo ? o.investment.renovationBudget : undefined;
-  const invHardPerKey = isKimptonDemo ? o.investment.hardCostsPerKey : undefined;
-  const invSoftCosts = isKimptonDemo ? o.investment.softCosts : undefined;
-  const invContingency = isKimptonDemo ? o.investment.contingency : undefined;
+  // Investment — renovation / soft costs / contingency come from capital.uses.
+  const invRenoBudget = pickNum(useAmt(/renovat/i), o.investment.renovationBudget);
+  const invHardPerKey = pickNum(
+    invRenoBudget != null && propertyKeys && propertyKeys > 0 ? invRenoBudget / propertyKeys : undefined,
+    o.investment.hardCostsPerKey,
+  );
+  const invSoftCosts = pickNum(useAmt(/soft/i), o.investment.softCosts);
+  const invContingency = pickNum(useAmt(/contingen/i), o.investment.contingency);
   const invTotalCapital = pickNum(wTotalCapital, o.investment.totalCapital);
 
   // Acquisition Financing
   const finLoanAmount = pickNum(wLoanAmount ?? wDebtAmount, o.financing.loanAmount);
-  const finLtv = pickNum(wLtv, o.financing.ltv);
+  // LTV = loan / purchase price (derive when the engine only publishes LTC).
+  const finLtv = pickNum(
+    wLtv ?? wLtc ?? ((wDebtAmount ?? wLoanAmount) != null && acqPurchase
+      ? ((wDebtAmount ?? wLoanAmount) as number) / acqPurchase
+      : undefined),
+    o.financing.ltv,
+  );
   const finInterestRate = pickNum(wInterestRate, o.financing.interestRate);
   const finDscr = pickNum(wDscr, o.financing.dscr);
   const finAnnualDebtService = pickNum(wAnnualDebtService, o.financing.annualDebtService);
