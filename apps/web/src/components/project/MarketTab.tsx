@@ -22,6 +22,7 @@ import { useDeal } from '@/lib/hooks/useDeal';
 import { useEngineRun } from '@/lib/hooks/useEngineRun';
 import { cn } from '@/lib/format';
 import { IntroCard } from '@/components/help/IntroCard';
+import IndexAnalysisSection from './pl/IndexAnalysisSection';
 
 // FON-47 — real STR/CoStar market data served by /deals/{id}/market-data
 // (apps/worker/app/api/documents.py _aggregate_market_data). Populated once an
@@ -50,7 +51,7 @@ interface MarketDataResp {
   sources?: Record<string, unknown>;
 }
 
-const subTabs = ['Market Overview', 'Transaction Comps'];
+const subTabs = ['Market Overview', 'Transaction Comps', 'Index Analysis'];
 
 // Worker `GET /market/{deal_id}/overview` shape — mirrors
 // apps/worker/app/api/market.py MarketOverview. Indices are null
@@ -371,6 +372,12 @@ export default function MarketTab({ projectId }: { projectId: number | string })
           </button>
         ))}
       </div>
+
+      {/* FON-60/61 — Index Analysis lives in Market now (it's competitive-set
+          analysis), reading the normalized STR / CoStar market data. */}
+      {tab === 'Index Analysis' && (
+        <IndexAnalysisSection dealId={dealId} isKimptonDemo={isKimptonDemo} />
+      )}
 
       {tab === 'Market Overview' && (
         <div className="space-y-5">

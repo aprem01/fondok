@@ -33,18 +33,17 @@ import { GLOSSARY } from '@/lib/glossary';
 import DueDiligenceSection from './pl/DueDiligenceSection';
 import ProjectionsSection from './pl/ProjectionsSection';
 import GroundedWorksheet from './pl/GroundedWorksheet';
-import IndexAnalysisSection from './pl/IndexAnalysisSection';
 
 // Review is NOT its own screen — it lives inside Historicals, where the
 // financial data already is (upload → fix/review in place → use the app).
 // Design sync: the mockup leads with Historicals + Projections (P&L Summary
 // was folded into Historicals when review moved in-place). The analytical
 // tabs stay available after the two primary financial views.
+// FON-60/61 — Index Analysis + Competitive Set moved to the Market tab (they're
+// competitive-set analysis, not financial statements).
 const subTabs = [
   'Historicals',
   'Projections',
-  'Index Analysis',
-  'Competitive Set',
   'Due Diligence',
 ] as const;
 type SubTab = typeof subTabs[number];
@@ -546,8 +545,6 @@ export default function PLTab({ projectId }: { projectId: number | string }) {
         {tab === 'Projections' && (
           <ProjectionsSection dealId={dealId} isKimptonDemo={isKimptonDemo} />
         )}
-        {tab === 'Index Analysis' && <IndexAnalysisSection dealId={dealId} isKimptonDemo={isKimptonDemo} />}
-        {tab === 'Competitive Set' && <CompetitiveSet dealId={dealId} isKimptonDemo={isKimptonDemo} />}
         {tab === 'Due Diligence' && <DueDiligenceSection dealId={dealId} />}
         {computing && (
           <div className="absolute inset-0 bg-bg/60 backdrop-blur-[1px] flex items-start justify-center pt-12 rounded-md">
