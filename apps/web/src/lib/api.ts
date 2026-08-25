@@ -1457,6 +1457,10 @@ export const api = {
      *  the wrong tenant on the deployed app and returned empty. */
     data: (dealId: string, signal?: AbortSignal) =>
       request<unknown>('GET', `/deals/${dealId}/market-data`, undefined, { signal }),
+    /** Market overview (submarket label / indices). Authed like `data` — the
+     *  old raw fetch resolved the wrong tenant on the deployed app. */
+    overview: (dealId: string, signal?: AbortSignal) =>
+      request<unknown>('GET', `/market/${dealId}/overview`, undefined, { signal }),
   },
   /** AI-generated broker due-diligence question packet. */
   dueDiligence: {

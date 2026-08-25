@@ -136,8 +136,8 @@ export default function MarketTab({ projectId }: { projectId: number | string })
     if (!isWorkerConnected()) return;
     if (!dealId || /^\d+$/.test(dealId)) return; // mock id, no UUID
     const ctrl = new AbortController();
-    fetch(`${workerUrl()}/market/${dealId}/overview`, { signal: ctrl.signal })
-      .then((res) => (res.ok ? res.json() : null))
+    api.market
+      .overview(dealId, ctrl.signal)
       .then((data) => { if (data) setWorkerMarket(data as WorkerMarketOverview); })
       .catch(() => { /* silent — empty state covers it */ });
     return () => ctrl.abort();
@@ -245,7 +245,7 @@ export default function MarketTab({ projectId }: { projectId: number | string })
             </div>
             <div className="grid grid-cols-3 divide-x divide-border border-b border-border">
               {[
-                { label: 'Occupancy', value: strTrend.subject_occupancy_pct != null ? `${(strTrend.subject_occupancy_pct * 100).toFixed(1)}%` : '—' },
+                { label: 'Occupancy', value: strTrend.subject_occupancy_pct != null ? `${strTrend.subject_occupancy_pct.toFixed(1)}%` : '—' },
                 { label: 'ADR', value: strTrend.subject_adr_usd != null ? `$${strTrend.subject_adr_usd.toFixed(2)}` : '—' },
                 { label: 'RevPAR', value: strTrend.subject_revpar_usd != null ? `$${strTrend.subject_revpar_usd.toFixed(2)}` : '—' },
               ].map((mm) => (
@@ -290,7 +290,7 @@ export default function MarketTab({ projectId }: { projectId: number | string })
                       <tr key={`${c.name}-${i}`} className="border-b border-border/60">
                         <td className="px-5 py-2 text-ink-800">{c.name}</td>
                         <td className="px-3 py-2 text-right tabular-nums text-ink-700">{c.keys ?? '—'}</td>
-                        <td className="px-3 py-2 text-right tabular-nums text-ink-700">{c.occupancy_pct != null ? `${(c.occupancy_pct * 100).toFixed(1)}%` : '—'}</td>
+                        <td className="px-3 py-2 text-right tabular-nums text-ink-700">{c.occupancy_pct != null ? `${c.occupancy_pct.toFixed(1)}%` : '—'}</td>
                         <td className="px-3 py-2 text-right tabular-nums text-ink-700">{c.adr_usd != null ? `$${c.adr_usd.toFixed(0)}` : '—'}</td>
                         <td className="px-5 py-2 text-right tabular-nums text-ink-700">{c.revpar_usd != null ? `$${c.revpar_usd.toFixed(0)}` : '—'}</td>
                       </tr>

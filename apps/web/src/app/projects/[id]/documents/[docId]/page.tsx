@@ -11,9 +11,9 @@
 
 import { useMemo, useState } from 'react';
 import { useParams, useRouter } from 'next/navigation';
-import { ArrowLeft, Search, FileText, AlertTriangle } from 'lucide-react';
+import { ArrowLeft, Search, FileText, AlertTriangle, Loader2 } from 'lucide-react';
 import { Card } from '@/components/ui/Card';
-import { cn } from '@/lib/format';
+import { cn, formatValue } from '@/lib/format';
 import { useDocuments } from '@/lib/hooks/useDocuments';
 import { humanizeFieldName } from '@/lib/fieldLabels';
 
@@ -25,48 +25,42 @@ const DOC_TYPE_LABEL: Record<string, string> = {
   PROPERTY_INFO: 'Property Info', LEASES: 'Leases & Agreements', SURVEYS: 'Surveys & Reviews',
 };
 
-function fmtValue(v: unknown): string {
-  if (v === null || v === undefined || v === '') return '—';
-  if (typeof v === 'number') {
-    if (!Number.isFinite(v)) return '—';
-    return Math.abs(v) >= 1000 ? v.toLocaleString(undefined, { maximumFractionDigits: 2 }) : String(v);
-  }
-  if (typeof v === 'boolean') return v ? 'Yes' : 'No';
-  const s = String(v);
-  return s.length > 160 ? s.slice(0, 160) + '…' : s;
-}
-
 export default function DocumentDetailPage() {
   const params = useParams();
   const router = useRouter();
   const dealId = (params?.id as string) ?? '';
   const docId = (params?.docId as string) ?? '';
-  const { documents, extractions } = useDocuments(dealId);
+  const { documents, extractions, loading } = useDocuments(dealId);
   const [q, setQ] = useState('');
 
   const doc = documents.find((d) => d.id === docId);
   const ext = extractions[docId];
   const fields = ext?.fields ?? [];
 
+  // Only fields that carry a value are shown; counts follow the visible set.
+  const displayable = useMemo(
+    () => fields.filter((f) => f.value !== null && f.value !== undefined && f.value !== ''),
+    [fields],
+  );
   const filtered = useMemo(() => {
-    const rows = fields.filter((f) => f.value !== null && f.value !== undefined && f.value !== '');
     const query = q.trim().toLowerCase();
-    if (!query) return rows;
-    return rows.filter(
+    if (!query) return displayable;
+    return displayable.filter(
       (f) =>
         humanizeFieldName(f.field_name).toLowerCase().includes(query) ||
         f.field_name.toLowerCase().includes(query),
     );
-  }, [fields, q]);
+  }, [displayable, q]);
 
-  const lowCount = fields.filter((f) => (f.confidence ?? 1) < 0.85 && !f.reviewed).length;
+  const lowCount = displayable.filter((f) => (f.confidence ?? 1) < 0.85 && !f.reviewed).length;
   const docType = (doc?.doc_type ?? '').toUpperCase();
+  const stillLoading = loading && !doc;
 
   return (
     <div className="p-8 max-w-[1100px] w-full">
       <button
         type="button"
-        onClick={() => router.push(`/projects/${dealId}?tab=dataroom`, { scroll: false })}
+        onClick={() => router.push(`/projects/${dealId}`, { scroll: false })}
         className="inline-flex items-center gap-1.5 text-[11px] uppercase tracking-wide text-ink-500 hover:text-ink-900 mb-3"
       >
         <ArrowLeft size={13} /> Back to Data Room
@@ -85,7 +79,7 @@ export default function DocumentDetailPage() {
               </span>
             )}
             {doc?.status && <span>{doc.status === 'EXTRACTED' ? 'Extracted' : doc.status}</span>}
-            <span>· {fields.length} fields</span>
+            {displayable.length > 0 && <span>· {displayable.length} fields</span>}
             {lowCount > 0 && (
               <span className="inline-flex items-center gap-1 text-danger-700">
                 <AlertTriangle size={11} /> {lowCount} to review
@@ -104,9 +98,13 @@ export default function DocumentDetailPage() {
         </div>
       </div>
 
-      {!doc ? (
+      {stillLoading ? (
+        <Card className="p-12 text-center text-[13px] text-ink-500">
+          <Loader2 size={18} className="animate-spin mx-auto mb-2 text-ink-400" /> Loading document…
+        </Card>
+      ) : !doc ? (
         <Card className="p-12 text-center text-[13px] text-ink-500">Document not found on this deal.</Card>
-      ) : fields.length === 0 ? (
+      ) : displayable.length === 0 ? (
         <Card className="p-12 text-center text-[13px] text-ink-500">
           No extracted data yet{doc.status && doc.status !== 'EXTRACTED' ? ` — status: ${doc.status}.` : '.'}
         </Card>
@@ -123,29 +121,37 @@ export default function DocumentDetailPage() {
                 </tr>
               </thead>
               <tbody>
-                {filtered.map((f, i) => {
-                  const conf = f.confidence ?? null;
-                  const low = conf != null && conf < 0.85 && !f.reviewed;
-                  return (
-                    <tr key={`${f.field_name}-${i}`} className="border-t border-border hover:bg-ink-100/30">
-                      <td className="px-5 py-2 text-ink-800">
-                        {humanizeFieldName(f.field_name)}
-                        <span className="block text-[10px] text-ink-400 font-mono">{f.field_name}</span>
-                      </td>
-                      <td className={cn('px-5 py-2 text-right tabular-nums', low ? 'text-danger-700 font-medium' : 'text-ink-900')}>
-                        {fmtValue(f.value)}
-                      </td>
-                      <td className="px-5 py-2 text-right tabular-nums">
-                        {conf != null ? (
-                          <span className={conf >= 0.85 ? 'text-success-700' : 'text-danger-700'}>{Math.round(conf * 100)}%</span>
-                        ) : (
-                          '—'
-                        )}
-                      </td>
-                      <td className="px-5 py-2 text-right tabular-nums text-ink-500">{f.source_page ?? '—'}</td>
-                    </tr>
-                  );
-                })}
+                {filtered.length === 0 ? (
+                  <tr>
+                    <td colSpan={4} className="px-5 py-8 text-center text-[12.5px] text-ink-500">
+                      No fields match “{q}”.
+                    </td>
+                  </tr>
+                ) : (
+                  filtered.map((f, i) => {
+                    const conf = f.confidence ?? null;
+                    const low = conf != null && conf < 0.85 && !f.reviewed;
+                    return (
+                      <tr key={`${f.field_name}-${i}`} className="border-t border-border hover:bg-ink-100/30">
+                        <td className="px-5 py-2 text-ink-800">
+                          {humanizeFieldName(f.field_name)}
+                          <span className="block text-[10px] text-ink-400 font-mono">{f.field_name}</span>
+                        </td>
+                        <td className={cn('px-5 py-2 text-right tabular-nums', low ? 'text-danger-700 font-medium' : 'text-ink-900')}>
+                          {formatValue(f.value, f.unit, f.field_name)}
+                        </td>
+                        <td className="px-5 py-2 text-right tabular-nums">
+                          {conf != null ? (
+                            <span className={conf >= 0.85 ? 'text-success-700' : 'text-danger-700'}>{Math.round(conf * 100)}%</span>
+                          ) : (
+                            '—'
+                          )}
+                        </td>
+                        <td className="px-5 py-2 text-right tabular-nums text-ink-500">{f.source_page ?? '—'}</td>
+                      </tr>
+                    );
+                  })
+                )}
               </tbody>
             </table>
           </div>
