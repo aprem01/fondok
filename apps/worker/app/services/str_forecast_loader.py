@@ -249,6 +249,63 @@ async def load_str_history_for_deal(
     return _build_monthly_records(monthly, comp_revpar, rgi)
 
 
+async def load_str_subject_ttm(
+    session: AsyncSession, *, deal_id: str, tenant_id: str | None
+) -> tuple[float, float] | None:
+    """Return the STR report's SUBJECT trailing-12 (occupancy 0-1, ADR).
+
+    Sam QA 8/25: the STR seed should ground Year-1 on the subject's CURRENT
+    TTM performance (``ttm_performance.subject.occupancy_pct`` / ``adr_usd`` —
+    the headline the Market tab displays), not a downstream forecast point that
+    can land far below it (a −19% IRR foot-gun). Occupancy is published on a
+    0-100 scale; we return it as a 0-1 fraction to match ``starting_occupancy``.
+    Newest STR_TREND extraction wins.
+    """
+    if tenant_id is None:
+        sql = """
+            SELECT er.fields, er.created_at
+              FROM extraction_results er
+              JOIN documents d ON d.id = er.document_id
+             WHERE er.deal_id = :deal
+               AND UPPER(COALESCE(d.doc_type, '')) IN ('STR', 'STR_TREND')
+             ORDER BY er.created_at DESC
+        """
+        params = {"deal": deal_id}
+    else:
+        sql = """
+            SELECT er.fields, er.created_at
+              FROM extraction_results er
+              JOIN documents d ON d.id = er.document_id
+             WHERE er.deal_id = :deal
+               AND er.tenant_id = :tenant
+               AND d.tenant_id = :tenant
+               AND UPPER(COALESCE(d.doc_type, '')) IN ('STR', 'STR_TREND')
+             ORDER BY er.created_at DESC
+        """
+        params = {"deal": deal_id, "tenant": tenant_id}
+
+    try:
+        rows = await session.execute(text(sql), params)
+        materialized = [dict(r._mapping) for r in rows.fetchall()]
+    except Exception:
+        logger.exception("str_forecast: failed to query STR_TREND subject TTM")
+        return None
+
+    for row in materialized:  # newest extraction first
+        occ: float | None = None
+        adr: float | None = None
+        for f in _parse_fields(row.get("fields")):
+            name = (f.get("field_name") or "").strip().lower()
+            if name == "ttm_performance.subject.occupancy_pct":
+                occ = _coerce_float(f.get("value"))
+            elif name == "ttm_performance.subject.adr_usd":
+                adr = _coerce_float(f.get("value"))
+        if occ is not None and adr is not None and occ > 0 and adr > 0:
+            occ_frac = occ / 100.0 if occ > 1.5 else occ
+            return (occ_frac, adr)
+    return None
+
+
 __all__ = [
     "load_str_history_for_deal",
 ]

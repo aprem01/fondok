@@ -827,14 +827,23 @@ async def _load_engine_inputs(
     #   * the load fails (best-effort — analyst sees badge stay at the
     #     prior source rather than a 500).
     if base.get("revenue_seed_from_str_forecast") is True:
+        # Sam QA 8/25: prefer the STR SUBJECT TTM (the current performance the
+        # Market tab displays) over the forecast Month-12 point, which could
+        # land far below the subject actual and tank the deal (a −19% IRR
+        # foot-gun). Fall back to the forecast only when the subject TTM isn't
+        # extracted.
+        from .str_forecast_loader import load_str_subject_ttm
+
         try:
-            forecast = await _load_str_forecast_for_seed(
+            seed = await load_str_subject_ttm(
+                session, deal_id=deal_id, tenant_id=effective_tenant
+            ) or await _load_str_forecast_for_seed(
                 session, deal_id=deal_id, tenant_id=effective_tenant
             )
         except Exception:
-            forecast = None
-        if forecast is not None:
-            seed_occ, seed_adr = forecast
+            seed = None
+        if seed is not None:
+            seed_occ, seed_adr = seed
             base["starting_occupancy"] = seed_occ
             base["starting_adr"] = seed_adr
             sources["starting_occupancy"] = SOURCE_STR_FORECAST
