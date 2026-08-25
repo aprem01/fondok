@@ -61,6 +61,10 @@ const MarketTab = dynamic(() => import('@/components/project/MarketTab'), {
 const AnalysisTab = dynamic(() => import('@/components/project/AnalysisTab'), {
   loading: () => <TabLoadingSkeleton />,
 });
+// FON-54 — IC Memo one-pager (Deal Summary + dynamic recommendation + export).
+const ICMemoTab = dynamic(() => import('@/components/project/ICMemoTab'), {
+  loading: () => <TabLoadingSkeleton />,
+});
 const ValidationTab = dynamic(() => import('@/components/project/ValidationTab'), {
   loading: () => <TabLoadingSkeleton />,
 });
@@ -747,15 +751,11 @@ export default function ProjectDetailPage() {
         {activeTab === 'export' && (
           <ErrorBoundary tabName="Export"><ExportTab project={project} /></ErrorBoundary>
         )}
-        {/* FON-54 — IC Memo consolidates Analysis + Export. Interim: the two
-            surfaces stacked; the IC-ready one-pager is built out in FON-54. */}
+        {/* FON-54 — IC Memo: the IC-ready one-pager (Deal Summary + dynamic
+            recommendation) with Configure → Preview → Export/Share folded in,
+            consolidating the former Analysis + Export tabs. */}
         {activeTab === 'ic-memo' && (
-          <ErrorBoundary tabName="IC Memo">
-            <div className="space-y-6">
-              <AnalysisTab />
-              <ExportTab project={project} />
-            </div>
-          </ErrorBoundary>
+          <ErrorBoundary tabName="IC Memo"><ICMemoTab project={project} /></ErrorBoundary>
         )}
       </div>
       </ValueTraceProvider>
