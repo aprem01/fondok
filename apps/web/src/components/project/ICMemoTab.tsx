@@ -24,13 +24,14 @@
 import { useMemo, useState } from 'react';
 import {
   CheckCircle2, AlertTriangle, XCircle, TrendingUp, ShieldCheck,
-  Sliders, FileText, ListChecks,
+  Sliders, FileText, ListChecks, ClipboardList,
 } from 'lucide-react';
 import { Card } from '@/components/ui/Card';
 import { Badge } from '@/components/ui/Badge';
 import { fmtCurrency, fmtPct, cn } from '@/lib/format';
 import { useEngineOutputs, getEngineField } from '@/lib/hooks/useEngineOutputs';
 import { useDeal } from '@/lib/hooks/useDeal';
+import { useVariance } from '@/lib/hooks/useVariance';
 import type { Project } from '@/lib/mockData';
 import ExportTab from './ExportTab';
 
@@ -290,7 +291,10 @@ interface SectionState {
   thesis: boolean;
   highlights: boolean;
   risks: boolean;
+  diligence: boolean;
 }
+
+const SEV_TONE: Record<string, Tone> = { CRITICAL: 'red', WARN: 'amber', INFO: 'green' };
 
 const VERDICT_ICON: Record<Tone, typeof CheckCircle2> = {
   green: CheckCircle2,
@@ -312,13 +316,26 @@ export default function ICMemoTab({ project }: { project: Project }) {
   const metrics = useMemo(() => extractMetrics(outputs, deal, project), [outputs, deal, project]);
   const rec = useMemo(() => buildRecommendation(metrics), [metrics]);
 
+  const variance = useVariance(dealId);
+
   const [detail, setDetail] = useState<Detail>('default');
   const [sections, setSections] = useState<SectionState>({
     summary: true,
     thesis: true,
     highlights: true,
     risks: true,
+    diligence: true,
   });
+
+  // Diligence items — the highest-$-impact broker-vs-T-12 variance flags,
+  // surfaced compactly so the memo carries the "diligence items" the IC needs
+  // without becoming the full Analysis dashboard.
+  const diligenceFlags = useMemo(() => {
+    const flags = variance.flags ?? [];
+    return [...flags]
+      .sort((a, b) => Math.abs(b.noi_impact_usd) - Math.abs(a.noi_impact_usd))
+      .slice(0, detail === 'condensed' ? 3 : 5);
+  }, [variance.flags, detail]);
 
   // Level of detail trims the memo: condensed = verdict + thesis + top items;
   // expanded = the full set plus a supporting-analysis note.
@@ -472,6 +489,38 @@ export default function ICMemoTab({ project }: { project: Project }) {
                   </p>
                 </div>
               )}
+
+              {/* Diligence items — top broker-vs-T-12 variance flags by $ impact.
+                  Bridges the fuller "Analysis" intent without the dashboard. */}
+              {sections.diligence && diligenceFlags.length > 0 && (
+                <div className="border-t border-border pt-4">
+                  <div className="flex items-center gap-2 mb-2">
+                    <ClipboardList size={14} className="text-ink-500" />
+                    <h3 className="text-[13px] font-semibold text-ink-900">Diligence Items &amp; Broker Variance</h3>
+                    {variance.critical > 0 && <Badge tone="red">{variance.critical} critical</Badge>}
+                    {variance.warn > 0 && <Badge tone="amber">{variance.warn} warn</Badge>}
+                  </div>
+                  <ul className="space-y-1.5">
+                    {diligenceFlags.map((f) => (
+                      <li key={f.flag_id} className="flex items-start gap-2 text-[12px] leading-relaxed">
+                        <Badge tone={SEV_TONE[f.severity] ?? 'gray'}>
+                          {f.severity[0] + f.severity.slice(1).toLowerCase()}
+                        </Badge>
+                        <span className="flex-1">
+                          <span className="font-medium text-ink-900">{f.field_label}</span>
+                          {Math.abs(f.noi_impact_usd) > 0 && (
+                            <span className="text-ink-500">
+                              {' · '}
+                              {fmtCurrency(Math.abs(f.noi_impact_usd), { compact: true })} NOI impact
+                            </span>
+                          )}
+                          <span className="block text-[11.5px] text-ink-500">{f.explanation}</span>
+                        </span>
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              )}
             </div>
           )}
         </div>
@@ -531,6 +580,7 @@ export default function ICMemoTab({ project }: { project: Project }) {
                 ['thesis', 'Investment Thesis & Recommendation'],
                 ['highlights', 'Key Highlights'],
                 ['risks', 'Key Risks & Considerations'],
+                ['diligence', 'Diligence & Variance'],
               ] as [keyof SectionState, string][]).map(([id, label]) => (
                 <label
                   key={id}
