@@ -9,13 +9,15 @@
  * insurance, property tax, room mix, etc.)
  */
 
-import { useMemo, useState } from 'react';
+import { useCallback, useMemo, useState } from 'react';
 import { useParams, useRouter } from 'next/navigation';
-import { ArrowLeft, Search, FileText, AlertTriangle, Loader2 } from 'lucide-react';
+import { ArrowLeft, Search, FileText, AlertTriangle, Loader2, Check, Pencil, X } from 'lucide-react';
 import { Card } from '@/components/ui/Card';
 import { cn, formatValue } from '@/lib/format';
 import { useDocuments } from '@/lib/hooks/useDocuments';
 import { humanizeFieldName } from '@/lib/fieldLabels';
+import { api } from '@/lib/api';
+import { useToast } from '@/components/ui/Toast';
 
 const DOC_TYPE_LABEL: Record<string, string> = {
   OM: 'Offering Memorandum', T12: 'T-12', PNL: 'P&L', PNL_MONTHLY: 'Monthly P&L',
@@ -30,8 +32,14 @@ export default function DocumentDetailPage() {
   const router = useRouter();
   const dealId = (params?.id as string) ?? '';
   const docId = (params?.docId as string) ?? '';
-  const { documents, extractions, loading } = useDocuments(dealId);
+  const { documents, extractions, loading, refreshExtraction } = useDocuments(dealId);
+  const { toast } = useToast();
   const [q, setQ] = useState('');
+  // FON-40 — filter to just the fields that still need review, and edit inline.
+  const [reviewOnly, setReviewOnly] = useState(false);
+  const [editing, setEditing] = useState<string | null>(null);
+  const [editValue, setEditValue] = useState('');
+  const [busy, setBusy] = useState<string | null>(null);
 
   const doc = documents.find((d) => d.id === docId);
   const ext = extractions[docId];
@@ -42,17 +50,40 @@ export default function DocumentDetailPage() {
     () => fields.filter((f) => f.value !== null && f.value !== undefined && f.value !== ''),
     [fields],
   );
+  const needsReview = (f: { confidence?: number | null; reviewed?: string | null }) =>
+    (f.confidence ?? 1) < 0.85 && !f.reviewed;
   const filtered = useMemo(() => {
+    let list = displayable;
+    if (reviewOnly) list = list.filter(needsReview);
     const query = q.trim().toLowerCase();
-    if (!query) return displayable;
-    return displayable.filter(
-      (f) =>
-        humanizeFieldName(f.field_name).toLowerCase().includes(query) ||
-        f.field_name.toLowerCase().includes(query),
-    );
-  }, [displayable, q]);
+    if (query) {
+      list = list.filter(
+        (f) =>
+          humanizeFieldName(f.field_name).toLowerCase().includes(query) ||
+          f.field_name.toLowerCase().includes(query),
+      );
+    }
+    return list;
+  }, [displayable, q, reviewOnly]);
 
-  const lowCount = displayable.filter((f) => (f.confidence ?? 1) < 0.85 && !f.reviewed).length;
+  const lowCount = displayable.filter(needsReview).length;
+
+  const doReview = useCallback(
+    async (fieldName: string, action: 'accept' | 'edit' | 'reject', value?: string) => {
+      setBusy(fieldName);
+      try {
+        await api.documents.reviewField(dealId, docId, { field_name: fieldName, action, value });
+        await refreshExtraction(docId);
+        setEditing(null);
+        toast(action === 'reject' ? 'Field rejected' : 'Field updated', { type: 'success' });
+      } catch (err) {
+        toast(`Couldn't update field: ${err instanceof Error ? err.message : String(err)}`, { type: 'error' });
+      } finally {
+        setBusy(null);
+      }
+    },
+    [dealId, docId, refreshExtraction, toast],
+  );
   const docType = (doc?.doc_type ?? '').toUpperCase();
   const stillLoading = loading && !doc;
 
@@ -87,14 +118,31 @@ export default function DocumentDetailPage() {
             )}
           </div>
         </div>
-        <div className="relative shrink-0">
-          <Search size={13} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-ink-400" aria-hidden="true" />
-          <input
-            value={q}
-            onChange={(e) => setQ(e.target.value)}
-            placeholder="Search fields…"
-            className="w-56 pl-8 pr-2 py-1.5 text-[12.5px] rounded-md border border-border focus:outline-none focus:ring-2 focus:ring-brand-100 focus:border-brand-500"
-          />
+        <div className="flex items-center gap-2 shrink-0">
+          {lowCount > 0 && (
+            <button
+              type="button"
+              onClick={() => setReviewOnly((v) => !v)}
+              aria-pressed={reviewOnly}
+              className={cn(
+                'inline-flex items-center gap-1.5 text-[11.5px] font-medium px-2.5 py-1.5 rounded-md border transition-colors',
+                reviewOnly
+                  ? 'border-danger-500 bg-danger-50 text-danger-700'
+                  : 'border-border text-ink-700 hover:bg-ink-100',
+              )}
+            >
+              <AlertTriangle size={12} /> Needs review ({lowCount})
+            </button>
+          )}
+          <div className="relative">
+            <Search size={13} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-ink-400" aria-hidden="true" />
+            <input
+              value={q}
+              onChange={(e) => setQ(e.target.value)}
+              placeholder="Search fields…"
+              className="w-56 pl-8 pr-2 py-1.5 text-[12.5px] rounded-md border border-border focus:outline-none focus:ring-2 focus:ring-brand-100 focus:border-brand-500"
+            />
+          </div>
         </div>
       </div>
 
@@ -116,29 +164,45 @@ export default function DocumentDetailPage() {
                 <tr className="bg-ink-900 text-white text-[10px] uppercase tracking-wider">
                   <th className="text-left font-semibold px-5 py-2.5">Field</th>
                   <th className="text-right font-semibold px-5 py-2.5">Value</th>
-                  <th className="text-right font-semibold px-5 py-2.5 w-28">Confidence</th>
-                  <th className="text-right font-semibold px-5 py-2.5 w-16">Page</th>
+                  <th className="text-right font-semibold px-5 py-2.5 w-24">Confidence</th>
+                  <th className="text-right font-semibold px-5 py-2.5 w-14">Page</th>
+                  <th className="text-right font-semibold px-5 py-2.5 w-32">Review</th>
                 </tr>
               </thead>
               <tbody>
                 {filtered.length === 0 ? (
                   <tr>
-                    <td colSpan={4} className="px-5 py-8 text-center text-[12.5px] text-ink-500">
-                      No fields match “{q}”.
+                    <td colSpan={5} className="px-5 py-8 text-center text-[12.5px] text-ink-500">
+                      {reviewOnly ? 'Nothing left to review on this document.' : `No fields match “${q}”.`}
                     </td>
                   </tr>
                 ) : (
                   filtered.map((f, i) => {
                     const conf = f.confidence ?? null;
                     const low = conf != null && conf < 0.85 && !f.reviewed;
+                    const isEditing = editing === f.field_name;
+                    const isBusy = busy === f.field_name;
                     return (
-                      <tr key={`${f.field_name}-${i}`} className="border-t border-border hover:bg-ink-100/30">
+                      <tr key={`${f.field_name}-${i}`} className="border-t border-border hover:bg-ink-100/30 align-top">
                         <td className="px-5 py-2 text-ink-800">
                           {humanizeFieldName(f.field_name)}
                           <span className="block text-[10px] text-ink-400 font-mono">{f.field_name}</span>
                         </td>
                         <td className={cn('px-5 py-2 text-right tabular-nums', low ? 'text-danger-700 font-medium' : 'text-ink-900')}>
-                          {formatValue(f.value, f.unit, f.field_name)}
+                          {isEditing ? (
+                            <input
+                              autoFocus
+                              value={editValue}
+                              onChange={(e) => setEditValue(e.target.value)}
+                              onKeyDown={(e) => {
+                                if (e.key === 'Enter') doReview(f.field_name, 'edit', editValue);
+                                if (e.key === 'Escape') setEditing(null);
+                              }}
+                              className="w-full max-w-[220px] text-right text-[12px] px-2 py-1 rounded border border-brand-500 focus:outline-none focus:ring-2 focus:ring-brand-100"
+                            />
+                          ) : (
+                            formatValue(f.value, f.unit, f.field_name)
+                          )}
                         </td>
                         <td className="px-5 py-2 text-right tabular-nums">
                           {conf != null ? (
@@ -148,6 +212,71 @@ export default function DocumentDetailPage() {
                           )}
                         </td>
                         <td className="px-5 py-2 text-right tabular-nums text-ink-500">{f.source_page ?? '—'}</td>
+                        <td className="px-5 py-2 text-right whitespace-nowrap">
+                          {isEditing ? (
+                            <span className="inline-flex items-center gap-1">
+                              <button
+                                type="button"
+                                disabled={isBusy}
+                                onClick={() => doReview(f.field_name, 'edit', editValue)}
+                                title="Save"
+                                className="p-1 rounded border border-success-500/40 text-success-700 hover:bg-success-50 disabled:opacity-40"
+                              >
+                                {isBusy ? <Loader2 size={12} className="animate-spin" /> : <Check size={12} />}
+                              </button>
+                              <button
+                                type="button"
+                                disabled={isBusy}
+                                onClick={() => setEditing(null)}
+                                title="Cancel"
+                                className="p-1 rounded border border-border text-ink-500 hover:bg-ink-100 disabled:opacity-40"
+                              >
+                                <X size={12} />
+                              </button>
+                            </span>
+                          ) : f.reviewed ? (
+                            <span className="inline-flex items-center gap-1 text-[10.5px] text-success-700">
+                              <Check size={11} /> {f.reviewed}
+                            </span>
+                          ) : (
+                            <span className="inline-flex items-center gap-1">
+                              {low && (
+                                <button
+                                  type="button"
+                                  disabled={isBusy}
+                                  onClick={() => doReview(f.field_name, 'accept')}
+                                  title="Accept as-is"
+                                  className="p-1 rounded border border-success-500/40 text-success-700 hover:bg-success-50 disabled:opacity-40"
+                                >
+                                  <Check size={12} />
+                                </button>
+                              )}
+                              <button
+                                type="button"
+                                disabled={isBusy}
+                                onClick={() => {
+                                  setEditing(f.field_name);
+                                  setEditValue(f.value == null ? '' : String(f.value));
+                                }}
+                                title="Edit value"
+                                className="p-1 rounded border border-border text-ink-600 hover:bg-ink-100 disabled:opacity-40"
+                              >
+                                <Pencil size={12} />
+                              </button>
+                              {low && (
+                                <button
+                                  type="button"
+                                  disabled={isBusy}
+                                  onClick={() => doReview(f.field_name, 'reject')}
+                                  title="Reject"
+                                  className="p-1 rounded border border-danger-500/40 text-danger-700 hover:bg-danger-50 disabled:opacity-40"
+                                >
+                                  <X size={12} />
+                                </button>
+                              )}
+                            </span>
+                          )}
+                        </td>
                       </tr>
                     );
                   })
