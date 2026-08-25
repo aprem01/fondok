@@ -24,6 +24,11 @@ export interface WorkerDeal {
   service: string | null;
   // FON-46 — deal classification (acquisition / development / redevelopment).
   deal_type?: string | null;
+  // FON-59 — Investment Profile captured in the onboarding wizard (return
+  // strategy id e.g. "value-add", positioning-tier id). Persisted by the
+  // worker; surfaced on the Overview's Investment Profile tile.
+  return_profile?: string | null;
+  positioning?: string | null;
   brand: string | null;
   status: string;
   deal_stage: string | null;

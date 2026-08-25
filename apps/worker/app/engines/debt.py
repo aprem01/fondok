@@ -71,6 +71,11 @@ class DebtEngineOutputExt(DebtEngineOutput):
     monthly_schedule: list[DebtMonth] = Field(default_factory=list)
     year_one_dscr: Annotated[float, Field(ge=0)] | None = None
     year_one_debt_yield: Annotated[float, Field(ge=0)] | None = None
+    # FON-59 — echo the loan terms so the Overview Financing tile can render
+    # Interest Rate / Term / Amortization without re-fetching the debt inputs.
+    interest_rate: Annotated[float, Field(ge=0)] | None = None
+    term_years: Annotated[int, Field(ge=0)] | None = None
+    amortization_years: Annotated[int, Field(ge=0)] | None = None
 
 
 def pmt(rate: float, nper: int, pv: float) -> float:
@@ -200,6 +205,9 @@ class DebtEngine(BaseEngine[DebtEngineInputExt, DebtEngineOutputExt]):
             monthly_schedule=monthly_schedule,
             year_one_dscr=year1_dscr,
             year_one_debt_yield=year1_dy,
+            interest_rate=payload.interest_rate,
+            term_years=payload.term_years,
+            amortization_years=payload.amortization_years,
             provenance=prov,
         )
 

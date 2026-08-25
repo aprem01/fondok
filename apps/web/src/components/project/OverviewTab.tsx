@@ -396,14 +396,13 @@ export default function OverviewTab({ projectId }: { projectId: number | string 
     : '—';
 
   // Investment Profile rows (return strategy, IRR target, positioning tier).
-  // Profile / positioning live on the deal-creation wizard's enum and
-  // currently surface only on the Kimpton demo.
-  const profile = isKimptonDemo
-    ? returnProfiles.find(r => r.id === o.investmentProfile.returnProfile)
-    : undefined;
-  const positioning = isKimptonDemo
-    ? positioningTiers.find(p => p.id === o.investmentProfile.positioning)
-    : undefined;
+  // FON-59 — these are captured in the onboarding wizard and persisted on the
+  // deal (return_profile / positioning); read them for live deals, falling back
+  // to the Kimpton demo fixture. IRR target comes off the deal's target_irr.
+  const profileId = deal?.return_profile ?? (isKimptonDemo ? o.investmentProfile.returnProfile : undefined);
+  const positioningId = deal?.positioning ?? (isKimptonDemo ? o.investmentProfile.positioning : undefined);
+  const profile = profileId ? returnProfiles.find(r => r.id === profileId) : undefined;
+  const positioning = positioningId ? positioningTiers.find(p => p.id === positioningId) : undefined;
 
   // ─── Headline engine reads ───────────────────────────────────────
   // Acquisition / Reversion / Investment / Financing / Refi tiles all

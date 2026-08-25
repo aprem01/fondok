@@ -254,6 +254,10 @@ class ReturnsEngineOutputExt(ReturnsEngineOutput):
 
     cash_flows: list[float] = Field(default_factory=list)
     cash_flows_unlevered: list[float] = Field(default_factory=list)
+    # FON-59 — surface the reversion assumptions so the Overview's Reversion
+    # tile can show Exit Cap Rate + Terminal NOI instead of "—".
+    exit_cap_rate: float | None = None
+    terminal_noi: float | None = None
 
 
 def _project_noi_series(
@@ -351,6 +355,8 @@ class ReturnsEngine(BaseEngine[ReturnsEngineInputExt, ReturnsEngineOutputExt]):
             selling_costs=selling_costs,
             net_proceeds=net_proceeds_to_equity,
             hold_years=hold,
+            exit_cap_rate=assumptions.exit_cap_rate,
+            terminal_noi=terminal_noi,
             cash_flows=levered_flows,
             cash_flows_unlevered=unlevered_flows,
             provenance={
@@ -425,6 +431,8 @@ def returns_from_cash_flow(
         selling_costs=selling_costs,
         net_proceeds=net_proceeds,
         hold_years=hold,
+        exit_cap_rate=assumptions.exit_cap_rate,
+        terminal_noi=payload.terminal_noi,
         cash_flows=levered_flows,
         cash_flows_unlevered=unlevered_flows,
         provenance={
