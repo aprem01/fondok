@@ -85,27 +85,31 @@ type Tab = {
   label: string;
   icon: typeof FolderOpen;
   inactive?: boolean;
+  /** FON-55 — internal/admin-only tab, hidden from the investor-facing nav. */
+  adminOnly?: boolean;
 };
 
+// FON-52 — investor-workflow navigation. Order mirrors how an institutional
+// investor evaluates a deal: source data → underwriting → returns → scenario
+// analysis → IC output. Validation, Forecasting, Analysis and Export are
+// removed from the end-user nav (functionality preserved: forecasting lives in
+// Financials → Projections; Analysis + Export are consolidated into IC Memo;
+// Validation stays engine-internal, still deep-linkable). Activity is
+// admin-only (FON-55). The removed tabs' render blocks below stay reachable via
+// ?tab= for internal use.
 const tabs: Tab[] = [
   { id: '', label: 'Data Room', icon: FolderOpen },
-  { id: 'validation', label: 'Validation', icon: ShieldCheck },
   { id: 'overview', label: 'Overview', icon: FileText },
-  { id: 'investment', label: 'Investment', icon: Briefcase },
+  { id: 'market', label: 'Market', icon: MapPinned },
   { id: 'pl', label: 'Financials', icon: BarChart3 },
+  { id: 'investment', label: 'Investment', icon: Briefcase },
   { id: 'debt', label: 'Debt', icon: DollarSign },
+  { id: 'partnership', label: 'Partnership', icon: Users },
   { id: 'cash-flow', label: 'Cash Flow', icon: Activity },
   { id: 'returns', label: 'Returns', icon: TrendingUp },
-  { id: 'partnership', label: 'Partnership', icon: Users },
-  { id: 'market', label: 'Market', icon: MapPinned },
-  { id: 'forecasting', label: 'Forecasting', icon: TrendingUp },
-  { id: 'analysis', label: 'Analysis', icon: FileSearch },
-  { id: 'scenarios', label: 'Scenarios', icon: GitCompareArrows },
-  // Wave 4 W4.3 — every audited mutation (override / scenario / engine
-  // run / export) shows up in this stream so analysts have a single
-  // "what changed on this deal" surface.
-  { id: 'activity', label: 'Activity', icon: History },
-  { id: 'export', label: 'Export', icon: Download, inactive: true },
+  { id: 'scenarios', label: 'Scenario Analysis', icon: GitCompareArrows },
+  { id: 'ic-memo', label: 'IC Memo', icon: FileSearch },
+  { id: 'activity', label: 'Activity', icon: History, adminOnly: true },
 ];
 
 export default function ProjectDetailPage() {
@@ -623,7 +627,7 @@ export default function ProjectDetailPage() {
           aria-label="Project sections"
           className="flex items-center gap-1 -mb-px overflow-x-auto scrollbar-thin border-t hairline pt-1"
         >
-          {tabs.map(t => {
+          {tabs.filter(t => !t.adminOnly || isAdmin).map(t => {
             const Icon = t.icon;
             const isActive = activeTab === t.id;
             const isInactive = t.inactive === true;
@@ -742,6 +746,16 @@ export default function ProjectDetailPage() {
         )}
         {activeTab === 'export' && (
           <ErrorBoundary tabName="Export"><ExportTab project={project} /></ErrorBoundary>
+        )}
+        {/* FON-54 — IC Memo consolidates Analysis + Export. Interim: the two
+            surfaces stacked; the IC-ready one-pager is built out in FON-54. */}
+        {activeTab === 'ic-memo' && (
+          <ErrorBoundary tabName="IC Memo">
+            <div className="space-y-6">
+              <AnalysisTab />
+              <ExportTab project={project} />
+            </div>
+          </ErrorBoundary>
         )}
       </div>
       </ValueTraceProvider>
