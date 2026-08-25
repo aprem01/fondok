@@ -11,7 +11,6 @@ import EngineLegend from './EngineLegend';
 import EngineRunHistory from './EngineRunHistory';
 import WhatJustHappened from './WhatJustHappened';
 import CapexPlanPanel, { DEFAULT_CAPEX_PLAN, type CapexPlanState } from './CapexPlanPanel';
-import DebtStackPanel, { DEFAULT_DEBT_STACK, type DebtStackState } from './DebtStackPanel';
 import HistoricalBaselinePanel from './HistoricalBaselinePanel';
 import { useHistoricalBaseline } from '@/lib/hooks/useHistoricalBaseline';
 import { kimptonAnglerOverview } from '@/lib/mockData';
@@ -51,10 +50,6 @@ export default function InvestmentTab({ projectId }: { projectId: number | strin
   // engine output isn't wired into useEngineOutputs yet; until it is,
   // the panel owns the source of truth in memory.
   const [capexPlan, setCapexPlan] = useState<CapexPlanState>(DEFAULT_CAPEX_PLAN);
-  // Wave 4 W4.4 — debt stack v2 local state. Worker debt-stack engine
-  // output isn't wired through useEngineOutputs yet; the panel owns
-  // the in-memory source of truth and previews the math client-side.
-  const [debtStack, setDebtStack] = useState<DebtStackState>(DEFAULT_DEBT_STACK);
 
   // ─── Worker engine field reads ────────────────────────────────────
   // Sam QA #8: the Investment tab used to render the Kimpton fixture
@@ -394,19 +389,23 @@ export default function InvestmentTab({ projectId }: { projectId: number | strin
               })()}
             />
           </div>
-          {/* Wave 4 W4.4 — Debt Stack v2 panel.
-              Replaces the legacy Senior Loan Financing / Refinancing
-              side-by-side cards with a full institutional capital
-              stack (senior + mezz + pref equity) + refi test. */}
-          <div className="grid grid-cols-1 gap-5 mt-5">
-            <DebtStackPanel
-              purchasePrice={pickNum(wPurchase, o.acquisition.purchasePrice) ?? 0}
-              totalCapital={totalCapital}
-              noiByYear={(wExpenseYears ?? []).map(y => y.noi)}
-              termYears={(holdYears as number | undefined) ?? 5}
-              state={debtStack}
-              onChange={setDebtStack}
-            />
+          {/* FON-62 — detailed debt configuration lives on the Debt tab now,
+              so there's one authoritative place for loan terms + the schedule.
+              Investment keeps debt only as a read-only source (Sources & Uses).
+              This pointer replaces the editable Debt Stack panel that used to
+              sit here. */}
+          <div className="mt-5 rounded-md border border-border bg-ink-50/40 px-4 py-3 flex items-center justify-between gap-3">
+            <div className="text-[12.5px] text-ink-600 leading-relaxed">
+              <span className="font-medium text-ink-900">Debt configuration moved to the Debt tab.</span>{' '}
+              All loan terms, tranches, and the debt schedule are managed there — debt shows
+              here only as a source in Sources &amp; Uses.
+            </div>
+            <a
+              href="?tab=debt"
+              className="shrink-0 text-[12px] font-medium px-3 py-1.5 rounded-md border border-border text-brand-700 hover:bg-brand-50 whitespace-nowrap"
+            >
+              Open Debt tab →
+            </a>
           </div>
         </>
         );
