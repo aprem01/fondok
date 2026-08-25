@@ -32,6 +32,7 @@ import ExportTab from '@/components/project/ExportTab';
 import ScenarioSelector from '@/components/project/ScenarioSelector';
 import ScenarioComparePanel from '@/components/project/ScenarioComparePanel';
 import ScenarioAnalysisTab from '@/components/project/ScenarioAnalysisTab';
+import AtlasCopilot from '@/components/project/AtlasCopilot';
 import ScenarioEditor from '@/components/project/ScenarioEditor';
 import TabLoadingSkeleton from '@/components/project/TabLoadingSkeleton';
 import { api as workerApi, type ScenarioRecord } from '@/lib/api';
@@ -679,7 +680,10 @@ export default function ProjectDetailPage() {
           any number on any tab can explain itself from one pair of fetches. */}
       <ProvenanceProvider dealId={rawId}>
       <ValueTraceProvider dealId={rawId}>
-      <div className="p-8 max-w-[1800px] w-full" role="tabpanel" aria-label={`${activeLabel} content`}>
+      {/* Atlas AI Copilot docks to the right of the tab content and persists
+          across tabs; the content column flexes narrower when it's open. */}
+      <div className="flex items-start">
+      <div className="p-8 max-w-[1800px] w-full min-w-0 flex-1" role="tabpanel" aria-label={`${activeLabel} content`}>
         {!isMockId && <EngineFailuresBanner outputs={pageEngineOutputs} dealId={rawId} />}
         {!isMockId && (
           <IntroCard
@@ -757,6 +761,10 @@ export default function ProjectDetailPage() {
         {activeTab === 'ic-memo' && (
           <ErrorBoundary tabName="IC Memo"><ICMemoTab project={project} /></ErrorBoundary>
         )}
+      </div>
+      <ErrorBoundary tabName="Atlas">
+        <AtlasCopilot dealId={rawId} activeTab={activeTab} activeLabel={activeLabel} />
+      </ErrorBoundary>
       </div>
       </ValueTraceProvider>
       </ProvenanceProvider>
