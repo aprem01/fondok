@@ -37,6 +37,7 @@ interface StackTranche {
   annual_debt_service: number | null;
   interest_only: boolean;
   terms_pending: boolean;
+  amortization_years: number | null;
 }
 interface DebtStackOutput {
   tranches: StackTranche[];
@@ -733,7 +734,7 @@ function CapitalStack({
         if (!rows.some((r) => r.kind === 'pace')) {
           rows.push({
             idx: rows.length, kind: 'pace', label: 'PACE Loan',
-            loan_amount: 0, all_in_rate: null, rate_type: 'fixed',
+            loan_amount: 0, all_in_rate: null, rate_type: 'fixed', amortization_years: null,
             annual_debt_service: null, interest_only: true, terms_pending: true, synthetic: true,
           });
         }
@@ -755,6 +756,7 @@ function CapitalStack({
                 <th className="text-right font-semibold px-5 py-2.5 w-40">Amount</th>
                 <th className="text-left font-semibold px-5 py-2.5">Rate Type</th>
                 <th className="text-right font-semibold px-5 py-2.5 w-36">All-in Rate</th>
+                <th className="text-right font-semibold px-5 py-2.5 w-28">Amort</th>
                 <th className="text-right font-semibold px-5 py-2.5">Debt Service</th>
                 <th className="text-left font-semibold px-5 py-2.5 w-28">Status</th>
               </tr>
@@ -763,9 +765,14 @@ function CapitalStack({
               {rows.map((t) => {
                 const amtPath = `debt_stack.tranches.${t.idx}.principal_usd`;
                 const ratePath = `debt_stack.tranches.${t.idx}.rate_pct`;
+                const amortPath = `debt_stack.tranches.${t.idx}.amortization_months`;
                 const amt = readOverrideNum(overrides, amtPath, t.loan_amount);
                 const rawRate = readOverrideNum(overrides, ratePath, t.all_in_rate ?? Number.NaN);
                 const rateVal = Number.isFinite(rawRate) ? rawRate : null;
+                const amortMonthsOv = readOverrideNum(overrides, amortPath, Number.NaN);
+                const amortYears = Number.isFinite(amortMonthsOv)
+                  ? Math.round(amortMonthsOv / 12)
+                  : (t.interest_only ? 0 : (t.amortization_years ?? 0));
                 const muted = t.synthetic && amt <= 0;
                 return (
                   <tr key={`${t.kind}-${t.idx}`} className={cn('border-t border-border', muted && 'opacity-70')}>
@@ -778,11 +785,15 @@ function CapitalStack({
                         onCommit={(v) => onSave({ [amtPath]: v })} />
                     </td>
                     <td className="px-5 py-2.5 text-ink-700 capitalize">
-                      {t.rate_type}{t.interest_only ? ' · IO' : ''}
+                      {t.rate_type}
                     </td>
                     <td className="px-4 py-2 text-right">
                       <CellPct value={rateVal} overridden={ratePath in overrides} liveMode={liveMode}
                         onCommit={(f) => onSave({ [ratePath]: f })} />
+                    </td>
+                    <td className="px-4 py-2 text-right">
+                      <CellYears value={amortYears} overridden={amortPath in overrides} liveMode={liveMode}
+                        onCommit={(yrs) => onSave({ [amortPath]: Math.round(yrs) * 12 })} />
                     </td>
                     <td className="px-5 py-2.5 text-right tabular-nums text-ink-900">{t.annual_debt_service == null ? '—' : fmtCurrency(t.annual_debt_service, { compact: true })}</td>
                     <td className="px-5 py-2.5">
@@ -839,7 +850,8 @@ function CapitalStack({
 
       <p className="text-[11px] text-ink-400 leading-relaxed">
         Seeded from the deal&apos;s extracted senior loan plus an institutional PACE placeholder.
-        Amortization / IO-period / fee edits and live covenant testing are the next build steps.
+        Amount, rate and amortization are editable (0 yrs = interest-only). Origination / exit
+        fees and live covenant testing are the next build steps.
       </p>
     </div>
   );
@@ -951,6 +963,55 @@ function CellUsd({
         className="w-14 bg-transparent text-right text-[12.5px] tabular-nums text-ink-900 focus:outline-none"
       />
       <span className="text-ink-400 text-[11px]">M</span>
+    </span>
+  );
+}
+
+// Editable amortization cell — years; 0 shows/means interest-only (IO).
+function CellYears({
+  value, overridden, liveMode, onCommit,
+}: {
+  value: number;
+  overridden: boolean;
+  liveMode: boolean;
+  onCommit: (years: number) => void;
+}) {
+  const [draft, setDraft] = useState<string | null>(null);
+  const isIO = value <= 0;
+  const shown = draft ?? (isIO ? 'IO' : String(value));
+  const commit = () => {
+    if (draft === null) return;
+    const t = draft.trim();
+    setDraft(null);
+    if (t === '') return;
+    // Accept "IO" (case-insensitive) or 0 as interest-only.
+    if (/^io$/i.test(t)) { onCommit(0); return; }
+    const yrs = Number(t);
+    if (Number.isFinite(yrs) && yrs >= 0) onCommit(Math.round(yrs));
+  };
+  return (
+    <span className={cn(
+      'inline-flex items-center gap-0.5 justify-end rounded border px-1.5 py-1',
+      liveMode
+        ? 'border-border focus-within:border-brand-500 focus-within:ring-2 focus-within:ring-brand-100'
+        : 'border-transparent',
+      overridden && 'border-blue-400 bg-blue-50',
+    )}>
+      <input
+        value={shown}
+        onChange={(e) => setDraft(e.target.value)}
+        onBlur={commit}
+        onFocus={(e) => { if (isIO && draft === null) { setDraft(''); e.currentTarget.select(); } }}
+        onKeyDown={(e) => {
+          if (e.key === 'Enter') e.currentTarget.blur();
+          if (e.key === 'Escape') { setDraft(null); e.currentTarget.blur(); }
+        }}
+        readOnly={!liveMode}
+        inputMode="numeric"
+        aria-label="amortization years (0 = interest-only)"
+        className="w-10 bg-transparent text-right text-[12.5px] tabular-nums text-ink-900 focus:outline-none"
+      />
+      <span className="text-ink-400 text-[11px]">{isIO && draft === null ? '' : 'yr'}</span>
     </span>
   );
 }

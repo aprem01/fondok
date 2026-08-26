@@ -176,11 +176,15 @@ def _apply_tranche_overrides(
             data["rate_type"] = "fixed"
             data["terms_pending"] = False
         if "amortization_months" in ov:
+            # FON-63 follow-up: a single Amort control covers both cases —
+            # >0 amortizes over that term, 0 means interest-only.
             months = float(ov["amortization_months"])
-            years = int(round(months / 12)) if months > 0 else 0
-            data["amortization_years"] = years or None
             if months > 0:
+                data["amortization_years"] = int(round(months / 12))
                 data["interest_only"] = False
+            else:
+                data["amortization_years"] = None
+                data["interest_only"] = True
         if "io_period_months" in ov:
             io_months = float(ov["io_period_months"])
             data["interest_only"] = io_months > 0

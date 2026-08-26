@@ -99,6 +99,9 @@ class TrancheResult(BaseModel):
     annual_debt_service: float | None
     interest_only: bool
     terms_pending: bool
+    # FON-63 follow-up — surface the amortization so the Debt tab can render
+    # and edit it (None / interest-only shows as "IO").
+    amortization_years: int | None = None
 
 
 class DebtStackResult(BaseModel):
@@ -163,6 +166,7 @@ def compute_debt_stack(
                 kind=t.kind, label=label, loan_amount=t.loan_amount, all_in_rate=None,
                 rate_type=t.rate_type, annual_debt_service=None,
                 interest_only=t.interest_only, terms_pending=True,
+                amortization_years=t.amortization_years,
             ))
             continue
         ds = _annual_debt_service(t, rate)
@@ -173,6 +177,7 @@ def compute_debt_stack(
             kind=t.kind, label=label, loan_amount=t.loan_amount, all_in_rate=rate,
             rate_type=t.rate_type, annual_debt_service=ds,
             interest_only=t.interest_only, terms_pending=False,
+            amortization_years=t.amortization_years,
         ))
 
     weighted_avg_rate = rate_weight / priced_debt if priced_debt > 0 else None

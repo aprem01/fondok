@@ -122,3 +122,22 @@ def test_amortization_override_switches_off_interest_only() -> None:
     )
     assert resolved[0].interest_only is False
     assert resolved[0].amortization_years == 25
+
+
+def test_zero_amortization_override_means_interest_only() -> None:
+    # A single Amort control: 0 years -> interest-only.
+    resolved = _apply_tranche_overrides(
+        _build_default_tranches(_input(amortization_years=30)),  # amortizing senior
+        {"tranches": {0: {"amortization_months": 0}}},
+    )
+    assert resolved[0].interest_only is True
+    assert resolved[0].amortization_years is None
+
+
+def test_zero_amortization_lowers_debt_service() -> None:
+    # Switching the senior to IO reduces its debt service (no principal).
+    amort = DebtEngine().run(_input())  # default = amortizing 30yr
+    io = DebtEngine().run(
+        _input(debt_stack_overrides={"tranches": {0: {"amortization_months": 0}}})
+    )
+    assert io.annual_debt_service < amort.annual_debt_service
