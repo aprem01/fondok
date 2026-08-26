@@ -1,7 +1,7 @@
 'use client';
 import { useMemo, useState, type ReactNode } from 'react';
 import { useParams } from 'next/navigation';
-import { TrendingDown, Minus, TrendingUp } from 'lucide-react';
+import { TrendingUp } from 'lucide-react';
 import { Card } from '@/components/ui/Card';
 import { Button } from '@/components/ui/Button';
 import { useToast } from '@/components/ui/Toast';
@@ -12,8 +12,6 @@ import EngineRunHistory from './EngineRunHistory';
 import WhatJustHappened from './WhatJustHappened';
 import PricingSensitivityPanel from './PricingSensitivityPanel';
 import MaxPricePanel from './MaxPricePanel';
-import LOIPanel from './LOIPanel';
-import CompSalesPanel from './CompSalesPanel';
 import { fmtPct, cn } from '@/lib/format';
 import { useAssumptionsOptional } from '@/stores/assumptionsStore';
 import { defaultSensitivities, SensitivityMatrix } from '@/lib/engines';
@@ -26,7 +24,9 @@ import { CoachMark } from '@/components/help/CoachMark';
 import { Traced } from '@/components/help/Traced';
 import { GLOSSARY } from '@/lib/glossary';
 
-const subTabs = ['Returns Summary', 'Sensitivities', 'Pricing', 'Comps'];
+// FON-68 — MVP Returns is three sub-tabs. Scenario management lives on
+// Scenario Analysis; comps live on Market → Transaction Comps.
+const subTabs = ['Returns Summary', 'Sensitivities', 'Pricing'];
 
 export default function ReturnsTab({ projectId }: { projectId: number | string }) {
   const [tab, setTab] = useState('Returns Summary');
@@ -168,12 +168,6 @@ export default function ReturnsTab({ projectId }: { projectId: number | string }
           <div className="flex flex-col gap-4">
             <PricingSensitivityPanel dealId={dealId} />
             <MaxPricePanel dealId={dealId} />
-            <LOIPanel dealId={dealId} />
-          </div>
-        )}
-        {tab === 'Comps' && (
-          <div className="flex flex-col gap-4">
-            <CompSalesPanel dealId={dealId} />
           </div>
         )}
         {computing && (
@@ -206,22 +200,9 @@ function LiveReturnsSummary({ outputs }: { outputs: ReturnType<typeof useEngineO
   const wIrr = getEngineField<number>(outputs, 'returns', 'levered_irr');
   const wMult = getEngineField<number>(outputs, 'returns', 'equity_multiple');
   const wCoC = getEngineField<number>(outputs, 'returns', 'cash_on_cash_year_one');
-  const wUnleveredIrr = getEngineField<number>(outputs, 'returns', 'unlevered_irr');
-  const wExitValue = getEngineField<number>(outputs, 'returns', 'exit_value_usd');
   const irr = wIrr ?? model.leveredIrr;
   const mult = wMult ?? model.equityMultiple;
   const coc = wCoC ?? model.cashOnCash;
-  // Project the canonical Base Case off the worker outputs when present;
-  // Downside / Upside still come from the in-page sensitivity model.
-  const baseScenario = (wIrr !== undefined || wMult !== undefined)
-    ? {
-        irr: wIrr ?? model.scenarios.base.irr,
-        unleveredIrr: wUnleveredIrr ?? model.scenarios.base.unleveredIrr,
-        multiple: wMult ?? model.scenarios.base.multiple,
-        coc: wCoC ?? model.scenarios.base.coc,
-        exitValue: wExitValue ?? model.scenarios.base.exitValue,
-      }
-    : model.scenarios.base;
 
   return (
     <>
@@ -290,38 +271,6 @@ function LiveReturnsSummary({ outputs }: { outputs: ReturnType<typeof useEngineO
             <span className="mx-2">·</span>
             DSCR Y1: <span className="font-medium text-ink-900 tabular-nums">{model.dscrY1.toFixed(2)}x</span>
           </div>
-        </div>
-      </Card>
-
-      <Card className="p-5">
-        <h3 className="text-[14px] font-semibold text-ink-900 mb-4">Scenario Analysis</h3>
-        <div className="grid grid-cols-3 gap-4">
-          {[
-            { name: 'Downside', sc: model.scenarios.downside },
-            { name: 'Base Case', sc: baseScenario, base: true },
-            { name: 'Upside', sc: model.scenarios.upside },
-          ].map(({ name, sc, base }) => {
-            const Icon = name === 'Downside' ? TrendingDown : name === 'Base Case' ? Minus : TrendingUp;
-            const tone = name === 'Downside' ? 'text-danger-700' : name === 'Base Case' ? 'text-ink-700' : 'text-success-700';
-            return (
-              <div key={name} className={cn(
-                'p-4 rounded-lg border-2',
-                base ? 'border-brand-500 bg-brand-50' : 'border-border'
-              )}>
-                <div className="flex items-center gap-2 mb-3">
-                  <Icon size={16} className={tone} />
-                  <div className="text-[13px] font-semibold text-ink-900">{name}</div>
-                </div>
-                <div className="space-y-2 text-[12.5px]">
-                  <Row k="Levered IRR" v={fmtPct(sc.irr, 2)} />
-                  <Row k="Unlevered IRR" v={fmtPct(sc.unleveredIrr ?? 0, 2)} />
-                  <Row k="Multiple" v={`${sc.multiple.toFixed(2)}x`} />
-                  <Row k="Y1 CoC" v={fmtPct(sc.coc, 1)} />
-                  <Row k="Exit Value" v={`$${((sc.exitValue ?? 0) / 1e6).toFixed(1)}M`} />
-                </div>
-              </div>
-            );
-          })}
         </div>
       </Card>
     </>
@@ -547,14 +496,6 @@ function KPI({ label, value, flashKey, tip }: { label: string; value: ReactNode;
   );
 }
 
-function Row({ k, v }: { k: string; v: string }) {
-  return (
-    <div className="flex justify-between border-b border-border/30 py-1 last:border-0">
-      <span className="text-ink-500">{k}</span>
-      <span className="font-medium tabular-nums">{v}</span>
-    </div>
-  );
-}
 
 function Slider({
   label, value, min, max, step, onChange, format,
