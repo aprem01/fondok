@@ -134,6 +134,10 @@ export default function DebtTab({ projectId }: { projectId: number | string }) {
     getEngineField<number>(outputs, 'capital', 'total_capital');
   const wPurchase = getEngineField<number>(outputs, 'capital', 'purchase_price');
   const stack = getEngineField<DebtStackOutput>(outputs, 'debt', 'debt_stack');
+  // FON-67 — refinance outputs (populated when a refi year is set).
+  const wRefiYear = getEngineField<number>(outputs, 'debt', 'refi_year');
+  const wRefiCashOut = getEngineField<number>(outputs, 'debt', 'refi_cash_out');
+  const wRefiProceeds = getEngineField<number>(outputs, 'debt', 'balance_at_exit');
 
   // Display helpers: prefer worker → fixture (Kimpton demo only) → '—'.
   const pickNum = (worker: number | undefined, fixture: number): number | undefined =>
@@ -432,21 +436,26 @@ export default function DebtTab({ projectId }: { projectId: number | string }) {
 
       {tab === 'Term & Refinance' && (
         <>
-          {/*
-            Term & Refinance has no worker engine source today — refi_year /
-            refi_proceeds aren't on the debt engine output. For non-Kimpton
-            deals we render '—' across the board rather than leak the
-            Kimpton fixture (5-yr term, $32M proceeds, etc.) onto an
-            unrelated deal.
-          */}
+          {/* FON-67 — editable mid-hold refinance. Set a refi year to model
+              the senior→refi phases; the debt engine sizes the new loan off
+              that year's NOI, retires the senior, and returns the cash-out to
+              equity (lifting levered IRR). Blank year = single-phase deal. */}
+          <RefinancePanel
+            liveMode={liveMode}
+            overrides={overrides}
+            onSave={onSaveOverride}
+            refiYear={wRefiYear}
+            refiProceeds={wRefiProceeds}
+            refiCashOut={wRefiCashOut}
+          />
           <div className="grid grid-cols-4 gap-4 mb-5">
             <KPI label="Loan Term" flashKey="loan-term" value={isKimptonDemo ? '5 Years' : <SourcedValue sourceKey="term_years" fmt={yrs} />} />
             <KPI label="IO Period" flashKey="io-period" value={isKimptonDemo ? '4 Years' : <SourcedValue sourceKey="interest_only_years" fmt={yrs} />} />
             <KPI label="Maturity" value={isKimptonDemo ? '3/31/2029' : '—'} />
             <KPI
               label="Refi Status"
-              value={isKimptonDemo ? 'Disabled' : '—'}
-              tone={isKimptonDemo ? 'amber' : undefined}
+              value={wRefiYear != null ? `Year ${wRefiYear}` : (isKimptonDemo ? 'Disabled' : 'Single-phase')}
+              tone={wRefiYear != null ? 'green' : undefined}
             />
           </div>
           <div className="grid grid-cols-2 gap-5">
@@ -1013,5 +1022,130 @@ function CellYears({
       />
       <span className="text-ink-400 text-[11px]">{isIO && draft === null ? '' : 'yr'}</span>
     </span>
+  );
+}
+
+// FON-67 — editable mid-hold refinance assumptions + computed cash-out.
+function RefinancePanel({
+  liveMode, overrides, onSave, refiYear, refiProceeds, refiCashOut,
+}: {
+  liveMode: boolean;
+  overrides: Record<string, unknown>;
+  onSave: (patch: Record<string, number | null>) => void;
+  refiYear?: number;
+  refiProceeds?: number;
+  refiCashOut?: number;
+}) {
+  const usd = (v?: number) => (v == null ? '—' : fmtCurrency(v, { compact: true }));
+  const active = refiYear != null && refiYear > 0;
+  return (
+    <Card className="p-5 mb-5">
+      <div className="flex items-center justify-between mb-1">
+        <h3 className="text-[13px] font-semibold text-ink-900">Refinance (mid-hold)</h3>
+        <span className={cn('text-[11px]', liveMode ? 'text-ink-500' : 'text-ink-400')}>
+          {liveMode ? 'Editable · set a refi year to model it' : 'Read-only on demo deals'}
+        </span>
+      </div>
+      <p className="text-[11.5px] text-ink-500 mb-4 leading-relaxed">
+        Set a refi year to model a mid-hold refinance: the new loan is sized off that year&apos;s NOI
+        (min of the debt-yield and DSCR limits), retires the senior balance, and returns the net
+        cash-out to equity — lifting the levered IRR. Leave the year blank for a single-phase deal.
+      </p>
+      <div className="grid grid-cols-2 sm:grid-cols-4 gap-5">
+        <RefiField label="Refi Year" path="debt_stack.refi_test_year" seed={0} kind="int"
+          overrides={overrides} liveMode={liveMode} onSave={onSave} hint="blank = no refi" />
+        <RefiField label="Refi Debt Yield" path="debt_stack.refi_market_debt_yield_pct" seed={0.10} kind="pct"
+          overrides={overrides} liveMode={liveMode} onSave={onSave} />
+        <RefiField label="Refi Min DSCR" path="debt_stack.refi_market_dscr_min" seed={1.25} kind="ratio"
+          overrides={overrides} liveMode={liveMode} onSave={onSave} />
+        <RefiField label="Refi Rate" path="debt_stack.refi_market_rate_pct" seed={0.068} kind="pct"
+          overrides={overrides} liveMode={liveMode} onSave={onSave} />
+      </div>
+      {active && (
+        <div className="mt-4 pt-4 border-t border-border grid grid-cols-3 gap-4">
+          <div>
+            <div className="text-[10px] uppercase tracking-wide text-ink-400">Refi Year</div>
+            <div className="text-[15px] font-semibold text-ink-900 tabular-nums">Year {refiYear}</div>
+          </div>
+          <div>
+            <div className="text-[10px] uppercase tracking-wide text-ink-400">Refi Proceeds</div>
+            <div className="text-[15px] font-semibold text-ink-900 tabular-nums">{usd(refiProceeds)}</div>
+          </div>
+          <div>
+            <div className="text-[10px] uppercase tracking-wide text-ink-400">Cash-Out to Equity</div>
+            <div className="text-[15px] font-semibold text-success-700 tabular-nums">{usd(refiCashOut)}</div>
+          </div>
+        </div>
+      )}
+    </Card>
+  );
+}
+
+// Labeled editable refi field — int (year), pct (fraction), or ratio.
+function RefiField({
+  label, path, seed, kind, overrides, liveMode, onSave, hint,
+}: {
+  label: string;
+  path: string;
+  seed: number;
+  kind: 'int' | 'pct' | 'ratio';
+  overrides: Record<string, unknown>;
+  liveMode: boolean;
+  onSave: (patch: Record<string, number | null>) => void;
+  hint?: string;
+}) {
+  const overridden = path in overrides;
+  const current = readOverrideNum(overrides, path, seed);
+  const [draft, setDraft] = useState<string | null>(null);
+  const fmtVal = kind === 'pct'
+    ? (current * 100).toFixed(2)
+    : kind === 'ratio'
+      ? current.toFixed(2)
+      : (current > 0 ? String(Math.round(current)) : '');
+  const shown = draft ?? fmtVal;
+  const suffix = kind === 'pct' ? '%' : kind === 'ratio' ? 'x' : 'yr';
+  const commit = () => {
+    if (draft === null) return;
+    const t = draft.trim();
+    setDraft(null);
+    if (t === '') { onSave({ [path]: null }); return; } // clear the override
+    const n = Number(t);
+    if (!Number.isFinite(n)) return;
+    const val = kind === 'pct' ? round6(n / 100) : kind === 'int' ? Math.round(n) : round6(n);
+    onSave({ [path]: val });
+  };
+  return (
+    <div>
+      <label className="block text-[11.5px] text-ink-500 mb-1">
+        {label}
+        {overridden && (
+          <span className="ml-1.5 text-[10px] text-blue-600" title="Analyst override">• edited</span>
+        )}
+      </label>
+      <div className={cn(
+        'flex items-center gap-1 px-3 py-2 rounded-md border',
+        liveMode
+          ? 'border-border focus-within:border-brand-500 focus-within:ring-2 focus-within:ring-brand-100'
+          : 'border-transparent bg-ink-300/10',
+        overridden && 'border-blue-400',
+      )}>
+        <input
+          value={shown}
+          placeholder={kind === 'int' ? 'none' : ''}
+          onChange={(e) => setDraft(e.target.value)}
+          onBlur={commit}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter') e.currentTarget.blur();
+            if (e.key === 'Escape') { setDraft(null); e.currentTarget.blur(); }
+          }}
+          readOnly={!liveMode}
+          inputMode="decimal"
+          aria-label={label}
+          className="w-full bg-transparent text-[13px] tabular-nums text-ink-900 focus:outline-none"
+        />
+        <span className="text-ink-400 text-[12px]">{suffix}</span>
+      </div>
+      {hint && <div className="text-[10.5px] text-ink-400 mt-1">{hint}</div>}
+    </div>
   );
 }

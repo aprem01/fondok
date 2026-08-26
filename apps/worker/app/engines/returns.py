@@ -239,6 +239,13 @@ class ReturnsEngineInputExt(BaseModel):
     debt_service_by_year: list[Annotated[float, Field(ge=0)]] = Field(
         default_factory=list
     )
+    # FON-67 — mid-hold refinance. When a refi occurs in ``refi_year`` the net
+    # cash-out (refi proceeds − senior payoff − costs) is a positive equity
+    # distribution in that year; ``debt_service_by_year`` already carries the
+    # phased senior→refi debt service and ``loan_balance_at_exit`` the refi
+    # balance. Zero / None keeps the single-phase behavior byte-identical.
+    refi_cash_out: Annotated[float, Field(ge=0)] = 0.0
+    refi_year: Annotated[int, Field(ge=1)] | None = None
     terminal_noi_override: Annotated[float, Field(gt=0)] | None = Field(
         default=None,
         description=(
@@ -314,6 +321,16 @@ class ReturnsEngine(BaseEngine[ReturnsEngineInputExt, ReturnsEngineOutputExt]):
         else:
             ds_series = [payload.annual_debt_service] * hold
         cfad_series = [n - ds for n, ds in zip(noi_series, ds_series)]
+        # FON-67 — a mid-hold refi returns capital to equity: add the net
+        # cash-out into that year's levered cash flow. Levered-only (the
+        # unlevered stream below never sees debt), so it lifts the levered IRR
+        # / equity multiple without touching the unlevered case.
+        if (
+            payload.refi_cash_out > 0
+            and payload.refi_year is not None
+            and 1 <= payload.refi_year <= len(cfad_series)
+        ):
+            cfad_series[payload.refi_year - 1] += payload.refi_cash_out
         levered_flows = [-payload.equity] + cfad_series[:-1] + [
             cfad_series[-1] + net_proceeds_to_equity
         ]

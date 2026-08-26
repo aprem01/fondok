@@ -3500,18 +3500,29 @@ def _build_input_for(
             selling_costs_pct=base["selling_costs_pct"],
             closing_costs_pct=base["closing_costs_pct"],
         )
+        # FON-67 — forward the debt engine's phased debt service + refinance
+        # cash-out + post-refi exit balance. All default to the single-phase
+        # values when no refi is modeled, so non-refi deals are unchanged.
+        debt_exit_balance = (
+            debt_out.balance_at_exit
+            if getattr(debt_out, "balance_at_exit", None) is not None
+            else (
+                debt_out.schedule[-1].ending_balance
+                if debt_out.schedule
+                else capital_out.debt_amount
+            )
+        )
         return ReturnsEngineInputExt(
             deal_id=deal_uuid,
             assumptions=assumptions,
             year_one_noi=noi_by_year[0],
             noi_by_year=noi_by_year,
             annual_debt_service=debt_out.annual_debt_service,
+            debt_service_by_year=getattr(debt_out, "debt_service_by_year", []) or [],
             loan_amount=capital_out.debt_amount,
-            loan_balance_at_exit=(
-                debt_out.schedule[-1].ending_balance
-                if debt_out.schedule
-                else capital_out.debt_amount
-            ),
+            loan_balance_at_exit=debt_exit_balance,
+            refi_cash_out=getattr(debt_out, "refi_cash_out", 0.0) or 0.0,
+            refi_year=getattr(debt_out, "refi_year", None),
             equity=capital_out.equity_amount,
         )
 

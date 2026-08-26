@@ -91,6 +91,17 @@ class DebtEngineOutputExt(DebtEngineOutput):
     # extracted senior loan; a user adds PACE / mezz + floating terms in the
     # Debt tab. Optional so legacy consumers ignore it.
     debt_stack: DebtStackResult | None = None
+    # FON-67 — two-phase senior→refinance financing. Populated only when the
+    # analyst sets a refi year; empty/zero keeps single-phase deals unchanged.
+    # ``debt_service_by_year`` is the phased DS (senior then refi) the Returns
+    # engine consumes; ``refi_cash_out`` is the net proceeds returned to equity
+    # at ``refi_year``; ``balance_at_exit`` is the loan balance at the sale.
+    debt_service_by_year: list[Annotated[float, Field(ge=0)]] = Field(
+        default_factory=list
+    )
+    refi_cash_out: Annotated[float, Field(ge=0)] = 0.0
+    refi_year: Annotated[int, Field(ge=1)] | None = None
+    balance_at_exit: Annotated[float, Field(ge=0)] | None = None
 
 
 def pmt(rate: float, nper: int, pv: float) -> float:
@@ -204,6 +215,81 @@ def _apply_tranche_overrides(
             data["terms_pending"] = True
         out.append(LoanTranche(**data))
     return out
+
+
+def _refi_params(overrides: dict[str, Any] | None) -> dict[str, float] | None:
+    """Pull the mid-hold refinance assumptions from the stack-level overrides
+    (``debt_stack.refi_*``). Returns None when no refi year is set — i.e. the
+    deal stays single-phase and nothing downstream changes."""
+    if not overrides:
+        return None
+    year = overrides.get("refi_test_year")
+    if year is None:
+        return None
+    try:
+        year_i = int(round(float(year)))
+    except (TypeError, ValueError):
+        return None
+    if year_i < 1:
+        return None
+
+    def _f(key: str, default: float) -> float:
+        v = overrides.get(key)
+        try:
+            return float(v) if v is not None else default
+        except (TypeError, ValueError):
+            return default
+
+    return {
+        "year": float(year_i),
+        "debt_yield": _f("refi_market_debt_yield_pct", 0.10),
+        "dscr_min": _f("refi_market_dscr_min", 1.25),
+        "rate": _f("refi_market_rate_pct", 0.068),
+    }
+
+
+def _compute_refi(
+    refi: dict[str, float],
+    schedule: list[DebtServiceYear],
+    noi_by_year: list[float],
+    horizon: int,
+    senior_ds_by_year: list[float],
+) -> tuple[list[float], float, float, int] | None:
+    """Model a mid-hold refinance: size the new loan off the refi-year NOI
+    (min of the debt-yield and DSCR limits), retire the senior balance, and
+    return the phased debt service, the net cash-out to equity, the (interest-
+    only) refi balance at exit, and the refi year. None when out of range."""
+    k = int(refi["year"])
+    if k < 1 or k >= horizon:  # refi must land strictly before the exit year
+        return None
+    noi_k = (
+        noi_by_year[k - 1]
+        if k - 1 < len(noi_by_year)
+        else (noi_by_year[-1] if noi_by_year else 0.0)
+    )
+    rate = refi["rate"]
+    by_dy = noi_k / refi["debt_yield"] if refi["debt_yield"] > 0 else 0.0
+    by_dscr = (
+        noi_k / (refi["dscr_min"] * rate)
+        if (refi["dscr_min"] > 0 and rate > 0)
+        else 0.0
+    )
+    sizers = [x for x in (by_dy, by_dscr) if x > 0]
+    refi_proceeds = min(sizers) if sizers else 0.0
+    senior_balance_at_k = (
+        schedule[k - 1].ending_balance if k - 1 < len(schedule) else 0.0
+    )
+    refi_cash_out = max(0.0, refi_proceeds - senior_balance_at_k)
+    refi_ds = refi_proceeds * rate  # interest-only refinance
+    ds_by_year: list[float] = []
+    for i in range(1, horizon + 1):
+        if i <= k:
+            ds_by_year.append(
+                senior_ds_by_year[i - 1] if i - 1 < len(senior_ds_by_year) else 0.0
+            )
+        else:
+            ds_by_year.append(refi_ds)
+    return ds_by_year, refi_cash_out, refi_proceeds, k
 
 
 class DebtEngine(BaseEngine[DebtEngineInputExt, DebtEngineOutputExt]):
@@ -371,6 +457,35 @@ class DebtEngine(BaseEngine[DebtEngineInputExt, DebtEngineOutputExt]):
         dscrs = [yr.dscr for yr in schedule if yr.dscr is not None]
         avg_dscr = sum(dscrs) / len(dscrs) if dscrs else None
 
+        # FON-67 — model a mid-hold refinance when the analyst sets a refi year.
+        # It only produces the returns-facing phased DS series, exit balance and
+        # cash-out; every headline metric above (Year-1 DSCR, debt yield, the
+        # senior schedule) is unchanged, and a deal with no refi year is
+        # byte-for-byte the single-phase model.
+        refi = _refi_params(payload.debt_stack_overrides)
+        horizon = len(payload.noi_by_year)
+        debt_service_by_year: list[float] = []
+        refi_cash_out = 0.0
+        refi_year_out: int | None = None
+        balance_at_exit_out: float | None = (
+            schedule[-1].ending_balance if schedule else None
+        )
+        if refi is not None and horizon > 0:
+            senior_ds_by_year = [
+                schedule[i].debt_service if i < len(schedule) else senior_annual_ds
+                for i in range(horizon)
+            ]
+            computed = _compute_refi(
+                refi, schedule, payload.noi_by_year, horizon, senior_ds_by_year
+            )
+            if computed is not None:
+                (
+                    debt_service_by_year,
+                    refi_cash_out,
+                    balance_at_exit_out,
+                    refi_year_out,
+                ) = computed
+
         return DebtEngineOutputExt(
             deal_id=payload.deal_id,
             annual_debt_service=annual_ds,
@@ -384,6 +499,10 @@ class DebtEngine(BaseEngine[DebtEngineInputExt, DebtEngineOutputExt]):
             term_years=payload.term_years,
             amortization_years=payload.amortization_years,
             debt_stack=debt_stack,
+            debt_service_by_year=debt_service_by_year,
+            refi_cash_out=refi_cash_out,
+            refi_year=refi_year_out,
+            balance_at_exit=balance_at_exit_out,
             provenance=prov,
         )
 
