@@ -23,7 +23,7 @@ Contract:
   works unchanged.
 """
 
-from . import cbre_horizons, str_trend
+from . import cbre_horizons, partnership, str_trend
 from ._common import TemplateExtractResult
 
 __all__ = ["TemplateExtractResult", "try_template_extract"]
@@ -39,4 +39,6 @@ def try_template_extract(parsed, doc_type: str) -> TemplateExtractResult | None:
         return str_trend.try_template_extract(parsed, doc_type)
     elif (doc_type or "").upper() == "CBRE_HORIZONS":
         return cbre_horizons.try_template_extract(parsed, doc_type)
+    elif (doc_type or "").upper() == "PARTNERSHIP":
+        return partnership.try_template_extract(parsed, doc_type)
     return None

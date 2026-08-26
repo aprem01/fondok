@@ -101,6 +101,16 @@ Available document types (use exactly one of these tokens):
 - SURVEYS        — Third-party reports: ALTA survey, structural /
                    engineering report, Phase I environmental, PCA
                    (property condition assessment), Phase II.
+- DEBT           — Debt / loan documents: loan agreements, term sheets,
+                   promissory notes, PACE / mezzanine / refinance terms,
+                   rate/amortization/covenant schedules.
+- PARTNERSHIP    — Partnership / JV documents: operating agreements, JV
+                   agreements, equity / waterfall terms — GP/LP ownership
+                   splits, preferred return, promote hurdle tiers with
+                   GP/LP splits, catch-up/carry mechanics.
+- OTHER          — A real, deliberate classification for a document that
+                   doesn't fit any type above (NOT the same as UNKNOWN,
+                   which means you couldn't classify confidently).
 - UNKNOWN        — Cannot confidently classify; downstream HITL gate.
 
 Rules:

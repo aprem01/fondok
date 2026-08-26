@@ -245,6 +245,11 @@ SOURCE_ROI_USER = "roi_user"
 # the forecast's bottom-up math (rather than the T-12 / Kimpton seed).
 # Default is OFF — no regression to existing deals.
 SOURCE_STR_FORECAST = "str_forecast"
+# FON-66 Slice B — partnership/JV terms extracted from an uploaded
+# PARTNERSHIP-classified document (ownership split, preferred return, promote
+# waterfall). Sits between the Kimpton benchmark seed and an analyst override:
+# seed < partnership_doc < analyst_override.
+SOURCE_PARTNERSHIP_DOC = "partnership_doc"
 
 
 async def _load_engine_inputs(
@@ -549,6 +554,26 @@ async def _load_engine_inputs(
             if key in ("mgmt_fee_pct", "ffe_reserve_pct"):
                 base[key] = value
             sources[key] = SOURCE_PORTFOLIO_PNL
+
+    # FON-66 Slice B — partnership/JV terms extracted from an uploaded
+    # PARTNERSHIP document overlay the Kimpton benchmark seed (gp/lp/pref
+    # scalars + the per-tier promote waterfall) and are tagged
+    # SOURCE_PARTNERSHIP_DOC. They share the ``partnership_waterfall_overrides``
+    # channel the analyst override loop writes to later, so an analyst edit on
+    # the same tier field still wins: seed < partnership_doc < analyst_override.
+    pship_scalars, pship_waterfall = await _load_partnership_terms(
+        session, deal_id=deal_id, tenant_id=effective_tenant
+    )
+    for key, value in pship_scalars.items():
+        base[key] = value
+        sources[key] = SOURCE_PARTNERSHIP_DOC
+    if pship_waterfall:
+        wf = base.setdefault("partnership_waterfall_overrides", {})
+        for idx, tier_fields in pship_waterfall.items():
+            tier = wf.setdefault(idx, {})
+            for field, value in tier_fields.items():
+                tier[field] = value
+                sources[f"partnership.waterfall.{idx}.{field}"] = SOURCE_PARTNERSHIP_DOC
 
     # OM-derived exit-cap anchor — the broker's "Comparable Sales"
     # table gives us market-specific cap rates we should prefer over
@@ -1440,6 +1465,7 @@ _SOURCE_TO_DOC_TYPES: dict[str, tuple[str, ...]] = {
     SOURCE_PNL_BENCHMARK: ("PNL_BENCHMARK",),
     SOURCE_OM_COMPS: ("OM",),
     SOURCE_OM_BROKER: ("OM",),
+    SOURCE_PARTNERSHIP_DOC: ("PARTNERSHIP",),
 }
 
 
@@ -1974,6 +2000,81 @@ def _apply_overrides(
         if canonical in percentage_keys and v > 1.0:
             v = v / 100.0
         actuals[canonical] = v
+
+
+async def _load_partnership_terms(
+    session: AsyncSession,
+    *,
+    deal_id: str,
+    tenant_id: str,
+) -> tuple[dict[str, float], dict[int, dict[str, float]]]:
+    """FON-66 Slice B — read partnership/JV terms off the deal's most recent
+    PARTNERSHIP-classified document.
+
+    Returns ``(scalars, waterfall)`` where ``scalars`` carries any of
+    ``gp_equity_pct`` / ``lp_equity_pct`` / ``pref_rate`` and ``waterfall`` maps
+    tier index → ``{hurdle_rate, gp_split, lp_split}`` (the same shape
+    ``_build_partnership_waterfall`` already overlays). Empty when no partnership
+    document has been extracted, the deal id isn't a UUID, or the table is
+    missing — the engine then falls back to the Kimpton benchmark seed.
+    """
+    scalars: dict[str, float] = {}
+    waterfall: dict[int, dict[str, float]] = {}
+    try:
+        UUID(deal_id)
+    except (ValueError, TypeError):
+        return scalars, waterfall
+    try:
+        rows = await session.execute(
+            text(
+                """
+                SELECT er.fields
+                  FROM extraction_results er
+                  JOIN documents d ON d.id = er.document_id
+                 WHERE er.deal_id = :deal
+                   AND er.tenant_id = :tenant
+                   AND d.tenant_id = :tenant
+                   AND d.doc_type = 'PARTNERSHIP'
+                 ORDER BY er.created_at DESC
+                """
+            ),
+            {"deal": deal_id, "tenant": tenant_id},
+        )
+    except Exception:
+        return scalars, waterfall
+
+    _SCALAR_FIELDS = {
+        "partnership.gp_equity_pct": "gp_equity_pct",
+        "partnership.lp_equity_pct": "lp_equity_pct",
+        "partnership.pref_rate": "pref_rate",
+    }
+    # Most-recent extraction wins; don't let an older doc overwrite it.
+    for r in rows.fetchall():
+        raw_fields = r._mapping["fields"]
+        if isinstance(raw_fields, str):
+            try:
+                raw_fields = json.loads(raw_fields)
+            except (json.JSONDecodeError, TypeError):
+                continue
+        if not isinstance(raw_fields, list):
+            continue
+        for f in raw_fields:
+            if not isinstance(f, dict):
+                continue
+            name = (f.get("field_name") or "").strip().lower()
+            value = f.get("value")
+            if not name or not isinstance(value, (int, float)):
+                continue
+            if name in _SCALAR_FIELDS:
+                scalars.setdefault(_SCALAR_FIELDS[name], float(value))
+                continue
+            parsed = _parse_partnership_override_path(name)
+            if parsed is not None:
+                idx, field = parsed
+                waterfall.setdefault(idx, {}).setdefault(field, float(value))
+        if scalars or waterfall:
+            break  # newest document with terms wins
+    return scalars, waterfall
 
 
 async def _load_om_capital_actuals(
