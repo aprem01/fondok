@@ -41,6 +41,58 @@ interface OverrideRow {
   value: string; // string in the input; coerced on save
 }
 
+// FON-69 — a business-friendly catalog so analysts never touch raw field paths
+// or raw fractions. Each entry maps a human label + unit to the canonical
+// override path the engines accept. `pct` fields let the user type "8.5" and
+// store 0.085; `usd` accepts "$36.4M"-style numbers; `years` are integers.
+type Unit = 'pct' | 'usd' | 'years' | 'number';
+const ASSUMPTION_CATALOG: { path: string; label: string; unit: Unit; group: string }[] = [
+  { path: 'starting_occupancy', label: 'Year-1 Occupancy', unit: 'pct', group: 'Revenue' },
+  { path: 'starting_adr', label: 'Year-1 ADR', unit: 'usd', group: 'Revenue' },
+  { path: 'revpar_growth', label: 'RevPAR Growth', unit: 'pct', group: 'Revenue' },
+  { path: 'adr_growth', label: 'ADR Growth', unit: 'pct', group: 'Revenue' },
+  { path: 'occupancy_growth', label: 'Occupancy Growth', unit: 'pct', group: 'Revenue' },
+  { path: 'expense_growth', label: 'Expense Growth', unit: 'pct', group: 'Expenses' },
+  { path: 'mgmt_fee_pct', label: 'Management Fee', unit: 'pct', group: 'Expenses' },
+  { path: 'ffe_reserve_pct', label: 'FF&E Reserve', unit: 'pct', group: 'Expenses' },
+  { path: 'purchase_price', label: 'Purchase Price', unit: 'usd', group: 'Acquisition' },
+  { path: 'exit_cap_rate', label: 'Exit Cap Rate', unit: 'pct', group: 'Exit' },
+  { path: 'hold_years', label: 'Hold Period', unit: 'years', group: 'Exit' },
+  { path: 'ltv', label: 'LTV', unit: 'pct', group: 'Debt' },
+  { path: 'interest_rate', label: 'Interest Rate', unit: 'pct', group: 'Debt' },
+  { path: 'amortization_years', label: 'Amortization (yrs)', unit: 'years', group: 'Debt' },
+  { path: 'term_years', label: 'Loan Term (yrs)', unit: 'years', group: 'Debt' },
+  { path: 'pref_rate', label: 'Preferred Return', unit: 'pct', group: 'Partnership' },
+];
+const CATALOG_BY_PATH = new Map(ASSUMPTION_CATALOG.map((a) => [a.path, a]));
+const CATALOG_GROUPS = Array.from(new Set(ASSUMPTION_CATALOG.map((a) => a.group)));
+
+function unitFor(path: string): Unit | null {
+  return CATALOG_BY_PATH.get(path)?.unit ?? null;
+}
+// Stored (canonical) → what the input shows.
+function toDisplay(path: string, stored: unknown): string {
+  if (unitFor(path) === 'pct' && typeof stored === 'number') {
+    return String(Number((stored * 100).toFixed(4)));
+  }
+  return stringifyValue(stored);
+}
+// Input string → canonical value the engine stores.
+function fromDisplay(path: string, input: string): unknown {
+  const u = unitFor(path);
+  const t = input.trim();
+  if (t === '') return '';
+  if (u === 'pct') {
+    const n = parseFloat(t.replace('%', ''));
+    return Number.isFinite(n) ? n / 100 : coerceValue(t);
+  }
+  if (u === 'usd') {
+    const n = parseFloat(t.replace(/[$,\s]/g, ''));
+    return Number.isFinite(n) ? n : coerceValue(t);
+  }
+  return coerceValue(t);
+}
+
 export default function ScenarioEditor({
   open,
   dealId,
@@ -65,7 +117,7 @@ export default function ScenarioEditor({
       setRows(
         scenario.overrides.map((o) => ({
           field_path: o.field_path,
-          value: stringifyValue(o.value),
+          value: toDisplay(o.field_path, o.value),
         })),
       );
     } else {
@@ -93,7 +145,7 @@ export default function ScenarioEditor({
     .filter((r) => r.field_path.trim())
     .map((r) => ({
       field_path: r.field_path.trim(),
-      value: coerceValue(r.value),
+      value: fromDisplay(r.field_path.trim(), r.value),
     }));
 
   async function handleSave() {
@@ -248,32 +300,56 @@ export default function ScenarioEditor({
               )}
               {rows.map((row, idx) => (
                 <div key={idx} className="flex items-center gap-2">
-                  <input
-                    type="text"
+                  <select
+                    aria-label="Assumption"
                     value={row.field_path}
-                    placeholder="exit_cap_rate"
                     onChange={(e) =>
                       setRows((rs) =>
                         rs.map((r, i) =>
-                          i === idx ? { ...r, field_path: e.target.value } : r,
+                          // Clear the value when the assumption changes so a
+                          // pct value can't linger under a $ field.
+                          i === idx ? { field_path: e.target.value, value: '' } : r,
                         ),
                       )
                     }
-                    className="flex-1 px-2 py-1 text-[12.5px] font-mono border border-border rounded focus:outline-none focus:ring-2 focus:ring-brand-500"
-                  />
-                  <input
-                    type="text"
-                    value={row.value}
-                    placeholder="0.085"
-                    onChange={(e) =>
-                      setRows((rs) =>
-                        rs.map((r, i) =>
-                          i === idx ? { ...r, value: e.target.value } : r,
-                        ),
-                      )
-                    }
-                    className="w-24 px-2 py-1 text-[12.5px] tabular-nums border border-border rounded focus:outline-none focus:ring-2 focus:ring-brand-500"
-                  />
+                    className="flex-1 px-2 py-1 text-[12.5px] border border-border rounded bg-white focus:outline-none focus:ring-2 focus:ring-brand-500"
+                  >
+                    <option value="">Choose assumption…</option>
+                    {row.field_path && !CATALOG_BY_PATH.has(row.field_path) && (
+                      <option value={row.field_path}>{row.field_path} (advanced)</option>
+                    )}
+                    {CATALOG_GROUPS.map((g) => (
+                      <optgroup key={g} label={g}>
+                        {ASSUMPTION_CATALOG.filter((a) => a.group === g).map((a) => (
+                          <option key={a.path} value={a.path}>{a.label}</option>
+                        ))}
+                      </optgroup>
+                    ))}
+                  </select>
+                  <div className="relative w-28 shrink-0">
+                    <input
+                      type="text"
+                      value={row.value}
+                      placeholder={
+                        unitFor(row.field_path) === 'pct' ? '8.5'
+                        : unitFor(row.field_path) === 'usd' ? '36,400,000'
+                        : unitFor(row.field_path) === 'years' ? '5' : 'value'
+                      }
+                      onChange={(e) =>
+                        setRows((rs) =>
+                          rs.map((r, i) =>
+                            i === idx ? { ...r, value: e.target.value } : r,
+                          ),
+                        )
+                      }
+                      className="w-full px-2 py-1 pr-7 text-[12.5px] tabular-nums border border-border rounded focus:outline-none focus:ring-2 focus:ring-brand-500"
+                    />
+                    {unitFor(row.field_path) && (
+                      <span className="absolute right-2 top-1/2 -translate-y-1/2 text-[10.5px] text-ink-400 pointer-events-none">
+                        {unitFor(row.field_path) === 'pct' ? '%' : unitFor(row.field_path) === 'usd' ? '$' : 'yr'}
+                      </span>
+                    )}
+                  </div>
                   <button
                     type="button"
                     onClick={() =>
@@ -288,10 +364,9 @@ export default function ScenarioEditor({
               ))}
             </div>
             <p className="text-[10.5px] text-ink-500 mt-2 leading-tight">
-              Field paths use the same canonical names as the
-              assumption-source badges: <code>starting_occupancy</code>,
-              <code> exit_cap_rate</code>, <code>pip_displacement.brand</code>,
-              <code> segments.transient_ota.adr</code>, etc.
+              Pick an assumption and enter its value — percentages as
+              percentages (e.g. <code>8.5</code> for 8.5%), dollars as dollars.
+              A scenario is these overrides layered on top of the Base case.
             </p>
           </div>
         </div>
