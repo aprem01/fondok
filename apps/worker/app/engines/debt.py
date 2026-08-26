@@ -34,6 +34,7 @@ from fondok_schemas.underwriting import (
 )
 
 from .base import BaseEngine
+from .tranche_stack import DebtStackResult, LoanTranche, compute_debt_stack
 
 
 class DebtEngineInputExt(DebtEngineInput):
@@ -42,6 +43,10 @@ class DebtEngineInputExt(DebtEngineInput):
     model_config = ConfigDict(extra="forbid")
 
     noi_by_year: list[Annotated[float, Field(ge=0)]] = Field(default_factory=list)
+    # FON-63 — deal basis for the multi-tranche stack's LTV / LTC. Optional so
+    # the legacy single-loan callers don't have to supply them.
+    purchase_price_usd: Annotated[float, Field(ge=0)] | None = None
+    total_capital_usd: Annotated[float, Field(ge=0)] | None = None
 
 
 class DebtMonth(BaseModel):
@@ -76,6 +81,10 @@ class DebtEngineOutputExt(DebtEngineOutput):
     interest_rate: Annotated[float, Field(ge=0)] | None = None
     term_years: Annotated[int, Field(ge=0)] | None = None
     amortization_years: Annotated[int, Field(ge=0)] | None = None
+    # FON-63 — the institutional multi-tranche view. Seeded from the deal's own
+    # extracted senior loan; a user adds PACE / mezz + floating terms in the
+    # Debt tab. Optional so legacy consumers ignore it.
+    debt_stack: DebtStackResult | None = None
 
 
 def pmt(rate: float, nper: int, pv: float) -> float:
@@ -196,6 +205,32 @@ class DebtEngine(BaseEngine[DebtEngineInputExt, DebtEngineOutputExt]):
         dscrs = [yr.dscr for yr in schedule if yr.dscr is not None]
         avg_dscr = sum(dscrs) / len(dscrs) if dscrs else None
 
+        # FON-63 — seed the multi-tranche stack from this deal's extracted senior
+        # loan (deal-agnostic; reconciles with the deal basis). A user layers on
+        # PACE / mezz + floating terms in the Debt tab.
+        senior_is_io = (
+            payload.amortization_years == 0
+            or payload.interest_only_years >= (payload.term_years or 0)
+        )
+        senior_tranche = LoanTranche(
+            kind="senior",
+            label="Senior Loan",
+            loan_amount=payload.loan_amount,
+            rate_type="fixed",
+            fixed_rate=payload.interest_rate,
+            interest_only=senior_is_io,
+            amortization_years=payload.amortization_years or None,
+            term_years=payload.term_years or None,
+        )
+        debt_stack = compute_debt_stack(
+            [senior_tranche],
+            year_one_noi=payload.noi_by_year[0] if payload.noi_by_year else None,
+            property_value=payload.purchase_price_usd,
+            total_cost=payload.total_capital_usd,
+            default_index=0.0,
+            deal_id=payload.deal_id,
+        )
+
         return DebtEngineOutputExt(
             deal_id=payload.deal_id,
             annual_debt_service=annual_ds,
@@ -208,6 +243,7 @@ class DebtEngine(BaseEngine[DebtEngineInputExt, DebtEngineOutputExt]):
             interest_rate=payload.interest_rate,
             term_years=payload.term_years,
             amortization_years=payload.amortization_years,
+            debt_stack=debt_stack,
             provenance=prov,
         )
 

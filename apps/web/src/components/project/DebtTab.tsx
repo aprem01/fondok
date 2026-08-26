@@ -1,7 +1,7 @@
 'use client';
 import { useState, type ReactNode } from 'react';
 import { useParams } from 'next/navigation';
-import { DollarSign } from 'lucide-react';
+import { DollarSign, AlertTriangle, Layers } from 'lucide-react';
 import { Card } from '@/components/ui/Card';
 import { Badge } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
@@ -23,14 +23,46 @@ import { Traced } from '@/components/help/Traced';
 import { MetricLabel } from '@/components/help/MetricLabel';
 import { GLOSSARY } from '@/lib/glossary';
 
-const subTabs = ['Debt Summary', 'Rates & Covenants', 'Term & Refinance', 'Debt Schedule'];
+const subTabs = ['Capital Stack', 'Debt Summary', 'Rates & Covenants', 'Term & Refinance', 'Debt Schedule'];
+
+// FON-63 — shape of the multi-tranche stack the debt engine now emits.
+interface StackTranche {
+  kind: string;
+  label: string;
+  loan_amount: number;
+  all_in_rate: number | null;
+  rate_type: string;
+  annual_debt_service: number | null;
+  interest_only: boolean;
+  terms_pending: boolean;
+}
+interface DebtStackOutput {
+  tranches: StackTranche[];
+  total_debt: number;
+  priced_debt: number;
+  total_annual_debt_service: number;
+  weighted_avg_rate: number | null;
+  year_one_dscr: number | null;
+  ltv: number | null;
+  debt_yield: number | null;
+  ltc: number | null;
+  covenants?: {
+    max_ltv?: number | null;
+    min_debt_yield?: number | null;
+    min_dscr?: number | null;
+    combined_min_dscr?: number | null;
+    cash_trap?: boolean | null;
+    notes?: string[];
+  } | null;
+  warnings: string[];
+}
 
 // Formatters for <SourcedValue> on term inputs (years / months).
 const yrs = (v: number | string | boolean) => `${Number(v)} ${Number(v) === 1 ? 'Year' : 'Years'}`;
 const months = (v: number | string | boolean) => `${Math.round(Number(v) * 12)}`;
 
 export default function DebtTab({ projectId }: { projectId: number | string }) {
-  const [tab, setTab] = useState('Debt Summary');
+  const [tab, setTab] = useState('Capital Stack');
   const o = kimptonAnglerOverview;
   const params = useParams();
   const dealId = (params?.id as string | undefined) ?? '';
@@ -57,6 +89,7 @@ export default function DebtTab({ projectId }: { projectId: number | string }) {
     getEngineField<number>(outputs, 'capital', 'total_capital_usd') ??
     getEngineField<number>(outputs, 'capital', 'total_capital');
   const wPurchase = getEngineField<number>(outputs, 'capital', 'purchase_price');
+  const stack = getEngineField<DebtStackOutput>(outputs, 'debt', 'debt_stack');
 
   // Display helpers: prefer worker → fixture (Kimpton demo only) → '—'.
   const pickNum = (worker: number | undefined, fixture: number): number | undefined =>
@@ -198,6 +231,8 @@ export default function DebtTab({ projectId }: { projectId: number | string }) {
         ))}
       </div>
       <EngineLegend />
+
+      {tab === 'Capital Stack' && <CapitalStack stack={stack ?? null} />}
 
       {tab === 'Debt Summary' && (
         <div className={cn(computing && 'relative pointer-events-none opacity-60')}>
@@ -573,5 +608,141 @@ function DebtScheduleTable({
         {hasWorker && <div>• Schedule sourced from latest Debt engine run.</div>}
       </div>
     </Card>
+  );
+}
+
+// ─────────────────────────── Capital Stack (FON-63) ───────────────────────────
+// Renders the multi-tranche debt stack the engine emits: per-tranche terms +
+// consolidated leverage/coverage metrics + covenants + honest warnings.
+// Read-only for now; add/edit tranches (PACE, floating config) is the next step.
+function CapitalStack({ stack }: { stack: DebtStackOutput | null }) {
+  if (!stack || stack.tranches.length === 0) {
+    return (
+      <Card className="p-10 text-center">
+        <div className="w-11 h-11 mx-auto rounded-lg bg-brand-50 flex items-center justify-center mb-3">
+          <Layers size={19} className="text-brand-500" />
+        </div>
+        <div className="text-[14px] font-semibold text-ink-900 mb-1">Capital stack not computed</div>
+        <p className="text-[12.5px] text-ink-500 max-w-md mx-auto leading-relaxed">
+          Run the Debt engine and the tranche stack populates here — seeded from the deal&apos;s senior
+          loan. You can then layer on PACE / mezzanine and floating-rate terms.
+        </p>
+      </Card>
+    );
+  }
+
+  const pct = (v: number | null | undefined, dp = 1) => (v == null ? '—' : fmtPct(v, dp));
+  const usd = (v: number | null | undefined) => (v == null ? '—' : fmtCurrency(v, { compact: true }));
+
+  return (
+    <div className="space-y-5">
+      {/* Consolidated metrics */}
+      <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3">
+        {[
+          ['Total Debt', usd(stack.total_debt)],
+          ['Wtd. Avg Rate', pct(stack.weighted_avg_rate)],
+          ['DSCR', stack.year_one_dscr == null ? '—' : `${stack.year_one_dscr.toFixed(2)}x`],
+          ['LTV', pct(stack.ltv, 0)],
+          ['Debt Yield', pct(stack.debt_yield)],
+          ['LTC', pct(stack.ltc, 0)],
+        ].map(([label, value]) => (
+          <Card key={label} className="p-3">
+            <div className="text-[10px] uppercase tracking-wide text-ink-400">{label}</div>
+            <div className="text-[16px] font-semibold text-ink-900 tabular-nums mt-0.5">{value}</div>
+          </Card>
+        ))}
+      </div>
+
+      {/* Warnings */}
+      {stack.warnings.length > 0 && (
+        <div className="rounded-md border border-warn-200 bg-warn-50 px-4 py-3 space-y-1.5">
+          {stack.warnings.map((w, i) => (
+            <div key={i} className="flex items-start gap-2 text-[12px] text-warn-900 leading-relaxed">
+              <AlertTriangle size={13} className="text-warn-600 shrink-0 mt-0.5" />
+              <span>{w}</span>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {/* Tranche table */}
+      <Card className="p-0 overflow-hidden">
+        <div className="px-5 py-3 border-b border-border flex items-center gap-2">
+          <Layers size={15} className="text-ink-500" />
+          <h3 className="text-[13px] font-semibold text-ink-900">Capital Stack</h3>
+          <span className="text-[11px] text-ink-400">{stack.tranches.length} tranche{stack.tranches.length === 1 ? '' : 's'}</span>
+        </div>
+        <div className="overflow-x-auto">
+          <table className="w-full text-[12.5px]">
+            <thead>
+              <tr className="bg-ink-900 text-white text-[10px] uppercase tracking-wider">
+                <th className="text-left font-semibold px-5 py-2.5">Tranche</th>
+                <th className="text-right font-semibold px-5 py-2.5">Amount</th>
+                <th className="text-left font-semibold px-5 py-2.5">Rate Type</th>
+                <th className="text-right font-semibold px-5 py-2.5">All-in Rate</th>
+                <th className="text-right font-semibold px-5 py-2.5">Debt Service</th>
+                <th className="text-left font-semibold px-5 py-2.5 w-28">Status</th>
+              </tr>
+            </thead>
+            <tbody>
+              {stack.tranches.map((t, i) => (
+                <tr key={`${t.kind}-${i}`} className="border-t border-border">
+                  <td className="px-5 py-2.5 text-ink-900 font-medium">
+                    {t.label}
+                    <span className="ml-2 text-[10px] uppercase tracking-wide text-ink-400">{t.kind}</span>
+                  </td>
+                  <td className="px-5 py-2.5 text-right tabular-nums text-ink-900">{fmtCurrency(t.loan_amount, { compact: true })}</td>
+                  <td className="px-5 py-2.5 text-ink-700 capitalize">
+                    {t.rate_type}{t.interest_only ? ' · IO' : ''}
+                  </td>
+                  <td className="px-5 py-2.5 text-right tabular-nums text-ink-900">{t.all_in_rate == null ? '—' : fmtPct(t.all_in_rate, 2)}</td>
+                  <td className="px-5 py-2.5 text-right tabular-nums text-ink-900">{t.annual_debt_service == null ? '—' : fmtCurrency(t.annual_debt_service, { compact: true })}</td>
+                  <td className="px-5 py-2.5">
+                    {t.terms_pending
+                      ? <Badge tone="amber">Terms pending</Badge>
+                      : <Badge tone="green">Priced</Badge>}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </Card>
+
+      {/* Covenants */}
+      {stack.covenants && (
+        <Card className="p-5">
+          <h3 className="text-[13px] font-semibold text-ink-900 mb-3">Covenants</h3>
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-4 text-[12.5px]">
+            {[
+              ['Max LTV', pct(stack.covenants.max_ltv, 0)],
+              ['Min Debt Yield', pct(stack.covenants.min_debt_yield)],
+              ['Min DSCR', stack.covenants.min_dscr == null ? '—' : `${stack.covenants.min_dscr.toFixed(2)}x`],
+              ['Combined DSCR', stack.covenants.combined_min_dscr == null ? '—' : `${stack.covenants.combined_min_dscr.toFixed(2)}x`],
+            ].map(([label, value]) => (
+              <div key={label}>
+                <div className="text-[10px] uppercase tracking-wide text-ink-400">{label}</div>
+                <div className="text-[13.5px] font-semibold text-ink-900 tabular-nums">{value}</div>
+              </div>
+            ))}
+          </div>
+          {stack.covenants.cash_trap != null && (
+            <div className="mt-3 text-[12px] text-ink-600">
+              Cash trap: <span className="font-medium text-ink-900">{stack.covenants.cash_trap ? 'Yes' : 'No'}</span>
+            </div>
+          )}
+          {stack.covenants.notes && stack.covenants.notes.length > 0 && (
+            <ul className="mt-2 space-y-1 text-[11.5px] text-ink-500 list-disc pl-5">
+              {stack.covenants.notes.map((n, i) => <li key={i}>{n}</li>)}
+            </ul>
+          )}
+        </Card>
+      )}
+
+      <p className="text-[11px] text-ink-400 leading-relaxed">
+        Seeded from the deal&apos;s extracted senior loan. Editing tranches (add PACE / mezzanine,
+        floating-rate terms) and live covenant testing are the next build steps.
+      </p>
+    </div>
   );
 }

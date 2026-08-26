@@ -3345,6 +3345,9 @@ def _build_input_for(
             amortization_years=base["amortization_years"],
             interest_only_years=base.get("interest_only_years", 0),
             noi_by_year=noi_by_year,
+            # FON-63 — deal basis for the multi-tranche stack's LTV / LTC.
+            purchase_price_usd=base.get("purchase_price"),
+            total_capital_usd=getattr(capital_out, "total_capital", None),
         )
 
     if engine_name == "returns":
