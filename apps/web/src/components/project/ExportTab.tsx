@@ -1,9 +1,8 @@
 'use client';
 import { useState } from 'react';
-import { useRouter } from 'next/navigation';
 import {
-  FileSpreadsheet, FileText, Presentation, Download, Copy, ExternalLink,
-  CheckCircle2, AlertTriangle, Sparkles, Loader2,
+  FileSpreadsheet, FileText, Presentation, Download, Copy,
+  AlertTriangle, Loader2,
 } from 'lucide-react';
 import { Card } from '@/components/ui/Card';
 import { Button } from '@/components/ui/Button';
@@ -11,6 +10,7 @@ import { Badge } from '@/components/ui/Badge';
 import type { Project } from '@/lib/mockData';
 import { useToast } from '@/components/ui/Toast';
 import { IntroCard } from '@/components/help/IntroCard';
+import { useEngineOutputs } from '@/lib/hooks/useEngineOutputs';
 
 type ExportPath = 'excel' | 'memo.pdf' | 'presentation.pptx';
 
@@ -20,27 +20,13 @@ type Deliverable = {
   desc: string;
   icon: typeof FileSpreadsheet;
   color: string;
-  age: string;
   path: ExportPath;
 };
 
 const deliverables: Deliverable[] = [
-  { type: 'Excel Model', ext: '.xlsx', desc: 'Complete underwriting model with all assumptions and calculations', icon: FileSpreadsheet, color: 'text-success-700 bg-success-50', age: '2 hours ago', path: 'excel' },
-  { type: 'IC Memo (PDF)', ext: '.pdf', desc: 'One-page investment committee summary document', icon: FileText, color: 'text-danger-700 bg-danger-50', age: '2 hours ago', path: 'memo.pdf' },
-  { type: 'Deal Presentation', ext: '.pptx', desc: 'Full presentation deck with market analysis and financials', icon: Presentation, color: 'text-warn-700 bg-warn-50', age: '2 hours ago', path: 'presentation.pptx' },
-];
-
-const highlights = [
-  'Prime South Beach location with strong fundamentals',
-  'Kimpton brand affiliation drives 14% ADR premium',
-  'Attractive basis at $276K/key (22% discount to comps)',
-  '24.5% levered IRR over 5-year hold',
-];
-
-const risks = [
-  'Q1/Q3 RevPAR seasonal swing of 80%',
-  'Pending PIP requirement of $5.3M',
-  'Market supply pipeline of 414 rooms (2.2%)',
+  { type: 'Excel Model', ext: '.xlsx', desc: 'Complete underwriting model with all assumptions and calculations', icon: FileSpreadsheet, color: 'text-success-700 bg-success-50', path: 'excel' },
+  { type: 'IC Memo (PDF)', ext: '.pdf', desc: 'One-page investment committee summary document', icon: FileText, color: 'text-danger-700 bg-danger-50', path: 'memo.pdf' },
+  { type: 'Deal Presentation', ext: '.pptx', desc: 'Full presentation deck with market analysis and financials', icon: Presentation, color: 'text-warn-700 bg-warn-50', path: 'presentation.pptx' },
 ];
 
 // Browsers don't expose .env to client without the NEXT_PUBLIC_ prefix.
@@ -54,10 +40,20 @@ const labelByPath: Record<ExportPath, string> = {
 };
 
 export default function ExportTab({ project }: { project: Project }) {
-  const router = useRouter();
   const [busy, setBusy] = useState<ExportPath | null>(null);
   const workerConnected = WORKER_URL.length > 0;
   const { toast } = useToast();
+  // FON-54 — deliverables must reflect the latest model run, not a canned
+  // "2 hours ago". Stamp them with the real run time; when no run exists yet
+  // there's nothing to export.
+  const { outputs, lastRunAt } = useEngineOutputs(String(project.id));
+  const hasRun = outputs != null && Object.keys(outputs.engines ?? {}).length > 0;
+  const runStamp = lastRunAt
+    ? new Date(lastRunAt).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })
+    : null;
+  const sourceLabel = hasRun
+    ? `Latest model run${runStamp ? ` · ${runStamp}` : ''}`
+    : 'Awaiting model run';
 
   const handleDownload = (path: ExportPath) => {
     if (!workerConnected) return;
@@ -74,25 +70,24 @@ export default function ExportTab({ project }: { project: Project }) {
     <div className="space-y-5">
       <IntroCard
         dismissKey="export-intro"
-        title="The Export tab"
+        title="Export & Share"
         body={
           <>
-            Download the deal in three formats: a full <span className="font-semibold">Excel model</span> with
-            10 tabs (the actual financial workbook), a <span className="font-semibold">PDF IC memo</span> (the
-            narrative your investment committee reads), and a <span className="font-semibold">PowerPoint deck</span>
-            {' '}(the visual presentation). All three regenerate from the latest model run.
+            Generate the latest underwriting model, IC memo, and deal presentation from the current
+            model run and active scenario. Three formats: a full <span className="font-semibold">Excel model</span>,
+            a <span className="font-semibold">PDF IC memo</span>, and a <span className="font-semibold">PowerPoint deck</span>.
           </>
         }
       />
       <Card className="p-5">
         <div className="flex items-center justify-between">
           <div>
-            <h2 className="text-[15px] font-semibold text-ink-900">Export</h2>
-            <p className="text-[12.5px] text-ink-500 mt-1">Generate IC memos, deal presentations, and Excel models for distribution.</p>
+            <h2 className="text-[15px] font-semibold text-ink-900">Export &amp; Share</h2>
+            <p className="text-[12.5px] text-ink-500 mt-1">
+              Deliverables regenerate from the current model run and active scenario.
+            </p>
           </div>
-          <Badge tone={workerConnected ? 'green' : 'amber'}>
-            {workerConnected ? '3 exports ready' : 'Awaiting model run'}
-          </Badge>
+          <Badge tone={hasRun ? 'green' : 'amber'}>{sourceLabel}</Badge>
         </div>
       </Card>
 
@@ -126,13 +121,13 @@ export default function ExportTab({ project }: { project: Project }) {
                 </div>
               </div>
               <p className="text-[11.5px] text-ink-500 mb-4 leading-relaxed">{d.desc}</p>
-              <div className="text-[10.5px] text-ink-500 mb-3">Generated {d.age}</div>
+              <div className="text-[10.5px] text-ink-500 mb-3">{hasRun ? sourceLabel : 'Available after model run'}</div>
               <Button
                 variant="primary"
                 size="sm"
                 className="w-full"
                 onClick={() => handleDownload(d.path)}
-                disabled={!workerConnected || isBusy}
+                disabled={!workerConnected || !hasRun || isBusy}
                 title={workerConnected ? `Download ${d.ext}` : 'Available after model run'}
               >
                 {isBusy ? (
@@ -169,87 +164,6 @@ export default function ExportTab({ project }: { project: Project }) {
           >
             <Copy size={12} /> Copy Link
           </Button>
-          <Button
-            variant="secondary"
-            size="sm"
-            onClick={() =>
-              router.push(
-                `/projects/${String(project.id)}?tab=analysis&sub=memo`,
-                { scroll: false },
-              )
-            }
-          >
-            <ExternalLink size={12} /> Open Preview
-          </Button>
-        </div>
-      </Card>
-
-      <Card className="overflow-hidden">
-        <div className="px-5 py-4 border-b border-border flex items-center justify-between">
-          <h3 className="text-[14px] font-semibold text-ink-900">IC Memo Preview</h3>
-          <button
-            className="text-[12px] text-brand-500 hover:text-brand-700 font-medium"
-            onClick={() =>
-              router.push(
-                `/projects/${String(project.id)}?tab=analysis&sub=memo`,
-                { scroll: false },
-              )
-            }
-          >
-            Full Preview ↗
-          </button>
-        </div>
-        <div className="p-6 bg-gradient-to-br from-white to-ink-300/5">
-          <div className="flex items-start justify-between mb-4">
-            <div>
-              <Badge tone="blue" className="mb-2"><Sparkles size={11} /> Investment Committee Memo</Badge>
-              <h2 className="text-[20px] font-semibold text-ink-900">{project.name} Hotel</h2>
-              <div className="text-[12.5px] text-ink-500 mt-1">{project.city} · {project.keys} Keys · {project.service}</div>
-            </div>
-            <div className="text-right">
-              <div className="text-[11px] text-ink-500 uppercase tracking-wide">Purchase Price</div>
-              <div className="text-[20px] font-semibold text-ink-900 tabular-nums">$36,400,000</div>
-              <div className="text-[11.5px] text-ink-500">$275,758/key</div>
-            </div>
-          </div>
-
-          <div className="grid grid-cols-4 gap-3 mb-5">
-            {[['RevPAR', '$218'], ['NOI', '$4.2M'], ['Cap Rate', '7.25%'], ['Levered IRR', '24.5%']].map(([k, v]) => (
-              <div key={k} className="bg-white border border-border rounded-md p-3">
-                <div className="text-[10px] text-ink-500 uppercase tracking-wide">{k}</div>
-                <div className="text-[18px] font-semibold tabular-nums mt-0.5 text-brand-700">{v}</div>
-              </div>
-            ))}
-          </div>
-
-          <div className="grid grid-cols-2 gap-5">
-            <Card className="p-4 bg-success-50 border-success-500/20">
-              <div className="flex items-center gap-2 mb-2">
-                <CheckCircle2 size={14} className="text-success-700" />
-                <h4 className="text-[12.5px] font-semibold text-ink-900">Investment Highlights</h4>
-              </div>
-              <ul className="space-y-1.5 text-[11.5px] text-ink-700">
-                {highlights.map(h => (
-                  <li key={h} className="flex gap-2"><span className="text-success-700">•</span>{h}</li>
-                ))}
-              </ul>
-            </Card>
-            <Card className="p-4 bg-warn-50 border-warn-500/30">
-              <div className="flex items-center gap-2 mb-2">
-                <AlertTriangle size={14} className="text-warn-700" />
-                <h4 className="text-[12.5px] font-semibold text-ink-900">Key Risks</h4>
-              </div>
-              <ul className="space-y-1.5 text-[11.5px] text-ink-700">
-                {risks.map(r => (
-                  <li key={r} className="flex gap-2"><span className="text-warn-700">•</span>{r}</li>
-                ))}
-              </ul>
-            </Card>
-          </div>
-
-          <div className="text-[10.5px] text-ink-500 mt-5 text-center pt-3 border-t border-border">
-            Generated · April 2026
-          </div>
         </div>
       </Card>
 
