@@ -26,6 +26,7 @@ import {
   Sliders, FileText, ListChecks, ClipboardList, BarChart3, ArrowRight, Loader2,
 } from 'lucide-react';
 import Link from 'next/link';
+import { useParams } from 'next/navigation';
 import { useState, useEffect, useMemo } from 'react';
 import { Card } from '@/components/ui/Card';
 import { Badge } from '@/components/ui/Badge';
@@ -322,7 +323,15 @@ const VERDICT_STYLE: Record<Tone, string> = {
 };
 
 export default function ICMemoTab({ project }: { project: Project }) {
-  const dealId = String(project.id);
+  // FON-54 — the real deal id lives in the route (a UUID for live deals).
+  // page.tsx builds `project` with `id: 0` for live deals, so
+  // `String(project.id)` used to resolve to "0" — the engine-outputs and
+  // deal fetches then hit a non-existent deal and the memo was stuck on
+  // "Recommendation pending model run" even with a completed model (Sam QA).
+  // Fall back to project.id only for the static mock deals.
+  const params = useParams();
+  const routeId = typeof params?.id === 'string' ? params.id : null;
+  const dealId = routeId ?? String(project.id);
   const { outputs } = useEngineOutputs(dealId);
   const { deal } = useDeal(dealId);
 

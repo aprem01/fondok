@@ -1,5 +1,6 @@
 'use client';
 import { useState } from 'react';
+import { useParams } from 'next/navigation';
 import {
   FileSpreadsheet, FileText, Presentation, Download, Copy,
   AlertTriangle, Loader2,
@@ -43,10 +44,18 @@ export default function ExportTab({ project }: { project: Project }) {
   const [busy, setBusy] = useState<ExportPath | null>(null);
   const workerConnected = WORKER_URL.length > 0;
   const { toast } = useToast();
+  // FON-54 — the real deal id is the route param (a UUID for live deals);
+  // page.tsx passes `project.id: 0` for live deals, so String(project.id)
+  // resolved to "0" and both the run-status read AND the export download URL
+  // pointed at a non-existent deal — deliverables showed "Awaiting model run"
+  // and downloads 404'd on a fully-modeled deal (Sam QA). Route id wins.
+  const params = useParams();
+  const routeId = typeof params?.id === 'string' ? params.id : null;
+  const dealId = routeId ?? String(project.id);
   // FON-54 — deliverables must reflect the latest model run, not a canned
   // "2 hours ago". Stamp them with the real run time; when no run exists yet
   // there's nothing to export.
-  const { outputs, lastRunAt } = useEngineOutputs(String(project.id));
+  const { outputs, lastRunAt } = useEngineOutputs(dealId);
   const hasRun = outputs != null && Object.keys(outputs.engines ?? {}).length > 0;
   const runStamp = lastRunAt
     ? new Date(lastRunAt).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })
@@ -61,7 +70,7 @@ export default function ExportTab({ project }: { project: Project }) {
     toast(`Generating ${labelByPath[path]}…`, { type: 'info' });
     // Stream the file via the worker — FileResponse on the Python side sets
     // Content-Disposition so the browser saves it directly.
-    window.location.href = `${WORKER_URL}/deals/${project.id}/export/${path}`;
+    window.location.href = `${WORKER_URL}/deals/${dealId}/export/${path}`;
     // The redirect kicks off a download; clear the spinner shortly after.
     window.setTimeout(() => setBusy(null), 2500);
   };
