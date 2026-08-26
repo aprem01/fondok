@@ -60,6 +60,10 @@ interface DealMetrics {
   holdYears: number | null;
   renovation: number | null;
   revenueCagr: number | null;
+  totalRevenue: number | null;
+  totalCost: number | null;
+  loanAmount: number | null;
+  interestRate: number | null;
   hasModel: boolean;
 }
 
@@ -127,6 +131,11 @@ function extractMetrics(
     holdYears: num(g<number>('returns', 'hold_years')),
     renovation: num(renovationUse?.amount),
     revenueCagr: num(g<number>('revenue', 'total_revenue_cagr')),
+    // FON-54 #4 — Underwriting Summary bridge inputs.
+    totalRevenue: y1rev ? num(y1rev.total_revenue) : null,
+    totalCost: num(g<number>('capital', 'total_capital')),
+    loanAmount: num(g<number>('capital', 'debt_amount')),
+    interestRate: num(g<number>('debt', 'interest_rate')),
     // The recommendation needs at least the levered return story to be honest.
     hasModel: leveredIrr != null || equityMultiple != null || revpar != null,
   };
@@ -292,6 +301,7 @@ interface SectionState {
   highlights: boolean;
   risks: boolean;
   diligence: boolean;
+  underwriting: boolean;
 }
 
 const SEV_TONE: Record<string, Tone> = { CRITICAL: 'red', WARN: 'amber', INFO: 'green' };
@@ -325,6 +335,7 @@ export default function ICMemoTab({ project }: { project: Project }) {
     highlights: true,
     risks: true,
     diligence: true,
+    underwriting: true,
   });
 
   // Diligence items — the highest-$-impact broker-vs-T-12 variance flags,
@@ -474,6 +485,52 @@ export default function ICMemoTab({ project }: { project: Project }) {
                 )}
               </div>
 
+              {/* FON-54 #4 — Underwriting Summary: a concise bridge from the
+                  recommendation back to the model, not a re-run of it. */}
+              {sections.underwriting && (
+                <div className="border-t border-border pt-4">
+                  <h3 className="text-[13px] font-semibold text-ink-900 mb-2.5">Underwriting Summary</h3>
+                  <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+                    <UwColumn
+                      title="Operating"
+                      rows={[
+                        ['RevPAR', metrics.revpar != null ? fmtCurrency(metrics.revpar) : '—'],
+                        ['Revenue (Y1)', metrics.totalRevenue != null ? fmtCurrency(metrics.totalRevenue, { compact: true }) : '—'],
+                        ['NOI (Y1)', metrics.noi != null ? fmtCurrency(metrics.noi, { compact: true }) : '—'],
+                        ['NOI Margin', metrics.noi != null && metrics.totalRevenue ? fmtPct(metrics.noi / metrics.totalRevenue, 0) : '—'],
+                      ]}
+                    />
+                    <UwColumn
+                      title="Capitalization"
+                      rows={[
+                        ['Purchase', metrics.purchasePrice != null ? fmtCurrency(metrics.purchasePrice, { compact: true }) : '—'],
+                        ['Renovation', metrics.renovation != null ? fmtCurrency(metrics.renovation, { compact: true }) : '—'],
+                        ['Total Cost', metrics.totalCost != null ? fmtCurrency(metrics.totalCost, { compact: true }) : '—'],
+                        ['Equity', metrics.equity != null ? fmtCurrency(metrics.equity, { compact: true }) : '—'],
+                      ]}
+                    />
+                    <UwColumn
+                      title="Debt"
+                      rows={[
+                        ['Loan', metrics.loanAmount != null ? fmtCurrency(metrics.loanAmount, { compact: true }) : '—'],
+                        ['LTV', metrics.loanAmount != null && metrics.purchasePrice ? fmtPct(metrics.loanAmount / metrics.purchasePrice, 0) : '—'],
+                        ['Rate', metrics.interestRate != null ? fmtPct(metrics.interestRate, 2) : '—'],
+                        ['DSCR', metrics.dscr != null ? `${metrics.dscr.toFixed(2)}x` : '—'],
+                      ]}
+                    />
+                    <UwColumn
+                      title="Returns"
+                      rows={[
+                        ['Unlevered IRR', metrics.unleveredIrr != null ? fmtPct(metrics.unleveredIrr, 1) : '—'],
+                        ['Levered IRR', metrics.leveredIrr != null ? fmtPct(metrics.leveredIrr, 1) : '—'],
+                        ['Equity Multiple', metrics.equityMultiple != null ? `${metrics.equityMultiple.toFixed(2)}x` : '—'],
+                        ['Hold', metrics.holdYears != null ? `${metrics.holdYears} yrs` : '—'],
+                      ]}
+                    />
+                  </div>
+                </div>
+              )}
+
               {detail === 'expanded' && (
                 <div className="border-t border-border pt-4">
                   <h3 className="text-[13px] font-semibold text-ink-900 mb-2">Supporting Analysis</h3>
@@ -581,6 +638,7 @@ export default function ICMemoTab({ project }: { project: Project }) {
                 ['highlights', 'Key Highlights'],
                 ['risks', 'Key Risks & Considerations'],
                 ['diligence', 'Diligence & Variance'],
+                ['underwriting', 'Underwriting Summary'],
               ] as [keyof SectionState, string][]).map(([id, label]) => (
                 <label
                   key={id}
@@ -611,6 +669,23 @@ function SupportStat({ label, value }: { label: string; value: string }) {
     <div>
       <div className="text-[10px] uppercase tracking-wide text-ink-400">{label}</div>
       <div className="text-[13.5px] font-semibold text-ink-900 tabular-nums">{value}</div>
+    </div>
+  );
+}
+
+// FON-54 #4 — one column of the Underwriting Summary bridge.
+function UwColumn({ title, rows }: { title: string; rows: [string, string][] }) {
+  return (
+    <div className="rounded-md border border-border bg-ink-50/40 p-3">
+      <div className="text-[10px] uppercase tracking-wide text-ink-400 mb-1.5">{title}</div>
+      <div className="space-y-1">
+        {rows.map(([k, v]) => (
+          <div key={k} className="flex items-center justify-between gap-2 text-[12px]">
+            <span className="text-ink-500">{k}</span>
+            <span className="font-medium text-ink-900 tabular-nums">{v}</span>
+          </div>
+        ))}
+      </div>
     </div>
   );
 }
