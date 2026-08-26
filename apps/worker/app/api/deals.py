@@ -179,6 +179,8 @@ class UpdateDealBody(BaseModel):
     deal_stage: str | None = None
     risk: str | None = None
     ai_confidence: float | None = Field(default=None, ge=0.0, le=1.0)
+    # FON-59 — Investment Profile is now editable inline on Overview.
+    deal_type: str | None = Field(default=None, max_length=40)
     return_profile: str | None = None
     brand: str | None = None
     positioning: str | None = None

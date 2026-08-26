@@ -1050,7 +1050,9 @@ export const api = {
     /** Patch one-or-more deal fields (keys override, brand fix, etc.). */
     update: (
       id: string,
-      patch: Partial<Pick<WorkerDeal, 'name' | 'city' | 'keys' | 'service' | 'brand'>> & {
+      patch: Partial<Pick<WorkerDeal,
+        'name' | 'city' | 'keys' | 'service' | 'brand'
+        | 'deal_type' | 'return_profile' | 'positioning'>> & {
         field_overrides?: Record<string, unknown>;
       },
     ) =>

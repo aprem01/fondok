@@ -1,10 +1,9 @@
 'use client';
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { useRouter, useParams } from 'next/navigation';
-import { LayoutGrid, Download, Pencil, Link2, Settings } from 'lucide-react';
+import { LayoutGrid, Download, Pencil, Link2 } from 'lucide-react';
 import { Card } from '@/components/ui/Card';
 import { Button } from '@/components/ui/Button';
-import Modal from '@/components/ui/Modal';
 import { useToast } from '@/components/ui/Toast';
 import { DataKeyLegend } from './DataKeyLegend';
 import {
@@ -62,7 +61,6 @@ export default function OverviewTab({ projectId }: { projectId: number | string 
   const { outputs } = useEngineOutputs(dealId);
   const { deal, refresh: refreshDeal } = useDeal(dealId);
 
-  const [modelSettingsOpen, setModelSettingsOpen] = useState(false);
 
   // Provenance map for the key underwriting assumptions (Sam v2 #11).
   // Loaded once on mount + after engine re-runs so the "Sources" strip
@@ -527,13 +525,6 @@ export default function OverviewTab({ projectId }: { projectId: number | string 
       <div className="flex items-center justify-between py-1 gap-4">
         <DataKeyLegend variant="overview" />
         <div className="flex items-center gap-2 shrink-0">
-          <Button
-            variant="secondary"
-            size="sm"
-            onClick={() => setModelSettingsOpen(true)}
-          >
-            <Settings size={12} /> Model Settings
-          </Button>
           <Button variant="secondary" size="sm" onClick={onExportExcel}>
             <Download size={12} /> Export to Excel
           </Button>
@@ -544,27 +535,6 @@ export default function OverviewTab({ projectId }: { projectId: number | string 
           broker says?" at the top, not buried in the Variance tab. */}
       {liveMode && <VarianceHero dealId={dealId} />}
 
-      {/* Model controls live in a dedicated settings panel (Sam v2:
-          "Move target returns, brands, and similar controls out of the
-          Overview header and into a dedicated settings/navigation
-          area"). Triggered from the Model Settings button above. */}
-      <Modal
-        open={modelSettingsOpen}
-        onClose={() => setModelSettingsOpen(false)}
-        title="Model Settings"
-        maxWidth="max-w-2xl"
-      >
-        <div className="p-5">
-          <ModelSettings
-            defaults={{
-              dealType: 'acquisition',
-              returnProfile: isKimptonDemo ? o.investmentProfile.returnProfile : 'value-add',
-              brand: propertyBrand ?? '',
-              positioning: 'default',
-            }}
-          />
-        </div>
-      </Modal>
 
       <div className="grid grid-cols-2 gap-3">
         <Section
@@ -624,11 +594,26 @@ export default function OverviewTab({ projectId }: { projectId: number | string 
           ]}
         />
 
-        <Section title="Investment Profile" rows={[
-          ['Return Strategy', profile?.label ?? '—'],
-          ['IRR Target', profile?.target ?? '—'],
-          ['Positioning Tier', positioning?.label ?? '—'],
-        ]} />
+        {/* FON-59 — Investment Profile is editable inline (Deal Type / Returns
+            Profile / Brand / Positioning); the Model Settings modal is gone. */}
+        {liveMode ? (
+          <ModelSettings
+            dealId={String(dealId)}
+            defaults={{
+              dealType: deal?.deal_type === 'development' ? 'development' : 'acquisition',
+              returnProfile: profileId ?? 'value-add',
+              brand: propertyBrand ?? '',
+              positioning: positioningId ?? 'default',
+            }}
+            onSaved={() => { void refreshDeal?.(); }}
+          />
+        ) : (
+          <Section title="Investment Profile" rows={[
+            ['Return Strategy', profile?.label ?? '—'],
+            ['IRR Target', profile?.target ?? '—'],
+            ['Positioning Tier', positioning?.label ?? '—'],
+          ]} />
+        )}
       </div>
 
       <div className="grid grid-cols-1 gap-3">
@@ -883,10 +868,31 @@ interface ModelSettingsState {
   positioning: string;
 }
 
-function ModelSettings({ defaults }: { defaults: ModelSettingsState }) {
+function ModelSettings({
+  defaults,
+  dealId,
+  onSaved,
+}: {
+  defaults: ModelSettingsState;
+  dealId: string;
+  onSaved?: () => void;
+}) {
   const [state, setState] = useState<ModelSettingsState>(defaults);
-  const changeCount = (Object.keys(defaults) as (keyof ModelSettingsState)[])
-    .reduce((n, k) => n + (state[k] !== defaults[k] ? 1 : 0), 0);
+  const { toast } = useToast();
+  // FON-59 — the Investment Profile is editable inline now (the Model Settings
+  // modal is gone). Each change persists to the deal + re-runs the engines.
+  const persist = useCallback(
+    async (patch: Parameters<typeof api.deals.update>[1]) => {
+      try {
+        await api.deals.update(dealId, patch);
+        toast('Saved — re-running engines', { type: 'success' });
+        onSaved?.();
+      } catch (e) {
+        toast(`Save failed: ${e instanceof Error ? e.message : String(e)}`, { type: 'error' });
+      }
+    },
+    [dealId, toast, onSaved],
+  );
 
   // Flatten all known brands for the picker (family > brand[]).
   const brandOptions = useMemo(() => {
@@ -905,17 +911,8 @@ function ModelSettings({ defaults }: { defaults: ModelSettingsState }) {
       <div className="flex flex-wrap items-end gap-x-4 gap-y-2">
         <div className="flex items-center gap-2">
           <span className="text-[10.5px] font-medium text-ink-500 uppercase tracking-wide">
-            Model
+            Investment Profile
           </span>
-          {changeCount === 0 ? (
-            <span className="px-1.5 py-0 text-[10px] font-medium rounded-full bg-ink-300/30 text-ink-700">
-              No Changes
-            </span>
-          ) : (
-            <span className="px-1.5 py-0 text-[10px] font-medium rounded-full bg-warn-50 text-warn-700 border border-warn-500/30">
-              {changeCount} Pending
-            </span>
-          )}
         </div>
 
         {/* Deal Type pill toggle */}
@@ -928,7 +925,7 @@ function ModelSettings({ defaults }: { defaults: ModelSettingsState }) {
               <button
                 key={opt}
                 type="button"
-                onClick={() => setState(s => ({ ...s, dealType: opt }))}
+                onClick={() => { setState(s => ({ ...s, dealType: opt })); void persist({ deal_type: opt }); }}
                 className={cn(
                   'px-2 py-0.5 text-[11.5px] rounded transition-colors capitalize',
                   state.dealType === opt
@@ -948,7 +945,7 @@ function ModelSettings({ defaults }: { defaults: ModelSettingsState }) {
           </label>
           <select
             value={state.returnProfile}
-            onChange={e => setState(s => ({ ...s, returnProfile: e.target.value }))}
+            onChange={e => { const v = e.target.value; setState(s => ({ ...s, returnProfile: v })); void persist({ return_profile: v }); }}
             className={selectClass}
           >
             {returnProfiles.map(p => (
@@ -963,7 +960,7 @@ function ModelSettings({ defaults }: { defaults: ModelSettingsState }) {
           </label>
           <select
             value={state.brand}
-            onChange={e => setState(s => ({ ...s, brand: e.target.value }))}
+            onChange={e => { const v = e.target.value; setState(s => ({ ...s, brand: v })); void persist({ brand: v }); }}
             className={selectClass}
           >
             {!brandOptions.some(b => b.value === state.brand) && (
@@ -985,7 +982,7 @@ function ModelSettings({ defaults }: { defaults: ModelSettingsState }) {
           </label>
           <select
             value={state.positioning}
-            onChange={e => setState(s => ({ ...s, positioning: e.target.value }))}
+            onChange={e => { const v = e.target.value; setState(s => ({ ...s, positioning: v })); void persist({ positioning: v }); }}
             className={selectClass}
           >
             {positioningTiers.map(p => (
