@@ -2000,8 +2000,13 @@ async def _load_om_transaction_comps_cap_rate(
             # Normalize 0..100 percent → 0..1 fraction.
             if v > 1.0:
                 v = v / 100.0
-            # Sanity bounds: any "cap rate" outside 3-15% is broken data.
-            if 0.03 <= v <= 0.15:
+            # Sanity bounds (FON-67): hotel exit caps live ~4-11%. The old
+            # 3-15% band let a mis-extracted comp — an IRR (~15-20%) or debt
+            # yield read as a "cap rate" — into the median, which then silently
+            # overrode the 7% seed and collapsed the exit value (a 15% cap on a
+            # $4.4M NOI gives a ~$29.5M sale vs a ~$63M sale at 7%). Anything
+            # outside 4-11% is broken data, not a cap rate.
+            if 0.04 <= v <= 0.11:
                 cap_rates.append(v)
 
     if len(cap_rates) < 3:
