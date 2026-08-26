@@ -674,6 +674,7 @@ export default function ProjectDetailPage() {
           onCreate={() =>
             setScenarioEditor({ open: true, scenario: null })
           }
+          onEdit={(s) => setScenarioEditor({ open: true, scenario: s })}
         />
       )}
 
