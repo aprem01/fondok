@@ -195,7 +195,9 @@ def _kimpton_assumptions() -> dict[str, Any]:
         "selling_costs_pct": 0.02,
         "gp_equity_pct": 0.10,
         "lp_equity_pct": 0.90,
-        "pref_rate": 0.08,
+        # FON-66 — Kimpton Angler benchmark preferred return (10%). The
+        # promote tiers above this live in _KIMPTON_WATERFALL_REFERENCE.
+        "pref_rate": 0.10,
     }
 
 
@@ -814,6 +816,31 @@ async def _load_engine_inputs(
                             debt_overrides[field] = num_value
                             sources[path] = SOURCE_ANALYST_OVERRIDE
                 continue
+            elif path in _OVERRIDE_PARTNERSHIP_KEYS:
+                # FON-66 — partnership waterfall tier override. Indexed
+                # scalars (``partnership.waterfall.<idx>.<field>``) land in
+                # ``base['partnership_waterfall_overrides'][idx][field]``;
+                # the partnership builder seeds the Kimpton reference stack
+                # and layers these on top (deriving the complementary split
+                # so a single-side edit keeps gp + lp == 1.0).
+                parsed_wf = _parse_partnership_override_path(path)
+                if parsed_wf is not None:
+                    idx, field = parsed_wf
+                    try:
+                        num_value = (
+                            float(value)
+                            if isinstance(value, (int, float, str))
+                            else None
+                        )
+                    except (TypeError, ValueError):
+                        num_value = None
+                    if num_value is not None:
+                        wf_overrides = base.setdefault(
+                            "partnership_waterfall_overrides", {}
+                        )
+                        wf_overrides.setdefault(idx, {})[field] = num_value
+                        sources[path] = SOURCE_ANALYST_OVERRIDE
+                continue
             else:
                 base[path] = value
             sources[path] = SOURCE_ANALYST_OVERRIDE
@@ -1024,6 +1051,103 @@ def _parse_debt_stack_override_path(path: str) -> tuple[str, int | None, str] | 
     if len(parts) == 2:
         return ("stack", None, parts[1])
     return None
+
+
+# ── Partnership waterfall overrides (FON-66) ───────────────────────────
+# The promote waterfall ships as a deal-agnostic institutional default
+# (the Kimpton Angler benchmark stack) that an analyst can edit per-tier
+# from the Partnership tab. Each editable field is exposed as an indexed
+# scalar path — ``partnership.waterfall.<idx>.<field>`` — so the values
+# clear the scalar override guard the same way the debt-stack tranche
+# overrides do. Splits always sum to 1.0; editing one side derives the
+# other in the builder, so a single-field edit never trips the
+# ``WaterfallTier`` validator.
+_PARTNERSHIP_WATERFALL_FIELDS: tuple[str, ...] = (
+    "hurdle_rate",
+    "gp_split",
+    "lp_split",
+)
+# Default promote structure — Kimpton Angler benchmark (FON-66 §3). The
+# preferred return itself is carried by ``pref_rate`` (seed 0.10); these
+# are the promote tiers above it. The top tier represents ">30% IRR".
+_KIMPTON_WATERFALL_REFERENCE: tuple[dict[str, Any], ...] = (
+    {"label": "Preferred (to 10%)", "hurdle_rate": 0.10, "gp_split": 0.00, "lp_split": 1.00},
+    {"label": "Tier 2 (to 15%)", "hurdle_rate": 0.15, "gp_split": 0.20, "lp_split": 0.80},
+    {"label": "Tier 3 (to 20%)", "hurdle_rate": 0.20, "gp_split": 0.25, "lp_split": 0.75},
+    {"label": "Tier 4 (to 25%)", "hurdle_rate": 0.25, "gp_split": 0.25, "lp_split": 0.75},
+    {"label": "Tier 5 (to 30%)", "hurdle_rate": 0.30, "gp_split": 0.25, "lp_split": 0.75},
+    {"label": "Tier 6 (>30%)", "hurdle_rate": 0.50, "gp_split": 0.50, "lp_split": 0.50},
+)
+_PARTNERSHIP_TIER_INDEXES: tuple[int, ...] = tuple(
+    range(len(_KIMPTON_WATERFALL_REFERENCE))
+)
+_OVERRIDE_PARTNERSHIP_KEYS: frozenset[str] = frozenset(
+    f"partnership.waterfall.{idx}.{field}"
+    for idx in _PARTNERSHIP_TIER_INDEXES
+    for field in _PARTNERSHIP_WATERFALL_FIELDS
+)
+
+
+def _parse_partnership_override_path(path: str) -> tuple[int, str] | None:
+    """Split ``partnership.waterfall.<idx>.<field>`` → ``(index, field)``.
+
+    Returns ``None`` for paths that don't fit the pattern or name a field
+    outside ``_PARTNERSHIP_WATERFALL_FIELDS``.
+    """
+    if not path.startswith("partnership.waterfall."):
+        return None
+    parts = path.split(".")
+    if len(parts) != 4:
+        return None
+    try:
+        idx = int(parts[2])
+    except ValueError:
+        return None
+    field = parts[3]
+    if field not in _PARTNERSHIP_WATERFALL_FIELDS:
+        return None
+    return (idx, field)
+
+
+def _build_partnership_waterfall(
+    overrides: dict[int, dict[str, float]] | None,
+) -> list[WaterfallTier]:
+    """Seed the Kimpton reference promote stack and layer analyst edits.
+
+    Each tier starts from ``_KIMPTON_WATERFALL_REFERENCE``. An override on
+    ``gp_split`` (or ``lp_split``) alone derives the complementary split so
+    the ``WaterfallTier`` ``gp + lp == 1`` validator is never tripped by a
+    single-field edit; overriding both sides uses the analyst's exact
+    values (their responsibility to keep the sum at 1.0).
+    """
+    overrides = overrides or {}
+    tiers: list[WaterfallTier] = []
+    for idx, ref in enumerate(_KIMPTON_WATERFALL_REFERENCE):
+        ov = overrides.get(idx, {})
+        hurdle = float(ov.get("hurdle_rate", ref["hurdle_rate"]))
+        gp_ov = "gp_split" in ov
+        lp_ov = "lp_split" in ov
+        if gp_ov and lp_ov:
+            gp_split = float(ov["gp_split"])
+            lp_split = float(ov["lp_split"])
+        elif gp_ov:
+            gp_split = float(ov["gp_split"])
+            lp_split = round(1.0 - gp_split, 6)
+        elif lp_ov:
+            lp_split = float(ov["lp_split"])
+            gp_split = round(1.0 - lp_split, 6)
+        else:
+            gp_split = float(ref["gp_split"])
+            lp_split = float(ref["lp_split"])
+        tiers.append(
+            WaterfallTier(
+                label=str(ref["label"]),
+                hurdle_rate=hurdle,
+                gp_split=gp_split,
+                lp_split=lp_split,
+            )
+        )
+    return tiers
 
 
 def _coerce_comp_sales_override_value(field: str, value: Any) -> Any:
@@ -3496,11 +3620,11 @@ def _build_input_for(
         if not flows:
             # Defensive fallback: synthesize a flat annual cash flow.
             flows = [returns_out.equity_multiple * capital_out.equity_amount / max(1, base["hold_years"])]
-        waterfall = [
-            WaterfallTier(label="Pref", hurdle_rate=0.08, gp_split=0.10, lp_split=0.90),
-            WaterfallTier(label="Tier 1", hurdle_rate=0.12, gp_split=0.20, lp_split=0.80),
-            WaterfallTier(label="Tier 2", hurdle_rate=0.18, gp_split=0.30, lp_split=0.70),
-        ]
+        # FON-66 — seed the Kimpton benchmark promote stack, then layer any
+        # analyst per-tier overrides (partnership.waterfall.<idx>.<field>).
+        waterfall = _build_partnership_waterfall(
+            base.get("partnership_waterfall_overrides")
+        )
         return PartnershipInputExt(
             deal_id=deal_uuid,
             total_equity=capital_out.equity_amount,

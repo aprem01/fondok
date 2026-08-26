@@ -1,10 +1,13 @@
 'use client';
-import { useState } from 'react';
+import { useState, useEffect, useRef, useCallback } from 'react';
 import { useParams } from 'next/navigation';
 import { Users } from 'lucide-react';
 import { Card } from '@/components/ui/Card';
 import { Button } from '@/components/ui/Button';
 import { useToast } from '@/components/ui/Toast';
+import { api, isWorkerConnected } from '@/lib/api';
+import { useEngineRun } from '@/lib/hooks/useEngineRun';
+import { useDeal } from '@/lib/hooks/useDeal';
 import EngineHeader from './EngineHeader';
 import EngineRightRail from './EngineRightRail';
 import EngineLegend from './EngineLegend';
@@ -30,20 +33,47 @@ const fmtOrDash = (
   formatter: (v: number) => string,
 ): string => (n != null ? formatter(n) : '—');
 
-// Default Kimpton-fixture waterfall — only rendered for the demo deal.
-// Pref Return aligned to the 8% LP preferred used by every other layer
-// of the model (engine seed at engine_runner.py:144, web engine seed at
-// lib/engines/model.ts:51, Kimpton golden-set partnership.lp_pref_pct).
-// Sam QA #20 caught the 10% leak here — the display read had drifted
-// off the rest of the model.
-const kimptonWaterfall = [
-  { tier: 'Pref Return (8%)', gp: 0, lp: 100 },
-  { tier: 'Hurdle #1 (12%)', gp: 20, lp: 80 },
-  { tier: 'Hurdle #2 (15%)', gp: 25, lp: 75 },
-  { tier: 'Hurdle #3 (20%)', gp: 30, lp: 70 },
-  { tier: 'Hurdle #4 (25%)', gp: 35, lp: 65 },
-  { tier: 'Hurdle #5 (>25%)', gp: 50, lp: 50 },
+// FON-66 — the promote waterfall seed. This MIRRORS the worker's
+// `_KIMPTON_WATERFALL_REFERENCE` (engine_runner.py): the deal-agnostic
+// institutional benchmark an analyst edits from the Waterfall Structure
+// sub-tab. Each tier's editable fields persist as indexed field_overrides
+// (`partnership.waterfall.<idx>.<field>`) the worker layers over this
+// seed. `hurdle`/`gp` are fractions; LP split derives as `1 - gp`.
+const WATERFALL_SEED: Array<{ label: string; hurdle: number; gp: number }> = [
+  { label: 'Preferred (to 10%)', hurdle: 0.10, gp: 0.00 },
+  { label: 'Tier 2 (to 15%)', hurdle: 0.15, gp: 0.20 },
+  { label: 'Tier 3 (to 20%)', hurdle: 0.20, gp: 0.25 },
+  { label: 'Tier 4 (to 25%)', hurdle: 0.25, gp: 0.25 },
+  { label: 'Tier 5 (to 30%)', hurdle: 0.30, gp: 0.25 },
+  { label: 'Tier 6 (>30%)', hurdle: 0.50, gp: 0.50 },
 ];
+
+// Read a scalar override, tolerating both the flat scalar and the
+// structured `{ value, note }` shape the override panel writes.
+function readOverrideNum(
+  overrides: Record<string, unknown>,
+  path: string,
+  fallback: number,
+): number {
+  const raw = overrides[path];
+  const val = raw && typeof raw === 'object' && 'value' in raw
+    ? (raw as { value: unknown }).value
+    : raw;
+  if (val == null || val === '') return fallback;
+  const n = typeof val === 'number' ? val : Number(val);
+  return Number.isFinite(n) ? n : fallback;
+}
+
+// Resolve the live promote structure = seed + any analyst tier overrides.
+// Returns display rows { tier, gp, lp } as whole-percent numbers.
+function resolveWaterfall(
+  overrides: Record<string, unknown>,
+): Array<{ tier: string; gp: number; lp: number }> {
+  return WATERFALL_SEED.map((t, idx) => {
+    const gp = readOverrideNum(overrides, `partnership.waterfall.${idx}.gp_split`, t.gp);
+    return { tier: t.label, gp: Math.round(gp * 100), lp: Math.round((1 - gp) * 100) };
+  });
+}
 
 export default function PartnershipTab({ projectId }: { projectId: number | string }) {
   const [tab, setTab] = useState('Summary');
@@ -54,6 +84,56 @@ export default function PartnershipTab({ projectId }: { projectId: number | stri
   const { outputs, previous } = useEngineOutputs(dealId);
   const [computing, setComputing] = useState(false);
   const [runToken, setRunToken] = useState<number | null>(null);
+
+  // ─── FON-66: editable waterfall assumptions ────────────────────────
+  // Live deals (real UUID + worker connected) can edit ownership,
+  // preferred return, and the promote tiers. Edits PATCH the deal's
+  // field_overrides and kick a debounced run-all so GP/LP outputs
+  // re-derive. Demo (id 7) and mock numeric deals stay read-only.
+  const isMockId = /^\d+$/.test(dealId);
+  const liveMode = isWorkerConnected() && !isMockId;
+  const { deal, refresh: refreshDeal } = useDeal(dealId);
+  const [overrides, setOverrides] = useState<Record<string, unknown>>({});
+  useEffect(() => {
+    setOverrides((deal?.field_overrides as Record<string, unknown> | undefined) ?? {});
+  }, [deal?.field_overrides]);
+  const fullRun = useEngineRun(liveMode ? dealId : '', 'returns', { runMode: 'all' });
+  const rerunTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  useEffect(() => () => {
+    if (rerunTimerRef.current) clearTimeout(rerunTimerRef.current);
+  }, []);
+
+  // Persist one or more overrides in a single PATCH. Complementary fields
+  // (GP/LP ownership, GP/LP tier split) are saved together so the engine
+  // never sees an inconsistent pair. A null value clears that override.
+  const onSaveOverride = useCallback(
+    async (patch: Record<string, number | null>) => {
+      if (!liveMode) {
+        toast('Editing is disabled on demo deals', { type: 'info' });
+        return;
+      }
+      const next = { ...overrides };
+      for (const [path, value] of Object.entries(patch)) {
+        if (value === null) delete next[path];
+        else next[path] = value;
+      }
+      setOverrides(next); // optimistic
+      try {
+        await api.deals.update(dealId, { field_overrides: next });
+        toast('Saved — re-running engines', { type: 'success' });
+        void refreshDeal?.();
+        if (rerunTimerRef.current) clearTimeout(rerunTimerRef.current);
+        rerunTimerRef.current = setTimeout(() => {
+          void fullRun.run();
+        }, 1500);
+      } catch (err) {
+        setOverrides(overrides); // rollback
+        const msg = err instanceof Error ? err.message : 'Unknown error';
+        toast(`Save failed: ${msg}`, { type: 'error' });
+      }
+    },
+    [overrides, dealId, liveMode, toast, refreshDeal, fullRun],
+  );
 
   // Worker partnership engine fields. The runtime engine returns nested
   // `gp` / `lp` PartnerReturn objects; the export schema flattens them as
@@ -364,14 +444,10 @@ export default function PartnershipTab({ projectId }: { projectId: number | stri
                 }
                 return tiers.length > 0 ? tiers : null;
               })();
-              const rows = workerTiers ?? (isKimptonDemo ? kimptonWaterfall : null);
-              if (!rows) {
-                return (
-                  <div className="py-6 text-center text-[12px] text-ink-500">
-                    Waterfall tiers will populate once the Partnership engine emits tier splits.
-                  </div>
-                );
-              }
+              // Prefer worker-emitted tier fields; otherwise show the live
+              // promote structure (benchmark seed + analyst overrides) so the
+              // waterfall is never empty on a real deal.
+              const rows = workerTiers ?? resolveWaterfall(overrides);
               return (
                 <table className="w-full text-[12.5px]">
                   <thead>
@@ -406,42 +482,117 @@ export default function PartnershipTab({ projectId }: { projectId: number | stri
       )}
 
       {tab === 'Waterfall Structure' && (
-        <Card className="p-5">
-          <h3 className="text-[13px] font-semibold text-ink-900 mb-4">Equity Breakdown</h3>
-          {(() => {
-            // Worker is preferred; fall back to Kimpton fixture only on demo.
-            const gpEqPick = pickNum(wGpEquity, 1_388_960, isKimptonDemo);
-            const lpEqPick = pickNum(wLpEquity, 12_447_110, isKimptonDemo);
-            const total = (gpEqPick != null && lpEqPick != null)
-              ? gpEqPick + lpEqPick
-              : pickNum(wTotalEquityFlat, 13_836_070, isKimptonDemo);
-            const gpPct = (gpEqPick != null && total && total > 0)
-              ? `${((gpEqPick / total) * 100).toFixed(0)}%`
-              : '—';
-            const lpPct = (lpEqPick != null && total && total > 0)
-              ? `${((lpEqPick / total) * 100).toFixed(0)}%`
-              : '—';
-            const fields: Array<[string, string]> = [
-              ['Sponsor / GP %', gpPct],
-              ['LP Investor %', lpPct],
-              ['GP Amount', fmtOrDash(gpEqPick, fmtCurrency)],
-              ['LP Amount', fmtOrDash(lpEqPick, fmtCurrency)],
-            ];
-            return (
-              <div className="grid grid-cols-2 gap-5">
-                {fields.map(([k, v]) => (
-                  <div key={k}>
-                    <label className="block text-[11.5px] text-ink-500 mb-1">{k}</label>
-                    <input value={v} readOnly className="w-full px-3 py-2 text-[13px] border border-border rounded-md bg-ink-300/10" />
+        <div className="space-y-5">
+          {/* Ownership & preferred return — editable assumptions */}
+          <Card className="p-5">
+            <div className="flex items-center justify-between mb-1">
+              <h3 className="text-[13px] font-semibold text-ink-900">Ownership &amp; Preferred Return</h3>
+              <span className={cn('text-[11px]', liveMode ? 'text-ink-500' : 'text-ink-400')}>
+                {liveMode ? 'Editable · changes re-run the model' : 'Read-only on demo deals'}
+              </span>
+            </div>
+            <p className="text-[11.5px] text-ink-500 mb-4">
+              The equity split between sponsor and investors, and the LP preferred return paid before any promote.
+              LP ownership derives from GP so the two always total 100%.
+            </p>
+            {(() => {
+              const gpOwn = readOverrideNum(overrides, 'gp_equity_pct', 0.10);
+              const lpOwn = readOverrideNum(overrides, 'lp_equity_pct', 0.90);
+              const gpEqPick = pickNum(wGpEquity, 1_388_960, isKimptonDemo);
+              const lpEqPick = pickNum(wLpEquity, 12_447_110, isKimptonDemo);
+              return (
+                <div className="grid grid-cols-3 gap-5">
+                  <PctField
+                    label="GP / Sponsor Ownership"
+                    valueFraction={gpOwn}
+                    overridden={'gp_equity_pct' in overrides}
+                    liveMode={liveMode}
+                    onCommit={(f) => onSaveOverride({ gp_equity_pct: f, lp_equity_pct: round6(1 - f) })}
+                    sub={fmtOrDash(gpEqPick, v => fmtCurrency(v, { compact: true }))}
+                  />
+                  <div>
+                    <label className="block text-[11.5px] text-ink-500 mb-1">LP Investor Ownership</label>
+                    <div className="w-full px-3 py-2 text-[13px] border border-transparent rounded-md bg-ink-300/10 tabular-nums text-ink-600">
+                      {(lpOwn * 100).toFixed(0)}%
+                    </div>
+                    <div className="text-[10.5px] text-ink-400 mt-1">
+                      {fmtOrDash(lpEqPick, v => fmtCurrency(v, { compact: true }))} · derived
+                    </div>
                   </div>
-                ))}
+                  <PctField
+                    label="Preferred Return"
+                    valueFraction={readOverrideNum(overrides, 'pref_rate', 0.10)}
+                    overridden={'pref_rate' in overrides}
+                    liveMode={liveMode}
+                    onCommit={(f) => onSaveOverride({ pref_rate: f })}
+                    sub="LP hurdle before promote"
+                  />
+                </div>
+              );
+            })()}
+          </Card>
+
+          {/* Promote waterfall — editable hurdles + GP split per tier */}
+          <Card className="p-5">
+            <div className="flex items-center justify-between mb-1">
+              <h3 className="text-[13px] font-semibold text-ink-900">Promote Waterfall</h3>
+              <span className={cn('text-[11px]', liveMode ? 'text-ink-500' : 'text-ink-400')}>
+                {liveMode ? 'Editable · LP split derives from GP' : 'Read-only on demo deals'}
+              </span>
+            </div>
+            <p className="text-[11.5px] text-ink-500 mb-4">
+              Each tier splits residual cash once cumulative LP IRR clears its hurdle. Seeded from the
+              institutional benchmark — edit any hurdle or GP split to model a different promote.
+            </p>
+            <table className="w-full text-[12.5px]">
+              <thead>
+                <tr className="text-ink-500 text-[11px] border-b border-border">
+                  <th className="text-left font-medium pb-2">Tier</th>
+                  <th className="text-right font-medium pb-2 w-36">IRR Hurdle</th>
+                  <th className="text-right font-medium pb-2 w-36">GP Split</th>
+                  <th className="text-right font-medium pb-2 w-24">LP Split</th>
+                </tr>
+              </thead>
+              <tbody>
+                {WATERFALL_SEED.map((t, idx) => {
+                  const gpPath = `partnership.waterfall.${idx}.gp_split`;
+                  const hurdlePath = `partnership.waterfall.${idx}.hurdle_rate`;
+                  const gpFrac = readOverrideNum(overrides, gpPath, t.gp);
+                  const hurdleFrac = readOverrideNum(overrides, hurdlePath, t.hurdle);
+                  return (
+                    <tr key={t.label} className="border-b border-border/50">
+                      <td className="py-2 text-ink-800">{t.label}</td>
+                      <td className="py-1 text-right">
+                        <CellPct
+                          valueFraction={hurdleFrac}
+                          overridden={hurdlePath in overrides}
+                          liveMode={liveMode}
+                          onCommit={(f) => onSaveOverride({ [hurdlePath]: f })}
+                        />
+                      </td>
+                      <td className="py-1 text-right">
+                        <CellPct
+                          valueFraction={gpFrac}
+                          overridden={gpPath in overrides}
+                          liveMode={liveMode}
+                          onCommit={(f) => onSaveOverride({ [gpPath]: f, [`partnership.waterfall.${idx}.lp_split`]: round6(1 - f) })}
+                        />
+                      </td>
+                      <td className="py-2 text-right tabular-nums text-ink-500">
+                        {Math.round((1 - gpFrac) * 100)}%
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+            {!liveMode && (
+              <div className="mt-4 text-[11.5px] text-ink-400">
+                Waterfall editing is available on live deals. The demo shows the benchmark structure.
               </div>
-            );
-          })()}
-          <div className="mt-5 text-[11.5px] text-ink-500">
-            Adjust hurdle rates and split percentages to model promote scenarios.
-          </div>
-        </Card>
+            )}
+          </Card>
+        </div>
       )}
 
       {tab === 'Distribution Timeline' && (
@@ -563,5 +714,110 @@ function Row({ k, v }: { k: string; v: string }) {
       <span className="text-ink-500">{k}</span>
       <span className="font-medium tabular-nums">{v}</span>
     </div>
+  );
+}
+
+function round6(n: number): number {
+  return Math.round(n * 1e6) / 1e6;
+}
+
+// Labeled editable percent field — displays whole-percent, saves a fraction.
+function PctField({
+  label, valueFraction, overridden, liveMode, onCommit, sub,
+}: {
+  label: string;
+  valueFraction: number;
+  overridden: boolean;
+  liveMode: boolean;
+  onCommit: (fraction: number) => void;
+  sub?: string;
+}) {
+  const [draft, setDraft] = useState<string | null>(null);
+  const shown = draft ?? (valueFraction * 100).toFixed(0);
+  const commit = () => {
+    if (draft === null) return;
+    const t = draft.trim();
+    setDraft(null);
+    if (t === '') return;
+    const pct = Number(t);
+    if (Number.isFinite(pct)) onCommit(round6(pct / 100));
+  };
+  return (
+    <div>
+      <label className="block text-[11.5px] text-ink-500 mb-1">
+        {label}
+        {overridden && (
+          <span className="ml-1.5 text-[10px] text-amber-600" title="Analyst override">• edited</span>
+        )}
+      </label>
+      <div className={cn(
+        'flex items-center gap-1 px-3 py-2 rounded-md border',
+        liveMode
+          ? 'border-border focus-within:border-brand-500 focus-within:ring-2 focus-within:ring-brand-100'
+          : 'border-transparent bg-ink-300/10',
+        overridden && 'border-amber-400',
+      )}>
+        <input
+          value={shown}
+          onChange={(e) => setDraft(e.target.value)}
+          onBlur={commit}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter') e.currentTarget.blur();
+            if (e.key === 'Escape') { setDraft(null); e.currentTarget.blur(); }
+          }}
+          readOnly={!liveMode}
+          inputMode="decimal"
+          aria-label={label}
+          className="w-full bg-transparent text-[13px] tabular-nums text-ink-900 focus:outline-none"
+        />
+        <span className="text-ink-400 text-[12px]">%</span>
+      </div>
+      {sub && <div className="text-[10.5px] text-ink-400 mt-1">{sub}</div>}
+    </div>
+  );
+}
+
+// Compact editable percent cell for the waterfall table.
+function CellPct({
+  valueFraction, overridden, liveMode, onCommit,
+}: {
+  valueFraction: number;
+  overridden: boolean;
+  liveMode: boolean;
+  onCommit: (fraction: number) => void;
+}) {
+  const [draft, setDraft] = useState<string | null>(null);
+  const shown = draft ?? (valueFraction * 100).toFixed(0);
+  const commit = () => {
+    if (draft === null) return;
+    const t = draft.trim();
+    setDraft(null);
+    if (t === '') return;
+    const pct = Number(t);
+    if (Number.isFinite(pct)) onCommit(round6(pct / 100));
+  };
+  return (
+    <span className={cn(
+      'inline-flex items-center gap-0.5 justify-end rounded border px-1.5 py-0.5',
+      liveMode
+        ? 'border-border focus-within:border-brand-500 focus-within:ring-2 focus-within:ring-brand-100'
+        : 'border-transparent',
+      overridden && 'border-amber-400 bg-amber-50',
+    )}>
+      <input
+        value={shown}
+        onChange={(e) => setDraft(e.target.value)}
+        onBlur={commit}
+        onKeyDown={(e) => {
+          if (e.key === 'Enter') e.currentTarget.blur();
+          if (e.key === 'Escape') { setDraft(null); e.currentTarget.blur(); }
+        }}
+        readOnly={!liveMode}
+        inputMode="decimal"
+        aria-label="percent"
+        className="w-9 bg-transparent text-right text-[12.5px] tabular-nums text-ink-900 focus:outline-none"
+      />
+      <span className="text-ink-400 text-[11px]">%</span>
+    </span>
   );
 }
