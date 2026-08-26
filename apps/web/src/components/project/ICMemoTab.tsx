@@ -21,17 +21,19 @@
  * recommendation*, not like it generated a file.
  */
 
-import { useMemo, useState } from 'react';
 import {
   CheckCircle2, AlertTriangle, XCircle, TrendingUp, ShieldCheck,
-  Sliders, FileText, ListChecks, ClipboardList,
+  Sliders, FileText, ListChecks, ClipboardList, BarChart3, ArrowRight, Loader2,
 } from 'lucide-react';
+import Link from 'next/link';
+import { useState, useEffect, useMemo } from 'react';
 import { Card } from '@/components/ui/Card';
 import { Badge } from '@/components/ui/Badge';
 import { fmtCurrency, fmtPct, cn } from '@/lib/format';
 import { useEngineOutputs, getEngineField } from '@/lib/hooks/useEngineOutputs';
 import { useDeal } from '@/lib/hooks/useDeal';
 import { useVariance } from '@/lib/hooks/useVariance';
+import { api } from '@/lib/api';
 import type { Project } from '@/lib/mockData';
 import ExportTab from './ExportTab';
 
@@ -302,6 +304,7 @@ interface SectionState {
   risks: boolean;
   diligence: boolean;
   underwriting: boolean;
+  scenario: boolean;
 }
 
 const SEV_TONE: Record<string, Tone> = { CRITICAL: 'red', WARN: 'amber', INFO: 'green' };
@@ -336,6 +339,7 @@ export default function ICMemoTab({ project }: { project: Project }) {
     risks: true,
     diligence: true,
     underwriting: true,
+    scenario: true,
   });
 
   // Diligence items — the highest-$-impact broker-vs-T-12 variance flags,
@@ -547,6 +551,14 @@ export default function ICMemoTab({ project }: { project: Project }) {
                 </div>
               )}
 
+              {/* FON-54 #5 — Scenario Summary: a concise Base / Downside /
+                  Upside readout (IRR / EM / NOI / Exit) with a link to the
+                  full Scenario Analysis tab. Never duplicates the sensitivity
+                  experience — just the headline outcomes for the IC. */}
+              {sections.scenario && (
+                <ScenarioSummary dealId={dealId} />
+              )}
+
               {/* Diligence items — top broker-vs-T-12 variance flags by $ impact.
                   Bridges the fuller "Analysis" intent without the dashboard. */}
               {sections.diligence && diligenceFlags.length > 0 && (
@@ -637,8 +649,9 @@ export default function ICMemoTab({ project }: { project: Project }) {
                 ['thesis', 'Investment Thesis & Recommendation'],
                 ['highlights', 'Key Highlights'],
                 ['risks', 'Key Risks & Considerations'],
-                ['diligence', 'Diligence & Variance'],
                 ['underwriting', 'Underwriting Summary'],
+                ['scenario', 'Scenario Summary'],
+                ['diligence', 'Diligence & Variance'],
               ] as [keyof SectionState, string][]).map(([id, label]) => (
                 <label
                   key={id}
@@ -662,6 +675,171 @@ export default function ICMemoTab({ project }: { project: Project }) {
       <ExportTab project={project} />
     </div>
   );
+}
+
+// ─── FON-54 #5 — Scenario Summary ───────────────────────────────────
+// A concise Base / Downside / Upside readout for the IC memo. Reads the
+// same run-scoped compare endpoint the Scenario Analysis tab uses, but
+// renders only headline outcomes (IRR / EM / NOI / Exit) and links out to
+// the full sensitivity experience rather than duplicating it.
+interface ScenarioKpi {
+  id: string;
+  name: string;
+  isBase: boolean;
+  irr: number | null;
+  em: number | null;
+  noi: number | null;
+  exit: number | null;
+}
+
+function ScenarioSummary({ dealId }: { dealId: string }) {
+  const [rows, setRows] = useState<ScenarioKpi[] | null>(null);
+  const [loading, setLoading] = useState(true);
+  // Demo / mock deals (numeric ids) have no worker-backed scenarios.
+  const isMock = /^\d+$/.test(dealId);
+
+  useEffect(() => {
+    if (isMock) { setRows([]); setLoading(false); return; }
+    const ac = new AbortController();
+    let alive = true;
+    (async () => {
+      try {
+        const scs = await api.scenarios.list(dealId, ac.signal);
+        if (!alive) return;
+        const base = scs?.find((s) => s.is_base);
+        const others = (scs ?? []).filter((s) => !s.is_base).slice(0, 2);
+        const ids = [base?.id, ...others.map((s) => s.id)].filter(
+          (x): x is string => typeof x === 'string',
+        );
+        if (ids.length === 0) { setRows([]); return; }
+        const cmp = await api.scenarios.compare(dealId, ids);
+        if (!alive) return;
+        const kpis: ScenarioKpi[] = cmp.scenarios.map((c) => {
+          const e = c.engines as Record<string, { outputs?: unknown }>;
+          return {
+            id: c.scenario_id,
+            name: c.scenario_name,
+            isBase: c.is_base,
+            irr: pathNum(e.returns?.outputs, ['levered_irr']),
+            em: pathNum(e.returns?.outputs, ['equity_multiple']),
+            noi: pathNum(e.expense?.outputs, ['years', 0, 'noi']),
+            exit: pathNum(e.returns?.outputs, ['gross_sale_price']),
+          };
+        });
+        kpis.sort((a, b) => (a.isBase === b.isBase ? 0 : a.isBase ? -1 : 1));
+        setRows(kpis);
+      } catch {
+        if (alive) setRows(null);
+      } finally {
+        if (alive) setLoading(false);
+      }
+    })();
+    return () => { alive = false; ac.abort(); };
+  }, [dealId, isMock]);
+
+  const KPI: { key: keyof ScenarioKpi; label: string; fmt: (n: number) => string }[] = [
+    { key: 'irr', label: 'Levered IRR', fmt: (n) => fmtPct(n, 1) },
+    { key: 'em', label: 'Equity Multiple', fmt: (n) => `${n.toFixed(2)}x` },
+    { key: 'noi', label: 'NOI (Y1)', fmt: (n) => fmtCurrency(n, { compact: true }) },
+    { key: 'exit', label: 'Exit Value', fmt: (n) => fmtCurrency(n, { compact: true }) },
+  ];
+
+  return (
+    <div className="border-t border-border pt-4">
+      <div className="flex items-center justify-between mb-2.5">
+        <div className="flex items-center gap-2">
+          <BarChart3 size={14} className="text-ink-500" />
+          <h3 className="text-[13px] font-semibold text-ink-900">Scenario Summary</h3>
+        </div>
+        <Link
+          href={`/projects/${dealId}?tab=scenarios`}
+          className="inline-flex items-center gap-1 text-[11.5px] font-medium text-brand-700 hover:text-brand-800"
+        >
+          View Scenario Analysis <ArrowRight size={12} aria-hidden="true" />
+        </Link>
+      </div>
+
+      {loading ? (
+        <div className="flex items-center gap-2 py-4 text-[12px] text-ink-500">
+          <Loader2 size={13} className="animate-spin" /> Loading scenarios…
+        </div>
+      ) : !rows || rows.length === 0 ? (
+        <p className="text-[12px] text-ink-500 py-2">
+          No saved scenarios yet. Build a downside / upside case in{' '}
+          <Link href={`/projects/${dealId}?tab=scenarios`} className="text-brand-700 hover:underline">
+            Scenario Analysis
+          </Link>{' '}
+          to compare outcomes here.
+        </p>
+      ) : (
+        <div className="overflow-x-auto">
+          <table className="w-full text-[12.5px]">
+            <thead>
+              <tr className="text-ink-500 text-[11px] border-b border-border">
+                <th className="text-left font-medium pb-2">Outcome</th>
+                {rows.map((r) => (
+                  <th key={r.id} className="text-right font-medium pb-2">
+                    <span className="inline-flex items-center gap-1 justify-end">
+                      {r.isBase && (
+                        <span className="text-[9.5px] uppercase tracking-wide bg-ink-100 text-ink-600 px-1 rounded">Base</span>
+                      )}
+                      {r.name}
+                    </span>
+                  </th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {KPI.map((k) => {
+                const baseRow = rows.find((r) => r.isBase) ?? rows[0];
+                const baseVal = baseRow[k.key] as number | null;
+                return (
+                  <tr key={k.key} className="border-b border-border/50 last:border-0">
+                    <td className="py-1.5 text-ink-700">{k.label}</td>
+                    {rows.map((r) => {
+                      const v = r[k.key] as number | null;
+                      const delta = !r.isBase && v != null && baseVal != null
+                        ? (v - baseVal) / Math.max(Math.abs(baseVal), 1e-9)
+                        : null;
+                      return (
+                        <td key={r.id} className="py-1.5 text-right tabular-nums">
+                          <div className="text-ink-900">{v == null ? '—' : k.fmt(v)}</div>
+                          {delta != null && (
+                            <div className={cn('text-[10px]', delta >= 0 ? 'text-emerald-600' : 'text-red-600')}>
+                              {delta >= 0 ? '+' : ''}{(delta * 100).toFixed(1)}%
+                            </div>
+                          )}
+                        </td>
+                      );
+                    })}
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+          <p className="text-[11px] text-ink-400 mt-2">
+            Headline outcomes for the active scenarios · deltas vs Base. Full sensitivity tables live in Scenario Analysis.
+          </p>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function pathNum(obj: unknown, path: (string | number)[]): number | null {
+  let cur: unknown = obj;
+  for (const key of path) {
+    if (cur == null) return null;
+    if (typeof key === 'number') {
+      if (!Array.isArray(cur)) return null;
+      cur = cur[key];
+    } else if (typeof cur === 'object') {
+      cur = (cur as Record<string, unknown>)[key];
+    } else {
+      return null;
+    }
+  }
+  return typeof cur === 'number' ? cur : null;
 }
 
 function SupportStat({ label, value }: { label: string; value: string }) {
