@@ -1,11 +1,13 @@
 'use client';
-import { useState, type ReactNode } from 'react';
+import { useState, useEffect, useRef, useCallback, type ReactNode } from 'react';
 import { useParams } from 'next/navigation';
 import { DollarSign, AlertTriangle, Layers } from 'lucide-react';
 import { Card } from '@/components/ui/Card';
 import { Badge } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
 import { useToast } from '@/components/ui/Toast';
+import { api, isWorkerConnected } from '@/lib/api';
+import { useEngineRun } from '@/lib/hooks/useEngineRun';
 import EngineHeader from './EngineHeader';
 import EngineRightRail from './EngineRightRail';
 import EngineLegend from './EngineLegend';
@@ -69,9 +71,50 @@ export default function DebtTab({ projectId }: { projectId: number | string }) {
   const { toast } = useToast();
   const isKimptonDemo = projectId === 7;
   const { outputs, previous } = useEngineOutputs(dealId);
-  const { deal } = useDeal(dealId);
+  const { deal, refresh: refreshDeal } = useDeal(dealId);
   const [computing, setComputing] = useState(false);
   const [runToken, setRunToken] = useState<number | null>(null);
+
+  // ─── FON-63: editable debt tranches ────────────────────────────────
+  // Live deals can edit tranche terms (Senior rate/principal, activate
+  // PACE) from the Capital Stack table. Edits PATCH field_overrides and
+  // kick a debounced run-all so DSCR / leverage / returns re-derive.
+  const isMockId = /^\d+$/.test(dealId);
+  const liveMode = isWorkerConnected() && !isMockId;
+  const [overrides, setOverrides] = useState<Record<string, unknown>>({});
+  useEffect(() => {
+    setOverrides((deal?.field_overrides as Record<string, unknown> | undefined) ?? {});
+  }, [deal?.field_overrides]);
+  const fullRun = useEngineRun(liveMode ? dealId : '', 'returns', { runMode: 'all' });
+  const rerunTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  useEffect(() => () => {
+    if (rerunTimerRef.current) clearTimeout(rerunTimerRef.current);
+  }, []);
+  const onSaveOverride = useCallback(
+    async (patch: Record<string, number | null>) => {
+      if (!liveMode) {
+        toast('Editing is disabled on demo deals', { type: 'info' });
+        return;
+      }
+      const next = { ...overrides };
+      for (const [path, value] of Object.entries(patch)) {
+        if (value === null) delete next[path];
+        else next[path] = value;
+      }
+      setOverrides(next); // optimistic
+      try {
+        await api.deals.update(dealId, { field_overrides: next });
+        toast('Saved — re-running engines', { type: 'success' });
+        void refreshDeal?.();
+        if (rerunTimerRef.current) clearTimeout(rerunTimerRef.current);
+        rerunTimerRef.current = setTimeout(() => { void fullRun.run(); }, 1500);
+      } catch (err) {
+        setOverrides(overrides); // rollback
+        toast(`Save failed: ${err instanceof Error ? err.message : 'Unknown error'}`, { type: 'error' });
+      }
+    },
+    [overrides, dealId, liveMode, toast, refreshDeal, fullRun],
+  );
 
   // ─── Worker engine field reads ────────────────────────────────────
   // Sam QA: panels used to read Kimpton fixture (`o.financing.*`,
@@ -232,7 +275,14 @@ export default function DebtTab({ projectId }: { projectId: number | string }) {
       </div>
       <EngineLegend />
 
-      {tab === 'Capital Stack' && <CapitalStack stack={stack ?? null} />}
+      {tab === 'Capital Stack' && (
+        <CapitalStack
+          stack={stack ?? null}
+          liveMode={liveMode}
+          overrides={overrides}
+          onSave={onSaveOverride}
+        />
+      )}
 
       {tab === 'Debt Summary' && (
         <div className={cn(computing && 'relative pointer-events-none opacity-60')}>
@@ -614,8 +664,16 @@ function DebtScheduleTable({
 // ─────────────────────────── Capital Stack (FON-63) ───────────────────────────
 // Renders the multi-tranche debt stack the engine emits: per-tranche terms +
 // consolidated leverage/coverage metrics + covenants + honest warnings.
-// Read-only for now; add/edit tranches (PACE, floating config) is the next step.
-function CapitalStack({ stack }: { stack: DebtStackOutput | null }) {
+// Senior amount/rate are editable and PACE can be activated in-place; edits
+// persist as debt_stack.tranches.<idx>.* overrides and re-run the model.
+function CapitalStack({
+  stack, liveMode, overrides, onSave,
+}: {
+  stack: DebtStackOutput | null;
+  liveMode: boolean;
+  overrides: Record<string, unknown>;
+  onSave: (patch: Record<string, number | null>) => void;
+}) {
   if (!stack || stack.tranches.length === 0) {
     return (
       <Card className="p-10 text-center">
@@ -665,49 +723,89 @@ function CapitalStack({ stack }: { stack: DebtStackOutput | null }) {
         </div>
       )}
 
-      {/* Tranche table */}
+      {/* Tranche table — Senior + PACE, amount/rate editable in place. */}
+      {(() => {
+        // Always surface a PACE row so it can be activated; the engine only
+        // returns PACE once it's funded, so synthesize a placeholder (index 1)
+        // that writes the same debt_stack.tranches.1.* overrides.
+        type Row = StackTranche & { idx: number; synthetic: boolean };
+        const rows: Row[] = stack.tranches.map((t, i) => ({ ...t, idx: i, synthetic: false }));
+        if (!rows.some((r) => r.kind === 'pace')) {
+          rows.push({
+            idx: rows.length, kind: 'pace', label: 'PACE Loan',
+            loan_amount: 0, all_in_rate: null, rate_type: 'fixed',
+            annual_debt_service: null, interest_only: true, terms_pending: true, synthetic: true,
+          });
+        }
+        return (
       <Card className="p-0 overflow-hidden">
         <div className="px-5 py-3 border-b border-border flex items-center gap-2">
           <Layers size={15} className="text-ink-500" />
           <h3 className="text-[13px] font-semibold text-ink-900">Capital Stack</h3>
           <span className="text-[11px] text-ink-400">{stack.tranches.length} tranche{stack.tranches.length === 1 ? '' : 's'}</span>
+          <span className={cn('ml-auto text-[11px]', liveMode ? 'text-ink-500' : 'text-ink-400')}>
+            {liveMode ? 'Editable · changes re-run the model' : 'Read-only on demo deals'}
+          </span>
         </div>
         <div className="overflow-x-auto">
           <table className="w-full text-[12.5px]">
             <thead>
               <tr className="bg-ink-900 text-white text-[10px] uppercase tracking-wider">
                 <th className="text-left font-semibold px-5 py-2.5">Tranche</th>
-                <th className="text-right font-semibold px-5 py-2.5">Amount</th>
+                <th className="text-right font-semibold px-5 py-2.5 w-40">Amount</th>
                 <th className="text-left font-semibold px-5 py-2.5">Rate Type</th>
-                <th className="text-right font-semibold px-5 py-2.5">All-in Rate</th>
+                <th className="text-right font-semibold px-5 py-2.5 w-36">All-in Rate</th>
                 <th className="text-right font-semibold px-5 py-2.5">Debt Service</th>
                 <th className="text-left font-semibold px-5 py-2.5 w-28">Status</th>
               </tr>
             </thead>
             <tbody>
-              {stack.tranches.map((t, i) => (
-                <tr key={`${t.kind}-${i}`} className="border-t border-border">
-                  <td className="px-5 py-2.5 text-ink-900 font-medium">
-                    {t.label}
-                    <span className="ml-2 text-[10px] uppercase tracking-wide text-ink-400">{t.kind}</span>
-                  </td>
-                  <td className="px-5 py-2.5 text-right tabular-nums text-ink-900">{fmtCurrency(t.loan_amount, { compact: true })}</td>
-                  <td className="px-5 py-2.5 text-ink-700 capitalize">
-                    {t.rate_type}{t.interest_only ? ' · IO' : ''}
-                  </td>
-                  <td className="px-5 py-2.5 text-right tabular-nums text-ink-900">{t.all_in_rate == null ? '—' : fmtPct(t.all_in_rate, 2)}</td>
-                  <td className="px-5 py-2.5 text-right tabular-nums text-ink-900">{t.annual_debt_service == null ? '—' : fmtCurrency(t.annual_debt_service, { compact: true })}</td>
-                  <td className="px-5 py-2.5">
-                    {t.terms_pending
-                      ? <Badge tone="amber">Terms pending</Badge>
-                      : <Badge tone="green">Priced</Badge>}
-                  </td>
-                </tr>
-              ))}
+              {rows.map((t) => {
+                const amtPath = `debt_stack.tranches.${t.idx}.principal_usd`;
+                const ratePath = `debt_stack.tranches.${t.idx}.rate_pct`;
+                const amt = readOverrideNum(overrides, amtPath, t.loan_amount);
+                const rawRate = readOverrideNum(overrides, ratePath, t.all_in_rate ?? Number.NaN);
+                const rateVal = Number.isFinite(rawRate) ? rawRate : null;
+                const muted = t.synthetic && amt <= 0;
+                return (
+                  <tr key={`${t.kind}-${t.idx}`} className={cn('border-t border-border', muted && 'opacity-70')}>
+                    <td className="px-5 py-2.5 text-ink-900 font-medium">
+                      {t.label}
+                      <span className="ml-2 text-[10px] uppercase tracking-wide text-ink-400">{t.kind}</span>
+                    </td>
+                    <td className="px-4 py-2 text-right">
+                      <CellUsd value={amt} overridden={amtPath in overrides} liveMode={liveMode}
+                        onCommit={(v) => onSave({ [amtPath]: v })} />
+                    </td>
+                    <td className="px-5 py-2.5 text-ink-700 capitalize">
+                      {t.rate_type}{t.interest_only ? ' · IO' : ''}
+                    </td>
+                    <td className="px-4 py-2 text-right">
+                      <CellPct value={rateVal} overridden={ratePath in overrides} liveMode={liveMode}
+                        onCommit={(f) => onSave({ [ratePath]: f })} />
+                    </td>
+                    <td className="px-5 py-2.5 text-right tabular-nums text-ink-900">{t.annual_debt_service == null ? '—' : fmtCurrency(t.annual_debt_service, { compact: true })}</td>
+                    <td className="px-5 py-2.5">
+                      {muted
+                        ? <span className="text-[10.5px] text-ink-400">Not funded</span>
+                        : t.terms_pending
+                          ? <Badge tone="amber">Terms pending</Badge>
+                          : <Badge tone="green">Priced</Badge>}
+                    </td>
+                  </tr>
+                );
+              })}
             </tbody>
           </table>
         </div>
+        {liveMode && (
+          <div className="px-5 py-2.5 border-t border-border text-[11px] text-ink-500 leading-relaxed">
+            Edit an amount or rate to reprice a tranche. Enter a PACE amount + rate to add it to the stack — leave a tranche&apos;s rate blank to keep it in leverage but out of debt service.
+          </div>
+        )}
       </Card>
+        );
+      })()}
 
       {/* Covenants */}
       {stack.covenants && (
@@ -740,9 +838,119 @@ function CapitalStack({ stack }: { stack: DebtStackOutput | null }) {
       )}
 
       <p className="text-[11px] text-ink-400 leading-relaxed">
-        Seeded from the deal&apos;s extracted senior loan. Editing tranches (add PACE / mezzanine,
-        floating-rate terms) and live covenant testing are the next build steps.
+        Seeded from the deal&apos;s extracted senior loan plus an institutional PACE placeholder.
+        Amortization / IO-period / fee edits and live covenant testing are the next build steps.
       </p>
     </div>
+  );
+}
+
+// FON-63 — editable-cell helpers (mirror the Partnership tab pattern).
+function round6(n: number): number {
+  return Math.round(n * 1e6) / 1e6;
+}
+function readOverrideNum(
+  overrides: Record<string, unknown>,
+  path: string,
+  fallback: number,
+): number {
+  const raw = overrides[path];
+  const val = raw && typeof raw === 'object' && 'value' in raw
+    ? (raw as { value: unknown }).value
+    : raw;
+  if (val == null || val === '') return fallback;
+  const n = typeof val === 'number' ? val : Number(val);
+  return Number.isFinite(n) ? n : fallback;
+}
+
+// Editable whole-percent cell (displays %, saves a fraction).
+function CellPct({
+  value, overridden, liveMode, onCommit,
+}: {
+  value: number | null;
+  overridden: boolean;
+  liveMode: boolean;
+  onCommit: (fraction: number) => void;
+}) {
+  const [draft, setDraft] = useState<string | null>(null);
+  const shown = draft ?? (value == null ? '' : (value * 100).toFixed(2));
+  const commit = () => {
+    if (draft === null) return;
+    const t = draft.trim();
+    setDraft(null);
+    if (t === '') return;
+    const pct = Number(t);
+    if (Number.isFinite(pct)) onCommit(round6(pct / 100));
+  };
+  return (
+    <span className={cn(
+      'inline-flex items-center gap-0.5 justify-end rounded border px-1.5 py-1',
+      liveMode
+        ? 'border-border focus-within:border-brand-500 focus-within:ring-2 focus-within:ring-brand-100'
+        : 'border-transparent',
+      overridden && 'border-amber-400 bg-amber-50',
+    )}>
+      <input
+        value={shown}
+        placeholder={liveMode ? '—' : ''}
+        onChange={(e) => setDraft(e.target.value)}
+        onBlur={commit}
+        onKeyDown={(e) => {
+          if (e.key === 'Enter') e.currentTarget.blur();
+          if (e.key === 'Escape') { setDraft(null); e.currentTarget.blur(); }
+        }}
+        readOnly={!liveMode}
+        inputMode="decimal"
+        aria-label="all-in rate percent"
+        className="w-12 bg-transparent text-right text-[12.5px] tabular-nums text-ink-900 focus:outline-none"
+      />
+      <span className="text-ink-400 text-[11px]">%</span>
+    </span>
+  );
+}
+
+// Editable dollar cell — displays/edits in $millions for a friendly input.
+function CellUsd({
+  value, overridden, liveMode, onCommit,
+}: {
+  value: number;
+  overridden: boolean;
+  liveMode: boolean;
+  onCommit: (usd: number) => void;
+}) {
+  const [draft, setDraft] = useState<string | null>(null);
+  const shown = draft ?? (value ? (value / 1e6).toFixed(2) : '0');
+  const commit = () => {
+    if (draft === null) return;
+    const t = draft.trim();
+    setDraft(null);
+    if (t === '') return;
+    const m = Number(t);
+    if (Number.isFinite(m)) onCommit(Math.max(0, Math.round(m * 1e6)));
+  };
+  return (
+    <span className={cn(
+      'inline-flex items-center gap-0.5 justify-end rounded border px-1.5 py-1',
+      liveMode
+        ? 'border-border focus-within:border-brand-500 focus-within:ring-2 focus-within:ring-brand-100'
+        : 'border-transparent',
+      overridden && 'border-amber-400 bg-amber-50',
+    )}>
+      <span className="text-ink-400 text-[11px]">$</span>
+      <input
+        value={shown}
+        onChange={(e) => setDraft(e.target.value)}
+        onBlur={commit}
+        onKeyDown={(e) => {
+          if (e.key === 'Enter') e.currentTarget.blur();
+          if (e.key === 'Escape') { setDraft(null); e.currentTarget.blur(); }
+        }}
+        readOnly={!liveMode}
+        inputMode="decimal"
+        aria-label="tranche amount in millions"
+        className="w-14 bg-transparent text-right text-[12.5px] tabular-nums text-ink-900 focus:outline-none"
+      />
+      <span className="text-ink-400 text-[11px]">M</span>
+    </span>
   );
 }

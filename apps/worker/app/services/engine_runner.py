@@ -3477,6 +3477,9 @@ def _build_input_for(
             # FON-63 — deal basis for the multi-tranche stack's LTV / LTC.
             purchase_price_usd=base.get("purchase_price"),
             total_capital_usd=getattr(capital_out, "total_capital", None),
+            # FON-63 — analyst per-tranche edits (Senior rate/principal/amort,
+            # activated PACE, etc.) layered over the default stack.
+            debt_stack_overrides=base.get("debt_stack_overrides"),
         )
 
     if engine_name == "returns":

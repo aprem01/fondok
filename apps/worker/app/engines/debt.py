@@ -13,7 +13,7 @@ schedule identically — see ``test_single_senior_tranche_matches_legacy_single_
 
 from __future__ import annotations
 
-from typing import Annotated
+from typing import Annotated, Any
 from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field
@@ -47,6 +47,12 @@ class DebtEngineInputExt(DebtEngineInput):
     # the legacy single-loan callers don't have to supply them.
     purchase_price_usd: Annotated[float, Field(ge=0)] | None = None
     total_capital_usd: Annotated[float, Field(ge=0)] | None = None
+    # FON-63 — analyst per-tranche edits from the Debt tab, shaped
+    # ``{"tranches": {0: {field: value}, 1: {...}}, <stack-level keys>}``.
+    # The senior (index 0) is seeded from the deal; index 1 is the PACE
+    # placeholder an analyst activates by entering a principal. Optional so
+    # legacy callers are byte-for-byte unaffected.
+    debt_stack_overrides: dict[str, Any] | None = None
 
 
 class DebtMonth(BaseModel):
@@ -97,17 +103,129 @@ def pmt(rate: float, nper: int, pv: float) -> float:
     return pv * (rate * factor) / (factor - 1.0)
 
 
+# FON-63 — a forward-SOFR assumption for any floating tranche the analyst
+# configures. Fixed tranches (the default senior) ignore it.
+_SOFR_DEFAULT = 0.043
+
+# FON-63 — the editable per-tranche fields, keyed by the override path
+# ``debt_stack.tranches.<idx>.<field>``. Values arrive as fractions (rates,
+# fees) or raw units (USD, months), matching the Debt tab inputs.
+_TRANCHE_OVERRIDE_FIELDS = (
+    "principal_usd",
+    "rate_pct",
+    "amortization_months",
+    "io_period_months",
+    "upfront_fee_pct",
+    "exit_fee_pct",
+)
+
+
+def _build_default_tranches(payload: DebtEngineInputExt) -> list[LoanTranche]:
+    """Deal-agnostic institutional default stack: the deal's own senior loan
+    (index 0) plus a PACE placeholder (index 1). PACE starts at $0 / pending so
+    the default economics equal the legacy single-senior model until an analyst
+    activates it in the Debt tab."""
+    senior_is_io = (
+        payload.amortization_years == 0
+        or payload.interest_only_years >= (payload.term_years or 0)
+    )
+    senior = LoanTranche(
+        kind="senior",
+        label="Senior Loan",
+        loan_amount=payload.loan_amount,
+        rate_type="fixed",
+        fixed_rate=payload.interest_rate,
+        interest_only=senior_is_io,
+        amortization_years=payload.amortization_years or None,
+        term_years=payload.term_years or None,
+    )
+    pace = LoanTranche(
+        kind="pace",
+        label="PACE Loan",
+        loan_amount=0.0,
+        terms_pending=True,
+    )
+    return [senior, pace]
+
+
+def _apply_tranche_overrides(
+    tranches: list[LoanTranche], overrides: dict[str, Any] | None
+) -> list[LoanTranche]:
+    """Layer analyst per-tranche edits onto the seed tranches. Each override
+    maps a Debt-tab field onto the ``LoanTranche`` shape; supplying a rate on a
+    pending tranche activates it. JSONB round-trips can key the tranche index as
+    an int or a string, so both are accepted."""
+    if not overrides:
+        return tranches
+    tranche_ovs = overrides.get("tranches") or {}
+    if not tranche_ovs:
+        return tranches
+    out: list[LoanTranche] = []
+    for idx, t in enumerate(tranches):
+        ov = tranche_ovs.get(idx)
+        if ov is None:
+            ov = tranche_ovs.get(str(idx))
+        if not ov:
+            out.append(t)
+            continue
+        data = t.model_dump()
+        if "principal_usd" in ov:
+            data["loan_amount"] = max(0.0, float(ov["principal_usd"]))
+        if "rate_pct" in ov:
+            data["fixed_rate"] = float(ov["rate_pct"])
+            data["rate_type"] = "fixed"
+            data["terms_pending"] = False
+        if "amortization_months" in ov:
+            months = float(ov["amortization_months"])
+            years = int(round(months / 12)) if months > 0 else 0
+            data["amortization_years"] = years or None
+            if months > 0:
+                data["interest_only"] = False
+        if "io_period_months" in ov:
+            io_months = float(ov["io_period_months"])
+            data["interest_only"] = io_months > 0
+            if io_months > 0:
+                data["amortization_years"] = None
+        if "upfront_fee_pct" in ov:
+            data["origination_fee_pct"] = float(ov["upfront_fee_pct"])
+        if "exit_fee_pct" in ov:
+            data["exit_fee_pct"] = float(ov["exit_fee_pct"])
+        # A tranche with a principal but still no resolvable rate stays pending
+        # (compute_debt_stack will exclude it from debt service, not invent one).
+        if (
+            data.get("fixed_rate") is None
+            and data.get("spread") is None
+            and data["loan_amount"] > 0
+        ):
+            data["terms_pending"] = True
+        out.append(LoanTranche(**data))
+    return out
+
+
 class DebtEngine(BaseEngine[DebtEngineInputExt, DebtEngineOutputExt]):
     """Build the debt service schedule and DSCR / debt-yield headline metrics."""
 
     name = "debt"
 
     def run(self, payload: DebtEngineInputExt) -> DebtEngineOutputExt:
-        loan = payload.loan_amount
-        annual_rate = payload.interest_rate
+        # FON-63 — resolve the tranche stack up front. The senior (index 0)
+        # drives the amortization schedule below; with no overrides the
+        # resolved senior equals the deal's seed, so the schedule is
+        # byte-for-byte identical to the legacy single-loan path.
+        resolved_tranches = _apply_tranche_overrides(
+            _build_default_tranches(payload), payload.debt_stack_overrides
+        )
+        senior = resolved_tranches[0]
+
+        loan = senior.loan_amount
+        annual_rate = senior.effective_rate(_SOFR_DEFAULT) or senior.fixed_rate or 0.0
         monthly_rate = annual_rate / 12.0
-        amort_months = payload.amortization_years * 12
-        io_months = payload.interest_only_years * 12
+        if senior.interest_only:
+            amort_months = 0
+            io_months = (payload.term_years or 0) * 12
+        else:
+            amort_months = (senior.amortization_years or 0) * 12
+            io_months = payload.interest_only_years * 12
 
         # Monthly payment for the amortizing portion.
         amortizing_pmt = pmt(monthly_rate, amort_months, loan) if amort_months else 0.0
@@ -195,48 +313,69 @@ class DebtEngine(BaseEngine[DebtEngineInputExt, DebtEngineOutputExt]):
                 )
             )
 
-        annual_ds = schedule[0].debt_service if schedule else 0.0
-        year1_dscr = schedule[0].dscr if schedule else None
+        senior_annual_ds = schedule[0].debt_service if schedule else 0.0
+
+        # FON-63 — the institutional multi-tranche view. Only tranches with a
+        # positive balance (or a resolvable rate) enter the stack, so the default
+        # PACE placeholder ($0 / pending) is excluded until an analyst activates
+        # it — keeping every existing deal's leverage and coverage unchanged.
+        active_tranches = [
+            t for t in resolved_tranches
+            if t.loan_amount > 0 or t.effective_rate(_SOFR_DEFAULT) is not None
+        ]
+        debt_stack = compute_debt_stack(
+            active_tranches,
+            year_one_noi=payload.noi_by_year[0] if payload.noi_by_year else None,
+            property_value=payload.purchase_price_usd,
+            total_cost=payload.total_capital_usd,
+            default_index=_SOFR_DEFAULT,
+            deal_id=payload.deal_id,
+        )
+
+        # Reconcile the senior tranche's debt service to the month-by-month
+        # schedule (compute_debt_stack uses an annual level payment; the schedule
+        # is monthly-compounded) so the Capital Stack view and the Debt Summary
+        # DSCR agree and amortizing deals see no drift.
+        if debt_stack.tranches and debt_stack.tranches[0].kind == "senior":
+            sr = debt_stack.tranches[0]
+            if sr.annual_debt_service is not None:
+                delta = senior_annual_ds - sr.annual_debt_service
+                sr.annual_debt_service = senior_annual_ds
+                debt_stack.total_annual_debt_service += delta
+                if payload.noi_by_year and debt_stack.total_annual_debt_service > 0:
+                    debt_stack.year_one_dscr = (
+                        payload.noi_by_year[0]
+                        / debt_stack.total_annual_debt_service
+                    )
+
+        # Headline metrics reflect the whole stack: senior debt service from the
+        # accurate schedule plus any priced junior tranche (activated PACE/mezz).
+        extra_ds = sum(
+            t.annual_debt_service or 0.0
+            for t in debt_stack.tranches
+            if t.kind != "senior" and t.annual_debt_service is not None
+        )
+        annual_ds = senior_annual_ds + extra_ds
+        total_debt = debt_stack.total_debt or loan
+        year1_dscr = (
+            (payload.noi_by_year[0] / annual_ds)
+            if payload.noi_by_year and annual_ds > 0
+            else None
+        )
         year1_dy = (
-            (payload.noi_by_year[0] / loan)
-            if payload.noi_by_year and loan > 0
+            (payload.noi_by_year[0] / total_debt)
+            if payload.noi_by_year and total_debt > 0
             else None
         )
         dscrs = [yr.dscr for yr in schedule if yr.dscr is not None]
         avg_dscr = sum(dscrs) / len(dscrs) if dscrs else None
-
-        # FON-63 — seed the multi-tranche stack from this deal's extracted senior
-        # loan (deal-agnostic; reconciles with the deal basis). A user layers on
-        # PACE / mezz + floating terms in the Debt tab.
-        senior_is_io = (
-            payload.amortization_years == 0
-            or payload.interest_only_years >= (payload.term_years or 0)
-        )
-        senior_tranche = LoanTranche(
-            kind="senior",
-            label="Senior Loan",
-            loan_amount=payload.loan_amount,
-            rate_type="fixed",
-            fixed_rate=payload.interest_rate,
-            interest_only=senior_is_io,
-            amortization_years=payload.amortization_years or None,
-            term_years=payload.term_years or None,
-        )
-        debt_stack = compute_debt_stack(
-            [senior_tranche],
-            year_one_noi=payload.noi_by_year[0] if payload.noi_by_year else None,
-            property_value=payload.purchase_price_usd,
-            total_cost=payload.total_capital_usd,
-            default_index=0.0,
-            deal_id=payload.deal_id,
-        )
 
         return DebtEngineOutputExt(
             deal_id=payload.deal_id,
             annual_debt_service=annual_ds,
             schedule=schedule,
             avg_dscr=avg_dscr,
-            loan_amount=payload.loan_amount,
+            loan_amount=total_debt,
             monthly_schedule=monthly_schedule,
             year_one_dscr=year1_dscr,
             year_one_debt_yield=year1_dy,
