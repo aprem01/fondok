@@ -163,7 +163,21 @@ export default function ProjectDetailPage() {
       });
     }
   };
-  const onMarkICReady = () => toast('Marked as IC Ready', { type: 'success' });
+  // FON-54 #9 — persist IC-Ready status (was a stub toast) so the header pill
+  // + pipeline reflect it. Mock/demo deals just toast.
+  const onMarkICReady = async () => {
+    if (!workerConnected || isMockId) {
+      toast('Marked as IC Ready', { type: 'success' });
+      return;
+    }
+    try {
+      await workerApi.deals.update(rawId, { status: 'IC Ready' });
+      toast('Marked as IC Ready', { type: 'success' });
+      void refreshDeal?.();
+    } catch (err) {
+      toast(`Couldn't mark IC Ready: ${err instanceof Error ? err.message : 'Unknown error'}`, { type: 'error' });
+    }
+  };
   const onArchive = async () => {
     if (workerConnected && !isMockId) {
       try {

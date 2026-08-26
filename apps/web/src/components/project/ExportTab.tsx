@@ -12,6 +12,9 @@ import type { Project } from '@/lib/mockData';
 import { useToast } from '@/components/ui/Toast';
 import { IntroCard } from '@/components/help/IntroCard';
 import { useEngineOutputs } from '@/lib/hooks/useEngineOutputs';
+import { useDeal } from '@/lib/hooks/useDeal';
+import { api, isWorkerConnected } from '@/lib/api';
+import { CheckCircle2 } from 'lucide-react';
 
 type ExportPath = 'excel' | 'memo.pdf' | 'presentation.pptx';
 
@@ -63,6 +66,29 @@ export default function ExportTab({ project }: { project: Project }) {
   const sourceLabel = hasRun
     ? `Latest model run${runStamp ? ` · ${runStamp}` : ''}`
     : 'Awaiting model run';
+
+  // FON-54 #9 — "Mark as IC Ready" is the final workflow action; it's gated on
+  // a completed model + a live deal, and now actually persists the deal status
+  // (was a stub toast) so the header pill + pipeline reflect it.
+  const { deal, refresh: refreshDeal } = useDeal(dealId);
+  const isMockId = /^\d+$/.test(dealId);
+  const liveMode = isWorkerConnected() && !isMockId;
+  const alreadyReady = (deal?.status ?? '').toLowerCase().replace(/[\s_]/g, '') === 'icready';
+  const canMarkReady = liveMode && hasRun && !alreadyReady;
+  const [markingReady, setMarkingReady] = useState(false);
+  const onMarkICReady = async () => {
+    if (!canMarkReady) return;
+    setMarkingReady(true);
+    try {
+      await api.deals.update(dealId, { status: 'IC Ready' });
+      toast(`${project.name} marked IC Ready`, { type: 'success' });
+      void refreshDeal?.();
+    } catch (err) {
+      toast(`Couldn't mark IC Ready: ${err instanceof Error ? err.message : 'Unknown error'}`, { type: 'error' });
+    } finally {
+      setMarkingReady(false);
+    }
+  };
 
   const handleDownload = (path: ExportPath) => {
     if (!workerConnected) return;
@@ -176,22 +202,37 @@ export default function ExportTab({ project }: { project: Project }) {
         </div>
       </Card>
 
-      <Card className="p-5 bg-brand-50 border-brand-100">
-        <div className="flex items-center justify-between">
+      {/* FON-54 #9 — Mark as IC Ready. Gated on a completed model + live deal;
+          persists the deal status so the header pill + pipeline update. */}
+      <Card className={alreadyReady ? 'p-5 bg-success-50 border-success-100' : 'p-5 bg-brand-50 border-brand-100'}>
+        <div className="flex items-center justify-between gap-4">
           <div>
-            <h3 className="text-[14px] font-semibold text-ink-900">Ready for Investment Committee?</h3>
-            <p className="text-[12px] text-ink-700 mt-1">Mark this project as IC Ready to notify your team for review.</p>
+            <h3 className="text-[14px] font-semibold text-ink-900">
+              {alreadyReady ? 'This deal is IC Ready' : 'Ready for Investment Committee?'}
+            </h3>
+            <p className="text-[12px] text-ink-700 mt-1">
+              {alreadyReady
+                ? 'Marked ready for the investment committee. Re-running the model keeps this status.'
+                : hasRun
+                  ? 'Mark this project as IC Ready to notify your team for review.'
+                  : 'Run the underwriting model first — IC Ready is available once the memo reflects a completed run.'}
+            </p>
           </div>
-          {/* Status flip is local-only today — the worker doesn't yet expose
-              PATCH /deals/{id}/status. Toast names the deal so users know
-              their click registered, and we route them to the project header
-              kebab where the same action lives alongside Archive/Export. */}
-          <Button
-            variant="primary"
-            onClick={() => toast(`${project.name} flagged IC Ready · status sync pending worker rollout`, { type: 'success' })}
-          >
-            Mark as IC Ready
-          </Button>
+          {alreadyReady ? (
+            <span className="inline-flex items-center gap-1.5 text-[13px] font-semibold text-success-700 shrink-0">
+              <CheckCircle2 size={16} /> IC Ready
+            </span>
+          ) : (
+            <Button
+              variant="primary"
+              disabled={!canMarkReady || markingReady}
+              title={!hasRun ? 'Run the model before marking IC Ready' : undefined}
+              onClick={onMarkICReady}
+            >
+              {markingReady ? <Loader2 size={14} className="animate-spin" /> : null}
+              Mark as IC Ready
+            </Button>
+          )}
         </div>
       </Card>
     </div>

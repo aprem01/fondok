@@ -1052,7 +1052,7 @@ export const api = {
       id: string,
       patch: Partial<Pick<WorkerDeal,
         'name' | 'city' | 'keys' | 'service' | 'brand'
-        | 'deal_type' | 'return_profile' | 'positioning'>> & {
+        | 'deal_type' | 'return_profile' | 'positioning' | 'status'>> & {
         field_overrides?: Record<string, unknown>;
       },
     ) =>
