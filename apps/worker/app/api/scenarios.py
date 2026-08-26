@@ -35,6 +35,7 @@ from ..database import get_session
 from ..services.engine_runner import (
     ENGINE_NAMES,
     get_latest_outputs,
+    get_run_status,
     run_all_engines,
 )
 from .deals import _assert_deal_belongs_to_tenant, get_tenant_id
@@ -886,29 +887,32 @@ async def compare_scenarios(
             await session.commit()
             record = record.model_copy(update={"last_run_id": run_id})
 
-        # Read the persisted engine outputs back out so every column
-        # reflects what the DB carries (the source of truth the UI is
-        # already polling for elsewhere).
-        engines = await get_latest_outputs(
-            session, deal_id=str(deal_id), tenant_id=str(tenant_id)
-        )
-        # Filter to the rows whose run_id matches this scenario's
-        # ``last_run_id`` — defends against compare picking up a stale
-        # row from a different scenario's older run.
+        # FON-69 — read this scenario's OWN run directly, keyed by run_id,
+        # instead of the deal-global latest-then-filter. The old approach
+        # fetched the globally-latest row per engine and dropped any whose
+        # run_id != last_run_id; the moment any newer run existed (another
+        # scenario's compare, or a deal-level "run model"), every Base row was a
+        # different run and got filtered out — leaving the Base column blank
+        # even though its outputs exist. A run_id-scoped read pins each column
+        # to its own run.
         scoped: dict[str, dict[str, Any]] = {}
-        for name in ENGINE_NAMES:
-            entry = engines.get(name)
-            if entry is None:
-                continue
-            if (
-                record.last_run_id is not None
-                and entry.get("run_id")
-                and str(entry["run_id"]) != str(record.last_run_id)
-            ):
-                # The latest persisted row belongs to a different run.
-                # Skip rather than render mixed-scenario data.
-                continue
-            scoped[name] = entry
+        if record.last_run_id is not None:
+            run_rows = await get_run_status(
+                session,
+                deal_id=str(deal_id),
+                run_id=str(record.last_run_id),
+                tenant_id=str(tenant_id),
+            )
+            for entry in run_rows:
+                name = entry.get("engine")
+                if name in ENGINE_NAMES:
+                    scoped[name] = entry
+        else:
+            # No run for this scenario yet — fall back to the deal's latest.
+            engines = await get_latest_outputs(
+                session, deal_id=str(deal_id), tenant_id=str(tenant_id)
+            )
+            scoped = {n: e for n, e in engines.items() if n in ENGINE_NAMES}
         cells.append(
             CompareCell(
                 scenario_id=record.id,
