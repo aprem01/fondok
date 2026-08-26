@@ -278,7 +278,7 @@ export default function CashFlowTab({ projectId }: { projectId: number | string 
             name="Cash Flow Engine"
             desc="Computes levered and unlevered cash flow from operations through hold period."
             outputs={['Levered CF', 'Unlevered CF', 'CoC', 'DSCR']}
-            dependsOn="P&L"
+            dependsOn="P&L · Investment · Debt · Returns"
             dealId={dealId}
             engineName="returns"
             onRunStart={() => setComputing(true)}
@@ -337,7 +337,7 @@ export default function CashFlowTab({ projectId }: { projectId: number | string 
         name="Cash Flow Engine"
         desc="Computes levered and unlevered cash flow from operations through hold period."
         outputs={['Levered CF', 'Unlevered CF', 'CoC', 'DSCR']}
-        dependsOn="P&L"
+        dependsOn="P&L · Investment · Debt · Returns"
         complete
         dealId={dealId}
         engineName="returns"
