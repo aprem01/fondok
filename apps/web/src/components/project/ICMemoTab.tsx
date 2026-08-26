@@ -789,7 +789,8 @@ function ScenarioSummary({ dealId }: { dealId: string }) {
                 {rows.map((r) => (
                   <th key={r.id} className="text-right font-medium pb-2">
                     <span className="inline-flex items-center gap-1 justify-end">
-                      {r.isBase && (
+                      {/* FON-65 — avoid "Base Base": the base scenario is named "Base". */}
+                      {r.isBase && r.name.toLowerCase() !== 'base' && (
                         <span className="text-[9.5px] uppercase tracking-wide bg-ink-100 text-ink-600 px-1 rounded">Base</span>
                       )}
                       {r.name}

@@ -747,7 +747,7 @@ function PctField({
       <label className="block text-[11.5px] text-ink-500 mb-1">
         {label}
         {overridden && (
-          <span className="ml-1.5 text-[10px] text-amber-600" title="Analyst override">• edited</span>
+          <span className="ml-1.5 text-[10px] text-blue-600" title="Analyst override">• edited</span>
         )}
       </label>
       <div className={cn(
@@ -755,7 +755,7 @@ function PctField({
         liveMode
           ? 'border-border focus-within:border-brand-500 focus-within:ring-2 focus-within:ring-brand-100'
           : 'border-transparent bg-ink-300/10',
-        overridden && 'border-amber-400',
+        overridden && 'border-blue-400',
       )}>
         <input
           value={shown}
@@ -802,7 +802,7 @@ function CellPct({
       liveMode
         ? 'border-border focus-within:border-brand-500 focus-within:ring-2 focus-within:ring-brand-100'
         : 'border-transparent',
-      overridden && 'border-amber-400 bg-amber-50',
+      overridden && 'border-blue-400 bg-blue-50',
     )}>
       <input
         value={shown}

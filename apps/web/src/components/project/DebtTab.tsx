@@ -888,7 +888,7 @@ function CellPct({
       liveMode
         ? 'border-border focus-within:border-brand-500 focus-within:ring-2 focus-within:ring-brand-100'
         : 'border-transparent',
-      overridden && 'border-amber-400 bg-amber-50',
+      overridden && 'border-blue-400 bg-blue-50',
     )}>
       <input
         value={shown}
@@ -934,7 +934,7 @@ function CellUsd({
       liveMode
         ? 'border-border focus-within:border-brand-500 focus-within:ring-2 focus-within:ring-brand-100'
         : 'border-transparent',
-      overridden && 'border-amber-400 bg-amber-50',
+      overridden && 'border-blue-400 bg-blue-50',
     )}>
       <span className="text-ink-400 text-[11px]">$</span>
       <input

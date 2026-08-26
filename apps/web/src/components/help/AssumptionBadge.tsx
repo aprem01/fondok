@@ -114,7 +114,7 @@ export function AssumptionBadge({
             e.stopPropagation();
             onOverride();
           }}
-          className="inline-flex items-center justify-center w-4 h-4 rounded text-ink-500 hover:text-warn-700 hover:bg-warn-50 transition-colors"
+          className="inline-flex items-center justify-center w-4 h-4 rounded text-ink-500 hover:text-blue-700 hover:bg-blue-50 transition-colors"
           aria-label="Override value"
         >
           <Pencil size={9} aria-hidden="true" />
@@ -192,7 +192,9 @@ const SOURCE_META: Record<AssumptionSource, SourceMeta> = {
   },
   analyst_override: {
     label: 'Override',
-    tone: 'bg-warn-50 text-warn-700 border-warn-500/30',
+    // FON-65 — analyst override is an "input/assumption" value, so it uses the
+    // canonical blue (matches KIND_TONE.override + the DATA KEY), not amber.
+    tone: 'bg-blue-50 text-blue-700 border-blue-500/30',
     tooltip:
       'Analyst override set via the Overview inline editor. Wins over every other source.',
     Icon: Pencil,

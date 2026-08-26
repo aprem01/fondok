@@ -237,7 +237,9 @@ function CompareTable({ response, baseId }: TableProps) {
                 className="text-right px-4 py-2 font-semibold text-ink-900"
               >
                 <div className="flex items-center justify-end gap-1">
-                  {cell.is_base && (
+                  {/* FON-65 — the base scenario is literally named "Base", so
+                      only show the badge when the name differs (no "Base Base"). */}
+                  {cell.is_base && cell.scenario_name.toLowerCase() !== 'base' && (
                     <span className="text-[10px] uppercase tracking-wide bg-ink-100 text-ink-600 px-1 rounded">
                       Base
                     </span>

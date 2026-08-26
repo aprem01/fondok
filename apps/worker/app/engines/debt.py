@@ -319,10 +319,7 @@ class DebtEngine(BaseEngine[DebtEngineInputExt, DebtEngineOutputExt]):
         # positive balance (or a resolvable rate) enter the stack, so the default
         # PACE placeholder ($0 / pending) is excluded until an analyst activates
         # it — keeping every existing deal's leverage and coverage unchanged.
-        active_tranches = [
-            t for t in resolved_tranches
-            if t.loan_amount > 0 or t.effective_rate(_SOFR_DEFAULT) is not None
-        ]
+        active_tranches = [t for t in resolved_tranches if t.loan_amount > 0]
         debt_stack = compute_debt_stack(
             active_tranches,
             year_one_noi=payload.noi_by_year[0] if payload.noi_by_year else None,

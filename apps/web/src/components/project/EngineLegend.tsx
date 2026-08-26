@@ -22,7 +22,7 @@ export default function EngineLegend() {
   return (
     <div className="flex flex-wrap items-center gap-4 mb-4 text-[11px] text-ink-500">
       <span className="flex items-center gap-1.5">
-        <Pencil size={11} className="text-warn-500" /> Editable
+        <Pencil size={11} className="text-blue-500" /> Editable
       </span>
       <span className="text-ink-300">|</span>
       <span className="flex items-center gap-1.5">
