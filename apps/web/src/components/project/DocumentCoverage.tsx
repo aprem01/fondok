@@ -99,6 +99,10 @@ const CATEGORIES: CategorySpec[] = [
   { id: 'property_info', label: 'Basic Property Info', match: ['PROPERTY_INFO'] },
   { id: 'leases', label: 'Leases & Agreements', match: ['LEASES', 'CONTRACT'] },
   { id: 'surveys', label: 'Surveys & Reviews', match: ['SURVEYS'], optional: true },
+  // FON-64 — Debt / Partnership source docs + catch-all (all optional).
+  { id: 'debt', label: 'Debt / Loan Docs', match: ['DEBT'], optional: true },
+  { id: 'partnership', label: 'Partnership / JV Docs', match: ['PARTNERSHIP'], optional: true },
+  { id: 'other', label: 'Other', match: ['OTHER'], optional: true },
 ];
 
 const REQUIRED_TOTAL = CATEGORIES.filter((c) => !c.optional).length;
@@ -154,6 +158,10 @@ const DOC_TYPE_OPTIONS: { value: string; label: string }[] = [
   { value: 'PROPERTY_INFO', label: 'Basic Property Info' },
   { value: 'LEASES', label: 'Leases & Agreements' },
   { value: 'SURVEYS', label: 'Surveys & Reviews' },
+  // FON-64 — Debt / Partnership source docs + catch-all.
+  { value: 'DEBT', label: 'Debt / Loan Docs' },
+  { value: 'PARTNERSHIP', label: 'Partnership / JV Docs' },
+  { value: 'OTHER', label: 'Other' },
 ];
 
 export function DocumentCoverage({
@@ -442,9 +450,29 @@ function CoverageFileRow({
       </span>
 
       {financial ? (
-        <div className="flex items-center gap-1.5">
+        <div className="flex items-center gap-1.5 flex-wrap">
+          {/* FON-64 — a financial doc can be re-typed to ANY type (e.g. a T-12
+              mistagged over a loan doc → Debt); family/period stay as additive
+              controls while the type remains financial. */}
           <select
             aria-label={`Document type for ${file.name}`}
+            className={selectCls}
+            value={file.docType}
+            disabled={busy}
+            onChange={(e) => {
+              if (e.target.value && e.target.value !== file.docType) {
+                onReclassify(file.id, { doc_type: e.target.value });
+              }
+            }}
+          >
+            {DOC_TYPE_OPTIONS.map((o) => (
+              <option key={o.value} value={o.value}>
+                {o.label}
+              </option>
+            ))}
+          </select>
+          <select
+            aria-label={`Statement family for ${file.name}`}
             className={selectCls}
             value={family}
             disabled={busy}

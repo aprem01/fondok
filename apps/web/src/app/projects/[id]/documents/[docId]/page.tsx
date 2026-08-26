@@ -25,6 +25,7 @@ const DOC_TYPE_LABEL: Record<string, string> = {
   STR_TREND: 'STR / CoStar Trend', CBRE_HORIZONS: 'CBRE Horizons', INSURANCE: 'Insurance',
   PROPERTY_TAX: 'Property Taxes', ROOM_MIX: 'Room Mix', CAPEX: 'Historical CapEx',
   PROPERTY_INFO: 'Property Info', LEASES: 'Leases & Agreements', SURVEYS: 'Surveys & Reviews',
+  DEBT: 'Debt / Loan Docs', PARTNERSHIP: 'Partnership / JV Docs', OTHER: 'Other',
 };
 
 export default function DocumentDetailPage() {

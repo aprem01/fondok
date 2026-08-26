@@ -74,6 +74,13 @@ class DocType(str, Enum):
     PROPERTY_INFO = "PROPERTY_INFO"
     LEASES = "LEASES"
     SURVEYS = "SURVEYS"
+    # FON-64 — Debt / Partnership source docs (loan agreements, term sheets,
+    # JV / operating agreements, waterfall terms) + a user-chosen catch-all.
+    # OTHER is distinct from the Router's UNKNOWN sentinel: it's a deliberate,
+    # persisted classification for docs that don't fit an existing type.
+    DEBT = "DEBT"
+    PARTNERSHIP = "PARTNERSHIP"
+    OTHER = "OTHER"
     # NOTE: ``UNKNOWN`` is intentionally NOT in this enum — it's a
     # sentinel the Router agent emits when the LLM can't classify
     # confidently. Persisted doc_type values are always one of the

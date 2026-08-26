@@ -75,7 +75,7 @@ const DOC_TYPE_LABEL: Record<string, string> = {
   STR_TREND: 'STR',
   CBRE_HORIZONS: 'CBRE',
   BUDGET: 'Budget',
-  DEBT: 'Debt',
+  DEBT: 'Debt', PARTNERSHIP: 'Partnership / JV', OTHER: 'Other',
   INSURANCE: 'Insurance',
   PROPERTY_TAX: 'Prop. Tax',
   CAPEX: 'CapEx',
