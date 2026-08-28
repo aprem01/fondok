@@ -39,6 +39,13 @@ import { GapChipsStrip } from './validation/GapChipsStrip';
 import { MisclassificationBanner } from './wizard/MisclassificationBanner';
 import { YearMismatchBanner } from './wizard/YearMismatchBanner';
 import { DocumentCoverage, type CoverageFile } from './DocumentCoverage';
+import { isReviewableFinancialField } from './pl/GroundedWorksheet';
+
+// FON-41 — doc types whose data lands in the Financials historical view. Their
+// "to review" count is reconciled to what that view surfaces.
+const FINANCIAL_DOC_TYPES = new Set([
+  'T12', 'PNL', 'PNL_MONTHLY', 'PNL_YTD', 'PNL_BENCHMARK',
+]);
 
 // Same dependency order EngineHeader uses for run-all fallbacks — mirrors the
 // worker's chain in apps/worker/app/api/model.py.
@@ -1074,9 +1081,19 @@ export default function DataRoomTab({ projectId }: { projectId: number | string 
               docType: d.type === '—' ? '' : d.type,
               fields: d.fields,
               confidence: d.confidence,
-              toReview: (d.fieldList ?? []).filter(
-                (f) => Math.round((f.confidence ?? 0) * 100) < 85 && !f.reviewed,
-              ).length,
+              // FON-41 — on financial statements, count only low-confidence
+              // fields the analyst can actually review in the Financials
+              // historical view, so this badge reconciles with what that view
+              // surfaces. Non-financial docs keep their full low-confidence
+              // count (reviewed via the document-detail panel).
+              toReview: (d.fieldList ?? []).filter((f) => {
+                if (Math.round((f.confidence ?? 0) * 100) >= 85 || f.reviewed) {
+                  return false;
+                }
+                return FINANCIAL_DOC_TYPES.has(d.type)
+                  ? isReviewableFinancialField(f.field_name ?? '')
+                  : true;
+              }).length,
               fiscalYear: d.fiscalYear ?? null,
               status: d.rawStatus,
             }),

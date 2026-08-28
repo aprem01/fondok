@@ -1295,7 +1295,7 @@ function SourcePanel({
 
 // Fuzzy match an extraction field_name to a canonical override key. Handles
 // USALI dotted paths, *_usd suffixes, and fb/f_and_b variants.
-function fieldMatchesKey(fieldName: string, key: string): boolean {
+export function fieldMatchesKey(fieldName: string, key: string): boolean {
   const norm = (s: string) => s.toLowerCase().replace(/[^a-z]/g, '');
   const fn = norm(fieldName);
   const aliases: Record<string, string[]> = {
@@ -1317,4 +1317,24 @@ function fieldMatchesKey(fieldName: string, key: string): boolean {
   };
   const cands = aliases[key] ?? [norm(key)];
   return cands.some((c) => c.length > 2 && fn.includes(c));
+}
+
+// FON-41 — the model-row keys the historical financial view (this worksheet)
+// exposes for review, derived from ROWS so the two never drift. Shared with the
+// Data Room so its "to review" count reconciles to what's actually reviewable
+// here — instead of counting every low-confidence field, including ones that
+// have no home in the historical grid.
+export const REVIEWABLE_FINANCIAL_KEYS: string[] = Array.from(
+  new Set(
+    ROWS.map((r) => r.overrideKey ?? r.reviewKey).filter(
+      (k): k is string => typeof k === 'string' && k.length > 0,
+    ),
+  ),
+);
+
+/** True when a low-confidence extracted field maps to a value the analyst can
+ *  review/edit in the Financials historical view. */
+export function isReviewableFinancialField(fieldName: string): boolean {
+  if (!fieldName) return false;
+  return REVIEWABLE_FINANCIAL_KEYS.some((k) => fieldMatchesKey(fieldName, k));
 }
