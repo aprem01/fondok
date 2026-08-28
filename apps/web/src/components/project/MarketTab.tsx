@@ -263,7 +263,24 @@ export default function MarketTab({ projectId }: { projectId: number | string })
             </div>
           </div>
         </Card>
-        {hasStr && strTrend ? (
+
+        {/* FON-60/61 — real deals get the same 3 sub-tabs as the demo
+            (Market Overview / Transaction Comps / Index Analysis), each wired
+            to live data. Previously this early-return path rendered only the
+            STR card and skipped the sub-tab shell entirely. */}
+        <div className="flex items-center gap-1 mb-5 border-b border-border">
+          {subTabs.map((st) => (
+            <button key={st} onClick={() => setTab(st)}
+              className={cn(
+                'px-4 py-2 text-[12.5px] border-b-2 transition-colors -mb-px',
+                tab === st ? 'border-brand-500 text-brand-700 font-medium' : 'border-transparent text-ink-500 hover:text-ink-900'
+              )}>
+              {st}
+            </button>
+          ))}
+        </div>
+
+        {tab === 'Market Overview' && (hasStr && strTrend ? (
           // FON-47 — real STR/CoStar market data, live from /market-data.
           <Card className="p-0 overflow-hidden">
             <div className="flex flex-wrap items-center justify-between gap-3 px-5 py-3 border-b border-border bg-surface-2/40">
@@ -402,6 +419,20 @@ export default function MarketTab({ projectId }: { projectId: number | string })
               <Button variant="primary" size="sm">Open Data Library</Button>
             </Link>
           </Card>
+        ))}
+
+        {tab === 'Transaction Comps' && (
+          <TransactionCompsSection
+            isKimptonDemo={false}
+            workerComps={workerComps}
+            mockSales={m.sales}
+            mockAsOf={m.asOf}
+            dealId={dealId}
+          />
+        )}
+
+        {tab === 'Index Analysis' && (
+          <IndexAnalysisSection dealId={dealId} isKimptonDemo={isKimptonDemo} />
         )}
       </div>
     );
