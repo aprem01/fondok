@@ -278,7 +278,8 @@ async def get_variance(
     # not just T-12 reconciliation but discipline against the broker
     # over-projecting forward growth.
     market_flags = await _broker_vs_market_flags(
-        session, deal_id=str(deal_id), broker_proforma=broker, actuals=actuals
+        session, deal_id=str(deal_id), tenant_id=str(tenant_id),
+        broker_proforma=broker, actuals=actuals,
     )
     for mf in market_flags:
         if mf.severity == "Critical":
@@ -302,6 +303,7 @@ async def _broker_vs_market_flags(
     session: AsyncSession,
     *,
     deal_id: str,
+    tenant_id: str,
     broker_proforma: Any,
     actuals: Any,
 ) -> list[VarianceFlagOut]:
@@ -322,7 +324,7 @@ async def _broker_vs_market_flags(
     from ..services.engine_runner import _load_cbre_horizons_overrides
 
     market_overrides = await _load_cbre_horizons_overrides(
-        session, deal_id=deal_id
+        session, deal_id=deal_id, tenant_id=tenant_id
     )
     if not market_overrides:
         return []

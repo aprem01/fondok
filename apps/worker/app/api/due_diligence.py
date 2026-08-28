@@ -656,7 +656,8 @@ async def _summarize_variance(
     # Broker vs market flags (CBRE comparison) — already exposed by analysis.
     try:
         market_flags = await _broker_vs_market_flags(
-            session, deal_id=deal_id, broker_proforma=broker, actuals=actuals
+            session, deal_id=deal_id, tenant_id=tenant_id,
+            broker_proforma=broker, actuals=actuals
         )
         for mf in market_flags:
             flags_summary.append(
