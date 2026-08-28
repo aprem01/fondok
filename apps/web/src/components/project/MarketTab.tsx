@@ -303,6 +303,13 @@ export default function MarketTab({ projectId }: { projectId: number | string })
                     ))}
                   </tbody>
                 </table>
+                {strTrend.compset.length > 0
+                  && strTrend.compset.every((c) => c.occupancy_pct == null && c.adr_usd == null && c.revpar_usd == null) && (
+                  <div className="px-5 py-2.5 border-t border-border text-[11px] text-ink-500 leading-relaxed">
+                    STR / CoStar reports anonymize competitor performance — per-property Occupancy / ADR / RevPAR
+                    isn&apos;t published, so only key counts appear here. The subject&apos;s own performance is shown above.
+                  </div>
+                )}
               </div>
             )}
           </Card>

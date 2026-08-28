@@ -79,6 +79,15 @@ export default function InvestmentTab({ projectId }: { projectId: number | strin
     getEngineField<number>(outputs, 'returns', 'terminal_noi_usd') ??
     getEngineField<number>(outputs, 'returns', 'terminal_noi');
   const wSellingCosts = getEngineField<number>(outputs, 'returns', 'selling_costs');
+  const wHoldYears = getEngineField<number>(outputs, 'returns', 'hold_years');
+  // Capital uses — the "Renovation" / "Contingency" line items live here.
+  const wCapitalUses = getEngineField<Array<{ label?: string; amount?: number }>>(
+    outputs, 'capital', 'uses',
+  );
+  const findUse = (re: RegExp): number | undefined => {
+    const hit = (wCapitalUses ?? []).find((u) => re.test(String(u?.label ?? '')));
+    return typeof hit?.amount === 'number' ? hit.amount : undefined;
+  };
 
   const hasCapitalOutput =
     wPurchase != null || wPricePerKey != null || wEntryCap != null;
@@ -195,12 +204,13 @@ export default function InvestmentTab({ projectId }: { projectId: number | strin
       {!isKimptonDemo && (
         <Card className="p-3 mb-3 border-l-4 border-l-warn-500 bg-warn-50/40">
           <p className="text-[12px] text-ink-700">
-            <span className="font-semibold">Preview — investment engine still being calibrated.</span>{' '}
-            Hotel Purchase Price, Entry Cap, Exit Cap, IRR and similar
-            outputs are currently driven by the Capital / Returns engines
-            with seed defaults where deal data is missing. Treat them as
-            analyst-overridable until the investment engine ships its
-            full exit / cap-rate assumption set.
+            <span className="font-semibold">Some fields aren&apos;t populated yet.</span>{' '}
+            Core economics — purchase price, entry / exit cap, NOI and returns —
+            are live from the Capital / Returns engines. A few details still show
+            &ldquo;—&rdquo; because they aren&apos;t extracted from the deal docs
+            (year built, labor / title, the renovation cost split) or need the
+            timeline engine (acquisition / exit dates). Treat those as pending,
+            not committed.
           </p>
         </Card>
       )}
@@ -238,15 +248,24 @@ export default function InvestmentTab({ projectId }: { projectId: number | strin
         const dealKeys = (deal?.keys && deal.keys > 0)
           ? deal.keys
           : (isKimptonDemo ? o.general.keys : undefined);
-        const dealType = isKimptonDemo ? o.general.type : undefined;
+        const dealType = deal?.deal_type ?? deal?.positioning ?? deal?.service
+          ?? (isKimptonDemo ? o.general.type : undefined);
         const dealYearBuilt = isKimptonDemo ? o.general.yearBuilt : undefined;
         const dealGba = isKimptonDemo ? o.general.gba : undefined;
 
         // Entry Valuation
         const entryNoi = pickNum(wYearOneNoi, 2_481_478);
-        const entryCap = pickNum(wEntryCap, o.acquisition.entryCapRate);
-        const entryPurchase = pickNum(wPurchase, o.acquisition.purchasePrice);
         const entryPricePerKey = pickNum(wPricePerKey, o.acquisition.pricePerKey);
+        // Purchase price: engine value, else derive from price/key × keys
+        // (the capital engine emits price_per_key, not purchase_price).
+        const entryPurchase = pickNum(wPurchase, o.acquisition.purchasePrice)
+          ?? (entryPricePerKey != null && propertyKeys && propertyKeys > 0
+            ? entryPricePerKey * propertyKeys
+            : undefined);
+        // Entry cap = Y1 NOI ÷ purchase price (the engine doesn't emit it).
+        const entryCap = (entryNoi != null && entryPurchase != null && entryPurchase > 0)
+          ? entryNoi / entryPurchase
+          : pickNum(wEntryCap, o.acquisition.entryCapRate);
 
         // Exit Valuation
         const exitTerminalNoi = pickNum(wTerminalNoi, o.reversion.terminalNOI);
@@ -258,12 +277,14 @@ export default function InvestmentTab({ projectId }: { projectId: number | strin
 
         // Renovation Budget — capital engine doesn't break out
         // hard/soft/fees yet; sub-rows stay fixture-only on demo.
-        const renoBudget = isKimptonDemo ? o.investment.renovationBudget : undefined;
+        const renoBudget = findUse(/renovat/i)
+          ?? (isKimptonDemo ? o.investment.renovationBudget : undefined);
         const renoPerKey = (renoBudget != null && propertyKeys && propertyKeys > 0)
           ? renoBudget / propertyKeys : undefined;
         const renoPerSf = (renoBudget != null && dealGba && dealGba > 0)
           ? renoBudget / dealGba : undefined;
-        const renoContingency = isKimptonDemo ? o.investment.contingency : undefined;
+        const renoContingency = findUse(/conting/i)
+          ?? (isKimptonDemo ? o.investment.contingency : undefined);
         const renoHard = isKimptonDemo ? 3_960_000 : undefined;
         const renoSoft = isKimptonDemo ? 528_000 : undefined;
         const renoFees = isKimptonDemo ? 264_000 : undefined;
@@ -275,7 +296,8 @@ export default function InvestmentTab({ projectId }: { projectId: number | strin
           : (totalCapital != null && propertyKeys && propertyKeys > 0)
             ? totalCapital / propertyKeys
             : undefined;
-        const holdYears = isKimptonDemo ? o.returns.hold : undefined;
+        const holdYears = wHoldYears ?? (isKimptonDemo ? o.returns.hold : undefined);
+        const exitMonth = holdYears != null ? holdYears * 12 : undefined;
 
         // Senior Loan Financing — prefer debt engine echo, fall
         // back to capital engine debt_amount, then fixture. The
@@ -316,7 +338,7 @@ export default function InvestmentTab({ projectId }: { projectId: number | strin
               ['Per Key', fmtOrDash(entryPricePerKey, fmtCurrency)],
             ]} />
             <Panel title="Exit Valuation" rows={[
-              ['Exit Month', isKimptonDemo ? '60' : '—'],
+              ['Exit Month', exitMonth != null ? String(exitMonth) : '—'],
               ['Exit Date', isKimptonDemo ? '9/30/2030' : '—'],
               ['Fwd. 12 Mo NOI', fmtOrDash(exitTerminalNoi, fmtCurrency)],
               ['Exit Cap Rate', <Sourced key="xc" sourceKey="exit_cap_rate">{fmtOrDash(exitCap, v => fmtPct(v, 2))}</Sourced>],
