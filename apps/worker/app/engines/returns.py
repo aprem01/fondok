@@ -22,6 +22,7 @@ from fondok_schemas.underwriting import (
 )
 
 from .base import BaseEngine
+from .monthly_cashflow import MonthlyCashFlowInput, build_monthly_cashflow
 
 
 def _exit_value_provenance(
@@ -296,6 +297,9 @@ class ReturnsEngineInputExt(BaseModel):
     # single-close behavior (all capital at t=0), so existing deals are unchanged.
     deferred_capital: Annotated[float, Field(ge=0)] = 0.0
     deferred_capital_year: Annotated[int, Field(ge=1)] | None = None
+    # FON-67 — months elapsed in the acquisition calendar year at close (0-11),
+    # for the monthly model's stub-year handling (a 9/30 close = 9).
+    acquisition_month_offset: Annotated[int, Field(ge=0, le=11)] = 0
     terminal_noi_override: Annotated[float, Field(gt=0)] | None = Field(
         default=None,
         description=(
@@ -440,6 +444,46 @@ class ReturnsEngine(BaseEngine[ReturnsEngineInputExt, ReturnsEngineOutputExt]):
 
         levered_irr = xirr(lev_times, lev_amounts)
         unlevered_irr = irr(unlevered_flows)
+
+        # FON-67 — compute the returns on a MONTHLY calendar (the accurate,
+        # institutional method): operating cash accrues through the year, the
+        # refi and sale land on their real months, and IRR is XIRR over the full
+        # monthly series. This closes the several IRR points an annual grid loses
+        # to intra-year timing + partial stub years. The annual figures above are
+        # the fallback. See app/engines/monthly_cashflow.py.
+        if hold > 0 and noi_series:
+            refi_month: int | None = None
+            if refi_active and payload.refi_year is not None:
+                _rt = (
+                    payload.refi_time_years
+                    if payload.refi_time_years is not None
+                    else float(payload.refi_year)
+                )
+                refi_month = max(1, min(hold * 12, round(_rt * 12)))
+            dy = payload.deferred_capital_year
+            monthly = build_monthly_cashflow(
+                MonthlyCashFlowInput(
+                    hold_years=hold,
+                    noi_by_year=list(noi_series),
+                    acquisition_month_offset=payload.acquisition_month_offset,
+                    monthly_debt_service=[
+                        ds_series[y] / 12.0 for y in range(hold) for _ in range(12)
+                    ],
+                    equity_at_close=max(0.0, payload.equity - payload.deferred_capital),
+                    total_capital_at_close=max(
+                        0.0, total_capital - payload.deferred_capital
+                    ),
+                    deferred_capital=payload.deferred_capital,
+                    deferred_capital_start_month=((dy - 1) * 12 + 1) if dy else 1,
+                    deferred_capital_end_month=(dy * 12) if dy else 12,
+                    refi_month=refi_month,
+                    refi_net_cash_out=payload.refi_cash_out if refi_active else 0.0,
+                    exit_net_proceeds_levered=net_proceeds_to_equity,
+                    exit_net_proceeds_unlevered=gross_sale - selling_costs - transfer_tax,
+                )
+            )
+            levered_irr = monthly.levered_irr
+            unlevered_irr = monthly.unlevered_irr
 
         total_distributions = sum(cfad_series) + net_proceeds_to_equity
         equity_multiple = total_distributions / payload.equity if payload.equity else 0.0

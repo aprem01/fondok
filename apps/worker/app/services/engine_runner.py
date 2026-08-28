@@ -3684,6 +3684,11 @@ def _build_input_for(
                 if base.get("deferred_capital_year") not in (None, "")
                 else None
             ),
+            acquisition_month_offset=(
+                max(0, min(11, int(float(base["acquisition_month_offset"]))))
+                if base.get("acquisition_month_offset") not in (None, "")
+                else 0
+            ),
             equity=capital_out.equity_amount,
         )
 

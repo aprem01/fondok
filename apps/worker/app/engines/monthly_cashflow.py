@@ -26,13 +26,21 @@ def xnpv(rate: float, flows: list[tuple[float, float]]) -> float:
 def xirr(flows: list[tuple[float, float]], tol: float = 1e-9, max_iter: int = 400) -> float:
     """Date-based IRR over ``(t_years, amount)`` flows via bisection.
 
-    Returns 0.0 when the series can't bracket a root (all one sign)."""
-    if not flows or all(cf >= 0 for _, cf in flows) or all(cf <= 0 for _, cf in flows):
+    Degenerate one-sign streams return a monotonicity-preserving sentinel rather
+    than 0.0: an all-inflow series is unbounded-good (+10.0), an all-outflow
+    (total-loss) series is ~-100% (-0.9999). This keeps the return-vs-price
+    surface monotone for the price solver — a terrible deal must read *worse*
+    than a mediocre one, not as a misleading 0%."""
+    if not flows:
         return 0.0
+    if all(cf >= 0 for _, cf in flows):
+        return 10.0
+    if all(cf <= 0 for _, cf in flows):
+        return -0.9999
     lo, hi = -0.9999, 10.0
     f_lo = xnpv(lo, flows)
     if f_lo * xnpv(hi, flows) > 0:
-        return 0.0
+        return -0.9999 if xnpv(0.0, flows) < 0 else 10.0
     for _ in range(max_iter):
         mid = (lo + hi) / 2.0
         f_mid = xnpv(mid, flows)
