@@ -4132,22 +4132,29 @@ async def get_latest_output(
     *,
     deal_id: str,
     engine_name: str,
+    tenant_id: str,
 ) -> dict[str, Any] | None:
     """Return the latest persisted row for ``(deal_id, engine_name)``."""
     row = (
         await session.execute(
             text(
+                # tenant-scope predicate required by tenant_middleware
                 """
                 SELECT id, deal_id, tenant_id, run_id, engine_name,
                        status, inputs, outputs, error,
                        started_at, completed_at, runtime_ms
                   FROM engine_outputs
-                 WHERE deal_id = :deal AND engine_name = :engine
+                 WHERE deal_id = :deal AND tenant_id = :tenant
+                   AND engine_name = :engine
                  ORDER BY started_at DESC
                  LIMIT 1
                 """
             ),
-            {"deal": str(_coerce_uuid(deal_id)), "engine": engine_name},
+            {
+                "deal": str(_coerce_uuid(deal_id)),
+                "engine": engine_name,
+                "tenant": str(tenant_id),
+            },
         )
     ).first()
     if row is None:

@@ -340,7 +340,9 @@ async def kickoff_run_one(
 
     # Re-fetch the persisted row so the response contains the canonical
     # started_at / completed_at the DB recorded.
-    row = await get_latest_output(session, deal_id=deal_id, engine_name=name)
+    row = await get_latest_output(
+        session, deal_id=deal_id, engine_name=name, tenant_id=str(tenant_id)
+    )
     if row is None:  # pragma: no cover - defensive; we just inserted it
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
@@ -410,7 +412,9 @@ async def get_engine_output(
         session, deal_id=deal_id, tenant_id=tenant_id
     )
     _validate_engine_name(name)
-    row = await get_latest_output(session, deal_id=deal_id, engine_name=name)
+    row = await get_latest_output(
+        session, deal_id=deal_id, engine_name=name, tenant_id=str(tenant_id)
+    )
     if row is None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
