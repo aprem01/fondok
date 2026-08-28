@@ -296,7 +296,11 @@ class ReturnsEngineInputExt(BaseModel):
     # toward a source model that draws capital over the first years. 0 keeps the
     # single-close behavior (all capital at t=0), so existing deals are unchanged.
     deferred_capital: Annotated[float, Field(ge=0)] = 0.0
-    deferred_capital_year: Annotated[int, Field(ge=1)] | None = None
+    # Calendar years after the acquisition year in which the deferred capital
+    # deploys (0 = acquisition year, 1 = the next calendar year). Combined with
+    # acquisition_month_offset this lands the outflow in the right months even
+    # for a mid-year close (Kimpton renovation in 2026 → 1).
+    deferred_capital_year: Annotated[int, Field(ge=0)] | None = None
     # FON-67 — months elapsed in the acquisition calendar year at close (0-11),
     # for the monthly model's stub-year handling (a 9/30 close = 9).
     acquisition_month_offset: Annotated[int, Field(ge=0, le=11)] = 0
@@ -474,8 +478,18 @@ class ReturnsEngine(BaseEngine[ReturnsEngineInputExt, ReturnsEngineOutputExt]):
                         0.0, total_capital - payload.deferred_capital
                     ),
                     deferred_capital=payload.deferred_capital,
-                    deferred_capital_start_month=((dy - 1) * 12 + 1) if dy else 1,
-                    deferred_capital_end_month=(dy * 12) if dy else 12,
+                    # Offset-aware deployment window: calendar year ``dy`` after
+                    # acquisition maps to its actual months given the close date.
+                    deferred_capital_start_month=(
+                        max(1, dy * 12 - payload.acquisition_month_offset + 1)
+                        if dy is not None
+                        else 1
+                    ),
+                    deferred_capital_end_month=(
+                        min(hold * 12, (dy + 1) * 12 - payload.acquisition_month_offset)
+                        if dy is not None
+                        else 12
+                    ),
                     refi_month=refi_month,
                     refi_net_cash_out=payload.refi_cash_out if refi_active else 0.0,
                     exit_net_proceeds_levered=net_proceeds_to_equity,
