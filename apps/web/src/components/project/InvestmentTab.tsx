@@ -1,5 +1,5 @@
 'use client';
-import { useState, type ReactNode } from 'react';
+import { useState, useCallback, useRef, type ReactNode } from 'react';
 import { useParams } from 'next/navigation';
 import { ChevronDown, ChevronUp, Briefcase, Pencil, Check, X } from 'lucide-react';
 import { Card } from '@/components/ui/Card';
@@ -18,6 +18,7 @@ import { fmtCurrency, fmtPct, cn } from '@/lib/format';
 import { useAssumptionsOptional } from '@/stores/assumptionsStore';
 import { getEngineField, useEngineOutputs } from '@/lib/hooks/useEngineOutputs';
 import { useDeal } from '@/lib/hooks/useDeal';
+import { useEngineRun } from '@/lib/hooks/useEngineRun';
 import { IntroCard } from '@/components/help/IntroCard';
 import { Sourced } from '@/components/help/Sourced';
 import { api, isWorkerConnected, WorkerError } from '@/lib/api';
@@ -46,6 +47,38 @@ export default function InvestmentTab({ projectId }: { projectId: number | strin
   const { baseline: historicalBaseline } = useHistoricalBaseline(dealId);
   const [computing, setComputing] = useState(false);
   const [runToken, setRunToken] = useState<number | null>(null);
+
+  // ─── FON-44: editable transaction assumptions ─────────────────────
+  // Sam's spec — the Deal Summary is the transaction-assumptions layer: the
+  // analyst edits the core inputs (purchase price, renovation, hold, exit cap)
+  // and the derived values (entry/exit NOI + cap, price/key, exit date) stay
+  // linked. Edits PATCH field_overrides and kick a debounced run-all so the
+  // downstream Debt / Cash Flow / Returns engines re-derive.
+  const isMockIdInv = /^\d+$/.test(dealId);
+  const liveMode = isWorkerConnected() && !isMockIdInv;
+  const invOverrides = (deal?.field_overrides ?? {}) as Record<string, unknown>;
+  const invRun = useEngineRun(liveMode ? dealId : '', 'returns', { runMode: 'all' });
+  const invRerunRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const onSaveAssumption = useCallback(
+    async (key: string, value: number) => {
+      if (!liveMode) {
+        toast('Editing is disabled on demo deals', { type: 'info' });
+        return;
+      }
+      const next = { ...invOverrides, [key]: value };
+      try {
+        await api.deals.update(dealId, { field_overrides: next });
+        toast('Saved — re-running the model…', { type: 'success' });
+        void refreshDeal?.();
+        if (invRerunRef.current) clearTimeout(invRerunRef.current);
+        invRerunRef.current = setTimeout(() => { void invRun.run(); }, 1200);
+      } catch (err) {
+        const detail = err instanceof WorkerError ? err.body : String(err);
+        toast(`Save failed: ${detail || 'worker rejected update'}`, { type: 'error' });
+      }
+    },
+    [invOverrides, dealId, liveMode, toast, refreshDeal, invRun],
+  );
   // Wave 2 P2.5 - local capex plan state. The worker's ``capex_plan``
   // engine output isn't wired into useEngineOutputs yet; until it is,
   // the panel owns the source of truth in memory.
@@ -334,21 +367,30 @@ export default function InvestmentTab({ projectId }: { projectId: number | strin
               ['Entry Cap Rate', fmtOrDash(entryCap, v => fmtPct(v, 2))],
               ['2025 Run-Rate NOI', fmtOrDash(entryNoi, fmtCurrency)],
               ['FTM Date', isKimptonDemo ? '12/31/2025' : '—'],
-              ['Hotel Purchase Price', <Sourced key="pp" sourceKey="purchase_price">{fmtOrDash(entryPurchase, fmtCurrency)}</Sourced>],
+              ['Hotel Purchase Price', <AssumptionField key="pp" value={entryPurchase} editable={liveMode}
+                format={fmtCurrency} toDraft={(v) => String(Math.round(v))}
+                parse={(s) => { const n = parseFloat(s.replace(/[,$\s]/g, '')); return Number.isFinite(n) && n > 0 ? n : null; }}
+                onSave={(v) => onSaveAssumption('purchase_price', v)} width="w-36" />],
               ['Per Key', fmtOrDash(entryPricePerKey, fmtCurrency)],
             ]} />
             <Panel title="Exit Valuation" rows={[
               ['Exit Month', exitMonth != null ? String(exitMonth) : '—'],
               ['Exit Date', isKimptonDemo ? '9/30/2030' : '—'],
               ['Fwd. 12 Mo NOI', fmtOrDash(exitTerminalNoi, fmtCurrency)],
-              ['Exit Cap Rate', <Sourced key="xc" sourceKey="exit_cap_rate">{fmtOrDash(exitCap, v => fmtPct(v, 2))}</Sourced>],
+              ['Exit Cap Rate', <AssumptionField key="xc-edit" value={exitCap} editable={liveMode}
+                format={(v) => fmtPct(v, 2)} toDraft={(v) => (v * 100).toFixed(2)}
+                parse={(s) => { const n = parseFloat(s); return Number.isFinite(n) && n > 0 ? n / 100 : null; }}
+                onSave={(v) => onSaveAssumption('exit_cap_rate', v)} suffix="%" width="w-20" />],
               ['Gross Exit Value', fmtOrDash(exitGross, fmtCurrency)],
               ['Per Key', fmtOrDash(exitPerKey, fmtCurrency)],
               ['Exit Sales Cost', fmtOrDash(exitSellingCosts, fmtCurrency)],
               ['Transfer Tax', isKimptonDemo ? '0.6%' : '—'],
             ]} />
             <Panel title="Renovation Budget" rows={[
-              ['Renovation Budget', <Sourced key="rb" sourceKey="renovation_budget">{fmtOrDash(renoBudget, fmtCurrency)}</Sourced>],
+              ['Renovation Budget', <AssumptionField key="rb" value={renoBudget} editable={liveMode}
+                format={fmtCurrency} toDraft={(v) => String(Math.round(v))}
+                parse={(s) => { const n = parseFloat(s.replace(/[,$\s]/g, '')); return Number.isFinite(n) && n >= 0 ? n : null; }}
+                onSave={(v) => onSaveAssumption('renovation_budget', v)} width="w-36" />],
               ['Per Key', fmtOrDash(renoPerKey, fmtCurrency)],
               ['Per SF', fmtOrDash(renoPerSf, fmtCurrency)],
               ['Hard Costs (75%)', fmtOrDash(renoHard, fmtCurrency)],
@@ -362,7 +404,10 @@ export default function InvestmentTab({ projectId }: { projectId: number | strin
             <Panel title="Valuation Assumptions" rows={[
               ['Total Dev. Cost', fmtOrDash(totalCapital, fmtCurrency)],
               ['Per Key', fmtOrDash(totalCapitalPerKey, fmtCurrency)],
-              ['Hold Years', <Sourced key="hy" sourceKey="hold_years">{holdYears != null ? `${holdYears} yrs` : '—'}</Sourced>],
+              ['Hold Years', <AssumptionField key="hy" value={holdYears} editable={liveMode}
+                format={(v) => `${v} yrs`} toDraft={(v) => String(v)}
+                parse={(s) => { const n = parseInt(s, 10); return Number.isFinite(n) && n > 0 && n <= 20 ? n : null; }}
+                onSave={(v) => onSaveAssumption('hold_years', v)} suffix="yrs" width="w-16" />],
               ['Stabilized NOI FWD 12', fmtOrDash(exitTerminalNoi, fmtCurrency)],
               ['Exit Cap Rate', <Sourced key="xc" sourceKey="exit_cap_rate">{fmtOrDash(exitCap, v => fmtPct(v, 2))}</Sourced>],
               ['Sale Price', fmtOrDash(exitGross, fmtCurrency)],
@@ -838,6 +883,96 @@ function Panel({ title, rows }: { title: string; rows: PanelRow[] }) {
  * Read-only when no worker connection (mock data flow). Reverts to
  * read-only when the deal id isn't a UUID (numeric mock ids).
  */
+/**
+ * FON-44 — an editable transaction-assumption cell. Shows the value with a
+ * pencil affordance; on save it hands the parsed number back to the parent's
+ * onSave (which PATCHes field_overrides + re-runs). Read-only when not live.
+ */
+function AssumptionField({
+  value,
+  format,
+  toDraft,
+  parse,
+  onSave,
+  editable,
+  suffix,
+  width = 'w-32',
+}: {
+  value: number | undefined;
+  format: (v: number) => string;
+  toDraft: (v: number) => string;
+  parse: (s: string) => number | null;
+  onSave: (v: number) => void | Promise<void>;
+  editable: boolean;
+  suffix?: string;
+  width?: string;
+}) {
+  const { toast } = useToast();
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState('');
+  const [saving, setSaving] = useState(false);
+  const display = value != null ? format(value) : '—';
+
+  if (!editable) {
+    return <span className="tabular-nums font-medium text-ink-900">{display}</span>;
+  }
+  if (!editing) {
+    return (
+      <span className="inline-flex items-center gap-1.5">
+        <span className="tabular-nums font-medium text-ink-900">{display}</span>
+        <button
+          type="button"
+          aria-label="Edit assumption"
+          title="Edit assumption"
+          onClick={() => { setDraft(value != null ? toDraft(value) : ''); setEditing(true); }}
+          className="text-ink-400 hover:text-brand-600 transition-colors"
+        >
+          <Pencil className="w-3 h-3" />
+        </button>
+      </span>
+    );
+  }
+  const submit = async () => {
+    const parsed = parse(draft);
+    if (parsed == null) {
+      toast('Enter a valid number.', { type: 'error' });
+      return;
+    }
+    setSaving(true);
+    try {
+      await onSave(parsed);
+      setEditing(false);
+    } finally {
+      setSaving(false);
+    }
+  };
+  return (
+    <span className="inline-flex items-center gap-1">
+      <input
+        type="number"
+        value={draft}
+        autoFocus
+        disabled={saving}
+        onChange={(e) => setDraft(e.target.value)}
+        onKeyDown={(e) => {
+          if (e.key === 'Enter') void submit();
+          if (e.key === 'Escape') setEditing(false);
+        }}
+        className={cn(width, 'px-2 py-0.5 text-[12.5px] border border-border rounded text-right tabular-nums')}
+      />
+      {suffix && <span className="text-[11px] text-ink-500">{suffix}</span>}
+      <button type="button" aria-label="Save" onClick={() => void submit()} disabled={saving}
+        className="text-emerald-600 hover:text-emerald-800 disabled:opacity-50">
+        <Check className="w-3.5 h-3.5" />
+      </button>
+      <button type="button" aria-label="Cancel" onClick={() => setEditing(false)}
+        className="text-ink-400 hover:text-ink-700">
+        <X className="w-3.5 h-3.5" />
+      </button>
+    </span>
+  );
+}
+
 function KeysOverride({
   dealId,
   currentKeys,
