@@ -134,13 +134,23 @@ export default function ProjectDetailPage() {
   // calls without ever stringifying NaN into a URL path.
   const id: number | string = isMockId ? Number(rawId) : rawId;
   const { deal, loading: dealLoading, error: dealError, refresh: refreshDeal } = useDeal(rawId);
-  const mockMatch = isMockId
+  const workerConnected = isWorkerConnected();
+  // The static sample deal exists ONLY for the demo/marketing build (no
+  // worker). In the live app every deal is worker-backed, so numeric/mock
+  // ids never resolve to the fixture — they redirect to the deal list below.
+  const mockMatch = isMockId && !workerConnected
     ? projects.find(p => p.id === Number(rawId))
     : undefined;
-  const workerConnected = isWorkerConnected();
   // Page-level engine outputs — powers the failure banner so a crashed
   // engine is loud on EVERY tab, not silently dashed.
   const { outputs: pageEngineOutputs } = useEngineOutputs(rawId);
+
+  // The static sample/demo deal is not a real, editable deal — it only backs
+  // the worker-less marketing build. In the live app, bounce any numeric/mock
+  // id straight to the real deal list so no one lands on a read-only fixture.
+  useEffect(() => {
+    if (workerConnected && isMockId) router.replace('/projects');
+  }, [workerConnected, isMockId, router]);
 
   // Header kebab actions — Export Excel / Export IC Memo / Mark IC Ready /
   // Archive Project. Worker-backed deals (UUID rawId) actually hit the worker;
@@ -270,7 +280,7 @@ export default function ProjectDetailPage() {
     updatedAt: deal.updated_at ? new Date(deal.updated_at).toLocaleDateString() : '—',
     createdAt: deal.created_at ? new Date(deal.created_at).toLocaleDateString() : undefined,
     noDocs: true,
-  } : (isMockId ? projects[0] : null));
+  } : (isMockId && !workerConnected ? projects[0] : null));
 
   // Header pill state — popovers/drawers/tooltips. We keep all four
   // independent so opening one doesn't smash the others. Each closes on
@@ -394,6 +404,11 @@ export default function ProjectDetailPage() {
   // analyst can confirm the URL is the deal they meant to open — and
   // neither leaks any mock-data names. Mock-id deals (digit-only ``id``)
   // keep the legacy projects[0] fallback so demo URLs continue to work.
+  // Live app: a numeric/mock id is the retired sample deal — the effect above
+  // redirects to /projects; render nothing meanwhile so no read-only fixture flashes.
+  if (isMockId && workerConnected) {
+    return null;
+  }
   if (!isMockId && !projectOrNull) {
     return (
       <DealAssumptionsProvider deal={null} dealId={rawId}>
