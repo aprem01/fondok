@@ -731,6 +731,13 @@ async def _load_engine_inputs(
                     ] = value
                     sources[path] = SOURCE_PIP_USER
                     continue
+            # FON-67 — the operating NOI path reconciliation override is a JSON
+            # list (NOI per year). Route it before the scalar guard would drop
+            # it; the returns/debt builders read base['noi_override_by_year'].
+            if path == "noi_override_by_year" and isinstance(value, list):
+                base["noi_override_by_year"] = value
+                sources[path] = SOURCE_ANALYST_OVERRIDE
+                continue
             # Wave 2 P2.4 — PIP-displacement overrides include a list field
             # (``pct_rooms_offline_by_month``). Accept it as JSON-array
             # string or real list; everything else has to be a scalar.
@@ -3575,6 +3582,14 @@ def _build_input_for(
         capital_out = accumulated["capital"]
         expense_out = accumulated["expense"]
         noi_by_year = [yr.noi for yr in expense_out.years]
+        # FON-67 — reconciliation input: pin the operating NOI path to the
+        # source model's schedule when the analyst provides it (list override).
+        _noi_ovr = base.get("noi_override_by_year")
+        if isinstance(_noi_ovr, list) and _noi_ovr:
+            try:
+                noi_by_year = [float(x) for x in _noi_ovr]
+            except (TypeError, ValueError):
+                pass
         return DebtEngineInputExt(
             deal_id=deal_uuid,
             loan_amount=capital_out.debt_amount,
@@ -3597,6 +3612,14 @@ def _build_input_for(
         debt_out = accumulated["debt"]
         expense_out = accumulated["expense"]
         noi_by_year = [yr.noi for yr in expense_out.years]
+        # FON-67 — reconciliation input: pin the operating NOI path to the
+        # source model's schedule when the analyst provides it (list override).
+        _noi_ovr = base.get("noi_override_by_year")
+        if isinstance(_noi_ovr, list) and _noi_ovr:
+            try:
+                noi_by_year = [float(x) for x in _noi_ovr]
+            except (TypeError, ValueError):
+                pass
         assumptions = ModelAssumptions(
             purchase_price=base["purchase_price"],
             ltv=base["ltv"],
@@ -3648,6 +3671,19 @@ def _build_input_for(
             refi_cash_out=getattr(debt_out, "refi_cash_out", 0.0) or 0.0,
             refi_year=getattr(debt_out, "refi_year", None),
             refi_time_years=refi_time_years,
+            # FON-67 — reconciliation overrides: pin the exit-year terminal NOI
+            # (for the reversion) to the source model's stabilized NOI when set.
+            terminal_noi_override=(
+                float(base["terminal_noi_override"])
+                if base.get("terminal_noi_override") not in (None, "")
+                else None
+            ),
+            deferred_capital=float(base.get("deferred_capital") or 0.0),
+            deferred_capital_year=(
+                int(float(base["deferred_capital_year"]))
+                if base.get("deferred_capital_year") not in (None, "")
+                else None
+            ),
             equity=capital_out.equity_amount,
         )
 

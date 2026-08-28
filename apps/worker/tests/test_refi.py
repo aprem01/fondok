@@ -212,3 +212,21 @@ def test_refi_month_timing_lifts_levered_irr() -> None:
     mid_year = ReturnsEngine().run(ReturnsEngineInputExt(**common, refi_time_years=2.5))
     assert mid_year.levered_irr > year_end.levered_irr
     assert mid_year.unlevered_irr == pytest.approx(year_end.unlevered_irr, rel=1e-9)
+
+
+def test_deferred_capital_lifts_irr_and_defaults_off() -> None:
+    """FON-67 — deferring capital (e.g. renovation) from t=0 to its deployment
+    year lifts both IRRs; with the default (0) the streams are unchanged."""
+    common = dict(
+        deal_id=uuid4(), assumptions=_assumptions(), year_one_noi=3_000_000,
+        equity=20_000_000, loan_amount=23_000_000,
+        noi_by_year=[3_000_000, 3_500_000, 4_000_000, 4_300_000, 4_600_000],
+    )
+    base = ReturnsEngine().run(ReturnsEngineInputExt(**common))
+    deferred = ReturnsEngine().run(ReturnsEngineInputExt(
+        **common, deferred_capital=5_000_000, deferred_capital_year=1))
+    assert deferred.levered_irr > base.levered_irr
+    assert deferred.unlevered_irr > base.unlevered_irr
+    # default (no deferral) is unchanged
+    same = ReturnsEngine().run(ReturnsEngineInputExt(**common, deferred_capital=0.0))
+    assert same.levered_irr == pytest.approx(base.levered_irr, rel=1e-9)

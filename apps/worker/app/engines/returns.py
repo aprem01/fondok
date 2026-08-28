@@ -289,6 +289,13 @@ class ReturnsEngineInputExt(BaseModel):
     # refi_year's year-end, so the levered IRR equals the annual-period IRR and
     # deals without a refi timing are unchanged.
     refi_time_years: Annotated[float, Field(gt=0)] | None = None
+    # FON-67 — phased capital deployment. When capital (e.g. the renovation) is
+    # spent mid-hold rather than all at close, model it as an outflow deferred
+    # from t=0 to ``deferred_capital_year``. This defers equity, lifting the IRR
+    # toward a source model that draws capital over the first years. 0 keeps the
+    # single-close behavior (all capital at t=0), so existing deals are unchanged.
+    deferred_capital: Annotated[float, Field(ge=0)] = 0.0
+    deferred_capital_year: Annotated[int, Field(ge=1)] | None = None
     terminal_noi_override: Annotated[float, Field(gt=0)] | None = Field(
         default=None,
         description=(
@@ -415,6 +422,22 @@ class ReturnsEngine(BaseEngine[ReturnsEngineInputExt, ReturnsEngineOutputExt]):
                 else float(payload.refi_year)
             )
             lev_amounts.append(payload.refi_cash_out)
+
+        # FON-67 — phased capital deployment: shift a chunk of capital (e.g. the
+        # renovation) out of the t=0 close and into its deployment year, in both
+        # the levered and unlevered streams. Deferring the outflow lifts the IRR
+        # toward a source model that draws capital over the first years. Index 0
+        # is t=0; index d is year d in every stream here.
+        dc = payload.deferred_capital
+        dy = payload.deferred_capital_year
+        if dc > 0 and dy is not None and 1 <= dy <= hold:
+            unlevered_flows[0] += dc
+            unlevered_flows[dy] -= dc
+            levered_flows[0] += dc
+            levered_flows[dy] -= dc
+            lev_amounts[0] += dc
+            lev_amounts[dy] -= dc
+
         levered_irr = xirr(lev_times, lev_amounts)
         unlevered_irr = irr(unlevered_flows)
 
