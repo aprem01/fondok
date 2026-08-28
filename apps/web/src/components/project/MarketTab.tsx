@@ -77,6 +77,31 @@ const tooltipStyle = {
 // render "0.7%" for a 72%-occupied hotel (Sam QA).
 const occPct = (v: number): number => (v <= 1.5 ? v * 100 : v);
 
+// STR / CoStar anonymize per-property comp performance, so every competitor's
+// Occ/ADR/RevPAR comes back null. But the report DOES publish the subject's
+// index vs the comp-set aggregate — MPI (occupancy), ARI (ADR), RGI (RevPAR) —
+// where each index = subject metric ÷ comp-set metric. So the blended comp-set
+// performance is fully recoverable: comp metric = subject metric ÷ index. This
+// is the standard way an analyst benchmarks a subject to its comp set. Indices
+// may arrive as a ratio (1.098) or as index points (109.8); normalize both.
+function deriveCompSet(
+  t: StrTrend | null,
+): { occ: number | null; adr: number | null; revpar: number | null } | null {
+  if (!t) return null;
+  const ratio = (idx: number | null): number | null =>
+    idx == null || idx <= 0 ? null : idx > 3 ? idx / 100 : idx;
+  const div = (subj: number | null, idx: number | null, normalizeSubj = false): number | null => {
+    const r = ratio(idx);
+    if (subj == null || r == null) return null;
+    return (normalizeSubj ? occPct(subj) : subj) / r;
+  };
+  const occ = div(t.subject_occupancy_pct, t.mpi_occupancy_index, true);
+  const adr = div(t.subject_adr_usd, t.ari_adr_index);
+  const revpar = div(t.subject_revpar_usd, t.rgi_revpar_index);
+  if (occ == null && adr == null && revpar == null) return null;
+  return { occ, adr, revpar };
+}
+
 export default function MarketTab({ projectId }: { projectId: number | string }) {
   const [tab, setTab] = useState('Market Overview');
   const m = miamiMarket;
@@ -101,6 +126,8 @@ export default function MarketTab({ projectId }: { projectId: number | string })
   }, [dealId, isKimptonDemo]);
   const strTrend = marketData?.str_trend ?? null;
   const hasStr = !!(strTrend && (strTrend.subject_occupancy_pct != null || strTrend.subject_adr_usd != null));
+  // Blended comp-set benchmark recovered from the STR indices (see deriveCompSet).
+  const derivedComp = deriveCompSet(strTrend);
 
   // FON-47 (b) — let the analyst drive the model's Year-1 occupancy/ADR from
   // the STR market rates. The revenue engine already reads
@@ -301,13 +328,41 @@ export default function MarketTab({ projectId }: { projectId: number | string })
                         <td className="px-5 py-2 text-right tabular-nums text-ink-700">{c.revpar_usd != null ? `$${c.revpar_usd.toFixed(0)}` : '—'}</td>
                       </tr>
                     ))}
+                    {derivedComp && (
+                      // Blended comp-set benchmark — derived from the STR indices since
+                      // per-property performance is anonymized. This is the row an analyst
+                      // actually benchmarks the subject against.
+                      <tr className="border-t-2 border-brand-200 bg-brand-50/50">
+                        <td className="px-5 py-2.5 font-semibold text-ink-900">
+                          Comp Set
+                          <span className="ml-1.5 text-[9.5px] font-medium uppercase tracking-wide text-brand-700">blended</span>
+                        </td>
+                        <td className="px-3 py-2.5 text-right tabular-nums text-ink-800">
+                          {strTrend.compset.reduce((s, c) => s + (c.keys ?? 0), 0) || '—'}
+                        </td>
+                        <td className="px-3 py-2.5 text-right tabular-nums font-semibold text-ink-900">{derivedComp.occ != null ? `${derivedComp.occ.toFixed(1)}%` : '—'}</td>
+                        <td className="px-3 py-2.5 text-right tabular-nums font-semibold text-ink-900">{derivedComp.adr != null ? `$${derivedComp.adr.toFixed(0)}` : '—'}</td>
+                        <td className="px-5 py-2.5 text-right tabular-nums font-semibold text-ink-900">{derivedComp.revpar != null ? `$${derivedComp.revpar.toFixed(0)}` : '—'}</td>
+                      </tr>
+                    )}
                   </tbody>
                 </table>
                 {strTrend.compset.length > 0
                   && strTrend.compset.every((c) => c.occupancy_pct == null && c.adr_usd == null && c.revpar_usd == null) && (
                   <div className="px-5 py-2.5 border-t border-border text-[11px] text-ink-500 leading-relaxed">
-                    STR / CoStar reports anonymize competitor performance — per-property Occupancy / ADR / RevPAR
-                    isn&apos;t published, so only key counts appear here. The subject&apos;s own performance is shown above.
+                    {derivedComp ? (
+                      <>
+                        STR / CoStar anonymize <span className="font-medium">per-property</span> performance, so the
+                        individual rows show key counts only. The <span className="font-medium text-ink-700">Comp Set · blended</span> row
+                        is the aggregate the subject is benchmarked against — recovered from the report&apos;s STR indices
+                        (MPI&nbsp;occupancy · ARI&nbsp;rate · RGI&nbsp;RevPAR) against the subject shown above.
+                      </>
+                    ) : (
+                      <>
+                        STR / CoStar reports anonymize competitor performance — per-property Occupancy / ADR / RevPAR
+                        isn&apos;t published, so only key counts appear here. The subject&apos;s own performance is shown above.
+                      </>
+                    )}
                   </div>
                 )}
               </div>
