@@ -273,6 +273,8 @@ export const ModelAssumptions = z.object({
   revpar_growth: z.number().min(-0.5).max(0.5),
   expense_growth: z.number().min(-0.5).max(0.5).default(0.03),
   selling_costs_pct: z.number().min(0).max(0.1).default(0.02),
+  // FON-67 — transfer/recordation tax on exit, separate from selling costs.
+  transfer_tax_pct: z.number().min(0).max(0.1).default(0),
   closing_costs_pct: z.number().min(0).max(0.1).default(0.02),
 });
 export type ModelAssumptions = z.infer<typeof ModelAssumptions>;

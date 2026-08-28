@@ -126,3 +126,63 @@ def test_zero_cash_out_leaves_returns_unchanged() -> None:
     base = ret.run(ReturnsEngineInputExt(**common))
     zero = ret.run(ReturnsEngineInputExt(**{**common, "refi_cash_out": 0.0, "refi_year": 4}))
     assert zero.levered_irr == pytest.approx(base.levered_irr)
+
+
+def test_refi_ltv_sizing_matches_kimpton_source() -> None:
+    """FON-67 — LTV sizing: refi proceeds = refi LTV × stabilized value, net of
+    the loan fee. Kimpton source: 0.75 × $68,320,731 = $51,240,548 proceeds;
+    cash-out after retiring the senior balance and the 1% fee."""
+    di = _debt_input(
+        loan_amount=23_187_000,
+        debt_stack_overrides={
+            "refi_test_year": 3,
+            "refi_market_ltv_pct": 0.75,
+            "refi_stabilized_value": 68_320_731,
+            "refi_fee_pct": 0.01,
+            "refi_market_rate_pct": 0.075,
+        },
+    )
+    out = DebtEngine().run(di)
+    proceeds = 0.75 * 68_320_731  # 51,240,548
+    assert out.refi_year == 3
+    assert out.balance_at_exit == pytest.approx(proceeds, rel=1e-4)
+    senior_bal = out.schedule[2].ending_balance
+    fee = proceeds * 0.01
+    assert out.refi_cash_out == pytest.approx(max(0.0, proceeds - senior_bal - fee), rel=1e-4)
+
+
+def test_refi_ltv_takes_precedence_over_covenant_sizing() -> None:
+    """With an LTV set, debt-yield / DSCR limits no longer size the loan."""
+    di = _debt_input(
+        loan_amount=23_187_000,
+        debt_stack_overrides={
+            "refi_test_year": 3,
+            "refi_market_ltv_pct": 0.75,
+            "refi_stabilized_value": 68_320_731,
+            # deliberately tight covenants that WOULD size a smaller loan:
+            "refi_market_debt_yield_pct": 0.20,
+            "refi_market_dscr_min": 2.00,
+        },
+    )
+    out = DebtEngine().run(di)
+    assert out.balance_at_exit == pytest.approx(0.75 * 68_320_731, rel=1e-4)
+
+
+def test_transfer_tax_reduces_exit_proceeds() -> None:
+    """FON-67 — transfer tax is deducted from the reversion alongside selling
+    costs (0 by default; here 1.05% of gross sale)."""
+    common = dict(
+        deal_id=uuid4(), year_one_noi=3_000_000, equity=20_000_000,
+        loan_amount=23_000_000, noi_by_year=[3_000_000] * 5,
+    )
+    a_no = _assumptions()
+    a_tax = _assumptions()
+    a_tax.transfer_tax_pct = 0.0105
+    out_no = ReturnsEngine().run(ReturnsEngineInputExt(assumptions=a_no, **common))
+    out_tax = ReturnsEngine().run(ReturnsEngineInputExt(assumptions=a_tax, **common))
+    gross = out_no.gross_sale_price
+    assert out_no.net_proceeds - out_tax.net_proceeds == pytest.approx(gross * 0.0105, rel=1e-6)
+    # unlevered final flow also drops by the transfer tax
+    assert out_no.cash_flows_unlevered[-1] - out_tax.cash_flows_unlevered[-1] == pytest.approx(
+        gross * 0.0105, rel=1e-6
+    )

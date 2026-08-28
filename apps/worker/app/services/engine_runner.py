@@ -193,6 +193,8 @@ def _kimpton_assumptions() -> dict[str, Any]:
         "exit_cap_rate": 0.07,
         "revpar_growth": 0.045,
         "selling_costs_pct": 0.02,
+        # FON-67 — transfer/recordation tax on exit (0 unless the analyst sets it).
+        "transfer_tax_pct": 0.0,
         "gp_equity_pct": 0.10,
         "lp_equity_pct": 0.90,
         # FON-66 — Kimpton Angler benchmark preferred return (10%). The
@@ -3599,6 +3601,7 @@ def _build_input_for(
             revpar_growth=base["revpar_growth"],
             expense_growth=base["expense_growth"],
             selling_costs_pct=base["selling_costs_pct"],
+            transfer_tax_pct=base.get("transfer_tax_pct", 0.0),
             closing_costs_pct=base["closing_costs_pct"],
         )
         # FON-67 — forward the debt engine's phased debt service + refinance

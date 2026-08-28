@@ -301,12 +301,15 @@ class ReturnsEngine(BaseEngine[ReturnsEngineInputExt, ReturnsEngineOutputExt]):
         )
         gross_sale = terminal_noi / assumptions.exit_cap_rate
         selling_costs = gross_sale * assumptions.selling_costs_pct
+        # FON-67 — transfer/recordation tax on the gross sale, deducted from the
+        # reversion alongside brokerage selling costs (0 unless set).
+        transfer_tax = gross_sale * assumptions.transfer_tax_pct
         loan_balance_at_exit = (
             payload.loan_balance_at_exit
             if payload.loan_balance_at_exit is not None
             else payload.loan_amount  # IO assumption — full balance still outstanding
         )
-        net_proceeds_to_equity = gross_sale - selling_costs - loan_balance_at_exit
+        net_proceeds_to_equity = gross_sale - selling_costs - transfer_tax - loan_balance_at_exit
 
         # Levered cash flow stream (Year 0 = -equity). When the
         # caller supplies a full debt-stack DS series (Wave 4 W4.4)
@@ -343,7 +346,7 @@ class ReturnsEngine(BaseEngine[ReturnsEngineInputExt, ReturnsEngineOutputExt]):
         # when the asset yield exceeded the debt cost.
         total_capital = payload.equity + payload.loan_amount
         unlevered_flows = [-total_capital] + noi_series[:-1] + [
-            noi_series[-1] + gross_sale - selling_costs
+            noi_series[-1] + gross_sale - selling_costs - transfer_tax
         ]
 
         levered_irr = irr(levered_flows)
@@ -416,7 +419,8 @@ def returns_from_cash_flow(
 
     gross_sale = payload.terminal_noi / assumptions.exit_cap_rate
     selling_costs = gross_sale * assumptions.selling_costs_pct
-    net_proceeds = gross_sale - selling_costs - loan_balance_at_exit
+    transfer_tax = gross_sale * assumptions.transfer_tax_pct
+    net_proceeds = gross_sale - selling_costs - transfer_tax - loan_balance_at_exit
 
     levered_flows = [-equity] + cfad[:-1] + [cfad[-1] + net_proceeds]
     # Unlevered basis = total invested capital an all-cash buyer funds
@@ -430,7 +434,7 @@ def returns_from_cash_flow(
         + a.renovation_budget + a.soft_costs + a.contingency + a.working_capital
     )
     unlevered_flows = [-total_capital] + noi_series[:-1] + [
-        noi_series[-1] + gross_sale - selling_costs
+        noi_series[-1] + gross_sale - selling_costs - transfer_tax
     ]
 
     total_distributions = sum(cfad) + net_proceeds

@@ -242,6 +242,17 @@ def _refi_params(overrides: dict[str, Any] | None) -> dict[str, float] | None:
 
     return {
         "year": float(year_i),
+        # FON-67 — LTV-based sizing is the Kimpton source-of-truth method:
+        # refi proceeds = refi LTV × stabilized value (value = explicit input,
+        # or stabilized NOI ÷ exit cap). When an LTV is provided it takes
+        # precedence; the debt-yield / DSCR limits then act only as covenant
+        # tests, not as the sizing constraint. With no LTV set we fall back to
+        # the prior min(debt-yield, DSCR) sizing so existing deals are unchanged.
+        "ltv": _f("refi_market_ltv_pct", 0.0),
+        "stabilized_value": _f("refi_stabilized_value", 0.0),
+        "stabilized_noi": _f("refi_stabilized_noi", 0.0),
+        "exit_cap": _f("refi_exit_cap_rate", 0.0),
+        "fee_pct": _f("refi_fee_pct", 0.0),
         "debt_yield": _f("refi_market_debt_yield_pct", 0.10),
         "dscr_min": _f("refi_market_dscr_min", 1.25),
         "rate": _f("refi_market_rate_pct", 0.068),
@@ -268,18 +279,30 @@ def _compute_refi(
         else (noi_by_year[-1] if noi_by_year else 0.0)
     )
     rate = refi["rate"]
-    by_dy = noi_k / refi["debt_yield"] if refi["debt_yield"] > 0 else 0.0
-    by_dscr = (
-        noi_k / (refi["dscr_min"] * rate)
-        if (refi["dscr_min"] > 0 and rate > 0)
-        else 0.0
-    )
-    sizers = [x for x in (by_dy, by_dscr) if x > 0]
-    refi_proceeds = min(sizers) if sizers else 0.0
+    # FON-67 — LTV sizing takes precedence when configured: refi proceeds =
+    # LTV × stabilized value (value = explicit input, else stabilized NOI ÷ exit
+    # cap). Debt-yield / DSCR then act as covenant tests only. Falls back to the
+    # min(debt-yield, DSCR) sizing when no LTV is set (single-phase deals).
+    stabilized_value = refi.get("stabilized_value", 0.0)
+    if stabilized_value <= 0 and refi.get("stabilized_noi", 0.0) > 0 and refi.get("exit_cap", 0.0) > 0:
+        stabilized_value = refi["stabilized_noi"] / refi["exit_cap"]
+    if refi.get("ltv", 0.0) > 0 and stabilized_value > 0:
+        refi_proceeds = refi["ltv"] * stabilized_value
+    else:
+        by_dy = noi_k / refi["debt_yield"] if refi["debt_yield"] > 0 else 0.0
+        by_dscr = (
+            noi_k / (refi["dscr_min"] * rate)
+            if (refi["dscr_min"] > 0 and rate > 0)
+            else 0.0
+        )
+        sizers = [x for x in (by_dy, by_dscr) if x > 0]
+        refi_proceeds = min(sizers) if sizers else 0.0
     senior_balance_at_k = (
         schedule[k - 1].ending_balance if k - 1 < len(schedule) else 0.0
     )
-    refi_cash_out = max(0.0, refi_proceeds - senior_balance_at_k)
+    # Net the refi loan fee out of the cash-out to equity (source: 1.00% fee).
+    refi_fee = refi_proceeds * refi.get("fee_pct", 0.0)
+    refi_cash_out = max(0.0, refi_proceeds - senior_balance_at_k - refi_fee)
     refi_ds = refi_proceeds * rate  # interest-only refinance
     ds_by_year: list[float] = []
     for i in range(1, horizon + 1):

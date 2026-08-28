@@ -180,4 +180,8 @@ class ModelAssumptions(BaseModel):
     revpar_growth: Annotated[float, Field(ge=-0.50, le=0.50)]
     expense_growth: Annotated[float, Field(ge=-0.50, le=0.50)] = 0.03
     selling_costs_pct: Annotated[float, Field(ge=0.0, le=0.10)] = 0.02
+    # FON-67 — transfer/recordation tax on the gross sale at exit, separate from
+    # brokerage selling costs. Deducted from reversion proceeds alongside
+    # selling costs (Kimpton source ≈ 1.05% of gross sale). Defaults to 0.
+    transfer_tax_pct: Annotated[float, Field(ge=0.0, le=0.10)] = 0.0
     closing_costs_pct: Annotated[float, Field(ge=0.0, le=0.10)] = 0.02
