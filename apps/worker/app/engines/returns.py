@@ -211,6 +211,44 @@ def irr(
     return (lo + hi) / 2.0
 
 
+def xnpv(rate: float, times: list[float], flows: list[float]) -> float:
+    """NPV of cash flows at arbitrary (fractional-year) time offsets."""
+    return sum(cf / ((1.0 + rate) ** t) for t, cf in zip(times, flows))
+
+
+def xirr(
+    times: list[float],
+    flows: list[float],
+    tol: float = 1e-7,
+    max_iter: int = 200,
+) -> float:
+    """Date-aware IRR (Excel XIRR semantics) — solves for the rate r where
+    Σ CFₜ ÷ (1+r)^tₜ = 0 with ``times`` given in years from t=0. Used so a
+    mid-hold event (e.g. a month-30 cash-out refinance) is discounted at its
+    actual time rather than folded into a year-end. Integer, evenly-spaced
+    ``times`` reduce exactly to the annual-period :func:`irr`. Bisection over a
+    wide bracket; falls back to the annual IRR when there is no sign change.
+    """
+    if not flows or all(cf >= 0 for cf in flows) or all(cf <= 0 for cf in flows):
+        return 0.0
+    lo, hi = -0.999, 10.0
+    f_lo = xnpv(lo, times, flows)
+    f_hi = xnpv(hi, times, flows)
+    if f_lo * f_hi > 0:
+        return irr(flows)
+    for _ in range(max_iter):
+        mid = (lo + hi) / 2.0
+        f_mid = xnpv(mid, times, flows)
+        if abs(f_mid) < tol:
+            return mid
+        if f_lo * f_mid < 0:
+            hi = mid
+        else:
+            lo = mid
+            f_lo = f_mid
+    return (lo + hi) / 2.0
+
+
 # ─────────────── Returns engine ───────────────
 
 
@@ -246,6 +284,11 @@ class ReturnsEngineInputExt(BaseModel):
     # balance. Zero / None keeps the single-phase behavior byte-identical.
     refi_cash_out: Annotated[float, Field(ge=0)] = 0.0
     refi_year: Annotated[int, Field(ge=1)] | None = None
+    # FON-67 — actual time (years from acquisition) of the refi cash-out, for
+    # date-based XIRR. A month-30 refi is 2.5. None places the cash-out at
+    # refi_year's year-end, so the levered IRR equals the annual-period IRR and
+    # deals without a refi timing are unchanged.
+    refi_time_years: Annotated[float, Field(gt=0)] | None = None
     terminal_noi_override: Annotated[float, Field(gt=0)] | None = Field(
         default=None,
         description=(
@@ -323,16 +366,19 @@ class ReturnsEngine(BaseEngine[ReturnsEngineInputExt, ReturnsEngineOutputExt]):
                 ds_series.append(payload.annual_debt_service)
         else:
             ds_series = [payload.annual_debt_service] * hold
-        cfad_series = [n - ds for n, ds in zip(noi_series, ds_series)]
-        # FON-67 — a mid-hold refi returns capital to equity: add the net
-        # cash-out into that year's levered cash flow. Levered-only (the
-        # unlevered stream below never sees debt), so it lifts the levered IRR
-        # / equity multiple without touching the unlevered case.
-        if (
+        # Operating cash flow after debt service, per year (the refi cash-out is
+        # held out here so it can be timed correctly for the date-based IRR).
+        op_cfad = [n - ds for n, ds in zip(noi_series, ds_series)]
+        refi_active = (
             payload.refi_cash_out > 0
             and payload.refi_year is not None
-            and 1 <= payload.refi_year <= len(cfad_series)
-        ):
+            and 1 <= payload.refi_year <= len(op_cfad)
+        )
+        # FON-67 — a mid-hold refi returns capital to equity. For the DISPLAY
+        # stream (Cash Flow tab + equity multiple) fold the cash-out into its
+        # year; it's levered-only, so the unlevered case is untouched.
+        cfad_series = list(op_cfad)
+        if refi_active:
             cfad_series[payload.refi_year - 1] += payload.refi_cash_out
         levered_flows = [-payload.equity] + cfad_series[:-1] + [
             cfad_series[-1] + net_proceeds_to_equity
@@ -349,7 +395,27 @@ class ReturnsEngine(BaseEngine[ReturnsEngineInputExt, ReturnsEngineOutputExt]):
             noi_series[-1] + gross_sale - selling_costs - transfer_tax
         ]
 
-        levered_irr = irr(levered_flows)
+        # FON-67 — date-based levered IRR. Equity at t=0, each operating CF at
+        # its year-end, the exit at t=hold, and the refi cash-out at its ACTUAL
+        # time (refi_time_years; e.g. 2.5 for a month-30 refi). With no refi
+        # timing set the cash-out sits at its year-end, so xirr reduces exactly
+        # to the annual-period IRR — existing deals are byte-for-byte unchanged.
+        lev_times: list[float] = [0.0]
+        lev_amounts: list[float] = [-payload.equity]
+        for y in range(1, hold + 1):
+            lev_times.append(float(y))
+            lev_amounts.append(
+                op_cfad[y - 1] + (net_proceeds_to_equity if y == hold else 0.0)
+            )
+        if refi_active:
+            assert payload.refi_year is not None
+            lev_times.append(
+                payload.refi_time_years
+                if payload.refi_time_years is not None
+                else float(payload.refi_year)
+            )
+            lev_amounts.append(payload.refi_cash_out)
+        levered_irr = xirr(lev_times, lev_amounts)
         unlevered_irr = irr(unlevered_flows)
 
         total_distributions = sum(cfad_series) + net_proceeds_to_equity

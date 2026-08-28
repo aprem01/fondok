@@ -186,3 +186,29 @@ def test_transfer_tax_reduces_exit_proceeds() -> None:
     assert out_no.cash_flows_unlevered[-1] - out_tax.cash_flows_unlevered[-1] == pytest.approx(
         gross * 0.0105, rel=1e-6
     )
+
+
+def test_xirr_reduces_to_annual_irr_on_integer_times() -> None:
+    """Date-based XIRR on evenly-spaced integer times == annual-period IRR, so
+    deals without a refi timing are unchanged."""
+    from app.engines.returns import irr, xirr
+    flows = [-100.0, 10.0, 10.0, 10.0, 130.0]
+    assert xirr([0, 1, 2, 3, 4], flows) == pytest.approx(irr(flows), rel=1e-6)
+
+
+def test_refi_month_timing_lifts_levered_irr() -> None:
+    """FON-67 — timing the refi cash-out at its actual mid-hold moment
+    (refi_time_years=2.5 for a month-30 refi) lifts the levered IRR vs folding
+    it into the year-end, reflecting the source model's date-based XIRR. The
+    unlevered case, which never sees the refi, is unchanged."""
+    common = dict(
+        deal_id=uuid4(), assumptions=_assumptions(), year_one_noi=3_000_000,
+        equity=15_000_000, loan_amount=23_000_000,
+        noi_by_year=[1_000_000, 3_000_000, 4_000_000, 4_300_000, 4_600_000],
+        debt_service_by_year=[1_600_000] * 5,
+        refi_cash_out=27_000_000, refi_year=3,
+    )
+    year_end = ReturnsEngine().run(ReturnsEngineInputExt(**common, refi_time_years=None))
+    mid_year = ReturnsEngine().run(ReturnsEngineInputExt(**common, refi_time_years=2.5))
+    assert mid_year.levered_irr > year_end.levered_irr
+    assert mid_year.unlevered_irr == pytest.approx(year_end.unlevered_irr, rel=1e-9)

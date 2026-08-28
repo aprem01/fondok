@@ -1052,6 +1052,13 @@ _OVERRIDE_DEBT_KEYS: frozenset[str] = frozenset(
         "debt_stack.refi_market_dscr_min",
         "debt_stack.refi_market_cap_rate",
         "debt_stack.refi_market_rate_pct",
+        # FON-67 — LTV-based refi sizing + timing + fee.
+        "debt_stack.refi_market_ltv_pct",
+        "debt_stack.refi_stabilized_value",
+        "debt_stack.refi_stabilized_noi",
+        "debt_stack.refi_exit_cap_rate",
+        "debt_stack.refi_fee_pct",
+        "debt_stack.refi_month",
     }
 )
 
@@ -3616,6 +3623,19 @@ def _build_input_for(
                 else capital_out.debt_amount
             )
         )
+        # FON-67 — date-based IRR timing: a `refi_month` override (months from
+        # acquisition) places the cash-out at its actual time (month 30 → 2.5y).
+        # None keeps the cash-out at its year-end, so the IRR is unchanged.
+        _dso = base.get("debt_stack_overrides") or {}
+        _refi_month = _dso.get("refi_month") if isinstance(_dso, dict) else None
+        try:
+            refi_time_years = (
+                float(_refi_month) / 12.0
+                if _refi_month is not None and float(_refi_month) > 0
+                else None
+            )
+        except (TypeError, ValueError):
+            refi_time_years = None
         return ReturnsEngineInputExt(
             deal_id=deal_uuid,
             assumptions=assumptions,
@@ -3627,6 +3647,7 @@ def _build_input_for(
             loan_balance_at_exit=debt_exit_balance,
             refi_cash_out=getattr(debt_out, "refi_cash_out", 0.0) or 0.0,
             refi_year=getattr(debt_out, "refi_year", None),
+            refi_time_years=refi_time_years,
             equity=capital_out.equity_amount,
         )
 
