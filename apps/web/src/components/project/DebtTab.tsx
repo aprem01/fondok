@@ -173,6 +173,23 @@ export default function DebtTab({ projectId }: { projectId: number | string }) {
   const debtYield = fmtOrDash(dyN, (v) => fmtPct(v, 1));
   const hasWorkerDebtOutput = wLoan != null;
 
+  // FON-63 de-facade — surface real PACE + rate-type from the resolved stack so
+  // real deals show the analyst's actual entered values, not a demo hardcode or
+  // a bare '—'. (Descriptive term-sheet fields — borrower, spread, maturity —
+  // legitimately stay '—' on real deals: they come from the debt doc, which is
+  // deferred out of MVP scope, so inventing them would be wrong.)
+  const seniorTr = stack?.tranches?.find((t) => t.kind === 'senior') ?? stack?.tranches?.[0];
+  const paceTr = stack?.tranches?.find((t) => t.kind === 'pace');
+  const paceAmountStr = paceTr && paceTr.loan_amount > 0
+    ? fmtCurrency(paceTr.loan_amount)
+    : (isKimptonDemo ? '$0' : '—');
+  const paceRateStr = paceTr && paceTr.all_in_rate != null && !paceTr.terms_pending
+    ? fmtPct(paceTr.all_in_rate, 2)
+    : (isKimptonDemo ? '7.99%' : '—');
+  const rateTypeStr = seniorTr
+    ? (seniorTr.rate_type === 'floating' ? 'Variable' : 'Fixed')
+    : (isKimptonDemo ? 'Variable' : '—');
+
   // Non-Kimpton deals: show empty placeholder until engines have run.
   if (!isKimptonDemo && !hasWorkerDebtOutput) {
     return (
@@ -301,7 +318,7 @@ export default function DebtTab({ projectId }: { projectId: number | string }) {
             <Panel title="Debt Summary" rows={[
               ['Total Debt', loanAmountStr],
               ['Senior Loan', loanAmountStr],
-              ['PACE Loan', isKimptonDemo ? '$0' : '—'],
+              ['PACE Loan', paceAmountStr],
               ['LTC %', ltcStr],
               ['Debt Yield', debtYield],
               ['DSCR', <Traced key="dscr" engine="debt" path="schedule[0].dscr">{dscrStr}</Traced>],
@@ -378,13 +395,13 @@ export default function DebtTab({ projectId }: { projectId: number | string }) {
         <>
           <div className="grid grid-cols-4 gap-4 mb-5">
             <KPI label="Senior Rate" flashKey="senior-rate" value={isKimptonDemo ? '6.80%' : <SourcedValue sourceKey="interest_rate" />} />
-            <KPI label="PACE Rate" value={isKimptonDemo ? '7.99%' : '—'} />
+            <KPI label="PACE Rate" value={paceRateStr} />
             <KPI label="Rate Cap" value={isKimptonDemo ? '8.33%' : '—'} />
             <KPI label="Cap Expiry" value={isKimptonDemo ? '9/30/2027' : '—'} />
           </div>
           <div className="grid grid-cols-2 gap-5">
             <Panel title="Rate Configuration" rows={[
-              ['Rate Type', isKimptonDemo ? 'Variable' : '—'],
+              ['Rate Type', rateTypeStr],
               ['Spread over SOFR', isKimptonDemo ? '2.9%' : '—'],
               ['SOFR Ceiling', isKimptonDemo ? '8.33%' : '—'],
               ['SOFR Floor', isKimptonDemo ? '0%' : '—'],
