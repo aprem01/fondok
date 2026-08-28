@@ -695,7 +695,9 @@ export default function ProjectDetailPage() {
           Base / New-scenario buttons don't belong on the document-intake view);
           scenario management lives in Scenario Analysis. Hidden for mock deals
           (no worker → no scenarios). */}
-      {liveMode && scenarios.length > 0 && activeTab !== '' && (
+      {/* FON-57 — the Overview (home) screen omits the scenario pill row; it's
+          clutter there and scenario management lives in Scenario Analysis. */}
+      {liveMode && scenarios.length > 0 && activeTab !== '' && activeTab !== 'overview' && (
         <ScenarioSelector
           scenarios={scenarios}
           activeScenarioId={activeScenarioId}
