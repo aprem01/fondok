@@ -319,32 +319,48 @@ export default function MarketTab({ projectId }: { projectId: number | string })
                     </tr>
                   </thead>
                   <tbody>
-                    {strTrend.compset.map((c, i) => (
-                      <tr key={`${c.name}-${i}`} className="border-b border-border/60">
-                        <td className="px-5 py-2 text-ink-800">{c.name}</td>
-                        <td className="px-3 py-2 text-right tabular-nums text-ink-700">{c.keys ?? '—'}</td>
-                        <td className="px-3 py-2 text-right tabular-nums text-ink-700">{c.occupancy_pct != null ? `${occPct(c.occupancy_pct).toFixed(1)}%` : '—'}</td>
-                        <td className="px-3 py-2 text-right tabular-nums text-ink-700">{c.adr_usd != null ? `$${c.adr_usd.toFixed(0)}` : '—'}</td>
-                        <td className="px-5 py-2 text-right tabular-nums text-ink-700">{c.revpar_usd != null ? `$${c.revpar_usd.toFixed(0)}` : '—'}</td>
-                      </tr>
-                    ))}
                     {derivedComp && (
-                      // Blended comp-set benchmark — derived from the STR indices since
-                      // per-property performance is anonymized. This is the row an analyst
-                      // actually benchmarks the subject against.
-                      <tr className="border-t-2 border-brand-200 bg-brand-50/50">
-                        <td className="px-5 py-2.5 font-semibold text-ink-900">
+                      // Blended comp-set benchmark FIRST — it's the real, analyst-facing
+                      // number (recovered from the STR indices). Per-property performance is
+                      // anonymized, so leading with the aggregate keeps the table from reading
+                      // as a wall of blanks.
+                      <tr className="border-b-2 border-brand-300 bg-brand-50/60">
+                        <td className="px-5 py-3 font-semibold text-ink-900">
                           Comp Set
-                          <span className="ml-1.5 text-[9.5px] font-medium uppercase tracking-wide text-brand-700">blended</span>
+                          <span className="ml-1.5 rounded bg-brand-100 px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-wide text-brand-700">blended</span>
                         </td>
-                        <td className="px-3 py-2.5 text-right tabular-nums text-ink-800">
+                        <td className="px-3 py-3 text-right tabular-nums text-ink-800">
                           {strTrend.compset.reduce((s, c) => s + (c.keys ?? 0), 0) || '—'}
                         </td>
-                        <td className="px-3 py-2.5 text-right tabular-nums font-semibold text-ink-900">{derivedComp.occ != null ? `${derivedComp.occ.toFixed(1)}%` : '—'}</td>
-                        <td className="px-3 py-2.5 text-right tabular-nums font-semibold text-ink-900">{derivedComp.adr != null ? `$${derivedComp.adr.toFixed(0)}` : '—'}</td>
-                        <td className="px-5 py-2.5 text-right tabular-nums font-semibold text-ink-900">{derivedComp.revpar != null ? `$${derivedComp.revpar.toFixed(0)}` : '—'}</td>
+                        <td className="px-3 py-3 text-right tabular-nums font-semibold text-ink-900">{derivedComp.occ != null ? `${derivedComp.occ.toFixed(1)}%` : '—'}</td>
+                        <td className="px-3 py-3 text-right tabular-nums font-semibold text-ink-900">{derivedComp.adr != null ? `$${derivedComp.adr.toFixed(0)}` : '—'}</td>
+                        <td className="px-5 py-3 text-right tabular-nums font-semibold text-ink-900">{derivedComp.revpar != null ? `$${derivedComp.revpar.toFixed(0)}` : '—'}</td>
                       </tr>
                     )}
+                    {derivedComp && (
+                      <tr>
+                        <td colSpan={5} className="px-5 pt-2.5 pb-1 text-[10px] font-medium uppercase tracking-wide text-ink-400">
+                          Comp-set members · per-property performance not published
+                        </td>
+                      </tr>
+                    )}
+                    {strTrend.compset.map((c, i) => {
+                      // When per-property performance is anonymized (the common case), mute the
+                      // empty cells to a faint dash so they recede instead of reading as "missing".
+                      const perf = (v: string | null, cls = '') =>
+                        v != null
+                          ? <span className={cn('tabular-nums text-ink-700', cls)}>{v}</span>
+                          : <span className="text-ink-300">—</span>;
+                      return (
+                        <tr key={`${c.name}-${i}`} className="border-b border-border/60">
+                          <td className="px-5 py-2 text-ink-800">{c.name}</td>
+                          <td className="px-3 py-2 text-right tabular-nums text-ink-700">{c.keys ?? '—'}</td>
+                          <td className="px-3 py-2 text-right">{perf(c.occupancy_pct != null ? `${occPct(c.occupancy_pct).toFixed(1)}%` : null)}</td>
+                          <td className="px-3 py-2 text-right">{perf(c.adr_usd != null ? `$${c.adr_usd.toFixed(0)}` : null)}</td>
+                          <td className="px-5 py-2 text-right">{perf(c.revpar_usd != null ? `$${c.revpar_usd.toFixed(0)}` : null)}</td>
+                        </tr>
+                      );
+                    })}
                   </tbody>
                 </table>
                 {strTrend.compset.length > 0
