@@ -295,6 +295,10 @@ async def build_pipeline_snapshot(
     # PARTITION BY (SQLite >= 3.25).
     placeholders = ", ".join(f":id_{i}" for i in range(len(deal_ids)))
     params: dict[str, Any] = {f"id_{i}": d for i, d in enumerate(deal_ids)}
+    # The `tenant_id = :tenant` predicate satisfies tenant_middleware (Sam
+    # Sentry 3b1be68e 2026-08-28) — the deal_ids come from the tenant-filtered
+    # `deals` query above, so this is a belt-and-braces guard mirroring the
+    # doc-count query below, not a semantics change.
     engine_rows = await session.execute(
         text(
             f"""
@@ -308,11 +312,12 @@ async def build_pipeline_snapshot(
                        ) AS rn
                   FROM engine_outputs
                  WHERE deal_id IN ({placeholders})
+                   AND tenant_id = :tenant
               ) latest
              WHERE rn = 1
             """
         ),
-        params,
+        {**params, "tenant": tenant_id_str},
     )
 
     # deal_id → engine_name → envelope
