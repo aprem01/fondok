@@ -72,6 +72,11 @@ const tooltipStyle = {
   labelStyle: { color: '#64748b', fontSize: 11 },
 };
 
+// STR occupancy arrives as a 0..1 fraction (0.715); some sources send a whole
+// percent (71.5). Normalize to a whole-percent number for display so we never
+// render "0.7%" for a 72%-occupied hotel (Sam QA).
+const occPct = (v: number): number => (v <= 1.5 ? v * 100 : v);
+
 export default function MarketTab({ projectId }: { projectId: number | string }) {
   const [tab, setTab] = useState('Market Overview');
   const m = miamiMarket;
@@ -246,7 +251,7 @@ export default function MarketTab({ projectId }: { projectId: number | string })
             </div>
             <div className="grid grid-cols-3 divide-x divide-border border-b border-border">
               {[
-                { label: 'Occupancy', value: strTrend.subject_occupancy_pct != null ? `${strTrend.subject_occupancy_pct.toFixed(1)}%` : '—' },
+                { label: 'Occupancy', value: strTrend.subject_occupancy_pct != null ? `${occPct(strTrend.subject_occupancy_pct).toFixed(1)}%` : '—' },
                 { label: 'ADR', value: strTrend.subject_adr_usd != null ? `$${strTrend.subject_adr_usd.toFixed(2)}` : '—' },
                 { label: 'RevPAR', value: strTrend.subject_revpar_usd != null ? `$${strTrend.subject_revpar_usd.toFixed(2)}` : '—' },
               ].map((mm) => (
@@ -291,7 +296,7 @@ export default function MarketTab({ projectId }: { projectId: number | string })
                       <tr key={`${c.name}-${i}`} className="border-b border-border/60">
                         <td className="px-5 py-2 text-ink-800">{c.name}</td>
                         <td className="px-3 py-2 text-right tabular-nums text-ink-700">{c.keys ?? '—'}</td>
-                        <td className="px-3 py-2 text-right tabular-nums text-ink-700">{c.occupancy_pct != null ? `${c.occupancy_pct.toFixed(1)}%` : '—'}</td>
+                        <td className="px-3 py-2 text-right tabular-nums text-ink-700">{c.occupancy_pct != null ? `${occPct(c.occupancy_pct).toFixed(1)}%` : '—'}</td>
                         <td className="px-3 py-2 text-right tabular-nums text-ink-700">{c.adr_usd != null ? `$${c.adr_usd.toFixed(0)}` : '—'}</td>
                         <td className="px-5 py-2 text-right tabular-nums text-ink-700">{c.revpar_usd != null ? `$${c.revpar_usd.toFixed(0)}` : '—'}</td>
                       </tr>
