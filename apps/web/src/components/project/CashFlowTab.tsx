@@ -13,7 +13,6 @@ import EngineHeader from './EngineHeader';
 import EngineRightRail from './EngineRightRail';
 import EngineLegend from './EngineLegend';
 import EngineRunHistory from './EngineRunHistory';
-import { kimptonAnglerOverview } from '@/lib/mockData';
 import { fmtCurrency, fmtMillions, cn } from '@/lib/format';
 import { getEngineField, useEngineOutputs } from '@/lib/hooks/useEngineOutputs';
 import { useFlash } from '@/lib/hooks/useFlash';
@@ -24,14 +23,12 @@ import { GLOSSARY } from '@/lib/glossary';
 
 const subTabs = ['Cash Flow Summary', 'Levered Detail', 'Unlevered Detail', 'Distributions'];
 
-// InvestmentTab-style display helpers: prefer worker output over fixture.
+// InvestmentTab-style display helpers: prefer worker output.
 // `pickNum` returns the raw number for arithmetic; `fmtOrDash` formats it
-// or renders '—' when neither source is available.
+// or renders '—' when the value is unavailable.
 const pickNum = (
   worker: number | undefined,
-  fixture: number,
-  isKimptonDemo: boolean,
-): number | undefined => (worker != null ? worker : (isKimptonDemo ? fixture : undefined));
+): number | undefined => (worker != null ? worker : undefined);
 const fmtOrDash = (
   n: number | undefined,
   formatter: (v: number) => string,
@@ -75,7 +72,7 @@ interface CashFlowModel {
   y5WithExit: number;
   exitNet: number;
   initialEquity: number;
-  source: 'worker' | 'mock';
+  source: 'worker';
 }
 
 // Worker variant: all dollar amounts in actual dollars (not $000s).
@@ -160,72 +157,12 @@ function buildCashFlowFromWorker(opts: {
   };
 }
 
-// Build cash flow schedule. NOI is in $000s in proforma; convert to dollars here.
-function buildCashFlowFromMock(): CashFlowModel {
-  const p = kimptonAnglerOverview.proforma;
-  const noiThousands = p.find(r => r.label === 'Net Operating Income')!;
-  const debtSvcThousands = p.find(r => r.label === 'Debt Service')!;
-  const ffeThousands = p.find(r => r.label === 'FF&E Reserve')!;
-  const years: ('y1' | 'y2' | 'y3' | 'y4' | 'y5')[] = ['y1', 'y2', 'y3', 'y4', 'y5'];
-
-  const noi = years.map(y => noiThousands[y] * 1000);
-  const debtService = years.map(y => debtSvcThousands[y] * 1000);
-  const ffe = years.map(y => ffeThousands[y] * 1000);
-  const leveredCF = noi.map((n, i) => n - debtService[i]);
-
-  // Capex outside of FF&E reserve — modest year 2/3 PIP catch-up
-  const capex = [0, 250_000, 250_000, 0, 0];
-
-  // Interest vs Principal (IO for first 4 years per debt tab, then amortizing)
-  const annualDS = kimptonAnglerOverview.financing.annualDebtService;
-  const rate = kimptonAnglerOverview.financing.interestRate;
-  const loanBal = kimptonAnglerOverview.financing.loanAmount;
-  const interest = years.map((_, i) => i < 4 ? annualDS : Math.round(loanBal * rate));
-  const principal = years.map((_, i) => i < 4 ? 0 : Math.round(annualDS - loanBal * rate));
-
-  // Distributions per the Partnership Distribution Timeline
-  const distributions = [309_500, 345_600, 384_200, 517_300, 20_563_400];
-  const operatingDist = distributions.slice(0, 4);
-  const exitDist = distributions[4];
-
-  // Cash sweep — retained CF after distributions during cash trap (low DSCR Y1-Y2)
-  const cashSweep = leveredCF.map((cf, i) =>
-    i < 4 ? Math.max(0, cf - operatingDist[i] - capex[i]) : 0
-  );
-
-  // Build beginning/ending cash
-  const initialCash = kimptonAnglerOverview.acquisition.workingCapital;
-  let bal = initialCash;
-  const begCash: number[] = [];
-  const endCash: number[] = [];
-  for (let i = 0; i < 5; i++) {
-    begCash.push(bal);
-    bal = bal + leveredCF[i] - capex[i] - (i < 4 ? operatingDist[i] : exitDist);
-    endCash.push(Math.max(0, bal));
-  }
-
-  // Unlevered: NOI - Capex - FF&E (no debt). Y5 includes terminal value (gross sale - selling costs).
-  const exitNet = kimptonAnglerOverview.reversion.grossSalePrice - kimptonAnglerOverview.reversion.sellingCosts;
-  const unlevered = noi.map((n, i) => n - capex[i] - ffe[i]);
-  const y5Operations = unlevered[4];
-  const y5WithExit = y5Operations + exitNet;
-  const equity = kimptonAnglerOverview.sources.find(s => s.label === 'Equity')!.amount;
-
-  return {
-    noi, debtService, leveredCF, capex, ffe, interest, principal,
-    distributions, operatingDist, exitDist, cashSweep,
-    begCash, endCash, unlevered, y5Operations, y5WithExit, exitNet,
-    initialEquity: equity, source: 'mock',
-  };
-}
-
-export default function CashFlowTab({ projectId }: { projectId: number | string }) {
+export default function CashFlowTab() {
   const [tab, setTab] = useState('Cash Flow Summary');
   const params = useParams();
   const { toast } = useToast();
   const dealId = (params?.id as string | undefined) ?? '';
   const [computing, setComputing] = useState(false);
-  const isKimptonDemo = projectId === 7;
   const { outputs } = useEngineOutputs(dealId);
 
   // Pull dependencies from worker output. Returns engine cash_flows /
@@ -255,11 +192,10 @@ export default function CashFlowTab({ projectId }: { projectId: number | string 
         workingCapital: wWorkingCapital ?? 0,
       });
     }
-    if (isKimptonDemo) return buildCashFlowFromMock();
     return null;
-  }, [hasWorkerCashFlow, expenseYears, debtSchedule, leveredFlows, unleveredFlows, partnershipDistributions, wWorkingCapital, isKimptonDemo]);
+  }, [hasWorkerCashFlow, expenseYears, debtSchedule, leveredFlows, unleveredFlows, partnershipDistributions, wWorkingCapital]);
 
-  if (!isKimptonDemo && !cf) {
+  if (!cf) {
     return (
       <div className="flex gap-4">
         <div className="flex-1 min-w-0">
@@ -368,9 +304,9 @@ export default function CashFlowTab({ projectId }: { projectId: number | string 
 
       <div className={cn(computing && 'relative pointer-events-none opacity-60')}>
         {tab === 'Cash Flow Summary' && <Summary cf={cfd} />}
-        {tab === 'Levered Detail' && <LeveredDetail cf={cfd} isKimptonDemo={isKimptonDemo} />}
-        {tab === 'Unlevered Detail' && <UnleveredDetail cf={cfd} isKimptonDemo={isKimptonDemo} outputs={outputs} />}
-        {tab === 'Distributions' && <Distributions cf={cfd} equity={equity} outputs={outputs} isKimptonDemo={isKimptonDemo} />}
+        {tab === 'Levered Detail' && <LeveredDetail cf={cfd} />}
+        {tab === 'Unlevered Detail' && <UnleveredDetail cf={cfd} outputs={outputs} />}
+        {tab === 'Distributions' && <Distributions cf={cfd} equity={equity} outputs={outputs} />}
         {computing && (
           <div className="absolute inset-0 bg-bg/60 backdrop-blur-[1px] flex items-start justify-center pt-12 rounded-md">
             <span className="inline-flex items-center gap-2 px-3 py-1.5 bg-white border border-border rounded-md shadow-card text-[12.5px] font-medium text-ink-700">
@@ -454,7 +390,7 @@ function Summary({ cf }: { cf: CashFlowModel }) {
   );
 }
 
-function LeveredDetail({ cf, isKimptonDemo }: { cf: CashFlowModel; isKimptonDemo: boolean }) {
+function LeveredDetail({ cf }: { cf: CashFlowModel }) {
   const years = cf.noi.map((_, i) => `Year ${i + 1}`);
   const zeroes = cf.noi.map(() => 0);
 
@@ -482,9 +418,7 @@ function LeveredDetail({ cf, isKimptonDemo }: { cf: CashFlowModel; isKimptonDemo
       <div className="flex items-baseline justify-between mb-3">
         <h3 className="text-[13px] font-semibold text-ink-900">Levered Cash Flow Detail</h3>
         <span className="text-[11px] text-ink-500">
-          {isKimptonDemo
-            ? '5-year hold · IO loan Y1-Y4 · refinance Y4 → amortizing Y5'
-            : `${cf.noi.length}-year hold · derived from worker debt schedule`}
+          {`${cf.noi.length}-year hold · derived from worker debt schedule`}
         </span>
       </div>
       <div className="overflow-x-auto">
@@ -519,9 +453,8 @@ function LeveredDetail({ cf, isKimptonDemo }: { cf: CashFlowModel; isKimptonDemo
   );
 }
 
-function UnleveredDetail({ cf, isKimptonDemo, outputs }: {
+function UnleveredDetail({ cf, outputs }: {
   cf: CashFlowModel;
-  isKimptonDemo: boolean;
   outputs: ReturnType<typeof useEngineOutputs>['outputs'];
 }) {
   const years = cf.noi.map((_, i) => `Year ${i + 1}`);
@@ -529,16 +462,16 @@ function UnleveredDetail({ cf, isKimptonDemo, outputs }: {
 
   type Row = { label: string; values: (number | string)[]; kind?: 'detail' | 'subtotal' | 'total' | 'header' };
 
-  // Initial equity for unlevered = total capital (no debt). Prefer worker
-  // capital engine output; fall back to Kimpton mock for the demo via pickNum.
+  // Initial equity for unlevered = total capital (no debt), from the worker
+  // capital engine output.
   const wTotalCapital = getEngineField<number>(outputs, 'capital', 'total_capital');
-  const totalCapital = pickNum(wTotalCapital, kimptonAnglerOverview.investment.totalCapital, isKimptonDemo) ?? 0;
+  const totalCapital = pickNum(wTotalCapital) ?? 0;
 
   // Use worker returns engine for the gross sale + selling costs when available.
   const wGrossSale = getEngineField<number>(outputs, 'returns', 'gross_sale_price');
   const wSellingCosts = getEngineField<number>(outputs, 'returns', 'selling_costs');
-  const grossSale = pickNum(wGrossSale, kimptonAnglerOverview.reversion.grossSalePrice, isKimptonDemo) ?? cf.exitNet;
-  const sellingCosts = pickNum(wSellingCosts, kimptonAnglerOverview.reversion.sellingCosts, isKimptonDemo) ?? 0;
+  const grossSale = pickNum(wGrossSale) ?? cf.exitNet;
+  const sellingCosts = pickNum(wSellingCosts) ?? 0;
 
   const exitVec = cf.noi.map((_, i) => i === lastIdx ? grossSale : 0);
   const sellingVec = cf.noi.map((_, i) => i === lastIdx ? -sellingCosts : 0);
@@ -569,7 +502,7 @@ function UnleveredDetail({ cf, isKimptonDemo, outputs }: {
   ];
 
   const wUnleveredIRR = getEngineField<number>(outputs, 'returns', 'unlevered_irr');
-  const unleveredIRRPick = pickNum(wUnleveredIRR, kimptonAnglerOverview.returns.unleveredIRR, isKimptonDemo);
+  const unleveredIRRPick = pickNum(wUnleveredIRR);
 
   return (
     <Card className="p-5">
@@ -646,11 +579,10 @@ function UnleveredDetail({ cf, isKimptonDemo, outputs }: {
   );
 }
 
-function Distributions({ cf, equity, outputs, isKimptonDemo }: {
+function Distributions({ cf, equity, outputs }: {
   cf: CashFlowModel;
   equity: number;
   outputs: ReturnType<typeof useEngineOutputs>['outputs'];
-  isKimptonDemo: boolean;
 }) {
   // Prefer partnership engine GP/LP cash flows. Promote portion is what the GP
   // earns above their pro-rata equity share — the engine returns it as
@@ -674,14 +606,6 @@ function Distributions({ cf, equity, outputs, isKimptonDemo }: {
       exit: i === lastIdx ? (wLpFlows![i] ?? 0) : 0,
       kind: i === lastIdx ? 'exit' : 'operating',
     }));
-  } else if (isKimptonDemo) {
-    data = [
-      { year: 'Year 1', operating: cf.operatingDist[0] ?? 0, promote: 0, exit: 0, kind: 'operating' },
-      { year: 'Year 2', operating: cf.operatingDist[1] ?? 0, promote: 0, exit: 0, kind: 'operating' },
-      { year: 'Year 3', operating: cf.operatingDist[2] ?? 0, promote: 0, exit: 0, kind: 'operating' },
-      { year: 'Year 4', operating: (cf.operatingDist[3] ?? 0) - 92_000, promote: 92_000, exit: 0, kind: 'operating' },
-      { year: 'Year 5 (Exit)', operating: 0, promote: 2_748_000, exit: 17_815_400, kind: 'exit' },
-    ];
   } else {
     // Fallback: no partnership output, render the levered CF as operating dist.
     const lastIdx = cf.noi.length - 1;
@@ -765,13 +689,9 @@ function Distributions({ cf, equity, outputs, isKimptonDemo }: {
           </tbody>
         </table>
         <div className="mt-4 pt-4 border-t border-border text-[11px] text-ink-500 space-y-1">
-          {isKimptonDemo ? (
-            <div>• LP Preferred Return: 10% on $19.6M equity = ${(prefTarget / 1e3).toFixed(0)}K/yr target. Y1-Y2 limited by DSCR cash trap.</div>
-          ) : (
-            <div>• LP Preferred Return: 10% on {fmtOrDash(equity > 0 ? equity : undefined, fmtCurrency)} equity = {fmtOrDash(prefTarget > 0 ? prefTarget : undefined, v => `$${(v / 1e3).toFixed(0)}K`)}/yr target.</div>
-          )}
+          <div>• LP Preferred Return: 10% on {fmtOrDash(equity > 0 ? equity : undefined, fmtCurrency)} equity = {fmtOrDash(prefTarget > 0 ? prefTarget : undefined, v => `$${(v / 1e3).toFixed(0)}K`)}/yr target.</div>
           <div>• GP Promote tier accrues from Y4 onward as LP pref hurdle is satisfied.</div>
-          <div>• {isKimptonDemo ? 'Y5' : 'Final-year'} Exit Distribution = sale proceeds net of debt payoff and selling costs, distributed per waterfall.</div>
+          <div>• Final-year Exit Distribution = sale proceeds net of debt payoff and selling costs, distributed per waterfall.</div>
         </div>
       </Card>
     </>

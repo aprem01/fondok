@@ -28,23 +28,22 @@ import { GLOSSARY } from '@/lib/glossary';
 // Scenario Analysis; comps live on Market → Transaction Comps.
 const subTabs = ['Returns Summary', 'Sensitivities', 'Pricing'];
 
-export default function ReturnsTab({ projectId }: { projectId: number | string }) {
+export default function ReturnsTab() {
   const [tab, setTab] = useState('Returns Summary');
   const ctx = useAssumptionsOptional();
   const params = useParams();
   const dealId = (params?.id as string | undefined) ?? '';
   const { toast } = useToast();
-  const isKimptonDemo = projectId === 7;
   const { outputs, previous } = useEngineOutputs(dealId);
   const [computing, setComputing] = useState(false);
   const [runToken, setRunToken] = useState<number | null>(null);
 
   // Has the Returns engine been run for this deal? Used to decide whether to
-  // render the placeholder or the live UI for non-Kimpton deals.
+  // render the placeholder or the live UI.
   const wReturnsIrr = getEngineField<number>(outputs, 'returns', 'levered_irr');
   const hasWorkerReturns = wReturnsIrr != null;
 
-  if (!isKimptonDemo && !hasWorkerReturns) {
+  if (!hasWorkerReturns) {
     return (
       <div className="flex gap-4">
         <div className="flex-1 min-w-0">

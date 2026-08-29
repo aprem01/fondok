@@ -12,7 +12,6 @@
  *      treat 404 as "fall through".
  *   2. The latest extraction on the deal's T-12 document (anchors a
  *      single rightmost year).
- *   3. Static Kimpton mock for the demo deal (id=7) — covers 2021-2025.
  *
  * No new worker route is wired here — that's net-new scope. We just
  * gracefully render an inline empty state when nothing's available.
@@ -28,7 +27,6 @@ import {
   api, isWorkerConnected, workerUrl, ExtractionField, WorkerDocument,
 } from '@/lib/api';
 import { useDeal } from '@/lib/hooks/useDeal';
-import { kimptonAnglerOverview } from '@/lib/mockData';
 import { downloadXlsx, type XlsxCell } from '@/lib/exportXlsx';
 
 // ─────────────────────────── Data shape ───────────────────────────
@@ -85,47 +83,6 @@ export interface HistData {
   keys: number;
   years: HistYear[];
 }
-
-// ─────────────────────────── Mock fallback ───────────────────────────
-// Kimpton Angler — 2021-2025. Numbers are illustrative but internally
-// consistent (RevPAR = ADR × occupancy, total rev ≈ rooms / (1 - 0.27),
-// dept expense ratios ~ rooms 24% / F&B 75% / other 70%, undist ~ 22%
-// of total rev, fixed ~ 7% of total rev).
-const KIMPTON_HISTORICAL: HistData = {
-  keys: kimptonAnglerOverview.general.keys, // 132
-  years: [
-    { year: '2021', days: 365, occupancyPct: 0.581, adr: 245, revpar: 142,
-      rooms: 6_854_000, fb: 1_998_000, misc: 444_000,
-      rooms_dept_expense: 1_645_000, fb_dept_expense: 1_499_000,
-      other_dept_expense: 311_000, undistributed: 2_046_000,
-      gop: 1_795_000, fixed_expenses: 651_000, noi: 1_144_000,
-      populated: true },
-    { year: '2022', days: 365, occupancyPct: 0.681, adr: 271, revpar: 184,
-      rooms: 8_870_000, fb: 2_586_000, misc: 575_000,
-      rooms_dept_expense: 2_129_000, fb_dept_expense: 1_940_000,
-      other_dept_expense: 403_000, undistributed: 2_646_000,
-      gop: 2_913_000, fixed_expenses: 842_000, noi: 2_071_000,
-      populated: true },
-    { year: '2023', days: 365, occupancyPct: 0.715, adr: 287, revpar: 205,
-      rooms: 9_881_000, fb: 2_881_000, misc: 640_000,
-      rooms_dept_expense: 2_371_000, fb_dept_expense: 2_161_000,
-      other_dept_expense: 448_000, undistributed: 2_948_000,
-      gop: 3_474_000, fixed_expenses: 938_000, noi: 2_536_000,
-      populated: true },
-    { year: '2024', days: 366, occupancyPct: 0.738, adr: 294, revpar: 217,
-      rooms: 10_493_000, fb: 3_059_000, misc: 680_000,
-      rooms_dept_expense: 2_518_000, fb_dept_expense: 2_294_000,
-      other_dept_expense: 476_000, undistributed: 3_130_000,
-      gop: 3_814_000, fixed_expenses: 995_000, noi: 2_819_000,
-      populated: true },
-    { year: '2025', days: 365, occupancyPct: 0.762, adr: 312, revpar: 238,
-      rooms: 11_472_000, fb: 3_344_000, misc: 743_000,
-      rooms_dept_expense: 2_753_000, fb_dept_expense: 2_508_000,
-      other_dept_expense: 520_000, undistributed: 3_421_000,
-      gop: 4_357_000, fixed_expenses: 1_088_000, noi: 3_269_000,
-      populated: true },
-  ],
-};
 
 // ─────────────────────────── T-12 derivation ───────────────────────────
 // Pull a tolerant set of T-12 metrics off the worker extraction. We look
@@ -668,10 +625,8 @@ export function emptyFiveYearSkeleton(): HistData {
 // ─────────────────────────── Component ───────────────────────────
 export default function HistoricalsSection({
   dealId,
-  isKimptonDemo,
 }: {
   dealId: string;
-  isKimptonDemo: boolean;
 }) {
   const { toast } = useToast();
   const { deal } = useDeal(dealId);
@@ -682,16 +637,11 @@ export default function HistoricalsSection({
   const [data, setData] = useState<HistData | null>(null);
   const [loading, setLoading] = useState(false);
 
-  // 1) demo deal short-circuits to the static mock.
-  // 2) live deal: try /deals/{id}/historicals (graceful 404), then T-12.
-  // 3) otherwise: render the empty 5-year skeleton.
+  // 1) live deal: try /deals/{id}/historicals (graceful 404), then T-12.
+  // 2) otherwise: render the empty 5-year skeleton.
   useEffect(() => {
     let cancelled = false;
     async function load() {
-      if (isKimptonDemo) {
-        setData(KIMPTON_HISTORICAL);
-        return;
-      }
       if (!liveMode) {
         setData(emptyFiveYearSkeleton());
         return;
@@ -841,7 +791,7 @@ export default function HistoricalsSection({
     }
     load().finally(() => { if (!cancelled) setLoading(false); });
     return () => { cancelled = true; };
-  }, [dealId, isKimptonDemo, liveMode, deal?.keys]);
+  }, [dealId, liveMode, deal?.keys]);
 
   const onNotes = () => {
     toast('Historicals notes — coming with the next deploy', { type: 'info' });
@@ -889,9 +839,7 @@ export default function HistoricalsSection({
     ]);
   };
 
-  const keys = isKimptonDemo
-    ? kimptonAnglerOverview.general.keys
-    : (deal?.keys ?? data?.keys ?? 0);
+  const keys = deal?.keys ?? data?.keys ?? 0;
 
   const hasAnyData = (data?.years ?? []).some(y => y.populated);
 

@@ -276,10 +276,8 @@ type RenderItem =
 
 export default function GroundedWorksheet({
   dealId,
-  isKimptonDemo,
 }: {
   dealId: string | number;
-  isKimptonDemo?: boolean;
 }) {
   const rawId = String(dealId);
   const { outputs, refresh } = useEngineOutputs(rawId);
@@ -537,9 +535,6 @@ export default function GroundedWorksheet({
     [overrides, rawId, refreshDeal, run, refresh, toast],
   );
 
-  if (isKimptonDemo) {
-    return <Card className="p-6 text-[13px] text-ink-500">The editable worksheet is available on live deals.</Card>;
-  }
   if (num(expY0['total_revenue']) === 0) {
     return (
       <Card className="p-6 text-[13px] text-ink-500">

@@ -25,9 +25,7 @@ const subTabs = ['Summary', 'Waterfall Structure', 'Distribution Timeline', 'Ret
 // InvestmentTab-style display helpers.
 const pickNum = (
   worker: number | undefined,
-  fixture: number,
-  isKimptonDemo: boolean,
-): number | undefined => (worker != null ? worker : (isKimptonDemo ? fixture : undefined));
+): number | undefined => (worker != null ? worker : undefined);
 const fmtOrDash = (
   n: number | undefined,
   formatter: (v: number) => string,
@@ -75,12 +73,11 @@ function resolveWaterfall(
   });
 }
 
-export default function PartnershipTab({ projectId }: { projectId: number | string }) {
+export default function PartnershipTab() {
   const [tab, setTab] = useState('Summary');
   const { toast } = useToast();
   const params = useParams();
   const dealId = (params?.id as string | undefined) ?? '';
-  const isKimptonDemo = projectId === 7;
   const { outputs, previous } = useEngineOutputs(dealId);
   const [computing, setComputing] = useState(false);
   const [runToken, setRunToken] = useState<number | null>(null);
@@ -182,18 +179,16 @@ export default function PartnershipTab({ projectId }: { projectId: number | stri
   const hasWorkerPartnership = wGp != null || wLp != null
     || wGpEquityFlat != null || wLpEquityFlat != null
     || wGpIrrFlat != null || wLpIrrFlat != null;
-  // 0.4218 / 0.2045 are the Kimpton-fixture demo values; only rendered for
-  // the demo deal. fmtOrDash handles the '—' fallback for other deals.
-  const gpIrrPick = pickNum(wGpIrr, 0.4218, isKimptonDemo);
-  const lpIrrPick = pickNum(wLpIrr, 0.2045, isKimptonDemo);
-  const promotePick = pickNum(wPromote, 2_840_000, isKimptonDemo);
+  const gpIrrPick = pickNum(wGpIrr);
+  const lpIrrPick = pickNum(wLpIrr);
+  const promotePick = pickNum(wPromote);
   const gpIrrLabel = fmtOrDash(gpIrrPick, v => fmtPct(v, 2));
   const lpIrrLabel = fmtOrDash(lpIrrPick, v => fmtPct(v, 2));
   const promoteLabel = fmtOrDash(promotePick, v => fmtCurrency(v, { compact: true }));
 
   // Total deal profit = total cash returned to all equity - equity contributed.
   // We can compute it when both distributions and equity are present from the
-  // engine; otherwise fall back to the Kimpton fixture for the demo only.
+  // engine; otherwise it is undefined and renders as '—'.
   const totalDistributions = (wGpDist ?? 0) + (wLpDist ?? 0);
   const totalEquityRuntime = (wGpEquity ?? 0) + (wLpEquity ?? 0);
   const totalEquity = wTotalEquityFlat ?? totalEquityRuntime;
@@ -201,10 +196,10 @@ export default function PartnershipTab({ projectId }: { projectId: number | stri
     && (wGpEquity != null || wLpEquity != null || wTotalEquityFlat != null);
   const dealProfitPick = canComputeDealProfit
     ? Math.max(0, totalDistributions - totalEquity)
-    : (isKimptonDemo ? 22_120_000 : undefined);
+    : undefined;
   const dealProfitLabel = fmtOrDash(dealProfitPick, v => fmtCurrency(v, { compact: true }));
 
-  if (!isKimptonDemo && !hasWorkerPartnership) {
+  if (!hasWorkerPartnership) {
     return (
       <div className="flex gap-4">
         <div className="flex-1 min-w-0">
@@ -334,11 +329,11 @@ export default function PartnershipTab({ projectId }: { projectId: number | stri
                 </thead>
                 <tbody>
                   {(() => {
-                    const gpEqPick = pickNum(wGpEquity, 1_388_960, isKimptonDemo);
-                    const lpEqPick = pickNum(wLpEquity, 12_447_110, isKimptonDemo);
+                    const gpEqPick = pickNum(wGpEquity);
+                    const lpEqPick = pickNum(wLpEquity);
                     const totalPick = (gpEqPick != null && lpEqPick != null)
                       ? gpEqPick + lpEqPick
-                      : pickNum(wTotalEquityFlat, 13_836_070, isKimptonDemo);
+                      : pickNum(wTotalEquityFlat);
                     const gpPctStr = (gpEqPick != null && totalPick && totalPick > 0)
                       ? `${((gpEqPick / totalPick) * 100).toFixed(1)}%`
                       : '—';
@@ -389,10 +384,10 @@ export default function PartnershipTab({ projectId }: { projectId: number | stri
                     const lpProfitNum = (wLpDist != null && wLpEquity != null)
                       ? Math.max(0, wLpDist - wLpEquity)
                       : undefined;
-                    const gpProfitPick = pickNum(gpProfitNum, 2_840_000, isKimptonDemo);
-                    const lpProfitPick = pickNum(lpProfitNum, 19_280_000, isKimptonDemo);
-                    const gpMultiplePick = pickNum(wGpMultiple, 3.04, isKimptonDemo);
-                    const lpMultiplePick = pickNum(wLpMultiple, 2.02, isKimptonDemo);
+                    const gpProfitPick = pickNum(gpProfitNum);
+                    const lpProfitPick = pickNum(lpProfitNum);
+                    const gpMultiplePick = pickNum(wGpMultiple);
+                    const lpMultiplePick = pickNum(wLpMultiple);
                     return (
                       <>
                         <tr className="border-b border-border/50">
@@ -419,9 +414,7 @@ export default function PartnershipTab({ projectId }: { projectId: number | stri
             <h3 className="text-[13px] font-semibold text-ink-900 mb-3">Cash Flow Waterfall</h3>
             {(() => {
               // Build the waterfall tier table from worker fields when the
-              // export-style schema is present; fall back to the Kimpton
-              // fixture only on the demo deal so non-Kimpton deals render '—'
-              // instead of inheriting the demo's promote tiers.
+              // export-style schema is present.
               type Tier = { tier: string; gp: number; lp: number };
               const workerTiers: Tier[] | null = (() => {
                 const tiers: Tier[] = [];
@@ -498,8 +491,8 @@ export default function PartnershipTab({ projectId }: { projectId: number | stri
             {(() => {
               const gpOwn = readOverrideNum(overrides, 'gp_equity_pct', 0.10);
               const lpOwn = readOverrideNum(overrides, 'lp_equity_pct', 0.90);
-              const gpEqPick = pickNum(wGpEquity, 1_388_960, isKimptonDemo);
-              const lpEqPick = pickNum(wLpEquity, 12_447_110, isKimptonDemo);
+              const gpEqPick = pickNum(wGpEquity);
+              const lpEqPick = pickNum(wLpEquity);
               return (
                 <div className="grid grid-cols-3 gap-5">
                   <PctField
@@ -610,15 +603,7 @@ export default function PartnershipTab({ projectId }: { projectId: number | stri
                     : `Year ${i + 1}`;
                   return [yearLabel, gp, lp, gp + lp];
                 })
-              : isKimptonDemo
-                ? [
-                    ['Year 1', 0, 309_500, 309_500],
-                    ['Year 2', 0, 345_600, 345_600],
-                    ['Year 3', 0, 384_200, 384_200],
-                    ['Year 4', 92_000, 425_300, 517_300],
-                    ['Year 5 (Exit)', 2_748_000, 17_815_400, 20_563_400],
-                  ]
-                : [];
+              : [];
             if (rows.length === 0) {
               return (
                 <div className="py-6 text-center text-[12px] text-ink-500">
@@ -648,13 +633,13 @@ export default function PartnershipTab({ projectId }: { projectId: number | stri
       )}
 
       {tab === 'Returns Summary' && (() => {
-        const gpMultiplePick = pickNum(wGpMultiple, 3.04, isKimptonDemo);
-        const lpMultiplePick = pickNum(wLpMultiple, 2.02, isKimptonDemo);
-        const gpDistPick = pickNum(wGpDist, 2_840_000, isKimptonDemo);
-        const lpDistPick = pickNum(wLpDist, 19_280_000, isKimptonDemo);
+        const gpMultiplePick = pickNum(wGpMultiple);
+        const lpMultiplePick = pickNum(wLpMultiple);
+        const gpDistPick = pickNum(wGpDist);
+        const lpDistPick = pickNum(wLpDist);
         const prefMet = wLpIrr != null
           ? (wLpIrr >= 0.10 ? 'Yes' : 'No')
-          : (isKimptonDemo ? 'Yes' : '—');
+          : '—';
         return (
           <div className="grid grid-cols-2 gap-5">
             <Card className="p-5">

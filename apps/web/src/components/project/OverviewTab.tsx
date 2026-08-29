@@ -7,7 +7,7 @@ import { Button } from '@/components/ui/Button';
 import { useToast } from '@/components/ui/Toast';
 import { DataKeyLegend } from './DataKeyLegend';
 import {
-  kimptonAnglerOverview, findBrand, returnProfiles, positioningTiers,
+  findBrand, returnProfiles, positioningTiers,
   brandFamilies,
 } from '@/lib/mockData';
 import { api, isWorkerConnected, workerUrl, type ExtractionField, type AssumptionSourcesResponse } from '@/lib/api';
@@ -212,7 +212,7 @@ export default function OverviewTab({ projectId }: { projectId: number | string 
   const hasWorkerReturns = wReturnsIrr != null;
   const hasAnyWorker = hasWorkerCapital || hasWorkerReturns;
 
-  if (projectId !== 7 && !hasAnyWorker) {
+  if (!hasAnyWorker) {
     return (
       <Card className="p-16 text-center">
         <div className="w-12 h-12 rounded-lg bg-ink-300/20 flex items-center justify-center mx-auto mb-4">
@@ -236,17 +236,12 @@ export default function OverviewTab({ projectId }: { projectId: number | string 
     );
   }
 
-  const o = kimptonAnglerOverview;
-  const isKimptonDemo = projectId === 7;
-
-  // ─── Fixture-leak gate ───────────────────────────────────────────
-  // Same pattern as InvestmentTab.tsx: prefer worker engine output and
-  // fall back to the Kimpton fixture only on the demo deal (projectId
-  // === 7); other deals show '—' until the engine has produced the
-  // value. `pickNum` returns a raw number for arithmetic;
+  // ─── Engine-value gate ───────────────────────────────────────────
+  // Prefer worker engine output; deals show '—' until the engine has
+  // produced the value. `pickNum` returns a raw number for arithmetic;
   // `fmtOrDash` formats with a fallback to '—'.
-  const pickNum = (worker: number | undefined, fixture: number): number | undefined =>
-    worker != null ? worker : (isKimptonDemo ? fixture : undefined);
+  const pickNum = (worker: number | undefined): number | undefined =>
+    worker != null ? worker : undefined;
   const fmtOrDash = (
     n: number | undefined,
     formatter: (v: number) => string,
@@ -257,20 +252,11 @@ export default function OverviewTab({ projectId }: { projectId: number | string 
   // wizard or patched via the API). The descriptive fields the OM
   // typically carries — year_built, gba, meeting_space, parking,
   // fb_outlets, property_type — are resolved from the OM extraction by
-  // trying a list of plausible aliases per field. Kimpton demo (id=7)
-  // keeps its fixture values so the canned demo stays byte-identical.
-  const propertyName = isKimptonDemo
-    ? o.general.name
-    : (deal?.name ?? undefined);
-  const propertyCity = isKimptonDemo
-    ? o.general.location
-    : (deal?.city ?? undefined);
-  const propertyKeys = isKimptonDemo
-    ? o.general.keys
-    : ((deal?.keys && deal.keys > 0) ? deal.keys : undefined);
-  const propertyBrand = isKimptonDemo
-    ? o.general.brand
-    : (deal?.brand ?? undefined);
+  // trying a list of plausible aliases per field.
+  const propertyName = deal?.name ?? undefined;
+  const propertyCity = deal?.city ?? undefined;
+  const propertyKeys = (deal?.keys && deal.keys > 0) ? deal.keys : undefined;
+  const propertyBrand = deal?.brand ?? undefined;
 
   // Resolve a descriptive field by trying multiple alias paths against
   // the OM extraction. Matches on the full dotted name, the last
@@ -383,9 +369,7 @@ export default function OverviewTab({ projectId }: { projectId: number | string 
   // Service / Type: prefer the OM-extracted descriptor, fall back to
   // the deal row (which the create-deal wizard captures as service
   // level), then '—'.
-  const propertyService = isKimptonDemo
-    ? o.general.type
-    : (omPropertyType ?? deal?.service ?? undefined);
+  const propertyService = omPropertyType ?? deal?.service ?? undefined;
 
   // Brand tier enrichment: only valid when we have a brand string.
   const brandMatch = propertyBrand ? findBrand(propertyBrand) : null;
@@ -395,10 +379,10 @@ export default function OverviewTab({ projectId }: { projectId: number | string 
 
   // Investment Profile rows (return strategy, IRR target, positioning tier).
   // FON-59 — these are captured in the onboarding wizard and persisted on the
-  // deal (return_profile / positioning); read them for live deals, falling back
-  // to the Kimpton demo fixture. IRR target comes off the deal's target_irr.
-  const profileId = deal?.return_profile ?? (isKimptonDemo ? o.investmentProfile.returnProfile : undefined);
-  const positioningId = deal?.positioning ?? (isKimptonDemo ? o.investmentProfile.positioning : undefined);
+  // deal (return_profile / positioning); read them for live deals. IRR target
+  // comes off the deal's target_irr.
+  const profileId = deal?.return_profile ?? undefined;
+  const positioningId = deal?.positioning ?? undefined;
   const profile = profileId ? returnProfiles.find(r => r.id === profileId) : undefined;
   const positioning = positioningId ? positioningTiers.find(p => p.id === positioningId) : undefined;
 
@@ -454,67 +438,64 @@ export default function OverviewTab({ projectId }: { projectId: number | string 
   const y1Noi = wExpenseY1 ? (wExpenseY1.noi_institutional ?? wExpenseY1.noi) : undefined;
 
   // Acquisition Assumptions
-  const acqPurchase = pickNum(wPurchase ?? usePurchase, o.acquisition.purchasePrice);
+  const acqPurchase = pickNum(wPurchase ?? usePurchase);
   const acqPricePerKey = wPricePerKey != null
     ? wPricePerKey
     : (acqPurchase != null && propertyKeys && propertyKeys > 0)
       ? acqPurchase / propertyKeys
-      : (isKimptonDemo ? o.acquisition.pricePerKey : undefined);
+      : undefined;
   // Entry cap = going-in (Year-1) NOI / purchase price when the engine doesn't
   // publish it directly.
   const acqEntryCap = pickNum(
     wEntryCap ?? (y1Noi != null && acqPurchase ? y1Noi / acqPurchase : undefined),
-    o.acquisition.entryCapRate,
   );
-  const acqClosingCosts = pickNum(useAmt(/closing/i), o.acquisition.closingCosts);
-  const acqWorkingCapital = pickNum(useAmt(/working/i), o.acquisition.workingCapital);
+  const acqClosingCosts = pickNum(useAmt(/closing/i));
+  const acqWorkingCapital = pickNum(useAmt(/working/i));
 
   // Returns Summary
-  const retLeveredIrr = pickNum(wReturnsIrr, o.returns.leveredIRR);
-  const retUnleveredIrr = pickNum(wUnleveredIrr, o.returns.unleveredIRR);
-  const retEquityMultiple = pickNum(wEquityMultiple, o.returns.equityMultiple);
-  const retYearOneCoC = pickNum(wYearOneCoC, o.returns.yearOneCoC);
-  const retHold = pickNum(wHold, o.returns.hold);
+  const retLeveredIrr = pickNum(wReturnsIrr);
+  const retUnleveredIrr = pickNum(wUnleveredIrr);
+  const retEquityMultiple = pickNum(wEquityMultiple);
+  const retYearOneCoC = pickNum(wYearOneCoC);
+  const retHold = pickNum(wHold);
 
   // Reversion
-  const revExitCap = pickNum(wExitCap, o.reversion.exitCapRate);
+  const revExitCap = pickNum(wExitCap);
   // Exit year = the hold period (Year N); worker doesn't emit an exit-year field.
-  const revExitYear = pickNum(retHold, o.reversion.exitYear);
-  const revTerminalNoi = pickNum(wTerminalNoi, o.reversion.terminalNOI);
-  const revGrossSale = pickNum(wGrossSale, o.reversion.grossSalePrice);
-  const revSellingCosts = pickNum(wSellingCosts, o.reversion.sellingCosts);
+  const revExitYear = pickNum(retHold);
+  const revTerminalNoi = pickNum(wTerminalNoi);
+  const revGrossSale = pickNum(wGrossSale);
+  const revSellingCosts = pickNum(wSellingCosts);
 
   // Investment — renovation / soft costs / contingency come from capital.uses.
-  const invRenoBudget = pickNum(useAmt(/renovat/i), o.investment.renovationBudget);
+  const invRenoBudget = pickNum(useAmt(/renovat/i));
   const invHardPerKey = pickNum(
     invRenoBudget != null && propertyKeys && propertyKeys > 0 ? invRenoBudget / propertyKeys : undefined,
-    o.investment.hardCostsPerKey,
   );
-  const invSoftCosts = pickNum(useAmt(/soft/i), o.investment.softCosts);
-  const invContingency = pickNum(useAmt(/contingen/i), o.investment.contingency);
-  const invTotalCapital = pickNum(wTotalCapital, o.investment.totalCapital);
+  const invSoftCosts = pickNum(useAmt(/soft/i));
+  const invContingency = pickNum(useAmt(/contingen/i));
+  const invTotalCapital = pickNum(wTotalCapital);
 
   // Acquisition Financing
-  const finLoanAmount = pickNum(wLoanAmount ?? wDebtAmount, o.financing.loanAmount);
+  const finLoanAmount = pickNum(wLoanAmount ?? wDebtAmount);
   // LTV = loan / purchase price (derive when the engine only publishes LTC).
   const finLtv = pickNum(
     wLtv ?? wLtc ?? ((wDebtAmount ?? wLoanAmount) != null && acqPurchase
       ? ((wDebtAmount ?? wLoanAmount) as number) / acqPurchase
       : undefined),
-    o.financing.ltv,
   );
-  const finInterestRate = pickNum(wInterestRate, o.financing.interestRate);
-  const finDscr = pickNum(wDscr, o.financing.dscr);
-  const finAnnualDebtService = pickNum(wAnnualDebtService, o.financing.annualDebtService);
-  const finTerm = pickNum(wDebtTerm, o.financing.term);
-  const finAmort = pickNum(wDebtAmort, o.financing.amortization);
+  const finInterestRate = pickNum(wInterestRate);
+  const finDscr = pickNum(wDscr);
+  const finAnnualDebtService = pickNum(wAnnualDebtService);
+  const finTerm = pickNum(wDebtTerm);
+  const finAmort = pickNum(wDebtAmort);
 
   // Refi (no worker engine output yet)
-  const refiYear = isKimptonDemo ? o.refi.refiYear : undefined;
-  const refiLtv = isKimptonDemo ? o.refi.refiLTV : undefined;
-  const refiRate = isKimptonDemo ? o.refi.refiRate : undefined;
-  const refiTerm = isKimptonDemo ? o.refi.refiTerm : undefined;
-  const refiAmort = isKimptonDemo ? o.refi.refiAmortization : undefined;
+  const refiYear: number | undefined = undefined;
+  const refiLtv: number | undefined = undefined;
+  const refiRate: number | undefined = undefined;
+  const refiTerm: number | undefined = undefined;
+  const refiAmort: number | undefined = undefined;
 
   return (
     <div className="space-y-3">
@@ -564,33 +545,23 @@ export default function OverviewTab({ projectId }: { projectId: number | string 
             { label: 'Year Built', kind: 'editable',
               fieldPath: 'property_overview.year_built', inputType: 'number',
               raw: omYearBuilt,
-              value: isKimptonDemo
-                ? o.general.yearBuilt.toString()
-                : (omYearBuilt != null ? String(Math.round(omYearBuilt)) : '—') },
+              value: omYearBuilt != null ? String(Math.round(omYearBuilt)) : '—' },
             { label: 'GBA (SF)', kind: 'editable',
               fieldPath: 'property_overview.gba_sf', inputType: 'number',
               raw: omGba,
-              value: isKimptonDemo
-                ? fmtNumber(o.general.gba)
-                : (omGba != null ? fmtNumber(Math.round(omGba)) : '—') },
+              value: omGba != null ? fmtNumber(Math.round(omGba)) : '—' },
             { label: 'Meeting Space', kind: 'editable',
               fieldPath: 'property_overview.meeting_space_sf', inputType: 'number',
               raw: omMeetingSpace,
-              value: isKimptonDemo
-                ? o.general.meetingSpace
-                : (omMeetingSpace != null ? `${fmtNumber(Math.round(omMeetingSpace))} SF` : '—') },
+              value: omMeetingSpace != null ? `${fmtNumber(Math.round(omMeetingSpace))} SF` : '—' },
             { label: 'Parking Spaces', kind: 'editable',
               fieldPath: 'property_overview.parking_spaces', inputType: 'number',
               raw: omParking,
-              value: isKimptonDemo
-                ? o.general.parking.toString()
-                : (omParking != null ? fmtNumber(Math.round(omParking)) : '—') },
+              value: omParking != null ? fmtNumber(Math.round(omParking)) : '—' },
             { label: 'F&B Outlets', kind: 'editable',
               fieldPath: 'property_overview.fb_outlets', inputType: 'number',
               raw: omFbOutlets,
-              value: isKimptonDemo
-                ? o.general.fbOutlets.toString()
-                : (omFbOutlets != null ? String(Math.round(omFbOutlets)) : '—') },
+              value: omFbOutlets != null ? String(Math.round(omFbOutlets)) : '—' },
           ]}
         />
 
@@ -806,29 +777,12 @@ export default function OverviewTab({ projectId }: { projectId: number | string 
 
       <div className="grid grid-cols-2 gap-3">
         <SourcesPanel
-          sources={
-            hasWorkerCapital
-              ? wSources!
-              : isKimptonDemo
-                ? o.sources.map((s) => ({
-                    label: s.label,
-                    amount: s.amount,
-                    pct: s.pct,
-                    is_total: s.total,
-                  }))
-                : []
-          }
+          sources={hasWorkerCapital ? wSources! : []}
           keys={propertyKeys ?? 0}
           source={hasWorkerCapital ? 'worker' : 'mock'}
         />
         <UsesPanel
-          uses={
-            hasWorkerCapital
-              ? wUses!
-              : isKimptonDemo
-                ? o.uses.map((u) => ({ label: u.label, amount: u.amount, is_total: u.total }))
-                : []
-          }
+          uses={hasWorkerCapital ? wUses! : []}
           source={hasWorkerCapital ? 'worker' : 'mock'}
         />
       </div>
@@ -1257,10 +1211,9 @@ function UsesPanel({ uses, source }: { uses: SourceUseLine[]; source: 'worker' |
 }
 
 // Proforma panel — prefer the worker expense engine years[] (in dollars,
-// converted to $000s for display). Falls back to Kimpton mock for the demo.
-function ProformaPanel({ outputs, isKimptonDemo }: {
+// converted to $000s for display).
+function ProformaPanel({ outputs }: {
   outputs: ReturnType<typeof useEngineOutputs>['outputs'];
-  isKimptonDemo: boolean;
 }) {
   type WorkerExpenseYear = {
     year: number;
@@ -1330,13 +1283,6 @@ function ProformaPanel({ outputs, isKimptonDemo }: {
       row('Debt Service', ds),
       row('Cash Flow After Debt', cfadInst, true),
     ];
-  } else if (isKimptonDemo) {
-    rows = kimptonAnglerOverview.proforma.map(p => ({
-      label: p.label,
-      vals: [p.y1, p.y2, p.y3, p.y4, p.y5],
-      cagr: p.cagr,
-      bold: p.bold,
-    }));
   }
 
   if (rows.length === 0) {

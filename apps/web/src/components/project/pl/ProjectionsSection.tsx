@@ -12,7 +12,6 @@
  *  - Worker: ``revenue.years`` + ``fb.years`` + ``expense.years`` via
  *    ``useEngineOutputs``. Year 0 (Base) = first engine year, treated
  *    as the T-12 anchor; Years 1-5 = engine years[0..4].
- *  - Kimpton demo (id=7): ``kimptonAnglerOverview.proforma`` mock.
  *
  * Helpers (mirroring Historicals):
  *   PAR  = Amount / Available Rooms × 1000
@@ -35,7 +34,6 @@ import { sourceKind, sourceLabel, sourceExplanation, KIND_TONE } from '@/lib/pro
 import { getEngineField, useEngineOutputs } from '@/lib/hooks/useEngineOutputs';
 import { useEngineRun } from '@/lib/hooks/useEngineRun';
 import { useDeal } from '@/lib/hooks/useDeal';
-import { kimptonAnglerOverview } from '@/lib/mockData';
 import {
   api,
   isWorkerConnected,
@@ -156,10 +154,8 @@ const isLeap = (y: number) => (y % 4 === 0 && y % 100 !== 0) || y % 400 === 0;
 
 export default function ProjectionsSection({
   dealId,
-  isKimptonDemo,
 }: {
   dealId: string;
-  isKimptonDemo: boolean;
 }) {
   const { toast } = useToast();
   const { outputs } = useEngineOutputs(dealId);
@@ -211,10 +207,8 @@ export default function ProjectionsSection({
     [overrides, applyOverride, resetOverride, runStatus],
   );
 
-  // Resolve key count: Kimpton mock or real deal.keys; default 0 until known.
-  const keys = isKimptonDemo
-    ? kimptonAnglerOverview.general.keys
-    : (deal?.keys && deal.keys > 0 ? deal.keys : 0);
+  // Resolve key count: real deal.keys; default 0 until known.
+  const keys = deal?.keys && deal.keys > 0 ? deal.keys : 0;
 
   // Pull engine years.
   const revenueYears = getEngineField<RevenueYearWorker[]>(outputs, 'revenue', 'years');
@@ -228,11 +222,8 @@ export default function ProjectionsSection({
     if (hasWorker && keys > 0) {
       return buildFromWorker(revenueYears!, fbYears ?? null, expenseYears!, keys);
     }
-    if (isKimptonDemo) {
-      return buildFromKimpton();
-    }
     return null;
-  }, [hasWorker, revenueYears, fbYears, expenseYears, keys, isKimptonDemo]);
+  }, [hasWorker, revenueYears, fbYears, expenseYears, keys]);
 
   // ── AI NOI Summary modal ────────────────────────────────────────
   // Hits the worker's grounded Q&A endpoint (`/deals/{id}/ask`),
@@ -612,65 +603,6 @@ function buildFromWorker(
     });
   }
   return out;
-}
-
-// Kimpton mock: synthesize a Base Year (T-12 anchor) + 5 projection
-// years from the proforma block. Numbers in proforma are $000s, so
-// we multiply by 1000 to get dollars in the table.
-function buildFromKimpton(): ProjYear[] {
-  const keys = kimptonAnglerOverview.general.keys; // 132
-  const p = kimptonAnglerOverview.proforma;
-  const get = (label: string) => p.find(r => r.label === label)!;
-  const room = get('Room Revenue');
-  const fb = get('F&B Revenue');
-  const other = get('Other Revenue');
-  const totalRev = get('Total Revenue');
-
-  // Base Year (2025) — derived as Y1 / 1.05 to back into a T-12 anchor.
-  const baseYear = 2025;
-  const baseScale = 1 / 1.05;
-  const baseOcc = 0.701;
-  // Forecast years (2026..2030) follow the existing Kimpton occupancy ramp.
-  const occRamp = [0.701, 0.738, 0.762, 0.776, 0.787];
-  const yearsArr = [baseYear, 2026, 2027, 2028, 2029, 2030];
-
-  return yearsArr.map((y, i) => {
-    const isBase = i === 0;
-    const days = isLeap(y) ? 366 : 365;
-    const availableRooms = keys * days;
-    const occ = isBase ? baseOcc * baseScale * 1.05 : occRamp[i - 1]; // ≈ baseOcc for i=0
-    const occupiedRooms = Math.round(availableRooms * occ);
-
-    const ykey = (['y1', 'y2', 'y3', 'y4', 'y5'] as const)[Math.max(0, i - 1)];
-    const scale = isBase ? baseScale : 1;
-    const rooms$ = (room[ykey] * 1000) * scale;
-    const fb$ = (fb[ykey] * 1000) * scale;
-    const other$ = (other[ykey] * 1000) * scale;
-    const total$ = (totalRev[ykey] * 1000) * scale;
-    const adr = occupiedRooms > 0 ? rooms$ / occupiedRooms : 0;
-    const revpar = availableRooms > 0 ? rooms$ / availableRooms : 0;
-
-    return {
-      year: y,
-      days,
-      rooms: keys,
-      availableRooms,
-      occupiedRooms,
-      occupancy: occ,
-      adr,
-      revpar,
-      roomsRevenue: rooms$,
-      fbRevenue: fb$,
-      // Kimpton demo has no separate OOD line — surface "other"
-      // under the OOD bucket so the line at least renders, and
-      // leave Resort Fees / Misc at zero. The demo's purpose is to
-      // demonstrate the waterfall, not match a real USALI split.
-      otherOperatedRevenue: other$,
-      resortFees: 0,
-      miscRevenue: 0,
-      totalRevenue: total$,
-    };
-  });
 }
 
 // ────────────────────────────────────────────────────────────────────

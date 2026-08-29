@@ -60,10 +60,8 @@ interface FlaggedField {
 
 export default function PLReviewSection({
   dealId,
-  isKimptonDemo,
 }: {
   dealId: string | number;
-  isKimptonDemo?: boolean;
 }) {
   const rawId = String(dealId);
   const { documents, extractions, refreshExtraction } = useDocuments(rawId);
@@ -149,15 +147,6 @@ export default function PLReviewSection({
       setBulk(false);
     }
   }, [bulk, queue, rawId, refreshExtraction, toast]);
-
-  if (isKimptonDemo) {
-    return (
-      <Card className="p-6 text-[13px] text-ink-500">
-        Financial data review is available on live deals — upload T-12 / P&amp;L
-        statements and this walks you through every value that needs a look.
-      </Card>
-    );
-  }
 
   if (financialDocs.length === 0) {
     return (

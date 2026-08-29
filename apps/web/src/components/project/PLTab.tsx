@@ -22,7 +22,6 @@ import EngineRunHistory from './EngineRunHistory';
 import WhatJustHappened from './WhatJustHappened';
 import type { EngineOutputsResponse } from '@/lib/api';
 import { isWorkerConnected, workerUrl } from '@/lib/api';
-import { kimptonAnglerOverview } from '@/lib/mockData';
 import { fmtCurrency, fmtMillions, cn } from '@/lib/format';
 import { getEngineField, useEngineOutputs } from '@/lib/hooks/useEngineOutputs';
 import { useDeal } from '@/lib/hooks/useDeal';
@@ -253,94 +252,7 @@ function buildStatementFromWorker(
   return { rows, totals: { totalRev, noi: noiCalc, gop, deptProfit } };
 }
 
-// Build USALI-style operating statement rows from existing proforma totals.
-// All numbers are in thousands (matching the existing mockData proforma convention).
-function buildStatement(): StatementResult {
-  const p = kimptonAnglerOverview.proforma;
-  const get = (label: string) => p.find(r => r.label === label)!;
-  const room = get('Room Revenue');
-  const fb = get('F&B Revenue');
-  const other = get('Other Revenue');
-  const totalRev = get('Total Revenue');
-  const mgmt = get('Management Fee');
-  const ffe = get('FF&E Reserve');
-
-  const years: ('y1' | 'y2' | 'y3' | 'y4' | 'y5')[] = ['y1', 'y2', 'y3', 'y4', 'y5'];
-
-  // Departmental expenses synthesized from realistic ratios for select-service Lifestyle
-  // Rooms ~25% of room rev, F&B ~75% of F&B rev, Other ~50%
-  const roomsDept = years.map(y => Math.round(room[y] * 0.25));
-  const fbDept = years.map(y => Math.round(fb[y] * 0.75));
-  const otherDept = years.map(y => Math.round(other[y] * 0.50));
-  const deptProfit = years.map((y, i) =>
-    totalRev[y] - roomsDept[i] - fbDept[i] - otherDept[i]
-  );
-
-  // Undistributed operating expenses — break down the existing aggregate "Operating Expenses" line.
-  // Splits target USALI standard ratios for lifestyle: A&G 8%, S&M 7%, POM 4%, Utilities 4.5%, IT 1.5%
-  const uoePct = { ag: 0.08, sm: 0.07, pom: 0.04, util: 0.045, it: 0.015 };
-  const ag = years.map(y => Math.round(totalRev[y] * uoePct.ag));
-  const sm = years.map(y => Math.round(totalRev[y] * uoePct.sm));
-  const pom = years.map(y => Math.round(totalRev[y] * uoePct.pom));
-  const util = years.map(y => Math.round(totalRev[y] * uoePct.util));
-  const it = years.map(y => Math.round(totalRev[y] * uoePct.it));
-  const gop = years.map((_, i) => deptProfit[i] - ag[i] - sm[i] - pom[i] - util[i] - it[i]);
-
-  // Fixed charges
-  const insurance = years.map(y => Math.round(totalRev[y] * 0.012));
-  const propTax = years.map(y => Math.round(totalRev[y] * 0.028));
-  const equipLease = years.map(y => Math.round(totalRev[y] * 0.005));
-  const noiCalc = years.map((_, i) => gop[i] - insurance[i] - propTax[i] - equipLease[i]);
-
-  // Net income = NOI - FF&E Reserve - Management Fee
-  const netIncome = years.map((y, i) => noiCalc[i] - ffe[y] - mgmt[y]);
-
-  const rows: StatementRow[] = [
-    { label: 'REVENUES', values: [], kind: 'group' },
-    { label: 'Room Revenue', values: years.map(y => room[y]), cagr: room.cagr, kind: 'detail' },
-    { label: 'F&B Revenue', values: years.map(y => fb[y]), cagr: fb.cagr, kind: 'detail' },
-    { label: 'Other Revenue', values: years.map(y => other[y]), cagr: other.cagr, kind: 'detail' },
-    { label: 'Total Revenue', values: years.map(y => totalRev[y]), cagr: totalRev.cagr, kind: 'subtotal' },
-
-    { label: 'DEPARTMENTAL EXPENSES', values: [], kind: 'group' },
-    { label: 'Rooms Department', values: roomsDept, cagr: cagrCalc(roomsDept[0], roomsDept[4]), kind: 'detail' },
-    { label: 'F&B Department', values: fbDept, cagr: cagrCalc(fbDept[0], fbDept[4]), kind: 'detail' },
-    { label: 'Other Department', values: otherDept, cagr: cagrCalc(otherDept[0], otherDept[4]), kind: 'detail' },
-    { label: 'Departmental Profit', values: deptProfit, cagr: cagrCalc(deptProfit[0], deptProfit[4]), kind: 'subtotal' },
-
-    { label: 'UNDISTRIBUTED OPERATING EXPENSES', values: [], kind: 'group' },
-    { label: 'Administrative & General', values: ag, cagr: cagrCalc(ag[0], ag[4]), kind: 'detail' },
-    { label: 'Sales & Marketing', values: sm, cagr: cagrCalc(sm[0], sm[4]), kind: 'detail' },
-    { label: 'Property Operations & Maintenance', values: pom, cagr: cagrCalc(pom[0], pom[4]), kind: 'detail' },
-    { label: 'Utilities', values: util, cagr: cagrCalc(util[0], util[4]), kind: 'detail' },
-    { label: 'Information & Telecom', values: it, cagr: cagrCalc(it[0], it[4]), kind: 'detail' },
-    { label: 'Gross Operating Profit (GOP)', values: gop, cagr: cagrCalc(gop[0], gop[4]), kind: 'subtotal' },
-
-    { label: 'FIXED CHARGES', values: [], kind: 'group' },
-    { label: 'Insurance', values: insurance, cagr: cagrCalc(insurance[0], insurance[4]), kind: 'detail' },
-    { label: 'Property Taxes', values: propTax, cagr: cagrCalc(propTax[0], propTax[4]), kind: 'detail' },
-    { label: 'Equipment Lease', values: equipLease, cagr: cagrCalc(equipLease[0], equipLease[4]), kind: 'detail' },
-    { label: 'Net Operating Income', values: noiCalc, cagr: cagrCalc(noiCalc[0], noiCalc[4]), kind: 'subtotal' },
-
-    { label: 'FF&E Reserve', values: years.map(y => ffe[y]), cagr: cagrCalc(ffe.y1, ffe.y5), kind: 'detail' },
-    { label: 'Management Fee', values: years.map(y => mgmt[y]), cagr: cagrCalc(mgmt.y1, mgmt.y5), kind: 'detail' },
-    { label: 'Net Income', values: netIncome, cagr: cagrCalc(netIncome[0], netIncome[4]), kind: 'total' },
-  ];
-
-  return {
-    rows,
-    totals: {
-      totalRev: years.map(y => totalRev[y]),
-      noi: noiCalc,
-      gop,
-      deptProfit,
-    },
-  };
-}
-
-const kimptonStatement = buildStatement();
-
-export default function PLTab({ projectId }: { projectId: number | string }) {
+export default function PLTab() {
   const searchParams = useSearchParams();
   // Deep-link from the Data Room's "review financials" CTA lands on Historicals
   // (the review now lives inside the historical data screen — no separate tab).
@@ -355,7 +267,6 @@ export default function PLTab({ projectId }: { projectId: number | string }) {
   const { deal, loading: dealLoading } = useDeal(dealId);
   const [computing, setComputing] = useState(false);
   const [runToken, setRunToken] = useState<number | null>(null);
-  const isKimptonDemo = projectId === 7;
   // Per-Key / Departmental dividers must use the real deal's room count.
   // Sam QA re-test: when ``useDeal`` was still loading we silently fell
   // back to 100, which then rendered "100 keys" on the Per-Key header
@@ -363,10 +274,8 @@ export default function PLTab({ projectId }: { projectId: number | string }) {
   // sub-tabs that depend on a known key count until the deal hydrates,
   // so reviewers never see a wrong divisor.
   const realKeys = deal?.keys && deal.keys > 0 ? deal.keys : null;
-  const propertyKeys = isKimptonDemo
-    ? kimptonAnglerOverview.general.keys
-    : (realKeys ?? 0);
-  const keysReady = isKimptonDemo || realKeys !== null;
+  const propertyKeys = realKeys ?? 0;
+  const keysReady = realKeys !== null;
 
   // Worker → expense engine years[] is the canonical source for the operating
   // statement on a real run. Worker wins; Kimpton mock is the demo fallback.
@@ -387,9 +296,8 @@ export default function PLTab({ projectId }: { projectId: number | string }) {
     if (hasWorkerStatement) {
       return buildStatementFromWorker(expenseYears!, fbYears ?? null);
     }
-    if (isKimptonDemo) return kimptonStatement;
     return null;
-  }, [hasWorkerStatement, expenseYears, fbYears, isKimptonDemo]);
+  }, [hasWorkerStatement, expenseYears, fbYears]);
 
   // Year-1 RevPAR — hoisted ABOVE the empty-state early return so the
   // hook count stays stable when `statement` flips from null →
@@ -407,7 +315,7 @@ export default function PLTab({ projectId }: { projectId: number | string }) {
     return 0;
   }, [revenueYears, statement, propertyKeys]);
 
-  if (!isKimptonDemo && !statement) {
+  if (!statement) {
     return (
       <div className="flex gap-4">
         <div className="flex-1 min-w-0">
@@ -539,10 +447,10 @@ export default function PLTab({ projectId }: { projectId: number | string }) {
           // inline-editable Model column, click-to-source, low-confidence flags,
           // and structure editing. It reuses HistoricalsSection's loader via
           // useHistoricals, so nothing was lost by retiring the old table here.
-          <GroundedWorksheet dealId={dealId} isKimptonDemo={isKimptonDemo} />
+          <GroundedWorksheet dealId={dealId} />
         )}
         {tab === 'Projections' && (
-          <ProjectionsSection dealId={dealId} isKimptonDemo={isKimptonDemo} />
+          <ProjectionsSection dealId={dealId} />
         )}
         {computing && (
           <div className="absolute inset-0 bg-bg/60 backdrop-blur-[1px] flex items-start justify-center pt-12 rounded-md">
@@ -758,12 +666,10 @@ function Departmental({ statement, keys }: { statement: StatementResult; keys: n
 function PerKey({
   statement,
   keys,
-  isKimptonDemo,
   revenueYears,
 }: {
   statement: StatementResult;
   keys: number;
-  isKimptonDemo: boolean;
   revenueYears: RevenueYearWorker[] | null;
 }) {
   const findRow = (label: string) =>
@@ -817,7 +723,7 @@ function PerKey({
     <Card className="p-5">
       <div className="flex items-baseline justify-between mb-3">
         <h3 className="text-[13px] font-semibold text-ink-900">Per-Key Operating Metrics</h3>
-        <span className="text-[11px] text-ink-500">{keys} keys{isKimptonDemo ? ' · 132-room lifestyle boutique' : ''}</span>
+        <span className="text-[11px] text-ink-500">{keys} keys</span>
       </div>
       <table className="w-full text-[12.5px]">
         <thead>
@@ -851,11 +757,9 @@ function PerKey({
 
 function HistoricalProjected({
   statement,
-  isKimptonDemo,
   hasWorkerStatement,
 }: {
   statement: StatementResult;
-  isKimptonDemo: boolean;
   hasWorkerStatement: boolean;
 }) {
   // Historical: pre-acquisition operating performance (in $000s).
@@ -884,13 +788,7 @@ function HistoricalProjected({
   // proper starts at "2026" — same numerical anchor, but separated
   // visually so reviewers see the historical-to-projected transition.
   const historical: { year: string; revenue: number; noi: number; gop: number; kind: 'historical' }[] = [];
-  if (isKimptonDemo) {
-    historical.push(
-      { year: '2023', revenue: 13_240, noi: 2_120, gop: 4_520, kind: 'historical' as const },
-      { year: '2024', revenue: 13_680, noi: 2_280, gop: 4_780, kind: 'historical' as const },
-      { year: '2025', revenue: 13_950, noi: 2_481, gop: 4_950, kind: 'historical' as const },
-    );
-  } else if (hasWorkerStatement && totalRev[0] > 0) {
+  if (hasWorkerStatement && totalRev[0] > 0) {
     historical.push({
       year: '2025 (T-12)',
       revenue: totalRev[0],
@@ -900,11 +798,9 @@ function HistoricalProjected({
     });
   }
   const data = [...historical, ...projected];
-  const subtitle = isKimptonDemo
-    ? 'Pre-acquisition T-3 (2023-2025) and underwritten projection (2026-2030) · $ in 000s'
-    : historical.length > 0
-      ? 'Trailing twelve months (T-12 actuals) and underwritten projection (2026-2030) · $ in 000s · upload prior-period operating statements for T-3 trend'
-      : 'Underwritten projection (2026-2030) · $ in 000s · upload a T-12 to anchor a historical baseline';
+  const subtitle = historical.length > 0
+    ? 'Trailing twelve months (T-12 actuals) and underwritten projection (2026-2030) · $ in 000s · upload prior-period operating statements for T-3 trend'
+    : 'Underwritten projection (2026-2030) · $ in 000s · upload a T-12 to anchor a historical baseline';
 
   return (
     <>
@@ -1765,7 +1661,7 @@ interface MarketDataAPIResponse {
   sources?: Record<string, string[]>;
 }
 
-function CompetitiveSet({ dealId, isKimptonDemo }: { dealId: string; isKimptonDemo: boolean }) {
+function CompetitiveSet({ dealId }: { dealId: string }) {
   const [data, setData] = useState<MarketDataAPIResponse | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -1816,9 +1712,7 @@ function CompetitiveSet({ dealId, isKimptonDemo }: { dealId: string; isKimptonDe
         </div>
         <h3 className="text-[14px] font-semibold text-ink-900 mb-1">No competitive set data</h3>
         <p className="text-[12.5px] text-ink-500 max-w-md mx-auto leading-relaxed">
-          {isKimptonDemo
-            ? 'Demo deal — STR comp set fixture is not yet wired into the demo seed.'
-            : 'Upload an STR comp set / TREND report to populate.'}
+          {'Upload an STR comp set / TREND report to populate.'}
         </p>
         {error && <div className="text-[10.5px] text-danger-700 mt-2">{error}</div>}
       </Card>

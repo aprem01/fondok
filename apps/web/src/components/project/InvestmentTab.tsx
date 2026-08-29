@@ -33,14 +33,12 @@ interface RevenueYearLite { year: number; total_revenue: number }
 
 const subTabs = ['Deal Summary', 'Sources & Uses', 'Timeline'];
 
-export default function InvestmentTab({ projectId }: { projectId: number | string }) {
+export default function InvestmentTab() {
   const [tab, setTab] = useState('Deal Summary');
-  const o = kimptonAnglerOverview;
   const ctx = useAssumptionsOptional();
   const params = useParams();
   const dealId = (params?.id as string | undefined) ?? '';
   const { toast } = useToast();
-  const isKimptonDemo = projectId === 7;
   const { outputs, previous } = useEngineOutputs(dealId);
   const { deal, refresh: refreshDeal } = useDeal(dealId);
   // Wave 2 P2.6 — historical baseline (Sam's multi-year walk ask).
@@ -87,10 +85,8 @@ export default function InvestmentTab({ projectId }: { projectId: number | strin
   // ─── Worker engine field reads ────────────────────────────────────
   // Sam QA #8: the Investment tab used to render the Kimpton fixture
   // (Miami Beach, 132 keys, $36.4M etc.) for every deal because every
-  // panel read from `o = kimptonAnglerOverview`. We now prefer worker
-  // engine output and fall back to the Kimpton fixture only on the
-  // demo deal (projectId === 7); other deals show '—' until the
-  // engine has produced the value.
+  // panel read from `o = kimptonAnglerOverview`. We now read worker
+  // engine output and show '—' until the engine has produced the value.
   const wPurchase = getEngineField<number>(outputs, 'capital', 'purchase_price');
   const wPricePerKey = getEngineField<number>(outputs, 'capital', 'price_per_key');
   const wEntryCap = getEngineField<number>(outputs, 'capital', 'entry_cap_rate');
@@ -125,11 +121,7 @@ export default function InvestmentTab({ projectId }: { projectId: number | strin
   const hasCapitalOutput =
     wPurchase != null || wPricePerKey != null || wEntryCap != null;
 
-  // Display helpers: prefer worker → fixture (Kimpton demo only) → '—'.
-  // `valOrDash` picks the first non-null source; `pickNum` returns the
-  // raw number for arithmetic (per-key dividers, etc.).
-  const pickNum = (worker: number | undefined, fixture: number): number | undefined =>
-    worker != null ? worker : (isKimptonDemo ? fixture : undefined);
+  // Display helper: format a worker value, or '—' when absent.
   const fmtOrDash = (
     n: number | undefined,
     formatter: (v: number) => string,
@@ -141,9 +133,9 @@ export default function InvestmentTab({ projectId }: { projectId: number | strin
   const propertyKeys =
     (deal?.keys && deal.keys > 0)
       ? deal.keys
-      : (isKimptonDemo ? kimptonAnglerOverview.general.keys : undefined);
+      : undefined;
 
-  if (!isKimptonDemo && !hasCapitalOutput) {
+  if (!hasCapitalOutput) {
     return (
       <div className="flex gap-4">
         <div className="flex-1 min-w-0">
@@ -234,19 +226,17 @@ export default function InvestmentTab({ projectId }: { projectId: number | strin
           today but the values flow through default seeds where deal
           data is missing — surface that explicitly so reviewers
           don't take the numbers as committed. */}
-      {!isKimptonDemo && (
-        <Card className="p-3 mb-3 border-l-4 border-l-warn-500 bg-warn-50/40">
-          <p className="text-[12px] text-ink-700">
-            <span className="font-semibold">Some fields aren&apos;t populated yet.</span>{' '}
-            Core economics — purchase price, entry / exit cap, NOI and returns —
-            are live from the Capital / Returns engines. A few details still show
-            &ldquo;—&rdquo; because they aren&apos;t extracted from the deal docs
-            (year built, labor / title, the renovation cost split) or need the
-            timeline engine (acquisition / exit dates). Treat those as pending,
-            not committed.
-          </p>
-        </Card>
-      )}
+      <Card className="p-3 mb-3 border-l-4 border-l-warn-500 bg-warn-50/40">
+        <p className="text-[12px] text-ink-700">
+          <span className="font-semibold">Some fields aren&apos;t populated yet.</span>{' '}
+          Core economics — purchase price, entry / exit cap, NOI and returns —
+          are live from the Capital / Returns engines. A few details still show
+          &ldquo;—&rdquo; because they aren&apos;t extracted from the deal docs
+          (year built, labor / title, the renovation cost split) or need the
+          timeline engine (acquisition / exit dates). Treat those as pending,
+          not committed.
+        </p>
+      </Card>
 
       <WhatJustHappened
         engine="capital"
@@ -272,72 +262,69 @@ export default function InvestmentTab({ projectId }: { projectId: number | strin
       <div className={cn(computing && 'relative pointer-events-none opacity-60')}>
 
       {tab === 'Deal Summary' && (() => {
-        // ─── Worker → fixture wiring for every panel below ──────
+        // ─── Worker field wiring for every panel below ──────────
         // Property Overview: name/location/keys come from the deal
         // row (useDeal). Worker doesn't surface year_built / address
-        // yet, so those stay fixture-only on the demo.
-        const dealName = deal?.name ?? (isKimptonDemo ? o.general.name : undefined);
-        const dealLocation = deal?.city ?? (isKimptonDemo ? o.general.location : undefined);
+        // yet, so those show '—' until it does.
+        const dealName = deal?.name ?? undefined;
+        const dealLocation = deal?.city ?? undefined;
         const dealKeys = (deal?.keys && deal.keys > 0)
           ? deal.keys
-          : (isKimptonDemo ? o.general.keys : undefined);
+          : undefined;
         const dealType = deal?.deal_type ?? deal?.positioning ?? deal?.service
-          ?? (isKimptonDemo ? o.general.type : undefined);
-        const dealYearBuilt = isKimptonDemo ? o.general.yearBuilt : undefined;
-        const dealGba = isKimptonDemo ? o.general.gba : undefined;
+          ?? undefined;
+        const dealYearBuilt: number | undefined = undefined;
+        const dealGba: number | undefined = undefined;
 
         // Entry Valuation
-        const entryNoi = pickNum(wYearOneNoi, 2_481_478);
-        const entryPricePerKey = pickNum(wPricePerKey, o.acquisition.pricePerKey);
+        const entryNoi = wYearOneNoi;
+        const entryPricePerKey = wPricePerKey;
         // Purchase price: engine value, else derive from price/key × keys
         // (the capital engine emits price_per_key, not purchase_price).
-        const entryPurchase = pickNum(wPurchase, o.acquisition.purchasePrice)
+        const entryPurchase = wPurchase
           ?? (entryPricePerKey != null && propertyKeys && propertyKeys > 0
             ? entryPricePerKey * propertyKeys
             : undefined);
         // Entry cap = Y1 NOI ÷ purchase price (the engine doesn't emit it).
         const entryCap = (entryNoi != null && entryPurchase != null && entryPurchase > 0)
           ? entryNoi / entryPurchase
-          : pickNum(wEntryCap, o.acquisition.entryCapRate);
+          : wEntryCap;
 
         // Exit Valuation
-        const exitTerminalNoi = pickNum(wTerminalNoi, o.reversion.terminalNOI);
-        const exitCap = pickNum(wExitCap, o.reversion.exitCapRate);
-        const exitGross = pickNum(wGrossSale, o.reversion.grossSalePrice);
+        const exitTerminalNoi = wTerminalNoi;
+        const exitCap = wExitCap;
+        const exitGross = wGrossSale;
         const exitPerKey = (exitGross != null && propertyKeys && propertyKeys > 0)
           ? exitGross / propertyKeys : undefined;
-        const exitSellingCosts = pickNum(wSellingCosts, o.reversion.sellingCosts);
+        const exitSellingCosts = wSellingCosts;
 
         // Renovation Budget — capital engine doesn't break out
-        // hard/soft/fees yet; sub-rows stay fixture-only on demo.
-        const renoBudget = findUse(/renovat/i)
-          ?? (isKimptonDemo ? o.investment.renovationBudget : undefined);
+        // hard/soft/fees yet; sub-rows show '—' until it does.
+        const renoBudget = findUse(/renovat/i);
         const renoPerKey = (renoBudget != null && propertyKeys && propertyKeys > 0)
           ? renoBudget / propertyKeys : undefined;
         const renoPerSf = (renoBudget != null && dealGba && dealGba > 0)
           ? renoBudget / dealGba : undefined;
-        const renoContingency = findUse(/conting/i)
-          ?? (isKimptonDemo ? o.investment.contingency : undefined);
-        const renoHard = isKimptonDemo ? 3_960_000 : undefined;
-        const renoSoft = isKimptonDemo ? 528_000 : undefined;
-        const renoFees = isKimptonDemo ? 264_000 : undefined;
+        const renoContingency = findUse(/conting/i);
+        const renoHard = undefined;
+        const renoSoft = undefined;
+        const renoFees = undefined;
 
         // Valuation Assumptions
-        const totalCapital = pickNum(wTotalCapital, o.investment.totalCapital);
+        const totalCapital = wTotalCapital;
         const totalCapitalPerKey = wTotalCapitalPerKey != null
           ? wTotalCapitalPerKey
           : (totalCapital != null && propertyKeys && propertyKeys > 0)
             ? totalCapital / propertyKeys
             : undefined;
-        const holdYears = wHoldYears ?? (isKimptonDemo ? o.returns.hold : undefined);
+        const holdYears = wHoldYears;
         const exitMonth = holdYears != null ? holdYears * 12 : undefined;
 
         // Senior Loan Financing — prefer debt engine echo, fall
-        // back to capital engine debt_amount, then fixture. The
-        // simplified Lovable layout only surfaces term here, but we
-        // keep loanAmount derived for completeness / future rows.
-        const loanAmount = pickNum(wLoanAmount ?? wDebtAmount, o.financing.loanAmount);
-        const loanTerm = isKimptonDemo ? o.financing.term : undefined;
+        // back to capital engine debt_amount. The simplified Lovable
+        // layout only surfaces term here, but we keep loanAmount
+        // derived for completeness / future rows.
+        const loanAmount = wLoanAmount ?? wDebtAmount;
         void loanAmount;
 
         return (
@@ -348,8 +335,8 @@ export default function InvestmentTab({ projectId }: { projectId: number | strin
               ['Type', dealType ?? '—'],
               ['Location', dealLocation ?? '—'],
               ['Year Built', dealYearBuilt != null ? String(dealYearBuilt) : '—'],
-              ['Labor', isKimptonDemo ? 'Union' : '—'],
-              ['Title', isKimptonDemo ? 'Fee Simple' : '—'],
+              ['Labor', '—'],
+              ['Title', '—'],
               [
                 'Pre-Renovation Keys',
                 <KeysOverride
@@ -360,13 +347,13 @@ export default function InvestmentTab({ projectId }: { projectId: number | strin
                 />,
               ],
               ['Post-Renovation Keys', dealKeys != null ? String(dealKeys) : '—'],
-              ['Post-Renovation SF', dealGba != null ? dealGba.toLocaleString() : '—'],
+              ['Post-Renovation SF', '—'],
             ]} />
             <Panel title="Entry Valuation" rows={[
               ['NOI', fmtOrDash(entryNoi, fmtCurrency)],
               ['Entry Cap Rate', fmtOrDash(entryCap, v => fmtPct(v, 2))],
               ['2025 Run-Rate NOI', fmtOrDash(entryNoi, fmtCurrency)],
-              ['FTM Date', isKimptonDemo ? '12/31/2025' : '—'],
+              ['FTM Date', '—'],
               ['Hotel Purchase Price', <AssumptionField key="pp" value={entryPurchase} editable={liveMode}
                 format={fmtCurrency} toDraft={(v) => String(Math.round(v))}
                 parse={(s) => { const n = parseFloat(s.replace(/[,$\s]/g, '')); return Number.isFinite(n) && n > 0 ? n : null; }}
@@ -375,7 +362,7 @@ export default function InvestmentTab({ projectId }: { projectId: number | strin
             ]} />
             <Panel title="Exit Valuation" rows={[
               ['Exit Month', exitMonth != null ? String(exitMonth) : '—'],
-              ['Exit Date', isKimptonDemo ? '9/30/2030' : '—'],
+              ['Exit Date', '—'],
               ['Fwd. 12 Mo NOI', fmtOrDash(exitTerminalNoi, fmtCurrency)],
               ['Exit Cap Rate', <AssumptionField key="xc-edit" value={exitCap} editable={liveMode}
                 format={(v) => fmtPct(v, 2)} toDraft={(v) => (v * 100).toFixed(2)}
@@ -384,7 +371,7 @@ export default function InvestmentTab({ projectId }: { projectId: number | strin
               ['Gross Exit Value', fmtOrDash(exitGross, fmtCurrency)],
               ['Per Key', fmtOrDash(exitPerKey, fmtCurrency)],
               ['Exit Sales Cost', fmtOrDash(exitSellingCosts, fmtCurrency)],
-              ['Transfer Tax', isKimptonDemo ? '0.6%' : '—'],
+              ['Transfer Tax', '—'],
             ]} />
             <Panel title="Renovation Budget" rows={[
               ['Renovation Budget', <AssumptionField key="rb" value={renoBudget} editable={liveMode}
@@ -503,7 +490,7 @@ export default function InvestmentTab({ projectId }: { projectId: number | strin
           { event: 'Stabilized (FTM NOI, Value)',             start: '12/31/2027' },
         ];
         const cell = (v: string | undefined) =>
-          v != null && v !== '' ? (isKimptonDemo ? v : '—') : '—';
+          v != null && v !== '' ? '—' : '—';
         return (
           <Card className="p-5">
             <h3 className="text-[13px] font-semibold text-ink-900 mb-3">Transaction Timeline</h3>

@@ -745,22 +745,22 @@ export default function ProjectDetailPage() {
           <ErrorBoundary tabName="Overview"><OverviewTab projectId={id} /></ErrorBoundary>
         )}
         {activeTab === 'investment' && (
-          <ErrorBoundary tabName="Investment"><InvestmentTab projectId={id} /></ErrorBoundary>
+          <ErrorBoundary tabName="Investment"><InvestmentTab /></ErrorBoundary>
         )}
         {activeTab === 'pl' && (
-          <ErrorBoundary tabName="P&L"><PLTab projectId={id} /></ErrorBoundary>
+          <ErrorBoundary tabName="P&L"><PLTab /></ErrorBoundary>
         )}
         {activeTab === 'debt' && (
-          <ErrorBoundary tabName="Debt"><DebtTab projectId={id} /></ErrorBoundary>
+          <ErrorBoundary tabName="Debt"><DebtTab /></ErrorBoundary>
         )}
         {activeTab === 'cash-flow' && (
-          <ErrorBoundary tabName="Cash Flow"><CashFlowTab projectId={id} /></ErrorBoundary>
+          <ErrorBoundary tabName="Cash Flow"><CashFlowTab /></ErrorBoundary>
         )}
         {activeTab === 'returns' && (
-          <ErrorBoundary tabName="Returns"><ReturnsTab projectId={id} /></ErrorBoundary>
+          <ErrorBoundary tabName="Returns"><ReturnsTab /></ErrorBoundary>
         )}
         {activeTab === 'partnership' && (
-          <ErrorBoundary tabName="Partnership"><PartnershipTab projectId={id} /></ErrorBoundary>
+          <ErrorBoundary tabName="Partnership"><PartnershipTab /></ErrorBoundary>
         )}
         {activeTab === 'market' && (
           <ErrorBoundary tabName="Market"><MarketTab projectId={id} /></ErrorBoundary>

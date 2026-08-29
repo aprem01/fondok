@@ -127,7 +127,7 @@ export function Sourced({
  * "activate the dashes" primitive: on a real deal it shows the real
  * number instead of a placeholder, and every number carries its source.
  *
- *   {isKimptonDemo ? '6.80%' : <SourcedValue sourceKey="interest_rate" fmt={pct} />}
+ *   <SourcedValue sourceKey="interest_rate" fmt={pct} />
  */
 export function SourcedValue({
   sourceKey,
