@@ -101,6 +101,122 @@ function deriveCompSet(
   return { occ, adr, revpar };
 }
 
+type DerivedComp = { occ: number | null; adr: number | null; revpar: number | null } | null;
+
+// FON-60 Market Overview §1 — an executive submarket read built from the
+// competitive-set aggregate (the subject's local market): inventory from the
+// comp-set roster, Occupancy/ADR/RevPAR from the blended comp metrics. Demand
+// and supply growth need a multi-year trend report, so they read "—" (never a
+// fabricated fixture value — FON-60 requirement #10).
+function SubmarketSnapshot({
+  derivedComp, compSetSize, compKeyCount, submarketLabel,
+}: {
+  derivedComp: DerivedComp;
+  compSetSize: number | null;
+  compKeyCount: number | null;
+  submarketLabel: string | null;
+}) {
+  const inventory = compSetSize && compKeyCount
+    ? `${compSetSize} hotels · ${compKeyCount.toLocaleString()} keys`
+    : compKeyCount ? `${compKeyCount.toLocaleString()} keys` : '—';
+  const kpis = [
+    { label: 'Inventory', value: inventory, sub: 'competitive set' },
+    { label: 'Market Occupancy', value: derivedComp?.occ != null ? `${derivedComp.occ.toFixed(1)}%` : '—', sub: 'comp-set blend' },
+    { label: 'Market ADR', value: derivedComp?.adr != null ? `$${derivedComp.adr.toFixed(0)}` : '—', sub: 'comp-set blend' },
+    { label: 'Market RevPAR', value: derivedComp?.revpar != null ? `$${derivedComp.revpar.toFixed(0)}` : '—', sub: 'comp-set blend' },
+    { label: 'Demand Growth', value: '—', sub: 'needs trend report' },
+    { label: 'Supply Growth', value: '—', sub: 'needs trend report' },
+  ];
+  return (
+    <Card className="p-0 overflow-hidden">
+      <div className="px-5 py-3 border-b border-border bg-surface-2/40">
+        <h3 className="text-[14px] font-semibold text-ink-900">Submarket Snapshot</h3>
+        <p className="text-[11.5px] text-ink-500 mt-0.5">
+          {submarketLabel ? `${submarketLabel} · ` : ''}Competitive-set aggregate — the subject&apos;s local market.
+        </p>
+      </div>
+      <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 divide-x divide-y lg:divide-y-0 divide-border">
+        {kpis.map((k) => (
+          <div key={k.label} className="px-4 py-3.5">
+            <div className="text-[10px] uppercase tracking-wide text-ink-500">{k.label}</div>
+            <div className="text-[17px] font-semibold text-ink-900 tabular-nums mt-0.5">{k.value}</div>
+            <div className="text-[9.5px] text-ink-400 mt-0.5">{k.sub}</div>
+          </div>
+        ))}
+      </div>
+    </Card>
+  );
+}
+
+// FON-60 Market Overview §5 — a concise MPI / ARI / RGI read. The detailed
+// historical + forecast penetration series lives on Index Analysis; this is the
+// executive summary. Values come straight from the STR report indices.
+function MarketIndexSummary({ strTrend }: { strTrend: StrTrend }) {
+  const pt = (idx: number | null): number | null =>
+    idx == null || idx <= 0 ? null : idx > 3 ? idx : idx * 100;
+  const items = [
+    { key: 'MPI', label: 'Occupancy Index', v: pt(strTrend.mpi_occupancy_index) },
+    { key: 'ARI', label: 'ADR Index', v: pt(strTrend.ari_adr_index) },
+    { key: 'RGI', label: 'RevPAR Index', v: pt(strTrend.rgi_revpar_index) },
+  ];
+  if (!items.some((i) => i.v != null)) return null;
+  return (
+    <Card className="p-0 overflow-hidden">
+      <div className="px-5 py-3 border-b border-border bg-surface-2/40">
+        <h3 className="text-[14px] font-semibold text-ink-900">Subject vs Comp Set — Index Summary</h3>
+        <p className="text-[11.5px] text-ink-500 mt-0.5">100 = at par with the comp set · &gt;100 = the subject outperforms.</p>
+      </div>
+      <div className="grid grid-cols-3 divide-x divide-border">
+        {items.map((it) => {
+          const over = it.v != null && it.v >= 100;
+          return (
+            <div key={it.key} className="px-5 py-4">
+              <div className="text-[10px] uppercase tracking-wide text-ink-500">{it.label} <span className="text-ink-400">· {it.key}</span></div>
+              <div className={cn('text-[24px] font-semibold tabular-nums mt-1', it.v == null ? 'text-ink-400' : over ? 'text-success-700' : 'text-warn-700')}>
+                {it.v != null ? it.v.toFixed(1) : '—'}
+              </div>
+              <div className="text-[10.5px] text-ink-500 mt-0.5">
+                {it.v == null
+                  ? 'not published'
+                  : over
+                    ? `subject leads by ${(it.v - 100).toFixed(0)} pts`
+                    : `subject trails by ${(100 - it.v).toFixed(0)} pts`}
+              </div>
+            </div>
+          );
+        })}
+      </div>
+      <div className="px-5 py-2.5 border-t border-border text-[11px] text-ink-500">
+        Full historical + forecast penetration series on <span className="font-medium text-ink-700">Index Analysis</span>.
+      </div>
+    </Card>
+  );
+}
+
+// FON-60 Market Overview §2/3/6/7 — sections in Sam's hierarchy whose data
+// source isn't extracted yet. Shown as labeled "awaiting data" rows (never a
+// fixture) so the structure is visible and it's clear what report populates each.
+function PendingMarketCard({ title, items }: { title: string; items: { label: string; note: string }[] }) {
+  return (
+    <Card className="p-0 overflow-hidden">
+      <div className="px-5 py-3 border-b border-border bg-surface-2/40">
+        <h3 className="text-[14px] font-semibold text-ink-900">{title}</h3>
+      </div>
+      <div className="divide-y divide-border">
+        {items.map((it) => (
+          <div key={it.label} className="flex items-start justify-between gap-4 px-5 py-3">
+            <div>
+              <div className="text-[12.5px] font-medium text-ink-800">{it.label}</div>
+              <div className="text-[11px] text-ink-500 mt-0.5 leading-relaxed">{it.note}</div>
+            </div>
+            <span className="shrink-0 mt-0.5 text-[9.5px] uppercase tracking-wide text-ink-400 bg-ink-100/60 rounded px-1.5 py-0.5">Awaiting data</span>
+          </div>
+        ))}
+      </div>
+    </Card>
+  );
+}
+
 export default function MarketTab({ projectId }: { projectId: number | string }) {
   const [tab, setTab] = useState('Market Overview');
   const { toast } = useToast();
@@ -242,13 +358,33 @@ export default function MarketTab({ projectId }: { projectId: number | string })
         </div>
 
         {tab === 'Market Overview' && (hasStr && strTrend ? (
-          // FON-47 — real STR/CoStar market data, live from /market-data.
+          // FON-60 — executive Market Overview: submarket read, subject-vs-comp
+          // benchmark, index summary, and the sections awaiting a submarket feed.
+          <div className="space-y-5">
+            {/* §1 — Submarket snapshot (competitive-set aggregate) */}
+            <SubmarketSnapshot
+              derivedComp={derivedComp}
+              compSetSize={strTrend.comp_set_size ?? null}
+              compKeyCount={compKeyCount}
+              submarketLabel={submarketLabel}
+            />
+
+            {/* §2 & §3 — market performance trends (need a multi-year/monthly feed) */}
+            <PendingMarketCard
+              title="Market Performance Trends"
+              items={[
+                { label: 'Historical Market Performance', note: 'Multi-year submarket Occupancy / ADR / RevPAR trends — populates from a multi-year STR / CoStar trend report.' },
+                { label: 'Monthly / TTM Performance', note: 'Recent performance and seasonality. TTM subject metrics appear below; monthly detail needs a monthly STR report.' },
+              ]}
+            />
+
+          {/* §4 — Subject vs Comp Set snapshot (blended STR, live from /market-data) */}
           <Card className="p-0 overflow-hidden">
             <div className="flex flex-wrap items-center justify-between gap-3 px-5 py-3 border-b border-border bg-surface-2/40">
               <div>
-                <h3 className="text-[14px] font-semibold text-ink-900">STR market data</h3>
+                <h3 className="text-[14px] font-semibold text-ink-900">Subject vs Comp Set</h3>
                 <p className="text-[11.5px] text-ink-500 mt-0.5">
-                  Extracted from this deal&apos;s uploaded STR / CoStar Trend report
+                  Subject TTM vs the blended competitive set · from this deal&apos;s uploaded STR / CoStar Trend report
                   {strTrend.comp_set_size ? ` · ${strTrend.comp_set_size}-property comp set` : ''}
                   {compKeyCount ? ` · ${compKeyCount.toLocaleString()} keys` : ''}.
                 </p>
@@ -362,6 +498,19 @@ export default function MarketTab({ projectId }: { projectId: number | string })
               </div>
             )}
           </Card>
+
+            {/* §5 — Index summary (MPI / ARI / RGI); detail lives on Index Analysis */}
+            <MarketIndexSummary strTrend={strTrend} />
+
+            {/* §6 & §7 — supply pipeline + demand drivers (need a submarket feed) */}
+            <PendingMarketCard
+              title="Supply Pipeline & Demand Drivers"
+              items={[
+                { label: 'Supply Pipeline', note: 'Upcoming hotels / rooms, development status, expected opening — populates from a CoStar submarket supply report.' },
+                { label: 'Demand Drivers', note: 'Key market demand generators — populates from submarket demand data where supported.' },
+              ]}
+            />
+          </div>
         ) : (
           <Card className="p-16 text-center">
             <div className="w-12 h-12 rounded-lg bg-ink-300/20 flex items-center justify-center mx-auto mb-4">
