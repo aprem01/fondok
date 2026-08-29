@@ -27,8 +27,8 @@ import { Card } from '@/components/ui/Card';
 import { Badge } from '@/components/ui/Badge';
 import { cn } from '@/lib/format';
 import {
+  api,
   isWorkerConnected,
-  workerUrl,
   EngineOutputsResponse,
   HistoricalBaselineResponse,
 } from '@/lib/api';
@@ -726,13 +726,14 @@ export default function IndexAnalysisSection({
     if (!liveMode) return;
     const ctrl = new AbortController();
     setLoading(true);
-    fetch(`${workerUrl()}/deals/${dealId}/market-data`, { signal: ctrl.signal })
-      .then(async (res) => {
-        if (!res.ok) throw new Error(`HTTP ${res.status}`);
-        return (await res.json()) as MarketDataAPIResponse;
-      })
+    // Route through the authenticated api helper (attaches Authorization +
+    // X-Tenant-Id) — exactly as Market Overview does. A raw, tenant-unscoped
+    // fetch 404s ("deal not found"), which is why the comp-set + penetration
+    // tables were blank here while Market Overview had the same data (FON-61).
+    api.market
+      .data(dealId, ctrl.signal)
       .then((json) => {
-        setMarketData(json);
+        if (json) setMarketData(json as MarketDataAPIResponse);
         setLoading(false);
       })
       .catch((e) => {
