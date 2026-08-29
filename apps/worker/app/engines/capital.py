@@ -38,6 +38,26 @@ class CapitalEngineInput(InvestmentEngineInput):
     loan_costs_pct: Annotated[float, Field(ge=0.0, le=0.05)] = 0.015
     debt_basis: Literal["purchase", "cost"] = "purchase"
 
+    # Renovation cost split (FON-71). The renovation budget is one line in
+    # the sources & uses, but the Investment tab breaks it into hard costs,
+    # soft costs, and professional fees. These are configurable percentages
+    # (industry-standard 75/20/5 default), applied uniformly — not a per-deal
+    # fixture. A future doc-driven breakdown can override these when a
+    # renovation budget with itemized costs is extracted.
+    renovation_hard_pct: Annotated[float, Field(ge=0.0, le=1.0)] = 0.75
+    renovation_soft_pct: Annotated[float, Field(ge=0.0, le=1.0)] = 0.20
+    renovation_fees_pct: Annotated[float, Field(ge=0.0, le=1.0)] = 0.05
+
+
+class RenovationBreakdown(BaseModel):
+    """Hard / soft / professional-fee split of the renovation budget."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    hard: Annotated[float, Field(ge=0)]
+    soft: Annotated[float, Field(ge=0)]
+    fees: Annotated[float, Field(ge=0)]
+
 
 class CapitalEngineOutput(InvestmentEngineOutput):
     """Investment output enriched with debt/equity split."""
@@ -47,6 +67,9 @@ class CapitalEngineOutput(InvestmentEngineOutput):
     debt_amount: Annotated[float, Field(ge=0)]
     equity_amount: Annotated[float, Field(ge=0)]
     ltc: Annotated[float, Field(ge=0.0, le=1.5)]
+    # None when there is no renovation budget (so the UI shows '—' rather
+    # than a fabricated $0 split).
+    renovation_breakdown: RenovationBreakdown | None = None
 
 
 class CapitalEngine(BaseEngine[CapitalEngineInput, CapitalEngineOutput]):
@@ -76,6 +99,17 @@ class CapitalEngine(BaseEngine[CapitalEngineInput, CapitalEngineOutput]):
 
         total_uses = sum(u.amount for u in uses_lines)
         equity = total_uses - debt
+
+        # Break the renovation budget into hard / soft / professional fees.
+        # Only when there's an actual budget — otherwise leave it None so the
+        # UI renders '—' rather than a $0 split.
+        reno_breakdown: RenovationBreakdown | None = None
+        if payload.renovation_budget > 0:
+            reno_breakdown = RenovationBreakdown(
+                hard=payload.renovation_budget * payload.renovation_hard_pct,
+                soft=payload.renovation_budget * payload.renovation_soft_pct,
+                fees=payload.renovation_budget * payload.renovation_fees_pct,
+            )
 
         # Stamp pct on each line and append totals.
         for line in uses_lines:
@@ -109,7 +143,13 @@ class CapitalEngine(BaseEngine[CapitalEngineInput, CapitalEngineOutput]):
             debt_amount=debt,
             equity_amount=equity,
             ltc=debt / total_uses if total_uses else 0.0,
+            renovation_breakdown=reno_breakdown,
         )
 
 
-__all__ = ["CapitalEngine", "CapitalEngineInput", "CapitalEngineOutput"]
+__all__ = [
+    "CapitalEngine",
+    "CapitalEngineInput",
+    "CapitalEngineOutput",
+    "RenovationBreakdown",
+]

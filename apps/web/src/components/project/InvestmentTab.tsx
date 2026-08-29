@@ -94,6 +94,9 @@ export default function InvestmentTab() {
     outputs, 'capital', 'total_capital_per_key',
   );
   const wDebtAmount = getEngineField<number>(outputs, 'capital', 'debt_amount');
+  const wRenoBreakdown = getEngineField<{ hard?: number; soft?: number; fees?: number }>(
+    outputs, 'capital', 'renovation_breakdown',
+  );
   const wLoanAmount = getEngineField<number>(outputs, 'debt', 'loan_amount');
 
   const wExpenseYears = getEngineField<ExpenseYearLite[]>(outputs, 'expense', 'years');
@@ -290,17 +293,18 @@ export default function InvestmentTab() {
           ? exitGross / propertyKeys : undefined;
         const exitSellingCosts = wSellingCosts;
 
-        // Renovation Budget — capital engine doesn't break out
-        // hard/soft/fees yet; sub-rows show '—' until it does.
+        // Renovation Budget — the capital engine now emits the hard/soft/
+        // fees split (FON-71) via `renovation_breakdown`; sub-rows show '—'
+        // only when there's no renovation budget.
         const renoBudget = findUse(/renovat/i);
         const renoPerKey = (renoBudget != null && propertyKeys && propertyKeys > 0)
           ? renoBudget / propertyKeys : undefined;
         const renoPerSf = (renoBudget != null && dealGba && dealGba > 0)
           ? renoBudget / dealGba : undefined;
         const renoContingency = findUse(/conting/i);
-        const renoHard = undefined;
-        const renoSoft = undefined;
-        const renoFees = undefined;
+        const renoHard = wRenoBreakdown?.hard;
+        const renoSoft = wRenoBreakdown?.soft;
+        const renoFees = wRenoBreakdown?.fees;
 
         // Valuation Assumptions
         const totalCapital = wTotalCapital;
