@@ -260,17 +260,12 @@ export default function InvestmentTab() {
 
       {tab === 'Deal Summary' && (() => {
         // ─── Worker field wiring for every panel below ──────────
-        // Property Overview: name/location/keys come from the deal
-        // row (useDeal). Worker doesn't surface year_built / address
-        // yet, so those show '—' until it does.
-        const dealName = deal?.name ?? undefined;
-        const dealLocation = deal?.city ?? undefined;
+        // Keys come from the deal row (useDeal); everything else is engine
+        // output or an editable assumption. Descriptive property facts live on
+        // Overview, not here (FON-44).
         const dealKeys = (deal?.keys && deal.keys > 0)
           ? deal.keys
           : undefined;
-        const dealType = deal?.deal_type ?? deal?.positioning ?? deal?.service
-          ?? undefined;
-        const dealYearBuilt: number | undefined = undefined;
         const dealGba: number | undefined = undefined;
 
         // Entry Valuation
@@ -327,15 +322,13 @@ export default function InvestmentTab() {
         return (
         <>
           <div className="grid grid-cols-2 gap-5">
-            <Panel title="Property Overview" rows={[
-              ['Name', dealName ?? '—'],
-              ['Type', dealType ?? '—'],
-              ['Location', dealLocation ?? '—'],
-              ['Year Built', dealYearBuilt != null ? String(dealYearBuilt) : '—'],
-              ['Labor', '—'],
-              ['Title', '—'],
+            {/* FON-44 — Investment is the transaction-assumptions layer, not a
+                property directory. Descriptive property facts (name, location,
+                year built, labor/title) live on Overview; Investment references
+                only Keys (needed for per-key math). */}
+            <Panel title="Acquisition" rows={[
               [
-                'Pre-Renovation Keys',
+                'Keys',
                 <KeysOverride
                   key="keys-override"
                   dealId={dealId}
@@ -343,19 +336,13 @@ export default function InvestmentTab() {
                   onSaved={() => refreshDeal()}
                 />,
               ],
-              ['Post-Renovation Keys', dealKeys != null ? String(dealKeys) : '—'],
-              ['Post-Renovation SF', '—'],
-            ]} />
-            <Panel title="Entry Valuation" rows={[
-              ['NOI', fmtOrDash(entryNoi, fmtCurrency)],
-              ['Entry Cap Rate', fmtOrDash(entryCap, v => fmtPct(v, 2))],
-              ['2025 Run-Rate NOI', fmtOrDash(entryNoi, fmtCurrency)],
-              ['FTM Date', '—'],
               ['Hotel Purchase Price', <AssumptionField key="pp" value={entryPurchase} editable={liveMode}
                 format={fmtCurrency} toDraft={(v) => String(Math.round(v))}
                 parse={(s) => { const n = parseFloat(s.replace(/[,$\s]/g, '')); return Number.isFinite(n) && n > 0 ? n : null; }}
                 onSave={(v) => onSaveAssumption('purchase_price', v)} width="w-36" />],
-              ['Per Key', fmtOrDash(entryPricePerKey, fmtCurrency)],
+              ['Purchase Price / Key', fmtOrDash(entryPricePerKey, fmtCurrency)],
+              ['Entry NOI', fmtOrDash(entryNoi, fmtCurrency)],
+              ['Entry Cap Rate', fmtOrDash(entryCap, v => fmtPct(v, 2))],
             ]} />
             <Panel title="Exit Valuation" rows={[
               ['Exit Month', exitMonth != null ? String(exitMonth) : '—'],
