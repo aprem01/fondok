@@ -42,7 +42,7 @@ const FORECAST_YEARS = [2025, 2026, 2027, 2028, 2029, 2030, 2031, 2032, 2033];
 const ALL_YEARS = [...HISTORICAL_YEARS, ...FORECAST_YEARS];
 
 const NOTES_TEXT =
-  'Notes: (1) Competitive Set RevPAR growth through 2020 is based on third-party projections. Assumed 3.0% growth thereafter.';
+  'Notes: (1) Competitive-set performance is the STR/CoStar comp-set aggregate, recovered from the subject’s published penetration indices (MPI occupancy, ARI rate, RGI RevPAR) — comp = subject ÷ index. STR anonymizes per-property comp performance, so individual competitor Occ/ADR/RevPAR are not published. (2) Absent a CBRE Horizons forecast, the comp set is carried forward at its trailing-twelve-month penetration to the subject. (3) Blank cells are unreported data, not zero.';
 
 interface RevenueYear {
   year: number;
@@ -70,6 +70,11 @@ interface MarketDataAPIResponse {
     subject_occupancy_pct?: number | null;
     subject_adr_usd?: number | null;
     subject_revpar_usd?: number | null;
+    // STR penetration indices (subject ÷ comp-set). May arrive as a ratio
+    // (1.098) or as index points (109.8); buildCompSeries normalizes both.
+    mpi_occupancy_index?: number | null;
+    ari_adr_index?: number | null;
+    rgi_revpar_index?: number | null;
     indices?: unknown;
     report_month?: string | null;
     comp_set_size?: number | null;
@@ -92,6 +97,30 @@ interface YearSeries {
 
 function isLeapYear(y: number): boolean {
   return (y % 4 === 0 && y % 100 !== 0) || y % 400 === 0;
+}
+
+// FON-61 — a metric that arrives as 0, negative, null, or non-finite is "not
+// reported", not a real value: an operating hotel never books 0% occupancy or a
+// $0 ADR. Coerce all of these to null so the UI shows blank/N-A and never
+// fabricates a zero (a populated ADR next to "Occupancy 0.0% / Occupied 0" was
+// the exact defect). Applied to every series fill, subject and comp.
+function posOrNull(v: number | null | undefined): number | null {
+  return typeof v === 'number' && isFinite(v) && v > 0 ? v : null;
+}
+
+// Normalize an STR penetration index to a plain ratio. STR/CoStar publish these
+// either as a ratio (1.098) or as index points (109.8); anything > 3 is points.
+function indexRatio(idx: number | null | undefined): number | null {
+  if (idx == null || idx <= 0) return null;
+  return idx > 3 ? idx / 100 : idx;
+}
+
+// Normalize an occupancy figure to a 0..1 fraction (sources vary between 0.72
+// and 72). Values ≤ 1.5 are already fractions; larger are whole percents.
+function occFraction(v: number | null | undefined): number | null {
+  const p = posOrNull(v);
+  if (p == null) return null;
+  return p > 1.5 ? p / 100 : p;
 }
 
 // Build the subject-property year series. Historical years pull from
@@ -147,12 +176,16 @@ function buildSubjectSeries(
     HISTORICAL_YEARS.forEach((yr, i) => {
       const row = byYear.get(yr);
       if (!row) return;
-      series.occupancy[i] = row.occupancy;
-      series.adr[i] = row.adr;
+      // Validate each metric independently — a P&L year can ship a real ADR
+      // while the occupancy cell was blank (stored as 0). Coerce non-positive
+      // to null so the column reads blank, not a fabricated 0 (FON-61 d).
+      series.occupancy[i] = occFraction(row.occupancy);
+      series.adr[i] = posOrNull(row.adr);
+      const rp = posOrNull(row.revpar);
       series.revpar[i] =
-        row.revpar ??
-        (row.occupancy != null && row.adr != null
-          ? row.occupancy * row.adr
+        rp ??
+        (series.occupancy[i] != null && series.adr[i] != null
+          ? series.occupancy[i]! * series.adr[i]!
           : null);
     });
   }
@@ -166,15 +199,15 @@ function buildSubjectSeries(
   if (revYears && revYears.length > 0) {
     const anchorIdx = HISTORICAL_YEARS.length - 1;
     if (series.occupancy[anchorIdx] == null) {
-      series.occupancy[anchorIdx] = revYears[0].occupancy;
-      series.adr[anchorIdx] = revYears[0].adr;
-      series.revpar[anchorIdx] = revYears[0].revpar;
+      series.occupancy[anchorIdx] = occFraction(revYears[0].occupancy);
+      series.adr[anchorIdx] = posOrNull(revYears[0].adr);
+      series.revpar[anchorIdx] = posOrNull(revYears[0].revpar);
     }
     for (let i = 1; i < revYears.length && i <= FORECAST_YEARS.length; i++) {
       const idx = anchorIdx + i;
-      series.occupancy[idx] = revYears[i].occupancy;
-      series.adr[idx] = revYears[i].adr;
-      series.revpar[idx] = revYears[i].revpar;
+      series.occupancy[idx] = occFraction(revYears[i].occupancy);
+      series.adr[idx] = posOrNull(revYears[i].adr);
+      series.revpar[idx] = posOrNull(revYears[i].revpar);
     }
     // FON-61 — extend the forecast to the full window. The revenue engine
     // projects a finite horizon (often short of the hold's exit year); beyond
@@ -200,10 +233,13 @@ function buildSubjectSeries(
   return series;
 }
 
-// Build the CoStar comp-set year series from market-data envelope.
+// Build the CoStar comp-set year series from the market-data envelope. The
+// subject series is passed so the forecast can be carried at a held-flat
+// penetration when no CBRE Horizons forecast was uploaded (see below).
 function buildCompSeries(
   marketData: MarketDataAPIResponse | null,
   isKimptonDemo: boolean,
+  subjectSeries?: YearSeries | null,
 ): YearSeries {
   const series: YearSeries = {
     occupancy: ALL_YEARS.map(() => null),
@@ -235,40 +271,101 @@ function buildCompSeries(
     return series;
   }
 
-  // Live: STR comp set carries one year of historical (subject + comp).
+  // Live: the STR/CoStar TTM report anonymizes per-property comp performance
+  // (compset[i].occupancy_pct/adr/revpar all come back null), but it publishes
+  // the subject's penetration index vs the comp-set aggregate — MPI (occupancy),
+  // ARI (ADR), RGI (RevPAR), each = subject ÷ comp. So the blended comp-set
+  // metric is recoverable: comp = subject ÷ index. This is the SAME derivation
+  // Market Overview uses (MarketTab.deriveCompSet), so both views consume one
+  // dataset (FON-61 a). It lands on the anchor — the latest historical year,
+  // which the TTM window most closely represents. STR does not publish
+  // prior-year comp performance, so earlier historical comp columns stay blank
+  // (FON-61 b: populate only where docs support it).
+  const anchorIdx = HISTORICAL_YEARS.length - 1;
   const str = marketData?.str_trend;
-  if (str && str.subject_occupancy_pct != null && str.subject_adr_usd != null) {
-    const occ = str.subject_occupancy_pct > 1
-      ? str.subject_occupancy_pct / 100
-      : str.subject_occupancy_pct;
-    const adr = str.subject_adr_usd;
-    const idx = HISTORICAL_YEARS.length - 1;
-    series.occupancy[idx] = occ;
-    series.adr[idx] = adr;
-    series.revpar[idx] = str.subject_revpar_usd ?? occ * adr;
+  const occR = indexRatio(str?.mpi_occupancy_index);
+  const adrR = indexRatio(str?.ari_adr_index);
+  const revparR = indexRatio(str?.rgi_revpar_index);
+  if (str) {
+    // Anchor the comp on the SUBJECT SERIES basis (the operating figures the
+    // whole table is built on), not the STR report's own TTM subject snapshot.
+    // Penetration is subject ÷ comp, so deriving comp = subject_series ÷ index
+    // makes the MPI/ARI/RGI rows come out EXACTLY equal to the STR-published
+    // indices — same-basis, and reconciling to Sam's source doc. Mixing the
+    // baseline subject with an STR-TTM-derived comp would instead print an MPI
+    // that contradicts the STR report. Fall back to the STR report's subject
+    // only when the series has no anchor value.
+    const subjOcc =
+      subjectSeries?.occupancy[anchorIdx] ?? occFraction(str.subject_occupancy_pct);
+    const subjAdr = subjectSeries?.adr[anchorIdx] ?? posOrNull(str.subject_adr_usd);
+    const subjRevpar =
+      subjectSeries?.revpar[anchorIdx] ?? posOrNull(str.subject_revpar_usd);
+    const compOcc = subjOcc != null && occR != null ? subjOcc / occR : null;
+    const compAdr = subjAdr != null && adrR != null ? subjAdr / adrR : null;
+    const compRevpar =
+      subjRevpar != null && revparR != null
+        ? subjRevpar / revparR
+        : compOcc != null && compAdr != null
+          ? compOcc * compAdr
+          : null;
+    if (compOcc != null) series.occupancy[anchorIdx] = compOcc;
+    if (compAdr != null) series.adr[anchorIdx] = compAdr;
+    if (compRevpar != null) series.revpar[anchorIdx] = compRevpar;
   }
 
-  // CBRE Horizons forecast — year_index 1..5 maps to FORECAST_YEARS[0..4].
+  // Forecast — a real CBRE Horizons projection when one was uploaded.
   const cbreYears = marketData?.cbre_horizons?.years ?? [];
   for (const y of cbreYears) {
     const fIdx = (y.year_index ?? 0) - 1;
     if (fIdx < 0 || fIdx >= FORECAST_YEARS.length) continue;
     const idx = HISTORICAL_YEARS.length + fIdx;
-    if (y.occupancy_pct != null) {
-      series.occupancy[idx] = y.occupancy_pct > 1 ? y.occupancy_pct / 100 : y.occupancy_pct;
-    }
-    if (y.adr_usd != null) series.adr[idx] = y.adr_usd;
-    if (y.revpar_usd != null) series.revpar[idx] = y.revpar_usd;
+    const occ = occFraction(y.occupancy_pct);
+    if (occ != null) series.occupancy[idx] = occ;
+    const adr = posOrNull(y.adr_usd);
+    if (adr != null) series.adr[idx] = adr;
+    const rp = posOrNull(y.revpar_usd);
+    if (rp != null) series.revpar[idx] = rp;
   }
-  // Beyond CBRE's 5-year horizon, grow last known RevPAR at 3.0%.
-  for (let i = HISTORICAL_YEARS.length + 5; i < ALL_YEARS.length; i++) {
-    if (series.revpar[i] != null) continue;
-    const prevAdr = series.adr[i - 1];
-    const prevOcc = series.occupancy[i - 1];
-    if (prevAdr != null && prevOcc != null) {
-      series.adr[i] = prevAdr * 1.03;
-      series.occupancy[i] = prevOcc;
-      series.revpar[i] = series.adr[i]! * series.occupancy[i]!;
+
+  if (cbreYears.length > 0) {
+    // Beyond CBRE's 5-year horizon, grow last known RevPAR at 3.0%.
+    for (let i = HISTORICAL_YEARS.length + 5; i < ALL_YEARS.length; i++) {
+      if (series.revpar[i] != null) continue;
+      const prevAdr = series.adr[i - 1];
+      const prevOcc = series.occupancy[i - 1];
+      if (prevAdr != null && prevOcc != null) {
+        series.adr[i] = prevAdr * 1.03;
+        series.occupancy[i] = prevOcc;
+        series.revpar[i] = series.adr[i]! * series.occupancy[i]!;
+      }
+    }
+  } else if (subjectSeries) {
+    // No CBRE doc — carry the comp set forward by holding its trailing-twelve-
+    // month penetration to the subject flat: grow the anchor comp-set by the
+    // subject's own (doc-based revenue-engine) forecast growth. This keeps the
+    // penetration/index columns populated across the forecast (FON-61 e) with a
+    // transparent, standard assumption rather than a wall of blanks. Penetration
+    // then equals the anchor relationship, held flat.
+    const sOccA = subjectSeries.occupancy[anchorIdx];
+    const sAdrA = subjectSeries.adr[anchorIdx];
+    const sRevA = subjectSeries.revpar[anchorIdx];
+    const cOccA = series.occupancy[anchorIdx];
+    const cAdrA = series.adr[anchorIdx];
+    const cRevA = series.revpar[anchorIdx];
+    for (let idx = HISTORICAL_YEARS.length; idx < ALL_YEARS.length; idx++) {
+      if (series.occupancy[idx] == null && cOccA != null && sOccA && subjectSeries.occupancy[idx] != null) {
+        series.occupancy[idx] = cOccA * (subjectSeries.occupancy[idx]! / sOccA);
+      }
+      if (series.adr[idx] == null && cAdrA != null && sAdrA && subjectSeries.adr[idx] != null) {
+        series.adr[idx] = cAdrA * (subjectSeries.adr[idx]! / sAdrA);
+      }
+      if (series.revpar[idx] == null) {
+        if (cRevA != null && sRevA && subjectSeries.revpar[idx] != null) {
+          series.revpar[idx] = cRevA * (subjectSeries.revpar[idx]! / sRevA);
+        } else if (series.occupancy[idx] != null && series.adr[idx] != null) {
+          series.revpar[idx] = series.occupancy[idx]! * series.adr[idx]!;
+        }
+      }
     }
   }
   return series;
@@ -293,6 +390,17 @@ function fmtInt(v: number | null): string {
   return v.toLocaleString('en-US');
 }
 
+// Penetration index = subject ÷ comp-set × 100. 100 = at par with the comp set;
+// >100 = the subject outperforms. Null when either side is unreported.
+function pctIndex(subj: number | null, comp: number | null): number | null {
+  if (subj == null || comp == null || comp === 0) return null;
+  return (subj / comp) * 100;
+}
+function fmtIndex(v: number | null): string {
+  if (v == null) return '—';
+  return v.toFixed(1);
+}
+
 // Negative growth → red parens "(36.0%)"; positive → "12.5%"; null → "N/A".
 function GrowthCell({ value }: { value: number | null }) {
   if (value == null) {
@@ -310,18 +418,22 @@ function GrowthCell({ value }: { value: number | null }) {
 
 interface TableProps {
   title: string;
-  keys: number;
+  keys: number | null;
   series: YearSeries;
 }
 
 function IndexTable({ title, keys, series }: TableProps) {
-  // Derived rows.
+  // Derived rows. When the room count is unknown, Available/Occupied Rooms are
+  // N/A (null) rather than 0 — a 0 would misread as "no rooms available"
+  // (FON-61 c). Occupied is also null wherever occupancy itself is unreported.
+  const kv = typeof keys === 'number' && keys > 0 ? keys : null;
   const days = ALL_YEARS.map((y) => (isLeapYear(y) ? 366 : 365));
-  const available = days.map((d) => d * keys);
+  const available = days.map((d) => (kv != null ? d * kv : null));
   const occupied = ALL_YEARS.map((_, i) => {
     const occ = series.occupancy[i];
-    if (occ == null) return null;
-    return Math.round(available[i] * occ);
+    const av = available[i];
+    if (occ == null || av == null) return null;
+    return Math.round(av * occ);
   });
   const occGrowth = ALL_YEARS.map((_, i) =>
     i === 0 ? null : growth(series.occupancy[i], series.occupancy[i - 1]),
@@ -393,7 +505,7 @@ function IndexTable({ title, keys, series }: TableProps) {
             label="Keys"
             cells={ALL_YEARS.map(() => (
               <span className="text-brand-700 font-medium underline-offset-2 hover:underline cursor-pointer">
-                {fmtInt(keys)}
+                {fmtInt(kv)}
               </span>
             ))}
             stickyL={stickyL}
@@ -443,6 +555,75 @@ function IndexTable({ title, keys, series }: TableProps) {
             stickyL={stickyL}
             zebra
           />
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+// Subject-vs-comp penetration index (MPI / ARI / RGI), computed from the two
+// populated series (FON-61 e). MPI = subject occupancy ÷ comp occupancy × 100,
+// and likewise ARI for ADR and RGI for RevPAR. Blank where either side is
+// unreported — never a fabricated 0 or 100.
+function PenetrationTable({ subject, comp }: { subject: YearSeries; comp: YearSeries }) {
+  const mpi = ALL_YEARS.map((_, i) => pctIndex(subject.occupancy[i], comp.occupancy[i]));
+  const ari = ALL_YEARS.map((_, i) => pctIndex(subject.adr[i], comp.adr[i]));
+  const rgi = ALL_YEARS.map((_, i) => pctIndex(subject.revpar[i], comp.revpar[i]));
+  const stickyL = 'sticky left-0 bg-card z-10 border-r border-border';
+
+  return (
+    <div className="overflow-x-auto">
+      <table className="w-full text-[12px] border-collapse" style={{ minWidth: 1400 }}>
+        <thead>
+          <tr className="text-ink-700 border-b border-border">
+            <th
+              className={cn(
+                stickyL,
+                'text-left font-semibold uppercase tracking-wide text-[11px] px-3 py-2',
+              )}
+            >
+              Penetration Index
+            </th>
+            <th
+              colSpan={HISTORICAL_YEARS.length}
+              className="text-center font-semibold uppercase tracking-wide text-[10.5px] text-ink-500 bg-ink-100/40 border-l border-border px-2 py-2"
+            >
+              Historical
+            </th>
+            <th
+              colSpan={FORECAST_YEARS.length}
+              className="text-center font-semibold uppercase tracking-wide text-[10.5px] text-brand-700 bg-brand-50/40 border-l border-border px-2 py-2"
+            >
+              Forecast
+            </th>
+          </tr>
+          <tr className="text-ink-500 text-[10.5px] border-b border-border">
+            <th className={cn(stickyL, 'text-left font-medium px-3 py-1.5')}>
+              Subject ÷ Comp × 100
+            </th>
+            {ALL_YEARS.map((y, i) => (
+              <th
+                key={y}
+                className={cn(
+                  'text-right font-medium px-2 py-1.5 tabular-nums',
+                  i === 0 && 'border-l border-border',
+                  i === HISTORICAL_YEARS.length && 'border-l border-border',
+                )}
+              >
+                {y}
+              </th>
+            ))}
+          </tr>
+        </thead>
+        <tbody>
+          <Row label="Occupancy Index (MPI)" cells={mpi.map((v) => fmtIndex(v))} stickyL={stickyL} />
+          <Row
+            label="ADR Index (ARI)"
+            cells={ari.map((v) => fmtIndex(v))}
+            stickyL={stickyL}
+            zebra
+          />
+          <Row label="RevPAR Index (RGI)" cells={rgi.map((v) => fmtIndex(v))} stickyL={stickyL} />
         </tbody>
       </table>
     </div>
@@ -531,17 +712,19 @@ export default function IndexAnalysisSection({
     return () => ctrl.abort();
   }, [dealId, liveMode]);
 
-  const subjectKeys = isKimptonDemo
+  // Null (not 0) when the room count is unknown, so the table renders N/A
+  // rather than a misleading "Available Rooms 0 / Occupied Rooms 0" (FON-61 c).
+  const subjectKeys: number | null = isKimptonDemo
     ? kimptonAnglerOverview.general.keys
-    : (deal?.keys && deal.keys > 0 ? deal.keys : 0);
+    : (deal?.keys && deal.keys > 0 ? deal.keys : null);
 
   const subjectSeries = useMemo(
     () => buildSubjectSeries(outputs, historicalBaseline, isKimptonDemo),
     [outputs, historicalBaseline, isKimptonDemo],
   );
   const compSeries = useMemo(
-    () => buildCompSeries(marketData, isKimptonDemo),
-    [marketData, isKimptonDemo],
+    () => buildCompSeries(marketData, isKimptonDemo, subjectSeries),
+    [marketData, isKimptonDemo, subjectSeries],
   );
 
   // Comp-set "keys" row uses the total comp-set room count.
@@ -552,10 +735,10 @@ export default function IndexAnalysisSection({
   //      the rollup row was missing — see _build_str_trend_block).
   //   2. Sum of `str_trend.compset[i].keys` — defensive fallback if
   //      the backend somehow lost the rollup mid-flight.
-  //   3. 0 — last resort; the Available-Rooms row will render zeros
-  //      and the empty-state copy elsewhere tells the user to upload
-  //      an STR Trend report.
-  const compKeys = isKimptonDemo
+  //   3. null — last resort; the Available/Occupied-Rooms rows render N/A
+  //      (never a fabricated 0) and the empty-state copy elsewhere tells the
+  //      user to upload an STR Trend report (FON-61 c).
+  const compKeys: number | null = isKimptonDemo
     ? 1240
     : (() => {
         const fromRollup = marketData?.str_trend?.total_keys;
@@ -564,7 +747,7 @@ export default function IndexAnalysisSection({
           (acc, row) => acc + (typeof row.keys === 'number' && row.keys > 0 ? row.keys : 0),
           0,
         );
-        return fromRoster > 0 ? fromRoster : 0;
+        return fromRoster > 0 ? fromRoster : null;
       })();
 
   // Empty state — no engine outputs and no market data (and not Kimpton demo).
@@ -627,6 +810,10 @@ export default function IndexAnalysisSection({
           keys={compKeys}
           series={compSeries}
         />
+      </Card>
+
+      <Card className="p-0 overflow-hidden">
+        <PenetrationTable subject={subjectSeries} comp={compSeries} />
       </Card>
     </div>
   );
