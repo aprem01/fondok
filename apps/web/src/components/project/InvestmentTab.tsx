@@ -594,7 +594,8 @@ const USES_ORDER: { label: string; aliases: string[] }[] = [
   { label: 'Soft Costs (Arch/Design)', aliases: ['Soft Costs (Arch/Design)', 'Soft Costs'] },
   { label: 'Closing Costs', aliases: ['Closing Costs'] },
   { label: 'Working Capital / Reserves', aliases: ['Working Capital / Reserves', 'Working Capital'] },
-  { label: 'Lender Fees & Costs', aliases: ['Lender Fees & Costs', 'Loan Costs'] },
+  { label: 'Insurance Reserve', aliases: ['Insurance Reserve'] },
+  { label: 'Lender Fees & Costs', aliases: ['Lender Fees & Costs', 'Senior Loan Fee', 'Loan Costs'] },
   { label: 'Interest Reserve', aliases: ['Interest Reserve'] },
   { label: 'Op. Shortfall Reserve', aliases: ['Op. Shortfall Reserve', 'Operating Shortfall Reserve'] },
 ];

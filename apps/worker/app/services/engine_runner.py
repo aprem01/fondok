@@ -3564,6 +3564,14 @@ def _build_input_for(
         )
 
     if engine_name == "capital":
+        # FON-67 — an explicit senior loan reconciles the stack to a source
+        # model; None (absent / blank) keeps LTV sizing.
+        _senior = base.get("senior_loan_amount")
+        senior_loan_amount = (
+            float(_senior)
+            if _senior not in (None, "") and float(_senior) > 0
+            else None
+        )
         return CapitalEngineInput(
             deal_id=deal_uuid,
             purchase_price=base["purchase_price"],
@@ -3572,8 +3580,10 @@ def _build_input_for(
             soft_costs=base.get("soft_costs", 0.0),
             contingency=base.get("contingency", 0.0),
             working_capital=base.get("working_capital", 0.0),
+            insurance_reserve=base.get("insurance_reserve", 0.0),
             closing_costs_pct=base.get("closing_costs_pct", 0.02),
             loan_costs_pct=base.get("loan_costs_pct", 0.015),
+            senior_loan_amount=senior_loan_amount,
             ltv=base["ltv"],
             debt_basis="purchase",
         )

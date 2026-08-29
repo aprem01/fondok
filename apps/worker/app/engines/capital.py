@@ -4,12 +4,21 @@ Builds the deal-level capital stack from the underwriter's inputs.
 
 By default debt is sized at LTV against purchase price only (the typical
 hotel acquisition convention). Set ``debt_basis = "cost"`` to size against
-purchase + closing + renovation (LTC convention).
+purchase + closing + renovation (LTC convention). An explicit
+``senior_loan_amount`` (FON-67) overrides LTV sizing so the stack reconciles
+to a source model's confirmed senior figure.
 
-    Uses    = Purchase + Closing + Renovation + Working Capital
-              + Soft Costs + Contingency + Loan Costs
-    Debt    = LTV * basis
-    Equity  = Total Uses - Debt
+    Property uses = Purchase + Closing + Renovation + Working Capital
+                    + Insurance Reserve + Soft Costs + Contingency
+    Debt          = senior_loan_amount, else LTV * basis
+    Senior fee    = Debt * loan_costs_pct   (financing cost at close)
+    Total Uses    = Property uses + Senior fee
+    Equity        = Total Uses - Debt
+
+Financing costs (the senior fee here, plus the refi fee modeled in the debt
+engine) are kept separate from the property uses per the source-model
+convention, but still fund at close, so the levered IRR is unchanged versus
+carrying the fee inside the property uses.
 """
 
 from __future__ import annotations
@@ -37,6 +46,13 @@ class CapitalEngineInput(InvestmentEngineInput):
     closing_costs_pct: Annotated[float, Field(ge=0.0, le=0.10)] = 0.02
     loan_costs_pct: Annotated[float, Field(ge=0.0, le=0.05)] = 0.015
     debt_basis: Literal["purchase", "cost"] = "purchase"
+    # FON-67 — an explicit senior loan amount reconciles the stack to a source
+    # model's confirmed senior figure. When set (> 0) it wins over LTV sizing;
+    # None keeps the LTV-derived debt so existing deals are unchanged.
+    senior_loan_amount: Annotated[float, Field(ge=0)] | None = None
+    # FON-67 — an insurance / operating reserve funded at close, a property use
+    # alongside working capital (0 unless the analyst provides it).
+    insurance_reserve: Annotated[float, Field(ge=0)] = 0.0
 
     # Renovation cost split (FON-71). The renovation budget is one line in
     # the sources & uses, but the Investment tab breaks it into hard costs,
@@ -70,6 +86,11 @@ class CapitalEngineOutput(InvestmentEngineOutput):
     # None when there is no renovation budget (so the UI shows '—' rather
     # than a fabricated $0 split).
     renovation_breakdown: RenovationBreakdown | None = None
+    # FON-67 — the property/capital uses (Total Uses minus financing costs)
+    # and the senior loan fee, surfaced separately so the source-model
+    # convention (property uses kept apart from financing) is legible.
+    property_uses_usd: Annotated[float, Field(ge=0)] = 0.0
+    senior_loan_fee_usd: Annotated[float, Field(ge=0)] = 0.0
 
 
 class CapitalEngine(BaseEngine[CapitalEngineInput, CapitalEngineOutput]):
@@ -83,22 +104,40 @@ class CapitalEngine(BaseEngine[CapitalEngineInput, CapitalEngineOutput]):
 
         cost_basis = payload.purchase_price + closing_costs + payload.renovation_budget
         basis = payload.purchase_price if payload.debt_basis == "purchase" else cost_basis
-        debt = basis * payload.ltv
-        loan_costs = debt * payload.loan_costs_pct
+        # FON-67 — explicit senior loan wins over LTV sizing when provided, so
+        # the stack reconciles to a source model's confirmed senior amount.
+        if payload.senior_loan_amount is not None and payload.senior_loan_amount > 0:
+            debt = float(payload.senior_loan_amount)
+        else:
+            debt = basis * payload.ltv
+        # Senior loan fee — a financing cost funded at close (levered outflow at
+        # t=0), kept separate from the property uses per the source-model
+        # convention. It still adds to equity, so the levered IRR is unchanged
+        # vs. carrying it as a "Loan Costs" use.
+        senior_loan_fee = debt * payload.loan_costs_pct
 
-        uses_lines = [
+        property_lines = [
             SourceUseLine(label="Purchase Price", amount=payload.purchase_price),
             SourceUseLine(label="Closing Costs", amount=closing_costs),
             SourceUseLine(label="Renovation", amount=payload.renovation_budget),
             SourceUseLine(label="Working Capital", amount=payload.working_capital),
+            SourceUseLine(label="Insurance Reserve", amount=payload.insurance_reserve),
             SourceUseLine(label="Soft Costs", amount=payload.soft_costs),
             SourceUseLine(label="Contingency", amount=payload.contingency),
-            SourceUseLine(label="Loan Costs", amount=loan_costs),
         ]
-        uses_lines = [u for u in uses_lines if u.amount > 0]
+        property_lines = [u for u in property_lines if u.amount > 0]
+        property_uses = sum(u.amount for u in property_lines)
 
-        total_uses = sum(u.amount for u in uses_lines)
+        # Total capitalization = property uses + financing fee (unchanged
+        # meaning of ``total_capital``); equity funds the gap plus the fee.
+        total_uses = property_uses + senior_loan_fee
         equity = total_uses - debt
+
+        uses_lines = list(property_lines)
+        if senior_loan_fee > 0:
+            uses_lines.append(
+                SourceUseLine(label="Senior Loan Fee", amount=senior_loan_fee)
+            )
 
         # Break the renovation budget into hard / soft / professional fees.
         # Only when there's an actual budget — otherwise leave it None so the
@@ -144,6 +183,8 @@ class CapitalEngine(BaseEngine[CapitalEngineInput, CapitalEngineOutput]):
             equity_amount=equity,
             ltc=debt / total_uses if total_uses else 0.0,
             renovation_breakdown=reno_breakdown,
+            property_uses_usd=property_uses,
+            senior_loan_fee_usd=senior_loan_fee,
         )
 
 
