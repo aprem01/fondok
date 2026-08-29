@@ -631,9 +631,12 @@ function canonicalizeSources(raw: { label: string; amount: number; total?: boole
     return { label, amount: hit ? hit.amount : null, total: false, pct: hit?.pct ?? 0 };
   });
   // The engine emits a single "Equity" line — surface it under
-  // "Sponsor Equity" if no LP/Sponsor split is provided.
-  const hasAnySource = rows.some(r => r.amount != null);
-  if (!hasAnySource) {
+  // "Sponsor Equity" whenever no explicit Sponsor/LP split is provided
+  // (even when the Senior Loan line is present, which it always is).
+  const hasEquitySource = rows.some(
+    r => (r.label === 'Sponsor Equity' || r.label === 'LP Equity') && r.amount != null,
+  );
+  if (!hasEquitySource) {
     const equity = raw.find(r => !r.total && /^Equity$/i.test(r.label));
     if (equity) {
       const sponsorRow = rows.find(r => r.label === 'Sponsor Equity');
