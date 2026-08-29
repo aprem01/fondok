@@ -176,6 +176,26 @@ function buildSubjectSeries(
       series.adr[idx] = revYears[i].adr;
       series.revpar[idx] = revYears[i].revpar;
     }
+    // FON-61 — extend the forecast to the full window. The revenue engine
+    // projects a finite horizon (often short of the hold's exit year); beyond
+    // it, carry the stabilized operation forward — occupancy held flat once
+    // stabilized, ADR/RevPAR grown at the trailing rate — so the index series
+    // covers the whole hold instead of trailing off into blanks.
+    const lastIdx = Math.min(anchorIdx + revYears.length - 1, ALL_YEARS.length - 1);
+    const aPrev = series.adr[lastIdx - 1];
+    const aLast = series.adr[lastIdx];
+    const g =
+      aPrev != null && aLast != null && aPrev > 0
+        ? Math.max(0, Math.min(0.08, aLast / aPrev - 1))
+        : 0.03;
+    for (let idx = lastIdx + 1; idx < ALL_YEARS.length; idx++) {
+      const occPrev = series.occupancy[idx - 1];
+      const adrPrev = series.adr[idx - 1];
+      if (occPrev == null || adrPrev == null) break;
+      series.occupancy[idx] = occPrev; // stabilized occupancy holds flat
+      series.adr[idx] = adrPrev * (1 + g);
+      series.revpar[idx] = occPrev * series.adr[idx]!;
+    }
   }
   return series;
 }
