@@ -14,7 +14,6 @@
  *  • Subject forecast → revenue engine ``years[1..]``.
  *  • Comp set → ``GET /deals/{id}/market-data`` (str_trend for the most-
  *    recent historical anchor; cbre_horizons.years[] for forecast).
- *  • Kimpton demo (id=7) → kimptonAnglerOverview / kimptonAnalysis fixtures.
  *
  * Lovable parity: ADR + RevPAR rows render in green; growth rows render
  * negatives as red parens; Keys row is blue + link-styled. Wide tables
@@ -35,7 +34,6 @@ import {
 import { getEngineField, useEngineOutputs } from '@/lib/hooks/useEngineOutputs';
 import { useDeal } from '@/lib/hooks/useDeal';
 import { useHistoricalBaseline } from '@/lib/hooks/useHistoricalBaseline';
-import { kimptonAnglerOverview } from '@/lib/mockData';
 
 const HISTORICAL_YEARS = [2019, 2020, 2021, 2022, 2023, 2024];
 const FORECAST_YEARS = [2025, 2026, 2027, 2028, 2029, 2030, 2031, 2032, 2033];
@@ -141,37 +139,12 @@ function occFraction(v: number | null | undefined): number | null {
 function buildSubjectSeries(
   outputs: EngineOutputsResponse | null,
   baseline: HistoricalBaselineResponse | null,
-  isKimptonDemo: boolean,
 ): YearSeries {
   const series: YearSeries = {
     occupancy: ALL_YEARS.map(() => null),
     adr: ALL_YEARS.map(() => null),
     revpar: ALL_YEARS.map(() => null),
   };
-
-  if (isKimptonDemo) {
-    // Synthesized historical ramp consistent with Miami Beach lifestyle
-    // boutique and the Kimpton mock proforma. Years align with index 0..14.
-    const occH = [0.701, 0.448, 0.612, 0.703, 0.738, 0.762];
-    const adrH = [298, 272, 312, 348, 372, 385];
-    occH.forEach((o, i) => {
-      series.occupancy[i] = o;
-      series.adr[i] = adrH[i];
-      series.revpar[i] = o * adrH[i];
-    });
-    // Forecast: anchor on revenue engine if present, otherwise grow at 4% / 3%.
-    let occ = 0.762;
-    let adr = 385;
-    for (let i = 0; i < FORECAST_YEARS.length; i++) {
-      const idx = HISTORICAL_YEARS.length + i;
-      occ = i === 0 ? occ : Math.min(0.95, occ * 1.012);
-      adr = i === 0 ? adr * 1.04 : adr * 1.035;
-      series.occupancy[idx] = occ;
-      series.adr[idx] = adr;
-      series.revpar[idx] = occ * adr;
-    }
-    return series;
-  }
 
   // Historical years — pull from historical_baseline.years[] by matching
   // fiscal_year to the column year. RevPAR falls back to occ × ADR when
@@ -244,7 +217,6 @@ function buildSubjectSeries(
 // penetration when no CBRE Horizons forecast was uploaded (see below).
 function buildCompSeries(
   marketData: MarketDataAPIResponse | null,
-  isKimptonDemo: boolean,
   subjectSeries?: YearSeries | null,
 ): YearSeries {
   const series: YearSeries = {
@@ -253,31 +225,7 @@ function buildCompSeries(
     revpar: ALL_YEARS.map(() => null),
   };
 
-  if (isKimptonDemo) {
-    // STR-style comp set: Miami Beach upscale boutique cohort. The
-    // Lovable mock note says comp set RevPAR through 2020 is from a
-    // third-party projection and 3.0% thereafter — we honor that.
-    const occH = [0.731, 0.468, 0.622, 0.708, 0.741, 0.759];
-    const adrH = [310, 285, 322, 358, 379, 391];
-    occH.forEach((o, i) => {
-      series.occupancy[i] = o;
-      series.adr[i] = adrH[i];
-      series.revpar[i] = o * adrH[i];
-    });
-    let occ = 0.759;
-    let adr = 391;
-    for (let i = 0; i < FORECAST_YEARS.length; i++) {
-      const idx = HISTORICAL_YEARS.length + i;
-      occ = i === 0 ? occ * 1.005 : Math.min(0.95, occ * 1.008);
-      adr = i === 0 ? adr * 1.03 : adr * 1.03;
-      series.occupancy[idx] = occ;
-      series.adr[idx] = adr;
-      series.revpar[idx] = occ * adr;
-    }
-    return series;
-  }
-
-  // Live: the STR/CoStar TTM report anonymizes per-property comp performance
+  // The STR/CoStar TTM report anonymizes per-property comp performance
   // (compset[i].occupancy_pct/adr/revpar all come back null), but it publishes
   // the subject's penetration index vs the comp-set aggregate — MPI (occupancy),
   // ARI (ADR), RGI (RevPAR), each = subject ÷ comp. So the blended comp-set
@@ -706,10 +654,8 @@ function Row({
 
 export default function IndexAnalysisSection({
   dealId,
-  isKimptonDemo,
 }: {
   dealId: string;
-  isKimptonDemo: boolean;
 }) {
   const { outputs } = useEngineOutputs(dealId);
   const { deal } = useDeal(dealId);
@@ -745,17 +691,15 @@ export default function IndexAnalysisSection({
 
   // Null (not 0) when the room count is unknown, so the table renders N/A
   // rather than a misleading "Available Rooms 0 / Occupied Rooms 0" (FON-61 c).
-  const subjectKeys: number | null = isKimptonDemo
-    ? kimptonAnglerOverview.general.keys
-    : (deal?.keys && deal.keys > 0 ? deal.keys : null);
+  const subjectKeys: number | null = deal?.keys && deal.keys > 0 ? deal.keys : null;
 
   const subjectSeries = useMemo(
-    () => buildSubjectSeries(outputs, historicalBaseline, isKimptonDemo),
-    [outputs, historicalBaseline, isKimptonDemo],
+    () => buildSubjectSeries(outputs, historicalBaseline),
+    [outputs, historicalBaseline],
   );
   const compSeries = useMemo(
-    () => buildCompSeries(marketData, isKimptonDemo, subjectSeries),
-    [marketData, isKimptonDemo, subjectSeries],
+    () => buildCompSeries(marketData, subjectSeries),
+    [marketData, subjectSeries],
   );
 
   // Comp-set "keys" row = total comp-set room count. Source priority:
@@ -769,25 +713,21 @@ export default function IndexAnalysisSection({
   //   3. null — the Available/Occupied-Rooms rows render N/A, never a
   //      fabricated 0, and the empty-state copy tells the user to upload an
   //      STR Trend report (FON-61 c).
-  const compKeys: number | null = isKimptonDemo
-    ? 1240
-    : (() => {
-        const fromRoster = (marketData?.str_trend?.compset ?? []).reduce(
-          (acc, row) => acc + (typeof row.keys === 'number' && row.keys > 0 ? row.keys : 0),
-          0,
-        );
-        if (fromRoster > 0) return fromRoster;
-        const fromRollup = marketData?.str_trend?.total_keys;
-        return typeof fromRollup === 'number' && fromRollup > 0 ? fromRollup : null;
-      })();
+  const compKeys: number | null = (() => {
+    const fromRoster = (marketData?.str_trend?.compset ?? []).reduce(
+      (acc, row) => acc + (typeof row.keys === 'number' && row.keys > 0 ? row.keys : 0),
+      0,
+    );
+    if (fromRoster > 0) return fromRoster;
+    const fromRollup = marketData?.str_trend?.total_keys;
+    return typeof fromRollup === 'number' && fromRollup > 0 ? fromRollup : null;
+  })();
 
-  // Empty state — no engine outputs and no market data (and not Kimpton demo).
+  // Empty state — no engine outputs and no market data.
   const subjectHasAny =
-    isKimptonDemo ||
     subjectSeries.occupancy.some((v) => v != null) ||
     subjectSeries.adr.some((v) => v != null);
   const compHasAny =
-    isKimptonDemo ||
     compSeries.occupancy.some((v) => v != null) ||
     compSeries.adr.some((v) => v != null);
 
@@ -847,15 +787,11 @@ export default function IndexAnalysisSection({
         <PenetrationTable
           subject={subjectSeries}
           comp={compSeries}
-          indices={
-            isKimptonDemo
-              ? null
-              : {
-                  mpi: indexPoints(marketData?.str_trend?.mpi_occupancy_index),
-                  ari: indexPoints(marketData?.str_trend?.ari_adr_index),
-                  rgi: indexPoints(marketData?.str_trend?.rgi_revpar_index),
-                }
-          }
+          indices={{
+            mpi: indexPoints(marketData?.str_trend?.mpi_occupancy_index),
+            ari: indexPoints(marketData?.str_trend?.ari_adr_index),
+            rgi: indexPoints(marketData?.str_trend?.rgi_revpar_index),
+          }}
         />
       </Card>
     </div>
