@@ -78,11 +78,28 @@ def build_timeline(
     interest_only_months: int | None = None,
     refi_month: int | None = None,
     renovation_budget: float = 0.0,
+    renovation_start_offset_months: int | None = None,
+    renovation_duration_months: int | None = None,
+    ramp_months: int | None = None,
 ) -> list[TimelineEvent]:
-    """Assemble the dated transaction timeline from the deal's timing inputs."""
+    """Assemble the dated transaction timeline from the deal's timing inputs.
+
+    The renovation start offset, renovation duration, and ramp-to-stabilization
+    are per-deal-overridable; each falls back to its module default when not
+    provided (or when a non-sensical negative value is passed).
+    """
     events: list[TimelineEvent] = []
     pending = close_date is None
     dbasis = "pending" if pending else "derived"
+
+    def _months(value: int | None, default: int) -> int:
+        return value if isinstance(value, int) and value >= 0 else default
+
+    reno_start_off = _months(
+        renovation_start_offset_months, RENOVATION_START_OFFSET_MONTHS
+    )
+    reno_duration = _months(renovation_duration_months, RENOVATION_DURATION_MONTHS)
+    ramp_duration = _months(ramp_months, RAMP_TO_STABILIZATION_MONTHS)
 
     def at(offset_months: int | None) -> str | None:
         if close_date is None or offset_months is None:
@@ -103,15 +120,15 @@ def build_timeline(
     # 2. Renovation window + ramp to stabilization (assumption) — only when
     #    there is an actual renovation budget.
     if renovation_budget and renovation_budget > 0:
-        reno_start = RENOVATION_START_OFFSET_MONTHS
-        reno_end = reno_start + RENOVATION_DURATION_MONTHS
-        ramp_end = reno_end + RAMP_TO_STABILIZATION_MONTHS
+        reno_start = reno_start_off
+        reno_end = reno_start + reno_duration
+        ramp_end = reno_end + ramp_duration
         abasis = "pending" if pending else "assumption"
         events.append(
             TimelineEvent(
                 event="Renovation",
                 start=at(reno_start),
-                duration_months=RENOVATION_DURATION_MONTHS,
+                duration_months=reno_duration,
                 finish=at(reno_end),
                 basis=abasis,
             )
@@ -129,7 +146,7 @@ def build_timeline(
             TimelineEvent(
                 event="Ramp-Up Period",
                 start=at(reno_end),
-                duration_months=RAMP_TO_STABILIZATION_MONTHS,
+                duration_months=ramp_duration,
                 finish=at(ramp_end),
                 basis=abasis,
             )

@@ -456,6 +456,15 @@ async def get_deal_timeline(
         interest_only_months=io_months,
         refi_month=refi_month,
         renovation_budget=_reno_budget_from_capital(capital_out),
+        # Per-deal-overridable renovation / ramp windows (FON-71); each falls
+        # back to the engine default when the analyst hasn't set it.
+        renovation_start_offset_months=_timeline_int(
+            overrides.get("renovation_start_offset_months")
+        ),
+        renovation_duration_months=_timeline_int(
+            overrides.get("renovation_duration_months")
+        ),
+        ramp_months=_timeline_int(overrides.get("ramp_months")),
     )
 
     exit_ev = next((e for e in events if e.event.startswith("Disposition")), None)

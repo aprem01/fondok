@@ -94,6 +94,33 @@ def test_month_rollover_clamps_day():
     assert reno.finish == "2026-01-31"
 
 
+def test_renovation_and_ramp_windows_flex_per_deal():
+    # A 6-month reno starting 2 months after close, with an 18-month ramp.
+    events = build_timeline(
+        close_date=date(2025, 1, 1), hold_years=5, renovation_budget=5_000_000,
+        renovation_start_offset_months=2, renovation_duration_months=6,
+        ramp_months=18,
+    )
+    by = _by_event(events)
+    assert by["Renovation"].start == "2025-03-01"       # close + 2 mo
+    assert by["Renovation"].duration_months == 6
+    assert by["Renovation"].finish == "2025-09-01"      # + 6 mo
+    assert by["Ramp-Up Period"].duration_months == 18
+    # Stabilization = reno end + 18 mo ramp → 2027-03-01
+    assert by["Stabilized (FTM NOI, Value)"].finish == "2027-03-01"
+
+
+def test_invalid_window_overrides_fall_back_to_defaults():
+    events = build_timeline(
+        close_date=date(2025, 1, 1), hold_years=5, renovation_budget=5_000_000,
+        renovation_duration_months=-3, ramp_months=None,
+    )
+    by = _by_event(events)
+    # Negative override ignored → 12-month default.
+    assert by["Renovation"].duration_months == 12
+    assert by["Ramp-Up Period"].duration_months == 12
+
+
 def test_parse_iso_date_variants():
     assert parse_iso_date("2025-09-30") == date(2025, 9, 30)
     assert parse_iso_date("2025-09-30T00:00:00Z") == date(2025, 9, 30)
