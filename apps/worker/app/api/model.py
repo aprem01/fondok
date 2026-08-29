@@ -411,7 +411,7 @@ def _reno_budget_from_capital(capital_out: dict[str, Any]) -> float:
     return 0.0
 
 
-@engines_router.get("/{deal_id}/timeline", response_model=TimelineResponse)
+@engines_router.get("/{deal_id}/engines/timeline", response_model=TimelineResponse)
 async def get_deal_timeline(
     deal_id: str,
     session: Annotated[AsyncSession, Depends(get_session)],
