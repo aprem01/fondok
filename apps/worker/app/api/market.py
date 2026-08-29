@@ -50,6 +50,14 @@ class MarketOverview(BaseModel):
     # The subject hotel's actual name, extracted from the documents (OM wins).
     # Distinct from the deal row's `name`, which is the user's project name.
     property_name: str | None = None
+    # FON-70 — descriptive property metadata extracted from the OM
+    # (property_overview.*). None when no document carried the field, so the UI
+    # shows a blank rather than a fabricated value. Title / transfer tax are not
+    # extracted (title = ownership type isn't in the OM; transfer tax needs a
+    # jurisdiction lookup), so they stay off this response.
+    year_built: int | None = None
+    gba_sf: int | None = None
+    labor_type: str | None = None
     occupancy_index: float | None = None
     adr_index: float | None = None
     revpar_index: float | None = None
@@ -73,17 +81,20 @@ class CompsResponse(BaseModel):
     metadata: dict[str, Any] = Field(default_factory=dict)
 
 
-async def _extracted_property_name(
+async def _extracted_property_meta(
     session: AsyncSession, *, deal_id: UUID, tenant_id: UUID
-) -> str | None:
-    """The subject hotel's name as extracted from the documents (OM wins).
+) -> dict[str, Any]:
+    """Descriptive property metadata extracted from the documents (OM wins).
 
-    The deal row only carries the user's *project* name; the actual asset name
-    is extracted as ``property_overview.name`` (OM / financials / debt / etc.)
-    or the STR report's ``ttm_performance.subject.name``. Prefer the OM, then
-    the STR report, then any document that carried it. Returns ``None`` when no
-    document extracted a subject name (so the UI can fall back to an editable
-    blank rather than the project name — FON-59 / FON-44)."""
+    Returns a dict with any of ``name`` / ``year_built`` / ``gba_sf`` /
+    ``labor_type`` that a document carried; absent keys mean nothing extracted
+    it (so the UI shows a blank rather than a fabricated value). Name is
+    ``property_overview.name`` (or the STR subject name); the rest are
+    ``property_overview.*`` from the OM (FON-59 / FON-70). Rows are OM-first, so
+    the first hit per field is the OM's value. Title (ownership type) and
+    transfer tax are deliberately not surfaced — the OM doesn't carry a title
+    type and transfer tax needs a jurisdiction lookup, so they stay blank."""
+    out: dict[str, Any] = {}
     rows = await session.execute(
         text(
             """
@@ -116,11 +127,24 @@ async def _extracted_property_name(
             if not isinstance(f, dict):
                 continue
             fn = (f.get("field_name") or "").strip().lower()
+            val = f.get("value")
             if fn in ("property_overview.name", "ttm_performance.subject.name"):
-                val = f.get("value")
-                if isinstance(val, str) and val.strip():
-                    return val.strip()
-    return None
+                if "name" not in out and isinstance(val, str) and val.strip():
+                    out["name"] = val.strip()
+            elif fn == "property_overview.year_built":
+                if "year_built" not in out:
+                    yb = _coerce_int(val)
+                    if yb is not None and 1700 < yb < 2100:
+                        out["year_built"] = yb
+            elif fn == "property_overview.gba_sf":
+                if "gba_sf" not in out:
+                    g = _coerce_int(val)
+                    if g is not None and g > 0:
+                        out["gba_sf"] = g
+            elif fn == "property_overview.labor_type":
+                if "labor_type" not in out and isinstance(val, str) and val.strip():
+                    out["labor_type"] = val.strip()
+    return out
 
 
 @router.get("/{deal_id}/overview", response_model=MarketOverview)
@@ -160,7 +184,7 @@ async def market_overview(
             keys = int(m["keys"])
         except (TypeError, ValueError):
             keys = None
-    property_name = await _extracted_property_name(
+    meta = await _extracted_property_meta(
         session, deal_id=deal_id, tenant_id=tenant_id
     )
     return MarketOverview(
@@ -169,7 +193,10 @@ async def market_overview(
         keys=keys,
         brand=m.get("brand"),
         service=m.get("service"),
-        property_name=property_name,
+        property_name=meta.get("name"),
+        year_built=meta.get("year_built"),
+        gba_sf=meta.get("gba_sf"),
+        labor_type=meta.get("labor_type"),
     )
 
 

@@ -75,16 +75,40 @@ export default function OverviewTab({ projectId }: { projectId: number | string 
     return () => ac.abort();
   }, [dealId, liveMode]);
 
-  // FON-59 / FON-44 — the actual hotel/asset name, extracted from the OM
-  // (property_overview.name). Distinct from the deal's project name.
-  const [extractedPropertyName, setExtractedPropertyName] = useState<string | null>(null);
+  // FON-59 / FON-44 / FON-70 — descriptive property metadata resolved
+  // cross-document by the worker (OM-first, then STR, then any doc): the
+  // hotel/asset name (property_overview.name — distinct from the deal's
+  // project name), plus year_built / gba_sf / labor_type. These serve as
+  // the fallback source for the General Information rows when the OM's own
+  // extraction (read client-side, OM-only below) doesn't carry the field —
+  // e.g. year_built often lives on the STR trend report, not the OM.
+  const [extractedMeta, setExtractedMeta] = useState<{
+    name: string | null;
+    year_built: number | null;
+    gba_sf: number | null;
+    labor_type: string | null;
+  }>({ name: null, year_built: null, gba_sf: null, labor_type: null });
   useEffect(() => {
-    if (!liveMode) { setExtractedPropertyName(null); return; }
+    if (!liveMode) {
+      setExtractedMeta({ name: null, year_built: null, gba_sf: null, labor_type: null });
+      return;
+    }
     const ac = new AbortController();
     api.market.overview(dealId, ac.signal)
-      .then((d) => setExtractedPropertyName(
-        (d as { property_name?: string | null } | null)?.property_name ?? null,
-      ))
+      .then((d) => {
+        const o = (d ?? {}) as {
+          property_name?: string | null;
+          year_built?: number | null;
+          gba_sf?: number | null;
+          labor_type?: string | null;
+        };
+        setExtractedMeta({
+          name: o.property_name ?? null,
+          year_built: o.year_built ?? null,
+          gba_sf: o.gba_sf ?? null,
+          labor_type: o.labor_type ?? null,
+        });
+      })
       .catch(() => { /* best-effort; falls back to editable blank */ });
     return () => ac.abort();
   }, [dealId, liveMode]);
@@ -272,7 +296,7 @@ export default function OverviewTab({ projectId }: { projectId: number | string 
   // (FON-59 #3 normalization rule).
   const propertyNameOverride =
     typeof overrides['property_name'] === 'string' ? (overrides['property_name'] as string) : undefined;
-  const propertyName = propertyNameOverride ?? extractedPropertyName ?? undefined;
+  const propertyName = propertyNameOverride ?? extractedMeta.name ?? undefined;
   const propertyCity = deal?.city ?? undefined;
   const propertyKeys = (deal?.keys && deal.keys > 0) ? deal.keys : undefined;
   const propertyBrand = deal?.brand ?? undefined;
@@ -354,15 +378,22 @@ export default function OverviewTab({ projectId }: { projectId: number | string 
   // `property_overview.*` namespace from the extractor prompt plus the
   // common variants real-world OMs use. The first alias is the
   // canonical path the override map writes to.
+  // For year_built / gba the worker's cross-document value (extractedMeta)
+  // is the fallback: an analyst override wins, then the OM's own field,
+  // then whatever doc the worker resolved it from (often the STR trend).
   const omYearBuilt = resolveNum([
     'property_overview.year_built', 'year_built', 'built',
-  ]);
+  ]) ?? extractedMeta.year_built ?? undefined;
   const omGba = resolveNum([
     'property_overview.gba_sf', 'property_overview.gba_sqft',
     'property_overview.gba', 'gba_sf', 'gba_sqft', 'gba',
     'property_overview.gross_building_area',
     'property_overview.total_sf',
-  ]);
+  ]) ?? extractedMeta.gba_sf ?? undefined;
+  const omLabor = resolveStr([
+    'property_overview.labor_type', 'property_overview.labor',
+    'property_overview.union_status', 'labor_type', 'labor', 'union_status',
+  ]) ?? extractedMeta.labor_type ?? undefined;
   const omMeetingSpace = resolveNum([
     'property_overview.meeting_space_sf', 'property_overview.meeting_space_sqft',
     'property_overview.meeting_space', 'meeting_space_sf', 'meeting_space_sqft',
@@ -581,6 +612,10 @@ export default function OverviewTab({ projectId }: { projectId: number | string 
               fieldPath: 'property_overview.fb_outlets', inputType: 'number',
               raw: omFbOutlets,
               value: omFbOutlets != null ? String(Math.round(omFbOutlets)) : '—' },
+            { label: 'Labor', kind: 'editable',
+              fieldPath: 'property_overview.labor_type', inputType: 'text',
+              raw: omLabor,
+              value: omLabor ?? '—' },
           ]}
         />
 
