@@ -851,6 +851,15 @@ function ModelSettings({
   onSaved?: () => void;
 }) {
   const [state, setState] = useState<ModelSettingsState>(defaults);
+  // FON-59 #2 — `defaults` is empty on first paint (before useDeal resolves);
+  // useState only honors its INITIAL value, so without this re-sync the Brand /
+  // Returns Profile / Positioning selects stay blank even though the deal
+  // carries them. Depend on the primitive values (not the object ref, which is
+  // recreated every render) so a select commit doesn't fight the sync.
+  useEffect(() => {
+    setState(defaults);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [defaults.dealType, defaults.returnProfile, defaults.brand, defaults.positioning]);
   const { toast } = useToast();
   // FON-59 — the Investment Profile is editable inline now (the Model Settings
   // modal is gone). Each change persists to the deal + re-runs the engines.
