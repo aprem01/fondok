@@ -555,6 +555,23 @@ export interface EngineRunStatusResponse {
   engines: EngineOutputResponse[];
 }
 
+// ── Transaction timeline (FON-71) ───────────────────────────────────
+export interface TimelineEvent {
+  event: string;
+  start: string | null;          // ISO date, null until close date is set
+  duration_months: number | null;
+  finish: string | null;
+  basis: 'derived' | 'assumption' | 'pending';
+}
+
+export interface TimelineResponse {
+  deal_id: string;
+  close_date: string | null;
+  exit_date: string | null;
+  stabilization_date: string | null;  // FTM (forward-twelve-month) date
+  events: TimelineEvent[];
+}
+
 // ─────────────────────────── scenarios (Wave 3 W3.2) ────────────────
 //
 // Mirrors apps/worker/app/api/scenarios.py. A scenario is a named
@@ -1235,6 +1252,14 @@ export const api = {
       request<EngineOutputsResponse>(
         'GET',
         `/deals/${dealId}/engines`,
+        undefined,
+        { signal },
+      ),
+    /** Dated transaction timeline (FON-71) — close date + derived schedule. */
+    timeline: (dealId: string, signal?: AbortSignal) =>
+      request<TimelineResponse>(
+        'GET',
+        `/deals/${dealId}/engines/timeline`,
         undefined,
         { signal },
       ),

@@ -25,9 +25,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..audit import log_audit
 from ..database import get_session, get_session_factory
+from ..engines.timeline import TimelineEvent, build_timeline, parse_iso_date
 from ..services.engine_runner import (
     ENGINE_NAMES,
     ENGINE_REGISTRY,
+    _load_deal_overrides,
     get_latest_output,
     get_latest_outputs,
     get_run_status,
@@ -371,6 +373,100 @@ async def list_engine_outputs(
     rows = await get_latest_outputs(session, deal_id=deal_id, tenant_id=str(tenant_id))
     engines = {name: EngineOutputResponse(**row) for name, row in rows.items()}
     return EngineOutputsResponse(deal_id=deal_id, engines=engines)
+
+
+class TimelineResponse(BaseModel):
+    """Dated transaction timeline for the Investment tab (FON-71)."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    deal_id: str
+    # The acquisition close date drives every other date; None until the
+    # analyst enters it (dates then read as "pending" in the UI).
+    close_date: str | None = None
+    # Convenience anchors surfaced on the Exit Valuation panel.
+    exit_date: str | None = None
+    stabilization_date: str | None = None  # FTM (forward-twelve-month) date
+    events: list[TimelineEvent]
+
+
+def _timeline_int(value: object) -> int | None:
+    """Coerce a JSON scalar to int, or None when absent / non-numeric."""
+    if value is None or value == "":
+        return None
+    try:
+        return int(float(value))  # type: ignore[arg-type]
+    except (TypeError, ValueError):
+        return None
+
+
+def _reno_budget_from_capital(capital_out: dict[str, Any]) -> float:
+    """Renovation budget from the capital output's 'Renovation' uses line."""
+    for line in capital_out.get("uses") or []:
+        if isinstance(line, dict) and "renovat" in str(line.get("label", "")).lower():
+            try:
+                return float(line.get("amount") or 0.0)
+            except (TypeError, ValueError):
+                return 0.0
+    return 0.0
+
+
+@engines_router.get("/{deal_id}/timeline", response_model=TimelineResponse)
+async def get_deal_timeline(
+    deal_id: str,
+    session: Annotated[AsyncSession, Depends(get_session)],
+    tenant_id: Annotated[UUID, Depends(get_tenant_id)],
+) -> TimelineResponse:
+    """Project the transaction schedule onto calendar dates.
+
+    Reads the acquisition close date from ``field_overrides`` and the timing
+    already modeled by the returns (hold) and debt (term / interest-only)
+    engines, then maps those month-offsets onto dates. No re-run, no writes.
+    """
+    await _assert_deal_belongs_to_tenant(
+        session, deal_id=deal_id, tenant_id=tenant_id
+    )
+    overrides = await _load_deal_overrides(
+        session, deal_id=deal_id, tenant_id=str(tenant_id)
+    )
+    rows = await get_latest_outputs(
+        session, deal_id=deal_id, tenant_id=str(tenant_id)
+    )
+    returns_out = (rows.get("returns") or {}).get("outputs") or {}
+    debt_out = (rows.get("debt") or {}).get("outputs") or {}
+    capital_out = (rows.get("capital") or {}).get("outputs") or {}
+
+    close_date = parse_iso_date(overrides.get("acquisition_close_date"))
+
+    io_years = _timeline_int(debt_out.get("interest_only_years"))
+    io_months = (
+        io_years * 12
+        if io_years
+        else _timeline_int(debt_out.get("io_period_months"))
+    )
+    dso = overrides.get("debt_stack_overrides")
+    refi_month = (
+        _timeline_int(dso.get("refi_month")) if isinstance(dso, dict) else None
+    )
+
+    events = build_timeline(
+        close_date=close_date,
+        hold_years=_timeline_int(returns_out.get("hold_years")),
+        term_years=_timeline_int(debt_out.get("term_years")),
+        interest_only_months=io_months,
+        refi_month=refi_month,
+        renovation_budget=_reno_budget_from_capital(capital_out),
+    )
+
+    exit_ev = next((e for e in events if e.event.startswith("Disposition")), None)
+    stab_ev = next((e for e in events if e.event.startswith("Stabilized")), None)
+    return TimelineResponse(
+        deal_id=deal_id,
+        close_date=close_date.isoformat() if close_date else None,
+        exit_date=exit_ev.finish if exit_ev else None,
+        stabilization_date=stab_ev.finish if stab_ev else None,
+        events=events,
+    )
 
 
 @engines_router.get(

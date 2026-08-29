@@ -1,5 +1,5 @@
 'use client';
-import { useState, useCallback, useRef, type ReactNode } from 'react';
+import { useState, useCallback, useEffect, useRef, type ReactNode } from 'react';
 import { useParams } from 'next/navigation';
 import { ChevronDown, ChevronUp, Briefcase, Pencil, Check, X } from 'lucide-react';
 import { Card } from '@/components/ui/Card';
@@ -20,7 +20,7 @@ import { useDeal } from '@/lib/hooks/useDeal';
 import { useEngineRun } from '@/lib/hooks/useEngineRun';
 import { IntroCard } from '@/components/help/IntroCard';
 import { Sourced } from '@/components/help/Sourced';
-import { api, isWorkerConnected, WorkerError } from '@/lib/api';
+import { api, isWorkerConnected, WorkerError, type TimelineResponse } from '@/lib/api';
 
 // Expense engine year shape — mirrors apps/worker/app/engines/expense.py.
 // Only the fields we read on the Investment tab are typed here; the
@@ -75,6 +75,43 @@ export default function InvestmentTab() {
       }
     },
     [invOverrides, dealId, liveMode, toast, refreshDeal, invRun],
+  );
+
+  // FON-71 — dated transaction timeline. The worker projects the schedule
+  // from the acquisition close date + the hold/term/reno offsets already
+  // modeled by the other engines. Refetched after a save or a model run.
+  const [timeline, setTimeline] = useState<TimelineResponse | null>(null);
+  const refreshTimeline = useCallback(() => {
+    if (!liveMode) { setTimeline(null); return; }
+    const ac = new AbortController();
+    api.engines.timeline(dealId, ac.signal)
+      .then(setTimeline)
+      .catch(() => { /* best-effort; tab shows pending rows */ });
+    return () => ac.abort();
+  }, [dealId, liveMode]);
+  useEffect(() => { refreshTimeline(); }, [refreshTimeline, runToken]);
+
+  // Acquisition close date drives every timeline date. Unlike the numeric
+  // assumptions it feeds no engine, so we save it and just refetch the
+  // timeline — no full model re-run.
+  const onSaveCloseDate = useCallback(
+    async (iso: string) => {
+      if (!liveMode) {
+        toast('Editing is disabled on demo deals', { type: 'info' });
+        return;
+      }
+      const next = { ...invOverrides, acquisition_close_date: iso };
+      try {
+        await api.deals.update(dealId, { field_overrides: next });
+        toast('Acquisition date saved', { type: 'success' });
+        void refreshDeal?.();
+        refreshTimeline();
+      } catch (err) {
+        const detail = err instanceof WorkerError ? err.body : String(err);
+        toast(`Save failed: ${detail || 'worker rejected update'}`, { type: 'error' });
+      }
+    },
+    [invOverrides, dealId, liveMode, toast, refreshDeal, refreshTimeline],
   );
   // Wave 2 P2.5 - local capex plan state. The worker's ``capex_plan``
   // engine output isn't wired into useEngineOutputs yet; until it is,
@@ -340,6 +377,16 @@ export default function InvestmentTab() {
                   onSaved={() => refreshDeal()}
                 />,
               ],
+              [
+                'Acquisition Date',
+                <CloseDateField
+                  key="close-date"
+                  iso={(invOverrides['acquisition_close_date'] as string | undefined)
+                    ?? timeline?.close_date ?? null}
+                  editable={liveMode}
+                  onSave={onSaveCloseDate}
+                />,
+              ],
               ['Hotel Purchase Price', <AssumptionField key="pp" value={entryPurchase} editable={liveMode}
                 format={fmtCurrency} toDraft={(v) => String(Math.round(v))}
                 parse={(s) => { const n = parseFloat(s.replace(/[,$\s]/g, '')); return Number.isFinite(n) && n > 0 ? n : null; }}
@@ -351,7 +398,7 @@ export default function InvestmentTab() {
             ]} />
             <Panel title="Exit Valuation" rows={[
               ['Exit Month', exitMonth != null ? String(exitMonth) : '—'],
-              ['Exit Date', '—'],
+              ['Exit Date', timeline?.exit_date ? fmtISODate(timeline.exit_date) : '—'],
               ['Fwd. 12 Mo NOI', fmtOrDash(exitTerminalNoi, fmtCurrency)],
               ['Exit Cap Rate', <AssumptionField key="xc-edit" value={exitCap} editable={liveMode}
                 format={(v) => fmtPct(v, 2)} toDraft={(v) => (v * 100).toFixed(2)}
@@ -457,55 +504,53 @@ export default function InvestmentTab() {
       {tab === 'Sources & Uses' && ctx && <LiveSourcesUses />}
 
       {tab === 'Timeline' && (() => {
-        // ─── Transaction Timeline (Lovable spec) ─────────────────
-        // Render all 13 rows in fixed order with three numeric
-        // columns (START | DURATION | FINISH). Most rows have no
-        // engine source yet, so we surface fixture values on the
-        // demo and '—' otherwise — Lovable's screenshot keeps the
-        // row visible even when values are missing.
-        const TIMELINE: { event: string; start?: string; duration?: string; finish?: string }[] = [
-          { event: 'Hotel Purchase',                          start: '9/30/2025',  duration: '0 mo',  finish: '9/30/2025' },
-          { event: 'Senior Loan Interest-Only Period',        start: '9/30/2025',  duration: '48 mo', finish: '9/30/2029' },
-          { event: 'Senior Loan Perm Loan Payoff',            start: '9/30/2029',  duration: '12 mo', finish: '9/30/2030' },
-          { event: 'Acq. To Renovation',                      start: '9/30/2025',  duration: '3 mo',  finish: '12/31/2025' },
-          { event: 'Renovation',                              start: '1/1/2026',   duration: '12 mo', finish: '12/31/2026' },
-          { event: 'Completed Renovation',                    start: '1/1/2027' },
-          { event: 'Receive Key Money',                       start: '1/1/2027',   duration: '1 mo',  finish: '2/1/2027' },
-          { event: 'Ramp-Up Period',                          start: '1/1/2027',   duration: '12 mo', finish: '12/31/2027' },
-          { event: 'Senior Loan Refi',                        start: '9/30/2029' },
-          { event: 'Disposition After Refi',                  start: '9/30/2030' },
-          { event: 'Investment Hold Period',                  start: '9/30/2025',  duration: '60 mo', finish: '9/30/2030' },
-          { event: 'Practical Completion (FTM NOI, Value)',   start: '12/31/2026' },
-          { event: 'Stabilized (FTM NOI, Value)',             start: '12/31/2027' },
-        ];
-        const cell = (v: string | undefined) =>
-          v != null && v !== '' ? '—' : '—';
+        // ─── Transaction Timeline (FON-71) ───────────────────────
+        // Dates come from the worker timeline engine: the acquisition
+        // close date projected onto the hold / loan-term / renovation
+        // offsets already modeled by the other engines. Durations show
+        // even before a close date is set; the dates stay '—' (pending)
+        // until the analyst enters the Acquisition Date on Deal Summary.
+        const events = timeline?.events ?? [];
+        const pending = !timeline?.close_date;
         return (
           <Card className="p-5">
-            <h3 className="text-[13px] font-semibold text-ink-900 mb-3">Transaction Timeline</h3>
-            {/* Thin colored bar separator between title and column headers
-                — matches Lovable's reference screenshot. */}
+            <div className="flex items-center justify-between mb-3">
+              <h3 className="text-[13px] font-semibold text-ink-900">Transaction Timeline</h3>
+              {pending && (
+                <span className="text-[11px] text-ink-500">
+                  Set the Acquisition Date on Deal Summary to populate dates
+                </span>
+              )}
+            </div>
             <div className="h-1 w-full rounded bg-brand-500 mb-3" />
-            <table className="w-full text-[12.5px]">
-              <thead>
-                <tr className="text-ink-500 text-[11px] border-b border-border">
-                  <th className="text-left font-medium pb-2">Event</th>
-                  <th className="text-right font-medium pb-2">START</th>
-                  <th className="text-right font-medium pb-2">DURATION</th>
-                  <th className="text-right font-medium pb-2">FINISH</th>
-                </tr>
-              </thead>
-              <tbody>
-                {TIMELINE.map(row => (
-                  <tr key={row.event} className="border-b border-border/50">
-                    <td className="py-2">{row.event}</td>
-                    <td className="text-right tabular-nums text-ink-700">{cell(row.start)}</td>
-                    <td className="text-right tabular-nums text-ink-700">{cell(row.duration)}</td>
-                    <td className="text-right tabular-nums text-ink-700">{cell(row.finish)}</td>
+            {events.length === 0 ? (
+              <p className="text-[12.5px] text-ink-500 py-2">
+                {liveMode ? 'Run the model to build the timeline.' : 'Timeline is available on live deals.'}
+              </p>
+            ) : (
+              <table className="w-full text-[12.5px]">
+                <thead>
+                  <tr className="text-ink-500 text-[11px] border-b border-border">
+                    <th className="text-left font-medium pb-2">Event</th>
+                    <th className="text-right font-medium pb-2">START</th>
+                    <th className="text-right font-medium pb-2">DURATION</th>
+                    <th className="text-right font-medium pb-2">FINISH</th>
                   </tr>
-                ))}
-              </tbody>
-            </table>
+                </thead>
+                <tbody>
+                  {events.map((row, i) => (
+                    <tr key={`${row.event}-${i}`} className="border-b border-border/50">
+                      <td className="py-2">{row.event}</td>
+                      <td className="text-right tabular-nums text-ink-700">{fmtISODate(row.start)}</td>
+                      <td className="text-right tabular-nums text-ink-700">
+                        {row.duration_months != null ? `${row.duration_months} mo` : '—'}
+                      </td>
+                      <td className="text-right tabular-nums text-ink-700">{fmtISODate(row.finish)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            )}
           </Card>
         );
       })()}
@@ -873,6 +918,98 @@ function AssumptionField({
         className={cn(width, 'px-2 py-0.5 text-[12.5px] border border-border rounded text-right tabular-nums')}
       />
       {suffix && <span className="text-[11px] text-ink-500">{suffix}</span>}
+      <button type="button" aria-label="Save" onClick={() => void submit()} disabled={saving}
+        className="text-emerald-600 hover:text-emerald-800 disabled:opacity-50">
+        <Check className="w-3.5 h-3.5" />
+      </button>
+      <button type="button" aria-label="Cancel" onClick={() => setEditing(false)}
+        className="text-ink-400 hover:text-ink-700">
+        <X className="w-3.5 h-3.5" />
+      </button>
+    </span>
+  );
+}
+
+/**
+ * Format an ISO date (YYYY-MM-DD) as M/D/YYYY without a timezone shift —
+ * parsing the parts directly avoids `new Date('2025-09-30')` landing on the
+ * prior day in negative-offset zones. Returns '—' for null/empty.
+ */
+function fmtISODate(iso: string | null | undefined): string {
+  if (!iso) return '—';
+  const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(iso);
+  if (!m) return '—';
+  return `${Number(m[2])}/${Number(m[3])}/${m[1]}`;
+}
+
+/**
+ * FON-71 — the acquisition close date, an editable date cell. Drives every
+ * date on the Timeline tab. Shows the date with a pencil affordance; on save
+ * it hands the ISO string to the parent's onSave (PATCHes field_overrides).
+ */
+function CloseDateField({
+  iso,
+  editable,
+  onSave,
+}: {
+  iso: string | null;
+  editable: boolean;
+  onSave: (iso: string) => void | Promise<void>;
+}) {
+  const { toast } = useToast();
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState('');
+  const [saving, setSaving] = useState(false);
+  const display = fmtISODate(iso);
+
+  if (!editable) {
+    return <span className="tabular-nums font-medium text-ink-900">{display}</span>;
+  }
+  if (!editing) {
+    return (
+      <span className="inline-flex items-center gap-1.5">
+        <span className="tabular-nums font-medium text-ink-900">
+          {iso ? display : <span className="text-ink-400 font-normal">Set date</span>}
+        </span>
+        <button
+          type="button"
+          aria-label="Edit acquisition date"
+          title="Edit acquisition date"
+          onClick={() => { setDraft(iso ? iso.slice(0, 10) : ''); setEditing(true); }}
+          className="text-ink-400 hover:text-brand-600 transition-colors"
+        >
+          <Pencil className="w-3 h-3" />
+        </button>
+      </span>
+    );
+  }
+  const submit = async () => {
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(draft)) {
+      toast('Pick a valid date.', { type: 'error' });
+      return;
+    }
+    setSaving(true);
+    try {
+      await onSave(draft);
+      setEditing(false);
+    } finally {
+      setSaving(false);
+    }
+  };
+  return (
+    <span className="inline-flex items-center gap-1">
+      <input
+        type="date"
+        value={draft}
+        autoFocus
+        disabled={saving}
+        onChange={(e) => setDraft(e.target.value)}
+        onKeyDown={(e) => {
+          if (e.key === 'Enter') void submit();
+          if (e.key === 'Escape') setEditing(false);
+        }}
+        className="px-2 py-0.5 text-[12.5px] border border-border rounded tabular-nums"
+      />
       <button type="button" aria-label="Save" onClick={() => void submit()} disabled={saving}
         className="text-emerald-600 hover:text-emerald-800 disabled:opacity-50">
         <Check className="w-3.5 h-3.5" />
