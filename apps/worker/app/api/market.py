@@ -47,6 +47,9 @@ class MarketOverview(BaseModel):
     keys: int | None = None
     brand: str | None = None
     service: str | None = None
+    # The subject hotel's actual name, extracted from the documents (OM wins).
+    # Distinct from the deal row's `name`, which is the user's project name.
+    property_name: str | None = None
     occupancy_index: float | None = None
     adr_index: float | None = None
     revpar_index: float | None = None
@@ -68,6 +71,56 @@ class CompsResponse(BaseModel):
     deal_id: UUID
     comps: list[Comp] = Field(default_factory=list)
     metadata: dict[str, Any] = Field(default_factory=dict)
+
+
+async def _extracted_property_name(
+    session: AsyncSession, *, deal_id: UUID, tenant_id: UUID
+) -> str | None:
+    """The subject hotel's name as extracted from the documents (OM wins).
+
+    The deal row only carries the user's *project* name; the actual asset name
+    is extracted as ``property_overview.name`` (OM / financials / debt / etc.)
+    or the STR report's ``ttm_performance.subject.name``. Prefer the OM, then
+    the STR report, then any document that carried it. Returns ``None`` when no
+    document extracted a subject name (so the UI can fall back to an editable
+    blank rather than the project name — FON-59 / FON-44)."""
+    rows = await session.execute(
+        text(
+            """
+            SELECT er.fields, d.doc_type
+              FROM extraction_results er
+              JOIN documents d ON d.id = er.document_id
+             WHERE er.deal_id = :deal
+               AND er.tenant_id = :tenant
+               AND d.tenant_id = :tenant
+             ORDER BY CASE UPPER(COALESCE(d.doc_type, ''))
+                        WHEN 'OM' THEN 0
+                        WHEN 'STR_TREND' THEN 1
+                        WHEN 'STR' THEN 1
+                        ELSE 2 END,
+                      er.created_at DESC
+            """
+        ),
+        {"deal": str(deal_id), "tenant": str(tenant_id)},
+    )
+    for r in rows.fetchall():
+        raw = r._mapping.get("fields")
+        if isinstance(raw, str):
+            try:
+                raw = json.loads(raw)
+            except json.JSONDecodeError:
+                continue
+        if not isinstance(raw, list):
+            continue
+        for f in raw:
+            if not isinstance(f, dict):
+                continue
+            fn = (f.get("field_name") or "").strip().lower()
+            if fn in ("property_overview.name", "ttm_performance.subject.name"):
+                val = f.get("value")
+                if isinstance(val, str) and val.strip():
+                    return val.strip()
+    return None
 
 
 @router.get("/{deal_id}/overview", response_model=MarketOverview)
@@ -107,12 +160,16 @@ async def market_overview(
             keys = int(m["keys"])
         except (TypeError, ValueError):
             keys = None
+    property_name = await _extracted_property_name(
+        session, deal_id=deal_id, tenant_id=tenant_id
+    )
     return MarketOverview(
         deal_id=deal_id,
         market=m.get("city"),
         keys=keys,
         brand=m.get("brand"),
         service=m.get("service"),
+        property_name=property_name,
     )
 
 

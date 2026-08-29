@@ -61,6 +61,7 @@ interface WorkerMarketOverview {
   keys: number | null;
   brand: string | null;
   service: string | null;
+  property_name: string | null;
   occupancy_index: number | null;
   adr_index: number | null;
   revpar_index: number | null;

@@ -75,6 +75,20 @@ export default function OverviewTab({ projectId }: { projectId: number | string 
     return () => ac.abort();
   }, [dealId, liveMode]);
 
+  // FON-59 / FON-44 — the actual hotel/asset name, extracted from the OM
+  // (property_overview.name). Distinct from the deal's project name.
+  const [extractedPropertyName, setExtractedPropertyName] = useState<string | null>(null);
+  useEffect(() => {
+    if (!liveMode) { setExtractedPropertyName(null); return; }
+    const ac = new AbortController();
+    api.market.overview(dealId, ac.signal)
+      .then((d) => setExtractedPropertyName(
+        (d as { property_name?: string | null } | null)?.property_name ?? null,
+      ))
+      .catch(() => { /* best-effort; falls back to editable blank */ });
+    return () => ac.abort();
+  }, [dealId, liveMode]);
+
   // ─── Inline-edit override state ────────────────────────────────────
   // Mirrors the deal's `field_overrides` JSONB column. Edits PATCH the
   // worker, hold an optimistic local copy so the UI reacts immediately,
@@ -253,7 +267,12 @@ export default function OverviewTab({ projectId }: { projectId: number | string 
   // typically carries — year_built, gba, meeting_space, parking,
   // fb_outlets, property_type — are resolved from the OM extraction by
   // trying a list of plausible aliases per field.
-  const propertyName = deal?.name ?? undefined;
+  // Property / Hotel Name = user override → extracted OM asset name. NEVER the
+  // deal's project name (deal.name), which stays in the project header only
+  // (FON-59 #3 normalization rule).
+  const propertyNameOverride =
+    typeof overrides['property_name'] === 'string' ? (overrides['property_name'] as string) : undefined;
+  const propertyName = propertyNameOverride ?? extractedPropertyName ?? undefined;
   const propertyCity = deal?.city ?? undefined;
   const propertyKeys = (deal?.keys && deal.keys > 0) ? deal.keys : undefined;
   const propertyBrand = deal?.brand ?? undefined;
@@ -523,7 +542,7 @@ export default function OverviewTab({ projectId }: { projectId: number | string 
           onSaveOverride={onSaveOverride}
           rows={[
             { label: 'Property Name', kind: 'editable',
-              fieldPath: 'deal.name', inputType: 'text',
+              fieldPath: 'property_name', inputType: 'text',
               raw: propertyName,
               value: propertyName ?? '—' },
             { label: 'Location', kind: 'editable',
