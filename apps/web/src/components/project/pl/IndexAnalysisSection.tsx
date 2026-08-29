@@ -42,7 +42,7 @@ const FORECAST_YEARS = [2025, 2026, 2027, 2028, 2029, 2030, 2031, 2032, 2033];
 const ALL_YEARS = [...HISTORICAL_YEARS, ...FORECAST_YEARS];
 
 const NOTES_TEXT =
-  'Notes: (1) Competitive-set performance is the STR/CoStar comp-set aggregate, recovered from the subject’s published penetration indices (MPI occupancy, ARI rate, RGI RevPAR) — comp = subject ÷ index. STR anonymizes per-property comp performance, so individual competitor Occ/ADR/RevPAR are not published. (2) Absent a CBRE Horizons forecast, the comp set is carried forward at its trailing-twelve-month penetration to the subject. (3) Blank cells are unreported data, not zero.';
+  'Notes: (1) Competitive-set performance is the STR/CoStar comp-set aggregate, recovered from the subject’s published penetration indices (MPI occupancy, ARI rate, RGI RevPAR) — comp = subject ÷ index — matching Market Overview. STR anonymizes per-property comp performance, so individual competitor Occ/ADR/RevPAR are not published. (2) The MPI/ARI/RGI penetration indices are the STR-published values, measured on STR’s trailing-twelve-month subject basis; the subject rows are the operating P&L series. (3) Absent a CBRE Horizons forecast, comp set and penetration are carried forward at the trailing-twelve-month relationship. (4) Blank cells are unreported data, not zero.';
 
 interface RevenueYear {
   year: number;
@@ -113,6 +113,12 @@ function posOrNull(v: number | null | undefined): number | null {
 function indexRatio(idx: number | null | undefined): number | null {
   if (idx == null || idx <= 0) return null;
   return idx > 3 ? idx / 100 : idx;
+}
+
+// Same normalization, expressed in index points (109.8) for display.
+function indexPoints(idx: number | null | undefined): number | null {
+  const r = indexRatio(idx);
+  return r == null ? null : r * 100;
 }
 
 // Normalize an occupancy figure to a 0..1 fraction (sources vary between 0.72
@@ -287,19 +293,16 @@ function buildCompSeries(
   const adrR = indexRatio(str?.ari_adr_index);
   const revparR = indexRatio(str?.rgi_revpar_index);
   if (str) {
-    // Anchor the comp on the SUBJECT SERIES basis (the operating figures the
-    // whole table is built on), not the STR report's own TTM subject snapshot.
-    // Penetration is subject ÷ comp, so deriving comp = subject_series ÷ index
-    // makes the MPI/ARI/RGI rows come out EXACTLY equal to the STR-published
-    // indices — same-basis, and reconciling to Sam's source doc. Mixing the
-    // baseline subject with an STR-TTM-derived comp would instead print an MPI
-    // that contradicts the STR report. Fall back to the STR report's subject
-    // only when the series has no anchor value.
-    const subjOcc =
-      subjectSeries?.occupancy[anchorIdx] ?? occFraction(str.subject_occupancy_pct);
-    const subjAdr = subjectSeries?.adr[anchorIdx] ?? posOrNull(str.subject_adr_usd);
-    const subjRevpar =
-      subjectSeries?.revpar[anchorIdx] ?? posOrNull(str.subject_revpar_usd);
+    // Anchor the comp on the STR report's own TTM subject figures ÷ the
+    // penetration index — IDENTICAL to MarketTab.deriveCompSet — so the comp
+    // row here equals the blended comp set shown in Market Overview to the
+    // dollar (FON-61 a: the two views must agree). The penetration index
+    // itself (MPI/ARI/RGI) is shown from the STR-published values, not
+    // recomputed against the operating subject series, since STR measures it
+    // on its own TTM subject basis (see PenetrationTable).
+    const subjOcc = occFraction(str.subject_occupancy_pct);
+    const subjAdr = posOrNull(str.subject_adr_usd);
+    const subjRevpar = posOrNull(str.subject_revpar_usd);
     const compOcc = subjOcc != null && occR != null ? subjOcc / occR : null;
     const compAdr = subjAdr != null && adrR != null ? subjAdr / adrR : null;
     const compRevpar =
@@ -561,14 +564,41 @@ function IndexTable({ title, keys, series }: TableProps) {
   );
 }
 
-// Subject-vs-comp penetration index (MPI / ARI / RGI), computed from the two
-// populated series (FON-61 e). MPI = subject occupancy ÷ comp occupancy × 100,
-// and likewise ARI for ADR and RGI for RevPAR. Blank where either side is
-// unreported — never a fabricated 0 or 100.
-function PenetrationTable({ subject, comp }: { subject: YearSeries; comp: YearSeries }) {
-  const mpi = ALL_YEARS.map((_, i) => pctIndex(subject.occupancy[i], comp.occupancy[i]));
-  const ari = ALL_YEARS.map((_, i) => pctIndex(subject.adr[i], comp.adr[i]));
-  const rgi = ALL_YEARS.map((_, i) => pctIndex(subject.revpar[i], comp.revpar[i]));
+// Subject-vs-comp penetration index (MPI / ARI / RGI) (FON-61 e). For live
+// deals the values are the STR-published indices — the canonical penetration,
+// measured by STR on its TTM subject basis, so the MPI/ARI/RGI shown reconcile
+// exactly to the analyst's STR report. STR only publishes them for the TTM
+// window (the anchor year); we hold them flat across the forecast wherever the
+// subject series is populated (standard assumption absent a market forecast)
+// and leave pre-anchor history blank (STR anonymizes prior-year comp data).
+// Absent published indices (the demo), fall back to computing subject ÷ comp.
+// Blank — never a fabricated 0 or 100 — where unsupported.
+function PenetrationTable({
+  subject,
+  comp,
+  indices,
+}: {
+  subject: YearSeries;
+  comp: YearSeries;
+  indices?: { mpi: number | null; ari: number | null; rgi: number | null } | null;
+}) {
+  const anchorIdx = HISTORICAL_YEARS.length - 1;
+  const rowFor = (
+    published: number | null,
+    subjArr: (number | null)[],
+    compArr: (number | null)[],
+  ): (number | null)[] =>
+    ALL_YEARS.map((_, i) => {
+      if (published != null) {
+        if (i < anchorIdx) return null; // no STR comp history before the TTM anchor
+        if (i === anchorIdx) return published;
+        return subjArr[i] != null ? published : null; // hold flat across forecast
+      }
+      return pctIndex(subjArr[i], compArr[i]);
+    });
+  const mpi = rowFor(indices?.mpi ?? null, subject.occupancy, comp.occupancy);
+  const ari = rowFor(indices?.ari ?? null, subject.adr, comp.adr);
+  const rgi = rowFor(indices?.rgi ?? null, subject.revpar, comp.revpar);
   const stickyL = 'sticky left-0 bg-card z-10 border-r border-border';
 
   return (
@@ -727,27 +757,27 @@ export default function IndexAnalysisSection({
     [marketData, isKimptonDemo, subjectSeries],
   );
 
-  // Comp-set "keys" row uses the total comp-set room count.
-  //
-  // Source priority for live deals:
-  //   1. `str_trend.total_keys` — extracted from the STR Trend
-  //      "Response" tab roster (or summed from `compset[i].keys` when
-  //      the rollup row was missing — see _build_str_trend_block).
-  //   2. Sum of `str_trend.compset[i].keys` — defensive fallback if
-  //      the backend somehow lost the rollup mid-flight.
-  //   3. null — last resort; the Available/Occupied-Rooms rows render N/A
-  //      (never a fabricated 0) and the empty-state copy elsewhere tells the
-  //      user to upload an STR Trend report (FON-61 c).
+  // Comp-set "keys" row = total comp-set room count. Source priority:
+  //   1. Sum of the named `compset[i].keys` roster — this is exactly what
+  //      Market Overview's blended comp-set row shows, so the two views agree
+  //      on the key count (FON-61 a). It is also the concrete, verifiable
+  //      figure (5 named properties on the live deals).
+  //   2. `str_trend.total_keys` rollup — only when the roster is empty. The
+  //      extracted rollup has proven unreliable (e.g. 1011 for a 424-key,
+  //      5-property comp set), so the roster wins whenever it exists.
+  //   3. null — the Available/Occupied-Rooms rows render N/A, never a
+  //      fabricated 0, and the empty-state copy tells the user to upload an
+  //      STR Trend report (FON-61 c).
   const compKeys: number | null = isKimptonDemo
     ? 1240
     : (() => {
-        const fromRollup = marketData?.str_trend?.total_keys;
-        if (typeof fromRollup === 'number' && fromRollup > 0) return fromRollup;
         const fromRoster = (marketData?.str_trend?.compset ?? []).reduce(
           (acc, row) => acc + (typeof row.keys === 'number' && row.keys > 0 ? row.keys : 0),
           0,
         );
-        return fromRoster > 0 ? fromRoster : null;
+        if (fromRoster > 0) return fromRoster;
+        const fromRollup = marketData?.str_trend?.total_keys;
+        return typeof fromRollup === 'number' && fromRollup > 0 ? fromRollup : null;
       })();
 
   // Empty state — no engine outputs and no market data (and not Kimpton demo).
@@ -813,7 +843,19 @@ export default function IndexAnalysisSection({
       </Card>
 
       <Card className="p-0 overflow-hidden">
-        <PenetrationTable subject={subjectSeries} comp={compSeries} />
+        <PenetrationTable
+          subject={subjectSeries}
+          comp={compSeries}
+          indices={
+            isKimptonDemo
+              ? null
+              : {
+                  mpi: indexPoints(marketData?.str_trend?.mpi_occupancy_index),
+                  ari: indexPoints(marketData?.str_trend?.ari_adr_index),
+                  rgi: indexPoints(marketData?.str_trend?.rgi_revpar_index),
+                }
+          }
+        />
       </Card>
     </div>
   );

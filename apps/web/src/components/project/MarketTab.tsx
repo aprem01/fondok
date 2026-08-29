@@ -128,6 +128,12 @@ export default function MarketTab({ projectId }: { projectId: number | string })
   const hasStr = !!(strTrend && (strTrend.subject_occupancy_pct != null || strTrend.subject_adr_usd != null));
   // Blended comp-set benchmark recovered from the STR indices (see deriveCompSet).
   const derivedComp = deriveCompSet(strTrend);
+  // Comp-set room count = sum of the named roster's keys. This (not the extracted
+  // `total_keys` rollup, which has proven unreliable — e.g. 1011 for a 424-key
+  // set) is the figure shown consistently across the header, the blended comp-set
+  // row, and Index Analysis, so all three agree (FON-61 a).
+  const compKeyCount =
+    strTrend?.compset?.reduce((s, c) => s + (c.keys && c.keys > 0 ? c.keys : 0), 0) || null;
 
   // FON-47 (b) — let the analyst drive the model's Year-1 occupancy/ADR from
   // the STR market rates. The revenue engine already reads
@@ -289,7 +295,7 @@ export default function MarketTab({ projectId }: { projectId: number | string })
                 <p className="text-[11.5px] text-ink-500 mt-0.5">
                   Extracted from this deal&apos;s uploaded STR / CoStar Trend report
                   {strTrend.comp_set_size ? ` · ${strTrend.comp_set_size}-property comp set` : ''}
-                  {strTrend.total_keys ? ` · ${strTrend.total_keys.toLocaleString()} keys` : ''}.
+                  {compKeyCount ? ` · ${compKeyCount.toLocaleString()} keys` : ''}.
                 </p>
               </div>
             </div>
@@ -347,7 +353,7 @@ export default function MarketTab({ projectId }: { projectId: number | string })
                           <span className="ml-1.5 rounded bg-brand-100 px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-wide text-brand-700">blended</span>
                         </td>
                         <td className="px-3 py-3 text-right tabular-nums text-ink-800">
-                          {strTrend.compset.reduce((s, c) => s + (c.keys ?? 0), 0) || '—'}
+                          {compKeyCount ?? '—'}
                         </td>
                         <td className="px-3 py-3 text-right tabular-nums font-semibold text-ink-900">{derivedComp.occ != null ? `${derivedComp.occ.toFixed(1)}%` : '—'}</td>
                         <td className="px-3 py-3 text-right tabular-nums font-semibold text-ink-900">{derivedComp.adr != null ? `$${derivedComp.adr.toFixed(0)}` : '—'}</td>
