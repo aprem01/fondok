@@ -13,7 +13,6 @@ import WhatJustHappened from './WhatJustHappened';
 import CapexPlanPanel, { DEFAULT_CAPEX_PLAN, type CapexPlanState } from './CapexPlanPanel';
 import HistoricalBaselinePanel from './HistoricalBaselinePanel';
 import { useHistoricalBaseline } from '@/lib/hooks/useHistoricalBaseline';
-import { kimptonAnglerOverview } from '@/lib/mockData';
 import { fmtCurrency, fmtPct, cn } from '@/lib/format';
 import { useAssumptionsOptional } from '@/stores/assumptionsStore';
 import { getEngineField, useEngineOutputs } from '@/lib/hooks/useEngineOutputs';
@@ -83,10 +82,8 @@ export default function InvestmentTab() {
   const [capexPlan, setCapexPlan] = useState<CapexPlanState>(DEFAULT_CAPEX_PLAN);
 
   // ─── Worker engine field reads ────────────────────────────────────
-  // Sam QA #8: the Investment tab used to render the Kimpton fixture
-  // (Miami Beach, 132 keys, $36.4M etc.) for every deal because every
-  // panel read from `o = kimptonAnglerOverview`. We now read worker
-  // engine output and show '—' until the engine has produced the value.
+  // Every panel reads worker engine output and shows '—' until the engine
+  // has produced the value — no fixtures.
   const wPurchase = getEngineField<number>(outputs, 'capital', 'purchase_price');
   const wPricePerKey = getEngineField<number>(outputs, 'capital', 'price_per_key');
   const wEntryCap = getEngineField<number>(outputs, 'capital', 'entry_cap_rate');
@@ -465,7 +462,7 @@ export default function InvestmentTab() {
         );
       })()}
 
-      {tab === 'Sources & Uses' && (ctx ? <LiveSourcesUses /> : <StaticSourcesUses />)}
+      {tab === 'Sources & Uses' && ctx && <LiveSourcesUses />}
 
       {tab === 'Timeline' && (() => {
         // ─── Transaction Timeline (Lovable spec) ─────────────────
@@ -768,70 +765,6 @@ function NumberField({
         }}
         className="w-full px-2 py-1.5 text-[12.5px] border border-border rounded-md tabular-nums focus:outline-none focus:ring-2 focus:ring-brand-500"
       />
-    </div>
-  );
-}
-
-function StaticSourcesUses() {
-  const params = useParams();
-  const dealId = (params?.id as string | undefined) ?? '';
-  const { outputs } = useEngineOutputs(dealId);
-  const wSources = getEngineField<CapitalLine[]>(outputs, 'capital', 'sources');
-  const wUses = getEngineField<CapitalLine[]>(outputs, 'capital', 'uses');
-
-  const o = kimptonAnglerOverview;
-  const rawUses = (wUses && wUses.length > 0)
-    ? wUses.map(u => ({ label: u.label, amount: u.amount, total: !!u.is_total, pct: u.pct ?? 0 }))
-    : o.uses.map(u => ({ ...u, total: u.total ?? false, pct: 0 }));
-  const rawSources = (wSources && wSources.length > 0)
-    ? wSources.map(s => ({ label: s.label, amount: s.amount, total: !!s.is_total, pct: s.pct ?? 0 }))
-    : o.sources.map(s => ({ ...s, total: s.total ?? false, pct: s.pct ?? 0 }));
-  const uses = canonicalizeUses(rawUses);
-  const sources = canonicalizeSources(rawSources);
-  const usingWorker = (wSources && wSources.length > 0) || (wUses && wUses.length > 0);
-
-  return (
-    <div className="grid grid-cols-2 gap-5">
-      <Card className="p-5">
-        <div className="flex items-center justify-between mb-3">
-          <h3 className="text-[13px] font-semibold text-ink-900">Transaction Uses</h3>
-          {usingWorker && (
-            <span className="text-[9.5px] uppercase tracking-wide text-success-700 bg-success-50 rounded px-1.5 py-0.5">Live</span>
-          )}
-        </div>
-        <table className="w-full text-[12.5px]">
-          <tbody>
-            {uses.map(u => (
-              <tr key={u.label} className={u.total ? 'font-semibold border-t border-border' : 'border-b border-border/50'}>
-                <td className="py-2">{u.label}</td>
-                <td className="text-right tabular-nums">
-                  {u.amount != null ? fmtCurrency(u.amount) : '—'}
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </Card>
-      <Card className="p-5">
-        <div className="flex items-center justify-between mb-3">
-          <h3 className="text-[13px] font-semibold text-ink-900">Transaction Sources</h3>
-          {usingWorker && (
-            <span className="text-[9.5px] uppercase tracking-wide text-success-700 bg-success-50 rounded px-1.5 py-0.5">Live</span>
-          )}
-        </div>
-        <table className="w-full text-[12.5px]">
-          <tbody>
-            {sources.map(s => (
-              <tr key={s.label} className={s.total ? 'font-semibold border-t border-border' : 'border-b border-border/50'}>
-                <td className="py-2">{s.label}</td>
-                <td className="text-right tabular-nums">
-                  {s.amount != null ? fmtCurrency(s.amount) : '—'}
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </Card>
     </div>
   );
 }

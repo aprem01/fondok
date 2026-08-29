@@ -162,7 +162,7 @@ export default function ReturnsTab() {
           // scenarios card always reconciles with the headline.
           <LiveReturnsSummary outputs={outputs} />
         )}
-        {tab === 'Sensitivities' && (ctx ? <LiveSensitivities /> : <StaticSensitivities />)}
+        {tab === 'Sensitivities' && ctx && <LiveSensitivities />}
         {tab === 'Pricing' && (
           <div className="flex flex-col gap-4">
             <PricingSensitivityPanel dealId={dealId} />
@@ -433,52 +433,6 @@ function SensitivityCard({ matrix, title, source = 'ts' }: { matrix: Sensitivity
   );
 }
 
-function StaticSensitivities() {
-  const params = useParams();
-  const dealId = (params?.id as string | undefined) ?? '';
-  const { outputs } = useEngineOutputs(dealId);
-  const workerMatrix = matrixFromWorker(outputs);
-
-  return (
-    <div className="grid grid-cols-3 gap-4">
-      {workerMatrix ? (
-        <SensitivityCard matrix={workerMatrix} title="Levered IRR" source="worker" />
-      ) : (
-        <StaticHeatmap title="Levered IRR" rowLabel="Exit Cap" colLabel="RevPAR Growth"
-          rows={['6.0%', '6.5%', '7.0%', '7.5%', '8.0%']}
-          cols={['2.0%', '2.5%', '3.0%', '3.5%', '4.0%']}
-          data={[
-            [29.4, 31.2, 33.0, 34.7, 36.5],
-            [25.6, 27.4, 29.2, 31.0, 32.8],
-            [21.9, 23.5, 23.48, 27.4, 29.2],
-            [18.4, 20.0, 21.7, 23.4, 25.1],
-            [15.0, 16.6, 18.3, 20.0, 21.7],
-          ]} baseRow={2} baseCol={2} unit="%" />
-      )}
-      <StaticHeatmap title="Equity Multiple (MOIC)" rowLabel="LTV" colLabel="Hold"
-        rows={['55%', '60%', '65%', '70%', '75%']}
-        cols={['3y', '4y', '5y', '6y', '7y']}
-        data={[
-          [1.62, 1.81, 1.99, 2.16, 2.32],
-          [1.68, 1.88, 2.06, 2.24, 2.41],
-          [1.74, 1.94, 2.12, 2.31, 2.49],
-          [1.80, 2.00, 2.18, 2.38, 2.56],
-          [1.86, 2.06, 2.24, 2.45, 2.63],
-        ]} baseRow={2} baseCol={2} unit="x" />
-      <StaticHeatmap title="Year-1 Cash-on-Cash" rowLabel="Cap Rate" colLabel="Hold"
-        rows={['6.0%', '6.5%', '7.0%', '7.5%', '8.0%']}
-        cols={['3y', '4y', '5y', '6y', '7y']}
-        data={[
-          [3.4, 3.9, 4.4, 4.9, 5.4],
-          [3.6, 4.1, 4.6, 5.1, 5.6],
-          [3.8, 4.3, 4.8, 5.3, 5.8],
-          [4.0, 4.5, 5.0, 5.5, 6.0],
-          [4.2, 4.7, 5.2, 5.7, 6.2],
-        ]} baseRow={2} baseCol={2} unit="%" />
-    </div>
-  );
-}
-
 // ───────────────────────────────────────────────────────────────────
 // Shared bits
 // ───────────────────────────────────────────────────────────────────
@@ -519,55 +473,3 @@ function Slider({
   );
 }
 
-function StaticHeatmap({
-  title, rowLabel, colLabel, rows, cols, data, baseRow, baseCol, unit,
-}: {
-  title: string; rowLabel: string; colLabel: string;
-  rows: string[]; cols: string[]; data: number[][];
-  baseRow: number; baseCol: number; unit: string;
-}) {
-  const flat = data.flat();
-  const min = Math.min(...flat); const max = Math.max(...flat);
-  const colorFor = (v: number) => {
-    const t = (v - min) / (max - min);
-    if (t > 0.66) return 'bg-success-50 text-success-700';
-    if (t > 0.33) return 'bg-warn-50 text-warn-700';
-    return 'bg-danger-50 text-danger-700';
-  };
-
-  return (
-    <Card className="p-4">
-      <h3 className="text-[12.5px] font-semibold text-ink-900 mb-2">{title}</h3>
-      <div className="text-[10.5px] text-ink-500 mb-3">{rowLabel} ↓ × {colLabel} →</div>
-      <table className="w-full text-[10.5px]">
-        <thead>
-          <tr>
-            <th></th>
-            {cols.map(c => <th key={c} className="font-medium text-ink-500 pb-1 px-1">{c}</th>)}
-          </tr>
-        </thead>
-        <tbody>
-          {data.map((row, ri) => (
-            <tr key={ri}>
-              <td className="font-medium text-ink-500 pr-1 tabular-nums">{rows[ri]}</td>
-              {row.map((v, ci) => {
-                const isBase = ri === baseRow && ci === baseCol;
-                return (
-                  <td key={ci} className="p-0.5">
-                    <div className={cn(
-                      'rounded px-1 py-1.5 text-center font-medium tabular-nums',
-                      colorFor(v),
-                      isBase && 'ring-2 ring-brand-500'
-                    )}>
-                      {v.toFixed(unit === 'x' ? 2 : 1)}{unit}
-                    </div>
-                  </td>
-                );
-              })}
-            </tr>
-          ))}
-        </tbody>
-      </table>
-    </Card>
-  );
-}

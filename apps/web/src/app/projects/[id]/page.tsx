@@ -14,8 +14,7 @@ import { StatusBadge } from '@/components/ui/Badge';
 import { ErrorBoundary } from '@/components/ui/ErrorBoundary';
 import KebabMenu from '@/components/ui/KebabMenu';
 import { useToast } from '@/components/ui/Toast';
-import { projects, kimptonDocuments } from '@/lib/mockData';
-import { criticalCount as varianceCriticalCount } from '@/lib/varianceData';
+import { projects } from '@/lib/mockData';
 import { cn } from '@/lib/format';
 import { useDeal } from '@/lib/hooks/useDeal';
 import { ProvenanceProvider } from '@/lib/hooks/useDealProvenance';
@@ -129,9 +128,8 @@ export default function ProjectDetailPage() {
   const isAdmin = currentRole === 'org:admin';
   const rawId = (params?.id as string | undefined) ?? '';
   const isMockId = /^\d+$/.test(rawId);
-  // For mock ids we want the numeric form for === 7 checks. For real
-  // (UUID) deals we keep the raw string so children can pass it to API
-  // calls without ever stringifying NaN into a URL path.
+  // For real (UUID) deals we keep the raw string so children can pass it
+  // to API calls without ever stringifying NaN into a URL path.
   const id: number | string = isMockId ? Number(rawId) : rawId;
   const { deal, loading: dealLoading, error: dealError, refresh: refreshDeal } = useDeal(rawId);
   const workerConnected = isWorkerConnected();
@@ -293,15 +291,12 @@ export default function ProjectDetailPage() {
   const collabBtnRef = useRef<HTMLButtonElement | null>(null);
 
   // Pull live worker docs when on a real (UUID) deal so the Docs drawer
-  // reflects what's actually in the data room. Mock deals fall back to the
-  // canned kimptonDocuments list (only Kimpton has rich mock data).
+  // reflects what's actually in the data room. Mock deals show no drawer docs.
   const liveMode = workerConnected && !isMockId;
   const { documents: liveDocs } = useDocuments(liveMode ? rawId : '');
   const drawerDocs = liveMode
     ? liveDocs.map((d) => ({ name: d.filename, status: d.status, type: d.doc_type ?? '—' }))
-    : (id === 7
-        ? kimptonDocuments.map((d) => ({ name: d.name, status: d.status, type: d.type }))
-        : []);
+    : [];
 
   // Standard institutional underwriting checklist size (OM, T-12, STR
   // report, rent roll, PIP estimate). Used as the denominator in the
@@ -340,8 +335,9 @@ export default function ProjectDetailPage() {
   // their static numbers; live deals lean on the worker payload via useDeal.
   const docCount = drawerDocs.length;
   const avgFieldConfidence = projectOrNull?.aiConfidence ?? 0;
-  // Mock variance flag count is global today; only Kimpton (id=7) has real flags.
-  const varianceFlagCount = id === 7 ? varianceCriticalCount : 0;
+  // Variance flags surface on the Analysis tab (live worker variance); the
+  // deal header no longer carries a mock count.
+  const varianceFlagCount = 0;
 
   const activeTab = searchParams.get('tab') || '';
   const activeLabel = tabs.find(t => t.id === activeTab)?.label ?? 'Data Room';
@@ -552,17 +548,6 @@ export default function ProjectDetailPage() {
                 </div>
               )}
             </div>
-            {id === 7 && varianceCriticalCount > 0 && (
-              <button
-                type="button"
-                onClick={() => router.push(`/projects/${id}?tab=analysis&sub=variance`, { scroll: false })}
-                className="h-8 px-2.5 bg-danger-50 hover:bg-danger-500 hover:text-white text-danger-700 border border-danger-500/30 rounded-md text-[12px] inline-flex items-center gap-1.5 font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-500"
-                title="Open Broker Variance review"
-                aria-label={`${varianceCriticalCount} critical variance flags — open review`}
-              >
-                <AlertTriangle size={12} aria-hidden="true" /> {varianceCriticalCount} critical flag{varianceCriticalCount === 1 ? '' : 's'}
-              </button>
-            )}
             <div className="w-px h-5 bg-ink-200 mx-1" aria-hidden="true" />
             <div className="relative">
               <button
@@ -804,8 +789,7 @@ export default function ProjectDetailPage() {
       </ProvenanceProvider>
 
       {/* Docs side drawer — slides in from the right when the Docs pill is
-          clicked. Mock deals show kimptonDocuments; live (UUID) deals pull
-          from the worker via useDocuments. */}
+          clicked. Live (UUID) deals pull from the worker via useDocuments. */}
       {docsOpen && (
         <>
           <div

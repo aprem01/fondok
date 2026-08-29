@@ -11,8 +11,7 @@ import { Card } from '@/components/ui/Card';
 import { Button } from '@/components/ui/Button';
 import { Badge, StatusBadge } from '@/components/ui/Badge';
 import KebabMenu from '@/components/ui/KebabMenu';
-import { engines, kimptonDocuments, templates } from '@/lib/mockData';
-import { criticalCount, warnCount, varianceFlags } from '@/lib/varianceData';
+import { engines, templates } from '@/lib/mockData';
 import {
   api,
   isWorkerConnected,
@@ -223,7 +222,6 @@ export default function DataRoomTab({ projectId }: { projectId: number | string 
   const fallback = projectIdStr === 'NaN' ? '' : projectIdStr;
   const rawId = (params?.id as string | undefined) ?? fallback;
   const isMockId = /^\d+$/.test(rawId);
-  const isFullDoc = isMockId && Number(rawId) === 7; // Kimpton Angler
 
   const fileInputRef = useRef<HTMLInputElement>(null);
   const searchParams = useSearchParams();
@@ -436,9 +434,6 @@ export default function DataRoomTab({ projectId }: { projectId: number | string 
     return { processingFinancialsCount: processing, failedFinancialsCount: failed };
   }, [documents]);
 
-  const goToVariance = () =>
-    router.push(`/projects/${rawId}?tab=analysis&sub=variance`, { scroll: false });
-
   // Build the unified doc rows the UI renders.
   type Row = {
     id: string;
@@ -509,22 +504,8 @@ export default function DataRoomTab({ projectId }: { projectId: number | string 
         };
       });
     }
-    if (isFullDoc) {
-      return kimptonDocuments.map((d) => ({
-        id: d.name,
-        name: d.name,
-        type: d.type,
-        status: d.status,
-        rawStatus: d.status,
-        size: d.size,
-        date: d.date,
-        fields: d.fields,
-        confidence: d.confidence,
-        populates: d.populates,
-      }));
-    }
     return [];
-  }, [liveMode, documents, extractions, isFullDoc]);
+  }, [liveMode, documents, extractions]);
 
   // Deep-link a reviewed field to the screen where its data is seeded/used —
   // with an optional focus field so the destination can highlight it.
@@ -545,8 +526,7 @@ export default function DataRoomTab({ projectId }: { projectId: number | string 
   // Build the required-doc checklist by intersecting our canonical 10-item
   // list against the live `documents` array's doc_type values. An item
   // flips to "complete" the moment any uploaded doc carries one of its
-  // mapped tokens. Mock mode (Kimpton id=7) sets the first four complete
-  // so the demo deal still shows progress without needing a live worker.
+  // mapped tokens.
   const uploadedDocTypes = useMemo(() => {
     if (liveMode) {
       return new Set(
@@ -555,9 +535,8 @@ export default function DataRoomTab({ projectId }: { projectId: number | string 
           .filter(Boolean),
       );
     }
-    if (isFullDoc) return new Set(['OM', 'T12', 'STR', 'STR_TREND']);
     return new Set<string>();
-  }, [liveMode, documents, isFullDoc]);
+  }, [liveMode, documents]);
 
   const checklist = REQUIRED_CHECKLIST.map((item) => ({
     name: item.label,
@@ -916,20 +895,9 @@ export default function DataRoomTab({ projectId }: { projectId: number | string 
           tab nav already labels the surface, the Document Checklist
           carries the "X extracted of Y required" progress, and the
           per-row pills carry per-doc status. */}
-      {((isFullDoc && criticalCount > 0) || fullRunRunning) && (
+      {fullRunRunning && (
         <div className="flex items-center justify-between gap-3 -mb-1">
-          {isFullDoc && criticalCount > 0 ? (
-            <button
-              onClick={goToVariance}
-              className="inline-flex items-center gap-2 px-3 py-1.5 rounded-md bg-danger-50 hover:bg-danger-500 hover:text-white text-danger-700 border border-danger-500/30 transition-colors group"
-            >
-              <AlertTriangle size={13} />
-              <span className="text-[12px] font-semibold">
-                {criticalCount} critical · {warnCount} warn variance flags
-              </span>
-              <ArrowRight size={12} />
-            </button>
-          ) : <span />}
+          <span />
           {fullRunRunning && (
             <span className="inline-flex items-center gap-2 text-[12px] text-ink-500">
               <span className="inline-block w-2 h-2 rounded-full bg-brand-500 animate-pulse" />
