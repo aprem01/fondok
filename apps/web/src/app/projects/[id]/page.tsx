@@ -680,9 +680,11 @@ export default function ProjectDetailPage() {
           Base / New-scenario buttons don't belong on the document-intake view);
           scenario management lives in Scenario Analysis. Hidden for mock deals
           (no worker → no scenarios). */}
-      {/* FON-57 — the Overview (home) screen omits the scenario pill row; it's
-          clutter there and scenario management lives in Scenario Analysis. */}
-      {liveMode && scenarios.length > 0 && activeTab !== '' && activeTab !== 'overview' && (
+      {/* FON-57 / FON-59 — scenario create/edit/select lives ONLY on the
+          Scenario Analysis tab. Every model tab (Overview, Financials,
+          Investment, Debt, Partnership, Cash Flow, Returns, Market, …) shows the
+          Base Case with no scenario controls, per Sam's 8/28 QA. */}
+      {liveMode && scenarios.length > 0 && activeTab === 'scenarios' && (
         <ScenarioSelector
           scenarios={scenarios}
           activeScenarioId={activeScenarioId}
