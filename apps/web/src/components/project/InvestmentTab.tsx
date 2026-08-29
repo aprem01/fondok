@@ -341,6 +341,7 @@ export default function InvestmentTab() {
                 parse={(s) => { const n = parseFloat(s.replace(/[,$\s]/g, '')); return Number.isFinite(n) && n > 0 ? n : null; }}
                 onSave={(v) => onSaveAssumption('purchase_price', v)} width="w-36" />],
               ['Purchase Price / Key', fmtOrDash(entryPricePerKey, fmtCurrency)],
+              ['Acquisition / Closing Costs', fmtOrDash(findUse(/closing/i), fmtCurrency)],
               ['Entry NOI', fmtOrDash(entryNoi, fmtCurrency)],
               ['Entry Cap Rate', fmtOrDash(entryCap, v => fmtPct(v, 2))],
             ]} />

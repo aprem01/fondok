@@ -381,7 +381,6 @@ export default function GroundedWorksheet({
     }
     return out;
   }, [documents, extractions]);
-  const reviewCount = Object.keys(reviewMap).length;
 
   const acceptReview = useCallback(
     async (docId: string, field: string) => {
@@ -553,6 +552,19 @@ export default function GroundedWorksheet({
     year: y,
   }));
 
+  // FON-41 — this worksheet renders historical columns only, so red flags come
+  // entirely from per-cell extraction confidence (histYear.meta), never the
+  // forecast reviewMap. Count exactly the cells that render red so the banner
+  // equals the flagged values actually visible in the table (Sam's 8-vs-3).
+  const flaggedCount = cols.reduce((acc, c) => {
+    for (const row of ROWS) {
+      if (!row.metaKey) continue;
+      const m = c.year.meta?.[row.metaKey];
+      if (m && m.docId && m.confidence < 0.85 && histValue(row.id, c.year) != null) acc += 1;
+    }
+    return acc;
+  }, 0);
+
   return (
     <Card className="p-0 overflow-hidden">
       <div className="flex flex-wrap items-center justify-between gap-3 px-5 py-3 border-b border-border bg-surface-2/40">
@@ -614,11 +626,11 @@ export default function GroundedWorksheet({
           </div>
         </div>
       )}
-      {reviewCount > 0 && (
+      {flaggedCount > 0 && (
         <div className="px-5 py-2 bg-red-50 border-b border-red-500/30 text-[11.5px] text-red-800 flex items-center gap-1.5">
           <Info size={11} className="shrink-0" />
           <span>
-            <span className="font-semibold">{reviewCount}</span> value{reviewCount === 1 ? '' : 's'} came in low-confidence —
+            <span className="font-semibold">{flaggedCount}</span> value{flaggedCount === 1 ? '' : 's'} came in low-confidence —
             they’re flagged <span className="text-red-700 font-medium">red</span> below. Click one to check its source and accept or edit it.
           </span>
         </div>
