@@ -53,6 +53,15 @@ class DebtEngineInputExt(DebtEngineInput):
     # placeholder an analyst activates by entering a principal. Optional so
     # legacy callers are byte-for-byte unaffected.
     debt_stack_overrides: dict[str, Any] | None = None
+    # FON-63 — a monthly forward SOFR curve (annualized rate per hold-month,
+    # index 0 = month 1), e.g. the Chatham 1-Month Term SOFR Forward Curve.
+    # When present alongside a spread, the floating senior (and refi) price off
+    # ``curve[month] + spread`` instead of the flat ``_SOFR_DEFAULT`` — so the
+    # rate is real market data, not a flat assumption. None keeps the flat
+    # behavior, so every existing deal is byte-for-byte unchanged.
+    sofr_curve: list[float] | None = None
+    # Senior margin over SOFR (e.g. 0.035). Only used when ``sofr_curve`` is set.
+    senior_spread_pct: Annotated[float, Field(ge=0.0, le=1.0)] | None = None
 
 
 class DebtMonth(BaseModel):
@@ -333,6 +342,19 @@ class DebtEngine(BaseEngine[DebtEngineInputExt, DebtEngineOutputExt]):
         loan = senior.loan_amount
         annual_rate = senior.effective_rate(_SOFR_DEFAULT) or senior.fixed_rate or 0.0
         monthly_rate = annual_rate / 12.0
+        # FON-63 — when a monthly SOFR curve + senior spread are supplied, the
+        # floating senior prices each month off curve[m] + spread; without them
+        # every month uses the flat monthly_rate above (unchanged behavior).
+        _curve = payload.sofr_curve or []
+        _senior_spread = payload.senior_spread_pct
+        _use_senior_curve = bool(_curve) and _senior_spread is not None
+
+        def _senior_monthly_rate(month: int) -> float:
+            if _use_senior_curve:
+                idx = _curve[month - 1] if (month - 1) < len(_curve) else _curve[-1]
+                return (idx + (_senior_spread or 0.0)) / 12.0
+            return monthly_rate
+
         if senior.interest_only:
             amort_months = 0
             io_months = (payload.term_years or 0) * 12
@@ -349,7 +371,7 @@ class DebtEngine(BaseEngine[DebtEngineInputExt, DebtEngineOutputExt]):
         total_months = max(payload.term_years * 12, 12)
 
         for m in range(1, total_months + 1):
-            interest = balance * monthly_rate
+            interest = balance * _senior_monthly_rate(m)
             if m <= io_months:
                 principal = 0.0
                 payment = interest
@@ -487,6 +509,18 @@ class DebtEngine(BaseEngine[DebtEngineInputExt, DebtEngineOutputExt]):
         # byte-for-byte the single-phase model.
         refi = _refi_params(payload.debt_stack_overrides)
         horizon = len(payload.noi_by_year)
+        # FON-63 — price the (interest-only) refinance off the SOFR curve when
+        # one is supplied: rate = average curve over the post-refi months +
+        # refi spread. For IO debt the period average reproduces the exact
+        # total interest month-by-month would, and keeps the flat-rate refi
+        # path unchanged when no curve/spread is set.
+        if refi is not None and payload.sofr_curve:
+            _refi_spread = (payload.debt_stack_overrides or {}).get("refi_spread_pct")
+            if _refi_spread is not None:
+                _k = int(refi["year"])
+                _post = payload.sofr_curve[_k * 12 : horizon * 12] or payload.sofr_curve[-1:]
+                _avg = sum(_post) / len(_post) if _post else 0.0
+                refi["rate"] = _avg + float(_refi_spread)
         debt_service_by_year: list[float] = []
         refi_cash_out = 0.0
         refi_year_out: int | None = None

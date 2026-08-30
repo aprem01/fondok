@@ -738,6 +738,13 @@ async def _load_engine_inputs(
                 base["noi_override_by_year"] = value
                 sources[path] = SOURCE_ANALYST_OVERRIDE
                 continue
+            # FON-63 — a monthly SOFR forward curve (list of annualized rates).
+            # Route it before the scalar guard drops it; the debt builder reads
+            # base['sofr_curve'].
+            if path == "sofr_curve" and isinstance(value, list):
+                base["sofr_curve"] = value
+                sources[path] = SOURCE_ANALYST_OVERRIDE
+                continue
             # Wave 2 P2.4 — PIP-displacement overrides include a list field
             # (``pct_rooms_offline_by_month``). Accept it as JSON-array
             # string or real list; everything else has to be a scalar.
@@ -1066,6 +1073,8 @@ _OVERRIDE_DEBT_KEYS: frozenset[str] = frozenset(
         "debt_stack.refi_exit_cap_rate",
         "debt_stack.refi_fee_pct",
         "debt_stack.refi_month",
+        # FON-63 — refi margin over SOFR, used when a monthly SOFR curve is set.
+        "debt_stack.refi_spread_pct",
     }
 )
 
@@ -3615,6 +3624,18 @@ def _build_input_for(
             # FON-63 — analyst per-tranche edits (Senior rate/principal/amort,
             # activated PACE, etc.) layered over the default stack.
             debt_stack_overrides=base.get("debt_stack_overrides"),
+            # FON-63 — monthly SOFR forward curve + senior spread for a
+            # floating senior priced off market data instead of a flat rate.
+            sofr_curve=(
+                [float(x) for x in base["sofr_curve"]]
+                if isinstance(base.get("sofr_curve"), list) and base["sofr_curve"]
+                else None
+            ),
+            senior_spread_pct=(
+                float(base["senior_spread_pct"])
+                if base.get("senior_spread_pct") not in (None, "")
+                else None
+            ),
         )
 
     if engine_name == "returns":
