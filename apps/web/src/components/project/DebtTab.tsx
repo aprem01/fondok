@@ -1,5 +1,5 @@
 'use client';
-import { useState, useEffect, useRef, useCallback, type ReactNode } from 'react';
+import { useState, useEffect, useMemo, useRef, useCallback, type ReactNode } from 'react';
 import { useParams } from 'next/navigation';
 import { DollarSign, AlertTriangle, Layers } from 'lucide-react';
 import { Card } from '@/components/ui/Card';
@@ -24,7 +24,7 @@ import { Traced } from '@/components/help/Traced';
 import { MetricLabel } from '@/components/help/MetricLabel';
 import { GLOSSARY } from '@/lib/glossary';
 
-const subTabs = ['Capital Stack', 'Debt Summary', 'Rates & Covenants', 'Term & Refinance', 'Debt Schedule'];
+const subTabs = ['Capital Stack', 'Debt Summary', 'Rates & Covenants', 'Term & Refinance', 'Rate Curve', 'Debt Schedule'];
 
 // FON-63 — shape of the multi-tranche stack the debt engine now emits.
 interface StackTranche {
@@ -108,6 +108,34 @@ export default function DebtTab() {
         rerunTimerRef.current = setTimeout(() => { void fullRun.run(); }, 1500);
       } catch (err) {
         setOverrides(overrides); // rollback
+        toast(`Save failed: ${err instanceof Error ? err.message : 'Unknown error'}`, { type: 'error' });
+      }
+    },
+    [overrides, dealId, liveMode, toast, refreshDeal, fullRun],
+  );
+  // FON-63 — Rate Curve save: the SOFR curve is a list (and spreads are
+  // scalars), so it can't go through onSaveOverride's number-only patch.
+  // Merge arbitrary values into field_overrides, then re-run.
+  const onSaveRateCurve = useCallback(
+    async (patch: Record<string, unknown>) => {
+      if (!liveMode) {
+        toast('Editing is disabled on demo deals', { type: 'info' });
+        return;
+      }
+      const next = { ...overrides };
+      for (const [path, value] of Object.entries(patch)) {
+        if (value === null || value === undefined) delete next[path];
+        else next[path] = value;
+      }
+      setOverrides(next);
+      try {
+        await api.deals.update(dealId, { field_overrides: next });
+        toast('Rate curve saved — re-running engines', { type: 'success' });
+        void refreshDeal?.();
+        if (rerunTimerRef.current) clearTimeout(rerunTimerRef.current);
+        rerunTimerRef.current = setTimeout(() => { void fullRun.run(); }, 1500);
+      } catch (err) {
+        setOverrides(overrides);
         toast(`Save failed: ${err instanceof Error ? err.message : 'Unknown error'}`, { type: 'error' });
       }
     },
@@ -489,6 +517,10 @@ export default function DebtTab() {
         </>
       )}
 
+      {tab === 'Rate Curve' && (
+        <RateCurvePanel liveMode={liveMode} overrides={overrides} onSave={onSaveRateCurve} />
+      )}
+
       {tab === 'Debt Schedule' && (
         <DebtScheduleTable outputs={outputs} />
       )}
@@ -496,6 +528,221 @@ export default function DebtTab() {
       </div>
       <EngineRightRail />
     </div>
+  );
+}
+
+// ─── FON-63 Rate Curve subtab ────────────────────────────────────────
+// The market SOFR forward curve, kept separate from the deal-specific loan
+// terms. Two modes: a flat rate (the deal's rate on Rates & Covenants), or a
+// monthly forward curve where the senior prices off curve + spread and the
+// refi off curve + spread. Paste the Chatham 1-mo Term SOFR values (any
+// delimiter, % or decimal) and the engine prices the floating tranches off it.
+
+function parseCurveText(text: string): number[] {
+  return text
+    .split(/[\s,;]+/)
+    .map((s) => s.trim())
+    .filter(Boolean)
+    .map((s) => {
+      const hadPct = s.includes('%');
+      const n = parseFloat(s.replace('%', ''));
+      if (!Number.isFinite(n)) return NaN;
+      // Percent-style (4.32) → decimal (0.0432); already-decimal kept as-is.
+      return hadPct || n > 1 ? n / 100 : n;
+    })
+    .filter((n) => Number.isFinite(n));
+}
+
+function CurveSparkline({ values }: { values: number[] }) {
+  if (values.length < 2) return null;
+  const w = 360, h = 52, pad = 5;
+  const min = Math.min(...values);
+  const max = Math.max(...values);
+  const span = max - min || 1;
+  const pts = values
+    .map((v, i) => {
+      const x = pad + (i / (values.length - 1)) * (w - 2 * pad);
+      const y = pad + (1 - (v - min) / span) * (h - 2 * pad);
+      return `${x.toFixed(1)},${y.toFixed(1)}`;
+    })
+    .join(' ');
+  return (
+    <svg width={w} height={h} viewBox={`0 0 ${w} ${h}`} className="w-full max-w-[360px]" role="img" aria-label="SOFR curve preview">
+      <polyline points={pts} fill="none" stroke="currentColor" strokeWidth="1.5" className="text-brand-500" />
+    </svg>
+  );
+}
+
+function RateCurvePanel({
+  liveMode,
+  overrides,
+  onSave,
+}: {
+  liveMode: boolean;
+  overrides: Record<string, unknown>;
+  onSave: (patch: Record<string, unknown>) => void | Promise<void>;
+}) {
+  const savedCurve = Array.isArray(overrides['sofr_curve'])
+    ? (overrides['sofr_curve'] as number[])
+    : null;
+  const savedSeniorSpread =
+    typeof overrides['senior_spread_pct'] === 'number' ? (overrides['senior_spread_pct'] as number) : null;
+  const savedRefiSpread =
+    typeof overrides['debt_stack.refi_spread_pct'] === 'number'
+      ? (overrides['debt_stack.refi_spread_pct'] as number)
+      : null;
+
+  const [mode, setMode] = useState<'flat' | 'curve'>(savedCurve ? 'curve' : 'flat');
+  const [text, setText] = useState(savedCurve ? savedCurve.map((v) => (v * 100).toFixed(4)).join('\n') : '');
+  const [seniorSpread, setSeniorSpread] = useState(savedSeniorSpread != null ? (savedSeniorSpread * 100).toString() : '3.50');
+  const [refiSpread, setRefiSpread] = useState(savedRefiSpread != null ? (savedRefiSpread * 100).toString() : '4.00');
+  const [saving, setSaving] = useState(false);
+
+  const parsed = useMemo(() => parseCurveText(text), [text]);
+  const avg = parsed.length ? parsed.reduce((a, b) => a + b, 0) / parsed.length : 0;
+  const lo = parsed.length ? Math.min(...parsed) : 0;
+  const hi = parsed.length ? Math.max(...parsed) : 0;
+  const sSpread = parseFloat(seniorSpread) / 100;
+  const rSpread = parseFloat(refiSpread) / 100;
+  const countOk = parsed.length === 60;
+
+  const saveCurve = async () => {
+    setSaving(true);
+    try {
+      await onSave({
+        sofr_curve: parsed,
+        senior_spread_pct: Number.isFinite(sSpread) ? sSpread : null,
+        'debt_stack.refi_spread_pct': Number.isFinite(rSpread) ? rSpread : null,
+      });
+    } finally {
+      setSaving(false);
+    }
+  };
+  const clearCurve = async () => {
+    setSaving(true);
+    try {
+      await onSave({ sofr_curve: null, senior_spread_pct: null, 'debt_stack.refi_spread_pct': null });
+      setMode('flat');
+      setText('');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <Card className="p-5">
+      <div className="flex items-center justify-between mb-4">
+        <div>
+          <h3 className="text-[13px] font-semibold text-ink-900">Rate Curve</h3>
+          <p className="text-[11px] text-ink-500 mt-0.5">
+            Market SOFR assumption, kept separate from the loan terms. Floating tranches price off curve + spread.
+          </p>
+        </div>
+        <div className="inline-flex rounded-md border border-border overflow-hidden text-[12px]">
+          {(['flat', 'curve'] as const).map((m) => (
+            <button
+              key={m}
+              type="button"
+              onClick={() => setMode(m)}
+              className={cn(
+                'px-3 py-1.5 transition-colors',
+                mode === m ? 'bg-brand-500 text-white font-medium' : 'bg-white text-ink-600 hover:text-ink-900',
+              )}
+            >
+              {m === 'flat' ? 'Flat rate' : 'Forward curve'}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      {savedCurve && (
+        <div className="mb-4 flex items-center gap-2 text-[12px] text-emerald-700 bg-emerald-50 border border-emerald-200 rounded px-3 py-1.5">
+          <span className="w-1.5 h-1.5 rounded-full bg-emerald-500" />
+          A {savedCurve.length}-month SOFR curve is active (senior + {savedSeniorSpread != null ? (savedSeniorSpread * 100).toFixed(2) : '—'}%, refi + {savedRefiSpread != null ? (savedRefiSpread * 100).toFixed(2) : '—'}%).
+        </div>
+      )}
+
+      {mode === 'flat' ? (
+        <div className="text-[12.5px] text-ink-600 space-y-3">
+          <p>
+            This deal prices debt off the flat interest rate set on{' '}
+            <span className="font-medium text-ink-800">Rates &amp; Covenants</span>. Switch to{' '}
+            <span className="font-medium text-ink-800">Forward curve</span> to price the floating senior and refi off a
+            monthly SOFR forward curve (e.g. the Chatham 1-Month Term SOFR curve) instead.
+          </p>
+          {savedCurve && (
+            <Button variant="secondary" onClick={() => void clearCurve()} disabled={!liveMode || saving}>
+              Clear saved curve
+            </Button>
+          )}
+        </div>
+      ) : (
+        <div className="space-y-4">
+          <div className="grid grid-cols-2 gap-4">
+            <label className="block">
+              <span className="text-[11px] text-ink-500">Senior spread over SOFR</span>
+              <div className="flex items-center gap-1 mt-1">
+                <input type="number" step="0.05" value={seniorSpread} disabled={!liveMode}
+                  onChange={(e) => setSeniorSpread(e.target.value)}
+                  className="w-24 px-2 py-1 text-[12.5px] border border-border rounded text-right tabular-nums" />
+                <span className="text-[11px] text-ink-500">%</span>
+              </div>
+            </label>
+            <label className="block">
+              <span className="text-[11px] text-ink-500">Refi spread over SOFR</span>
+              <div className="flex items-center gap-1 mt-1">
+                <input type="number" step="0.05" value={refiSpread} disabled={!liveMode}
+                  onChange={(e) => setRefiSpread(e.target.value)}
+                  className="w-24 px-2 py-1 text-[12.5px] border border-border rounded text-right tabular-nums" />
+                <span className="text-[11px] text-ink-500">%</span>
+              </div>
+            </label>
+          </div>
+
+          <label className="block">
+            <span className="text-[11px] text-ink-500">
+              Monthly SOFR values — one per hold-month, in order. Paste a column from the curve tab (% or decimal, any delimiter).
+            </span>
+            <textarea
+              value={text}
+              disabled={!liveMode}
+              onChange={(e) => setText(e.target.value)}
+              rows={5}
+              placeholder="4.32%, 4.28%, 4.21%, …  (or 0.0432, 0.0428, …)"
+              className="mt-1 w-full px-2 py-1.5 text-[12px] font-mono border border-border rounded resize-y tabular-nums"
+            />
+          </label>
+
+          {parsed.length > 0 && (
+            <div className="rounded border border-border bg-ink-50/40 p-3 space-y-2">
+              <div className="flex flex-wrap items-center gap-x-5 gap-y-1 text-[12px]">
+                <span className={cn('font-medium', countOk ? 'text-emerald-700' : 'text-amber-700')}>
+                  {parsed.length} values{countOk ? '' : ' (expected 60)'}
+                </span>
+                <span className="text-ink-600">Avg SOFR <span className="font-medium tabular-nums">{(avg * 100).toFixed(2)}%</span></span>
+                <span className="text-ink-600">Range <span className="font-medium tabular-nums">{(lo * 100).toFixed(2)}–{(hi * 100).toFixed(2)}%</span></span>
+              </div>
+              <div className="flex flex-wrap items-center gap-x-5 text-[11px] text-ink-500">
+                <span>Senior all-in ≈ <span className="font-medium tabular-nums text-ink-700">{((avg + sSpread) * 100).toFixed(2)}%</span></span>
+                <span>Refi all-in ≈ <span className="font-medium tabular-nums text-ink-700">{((avg + rSpread) * 100).toFixed(2)}%</span></span>
+              </div>
+              <CurveSparkline values={parsed} />
+            </div>
+          )}
+
+          <div className="flex items-center gap-2">
+            <Button onClick={() => void saveCurve()} disabled={!liveMode || saving || parsed.length === 0}>
+              {saving ? 'Saving…' : 'Load curve & re-run'}
+            </Button>
+            {savedCurve && (
+              <Button variant="secondary" onClick={() => void clearCurve()} disabled={!liveMode || saving}>
+                Clear
+              </Button>
+            )}
+          </div>
+        </div>
+      )}
+    </Card>
   );
 }
 
