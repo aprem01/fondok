@@ -323,6 +323,10 @@ class ReturnsEngineOutputExt(ReturnsEngineOutput):
     # tile can show Exit Cap Rate + Terminal NOI instead of "—".
     exit_cap_rate: float | None = None
     terminal_noi: float | None = None
+    # FON-67 — the deepest cumulative equity outflow over the hold (close +
+    # deferred draws net of interim distributions), from the monthly model.
+    # None when the monthly path didn't run. Distinct from initial equity.
+    peak_equity: float | None = None
 
 
 def _project_noi_series(
@@ -448,6 +452,7 @@ class ReturnsEngine(BaseEngine[ReturnsEngineInputExt, ReturnsEngineOutputExt]):
 
         levered_irr = xirr(lev_times, lev_amounts)
         unlevered_irr = irr(unlevered_flows)
+        peak_equity_out: float | None = None
 
         # FON-67 — compute the returns on a MONTHLY calendar (the accurate,
         # institutional method): operating cash accrues through the year, the
@@ -498,6 +503,7 @@ class ReturnsEngine(BaseEngine[ReturnsEngineInputExt, ReturnsEngineOutputExt]):
             )
             levered_irr = monthly.levered_irr
             unlevered_irr = monthly.unlevered_irr
+            peak_equity_out = monthly.peak_equity
 
         total_distributions = sum(cfad_series) + net_proceeds_to_equity
         equity_multiple = total_distributions / payload.equity if payload.equity else 0.0
@@ -516,6 +522,7 @@ class ReturnsEngine(BaseEngine[ReturnsEngineInputExt, ReturnsEngineOutputExt]):
             levered_irr=levered_irr,
             unlevered_irr=unlevered_irr,
             equity_multiple=equity_multiple,
+            peak_equity=peak_equity_out,
             year_one_coc=year_one_coc,
             avg_coc=avg_coc,
             gross_sale_price=gross_sale,
