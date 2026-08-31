@@ -480,15 +480,24 @@ class ReturnsEngine(BaseEngine[ReturnsEngineInputExt, ReturnsEngineOutputExt]):
                 )
                 refi_month = max(1, min(hold * 12, round(_rt * 12)))
             dy = payload.deferred_capital_year
+            # FON-67 — monthly debt service. The refi funds mid-hold on a much
+            # larger balance, so its interest-only payment (the post-refi annual
+            # amount) applies from the actual refi month, not the following
+            # year-end — otherwise the months between the refi and year-end
+            # under-count debt service (a larger loan paying the smaller senior's
+            # coupon). Senior months keep the senior schedule.
+            _monthly_ds = [ds_series[y] / 12.0 for y in range(hold) for _ in range(12)]
+            if refi_active and refi_month is not None and ds_series:
+                _refi_monthly = ds_series[-1] / 12.0
+                for _m in range(refi_month, len(_monthly_ds)):
+                    _monthly_ds[_m] = _refi_monthly
             monthly = build_monthly_cashflow(
                 MonthlyCashFlowInput(
                     hold_years=hold,
                     noi_by_year=list(noi_series),
                     acquisition_month_offset=payload.acquisition_month_offset,
                     exit_month=payload.exit_month_override,
-                    monthly_debt_service=[
-                        ds_series[y] / 12.0 for y in range(hold) for _ in range(12)
-                    ],
+                    monthly_debt_service=_monthly_ds,
                     equity_at_close=max(0.0, payload.equity - payload.deferred_capital),
                     total_capital_at_close=max(
                         0.0, total_capital - payload.deferred_capital
