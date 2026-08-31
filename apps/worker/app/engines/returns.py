@@ -331,6 +331,10 @@ class ReturnsEngineOutputExt(ReturnsEngineOutput):
     # deferred draws net of interim distributions), from the monthly model.
     # None when the monthly path didn't run. Distinct from initial equity.
     peak_equity: float | None = None
+    # FON-66/67 — the monthly levered cash-flow series (month 0 = close;
+    # negative = equity draw, positive = distribution). Feeds the monthly
+    # partnership waterfall. Empty when the monthly path didn't run.
+    levered_monthly: list[float] = Field(default_factory=list)
 
 
 def _project_noi_series(
@@ -458,6 +462,7 @@ class ReturnsEngine(BaseEngine[ReturnsEngineInputExt, ReturnsEngineOutputExt]):
         unlevered_irr = irr(unlevered_flows)
         peak_equity_out: float | None = None
         equity_multiple_override: float | None = None
+        levered_monthly_out: list[float] = []
 
         # FON-67 — compute the returns on a MONTHLY calendar (the accurate,
         # institutional method): operating cash accrues through the year, the
@@ -510,6 +515,7 @@ class ReturnsEngine(BaseEngine[ReturnsEngineInputExt, ReturnsEngineOutputExt]):
             levered_irr = monthly.levered_irr
             unlevered_irr = monthly.unlevered_irr
             peak_equity_out = monthly.peak_equity
+            levered_monthly_out = list(monthly.levered_monthly)
             # For an off-cycle exit the annual cash-flow series (built over whole
             # hold-years) overstates the distributions, so use the monthly
             # model's equity multiple, which stops at the real exit month.
@@ -538,6 +544,7 @@ class ReturnsEngine(BaseEngine[ReturnsEngineInputExt, ReturnsEngineOutputExt]):
             unlevered_irr=unlevered_irr,
             equity_multiple=equity_multiple,
             peak_equity=peak_equity_out,
+            levered_monthly=levered_monthly_out,
             year_one_coc=year_one_coc,
             avg_coc=avg_coc,
             gross_sale_price=gross_sale,

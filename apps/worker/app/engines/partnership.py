@@ -14,7 +14,7 @@ which tier the residual lands in.
 
 from __future__ import annotations
 
-from typing import Annotated
+from typing import Annotated, Literal
 from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field
@@ -27,7 +27,7 @@ from fondok_schemas.partnership import (
 )
 
 from .base import BaseEngine
-from .returns import irr
+from .returns import irr, xirr
 
 
 class PartnershipInputExt(BaseModel):
@@ -48,6 +48,14 @@ class PartnershipInputExt(BaseModel):
         description="Annual project distributable cash; index 0 = Year 1.",
     )
     catch_up: bool = False
+    # FON-66/67 — monthly waterfall. ``period='monthly'`` runs an institutional
+    # monthly IRR-hurdle waterfall over ``cash_flows_monthly`` (the levered
+    # monthly series: month 0 = close, negative = equity draw, positive =
+    # distribution). ``'annual'`` keeps the legacy annual waterfall. The caller
+    # auto-selects monthly for deals with sub-annual timing (mid-year close,
+    # off-cycle exit, or a refi), else annual — so existing deals are unchanged.
+    period: Literal["annual", "monthly"] = "annual"
+    cash_flows_monthly: list[float] = Field(default_factory=list)
 
 
 class PartnershipOutputExt(PartnershipOutput):
@@ -70,7 +78,114 @@ class PartnershipEngine(BaseEngine[PartnershipInputExt, PartnershipOutputExt]):
 
     name = "partnership"
 
+    def _run_monthly(self, payload: PartnershipInputExt) -> PartnershipOutputExt:
+        """Institutional monthly IRR-hurdle waterfall.
+
+        Walks the levered monthly cash-flow series (month 0 = close): negative
+        months are equity draws funded pro-rata (LP/GP %), positive months are
+        distributions split tier-by-tier. Each tier tracks the LP capital
+        account compounded at that tier's hurdle rate; the LP has cleared a
+        hurdle when its balance is paid down to zero, at which point the split
+        steps to the next tier. Mirrors a standard PE promote waterfall (and
+        the Kimpton source model's monthly Waterfall tab).
+        """
+        gp_pct = payload.gp_equity_pct
+        lp_pct = payload.lp_equity_pct
+        tiers = sorted(payload.waterfall, key=lambda t: t.hurdle_rate)
+        n = len(tiers)
+        lp_bal = [0.0] * n  # LP capital compounded at each tier's hurdle
+
+        gp_cf: list[float] = []
+        lp_cf: list[float] = []
+        gp_contrib_total = 0.0
+        lp_contrib_total = 0.0
+        promote_total = 0.0
+
+        for cf in payload.cash_flows_monthly:
+            # Accrue one month of preferred return on every tier's balance.
+            for i, t in enumerate(tiers):
+                lp_bal[i] *= 1.0 + t.hurdle_rate / 12.0
+
+            gp_take = 0.0
+            lp_take = 0.0
+            if cf < -1e-9:
+                # Equity draw funded pro-rata; adds to every hurdle balance.
+                draw = -cf
+                lp_c = draw * lp_pct
+                gp_c = draw * gp_pct
+                for i in range(n):
+                    lp_bal[i] += lp_c
+                gp_cf.append(-gp_c)
+                lp_cf.append(-lp_c)
+                lp_contrib_total += lp_c
+                gp_contrib_total += gp_c
+                continue
+
+            remaining = cf
+            for i, t in enumerate(tiers):
+                if remaining <= 1e-9:
+                    break
+                if lp_bal[i] <= 1e-9:
+                    continue  # LP already cleared this hurdle
+                lp_split = t.lp_split
+                # Cash needed at this tier so the LP's share zeroes its balance.
+                dist_to_clear = lp_bal[i] / lp_split if lp_split > 1e-9 else remaining
+                dist = min(remaining, dist_to_clear)
+                lp_share = dist * lp_split
+                gp_share = dist * t.gp_split
+                promote_total += max(0.0, gp_share - dist * gp_pct)
+                lp_take += lp_share
+                gp_take += gp_share
+                for j in range(n):
+                    lp_bal[j] -= lp_share  # distribution counts toward every hurdle
+                remaining -= dist
+            if remaining > 1e-9:  # residual → top tier
+                top = tiers[-1]
+                ls = remaining * top.lp_split
+                gs = remaining * top.gp_split
+                promote_total += max(0.0, gs - remaining * gp_pct)
+                lp_take += ls
+                gp_take += gs
+                for j in range(n):
+                    lp_bal[j] -= ls
+            gp_cf.append(gp_take)
+            lp_cf.append(lp_take)
+
+        # Annualized IRRs via XIRR over the monthly time points (month/12 years).
+        times = [m / 12.0 for m in range(len(gp_cf))]
+        gp_irr = xirr(times, gp_cf)
+        lp_irr = xirr(times, lp_cf)
+
+        gp_dist = sum(v for v in gp_cf if v > 0)
+        lp_dist = sum(v for v in lp_cf if v > 0)
+        gp_em = gp_dist / gp_contrib_total if gp_contrib_total else 0.0
+        lp_em = lp_dist / lp_contrib_total if lp_contrib_total else 0.0
+
+        return PartnershipOutputExt(
+            deal_id=payload.deal_id,
+            gp=PartnerReturn(
+                partner="GP",
+                contributed_equity=gp_contrib_total,
+                distributions=gp_dist,
+                irr=gp_irr,
+                equity_multiple=gp_em,
+            ),
+            lp=PartnerReturn(
+                partner="LP",
+                contributed_equity=lp_contrib_total,
+                distributions=lp_dist,
+                irr=lp_irr,
+                equity_multiple=lp_em,
+            ),
+            promote_earned=promote_total,
+            gp_cash_flows=gp_cf,
+            lp_cash_flows=lp_cf,
+            promote_amount=promote_total,
+        )
+
     def run(self, payload: PartnershipInputExt) -> PartnershipOutputExt:
+        if payload.period == "monthly" and payload.cash_flows_monthly:
+            return self._run_monthly(payload)
         gp_eq = payload.total_equity * payload.gp_equity_pct
         lp_eq = payload.total_equity * payload.lp_equity_pct
 

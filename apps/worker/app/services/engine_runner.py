@@ -3843,6 +3843,26 @@ def _build_input_for(
         waterfall = _build_partnership_waterfall(
             base.get("partnership_waterfall_overrides")
         )
+        # FON-66/67 — auto-select the monthly IRR-hurdle waterfall for deals with
+        # sub-annual timing (a mid-year close, an off-cycle exit, or a refi),
+        # where monthly vs annual materially diverges; else the annual waterfall
+        # (existing deals unchanged). An explicit ``waterfall_period`` override
+        # forces either.
+        monthly_flows = list(getattr(returns_out, "levered_monthly", []) or [])
+        _offset = base.get("acquisition_month_offset")
+        _exit_mo = base.get("exit_month")
+        _dso = base.get("debt_stack_overrides") or {}
+        _has_refi = isinstance(_dso, dict) and _dso.get("refi_test_year") not in (None, "")
+        _sub_annual = (
+            (_offset not in (None, "", 0) and int(float(_offset)) > 0)
+            or (_exit_mo not in (None, "") and int(float(_exit_mo)) % 12 != 0)
+            or _has_refi
+        )
+        _period_override = str(base.get("waterfall_period") or "").strip().lower()
+        if _period_override in ("annual", "monthly"):
+            period = _period_override
+        else:
+            period = "monthly" if (_sub_annual and monthly_flows) else "annual"
         return PartnershipInputExt(
             deal_id=deal_uuid,
             total_equity=capital_out.equity_amount,
@@ -3852,6 +3872,8 @@ def _build_input_for(
             waterfall=waterfall,
             cash_flows=flows,
             catch_up=False,
+            period=period,
+            cash_flows_monthly=monthly_flows,
         )
 
     raise ValueError(f"unknown engine: {engine_name!r}")
