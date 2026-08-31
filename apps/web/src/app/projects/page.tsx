@@ -16,6 +16,7 @@ import { useDeals } from '@/lib/hooks/useDeals';
 import { WorkerDeal, api, isWorkerConnected, workerUrl } from '@/lib/api';
 import { useCurrentRole } from '@/lib/auth';
 import { useToast } from '@/components/ui/Toast';
+import { GetStartedHero } from '@/components/help/GetStartedHero';
 import { IntroCard } from '@/components/help/IntroCard';
 import { MetricLabel } from '@/components/help/MetricLabel';
 
@@ -279,20 +280,17 @@ export default function ProjectsPage() {
             </Card>
           ))}
         </div>
+      ) : deals.length === 0 ? (
+        // Genuinely no deals — the guided first-run hero.
+        <GetStartedHero />
       ) : filtered.length === 0 ? (
+        // Has deals, but the search / filter matched none.
         <Card className="p-12 text-center">
           <Building2 size={36} className="text-ink-400 mx-auto mb-3" />
-          <div className="text-[14px] font-semibold text-ink-900">No deals yet</div>
+          <div className="text-[14px] font-semibold text-ink-900">No deals match your filters</div>
           <p className="text-[12.5px] text-ink-500 mt-1 max-w-md mx-auto leading-relaxed">
-            A deal is one hotel acquisition you&apos;re evaluating. Click <span className="font-medium">+ New Project</span> to set up
-            your first one — you&apos;ll add the deal name, market, and key count, then drop in
-            the offering memorandum and T-12 to start underwriting.
+            Try a different search term or clear the status filter to see all your deals.
           </p>
-          <div className="mt-5">
-            <Link href="/projects/new">
-              <Button variant="primary"><Plus size={14} /> New Project</Button>
-            </Link>
-          </div>
         </Card>
       ) : view === 'grid' ? (
         <div className="grid grid-cols-3 gap-4">

@@ -16,6 +16,7 @@ import { fmtCurrency, cn } from '@/lib/format';
 import { IntroCard } from '@/components/help/IntroCard';
 import { MetricLabel } from '@/components/help/MetricLabel';
 import { GettingStartedSidebar } from '@/components/help/GettingStartedSidebar';
+import { GetStartedHero } from '@/components/help/GetStartedHero';
 
 type StatTone = 'default' | 'luxe';
 
@@ -92,6 +93,9 @@ export default function DashboardPage() {
     [resp],
   );
   const dealCount = summary?.deal_count ?? 0;
+  // A brand-new user (worker connected, load done, zero deals) gets the
+  // guided first-run hero instead of a wall of empty KPIs.
+  const isNewUser = connected && !loading && !error && dealCount === 0;
 
   return (
     <div className="px-8 py-8 max-w-[1440px]">
@@ -111,17 +115,21 @@ export default function DashboardPage() {
         }
       />
 
-      <IntroCard
-        dismissKey="dashboard-overview"
-        title="Welcome to your portfolio"
-        body={
-          <>
-            The numbers up top summarize every hotel deal in your pipeline — how many
-            you have in flight, the median return, your typical basis per key, and how many
-            are clearing their target. Click any deal below to open its full underwriting model.
-          </>
-        }
-      />
+      {isNewUser && <GetStartedHero />}
+
+      {!isNewUser && (
+        <IntroCard
+          dismissKey="dashboard-overview"
+          title="Welcome to your portfolio"
+          body={
+            <>
+              The numbers up top summarize every hotel deal in your pipeline — how many
+              you have in flight, the median return, your typical basis per key, and how many
+              are clearing their target. Click any deal below to open its full underwriting model.
+            </>
+          }
+        />
+      )}
 
       {error && (
         <Card className="p-5 mb-5 border-danger-500/30 bg-danger-50">
