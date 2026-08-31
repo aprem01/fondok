@@ -213,7 +213,10 @@ def test_refine_v4_trusts_user_pnl_tag(monkeypatch) -> None:
         signals=_FakeSignals(is_pnl=True, pnl_score=1.0),
     )
     assert res.misclassified is False
-    assert res.doc_type == "PNLMONTHLY"  # canonical user tag adopted
+    # FON-18 fix: the REAL enum (with separators) is adopted, not the
+    # underscore-stripped comparison form — "PNLMONTHLY" matches no DocType
+    # member and would silently drop the doc from coverage + ranking.
+    assert res.doc_type == "PNL_MONTHLY"  # user tag adopted as the real enum
 
 
 def test_refine_v4_pnl_under_wrong_tag_flags(monkeypatch) -> None:
