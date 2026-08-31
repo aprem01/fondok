@@ -14,6 +14,8 @@ which tier the residual lands in.
 
 from __future__ import annotations
 
+import calendar
+from datetime import date
 from typing import Annotated, Literal
 from uuid import UUID
 
@@ -56,6 +58,11 @@ class PartnershipInputExt(BaseModel):
     # off-cycle exit, or a refi), else annual — so existing deals are unchanged.
     period: Literal["annual", "monthly"] = "annual"
     cash_flows_monthly: list[float] = Field(default_factory=list)
+    # FON-66/67 — acquisition close date (ISO). The monthly waterfall accrues
+    # the preferred return on an actual/365 fractional-year basis between the
+    # real month-end dates — Begin*(1+pref)^(days/365)-Begin — matching an
+    # institutional model. None falls back to nominal 365/12-day periods.
+    close_date: str | None = None
 
 
 class PartnershipOutputExt(PartnershipOutput):
@@ -71,6 +78,39 @@ def _lp_irr_to_date(
 ) -> float:
     flows = [-lp_contributed] + lp_distributions_so_far
     return irr(flows)
+
+
+def _monthly_period_days(close_iso: str | None, n: int) -> list[float]:
+    """Actual days in each monthly accrual period (index 0 = close, no accrual).
+
+    Dates are the acquisition close date followed by successive month-ends, so
+    the preferred return compounds over the true day count between cash-flow
+    dates. Falls back to nominal 365/12-day periods when no close date is set.
+    """
+    if n <= 0:
+        return []
+    days = [0.0] * n
+    close: date | None = None
+    if isinstance(close_iso, str) and close_iso.strip():
+        try:
+            close = date.fromisoformat(close_iso.strip()[:10])
+        except ValueError:
+            close = None
+    if close is None:
+        for k in range(1, n):
+            days[k] = 365.0 / 12.0
+        return days
+    prev = close
+    year, month = close.year, close.month
+    for k in range(1, n):
+        month += 1
+        if month > 12:
+            month = 1
+            year += 1
+        cur = date(year, month, calendar.monthrange(year, month)[1])
+        days[k] = float((cur - prev).days)
+        prev = cur
+    return days
 
 
 class PartnershipEngine(BaseEngine[PartnershipInputExt, PartnershipOutputExt]):
@@ -101,10 +141,16 @@ class PartnershipEngine(BaseEngine[PartnershipInputExt, PartnershipOutputExt]):
         lp_contrib_total = 0.0
         promote_total = 0.0
 
-        for cf in payload.cash_flows_monthly:
-            # Accrue one month of preferred return on every tier's balance.
-            for i, t in enumerate(tiers):
-                lp_bal[i] *= 1.0 + t.hurdle_rate / 12.0
+        # Actual/365 day counts between the real month-end cash-flow dates.
+        period_days = _monthly_period_days(payload.close_date, len(payload.cash_flows_monthly))
+
+        for idx, cf in enumerate(payload.cash_flows_monthly):
+            # Accrue the preferred return on an actual/365 fractional-year basis:
+            # Begin*(1+hurdle)^(days/365) - Begin, matching an institutional model.
+            frac = period_days[idx] / 365.0
+            if frac > 0:
+                for i, t in enumerate(tiers):
+                    lp_bal[i] *= (1.0 + t.hurdle_rate) ** frac
 
             gp_take = 0.0
             lp_take = 0.0

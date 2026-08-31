@@ -4,7 +4,11 @@ from __future__ import annotations
 
 from uuid import uuid4
 
-from app.engines.partnership import PartnershipEngine, PartnershipInputExt
+from app.engines.partnership import (
+    PartnershipEngine,
+    PartnershipInputExt,
+    _monthly_period_days,
+)
 from fondok_schemas.partnership import WaterfallTier
 
 _TIERS = [
@@ -52,6 +56,29 @@ def test_monthly_promote_grows_with_upside():
     # More upside → more promote to the GP and a higher GP multiple.
     assert high.promote_earned > low.promote_earned
     assert high.gp.equity_multiple > low.gp.equity_multiple
+
+
+def test_actual_365_period_days_from_month_end_close():
+    # A 9/30 close → successive month-ends: Oct 31 (31d), Nov 30 (30d), Dec 31 (31d)…
+    days = _monthly_period_days("2025-09-30", 6)
+    assert days[0] == 0.0
+    assert days[1:6] == [31.0, 30.0, 31.0, 31.0, 28.0]
+
+
+def test_actual_365_pref_matches_institutional_convention():
+    # Begin*(1+10%)^(31/365)-Begin on $13.305M ≈ $108.1K (the Kimpton model's
+    # actual/365 accrual), materially below a naive 10%/12 = ~$110.9K.
+    days = _monthly_period_days("2025-09-30", 2)
+    bal = 13_305_000.0
+    accr = bal * (1.10) ** (days[1] / 365.0) - bal
+    assert abs(accr - 108_139) < 5
+    assert accr < bal * (0.10 / 12)  # strictly less than simple monthly
+
+
+def test_no_close_date_falls_back_to_nominal_months():
+    days = _monthly_period_days(None, 4)
+    assert days[0] == 0.0
+    assert all(abs(d - 365.0 / 12.0) < 1e-9 for d in days[1:])
 
 
 def test_monthly_contributions_fund_pro_rata():

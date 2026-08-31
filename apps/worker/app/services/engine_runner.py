@@ -3874,6 +3874,11 @@ def _build_input_for(
             catch_up=False,
             period=period,
             cash_flows_monthly=monthly_flows,
+            close_date=(
+                str(base["acquisition_close_date"])
+                if base.get("acquisition_close_date") not in (None, "")
+                else None
+            ),
         )
 
     raise ValueError(f"unknown engine: {engine_name!r}")
