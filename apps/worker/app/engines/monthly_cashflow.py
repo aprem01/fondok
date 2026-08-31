@@ -179,7 +179,17 @@ def build_monthly_cashflow(inp: MonthlyCashFlowInput) -> MonthlyCashFlowResult:
         exit_lev = inp.exit_net_proceeds_levered if m == exit_month else 0.0
         exit_unlev = inp.exit_net_proceeds_unlevered if m == exit_month else 0.0
 
-        lev_cf = noi_m(m) - ds_m(m) - cap_lev + refi + exit_lev
+        # Under an explicit draw schedule a draw month's levered CF *is* the
+        # draw — a net equity outflow that already accounts for that month's
+        # operations (during a renovation the asset is largely offline and earns
+        # nothing, so crediting the annual NOI spread here double-counts income
+        # and inflates the return). Operating months (no draw) still run
+        # NOI − debt service normally. Without a schedule, the classic
+        # NOI − DS − deferred-capital formula applies every month.
+        if use_draws and cap_lev > 0:
+            lev_cf = -cap_lev + refi + exit_lev
+        else:
+            lev_cf = noi_m(m) - ds_m(m) - cap_lev + refi + exit_lev
         unlev_cf = noi_m(m) - cap_unlev + exit_unlev
         lev.append((t, lev_cf))
         unlev.append((t, unlev_cf))
