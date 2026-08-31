@@ -197,8 +197,16 @@ class PartnershipEngine(BaseEngine[PartnershipInputExt, PartnershipOutputExt]):
             gp_cf.append(gp_take)
             lp_cf.append(lp_take)
 
-        # Annualized IRRs via XIRR over the monthly time points (month/12 years).
-        times = [m / 12.0 for m in range(len(gp_cf))]
+        # Annualized IRRs via XIRR over the actual/365 elapsed time at each
+        # month-end — the cumulative day count from `period_days`, matching the
+        # source model's date-based XIRR (a nominal m/12 grid drifts ~0.5 pt on
+        # the more-levered GP leg). Falls back to nominal 365/12-day periods
+        # when no close date is set, which reduces exactly to m/12.
+        _cum = 0.0
+        times = []
+        for m in range(len(gp_cf)):
+            _cum += period_days[m] if m < len(period_days) else 365.0 / 12.0
+            times.append(_cum / 365.0)
         gp_irr = xirr(times, gp_cf)
         lp_irr = xirr(times, lp_cf)
 
