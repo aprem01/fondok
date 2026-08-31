@@ -3720,6 +3720,13 @@ def _build_input_for(
                 if base.get("acquisition_month_offset") not in (None, "")
                 else 0
             ),
+            # FON-67 — off-cycle disposition month (e.g. a 52-month hold).
+            exit_month_override=(
+                int(float(base["exit_month"]))
+                if base.get("exit_month") not in (None, "")
+                and int(float(base["exit_month"])) > 0
+                else None
+            ),
             equity=capital_out.equity_amount,
         )
 

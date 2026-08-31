@@ -304,6 +304,10 @@ class ReturnsEngineInputExt(BaseModel):
     # FON-67 — months elapsed in the acquisition calendar year at close (0-11),
     # for the monthly model's stub-year handling (a 9/30 close = 9).
     acquisition_month_offset: Annotated[int, Field(ge=0, le=11)] = 0
+    # FON-67 — off-cycle disposition month (1-based). None → clean hold_years×12
+    # exit; set it for a hold that doesn't land on a whole-year boundary (e.g.
+    # a 52-month / 4.333-year hold). The monthly model exits here.
+    exit_month_override: Annotated[int, Field(ge=1)] | None = None
     terminal_noi_override: Annotated[float, Field(gt=0)] | None = Field(
         default=None,
         description=(
@@ -453,6 +457,7 @@ class ReturnsEngine(BaseEngine[ReturnsEngineInputExt, ReturnsEngineOutputExt]):
         levered_irr = xirr(lev_times, lev_amounts)
         unlevered_irr = irr(unlevered_flows)
         peak_equity_out: float | None = None
+        equity_multiple_override: float | None = None
 
         # FON-67 — compute the returns on a MONTHLY calendar (the accurate,
         # institutional method): operating cash accrues through the year, the
@@ -475,6 +480,7 @@ class ReturnsEngine(BaseEngine[ReturnsEngineInputExt, ReturnsEngineOutputExt]):
                     hold_years=hold,
                     noi_by_year=list(noi_series),
                     acquisition_month_offset=payload.acquisition_month_offset,
+                    exit_month=payload.exit_month_override,
                     monthly_debt_service=[
                         ds_series[y] / 12.0 for y in range(hold) for _ in range(12)
                     ],
@@ -504,9 +510,18 @@ class ReturnsEngine(BaseEngine[ReturnsEngineInputExt, ReturnsEngineOutputExt]):
             levered_irr = monthly.levered_irr
             unlevered_irr = monthly.unlevered_irr
             peak_equity_out = monthly.peak_equity
+            # For an off-cycle exit the annual cash-flow series (built over whole
+            # hold-years) overstates the distributions, so use the monthly
+            # model's equity multiple, which stops at the real exit month.
+            if payload.exit_month_override is not None:
+                equity_multiple_override = monthly.equity_multiple
 
         total_distributions = sum(cfad_series) + net_proceeds_to_equity
-        equity_multiple = total_distributions / payload.equity if payload.equity else 0.0
+        equity_multiple = (
+            equity_multiple_override
+            if equity_multiple_override is not None
+            else (total_distributions / payload.equity if payload.equity else 0.0)
+        )
 
         year_one_coc = (
             cfad_series[0] / payload.equity if payload.equity else 0.0

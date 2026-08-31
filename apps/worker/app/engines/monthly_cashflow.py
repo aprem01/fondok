@@ -79,6 +79,10 @@ class MonthlyCashFlowInput:
     # following year's higher NOI begins at month 4 — which lifts the IRR and is
     # required to reconcile a calendar-year source model.
     acquisition_month_offset: int = 0
+    # Exit month override (1-based). None → the clean hold_years × 12 exit. Set
+    # it to model an off-cycle disposition — e.g. a 4.333-year / 52-month hold
+    # that doesn't land on a whole-year boundary. Clamped to hold_years × 12.
+    exit_month: int | None = None
     # Capital deferred out of the close and deployed later — e.g. renovation.
     # Spread evenly across [deploy_start_month, deploy_end_month] inclusive.
     deferred_capital: float = 0.0
@@ -105,7 +109,13 @@ class MonthlyCashFlowResult:
 
 
 def build_monthly_cashflow(inp: MonthlyCashFlowInput) -> MonthlyCashFlowResult:
-    exit_month = inp.hold_years * 12
+    full_term = inp.hold_years * 12
+    # Off-cycle disposition: exit at an arbitrary month within the term.
+    exit_month = (
+        max(1, min(full_term, inp.exit_month))
+        if inp.exit_month is not None
+        else full_term
+    )
     n_years = len(inp.noi_by_year)
 
     def noi_m(month: int) -> float:
