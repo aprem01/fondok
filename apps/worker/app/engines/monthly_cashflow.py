@@ -15,7 +15,7 @@ cash-flow series, and solves each for its XIRR. The returns engine composes it.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 
 def xnpv(rate: float, flows: list[tuple[float, float]]) -> float:
@@ -88,6 +88,12 @@ class MonthlyCashFlowInput:
     deferred_capital: float = 0.0
     deferred_capital_start_month: int = 1
     deferred_capital_end_month: int = 12
+    # FON-67 — an explicit per-month equity draw schedule (index 0 = close,
+    # then month 1, 2, …). When set it drives the levered equity outflows
+    # exactly — for reconciling to a source model's actual draw timing —
+    # instead of ``equity_at_close`` + the even deferred-capital spread. The
+    # total equity is its sum, so the multiple stays timing-invariant.
+    equity_draws: list[float] = field(default_factory=list)
     # Mid-hold refinance. ``refi_net_cash_out`` = proceeds − senior payoff − fee,
     # a levered-only inflow at ``refi_month``.
     refi_month: int | None = None
@@ -140,25 +146,41 @@ def build_monthly_cashflow(inp: MonthlyCashFlowInput) -> MonthlyCashFlowResult:
     def defer_m(month: int) -> float:
         return per_month_defer if lo <= month <= hi else 0.0
 
-    lev: list[tuple[float, float]] = [(0.0, -inp.equity_at_close)]
+    # FON-67 — an explicit per-month equity draw schedule drives the levered
+    # equity outflows exactly (index 0 = close); otherwise fall back to the
+    # equity-at-close + even deferred-capital spread. Either way the equity
+    # base for the multiple is the TOTAL equity, so the multiple stays
+    # invariant to how the draws are timed.
+    draws = list(inp.equity_draws)
+    use_draws = len(draws) > 0
+    eq0 = draws[0] if use_draws else inp.equity_at_close
+    em_equity_base = sum(draws) if use_draws else inp.equity_at_close
+
+    def equity_out(month: int) -> float:
+        if use_draws:
+            return draws[month] if 0 <= month < len(draws) else 0.0
+        return defer_m(month)
+
+    lev: list[tuple[float, float]] = [(0.0, -eq0)]
     unlev: list[tuple[float, float]] = [(0.0, -inp.total_capital_at_close)]
-    lev_series = [-inp.equity_at_close]
+    lev_series = [-eq0]
     unlev_series = [-inp.total_capital_at_close]
 
-    # Peak equity: the deepest cumulative equity outflow (close + deferred draws
+    # Peak equity: the deepest cumulative equity outflow (close + later draws
     # net of any interim distributions) before capital starts coming back.
-    cum_equity, peak_equity = inp.equity_at_close, inp.equity_at_close
+    cum_equity, peak_equity = eq0, eq0
     distributions = 0.0
 
     for m in range(1, exit_month + 1):
         t = m / 12.0
-        cap = defer_m(m)
+        cap_lev = equity_out(m)
+        cap_unlev = 0.0 if use_draws else defer_m(m)
         refi = inp.refi_net_cash_out if (inp.refi_month is not None and m == inp.refi_month) else 0.0
         exit_lev = inp.exit_net_proceeds_levered if m == exit_month else 0.0
         exit_unlev = inp.exit_net_proceeds_unlevered if m == exit_month else 0.0
 
-        lev_cf = noi_m(m) - ds_m(m) - cap + refi + exit_lev
-        unlev_cf = noi_m(m) - cap + exit_unlev
+        lev_cf = noi_m(m) - ds_m(m) - cap_lev + refi + exit_lev
+        unlev_cf = noi_m(m) - cap_unlev + exit_unlev
         lev.append((t, lev_cf))
         unlev.append((t, unlev_cf))
         lev_series.append(lev_cf)
@@ -171,13 +193,10 @@ def build_monthly_cashflow(inp: MonthlyCashFlowInput) -> MonthlyCashFlowResult:
         if lev_cf > 0:
             distributions += lev_cf
 
-    equity_multiple = (
-        (inp.equity_at_close + max(0.0, distributions - 0.0)) / peak_equity
-        if peak_equity > 0
-        else 0.0
-    )
-    # Equity multiple = total distributions ÷ total equity invested.
-    total_equity_in = inp.equity_at_close + inp.deferred_capital
+    # Equity multiple = total distributions ÷ total equity invested. Under an
+    # explicit draw schedule the invested base is the sum of the draws; otherwise
+    # it's the close equity plus any evenly-spread deferred capital.
+    total_equity_in = em_equity_base if use_draws else (inp.equity_at_close + inp.deferred_capital)
     equity_multiple = (distributions / total_equity_in) if total_equity_in > 0 else 0.0
 
     return MonthlyCashFlowResult(

@@ -308,6 +308,11 @@ class ReturnsEngineInputExt(BaseModel):
     # exit; set it for a hold that doesn't land on a whole-year boundary (e.g.
     # a 52-month / 4.333-year hold). The monthly model exits here.
     exit_month_override: Annotated[int, Field(ge=1)] | None = None
+    # FON-67 — explicit per-month equity draw schedule (index 0 = close). When
+    # set it drives the levered equity outflows exactly, for reconciling to a
+    # source model's actual renovation draw timing. Empty → equity at close +
+    # the deferred-capital spread.
+    equity_draw_schedule: list[float] = Field(default_factory=list)
     terminal_noi_override: Annotated[float, Field(gt=0)] | None = Field(
         default=None,
         description=(
@@ -497,6 +502,7 @@ class ReturnsEngine(BaseEngine[ReturnsEngineInputExt, ReturnsEngineOutputExt]):
                     noi_by_year=list(noi_series),
                     acquisition_month_offset=payload.acquisition_month_offset,
                     exit_month=payload.exit_month_override,
+                    equity_draws=list(payload.equity_draw_schedule),
                     monthly_debt_service=_monthly_ds,
                     equity_at_close=max(0.0, payload.equity - payload.deferred_capital),
                     total_capital_at_close=max(

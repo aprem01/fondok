@@ -745,6 +745,11 @@ async def _load_engine_inputs(
                 base["sofr_curve"] = value
                 sources[path] = SOURCE_ANALYST_OVERRIDE
                 continue
+            # FON-67 — explicit per-month equity draw schedule (list of dollars).
+            if path == "equity_draw_schedule" and isinstance(value, list):
+                base["equity_draw_schedule"] = value
+                sources[path] = SOURCE_ANALYST_OVERRIDE
+                continue
             # Wave 2 P2.4 — PIP-displacement overrides include a list field
             # (``pct_rooms_offline_by_month``). Accept it as JSON-array
             # string or real list; everything else has to be a scalar.
@@ -3726,6 +3731,13 @@ def _build_input_for(
                 if base.get("exit_month") not in (None, "")
                 and int(float(base["exit_month"])) > 0
                 else None
+            ),
+            # FON-67 — explicit per-month equity draw schedule.
+            equity_draw_schedule=(
+                [float(x) for x in base["equity_draw_schedule"]]
+                if isinstance(base.get("equity_draw_schedule"), list)
+                and base["equity_draw_schedule"]
+                else []
             ),
             equity=capital_out.equity_amount,
         )
