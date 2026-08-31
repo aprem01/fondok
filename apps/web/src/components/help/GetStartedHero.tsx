@@ -1,19 +1,67 @@
 'use client';
 
 /**
- * GetStartedHero — the zero-deal first-run panel.
+ * GetStartedHero — the OPTIONAL zero-deal first-run panel.
  *
  * A brand-new user otherwise lands on a wall of empty KPIs and a terse
- * "No deals yet". This replaces that with a warm, single-glance path:
- * the three steps from an empty workspace to a complete underwriting, plus
- * one prominent CTA. Shown only when the tenant has zero deals; the
- * non-blocking GettingStartedSidebar handles ongoing coach-marks after that.
+ * "No deals yet". This offers a warm, single-glance path: the three steps
+ * from an empty workspace to a complete underwriting, plus one prominent CTA.
+ *
+ * It is opt-out, not forced:
+ *   - Respects the global "Show contextual coach marks" toggle (hintsEnabled).
+ *   - Dismissable via the X — persisted under a ``fondok:coachmark:*`` key so
+ *     the Settings "Reset coach marks" action brings it back on demand.
+ *   - When hidden, the parent falls back to the normal view / empty state.
+ *
+ * ``useGetStartedHeroVisible()`` lets the parent decide hero-vs-fallback.
  */
 
+import { useEffect, useState } from 'react';
 import Link from 'next/link';
-import { Plus, FileText, LineChart, Sparkles, ArrowRight } from 'lucide-react';
+import { Plus, FileText, LineChart, Sparkles, ArrowRight, X } from 'lucide-react';
 import { Card } from '@/components/ui/Card';
 import { Button } from '@/components/ui/Button';
+import { hintsEnabled } from './useHintsEnabled';
+
+// A coachmark-namespaced key so Settings' resetAllCoachMarks() clears it.
+const HERO_KEY = 'fondok:coachmark:getstarted-hero';
+const HINTS_EVENT = 'fondok:hints-changed';
+
+function heroDismissed(): boolean {
+  if (typeof window === 'undefined') return false;
+  try {
+    return window.localStorage.getItem(HERO_KEY) === '1';
+  } catch {
+    return false;
+  }
+}
+
+function dismissHero(): void {
+  if (typeof window === 'undefined') return;
+  try {
+    window.localStorage.setItem(HERO_KEY, '1');
+  } catch {
+    /* private mode — non-fatal */
+  }
+  // Same event the hints toggle + reset use, so the parent hook + other tabs update.
+  window.dispatchEvent(new Event(HINTS_EVENT));
+}
+
+/** Whether the getting-started hero should show: hints on AND not dismissed. */
+export function useGetStartedHeroVisible(): boolean {
+  const [visible, setVisible] = useState(false);
+  useEffect(() => {
+    const compute = () => setVisible(hintsEnabled() && !heroDismissed());
+    compute();
+    window.addEventListener('storage', compute);
+    window.addEventListener(HINTS_EVENT, compute);
+    return () => {
+      window.removeEventListener('storage', compute);
+      window.removeEventListener(HINTS_EVENT, compute);
+    };
+  }, []);
+  return visible;
+}
 
 const STEPS: { icon: typeof Plus; title: string; body: string }[] = [
   {
@@ -35,9 +83,19 @@ const STEPS: { icon: typeof Plus; title: string; body: string }[] = [
 
 export function GetStartedHero() {
   return (
-    <Card tone="luxe" className="p-7 mb-6">
-      <div className="flex items-center gap-1.5 mb-2">
-        <Sparkles size={14} className="text-gold-400" strokeWidth={1.75} />
+    <Card tone="luxe" className="p-7 mb-6 relative">
+      <button
+        type="button"
+        onClick={dismissHero}
+        aria-label="Dismiss getting started"
+        title="Dismiss — reappears via Settings → Reset coach marks"
+        className="absolute top-3.5 right-3.5 text-ink-400 hover:text-ink-700 transition-colors"
+      >
+        <X size={15} />
+      </button>
+
+      <div className="flex items-center gap-1.5 mb-2 text-gold-400">
+        <Sparkles size={14} strokeWidth={1.75} />
         <span className="text-[11px] font-semibold uppercase tracking-[0.12em] text-gold-600">
           Getting started
         </span>

@@ -16,7 +16,7 @@ import { useDeals } from '@/lib/hooks/useDeals';
 import { WorkerDeal, api, isWorkerConnected, workerUrl } from '@/lib/api';
 import { useCurrentRole } from '@/lib/auth';
 import { useToast } from '@/components/ui/Toast';
-import { GetStartedHero } from '@/components/help/GetStartedHero';
+import { GetStartedHero, useGetStartedHeroVisible } from '@/components/help/GetStartedHero';
 import { IntroCard } from '@/components/help/IntroCard';
 import { MetricLabel } from '@/components/help/MetricLabel';
 
@@ -173,6 +173,7 @@ export default function ProjectsPage() {
   const isAdmin = currentRole === 'org:admin';
 
   const { deals, loading, error, fromMock, refresh } = useDeals();
+  const heroVisible = useGetStartedHeroVisible();
 
   // Worker-connected mode (the real deployment) shows ONLY worker
   // deals — the seeded demos (Kimpton Angler etc.) were confusing
@@ -281,8 +282,25 @@ export default function ProjectsPage() {
           ))}
         </div>
       ) : deals.length === 0 ? (
-        // Genuinely no deals — the guided first-run hero.
-        <GetStartedHero />
+        // Genuinely no deals — the guided first-run hero (opt-out), or a
+        // compact empty state once it's been dismissed / coach marks are off.
+        heroVisible ? (
+          <GetStartedHero />
+        ) : (
+          <Card className="p-12 text-center">
+            <Building2 size={36} className="text-ink-400 mx-auto mb-3" />
+            <div className="text-[14px] font-semibold text-ink-900">No deals yet</div>
+            <p className="text-[12.5px] text-ink-500 mt-1 max-w-md mx-auto leading-relaxed">
+              Click <span className="font-medium">+ New Project</span> to set up your first hotel —
+              add the deal name, market, and key count, then drop in the OM and T-12 to start underwriting.
+            </p>
+            <div className="mt-5">
+              <Link href="/projects/new">
+                <Button variant="primary"><Plus size={14} /> New Project</Button>
+              </Link>
+            </div>
+          </Card>
+        )
       ) : filtered.length === 0 ? (
         // Has deals, but the search / filter matched none.
         <Card className="p-12 text-center">

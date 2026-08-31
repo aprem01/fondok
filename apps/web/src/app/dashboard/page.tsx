@@ -16,7 +16,7 @@ import { fmtCurrency, cn } from '@/lib/format';
 import { IntroCard } from '@/components/help/IntroCard';
 import { MetricLabel } from '@/components/help/MetricLabel';
 import { GettingStartedSidebar } from '@/components/help/GettingStartedSidebar';
-import { GetStartedHero } from '@/components/help/GetStartedHero';
+import { GetStartedHero, useGetStartedHeroVisible } from '@/components/help/GetStartedHero';
 
 type StatTone = 'default' | 'luxe';
 
@@ -93,9 +93,13 @@ export default function DashboardPage() {
     [resp],
   );
   const dealCount = summary?.deal_count ?? 0;
-  // A brand-new user (worker connected, load done, zero deals) gets the
-  // guided first-run hero instead of a wall of empty KPIs.
+  // A brand-new user (worker connected, load done, zero deals) can get the
+  // guided first-run hero instead of a wall of empty KPIs — but it's opt-out:
+  // hidden once dismissed or when coach marks are off, falling back to the
+  // normal welcome.
   const isNewUser = connected && !loading && !error && dealCount === 0;
+  const heroVisible = useGetStartedHeroVisible();
+  const showHero = isNewUser && heroVisible;
 
   return (
     <div className="px-8 py-8 max-w-[1440px]">
@@ -115,9 +119,9 @@ export default function DashboardPage() {
         }
       />
 
-      {isNewUser && <GetStartedHero />}
+      {showHero && <GetStartedHero />}
 
-      {!isNewUser && (
+      {!showHero && (
         <IntroCard
           dismissKey="dashboard-overview"
           title="Welcome to your portfolio"
