@@ -308,7 +308,12 @@ export default function GroundedWorksheet({
   // populated years; empty on deals with no extracted P&Ls (Model col alone).
   const { years: allHistYears } = useHistoricals(rawId, { keys: deal?.keys });
   const populatedHistYears = useMemo(() => allHistYears.filter(histHasData), [allHistYears]);
-  const histYears = useMemo(() => populatedHistYears.slice(-4), [populatedHistYears]);
+  // FON-15 — render EVERY available normalized period, not a fixed last-4
+  // window. Any year the analyst uploaded (2019, a partial/YTD 2025, …) is
+  // recognized by Historical Coverage, so it must be accessible here too; the
+  // table scrolls horizontally (minWidth scales with column count) and the
+  // year-pill filter lets the reviewer hide any period they don't want.
+  const histYears = populatedHistYears;
   const coverage = useMemo(() => buildCoverage(documents, populatedHistYears), [documents, populatedHistYears]);
   // Design rewire: overall extraction confidence chip — average of the
   // per-line confidences captured on the historical years.

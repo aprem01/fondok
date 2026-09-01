@@ -244,6 +244,11 @@ export function deriveYearLabel(
   fields: ExtractionField[],
   filename: string,
   docType: string | null | undefined,
+  // The document's normalized period year — ``fiscal_year`` (the analyst's tag)
+  // or, failing that, ``extracted_period_year`` (Fondok's read of period_ending).
+  // This is the SAME signal Historical Coverage trusts, passed in so the
+  // rendered year columns stay in lockstep with the coverage chips (FON-15).
+  normalizedYear?: number | string | null,
 ): string {
   // Resolution order — most authoritative first. The extractor is the
   // format-agnostic layer (it now emits period metadata for any P&L
@@ -253,6 +258,18 @@ export function deriveYearLabel(
 
   const dt = (docType ?? '').toUpperCase();
   const isT12Type = dt === 'T12' || dt === 'T-12' || dt.includes('T12');
+
+  // 0. Normalized period on the document itself — the post-classification
+  //    fiscal year that Historical Coverage reads. Trusting it here is what
+  //    keeps the rendered columns dynamic and consistent with Coverage
+  //    (FON-15): any uploaded year Coverage recognizes — e.g. 2019 or a
+  //    partial/YTD 2025 — gets its own column instead of being re-derived
+  //    from raw fields and silently dropped into the T-12 slot. A
+  //    trailing-twelve doc still resolves to 'T-12' below.
+  if (!isT12Type && normalizedYear != null && normalizedYear !== '') {
+    const ny = String(normalizedYear).match(/((?:19|20)\d{2})/);
+    if (ny) return ny[1];
+  }
 
   const periodEnding = strVal(findField(fields, [
     'period_ending', 'p_and_l_usali.period_ending',
@@ -711,6 +728,7 @@ export default function HistoricalsSection({
               // labeled by a year in its filename.
               const label = deriveYearLabel(
                 fields, doc.filename ?? '', doc.doc_type,
+                doc.fiscal_year ?? doc.extracted_period_year,
               );
               const built = buildHistYear(fields, keysForBuild, label);
               if (built) byYear.set(label, built);
