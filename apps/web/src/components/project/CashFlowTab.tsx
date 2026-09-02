@@ -7,7 +7,6 @@ import { Button } from '@/components/ui/Button';
 import { useToast } from '@/components/ui/Toast';
 import EngineHeader from './EngineHeader';
 import EngineRightRail from './EngineRightRail';
-import EngineLegend from './EngineLegend';
 import EngineRunHistory from './EngineRunHistory';
 import { fmtCurrency, fmtMillions, cn } from '@/lib/format';
 import { getEngineField, useEngineOutputs } from '@/lib/hooks/useEngineOutputs';
@@ -147,7 +146,6 @@ export default function CashFlowTab() {
             onRunStart={() => setComputing(true)}
             onRunComplete={() => setComputing(false)}
           />
-          <EngineLegend />
           <Card className="p-16 text-center">
             <div className="w-12 h-12 rounded-lg bg-ink-300/20 flex items-center justify-center mx-auto mb-4">
               <Activity size={20} className="text-ink-400" />
@@ -218,7 +216,6 @@ export default function CashFlowTab() {
             </button>
           ))}
         </div>
-        <EngineLegend />
 
         <div className={cn(computing && 'relative pointer-events-none opacity-60')}>
           {tab === 'Summary' && <SummaryView cf={cf} />}

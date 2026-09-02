@@ -5,7 +5,6 @@ import { LayoutGrid, Download, Pencil, Link2 } from 'lucide-react';
 import { Card } from '@/components/ui/Card';
 import { Button } from '@/components/ui/Button';
 import { useToast } from '@/components/ui/Toast';
-import { DataKeyLegend } from './DataKeyLegend';
 import {
   findBrand, returnProfiles, positioningTiers,
   brandFamilies,
@@ -549,12 +548,10 @@ export default function OverviewTab({ projectId }: { projectId: number | string 
 
   return (
     <div className="space-y-3">
-      {/* Toolbar — legend + actions on a single hairline row. The
-          standalone IntroCard and its wrapper Card were removed (Wave 1
-          UX reduction): provenance icons get a one-line legend instead
-          of a teaching banner, and CoachMark covers the rest. */}
-      <div className="flex items-center justify-between py-1 gap-4">
-        <DataKeyLegend variant="overview" />
+      {/* Toolbar — actions on a single hairline row. The per-tab Data Key
+          legend was removed in favour of the one canonical <DataKey> strip
+          mounted under the tab bar (FON-72). */}
+      <div className="flex items-center justify-end py-1 gap-4">
         <div className="flex items-center gap-2 shrink-0">
           <Button variant="secondary" size="sm" onClick={onExportExcel}>
             <Download size={12} /> Export to Excel

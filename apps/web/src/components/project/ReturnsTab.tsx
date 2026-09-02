@@ -7,7 +7,6 @@ import { Button } from '@/components/ui/Button';
 import { useToast } from '@/components/ui/Toast';
 import EngineHeader from './EngineHeader';
 import EngineRightRail from './EngineRightRail';
-import EngineLegend from './EngineLegend';
 import EngineRunHistory from './EngineRunHistory';
 import WhatJustHappened from './WhatJustHappened';
 import PricingSensitivityPanel from './PricingSensitivityPanel';
@@ -69,7 +68,6 @@ export default function ReturnsTab() {
               setRunToken(Date.now());
             }}
           />
-          <EngineLegend />
           <Card className="p-16 text-center">
             <div className="w-12 h-12 rounded-lg bg-ink-300/20 flex items-center justify-center mx-auto mb-4">
               <TrendingUp size={20} className="text-ink-400" />
@@ -141,7 +139,6 @@ export default function ReturnsTab() {
           </button>
         ))}
       </div>
-      <EngineLegend />
 
       <WhatJustHappened
         engine="returns"

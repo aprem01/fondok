@@ -16,8 +16,6 @@ import { Badge } from '@/components/ui/Badge';
 import { useToast } from '@/components/ui/Toast';
 import EngineHeader from './EngineHeader';
 import EngineRightRail from './EngineRightRail';
-import EngineLegend from './EngineLegend';
-import { DataKeyLegend } from './DataKeyLegend';
 import EngineRunHistory from './EngineRunHistory';
 import WhatJustHappened from './WhatJustHappened';
 import type { EngineOutputsResponse } from '@/lib/api';
@@ -344,7 +342,6 @@ export default function PLTab() {
               setRunToken(Date.now());
             }}
           />
-          <EngineLegend />
           <Card className="p-16 text-center">
             <div className="w-12 h-12 rounded-lg bg-ink-300/20 flex items-center justify-center mx-auto mb-4">
               <BarChart3 size={20} className="text-ink-400" />
@@ -434,11 +431,6 @@ export default function PLTab() {
           </button>
         ))}
       </div>
-      {tab === 'Historicals' || tab === 'Projections' ? (
-        <DataKeyLegend variant="financials" className="mb-4" />
-      ) : (
-        <EngineLegend />
-      )}
 
       <div className={cn(computing && 'relative pointer-events-none opacity-60')}>
         {tab === 'Historicals' && (

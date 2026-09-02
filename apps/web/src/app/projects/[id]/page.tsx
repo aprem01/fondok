@@ -34,6 +34,7 @@ import ScenarioAnalysisTab from '@/components/project/ScenarioAnalysisTab';
 import AtlasCopilot from '@/components/project/AtlasCopilot';
 import ScenarioEditor from '@/components/project/ScenarioEditor';
 import TabLoadingSkeleton from '@/components/project/TabLoadingSkeleton';
+import { DataKey } from '@/components/design';
 import { api as workerApi, type ScenarioRecord } from '@/lib/api';
 import { AssumptionsProvider } from '@/stores/assumptionsStore';
 import { useEngineOutputs } from '@/lib/hooks/useEngineOutputs';
@@ -673,6 +674,15 @@ export default function ProjectDetailPage() {
             );
           })}
         </nav>
+      </div>
+
+      {/* Canonical Data Key — ONE strip, full width, directly under the tab bar
+          on every tab (FON-72 · design/canonical/Fondok Data Key.dc.html:
+          "sits directly under the tab bar on every tab · full width"). Replaces
+          the per-tab EngineLegend / DataKeyLegend strips. Purely presentational,
+          so it lives outside the provenance providers. */}
+      <div className="px-8 pt-3">
+        <DataKey />
       </div>
 
       {/* Scenario selector — the active what-if pill sits below the tab nav on

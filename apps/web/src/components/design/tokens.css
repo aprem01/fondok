@@ -1,0 +1,72 @@
+/**
+ * Fondok canonical design tokens — CSS custom-property mirror of `tokens.ts`.
+ *
+ * Extracted EXACTLY from `design/canonical/*.dc.html` (FON-72). Import this once
+ * (e.g. from a layout or globals) to expose the canonical palette to any
+ * class/style consumer. The `components/design/` React layer drives its inline
+ * styles from `tokens.ts` directly, so it does NOT depend on this file being
+ * loaded — this exists for parity with the app's existing token convention and
+ * for hand-authored markup that wants the variables.
+ *
+ * Not wired into any tab yet (design-system-only phase).
+ */
+
+:root {
+  /* Core palette — Component Kit swatches + tab chrome */
+  --fondok-ink-navy: #14213d;
+  --fondok-sidebar-navy: #0f1a30;
+  --fondok-ground: #f5f4f0;
+  --fondok-card: #ffffff;
+  --fondok-surface-tint: #fbfbf9;
+  --fondok-border: #eae9e4;
+  --fondok-ink: #1a2233;
+  --fondok-text-secondary: #6b6f76;
+  --fondok-text-muted: #9a9a95;
+  --fondok-text-faint: #b0afaa;
+  --fondok-eyebrow: #8a8a86;
+  --fondok-hairline-row: #f7f6f3;
+  --fondok-hairline-section: #f2f1ec;
+  --fondok-subtab-hairline: #e6e5e0;
+  --fondok-hover-ink: #3a3f47;
+  --fondok-grid-header-text: #c9cede;
+  --fondok-grid-header-divider: #2a3a5c;
+  --fondok-link-blue: #2f4a8c;
+  --fondok-link-blue-hover: #1f3568;
+  --fondok-button-secondary-border: #d8d7d2;
+  --fondok-disabled-text: #9098a3;
+  --fondok-disabled-border: #e2e1dc;
+
+  /* Provenance state colors — Fondok Data Key (canonical strip) */
+  --fondok-prov-green: oklch(45% 0.12 155); /* Document sourced + Linked */
+  --fondok-prov-blue: oklch(45% 0.14 260); /* Assumption */
+  --fondok-prov-gray: #5f656e; /* Calculated */
+  --fondok-prov-muted: #b0afaa; /* Awaiting data */
+  --fondok-prov-black: #1a2233; /* Total */
+  --fondok-prov-amber: oklch(52% 0.15 45); /* Needs review family */
+  --fondok-prov-review-ring: 0 0 0 3px oklch(88% 0.07 45);
+  --fondok-prov-review-cell-tint: oklch(93% 0.05 45 / 0.55);
+
+  /* Field-value treatment — Fondok Field System */
+  --fondok-field-input: #1a4fa0; /* editable assumption — the only blue */
+  --fondok-field-ink: #1a2233;
+  --fondok-field-doc: oklch(48% 0.09 165);
+  --fondok-field-link: oklch(52% 0.07 240);
+  --fondok-field-flag: oklch(62% 0.16 55);
+  --fondok-field-override: oklch(55% 0.13 300);
+
+  /* Radii */
+  --fondok-radius-card: 10px;
+  --fondok-radius-card-lg: 12px;
+  --fondok-radius-popover: 11px;
+  --fondok-radius-button: 6px;
+  --fondok-radius-control: 5px;
+  --fondok-radius-pill: 20px;
+
+  /* Shadows */
+  --fondok-shadow-popover: 0 14px 40px rgba(20, 33, 61, 0.16), 0 2px 6px rgba(20, 33, 61, 0.06);
+  --fondok-shadow-help-modal: 0 24px 56px rgba(16, 24, 40, 0.28);
+  --fondok-shadow-edit-focus: 0 0 0 3px rgba(26, 79, 160, 0.12);
+
+  /* Font */
+  --fondok-font: -apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif;
+}

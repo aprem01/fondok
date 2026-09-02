@@ -10,7 +10,6 @@ import { useEngineRun } from '@/lib/hooks/useEngineRun';
 import { useDeal } from '@/lib/hooks/useDeal';
 import EngineHeader from './EngineHeader';
 import EngineRightRail from './EngineRightRail';
-import EngineLegend from './EngineLegend';
 import EngineRunHistory from './EngineRunHistory';
 import WhatJustHappened from './WhatJustHappened';
 import { fmtCurrency, fmtPct, cn } from '@/lib/format';
@@ -228,7 +227,6 @@ export default function PartnershipTab() {
               setRunToken(Date.now());
             }}
           />
-          <EngineLegend />
           <Card className="p-16 text-center">
             <div className="w-12 h-12 rounded-lg bg-ink-300/20 flex items-center justify-center mx-auto mb-4">
               <Users size={20} className="text-ink-400" />
@@ -305,7 +303,6 @@ export default function PartnershipTab() {
           </button>
         ))}
       </div>
-      <EngineLegend />
 
       {tab === 'Summary' && (
         <div className={cn(computing && 'relative pointer-events-none opacity-60')}>

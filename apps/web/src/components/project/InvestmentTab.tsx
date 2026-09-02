@@ -7,7 +7,6 @@ import { Button } from '@/components/ui/Button';
 import { useToast } from '@/components/ui/Toast';
 import EngineHeader from './EngineHeader';
 import EngineRightRail from './EngineRightRail';
-import EngineLegend from './EngineLegend';
 import EngineRunHistory from './EngineRunHistory';
 import WhatJustHappened from './WhatJustHappened';
 import CapexPlanPanel, { DEFAULT_CAPEX_PLAN, type CapexPlanState } from './CapexPlanPanel';
@@ -201,7 +200,6 @@ export default function InvestmentTab() {
               setRunToken(Date.now());
             }}
           />
-          <EngineLegend />
           <Card className="p-16 text-center">
             <div className="w-12 h-12 rounded-lg bg-ink-300/20 flex items-center justify-center mx-auto mb-4">
               <Briefcase size={20} className="text-ink-400" />
@@ -294,7 +292,6 @@ export default function InvestmentTab() {
           </button>
         ))}
       </div>
-      <EngineLegend />
 
       <div className={cn(computing && 'relative pointer-events-none opacity-60')}>
 

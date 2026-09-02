@@ -65,6 +65,45 @@ const config: Config = {
         success: { 50: '#f0f9f4', 500: '#15803d', 600: '#166534', 700: '#14532d' },
         warn:    { 50: '#fefbf3', 500: '#b97309', 600: '#92580c', 700: '#7a4708' },
         danger:  { 50: '#fdf3f3', 500: '#b91c1c', 600: '#991b1b', 700: '#7f1d1d' },
+
+        // ── Fondok canonical design tokens (FON-72) ──────────────────────────
+        // Extracted EXACTLY from design/canonical/*.dc.html. Mirror of
+        // src/components/design/tokens.ts + tokens.css. Additive + namespaced
+        // so it can't disturb the existing palette above; the design/ React
+        // layer drives its inline styles from tokens.ts, these classes exist
+        // for class-based consumers when tabs are rebuilt on this layer.
+        fondok: {
+          navy: '#14213d',          // statement-grid header, primary btn, active tab
+          'navy-sidebar': '#0f1a30',
+          ground: '#f5f4f0',        // app background
+          card: '#ffffff',
+          'surface-tint': '#fbfbf9',
+          border: '#eae9e4',
+          ink: '#1a2233',
+          'text-secondary': '#6b6f76',
+          'text-muted': '#9a9a95',
+          'text-faint': '#b0afaa',
+          eyebrow: '#8a8a86',
+          'hairline-row': '#f7f6f3',
+          'hairline-section': '#f2f1ec',
+          'subtab-hairline': '#e6e5e0',
+          'grid-header-text': '#c9cede',
+          'grid-header-divider': '#2a3a5c',
+          link: '#2f4a8c',
+          // Provenance origin states — Fondok Data Key strip
+          'prov-green': 'oklch(45% 0.12 155)',   // document_sourced + linked
+          'prov-blue': 'oklch(45% 0.14 260)',    // assumption
+          'prov-gray': '#5f656e',                // calculated
+          'prov-muted': '#b0afaa',               // awaiting_data
+          'prov-black': '#1a2233',               // total
+          'prov-amber': 'oklch(52% 0.15 45)',    // needs_review family
+          // Field-value treatment — Fondok Field System
+          'field-input': '#1a4fa0',              // editable assumption (the only blue)
+          'field-doc': 'oklch(48% 0.09 165)',
+          'field-link': 'oklch(52% 0.07 240)',
+          'field-flag': 'oklch(62% 0.16 55)',
+          'field-override': 'oklch(55% 0.13 300)',
+        },
       },
 
       fontFamily: {

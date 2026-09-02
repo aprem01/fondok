@@ -10,7 +10,6 @@ import { api, isWorkerConnected } from '@/lib/api';
 import { useEngineRun } from '@/lib/hooks/useEngineRun';
 import EngineHeader from './EngineHeader';
 import EngineRightRail from './EngineRightRail';
-import EngineLegend from './EngineLegend';
 import EngineRunHistory from './EngineRunHistory';
 import WhatJustHappened from './WhatJustHappened';
 import type { EngineOutputsResponse } from '@/lib/api';
@@ -238,7 +237,6 @@ export default function DebtTab() {
               setRunToken(Date.now());
             }}
           />
-          <EngineLegend />
           <Card className="p-16 text-center">
             <div className="w-12 h-12 rounded-lg bg-ink-300/20 flex items-center justify-center mx-auto mb-4">
               <DollarSign size={20} className="text-ink-400" />
@@ -314,7 +312,6 @@ export default function DebtTab() {
           </button>
         ))}
       </div>
-      <EngineLegend />
 
       {tab === 'Capital Stack' && (
         <CapitalStack
