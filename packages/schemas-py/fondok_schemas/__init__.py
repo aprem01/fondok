@@ -91,13 +91,22 @@ from .pipeline_filter import (
     SavedPipelineView,
 )
 from .portfolio_library import PortfolioLibraryEntry
-from .provenance import ProvenanceMap, ValueInput, ValueTrace
+from .provenance import (
+    ProvenanceMap,
+    State,
+    ValueInput,
+    ValueTrace,
+    apply_states,
+    classify_state,
+)
 from .scenario import Scenario, ScenarioOverride
 from .underwriting import (
     CapexPlan,
     CapexScheduleYear,
     CashFlowEngineInput,
     CashFlowEngineOutput,
+    CashFlowStatementLine,
+    CashFlowStatementOutput,
     CashFlowYear,
     DebtEngineInput,
     DebtEngineOutput,
@@ -226,8 +235,11 @@ __all__ = [
     "PortfolioLibraryEntry",
     # provenance (FON-25 / FON-27 — modeled-value provenance & rationale)
     "ProvenanceMap",
+    "State",
     "ValueInput",
     "ValueTrace",
+    "apply_states",
+    "classify_state",
     # scenario (Wave 3 W3.2 — named what-if scenarios)
     "Scenario",
     "ScenarioOverride",
@@ -236,6 +248,8 @@ __all__ = [
     "CapexScheduleYear",
     "CashFlowEngineInput",
     "CashFlowEngineOutput",
+    "CashFlowStatementLine",
+    "CashFlowStatementOutput",
     "CashFlowYear",
     "DebtEngineInput",
     "DebtEngineOutput",

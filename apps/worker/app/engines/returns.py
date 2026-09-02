@@ -13,7 +13,7 @@ from uuid import UUID
 from pydantic import BaseModel, ConfigDict, Field
 
 from fondok_schemas.financial import ModelAssumptions
-from fondok_schemas.provenance import ValueInput, ValueTrace
+from fondok_schemas.provenance import ValueInput, ValueTrace, apply_states
 from fondok_schemas.underwriting import (
     CashFlowEngineOutput,
     CashFlowYear,
@@ -570,7 +570,7 @@ class ReturnsEngine(BaseEngine[ReturnsEngineInputExt, ReturnsEngineOutputExt]):
             terminal_noi=terminal_noi,
             cash_flows=levered_flows,
             cash_flows_unlevered=unlevered_flows,
-            provenance={
+            provenance=apply_states({
                 **_exit_value_provenance(
                     terminal_noi=terminal_noi,
                     exit_cap_rate=assumptions.exit_cap_rate,
@@ -589,7 +589,7 @@ class ReturnsEngine(BaseEngine[ReturnsEngineInputExt, ReturnsEngineOutputExt]):
                     unlevered_irr=unlevered_irr,
                     unlevered_flows=unlevered_flows,
                 ),
-            },
+            }),
         )
 
 
@@ -647,7 +647,7 @@ def returns_from_cash_flow(
         terminal_noi=payload.terminal_noi,
         cash_flows=levered_flows,
         cash_flows_unlevered=unlevered_flows,
-        provenance={
+        provenance=apply_states({
             **_exit_value_provenance(
                 terminal_noi=payload.terminal_noi,
                 exit_cap_rate=assumptions.exit_cap_rate,
@@ -666,7 +666,7 @@ def returns_from_cash_flow(
                 unlevered_irr=unl_irr,
                 unlevered_flows=unlevered_flows,
             ),
-        },
+        }),
     )
 
 

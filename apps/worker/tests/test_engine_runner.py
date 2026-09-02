@@ -167,7 +167,8 @@ async def test_engine_failure_doesnt_block_independent_engines() -> None:
 
 @pytest.mark.asyncio
 async def test_run_persists_to_db() -> None:
-    """run_all → engine_outputs has 8 rows, all 'complete', for the run."""
+    """run_all → engine_outputs has one row per engine (9 incl. cash_flow),
+    all 'complete', for the run."""
     from app.database import get_session_factory
     from app.services.engine_runner import (
         ENGINE_NAMES,
@@ -467,6 +468,129 @@ async def test_run_scoped_outputs_canonical_and_fallback() -> None:
         )
     assert "revenue" in scoped
     assert set(scoped) <= set(ENGINE_NAMES)
+
+
+async def _insert_engine_row(
+    session,
+    *,
+    deal_id: str,
+    tenant_id: str,
+    run_id: str,
+    engine_name: str,
+    started_at: str,
+) -> None:
+    """Insert a minimal complete engine_outputs row (canonical-gating tests)."""
+    from uuid import uuid4 as _uuid4
+
+    from app.services.engine_runner import _coerce_uuid
+
+    await session.execute(
+        text(
+            """
+            INSERT INTO engine_outputs (
+                id, deal_id, tenant_id, run_id, engine_name,
+                status, inputs, outputs, error,
+                started_at, completed_at, runtime_ms
+            ) VALUES (
+                :id, :deal, :tenant, :run, :engine,
+                'complete', NULL, '{}', NULL,
+                :started_at, :started_at, 1
+            )
+            """
+        ),
+        {
+            "id": str(_uuid4()),
+            "deal": str(_coerce_uuid(deal_id)),
+            "tenant": tenant_id,
+            "run": run_id,
+            "engine": engine_name,
+            "started_at": started_at,
+        },
+    )
+
+
+@pytest.mark.asyncio
+async def test_canonical_gates_on_base_engines_not_cashflow() -> None:
+    """Move 2 — canonical gating counts the 8 BASE engines, ignoring cash_flow.
+
+    * An existing 8-base-engine run (no cash_flow row — the pre-Move-2 shape)
+      stays canonical with NO backfill.
+    * A later LONE cash_flow re-run (1 row, not a base engine) can't hijack
+      canonical — it has zero base engines (0 < 8).
+    """
+    from app.database import get_session_factory
+    from app.services.engine_runner import CANONICAL_ENGINES, get_canonical_run_id
+
+    deal_id = "kimpton-angler-2026"
+    tenant_id = str(uuid4())
+    run_base = str(uuid4())
+    run_cf = str(uuid4())
+
+    factory = get_session_factory()
+    async with factory() as session:
+        # A full 8-base-engine run, no cash_flow row (legacy shape).
+        for i, name in enumerate(CANONICAL_ENGINES):
+            await _insert_engine_row(
+                session, deal_id=deal_id, tenant_id=tenant_id, run_id=run_base,
+                engine_name=name, started_at=f"2026-01-01T00:00:{i:02d}",
+            )
+        await session.commit()
+
+        canonical = await get_canonical_run_id(
+            session, deal_id=deal_id, tenant_id=tenant_id
+        )
+        assert canonical == run_base, "8-base-engine run must stay canonical"
+
+        # A LATER lone cash_flow re-run — newest started_at, single row.
+        await _insert_engine_row(
+            session, deal_id=deal_id, tenant_id=tenant_id, run_id=run_cf,
+            engine_name="cash_flow", started_at="2026-01-01T01:00:00",
+        )
+        await session.commit()
+
+        canonical = await get_canonical_run_id(
+            session, deal_id=deal_id, tenant_id=tenant_id
+        )
+        assert canonical == run_base, (
+            "a lone cash_flow re-run must not become canonical"
+        )
+
+
+@pytest.mark.asyncio
+async def test_nine_engine_run_is_canonical() -> None:
+    """Move 2 — a real full chain (9 engines incl. cash_flow) is canonical, and
+    the cash_flow row is present, complete, and served by the run-scoped read."""
+    from app.database import get_session_factory
+    from app.services.engine_runner import (
+        ENGINE_NAMES,
+        get_canonical_run_id,
+        get_run_scoped_outputs,
+        run_all_engines,
+    )
+
+    deal_id = "kimpton-angler-2026"
+    tenant_id = str(uuid4())
+    run_id = str(uuid4())
+
+    factory = get_session_factory()
+    async with factory() as session:
+        results = await run_all_engines(
+            session, deal_id=deal_id, tenant_id=tenant_id, run_id=run_id
+        )
+        assert "cash_flow" in results
+        assert results["cash_flow"]["status"] == "complete"
+
+        canonical = await get_canonical_run_id(
+            session, deal_id=deal_id, tenant_id=tenant_id
+        )
+        assert canonical == run_id, "9-engine full chain must be canonical"
+
+        scoped = await get_run_scoped_outputs(
+            session, deal_id=deal_id, tenant_id=tenant_id
+        )
+        assert set(scoped) == set(ENGINE_NAMES)
+        assert "cash_flow" in scoped
+        assert {v["run_id"] for v in scoped.values()} == {run_id}
 
 
 @pytest.mark.asyncio

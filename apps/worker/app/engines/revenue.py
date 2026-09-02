@@ -26,7 +26,7 @@ legacy ``y1_*_displacement_pct`` math byte-for-byte.
 
 from __future__ import annotations
 
-from fondok_schemas.provenance import ValueInput, ValueTrace
+from fondok_schemas.provenance import ValueInput, ValueTrace, apply_states
 from fondok_schemas.underwriting import (
     PIPDisplacement,
     RevenueEngineInput,
@@ -405,7 +405,7 @@ class RevenueEngine(BaseEngine[RevenueEngineInput, RevenueEngineOutput]):
             deal_id=payload.deal_id,
             years=years,
             total_revenue_cagr=cagr,
-            provenance=prov,
+            provenance=apply_states(prov),
         )
 
 

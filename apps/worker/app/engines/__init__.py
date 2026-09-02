@@ -8,6 +8,7 @@ re-implements their math.
 
 from .base import BaseEngine, EngineInput, EngineOutput
 from .capital import CapitalEngine, CapitalEngineInput, CapitalEngineOutput
+from .cash_flow import CashFlowStatementEngine, CashFlowStatementInput
 from .debt import (
     DebtEngine,
     DebtEngineInputExt,
@@ -55,6 +56,8 @@ __all__ = [
     "CapitalEngine",
     "CapitalEngineInput",
     "CapitalEngineOutput",
+    "CashFlowStatementEngine",
+    "CashFlowStatementInput",
     "DebtEngine",
     "DebtEngineInputExt",
     "DebtEngineOutputExt",

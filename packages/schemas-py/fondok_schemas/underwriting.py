@@ -501,6 +501,56 @@ class CashFlowEngineOutput(BaseModel):
     years: list[CashFlowYear]
 
 
+# ─────────────── Cash Flow Statement (Move 2 — composed view) ───────────────
+#
+# The composed, line-itemized levered/unlevered cash-flow statement +
+# distributions the Cash Flow tab renders. Unlike the thin
+# ``CashFlowEngineOutput`` above, this is a *view* over the canonical engine
+# outputs (capital / expense / debt / returns / partnership): every bottom
+# line ties out to the returns engine's ``cash_flows`` / ``cash_flows_unlevered``
+# to the cent. It never re-derives IRR/NOI/debt-service math — it relocates
+# what the frontend used to assemble ad hoc into one reconciled server output.
+
+
+class CashFlowStatementLine(BaseModel):
+    """One row of the cash-flow statement.
+
+    ``values`` is indexed by period: index 0 = at close (Year 0), indices
+    1..N = operating years 1..N. A ``None`` marks a period the row doesn't
+    touch (rendered as an em-dash). ``kind`` distinguishes a value pulled
+    straight from another engine (``linked``) from one this view computes by
+    summing its component rows (``calc``).
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    label: str
+    values: list[float | None]
+    kind: Literal["linked", "calc"]
+    note: str | None = None
+
+
+class CashFlowStatementOutput(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    deal_id: UUID
+    hold_years: Annotated[int, Field(ge=1, le=20)]
+    # Line-itemized statements. ``unlevered`` / ``levered`` values are indexed
+    # 0..hold (index 0 = close); ``distributions`` values are indexed by
+    # operating period (year 1..hold) as sourced from the partnership waterfall.
+    unlevered: list[CashFlowStatementLine]
+    levered: list[CashFlowStatementLine]
+    distributions: list[CashFlowStatementLine]
+    # Canonical bottom-line series — a direct view over the returns engine, so
+    # consumers (and the reconciliation guard) can compare without re-summing.
+    unlevered_cash_flow: list[float]
+    levered_cash_flow: list[float]
+    # FON-25/65 — per-row provenance sidecar. Keyed by dotted row path
+    # (e.g. "levered.net_cash_flow_to_equity"); each trace carries a ``state``
+    # emitted directly from the row's linked/calc kind.
+    provenance: dict[str, ValueTrace] = Field(default_factory=dict)
+
+
 # ─────────────── Returns Engine ───────────────
 
 

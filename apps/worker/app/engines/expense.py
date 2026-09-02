@@ -20,7 +20,7 @@ from uuid import UUID
 from pydantic import BaseModel, ConfigDict, Field
 
 from fondok_schemas.financial import DepartmentalExpenses, FixedCharges, UndistributedExpenses
-from fondok_schemas.provenance import ValueInput, ValueTrace
+from fondok_schemas.provenance import ValueInput, ValueTrace, apply_states
 
 from .base import BaseEngine
 from .fb_revenue import FBRevenueOutput
@@ -409,7 +409,7 @@ class ExpenseEngine(BaseEngine[ExpenseEngineInput, ExpenseEngineOutput]):
             years=years,
             noi_cagr=noi_cagr,
             sourced_from_t12=sourced,
-            provenance=prov,
+            provenance=apply_states(prov),
         )
 
 

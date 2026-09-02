@@ -26,7 +26,7 @@ from fondok_schemas.debt_stack import (
     TrancheAmortYear,
     TrancheSchedule,
 )
-from fondok_schemas.provenance import ValueInput, ValueTrace
+from fondok_schemas.provenance import ValueInput, ValueTrace, apply_states
 from fondok_schemas.underwriting import (
     DebtEngineInput,
     DebtEngineOutput,
@@ -560,7 +560,7 @@ class DebtEngine(BaseEngine[DebtEngineInputExt, DebtEngineOutputExt]):
             refi_cash_out=refi_cash_out,
             refi_year=refi_year_out,
             balance_at_exit=balance_at_exit_out,
-            provenance=prov,
+            provenance=apply_states(prov),
         )
 
 

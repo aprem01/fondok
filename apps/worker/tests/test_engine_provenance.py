@@ -226,6 +226,52 @@ def test_returns_irr_traced_as_calculated() -> None:
     _assert_no_dangling(prov)
 
 
+# ──────────────────────── FON-65 state classifier ────────────────────────
+
+
+def test_classify_state_maps_each_signal() -> None:
+    """The classifier derives a grounding state from data the trace carries."""
+    from fondok_schemas.provenance import ValueInput, ValueTrace, classify_state
+
+    # formula/inputs → calculated
+    assert classify_state(ValueTrace(value=1.0, formula="x = y + z")) == "calculated"
+    # subject's own docs / market comps → document_sourced
+    assert classify_state(ValueTrace(value=1.0), "t12_actual") == "document_sourced"
+    assert classify_state(ValueTrace(value=1.0), "om_comps") == "document_sourced"
+    # seed / analyst override / *_default → assumption
+    assert classify_state(ValueTrace(value=1.0), "seed") == "assumption"
+    assert classify_state(ValueTrace(value=1.0), "analyst_override") == "assumption"
+    assert classify_state(ValueTrace(value=1.0), "capex_ffe_default") == "assumption"
+    # an input that links to ANOTHER engine's value → linked
+    cross = ValueTrace(
+        value=1.0,
+        inputs=[ValueInput(name="noi", value=1.0, traces_to="expense.years[0].noi")],
+    )
+    assert classify_state(cross) == "linked"
+    # a same-engine traces_to is NOT cross-engine — a bona-fide calc.
+    same = ValueTrace(
+        value=1.0,
+        formula="dscr = noi ÷ ds",
+        inputs=[ValueInput(name="ds", value=1.0, traces_to="schedule[0].debt_service")],
+    )
+    assert classify_state(same) == "calculated"
+
+
+def test_engines_tag_provenance_state() -> None:
+    """The four provenance-emitting engines set ``state`` on every trace, and
+    their computed waterfall values read as ``calculated``."""
+    for out in (
+        ExpenseEngine().run(_expense_input()),
+        DebtEngine().run(_debt_input()),
+        ReturnsEngine().run(_returns_input()),
+    ):
+        assert out.provenance
+        for trace in out.provenance.values():
+            assert trace.state is not None
+        # These are all formula-computed values.
+        assert all(t.state == "calculated" for t in out.provenance.values())
+
+
 def test_unlevered_basis_is_total_capital_not_purchase() -> None:
     """Unlevered Year-0 outflow must be TOTAL invested capital (equity + loan),
     not just purchase_price. Using purchase_price understated the basis and

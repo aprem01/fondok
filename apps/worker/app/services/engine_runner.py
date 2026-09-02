@@ -68,6 +68,7 @@ from ..engines import (
     SensitivityInput,
     SensitivitySpec,
 )
+from ..engines.cash_flow import CashFlowStatementEngine, CashFlowStatementInput
 from fondok_schemas.underwriting import (
     PIPDisplacement,
     RevenueEngineInput,
@@ -112,7 +113,29 @@ _DEFAULT_SEGMENT_ADR_RATIO: dict[str, float] = {
 }
 
 
-# Canonical engine identifiers — match what the web app posts.
+# The BASE engines that define a *canonical run* (FON-73). A deal-wide run is
+# canonical only when it has all of these — the full ``run_all_engines`` chain,
+# not a lone single-engine re-run. Kept separate from ``ENGINE_NAMES`` so that
+# additive, composed *views* (e.g. ``cash_flow``, Move 2) can be part of the run
+# and served, yet never count toward — or hijack — canonical gating. A lone
+# ``cash_flow`` re-run has zero base engines (0 < 8) and can't become canonical;
+# existing 8-engine runs stay canonical with no backfill.
+CANONICAL_ENGINES: tuple[str, ...] = (
+    "revenue",
+    "fb",
+    "expense",
+    "capital",
+    "debt",
+    "returns",
+    "sensitivity",
+    "partnership",
+)
+
+
+# Canonical engine identifiers — match what the web app posts. ``cash_flow``
+# (Move 2) is LAST: a composed view over the base engines' canonical outputs,
+# run after them and served like any engine, but excluded from canonical
+# gating (see ``CANONICAL_ENGINES``).
 ENGINE_NAMES: tuple[str, ...] = (
     "revenue",
     "fb",
@@ -122,6 +145,7 @@ ENGINE_NAMES: tuple[str, ...] = (
     "returns",
     "sensitivity",
     "partnership",
+    "cash_flow",
 )
 
 
@@ -134,6 +158,7 @@ ENGINE_REGISTRY: dict[str, type] = {
     "returns": ReturnsEngine,
     "sensitivity": SensitivityEngine,
     "partnership": PartnershipEngine,
+    "cash_flow": CashFlowStatementEngine,
 }
 
 
@@ -149,6 +174,8 @@ ENGINE_DEPS: dict[str, list[str]] = {
     "returns": ["expense", "debt", "capital"],
     "sensitivity": ["returns"],
     "partnership": ["returns", "capital"],
+    # Move 2 — a composed view over the canonical outputs; runs LAST.
+    "cash_flow": ["capital", "expense", "debt", "returns", "partnership"],
 }
 
 
@@ -3893,6 +3920,29 @@ def _build_input_for(
             ),
         )
 
+    if engine_name == "cash_flow":
+        # Move 2 — a composed VIEW over the canonical outputs. It re-derives no
+        # math; it decomposes the returns engine's cash-flow series into legible
+        # line items and reconciles to the cent. Pull only the disposition /
+        # phased-capital scalars that live on the assumptions rather than any
+        # single engine output, so the unlevered stream ties out for
+        # transfer-tax and deferred-capital deals.
+        _dc = base.get("deferred_capital")
+        _dcy = base.get("deferred_capital_year")
+        return CashFlowStatementInput(
+            deal_id=deal_uuid,
+            capital=accumulated["capital"],
+            expense=accumulated["expense"],
+            debt=accumulated["debt"],
+            returns=accumulated["returns"],
+            partnership=accumulated["partnership"],
+            transfer_tax_pct=float(base.get("transfer_tax_pct") or 0.0),
+            deferred_capital=float(_dc) if _dc not in (None, "") else 0.0,
+            deferred_capital_year=(
+                int(float(_dcy)) if _dcy not in (None, "") else None
+            ),
+        )
+
     raise ValueError(f"unknown engine: {engine_name!r}")
 
 
@@ -4059,6 +4109,9 @@ def _summary_for(engine_name: str, output: BaseModel) -> str:
                 f"LP IRR {output.lp.irr * 100:.1f}% "
                 f"· GP IRR {output.gp.irr * 100:.1f}%"
             )
+        if engine_name == "cash_flow":
+            lev = sum(output.levered_cash_flow[1:]) if output.levered_cash_flow else 0.0
+            return f"Levered CF ${lev / 1e6:.2f}M"
     except Exception:
         return ""
     return ""
@@ -4427,20 +4480,38 @@ async def get_canonical_run_id(
     # Candidate full-chain runs, newest first. COUNT(DISTINCT engine_name)
     # and MAX(started_at) behave identically on both dialects (started_at
     # is TIMESTAMPTZ on PG, ISO-8601 TEXT on SQLite — both sort correctly).
+    #
+    # FON-73 / Move 2: gate on the BASE engines only. Restricting the count to
+    # ``engine_name IN CANONICAL_ENGINES`` (and requiring all 8) means a run is
+    # canonical iff it has the full base chain — composed views like
+    # ``cash_flow`` neither count toward nor can hijack canonical (a lone
+    # cash_flow re-run has 0 base engines). Existing 8-engine runs stay
+    # canonical with no backfill.
+    _canon_placeholders = ", ".join(
+        f":canon_{i}" for i in range(len(CANONICAL_ENGINES))
+    )
+    _params: dict[str, Any] = {
+        "deal": deal,
+        "tenant": tenant,
+        "engine_count": len(CANONICAL_ENGINES),
+    }
+    for i, name in enumerate(CANONICAL_ENGINES):
+        _params[f"canon_{i}"] = name
     rows = await session.execute(
         text(
             # tenant-scope predicate required by tenant_middleware
-            """
+            f"""
             SELECT run_id
               FROM engine_outputs
              WHERE deal_id = :deal AND tenant_id = :tenant
                AND run_id IS NOT NULL
+               AND engine_name IN ({_canon_placeholders})
              GROUP BY run_id
             HAVING COUNT(DISTINCT engine_name) >= :engine_count
              ORDER BY MAX(started_at) DESC
             """
         ),
-        {"deal": deal, "tenant": tenant, "engine_count": len(ENGINE_NAMES)},
+        _params,
     )
     for r in rows.fetchall():
         run_id = r._mapping["run_id"]
@@ -4566,6 +4637,10 @@ def _summary_from_dict(engine_name: str, output: dict[str, Any]) -> str:
                 f"LP IRR {lp.get('irr', 0) * 100:.1f}% "
                 f"· GP IRR {gp.get('irr', 0) * 100:.1f}%"
             )
+        if engine_name == "cash_flow":
+            lev = output.get("levered_cash_flow") or []
+            total = sum(lev[1:]) if len(lev) > 1 else 0.0
+            return f"Levered CF ${total / 1e6:.2f}M"
     except Exception:
         return ""
     return ""
@@ -4580,6 +4655,7 @@ def _coerce_iso(value: Any) -> str | None:
 
 
 __all__ = [
+    "CANONICAL_ENGINES",
     "ENGINE_DEPS",
     "ENGINE_NAMES",
     "ENGINE_REGISTRY",

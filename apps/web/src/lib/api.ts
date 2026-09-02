@@ -273,6 +273,16 @@ export interface ValueInput {
   traces_to?: string | null;
 }
 
+/** Per-value grounding classification (FON-65). Mirrors
+ *  fondok_schemas.provenance.State — a single consistent badge across engines. */
+export type ValueState =
+  | 'document_sourced'
+  | 'linked'
+  | 'assumption'
+  | 'calculated'
+  | 'awaiting_data'
+  | 'needs_review';
+
 /** Provenance + calculation rationale for one modeled output value. */
 export interface ValueTrace {
   value: number;
@@ -282,6 +292,8 @@ export interface ValueTrace {
   /** SOURCE_* label for values read straight from a source (not computed). */
   source?: string | null;
   note?: string | null;
+  /** How grounded the value is — derived server-side (FON-65). */
+  state?: ValueState | null;
 }
 
 /** GET /deals/{id}/provenance — per-value calculation provenance for the
