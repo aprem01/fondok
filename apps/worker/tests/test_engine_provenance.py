@@ -283,3 +283,26 @@ def test_unlevered_basis_is_total_capital_not_purchase() -> None:
     assert abs(year0 - expected) < TOL, (year0, expected)
     # And it must NOT be the old -purchase_price basis.
     assert abs(year0 + inp.assumptions.purchase_price) > 1.0
+
+
+def test_returns_coc_kpis_have_provenance() -> None:
+    """FON-72 gap-fill — the Returns tab's Year-1 + average cash-on-cash KPIs
+    now carry a traced, state-tagged provenance entry (they shipped without
+    one)."""
+    out = ReturnsEngine().run(_returns_input())
+    assert "year_one_coc" in out.provenance
+    assert "avg_coc" in out.provenance
+    for key in ("year_one_coc", "avg_coc"):
+        tr = out.provenance[key]
+        assert tr.state == "calculated"
+        assert abs(tr.value - getattr(out, key)) < 1e-9
+
+
+def test_debt_headline_covenant_metrics_have_provenance() -> None:
+    """FON-72 gap-fill — Year-1 DSCR + debt yield (the Debt tab headline
+    covenant badges) carry provenance, not just the per-year schedule rows."""
+    out = DebtEngine().run(_debt_input())
+    assert "year_one_dscr" in out.provenance
+    assert "year_one_debt_yield" in out.provenance
+    assert out.provenance["year_one_dscr"].state == "calculated"
+    assert out.provenance["year_one_debt_yield"].state == "calculated"

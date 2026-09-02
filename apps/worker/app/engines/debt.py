@@ -13,7 +13,7 @@ schedule identically — see ``test_single_senior_tranche_matches_legacy_single_
 
 from __future__ import annotations
 
-from typing import Annotated, Any
+from typing import Annotated, Any, Literal
 from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field
@@ -74,6 +74,115 @@ class DebtMonth(BaseModel):
     ending_balance: Annotated[float, Field(ge=0)]
 
 
+class DebtCovenantStatus(BaseModel):
+    """One covenant test with its live reading (FON-72 Debt tab).
+
+    Lets the Debt tab render each covenant's Current value and its Headroom vs
+    the threshold instead of hardcoding a static covenant table. LTV / LTC are
+    ceilings (``kind="max"``); DSCR / debt-yield are floors (``kind="min"``).
+
+    ``headroom`` is signed room toward a breach — for a ceiling it is
+    ``threshold − current`` (positive = still under the cap); for a floor it is
+    ``current − threshold`` (positive = still above the floor). ``current`` /
+    ``threshold`` / ``headroom`` / ``passes`` are all null when the underlying
+    metric can't be computed yet (e.g. no purchase price for LTV), so the tab
+    shows "—/awaiting" rather than a fabricated pass.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    name: Literal["ltv", "ltc", "dscr", "debt_yield"]
+    label: str
+    kind: Literal["max", "min"]
+    current: float | None = None
+    threshold: float | None = None
+    headroom: float | None = None
+    passes: bool | None = None
+
+
+# FON-72 — institutional covenant defaults (Kimpton Angler senior package:
+# 65% LTV / 1.25x combined DSCR / 10% debt yield). Analyst-overridable via the
+# ``covenant_*`` keys on ``debt_stack_overrides``. LTC has no source default so
+# a conservative 75% ceiling is used until an analyst sets one.
+_COVENANT_DEFAULTS: dict[str, float] = {
+    "max_ltv": 0.65,
+    "max_ltc": 0.75,
+    "min_dscr": 1.25,
+    "min_debt_yield": 0.10,
+}
+
+
+def _covenant_thresholds(overrides: dict[str, Any] | None) -> dict[str, float]:
+    """Resolve covenant thresholds from analyst overrides, else defaults."""
+    ov = overrides or {}
+
+    def _f(key: str, default: float) -> float:
+        v = ov.get(key)
+        try:
+            return float(v) if v is not None else default
+        except (TypeError, ValueError):
+            return default
+
+    return {
+        "max_ltv": _f("covenant_max_ltv", _COVENANT_DEFAULTS["max_ltv"]),
+        "max_ltc": _f("covenant_max_ltc", _COVENANT_DEFAULTS["max_ltc"]),
+        "min_dscr": _f("covenant_min_dscr", _COVENANT_DEFAULTS["min_dscr"]),
+        "min_debt_yield": _f(
+            "covenant_min_debt_yield", _COVENANT_DEFAULTS["min_debt_yield"]
+        ),
+    }
+
+
+def _build_covenant_statuses(
+    *,
+    ltv: float | None,
+    ltc: float | None,
+    dscr: float | None,
+    debt_yield: float | None,
+    thresholds: dict[str, float],
+) -> list[DebtCovenantStatus]:
+    """Assemble the four covenant readings (current + headroom vs threshold)."""
+
+    def _status(
+        name: str,
+        label: str,
+        kind: str,
+        current: float | None,
+        threshold: float | None,
+    ) -> DebtCovenantStatus:
+        headroom: float | None = None
+        passes: bool | None = None
+        if current is not None and threshold is not None:
+            if kind == "max":
+                headroom = threshold - current
+                passes = current <= threshold
+            else:
+                headroom = current - threshold
+                passes = current >= threshold
+        return DebtCovenantStatus(
+            name=name,  # type: ignore[arg-type]
+            label=label,
+            kind=kind,  # type: ignore[arg-type]
+            current=current,
+            threshold=threshold,
+            headroom=headroom,
+            passes=passes,
+        )
+
+    return [
+        _status("ltv", "Loan-to-Value", "max", ltv, thresholds["max_ltv"]),
+        _status("ltc", "Loan-to-Cost", "max", ltc, thresholds["max_ltc"]),
+        _status("dscr", "DSCR (Year 1)", "min", dscr, thresholds["min_dscr"]),
+        _status(
+            "debt_yield",
+            "Debt Yield (Year 1)",
+            "min",
+            debt_yield,
+            thresholds["min_debt_yield"],
+        ),
+    ]
+
+
 class DebtEngineOutputExt(DebtEngineOutput):
     """Debt output enriched with DSCR, debt-yield and a monthly schedule.
 
@@ -111,6 +220,19 @@ class DebtEngineOutputExt(DebtEngineOutput):
     refi_cash_out: Annotated[float, Field(ge=0)] = 0.0
     refi_year: Annotated[int, Field(ge=1)] | None = None
     balance_at_exit: Annotated[float, Field(ge=0)] | None = None
+    # FON-72 — surface the senior tranche's financing fees so the Debt tab's
+    # "Financing Fees" line reads from the engine, not a placeholder. The pct
+    # fields echo the (analyst-editable) senior tranche fees; the USD figures
+    # aggregate every priced tranche using the codebase's percent convention
+    # (fee_pct is a 0..10 percent, e.g. 1.0 = 1.00%). All 0.0 by default.
+    origination_fee_pct: Annotated[float, Field(ge=0)] | None = None
+    exit_fee_pct: Annotated[float, Field(ge=0)] | None = None
+    origination_fee_usd: Annotated[float, Field(ge=0)] | None = None
+    exit_fee_usd: Annotated[float, Field(ge=0)] | None = None
+    # FON-72 — covenant package with each test's live Current value + Headroom
+    # vs its threshold (LTV / LTC / DSCR / debt-yield), so the Debt tab stops
+    # hardcoding the covenant table. Empty only for pre-covenant legacy runs.
+    covenants: list[DebtCovenantStatus] = Field(default_factory=list)
 
 
 def pmt(rate: float, nper: int, pv: float) -> float:
@@ -543,6 +665,55 @@ class DebtEngine(BaseEngine[DebtEngineInputExt, DebtEngineOutputExt]):
                     refi_year_out,
                 ) = computed
 
+        # FON-72 — financing fees. Echo the senior tranche's (analyst-editable)
+        # fee percentages, and aggregate fee dollars across every priced tranche
+        # using the codebase's percent convention (fee_pct/100 × principal, the
+        # same as build_stack_schedule). All 0.0 on a default stack.
+        origination_fee_pct = senior.origination_fee_pct
+        exit_fee_pct = senior.exit_fee_pct
+        origination_fee_usd = sum(
+            t.loan_amount * (t.origination_fee_pct / 100.0) for t in active_tranches
+        )
+        exit_fee_usd = sum(
+            t.loan_amount * (t.exit_fee_pct / 100.0) for t in active_tranches
+        )
+
+        # FON-72 — covenant readings: current value + headroom vs each threshold.
+        # Current LTV/LTC come from the stack (need purchase price / total cost);
+        # DSCR / debt-yield are the Year-1 headline metrics above.
+        thresholds = _covenant_thresholds(payload.debt_stack_overrides)
+        covenants = _build_covenant_statuses(
+            ltv=debt_stack.ltv,
+            ltc=debt_stack.ltc,
+            dscr=year1_dscr,
+            debt_yield=year1_dy,
+            thresholds=thresholds,
+        )
+
+        # FON-72 — provenance for the two headline covenant metrics the Debt tab
+        # badges (Year-1 DSCR + debt yield), so they carry a state tag like the
+        # per-year schedule rows already do.
+        if year1_dscr is not None and payload.noi_by_year:
+            prov["year_one_dscr"] = ValueTrace(
+                value=year1_dscr,
+                formula="year_one_dscr = year_1_noi ÷ annual_debt_service",
+                inputs=[
+                    ValueInput(name="year_1_noi", value=payload.noi_by_year[0]),
+                    ValueInput(name="annual_debt_service", value=annual_ds),
+                ],
+                note="Year-1 stack-wide Debt Service Coverage Ratio.",
+            )
+        if year1_dy is not None and payload.noi_by_year:
+            prov["year_one_debt_yield"] = ValueTrace(
+                value=year1_dy,
+                formula="year_one_debt_yield = year_1_noi ÷ total_debt",
+                inputs=[
+                    ValueInput(name="year_1_noi", value=payload.noi_by_year[0]),
+                    ValueInput(name="total_debt", value=total_debt),
+                ],
+                note="Year-1 debt yield — lender's NOI-to-loan cushion.",
+            )
+
         return DebtEngineOutputExt(
             deal_id=payload.deal_id,
             annual_debt_service=annual_ds,
@@ -560,6 +731,11 @@ class DebtEngine(BaseEngine[DebtEngineInputExt, DebtEngineOutputExt]):
             refi_cash_out=refi_cash_out,
             refi_year=refi_year_out,
             balance_at_exit=balance_at_exit_out,
+            origination_fee_pct=origination_fee_pct,
+            exit_fee_pct=exit_fee_pct,
+            origination_fee_usd=origination_fee_usd,
+            exit_fee_usd=exit_fee_usd,
+            covenants=covenants,
             provenance=apply_states(prov),
         )
 
@@ -873,6 +1049,7 @@ def run_refi_test(
 
 
 __all__ = [
+    "DebtCovenantStatus",
     "DebtEngine",
     "DebtEngineInputExt",
     "DebtEngineOutputExt",

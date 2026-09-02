@@ -91,3 +91,60 @@ def test_engine_runs_on_default_stack() -> None:
     assert out.promote_amount > 0
     assert out.gp.contributed_equity == pytest.approx(1_000_000)
     assert out.lp.contributed_equity == pytest.approx(9_000_000)
+
+
+# ─────────────── FON-72 dollar waterfall + GP catch-up ───────────────
+
+
+def _annual_input(catch_up: bool = False) -> PartnershipInputExt:
+    return PartnershipInputExt(
+        deal_id=uuid4(),
+        total_equity=10_000_000,
+        gp_equity_pct=0.10,
+        lp_equity_pct=0.90,
+        pref_rate=0.08,
+        waterfall=_build_partnership_waterfall(None),
+        cash_flows=[1_000_000, 1_500_000, 2_000_000, 2_500_000, 15_000_000],
+        catch_up=catch_up,
+    )
+
+
+def test_dollar_tiers_reconcile_to_total() -> None:
+    """The 'Allocation of Projected Proceeds' rows must sum to every dollar
+    distributed — the tab's 'Reconciles' badge reads this."""
+    out = PartnershipEngine().run(_annual_input())
+    assert out.tier_allocations, "no dollar tiers emitted"
+    tier_sum = sum(t.total_amount for t in out.tier_allocations)
+    distributed = out.gp.distributions + out.lp.distributions
+    assert tier_sum == pytest.approx(distributed, rel=1e-9, abs=1.0)
+    assert out.total_distributable == pytest.approx(distributed)
+    assert out.reconciles is True
+    # Each row's total equals gp + lp.
+    for t in out.tier_allocations:
+        assert t.total_amount == pytest.approx(t.gp_amount + t.lp_amount)
+    # Return of Capital + Preferred rows are present (annual path decomposes them).
+    kinds = {t.kind for t in out.tier_allocations}
+    assert "return_of_capital" in kinds
+    assert "preferred" in kinds
+
+
+def test_catch_up_tier_present_when_set() -> None:
+    """catch_up=True adds a GP Catch-Up tier row (100% to GP) and still
+    reconciles to the total distributed."""
+    out = PartnershipEngine().run(_annual_input(catch_up=True))
+    catchup_rows = [t for t in out.tier_allocations if t.kind == "catch_up"]
+    assert len(catchup_rows) == 1, "catch-up tier row missing when catch_up set"
+    cu = catchup_rows[0]
+    assert cu.label == "GP Catch-Up"
+    assert cu.lp_amount == pytest.approx(0.0)  # catch-up is GP-only
+    assert cu.gp_amount > 0
+    assert out.catch_up_amount == pytest.approx(cu.gp_amount)
+    # Still fully reconciled.
+    assert out.reconciles is True
+
+
+def test_catch_up_absent_by_default() -> None:
+    """No catch-up row when catch_up is unset — default deals are unchanged."""
+    out = PartnershipEngine().run(_annual_input(catch_up=False))
+    assert not any(t.kind == "catch_up" for t in out.tier_allocations)
+    assert out.catch_up_amount == pytest.approx(0.0)

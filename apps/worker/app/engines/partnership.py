@@ -65,12 +65,42 @@ class PartnershipInputExt(BaseModel):
     close_date: str | None = None
 
 
+class TierAllocation(BaseModel):
+    """One row of the "Allocation of Projected Proceeds" dollar waterfall
+    (FON-72 Partnership tab).
+
+    Each tier reports the dollars that flowed to the GP and LP through that
+    step, plus the row total. The tab renders these as the dollar waterfall and
+    checks that ``Σ total_amount == total_distributable`` for its "Reconciles"
+    badge. ``kind`` groups the four canonical steps; ``label`` is the display
+    string (the hurdle label for promote tiers).
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    label: str
+    kind: Literal["return_of_capital", "preferred", "catch_up", "promote"]
+    gp_amount: float = 0.0
+    lp_amount: float = 0.0
+    total_amount: float = 0.0
+
+
 class PartnershipOutputExt(PartnershipOutput):
     model_config = ConfigDict(extra="forbid")
 
     gp_cash_flows: list[float] = Field(default_factory=list)
     lp_cash_flows: list[float] = Field(default_factory=list)
     promote_amount: Annotated[float, Field(ge=0)] = 0.0
+    # FON-72 — per-tier DOLLAR allocation ("Allocation of Projected Proceeds")
+    # so the tab renders the dollar waterfall without re-deriving it, plus a
+    # reconciliation check. ``total_distributable`` is the total cash actually
+    # distributed to both partners; ``reconciles`` is true when the tier totals
+    # sum to it (to the cent). ``catch_up_amount`` is the GP catch-up dollars
+    # (0 unless ``catch_up`` was set on the input).
+    tier_allocations: list[TierAllocation] = Field(default_factory=list)
+    total_distributable: Annotated[float, Field(ge=0)] = 0.0
+    reconciles: bool = False
+    catch_up_amount: Annotated[float, Field(ge=0)] = 0.0
 
 
 def _lp_irr_to_date(
@@ -78,6 +108,17 @@ def _lp_irr_to_date(
 ) -> float:
     flows = [-lp_contributed] + lp_distributions_so_far
     return irr(flows)
+
+
+def _reconciles(tiers: list["TierAllocation"], distributed: float) -> bool:
+    """True when the tier totals sum to the distributed cash (to the cent).
+
+    Powers the Partnership tab's "Reconciles" badge — the dollar waterfall must
+    account for every distributed dollar. Dollar tolerance so large deals don't
+    fail on floating-point dust.
+    """
+    s = sum(t.total_amount for t in tiers)
+    return abs(s - distributed) < max(1.0, 1e-6 * abs(distributed))
 
 
 def _monthly_period_days(close_iso: str | None, n: int) -> list[float]:
@@ -140,6 +181,10 @@ class PartnershipEngine(BaseEngine[PartnershipInputExt, PartnershipOutputExt]):
         gp_contrib_total = 0.0
         lp_contrib_total = 0.0
         promote_total = 0.0
+        # FON-72 — dollar waterfall by hurdle band (monthly path folds return of
+        # capital + preferred into the lowest hurdle's LP balance, so tiers are
+        # reported per hurdle band rather than as separate ROC/Pref rows).
+        mono_alloc: dict[str, list[float]] = {}  # tier label → [gp, lp]
 
         # Actual/365 day counts between the real month-end cash-flow dates.
         period_days = _monthly_period_days(payload.close_date, len(payload.cash_flows_monthly))
@@ -185,6 +230,9 @@ class PartnershipEngine(BaseEngine[PartnershipInputExt, PartnershipOutputExt]):
                 for j in range(n):
                     lp_bal[j] -= lp_share  # distribution counts toward every hurdle
                 remaining -= dist
+                _slot = mono_alloc.setdefault(t.label, [0.0, 0.0])
+                _slot[0] += gp_share
+                _slot[1] += lp_share
             if remaining > 1e-9:  # residual → top tier
                 top = tiers[-1]
                 ls = remaining * top.lp_split
@@ -194,6 +242,9 @@ class PartnershipEngine(BaseEngine[PartnershipInputExt, PartnershipOutputExt]):
                 gp_take += gs
                 for j in range(n):
                     lp_bal[j] -= ls
+                _slot = mono_alloc.setdefault(top.label, [0.0, 0.0])
+                _slot[0] += gs
+                _slot[1] += ls
             gp_cf.append(gp_take)
             lp_cf.append(lp_take)
 
@@ -215,6 +266,23 @@ class PartnershipEngine(BaseEngine[PartnershipInputExt, PartnershipOutputExt]):
         gp_em = gp_dist / gp_contrib_total if gp_contrib_total else 0.0
         lp_em = lp_dist / lp_contrib_total if lp_contrib_total else 0.0
 
+        # FON-72 — dollar waterfall (by hurdle band), in ascending hurdle order.
+        tier_allocations: list[TierAllocation] = []
+        for t in tiers:
+            slot = mono_alloc.get(t.label)
+            if slot and (slot[0] or slot[1]):
+                tier_allocations.append(
+                    TierAllocation(
+                        label=t.label,
+                        kind="promote",
+                        gp_amount=slot[0],
+                        lp_amount=slot[1],
+                        total_amount=slot[0] + slot[1],
+                    )
+                )
+        total_distributed = gp_dist + lp_dist
+        reconciles = _reconciles(tier_allocations, total_distributed)
+
         return PartnershipOutputExt(
             deal_id=payload.deal_id,
             gp=PartnerReturn(
@@ -235,6 +303,10 @@ class PartnershipEngine(BaseEngine[PartnershipInputExt, PartnershipOutputExt]):
             gp_cash_flows=gp_cf,
             lp_cash_flows=lp_cf,
             promote_amount=promote_total,
+            tier_allocations=tier_allocations,
+            total_distributable=total_distributed,
+            reconciles=reconciles,
+            catch_up_amount=0.0,
         )
 
     def run(self, payload: PartnershipInputExt) -> PartnershipOutputExt:
@@ -258,6 +330,21 @@ class PartnershipEngine(BaseEngine[PartnershipInputExt, PartnershipOutputExt]):
 
         lp_distributions: list[float] = []
 
+        # FON-72 — dollar-waterfall accumulators ("Allocation of Projected
+        # Proceeds"). Bucketed straight from the flows the loop already computes,
+        # so the decomposition never diverges from gp_cf / lp_cf.
+        alloc_roc = [0.0, 0.0]  # [gp, lp]
+        alloc_pref = [0.0, 0.0]
+        alloc_catchup = 0.0     # GP-only
+        alloc_promote: dict[str, list[float]] = {}
+        gp_catchup_paid = 0.0
+        lp_pref_paid_cum = 0.0
+        # Full GP catch-up target ratio = carry / (1 − carry), where carry is the
+        # GP's promote share — the first tier that actually carries a GP split
+        # (the lowest hurdle is usually 100% LP preferred). Only used when
+        # ``catch_up`` is set.
+        _carry = next((t.gp_split for t in tiers_sorted if t.gp_split > 0.0), 0.0)
+
         for cash in payload.cash_flows:
             remaining = cash
             gp_take = 0.0
@@ -278,6 +365,8 @@ class PartnershipEngine(BaseEngine[PartnershipInputExt, PartnershipOutputExt]):
                 gp_take += gp_share
                 lp_take += lp_share
                 remaining -= ret
+                alloc_roc[0] += gp_share
+                alloc_roc[1] += lp_share
 
             # Tier 1 — preferred return, pro-rata until pref accruals are paid
             total_pref = gp_pref_accrued + lp_pref_accrued
@@ -290,6 +379,24 @@ class PartnershipEngine(BaseEngine[PartnershipInputExt, PartnershipOutputExt]):
                 gp_take += gp_share
                 lp_take += lp_share
                 remaining -= pay
+                alloc_pref[0] += gp_share
+                alloc_pref[1] += lp_share
+                lp_pref_paid_cum += lp_share
+
+            # GP catch-up (FON-72) — only when the input opts in. 100% to the GP
+            # until it has caught up to its carry share of the profit distributed
+            # above return of capital: target = carry/(1−carry) × LP pref paid.
+            # No-op for every existing deal (the runner passes catch_up=False), so
+            # default numbers are unchanged.
+            if payload.catch_up and remaining > 0 and 0.0 < _carry < 1.0:
+                target = _carry / (1.0 - _carry) * lp_pref_paid_cum
+                cu = min(remaining, max(0.0, target - gp_catchup_paid))
+                if cu > 0:
+                    gp_take += cu
+                    remaining -= cu
+                    gp_catchup_paid += cu
+                    alloc_catchup += cu
+                    promote_total += cu  # catch-up is promote to the GP
 
             # Promote tiers — climb tiers as cumulative LP IRR clears hurdles
             for tier in tiers_sorted:
@@ -320,6 +427,9 @@ class PartnershipEngine(BaseEngine[PartnershipInputExt, PartnershipOutputExt]):
                     gp_take += gp_share
                     lp_take += lp_share
                     remaining = 0.0
+                    _slot = alloc_promote.setdefault(tier.label, [0.0, 0.0])
+                    _slot[0] += gp_share
+                    _slot[1] += lp_share
                     break
 
             # If we still have residual, it goes to the highest tier
@@ -331,6 +441,9 @@ class PartnershipEngine(BaseEngine[PartnershipInputExt, PartnershipOutputExt]):
                 gp_take += gp_share
                 lp_take += lp_share
                 remaining = 0.0
+                _slot = alloc_promote.setdefault(top.label, [0.0, 0.0])
+                _slot[0] += gp_share
+                _slot[1] += lp_share
 
             gp_cf.append(gp_take)
             lp_cf.append(lp_take)
@@ -346,6 +459,59 @@ class PartnershipEngine(BaseEngine[PartnershipInputExt, PartnershipOutputExt]):
         lp_distributions_total = sum(lp_cf)
         gp_em = gp_distributions_total / gp_eq if gp_eq else 0.0
         lp_em = lp_distributions_total / lp_eq if lp_eq else 0.0
+
+        # FON-72 — assemble the dollar waterfall ("Allocation of Projected
+        # Proceeds"): Return of Capital → Preferred → GP Catch-Up (when opted
+        # in) → promote tiers in hurdle order. Every row is bucketed from the
+        # flows above, so Σ rows == total distributed (the reconcile check).
+        tier_allocations: list[TierAllocation] = []
+        if alloc_roc[0] or alloc_roc[1]:
+            tier_allocations.append(
+                TierAllocation(
+                    label="Return of Capital",
+                    kind="return_of_capital",
+                    gp_amount=alloc_roc[0],
+                    lp_amount=alloc_roc[1],
+                    total_amount=alloc_roc[0] + alloc_roc[1],
+                )
+            )
+        if alloc_pref[0] or alloc_pref[1]:
+            tier_allocations.append(
+                TierAllocation(
+                    label="Preferred Return",
+                    kind="preferred",
+                    gp_amount=alloc_pref[0],
+                    lp_amount=alloc_pref[1],
+                    total_amount=alloc_pref[0] + alloc_pref[1],
+                )
+            )
+        # The catch-up row is present whenever catch_up is set (even at $0), so
+        # the tab can always render the tier when the structure has one.
+        if payload.catch_up:
+            tier_allocations.append(
+                TierAllocation(
+                    label="GP Catch-Up",
+                    kind="catch_up",
+                    gp_amount=alloc_catchup,
+                    lp_amount=0.0,
+                    total_amount=alloc_catchup,
+                )
+            )
+        for tier in tiers_sorted:
+            slot = alloc_promote.get(tier.label)
+            if slot and (slot[0] or slot[1]):
+                tier_allocations.append(
+                    TierAllocation(
+                        label=tier.label,
+                        kind="promote",
+                        gp_amount=slot[0],
+                        lp_amount=slot[1],
+                        total_amount=slot[0] + slot[1],
+                    )
+                )
+
+        total_distributed = gp_distributions_total + lp_distributions_total
+        reconciles = _reconciles(tier_allocations, total_distributed)
 
         return PartnershipOutputExt(
             deal_id=payload.deal_id,
@@ -367,6 +533,10 @@ class PartnershipEngine(BaseEngine[PartnershipInputExt, PartnershipOutputExt]):
             gp_cash_flows=gp_cf,
             lp_cash_flows=lp_cf,
             promote_amount=promote_total,
+            tier_allocations=tier_allocations,
+            total_distributable=total_distributed,
+            reconciles=reconciles,
+            catch_up_amount=alloc_catchup,
         )
 
 
@@ -374,6 +544,7 @@ __all__ = [
     "PartnershipEngine",
     "PartnershipInputExt",
     "PartnershipOutputExt",
+    "TierAllocation",
 ]
 
 

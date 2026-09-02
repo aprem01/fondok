@@ -244,6 +244,10 @@ class TransactionCompEntry(BaseModel):
     cap_rate_pct: float | None = None
     buyer_name: str | None = None
     buyer_type: str | None = None
+    # FON-72 Market Tab — the design's comps table carries both a BUYER and a
+    # SELLER column. Emitted as null (renders "—") when the OM row doesn't
+    # disclose a seller rather than omitting the field.
+    seller: str | None = None
     source_document_id: str | None = None
     source_page: int | None = None
 
@@ -297,6 +301,10 @@ _TXN_FIELD_ALIASES: dict[str, str] = {
     "purchaser": "buyer_name",
     "buyer_type": "buyer_type",
     "buyer_class": "buyer_type",
+    "seller": "seller",
+    "seller_name": "seller",
+    "vendor": "seller",
+    "disposition_by": "seller",
 }
 
 
@@ -440,6 +448,9 @@ async def transaction_comps(
         buyer_type = b.get("buyer_type")
         if buyer_type is not None and not isinstance(buyer_type, str):
             buyer_type = str(buyer_type)
+        seller = b.get("seller")
+        if seller is not None and not isinstance(seller, str):
+            seller = str(seller)
 
         doc_id, page = sources.get(idx, (None, None))
         comps.append(
@@ -453,6 +464,7 @@ async def transaction_comps(
                 cap_rate_pct=cap,
                 buyer_name=buyer_name,
                 buyer_type=buyer_type,
+                seller=seller,
                 source_document_id=doc_id,
                 source_page=page,
             )

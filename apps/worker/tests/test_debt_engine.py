@@ -56,3 +56,77 @@ def test_output_monthly_schedule_populated_for_amortization() -> None:
     assert all(m.payment > 0 for m in out.monthly_schedule)
     # Final ending balance must be lower than the initial loan amount.
     assert out.monthly_schedule[-1].ending_balance < 25_000_000.0
+
+
+# ─────────────────────── FON-72 fees + covenants ─────────────────────
+
+
+def _input_with_basis(**kw):
+    base = _input(**kw)
+    return base.model_copy(
+        update={
+            "purchase_price_usd": 40_000_000.0,
+            "total_capital_usd": 45_000_000.0,
+        }
+    )
+
+
+def test_output_exposes_fee_fields_default_zero() -> None:
+    """Fee fields are always present; a default stack carries 0.0, not None."""
+    out = DebtEngine().run(_input())
+    assert out.origination_fee_pct == pytest.approx(0.0)
+    assert out.exit_fee_pct == pytest.approx(0.0)
+    assert out.origination_fee_usd == pytest.approx(0.0)
+    assert out.exit_fee_usd == pytest.approx(0.0)
+
+
+def test_output_surfaces_senior_fees_from_overrides() -> None:
+    """Analyst upfront/exit fees on the senior tranche surface on the output,
+    with USD aggregated using the percent convention (fee_pct/100 × principal)."""
+    inp = _input(loan=25_000_000.0).model_copy(
+        update={
+            "debt_stack_overrides": {
+                "tranches": {0: {"upfront_fee_pct": 1.0, "exit_fee_pct": 0.5}}
+            }
+        }
+    )
+    out = DebtEngine().run(inp)
+    assert out.origination_fee_pct == pytest.approx(1.0)
+    assert out.exit_fee_pct == pytest.approx(0.5)
+    assert out.origination_fee_usd == pytest.approx(25_000_000.0 * 0.01)
+    assert out.exit_fee_usd == pytest.approx(25_000_000.0 * 0.005)
+
+
+def test_output_exposes_covenant_current_and_headroom() -> None:
+    """Debt output carries LTV/LTC/DSCR/debt-yield covenants, each with a live
+    Current reading and signed Headroom vs the threshold."""
+    out = DebtEngine().run(_input_with_basis(loan=25_000_000.0, noi=2_500_000.0))
+    by = {c.name: c for c in out.covenants}
+    assert set(by) == {"ltv", "ltc", "dscr", "debt_yield"}
+
+    ltv = by["ltv"]
+    assert ltv.kind == "max"
+    assert ltv.current == pytest.approx(25_000_000.0 / 40_000_000.0)  # 0.625
+    assert ltv.threshold == pytest.approx(0.65)
+    # Ceiling headroom = threshold − current (positive = under the cap).
+    assert ltv.headroom == pytest.approx(0.65 - 0.625)
+    assert ltv.passes is True
+
+    dscr = by["dscr"]
+    assert dscr.kind == "min"
+    assert dscr.current is not None and dscr.current > 0
+    # Floor headroom = current − threshold.
+    assert dscr.headroom == pytest.approx(dscr.current - dscr.threshold)
+
+
+def test_covenant_thresholds_are_override_driven() -> None:
+    """A tighter analyst LTV covenant flips the pass/fail + headroom sign."""
+    inp = _input_with_basis(loan=25_000_000.0).model_copy(
+        update={"debt_stack_overrides": {"covenant_max_ltv": 0.60}}
+    )
+    out = DebtEngine().run(inp)
+    ltv = next(c for c in out.covenants if c.name == "ltv")
+    assert ltv.threshold == pytest.approx(0.60)
+    # current 0.625 > 0.60 → breach.
+    assert ltv.passes is False
+    assert ltv.headroom == pytest.approx(0.60 - 0.625)  # negative

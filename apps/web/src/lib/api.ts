@@ -1937,6 +1937,9 @@ export interface CompTransactionRow {
   chain_scale: string | null;
   brand_family: string | null;
   flag: string | null;
+  /** FON-72 — BUYER / SELLER columns from the design comps table. */
+  buyer: string | null;
+  seller: string | null;
   source_document_id: string;
   source_page_number: number | null;
   note: string | null;
@@ -1970,6 +1973,9 @@ export interface TransactionCompEntry {
   cap_rate_pct: number | null;
   buyer_name: string | null;
   buyer_type: string | null;
+  /** FON-72 Market Tab — SELLER column. Null (renders "—") when the OM row
+   *  doesn't disclose a seller. */
+  seller: string | null;
   source_document_id: string | null;
   source_page: number | null;
 }
@@ -1980,6 +1986,63 @@ export interface TransactionCompsResult {
   median_price_per_key: number | null;
   median_cap_rate_pct: number | null;
   note: string | null;
+}
+
+// ─── Debt fees + covenants (FON-72) ─────────────────────────────────
+// Additive fields on the `debt` engine output (read via getEngineField).
+// Mirrors apps/worker/app/engines/debt.py DebtEngineOutputExt.
+
+/** One covenant test with its live Current reading + Headroom vs threshold.
+ *  LTV/LTC are ceilings (kind='max'); DSCR/debt_yield are floors (kind='min').
+ *  headroom is signed room toward a breach: max → threshold−current,
+ *  min → current−threshold. All null when the metric can't be computed yet. */
+export interface DebtCovenantStatus {
+  name: 'ltv' | 'ltc' | 'dscr' | 'debt_yield';
+  label: string;
+  kind: 'max' | 'min';
+  current: number | null;
+  threshold: number | null;
+  headroom: number | null;
+  passes: boolean | null;
+}
+
+/** Additive fee/covenant fields on the debt engine output. Not a full mirror
+ *  of DebtEngineOutputExt — just the FON-72 Wave-0 additions the Debt tab reads
+ *  so it stops hardcoding fees + covenants. */
+export interface DebtEngineOutputExtras {
+  /** Senior tranche fee percentages (0..10 percent, e.g. 1.0 = 1.00%). */
+  origination_fee_pct: number | null;
+  exit_fee_pct: number | null;
+  /** Fee dollars aggregated across priced tranches. */
+  origination_fee_usd: number | null;
+  exit_fee_usd: number | null;
+  /** LTV / LTC / DSCR / debt-yield covenants with current + headroom. */
+  covenants: DebtCovenantStatus[];
+}
+
+// ─── Partnership dollar waterfall (FON-72) ──────────────────────────
+// Additive fields on the `partnership` engine output (read via getEngineField).
+// Mirrors apps/worker/app/engines/partnership.py PartnershipOutputExt.
+
+/** One row of the "Allocation of Projected Proceeds" dollar waterfall. */
+export interface PartnershipTierAllocation {
+  label: string;
+  kind: 'return_of_capital' | 'preferred' | 'catch_up' | 'promote';
+  gp_amount: number;
+  lp_amount: number;
+  total_amount: number;
+}
+
+/** Additive dollar-waterfall fields on the partnership engine output. */
+export interface PartnershipOutputExtras {
+  /** Per-tier dollar allocation; Σ total_amount === total_distributable. */
+  tier_allocations: PartnershipTierAllocation[];
+  /** Total cash distributed to both partners (the reconcile target). */
+  total_distributable: number;
+  /** True when the tier totals reconcile to total_distributable. */
+  reconciles: boolean;
+  /** GP catch-up dollars (0 unless the deal opts into a catch-up). */
+  catch_up_amount: number;
 }
 
 // ─── Document Coverage (ROADMAP #7) ─────────────────────────────────

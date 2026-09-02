@@ -2423,6 +2423,13 @@ async def _load_comp_transactions(
                 "brand_family": "brand_family",
                 "flag": "flag",
                 "note": "note",
+                # FON-72 — buyer / seller (design comps table columns).
+                "buyer": "buyer",
+                "buyer_name": "buyer",
+                "purchaser": "buyer",
+                "seller": "seller",
+                "seller_name": "seller",
+                "vendor": "seller",
             }.get(field)
             if field_canonical is None:
                 continue
@@ -2497,6 +2504,8 @@ async def _load_comp_transactions(
                     chain_scale=slot.get("chain_scale"),
                     brand_family=slot.get("brand_family"),
                     flag=slot.get("flag"),
+                    buyer=slot.get("buyer"),
+                    seller=slot.get("seller"),
                     source_document_id=doc_id or "",
                     source_page_number=slot.get("_page"),
                     note=slot.get("note"),
@@ -3854,6 +3863,18 @@ def _build_input_for(
                             row_variable="loan_amount", row_values=loan_v,
                             col_variable="interest_rate", col_values=rate_v,
                             metric="equity_multiple", mode="financing"),
+            # FON-68 step 5 — the Returns tab's third grid (Year-1 Cash-on-Cash).
+            # Year-1 CoC = Year-1 cash-flow-after-debt ÷ equity, so it is flat
+            # against exit cap / RevPAR growth (both bite in later years) — it
+            # only moves with the financing: a bigger loan cuts equity + lifts
+            # debt service, a higher rate lifts debt service. So this is a true
+            # financing grid (mode="financing", loan amount × loan rate), the
+            # only pair of axes CoC actually varies across.
+            SensitivitySpec(key="coc_loan_rate",
+                            label="Year-1 Cash-on-Cash — Loan Amount × Loan Rate",
+                            row_variable="loan_amount", row_values=loan_v,
+                            col_variable="interest_rate", col_values=rate_v,
+                            metric="year_one_coc", mode="financing"),
         ]
         return SensitivityInput(
             deal_id=deal_uuid,
@@ -3910,7 +3931,9 @@ def _build_input_for(
             pref_rate=base["pref_rate"],
             waterfall=waterfall,
             cash_flows=flows,
-            catch_up=False,
+            # FON-72 — GP catch-up is opt-in per deal (analyst-set override);
+            # defaults False so every existing deal's waterfall is unchanged.
+            catch_up=bool(base.get("partnership_catch_up") or False),
             period=period,
             cash_flows_monthly=monthly_flows,
             close_date=(

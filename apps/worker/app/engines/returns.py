@@ -145,6 +145,45 @@ def _irr_provenance(
     }
 
 
+def _coc_provenance(
+    *,
+    year_one_coc: float,
+    avg_coc: float,
+    year_one_cfad: float,
+    total_cfad: float,
+    n_years: int,
+    equity: float,
+) -> dict[str, ValueTrace]:
+    """Provenance for the cash-on-cash yields the Returns tab renders.
+
+    Both are the levered cash-flow-after-debt over invested equity — Year 1 for
+    ``year_one_coc``, the hold average for ``avg_coc`` — so an analyst can see
+    the badge is a genuine calculation, not a placeholder (fills the FON-65 gap
+    where the CoC KPIs shipped without a trace).
+    """
+    return {
+        "year_one_coc": ValueTrace(
+            value=year_one_coc,
+            formula="year_one_coc = year_1_cash_flow_after_debt ÷ equity",
+            inputs=[
+                ValueInput(name="year_1_cash_flow_after_debt", value=year_one_cfad),
+                ValueInput(name="equity", value=equity),
+            ],
+            note="Year-1 levered cash yield on invested equity.",
+        ),
+        "avg_coc": ValueTrace(
+            value=avg_coc,
+            formula="avg_coc = (Σ cash_flow_after_debt ÷ years) ÷ equity",
+            inputs=[
+                ValueInput(name="total_cash_flow_after_debt", value=total_cfad),
+                ValueInput(name="years", value=float(n_years)),
+                ValueInput(name="equity", value=equity),
+            ],
+            note="Average annual levered cash yield across the hold.",
+        ),
+    }
+
+
 # ─────────────── IRR helpers ───────────────
 
 
@@ -589,6 +628,14 @@ class ReturnsEngine(BaseEngine[ReturnsEngineInputExt, ReturnsEngineOutputExt]):
                     unlevered_irr=unlevered_irr,
                     unlevered_flows=unlevered_flows,
                 ),
+                **_coc_provenance(
+                    year_one_coc=year_one_coc,
+                    avg_coc=avg_coc,
+                    year_one_cfad=cfad_series[0] if cfad_series else 0.0,
+                    total_cfad=sum(cfad_series),
+                    n_years=len(cfad_series),
+                    equity=payload.equity,
+                ),
             }),
         )
 
@@ -665,6 +712,14 @@ def returns_from_cash_flow(
                 levered_flows=levered_flows,
                 unlevered_irr=unl_irr,
                 unlevered_flows=unlevered_flows,
+            ),
+            **_coc_provenance(
+                year_one_coc=cfad[0] / equity if equity and cfad else 0.0,
+                avg_coc=(sum(cfad) / len(cfad)) / equity if equity and cfad else 0.0,
+                year_one_cfad=cfad[0] if cfad else 0.0,
+                total_cfad=sum(cfad),
+                n_years=len(cfad),
+                equity=equity,
             ),
         }),
     )

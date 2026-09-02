@@ -547,3 +547,24 @@ async def test_endpoint_returns_full_comp_set() -> None:
         for t in body["transactions"]:
             assert t["source_document_id"] == str(document_id)
             assert t["transaction_id"] is not None
+
+
+# ─────────────────────── FON-72 buyer / seller columns ───────────────
+
+
+def test_comp_carries_buyer_and_seller() -> None:
+    """The design comps table has BUYER + SELLER columns; the engine must
+    preserve both on the row (null when the OM doesn't disclose them)."""
+    comp = _comp(transaction_id="doc:1", cap_rate_pct=7.0)
+    comp = comp.model_copy(update={"buyer": "Blackstone", "seller": "Host Hotels"})
+    result = build_comp_set(deal_id="deal-1", transactions=[comp], today=_TODAY)
+    assert result.transactions[0].buyer == "Blackstone"
+    assert result.transactions[0].seller == "Host Hotels"
+
+
+def test_comp_seller_defaults_null() -> None:
+    """A comp with no seller disclosed carries seller=None, not a KeyError."""
+    comp = _comp(transaction_id="doc:2", cap_rate_pct=7.0)
+    result = build_comp_set(deal_id="deal-1", transactions=[comp], today=_TODAY)
+    assert result.transactions[0].seller is None
+    assert result.transactions[0].buyer is None

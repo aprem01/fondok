@@ -2971,6 +2971,9 @@ class _CompTransactionOut(BaseModel):
     chain_scale: str | None = None
     brand_family: str | None = None
     flag: str | None = None
+    # FON-72 — BUYER / SELLER columns from the design comps table.
+    buyer: str | None = None
+    seller: str | None = None
     source_document_id: str
     source_page_number: int | None = None
     note: str | None = None
@@ -3017,6 +3020,8 @@ def _comp_set_to_out(deal_id: UUID, comp_set: Any) -> _CompSalesSetOut:
                 chain_scale=t.chain_scale,
                 brand_family=t.brand_family,
                 flag=t.flag,
+                buyer=getattr(t, "buyer", None),
+                seller=getattr(t, "seller", None),
                 source_document_id=t.source_document_id,
                 source_page_number=t.source_page_number,
                 note=t.note,

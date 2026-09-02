@@ -60,6 +60,11 @@ class CompTransaction(BaseModel):
     chain_scale: str | None = None              # e.g. "upper-upscale"
     brand_family: str | None = None             # e.g. "Marriott", "Hilton"
     flag: str | None = None                     # e.g. "Courtyard by Marriott"
+    # FON-72 — the design's comps table carries BUYER and SELLER columns. Both
+    # are optional (OMs frequently disclose one, the other, or neither); a
+    # missing value is emitted as null ("—" in the UI) rather than omitted.
+    buyer: str | None = None
+    seller: str | None = None
     source_document_id: str
     source_page_number: int | None = None
     note: str | None = None

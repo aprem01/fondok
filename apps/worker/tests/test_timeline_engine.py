@@ -127,3 +127,36 @@ def test_parse_iso_date_variants():
     assert parse_iso_date("") is None
     assert parse_iso_date(None) is None
     assert parse_iso_date("not-a-date") is None
+
+
+def test_milestones_are_chronologically_ordered_with_durations():
+    """FON-71 / Wave 0 — Investment + Overview render a milestone/duration
+    timeline. Every milestone must carry a duration (point events are 0) and
+    the dated rows must be non-decreasing in time (acquisition → renovation →
+    stabilization → refi → maturity → exit)."""
+    events = build_timeline(
+        close_date=date(2025, 9, 30),
+        hold_years=5,
+        term_years=5,
+        interest_only_months=24,
+        refi_month=30,
+        renovation_budget=5_280_000,
+    )
+    # Every milestone carries an explicit duration (0 for point events).
+    assert all(e.duration_months is not None for e in events)
+    # The key phases are all present.
+    names = {e.event for e in events}
+    assert "Hotel Purchase" in names
+    assert "Renovation" in names
+    assert "Stabilized (FTM NOI, Value)" in names
+    assert "Senior Loan Refi" in names
+    assert "Disposition / Exit" in names
+    # Each dated milestone is internally chronological (finish >= start).
+    for e in events:
+        if e.start is not None and e.finish is not None:
+            assert e.finish >= e.start, f"{e.event}: finish before start"
+    # Acquisition opens the schedule; disposition closes it (last dated finish).
+    assert events[0].event == "Hotel Purchase"
+    finishes = [e.finish for e in events if e.finish is not None]
+    exit_ev = next(e for e in events if e.event.startswith("Disposition"))
+    assert exit_ev.finish == max(finishes)
