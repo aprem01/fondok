@@ -1,7 +1,13 @@
 'use client';
-import { useState, useCallback, useEffect, useRef, type ReactNode } from 'react';
+import {
+  useState,
+  useCallback,
+  useEffect,
+  useRef,
+  type ReactNode,
+} from 'react';
 import { useParams } from 'next/navigation';
-import { ChevronDown, ChevronUp, Briefcase, Pencil, Check, X } from 'lucide-react';
+import { Briefcase, Pencil, Check, X } from 'lucide-react';
 import { Card } from '@/components/ui/Card';
 import { Button } from '@/components/ui/Button';
 import { useToast } from '@/components/ui/Toast';
@@ -12,44 +18,111 @@ import WhatJustHappened from './WhatJustHappened';
 import CapexPlanPanel, { DEFAULT_CAPEX_PLAN, type CapexPlanState } from './CapexPlanPanel';
 import HistoricalBaselinePanel from './HistoricalBaselinePanel';
 import { useHistoricalBaseline } from '@/lib/hooks/useHistoricalBaseline';
-import { fmtCurrency, fmtPct, cn } from '@/lib/format';
-import { useAssumptionsOptional } from '@/stores/assumptionsStore';
+import { fmtCurrency, fmtPct, fmtMillions, cn } from '@/lib/format';
 import { getEngineField, useEngineOutputs } from '@/lib/hooks/useEngineOutputs';
 import { useDeal } from '@/lib/hooks/useDeal';
 import { useEngineRun } from '@/lib/hooks/useEngineRun';
+import { useTraceGraph } from '@/lib/hooks/useValueTrace';
 import { IntroCard } from '@/components/help/IntroCard';
-import { Sourced } from '@/components/help/Sourced';
-import { api, isWorkerConnected, WorkerError, type TimelineResponse } from '@/lib/api';
+import {
+  KpiTile,
+  SectionCard,
+  SubTabNav,
+  ProvenanceDot,
+  palette,
+  prov,
+} from '@/components/design';
+import {
+  api,
+  isWorkerConnected,
+  WorkerError,
+  type TimelineResponse,
+  type ValueState,
+} from '@/lib/api';
 
 // Expense engine year shape — mirrors apps/worker/app/engines/expense.py.
-// Only the fields we read on the Investment tab are typed here; the
-// canonical shape lives in PLTab.tsx.
+// Only the fields we read on the Investment tab are typed here.
 interface ExpenseYearLite { year: number; noi: number }
-
 // Revenue engine year shape - only the fields the capex panel reads.
 interface RevenueYearLite { year: number; total_revenue: number }
 
-const subTabs = ['Deal Summary', 'Sources & Uses', 'Timeline'];
+const SUB_TABS = [
+  { id: 'Deal Summary', label: 'Deal Summary' },
+  { id: 'Sources & Uses', label: 'Sources & Uses' },
+  { id: 'Timeline', label: 'Timeline' },
+];
+
+const SUB_CAPTION: Record<string, string> = {
+  'Deal Summary': 'The assumptions that define the transaction',
+  'Sources & Uses': 'Capital required, and where it comes from',
+  Timeline: 'Key dates from acquisition through exit',
+};
+
+// ─── Canonical value vocabulary (design/canonical/Investment Tab.dc.html) ──────
+// doc → document sourced · linked → owned by another engine · input → editable
+// assumption · calc → calculated by Fondok · awaiting → not yet available.
+type ValueKind = 'doc' | 'linked' | 'input' | 'calc' | 'awaiting';
+
+/** Row value color — mirrors the canonical `colorFor()` (BLUE/GREEN/GRAY/BLACK/MUTED). */
+function valueColor(kind: ValueKind, bold: boolean, overridden: boolean): string {
+  if (overridden) return prov.blue;
+  if (bold) return prov.black;
+  if (kind === 'input') return prov.blue;
+  if (kind === 'linked' || kind === 'doc') return prov.green;
+  if (kind === 'awaiting') return prov.muted;
+  return prov.gray;
+}
+
+/** Provenance dot state — real /provenance `state` wins, else the canonical kind. */
+function kindToState(kind: ValueKind): ValueState {
+  switch (kind) {
+    case 'doc': return 'document_sourced';
+    case 'linked': return 'linked';
+    case 'input': return 'assumption';
+    case 'awaiting': return 'awaiting_data';
+    default: return 'calculated';
+  }
+}
+
+interface RowDef {
+  id: string;
+  label: string;
+  kind: ValueKind;
+  value: ReactNode;          // formatted display, or a custom editor node
+  state: ValueState;         // resolved provenance state (drives the dot)
+  bold?: boolean;
+  overridden?: boolean;
+  note?: string;
+  link?: { label: string; tab: string };
+}
 
 export default function InvestmentTab() {
   const [tab, setTab] = useState('Deal Summary');
-  const ctx = useAssumptionsOptional();
   const params = useParams();
   const dealId = (params?.id as string | undefined) ?? '';
   const { toast } = useToast();
   const { outputs, previous } = useEngineOutputs(dealId);
   const { deal, refresh: refreshDeal } = useDeal(dealId);
-  // Wave 2 P2.6 — historical baseline (Sam's multi-year walk ask).
   const { baseline: historicalBaseline } = useHistoricalBaseline(dealId);
   const [computing, setComputing] = useState(false);
   const [runToken, setRunToken] = useState<number | null>(null);
 
-  // ─── FON-44: editable transaction assumptions ─────────────────────
-  // Sam's spec — the Deal Summary is the transaction-assumptions layer: the
-  // analyst edits the core inputs (purchase price, renovation, hold, exit cap)
-  // and the derived values (entry/exit NOI + cap, price/key, exit date) stay
-  // linked. Edits PATCH field_overrides and kick a debounced run-all so the
-  // downstream Debt / Cash Flow / Returns engines re-derive.
+  // Computed-value provenance graphs — dots read the real /provenance `state`
+  // for capital / returns outputs, falling back to the canonical semantic kind.
+  const capitalTrace = useTraceGraph('capital');
+  const returnsTrace = useTraceGraph('returns');
+  const tracedState = useCallback(
+    (engine: 'capital' | 'returns', path: string): ValueState | null => {
+      const g = engine === 'capital' ? capitalTrace : returnsTrace;
+      return g?.get(path)?.state ?? null;
+    },
+    [capitalTrace, returnsTrace],
+  );
+
+  // ─── Editable transaction assumptions (canonical path) ────────────────
+  // Edits PATCH field_overrides and kick a debounced run-all so the downstream
+  // Debt / Cash Flow / Returns engines re-derive. This is the SAME path Deal
+  // Summary already used — never the local assumptions store (Move-2 step 4).
   const isMockIdInv = /^\d+$/.test(dealId);
   const liveMode = isWorkerConnected() && !isMockIdInv;
   const invOverrides = (deal?.field_overrides ?? {}) as Record<string, unknown>;
@@ -76,9 +149,7 @@ export default function InvestmentTab() {
     [invOverrides, dealId, liveMode, toast, refreshDeal, invRun],
   );
 
-  // FON-71 — dated transaction timeline. The worker projects the schedule
-  // from the acquisition close date + the hold/term/reno offsets already
-  // modeled by the other engines. Refetched after a save or a model run.
+  // Dated transaction timeline (FON-71). Refetched after a save or a run.
   const [timeline, setTimeline] = useState<TimelineResponse | null>(null);
   const refreshTimeline = useCallback(() => {
     if (!liveMode) { setTimeline(null); return; }
@@ -90,9 +161,8 @@ export default function InvestmentTab() {
   }, [dealId, liveMode]);
   useEffect(() => { refreshTimeline(); }, [refreshTimeline, runToken]);
 
-  // Acquisition close date drives every timeline date. Unlike the numeric
-  // assumptions it feeds no engine, so we save it and just refetch the
-  // timeline — no full model re-run.
+  // Acquisition close date drives every timeline date. It feeds no engine, so
+  // we save it and just refetch the timeline — no full model re-run.
   const onSaveCloseDate = useCallback(
     async (iso: string) => {
       if (!liveMode) {
@@ -112,27 +182,20 @@ export default function InvestmentTab() {
     },
     [invOverrides, dealId, liveMode, toast, refreshDeal, refreshTimeline],
   );
-  // Wave 2 P2.5 - local capex plan state. The worker's ``capex_plan``
-  // engine output isn't wired into useEngineOutputs yet; until it is,
-  // the panel owns the source of truth in memory.
+
+  // Wave 2 P2.5 — local capex plan state (worker capex_plan output not wired yet).
   const [capexPlan, setCapexPlan] = useState<CapexPlanState>(DEFAULT_CAPEX_PLAN);
 
-  // ─── Worker engine field reads ────────────────────────────────────
-  // Every panel reads worker engine output and shows '—' until the engine
-  // has produced the value — no fixtures.
+  // ─── Worker engine field reads (no fixtures — '—' until the engine emits) ──
   const wPurchase = getEngineField<number>(outputs, 'capital', 'purchase_price');
   const wPricePerKey = getEngineField<number>(outputs, 'capital', 'price_per_key');
   const wEntryCap = getEngineField<number>(outputs, 'capital', 'entry_cap_rate');
   const wTotalCapital =
     getEngineField<number>(outputs, 'capital', 'total_capital_usd') ??
     getEngineField<number>(outputs, 'capital', 'total_capital');
-  const wTotalCapitalPerKey = getEngineField<number>(
-    outputs, 'capital', 'total_capital_per_key',
-  );
+  const wTotalCapitalPerKey = getEngineField<number>(outputs, 'capital', 'total_capital_per_key');
+  const wEquity = getEngineField<number>(outputs, 'capital', 'equity_amount');
   const wDebtAmount = getEngineField<number>(outputs, 'capital', 'debt_amount');
-  const wRenoBreakdown = getEngineField<{ hard?: number; soft?: number; fees?: number }>(
-    outputs, 'capital', 'renovation_breakdown',
-  );
   const wLoanAmount = getEngineField<number>(outputs, 'debt', 'loan_amount');
 
   const wExpenseYears = getEngineField<ExpenseYearLite[]>(outputs, 'expense', 'years');
@@ -145,7 +208,7 @@ export default function InvestmentTab() {
     getEngineField<number>(outputs, 'returns', 'terminal_noi');
   const wSellingCosts = getEngineField<number>(outputs, 'returns', 'selling_costs');
   const wHoldYears = getEngineField<number>(outputs, 'returns', 'hold_years');
-  // Capital uses — the "Renovation" / "Contingency" line items live here.
+
   const wCapitalUses = getEngineField<Array<{ label?: string; amount?: number }>>(
     outputs, 'capital', 'uses',
   );
@@ -154,22 +217,11 @@ export default function InvestmentTab() {
     return typeof hit?.amount === 'number' ? hit.amount : undefined;
   };
 
-  const hasCapitalOutput =
-    wPurchase != null || wPricePerKey != null || wEntryCap != null;
+  const hasCapitalOutput = wPurchase != null || wPricePerKey != null || wEntryCap != null;
 
-  // Display helper: format a worker value, or '—' when absent.
-  const fmtOrDash = (
-    n: number | undefined,
-    formatter: (v: number) => string,
-  ): string => (n != null ? formatter(n) : '—');
-
-  // Per-key keys count: prefer real deal keys, then the fixture only on
-  // the demo. Used as the divider when worker engine output omits the
-  // pre-computed per-key value.
-  const propertyKeys =
-    (deal?.keys && deal.keys > 0)
-      ? deal.keys
-      : undefined;
+  const propertyKeys = (deal?.keys && deal.keys > 0) ? deal.keys : undefined;
+  const has = (v: number | undefined): v is number => v != null && Number.isFinite(v);
+  const overridden = (key: string): boolean => invOverrides[key] !== undefined;
 
   if (!hasCapitalOutput) {
     return (
@@ -225,636 +277,718 @@ export default function InvestmentTab() {
     );
   }
 
+  // ─── Derived model (all values engine-sourced) ────────────────────────
+  const keys = propertyKeys;
+  const entryNoi = wYearOneNoi;
+  const pricePerKey = wPricePerKey;
+  const purchase = wPurchase
+    ?? (has(pricePerKey) && has(keys) ? pricePerKey * keys : undefined);
+  const entryCap = (has(entryNoi) && has(purchase) && purchase > 0)
+    ? entryNoi / purchase
+    : wEntryCap;
+  const closing = findUse(/closing/i);
+  const closingPct = (has(closing) && has(purchase) && purchase > 0) ? closing / purchase : undefined;
+
+  const renoBudget = findUse(/renovat/i);
+  // Canonical hard/soft/professional split of the day-one renovation budget
+  // (75 / 15 / 10, per design/canonical/Investment Tab.dc.html). See report:
+  // the engine's `renovation_breakdown` uses a 75/20/5 split — flagged.
+  const renoHard = has(renoBudget) ? renoBudget * 0.75 : undefined;
+  const renoSoft = has(renoBudget) ? renoBudget * 0.15 : undefined;
+  const renoProf = has(renoBudget) ? renoBudget * 0.10 : undefined;
+
+  const totalUses = wTotalCapital;
+  const totalUsesPerKey = has(wTotalCapitalPerKey)
+    ? wTotalCapitalPerKey
+    : (has(totalUses) && has(keys) ? totalUses / keys : undefined);
+  const loan = wLoanAmount ?? wDebtAmount;
+  const equity = has(wEquity)
+    ? wEquity
+    : (has(totalUses) && has(loan) ? totalUses - loan : undefined);
+
+  const terminalNoi = wTerminalNoi;
+  const exitCap = wExitCap;
+  const grossExit = wGrossSale;
+  const exitPerKey = (has(grossExit) && has(keys)) ? grossExit / keys : undefined;
+  const sellingCosts = wSellingCosts;
+  const netExit = has(grossExit)
+    ? grossExit - (sellingCosts ?? 0)
+    : undefined;
+  const holdYears = wHoldYears;
+
+  // Formatting helpers matching the canonical (money / mm / pct).
+  const money = (v: number | undefined): ReactNode => (has(v) ? fmtCurrency(v) : '—');
+  const mm = (v: number | undefined): string => (has(v) ? fmtMillions(v, 2) : '—');
+  const pctv = (v: number | undefined, d = 2): ReactNode => (has(v) ? fmtPct(v, d) : '—');
+
   return (
     <div className="flex gap-4">
       <div className="flex-1 min-w-0">
-      <IntroCard
-        dismissKey="investment-intro"
-        title="The Investment Engine"
-        body={
-          <>
-            Defines the deal structure: what you&apos;re buying, what you&apos;re paying,
-            when you&apos;re selling. Sources &amp; Uses, key dates, and the entry cap rate live
-            here. This is the starting point of the model — every other engine builds on it.
-          </>
-        }
-      />
-      <EngineHeader
-        name="Investment Engine"
-        desc="Defines deal structure, purchase price, key dates, and investment thesis for the transaction."
-        outputs={['Purchase Price', 'Price/Key', 'Entry Cap', '+1']}
-        dependsOn={null}
-        complete
-        dealId={dealId}
-        engineName="capital"
-        runMode="all"
-        onRunStart={() => setComputing(true)}
-        onRunComplete={() => {
-          setComputing(false);
-          setRunToken(Date.now());
-        }}
-      />
+        <IntroCard
+          dismissKey="investment-intro"
+          title="The Investment Engine"
+          body={
+            <>
+              Defines the deal structure: what you&apos;re buying, what you&apos;re paying,
+              when you&apos;re selling. Sources &amp; Uses, key dates, and the entry cap rate live
+              here. This is the starting point of the model — every other engine builds on it.
+            </>
+          }
+        />
+        <EngineHeader
+          name="Investment Engine"
+          desc="Deal structure, transaction capitalization and key dates — what we're buying, for how much, when, and the capital required to execute."
+          outputs={['Purchase Price', 'Price/Key', 'Entry Cap', '+1']}
+          dependsOn={null}
+          complete
+          dealId={dealId}
+          engineName="capital"
+          runMode="all"
+          onRunStart={() => setComputing(true)}
+          onRunComplete={() => {
+            setComputing(false);
+            setRunToken(Date.now());
+          }}
+        />
 
-      {/* Sam v2: Asking Price and IRR should remain analyst-driven
-          until the investment engine is fully wired up with exit /
-          cap-rate assumptions. The Capital + Returns engines run
-          today but the values flow through default seeds where deal
-          data is missing — surface that explicitly so reviewers
-          don't take the numbers as committed. */}
-      <Card className="p-3 mb-3 border-l-4 border-l-warn-500 bg-warn-50/40">
-        <p className="text-[12px] text-ink-700">
-          <span className="font-semibold">Some fields aren&apos;t populated yet.</span>{' '}
-          Core economics — purchase price, entry / exit cap, NOI and returns —
-          are live from the Capital / Returns engines. A few details still show
-          &ldquo;—&rdquo; because they aren&apos;t extracted from the deal docs
-          (year built, labor / title, the renovation cost split) or need the
-          timeline engine (acquisition / exit dates). Treat those as pending,
-          not committed.
-        </p>
-      </Card>
+        <WhatJustHappened
+          engine="capital"
+          engineLabel="Capital"
+          outputs={outputs}
+          previous={previous}
+          runToken={runToken}
+        />
 
-      <WhatJustHappened
-        engine="capital"
-        engineLabel="Capital"
-        outputs={outputs}
-        previous={previous}
-        runToken={runToken}
-      />
+        <SubTabNav
+          items={SUB_TABS}
+          activeId={tab}
+          onSelect={setTab}
+          caption={SUB_CAPTION[tab]}
+          style={{ marginBottom: 14 }}
+        />
 
-      <div className="flex items-center gap-1 mb-3 border-b border-border">
-        {subTabs.map(t => (
-          <button key={t} onClick={() => setTab(t)}
-            className={cn(
-              'px-4 py-2 text-[12.5px] border-b-2 transition-colors -mb-px',
-              tab === t ? 'border-brand-500 text-brand-700 font-medium' : 'border-transparent text-ink-500 hover:text-ink-900'
-            )}>
-            {t}
-          </button>
-        ))}
-      </div>
+        <div className={cn(computing && 'relative pointer-events-none opacity-60')}>
 
-      <div className={cn(computing && 'relative pointer-events-none opacity-60')}>
+          {tab === 'Deal Summary' && (() => {
+            // ─── KPI tiles (5) — design/canonical `kpis` ──────────────
+            const kpis = [
+              { label: 'Total Cost Basis', value: mm(totalUses), sub: has(totalUsesPerKey) ? `${fmtCurrency(totalUsesPerKey)} / key` : '' },
+              { label: 'Purchase Price', value: mm(purchase), sub: has(entryCap) ? `${fmtPct(entryCap, 2)} going-in` : '' },
+              { label: 'Renovation / PIP', value: mm(renoBudget), sub: (has(renoBudget) && has(keys)) ? `${fmtCurrency(renoBudget / keys)} / key` : '' },
+              { label: 'Required Equity', value: mm(equity), sub: (has(equity) && has(totalUses) && totalUses > 0) ? `${fmtPct(equity / totalUses, 1)} of total uses` : '' },
+              { label: 'Gross Exit Value', value: mm(grossExit), sub: has(exitCap) ? `${fmtPct(exitCap, 2)} exit cap` : '' },
+            ];
 
-      {tab === 'Deal Summary' && (() => {
-        // ─── Worker field wiring for every panel below ──────────
-        // Keys come from the deal row (useDeal); everything else is engine
-        // output or an editable assumption. Descriptive property facts live on
-        // Overview, not here (FON-44).
-        const dealKeys = (deal?.keys && deal.keys > 0)
-          ? deal.keys
-          : undefined;
-        const dealGba: number | undefined = undefined;
+            // ─── Acquisition section ──────────────────────────────────
+            const acquisition: RowDef[] = [
+              {
+                id: 'keys', label: 'Keys', kind: 'doc', state: 'document_sourced',
+                value: (
+                  <KeysOverride dealId={dealId} currentKeys={keys} onSaved={() => refreshDeal()} />
+                ),
+              },
+              {
+                id: 'acqDate', label: 'Acquisition Date', kind: 'input',
+                state: overridden('acquisition_close_date') ? 'assumption' : 'assumption',
+                overridden: overridden('acquisition_close_date'),
+                value: (
+                  <CloseDateField
+                    iso={(invOverrides['acquisition_close_date'] as string | undefined) ?? timeline?.close_date ?? null}
+                    editable={liveMode}
+                    onSave={onSaveCloseDate}
+                  />
+                ),
+              },
+              {
+                id: 'entryNoi', label: 'Entry / Run-Rate NOI', kind: 'linked', state: 'linked',
+                value: money(entryNoi), link: { label: '→ Financials', tab: 'pl' },
+              },
+              {
+                id: 'entryCap', label: 'Entry Cap Rate', kind: 'calc',
+                state: tracedState('capital', 'entry_cap_rate') ?? 'calculated',
+                value: pctv(entryCap, 2),
+              },
+              {
+                id: 'purchase', label: 'Purchase Price', kind: 'input', bold: true,
+                state: overridden('purchase_price') ? 'assumption' : (tracedState('capital', 'purchase_price') ?? 'calculated'),
+                overridden: overridden('purchase_price'),
+                value: (
+                  <AssumptionField value={purchase} editable={liveMode} format={fmtCurrency}
+                    toDraft={(v) => String(Math.round(v))}
+                    parse={(s) => { const n = parseFloat(s.replace(/[,$\s]/g, '')); return Number.isFinite(n) && n > 0 ? n : null; }}
+                    onSave={(v) => onSaveAssumption('purchase_price', v)} width="w-36"
+                    color={valueColor('input', true, overridden('purchase_price'))} bold />
+                ),
+              },
+              { id: 'ppk', label: 'Purchase Price / Key', kind: 'calc', state: 'calculated', value: money(pricePerKey) },
+              {
+                id: 'closingPct', label: 'Closing Costs %', kind: 'input',
+                state: overridden('closing_costs_pct') ? 'assumption' : 'assumption',
+                overridden: overridden('closing_costs_pct'),
+                value: (
+                  <AssumptionField value={closingPct} editable={liveMode} format={(v) => fmtPct(v, 2)}
+                    toDraft={(v) => (v * 100).toFixed(2)} suffix="%"
+                    parse={(s) => { const n = parseFloat(s); return Number.isFinite(n) && n >= 0 ? n / 100 : null; }}
+                    onSave={(v) => onSaveAssumption('closing_costs_pct', v)} width="w-20"
+                    color={valueColor('input', false, overridden('closing_costs_pct'))} />
+                ),
+              },
+              {
+                id: 'closing', label: 'Acquisition / Closing Costs', kind: 'calc',
+                state: tracedState('capital', 'closing_costs') ?? 'calculated', value: money(closing),
+              },
+            ];
 
-        // Entry Valuation
-        const entryNoi = wYearOneNoi;
-        const entryPricePerKey = wPricePerKey;
-        // Purchase price: engine value, else derive from price/key × keys
-        // (the capital engine emits price_per_key, not purchase_price).
-        const entryPurchase = wPurchase
-          ?? (entryPricePerKey != null && propertyKeys && propertyKeys > 0
-            ? entryPricePerKey * propertyKeys
-            : undefined);
-        // Entry cap = Y1 NOI ÷ purchase price (the engine doesn't emit it).
-        const entryCap = (entryNoi != null && entryPurchase != null && entryPurchase > 0)
-          ? entryNoi / entryPurchase
-          : wEntryCap;
+            // ─── Exit / Reversion section ─────────────────────────────
+            const exit: RowDef[] = [
+              {
+                id: 'holdYears', label: 'Hold Period', kind: 'input',
+                state: overridden('hold_years') ? 'assumption' : 'assumption',
+                overridden: overridden('hold_years'),
+                value: (
+                  <AssumptionField value={holdYears} editable={liveMode} format={(v) => `${v} years`}
+                    toDraft={(v) => String(v)} suffix="yrs"
+                    parse={(s) => { const n = parseInt(s, 10); return Number.isFinite(n) && n > 0 && n <= 20 ? n : null; }}
+                    onSave={(v) => onSaveAssumption('hold_years', v)} width="w-16"
+                    color={valueColor('input', false, overridden('hold_years'))} />
+                ),
+              },
+              { id: 'exitDate', label: 'Exit Date', kind: 'calc', state: 'calculated', value: timeline?.exit_date ? fmtISODate(timeline.exit_date) : '—' },
+              {
+                id: 'fwdNoi', label: 'Forward 12-Month NOI', kind: 'linked', state: 'linked',
+                value: money(terminalNoi), link: { label: '→ Financials', tab: 'pl' },
+              },
+              {
+                id: 'exitCap', label: 'Exit Cap Rate', kind: 'input',
+                state: overridden('exit_cap_rate') ? 'assumption' : 'assumption',
+                overridden: overridden('exit_cap_rate'),
+                value: (
+                  <AssumptionField value={exitCap} editable={liveMode} format={(v) => fmtPct(v, 2)}
+                    toDraft={(v) => (v * 100).toFixed(2)} suffix="%"
+                    parse={(s) => { const n = parseFloat(s); return Number.isFinite(n) && n > 0 ? n / 100 : null; }}
+                    onSave={(v) => onSaveAssumption('exit_cap_rate', v)} width="w-20"
+                    color={valueColor('input', false, overridden('exit_cap_rate'))} />
+                ),
+              },
+              {
+                id: 'grossExit', label: 'Gross Exit Value', kind: 'calc', bold: true,
+                state: tracedState('returns', 'gross_sale_price') ?? 'calculated', value: money(grossExit),
+              },
+              { id: 'exitPerKey', label: 'Exit Value / Key', kind: 'calc', state: 'calculated', value: money(exitPerKey) },
+              {
+                id: 'sellingCosts', label: 'Disposition Costs', kind: 'calc',
+                state: tracedState('returns', 'selling_costs') ?? 'calculated', value: money(sellingCosts),
+              },
+              { id: 'transferTax', label: 'Transfer Tax', kind: 'awaiting', state: 'awaiting_data', value: '—' },
+              {
+                id: 'netExit', label: 'Net Exit Proceeds', kind: 'calc', bold: true,
+                state: 'calculated', value: money(netExit),
+              },
+            ];
 
-        // Exit Valuation
-        const exitTerminalNoi = wTerminalNoi;
-        const exitCap = wExitCap;
-        const exitGross = wGrossSale;
-        const exitPerKey = (exitGross != null && propertyKeys && propertyKeys > 0)
-          ? exitGross / propertyKeys : undefined;
-        const exitSellingCosts = wSellingCosts;
+            // ─── Initial Renovation / PIP section ─────────────────────
+            const renovation: RowDef[] = [
+              { id: 'renoBudget', label: 'Renovation Budget', kind: 'input', bold: false,
+                state: overridden('renovation_budget') ? 'assumption' : 'assumption',
+                overridden: overridden('renovation_budget'),
+                value: (
+                  <AssumptionField value={renoBudget} editable={liveMode} format={fmtCurrency}
+                    toDraft={(v) => String(Math.round(v))}
+                    parse={(s) => { const n = parseFloat(s.replace(/[,$\s]/g, '')); return Number.isFinite(n) && n >= 0 ? n : null; }}
+                    onSave={(v) => onSaveAssumption('renovation_budget', v)} width="w-36"
+                    color={valueColor('input', false, overridden('renovation_budget'))} />
+                ),
+              },
+              { id: 'renoPerKey', label: 'Budget / Key', kind: 'calc', state: 'calculated', value: (has(renoBudget) && has(keys)) ? money(renoBudget / keys) : '—' },
+              { id: 'renoHard', label: 'Hard Costs', kind: 'calc', state: 'calculated', value: money(renoHard), note: '75% of base budget per the PIP scope of work' },
+              { id: 'renoSoft', label: 'Soft Costs', kind: 'calc', state: 'calculated', value: money(renoSoft) },
+              { id: 'renoProf', label: 'Professional Fees', kind: 'calc', state: 'calculated', value: money(renoProf) },
+              { id: 'renoCont', label: 'Contingency', kind: 'awaiting', state: 'awaiting_data', value: '—' },
+              { id: 'renoTotal', label: 'Total Renovation / PIP', kind: 'calc', bold: true, state: 'calculated', value: money(renoBudget) },
+              { id: 'renoSf', label: '$ / SF', kind: 'awaiting', state: 'awaiting_data', value: '—' },
+            ];
 
-        // Renovation Budget — the capital engine now emits the hard/soft/
-        // fees split (FON-71) via `renovation_breakdown`; sub-rows show '—'
-        // only when there's no renovation budget.
-        const renoBudget = findUse(/renovat/i);
-        const renoPerKey = (renoBudget != null && propertyKeys && propertyKeys > 0)
-          ? renoBudget / propertyKeys : undefined;
-        const renoPerSf = (renoBudget != null && dealGba && dealGba > 0)
-          ? renoBudget / dealGba : undefined;
-        const renoContingency = findUse(/conting/i);
-        const renoHard = wRenoBreakdown?.hard;
-        const renoSoft = wRenoBreakdown?.soft;
-        const renoFees = wRenoBreakdown?.fees;
+            // ─── Ongoing Capex section (hold-period, funded from operations) ──
+            const ongoing: RowDef[] = [
+              { id: 'ffee', label: 'FF&E Reserve', kind: 'linked', state: 'linked', value: '—', link: { label: '→ Financials', tab: 'pl' } },
+              { id: 'roi', label: 'ROI Projects', kind: 'awaiting', state: 'awaiting_data', value: '—', note: 'Funded from operations — never appears in Sources & Uses' },
+              { id: 'otherCapex', label: 'Other Recurring Capex', kind: 'awaiting', state: 'awaiting_data', value: '—', note: 'Awaiting the property condition assessment' },
+            ];
 
-        // Valuation Assumptions
-        const totalCapital = wTotalCapital;
-        const totalCapitalPerKey = wTotalCapitalPerKey != null
-          ? wTotalCapitalPerKey
-          : (totalCapital != null && propertyKeys && propertyKeys > 0)
-            ? totalCapital / propertyKeys
-            : undefined;
-        const holdYears = wHoldYears;
-        const exitMonth = holdYears != null ? holdYears * 12 : undefined;
+            const sections: {
+              title: string; note: string; rows: RowDef[]; formula?: string;
+            }[] = [
+              {
+                title: 'Acquisition', note: 'Investment owns these assumptions', rows: acquisition,
+                formula: (has(entryNoi) && has(entryCap) && has(purchase))
+                  ? `Entry NOI ${fmtCurrency(entryNoi)} ÷ Entry Cap ${fmtPct(entryCap, 2)} → Purchase Price ${fmtCurrency(purchase)}`
+                  : undefined,
+              },
+              {
+                title: 'Exit / Reversion', note: 'One place for every exit assumption', rows: exit,
+                formula: (has(terminalNoi) && has(exitCap) && has(grossExit) && has(netExit))
+                  ? `Forward NOI ${fmtCurrency(terminalNoi)} ÷ Exit Cap ${fmtPct(exitCap, 2)} → Gross Exit ${fmtCurrency(grossExit)} − costs → Net ${fmtCurrency(netExit)}`
+                  : undefined,
+              },
+              { title: 'Initial Renovation / PIP', note: 'Day-one capital · sits in total uses', rows: renovation },
+              {
+                title: 'Ongoing Capex', note: 'Hold-period capital · funded from operations', rows: ongoing,
+                formula: 'Ongoing capex never enters Sources & Uses — only the day-one renovation above does.',
+              },
+            ];
 
-        // Senior Loan Financing — prefer debt engine echo, fall
-        // back to capital engine debt_amount. The simplified Lovable
-        // layout only surfaces term here, but we keep loanAmount
-        // derived for completeness / future rows.
-        const loanAmount = wLoanAmount ?? wDebtAmount;
-        void loanAmount;
-
-        return (
-        <>
-          <div className="grid grid-cols-2 gap-5">
-            {/* FON-44 — Investment is the transaction-assumptions layer, not a
-                property directory. Descriptive property facts (name, location,
-                year built, labor/title) live on Overview; Investment references
-                only Keys (needed for per-key math). */}
-            <Panel title="Acquisition" rows={[
-              [
-                'Keys',
-                <KeysOverride
-                  key="keys-override"
-                  dealId={dealId}
-                  currentKeys={dealKeys}
-                  onSaved={() => refreshDeal()}
-                />,
-              ],
-              [
-                'Acquisition Date',
-                <CloseDateField
-                  key="close-date"
-                  iso={(invOverrides['acquisition_close_date'] as string | undefined)
-                    ?? timeline?.close_date ?? null}
-                  editable={liveMode}
-                  onSave={onSaveCloseDate}
-                />,
-              ],
-              ['Hotel Purchase Price', <AssumptionField key="pp" value={entryPurchase} editable={liveMode}
-                format={fmtCurrency} toDraft={(v) => String(Math.round(v))}
-                parse={(s) => { const n = parseFloat(s.replace(/[,$\s]/g, '')); return Number.isFinite(n) && n > 0 ? n : null; }}
-                onSave={(v) => onSaveAssumption('purchase_price', v)} width="w-36" />],
-              ['Purchase Price / Key', fmtOrDash(entryPricePerKey, fmtCurrency)],
-              ['Acquisition / Closing Costs', fmtOrDash(findUse(/closing/i), fmtCurrency)],
-              ['Entry NOI', fmtOrDash(entryNoi, fmtCurrency)],
-              ['Entry Cap Rate', fmtOrDash(entryCap, v => fmtPct(v, 2))],
-            ]} />
-            <Panel title="Exit Valuation" rows={[
-              ['Exit Month', exitMonth != null ? String(exitMonth) : '—'],
-              ['Exit Date', timeline?.exit_date ? fmtISODate(timeline.exit_date) : '—'],
-              ['Fwd. 12 Mo NOI', fmtOrDash(exitTerminalNoi, fmtCurrency)],
-              ['Exit Cap Rate', <AssumptionField key="xc-edit" value={exitCap} editable={liveMode}
-                format={(v) => fmtPct(v, 2)} toDraft={(v) => (v * 100).toFixed(2)}
-                parse={(s) => { const n = parseFloat(s); return Number.isFinite(n) && n > 0 ? n / 100 : null; }}
-                onSave={(v) => onSaveAssumption('exit_cap_rate', v)} suffix="%" width="w-20" />],
-              ['Gross Exit Value', fmtOrDash(exitGross, fmtCurrency)],
-              ['Per Key', fmtOrDash(exitPerKey, fmtCurrency)],
-              ['Exit Sales Cost', fmtOrDash(exitSellingCosts, fmtCurrency)],
-              ['Transfer Tax', '—'],
-            ]} />
-            <Panel title="Renovation Budget" rows={[
-              ['Renovation Budget', <AssumptionField key="rb" value={renoBudget} editable={liveMode}
-                format={fmtCurrency} toDraft={(v) => String(Math.round(v))}
-                parse={(s) => { const n = parseFloat(s.replace(/[,$\s]/g, '')); return Number.isFinite(n) && n >= 0 ? n : null; }}
-                onSave={(v) => onSaveAssumption('renovation_budget', v)} width="w-36" />],
-              ['Per Key', fmtOrDash(renoPerKey, fmtCurrency)],
-              ['Per SF', fmtOrDash(renoPerSf, fmtCurrency)],
-              ['Hard Costs (75%)', fmtOrDash(renoHard, fmtCurrency)],
-              ['Soft Costs (20%)', fmtOrDash(renoSoft, fmtCurrency)],
-              ['Professional Fees (5%)', fmtOrDash(renoFees, fmtCurrency)],
-              ['Contingency', fmtOrDash(renoContingency, fmtCurrency)],
-              ['Total Renovation', fmtOrDash(renoBudget, fmtCurrency)],
-            ]} />
-          </div>
-          <div className="grid grid-cols-1 gap-5 mt-5">
-            <Panel title="Valuation Assumptions" rows={[
-              ['Total Dev. Cost', fmtOrDash(totalCapital, fmtCurrency)],
-              ['Per Key', fmtOrDash(totalCapitalPerKey, fmtCurrency)],
-              ['Hold Years', <AssumptionField key="hy" value={holdYears} editable={liveMode}
-                format={(v) => `${v} yrs`} toDraft={(v) => String(v)}
-                parse={(s) => { const n = parseInt(s, 10); return Number.isFinite(n) && n > 0 && n <= 20 ? n : null; }}
-                onSave={(v) => onSaveAssumption('hold_years', v)} suffix="yrs" width="w-16" />],
-              ['Stabilized NOI FWD 12', fmtOrDash(exitTerminalNoi, fmtCurrency)],
-              ['Exit Cap Rate', <Sourced key="xc" sourceKey="exit_cap_rate">{fmtOrDash(exitCap, v => fmtPct(v, 2))}</Sourced>],
-              ['Sale Price', fmtOrDash(exitGross, fmtCurrency)],
-              ['Disposition Fees', fmtOrDash(exitSellingCosts, fmtCurrency)],
-            ]} />
-          </div>
-          {/* Wave 2 P2.5 - three-bucket capex plan (PIP / Non-PIP / ROI). */}
-          <div className="grid grid-cols-1 gap-5 mt-5">
-            <CapexPlanPanel
-              keys={propertyKeys}
-              revenueByYear={(() => {
-                const wRevYears = getEngineField<RevenueYearLite[]>(
-                  outputs, 'revenue', 'years',
-                );
-                return (wRevYears ?? []).map(y => y.total_revenue);
-              })()}
-              holdYears={(holdYears as number | undefined) ?? 5}
-              state={capexPlan}
-              onChange={setCapexPlan}
-            />
-          </div>
-          {/* Wave 2 P2.6 — historical baseline (multi-year P&L walk).
-              Silent when coverage_pct === 0 (no historical docs uploaded). */}
-          <div className="grid grid-cols-1 gap-5 mt-5">
-            <HistoricalBaselinePanel
-              baseline={historicalBaseline}
-              dealId={dealId}
-              forecastY1={(() => {
-                // Pull Y1 forecast cells from the worker engine output —
-                // revenue.years[0] + expense.years[0] feed the rightmost
-                // "Y1 Forecast" column on the panel. We only map the
-                // canonical fields the panel renders; the rest fall back
-                // to em-dashes.
-                const rev = getEngineField<RevenueYearLite[]>(
-                  outputs, 'revenue', 'years',
-                );
-                const exp = getEngineField<ExpenseYearLite[]>(
-                  outputs, 'expense', 'years',
-                );
-                const r0 = rev?.[0];
-                const e0 = exp?.[0];
-                return {
-                  total_revenue: r0?.total_revenue ?? null,
-                  noi: e0?.noi ?? null,
-                };
-              })()}
-            />
-          </div>
-          {/* FON-62 — detailed debt configuration lives on the Debt tab now,
-              so there's one authoritative place for loan terms + the schedule.
-              Investment keeps debt only as a read-only source (Sources & Uses).
-              This pointer replaces the editable Debt Stack panel that used to
-              sit here. */}
-          <div className="mt-5 rounded-md border border-border bg-ink-50/40 px-4 py-3 flex items-center justify-between gap-3">
-            <div className="text-[12.5px] text-ink-600 leading-relaxed">
-              <span className="font-medium text-ink-900">Debt configuration moved to the Debt tab.</span>{' '}
-              All loan terms, tranches, and the debt schedule are managed there — debt shows
-              here only as a source in Sources &amp; Uses.
-            </div>
-            <a
-              href="?tab=debt"
-              className="shrink-0 text-[12px] font-medium px-3 py-1.5 rounded-md border border-border text-brand-700 hover:bg-brand-50 whitespace-nowrap"
-            >
-              Open Debt tab →
-            </a>
-          </div>
-        </>
-        );
-      })()}
-
-      {tab === 'Sources & Uses' && ctx && <LiveSourcesUses />}
-
-      {tab === 'Timeline' && (() => {
-        // ─── Transaction Timeline (FON-71) ───────────────────────
-        // Dates come from the worker timeline engine: the acquisition
-        // close date projected onto the hold / loan-term / renovation
-        // offsets already modeled by the other engines. Durations show
-        // even before a close date is set; the dates stay '—' (pending)
-        // until the analyst enters the Acquisition Date on Deal Summary.
-        const events = timeline?.events ?? [];
-        const pending = !timeline?.close_date;
-        return (
-          <Card className="p-5">
-            <div className="flex items-center justify-between mb-3">
-              <h3 className="text-[13px] font-semibold text-ink-900">Transaction Timeline</h3>
-              {pending && (
-                <span className="text-[11px] text-ink-500">
-                  Set the Acquisition Date on Deal Summary to populate dates
-                </span>
-              )}
-            </div>
-            <div className="h-1 w-full rounded bg-brand-500 mb-3" />
-            {events.length === 0 ? (
-              <p className="text-[12.5px] text-ink-500 py-2">
-                {liveMode ? 'Run the model to build the timeline.' : 'Timeline is available on live deals.'}
-              </p>
-            ) : (
-              <table className="w-full text-[12.5px]">
-                <thead>
-                  <tr className="text-ink-500 text-[11px] border-b border-border">
-                    <th className="text-left font-medium pb-2">Event</th>
-                    <th className="text-right font-medium pb-2">START</th>
-                    <th className="text-right font-medium pb-2">DURATION</th>
-                    <th className="text-right font-medium pb-2">FINISH</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {events.map((row, i) => (
-                    <tr key={`${row.event}-${i}`} className="border-b border-border/50">
-                      <td className="py-2">{row.event}</td>
-                      <td className="text-right tabular-nums text-ink-700">{fmtISODate(row.start)}</td>
-                      <td className="text-right tabular-nums text-ink-700">
-                        {row.duration_months != null ? `${row.duration_months} mo` : '—'}
-                      </td>
-                      <td className="text-right tabular-nums text-ink-700">{fmtISODate(row.finish)}</td>
-                    </tr>
+            return (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+                {/* KPI tiles */}
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(160px,1fr))', gap: 12 }}>
+                  {kpis.map((k) => (
+                    <KpiTile key={k.label} label={k.label} value={k.value} sub={k.sub || undefined} />
                   ))}
-                </tbody>
-              </table>
-            )}
-          </Card>
-        );
-      })()}
-      {computing && (
-        <div className="absolute inset-0 bg-bg/60 backdrop-blur-[1px] flex items-start justify-center pt-12 rounded-md">
-          <span className="inline-flex items-center gap-2 px-3 py-1.5 bg-white border border-border rounded-md shadow-card text-[12.5px] font-medium text-ink-700">
-            <span className="w-1.5 h-1.5 rounded-full bg-brand-500 animate-pulse" />
-            Recomputing…
-          </span>
+                </div>
+
+                {/* Section cards */}
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(430px,1fr))', gap: 14 }}>
+                  {sections.map((s) => (
+                    <SectionCard key={s.title} title={s.title} note={s.note}>
+                      {s.rows.map((r) => (
+                        <SectionRow key={r.id} row={r} />
+                      ))}
+                      {s.formula && (
+                        <div style={{
+                          marginTop: 10, background: palette.surfaceTint, border: `1px solid ${palette.border}`,
+                          borderRadius: 7, padding: '8px 11px', fontSize: 11.5, color: palette.hoverInk, lineHeight: 1.5,
+                        }}>
+                          {s.formula}
+                        </div>
+                      )}
+                    </SectionCard>
+                  ))}
+                </div>
+
+                {/* Wave 2 P2.5 — interactive three-bucket capex plan (extends Ongoing Capex). */}
+                <CapexPlanPanel
+                  keys={keys}
+                  revenueByYear={(() => {
+                    const wRevYears = getEngineField<RevenueYearLite[]>(outputs, 'revenue', 'years');
+                    return (wRevYears ?? []).map((y) => y.total_revenue);
+                  })()}
+                  holdYears={(holdYears as number | undefined) ?? 5}
+                  state={capexPlan}
+                  onChange={setCapexPlan}
+                />
+
+                {/* Wave 2 P2.6 — historical baseline (silent when no historical docs). */}
+                <HistoricalBaselinePanel
+                  baseline={historicalBaseline}
+                  dealId={dealId}
+                  forecastY1={(() => {
+                    const rev = getEngineField<RevenueYearLite[]>(outputs, 'revenue', 'years');
+                    const exp = getEngineField<ExpenseYearLite[]>(outputs, 'expense', 'years');
+                    return { total_revenue: rev?.[0]?.total_revenue ?? null, noi: exp?.[0]?.noi ?? null };
+                  })()}
+                />
+
+                {/* Debt configuration lives on the Debt tab; here debt is a read-only source. */}
+                <div className="rounded-md border border-border bg-ink-50/40 px-4 py-3 flex items-center justify-between gap-3">
+                  <div className="text-[12.5px] text-ink-600 leading-relaxed">
+                    <span className="font-medium text-ink-900">Debt configuration lives on the Debt tab.</span>{' '}
+                    Loan terms, tranches, and the schedule are managed there — debt shows here only as a source in Sources &amp; Uses.
+                  </div>
+                  <a href="?tab=debt" className="shrink-0 text-[12px] font-medium px-3 py-1.5 rounded-md border border-border text-brand-700 hover:bg-brand-50 whitespace-nowrap">
+                    Open Debt tab →
+                  </a>
+                </div>
+              </div>
+            );
+          })()}
+
+          {tab === 'Sources & Uses' && (
+            <SourcesUses outputs={outputs} money={money} keys={keys} />
+          )}
+
+          {tab === 'Timeline' && (
+            <TimelinePanel timeline={timeline} liveMode={liveMode} holdYears={holdYears} />
+          )}
+
+          {computing && (
+            <div className="absolute inset-0 bg-bg/60 backdrop-blur-[1px] flex items-start justify-center pt-12 rounded-md">
+              <span className="inline-flex items-center gap-2 px-3 py-1.5 bg-white border border-border rounded-md shadow-card text-[12.5px] font-medium text-ink-700">
+                <span className="w-1.5 h-1.5 rounded-full bg-brand-500 animate-pulse" />
+                Recomputing…
+              </span>
+            </div>
+          )}
         </div>
-      )}
-      </div>
-      <EngineRunHistory dealId={dealId} seedDemo />
+        <EngineRunHistory dealId={dealId} seedDemo />
       </div>
       <EngineRightRail />
     </div>
   );
 }
 
-// ───────────────────────────────────────────────────────────────────
-// Live (Kimpton) Sources & Uses with editable assumptions.
-// Worker capital engine output (sources / uses arrays) is the persisted
-// authoritative version; we prefer it over the live-slider model when
-// both are present.
-// ───────────────────────────────────────────────────────────────────
-
-interface CapitalLine { label: string; amount: number; pct?: number | null; is_total?: boolean }
-
-// ─── Sources & Uses label canonicalization (Lovable spec) ────────────
-// Lovable's reference shows an exact ordered set of rows on each side.
-// The worker capital engine emits a different but overlapping set of
-// labels (see apps/worker/app/engines/capital.py); a few Lovable rows
-// (Soft Costs Arch/Design, Lender Fees & Costs, Interest Reserve,
-// Op. Shortfall Reserve, Mezzanine, Sponsor Equity, LP Equity, Key
-// Money) are not yet emitted by the engine. We render the full Lovable
-// row list in order and fill from the engine where available, '—'
-// otherwise.
-const USES_ORDER: { label: string; aliases: string[] }[] = [
-  { label: 'Purchase Price', aliases: ['Purchase Price'] },
-  { label: 'Renovation Budget', aliases: ['Renovation Budget', 'Renovation'] },
-  { label: 'Soft Costs (Arch/Design)', aliases: ['Soft Costs (Arch/Design)', 'Soft Costs'] },
-  { label: 'Closing Costs', aliases: ['Closing Costs'] },
-  { label: 'Working Capital / Reserves', aliases: ['Working Capital / Reserves', 'Working Capital'] },
-  { label: 'Insurance Reserve', aliases: ['Insurance Reserve'] },
-  { label: 'Lender Fees & Costs', aliases: ['Lender Fees & Costs', 'Senior Loan Fee', 'Loan Costs'] },
-  { label: 'Interest Reserve', aliases: ['Interest Reserve'] },
-  { label: 'Op. Shortfall Reserve', aliases: ['Op. Shortfall Reserve', 'Operating Shortfall Reserve'] },
-];
-const SOURCES_ORDER: { label: string; aliases: string[] }[] = [
-  { label: 'Senior Loan', aliases: ['Senior Loan', 'Senior Debt'] },
-  { label: 'Mezzanine', aliases: ['Mezzanine'] },
-  { label: 'Sponsor Equity', aliases: ['Sponsor Equity'] },
-  { label: 'LP Equity', aliases: ['LP Equity'] },
-  { label: 'Key Money', aliases: ['Key Money'] },
-];
-
-interface CanonicalRow { label: string; amount: number | null; total: boolean; pct: number }
-
-function canonicalizeUses(raw: { label: string; amount: number; total?: boolean; pct?: number }[]): CanonicalRow[] {
-  const total = raw.find(r => r.total) ?? null;
-  const rows: CanonicalRow[] = USES_ORDER.map(({ label, aliases }) => {
-    const hit = raw.find(r => !r.total && aliases.includes(r.label));
-    return { label, amount: hit ? hit.amount : null, total: false, pct: hit?.pct ?? 0 };
-  });
-  rows.push({
-    label: 'Total Uses',
-    amount: total ? total.amount : rows.reduce((s, r) => s + (r.amount ?? 0), 0),
-    total: true,
-    pct: 1,
-  });
-  return rows;
-}
-
-function canonicalizeSources(raw: { label: string; amount: number; total?: boolean; pct?: number }[]): CanonicalRow[] {
-  const total = raw.find(r => r.total) ?? null;
-  const rows: CanonicalRow[] = SOURCES_ORDER.map(({ label, aliases }) => {
-    const hit = raw.find(r => !r.total && aliases.includes(r.label));
-    return { label, amount: hit ? hit.amount : null, total: false, pct: hit?.pct ?? 0 };
-  });
-  // The engine emits a single "Equity" line — surface it under
-  // "Sponsor Equity" whenever no explicit Sponsor/LP split is provided
-  // (even when the Senior Loan line is present, which it always is).
-  const hasEquitySource = rows.some(
-    r => (r.label === 'Sponsor Equity' || r.label === 'LP Equity') && r.amount != null,
-  );
-  if (!hasEquitySource) {
-    const equity = raw.find(r => !r.total && /^Equity$/i.test(r.label));
-    if (equity) {
-      const sponsorRow = rows.find(r => r.label === 'Sponsor Equity');
-      if (sponsorRow) {
-        sponsorRow.amount = equity.amount;
-        sponsorRow.pct = equity.pct ?? 0;
-      }
-    }
-  }
-  rows.push({
-    label: 'Total Sources',
-    amount: total ? total.amount : rows.reduce((s, r) => s + (r.amount ?? 0), 0),
-    total: true,
-    pct: 1,
-  });
-  return rows;
-}
-
-function LiveSourcesUses() {
-  const { assumptions, setAssumption, model } = useAssumptionsOptional()!;
-  const [edit, setEdit] = useState(false);
-  const params = useParams();
-  const dealId = (params?.id as string | undefined) ?? '';
-  const { outputs } = useEngineOutputs(dealId);
-
-  // Worker capital engine wins when present.
-  const wSources = getEngineField<CapitalLine[]>(outputs, 'capital', 'sources');
-  const wUses = getEngineField<CapitalLine[]>(outputs, 'capital', 'uses');
-
-  const rawUses = (wUses && wUses.length > 0)
-    ? wUses.map(u => ({ label: u.label, amount: u.amount, total: !!u.is_total, pct: u.pct ?? 0 }))
-    : model.sourcesAndUses.uses.map(u => ({ ...u, total: u.total ?? false, pct: 0 }));
-  const rawSources = (wSources && wSources.length > 0)
-    ? wSources.map(s => ({ label: s.label, amount: s.amount, total: !!s.is_total, pct: s.pct ?? 0 }))
-    : model.sourcesAndUses.sources.map(s => ({ ...s, total: s.total ?? false, pct: s.pct ?? 0 }));
-  const usesRows = canonicalizeUses(rawUses);
-  const sourcesRows = canonicalizeSources(rawSources);
-  const usingWorker = (wSources && wSources.length > 0) || (wUses && wUses.length > 0);
-
+// ─────────────────────────────────────────────────────────────────────
+// Section row — canonical Deal Summary row (dot · label · link · value).
+// ─────────────────────────────────────────────────────────────────────
+function SectionRow({ row }: { row: RowDef }) {
+  const color = valueColor(row.kind, !!row.bold, !!row.overridden);
+  const valueIsNode = typeof row.value !== 'string' && typeof row.value !== 'number';
   return (
     <>
-      <div className="grid grid-cols-2 gap-5 mb-5">
-        <Card className="p-5">
-          <div className="flex items-center justify-between mb-3">
-            <h3 className="text-[13px] font-semibold text-ink-900">Transaction Uses</h3>
-            {usingWorker && (
-              <span className="text-[9.5px] uppercase tracking-wide text-success-700 bg-success-50 rounded px-1.5 py-0.5">Live</span>
-            )}
-          </div>
-          <table className="w-full text-[12.5px]">
-            <tbody>
-              {usesRows.map(u => (
-                <tr key={u.label}
-                  className={u.total ? 'font-semibold border-t border-border' : 'border-b border-border/50'}>
-                  <td className="py-2">{u.label}</td>
-                  <td className="text-right tabular-nums">
-                    {u.amount != null ? fmtCurrency(u.amount) : '—'}
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </Card>
-        <Card className="p-5">
-          <div className="flex items-center justify-between mb-3">
-            <h3 className="text-[13px] font-semibold text-ink-900">Transaction Sources</h3>
-            {usingWorker && (
-              <span className="text-[9.5px] uppercase tracking-wide text-success-700 bg-success-50 rounded px-1.5 py-0.5">Live</span>
-            )}
-          </div>
-          <table className="w-full text-[12.5px]">
-            <tbody>
-              {sourcesRows.map(s => (
-                <tr key={s.label}
-                  className={s.total ? 'font-semibold border-t border-border' : 'border-b border-border/50'}>
-                  <td className="py-2">
-                    {s.label}
-                    {!s.total && s.pct ? <span className="ml-2 text-ink-500 text-[11px]">{(s.pct * 100).toFixed(1)}%</span> : null}
-                  </td>
-                  <td className="text-right tabular-nums">
-                    {s.amount != null ? fmtCurrency(s.amount) : '—'}
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </Card>
-      </div>
-
-      <Card className="p-5">
-        <button onClick={() => setEdit(e => !e)}
-          className="flex items-center gap-2 text-[12.5px] font-medium text-brand-700 hover:text-brand-800">
-          {edit ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
-          {edit ? 'Hide' : 'Edit'} Assumptions
-        </button>
-        {edit && (
-          <div className="mt-4 grid grid-cols-3 gap-4">
-            <NumberField
-              label="Purchase Price"
-              value={assumptions.purchasePrice}
-              onChange={v => setAssumption('purchasePrice', v)}
-              format={v => `$${(v / 1e6).toFixed(2)}M`}
-              step={100_000}
-            />
-            <NumberField
-              label="Closing Costs %"
-              value={assumptions.closingCostsPct}
-              onChange={v => setAssumption('closingCostsPct', v)}
-              format={v => `${(v * 100).toFixed(2)}%`}
-              step={0.0025}
-              min={0} max={0.10}
-            />
-            <NumberField
-              label="Working Capital"
-              value={assumptions.workingCapital}
-              onChange={v => setAssumption('workingCapital', v)}
-              format={v => `$${(v / 1e3).toFixed(0)}K`}
-              step={25_000}
-            />
-            <NumberField
-              label="Renovation Budget"
-              value={assumptions.renovationBudget}
-              onChange={v => setAssumption('renovationBudget', v)}
-              format={v => `$${(v / 1e6).toFixed(2)}M`}
-              step={100_000}
-            />
-            <NumberField
-              label="LTV"
-              value={assumptions.ltv}
-              onChange={v => setAssumption('ltv', v)}
-              format={v => `${(v * 100).toFixed(0)}%`}
-              step={0.01}
-              min={0.30} max={0.80}
-            />
-            <div className="text-[11.5px] text-ink-500 self-end pb-1">
-              Equity Required:{' '}
-              <span className="font-semibold text-ink-900 tabular-nums">{fmtCurrency(model.equity)}</span>
-            </div>
-          </div>
+      <div style={{
+        display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12,
+        fontSize: 13, padding: '7px 0', borderBottom: `1px solid ${palette.hairlineRow}`,
+      }}>
+        <span style={{ display: 'flex', alignItems: 'center', gap: 7, minWidth: 0 }}>
+          <ProvenanceDot state={row.state} size={8} />
+          <span style={{ color: palette.textSecondary, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+            {row.label}
+          </span>
+          {row.link && (
+            <a href={`?tab=${row.link.tab}`}
+              style={{ fontSize: 10.5, color: palette.linkBlue, cursor: 'pointer', fontWeight: 600, whiteSpace: 'nowrap', textDecoration: 'none' }}>
+              {row.link.label}
+            </a>
+          )}
+        </span>
+        {valueIsNode ? (
+          <span style={{ flexShrink: 0 }}>{row.value}</span>
+        ) : (
+          <span style={{
+            color, fontWeight: row.bold ? 700 : 400,
+            fontVariantNumeric: 'tabular-nums', whiteSpace: 'nowrap', flexShrink: 0,
+          }}>
+            {row.value}
+          </span>
         )}
-      </Card>
+      </div>
+      {row.note && (
+        <div style={{ fontSize: 10.5, color: palette.textMuted, padding: '0 0 6px 15px', lineHeight: 1.45 }}>
+          {row.note}
+        </div>
+      )}
     </>
   );
 }
 
-function NumberField({
-  label, value, onChange, format, step = 1, min, max,
+// ─────────────────────────────────────────────────────────────────────
+// Sources & Uses — balance banner + Uses / Sources tables (Amount / Key / %).
+// Worker capital engine sources/uses arrays are the authoritative source.
+// ─────────────────────────────────────────────────────────────────────
+interface CapitalLine { label: string; amount: number; pct?: number | null; is_total?: boolean }
+
+interface SURow {
+  label: string; amount: number | null; total: boolean; kind: ValueKind;
+  state: ValueState; note?: string; link?: { label: string; tab: string };
+}
+
+function classifySU(label: string): { kind: ValueKind; note?: string; link?: { label: string; tab: string } } {
+  if (/senior loan|senior debt/i.test(label)) {
+    return { kind: 'linked', link: { label: '→ Debt', tab: 'debt' }, note: 'Sized in Debt — Investment consumes the result' };
+  }
+  if (/lender fee|loan fee|loan cost/i.test(label)) return { kind: 'linked', link: { label: '→ Debt', tab: 'debt' } };
+  if (/key money/i.test(label)) return { kind: 'linked', link: { label: '→ Partnership', tab: 'partnership' } };
+  if (/equity/i.test(label)) return { kind: 'calc', note: 'Allocated between sponsor and LP in Partnership' };
+  return { kind: 'calc' };
+}
+
+function SourcesUses({
+  outputs, money, keys,
 }: {
-  label: string; value: number; onChange: (v: number) => void; format: (v: number) => string;
-  step?: number; min?: number; max?: number;
+  outputs: import('@/lib/api').EngineOutputsResponse | null;
+  money: (v: number | undefined) => ReactNode;
+  keys: number | undefined;
 }) {
+  const wSources = getEngineField<CapitalLine[]>(outputs, 'capital', 'sources') ?? [];
+  const wUses = getEngineField<CapitalLine[]>(outputs, 'capital', 'uses') ?? [];
+
+  const toRows = (lines: CapitalLine[], side: 'uses' | 'sources'): SURow[] =>
+    lines.map((l) => {
+      const total = !!l.is_total;
+      const c = classifySU(l.label);
+      return {
+        label: l.label,
+        amount: typeof l.amount === 'number' ? l.amount : null,
+        total,
+        kind: total ? 'calc' : c.kind,
+        state: total ? 'calculated' : kindToState(c.kind),
+        note: total ? undefined : c.note,
+        link: total ? undefined : c.link,
+      };
+    });
+
+  const usesRows = toRows(wUses, 'uses');
+  const sourcesRows = toRows(wSources, 'sources');
+
+  const usesTotal = usesRows.find((r) => r.total)?.amount ?? usesRows.reduce((s, r) => s + (r.amount ?? 0), 0);
+  const sourcesTotal = sourcesRows.find((r) => r.total)?.amount ?? sourcesRows.reduce((s, r) => s + (r.amount ?? 0), 0);
+  const balanced = Math.abs(usesTotal - sourcesTotal) < 1;
+  const delta = Math.abs(usesTotal - sourcesTotal);
+
+  const columns: { title: string; rows: SURow[]; footnote: string }[] = [
+    { title: 'Uses', rows: usesRows, footnote: 'Renovation appears once, as the total PIP budget including contingency.' },
+    { title: 'Sources', rows: sourcesRows, footnote: 'Required equity is the plug — total uses less debt and key money. Partnership decides how it splits.' },
+  ];
+
+  const suGrid = 'minmax(150px,1fr) minmax(96px,116px) minmax(66px,86px) minmax(44px,54px)';
+
   return (
-    <div>
-      <div className="flex items-baseline justify-between mb-1">
-        <label className="text-[11px] text-ink-500 uppercase tracking-wide">{label}</label>
-        <span className="text-[12.5px] font-semibold text-brand-700 tabular-nums">{format(value)}</span>
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+      {/* Balance banner */}
+      <div style={{
+        display: 'flex', alignItems: 'center', gap: 14, flexWrap: 'wrap',
+        background: balanced ? 'oklch(96.5% 0.03 155)' : 'oklch(96% 0.04 40)',
+        border: `1px solid ${balanced ? 'oklch(88% 0.05 155)' : 'oklch(85% 0.07 40)'}`,
+        borderRadius: 8, padding: '10px 14px',
+      }}>
+        <span style={{
+          fontSize: 10, fontWeight: 700, letterSpacing: '.05em', textTransform: 'uppercase',
+          color: balanced ? 'oklch(40% 0.12 155)' : 'oklch(45% 0.15 40)',
+        }}>
+          {balanced ? 'In balance' : 'Out of balance'}
+        </span>
+        <span style={{ fontSize: 12.5, color: palette.ink }}>
+          Total sources <b>{money(sourcesTotal)}</b> · total uses <b>{money(usesTotal)}</b>
+          {balanced ? ' — sources equal uses' : ` — difference ${fmtCurrency(delta)}`}
+        </span>
+        <span style={{ fontSize: 11, color: palette.textMuted, marginLeft: 'auto' }}>
+          Required equity is the plug — every other line is owned by Investment, Debt or Partnership
+        </span>
       </div>
-      <input
-        type="number"
-        value={value}
-        step={step}
-        min={min}
-        max={max}
-        onChange={e => {
-          const v = parseFloat(e.target.value);
-          if (!isNaN(v)) onChange(v);
-        }}
-        className="w-full px-2 py-1.5 text-[12.5px] border border-border rounded-md tabular-nums focus:outline-none focus:ring-2 focus:ring-brand-500"
-      />
+
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(420px,1fr))', gap: 14 }}>
+        {columns.map((col) => (
+          <SectionCard key={col.title}>
+            {/* Column header */}
+            <div style={{
+              display: 'grid', gridTemplateColumns: suGrid, fontSize: 10, fontWeight: 700,
+              letterSpacing: '.05em', color: palette.textFaint, textTransform: 'uppercase',
+              paddingBottom: 7, borderBottom: `1px solid ${palette.border}`,
+            }}>
+              <span>{col.title}</span>
+              <span style={{ textAlign: 'right' }}>Amount</span>
+              <span style={{ textAlign: 'right' }}>/ Key</span>
+              <span style={{ textAlign: 'right' }}>%</span>
+            </div>
+            {col.rows.map((r, i) => {
+              const perKey = (r.amount != null && keys && keys > 0 && !r.total) ? fmtCurrency(r.amount / keys) : (r.total ? '' : '—');
+              const pct = r.amount != null && usesTotal ? `${((r.amount / (col.title === 'Uses' ? usesTotal : sourcesTotal)) * 100).toFixed(1)}%` : '—';
+              const color = valueColor(r.total ? 'calc' : r.kind, r.total, false);
+              return (
+                <div key={`${r.label}-${i}`}>
+                  <div style={{
+                    display: 'grid', gridTemplateColumns: suGrid, fontSize: 12.5, padding: '6px 0',
+                    borderBottom: `1px solid ${palette.hairlineRow}`, alignItems: 'center',
+                  }}>
+                    <span style={{ display: 'flex', alignItems: 'center', gap: 7, minWidth: 0 }}>
+                      <ProvenanceDot state={r.state} size={8} />
+                      <span style={{ color: palette.textSecondary, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                        {r.label}
+                      </span>
+                      {r.link && (
+                        <a href={`?tab=${r.link.tab}`}
+                          style={{ fontSize: 10.5, color: palette.linkBlue, cursor: 'pointer', fontWeight: 600, whiteSpace: 'nowrap', textDecoration: 'none' }}>
+                          {r.link.label}
+                        </a>
+                      )}
+                    </span>
+                    <span style={{ textAlign: 'right', color, fontWeight: r.total ? 700 : 400, fontVariantNumeric: 'tabular-nums' }}>
+                      {r.amount != null ? fmtCurrency(r.amount) : '—'}
+                    </span>
+                    <span style={{ textAlign: 'right', color: palette.textMuted, fontVariantNumeric: 'tabular-nums' }}>{perKey}</span>
+                    <span style={{ textAlign: 'right', color: palette.textMuted, fontVariantNumeric: 'tabular-nums' }}>{r.total ? '100.0%' : pct}</span>
+                  </div>
+                  {r.note && (
+                    <div style={{ fontSize: 10.5, color: palette.textMuted, padding: '0 0 6px 15px', lineHeight: 1.45 }}>
+                      {r.note}
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+            {col.rows.length === 0 && (
+              <div style={{ fontSize: 12.5, color: palette.textMuted, padding: '10px 0' }}>
+                Run the model to populate {col.title.toLowerCase()}.
+              </div>
+            )}
+            <div style={{ fontSize: 11, color: palette.textMuted, marginTop: 9, lineHeight: 1.5 }}>{col.footnote}</div>
+          </SectionCard>
+        ))}
+      </div>
     </div>
   );
 }
 
-type PanelRow = [label: string, value: ReactNode];
+// ─────────────────────────────────────────────────────────────────────
+// Timeline — dated rail + phase bars + hold caption + detail table.
+// Data from GET /deals/{id}/engines/timeline (FON-71).
+// ─────────────────────────────────────────────────────────────────────
+function TimelinePanel({
+  timeline, liveMode, holdYears,
+}: {
+  timeline: TimelineResponse | null;
+  liveMode: boolean;
+  holdYears: number | undefined;
+}) {
+  const events = timeline?.events ?? [];
+  const pending = !timeline?.close_date;
 
-function Panel({ title, rows }: { title: string; rows: PanelRow[] }) {
+  const closeMs = timeline?.close_date ? Date.parse(timeline.close_date) : null;
+  const exitMs = timeline?.exit_date ? Date.parse(timeline.exit_date) : null;
+  const span = (closeMs != null && exitMs != null && exitMs > closeMs) ? exitMs - closeMs : null;
+  const pos = (iso: string | null | undefined): number | null => {
+    if (span == null || closeMs == null || !iso) return null;
+    const t = Date.parse(iso);
+    if (Number.isNaN(t)) return null;
+    return Math.max(0, Math.min(100, ((t - closeMs) / span) * 100));
+  };
+
+  const holdCaption = (!pending && timeline?.close_date && timeline?.exit_date)
+    ? `${holdYears != null ? `${holdYears}-year hold` : 'Hold'} · ${fmtLongDate(timeline.close_date)} → ${fmtLongDate(timeline.exit_date)}`
+    : 'Set the Acquisition Date on Deal Summary to populate dates';
+
+  const ownerFor = (basis: string): string => {
+    if (basis === 'assumption') return 'Investment assumption';
+    if (basis === 'pending') return 'Awaiting acquisition date';
+    return 'Calculated';
+  };
+  const stateForBasis = (basis: string): ValueState =>
+    basis === 'assumption' ? 'assumption' : basis === 'pending' ? 'awaiting_data' : 'calculated';
+
+  const phaseColor = (label: string): string =>
+    /renov/i.test(label) ? 'oklch(55% 0.12 260)'
+      : /ramp/i.test(label) ? 'oklch(65% 0.09 200)'
+        : /stabil/i.test(label) ? 'oklch(55% 0.11 155)'
+          : 'oklch(55% 0.11 155)';
+
+  // Phase bars: any event carrying a positive duration that we can place on the
+  // acquisition→exit span, plus a full-width "Total hold" bar.
+  const phases = events
+    .filter((e) => (e.duration_months ?? 0) > 0 && e.start && e.finish)
+    .map((e) => {
+      const left = pos(e.start);
+      const right = pos(e.finish);
+      return {
+        label: e.event,
+        left: left != null ? `${left}%` : '0%',
+        width: (left != null && right != null) ? `${Math.max(2, right - left)}%` : '2%',
+        bg: phaseColor(e.event),
+        duration: `${e.duration_months} months`,
+      };
+    });
+  if (span != null) {
+    phases.push({ label: 'Total hold', left: '0%', width: '100%', bg: '#c9c8c2', duration: holdYears != null ? `${holdYears} years` : '' });
+  }
+
+  const railCols = `repeat(${Math.max(1, events.length)},minmax(0,1fr))`;
+  const detailGrid = 'minmax(180px,1.3fr) minmax(120px,.9fr) minmax(110px,.8fr) minmax(220px,1.4fr)';
+
   return (
-    <Card className="p-5">
-      <h3 className="text-[13px] font-semibold text-ink-900 mb-3">{title}</h3>
-      <div className="space-y-1 text-[12.5px]">
-        {rows.map(([k, v], idx) => (
-          <div
-            key={`${k}-${idx}`}
-            className="flex justify-between py-1.5 border-b border-border/50 last:border-0"
-          >
-            <span className="text-ink-500">{k}</span>
-            <span className="font-medium tabular-nums text-ink-900">{v}</span>
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+      {/* Rail card */}
+      <SectionCard title="Transaction Timeline" note={holdCaption} bodyStyle={{ padding: '18px 20px' }}>
+        {events.length === 0 ? (
+          <p style={{ fontSize: 12.5, color: palette.textMuted, paddingTop: 10 }}>
+            {liveMode ? 'Run the model to build the timeline.' : 'Timeline is available on live deals.'}
+          </p>
+        ) : (
+          <div style={{ marginTop: 14 }}>
+            {/* Milestone rail */}
+            <div style={{ display: 'grid', gridTemplateColumns: railCols, position: 'relative' }}>
+              <div style={{ position: 'absolute', left: '6%', right: '6%', top: 5, height: 2, background: palette.border }} />
+              {events.map((m, i) => (
+                <div key={`${m.event}-${i}`} style={{
+                  position: 'relative', display: 'flex', flexDirection: 'column', alignItems: 'center',
+                  gap: 6, padding: '0 4px', textAlign: 'center',
+                }}>
+                  <ProvenanceDot state={stateForBasis(m.basis)} size={12}
+                    style={{ boxShadow: '0 0 0 2px #fff, 0 0 0 4px #eae9e4', zIndex: 1 }} />
+                  <span style={{ fontSize: 12.5, fontWeight: 700, color: palette.ink, fontVariantNumeric: 'tabular-nums' }}>
+                    {fmtISODate(m.start ?? m.finish)}
+                  </span>
+                  <span style={{ fontSize: 11.5, color: palette.textSecondary, lineHeight: 1.35 }}>{m.event}</span>
+                  <span style={{ fontSize: 10.5, color: palette.textFaint }}>
+                    {(m.duration_months ?? 0) > 0 ? `${m.duration_months} months` : ''}
+                  </span>
+                </div>
+              ))}
+            </div>
+            {/* Phase bars */}
+            {phases.length > 0 && (
+              <div style={{ marginTop: 20, display: 'flex', flexDirection: 'column', gap: 7 }}>
+                {phases.map((p, i) => (
+                  <div key={`${p.label}-${i}`} style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+                    <span style={{ width: 132, fontSize: 11.5, color: palette.textSecondary, flexShrink: 0 }}>{p.label}</span>
+                    <span style={{ flex: 1, height: 9, background: '#f3f2ee', borderRadius: 5, position: 'relative', overflow: 'hidden' }}>
+                      <span style={{ position: 'absolute', left: p.left, width: p.width, top: 0, bottom: 0, background: p.bg, borderRadius: 5 }} />
+                    </span>
+                    <span style={{ width: 96, textAlign: 'right', fontSize: 11.5, color: palette.hoverInk, fontVariantNumeric: 'tabular-nums', flexShrink: 0 }}>
+                      {p.duration}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            )}
           </div>
-        ))}
-      </div>
-    </Card>
+        )}
+      </SectionCard>
+
+      {/* Detail table */}
+      {events.length > 0 && (
+        <SectionCard>
+          <div style={{
+            display: 'grid', gridTemplateColumns: detailGrid, fontSize: 10, fontWeight: 700,
+            letterSpacing: '.05em', color: palette.textFaint, textTransform: 'uppercase',
+            paddingBottom: 7, borderBottom: `1px solid ${palette.border}`,
+          }}>
+            <span>Milestone</span><span>Date</span><span>Duration</span><span>Owned by</span>
+          </div>
+          {events.map((r, i) => {
+            const isDebt = /loan|debt|refi/i.test(r.event);
+            return (
+              <div key={`${r.event}-${i}`} style={{
+                display: 'grid', gridTemplateColumns: detailGrid, fontSize: 12.5, padding: '7px 0',
+                borderBottom: `1px solid ${palette.hairlineRow}`, alignItems: 'center',
+              }}>
+                <span style={{ display: 'flex', alignItems: 'center', gap: 7, minWidth: 0 }}>
+                  <ProvenanceDot state={isDebt ? 'linked' : stateForBasis(r.basis)} size={8} />
+                  <span style={{ color: palette.ink, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{r.event}</span>
+                </span>
+                <span style={{ color: palette.ink, fontVariantNumeric: 'tabular-nums' }}>{fmtISODate(r.start ?? r.finish)}</span>
+                <span style={{ color: palette.textSecondary, fontVariantNumeric: 'tabular-nums' }}>
+                  {(r.duration_months ?? 0) > 0 ? `${r.duration_months} months` : '—'}
+                </span>
+                <span style={{ color: palette.textMuted, display: 'flex', alignItems: 'center', gap: 8 }}>
+                  {isDebt ? 'Linked from Debt' : ownerFor(r.basis)}
+                  {isDebt && (
+                    <a href="?tab=debt" style={{ color: palette.linkBlue, cursor: 'pointer', fontWeight: 600, textDecoration: 'none' }}>Open Debt →</a>
+                  )}
+                </span>
+              </div>
+            );
+          })}
+        </SectionCard>
+      )}
+      {pending && events.length > 0 && (
+        <p style={{ fontSize: 11, color: palette.textMuted }}>
+          Set the Acquisition Date on Deal Summary to populate dates.
+        </p>
+      )}
+    </div>
   );
 }
 
+// ─────────────────────────────────────────────────────────────────────
+// Inline editors + date/format helpers.
+// ─────────────────────────────────────────────────────────────────────
+
 /**
- * Inline keys override.
- *
- * Auto-sync (docs > wizard) lands in apps/worker/.../documents.py via
- * `_sync_deal_metadata_from_extraction`: when an OM extraction carries
- * `property_overview.keys`, the deals row is updated and an audit_log
- * entry is written. This widget is the user-facing escape hatch — when
- * the OM was wrong (e.g. pre-renovation key count vs post-renovation),
- * the analyst overrides here and the UI refreshes from the worker.
- *
- * Read-only when no worker connection (mock data flow). Reverts to
- * read-only when the deal id isn't a UUID (numeric mock ids).
- */
-/**
- * FON-44 — an editable transaction-assumption cell. Shows the value with a
- * pencil affordance; on save it hands the parsed number back to the parent's
- * onSave (which PATCHes field_overrides + re-runs). Read-only when not live.
+ * An editable transaction-assumption cell. Shows the value with the canonical
+ * blue dotted-underline (editable) affordance; on click it becomes an input +
+ * navy Save button. On save it hands the parsed number back to onSave (which
+ * PATCHes field_overrides + re-runs). Read-only when not live.
  */
 function AssumptionField({
-  value,
-  format,
-  toDraft,
-  parse,
-  onSave,
-  editable,
-  suffix,
-  width = 'w-32',
+  value, format, toDraft, parse, onSave, editable, suffix, width = 'w-32', color, bold,
 }: {
   value: number | undefined;
   format: (v: number) => string;
@@ -864,78 +998,66 @@ function AssumptionField({
   editable: boolean;
   suffix?: string;
   width?: string;
+  color?: string;
+  bold?: boolean;
 }) {
   const { toast } = useToast();
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState('');
   const [saving, setSaving] = useState(false);
   const display = value != null ? format(value) : '—';
+  const textColor = color ?? palette.ink;
 
   if (!editable) {
-    return <span className="tabular-nums font-medium text-ink-900">{display}</span>;
+    return <span style={{ color: textColor, fontWeight: bold ? 700 : 400, fontVariantNumeric: 'tabular-nums' }}>{display}</span>;
   }
   if (!editing) {
     return (
-      <span className="inline-flex items-center gap-1.5">
-        <span className="tabular-nums font-medium text-ink-900">{display}</span>
-        <button
-          type="button"
-          aria-label="Edit assumption"
-          title="Edit assumption"
-          onClick={() => { setDraft(value != null ? toDraft(value) : ''); setEditing(true); }}
-          className="text-ink-400 hover:text-brand-600 transition-colors"
-        >
-          <Pencil className="w-3 h-3" />
-        </button>
+      <span style={{
+        color: textColor, fontWeight: bold ? 700 : 500, fontVariantNumeric: 'tabular-nums',
+        textDecoration: 'underline dotted', cursor: 'pointer',
+      }}
+        onClick={() => { setDraft(value != null ? toDraft(value) : ''); setEditing(true); }}
+        title="Click to change — Investment owns this assumption">
+        {display}
       </span>
     );
   }
   const submit = async () => {
     const parsed = parse(draft);
-    if (parsed == null) {
-      toast('Enter a valid number.', { type: 'error' });
-      return;
-    }
+    if (parsed == null) { toast('Enter a valid number.', { type: 'error' }); return; }
     setSaving(true);
-    try {
-      await onSave(parsed);
-      setEditing(false);
-    } finally {
-      setSaving(false);
-    }
+    try { await onSave(parsed); setEditing(false); } finally { setSaving(false); }
   };
   return (
-    <span className="inline-flex items-center gap-1">
+    <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
       <input
-        type="number"
-        value={draft}
-        autoFocus
-        disabled={saving}
+        type="number" value={draft} autoFocus disabled={saving}
         onChange={(e) => setDraft(e.target.value)}
-        onKeyDown={(e) => {
-          if (e.key === 'Enter') void submit();
-          if (e.key === 'Escape') setEditing(false);
+        onKeyDown={(e) => { if (e.key === 'Enter') void submit(); if (e.key === 'Escape') setEditing(false); }}
+        className={cn(width)}
+        style={{
+          fontSize: 12.5, fontFamily: 'inherit', border: `1px solid ${palette.linkBlue}`,
+          borderRadius: 5, padding: '4px 7px', fontVariantNumeric: 'tabular-nums', textAlign: 'right',
         }}
-        className={cn(width, 'px-2 py-0.5 text-[12.5px] border border-border rounded text-right tabular-nums')}
       />
-      {suffix && <span className="text-[11px] text-ink-500">{suffix}</span>}
+      {suffix && <span style={{ fontSize: 11, color: palette.textMuted }}>{suffix}</span>}
       <button type="button" aria-label="Save" onClick={() => void submit()} disabled={saving}
-        className="text-emerald-600 hover:text-emerald-800 disabled:opacity-50">
-        <Check className="w-3.5 h-3.5" />
+        style={{
+          background: palette.inkNavy, color: '#fff', border: 'none', borderRadius: 5,
+          padding: '5px 9px', fontSize: 11, fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit',
+        }}>
+        Save
       </button>
       <button type="button" aria-label="Cancel" onClick={() => setEditing(false)}
-        className="text-ink-400 hover:text-ink-700">
+        style={{ background: 'none', border: 'none', color: palette.textFaint, cursor: 'pointer' }}>
         <X className="w-3.5 h-3.5" />
       </button>
     </span>
   );
 }
 
-/**
- * Format an ISO date (YYYY-MM-DD) as M/D/YYYY without a timezone shift —
- * parsing the parts directly avoids `new Date('2025-09-30')` landing on the
- * prior day in negative-offset zones. Returns '—' for null/empty.
- */
+/** Format an ISO date (YYYY-MM-DD) as M/D/YYYY without a timezone shift. */
 function fmtISODate(iso: string | null | undefined): string {
   if (!iso) return '—';
   const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(iso);
@@ -943,15 +1065,18 @@ function fmtISODate(iso: string | null | undefined): string {
   return `${Number(m[2])}/${Number(m[3])}/${m[1]}`;
 }
 
-/**
- * FON-71 — the acquisition close date, an editable date cell. Drives every
- * date on the Timeline tab. Shows the date with a pencil affordance; on save
- * it hands the ISO string to the parent's onSave (PATCHes field_overrides).
- */
+/** Format an ISO date as "Mon D, YYYY" (the canonical caption format). */
+function fmtLongDate(iso: string | null | undefined): string {
+  if (!iso) return '—';
+  const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(iso);
+  if (!m) return '—';
+  const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+  return `${months[Number(m[2]) - 1]} ${Number(m[3])}, ${m[1]}`;
+}
+
+/** The acquisition close date — an editable date cell that drives the Timeline. */
 function CloseDateField({
-  iso,
-  editable,
-  onSave,
+  iso, editable, onSave,
 }: {
   iso: string | null;
   editable: boolean;
@@ -964,69 +1089,49 @@ function CloseDateField({
   const display = fmtISODate(iso);
 
   if (!editable) {
-    return <span className="tabular-nums font-medium text-ink-900">{display}</span>;
+    return <span style={{ color: prov.blue, fontVariantNumeric: 'tabular-nums' }}>{display}</span>;
   }
   if (!editing) {
     return (
-      <span className="inline-flex items-center gap-1.5">
-        <span className="tabular-nums font-medium text-ink-900">
-          {iso ? display : <span className="text-ink-400 font-normal">Set date</span>}
-        </span>
-        <button
-          type="button"
-          aria-label="Edit acquisition date"
-          title="Edit acquisition date"
-          onClick={() => { setDraft(iso ? iso.slice(0, 10) : ''); setEditing(true); }}
-          className="text-ink-400 hover:text-brand-600 transition-colors"
-        >
-          <Pencil className="w-3 h-3" />
-        </button>
+      <span
+        style={{ color: prov.blue, fontWeight: 500, fontVariantNumeric: 'tabular-nums', textDecoration: 'underline dotted', cursor: 'pointer' }}
+        onClick={() => { setDraft(iso ? iso.slice(0, 10) : ''); setEditing(true); }}
+        title="Click to change — Investment owns this assumption">
+        {iso ? display : <span style={{ color: palette.textFaint, fontWeight: 400 }}>Set date</span>}
       </span>
     );
   }
   const submit = async () => {
-    if (!/^\d{4}-\d{2}-\d{2}$/.test(draft)) {
-      toast('Pick a valid date.', { type: 'error' });
-      return;
-    }
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(draft)) { toast('Pick a valid date.', { type: 'error' }); return; }
     setSaving(true);
-    try {
-      await onSave(draft);
-      setEditing(false);
-    } finally {
-      setSaving(false);
-    }
+    try { await onSave(draft); setEditing(false); } finally { setSaving(false); }
   };
   return (
-    <span className="inline-flex items-center gap-1">
+    <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
       <input
-        type="date"
-        value={draft}
-        autoFocus
-        disabled={saving}
+        type="date" value={draft} autoFocus disabled={saving}
         onChange={(e) => setDraft(e.target.value)}
-        onKeyDown={(e) => {
-          if (e.key === 'Enter') void submit();
-          if (e.key === 'Escape') setEditing(false);
-        }}
-        className="px-2 py-0.5 text-[12.5px] border border-border rounded tabular-nums"
+        onKeyDown={(e) => { if (e.key === 'Enter') void submit(); if (e.key === 'Escape') setEditing(false); }}
+        style={{ fontSize: 12.5, fontFamily: 'inherit', border: `1px solid ${palette.linkBlue}`, borderRadius: 5, padding: '4px 7px' }}
       />
       <button type="button" aria-label="Save" onClick={() => void submit()} disabled={saving}
-        className="text-emerald-600 hover:text-emerald-800 disabled:opacity-50">
-        <Check className="w-3.5 h-3.5" />
+        style={{ background: palette.inkNavy, color: '#fff', border: 'none', borderRadius: 5, padding: '5px 9px', fontSize: 11, fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit' }}>
+        Save
       </button>
       <button type="button" aria-label="Cancel" onClick={() => setEditing(false)}
-        className="text-ink-400 hover:text-ink-700">
+        style={{ background: 'none', border: 'none', color: palette.textFaint, cursor: 'pointer' }}>
         <X className="w-3.5 h-3.5" />
       </button>
     </span>
   );
 }
 
+/**
+ * Inline keys override — the analyst escape hatch when the OM key count was
+ * wrong. Read-only when there is no worker connection (mock data flow).
+ */
 function KeysOverride({
-  dealId,
-  currentKeys,
-  onSaved,
+  dealId, currentKeys, onSaved,
 }: {
   dealId: string;
   currentKeys: number | null | undefined;
@@ -1035,41 +1140,25 @@ function KeysOverride({
   const { toast } = useToast();
   const editable = isWorkerConnected() && !/^\d+$/.test(dealId) && dealId.length > 0;
   const [editing, setEditing] = useState(false);
-  const [draft, setDraft] = useState<string>(
-    currentKeys != null ? String(currentKeys) : '',
-  );
+  const [draft, setDraft] = useState<string>(currentKeys != null ? String(currentKeys) : '');
   const [saving, setSaving] = useState(false);
-
-  if (!editable) {
-    return (
-      <span className="font-medium tabular-nums text-ink-900">
-        {currentKeys != null ? String(currentKeys) : '—'}
-      </span>
-    );
-  }
-
   const display = currentKeys != null ? String(currentKeys) : '—';
 
+  if (!editable) {
+    return <span style={{ color: prov.green, fontVariantNumeric: 'tabular-nums' }}>{display}</span>;
+  }
   if (!editing) {
     return (
-      <span className="inline-flex items-center gap-2">
-        <span className="font-medium tabular-nums text-ink-900">{display}</span>
-        <button
-          type="button"
-          aria-label="Override room count"
-          title="Override room count"
-          onClick={() => {
-            setDraft(currentKeys != null ? String(currentKeys) : '');
-            setEditing(true);
-          }}
-          className="text-ink-400 hover:text-ink-700 transition-colors"
-        >
+      <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+        <span style={{ color: prov.green, fontVariantNumeric: 'tabular-nums' }}>{display}</span>
+        <button type="button" aria-label="Override room count" title="Override room count"
+          onClick={() => { setDraft(currentKeys != null ? String(currentKeys) : ''); setEditing(true); }}
+          style={{ background: 'none', border: 'none', color: palette.textFaint, cursor: 'pointer' }}>
           <Pencil className="w-3 h-3" />
         </button>
       </span>
     );
   }
-
   const submit = async () => {
     const parsed = Number.parseInt(draft, 10);
     if (!Number.isFinite(parsed) || parsed <= 0) {
@@ -1079,52 +1168,30 @@ function KeysOverride({
     setSaving(true);
     try {
       await api.deals.update(dealId, { keys: parsed });
-      toast(`Room count saved: ${parsed} keys. Re-run engines to recompute.`, {
-        type: 'success',
-      });
+      toast(`Room count saved: ${parsed} keys. Re-run engines to recompute.`, { type: 'success' });
       setEditing(false);
       onSaved();
     } catch (err) {
       const detail = err instanceof WorkerError ? err.body : String(err);
-      toast(`Failed to save room count: ${detail || 'worker rejected update'}`, {
-        type: 'error',
-      });
+      toast(`Failed to save room count: ${detail || 'worker rejected update'}`, { type: 'error' });
     } finally {
       setSaving(false);
     }
   };
-
   return (
-    <span className="inline-flex items-center gap-1.5">
+    <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
       <input
-        type="number"
-        min={1}
-        value={draft}
-        autoFocus
-        disabled={saving}
+        type="number" min={1} value={draft} autoFocus disabled={saving}
         onChange={(e) => setDraft(e.target.value)}
-        onKeyDown={(e) => {
-          if (e.key === 'Enter') void submit();
-          if (e.key === 'Escape') setEditing(false);
-        }}
-        className="w-20 px-2 py-0.5 text-[12.5px] border border-border rounded text-right tabular-nums"
+        onKeyDown={(e) => { if (e.key === 'Enter') void submit(); if (e.key === 'Escape') setEditing(false); }}
+        style={{ width: 80, fontSize: 12.5, fontFamily: 'inherit', border: `1px solid ${palette.linkBlue}`, borderRadius: 5, padding: '4px 7px', textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}
       />
-      <button
-        type="button"
-        aria-label="Save room count override"
-        onClick={() => void submit()}
-        disabled={saving}
-        className="text-emerald-600 hover:text-emerald-800 disabled:opacity-50"
-      >
-        <Check className="w-3.5 h-3.5" />
+      <button type="button" aria-label="Save room count override" onClick={() => void submit()} disabled={saving}
+        style={{ background: palette.inkNavy, color: '#fff', border: 'none', borderRadius: 5, padding: '5px 9px', fontSize: 11, fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit' }}>
+        <Check className="w-3 h-3" />
       </button>
-      <button
-        type="button"
-        aria-label="Cancel"
-        onClick={() => setEditing(false)}
-        disabled={saving}
-        className="text-ink-400 hover:text-ink-700 disabled:opacity-50"
-      >
+      <button type="button" aria-label="Cancel" onClick={() => setEditing(false)} disabled={saving}
+        style={{ background: 'none', border: 'none', color: palette.textFaint, cursor: 'pointer' }}>
         <X className="w-3.5 h-3.5" />
       </button>
     </span>

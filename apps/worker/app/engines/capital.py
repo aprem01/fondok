@@ -61,8 +61,8 @@ class CapitalEngineInput(InvestmentEngineInput):
     # fixture. A future doc-driven breakdown can override these when a
     # renovation budget with itemized costs is extracted.
     renovation_hard_pct: Annotated[float, Field(ge=0.0, le=1.0)] = 0.75
-    renovation_soft_pct: Annotated[float, Field(ge=0.0, le=1.0)] = 0.20
-    renovation_fees_pct: Annotated[float, Field(ge=0.0, le=1.0)] = 0.05
+    renovation_soft_pct: Annotated[float, Field(ge=0.0, le=1.0)] = 0.15
+    renovation_fees_pct: Annotated[float, Field(ge=0.0, le=1.0)] = 0.10
 
 
 class RenovationBreakdown(BaseModel):
