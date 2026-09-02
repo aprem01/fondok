@@ -29,6 +29,7 @@ const ENGINE_LABEL: Record<EngineName, string> = {
   returns: 'Returns',
   sensitivity: 'Sensitivity',
   partnership: 'Partnership',
+  cash_flow: 'Cash Flow',
 };
 
 interface EngineRunProgressProps {

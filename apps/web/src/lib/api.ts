@@ -496,9 +496,53 @@ export type EngineName =
   | 'debt'
   | 'returns'
   | 'sensitivity'
-  | 'partnership';
+  | 'partnership'
+  // Move 2 — the composed cash-flow statement view (levered/unlevered +
+  // distributions), reconciled server-side to the returns engine.
+  | 'cash_flow';
 
 export type EngineStatus = 'queued' | 'running' | 'complete' | 'failed';
+
+// ─────────────────── Cash Flow Statement (Move 2) ───────────────────
+//
+// Mirrors fondok_schemas.underwriting.CashFlowStatementOutput /
+// CashFlowStatementLine + apps/worker/app/engines/cash_flow.py. This is a
+// COMPOSED VIEW over the canonical engine outputs — the worker assembles the
+// line-itemized levered/unlevered statement and distribution waterfall and
+// reconciles every bottom line to the returns engine to the cent. The Cash
+// Flow tab reads this straight from the ``cash_flow`` engine output rather
+// than re-deriving it in the browser.
+
+/** ``linked`` = a value pulled straight from another engine; ``calc`` = a
+ *  bottom line this view composes by summing its component rows. */
+export type CashFlowLineKind = 'linked' | 'calc';
+
+/** One row of the statement. ``values`` is indexed by period: index 0 = at
+ *  close (Year 0), indices 1..N = operating years 1..N. ``null`` marks a
+ *  period the row doesn't touch (rendered as an em-dash). */
+export interface CashFlowStatementLine {
+  label: string;
+  values: (number | null)[];
+  kind: CashFlowLineKind;
+  note?: string | null;
+}
+
+/** GET engine output for ``cash_flow``. ``unlevered`` / ``levered`` line
+ *  values are indexed 0..hold (index 0 = close); ``distributions`` values are
+ *  indexed by operating period (year 1..hold). ``unlevered_cash_flow`` /
+ *  ``levered_cash_flow`` are the canonical returns arrays. ``provenance`` is
+ *  keyed by dotted row path (e.g. "levered.net_cash_flow_to_equity"); each
+ *  trace carries a ``state`` emitted from the row's linked/calc kind. */
+export interface CashFlowStatementOutput {
+  deal_id: string;
+  hold_years: number;
+  unlevered: CashFlowStatementLine[];
+  levered: CashFlowStatementLine[];
+  distributions: CashFlowStatementLine[];
+  unlevered_cash_flow: number[];
+  levered_cash_flow: number[];
+  provenance: Record<string, ValueTrace>;
+}
 
 // ─────────────────────── revenue segmentation (Wave 2 P2.1) ───────────
 //
