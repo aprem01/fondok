@@ -4363,6 +4363,129 @@ async def get_run_status(
     return [_row_to_dict(r._mapping) for r in rows.fetchall()]
 
 
+async def get_canonical_run_id(
+    session: AsyncSession,
+    *,
+    deal_id: str,
+    tenant_id: str,
+) -> str | None:
+    """FON-73 — resolve the deal's canonical (deal-wide, base-case) run.
+
+    The canonical run is the most-recent ``run_id`` that
+
+    * has a row for *every* engine in :data:`ENGINE_NAMES` — i.e. it came
+      from a full ``run_all_engines`` chain, not a lone single-engine
+      re-run (which stamps its own fresh ``run_id`` on a single row), and
+    * is NOT a non-base scenario's run.
+
+    Serving this one run's snapshot keeps every deal-wide tab
+    (Financials/Investment/Debt → Cash Flow → Returns → IC Memo) pinned to
+    a single internally-consistent set of outputs. Before FON-73 the
+    deal-wide read took the latest row *per engine*, so a single-engine
+    re-run could silently de-sync it (Debt from run A, Returns from run B)
+    — the root cause of the cross-tab "two different Base" drift
+    (FON-54: IC Memo 31.6% vs Scenario 26.8%; FON-69: 38.6% vs -0.8%).
+
+    Returns ``None`` when the deal has never completed a full chain
+    (mid-migration / never run); callers then fall back to
+    ``get_latest_outputs`` so nothing 404s or renders empty.
+
+    Migration-free: derived purely from existing ``engine_outputs`` rows
+    plus ``scenarios.last_run_id`` — no schema change, no stored pointer,
+    identical SQL on SQLite and Postgres.
+    """
+    deal = str(_coerce_uuid(deal_id))
+    tenant = str(tenant_id)
+
+    # Non-base scenario runs also land in ``engine_outputs`` (they share
+    # ``run_all_engines``) but must never become the deal-wide canonical
+    # snapshot — they carry scenario-specific overrides. Exclude their
+    # run_ids. The BASE scenario's run stays eligible: its empty override
+    # list makes it byte-identical to the deal base case.
+    excluded: set[str] = set()
+    try:
+        scen_rows = await session.execute(
+            text(
+                # tenant-scope predicate required by tenant_middleware
+                """
+                SELECT last_run_id
+                  FROM scenarios
+                 WHERE deal_id = :deal AND tenant_id = :tenant
+                   AND is_base = :is_base AND last_run_id IS NOT NULL
+                """
+            ),
+            {"deal": deal, "tenant": tenant, "is_base": False},
+        )
+        excluded = {
+            str(r._mapping["last_run_id"])
+            for r in scen_rows.fetchall()
+            if r._mapping["last_run_id"] is not None
+        }
+    except Exception:  # pragma: no cover - scenarios table is always migrated
+        excluded = set()
+
+    # Candidate full-chain runs, newest first. COUNT(DISTINCT engine_name)
+    # and MAX(started_at) behave identically on both dialects (started_at
+    # is TIMESTAMPTZ on PG, ISO-8601 TEXT on SQLite — both sort correctly).
+    rows = await session.execute(
+        text(
+            # tenant-scope predicate required by tenant_middleware
+            """
+            SELECT run_id
+              FROM engine_outputs
+             WHERE deal_id = :deal AND tenant_id = :tenant
+               AND run_id IS NOT NULL
+             GROUP BY run_id
+            HAVING COUNT(DISTINCT engine_name) >= :engine_count
+             ORDER BY MAX(started_at) DESC
+            """
+        ),
+        {"deal": deal, "tenant": tenant, "engine_count": len(ENGINE_NAMES)},
+    )
+    for r in rows.fetchall():
+        run_id = r._mapping["run_id"]
+        if run_id is None:
+            continue
+        run_id = str(run_id)
+        if run_id not in excluded:
+            return run_id
+    return None
+
+
+async def get_run_scoped_outputs(
+    session: AsyncSession,
+    *,
+    deal_id: str,
+    tenant_id: str,
+) -> dict[str, dict[str, Any]]:
+    """FON-73 — the deal-wide engine snapshot, pinned to ONE run.
+
+    Returns the canonical run's rows keyed by engine name — the SAME
+    shape as :func:`get_latest_outputs` (``{engine: envelope}``) — so it
+    is a drop-in replacement for every deal-wide reader (the ``/engines``
+    list, the IC Memo / due-diligence context, the provenance endpoint,
+    the transaction timeline). Routing them all through here is what
+    keeps the cross-tab surface — Financials / Investment / Debt → Cash
+    Flow → Returns → Scenario → IC Memo — reading one internally
+    consistent Base (closes FON-54 / FON-69).
+
+    Falls back to :func:`get_latest_outputs` (latest row per engine, even
+    if cross-run) only when the deal has never completed a full chain, so
+    mid-migration / never-run deals still render instead of going empty.
+    """
+    canonical_run_id = await get_canonical_run_id(
+        session, deal_id=deal_id, tenant_id=tenant_id
+    )
+    if canonical_run_id is None:
+        return await get_latest_outputs(
+            session, deal_id=deal_id, tenant_id=tenant_id
+        )
+    run_rows = await get_run_status(
+        session, deal_id=deal_id, run_id=canonical_run_id, tenant_id=tenant_id
+    )
+    return {r["engine"]: r for r in run_rows if r.get("engine") in ENGINE_NAMES}
+
+
 def _row_to_dict(mapping: Any) -> dict[str, Any]:
     """Coerce a SQL row into the engine-output JSON envelope.
 
@@ -4460,8 +4583,10 @@ __all__ = [
     "ENGINE_DEPS",
     "ENGINE_NAMES",
     "ENGINE_REGISTRY",
+    "get_canonical_run_id",
     "get_latest_output",
     "get_latest_outputs",
+    "get_run_scoped_outputs",
     "get_run_status",
     "run_all_engines",
     "run_single_engine",

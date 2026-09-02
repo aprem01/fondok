@@ -31,7 +31,7 @@ from ..services.engine_runner import (
     ENGINE_REGISTRY,
     _load_deal_overrides,
     get_latest_output,
-    get_latest_outputs,
+    get_run_scoped_outputs,
     get_run_status,
     run_all_engines,
     run_single_engine,
@@ -366,11 +366,24 @@ async def list_engine_outputs(
     session: Annotated[AsyncSession, Depends(get_session)],
     tenant_id: Annotated[UUID, Depends(get_tenant_id)],
 ) -> EngineOutputsResponse:
-    """Return the latest persisted output per engine for ``deal_id``."""
+    """Return one internally-consistent run-scoped snapshot for ``deal_id``.
+
+    FON-73 — serve the deal's *canonical* run (the most-recent full
+    ``run_all_engines`` chain that isn't a non-base scenario) so every
+    engine here comes from the SAME ``run_id``. This replaces the old
+    latest-row-per-engine read, under which a single-engine re-run could
+    silently de-sync the deal-wide snapshot (Debt from run A, Returns from
+    run B) — the root cause of the cross-tab "two different Base" drift
+    (FON-54 / FON-69). Falls back to the legacy per-engine latest only
+    when the deal has never completed a full chain, so mid-migration /
+    never-run deals still render instead of 404-ing or showing empty.
+    """
     await _assert_deal_belongs_to_tenant(
         session, deal_id=deal_id, tenant_id=tenant_id
     )
-    rows = await get_latest_outputs(session, deal_id=deal_id, tenant_id=str(tenant_id))
+    rows = await get_run_scoped_outputs(
+        session, deal_id=deal_id, tenant_id=str(tenant_id)
+    )
     engines = {name: EngineOutputResponse(**row) for name, row in rows.items()}
     return EngineOutputsResponse(deal_id=deal_id, engines=engines)
 
@@ -429,7 +442,10 @@ async def get_deal_timeline(
     overrides = await _load_deal_overrides(
         session, deal_id=deal_id, tenant_id=str(tenant_id)
     )
-    rows = await get_latest_outputs(
+    # FON-73 — read the canonical run so the dated timeline is derived from
+    # the SAME run as every other deal-wide tab (falls back to latest-per-
+    # engine when no full chain has completed).
+    rows = await get_run_scoped_outputs(
         session, deal_id=deal_id, tenant_id=str(tenant_id)
     )
     returns_out = (rows.get("returns") or {}).get("outputs") or {}

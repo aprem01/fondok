@@ -1393,9 +1393,12 @@ async def get_deal_provenance(
             detail=f"deal {deal_id} not found",
         )
 
-    from ..services.engine_runner import get_latest_outputs
+    # FON-73 — run-scoped read so per-value provenance reflects the SAME
+    # canonical run as the numbers on every deal-wide tab (falls back to
+    # latest-per-engine when no full chain has completed).
+    from ..services.engine_runner import get_run_scoped_outputs
 
-    raw = await get_latest_outputs(
+    raw = await get_run_scoped_outputs(
         session, deal_id=str(deal_id), tenant_id=str(tenant_id)
     )
     engines: dict[str, dict[str, Any]] = {}
@@ -2119,9 +2122,14 @@ async def _build_real_analyst_fields(
     # Pull every engine's latest persisted ``outputs`` blob; the prompt
     # iterates a flat dict, so we surface only the ``outputs`` payload
     # (not the run wrapper) keyed by engine name.
-    from ..services.engine_runner import get_latest_outputs
+    # FON-73 — the IC Memo must read the SAME canonical run as the Scenario
+    # tab's Base column. Latest-per-engine let a newer single-engine re-run
+    # (or a non-base scenario run) silently swap in different numbers — the
+    # FON-54 IC-Memo-vs-Scenario mismatch (31.6% vs 26.8%). The run-scoped
+    # read pins both surfaces to one internally-consistent run.
+    from ..services.engine_runner import get_run_scoped_outputs
 
-    raw_engines = await get_latest_outputs(
+    raw_engines = await get_run_scoped_outputs(
         session, deal_id=deal_id, tenant_id=tenant_id
     )
     engine_results: dict[str, Any] = {}

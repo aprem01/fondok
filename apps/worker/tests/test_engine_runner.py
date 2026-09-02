@@ -251,6 +251,225 @@ async def test_get_latest_outputs_returns_per_engine_map() -> None:
 
 
 @pytest.mark.asyncio
+async def test_canonical_run_survives_single_engine_rerun() -> None:
+    """FON-73 — the deal-wide read stays pinned to ONE run.
+
+    A lone single-engine re-run stamps a fresh ``run_id`` on its own row
+    (and its dependency rows), so ``get_latest_outputs`` — the old
+    latest-row-per-engine read — mixes run_ids (returns from run B,
+    sensitivity still from run A). That silent de-sync is the FON-54/69
+    root cause. ``get_canonical_run_id`` must ignore the partial re-run
+    and keep the full chain, and the run-scoped read must return one
+    internally-consistent run.
+    """
+    from app.database import get_session_factory
+    from app.services.engine_runner import (
+        ENGINE_NAMES,
+        get_canonical_run_id,
+        get_latest_outputs,
+        get_run_status,
+        run_all_engines,
+        run_single_engine,
+    )
+
+    deal_id = "kimpton-angler-2026"
+    tenant_id = str(uuid4())
+    run_a = str(uuid4())
+    run_b = str(uuid4())
+
+    factory = get_session_factory()
+    async with factory() as session:
+        # Full chain — the canonical base-case run (all 8 engines).
+        await run_all_engines(
+            session, deal_id=deal_id, tenant_id=tenant_id, run_id=run_a
+        )
+        # Later single-engine re-run of returns. It walks its deps, so it
+        # persists revenue/fb/expense/capital/debt/returns under run_b —
+        # 6 engines, NOT the full 8 (no sensitivity/partnership).
+        await run_single_engine(
+            session,
+            deal_id=deal_id,
+            tenant_id=tenant_id,
+            engine_name="returns",
+            run_id=run_b,
+        )
+
+        canonical = await get_canonical_run_id(
+            session, deal_id=deal_id, tenant_id=tenant_id
+        )
+        assert canonical == run_a, "partial single-engine re-run hijacked canonical"
+
+        # OLD behavior drifts: latest-per-engine straddles two runs.
+        latest = await get_latest_outputs(
+            session, deal_id=deal_id, tenant_id=tenant_id
+        )
+        assert latest["returns"]["run_id"] == run_b
+        assert latest["sensitivity"]["run_id"] == run_a  # de-synced mix
+
+        # NEW behavior: run-scoped read is one internally-consistent run.
+        run_rows = await get_run_status(
+            session, deal_id=deal_id, run_id=canonical, tenant_id=tenant_id
+        )
+        scoped = {r["engine"]: r for r in run_rows if r["engine"] in ENGINE_NAMES}
+        assert set(scoped) == set(ENGINE_NAMES)
+        assert {r["run_id"] for r in scoped.values()} == {run_a}
+
+
+@pytest.mark.asyncio
+async def test_canonical_run_none_without_full_chain() -> None:
+    """FON-73 — no complete chain → None → caller falls back to latest."""
+    from app.database import get_session_factory
+    from app.services.engine_runner import (
+        get_canonical_run_id,
+        get_latest_outputs,
+        run_single_engine,
+    )
+
+    deal_id = "kimpton-angler-2026"
+    tenant_id = str(uuid4())
+
+    factory = get_session_factory()
+    async with factory() as session:
+        # Only revenue ever ran (no deps) — never a full chain.
+        await run_single_engine(
+            session,
+            deal_id=deal_id,
+            tenant_id=tenant_id,
+            engine_name="revenue",
+            run_id=str(uuid4()),
+        )
+        canonical = await get_canonical_run_id(
+            session, deal_id=deal_id, tenant_id=tenant_id
+        )
+        assert canonical is None
+
+        # Fallback still surfaces the partial output (no 404 / empty page).
+        latest = await get_latest_outputs(
+            session, deal_id=deal_id, tenant_id=tenant_id
+        )
+        assert "revenue" in latest
+
+
+@pytest.mark.asyncio
+async def test_canonical_run_excludes_non_base_scenario() -> None:
+    """FON-73 — a non-base scenario's full run must not become canonical.
+
+    Scenario runs share ``run_all_engines`` and write all-8-engine rows to
+    ``engine_outputs`` with a fresh run_id, but carry scenario overrides.
+    Even when a non-base scenario run is the MOST recent full chain, the
+    deal-wide read must skip it (via ``scenarios.last_run_id``) and keep
+    the base run.
+    """
+    from app.database import get_session_factory
+    from app.services.engine_runner import (
+        _coerce_uuid,
+        get_canonical_run_id,
+        run_all_engines,
+    )
+
+    deal_id = "kimpton-angler-2026"
+    tenant_id = str(uuid4())
+    base_run = str(uuid4())
+    scenario_run = str(uuid4())
+    scenario_id = str(uuid4())
+
+    factory = get_session_factory()
+    async with factory() as session:
+        # Base-case full chain first ...
+        await run_all_engines(
+            session, deal_id=deal_id, tenant_id=tenant_id, run_id=base_run
+        )
+        # ... then a LATER non-base scenario full chain (would otherwise win
+        # on recency).
+        await run_all_engines(
+            session, deal_id=deal_id, tenant_id=tenant_id, run_id=scenario_run
+        )
+        # Record the scenario row pointing at its run (as run_scenario does).
+        await session.execute(
+            text(
+                "INSERT INTO scenarios (id, deal_id, tenant_id, name, "
+                "is_base, overrides, last_run_id) VALUES "
+                "(:id, :deal, :tenant, :name, :is_base, :ov, :run)"
+            ),
+            {
+                "id": scenario_id,
+                "deal": str(_coerce_uuid(deal_id)),
+                "tenant": tenant_id,
+                "name": f"downside-{scenario_id[:8]}",
+                "is_base": False,
+                "ov": "[]",
+                "run": scenario_run,
+            },
+        )
+        await session.commit()
+
+        canonical = await get_canonical_run_id(
+            session, deal_id=deal_id, tenant_id=tenant_id
+        )
+        assert canonical == base_run, (
+            "non-base scenario run must be excluded from canonical"
+        )
+
+
+@pytest.mark.asyncio
+async def test_run_scoped_outputs_canonical_and_fallback() -> None:
+    """FON-73 — ``get_run_scoped_outputs`` is the shared deal-wide read.
+
+    Every deal-wide surface (the /engines list, IC Memo context,
+    provenance, timeline) routes through it. It must return the canonical
+    run's snapshot — all one run_id — after a desyncing single-engine
+    re-run, and fall back to latest-per-engine only when no full chain
+    exists.
+    """
+    from app.database import get_session_factory
+    from app.services.engine_runner import (
+        ENGINE_NAMES,
+        get_run_scoped_outputs,
+        run_all_engines,
+        run_single_engine,
+    )
+
+    deal_id = "kimpton-angler-2026"
+    factory = get_session_factory()
+
+    # Canonical path — full chain, then a desyncing single-engine re-run.
+    tenant_a = str(uuid4())
+    run_a = str(uuid4())
+    async with factory() as session:
+        await run_all_engines(
+            session, deal_id=deal_id, tenant_id=tenant_a, run_id=run_a
+        )
+        await run_single_engine(
+            session,
+            deal_id=deal_id,
+            tenant_id=tenant_a,
+            engine_name="returns",
+            run_id=str(uuid4()),
+        )
+        scoped = await get_run_scoped_outputs(
+            session, deal_id=deal_id, tenant_id=tenant_a
+        )
+    assert set(scoped) == set(ENGINE_NAMES)
+    assert {v["run_id"] for v in scoped.values()} == {run_a}
+
+    # Fallback path — only a single engine ever ran (no full chain).
+    tenant_b = str(uuid4())
+    async with factory() as session:
+        await run_single_engine(
+            session,
+            deal_id=deal_id,
+            tenant_id=tenant_b,
+            engine_name="revenue",
+            run_id=str(uuid4()),
+        )
+        scoped = await get_run_scoped_outputs(
+            session, deal_id=deal_id, tenant_id=tenant_b
+        )
+    assert "revenue" in scoped
+    assert set(scoped) <= set(ENGINE_NAMES)
+
+
+@pytest.mark.asyncio
 async def test_unknown_engine_raises() -> None:
     """``run_single_engine`` rejects unknown engine names cleanly."""
     from app.database import get_session_factory
