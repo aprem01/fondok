@@ -34,6 +34,7 @@ from ..services.engine_runner import (
     get_run_scoped_outputs,
     get_run_status,
     run_all_engines,
+    run_returns_preview,
     run_single_engine,
 )
 from .deals import _assert_deal_belongs_to_tenant, get_tenant_id
@@ -355,6 +356,80 @@ async def kickoff_run_one(
     _ = background_tasks
     _ = result
     return EngineOutputResponse(**row)
+
+
+class ReturnsPreviewBody(BaseModel):
+    """Ephemeral sandbox overrides for the Returns preview (FON-68 step 3).
+
+    ``overrides`` carries the Live-Assumptions slider values (exit_cap_rate,
+    revpar_growth, hold_years, ltv, interest_rate). Only those recognized keys
+    are applied server-side; everything else is ignored. Empty body == the
+    deal's canonical base case.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    overrides: dict[str, Any] | None = None
+    include_sensitivity: bool = False
+
+
+class ReturnsPreviewResponse(BaseModel):
+    """Sandbox returns headline — computed in-memory, persisted NOWHERE."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    deal_id: str
+    levered_irr: float | None = None
+    unlevered_irr: float | None = None
+    equity_multiple: float | None = None
+    year_one_coc: float | None = None
+    exit_value: float | None = None
+    net_proceeds: float | None = None
+    dscr_y1: float | None = None
+    hold_years: int | None = None
+    exit_cap_rate: float | None = None
+    # Present only when ``include_sensitivity`` was requested — the serialized
+    # sensitivity engine output (row/col axes + flat cell list), matching the
+    # shape the web ``matrixFromWorker`` helper already consumes.
+    sensitivity: dict[str, Any] | None = None
+
+
+@engines_router.post(
+    "/{deal_id}/engines/returns/preview",
+    response_model=ReturnsPreviewResponse,
+)
+async def preview_returns(
+    deal_id: str,
+    session: Annotated[AsyncSession, Depends(get_session)],
+    tenant_id: Annotated[UUID, Depends(get_tenant_id)],
+    body: ReturnsPreviewBody | None = None,
+) -> ReturnsPreviewResponse:
+    """Compute a non-persisting Returns preview under sandbox overrides.
+
+    Powers the Returns tab's ephemeral "Live Assumptions" sensitivity sandbox
+    (FON-68 step 3). Walks the engine chain in memory
+    (revenue → fb → expense → capital → debt → returns, optionally
+    → sensitivity), flexes the recognized slider keys on top of the deal's
+    canonical inputs, and returns the resulting IRR / equity multiple /
+    year-one CoC / exit value / DSCR (+ optional sensitivity grid).
+
+    Read-only guarantee: this NEVER writes to ``engine_outputs``, never mints
+    a ``run_id``, and never advances the deal's canonical run — dragging a
+    sandbox slider cannot mutate the deal. Tenant-scoped like the sibling
+    engine routes (cross-tenant deal ids 404 before any compute).
+    """
+    await _assert_deal_belongs_to_tenant(
+        session, deal_id=deal_id, tenant_id=tenant_id
+    )
+    body = body or ReturnsPreviewBody()
+    result = await run_returns_preview(
+        session,
+        deal_id=deal_id,
+        tenant_id=str(tenant_id),
+        overrides=body.overrides,
+        include_sensitivity=body.include_sensitivity,
+    )
+    return ReturnsPreviewResponse(deal_id=deal_id, **result)
 
 
 @engines_router.get(

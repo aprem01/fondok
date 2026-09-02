@@ -1335,6 +1335,20 @@ export const api = {
         undefined,
         { signal },
       ),
+    /** FON-68 step 3 — ephemeral Returns sandbox preview. Runs the chain in
+     *  memory under slider overrides and returns IRR/EM/CoC/exit/DSCR (+ an
+     *  optional sensitivity grid). NEVER persists to engine_outputs. */
+    returnsPreview: (
+      dealId: string,
+      body: ReturnsPreviewBody,
+      signal?: AbortSignal,
+    ) =>
+      request<ReturnsPreviewResponse>(
+        'POST',
+        `/deals/${dealId}/engines/returns/preview`,
+        body,
+        { signal },
+      ),
   },
   analysis: {
     /** Deterministic broker-vs-T12 variance flags for a deal. */
@@ -1796,6 +1810,33 @@ export interface VarianceReportResult {
   info_count: number;
   /** Set when no flags can be computed yet (e.g. only one of broker/T-12 is extracted). */
   note: string | null;
+}
+
+// ─── Returns preview — FON-68 step 3 ────────────────────────────────
+// Ephemeral, non-persisting sandbox behind the Returns tab's Live
+// Assumptions card. Mirrors apps/worker/app/api/model.py
+// ``POST /deals/{id}/engines/returns/preview``. Never writes engine_outputs.
+
+export interface ReturnsPreviewBody {
+  /** Slider overrides: exit_cap_rate, revpar_growth, hold_years, ltv,
+   *  interest_rate. Only recognized keys are applied server-side. */
+  overrides?: Record<string, number>;
+  include_sensitivity?: boolean;
+}
+
+export interface ReturnsPreviewResponse {
+  deal_id: string;
+  levered_irr: number | null;
+  unlevered_irr: number | null;
+  equity_multiple: number | null;
+  year_one_coc: number | null;
+  exit_value: number | null;
+  net_proceeds: number | null;
+  dscr_y1: number | null;
+  hold_years: number | null;
+  exit_cap_rate: number | null;
+  /** Serialized sensitivity engine grid — present only when requested. */
+  sensitivity: Record<string, unknown> | null;
 }
 
 // ─── Pricing — Wave 2 P2.8 ──────────────────────────────────────────

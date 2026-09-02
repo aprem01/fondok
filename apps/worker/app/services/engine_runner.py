@@ -4319,6 +4319,91 @@ async def run_all_engines(
     return results
 
 
+# ─────────────────────── Ephemeral sandbox preview ────────────────────
+
+
+# The top-level sandbox slider keys the Returns tab's Live Assumptions card
+# flexes. All are top-level scalar assumption keys on the ``base`` dict, so a
+# plain overwrite (applied AFTER the canonical load) makes the sandbox win over
+# the deal's persisted ``field_overrides`` — exactly the ephemeral, testing-only
+# semantics the design guardrail promises ("the canonical assumptions in
+# Investment and Debt are unchanged").
+RETURNS_PREVIEW_KEYS: tuple[str, ...] = (
+    "exit_cap_rate",
+    "revpar_growth",
+    "hold_years",
+    "ltv",
+    "interest_rate",
+)
+
+
+async def run_returns_preview(
+    session: AsyncSession,
+    *,
+    deal_id: str,
+    tenant_id: str,
+    overrides: dict[str, Any] | None = None,
+    include_sensitivity: bool = False,
+) -> dict[str, Any]:
+    """Run the engine chain in-memory with sandbox overrides; persist NOTHING.
+
+    FON-68 step 3 — the ephemeral sensitivity sandbox behind the Returns tab's
+    Live Assumptions card. Unlike :func:`run_single_engine` /
+    :func:`run_all_engines` this NEVER touches ``engine_outputs``: no INSERT,
+    no ``run_id``, no canonical-run advance. Viewing / dragging a sandbox
+    slider therefore cannot mutate the deal or pollute the canonical run —
+    the same read-only guarantee the pricing endpoints make.
+
+    Sandbox overrides win over the deal's persisted ``field_overrides`` because
+    they are layered onto the canonical ``base`` dict AFTER
+    :func:`_load_engine_inputs` has resolved it. Only the recognized
+    :data:`RETURNS_PREVIEW_KEYS` are applied; any other keys in ``overrides``
+    are ignored so a sandbox request can't reach unrelated engine inputs.
+    """
+    base = await _load_engine_inputs(session, deal_id, tenant_id=tenant_id)
+    if overrides:
+        for key in RETURNS_PREVIEW_KEYS:
+            if key not in overrides:
+                continue
+            value = overrides[key]
+            if key == "hold_years":
+                # hold_years drives range()/indexing math — keep it an int.
+                try:
+                    base[key] = int(round(float(value)))
+                except (TypeError, ValueError):
+                    continue
+            else:
+                try:
+                    base[key] = float(value)
+                except (TypeError, ValueError):
+                    continue
+
+    accumulated: dict[str, BaseModel] = {}
+    for name in ("revenue", "fb", "expense", "capital", "debt", "returns"):
+        engine_input = _build_input_for(name, deal_id, base, accumulated)
+        accumulated[name] = ENGINE_REGISTRY[name]().run(engine_input)
+
+    returns_out = accumulated["returns"]
+    debt_out = accumulated["debt"]
+
+    result: dict[str, Any] = {
+        "levered_irr": returns_out.levered_irr,
+        "unlevered_irr": returns_out.unlevered_irr,
+        "equity_multiple": returns_out.equity_multiple,
+        "year_one_coc": returns_out.year_one_coc,
+        "exit_value": returns_out.gross_sale_price,
+        "net_proceeds": returns_out.net_proceeds,
+        "hold_years": returns_out.hold_years,
+        "exit_cap_rate": returns_out.exit_cap_rate,
+        "dscr_y1": getattr(debt_out, "year_one_dscr", None),
+    }
+    if include_sensitivity:
+        sens_input = _build_input_for("sensitivity", deal_id, base, accumulated)
+        sens_out = ENGINE_REGISTRY["sensitivity"]().run(sens_input)
+        result["sensitivity"] = json.loads(sens_out.model_dump_json())
+    return result
+
+
 # ─────────────────────────── Reading back ─────────────────────────────
 
 

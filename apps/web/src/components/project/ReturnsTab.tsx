@@ -1,5 +1,5 @@
 'use client';
-import { useMemo, useState, type ReactNode } from 'react';
+import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { useParams } from 'next/navigation';
 import { TrendingUp } from 'lucide-react';
 import { Card } from '@/components/ui/Card';
@@ -13,8 +13,8 @@ import WhatJustHappened from './WhatJustHappened';
 import PricingSensitivityPanel from './PricingSensitivityPanel';
 import MaxPricePanel from './MaxPricePanel';
 import { fmtPct, cn } from '@/lib/format';
-import { useAssumptionsOptional } from '@/stores/assumptionsStore';
-import { defaultSensitivities, SensitivityMatrix } from '@/lib/engines';
+import { api, isWorkerConnected, type ReturnsPreviewResponse } from '@/lib/api';
+import type { SensitivityMatrix } from '@/lib/engines';
 import type { SensitivityCell } from '@/lib/engines/types';
 import { getEngineField, useEngineOutputs } from '@/lib/hooks/useEngineOutputs';
 import { useFlash } from '@/lib/hooks/useFlash';
@@ -30,7 +30,6 @@ const subTabs = ['Returns Summary', 'Sensitivities', 'Pricing'];
 
 export default function ReturnsTab() {
   const [tab, setTab] = useState('Returns Summary');
-  const ctx = useAssumptionsOptional();
   const params = useParams();
   const dealId = (params?.id as string | undefined) ?? '';
   const { toast } = useToast();
@@ -97,8 +96,10 @@ export default function ReturnsTab() {
     );
   }
 
-  // If we're inside the AssumptionsProvider (Kimpton deal), use live model.
-  // Otherwise fall back to static mock data.
+  // Output-only tab: every sub-view reads the canonical worker engine
+  // outputs. The Returns tab no longer consumes the page assumptions
+  // provider — its Live Assumptions sliders are a local, ephemeral sandbox
+  // (FON-68 step 3), so nothing here can mutate Investment/Debt's model.
   return (
     <div className="flex gap-4">
       <div className="flex-1 min-w-0">
@@ -151,18 +152,8 @@ export default function ReturnsTab() {
       />
 
       <div className={cn(computing && 'relative pointer-events-none opacity-60')}>
-        {tab === 'Returns Summary' && (
-          // AssumptionsProvider is now mounted universally on every
-          // deal page, so ``ctx`` is always non-null in production.
-          // The Static* fallbacks below leak Kimpton's hardcoded
-          // dealScenarios (Base 23.01%, etc.) onto unrelated deals
-          // when ctx briefly is null on first paint — Sam re-test
-          // saw a 36.92% headline next to a 23.01% Base Case via
-          // this exact path. We render Live unconditionally so the
-          // scenarios card always reconciles with the headline.
-          <LiveReturnsSummary outputs={outputs} />
-        )}
-        {tab === 'Sensitivities' && ctx && <LiveSensitivities />}
+        {tab === 'Returns Summary' && <LiveReturnsSummary outputs={outputs} />}
+        {tab === 'Sensitivities' && <LiveSensitivities />}
         {tab === 'Pricing' && (
           <div className="flex flex-col gap-4">
             <PricingSensitivityPanel dealId={dealId} />
@@ -186,26 +177,147 @@ export default function ReturnsTab() {
 }
 
 // ───────────────────────────────────────────────────────────────────
-// Live (Kimpton) version — wired to the assumptions store + engine.
+// Live Returns Summary — headline reads WORKER outputs only; the Live
+// Assumptions card is an EPHEMERAL, LOCAL sensitivity sandbox backed by
+// the non-persisting /engines/returns/preview endpoint (FON-68 step 3).
+// Dragging a slider NEVER mutates the shared assumptions store, so the
+// canonical case in Investment / Debt is untouched.
 // ───────────────────────────────────────────────────────────────────
 
+type SandboxKey = 'exitCapRate' | 'revparGrowth' | 'holdYears' | 'ltv' | 'interestRate';
+type SandboxValues = Record<SandboxKey, number>;
+
+// Read the canonical slider base case straight off the returns engine's
+// persisted ``inputs.assumptions`` blob — the SAME canonical run the headline
+// reads — so the sandbox starts on the deal's real numbers with no dependency
+// on the page assumptions provider.
+function readSandboxBase(
+  outputs: ReturnType<typeof useEngineOutputs>['outputs'],
+): SandboxValues {
+  const rIn = ((outputs?.engines?.returns?.inputs as Record<string, unknown> | undefined)
+    ?.assumptions ?? {}) as Record<string, unknown>;
+  const n = (v: unknown, fallback: number) =>
+    typeof v === 'number' && Number.isFinite(v) ? v : fallback;
+  return {
+    exitCapRate: n(rIn.exit_cap_rate, 0.07),
+    revparGrowth: n(rIn.revpar_growth, 0.03),
+    holdYears: Math.round(n(rIn.hold_years, 5)),
+    ltv: n(rIn.ltv, 0.65),
+    interestRate: n(rIn.interest_rate, 0.068),
+  };
+}
+
+function sandboxDiffers(a: SandboxValues, b: SandboxValues): boolean {
+  return (Object.keys(a) as SandboxKey[]).some(k => Math.abs(a[k] - b[k]) > 1e-9);
+}
+
 function LiveReturnsSummary({ outputs }: { outputs: ReturnType<typeof useEngineOutputs>['outputs'] }) {
-  const { assumptions, setAssumption, model } = useAssumptionsOptional()!;
-  // Worker overrides — fall back to live in-page model when worker has no data.
-  // The headline KPIs and the Base Case scenario card MUST resolve to the same
-  // numbers; otherwise an analyst sees "Levered IRR 18.07%" up top and a Base
-  // Case card showing "23.01%" on the same page (Sam QA #5). We compute the
-  // canonical triple here and reuse it both places.
-  const wIrr = getEngineField<number>(outputs, 'returns', 'levered_irr');
-  const wMult = getEngineField<number>(outputs, 'returns', 'equity_multiple');
-  const wCoC = getEngineField<number>(outputs, 'returns', 'cash_on_cash_year_one');
-  const irr = wIrr ?? model.leveredIrr;
-  const mult = wMult ?? model.equityMultiple;
-  const coc = wCoC ?? model.cashOnCash;
+  const params = useParams();
+  const dealId = (params?.id as string | undefined) ?? '';
+
+  // ── Canonical headline — WORKER outputs only, no client TS fallback. ──
+  // FON-68 split-headline fix: the CoC field is ``year_one_coc`` on the returns
+  // engine (returns.py:563). The old ``cash_on_cash_year_one`` read always
+  // missed and silently fell back to the client TS model, so IRR/EM came from
+  // the worker while CoC came from TS — a split headline. Every KPI below now
+  // resolves from the same worker run.
+  const irr = getEngineField<number>(outputs, 'returns', 'levered_irr');
+  const mult = getEngineField<number>(outputs, 'returns', 'equity_multiple');
+  const coc = getEngineField<number>(outputs, 'returns', 'year_one_coc');
+  const exitValue = getEngineField<number>(outputs, 'returns', 'gross_sale_price');
+  const dscrY1 = getEngineField<number>(outputs, 'debt', 'year_one_dscr');
+  const holdYears = getEngineField<number>(outputs, 'returns', 'hold_years');
+
+  // ── Ephemeral sandbox — LOCAL state only. ──
+  const base = useMemo(() => readSandboxBase(outputs), [outputs]);
+  const [sandbox, setSandbox] = useState<SandboxValues>(base);
+  const prevBaseRef = useRef(base);
+  // Follow a new canonical base (e.g. after a real re-run) only when the user
+  // hasn't started testing an override; otherwise their sandbox persists across
+  // a background refetch.
+  useEffect(() => {
+    const prev = prevBaseRef.current;
+    setSandbox(cur => (sandboxDiffers(cur, prev) ? cur : base));
+    prevBaseRef.current = base;
+  }, [base]);
+
+  const dirty = sandboxDiffers(sandbox, base);
+  const [preview, setPreview] = useState<ReturnsPreviewResponse | null>(null);
+  const [previewing, setPreviewing] = useState(false);
+
+  // Debounced, non-persisting preview call. Clears when the sandbox is back on
+  // the base case. Aborts in-flight requests as the slider moves.
+  useEffect(() => {
+    if (!dirty) {
+      setPreview(null);
+      setPreviewing(false);
+      return;
+    }
+    if (!isWorkerConnected() || !dealId) return;
+    const ctrl = new AbortController();
+    setPreviewing(true);
+    const t = setTimeout(async () => {
+      try {
+        const res = await api.engines.returnsPreview(
+          dealId,
+          {
+            overrides: {
+              exit_cap_rate: sandbox.exitCapRate,
+              revpar_growth: sandbox.revparGrowth,
+              hold_years: sandbox.holdYears,
+              ltv: sandbox.ltv,
+              interest_rate: sandbox.interestRate,
+            },
+          },
+          ctrl.signal,
+        );
+        setPreview(res);
+      } catch {
+        // Silent — keep the last good preview; the slider stays usable.
+      } finally {
+        setPreviewing(false);
+      }
+    }, 250);
+    return () => {
+      clearTimeout(t);
+      ctrl.abort();
+    };
+  }, [dirty, dealId, sandbox]);
+
+  const resetToBase = () => setSandbox(base);
+
+  // What the card's live-result line shows: the sandbox preview when an
+  // override is active, else the canonical values (so it always reconciles
+  // with the headline on the base case).
+  const sIrr = dirty && preview ? preview.levered_irr : irr;
+  const sMult = dirty && preview ? preview.equity_multiple : mult;
+  const sExit = dirty && preview ? preview.exit_value : exitValue;
+  const sDscr = dirty && preview ? preview.dscr_y1 : dscrY1;
+  const fmtM = (v: number | null | undefined) =>
+    v == null ? '—' : `$${(v / 1e6).toFixed(2)}M`;
+  const fmtX = (v: number | null | undefined) =>
+    v == null ? '—' : `${v.toFixed(2)}x`;
 
   return (
     <>
-      <div className="grid grid-cols-4 gap-4 mb-5">
+      {dirty && (
+        <div className="flex items-center gap-3 flex-wrap mb-4 rounded-md border border-brand-200 bg-brand-50 px-3.5 py-2 text-[12px] text-ink-900">
+          <span className="text-[10px] font-bold tracking-wide uppercase text-brand-700 whitespace-nowrap">
+            Sensitivity override active
+          </span>
+          <span className="text-ink-500">
+            Testing only — the canonical assumptions in Investment and Debt are unchanged.
+          </span>
+          <button
+            onClick={resetToBase}
+            className="ml-auto text-brand-700 font-semibold whitespace-nowrap hover:underline"
+          >
+            Reset to base case
+          </button>
+        </div>
+      )}
+
+      <div className="grid grid-cols-3 gap-4 mb-5">
         <CoachMark
           anchorId="returns-levered-irr"
           viewKey="returns"
@@ -216,60 +328,81 @@ function LiveReturnsSummary({ outputs }: { outputs: ReturnType<typeof useEngineO
           learnMoreHref="/methodology#engines"
         >
           <KPI label="Levered IRR" tip={GLOSSARY['IRR']} flashKey={irr}
-            value={<Traced engine="returns" path="levered_irr">{fmtPct(irr, 2)}</Traced>} />
+            value={<Traced engine="returns" path="levered_irr">{fmtPct(irr ?? 0, 2)}</Traced>} />
         </CoachMark>
         <KPI label="Equity Multiple" tip={GLOSSARY['Equity Multiple']} flashKey={mult}
-          value={<Traced engine="returns" path="equity_multiple">{`${mult.toFixed(2)}x`}</Traced>} />
-        <KPI label="Cash-on-Cash" tip={GLOSSARY['CoC']} value={fmtPct(coc, 2)} flashKey={coc} />
-        <KPI label="Hold Period" tip={GLOSSARY['Hold Period']} value={`${assumptions.holdYears} Years`} flashKey={assumptions.holdYears} />
+          value={<Traced engine="returns" path="equity_multiple">{`${(mult ?? 0).toFixed(2)}x`}</Traced>} />
+        <KPI label="Cash-on-Cash" tip={GLOSSARY['CoC']} value={fmtPct(coc ?? 0, 2)} flashKey={coc} />
+        <KPI label="Exit Value" value={fmtM(exitValue)} flashKey={exitValue} />
+        <KPI label="DSCR Y1" tip={GLOSSARY['DSCR']} value={fmtX(dscrY1)} flashKey={dscrY1} />
+        <KPI label="Hold Period" tip={GLOSSARY['Hold Period']}
+          value={holdYears != null ? `${holdYears} Years` : '—'} flashKey={holdYears} />
       </div>
 
       <Card className="p-5 mb-5">
         <div className="flex items-baseline justify-between mb-3">
           <h3 className="text-[14px] font-semibold text-ink-900">Live Assumptions</h3>
-          <span className="text-[11px] text-ink-500">Drag a slider — IRR, multiple and exit value recompute instantly.</span>
+          <span className="text-[11px] text-ink-500">
+            Temporary overrides for testing — the source of truth stays in Investment and Debt.
+          </span>
         </div>
         <div className="grid grid-cols-2 gap-x-8 gap-y-3">
           <Slider
             label="Exit Cap Rate"
             min={0.04} max={0.12} step={0.001}
-            value={assumptions.exitCapRate}
-            onChange={v => setAssumption('exitCapRate', v)}
+            value={sandbox.exitCapRate}
+            onChange={v => setSandbox(s => ({ ...s, exitCapRate: v }))}
             format={v => fmtPct(v, 2)}
           />
           <Slider
             label="RevPAR Growth"
             min={0} max={0.06} step={0.0025}
-            value={assumptions.revparGrowth}
-            onChange={v => setAssumption('revparGrowth', v)}
+            value={sandbox.revparGrowth}
+            onChange={v => setSandbox(s => ({ ...s, revparGrowth: v }))}
             format={v => fmtPct(v, 2)}
           />
           <Slider
             label="Hold Period"
             min={3} max={10} step={1}
-            value={assumptions.holdYears}
-            onChange={v => setAssumption('holdYears', Math.round(v))}
+            value={sandbox.holdYears}
+            onChange={v => setSandbox(s => ({ ...s, holdYears: Math.round(v) }))}
             format={v => `${Math.round(v)} years`}
           />
           <Slider
             label="LTV"
             min={0.40} max={0.80} step={0.01}
-            value={assumptions.ltv}
-            onChange={v => setAssumption('ltv', v)}
+            value={sandbox.ltv}
+            onChange={v => setSandbox(s => ({ ...s, ltv: v }))}
             format={v => fmtPct(v, 0)}
           />
           <Slider
             label="Interest Rate"
             min={0.04} max={0.10} step={0.00125}
-            value={assumptions.interestRate}
-            onChange={v => setAssumption('interestRate', v)}
+            value={sandbox.interestRate}
+            onChange={v => setSandbox(s => ({ ...s, interestRate: v }))}
             format={v => fmtPct(v, 3)}
           />
-          <div className="text-[11.5px] text-ink-500 self-end pb-1">
-            Exit Value: <span className="font-medium text-ink-900 tabular-nums">${(model.exitValue / 1e6).toFixed(2)}M</span>
-            <span className="mx-2">·</span>
-            DSCR Y1: <span className="font-medium text-ink-900 tabular-nums">{model.dscrY1.toFixed(2)}x</span>
-          </div>
+        </div>
+        <div className="flex items-center gap-3 flex-wrap mt-4 pt-3 border-t border-border">
+          <span className="text-[11.5px] text-ink-500 tabular-nums">
+            {dirty ? (previewing ? 'Recomputing sandbox…' : 'Sandbox result:') : 'Base case:'}
+            <span className="mx-1.5 font-medium text-ink-900">IRR {fmtPct(sIrr ?? 0, 2)}</span>·
+            <span className="mx-1.5 font-medium text-ink-900">EM {fmtX(sMult)}</span>·
+            <span className="mx-1.5 font-medium text-ink-900">Exit {fmtM(sExit)}</span>·
+            <span className="mx-1.5 font-medium text-ink-900">DSCR {fmtX(sDscr)}</span>
+          </span>
+          <button
+            onClick={resetToBase}
+            disabled={!dirty}
+            className={cn(
+              'ml-auto rounded-md border px-3 py-1.5 text-[11.5px] font-semibold',
+              dirty
+                ? 'bg-white border-border text-ink-700 hover:bg-ink-50 cursor-pointer'
+                : 'bg-ink-50 border-border text-ink-400 cursor-not-allowed',
+            )}
+          >
+            Reset to base case
+          </button>
         </div>
       </Card>
     </>
@@ -277,52 +410,79 @@ function LiveReturnsSummary({ outputs }: { outputs: ReturnType<typeof useEngineO
 }
 
 function LiveSensitivities() {
-  const { assumptions } = useAssumptionsOptional()!;
   const params = useParams();
   const dealId = (params?.id as string | undefined) ?? '';
   const { outputs } = useEngineOutputs(dealId);
-  // Sensitivity matrices recompute on assumption change. 5x5x3 = 75 model runs;
-  // each run is fast so the user perceives no lag.
-  const tsMatrices = useMemo(() => defaultSensitivities(assumptions), [assumptions]);
 
-  // Worker sensitivity output: a single matrix (the first one in our suite).
-  // When present, we prefer it and merge it as the first matrix in the trio.
-  const workerMatrix = useMemo(() => {
-    return matrixFromWorker(outputs);
+  // Worker sensitivity grids ONLY. The canonical engine is the single source of
+  // truth — mixing worker grids with client-TS ``defaultSensitivities`` is the
+  // exact cross-tab "two different Base" drift the engine-output contract
+  // exists to prevent. The engine emits named matrices for Levered IRR and
+  // Equity Multiple (FON-53 ``matrices[]``); older runs carry only the
+  // top-level primary matrix, which we still accept as the IRR grid.
+  const cards = useMemo(() => {
+    const list =
+      getEngineField<WorkerMatrixRaw[]>(outputs, 'sensitivity', 'matrices') ?? [];
+    const byKey = (k: string) => list.find(m => m?.key === k) ?? null;
+    const irrRaw = byKey('irr_exit_revpar') ?? topLevelSensitivityMatrix(outputs);
+    const emRaw = byKey('em_exit_revpar');
+    return [
+      { title: 'Levered IRR', matrix: irrRaw ? matrixFromWorkerObj(irrRaw) : null },
+      { title: 'Equity Multiple (MOIC)', matrix: emRaw ? matrixFromWorkerObj(emRaw) : null },
+      // TODO(FON-68 step 5): the worker sensitivity engine ships no year_one_coc
+      // spec, so there is no canonical Year-1 Cash-on-Cash grid to render here.
+      // Do NOT reintroduce lib/engines' defaultSensitivities() TS grid to fill
+      // it (step 5 owns removing that module) — add a worker CoC spec instead.
+    ].filter((c): c is { title: string; matrix: SensitivityMatrix } => c.matrix != null);
   }, [outputs]);
 
-  const matrices = workerMatrix
-    ? [workerMatrix, ...tsMatrices.slice(1)]
-    : tsMatrices;
-  const titles = ['Levered IRR', 'Equity Multiple (MOIC)', 'Year-1 Cash-on-Cash'];
+  if (cards.length === 0) {
+    return (
+      <Card className="p-8 text-center text-[12.5px] text-ink-500">
+        Sensitivity grids appear once the Returns engine has run.
+      </Card>
+    );
+  }
 
   return (
-    <div className="grid grid-cols-3 gap-4">
-      {matrices.map((m, i) => (
-        <SensitivityCard
-          key={i}
-          matrix={m}
-          title={titles[i]}
-          source={i === 0 && workerMatrix ? 'worker' : 'ts'}
-        />
+    <div className="grid grid-cols-2 gap-4">
+      {cards.map((c, i) => (
+        <SensitivityCard key={i} matrix={c.matrix} title={c.title} source="worker" />
       ))}
     </div>
   );
 }
 
-// Map a worker sensitivity engine output into the SensitivityMatrix shape the
-// existing card uses. Returns null when the engine hasn't run yet.
-function matrixFromWorker(
+interface WorkerCellRaw {
+  row_value: number;
+  col_value: number;
+  value: number;
+  is_base: boolean;
+}
+interface WorkerMatrixRaw {
+  key?: string;
+  label?: string;
+  row_variable: string;
+  col_variable: string;
+  metric: string;
+  rows: number[];
+  cols: number[];
+  cells: WorkerCellRaw[];
+}
+
+// The sensitivity engine's top-level primary matrix (pre-FON-53 shape).
+function topLevelSensitivityMatrix(
   outputs: ReturnType<typeof useEngineOutputs>['outputs'],
-): SensitivityMatrix | null {
-  const out = getEngineField<{
-    row_variable: string;
-    col_variable: string;
-    metric: string;
-    rows: number[];
-    cols: number[];
-    cells: { row_value: number; col_value: number; value: number; is_base: boolean }[];
-  }>(outputs, 'sensitivity');
+): WorkerMatrixRaw | null {
+  const out = getEngineField<WorkerMatrixRaw>(outputs, 'sensitivity');
+  if (!out || !Array.isArray(out.rows) || !Array.isArray(out.cols)) return null;
+  if (!Array.isArray(out.cells) || out.cells.length === 0) return null;
+  return out;
+}
+
+// Map a worker sensitivity matrix (top-level primary OR a named entry from
+// ``matrices[]``) into the SensitivityMatrix shape the card renders.
+function matrixFromWorkerObj(out: WorkerMatrixRaw): SensitivityMatrix | null {
   if (!out || !Array.isArray(out.rows) || !Array.isArray(out.cols)) return null;
   if (!Array.isArray(out.cells) || out.cells.length === 0) return null;
 
