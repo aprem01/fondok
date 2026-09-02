@@ -1,0 +1,763 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+  <style>body{margin:0;background:#f5f4f0;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,Arial,sans-serif;}a{color:#2f4a8c}a:hover{color:#1f3568}</style>
+</helmet>
+<template id="__bundler_thumbnail">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 120 56" data-bg-color="#14213d"><rect width="120" height="56" fill="#14213d"/><circle cx="46" cy="28" r="12" stroke="#f5f4f0" stroke-width="3" fill="none"/><path d="M20 50c0-10 9-15 20-15s20 5 20 15" stroke="#f5f4f0" stroke-width="3" fill="none"/></svg>
+</template>
+<div style="display:flex;min-height:100vh" data-screen-label="Market">
+  <div style="width:210px;background:#0f1a30;padding:22px 16px;display:flex;flex-direction:column;gap:2px;flex-shrink:0">
+    <div style="display:flex;align-items:center;gap:8px;color:#fff;font-weight:700;font-size:16px;margin-bottom:24px"><div style="width:28px;height:28px;background:#2f4a8c;border-radius:6px;display:flex;align-items:center;justify-content:center;font-size:13px">F</div>Fondok.</div>
+    <div style="color:#c9cede;font-size:12.5px;padding:8px 10px;border-radius:6px;background:rgba(255,255,255,.06);margin-bottom:16px;display:flex;justify-content:space-between">fondok.ai <span>⌄</span></div>
+    <div style="color:#8b93a7;font-size:13px;padding:8px 10px;display:flex;gap:9px">⊞ Dashboard</div>
+    <div style="color:#fff;background:rgba(255,255,255,.09);font-size:13px;font-weight:600;padding:8px 10px;border-radius:6px;display:flex;gap:9px">▤ Projects</div>
+    <div style="color:#8b93a7;font-size:13px;padding:8px 10px;display:flex;gap:9px">📈 Pipeline</div>
+    <div style="color:#8b93a7;font-size:13px;padding:8px 10px;display:flex;gap:9px">◔ Audit</div>
+    <div style="color:#8b93a7;font-size:13px;padding:8px 10px;display:flex;gap:9px">$ Cost</div>
+    <div style="color:#8b93a7;font-size:13px;padding:8px 10px;display:flex;gap:9px">▥ Data Library</div>
+    <div style="color:#8b93a7;font-size:13px;padding:8px 10px;display:flex;gap:9px">▦ Methodology</div>
+    <div style="color:#8b93a7;font-size:13px;padding:8px 10px;display:flex;gap:9px">◷ Settings</div>
+  </div>
+
+  <div style="flex:1;min-width:0">
+    <div style="padding:22px 32px 0">
+      <div style="font-size:11.5px;color:#9a9a95;margin-bottom:10px">← BACK TO PROJECTS</div>
+      <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;row-gap:8px;margin-bottom:10px">
+        <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap"><h1 style="font-size:26px;margin:0;color:#1a2233;font-weight:600;white-space:nowrap">Kimpton Hotel</h1><span style="color:#9a9a95;font-size:11px;font-weight:600;letter-spacing:.04em">DRAFT</span></div>
+        <div style="display:flex;gap:14px;align-items:center;flex-wrap:wrap">
+          <button onClick="{{ toggleAtlas }}" style="display:flex;align-items:center;gap:6px;background:#eef2fb;border:1px solid #dbe3f5;color:#2f4a8c;border-radius:6px;padding:8px 14px;font-size:12px;font-weight:600;cursor:pointer;white-space:nowrap;font-family:inherit">✦ Ask Atlas</button>
+          <button style="background:#14213d;color:#fff;border:none;border-radius:6px;padding:8px 16px;font-size:12.5px;font-weight:600;white-space:nowrap;font-family:inherit">Share</button>
+        </div>
+      </div>
+      <div style="font-size:12.5px;color:#9a9a95;margin-bottom:20px;display:flex;gap:18px;flex-wrap:wrap">
+        <span>660 Washington Avenue, Miami Beach, FL 33139</span><span>132 keys</span><span>Created 7/30/2026</span>
+      </div>
+      <div style="display:flex;gap:22px;border-bottom:1px solid #ececea;font-size:13.5px;font-weight:500;color:#9a9a95;overflow-x:auto">
+        <sc-for list="{{ navItems }}" as="nav" hint-placeholder-count="11">
+          <div onClick="{{ nav.onClick }}" style="display:flex;align-items:center;gap:6px;padding-bottom:10px;white-space:nowrap;cursor:pointer;color:{{ nav.color }};font-weight:{{ nav.weight }};border-bottom:{{ nav.border }}">
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="{{ nav.icon }}"></path></svg>{{ nav.label }}
+          </div>
+        </sc-for>
+      </div>
+    </div>
+
+    <div style="padding:16px 32px 56px;max-width:1320px;display:flex;flex-direction:column;gap:14px">
+      <div style="background:#fff;border:1px solid #eae9e4;border-radius:10px;padding:12px 16px;display:flex;flex-direction:column;gap:3px">
+        <span style="font-size:13.5px;font-weight:700;color:#1a2233">Market</span>
+        <span style="font-size:12.5px;color:#6b6f76;line-height:1.55;max-width:960px">What's happening in this submarket — recent performance trends, the supply pipeline, demand drivers, and recent sales of comparable hotels. The basis for your projections and exit valuation.</span>
+      </div>
+
+<div style="display:flex;align-items:flex-end;gap:28px;border-bottom:1px solid #e6e5e0;overflow-x:auto">
+        <sc-for list="{{ subTabs }}" as="t" hint-placeholder-count="3">
+          <button onClick="{{ t.select }}" style="font-size:13.5px;font-family:inherit;background:none;border:none;border-bottom:{{ t.border }};cursor:pointer;font-weight:{{ t.weight }};color:{{ t.color }};padding:0 0 10px;margin-bottom:-1px;white-space:nowrap">{{ t.label }}</button>
+        </sc-for>
+        <span style="font-size:11.5px;color:#9a9a95;margin-left:auto;padding-bottom:11px;white-space:nowrap">{{ tabCaption }}</span>
+      </div>
+
+      <div style="display:flex;align-items:center;gap:16px;flex-wrap:wrap;background:#fbfbf9;border:1px solid #eae9e4;border-radius:8px;padding:8px 14px;font-size:11px;color:#6b6f76">
+        <span style="font-weight:700;color:#8a8a86;letter-spacing:.02em">DATA KEY</span>
+          <span style="display:flex;align-items:center;gap:6px"><span style="width:9px;height:9px;border-radius:50%;background:oklch(45% 0.12 155);display:inline-block;flex-shrink:0"></span>Document sourced</span>
+          <span style="display:flex;align-items:center;gap:6px"><span style="width:9px;height:9px;border-radius:50%;background:#fff;border:2px solid oklch(45% 0.12 155);display:inline-block;flex-shrink:0"></span>Linked</span>
+          <span style="display:flex;align-items:center;gap:6px"><span style="width:9px;height:9px;border-radius:50%;background:oklch(45% 0.14 260);display:inline-block;flex-shrink:0"></span>Assumption</span>
+          <span style="display:flex;align-items:center;gap:6px"><span style="width:9px;height:9px;border-radius:50%;background:#5f656e;display:inline-block;flex-shrink:0"></span>Calculated</span>
+          <span style="display:flex;align-items:center;gap:6px"><span style="width:9px;height:9px;border-radius:50%;background:#fff;border:1px dashed #b0afaa;display:inline-block;flex-shrink:0"></span>Awaiting data</span>
+          <span style="display:flex;align-items:center;gap:6px"><span style="width:9px;height:9px;border-radius:50%;background:oklch(45% 0.12 155);box-shadow:0 0 0 3px oklch(88% 0.07 45);display:inline-block;flex-shrink:0"></span>Needs review</span>
+          <span style="display:flex;align-items:center;gap:6px"><b style="color:#1a2233">1,240</b>Total / summary</span>
+          <span style="display:flex;align-items:center;gap:6px"><span style="text-decoration:underline dotted;color:#6b6f76">123</span>Editable — click to change</span>
+          <span title="Origin is the dot: document sourced, linked from another module, your assumption, calculated by Fondok, or awaiting data. An amber halo means the value needs review. Bold marks totals, a dotted underline marks values you can change. Provenance and editability are separate — a sourced value can also be editable, and an override keeps its original source so you can restore it." style="cursor:help;color:#9a9a95;margin-left:auto;white-space:nowrap">ⓘ How to read this</span>
+        </div>
+
+      <sc-if value="{{ isOverview }}" hint-placeholder-val="{{ true }}">
+        <div style="display:flex;flex-direction:column;gap:14px">
+
+          <div style="background:#fff;border:1px solid #eae9e4;border-radius:10px;padding:16px 18px">
+            <div style="display:flex;justify-content:space-between;align-items:baseline;gap:16px;flex-wrap:wrap;margin-bottom:12px">
+              <span style="font-size:12px;font-weight:700;color:#8a8a86;text-transform:uppercase;letter-spacing:.03em">Submarket Snapshot</span>
+              <span style="font-size:11.5px;color:#9a9a95">{{ snapshotContext }}</span>
+            </div>
+            <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(158px,1fr));gap:10px">
+              <sc-for list="{{ snapshot }}" as="s" hint-placeholder-count="6">
+                <div style="border:1px solid #eae9e4;border-radius:8px;padding:11px 13px;background:{{ s.cardBg }}">
+                  <div style="font-size:10px;font-weight:700;letter-spacing:.04em;color:#8a8a86;text-transform:uppercase;margin-bottom:6px">{{ s.label }}</div>
+                  <div style="font-size:18px;font-weight:700;color:{{ s.color }};font-variant-numeric:tabular-nums;line-height:1.15">{{ s.value }}</div>
+                  <div style="font-size:10.5px;color:#9a9a95;margin-top:4px">{{ s.sub }}</div>
+                </div>
+              </sc-for>
+            </div>
+          </div>
+
+          <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(430px,1fr));gap:14px">
+            <div style="background:#fff;border:1px solid #eae9e4;border-radius:10px;overflow:hidden">
+              <div style="padding:13px 18px;display:flex;justify-content:space-between;align-items:baseline;gap:12px;border-bottom:1px solid #f2f1ec">
+                <span style="font-size:13.5px;font-weight:700;color:#1a2233">Historical Market Performance</span>
+                <span style="font-size:11px;color:#9a9a95">STR Monthly Report · comp set 4821</span>
+              </div>
+              <div style="overflow-x:auto">
+                <div style="display:grid;grid-template-columns:150px repeat(4,minmax(74px,1fr));width:max-content;min-width:100%">
+                  <div style="padding:7px 14px;background:#14213d;color:#c9cede;font-size:11px;font-weight:600;border-right:1px solid #2a3a5c">METRIC</div>
+                  <sc-for list="{{ marketYears }}" as="y" hint-placeholder-count="4">
+                    <div style="padding:7px 10px;background:#14213d;color:#c9cede;font-size:10.5px;font-weight:600;text-align:right;border-right:1px solid #2a3a5c">{{ y }}</div>
+                  </sc-for>
+                  <sc-for list="{{ marketRows }}" as="row" hint-placeholder-count="4">
+                    <div style="padding:6px 14px;border-right:1px solid #f0efeb;border-bottom:1px solid #f0efeb;font-size:12px;color:#1a2233">{{ row.label }}</div>
+                    <sc-for list="{{ row.cells }}" as="c" hint-placeholder-count="4">
+                      <div style="padding:6px 10px;border-right:1px solid #f0efeb;border-bottom:1px solid #f0efeb;text-align:right;font-size:12px;font-variant-numeric:tabular-nums;color:{{ c.color }}">{{ c.text }}</div>
+                    </sc-for>
+                  </sc-for>
+                </div>
+              </div>
+            </div>
+
+            <div style="background:#fff;border:1px solid #eae9e4;border-radius:10px;overflow:hidden;display:flex;flex-direction:column">
+              <div style="padding:13px 18px;display:flex;justify-content:space-between;align-items:baseline;gap:12px;border-bottom:1px solid #f2f1ec">
+                <span style="font-size:13.5px;font-weight:700;color:#1a2233">Monthly / TTM Performance</span>
+                <span style="font-size:11px;color:#9a9a95">{{ ttmCaption }}</span>
+              </div>
+              <sc-if value="{{ trendReady }}" hint-placeholder-val="{{ false }}">
+                <div style="padding:12px 18px 16px;display:flex;flex-direction:column;gap:9px">
+                  <sc-for list="{{ ttmRows }}" as="r" hint-placeholder-count="4">
+                    <div style="display:flex;justify-content:space-between;gap:12px;font-size:12.5px;padding-bottom:7px;border-bottom:1px solid #f7f6f3">
+                      <span style="color:#6b6f76">{{ r.label }}</span>
+                      <span style="color:{{ r.color }};font-weight:600;font-variant-numeric:tabular-nums">{{ r.value }}</span>
+                    </div>
+                  </sc-for>
+                  <div style="display:flex;align-items:flex-end;gap:4px;height:72px;margin-top:4px">
+                    <sc-for list="{{ seasonality }}" as="b" hint-placeholder-count="12">
+                      <div title="{{ b.title }}" style="flex:1;display:flex;flex-direction:column;align-items:center;gap:4px">
+                        <div style="width:100%;height:{{ b.h }};background:{{ b.bg }};border-radius:2px 2px 0 0"></div>
+                        <span style="font-size:9px;color:#b0afaa">{{ b.m }}</span>
+                      </div>
+                    </sc-for>
+                  </div>
+                </div>
+              </sc-if>
+              <sc-if value="{{ trendMissing }}" hint-placeholder-val="{{ true }}">
+                <div style="flex:1;padding:16px 18px;display:flex;flex-direction:column;justify-content:center;gap:8px">
+                  <div style="border:1px dashed #d9d8d2;border-radius:8px;background:#fbfbf9;padding:16px 18px;display:flex;flex-direction:column;gap:7px">
+                    <span style="font-size:10px;font-weight:700;letter-spacing:.05em;color:#8a8a86;text-transform:uppercase">Awaiting data</span>
+                    <span style="font-size:12.5px;color:#3a3f47;line-height:1.5">Monthly and TTM market performance needs the <b>STR Trend Report (36-month, monthly)</b> for comp set 4821. Fondok will populate seasonality and TTM movement as soon as it is in the Data Room.</span>
+                    <span onClick="{{ goDataRoom }}" style="font-size:11.5px;color:#2f4a8c;font-weight:600;cursor:pointer">Upload to Data Room →</span>
+                  </div>
+                </div>
+              </sc-if>
+            </div>
+          </div>
+
+          <div style="background:#fff;border:1px solid #eae9e4;border-radius:10px;padding:16px 18px;display:flex;flex-direction:column;gap:14px">
+            <div style="display:flex;justify-content:space-between;align-items:baseline;gap:16px;flex-wrap:wrap">
+              <span style="font-size:12px;font-weight:700;color:#8a8a86;text-transform:uppercase;letter-spacing:.03em">Subject vs. Comp Set</span>
+              <span style="font-size:11.5px;color:#9a9a95">Trailing 12 months ended Jun 2026 · STR</span>
+            </div>
+
+            <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:12px">
+              <div style="border:1px solid #dbe3f5;background:oklch(97.5% 0.015 250);border-radius:9px;padding:13px 15px">
+                <div style="font-size:10px;font-weight:700;letter-spacing:.05em;color:#2f4a8c;text-transform:uppercase;margin-bottom:9px">Subject property — The Angler's Kimpton</div>
+                <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:10px">
+                  <sc-for list="{{ subjectPerf }}" as="p" hint-placeholder-count="3">
+                    <div>
+                      <div style="font-size:10px;font-weight:700;letter-spacing:.04em;color:#8a8a86;text-transform:uppercase;margin-bottom:4px">{{ p.label }}</div>
+                      <div style="font-size:20px;font-weight:700;color:#1a2233;font-variant-numeric:tabular-nums">{{ p.value }}</div>
+                      <div style="font-size:10.5px;color:{{ p.deltaColor }};margin-top:3px">{{ p.delta }}</div>
+                    </div>
+                  </sc-for>
+                </div>
+              </div>
+              <div style="border:1px solid #eae9e4;border-radius:9px;padding:13px 15px">
+                <div style="font-size:10px;font-weight:700;letter-spacing:.05em;color:#8a8a86;text-transform:uppercase;margin-bottom:9px">Blended competitive set — benchmark</div>
+                <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:10px">
+                  <sc-for list="{{ compBlended }}" as="p" hint-placeholder-count="4">
+                    <div>
+                      <div style="font-size:10px;font-weight:700;letter-spacing:.04em;color:#8a8a86;text-transform:uppercase;margin-bottom:4px">{{ p.label }}</div>
+                      <div style="font-size:17px;font-weight:700;color:oklch(45% 0.12 155);font-variant-numeric:tabular-nums">{{ p.value }}</div>
+                    </div>
+                  </sc-for>
+                </div>
+                <div style="font-size:11px;color:#9a9a95;margin-top:9px;line-height:1.45">The blended comp set is the benchmark every index on this page is measured against.</div>
+              </div>
+            </div>
+
+            <div>
+              <div style="display:grid;grid-template-columns:minmax(200px,2fr) 68px repeat(3,minmax(72px,1fr));font-size:10px;font-weight:700;letter-spacing:.05em;color:#b0afaa;text-transform:uppercase;padding-bottom:6px;border-bottom:1px solid #eae9e4">
+                <span>Competitive set hotel</span><span style="text-align:right">Keys</span><span style="text-align:right">Occ</span><span style="text-align:right">ADR</span><span style="text-align:right">RevPAR</span>
+              </div>
+              <sc-for list="{{ compHotels }}" as="h" hint-placeholder-count="7">
+                <div style="display:grid;grid-template-columns:minmax(200px,2fr) 68px repeat(3,minmax(72px,1fr));font-size:12.5px;padding:6px 0;border-bottom:1px solid #f7f6f3;align-items:center">
+                  <span style="color:#1a2233;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">{{ h.name }}</span>
+                  <span style="text-align:right;color:#3a3f47;font-variant-numeric:tabular-nums">{{ h.keys }}</span>
+                  <span style="text-align:right;color:#b0afaa">—</span>
+                  <span style="text-align:right;color:#b0afaa">—</span>
+                  <span style="text-align:right;color:#b0afaa">—</span>
+                </div>
+              </sc-for>
+              <div style="font-size:11px;color:#9a9a95;margin-top:8px;line-height:1.45">STR does not publish per-property occupancy, ADR or RevPAR for the comp set — only the blended figures above.</div>
+            </div>
+
+            <sc-if value="{{ strActive }}" hint-placeholder-val="{{ false }}">
+              <div style="display:flex;align-items:center;gap:14px;flex-wrap:wrap;background:oklch(96.5% 0.03 155);border:1px solid oklch(85% 0.05 155);border-radius:8px;padding:10px 14px">
+                <span style="font-size:10px;font-weight:700;letter-spacing:.05em;color:oklch(40% 0.12 155);text-transform:uppercase">STR rates active</span>
+                <span style="font-size:12.5px;color:#1a2233">The model is using these STR market rates for Year-1 Occupancy &amp; ADR — <b>{{ strOcc }}</b> and <b>{{ strADR }}</b>, feeding Financials → Projections.</span>
+                <span style="display:flex;gap:8px;margin-left:auto">
+                  <button onClick="{{ goFinancials }}" style="background:#fff;border:1px solid #e2e1dc;color:#3a3f47;border-radius:5px;padding:6px 12px;font-size:11.5px;font-weight:600;cursor:pointer;font-family:inherit">View Projections →</button>
+                  <button onClick="{{ revertStr }}" style="background:#14213d;color:#fff;border:none;border-radius:5px;padding:6px 12px;font-size:11.5px;font-weight:600;cursor:pointer;font-family:inherit">Revert to T-12 actuals</button>
+                </span>
+              </div>
+            </sc-if>
+            <sc-if value="{{ strInactive }}" hint-placeholder-val="{{ true }}">
+              <div style="display:flex;align-items:center;gap:14px;flex-wrap:wrap;background:#fbfbf9;border:1px solid #eae9e4;border-radius:8px;padding:10px 14px">
+                <span style="font-size:10px;font-weight:700;letter-spacing:.05em;color:#8a8a86;text-transform:uppercase">Model input</span>
+                <span style="font-size:12.5px;color:#1a2233">Year-1 Occupancy &amp; ADR are on <b>T-12 actuals</b> ({{ t12Occ }} · {{ t12ADR }}). STR market rates would set <b>{{ strOcc }}</b> · <b>{{ strADR }}</b>.</span>
+                <button onClick="{{ applyStr }}" style="margin-left:auto;background:#14213d;color:#fff;border:none;border-radius:5px;padding:6px 12px;font-size:11.5px;font-weight:600;cursor:pointer;font-family:inherit">Use STR rates in the model</button>
+              </div>
+            </sc-if>
+          </div>
+
+          <div style="background:#fff;border:1px solid #eae9e4;border-radius:10px;padding:16px 18px">
+            <div style="display:flex;justify-content:space-between;align-items:baseline;gap:16px;flex-wrap:wrap;margin-bottom:12px">
+              <span style="font-size:12px;font-weight:700;color:#8a8a86;text-transform:uppercase;letter-spacing:.03em">Index Summary</span>
+              <span onClick="{{ goIndexTab }}" style="font-size:11.5px;color:#2f4a8c;font-weight:600;cursor:pointer">Full 2019–2033 series in Index Analysis →</span>
+            </div>
+            <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(210px,1fr));gap:12px">
+              <sc-for list="{{ indexSummary }}" as="i" hint-placeholder-count="3">
+                <div style="border:1px solid #eae9e4;border-radius:8px;padding:12px 14px">
+                  <div style="display:flex;justify-content:space-between;align-items:baseline;gap:8px;margin-bottom:8px">
+                    <span style="font-size:10px;font-weight:700;letter-spacing:.04em;color:#8a8a86;text-transform:uppercase">{{ i.label }}</span>
+                    <span style="font-size:19px;font-weight:700;color:{{ i.color }};font-variant-numeric:tabular-nums">{{ i.value }}</span>
+                  </div>
+                  <div style="position:relative;height:6px;background:#f0efeb;border-radius:3px;overflow:hidden">
+                    <div style="position:absolute;left:0;top:0;height:100%;width:{{ i.pct }};background:{{ i.color }};border-radius:3px"></div>
+                    <div style="position:absolute;left:50%;top:0;height:100%;width:1px;background:#c9c8c2"></div>
+                  </div>
+                  <div style="font-size:11px;color:#6b6f76;margin-top:7px">{{ i.note }}</div>
+                </div>
+              </sc-for>
+            </div>
+            <div style="font-size:11px;color:#9a9a95;margin-top:10px">100 = at par with the comp set · &gt;100 = subject outperforms</div>
+          </div>
+
+          <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(400px,1fr));gap:14px">
+            <div style="background:#fff;border:1px solid #eae9e4;border-radius:10px;padding:16px 18px">
+              <div style="display:flex;justify-content:space-between;align-items:baseline;gap:12px;margin-bottom:10px">
+                <span style="font-size:12px;font-weight:700;color:#8a8a86;text-transform:uppercase;letter-spacing:.03em">Supply Pipeline</span>
+                <span style="font-size:11px;color:#9a9a95">CoStar Hospitality · Miami Beach</span>
+              </div>
+              <sc-for list="{{ supplyRows }}" as="r" hint-placeholder-count="5">
+                <div style="display:flex;justify-content:space-between;gap:12px;font-size:12.5px;padding:6px 0;border-bottom:1px solid #f7f6f3">
+                  <span style="color:#6b6f76">{{ r.label }}</span>
+                  <span style="color:{{ r.color }};font-weight:{{ r.weight }};font-variant-numeric:tabular-nums">{{ r.value }}</span>
+                </div>
+              </sc-for>
+            </div>
+            <div style="background:#fff;border:1px solid #eae9e4;border-radius:10px;padding:16px 18px;display:flex;flex-direction:column">
+              <div style="display:flex;justify-content:space-between;align-items:baseline;gap:12px;margin-bottom:10px">
+                <span style="font-size:12px;font-weight:700;color:#8a8a86;text-transform:uppercase;letter-spacing:.03em">Demand Drivers</span>
+                <span style="font-size:11px;color:#9a9a95">{{ demandCaption }}</span>
+              </div>
+              <sc-if value="{{ trendReady }}" hint-placeholder-val="{{ false }}">
+                <div style="display:flex;flex-direction:column">
+                  <sc-for list="{{ demandRows }}" as="r" hint-placeholder-count="4">
+                    <div style="display:flex;justify-content:space-between;gap:12px;font-size:12.5px;padding:6px 0;border-bottom:1px solid #f7f6f3">
+                      <span style="color:#6b6f76">{{ r.label }}</span>
+                      <span style="color:{{ r.color }};font-weight:600;font-variant-numeric:tabular-nums">{{ r.value }}</span>
+                    </div>
+                  </sc-for>
+                </div>
+              </sc-if>
+              <sc-if value="{{ trendMissing }}" hint-placeholder-val="{{ true }}">
+                <div style="flex:1;display:flex;align-items:center">
+                  <div style="width:100%;border:1px dashed #d9d8d2;border-radius:8px;background:#fbfbf9;padding:16px 18px;display:flex;flex-direction:column;gap:7px">
+                    <span style="font-size:10px;font-weight:700;letter-spacing:.05em;color:#8a8a86;text-transform:uppercase">Awaiting data</span>
+                    <span style="font-size:12.5px;color:#3a3f47;line-height:1.5">Demand segmentation needs the <b>CoStar Submarket Report</b> — segment mix, group vs. transient and demand growth by source.</span>
+                    <span onClick="{{ goDataRoom }}" style="font-size:11.5px;color:#2f4a8c;font-weight:600;cursor:pointer">Upload to Data Room →</span>
+                  </div>
+                </div>
+              </sc-if>
+            </div>
+          </div>
+        </div>
+      </sc-if>
+
+      <sc-if value="{{ isComps }}" hint-placeholder-val="{{ false }}">
+        <div style="display:flex;flex-direction:column;gap:14px">
+          <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:14px">
+            <sc-for list="{{ compSummary }}" as="c" hint-placeholder-count="2">
+              <div style="background:#fff;border:1px solid #eae9e4;border-radius:10px;padding:16px 18px">
+                <div style="font-size:10px;font-weight:700;letter-spacing:.04em;color:#8a8a86;text-transform:uppercase;margin-bottom:7px">{{ c.label }}</div>
+                <div style="display:flex;align-items:baseline;gap:12px;flex-wrap:wrap">
+                  <span style="font-size:26px;font-weight:700;color:#1a2233;font-variant-numeric:tabular-nums">{{ c.value }}</span>
+                  <span style="font-size:11.5px;color:#9a9a95">{{ c.range }}</span>
+                </div>
+                <div style="font-size:12px;color:#3a3f47;line-height:1.5;margin-top:8px">{{ c.context }}</div>
+              </div>
+            </sc-for>
+          </div>
+
+          <div style="background:#fff;border:1px solid #eae9e4;border-radius:10px;overflow:hidden">
+            <div style="padding:13px 18px;display:flex;justify-content:space-between;align-items:center;gap:14px;flex-wrap:wrap;border-bottom:1px solid #f2f1ec">
+              <div style="display:flex;flex-direction:column;gap:2px">
+                <span style="font-size:13.5px;font-weight:700;color:#1a2233">Transaction Comparables</span>
+                <span style="font-size:11px;color:#9a9a95">{{ compsCaption }}</span>
+              </div>
+              <div style="display:flex;gap:8px;align-items:center">
+                <sc-for list="{{ sortOptions }}" as="s" hint-placeholder-count="3">
+                  <button onClick="{{ s.select }}" style="font-size:11.5px;font-family:inherit;border:1px solid {{ s.border }};background:{{ s.bg }};color:{{ s.color }};font-weight:{{ s.weight }};border-radius:6px;padding:5px 11px;cursor:pointer;white-space:nowrap">{{ s.label }}</button>
+                </sc-for>
+              </div>
+            </div>
+            <div style="overflow-x:auto">
+              <div style="display:grid;grid-template-columns:minmax(210px,1.6fr) minmax(120px,1fr) 96px 62px 108px 100px 84px minmax(150px,1fr) minmax(150px,1fr);width:max-content;min-width:100%">
+                <sc-for list="{{ compColumns }}" as="h" hint-placeholder-count="9">
+                  <div style="padding:8px 12px;background:#14213d;color:#c9cede;font-size:10.5px;font-weight:600;letter-spacing:.03em;text-align:{{ h.align }};border-right:1px solid #2a3a5c;position:sticky;top:0">{{ h.label }}</div>
+                </sc-for>
+                <sc-for list="{{ comps }}" as="t" hint-placeholder-count="14">
+                  <div style="padding:7px 12px;border-bottom:1px solid #f2f1ec;font-size:12.5px;color:#1a2233;font-weight:600;background:{{ t.bg }};overflow:hidden;text-overflow:ellipsis;white-space:nowrap">{{ t.name }}</div>
+                  <div style="padding:7px 12px;border-bottom:1px solid #f2f1ec;font-size:12px;color:#6b6f76;background:{{ t.bg }};overflow:hidden;text-overflow:ellipsis;white-space:nowrap">{{ t.market }}</div>
+                  <div style="padding:7px 12px;border-bottom:1px solid #f2f1ec;font-size:12px;color:#6b6f76;background:{{ t.bg }};white-space:nowrap">{{ t.date }}</div>
+                  <div style="padding:7px 12px;border-bottom:1px solid #f2f1ec;font-size:12px;text-align:right;color:#3a3f47;font-variant-numeric:tabular-nums;background:{{ t.bg }}">{{ t.keys }}</div>
+                  <div style="padding:7px 12px;border-bottom:1px solid #f2f1ec;font-size:12px;text-align:right;color:#3a3f47;font-variant-numeric:tabular-nums;background:{{ t.bg }}">{{ t.price }}</div>
+                  <div style="padding:7px 12px;border-bottom:1px solid #f2f1ec;font-size:12.5px;text-align:right;color:#1a2233;font-weight:600;font-variant-numeric:tabular-nums;background:{{ t.bg }}">{{ t.perKey }}</div>
+                  <div style="padding:7px 12px;border-bottom:1px solid #f2f1ec;font-size:12.5px;text-align:right;color:{{ t.capColor }};font-weight:600;font-variant-numeric:tabular-nums;background:{{ t.bg }}">{{ t.cap }}</div>
+                  <div style="padding:7px 12px;border-bottom:1px solid #f2f1ec;font-size:12px;color:{{ t.buyerColor }};background:{{ t.bg }};overflow:hidden;text-overflow:ellipsis;white-space:nowrap">{{ t.buyer }}</div>
+                  <div style="padding:7px 12px;border-bottom:1px solid #f2f1ec;font-size:12px;color:{{ t.sellerColor }};background:{{ t.bg }};overflow:hidden;text-overflow:ellipsis;white-space:nowrap">{{ t.seller }}</div>
+                </sc-for>
+              </div>
+            </div>
+            <div style="padding:11px 18px;display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap">
+              <span style="font-size:11.5px;color:#9a9a95">{{ compsShowing }}</span>
+              <button onClick="{{ toggleAllComps }}" style="background:#fff;border:1px solid #e2e1dc;color:#3a3f47;border-radius:6px;padding:6px 13px;font-size:11.5px;font-weight:600;cursor:pointer;font-family:inherit">{{ compsToggleLabel }}</button>
+            </div>
+          </div>
+        </div>
+      </sc-if>
+
+      <sc-if value="{{ isIndex }}" hint-placeholder-val="{{ false }}">
+        <div style="display:flex;flex-direction:column;gap:14px">
+          <div style="background:#fff;border:1px solid #eae9e4;border-radius:10px;padding:14px 18px;display:flex;justify-content:space-between;align-items:center;gap:16px;flex-wrap:wrap">
+            <div style="display:flex;flex-direction:column;gap:3px">
+              <span style="font-size:13.5px;font-weight:700;color:#1a2233">Subject vs. Competitive Set — Index Analysis</span>
+              <span style="font-size:11.5px;color:#9a9a95">2019–2033 · subject actuals and STR market data through 2025, underwriting and CoStar forecast thereafter</span>
+            </div>
+            <div style="display:flex;gap:16px;align-items:center;font-size:11px;color:#6b6f76">
+              <span style="display:flex;align-items:center;gap:6px"><span style="width:14px;height:10px;border-radius:2px;background:#fff;border:1px solid #e2e1dc;display:inline-block"></span>HISTORICAL</span>
+              <span style="display:flex;align-items:center;gap:6px"><span style="width:14px;height:10px;border-radius:2px;background:oklch(97% 0.012 260);border:1px solid #dbe3f5;display:inline-block"></span>FORECAST</span>
+            </div>
+          </div>
+
+          <div style="background:#fff;border:1px solid #eae9e4;border-radius:10px;overflow:hidden">
+            <div style="overflow-x:auto">
+              <div style="display:grid;grid-template-columns:{{ indexCols }};width:max-content;min-width:100%">
+                <div style="padding:7px 12px;background:#14213d;color:#c9cede;font-size:10.5px;font-weight:700;letter-spacing:.04em;position:sticky;left:0;z-index:2">METRIC</div>
+                <sc-for list="{{ indexYears }}" as="y" hint-placeholder-count="15">
+                  <div style="padding:7px 8px;background:{{ y.bg }};color:{{ y.color }};font-size:10.5px;font-weight:600;text-align:right;border-left:1px solid #2a3a5c">{{ y.label }}</div>
+                </sc-for>
+                <div style="grid-column:1/-1;display:grid;grid-template-columns:{{ indexBandCols }};font-size:9.5px;font-weight:700;letter-spacing:.08em;color:#8a8a86">
+                  <span style="padding:4px 12px;background:#f7f6f3;border-bottom:1px solid #eae9e4"></span>
+                  <span style="padding:4px 8px;background:#f7f6f3;border-bottom:1px solid #eae9e4">HISTORICAL</span>
+                  <span style="padding:4px 8px;background:oklch(97% 0.012 260);border-bottom:1px solid #dbe3f5;color:#2f4a8c">FORECAST</span>
+                </div>
+                <sc-for list="{{ indexGroups }}" as="g" hint-placeholder-count="3">
+                  <div style="grid-column:1/-1;padding:8px 12px;background:#f3f2ee;border-top:1px solid #eae9e4;border-bottom:1px solid #eae9e4;font-size:10.5px;font-weight:700;letter-spacing:.06em;color:#3a3f47;text-transform:uppercase;display:flex;justify-content:space-between;gap:12px">
+                    <span>{{ g.title }}</span><span style="font-weight:600;letter-spacing:.02em;text-transform:none;color:#9a9a95">{{ g.source }}</span>
+                  </div>
+                  <sc-for list="{{ g.rows }}" as="r" hint-placeholder-count="8">
+                    <div style="padding:5px 12px;font-size:12px;color:#1a2233;font-weight:{{ r.weight }};border-bottom:1px solid #f7f6f3;background:#fff;position:sticky;left:0;z-index:1;white-space:nowrap">{{ r.label }}</div>
+                    <sc-for list="{{ r.cells }}" as="c" hint-placeholder-count="15">
+                      <div style="padding:5px 8px;text-align:right;font-size:11.5px;font-variant-numeric:tabular-nums;border-bottom:1px solid #f7f6f3;border-left:1px solid #f7f6f3;background:{{ c.bg }};color:{{ c.color }};font-weight:{{ c.weight }};white-space:nowrap">{{ c.text }}</div>
+                    </sc-for>
+                  </sc-for>
+                </sc-for>
+              </div>
+            </div>
+          </div>
+          <div style="font-size:11px;color:#9a9a95;line-height:1.55;max-width:900px">Subject historicals are STR actuals for the property; subject forecast rows are the underwriting model, shown in assumption blue so a forecast is never read as an STR actual. Competitive-set columns come from normalized STR / CoStar market data. Penetration rows are calculated from the two series above.</div>
+        </div>
+      </sc-if>
+    </div>
+  </div>
+
+  <div style="position:fixed;top:0;right:0;height:100vh;width:340px;background:#fff;box-shadow:-4px 0 24px rgba(0,0,0,.14);z-index:50;display:flex;flex-direction:column;transform:{{ atlasTransform }};transition:transform .22s ease">
+    <div style="padding:16px 18px;border-bottom:1px solid #eae9e4;display:flex;justify-content:space-between;align-items:center">
+      <span style="font-weight:700;font-size:13.5px;color:#1a2233">✦ Atlas</span>
+      <span onClick="{{ closeAtlas }}" style="cursor:pointer;color:#9a9a95">✕</span>
+    </div>
+    <div style="flex:1;overflow-y:auto;padding:14px 18px;display:flex;flex-direction:column;gap:10px">
+      <div style="background:#f3f2ee;color:#1a2233;padding:9px 12px;border-radius:8px;font-size:12.5px;line-height:1.5">The subject runs an occupancy index of 103.2 but an ADR index of 94.2 — the rate gap, not demand, is the value-add case. Post-renovation ADR is underwritten to close roughly two-thirds of it.</div>
+      <div style="background:#f3f2ee;color:#1a2233;padding:9px 12px;border-radius:8px;font-size:12.5px;line-height:1.5">612 comp-set keys are under construction for 2027–2028 delivery — reflected in the supply growth line and the Analysis risk flags.</div>
+    </div>
+    <div style="padding:12px 18px;border-top:1px solid #eae9e4;display:flex;flex-direction:column;gap:8px">
+      <button style="text-align:left;background:#f5f4f0;border:1px solid #eae9e4;border-radius:6px;padding:8px 10px;font-size:12px;color:#3a3f47;cursor:pointer;font-family:inherit">Which comps most resemble the subject?</button>
+      <button style="text-align:left;background:#f5f4f0;border:1px solid #eae9e4;border-radius:6px;padding:8px 10px;font-size:12px;color:#3a3f47;cursor:pointer;font-family:inherit">What data is still missing for Market?</button>
+    </div>
+  </div>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props="{&quot;onNavigate&quot;:{&quot;editor&quot;:null,&quot;tsType&quot;:&quot;(tab: string, params?: object) =&gt; void&quot;},&quot;defaultSubTab&quot;:{&quot;editor&quot;:&quot;enum&quot;,&quot;options&quot;:[&quot;Market Overview&quot;,&quot;Transaction Comps&quot;,&quot;Index Analysis&quot;],&quot;default&quot;:&quot;Market Overview&quot;,&quot;tsType&quot;:&quot;string&quot;,&quot;section&quot;:&quot;Market tab&quot;},&quot;trendReportUploaded&quot;:{&quot;editor&quot;:&quot;boolean&quot;,&quot;default&quot;:false,&quot;tsType&quot;:&quot;boolean&quot;,&quot;section&quot;:&quot;Market tab&quot;}}">
+class Component extends DCLogic {
+  GREEN = 'oklch(45% 0.12 155)';
+  BLUE = 'oklch(45% 0.14 260)';
+  GRAY = '#5f656e';
+  BLACK = '#1a2233';
+  AMBER = 'oklch(50% 0.14 40)';
+  MUTED = '#b0afaa';
+  FC_BG = 'oklch(97% 0.012 260)';
+
+  state = {
+    tab: this.props.defaultSubTab || 'Market Overview',
+    strActive: false,
+    showAllComps: false,
+    sort: 'Sale date',
+  };
+
+  goFn(onNavigate, key) {
+    const HREFS = { dataroom:'./Data Room v2.dc.html', overview:'./Overview Tab v3.dc.html', market:'./Market Tab.dc.html', financials:'./Financials Tab.dc.html', investment:'./Investment Tab.dc.html', debt:'./Debt Tab.dc.html', partnership:'./Partnership Tab.dc.html', cashflow:'./Cash Flow Tab.dc.html', returns:'./Returns Tab.dc.html', scenarios:'./Scenarios Tab.dc.html', icmemo:'./IC Memo Tab.dc.html' };
+    return () => { if (onNavigate) onNavigate(key); else window.location.href = HREFS[key]; };
+  }
+  buildNavItems(active, onNavigate) {
+    const ICONS = {
+      dataroom: "M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7z",
+      overview: "M6 3h9l4 4v14a1 1 0 0 1-1 1H6a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1zM9 12h6M9 16h6",
+      market: "M12 4a4 4 0 100 8 4 4 0 000-8zM4 21c0-4 3.6-6 8-6s8 2 8 6",
+      financials: "M4 20V10M11 20V4M18 20v-7",
+      investment: "M3 8h18v12a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V8zM8 8V6a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2",
+      debt: "M12 3a9 9 0 100 18 9 9 0 000-18zM12 7v10M9.5 9.5c0-1.4 1.1-2.5 2.5-2.5s2.5.7 2.5 2c0 2-5 1.5-5 4 0 1.3 1.1 2.5 2.5 2.5s2.5-1.1 2.5-2.5",
+      partnership: "M9 11a3 3 0 100-6 3 3 0 000 6zM17 11a3 3 0 100-6 3 3 0 000 6zM2 20c0-3 3-5 7-5M13 20c0-3 3-5 7-5",
+      cashflow: "M3 12h4l3 7 4-14 3 7h4",
+      returns: "M3 17l6-6 4 4 8-8M15 7h6v6",
+      scenarios: "M4 7h13l-3-3M4 7l3 3M20 17H7l3 3M20 17l-3-3",
+      icmemo: "M6 3h9l4 4v14a1 1 0 0 1-1 1H6a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1zM9 12h6M9 16h4M14 3v5h5",
+    };
+    const items = [
+      ['dataroom','Data Room'], ['overview','Overview'], ['market','Market'], ['financials','Financials'],
+      ['investment','Investment'], ['debt','Debt'], ['partnership','Partnership'], ['cashflow','Cash Flow'],
+      ['returns','Returns'], ['scenarios','Scenario Analysis'], ['icmemo','IC Memo'],
+    ];
+    return items.map(([key, label]) => ({
+      key, label, icon: ICONS[key],
+      color: key === active ? '#14213d' : '#9a9a95',
+      weight: key === active ? 700 : 500,
+      border: key === active ? '2px solid #14213d' : '2px solid transparent',
+      onClick: key === active ? null : this.goFn(onNavigate, key),
+    }));
+  }
+
+  money(n) { return '$' + Math.round(n).toLocaleString('en-US'); }
+  pct(n, d) { return (n * 100).toFixed(d === undefined ? 1 : d) + '%'; }
+  signPct(n, d) { const s = (n * 100).toFixed(d === undefined ? 1 : d); return (n > 0 ? '+' : '') + s + '%'; }
+
+  SUBJ_OCC = [0.742, 0.312, 0.611, 0.703, 0.714, 0.708, 0.714, 0.702, 0.664, 0.726, 0.752, 0.760, 0.760, 0.760, 0.760];
+  SUBJ_ADR = [236, 178, 244, 268, 274, 276, 278, 286, 292, 305, 312, 318, 325, 332, 339];
+  MKT_OCC = [0.741, 0.368, 0.636, 0.641, 0.660, 0.678, 0.692, 0.698, 0.702, 0.706, 0.710, 0.712, 0.714, 0.716, 0.718];
+  MKT_ADR = [250, 190, 258, 268, 279, 288, 295, 301, 308, 315, 322, 329, 336, 343, 350];
+
+  years() { const y = []; for (let v = 2019; v <= 2033; v++) y.push(v); return y; }
+  isFc(y) { return y >= 2026; }
+  daysIn(y) { return y % 4 === 0 ? 366 : 365; }
+  mktKeys(y) { return y >= 2028 ? 2140 : 2008; }
+
+  COMPS = [
+    ['The Betsy Hotel', 'Miami Beach — South Beach', 'Jun 2025', 61, 25010000, 0.058, 'Certares Real Estate', 'Betsy Ross Hospitality'],
+    ['Cadillac Hotel & Beach Club', 'Miami Beach — Mid Beach', 'Feb 2025', 357, 106386000, 0.062, 'Blackstone RE Income', 'Ashkenazy Acquisition'],
+    ['Marseilles Hotel', 'Miami Beach — Ocean Drive', 'Nov 2024', 116, 29232000, 0.069, 'Alba Hospitality', 'Marseilles Partners LLC'],
+    ['Z Ocean Hotel', 'Miami Beach — South Beach', 'Aug 2024', 68, 18020000, 0.066, 'Sixty Hotels', '—'],
+    ['Hotel Croydon', 'Miami Beach — Mid Beach', 'May 2024', 102, 22440000, 0.071, 'Lubert-Adler', 'Croydon Owner LLC'],
+    ['The Palms Hotel & Spa', 'Miami Beach — Mid Beach', 'Mar 2024', 251, 78563000, 0.061, 'Northwood Investors', 'Kanner Family Trust'],
+    ['Nautilus Sonesta', 'Miami Beach — Mid Beach', 'Jan 2024', 250, 87500000, 0.057, 'Sonesta International', 'SixtyFive Hotels'],
+    ['Hotel Greystone', 'Miami Beach — South Beach', 'Dec 2023', 91, 27300000, '—', 'Gencom', 'Fisher Brothers'],
+    ['Kimpton Angler\u2019s (prior trade)', 'Miami Beach — South of Fifth', 'Sep 2023', 132, 32340000, 0.072, 'Highgate Hotels', 'Angler\u2019s Owner LLC'],
+    ['The Confidante Miami Beach', 'Miami Beach — Mid Beach', 'Aug 2023', 339, 232000000, 0.049, 'Hyatt Hotels', 'Blackstone'],
+    ['Ritz-Carlton South Beach', 'Miami Beach — Lincoln Rd', 'Jun 2023', 375, 205000000, 0.052, 'Sunstone Hotel Investors', 'Lionstone Development'],
+    ['Kaskades Hotel', 'Miami Beach — South Beach', 'May 2023', 51, 12240000, '—', 'Private investor', '—'],
+    ['Hilton Cabana Miami Beach', 'Miami Beach — North Beach', 'Apr 2023', 231, 63525000, 0.068, 'Certares Real Estate', 'Blackstone'],
+    ['Shelborne South Beach', 'Miami Beach — Collins Ave', 'Feb 2023', 200, 62000000, 0.065, 'Witkoff Group', 'Shelborne Owner LLC'],
+    ['Sagamore Hotel', 'Miami Beach — Mid Beach', 'Dec 2022', 93, 30225000, 0.059, 'Rodrigo Nino Group', 'Taplin Family'],
+    ['Fontainebleau — Trésor Tower', 'Miami Beach — Mid Beach', 'Nov 2022', 288, 118080000, 0.055, 'Soffer Organization', 'Trésor Condo Assn.'],
+    ['Circa 39 Hotel', 'Miami Beach — North Beach', 'Oct 2022', 97, 21340000, 0.073, 'Elevate Hospitality', 'Circa Owner LLC'],
+    ['Hotel Ocean', 'Miami Beach — Ocean Drive', 'Sep 2022', 27, 8100000, '—', 'Private investor', '—'],
+    ['Gale South Beach', 'Miami Beach — Collins Ave', 'Jul 2022', 87, 27840000, 0.063, 'Menin Hospitality', 'Gale Owner LLC'],
+    ['Royal Palm South Beach', 'Miami Beach — Collins Ave', 'Jun 2022', 393, 173000000, 0.056, 'KSL Capital Partners', 'Sotherly Hotels'],
+    ['Kimpton EPIC Miami', 'Downtown Miami', 'Apr 2022', 411, 178000000, 0.060, 'Terra Group', 'Florida East Coast Realty'],
+    ['Hyatt Centric Brickell', 'Brickell — Miami', 'Mar 2022', 208, 68640000, 0.064, 'Grupo Aldesa', 'Brickell Hotel Partners'],
+    ['Novotel Miami Brickell', 'Brickell — Miami', 'Feb 2022', 275, 71500000, 0.067, 'Accor / Ennismore JV', 'Brickell Bay Partners'],
+    ['Aloft Miami Aventura', 'Aventura — North Dade', 'Jan 2022', 207, 44280000, 0.070, 'Driftwood Capital', 'Turnberry Associates'],
+    ['The Elser Hotel & Residences', 'Downtown Miami', 'Dec 2021', 646, 226100000, '—', 'PMG', 'Elser Owner LLC'],
+    ['Courtyard Miami Beach Oceanfront', 'Miami Beach — North Beach', 'Nov 2021', 263, 63120000, 0.069, 'Hersha Hospitality', 'Ocean Blvd Partners'],
+    ['Eden Roc Miami Beach', 'Miami Beach — Mid Beach', 'Sep 2021', 631, 289000000, 0.054, 'Host Hotels & Resorts', 'Seaview Hotel Assoc.'],
+    ['Life House Little Havana', 'Little Havana — Miami', 'Aug 2021', 33, 7920000, '—', 'Life House Hotels', '—'],
+  ];
+
+  median(arr) {
+    const a = arr.slice().sort((x, y) => x - y);
+    if (!a.length) return 0;
+    const mid = Math.floor(a.length / 2);
+    return a.length % 2 ? a[mid] : (a[mid - 1] + a[mid]) / 2;
+  }
+
+  buildIndexGroups() {
+    const Y = this.years();
+    const cell = (text, color, bg, weight) => ({ text, color, bg, weight: weight || 400 });
+    const rowOf = (label, fn, opts) => {
+      const o = opts || {};
+      return {
+        label, weight: o.bold ? 700 : 400,
+        cells: Y.map((y, i) => {
+          const fc = this.isFc(y);
+          const v = fn(i, y, fc);
+          const bg = fc ? this.FC_BG : '#fff';
+          if (v === null || v === undefined) return cell('—', this.MUTED, bg);
+          const color = o.color ? o.color(fc) : (fc ? this.BLUE : this.GREEN);
+          return cell(v, color, bg, o.bold ? 700 : 400);
+        }),
+      };
+    };
+    const subjAvail = i => 132 * this.daysIn(Y[i]);
+    const mktAvail = i => this.mktKeys(Y[i]) * this.daysIn(Y[i]);
+    const subjRevpar = i => this.SUBJ_OCC[i] * this.SUBJ_ADR[i];
+    const mktRevpar = i => this.MKT_OCC[i] * this.MKT_ADR[i];
+    const gr = (arr, i) => i === 0 ? null : this.signPct(arr[i] / arr[i - 1] - 1);
+    const grFn = (f) => (i) => i === 0 ? null : this.signPct(f(i) / f(i - 1) - 1);
+    const calcColor = () => this.GRAY;
+
+    const subject = {
+      title: 'Subject Property', source: 'STR actuals through 2025 · underwriting model 2026–2033',
+      rows: [
+        rowOf('Days', i => String(this.daysIn(Y[i])), { color: calcColor }),
+        rowOf('Keys', () => '132', { color: calcColor }),
+        rowOf('Available Rooms', i => subjAvail(i).toLocaleString('en-US'), { color: calcColor }),
+        rowOf('Occupied Rooms', i => Math.round(subjAvail(i) * this.SUBJ_OCC[i]).toLocaleString('en-US'), { color: calcColor }),
+        rowOf('Occupancy', i => this.pct(this.SUBJ_OCC[i]), { bold: true }),
+        rowOf('ADR', i => this.money(this.SUBJ_ADR[i]), { bold: true }),
+        rowOf('RevPAR', i => this.money(subjRevpar(i)), { bold: true }),
+        rowOf('Occupancy Growth', i => gr(this.SUBJ_OCC, i), { color: calcColor }),
+        rowOf('ADR Growth', i => gr(this.SUBJ_ADR, i), { color: calcColor }),
+        rowOf('RevPAR Growth', grFn(subjRevpar), { color: calcColor }),
+      ],
+    };
+    const market = {
+      title: 'CoStar Market / Competitive Set', source: 'Normalized STR / CoStar comp set 4821',
+      rows: [
+        rowOf('Days', i => String(this.daysIn(Y[i])), { color: calcColor }),
+        rowOf('Keys', i => this.mktKeys(Y[i]).toLocaleString('en-US'), { color: () => this.GREEN }),
+        rowOf('Available Rooms', i => mktAvail(i).toLocaleString('en-US'), { color: calcColor }),
+        rowOf('Occupied Rooms', i => Math.round(mktAvail(i) * this.MKT_OCC[i]).toLocaleString('en-US'), { color: calcColor }),
+        rowOf('Occupancy', i => this.pct(this.MKT_OCC[i]), { bold: true, color: () => this.GREEN }),
+        rowOf('ADR', i => this.money(this.MKT_ADR[i]), { bold: true, color: () => this.GREEN }),
+        rowOf('RevPAR', i => this.money(mktRevpar(i)), { bold: true, color: () => this.GREEN }),
+        rowOf('Occupancy Growth', i => gr(this.MKT_OCC, i), { color: calcColor }),
+        rowOf('ADR Growth', i => gr(this.MKT_ADR, i), { color: calcColor }),
+        rowOf('RevPAR Growth', grFn(mktRevpar), { color: calcColor }),
+      ],
+    };
+    const mpi = i => this.SUBJ_OCC[i] / this.MKT_OCC[i] * 100;
+    const ari = i => this.SUBJ_ADR[i] / this.MKT_ADR[i] * 100;
+    const rgi = i => mpi(i) * ari(i) / 100;
+    const penetration = {
+      title: 'Penetration / Index Analysis', source: 'Calculated — 100 = par with the comp set',
+      rows: [
+        rowOf('Occupancy Penetration (MPI)', i => mpi(i).toFixed(1), { bold: true, color: calcColor }),
+        rowOf('ADR Penetration (ARI)', i => ari(i).toFixed(1), { bold: true, color: calcColor }),
+        rowOf('RevPAR Penetration (RGI)', i => rgi(i).toFixed(1), { bold: true, color: calcColor }),
+        rowOf('RGI Growth (pts)', i => i === 0 ? null : (rgi(i) - rgi(i - 1) >= 0 ? '+' : '') + (rgi(i) - rgi(i - 1)).toFixed(1), { color: calcColor }),
+        rowOf('RevPAR Variance to Comp Set', i => (subjRevpar(i) - mktRevpar(i) >= 0 ? '' : '−') + '$' + Math.abs(subjRevpar(i) - mktRevpar(i)).toFixed(0), { color: calcColor }),
+        rowOf('Fair Share of Supply', i => this.pct(132 / this.mktKeys(Y[i]), 2), { color: calcColor }),
+        rowOf('Actual Share of Demand', i => this.pct((subjAvail(i) * this.SUBJ_OCC[i]) / (mktAvail(i) * this.MKT_OCC[i]), 2), { color: calcColor }),
+        rowOf('Revenue Opportunity at Par', i => {
+          const gap = (mktRevpar(i) - subjRevpar(i)) * subjAvail(i);
+          return gap > 0 ? this.money(gap) : '—';
+        }, { color: calcColor }),
+      ],
+    };
+    return [subject, market, penetration];
+  }
+
+  renderVals() {
+    const tab = this.state.tab;
+    const go = key => this.goFn(this.props.onNavigate, key);
+    const trendReady = !!this.props.trendReportUploaded;
+    const cell = (text, color) => ({ text, color: color || this.BLACK });
+
+    const subjOcc = 0.714, subjADR = 278, mktOccNow = 0.692, mktADRNow = 295;
+    const subjRevPAR = subjOcc * subjADR, mktRevPAR = mktOccNow * mktADRNow;
+    const mpi = subjOcc / mktOccNow * 100, ari = subjADR / mktADRNow * 100, rgi = mpi * ari / 100;
+
+    const caps = this.COMPS.filter(c => typeof c[5] === 'number').map(c => c[5]);
+    const perKeys = this.COMPS.map(c => c[4] / c[3]);
+    const medPerKey = this.median(perKeys), medCap = this.median(caps);
+
+    const sortKey = this.state.sort;
+    const sorted = this.COMPS.slice().sort((a, b) => {
+      if (sortKey === '$ / Key') return b[4] / b[3] - a[4] / a[3];
+      if (sortKey === 'Cap rate') {
+        const av = typeof a[5] === 'number' ? a[5] : 99, bv = typeof b[5] === 'number' ? b[5] : 99;
+        return av - bv;
+      }
+      return this.COMPS.indexOf(a) - this.COMPS.indexOf(b);
+    });
+    const visible = this.state.showAllComps ? sorted : sorted.slice(0, 14);
+
+    const Y = this.years();
+    const idxYears = Y.map(y => ({
+      label: String(y), bg: this.isFc(y) ? '#1d2a49' : '#14213d',
+      color: this.isFc(y) ? '#9fb2df' : '#c9cede',
+    }));
+
+    return {
+      navItems: this.buildNavItems('market', this.props.onNavigate),
+      atlasTransform: this.state.atlasOpen ? 'translateX(0)' : 'translateX(100%)',
+      toggleAtlas: () => this.setState(s => ({ atlasOpen: !s.atlasOpen })),
+      closeAtlas: () => this.setState({ atlasOpen: false }),
+      goDataRoom: go('dataroom'),
+      goFinancials: go('financials'),
+      goIndexTab: () => this.setState({ tab: 'Index Analysis' }),
+
+      subTabs: ['Market Overview', 'Transaction Comps', 'Index Analysis'].map(label => {
+        const active = label === tab;
+        return {
+          label, weight: active ? 700 : 500, color: active ? '#14213d' : '#9a9a95',
+          border: active ? '2px solid #14213d' : '2px solid transparent',
+          select: () => this.setState({ tab: label }),
+        };
+      }),
+      tabCaption: tab === 'Market Overview' ? 'STR · CoStar Hospitality — competitive set 4821'
+        : tab === 'Transaction Comps' ? this.COMPS.length + ' comps extracted from 6 market documents'
+        : 'Subject vs. competitive set · 2019–2033',
+      isOverview: tab === 'Market Overview',
+      isComps: tab === 'Transaction Comps',
+      isIndex: tab === 'Index Analysis',
+
+      snapshotContext: "Subject's local competitive set — Miami Beach, South of Fifth / Washington Ave · 12 hotels",
+      snapshot: [
+        { label: 'Inventory', value: '12 hotels', sub: '2,008 keys in comp set', color: this.GREEN, cardBg: '#fff' },
+        { label: 'Market Occupancy', value: this.pct(mktOccNow), sub: 'TTM Jun 2026', color: this.GREEN, cardBg: '#fff' },
+        { label: 'Market ADR', value: this.money(mktADRNow), sub: 'TTM Jun 2026', color: this.GREEN, cardBg: '#fff' },
+        { label: 'Market RevPAR', value: this.money(mktRevPAR), sub: 'Occupancy × ADR', color: this.GRAY, cardBg: '#fff' },
+        { label: 'Demand Growth', value: '+4.2%', sub: '3-yr CAGR, occupied rooms', color: this.GREEN, cardBg: '#fff' },
+        trendReady
+          ? { label: 'Supply Growth', value: '+1.8%', sub: '3-yr CAGR, available rooms', color: this.GREEN, cardBg: '#fff' }
+          : { label: 'Supply Growth', value: '—', sub: 'Awaiting CoStar submarket report', color: this.MUTED, cardBg: '#fbfbf9' },
+      ],
+
+      marketYears: ['2022', '2023', '2024', '2025'],
+      marketRows: [
+        { label: 'Market Occupancy', cells: [cell('64.1%', this.GREEN), cell('66.0%', this.GREEN), cell('67.8%', this.GREEN), cell('69.2%', this.GREEN)] },
+        { label: 'Market ADR', cells: [cell('$268', this.GREEN), cell('$279', this.GREEN), cell('$288', this.GREEN), cell('$295', this.GREEN)] },
+        { label: 'Market RevPAR', cells: [cell('$172', this.GRAY), cell('$184', this.GRAY), cell('$195', this.GRAY), cell('$204', this.GRAY)] },
+        { label: 'RevPAR Growth', cells: [cell('—', this.MUTED), cell('+7.0%', this.GRAY), cell('+6.0%', this.GRAY), cell('+4.6%', this.GRAY)] },
+      ],
+
+      trendReady, trendMissing: !trendReady,
+      ttmCaption: trendReady ? 'STR Trend Report · 36 months' : 'STR Trend Report not uploaded',
+      demandCaption: trendReady ? 'CoStar Submarket Report' : 'CoStar Submarket Report not uploaded',
+      ttmRows: [
+        { label: 'TTM Occupancy', value: '69.2%', color: this.GREEN },
+        { label: 'TTM ADR', value: '$295', color: this.GREEN },
+        { label: 'TTM RevPAR', value: '$204', color: this.GRAY },
+        { label: 'TTM RevPAR change', value: '+4.6%', color: this.GREEN },
+      ],
+      seasonality: ['J', 'F', 'M', 'A', 'M', 'J', 'J', 'A', 'S', 'O', 'N', 'D'].map((m, i) => {
+        const shape = [86, 94, 100, 88, 74, 66, 68, 62, 54, 62, 76, 90][i];
+        return { m, h: shape + '%', bg: shape > 85 ? 'oklch(55% 0.09 200)' : 'oklch(78% 0.05 200)', title: 'Index ' + shape };
+      }),
+
+      subjectPerf: [
+        { label: 'Occupancy', value: this.pct(subjOcc), delta: '+2.2 pts vs. comp set', deltaColor: this.GREEN },
+        { label: 'ADR', value: this.money(subjADR), delta: '−$17 vs. comp set', deltaColor: this.AMBER },
+        { label: 'RevPAR', value: this.money(subjRevPAR), delta: '−$5 vs. comp set', deltaColor: this.AMBER },
+      ],
+      compBlended: [
+        { label: 'Keys', value: '2,008' },
+        { label: 'Occupancy', value: this.pct(mktOccNow) },
+        { label: 'ADR', value: this.money(mktADRNow) },
+        { label: 'RevPAR', value: this.money(mktRevPAR) },
+      ],
+      compHotels: [
+        { name: 'The Betsy Hotel', keys: '61' },
+        { name: 'Marseilles Hotel', keys: '116' },
+        { name: 'Z Ocean Hotel', keys: '68' },
+        { name: 'Hotel Croydon', keys: '102' },
+        { name: 'The Palms Hotel & Spa', keys: '251' },
+        { name: 'Nautilus Sonesta', keys: '250' },
+        { name: 'Shelborne South Beach', keys: '200' },
+        { name: 'Gale South Beach', keys: '87' },
+      ],
+
+      strActive: this.state.strActive,
+      strInactive: !this.state.strActive,
+      strOcc: '69.2%', strADR: '$295', t12Occ: '71.4%', t12ADR: '$278',
+      applyStr: () => this.setState({ strActive: true }),
+      revertStr: () => this.setState({ strActive: false }),
+
+      indexSummary: [
+        { label: 'Occupancy Index / MPI', value: mpi.toFixed(1), color: this.GREEN, pct: Math.min(100, mpi / 2) + '%', note: 'Subject leads by ' + (mpi - 100).toFixed(1) + ' points' },
+        { label: 'ADR Index / ARI', value: ari.toFixed(1), color: this.AMBER, pct: Math.min(100, ari / 2) + '%', note: 'Subject trails by ' + (100 - ari).toFixed(1) + ' points' },
+        { label: 'RevPAR Index / RGI', value: rgi.toFixed(1), color: this.AMBER, pct: Math.min(100, rgi / 2) + '%', note: 'Subject trails by ' + (100 - rgi).toFixed(1) + ' points' },
+      ],
+
+      supplyRows: [
+        { label: 'Existing comp set supply', value: '2,008 keys', color: this.GREEN, weight: 400 },
+        { label: 'Under construction', value: '612 keys', color: this.AMBER, weight: 600 },
+        { label: 'Expected deliveries', value: '2 hotels · 2027–2028', color: this.BLACK, weight: 400 },
+        { label: 'Comp set growth by 2028', value: '+6.6%', color: this.AMBER, weight: 600 },
+        { label: 'Planned / unentitled', value: '—', color: this.MUTED, weight: 400 },
+      ],
+      demandRows: [
+        { label: 'Transient share', value: '78%', color: this.GREEN },
+        { label: 'Group share', value: '17%', color: this.GREEN },
+        { label: 'Contract share', value: '5%', color: this.GREEN },
+        { label: 'Demand growth (3-yr CAGR)', value: '+4.2%', color: this.GREEN },
+      ],
+
+      compSummary: [
+        {
+          label: 'Median $ / Key', value: this.money(medPerKey), range: 'Range ' + this.money(Math.min.apply(null, perKeys)) + ' – ' + this.money(Math.max.apply(null, perKeys)),
+          context: 'Underwritten entry basis of $276,000 / key sits ' + this.pct(1 - 276000 / medPerKey, 1) + ' below the median comp — supportive of the entry valuation.',
+        },
+        {
+          label: 'Median Cap Rate', value: this.pct(medCap, 2), range: caps.length + ' of ' + this.COMPS.length + ' comps disclose a cap rate',
+          context: 'Entry cap of 7.00% is ' + Math.round((0.07 - medCap) * 10000) + ' bps above the median; the 6.50% exit assumption is inside the observed range.',
+        },
+      ],
+      compsCaption: 'Extracted from Offering Memorandums and market reports in the Data Room · Miami-Dade, 2021–2025',
+      compColumns: [
+        { label: 'PROPERTY', align: 'left' }, { label: 'MARKET', align: 'left' }, { label: 'SALE DATE', align: 'left' },
+        { label: 'KEYS', align: 'right' }, { label: 'SALE PRICE', align: 'right' }, { label: '$ / KEY', align: 'right' },
+        { label: 'CAP RATE', align: 'right' }, { label: 'BUYER', align: 'left' }, { label: 'SELLER', align: 'left' },
+      ],
+      sortOptions: ['Sale date', '$ / Key', 'Cap rate'].map(label => {
+        const active = label === this.state.sort;
+        return {
+          label, select: () => this.setState({ sort: label }),
+          bg: active ? '#eef2fb' : '#fff', border: active ? '#dbe3f5' : '#e2e1dc',
+          color: active ? '#2f4a8c' : '#6b6f76', weight: active ? 700 : 500,
+        };
+      }),
+      comps: visible.map((c, i) => ({
+        name: c[0], market: c[1], date: c[2], keys: String(c[3]),
+        price: '$' + (c[4] / 1e6).toFixed(1) + 'M',
+        perKey: this.money(c[4] / c[3]),
+        cap: typeof c[5] === 'number' ? this.pct(c[5], 2) : '—',
+        capColor: typeof c[5] === 'number' ? this.BLACK : this.MUTED,
+        buyer: c[6], buyerColor: c[6] === '—' ? this.MUTED : '#6b6f76',
+        seller: c[7], sellerColor: c[7] === '—' ? this.MUTED : '#6b6f76',
+        bg: i % 2 ? '#fbfbf9' : '#fff',
+      })),
+      compsShowing: 'Showing ' + visible.length + ' of ' + this.COMPS.length + ' comps · sorted by ' + this.state.sort.toLowerCase(),
+      compsToggleLabel: this.state.showAllComps ? 'Show top 14' : 'Show all ' + this.COMPS.length + ' comps',
+      toggleAllComps: () => this.setState(s => ({ showAllComps: !s.showAllComps })),
+
+      indexYears: idxYears,
+      indexCols: '230px repeat(' + Y.length + ',88px)',
+      indexBandCols: '230px ' + (7 * 88) + 'px ' + (8 * 88) + 'px',
+      indexGroups: this.buildIndexGroups(),
+    };
+  }
+}
+</script>
+</body>
+</html>

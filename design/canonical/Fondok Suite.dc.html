@@ -1,0 +1,81 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+
+<helmet>
+  <style>body{margin:0;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,Arial,sans-serif;}</style>
+</helmet>
+<template id="__bundler_thumbnail">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 120 56" data-bg-color="#14213d">
+  <rect width="120" height="56" fill="#14213d"/>
+  <g fill="none" stroke="#f5f4f0" stroke-width="2">
+    <rect x="20" y="14" width="16" height="28"/>
+    <rect x="52" y="20" width="16" height="16"/>
+    <rect x="84" y="8" width="16" height="32"/>
+  </g>
+</svg>
+</template>
+<div style="width:100%;min-height:100vh">
+  <sc-if value="{{ isDataRoom }}" hint-placeholder-val="{{ true }}">
+    <dc-import name="Data Room v2" onNavigate="{{ onNavigate }}" hint-size="100%,100vh"></dc-import>
+  </sc-if>
+  <sc-if value="{{ isOverview }}">
+    <dc-import name="Overview Tab v3" onNavigate="{{ onNavigate }}" hint-size="100%,100vh"></dc-import>
+  </sc-if>
+  <sc-if value="{{ isMarket }}">
+    <dc-import name="Market Tab" onNavigate="{{ onNavigate }}" hint-size="100%,100vh"></dc-import>
+  </sc-if>
+  <sc-if value="{{ isFinancials }}">
+    <dc-import name="Financials Tab" onNavigate="{{ onNavigate }}" initial-doc="{{ financialsDoc }}" hint-size="100%,100vh"></dc-import>
+  </sc-if>
+  <sc-if value="{{ isInvestment }}">
+    <dc-import name="Investment Tab" onNavigate="{{ onNavigate }}" hint-size="100%,100vh"></dc-import>
+  </sc-if>
+  <sc-if value="{{ isDebt }}">
+    <dc-import name="Debt Tab" onNavigate="{{ onNavigate }}" hint-size="100%,100vh"></dc-import>
+  </sc-if>
+  <sc-if value="{{ isPartnership }}">
+    <dc-import name="Partnership Tab" onNavigate="{{ onNavigate }}" hint-size="100%,100vh"></dc-import>
+  </sc-if>
+  <sc-if value="{{ isCashflow }}">
+    <dc-import name="Cash Flow Tab" onNavigate="{{ onNavigate }}" hint-size="100%,100vh"></dc-import>
+  </sc-if>
+  <sc-if value="{{ isReturns }}">
+    <dc-import name="Returns Tab" onNavigate="{{ onNavigate }}" hint-size="100%,100vh"></dc-import>
+  </sc-if>
+  <sc-if value="{{ isScenarios }}">
+    <dc-import name="Scenarios Tab" onNavigate="{{ onNavigate }}" hint-size="100%,100vh"></dc-import>
+  </sc-if>
+  <sc-if value="{{ isIcMemo }}">
+    <dc-import name="IC Memo Tab" onNavigate="{{ onNavigate }}" hint-size="100%,100vh"></dc-import>
+  </sc-if>
+</div>
+
+</x-dc>
+<script type="text/x-dc" data-dc-script>
+class Component extends DCLogic {
+  state = { tab: 'overview', financialsDoc: null };
+
+  renderVals() {
+    const ALIAS = { forecasting: 'financials', capex: 'investment', analysis: 'scenarios' };
+    const t = this.state.tab;
+    return {
+      isDataRoom: t === 'dataroom', isOverview: t === 'overview', isMarket: t === 'market',
+      isFinancials: t === 'financials', isInvestment: t === 'investment', isDebt: t === 'debt',
+      isPartnership: t === 'partnership', isCashflow: t === 'cashflow', isReturns: t === 'returns',
+      isScenarios: t === 'scenarios', isIcMemo: t === 'icmemo',
+      financialsDoc: this.state.financialsDoc,
+      onNavigate: (tab, params) => this.setState({ tab: ALIAS[tab] || tab, financialsDoc: (params && params.doc) || null }),
+    };
+  }
+}
+
+</script>
+</body>
+</html>

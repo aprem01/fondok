@@ -1,0 +1,185 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+  <style>body{margin:0;background:#f5f4f0;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,Arial,sans-serif;}a{color:#2f4a8c}a:hover{color:#1f3568}</style>
+</helmet>
+<template id="__bundler_thumbnail">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 120 56" data-bg-color="#14213d"><rect width="120" height="56" fill="#14213d"/><rect x="20" y="34" width="80" height="2" fill="#3d4a68"/><rect x="20" y="33" width="26" height="4" fill="#f5f4f0"/></svg>
+</template>
+
+<div style="max-width:1060px;margin:0 auto;padding:34px 32px 72px;display:flex;flex-direction:column;gap:26px" data-screen-label="Sub-tab standard">
+
+  <div style="display:flex;flex-direction:column;gap:8px">
+    <span style="font-size:11px;font-weight:700;letter-spacing:.08em;color:#9a9a95;text-transform:uppercase">Standard · applied to Financials and Market</span>
+    <h1 style="font-size:27px;margin:0;color:#1a2233;font-weight:600;letter-spacing:-.01em">One sub-tab control</h1>
+    <p style="font-size:14px;color:#6b6f76;line-height:1.6;margin:0;max-width:740px;text-wrap:pretty">Sub-tabs are <b style="color:#3a3f47">underline tabs on a full-width hairline</b>: navy label with a 2px navy rule when active, grey when not. They read as tabs because they are tabs — the separation from the primary bar comes from position and weight, not from a different shape.</p>
+  </div>
+
+  <div style="background:#fff;border:1px solid #eae9e4;border-radius:10px;padding:0 0 16px;overflow:hidden">
+    <div style="padding:16px 20px 0;display:flex;justify-content:space-between;align-items:baseline;gap:14px;flex-wrap:wrap">
+      <span style="font-size:12px;font-weight:700;color:#8a8a86;text-transform:uppercase;letter-spacing:.03em">The standard, in place</span>
+      <span style="font-size:11.5px;color:#9a9a95">Click through it — this is the live control</span>
+    </div>
+
+    <div style="margin:14px 20px 0;border:1px solid #eae9e4;border-radius:9px;overflow:hidden;background:#fbfbf9">
+      <div style="background:#fff;padding:14px 18px 0">
+        <div style="display:flex;gap:22px;border-bottom:1px solid #ececea;font-size:13.5px;font-weight:500;color:#9a9a95">
+          <sc-for list="{{ primaryTabs }}" as="p" hint-placeholder-count="4">
+            <div style="display:flex;align-items:center;gap:6px;padding-bottom:10px;white-space:nowrap;color:{{ p.color }};font-weight:{{ p.weight }};border-bottom:{{ p.border }}">
+              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="{{ p.icon }}"></path></svg>{{ p.label }}
+            </div>
+          </sc-for>
+        </div>
+      </div>
+      <div style="padding:16px 18px;display:flex;flex-direction:column;gap:14px;background:#f5f4f0">
+        <div style="display:flex;align-items:flex-end;gap:28px;border-bottom:1px solid #e6e5e0;overflow-x:auto">
+          <sc-for list="{{ demoTabs }}" as="t" hint-placeholder-count="3">
+            <button onClick="{{ t.select }}" style="font-size:13.5px;font-family:inherit;background:none;border:none;border-bottom:{{ t.border }};cursor:pointer;font-weight:{{ t.weight }};color:{{ t.color }};padding:0 0 10px;margin-bottom:-1px;white-space:nowrap">{{ t.label }}</button>
+          </sc-for>
+          <span style="font-size:11.5px;color:#9a9a95;margin-left:auto;padding-bottom:11px;white-space:nowrap">{{ demoCaption }}</span>
+        </div>
+        <div style="display:flex;align-items:center;gap:16px;flex-wrap:wrap;background:#fbfbf9;border:1px solid #eae9e4;border-radius:8px;padding:9px 14px;font-size:11px;color:#6b6f76">
+          <span style="font-weight:700;color:#8a8a86;letter-spacing:.02em">DATA KEY</span>
+          <span style="display:flex;align-items:center;gap:6px"><span style="width:9px;height:9px;border-radius:50%;background:oklch(45% 0.12 155);display:inline-block"></span>Document sourced</span>
+          <span style="display:flex;align-items:center;gap:6px"><span style="width:9px;height:9px;border-radius:50%;background:#fff;border:2px solid oklch(45% 0.12 155);display:inline-block"></span>Linked</span>
+          <span style="display:flex;align-items:center;gap:6px"><span style="width:9px;height:9px;border-radius:50%;background:oklch(45% 0.14 260);display:inline-block"></span>Assumption</span>
+          <span style="color:#b0afaa">…</span>
+        </div>
+        <div style="background:#fff;border:1px solid #eae9e4;border-radius:9px;padding:16px 18px;font-size:12.5px;color:#6b6f76;line-height:1.55">{{ demoBody }}</div>
+      </div>
+    </div>
+
+    <div style="padding:14px 20px 0;font-size:11.5px;color:#9a9a95;line-height:1.55">Order is fixed: notification banners → primary tabs → sub-tabs → data key → content. The sub-tab row belongs to navigation, so it stays above the key.</div>
+  </div>
+
+  <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(320px,1fr));gap:16px">
+    <div style="background:#fff;border:1px solid #eae9e4;border-radius:10px;padding:18px 20px;display:flex;flex-direction:column;gap:16px">
+      <span style="font-size:12px;font-weight:700;color:#8a8a86;text-transform:uppercase;letter-spacing:.03em">States</span>
+      <sc-for list="{{ states }}" as="s" hint-placeholder-count="4">
+        <div style="display:flex;align-items:center;gap:16px">
+          <div style="border-bottom:1px solid #e6e5e0;flex-shrink:0;min-width:150px">
+            <span style="display:inline-block;font-size:13.5px;font-weight:{{ s.weight }};color:{{ s.color }};border-bottom:{{ s.border }};padding:0 0 10px;margin-bottom:-1px;opacity:{{ s.opacity }}">{{ s.label }}</span>
+          </div>
+          <span style="font-size:11.5px;color:#9a9a95;line-height:1.45">{{ s.note }}</span>
+        </div>
+      </sc-for>
+    </div>
+
+    <div style="background:#fff;border:1px solid #eae9e4;border-radius:10px;padding:18px 20px;display:flex;flex-direction:column;gap:10px">
+      <span style="font-size:12px;font-weight:700;color:#8a8a86;text-transform:uppercase;letter-spacing:.03em">Spec</span>
+      <sc-for list="{{ spec }}" as="s" hint-placeholder-count="8">
+        <div style="display:flex;justify-content:space-between;gap:14px;font-size:12px;padding:5px 0;border-bottom:1px solid #f7f6f3">
+          <span style="color:#6b6f76">{{ s.k }}</span>
+          <span style="color:#1a2233;text-align:right;font-variant-numeric:tabular-nums">{{ s.v }}</span>
+        </div>
+      </sc-for>
+    </div>
+  </div>
+
+  <div style="display:flex;flex-direction:column;gap:12px">
+    <span style="font-size:12px;font-weight:700;color:#8a8a86;text-transform:uppercase;letter-spacing:.03em">Telling the two levels apart</span>
+    <div style="background:#fff;border:1px solid #eae9e4;border-radius:10px;overflow:hidden">
+      <div style="display:grid;grid-template-columns:minmax(120px,.8fr) minmax(200px,1fr) minmax(200px,1fr);font-size:10px;font-weight:700;letter-spacing:.05em;color:#b0afaa;text-transform:uppercase;padding:9px 18px;border-bottom:1px solid #eae9e4">
+        <span></span><span>Primary tabs</span><span>Sub-tabs</span>
+      </div>
+      <sc-for list="{{ compare }}" as="c" hint-placeholder-count="5">
+        <div style="display:grid;grid-template-columns:minmax(120px,.8fr) minmax(200px,1fr) minmax(200px,1fr);padding:10px 18px;border-bottom:1px solid #f7f6f3;font-size:12px;align-items:start">
+          <span style="color:#8a8a86;padding-right:12px">{{ c.k }}</span>
+          <span style="color:#1a2233;padding-right:14px;line-height:1.5">{{ c.primary }}</span>
+          <span style="color:#1a2233;line-height:1.5">{{ c.sub }}</span>
+        </div>
+      </sc-for>
+    </div>
+  </div>
+
+  <div style="display:flex;flex-direction:column;gap:12px">
+    <span style="font-size:12px;font-weight:700;color:#8a8a86;text-transform:uppercase;letter-spacing:.03em">Rules</span>
+    <div style="background:#fff;border:1px solid #eae9e4;border-radius:10px;overflow:hidden">
+      <sc-for list="{{ rules }}" as="r" hint-placeholder-count="6">
+        <div style="display:grid;grid-template-columns:minmax(170px,1fr) minmax(300px,2fr);padding:11px 18px;border-bottom:1px solid #f7f6f3;align-items:start">
+          <span style="font-size:12.5px;color:#1a2233;font-weight:600;padding-right:14px">{{ r.rule }}</span>
+          <span style="font-size:12px;color:#6b6f76;line-height:1.5">{{ r.why }}</span>
+        </div>
+      </sc-for>
+      <div style="padding:14px 18px;font-size:12.5px;color:#6b6f76;line-height:1.6">Applied to <b style="color:#1a2233">Financials</b> (Historicals · Projections) and <b style="color:#1a2233">Market</b> (Market Overview · Transaction Comps · Index Analysis) — the only two tabs with sub-tabs today. <b style="color:#1a2233">Scenario Analysis</b>'s scenario chips stay chips and <b style="color:#1a2233">Data Room</b>'s coverage → document view stays a drill-in with a back link; neither is a sub-tab.</div>
+    </div>
+  </div>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props="{&quot;$preview&quot;:{&quot;width&quot;:1060}}">
+class Component extends DCLogic {
+  NAVY = '#14213d';
+  state = { tab: 'Historicals' };
+
+  renderVals() {
+    const TABS = {
+      Historicals: 'Actual operating history, normalized and traceable to the P&L',
+      Projections: 'The forward model — assumptions, growth and projected performance',
+      'Actual vs. OM': 'Line-by-line reconciliation of the offering memorandum against actuals',
+    };
+    const ICONS = {
+      'Data Room': 'M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7z',
+      Overview: 'M6 3h9l4 4v14a1 1 0 0 1-1 1H6a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1zM9 12h6M9 16h6',
+      Market: 'M12 4a4 4 0 100 8 4 4 0 000-8zM4 21c0-4 3.6-6 8-6s8 2 8 6',
+      Financials: 'M4 20V10M11 20V4M18 20v-7',
+    };
+    return {
+      primaryTabs: Object.keys(ICONS).map(label => {
+        const active = label === 'Financials';
+        return { label, icon: ICONS[label], color: active ? this.NAVY : '#9a9a95', weight: active ? 700 : 500, border: active ? '2px solid ' + this.NAVY : '2px solid transparent' };
+      }),
+      demoTabs: Object.keys(TABS).map(label => {
+        const active = label === this.state.tab;
+        return {
+          label, weight: active ? 700 : 500, color: active ? this.NAVY : '#9a9a95',
+          border: active ? '2px solid ' + this.NAVY : '2px solid transparent',
+          select: () => this.setState({ tab: label }),
+        };
+      }),
+      demoCaption: TABS[this.state.tab],
+      demoBody: this.state.tab + ' content renders here — the sub-tab switches the view inside the tab, never the tab itself.',
+
+      states: [
+        { label: 'Active', weight: 700, color: this.NAVY, border: '2px solid ' + this.NAVY, opacity: 1, note: 'Navy label, 700 weight, 2px navy rule sitting on the hairline. Exactly one per group.' },
+        { label: 'Rest', weight: 500, color: '#9a9a95', border: '2px solid transparent', opacity: 1, note: 'Grey label, no rule — the transparent border keeps the baseline from shifting.' },
+        { label: 'Hover', weight: 500, color: '#3a3f47', border: '2px solid #d9d8d2', opacity: 1, note: 'Label darkens, a light grey rule previews the underline. No movement.' },
+        { label: 'Unavailable', weight: 500, color: '#b0afaa', border: '2px solid transparent', opacity: 0.55, note: 'For a view whose source data is not in yet; the tooltip names the missing document.' },
+      ],
+      spec: [
+        { k: 'Label', v: '13.5px · 500 rest / 700 active' },
+        { k: 'Active', v: 'Navy #14213d · 2px navy underline' },
+        { k: 'Rest', v: '#9a9a95 · 2px transparent underline' },
+        { k: 'Row', v: '1px #e6e5e0 hairline, full content width' },
+        { k: 'Spacing', v: 'gap 28 · padding-bottom 10 · margin-bottom −1' },
+        { k: 'Caption', v: '11.5px #9a9a95, right-aligned on the row' },
+        { k: 'Placement', v: 'First element under the primary tab bar' },
+        { k: 'Group size', v: '2–5 items · one line · no icons' },
+      ],
+      compare: [
+        { k: 'Where', primary: 'In the page header, above the content column', sub: 'First row inside the content column, above the data key' },
+        { k: 'Icons', primary: '15px line icon on every tab', sub: 'No icons — text only' },
+        { k: 'Rule', primary: 'Hairline spans the header, edge to edge', sub: 'Hairline spans the content column only' },
+        { k: 'Caption', primary: 'None', sub: 'One line of grey text, right-aligned' },
+        { k: 'Scope', primary: 'Moves between modules — Overview, Market, Debt', sub: 'Switches the view inside one module' },
+      ],
+      rules: [
+        { rule: 'One group per tab', why: 'A tab needs at most one sub-tab row. A second level of view switching means the tab is doing two jobs.' },
+        { rule: 'Views, not filters', why: 'Sub-tabs swap what is on screen. Anything that narrows the same view — scenario, year, sort — stays a chip or a select inside the card.' },
+        { rule: 'Two to five items', why: 'Below two, drop the control. Above five, it is a tab of its own or a select.' },
+        { rule: 'Short noun labels', why: 'Title case, no counts, no icons: Historicals · Projections · Index Analysis. The caption carries the explanation.' },
+        { rule: 'Caption is optional but singular', why: 'One line of 11.5px grey at the right of the row, describing the active view. Never a second row of text.' },
+        { rule: 'Never inside a card', why: 'The row sits on the page, full content width. Putting it inside a panel makes it read as a control for that panel alone.' },
+      ],
+    };
+  }
+}
+</script>
+</body>
+</html>

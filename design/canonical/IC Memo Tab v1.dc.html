@@ -1,0 +1,692 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+  <style>body{margin:0;background:#f5f4f0;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,Arial,sans-serif;}a{color:#2f4a8c}a:hover{color:#1f3568}</style>
+</helmet>
+<template id="__bundler_thumbnail">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 120 56" data-bg-color="#14213d"><rect width="120" height="56" fill="#14213d"/><rect x="42" y="8" width="36" height="42" rx="2" stroke="#f5f4f0" stroke-width="3" fill="none"/><path d="M50 22h20M50 30h20M50 38h12" stroke="#f5f4f0" stroke-width="3"/></svg>
+</template>
+<div style="display:flex;min-height:100vh">
+  <div style="width:210px;background:#0f1a30;padding:22px 16px;display:flex;flex-direction:column;gap:2px;flex-shrink:0">
+    <div style="display:flex;align-items:center;gap:8px;color:#fff;font-weight:700;font-size:16px;margin-bottom:24px"><div style="width:28px;height:28px;background:#2f4a8c;border-radius:6px;display:flex;align-items:center;justify-content:center;font-size:13px">F</div>Fondok.</div>
+    <div style="color:#c9cede;font-size:12.5px;padding:8px 10px;border-radius:6px;background:rgba(255,255,255,.06);margin-bottom:16px;display:flex;justify-content:space-between">fondok.ai <span>⌄</span></div>
+    <div style="color:#8b93a7;font-size:13px;padding:8px 10px;display:flex;gap:9px">⊞ Dashboard</div>
+    <div style="color:#fff;background:rgba(255,255,255,.09);font-size:13px;font-weight:600;padding:8px 10px;border-radius:6px;display:flex;gap:9px">▤ Projects</div>
+    <div style="color:#8b93a7;font-size:13px;padding:8px 10px;display:flex;gap:9px">📈 Pipeline</div>
+    <div style="color:#8b93a7;font-size:13px;padding:8px 10px;display:flex;gap:9px">◔ Audit</div>
+    <div style="color:#8b93a7;font-size:13px;padding:8px 10px;display:flex;gap:9px">$ Cost</div>
+    <div style="color:#8b93a7;font-size:13px;padding:8px 10px;display:flex;gap:9px">▥ Data Library</div>
+    <div style="color:#8b93a7;font-size:13px;padding:8px 10px;display:flex;gap:9px">▦ Methodology</div>
+    <div style="color:#8b93a7;font-size:13px;padding:8px 10px;display:flex;gap:9px">◷ Settings</div>
+  </div>
+  <div style="flex:1;min-width:0">
+    <div style="padding:22px 32px 0">
+      <div style="font-size:11.5px;color:#9a9a95;margin-bottom:10px">← BACK TO PROJECTS</div>
+      <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;row-gap:8px;margin-bottom:10px">
+        <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap"><h1 style="font-size:26px;margin:0;color:#1a2233;font-weight:600;white-space:nowrap">Kimpton Hotel</h1><span style="color:#9a9a95;font-size:11px;font-weight:600;letter-spacing:.04em">DRAFT</span></div>
+        <div style="display:flex;gap:14px;align-items:center;flex-wrap:wrap">
+          <button onClick="{{ toggleAtlas }}" style="display:flex;align-items:center;gap:6px;background:#eef2fb;border:1px solid #dbe3f5;color:#2f4a8c;border-radius:6px;padding:8px 14px;font-size:12px;font-weight:600;cursor:pointer;white-space:nowrap">✦ Ask Atlas</button>
+          <button onClick="{{ toggleExport }}" style="background:#14213d;color:#fff;border:none;border-radius:6px;padding:8px 16px;font-size:12.5px;font-weight:600;white-space:nowrap;cursor:pointer;font-family:inherit">Export Memo</button>
+        </div>
+      </div>
+      <div style="font-size:12.5px;color:#9a9a95;margin-bottom:20px;display:flex;gap:18px">
+        <span>660 Washington Avenue, Miami Beach, FL 33139</span><span>132 keys</span><span>Created 7/30/2026</span>
+      </div>
+      <div style="display:flex;gap:22px;border-bottom:1px solid #ececea;font-size:13.5px;font-weight:500;color:#9a9a95;overflow-x:auto">
+        <sc-for list="{{ navItems }}" as="nav" hint-placeholder-count="11">
+          <div onClick="{{ nav.onClick }}" style="display:flex;align-items:center;gap:6px;padding-bottom:10px;white-space:nowrap;cursor:pointer;color:{{ nav.color }};font-weight:{{ nav.weight }};border-bottom:{{ nav.border }}">
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="{{ nav.icon }}"></path></svg>{{ nav.label }}
+          </div>
+        </sc-for>
+      </div>
+    </div>
+
+    <div style="padding:16px 32px 56px;max-width:1320px">
+      <div style="background:#fff;border:1px solid #eae9e4;border-radius:10px;padding:12px 16px;margin-bottom:14px;display:flex;flex-direction:column;gap:3px">
+        <span style="font-size:13.5px;font-weight:700;color:#1a2233">IC Memo</span>
+        <span style="font-size:12.5px;color:#6b6f76;line-height:1.55;max-width:960px">The committee-ready write-up, drafted from the current underwriting model. Narrative is AI-drafted and editable; every figure stays linked to the engine it came from.</span>
+      </div>
+
+      <div style="display:flex;align-items:center;gap:16px;flex-wrap:wrap;background:#fbfbf9;border:1px solid #eae9e4;border-radius:8px;padding:9px 14px;margin-bottom:14px;font-size:11px;color:#6b6f76">
+        <span style="font-weight:700;color:#8a8a86;letter-spacing:.02em">DATA KEY</span>
+        <span style="display:flex;align-items:center;gap:6px"><span style="width:9px;height:9px;border-radius:50%;background:oklch(45% 0.12 155);display:inline-block;flex-shrink:0"></span>Document sourced</span>
+        <span style="display:flex;align-items:center;gap:6px"><span style="width:9px;height:9px;border-radius:50%;background:#fff;border:2px solid oklch(45% 0.12 155);display:inline-block;flex-shrink:0"></span>Linked</span>
+        <span style="display:flex;align-items:center;gap:6px"><span style="width:9px;height:9px;border-radius:50%;background:oklch(45% 0.14 260);display:inline-block;flex-shrink:0"></span>Assumption</span>
+        <span style="display:flex;align-items:center;gap:6px"><span style="width:9px;height:9px;border-radius:50%;background:#5f656e;display:inline-block;flex-shrink:0"></span>Calculated</span>
+        <span style="display:flex;align-items:center;gap:6px"><span style="width:9px;height:9px;border-radius:50%;background:#fff;border:1px dashed #b0afaa;display:inline-block;flex-shrink:0"></span>Awaiting data</span>
+        <span style="display:flex;align-items:center;gap:6px"><span style="width:9px;height:9px;border-radius:50%;background:oklch(45% 0.12 155);box-shadow:0 0 0 3px oklch(88% 0.07 45);display:inline-block;flex-shrink:0"></span>Needs review</span>
+        <span style="display:flex;align-items:center;gap:6px"><b style="color:#1a2233">1,240</b>Total / summary</span>
+        <span style="display:flex;align-items:center;gap:6px"><span style="text-decoration:underline dotted;color:#6b6f76">123</span>Editable — click to change</span>
+        <span title="Origin is the dot: document sourced, linked from another module, your assumption, calculated by Fondok, or awaiting data. An amber halo means the value needs review. Bold marks totals, a dotted underline marks values you can change. Provenance and editability are separate — a sourced value can also be editable, and an override keeps its original source so you can restore it." style="cursor:help;color:#9a9a95;margin-left:auto;white-space:nowrap">ⓘ How to read this</span>
+      </div>
+
+      <sc-if value="{{ showSetup }}" hint-placeholder-val="{{ true }}">
+        <div style="background:#fff;border:1px solid #eae9e4;border-radius:10px;padding:30px 34px;max-width:940px">
+          <div style="font-size:19px;font-weight:600;color:#1a2233;margin-bottom:6px">Generate IC Memo</div>
+          <div style="font-size:13px;color:#6b6f76;line-height:1.6;max-width:620px;margin-bottom:22px">Fondok drafts a full Investment Committee memo from the current underwriting model. All figures are linked to the live model.</div>
+
+          <div style="font-size:10.5px;font-weight:700;letter-spacing:.06em;color:#8a8a86;text-transform:uppercase;margin-bottom:9px">Template</div>
+          <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:10px;margin-bottom:22px">
+            <sc-for list="{{ templates }}" as="t" hint-placeholder-count="4">
+              <div onClick="{{ t.select }}" style="border:{{ t.border }};background:{{ t.bg }};border-radius:8px;padding:12px 14px;cursor:{{ t.cursor }};opacity:{{ t.opacity }};display:flex;flex-direction:column;gap:4px">
+                <div style="display:flex;align-items:center;gap:8px">
+                  <span style="width:11px;height:11px;border-radius:50%;border:{{ t.dot }};flex-shrink:0"></span>
+                  <span style="font-size:12.5px;font-weight:600;color:#1a2233">{{ t.label }}</span>
+                </div>
+                <span style="font-size:11.5px;color:#8a8a86;line-height:1.45;padding-left:19px">{{ t.note }}</span>
+              </div>
+            </sc-for>
+          </div>
+
+          <div style="font-size:10.5px;font-weight:700;letter-spacing:.06em;color:#8a8a86;text-transform:uppercase;margin-bottom:9px">Case</div>
+          <div style="display:flex;gap:7px;margin-bottom:22px;flex-wrap:wrap">
+            <sc-for list="{{ scenarioChips }}" as="s" hint-placeholder-count="3">
+              <button onClick="{{ s.select }}" style="font-family:inherit;font-size:12px;font-weight:{{ s.weight }};padding:6px 13px;border-radius:6px;border:{{ s.border }};background:{{ s.bg }};color:{{ s.color }};cursor:pointer">{{ s.label }}</button>
+            </sc-for>
+          </div>
+
+          <div style="font-size:10.5px;font-weight:700;letter-spacing:.06em;color:#8a8a86;text-transform:uppercase;margin-bottom:9px">Sources</div>
+          <div style="display:flex;flex-wrap:wrap;gap:7px;margin-bottom:8px">
+            <sc-for list="{{ sources }}" as="s" hint-placeholder-count="7">
+              <span style="display:flex;align-items:center;gap:6px;font-size:11.5px;color:{{ s.color }};border:1px solid {{ s.border }};background:{{ s.bg }};border-radius:20px;padding:4px 11px">
+                <span style="width:7px;height:7px;border-radius:50%;background:{{ s.dotBg }};border:{{ s.dotBorder }};display:inline-block"></span>{{ s.label }}
+              </span>
+            </sc-for>
+          </div>
+          <div style="font-size:11.5px;color:#8a8a86;line-height:1.55;margin-bottom:24px">Market is missing the 2026 STR trend report — the Market Overview section will draft with the data on hand and flag the gap.</div>
+
+          <div style="display:flex;align-items:center;gap:14px">
+            <button onClick="{{ generate }}" style="background:#14213d;color:#fff;border:none;border-radius:6px;padding:10px 20px;font-size:13px;font-weight:600;cursor:pointer;font-family:inherit">Generate memo</button>
+            <span style="font-size:11.5px;color:#9a9a95">{{ setupSummary }}</span>
+          </div>
+        </div>
+      </sc-if>
+
+      <sc-if value="{{ showMemo }}" hint-placeholder-val="{{ false }}">
+        <div style="display:flex;flex-direction:column;gap:12px">
+          <div style="display:flex;align-items:center;gap:14px;flex-wrap:wrap;background:#fff;border:1px solid #eae9e4;border-radius:8px;padding:9px 14px;font-size:11.5px;color:#6b6f76;position:relative">
+            <span style="display:flex;align-items:center;gap:6px;font-weight:600;color:#1a2233"><span style="width:8px;height:8px;border-radius:50%;background:#fff;border:2px solid oklch(45% 0.12 155);display:inline-block"></span>Linked to model</span>
+            <span>Last synced {{ syncedAt }}</span>
+            <span style="color:#c3c2bd">·</span>
+            <span>{{ versionLine }}</span>
+            <span onClick="{{ toggleVersions }}" style="color:#2f4a8c;font-weight:600;cursor:pointer">Version history</span>
+            <span style="margin-left:auto;display:flex;align-items:center;gap:10px;flex-wrap:wrap">
+              <span style="color:#8a8a86">Tone</span>
+              <sc-for list="{{ tones }}" as="t" hint-placeholder-count="3">
+                <button onClick="{{ t.select }}" style="font-family:inherit;font-size:11.5px;font-weight:{{ t.weight }};padding:4px 10px;border-radius:5px;border:{{ t.border }};background:{{ t.bg }};color:{{ t.color }};cursor:pointer">{{ t.label }}</button>
+              </sc-for>
+              <button onClick="{{ toggleExport }}" style="font-family:inherit;font-size:11.5px;font-weight:600;padding:5px 12px;border-radius:5px;border:1px solid #dcdbd6;background:#fff;color:#1a2233;cursor:pointer">Export ⌄</button>
+            </span>
+            <sc-if value="{{ exportOpen }}" hint-placeholder-val="{{ false }}">
+              <div style="position:absolute;top:44px;right:14px;z-index:20;background:#fff;border:1px solid #e2e1dc;border-radius:8px;box-shadow:0 8px 24px rgba(0,0,0,.10);padding:6px;width:224px;display:flex;flex-direction:column">
+                <sc-for list="{{ exportItems }}" as="e" hint-placeholder-count="5">
+                  <div onClick="{{ e.click }}" style="display:flex;align-items:center;justify-content:space-between;gap:10px;font-size:12.5px;color:{{ e.color }};padding:8px 10px;border-radius:5px;cursor:{{ e.cursor }}">
+                    <span>{{ e.label }}</span><span style="font-size:9.5px;font-weight:700;letter-spacing:.05em;color:#9a9a95">{{ e.tag }}</span>
+                  </div>
+                </sc-for>
+              </div>
+            </sc-if>
+          </div>
+
+          <sc-if value="{{ versionsOpen }}" hint-placeholder-val="{{ false }}">
+            <div style="background:#fff;border:1px solid #eae9e4;border-radius:8px;padding:12px 14px">
+              <div style="font-size:10.5px;font-weight:700;letter-spacing:.06em;color:#8a8a86;text-transform:uppercase;margin-bottom:9px">Version history</div>
+              <div style="display:flex;flex-direction:column">
+                <sc-for list="{{ versions }}" as="v" hint-placeholder-count="3">
+                  <div style="display:flex;align-items:baseline;gap:14px;font-size:12.5px;padding:7px 0;border-top:1px solid #f0efeb">
+                    <span style="font-weight:700;color:#1a2233;width:34px">{{ v.id }}</span>
+                    <span style="color:#3a3f47;flex:1">{{ v.desc }}</span>
+                    <span style="color:#9a9a95;font-size:11.5px">{{ v.when }}</span>
+                    <span style="color:{{ v.stateColor }};font-size:11px;font-weight:600">{{ v.state }}</span>
+                  </div>
+                </sc-for>
+              </div>
+            </div>
+          </sc-if>
+
+          <sc-if value="{{ stale }}" hint-placeholder-val="{{ false }}">
+            <div style="display:flex;align-items:center;gap:14px;flex-wrap:wrap;background:oklch(97% 0.03 75);border:1px solid oklch(85% 0.07 75);border-radius:8px;padding:9px 14px;font-size:12px;color:#1a2233">
+              <span style="font-size:10px;font-weight:700;letter-spacing:.05em;color:oklch(48% 0.12 60);text-transform:uppercase;white-space:nowrap">Model updated</span>
+              <span>{{ staleReason }}</span>
+              <span onClick="{{ refresh }}" style="margin-left:auto;color:#2f4a8c;font-weight:600;cursor:pointer;white-space:nowrap">Refresh from model →</span>
+            </div>
+          </sc-if>
+
+          <div style="display:grid;grid-template-columns:252px 1fr;gap:20px;align-items:start">
+            <div style="background:#fff;border:1px solid #eae9e4;border-radius:10px;padding:14px 12px;position:sticky;top:20px">
+              <div style="font-size:10.5px;font-weight:700;color:#8a8a86;text-transform:uppercase;letter-spacing:.05em;margin:2px 6px 10px">{{ templateLabel }}</div>
+              <div style="display:flex;flex-direction:column;gap:1px">
+                <sc-for list="{{ sections }}" as="s" hint-placeholder-count="13">
+                  <div onClick="{{ s.select }}" style="display:flex;align-items:center;gap:9px;font-size:12.5px;padding:7px 8px;border-radius:6px;cursor:pointer;background:{{ s.bg }};color:{{ s.color }};font-weight:{{ s.weight }}">
+                    <span style="font-size:10.5px;color:#b0afaa;width:14px;flex-shrink:0;font-variant-numeric:tabular-nums">{{ s.num }}</span>
+                    <span style="flex:1">{{ s.label }}</span>
+                    <span style="font-size:10px;color:{{ s.markColor }};white-space:nowrap">{{ s.mark }}</span>
+                  </div>
+                </sc-for>
+              </div>
+              <div style="border-top:1px solid #f0efeb;margin-top:10px;padding:10px 8px 2px;font-size:11px;color:#9a9a95;line-height:1.5">Edited sections keep their model links. Numbers stay locked to the engines.</div>
+            </div>
+
+            <div style="background:#fff;border:1px solid #eae9e4;border-radius:10px;padding:30px 38px 36px">
+              <div style="display:flex;align-items:center;justify-content:space-between;gap:16px;flex-wrap:wrap;padding-bottom:16px;border-bottom:1px solid #f0efeb;margin-bottom:22px">
+                <div>
+                  <div style="font-size:10.5px;font-weight:700;color:#8a8a86;letter-spacing:.06em;margin-bottom:6px">INVESTMENT COMMITTEE MEMORANDUM</div>
+                  <h2 style="font-size:21px;margin:0 0 4px;color:#1a2233;font-weight:600">Kimpton Hotel — The Angler's, Miami Beach</h2>
+                  <div style="font-size:11.5px;color:#9a9a95">{{ memoSubline }}</div>
+                </div>
+                <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
+                  <span style="font-size:10.5px;color:#8a8a86">Case</span>
+                  <sc-for list="{{ scenarioChips }}" as="s" hint-placeholder-count="3">
+                    <button onClick="{{ s.select }}" style="font-family:inherit;font-size:11.5px;font-weight:{{ s.weight }};padding:5px 11px;border-radius:5px;border:{{ s.border }};background:{{ s.bg }};color:{{ s.color }};cursor:pointer">{{ s.label }}</button>
+                  </sc-for>
+                </div>
+              </div>
+
+              <div style="display:flex;align-items:center;justify-content:space-between;gap:16px;flex-wrap:wrap;margin-bottom:14px">
+                <div style="display:flex;align-items:baseline;gap:10px">
+                  <span style="font-size:11px;color:#b0afaa;font-weight:700">{{ activeNum }}</span>
+                  <h3 style="font-size:16px;margin:0;color:#1a2233;font-weight:600">{{ activeLabel }}</h3>
+                  <span style="font-size:10.5px;color:{{ editedColor }};font-weight:600">{{ editedTag }}</span>
+                </div>
+                <div style="display:flex;align-items:center;gap:12px">
+                  <span onClick="{{ regenerate }}" style="font-size:11.5px;color:#2f4a8c;font-weight:600;cursor:pointer">{{ regenLabel }}</span>
+                  <span onClick="{{ copySection }}" style="font-size:11.5px;color:#6b6f76;cursor:pointer">Copy section</span>
+                </div>
+              </div>
+
+              <div style="font-size:11px;color:#9a9a95;display:flex;gap:16px;flex-wrap:wrap;margin-bottom:18px">
+                <span>AI-drafted narrative — click any paragraph to edit</span>
+                <span style="display:flex;align-items:center;gap:6px"><span style="width:8px;height:8px;border-radius:50%;background:#fff;border:2px solid oklch(45% 0.12 155);display:inline-block"></span>Model-linked figure — locked</span>
+              </div>
+
+              <div contentEditable="{{ editable }}" suppressContentEditableWarning="{{ true }}" onInput="{{ markEdited }}" style="outline:none;border-radius:6px;padding:2px">
+                <sc-for list="{{ paras }}" as="p" hint-placeholder-count="3">
+                  <p style="font-size:13.5px;line-height:1.75;color:#3a3f47;margin:0 0 14px;text-wrap:pretty">
+                    <sc-for list="{{ p.runs }}" as="run" hint-placeholder-count="5">
+                      <span contentEditable="{{ run.edit }}" title="{{ run.title }}" style="color:{{ run.color }};font-weight:{{ run.weight }};border-bottom:{{ run.border }};cursor:{{ run.cursor }}">{{ run.text }}</span>
+                    </sc-for>
+                  </p>
+                </sc-for>
+                <sc-for list="{{ bullets }}" as="b" hint-placeholder-count="0">
+                  <div style="display:flex;gap:11px;margin-bottom:11px">
+                    <span style="color:#2f4a8c;flex-shrink:0">—</span>
+                    <div>
+                      <div style="font-size:13px;font-weight:600;color:#1a2233;margin-bottom:2px">{{ b.title }}</div>
+                      <div style="font-size:13px;color:#6b6f76;line-height:1.65">{{ b.body }}</div>
+                    </div>
+                  </div>
+                </sc-for>
+              </div>
+
+              <sc-if value="{{ hasMetrics }}" hint-placeholder-val="{{ false }}">
+                <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin:18px 0 6px">
+                  <sc-for list="{{ metrics }}" as="m" hint-placeholder-count="4">
+                    <div style="background:#f7f6f2;border:1px solid #efeee9;border-radius:8px;padding:11px 13px">
+                      <div style="font-size:10px;color:#8a8a86;font-weight:700;letter-spacing:.03em;text-transform:uppercase;margin-bottom:5px">{{ m.label }}</div>
+                      <div style="font-size:16.5px;font-weight:700;color:#1a2233;font-variant-numeric:tabular-nums">{{ m.value }}</div>
+                      <div style="display:flex;align-items:center;gap:5px;margin-top:5px;font-size:10.5px;color:#9a9a95">
+                        <span style="width:7px;height:7px;border-radius:50%;background:{{ m.dotBg }};border:{{ m.dotBorder }};display:inline-block;flex-shrink:0"></span>{{ m.src }}
+                      </div>
+                    </div>
+                  </sc-for>
+                </div>
+              </sc-if>
+
+              <sc-if value="{{ hasTable }}" hint-placeholder-val="{{ false }}">
+                <div style="margin:18px 0 4px;border:1px solid #eae9e4;border-radius:8px;overflow:hidden">
+                  <div style="display:flex;align-items:center;justify-content:space-between;background:#fbfbf9;border-bottom:1px solid #eae9e4;padding:8px 14px">
+                    <span style="font-size:10.5px;font-weight:700;letter-spacing:.05em;color:#8a8a86;text-transform:uppercase">{{ tableTitle }}</span>
+                    <span style="font-size:10.5px;color:#9a9a95">{{ tableSource }}</span>
+                  </div>
+                  <table style="width:100%;border-collapse:collapse;font-size:12.5px">
+                    <thead>
+                      <tr>
+                        <sc-for list="{{ tableCols }}" as="c" hint-placeholder-count="5">
+                          <th style="text-align:{{ c.align }};padding:8px 14px;font-size:10.5px;font-weight:700;letter-spacing:.03em;color:#8a8a86;text-transform:uppercase;border-bottom:1px solid #f0efeb;background:#fff">{{ c.label }}</th>
+                        </sc-for>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      <sc-for list="{{ tableRows }}" as="r" hint-placeholder-count="5">
+                        <tr style="background:{{ r.bg }}">
+                          <sc-for list="{{ r.cells }}" as="c" hint-placeholder-count="5">
+                            <td style="text-align:{{ c.align }};padding:7px 14px;color:{{ c.color }};font-weight:{{ c.weight }};border-top:1px solid #f4f3ef;font-variant-numeric:tabular-nums">{{ c.v }}</td>
+                          </sc-for>
+                        </tr>
+                      </sc-for>
+                    </tbody>
+                  </table>
+                </div>
+              </sc-if>
+
+              <sc-if value="{{ isExhibits }}" hint-placeholder-val="{{ false }}">
+                <div style="margin-top:6px;border:1px solid #eae9e4;border-radius:8px;overflow:hidden">
+                  <div style="background:#fbfbf9;border-bottom:1px solid #eae9e4;padding:8px 14px;display:flex;justify-content:space-between;align-items:center">
+                    <span style="font-size:10.5px;font-weight:700;letter-spacing:.05em;color:#8a8a86;text-transform:uppercase">Exhibits</span>
+                    <span style="font-size:10.5px;color:#9a9a95">{{ exhibitCount }}</span>
+                  </div>
+                  <sc-for list="{{ exhibits }}" as="e" hint-placeholder-count="7">
+                    <div onClick="{{ e.toggle }}" style="display:flex;align-items:center;gap:11px;padding:9px 14px;border-top:1px solid #f4f3ef;cursor:pointer">
+                      <span style="width:15px;height:15px;border-radius:4px;border:{{ e.boxBorder }};background:{{ e.boxBg }};color:#fff;font-size:10px;display:flex;align-items:center;justify-content:center;flex-shrink:0">{{ e.check }}</span>
+                      <span style="font-size:12.5px;color:{{ e.color }};font-weight:{{ e.weight }};flex:1">{{ e.label }}</span>
+                      <span style="font-size:11px;color:#9a9a95">{{ e.src }}</span>
+                    </div>
+                  </sc-for>
+                </div>
+              </sc-if>
+
+              <div style="display:flex;align-items:center;justify-content:space-between;gap:16px;margin-top:26px;padding-top:14px;border-top:1px solid #f0efeb">
+                <span onClick="{{ prevSection }}" style="font-size:12.5px;color:{{ prevColor }};cursor:pointer">{{ prevLabel }}</span>
+                <span onClick="{{ nextSection }}" style="font-size:12.5px;color:{{ nextColor }};cursor:pointer">{{ nextLabel }}</span>
+              </div>
+            </div>
+          </div>
+        </div>
+      </sc-if>
+    </div>
+  </div>
+
+  <div style="position:fixed;top:0;right:0;height:100vh;width:340px;background:#fff;box-shadow:-4px 0 24px rgba(0,0,0,.14);z-index:50;display:flex;flex-direction:column;transform:{{ atlasTransform }};transition:transform .22s ease">
+    <div style="padding:16px 18px;border-bottom:1px solid #eae9e4;display:flex;justify-content:space-between;align-items:center">
+      <span style="font-weight:700;font-size:13.5px;color:#1a2233">✦ Atlas</span>
+      <span onClick="{{ closeAtlas }}" style="cursor:pointer;color:#9a9a95">✕</span>
+    </div>
+    <div style="flex:1;overflow-y:auto;padding:14px 18px;display:flex;flex-direction:column;gap:10px">
+      <div style="background:#f3f2ee;color:#1a2233;padding:9px 12px;border-radius:8px;font-size:12.5px">Three items are still outstanding before this memo is committee-ready — 2026 interim financials are the blocking one.</div>
+    </div>
+    <div style="padding:12px 18px;border-top:1px solid #eae9e4;display:flex;flex-direction:column;gap:8px">
+      <button style="text-align:left;background:#f5f4f0;border:1px solid #eae9e4;border-radius:6px;padding:8px 10px;font-size:12px;color:#3a3f47;cursor:pointer">Draft the risks section</button>
+      <button style="text-align:left;background:#f5f4f0;border:1px solid #eae9e4;border-radius:6px;padding:8px 10px;font-size:12px;color:#3a3f47;cursor:pointer">What's blocking sign-off?</button>
+    </div>
+  </div>
+</div>
+
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props="{&quot;onNavigate&quot;:{&quot;editor&quot;:null,&quot;tsType&quot;:&quot;(tab: string, params?: object) =&gt; void&quot;}}">
+class Component extends DCLogic {
+  GREEN = 'oklch(45% 0.12 155)';
+  NAVY = '#14213d';
+
+  state = {
+    atlasOpen: false, generated: false, template: 'standard', scenario: 'Base Case',
+    memoScenario: 'Base Case', memoTemplate: 'standard', active: 0, tone: 'Standard',
+    edited: {}, exportOpen: false, versionsOpen: false, exhibits: { su: true, proj: true, debt: true, cf: true, ret: true, scen: true, mkt: false },
+    syncedAt: '9/28/25 4:12pm', version: 3, regenerating: false,
+  };
+
+  CASES = {
+    'Base Case':  { irr: '19.8%', moic: '2.24x', coc: '6.4%', exitCap: '6.50%', exitValue: '$63.4M', noi: '$3.86M', dscr: '1.42x', growth: '3.0%', profit: '$23.2M',
+      series: {
+        occ: ['71.2%','76.8%','79.5%','79.5%','79.5%'], adr: ['$275','$293','$309','$318','$328'],
+        revpar: ['$196','$225','$246','$253','$261'], rev: ['$14.2M','$16.1M','$17.5M','$18.0M','$18.6M'],
+        noi: ['$2.55M','$3.31M','$3.74M','$3.86M','$3.98M'],
+      },
+      partners: { lpDist: '$36.1M', lpIrr: '17.9%', lpMoic: '2.15x', gpDist: '$5.7M', gpIrr: '27.4%', gpMoic: '3.05x', dealDist: '$41.8M' } },
+    'Downside':   { irr: '12.4%', moic: '1.71x', coc: '4.9%', exitCap: '7.50%', exitValue: '$52.9M', noi: '$3.42M', dscr: '1.24x', growth: '1.0%', profit: '$13.3M',
+      series: {
+        occ: ['69.5%','74.0%','76.5%','76.5%','76.5%'], adr: ['$271','$283','$292','$295','$298'],
+        revpar: ['$188','$209','$223','$226','$228'], rev: ['$13.6M','$15.0M','$15.9M','$16.1M','$16.3M'],
+        noi: ['$2.28M','$2.90M','$3.28M','$3.35M','$3.42M'],
+      },
+      partners: { lpDist: '$28.0M', lpIrr: '11.3%', lpMoic: '1.67x', gpDist: '$3.9M', gpIrr: '17.6%', gpMoic: '2.09x', dealDist: '$31.9M' } },
+    'Upside':     { irr: '24.6%', moic: '2.68x', coc: '7.5%', exitCap: '6.00%', exitValue: '$71.8M', noi: '$4.16M', dscr: '1.55x', growth: '4.0%', profit: '$31.4M',
+      series: {
+        occ: ['72.5%','78.0%','81.0%','81.0%','81.0%'], adr: ['$279','$300','$319','$332','$345'],
+        revpar: ['$202','$234','$258','$269','$279'], rev: ['$14.7M','$16.7M','$18.3M','$19.0M','$19.7M'],
+        noi: ['$2.72M','$3.55M','$4.02M','$4.16M','$4.32M'],
+      },
+      partners: { lpDist: '$42.4M', lpIrr: '21.8%', lpMoic: '2.52x', gpDist: '$7.6M', gpIrr: '36.0%', gpMoic: '4.06x', dealDist: '$50.0M' } },
+  };
+
+  TEMPLATES = [
+    { id: 'standard', label: 'Fondok Standard IC Memo', note: '13 sections · the default committee format', count: 13 },
+    { id: 'screening', label: 'Screening Memo', note: 'Short form — thesis, metrics, risks, recommendation', count: 6 },
+    { id: 'full', label: 'Full IC Memo', note: 'Long form with expanded market and appendix detail', count: 13 },
+    { id: 'custom', label: 'Custom Template', note: 'Bring your own house format', soon: true },
+  ];
+
+  SECTION_ORDER = ['Executive Summary','Investment Thesis','Property Overview','Market Overview','Business Plan','Financial Summary','Debt & Capital Structure','Partnership Structure','Returns Analysis','Sensitivities & Scenarios','Key Risks & Mitigants','Recommendation','Appendix / Exhibits'];
+  SCREENING = ['Executive Summary','Investment Thesis','Financial Summary','Returns Analysis','Key Risks & Mitigants','Recommendation'];
+
+  sectionList() {
+    return this.state.memoTemplate === 'screening' ? this.SCREENING : this.SECTION_ORDER;
+  }
+
+  r(text) { return { text, color: '#3a3f47', weight: 400, border: 'none', cursor: 'text', edit: undefined, title: '' }; }
+  L(text, src) { return { text, color: '#1a2233', weight: 600, border: '1px solid ' + this.GREEN, cursor: 'help', edit: false, title: 'Linked from ' + src + ' — locked to the model' }; }
+
+  buildNavItems(active, onNavigate) {
+    const ICONS = {
+      dataroom: "M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7z",
+      overview: "M6 3h9l4 4v14a1 1 0 0 1-1 1H6a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1zM9 12h6M9 16h6",
+      market: "M12 4a4 4 0 100 8 4 4 0 000-8zM4 21c0-4 3.6-6 8-6s8 2 8 6",
+      financials: "M4 20V10M11 20V4M18 20v-7",
+      investment: "M3 8h18v12a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V8zM8 8V6a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2",
+      debt: "M12 3a9 9 0 100 18 9 9 0 000-18zM12 7v10M9.5 9.5c0-1.4 1.1-2.5 2.5-2.5s2.5.7 2.5 2c0 2-5 1.5-5 4 0 1.3 1.1 2.5 2.5 2.5s2.5-1.1 2.5-2.5",
+      partnership: "M9 11a3 3 0 100-6 3 3 0 000 6zM17 11a3 3 0 100-6 3 3 0 000 6zM2 20c0-3 3-5 7-5M13 20c0-3 3-5 7-5",
+      cashflow: "M3 12h4l3 7 4-14 3 7h4",
+      returns: "M3 17l6-6 4 4 8-8M15 7h6v6",
+      scenarios: "M4 7h13l-3-3M4 7l3 3M20 17H7l3 3M20 17l-3-3",
+      icmemo: "M6 3h9l4 4v14a1 1 0 0 1-1 1H6a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1zM9 12h6M9 16h4M14 3v5h5",
+    };
+    const HREFS = {
+      dataroom: './Data Room v2.dc.html', overview: './Overview Tab.dc.html', market: './Market Tab.dc.html',
+      financials: './Financials Tab.dc.html', investment: './Investment Tab.dc.html', debt: './Debt Tab.dc.html',
+      partnership: './Partnership Tab.dc.html', cashflow: './Cash Flow Tab.dc.html', returns: './Returns Tab.dc.html',
+      scenarios: './Scenarios Tab.dc.html', icmemo: './IC Memo Tab.dc.html',
+    };
+    const items = [
+      ['dataroom','Data Room'], ['overview','Overview'], ['market','Market'], ['financials','Financials'],
+      ['investment','Investment'], ['debt','Debt'], ['partnership','Partnership'], ['cashflow','Cash Flow'],
+      ['returns','Returns'], ['scenarios','Scenario Analysis'], ['icmemo','IC Memo'],
+    ];
+    return items.map(([key, label]) => ({
+      key, label, icon: ICONS[key],
+      color: key === active ? '#14213d' : '#9a9a95',
+      weight: key === active ? 700 : 500,
+      border: key === active ? '2px solid #14213d' : '2px solid transparent',
+      onClick: key === active ? null : () => { if (onNavigate) onNavigate(key); else window.location.href = HREFS[key]; },
+    }));
+  }
+
+  content(label) {
+    const c = this.CASES[this.state.memoScenario];
+    const R = t => this.r(t), L = (t, s) => this.L(t, s);
+    const long = this.state.memoTemplate === 'full';
+    const concise = this.state.tone === 'Concise';
+    const map = {
+      'Executive Summary': {
+        paras: [
+          { runs: [R('Fondok recommends the acquisition of the 132-key Kimpton Hotel at The Angler\'s, Miami Beach, at a purchase price of '), L('$36,440,000', 'Investment'), R(' — '), L('$276,036', 'Investment'), R(' per key — representing a '), L('7.00%', 'Financials'), R(' going-in yield on trailing NOI. Total cost basis of '), L('$41,860,000', 'Investment'), R(' includes a '), L('$4,620,000', 'Investment'), R(' PIP covering all guestrooms and public space.')] },
+          { runs: [R('The deal underwrites to a '), L(c.irr, 'Returns'), R(' levered IRR and '), L(c.moic, 'Returns'), R(' equity multiple over a five-year hold, on '), L('$18.67M', 'Investment'), R(' of required equity. Stabilized NOI of '), L(c.noi, 'Financials'), R(' exits at a '), L(c.exitCap, 'Investment'), R(' cap for '), L(c.exitValue, 'Returns'), R('.')] },
+        ].concat(concise ? [] : [{ runs: [R('Three diligence items remain open, none of which are expected to alter the underwriting: 2026 interim financials, a re-scoped parking structure repair estimate, and lender confirmation on the exit refinance option.')] }]),
+        metrics: [
+          { label: 'Purchase Price', value: '$36.44M', src: 'Investment' },
+          { label: 'Total Basis', value: '$41.86M', src: 'Investment' },
+          { label: 'Levered IRR', value: c.irr, src: 'Returns' },
+          { label: 'MOIC', value: c.moic, src: 'Returns' },
+        ],
+      },
+      'Investment Thesis': {
+        bullets: [
+          { title: 'Basis below the comp set', body: '$276k per key sits 10% below the trailing average of $306k across four recent Miami Beach transactions extracted from the offering memoranda in the data room.' },
+          { title: 'Rate-led, not occupancy-led', body: 'Occupancy already indexes at 104 against the comp set. The underwriting relies on ADR moving from $275 to $309 by exit rather than on further occupancy gains.' },
+          { title: 'PIP creates the newest product in the set', body: 'The $4.62M renovation delivers ahead of the 612 comp-set keys scheduled for 2027–2028, positioning the asset as repositioned product against aging inventory.' },
+          { title: 'Financing covers the disruption', body: 'Fixed-rate debt at 7.66% with 24 months of interest-only carries the renovation period before amortization begins.' },
+        ],
+      },
+      'Property Overview': {
+        paras: [
+          { runs: [R('The Angler\'s is a '), L('132-key', 'Data Room'), R(' boutique hotel at 660 Washington Avenue in South Beach, operating under a Kimpton franchise agreement through '), L('2039', 'Data Room'), R('. The property comprises a 1930 historic villa building and a 2008 tower across '), L('86,400 SF', 'Data Room'), R(', with three F&B outlets, a pool deck and '), L('2,100 SF', 'Data Room'), R(' of meeting space.')] },
+          { runs: [R('Positioning is Upper Upscale. The asset last received a soft-goods refresh in 2018; the case FF&E and bathrooms are original to the 2008 delivery and drive the majority of the PIP scope.')] },
+        ],
+      },
+      'Market Overview': {
+        paras: [
+          { runs: [R('Miami Beach submarket occupancy ran '), L('76.4%', 'Market'), R(' at an ADR of '), L('$291', 'Market'), R(' over the trailing twelve months, producing RevPAR of '), L('$222', 'Market'), R('. The subject indexes at '), L('104', 'Market'), R(' on occupancy and '), L('94', 'Market'), R(' on ADR against a nine-hotel competitive set of '), L('1,486 keys', 'Market'), R('.')] },
+          { runs: [R('The ADR index gap is the core value-creation thesis: the subject holds share on occupancy while underpricing the set by roughly $17 in rate.')] },
+          { runs: [R('The 2026 STR trend report has not been uploaded, so forward supply and demand growth are shown as awaiting data rather than estimated. This section will redraft on upload.')] },
+        ],
+      },
+      'Business Plan': {
+        paras: [
+          { runs: [R('Renovate all '), L('132', 'Investment'), R(' guestrooms and the lobby, pool deck and primary F&B outlet over '), L('12 months', 'Investment'), R(' beginning at close, at a budget of '), L('$4.62M', 'Investment'), R(' — '), L('$35,000', 'Investment'), R(' per key. Rooms are taken out of service in two phases of 66 keys, with displacement reflected in the Year 1 forecast.')] },
+          { runs: [R('Post-renovation, rate is pushed toward comp-set parity across a 12-month ramp, reaching stabilization in Year 3 at '), L('79.5%', 'Financials'), R(' occupancy and '), L('$309', 'Financials'), R(' ADR. Management transitions at close under a new operating agreement at a '), L('3.0%', 'Financials'), R(' base fee.')] },
+        ],
+      },
+      'Financial Summary': {
+        paras: [{ runs: [R('Operating figures below are linked from Financials and reflect the '), L(this.state.memoScenario, 'Scenario Analysis'), R(' case at '), L(c.growth, 'Financials'), R(' annual RevPAR growth after stabilization.')] }],
+        table: {
+          title: 'Operating summary', source: 'Linked from Financials',
+          cols: ['', 'Year 1', 'Year 2', 'Year 3', 'Year 4', 'Year 5'],
+          rows: [
+            ['Occupancy', '71.2%', '76.8%', '79.5%', '79.5%', '79.5%'],
+            ['ADR', '$275', '$293', '$309', '$318', '$328'],
+            ['RevPAR', '$196', '$225', '$246', '$253', '$261'],
+            ['Total Revenue', '$14.2M', '$16.1M', '$17.5M', '$18.0M', '$18.6M'],
+            ['NOI', '$2.55M', '$3.31M', '$3.74M', '$3.86M', '$3.98M', true],
+          ],
+        },
+      },
+      'Debt & Capital Structure': {
+        paras: [{ runs: [R('Senior acquisition financing of '), L('$23.19M', 'Debt'), R(' at '), L('63.6%', 'Debt'), R(' LTV and '), L('55.4%', 'Debt'), R(' LTC, fixed at '), L('7.66%', 'Debt'), R(' with 24 months interest-only and a 30-year amortization schedule thereafter. Average DSCR across the hold is '), L(c.dscr, 'Debt'), R(', against a '), L('1.20x', 'Debt'), R(' covenant.')] }],
+        table: {
+          title: 'Capital structure', source: 'Linked from Debt and Investment',
+          cols: ['Source', 'Amount', '% of Total', 'Rate / Terms'],
+          rows: [
+            ['Senior Loan', '$23.19M', '55.4%', '7.66% fixed · 24mo IO'],
+            ['Required Equity', '$18.67M', '44.6%', '—'],
+            ['Total Sources', '$41.86M', '100.0%', '', true],
+          ],
+        },
+      },
+      'Partnership Structure': {
+        paras: [{ runs: [R('Required equity of '), L('$18.67M', 'Investment'), R(' is split '), L('10%', 'Partnership'), R(' GP co-invest and '), L('90%', 'Partnership'), R(' LP. LPs receive an '), L('8.0%', 'Partnership'), R(' preferred return compounded annually, followed by a 50/50 GP catch-up, '), L('20%', 'Partnership'), R(' promote above the pref and '), L('30%', 'Partnership'), R(' above a 15% LP IRR.')] },
+        { runs: [R('Partnership terms are entered manually in the current release and are not extracted from JV documents.')] }],
+        table: {
+          title: 'Partner economics', source: 'Calculated in Partnership',
+          cols: ['', 'Contribution', 'Distributions', 'IRR', 'MOIC'],
+          rows: [
+            ['LP Investors', '$16.80M', '$36.1M', '17.9%', '2.15x'],
+            ['GP / Sponsor', '$1.87M', '$5.7M', '27.4%', '3.05x'],
+            ['Deal Level', '$18.67M', '$41.8M', c.irr, c.moic, true],
+          ],
+        },
+      },
+      'Returns Analysis': {
+        paras: [{ runs: [R('Deal-level returns before GP/LP allocation: '), L(c.irr, 'Returns'), R(' levered IRR, '), L(c.moic, 'Returns'), R(' equity multiple and '), L(c.coc, 'Returns'), R(' average cash-on-cash across the hold. Equity profit of '), L(c.profit, 'Returns'), R(' is driven roughly two-thirds by exit value and one-third by operating cash flow.')] }],
+        metrics: [
+          { label: 'Levered IRR', value: c.irr, src: 'Returns' },
+          { label: 'Equity Multiple', value: c.moic, src: 'Returns' },
+          { label: 'Avg. Cash-on-Cash', value: c.coc, src: 'Returns' },
+          { label: 'Exit Value', value: c.exitValue, src: 'Returns' },
+        ],
+      },
+      'Sensitivities & Scenarios': {
+        paras: [{ runs: [R('Returns hold above the 15% hurdle across the tested exit cap and growth range, breaking only at a 7.50% exit cap paired with 1.0% growth. Pricing headroom at the 18% IRR hurdle is '), L('$7.05M', 'Returns'), R(' above the current purchase price, with IRR the binding constraint.')] }],
+        table: {
+          title: 'Scenario comparison', source: 'Linked from Scenario Analysis',
+          cols: ['Metric', 'Base', 'Downside', 'Upside'],
+          rows: [
+            ['Levered IRR', '19.8%', '12.4%', '24.6%'],
+            ['Equity Multiple', '2.24x', '1.71x', '2.68x'],
+            ['Stabilized NOI', '$3.86M', '$3.42M', '$4.16M'],
+            ['Exit Value', '$63.4M', '$52.9M', '$71.8M'],
+            ['Avg. DSCR', '1.42x', '1.24x', '1.55x', true],
+          ],
+        },
+      },
+      'Key Risks & Mitigants': {
+        bullets: [
+          { title: 'NOI margin expands 5.7 pts over the hold', body: 'Roughly two-thirds of the expansion comes from rate rather than expense reduction. The downside case at a 28% stabilized margin still returns 12.4%.' },
+          { title: '612 comp-set keys deliver 2027–2028', body: 'Deliveries land after the renovation completes, positioning the asset as newly repositioned product against aging inventory.' },
+          { title: 'Forecast ADR growth of 3.0% vs. comp set trailing 2.1%', body: 'The premium is attributed to the PIP. The downside scenario holds growth at 1.0% and remains above the debt covenant.' },
+          { title: 'Renovation execution and displacement', body: 'Phased in two tranches of 66 keys with a 10% contingency inside the budget; the GC contract is fixed-price on hard costs.' },
+        ],
+      },
+      'Recommendation': {
+        paras: [
+          { runs: [R('Approve the acquisition at '), L('$36,440,000', 'Investment'), R(' with a total funding commitment of '), L('$18.67M', 'Investment'), R(' in equity. The deal clears the Value Add target range of 12–18% levered IRR at '), L(c.irr, 'Returns'), R('.')] },
+          { runs: [R('Approval is recommended subject to receipt of 2026 interim financials, a re-scoped parking structure estimate, and written lender confirmation on the exit refinance option.')] },
+        ],
+      },
+      'Appendix / Exhibits': {
+        paras: [{ runs: [R('Exhibits are pulled live from the model at export. Excluded exhibits are omitted from the PDF and Word outputs.')] }],
+      },
+    };
+    let s = map[label] || { paras: [{ runs: [this.r('Section drafted from the model.')] }] };
+    if (long && s.paras && label === 'Market Overview') {
+      s = Object.assign({}, s, { paras: s.paras.concat([{ runs: [this.r('Demand is anchored by leisure (62% of roomnights), group and corporate transient. Art Basel, Miami Music Week and the boat show concentrate compression into Q1 and early Q4, and the subject has historically captured above fair share during those periods.')] }]) });
+    }
+    return s;
+  }
+
+  renderVals() {
+    const S = this.state, list = this.sectionList();
+    const active = Math.min(S.active, list.length - 1);
+    const label = list[active];
+    const body = S.generated ? this.content(label) : {};
+    const stale = S.generated && S.scenario !== S.memoScenario;
+
+    const cell = (v, i, bold) => ({ v, align: i === 0 ? 'left' : 'right', color: bold ? '#1a2233' : (i === 0 ? '#3a3f47' : '#3a3f47'), weight: bold ? 700 : (i === 0 ? 500 : 400) });
+    const t = body.table;
+
+    return {
+      navItems: this.buildNavItems('icmemo', this.props.onNavigate),
+      atlasTransform: S.atlasOpen ? 'translateX(0)' : 'translateX(100%)',
+      toggleAtlas: () => this.setState(s => ({ atlasOpen: !s.atlasOpen })),
+      closeAtlas: () => this.setState({ atlasOpen: false }),
+
+      showSetup: !S.generated,
+      showMemo: S.generated,
+      stale,
+      staleReason: 'This memo was generated from the ' + S.memoScenario + ' case. The active case is now ' + S.scenario + '.',
+      refresh: () => this.setState(s => ({ memoScenario: s.scenario, syncedAt: '9/30/25 11:04am', version: s.version + 1 })),
+
+      templates: this.TEMPLATES.map(tp => {
+        const on = tp.id === S.template;
+        return {
+          label: tp.soon ? tp.label + '  ·  Coming soon' : tp.label, note: tp.note,
+          border: on ? '1px solid #14213d' : '1px solid #eae9e4',
+          bg: on ? '#fbfbf9' : '#fff',
+          dot: on ? '4px solid #14213d' : '1.5px solid #c3c2bd',
+          cursor: tp.soon ? 'not-allowed' : 'pointer',
+          opacity: tp.soon ? 0.55 : 1,
+          select: tp.soon ? null : () => this.setState({ template: tp.id }),
+        };
+      }),
+      templateLabel: (this.TEMPLATES.find(x => x.id === S.memoTemplate) || {}).label || 'Memo sections',
+      setupSummary: (S.template === 'screening' ? this.SCREENING.length : this.SECTION_ORDER.length) + ' sections · ' + S.scenario,
+      generate: () => this.setState(s => ({ generated: true, memoTemplate: s.template, memoScenario: s.scenario, active: 0 })),
+
+      scenarioChips: ['Base Case', 'Downside', 'Upside'].map(name => {
+        const on = name === S.scenario;
+        return {
+          label: name, weight: on ? 700 : 500,
+          border: on ? '1px solid #14213d' : '1px solid #e2e1dc',
+          bg: on ? '#14213d' : '#fff', color: on ? '#fff' : '#6b6f76',
+          select: () => this.setState({ scenario: name }),
+        };
+      }),
+
+      sources: ['Financials','Investment','Debt','Market','Partnership','Returns','Scenario Analysis'].map(n => {
+        const missing = n === 'Market';
+        return {
+          label: missing ? n + ' — partial' : n,
+          color: missing ? '#8a8a86' : '#3a3f47',
+          border: missing ? '#e2e1dc' : '#e2e1dc', bg: missing ? '#fbfbf9' : '#fff',
+          dotBg: missing ? '#fff' : this.GREEN,
+          dotBorder: missing ? '1px dashed #b0afaa' : 'none',
+        };
+      }),
+
+      syncedAt: S.syncedAt,
+      versionLine: 'v' + S.version + ' · Generated from ' + S.memoScenario + ' · Model run ' + S.syncedAt,
+      versionsOpen: S.versionsOpen,
+      toggleVersions: () => this.setState(s => ({ versionsOpen: !s.versionsOpen, exportOpen: false })),
+      versions: [
+        { id: 'v' + S.version, desc: 'Generated from ' + S.memoScenario + ' · ' + ((this.TEMPLATES.find(x => x.id === S.memoTemplate) || {}).label || ''), when: S.syncedAt, state: 'Current', stateColor: this.GREEN },
+        { id: 'v2', desc: 'Generated from Base Case · debt terms updated', when: '9/24/25 9:41am', state: 'Superseded', stateColor: '#9a9a95' },
+        { id: 'v1', desc: 'Generated from Base Case · first draft', when: '9/18/25 2:07pm', state: 'Superseded', stateColor: '#9a9a95' },
+      ],
+
+      exportOpen: S.exportOpen,
+      toggleExport: () => this.setState(s => ({ exportOpen: !s.exportOpen, versionsOpen: false })),
+      exportItems: [
+        { label: 'Download PDF', tag: '', color: '#1a2233', cursor: 'pointer', click: () => this.setState({ exportOpen: false }) },
+        { label: 'Download Word (.docx)', tag: '', color: '#1a2233', cursor: 'pointer', click: () => this.setState({ exportOpen: false }) },
+        { label: 'PowerPoint', tag: 'COMING SOON', color: '#b0afaa', cursor: 'not-allowed', click: null },
+        { label: 'Copy section', tag: '', color: '#1a2233', cursor: 'pointer', click: () => this.setState({ exportOpen: false }) },
+        { label: 'Share link', tag: 'COMING SOON', color: '#b0afaa', cursor: 'not-allowed', click: null },
+      ],
+
+      tones: ['Concise', 'Standard', 'Detailed'].map(name => {
+        const on = name === S.tone;
+        return {
+          label: name, weight: on ? 700 : 500,
+          border: on ? '1px solid #cdd6ea' : '1px solid transparent',
+          bg: on ? '#eef2fb' : 'transparent', color: on ? '#2f4a8c' : '#8a8a86',
+          select: () => this.setState({ tone: name }),
+        };
+      }),
+
+      memoSubline: 'Prepared 31 August 2026 · ' + S.memoScenario + ' · Draft for committee review',
+
+      sections: list.map((name, i) => {
+        const on = i === active, ed = !!S.edited[name];
+        return {
+          num: String(i + 1).padStart(2, '0'), label: name,
+          bg: on ? '#f3f2ee' : 'transparent', color: on ? '#1a2233' : '#6b6f76', weight: on ? 600 : 400,
+          mark: ed ? 'edited' : '', markColor: '#9a9a95',
+          select: () => this.setState({ active: i }),
+        };
+      }),
+
+      activeNum: String(active + 1).padStart(2, '0'),
+      activeLabel: label,
+      editedTag: S.edited[label] ? '· edited by analyst' : '',
+      editedColor: '#9a9a95',
+      regenLabel: S.regenerating ? 'Regenerating…' : 'Regenerate section',
+      regenerate: () => {
+        this.setState({ regenerating: true });
+        setTimeout(() => this.setState(s => {
+          const e = Object.assign({}, s.edited); delete e[label];
+          return { regenerating: false, edited: e };
+        }), 700);
+      },
+      copySection: () => {},
+      editable: true,
+      markEdited: () => { if (!S.edited[label]) this.setState(s => ({ edited: Object.assign({}, s.edited, { [label]: true }) })); },
+
+      paras: body.paras || [],
+      bullets: body.bullets || [],
+      hasMetrics: !!body.metrics,
+      metrics: (body.metrics || []).map(m => Object.assign({}, m, { dotBg: '#fff', dotBorder: '2px solid ' + this.GREEN })),
+
+      hasTable: !!t,
+      tableTitle: t ? t.title : '',
+      tableSource: t ? t.source : '',
+      tableCols: t ? t.cols.map((cName, i) => ({ label: cName, align: i === 0 ? 'left' : 'right' })) : [],
+      tableRows: t ? t.rows.map(row => {
+        const bold = row[row.length - 1] === true;
+        const vals = bold ? row.slice(0, -1) : row;
+        return { bg: bold ? '#fbfbf9' : '#fff', cells: vals.map((v, i) => cell(v, i, bold)) };
+      }) : [],
+
+      isExhibits: label === 'Appendix / Exhibits',
+      exhibitCount: Object.keys(S.exhibits).filter(k => S.exhibits[k]).length + ' of 7 included',
+      exhibits: [
+        ['su', 'Sources & Uses', 'Investment'], ['proj', 'Operating Projections', 'Financials'],
+        ['debt', 'Debt Schedule', 'Debt'], ['cf', 'Cash Flow Summary', 'Cash Flow'],
+        ['ret', 'Returns Summary', 'Returns'], ['scen', 'Scenario Comparison', 'Scenario Analysis'],
+        ['mkt', 'Market / Comp Set Summary', 'Market — partial data'],
+      ].map(([k, name, src]) => {
+        const on = !!S.exhibits[k];
+        return {
+          label: name, src,
+          check: on ? '✓' : '', boxBg: on ? this.NAVY : '#fff',
+          boxBorder: on ? '1px solid ' + this.NAVY : '1px solid #cfcec9',
+          color: on ? '#1a2233' : '#8a8a86', weight: on ? 500 : 400,
+          toggle: () => this.setState(s => ({ exhibits: Object.assign({}, s.exhibits, { [k]: !s.exhibits[k] }) })),
+        };
+      }),
+
+      prevLabel: active > 0 ? '← ' + list[active - 1] : '',
+      prevColor: '#2f4a8c',
+      prevSection: active > 0 ? () => this.setState({ active: active - 1 }) : null,
+      nextLabel: active < list.length - 1 ? list[active + 1] + ' →' : '',
+      nextColor: '#2f4a8c',
+      nextSection: active < list.length - 1 ? () => this.setState({ active: active + 1 }) : null,
+    };
+  }
+}
+</script>
+</body>
+</html>

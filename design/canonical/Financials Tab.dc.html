@@ -1,0 +1,1264 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script src="./support.js"></script>
+<template id="__bundler_thumbnail">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 120 56" data-bg-color="#14213d">
+  <rect width="120" height="56" fill="#14213d"/>
+  <g fill="none" stroke="#f5f4f0" stroke-width="2">
+    <rect x="34" y="16" width="16" height="24"/>
+    <rect x="52" y="24" width="16" height="16"/>
+    <rect x="70" y="10" width="16" height="30"/>
+  </g>
+</svg>
+</template>
+</head>
+<body>
+<x-dc>
+
+<helmet>
+  <style>
+    body{margin:0;background:#f5f4f0;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,Arial,sans-serif;}
+    a{color:#2f4a8c}
+    a:hover{color:#1f3568}
+    select{font-family:inherit}
+    input{font-family:inherit}
+  </style>
+</helmet>
+<div style="display:flex;min-height:100vh">
+  <div style="width:210px;background:#0f1a30;padding:22px 16px;display:flex;flex-direction:column;gap:2px;flex-shrink:0">
+    <div style="display:flex;align-items:center;gap:8px;color:#fff;font-weight:700;font-size:16px;margin-bottom:24px"><div style="width:28px;height:28px;background:#2f4a8c;border-radius:6px;display:flex;align-items:center;justify-content:center;font-size:13px">F</div>Fondok.</div>
+    <div style="color:#c9cede;font-size:12.5px;padding:8px 10px;border-radius:6px;background:rgba(255,255,255,.06);margin-bottom:16px;display:flex;justify-content:space-between">fondok.ai <span>⌄</span></div>
+    <div style="color:#8b93a7;font-size:13px;padding:8px 10px;display:flex;gap:9px">⊞ Dashboard</div>
+    <div style="color:#fff;background:rgba(255,255,255,.09);font-size:13px;font-weight:600;padding:8px 10px;border-radius:6px;display:flex;gap:9px">▤ Projects</div>
+    <div style="color:#8b93a7;font-size:13px;padding:8px 10px;display:flex;gap:9px">📈 Pipeline</div>
+    <div style="color:#8b93a7;font-size:13px;padding:8px 10px;display:flex;gap:9px">◔ Audit</div>
+    <div style="color:#8b93a7;font-size:13px;padding:8px 10px;display:flex;gap:9px">$ Cost</div>
+    <div style="color:#8b93a7;font-size:13px;padding:8px 10px;display:flex;gap:9px">▥ Data Library</div>
+    <div style="color:#8b93a7;font-size:13px;padding:8px 10px;display:flex;gap:9px">▦ Methodology</div>
+    <div style="color:#8b93a7;font-size:13px;padding:8px 10px;display:flex;gap:9px">◷ Settings</div>
+  </div>
+
+  <div style="flex:1;min-width:0">
+    <div style="padding:22px 32px 0">
+      <div style="font-size:11.5px;color:#9a9a95;margin-bottom:10px">← BACK TO PROJECTS</div>
+      <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;row-gap:8px;margin-bottom:10px">
+        <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap"><h1 style="font-size:26px;margin:0;color:#1a2233;font-weight:600;white-space:nowrap">Kimpton Hotel</h1><span style="color:#9a9a95;font-size:11px;font-weight:600;letter-spacing:.04em">DRAFT</span></div>
+        <div style="display:flex;gap:14px;align-items:center;flex-wrap:wrap">
+          <button onClick="{{ toggleCopilot }}" style="display:flex;align-items:center;gap:6px;background:#eef2fb;border:1px solid #dbe3f5;color:#2f4a8c;border-radius:6px;padding:8px 14px;font-size:12px;font-weight:600;cursor:pointer;white-space:nowrap">✦ Ask Atlas</button>
+          <button style="background:#14213d;color:#fff;border:none;border-radius:6px;padding:8px 16px;font-size:12.5px;font-weight:600;white-space:nowrap">Share</button>
+        </div>
+      </div>
+      <div style="font-size:12.5px;color:#9a9a95;margin-bottom:20px;display:flex;gap:18px">
+        <span>660 Washington Avenue, Miami Beach, FL 33139</span><span>132 keys</span><span>Created 7/30/2026</span>
+      </div>
+      <div style="display:flex;gap:22px;border-bottom:1px solid #ececea;font-size:13.5px;font-weight:500;color:#9a9a95;overflow-x:auto">
+        <sc-for list="{{ navItems }}" as="nav" hint-placeholder-count="11">
+          <div onClick="{{ nav.onClick }}" style="display:flex;align-items:center;gap:6px;padding-bottom:10px;white-space:nowrap;cursor:pointer;color:{{ nav.color }};font-weight:{{ nav.weight }};border-bottom:{{ nav.border }}">
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="{{ nav.icon }}"></path></svg>{{ nav.label }}
+          </div>
+        </sc-for>
+      </div>
+    </div>
+
+    <div style="padding:16px 32px 56px;max-width:1320px">
+      <sc-if value="{{ arrivalBanner }}" hint-placeholder-val="{{ false }}">
+        <div style="display:flex;align-items:center;gap:10px;background:#eef2fb;border:1px solid #dbe3f5;border-radius:8px;padding:10px 16px;margin-bottom:18px;font-size:12.5px;color:#2f4a8c">
+          <span>📄</span>
+          <span style="flex:1">Opened from Data Room · extracted from <strong>{{ arrivalBanner.docName }}</strong> — values below are populated from this document.</span>
+          <span onClick="{{ arrivalBanner.dismiss }}" style="cursor:pointer;color:#8a8a86;font-size:14px">✕</span>
+        </div>
+      </sc-if>
+
+      <div style="background:#fff;border:1px solid #eae9e4;border-radius:10px;padding:12px 16px;margin-bottom:14px;display:flex;flex-direction:column;gap:3px">
+        <span style="font-size:13.5px;font-weight:700;color:#1a2233">Financials</span>
+        <span style="font-size:12.5px;color:#6b6f76;line-height:1.55;max-width:960px">Verify and shape this deal's P&L — normalized operating history on one side, the forward model that drives value on the other.</span>
+      </div>
+
+      <div style="display:flex;align-items:flex-end;gap:28px;border-bottom:1px solid #e6e5e0;overflow-x:auto;margin-bottom:14px">
+        <sc-for list="{{ subTabs }}" as="t" hint-placeholder-count="2">
+          <button onClick="{{ t.select }}" style="font-size:13.5px;font-family:inherit;background:none;border:none;border-bottom:{{ t.border }};cursor:pointer;font-weight:{{ t.weight }};color:{{ t.color }};padding:0 0 10px;margin-bottom:-1px;white-space:nowrap">{{ t.label }}</button>
+        </sc-for>
+        <span style="font-size:11.5px;color:#9a9a95;margin-left:auto;padding-bottom:11px;white-space:nowrap">{{ subTabCaption }}</span>
+      </div>
+
+      <div style="display:flex;align-items:center;gap:16px;flex-wrap:wrap;background:#fbfbf9;border:1px solid #eae9e4;border-radius:8px;padding:9px 14px;margin-bottom:14px;font-size:11px;color:#6b6f76">
+        <span style="font-weight:700;color:#8a8a86;letter-spacing:.02em">DATA KEY</span>
+        <span style="display:flex;align-items:center;gap:6px"><span style="width:9px;height:9px;border-radius:50%;background:oklch(45% 0.12 155);display:inline-block;flex-shrink:0"></span>Document sourced</span>
+        <span style="display:flex;align-items:center;gap:6px"><span style="width:9px;height:9px;border-radius:50%;background:#fff;border:2px solid oklch(45% 0.12 155);display:inline-block;flex-shrink:0"></span>Linked</span>
+        <span style="display:flex;align-items:center;gap:6px"><span style="width:9px;height:9px;border-radius:50%;background:oklch(45% 0.14 260);display:inline-block;flex-shrink:0"></span>Assumption</span>
+        <span style="display:flex;align-items:center;gap:6px"><span style="width:9px;height:9px;border-radius:50%;background:#5f656e;display:inline-block;flex-shrink:0"></span>Calculated</span>
+        <span style="display:flex;align-items:center;gap:6px"><span style="width:9px;height:9px;border-radius:50%;background:#fff;border:1px dashed #b0afaa;display:inline-block;flex-shrink:0"></span>Awaiting data</span>
+        <span style="display:flex;align-items:center;gap:6px"><span style="width:9px;height:9px;border-radius:50%;background:oklch(45% 0.12 155);box-shadow:0 0 0 3px oklch(88% 0.07 45);display:inline-block;flex-shrink:0"></span>Needs review</span>
+        <span style="display:flex;align-items:center;gap:6px"><b style="color:#1a2233">1,240</b>Total / summary</span>
+        <span style="display:flex;align-items:center;gap:6px"><span style="text-decoration:underline dotted;color:#6b6f76">123</span>Editable — click to change</span>
+        <span title="Origin is the dot: document sourced, linked from another module, your assumption, calculated by Fondok, or awaiting data. An amber halo means the value needs review. Bold marks totals, a dotted underline marks values you can change. Provenance and editability are separate — a sourced value can also be editable, and an override keeps its original source so you can restore it." style="cursor:help;color:#9a9a95;margin-left:auto;white-space:nowrap">ⓘ How to read this</span>
+      </div>
+
+      <div style="background:#fff;border:1px solid #ececea;border-radius:10px;overflow:hidden;box-shadow:0 1px 2px rgba(0,0,0,.02)">
+        <sc-if value="{{ isHistoricalsTab }}" hint-placeholder-val="{{ true }}">
+        <div style="padding:16px 22px;border-bottom:1px solid #eee;display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:10px">
+          <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap">
+            <div style="font-size:16px;font-weight:700;color:#1a2233">Financials</div>
+            <select value="{{ periodType }}" onChange="{{ onPeriodTypeChange }}" style="font-size:12px;border:1px solid #e2e1dc;border-radius:6px;padding:6px 9px;color:#3a3f47">
+              <option value="FY">Full Year</option>
+              <option value="T12">Trailing 12 (month-end)</option>
+              <option value="Monthly">Monthly</option>
+            </select>
+            <sc-if value="{{ isFY }}" hint-placeholder-val="{{ true }}">
+              <div style="display:flex;gap:4px">
+                <sc-for list="{{ fyYearChips }}" as="yr" hint-placeholder-count="4">
+                  <div onClick="{{ yr.toggle }}" style="font-size:12px;border:1px solid {{ yr.borderColor }};background:{{ yr.bg }};color:{{ yr.color }};border-radius:6px;padding:6px 10px;cursor:pointer;font-weight:{{ yr.weight }}">{{ yr.label }}</div>
+                </sc-for>
+              </div>
+            </sc-if>
+            <sc-if value="{{ isT12 }}" hint-placeholder-val="{{ false }}">
+              <select value="{{ t12MonthEnd }}" onChange="{{ onT12Change }}" style="font-size:12px;border:1px solid #e2e1dc;border-radius:6px;padding:6px 9px;color:#3a3f47">
+                <option>Dec 2023</option><option>Nov 2023</option><option>Jun 2023</option>
+              </select>
+            </sc-if>
+            <sc-if value="{{ isMonthly }}" hint-placeholder-val="{{ false }}">
+              <select value="{{ monthlyMonth }}" onChange="{{ onMonthlyMonthChange }}" style="font-size:12px;border:1px solid #e2e1dc;border-radius:6px;padding:6px 9px;color:#3a3f47">
+                <option>Jan</option><option>Feb</option><option>Mar</option><option>Apr</option><option>May</option><option>Jun</option>
+              </select>
+              <select value="{{ monthlyYear }}" onChange="{{ onMonthlyYearChange }}" style="font-size:12px;border:1px solid #e2e1dc;border-radius:6px;padding:6px 9px;color:#3a3f47"><option>2023</option><option>2022</option></select>
+            </sc-if>
+          </div>
+          <div style="display:flex;align-items:center;gap:10px">
+            <div style="position:relative">
+              <input value="{{ searchQuery }}" onChange="{{ onSearchChange }}" placeholder="Search line items…" style="font-size:12px;border:1px solid #e2e1dc;border-radius:6px;padding:6px 10px 6px 26px;width:180px;color:#3a3f47" />
+              <span style="position:absolute;left:8px;top:6px;font-size:11px;color:#9a9a95">⌕</span>
+            </div>
+          </div>
+        </div>
+
+        <div style="padding:10px 22px;border-bottom:1px solid #f2f1ec;display:flex;align-items:center;gap:16px;flex-wrap:wrap;background:#fbfbf9">
+          <div style="display:flex;align-items:center;gap:8px">
+            <span style="font-size:11.5px;color:#6b6f76">Format:</span>
+            <div style="display:flex;background:#f0efeb;border-radius:6px;padding:2px">
+              <div onClick="{{ setSummaryMode }}" style="padding:4px 12px;font-size:11.5px;font-weight:600;cursor:pointer;background:{{ summaryModeBg }};color:{{ summaryModeColor }};border-radius:5px;box-shadow:{{ summaryModeShadow }}">Summary</div>
+              <div onClick="{{ setDetailedMode }}" style="padding:4px 12px;font-size:11.5px;font-weight:600;cursor:pointer;background:{{ detailedModeBg }};color:{{ detailedModeColor }};border-radius:5px;box-shadow:{{ detailedModeShadow }}">Detailed</div>
+            </div>
+          </div>
+          <div style="display:flex;align-items:center;gap:8px">
+            <span style="font-size:11.5px;color:#6b6f76">Granularity:</span>
+            <div style="display:flex;background:#f0efeb;border-radius:6px;padding:2px">
+              <div onClick="{{ setAnnualGranularity }}" style="padding:4px 12px;font-size:11.5px;font-weight:600;cursor:pointer;background:{{ annualGranBg }};color:{{ annualGranColor }};border-radius:5px;box-shadow:{{ annualGranShadow }}">Annual</div>
+              <div onClick="{{ setMonthlyGranularity }}" style="padding:4px 12px;font-size:11.5px;font-weight:600;cursor:pointer;background:{{ monthlyGranBg }};color:{{ monthlyGranColor }};border-radius:5px;box-shadow:{{ monthlyGranShadow }}">Monthly</div>
+            </div>
+          </div>
+          <sc-if value="{{ showComparisonNote }}" hint-placeholder-val="{{ false }}">
+            <span style="font-size:11px;color:#c3c2bd">Budget / prior-year comparison shown in annual view</span>
+          </sc-if>
+          <span title="Average extraction confidence across all cells in this view — lower scores mean more source documents were low-quality scans or had ambiguous line items. Flagged (amber) cells are the ones dragging this down." style="margin-left:auto;font-size:11px;color:oklch(50% 0.1 155);background:oklch(56% 0.12 155 / .1);padding:5px 10px;border-radius:6px;cursor:help">{{ headlineConfidence }}% extraction confidence</span>
+        </div>
+
+        <div style="display:flex">
+          <div style="flex:1;min-width:0;overflow-x:auto;padding:14px">
+            <div style="border:1px solid #dadce0;border-radius:2px;width:max-content;min-width:100%">
+              <div style="display:grid;grid-template-columns:{{ gridCols }};background:#14213d">
+                <div style="padding:7px 16px;border-right:1px solid #2a3a5c;border-bottom:1px solid #2a3a5c;font-size:11px;font-weight:600;color:#c9cede">LINE ITEM</div>
+                <sc-for list="{{ colHeaders }}" as="col" hint-placeholder-count="1">
+                  <div style="padding:6px 9px;border-right:1px solid #2a3a5c;border-bottom:1px solid #2a3a5c;text-align:right;font-size:10.5px;font-weight:600;color:#c9cede;white-space:nowrap">{{ col }}</div>
+                </sc-for>
+                <sc-for list="{{ extraHeaders }}" as="col" hint-placeholder-count="0">
+                  <div style="padding:6px 9px;border-right:1px solid #2a3a5c;border-bottom:1px solid #2a3a5c;text-align:right;font-size:10.5px;font-weight:600;color:#8b93a7;white-space:nowrap">{{ col }}</div>
+                </sc-for>
+              </div>
+              <sc-for list="{{ rows }}" as="row" hint-placeholder-count="14">
+                <sc-if value="{{ row.isHeader }}" hint-placeholder-val="{{ false }}">
+                  <div style="display:grid;grid-template-columns:{{ gridCols }};background:#f0f0ee">
+                    <div style="grid-column:1/-1;padding:6px 16px;border-bottom:1px solid #d8d7d1;font-size:11px;font-weight:700;color:#6b6f76;text-transform:uppercase;letter-spacing:.03em">{{ row.label }}</div>
+                  </div>
+                </sc-if>
+                <sc-if value="{{ row.isNormal }}" hint-placeholder-val="{{ true }}">
+                  <div draggable="true" onDragStart="{{ row.onDragStart }}" onDragOver="{{ row.onDragOver }}" onDrop="{{ row.onDrop }}" style="display:grid;grid-template-columns:{{ gridCols }};background:{{ row.rowBg }};opacity:{{ row.dragOpacity }};border-top:{{ row.topBorder }}">
+                    <div style="padding:6px 9px;border-right:1px solid #e1e3e6;border-bottom:1px solid #e1e3e6;font-weight:{{ row.weight }};color:#1a2233;font-size:12px;padding-left:{{ row.indent }};display:flex;align-items:center;gap:8px">
+                      <span style="cursor:grab;color:#c3c2bd;font-size:12px;flex-shrink:0">⠿</span>{{ row.label }}
+                      <sc-if value="{{ row.canDelete }}" hint-placeholder-val="{{ false }}">
+                        <span onClick="{{ row.onDelete }}" title="Delete row" style="margin-left:auto;color:#c3c2bd;font-size:13px;cursor:pointer;padding:0 4px">✕</span>
+                      </sc-if>
+                    </div>
+                    <sc-for list="{{ row.cells }}" as="c" hint-placeholder-count="1">
+                      <div onClick="{{ c.onClick }}" onMouseEnter="{{ c.onHover }}" onMouseLeave="{{ c.onUnhover }}" style="padding:6px 9px;border-right:1px solid #e1e3e6;border-bottom:1px solid #e1e3e6;text-align:right;font-family:-apple-system,'Segoe UI',Helvetica,Arial,sans-serif;font-variant-numeric:tabular-nums;font-size:12px;font-weight:{{ row.weight }};color:{{ c.color }};background:{{ c.bg }};text-decoration:{{ c.underline }};cursor:pointer;outline:{{ c.outline }};outline-offset:-2px;white-space:nowrap;position:relative">
+                        {{ c.text }}
+                        <sc-if value="{{ c.showTip }}" hint-placeholder-val="{{ false }}">
+                          <div style="position:absolute;bottom:100%;right:0;margin-bottom:6px;background:#1a2233;color:#fff;font-family:-apple-system,sans-serif;font-size:11px;font-weight:500;padding:6px 10px;border-radius:6px;white-space:nowrap;box-shadow:0 4px 10px rgba(0,0,0,.18);z-index:20">{{ c.sourceDoc }}</div>
+                        </sc-if>
+                      </div>
+                    </sc-for>
+                    <sc-for list="{{ row.extraCells }}" as="ec" hint-placeholder-count="0">
+                      <div style="padding:6px 9px;border-right:1px solid #e1e3e6;border-bottom:1px solid #e1e3e6;text-align:right;font-family:-apple-system,'Segoe UI',Helvetica,Arial,sans-serif;font-variant-numeric:tabular-nums;font-size:12px;color:{{ ec.color }};white-space:nowrap">{{ ec.text }}</div>
+                    </sc-for>
+                  </div>
+                </sc-if>
+                <sc-if value="{{ row.isAddRow }}" hint-placeholder-val="{{ false }}">
+                  <sc-if value="{{ row.open }}" hint-placeholder-val="{{ false }}">
+                    <div style="display:flex;gap:8px;align-items:center;padding:8px 16px;background:#fbfbf9;border-bottom:1px solid #e1e3e6">
+                      <input value="{{ row.draft }}" onChange="{{ row.onDraftChange }}" placeholder="New line item name" style="flex:1;max-width:260px;font-size:12px;border:1px solid #e2e1dc;border-radius:6px;padding:6px 9px" />
+                      <button onClick="{{ row.confirm }}" style="background:#14213d;color:#fff;border:none;border-radius:6px;padding:6px 14px;font-size:12px;font-weight:600;cursor:pointer">Add</button>
+                      <button onClick="{{ row.cancel }}" style="background:#fff;border:1px solid #e2e1dc;color:#3a3f47;border-radius:6px;padding:6px 14px;font-size:12px;font-weight:600;cursor:pointer">Cancel</button>
+                    </div>
+                  </sc-if>
+                  <sc-if value="{{ row.closed }}" hint-placeholder-val="{{ true }}">
+                    <div onClick="{{ row.openIt }}" style="padding:6px 16px;border-bottom:1px solid #e1e3e6;font-size:11px;color:#2f4a8c;font-weight:600;cursor:pointer;background:#fff">+ Add row</div>
+                  </sc-if>
+                </sc-if>
+              </sc-for>
+            </div>
+          </div>
+          <sc-if value="{{ sourcePanelClosed }}" hint-placeholder-val="{{ false }}">
+            <div onClick="{{ toggleSourcePanel }}" style="width:40px;flex-shrink:0;border-left:1px solid #eae9e4;background:#fbfbf9;cursor:pointer;display:flex;flex-direction:column;align-items:center;gap:8px;padding:16px 0">
+              <span style="font-size:12px;color:#8a8a86">◂</span>
+              <span style="font-size:11px;font-weight:700;color:#6b6f76;writing-mode:vertical-rl;letter-spacing:.03em">SOURCE</span>
+              <sc-if value="{{ nextFlaggedInfo.count }}" hint-placeholder-val="{{ false }}">
+                <span style="font-size:10.5px;font-weight:700;color:oklch(45% 0.14 40);background:oklch(56% 0.12 40 / .12);border-radius:10px;padding:2px 5px">{{ nextFlaggedInfo.count }}</span>
+              </sc-if>
+            </div>
+          </sc-if>
+          <sc-if value="{{ sourcePanelOpen }}" hint-placeholder-val="{{ true }}">
+          <div style="width:290px;flex-shrink:0;border-left:1px solid #eae9e4;background:#fbfbf9;display:flex;flex-direction:column">
+            <div style="padding:12px 16px;border-bottom:1px solid #f2f1ec;display:flex;justify-content:space-between;align-items:center">
+              <span style="font-size:11.5px;font-weight:700;color:#9a9a95;text-transform:uppercase;letter-spacing:.03em">Source</span>
+              <div style="display:flex;gap:6px;align-items:center">
+                <button onClick="{{ nextFlaggedInfo.goBack }}" title="Previous flagged" style="background:oklch(56% 0.12 40 / .12);color:oklch(45% 0.14 40);border:none;border-radius:6px;width:26px;height:26px;font-size:12px;font-weight:700;cursor:pointer">←</button>
+                <button onClick="{{ nextFlaggedInfo.goTo }}" style="background:oklch(56% 0.12 40 / .12);color:oklch(45% 0.14 40);border:none;border-radius:6px;padding:5px 10px;font-size:11.5px;font-weight:600;cursor:pointer;white-space:nowrap">Flagged ({{ nextFlaggedInfo.count }}) →</button>
+                <button onClick="{{ toggleSourcePanel }}" title="Collapse source panel" style="background:#fff;border:1px solid #e2e1dc;color:#8a8a86;border-radius:6px;width:26px;height:26px;font-size:12px;cursor:pointer">✕</button>
+              </div>
+            </div>
+            <sc-if value="{{ selectedField }}" hint-placeholder-val="{{ true }}">
+              <div style="padding:14px 16px;border-top:1px solid #f2f1ec">
+                <div style="font-size:12px;color:#6b6f76;margin-bottom:4px">{{ selectedField.label }}</div>
+                <div style="font-family:-apple-system,'Segoe UI',Helvetica,Arial,sans-serif;font-variant-numeric:tabular-nums;font-size:18px;color:#1a2233;font-weight:600;margin-bottom:8px">{{ selectedField.value }}</div>
+                <div style="display:flex;align-items:center;gap:8px;font-size:11.5px;color:#6b6f76;background:#f3f2ee;border-radius:6px;padding:6px 9px;margin-bottom:12px">
+                  <span style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap"><strong style="color:#3a3f47">{{ selectedField.sourceDoc }}</strong></span>
+                  <button onClick="{{ selectedField.openSource }}" title="Open source document in new tab" style="flex-shrink:0;background:#fff;border:1px solid #e2e1dc;color:#2f4a8c;border-radius:5px;width:22px;height:22px;font-size:12px;cursor:pointer;display:flex;align-items:center;justify-content:center">↗</button>
+                </div>
+
+                <sc-if value="{{ selectedField.isEditing }}" hint-placeholder-val="{{ false }}">
+                  <input value="{{ selectedField.editDraft }}" onChange="{{ selectedField.onDraftChange }}" style="width:100%;font-size:13px;border:1px solid #e2e1dc;border-radius:6px;padding:7px 9px;margin-bottom:8px;font-family:-apple-system,'Segoe UI',Helvetica,Arial,sans-serif;font-variant-numeric:tabular-nums" />
+                  <input value="{{ selectedField.editReason }}" onChange="{{ selectedField.onReasonChange }}" placeholder="Reason for change (optional)" style="width:100%;font-size:12px;border:1px solid #e2e1dc;border-radius:6px;padding:7px 9px;margin-bottom:8px;font-family:-apple-system,'Segoe UI',Helvetica,Arial,sans-serif;color:#3a3f47" />
+                  <button onClick="{{ selectedField.saveEdit }}" style="width:100%;background:#14213d;color:#fff;border:none;border-radius:6px;padding:8px;font-size:12.5px;font-weight:600;cursor:pointer;margin-bottom:10px">Save value</button>
+                  <div style="border-top:1px solid #f2f1ec;padding-top:10px">
+                    <div style="font-size:11px;color:#9a9a95;margin-bottom:6px">Sourced from wrong document?</div>
+                    <select value="{{ selectedField.sourceDoc }}" onChange="{{ selectedField.onSourceDocChange }}" style="width:100%;font-size:12px;border:1px solid #e2e1dc;border-radius:6px;padding:6px 9px;color:#3a3f47">
+                      <sc-for list="{{ selectedField.sourceDocOptions }}" as="doc" hint-placeholder-count="3">
+                        <option value="{{ doc }}">{{ doc }}</option>
+                      </sc-for>
+                    </select>
+                  </div>
+                </sc-if>
+
+                <sc-if value="{{ selectedField.isFlagged }}" hint-placeholder-val="{{ false }}">
+                  <div style="font-size:11.5px;color:oklch(50% 0.14 40);background:oklch(56% 0.12 40 / .12);padding:5px 9px;border-radius:6px;margin-bottom:10px;display:inline-block">{{ selectedField.conf }}% confidence — please confirm</div>
+                  <div style="display:flex;gap:8px">
+                    <button onClick="{{ selectedField.accept }}" style="flex:1;background:oklch(56% 0.12 155);color:#fff;border:none;border-radius:6px;padding:8px;font-size:12.5px;font-weight:600;cursor:pointer">Accept</button>
+                    <button onClick="{{ selectedField.startEdit }}" style="flex:1;background:#fff;border:1px solid #e2e1dc;color:#3a3f47;border-radius:6px;padding:8px;font-size:12.5px;font-weight:600;cursor:pointer">Edit</button>
+                  </div>
+                </sc-if>
+
+                <sc-if value="{{ selectedField.isPlainEditable }}" hint-placeholder-val="{{ false }}">
+                  <button onClick="{{ selectedField.startEdit }}" style="width:100%;background:#fff;border:1px solid #e2e1dc;color:#3a3f47;border-radius:6px;padding:8px;font-size:12.5px;font-weight:600;cursor:pointer">✎ Edit value</button>
+                </sc-if>
+
+                <sc-if value="{{ selectedField.isVerified }}" hint-placeholder-val="{{ false }}">
+                  <div style="font-size:12px;color:oklch(45% 0.12 155);display:flex;align-items:center;gap:6px;margin-bottom:8px">✓ Verified by you</div>
+                  <span style="font-size:11.5px;color:#2f4a8c;cursor:pointer" onClick="{{ selectedField.revert }}">Undo</span>
+                </sc-if>
+
+                <sc-if value="{{ selectedField.isEdited }}" hint-placeholder-val="{{ false }}">
+                  <div style="font-size:12px;color:oklch(45% 0.1 260);display:flex;align-items:center;gap:6px;margin-bottom:8px">✎ Edited by you</div>
+                  <span style="font-size:11.5px;color:#2f4a8c;cursor:pointer" onClick="{{ selectedField.revert }}">Revert to extracted</span>
+                </sc-if>
+
+                <sc-if value="{{ selectedField.hasAudit }}" hint-placeholder-val="{{ false }}">
+                  <div style="border-top:1px solid #f2f1ec;margin-top:14px;padding-top:11px">
+                    <div style="font-size:10px;font-weight:700;letter-spacing:.07em;text-transform:uppercase;color:#9a9a95;margin-bottom:9px">Change history</div>
+                    <div style="display:flex;flex-direction:column;gap:11px">
+                      <sc-for list="{{ selectedField.auditTrail }}" as="entry" hint-placeholder-count="2">
+                        <div style="display:grid;grid-template-columns:7px 1fr;gap:9px;align-items:start">
+                          <span style="width:5px;height:5px;border-radius:50%;background:#c9c8c2;margin-top:6px"></span>
+                          <div style="display:flex;flex-direction:column;gap:2px;min-width:0">
+                            <div style="font-size:12px;color:#1a2233;font-weight:600;line-height:1.35;overflow-wrap:anywhere">{{ entry.action }}</div>
+                            <sc-if value="{{ entry.hasDelta }}" hint-placeholder-val="{{ true }}">
+                              <div style="display:flex;align-items:center;gap:6px;font-size:12px;font-variant-numeric:tabular-nums">
+                                <span style="color:#9a9a95;text-decoration:line-through">{{ entry.from }}</span>
+                                <span style="color:#c9c8c2">→</span>
+                                <span style="color:oklch(45% 0.14 260);font-weight:600">{{ entry.to }}</span>
+                              </div>
+                            </sc-if>
+                            <sc-if value="{{ entry.hasReason }}" hint-placeholder-val="{{ false }}">
+                              <div style="font-size:11.5px;color:#6b6f76;font-style:italic;line-height:1.4">“{{ entry.reason }}”</div>
+                            </sc-if>
+                            <div style="font-size:11px;color:#9a9a95">{{ entry.meta }}</div>
+                          </div>
+                        </div>
+                      </sc-for>
+                    </div>
+                  </div>
+                </sc-if>
+              </div>
+            </sc-if>
+          </div>
+          </sc-if>
+        </div>
+        </sc-if>
+        <sc-if value="{{ isProjectionsTab }}" hint-placeholder-val="{{ false }}">
+          <div style="padding:12px 22px;border-bottom:1px solid #eee;background:#fbfbf9;display:flex;align-items:center;gap:16px;flex-wrap:wrap">
+            <div style="display:flex;align-items:center;gap:6px">
+              <span style="font-size:11px;color:#6b6f76;font-weight:600">Base year</span>
+              <select value="{{ baseYear }}" onChange="{{ onBaseYearChange }}" style="font-size:12.5px;font-weight:600;border:1px solid #e2e1dc;border-radius:6px;padding:6px 8px;color:#1a2233">
+                <option value="2021">2021</option><option value="2022">2022</option><option value="2023">2023</option><option value="2024">2024</option>
+              </select>
+            </div>
+            <div style="display:flex;align-items:center;gap:6px">
+              <span style="font-size:11px;color:#6b6f76;font-weight:600">Period</span>
+              <button onClick="{{ decProjYears }}" style="width:24px;height:26px;border:1px solid #e2e1dc;background:#fff;border-radius:6px;cursor:pointer;font-size:14px;color:#3a3f47">−</button>
+              <span style="font-size:12.5px;font-weight:700;color:#1a2233;min-width:56px;text-align:center">{{ projYears }} years</span>
+              <button onClick="{{ incProjYears }}" style="width:24px;height:26px;border:1px solid #e2e1dc;background:#fff;border-radius:6px;cursor:pointer;font-size:14px;color:#3a3f47">+</button>
+            </div>
+            <div style="display:flex;align-items:center;gap:6px">
+              <span style="font-size:11px;color:#6b6f76;font-weight:600">View</span>
+              <div style="display:flex;background:#f0efeb;border-radius:6px;padding:2px">
+                <div onClick="{{ setProjAnnual }}" style="padding:5px 11px;font-size:11.5px;font-weight:600;cursor:pointer;background:{{ projAnnualBg }};color:{{ projAnnualColor }};border-radius:5px">Annual</div>
+                <div onClick="{{ setProjMonthly }}" style="padding:5px 11px;font-size:11.5px;font-weight:600;cursor:pointer;background:{{ projMonthlyBg }};color:{{ projMonthlyColor }};border-radius:5px">Monthly</div>
+              </div>
+            </div>
+            <sc-if value="{{ projIsAnnual }}" hint-placeholder-val="{{ true }}">
+              <div style="display:flex;align-items:center;gap:6px">
+                <span style="font-size:11px;color:#6b6f76;font-weight:600">Show as</span>
+                <div style="display:flex;background:#f0efeb;border-radius:6px;padding:2px">
+                  <sc-for list="{{ projMetricOptions }}" as="mo" hint-placeholder-count="4">
+                    <div onClick="{{ mo.onClick }}" style="padding:5px 9px;font-size:11px;font-weight:600;cursor:pointer;background:{{ mo.bg }};color:{{ mo.color }};border-radius:5px;white-space:nowrap">{{ mo.label }}</div>
+                  </sc-for>
+                </div>
+              </div>
+            </sc-if>
+            <sc-if value="{{ projIsMonthly }}" hint-placeholder-val="{{ false }}">
+              <div style="display:flex;align-items:center;gap:6px">
+                <span style="font-size:11px;color:#6b6f76;font-weight:600">Month detail for</span>
+                <select value="{{ projMonthlyYearIdx }}" onChange="{{ onProjMonthlyYearChange }}" style="font-size:12.5px;font-weight:600;border:1px solid #e2e1dc;border-radius:6px;padding:6px 8px;color:#1a2233">
+                  <sc-for list="{{ projYearOptions }}" as="yo" hint-placeholder-count="6">
+                    <option value="{{ yo.idx }}">{{ yo.label }}</option>
+                  </sc-for>
+                </select>
+              </div>
+            </sc-if>
+          </div>
+          <div style="padding:16px 22px;border-bottom:1px solid #eee;background:#fff">
+            <div style="font-size:11px;font-weight:700;color:#6b6f76;text-transform:uppercase;letter-spacing:.04em;margin-bottom:2px">Assumptions</div>
+            <div style="font-size:12px;color:#9a9a95;margin-bottom:14px">These drive every projected year below — change any value to see the statement recompute.</div>
+            <div style="display:flex;gap:14px;flex-wrap:wrap">
+              <div style="flex:1;min-width:220px;border:1px solid #e2e1dc;border-radius:8px;padding:12px 14px;background:#fbfbf9">
+                <div style="font-size:11px;font-weight:700;color:#1a2233;margin-bottom:10px">Growth</div>
+                <div style="display:flex;flex-direction:column;gap:8px">
+                  <div style="display:flex;align-items:center;justify-content:space-between;gap:10px">
+                    <span style="font-size:12px;color:#6b6f76">Revenue inflation</span>
+                    <div style="display:flex;align-items:center;gap:3px"><input type="number" value="{{ revGrowth }}" onChange="{{ onRevGrowthChange }}" style="font-size:13px;font-weight:600;border:1px solid #e2e1dc;border-radius:6px;padding:5px 7px;color:#1a2233;width:46px;text-align:right" /><span style="font-size:11px;color:#6b6f76">%/yr</span></div>
+                  </div>
+                  <div style="display:flex;align-items:center;justify-content:space-between;gap:10px">
+                    <span style="font-size:12px;color:#6b6f76">Dept. expense inflation</span>
+                    <div style="display:flex;align-items:center;gap:3px"><input type="number" value="{{ expGrowth }}" onChange="{{ onExpGrowthChange }}" style="font-size:13px;font-weight:600;border:1px solid #e2e1dc;border-radius:6px;padding:5px 7px;color:#1a2233;width:46px;text-align:right" /><span style="font-size:11px;color:#6b6f76">%/yr</span></div>
+                  </div>
+                  <div style="display:flex;align-items:center;justify-content:space-between;gap:10px">
+                    <span style="font-size:12px;color:#6b6f76">Other expense inflation</span>
+                    <div style="display:flex;align-items:center;gap:3px"><input type="number" value="{{ otherExpInflation }}" onChange="{{ onOtherExpInflationChange }}" style="font-size:13px;font-weight:600;border:1px solid #e2e1dc;border-radius:6px;padding:5px 7px;color:#1a2233;width:46px;text-align:right" /><span style="font-size:11px;color:#6b6f76">%/yr</span></div>
+                  </div>
+                </div>
+              </div>
+              <div style="flex:1;min-width:220px;border:1px solid #e2e1dc;border-radius:8px;padding:12px 14px;background:#fbfbf9">
+                <div style="font-size:11px;font-weight:700;color:#1a2233;margin-bottom:10px">Resort fee revenue</div>
+                <div style="display:flex;flex-direction:column;gap:8px">
+                  <div style="display:flex;align-items:center;justify-content:space-between;gap:10px">
+                    <span style="font-size:12px;color:#6b6f76">Resort fee</span>
+                    <div style="display:flex;align-items:center;gap:3px"><span style="font-size:11px;color:#6b6f76">$</span><input type="number" value="{{ resortFee }}" onChange="{{ onResortFeeChange }}" style="font-size:13px;font-weight:600;border:1px solid #e2e1dc;border-radius:6px;padding:5px 7px;color:#1a2233;width:46px;text-align:right" /><span style="font-size:11px;color:#6b6f76">/night</span></div>
+                  </div>
+                  <div style="display:flex;align-items:center;justify-content:space-between;gap:10px">
+                    <span style="font-size:12px;color:#6b6f76">Capture Yr 1</span>
+                    <div style="display:flex;align-items:center;gap:3px"><input type="number" value="{{ captureY1 }}" onChange="{{ onCaptureY1Change }}" style="font-size:13px;font-weight:600;border:1px solid #e2e1dc;border-radius:6px;padding:5px 7px;color:#1a2233;width:46px;text-align:right" /><span style="font-size:11px;color:#6b6f76">%</span></div>
+                  </div>
+                  <div style="display:flex;align-items:center;justify-content:space-between;gap:10px">
+                    <span style="font-size:12px;color:#6b6f76">Capture Yr 2</span>
+                    <div style="display:flex;align-items:center;gap:3px"><input type="number" value="{{ captureY2 }}" onChange="{{ onCaptureY2Change }}" style="font-size:13px;font-weight:600;border:1px solid #e2e1dc;border-radius:6px;padding:5px 7px;color:#1a2233;width:46px;text-align:right" /><span style="font-size:11px;color:#6b6f76">%</span></div>
+                  </div>
+                  <div style="display:flex;align-items:center;justify-content:space-between;gap:10px">
+                    <span style="font-size:12px;color:#6b6f76">Capture Yr 3+</span>
+                    <div style="display:flex;align-items:center;gap:3px"><input type="number" value="{{ captureY3 }}" onChange="{{ onCaptureY3Change }}" style="font-size:13px;font-weight:600;border:1px solid #e2e1dc;border-radius:6px;padding:5px 7px;color:#1a2233;width:46px;text-align:right" /><span style="font-size:11px;color:#6b6f76">%</span></div>
+                  </div>
+                </div>
+              </div>
+              <div style="flex:1;min-width:220px;border:1px solid #e2e1dc;border-radius:8px;padding:12px 14px;background:#fbfbf9">
+                <div style="font-size:11px;font-weight:700;color:#1a2233;margin-bottom:10px">Deal economics</div>
+                <div style="display:flex;flex-direction:column;gap:8px">
+                  <div style="display:flex;align-items:center;justify-content:space-between;gap:10px">
+                    <span style="font-size:12px;color:#6b6f76">Management fee</span>
+                    <div style="display:flex;align-items:center;gap:3px"><input type="number" value="{{ mgmtFeePct }}" onChange="{{ onMgmtFeePctChange }}" style="font-size:13px;font-weight:600;border:1px solid #e2e1dc;border-radius:6px;padding:5px 7px;color:#1a2233;width:46px;text-align:right" /><span style="font-size:11px;color:#6b6f76">% of rev</span></div>
+                  </div>
+                  <div style="display:flex;align-items:center;justify-content:space-between;gap:10px">
+                    <span style="font-size:12px;color:#6b6f76">Exit cap rate</span>
+                    <div style="display:flex;align-items:center;gap:3px"><input type="number" value="{{ exitCapPct }}" onChange="{{ onExitCapPctChange }}" style="font-size:13px;font-weight:600;border:1px solid #e2e1dc;border-radius:6px;padding:5px 7px;color:#1a2233;width:46px;text-align:right" /><span style="font-size:11px;color:#6b6f76">%</span></div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+          <div style="overflow-x:auto;padding:14px">
+            <div style="border:1px solid #dadce0;border-radius:2px;width:max-content;min-width:100%">
+              <div style="display:grid;grid-template-columns:{{ projGridCols }};background:#14213d">
+                <div style="padding:7px 16px;border-right:1px solid #2a3a5c;border-bottom:1px solid #2a3a5c;font-size:11px;font-weight:600;color:#c9cede">LINE ITEM</div>
+                <sc-for list="{{ projColHeaders }}" as="col" hint-placeholder-count="6">
+                  <div style="padding:6px 9px;border-right:1px solid #2a3a5c;border-bottom:1px solid #2a3a5c;text-align:right;font-size:10.5px;font-weight:600;color:#c9cede;white-space:nowrap">{{ col }}</div>
+                </sc-for>
+              </div>
+              <sc-for list="{{ projRows }}" as="row" hint-placeholder-count="16">
+                <sc-if value="{{ row.isHeader }}" hint-placeholder-val="{{ false }}">
+                  <div style="display:grid;grid-template-columns:{{ projGridCols }};background:#f0f0ee">
+                    <div style="grid-column:1/-1;padding:6px 16px;border-bottom:1px solid #d8d7d1;font-size:11px;font-weight:700;color:#6b6f76;text-transform:uppercase;letter-spacing:.03em">{{ row.label }}</div>
+                  </div>
+                </sc-if>
+                <sc-if value="{{ row.isNormal }}" hint-placeholder-val="{{ true }}">
+                  <div style="display:grid;grid-template-columns:{{ projGridCols }};background:{{ row.rowBg }}">
+                    <div style="padding:6px 9px;border-right:1px solid #e1e3e6;border-bottom:1px solid #e1e3e6;font-weight:{{ row.weight }};color:#1a2233;font-size:12px;padding-left:{{ row.indent }}">{{ row.label }}</div>
+                    <sc-for list="{{ row.cells }}" as="c" hint-placeholder-count="6">
+                      <div onClick="{{ c.onClick }}" onDoubleClick="{{ c.startEdit }}" onMouseEnter="{{ c.onHover }}" onMouseLeave="{{ c.onUnhover }}" style="padding:6px 9px;border-right:1px solid #e1e3e6;border-bottom:1px solid #e1e3e6;text-align:right;font-family:-apple-system,'Segoe UI',Helvetica,Arial,sans-serif;font-variant-numeric:tabular-nums;font-size:12px;font-weight:{{ row.weight }};color:{{ c.color }};text-decoration:{{ c.underline }};white-space:nowrap;cursor:pointer;position:relative">
+                        <sc-if value="{{ c.isEditing }}" hint-placeholder-val="{{ false }}">
+                          <input value="{{ c.editDraft }}" onChange="{{ c.onDraftChange }}" onBlur="{{ c.saveEdit }}" onKeyDown="{{ c.onKeyDown }}" autoFocus="{{ true }}" style="width:100%;text-align:right;font-size:12px;border:1px solid #1a73e8;border-radius:4px;padding:2px 4px;font-variant-numeric:tabular-nums" />
+                        </sc-if>
+                        <sc-if value="{{ c.notEditing }}" hint-placeholder-val="{{ true }}">
+                          {{ c.text }}
+                        </sc-if>
+                        <sc-if value="{{ c.showTip }}" hint-placeholder-val="{{ false }}">
+                          <div style="position:absolute;bottom:100%;right:0;margin-bottom:6px;background:#1a2233;color:#fff;font-family:-apple-system,sans-serif;font-size:11px;font-weight:500;padding:6px 10px;border-radius:6px;white-space:nowrap;box-shadow:0 4px 10px rgba(0,0,0,.18);z-index:20">{{ c.sourceDoc }}</div>
+                        </sc-if>
+                      </div>
+                    </sc-for>
+                  </div>
+                </sc-if>
+              </sc-for>
+            </div>
+          </div>
+        </sc-if>
+      </div>
+    </div>
+  </div>
+</div>
+
+<sc-if value="{{ copilotClosedForDock }}" hint-placeholder-val="{{ true }}">
+  <div onClick="{{ toggleCopilot }}" title="Ask Atlas" style="position:fixed;bottom:24px;right:24px;width:48px;height:48px;border-radius:50%;background:#14213d;color:#fff;display:flex;align-items:center;justify-content:center;font-size:19px;cursor:pointer;box-shadow:0 4px 14px rgba(0,0,0,.25);z-index:39">✦</div>
+</sc-if>
+<sc-if value="{{ copilotOpen }}" hint-placeholder-val="{{ false }}">
+  <div onClick="{{ closeCopilot }}" style="position:fixed;inset:0;background:rgba(15,20,35,.25);z-index:40"></div>
+</sc-if>
+<div style="position:fixed;top:0;right:0;height:100vh;width:380px;max-width:92vw;background:#fff;border-left:1px solid #e2e1dc;box-shadow:-4px 0 24px rgba(0,0,0,.1);z-index:41;display:flex;flex-direction:column;transform:{{ copilotTransform }};transition:transform .25s ease">
+  <div style="padding:16px 18px;border-bottom:1px solid #f0efeb;display:flex;align-items:center;justify-content:space-between;flex-shrink:0">
+    <div style="display:flex;align-items:center;gap:10px">
+      <div style="width:30px;height:30px;border-radius:8px;background:#14213d;display:flex;align-items:center;justify-content:center;color:#fff;font-size:14px">✦</div>
+      <div>
+        <div style="font-size:13.5px;font-weight:700;color:#1a2233">Atlas</div>
+        <div style="font-size:11px;color:#9a9a95">AI Underwriting Copilot</div>
+      </div>
+    </div>
+    <span onClick="{{ closeCopilot }}" style="cursor:pointer;color:#8a8a86;font-size:16px">✕</span>
+  </div>
+  <div style="padding:10px 18px;border-bottom:1px solid #f0efeb;flex-shrink:0">
+    <div style="font-size:10px;font-weight:700;color:#9a9a95;letter-spacing:.04em;margin-bottom:6px">UNDERWRITING PROGRESS</div>
+    <div style="display:flex;flex-direction:column;gap:3px">
+      <sc-for list="{{ copilotProgress }}" as="p" hint-placeholder-count="5">
+        <div style="display:flex;align-items:center;gap:6px;font-size:11.5px;color:{{ p.color }};font-weight:{{ p.weight }}"><span style="width:14px">{{ p.mark }}</span>{{ p.label }}</div>
+      </sc-for>
+    </div>
+  </div>
+  <div style="flex:1;overflow-y:auto;padding:16px 18px;display:flex;flex-direction:column;gap:10px">
+    <sc-for list="{{ copilotMessages }}" as="m" hint-placeholder-count="1">
+      <div style="max-width:88%;align-self:{{ m.align }};background:{{ m.bg }};color:{{ m.color }};border-radius:10px;padding:9px 12px;font-size:12.5px;line-height:1.5;white-space:pre-wrap">{{ m.text }}</div>
+    </sc-for>
+  </div>
+  <div style="padding:10px 14px;border-top:1px solid #f0efeb;display:flex;gap:6px;flex-wrap:wrap;flex-shrink:0">
+    <sc-for list="{{ copilotSuggestions }}" as="s" hint-placeholder-count="4">
+      <div onClick="{{ s.onClick }}" style="font-size:11px;color:#2f4a8c;background:#eef2fb;border-radius:14px;padding:5px 10px;cursor:pointer;white-space:nowrap">{{ s.label }}</div>
+    </sc-for>
+  </div>
+  <div style="padding:12px 14px;border-top:1px solid #f0efeb;display:flex;gap:8px;flex-shrink:0">
+    <input value="{{ copilotDraft }}" onChange="{{ onCopilotDraftChange }}" onKeyDown="{{ onCopilotKeyDown }}" placeholder="Ask about this statement…" style="flex:1;font-size:12.5px;border:1px solid #e2e1dc;border-radius:6px;padding:8px 10px" />
+    <button onClick="{{ sendCopilotMessage }}" style="background:#14213d;color:#fff;border:none;border-radius:6px;padding:8px 14px;font-size:12.5px;font-weight:600;cursor:pointer">Send</button>
+  </div>
+</div>
+
+</x-dc>
+<script type="text/x-dc" data-dc-script>
+class Component extends DCLogic {
+  buildNavItems(active, onNavigate) {
+    const ICONS = {
+      dataroom: "M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7z",
+      overview: "M6 3h9l4 4v14a1 1 0 0 1-1 1H6a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1zM9 12h6M9 16h6",
+      market: "M12 4a4 4 0 100 8 4 4 0 000-8zM4 21c0-4 3.6-6 8-6s8 2 8 6",
+      financials: "M4 20V10M11 20V4M18 20v-7",
+      investment: "M3 8h18v12a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V8zM8 8V6a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2",
+      debt: "M12 3a9 9 0 100 18 9 9 0 000-18zM12 7v10M9.5 9.5c0-1.4 1.1-2.5 2.5-2.5s2.5.7 2.5 2c0 2-5 1.5-5 4 0 1.3 1.1 2.5 2.5 2.5s2.5-1.1 2.5-2.5",
+      partnership: "M9 11a3 3 0 100-6 3 3 0 000 6zM17 11a3 3 0 100-6 3 3 0 000 6zM2 20c0-3 3-5 7-5M13 20c0-3 3-5 7-5",
+      cashflow: "M3 12h4l3 7 4-14 3 7h4",
+      returns: "M3 17l6-6 4 4 8-8M15 7h6v6",
+      scenarios: "M4 7h13l-3-3M4 7l3 3M20 17H7l3 3M20 17l-3-3",
+      icmemo: "M6 3h9l4 4v14a1 1 0 0 1-1 1H6a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1zM9 12h6M9 16h4M14 3v5h5",
+    };
+    const HREFS = {
+      dataroom: './Data Room v2.dc.html', overview: './Overview Tab v3.dc.html', market: './Market Tab.dc.html',
+      financials: './Financials Tab.dc.html', investment: './Investment Tab.dc.html', debt: './Debt Tab.dc.html',
+      partnership: './Partnership Tab.dc.html', cashflow: './Cash Flow Tab.dc.html', returns: './Returns Tab.dc.html',
+      scenarios: './Scenarios Tab.dc.html', icmemo: './IC Memo Tab.dc.html',
+    };
+    const items = [
+      ['dataroom','Data Room'], ['overview','Overview'], ['market','Market'], ['financials','Financials'],
+      ['investment','Investment'], ['debt','Debt'], ['partnership','Partnership'], ['cashflow','Cash Flow'],
+      ['returns','Returns'], ['scenarios','Scenario Analysis'], ['icmemo','IC Memo'],
+    ];
+    return items.map(([key, label]) => ({
+      key, label, icon: ICONS[key],
+      color: key === active ? '#14213d' : '#9a9a95',
+      weight: key === active ? 700 : 500,
+      border: key === active ? '2px solid #14213d' : '2px solid transparent',
+      onClick: key === active ? null : () => { if (onNavigate) onNavigate(key); else window.location.href = HREFS[key]; },
+    }));
+  }
+  months = ['Jan 23','Feb 23','Mar 23','Apr 23','May 23','Jun 23','Jul 23','Aug 23','Sep 23','Oct 23','Nov 23','Dec 23'];
+  monthAbbrs = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+
+  copilotReplyFor(text) {
+    const t = text.toLowerCase();
+    if (t.includes('flag') || t.includes('confiden')) return 'There are a few flagged cells needing review — lowest confidence is on Other Operated Departments Revenue. Use the Flagged counter on the source panel to jump between them.';
+    if (t.includes('ebitda')) return 'EBITDA dips in the summer months, mainly from lower occupancy and softer ADR — Jun/Jul show the steepest drop versus the shoulder months.';
+    if (t.includes('compare') || t.includes(' vs') || t.includes('prior') || t.includes('budget') || t.includes('year')) return 'Select two or more year chips above the table to compare fiscal years side-by-side, or switch to Detailed mode for Budget / Prior Year / Variance columns.';
+    if (t.includes('summar')) return 'FY23: Total Revenues $15.3M, Gross Operating Profit $6.7M, EBITDA $4.4M. Rooms revenue drives the top line; Management Fees and non-operating costs are the main drags below GOP.';
+    if (t.includes('driving') || t.includes('assumption')) return `This projection runs off Base Year ${this.state.baseYear} with Revenue growing ${this.state.revGrowth}%/yr and Expenses growing ${this.state.expGrowth}%/yr over ${this.state.projYears} years — change those in the Assumptions bar above the table to see NOI/EBITDA move.`;
+    if (t.includes('come from') || t.includes('color') || t.includes('coding')) return "Green = linked to or extracted from a source document, Amber with a light red highlight = extracted but flagged for review, Blue = you typed it in, Black = calculated and not editable, and bold black = a total row. Cells with a dotted underline are editable — see the key above the table.";
+    if (t.includes('provenance') || t.includes('trace')) return "2025 NOI — $4.82M\n\nSource: Actual Operating Statement, extracted value $4.76M\nNormalized value: $4.82M (+$60K)\nAdjustment reason: Management fee normalized to 3.0%\n\nClick any cell to see its own chain in the source panel on the right.";
+    if (t.includes('om') && (t.includes('actual') || t.includes('vs') || t.includes('compar'))) return "OM Management Fee: 3.0% (standardized) vs. Actual: 4.2% (trailing-12 P&L). That 1.2pt gap is currently flowing into projected NOI — worth confirming which basis to underwrite on before you finalize projections.";
+    if (t.includes('anomal') || t.includes('unusual') || t.includes('decline') || t.includes('decreas')) return "NOI declined 8.4% YoY, primarily from a 12% increase in labor expense and a 7% decline in occupancy. Revenue was down 3% while operating expenses rose 5%. Click Total Revenues or Total Undistributed Expenses above to see the underlying rows.";
+    if (t.includes('missing') || t.includes('readiness') || t.includes('document')) return "Deal Readiness: 82%. The OM, 2024/2025 operating statements, and trailing-12 P&L are in. Still missing: current debt terms and the most recent occupancy/STR report — check the Data Room tab.";
+    if (t.includes('guide') || t.includes('walk me') || t.includes('start here')) {
+      return this.state.financialsTab === 'projections'
+        ? "Let's work through Projections:\n1. Confirm the base year\n2. Review revenue assumptions\n3. Review expense assumptions\n4. Review projected operating performance\n5. Compare projected growth to historical performance\n6. Run sensitivities / a downside case\n7. Confirm the underwriting case\n\nYou're set up on Base Year " + this.state.baseYear + " right now — Step 1 is done."
+        : "Let's work through Historical P&L:\n1. Review actual historical financials\n2. Compare years / identify YoY changes\n3. Review unusual variances\n4. Compare actuals against OM financials\n5. Verify important numbers against source documents\n6. Confirm the historical baseline for projections\n\nStart with the flagged cells — that's where the data quality risk usually sits.";
+    }
+    if ((t.includes('next') && (t.includes('do') || t.includes('step'))) || t.includes('best step')) {
+      return "Your next best step\n\nReview the management fee. The OM assumes 3.0%, while actual historical financials show 4.2%. This difference is currently affecting projected NOI — worth resolving before you lock the projection baseline.";
+    }
+    if (t.includes('am i done') || (t.includes('done') && (t.includes('step') || t.includes('review')))) {
+      return this.state.financialsTab === 'projections'
+        ? "Projections review: 60% complete\n✓ Base year confirmed\n✓ Revenue & expense growth set\n⚠ Assumptions not yet compared to historical CAGR\n○ No downside case run yet\n○ Underwriting case not confirmed\n\nRemaining: sanity-check growth vs. historical trend and run a downside scenario."
+        : "Historical P&L review: 80% complete\n✓ Historical financials loaded\n✓ Actual vs. OM comparison completed\n✓ Major YoY variances reviewed\n⚠ 2 material discrepancies still need review\n✓ Source documents available\n\nRemaining: resolve the management fee discrepancy and the 2024 utilities variance.";
+    }
+    return "I can summarize the statement, explain flagged or low-confidence cells, trace a number's provenance, compare OM vs. actuals, flag YoY anomalies, walk through projection assumptions, tell you what to do next, or compare periods — try a suggestion below or ask me directly.";
+  }
+
+  sendCopilotMessage() {
+    const text = this.state.copilotDraft.trim();
+    if (!text) return;
+    const reply = this.copilotReplyFor(text);
+    this.setState(s => ({
+      copilotDraft: '',
+      copilotMessages: [...s.copilotMessages, { from: 'user', text }, { from: 'bot', text: reply }],
+    }));
+  }
+
+  fmtByType(n, type) {
+    const neg = n < 0; const a = Math.abs(n);
+    let s;
+    if (type === 'usd2') s = '$' + a.toFixed(2).replace(/\B(?=(\d{3})+(?!\d))/g, ',');
+    else if (type === 'pct') s = a.toFixed(1) + '%';
+    else s = Math.round(a).toLocaleString();
+    return neg ? `(${s})` : s;
+  }
+
+  // key, label, weight, indent, type, vals[6mo], fy, detailOnly, canBreakout, isHeader
+  rawRows = [
+    { isHeader: true, key: 'hdr-kpi', label: 'Key Stats', detailOnly: true },
+    { key: 'AvailRooms', label: 'Available Rooms', weight: 400, indent: 12, type: 'int', vals: [4092,3696,4092,3960,4092,3960,3960,4092,3960,4092,3696,4092], fy: 47784, detailOnly: true },
+    { key: 'RoomsSold', label: 'Total Rooms Sold', weight: 400, indent: 12, type: 'int', vals: [3863,3471,3750,3450,3162,3403,3403,3162,3450,3750,3471,3863], fy: 42198, detailOnly: true },
+    { key: 'Occupancy', label: 'Occupancy', weight: 400, indent: 12, type: 'pct', vals: [94.4,93.9,91.6,87.1,77.3,85.9,85.9,77.3,87.1,91.6,93.9,94.4], fy: 88.37, detailOnly: true },
+    { key: 'ADR', label: 'Average Daily Rate', weight: 400, indent: 12, type: 'usd2', vals: [281.23,346.86,314.57,263.63,262.26,185.45,185.45,262.26,263.63,314.57,346.86,281.23], fy: 275.67, detailOnly: true },
+    { key: 'RevPAR', label: 'Revenue per Available Room', weight: 400, indent: 12, type: 'usd2', vals: [265.49,325.75,288.28,229.68,202.65,159.36,159.36,202.65,229.68,288.28,325.75,265.49], fy: 245.2, detailOnly: true },
+
+    { isHeader: true, key: 'hdr-rev', label: 'Revenues', detailOnly: true },
+    { key: 'RoomsRev', label: 'Rooms', weight: 400, indent: 26, type: 'money', vals: [1086374,1203961,1179641,909529,829256,631080,631080,829256,909529,1179641,1203961,1086374], fy: 11679682 },
+    { key: 'FBRev', label: 'Food & Beverage', weight: 400, indent: 26, type: 'money', vals: [271648,243117,262610,178742,174453,153035,153035,174453,178742,262610,243117,271648], fy: 2567210 },
+    { key: 'OthOpDeptsRev', label: 'Other Operated Departments', weight: 400, indent: 26, type: 'money', vals: [1877,2263,1370,2075,1531,1673,1673,1531,2075,1370,2263,1877], fy: 21578, canBreakout: true },
+    { key: 'MiscIncome', label: 'Miscellaneous Income', weight: 400, indent: 26, type: 'money', vals: [102265,87267,90783,79960,78295,88954,88954,78295,79960,90783,87267,102265], fy: 1055048, detailOnly: true },
+    { key: 'TotalRevenues', label: 'Total Revenues', weight: 700, indent: 12, type: 'money', vals: [1462164,1536608,1534404,1170306,1083535,874742,874742,1083535,1170306,1534404,1536608,1462164], fy: 15323518 },
+
+    { isHeader: true, key: 'hdr-deptexp', label: 'Departmental Expense', detailOnly: true },
+    { key: 'RoomsExp', label: 'Rooms', weight: 400, indent: 26, type: 'money', vals: [237563,222324,240432,244110,208186,199280,199280,208186,244110,240432,222324,237563], fy: 2703790, detailOnly: true },
+    { key: 'FBExp', label: 'Food & Beverage', weight: 400, indent: 26, type: 'money', vals: [205139,193373,214745,188934,178111,150465,150465,178111,188934,214745,193373,205139], fy: 2261534, detailOnly: true },
+    { key: 'OthOpDeptsExp', label: 'Other Operated Departments', weight: 400, indent: 26, type: 'money', vals: [605,1037,1213,1094,718,701,701,718,1094,1213,1037,605], fy: 10736, detailOnly: true },
+    { key: 'TotalDeptExp', label: 'Total Departmental Expense', weight: 700, indent: 12, type: 'money', vals: [443307,416734,456390,434138,387015,350446,350446,387015,434138,456390,416734,443307], fy: 4976060 },
+
+    { key: 'TotalDeptProfit', label: 'Total Departmental Profit', weight: 700, indent: 12, type: 'money', vals: [1018857,1119874,1078014,736168,696520,524296,524296,696520,736168,1078014,1119874,1018857], fy: 10347458 },
+
+    { isHeader: true, key: 'hdr-undist', label: 'Undistributed Expenses', detailOnly: true },
+    { key: 'AdminGeneral', label: 'Administrative & General', weight: 400, indent: 26, type: 'money', vals: [115880,107208,104656,94140,98596,93589,93589,98596,94140,104656,107208,115880], fy: 1228138, detailOnly: true },
+    { key: 'InfoTelecom', label: 'Information & Telecom Systems', weight: 400, indent: 26, type: 'money', vals: [19394,18142,16596,21436,24853,16535,16535,24853,21436,16596,18142,19394], fy: 233912, detailOnly: true },
+    { key: 'SalesMktg', label: 'Sales & Marketing', weight: 400, indent: 26, type: 'money', vals: [96912,100823,117164,110588,102044,107480,107480,102044,110588,117164,100823,96912], fy: 1270022, detailOnly: true },
+    { key: 'PropOpMaint', label: 'Property Operation & Maintenance', weight: 400, indent: 26, type: 'money', vals: [42992,55685,57325,62439,73286,59618,59618,73286,62439,57325,55685,42992], fy: 702690, detailOnly: true },
+    { key: 'Utilities', label: 'Utilities', weight: 400, indent: 26, type: 'money', vals: [15385,15457,21209,18255,19151,19916,19916,19151,18255,21209,15457,15385], fy: 218746, detailOnly: true },
+    { key: 'TotalUndist', label: 'Total Undistributed Expenses', weight: 700, indent: 12, type: 'money', vals: [290563,297315,316950,306858,317930,297138,297138,317930,306858,316950,297315,290563], fy: 3653508 },
+
+    { key: 'GOP', label: 'Gross Operating Profit', weight: 700, indent: 12, type: 'money', vals: [728294,822559,761064,429310,378590,227158,227158,378590,429310,761064,822559,728294], fy: 6693950 },
+    { key: 'ManagementFees', label: 'Management Fees', weight: 400, indent: 26, type: 'money', vals: [40697,48837,48601,37083,34688,29381,29381,34688,37083,48601,48837,40697], fy: 478574 },
+    { key: 'IncomeBeforeNonOp', label: 'Income before non-operating inc & expense', weight: 700, indent: 12, type: 'money', vals: [687597,773722,712463,392227,343902,197777,197777,343902,392227,712463,773722,687597], fy: 6215376, detailOnly: true },
+
+    { isHeader: true, key: 'hdr-nonop', label: 'Non-Operating Income & Expenses', detailOnly: true },
+    { key: 'NonOpIncome', label: 'Income', weight: 400, indent: 26, type: 'money', vals: [0,0,0,0,0,0,0,0,0,0,0,0], fy: 0, detailOnly: true },
+    { key: 'Rent', label: 'Rent', weight: 400, indent: 26, type: 'money', vals: [1154,1468,1238,1841,1332,1056,1056,1332,1841,1238,1468,1154], fy: 16178, detailOnly: true },
+    { key: 'PropOtherTaxes', label: 'Property & Other Taxes', weight: 400, indent: 26, type: 'money', vals: [40030,40030,40030,56619,40030,40030,40030,40030,56619,40030,40030,40030], fy: 513538, detailOnly: true },
+    { key: 'Insurance', label: 'Insurance', weight: 400, indent: 26, type: 'money', vals: [104943,104943,104943,103457,104200,105130,105130,104200,103457,104943,104943,104943], fy: 1255232, detailOnly: true },
+    { key: 'OtherNonOp', label: 'Other', weight: 400, indent: 26, type: 'money', vals: [0,0,0,0,0,0,0,0,0,0,0,0], fy: 0, detailOnly: true },
+    { key: 'TotalNonOp', label: 'Total non-operating income & expenses', weight: 700, indent: 12, type: 'money', vals: [146127,146441,146211,161917,145562,146216,146216,145562,161917,146211,146441,146127], fy: 1784948, detailOnly: true },
+
+    { key: 'EBITDA', label: 'EBITDA', weight: 700, indent: 12, type: 'money', vals: [541470,627281,566252,230310,198340,51561,51561,198340,230310,566252,627281,541470], fy: 4430428 },
+
+    { isHeader: true, key: 'hdr-int', label: 'Interest, Depreciation & Amortization', detailOnly: true },
+    { key: 'IntExp', label: 'Total Interest Expense', weight: 400, indent: 26, type: 'money', vals: [260137,240574,270984,267633,283596,276945,276945,283596,267633,270984,240574,260137], fy: 3199738, detailOnly: true },
+    { key: 'Depreciation', label: 'Depreciation', weight: 400, indent: 26, type: 'money', vals: [40537,40537,40537,40537,40537,40537,40537,40537,40537,40537,40537,40537], fy: 486444, detailOnly: true },
+    { key: 'Amortization', label: 'Amortization', weight: 400, indent: 26, type: 'money', vals: [0,0,0,0,0,0,0,0,0,0,0,0], fy: 0, detailOnly: true },
+    { key: 'TotalIntDA', label: 'Total Interest, Depreciation & Amortization', weight: 700, indent: 12, type: 'money', vals: [300674,281111,311521,308170,324133,317482,317482,324133,308170,311521,281111,300674], fy: 3686182, detailOnly: true },
+    { key: 'IncomeBeforeTax', label: 'Income Before Income Taxes', weight: 700, indent: 12, type: 'money', vals: [240796,346170,254731,-77860,-125793,-265921,-265921,-125793,-77860,254731,346170,240796], fy: 744246, detailOnly: true },
+    { key: 'IncomeTaxes', label: 'Total Income Taxes', weight: 400, indent: 26, type: 'money', vals: [0,0,0,0,0,0,0,0,0,0,0,0], fy: 0, detailOnly: true },
+    { key: 'NetIncome', label: 'Net Income', weight: 700, indent: 12, type: 'money', vals: [240796,346170,254731,-77860,-125793,-265921,-265921,-125793,-77860,254731,346170,240796], fy: 744246, detailOnly: true },
+
+    { key: 'FFE', label: 'FF&E Proforma Calculation', weight: 400, indent: 26, type: 'money', vals: [50375,60107,59816,45641,42693,36162,36162,42693,45641,59816,60107,50375], fy: 589588, detailOnly: true },
+    { key: 'EBITDALessReserve', label: 'EBITDA: less Replacement Reserve', weight: 700, indent: 12, type: 'money', vals: [491095,567174,506436,184669,155647,15399,15399,155647,184669,506436,567174,491095], fy: 3840840, detailOnly: true },
+  ];
+
+  flagged = { 'OthOpDeptsRev-0': 61, 'OthOpDeptsRev-fy': 55, 'ManagementFees-2': 72, 'ManagementFees-fy': 68, 'Utilities-1': 58, 'Utilities-fy': 63, 'Utilities-9': 58 };
+
+  docsById = {
+    om: "Miami Beach Anglers Offering Memorandum.pdf",
+    nov1: "Angler's 2024 November Detailed P&L.xlsm",
+    nov2: "The Angler's - November 2024 Financials.xlsx",
+    dec: "The Angler's - December 2024 Financials.xlsx",
+    fullyear: "Angler's 2024 Full Year Detailed P&L.xlsm",
+  };
+
+  yearMultiplier = { '2021': 0.79, '2022': 0.91, '2023': 1, '2024': 1.08 };
+  fySuffix(year) { return year === '2023' ? 'fy' : `fy${year}`; }
+
+  state = {
+    periodType: 'FY', fyYears: ['2023'], t12MonthEnd: 'Dec 2023', monthlyMonth: 'Jan', monthlyYear: '2023',
+    granularity: 'annual', detailLevel: 'summary', searchQuery: '',
+    cellStatus: {}, cellValue: {}, selectedCell: 'OthOpDeptsRev-fy',
+    editingCell: null, editDraft: '',
+    arrivalDocId: null, bannerDismissed: false, sourcePanelOpen: true, cellSourceDoc: {}, hoveredCell: null,
+    customRows: [], rowOrder: {}, draggingKey: null, addRowOpenSection: null, addRowDraft: '',
+    financialsTab: 'historicals',
+    baseYear: '2024', projYears: 5, revGrowth: 4, expGrowth: 3,
+    projOverrides: {}, projEditingKey: null, projEditDraft: '',
+    cellAudit: {}, editReason: '',
+    projGranularity: 'annual', projMonthlyYearIdx: 0, projMetricView: 'amount',
+    mgmtFeePct: 3, resortFee: 45, captureY1: 65, captureY2: 70, captureY3: 80, otherExpInflation: 1.5, exitCapPct: 6.5,
+    copilotOpen: false, copilotDraft: '',
+    copilotMessages: [
+      { from: 'bot', text: "Hi, I'm Atlas — ask me to summarize this statement, explain flagged cells, or compare periods." },
+    ],
+  };
+
+  reorderRow(sectionKey, fromKey, toKey, naturalKeys) {
+    if (!fromKey || fromKey === toKey) { this.setState({ draggingKey: null }); return; }
+    const saved = this.state.rowOrder[sectionKey] || [];
+    const base = [...saved.filter(k => naturalKeys.includes(k)), ...naturalKeys.filter(k => !saved.includes(k))];
+    const withoutFrom = base.filter(k => k !== fromKey);
+    const idx = withoutFrom.indexOf(toKey);
+    withoutFrom.splice(idx, 0, fromKey);
+    this.setState(s => ({ rowOrder: { ...s.rowOrder, [sectionKey]: withoutFrom }, draggingKey: null }));
+  }
+
+  deleteRow(key, sectionKey) {
+    this.setState(s => ({
+      customRows: s.customRows.filter(r => r.key !== key),
+      rowOrder: { ...s.rowOrder, [sectionKey]: (s.rowOrder[sectionKey] || []).filter(k => k !== key) },
+    }));
+  }
+
+  allDocOptions = ["Angler's 2024 Full Year Detailed P&L.xlsm", "T-12 bundle — rolled from 12 monthly statements", "Angler's 2024 November Detailed P&L.xlsm", "The Angler's - November 2024 Financials.xlsx", "The Angler's - December 2024 Financials.xlsx", "Miami Beach Anglers Offering Memorandum.pdf"];
+
+  componentDidMount() {
+    const docId = this.props.initialDoc || new URLSearchParams(window.location.search).get('doc');
+    if (docId && this.docsById[docId]) {
+      const isMonthly = docId === 'nov1' || docId === 'nov2' || docId === 'dec';
+      this.setState({
+        arrivalDocId: docId,
+        periodType: isMonthly ? 'Monthly' : 'FY',
+        granularity: isMonthly ? 'monthly' : 'annual',
+        selectedCell: isMonthly ? 'OthOpDeptsRev-0' : 'OthOpDeptsRev-fy',
+      });
+    }
+  }
+
+  nowStamp() {
+    const d = new Date();
+    return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }) + ' · ' + d.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' });
+  }
+  logAudit(key, entry) {
+    this.setState(s => ({ cellAudit: { ...s.cellAudit, [key]: [ ...(s.cellAudit[key] || []), { by: 'You', at: this.nowStamp(), ...entry } ] } }));
+  }
+  auditFor(key) {
+    return (this.state.cellAudit[key] || []).slice().reverse().map(e => ({
+      action: e.action, meta: e.by + ' · ' + e.at,
+      hasDelta: !!e.from, from: e.from || '', to: e.to || '',
+      hasReason: !!e.reason, reason: e.reason || '',
+    }));
+  }
+
+  acceptCell(key) {
+    this.setState(s => ({ cellStatus: { ...s.cellStatus, [key]: 'verified' } }));
+    this.logAudit(key, { action: 'Accepted extracted value', kind: 'verified' });
+  }
+  startEdit(key, currentVal) { this.setState({ editingCell: key, editDraft: String(currentVal), editReason: '' }); }
+  saveEdit(key, prevVal, type) {
+    const val = Number(this.state.editDraft.replace(/[^0-9.-]/g, '')) || 0;
+    const reason = (this.state.editReason || '').trim();
+    this.setState(s => ({ cellStatus: { ...s.cellStatus, [key]: 'edited' }, cellValue: { ...s.cellValue, [key]: val }, editingCell: null, editReason: '' }));
+    this.logAudit(key, { action: 'Value changed', from: this.fmtByType(prevVal || 0, type || 'money'), to: this.fmtByType(val, type || 'money'), reason, kind: 'edited' });
+  }
+  revertCell(key) {
+    this.setState(s => { const cellValue = { ...s.cellValue }; delete cellValue[key]; const cellStatus = { ...s.cellStatus }; delete cellStatus[key]; return { cellValue, cellStatus }; });
+    this.logAudit(key, { action: 'Reverted to extracted value', kind: 'revert' });
+  }
+
+  sourceDocName(colRaw) {
+    if (colRaw === 'fy') {
+      if (this.state.periodType === 'T12') return `T-12 bundle — rolled from 12 monthly statements`;
+      return this.docsById.fullyear;
+    }
+    const idx = Number(colRaw);
+    if (!isNaN(idx)) {
+      const [mon, yr] = this.months[idx].split(' ');
+      return `The Angler's - ${mon} 20${yr} Financials.xlsx`;
+    }
+    return this.docsById.fullyear;
+  }
+
+  projDefs() {
+    return [
+      { header: 'Operating Statistics' },
+      { key: 'Occupancy', label: 'Occupancy', indent: 26, isStat: true, statFmt: 'pct' },
+      { key: 'ADR', label: 'Average Daily Rate', indent: 26, isStat: true, statFmt: 'money' },
+      { key: 'RevPAR', label: 'RevPAR', indent: 26, isStat: true, statFmt: 'money' },
+      { header: 'Revenues' },
+      { key: 'RoomsRev', label: 'Rooms', indent: 26 },
+      { key: 'FBRev', label: 'Food & Beverage', indent: 26 },
+      { key: 'OthOpDeptsRev', label: 'Other Operated Departments', indent: 26 },
+      { key: 'MiscIncome', label: 'Miscellaneous Income', indent: 26 },
+      { key: 'TotalRevenues', label: 'Total Revenues', indent: 12, bold: true },
+      { header: 'Departmental Expense' },
+      { key: 'RoomsExp', label: 'Rooms', indent: 26 },
+      { key: 'FBExp', label: 'Food & Beverage', indent: 26 },
+      { key: 'OthOpDeptsExp', label: 'Other Operated Departments', indent: 26 },
+      { key: 'TotalDeptExp', label: 'Total Departmental Expense', indent: 12, bold: true },
+      { key: 'TotalDeptProfit', label: 'Total Departmental Profit', indent: 12, bold: true },
+      { header: 'Undistributed Expenses' },
+      { key: 'AdminGeneral', label: 'Administrative & General', indent: 26 },
+      { key: 'InfoTelecom', label: 'Information & Telecom Systems', indent: 26 },
+      { key: 'SalesMktg', label: 'Sales & Marketing', indent: 26 },
+      { key: 'PropOpMaint', label: 'Property Operation & Maintenance', indent: 26 },
+      { key: 'Utilities', label: 'Utilities', indent: 26 },
+      { key: 'TotalUndist', label: 'Total Undistributed Expenses', indent: 12, bold: true },
+      { key: 'GOP', label: 'Gross Operating Profit', indent: 12, bold: true },
+      { key: 'ManagementFees', label: 'Management Fees', indent: 26 },
+      { key: 'EBITDA', label: 'EBITDA', indent: 12, bold: true, highlight: true },
+      { key: 'ExitValue', label: 'Implied Exit Value', indent: 12, bold: true, isStat: true, statFmt: 'money' },
+    ];
+  }
+
+  buildProjSelectedField(selectedCell) {
+    const [dKey, yPart] = selectedCell.split('::');
+    const def = this.projDefs().find(d => d.key === dKey);
+    if (!def) return null;
+    const years = this.buildProjectionYears();
+    const baseYearNum = parseInt(this.state.baseYear, 10);
+    const fmtVal = (n) => def.statFmt === 'pct' ? `${(n * 100).toFixed(1)}%` : this.fmtByType(n, 'money');
+    const isMonth = yPart.startsWith('m');
+    if (isMonth) {
+      const yIdx = Math.min(this.state.projMonthlyYearIdx, years.length - 1);
+      const val = years[yIdx][dKey] / 12;
+      return {
+        label: `${def.label} · ${this.monthAbbrs[Number(yPart.slice(1))]} ${baseYearNum + yIdx}`,
+        value: fmtVal(val),
+        sourceDoc: yIdx === 0 ? `1/12 of extracted Base Year (${baseYearNum})` : `Calculated: 1/12 of Year ${yIdx} projection`,
+        isFlagged: false, isVerified: false, isEdited: false, isPlainEditable: false, isEditing: false,
+        openSource: () => window.open('about:blank', '_blank'),
+      };
+    }
+    const yi = Number(yPart);
+    const y = years.find(yy => yy.i === yi);
+    const overridden = this.state.projOverrides[selectedCell] !== undefined;
+    const raw = overridden ? this.state.projOverrides[selectedCell] : y[dKey];
+    const editable = !def.bold && !def.isStat;
+    return {
+      label: `${def.label} · ${yi === 0 ? `Base Year (${baseYearNum})` : `Year ${yi} (${baseYearNum + yi})`}`,
+      value: fmtVal(raw),
+      sourceDoc: overridden ? 'Entered by you' : def.isStat ? 'Calculated from projected Rooms Revenue' : def.bold ? 'Calculated total — sum of the lines above' : (yi === 0 ? `Extracted from ${this.docsById.fullyear}` : `Calculated from Base Year at ${this.state.revGrowth}%/${this.state.expGrowth}% growth`),
+      isFlagged: false, isVerified: false, isEdited: overridden,
+      auditTrail: this.auditFor(selectedCell), hasAudit: (this.state.cellAudit[selectedCell] || []).length > 0,
+      editReason: this.state.editReason || '',
+      onReasonChange: (e) => this.setState({ editReason: e.target.value }),
+      isPlainEditable: editable && !overridden,
+      isEditing: this.state.projEditingKey === selectedCell, editDraft: this.state.projEditDraft,
+      onDraftChange: (e) => this.setState({ projEditDraft: e.target.value }),
+      startEdit: () => this.setState({ projEditingKey: selectedCell, projEditDraft: String(Math.round(raw)), editReason: '' }),
+      saveEdit: () => {
+        const n = Number(this.state.projEditDraft);
+        const next = Number.isFinite(n) ? n : raw;
+        const reason = (this.state.editReason || '').trim();
+        this.setState(s => ({ projEditingKey: null, projOverrides: { ...s.projOverrides, [selectedCell]: next }, editReason: '' }));
+        this.logAudit(selectedCell, { action: 'Assumption overridden', from: fmtVal(raw), to: fmtVal(next), reason, kind: 'edited' });
+      },
+      revert: () => {
+        this.setState(s => { const projOverrides = { ...s.projOverrides }; delete projOverrides[selectedCell]; return { projOverrides }; });
+        this.logAudit(selectedCell, { action: 'Reverted to calculated value', kind: 'revert' });
+      },
+      openSource: () => window.open('about:blank', '_blank'),
+    };
+  }
+
+  buildProjectionYears() {
+    const getFY = (key) => (this.rawRows.find(r => r.key === key) || {}).fy || 0;
+    const base = {
+      RoomsRev: getFY('RoomsRev'), FBRev: getFY('FBRev'), OthOpDeptsRev: getFY('OthOpDeptsRev'), MiscIncome: getFY('MiscIncome'),
+      RoomsExp: getFY('RoomsExp'), FBExp: getFY('FBExp'), OthOpDeptsExp: getFY('OthOpDeptsExp'),
+      AdminGeneral: getFY('AdminGeneral'), InfoTelecom: getFY('InfoTelecom'), SalesMktg: getFY('SalesMktg'), PropOpMaint: getFY('PropOpMaint'), Utilities: getFY('Utilities'),
+    };
+    const n = this.state.projYears;
+    const rg = this.state.revGrowth / 100, eg = this.state.expGrowth / 100, oeg = this.state.otherExpInflation / 100;
+    const mgmtFeePct = this.state.mgmtFeePct / 100;
+    const ROOMS = 132, DAYS = 365, OCC_PCT = 0.78;
+    const availableRooms = ROOMS * DAYS, occupiedRooms = Math.round(availableRooms * OCC_PCT);
+    const captureFor = (i) => i <= 0 ? this.state.captureY1 / 100 : i === 1 ? this.state.captureY2 / 100 : this.state.captureY3 / 100;
+    const years = [];
+    for (let i = 0; i <= n; i++) {
+      const rf = Math.pow(1 + rg, i), ef = Math.pow(1 + eg, i), oef = Math.pow(1 + oeg, i);
+      const resortFeeRevenue = this.state.resortFee * occupiedRooms * captureFor(i);
+      const RoomsRev = base.RoomsRev * rf, FBRev = base.FBRev * rf, OthOpDeptsRev = base.OthOpDeptsRev * rf;
+      const MiscIncome = base.MiscIncome * rf + resortFeeRevenue;
+      const TotalRevenues = RoomsRev + FBRev + OthOpDeptsRev + MiscIncome;
+      const RoomsExp = base.RoomsExp * ef, FBExp = base.FBExp * ef, OthOpDeptsExp = base.OthOpDeptsExp * ef;
+      const TotalDeptExp = RoomsExp + FBExp + OthOpDeptsExp;
+      const TotalDeptProfit = TotalRevenues - TotalDeptExp;
+      const AdminGeneral = base.AdminGeneral * oef, InfoTelecom = base.InfoTelecom * oef, SalesMktg = base.SalesMktg * oef, PropOpMaint = base.PropOpMaint * oef, Utilities = base.Utilities * oef;
+      const TotalUndist = AdminGeneral + InfoTelecom + SalesMktg + PropOpMaint + Utilities;
+      const GOP = TotalDeptProfit - TotalUndist;
+      const ManagementFees = TotalRevenues * mgmtFeePct;
+      const EBITDA = GOP - ManagementFees;
+      const ExitValue = this.state.exitCapPct ? EBITDA / (this.state.exitCapPct / 100) : 0;
+      const ADR = RoomsRev / occupiedRooms, RevPAR = RoomsRev / availableRooms;
+      years.push({ i, RoomsRev, FBRev, OthOpDeptsRev, MiscIncome, TotalRevenues, RoomsExp, FBExp, OthOpDeptsExp, TotalDeptExp, TotalDeptProfit, AdminGeneral, InfoTelecom, SalesMktg, PropOpMaint, Utilities, TotalUndist, GOP, ManagementFees, EBITDA, ExitValue, Occupancy: OCC_PCT, ADR, RevPAR, availableRooms, occupiedRooms });
+    }
+    return years;
+  }
+
+  renderProjectionVals() {
+    const baseYearNum = parseInt(this.state.baseYear, 10);
+    const years = this.buildProjectionYears();
+    const projColHeaders = years.map(y => y.i === 0 ? `Base Year (${baseYearNum})` : `Year ${y.i} (${baseYearNum + y.i})`);
+    const projYearOptions = projColHeaders.map((label, idx) => ({ idx, label }));
+    const isMonthlyProj = this.state.projGranularity === 'monthly';
+    const fmt = (n) => this.fmtByType(n, 'money');
+    const metricView = this.state.projMetricView;
+    const defs = this.projDefs();
+    const yIdx = Math.min(this.state.projMonthlyYearIdx, years.length - 1);
+    const monthYearNum = baseYearNum + yIdx;
+    const monthHeaders = this.monthAbbrs.map(m => `${m} ${monthYearNum}`);
+    const projGridCols = isMonthlyProj ? `220px repeat(12, 92px)` : `220px repeat(${years.length}, 130px)`;
+    const headerCols = isMonthlyProj ? monthHeaders : projColHeaders;
+
+    const projRows = defs.map(d => {
+      if (d.header) return { isHeader: true, label: d.header };
+      if (d.isStat) {
+        const statFmt = (n) => d.statFmt === 'pct' ? `${(n * 100).toFixed(1)}%` : fmt(n);
+        if (isMonthlyProj) {
+          return {
+            isNormal: true, label: d.label, weight: d.bold ? 700 : 400, indent: d.indent + 'px', rowBg: d.highlight ? '#eaf1fb' : '#fff',
+            cells: Array.from({ length: 12 }, (_, mIdx) => {
+              const mkey = `${d.key}::m${mIdx}`;
+              return {
+                text: statFmt(years[yIdx][d.key]), color: '#1a2233', underline: 'none', isEditing: false, notEditing: true,
+                editDraft: '', onDraftChange: () => {}, startEdit: () => {}, saveEdit: () => {}, onKeyDown: () => {},
+                sourceDoc: 'Calculated from projected Rooms Revenue', showTip: this.state.hoveredCell === mkey,
+                onHover: () => this.setState({ hoveredCell: mkey }), onUnhover: () => this.setState({ hoveredCell: null }),
+                onClick: () => this.setState({ selectedCell: mkey, sourcePanelOpen: true }),
+              };
+            }),
+          };
+        }
+        return {
+          isNormal: true, label: d.label, weight: d.bold ? 700 : 400, indent: d.indent + 'px', rowBg: d.highlight ? '#eaf1fb' : '#fff',
+          cells: years.map(y => {
+            const key = `${d.key}::${y.i}`;
+            return {
+              text: statFmt(y[d.key]), color: '#1a2233', underline: 'none', isEditing: false, notEditing: true,
+              editDraft: '', onDraftChange: () => {}, startEdit: () => {}, saveEdit: () => {}, onKeyDown: () => {},
+              sourceDoc: 'Calculated from projected Rooms Revenue', showTip: this.state.hoveredCell === key,
+              onHover: () => this.setState({ hoveredCell: key }), onUnhover: () => this.setState({ hoveredCell: null }),
+              onClick: () => this.setState({ selectedCell: key, sourcePanelOpen: true }),
+            };
+          }),
+        };
+      }
+      if (isMonthlyProj) {
+        const annualVal = years[yIdx][d.key];
+        const color = d.bold ? '#1a2233' : (yIdx === 0 ? 'oklch(45% 0.12 155)' : '#1a2233');
+        return {
+          isNormal: true, label: d.label, weight: d.bold ? 700 : 400, indent: d.indent + 'px',
+          rowBg: d.highlight ? '#eaf1fb' : '#fff',
+          cells: Array.from({ length: 12 }, (_, mIdx) => {
+            const mkey = `${d.key}::m${mIdx}`;
+            return {
+              text: fmt(annualVal / 12), color, underline: 'none', isEditing: false, notEditing: true,
+              editDraft: '', onDraftChange: () => {}, startEdit: () => {}, saveEdit: () => {}, onKeyDown: () => {},
+              sourceDoc: yIdx === 0 ? `1/12 of extracted Base Year (${baseYearNum})` : `Calculated: 1/12 of Year ${yIdx} (${baseYearNum + yIdx})`,
+              showTip: this.state.hoveredCell === mkey,
+              onHover: () => this.setState({ hoveredCell: mkey }), onUnhover: () => this.setState({ hoveredCell: null }),
+              onClick: () => this.setState({ selectedCell: mkey, sourcePanelOpen: true }),
+            };
+          }),
+        };
+      }
+      return {
+        isNormal: true, label: d.label, weight: d.bold ? 700 : 400, indent: d.indent + 'px',
+        rowBg: d.highlight ? '#eaf1fb' : '#fff',
+        cells: years.map(y => {
+          const key = `${d.key}::${y.i}`;
+          const overridden = this.state.projOverrides[key] !== undefined;
+          const raw = overridden ? this.state.projOverrides[key] : y[d.key];
+          const isEditing = this.state.projEditingKey === key;
+          const editable = !d.bold && metricView === 'amount';
+          let color = d.bold ? '#1a2233' : (y.i === 0 ? 'oklch(45% 0.12 155)' : '#1a2233');
+          if (overridden) color = 'oklch(45% 0.14 260)';
+          let displayText;
+          if (metricView === 'pctRev') displayText = y.TotalRevenues ? `${(raw / y.TotalRevenues * 100).toFixed(1)}%` : '—';
+          else if (metricView === 'par') displayText = (raw / 132).toFixed(1);
+          else if (metricView === 'por') displayText = y.occupiedRooms ? (raw / y.occupiedRooms).toFixed(1) : '—';
+          else displayText = fmt(raw);
+          const sourceDoc = overridden ? 'Entered by you' : d.bold ? 'Calculated total' : (y.i === 0 ? `Extracted from ${this.docsById.fullyear}` : `Calculated from Base Year at ${this.state.revGrowth}%/${this.state.expGrowth}% growth`);
+          return {
+            text: displayText, color, underline: editable ? 'underline dotted' : 'none', isEditing, notEditing: !isEditing,
+            sourceDoc, showTip: this.state.hoveredCell === key,
+            onHover: () => this.setState({ hoveredCell: key }), onUnhover: () => this.setState({ hoveredCell: null }),
+            onClick: () => this.setState({ selectedCell: key, sourcePanelOpen: true }),
+            editDraft: this.state.projEditDraft,
+            onDraftChange: (e) => this.setState({ projEditDraft: e.target.value }),
+            startEdit: editable ? () => this.setState({ projEditingKey: key, projEditDraft: String(Math.round(raw)) }) : () => {},
+            saveEdit: () => {
+              const n = Number(this.state.projEditDraft);
+              this.setState(s => ({ projEditingKey: null, projOverrides: { ...s.projOverrides, [key]: Number.isFinite(n) ? n : raw } }));
+            },
+            onKeyDown: (e) => {
+              if (e.key === 'Enter') {
+                const n = Number(this.state.projEditDraft);
+                this.setState(s => ({ projEditingKey: null, projOverrides: { ...s.projOverrides, [key]: Number.isFinite(n) ? n : raw } }));
+              }
+              if (e.key === 'Escape') this.setState({ projEditingKey: null });
+            },
+          };
+        }),
+      };
+    });
+    return {
+      baseYear: this.state.baseYear,
+      onBaseYearChange: (e) => this.setState({ baseYear: e.target.value }),
+      projYears: this.state.projYears,
+      incProjYears: () => this.setState(s => ({ projYears: Math.min(30, s.projYears + 1) })),
+      decProjYears: () => this.setState(s => ({ projYears: Math.max(1, s.projYears - 1) })),
+      addFiveYears: () => this.setState(s => ({ projYears: Math.min(30, s.projYears + 5) })),
+      revGrowth: this.state.revGrowth,
+      onRevGrowthChange: (e) => this.setState({ revGrowth: Number(e.target.value) }),
+      expGrowth: this.state.expGrowth,
+      onExpGrowthChange: (e) => this.setState({ expGrowth: Number(e.target.value) }),
+      mgmtFeePct: this.state.mgmtFeePct, onMgmtFeePctChange: (e) => this.setState({ mgmtFeePct: Number(e.target.value) }),
+      resortFee: this.state.resortFee, onResortFeeChange: (e) => this.setState({ resortFee: Number(e.target.value) }),
+      captureY1: this.state.captureY1, onCaptureY1Change: (e) => this.setState({ captureY1: Number(e.target.value) }),
+      captureY2: this.state.captureY2, onCaptureY2Change: (e) => this.setState({ captureY2: Number(e.target.value) }),
+      captureY3: this.state.captureY3, onCaptureY3Change: (e) => this.setState({ captureY3: Number(e.target.value) }),
+      otherExpInflation: this.state.otherExpInflation, onOtherExpInflationChange: (e) => this.setState({ otherExpInflation: Number(e.target.value) }),
+      exitCapPct: this.state.exitCapPct, onExitCapPctChange: (e) => this.setState({ exitCapPct: Number(e.target.value) }),
+      projGridCols, projColHeaders: headerCols, projRows,
+      projIsMonthly: isMonthlyProj, projIsAnnual: !isMonthlyProj,
+      setProjAnnual: () => this.setState({ projGranularity: 'annual' }),
+      setProjMonthly: () => this.setState({ projGranularity: 'monthly', projMonthlyYearIdx: 0 }),
+      projAnnualBg: !isMonthlyProj ? '#fff' : 'transparent', projAnnualColor: !isMonthlyProj ? '#1a2233' : '#8a8a86',
+      projMonthlyBg: isMonthlyProj ? '#fff' : 'transparent', projMonthlyColor: isMonthlyProj ? '#1a2233' : '#8a8a86',
+      projMonthlyYearIdx: this.state.projMonthlyYearIdx,
+      onProjMonthlyYearChange: (e) => this.setState({ projMonthlyYearIdx: Number(e.target.value) }),
+      projYearOptions,
+      projMetricOptions: [
+        { key: 'amount', label: '$' }, { key: 'pctRev', label: '% of Rev' }, { key: 'par', label: 'PAR' }, { key: 'por', label: 'POR' },
+      ].map(o => ({ label: o.label, onClick: () => this.setState({ projMetricView: o.key }), bg: metricView === o.key ? '#fff' : 'transparent', color: metricView === o.key ? '#1a2233' : '#8a8a86' })),
+    };
+  }
+
+  renderVals() {
+    const { periodType, granularity, detailLevel, searchQuery, cellStatus, cellValue, selectedCell, customRows, rowOrder, draggingKey, addRowOpenSection, addRowDraft } = this.state;
+    const isMonthlyView = granularity === 'monthly' || periodType === 'Monthly';
+    const isFY = periodType === 'FY', isT12 = periodType === 'T12', isMonthly = periodType === 'Monthly';
+    const fyYears = [...this.state.fyYears].sort();
+    const colHeaders = isMonthlyView ? this.months : (isT12 ? [this.state.t12MonthEnd] : fyYears.map(y => `FY ${y}`));
+    const isDetailed = detailLevel === 'detailed';
+    const showExtra = isDetailed && !isMonthlyView && !(isFY && fyYears.length > 1);
+    const extraHeaders = showExtra ? ['Budget', 'Var', '2022 Actual', 'Var'] : [];
+    const numFyCols = isFY ? Math.max(fyYears.length, 1) : 1;
+    const gridCols = `2.2fr ${isMonthlyView ? 'repeat(12,1fr)' : `repeat(${numFyCols},1fr)`}${showExtra ? ' repeat(4,1fr)' : ''}`;
+
+    const q = searchQuery.trim().toLowerCase();
+    const fmtByType = this.fmtByType.bind(this);
+    const flagged = this.flagged;
+
+    const buildRow = (r) => {
+      if (r.isHeader) return { isHeader: true, isNormal: false, key: r.key, label: r.label };
+      const cellsRaw = isMonthlyView
+        ? r.vals.map((v, i) => ({ i, val: v, key: `${r.key}-${i}` }))
+        : (isFY
+          ? fyYears.map(y => ({ i: this.fySuffix(y), val: r.fy * (this.yearMultiplier[y] ?? 1), key: `${r.key}-${this.fySuffix(y)}` }))
+          : [{ i: 'fy', val: r.fy, key: `${r.key}-fy` }]);
+      const cells = cellsRaw.map(c => {
+        const conf = flagged[c.key];
+        const status = cellStatus[c.key];
+        const val = cellValue[c.key] !== undefined ? cellValue[c.key] : c.val;
+        const isSelected = selectedCell === c.key;
+        const isTotalRow = r.weight === 700;
+        const isFlagged = !!conf && status !== 'verified' && status !== 'edited';
+        let color, bg = 'transparent', mark = '';
+        if (isTotalRow) { color = '#1a2233'; }
+        else if (r.isNew || status === 'edited') { color = 'oklch(45% 0.14 260)'; }
+        else if (isFlagged) { color = 'oklch(45% 0.12 155)'; bg = 'oklch(92% 0.05 25 / .55)'; }
+        else { color = 'oklch(45% 0.12 155)'; }
+        if (isFlagged) mark = ' ⚠';
+        if (status === 'verified') mark = ' ✓';
+        if (status === 'edited') mark = ' ✎';
+        const editable = !isTotalRow;
+        const docLabel = this.state.cellSourceDoc[c.key] || (r.isNew ? 'Added manually — no source document' : this.sourceDocName(String(c.i)));
+        return {
+          key: c.key, text: fmtByType(val, r.type) + mark, color, bg, outline: isSelected ? '2px solid #1a73e8' : 'none',
+          underline: editable ? 'underline dotted' : 'none',
+          onClick: () => this.setState({ selectedCell: c.key, sourcePanelOpen: true }),
+          sourceDoc: `Extracted from ${docLabel}`,
+          showTip: this.state.hoveredCell === c.key,
+          onHover: () => this.setState({ hoveredCell: c.key }),
+          onUnhover: () => this.setState({ hoveredCell: null }),
+        };
+      });
+      let extraCells = [];
+      if (showExtra) {
+        const budget = Math.round(r.fy * 1.14);
+        const varB = r.fy - budget;
+        const prior = Math.round(r.fy * 0.91);
+        const varP = r.fy - prior;
+        extraCells = [
+          { text: fmtByType(budget, r.type), color: '#8a8a86' },
+          { text: fmtByType(varB, r.type), color: varB < 0 ? 'oklch(50% 0.14 40)' : '#8a8a86' },
+          { text: fmtByType(prior, r.type), color: '#8a8a86' },
+          { text: fmtByType(varP, r.type), color: varP < 0 ? 'oklch(50% 0.14 40)' : '#8a8a86' },
+        ];
+      }
+      return {
+        isHeader: false, isNormal: true, key: r.key, label: r.label, weight: r.weight, indent: r.indent + 'px', rowBg: r.weight === 700 ? '#eef2fb' : '#fff', topBorder: r.weight === 700 ? '1px solid #c7d2ea' : 'none',
+        cells, extraCells,
+        canDelete: !!r.isNew,
+        onDelete: () => this.deleteRow(r.key, r.sectionKey),
+        dragOpacity: draggingKey === r.key ? 0.4 : 1,
+        onDragStart: () => this.setState({ draggingKey: r.key }),
+        onDragOver: (e) => e.preventDefault(),
+        onDrop: (e) => { e.preventDefault(); this.reorderRow(r.sectionKey, draggingKey, r.key, r.sectionNaturalKeys); },
+      };
+    };
+
+    // group into sections by preceding header, so custom rows / drag-reorder / add-row are scoped per group
+    const sections = [];
+    let current = { key: '__root', headerDef: null, natural: [] };
+    this.rawRows.forEach(r => {
+      if (r.isHeader) { sections.push(current); current = { key: r.key, headerDef: r, natural: [] }; }
+      else current.natural.push(r.key);
+    });
+    sections.push(current);
+    customRows.forEach(cr => { const sec = sections.find(s => s.key === cr.sectionKey) || sections[sections.length - 1]; sec.natural.push(cr.key); });
+
+    const defsByKey = new Map([...this.rawRows, ...customRows].map(d => [d.key, d]));
+    const cleaned = [];
+    sections.forEach(sec => {
+      const saved = rowOrder[sec.key] || [];
+      const order = [...saved.filter(k => sec.natural.includes(k)), ...sec.natural.filter(k => !saved.includes(k))];
+      const visibleKeys = order.filter(k => {
+        const def = defsByKey.get(k);
+        return def && (isDetailed || !def.detailOnly) && (!q || def.label.toLowerCase().includes(q));
+      });
+      if (sec.headerDef && q && !visibleKeys.length) return;
+      if (sec.headerDef && isDetailed) cleaned.push({ isHeader: true, isNormal: false, key: sec.headerDef.key, label: sec.headerDef.label });
+      visibleKeys.forEach(k => {
+        const def = defsByKey.get(k);
+        cleaned.push(buildRow({ ...def, sectionKey: sec.key, sectionNaturalKeys: order }));
+      });
+      if (!q && visibleKeys.length) {
+        cleaned.push({
+          isHeader: false, isNormal: false, isAddRow: true, key: `addrow-${sec.key}`,
+          open: addRowOpenSection === sec.key, closed: addRowOpenSection !== sec.key, draft: addRowDraft,
+          openIt: () => this.setState({ addRowOpenSection: sec.key, addRowDraft: '' }),
+          cancel: () => this.setState({ addRowOpenSection: null, addRowDraft: '' }),
+          onDraftChange: (e) => this.setState({ addRowDraft: e.target.value }),
+          confirm: () => {
+            if (!addRowDraft.trim()) return;
+            const key = `custom-${Date.now()}`;
+            this.setState(s => ({
+              customRows: [...s.customRows, { key, sectionKey: sec.key, label: addRowDraft.trim(), weight: 400, indent: 26, type: 'money', vals: new Array(12).fill(0), fy: 0, isNew: true }],
+              addRowOpenSection: null, addRowDraft: '',
+            }));
+          },
+        });
+      }
+    });
+
+    const visibleCellKeys = new Set();
+    cleaned.forEach(r => { if (r.cells) r.cells.forEach(c => visibleCellKeys.add(c.key)); });
+    const flaggedKeys = Object.keys(flagged).filter(k => visibleCellKeys.has(k));
+    const remainingFlagged = flaggedKeys.filter(k => cellStatus[k] !== 'verified' && cellStatus[k] !== 'edited');
+    const stepFlagged = (dir) => {
+      const pool = remainingFlagged.length ? remainingFlagged : flaggedKeys;
+      if (!pool.length) return;
+      const curIdx = pool.indexOf(selectedCell);
+      const nextIdx = curIdx === -1 ? 0 : (curIdx + dir + pool.length) % pool.length;
+      const next = pool[nextIdx];
+      if (next) this.setState({ selectedCell: next });
+    };
+    const nextFlaggedInfo = { count: remainingFlagged.length, goTo: () => stepFlagged(1), goBack: () => stepFlagged(-1) };
+
+    const dashIdx = selectedCell.lastIndexOf('-');
+    const selRowKey = selectedCell.slice(0, dashIdx);
+    const selColRaw = selectedCell.slice(dashIdx + 1);
+    const selRow = this.rawRows.find(r => r.key === selRowKey) || customRows.find(r => r.key === selRowKey);
+    const selConf = flagged[selectedCell];
+    const selStatus = cellStatus[selectedCell];
+    const selYearMatch = selColRaw.match(/^fy(\d{4})?$/);
+    const rawSelVal = selRow ? (selYearMatch ? selRow.fy * (this.yearMultiplier[selYearMatch[1] || '2023'] ?? 1) : selRow.vals[Number(selColRaw)]) : 0;
+    const selVal = cellValue[selectedCell] !== undefined ? cellValue[selectedCell] : rawSelVal;
+    const selColLabel = selYearMatch ? (isT12 ? this.state.t12MonthEnd : `FY ${selYearMatch[1] || '2023'}`) : this.months[Number(selColRaw)];
+    const selectedField = selRow ? {
+      label: `${selRow.label} · ${selColLabel}`, value: fmtByType(selVal, selRow.type), conf: selConf, status: selStatus,
+      isFlagged: !!selConf && selStatus !== 'verified' && selStatus !== 'edited',
+      isVerified: selStatus === 'verified', isEdited: selStatus === 'edited',
+      isPlainEditable: !selConf && selStatus !== 'verified' && selStatus !== 'edited',
+      isEditing: this.state.editingCell === selectedCell, editDraft: this.state.editDraft,
+      onDraftChange: (e) => this.setState({ editDraft: e.target.value }),
+      accept: () => this.acceptCell(selectedCell), startEdit: () => this.startEdit(selectedCell, selVal),
+      saveEdit: () => this.saveEdit(selectedCell, selVal, selRow.type), revert: () => this.revertCell(selectedCell),
+      editReason: this.state.editReason || '',
+      onReasonChange: (e) => this.setState({ editReason: e.target.value }),
+      auditTrail: this.auditFor(selectedCell), hasAudit: (this.state.cellAudit[selectedCell] || []).length > 0,
+      sourceDoc: this.state.cellSourceDoc[selectedCell] || this.sourceDocName(selColRaw),
+      sourceDocOptions: this.allDocOptions,
+      onSourceDocChange: (e) => { const v = e.target.value; this.setState(s => ({ cellSourceDoc: { ...s.cellSourceDoc, [selectedCell]: v } })); this.logAudit(selectedCell, { action: 'Source reassigned to ' + v, kind: 'source' }); },
+      openSource: () => window.open('about:blank', '_blank'),
+    } : (selectedCell.includes('::') ? this.buildProjSelectedField(selectedCell) : null);
+
+    const arrivalBanner = (this.state.arrivalDocId && !this.state.bannerDismissed) ? {
+      docName: this.docsById[this.state.arrivalDocId],
+      dismiss: () => this.setState({ bannerDismissed: true }),
+    } : null;
+
+    return {
+      arrivalBanner,
+      navItems: this.buildNavItems('financials', this.props.onNavigate),
+      goToDataRoom: () => { this.props.onNavigate ? this.props.onNavigate('dataroom') : window.location.href = './Data Room v2.dc.html'; },
+      goToOverview: () => { this.props.onNavigate ? this.props.onNavigate('overview') : window.location.href = './Overview Tab v3.dc.html'; },
+      sourcePanelOpen: this.state.sourcePanelOpen,
+      sourcePanelClosed: !this.state.sourcePanelOpen,
+      toggleSourcePanel: () => this.setState(s => ({ sourcePanelOpen: !s.sourcePanelOpen })),
+      periodType, isFY, isT12, isMonthly,
+      onPeriodTypeChange: (e) => this.setState({ periodType: e.target.value, selectedCell: 'EBITDA-fy' }),
+      fyYearChips: ['2021', '2022', '2023', '2024'].map(y => {
+        const active = fyYears.includes(y);
+        return {
+          label: y, active,
+          bg: active ? '#14213d' : '#fff', color: active ? '#fff' : '#3a3f47', borderColor: active ? '#14213d' : '#e2e1dc', weight: active ? 600 : 500,
+          toggle: () => this.setState(s => {
+            const has = s.fyYears.includes(y);
+            const next = has ? s.fyYears.filter(v => v !== y) : [...s.fyYears, y];
+            return { fyYears: next.length ? next : s.fyYears };
+          }),
+        };
+      }),
+      t12MonthEnd: this.state.t12MonthEnd, onT12Change: (e) => this.setState({ t12MonthEnd: e.target.value }),
+      monthlyMonth: this.state.monthlyMonth, onMonthlyMonthChange: (e) => this.setState({ monthlyMonth: e.target.value }),
+      monthlyYear: this.state.monthlyYear, onMonthlyYearChange: (e) => this.setState({ monthlyYear: e.target.value }),
+      searchQuery, onSearchChange: (e) => this.setState({ searchQuery: e.target.value }),
+      setAnnualGranularity: () => this.setState({ granularity: 'annual', selectedCell: 'EBITDA-fy' }),
+      setMonthlyGranularity: () => this.setState({ granularity: 'monthly', selectedCell: 'EBITDA-0' }),
+      annualGranBg: granularity === 'annual' ? '#fff' : 'transparent', annualGranColor: granularity === 'annual' ? '#1a2233' : '#8a8a86', annualGranShadow: granularity === 'annual' ? '0 1px 2px rgba(0,0,0,.06)' : 'none',
+      monthlyGranBg: granularity === 'monthly' ? '#fff' : 'transparent', monthlyGranColor: granularity === 'monthly' ? '#1a2233' : '#8a8a86', monthlyGranShadow: granularity === 'monthly' ? '0 1px 2px rgba(0,0,0,.06)' : 'none',
+      setSummaryMode: () => this.setState({ detailLevel: 'summary' }),
+      setDetailedMode: () => this.setState({ detailLevel: 'detailed' }),
+      summaryModeBg: detailLevel === 'summary' ? '#fff' : 'transparent', summaryModeColor: detailLevel === 'summary' ? '#1a2233' : '#8a8a86', summaryModeShadow: detailLevel === 'summary' ? '0 1px 2px rgba(0,0,0,.06)' : 'none',
+      detailedModeBg: detailLevel === 'detailed' ? '#fff' : 'transparent', detailedModeColor: detailLevel === 'detailed' ? '#1a2233' : '#8a8a86', detailedModeShadow: detailLevel === 'detailed' ? '0 1px 2px rgba(0,0,0,.06)' : 'none',
+      showComparisonNote: isDetailed && isMonthlyView,
+      headlineConfidence: 94,
+      colHeaders, extraHeaders, gridCols, rows: cleaned, selectedField, nextFlaggedInfo,
+      isHistoricalsTab: this.state.financialsTab === 'historicals',
+      isProjectionsTab: this.state.financialsTab === 'projections',
+      historicalsTabColor: this.state.financialsTab === 'historicals' ? '#14213d' : '#9a9a95',
+      historicalsTabBorder: this.state.financialsTab === 'historicals' ? '2px solid #14213d' : '2px solid transparent',
+      projectionsTabColor: this.state.financialsTab === 'projections' ? '#14213d' : '#9a9a95',
+      projectionsTabBorder: this.state.financialsTab === 'projections' ? '2px solid #14213d' : '2px solid transparent',
+      setHistoricalsTab: () => this.setState({ financialsTab: 'historicals' }),
+      subTabs: [['historicals', 'Historicals'], ['projections', 'Projections']].map(([key, label]) => {
+        const active = this.state.financialsTab === key;
+        return {
+          label, weight: active ? 700 : 500, color: active ? '#14213d' : '#9a9a95',
+          border: active ? '2px solid #14213d' : '2px solid transparent',
+          select: () => this.setState({ financialsTab: key }),
+        };
+      }),
+      subTabCaption: this.state.financialsTab === 'projections'
+        ? 'The forward model — assumptions, growth and projected performance'
+        : 'Actual operating history, normalized and traceable to the P&L',
+      setProjectionsTab: () => this.setState({ financialsTab: 'projections' }),
+      ...this.renderProjectionVals(),
+      copilotOpen: this.state.copilotOpen,
+      copilotClosedForDock: !this.state.copilotOpen,
+      copilotTransform: this.state.copilotOpen ? 'translateX(0)' : 'translateX(100%)',
+      toggleCopilot: () => this.setState(s => ({ copilotOpen: !s.copilotOpen })),
+      closeCopilot: () => this.setState({ copilotOpen: false }),
+      copilotMessages: this.state.copilotMessages.map(m => ({
+        text: m.text,
+        align: m.from === 'user' ? 'flex-end' : 'flex-start',
+        bg: m.from === 'user' ? '#14213d' : '#f3f2ee',
+        color: m.from === 'user' ? '#fff' : '#1a2233',
+      })),
+      copilotDraft: this.state.copilotDraft,
+      onCopilotDraftChange: (e) => this.setState({ copilotDraft: e.target.value }),
+      onCopilotKeyDown: (e) => { if (e.key === 'Enter') this.sendCopilotMessage(); },
+      sendCopilotMessage: () => this.sendCopilotMessage(),
+      copilotProgress: [
+        { label: 'Documents', state: 'done' },
+        { label: 'Historical Financials', state: this.state.financialsTab === 'projections' ? 'done' : 'current' },
+        { label: 'Projections', state: this.state.financialsTab === 'projections' ? 'current' : 'todo' },
+        { label: 'Underwriting', state: 'todo' },
+        { label: 'Investment Review', state: 'todo' },
+      ].map(p => ({ label: p.label, mark: p.state === 'done' ? '✓' : p.state === 'current' ? '→' : '○', color: p.state === 'done' ? 'oklch(45% 0.12 155)' : p.state === 'current' ? '#2f4a8c' : '#9a9a95', weight: p.state === 'current' ? 700 : 400 })),
+      copilotSuggestions: this.state.financialsTab === 'projections' ? [
+        { label: 'What should I do next?', onClick: () => this.setState(s => ({ copilotMessages: [...s.copilotMessages, { from: 'user', text: 'What should I do next?' }, { from: 'bot', text: this.copilotReplyFor('what should I do next') }] })) },
+        { label: 'Guide me through Projections', onClick: () => this.setState(s => ({ copilotMessages: [...s.copilotMessages, { from: 'user', text: 'Walk me through Projections' }, { from: 'bot', text: this.copilotReplyFor('guide') }] })) },
+        { label: "What's driving this?", onClick: () => this.setState(s => ({ copilotMessages: [...s.copilotMessages, { from: 'user', text: "What's driving this projection?" }, { from: 'bot', text: this.copilotReplyFor('driving') }] })) },
+        { label: 'Am I done with this step?', onClick: () => this.setState(s => ({ copilotMessages: [...s.copilotMessages, { from: 'user', text: 'Am I done with this step?' }, { from: 'bot', text: this.copilotReplyFor('am I done with this step') }] })) },
+        { label: 'Biggest risks', onClick: () => this.setState(s => ({ copilotMessages: [...s.copilotMessages, { from: 'user', text: 'What are the biggest underwriting risks?' }, { from: 'bot', text: '1) Revenue growth exceeds historical CAGR. 2) Expense inflation assumption is below historical trend. 3) Exit cap rate compresses vs. entry. 4) Management fee normalization (3.0% OM vs 4.2% actual) affects EBITDA. 5) Resort fee capture ramps quickly in Yr 1-2.' }] })) },
+      ] : [
+        { label: 'What should I do next?', onClick: () => this.setState(s => ({ copilotMessages: [...s.copilotMessages, { from: 'user', text: 'What should I do next?' }, { from: 'bot', text: this.copilotReplyFor('what should I do next') }] })) },
+        { label: 'Guide me through this', onClick: () => this.setState(s => ({ copilotMessages: [...s.copilotMessages, { from: 'user', text: 'Walk me through the Historical P&L' }, { from: 'bot', text: this.copilotReplyFor('guide') }] })) },
+        { label: "What changed YoY?", onClick: () => this.setState(s => ({ copilotMessages: [...s.copilotMessages, { from: 'user', text: 'What changed YoY?' }, { from: 'bot', text: this.copilotReplyFor('anomaly decline') }] })) },
+        { label: 'Am I done with this step?', onClick: () => this.setState(s => ({ copilotMessages: [...s.copilotMessages, { from: 'user', text: 'Am I done with this step?' }, { from: 'bot', text: this.copilotReplyFor('am I done with this step') }] })) },
+        { label: 'Compare OM vs. actuals', onClick: () => this.setState(s => ({ copilotMessages: [...s.copilotMessages, { from: 'user', text: 'Compare OM vs. actuals' }, { from: 'bot', text: this.copilotReplyFor('om vs actuals') }] })) },
+      ],
+    };
+  }
+}
+
+</script>
+</body>
+</html>

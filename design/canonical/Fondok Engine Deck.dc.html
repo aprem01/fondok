@@ -1,0 +1,382 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+
+<helmet>
+  <style>
+    body{margin:0;background:#0b1120;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,Arial,sans-serif;}
+    a{color:#8fb0f0}a:hover{color:#c9d9f8}
+    :root{--type-title:64px;--type-subtitle:44px;--type-body:34px;--type-small:28px;--pad-top:100px;--pad-bottom:80px;--pad-x:100px;--gap-title:52px;--gap-item:28px;}
+  </style>
+</helmet>
+<template id="__bundler_thumbnail">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 120 56" data-bg-color="#14213d"><rect width="120" height="56" fill="#14213d"/><g fill="none" stroke="#f5f4f0" stroke-width="2"><rect x="20" y="14" width="16" height="28"/><rect x="52" y="20" width="16" height="16"/><rect x="84" y="8" width="16" height="32"/></g></svg>
+</template>
+<x-import component-from-global-scope="deck-stage" from="./deck-stage.js" width="1920" height="1080" hint-size="100%,100%">
+
+  <section data-label="Title" data-screen-label="01" data-speaker-notes="Frame the thesis: the model builds itself from the data room." style="background:#14213d;color:#fff;display:flex;flex-direction:column;justify-content:center;padding:var(--pad-top) var(--pad-x) var(--pad-bottom)">
+    <div style="display:flex;align-items:center;gap:18px;margin-bottom:56px">
+      <div style="width:60px;height:60px;background:#2f4a8c;border-radius:12px;display:flex;align-items:center;justify-content:center;font-size:30px;font-weight:700">F</div>
+      <div style="font-size:38px;font-weight:700;letter-spacing:-.01em">Fondok.</div>
+    </div>
+    <h1 style="font-size:96px;line-height:1.05;margin:0 0 32px;font-weight:600;letter-spacing:-.02em;max-width:1400px;text-wrap:pretty">The underwriting model that built itself from the data room</h1>
+    <p style="font-size:var(--type-subtitle);color:#9fb0d0;margin:0;max-width:1200px;line-height:1.4">Engine architecture review — Kimpton / The Angler, Miami Beach</p>
+  </section>
+
+  <section data-label="Architecture" data-screen-label="02" data-speaker-notes="Documents never feed engines directly. Everything routes through the normalized layer." style="background:#f5f4f0;color:#1a2233;display:flex;flex-direction:column;padding:var(--pad-top) var(--pad-x) var(--pad-bottom)">
+    <h2 style="font-size:var(--type-title);margin:0 0 20px;font-weight:600;letter-spacing:-.01em">Product Architecture</h2>
+    <p style="font-size:var(--type-body);color:#6b6f76;margin:0 0 var(--gap-title);max-width:1300px;line-height:1.4">A single normalized data point can be consumed by many engines. Documents never feed an engine directly.</p>
+    <div style="display:flex;align-items:stretch;gap:20px">
+      <div style="flex:1;background:#fff;border:1px solid #e2e1dc;border-radius:14px;padding:36px 30px">
+        <div style="font-size:var(--type-small);font-weight:700;color:#8a8a86;letter-spacing:.04em;margin-bottom:18px">01</div>
+        <div style="font-size:38px;font-weight:600;margin-bottom:14px">Source Documents</div>
+        <div style="font-size:var(--type-small);color:#6b6f76;line-height:1.4">72 Kimpton files + 2 CoStar reports</div>
+      </div>
+      <div style="display:flex;align-items:center;font-size:44px;color:#c3c2bd">→</div>
+      <div style="flex:1;background:#fff;border:1px solid #e2e1dc;border-radius:14px;padding:36px 30px">
+        <div style="font-size:var(--type-small);font-weight:700;color:#8a8a86;letter-spacing:.04em;margin-bottom:18px">02</div>
+        <div style="font-size:38px;font-weight:600;margin-bottom:14px">Extraction</div>
+        <div style="font-size:var(--type-small);color:#6b6f76;line-height:1.4">Field-level capture with cell-level provenance</div>
+      </div>
+      <div style="display:flex;align-items:center;font-size:44px;color:#c3c2bd">→</div>
+      <div style="flex:1.15;background:#14213d;color:#fff;border-radius:14px;padding:36px 30px">
+        <div style="font-size:var(--type-small);font-weight:700;color:#8b93a7;letter-spacing:.04em;margin-bottom:18px">03</div>
+        <div style="font-size:38px;font-weight:600;margin-bottom:14px">Normalized Data Layer</div>
+        <div style="font-size:var(--type-small);color:#9fb0d0;line-height:1.4">The single source of truth</div>
+      </div>
+      <div style="display:flex;align-items:center;font-size:44px;color:#c3c2bd">→</div>
+      <div style="flex:1;background:#fff;border:1px solid #e2e1dc;border-radius:14px;padding:36px 30px">
+        <div style="font-size:var(--type-small);font-weight:700;color:#8a8a86;letter-spacing:.04em;margin-bottom:18px">04</div>
+        <div style="font-size:38px;font-weight:600;margin-bottom:14px">Calculation Engines</div>
+        <div style="font-size:var(--type-small);color:#6b6f76;line-height:1.4">Ten engines, one shared data spine</div>
+      </div>
+    </div>
+    <div style="margin-top:44px;background:#eef2fb;border:1px solid #dbe3f5;border-radius:12px;padding:28px 32px;font-size:var(--type-small);color:#2f4a8c;line-height:1.5">Kimpton P&amp;L → historical.noi → Financials · Forecasting · Investment · Cash Flow · Returns</div>
+  </section>
+
+  <section data-label="Workflow" data-screen-label="03" data-speaker-notes="Read the flow left to right. Market is a cross-cutting reference layer, not a step." style="background:#fff;color:#1a2233;display:flex;flex-direction:column;padding:var(--pad-top) var(--pad-x) var(--pad-bottom)">
+    <h2 style="font-size:var(--type-title);margin:0 0 20px;font-weight:600;letter-spacing:-.01em">Underwriting Workflow</h2>
+    <p style="font-size:var(--type-body);color:#6b6f76;margin:0 0 var(--gap-title);max-width:1300px;line-height:1.4">Twelve tabs, one coherent sequence — not twelve independent applications.</p>
+    <div style="display:flex;flex-wrap:wrap;gap:18px;max-width:1560px">
+      <div style="background:#f5f4f0;border-radius:10px;padding:22px 30px;font-size:var(--type-body);font-weight:600">Data Room</div>
+      <div style="background:#f5f4f0;border-radius:10px;padding:22px 30px;font-size:var(--type-body);font-weight:600">Financials</div>
+      <div style="background:#f5f4f0;border-radius:10px;padding:22px 30px;font-size:var(--type-body);font-weight:600">Forecasting</div>
+      <div style="background:#f5f4f0;border-radius:10px;padding:22px 30px;font-size:var(--type-body);font-weight:600">Investment</div>
+      <div style="background:#f5f4f0;border-radius:10px;padding:22px 30px;font-size:var(--type-body);font-weight:600">CapEx</div>
+      <div style="background:#f5f4f0;border-radius:10px;padding:22px 30px;font-size:var(--type-body);font-weight:600">Debt</div>
+      <div style="background:#f5f4f0;border-radius:10px;padding:22px 30px;font-size:var(--type-body);font-weight:600">Cash Flow</div>
+      <div style="background:#f5f4f0;border-radius:10px;padding:22px 30px;font-size:var(--type-body);font-weight:600">Returns</div>
+      <div style="background:#f5f4f0;border-radius:10px;padding:22px 30px;font-size:var(--type-body);font-weight:600">Analysis</div>
+      <div style="background:#f5f4f0;border-radius:10px;padding:22px 30px;font-size:var(--type-body);font-weight:600">Scenarios</div>
+      <div style="background:#14213d;color:#fff;border-radius:10px;padding:22px 30px;font-size:var(--type-body);font-weight:600">Overview</div>
+      <div style="background:#eef2fb;color:#2f4a8c;border:1px solid #dbe3f5;border-radius:10px;padding:22px 30px;font-size:var(--type-body);font-weight:600">Market — cross-cutting</div>
+    </div>
+  </section>
+
+  <section data-label="Data Lineage" data-screen-label="04" data-speaker-notes="This is the product's spine. Every number carries its status and its source." style="background:#f5f4f0;color:#1a2233;display:flex;flex-direction:column;padding:var(--pad-top) var(--pad-x) var(--pad-bottom)">
+    <h2 style="font-size:var(--type-title);margin:0 0 20px;font-weight:600;letter-spacing:-.01em">Data Lineage</h2>
+    <p style="font-size:var(--type-body);color:#6b6f76;margin:0 0 var(--gap-title);max-width:1300px;line-height:1.4">Five states, applied consistently across every engine. Hover any value to reach the source document, sheet and cell.</p>
+    <div style="display:grid;grid-template-columns:repeat(5,1fr);gap:20px">
+      <div style="background:#fff;border:1px solid #e2e1dc;border-radius:14px;padding:32px 26px">
+        <div style="width:20px;height:20px;border-radius:50%;background:oklch(45% 0.12 155);margin-bottom:20px"></div>
+        <div style="font-size:34px;font-weight:600;margin-bottom:12px">Sourced</div>
+        <div style="font-size:var(--type-small);color:#6b6f76;line-height:1.4">Read directly from a document</div>
+      </div>
+      <div style="background:#fff;border:1px solid #e2e1dc;border-radius:14px;padding:32px 26px">
+        <div style="width:20px;height:20px;border-radius:50%;background:oklch(50% 0.1 200);margin-bottom:20px"></div>
+        <div style="font-size:34px;font-weight:600;margin-bottom:12px">Normalized</div>
+        <div style="font-size:var(--type-small);color:#6b6f76;line-height:1.4">Mapped into the shared data layer</div>
+      </div>
+      <div style="background:#fff;border:1px solid #e2e1dc;border-radius:14px;padding:32px 26px">
+        <div style="width:20px;height:20px;border-radius:50%;background:oklch(45% 0.14 260);margin-bottom:20px"></div>
+        <div style="font-size:34px;font-weight:600;margin-bottom:12px">Assumption</div>
+        <div style="font-size:var(--type-small);color:#6b6f76;line-height:1.4">Analyst input, editable in place</div>
+      </div>
+      <div style="background:#fff;border:1px solid #e2e1dc;border-radius:14px;padding:32px 26px">
+        <div style="width:20px;height:20px;border-radius:50%;background:#1a2233;margin-bottom:20px"></div>
+        <div style="font-size:34px;font-weight:600;margin-bottom:12px">Calculated</div>
+        <div style="font-size:var(--type-small);color:#6b6f76;line-height:1.4">Derived by an engine</div>
+      </div>
+      <div style="background:#fff;border:1px solid #e2e1dc;border-radius:14px;padding:32px 26px">
+        <div style="width:20px;height:20px;border-radius:50%;border:3px dashed #9a9a95;margin-bottom:20px"></div>
+        <div style="font-size:34px;font-weight:600;margin-bottom:12px">Missing</div>
+        <div style="font-size:var(--type-small);color:#6b6f76;line-height:1.4">Flagged before it reaches IC</div>
+      </div>
+    </div>
+  </section>
+
+  <section data-label="Existing Tabs" data-screen-label="05" data-speaker-notes="These two ship as-is. No changes this iteration." style="background:#14213d;color:#fff;display:flex;flex-direction:column;justify-content:center;padding:var(--pad-top) var(--pad-x) var(--pad-bottom)">
+    <div style="font-size:var(--type-small);color:#8b93a7;font-weight:700;letter-spacing:.08em;margin-bottom:28px">CURRENT STATE</div>
+    <h2 style="font-size:76px;margin:0 0 var(--gap-title);font-weight:600;letter-spacing:-.01em">Data Room and Financials ship unchanged</h2>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:32px;max-width:1500px">
+      <div style="background:rgba(255,255,255,.07);border-radius:14px;padding:36px 34px">
+        <div style="font-size:42px;font-weight:600;margin-bottom:16px">Data Room</div>
+        <div style="font-size:var(--type-small);color:#9fb0d0;line-height:1.5">Ingestion, organization, extraction and source traceability for all 74 documents.</div>
+      </div>
+      <div style="background:rgba(255,255,255,.07);border-radius:14px;padding:36px 34px">
+        <div style="font-size:42px;font-weight:600;margin-bottom:16px">Financials</div>
+        <div style="font-size:var(--type-small);color:#9fb0d0;line-height:1.5">Historical P&amp;L representation — the first engine to consume normalized data.</div>
+      </div>
+    </div>
+  </section>
+
+  <section data-label="Forecasting" data-screen-label="06" data-speaker-notes="Benchmarks sit beside every growth assumption so nothing is entered blind." style="background:#fff;color:#1a2233;display:flex;flex-direction:column;padding:var(--pad-top) var(--pad-x) var(--pad-bottom)">
+    <div style="font-size:var(--type-small);color:#8a8a86;font-weight:700;letter-spacing:.08em;margin-bottom:20px">ENGINE 01</div>
+    <h2 style="font-size:var(--type-title);margin:0 0 20px;font-weight:600;letter-spacing:-.01em">Forecasting</h2>
+    <p style="font-size:var(--type-body);color:#6b6f76;margin:0 0 var(--gap-title);max-width:1300px;line-height:1.4">Historical performance plus market data becomes the forward operating model.</p>
+    <div style="display:grid;grid-template-columns:1.1fr 1fr;gap:44px;align-items:start">
+      <div style="display:flex;flex-direction:column;gap:var(--gap-item)">
+        <div style="font-size:var(--type-body);line-height:1.45">Revenue build from occupancy, ADR and RevPAR through to total revenue</div>
+        <div style="font-size:var(--type-body);line-height:1.45">Departmental and undistributed expense structure with fee assumptions</div>
+        <div style="font-size:var(--type-body);line-height:1.45">GOP and NOI with margin at every year of the hold</div>
+      </div>
+      <div style="background:#f5f4f0;border-radius:14px;padding:34px 32px">
+        <div style="font-size:var(--type-small);font-weight:700;color:#8a8a86;letter-spacing:.04em;margin-bottom:22px">BENCHMARKED IN PLACE</div>
+        <div style="display:flex;justify-content:space-between;font-size:32px;padding:12px 0;border-bottom:1px solid #e2e1dc"><span style="color:#6b6f76">Property ADR</span><span style="font-weight:600">$275</span></div>
+        <div style="display:flex;justify-content:space-between;font-size:32px;padding:12px 0;border-bottom:1px solid #e2e1dc"><span style="color:#6b6f76">Comp Set ADR</span><span style="font-weight:600">$271</span></div>
+        <div style="display:flex;justify-content:space-between;font-size:32px;padding:12px 0"><span style="color:#6b6f76">Market ADR</span><span style="font-weight:600">$295</span></div>
+      </div>
+    </div>
+  </section>
+
+  <section data-label="Investment" data-screen-label="07" data-speaker-notes="Nothing on this tab is re-entered — it consumes Financials, Forecasting, Market and CapEx." style="background:#f5f4f0;color:#1a2233;display:flex;flex-direction:column;padding:var(--pad-top) var(--pad-x) var(--pad-bottom)">
+    <div style="font-size:var(--type-small);color:#8a8a86;font-weight:700;letter-spacing:.08em;margin-bottom:20px">ENGINE 02</div>
+    <h2 style="font-size:var(--type-title);margin:0 0 20px;font-weight:600;letter-spacing:-.01em">Investment</h2>
+    <p style="font-size:var(--type-body);color:#6b6f76;margin:0 0 var(--gap-title);max-width:1300px;line-height:1.4">What we're buying, what we're paying, and why the investment makes sense.</p>
+    <div style="display:grid;grid-template-columns:repeat(5,1fr);gap:20px;margin-bottom:44px">
+      <div style="background:#fff;border:1px solid #e2e1dc;border-radius:14px;padding:30px 26px">
+        <div style="font-size:26px;color:#8a8a86;font-weight:600;margin-bottom:14px">Purchase Price</div>
+        <div style="font-size:46px;font-weight:700">$36.44M</div>
+      </div>
+      <div style="background:#fff;border:1px solid #e2e1dc;border-radius:14px;padding:30px 26px">
+        <div style="font-size:26px;color:#8a8a86;font-weight:600;margin-bottom:14px">Price / Key</div>
+        <div style="font-size:46px;font-weight:700">$276K</div>
+      </div>
+      <div style="background:#fff;border:1px solid #e2e1dc;border-radius:14px;padding:30px 26px">
+        <div style="font-size:26px;color:#8a8a86;font-weight:600;margin-bottom:14px">Going-In Yield</div>
+        <div style="font-size:46px;font-weight:700">7.00%</div>
+      </div>
+      <div style="background:#fff;border:1px solid #e2e1dc;border-radius:14px;padding:30px 26px">
+        <div style="font-size:26px;color:#8a8a86;font-weight:600;margin-bottom:14px">Total Basis</div>
+        <div style="font-size:46px;font-weight:700">$41.86M</div>
+      </div>
+      <div style="background:#fff;border:1px solid #e2e1dc;border-radius:14px;padding:30px 26px">
+        <div style="font-size:26px;color:#8a8a86;font-weight:600;margin-bottom:14px">Yield on Cost</div>
+        <div style="font-size:46px;font-weight:700">10.43%</div>
+      </div>
+    </div>
+    <div style="font-size:var(--type-body);color:#6b6f76;line-height:1.45;max-width:1400px">Value creation is broken into renovation, rate growth, occupancy upside, expense optimization and ancillary revenue — each with its own NOI contribution.</div>
+  </section>
+
+  <section data-label="Market" data-screen-label="08" data-speaker-notes="Market informs but never overwrites property-level financials." style="background:#fff;color:#1a2233;display:flex;flex-direction:column;padding:var(--pad-top) var(--pad-x) var(--pad-bottom)">
+    <div style="font-size:var(--type-small);color:#8a8a86;font-weight:700;letter-spacing:.08em;margin-bottom:20px">ENGINE 03</div>
+    <h2 style="font-size:var(--type-title);margin:0 0 20px;font-weight:600;letter-spacing:-.01em">Market</h2>
+    <p style="font-size:var(--type-body);color:#6b6f76;margin:0 0 var(--gap-title);max-width:1300px;line-height:1.4">STR, CoStar and sales comps consolidated into one reference layer.</p>
+    <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:20px;margin-bottom:40px">
+      <div style="background:#f5f4f0;border-radius:14px;padding:32px 28px">
+        <div style="font-size:38px;font-weight:600;margin-bottom:12px">Performance</div>
+        <div style="font-size:var(--type-small);color:#6b6f76;line-height:1.4">Occupancy, ADR, RevPAR and growth trends</div>
+      </div>
+      <div style="background:#f5f4f0;border-radius:14px;padding:32px 28px">
+        <div style="font-size:38px;font-weight:600;margin-bottom:12px">Comp Set</div>
+        <div style="font-size:var(--type-small);color:#6b6f76;line-height:1.4">Occupancy, ADR, RevPAR indices and RGI</div>
+      </div>
+      <div style="background:#f5f4f0;border-radius:14px;padding:32px 28px">
+        <div style="font-size:38px;font-weight:600;margin-bottom:12px">Supply</div>
+        <div style="font-size:var(--type-small);color:#6b6f76;line-height:1.4">Pipeline, expected openings, demand trends</div>
+      </div>
+      <div style="background:#f5f4f0;border-radius:14px;padding:32px 28px">
+        <div style="font-size:38px;font-weight:600;margin-bottom:12px">Transactions</div>
+        <div style="font-size:var(--type-small);color:#6b6f76;line-height:1.4">Comparable sales, price per key, cap rates</div>
+      </div>
+    </div>
+    <div style="background:#14213d;color:#fff;border-radius:14px;padding:34px 36px;display:flex;align-items:baseline;gap:28px">
+      <div style="font-size:72px;font-weight:700">612 keys</div>
+      <div style="font-size:var(--type-body);color:#9fb0d0;line-height:1.4">under construction in the comp set, delivering 2027–2028</div>
+    </div>
+  </section>
+
+  <section data-label="CapEx" data-screen-label="09" data-speaker-notes="Deal type drives the capital workflow. Acquisition here; a new build would show development costs." style="background:#f5f4f0;color:#1a2233;display:flex;flex-direction:column;padding:var(--pad-top) var(--pad-x) var(--pad-bottom)">
+    <div style="font-size:var(--type-small);color:#8a8a86;font-weight:700;letter-spacing:.08em;margin-bottom:20px">ENGINE 04</div>
+    <h2 style="font-size:var(--type-title);margin:0 0 20px;font-weight:600;letter-spacing:-.01em">CapEx</h2>
+    <p style="font-size:var(--type-body);color:#6b6f76;margin:0 0 var(--gap-title);max-width:1300px;line-height:1.4">An acquisition-specific workflow, not a universal tab. The onboarding wizard's deal type decides which capital engine appears.</p>
+    <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:20px;margin-bottom:44px">
+      <div style="background:#fff;border:1px solid #e2e1dc;border-radius:14px;padding:30px 26px">
+        <div style="font-size:26px;color:#8a8a86;font-weight:600;margin-bottom:14px">Total CapEx</div>
+        <div style="font-size:46px;font-weight:700">$6.37M</div>
+      </div>
+      <div style="background:#fff;border:1px solid #e2e1dc;border-radius:14px;padding:30px 26px">
+        <div style="font-size:26px;color:#8a8a86;font-weight:600;margin-bottom:14px">Renovation / Key</div>
+        <div style="font-size:46px;font-weight:700">$35K</div>
+      </div>
+      <div style="background:#fff;border:1px solid #e2e1dc;border-radius:14px;padding:30px 26px">
+        <div style="font-size:26px;color:#8a8a86;font-weight:600;margin-bottom:14px">PIP</div>
+        <div style="font-size:46px;font-weight:700">$4.62M</div>
+      </div>
+      <div style="background:#fff;border:1px solid #e2e1dc;border-radius:14px;padding:30px 26px">
+        <div style="font-size:26px;color:#8a8a86;font-weight:600;margin-bottom:14px">Reserve</div>
+        <div style="font-size:46px;font-weight:700">4.0%</div>
+      </div>
+    </div>
+    <div style="font-size:var(--type-body);color:#6b6f76;line-height:1.45;max-width:1400px">Every project carries a source, amount, timing, category and status — from the CapEx plan, property survey, HMA and parking analysis.</div>
+  </section>
+
+  <section data-label="Debt" data-screen-label="10" data-speaker-notes="Terms come from the term sheet. We do not invent debt terms the documents don't provide." style="background:#fff;color:#1a2233;display:flex;flex-direction:column;padding:var(--pad-top) var(--pad-x) var(--pad-bottom)">
+    <div style="font-size:var(--type-small);color:#8a8a86;font-weight:700;letter-spacing:.08em;margin-bottom:20px">ENGINE 05</div>
+    <h2 style="font-size:var(--type-title);margin:0 0 20px;font-weight:600;letter-spacing:-.01em">Debt</h2>
+    <p style="font-size:var(--type-body);color:#6b6f76;margin:0 0 var(--gap-title);max-width:1300px;line-height:1.4">Capital structure, loan terms and the full annual debt schedule.</p>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:36px;max-width:1560px">
+      <div style="background:#f5f4f0;border-radius:14px;padding:34px 32px">
+        <div style="font-size:var(--type-small);font-weight:700;color:#8a8a86;letter-spacing:.04em;margin-bottom:22px">CAPITAL STRUCTURE</div>
+        <div style="display:flex;justify-content:space-between;font-size:32px;padding:12px 0;border-bottom:1px solid #e2e1dc"><span style="color:#6b6f76">Loan Amount</span><span style="font-weight:600">$23.19M</span></div>
+        <div style="display:flex;justify-content:space-between;font-size:32px;padding:12px 0;border-bottom:1px solid #e2e1dc"><span style="color:#6b6f76">LTV</span><span style="font-weight:600">65.0%</span></div>
+        <div style="display:flex;justify-content:space-between;font-size:32px;padding:12px 0"><span style="color:#6b6f76">Equity</span><span style="font-weight:600">$18.67M</span></div>
+      </div>
+      <div style="background:#f5f4f0;border-radius:14px;padding:34px 32px">
+        <div style="font-size:var(--type-small);font-weight:700;color:#8a8a86;letter-spacing:.04em;margin-bottom:22px">LOAN TERMS</div>
+        <div style="display:flex;justify-content:space-between;font-size:32px;padding:12px 0;border-bottom:1px solid #e2e1dc"><span style="color:#6b6f76">All-In Rate</span><span style="font-weight:600">7.66%</span></div>
+        <div style="display:flex;justify-content:space-between;font-size:32px;padding:12px 0;border-bottom:1px solid #e2e1dc"><span style="color:#6b6f76">Amortization</span><span style="font-weight:600">30 years</span></div>
+        <div style="display:flex;justify-content:space-between;font-size:32px;padding:12px 0"><span style="color:#6b6f76">Interest-Only</span><span style="font-weight:600">24 months</span></div>
+      </div>
+    </div>
+  </section>
+
+  <section data-label="Cash Flow" data-screen-label="11" data-speaker-notes="This is a pure calculation engine. No operating assumptions live here." style="background:#f5f4f0;color:#1a2233;display:flex;flex-direction:column;padding:var(--pad-top) var(--pad-x) var(--pad-bottom)">
+    <div style="font-size:var(--type-small);color:#8a8a86;font-weight:700;letter-spacing:.08em;margin-bottom:20px">ENGINE 06</div>
+    <h2 style="font-size:var(--type-title);margin:0 0 20px;font-weight:600;letter-spacing:-.01em">Cash Flow</h2>
+    <p style="font-size:var(--type-body);color:#6b6f76;margin:0 0 var(--gap-title);max-width:1300px;line-height:1.4">The operating model converted into property and equity cash flow.</p>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:36px;max-width:1560px">
+      <div style="background:#fff;border:1px solid #e2e1dc;border-radius:14px;padding:34px 32px">
+        <div style="font-size:38px;font-weight:600;margin-bottom:18px">Unlevered</div>
+        <div style="font-size:var(--type-small);color:#6b6f76;line-height:1.6">NOI less CapEx and other property-level flows, down to unlevered free cash flow.</div>
+      </div>
+      <div style="background:#fff;border:1px solid #e2e1dc;border-radius:14px;padding:34px 32px">
+        <div style="font-size:38px;font-weight:600;margin-bottom:18px">Levered</div>
+        <div style="font-size:var(--type-small);color:#6b6f76;line-height:1.6">Debt proceeds, interest, principal and equity contributions, down to equity cash flow.</div>
+      </div>
+    </div>
+    <div style="margin-top:40px;background:#14213d;color:#fff;border-radius:14px;padding:34px 36px;display:flex;align-items:baseline;gap:28px">
+      <div style="font-size:72px;font-weight:700">$67.1M</div>
+      <div style="font-size:var(--type-body);color:#9fb0d0;line-height:1.4">total equity return across the hold, feeding the Returns engine directly</div>
+    </div>
+  </section>
+
+  <section data-label="Returns" data-screen-label="12" data-speaker-notes="The return bridge shows what is actually driving the outcome." style="background:#14213d;color:#fff;display:flex;flex-direction:column;padding:var(--pad-top) var(--pad-x) var(--pad-bottom)">
+    <div style="font-size:var(--type-small);color:#8b93a7;font-weight:700;letter-spacing:.08em;margin-bottom:20px">ENGINE 07</div>
+    <h2 style="font-size:var(--type-title);margin:0 0 20px;font-weight:600;letter-spacing:-.01em">Returns</h2>
+    <p style="font-size:var(--type-body);color:#9fb0d0;margin:0 0 var(--gap-title);max-width:1300px;line-height:1.4">The return profile, and a bridge from purchase through exit.</p>
+    <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:22px;margin-bottom:44px">
+      <div style="background:rgba(255,255,255,.08);border-radius:14px;padding:32px 28px">
+        <div style="font-size:26px;color:#8b93a7;font-weight:600;margin-bottom:14px">IRR</div>
+        <div style="font-size:60px;font-weight:700">19.8%</div>
+      </div>
+      <div style="background:rgba(255,255,255,.08);border-radius:14px;padding:32px 28px">
+        <div style="font-size:26px;color:#8b93a7;font-weight:600;margin-bottom:14px">MOIC</div>
+        <div style="font-size:60px;font-weight:700">2.24x</div>
+      </div>
+      <div style="background:rgba(255,255,255,.08);border-radius:14px;padding:32px 28px">
+        <div style="font-size:26px;color:#8b93a7;font-weight:600;margin-bottom:14px">Avg. Cash-on-Cash</div>
+        <div style="font-size:60px;font-weight:700">9.2%</div>
+      </div>
+      <div style="background:rgba(255,255,255,.08);border-radius:14px;padding:32px 28px">
+        <div style="font-size:26px;color:#8b93a7;font-weight:600;margin-bottom:14px">Exit Value</div>
+        <div style="font-size:60px;font-weight:700">$68.3M</div>
+      </div>
+    </div>
+    <div style="font-size:var(--type-body);color:#9fb0d0;line-height:1.45;max-width:1400px">Purchase → Operations → CapEx → Debt → Exit → Equity Returns, shown as a single bridge.</div>
+  </section>
+
+  <section data-label="Analysis" data-screen-label="13" data-speaker-notes="This is the intelligence layer — where Fondok tells the analyst what to worry about." style="background:#fff;color:#1a2233;display:flex;flex-direction:column;padding:var(--pad-top) var(--pad-x) var(--pad-bottom)">
+    <div style="font-size:var(--type-small);color:#8a8a86;font-weight:700;letter-spacing:.08em;margin-bottom:20px">ENGINE 08</div>
+    <h2 style="font-size:var(--type-title);margin:0 0 20px;font-weight:600;letter-spacing:-.01em">Analysis</h2>
+    <p style="font-size:var(--type-body);color:#6b6f76;margin:0 0 var(--gap-title);max-width:1300px;line-height:1.4">Historical versus forecast, property versus market, and the risks that follow.</p>
+    <div style="display:flex;flex-direction:column;gap:22px;max-width:1560px">
+      <div style="display:flex;align-items:center;gap:26px;background:#f5f4f0;border-radius:12px;padding:26px 32px">
+        <span style="font-size:24px;font-weight:700;color:#fff;background:oklch(50% 0.16 25);padding:8px 18px;border-radius:20px;flex-shrink:0">HIGH</span>
+        <span style="font-size:32px;line-height:1.4">NOI margin expansion of 5.7pts is aggressive relative to comp set history</span>
+      </div>
+      <div style="display:flex;align-items:center;gap:26px;background:#f5f4f0;border-radius:12px;padding:26px 32px">
+        <span style="font-size:24px;font-weight:700;color:#fff;background:oklch(50% 0.14 40);padding:8px 18px;border-radius:20px;flex-shrink:0">MEDIUM</span>
+        <span style="font-size:32px;line-height:1.4">Forecast ADR growth of 3.0% runs ahead of the comp set trailing trend of 2.1%</span>
+      </div>
+      <div style="display:flex;align-items:center;gap:26px;background:#f5f4f0;border-radius:12px;padding:26px 32px">
+        <span style="font-size:24px;font-weight:700;color:#fff;background:oklch(50% 0.14 40);padding:8px 18px;border-radius:20px;flex-shrink:0">MEDIUM</span>
+        <span style="font-size:32px;line-height:1.4">Supply pipeline risk from 612 comp-set keys delivering 2027–2028</span>
+      </div>
+      <div style="display:flex;align-items:center;gap:26px;background:#f5f4f0;border-radius:12px;padding:26px 32px">
+        <span style="font-size:24px;font-weight:700;color:#fff;background:#9a9a95;padding:8px 18px;border-radius:20px;flex-shrink:0">LOW</span>
+        <span style="font-size:32px;line-height:1.4">Exit cap compression of 50bps assumed between entry and exit</span>
+      </div>
+    </div>
+  </section>
+
+  <section data-label="Scenarios" data-screen-label="14" data-speaker-notes="Downside still clears most hurdle rates. That's the headline here." style="background:#f5f4f0;color:#1a2233;display:flex;flex-direction:column;padding:var(--pad-top) var(--pad-x) var(--pad-bottom)">
+    <div style="font-size:var(--type-small);color:#8a8a86;font-weight:700;letter-spacing:.08em;margin-bottom:20px">ENGINE 09</div>
+    <h2 style="font-size:var(--type-title);margin:0 0 20px;font-weight:600;letter-spacing:-.01em">Scenarios</h2>
+    <p style="font-size:var(--type-body);color:#6b6f76;margin:0 0 var(--gap-title);max-width:1300px;line-height:1.4">Operating, financing and exit levers moved without touching the base case.</p>
+    <div style="background:#fff;border:1px solid #e2e1dc;border-radius:14px;overflow:hidden;max-width:1560px">
+      <div style="display:grid;grid-template-columns:1.4fr 1fr 1fr 1fr">
+        <div style="padding:24px 32px;background:#14213d;color:#c9cede;font-size:26px;font-weight:600">METRIC</div>
+        <div style="padding:24px 28px;background:#14213d;color:#c9cede;font-size:26px;font-weight:600;text-align:center">DOWNSIDE</div>
+        <div style="padding:24px 28px;background:#14213d;color:#fff;font-size:26px;font-weight:700;text-align:center">BASE</div>
+        <div style="padding:24px 28px;background:#14213d;color:#c9cede;font-size:26px;font-weight:600;text-align:center">UPSIDE</div>
+
+        <div style="padding:22px 32px;font-size:32px;font-weight:600;border-bottom:1px solid #ececea">IRR</div>
+        <div style="padding:22px 28px;font-size:32px;text-align:center;color:oklch(50% 0.16 25);border-bottom:1px solid #ececea">12.4%</div>
+        <div style="padding:22px 28px;font-size:32px;text-align:center;font-weight:700;background:#fbfbf9;border-bottom:1px solid #ececea">19.8%</div>
+        <div style="padding:22px 28px;font-size:32px;text-align:center;color:oklch(45% 0.12 155);border-bottom:1px solid #ececea">26.5%</div>
+
+        <div style="padding:22px 32px;font-size:32px;font-weight:600;border-bottom:1px solid #ececea">MOIC</div>
+        <div style="padding:22px 28px;font-size:32px;text-align:center;color:oklch(50% 0.16 25);border-bottom:1px solid #ececea">1.61x</div>
+        <div style="padding:22px 28px;font-size:32px;text-align:center;font-weight:700;background:#fbfbf9;border-bottom:1px solid #ececea">2.24x</div>
+        <div style="padding:22px 28px;font-size:32px;text-align:center;color:oklch(45% 0.12 155);border-bottom:1px solid #ececea">2.89x</div>
+
+        <div style="padding:22px 32px;font-size:32px;font-weight:600;border-bottom:1px solid #ececea">Stabilized NOI</div>
+        <div style="padding:22px 28px;font-size:32px;text-align:center;color:oklch(50% 0.16 25);border-bottom:1px solid #ececea">$3.71M</div>
+        <div style="padding:22px 28px;font-size:32px;text-align:center;font-weight:700;background:#fbfbf9;border-bottom:1px solid #ececea">$4.44M</div>
+        <div style="padding:22px 28px;font-size:32px;text-align:center;color:oklch(45% 0.12 155);border-bottom:1px solid #ececea">$4.98M</div>
+
+        <div style="padding:22px 32px;font-size:32px;font-weight:600">Exit Value</div>
+        <div style="padding:22px 28px;font-size:32px;text-align:center;color:oklch(50% 0.16 25)">$54.9M</div>
+        <div style="padding:22px 28px;font-size:32px;text-align:center;font-weight:700;background:#fbfbf9">$68.3M</div>
+        <div style="padding:22px 28px;font-size:32px;text-align:center;color:oklch(45% 0.12 155)">$79.7M</div>
+      </div>
+    </div>
+  </section>
+
+  <section data-label="Overview" data-screen-label="15" data-speaker-notes="Overview is the home base for IC — it presents, it does not calculate." style="background:#fff;color:#1a2233;display:flex;flex-direction:column;padding:var(--pad-top) var(--pad-x) var(--pad-bottom)">
+    <div style="font-size:var(--type-small);color:#8a8a86;font-weight:700;letter-spacing:.08em;margin-bottom:20px">ENGINE 10</div>
+    <h2 style="font-size:var(--type-title);margin:0 0 20px;font-weight:600;letter-spacing:-.01em">Overview</h2>
+    <p style="font-size:var(--type-body);color:#6b6f76;margin:0 0 var(--gap-title);max-width:1300px;line-height:1.4">The executive representation of the model. It pulls outputs from every other engine and never calculates its own.</p>
+    <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:20px;max-width:1560px">
+      <div style="background:#f5f4f0;border-radius:12px;padding:28px 26px;font-size:32px;font-weight:600">Deal Overview</div>
+      <div style="background:#f5f4f0;border-radius:12px;padding:28px 26px;font-size:32px;font-weight:600">Purchase &amp; Basis</div>
+      <div style="background:#f5f4f0;border-radius:12px;padding:28px 26px;font-size:32px;font-weight:600">Historical Performance</div>
+      <div style="background:#f5f4f0;border-radius:12px;padding:28px 26px;font-size:32px;font-weight:600">Forward Projections</div>
+      <div style="background:#f5f4f0;border-radius:12px;padding:28px 26px;font-size:32px;font-weight:600">Key Assumptions</div>
+      <div style="background:#f5f4f0;border-radius:12px;padding:28px 26px;font-size:32px;font-weight:600">CapEx &amp; Debt</div>
+      <div style="background:#f5f4f0;border-radius:12px;padding:28px 26px;font-size:32px;font-weight:600">Cash Flow &amp; Returns</div>
+      <div style="background:#f5f4f0;border-radius:12px;padding:28px 26px;font-size:32px;font-weight:600">Risks &amp; Sensitivities</div>
+    </div>
+    <div style="margin-top:40px;font-size:var(--type-body);color:#6b6f76;line-height:1.45;max-width:1400px">Every section links straight into the engine behind it.</div>
+  </section>
+
+  <section data-label="Closing" data-screen-label="16" data-speaker-notes="Close on the two questions the architecture is designed to eliminate." style="background:#14213d;color:#fff;display:flex;flex-direction:column;justify-content:center;padding:var(--pad-top) var(--pad-x) var(--pad-bottom)">
+    <h2 style="font-size:76px;margin:0 0 var(--gap-title);font-weight:600;letter-spacing:-.01em;max-width:1400px;line-height:1.15">Two questions the analyst should never have to ask</h2>
+    <div style="display:flex;flex-direction:column;gap:32px;max-width:1400px">
+      <div style="font-size:46px;color:#9fb0d0;line-height:1.35">"Where did this number come from?"</div>
+      <div style="font-size:46px;color:#9fb0d0;line-height:1.35">"Why did changing this assumption not update the rest of the model?"</div>
+    </div>
+  </section>
+
+</x-import>
+
+</x-dc>
+</body>
+</html>

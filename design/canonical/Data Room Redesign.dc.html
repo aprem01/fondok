@@ -1,0 +1,584 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet data-dc-atomics>
+  <meta name="design_doc_mode" content="canvas">
+  <style>
+    body{margin:0;background:#efeee9;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,Arial,sans-serif;}
+    .dv-turn{padding:40px 44px 32px}
+    .dv-thd{display:flex;align-items:baseline;gap:10px;margin:0 0 20px}
+    .dv-tid{font:600 10px ui-monospace,Menlo,monospace;padding:3px 7px;background:#14213d;color:#fff;border-radius:4px;text-decoration:none}
+    .dv-tname{font:600 13px/1.2 system-ui,sans-serif;color:#1a2233}
+    .dv-opts{display:flex;flex-wrap:wrap;gap:28px;align-items:flex-start}
+    .dv-opt{flex:none;display:flex;flex-direction:column;gap:9px}
+    .dv-oid{font:600 10.5px ui-monospace,Menlo,monospace;padding:3px 7px;background:rgba(0,0,0,.08);color:#1a2233;border-radius:5px;text-decoration:none}
+    .dv-olabel{display:flex;align-items:baseline;gap:8px;font:400 11px/1.3 system-ui,sans-serif;color:rgba(0,0,0,.55)}
+    .dv-card{background:#f5f4f0;border:1px solid rgba(0,0,0,.08);border-radius:8px;box-shadow:0 1px 3px rgba(0,0,0,.06);overflow:hidden}
+    .dv-next{margin:22px 0 0;font:12px/1.5 system-ui,sans-serif;color:rgba(0,0,0,.5)}
+    a.dv-oid, a.dv-tid { text-decoration:none; }
+    .fk-row:hover .fk-source{opacity:1}
+    .fk-hoverbox{position:relative}
+    .fk-hoverbox .fk-pop{display:none}
+    .fk-hoverbox:hover .fk-pop{display:block}
+  </style>
+</helmet>
+
+<section class="dv-turn" id="t4">
+  <div class="dv-thd"><a class="dv-tid" href="#t4">4</a><span class="dv-tname">3a — states after Accept and after Edit, with a verification mark</span></div>
+  <div class="dv-opts">
+    <div class="dv-opt" id="4a">
+      <div class="dv-olabel"><a class="dv-oid" href="#4a">4a</a>After Accept — cell gets a quiet green check, footer clears</div>
+      <div class="dv-card" style="width:820px">
+        <div style="padding:18px 20px">
+          <div style="font-size:11.5px;font-weight:700;color:#9a9a95;text-transform:uppercase;letter-spacing:.03em;margin-bottom:10px">Extracted P&amp;L (excerpt)</div>
+          <div style="display:grid;grid-template-columns:1.8fr repeat(4,1fr) 0.9fr;background:#14213d;color:#fff">
+            <div style="padding:9px 12px;font-weight:600;font-size:11px">LINE ITEM</div>
+            <div style="text-align:right;padding:9px 12px;font-weight:600;font-size:11px">Jan 25</div>
+            <div style="text-align:right;padding:9px 12px;font-weight:600;font-size:11px">Feb 25</div>
+            <div style="text-align:right;padding:9px 12px;font-weight:600;font-size:11px">Mar 25</div>
+            <div style="text-align:right;padding:9px 12px;font-weight:600;font-size:11px">Apr 25</div>
+            <div style="text-align:right;padding:9px 12px;font-weight:700;font-size:11px;background:#0f1a30">TOTAL</div>
+          </div>
+          <div style="display:grid;grid-template-columns:1.8fr repeat(4,1fr) 0.9fr;border-bottom:1px solid #f2f1ec;background:oklch(56% 0.12 155 / .07)">
+            <div style="padding:8px 12px;color:#1a2233;padding-left:26px">Other Operated Depts</div>
+            <div style="text-align:right;padding:8px 12px;font-family:ui-monospace,monospace;color:#1a2233;display:flex;justify-content:flex-end;align-items:center;gap:5px"><span style="font-size:11px;color:oklch(45% 0.12 155)">✓</span>2,237</div>
+            <div style="text-align:right;padding:8px 12px;font-family:ui-monospace,monospace;color:#1a2233">2,324</div>
+            <div style="text-align:right;padding:8px 12px;font-family:ui-monospace,monospace;color:#1a2233">2,364</div>
+            <div style="text-align:right;padding:8px 12px;font-family:ui-monospace,monospace;color:#1a2233">2,948</div>
+            <div style="text-align:right;padding:8px 12px;font-family:ui-monospace,monospace;font-weight:700;color:#1a2233">13,284</div>
+          </div>
+          <div style="padding:12px 12px 4px;background:#fbfbf9;display:flex;justify-content:space-between;align-items:center;border-top:1px solid #f2f1ec">
+            <span style="font-size:12.5px;color:oklch(45% 0.12 155);display:flex;align-items:center;gap:6px">✓ Verified by you · Jul 31, 2026</span>
+            <span style="font-size:11.5px;color:#2f4a8c;cursor:pointer">Undo</span>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="dv-opt" id="4b">
+      <div class="dv-olabel"><a class="dv-oid" href="#4b">4b</a>After Edit — old value struck through, new value + "edited" tag, hover reveals audit trail</div>
+      <div class="dv-card" style="width:820px">
+        <div style="padding:18px 20px">
+          <div style="font-size:11.5px;font-weight:700;color:#9a9a95;text-transform:uppercase;letter-spacing:.03em;margin-bottom:10px">Extracted P&amp;L (excerpt)</div>
+          <div style="display:grid;grid-template-columns:1.8fr repeat(4,1fr) 0.9fr;background:#14213d;color:#fff">
+            <div style="padding:9px 12px;font-weight:600;font-size:11px">LINE ITEM</div>
+            <div style="text-align:right;padding:9px 12px;font-weight:600;font-size:11px">Jan 25</div>
+            <div style="text-align:right;padding:9px 12px;font-weight:600;font-size:11px">Feb 25</div>
+            <div style="text-align:right;padding:9px 12px;font-weight:600;font-size:11px">Mar 25</div>
+            <div style="text-align:right;padding:9px 12px;font-weight:600;font-size:11px">Apr 25</div>
+            <div style="text-align:right;padding:9px 12px;font-weight:700;font-size:11px;background:#0f1a30">TOTAL</div>
+          </div>
+          <div style="display:grid;grid-template-columns:1.8fr repeat(4,1fr) 0.9fr;border-bottom:1px solid #f2f1ec;background:oklch(56% 0.1 260 / .07)">
+            <div style="padding:8px 12px;color:#1a2233;padding-left:26px">Other Operated Depts</div>
+            <div style="text-align:right;padding:8px 12px;font-family:ui-monospace,monospace;color:#1a2233">
+              <div style="display:flex;flex-direction:column;align-items:flex-end;line-height:1.3">
+                <span style="font-size:10px;color:#b3b2ac;text-decoration:line-through">2,237</span>
+                <span style="display:flex;align-items:center;gap:5px"><span style="font-size:11px;color:oklch(45% 0.1 260)">✎</span>2,950</span>
+              </div>
+            </div>
+            <div style="text-align:right;padding:8px 12px;font-family:ui-monospace,monospace;color:#1a2233">2,324</div>
+            <div style="text-align:right;padding:8px 12px;font-family:ui-monospace,monospace;color:#1a2233">2,364</div>
+            <div style="text-align:right;padding:8px 12px;font-family:ui-monospace,monospace;color:#1a2233">2,948</div>
+            <div style="text-align:right;padding:8px 12px;font-family:ui-monospace,monospace;font-weight:700;color:#1a2233">13,997</div>
+          </div>
+          <div style="padding:12px 12px 4px;background:#fbfbf9;display:flex;justify-content:space-between;align-items:center;border-top:1px solid #f2f1ec">
+            <span style="font-size:12.5px;color:oklch(45% 0.1 260);display:flex;align-items:center;gap:6px">✎ Edited by you · was $2,237, extracted 61% confidence</span>
+            <span style="font-size:11.5px;color:#2f4a8c;cursor:pointer">Revert to extracted</span>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+  <p class="dv-next">Try next: "apply this verified/edited styling across the whole table, not just one row" · "add this to Data Room v2"</p>
+</section>
+
+<section class="dv-turn" id="t3">
+  <div class="dv-thd"><a class="dv-tid" href="#t3">3</a><span class="dv-tname">Side-by-side: source document page + extracted P&amp;L, synced</span></div>
+  <div class="dv-opts">
+    <div class="dv-opt" id="3a">
+      <div class="dv-olabel"><a class="dv-oid" href="#3a">3a</a>Document preview left, extraction table right — click a page to jump the table, click a row to highlight the source</div>
+      <div class="dv-card" style="width:1360px">
+        <div style="padding:20px 24px 0">
+          <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:14px">
+            <div>
+              <div style="font-size:15px;font-weight:700;color:#1a2233">Angler_s 2024 Full Year Detailed P&amp;L.xlsm</div>
+              <div style="font-size:12.5px;color:#8a8a86;margin-top:2px">646 fields extracted · 94% confidence</div>
+            </div>
+            <div style="display:flex;gap:8px">
+              <button style="background:#fff;color:#3a3f47;border:1px solid #e2e1dc;border-radius:6px;padding:7px 12px;font-size:12px;font-weight:600;cursor:pointer">↗ Open in new tab</button>
+              <button style="background:#fff;color:#3a3f47;border:1px solid #e2e1dc;border-radius:6px;padding:7px 12px;font-size:12px;font-weight:600;cursor:pointer">⬇ Download</button>
+            </div>
+          </div>
+        </div>
+        <div style="display:flex;height:780px;border-top:1px solid #eae9e4">
+          <div style="flex:1;overflow:hidden;display:flex;flex-direction:column">
+            <div style="padding:12px 20px;border-bottom:1px solid #f2f1ec;display:flex;justify-content:space-between;align-items:center">
+              <span style="font-size:11.5px;font-weight:700;color:#9a9a95;text-transform:uppercase;letter-spacing:.03em">Extracted P&amp;L · monthly, Jan–Jun 2025</span>
+              <span style="font-size:12px;color:#9a9a95">✎ clay = editable · ⚠ = flagged</span>
+            </div>
+            <div style="flex:1;overflow:hidden">
+              <div style="display:grid;grid-template-columns:1.8fr repeat(4,1fr) 0.9fr;background:#14213d;color:#fff">
+                <div style="padding:9px 12px;font-weight:600;font-size:11px">LINE ITEM</div>
+                <div style="text-align:right;padding:9px 12px;font-weight:600;font-size:11px">Jan 25</div>
+                <div style="text-align:right;padding:9px 12px;font-weight:600;font-size:11px">Feb 25</div>
+                <div style="text-align:right;padding:9px 12px;font-weight:600;font-size:11px">Mar 25</div>
+                <div style="text-align:right;padding:9px 12px;font-weight:600;font-size:11px">Apr 25</div>
+                <div style="text-align:right;padding:9px 12px;font-weight:700;font-size:11px;background:#0f1a30">TOTAL</div>
+              </div>
+              <div style="display:grid;grid-template-columns:1.8fr repeat(4,1fr) 0.9fr;border-bottom:1px solid #f2f1ec">
+                <div style="padding:8px 12px;color:#1a2233;font-weight:700">Total Revenue</div>
+                <div style="text-align:right;padding:8px 12px;font-family:ui-monospace,monospace;color:#1a2233">1,504,426</div>
+                <div style="text-align:right;padding:8px 12px;font-family:ui-monospace,monospace;color:#1a2233">1,686,086</div>
+                <div style="text-align:right;padding:8px 12px;font-family:ui-monospace,monospace;color:#1a2233">1,589,915</div>
+                <div style="text-align:right;padding:8px 12px;font-family:ui-monospace,monospace;color:#1a2233">1,508,819</div>
+                <div style="text-align:right;padding:8px 12px;font-family:ui-monospace,monospace;font-weight:700;color:#1a2233">8,452,687</div>
+              </div>
+              <div style="display:grid;grid-template-columns:1.8fr repeat(4,1fr) 0.9fr;border-bottom:1px solid #f2f1ec;cursor:pointer;background:oklch(56% 0.12 40 / .1);outline:1.5px solid oklch(56% 0.14 40);outline-offset:-1.5px">
+                <div style="padding:8px 12px;color:#1a2233;padding-left:26px">Other Operated Depts</div>
+                <div style="text-align:right;padding:8px 12px;font-family:ui-monospace,monospace;color:oklch(50% 0.14 40);font-weight:700">2,237 ⚠</div>
+                <div style="text-align:right;padding:8px 12px;font-family:ui-monospace,monospace;color:#1a2233">2,324</div>
+                <div style="text-align:right;padding:8px 12px;font-family:ui-monospace,monospace;color:#1a2233">2,364</div>
+                <div style="text-align:right;padding:8px 12px;font-family:ui-monospace,monospace;color:#1a2233">2,948</div>
+                <div style="text-align:right;padding:8px 12px;font-family:ui-monospace,monospace;font-weight:700;color:#1a2233">13,284</div>
+              </div>
+              <div style="display:grid;grid-template-columns:1.8fr repeat(4,1fr) 0.9fr;border-bottom:1px solid #f2f1ec">
+                <div style="padding:8px 12px;color:#1a2233;font-weight:700">Total Departmental Expense</div>
+                <div style="text-align:right;padding:8px 12px;font-family:ui-monospace,monospace;color:#1a2233">528,959</div>
+                <div style="text-align:right;padding:8px 12px;font-family:ui-monospace,monospace;color:#1a2233">517,144</div>
+                <div style="text-align:right;padding:8px 12px;font-family:ui-monospace,monospace;color:#1a2233">516,393</div>
+                <div style="text-align:right;padding:8px 12px;font-family:ui-monospace,monospace;color:#1a2233">570,947</div>
+                <div style="text-align:right;padding:8px 12px;font-family:ui-monospace,monospace;font-weight:700;color:#1a2233">3,086,153</div>
+              </div>
+              <div style="display:grid;grid-template-columns:1.8fr repeat(4,1fr) 0.9fr;border-bottom:1px solid #f2f1ec">
+                <div style="padding:8px 12px;color:#1a2233;font-weight:700">Gross Operating Profit</div>
+                <div style="text-align:right;padding:8px 12px;font-family:ui-monospace,monospace;color:#1a2233">637,016</div>
+                <div style="text-align:right;padding:8px 12px;font-family:ui-monospace,monospace;color:#1a2233">858,034</div>
+                <div style="text-align:right;padding:8px 12px;font-family:ui-monospace,monospace;color:#1a2233">770,633</div>
+                <div style="text-align:right;padding:8px 12px;font-family:ui-monospace,monospace;color:#1a2233">617,867</div>
+                <div style="text-align:right;padding:8px 12px;font-family:ui-monospace,monospace;font-weight:700;color:#1a2233">3,497,749</div>
+              </div>
+            </div>
+            <div style="padding:12px 20px;border-top:1px solid #f2f1ec;background:#fbfbf9;display:flex;justify-content:space-between;align-items:center">
+              <span style="font-size:12.5px;color:oklch(50% 0.14 40)">⚠ Other Operated Depts, Jan — 61% confidence</span>
+              <div style="display:flex;gap:8px"><button style="background:oklch(56% 0.12 155);color:#fff;border:none;border-radius:6px;padding:6px 14px;font-size:12px;font-weight:600;cursor:pointer">Accept</button><button style="background:#fff;border:1px solid #e2e1dc;color:#3a3f47;border-radius:6px;padding:6px 14px;font-size:12px;font-weight:600;cursor:pointer">Edit value</button></div>
+            </div>
+          </div>
+          <div style="width:420px;border-left:1px solid #eae9e4;background:#fbfbf9;display:flex;flex-direction:column">
+            <div style="padding:12px 16px;display:flex;justify-content:space-between;align-items:center;border-bottom:1px solid #f2f1ec">
+              <span style="font-size:11.5px;font-weight:700;color:#9a9a95;text-transform:uppercase;letter-spacing:.03em">Source · page 4 of 9</span>
+              <div style="display:flex;gap:4px"><span style="width:22px;height:22px;border:1px solid #e2e1dc;border-radius:5px;display:flex;align-items:center;justify-content:center;font-size:11px;color:#6b6f76;cursor:pointer">‹</span><span style="width:22px;height:22px;border:1px solid #e2e1dc;border-radius:5px;display:flex;align-items:center;justify-content:center;font-size:11px;color:#6b6f76;cursor:pointer">›</span></div>
+            </div>
+            <div style="flex:1;margin:16px;background:#fff;border:1px solid #eae9e4;border-radius:6px;position:relative;overflow:hidden;box-shadow:0 1px 4px rgba(0,0,0,.05)">
+              <div style="position:absolute;inset:0;background:repeating-linear-gradient(135deg,#f7f6f2,#f7f6f2 10px,#f0efeb 10px,#f0efeb 20px)"></div>
+              <div style="position:absolute;top:34%;left:8%;right:8%;height:34px;border:2px solid oklch(56% 0.14 40);border-radius:4px;background:oklch(56% 0.12 40 / .1)"></div>
+              <div style="position:absolute;top:calc(34% + 40px);left:8%;font-size:10.5px;color:oklch(50% 0.14 40);font-weight:700;background:#fff;padding:2px 6px;border-radius:4px;border:1px solid oklch(56% 0.14 40 / .4)">↑ highlighted cell</div>
+            </div>
+            <div style="padding:10px 16px;border-top:1px solid #f2f1ec;font-size:11.5px;color:#9a9a95;text-align:center">Row selected in the table jumps &amp; highlights here</div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+  <p class="dv-next">Try next: "make the source panel scroll/sync automatically as I move down the table" · "apply this to Data Room v2's P&amp;L viewer"</p>
+</section>
+
+<section class="dv-turn" id="t2">
+  <div class="dv-thd"><a class="dv-tid" href="#t2">2</a><span class="dv-tname">Documents &amp; extraction — surface fields extracted, confidence, review count, and an accept/edit data view</span></div>
+  <div class="dv-opts">
+
+    <!-- 2A -->
+    <div class="dv-opt" id="2a">
+      <div class="dv-olabel"><a class="dv-oid" href="#2a">2a</a>Expandable cards — inline field review under each doc</div>
+      <div class="dv-card" style="width:920px">
+        <div style="padding:22px 24px;height:760px;overflow:hidden">
+          <h2 style="font-size:15px;color:#1a2233;margin:0 0 14px">Documents &amp; extraction (5)</h2>
+          <div style="display:flex;flex-direction:column;gap:10px">
+            <div style="background:#fff;border:1px solid #eae9e4;border-radius:10px;overflow:hidden">
+              <div style="padding:14px 18px;display:flex;align-items:center;gap:14px;cursor:pointer">
+                <div style="width:34px;height:34px;border-radius:7px;background:oklch(56% 0.12 155 / .15);color:oklch(45% 0.12 155);font-size:9.5px;font-weight:700;display:flex;align-items:center;justify-content:center">XLS</div>
+                <div style="flex:1">
+                  <div style="font-size:13.5px;font-weight:600;color:#1a2233">Angler_s 2024 Full Year Detailed P&amp;L.xlsm</div>
+                  <div style="font-size:12px;color:#8a8a86;margin-top:3px;display:flex;gap:6px;align-items:center">
+                    <span>646 fields extracted</span>·
+                    <span style="width:60px;height:5px;background:#f0efeb;border-radius:3px;display:inline-block;overflow:hidden"><span style="width:94%;height:100%;background:oklch(45% 0.12 155);display:block"></span></span>
+                    <span style="color:oklch(45% 0.12 155);font-weight:600">94%</span>
+                  </div>
+                </div>
+                <span style="font-size:11.5px;font-weight:600;color:oklch(50% 0.14 40);background:oklch(56% 0.12 40 / .12);padding:5px 11px;border-radius:14px;white-space:nowrap">⚠ 12 to confirm</span>
+                <span style="font-size:12px;color:#c3c2bd">▾</span>
+              </div>
+              <div style="border-top:1px solid #f2f1ec;padding:14px 18px;background:#fbfbf9">
+                <div style="font-size:11px;font-weight:700;color:#9a9a95;text-transform:uppercase;letter-spacing:.04em;margin-bottom:10px">Needs confirmation (12)</div>
+                <div style="display:flex;flex-direction:column;gap:8px">
+                  <div style="display:flex;align-items:center;gap:12px;background:#fff;border:1px solid #eae9e4;border-radius:8px;padding:9px 12px">
+                    <div style="flex:1"><span style="color:#6b6f76;font-size:12.5px">Other Operated Depts, Jan</span></div>
+                    <div style="font-family:ui-monospace,monospace;font-size:13px;color:#1a2233">$2,237</div>
+                    <span style="font-size:10.5px;color:oklch(50% 0.12 55);background:oklch(56% 0.12 55 / .12);padding:2px 8px;border-radius:10px">61%</span>
+                    <button style="background:oklch(56% 0.12 155);color:#fff;border:none;border-radius:5px;padding:5px 10px;font-size:11.5px;font-weight:600;cursor:pointer">Accept</button>
+                    <button style="background:#fff;border:1px solid #e2e1dc;color:#3a3f47;border-radius:5px;padding:5px 10px;font-size:11.5px;font-weight:600;cursor:pointer">Edit</button>
+                  </div>
+                  <div style="display:flex;align-items:center;gap:12px;background:#fff;border:1px solid #eae9e4;border-radius:8px;padding:9px 12px">
+                    <div style="flex:1"><span style="color:#6b6f76;font-size:12.5px">Management Fees, Mar</span></div>
+                    <div style="font-family:ui-monospace,monospace;font-size:13px;color:#1a2233">$69,991</div>
+                    <span style="font-size:10.5px;color:oklch(50% 0.12 55);background:oklch(56% 0.12 55 / .12);padding:2px 8px;border-radius:10px">72%</span>
+                    <button style="background:oklch(56% 0.12 155);color:#fff;border:none;border-radius:5px;padding:5px 10px;font-size:11.5px;font-weight:600;cursor:pointer">Accept</button>
+                    <button style="background:#fff;border:1px solid #e2e1dc;color:#3a3f47;border-radius:5px;padding:5px 10px;font-size:11.5px;font-weight:600;cursor:pointer">Edit</button>
+                  </div>
+                </div>
+                <div style="display:flex;justify-content:space-between;margin-top:12px">
+                  <span style="font-size:12px;color:#2f4a8c;font-weight:600;cursor:pointer">View all 12 →</span>
+                  <button style="background:#14213d;color:#fff;border:none;border-radius:6px;padding:8px 16px;font-size:12.5px;font-weight:600;cursor:pointer">Open full P&amp;L view</button>
+                </div>
+              </div>
+            </div>
+            <div style="background:#fff;border:1px solid #eae9e4;border-radius:10px;padding:14px 18px;display:flex;align-items:center;gap:14px">
+              <div style="width:34px;height:34px;border-radius:7px;background:oklch(56% 0.12 155 / .15);color:oklch(45% 0.12 155);font-size:9.5px;font-weight:700;display:flex;align-items:center;justify-content:center">XLS</div>
+              <div style="flex:1"><div style="font-size:13.5px;font-weight:600;color:#1a2233">Angler_s 2024 November Detailed P&amp;L.xlsm</div>
+                <div style="font-size:12px;color:#8a8a86;margin-top:3px">375 fields · 93% confidence</div></div>
+              <span style="font-size:11.5px;font-weight:600;color:oklch(50% 0.14 40);background:oklch(56% 0.12 40 / .12);padding:5px 11px;border-radius:14px">⚠ 2 to confirm</span>
+              <span style="font-size:12px;color:#c3c2bd">▸</span>
+            </div>
+            <div style="background:#fff;border:1px solid #eae9e4;border-radius:10px;padding:14px 18px;display:flex;align-items:center;gap:14px">
+              <div style="width:34px;height:34px;border-radius:7px;background:#f1eefb;color:#6a3fa8;font-size:9.5px;font-weight:700;display:flex;align-items:center;justify-content:center">PDF</div>
+              <div style="flex:1"><div style="font-size:13.5px;font-weight:600;color:#1a2233">Miami Beach Anglers Offering Memorandum.pdf</div>
+                <div style="font-size:12px;color:#8a8a86;margin-top:3px">440 fields · 97% confidence</div></div>
+              <span style="font-size:11.5px;font-weight:600;color:oklch(50% 0.14 40);background:oklch(56% 0.12 40 / .12);padding:5px 11px;border-radius:14px">⚠ 1 to confirm</span>
+              <span style="font-size:12px;color:#c3c2bd">▸</span>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- 2B -->
+    <div class="dv-opt" id="2b">
+      <div class="dv-olabel"><a class="dv-oid" href="#2b">2b</a>Compact table + right-side review drawer</div>
+      <div class="dv-card" style="width:1180px">
+        <div style="display:flex;height:760px">
+          <div style="flex:1;padding:22px 22px;overflow:hidden">
+            <h2 style="font-size:15px;color:#1a2233;margin:0 0 14px">Documents &amp; extraction (5)</h2>
+            <div style="display:grid;grid-template-columns:2.4fr 0.9fr 0.9fr 1fr 90px;gap:8px;font-size:10.5px;font-weight:700;color:#9a9a95;text-transform:uppercase;letter-spacing:.03em;padding:0 4px 8px;border-bottom:1px solid #eae9e4">
+              <div>Document</div><div>Fields</div><div>Confidence</div><div>To confirm</div><div></div>
+            </div>
+            <div style="display:grid;grid-template-columns:2.4fr 0.9fr 0.9fr 1fr 90px;gap:8px;align-items:center;padding:12px 4px;border-bottom:1px solid #f2f1ec;background:oklch(56% 0.12 40 / .06)">
+              <div style="font-size:12.5px;color:#1a2233;font-weight:600">Angler_s Full Year Detailed P&amp;L.xlsm</div>
+              <div style="font-size:12.5px;color:#3a3f47">646</div>
+              <div style="font-size:12.5px;color:oklch(45% 0.12 155);font-weight:600">94%</div>
+              <div style="font-size:12.5px;color:oklch(50% 0.14 40);font-weight:600">12 fields</div>
+              <button style="background:#14213d;color:#fff;border:none;border-radius:5px;padding:6px 10px;font-size:11.5px;font-weight:600;cursor:pointer">Review</button>
+            </div>
+            <div style="display:grid;grid-template-columns:2.4fr 0.9fr 0.9fr 1fr 90px;gap:8px;align-items:center;padding:12px 4px;border-bottom:1px solid #f2f1ec">
+              <div style="font-size:12.5px;color:#1a2233">Angler_s November Detailed P&amp;L.xlsm</div>
+              <div style="font-size:12.5px;color:#3a3f47">375</div>
+              <div style="font-size:12.5px;color:oklch(45% 0.12 155);font-weight:600">93%</div>
+              <div style="font-size:12.5px;color:#8a8a86">2 fields</div>
+              <button style="background:#fff;color:#3a3f47;border:1px solid #e2e1dc;border-radius:5px;padding:6px 10px;font-size:11.5px;font-weight:600;cursor:pointer">Review</button>
+            </div>
+            <div style="display:grid;grid-template-columns:2.4fr 0.9fr 0.9fr 1fr 90px;gap:8px;align-items:center;padding:12px 4px;border-bottom:1px solid #f2f1ec">
+              <div style="font-size:12.5px;color:#1a2233">The Angler_s - November 2024 Financials.xlsx</div>
+              <div style="font-size:12.5px;color:#3a3f47">156</div>
+              <div style="font-size:12.5px;color:oklch(50% 0.12 55);font-weight:600">88%</div>
+              <div style="font-size:12.5px;color:#8a8a86">4 fields</div>
+              <button style="background:#fff;color:#3a3f47;border:1px solid #e2e1dc;border-radius:5px;padding:6px 10px;font-size:11.5px;font-weight:600;cursor:pointer">Review</button>
+            </div>
+            <div style="display:grid;grid-template-columns:2.4fr 0.9fr 0.9fr 1fr 90px;gap:8px;align-items:center;padding:12px 4px;border-bottom:1px solid #f2f1ec">
+              <div style="font-size:12.5px;color:#1a2233">The Angler_s - December 2024 Financials.xlsx</div>
+              <div style="font-size:12.5px;color:#3a3f47">143</div>
+              <div style="font-size:12.5px;color:oklch(50% 0.12 55);font-weight:600">87%</div>
+              <div style="font-size:12.5px;color:#8a8a86">5 fields</div>
+              <button style="background:#fff;color:#3a3f47;border:1px solid #e2e1dc;border-radius:5px;padding:6px 10px;font-size:11.5px;font-weight:600;cursor:pointer">Review</button>
+            </div>
+            <div style="display:grid;grid-template-columns:2.4fr 0.9fr 0.9fr 1fr 90px;gap:8px;align-items:center;padding:12px 4px">
+              <div style="font-size:12.5px;color:#1a2233">Miami Beach Anglers Offering Memorandum.pdf</div>
+              <div style="font-size:12.5px;color:#3a3f47">440</div>
+              <div style="font-size:12.5px;color:oklch(45% 0.12 155);font-weight:600">97%</div>
+              <div style="font-size:12.5px;color:#8a8a86">1 field</div>
+              <button style="background:#fff;color:#3a3f47;border:1px solid #e2e1dc;border-radius:5px;padding:6px 10px;font-size:11.5px;font-weight:600;cursor:pointer">Review</button>
+            </div>
+          </div>
+          <div style="width:380px;border-left:1px solid #eae9e4;background:#fbfbf9;padding:20px 22px;overflow:hidden">
+            <div style="font-size:11px;font-weight:700;color:#9a9a95;text-transform:uppercase;letter-spacing:.04em;margin-bottom:4px">Reviewing</div>
+            <div style="font-size:13.5px;font-weight:600;color:#1a2233;margin-bottom:14px">Angler_s Full Year Detailed P&amp;L.xlsm</div>
+            <div style="display:flex;flex-direction:column;gap:10px">
+              <div style="background:#fff;border:1px solid #eae9e4;border-radius:8px;padding:12px 14px">
+                <div style="display:flex;justify-content:space-between;margin-bottom:6px"><span style="font-size:12.5px;color:#6b6f76">Other Operated Depts · Jan</span><span style="font-size:10.5px;color:oklch(50% 0.12 55);background:oklch(56% 0.12 55 / .12);padding:2px 8px;border-radius:10px">61%</span></div>
+                <div style="font-family:ui-monospace,monospace;font-size:15px;color:#1a2233;margin-bottom:8px">$2,237</div>
+                <div style="display:flex;gap:8px"><button style="flex:1;background:oklch(56% 0.12 155);color:#fff;border:none;border-radius:5px;padding:6px;font-size:12px;font-weight:600;cursor:pointer">Accept</button><button style="flex:1;background:#fff;border:1px solid #e2e1dc;color:#3a3f47;border-radius:5px;padding:6px;font-size:12px;font-weight:600;cursor:pointer">Edit</button></div>
+              </div>
+              <div style="background:#fff;border:1px solid #eae9e4;border-radius:8px;padding:12px 14px">
+                <div style="display:flex;justify-content:space-between;margin-bottom:6px"><span style="font-size:12.5px;color:#6b6f76">Management Fees · Mar</span><span style="font-size:10.5px;color:oklch(50% 0.12 55);background:oklch(56% 0.12 55 / .12);padding:2px 8px;border-radius:10px">72%</span></div>
+                <div style="font-family:ui-monospace,monospace;font-size:15px;color:#1a2233;margin-bottom:8px">$69,991</div>
+                <div style="display:flex;gap:8px"><button style="flex:1;background:oklch(56% 0.12 155);color:#fff;border:none;border-radius:5px;padding:6px;font-size:12px;font-weight:600;cursor:pointer">Accept</button><button style="flex:1;background:#fff;border:1px solid #e2e1dc;color:#3a3f47;border-radius:5px;padding:6px;font-size:12px;font-weight:600;cursor:pointer">Edit</button></div>
+              </div>
+            </div>
+            <div style="margin-top:14px;font-size:12px;color:#9a9a95;text-align:center">10 more below ↓</div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- 2C -->
+    <div class="dv-opt" id="2c">
+      <div class="dv-olabel"><a class="dv-oid" href="#2c">2c</a>Review queue — one field at a time, keyboard-fast</div>
+      <div class="dv-card" style="width:760px">
+        <div style="padding:22px 24px;height:760px;overflow:hidden;display:flex;flex-direction:column">
+          <h2 style="font-size:15px;color:#1a2233;margin:0 0 4px">Documents &amp; extraction (5)</h2>
+          <div style="font-size:12px;color:#8a8a86;margin-bottom:16px">24 data points across 5 documents need your confirmation.</div>
+          <div style="display:flex;flex-direction:column;gap:8px;margin-bottom:20px">
+            <div style="display:flex;align-items:center;gap:12px;background:#fff;border:1px solid #eae9e4;border-radius:8px;padding:10px 14px">
+              <div style="width:28px;height:28px;border-radius:6px;background:oklch(56% 0.12 155 / .15);color:oklch(45% 0.12 155);font-size:9px;font-weight:700;display:flex;align-items:center;justify-content:center">XLS</div>
+              <div style="flex:1;font-size:12.5px;color:#1a2233;font-weight:500">Full Year P&amp;L.xlsm</div>
+              <div style="font-size:11.5px;color:#8a8a86">646 fields</div>
+              <div style="width:44px;height:5px;background:#f0efeb;border-radius:3px;overflow:hidden"><div style="width:94%;height:100%;background:oklch(45% 0.12 155)"></div></div>
+              <span style="font-size:11px;font-weight:700;color:oklch(50% 0.14 40)">12</span>
+            </div>
+            <div style="display:flex;align-items:center;gap:12px;background:#fff;border:1px solid #eae9e4;border-radius:8px;padding:10px 14px">
+              <div style="width:28px;height:28px;border-radius:6px;background:oklch(56% 0.12 155 / .15);color:oklch(45% 0.12 155);font-size:9px;font-weight:700;display:flex;align-items:center;justify-content:center">XLS</div>
+              <div style="flex:1;font-size:12.5px;color:#1a2233;font-weight:500">November P&amp;L.xlsm</div>
+              <div style="font-size:11.5px;color:#8a8a86">375 fields</div>
+              <div style="width:44px;height:5px;background:#f0efeb;border-radius:3px;overflow:hidden"><div style="width:93%;height:100%;background:oklch(45% 0.12 155)"></div></div>
+              <span style="font-size:11px;font-weight:700;color:oklch(50% 0.14 40)">2</span>
+            </div>
+          </div>
+          <div style="flex:1;background:#14213d;border-radius:12px;padding:26px;display:flex;flex-direction:column;color:#fff">
+            <div style="font-size:11px;color:#9db3e0;text-transform:uppercase;letter-spacing:.05em;margin-bottom:6px">Field 1 of 12 · Full Year P&amp;L.xlsm, page 4</div>
+            <div style="font-size:14px;color:#c9cede;margin-bottom:10px">Other Operated Departments Revenue — January</div>
+            <div style="font-family:ui-monospace,monospace;font-size:34px;font-weight:600;margin-bottom:6px">$2,237</div>
+            <div style="font-size:12px;color:oklch(75% 0.1 55);background:rgba(255,255,255,.08);display:inline-block;padding:4px 10px;border-radius:6px;margin-bottom:20px;width:fit-content">61% confidence — low, worth a glance</div>
+            <div style="background:rgba(255,255,255,.06);border-radius:8px;height:160px;display:flex;align-items:center;justify-content:center;color:#9db3e0;font-size:12px;margin-bottom:20px">source document snippet, page 4</div>
+            <div style="display:flex;gap:10px;margin-top:auto">
+              <button style="flex:1;background:oklch(56% 0.12 155);color:#fff;border:none;border-radius:8px;padding:12px;font-size:13.5px;font-weight:600;cursor:pointer">✓ Accept</button>
+              <button style="flex:1;background:transparent;color:#fff;border:1px solid rgba(255,255,255,.3);border-radius:8px;padding:12px;font-size:13.5px;font-weight:600;cursor:pointer">✎ Edit value</button>
+              <button style="background:transparent;color:#9db3e0;border:none;padding:12px;font-size:13.5px;cursor:pointer">Skip →</button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+  </div>
+  <p class="dv-next">Try next: "combine <a class="dv-oid" href="#2a">2a</a>'s inline expand with <a class="dv-oid" href="#2c">2c</a>'s queue for low-confidence fields" · "apply whichever direction to Data Room v2"</p>
+</section>
+
+<section class="dv-turn" id="t1">
+  <div class="dv-thd"><a class="dv-tid" href="#t1">1</a><span class="dv-tname">Data Room redesign — grouping, source-of-truth, non-blocking framing</span></div>
+  <div class="dv-opts">
+
+    <!-- OPTION 1A -->
+    <div class="dv-opt" id="1a">
+      <div class="dv-olabel"><a class="dv-oid" href="#1a">1a</a>Grouped library + source panel (Notion/Linear feel)</div>
+      <div class="dv-card" style="width:1440px">
+        <div style="display:flex;height:900px">
+          <div style="width:216px;background:#0f1a30;padding:20px 16px;display:flex;flex-direction:column;gap:2px;flex-shrink:0">
+            <div style="display:flex;align-items:center;gap:8px;color:#fff;font-weight:700;font-size:15px;margin-bottom:22px"><div style="width:26px;height:26px;background:#2f4a8c;border-radius:6px;display:flex;align-items:center;justify-content:center;font-size:12px">F</div>Fondok.</div>
+            <div style="color:#c9cede;font-size:12.5px;padding:8px 10px;border-radius:6px;background:rgba(255,255,255,.06);margin-bottom:14px">fondok.ai</div>
+            <div style="color:#fff;background:rgba(255,255,255,.09);font-size:13px;font-weight:600;padding:8px 10px;border-radius:6px">Projects</div>
+            <div style="color:#8b93a7;font-size:13px;padding:8px 10px">Pipeline</div>
+            <div style="color:#8b93a7;font-size:13px;padding:8px 10px">Audit</div>
+            <div style="color:#8b93a7;font-size:13px;padding:8px 10px">Data Library</div>
+            <div style="color:#8b93a7;font-size:13px;padding:8px 10px">Settings</div>
+          </div>
+          <div style="flex:1;overflow:hidden;display:flex;flex-direction:column">
+            <div style="padding:20px 28px 0">
+              <div style="font-size:11px;color:#9a9a95;margin-bottom:8px">← Back to Projects</div>
+              <div style="display:flex;align-items:center;gap:10px;margin-bottom:6px"><h1 style="font-size:22px;margin:0;color:#1a2233">Kimpton Hotel</h1><span style="background:#e9eefb;color:#2f4a8c;font-size:10.5px;font-weight:700;padding:3px 9px;border-radius:20px">DRAFT</span></div>
+              <div style="font-size:12.5px;color:#8a8a86;margin-bottom:16px">660 Washington Avenue, Miami Beach, FL 33139 · 132 keys · Created 7/30/2026</div>
+              <div style="display:flex;gap:20px;border-bottom:1px solid #e5e4df;font-size:13px;font-weight:600;color:#8a8a86">
+                <div style="padding-bottom:10px;color:#14213d;border-bottom:2px solid #14213d">Data Room</div>
+                <div style="padding-bottom:10px">Overview</div><div style="padding-bottom:10px">P&amp;L</div><div style="padding-bottom:10px">Returns</div>
+              </div>
+            </div>
+            <div style="flex:1;overflow:hidden;display:flex">
+              <div style="flex:1;padding:20px 28px;overflow:hidden">
+                <div style="background:#e8f5ee;border-radius:8px;padding:12px 16px;font-size:13px;color:oklch(40% 0.10 155);margin-bottom:18px;display:flex;justify-content:space-between;align-items:center">
+                  <span>✓ 9 documents uploaded across 5 categories — ready to underwrite.</span>
+                  <span style="font-size:11.5px;font-weight:600;color:oklch(50% 0.12 155)">+ 4 more recommended</span>
+                </div>
+
+                <div style="margin-bottom:20px">
+                  <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
+                    <div style="font-size:11.5px;font-weight:700;letter-spacing:.04em;color:#6b6f76;text-transform:uppercase">Financial Statements <span style="color:#c3c2bd">· 4</span></div>
+                    <div style="font-size:11.5px;color:#2f4a8c;font-weight:600;cursor:pointer">+ Add document</div>
+                  </div>
+                  <div style="border:1px solid #eae9e4;border-radius:8px;overflow:hidden">
+                    <div class="fk-row" style="display:flex;align-items:center;gap:12px;padding:11px 14px;border-bottom:1px solid #f2f1ec;background:#fff">
+                      <div style="width:26px;height:26px;border-radius:5px;background:oklch(56% 0.12 155 / .15);color:oklch(45% 0.12 155);font-size:9.5px;font-weight:700;display:flex;align-items:center;justify-content:center">XLS</div>
+                      <div style="flex:1;font-size:13px;color:#1a2233;font-weight:500">2024_Annual_PL.xlsx</div>
+                      <div style="font-size:11px;background:#f3f2ee;color:#6b6f76;padding:3px 9px;border-radius:14px">Annual · 2024</div>
+                      <div class="fk-source" style="font-size:11px;color:#2f4a8c;opacity:.7;cursor:pointer">View source ↗</div>
+                    </div>
+                    <div class="fk-row" style="display:flex;align-items:center;gap:12px;padding:11px 14px;border-bottom:1px solid #f2f1ec;background:#fff">
+                      <div style="width:26px;height:26px;border-radius:5px;background:oklch(56% 0.12 155 / .15);color:oklch(45% 0.12 155);font-size:9.5px;font-weight:700;display:flex;align-items:center;justify-content:center">XLS</div>
+                      <div style="flex:1;font-size:13px;color:#1a2233;font-weight:500">T12_through_Mar2025.xlsx</div>
+                      <div style="font-size:11px;background:#f3f2ee;color:#6b6f76;padding:3px 9px;border-radius:14px">T12 · thru Mar 2025</div>
+                      <div class="fk-source" style="font-size:11px;color:#2f4a8c;opacity:.7;cursor:pointer">View source ↗</div>
+                    </div>
+                    <div class="fk-row" style="display:flex;align-items:center;gap:12px;padding:11px 14px;background:#fff">
+                      <div style="width:26px;height:26px;border-radius:5px;background:oklch(56% 0.12 155 / .15);color:oklch(45% 0.12 155);font-size:9.5px;font-weight:700;display:flex;align-items:center;justify-content:center">PDF</div>
+                      <div style="flex:1;font-size:13px;color:#1a2233;font-weight:500">Jan_Feb_2025_Monthly.pdf</div>
+                      <div style="font-size:11px;background:#fdf4e3;color:oklch(50% 0.12 55);padding:3px 9px;border-radius:14px">Monthly · needs review ✎</div>
+                      <div class="fk-source" style="font-size:11px;color:#2f4a8c;opacity:.7;cursor:pointer">View source ↗</div>
+                    </div>
+                  </div>
+                </div>
+
+                <div style="margin-bottom:20px">
+                  <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
+                    <div style="font-size:11.5px;font-weight:700;letter-spacing:.04em;color:#6b6f76;text-transform:uppercase">STR Reports <span style="color:#c3c2bd">· 1</span></div>
+                    <div style="font-size:11.5px;color:#2f4a8c;font-weight:600;cursor:pointer">+ Add document</div>
+                  </div>
+                  <div style="border:1px solid #eae9e4;border-radius:8px;overflow:hidden">
+                    <div class="fk-row" style="display:flex;align-items:center;gap:12px;padding:11px 14px;background:#fff">
+                      <div style="width:26px;height:26px;border-radius:5px;background:oklch(56% 0.12 250 / .15);color:oklch(45% 0.12 250);font-size:9.5px;font-weight:700;display:flex;align-items:center;justify-content:center">PDF</div>
+                      <div style="flex:1;font-size:13px;color:#1a2233;font-weight:500">STR_Comp_Set_Mar2025.pdf</div>
+                      <div style="font-size:11px;background:#f3f2ee;color:#6b6f76;padding:3px 9px;border-radius:14px">Comp Set</div>
+                      <div class="fk-source" style="font-size:11px;color:#2f4a8c;opacity:.7;cursor:pointer">View source ↗</div>
+                    </div>
+                  </div>
+                </div>
+
+                <div style="font-size:11.5px;color:#c3c2bd;text-align:center;padding:16px 0">Rent Roll · Budget · CapEx · IC Memo · Other — collapsed, empty</div>
+              </div>
+
+              <div style="width:320px;border-left:1px solid #eae9e4;padding:20px 22px;background:#fbfbf9;flex-shrink:0">
+                <div style="font-size:11px;font-weight:700;letter-spacing:.04em;color:#6b6f76;text-transform:uppercase;margin-bottom:12px">Source &amp; confidence</div>
+                <div style="font-size:12.5px;color:#8a8a86;margin-bottom:14px">2024_Annual_PL.xlsx · page 3</div>
+                <div style="display:flex;flex-direction:column;gap:10px">
+                  <div style="display:flex;justify-content:space-between;font-size:13px"><span style="color:#6b6f76">Total Revenue</span><span style="color:#1a2233;font-weight:600;font-family:ui-monospace,monospace">$12,487,342</span></div>
+                  <div style="display:flex;justify-content:space-between;font-size:13px"><span style="color:#6b6f76">Total Expenses</span><span style="color:#1a2233;font-weight:600;font-family:ui-monospace,monospace">$8,214,910</span></div>
+                  <div style="display:flex;justify-content:space-between;font-size:13px"><span style="color:#6b6f76">NOI</span><span style="color:#1a2233;font-weight:600;font-family:ui-monospace,monospace">$4,272,432</span></div>
+                </div>
+                <div style="margin-top:14px;font-size:11px;color:oklch(50% 0.1 155);background:oklch(56% 0.12 155 / .12);padding:6px 10px;border-radius:6px;display:inline-block">96% extraction confidence</div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- OPTION 1B -->
+    <div class="dv-opt" id="1b">
+      <div class="dv-olabel"><a class="dv-oid" href="#1b">1b</a>Single spacious list, hover-to-source (Stripe feel)</div>
+      <div class="dv-card" style="width:1200px">
+        <div style="padding:28px 40px;height:860px;overflow:hidden">
+          <div style="font-size:11px;color:#9a9a95;margin-bottom:8px">← Back to Projects</div>
+          <div style="display:flex;align-items:center;gap:10px;margin-bottom:4px"><h1 style="font-size:24px;margin:0;color:#1a2233;font-weight:600">Kimpton Hotel</h1><span style="background:#e9eefb;color:#2f4a8c;font-size:10.5px;font-weight:700;padding:3px 9px;border-radius:20px">DRAFT</span></div>
+          <div style="font-size:12.5px;color:#8a8a86;margin-bottom:24px">660 Washington Avenue, Miami Beach, FL · 132 keys</div>
+
+          <div style="display:flex;justify-content:space-between;align-items:baseline;margin-bottom:6px">
+            <h2 style="font-size:16px;color:#1a2233;margin:0">Documents</h2>
+            <div style="font-size:13px;color:#8a8a86">You've uploaded <b style="color:#1a2233">9 documents</b> across <b style="color:#1a2233">6 categories</b>.</div>
+          </div>
+          <div style="height:1px;background:#eae9e4;margin-bottom:20px"></div>
+
+          <div style="font-size:12px;font-weight:700;color:#6b6f76;text-transform:uppercase;letter-spacing:.05em;margin:18px 0 10px">Financial Statements</div>
+          <div class="fk-hoverbox" style="display:flex;align-items:center;padding:14px 0;border-bottom:1px solid #f2f1ec">
+            <div style="width:34px;height:34px;border-radius:8px;background:#eef2fb;color:#2f4a8c;font-size:10px;font-weight:700;display:flex;align-items:center;justify-content:center;margin-right:14px">XLS</div>
+            <div style="flex:1">
+              <div style="font-size:14px;color:#1a2233;font-weight:500">2024 Annual Financials</div>
+              <div style="font-size:12px;color:#9a9a95">2024_Annual_PL.xlsx</div>
+            </div>
+            <select style="font-size:12.5px;border:1px solid #e2e1dc;border-radius:6px;padding:5px 10px;color:#3a3f47;margin-right:24px">
+              <option>Annual</option><option>Monthly</option><option>YTD</option><option>T12</option>
+            </select>
+            <div style="font-size:12px;color:#2f4a8c;cursor:pointer">Source: p.3 →</div>
+            <div class="fk-pop" style="position:absolute;margin-top:90px;margin-left:-260px;background:#1a2233;color:#fff;font-size:12px;border-radius:8px;padding:12px 14px;width:220px;box-shadow:0 8px 24px rgba(0,0,0,.2)">
+              <div style="opacity:.6;font-size:10.5px;text-transform:uppercase;margin-bottom:6px">Extracted</div>
+              Total Revenue: $12,487,342<br>Confidence: 96%
+            </div>
+          </div>
+          <div style="display:flex;align-items:center;padding:14px 0;border-bottom:1px solid #f2f1ec">
+            <div style="width:34px;height:34px;border-radius:8px;background:#eef2fb;color:#2f4a8c;font-size:10px;font-weight:700;display:flex;align-items:center;justify-content:center;margin-right:14px">XLS</div>
+            <div style="flex:1">
+              <div style="font-size:14px;color:#1a2233;font-weight:500">T12 through March 2025</div>
+              <div style="font-size:12px;color:#9a9a95">T12_Mar2025.xlsx</div>
+            </div>
+            <select style="font-size:12.5px;border:1px solid #e2e1dc;border-radius:6px;padding:5px 10px;color:#3a3f47;margin-right:24px"><option>T12</option><option>Annual</option></select>
+            <div style="font-size:12px;color:#2f4a8c;cursor:pointer">Source: p.1 →</div>
+          </div>
+          <div style="display:flex;align-items:center;padding:14px 0;border-bottom:1px solid #f2f1ec">
+            <div style="width:34px;height:34px;border-radius:8px;background:#eef2fb;color:#2f4a8c;font-size:10px;font-weight:700;display:flex;align-items:center;justify-content:center;margin-right:14px">PDF</div>
+            <div style="flex:1">
+              <div style="font-size:14px;color:#1a2233;font-weight:500">Jan–Feb 2025 Monthly</div>
+              <div style="font-size:12px;color:#9a9a95">Jan_Feb_2025_Monthly.pdf</div>
+            </div>
+            <select style="font-size:12.5px;border:1px solid oklch(56% 0.12 55);border-radius:6px;padding:5px 10px;color:oklch(45% 0.12 55);margin-right:24px"><option>Monthly (unconfirmed)</option><option>YTD</option></select>
+            <div style="font-size:12px;color:#2f4a8c;cursor:pointer">Source: p.2 →</div>
+          </div>
+
+          <div style="font-size:12px;font-weight:700;color:#6b6f76;text-transform:uppercase;letter-spacing:.05em;margin:22px 0 10px">STR Reports</div>
+          <div style="display:flex;align-items:center;padding:14px 0;border-bottom:1px solid #f2f1ec">
+            <div style="width:34px;height:34px;border-radius:8px;background:#f1eefb;color:#6a3fa8;font-size:10px;font-weight:700;display:flex;align-items:center;justify-content:center;margin-right:14px">PDF</div>
+            <div style="flex:1">
+              <div style="font-size:14px;color:#1a2233;font-weight:500">STR Comp Set — March 2025</div>
+              <div style="font-size:12px;color:#9a9a95">STR_Mar2025.pdf</div>
+            </div>
+            <div style="font-size:12px;color:#2f4a8c;cursor:pointer;margin-right:24px">Source: p.1 →</div>
+          </div>
+
+          <div style="margin-top:22px;font-size:12.5px;color:#9a9a95">Budget · Rent Roll · Occupancy · CapEx · IC Memo — none uploaded yet, no action needed to keep modeling.</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- OPTION 1C -->
+    <div class="dv-opt" id="1c">
+      <div class="dv-olabel"><a class="dv-oid" href="#1c">1c</a>Two-pane category explorer, dense (Bloomberg feel)</div>
+      <div class="dv-card" style="width:1320px">
+        <div style="display:flex;height:860px;font-family:ui-monospace,'SF Mono',Menlo,monospace">
+          <div style="width:240px;background:#fbfbf9;border-right:1px solid #eae9e4;padding:18px 14px;flex-shrink:0">
+            <div style="font-size:11px;font-weight:700;letter-spacing:.04em;color:#9a9a95;text-transform:uppercase;margin-bottom:10px">Categories</div>
+            <div style="background:#14213d;color:#fff;font-size:12.5px;padding:8px 10px;border-radius:5px;display:flex;justify-content:space-between;margin-bottom:2px"><span>Financial Statements</span><span>4</span></div>
+            <div style="color:#3a3f47;font-size:12.5px;padding:8px 10px;display:flex;justify-content:space-between"><span>STR Reports</span><span>1</span></div>
+            <div style="color:#3a3f47;font-size:12.5px;padding:8px 10px;display:flex;justify-content:space-between"><span>Budget</span><span>0</span></div>
+            <div style="color:#3a3f47;font-size:12.5px;padding:8px 10px;display:flex;justify-content:space-between"><span>Rent Roll</span><span>0</span></div>
+            <div style="color:#3a3f47;font-size:12.5px;padding:8px 10px;display:flex;justify-content:space-between"><span>Occupancy</span><span>0</span></div>
+            <div style="color:#3a3f47;font-size:12.5px;padding:8px 10px;display:flex;justify-content:space-between"><span>CapEx</span><span>0</span></div>
+            <div style="color:#3a3f47;font-size:12.5px;padding:8px 10px;display:flex;justify-content:space-between"><span>IC Memo</span><span>0</span></div>
+            <div style="color:#c3c2bd;font-size:12.5px;padding:8px 10px;display:flex;justify-content:space-between"><span>Other</span><span>0</span></div>
+          </div>
+          <div style="flex:1;padding:18px 24px;overflow:hidden">
+            <div style="font-size:13px;color:#1a2233;font-weight:700;margin-bottom:12px">Financial Statements <span style="color:#9a9a95;font-weight:400">/ 4 documents</span></div>
+            <div style="display:grid;grid-template-columns:2fr 1fr 1fr 60px 1fr;font-size:10.5px;color:#9a9a95;text-transform:uppercase;letter-spacing:.03em;padding:0 0 8px;border-bottom:1px solid #eae9e4">
+              <div>Name</div><div>Class</div><div>Period</div><div>Pg</div><div>Confidence</div>
+            </div>
+            <div style="display:grid;grid-template-columns:2fr 1fr 1fr 60px 1fr;font-size:12.5px;color:#1a2233;padding:10px 0;border-bottom:1px solid #f2f1ec;align-items:center">
+              <div>2024_Annual_PL.xlsx</div><div>Annual</div><div>FY2024</div><div>3</div><div style="color:oklch(45% 0.12 155)">96%</div>
+            </div>
+            <div style="display:grid;grid-template-columns:2fr 1fr 1fr 60px 1fr;font-size:12.5px;color:#1a2233;padding:10px 0;border-bottom:1px solid #f2f1ec;align-items:center">
+              <div>T12_Mar2025.xlsx</div><div>T12</div><div>thru 03/25</div><div>1</div><div style="color:oklch(45% 0.12 155)">94%</div>
+            </div>
+            <div style="display:grid;grid-template-columns:2fr 1fr 1fr 60px 1fr;font-size:12.5px;color:#1a2233;padding:10px 0;border-bottom:1px solid #f2f1ec;align-items:center;background:oklch(56% 0.12 55 / .07)">
+              <div>Jan_Monthly.pdf</div><div style="color:oklch(45% 0.12 55)">Monthly ✎</div><div>Jan 2025</div><div>2</div><div style="color:oklch(50% 0.1 55)">61%</div>
+            </div>
+            <div style="display:grid;grid-template-columns:2fr 1fr 1fr 60px 1fr;font-size:12.5px;color:#1a2233;padding:10px 0;align-items:center">
+              <div>Feb_Monthly.pdf</div><div>Monthly</div><div>Feb 2025</div><div>2</div><div style="color:oklch(45% 0.12 155)">89%</div>
+            </div>
+          </div>
+          <div style="width:340px;border-left:1px solid #eae9e4;padding:18px 22px;background:#fbfbf9;flex-shrink:0">
+            <div style="font-size:11px;color:#9a9a95;text-transform:uppercase;letter-spacing:.04em;margin-bottom:10px">Jan_Monthly.pdf — page 2</div>
+            <div style="height:120px;background:repeating-linear-gradient(135deg,#f0efeb,#f0efeb 8px,#e8e7e2 8px,#e8e7e2 16px);border-radius:6px;margin-bottom:14px;display:flex;align-items:center;justify-content:center;color:#9a9a95;font-size:11px">document page preview</div>
+            <div style="display:flex;flex-direction:column;gap:8px;font-size:12.5px">
+              <div style="display:flex;justify-content:space-between"><span style="color:#6b6f76">Room Revenue</span><span style="color:#1a2233">$918,204</span></div>
+              <div style="display:flex;justify-content:space-between"><span style="color:#6b6f76">F&amp;B Revenue</span><span style="color:#1a2233">$211,556</span></div>
+              <div style="display:flex;justify-content:space-between"><span style="color:#6b6f76">Total Expenses</span><span style="color:#1a2233">$743,982</span></div>
+            </div>
+            <div style="margin-top:14px;font-size:11px;color:oklch(50% 0.12 55);background:oklch(56% 0.12 55 / .12);padding:6px 10px;border-radius:6px;display:inline-block">Low confidence — please confirm classification</div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+  </div>
+  <p class="dv-next">Try next: "combine <a class="dv-oid" href="#1a">1a</a>'s source panel with <a class="dv-oid" href="#1b">1b</a>'s spacious rows" · "apply this pattern to the onboarding Documents step" · "make the confidence badge only show when below 80%"</p>
+</section>
+
+</x-dc>
+</body>
+</html>

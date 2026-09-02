@@ -7,12 +7,21 @@ not screenshots, and not "which iteration is current?" (FON-72).
 
 ## Files
 
-- `FONDOK-MVP-CANONICAL.dc.html` — the exported canonical prototype (single
-  self-contained file: all 11 tabs, real CSS / tokens / copy). **Drop Sam's
-  latest export here** and commit it. The commit history is the design version
-  log; a design change becomes a reviewable diff.
-- `DESIGN_MAP.md` — each prototype tab → the route and component that implement
-  it. Start here when translating a design change into code.
+Vendored from Sam's "VERSION 2 — Fondok design transfer" (Sep 2026):
+
+- `FONDOK - MVP CANONICAL PROTOTYPE.dc.html` — the canonical index (11 primary
+  sections + sub-frames, canonical nav order, ownership + Base-Case rules).
+- One `.dc.html` per tab + design-system files (Data Key, Field System,
+  Component Kit, Data Provenance). `DESIGN_MAP.md` pins the canonical file per
+  tab and lists the obsolete iterations.
+- `Fondok Prototype (shareable).html` — self-contained single-file render (open
+  directly, no runtime). The `.dc.html` files render via `support.js` /
+  `deck-stage.js` in this folder.
+- `DESIGN_MAP.md` — each prototype tab → canonical file → route → component,
+  plus the canonical ownership model and the Data Key taxonomy. Start here.
+
+The commit history of this folder is the design version log; a design change
+lands as a re-export + a reviewable diff.
 
 ## Working model (FON-72)
 

@@ -1,0 +1,168 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+  <style>
+    @font-face{font-family:'system';src:local('Inter');}
+    body{margin:0;background:#f5f4f0;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,Arial,sans-serif;}
+    ::selection{background:#c7d7f5}
+  </style>
+</helmet>
+<div style="padding:40px 48px;max-width:1400px;margin:0 auto;">
+  <div style="margin-bottom:36px">
+    <div style="font-size:11px;font-weight:700;letter-spacing:.08em;color:#8a8a86;text-transform:uppercase;margin-bottom:6px">Reference · extracted from live product</div>
+    <h1 style="font-size:26px;font-weight:700;color:#1a2233;margin:0 0 6px">Fondok.ai Component Kit</h1>
+    <p style="font-size:14px;color:#6b6f76;margin:0;max-width:640px;line-height:1.5">Pieces pulled from the Data Room, onboarding wizard, and Overview screens. Use this as the shared vocabulary — new mockups should reuse these tokens and parts rather than inventing new ones.</p>
+  </div>
+
+  <!-- COLORS -->
+  <section style="margin-bottom:40px">
+    <h2 style="font-size:13px;font-weight:700;color:#1a2233;text-transform:uppercase;letter-spacing:.04em;margin:0 0 14px">Color tokens</h2>
+    <div style="display:flex;flex-wrap:wrap;gap:14px">
+      <sc-for list="{{ swatches }}" as="s" hint-placeholder-count="8">
+        <div style="width:132px">
+          <div style="height:56px;border-radius:8px;border:1px solid rgba(0,0,0,.08);background:{{ s.hex }}"></div>
+          <div style="font-size:11px;font-weight:600;color:#1a2233;margin-top:6px">{{ s.name }}</div>
+          <div style="font-size:10.5px;color:#9a9a95;font-family:ui-monospace,monospace">{{ s.hex }}</div>
+        </div>
+      </sc-for>
+    </div>
+  </section>
+
+  <!-- BUTTONS -->
+  <section style="margin-bottom:40px">
+    <h2 style="font-size:13px;font-weight:700;color:#1a2233;text-transform:uppercase;letter-spacing:.04em;margin:0 0 14px">Buttons</h2>
+    <div style="display:flex;gap:12px;align-items:center;flex-wrap:wrap">
+      <button style="background:#14213d;color:#fff;border:none;border-radius:6px;padding:9px 16px;font-size:13px;font-weight:600;cursor:pointer">Next →</button>
+      <button style="background:#fff;color:#1a2233;border:1px solid #d8d7d2;border-radius:6px;padding:9px 16px;font-size:13px;font-weight:600;cursor:pointer">← Back</button>
+      <button style="background:#eef2fb;color:#2f4a8c;border:none;border-radius:6px;padding:9px 16px;font-size:13px;font-weight:600;cursor:pointer">Choose Files</button>
+      <button style="background:transparent;color:#9098a3;border:1px solid #e2e1dc;border-radius:6px;padding:9px 16px;font-size:13px;font-weight:600;cursor:pointer" disabled="">Next → (disabled)</button>
+    </div>
+  </section>
+
+  <!-- BADGES / STATUS -->
+  <section style="margin-bottom:40px">
+    <h2 style="font-size:13px;font-weight:700;color:#1a2233;text-transform:uppercase;letter-spacing:.04em;margin:0 0 14px">Status badges &amp; field states</h2>
+    <div style="display:flex;gap:20px;flex-wrap:wrap;align-items:center">
+      <span style="display:inline-flex;align-items:center;gap:6px;background:#e9eefb;color:#2f4a8c;font-size:11px;font-weight:700;padding:4px 10px;border-radius:20px"><span style="width:6px;height:6px;border-radius:50%;background:#2f4a8c"></span>DRAFT</span>
+      <span style="display:inline-flex;align-items:center;gap:6px;color:oklch(56% 0.12 55);font-size:13px;font-weight:600"><span>✎</span> Editable field</span>
+      <span style="display:inline-flex;align-items:center;gap:6px;color:oklch(56% 0.12 155);font-size:13px;font-weight:600"><span>⇌</span> Linked field</span>
+      <span style="display:inline-flex;align-items:center;gap:6px;color:#8a8a86;font-size:13px;font-weight:600"><span>◎</span> Read-only</span>
+      <span style="display:inline-flex;align-items:center;gap:6px;background:#f3f2ee;color:#6b6f76;font-size:11px;font-weight:700;padding:4px 10px;border-radius:20px">RECOMMENDED</span>
+    </div>
+  </section>
+
+  <!-- ALERTS -->
+  <section style="margin-bottom:40px">
+    <h2 style="font-size:13px;font-weight:700;color:#1a2233;text-transform:uppercase;letter-spacing:.04em;margin:0 0 14px">Alert / banner variants</h2>
+    <div style="display:flex;flex-direction:column;gap:12px">
+      <div style="background:#eef2fb;border-radius:8px;padding:14px 18px;font-size:13px;color:#31405e;line-height:1.5">ⓘ No financials uploaded yet — coverage analysis will run once you add at least one P&L document.</div>
+      <div style="background:#e8f5ee;border-radius:8px;padding:14px 18px;color:#1f6b41">
+        <div style="font-weight:700;font-size:13.5px;margin-bottom:2px">🚀 Ready to run the model</div>
+        <div style="font-size:12.5px;color:#2c7a4d;line-height:1.5">You've uploaded the minimum (a P&L) to underwrite this deal. Everything below sharpens the projection but isn't required to run.</div>
+      </div>
+      <div style="background:#fdf4e3;border:1px solid #f0dcae;border-radius:8px;padding:14px 18px;color:#8a5a12">
+        <div style="font-weight:700;font-size:13.5px;margin-bottom:2px">⚠ Shell Deal</div>
+        <div style="font-size:12.5px;color:#9a6a1f;line-height:1.5">Deals can be created at the screening stage without documents. Financial modeling and IC-ready outputs require supporting documentation.</div>
+      </div>
+      <div style="background:#fbeaea;border-radius:8px;padding:14px 18px;font-size:13px;color:#a13a3a">⨯ Upload failed — file exceeds 25MB limit.</div>
+    </div>
+  </section>
+
+  <!-- STEPPER -->
+  <section style="margin-bottom:40px">
+    <h2 style="font-size:13px;font-weight:700;color:#1a2233;text-transform:uppercase;letter-spacing:.04em;margin:0 0 14px">Wizard stepper</h2>
+    <div style="background:#fff;border:1px solid #eae9e4;border-radius:10px;padding:20px 24px;display:flex;align-items:center;gap:0">
+      <sc-for list="{{ steps }}" as="st" hint-placeholder-count="6">
+        <div style="display:flex;align-items:center">
+          <div style="display:flex;flex-direction:column;align-items:center;gap:6px;width:84px">
+            <div style="{{ st.circleStyle }}">{{ st.mark }}</div>
+            <div style="font-size:11.5px;font-weight:600;color:{{ st.labelColor }};text-align:center;line-height:1.2">{{ st.label }}</div>
+          </div>
+          <sc-if value="{{ st.hasLine }}" hint-placeholder-val="{{ true }}"><div style="width:56px;height:2px;background:{{ st.lineColor }};margin:0 4px 20px"></div></sc-if>
+        </div>
+      </sc-for>
+    </div>
+  </section>
+
+  <!-- TABS -->
+  <section style="margin-bottom:40px">
+    <h2 style="font-size:13px;font-weight:700;color:#1a2233;text-transform:uppercase;letter-spacing:.04em;margin:0 0 14px">Section tabs</h2>
+    <div style="display:flex;gap:22px;border-bottom:1px solid #e5e4df;padding-bottom:0;flex-wrap:wrap">
+      <sc-for list="{{ tabs }}" as="t" hint-placeholder-count="6">
+        <div style="font-size:13.5px;font-weight:600;padding-bottom:10px;color:{{ t.color }};border-bottom:2px solid {{ t.border }}">{{ t.label }}</div>
+      </sc-for>
+    </div>
+  </section>
+
+  <!-- CARD -->
+  <section style="margin-bottom:40px">
+    <h2 style="font-size:13px;font-weight:700;color:#1a2233;text-transform:uppercase;letter-spacing:.04em;margin:0 0 14px">Data card</h2>
+    <div style="background:#fff;border:1px solid #eae9e4;border-radius:10px;padding:20px 22px;max-width:420px">
+      <div style="font-size:11px;font-weight:700;letter-spacing:.04em;color:#8a8a86;text-transform:uppercase;margin-bottom:12px">General information</div>
+      <div style="display:flex;flex-direction:column;gap:11px">
+        <div style="display:flex;justify-content:space-between;align-items:center;font-size:13px"><span style="color:#6b6f76">Property Name</span><span style="display:flex;align-items:center;gap:7px;color:#1a2233;font-weight:600">Kimpton Hotel<span style="color:oklch(56% 0.12 55);font-size:12px">✎</span></span></div>
+        <div style="display:flex;justify-content:space-between;align-items:center;font-size:13px"><span style="color:#6b6f76">Keys</span><span style="display:flex;align-items:center;gap:7px;color:#1a2233;font-weight:600">132<span style="color:oklch(56% 0.12 55);font-size:12px">✎</span></span></div>
+        <div style="display:flex;justify-content:space-between;align-items:center;font-size:13px;padding-top:6px;border-top:1px solid #f2f1ec"><span style="color:#6b6f76">Purchase Price</span><span style="display:flex;align-items:center;gap:7px;color:#9a9a95;font-weight:600">—<span style="color:oklch(56% 0.12 155);font-size:12px">⇌</span></span></div>
+      </div>
+      <div style="display:flex;gap:16px;margin-top:14px;padding-top:12px;border-top:1px solid #f2f1ec;font-size:11px;color:#9a9a95">
+        <span style="display:flex;align-items:center;gap:5px"><span style="color:oklch(56% 0.12 55)">✎</span>Editable</span>
+        <span style="display:flex;align-items:center;gap:5px"><span style="color:oklch(56% 0.12 155)">⇌</span>Linked / auto-filled</span>
+      </div>
+    </div>
+  </section>
+
+  <!-- UPLOAD -->
+  <section style="margin-bottom:20px">
+    <h2 style="font-size:13px;font-weight:700;color:#1a2233;text-transform:uppercase;letter-spacing:.04em;margin:0 0 14px">Upload dropzone</h2>
+    <div style="background:#fff;border:1px dashed #c9c8c2;border-radius:10px;padding:28px;max-width:520px;text-align:center">
+      <div style="font-size:22px;margin-bottom:8px">☁</div>
+      <div style="font-size:13.5px;font-weight:700;color:#1a2233;margin-bottom:4px">Drop offering memorandum here</div>
+      <div style="font-size:12px;color:#9a9a95">One file · PDF or Word. Click to browse.</div>
+    </div>
+  </section>
+</div>
+
+</x-dc>
+<script type="text/x-dc" data-dc-script>
+class Component extends DCLogic {
+  renderVals() {
+    const swatches = [
+      {name:'Ink navy', hex:'#14213d'},
+      {name:'Sidebar navy', hex:'#0f1a30'},
+      {name:'App background', hex:'#f5f4f0'},
+      {name:'Card white', hex:'#ffffff'},
+      {name:'Border gray', hex:'#eae9e4'},
+      {name:'Text secondary', hex:'#6b6f76'},
+      {name:'Editable amber', hex:'oklch(56% 0.12 55)'},
+      {name:'Linked green', hex:'oklch(56% 0.12 155)'},
+    ];
+    const steps = ['Deal Details','Return Profile','Documents','Brand','Positioning','Review'].map((label,i)=>{
+      const doneIdx = 2; // 0-indexed current
+      const state = i < doneIdx ? 'done' : i === doneIdx ? 'current' : 'pending';
+      const base = 'width:32px;height:32px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:13px;font-weight:700;';
+      const circleStyle = state==='done' ? base+'background:#e8f5ee;color:#1f6b41;' : state==='current' ? base+'background:#14213d;color:#fff;' : base+'background:#f3f2ee;color:#a9a9a4;border:1px solid #ddddd6;';
+      return {
+        label,
+        mark: state==='done' ? '✓' : String(i+1),
+        circleStyle,
+        labelColor: state==='pending' ? '#a9a9a4' : '#1a2233',
+        hasLine: i < 5,
+        lineColor: i < doneIdx ? '#1f6b41' : '#e5e4df',
+      };
+    });
+    const tabNames = ['Data Room','Validation','Overview','Investment','P&L','Debt'];
+    const tabs = tabNames.map((label,i)=>({label, color: i===0 ? '#14213d' : '#8a8a86', border: i===0 ? '#14213d' : 'transparent'}));
+    return { swatches, steps, tabs };
+  }
+}
+
+</script>
+</body>
+</html>

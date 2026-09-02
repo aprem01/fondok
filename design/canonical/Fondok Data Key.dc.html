@@ -1,0 +1,310 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+  <style>body{margin:0;background:#f5f4f0;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,Arial,sans-serif;}a{color:#2f4a8c}a:hover{color:#1f3568}</style>
+</helmet>
+<template id="__bundler_thumbnail">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 120 56" data-bg-color="#14213d"><rect width="120" height="56" fill="#14213d"/><circle cx="34" cy="28" r="6" fill="#4f9d6a"/><circle cx="60" cy="28" r="6" fill="#5b7fd4"/><circle cx="86" cy="28" r="6" fill="#9aa1ad"/></svg>
+</template>
+
+<div style="max-width:1080px;margin:0 auto;padding:34px 32px 72px;display:flex;flex-direction:column;gap:26px" data-screen-label="Data Key proposal">
+
+  <div style="display:flex;flex-direction:column;gap:8px">
+    <span style="font-size:11px;font-weight:700;letter-spacing:.08em;color:#9a9a95;text-transform:uppercase">Proposal · for review before rollout</span>
+    <h1 style="font-size:27px;margin:0;color:#1a2233;font-weight:600;letter-spacing:-.01em">One canonical Data Key</h1>
+    <p style="font-size:14px;color:#6b6f76;line-height:1.6;margin:0;max-width:720px;text-wrap:pretty">One strip, one order, one vocabulary, used identically on all ten tabs. Origin is always a dot. Status and formatting are modifiers on top of an origin — never separate colours competing with it.</p>
+  </div>
+
+  <div style="background:#fff;border:1px solid #eae9e4;border-radius:10px;padding:18px 20px;display:flex;flex-direction:column;gap:12px">
+    <div style="display:flex;justify-content:space-between;align-items:baseline;gap:14px;flex-wrap:wrap">
+      <span style="font-size:12px;font-weight:700;color:#8a8a86;text-transform:uppercase;letter-spacing:.03em">The component</span>
+      <span style="font-size:11.5px;color:#9a9a95">Sits directly under the tab bar on every tab · full width · 11px</span>
+    </div>
+
+    <div style="display:flex;align-items:center;gap:16px;flex-wrap:wrap;background:#fbfbf9;border:1px solid #eae9e4;border-radius:8px;padding:9px 14px;font-size:11px;color:#6b6f76">
+      <span style="font-weight:700;color:#8a8a86;letter-spacing:.02em">DATA KEY</span>
+      <sc-for list="{{ strip }}" as="k" hint-placeholder-count="7">
+        <span style="display:flex;align-items:center;gap:6px">
+          <span style="width:9px;height:9px;border-radius:50%;background:{{ k.fill }};border:{{ k.border }};box-shadow:{{ k.ring }};display:inline-block;flex-shrink:0"></span>{{ k.label }}
+        </span>
+      </sc-for>
+      <span style="display:flex;align-items:center;gap:6px"><b style="color:#1a2233">1,240</b>Total / summary</span>
+      <span style="display:flex;align-items:center;gap:6px"><span style="text-decoration:underline dotted;color:#6b6f76">123</span>Editable — click to change</span>
+      <span onClick="{{ openHelp }}" style="cursor:pointer;color:#9a9a95;margin-left:auto;white-space:nowrap">ⓘ How to read this</span>
+    </div>
+
+    <div style="font-size:11.5px;color:#9a9a95;line-height:1.5">Same eight tokens, same order, same words, on Overview · Financials · Market · Investment · Debt · Partnership · Cash Flow · Returns · Scenario Analysis · IC Memo.</div>
+  </div>
+
+  <div style="display:flex;flex-direction:column;gap:12px">
+    <span style="font-size:12px;font-weight:700;color:#8a8a86;text-transform:uppercase;letter-spacing:.03em">The vocabulary</span>
+    <div style="background:#fff;border:1px solid #eae9e4;border-radius:10px;overflow:hidden">
+      <div style="display:grid;grid-template-columns:34px minmax(150px,1fr) minmax(240px,1.5fr) minmax(200px,1.2fr);gap:0;font-size:10px;font-weight:700;letter-spacing:.05em;color:#b0afaa;text-transform:uppercase;padding:9px 18px;border-bottom:1px solid #eae9e4">
+        <span></span><span>Token</span><span>Means</span><span>Replaces today</span>
+      </div>
+      <sc-for list="{{ spec }}" as="s" hint-placeholder-count="8">
+        <div style="display:grid;grid-template-columns:34px minmax(150px,1fr) minmax(240px,1.5fr) minmax(200px,1.2fr);gap:0;padding:11px 18px;border-bottom:1px solid #f7f6f3;align-items:start">
+          <span style="padding-top:3px"><span style="width:9px;height:9px;border-radius:50%;background:{{ s.fill }};border:{{ s.border }};box-shadow:{{ s.ring }};display:inline-block"></span></span>
+          <span style="font-size:12.5px;color:#1a2233;font-weight:600;padding-right:12px">{{ s.label }}</span>
+          <span style="font-size:12px;color:#6b6f76;line-height:1.5;padding-right:16px">{{ s.means }}</span>
+          <span style="font-size:11.5px;color:#9a9a95;line-height:1.5">{{ s.replaces }}</span>
+        </div>
+      </sc-for>
+      <div style="padding:11px 18px;font-size:11.5px;color:#9a9a95;line-height:1.55">Origin is exclusive — every value is exactly one of the first five. <b style="color:#6b6f76">Needs review</b>, <b style="color:#6b6f76">Total</b> and <b style="color:#6b6f76">Editable</b> are modifiers that ride on top of an origin, so a document-sourced number can also be flagged, bold and editable at once.</div>
+    </div>
+  </div>
+
+  <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(330px,1fr));gap:16px">
+    <div style="background:#fff;border:1px solid #eae9e4;border-radius:10px;padding:18px 20px">
+      <div style="font-size:12px;font-weight:700;color:#8a8a86;text-transform:uppercase;letter-spacing:.03em;margin-bottom:12px">Applied — rows</div>
+      <sc-for list="{{ demoRows }}" as="r" hint-placeholder-count="6">
+        <div style="display:flex;justify-content:space-between;align-items:center;gap:12px;font-size:13px;padding:8px 0;border-bottom:1px solid #f7f6f3">
+          <span style="color:#6b6f76">{{ r.label }}</span>
+          <span style="display:flex;align-items:center;gap:7px">
+            <span style="width:8px;height:8px;border-radius:50%;background:{{ r.fill }};border:{{ r.border }};box-shadow:{{ r.ring }};display:inline-block"></span>
+            <span style="color:{{ r.color }};font-weight:{{ r.weight }};text-decoration:{{ r.underline }};font-variant-numeric:tabular-nums">{{ r.value }}</span>
+          </span>
+        </div>
+      </sc-for>
+      <div style="font-size:11px;color:#9a9a95;margin-top:10px;line-height:1.5">In dense tables the dot is optional — colour alone carries origin, exactly as it does today. The dot appears wherever a row has room for it.</div>
+    </div>
+
+    <div style="background:#fff;border:1px solid #eae9e4;border-radius:10px;padding:18px 20px;display:flex;flex-direction:column;gap:14px">
+      <div style="font-size:12px;font-weight:700;color:#8a8a86;text-transform:uppercase;letter-spacing:.03em">What changes per tab</div>
+      <sc-for list="{{ migration }}" as="m" hint-placeholder-count="4">
+        <div style="display:flex;flex-direction:column;gap:3px;padding-bottom:10px;border-bottom:1px solid #f7f6f3">
+          <span style="font-size:12.5px;color:#1a2233;font-weight:600">{{ m.tab }}</span>
+          <span style="font-size:11.5px;color:#6b6f76;line-height:1.5">{{ m.change }}</span>
+        </div>
+      </sc-for>
+    </div>
+  </div>
+
+  <div style="display:flex;flex-direction:column;gap:12px">
+    <div style="display:flex;flex-direction:column;gap:5px">
+      <span style="font-size:12px;font-weight:700;color:#8a8a86;text-transform:uppercase;letter-spacing:.03em">When there is no room for a dot</span>
+      <span style="font-size:12.5px;color:#6b6f76;line-height:1.6;max-width:760px;text-wrap:pretty">Dense grids — Financials, Cash Flow, Index Analysis, Scenarios — drop the dot and let the value's own colour carry the origin. Same five colours, same meanings, no new vocabulary; the only collapse is that <b style="color:#3a3f47">Document sourced and Linked share one green</b>, because the difference is where the source lives and the provenance popover says which on click.</span>
+    </div>
+
+    <div style="background:#fff;border:1px solid #eae9e4;border-radius:10px;overflow:hidden">
+      <div style="display:grid;grid-template-columns:minmax(180px,1.4fr) repeat(5,minmax(88px,1fr))">
+        <div style="padding:8px 14px;background:#14213d;color:#c9cede;font-size:10.5px;font-weight:700;letter-spacing:.04em">LINE ITEM</div>
+        <sc-for list="{{ denseHeaders }}" as="h" hint-placeholder-count="5">
+          <div style="padding:8px 12px;background:#14213d;color:#c9cede;font-size:10.5px;font-weight:600;text-align:right;border-left:1px solid #2a3a5c">{{ h }}</div>
+        </sc-for>
+        <sc-for list="{{ denseRows }}" as="r" hint-placeholder-count="7">
+          <div style="padding:6px 14px;font-size:12.5px;color:#1a2233;border-bottom:1px solid #f7f6f3;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">{{ r.label }}</div>
+          <sc-for list="{{ r.cells }}" as="c" hint-placeholder-count="5">
+            <div style="padding:6px 12px;text-align:right;font-size:12.5px;font-variant-numeric:tabular-nums;border-bottom:1px solid #f7f6f3;border-left:1px solid #f7f6f3;background:{{ c.bg }};color:{{ c.c }};font-weight:{{ c.w }};text-decoration:{{ c.u }}">{{ c.v }}</div>
+          </sc-for>
+        </sc-for>
+      </div>
+      <div style="padding:10px 14px;display:flex;gap:16px;flex-wrap:wrap;font-size:11px;color:#6b6f76;background:#fbfbf9;border-top:1px solid #eae9e4">
+        <sc-for list="{{ denseLegend }}" as="l" hint-placeholder-count="6">
+          <span style="display:flex;align-items:center;gap:6px"><span style="width:9px;height:9px;border-radius:2px;background:{{ l.swatch }};display:inline-block;flex-shrink:0"></span><b style="color:#3a3f47;font-weight:600">{{ l.label }}</b><span style="color:#9a9a95">{{ l.note }}</span></span>
+        </sc-for>
+      </div>
+    </div>
+
+    <div style="background:#fff;border:1px solid #eae9e4;border-radius:10px;overflow:hidden">
+      <sc-for list="{{ tiers }}" as="t" hint-placeholder-count="3">
+        <div style="display:grid;grid-template-columns:minmax(150px,1fr) minmax(200px,1.2fr) minmax(240px,1.6fr);gap:0;padding:11px 18px;border-bottom:1px solid #f7f6f3;align-items:start">
+          <span style="font-size:12.5px;color:#1a2233;font-weight:600;padding-right:12px">{{ t.name }}</span>
+          <span style="font-size:12px;color:#6b6f76;line-height:1.5;padding-right:16px">{{ t.where }}</span>
+          <span style="font-size:12px;color:#9a9a95;line-height:1.5">{{ t.how }}</span>
+        </div>
+      </sc-for>
+      <div style="padding:11px 18px;font-size:11.5px;color:#9a9a95;line-height:1.55">The page key is what makes Tier 3 legible — a grid never has to explain itself, because the same six colours are defined once at the top of every tab.</div>
+    </div>
+  </div>
+
+  <div style="display:flex;flex-direction:column;gap:12px">
+    <span style="font-size:12px;font-weight:700;color:#8a8a86;text-transform:uppercase;letter-spacing:.03em">Today — the three variants this replaces</span>
+    <div style="display:flex;flex-direction:column;gap:10px">
+      <sc-for list="{{ today }}" as="t" hint-placeholder-count="3">
+        <div style="background:#fff;border:1px solid #eae9e4;border-radius:10px;padding:12px 16px;display:flex;flex-direction:column;gap:7px">
+          <span style="font-size:11px;font-weight:700;letter-spacing:.05em;color:#b0afaa;text-transform:uppercase">{{ t.tab }}</span>
+          <span style="font-size:12px;color:#6b6f76;line-height:1.6">{{ t.line }}</span>
+          <span style="font-size:11.5px;color:oklch(50% 0.14 40);line-height:1.5">{{ t.problem }}</span>
+        </div>
+      </sc-for>
+    </div>
+  </div>
+
+  <sc-if value="{{ helpOpen }}" hint-placeholder-val="{{ false }}">
+    <div onClick="{{ closeHelp }}" style="position:fixed;inset:0;background:rgba(16,24,40,.34);z-index:80"></div>
+    <div style="position:fixed;left:50%;top:14vh;transform:translateX(-50%);width:460px;max-height:72vh;overflow-y:auto;background:#fff;border-radius:11px;box-shadow:0 24px 56px rgba(16,24,40,.28);z-index:81;padding:22px 24px;display:flex;flex-direction:column;gap:12px">
+      <div style="display:flex;justify-content:space-between;align-items:center;gap:12px">
+        <span style="font-size:15px;font-weight:700;color:#1a2233">How to read this</span>
+        <span onClick="{{ closeHelp }}" style="cursor:pointer;color:#9a9a95;font-size:13px">✕</span>
+      </div>
+      <div style="font-size:12.5px;color:#3a3f47;line-height:1.6">Every number in Fondok carries its origin as a coloured dot, and its status and role as modifiers on top. Provenance and editability are separate: a document-sourced value can also be editable — Fondok extracted it, you may override it, and the override keeps the original source so you can restore it.</div>
+      <sc-for list="{{ spec }}" as="s" hint-placeholder-count="8">
+        <div style="display:flex;gap:10px;align-items:flex-start;padding-top:9px;border-top:1px solid #f2f1ec">
+          <span style="width:9px;height:9px;border-radius:50%;background:{{ s.fill }};border:{{ s.border }};box-shadow:{{ s.ring }};display:inline-block;margin-top:4px;flex-shrink:0"></span>
+          <span style="display:flex;flex-direction:column;gap:2px">
+            <span style="font-size:12.5px;color:#1a2233;font-weight:600">{{ s.label }}</span>
+            <span style="font-size:12px;color:#6b6f76;line-height:1.5">{{ s.means }}</span>
+          </span>
+        </div>
+      </sc-for>
+      <div style="font-size:11.5px;color:#9a9a95;line-height:1.5;border-top:1px solid #f2f1ec;padding-top:10px">Click any value to see where it came from, the calculation behind it, and whether you can change it.</div>
+    </div>
+  </sc-if>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props="{&quot;$preview&quot;:{&quot;width&quot;:1080}}">
+class Component extends DCLogic {
+  GREEN = 'oklch(45% 0.12 155)';
+  BLUE = 'oklch(45% 0.14 260)';
+  GRAY = '#5f656e';
+  AMBER = 'oklch(52% 0.15 45)';
+  MUTED = '#b0afaa';
+  BLACK = '#1a2233';
+
+  state = { helpOpen: false };
+
+  tokens() {
+    return [
+      {
+        key: 'doc', label: 'Document sourced', fill: this.GREEN, border: 'none', ring: 'none',
+        means: 'Extracted by Fondok from a document in the Data Room — the source page is one click away.',
+        replaces: 'Overview “Document sourced” (doc icon) · half of Financials “Linked / Extracted”',
+      },
+      {
+        key: 'linked', label: 'Linked', fill: '#fff', border: '2px solid ' + this.GREEN, ring: 'none',
+        means: 'Owned by another Fondok module and mirrored here. Change it where it lives.',
+        replaces: 'Overview “Linked” · the other half of Financials “Linked / Extracted”',
+      },
+      {
+        key: 'input', label: 'Assumption', fill: this.BLUE, border: 'none', ring: 'none',
+        means: 'You entered it. Fondok never changes it silently.',
+        replaces: 'Overview “Assumption / input” · Financials “User input / assumption”',
+      },
+      {
+        key: 'calc', label: 'Calculated', fill: this.GRAY, border: 'none', ring: 'none',
+        means: 'Derived by Fondok from the values above. Edit its inputs to move it.',
+        replaces: 'Overview and Financials “Calculated” — Financials’ near-black dot becomes grey so black stays reserved for totals',
+      },
+      {
+        key: 'awaiting', label: 'Awaiting data', fill: '#fff', border: '1px dashed ' + this.MUTED, ring: 'none',
+        means: 'The source document is not in the Data Room yet. Shown as — , never as zero.',
+        replaces: 'Market’s dashed “Awaiting data” chip — now part of the shared key',
+      },
+      {
+        key: 'review', label: 'Needs review', fill: this.GREEN, border: 'none', ring: '0 0 0 3px oklch(88% 0.07 45)',
+        means: 'A halo on the origin dot: extracted but low confidence, or an override that conflicts with its source. Click to verify.',
+        replaces: 'Financials’ standalone amber dot — becomes a status ring, so it can flag any origin',
+      },
+    ];
+  }
+
+  renderVals() {
+    const t = this.tokens();
+    const chip = x => ({ label: x.label, fill: x.fill, border: x.border, ring: x.ring });
+    return {
+      strip: t.map(chip),
+      spec: t.concat([
+        { label: 'Total / summary', fill: this.BLACK, border: 'none', ring: 'none', means: 'Bold, in near-black. Structure, not origin — a total is bold and still carries its own dot.', replaces: 'Overview “Total / summary” · Financials “Total (bold)”' },
+        { label: 'Editable', fill: '#fff', border: '1px solid #d9d8d2', ring: 'none', means: 'Dotted underline. Independent of origin — sourced and calculated values can both be overridable.', replaces: 'Overview “Editable — click to change” · Financials “Editable”' },
+      ]),
+      demoRows: [
+        { label: 'Purchase Price', value: '$36,436,800', fill: this.GRAY, border: 'none', ring: 'none', color: this.BLACK, weight: 700, underline: 'none' },
+        { label: 'Keys', value: '132', fill: this.GREEN, border: 'none', ring: 'none', color: this.BLACK, weight: 400, underline: 'underline dotted' },
+        { label: 'Entry Cap Rate', value: '7.00%', fill: this.BLUE, border: 'none', ring: 'none', color: this.BLUE, weight: 400, underline: 'underline dotted' },
+        { label: 'Senior Loan', value: '$23,190,000', fill: '#fff', border: '2px solid ' + this.GREEN, ring: 'none', color: this.GREEN, weight: 400, underline: 'none' },
+        { label: 'F&B Revenue, FY23', value: '$2,104,000', fill: this.GREEN, border: 'none', ring: '0 0 0 3px oklch(88% 0.07 45)', color: this.BLACK, weight: 400, underline: 'underline dotted' },
+        { label: 'Supply Growth', value: '—', fill: '#fff', border: '1px dashed ' + this.MUTED, ring: 'none', color: this.MUTED, weight: 400, underline: 'none' },
+      ],
+      migration: [
+        { tab: 'Financials', change: 'Splits “Linked / Extracted” into Document sourced and Linked; the amber dot becomes a review ring on the origin dot; calculated moves from near-black to grey; help link renamed to “How to read this”.' },
+        { tab: 'Overview', change: 'The document icon becomes a filled green dot; Linked becomes the hollow green dot; gains Awaiting data and Needs review, which it never showed.' },
+        { tab: 'Market', change: 'Its bespoke four-token strip is replaced wholesale; the dashed Awaiting-data square becomes the standard dashed dot.' },
+        { tab: 'Investment · Debt · Partnership · Cash Flow · Returns · Scenarios · IC Memo', change: 'Adopt the same strip verbatim — several show no key at all today.' },
+      ],
+      today: [
+        { tab: 'Financials today', line: '● Linked / Extracted · ● Needs review · ● User input / assumption · ● Calculated · B Total (bold) · 123 Editable · “Colors explained”', problem: 'Merges two different origins into one token, gives a status its own colour slot, and names the help link differently.' },
+        { tab: 'Overview today', line: '● Assumption / input · 🗎 Document sourced · ● Linked · ● Calculated · B Total / summary · 123 Editable — click to change · “How to read this”', problem: 'Leads with the assumption instead of the source, mixes an icon into a dot system, and never mentions Needs review.' },
+        { tab: 'Market today', line: '● Source / linked (STR · CoStar) · ● Underwriting assumption · ● Calculated · ▫ Awaiting data', problem: 'A third vocabulary again, though it is the only tab that names the awaiting-data state the others need.' },
+      ],
+      tiers: [
+        { name: 'Tier 1 — page key', where: 'Once per tab, under the tab bar', how: 'The full strip above. Always present, always identical.' },
+        { name: 'Tier 2 — dot + value', where: 'Row lists, KPI cards, summary panels, Sources & Uses', how: 'Dot to the left of the value, as shown on the left.' },
+        { name: 'Tier 3 — colour only', where: 'Dense grids: Financials, Cash Flow, Index Analysis, Scenarios', how: 'No dot. The value’s own colour carries the origin; modifiers use weight, underline and cell tint.' },
+      ],
+      denseHeaders: ['FY24A', 'FY25A', 'FY26E', 'FY27E', 'FY28E'],
+      denseRows: [
+        { label: 'Occupancy', cells: [
+          { v: '70.8%', c: this.GREEN, w: 400, u: 'none', bg: 'transparent' },
+          { v: '71.4%', c: this.GREEN, w: 400, u: 'none', bg: 'transparent' },
+          { v: '70.2%', c: this.BLUE, w: 400, u: 'underline dotted', bg: 'transparent' },
+          { v: '66.4%', c: this.BLUE, w: 400, u: 'underline dotted', bg: 'transparent' },
+          { v: '72.6%', c: this.BLUE, w: 400, u: 'underline dotted', bg: 'transparent' },
+        ] },
+        { label: 'ADR', cells: [
+          { v: '$276', c: this.GREEN, w: 400, u: 'none', bg: 'transparent' },
+          { v: '$278', c: this.GREEN, w: 400, u: 'none', bg: 'oklch(93% 0.05 45 / .55)' },
+          { v: '$286', c: this.BLUE, w: 400, u: 'underline dotted', bg: 'transparent' },
+          { v: '$292', c: this.BLUE, w: 400, u: 'underline dotted', bg: 'transparent' },
+          { v: '$305', c: this.BLUE, w: 400, u: 'underline dotted', bg: 'transparent' },
+        ] },
+        { label: 'RevPAR', cells: [
+          { v: '$195', c: this.GRAY, w: 400, u: 'none', bg: 'transparent' },
+          { v: '$198', c: this.GRAY, w: 400, u: 'none', bg: 'transparent' },
+          { v: '$201', c: this.GRAY, w: 400, u: 'none', bg: 'transparent' },
+          { v: '$194', c: this.GRAY, w: 400, u: 'none', bg: 'transparent' },
+          { v: '$221', c: this.GRAY, w: 400, u: 'none', bg: 'transparent' },
+        ] },
+        { label: 'Rooms Revenue', cells: [
+          { v: '$9,417k', c: this.GRAY, w: 400, u: 'none', bg: 'transparent' },
+          { v: '$9,562k', c: this.GRAY, w: 400, u: 'none', bg: 'transparent' },
+          { v: '$9,690k', c: this.GRAY, w: 400, u: 'none', bg: 'transparent' },
+          { v: '$9,350k', c: this.GRAY, w: 400, u: 'none', bg: 'transparent' },
+          { v: '$10,651k', c: this.GRAY, w: 400, u: 'none', bg: 'transparent' },
+        ] },
+        { label: 'F&B Revenue', cells: [
+          { v: '$2,104k', c: this.GREEN, w: 400, u: 'underline dotted', bg: 'transparent' },
+          { v: '$2,180k', c: this.GREEN, w: 400, u: 'underline dotted', bg: 'transparent' },
+          { v: '—', c: this.MUTED, w: 400, u: 'none', bg: 'transparent' },
+          { v: '—', c: this.MUTED, w: 400, u: 'none', bg: 'transparent' },
+          { v: '—', c: this.MUTED, w: 400, u: 'none', bg: 'transparent' },
+        ] },
+        { label: 'Management Fee — linked', cells: [
+          { v: '$402k', c: this.GREEN, w: 400, u: 'none', bg: 'transparent' },
+          { v: '$412k', c: this.GREEN, w: 400, u: 'none', bg: 'transparent' },
+          { v: '$418k', c: this.GREEN, w: 400, u: 'none', bg: 'transparent' },
+          { v: '$405k', c: this.GREEN, w: 400, u: 'none', bg: 'transparent' },
+          { v: '$451k', c: this.GREEN, w: 400, u: 'none', bg: 'transparent' },
+        ] },
+        { label: 'Net Operating Income', cells: [
+          { v: '$2,438k', c: this.BLACK, w: 700, u: 'none', bg: 'transparent' },
+          { v: '$2,551k', c: this.BLACK, w: 700, u: 'none', bg: 'transparent' },
+          { v: '$2,604k', c: this.BLACK, w: 700, u: 'none', bg: 'transparent' },
+          { v: '$2,489k', c: this.BLACK, w: 700, u: 'none', bg: 'transparent' },
+          { v: '$3,196k', c: this.BLACK, w: 700, u: 'none', bg: 'transparent' },
+        ] },
+      ],
+      denseLegend: [
+        { swatch: this.GREEN, label: 'Sourced', note: 'document or linked — the popover names which' },
+        { swatch: this.BLUE, label: 'Assumption', note: 'dotted underline where editable' },
+        { swatch: this.GRAY, label: 'Calculated', note: 'derived in the grid' },
+        { swatch: this.BLACK, label: 'Total', note: 'bold, near-black' },
+        { swatch: 'oklch(93% 0.05 45 / .9)', label: 'Needs review', note: 'amber cell tint, not a colour change' },
+        { swatch: this.MUTED, label: 'Awaiting data', note: 'em dash, never zero' },
+      ],
+      helpOpen: this.state.helpOpen,
+      openHelp: () => this.setState({ helpOpen: true }),
+      closeHelp: () => this.setState({ helpOpen: false }),
+    };
+  }
+}
+</script>
+</body>
+</html>

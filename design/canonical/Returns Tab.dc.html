@@ -1,0 +1,656 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+  <style>body{margin:0;background:#f5f4f0;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,Arial,sans-serif;}a{color:#2f4a8c}a:hover{color:#1f3568}</style>
+</helmet>
+<template id="__bundler_thumbnail">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 120 56" data-bg-color="#14213d"><rect width="120" height="56" fill="#14213d"/><path d="M22 42l20-18 14 12 24-24" stroke="#f5f4f0" stroke-width="3" fill="none"/><path d="M68 12h18v18" stroke="#f5f4f0" stroke-width="3" fill="none"/></svg>
+</template>
+<div style="display:flex;min-height:100vh" data-screen-label="Returns">
+  <div style="width:210px;background:#0f1a30;padding:22px 16px;display:flex;flex-direction:column;gap:2px;flex-shrink:0">
+    <div style="display:flex;align-items:center;gap:8px;color:#fff;font-weight:700;font-size:16px;margin-bottom:24px"><div style="width:28px;height:28px;background:#2f4a8c;border-radius:6px;display:flex;align-items:center;justify-content:center;font-size:13px">F</div>Fondok.</div>
+    <div style="color:#c9cede;font-size:12.5px;padding:8px 10px;border-radius:6px;background:rgba(255,255,255,.06);margin-bottom:16px;display:flex;justify-content:space-between">fondok.ai <span>⌄</span></div>
+    <div style="color:#8b93a7;font-size:13px;padding:8px 10px;display:flex;gap:9px">⊞ Dashboard</div>
+    <div style="color:#fff;background:rgba(255,255,255,.09);font-size:13px;font-weight:600;padding:8px 10px;border-radius:6px;display:flex;gap:9px">▤ Projects</div>
+    <div style="color:#8b93a7;font-size:13px;padding:8px 10px;display:flex;gap:9px">📈 Pipeline</div>
+    <div style="color:#8b93a7;font-size:13px;padding:8px 10px;display:flex;gap:9px">◔ Audit</div>
+    <div style="color:#8b93a7;font-size:13px;padding:8px 10px;display:flex;gap:9px">$ Cost</div>
+    <div style="color:#8b93a7;font-size:13px;padding:8px 10px;display:flex;gap:9px">▥ Data Library</div>
+    <div style="color:#8b93a7;font-size:13px;padding:8px 10px;display:flex;gap:9px">▦ Methodology</div>
+    <div style="color:#8b93a7;font-size:13px;padding:8px 10px;display:flex;gap:9px">◷ Settings</div>
+  </div>
+
+  <div style="flex:1;min-width:0">
+    <div style="padding:22px 32px 0">
+      <div style="font-size:11.5px;color:#9a9a95;margin-bottom:10px">← BACK TO PROJECTS</div>
+      <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;row-gap:8px;margin-bottom:10px">
+        <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap"><h1 style="font-size:26px;margin:0;color:#1a2233;font-weight:600;white-space:nowrap">Kimpton Hotel</h1><span style="color:#9a9a95;font-size:11px;font-weight:600;letter-spacing:.04em">DRAFT</span></div>
+        <div style="display:flex;gap:14px;align-items:center;flex-wrap:wrap">
+          <button onClick="{{ toggleAtlas }}" style="display:flex;align-items:center;gap:6px;background:#eef2fb;border:1px solid #dbe3f5;color:#2f4a8c;border-radius:6px;padding:8px 14px;font-size:12px;font-weight:600;cursor:pointer;white-space:nowrap;font-family:inherit">✦ Ask Atlas</button>
+          <button style="background:#14213d;color:#fff;border:none;border-radius:6px;padding:8px 16px;font-size:12.5px;font-weight:600;white-space:nowrap;font-family:inherit">Share</button>
+        </div>
+      </div>
+      <div style="font-size:12.5px;color:#9a9a95;margin-bottom:20px;display:flex;gap:18px;flex-wrap:wrap">
+        <span>660 Washington Avenue, Miami Beach, FL 33139</span><span>132 keys</span><span>Created 7/30/2026</span>
+      </div>
+      <div style="display:flex;gap:22px;border-bottom:1px solid #ececea;font-size:13.5px;font-weight:500;color:#9a9a95;overflow-x:auto">
+        <sc-for list="{{ navItems }}" as="nav" hint-placeholder-count="11">
+          <div onClick="{{ nav.onClick }}" style="display:flex;align-items:center;gap:6px;padding-bottom:10px;white-space:nowrap;cursor:pointer;color:{{ nav.color }};font-weight:{{ nav.weight }};border-bottom:{{ nav.border }}">
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="{{ nav.icon }}"></path></svg>{{ nav.label }}
+          </div>
+        </sc-for>
+      </div>
+    </div>
+
+    <div style="padding:16px 32px 56px;max-width:1320px">
+      <div style="background:#fff;border:1px solid #eae9e4;border-radius:10px;padding:12px 16px;margin-bottom:14px;display:flex;flex-direction:column;gap:3px">
+        <span style="font-size:13.5px;font-weight:700;color:#1a2233">Returns</span>
+        <span style="font-size:12.5px;color:#6b6f76;line-height:1.55;max-width:960px">What the deal earns, what drives those returns, and what price it can carry while still clearing the hurdles. Calculated from the Cash Flow series — nothing is underwritten here.</span>
+      </div>
+
+      <div style="display:flex;align-items:center;gap:16px;flex-wrap:wrap;background:#fbfbf9;border:1px solid #eae9e4;border-radius:8px;padding:9px 14px;margin-bottom:14px;font-size:11px;color:#6b6f76">
+        <span style="font-weight:700;color:#8a8a86;letter-spacing:.02em">DATA KEY</span>
+        <span style="display:flex;align-items:center;gap:6px"><span style="width:9px;height:9px;border-radius:50%;background:oklch(45% 0.12 155);display:inline-block;flex-shrink:0"></span>Document sourced</span>
+        <span style="display:flex;align-items:center;gap:6px"><span style="width:9px;height:9px;border-radius:50%;background:#fff;border:2px solid oklch(45% 0.12 155);display:inline-block;flex-shrink:0"></span>Linked</span>
+        <span style="display:flex;align-items:center;gap:6px"><span style="width:9px;height:9px;border-radius:50%;background:oklch(45% 0.14 260);display:inline-block;flex-shrink:0"></span>Assumption</span>
+        <span style="display:flex;align-items:center;gap:6px"><span style="width:9px;height:9px;border-radius:50%;background:#5f656e;display:inline-block;flex-shrink:0"></span>Calculated</span>
+        <span style="display:flex;align-items:center;gap:6px"><span style="width:9px;height:9px;border-radius:50%;background:#fff;border:1px dashed #b0afaa;display:inline-block;flex-shrink:0"></span>Awaiting data</span>
+        <span style="display:flex;align-items:center;gap:6px"><span style="width:9px;height:9px;border-radius:50%;background:oklch(45% 0.12 155);box-shadow:0 0 0 3px oklch(88% 0.07 45);display:inline-block;flex-shrink:0"></span>Needs review</span>
+        <span style="display:flex;align-items:center;gap:6px"><b style="color:#1a2233">1,240</b>Total / summary</span>
+        <span style="display:flex;align-items:center;gap:6px"><span style="text-decoration:underline dotted;color:#6b6f76">123</span>Editable — click to change</span>
+        <span title="Origin is the dot: document sourced, linked from another module, your assumption, calculated by Fondok, or awaiting data. An amber halo means the value needs review. Bold marks totals, a dotted underline marks values you can change. Provenance and editability are separate — a sourced value can also be editable, and an override keeps its original source so you can restore it." style="cursor:help;color:#9a9a95;margin-left:auto;white-space:nowrap">ⓘ How to read this</span>
+      </div>
+
+      <div style="display:flex;align-items:flex-end;gap:28px;border-bottom:1px solid #e6e5e0;overflow-x:auto;margin-bottom:14px">
+        <sc-for list="{{ subTabs }}" as="t" hint-placeholder-count="3">
+          <button onClick="{{ t.select }}" style="font-size:13.5px;font-family:inherit;background:none;border:none;border-bottom:{{ t.border }};cursor:pointer;font-weight:{{ t.weight }};color:{{ t.color }};padding:0 0 10px;margin-bottom:-1px;white-space:nowrap">{{ t.label }}</button>
+        </sc-for>
+        <span style="font-size:11.5px;color:#9a9a95;margin-left:auto;padding-bottom:11px;white-space:nowrap">{{ subTabCaption }}</span>
+      </div>
+
+      <sc-if value="{{ overrideActive }}" hint-placeholder-val="{{ false }}">
+        <div style="display:flex;align-items:center;gap:14px;flex-wrap:wrap;background:oklch(97% 0.03 250);border:1px solid #c9d4ee;border-radius:8px;padding:9px 14px;margin-bottom:14px;font-size:12px;color:#1a2233">
+          <span style="font-size:10px;font-weight:700;letter-spacing:.05em;color:#2f4a8c;text-transform:uppercase;white-space:nowrap">Sensitivity override active</span>
+          <span>{{ overrideSummary }}</span>
+          <span style="color:#6b6f76">Testing only — the canonical assumptions in Investment and Debt are unchanged.</span>
+          <span onClick="{{ resetOverrides }}" style="margin-left:auto;color:#2f4a8c;font-weight:600;cursor:pointer;white-space:nowrap">Reset to base case</span>
+        </div>
+      </sc-if>
+
+      <sc-if value="{{ isSummary }}" hint-placeholder-val="{{ true }}">
+        <div style="display:flex;flex-direction:column;gap:14px">
+          <div style="display:flex;flex-direction:column;gap:8px">
+            <span style="font-size:10.5px;font-weight:700;letter-spacing:.06em;color:#8a8a86;text-transform:uppercase">Deal-level returns · before GP/LP allocation</span>
+            <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(190px,1fr));gap:12px">
+              <sc-for list="{{ headline }}" as="k" hint-placeholder-count="4">
+                <div style="background:#14213d;border-radius:10px;padding:15px 17px;color:#fff">
+                  <div style="font-size:10px;font-weight:700;letter-spacing:.05em;color:#8b93a7;text-transform:uppercase;margin-bottom:7px">{{ k.label }}</div>
+                  <div style="font-size:25px;font-weight:700;font-variant-numeric:tabular-nums;line-height:1.1">{{ k.value }}</div>
+                  <div style="font-size:10.5px;color:#9fb2df;margin-top:5px;line-height:1.4">{{ k.sub }}</div>
+                </div>
+              </sc-for>
+            </div>
+          </div>
+
+          <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(190px,1fr));gap:12px">
+            <sc-for list="{{ secondary }}" as="k" hint-placeholder-count="3">
+              <div style="background:#fff;border:1px solid #eae9e4;border-radius:10px;padding:13px 15px">
+                <div style="font-size:10px;font-weight:700;letter-spacing:.04em;color:#8a8a86;text-transform:uppercase;margin-bottom:6px">{{ k.label }}</div>
+                <div style="font-size:19px;font-weight:700;color:#1a2233;font-variant-numeric:tabular-nums">{{ k.value }}</div>
+                <div style="font-size:10.5px;color:#9a9a95;margin-top:4px">{{ k.sub }}</div>
+              </div>
+            </sc-for>
+          </div>
+
+          <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(430px,1fr));gap:14px">
+            <div style="background:#fff;border:1px solid #eae9e4;border-radius:10px;padding:16px 18px">
+              <div style="display:flex;justify-content:space-between;align-items:baseline;gap:14px;margin-bottom:4px">
+                <span style="font-size:12px;font-weight:700;color:#8a8a86;text-transform:uppercase;letter-spacing:.03em">Exit Assumptions</span>
+                <span onClick="{{ goInvestment }}" style="font-size:11.5px;color:#2f4a8c;font-weight:600;cursor:pointer">Edit in Investment →</span>
+              </div>
+              <sc-for list="{{ exitRows }}" as="r" hint-placeholder-count="5">
+                <div title="{{ r.title }}" style="display:flex;justify-content:space-between;align-items:center;gap:12px;font-size:13px;padding:7px 0;border-bottom:1px solid #f7f6f3">
+                  <span style="display:flex;align-items:center;gap:7px;min-width:0">
+                    <span style="width:8px;height:8px;border-radius:50%;background:{{ r.dotFill }};border:{{ r.dotBorder }};display:inline-block;flex-shrink:0"></span>
+                    <span style="color:#6b6f76">{{ r.label }}</span>
+                  </span>
+                  <span style="display:flex;align-items:baseline;gap:8px">
+                    <span style="color:{{ r.color }};font-weight:{{ r.weight }};font-variant-numeric:tabular-nums">{{ r.value }}</span>
+                    <span style="font-size:10.5px;color:#b0afaa;white-space:nowrap">{{ r.source }}</span>
+                  </span>
+                </div>
+              </sc-for>
+            </div>
+
+            <div style="background:#fff;border:1px solid #eae9e4;border-radius:10px;padding:16px 18px">
+              <div style="display:flex;justify-content:space-between;align-items:baseline;gap:14px;margin-bottom:12px">
+                <span style="font-size:12px;font-weight:700;color:#8a8a86;text-transform:uppercase;letter-spacing:.03em">Return Bridge</span>
+                <span onClick="{{ goCashFlow }}" style="font-size:11.5px;color:#2f4a8c;font-weight:600;cursor:pointer">View cash flow →</span>
+              </div>
+              <sc-for list="{{ bridge }}" as="b" hint-placeholder-count="7">
+                <div style="display:flex;align-items:center;gap:12px;padding:5px 0">
+                  <span style="width:150px;font-size:12px;color:#1a2233;font-weight:{{ b.weight }};flex-shrink:0">{{ b.label }}</span>
+                  <span style="flex:1;height:10px;background:#f3f2ee;border-radius:5px;position:relative;overflow:hidden">
+                    <span style="position:absolute;left:{{ b.left }};width:{{ b.width }};top:0;bottom:0;background:{{ b.bg }};border-radius:5px"></span>
+                  </span>
+                  <span style="width:112px;text-align:right;font-size:12.5px;color:{{ b.color }};font-weight:{{ b.weight }};font-variant-numeric:tabular-nums;flex-shrink:0">{{ b.value }}</span>
+                </div>
+              </sc-for>
+              <div style="font-size:11px;color:#9a9a95;margin-top:10px;line-height:1.5">{{ bridgeNote }}</div>
+            </div>
+          </div>
+        </div>
+      </sc-if>
+
+      <sc-if value="{{ isSensitivities }}" hint-placeholder-val="{{ false }}">
+        <div style="display:flex;flex-direction:column;gap:14px">
+          <div style="background:#fff;border:1px solid #eae9e4;border-radius:10px;padding:16px 18px">
+            <div style="display:flex;justify-content:space-between;align-items:baseline;gap:14px;margin-bottom:12px;flex-wrap:wrap">
+              <span style="font-size:12px;font-weight:700;color:#8a8a86;text-transform:uppercase;letter-spacing:.03em">Live Assumptions</span>
+              <span style="font-size:11px;color:#b0afaa">Temporary overrides for testing — the source of truth stays in Investment and Debt</span>
+            </div>
+            <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:12px">
+              <sc-for list="{{ liveAssumptions }}" as="a" hint-placeholder-count="5">
+                <div style="border:1px solid {{ a.border }};background:{{ a.bg }};border-radius:8px;padding:11px 13px">
+                  <div style="display:flex;justify-content:space-between;align-items:baseline;gap:8px;margin-bottom:7px">
+                    <span style="font-size:10px;font-weight:700;letter-spacing:.04em;color:#8a8a86;text-transform:uppercase">{{ a.label }}</span>
+                    <span style="font-size:10px;font-weight:700;letter-spacing:.03em;text-transform:uppercase;color:{{ a.tagColor }}">{{ a.tag }}</span>
+                  </div>
+                  <div style="display:flex;align-items:baseline;gap:8px;flex-wrap:wrap">
+                    <span style="font-size:17px;font-weight:700;color:{{ a.valueColor }};font-variant-numeric:tabular-nums">{{ a.value }}</span>
+                    <sc-if value="{{ a.overridden }}" hint-placeholder-val="{{ false }}">
+                      <span style="font-size:10.5px;color:#9a9a95;font-variant-numeric:tabular-nums">Base: {{ a.base }}</span>
+                    </sc-if>
+                  </div>
+                  <div style="display:flex;gap:4px;margin-top:9px;flex-wrap:wrap">
+                    <sc-for list="{{ a.options }}" as="o" hint-placeholder-count="4">
+                      <button onClick="{{ o.select }}" style="font-size:11px;font-family:inherit;border:1px solid {{ o.border }};background:{{ o.bg }};color:{{ o.color }};font-weight:{{ o.weight }};border-radius:5px;padding:3px 8px;cursor:pointer;font-variant-numeric:tabular-nums">{{ o.label }}</button>
+                    </sc-for>
+                  </div>
+                </div>
+              </sc-for>
+            </div>
+            <div style="display:flex;align-items:center;gap:14px;flex-wrap:wrap;margin-top:12px">
+              <span style="font-size:11.5px;color:#6b6f76">{{ liveResult }}</span>
+              <button onClick="{{ resetOverrides }}" style="margin-left:auto;background:#fff;border:1px solid #e2e1dc;color:#3a3f47;border-radius:6px;padding:6px 12px;font-size:11.5px;font-weight:600;cursor:pointer;font-family:inherit">Reset to base case</button>
+            </div>
+          </div>
+
+          <sc-for list="{{ matrices }}" as="m" hint-placeholder-count="3">
+            <div style="background:#fff;border:1px solid #eae9e4;border-radius:10px;padding:16px 18px">
+              <div style="display:flex;justify-content:space-between;align-items:baseline;gap:14px;margin-bottom:12px;flex-wrap:wrap">
+                <span style="font-size:12px;font-weight:700;color:#8a8a86;text-transform:uppercase;letter-spacing:.03em">{{ m.title }}</span>
+                <span style="font-size:11px;color:#b0afaa">{{ m.caption }}</span>
+              </div>
+              <div style="overflow-x:auto">
+                <div style="display:grid;grid-template-columns:{{ m.cols }};width:max-content;min-width:100%">
+                  <div style="padding:7px 12px;background:#14213d;color:#c9cede;font-size:10px;font-weight:700;letter-spacing:.04em;white-space:nowrap">{{ m.corner }}</div>
+                  <sc-for list="{{ m.headers }}" as="h" hint-placeholder-count="5">
+                    <div style="padding:7px 12px;background:#14213d;color:#c9cede;font-size:10.5px;font-weight:600;text-align:right;border-left:1px solid #2a3a5c;white-space:nowrap">{{ h }}</div>
+                  </sc-for>
+                  <sc-for list="{{ m.rows }}" as="row" hint-placeholder-count="5">
+                    <div style="padding:7px 12px;border-bottom:1px solid #f7f6f3;font-size:12px;color:#1a2233;font-weight:600;background:#fbfbf9;white-space:nowrap">{{ row.label }}</div>
+                    <sc-for list="{{ row.cells }}" as="c" hint-placeholder-count="5">
+                      <div title="{{ c.title }}" style="padding:7px 12px;border-bottom:1px solid #f7f6f3;border-left:1px solid #f7f6f3;text-align:right;font-size:12px;font-variant-numeric:tabular-nums;color:{{ c.color }};font-weight:{{ c.weight }};background:{{ c.bg }};box-shadow:{{ c.ring }};white-space:nowrap">{{ c.text }}</div>
+                    </sc-for>
+                  </sc-for>
+                </div>
+              </div>
+              <div style="font-size:11px;color:#9a9a95;margin-top:9px;line-height:1.5">{{ m.footnote }}</div>
+            </div>
+          </sc-for>
+        </div>
+      </sc-if>
+
+      <sc-if value="{{ isPricing }}" hint-placeholder-val="{{ false }}">
+        <div style="display:flex;flex-direction:column;gap:14px">
+          <div style="background:#fff;border:1px solid #eae9e4;border-radius:10px;padding:16px 18px">
+            <div style="display:flex;justify-content:space-between;align-items:baseline;gap:14px;margin-bottom:12px;flex-wrap:wrap">
+              <span style="font-size:12px;font-weight:700;color:#8a8a86;text-transform:uppercase;letter-spacing:.03em">Max Price Solver</span>
+              <span style="font-size:11px;color:#b0afaa">Solved against the hurdles on the Investment Profile</span>
+            </div>
+            <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(190px,1fr));gap:12px">
+              <sc-for list="{{ pricingKpis }}" as="k" hint-placeholder-count="4">
+                <div style="border:1px solid {{ k.border }};background:{{ k.bg }};border-radius:9px;padding:13px 15px">
+                  <div style="font-size:10px;font-weight:700;letter-spacing:.04em;color:#8a8a86;text-transform:uppercase;margin-bottom:6px">{{ k.label }}</div>
+                  <div style="font-size:21px;font-weight:700;color:{{ k.color }};font-variant-numeric:tabular-nums">{{ k.value }}</div>
+                  <div style="font-size:10.5px;color:#9a9a95;margin-top:4px;line-height:1.4">{{ k.sub }}</div>
+                </div>
+              </sc-for>
+            </div>
+            <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:0 32px;margin-top:14px">
+              <sc-for list="{{ pricingConstraints }}" as="r" hint-placeholder-count="6">
+                <div style="display:flex;justify-content:space-between;align-items:center;gap:12px;font-size:12.5px;padding:6px 0;border-bottom:1px solid #f7f6f3">
+                  <span style="display:flex;align-items:center;gap:7px;min-width:0">
+                    <span style="width:8px;height:8px;border-radius:50%;background:{{ r.dotFill }};border:{{ r.dotBorder }};display:inline-block;flex-shrink:0"></span>
+                    <span style="color:#6b6f76">{{ r.label }}</span>
+                  </span>
+                  <span style="color:{{ r.color }};font-weight:{{ r.weight }};font-variant-numeric:tabular-nums">{{ r.value }}</span>
+                </div>
+              </sc-for>
+            </div>
+            <div style="font-size:11px;color:#9a9a95;margin-top:10px;line-height:1.5">{{ pricingNote }}</div>
+          </div>
+
+          <sc-for list="{{ pricingMatrices }}" as="m" hint-placeholder-count="1">
+            <div style="background:#fff;border:1px solid #eae9e4;border-radius:10px;padding:16px 18px">
+              <div style="display:flex;justify-content:space-between;align-items:baseline;gap:14px;margin-bottom:12px;flex-wrap:wrap">
+                <span style="font-size:12px;font-weight:700;color:#8a8a86;text-transform:uppercase;letter-spacing:.03em">{{ m.title }}</span>
+                <span style="font-size:11px;color:#b0afaa">{{ m.caption }}</span>
+              </div>
+              <div style="overflow-x:auto">
+                <div style="display:grid;grid-template-columns:{{ m.cols }};width:max-content;min-width:100%">
+                  <div style="padding:7px 12px;background:#14213d;color:#c9cede;font-size:10px;font-weight:700;letter-spacing:.04em;white-space:nowrap">{{ m.corner }}</div>
+                  <sc-for list="{{ m.headers }}" as="h" hint-placeholder-count="5">
+                    <div style="padding:7px 12px;background:#14213d;color:#c9cede;font-size:10.5px;font-weight:600;text-align:right;border-left:1px solid #2a3a5c;white-space:nowrap">{{ h }}</div>
+                  </sc-for>
+                  <sc-for list="{{ m.rows }}" as="row" hint-placeholder-count="5">
+                    <div style="padding:7px 12px;border-bottom:1px solid #f7f6f3;font-size:12px;color:#1a2233;font-weight:600;background:#fbfbf9;white-space:nowrap">{{ row.label }}</div>
+                    <sc-for list="{{ row.cells }}" as="c" hint-placeholder-count="5">
+                      <div title="{{ c.title }}" style="padding:7px 12px;border-bottom:1px solid #f7f6f3;border-left:1px solid #f7f6f3;text-align:right;font-size:12px;font-variant-numeric:tabular-nums;color:{{ c.color }};font-weight:{{ c.weight }};background:{{ c.bg }};box-shadow:{{ c.ring }};white-space:nowrap;display:flex;flex-direction:column;align-items:flex-end;gap:2px">
+                        <span>{{ c.text }}</span>
+                        <span style="font-size:10.5px;font-weight:400;color:#9a9a95">{{ c.perKey }}</span>
+                      </div>
+                    </sc-for>
+                  </sc-for>
+                </div>
+              </div>
+              <div style="font-size:11px;color:#9a9a95;margin-top:9px;line-height:1.5">{{ m.footnote }}</div>
+            </div>
+          </sc-for>
+        </div>
+      </sc-if>
+    </div>
+  </div>
+
+  <div style="position:fixed;top:0;right:0;height:100vh;width:340px;background:#fff;box-shadow:-4px 0 24px rgba(0,0,0,.14);z-index:50;display:flex;flex-direction:column;transform:{{ atlasTransform }};transition:transform .22s ease">
+    <div style="padding:16px 18px;border-bottom:1px solid #eae9e4;display:flex;justify-content:space-between;align-items:center">
+      <span style="font-weight:700;font-size:13.5px;color:#1a2233">✦ Atlas</span>
+      <span onClick="{{ closeAtlas }}" style="cursor:pointer;color:#9a9a95">✕</span>
+    </div>
+    <div style="flex:1;overflow-y:auto;padding:14px 18px;display:flex;flex-direction:column;gap:10px">
+      <div style="background:#f3f2ee;color:#1a2233;padding:9px 12px;border-radius:8px;font-size:12.5px;line-height:1.5">{{ atlasSummary }}</div>
+      <div style="background:#f3f2ee;color:#1a2233;padding:9px 12px;border-radius:8px;font-size:12.5px;line-height:1.5">Exit cap is the single largest driver — every 25bps of cap moves the levered IRR by roughly 1.5 points.</div>
+    </div>
+    <div style="padding:12px 18px;border-top:1px solid #eae9e4;display:flex;flex-direction:column;gap:8px">
+      <button style="text-align:left;background:#f5f4f0;border:1px solid #eae9e4;border-radius:6px;padding:8px 10px;font-size:12px;color:#3a3f47;cursor:pointer;font-family:inherit">What breaks the deal?</button>
+    </div>
+  </div>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props="{&quot;onNavigate&quot;:{&quot;editor&quot;:null,&quot;tsType&quot;:&quot;(tab: string, params?: object) =&gt; void&quot;},&quot;defaultSubTab&quot;:{&quot;editor&quot;:&quot;enum&quot;,&quot;options&quot;:[&quot;Returns Summary&quot;,&quot;Sensitivities&quot;,&quot;Pricing&quot;],&quot;default&quot;:&quot;Returns Summary&quot;,&quot;tsType&quot;:&quot;string&quot;,&quot;section&quot;:&quot;Returns tab&quot;}}">
+class Component extends DCLogic {
+  GREEN = 'oklch(45% 0.12 155)';
+  BLUE = 'oklch(45% 0.14 260)';
+  GRAY = '#5f656e';
+  BLACK = '#1a2233';
+  MUTED = '#b0afaa';
+  AMBER = 'oklch(50% 0.14 40)';
+
+  BASE = {
+    purchase: 36436800, otherUses: 6679452, keyMoney: 1089576, keys: 132,
+    opFCF: [2421576, 2508000, 3166000, 3725000, 3844800],
+    noiExit: 4440800, exitCap: 0.065, growth: 0.03, hold: 5,
+    ltv: 23190000 / 36436800, rate: 0.0766,
+    sellCostPct: 0.016, refiLTV: 0.62, refiCap: 0.0675, refiRate: 0.0685, refiFeePct: 0.01, refiYear: 3,
+    principalY3: 171000, targetIRR: 0.18, targetMOIC: 2.0, stabNOI: 4440800,
+  };
+
+  state = { tab: this.props.defaultSubTab || 'Returns Summary', ov: {}, atlasOpen: false };
+
+  p(k) { return this.state.ov[k] !== undefined ? this.state.ov[k] : this.BASE[k]; }
+  money(v) { return (v < 0 ? '−$' : '$') + Math.round(Math.abs(v)).toLocaleString('en-US'); }
+  mm(v) { return (v < 0 ? '−$' : '$') + (Math.abs(v) / 1e6).toFixed(2) + 'M'; }
+  pct(v, d) { return (v * 100).toFixed(d === undefined ? 1 : d) + '%'; }
+  x(v) { return v.toFixed(2) + 'x'; }
+
+  irr(flows) {
+    const npv = r => flows.reduce((a, f, i) => a + f / Math.pow(1 + r, i), 0);
+    if (npv(-0.95) * npv(4) > 0) return null;
+    let lo = -0.95, hi = 4;
+    for (let i = 0; i < 160; i++) {
+      const mid = (lo + hi) / 2;
+      if (npv(-0.95) * npv(mid) <= 0) hi = mid; else lo = mid;
+    }
+    return (lo + hi) / 2;
+  }
+
+  model(over) {
+    const B = this.BASE;
+    const g = (over && over.growth !== undefined) ? over.growth : this.p('growth');
+    const exitCap = (over && over.exitCap !== undefined) ? over.exitCap : this.p('exitCap');
+    const hold = Math.max(2, Math.round((over && over.hold !== undefined) ? over.hold : this.p('hold')));
+    const ltv = (over && over.ltv !== undefined) ? over.ltv : this.p('ltv');
+    const rate = (over && over.rate !== undefined) ? over.rate : this.p('rate');
+    const purchase = (over && over.purchase !== undefined) ? over.purchase : B.purchase;
+
+    const totalUses = purchase + B.otherUses;
+    const loan = purchase * ltv;
+    const equity = totalUses - loan - B.keyMoney;
+    const gf = i => Math.pow((1 + g) / (1 + B.growth), i + 1);
+
+    const opFCF = [];
+    for (let i = 0; i < hold; i++) {
+      const base = i < B.opFCF.length ? B.opFCF[i] : B.opFCF[B.opFCF.length - 1] * Math.pow(1 + B.growth, i - B.opFCF.length + 1);
+      opFCF.push(base * gf(i));
+    }
+    const noiExitBase = B.noiExit * Math.pow(1 + B.growth, Math.max(0, hold - B.hold));
+    const noiExit = noiExitBase * gf(hold - 1);
+    const grossExit = noiExit / exitCap;
+    const sellCosts = grossExit * B.sellCostPct;
+    const netSale = grossExit - sellCosts;
+
+    const refiYear = hold > B.refiYear ? B.refiYear : 0;
+    const stabNOI = B.stabNOI * gf(Math.min(hold, 5) - 1);
+    const refiProceeds = refiYear ? (stabNOI / B.refiCap) * B.refiLTV : 0;
+    const principalPaid = B.principalY3 * (loan / (B.purchase * B.ltv));
+    const refiPayoff = refiYear ? loan - principalPaid : 0;
+    const refiFees = refiProceeds * B.refiFeePct;
+    const netRefi = refiYear ? refiProceeds - refiPayoff - refiFees : 0;
+    const endLoan = refiYear ? refiProceeds : loan - principalPaid;
+
+    const flows = [-equity];
+    const yearly = [];
+    for (let i = 0; i < hold; i++) {
+      const yr = i + 1;
+      const interest = (refiYear && yr > refiYear) ? refiProceeds * B.refiRate : loan * rate;
+      const principal = yr === B.refiYear ? principalPaid : 0;
+      let cf = opFCF[i] - interest - principal;
+      if (yr === refiYear) cf += netRefi;
+      if (yr === hold) cf += netSale - endLoan;
+      flows.push(cf);
+      yearly.push({ yr, opFCF: opFCF[i], interest, principal, cf });
+    }
+    const totalToEquity = flows.slice(1).reduce((a, b) => a + b, 0);
+    const opToEquity = yearly.reduce((a, y) => a + (y.opFCF - y.interest - y.principal), 0);
+    const irr = this.irr(flows);
+    return {
+      purchase, totalUses, loan, equity, hold, exitCap, g, ltv, rate,
+      opFCF, yearly, flows, noiExit, grossExit, sellCosts, netSale,
+      netRefi, refiProceeds, refiPayoff, refiFees, endLoan, refiYear,
+      totalToEquity, opToEquity, netExit: netSale - endLoan,
+      irr, moic: totalToEquity / equity, profit: totalToEquity - equity,
+      coc1: (yearly[0].opFCF - yearly[0].interest) / equity,
+      avgCoC: yearly.reduce((a, y) => a + (y.opFCF - y.interest - y.principal), 0) / yearly.length / equity,
+      yieldOnCost: stabNOI / totalUses,
+    };
+  }
+
+  solveMax(test, over) {
+    let lo = 8000000, hi = 95000000;
+    const ok = price => test(this.model(Object.assign({ purchase: price }, over || {})));
+    if (!ok(lo)) return null;
+    for (let i = 0; i < 60; i++) {
+      const mid = (lo + hi) / 2;
+      if (ok(mid)) lo = mid; else hi = mid;
+    }
+    return lo;
+  }
+  maxPrice(over) {
+    const B = this.BASE;
+    const atIRR = this.solveMax(m => (m.irr || 0) >= B.targetIRR, over);
+    const atMOIC = this.solveMax(m => m.moic >= B.targetMOIC, over);
+    if (atIRR === null && atMOIC === null) return { price: null, atIRR, atMOIC, binding: null, m: null };
+    const price = Math.min(atIRR === null ? Infinity : atIRR, atMOIC === null ? Infinity : atMOIC);
+    const binding = atIRR === null ? 'MOIC' : atMOIC === null ? 'IRR'
+      : (atIRR / 1e6).toFixed(2) === (atMOIC / 1e6).toFixed(2) ? 'IRR + MOIC' : (atIRR < atMOIC ? 'IRR' : 'MOIC');
+    return { price, atIRR, atMOIC, binding, m: this.model(Object.assign({ purchase: price }, over || {})) };
+  }
+
+  goFn(key) {
+    const HREFS = { dataroom:'./Data Room v2.dc.html', overview:'./Overview Tab v3.dc.html', market:'./Market Tab.dc.html', financials:'./Financials Tab.dc.html', investment:'./Investment Tab.dc.html', debt:'./Debt Tab.dc.html', partnership:'./Partnership Tab.dc.html', cashflow:'./Cash Flow Tab.dc.html', returns:'./Returns Tab.dc.html', scenarios:'./Scenarios Tab.dc.html', icmemo:'./IC Memo Tab.dc.html' };
+    const onNavigate = this.props.onNavigate;
+    return (e) => { if (e && e.stopPropagation) e.stopPropagation(); if (onNavigate) onNavigate(key); else window.location.href = HREFS[key]; };
+  }
+  buildNavItems(active) {
+    const ICONS = {
+      dataroom: "M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7z",
+      overview: "M6 3h9l4 4v14a1 1 0 0 1-1 1H6a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1zM9 12h6M9 16h6",
+      market: "M12 4a4 4 0 100 8 4 4 0 000-8zM4 21c0-4 3.6-6 8-6s8 2 8 6",
+      financials: "M4 20V10M11 20V4M18 20v-7",
+      investment: "M3 8h18v12a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V8zM8 8V6a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2",
+      debt: "M12 3a9 9 0 100 18 9 9 0 000-18zM12 7v10M9.5 9.5c0-1.4 1.1-2.5 2.5-2.5s2.5.7 2.5 2c0 2-5 1.5-5 4 0 1.3 1.1 2.5 2.5 2.5s2.5-1.1 2.5-2.5",
+      partnership: "M9 11a3 3 0 100-6 3 3 0 000 6zM17 11a3 3 0 100-6 3 3 0 000 6zM2 20c0-3 3-5 7-5M13 20c0-3 3-5 7-5",
+      cashflow: "M3 12h4l3 7 4-14 3 7h4",
+      returns: "M3 17l6-6 4 4 8-8M15 7h6v6",
+      scenarios: "M4 7h13l-3-3M4 7l3 3M20 17H7l3 3M20 17l-3-3",
+      icmemo: "M6 3h9l4 4v14a1 1 0 0 1-1 1H6a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1zM9 12h6M9 16h4M14 3v5h5",
+    };
+    const items = [['dataroom','Data Room'],['overview','Overview'],['market','Market'],['financials','Financials'],['investment','Investment'],['debt','Debt'],['partnership','Partnership'],['cashflow','Cash Flow'],['returns','Returns'],['scenarios','Scenario Analysis'],['icmemo','IC Memo']];
+    return items.map(([key, label]) => ({
+      key, label, icon: ICONS[key],
+      color: key === active ? '#14213d' : '#9a9a95',
+      weight: key === active ? 700 : 500,
+      border: key === active ? '2px solid #14213d' : '2px solid transparent',
+      onClick: key === active ? null : this.goFn(key),
+    }));
+  }
+  dot(kind) {
+    if (kind === 'linked') return { dotFill: '#fff', dotBorder: '2px solid ' + this.GREEN };
+    if (kind === 'input') return { dotFill: this.BLUE, dotBorder: 'none' };
+    return { dotFill: this.GRAY, dotBorder: 'none' };
+  }
+
+  matrix(title, caption, corner, rowDef, colDef, fn, fmt, footnote) {
+    const base = this.model();
+    const rows = rowDef.values.map(rv => ({
+      label: rowDef.fmt(rv),
+      cells: colDef.values.map(cv => {
+        const over = {};
+        over[rowDef.key] = rv; over[colDef.key] = cv;
+        const m = this.model(over);
+        const isBase = Math.abs(rv - rowDef.baseVal) < 1e-9 && Math.abs(cv - colDef.baseVal) < 1e-9;
+        const v = fn(m);
+        return {
+          text: v === null ? '—' : fmt(v), perKey: '',
+          color: isBase ? this.BLACK : this.GRAY,
+          weight: isBase ? 700 : 400,
+          bg: isBase ? 'oklch(97% 0.03 250)' : 'transparent',
+          ring: isBase ? 'inset 0 0 0 2px #2f4a8c' : 'none',
+          title: rowDef.fmt(rv) + ' · ' + colDef.fmt(cv) + (isBase ? ' — base case' : ''),
+        };
+      }),
+    }));
+    return {
+      title, caption, corner, footnote,
+      cols: '150px repeat(' + colDef.values.length + ',minmax(96px,1fr))',
+      headers: colDef.values.map(colDef.fmt), rows,
+      base,
+    };
+  }
+
+  renderVals() {
+    const B = this.BASE, m = this.model(), baseM = this.model({ exitCap: B.exitCap, growth: B.growth, hold: B.hold, ltv: B.ltv, rate: B.rate });
+    const ovKeys = Object.keys(this.state.ov);
+    const fmtP = v => this.pct(v, 2);
+    const fmtG = v => this.pct(v, 1);
+    const fmtY = v => v + ' yrs';
+    const fmtL = v => this.pct(v, 0);
+
+    const bridgeItems = [
+      { label: 'Initial equity', value: -m.equity },
+      { label: 'Operating cash flow', value: m.yearly.reduce((a, y) => a + y.opFCF, 0) },
+      { label: 'Debt service', value: -m.yearly.reduce((a, y) => a + y.interest + y.principal, 0) },
+      { label: 'Refinance proceeds', value: m.netRefi },
+      { label: 'Net exit proceeds', value: m.netExit },
+      { label: 'Total cash flow to equity', value: m.totalToEquity, bold: true },
+    ];
+    const maxAbs = Math.max.apply(null, bridgeItems.map(b => Math.abs(b.value)));
+
+    const liveDefs = [
+      { key: 'exitCap', label: 'Exit Cap Rate', fmt: fmtP, options: [0.06, 0.0625, 0.065, 0.07, 0.075] },
+      { key: 'growth', label: 'NOI Growth', fmt: fmtG, options: [0.01, 0.02, 0.03, 0.04, 0.05] },
+      { key: 'hold', label: 'Hold Period', fmt: fmtY, options: [3, 4, 5, 6, 7] },
+      { key: 'ltv', label: 'LTV', fmt: fmtL, options: [0.55, 0.60, B.ltv, 0.70, 0.75] },
+      { key: 'rate', label: 'Interest Rate', fmt: fmtP, options: [0.065, 0.07, B.rate, 0.0825, 0.09] },
+    ];
+
+    const solver = this.maxPrice();
+    const headroom = solver.price ? solver.price - B.purchase : null;
+
+    return {
+      navItems: this.buildNavItems('returns'),
+      atlasTransform: this.state.atlasOpen ? 'translateX(0)' : 'translateX(100%)',
+      toggleAtlas: () => this.setState(s => ({ atlasOpen: !s.atlasOpen })),
+      closeAtlas: () => this.setState({ atlasOpen: false }),
+      atlasSummary: 'At the current basis the deal returns ' + this.pct(m.irr || 0) + ' levered IRR and ' + this.x(m.moic) + ' on ' + this.mm(m.equity) + ' of equity, against a Value Add target of 12–18%.',
+      goInvestment: this.goFn('investment'),
+      goCashFlow: this.goFn('cashflow'),
+
+      subTabs: ['Returns Summary', 'Sensitivities', 'Pricing'].map(label => {
+        const active = label === this.state.tab;
+        return {
+          label, weight: active ? 700 : 500, color: active ? '#14213d' : '#9a9a95',
+          border: active ? '2px solid #14213d' : '2px solid transparent',
+          select: () => this.setState({ tab: label }),
+        };
+      }),
+      subTabCaption: this.state.tab === 'Returns Summary' ? 'What the deal earns and where it comes from'
+        : this.state.tab === 'Sensitivities' ? 'How returns move with the key assumptions'
+        : 'What price the deal can carry',
+      isSummary: this.state.tab === 'Returns Summary',
+      isSensitivities: this.state.tab === 'Sensitivities',
+      isPricing: this.state.tab === 'Pricing',
+
+      overrideActive: ovKeys.length > 0,
+      overrideSummary: ovKeys.map(k => {
+        const d = liveDefs.find(x => x.key === k);
+        return d ? d.label + ' ' + d.fmt(B[k]) + ' → ' + d.fmt(this.state.ov[k]) : k;
+      }).join(' · '),
+      resetOverrides: () => this.setState({ ov: {} }),
+
+      headline: [
+        { label: 'Levered IRR', value: this.pct(m.irr || 0), sub: 'Equity IRR over the ' + m.hold + '-year hold' },
+        { label: 'Equity Multiple', value: this.x(m.moic), sub: 'MOIC on ' + this.mm(m.equity) + ' invested' },
+        { label: 'Avg. Cash-on-Cash', value: this.pct(m.avgCoC), sub: 'Years 1–' + m.hold + ' average — year 1 alone is ' + this.pct(m.coc1) },
+        { label: 'Yield on Cost', value: this.pct(m.yieldOnCost), sub: 'Stabilized NOI ÷ total cost basis' },
+      ],
+      secondary: [
+        { label: 'Exit Value', value: this.mm(m.grossExit), sub: this.pct(m.exitCap, 2) + ' exit cap' },
+        { label: 'Equity Profit', value: this.mm(m.profit), sub: 'Cash returned less equity invested' },
+        { label: 'Initial Equity Invested', value: this.mm(m.equity), sub: 'Funded in full at close — no later contributions' },
+      ],
+
+      exitRows: [
+        Object.assign({ label: 'Hold Period', value: m.hold + ' years', source: 'Investment', color: this.GREEN, weight: 400, title: 'Linked from Investment → Exit / Reversion' }, this.dot('linked')),
+        Object.assign({ label: 'Exit Year', value: 'Year ' + m.hold, source: 'Calculated', color: this.GRAY, weight: 400, title: 'Acquisition date plus hold period' }, this.dot('calc')),
+        Object.assign({ label: 'Exit Cap Rate', value: this.pct(m.exitCap, 2), source: 'Investment', color: this.GREEN, weight: 400, title: 'Linked from Investment → Exit / Reversion' }, this.dot('linked')),
+        Object.assign({ label: 'Gross Sale Price', value: this.money(m.grossExit), source: 'Calculated', color: this.BLACK, weight: 700, title: 'Forward NOI ÷ exit cap rate' }, this.dot('calc')),
+        Object.assign({ label: 'Selling Costs', value: this.money(-m.sellCosts), source: 'Investment', color: this.GRAY, weight: 400, title: 'Disposition costs and transfer tax' }, this.dot('calc')),
+        Object.assign({ label: 'Net Sale Proceeds', value: this.money(m.netSale), source: 'Calculated', color: this.BLACK, weight: 700, title: 'Gross sale price less selling costs' }, this.dot('calc')),
+      ],
+
+      bridge: bridgeItems.map(b => ({
+        label: b.label, value: this.mm(b.value),
+        weight: b.bold ? 700 : 400,
+        color: b.bold ? this.BLACK : b.value < 0 ? this.AMBER : this.GRAY,
+        left: b.value < 0 ? (50 - Math.abs(b.value) / maxAbs * 50) + '%' : '50%',
+        width: (Math.abs(b.value) / maxAbs * 50) + '%',
+        bg: b.bold ? '#14213d' : b.value < 0 ? 'oklch(70% 0.10 40)' : 'oklch(60% 0.10 155)',
+      })),
+      bridgeNote: 'Reconciles to the canonical series on Cash Flow: ' + this.mm(m.opToEquity) + ' operating + ' + this.mm(m.netRefi) + ' refinance + ' + this.mm(m.netExit) + ' exit = ' + this.mm(m.totalToEquity) + ' returned on ' + this.mm(m.equity) + ' invested.',
+
+      liveAssumptions: liveDefs.map(d => {
+        const overridden = this.state.ov[d.key] !== undefined;
+        const current = this.p(d.key);
+        return {
+          label: d.label, value: d.fmt(current), base: d.fmt(B[d.key]), overridden,
+          tag: overridden ? '● Testing' : 'Base case',
+          tagColor: overridden ? '#2f4a8c' : '#b0afaa',
+          valueColor: overridden ? this.BLUE : this.BLACK,
+          border: overridden ? '#c9d4ee' : '#eae9e4',
+          bg: overridden ? 'oklch(98% 0.015 250)' : '#fff',
+          options: d.options.map(o => {
+            const active = Math.abs(o - current) < 1e-9;
+            return {
+              label: d.fmt(o), border: active ? '#2f4a8c' : '#e2e1dc',
+              bg: active ? '#eef2fb' : '#fff', color: active ? '#2f4a8c' : '#6b6f76',
+              weight: active ? 700 : 500,
+              select: () => this.setState(s => {
+                const ov = Object.assign({}, s.ov);
+                if (Math.abs(o - B[d.key]) < 1e-9) delete ov[d.key]; else ov[d.key] = o;
+                return { ov };
+              }),
+            };
+          }),
+        };
+      }),
+      liveResult: 'Testing case: ' + this.pct(m.irr || 0) + ' IRR · ' + this.x(m.moic) + ' MOIC · ' + this.pct(m.avgCoC) + ' avg cash-on-cash. Base case: ' + this.pct(baseM.irr || 0) + ' · ' + this.x(baseM.moic) + ' · ' + this.pct(baseM.avgCoC) + '.',
+
+      matrices: [
+        this.matrix('Levered IRR', 'Exit cap rate × NOI growth (annual, stabilized)', 'EXIT CAP \\ GROWTH',
+          { key: 'exitCap', values: [0.06, 0.0625, 0.065, 0.07, 0.075], baseVal: this.p('exitCap'), fmt: fmtP },
+          { key: 'growth', values: [0.01, 0.02, 0.03, 0.04, 0.05], baseVal: this.p('growth'), fmt: fmtG },
+          mm => mm.irr, v => this.pct(v),
+          'NOI growth compounds through operating cash flow and the exit NOI, so it moves both the cash flows and the sale price.'),
+        this.matrix('Equity Multiple', 'LTV × hold period', 'LTV \\ HOLD',
+          { key: 'ltv', values: [0.55, 0.60, B.ltv, 0.70, 0.75], baseVal: this.p('ltv'), fmt: fmtL },
+          { key: 'hold', values: [3, 4, 5, 6, 7], baseVal: this.p('hold'), fmt: fmtY },
+          mm => mm.moic, v => this.x(v),
+          'Higher leverage shrinks the equity base and lifts the multiple; a longer hold adds operating cash flow and a larger exit NOI.'),
+        this.matrix('Year-1 Cash-on-Cash', 'LTV × interest rate · year 1 only, not the Summary average', 'LTV \\ RATE',
+          { key: 'ltv', values: [0.55, 0.60, B.ltv, 0.70, 0.75], baseVal: this.p('ltv'), fmt: fmtL },
+          { key: 'rate', values: [0.065, 0.07, B.rate, 0.0825, 0.09], baseVal: this.p('rate'), fmt: fmtP },
+          mm => mm.coc1, v => this.pct(v),
+          'Year-1 cash-on-cash is operating cash flow less interest, over equity — both terms move with leverage, so every cell differs.'),
+      ],
+
+      pricingKpis: [
+        { label: 'Current purchase price', value: this.mm(B.purchase), sub: this.money(B.purchase / B.keys) + ' / key', color: this.BLACK, border: '#eae9e4', bg: '#fff' },
+        { label: 'Max price', value: solver.price ? this.mm(solver.price) : '—', sub: solver.price ? 'Maximum price clearing all hurdles' : 'No price clears the hurdles', color: this.BLACK, border: '#dbe3f5', bg: 'oklch(97.5% 0.015 250)' },
+        { label: headroom !== null && headroom >= 0 ? 'Headroom' : 'Gap', value: headroom === null ? '—' : (headroom >= 0 ? '+' : '') + this.mm(headroom), sub: headroom === null ? '' : headroom >= 0 ? 'Room above the current basis' : 'Current basis exceeds the max price', color: headroom !== null && headroom >= 0 ? this.GREEN : this.AMBER, border: '#eae9e4', bg: '#fff' },
+        { label: 'Max price / key', value: solver.price ? this.money(solver.price / B.keys) : '—', sub: 'At the binding hurdle', color: this.BLACK, border: '#eae9e4', bg: '#fff' },
+      ],
+      pricingConstraints: [
+        Object.assign({ label: 'Target levered IRR', value: this.pct(B.targetIRR, 0), color: this.GREEN, weight: 400 }, this.dot('linked')),
+        Object.assign({ label: 'Target MOIC', value: this.x(B.targetMOIC), color: this.GREEN, weight: 400 }, this.dot('linked')),
+        Object.assign({ label: 'Max price @ ' + this.pct(B.targetIRR, 0) + ' IRR', value: solver.atIRR ? this.mm(solver.atIRR) : '—', color: this.GRAY, weight: 400 }, this.dot('calc')),
+        Object.assign({ label: 'Max price @ ' + this.x(B.targetMOIC) + ' MOIC', value: solver.atMOIC ? this.mm(solver.atMOIC) : '—', color: this.GRAY, weight: 400 }, this.dot('calc')),
+        Object.assign({ label: 'Binding constraint', value: solver.binding || '—', color: this.BLACK, weight: 700 }, this.dot('calc')),
+        Object.assign({ label: 'Hold period', value: m.hold + ' years', color: this.GREEN, weight: 400 }, this.dot('linked')),
+        Object.assign({ label: 'Exit cap rate', value: this.pct(m.exitCap, 2), color: this.GREEN, weight: 400 }, this.dot('linked')),
+        Object.assign({ label: 'LTV / interest rate', value: this.pct(m.ltv, 1) + ' · ' + this.pct(m.rate, 2), color: this.GREEN, weight: 400 }, this.dot('linked')),
+      ],
+      pricingNote: 'Hurdles come from the Value Add returns profile on the Investment Profile, not from Returns. Each hurdle is solved independently and the lower price governs: ' + (solver.atIRR ? this.mm(solver.atIRR) : '—') + ' at the IRR hurdle, ' + (solver.atMOIC ? this.mm(solver.atMOIC) : '—') + ' at the MOIC hurdle — ' + (solver.binding === 'IRR + MOIC' ? 'both bind at the same price' : 'the ' + (solver.binding || '—') + ' hurdle binds') + '.',
+
+      pricingMatrices: [(() => {
+        const caps = [0.06, 0.0625, 0.065, 0.07, 0.075], growths = [0.01, 0.02, 0.03, 0.04, 0.05];
+        return {
+          title: 'Pricing Sensitivity — Max Purchase Price',
+          caption: 'Exit cap rate × NOI growth · highest price that still clears both hurdles',
+          corner: 'EXIT CAP \\ NOI GROWTH',
+          cols: '150px repeat(' + growths.length + ',minmax(132px,1fr))',
+          headers: growths.map(fmtG),
+          rows: caps.map(cap => ({
+            label: fmtP(cap),
+            cells: growths.map(g => {
+              const sol = this.maxPrice({ exitCap: cap, growth: g });
+              const isBase = Math.abs(cap - this.p('exitCap')) < 1e-9 && Math.abs(g - this.p('growth')) < 1e-9;
+              const solvable = sol.price !== null && isFinite(sol.price);
+              return {
+                text: solvable ? this.mm(sol.price) : '—',
+                perKey: solvable ? this.money(sol.price / B.keys) + ' / key' : '',
+                color: isBase ? this.BLACK : solvable ? this.GRAY : this.MUTED,
+                weight: isBase ? 700 : 400,
+                bg: isBase ? 'oklch(97% 0.03 250)' : 'transparent',
+                ring: isBase ? 'inset 0 0 0 2px #2f4a8c' : 'none',
+                title: solvable ? fmtP(cap) + ' exit cap · ' + fmtG(g) + ' NOI growth — binding constraint ' + sol.binding : 'No price clears the hurdles at this combination',
+              };
+            }),
+          })),
+          footnote: 'Each cell solves for the maximum purchase price that still meets both the ' + this.pct(B.targetIRR, 0) + ' IRR and ' + this.x(B.targetMOIC) + ' MOIC hurdles. Sensitivities answers how returns move; Pricing answers how much you can pay.',
+        };
+      })()],
+    };
+  }
+}
+</script>
+</body>
+</html>

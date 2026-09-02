@@ -1,0 +1,674 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+  <style>body{margin:0;background:#f5f4f0;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,Arial,sans-serif;}a{color:#2f4a8c}a:hover{color:#1f3568}[contenteditable]:focus{outline:1px solid #cdd6ea;border-radius:4px}</style>
+</helmet>
+<template id="__bundler_thumbnail">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 120 56" data-bg-color="#14213d"><rect width="120" height="56" fill="#14213d"/><rect x="42" y="8" width="36" height="42" rx="2" stroke="#f5f4f0" stroke-width="3" fill="none"/><path d="M50 22h20M50 30h20M50 38h12" stroke="#f5f4f0" stroke-width="3"/></svg>
+</template>
+<div style="display:flex;min-height:100vh">
+  <div style="width:210px;background:#0f1a30;padding:22px 16px;display:flex;flex-direction:column;gap:2px;flex-shrink:0">
+    <div style="display:flex;align-items:center;gap:8px;color:#fff;font-weight:700;font-size:16px;margin-bottom:24px"><div style="width:28px;height:28px;background:#2f4a8c;border-radius:6px;display:flex;align-items:center;justify-content:center;font-size:13px">F</div>Fondok.</div>
+    <div style="color:#c9cede;font-size:12.5px;padding:8px 10px;border-radius:6px;background:rgba(255,255,255,.06);margin-bottom:16px;display:flex;justify-content:space-between">fondok.ai <span>⌄</span></div>
+    <div style="color:#8b93a7;font-size:13px;padding:8px 10px;display:flex;gap:9px">⊞ Dashboard</div>
+    <div style="color:#fff;background:rgba(255,255,255,.09);font-size:13px;font-weight:600;padding:8px 10px;border-radius:6px;display:flex;gap:9px">▤ Projects</div>
+    <div style="color:#8b93a7;font-size:13px;padding:8px 10px;display:flex;gap:9px">📈 Pipeline</div>
+    <div style="color:#8b93a7;font-size:13px;padding:8px 10px;display:flex;gap:9px">◔ Audit</div>
+    <div style="color:#8b93a7;font-size:13px;padding:8px 10px;display:flex;gap:9px">$ Cost</div>
+    <div style="color:#8b93a7;font-size:13px;padding:8px 10px;display:flex;gap:9px">▥ Data Library</div>
+    <div style="color:#8b93a7;font-size:13px;padding:8px 10px;display:flex;gap:9px">▦ Methodology</div>
+    <div style="color:#8b93a7;font-size:13px;padding:8px 10px;display:flex;gap:9px">◷ Settings</div>
+  </div>
+  <div style="flex:1;min-width:0">
+    <div style="padding:22px 32px 0">
+      <div style="font-size:11.5px;color:#9a9a95;margin-bottom:10px">← BACK TO PROJECTS</div>
+      <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;row-gap:8px;margin-bottom:10px">
+        <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap"><h1 style="font-size:26px;margin:0;color:#1a2233;font-weight:600;white-space:nowrap">Kimpton Hotel</h1><span style="color:#9a9a95;font-size:11px;font-weight:600;letter-spacing:.04em">DRAFT</span></div>
+        <div style="display:flex;gap:14px;align-items:center;flex-wrap:wrap">
+          <button onClick="{{ toggleAtlas }}" style="display:flex;align-items:center;gap:6px;background:#eef2fb;border:1px solid #dbe3f5;color:#2f4a8c;border-radius:6px;padding:8px 14px;font-size:12px;font-weight:600;cursor:pointer;white-space:nowrap">✦ Ask Atlas</button>
+          <button style="background:#14213d;color:#fff;border:none;border-radius:6px;padding:8px 16px;font-size:12.5px;font-weight:600;white-space:nowrap">Export Memo</button>
+        </div>
+      </div>
+      <div style="font-size:12.5px;color:#9a9a95;margin-bottom:20px;display:flex;gap:18px">
+        <span>660 Washington Avenue, Miami Beach, FL 33139</span><span>132 keys</span><span>Created 7/30/2026</span>
+      </div>
+      <div style="display:flex;gap:22px;border-bottom:1px solid #ececea;font-size:13.5px;font-weight:500;color:#9a9a95;overflow-x:auto">
+        <sc-for list="{{ navItems }}" as="nav" hint-placeholder-count="11">
+          <div onClick="{{ nav.onClick }}" style="display:flex;align-items:center;gap:6px;padding-bottom:10px;white-space:nowrap;cursor:pointer;color:{{ nav.color }};font-weight:{{ nav.weight }};border-bottom:{{ nav.border }}">
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="{{ nav.icon }}"></path></svg>{{ nav.label }}
+          </div>
+        </sc-for>
+      </div>
+    </div>
+
+    <div style="padding:16px 32px 56px;max-width:1320px">
+      <div style="background:#fff;border:1px solid #eae9e4;border-radius:10px;padding:12px 16px;margin-bottom:14px;display:flex;flex-direction:column;gap:3px">
+        <span style="font-size:13.5px;font-weight:700;color:#1a2233">IC Memo</span>
+        <span style="font-size:12.5px;color:#6b6f76;line-height:1.55;max-width:960px">The decision workspace: the recommendation, the case for it, the risks against it, and the deliverables the committee needs. Every figure is the canonical Base Case — nothing is underwritten here.</span>
+      </div>
+
+      <div style="display:flex;align-items:center;gap:16px;flex-wrap:wrap;background:#fbfbf9;border:1px solid #eae9e4;border-radius:8px;padding:9px 14px;margin-bottom:16px;font-size:11px;color:#6b6f76">
+        <span style="font-weight:700;color:#8a8a86;letter-spacing:.02em">DATA KEY</span>
+        <span style="display:flex;align-items:center;gap:6px"><span style="width:9px;height:9px;border-radius:50%;background:oklch(45% 0.12 155);display:inline-block;flex-shrink:0"></span>Document sourced</span>
+        <span style="display:flex;align-items:center;gap:6px"><span style="width:9px;height:9px;border-radius:50%;background:#fff;border:2px solid oklch(45% 0.12 155);display:inline-block;flex-shrink:0"></span>Linked</span>
+        <span style="display:flex;align-items:center;gap:6px"><span style="width:9px;height:9px;border-radius:50%;background:oklch(45% 0.14 260);display:inline-block;flex-shrink:0"></span>Assumption</span>
+        <span style="display:flex;align-items:center;gap:6px"><span style="width:9px;height:9px;border-radius:50%;background:#5f656e;display:inline-block;flex-shrink:0"></span>Calculated</span>
+        <span style="display:flex;align-items:center;gap:6px"><span style="width:9px;height:9px;border-radius:50%;background:#fff;border:1px dashed #b0afaa;display:inline-block;flex-shrink:0"></span>Awaiting data</span>
+        <span style="display:flex;align-items:center;gap:6px"><span style="width:9px;height:9px;border-radius:50%;background:oklch(45% 0.12 155);box-shadow:0 0 0 3px oklch(88% 0.07 45);display:inline-block;flex-shrink:0"></span>Needs review</span>
+        <span style="display:flex;align-items:center;gap:6px"><b style="color:#1a2233">1,240</b>Total / summary</span>
+        <span style="display:flex;align-items:center;gap:6px"><span style="text-decoration:underline dotted;color:#6b6f76">123</span>Editable — click to change</span>
+        <span title="Origin is the dot: document sourced, linked from another module, your assumption, calculated by Fondok, or awaiting data. An amber halo means the value needs review. Bold marks totals, a dotted underline marks values you can change. Provenance and editability are separate — a sourced value can also be editable, and an override keeps its original source so you can restore it." style="cursor:help;color:#9a9a95;margin-left:auto;white-space:nowrap">ⓘ How to read this</span>
+      </div>
+
+      <div style="background:#14213d;border-radius:10px;padding:20px 24px;display:flex;justify-content:space-between;align-items:flex-start;gap:32px;flex-wrap:wrap;margin-bottom:2px">
+        <div style="display:flex;flex-direction:column;gap:5px;min-width:0">
+          <span style="font-size:10px;font-weight:700;letter-spacing:.1em;color:#8b93a7;text-transform:uppercase">Investment Committee Memo</span>
+          <span style="font-size:23px;font-weight:600;color:#fff">Kimpton Angler</span>
+          <span style="font-size:12px;color:#9fb2df">660 Washington Avenue, Miami Beach, FL 33139 · 132 keys · Kimpton Hotels &amp; Restaurants</span>
+          <span style="font-size:11px;color:#6b7794">Project: Kimpton Hotel (test deal)</span>
+        </div>
+        <div style="display:flex;gap:34px;flex-wrap:wrap">
+          <div style="display:flex;flex-direction:column;gap:6px">
+            <span style="font-size:9.5px;font-weight:700;letter-spacing:.08em;color:#8b93a7;text-transform:uppercase">Model assessment</span>
+            <span style="display:inline-flex;align-items:center;gap:7px;font-size:16px;font-weight:600;color:{{ assess.color }}"><span style="width:8px;height:8px;border-radius:50%;background:{{ assess.color }};display:inline-block"></span>{{ assess.label }}</span>
+            <span style="font-size:10.5px;color:#6b7794;max-width:210px;line-height:1.45">{{ assess.detail }}</span>
+          </div>
+          <div style="display:flex;flex-direction:column;gap:6px;position:relative">
+            <span style="font-size:9.5px;font-weight:700;letter-spacing:.08em;color:#8b93a7;text-transform:uppercase">IC recommendation</span>
+            <span onClick="{{ toggleRecMenu }}" style="display:inline-flex;align-items:center;gap:8px;font-size:16px;font-weight:600;color:#fff;cursor:pointer">{{ recLabel }}<span style="font-size:11px;color:#8b93a7">⌄</span></span>
+            <span style="font-size:10.5px;color:{{ recNoteColor }}">{{ recNote }}</span>
+            <sc-if value="{{ recMenuOpen }}" hint-placeholder-val="{{ false }}">
+              <div style="position:absolute;top:62px;right:0;z-index:30;background:#fff;border:1px solid #e2e1dc;border-radius:8px;box-shadow:0 10px 26px rgba(0,0,0,.18);padding:5px;width:230px;display:flex;flex-direction:column">
+                <sc-for list="{{ recOptions }}" as="o" hint-placeholder-count="3">
+                  <div onClick="{{ o.select }}" style="display:flex;align-items:center;gap:8px;font-size:12.5px;color:#1a2233;font-weight:{{ o.weight }};padding:8px 9px;border-radius:5px;cursor:pointer"><span style="width:11px">{{ o.check }}</span>{{ o.label }}</div>
+                </sc-for>
+                <div onClick="{{ confirmRec }}" style="border-top:1px solid #f2f1ec;margin-top:4px;padding:8px 9px;font-size:12px;color:#2f4a8c;font-weight:600;cursor:pointer">{{ confirmLabel }}</div>
+              </div>
+            </sc-if>
+          </div>
+        </div>
+      </div>
+
+      <div style="background:#fff;border:1px solid #eae9e4;border-top:none;border-radius:0 0 10px 10px;padding:14px 24px 16px;margin-bottom:16px">
+        <div style="display:flex;justify-content:space-between;align-items:baseline;gap:16px;flex-wrap:wrap;margin-bottom:10px">
+          <span style="font-size:10px;font-weight:700;letter-spacing:.07em;color:#8a8a86;text-transform:uppercase">Deal snapshot</span>
+          <span style="font-size:10.5px;color:#b0afaa">Base Case · Latest model run · Sep 1, 2026</span>
+        </div>
+        <div style="display:grid;grid-template-columns:repeat(9,1fr);gap:0">
+          <sc-for list="{{ snapshot }}" as="m" hint-placeholder-count="9">
+            <div title="{{ m.src }}" style="display:flex;flex-direction:column;gap:4px;padding:2px 14px 2px 0;border-left:{{ m.divider }};padding-left:{{ m.padLeft }};cursor:help">
+              <span style="font-size:9.5px;font-weight:700;letter-spacing:.04em;color:#9a9a95;text-transform:uppercase;line-height:1.3">{{ m.label }}</span>
+              <span style="font-size:16px;font-weight:600;color:#1a2233;font-variant-numeric:tabular-nums">{{ m.value }}</span>
+            </div>
+          </sc-for>
+        </div>
+      </div>
+
+      <div style="background:#fff;border:1px solid #eae9e4;border-radius:10px;margin-bottom:16px">
+        <div style="padding:12px 18px;border-bottom:1px solid #f2f1ec;display:flex;justify-content:space-between;align-items:center;gap:14px;flex-wrap:wrap">
+          <span style="display:flex;align-items:center;gap:10px">
+            <span style="font-size:13.5px;font-weight:700;color:#1a2233">Investment Thesis</span>
+            <span style="font-size:9.5px;font-weight:700;letter-spacing:.06em;color:#2f4a8c;background:#eef2fb;border:1px solid #dbe3f5;border-radius:4px;padding:2px 6px">{{ thesisBadge }}</span>
+          </span>
+          <span style="display:flex;gap:14px;align-items:center">
+            <span onClick="{{ toggleThesisEdit }}" style="font-size:11.5px;color:#2f4a8c;font-weight:600;cursor:pointer">{{ thesisEditLabel }}</span>
+            <span onClick="{{ regenThesis }}" style="font-size:11.5px;color:#6b6f76;cursor:pointer">{{ regenLabel }}</span>
+          </span>
+        </div>
+        <div style="padding:16px 18px">
+          <p contentEditable="{{ thesisEditing }}" suppressContentEditableWarning="{{ true }}" onInput="{{ thesisTouched }}" style="margin:0;font-size:13.5px;line-height:1.75;color:#3a3f47;text-wrap:pretty;background:{{ thesisBg }};padding:{{ thesisPad }};border-radius:6px">{{ thesis }}</p>
+          <div style="font-size:11px;color:#b0afaa;margin-top:10px">Narrative only — editing this text never changes an underwriting assumption.</div>
+        </div>
+      </div>
+
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-bottom:16px">
+        <sc-for list="{{ lists }}" as="col" hint-placeholder-count="2">
+          <div style="background:#fff;border:1px solid #eae9e4;border-radius:10px;display:flex;flex-direction:column">
+            <div style="padding:11px 16px;border-bottom:1px solid #f2f1ec;display:flex;justify-content:space-between;align-items:center;gap:12px">
+              <span style="font-size:10.5px;font-weight:700;letter-spacing:.06em;color:{{ col.titleColor }};text-transform:uppercase">{{ col.title }}</span>
+              <span style="font-size:10.5px;color:#b0afaa">{{ col.count }}</span>
+            </div>
+            <div style="padding:4px 16px 10px;flex:1">
+              <sc-for list="{{ col.items }}" as="it" hint-placeholder-count="4">
+                <div style="display:flex;gap:10px;align-items:flex-start;padding:10px 6px 10px 0;border-bottom:1px solid #f7f6f3;border-radius:6px;position:relative" style-hover="background:#fcfcfa">
+                  <span title="Drag to reorder" style="font-size:11px;color:#dedcd6;cursor:grab;padding-top:3px;flex-shrink:0" style-hover="color:#a8a7a2">⠿</span>
+                  <span contentEditable="{{ true }}" suppressContentEditableWarning="{{ true }}" style="font-size:12.5px;line-height:1.6;color:#3a3f47;flex:1;min-width:0">{{ it.text }}</span>
+                  <span style="display:flex;gap:9px;align-items:center;flex-shrink:0;padding-top:1px">
+                    <span title="Drafted by Fondok from the underwriting" style="font-size:9px;font-weight:600;letter-spacing:.04em;color:#c3c2bd;white-space:nowrap">{{ it.aiLabel }}</span>
+                    <span onClick="{{ it.toggleMenu }}" title="More" style="font-size:11px;color:#c3c2bd;cursor:pointer;line-height:1" style-hover="color:#6b6f76">•••</span>
+                  </span>
+                  <sc-if value="{{ it.menuOpen }}" hint-placeholder-val="{{ false }}">
+                    <div style="position:absolute;top:30px;right:4px;z-index:20;background:#fff;border:1px solid #e2e1dc;border-radius:7px;box-shadow:0 8px 20px rgba(0,0,0,.10);padding:4px;width:150px;display:flex;flex-direction:column">
+                      <div onClick="{{ it.edit }}" style="font-size:12px;color:#1a2233;padding:7px 9px;border-radius:5px;cursor:pointer">Edit text</div>
+                      <div onClick="{{ it.up }}" style="font-size:12px;color:#1a2233;padding:7px 9px;border-radius:5px;cursor:pointer">Move up</div>
+                      <div onClick="{{ it.down }}" style="font-size:12px;color:#1a2233;padding:7px 9px;border-radius:5px;cursor:pointer">Move down</div>
+                      <div onClick="{{ it.remove }}" style="font-size:12px;color:oklch(50% 0.15 30);padding:7px 9px;border-radius:5px;cursor:pointer">Delete</div>
+                    </div>
+                  </sc-if>
+                </div>
+              </sc-for>
+              <div onClick="{{ col.add }}" style="font-size:11.5px;color:#2f4a8c;font-weight:600;cursor:pointer;padding:10px 0 2px">+ Add point</div>
+            </div>
+          </div>
+        </sc-for>
+      </div>
+
+      <div style="background:#fff;border:1px solid #eae9e4;border-radius:10px;margin-bottom:16px">
+        <div style="padding:11px 16px;border-bottom:1px solid #f2f1ec;display:flex;justify-content:space-between;align-items:baseline;gap:12px">
+          <span style="font-size:10.5px;font-weight:700;letter-spacing:.06em;color:#8a8a86;text-transform:uppercase">Underwriting summary</span>
+          <span style="font-size:10.5px;color:#b0afaa">Read-only · consumed from the Base Case</span>
+        </div>
+        <div style="display:grid;grid-template-columns:repeat(4,1fr)">
+          <sc-for list="{{ uwGroups }}" as="g" hint-placeholder-count="4">
+            <div style="padding:11px 16px 12px;border-left:{{ g.divider }}">
+              <div style="font-size:9.5px;font-weight:700;letter-spacing:.07em;color:#b0afaa;text-transform:uppercase;margin-bottom:2px">{{ g.title }}</div>
+              <sc-for list="{{ g.rows }}" as="r" hint-placeholder-count="4">
+                <div title="{{ r.src }}" style="display:flex;justify-content:space-between;align-items:center;gap:12px;font-size:12.5px;height:34px;border-bottom:1px solid #f7f6f3;cursor:help">
+                  <span style="color:#7c8088">{{ r.label }}</span>
+                  <span style="color:#1a2233;font-weight:500;font-variant-numeric:tabular-nums">{{ r.value }}</span>
+                </div>
+              </sc-for>
+              <div onClick="{{ g.go }}" style="font-size:11px;color:#2f4a8c;font-weight:600;cursor:pointer;padding-top:9px">{{ g.link }}</div>
+            </div>
+          </sc-for>
+        </div>
+      </div>
+
+      <div style="background:#fff;border:1px solid #eae9e4;border-radius:10px;margin-bottom:16px">
+        <div style="padding:11px 16px;border-bottom:1px solid #f2f1ec;display:flex;justify-content:space-between;align-items:baseline;gap:12px">
+          <span style="font-size:10.5px;font-weight:700;letter-spacing:.06em;color:#8a8a86;text-transform:uppercase">Scenario summary</span>
+          <span onClick="{{ goScenarios }}" style="font-size:11px;color:#2f4a8c;font-weight:600;cursor:pointer">View Scenario Analysis →</span>
+        </div>
+        <div style="padding:2px 16px 10px">
+          <div style="display:grid;grid-template-columns:1.4fr 1fr 1fr 1fr;font-size:9.5px;font-weight:700;letter-spacing:.06em;color:#b0afaa;text-transform:uppercase;padding:10px 0 8px;border-bottom:1px solid #f2f1ec">
+            <span>Metric</span><span style="text-align:right">Base</span><span style="text-align:right">Downside</span><span style="text-align:right">Upside</span>
+          </div>
+          <sc-for list="{{ scenRows }}" as="r" hint-placeholder-count="5">
+            <div style="display:grid;grid-template-columns:1.4fr 1fr 1fr 1fr;align-items:center;padding:9px 0;border-bottom:1px solid #f7f6f3;font-size:12.5px">
+              <span style="color:#7c8088">{{ r.metric }}</span>
+              <span style="text-align:right;color:#1a2233;font-weight:600;font-variant-numeric:tabular-nums">{{ r.base }}</span>
+              <span style="text-align:right;font-variant-numeric:tabular-nums;display:flex;flex-direction:column;align-items:flex-end;gap:1px"><span style="color:#3a3f47">{{ r.down }}</span><span style="font-size:10.5px;color:{{ r.downColor }}">{{ r.downDelta }}</span></span>
+              <span style="text-align:right;font-variant-numeric:tabular-nums;display:flex;flex-direction:column;align-items:flex-end;gap:1px"><span style="color:#3a3f47">{{ r.up }}</span><span style="font-size:10.5px;color:{{ r.upColor }}">{{ r.upDelta }}</span></span>
+            </div>
+          </sc-for>
+          <div style="font-size:10.5px;color:#b0afaa;line-height:1.5;padding-top:9px">Saved scenarios are comparisons against Base. The memo and every export stay anchored to the Base Case.</div>
+        </div>
+      </div>
+
+      <div style="background:#fff;border:1px solid #eae9e4;border-radius:10px;margin-bottom:16px">
+        <div style="padding:11px 16px;border-bottom:1px solid #f2f1ec;display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap">
+          <span style="font-size:10.5px;font-weight:700;letter-spacing:.06em;color:#8a8a86;text-transform:uppercase">Diligence &amp; open items</span>
+          <span style="display:flex;align-items:center;gap:7px;font-size:11px;font-weight:600;color:{{ dilSummaryColor }}"><span style="width:7px;height:7px;border-radius:50%;background:{{ dilSummaryColor }};display:inline-block"></span>{{ dilSummary }}</span>
+        </div>
+        <sc-for list="{{ diligence }}" as="d" hint-placeholder-count="4">
+          <div style="padding:13px 16px;border-bottom:1px solid #f7f6f3;display:flex;gap:14px;align-items:flex-start">
+            <span style="font-size:9.5px;font-weight:700;letter-spacing:.05em;text-transform:uppercase;color:{{ d.sevColor }};background:{{ d.sevBg }};border:1px solid {{ d.sevBorder }};border-radius:4px;padding:3px 7px;white-space:nowrap;margin-top:1px">{{ d.severity }}</span>
+            <div style="flex:1;min-width:0;display:flex;flex-direction:column;gap:4px">
+              <span style="font-size:13px;font-weight:600;color:{{ d.titleColor }}">{{ d.title }}</span>
+              <span style="font-size:12.5px;color:#6b6f76;line-height:1.6">{{ d.body }}</span>
+              <span style="font-size:11.5px;color:#8a8a86">{{ d.impact }}</span>
+              <sc-if value="{{ d.open }}" hint-placeholder-val="{{ true }}">
+                <span style="display:flex;gap:16px;align-items:center;padding-top:4px;flex-wrap:wrap">
+                  <span onClick="{{ d.review }}" style="font-size:11.5px;color:#2f4a8c;font-weight:600;cursor:pointer">Review source →</span>
+                  <span onClick="{{ d.resolve }}" style="font-size:11.5px;color:#2f4a8c;font-weight:600;cursor:pointer">Resolve</span>
+                  <span onClick="{{ d.accept }}" style="font-size:11.5px;color:#6b6f76;cursor:pointer">Accept variance</span>
+                  <span onClick="{{ d.toggleDetails }}" style="font-size:11.5px;color:#9a9a95;cursor:pointer">{{ d.detailsLabel }}</span>
+                </span>
+              </sc-if>
+              <sc-if value="{{ d.showDetails }}" hint-placeholder-val="{{ false }}">
+                <div style="background:#fbfbf9;border:1px solid #f0efeb;border-radius:6px;padding:9px 11px;margin-top:6px;font-size:11px;color:#8a8a86;line-height:1.6;font-family:ui-monospace,SFMono-Regular,Menlo,monospace">{{ d.raw }}</div>
+              </sc-if>
+            </div>
+            <span style="font-size:11px;font-weight:600;color:{{ d.statusColor }};white-space:nowrap;margin-top:2px">{{ d.status }}</span>
+          </div>
+        </sc-for>
+      </div>
+
+      <div style="background:#fff;border:1px solid #eae9e4;border-radius:10px;margin-bottom:16px">
+        <div style="padding:11px 16px;border-bottom:1px solid #f2f1ec;display:flex;justify-content:space-between;align-items:baseline;gap:12px">
+          <span style="font-size:10.5px;font-weight:700;letter-spacing:.06em;color:#8a8a86;text-transform:uppercase">Configure IC memo</span>
+          <span style="font-size:10.5px;color:#b0afaa">{{ configSummary }}</span>
+        </div>
+        <div style="padding:13px 16px;display:grid;grid-template-columns:300px 1fr auto;gap:24px;align-items:start">
+          <div style="display:flex;flex-direction:column;gap:7px">
+            <span style="font-size:9.5px;font-weight:700;letter-spacing:.07em;color:#b0afaa;text-transform:uppercase">Memo format</span>
+            <div style="display:inline-flex;border:1px solid #e2e1dc;border-radius:6px;overflow:hidden;width:fit-content">
+              <sc-for list="{{ formats }}" as="f" hint-placeholder-count="3">
+                <button onClick="{{ f.select }}" style="font-family:inherit;font-size:12px;font-weight:{{ f.weight }};padding:6px 14px;border:none;border-right:1px solid #e2e1dc;background:{{ f.bg }};color:{{ f.color }};cursor:pointer">{{ f.label }}</button>
+              </sc-for>
+            </div>
+            <span style="font-size:11px;color:#9a9a95;line-height:1.5">{{ formatNote }}</span>
+          </div>
+          <div style="display:flex;flex-direction:column;gap:7px">
+            <span style="font-size:9.5px;font-weight:700;letter-spacing:.07em;color:#b0afaa;text-transform:uppercase">Include sections</span>
+            <div style="display:grid;grid-template-columns:repeat(3,minmax(150px,1fr));gap:4px 18px">
+              <sc-for list="{{ sectionToggles }}" as="s" hint-placeholder-count="6">
+                <div onClick="{{ s.toggle }}" style="display:flex;align-items:center;gap:9px;font-size:12.5px;color:{{ s.color }};cursor:pointer;padding:3px 0">
+                  <span style="width:14px;height:14px;border-radius:4px;border:{{ s.boxBorder }};background:{{ s.boxBg }};color:#fff;font-size:9.5px;display:flex;align-items:center;justify-content:center;flex-shrink:0">{{ s.check }}</span>{{ s.label }}
+                </div>
+              </sc-for>
+            </div>
+          </div>
+          <button onClick="{{ generateMemo }}" style="background:#14213d;color:#fff;border:none;border-radius:6px;padding:9px 18px;font-size:12.5px;font-weight:600;cursor:pointer;font-family:inherit;white-space:nowrap">{{ generateLabel }}</button>
+        </div>
+      </div>
+
+      <div style="background:#fff;border:1px solid #eae9e4;border-radius:10px;margin-bottom:16px">
+        <div style="padding:11px 16px;border-bottom:1px solid #f2f1ec;display:flex;justify-content:space-between;align-items:baseline;gap:12px;flex-wrap:wrap">
+          <span style="display:flex;flex-direction:column;gap:2px">
+            <span style="font-size:10.5px;font-weight:700;letter-spacing:.06em;color:#8a8a86;text-transform:uppercase">Export &amp; share</span>
+            <span style="font-size:11.5px;color:#9a9a95">Deliverables will be generated from the latest completed Base Case model run.</span>
+          </span>
+          <span style="font-size:10.5px;color:#b0afaa">Base Case · Latest model run · Sep 1, 2026</span>
+        </div>
+        <div style="padding:14px 16px;display:grid;grid-template-columns:repeat(3,1fr);gap:14px">
+          <sc-for list="{{ deliverables }}" as="d" hint-placeholder-count="3">
+            <div style="border:1px solid #eae9e4;border-radius:8px;padding:14px 15px;display:flex;flex-direction:column;gap:7px">
+              <div style="display:flex;align-items:baseline;justify-content:space-between;gap:10px">
+                <span style="font-size:13px;font-weight:600;color:#1a2233">{{ d.title }}</span>
+                <span style="font-size:10px;font-weight:700;letter-spacing:.05em;color:#9a9a95;background:#f5f4f0;border-radius:4px;padding:2px 6px">{{ d.ext }}</span>
+              </div>
+              <span style="font-size:12px;color:#6b6f76;line-height:1.55;flex:1">{{ d.body }}</span>
+              <div style="display:flex;align-items:center;gap:12px;padding-top:2px">
+                <button disabled="{{ true }}" style="font-family:inherit;font-size:12px;font-weight:600;padding:7px 14px;border-radius:6px;border:{{ d.btnBorder }};background:{{ d.btnBg }};color:{{ d.btnColor }};cursor:{{ d.btnCursor }}">{{ d.btnLabel }}</button>
+                <span style="font-size:11px;color:#b0afaa">{{ d.soonNote }}</span>
+              </div>
+            </div>
+          </sc-for>
+        </div>
+        <div style="padding:0 16px 14px;display:flex;gap:16px;align-items:center;flex-wrap:wrap">
+          <button disabled="{{ true }}" style="font-family:inherit;font-size:12px;font-weight:600;padding:7px 14px;border-radius:6px;border:1px solid #eae9e4;background:#f2f1ec;color:#a8a7a2;cursor:default">🔒 Share with team · Coming Soon</button>
+          <span style="font-size:11.5px;color:#b0afaa;font-weight:600">{{ copyLabel }}</span>
+        </div>
+      </div>
+
+      <div style="background:#fff;border:1px solid {{ readyBorder }};border-radius:10px">
+        <div style="padding:12px 16px;border-bottom:1px solid #f2f1ec;display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap">
+          <span style="font-size:13.5px;font-weight:700;color:#1a2233">{{ readyTitle }}</span>
+          <span style="font-size:11px;color:#9a9a95">{{ readySubtitle }}</span>
+        </div>
+        <div style="padding:12px 16px;display:grid;grid-template-columns:1fr auto;gap:24px;align-items:center">
+          <div style="display:grid;grid-template-columns:repeat(2,minmax(240px,1fr));gap:4px 24px">
+            <sc-for list="{{ checklist }}" as="c" hint-placeholder-count="6">
+              <div style="display:flex;align-items:center;gap:9px;font-size:12.5px;color:{{ c.color }};padding:4px 0">
+                <span style="width:14px;text-align:center;color:{{ c.markColor }};font-size:12px">{{ c.mark }}</span>{{ c.label }}
+              </div>
+            </sc-for>
+          </div>
+          <div style="display:flex;flex-direction:column;gap:9px;align-items:flex-end">
+            <sc-if value="{{ needsAck }}" hint-placeholder-val="{{ false }}">
+              <div onClick="{{ toggleAck }}" style="display:flex;align-items:center;gap:9px;font-size:12px;color:#3a3f47;cursor:pointer;max-width:300px;text-align:left">
+                <span style="width:14px;height:14px;border-radius:4px;border:{{ ackBorder }};background:{{ ackBg }};color:#fff;font-size:9.5px;display:flex;align-items:center;justify-content:center;flex-shrink:0">{{ ackCheck }}</span>
+                Acknowledge the unresolved critical items and proceed to committee
+              </div>
+            </sc-if>
+            <button onClick="{{ markReady }}" style="font-family:inherit;font-size:12.5px;font-weight:600;padding:9px 18px;border-radius:6px;border:none;background:{{ readyBtnBg }};color:{{ readyBtnColor }};cursor:{{ readyBtnCursor }};white-space:nowrap">{{ readyBtnLabel }}</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div style="position:fixed;top:0;right:0;height:100vh;width:340px;background:#fff;box-shadow:-4px 0 24px rgba(0,0,0,.14);z-index:50;display:flex;flex-direction:column;transform:{{ atlasTransform }};transition:transform .22s ease">
+    <div style="padding:16px 18px;border-bottom:1px solid #eae9e4;display:flex;justify-content:space-between;align-items:center">
+      <span style="font-weight:700;font-size:13.5px;color:#1a2233">✦ Atlas</span>
+      <span onClick="{{ closeAtlas }}" style="cursor:pointer;color:#9a9a95">✕</span>
+    </div>
+    <div style="flex:1;overflow-y:auto;padding:14px 18px;display:flex;flex-direction:column;gap:10px">
+      <div style="background:#f3f2ee;color:#1a2233;padding:9px 12px;border-radius:8px;font-size:12.5px">{{ atlasSummary }}</div>
+    </div>
+    <div style="padding:12px 18px;border-top:1px solid #eae9e4;display:flex;flex-direction:column;gap:8px">
+      <button style="text-align:left;background:#f5f4f0;border:1px solid #eae9e4;border-radius:6px;padding:8px 10px;font-size:12px;color:#3a3f47;cursor:pointer">Draft the risks section</button>
+      <button style="text-align:left;background:#f5f4f0;border:1px solid #eae9e4;border-radius:6px;padding:8px 10px;font-size:12px;color:#3a3f47;cursor:pointer">What's blocking IC readiness?</button>
+    </div>
+  </div>
+</div>
+
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props="{&quot;onNavigate&quot;:{&quot;editor&quot;:null,&quot;tsType&quot;:&quot;(tab: string, params?: object) =&gt; void&quot;}}">
+class Component extends DCLogic {
+  GREEN = 'oklch(45% 0.12 155)';
+  AMBER = 'oklch(52% 0.13 65)';
+  RED = 'oklch(50% 0.15 30)';
+  NAVY = '#14213d';
+
+  BASE = {
+    purchase: 36436800, perKey: 276036, revpar: 204, revenueY1: 14180000, noiY1: 2550576,
+    entryCap: 0.07, noiMargin: 0.18, renovation: 4620000, totalCost: 43116252, equity: 18836676,
+    loan: 23190000, ltv: 0.636, rate: 0.0766, dscr: 1.59, unlevIrr: 0.136, irr: 0.268, moic: 2.57,
+    hold: 5, stabNOI: 4440800, exitValue: 68320000,
+  };
+
+  SCEN = {
+    down: { irr: 0.184, moic: 2.10, stabNOI: 3950000, exitValue: 52670000, dscr: 1.38 },
+    up:   { irr: 0.312, moic: 2.91, stabNOI: 4720000, exitValue: 78670000, dscr: 1.71 },
+  };
+
+  DEFAULT_THESIS = 'Kimpton Angler is a rate-recovery story bought at a discount to the market. The basis is roughly 10% below recent Miami Beach trades, and a $4.62M renovation delivers the newest product in the competitive set ahead of the 2027–2028 supply wave. The case rests on closing an ADR gap to a comp set the asset already outperforms on occupancy — not on new demand. Financing is fixed through the disruption, and returns clear the hurdle with enough cushion to absorb a 100 bps softer exit.';
+
+  state = {
+    atlasOpen: false, recMenuOpen: false, rec: 'Proceed', recConfirmed: true,
+    thesis: null, thesisEditing: false, thesisEdited: false, regenerating: false,
+    highlights: [
+      { t: 'Levered IRR of 26.8% and a 2.57x multiple clear the ≥18% target with roughly 9 points of headroom.', ai: true },
+      { t: 'Basis of $276K per key sits 10% below the $306K trailing average across four recent Miami Beach transactions.', ai: true },
+      { t: 'Stabilized NOI of $4.44M is reached in Year 3, driven by rate recovery rather than further occupancy gains.', ai: true },
+      { t: 'Average DSCR of 1.59x against a 1.20x covenant leaves cushion through the renovation disruption.', ai: true },
+    ],
+    risks: [
+      { t: 'Renovation execution and displacement — 132 keys phased in two tranches over 12 months; Year-1 NOI absorbs the out-of-service impact.', ai: true },
+      { t: 'Underwritten ADR growth of 3.0% exceeds the comp-set trailing rate of 2.1%; the premium is attributed entirely to the PIP.', ai: true },
+      { t: 'Exit cap of 6.50% is 50 bps inside the going-in cap. A 7.50% exit takes the levered IRR to 18.4%.', ai: true },
+      { t: 'Refinance in Year 3 assumes a 62% LTV takeout at 6.85%; no lender commitment is in place.', ai: true },
+      { t: 'Critical diligence remains open, including a revenue variance between broker materials and the TTM financials.', ai: false },
+    ],
+    dil: {
+      d1: { status: 'Open', details: false },
+      d2: { status: 'Open', details: false },
+      d3: { status: 'Open', details: false },
+      d4: { status: 'Resolved', details: false },
+    },
+    format: 'Standard',
+    sections: { deal: true, thesis: true, hr: true, uw: true, scen: true, dil: true },
+    generated: false,
+    exports: { xlsx: false, pdf: false, pptx: false },
+    copied: false, ack: false, icReady: false,
+  };
+
+  mm(v) { return (v < 0 ? '−$' : '$') + (Math.abs(v) / 1e6).toFixed(2) + 'M'; }
+  pct(v, d) { return (v * 100).toFixed(d === undefined ? 1 : d) + '%'; }
+  x(v) { return v.toFixed(2) + 'x'; }
+
+  goFn(key) {
+    const HREFS = {
+      financials: './Financials Tab.dc.html', investment: './Investment Tab.dc.html', debt: './Debt Tab.dc.html',
+      returns: './Returns Tab.dc.html', scenarios: './Scenarios Tab.dc.html', dataroom: './Data Room v2.dc.html',
+    };
+    return () => { if (this.props.onNavigate) this.props.onNavigate(key); else window.location.href = HREFS[key]; };
+  }
+
+  buildNavItems(active, onNavigate) {
+    const ICONS = {
+      dataroom: "M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7z",
+      overview: "M6 3h9l4 4v14a1 1 0 0 1-1 1H6a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1zM9 12h6M9 16h6",
+      market: "M12 4a4 4 0 100 8 4 4 0 000-8zM4 21c0-4 3.6-6 8-6s8 2 8 6",
+      financials: "M4 20V10M11 20V4M18 20v-7",
+      investment: "M3 8h18v12a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V8zM8 8V6a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2",
+      debt: "M12 3a9 9 0 100 18 9 9 0 000-18zM12 7v10M9.5 9.5c0-1.4 1.1-2.5 2.5-2.5s2.5.7 2.5 2c0 2-5 1.5-5 4 0 1.3 1.1 2.5 2.5 2.5s2.5-1.1 2.5-2.5",
+      partnership: "M9 11a3 3 0 100-6 3 3 0 000 6zM17 11a3 3 0 100-6 3 3 0 000 6zM2 20c0-3 3-5 7-5M13 20c0-3 3-5 7-5",
+      cashflow: "M3 12h4l3 7 4-14 3 7h4",
+      returns: "M3 17l6-6 4 4 8-8M15 7h6v6",
+      scenarios: "M4 7h13l-3-3M4 7l3 3M20 17H7l3 3M20 17l-3-3",
+      icmemo: "M6 3h9l4 4v14a1 1 0 0 1-1 1H6a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1zM9 12h6M9 16h4M14 3v5h5",
+    };
+    const HREFS = {
+      dataroom: './Data Room v2.dc.html', overview: './Overview Tab v3.dc.html', market: './Market Tab.dc.html',
+      financials: './Financials Tab.dc.html', investment: './Investment Tab.dc.html', debt: './Debt Tab.dc.html',
+      partnership: './Partnership Tab.dc.html', cashflow: './Cash Flow Tab.dc.html', returns: './Returns Tab.dc.html',
+      scenarios: './Scenarios Tab.dc.html', icmemo: './IC Memo Tab.dc.html',
+    };
+    const items = [
+      ['dataroom','Data Room'], ['overview','Overview'], ['market','Market'], ['financials','Financials'],
+      ['investment','Investment'], ['debt','Debt'], ['partnership','Partnership'], ['cashflow','Cash Flow'],
+      ['returns','Returns'], ['scenarios','Scenario Analysis'], ['icmemo','IC Memo'],
+    ];
+    return items.map(([key, label]) => ({
+      key, label, icon: ICONS[key],
+      color: key === active ? '#14213d' : '#9a9a95',
+      weight: key === active ? 700 : 500,
+      border: key === active ? '2px solid #14213d' : '2px solid transparent',
+      onClick: key === active ? null : () => { if (onNavigate) onNavigate(key); else window.location.href = HREFS[key]; },
+    }));
+  }
+
+  listCol(key) {
+    const items = this.state[key];
+    const move = (i, dir) => this.setState(s => {
+      const arr = s[key].slice(), j = i + dir;
+      if (j < 0 || j >= arr.length) return null;
+      const tmp = arr[i]; arr[i] = arr[j]; arr[j] = tmp;
+      return { [key]: arr, rowMenu: null };
+    });
+    return items.map((it, i) => {
+      const id = key + i;
+      const open = this.state.rowMenu === id;
+      return {
+        text: it.t, ai: !!it.ai, aiLabel: it.ai ? 'AI drafted' : '',
+        menuOpen: open,
+        toggleMenu: () => this.setState(s => ({ rowMenu: s.rowMenu === id ? null : id })),
+        edit: () => this.setState({ rowMenu: null, editRow: id }),
+        up: () => move(i, -1), down: () => move(i, 1),
+        remove: () => this.setState(s => ({ [key]: s[key].filter((_, j) => j !== i), rowMenu: null })),
+      };
+    });
+  }
+
+  renderVals() {
+    const B = this.BASE, S = this.state;
+    const openCritical = ['d1', 'd2', 'd3'].filter(k => S.dil[k].status === 'Open').length;
+
+    const dilDefs = [
+      { id: 'd1', severity: 'Critical', title: 'Revenue discrepancy between broker materials and TTM financials', resolvedTitle: 'Revenue discrepancy reconciled to the TTM financials',
+        body: 'Broker materials report $12.9M of total revenue against $12.3M in the trailing-twelve-month operating statements. The underwriting uses the TTM figure.',
+        impact: 'Estimated NOI impact: $0.18M · affects Year-1 NOI and the going-in cap rate',
+        raw: 'rule BROKER_VS_T12_NOI_VARIANCE · field p_and_l_usali.venue5.total_revenue · sources: OM_2025.pdf p.14, T12_Operating_Statement.xlsx' },
+      { id: 'd2', severity: 'Critical', title: 'Parking structure repair estimate is out of date', resolvedTitle: 'Parking structure repair estimate re-scoped',
+        body: 'The capital plan carries a 2023 engineering estimate of $640K for structural repairs. No re-scope has been received, and the PIP budget assumes the original figure.',
+        impact: 'Estimated cost exposure: $0.2–0.4M · affects total uses and required equity',
+        raw: 'rule CAPEX_ESTIMATE_STALE · field capex_plan.line_items.parking_structure · source: PCA_Report_2023.pdf' },
+      { id: 'd3', severity: 'Critical', title: 'Exit refinance option not confirmed by lender', resolvedTitle: 'Exit refinance option confirmed by lender',
+        body: 'The Year-3 refinance assumes a 62% LTV takeout at 6.85%. The term sheet in the data room does not include a stated refinance option.',
+        impact: 'Affects Year-3 cash flow, levered IRR and the equity multiple',
+        raw: 'rule DEBT_TERM_UNCONFIRMED · field debt.refinance.ltv, debt.refinance.rate · source: Term_Sheet_Draft_v3.pdf' },
+      { id: 'd4', severity: 'Minor', title: '2026 interim financials received and reconciled', openTitle: '2026 interim financials not yet uploaded',
+        body: 'Year-to-date 2026 operating statements were received on 8/28 and reconciled to the STR data. No variance to the underwriting.',
+        impact: 'No NOI impact',
+        raw: 'rule INTERIM_FINANCIALS_MISSING · field p_and_l_usali.periods.2026_ytd · resolved 8/28/26' },
+    ];
+
+    const sevStyle = sev => sev === 'Critical'
+      ? { sevColor: this.RED, sevBg: 'oklch(97% 0.03 30)', sevBorder: 'oklch(88% 0.06 30)' }
+      : { sevColor: this.AMBER, sevBg: 'oklch(97% 0.03 75)', sevBorder: 'oklch(90% 0.05 75)' };
+
+    const scenRow = (metric, base, down, up, fmt, deltaFmt, better) => {
+      const d = (v) => { const diff = v - base; const good = diff * better > 0; return { txt: deltaFmt(diff), color: Math.abs(diff) < 1e-9 ? '#b0afaa' : good ? this.GREEN : this.RED }; };
+      const dd = d(down), du = d(up);
+      return { metric, base: fmt(base), down: fmt(down), up: fmt(up), downDelta: dd.txt, downColor: dd.color, upDelta: du.txt, upColor: du.color };
+    };
+    const ptFmt = diff => (diff >= 0 ? '+' : '−') + Math.abs(diff * 100).toFixed(1) + ' pts';
+    const xFmt = diff => (diff >= 0 ? '+' : '−') + Math.abs(diff).toFixed(2) + 'x';
+    const mmFmt = diff => (diff >= 0 ? '+' : '−') + '$' + (Math.abs(diff) / 1e6).toFixed(2) + 'M';
+
+    const checklistItems = [
+      { label: 'Base model run complete', ok: true },
+      { label: 'Required underwriting sections complete', ok: true },
+      { label: 'Returns calculated', ok: true },
+      { label: 'Scenario analysis available', ok: true },
+      { label: openCritical
+          ? openCritical + ' critical diligence item' + (openCritical === 1 ? '' : 's') + ' unresolved' + (S.ack ? ' (acknowledged)' : '')
+          : 'Critical diligence items resolved', ok: openCritical === 0 },
+      { label: S.generated ? 'IC memo previewed and reviewed' : 'IC memo not yet previewed', ok: S.generated },
+    ];
+    const blockers = checklistItems.filter(c => !c.ok).length;
+    const canMark = blockers === 0 || (openCritical > 0 && S.ack && S.generated);
+
+    const fmtNote = { Condensed: 'Condensed — key metrics + recommendation', Standard: 'Standard — standard IC format', Expanded: 'Expanded — full detail + appendix' };
+
+    const mkDeliverable = (key, title, ext, body) => ({
+      title, ext, body, soon: '🔒 Coming Soon',
+      btnLabel: '🔒 Coming Soon',
+      soonNote: '',
+      btnBg: '#f2f1ec', btnColor: '#a8a7a2', btnBorder: '1px solid #eae9e4',
+      btnCursor: 'default', done: false,
+      primary: null, regen: null,
+    });
+
+    return {
+      navItems: this.buildNavItems('icmemo', this.props.onNavigate),
+      atlasTransform: S.atlasOpen ? 'translateX(0)' : 'translateX(100%)',
+      toggleAtlas: () => this.setState(s => ({ atlasOpen: !s.atlasOpen })),
+      closeAtlas: () => this.setState({ atlasOpen: false }),
+      atlasSummary: 'Base Case clears the hurdle at ' + this.pct(B.irr) + ' levered IRR and ' + this.x(B.moic) + '. ' + (openCritical ? openCritical + ' critical diligence items are still open — the revenue variance is the blocking one.' : 'All critical diligence items are resolved.'),
+
+      assess: {
+        label: 'Clears Hurdles', color: this.GREEN,
+        detail: 'Levered IRR ' + this.pct(B.irr) + ' vs. ≥18% target · DSCR ' + this.x(B.dscr) + ' vs. ≥1.20x minimum',
+      },
+      recLabel: S.rec,
+      recNote: S.recConfirmed ? '✓ Analyst confirmed' : 'Awaiting analyst confirmation',
+      recNoteColor: S.recConfirmed ? '#7fbf9a' : '#c8a86b',
+      recMenuOpen: S.recMenuOpen,
+      toggleRecMenu: () => this.setState(s => ({ recMenuOpen: !s.recMenuOpen })),
+      recOptions: ['Proceed', 'Proceed with Conditions', 'Do Not Proceed'].map(label => ({
+        label, check: label === S.rec ? '✓' : '', weight: label === S.rec ? 600 : 400,
+        select: () => this.setState({ rec: label, recMenuOpen: false, recConfirmed: false }),
+      })),
+      confirmLabel: S.recConfirmed ? 'Withdraw confirmation' : 'Confirm recommendation',
+      confirmRec: () => this.setState(s => ({ recConfirmed: !s.recConfirmed, recMenuOpen: false })),
+
+      snapshot: [
+        ['Purchase Price', this.mm(B.purchase), 'Investment'], ['Price / Key', '$276K', 'Investment'],
+        ['RevPAR', '$' + B.revpar, 'Financials / Projections'],
+        ['NOI (Y1)', this.mm(B.noiY1), 'Financials / Projections'], ['Going-In Cap Rate', this.pct(B.entryCap, 2), 'Investment'],
+        ['Levered IRR', this.pct(B.irr), 'Returns'], ['Equity Multiple', this.x(B.moic), 'Returns'],
+        ['Avg. DSCR', this.x(B.dscr), 'Debt'], ['Hold Period', B.hold + ' years', 'Investment'],
+      ].map(([label, value, src], i) => ({
+        label, value, src: label + ' → ' + src + ' · Base Case output, read-only here',
+        divider: i === 0 ? 'none' : '1px solid #f2f1ec', padLeft: i === 0 ? '0' : '14px',
+      })),
+
+      thesis: S.thesis === null ? this.DEFAULT_THESIS : S.thesis,
+      thesisBadge: S.thesisEdited ? 'Analyst edited' : 'AI drafted',
+      thesisEditing: S.thesisEditing,
+      thesisEditLabel: S.thesisEditing ? 'Done editing' : 'Edit',
+      thesisBg: S.thesisEditing ? '#fbfbf9' : 'transparent',
+      thesisPad: S.thesisEditing ? '10px 12px' : '0',
+      toggleThesisEdit: () => this.setState(s => ({ thesisEditing: !s.thesisEditing })),
+      thesisTouched: () => { if (!S.thesisEdited) this.setState({ thesisEdited: true }); },
+      regenLabel: S.regenerating ? 'Regenerating…' : 'Regenerate',
+      regenThesis: () => {
+        this.setState({ regenerating: true });
+        setTimeout(() => this.setState({ regenerating: false, thesis: null, thesisEdited: false, thesisEditing: false }), 700);
+      },
+
+      lists: [
+        { title: 'Key highlights', titleColor: this.GREEN, dot: this.GREEN, count: S.highlights.length + ' points', items: this.listCol('highlights'),
+          add: () => this.setState(s => ({ highlights: s.highlights.concat([{ t: 'New highlight — click to write.', ai: false }]) })) },
+        { title: 'Key risks & considerations', titleColor: this.AMBER, dot: this.AMBER, count: S.risks.length + ' points', items: this.listCol('risks'),
+          add: () => this.setState(s => ({ risks: s.risks.concat([{ t: 'New risk — click to write.', ai: false }]) })) },
+      ],
+
+      uwGroups: [
+        { title: 'Operating', link: 'View Financials →', go: this.goFn('financials'), rows: [
+          { label: 'RevPAR', value: '$' + B.revpar }, { label: 'Revenue (Y1)', value: this.mm(B.revenueY1) },
+          { label: 'NOI (Y1)', value: this.mm(B.noiY1) }, { label: 'NOI Margin', value: this.pct(B.noiMargin) },
+        ] },
+        { title: 'Capitalization', link: 'View Investment →', go: this.goFn('investment'), rows: [
+          { label: 'Purchase Price', value: this.mm(B.purchase) }, { label: 'Renovation / CapEx', value: this.mm(B.renovation) },
+          { label: 'Total Project Cost', value: this.mm(B.totalCost) }, { label: 'Initial Equity', value: this.mm(B.equity) },
+        ] },
+        { title: 'Debt', link: 'View Debt →', go: this.goFn('debt'), rows: [
+          { label: 'Loan Amount', value: this.mm(B.loan) }, { label: 'LTV', value: this.pct(B.ltv) },
+          { label: 'Interest Rate', value: this.pct(B.rate, 2) }, { label: 'Avg. DSCR', value: this.x(B.dscr) },
+        ] },
+        { title: 'Returns', link: 'View Returns →', go: this.goFn('returns'), rows: [
+          { label: 'Unlevered IRR', value: this.pct(B.unlevIrr) }, { label: 'Levered IRR', value: this.pct(B.irr) },
+          { label: 'Equity Multiple', value: this.x(B.moic) }, { label: 'Hold Period', value: B.hold + ' years' },
+        ] },
+      ].map((g, i) => Object.assign({}, g, {
+        divider: i === 0 ? 'none' : '1px solid #f2f1ec',
+        rows: g.rows.map(r => Object.assign({}, r, { src: r.label + ' → ' + g.link.replace('View ', '').replace(' →', '') + ' · Base Case output, read-only here' })),
+      })),
+
+      goScenarios: this.goFn('scenarios'),
+      scenRows: [
+        scenRow('Levered IRR', B.irr, this.SCEN.down.irr, this.SCEN.up.irr, v => this.pct(v), ptFmt, 1),
+        scenRow('Equity Multiple', B.moic, this.SCEN.down.moic, this.SCEN.up.moic, v => this.x(v), xFmt, 1),
+        scenRow('Stabilized NOI', B.stabNOI, this.SCEN.down.stabNOI, this.SCEN.up.stabNOI, v => this.mm(v), mmFmt, 1),
+        scenRow('Exit Value', B.exitValue, this.SCEN.down.exitValue, this.SCEN.up.exitValue, v => this.mm(v), mmFmt, 1),
+        scenRow('Avg. DSCR', B.dscr, this.SCEN.down.dscr, this.SCEN.up.dscr, v => this.x(v), xFmt, 1),
+      ],
+
+      dilSummary: openCritical ? openCritical + ' critical diligence items remain open' : 'All critical diligence items resolved',
+      dilSummaryColor: openCritical ? this.RED : this.GREEN,
+      diligence: dilDefs.map(d => {
+        const st = S.dil[d.id];
+        const open = st.status === 'Open';
+        return Object.assign({}, sevStyle(d.severity), {
+          severity: d.severity,
+          title: open ? (d.openTitle || d.title) : st.status === 'Accepted' ? d.title + ' — variance accepted' : (d.resolvedTitle || d.title),
+          titleColor: open ? '#1a2233' : '#8a8a86',
+          body: d.body, impact: d.impact, raw: d.raw, open,
+          status: st.status, statusColor: st.status === 'Open' ? this.AMBER : this.GREEN,
+          showDetails: st.details, detailsLabel: st.details ? 'Hide technical detail' : 'Technical detail',
+          review: this.goFn('dataroom'),
+          resolve: () => this.setState(s => ({ dil: Object.assign({}, s.dil, { [d.id]: { status: 'Resolved', details: false } }) })),
+          accept: () => this.setState(s => ({ dil: Object.assign({}, s.dil, { [d.id]: { status: 'Accepted', details: false } }) })),
+          toggleDetails: () => this.setState(s => ({ dil: Object.assign({}, s.dil, { [d.id]: Object.assign({}, s.dil[d.id], { details: !s.dil[d.id].details }) }) })),
+        });
+      }),
+
+      formats: ['Condensed', 'Standard', 'Expanded'].map(label => {
+        const on = label === S.format;
+        return { label, weight: on ? 700 : 500, bg: on ? '#14213d' : '#fff', color: on ? '#fff' : '#6b6f76',
+          select: () => this.setState({ format: label, generated: false }) };
+      }),
+      formatNote: fmtNote[S.format],
+      sectionToggles: [
+        ['deal', 'Deal Summary'], ['thesis', 'Investment Thesis'], ['hr', 'Highlights & Risks'],
+        ['uw', 'Underwriting Summary'], ['scen', 'Scenario Summary'], ['dil', 'Diligence & Open Items'],
+      ].map(([k, label]) => {
+        const on = S.sections[k];
+        return { label, check: on ? '✓' : '', boxBg: on ? this.NAVY : '#fff',
+          boxBorder: on ? '1px solid ' + this.NAVY : '1px solid #cfcec9',
+          color: on ? '#1a2233' : '#9a9a95',
+          toggle: () => this.setState(s => ({ sections: Object.assign({}, s.sections, { [k]: !s.sections[k] }), generated: false })) };
+      }),
+      configSummary: S.format + ' · ' + Object.keys(S.sections).filter(k => S.sections[k]).length + ' of 6 sections',
+      generateLabel: S.generated ? '✓ Preview reviewed' : 'Preview Memo',
+      generateMemo: () => this.setState({ generated: true }),
+
+      deliverables: [
+        mkDeliverable('xlsx', 'Excel Model', '.xlsx', 'Complete underwriting model with assumptions, calculations and source references.'),
+        mkDeliverable('pdf', 'IC Memo', '.pdf', 'Investment Committee memo based on the configuration above.'),
+        mkDeliverable('pptx', 'Deal Presentation', '.pptx', 'Presentation-ready summary of the investment case, market, underwriting and returns.'),
+      ],
+      share: null,
+      copyLabel: 'Copy secure link · 🔒 Coming Soon',
+      copyLink: null,
+
+      readyTitle: S.icReady
+        ? (openCritical > 0 ? '✓ IC Ready · ' + openCritical + ' acknowledged critical item' + (openCritical === 1 ? '' : 's') : '✓ This deal is IC Ready')
+        : 'Ready for Investment Committee?',
+      readySubtitle: S.icReady
+        ? 'Marked IC Ready · Sep 1, 2026 · Base Case' + (openCritical > 0 ? ' · unresolved items acknowledged, not resolved' : '')
+        : blockers + ' item' + (blockers === 1 ? '' : 's') + ' outstanding',
+      readyBorder: S.icReady ? (openCritical > 0 ? 'oklch(85% 0.07 75)' : 'oklch(80% 0.08 155)') : '#eae9e4',
+      checklist: checklistItems.map(c => ({
+        label: c.label, mark: c.ok ? '✓' : '⚠',
+        markColor: c.ok ? this.GREEN : this.AMBER,
+        color: c.ok ? '#3a3f47' : '#1a2233',
+      })),
+      needsAck: !S.icReady && openCritical > 0,
+      ackCheck: S.ack ? '✓' : '',
+      ackBg: S.ack ? this.NAVY : '#fff',
+      ackBorder: S.ack ? '1px solid ' + this.NAVY : '1px solid #cfcec9',
+      toggleAck: () => this.setState(s => ({ ack: !s.ack })),
+      readyBtnLabel: S.icReady ? 'Undo IC Ready' : 'Mark as IC Ready',
+      readyBtnBg: S.icReady ? '#fff' : canMark ? this.NAVY : '#e6e5e0',
+      readyBtnColor: S.icReady ? '#1a2233' : canMark ? '#fff' : '#a8a7a2',
+      readyBtnCursor: S.icReady || canMark ? 'pointer' : 'not-allowed',
+      markReady: (S.icReady || canMark) ? () => this.setState(s => ({ icReady: !s.icReady })) : null,
+    };
+  }
+}
+</script>
+</body>
+</html>

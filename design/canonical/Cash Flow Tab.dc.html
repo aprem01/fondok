@@ -1,0 +1,380 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+  <style>body{margin:0;background:#f5f4f0;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,Arial,sans-serif;}a{color:#2f4a8c}a:hover{color:#1f3568}</style>
+</helmet>
+<template id="__bundler_thumbnail">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 120 56" data-bg-color="#14213d"><rect width="120" height="56" fill="#14213d"/><path d="M22 34h14l10 14 10-30 8 16h34" stroke="#f5f4f0" stroke-width="3" fill="none"/></svg>
+</template>
+<div style="display:flex;min-height:100vh" data-screen-label="Cash Flow">
+  <div style="width:210px;background:#0f1a30;padding:22px 16px;display:flex;flex-direction:column;gap:2px;flex-shrink:0">
+    <div style="display:flex;align-items:center;gap:8px;color:#fff;font-weight:700;font-size:16px;margin-bottom:24px"><div style="width:28px;height:28px;background:#2f4a8c;border-radius:6px;display:flex;align-items:center;justify-content:center;font-size:13px">F</div>Fondok.</div>
+    <div style="color:#c9cede;font-size:12.5px;padding:8px 10px;border-radius:6px;background:rgba(255,255,255,.06);margin-bottom:16px;display:flex;justify-content:space-between">fondok.ai <span>⌄</span></div>
+    <div style="color:#8b93a7;font-size:13px;padding:8px 10px;display:flex;gap:9px">⊞ Dashboard</div>
+    <div style="color:#fff;background:rgba(255,255,255,.09);font-size:13px;font-weight:600;padding:8px 10px;border-radius:6px;display:flex;gap:9px">▤ Projects</div>
+    <div style="color:#8b93a7;font-size:13px;padding:8px 10px;display:flex;gap:9px">📈 Pipeline</div>
+    <div style="color:#8b93a7;font-size:13px;padding:8px 10px;display:flex;gap:9px">◔ Audit</div>
+    <div style="color:#8b93a7;font-size:13px;padding:8px 10px;display:flex;gap:9px">$ Cost</div>
+    <div style="color:#8b93a7;font-size:13px;padding:8px 10px;display:flex;gap:9px">▥ Data Library</div>
+    <div style="color:#8b93a7;font-size:13px;padding:8px 10px;display:flex;gap:9px">▦ Methodology</div>
+    <div style="color:#8b93a7;font-size:13px;padding:8px 10px;display:flex;gap:9px">◷ Settings</div>
+  </div>
+
+  <div style="flex:1;min-width:0">
+    <div style="padding:22px 32px 0">
+      <div style="font-size:11.5px;color:#9a9a95;margin-bottom:10px">← BACK TO PROJECTS</div>
+      <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;row-gap:8px;margin-bottom:10px">
+        <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap"><h1 style="font-size:26px;margin:0;color:#1a2233;font-weight:600;white-space:nowrap">Kimpton Hotel</h1><span style="color:#9a9a95;font-size:11px;font-weight:600;letter-spacing:.04em">DRAFT</span></div>
+        <div style="display:flex;gap:14px;align-items:center;flex-wrap:wrap">
+          <button onClick="{{ toggleAtlas }}" style="display:flex;align-items:center;gap:6px;background:#eef2fb;border:1px solid #dbe3f5;color:#2f4a8c;border-radius:6px;padding:8px 14px;font-size:12px;font-weight:600;cursor:pointer;white-space:nowrap;font-family:inherit">✦ Ask Atlas</button>
+          <button style="background:#14213d;color:#fff;border:none;border-radius:6px;padding:8px 16px;font-size:12.5px;font-weight:600;white-space:nowrap;font-family:inherit">Share</button>
+        </div>
+      </div>
+      <div style="font-size:12.5px;color:#9a9a95;margin-bottom:20px;display:flex;gap:18px;flex-wrap:wrap">
+        <span>660 Washington Avenue, Miami Beach, FL 33139</span><span>132 keys</span><span>Created 7/30/2026</span>
+      </div>
+      <div style="display:flex;gap:22px;border-bottom:1px solid #ececea;font-size:13.5px;font-weight:500;color:#9a9a95;overflow-x:auto">
+        <sc-for list="{{ navItems }}" as="nav" hint-placeholder-count="11">
+          <div onClick="{{ nav.onClick }}" style="display:flex;align-items:center;gap:6px;padding-bottom:10px;white-space:nowrap;cursor:pointer;color:{{ nav.color }};font-weight:{{ nav.weight }};border-bottom:{{ nav.border }}">
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="{{ nav.icon }}"></path></svg>{{ nav.label }}
+          </div>
+        </sc-for>
+      </div>
+    </div>
+
+    <div style="padding:16px 32px 56px;max-width:1320px">
+      <div style="background:#fff;border:1px solid #eae9e4;border-radius:10px;padding:12px 16px;margin-bottom:14px;display:flex;flex-direction:column;gap:3px">
+        <span style="font-size:13.5px;font-weight:700;color:#1a2233">Cash Flow</span>
+        <span style="font-size:12.5px;color:#6b6f76;line-height:1.55;max-width:960px">The operating model converted into property and equity cash flow. Values flow from Financials, Investment and Debt — nothing is entered directly here.</span>
+      </div>
+
+      <div style="display:flex;align-items:center;gap:16px;flex-wrap:wrap;background:#fbfbf9;border:1px solid #eae9e4;border-radius:8px;padding:9px 14px;margin-bottom:14px;font-size:11px;color:#6b6f76">
+        <span style="font-weight:700;color:#8a8a86;letter-spacing:.02em">DATA KEY</span>
+        <span style="display:flex;align-items:center;gap:6px"><span style="width:9px;height:9px;border-radius:50%;background:oklch(45% 0.12 155);display:inline-block;flex-shrink:0"></span>Document sourced</span>
+        <span style="display:flex;align-items:center;gap:6px"><span style="width:9px;height:9px;border-radius:50%;background:#fff;border:2px solid oklch(45% 0.12 155);display:inline-block;flex-shrink:0"></span>Linked</span>
+        <span style="display:flex;align-items:center;gap:6px"><span style="width:9px;height:9px;border-radius:50%;background:oklch(45% 0.14 260);display:inline-block;flex-shrink:0"></span>Assumption</span>
+        <span style="display:flex;align-items:center;gap:6px"><span style="width:9px;height:9px;border-radius:50%;background:#5f656e;display:inline-block;flex-shrink:0"></span>Calculated</span>
+        <span style="display:flex;align-items:center;gap:6px"><span style="width:9px;height:9px;border-radius:50%;background:#fff;border:1px dashed #b0afaa;display:inline-block;flex-shrink:0"></span>Awaiting data</span>
+        <span style="display:flex;align-items:center;gap:6px"><span style="width:9px;height:9px;border-radius:50%;background:oklch(45% 0.12 155);box-shadow:0 0 0 3px oklch(88% 0.07 45);display:inline-block;flex-shrink:0"></span>Needs review</span>
+        <span style="display:flex;align-items:center;gap:6px"><b style="color:#1a2233">1,240</b>Total / summary</span>
+        <span style="display:flex;align-items:center;gap:6px"><span style="text-decoration:underline dotted;color:#6b6f76">123</span>Editable — click to change</span>
+        <span title="Origin is the dot: document sourced, linked from another module, your assumption, calculated by Fondok, or awaiting data. An amber halo means the value needs review. Bold marks totals, a dotted underline marks values you can change. Provenance and editability are separate — a sourced value can also be editable, and an override keeps its original source so you can restore it." style="cursor:help;color:#9a9a95;margin-left:auto;white-space:nowrap">ⓘ How to read this</span>
+      </div>
+
+      <div style="display:flex;align-items:flex-end;gap:28px;border-bottom:1px solid #e6e5e0;overflow-x:auto;margin-bottom:14px">
+        <sc-for list="{{ subTabs }}" as="t" hint-placeholder-count="3">
+          <button onClick="{{ t.select }}" style="font-size:13.5px;font-family:inherit;background:none;border:none;border-bottom:{{ t.border }};cursor:pointer;font-weight:{{ t.weight }};color:{{ t.color }};padding:0 0 10px;margin-bottom:-1px;white-space:nowrap">{{ t.label }}</button>
+        </sc-for>
+        <span style="font-size:11.5px;color:#9a9a95;margin-left:auto;padding-bottom:11px;white-space:nowrap">{{ subTabCaption }}</span>
+      </div>
+
+      <div style="display:flex;align-items:center;gap:14px;flex-wrap:wrap;background:#fbfbf9;border:1px solid #eae9e4;border-radius:8px;padding:9px 14px;margin-bottom:14px;font-size:11.5px;color:#6b6f76">
+        <span style="font-size:10px;font-weight:700;letter-spacing:.05em;color:#8a8a86;text-transform:uppercase;white-space:nowrap">Output only</span>
+        <span>No assumptions are entered here. Values flow from Financials, Investment and Debt. GP/LP allocation happens in Partnership.</span>
+        <span style="display:flex;gap:12px;margin-left:auto">
+          <span onClick="{{ goFinancials }}" style="color:#2f4a8c;font-weight:600;cursor:pointer;white-space:nowrap">Financials →</span>
+          <span onClick="{{ goInvestment }}" style="color:#2f4a8c;font-weight:600;cursor:pointer;white-space:nowrap">Investment →</span>
+          <span onClick="{{ goDebt }}" style="color:#2f4a8c;font-weight:600;cursor:pointer;white-space:nowrap">Debt →</span>
+          <span onClick="{{ goPartnership }}" style="color:#2f4a8c;font-weight:600;cursor:pointer;white-space:nowrap">Partnership →</span>
+        </span>
+      </div>
+
+      <sc-if value="{{ isSummary }}" hint-placeholder-val="{{ true }}">
+        <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:12px;margin-bottom:14px">
+          <sc-for list="{{ summary }}" as="m" hint-placeholder-count="5">
+            <div style="background:#fff;border:1px solid #eae9e4;border-radius:10px;padding:13px 15px">
+              <div style="font-size:10px;font-weight:700;letter-spacing:.04em;color:#8a8a86;text-transform:uppercase;margin-bottom:6px">{{ m.label }}</div>
+              <div style="font-size:19px;font-weight:700;color:{{ m.color }};font-variant-numeric:tabular-nums">{{ m.value }}</div>
+              <div style="font-size:10.5px;color:#9a9a95;margin-top:4px;line-height:1.4">{{ m.sub }}</div>
+            </div>
+          </sc-for>
+        </div>
+      </sc-if>
+
+      <sc-for list="{{ tables }}" as="tbl" hint-placeholder-count="2">
+        <div style="background:#fff;border:1px solid #eae9e4;border-radius:10px;overflow:hidden;margin-bottom:14px">
+          <div style="padding:13px 18px;display:flex;justify-content:space-between;align-items:baseline;gap:12px;flex-wrap:wrap;border-bottom:1px solid #f2f1ec">
+            <span style="font-size:13.5px;font-weight:700;color:#1a2233">{{ tbl.title }}</span>
+            <span style="font-size:11px;color:#9a9a95">{{ tbl.caption }}</span>
+          </div>
+          <div style="overflow-x:auto">
+            <div style="display:grid;grid-template-columns:{{ cols }};width:max-content;min-width:100%">
+              <div style="padding:7px 14px;background:#14213d;color:#c9cede;font-size:11px;font-weight:600;position:sticky;left:0;z-index:2">LINE ITEM</div>
+              <sc-for list="{{ headers }}" as="h" hint-placeholder-count="6">
+                <div style="padding:7px 12px;background:#14213d;color:#c9cede;font-size:10.5px;font-weight:600;text-align:right;border-left:1px solid #2a3a5c;white-space:nowrap">{{ h }}</div>
+              </sc-for>
+              <sc-for list="{{ tbl.rows }}" as="row" hint-placeholder-count="8">
+                <div style="padding:6px 14px;border-bottom:1px solid #f7f6f3;font-size:12px;color:#1a2233;font-weight:{{ row.weight }};background:{{ row.bg }};position:sticky;left:0;z-index:1;white-space:nowrap;display:flex;align-items:center;gap:7px;padding-left:{{ row.indent }}">
+                  <span style="width:8px;height:8px;border-radius:50%;background:{{ row.dotFill }};border:{{ row.dotBorder }};display:inline-block;flex-shrink:0"></span>
+                  <span title="{{ row.title }}">{{ row.label }}</span>
+                </div>
+                <sc-for list="{{ row.cells }}" as="c" hint-placeholder-count="6">
+                  <div style="padding:6px 12px;border-bottom:1px solid #f7f6f3;border-left:1px solid #f7f6f3;text-align:right;font-size:12px;font-variant-numeric:tabular-nums;color:{{ c.color }};font-weight:{{ row.weight }};background:{{ row.bg }};white-space:nowrap">{{ c.text }}</div>
+                </sc-for>
+              </sc-for>
+            </div>
+          </div>
+          <div style="padding:11px 18px;font-size:11px;color:#9a9a95;line-height:1.5">{{ tbl.footnote }}</div>
+        </div>
+      </sc-for>
+
+      <sc-if value="{{ isLevered }}" hint-placeholder-val="{{ false }}">
+        <div style="background:#fff;border:1px solid #eae9e4;border-radius:10px;padding:16px 18px">
+          <div style="display:flex;justify-content:space-between;align-items:baseline;gap:14px;margin-bottom:8px;flex-wrap:wrap">
+            <span style="font-size:12px;font-weight:700;color:#8a8a86;text-transform:uppercase;letter-spacing:.03em">Equity Funding Reference</span>
+            <span style="font-size:11px;color:#b0afaa">Reference only — already reflected in net cash flow to equity, never added again</span>
+          </div>
+          <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:0 32px">
+            <sc-for list="{{ equityReference }}" as="r" hint-placeholder-count="2">
+              <div title="{{ r.title }}" style="display:flex;justify-content:space-between;align-items:center;gap:12px;font-size:13px;padding:7px 0;border-bottom:1px solid #f7f6f3">
+                <span style="display:flex;align-items:center;gap:7px;min-width:0">
+                  <span style="width:8px;height:8px;border-radius:50%;background:{{ r.dotFill }};border:{{ r.dotBorder }};display:inline-block;flex-shrink:0"></span>
+                  <span style="color:#6b6f76">{{ r.label }}</span>
+                </span>
+                <span style="color:{{ r.color }};font-variant-numeric:tabular-nums">{{ r.value }}</span>
+              </div>
+            </sc-for>
+          </div>
+          <div style="font-size:11px;color:#9a9a95;margin-top:9px;line-height:1.5">{{ summaryNote }}</div>
+        </div>
+      </sc-if>
+
+      <sc-if value="{{ isSummary }}" hint-placeholder-val="{{ true }}">
+        <div style="background:#fbfbf9;border:1px solid #eae9e4;border-radius:10px;padding:14px 18px;font-size:11.5px;color:#6b6f76;line-height:1.55">{{ summaryNote }}</div>
+      </sc-if>
+    </div>
+  </div>
+
+  <div style="position:fixed;top:0;right:0;height:100vh;width:340px;background:#fff;box-shadow:-4px 0 24px rgba(0,0,0,.14);z-index:50;display:flex;flex-direction:column;transform:{{ atlasTransform }};transition:transform .22s ease">
+    <div style="padding:16px 18px;border-bottom:1px solid #eae9e4;display:flex;justify-content:space-between;align-items:center">
+      <span style="font-weight:700;font-size:13.5px;color:#1a2233">✦ Atlas</span>
+      <span onClick="{{ closeAtlas }}" style="cursor:pointer;color:#9a9a95">✕</span>
+    </div>
+    <div style="flex:1;overflow-y:auto;padding:14px 18px;display:flex;flex-direction:column;gap:10px">
+      <div style="background:#f3f2ee;color:#1a2233;padding:9px 12px;border-radius:8px;font-size:12.5px;line-height:1.5">{{ atlasRefi }}</div>
+      <div style="background:#f3f2ee;color:#1a2233;padding:9px 12px;border-radius:8px;font-size:12.5px;line-height:1.5">The renovation is funded at close inside total uses, so hold-period CapEx is only the FF&amp;E reserve — that is why year-1 property cash flow stays positive.</div>
+    </div>
+    <div style="padding:12px 18px;border-top:1px solid #eae9e4;display:flex;flex-direction:column;gap:8px">
+      <button style="text-align:left;background:#f5f4f0;border:1px solid #eae9e4;border-radius:6px;padding:8px 10px;font-size:12px;color:#3a3f47;cursor:pointer;font-family:inherit">Walk me through the exit year</button>
+    </div>
+  </div>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props="{&quot;onNavigate&quot;:{&quot;editor&quot;:null,&quot;tsType&quot;:&quot;(tab: string, params?: object) =&gt; void&quot;},&quot;defaultSubTab&quot;:{&quot;editor&quot;:&quot;enum&quot;,&quot;options&quot;:[&quot;Summary&quot;,&quot;Unlevered&quot;,&quot;Levered / Equity&quot;],&quot;default&quot;:&quot;Summary&quot;,&quot;tsType&quot;:&quot;string&quot;,&quot;section&quot;:&quot;Cash Flow tab&quot;}}">
+class Component extends DCLogic {
+  GREEN = 'oklch(45% 0.12 155)';
+  GRAY = '#5f656e';
+  BLACK = '#1a2233';
+  MUTED = '#b0afaa';
+
+  state = { atlasOpen: false, tab: this.props.defaultSubTab || 'Summary' };
+
+  // Close + 5 years. All figures flow in from Financials, Investment and Debt.
+  M = {
+    equity: 18836676, loan: 23190000, keyMoney: 1089576, totalUses: 43116252,
+    noi: [2550576, 2700000, 3600000, 4300000, 4440800],
+    capex: [-120000, -180000, -420000, -560000, -580000],
+    other: [-9000, -12000, -14000, -15000, -16000],
+    interest: [-1776354, -1776354, -1764000, -2794101, -2794101],
+    principal: [0, 0, -171000, 0, 0],
+    grossSale: 68320000, sellingCosts: -1093120,
+    refi: { year: 3, proceeds: 40789800, payoff: -23019000, fees: -407898, newLoan: 40789800 },
+  };
+
+  money(v) {
+    if (v === 0) return '$0';
+    const s = '$' + Math.round(Math.abs(v)).toLocaleString('en-US');
+    return v < 0 ? '(' + s + ')' : s;
+  }
+  mm(v) { return (v < 0 ? '−$' : '$') + (Math.abs(v) / 1e6).toFixed(2) + 'M'; }
+
+  compute() {
+    const M = this.M, n = M.noi.length;
+    const opFCF = M.noi.map((v, i) => v + M.capex[i] + M.other[i]);
+    const netSale = M.grossSale + M.sellingCosts;
+    const unlevered = opFCF.map((v, i) => v + (i === n - 1 ? netSale : 0));
+    const netRefi = M.refi.proceeds + M.refi.payoff + M.refi.fees;
+    const exitPayoff = -M.refi.newLoan;
+    const equityCF = unlevered.map((v, i) => {
+      let cf = v + M.interest[i] + M.principal[i];
+      if (i === M.refi.year - 1) cf += netRefi;
+      if (i === n - 1) cf += exitPayoff;
+      return cf;
+    });
+    const operatingToEquity = opFCF.map((v, i) => v + M.interest[i] + M.principal[i]);
+    return { opFCF, netSale, unlevered, netRefi, exitPayoff, equityCF, operatingToEquity, totalToEquity: equityCF.reduce((a, b) => a + b, 0) };
+  }
+
+  goFn(key) {
+    const HREFS = { dataroom:'./Data Room v2.dc.html', overview:'./Overview Tab v3.dc.html', market:'./Market Tab.dc.html', financials:'./Financials Tab.dc.html', investment:'./Investment Tab.dc.html', debt:'./Debt Tab.dc.html', partnership:'./Partnership Tab.dc.html', cashflow:'./Cash Flow Tab.dc.html', returns:'./Returns Tab.dc.html', scenarios:'./Scenarios Tab.dc.html', icmemo:'./IC Memo Tab.dc.html' };
+    const onNavigate = this.props.onNavigate;
+    return (e) => { if (e && e.stopPropagation) e.stopPropagation(); if (onNavigate) onNavigate(key); else window.location.href = HREFS[key]; };
+  }
+  buildNavItems(active) {
+    const ICONS = {
+      dataroom: "M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7z",
+      overview: "M6 3h9l4 4v14a1 1 0 0 1-1 1H6a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1zM9 12h6M9 16h6",
+      market: "M12 4a4 4 0 100 8 4 4 0 000-8zM4 21c0-4 3.6-6 8-6s8 2 8 6",
+      financials: "M4 20V10M11 20V4M18 20v-7",
+      investment: "M3 8h18v12a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V8zM8 8V6a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2",
+      debt: "M12 3a9 9 0 100 18 9 9 0 000-18zM12 7v10M9.5 9.5c0-1.4 1.1-2.5 2.5-2.5s2.5.7 2.5 2c0 2-5 1.5-5 4 0 1.3 1.1 2.5 2.5 2.5s2.5-1.1 2.5-2.5",
+      partnership: "M9 11a3 3 0 100-6 3 3 0 000 6zM17 11a3 3 0 100-6 3 3 0 000 6zM2 20c0-3 3-5 7-5M13 20c0-3 3-5 7-5",
+      cashflow: "M3 12h4l3 7 4-14 3 7h4",
+      returns: "M3 17l6-6 4 4 8-8M15 7h6v6",
+      scenarios: "M4 7h13l-3-3M4 7l3 3M20 17H7l3 3M20 17l-3-3",
+      icmemo: "M6 3h9l4 4v14a1 1 0 0 1-1 1H6a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1zM9 12h6M9 16h4M14 3v5h5",
+    };
+    const items = [['dataroom','Data Room'],['overview','Overview'],['market','Market'],['financials','Financials'],['investment','Investment'],['debt','Debt'],['partnership','Partnership'],['cashflow','Cash Flow'],['returns','Returns'],['scenarios','Scenario Analysis'],['icmemo','IC Memo']];
+    return items.map(([key, label]) => ({
+      key, label, icon: ICONS[key],
+      color: key === active ? '#14213d' : '#9a9a95',
+      weight: key === active ? 700 : 500,
+      border: key === active ? '2px solid #14213d' : '2px solid transparent',
+      onClick: key === active ? null : this.goFn(key),
+    }));
+  }
+
+  dot(kind) {
+    if (kind === 'linked') return { dotFill: '#fff', dotBorder: '2px solid ' + this.GREEN };
+    return { dotFill: this.GRAY, dotBorder: 'none' };
+  }
+
+  row(label, kind, values, opts) {
+    const o = opts || {};
+    const cells = values.map(v => {
+      if (v === null || v === undefined) return { text: '—', color: this.MUTED };
+      const color = o.bold ? this.BLACK : kind === 'linked' ? this.GREEN : this.GRAY;
+      return { text: this.money(v), color };
+    });
+    return Object.assign({
+      label, cells, weight: o.bold ? 700 : 400,
+      bg: o.bold ? '#fbfbf9' : 'transparent',
+      indent: o.indent ? '28px' : '14px',
+      title: o.title || (kind === 'linked' ? 'Linked from another engine' : 'Calculated by Fondok'),
+    }, this.dot(kind));
+  }
+
+  renderVals() {
+    const M = this.M, c = this.compute();
+    const pad = (arr, closeVal) => [closeVal].concat(arr);
+    const n = M.noi.length;
+    const nulls = M.noi.map(() => null);
+    const at = (i, v) => M.noi.map((_, k) => (k === i ? v : null));
+    const hasRefi = !!M.refi;
+
+    const unleveredRows = [
+      this.row('Acquisition Uses at Close', 'linked', pad(nulls, -M.totalUses), { title: 'Investment → Sources & Uses (total uses funded at close, before financing)' }),
+      this.row('NOI', 'linked', pad(M.noi, null), { title: 'Financials → Projections' }),
+      this.row('CapEx', 'linked', pad(M.capex, null), { title: 'Investment → Ongoing capex (FF&E reserve)' }),
+      this.row('Other property cash flow', 'linked', pad(M.other, null), { title: 'Financials → Projections' }),
+      this.row('Operating free cash flow', 'calc', pad(c.opFCF, null), { bold: true }),
+      this.row('Gross sale proceeds', 'linked', pad(at(n - 1, M.grossSale), null), { indent: true, title: 'Investment → Exit (forward NOI ÷ exit cap)' }),
+      this.row('Selling costs', 'linked', pad(at(n - 1, M.sellingCosts), null), { indent: true, title: 'Investment → Disposition costs and transfer tax' }),
+      this.row('Net sale proceeds', 'calc', pad(at(n - 1, c.netSale), null), { indent: true, bold: true }),
+      this.row('Unlevered cash flow', 'calc', pad(c.unlevered, -M.totalUses), { bold: true }),
+    ];
+
+    const leveredRows = [
+      this.row('Unlevered cash flow', 'calc', pad(c.unlevered, -M.totalUses)),
+      this.row('Debt proceeds', 'linked', pad(nulls, M.loan), { title: 'Debt → Senior loan funded at close' }),
+      this.row('Key money', 'linked', pad(nulls, M.keyMoney), { title: 'Partnership → Brand agreement' }),
+      this.row('Interest expense', 'linked', pad(M.interest, null), { title: 'Debt → Debt schedule' }),
+      this.row('Principal amortization', 'linked', pad(M.principal, null), { title: 'Debt → Debt schedule' }),
+    ].concat(hasRefi ? [
+      this.row('Refinance proceeds', 'linked', pad(at(M.refi.year - 1, M.refi.proceeds), null), { indent: true, title: 'Debt → Refinance' }),
+      this.row('Existing debt payoff', 'linked', pad(at(M.refi.year - 1, M.refi.payoff), null), { indent: true, title: 'Debt → Refinance' }),
+      this.row('Refinance fees', 'linked', pad(at(M.refi.year - 1, M.refi.fees), null), { indent: true, title: 'Debt → Refinance' }),
+      this.row('Net refinance cash-out', 'calc', pad(at(M.refi.year - 1, c.netRefi), null), { indent: true, bold: true }),
+    ] : []).concat([
+      this.row('Exit debt payoff', 'linked', pad(at(n - 1, c.exitPayoff), null), { title: 'Debt → Balance repaid at disposition' }),
+      this.row('Net cash flow to equity', 'calc', pad(c.equityCF, -M.equity), { bold: true }),
+    ]);
+
+    const opToEquity = c.operatingToEquity.reduce((a, b) => a + b, 0);
+    const netExit = c.netSale + c.exitPayoff;
+    const financingRow = c.equityCF.map((v, i) => v - c.unlevered[i]);
+
+    return {
+      navItems: this.buildNavItems('cashflow'),
+      atlasTransform: this.state.atlasOpen ? 'translateX(0)' : 'translateX(100%)',
+      toggleAtlas: () => this.setState(s => ({ atlasOpen: !s.atlasOpen })),
+      closeAtlas: () => this.setState({ atlasOpen: false }),
+      atlasRefi: hasRefi
+        ? 'The year-' + M.refi.year + ' spike is the refinance: ' + this.mm(M.refi.proceeds) + ' of new proceeds less ' + this.mm(-M.refi.payoff) + ' repaying the existing loan and ' + this.mm(-M.refi.fees) + ' of fees — ' + this.mm(c.netRefi) + ' net to equity.'
+        : 'No refinance is modeled, so equity cash flow is operating cash flow less debt service until exit.',
+      goFinancials: this.goFn('financials'),
+      goInvestment: this.goFn('investment'),
+      goDebt: this.goFn('debt'),
+      goPartnership: this.goFn('partnership'),
+
+      cols: '230px repeat(6,minmax(126px,1fr))',
+      headers: ['Close', 'Year 1', 'Year 2', 'Year 3', 'Year 4', 'Year 5 / Exit'],
+
+      subTabs: ['Summary', 'Unlevered', 'Levered / Equity'].map(label => {
+        const active = label === this.state.tab;
+        return {
+          label, weight: active ? 700 : 500, color: active ? '#14213d' : '#9a9a95',
+          border: active ? '2px solid #14213d' : '2px solid transparent',
+          select: () => this.setState({ tab: label }),
+        };
+      }),
+      subTabCaption: this.state.tab === 'Summary' ? 'What the deal returns to equity, and when'
+        : this.state.tab === 'Unlevered' ? 'Property cash flow before financing'
+        : 'How debt, refinance and exit reach equity',
+      isSummary: this.state.tab === 'Summary',
+      isUnlevered: this.state.tab === 'Unlevered',
+      isLevered: this.state.tab === 'Levered / Equity',
+
+      equityReference: [
+        Object.assign({ label: 'Initial equity required', value: this.money(-M.equity), color: this.GREEN, title: 'Investment → Required equity. Reference only — equity funding is already reflected in net cash flow to equity and is not added again.' }, this.dot('linked')),
+        Object.assign({ label: 'Additional equity required', value: this.money(0), color: this.GRAY, title: 'None required in this structure. Reference only — not added to the cash-flow columns.' }, this.dot('calc')),
+      ],
+
+      tables: this.state.tab === 'Summary' ? [
+        {
+          title: 'Cash Flow Bridge', caption: 'Property cash flow → financing → equity',
+          rows: [
+            this.row('Property / unlevered cash flow', 'calc', pad(c.unlevered, -M.totalUses)),
+            this.row('Financing', 'calc', pad(financingRow, M.loan + M.keyMoney), { title: 'Debt proceeds, key money, debt service, refinance and exit payoff' }),
+            this.row('Net cash flow to equity', 'calc', pad(c.equityCF, -M.equity), { bold: true }),
+          ],
+          footnote: 'Every column foots: property cash flow plus financing equals net cash flow to equity. The Unlevered and Levered / Equity views break each line into its components.',
+        },
+      ] : this.state.tab === 'Unlevered' ? [
+        {
+          title: 'Unlevered Cash Flow', caption: 'Property level · before financing',
+          rows: unleveredRows,
+          footnote: 'Terminal value is shown as its own bridge — gross sale proceeds less selling costs — rather than folded into a single unexplained exit-year number.',
+        },
+      ] : [
+        {
+          title: 'Levered / Equity Cash Flow', caption: 'After financing · before the partnership waterfall',
+          rows: leveredRows,
+          footnote: 'Every column foots: at close, unlevered cash flow plus debt proceeds and key money equals the equity required — the Equity Funding Reference below restates that figure without adding it again. '
+            + (hasRefi
+              ? 'The year-' + M.refi.year + ' refinance is broken into proceeds, payoff and fees so the net cash-out is traceable rather than appearing as an unexplained spike.'
+              : 'This deal has no refinance, so the refinance rows are hidden.'),
+        },
+      ],
+
+      summary: [
+        { label: 'Total equity invested', value: this.mm(M.equity), color: this.BLACK, sub: 'Funded in full at close' },
+        { label: 'Operating cash flow to equity', value: this.mm(opToEquity), color: this.BLACK, sub: 'Years 1–' + n + ', after debt service' },
+        { label: 'Net refinance proceeds', value: this.mm(c.netRefi), color: this.BLACK, sub: 'Year ' + M.refi.year + ' cash-out, net of payoff and fees' },
+        { label: 'Net exit proceeds', value: this.mm(netExit), color: this.BLACK, sub: 'Net sale less debt repaid' },
+        { label: 'Total cash returned to equity', value: this.mm(c.totalToEquity), color: this.BLACK, sub: 'Operating + refinance + exit · ' + (c.totalToEquity / M.equity).toFixed(2) + 'x on equity invested' },
+      ],
+      summaryNote: 'Net cash flow to equity is the canonical deal-level equity cash-flow series: operating cash flow to equity ' + this.mm(opToEquity) + ' + net refinance ' + this.mm(c.netRefi) + ' + net exit ' + this.mm(netExit) + ' = ' + this.mm(c.totalToEquity) + '. Partnership allocates this cash between GP and LP; Returns calculates performance from the resulting cash flows.',
+    };
+  }
+}
+</script>
+</body>
+</html>

@@ -1,0 +1,788 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+  <style>body{margin:0;background:#f5f4f0;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,Arial,sans-serif;}a{color:#2f4a8c}a:hover{color:#1f3568}</style>
+</helmet>
+<template id="__bundler_thumbnail">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 120 56" data-bg-color="#14213d"><rect width="120" height="56" fill="#14213d"/><circle cx="46" cy="24" r="8" stroke="#f5f4f0" stroke-width="3" fill="none"/><circle cx="74" cy="24" r="8" stroke="#f5f4f0" stroke-width="3" fill="none"/><path d="M28 44c0-7 8-10 18-10M56 44c0-7 8-10 18-10" stroke="#f5f4f0" stroke-width="3" fill="none"/></svg>
+</template>
+<div style="display:flex;min-height:100vh" data-screen-label="Partnership">
+  <div style="width:210px;background:#0f1a30;padding:22px 16px;display:flex;flex-direction:column;gap:2px;flex-shrink:0">
+    <div style="display:flex;align-items:center;gap:8px;color:#fff;font-weight:700;font-size:16px;margin-bottom:24px"><div style="width:28px;height:28px;background:#2f4a8c;border-radius:6px;display:flex;align-items:center;justify-content:center;font-size:13px">F</div>Fondok.</div>
+    <div style="color:#c9cede;font-size:12.5px;padding:8px 10px;border-radius:6px;background:rgba(255,255,255,.06);margin-bottom:16px;display:flex;justify-content:space-between">fondok.ai <span>⌄</span></div>
+    <div style="color:#8b93a7;font-size:13px;padding:8px 10px;display:flex;gap:9px">⊞ Dashboard</div>
+    <div style="color:#fff;background:rgba(255,255,255,.09);font-size:13px;font-weight:600;padding:8px 10px;border-radius:6px;display:flex;gap:9px">▤ Projects</div>
+    <div style="color:#8b93a7;font-size:13px;padding:8px 10px;display:flex;gap:9px">📈 Pipeline</div>
+    <div style="color:#8b93a7;font-size:13px;padding:8px 10px;display:flex;gap:9px">◔ Audit</div>
+    <div style="color:#8b93a7;font-size:13px;padding:8px 10px;display:flex;gap:9px">$ Cost</div>
+    <div style="color:#8b93a7;font-size:13px;padding:8px 10px;display:flex;gap:9px">▥ Data Library</div>
+    <div style="color:#8b93a7;font-size:13px;padding:8px 10px;display:flex;gap:9px">▦ Methodology</div>
+    <div style="color:#8b93a7;font-size:13px;padding:8px 10px;display:flex;gap:9px">◷ Settings</div>
+  </div>
+
+  <div style="flex:1;min-width:0">
+    <div style="padding:22px 32px 0">
+      <div style="font-size:11.5px;color:#9a9a95;margin-bottom:10px">← BACK TO PROJECTS</div>
+      <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;row-gap:8px;margin-bottom:10px">
+        <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap"><h1 style="font-size:26px;margin:0;color:#1a2233;font-weight:600;white-space:nowrap">Kimpton Hotel</h1><span style="color:#9a9a95;font-size:11px;font-weight:600;letter-spacing:.04em">DRAFT</span></div>
+        <div style="display:flex;gap:14px;align-items:center;flex-wrap:wrap">
+          <button onClick="{{ toggleAtlas }}" style="display:flex;align-items:center;gap:6px;background:#eef2fb;border:1px solid #dbe3f5;color:#2f4a8c;border-radius:6px;padding:8px 14px;font-size:12px;font-weight:600;cursor:pointer;white-space:nowrap;font-family:inherit">✦ Ask Atlas</button>
+          <button style="background:#14213d;color:#fff;border:none;border-radius:6px;padding:8px 16px;font-size:12.5px;font-weight:600;white-space:nowrap;font-family:inherit">Share</button>
+        </div>
+      </div>
+      <div style="font-size:12.5px;color:#9a9a95;margin-bottom:20px;display:flex;gap:18px;flex-wrap:wrap">
+        <span>660 Washington Avenue, Miami Beach, FL 33139</span><span>132 keys</span><span>Created 7/30/2026</span>
+      </div>
+      <div style="display:flex;gap:22px;border-bottom:1px solid #ececea;font-size:13.5px;font-weight:500;color:#9a9a95;overflow-x:auto">
+        <sc-for list="{{ navItems }}" as="nav" hint-placeholder-count="11">
+          <div onClick="{{ nav.onClick }}" style="display:flex;align-items:center;gap:6px;padding-bottom:10px;white-space:nowrap;cursor:pointer;color:{{ nav.color }};font-weight:{{ nav.weight }};border-bottom:{{ nav.border }}">
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="{{ nav.icon }}"></path></svg>{{ nav.label }}
+          </div>
+        </sc-for>
+      </div>
+    </div>
+
+    <div style="padding:16px 32px 56px;max-width:1320px">
+      <div style="background:#fff;border:1px solid #eae9e4;border-radius:10px;padding:12px 16px;margin-bottom:14px;display:flex;flex-direction:column;gap:3px">
+        <span style="font-size:13.5px;font-weight:700;color:#1a2233">Partnership</span>
+        <span style="font-size:12.5px;color:#6b6f76;line-height:1.55;max-width:960px">How equity is split between the sponsor and its partners, and how proceeds flow through the waterfall.</span>
+      </div>
+
+      <div style="display:flex;align-items:center;gap:16px;flex-wrap:wrap;background:#fbfbf9;border:1px solid #eae9e4;border-radius:8px;padding:9px 14px;margin-bottom:14px;font-size:11px;color:#6b6f76">
+        <span style="font-weight:700;color:#8a8a86;letter-spacing:.02em">DATA KEY</span>
+        <span style="display:flex;align-items:center;gap:6px"><span style="width:9px;height:9px;border-radius:50%;background:oklch(45% 0.12 155);display:inline-block;flex-shrink:0"></span>Document sourced</span>
+        <span style="display:flex;align-items:center;gap:6px"><span style="width:9px;height:9px;border-radius:50%;background:#fff;border:2px solid oklch(45% 0.12 155);display:inline-block;flex-shrink:0"></span>Linked</span>
+        <span style="display:flex;align-items:center;gap:6px"><span style="width:9px;height:9px;border-radius:50%;background:oklch(45% 0.14 260);display:inline-block;flex-shrink:0"></span>Assumption</span>
+        <span style="display:flex;align-items:center;gap:6px"><span style="width:9px;height:9px;border-radius:50%;background:#5f656e;display:inline-block;flex-shrink:0"></span>Calculated</span>
+        <span style="display:flex;align-items:center;gap:6px"><span style="width:9px;height:9px;border-radius:50%;background:#fff;border:1px dashed #b0afaa;display:inline-block;flex-shrink:0"></span>Awaiting data</span>
+        <span style="display:flex;align-items:center;gap:6px"><span style="width:9px;height:9px;border-radius:50%;background:oklch(45% 0.12 155);box-shadow:0 0 0 3px oklch(88% 0.07 45);display:inline-block;flex-shrink:0"></span>Needs review</span>
+        <span style="display:flex;align-items:center;gap:6px"><b style="color:#1a2233">1,240</b>Total / summary</span>
+        <span style="display:flex;align-items:center;gap:6px"><span style="text-decoration:underline dotted;color:#6b6f76">123</span>Editable — click to change</span>
+        <span title="Origin is the dot: document sourced, linked from another module, your assumption, calculated by Fondok, or awaiting data. An amber halo means the value needs review. Bold marks totals, a dotted underline marks values you can change. Provenance and editability are separate — a sourced value can also be editable, and an override keeps its original source so you can restore it." style="cursor:help;color:#9a9a95;margin-left:auto;white-space:nowrap">ⓘ How to read this</span>
+      </div>
+
+      <div style="display:flex;align-items:flex-end;gap:28px;border-bottom:1px solid #e6e5e0;overflow-x:auto;margin-bottom:14px">
+        <sc-for list="{{ subTabs }}" as="t" hint-placeholder-count="3">
+          <button onClick="{{ t.select }}" style="font-size:13.5px;font-family:inherit;background:none;border:none;border-bottom:{{ t.border }};cursor:pointer;font-weight:{{ t.weight }};color:{{ t.color }};padding:0 0 10px;margin-bottom:-1px;white-space:nowrap">{{ t.label }}</button>
+        </sc-for>
+        <span style="font-size:11.5px;color:#9a9a95;margin-left:auto;padding-bottom:11px;white-space:nowrap">{{ subTabCaption }}</span>
+      </div>
+
+      <div style="background:oklch(97.5% 0.015 250);border:1px solid #dbe3f5;border-radius:9px;padding:12px 16px;margin-bottom:14px;display:flex;flex-direction:column;gap:8px">
+        <div style="display:flex;align-items:center;gap:14px;flex-wrap:wrap">
+          <span style="display:flex;align-items:center;gap:6px;font-size:10px;font-weight:700;letter-spacing:.05em;color:#2f4a8c;text-transform:uppercase;white-space:nowrap"><span style="width:8px;height:8px;border-radius:50%;background:oklch(45% 0.14 260);display:inline-block"></span>Manual inputs · current release</span>
+          <span style="font-size:12.5px;color:#1a2233;line-height:1.5">Partnership terms are entered manually in this release and are not extracted from JV or partnership documents. Fondok calculates the waterfall, allocations and partner returns from what you enter.</span>
+          <button onClick="{{ goWaterfall }}" style="margin-left:auto;background:#14213d;color:#fff;border:none;border-radius:6px;padding:6px 13px;font-size:11.5px;font-weight:600;cursor:pointer;font-family:inherit;white-space:nowrap">Edit assumptions →</button>
+        </div>
+        <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;border-top:1px solid #dbe3f5;padding-top:8px">
+          <span style="font-size:9.5px;font-weight:700;letter-spacing:.06em;color:#6b6f76;text-transform:uppercase;background:#fff;border:1px solid #e2e1dc;border-radius:20px;padding:3px 9px;white-space:nowrap">Coming soon · document extraction</span>
+          <span style="font-size:11.5px;color:#6b6f76;line-height:1.45">Upload partnership documents and automatically extract ownership, preferred return, promote and waterfall terms in a future release.</span>
+        </div>
+      </div>
+
+      <sc-if value="{{ isSummary }}" hint-placeholder-val="{{ true }}">
+        <div style="display:flex;flex-direction:column;gap:14px">
+          <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(430px,1fr));gap:14px">
+            <sc-for list="{{ summaryCards }}" as="c" hint-placeholder-count="2">
+              <div style="background:#fff;border:1px solid #eae9e4;border-radius:10px;padding:16px 18px">
+                <div style="display:flex;justify-content:space-between;align-items:baseline;gap:14px;margin-bottom:4px">
+                  <span style="font-size:12px;font-weight:700;color:#8a8a86;text-transform:uppercase;letter-spacing:.03em">{{ c.title }}</span>
+                  <span style="font-size:11px;color:#b0afaa;text-align:right">{{ c.note }}</span>
+                </div>
+                <sc-for list="{{ c.rows }}" as="r" hint-placeholder-count="5">
+                  <div style="display:flex;justify-content:space-between;align-items:center;gap:12px;font-size:13px;padding:7px 0;border-bottom:1px solid #f7f6f3">
+                    <span style="display:flex;align-items:center;gap:7px;min-width:0">
+                      <span style="width:8px;height:8px;border-radius:50%;background:{{ r.dotFill }};border:{{ r.dotBorder }};display:inline-block;flex-shrink:0"></span>
+                      <span style="color:#6b6f76;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">{{ r.label }}</span>
+                      <sc-if value="{{ r.hasLink }}" hint-placeholder-val="{{ false }}">
+                        <span onClick="{{ r.goLink }}" style="font-size:10.5px;color:#2f4a8c;cursor:pointer;font-weight:600;white-space:nowrap">{{ r.linkLabel }}</span>
+                      </sc-if>
+                    </span>
+                    <sc-if value="{{ r.isEditing }}" hint-placeholder-val="{{ false }}">
+                      <span style="display:flex;align-items:center;gap:6px">
+                        <input value="{{ r.draft }}" onChange="{{ r.onDraft }}" onKeyDown="{{ r.onKey }}" style="width:120px;font-size:12.5px;font-family:inherit;border:1px solid #2f4a8c;border-radius:5px;padding:4px 7px;text-align:right;font-variant-numeric:tabular-nums" />
+                        <button onClick="{{ r.save }}" style="background:#14213d;color:#fff;border:none;border-radius:5px;padding:5px 9px;font-size:11px;font-weight:600;cursor:pointer;font-family:inherit">Save</button>
+                      </span>
+                    </sc-if>
+                    <sc-if value="{{ r.isStatic }}" hint-placeholder-val="{{ true }}">
+                      <span onClick="{{ r.onClick }}" title="{{ r.title }}" style="color:{{ r.color }};font-weight:{{ r.weight }};text-decoration:{{ r.underline }};cursor:{{ r.cursor }};font-variant-numeric:tabular-nums;white-space:nowrap">{{ r.value }}</span>
+                    </sc-if>
+                  </div>
+                  <sc-if value="{{ r.hasNote }}" hint-placeholder-val="{{ false }}">
+                    <div style="font-size:10.5px;color:#9a9a95;padding:0 0 6px 15px;line-height:1.45">{{ r.note }}</div>
+                  </sc-if>
+                </sc-for>
+              </div>
+            </sc-for>
+          </div>
+
+          <div style="background:#fff;border:1px solid #eae9e4;border-radius:10px;padding:16px 18px">
+            <div style="display:flex;justify-content:space-between;align-items:baseline;gap:14px;margin-bottom:12px">
+              <span style="font-size:12px;font-weight:700;color:#8a8a86;text-transform:uppercase;letter-spacing:.03em">Partner Returns</span>
+              <span style="font-size:11px;color:#b0afaa">Deal-level economics, then what each partner receives after the waterfall</span>
+            </div>
+            <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(250px,1fr));gap:12px">
+              <sc-for list="{{ partnerReturns }}" as="p" hint-placeholder-count="3">
+                <div style="border:1px solid {{ p.border }};background:{{ p.bg }};border-radius:9px;padding:14px 16px">
+                  <div style="font-size:10px;font-weight:700;letter-spacing:.05em;color:{{ p.titleColor }};text-transform:uppercase;margin-bottom:10px">{{ p.title }}</div>
+                  <sc-for list="{{ p.metrics }}" as="m" hint-placeholder-count="4">
+                    <div title="{{ m.title }}" style="display:flex;justify-content:space-between;align-items:baseline;gap:12px;padding:5px 0;border-bottom:1px solid #f2f1ec">
+                      <span style="font-size:12px;color:#6b6f76">{{ m.label }}</span>
+                      <span style="font-size:{{ m.size }};font-weight:700;color:#1a2233;font-variant-numeric:tabular-nums">{{ m.value }}</span>
+                    </div>
+                  </sc-for>
+                  <div style="font-size:10.5px;color:#9a9a95;margin-top:8px;line-height:1.45">{{ p.note }}</div>
+                </div>
+              </sc-for>
+            </div>
+          </div>
+
+          <div style="background:#fff;border:1px solid #eae9e4;border-radius:10px;padding:16px 18px">
+            <div style="display:flex;justify-content:space-between;align-items:baseline;gap:14px;margin-bottom:10px">
+              <span style="font-size:12px;font-weight:700;color:#8a8a86;text-transform:uppercase;letter-spacing:.03em">Waterfall Allocation Preview</span>
+              <span onClick="{{ goWaterfall }}" style="font-size:11.5px;color:#2f4a8c;font-weight:600;cursor:pointer">View / edit waterfall →</span>
+            </div>
+            <div style="display:grid;grid-template-columns:minmax(190px,1.6fr) minmax(110px,1fr) minmax(110px,1fr) minmax(120px,1fr);font-size:10px;font-weight:700;letter-spacing:.05em;color:#b0afaa;text-transform:uppercase;padding-bottom:7px;border-bottom:1px solid #eae9e4">
+              <span>Tier</span><span style="text-align:right">LP</span><span style="text-align:right">GP</span><span style="text-align:right">Allocated proceeds</span>
+            </div>
+            <sc-for list="{{ allocationPreview }}" as="r" hint-placeholder-count="5">
+              <div style="display:grid;grid-template-columns:minmax(190px,1.6fr) minmax(110px,1fr) minmax(110px,1fr) minmax(120px,1fr);font-size:12.5px;padding:7px 0;border-bottom:1px solid #f7f6f3;align-items:center">
+                <span style="display:flex;align-items:center;gap:7px;min-width:0">
+                  <span style="width:8px;height:8px;border-radius:50%;background:#5f656e;display:inline-block;flex-shrink:0"></span>
+                  <span style="color:#1a2233;font-weight:{{ r.weight }};overflow:hidden;text-overflow:ellipsis;white-space:nowrap">{{ r.tier }}</span>
+                </span>
+                <span style="text-align:right;color:{{ r.color }};font-weight:{{ r.weight }};font-variant-numeric:tabular-nums">{{ r.lp }}</span>
+                <span style="text-align:right;color:{{ r.color }};font-weight:{{ r.weight }};font-variant-numeric:tabular-nums">{{ r.gp }}</span>
+                <span style="text-align:right;color:{{ r.color }};font-weight:{{ r.weight }};font-variant-numeric:tabular-nums">{{ r.total }}</span>
+              </div>
+            </sc-for>
+            <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;background:oklch(96.5% 0.03 155);border:1px solid oklch(88% 0.05 155);border-radius:7px;padding:8px 12px;margin-top:10px">
+              <span style="font-size:10px;font-weight:700;letter-spacing:.05em;color:oklch(40% 0.12 155);text-transform:uppercase">Reconciles</span>
+              <span style="font-size:11.5px;color:#1a2233;font-variant-numeric:tabular-nums">{{ reconCheck }}</span>
+            </div>
+            <div style="font-size:11px;color:#9a9a95;margin-top:9px;line-height:1.5">Allocation of all projected distributions across the {{ holdYears }}-year hold. The promote applies only to residual proceeds above the preferred return and catch-up.</div>
+          </div>
+        </div>
+      </sc-if>
+
+      <sc-if value="{{ isWaterfall }}" hint-placeholder-val="{{ false }}">
+        <div style="display:flex;flex-direction:column;gap:14px">
+          <div style="background:#fff;border:1px solid #eae9e4;border-radius:10px;padding:16px 18px">
+            <div style="display:flex;justify-content:space-between;align-items:baseline;gap:14px;margin-bottom:4px">
+              <span style="font-size:12px;font-weight:700;color:#8a8a86;text-transform:uppercase;letter-spacing:.03em">Ownership &amp; Preferred Return</span>
+              <span style="font-size:11px;color:#b0afaa">Entered by you — Fondok does not read the JV agreement in this release</span>
+            </div>
+            <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(320px,1fr));gap:0 32px">
+              <sc-for list="{{ ownershipRows }}" as="r" hint-placeholder-count="4">
+                <div style="display:flex;justify-content:space-between;align-items:center;gap:12px;font-size:13px;padding:7px 0;border-bottom:1px solid #f7f6f3">
+                  <span style="display:flex;align-items:center;gap:7px;min-width:0">
+                    <span style="width:8px;height:8px;border-radius:50%;background:{{ r.dotFill }};border:{{ r.dotBorder }};display:inline-block;flex-shrink:0"></span>
+                    <span style="color:#6b6f76;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">{{ r.label }}</span>
+                  </span>
+                  <sc-if value="{{ r.isSelect }}" hint-placeholder-val="{{ false }}">
+                    <select value="{{ r.value }}" onChange="{{ r.onSelect }}" style="font-size:12px;font-family:inherit;font-weight:600;color:oklch(45% 0.14 260);background:#fbfbf9;border:1px solid #e2e1dc;border-radius:6px;padding:4px 8px;cursor:pointer">
+                      <sc-for list="{{ r.options }}" as="opt" hint-placeholder-count="2">
+                        <option value="{{ opt }}">{{ opt }}</option>
+                      </sc-for>
+                    </select>
+                  </sc-if>
+                  <sc-if value="{{ r.isEditing }}" hint-placeholder-val="{{ false }}">
+                    <span style="display:flex;align-items:center;gap:6px">
+                      <input value="{{ r.draft }}" onChange="{{ r.onDraft }}" onKeyDown="{{ r.onKey }}" style="width:110px;font-size:12.5px;font-family:inherit;border:1px solid #2f4a8c;border-radius:5px;padding:4px 7px;text-align:right;font-variant-numeric:tabular-nums" />
+                      <button onClick="{{ r.save }}" style="background:#14213d;color:#fff;border:none;border-radius:5px;padding:5px 9px;font-size:11px;font-weight:600;cursor:pointer;font-family:inherit">Save</button>
+                    </span>
+                  </sc-if>
+                  <sc-if value="{{ r.isStatic }}" hint-placeholder-val="{{ true }}">
+                    <span onClick="{{ r.onClick }}" title="{{ r.title }}" style="color:{{ r.color }};font-weight:{{ r.weight }};text-decoration:{{ r.underline }};cursor:{{ r.cursor }};font-variant-numeric:tabular-nums;white-space:nowrap">{{ r.value }}</span>
+                  </sc-if>
+                </div>
+              </sc-for>
+            </div>
+          </div>
+
+          <div style="background:#fff;border:1px solid #eae9e4;border-radius:10px;padding:16px 18px">
+            <div style="display:flex;justify-content:space-between;align-items:center;gap:14px;margin-bottom:10px;flex-wrap:wrap">
+              <span style="font-size:12px;font-weight:700;color:#8a8a86;text-transform:uppercase;letter-spacing:.03em">Promote Waterfall</span>
+              <button onClick="{{ addTier }}" style="background:#fff;border:1px solid #e2e1dc;color:#2f4a8c;border-radius:6px;padding:6px 12px;font-size:11.5px;font-weight:600;cursor:pointer;font-family:inherit">+ Add tier</button>
+            </div>
+            <div style="display:grid;grid-template-columns:38px minmax(180px,1.5fr) minmax(120px,1fr) 90px 90px minmax(210px,1.5fr) 34px;font-size:10px;font-weight:700;letter-spacing:.05em;color:#b0afaa;text-transform:uppercase;padding-bottom:7px;border-bottom:1px solid #eae9e4">
+              <span>Tier</span><span>Name</span><span style="text-align:right">Hurdle</span><span style="text-align:right">GP split</span><span style="text-align:right;padding-right:16px">LP split</span><span>Description</span><span></span>
+            </div>
+            <sc-for list="{{ tiers }}" as="t" hint-placeholder-count="5">
+              <div style="display:grid;grid-template-columns:38px minmax(180px,1.5fr) minmax(120px,1fr) 90px 90px minmax(210px,1.5fr) 34px;font-size:12.5px;padding:8px 0;border-bottom:1px solid #f7f6f3;align-items:center">
+                <span style="color:#9a9a95;font-variant-numeric:tabular-nums">{{ t.index }}</span>
+                <span style="display:flex;align-items:center;gap:7px;min-width:0">
+                  <span style="width:8px;height:8px;border-radius:50%;background:{{ t.dotFill }};border:{{ t.dotBorder }};display:inline-block;flex-shrink:0"></span>
+                  <span style="color:#1a2233;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">{{ t.name }}</span>
+                </span>
+                <sc-if value="{{ t.hurdleEditing }}" hint-placeholder-val="{{ false }}">
+                  <span style="display:flex;align-items:center;gap:5px;justify-content:flex-end">
+                    <input value="{{ t.draft }}" onChange="{{ t.onDraft }}" onKeyDown="{{ t.onHurdleKey }}" style="width:66px;font-size:12px;font-family:inherit;border:1px solid #2f4a8c;border-radius:5px;padding:3px 6px;text-align:right" />
+                    <button onClick="{{ t.saveHurdle }}" style="background:#14213d;color:#fff;border:none;border-radius:5px;padding:4px 7px;font-size:10.5px;font-weight:600;cursor:pointer;font-family:inherit">✓</button>
+                  </span>
+                </sc-if>
+                <sc-if value="{{ t.hurdleStatic }}" hint-placeholder-val="{{ true }}">
+                  <span onClick="{{ t.editHurdle }}" style="text-align:right;color:{{ t.hurdleColor }};text-decoration:{{ t.hurdleUnderline }};cursor:{{ t.hurdleCursor }};font-variant-numeric:tabular-nums">{{ t.hurdle }}</span>
+                </sc-if>
+                <sc-if value="{{ t.splitEditing }}" hint-placeholder-val="{{ false }}">
+                  <span style="display:flex;align-items:center;gap:5px;justify-content:flex-end">
+                    <input value="{{ t.draft }}" onChange="{{ t.onDraft }}" onKeyDown="{{ t.onSplitKey }}" style="width:56px;font-size:12px;font-family:inherit;border:1px solid #2f4a8c;border-radius:5px;padding:3px 6px;text-align:right" />
+                    <button onClick="{{ t.saveSplit }}" style="background:#14213d;color:#fff;border:none;border-radius:5px;padding:4px 7px;font-size:10.5px;font-weight:600;cursor:pointer;font-family:inherit">✓</button>
+                  </span>
+                </sc-if>
+                <sc-if value="{{ t.splitStatic }}" hint-placeholder-val="{{ true }}">
+                  <span onClick="{{ t.editSplit }}" style="text-align:right;color:{{ t.splitColor }};text-decoration:{{ t.splitUnderline }};cursor:{{ t.splitCursor }};font-variant-numeric:tabular-nums">{{ t.gpSplit }}</span>
+                </sc-if>
+                <span style="text-align:right;color:#5f656e;font-variant-numeric:tabular-nums;padding-right:16px">{{ t.lpSplit }}</span>
+                <span style="color:#9a9a95;line-height:1.4;font-size:11.5px">{{ t.description }}</span>
+                <span onClick="{{ t.remove }}" title="{{ t.removeTitle }}" style="text-align:right;color:{{ t.removeColor }};cursor:{{ t.removeCursor }};font-size:13px">{{ t.removeMark }}</span>
+              </div>
+            </sc-for>
+            <div style="font-size:11px;color:#9a9a95;margin-top:9px;line-height:1.5">LP split is always 100% − GP split. Hurdles are LP IRR thresholds; the final tier takes everything above the last hurdle.</div>
+          </div>
+
+          <div style="background:#fff;border:1px solid #eae9e4;border-radius:10px;padding:16px 18px">
+            <div style="display:flex;justify-content:space-between;align-items:baseline;gap:14px;margin-bottom:10px">
+              <span style="font-size:12px;font-weight:700;color:#8a8a86;text-transform:uppercase;letter-spacing:.03em">Allocation of Projected Proceeds</span>
+              <span style="font-size:11px;color:#b0afaa">Calculated from the tiers above and the modeled deal cash flow</span>
+            </div>
+            <div style="display:grid;grid-template-columns:minmax(190px,1.6fr) minmax(110px,1fr) minmax(110px,1fr) minmax(120px,1fr);font-size:10px;font-weight:700;letter-spacing:.05em;color:#b0afaa;text-transform:uppercase;padding-bottom:7px;border-bottom:1px solid #eae9e4">
+              <span>Tier</span><span style="text-align:right">LP</span><span style="text-align:right">GP</span><span style="text-align:right">Allocated proceeds</span>
+            </div>
+            <sc-for list="{{ allocationPreview }}" as="r" hint-placeholder-count="5">
+              <div style="display:grid;grid-template-columns:minmax(190px,1.6fr) minmax(110px,1fr) minmax(110px,1fr) minmax(120px,1fr);font-size:12.5px;padding:7px 0;border-bottom:1px solid #f7f6f3;align-items:center">
+                <span style="color:#1a2233;font-weight:{{ r.weight }}">{{ r.tier }}</span>
+                <span style="text-align:right;color:{{ r.color }};font-weight:{{ r.weight }};font-variant-numeric:tabular-nums">{{ r.lp }}</span>
+                <span style="text-align:right;color:{{ r.color }};font-weight:{{ r.weight }};font-variant-numeric:tabular-nums">{{ r.gp }}</span>
+                <span style="text-align:right;color:{{ r.color }};font-weight:{{ r.weight }};font-variant-numeric:tabular-nums">{{ r.total }}</span>
+              </div>
+            </sc-for>
+            <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;background:oklch(96.5% 0.03 155);border:1px solid oklch(88% 0.05 155);border-radius:7px;padding:8px 12px;margin-top:10px">
+              <span style="font-size:10px;font-weight:700;letter-spacing:.05em;color:oklch(40% 0.12 155);text-transform:uppercase">Reconciles</span>
+              <span style="font-size:11.5px;color:#1a2233;font-variant-numeric:tabular-nums">{{ reconCheck }}</span>
+            </div>
+          </div>
+        </div>
+      </sc-if>
+
+      <sc-if value="{{ isCashFlows }}" hint-placeholder-val="{{ false }}">
+        <div style="display:flex;flex-direction:column;gap:14px">
+          <div style="background:#fff;border:1px solid #eae9e4;border-radius:10px;overflow:hidden">
+            <div style="padding:13px 18px;display:flex;justify-content:space-between;align-items:baseline;gap:12px;flex-wrap:wrap;border-bottom:1px solid #f2f1ec">
+              <span style="font-size:13.5px;font-weight:700;color:#1a2233">Partner Cash Flows</span>
+              <span style="font-size:11px;color:#9a9a95">{{ cashFlowCaption }}</span>
+            </div>
+            <div style="overflow-x:auto">
+              <div style="display:grid;grid-template-columns:100px repeat(7,minmax(122px,1fr));width:max-content;min-width:100%">
+                <sc-for list="{{ cfHeaders }}" as="h" hint-placeholder-count="8">
+                  <div style="padding:8px 12px;background:#14213d;color:#c9cede;font-size:10.5px;font-weight:600;letter-spacing:.03em;text-align:{{ h.align }};white-space:nowrap">{{ h.label }}</div>
+                </sc-for>
+                <sc-for list="{{ cfRows }}" as="r" hint-placeholder-count="6">
+                  <div style="padding:7px 12px;border-bottom:1px solid #f7f6f3;font-size:12.5px;color:#1a2233;font-weight:{{ r.weight }};background:{{ r.bg }};white-space:nowrap">{{ r.period }}</div>
+                  <sc-for list="{{ r.cells }}" as="c" hint-placeholder-count="7">
+                    <div style="padding:7px 12px;border-bottom:1px solid #f7f6f3;text-align:right;font-size:12.5px;font-variant-numeric:tabular-nums;color:{{ c.color }};font-weight:{{ r.weight }};background:{{ r.bg }};white-space:nowrap">{{ c.text }}</div>
+                  </sc-for>
+                </sc-for>
+              </div>
+            </div>
+            <div style="padding:11px 18px;font-size:11px;color:#9a9a95;line-height:1.5">Contributions and distributions are shown separately — a contribution is never a negative distribution. The schedule ends at the modeled disposition in year {{ holdYears }}.</div>
+          </div>
+
+          <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(360px,1fr));gap:14px">
+            <sc-for list="{{ reconciliation }}" as="c" hint-placeholder-count="2">
+              <div style="background:#fff;border:1px solid #eae9e4;border-radius:10px;padding:16px 18px">
+                <div style="font-size:12px;font-weight:700;color:#8a8a86;text-transform:uppercase;letter-spacing:.03em;margin-bottom:6px">{{ c.title }}</div>
+                <sc-for list="{{ c.rows }}" as="r" hint-placeholder-count="4">
+                  <div style="display:flex;justify-content:space-between;align-items:center;gap:12px;font-size:13px;padding:7px 0;border-bottom:1px solid #f7f6f3">
+                    <span style="color:{{ r.labelColor }};font-weight:{{ r.weight }}">{{ r.label }}</span>
+                    <span style="color:{{ r.color }};font-weight:{{ r.weight }};font-variant-numeric:tabular-nums">{{ r.value }}</span>
+                  </div>
+                </sc-for>
+                <div style="font-size:11px;color:#9a9a95;margin-top:9px;line-height:1.5">{{ c.note }}</div>
+              </div>
+            </sc-for>
+          </div>
+        </div>
+      </sc-if>
+    </div>
+  </div>
+
+  <div style="position:fixed;top:0;right:0;height:100vh;width:340px;background:#fff;box-shadow:-4px 0 24px rgba(0,0,0,.14);z-index:50;display:flex;flex-direction:column;transform:{{ atlasTransform }};transition:transform .22s ease">
+    <div style="padding:16px 18px;border-bottom:1px solid #eae9e4;display:flex;justify-content:space-between;align-items:center">
+      <span style="font-weight:700;font-size:13.5px;color:#1a2233">✦ Atlas</span>
+      <span onClick="{{ closeAtlas }}" style="cursor:pointer;color:#9a9a95">✕</span>
+    </div>
+    <div style="flex:1;overflow-y:auto;padding:14px 18px;display:flex;flex-direction:column;gap:10px">
+      <div style="background:#f3f2ee;color:#1a2233;padding:9px 12px;border-radius:8px;font-size:12.5px;line-height:1.5">{{ atlasSummary }}</div>
+      <div style="background:#f3f2ee;color:#1a2233;padding:9px 12px;border-radius:8px;font-size:12.5px;line-height:1.5">Partnership terms in this release are your inputs, not extracted from the JV agreement — the Data Room copy is not yet connected to this engine.</div>
+    </div>
+    <div style="padding:12px 18px;border-top:1px solid #eae9e4;display:flex;flex-direction:column;gap:8px">
+      <button style="text-align:left;background:#f5f4f0;border:1px solid #eae9e4;border-radius:6px;padding:8px 10px;font-size:12px;color:#3a3f47;cursor:pointer;font-family:inherit">What does the promote cost the LP?</button>
+    </div>
+  </div>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props="{&quot;onNavigate&quot;:{&quot;editor&quot;:null,&quot;tsType&quot;:&quot;(tab: string, params?: object) =&gt; void&quot;},&quot;defaultSubTab&quot;:{&quot;editor&quot;:&quot;enum&quot;,&quot;options&quot;:[&quot;Summary&quot;,&quot;Waterfall&quot;,&quot;Cash Flows&quot;],&quot;default&quot;:&quot;Summary&quot;,&quot;tsType&quot;:&quot;string&quot;,&quot;section&quot;:&quot;Partnership tab&quot;}}">
+class Component extends DCLogic {
+  GREEN = 'oklch(45% 0.12 155)';
+  BLUE = 'oklch(45% 0.14 260)';
+  GRAY = '#5f656e';
+  BLACK = '#1a2233';
+  MUTED = '#b0afaa';
+
+  LINKED = { equity: 18836676, holdYears: 5 };
+  // Canonical equity cash-flow series from Cash Flow (year 3 includes the refinance cash-out)
+  OPERATING = [645222, 731646, 18593902, 930899, 1050699];
+  EXIT = 26437080;
+
+  DEF = { gpPct: 0.10, prefRate: 0.08 };
+
+  state = {
+    tab: this.props.defaultSubTab || 'Summary',
+    nums: {}, compounding: 'Annual / cumulative',
+    tiers: [
+      { id: 't1', kind: 'roc', name: 'Tier I — Return of Capital', gpSplit: null, hurdle: null, description: 'Contributed capital returned per the configured structure' },
+      { id: 't2', kind: 'pref', name: 'Tier II — Preferred Return', gpSplit: null, hurdle: null, description: 'LP preferred return on unreturned capital' },
+      { id: 't3', kind: 'catchup', name: 'Tier III — GP Catch-Up', gpSplit: 0.50, hurdle: null, description: 'Until the GP has caught up to its promote share' },
+      { id: 't4', kind: 'residual', name: 'Tier IV — Promote above pref', gpSplit: 0.20, hurdle: 0.15, description: 'Residual split until LP IRR reaches the hurdle' },
+      { id: 't5', kind: 'residual', name: 'Tier V — Above 15% LP IRR', gpSplit: 0.30, hurdle: null, description: 'All remaining proceeds above the final hurdle' },
+    ],
+    editing: null, draft: '', atlasOpen: false,
+  };
+
+  n(k) { return this.state.nums[k] !== undefined ? this.state.nums[k] : this.DEF[k]; }
+  edited(k) { return this.state.nums[k] !== undefined; }
+  money(v) { return (v < 0 ? '−$' : '$') + Math.round(Math.abs(v)).toLocaleString('en-US'); }
+  mm(v) { return '$' + (v / 1e6).toFixed(2) + 'M'; }
+  pct(v, d) { return (v * 100).toFixed(d === undefined ? 1 : d) + '%'; }
+  x(v) { return v.toFixed(2) + 'x'; }
+
+  irr(flows) {
+    const npv = r => flows.reduce((a, f, i) => a + f / Math.pow(1 + r, i), 0);
+    let lo = -0.9, hi = 3;
+    if (npv(lo) * npv(hi) > 0) return null;
+    for (let i = 0; i < 200; i++) {
+      const mid = (lo + hi) / 2;
+      if (npv(lo) * npv(mid) <= 0) hi = mid; else lo = mid;
+    }
+    return (lo + hi) / 2;
+  }
+
+  run() {
+    const gpPct = this.n('gpPct'), lpPct = 1 - gpPct;
+    const equity = this.LINKED.equity, hold = this.LINKED.holdYears;
+    const prefRate = this.n('prefRate');
+    const cap = { lp: equity * lpPct, gp: equity * gpPct };
+    const unret = { lp: cap.lp, gp: cap.gp };
+    const prefAcc = { lp: 0, gp: 0 };
+    const flows = { lp: [-cap.lp], gp: [-cap.gp], deal: [-equity] };
+    const tierTotals = {};
+    this.state.tiers.forEach(t => { tierTotals[t.id] = { lp: 0, gp: 0 }; });
+    const periods = [];
+    let prefPaid = 0, gpCatch = 0;
+    const promoteRate = (this.state.tiers.find(t => t.kind === 'residual') || { gpSplit: 0.2 }).gpSplit;
+    const residuals = this.state.tiers.filter(t => t.kind === 'residual');
+    const catchTier = this.state.tiers.find(t => t.kind === 'catchup');
+    const rocTier = this.state.tiers.find(t => t.kind === 'roc');
+    const prefTier = this.state.tiers.find(t => t.kind === 'pref');
+
+    for (let t = 1; t <= hold; t++) {
+      prefAcc.lp += unret.lp * prefRate;
+      prefAcc.gp += unret.gp * prefRate;
+      const operating = this.OPERATING[t - 1] || 0;
+      const exit = t === hold ? this.EXIT : 0;
+      let avail = operating + exit;
+      const paid = { lp: 0, gp: 0 };
+      const take = (who, amt, tierId) => { paid[who] += amt; avail -= amt; if (tierId) tierTotals[tierId][who] += amt; };
+
+      if (prefTier) {
+        const prefDue = prefAcc.lp + prefAcc.gp;
+        const p = Math.min(avail, prefDue);
+        if (p > 0) {
+          const shareLp = prefDue > 0 ? prefAcc.lp / prefDue : 0;
+          take('lp', p * shareLp, prefTier.id); take('gp', p * (1 - shareLp), prefTier.id);
+          prefAcc.lp -= p * shareLp; prefAcc.gp -= p * (1 - shareLp);
+          prefPaid += p;
+        }
+      }
+      if (rocTier && avail > 0) {
+        const due = unret.lp + unret.gp;
+        const p = Math.min(avail, due);
+        if (p > 0) {
+          const shareLp = due > 0 ? unret.lp / due : 0;
+          take('lp', p * shareLp, rocTier.id); take('gp', p * (1 - shareLp), rocTier.id);
+          unret.lp -= p * shareLp; unret.gp -= p * (1 - shareLp);
+        }
+      }
+      if (catchTier && avail > 0) {
+        const target = prefPaid * promoteRate / Math.max(0.0001, 1 - promoteRate);
+        const need = Math.max(0, target - gpCatch);
+        if (need > 0) {
+          const gpShare = catchTier.gpSplit;
+          const pot = Math.min(avail, gpShare > 0 ? need / gpShare : 0);
+          take('gp', pot * gpShare, catchTier.id); take('lp', pot * (1 - gpShare), catchTier.id);
+          gpCatch += pot * gpShare;
+        }
+      }
+      for (let i = 0; i < residuals.length && avail > 0.5; i++) {
+        const tier = residuals[i];
+        const gpShare = tier.gpSplit;
+        let amount = avail;
+        if (tier.hurdle != null) {
+          const base = flows.lp.slice();
+          while (base.length < t) base.push(0);
+          const lpSoFar = paid.lp;
+          const irrAt = a => {
+            const f = base.slice();
+            f[t] = (f[t] || 0) + lpSoFar + a * (1 - gpShare);
+            return this.irr(f);
+          };
+          const full = irrAt(avail);
+          if (full != null && full > tier.hurdle) {
+            let lo = 0, hi = avail;
+            for (let k = 0; k < 60; k++) {
+              const mid = (lo + hi) / 2;
+              const r = irrAt(mid);
+              if (r != null && r > tier.hurdle) hi = mid; else lo = mid;
+            }
+            amount = (lo + hi) / 2;
+          }
+        }
+        take('gp', amount * gpShare, tier.id);
+        take('lp', amount * (1 - gpShare), tier.id);
+      }
+
+      flows.lp.push(paid.lp); flows.gp.push(paid.gp); flows.deal.push(operating + exit);
+      periods.push({ year: t, deal: operating + exit, operating, exit, lp: paid.lp, gp: paid.gp });
+    }
+
+    const sum = a => a.reduce((x, y) => x + y, 0);
+    const lpDist = sum(flows.lp.slice(1)), gpDist = sum(flows.gp.slice(1)), dealDist = sum(flows.deal.slice(1));
+    return {
+      cap, periods, flows, tierTotals,
+      lpDist, gpDist, dealDist,
+      dealIRR: this.irr(flows.deal), lpIRR: this.irr(flows.lp), gpIRR: this.irr(flows.gp),
+      dealMOIC: dealDist / equity, lpMOIC: lpDist / cap.lp, gpMOIC: gpDist / cap.gp,
+      dealProfit: dealDist - equity, lpProfit: lpDist - cap.lp, gpProfit: gpDist - cap.gp,
+      promote: gpDist - dealDist * this.n('gpPct'),
+      equity, gpPct, lpPct, hold,
+    };
+  }
+
+  goFn(key) {
+    const HREFS = { dataroom:'./Data Room v2.dc.html', overview:'./Overview Tab v3.dc.html', market:'./Market Tab.dc.html', financials:'./Financials Tab.dc.html', investment:'./Investment Tab.dc.html', debt:'./Debt Tab.dc.html', partnership:'./Partnership Tab.dc.html', cashflow:'./Cash Flow Tab.dc.html', returns:'./Returns Tab.dc.html', scenarios:'./Scenarios Tab.dc.html', icmemo:'./IC Memo Tab.dc.html' };
+    const onNavigate = this.props.onNavigate;
+    return (e) => { if (e && e.stopPropagation) e.stopPropagation(); if (onNavigate) onNavigate(key); else window.location.href = HREFS[key]; };
+  }
+  buildNavItems(active) {
+    const ICONS = {
+      dataroom: "M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7z",
+      overview: "M6 3h9l4 4v14a1 1 0 0 1-1 1H6a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1zM9 12h6M9 16h6",
+      market: "M12 4a4 4 0 100 8 4 4 0 000-8zM4 21c0-4 3.6-6 8-6s8 2 8 6",
+      financials: "M4 20V10M11 20V4M18 20v-7",
+      investment: "M3 8h18v12a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V8zM8 8V6a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2",
+      debt: "M12 3a9 9 0 100 18 9 9 0 000-18zM12 7v10M9.5 9.5c0-1.4 1.1-2.5 2.5-2.5s2.5.7 2.5 2c0 2-5 1.5-5 4 0 1.3 1.1 2.5 2.5 2.5s2.5-1.1 2.5-2.5",
+      partnership: "M9 11a3 3 0 100-6 3 3 0 000 6zM17 11a3 3 0 100-6 3 3 0 000 6zM2 20c0-3 3-5 7-5M13 20c0-3 3-5 7-5",
+      cashflow: "M3 12h4l3 7 4-14 3 7h4",
+      returns: "M3 17l6-6 4 4 8-8M15 7h6v6",
+      scenarios: "M4 7h13l-3-3M4 7l3 3M20 17H7l3 3M20 17l-3-3",
+      icmemo: "M6 3h9l4 4v14a1 1 0 0 1-1 1H6a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1zM9 12h6M9 16h4M14 3v5h5",
+    };
+    const items = [['dataroom','Data Room'],['overview','Overview'],['market','Market'],['financials','Financials'],['investment','Investment'],['debt','Debt'],['partnership','Partnership'],['cashflow','Cash Flow'],['returns','Returns'],['scenarios','Scenario Analysis'],['icmemo','IC Memo']];
+    return items.map(([key, label]) => ({
+      key, label, icon: ICONS[key],
+      color: key === active ? '#14213d' : '#9a9a95',
+      weight: key === active ? 700 : 500,
+      border: key === active ? '2px solid #14213d' : '2px solid transparent',
+      onClick: key === active ? null : this.goFn(key),
+    }));
+  }
+
+  dot(kind) {
+    if (kind === 'linked') return { dotFill: '#fff', dotBorder: '2px solid ' + this.GREEN };
+    if (kind === 'input') return { dotFill: this.BLUE, dotBorder: 'none' };
+    if (kind === 'awaiting') return { dotFill: '#fff', dotBorder: '1px dashed ' + this.MUTED };
+    return { dotFill: this.GRAY, dotBorder: 'none' };
+  }
+  colorFor(kind, bold) {
+    if (bold) return this.BLACK;
+    if (kind === 'input') return this.BLUE;
+    if (kind === 'linked') return this.GREEN;
+    if (kind === 'awaiting') return this.MUTED;
+    return this.GRAY;
+  }
+
+  field(def) {
+    const { id, label, kind, value, editKey, fmt, bold, note, linkLabel, linkKey, title } = def;
+    const editable = !!editKey;
+    const isEditing = this.state.editing === id;
+    return Object.assign({
+      label, value, isEditing, isStatic: !isEditing && !def.isSelect, isSelect: !!def.isSelect,
+      options: def.options || [], onSelect: def.onSelect || null,
+      draft: this.state.draft,
+      color: this.colorFor(kind, bold), weight: bold ? 700 : 400,
+      underline: editable ? 'underline dotted' : 'none',
+      cursor: editable ? 'pointer' : 'default',
+      title: title || (editable ? 'Click to change — you own this assumption' : kind === 'linked' ? 'Linked from another engine' : 'Calculated by Fondok'),
+      hasNote: !!note, note: note || '',
+      hasLink: !!linkLabel, linkLabel: linkLabel || '', goLink: linkKey ? this.goFn(linkKey) : null,
+      onClick: editable ? () => this.setState({ editing: id, draft: fmt === 'pct' ? (this.n(editKey) * 100).toFixed(1) : String(this.n(editKey)) }) : null,
+      onDraft: (e) => this.setState({ draft: e.target.value }),
+      onKey: (e) => { if (e.key === 'Enter') this.commit(editKey, fmt); if (e.key === 'Escape') this.setState({ editing: null }); },
+      save: () => this.commit(editKey, fmt),
+    }, this.dot(kind));
+  }
+  commit(key, fmt) {
+    const v = Number(String(this.state.draft).replace(/[^0-9.\-]/g, ''));
+    if (!Number.isFinite(v)) { this.setState({ editing: null }); return; }
+    const nums = Object.assign({}, this.state.nums);
+    nums[key] = fmt === 'pct' ? v / 100 : v;
+    this.setState({ nums, editing: null, draft: '' });
+  }
+  setTier(id, patch) {
+    this.setState(s => ({ tiers: s.tiers.map(t => t.id === id ? Object.assign({}, t, patch) : t), editing: null, draft: '' }));
+  }
+
+  renderVals() {
+    const r = this.run();
+    const F = d => this.field(d);
+    const hold = this.LINKED.holdYears;
+
+    const equityRows = [
+      F({ id: 'equity', label: 'Total Equity', kind: 'linked', value: this.money(r.equity), bold: true, linkLabel: '→ Investment', linkKey: 'investment', note: 'Total uses less senior debt and key money — set by the deal financing, not here' }),
+      F({ id: 'gpPct', label: 'GP / Sponsor Ownership', kind: 'input', value: this.pct(r.gpPct), editKey: 'gpPct', fmt: 'pct' }),
+      F({ id: 'lpPct', label: 'LP Investor Ownership', kind: 'calc', value: this.pct(r.lpPct), title: '100% − GP ownership' }),
+      F({ id: 'gpCont', label: 'GP Contribution', kind: 'calc', value: this.money(r.cap.gp) }),
+      F({ id: 'lpCont', label: 'LP Contribution', kind: 'calc', value: this.money(r.cap.lp) }),
+    ];
+
+    const promoteTier = this.state.tiers.find(t => t.kind === 'residual');
+    const extraHurdles = this.state.tiers.filter(t => t.kind === 'residual' && t.hurdle != null);
+    const waterfallRows = [
+      F({ id: 'pref', label: 'Preferred Return', kind: 'input', value: this.pct(this.n('prefRate')), editKey: 'prefRate', fmt: 'pct' }),
+      F({ id: 'compounding', label: 'Compounding', kind: 'input', value: this.state.compounding, title: 'Edit in the Waterfall tab' }),
+      F({ id: 'catchup', label: 'GP Catch-Up', kind: 'input', value: this.pct((this.state.tiers.find(t => t.kind === 'catchup') || {}).gpSplit || 0, 0) + ' / ' + this.pct(1 - ((this.state.tiers.find(t => t.kind === 'catchup') || {}).gpSplit || 0), 0) + ' until caught up', title: 'Edit in the Waterfall tab' }),
+      F({ id: 'promote', label: 'Promote Above Pref', kind: 'input', value: this.pct(promoteTier ? promoteTier.gpSplit : 0, 0), title: 'Edit in the Waterfall tab' }),
+      extraHurdles.length
+        ? F({ id: 'hurdles', label: 'Additional Hurdles', kind: 'calc', value: extraHurdles.map(t => this.pct(t.hurdle, 0) + ' LP IRR').join(' · ') })
+        : F({ id: 'hurdles', label: 'Additional Hurdles', kind: 'awaiting', value: 'None configured', note: 'Add a tier in Waterfall to model an additional IRR hurdle' }),
+    ];
+
+    const tierRows = this.state.tiers.map((t, i) => {
+      const editable = t.kind === 'catchup' || t.kind === 'residual';
+      const hurdleEditable = t.kind === 'residual';
+      const hurdleId = t.id + '-h', splitId = t.id + '-s';
+      return {
+        index: String(i + 1), name: t.name, description: t.description,
+        hurdle: t.kind === 'roc' ? 'Contributed capital' : t.kind === 'pref' ? this.pct(this.n('prefRate')) + ' preferred return' : t.kind === 'catchup' ? 'Until GP catches up' : t.hurdle != null ? 'Until ' + this.pct(t.hurdle, 0) + ' LP IRR' : 'Thereafter',
+        hurdleColor: hurdleEditable && t.hurdle != null ? this.BLUE : this.GRAY,
+        hurdleUnderline: hurdleEditable ? 'underline dotted' : 'none',
+        hurdleCursor: hurdleEditable ? 'pointer' : 'default',
+        hurdleEditing: this.state.editing === hurdleId,
+        hurdleStatic: this.state.editing !== hurdleId,
+        editHurdle: hurdleEditable ? () => this.setState({ editing: hurdleId, draft: t.hurdle != null ? (t.hurdle * 100).toFixed(0) : '' }) : null,
+        onHurdleKey: (e) => { if (e.key === 'Enter') this.saveHurdle(t.id); if (e.key === 'Escape') this.setState({ editing: null }); },
+        saveHurdle: () => this.saveHurdle(t.id),
+        gpSplit: t.gpSplit == null ? '—' : this.pct(t.gpSplit, 0),
+        lpSplit: t.gpSplit == null ? '—' : this.pct(1 - t.gpSplit, 0),
+        splitColor: editable ? this.BLUE : this.GRAY,
+        splitUnderline: editable ? 'underline dotted' : 'none',
+        splitCursor: editable ? 'pointer' : 'default',
+        splitEditing: this.state.editing === splitId,
+        splitStatic: this.state.editing !== splitId,
+        editSplit: editable ? () => this.setState({ editing: splitId, draft: (t.gpSplit * 100).toFixed(0) }) : null,
+        onSplitKey: (e) => { if (e.key === 'Enter') this.saveSplit(t.id); if (e.key === 'Escape') this.setState({ editing: null }); },
+        saveSplit: () => this.saveSplit(t.id),
+        draft: this.state.draft,
+        onDraft: (e) => this.setState({ draft: e.target.value }),
+        removeMark: editable && t.kind === 'residual' && this.state.tiers.filter(x => x.kind === 'residual').length > 1 ? '✕' : '',
+        removeColor: '#b0afaa',
+        removeCursor: 'pointer',
+        removeTitle: 'Remove this tier',
+        remove: () => this.setState(s => ({ tiers: s.tiers.filter(x => x.id !== t.id) })),
+        dotFill: editable ? this.BLUE : this.GRAY, dotBorder: 'none',
+      };
+    });
+
+    const allocation = this.state.tiers.map(t => {
+      const a = r.tierTotals[t.id] || { lp: 0, gp: 0 };
+      return { tier: t.name, lp: this.money(a.lp), gp: this.money(a.gp), total: this.money(a.lp + a.gp), color: this.GRAY, weight: 400 };
+    }).concat([{ tier: 'Total distributions', lp: this.money(r.lpDist), gp: this.money(r.gpDist), total: this.money(r.dealDist), color: this.BLACK, weight: 700 }]);
+
+    const dash = { text: '—', color: this.MUTED };
+    const operatingTotal = r.periods.reduce((a, p) => a + p.operating, 0);
+    const cfRows = [{
+      period: 'Close', weight: 400, bg: '#fbfbf9',
+      cells: [
+        dash, dash, dash,
+        { text: this.money(r.cap.gp), color: this.BLUE },
+        { text: this.money(r.cap.lp), color: this.BLUE },
+        dash, dash,
+      ],
+    }].concat(r.periods.map(p => ({
+      period: p.exit ? 'Year ' + p.year + ' / Exit' : 'Year ' + p.year, weight: 400, bg: 'transparent',
+      cells: [
+        { text: this.money(p.operating), color: this.GRAY },
+        p.exit ? { text: this.money(p.exit), color: this.GRAY } : dash,
+        { text: this.money(p.deal), color: this.GRAY },
+        dash, dash,
+        { text: this.money(p.gp), color: this.GRAY },
+        { text: this.money(p.lp), color: this.GRAY },
+      ],
+    }))).concat([{
+      period: 'Total', weight: 700, bg: '#fbfbf9',
+      cells: [
+        { text: this.money(operatingTotal), color: this.BLACK },
+        { text: this.money(this.EXIT), color: this.BLACK },
+        { text: this.money(r.dealDist), color: this.BLACK },
+        { text: this.money(r.cap.gp), color: this.BLACK },
+        { text: this.money(r.cap.lp), color: this.BLACK },
+        { text: this.money(r.gpDist), color: this.BLACK },
+        { text: this.money(r.lpDist), color: this.BLACK },
+      ],
+    }]);
+
+    return {
+      navItems: this.buildNavItems('partnership'),
+      atlasTransform: this.state.atlasOpen ? 'translateX(0)' : 'translateX(100%)',
+      toggleAtlas: () => this.setState(s => ({ atlasOpen: !s.atlasOpen })),
+      closeAtlas: () => this.setState({ atlasOpen: false }),
+      atlasSummary: 'On the current terms the deal returns ' + this.pct(r.dealIRR || 0) + ' / ' + this.x(r.dealMOIC) + '; the LP receives ' + this.pct(r.lpIRR || 0) + ' / ' + this.x(r.lpMOIC) + ' and the GP earns ' + this.money(r.promote) + ' of promote above its pro-rata share.',
+      holdYears: hold,
+
+      subTabs: ['Summary', 'Waterfall', 'Cash Flows'].map(label => {
+        const active = label === this.state.tab;
+        return {
+          label, weight: active ? 700 : 500, color: active ? '#14213d' : '#9a9a95',
+          border: active ? '2px solid #14213d' : '2px solid transparent',
+          select: () => this.setState({ tab: label, editing: null }),
+        };
+      }),
+      subTabCaption: this.state.tab === 'Summary' ? 'Equity split, waterfall terms and partner returns'
+        : this.state.tab === 'Waterfall' ? 'The partnership assumption workspace'
+        : 'Contributions and distributions through exit',
+      isSummary: this.state.tab === 'Summary',
+      isWaterfall: this.state.tab === 'Waterfall',
+      isCashFlows: this.state.tab === 'Cash Flows',
+      needsReview: !this.state.reviewed,
+      markReviewed: () => this.setState({ reviewed: true }),
+      goWaterfall: () => this.setState({ tab: 'Waterfall' }),
+
+      summaryCards: [
+        { title: 'Equity Structure', note: 'Total equity comes from the deal financing', rows: equityRows },
+        { title: 'Waterfall Terms', note: 'Your inputs — not extracted from the JV agreement', rows: waterfallRows },
+      ],
+
+      partnerReturns: [
+        {
+          title: 'Deal level', border: '#eae9e4', bg: '#fff', titleColor: '#8a8a86',
+          note: 'Before the partnership split — what the investment itself generates.',
+          metrics: [
+            { label: 'IRR', value: this.pct(r.dealIRR || 0), size: '18px' },
+            { label: 'MOIC', value: this.x(r.dealMOIC), size: '18px' },
+            { label: 'Total profit', value: this.money(r.dealProfit), size: '14px' },
+          ],
+        },
+        {
+          title: 'LP investors', border: '#eae9e4', bg: '#fff', titleColor: '#8a8a86',
+          note: this.pct(r.lpPct) + ' of the equity · receives pref before any promote is paid.',
+          metrics: [
+            { label: 'LP IRR', value: this.pct(r.lpIRR || 0), size: '18px' },
+            { label: 'LP MOIC', value: this.x(r.lpMOIC), size: '18px' },
+            { label: 'LP profit', value: this.money(r.lpProfit), size: '14px' },
+          ],
+        },
+        {
+          title: 'GP / sponsor', border: '#dbe3f5', bg: 'oklch(97.5% 0.015 250)', titleColor: '#2f4a8c',
+          note: 'Co-invest of ' + this.pct(r.gpPct) + ' plus promote earned through the waterfall.',
+          metrics: [
+            { label: 'GP IRR', value: this.pct(r.gpIRR || 0), size: '18px', title: '' },
+            { label: 'GP MOIC', value: this.x(r.gpMOIC), size: '18px', title: '' },
+            { label: 'Total GP profit', value: this.money(r.gpProfit), size: '14px', title: 'Co-invest return plus promote' },
+            { label: 'Promote / carry earned', value: this.money(r.promote), size: '14px', title: 'Incremental distributions received by the GP through the promote structure, excluding returns attributable to the GP\u2019s invested capital.' },
+            { label: 'GP co-invest', value: this.pct(r.gpPct), size: '14px', title: 'The GP\u2019s share of contributed equity' },
+          ],
+        },
+      ],
+
+      allocationPreview: allocation,
+      ownershipRows: [
+        F({ id: 'gpPct2', label: 'GP / Sponsor Ownership', kind: 'input', value: this.pct(r.gpPct), editKey: 'gpPct', fmt: 'pct' }),
+        F({ id: 'lpPct2', label: 'LP Investor Ownership', kind: 'calc', value: this.pct(r.lpPct) }),
+        F({ id: 'pref2', label: 'Preferred Return', kind: 'input', value: this.pct(this.n('prefRate')), editKey: 'prefRate', fmt: 'pct' }),
+        F({ id: 'compounding2', label: 'Compounding', kind: 'input', value: this.state.compounding, isSelect: true, options: ['Annual / cumulative', 'Annual / non-cumulative', 'Quarterly / cumulative'], onSelect: (e) => this.setState({ compounding: e.target.value }) }),
+      ],
+      tiers: tierRows,
+      addTier: () => this.setState(s => {
+        const id = 't' + (Date.now() % 100000);
+        const idx = s.tiers.map(t => t.kind).lastIndexOf('residual');
+        const tier = { id, kind: 'residual', name: 'New hurdle', gpSplit: 0.35, hurdle: 0.20, description: 'Residual split above the hurdle' };
+        const next = s.tiers.slice();
+        next.splice(idx >= 0 ? idx : next.length, 0, tier);
+        return { tiers: next };
+      }),
+
+      cashFlowCaption: 'Annual · close through disposition in year ' + hold,
+      cfHeaders: [
+        { label: 'Period', align: 'left' },
+        { label: 'Operating cash flow', align: 'right' }, { label: 'Exit proceeds', align: 'right' },
+        { label: 'Total deal cash flow', align: 'right' },
+        { label: 'GP contribution', align: 'right' }, { label: 'LP contribution', align: 'right' },
+        { label: 'GP distribution', align: 'right' }, { label: 'LP distribution', align: 'right' },
+      ],
+      cfRows,
+      reconCheck: 'LP ' + this.money(r.lpDist) + ' + GP ' + this.money(r.gpDist) + ' = ' + this.money(r.lpDist + r.gpDist) + ' total deal distributions ✓',
+      reconciliation: [
+        {
+          title: 'Contributions, distributions and profit', note: 'Net profit is total distributions less total contributions — not a cash-flow total.',
+          rows: [
+            { label: 'Total contributions', value: this.money(r.equity), color: this.GRAY, labelColor: '#6b6f76', weight: 400 },
+            { label: 'Total distributions', value: this.money(r.dealDist), color: this.GRAY, labelColor: '#6b6f76', weight: 400 },
+            { label: 'Net profit', value: this.money(r.dealDist - r.equity), color: this.BLACK, labelColor: '#1a2233', weight: 700 },
+          ],
+        },
+        {
+          title: 'Invested equity', note: 'Contributions are drawn in full at close in this structure.',
+          rows: [
+            { label: 'Initial equity required', value: this.money(r.equity), color: this.GRAY, labelColor: '#6b6f76', weight: 400 },
+            { label: 'Additional contributions', value: this.money(0), color: this.MUTED, labelColor: '#6b6f76', weight: 400 },
+            { label: 'Total invested equity', value: this.money(r.equity), color: this.BLACK, labelColor: '#1a2233', weight: 700 },
+            { label: 'GP share', value: this.money(r.cap.gp), color: this.GRAY, labelColor: '#6b6f76', weight: 400 },
+            { label: 'LP share', value: this.money(r.cap.lp), color: this.GRAY, labelColor: '#6b6f76', weight: 400 },
+          ],
+        },
+        {
+          title: 'Distributions', note: 'GP and LP distributions reconcile to the deal cash flow above.',
+          rows: [
+            { label: 'Operating distributions', value: this.money(r.dealDist - this.EXIT), color: this.GRAY, labelColor: '#6b6f76', weight: 400 },
+            { label: 'Exit distributions', value: this.money(this.EXIT), color: this.GRAY, labelColor: '#6b6f76', weight: 400 },
+            { label: 'Total distributions', value: this.money(r.dealDist), color: this.BLACK, labelColor: '#1a2233', weight: 700 },
+            { label: 'GP distributions', value: this.money(r.gpDist), color: this.GRAY, labelColor: '#6b6f76', weight: 400 },
+            { label: 'LP distributions', value: this.money(r.lpDist), color: this.GRAY, labelColor: '#6b6f76', weight: 400 },
+          ],
+        },
+      ],
+    };
+  }
+
+  saveHurdle(id) {
+    const raw = String(this.state.draft).trim();
+    const v = Number(raw.replace(/[^0-9.\-]/g, ''));
+    this.setTier(id, { hurdle: raw === '' || !Number.isFinite(v) ? null : v / 100 });
+  }
+  saveSplit(id) {
+    const v = Number(String(this.state.draft).replace(/[^0-9.\-]/g, ''));
+    if (!Number.isFinite(v)) { this.setState({ editing: null }); return; }
+    this.setTier(id, { gpSplit: Math.max(0, Math.min(1, v / 100)) });
+  }
+}
+</script>
+</body>
+</html>

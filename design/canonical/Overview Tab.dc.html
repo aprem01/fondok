@@ -1,0 +1,383 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+  <style>body{margin:0;background:#f5f4f0;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,Arial,sans-serif;}a{color:#2f4a8c}a:hover{color:#1f3568}</style>
+</helmet>
+<template id="__bundler_thumbnail">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 120 56" data-bg-color="#14213d"><rect width="120" height="56" fill="#14213d"/><path d="M28 10h50l14 14v22a4 4 0 01-4 4H28a4 4 0 01-4-4V14a4 4 0 014-4z" stroke="#f5f4f0" stroke-width="3" fill="none"/></svg>
+</template>
+<div style="display:flex;min-height:100vh">
+  <div style="width:210px;background:#0f1a30;padding:22px 16px;display:flex;flex-direction:column;gap:2px;flex-shrink:0">
+    <div style="display:flex;align-items:center;gap:8px;color:#fff;font-weight:700;font-size:16px;margin-bottom:24px"><div style="width:28px;height:28px;background:#2f4a8c;border-radius:6px;display:flex;align-items:center;justify-content:center;font-size:13px">F</div>Fondok.</div>
+    <div style="color:#c9cede;font-size:12.5px;padding:8px 10px;border-radius:6px;background:rgba(255,255,255,.06);margin-bottom:16px;display:flex;justify-content:space-between">fondok.ai <span>⌄</span></div>
+    <div style="color:#8b93a7;font-size:13px;padding:8px 10px;display:flex;gap:9px">⊞ Dashboard</div>
+    <div style="color:#fff;background:rgba(255,255,255,.09);font-size:13px;font-weight:600;padding:8px 10px;border-radius:6px;display:flex;gap:9px">▤ Projects</div>
+    <div style="color:#8b93a7;font-size:13px;padding:8px 10px;display:flex;gap:9px">📈 Pipeline</div>
+    <div style="color:#8b93a7;font-size:13px;padding:8px 10px;display:flex;gap:9px">◔ Audit</div>
+    <div style="color:#8b93a7;font-size:13px;padding:8px 10px;display:flex;gap:9px">$ Cost</div>
+    <div style="color:#8b93a7;font-size:13px;padding:8px 10px;display:flex;gap:9px">▥ Data Library</div>
+    <div style="color:#8b93a7;font-size:13px;padding:8px 10px;display:flex;gap:9px">▦ Methodology</div>
+    <div style="color:#8b93a7;font-size:13px;padding:8px 10px;display:flex;gap:9px">◷ Settings</div>
+  </div>
+  <div style="flex:1;min-width:0">
+    <div style="padding:22px 32px 0">
+      <div style="font-size:11.5px;color:#9a9a95;margin-bottom:10px">← BACK TO PROJECTS</div>
+      <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;row-gap:8px;margin-bottom:10px">
+        <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap"><h1 style="font-size:26px;margin:0;color:#1a2233;font-weight:600;white-space:nowrap;flex-shrink:0">Kimpton Hotel</h1><span style="color:#9a9a95;font-size:11px;font-weight:600;letter-spacing:.04em;white-space:nowrap;flex-shrink:0">DRAFT</span></div>
+        <div style="display:flex;gap:14px;align-items:center;flex-wrap:wrap">
+          <button onClick="{{ toggleAtlas }}" style="display:flex;align-items:center;gap:6px;background:#eef2fb;border:1px solid #dbe3f5;color:#2f4a8c;border-radius:6px;padding:8px 14px;font-size:12px;font-weight:600;cursor:pointer;white-space:nowrap">✦ Ask Atlas</button>
+          <button style="background:#14213d;color:#fff;border:none;border-radius:6px;padding:8px 16px;font-size:12.5px;font-weight:600;white-space:nowrap">Share</button>
+        </div>
+      </div>
+      <div style="font-size:12.5px;color:#9a9a95;margin-bottom:20px;display:flex;gap:18px">
+        <span>660 Washington Avenue, Miami Beach, FL 33139</span><span>132 keys</span><span>Created 7/30/2026</span>
+      </div>
+      <div style="display:flex;gap:22px;border-bottom:1px solid #ececea;font-size:13.5px;font-weight:500;color:#9a9a95;overflow-x:auto">
+        <sc-for list="{{ navItems }}" as="nav" hint-placeholder-count="11">
+          <div onClick="{{ nav.onClick }}" style="display:flex;align-items:center;gap:6px;padding-bottom:10px;white-space:nowrap;cursor:pointer;color:{{ nav.color }};font-weight:{{ nav.weight }};border-bottom:{{ nav.border }}">
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="{{ nav.icon }}"></path></svg>{{ nav.label }}
+          </div>
+        </sc-for>
+      </div>
+    </div>
+
+    <div style="padding:20px 32px 60px">
+      <p style="font-size:13px;color:#8a8a86;line-height:1.6;margin:0 0 14px;max-width:800px">The executive rollup — home base for the deal team. Every section pulls from its engine; click through to drill in. Nothing here is entered directly except the investment profile below.</p>
+
+      <div style="display:flex;align-items:center;gap:16px;flex-wrap:wrap;background:#fbfbf9;border:1px solid #eae9e4;border-radius:8px;padding:8px 14px;margin-bottom:18px;font-size:11px;color:#6b6f76">
+        <span style="font-weight:700;color:#8a8a86;letter-spacing:.02em">DATA KEY</span>
+        <span style="display:flex;align-items:center;gap:5px"><span style="width:7px;height:7px;border-radius:50%;background:oklch(45% 0.12 155);display:inline-block"></span>Linked / Extracted</span>
+        <span style="display:flex;align-items:center;gap:5px"><span style="width:7px;height:7px;border-radius:50%;background:oklch(50% 0.14 40);box-shadow:0 0 0 3px oklch(92% 0.05 25 / .8);display:inline-block"></span>Needs review</span>
+        <span style="display:flex;align-items:center;gap:5px"><span style="width:7px;height:7px;border-radius:50%;background:oklch(45% 0.14 260);display:inline-block"></span>User input / assumption</span>
+        <span style="display:flex;align-items:center;gap:5px"><span style="width:7px;height:7px;border-radius:50%;background:#1a2233;display:inline-block"></span>Calculated</span>
+        <span style="display:flex;align-items:center;gap:5px"><span style="text-decoration:underline dotted;color:#6b6f76">123</span>Editable</span>
+        <span title="Green = linked to or extracted from a source document. Amber with a light red highlight = extracted but flagged for review. Blue = you typed it in (an assumption or override). Black = calculated by the model, not editable. A dotted underline means the value is editable." style="cursor:help;color:#9a9a95;margin-left:auto">ⓘ Colors explained</span>
+      </div>
+
+      <div style="background:#fff;border:1px solid #eae9e4;border-radius:10px;padding:18px 20px;margin-bottom:24px;display:grid;grid-template-columns:150px 1fr;gap:24px;align-items:start">
+        <div style="display:flex;flex-direction:column;gap:4px;padding-top:2px">
+          <div style="font-size:11px;font-weight:700;letter-spacing:.06em;color:#8a8a86;text-transform:uppercase;line-height:1.3">Investment Profile</div>
+          <div style="font-size:11px;color:#b0afaa;line-height:1.4">Set in project setup — editable here</div>
+        </div>
+        <div style="display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px 22px">
+          <div style="display:flex;flex-direction:column;gap:6px;min-width:0">
+            <div style="font-size:10.5px;font-weight:700;letter-spacing:.06em;color:#9a9a95;text-transform:uppercase;display:flex;align-items:center;gap:5px">Deal Type<sc-if value="{{ dealTypeEdited }}" hint-placeholder-val="{{ false }}"><span title="Changed by you" style="color:oklch(45% 0.14 260);font-weight:700">✎</span></sc-if></div>
+            <div style="display:inline-flex;background:#f3f2ee;border:1px solid #eae9e4;border-radius:7px;padding:2px;width:fit-content">
+              <sc-for list="{{ dealTypes }}" as="d" hint-placeholder-count="2">
+                <button onClick="{{ d.select }}" style="font-size:12.5px;font-family:inherit;border:none;cursor:pointer;font-weight:{{ d.weight }};color:{{ d.color }};background:{{ d.bg }};border-radius:5px;padding:5px 14px;white-space:nowrap;box-shadow:{{ d.shadow }}">{{ d.label }}</button>
+              </sc-for>
+            </div>
+          </div>
+          <sc-for list="{{ profileFields }}" as="f" hint-placeholder-count="3">
+            <div style="display:flex;flex-direction:column;gap:6px;min-width:0">
+              <div style="font-size:10.5px;font-weight:700;letter-spacing:.06em;color:#9a9a95;text-transform:uppercase;display:flex;align-items:center;gap:5px">{{ f.label }}<sc-if value="{{ f.edited }}" hint-placeholder-val="{{ false }}"><span title="Changed by you" style="color:oklch(45% 0.14 260);font-weight:700">✎</span></sc-if></div>
+              <select value="{{ f.value }}" onChange="{{ f.onChange }}" style="width:100%;font-size:12.5px;font-family:inherit;font-weight:600;color:oklch(45% 0.14 260);background:#fbfbf9;border:1px solid #e2e1dc;border-radius:7px;padding:7px 11px;cursor:pointer;text-overflow:ellipsis">
+                <sc-for list="{{ f.options }}" as="opt" hint-placeholder-count="3">
+                  <option value="{{ opt }}">{{ opt }}</option>
+                </sc-for>
+              </select>
+            </div>
+          </sc-for>
+        </div>
+      </div>
+
+      <div style="display:grid;grid-template-columns:repeat(5,1fr);gap:14px;margin-bottom:24px">
+        <sc-for list="{{ kpis }}" as="k" hint-placeholder-count="5">
+          <div style="background:#fff;border:1px solid #eae9e4;border-radius:10px;padding:16px 18px">
+            <div style="font-size:11px;font-weight:700;letter-spacing:.03em;color:#8a8a86;text-transform:uppercase;margin-bottom:8px">{{ k.label }}</div>
+            <div style="font-size:22px;font-weight:700;color:#1a2233">{{ k.value }}</div>
+          </div>
+        </sc-for>
+      </div>
+
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-bottom:16px">
+        <div onClick="{{ goToInvestment }}" style="background:#fff;border:1px solid #eae9e4;border-radius:10px;padding:18px 20px;cursor:pointer">
+          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px"><span style="font-size:12px;font-weight:700;color:#8a8a86;text-transform:uppercase;letter-spacing:.03em">Deal Overview → Investment</span><span style="color:#9a9a95">↗</span></div>
+          <div style="display:flex;flex-direction:column;gap:8px">
+            <sc-for list="{{ dealOverview }}" as="r" hint-placeholder-count="5">
+              <div style="display:flex;justify-content:space-between;font-size:13px"><span style="color:#6b6f76">{{ r.label }}</span><span style="color:{{ r.color }};font-weight:{{ r.weight }}">{{ r.value }}</span></div>
+            </sc-for>
+          </div>
+        </div>
+        <div onClick="{{ goToFinancials }}" style="background:#fff;border:1px solid #eae9e4;border-radius:10px;padding:18px 20px;cursor:pointer">
+          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px"><span style="font-size:12px;font-weight:700;color:#8a8a86;text-transform:uppercase;letter-spacing:.03em">Historical Performance → Financials</span><span style="color:#9a9a95">↗</span></div>
+          <div style="display:flex;flex-direction:column;gap:8px">
+            <sc-for list="{{ historical }}" as="r" hint-placeholder-count="4">
+              <div style="display:flex;justify-content:space-between;font-size:13px"><span style="color:#6b6f76">{{ r.label }}</span><span style="color:{{ r.color }};font-weight:{{ r.weight }}">{{ r.value }}</span></div>
+            </sc-for>
+          </div>
+        </div>
+      </div>
+
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-bottom:16px">
+        <div onClick="{{ goToFinancials }}" style="background:#fff;border:1px solid #eae9e4;border-radius:10px;padding:18px 20px;cursor:pointer">
+          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px"><span style="font-size:12px;font-weight:700;color:#8a8a86;text-transform:uppercase;letter-spacing:.03em">Forward Projections → Financials</span><span style="color:#9a9a95">↗</span></div>
+          <div style="display:flex;flex-direction:column;gap:8px">
+            <sc-for list="{{ projections }}" as="r" hint-placeholder-count="4">
+              <div style="display:flex;justify-content:space-between;font-size:13px"><span style="color:#6b6f76">{{ r.label }}</span><span style="color:{{ r.color }};font-weight:{{ r.weight }}">{{ r.value }}</span></div>
+            </sc-for>
+          </div>
+        </div>
+        <div style="background:#fff;border:1px solid #eae9e4;border-radius:10px;padding:18px 20px">
+          <div style="font-size:12px;font-weight:700;color:#8a8a86;text-transform:uppercase;letter-spacing:.03em;margin-bottom:12px">Key Underwriting Assumptions</div>
+          <div style="display:flex;flex-direction:column;gap:8px">
+            <sc-for list="{{ assumptions }}" as="r" hint-placeholder-count="4">
+              <div style="display:flex;justify-content:space-between;font-size:13px"><span style="color:#6b6f76">{{ r.label }}</span><span style="color:{{ r.color }};font-weight:{{ r.weight }}">{{ r.value }}</span></div>
+            </sc-for>
+          </div>
+        </div>
+      </div>
+
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-bottom:16px">
+        <div onClick="{{ goToInvestment }}" style="background:#fff;border:1px solid #eae9e4;border-radius:10px;padding:18px 20px;cursor:pointer">
+          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px"><span style="font-size:12px;font-weight:700;color:#8a8a86;text-transform:uppercase;letter-spacing:.03em">CapEx</span><span style="color:#9a9a95">↗</span></div>
+          <div style="display:flex;flex-direction:column;gap:8px">
+            <sc-for list="{{ capexSummary }}" as="r" hint-placeholder-count="3">
+              <div style="display:flex;justify-content:space-between;font-size:13px"><span style="color:#6b6f76">{{ r.label }}</span><span style="color:{{ r.color }};font-weight:{{ r.weight }}">{{ r.value }}</span></div>
+            </sc-for>
+          </div>
+        </div>
+        <div onClick="{{ goToDebt }}" style="background:#fff;border:1px solid #eae9e4;border-radius:10px;padding:18px 20px;cursor:pointer">
+          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px"><span style="font-size:12px;font-weight:700;color:#8a8a86;text-transform:uppercase;letter-spacing:.03em">Debt</span><span style="color:#9a9a95">↗</span></div>
+          <div style="display:flex;flex-direction:column;gap:8px">
+            <sc-for list="{{ debtSummary }}" as="r" hint-placeholder-count="3">
+              <div style="display:flex;justify-content:space-between;font-size:13px"><span style="color:#6b6f76">{{ r.label }}</span><span style="color:{{ r.color }};font-weight:{{ r.weight }}">{{ r.value }}</span></div>
+            </sc-for>
+          </div>
+        </div>
+      </div>
+
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-bottom:16px">
+        <div onClick="{{ goToCashflow }}" style="background:#fff;border:1px solid #eae9e4;border-radius:10px;padding:18px 20px;cursor:pointer">
+          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px"><span style="font-size:12px;font-weight:700;color:#8a8a86;text-transform:uppercase;letter-spacing:.03em">Cash Flow</span><span style="color:#9a9a95">↗</span></div>
+          <div style="display:flex;flex-direction:column;gap:8px">
+            <sc-for list="{{ cashflowSummary }}" as="r" hint-placeholder-count="3">
+              <div style="display:flex;justify-content:space-between;font-size:13px"><span style="color:#6b6f76">{{ r.label }}</span><span style="color:{{ r.color }};font-weight:{{ r.weight }}">{{ r.value }}</span></div>
+            </sc-for>
+          </div>
+        </div>
+        <div onClick="{{ goToReturns }}" style="background:#fff;border:1px solid #eae9e4;border-radius:10px;padding:18px 20px;cursor:pointer">
+          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px"><span style="font-size:12px;font-weight:700;color:#8a8a86;text-transform:uppercase;letter-spacing:.03em">Returns</span><span style="color:#9a9a95">↗</span></div>
+          <div style="display:flex;flex-direction:column;gap:8px">
+            <sc-for list="{{ returnsSummary }}" as="r" hint-placeholder-count="4">
+              <div style="display:flex;justify-content:space-between;font-size:13px"><span style="color:#6b6f76">{{ r.label }}</span><span style="color:{{ r.color }};font-weight:{{ r.weight }}">{{ r.value }}</span></div>
+            </sc-for>
+          </div>
+        </div>
+      </div>
+
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-bottom:16px">
+        <div onClick="{{ goToMarket }}" style="background:#fff;border:1px solid #eae9e4;border-radius:10px;padding:18px 20px;cursor:pointer">
+          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px"><span style="font-size:12px;font-weight:700;color:#8a8a86;text-transform:uppercase;letter-spacing:.03em">Key Market Metrics</span><span style="color:#9a9a95">↗</span></div>
+          <div style="display:flex;flex-direction:column;gap:8px">
+            <sc-for list="{{ marketSummary }}" as="r" hint-placeholder-count="3">
+              <div style="display:flex;justify-content:space-between;font-size:13px"><span style="color:#6b6f76">{{ r.label }}</span><span style="color:{{ r.color }};font-weight:{{ r.weight }}">{{ r.value }}</span></div>
+            </sc-for>
+          </div>
+        </div>
+        <div onClick="{{ goToScenarios }}" style="background:#fff;border:1px solid #eae9e4;border-radius:10px;padding:18px 20px;cursor:pointer">
+          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px"><span style="font-size:12px;font-weight:700;color:#8a8a86;text-transform:uppercase;letter-spacing:.03em">Key Risks / Flags → Scenario Analysis</span><span style="color:#9a9a95">↗</span></div>
+          <div style="display:flex;flex-direction:column;gap:6px">
+            <sc-for list="{{ riskSummary }}" as="r" hint-placeholder-count="3">
+              <div style="font-size:12.5px;color:oklch(50% 0.14 40)">⚠ {{ r }}</div>
+            </sc-for>
+          </div>
+        </div>
+      </div>
+
+      <div onClick="{{ goToScenarios }}" style="background:#fff;border:1px solid #eae9e4;border-radius:10px;padding:18px 20px;cursor:pointer">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px"><span style="font-size:12px;font-weight:700;color:#8a8a86;text-transform:uppercase;letter-spacing:.03em">Major Sensitivities → Scenarios</span><span style="color:#9a9a95">↗</span></div>
+        <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:12px">
+          <sc-for list="{{ sensitivities }}" as="s" hint-placeholder-count="4">
+            <div style="text-align:center;padding:10px;background:#f5f4f0;border-radius:8px">
+              <div style="font-size:11px;color:#8a8a86;font-weight:600;margin-bottom:4px">{{ s.label }}</div>
+              <div style="font-size:15px;font-weight:700;color:#1a2233">{{ s.value }}</div>
+            </div>
+          </sc-for>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div style="position:fixed;top:0;right:0;height:100vh;width:340px;background:#fff;box-shadow:-4px 0 24px rgba(0,0,0,.14);z-index:50;display:flex;flex-direction:column;transform:{{ atlasTransform }};transition:transform .22s ease">
+    <div style="padding:16px 18px;border-bottom:1px solid #eae9e4;display:flex;justify-content:space-between;align-items:center">
+      <span style="font-weight:700;font-size:13.5px;color:#1a2233">✦ Atlas</span>
+      <span onClick="{{ closeAtlas }}" style="cursor:pointer;color:#9a9a95">✕</span>
+    </div>
+    <div style="padding:14px 18px;border-bottom:1px solid #f2f1ec;display:flex;flex-direction:column;gap:6px">
+      <sc-for list="{{ progress }}" as="p" hint-placeholder-count="5">
+        <div style="font-size:12px;display:flex;gap:8px;color:{{ p.color }};font-weight:{{ p.weight }}"><span>{{ p.mark }}</span>{{ p.label }}</div>
+      </sc-for>
+    </div>
+    <div style="flex:1;overflow-y:auto;padding:14px 18px;display:flex;flex-direction:column;gap:10px">
+      <sc-for list="{{ messages }}" as="m" hint-placeholder-count="1">
+        <div style="align-self:{{ m.align }};background:{{ m.bg }};color:{{ m.color }};padding:9px 12px;border-radius:8px;font-size:12.5px;max-width:85%;white-space:pre-line">{{ m.text }}</div>
+      </sc-for>
+    </div>
+    <div style="padding:12px 18px;border-top:1px solid #eae9e4;display:flex;flex-direction:column;gap:8px">
+      <sc-for list="{{ suggestions }}" as="s" hint-placeholder-count="3">
+        <button onClick="{{ s.onClick }}" style="text-align:left;background:#f5f4f0;border:1px solid #eae9e4;border-radius:6px;padding:8px 10px;font-size:12px;color:#3a3f47;cursor:pointer">{{ s.label }}</button>
+      </sc-for>
+    </div>
+  </div>
+</div>
+
+</x-dc>
+<script type="text/x-dc" data-dc-script>
+class Component extends DCLogic {
+  goFn(onNavigate, key) {
+    const HREFS = { dataroom:'./Data Room v2.dc.html', overview:'./Overview Tab.dc.html', market:'./Market Tab.dc.html', financials:'./Financials Tab.dc.html', investment:'./Investment Tab.dc.html', debt:'./Debt Tab.dc.html', partnership:'./Partnership Tab.dc.html', cashflow:'./Cash Flow Tab.dc.html', returns:'./Returns Tab.dc.html', scenarios:'./Scenarios Tab.dc.html', icmemo:'./IC Memo Tab.dc.html' };
+    return () => { if (onNavigate) onNavigate(key); else window.location.href = HREFS[key]; };
+  }
+  buildNavItems(active, onNavigate) {
+    const ICONS = {
+      dataroom: "M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7z",
+      overview: "M6 3h9l4 4v14a1 1 0 0 1-1 1H6a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1zM9 12h6M9 16h6",
+      market: "M12 4a4 4 0 100 8 4 4 0 000-8zM4 21c0-4 3.6-6 8-6s8 2 8 6",
+      financials: "M4 20V10M11 20V4M18 20v-7",
+      investment: "M3 8h18v12a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V8zM8 8V6a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2",
+      debt: "M12 3a9 9 0 100 18 9 9 0 000-18zM12 7v10M9.5 9.5c0-1.4 1.1-2.5 2.5-2.5s2.5.7 2.5 2c0 2-5 1.5-5 4 0 1.3 1.1 2.5 2.5 2.5s2.5-1.1 2.5-2.5",
+      partnership: "M9 11a3 3 0 100-6 3 3 0 000 6zM17 11a3 3 0 100-6 3 3 0 000 6zM2 20c0-3 3-5 7-5M13 20c0-3 3-5 7-5",
+      cashflow: "M3 12h4l3 7 4-14 3 7h4",
+      returns: "M3 17l6-6 4 4 8-8M15 7h6v6",
+      scenarios: "M4 7h13l-3-3M4 7l3 3M20 17H7l3 3M20 17l-3-3",
+      icmemo: "M6 3h9l4 4v14a1 1 0 0 1-1 1H6a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1zM9 12h6M9 16h4M14 3v5h5",
+    };
+    const HREFS = {
+      dataroom: './Data Room v2.dc.html', overview: './Overview Tab.dc.html', market: './Market Tab.dc.html',
+      financials: './Financials Tab.dc.html', investment: './Investment Tab.dc.html', debt: './Debt Tab.dc.html',
+      partnership: './Partnership Tab.dc.html', cashflow: './Cash Flow Tab.dc.html', returns: './Returns Tab.dc.html',
+      scenarios: './Scenarios Tab.dc.html', icmemo: './IC Memo Tab.dc.html',
+    };
+    const items = [
+      ['dataroom','Data Room'], ['overview','Overview'], ['market','Market'], ['financials','Financials'],
+      ['investment','Investment'], ['debt','Debt'], ['partnership','Partnership'], ['cashflow','Cash Flow'],
+      ['returns','Returns'], ['scenarios','Scenario Analysis'], ['icmemo','IC Memo'],
+    ];
+    return items.map(([key, label]) => ({
+      key, label, icon: ICONS[key],
+      color: key === active ? '#14213d' : '#9a9a95',
+      weight: key === active ? 700 : 500,
+      border: key === active ? '2px solid #14213d' : '2px solid transparent',
+      onClick: key === active ? null : () => { if (onNavigate) onNavigate(key); else window.location.href = HREFS[key]; },
+    }));
+  }
+  setupProfile = {
+    dealType: 'Acquisition',
+    returnsProfile: 'Value Add (12–18%)',
+    brand: 'Kimpton Hotels & Restaurants (Upper Upscale)',
+    positioning: 'Default',
+  };
+  state = {
+    atlasOpen: false, messages: [],
+    dealType: 'Acquisition',
+    returnsProfile: 'Value Add (12–18%)',
+    brand: 'Kimpton Hotels & Restaurants (Upper Upscale)',
+    positioning: 'Default',
+  };
+  reply(t) {
+    t = t.toLowerCase();
+    if (t.includes('summar')) return "The Angler's, Miami Beach — 132-key acquisition at $36.4M ($276k/key), underwritten to a 19.8% IRR / 2.24x MOIC on a 4.33-year hold, driven by a $4.62M renovation and a 5pt occupancy ramp.";
+    if (t.includes('next')) return "Your next best step\n\nReview the ADR growth assumption in Forecasting — it's running ahead of market and is flagged in Analysis as a medium-severity risk.";
+    return "I can summarize the deal, walk through any section, or flag what still needs review before this goes to IC.";
+  }
+  renderVals() {
+    const green = 'oklch(45% 0.12 155)', blue = 'oklch(45% 0.14 260)', black = '#1a2233', amber = 'oklch(50% 0.14 40)';
+    const r = (label, value, color = black, bold = false) => ({ label, value, color, weight: bold ? 700 : 400 });
+    return {
+      navItems: this.buildNavItems('overview', this.props.onNavigate),
+      atlasTransform: this.state.atlasOpen ? 'translateX(0)' : 'translateX(100%)',
+      toggleAtlas: () => this.setState(s => ({ atlasOpen: !s.atlasOpen })),
+      closeAtlas: () => this.setState({ atlasOpen: false }),
+      goToInvestment: this.goFn(this.props.onNavigate, 'investment'), goToFinancials: this.goFn(this.props.onNavigate, 'financials'),
+      
+      goToDebt: this.goFn(this.props.onNavigate, 'debt'), goToCashflow: this.goFn(this.props.onNavigate, 'cashflow'),
+      goToReturns: this.goFn(this.props.onNavigate, 'returns'), goToMarket: this.goFn(this.props.onNavigate, 'market'),
+      goToScenarios: this.goFn(this.props.onNavigate, 'scenarios'), goToPartnership: this.goFn(this.props.onNavigate, 'partnership'), goToIcMemo: this.goFn(this.props.onNavigate, 'icmemo'),
+      progress: [
+        { label: 'Documents', mark: '✓', color: green, weight: 400 }, { label: 'Historicals', mark: '✓', color: green, weight: 400 },
+        { label: 'Projections', mark: '✓', color: green, weight: 400 }, { label: 'Underwriting', mark: '→', color: '#2f4a8c', weight: 700 }, { label: 'Investment Review', mark: '○', color: '#9a9a95', weight: 400 },
+      ],
+      messages: this.state.messages.map(m => ({ text: m.text, align: m.from === 'user' ? 'flex-end' : 'flex-start', bg: m.from === 'user' ? '#14213d' : '#f3f2ee', color: m.from === 'user' ? '#fff' : '#1a2233' })),
+      suggestions: [
+        { label: 'Summarize this deal', onClick: () => this.setState(s => ({ messages: [...s.messages, { from: 'user', text: 'Summarize this deal' }, { from: 'bot', text: this.reply('summar') }] })) },
+        { label: 'What should I do next?', onClick: () => this.setState(s => ({ messages: [...s.messages, { from: 'user', text: 'What should I do next?' }, { from: 'bot', text: this.reply('next') }] })) },
+      ],
+      dealTypeEdited: this.state.dealType !== this.setupProfile.dealType,
+      dealTypes: ['Acquisition', 'Development'].map(label => {
+        const active = label === this.state.dealType;
+        return {
+          label, weight: active ? 700 : 500, color: active ? blue : '#a8a7a2',
+          bg: active ? '#fff' : 'transparent', shadow: active ? '0 1px 2px rgba(0,0,0,.08)' : 'none',
+          select: () => this.setState({ dealType: label }),
+        };
+      }),
+      profileFields: [
+        { label: 'Returns Profile', key: 'returnsProfile', options: ['Core (8–12%)', 'Value Add (12–18%)', 'Opportunistic (18%+)'] },
+        { label: 'Brand', key: 'brand', options: ['Kimpton Hotels & Restaurants (Upper Upscale)', 'Autograph Collection (Upper Upscale)', 'Curio Collection (Upper Upscale)', 'Independent / Soft Brand', 'Unbranded'] },
+        { label: 'Positioning', key: 'positioning', options: ['Default', 'Economy', 'Midscale', 'Upper Midscale', 'Upscale', 'Upper Upscale', 'Luxury'] },
+      ].map(f => ({
+        label: f.label, options: f.options, value: this.state[f.key],
+        edited: this.state[f.key] !== this.setupProfile[f.key],
+        onChange: (e) => { const v = e.target.value; this.setState({ [f.key]: v }); },
+      })),
+      kpis: [
+        { label: 'Purchase Price', value: '$36.44M' }, { label: 'IRR', value: '19.8%' }, { label: 'MOIC', value: '2.24x' },
+        { label: 'Exit Value', value: '$68.32M' }, { label: 'Hold Period', value: '4.33 yrs' },
+      ],
+      dealOverview: [
+        r('Deal Type', this.state.dealType, blue), r('Price / Key', '$276,036'), r('Going-In Yield', '7.00%', blue),
+        r('Yield on Cost', '10.43%'), r('Equity Requirement', '$19,385,678', blue),
+      ],
+      historical: [
+        r('2025A Occupancy / ADR', '71.0% / $275', green), r('2025A Revenue', '$9.61M', green),
+        r('2025A NOI', '$2,550,576', green), r('2025A NOI Margin', '26.5%'),
+      ],
+      projections: [
+        r('Stabilized Occupancy / ADR', '76.0% / $310'), r('Stabilized Revenue (2030E)', '$13.93M'),
+        r('Stabilized NOI (2030E)', '$4.44M', black, true), r('NOI CAGR', '11.8%'),
+      ],
+      assumptions: [
+        r('ADR Growth', '3.0% / yr', blue), r('Occupancy Growth', '+1.0 pt / yr', blue),
+        r('Exit Cap Rate', '6.50%', blue), r('Management / Franchise Fee', '3.0% / 5.0%', blue),
+      ],
+      capexSummary: this.state.dealType === 'Development' ? [
+        r('Total Development Cost', '$41.62M', black, true), r('Cost / Key', '$315,300'), r('Timing', 'Construction Y1-Y3, open Y4'),
+      ] : [
+        r('Total CapEx (5yr)', '$6.37M', black, true), r('Renovation / Key', '$35,000'), r('Timing', 'Front-loaded Y1-Y2'),
+      ],
+      debtSummary: [
+        r('Loan Amount', '$23.19M', black, true), r('LTC / LTV', '65% / 65%', blue), r('All-In Rate', '7.66%'),
+      ],
+      cashflowSummary: [
+        r('Yr 1 Unlevered FCF', '($0.01M)'), r('Stabilized Unlevered FCF', '$3.94M'), r('Net Sale Proceeds', '$67.30M', black, true),
+      ],
+      returnsSummary: [
+        r('IRR', '19.8%', black, true), r('MOIC', '2.24x', black, true), r('Avg. Cash-on-Cash', '9.2%'), r('Equity Profit', '$24.1M'),
+      ],
+      marketSummary: [
+        r('ADR Index vs. Comp Set', '94', amber), r('Occupancy Index vs. Comp Set', '104', green), r('Supply Pipeline', '+8.0% by 2028', amber),
+      ],
+      riskSummary: [
+        'ADR growth assumption above market (2.1% actual vs. 3.0% assumed)',
+        'Supply pipeline: 612 comp-set keys under construction',
+        'Exit cap compression assumed (50bps entry-to-exit)',
+      ],
+      sensitivities: [
+        { label: 'IRR (Downside/Upside)', value: '12.4% / 26.5%' }, { label: 'MOIC (Downside/Upside)', value: '1.61x / 2.89x' },
+        { label: 'Exit Value Range', value: '$54.9M – $79.7M' }, { label: 'Stabilized NOI Range', value: '$3.71M – $4.98M' },
+      ],
+    };
+  }
+}
+
+</script>
+</body>
+</html>

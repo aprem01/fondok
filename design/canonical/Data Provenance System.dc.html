@@ -1,0 +1,312 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+  <meta name="design_doc_mode" content="canvas">
+  <style>
+    body{margin:0;background:#f5f4f0;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,Arial,sans-serif;}
+    a{color:#2f4a8c}
+    a:hover{color:#1f3568}
+  </style>
+</helmet>
+
+<section style="padding:44px 48px 80px;display:flex;flex-direction:column;gap:34px">
+
+  <div style="max-width:860px">
+    <div style="font-size:11px;font-weight:700;letter-spacing:.08em;color:#8a8a86;text-transform:uppercase;margin-bottom:8px">Turn 1 · System proposal</div>
+    <h1 style="font-size:30px;font-weight:600;color:#1a2233;margin:0 0 10px;letter-spacing:-.01em">Provenance &amp; editability legend</h1>
+    <p style="font-size:14px;color:#6b6f76;line-height:1.6;margin:0;text-wrap:pretty">The four things you listed aren't one scale — they're <strong>two axes</strong>. Where a number came from (document, user, model, another module) is <em>origin</em>. Whether you can change it is <em>editability</em>. Encoding them on one swatch is why data keys usually fail: a calculated number can be overridden, a document number can be locked. Colour carries origin, typography carries editability, and one flag layer carries "needs review".</p>
+  </div>
+
+  <div style="display:flex;flex-wrap:wrap;gap:22px;align-items:flex-start">
+
+    <div style="background:#fff;border:1px solid #ececea;border-radius:12px;padding:24px 26px;flex:1;min-width:520px">
+      <div style="font-size:11px;font-weight:700;letter-spacing:.06em;color:#8a8a86;text-transform:uppercase;margin-bottom:16px">Axis 1 — Origin (colour)</div>
+      <div style="display:flex;flex-direction:column;gap:0">
+        <sc-for list="{{ origins }}" as="o" hint-placeholder-count="4">
+          <div style="display:grid;grid-template-columns:150px 1fr;gap:18px;align-items:start;padding:13px 0;border-top:1px solid #f4f3ef">
+            <div style="display:flex;align-items:center;gap:9px">
+              <span style="width:9px;height:9px;border-radius:50%;flex-shrink:0;background:{{ o.color }}"></span>
+              <span style="font-size:13px;font-weight:600;color:#1a2233">{{ o.name }}</span>
+            </div>
+            <div>
+              <div style="font-size:12.5px;color:#6b6f76;line-height:1.5">{{ o.desc }}</div>
+              <div style="font-size:11.5px;color:#9a9a95;margin-top:4px;font-family:ui-monospace,monospace">{{ o.example }}</div>
+            </div>
+          </div>
+        </sc-for>
+      </div>
+    </div>
+
+    <div style="background:#fff;border:1px solid #ececea;border-radius:12px;padding:24px 26px;flex:1;min-width:420px">
+      <div style="font-size:11px;font-weight:700;letter-spacing:.06em;color:#8a8a86;text-transform:uppercase;margin-bottom:16px">Axis 2 — Editability (typography)</div>
+      <div style="display:flex;flex-direction:column;gap:0">
+        <div style="display:grid;grid-template-columns:150px 1fr;gap:18px;align-items:center;padding:13px 0;border-top:1px solid #f4f3ef">
+          <span style="font-size:14px;color:#1a2233;font-weight:600;text-decoration:underline dotted #b8b6ae;text-underline-offset:4px">7.25%</span>
+          <div style="font-size:12.5px;color:#6b6f76;line-height:1.5">Dotted underline = you can change it. Hover reveals a pencil and a cell frame.</div>
+        </div>
+        <div style="display:grid;grid-template-columns:150px 1fr;gap:18px;align-items:center;padding:13px 0;border-top:1px solid #f4f3ef">
+          <span style="font-size:14px;color:#1a2233;font-weight:600">$10,566,010</span>
+          <div style="font-size:12.5px;color:#6b6f76;line-height:1.5">No underline = locked. Nothing to click, no hover state, no false affordance.</div>
+        </div>
+        <div style="display:grid;grid-template-columns:150px 1fr;gap:18px;align-items:center;padding:13px 0;border-top:1px solid #f4f3ef">
+          <span style="display:inline-flex;align-items:center;gap:6px;font-size:14px;color:#1a2233;font-weight:600"><span style="width:9px;height:9px;border-radius:50%;background:oklch(55% 0.15 45);box-shadow:0 0 0 3px oklch(93% 0.06 45)"></span><span style="text-decoration:underline dotted #b8b6ae;text-underline-offset:4px">$2,145,900</span></span>
+          <div style="font-size:12.5px;color:#6b6f76;line-height:1.5">Halo on the dot = flag layer: low extraction confidence or a broken link. Rides on top of any origin, never replaces it.</div>
+        </div>
+        <div style="display:grid;grid-template-columns:150px 1fr;gap:18px;align-items:center;padding:13px 0;border-top:1px solid #f4f3ef">
+          <span style="display:inline-flex;align-items:center;gap:6px;font-size:14px;color:#1a2233;font-weight:600"><span style="width:9px;height:9px;border-radius:50%;background:oklch(48% 0.14 260)"></span><span style="text-decoration:underline dotted #b8b6ae;text-underline-offset:4px">6.0%</span><span style="font-size:10px;font-weight:700;color:oklch(48% 0.14 260);background:oklch(95% 0.03 260);padding:2px 5px;border-radius:4px">OVERRIDE</span></span>
+          <div style="font-size:12.5px;color:#6b6f76;line-height:1.5">When a user edits a document or calculated value, origin flips to blue and an OVERRIDE chip appears — the original stays one click away.</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div>
+    <h2 style="font-size:17px;font-weight:600;color:#1a2233;margin:14px 0 6px">Three ways to render it — same rows, same data</h2>
+    <p style="font-size:13px;color:#6b6f76;margin:0 0 18px;max-width:760px;line-height:1.55">Pick one and use it everywhere. My recommendation is <strong>A</strong>: the dot is a fixed 9px cost regardless of density, survives bold totals and red negatives, and leaves value colour free for financial meaning (negatives, deltas) — which B spends on provenance.</p>
+
+    <div style="display:flex;flex-wrap:wrap;gap:22px;align-items:flex-start">
+
+      <div id="1a" style="background:#fff;border:2px solid #14213d;border-radius:12px;overflow:hidden;flex:1;min-width:430px">
+        <div style="padding:16px 22px 14px;border-bottom:1px solid #f2f1ec;display:flex;align-items:flex-start;gap:12px">
+          <span style="background:#14213d;color:#fff;font-size:11px;font-weight:700;padding:3px 8px;border-radius:5px">1a</span>
+          <div>
+            <div style="font-size:14px;font-weight:600;color:#1a2233">Dot prefix <span style="color:#1f6b41;font-weight:700;font-size:11px;letter-spacing:.04em">· RECOMMENDED</span></div>
+            <div style="font-size:12px;color:#8a8a86;margin-top:2px">Origin in a leading dot, value stays ink black.</div>
+          </div>
+        </div>
+        <table style="width:100%;border-collapse:collapse;font-size:13px">
+          <sc-for list="{{ rows }}" as="r" hint-placeholder-count="6">
+            <tr style="border-bottom:1px solid #f6f5f1">
+              <td style="padding:11px 22px;color:#6b6f76;font-weight:{{ r.weight }}">{{ r.label }}</td>
+              <td style="padding:11px 22px;text-align:right;white-space:nowrap">
+                <span style="display:inline-flex;align-items:center;gap:7px;justify-content:flex-end">
+                  <span style="width:8px;height:8px;border-radius:50%;flex-shrink:0;background:{{ r.color }};box-shadow:{{ r.halo }}"></span>
+                  <span style="color:#1a2233;font-weight:{{ r.weight }};font-variant-numeric:tabular-nums;text-decoration:{{ r.underline }};text-underline-offset:4px">{{ r.value }}</span>
+                </span>
+              </td>
+            </tr>
+          </sc-for>
+        </table>
+        <div style="padding:11px 22px;background:#fbfbf9;font-size:11px;color:#8a8a86;line-height:1.5">Reads cleanly at 11px row height. Dot column aligns, so the eye can scan origin down a whole statement.</div>
+      </div>
+
+      <div id="1b" style="background:#fff;border:1px solid #ececea;border-radius:12px;overflow:hidden;flex:1;min-width:430px">
+        <div style="padding:16px 22px 14px;border-bottom:1px solid #f2f1ec;display:flex;align-items:flex-start;gap:12px">
+          <span style="background:#f3f2ee;color:#6b6f76;font-size:11px;font-weight:700;padding:3px 8px;border-radius:5px">1b</span>
+          <div>
+            <div style="font-size:14px;font-weight:600;color:#1a2233">Tinted numerals</div>
+            <div style="font-size:12px;color:#8a8a86;margin-top:2px">Origin colours the value itself. Zero added width.</div>
+          </div>
+        </div>
+        <table style="width:100%;border-collapse:collapse;font-size:13px">
+          <sc-for list="{{ rows }}" as="r" hint-placeholder-count="6">
+            <tr style="border-bottom:1px solid #f6f5f1">
+              <td style="padding:11px 22px;color:#6b6f76;font-weight:{{ r.weight }}">{{ r.label }}</td>
+              <td style="padding:11px 22px;text-align:right;white-space:nowrap;color:{{ r.color }};font-weight:{{ r.weight }};font-variant-numeric:tabular-nums">
+                <span style="text-decoration:{{ r.underline }};text-underline-offset:4px;background:{{ r.reviewTint }};padding:{{ r.reviewPad }};border-radius:4px">{{ r.value }}</span>
+              </td>
+            </tr>
+          </sc-for>
+        </table>
+        <div style="padding:11px 22px;background:#fbfbf9;font-size:11px;color:#8a8a86;line-height:1.5">Tightest option, but it burns the value's colour channel — negatives, variance and deltas then have nowhere to go.</div>
+      </div>
+
+      <div id="1c" style="background:#fff;border:1px solid #ececea;border-radius:12px;overflow:hidden;flex:1;min-width:430px">
+        <div style="padding:16px 22px 14px;border-bottom:1px solid #f2f1ec;display:flex;align-items:flex-start;gap:12px">
+          <span style="background:#f3f2ee;color:#6b6f76;font-size:11px;font-weight:700;padding:3px 8px;border-radius:5px">1c</span>
+          <div>
+            <div style="font-size:14px;font-weight:600;color:#1a2233">Filled cells</div>
+            <div style="font-size:12px;color:#8a8a86;margin-top:2px">Spreadsheet convention: input cells are shaded.</div>
+          </div>
+        </div>
+        <table style="width:100%;border-collapse:collapse;font-size:13px">
+          <sc-for list="{{ rows }}" as="r" hint-placeholder-count="6">
+            <tr style="border-bottom:1px solid #f6f5f1">
+              <td style="padding:11px 22px;color:#6b6f76;font-weight:{{ r.weight }}">{{ r.label }}</td>
+              <td style="padding:8px 22px;text-align:right;white-space:nowrap">
+                <span style="display:inline-block;padding:4px 9px;border-radius:5px;background:{{ r.tint }};border:1px solid {{ r.tintBorder }};color:#1a2233;font-weight:{{ r.weight }};font-variant-numeric:tabular-nums">{{ r.value }}</span>
+              </td>
+            </tr>
+          </sc-for>
+        </table>
+        <div style="padding:11px 22px;background:#fbfbf9;font-size:11px;color:#8a8a86;line-height:1.5">Most legible for analysts coming from Excel — but the fills stripe a long statement and fight the row banding.</div>
+      </div>
+    </div>
+  </div>
+
+  <div>
+    <h2 style="font-size:17px;font-weight:600;color:#1a2233;margin:14px 0 6px">How it persists — three levels of reveal</h2>
+    <p style="font-size:13px;color:#6b6f76;margin:0 0 18px;max-width:760px;line-height:1.55">The legend shouldn't be a block of chrome repeated on every tab. It's one always-on encoding, one always-available key, and one on-demand detail.</p>
+
+    <div style="display:flex;flex-wrap:wrap;gap:22px;align-items:flex-start">
+
+      <div style="background:#fff;border:1px solid #ececea;border-radius:12px;padding:22px 24px;flex:1;min-width:400px">
+        <div style="font-size:11px;font-weight:700;letter-spacing:.06em;color:#8a8a86;text-transform:uppercase;margin-bottom:4px">Level 1 · Ambient</div>
+        <div style="font-size:13.5px;font-weight:600;color:#1a2233;margin-bottom:12px">The dots themselves, on every surface</div>
+        <div style="display:flex;gap:12px;flex-wrap:wrap;margin-bottom:14px">
+          <div style="border:1px solid #ececea;border-radius:9px;padding:13px 16px;min-width:132px">
+            <div style="font-size:10.5px;color:#8a8a86;font-weight:600;letter-spacing:.04em;text-transform:uppercase;margin-bottom:6px">Stabilized NOI</div>
+            <div style="display:flex;align-items:center;gap:7px"><span style="width:8px;height:8px;border-radius:50%;background:#1a2233"></span><span style="font-size:20px;font-weight:600;color:#1a2233">$4.21M</span></div>
+          </div>
+          <div style="border:1px solid #ececea;border-radius:9px;padding:13px 16px;min-width:132px">
+            <div style="font-size:10.5px;color:#8a8a86;font-weight:600;letter-spacing:.04em;text-transform:uppercase;margin-bottom:6px">Exit cap</div>
+            <div style="display:flex;align-items:center;gap:7px"><span style="width:8px;height:8px;border-radius:50%;background:oklch(48% 0.14 260)"></span><span style="font-size:20px;font-weight:600;color:#1a2233;text-decoration:underline dotted #b8b6ae;text-underline-offset:5px">7.25%</span></div>
+          </div>
+          <div style="border:1px solid #ececea;border-radius:9px;padding:13px 16px;min-width:132px">
+            <div style="font-size:10.5px;color:#8a8a86;font-weight:600;letter-spacing:.04em;text-transform:uppercase;margin-bottom:6px">F&amp;B revenue</div>
+            <div style="display:flex;align-items:center;gap:7px"><span style="width:8px;height:8px;border-radius:50%;background:oklch(55% 0.15 45);box-shadow:0 0 0 3px oklch(93% 0.06 45)"></span><span style="font-size:20px;font-weight:600;color:#1a2233">$2.15M</span></div>
+          </div>
+        </div>
+        <div style="font-size:12.5px;color:#6b6f76;line-height:1.55">Same dot on KPI tiles, table cells, card rows, chart series markers and IC memo figures. One rule, no per-tab variants.</div>
+      </div>
+
+      <div style="background:#fff;border:1px solid #ececea;border-radius:12px;padding:22px 24px;flex:1;min-width:400px">
+        <div style="font-size:11px;font-weight:700;letter-spacing:.06em;color:#8a8a86;text-transform:uppercase;margin-bottom:4px">Level 2 · The key</div>
+        <div style="font-size:13.5px;font-weight:600;color:#1a2233;margin-bottom:12px">One global control in the deal header</div>
+        <div style="border:1px solid #ececea;border-radius:9px;overflow:hidden;margin-bottom:14px">
+          <div style="background:#fbfbf9;padding:10px 14px;display:flex;align-items:center;gap:10px;border-bottom:1px solid #f2f1ec">
+            <span style="font-size:12px;color:#9a9a95">Kimpton Hotel · Financials</span>
+            <span onClick="{{ toggleKey }}" style="margin-left:auto;display:inline-flex;align-items:center;gap:7px;background:#eef2fb;border:1px solid #dbe3f5;color:#2f4a8c;border-radius:6px;padding:6px 11px;font-size:11.5px;font-weight:600;cursor:pointer">
+              <span style="display:inline-flex;gap:2px"><span style="width:6px;height:6px;border-radius:50%;background:oklch(48% 0.13 155)"></span><span style="width:6px;height:6px;border-radius:50%;background:oklch(48% 0.14 260)"></span><span style="width:6px;height:6px;border-radius:50%;background:#1a2233"></span></span>
+              Data key {{ keyCaret }}
+            </span>
+          </div>
+          <sc-if value="{{ keyOpen }}" hint-placeholder-val="{{ true }}">
+            <div style="padding:14px 16px;display:flex;flex-direction:column;gap:10px">
+              <sc-for list="{{ origins }}" as="o" hint-placeholder-count="4">
+                <div style="display:flex;align-items:center;gap:9px">
+                  <span style="width:8px;height:8px;border-radius:50%;flex-shrink:0;background:{{ o.color }}"></span>
+                  <span style="font-size:12px;font-weight:600;color:#1a2233;width:112px">{{ o.name }}</span>
+                  <span style="font-size:11.5px;color:#9a9a95;flex:1">{{ o.short }}</span>
+                  <span style="font-size:11px;color:#8a8a86;font-variant-numeric:tabular-nums">{{ o.count }}</span>
+                </div>
+              </sc-for>
+              <div style="border-top:1px solid #f2f1ec;padding-top:11px;display:flex;align-items:center;gap:9px">
+                <span onClick="{{ toggleHighlight }}" style="width:30px;height:17px;border-radius:9px;background:{{ hlTrack }};position:relative;cursor:pointer;flex-shrink:0"><span style="position:absolute;top:2px;left:{{ hlKnob }};width:13px;height:13px;border-radius:50%;background:#fff;transition:left .15s"></span></span>
+                <span style="font-size:12px;color:#1a2233;font-weight:600">Highlight mode</span>
+                <span style="font-size:11.5px;color:#9a9a95">tint every cell by origin</span>
+              </div>
+            </div>
+          </sc-if>
+        </div>
+        <div style="font-size:12.5px;color:#6b6f76;line-height:1.55">Persists across every tab, remembers open/closed. Counts double as a completeness read. Highlight mode is the escape hatch for 1c-style scanning without paying for it all day.</div>
+      </div>
+
+      <div style="background:#fff;border:1px solid #ececea;border-radius:12px;padding:22px 24px;flex:1;min-width:400px">
+        <div style="font-size:11px;font-weight:700;letter-spacing:.06em;color:#8a8a86;text-transform:uppercase;margin-bottom:4px">Level 3 · Provenance</div>
+        <div style="font-size:13.5px;font-weight:600;color:#1a2233;margin-bottom:12px">Click any value for its lineage</div>
+        <div style="border:1px solid #e2e1dc;border-radius:9px;box-shadow:0 6px 20px rgba(20,33,61,.09);overflow:hidden;margin-bottom:14px">
+          <div style="padding:12px 15px;border-bottom:1px solid #f2f1ec;display:flex;align-items:center;gap:8px">
+            <span style="width:8px;height:8px;border-radius:50%;background:oklch(55% 0.15 45);box-shadow:0 0 0 3px oklch(93% 0.06 45)"></span>
+            <span style="font-size:13px;font-weight:600;color:#1a2233">F&amp;B Revenue · FY2025</span>
+            <span style="margin-left:auto;font-size:10px;font-weight:700;color:oklch(45% 0.15 45);background:oklch(94% 0.05 45);padding:3px 7px;border-radius:4px">REVIEW</span>
+          </div>
+          <div style="padding:13px 15px;display:flex;flex-direction:column;gap:9px">
+            <div style="display:flex;gap:10px;font-size:12px"><span style="color:#9a9a95;width:74px;flex-shrink:0">Source</span><a href="#1a" style="font-weight:600">Kimpton_T12_2025.pdf</a></div>
+            <div style="display:flex;gap:10px;font-size:12px"><span style="color:#9a9a95;width:74px;flex-shrink:0">Location</span><span style="color:#1a2233">Page 4 · row "Food &amp; Beverage"</span></div>
+            <div style="display:flex;gap:10px;font-size:12px"><span style="color:#9a9a95;width:74px;flex-shrink:0">Confidence</span><span style="color:oklch(45% 0.15 45);font-weight:600">72% — OCR ambiguity on thousands separator</span></div>
+            <div style="display:flex;gap:10px;font-size:12px"><span style="color:#9a9a95;width:74px;flex-shrink:0">Feeds</span><span style="color:#1a2233">Total Revenue → NOI → DSCR, Returns</span></div>
+            <div style="display:flex;gap:10px;font-size:12px"><span style="color:#9a9a95;width:74px;flex-shrink:0">History</span><span style="color:#1a2233">Extracted 7/30/26 · unchanged</span></div>
+          </div>
+          <div style="padding:11px 15px;background:#fbfbf9;border-top:1px solid #f2f1ec;display:flex;gap:9px">
+            <button style="background:#14213d;color:#fff;border:none;border-radius:6px;padding:7px 13px;font-size:11.5px;font-weight:600;cursor:pointer">Confirm value</button>
+            <button style="background:#fff;color:#1a2233;border:1px solid #d8d7d2;border-radius:6px;padding:7px 13px;font-size:11.5px;font-weight:600;cursor:pointer">Open source</button>
+            <button style="background:#fff;color:#1a2233;border:1px solid #d8d7d2;border-radius:6px;padding:7px 13px;font-size:11.5px;font-weight:600;cursor:pointer">Override</button>
+          </div>
+        </div>
+        <div style="font-size:12.5px;color:#6b6f76;line-height:1.55">One popover component, identical everywhere. "Feeds" is what makes it trustworthy — the user sees the blast radius before overriding.</div>
+      </div>
+    </div>
+  </div>
+
+  <div style="background:#14213d;border-radius:12px;padding:26px 30px;color:#fff;max-width:1000px">
+    <div style="font-size:11px;font-weight:700;letter-spacing:.06em;color:#8b93a7;text-transform:uppercase;margin-bottom:12px">Rules that keep it consistent</div>
+    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(230px,1fr));gap:20px 28px">
+      <sc-for list="{{ rules }}" as="rl" hint-placeholder-count="5">
+        <div>
+          <div style="font-size:13px;font-weight:600;margin-bottom:4px">{{ rl.t }}</div>
+          <div style="font-size:12.5px;color:#c9cede;line-height:1.55">{{ rl.d }}</div>
+        </div>
+      </sc-for>
+    </div>
+  </div>
+
+</section>
+
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props="{&quot;$preview&quot;:{&quot;width&quot;:1440,&quot;height&quot;:1600}}">
+class Component extends DCLogic {
+  state = { keyOpen: true, highlight: false };
+  renderVals() {
+    const C = {
+      doc: 'oklch(48% 0.13 155)',
+      input: 'oklch(48% 0.14 260)',
+      calc: '#1a2233',
+      link: 'oklch(52% 0.13 300)',
+      review: 'oklch(55% 0.15 45)',
+    };
+    const origins = [
+      { name: 'From a document', color: C.doc, short: 'Extracted, traceable to a page', count: '118 values',
+        desc: 'Machine-extracted from an uploaded file. Always traceable back to document, page and line.',
+        example: 'T-12 P&L · OM · rent roll · appraisal' },
+      { name: 'Assumption', color: C.input, short: 'Typed by a user', count: '24 values',
+        desc: 'A human typed it — an underwriting assumption, a default you accepted, or an override of another origin.',
+        example: 'Exit cap · ADR growth · hold period' },
+      { name: 'Calculated', color: C.calc, short: 'Derived by the model', count: '206 values',
+        desc: 'Produced by the model from other values on this deal. Never directly editable — change an input instead.',
+        example: 'NOI · DSCR · IRR · totals' },
+      { name: 'Linked', color: C.link, short: 'Owned by another module', count: '31 values',
+        desc: 'Mirrors a value that lives elsewhere in Fondok. Edit at the source; the link shows where.',
+        example: 'Purchase price from Investment · debt terms' },
+    ];
+    const R = (label, origin, value, opts = {}) => {
+      const color = C[origin];
+      const editable = !!opts.editable;
+      return {
+        label, value, color,
+        weight: opts.total ? 700 : 500,
+        underline: editable ? 'underline dotted #b8b6ae' : 'none',
+        halo: opts.review ? '0 0 0 3px oklch(93% 0.06 45)' : 'none',
+        reviewTint: opts.review ? 'oklch(95% 0.04 45)' : 'transparent',
+        reviewPad: opts.review ? '2px 6px' : '2px 0',
+        tint: origin === 'input' ? 'oklch(96% 0.025 260)' : origin === 'doc' ? 'oklch(96% 0.025 155)' : origin === 'link' ? 'oklch(96% 0.025 300)' : 'transparent',
+        tintBorder: origin === 'input' ? 'oklch(89% 0.05 260)' : origin === 'doc' ? 'oklch(89% 0.05 155)' : origin === 'link' ? 'oklch(89% 0.05 300)' : 'transparent',
+      };
+    };
+    const rows = [
+      R('Rooms Revenue', 'doc', '$8,420,110'),
+      R('F&B Revenue', 'doc', '$2,145,900', { review: true }),
+      R('Total Revenue', 'calc', '$10,566,010', { total: true }),
+      R('ADR Growth', 'input', '3.5%', { editable: true }),
+      R('Exit Cap Rate', 'input', '7.25%', { editable: true }),
+      R('Purchase Price', 'link', '$42,000,000'),
+    ];
+    const rules = [
+      { t: 'Colour is origin only', d: 'Never reuse the four hues for performance, variance or status. Good/bad stays in the existing green/red pair.' },
+      { t: 'Editability is never colour', d: 'A dotted underline and a hover frame carry it, so a locked document value and an editable one read the same colour.' },
+      { t: 'Flags stack, never replace', d: 'Review, stale link and low confidence are haloes on the origin dot — you always still see where it came from.' },
+      { t: 'Editing re-origins the value', d: 'Overriding a green or black value turns it blue with an OVERRIDE chip. Revert restores the prior origin.' },
+      { t: 'Every dot is clickable', d: 'The provenance popover is one component. If a number has a dot, clicking it explains the number.' },
+      { t: 'Exports carry it', d: 'IC memo and PDF exports print the key in the footer and keep the dots — trust travels outside the app.' },
+    ];
+    return {
+      origins, rows, rules,
+      keyOpen: this.state.keyOpen,
+      keyCaret: this.state.keyOpen ? '⌃' : '⌄',
+      hlTrack: this.state.highlight ? '#2f4a8c' : '#d8d7d2',
+      hlKnob: this.state.highlight ? '15px' : '2px',
+      toggleKey: () => this.setState(s => ({ keyOpen: !s.keyOpen })),
+      toggleHighlight: () => this.setState(s => ({ highlight: !s.highlight })),
+    };
+  }
+}
+</script>
+</body>
+</html>

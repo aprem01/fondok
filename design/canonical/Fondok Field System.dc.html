@@ -1,0 +1,585 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+  <meta name="design_doc_mode" content="canvas">
+  <style>
+    body{margin:0;background:#f5f4f0;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,Arial,sans-serif;}
+    a{color:#2f4a8c}
+    a:hover{color:#1f3568}
+    input{font-family:inherit}
+  </style>
+</helmet>
+
+<div ref="{{ rootRef }}" style="position:relative;padding:40px 44px 90px;max-width:1180px;margin:0 auto">
+
+  <div style="max-width:820px;margin-bottom:34px">
+    <div style="font-size:11px;font-weight:700;letter-spacing:.08em;color:#8a8a86;text-transform:uppercase;margin-bottom:8px">Fondok · field-level design system</div>
+    <h1 style="font-size:31px;font-weight:600;color:#1a2233;margin:0 0 12px;letter-spacing:-.015em">Every number says where it came from</h1>
+    <p style="font-size:14px;color:#6b6f76;line-height:1.65;margin:0;text-wrap:pretty">Analysts already read one convention fluently: <strong style="color:#1a4fa0">blue means a human typed it</strong>, black means the model produced it. Fondok keeps that and adds what Excel can't — a mark for document-sourced values, a mark for cross-module links, and a corner flag for overrides and low confidence. Two colours in the default view. Everything else is a 6px geometric mark that disappears until you look for it.</p>
+    <p style="font-size:13px;color:#9a9a95;margin:12px 0 0">Click any value below — the detail popover anchors to the cell. Esc or click away to dismiss.</p>
+  </div>
+
+  <div style="display:flex;flex-direction:column;gap:26px">
+
+    <section style="background:#fff;border:1px solid #ececea;border-radius:12px;overflow:hidden">
+      <div style="padding:18px 24px 14px;border-bottom:1px solid #f2f1ec">
+        <div style="font-size:14.5px;font-weight:600;color:#1a2233">Field states</div>
+        <div style="font-size:12.5px;color:#8a8a86;margin-top:3px">The whole vocabulary. Nothing else may be invented per screen.</div>
+      </div>
+      <table style="width:100%;border-collapse:collapse">
+        <tr style="background:#fbfbf9">
+          <td style="padding:8px 24px;font-size:10px;font-weight:700;letter-spacing:.06em;color:#9a9a95;text-transform:uppercase;width:180px">State</td>
+          <td style="padding:8px 14px;font-size:10px;font-weight:700;letter-spacing:.06em;color:#9a9a95;text-transform:uppercase;width:150px">Default</td>
+          <td style="padding:8px 14px;font-size:10px;font-weight:700;letter-spacing:.06em;color:#9a9a95;text-transform:uppercase;width:170px">Hover</td>
+          <td style="padding:8px 14px;font-size:10px;font-weight:700;letter-spacing:.06em;color:#9a9a95;text-transform:uppercase">Rule</td>
+        </tr>
+        <sc-for list="{{ specimens }}" as="s" hint-placeholder-count="6">
+          <tr style="border-top:1px solid #f4f3ef">
+            <td style="padding:15px 24px;vertical-align:top">
+              <div style="font-size:12.5px;font-weight:600;color:#1a2233">{{ s.name }}</div>
+              <div style="font-size:11.5px;color:#9a9a95;margin-top:2px">{{ s.mark }}</div>
+            </td>
+            <td style="padding:15px 14px;vertical-align:top">
+              <span style="position:relative;display:inline-flex;align-items:center;gap:5px;font-size:14px;font-variant-numeric:tabular-nums;color:{{ s.color }};font-weight:500">
+                <sc-if value="{{ s.glyph }}" hint-placeholder-val="{{ false }}"><span style="font-size:9px;color:{{ s.glyphColor }};line-height:1">{{ s.glyph }}</span></sc-if>
+                <span style="border-bottom:{{ s.rule }};padding-bottom:1px">{{ s.value }}</span>
+                <sc-if value="{{ s.corner }}" hint-placeholder-val="{{ false }}"><span style="width:0;height:0;border-left:5px solid transparent;border-top:5px solid {{ s.cornerColor }};align-self:flex-start;margin-left:-2px"></span></sc-if>
+              </span>
+            </td>
+            <td style="padding:15px 14px;vertical-align:top">
+              <span style="display:inline-flex;align-items:center;gap:6px;font-size:14px;font-variant-numeric:tabular-nums;color:{{ s.color }};font-weight:500;background:{{ s.hoverBg }};border:1px solid {{ s.hoverBorder }};border-radius:5px;padding:3px 8px;margin:-4px -9px">
+                {{ s.value }}<span style="font-size:10px;color:#9a9a95">{{ s.hoverAffordance }}</span>
+              </span>
+            </td>
+            <td style="padding:15px 24px 15px 14px;vertical-align:top;font-size:12.5px;color:#6b6f76;line-height:1.5">{{ s.rule_text }}</td>
+          </tr>
+        </sc-for>
+      </table>
+      <div style="padding:16px 24px;background:#fbfbf9;border-top:1px solid #f2f1ec;display:flex;gap:26px;flex-wrap:wrap;align-items:center">
+        <div style="font-size:11px;font-weight:700;letter-spacing:.06em;color:#9a9a95;text-transform:uppercase">Editing</div>
+        <div style="display:flex;align-items:center;gap:10px">
+          <span style="font-size:12.5px;color:#6b6f76">Exit Cap Rate</span>
+          <span style="display:inline-flex;align-items:center;background:#fff;border:1.5px solid #1a4fa0;box-shadow:0 0 0 3px rgba(26,79,160,.12);border-radius:5px;padding:3px 9px;font-size:14px;color:#1a4fa0;font-weight:600;font-variant-numeric:tabular-nums">6.50<span style="color:#9aa4b8">%</span><span style="width:1px;height:15px;background:#1a4fa0;margin-left:2px"></span></span>
+          <span style="font-size:11.5px;color:#9a9a95">↵ commit · esc revert · ⌥click to scope to scenario</span>
+        </div>
+      </div>
+    </section>
+
+    <section style="background:#fff;border:1px solid #ececea;border-radius:12px;overflow:hidden">
+      <div style="padding:16px 24px 14px;border-bottom:1px solid #f2f1ec;display:flex;align-items:center;gap:16px;flex-wrap:wrap">
+        <div>
+          <div style="font-size:14.5px;font-weight:600;color:#1a2233">Investment · Exit</div>
+          <div style="font-size:12px;color:#8a8a86;margin-top:2px">Kimpton Angler · Miami, FL · 132 keys</div>
+        </div>
+        <div style="margin-left:auto;display:flex;align-items:center;gap:14px;flex-wrap:wrap">
+          <div style="display:flex;align-items:center;gap:7px">
+            <span style="font-size:11px;font-weight:600;color:#9a9a95">SCENARIO</span>
+            <span style="font-size:12px;font-weight:600;color:#1a2233;background:#f3f2ee;border:1px solid #e5e4df;border-radius:5px;padding:4px 10px">Base ⌄</span>
+          </div>
+          <div style="display:flex;background:#f3f2ee;border-radius:7px;padding:2px">
+            <sc-for list="{{ filters }}" as="f" hint-placeholder-count="4">
+              <span onClick="{{ f.onClick }}" style="font-size:11.5px;font-weight:600;padding:5px 12px;border-radius:5px;cursor:pointer;color:{{ f.color }};background:{{ f.bg }};box-shadow:{{ f.shadow }}">{{ f.label }}</span>
+            </sc-for>
+          </div>
+        </div>
+      </div>
+
+      <div style="display:grid;grid-template-columns:1fr 1fr">
+        <div style="border-right:1px solid #f2f1ec">
+          <div style="padding:13px 24px 8px;font-size:10.5px;font-weight:700;letter-spacing:.06em;color:#9a9a95;text-transform:uppercase">Exit assumptions</div>
+          <sc-for list="{{ exitAssumptions }}" as="f" hint-placeholder-count="3">
+            <div ref="{{ f.ref }}" onClick="{{ f.onClick }}" style="display:flex;align-items:center;justify-content:space-between;gap:16px;padding:9px 24px;cursor:pointer;opacity:{{ f.dim }};background:{{ f.rowBg }};box-shadow:{{ f.rowRule }}" style-hover="background:#fafaf7">
+              <span style="font-size:13px;color:#6b6f76">{{ f.label }}</span>
+              <span style="position:relative;display:inline-flex;align-items:center;gap:5px;font-size:13.5px;font-variant-numeric:tabular-nums;color:{{ f.color }};font-weight:{{ f.weight }}">
+                <sc-if value="{{ f.glyph }}" hint-placeholder-val="{{ false }}"><span style="font-size:9px;color:{{ f.glyphColor }};line-height:1">{{ f.glyph }}</span></sc-if>
+                <span style="border-bottom:{{ f.rule }};padding-bottom:1px">{{ f.value }}</span>
+                <sc-if value="{{ f.corner }}" hint-placeholder-val="{{ false }}"><span style="width:0;height:0;border-left:5px solid transparent;border-top:5px solid {{ f.cornerColor }};align-self:flex-start"></span></sc-if>
+              </span>
+            </div>
+          </sc-for>
+          <div style="padding:13px 24px 8px;font-size:10.5px;font-weight:700;letter-spacing:.06em;color:#9a9a95;text-transform:uppercase;border-top:1px solid #f4f3ef;margin-top:6px">Acquisition</div>
+          <sc-for list="{{ acquisition }}" as="f" hint-placeholder-count="6">
+            <div ref="{{ f.ref }}" onClick="{{ f.onClick }}" style="display:flex;align-items:center;justify-content:space-between;gap:16px;padding:9px 24px;cursor:pointer;opacity:{{ f.dim }};background:{{ f.rowBg }};box-shadow:{{ f.rowRule }}" style-hover="background:#fafaf7">
+              <span style="font-size:13px;color:#6b6f76">{{ f.label }}</span>
+              <span style="position:relative;display:inline-flex;align-items:center;gap:5px;font-size:13.5px;font-variant-numeric:tabular-nums;color:{{ f.color }};font-weight:{{ f.weight }}">
+                <sc-if value="{{ f.glyph }}" hint-placeholder-val="{{ false }}"><span style="font-size:9px;color:{{ f.glyphColor }};line-height:1">{{ f.glyph }}</span></sc-if>
+                <span style="border-bottom:{{ f.rule }};padding-bottom:1px">{{ f.value }}</span>
+                <sc-if value="{{ f.corner }}" hint-placeholder-val="{{ false }}"><span style="width:0;height:0;border-left:5px solid transparent;border-top:5px solid {{ f.cornerColor }};align-self:flex-start"></span></sc-if>
+              </span>
+            </div>
+          </sc-for>
+          <div style="height:14px"></div>
+        </div>
+
+        <div>
+          <div style="padding:13px 24px 8px;font-size:10.5px;font-weight:700;letter-spacing:.06em;color:#9a9a95;text-transform:uppercase">Calculated exit</div>
+          <sc-for list="{{ calculatedExit }}" as="f" hint-placeholder-count="5">
+            <div ref="{{ f.ref }}" onClick="{{ f.onClick }}" style="display:flex;align-items:center;justify-content:space-between;gap:16px;padding:9px 24px;cursor:pointer;opacity:{{ f.dim }};background:{{ f.rowBg }};box-shadow:{{ f.rowRule }}" style-hover="background:#fafaf7">
+              <span style="font-size:13px;color:#6b6f76">{{ f.label }}</span>
+              <span style="position:relative;display:inline-flex;align-items:center;gap:5px;font-size:13.5px;font-variant-numeric:tabular-nums;color:{{ f.color }};font-weight:{{ f.weight }}">
+                <sc-if value="{{ f.glyph }}" hint-placeholder-val="{{ false }}"><span style="font-size:9px;color:{{ f.glyphColor }};line-height:1">{{ f.glyph }}</span></sc-if>
+                <span style="border-bottom:{{ f.rule }};padding-bottom:1px">{{ f.value }}</span>
+                <sc-if value="{{ f.corner }}" hint-placeholder-val="{{ false }}"><span style="width:0;height:0;border-left:5px solid transparent;border-top:5px solid {{ f.cornerColor }};align-self:flex-start"></span></sc-if>
+              </span>
+            </div>
+          </sc-for>
+
+          <div style="margin:14px 24px 20px;border:1px solid #ececea;border-radius:9px;overflow:hidden">
+            <div style="padding:10px 14px;background:#fbfbf9;border-bottom:1px solid #f2f1ec;display:flex;align-items:center;gap:10px;flex-wrap:wrap">
+              <span style="font-size:11.5px;font-weight:700;color:#1a2233">Renovation budget</span>
+              <span style="font-size:11px;color:#9a9a95">driven by</span>
+              <div style="display:flex;background:#eceae4;border-radius:5px;padding:2px">
+                <sc-for list="{{ drivers }}" as="d" hint-placeholder-count="3">
+                  <span onClick="{{ d.onClick }}" style="font-size:11px;font-weight:600;padding:3px 9px;border-radius:4px;cursor:pointer;color:{{ d.color }};background:{{ d.bg }}">{{ d.label }}</span>
+                </sc-for>
+              </div>
+            </div>
+            <sc-for list="{{ renovation }}" as="f" hint-placeholder-count="3">
+              <div style="display:flex;align-items:center;justify-content:space-between;padding:8px 14px;border-bottom:1px solid #f6f5f1">
+                <span style="font-size:12.5px;color:#6b6f76">{{ f.label }}</span>
+                <span style="font-size:13px;font-variant-numeric:tabular-nums;color:{{ f.color }};font-weight:{{ f.weight }};border-bottom:{{ f.rule }};padding-bottom:1px">{{ f.value }}</span>
+              </div>
+            </sc-for>
+            <div style="padding:9px 14px;font-size:11.5px;color:#8a8a86;line-height:1.5">Only the driver is editable. The other two recompute — so $/Key, $/SF and Total can never disagree.</div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section style="background:#fff;border:1px solid #ececea;border-radius:12px;overflow:hidden">
+      <div style="padding:16px 24px 14px;border-bottom:1px solid #f2f1ec;display:flex;align-items:baseline;gap:12px">
+        <div style="font-size:14.5px;font-weight:600;color:#1a2233">Debt · Senior loan</div>
+        <div style="font-size:12px;color:#8a8a86">7 assumptions drive 6 outputs</div>
+      </div>
+      <div style="display:grid;grid-template-columns:1fr 1fr">
+        <div style="border-right:1px solid #f2f1ec;padding-bottom:14px">
+          <div style="padding:13px 24px 8px;font-size:10.5px;font-weight:700;letter-spacing:.06em;color:#9a9a95;text-transform:uppercase">Financing assumptions</div>
+          <sc-for list="{{ debtInputs }}" as="f" hint-placeholder-count="7">
+            <div ref="{{ f.ref }}" onClick="{{ f.onClick }}" style="display:flex;align-items:center;justify-content:space-between;gap:16px;padding:9px 24px;cursor:pointer;opacity:{{ f.dim }};background:{{ f.rowBg }};box-shadow:{{ f.rowRule }}" style-hover="background:#fafaf7">
+              <span style="font-size:13px;color:#6b6f76">{{ f.label }}</span>
+              <span style="position:relative;display:inline-flex;align-items:center;gap:5px;font-size:13.5px;font-variant-numeric:tabular-nums;color:{{ f.color }};font-weight:{{ f.weight }}">
+                <sc-if value="{{ f.glyph }}" hint-placeholder-val="{{ false }}"><span style="font-size:9px;color:{{ f.glyphColor }};line-height:1">{{ f.glyph }}</span></sc-if>
+                <span style="border-bottom:{{ f.rule }};padding-bottom:1px">{{ f.value }}</span>
+                <sc-if value="{{ f.corner }}" hint-placeholder-val="{{ false }}"><span style="width:0;height:0;border-left:5px solid transparent;border-top:5px solid {{ f.cornerColor }};align-self:flex-start"></span></sc-if>
+              </span>
+            </div>
+          </sc-for>
+        </div>
+        <div style="padding-bottom:14px">
+          <div style="padding:13px 24px 8px;font-size:10.5px;font-weight:700;letter-spacing:.06em;color:#9a9a95;text-transform:uppercase">Loan outputs</div>
+          <sc-for list="{{ debtOutputs }}" as="f" hint-placeholder-count="6">
+            <div ref="{{ f.ref }}" onClick="{{ f.onClick }}" style="display:flex;align-items:center;justify-content:space-between;gap:16px;padding:9px 24px;cursor:pointer;opacity:{{ f.dim }};background:{{ f.rowBg }};box-shadow:{{ f.rowRule }}" style-hover="background:#fafaf7">
+              <span style="font-size:13px;color:#6b6f76">{{ f.label }}</span>
+              <span style="position:relative;display:inline-flex;align-items:center;gap:5px;font-size:13.5px;font-variant-numeric:tabular-nums;color:{{ f.color }};font-weight:{{ f.weight }}">
+                <sc-if value="{{ f.glyph }}" hint-placeholder-val="{{ false }}"><span style="font-size:9px;color:{{ f.glyphColor }};line-height:1">{{ f.glyph }}</span></sc-if>
+                <span style="border-bottom:{{ f.rule }};padding-bottom:1px">{{ f.value }}</span>
+                <sc-if value="{{ f.corner }}" hint-placeholder-val="{{ false }}"><span style="width:0;height:0;border-left:5px solid transparent;border-top:5px solid {{ f.cornerColor }};align-self:flex-start"></span></sc-if>
+              </span>
+            </div>
+          </sc-for>
+        </div>
+      </div>
+    </section>
+
+    <section style="background:#fff;border:1px solid #ececea;border-radius:12px;padding:20px 24px 24px">
+      <div style="display:flex;align-items:baseline;gap:12px;margin-bottom:4px">
+        <div style="font-size:14.5px;font-weight:600;color:#1a2233">Trace value — full lineage</div>
+        <div style="font-size:12px;color:#8a8a86">Level 3 · opened from the popover's “Trace lineage”</div>
+      </div>
+      <div style="font-size:12.5px;color:#6b6f76;margin-bottom:18px">Every hop is clickable and lands on the field in its own screen. Blue nodes are the only ones a human can change.</div>
+      <div style="display:flex;gap:14px;overflow-x:auto;padding-bottom:6px">
+        <sc-for list="{{ lineage }}" as="n" hint-placeholder-count="6">
+          <div style="display:flex;align-items:center;gap:14px;flex-shrink:0">
+            <div style="border:1px solid {{ n.border }};background:{{ n.bg }};border-radius:9px;padding:11px 14px;min-width:146px">
+              <div style="font-size:10px;font-weight:700;letter-spacing:.05em;color:#9a9a95;text-transform:uppercase;margin-bottom:5px">{{ n.where }}</div>
+              <div style="font-size:12.5px;font-weight:600;color:#1a2233;margin-bottom:3px">{{ n.label }}</div>
+              <div style="font-size:13px;font-variant-numeric:tabular-nums;color:{{ n.color }};font-weight:600">{{ n.value }}</div>
+            </div>
+            <sc-if value="{{ n.hasArrow }}" hint-placeholder-val="{{ true }}"><span style="color:#c9c8c2;font-size:15px">→</span></sc-if>
+          </div>
+        </sc-for>
+      </div>
+    </section>
+
+    <section style="background:#14213d;border-radius:12px;padding:26px 30px;color:#fff">
+      <div style="font-size:11px;font-weight:700;letter-spacing:.06em;color:#8b93a7;text-transform:uppercase;margin-bottom:14px">Implementation rules</div>
+      <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:20px 30px">
+        <sc-for list="{{ rules }}" as="r" hint-placeholder-count="6">
+          <div>
+            <div style="font-size:13px;font-weight:600;margin-bottom:4px">{{ r.t }}</div>
+            <div style="font-size:12.5px;color:#c9cede;line-height:1.55">{{ r.d }}</div>
+          </div>
+        </sc-for>
+      </div>
+    </section>
+  </div>
+
+  <sc-if value="{{ pop }}" hint-placeholder-val="{{ false }}">
+    <div onClick="{{ stop }}" style="position:absolute;z-index:40;width:346px;top:{{ pop.top }};left:{{ pop.left }};background:#fff;border:1px solid #dfdeda;border-radius:11px;box-shadow:0 14px 40px rgba(20,33,61,.16),0 2px 6px rgba(20,33,61,.06);overflow:hidden">
+      <div style="position:absolute;top:-6px;right:{{ pop.caretRight }};width:11px;height:11px;background:#fff;border-left:1px solid #dfdeda;border-top:1px solid #dfdeda;transform:rotate(45deg)"></div>
+      <div style="padding:15px 17px 13px;border-bottom:1px solid #f2f1ec;position:relative">
+        <div style="display:flex;align-items:center;gap:8px;margin-bottom:7px">
+          <span style="font-size:10px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:{{ insp.kindColor }}">{{ insp.kind }}</span>
+          <span onClick="{{ close }}" style="margin-left:auto;font-size:13px;color:#b5b4ae;cursor:pointer;line-height:1">✕</span>
+        </div>
+        <div style="font-size:12.5px;color:#6b6f76;margin-bottom:2px">{{ insp.label }}<span style="color:#b5b4ae"> · </span><span style="color:#9a9a95">{{ insp.where }}</span></div>
+        <div style="font-size:24px;font-weight:600;font-variant-numeric:tabular-nums;color:{{ insp.valueColor }};letter-spacing:-.01em">{{ insp.value }}</div>
+        <sc-if value="{{ insp.sub }}" hint-placeholder-val="{{ false }}"><div style="font-size:11.5px;color:#9a9a95;margin-top:4px;line-height:1.45">{{ insp.sub }}</div></sc-if>
+      </div>
+
+      <sc-if value="{{ insp.calc }}" hint-placeholder-val="{{ false }}">
+        <div style="padding:13px 17px;border-bottom:1px solid #f2f1ec">
+          <div style="font-size:10px;font-weight:700;letter-spacing:.06em;color:#9a9a95;text-transform:uppercase;margin-bottom:8px">Calculation</div>
+          <div style="font-size:12.5px;color:#1a2233;font-weight:600;margin-bottom:4px">{{ insp.calc.expr }}</div>
+          <div style="font-size:12px;color:#6b6f76;font-variant-numeric:tabular-nums;font-family:ui-monospace,monospace">{{ insp.calc.numbers }}</div>
+          <div style="margin-top:11px;display:flex;flex-direction:column;gap:7px">
+            <sc-for list="{{ insp.calc.inputs }}" as="i" hint-placeholder-count="2">
+              <div onClick="{{ i.onClick }}" style="display:flex;align-items:center;gap:8px;cursor:pointer">
+                <span style="width:5px;height:5px;border-radius:50%;background:{{ i.dot }};flex-shrink:0"></span>
+                <span style="font-size:12px;color:#1a2233;font-weight:500">{{ i.name }}</span>
+                <span style="font-size:11px;color:#9a9a95;margin-left:auto">{{ i.path }} ↗</span>
+              </div>
+            </sc-for>
+          </div>
+        </div>
+      </sc-if>
+
+      <sc-if value="{{ insp.source }}" hint-placeholder-val="{{ false }}">
+        <div style="padding:13px 17px;border-bottom:1px solid #f2f1ec">
+          <div style="font-size:10px;font-weight:700;letter-spacing:.06em;color:#9a9a95;text-transform:uppercase;margin-bottom:9px">Source</div>
+          <div style="display:flex;gap:11px;align-items:flex-start">
+            <div style="width:34px;height:44px;border:1px solid #e2e1dc;border-radius:3px;background:#fbfbf9;flex-shrink:0;padding:5px;display:flex;flex-direction:column;gap:3px">
+              <span style="height:2px;background:#dcdad3;display:block"></span><span style="height:2px;background:#dcdad3;display:block"></span><span style="height:2px;background:{{ insp.source.hl }};display:block"></span><span style="height:2px;background:#dcdad3;display:block"></span>
+            </div>
+            <div style="min-width:0">
+              <div style="font-size:12.5px;font-weight:600;color:#1a2233;line-height:1.35">{{ insp.source.doc }}</div>
+              <div style="font-size:11.5px;color:#9a9a95;margin-top:2px">{{ insp.source.loc }}</div>
+              <div style="font-size:11.5px;color:#6b6f76;margin-top:6px;font-style:italic;line-height:1.4">“{{ insp.source.text }}”</div>
+            </div>
+          </div>
+          <sc-if value="{{ insp.source.confidence }}" hint-placeholder-val="{{ false }}">
+            <div style="margin-top:11px;display:flex;align-items:center;gap:8px">
+              <div style="flex:1;height:4px;border-radius:2px;background:#f0efea;overflow:hidden"><div style="width:{{ insp.source.confidence }};height:100%;background:{{ insp.source.confColor }}"></div></div>
+              <span style="font-size:11px;font-weight:600;color:{{ insp.source.confColor }}">{{ insp.source.confidence }} confidence</span>
+            </div>
+          </sc-if>
+        </div>
+      </sc-if>
+
+      <sc-if value="{{ insp.override }}" hint-placeholder-val="{{ false }}">
+        <div style="padding:13px 17px;border-bottom:1px solid #f2f1ec">
+          <div style="font-size:10px;font-weight:700;letter-spacing:.06em;color:#9a9a95;text-transform:uppercase;margin-bottom:9px">Override</div>
+          <div style="display:flex;align-items:center;gap:12px;margin-bottom:10px">
+            <div>
+              <div style="font-size:10.5px;color:#9a9a95;margin-bottom:2px">Source value</div>
+              <div style="font-size:13px;color:#9a9a95;text-decoration:line-through;font-variant-numeric:tabular-nums">{{ insp.override.orig }}</div>
+            </div>
+            <span style="color:#c9c8c2">→</span>
+            <div>
+              <div style="font-size:10.5px;color:#9a9a95;margin-bottom:2px">Current</div>
+              <div style="font-size:13px;color:#1a4fa0;font-weight:600;font-variant-numeric:tabular-nums">{{ insp.override.cur }}</div>
+            </div>
+          </div>
+          <div style="display:flex;flex-direction:column;gap:5px">
+            <sc-for list="{{ insp.override.meta }}" as="m" hint-placeholder-count="3">
+              <div style="display:flex;gap:10px;font-size:11.5px"><span style="color:#9a9a95;width:66px;flex-shrink:0">{{ m.k }}</span><span style="color:#1a2233">{{ m.v }}</span></div>
+            </sc-for>
+          </div>
+        </div>
+      </sc-if>
+
+      <sc-if value="{{ insp.deps }}" hint-placeholder-val="{{ false }}">
+        <div style="padding:13px 17px;border-bottom:1px solid #f2f1ec">
+          <div style="display:flex;align-items:center;gap:8px;margin-bottom:9px">
+            <span style="font-size:10px;font-weight:700;letter-spacing:.06em;color:#9a9a95;text-transform:uppercase">Affects downstream</span>
+            <span style="font-size:10.5px;font-weight:700;color:#8a5a12;background:#fdf4e3;padding:2px 6px;border-radius:4px">{{ insp.depCount }}</span>
+          </div>
+          <div style="display:flex;flex-direction:column;gap:6px">
+            <sc-for list="{{ insp.deps }}" as="d" hint-placeholder-count="3">
+              <div style="display:flex;align-items:center;gap:8px;font-size:12px">
+                <span style="color:#c9c8c2">↳</span><span style="color:#1a2233">{{ d.name }}</span><span style="color:#9a9a95;margin-left:auto;font-size:11px">{{ d.where }}</span>
+              </div>
+            </sc-for>
+          </div>
+        </div>
+      </sc-if>
+
+      <div style="padding:12px 17px;background:#fbfbf9;display:flex;gap:7px;flex-wrap:wrap">
+        <sc-for list="{{ insp.actions }}" as="a" hint-placeholder-count="2">
+          <button style="border-radius:6px;padding:6px 11px;font-size:11.5px;font-weight:600;cursor:pointer;border:{{ a.border }};background:{{ a.bg }};color:{{ a.color }}">{{ a.label }}</button>
+        </sc-for>
+      </div>
+    </div>
+  </sc-if>
+</div>
+
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props="{&quot;$preview&quot;:{&quot;width&quot;:1280,&quot;height&quot;:2000}}">
+class Component extends DCLogic {
+  state = { sel: null, pop: null, filter: 'All', driver: '$/Key' };
+
+  static C = {
+    input: '#1a4fa0',
+    ink: '#1a2233',
+    doc: 'oklch(48% 0.09 165)',
+    link: 'oklch(52% 0.07 240)',
+    flag: 'oklch(62% 0.16 55)',
+  };
+
+  constructor(p) {
+    super(p);
+    this.anchors = {};
+    this.rootRef = el => { this.rootEl = el; };
+    this.onDocClick = () => { if (this.state.pop) this.setState({ pop: null, sel: null }); };
+    this.onKey = e => { if (e.key === 'Escape') this.setState({ pop: null, sel: null }); };
+  }
+
+  componentDidMount() {
+    document.addEventListener('click', this.onDocClick);
+    document.addEventListener('keydown', this.onKey);
+    this.onResize = () => { if (this.state.sel) this.place(this.state.sel); };
+    window.addEventListener('resize', this.onResize);
+    const settle = () => requestAnimationFrame(() => requestAnimationFrame(() => this.place('gross_exit')));
+    if (document.fonts && document.fonts.ready) document.fonts.ready.then(settle); else settle();
+    this._late = setTimeout(() => { if (this.state.sel === 'gross_exit') this.place('gross_exit'); }, 400);
+  }
+  componentWillUnmount() {
+    document.removeEventListener('click', this.onDocClick);
+    document.removeEventListener('keydown', this.onKey);
+    window.removeEventListener('resize', this.onResize);
+    clearTimeout(this._late);
+  }
+
+  place(id) {
+    const el = this.anchors[id], root = this.rootEl;
+    if (!el || !root) { this.setState({ sel: id }); return; }
+    const r = el.getBoundingClientRect(), rr = root.getBoundingClientRect();
+    const W = 346, pad = 12;
+    const anchorRight = r.right - rr.left;
+    let left = anchorRight - W + 8;
+    left = Math.max(pad, Math.min(left, rr.width - W - pad));
+    const caretRight = Math.max(14, Math.min(W - 26, anchorRight - left - 30));
+    this.setState({ sel: id, pop: { top: (r.bottom - rr.top + 10) + 'px', left: left + 'px', caretRight: caretRight + 'px' } });
+  }
+
+  field(o) {
+    const C = Component.C;
+    const kind = o.kind;
+    const isInput = kind === 'input' || kind === 'override';
+    const base = {
+      id: o.id, label: o.label, value: o.value, kind,
+      color: isInput ? C.input : C.ink,
+      weight: o.total ? 700 : 500,
+      rule: isInput ? '1px dashed rgba(26,79,160,.45)' : kind === 'doc' || kind === 'review' ? '1px dotted #c3c9c2' : 'none',
+      glyph: kind === 'doc' || kind === 'review' ? '◱' : kind === 'link' ? '↗' : false,
+      glyphColor: kind === 'link' ? C.link : C.doc,
+      corner: kind === 'override' || kind === 'review',
+      cornerColor: kind === 'review' ? C.flag : 'oklch(55% 0.13 300)',
+    };
+    if (kind === 'review') base.rule = '1px dotted ' + C.flag;
+    return base;
+  }
+
+  decorate(f) {
+    const sel = this.state.sel === f.id;
+    const grp = { input: 'Inputs', override: 'Inputs', doc: 'Sources', review: 'Sources', link: 'Sources', calc: 'Outputs' }[f.kind];
+    const on = this.state.filter === 'All' || this.state.filter === grp;
+    return Object.assign({}, f, {
+      dim: on ? 1 : 0.28,
+      rowBg: sel ? '#f4f6fb' : 'transparent',
+      rowRule: sel ? 'inset 2px 0 0 #1a4fa0' : 'none',
+      ref: el => { if (el) this.anchors[f.id] = el; },
+      onClick: e => { e.stopPropagation(); this.place(f.id); },
+    });
+  }
+
+  rows(list) { return list.map(o => this.decorate(this.field(o))); }
+
+  renderVals() {
+    const C = Component.C;
+    const S = this.state;
+    const go = id => e => { e.stopPropagation(); this.place(id); };
+
+    const specimens = [
+      { name: 'Editable assumption', mark: 'Blue text, dashed rule', value: '6.50%', color: C.input, rule: '1px dashed rgba(26,79,160,.45)', glyph: false, corner: false, hoverBg: '#fff', hoverBorder: '#1a4fa0', hoverAffordance: '✎', rule_text: 'The only blue in the interface. If it is blue, a human owns it and can change it here.' },
+      { name: 'Document-sourced', mark: 'Page-corner mark', value: '132', color: C.ink, rule: '1px dotted #c3c9c2', glyph: '◱', glyphColor: C.doc, corner: false, hoverBg: '#f7faf8', hoverBorder: '#dde6e0', hoverAffordance: 'OM p.9', rule_text: 'Extracted from an upload. Hover names the document; click opens the page at the highlighted line.' },
+      { name: 'Linked', mark: 'Outbound arrow', value: '$4,440,848', color: C.ink, rule: 'none', glyph: '↗', glyphColor: C.link, corner: false, hoverBg: '#f7f9fb', hoverBorder: '#dfe4ea', hoverAffordance: 'Financials', rule_text: 'Owned by another engine, read-only here. Click to jump to the field that produces it.' },
+      { name: 'Calculated', mark: 'No mark at all', value: '$68,320,731', color: C.ink, rule: 'none', glyph: false, corner: false, hoverBg: '#fafaf7', hoverBorder: '#eceae4', hoverAffordance: 'ƒx', rule_text: 'The default. Plain black earns no decoration — the absence of a mark means the model made it.' },
+      { name: 'Overridden', mark: 'Violet corner triangle', value: '$35,500,000', color: C.input, rule: '1px dashed rgba(26,79,160,.45)', glyph: false, corner: true, cornerColor: 'oklch(55% 0.13 300)', hoverBg: '#fff', hoverBorder: '#1a4fa0', hoverAffordance: 'was $36.44M', rule_text: 'Reads as an assumption because it now is one — the triangle says a source value is preserved underneath.' },
+      { name: 'Needs review', mark: 'Amber corner + rule', value: '$2,550,576', color: C.ink, rule: '1px dotted ' + C.flag, glyph: '◱', glyphColor: C.doc, corner: true, cornerColor: C.flag, hoverBg: '#fdfaf4', hoverBorder: '#f0dcae', hoverAffordance: '74%', rule_text: 'A flag layered on any origin — low extraction confidence, stale link, or a broken dependency.' },
+    ];
+
+    const filters = ['All', 'Inputs', 'Sources', 'Outputs'].map(label => ({
+      label,
+      color: S.filter === label ? '#1a2233' : '#8a8a86',
+      bg: S.filter === label ? '#fff' : 'transparent',
+      shadow: S.filter === label ? '0 1px 2px rgba(0,0,0,.08)' : 'none',
+      onClick: e => { e.stopPropagation(); this.setState({ filter: label }); },
+    }));
+
+    const exitAssumptions = this.rows([
+      { id: 'hold', label: 'Hold Period', value: '4.33 yrs', kind: 'input' },
+      { id: 'exit_cap', label: 'Exit Cap Rate', value: '6.50%', kind: 'input' },
+      { id: 'sale_costs', label: 'Sale Costs', value: '1.50%', kind: 'input' },
+    ]);
+    const acquisition = this.rows([
+      { id: 'purchase', label: 'Purchase Price', value: '$35,500,000', kind: 'override' },
+      { id: 'keys', label: 'Keys', value: '132', kind: 'doc' },
+      { id: 'year_built', label: 'Year Built', value: '2021', kind: 'doc' },
+      { id: 'entry_noi', label: 'Entry NOI', value: '$2,550,576', kind: 'review' },
+      { id: 'entry_cap', label: 'Entry Cap Rate', value: '7.19%', kind: 'calc' },
+      { id: 'ppk', label: 'Price / Key', value: '$268,939', kind: 'calc' },
+    ]);
+    const calculatedExit = this.rows([
+      { id: 'ftm_noi', label: 'FTM NOI', value: '$4,440,848', kind: 'link' },
+      { id: 'gross_exit', label: 'Gross Exit Value', value: '$68,320,731', kind: 'calc' },
+      { id: 'vpk', label: 'Value / Key', value: '$517,581', kind: 'calc' },
+      { id: 'dispo', label: 'Disposition Fees', value: '$1,024,811', kind: 'calc' },
+      { id: 'net_proceeds', label: 'Net Sale Proceeds', value: '$67,295,920', kind: 'calc', total: true },
+    ]);
+    const debtInputs = this.rows([
+      { id: 'ltc', label: 'LTC', value: '65.0%', kind: 'input' },
+      { id: 'spread', label: 'Spread over SOFR', value: '3.50%', kind: 'input' },
+      { id: 'sofr', label: 'SOFR', value: '4.16%', kind: 'link' },
+      { id: 'io', label: 'Interest Only', value: '48 mo', kind: 'input' },
+      { id: 'amort', label: 'Amortization', value: '30 yrs', kind: 'input' },
+      { id: 'orig_fee', label: 'Origination Fee', value: '2.00%', kind: 'input' },
+      { id: 'refi_month', label: 'Refi Month', value: '30', kind: 'input' },
+    ]);
+    const debtOutputs = this.rows([
+      { id: 'total_uses', label: 'Total Uses', value: '$42,572,678', kind: 'calc' },
+      { id: 'loan_amt', label: 'Loan Amount', value: '$23,187,000', kind: 'calc' },
+      { id: 'all_in', label: 'All-in Rate', value: '7.66%', kind: 'calc' },
+      { id: 'ads', label: 'Annual Debt Service', value: '$1,776,124', kind: 'calc' },
+      { id: 'dscr', label: 'DSCR (stabilized)', value: '2.50x', kind: 'calc' },
+      { id: 'equity', label: 'Equity Requirement', value: '$19,385,678', kind: 'calc', total: true },
+    ]);
+
+    const drv = S.driver;
+    const drivers = ['$/Key', '$/SF', 'Total'].map(label => ({
+      label,
+      color: drv === label ? '#1a2233' : '#8a8a86',
+      bg: drv === label ? '#fff' : 'transparent',
+      onClick: e => { e.stopPropagation(); this.setState({ driver: label }); },
+    }));
+    const renovation = [
+      { label: 'Renovation / Key', value: '$37,450', k: '$/Key' },
+      { label: 'Renovation / SF', value: '$35', k: '$/SF' },
+      { label: 'Total Renovation', value: '$4,943,400', k: 'Total' },
+    ].map(r => ({
+      label: r.label, value: r.value,
+      color: r.k === drv ? C.input : C.ink,
+      weight: r.k === 'Total' ? 700 : 500,
+      rule: r.k === drv ? '1px dashed rgba(26,79,160,.45)' : 'none',
+    }));
+
+    const lineage = [
+      { where: 'Data room', label: 'Financial projections', value: '3 documents', color: C.ink, bg: '#fbfbf9', border: '#ececea', hasArrow: true },
+      { where: 'Financials', label: 'FTM NOI', value: '$4,440,848', color: C.ink, bg: '#fbfbf9', border: '#ececea', hasArrow: true },
+      { where: 'Investment', label: 'Exit Cap Rate', value: '6.50%', color: C.input, bg: '#f4f6fb', border: '#d5ddef', hasArrow: true },
+      { where: 'Investment', label: 'Gross Exit Value', value: '$68,320,731', color: C.ink, bg: '#fbfbf9', border: '#ececea', hasArrow: true },
+      { where: 'Cash flow', label: 'Net Sale Proceeds', value: '$67,295,920', color: C.ink, bg: '#fbfbf9', border: '#ececea', hasArrow: true },
+      { where: 'Returns', label: 'IRR / MOIC', value: '21.4% · 2.31x', color: C.ink, bg: '#fbfbf9', border: '#ececea', hasArrow: false },
+    ];
+
+    const rules = [
+      { t: 'Blue is reserved', d: 'Blue text means user-controlled, everywhere, forever. No link, heading or accent may use it inside a data region.' },
+      { t: 'Calculated wears nothing', d: 'Outputs are the majority of values. Marking them would mark the whole screen, so the mark is their absence.' },
+      { t: 'Origin ≠ editability', d: 'Two separate metadata fields. A locked document value and an editable one differ by rule style, not colour.' },
+      { t: 'Flags stack', d: 'Review and stale-link are corner triangles drawn over any state — you never lose sight of where the value came from.' },
+      { t: 'One driver per identity', d: '$/Key, $/SF and Total are one value in three units. Exactly one is editable; switching the driver is an explicit act.' },
+      { t: 'One popover, anchored', d: 'The detail panel is a single component anchored to the cell. Same anatomy on every tab, nothing reflows behind it.' },
+    ];
+
+    const D = {
+      gross_exit: {
+        kind: 'Calculated', kindColor: '#1a2233', where: 'Investment / Exit', label: 'Gross Exit Value', value: '$68,320,731', valueColor: C.ink,
+        calc: { expr: 'FTM NOI ÷ Exit Cap Rate', numbers: '$4,440,848 ÷ 6.50%', inputs: [
+          { name: 'FTM NOI', path: 'Financials / Projections', dot: C.link, onClick: go('ftm_noi') },
+          { name: 'Exit Cap Rate', path: 'Investment / Exit', dot: C.input, onClick: go('exit_cap') },
+        ] },
+        deps: [ { name: 'Value / Key', where: 'Investment' }, { name: 'Net Sale Proceeds', where: 'Cash Flow' }, { name: 'IRR / MOIC', where: 'Returns' } ], depCount: '3 fields',
+        actions: [ { label: 'Trace lineage', bg: '#14213d', color: '#fff', border: 'none' }, { label: 'Copy calculation', bg: '#fff', color: '#1a2233', border: '1px solid #d8d7d2' } ],
+      },
+      purchase: {
+        kind: 'Overridden · was sourced', kindColor: 'oklch(50% 0.13 300)', where: 'Investment / Acquisition', label: 'Purchase Price', value: '$35,500,000', valueColor: C.input,
+        source: { doc: 'Kimpton Angler — Offering Memorandum', loc: 'Page 14 · Acquisition Summary', text: 'Asking price of $36,436,802 ($276,036 per key)', hl: 'oklch(75% 0.10 300)' },
+        override: { orig: '$36,436,802', cur: '$35,500,000', meta: [ { k: 'Changed by', v: 'M. Okafor' }, { k: 'When', v: 'Aug 24, 2026 · 4:12pm' }, { k: 'Reason', v: 'Negotiated LOI price' } ] },
+        deps: [ { name: 'Total Uses', where: 'Investment' }, { name: 'Loan Amount', where: 'Debt' }, { name: 'Equity Requirement', where: 'Partnership' }, { name: 'IRR / MOIC', where: 'Returns' } ], depCount: '11 fields',
+        actions: [ { label: 'Restore source value', bg: '#14213d', color: '#fff', border: 'none' }, { label: 'View source', bg: '#fff', color: '#1a2233', border: '1px solid #d8d7d2' } ],
+      },
+      entry_noi: {
+        kind: 'Sourced · needs review', kindColor: 'oklch(52% 0.16 55)', where: 'Investment / Acquisition', label: 'Entry NOI', value: '$2,550,576', valueColor: C.ink, sub: 'Run-rate, trailing 12 months to 9/30/2025',
+        source: { doc: 'Kimpton_Angler_T12_Sep2025.pdf', loc: 'Page 4 · Summary P&L', text: 'Net Operating Income 2,550,576', hl: 'oklch(78% 0.12 55)', confidence: '74%', confColor: 'oklch(52% 0.16 55)' },
+        deps: [ { name: 'Entry Cap Rate', where: 'Investment' }, { name: 'Debt Yield', where: 'Debt' } ], depCount: '2 fields',
+        actions: [ { label: 'Confirm value', bg: '#14213d', color: '#fff', border: 'none' }, { label: 'View source', bg: '#fff', color: '#1a2233', border: '1px solid #d8d7d2' }, { label: 'Override', bg: '#fff', color: '#1a2233', border: '1px solid #d8d7d2' } ],
+      },
+      keys: {
+        kind: 'Document-sourced', kindColor: 'oklch(45% 0.09 165)', where: 'Property / Overview', label: 'Keys', value: '132', valueColor: C.ink, sub: 'Post-renovation count, unchanged from pre-renovation',
+        source: { doc: 'Kimpton Angler — Offering Memorandum', loc: 'Page 9 · Property Summary', text: '132-key boutique hotel delivered in 2021', hl: 'oklch(75% 0.09 165)', confidence: '98%', confColor: 'oklch(45% 0.13 155)' },
+        deps: [ { name: 'Price / Key', where: 'Investment' }, { name: 'Value / Key', where: 'Investment' }, { name: 'Renovation / Key', where: 'Investment' } ], depCount: '6 fields',
+        actions: [ { label: 'View source', bg: '#14213d', color: '#fff', border: 'none' }, { label: 'Override', bg: '#fff', color: '#1a2233', border: '1px solid #d8d7d2' } ],
+      },
+      ftm_noi: {
+        kind: 'Linked', kindColor: 'oklch(48% 0.08 240)', where: 'Investment / Exit', label: 'FTM NOI', value: '$4,440,848', valueColor: C.ink, sub: 'Read-only here · owned by the projections engine',
+        calc: { expr: 'Forward 12 months from 9/30/2028', numbers: 'Stabilized year 3 projection', inputs: [ { name: 'Open in Financials → Projections', path: 'source of truth', dot: 'oklch(52% 0.07 240)', onClick: go('ftm_noi') } ] },
+        deps: [ { name: 'Gross Exit Value', where: 'Investment' }, { name: 'Refi sizing', where: 'Debt' } ], depCount: '4 fields',
+        actions: [ { label: 'Go to source field', bg: '#14213d', color: '#fff', border: 'none' }, { label: 'Break link & override', bg: '#fff', color: '#1a2233', border: '1px solid #d8d7d2' } ],
+      },
+      exit_cap: {
+        kind: 'Editable assumption', kindColor: '#1a4fa0', where: 'Investment / Exit', label: 'Exit Cap Rate', value: '6.50%', valueColor: C.input, sub: 'Base scenario · Downside 7.00% · Upside 6.10%',
+        deps: [ { name: 'Gross Exit Value', where: 'Investment' }, { name: 'Net Sale Proceeds', where: 'Cash Flow' }, { name: 'IRR / MOIC', where: 'Returns' } ], depCount: '9 fields',
+        actions: [ { label: 'Edit value', bg: '#14213d', color: '#fff', border: 'none' }, { label: 'Set per scenario', bg: '#fff', color: '#1a2233', border: '1px solid #d8d7d2' }, { label: 'Sensitize', bg: '#fff', color: '#1a2233', border: '1px solid #d8d7d2' } ],
+      },
+      loan_amt: {
+        kind: 'Calculated', kindColor: '#1a2233', where: 'Debt / Senior loan', label: 'Loan Amount', value: '$23,187,000', valueColor: C.ink, sub: 'Binding constraint: LTC',
+        calc: { expr: 'min( LTC × Total Uses , NOI ÷ Debt Yield )', numbers: 'min( 65.0% × $42,572,678 , $2,550,576 ÷ 11.00% )', inputs: [
+          { name: 'LTC', path: 'Debt / Assumptions', dot: C.input, onClick: go('ltc') },
+          { name: 'Total Uses', path: 'Investment / Sources & Uses', dot: '#1a2233', onClick: go('total_uses') },
+          { name: 'Entry NOI', path: 'Investment / Acquisition', dot: 'oklch(48% 0.09 165)', onClick: go('entry_noi') },
+        ] },
+        deps: [ { name: 'Annual Debt Service', where: 'Debt' }, { name: 'Equity Requirement', where: 'Partnership' } ], depCount: '7 fields',
+        actions: [ { label: 'Trace lineage', bg: '#14213d', color: '#fff', border: 'none' }, { label: 'Override sizing', bg: '#fff', color: '#1a2233', border: '1px solid #d8d7d2' } ],
+      },
+      sofr: {
+        kind: 'Linked · market data', kindColor: 'oklch(48% 0.08 240)', where: 'Debt / Senior loan', label: 'SOFR', value: '4.16%', valueColor: C.ink, sub: 'Term SOFR 1M as of 9/30/2025',
+        deps: [ { name: 'All-in Rate', where: 'Debt' }, { name: 'Annual Debt Service', where: 'Debt' } ], depCount: '5 fields',
+        actions: [ { label: 'Refresh rate', bg: '#14213d', color: '#fff', border: 'none' }, { label: 'Pin to date', bg: '#fff', color: '#1a2233', border: '1px solid #d8d7d2' } ],
+      },
+    };
+
+    const all = [].concat(exitAssumptions, acquisition, calculatedExit, debtInputs, debtOutputs);
+    const cur = all.find(f => f.id === S.sel);
+    let insp = D[S.sel];
+    if (!insp) {
+      insp = {
+        kind: 'Calculated', kindColor: '#1a2233', where: 'Kimpton Angler', label: '—', value: '—', valueColor: C.ink,
+        sub: 'Every field carries the same popover — source, calculation, dependencies, history.',
+        actions: [ { label: 'Trace lineage', bg: '#14213d', color: '#fff', border: 'none' } ],
+      };
+      if (cur) {
+        insp.label = cur.label; insp.value = cur.value; insp.valueColor = cur.color;
+        insp.kind = { input: 'Editable assumption', override: 'Overridden', doc: 'Document-sourced', link: 'Linked', review: 'Needs review', calc: 'Calculated' }[cur.kind];
+        insp.kindColor = cur.kind === 'input' || cur.kind === 'override' ? C.input : '#1a2233';
+      }
+    }
+
+    return {
+      specimens, filters, exitAssumptions, acquisition, calculatedExit, debtInputs, debtOutputs,
+      drivers, renovation, lineage, rules, insp,
+      pop: S.pop, rootRef: this.rootRef,
+      stop: e => e.stopPropagation(),
+      close: e => { e.stopPropagation(); this.setState({ pop: null, sel: null }); },
+    };
+  }
+}
+</script>
+</body>
+</html>

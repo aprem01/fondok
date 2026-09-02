@@ -1,0 +1,269 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+  <style>body{margin:0;background:#f5f4f0;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,Arial,sans-serif;}a{color:#2f4a8c}a:hover{color:#1f3568}</style>
+</helmet>
+<template id="__bundler_thumbnail">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 120 56" data-bg-color="#14213d"><rect width="120" height="56" fill="#14213d"/><g fill="none" stroke="#f5f4f0" stroke-width="2"><rect x="22" y="14" width="16" height="28"/><rect x="52" y="20" width="16" height="16"/><rect x="82" y="8" width="16" height="34"/></g></svg>
+</template>
+<div style="width:100%;min-height:100vh">
+
+  <sc-if value="{{ isCover }}" hint-placeholder-val="{{ true }}">
+    <div data-screen-label="00 — Cover / Index" style="min-height:100vh;background:#f5f4f0;padding:0 0 64px">
+      <div style="background:#0f1a30;color:#fff;padding:34px 40px 30px">
+        <div style="max-width:1160px;margin:0 auto">
+          <div style="display:flex;align-items:center;gap:9px;font-weight:700;font-size:15px;margin-bottom:26px"><span style="width:26px;height:26px;background:#2f4a8c;border-radius:6px;display:flex;align-items:center;justify-content:center;font-size:12px">F</span>Fondok.</div>
+          <h1 style="font-size:34px;line-height:1.15;font-weight:600;margin:0 0 12px;letter-spacing:-.015em">Fondok MVP — Canonical Product Prototype</h1>
+          <p style="font-size:13.5px;color:#c9cede;line-height:1.6;margin:0 0 20px;max-width:720px;text-wrap:pretty">The single design source of truth for the Fondok underwriting MVP. One definitive screen per primary tab, in the canonical navigation order, with the latest approved product decisions.</p>
+          <div style="display:flex;gap:10px;flex-wrap:wrap;font-size:11.5px">
+            <span style="border:1px solid rgba(255,255,255,.22);border-radius:20px;padding:5px 12px;color:#e4e7ef">Last consolidated: Sep 2026</span>
+            <span style="border:1px solid rgba(255,255,255,.22);border-radius:20px;padding:5px 12px;color:#e4e7ef">Status: MVP design source of truth</span>
+            <span style="border:1px solid rgba(255,255,255,.22);border-radius:20px;padding:5px 12px;color:#e4e7ef">11 primary sections · 6 sub-frames</span>
+          </div>
+        </div>
+      </div>
+
+      <div style="max-width:1160px;margin:0 auto;padding:22px 40px 0;display:flex;flex-direction:column;gap:14px">
+
+        <div style="background:#fff;border:1px solid #dbe3f5;border-radius:10px;padding:13px 16px;display:flex;gap:12px;align-items:flex-start">
+          <span style="font-size:9.5px;font-weight:700;letter-spacing:.06em;color:#2f4a8c;text-transform:uppercase;background:#eef2fb;border:1px solid #dbe3f5;border-radius:20px;padding:4px 9px;white-space:nowrap;flex-shrink:0">Engineering</span>
+          <span style="font-size:12.5px;color:#3a3f47;line-height:1.55;text-wrap:pretty">Implement from the screens in this canonical prototype only. Pages under <b>Archive — Previous Iterations</b> are obsolete and should not be used as requirements.</span>
+        </div>
+
+        <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(330px,1fr));gap:12px">
+
+          <div onClick="{{ goDataRoom }}" style="background:#fff;border:1px solid #eae9e4;border-radius:10px;padding:14px 16px;cursor:pointer;display:flex;flex-direction:column;gap:7px" style-hover="border-color:#c9d4ee;box-shadow:0 2px 10px rgba(16,24,40,.06)">
+            <div style="display:flex;align-items:baseline;gap:9px"><span style="font-size:11px;font-weight:700;color:#b0afaa;letter-spacing:.05em">01</span><span style="font-size:14px;font-weight:700;color:#1a2233">Data Room</span></div>
+            <div style="font-size:12px;color:#6b6f76;line-height:1.5">Document ingestion, classification, coverage and document-sourced provenance.</div>
+            <div style="display:flex;gap:7px;flex-wrap:wrap;margin-top:2px">
+              <span onClick="{{ goDataRoomDetail }}" style="font-size:11px;font-weight:600;color:#2f4a8c;background:#eef2fb;border:1px solid #dbe3f5;border-radius:5px;padding:4px 9px">01A — Document Review</span>
+            </div>
+          </div>
+
+          <div onClick="{{ goOverview }}" style="background:#fff;border:1px solid #eae9e4;border-radius:10px;padding:14px 16px;cursor:pointer;display:flex;flex-direction:column;gap:7px" style-hover="border-color:#c9d4ee;box-shadow:0 2px 10px rgba(16,24,40,.06)">
+            <div style="display:flex;align-items:baseline;gap:9px"><span style="font-size:11px;font-weight:700;color:#b0afaa;letter-spacing:.05em">02</span><span style="font-size:14px;font-weight:700;color:#1a2233">Overview</span></div>
+            <div style="font-size:12px;color:#6b6f76;line-height:1.5">Deal overview, Investment Profile, Deal Type and canonical Model Settings.</div>
+          </div>
+
+          <div onClick="{{ goMarket }}" style="background:#fff;border:1px solid #eae9e4;border-radius:10px;padding:14px 16px;cursor:pointer;display:flex;flex-direction:column;gap:7px" style-hover="border-color:#c9d4ee;box-shadow:0 2px 10px rgba(16,24,40,.06)">
+            <div style="display:flex;align-items:baseline;gap:9px"><span style="font-size:11px;font-weight:700;color:#b0afaa;letter-spacing:.05em">03</span><span style="font-size:14px;font-weight:700;color:#1a2233">Market</span></div>
+            <div style="font-size:12px;color:#6b6f76;line-height:1.5">Market Overview plus the two canonical sub-tabs. Transaction comps live here.</div>
+            <div style="display:flex;gap:7px;flex-wrap:wrap;margin-top:2px">
+              <span onClick="{{ goComps }}" style="font-size:11px;font-weight:600;color:#2f4a8c;background:#eef2fb;border:1px solid #dbe3f5;border-radius:5px;padding:4px 9px">03A — Transaction Comps</span>
+              <span onClick="{{ goIndex }}" style="font-size:11px;font-weight:600;color:#2f4a8c;background:#eef2fb;border:1px solid #dbe3f5;border-radius:5px;padding:4px 9px">03B — Index Analysis</span>
+            </div>
+          </div>
+
+          <div onClick="{{ goFinancials }}" style="background:#fff;border:1px solid #eae9e4;border-radius:10px;padding:14px 16px;cursor:pointer;display:flex;flex-direction:column;gap:7px" style-hover="border-color:#c9d4ee;box-shadow:0 2px 10px rgba(16,24,40,.06)">
+            <div style="display:flex;align-items:baseline;gap:9px"><span style="font-size:11px;font-weight:700;color:#b0afaa;letter-spacing:.05em">04</span><span style="font-size:14px;font-weight:700;color:#1a2233">Financials</span></div>
+            <div style="font-size:12px;color:#6b6f76;line-height:1.5">Owns the operating model and its canonical operating assumptions.</div>
+          </div>
+
+          <div onClick="{{ goInvestment }}" style="background:#fff;border:1px solid #eae9e4;border-radius:10px;padding:14px 16px;cursor:pointer;display:flex;flex-direction:column;gap:7px" style-hover="border-color:#c9d4ee;box-shadow:0 2px 10px rgba(16,24,40,.06)">
+            <div style="display:flex;align-items:baseline;gap:9px"><span style="font-size:11px;font-weight:700;color:#b0afaa;letter-spacing:.05em">05</span><span style="font-size:14px;font-weight:700;color:#1a2233">Investment</span></div>
+            <div style="font-size:12px;color:#6b6f76;line-height:1.5">Owns acquisition, capitalization and exit assumptions. No debt assumptions.</div>
+          </div>
+
+          <div onClick="{{ goDebt }}" style="background:#fff;border:1px solid #eae9e4;border-radius:10px;padding:14px 16px;cursor:pointer;display:flex;flex-direction:column;gap:7px" style-hover="border-color:#c9d4ee;box-shadow:0 2px 10px rgba(16,24,40,.06)">
+            <div style="display:flex;align-items:baseline;gap:9px"><span style="font-size:11px;font-weight:700;color:#b0afaa;letter-spacing:.05em">06</span><span style="font-size:14px;font-weight:700;color:#1a2233">Debt</span></div>
+            <div style="font-size:12px;color:#6b6f76;line-height:1.5">Owns financing and refinance structure; flows into Cash Flow and Returns.</div>
+          </div>
+
+          <div onClick="{{ goPartnership }}" style="background:#fff;border:1px solid #eae9e4;border-radius:10px;padding:14px 16px;cursor:pointer;display:flex;flex-direction:column;gap:7px" style-hover="border-color:#c9d4ee;box-shadow:0 2px 10px rgba(16,24,40,.06)">
+            <div style="display:flex;align-items:baseline;gap:9px"><span style="font-size:11px;font-weight:700;color:#b0afaa;letter-spacing:.05em">07</span><span style="font-size:14px;font-weight:700;color:#1a2233">Partnership</span></div>
+            <div style="font-size:12px;color:#6b6f76;line-height:1.5">GP/LP economics and waterfall allocation logic.</div>
+          </div>
+
+          <div onClick="{{ goCashflow }}" style="background:#fff;border:1px solid #eae9e4;border-radius:10px;padding:14px 16px;cursor:pointer;display:flex;flex-direction:column;gap:7px" style-hover="border-color:#c9d4ee;box-shadow:0 2px 10px rgba(16,24,40,.06)">
+            <div style="display:flex;align-items:baseline;gap:9px"><span style="font-size:11px;font-weight:700;color:#b0afaa;letter-spacing:.05em">08</span><span style="font-size:14px;font-weight:700;color:#1a2233">Cash Flow</span></div>
+            <div style="font-size:12px;color:#6b6f76;line-height:1.5">Output-only bridge — unlevered property and levered equity. No assumptions.</div>
+          </div>
+
+          <div onClick="{{ goReturns }}" style="background:#fff;border:1px solid #eae9e4;border-radius:10px;padding:14px 16px;cursor:pointer;display:flex;flex-direction:column;gap:7px" style-hover="border-color:#c9d4ee;box-shadow:0 2px 10px rgba(16,24,40,.06)">
+            <div style="display:flex;align-items:baseline;gap:9px"><span style="font-size:11px;font-weight:700;color:#b0afaa;letter-spacing:.05em">09</span><span style="font-size:14px;font-weight:700;color:#1a2233">Returns</span></div>
+            <div style="font-size:12px;color:#6b6f76;line-height:1.5">Return outputs and pricing. Scenario management lives in Scenario Analysis.</div>
+            <div style="display:flex;gap:7px;flex-wrap:wrap;margin-top:2px">
+              <span onClick="{{ goSensitivities }}" style="font-size:11px;font-weight:600;color:#2f4a8c;background:#eef2fb;border:1px solid #dbe3f5;border-radius:5px;padding:4px 9px">09A — Sensitivities</span>
+              <span onClick="{{ goPricing }}" style="font-size:11px;font-weight:600;color:#2f4a8c;background:#eef2fb;border:1px solid #dbe3f5;border-radius:5px;padding:4px 9px">09B — Pricing</span>
+            </div>
+          </div>
+
+          <div onClick="{{ goScenarios }}" style="background:#fff;border:1px solid #eae9e4;border-radius:10px;padding:14px 16px;cursor:pointer;display:flex;flex-direction:column;gap:7px" style-hover="border-color:#c9d4ee;box-shadow:0 2px 10px rgba(16,24,40,.06)">
+            <div style="display:flex;align-items:baseline;gap:9px"><span style="font-size:11px;font-weight:700;color:#b0afaa;letter-spacing:.05em">10</span><span style="font-size:14px;font-weight:700;color:#1a2233">Scenario Analysis</span></div>
+            <div style="font-size:12px;color:#6b6f76;line-height:1.5">Two-variable sensitivity plus saved multi-variable scenarios. Base is read-only.</div>
+            <div style="display:flex;gap:7px;flex-wrap:wrap;margin-top:2px">
+              <span onClick="{{ goNewScenario }}" style="font-size:11px;font-weight:600;color:#2f4a8c;background:#eef2fb;border:1px solid #dbe3f5;border-radius:5px;padding:4px 9px">10A — New Scenario</span>
+            </div>
+          </div>
+
+          <div onClick="{{ goIcMemo }}" style="background:#fff;border:1px solid #eae9e4;border-radius:10px;padding:14px 16px;cursor:pointer;display:flex;flex-direction:column;gap:7px" style-hover="border-color:#c9d4ee;box-shadow:0 2px 10px rgba(16,24,40,.06)">
+            <div style="display:flex;align-items:baseline;gap:9px"><span style="font-size:11px;font-weight:700;color:#b0afaa;letter-spacing:.05em">11</span><span style="font-size:14px;font-weight:700;color:#1a2233">IC Memo</span></div>
+            <div style="font-size:12px;color:#6b6f76;line-height:1.5">Model Assessment, IC Recommendation, diligence, and analysis &amp; export deliverables.</div>
+          </div>
+
+        </div>
+
+        <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:12px;margin-top:6px">
+          <div style="background:#fbfbf9;border:1px solid #eae9e4;border-radius:10px;padding:14px 16px;display:flex;flex-direction:column;gap:8px">
+            <span style="font-size:10px;font-weight:700;letter-spacing:.06em;color:#8a8a86;text-transform:uppercase">Canonical ownership</span>
+            <span style="font-size:12px;color:#6b6f76;line-height:1.6">Operating assumptions → Financials · Acquisition, capitalization, exit → Investment · Financing → Debt · Allocation and waterfall → Partnership · Saved scenarios → Scenario Analysis · Analysis and export → IC Memo. Cash Flow and Returns are outputs only.</span>
+          </div>
+          <div style="background:#fbfbf9;border:1px solid #eae9e4;border-radius:10px;padding:14px 16px;display:flex;flex-direction:column;gap:8px">
+            <span style="font-size:10px;font-weight:700;letter-spacing:.06em;color:#8a8a86;text-transform:uppercase">Base Case</span>
+            <span style="font-size:12px;color:#6b6f76;line-height:1.6">Base is the source of truth and read-only from Scenario Analysis. Saved scenarios carry explicit overrides against Base and appear in IC Memo as comparisons only. Numbers throughout are prototype examples; implementation consumes canonical model outputs.</span>
+          </div>
+          <div style="background:#fbfbf9;border:1px solid #eae9e4;border-radius:10px;padding:14px 16px;display:flex;flex-direction:column;gap:8px">
+            <span style="font-size:10px;font-weight:700;letter-spacing:.06em;color:#8a8a86;text-transform:uppercase">Data Key</span>
+            <div style="display:flex;flex-direction:column;gap:5px;font-size:11.5px;color:#6b6f76">
+              <span style="display:flex;align-items:center;gap:7px"><span style="width:9px;height:9px;border-radius:50%;background:oklch(45% 0.12 155);flex-shrink:0"></span>Document sourced</span>
+              <span style="display:flex;align-items:center;gap:7px"><span style="width:9px;height:9px;border-radius:50%;background:#fff;border:2px solid oklch(45% 0.12 155);flex-shrink:0"></span>Linked</span>
+              <span style="display:flex;align-items:center;gap:7px"><span style="width:9px;height:9px;border-radius:50%;background:#2f4a8c;flex-shrink:0"></span>Assumption</span>
+              <span style="display:flex;align-items:center;gap:7px"><span style="width:9px;height:9px;border-radius:50%;background:#5f656e;flex-shrink:0"></span>Calculated</span>
+              <span style="display:flex;align-items:center;gap:7px"><span style="width:9px;height:9px;border-radius:50%;background:#fff;border:1px dashed #b0afaa;flex-shrink:0"></span>Awaiting data</span>
+              <span style="display:flex;align-items:center;gap:7px"><span style="width:9px;height:9px;border-radius:50%;background:oklch(45% 0.12 155);box-shadow:0 0 0 3px oklch(88% 0.07 45);flex-shrink:0"></span>Needs review</span>
+              <span style="display:flex;align-items:center;gap:7px"><b style="color:#1a2233">1,240</b>Total / summary</span>
+              <span style="display:flex;align-items:center;gap:7px"><span style="text-decoration:underline dotted;color:#6b6f76">123</span>Editable — click to change</span>
+            </div>
+          </div>
+        </div>
+
+        <div style="display:flex;align-items:center;justify-content:space-between;gap:14px;flex-wrap:wrap;border-top:1px solid #e6e5e0;padding-top:14px;margin-top:6px;font-size:12px;color:#9a9a95">
+          <span>Start the end-to-end flow at <span onClick="{{ goDataRoom }}" style="color:#2f4a8c;font-weight:600;cursor:pointer">01 — Data Room →</span></span>
+          <a href="./Archive - Previous Iterations.dc.html" style="font-weight:600">Archive — Previous Iterations (obsolete) ↗</a>
+        </div>
+      </div>
+    </div>
+  </sc-if>
+
+  <sc-if value="{{ isDataRoom }}">
+    <dc-import name="Data Room v2" onNavigate="{{ onNavigate }}" default-view="{{ drView }}" default-doc-id="{{ drDoc }}" hint-size="100%,100vh"></dc-import>
+  </sc-if>
+  <sc-if value="{{ isOverview }}">
+    <dc-import name="Overview Tab v3" onNavigate="{{ onNavigate }}" showReviewBar="{{ overviewReviewBar }}" hint-size="100%,100vh"></dc-import>
+  </sc-if>
+  <sc-if value="{{ isMarket }}">
+    <dc-import name="Market Tab" onNavigate="{{ onNavigate }}" default-sub-tab="{{ subTab }}" hint-size="100%,100vh"></dc-import>
+  </sc-if>
+  <sc-if value="{{ isFinancials }}">
+    <dc-import name="Financials Tab" onNavigate="{{ onNavigate }}" initial-doc="{{ financialsDoc }}" hint-size="100%,100vh"></dc-import>
+  </sc-if>
+  <sc-if value="{{ isInvestment }}">
+    <dc-import name="Investment Tab" onNavigate="{{ onNavigate }}" hint-size="100%,100vh"></dc-import>
+  </sc-if>
+  <sc-if value="{{ isDebt }}">
+    <dc-import name="Debt Tab" onNavigate="{{ onNavigate }}" hint-size="100%,100vh"></dc-import>
+  </sc-if>
+  <sc-if value="{{ isPartnership }}">
+    <dc-import name="Partnership Tab" onNavigate="{{ onNavigate }}" hint-size="100%,100vh"></dc-import>
+  </sc-if>
+  <sc-if value="{{ isCashflow }}">
+    <dc-import name="Cash Flow Tab" onNavigate="{{ onNavigate }}" hint-size="100%,100vh"></dc-import>
+  </sc-if>
+  <sc-if value="{{ isReturns }}">
+    <dc-import name="Returns Tab" onNavigate="{{ onNavigate }}" default-sub-tab="{{ subTab }}" hint-size="100%,100vh"></dc-import>
+  </sc-if>
+  <sc-if value="{{ isScenarios }}">
+    <dc-import name="Scenarios Tab" onNavigate="{{ onNavigate }}" open-new-scenario="{{ openNew }}" hint-size="100%,100vh"></dc-import>
+  </sc-if>
+  <sc-if value="{{ isIcMemo }}">
+    <dc-import name="IC Memo Tab" onNavigate="{{ onNavigate }}" hint-size="100%,100vh"></dc-import>
+  </sc-if>
+
+  <sc-if value="{{ showFrameBar }}">
+    <div style="position:fixed;left:16px;bottom:16px;z-index:200;display:flex;align-items:center;gap:10px;background:#0f1a30;color:#fff;border-radius:8px;padding:7px 12px;box-shadow:0 6px 20px rgba(16,24,40,.22);font-size:11.5px">
+      <span onClick="{{ goCover }}" style="cursor:pointer;font-weight:600;color:#c9cede">← Index</span>
+      <span style="width:1px;height:14px;background:rgba(255,255,255,.2)"></span>
+      <span style="font-weight:600;letter-spacing:.02em">{{ frameLabel }}</span>
+    </div>
+  </sc-if>
+
+</div>
+
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props="{&quot;overviewReviewBar&quot;:{&quot;editor&quot;:&quot;boolean&quot;,&quot;default&quot;:false,&quot;tsType&quot;:&quot;boolean&quot;,&quot;section&quot;:&quot;Overview&quot;,&quot;label&quot;:&quot;Show \&quot;fields need review\&quot; bar&quot;}}">
+class Component extends DCLogic {
+  state = { tab: 'cover', subTab: null, financialsDoc: null, drView: null, drDoc: null, openNew: false };
+
+  FRAMES = {
+    dataroom: '01 — Data Room', overview: '02 — Overview', market: '03 — Market',
+    financials: '04 — Financials', investment: '05 — Investment', debt: '06 — Debt',
+    partnership: '07 — Partnership', cashflow: '08 — Cash Flow', returns: '09 — Returns',
+    scenarios: '10 — Scenario Analysis', icmemo: '11 — IC Memo',
+  };
+  SUBFRAMES = {
+    'Transaction Comps': '03A — Market / Transaction Comps',
+    'Index Analysis': '03B — Market / Index Analysis',
+    'Sensitivities': '09A — Returns / Sensitivities',
+    'Pricing': '09B — Returns / Pricing',
+  };
+
+  go(tab, extra) {
+    return (e) => {
+      if (e && e.stopPropagation) e.stopPropagation();
+      this.setState(Object.assign({ tab, subTab: null, financialsDoc: null, drView: null, drDoc: null, openNew: false }, extra || {}));
+      if (typeof window !== 'undefined') window.scrollTo(0, 0);
+    };
+  }
+
+  renderVals() {
+    const ALIAS = { forecasting: 'financials', capex: 'investment', analysis: 'scenarios' };
+    const t = this.state.tab;
+    const sub = this.state.subTab;
+    const frame = t === 'dataroom' && this.state.drView === 'detail'
+      ? '01A — Data Room / Document Review'
+      : (sub && this.SUBFRAMES[sub]) || (this.state.openNew ? '10A — Scenario Analysis / New Scenario' : this.FRAMES[t]);
+
+    return {
+      isCover: t === 'cover',
+      isDataRoom: t === 'dataroom', isOverview: t === 'overview', isMarket: t === 'market',
+      isFinancials: t === 'financials', isInvestment: t === 'investment', isDebt: t === 'debt',
+      isPartnership: t === 'partnership', isCashflow: t === 'cashflow', isReturns: t === 'returns',
+      isScenarios: t === 'scenarios', isIcMemo: t === 'icmemo',
+
+      overviewReviewBar: this.props.overviewReviewBar ?? false,
+      financialsDoc: this.state.financialsDoc,
+      subTab: sub,
+      drView: this.state.drView,
+      drDoc: this.state.drDoc,
+      openNew: this.state.openNew,
+
+      showFrameBar: t !== 'cover',
+      frameLabel: frame || '',
+      goCover: this.go('cover'),
+
+      goDataRoom: this.go('dataroom'),
+      goDataRoomDetail: this.go('dataroom', { drView: 'detail', drDoc: 'om' }),
+      goOverview: this.go('overview'),
+      goMarket: this.go('market'),
+      goComps: this.go('market', { subTab: 'Transaction Comps' }),
+      goIndex: this.go('market', { subTab: 'Index Analysis' }),
+      goFinancials: this.go('financials'),
+      goInvestment: this.go('investment'),
+      goDebt: this.go('debt'),
+      goPartnership: this.go('partnership'),
+      goCashflow: this.go('cashflow'),
+      goReturns: this.go('returns'),
+      goSensitivities: this.go('returns', { subTab: 'Sensitivities' }),
+      goPricing: this.go('returns', { subTab: 'Pricing' }),
+      goScenarios: this.go('scenarios'),
+      goNewScenario: this.go('scenarios', { openNew: true }),
+      goIcMemo: this.go('icmemo'),
+
+      onNavigate: (tab, params) => this.setState({
+        tab: ALIAS[tab] || tab, subTab: null, drView: null, drDoc: null, openNew: false,
+        financialsDoc: (params && params.doc) || null,
+      }),
+    };
+  }
+}
+
+</script>
+</body>
+</html>

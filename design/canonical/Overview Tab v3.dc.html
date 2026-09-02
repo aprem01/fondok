@@ -1,0 +1,1042 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+  <style>body{margin:0;background:#f5f4f0;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,Arial,sans-serif;}a{color:#2f4a8c}a:hover{color:#1f3568}</style>
+</helmet>
+<template id="__bundler_thumbnail">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 120 56" data-bg-color="#14213d"><rect width="120" height="56" fill="#14213d"/><path d="M28 10h50l14 14v22a4 4 0 01-4 4H28a4 4 0 01-4-4V14a4 4 0 014-4z" stroke="#f5f4f0" stroke-width="3" fill="none"/></svg>
+</template>
+<div style="display:flex;min-height:100vh" data-screen-label="Overview">
+  <div style="width:210px;background:#0f1a30;padding:22px 16px;display:flex;flex-direction:column;gap:2px;flex-shrink:0">
+    <div style="display:flex;align-items:center;gap:8px;color:#fff;font-weight:700;font-size:16px;margin-bottom:24px"><div style="width:28px;height:28px;background:#2f4a8c;border-radius:6px;display:flex;align-items:center;justify-content:center;font-size:13px">F</div>Fondok.</div>
+    <div style="color:#c9cede;font-size:12.5px;padding:8px 10px;border-radius:6px;background:rgba(255,255,255,.06);margin-bottom:16px;display:flex;justify-content:space-between">fondok.ai <span>⌄</span></div>
+    <div style="color:#8b93a7;font-size:13px;padding:8px 10px;display:flex;gap:9px">⊞ Dashboard</div>
+    <div style="color:#fff;background:rgba(255,255,255,.09);font-size:13px;font-weight:600;padding:8px 10px;border-radius:6px;display:flex;gap:9px">▤ Projects</div>
+    <div style="color:#8b93a7;font-size:13px;padding:8px 10px;display:flex;gap:9px">📈 Pipeline</div>
+    <div style="color:#8b93a7;font-size:13px;padding:8px 10px;display:flex;gap:9px">◔ Audit</div>
+    <div style="color:#8b93a7;font-size:13px;padding:8px 10px;display:flex;gap:9px">$ Cost</div>
+    <div style="color:#8b93a7;font-size:13px;padding:8px 10px;display:flex;gap:9px">▥ Data Library</div>
+    <div style="color:#8b93a7;font-size:13px;padding:8px 10px;display:flex;gap:9px">▦ Methodology</div>
+    <div style="color:#8b93a7;font-size:13px;padding:8px 10px;display:flex;gap:9px">◷ Settings</div>
+  </div>
+  <div style="flex:1;min-width:0">
+    <div style="padding:22px 32px 0">
+      <div style="font-size:11.5px;color:#9a9a95;margin-bottom:10px">← BACK TO PROJECTS</div>
+      <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;row-gap:8px;margin-bottom:10px">
+        <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap"><h1 style="font-size:26px;margin:0;color:#1a2233;font-weight:600;white-space:nowrap;flex-shrink:0">{{ projectName }}</h1><span style="color:#9a9a95;font-size:11px;font-weight:600;letter-spacing:.04em;white-space:nowrap;flex-shrink:0">DRAFT</span></div>
+        <div style="display:flex;gap:14px;align-items:center;flex-wrap:wrap">
+          <button onClick="{{ toggleAtlas }}" style="display:flex;align-items:center;gap:6px;background:#eef2fb;border:1px solid #dbe3f5;color:#2f4a8c;border-radius:6px;padding:8px 14px;font-size:12px;font-weight:600;cursor:pointer;white-space:nowrap;font-family:inherit">✦ Ask Atlas</button>
+          <button style="background:#14213d;color:#fff;border:none;border-radius:6px;padding:8px 16px;font-size:12.5px;font-weight:600;white-space:nowrap;font-family:inherit">Share</button>
+        </div>
+      </div>
+      <div style="font-size:12.5px;color:#9a9a95;margin-bottom:20px;display:flex;gap:18px;flex-wrap:wrap">
+        <span>{{ projectAddress }}</span><span>{{ projectKeys }}</span><span>{{ projectStage }}</span>
+      </div>
+      <div style="display:flex;gap:22px;border-bottom:1px solid #ececea;font-size:13.5px;font-weight:500;color:#9a9a95;overflow-x:auto">
+        <sc-for list="{{ navItems }}" as="nav" hint-placeholder-count="11">
+          <div onClick="{{ nav.onClick }}" style="display:flex;align-items:center;gap:6px;padding-bottom:10px;white-space:nowrap;cursor:pointer;color:{{ nav.color }};font-weight:{{ nav.weight }};border-bottom:{{ nav.border }}">
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="{{ nav.icon }}"></path></svg>{{ nav.label }}
+          </div>
+        </sc-for>
+      </div>
+    </div>
+
+    <div style="padding:16px 32px 56px;max-width:1320px;display:flex;flex-direction:column;gap:14px">
+      <div style="background:#fff;border:1px solid #eae9e4;border-radius:10px;padding:12px 16px;display:flex;flex-direction:column;gap:3px">
+        <span style="font-size:13.5px;font-weight:700;color:#1a2233">Overview</span>
+        <span style="font-size:12.5px;color:#6b6f76;line-height:1.55;max-width:960px">The deal on one page — what you're buying, how it's capitalized, when each milestone lands, and the returns that fall out of it.</span>
+      </div>
+
+<div style="display:flex;align-items:center;gap:16px;flex-wrap:wrap;background:#fbfbf9;border:1px solid #eae9e4;border-radius:8px;padding:9px 14px;margin-bottom:14px;font-size:11px;color:#6b6f76">
+        <span style="font-weight:700;color:#8a8a86;letter-spacing:.02em">DATA KEY</span>
+          <span style="display:flex;align-items:center;gap:6px"><span style="width:9px;height:9px;border-radius:50%;background:oklch(45% 0.12 155);display:inline-block;flex-shrink:0"></span>Document sourced</span>
+          <span style="display:flex;align-items:center;gap:6px"><span style="width:9px;height:9px;border-radius:50%;background:#fff;border:2px solid oklch(45% 0.12 155);display:inline-block;flex-shrink:0"></span>Linked</span>
+          <span style="display:flex;align-items:center;gap:6px"><span style="width:9px;height:9px;border-radius:50%;background:oklch(45% 0.14 260);display:inline-block;flex-shrink:0"></span>Assumption</span>
+          <span style="display:flex;align-items:center;gap:6px"><span style="width:9px;height:9px;border-radius:50%;background:#5f656e;display:inline-block;flex-shrink:0"></span>Calculated</span>
+          <span style="display:flex;align-items:center;gap:6px"><span style="width:9px;height:9px;border-radius:50%;background:#fff;border:1px dashed #b0afaa;display:inline-block;flex-shrink:0"></span>Awaiting data</span>
+          <span style="display:flex;align-items:center;gap:6px"><span style="width:9px;height:9px;border-radius:50%;background:oklch(45% 0.12 155);box-shadow:0 0 0 3px oklch(88% 0.07 45);display:inline-block;flex-shrink:0"></span>Needs review</span>
+          <span style="display:flex;align-items:center;gap:6px"><b style="color:#1a2233">1,240</b>Total / summary</span>
+          <span style="display:flex;align-items:center;gap:6px"><span style="text-decoration:underline dotted;color:#6b6f76">123</span>Editable — click to change</span>
+          <span title="Origin is the dot: document sourced, linked from another module, your assumption, calculated by Fondok, or awaiting data. An amber halo means the value needs review. Bold marks totals, a dotted underline marks values you can change. Provenance and editability are separate — a sourced value can also be editable, and an override keeps its original source so you can restore it." style="cursor:help;color:#9a9a95;margin-left:auto;white-space:nowrap">ⓘ How to read this</span>
+        </div>
+
+      <sc-if value="{{ hasReviews }}" hint-placeholder-val="{{ true }}">
+        <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin-bottom:14px;font-size:11.5px;color:#6b6f76">
+          <span style="display:flex;align-items:center;gap:7px;font-weight:600;color:#1a2233"><span style="width:9px;height:9px;border-radius:50%;background:oklch(45% 0.12 155);box-shadow:0 0 0 3px oklch(88% 0.07 45);display:inline-block;flex-shrink:0"></span>{{ reviewCount }}</span>
+          <span onClick="{{ toggleReviewOnly }}" style="font-size:11.5px;font-weight:600;color:#1a2233;background:{{ reviewChipBg }};border:{{ reviewChipBorder }};border-radius:6px;padding:4px 11px;cursor:pointer;white-space:nowrap">{{ reviewChipLabel }}</span>
+          <span style="color:#b0afaa">Values Fondok flagged as uncertain or contradicted by a second source.</span>
+        </div>
+      </sc-if>
+
+      <div style="background:#fff;border:1px solid #eae9e4;border-radius:10px;padding:11px 16px 12px;display:flex;flex-direction:column;gap:11px">
+        <div style="display:grid;grid-template-columns:118px 1fr;gap:16px;align-items:center">
+          <div style="display:flex;flex-direction:column;gap:2px">
+            <div style="font-size:10.5px;font-weight:700;letter-spacing:.06em;color:#8a8a86;text-transform:uppercase;line-height:1.25">Investment Profile</div>
+            <div style="font-size:10px;color:#b0afaa;line-height:1.35">Deal Type drives the model</div>
+          </div>
+          <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(168px,1fr));gap:9px 18px">
+            <div style="display:flex;flex-direction:column;gap:4px;min-width:0">
+              <div style="font-size:9.5px;font-weight:700;letter-spacing:.06em;color:#9a9a95;text-transform:uppercase">Deal Type</div>
+              <div style="display:inline-flex;background:#f3f2ee;border:1px solid #eae9e4;border-radius:6px;padding:2px;width:fit-content">
+                <sc-for list="{{ dealTypes }}" as="d" hint-placeholder-count="2">
+                  <button onClick="{{ d.select }}" style="font-size:11.5px;font-family:inherit;border:none;cursor:pointer;font-weight:{{ d.weight }};color:{{ d.color }};background:{{ d.bg }};border-radius:4px;padding:4px 11px;white-space:nowrap;box-shadow:{{ d.shadow }}">{{ d.label }}</button>
+                </sc-for>
+              </div>
+              <div style="font-size:10px;color:#b0afaa;line-height:1.3">Configures the underwriting model</div>
+            </div>
+            <sc-for list="{{ profileFields }}" as="f" hint-placeholder-count="3">
+              <div style="display:flex;flex-direction:column;gap:4px;min-width:0">
+                <div style="font-size:9.5px;font-weight:700;letter-spacing:.06em;color:#9a9a95;text-transform:uppercase;display:flex;align-items:center;gap:4px">{{ f.label }}<sc-if value="{{ f.edited }}" hint-placeholder-val="{{ false }}"><span title="Changed by you" style="color:oklch(45% 0.14 260);font-weight:700">✎</span></sc-if></div>
+                <select value="{{ f.value }}" onChange="{{ f.onChange }}" style="width:100%;font-size:11.5px;font-family:inherit;font-weight:600;color:oklch(45% 0.14 260);background:#fbfbf9;border:1px solid #e2e1dc;border-radius:6px;padding:5px 9px;cursor:pointer;text-overflow:ellipsis">
+                  <sc-for list="{{ f.options }}" as="opt" hint-placeholder-count="3">
+                    <option value="{{ opt }}">{{ opt }}</option>
+                  </sc-for>
+                </select>
+                <div style="font-size:10px;color:#b0afaa;line-height:1.3">{{ f.hint }}</div>
+              </div>
+            </sc-for>
+          </div>
+        </div>
+
+        <div style="display:flex;align-items:center;gap:14px;flex-wrap:wrap;background:#fbfbf9;border:1px solid #eae9e4;border-radius:7px;padding:8px 12px">
+          <span style="font-size:9.5px;font-weight:700;letter-spacing:.06em;color:#8a8a86;text-transform:uppercase">Return benchmark</span>
+          <span style="font-size:11.5px;color:#6b6f76">Target levered IRR <b style="color:oklch(45% 0.14 260)">{{ benchmark.target }}</b></span>
+          <span style="font-size:11.5px;color:#6b6f76">Calculated <b style="color:oklch(45% 0.12 155)">{{ benchmark.actual }}</b></span>
+          <span style="font-size:10.5px;font-weight:700;letter-spacing:.03em;text-transform:uppercase;color:{{ benchmark.statusColor }};background:{{ benchmark.statusBg }};border-radius:5px;padding:3px 8px">{{ benchmark.status }}</span>
+          <span style="font-size:10.5px;color:#b0afaa;margin-left:auto">Benchmark only — it does not drive the model</span>
+        </div>
+
+        <sc-if value="{{ hasReco }}" hint-placeholder-val="{{ false }}">
+          <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap;background:oklch(97% 0.02 250);border:1px solid #dbe3f5;border-radius:7px;padding:8px 12px">
+            <span style="font-size:10.5px;font-weight:700;letter-spacing:.05em;color:#2f4a8c;text-transform:uppercase">Suggestion</span>
+            <span style="font-size:11.5px;color:#1a2233">{{ reco.text }}</span>
+            <span style="display:flex;gap:8px;margin-left:auto">
+              <button onClick="{{ reco.apply }}" style="background:#14213d;color:#fff;border:none;border-radius:5px;padding:5px 12px;font-size:11.5px;font-weight:600;cursor:pointer;font-family:inherit">Apply</button>
+              <button onClick="{{ reco.dismiss }}" style="background:#fff;border:1px solid #e2e1dc;color:#3a3f47;border-radius:5px;padding:5px 12px;font-size:11.5px;font-weight:600;cursor:pointer;font-family:inherit">Dismiss</button>
+            </span>
+          </div>
+        </sc-if>
+      </div>
+
+      <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:12px">
+        <sc-for list="{{ kpis }}" as="k" hint-placeholder-count="5">
+          <div style="background:#fff;border:1px solid #eae9e4;border-radius:10px;padding:13px 15px">
+            <div style="font-size:10px;font-weight:700;letter-spacing:.04em;color:#8a8a86;text-transform:uppercase;margin-bottom:6px">{{ k.label }}</div>
+            <div style="font-size:19px;font-weight:700;color:#1a2233;font-variant-numeric:tabular-nums">{{ k.value }}</div>
+          </div>
+        </sc-for>
+      </div>
+
+      <sc-for list="{{ sections }}" as="s" hint-placeholder-count="7">
+        <div style="background:#fff;border:1px solid #eae9e4;border-radius:10px;padding:18px 20px">
+          <div style="display:flex;justify-content:space-between;align-items:baseline;gap:14px;margin-bottom:6px">
+            <span style="font-size:12px;font-weight:700;color:#8a8a86;text-transform:uppercase;letter-spacing:.03em">{{ s.title }}</span>
+            <sc-if value="{{ s.hasAction }}" hint-placeholder-val="{{ false }}">
+              <span onClick="{{ s.action }}" style="font-size:11.5px;color:#2f4a8c;cursor:pointer;font-weight:600;white-space:nowrap">{{ s.actionLabel }}</span>
+            </sc-if>
+            <sc-if value="{{ s.hasNote }}" hint-placeholder-val="{{ false }}">
+              <span style="font-size:11px;color:#b0afaa;text-align:right">{{ s.note }}</span>
+            </sc-if>
+          </div>
+
+          <sc-if value="{{ s.isRows }}" hint-placeholder-val="{{ true }}">
+            <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:0 32px">
+              <sc-for list="{{ s.rows }}" as="r" hint-placeholder-count="8">
+                <div onClick="{{ r.onClick }}" style="display:flex;justify-content:space-between;align-items:center;gap:12px;font-size:13px;padding:7px 0;cursor:pointer;border-bottom:1px solid #f7f6f3;background:{{ r.rowBg }}">
+                  <span style="color:#6b6f76;white-space:nowrap;min-width:0;overflow:hidden;text-overflow:ellipsis">{{ r.label }}</span>
+                  <span style="display:flex;align-items:center;gap:6px;flex-shrink:0">
+                    <sc-if value="{{ r.isDoc }}" hint-placeholder-val="{{ false }}">
+                      <span title="{{ r.dotTitle }}" style="width:8px;height:8px;border-radius:50%;background:{{ r.dotBg }};border:{{ r.dotBorder }};box-shadow:{{ r.dotShadow }};display:inline-block;flex-shrink:0"></span>
+                    </sc-if>
+                    <span style="color:{{ r.color }};font-weight:{{ r.weight }};text-decoration:{{ r.underline }};font-variant-numeric:tabular-nums;white-space:nowrap">{{ r.value }}</span>
+                  </span>
+                </div>
+              </sc-for>
+            </div>
+          </sc-if>
+
+          <sc-if value="{{ s.isSU }}" hint-placeholder-val="{{ false }}">
+            <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(340px,1fr));gap:14px 36px">
+              <div>
+                <div style="display:grid;grid-template-columns:minmax(88px,1fr) minmax(76px,96px) minmax(58px,82px) minmax(40px,50px);font-size:10.5px;font-weight:700;letter-spacing:.05em;color:#b0afaa;text-transform:uppercase;padding-bottom:6px;border-bottom:1px solid #eae9e4">
+                  <span>Uses</span><span style="text-align:right">Amount</span><span style="text-align:right">/ Key</span><span style="text-align:right">%</span>
+                </div>
+                <sc-for list="{{ s.uses }}" as="r" hint-placeholder-count="8">
+                  <div onClick="{{ r.onClick }}" style="display:grid;grid-template-columns:minmax(88px,1fr) minmax(76px,96px) minmax(58px,82px) minmax(40px,50px);font-size:12.5px;padding:6px 0;cursor:pointer;border-bottom:1px solid #f7f6f3;align-items:center;background:{{ r.rowBg }}">
+                    <span style="color:#6b6f76;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">{{ r.label }}</span>
+                    <span style="text-align:right;color:{{ r.color }};font-weight:{{ r.weight }};font-variant-numeric:tabular-nums">{{ r.value }}</span>
+                    <span style="text-align:right;color:#9a9a95;font-variant-numeric:tabular-nums">{{ r.perKey }}</span>
+                    <span style="text-align:right;color:#9a9a95;font-variant-numeric:tabular-nums">{{ r.pct }}</span>
+                  </div>
+                </sc-for>
+              </div>
+              <div>
+                <div style="display:grid;grid-template-columns:minmax(88px,1fr) minmax(76px,96px) minmax(58px,82px) minmax(40px,50px);font-size:10.5px;font-weight:700;letter-spacing:.05em;color:#b0afaa;text-transform:uppercase;padding-bottom:6px;border-bottom:1px solid #eae9e4">
+                  <span>Sources</span><span style="text-align:right">Amount</span><span style="text-align:right">/ Key</span><span style="text-align:right">%</span>
+                </div>
+                <sc-for list="{{ s.sources }}" as="r" hint-placeholder-count="4">
+                  <div onClick="{{ r.onClick }}" style="display:grid;grid-template-columns:minmax(88px,1fr) minmax(76px,96px) minmax(58px,82px) minmax(40px,50px);font-size:12.5px;padding:6px 0;cursor:pointer;border-bottom:1px solid #f7f6f3;align-items:center;background:{{ r.rowBg }}">
+                    <span style="color:#6b6f76;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">{{ r.label }}</span>
+                    <span style="text-align:right;color:{{ r.color }};font-weight:{{ r.weight }};font-variant-numeric:tabular-nums">{{ r.value }}</span>
+                    <span style="text-align:right;color:#9a9a95;font-variant-numeric:tabular-nums">{{ r.perKey }}</span>
+                    <span style="text-align:right;color:#9a9a95;font-variant-numeric:tabular-nums">{{ r.pct }}</span>
+                  </div>
+                </sc-for>
+                <div style="font-size:11.5px;color:#9a9a95;margin-top:9px;line-height:1.5">Equity is the calculated plug — total uses less all other sources.</div>
+              </div>
+            </div>
+          </sc-if>
+
+          <sc-if value="{{ s.isTimeline }}" hint-placeholder-val="{{ false }}">
+            <div style="display:grid;grid-template-columns:{{ s.timelineCols }};position:relative;margin-top:14px">
+              <div style="position:absolute;left:6%;right:6%;top:5px;height:2px;background:#eae9e4"></div>
+              <sc-for list="{{ s.milestones }}" as="ms" hint-placeholder-count="6">
+                <div onClick="{{ ms.onClick }}" style="position:relative;display:flex;flex-direction:column;align-items:center;gap:6px;cursor:pointer;padding:0 4px;text-align:center">
+                  <span style="width:12px;height:12px;border-radius:50%;background:{{ ms.dot }};border:2px solid #fff;box-shadow:0 0 0 2px {{ ms.ring }};z-index:1"></span>
+                  <span style="font-size:12.5px;font-weight:700;color:{{ ms.color }};font-variant-numeric:tabular-nums;text-decoration:{{ ms.underline }}">{{ ms.date }}</span>
+                  <span style="font-size:11.5px;color:#6b6f76;line-height:1.35">{{ ms.label }}</span>
+                  <span style="font-size:10.5px;color:#b0afaa">{{ ms.detail }}</span>
+                </div>
+              </sc-for>
+            </div>
+          </sc-if>
+        </div>
+      </sc-for>
+    </div>
+  </div>
+
+  <sc-if value="{{ hasProv }}" hint-placeholder-val="{{ false }}">
+    <div onClick="{{ closeProv }}" style="position:fixed;inset:0;z-index:70"></div>
+    <div style="position:fixed;left:{{ popLeft }};top:{{ popTop }};width:288px;max-height:70vh;overflow-y:auto;background:#fff;border:1px solid #e2e1dc;border-radius:9px;box-shadow:0 12px 30px rgba(16,24,40,.18);z-index:71;display:flex;flex-direction:column">
+      <div style="padding:9px 13px;border-bottom:1px solid #eae9e4;display:flex;justify-content:space-between;align-items:center;position:sticky;top:0;background:#fff;z-index:1">
+        <span style="font-weight:700;font-size:11.5px;color:#1a2233">Where this came from</span>
+        <span onClick="{{ closeProv }}" style="cursor:pointer;color:#9a9a95;font-size:12px">✕</span>
+      </div>
+      <div style="padding:11px 13px;display:flex;flex-direction:column;gap:11px">
+        <div style="display:flex;flex-direction:column;gap:4px">
+          <div style="font-size:11px;color:#8a8a86;font-weight:600;letter-spacing:.02em">{{ prov.label }}</div>
+          <div style="font-size:15px;font-weight:700;color:#1a2233;font-variant-numeric:tabular-nums">{{ prov.value }}</div>
+          <div style="display:flex;align-items:center;gap:6px;margin-top:1px">
+            <span style="font-size:10px;font-weight:700;letter-spacing:.03em;text-transform:uppercase;color:{{ prov.badgeColor }};background:{{ prov.badgeBg }};border-radius:5px;padding:3px 7px">{{ prov.badge }}</span>
+            <sc-if value="{{ prov.isEditable }}" hint-placeholder-val="{{ false }}">
+              <span style="font-size:10.5px;color:#9a9a95">Editable</span>
+            </sc-if>
+          </div>
+        </div>
+
+        <sc-if value="{{ prov.hasDoc }}" hint-placeholder-val="{{ false }}">
+          <div style="background:#fbfbf9;border:1px solid #eae9e4;border-radius:7px;padding:9px 11px;display:flex;flex-direction:column;gap:4px">
+            <div style="font-size:12px;color:#1a2233;font-weight:600;line-height:1.35">{{ prov.docName }}</div>
+            <div style="font-size:11px;color:#6b6f76">{{ prov.docPage }}</div>
+            <span onClick="{{ prov.viewSource }}" style="font-size:11px;color:#2f4a8c;cursor:pointer;font-weight:600;margin-top:1px">View source ↗</span>
+          </div>
+        </sc-if>
+
+        <sc-if value="{{ prov.hasLink }}" hint-placeholder-val="{{ false }}">
+          <div style="background:#fbfbf9;border:1px solid #eae9e4;border-radius:7px;padding:9px 11px;display:flex;flex-direction:column;gap:4px">
+            <div style="font-size:10px;color:#8a8a86;font-weight:700;letter-spacing:.04em;text-transform:uppercase">Originates in</div>
+            <div style="font-size:12px;color:#1a2233;font-weight:600;line-height:1.35">{{ prov.linkLabel }}</div>
+            <span onClick="{{ prov.goLink }}" style="font-size:11px;color:#2f4a8c;cursor:pointer;font-weight:600;margin-top:1px">Open module →</span>
+          </div>
+        </sc-if>
+
+        <sc-if value="{{ prov.hasCalc }}" hint-placeholder-val="{{ false }}">
+          <div style="background:#fbfbf9;border:1px solid #eae9e4;border-radius:7px;padding:9px 11px;display:flex;flex-direction:column;gap:6px">
+            <div style="font-size:10px;color:#8a8a86;font-weight:700;letter-spacing:.04em;text-transform:uppercase">Calculation</div>
+            <div style="font-size:12px;color:#1a2233;line-height:1.4">{{ prov.formula }}</div>
+            <div style="font-size:12px;color:#3a3f47;font-variant-numeric:tabular-nums;line-height:1.4">{{ prov.formulaNumbers }}</div>
+            <div style="display:flex;flex-direction:column;gap:3px;margin-top:2px;border-top:1px solid #f2f1ec;padding-top:6px">
+              <sc-for list="{{ prov.parts }}" as="p" hint-placeholder-count="2">
+                <div style="display:flex;justify-content:space-between;gap:10px;font-size:11px">
+                  <span style="color:#6b6f76">{{ p.label }}</span>
+                  <span style="color:{{ p.color }};font-weight:600;text-align:right">{{ p.from }}</span>
+                </div>
+              </sc-for>
+            </div>
+          </div>
+        </sc-if>
+
+        <sc-if value="{{ prov.hasNote }}" hint-placeholder-val="{{ false }}">
+          <div style="background:oklch(97% 0.02 250);border:1px solid #dbe3f5;border-radius:7px;padding:9px 11px;display:flex;flex-direction:column;gap:4px">
+            <div style="font-size:10px;color:#2f4a8c;font-weight:700;letter-spacing:.04em;text-transform:uppercase">Supporting context</div>
+            <div style="font-size:12px;color:#1a2233;line-height:1.4">{{ prov.noteText }}</div>
+            <span onClick="{{ prov.viewSource }}" style="font-size:11px;color:#2f4a8c;cursor:pointer;font-weight:600">View source ↗</span>
+          </div>
+        </sc-if>
+
+        <sc-if value="{{ prov.isOverride }}" hint-placeholder-val="{{ false }}">
+          <div style="background:oklch(96% 0.02 265);border:1px solid #dbe3f5;border-radius:7px;padding:9px 11px;display:flex;flex-direction:column;gap:5px">
+            <div style="font-size:11.5px;color:oklch(45% 0.14 260);font-weight:700">✎ Analyst override</div>
+            <div style="font-size:11.5px;color:#3a3f47;line-height:1.4">{{ prov.originalLine }} — <b>{{ prov.originalValue }}</b></div>
+            <span onClick="{{ prov.restore }}" style="font-size:11px;color:#2f4a8c;cursor:pointer;font-weight:600">{{ prov.restoreLabel }}</span>
+          </div>
+        </sc-if>
+
+        <sc-if value="{{ prov.isEditing }}" hint-placeholder-val="{{ false }}">
+          <div style="display:flex;flex-direction:column;gap:7px;border-top:1px solid #f2f1ec;padding-top:10px">
+            <input value="{{ prov.draft }}" onChange="{{ prov.onDraftChange }}" style="width:100%;font-size:12.5px;font-family:inherit;border:1px solid #e2e1dc;border-radius:6px;padding:7px 9px;font-variant-numeric:tabular-nums" />
+            <div style="font-size:10.5px;color:#9a9a95;line-height:1.4">{{ prov.editHint }}</div>
+            <button onClick="{{ prov.save }}" style="width:100%;background:#14213d;color:#fff;border:none;border-radius:6px;padding:8px;font-size:12px;font-weight:600;cursor:pointer;font-family:inherit">Save value</button>
+          </div>
+        </sc-if>
+        <sc-if value="{{ prov.canStartEdit }}" hint-placeholder-val="{{ false }}">
+          <button onClick="{{ prov.startEdit }}" style="width:100%;background:#fff;border:1px solid #e2e1dc;color:#3a3f47;border-radius:6px;padding:8px;font-size:12px;font-weight:600;cursor:pointer;font-family:inherit">✎ Edit value</button>
+        </sc-if>
+        <sc-if value="{{ prov.isLocked }}" hint-placeholder-val="{{ false }}">
+          <div style="font-size:11px;color:#9a9a95;line-height:1.5;border-top:1px solid #f2f1ec;padding-top:10px">Fondok derives this value — edit its inputs to change it.</div>
+        </sc-if>
+      </div>
+    </div>
+  </sc-if>
+
+  <sc-if value="{{ hasConfirm }}" hint-placeholder-val="{{ false }}">
+    <div onClick="{{ confirm.cancel }}" style="position:fixed;inset:0;background:rgba(16,24,40,.34);z-index:80"></div>
+    <div style="position:fixed;left:50%;top:22vh;transform:translateX(-50%);width:432px;background:#fff;border-radius:11px;box-shadow:0 24px 56px rgba(16,24,40,.28);z-index:81;padding:22px 24px;display:flex;flex-direction:column;gap:12px">
+      <div style="font-size:15px;font-weight:700;color:#1a2233">{{ confirm.title }}</div>
+      <div style="font-size:12.5px;color:#3a3f47;line-height:1.55">Changing the deal type will update the assumptions and modeling sections used for this investment. Existing values that are no longer applicable will be preserved but removed from the active model.</div>
+      <div style="background:#fbfbf9;border:1px solid #eae9e4;border-radius:8px;padding:10px 12px;display:flex;flex-direction:column;gap:5px">
+        <div style="font-size:10px;font-weight:700;letter-spacing:.05em;color:#8a8a86;text-transform:uppercase">Sections after the change</div>
+        <div style="font-size:12px;color:#1a2233;line-height:1.5">{{ confirm.sectionList }}</div>
+      </div>
+      <div style="display:flex;gap:10px;justify-content:flex-end;margin-top:2px">
+        <button onClick="{{ confirm.cancel }}" style="background:#fff;border:1px solid #e2e1dc;color:#3a3f47;border-radius:6px;padding:8px 16px;font-size:12.5px;font-weight:600;cursor:pointer;font-family:inherit">Cancel</button>
+        <button onClick="{{ confirm.apply }}" style="background:#14213d;color:#fff;border:none;border-radius:6px;padding:8px 16px;font-size:12.5px;font-weight:600;cursor:pointer;font-family:inherit">Update model</button>
+      </div>
+    </div>
+  </sc-if>
+
+  <div style="position:fixed;top:0;right:0;height:100vh;width:340px;background:#fff;box-shadow:-4px 0 24px rgba(0,0,0,.14);z-index:50;display:flex;flex-direction:column;transform:{{ atlasTransform }};transition:transform .22s ease">
+    <div style="padding:16px 18px;border-bottom:1px solid #eae9e4;display:flex;justify-content:space-between;align-items:center">
+      <span style="font-weight:700;font-size:13.5px;color:#1a2233">✦ Atlas</span>
+      <span onClick="{{ closeAtlas }}" style="cursor:pointer;color:#9a9a95">✕</span>
+    </div>
+    <div style="padding:14px 18px;border-bottom:1px solid #f2f1ec;display:flex;flex-direction:column;gap:6px">
+      <sc-for list="{{ progress }}" as="p" hint-placeholder-count="5">
+        <div style="font-size:12px;display:flex;gap:8px;color:{{ p.color }};font-weight:{{ p.weight }}"><span>{{ p.mark }}</span>{{ p.label }}</div>
+      </sc-for>
+    </div>
+    <div style="flex:1;overflow-y:auto;padding:14px 18px;display:flex;flex-direction:column;gap:10px">
+      <sc-for list="{{ messages }}" as="m" hint-placeholder-count="1">
+        <div style="align-self:{{ m.align }};background:{{ m.bg }};color:{{ m.color }};padding:9px 12px;border-radius:8px;font-size:12.5px;max-width:85%;white-space:pre-line">{{ m.text }}</div>
+      </sc-for>
+    </div>
+    <div style="padding:12px 18px;border-top:1px solid #eae9e4;display:flex;flex-direction:column;gap:8px">
+      <sc-for list="{{ suggestions }}" as="s" hint-placeholder-count="2">
+        <button onClick="{{ s.onClick }}" style="text-align:left;background:#f5f4f0;border:1px solid #eae9e4;border-radius:6px;padding:8px 10px;font-size:12px;color:#3a3f47;cursor:pointer;font-family:inherit">{{ s.label }}</button>
+      </sc-for>
+    </div>
+  </div>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props="{&quot;onNavigate&quot;:{&quot;editor&quot;:null,&quot;tsType&quot;:&quot;(tab: string, params?: object) =&gt; void&quot;},&quot;defaultConfig&quot;:{&quot;editor&quot;:&quot;enum&quot;,&quot;options&quot;:[&quot;Acquisition&quot;,&quot;Development&quot;],&quot;default&quot;:&quot;Acquisition&quot;,&quot;tsType&quot;:&quot;string&quot;,&quot;section&quot;:&quot;Model configuration&quot;},&quot;keys&quot;:{&quot;editor&quot;:&quot;int&quot;,&quot;default&quot;:132,&quot;min&quot;:1,&quot;max&quot;:600,&quot;tsType&quot;:&quot;number&quot;,&quot;section&quot;:&quot;Model configuration&quot;}}">
+class Component extends DCLogic {
+  BLUE = 'oklch(45% 0.14 260)';
+  GREEN = 'oklch(45% 0.12 155)';
+  GRAY = '#5f656e';
+  BLACK = '#1a2233';
+
+  DEFAULT_NUMS = {
+    mgmtFee: 0.03, franchiseFee: 0.05,
+    vaEntryCap: 0.07, vaClosingPct: 0.015, vaRenoPerKey: 35000, vaContPct: 0.05, vaExitCap: 0.065, vaHold: 4.33, vaSalesPct: 0.01, vaTransferPct: 0.006, vaSpread: 0.0275, vaTaxRes: 350000, vaInsRes: 180000, vaOther: 100000,
+    coreEntryCap: 0.0675, coreClosingPct: 0.015, coreLTV: 0.60, coreSpread: 0.021, coreExitCap: 0.07, coreHold: 7, coreSalesPct: 0.015, coreTaxRes: 400000, coreInsRes: 200000, coreCapexRes: 900000, coreOther: 120000,
+    devLandPrice: 12000000, devLandCostPct: 0.01, devHardPerKey: 240000, devSoftPct: 0.15, devFFEPerKey: 35000, devProfFees: 3500000, devDevFee: 2600000, devPreOpen: 2200000, devContPct: 0.05, devSpread: 0.0325, devRamp: 24, devExitCap: 0.0675, devHold: 6.5, devSalesPct: 0.015,
+  };
+
+  SETUP = { dealType: 'Acquisition', returnsProfile: 'Value Add', brand: 'Kimpton Hotels & Restaurants', positioning: 'Upper Upscale' };
+
+  TARGETS = { 'Core': [8, 12], 'Core+': [10, 14], 'Value Add': [12, 18], 'Opportunistic': [18, null] };
+  MGMT_BY_POSITIONING = { 'Luxury': 0.035, 'Upper Upscale': 0.03, 'Upscale': 0.025, 'Upper Midscale': 0.022, 'Midscale': 0.02, 'Economy': 0.02 };
+
+  state = {
+    dealType: (this.props.defaultConfig || '') === 'Development' ? 'Development' : 'Acquisition',
+    returnsProfile: 'Value Add', brand: 'Kimpton Hotels & Restaurants', positioning: 'Upper Upscale',
+    nums: {}, strs: {}, sel: null, editing: false, draft: '', pop: null,
+    pending: null, recoDismissed: false, atlasOpen: false, messages: [],
+  };
+
+  cfg() { return this.state.dealType === 'Development' ? 'dev' : 'va'; }
+
+  goFn(onNavigate, key) {
+    const HREFS = { dataroom:'./Data Room v2.dc.html', overview:'./Overview Tab v3.dc.html', market:'./Market Tab.dc.html', financials:'./Financials Tab.dc.html', investment:'./Investment Tab.dc.html', debt:'./Debt Tab.dc.html', partnership:'./Partnership Tab.dc.html', cashflow:'./Cash Flow Tab.dc.html', returns:'./Returns Tab.dc.html', scenarios:'./Scenarios Tab.dc.html', icmemo:'./IC Memo Tab.dc.html' };
+    return () => { if (onNavigate) onNavigate(key); else window.location.href = HREFS[key]; };
+  }
+  buildNavItems(active, onNavigate) {
+    const ICONS = {
+      dataroom: "M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7z",
+      overview: "M6 3h9l4 4v14a1 1 0 0 1-1 1H6a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1zM9 12h6M9 16h6",
+      market: "M12 4a4 4 0 100 8 4 4 0 000-8zM4 21c0-4 3.6-6 8-6s8 2 8 6",
+      financials: "M4 20V10M11 20V4M18 20v-7",
+      investment: "M3 8h18v12a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V8zM8 8V6a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2",
+      debt: "M12 3a9 9 0 100 18 9 9 0 000-18zM12 7v10M9.5 9.5c0-1.4 1.1-2.5 2.5-2.5s2.5.7 2.5 2c0 2-5 1.5-5 4 0 1.3 1.1 2.5 2.5 2.5s2.5-1.1 2.5-2.5",
+      partnership: "M9 11a3 3 0 100-6 3 3 0 000 6zM17 11a3 3 0 100-6 3 3 0 000 6zM2 20c0-3 3-5 7-5M13 20c0-3 3-5 7-5",
+      cashflow: "M3 12h4l3 7 4-14 3 7h4",
+      returns: "M3 17l6-6 4 4 8-8M15 7h6v6",
+      scenarios: "M4 7h13l-3-3M4 7l3 3M20 17H7l3 3M20 17l-3-3",
+      icmemo: "M6 3h9l4 4v14a1 1 0 0 1-1 1H6a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1zM9 12h6M9 16h4M14 3v5h5",
+    };
+    const items = [
+      ['dataroom','Data Room'], ['overview','Overview'], ['market','Market'], ['financials','Financials'],
+      ['investment','Investment'], ['debt','Debt'], ['partnership','Partnership'], ['cashflow','Cash Flow'],
+      ['returns','Returns'], ['scenarios','Scenario Analysis'], ['icmemo','IC Memo'],
+    ];
+    return items.map(([key, label]) => ({
+      key, label, icon: ICONS[key],
+      color: key === active ? '#14213d' : '#9a9a95',
+      weight: key === active ? 700 : 500,
+      border: key === active ? '2px solid #14213d' : '2px solid transparent',
+      onClick: key === active ? null : this.goFn(onNavigate, key),
+    }));
+  }
+
+  num(k) { if (this._pristine) return this.DEFAULT_NUMS[k]; return this.state.nums[k] !== undefined ? this.state.nums[k] : this.DEFAULT_NUMS[k]; }
+  money(n) { return (n < 0 ? '−$' : '$') + Math.round(Math.abs(n)).toLocaleString('en-US'); }
+  mm(n) { return '$' + (n / 1e6).toFixed(n >= 1e8 ? 1 : 2) + 'M'; }
+  pct(n, d) { return (n * 100).toFixed(d === undefined ? 2 : d) + '%'; }
+  fmtDate(d) { return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }); }
+  addYears(base, years) { return this.fmtDate(new Date(base.getTime() + years * 365.25 * 86400000)); }
+  addMonths(base, months) { const d = new Date(base.getTime()); d.setMonth(d.getMonth() + months); return this.fmtDate(d); }
+  pristineDefs() { this._pristine = true; let d; try { d = this.defs(); } finally { this._pristine = false; } return d; }
+
+  model() {
+    const cfg = this.cfg();
+    if (cfg === 'core') {
+      const keys = 180;
+      const entryNOI = 5400000, entryCap = this.num('coreEntryCap');
+      const purchase = entryNOI / entryCap;
+      const closingPct = this.num('coreClosingPct'), closing = purchase * closingPct;
+      const ltv = this.num('coreLTV'), loan = purchase * ltv;
+      const finCosts = loan * 0.0075;
+      const taxRes = this.num('coreTaxRes'), insRes = this.num('coreInsRes'), capexRes = this.num('coreCapexRes'), other = this.num('coreOther');
+      const totalUses = purchase + closing + finCosts + taxRes + insRes + capexRes + other;
+      const equity = totalUses - loan;
+      const benchmark = 0.0491, spread = this.num('coreSpread'), allIn = benchmark + spread;
+      const hold = this.num('coreHold'), acqDate = new Date(2026, 11, 15);
+      const fwdNOI = 6700000, exitCap = this.num('coreExitCap'), exitValue = fwdNOI / exitCap;
+      const salesPct = this.num('coreSalesPct'), salesCost = exitValue * salesPct;
+      return { cfg, keys, entryNOI, entryCap, purchase, closingPct, closing, ltv, loan, finCosts, taxRes, insRes, capexRes, other, totalUses, equity, benchmark, spread, allIn, hold, acqDate, fwdNOI, exitCap, exitValue, salesPct, salesCost, irr: 0.112 };
+    }
+    if (cfg === 'dev') {
+      const keys = 220;
+      const land = this.num('devLandPrice'), landCostPct = this.num('devLandCostPct'), landCosts = land * landCostPct;
+      const hardPerKey = this.num('devHardPerKey'), hard = hardPerKey * keys;
+      const softPct = this.num('devSoftPct'), soft = hard * softPct;
+      const ffePerKey = this.num('devFFEPerKey'), ffe = ffePerKey * keys;
+      const profFees = this.num('devProfFees'), devFee = this.num('devDevFee'), preOpen = this.num('devPreOpen');
+      const contPct = this.num('devContPct'), contingency = (hard + soft) * contPct;
+      const loan = 55000000, loanFees = loan * 0.01, interestReserve = 6400000;
+      const tdc = land + landCosts + hard + soft + ffe + profFees + devFee + preOpen + contingency + loanFees + interestReserve;
+      const equity = tdc - loan;
+      const benchmark = 0.0491, spread = this.num('devSpread'), allIn = benchmark + spread;
+      const landClose = new Date(2027, 5, 30);
+      const ramp = this.num('devRamp');
+      const hold = this.num('devHold');
+      const stabNOI = 8400000, exitCap = this.num('devExitCap'), exitValue = stabNOI / exitCap;
+      const salesPct = this.num('devSalesPct'), salesCost = exitValue * salesPct;
+      return { cfg, keys, land, landCostPct, landCosts, hardPerKey, hard, softPct, soft, ffePerKey, ffe, profFees, devFee, preOpen, contPct, contingency, loan, loanFees, interestReserve, tdc, totalUses: tdc, equity, benchmark, spread, allIn, landClose, ramp, hold, stabNOI, exitCap, exitValue, salesPct, salesCost, irr: 0.224 };
+    }
+    const keys = this.props.keys || 132;
+    const entryNOI = 2550576, entryCap = this.num('vaEntryCap');
+    const purchase = entryNOI / entryCap;
+    const closingPct = this.num('vaClosingPct'), closing = purchase * closingPct;
+    const renoPerKey = this.num('vaRenoPerKey'), reno = renoPerKey * keys;
+    const hard = reno * 0.75, soft = reno * 0.15, profFees = reno * 0.10;
+    const contPct = this.num('vaContPct'), contingency = reno * contPct, renoTotal = reno + contingency;
+    const loan = 23190000, loanCosts = 231900, keyMoney = 1089576, capexRes = 1200000;
+    const taxRes = this.num('vaTaxRes'), insRes = this.num('vaInsRes'), other = this.num('vaOther');
+    const totalUses = purchase + closing + renoTotal + loanCosts + taxRes + insRes + capexRes + other;
+    const equity = totalUses - loan - keyMoney;
+    const benchmark = 0.0491, spread = this.num('vaSpread'), allIn = benchmark + spread;
+    const hold = this.num('vaHold'), acqDate = new Date(2027, 2, 31);
+    const fwdNOI = 4440800, exitCap = this.num('vaExitCap'), exitValue = fwdNOI / exitCap;
+    const salesPct = this.num('vaSalesPct'), transferPct = this.num('vaTransferPct');
+    return { cfg, keys, entryNOI, entryCap, purchase, closingPct, closing, renoPerKey, reno, hard, soft, profFees, contPct, contingency, renoTotal, loan, loanCosts, keyMoney, capexRes, taxRes, insRes, other, totalUses, equity, benchmark, spread, allIn, hold, acqDate, fwdNOI, exitCap, exitValue, salesPct, salesCost: exitValue * salesPct, transferPct, transferTax: exitValue * transferPct, irr: 0.268 };
+  }
+
+  defs() {
+    const m = this.model();
+    const cfg = m.cfg;
+    const D = {};
+    const doc = (id, label, value, docName, docPage, extra) => { D[id] = Object.assign({ id, label, value, kind: 'doc', docName, docPage, editable: true, hint: 'Extracted by Fondok — your override keeps the source so you can restore it.' }, extra || {}); };
+    const inp = (id, label, value, extra) => { D[id] = Object.assign({ id, label, value, kind: 'input', editable: true }, extra || {}); };
+    const lnk = (id, label, value, linkLabel, linkKey, extra) => { D[id] = Object.assign({ id, label, value, kind: 'linked', linkLabel, linkKey }, extra || {}); };
+    const cal = (id, label, value, formula, formulaNumbers, parts, extra) => { D[id] = Object.assign({ id, label, value, kind: 'calc', formula, formulaNumbers, parts }, extra || {}); };
+
+    inp('brand', 'Brand', this.state.brand, { hint: 'Set in the Investment Profile above' });
+    inp('positioning', 'Positioning', this.state.positioning, { hint: 'Set in the Investment Profile above' });
+    inp('mgmtFee', 'Management Fee', this.pct(this.num('mgmtFee')), { numKey: 'mgmtFee', fmt: 'pct', hint: 'Base management fee, % of total revenue' });
+    inp('franchiseFee', 'Franchise / Brand Fee', this.pct(this.num('franchiseFee')), { numKey: 'franchiseFee', fmt: 'pct', hint: 'Royalty + program fees, % of rooms revenue' });
+    lnk('bench', 'Benchmark', 'SOFR · 4.91%', 'Debt → Loan Terms', 'debt');
+
+    if (cfg === 'va') {
+      const OM = 'Kimpton Offering Memorandum.pdf';
+      doc('pName', 'Property Name', "The Angler's — Kimpton Miami Beach", OM, 'p. 1 · Executive Summary');
+      doc('pType', 'Property Type', 'Full-service hotel', OM, 'p. 3 · Property Overview');
+      doc('pLoc', 'Location', '660 Washington Ave, Miami Beach, FL', OM, 'p. 4 · Location');
+      doc('pYear', 'Year Built', '1939 · renovated 2016', OM, 'p. 12 · Property History');
+      doc('pKeys', 'Keys', String(m.keys), OM, 'p. 14 · Room Mix');
+      doc('pFloors', 'Floors', '6', OM, 'p. 14 · Building Summary');
+      doc('pSF', 'Total SF', '71,400 SF', OM, 'p. 14 · Building Summary');
+      doc('pTitle', 'Title / Ownership', 'Fee simple', 'Preliminary Title Report.pdf', 'p. 2 · Vesting');
+      doc('pLabor', 'Labor / Union Status', 'Non-union', OM, 'p. 62 · Operations');
+
+      lnk('entryNOI', 'Run-Rate / Entry NOI', this.money(m.entryNOI), 'Financials → Historicals (T-12 normalized)', 'financials');
+      inp('entryCap', 'Entry Cap Rate', this.pct(m.entryCap), { numKey: 'vaEntryCap', fmt: 'pct', hint: 'Enter as a percentage, e.g. 7.00' });
+      cal('purchase', 'Purchase Price', this.money(m.purchase), 'Entry NOI ÷ Entry Cap Rate', this.money(m.entryNOI) + ' ÷ ' + this.pct(m.entryCap), [{ label: 'Entry NOI', from: 'Financials → Historicals', kind: 'linked' }, { label: 'Entry Cap Rate', from: 'User assumption', kind: 'input' }]);
+      cal('pricePerKey', 'Price / Key', this.money(m.purchase / m.keys), 'Purchase Price ÷ Keys', this.money(m.purchase) + ' ÷ ' + m.keys, [{ label: 'Purchase Price', from: 'Calculated', kind: 'calc' }, { label: 'Keys', from: 'OM p. 14', kind: 'doc' }]);
+      inp('acqDate', 'Acquisition Date', this.fmtDate(m.acqDate), { strKey: 'vaAcqDate', hint: 'Transaction setting — drives the timeline' });
+      inp('closingPct', 'Closing Costs %', this.pct(m.closingPct), { numKey: 'vaClosingPct', fmt: 'pct', hint: 'Percentage of purchase price' });
+      cal('closing', 'Closing Costs', this.money(m.closing), 'Purchase Price × Closing Costs %', this.money(m.purchase) + ' × ' + this.pct(m.closingPct), [{ label: 'Purchase Price', from: 'Calculated', kind: 'calc' }, { label: 'Closing Costs %', from: 'User assumption', kind: 'input' }]);
+
+      doc('renoScope', 'Renovation Scope', 'Full PIP — guestrooms, lobby, F&B', 'PIP Scope of Work.pdf', 'p. 3 · Scope Summary');
+      inp('renoPerKey', 'Renovation / Key', this.money(m.renoPerKey), { numKey: 'vaRenoPerKey', fmt: 'money', hint: 'Underwritten renovation budget per key', note: 'OM reference: ~$34,500 / key of planned PIP scope.', docName: OM, docPage: 'p. 48 · Capital Plan' });
+      cal('renoHard', 'Hard Costs', this.money(m.hard), '75% of base renovation budget (PIP allocation)', this.money(m.reno) + ' × 75%', [{ label: 'Base budget', from: 'Calculated', kind: 'calc' }, { label: 'Allocation', from: 'PIP Scope p. 9', kind: 'doc' }]);
+      cal('renoSoft', 'Soft Costs', this.money(m.soft), '15% of base renovation budget', this.money(m.reno) + ' × 15%', [{ label: 'Base budget', from: 'Calculated', kind: 'calc' }]);
+      cal('renoProf', 'Professional Fees', this.money(m.profFees), '10% of base renovation budget', this.money(m.reno) + ' × 10%', [{ label: 'Base budget', from: 'Calculated', kind: 'calc' }]);
+      inp('renoContPct', 'Contingency %', this.pct(m.contPct), { numKey: 'vaContPct', fmt: 'pct', hint: 'Percentage of base renovation budget' });
+      cal('renoCont', 'Contingency', this.money(m.contingency), 'Base Renovation Budget × Contingency %', this.money(m.reno) + ' × ' + this.pct(m.contPct), [{ label: 'Base budget', from: 'Calculated', kind: 'calc' }, { label: 'Contingency %', from: 'User assumption', kind: 'input' }]);
+      cal('renoTotal', 'Total Renovation Budget', this.money(m.renoTotal), 'Base Renovation Budget + Contingency', this.money(m.reno) + ' + ' + this.money(m.contingency), [{ label: 'Base budget', from: 'Calculated', kind: 'calc' }, { label: 'Contingency', from: 'Calculated', kind: 'calc' }]);
+      cal('renoTotalPerKey', 'Total Renovation / Key', this.money(m.renoTotal / m.keys), 'Total Renovation Budget ÷ Keys', this.money(m.renoTotal) + ' ÷ ' + m.keys, [{ label: 'Total budget', from: 'Calculated', kind: 'calc' }]);
+      inp('renoStart', 'Renovation Start', 'Jul 1, 2027', { strKey: 'vaRenoStart', hint: 'Mobilization date' });
+      lnk('renoDuration', 'Renovation Duration', '12 months', 'Investment → CapEx (renovation schedule)', 'investment');
+
+      lnk('loan', 'Acquisition Loan', this.money(m.loan), 'Debt → Senior Loan', 'debt');
+      lnk('ltv', 'LTV', '65.0%', 'Debt → Capital Structure', 'debt');
+      cal('ltc', 'LTC', this.pct(m.loan / m.totalUses, 1), 'Loan ÷ Total Uses', this.money(m.loan) + ' ÷ ' + this.money(m.totalUses), [{ label: 'Loan', from: 'Debt module', kind: 'linked' }, { label: 'Total Uses', from: 'Calculated', kind: 'calc' }]);
+      doc('spread', 'Spread over Benchmark', this.pct(m.spread), 'Senior Loan Term Sheet.pdf', 'p. 3 · Pricing', { numKey: 'vaSpread', fmt: 'pct', hint: 'Extracted from the term sheet — override to test pricing' });
+      cal('allIn', 'All-In Rate', this.pct(m.allIn), 'Benchmark + Spread', this.pct(m.benchmark) + ' + ' + this.pct(m.spread), [{ label: 'Benchmark (SOFR)', from: 'Debt → Loan Terms', kind: 'linked' }, { label: 'Spread', from: 'Loan Term Sheet p. 3', kind: 'doc' }]);
+      lnk('finCosts', 'Financing Costs', this.money(m.loanCosts), 'Debt → Loan Terms (origination + legal)', 'debt');
+      cal('equity', 'Equity', this.money(m.equity), 'Total Uses − Loan − Key Money', this.money(m.totalUses) + ' − ' + this.money(m.loan) + ' − ' + this.money(m.keyMoney), [{ label: 'Total Uses', from: 'Calculated', kind: 'calc' }, { label: 'Loan', from: 'Debt module', kind: 'linked' }, { label: 'Key Money', from: 'Partnership module', kind: 'linked' }]);
+      inp('refi', 'Planned Refinancing', 'Sep 30, 2029', { strKey: 'vaRefi', hint: 'Refinancing is modeled in Debt' });
+
+      lnk('renoImpact', 'Renovation Impact', '4,100 displaced room nights', 'Financials → Projections (disruption)', 'financials');
+      cal('stabDate', 'Stabilization Date', 'Dec 31, 2030', 'First full year at stabilized occupancy and ADR', 'Ramp complete per Financials → Projections', [{ label: 'Ramp schedule', from: 'Financials → Projections', kind: 'linked' }]);
+      lnk('stabOcc', 'Stabilized Occupancy', '76.0%', 'Financials → Projections', 'financials');
+      lnk('stabADR', 'Stabilized ADR', '$310', 'Financials → Projections', 'financials');
+      lnk('stabRev', 'Stabilized Revenue', '$13,930,000', 'Financials → Projections', 'financials');
+      lnk('stabNOI', 'Stabilized NOI', this.money(m.fwdNOI), 'Financials → Projections', 'financials');
+      cal('stabMargin', 'Stabilized NOI Margin', '31.9%', 'Stabilized NOI ÷ Stabilized Revenue', this.money(m.fwdNOI) + ' ÷ $13,930,000', [{ label: 'Both inputs', from: 'Financials → Projections', kind: 'linked' }]);
+
+      inp('hold', 'Hold Period', m.hold.toFixed(2) + ' years', { numKey: 'vaHold', fmt: 'plain', hint: 'Years from acquisition to disposition' });
+      cal('exitDate', 'Exit Date', this.addYears(m.acqDate, m.hold), 'Acquisition Date + Hold Period', this.fmtDate(m.acqDate) + ' + ' + m.hold.toFixed(2) + ' years', [{ label: 'Acquisition Date', from: 'User assumption', kind: 'input' }, { label: 'Hold Period', from: 'User assumption', kind: 'input' }]);
+      lnk('fwdNOI', 'Forward 12-Month NOI', this.money(m.fwdNOI), 'Financials → Projections (exit-year forward NOI)', 'financials');
+      inp('exitCap', 'Exit Cap Rate', this.pct(m.exitCap), { numKey: 'vaExitCap', fmt: 'pct', hint: 'Enter as a percentage, e.g. 6.50' });
+      cal('exitValue', 'Gross Exit Value', this.money(m.exitValue), 'Forward NOI ÷ Exit Cap Rate', this.money(m.fwdNOI) + ' ÷ ' + this.pct(m.exitCap), [{ label: 'Forward NOI', from: 'Financials → Projections', kind: 'linked' }, { label: 'Exit Cap Rate', from: 'User assumption', kind: 'input' }]);
+      cal('exitPerKey', 'Exit Value / Key', this.money(m.exitValue / m.keys), 'Gross Exit Value ÷ Keys', this.money(m.exitValue) + ' ÷ ' + m.keys, [{ label: 'Exit Value', from: 'Calculated', kind: 'calc' }]);
+      inp('salesPct', 'Disposition Costs', this.pct(m.salesPct) + ' · ' + this.money(m.salesCost), { numKey: 'vaSalesPct', fmt: 'pct', hint: 'Percentage of gross exit value' });
+      inp('transferPct', 'Transfer Tax', this.pct(m.transferPct) + ' · ' + this.money(m.transferTax), { numKey: 'vaTransferPct', fmt: 'pct', hint: 'Percentage of gross exit value' });
+
+      inp('vaTaxRes', 'Tax Reserve', this.money(m.taxRes), { numKey: 'vaTaxRes', fmt: 'money', hint: 'Escrowed at closing' });
+      inp('vaInsRes', 'Insurance Reserve', this.money(m.insRes), { numKey: 'vaInsRes', fmt: 'money', hint: 'Escrowed at closing' });
+      lnk('vaCapexRes', 'CapEx Reserve', this.money(m.capexRes), 'Investment → CapEx (FF&E reserve)', 'investment');
+      inp('vaOther', 'Other Uses', this.money(m.other), { numKey: 'vaOther', fmt: 'money', hint: 'Miscellaneous transaction costs' });
+      cal('renoUse', 'Renovation Expense', this.money(m.renoTotal), 'Total Renovation Budget (incl. contingency)', this.money(m.reno) + ' + ' + this.money(m.contingency), [{ label: 'Renovation budget', from: 'Calculated', kind: 'calc' }]);
+      lnk('keyMoney', 'Key Money', this.money(m.keyMoney), 'Partnership → Brand agreement', 'partnership');
+      cal('totalUses', 'Total Uses', this.money(m.totalUses), 'Sum of all uses', 'Purchase + closing + renovation + financing + reserves', [{ label: 'All use lines', from: 'Calculated', kind: 'calc' }]);
+      cal('totalSources', 'Total Sources', this.money(m.totalUses), 'Sum of all sources', 'Loan + key money + equity', [{ label: 'All source lines', from: 'Calculated', kind: 'calc' }]);
+
+      inp('msAcq', 'Acquisition', this.fmtDate(m.acqDate), { strKey: 'vaAcqDate', hint: 'Closing date' });
+      cal('msRenoDone', 'Renovation Complete', 'Jun 30, 2028', 'Renovation Start + 12-month program', 'Jul 1, 2027 + 12 months', [{ label: 'Renovation Start', from: 'User assumption', kind: 'input' }, { label: 'Program length', from: 'Investment → CapEx', kind: 'linked' }]);
+      cal('msExit', 'Disposition', this.addYears(m.acqDate, m.hold), 'Acquisition Date + Hold Period', this.fmtDate(m.acqDate) + ' + ' + m.hold.toFixed(2) + ' years', [{ label: 'Hold Period', from: 'User assumption', kind: 'input' }]);
+      return D;
+    }
+
+    if (cfg === 'core') {
+      const OM = 'Hyatt Centric Denver — Offering Memorandum.pdf';
+      doc('pName', 'Property Name', 'Hyatt Centric Denver Downtown', OM, 'p. 1 · Executive Summary');
+      doc('pType', 'Property Type', 'Select-service hotel', OM, 'p. 3 · Property Overview');
+      doc('pLoc', 'Location', '1441 Larimer St, Denver, CO', OM, 'p. 4 · Location');
+      doc('pYear', 'Year Built', '2018', OM, 'p. 11 · Property History');
+      doc('pKeys', 'Keys', String(m.keys), OM, 'p. 13 · Room Mix');
+      doc('pFloors', 'Floors', '11', OM, 'p. 13 · Building Summary');
+      doc('pSF', 'Total SF', '104,900 SF', OM, 'p. 13 · Building Summary');
+      doc('pTitle', 'Title / Ownership', 'Fee simple', 'Preliminary Title Report.pdf', 'p. 2 · Vesting');
+      doc('pLabor', 'Labor / Union Status', 'Non-union', OM, 'p. 55 · Operations');
+      lnk('opsTrail', 'Trailing-12 Occupancy / ADR', '78.4% / $232', 'Financials → Historicals', 'financials');
+
+      lnk('entryNOI', 'Run-Rate / Entry NOI', this.money(m.entryNOI), 'Financials → Historicals (T-12 normalized)', 'financials');
+      inp('entryCap', 'Entry Cap Rate', this.pct(m.entryCap), { numKey: 'coreEntryCap', fmt: 'pct', hint: 'Enter as a percentage, e.g. 6.75' });
+      cal('purchase', 'Purchase Price', this.money(m.purchase), 'Entry NOI ÷ Entry Cap Rate', this.money(m.entryNOI) + ' ÷ ' + this.pct(m.entryCap), [{ label: 'Entry NOI', from: 'Financials → Historicals', kind: 'linked' }, { label: 'Entry Cap Rate', from: 'User assumption', kind: 'input' }]);
+      cal('pricePerKey', 'Price / Key', this.money(m.purchase / m.keys), 'Purchase Price ÷ Keys', this.money(m.purchase) + ' ÷ ' + m.keys, [{ label: 'Purchase Price', from: 'Calculated', kind: 'calc' }, { label: 'Keys', from: 'OM p. 13', kind: 'doc' }]);
+      inp('acqDate', 'Acquisition Date', this.fmtDate(m.acqDate), { strKey: 'coreAcqDate', hint: 'Transaction setting — drives the timeline' });
+      inp('closingPct', 'Closing Costs %', this.pct(m.closingPct), { numKey: 'coreClosingPct', fmt: 'pct', hint: 'Percentage of purchase price' });
+      cal('closing', 'Closing Costs', this.money(m.closing), 'Purchase Price × Closing Costs %', this.money(m.purchase) + ' × ' + this.pct(m.closingPct), [{ label: 'Purchase Price', from: 'Calculated', kind: 'calc' }, { label: 'Closing Costs %', from: 'User assumption', kind: 'input' }]);
+
+      cal('loan', 'Acquisition Loan', this.money(m.loan), 'Purchase Price × LTV', this.money(m.purchase) + ' × ' + this.pct(m.ltv, 1), [{ label: 'Purchase Price', from: 'Calculated', kind: 'calc' }, { label: 'LTV', from: 'User assumption', kind: 'input' }]);
+      inp('ltv', 'LTV', this.pct(m.ltv, 1), { numKey: 'coreLTV', fmt: 'pct', hint: 'Loan sizing constraint' });
+      cal('ltc', 'LTC', this.pct(m.loan / m.totalUses, 1), 'Loan ÷ Total Uses', this.money(m.loan) + ' ÷ ' + this.money(m.totalUses), [{ label: 'Loan', from: 'Calculated', kind: 'calc' }, { label: 'Total Uses', from: 'Calculated', kind: 'calc' }]);
+      doc('spread', 'Spread over Benchmark', this.pct(m.spread), 'Senior Loan Term Sheet.pdf', 'p. 2 · Pricing', { numKey: 'coreSpread', fmt: 'pct', hint: 'Extracted from the term sheet — override to test pricing' });
+      cal('allIn', 'All-In Rate', this.pct(m.allIn), 'Benchmark + Spread', this.pct(m.benchmark) + ' + ' + this.pct(m.spread), [{ label: 'Benchmark (SOFR)', from: 'Debt → Loan Terms', kind: 'linked' }, { label: 'Spread', from: 'Loan Term Sheet p. 2', kind: 'doc' }]);
+      cal('finCosts', 'Financing Costs', this.money(m.finCosts), 'Loan × 0.75% origination', this.money(m.loan) + ' × 0.75%', [{ label: 'Loan', from: 'Calculated', kind: 'calc' }, { label: 'Origination fee', from: 'Debt → Loan Terms', kind: 'linked' }]);
+      cal('equity', 'Equity', this.money(m.equity), 'Total Uses − Loan', this.money(m.totalUses) + ' − ' + this.money(m.loan), [{ label: 'Total Uses', from: 'Calculated', kind: 'calc' }, { label: 'Loan', from: 'Calculated', kind: 'calc' }]);
+
+      inp('hold', 'Hold Period', m.hold.toFixed(0) + ' years', { numKey: 'coreHold', fmt: 'plain', hint: 'Years from acquisition to disposition' });
+      cal('exitDate', 'Exit Date', this.addYears(m.acqDate, m.hold), 'Acquisition Date + Hold Period', this.fmtDate(m.acqDate) + ' + ' + m.hold.toFixed(0) + ' years', [{ label: 'Acquisition Date', from: 'User assumption', kind: 'input' }, { label: 'Hold Period', from: 'User assumption', kind: 'input' }]);
+      lnk('fwdNOI', 'Forward 12-Month NOI', this.money(m.fwdNOI), 'Financials → Projections (exit-year forward NOI)', 'financials');
+      inp('exitCap', 'Exit Cap Rate', this.pct(m.exitCap), { numKey: 'coreExitCap', fmt: 'pct', hint: 'Enter as a percentage, e.g. 7.00' });
+      cal('exitValue', 'Gross Exit Value', this.money(m.exitValue), 'Forward NOI ÷ Exit Cap Rate', this.money(m.fwdNOI) + ' ÷ ' + this.pct(m.exitCap), [{ label: 'Forward NOI', from: 'Financials → Projections', kind: 'linked' }, { label: 'Exit Cap Rate', from: 'User assumption', kind: 'input' }]);
+      cal('exitPerKey', 'Exit Value / Key', this.money(m.exitValue / m.keys), 'Gross Exit Value ÷ Keys', this.money(m.exitValue) + ' ÷ ' + m.keys, [{ label: 'Exit Value', from: 'Calculated', kind: 'calc' }]);
+      inp('salesPct', 'Disposition Costs', this.pct(m.salesPct) + ' · ' + this.money(m.salesCost), { numKey: 'coreSalesPct', fmt: 'pct', hint: 'Percentage of gross exit value' });
+
+      inp('coreTaxRes', 'Tax Reserve', this.money(m.taxRes), { numKey: 'coreTaxRes', fmt: 'money', hint: 'Escrowed at closing' });
+      inp('coreInsRes', 'Insurance Reserve', this.money(m.insRes), { numKey: 'coreInsRes', fmt: 'money', hint: 'Escrowed at closing' });
+      inp('coreCapexRes', 'CapEx Reserve', this.money(m.capexRes), { numKey: 'coreCapexRes', fmt: 'money', hint: 'FF&E reserve funded at closing' });
+      inp('coreOther', 'Other Uses', this.money(m.other), { numKey: 'coreOther', fmt: 'money', hint: 'Miscellaneous transaction costs' });
+      cal('totalUses', 'Total Uses', this.money(m.totalUses), 'Sum of all uses', 'Purchase + closing + financing + reserves', [{ label: 'All use lines', from: 'Calculated', kind: 'calc' }]);
+      cal('totalSources', 'Total Sources', this.money(m.totalUses), 'Sum of all sources', 'Loan + equity', [{ label: 'All source lines', from: 'Calculated', kind: 'calc' }]);
+
+      inp('msAcq', 'Acquisition', this.fmtDate(m.acqDate), { strKey: 'coreAcqDate', hint: 'Closing date' });
+      cal('msFirstYear', 'First Full Year', 'Dec 31, 2027', 'First full calendar year of ownership', 'Acquisition + 1 year', [{ label: 'Acquisition Date', from: 'User assumption', kind: 'input' }]);
+      lnk('msMaturity', 'Loan Maturity', 'Dec 15, 2031', 'Debt → Loan Terms (5-year term)', 'debt');
+      cal('msExit', 'Disposition', this.addYears(m.acqDate, m.hold), 'Acquisition Date + Hold Period', this.fmtDate(m.acqDate) + ' + ' + m.hold.toFixed(0) + ' years', [{ label: 'Hold Period', from: 'User assumption', kind: 'input' }]);
+      return D;
+    }
+
+    const PSA = 'Land Purchase & Sale Agreement.pdf';
+    inp('pName', 'Project Name', 'Nashville Gulch Hotel', { strKey: 'devName', hint: 'Working project name' });
+    inp('pLoc', 'Location', '1200 Division St, Nashville, TN', { strKey: 'devLoc', hint: 'Site address' });
+    inp('pKeys', 'Planned Keys', String(m.keys), { strKey: 'devKeys', hint: 'Planned key count drives per-key metrics' });
+    inp('pFloors', 'Planned Floors', '14', { strKey: 'devFloors', hint: 'Per the approved massing study' });
+    inp('pSF', 'Planned SF', '186,000 SF', { strKey: 'devSF', hint: 'Gross building area' });
+    doc('pZoning', 'Zoning / Entitlement', 'MUL-A · entitled', 'Zoning Report.pdf', 'p. 4 · Entitlement Status');
+
+    doc('landPrice', 'Land Purchase Price', this.money(m.land), PSA, 'p. 2 · Purchase Price', { numKey: 'devLandPrice', fmt: 'money', hint: 'Extracted from the PSA — override to test pricing' });
+    cal('landPerKey', 'Land Cost / Key', this.money(m.land / m.keys), 'Land Purchase Price ÷ Planned Keys', this.money(m.land) + ' ÷ ' + m.keys, [{ label: 'Land Price', from: 'PSA p. 2', kind: 'doc' }, { label: 'Planned Keys', from: 'User assumption', kind: 'input' }]);
+    inp('landClose', 'Land Closing Date', this.fmtDate(m.landClose), { strKey: 'devLandClose', hint: 'Drives the development timeline' });
+    inp('landCostPct', 'Acquisition Costs %', this.pct(m.landCostPct), { numKey: 'devLandCostPct', fmt: 'pct', hint: 'Percentage of land price' });
+    cal('landCosts', 'Acquisition Costs', this.money(m.landCosts), 'Land Purchase Price × Acquisition Costs %', this.money(m.land) + ' × ' + this.pct(m.landCostPct), [{ label: 'Land Price', from: 'PSA p. 2', kind: 'doc' }, { label: 'Acquisition Costs %', from: 'User assumption', kind: 'input' }]);
+
+    cal('bLand', 'Land Cost', this.money(m.land + m.landCosts), 'Land Purchase Price + Acquisition Costs', this.money(m.land) + ' + ' + this.money(m.landCosts), [{ label: 'Land Price', from: 'PSA p. 2', kind: 'doc' }, { label: 'Acquisition Costs', from: 'Calculated', kind: 'calc' }]);
+    inp('hardPerKey', 'Hard Cost / Key', this.money(m.hardPerKey), { numKey: 'devHardPerKey', fmt: 'money', hint: 'GMP budget per key', note: 'GC budget estimate: ~$236,000 / key.', docName: 'GMP Construction Budget.pdf', docPage: 'p. 1 · Summary' });
+    cal('hard', 'Hard Costs', this.money(m.hard), 'Hard Cost / Key × Planned Keys', this.money(m.hardPerKey) + ' × ' + m.keys, [{ label: 'Hard Cost / Key', from: 'User assumption', kind: 'input' }, { label: 'Planned Keys', from: 'User assumption', kind: 'input' }]);
+    inp('softPct', 'Soft Costs %', this.pct(m.softPct, 1), { numKey: 'devSoftPct', fmt: 'pct', hint: 'Percentage of hard costs' });
+    cal('soft', 'Soft Costs', this.money(m.soft), 'Hard Costs × Soft Costs %', this.money(m.hard) + ' × ' + this.pct(m.softPct, 1), [{ label: 'Hard Costs', from: 'Calculated', kind: 'calc' }, { label: 'Soft Costs %', from: 'User assumption', kind: 'input' }]);
+    inp('ffePerKey', 'FF&E / Key', this.money(m.ffePerKey), { numKey: 'devFFEPerKey', fmt: 'money', hint: 'FF&E and OS&E per key' });
+    cal('ffe', 'FF&E', this.money(m.ffe), 'FF&E / Key × Planned Keys', this.money(m.ffePerKey) + ' × ' + m.keys, [{ label: 'FF&E / Key', from: 'User assumption', kind: 'input' }]);
+    inp('profFees', 'Professional Fees', this.money(m.profFees), { numKey: 'devProfFees', fmt: 'money', hint: 'Architecture, engineering, legal' });
+    inp('devFee', 'Development Fee', this.money(m.devFee), { numKey: 'devDevFee', fmt: 'money', hint: 'Sponsor development fee' });
+    inp('preOpen', 'Pre-Opening Costs', this.money(m.preOpen), { numKey: 'devPreOpen', fmt: 'money', hint: 'Hiring, training, marketing before opening' });
+    inp('contPct', 'Contingency %', this.pct(m.contPct), { numKey: 'devContPct', fmt: 'pct', hint: 'Percentage of hard + soft costs' });
+    cal('contingency', 'Contingency', this.money(m.contingency), '(Hard + Soft Costs) × Contingency %', this.money(m.hard + m.soft) + ' × ' + this.pct(m.contPct), [{ label: 'Hard + Soft', from: 'Calculated', kind: 'calc' }, { label: 'Contingency %', from: 'User assumption', kind: 'input' }]);
+    cal('loanFees', 'Financing Costs', this.money(m.loanFees), 'Construction Loan × 1.00% fees', this.money(m.loan) + ' × 1.00%', [{ label: 'Construction Loan', from: 'Debt module', kind: 'linked' }]);
+    lnk('interestReserve', 'Interest Reserve', this.money(m.interestReserve), 'Debt → Construction draw schedule', 'debt');
+    cal('tdc', 'Total Development Cost', this.money(m.tdc), 'Sum of all development budget lines', 'Land + hard + soft + FF&E + fees + contingency + financing', [{ label: 'All budget lines', from: 'Calculated', kind: 'calc' }]);
+    cal('tdcPerKey', 'Development Cost / Key', this.money(m.tdc / m.keys), 'Total Development Cost ÷ Planned Keys', this.money(m.tdc) + ' ÷ ' + m.keys, [{ label: 'Total Development Cost', from: 'Calculated', kind: 'calc' }]);
+
+    lnk('loan', 'Construction Loan', this.money(m.loan), 'Debt → Construction Facility', 'debt');
+    cal('ltc', 'LTC', this.pct(m.loan / m.tdc, 1), 'Construction Loan ÷ Total Development Cost', this.money(m.loan) + ' ÷ ' + this.money(m.tdc), [{ label: 'Construction Loan', from: 'Debt module', kind: 'linked' }, { label: 'Total Development Cost', from: 'Calculated', kind: 'calc' }]);
+    doc('spread', 'Spread over Benchmark', this.pct(m.spread), 'Construction Loan Term Sheet.pdf', 'p. 3 · Pricing', { numKey: 'devSpread', fmt: 'pct', hint: 'Extracted from the term sheet — override to test pricing' });
+    cal('allIn', 'All-In Rate', this.pct(m.allIn), 'Benchmark + Spread', this.pct(m.benchmark) + ' + ' + this.pct(m.spread), [{ label: 'Benchmark (SOFR)', from: 'Debt → Loan Terms', kind: 'linked' }, { label: 'Spread', from: 'Term Sheet p. 3', kind: 'doc' }]);
+    lnk('draws', 'Loan Draws', '11 draws · peak $55.0M at completion', 'Debt → Construction draw schedule', 'debt');
+    cal('equity', 'Equity Contribution', this.money(m.equity), 'Total Development Cost − Construction Loan', this.money(m.tdc) + ' − ' + this.money(m.loan), [{ label: 'Total Development Cost', from: 'Calculated', kind: 'calc' }, { label: 'Construction Loan', from: 'Debt module', kind: 'linked' }]);
+    inp('permFin', 'Permanent Financing', 'Refinance at stabilization · 2032', { strKey: 'devPerm', hint: 'Take-out financing assumption — modeled in Debt' });
+    inp('msRefi', 'Refinance', 'Mar 31, 2032', { strKey: 'devRefi', hint: 'Take-out of the construction loan at stabilization' });
+
+    cal('openDate', 'Opening Date', this.addMonths(m.landClose, 29), 'Land Close + 4 months pre-construction + 24-month build + 1 month', this.fmtDate(m.landClose) + ' + 29 months', [{ label: 'Land Close', from: 'User assumption', kind: 'input' }, { label: 'Construction duration', from: 'Investment → Development schedule', kind: 'linked' }]);
+    inp('ramp', 'Ramp-Up Period', m.ramp + ' months', { numKey: 'devRamp', fmt: 'plain', hint: 'Months from opening to stabilized performance' });
+    cal('stabDate', 'Stabilization Date', this.addMonths(m.landClose, 29 + m.ramp), 'Opening Date + Ramp-Up Period', 'Opening + ' + m.ramp + ' months', [{ label: 'Opening Date', from: 'Calculated', kind: 'calc' }, { label: 'Ramp-Up Period', from: 'User assumption', kind: 'input' }]);
+    lnk('stabOcc', 'Stabilized Occupancy', '74.0%', 'Financials → Projections', 'financials');
+    lnk('stabADR', 'Stabilized ADR', '$245', 'Financials → Projections', 'financials');
+    cal('stabRevPAR', 'Stabilized RevPAR', '$181', 'Stabilized Occupancy × Stabilized ADR', '74.0% × $245', [{ label: 'Both inputs', from: 'Financials → Projections', kind: 'linked' }]);
+    lnk('stabRev', 'Stabilized Revenue', '$24,800,000', 'Financials → Projections', 'financials');
+    lnk('stabNOI', 'Stabilized NOI', this.money(m.stabNOI), 'Financials → Projections', 'financials');
+    cal('yieldOnCost', 'Yield on Cost', this.pct(m.stabNOI / m.tdc), 'Stabilized NOI ÷ Total Development Cost', this.money(m.stabNOI) + ' ÷ ' + this.money(m.tdc), [{ label: 'Stabilized NOI', from: 'Financials → Projections', kind: 'linked' }, { label: 'Total Development Cost', from: 'Calculated', kind: 'calc' }]);
+
+    inp('hold', 'Hold Period', m.hold.toFixed(1) + ' years', { numKey: 'devHold', fmt: 'plain', hint: 'Years from land close to disposition' });
+    cal('exitDate', 'Exit Date', this.addYears(m.landClose, m.hold), 'Land Close + Hold Period', this.fmtDate(m.landClose) + ' + ' + m.hold.toFixed(1) + ' years', [{ label: 'Land Close', from: 'User assumption', kind: 'input' }, { label: 'Hold Period', from: 'User assumption', kind: 'input' }]);
+    lnk('fwdNOI', 'Stabilized / Forward NOI', this.money(m.stabNOI), 'Financials → Projections', 'financials');
+    inp('exitCap', 'Exit Cap Rate', this.pct(m.exitCap), { numKey: 'devExitCap', fmt: 'pct', hint: 'Enter as a percentage, e.g. 6.75' });
+    cal('exitValue', 'Gross Exit Value', this.money(m.exitValue), 'Forward NOI ÷ Exit Cap Rate', this.money(m.stabNOI) + ' ÷ ' + this.pct(m.exitCap), [{ label: 'Forward NOI', from: 'Financials → Projections', kind: 'linked' }, { label: 'Exit Cap Rate', from: 'User assumption', kind: 'input' }]);
+    cal('exitPerKey', 'Exit Value / Key', this.money(m.exitValue / m.keys), 'Gross Exit Value ÷ Planned Keys', this.money(m.exitValue) + ' ÷ ' + m.keys, [{ label: 'Exit Value', from: 'Calculated', kind: 'calc' }]);
+    inp('salesPct', 'Disposition Costs', this.pct(m.salesPct) + ' · ' + this.money(m.salesCost), { numKey: 'devSalesPct', fmt: 'pct', hint: 'Percentage of gross exit value' });
+
+    cal('totalUses', 'Total Uses', this.money(m.tdc), 'Total Development Cost', 'Sum of all development budget lines', [{ label: 'All budget lines', from: 'Calculated', kind: 'calc' }]);
+    cal('totalSources', 'Total Sources', this.money(m.tdc), 'Sum of all sources', 'Construction loan + equity', [{ label: 'All source lines', from: 'Calculated', kind: 'calc' }]);
+
+    inp('msLandClose', 'Land Close', this.fmtDate(m.landClose), { strKey: 'devLandClose', hint: 'Site acquisition closing' });
+    cal('msConstStart', 'Construction Start', this.addMonths(m.landClose, 4), 'Land Close + 4-month pre-construction', this.fmtDate(m.landClose) + ' + 4 months', [{ label: 'Land Close', from: 'User assumption', kind: 'input' }]);
+    cal('msConstDone', 'Construction Complete', this.addMonths(m.landClose, 28), 'Construction Start + 24-month build', 'Construction Start + 24 months', [{ label: 'Construction duration', from: 'Investment → Development schedule', kind: 'linked' }]);
+    cal('msOpen', 'Hotel Opening', this.addMonths(m.landClose, 29), 'Construction Complete + 1 month', 'Completion + 1 month', [{ label: 'Construction Complete', from: 'Calculated', kind: 'calc' }]);
+    cal('msStab', 'Stabilization', this.addMonths(m.landClose, 29 + m.ramp), 'Opening + Ramp-Up Period', 'Opening + ' + m.ramp + ' months', [{ label: 'Ramp-Up Period', from: 'User assumption', kind: 'input' }]);
+    cal('msExit', 'Disposition', this.addYears(m.landClose, m.hold), 'Land Close + Hold Period', this.fmtDate(m.landClose) + ' + ' + m.hold.toFixed(1) + ' years', [{ label: 'Hold Period', from: 'User assumption', kind: 'input' }]);
+    return D;
+  }
+
+  REVIEW = {
+    core: ['opsTrail', 'mgmtFee', 'spread'],
+    va: ['opsTrail', 'mgmtFee', 'renoPerKey', 'spread'],
+    dev: ['hardPerKey', 'spread', 'preOpen'],
+  };
+  needsReview(id) { return (this.REVIEW[this.cfg()] || []).indexOf(id) >= 0; }
+
+  colorFor(kind, bold) { if (bold) return this.BLACK; return kind === 'input' ? this.BLUE : kind === 'linked' ? this.GREEN : kind === 'calc' ? this.GRAY : this.BLACK; }
+
+  isOverridden(d, id) {
+    return (d.numKey && this.state.nums[d.numKey] !== undefined) || (d.strKey && this.state.strs[d.strKey] !== undefined) || (!d.numKey && !d.strKey && this.state.strs[id] !== undefined);
+  }
+  valueOf(d, id) {
+    if (d.strKey && this.state.strs[d.strKey] !== undefined) return this.state.strs[d.strKey];
+    if (!d.numKey && !d.strKey && this.state.strs[id] !== undefined) return this.state.strs[id];
+    return d.value;
+  }
+
+  row(defs, id, opts) {
+    const d = defs[id];
+    if (!d) return { label: id, value: '—', color: this.GRAY, weight: 400, underline: 'none', isDoc: false, dotBg: '#fff', dotBorder: 'none', dotTitle: '', rowBg: 'transparent', perKey: '', pct: '' };
+    const o = opts || {};
+    const overridden = this.isOverridden(d, id);
+    return {
+      label: o.label || d.label, value: this.valueOf(d, id),
+      color: overridden ? this.BLUE : this.colorFor(d.kind, o.bold),
+      weight: o.bold ? 700 : 400,
+      underline: d.editable ? 'underline dotted' : 'none',
+      isDoc: d.kind === 'doc' || d.kind === 'linked' || this.needsReview(id),
+      needsReview: this.needsReview(id),
+      dotBg: d.kind === 'linked' ? '#fff' : d.kind === 'input' ? this.BLUE : d.kind === 'calc' ? this.GRAY : this.GREEN,
+      dotBorder: d.kind === 'linked' ? '2px solid ' + this.GREEN : 'none',
+      dotShadow: this.needsReview(id) ? '0 0 0 3px oklch(88% 0.07 45)' : 'none',
+      dotTitle: (this.needsReview(id) ? 'Needs review · ' : '') + (d.kind === 'doc' ? 'Document sourced' : d.kind === 'linked' ? 'Linked from another module' : d.kind === 'input' ? 'Assumption' : 'Calculated'),
+      rowBg: this.state.sel === id ? '#f7f8fb' : 'transparent',
+      perKey: o.perKey || '', pct: o.pct || '',
+      onClick: (e) => {
+        let pop = { x: 40, y: 120 };
+        const el = e && e.currentTarget;
+        if (el && el.getBoundingClientRect) { const b = el.getBoundingClientRect(); pop = { x: b.left, y: b.bottom }; }
+        this.setState({ sel: id, editing: false, atlasOpen: false, pop });
+      },
+    };
+  }
+
+  buildProv(defs) {
+    const id = this.state.sel;
+    if (!id || !defs[id]) return null;
+    const d = defs[id];
+    const KINDS = {
+      input: { badge: 'Assumption', color: this.BLUE, bg: 'oklch(45% 0.14 260 / .1)' },
+      doc: { badge: 'Document sourced', color: '#3a3f47', bg: '#f3f2ee' },
+      linked: { badge: 'Linked', color: this.GREEN, bg: 'oklch(45% 0.12 155 / .1)' },
+      calc: { badge: 'Calculated', color: this.GRAY, bg: '#f3f2ee' },
+    };
+    const k = KINDS[d.kind];
+    const overridden = this.isOverridden(d, id);
+    const pristine = this.pristineDefs()[id];
+    return {
+      label: d.label, value: this.valueOf(d, id),
+      badge: overridden ? 'Analyst override' : k.badge,
+      badgeColor: overridden ? this.BLUE : k.color,
+      badgeBg: overridden ? 'oklch(45% 0.14 260 / .1)' : k.bg,
+      isEditable: !!d.editable, isLocked: !d.editable && d.kind === 'calc',
+      hasDoc: d.kind === 'doc' && !!d.docName, docName: d.docName, docPage: d.docPage,
+      hasLink: d.kind === 'linked', linkLabel: d.linkLabel,
+      goLink: this.goFn(this.props.onNavigate, d.linkKey || 'financials'),
+      hasCalc: d.kind === 'calc', formula: d.formula, formulaNumbers: d.formulaNumbers,
+      parts: (d.parts || []).map(p => ({ label: p.label, from: p.from, color: this.colorFor(p.kind) })),
+      hasNote: !!d.note, noteText: d.note,
+      viewSource: () => window.open('about:blank', '_blank'),
+      isOverride: overridden,
+      originalLine: d.kind === 'doc' ? ('Original source: ' + d.docName + (d.docPage ? ' · ' + d.docPage : ''))
+        : d.kind === 'linked' ? ('Original source: ' + d.linkLabel) : 'Underwriting default',
+      originalValue: (pristine || d).value,
+      restoreLabel: d.kind === 'input' ? 'Restore default value' : 'Restore sourced value',
+      restore: () => this.setState(s => {
+        const nums = Object.assign({}, s.nums), strs = Object.assign({}, s.strs);
+        if (d.numKey) delete nums[d.numKey];
+        if (d.strKey) delete strs[d.strKey];
+        delete strs[id];
+        return { nums, strs, editing: false };
+      }),
+      canStartEdit: !!d.editable && !this.state.editing,
+      isEditing: this.state.editing, draft: this.state.draft,
+      editHint: d.hint || 'Overrides keep their original source so you can restore it.',
+      onDraftChange: (e) => this.setState({ draft: e.target.value }),
+      startEdit: () => this.setState({ editing: true, draft: d.numKey ? String(d.fmt === 'pct' ? (this.num(d.numKey) * 100).toFixed(2) : this.num(d.numKey)) : this.valueOf(d, id) }),
+      save: () => this.setState(s => {
+        const nums = Object.assign({}, s.nums), strs = Object.assign({}, s.strs);
+        if (d.numKey) {
+          const raw = Number(String(s.draft).replace(/[^0-9.-]/g, ''));
+          if (Number.isFinite(raw)) nums[d.numKey] = d.fmt === 'pct' ? raw / 100 : raw;
+        } else if (d.strKey) { strs[d.strKey] = s.draft; }
+        else { strs[id] = s.draft; }
+        return { nums, strs, editing: false };
+      }),
+    };
+  }
+
+  sectionTitles(cfg) {
+    if (cfg === 'dev') return ['Project', 'Land / Site Acquisition', 'Development Budget', 'Construction Financing', 'Opening & Stabilization', 'Exit', 'Sources & Uses', 'Development Timeline'];
+    return ['Property', 'Entry Valuation', 'Renovation / CapEx', 'Capitalization', 'Stabilization', 'Exit', 'Sources & Uses', 'Transaction Timeline'];
+  }
+
+  requestConfig(next) {
+    if (next.dealType === this.state.dealType) return;
+    this.setState({ pending: next, sel: null });
+  }
+
+  reply(t) {
+    const cfg = this.cfg();
+    if (t === 'summar') {
+      if (cfg === 'core') return 'Hyatt Centric Denver — 180-key core acquisition at $80.0M (6.75% going-in), 7-year hold, 11.2% levered IRR against a Core target of 8–12%.';
+      if (cfg === 'dev') return 'Nashville Gulch — 220-key ground-up development at $98.8M total cost ($449k/key), opening late 2029, 22.4% levered IRR on a 6.5-year hold.';
+      return "The Angler's, Miami Beach — 132-key value-add acquisition at $36.4M ($276k/key), $4.85M renovation, 19.8% levered IRR on a 4.33-year hold.";
+    }
+    if (t === 'next') return 'Your next best step\n\nConfirm the exit cap rate against the current comp set — it is the single largest driver of the calculated IRR in this configuration.';
+    return 'I can summarize the deal, trace any number to its source, or explain how this model configuration differs from the others.';
+  }
+
+  renderVals() {
+    const cfg = this.cfg();
+    const m = this.model();
+    const defs = this.defs();
+    const R = (id, opts) => this.row(defs, id, opts);
+    const perKey = (n) => this.money(n / m.keys);
+    const pctOf = (n) => this.pct(n / m.totalUses, 1);
+    const go = (key) => this.goFn(this.props.onNavigate, key);
+
+    const rowsSection = (title, ids, extra) => Object.assign({
+      title, isRows: true, isSU: false, isTimeline: false,
+      rows: ids.map(x => typeof x === 'string' ? R(x) : R(x.id, x)),
+      hasAction: false, hasNote: false, actionLabel: '', note: '', uses: [], sources: [], milestones: [], timelineCols: '',
+    }, extra || {});
+    const suSection = (uses, sources) => ({
+      title: 'Transaction Sources & Uses', isRows: false, isSU: true, isTimeline: false,
+      uses, sources, rows: [], milestones: [], timelineCols: '',
+      hasAction: false, hasNote: false, actionLabel: '', note: '',
+    });
+    const tlSection = (title, items) => ({
+      title, isRows: false, isSU: false, isTimeline: true, rows: [], uses: [], sources: [],
+      timelineCols: 'repeat(' + items.length + ',minmax(0,1fr))',
+      milestones: items.map(it => {
+        const r = R(it.id);
+        const d = defs[it.id] || {};
+        return { label: r.label, detail: it.detail, date: r.value, color: r.color, underline: r.underline, dot: d.kind === 'input' ? this.BLUE : this.GRAY, ring: this.state.sel === it.id ? '#c9d4ee' : '#eae9e4', onClick: r.onClick };
+      }),
+      hasAction: false, hasNote: false, actionLabel: '', note: '',
+    });
+
+    let sections = [], kpis = [];
+    if (cfg === 'core') {
+      sections = [
+        rowsSection('Property', ['pName', 'pType', 'pLoc', 'pYear', 'pKeys', 'pFloors', 'pSF', 'pTitle', 'pLabor', 'opsTrail', 'brand', 'positioning', 'mgmtFee', 'franchiseFee'], { hasNote: true, note: 'Extracted from diligence documents — override where needed' }),
+        rowsSection('Entry', ['entryNOI', 'entryCap', { id: 'purchase', bold: true }, 'pricePerKey', 'acqDate', 'closingPct', 'closing']),
+        rowsSection('Capitalization', ['loan', 'ltv', 'ltc', 'bench', 'spread', 'allIn', 'finCosts', { id: 'equity', bold: true }], { hasAction: true, actionLabel: 'View Debt details →', action: go('debt') }),
+        rowsSection('Exit', ['hold', 'exitDate', 'fwdNOI', 'exitCap', { id: 'exitValue', bold: true }, 'exitPerKey', 'salesPct']),
+        suSection([
+          R('purchase', { perKey: perKey(m.purchase), pct: pctOf(m.purchase) }),
+          R('closing', { perKey: perKey(m.closing), pct: pctOf(m.closing) }),
+          R('finCosts', { perKey: perKey(m.finCosts), pct: pctOf(m.finCosts) }),
+          R('coreTaxRes', { perKey: perKey(m.taxRes), pct: pctOf(m.taxRes) }),
+          R('coreInsRes', { perKey: perKey(m.insRes), pct: pctOf(m.insRes) }),
+          R('coreCapexRes', { perKey: perKey(m.capexRes), pct: pctOf(m.capexRes) }),
+          R('coreOther', { perKey: perKey(m.other), pct: pctOf(m.other) }),
+          R('totalUses', { bold: true, perKey: perKey(m.totalUses), pct: '100.0%' }),
+        ], [
+          R('loan', { label: 'Acquisition Loan', perKey: perKey(m.loan), pct: pctOf(m.loan) }),
+          R('equity', { perKey: perKey(m.equity), pct: pctOf(m.equity) }),
+          R('totalSources', { bold: true, perKey: perKey(m.totalUses), pct: '100.0%' }),
+        ]),
+        tlSection('Transaction Timeline', [
+          { id: 'msAcq', detail: 'Close & fund' }, { id: 'msFirstYear', detail: 'Stabilized operations' },
+          { id: 'msMaturity', detail: '5-year term' }, { id: 'msExit', detail: m.hold.toFixed(0) + '-yr hold' },
+        ]),
+      ];
+      kpis = [
+        { label: 'Purchase Price', value: this.mm(m.purchase) }, { label: 'Going-In Cap', value: this.pct(m.entryCap) },
+        { label: 'Equity', value: this.mm(m.equity) }, { label: 'Exit Value', value: this.mm(m.exitValue) },
+        { label: 'Levered IRR', value: this.pct(m.irr, 1) },
+      ];
+    } else if (cfg === 'dev') {
+      sections = [
+        rowsSection('Project', ['pName', 'pLoc', 'brand', 'positioning', 'pKeys', 'pFloors', 'pSF', 'pZoning', 'mgmtFee', 'franchiseFee']),
+        rowsSection('Land / Site Acquisition', ['landPrice', 'landPerKey', 'landClose', 'landCostPct', 'landCosts']),
+        rowsSection('Development Budget', ['bLand', 'hardPerKey', 'hard', 'softPct', 'soft', 'ffePerKey', 'ffe', 'profFees', 'devFee', 'preOpen', 'contPct', 'contingency', 'loanFees', 'interestReserve', { id: 'tdc', bold: true }, 'tdcPerKey'], { hasAction: true, actionLabel: 'View development details →', action: go('investment') }),
+        rowsSection('Construction Financing', ['loan', 'ltc', 'bench', 'spread', 'allIn', 'loanFees', 'draws', 'interestReserve', { id: 'equity', bold: true }, 'permFin'], { hasAction: true, actionLabel: 'View Debt details →', action: go('debt') }),
+        rowsSection('Opening & Stabilization', ['openDate', 'ramp', 'stabDate', 'stabOcc', 'stabADR', 'stabRevPAR', 'stabRev', { id: 'stabNOI', bold: true }, 'yieldOnCost'], { hasAction: true, actionLabel: 'View Projections →', action: go('financials') }),
+        rowsSection('Exit', ['hold', 'exitDate', 'fwdNOI', 'exitCap', { id: 'exitValue', bold: true }, 'exitPerKey', 'salesPct']),
+        suSection([
+          R('bLand', { perKey: perKey(m.land + m.landCosts), pct: pctOf(m.land + m.landCosts) }),
+          R('hard', { perKey: perKey(m.hard), pct: pctOf(m.hard) }),
+          R('soft', { perKey: perKey(m.soft), pct: pctOf(m.soft) }),
+          R('ffe', { perKey: perKey(m.ffe), pct: pctOf(m.ffe) }),
+          R('profFees', { perKey: perKey(m.profFees), pct: pctOf(m.profFees) }),
+          R('devFee', { perKey: perKey(m.devFee), pct: pctOf(m.devFee) }),
+          R('preOpen', { perKey: perKey(m.preOpen), pct: pctOf(m.preOpen) }),
+          R('contingency', { perKey: perKey(m.contingency), pct: pctOf(m.contingency) }),
+          R('loanFees', { perKey: perKey(m.loanFees), pct: pctOf(m.loanFees) }),
+          R('interestReserve', { perKey: perKey(m.interestReserve), pct: pctOf(m.interestReserve) }),
+          R('totalUses', { bold: true, perKey: perKey(m.tdc), pct: '100.0%' }),
+        ], [
+          R('loan', { perKey: perKey(m.loan), pct: pctOf(m.loan) }),
+          R('equity', { perKey: perKey(m.equity), pct: pctOf(m.equity) }),
+          R('totalSources', { bold: true, perKey: perKey(m.tdc), pct: '100.0%' }),
+        ]),
+        tlSection('Development Timeline', [
+          { id: 'msLandClose', detail: 'Site acquisition' }, { id: 'msConstStart', detail: 'Notice to proceed' },
+          { id: 'msConstDone', detail: '24-month build' }, { id: 'msOpen', detail: 'Ramp-up begins' },
+          { id: 'msStab', detail: m.ramp + '-month ramp complete' }, { id: 'msRefi', detail: 'Construction take-out' },
+          { id: 'msExit', detail: m.hold.toFixed(1) + '-yr hold' },
+        ]),
+      ];
+      kpis = [
+        { label: 'Total Dev. Cost', value: this.mm(m.tdc) }, { label: 'Cost / Key', value: this.money(m.tdc / m.keys) },
+        { label: 'Stabilized NOI', value: this.mm(m.stabNOI) }, { label: 'Exit Value', value: this.mm(m.exitValue) },
+        { label: 'Levered IRR', value: this.pct(m.irr, 1) },
+      ];
+    } else {
+      const hasReno = m.renoTotal > 0;
+      const renoSection = hasReno
+        ? rowsSection('Renovation / CapEx', ['renoScope', 'renoPerKey', 'renoHard', 'renoSoft', 'renoProf', 'renoContPct', 'renoCont', { id: 'renoTotal', bold: true }, 'renoTotalPerKey', 'renoStart', 'renoDuration'], { hasAction: true, actionLabel: 'View renovation details →', action: go('investment') })
+        : rowsSection('Renovation / CapEx', ['renoPerKey'], { hasNote: true, note: 'No renovation underwritten — set a budget per key to activate this section' });
+      sections = [
+        rowsSection('Property', ['pName', 'pType', 'pLoc', 'pYear', 'pKeys', 'pFloors', 'pSF', 'pTitle', 'pLabor', 'brand', 'positioning', 'mgmtFee', 'franchiseFee'], { hasNote: true, note: 'Extracted from diligence documents — override where needed' }),
+        rowsSection('Entry Valuation', ['entryNOI', 'entryCap', { id: 'purchase', bold: true }, 'pricePerKey', 'acqDate', 'closingPct', 'closing']),
+        renoSection,
+        rowsSection('Capitalization', ['loan', 'ltv', 'ltc', 'bench', 'spread', 'allIn', 'finCosts', { id: 'equity', bold: true }, 'refi'], { hasAction: true, actionLabel: 'View Debt details →', action: go('debt') }),
+        rowsSection('Stabilization', hasReno ? ['renoImpact', 'stabDate', 'stabOcc', 'stabADR', 'stabRev', { id: 'stabNOI', bold: true }, 'stabMargin'] : ['stabDate', 'stabOcc', 'stabADR', 'stabRev', { id: 'stabNOI', bold: true }, 'stabMargin'], { hasAction: true, actionLabel: 'View Projections →', action: go('financials') }),
+        rowsSection('Exit', ['hold', 'exitDate', 'fwdNOI', 'exitCap', { id: 'exitValue', bold: true }, 'exitPerKey', 'salesPct', 'transferPct']),
+        suSection([
+          R('purchase', { perKey: perKey(m.purchase), pct: pctOf(m.purchase) }),
+          R('closing', { perKey: perKey(m.closing), pct: pctOf(m.closing) }),
+        ].concat(hasReno ? [R('renoUse', { perKey: perKey(m.renoTotal), pct: pctOf(m.renoTotal) })] : []).concat([
+          R('finCosts', { perKey: perKey(m.loanCosts), pct: pctOf(m.loanCosts) }),
+          R('vaTaxRes', { perKey: perKey(m.taxRes), pct: pctOf(m.taxRes) }),
+          R('vaInsRes', { perKey: perKey(m.insRes), pct: pctOf(m.insRes) }),
+          R('vaCapexRes', { perKey: perKey(m.capexRes), pct: pctOf(m.capexRes) }),
+          R('vaOther', { perKey: perKey(m.other), pct: pctOf(m.other) }),
+          R('totalUses', { bold: true, perKey: perKey(m.totalUses), pct: '100.0%' }),
+        ]), [
+          R('loan', { label: 'Acquisition Loan', perKey: perKey(m.loan), pct: pctOf(m.loan) }),
+          R('keyMoney', { perKey: perKey(m.keyMoney), pct: pctOf(m.keyMoney) }),
+          R('equity', { perKey: perKey(m.equity), pct: pctOf(m.equity) }),
+          R('totalSources', { bold: true, perKey: perKey(m.totalUses), pct: '100.0%' }),
+        ]),
+        tlSection('Transaction Timeline', [{ id: 'msAcq', detail: 'Close & fund' }].concat(hasReno ? [
+          { id: 'renoStart', detail: 'Mobilize' }, { id: 'msRenoDone', detail: '12-month program' },
+        ] : []).concat([
+          { id: 'stabDate', detail: 'First stabilized year' },
+          { id: 'refi', detail: 'Planned' }, { id: 'msExit', detail: m.hold.toFixed(2) + '-yr hold' },
+        ])),
+      ];
+      kpis = [
+        { label: 'Purchase Price', value: this.mm(m.purchase) }, { label: 'Total Capitalization', value: this.mm(m.totalUses) },
+      ].concat(hasReno ? [{ label: 'Renovation', value: this.mm(m.renoTotal) }] : []).concat([
+        { label: 'Stabilized NOI', value: this.mm(m.fwdNOI) },
+        { label: 'Levered IRR', value: this.pct(m.irr, 1) },
+      ]);
+    }
+
+    let reviewCount = 0;
+    sections.forEach(s => { if (s.isRows) s.rows.forEach(r => { if (r.needsReview) reviewCount++; }); });
+    const displaySections = this.state.reviewOnly
+      ? sections.filter(s => s.isRows)
+          .map(s => Object.assign({}, s, { rows: s.rows.filter(r => r.needsReview), hasAction: false, hasNote: false }))
+          .filter(s => s.rows.length)
+      : sections;
+
+    const target = this.TARGETS[this.state.returnsProfile] || [12, 18];
+    const irrPct = m.irr * 100;
+    const status = target[1] === null ? (irrPct >= target[0] ? 'Within target' : 'Below target')
+      : irrPct < target[0] ? 'Below target' : irrPct > target[1] ? 'Above target' : 'Within target';
+    const statusColor = status === 'Within target' ? this.GREEN : status === 'Above target' ? 'oklch(45% 0.12 155)' : 'oklch(50% 0.14 40)';
+    const statusBg = status === 'Below target' ? 'oklch(56% 0.12 40 / .12)' : 'oklch(45% 0.12 155 / .1)';
+
+    const suggestedMgmt = this.MGMT_BY_POSITIONING[this.state.positioning];
+    const hasReco = !this.state.recoDismissed && suggestedMgmt !== undefined && Math.abs(suggestedMgmt - this.num('mgmtFee')) > 0.0001;
+
+    const pending = this.state.pending;
+    const pendingCfg = pending ? (pending.dealType === 'Development' ? 'dev' : 'va') : null;
+
+    return {
+      navItems: this.buildNavItems('overview', this.props.onNavigate),
+      projectName: cfg === 'dev' ? 'Nashville Gulch' : cfg === 'core' ? 'Hyatt Centric Denver' : 'Kimpton Hotel',
+      projectAddress: cfg === 'dev' ? '1200 Division St, Nashville, TN 37203' : cfg === 'core' ? '1441 Larimer St, Denver, CO 80202' : '660 Washington Avenue, Miami Beach, FL 33139',
+      projectKeys: m.keys + (cfg === 'dev' ? ' planned keys' : ' keys'),
+      projectStage: cfg === 'dev' ? 'Ground-up development' : cfg === 'core' ? 'Core acquisition' : 'Value-add acquisition',
+
+      dealTypes: ['Acquisition', 'Development'].map(label => {
+        const active = label === this.state.dealType;
+        return {
+          label, weight: active ? 700 : 500, color: active ? this.BLUE : '#a8a7a2',
+          bg: active ? '#fff' : 'transparent', shadow: active ? '0 1px 2px rgba(0,0,0,.08)' : 'none',
+          select: () => this.requestConfig({ dealType: label }),
+        };
+      }),
+      profileFields: [
+        { label: 'Returns Profile', key: 'returnsProfile', hint: 'Sets the return benchmark only', options: ['Core', 'Core+', 'Value Add', 'Opportunistic'] },
+        { label: 'Brand', key: 'brand', hint: 'Property classification', options: ['Kimpton Hotels & Restaurants', 'Autograph Collection', 'Curio Collection', 'Hyatt Centric', 'Independent / Soft Brand', 'Unbranded'] },
+        { label: 'Positioning', key: 'positioning', hint: 'Property classification', options: ['Luxury', 'Upper Upscale', 'Upscale', 'Upper Midscale', 'Midscale', 'Economy'] },
+      ].map(f => ({
+        label: f.label, options: f.options, value: this.state[f.key], hint: f.hint,
+        edited: this.state[f.key] !== this.SETUP[f.key],
+        onChange: (e) => { const v = e.target.value; this.setState({ [f.key]: v, recoDismissed: f.key === 'positioning' ? false : this.state.recoDismissed }); },
+      })),
+
+      benchmark: {
+        target: target[1] === null ? target[0] + '%+' : target[0] + '–' + target[1] + '%',
+        actual: this.pct(m.irr, 1), status, statusColor, statusBg,
+      },
+      hasReco,
+      reco: {
+        text: hasReco ? this.state.positioning + ' positioning typically carries a ' + this.pct(suggestedMgmt) + ' base management fee — currently ' + this.pct(this.num('mgmtFee')) + '.' : '',
+        apply: () => this.setState(s => ({ nums: Object.assign({}, s.nums, { mgmtFee: suggestedMgmt }), recoDismissed: true })),
+        dismiss: () => this.setState({ recoDismissed: true }),
+      },
+
+      kpis, sections: displaySections,
+      reviewCount: reviewCount + ' field' + (reviewCount === 1 ? '' : 's') + ' need review',
+      hasReviews: reviewCount > 0 && this.props.showReviewBar !== false,
+      reviewOnly: !!this.state.reviewOnly,
+      reviewChipLabel: this.state.reviewOnly ? 'Showing review only — clear filter' : 'Filter to these',
+      reviewChipBg: this.state.reviewOnly ? 'oklch(94% 0.05 65)' : '#fff',
+      reviewChipBorder: this.state.reviewOnly ? '1px solid oklch(80% 0.09 65)' : '1px solid #e2e1dc',
+      toggleReviewOnly: () => this.setState(s => ({ reviewOnly: !s.reviewOnly })),
+      noReviewMatches: !!this.state.reviewOnly && reviewCount === 0,
+
+      hasConfirm: !!pending,
+      confirm: {
+        title: pending ? 'Change deal type to ' + pending.dealType + '?' : 'Change deal type?',
+        sectionList: pendingCfg ? this.sectionTitles(pendingCfg).join(' · ') : '',
+        cancel: () => this.setState({ pending: null }),
+        apply: () => this.setState(s => ({ dealType: (s.pending && s.pending.dealType) || s.dealType, pending: null, sel: null, editing: false })),
+      },
+
+      hasProv: !!this.state.sel,
+      prov: this.buildProv(defs),
+      closeProv: () => this.setState({ sel: null, editing: false }),
+      popLeft: (() => {
+        const pop = this.state.pop || { x: 40 };
+        const vw = typeof window !== 'undefined' ? window.innerWidth : 1440;
+        return Math.round(Math.min(Math.max(12, pop.x), Math.max(12, vw - 300))) + 'px';
+      })(),
+      popTop: (() => {
+        const pop = this.state.pop || { y: 120 };
+        const vh = typeof window !== 'undefined' ? window.innerHeight : 900;
+        let top = pop.y + 8;
+        if (top + 340 > vh - 12) top = Math.max(12, vh - 352);
+        return Math.round(top) + 'px';
+      })(),
+
+      atlasTransform: this.state.atlasOpen ? 'translateX(0)' : 'translateX(100%)',
+      toggleAtlas: () => this.setState(s => ({ atlasOpen: !s.atlasOpen, sel: null })),
+      closeAtlas: () => this.setState({ atlasOpen: false }),
+      progress: [
+        { label: 'Documents', mark: '✓', color: this.GREEN, weight: 400 }, { label: 'Historicals', mark: '✓', color: this.GREEN, weight: 400 },
+        { label: 'Projections', mark: '✓', color: this.GREEN, weight: 400 }, { label: 'Underwriting', mark: '→', color: '#2f4a8c', weight: 700 },
+        { label: 'Investment Review', mark: '○', color: '#9a9a95', weight: 400 },
+      ],
+      messages: this.state.messages.map(x => ({ text: x.text, align: x.from === 'user' ? 'flex-end' : 'flex-start', bg: x.from === 'user' ? '#14213d' : '#f3f2ee', color: x.from === 'user' ? '#fff' : '#1a2233' })),
+      suggestions: [
+        { label: 'Summarize this deal', onClick: () => this.setState(s => ({ messages: [...s.messages, { from: 'user', text: 'Summarize this deal' }, { from: 'bot', text: this.reply('summar') }] })) },
+        { label: 'What should I do next?', onClick: () => this.setState(s => ({ messages: [...s.messages, { from: 'user', text: 'What should I do next?' }, { from: 'bot', text: this.reply('next') }] })) },
+      ],
+    };
+  }
+}
+</script>
+</body>
+</html>

@@ -1,0 +1,619 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+  <style>
+    body{margin:0;background:#f5f4f0;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,Arial,sans-serif;}
+    a{color:#2f4a8c}
+    a:hover{color:#1f3568}
+    select{font-family:inherit}
+  </style>
+</helmet>
+<div style="display:flex;min-height:100vh">
+  <div style="width:210px;background:#0f1a30;padding:22px 16px;display:flex;flex-direction:column;gap:2px;flex-shrink:0">
+    <div style="display:flex;align-items:center;gap:8px;color:#fff;font-weight:700;font-size:16px;margin-bottom:24px"><div style="width:28px;height:28px;background:#2f4a8c;border-radius:6px;display:flex;align-items:center;justify-content:center;font-size:13px">F</div>Fondok.</div>
+    <div style="color:#c9cede;font-size:12.5px;padding:8px 10px;border-radius:6px;background:rgba(255,255,255,.06);margin-bottom:16px;display:flex;justify-content:space-between">fondok.ai <span>⌄</span></div>
+    <div style="color:#8b93a7;font-size:13px;padding:8px 10px;display:flex;gap:9px">⊞ Dashboard</div>
+    <div style="color:#fff;background:rgba(255,255,255,.09);font-size:13px;font-weight:600;padding:8px 10px;border-radius:6px;display:flex;gap:9px">▤ Projects</div>
+    <div style="color:#8b93a7;font-size:13px;padding:8px 10px;display:flex;gap:9px">📈 Pipeline</div>
+    <div style="color:#8b93a7;font-size:13px;padding:8px 10px;display:flex;gap:9px">◔ Audit</div>
+    <div style="color:#8b93a7;font-size:13px;padding:8px 10px;display:flex;gap:9px">$ Cost</div>
+    <div style="color:#8b93a7;font-size:13px;padding:8px 10px;display:flex;gap:9px">▥ Data Library</div>
+    <div style="color:#8b93a7;font-size:13px;padding:8px 10px;display:flex;gap:9px">▦ Methodology</div>
+    <div style="color:#8b93a7;font-size:13px;padding:8px 10px;display:flex;gap:9px">◷ Settings</div>
+  </div>
+
+  <div style="flex:1;min-width:0">
+    <div style="padding:22px 32px 0">
+      <div style="font-size:11.5px;color:#9a9a95;margin-bottom:10px">← BACK TO PROJECTS</div>
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px">
+        <div style="display:flex;align-items:center;gap:10px"><h1 style="font-size:26px;margin:0;color:#1a2233;font-weight:600">Kimpton Hotel</h1><span style="color:#9a9a95;font-size:11px;font-weight:600;letter-spacing:.04em">DRAFT</span></div>
+        <div style="display:flex;gap:14px;align-items:center">
+          <button onClick="{{ toggleCopilot }}" style="display:flex;align-items:center;gap:6px;background:#eef2fb;border:1px solid #dbe3f5;color:#2f4a8c;border-radius:6px;padding:8px 14px;font-size:12.5px;font-weight:600;cursor:pointer;white-space:nowrap">✦ Ask Atlas</button>
+          <button style="background:#14213d;color:#fff;border:none;border-radius:6px;padding:8px 16px;font-size:12.5px;font-weight:600">Share</button>
+        </div>
+      </div>
+      <div style="font-size:12.5px;color:#9a9a95;margin-bottom:20px;display:flex;gap:18px">
+        <span>660 Washington Avenue, Miami Beach, FL 33139</span><span>132 keys</span><span>Created 7/30/2026</span>
+      </div>
+      <div style="display:flex;gap:22px;border-bottom:1px solid #ececea;font-size:13.5px;font-weight:500;color:#9a9a95;overflow-x:auto">
+        <sc-for list="{{ navItems }}" as="nav" hint-placeholder-count="11">
+          <div onClick="{{ nav.onClick }}" style="display:flex;align-items:center;gap:6px;padding-bottom:10px;white-space:nowrap;cursor:pointer;color:{{ nav.color }};font-weight:{{ nav.weight }};border-bottom:{{ nav.border }}">
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="{{ nav.icon }}"></path></svg>{{ nav.label }}
+          </div>
+        </sc-for>
+      </div>
+    </div>
+
+    <div style="padding:16px 32px 56px;max-width:1320px">
+
+      <div style="background:#fff;border:1px solid #eae9e4;border-radius:10px;padding:12px 16px;margin-bottom:14px;display:flex;flex-direction:column;gap:3px">
+        <span style="font-size:13.5px;font-weight:700;color:#1a2233">Data Room</span>
+        <span style="font-size:12.5px;color:#6b6f76;line-height:1.55;max-width:960px">Every diligence document for this deal, what Fondok extracted from each one, and what is still missing. Confirm classifications here, then validate any statement’s extracted data in Financials.</span>
+      </div>
+
+      <div style="display:flex;align-items:center;gap:16px;flex-wrap:wrap;background:#fbfbf9;border:1px solid #eae9e4;border-radius:8px;padding:9px 14px;margin-bottom:14px;font-size:11px;color:#6b6f76">
+        <span style="font-weight:700;color:#8a8a86;letter-spacing:.02em">DATA KEY</span>
+        <span style="display:flex;align-items:center;gap:6px"><span style="width:9px;height:9px;border-radius:50%;background:oklch(45% 0.12 155);display:inline-block;flex-shrink:0"></span>Document sourced</span>
+        <span style="display:flex;align-items:center;gap:6px"><span style="width:9px;height:9px;border-radius:50%;background:#fff;border:2px solid oklch(45% 0.12 155);display:inline-block;flex-shrink:0"></span>Linked</span>
+        <span style="display:flex;align-items:center;gap:6px"><span style="width:9px;height:9px;border-radius:50%;background:oklch(45% 0.14 260);display:inline-block;flex-shrink:0"></span>Assumption</span>
+        <span style="display:flex;align-items:center;gap:6px"><span style="width:9px;height:9px;border-radius:50%;background:#5f656e;display:inline-block;flex-shrink:0"></span>Calculated</span>
+        <span style="display:flex;align-items:center;gap:6px"><span style="width:9px;height:9px;border-radius:50%;background:#fff;border:1px dashed #b0afaa;display:inline-block;flex-shrink:0"></span>Awaiting data</span>
+        <span style="display:flex;align-items:center;gap:6px"><span style="width:9px;height:9px;border-radius:50%;background:oklch(45% 0.12 155);box-shadow:0 0 0 3px oklch(88% 0.07 45);display:inline-block;flex-shrink:0"></span>Needs review</span>
+        <span style="display:flex;align-items:center;gap:6px"><b style="color:#1a2233">1,240</b>Total / summary</span>
+        <span style="display:flex;align-items:center;gap:6px"><span style="text-decoration:underline dotted;color:#6b6f76">123</span>Editable — click to change</span>
+        <span title="Origin is the dot: document sourced, linked from another module, your assumption, calculated by Fondok, or awaiting data. An amber halo means the value needs review. Bold marks totals, a dotted underline marks values you can change. Provenance and editability are separate — a sourced value can also be editable, and an override keeps its original source so you can restore it." style="cursor:help;color:#9a9a95;margin-left:auto;white-space:nowrap">ⓘ How to read this</span>
+      </div>
+
+      <sc-if value="{{ isCoverageView }}" hint-placeholder-val="{{ true }}">
+
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px;flex-wrap:wrap;row-gap:6px">
+        <div style="display:flex;align-items:center;gap:8px;font-size:13.5px">
+          <span style="color:oklch(55% 0.14 55)">⚠</span>
+          <span style="font-weight:700;color:#1a2233">2 coverage gaps</span>
+          <span style="color:oklch(50% 0.12 55);font-weight:600">1 warn</span>
+        </div>
+        <div onClick="{{ refreshCoverage }}" style="display:flex;align-items:center;gap:6px;font-size:12.5px;color:#6b6f76;cursor:pointer">⟲ Refresh</div>
+      </div>
+      <div style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:22px">
+        <div style="display:flex;align-items:center;gap:8px;font-size:12.5px;font-weight:600;color:oklch(50% 0.12 55);background:oklch(56% 0.1 55 / .08);border:1px solid oklch(56% 0.1 55 / .3);border-radius:8px;padding:8px 14px">
+          <span>ⓘ</span>Missing 2026 financials
+        </div>
+        <div style="display:flex;align-items:center;gap:8px;font-size:12.5px;font-weight:600;color:#2f4a8c;background:#eef2fb;border:1px solid #dbe3f5;border-radius:8px;padding:8px 14px">
+          <span>ⓘ</span>2024 annual only — no monthly
+        </div>
+      </div>
+
+      <div style="background:#fff;border:1px solid #ececea;border-radius:10px;padding:22px;margin-bottom:22px;display:flex;align-items:center;gap:18px;flex-wrap:wrap;box-shadow:0 1px 2px rgba(0,0,0,.02)">
+        <div style="width:52px;height:52px;border-radius:10px;background:#eef2fb;display:flex;align-items:center;justify-content:center;font-size:22px;color:#2f4a8c;flex-shrink:0">⇪</div>
+        <div style="flex:1;min-width:220px">
+          <div style="font-size:15px;font-weight:700;color:#1a2233">Upload Documents</div>
+          <div style="font-size:12.5px;color:#8a8a86;margin-top:2px">Drag and drop OM, T12, STR reports · AI auto-extracts key data</div>
+        </div>
+        <div style="display:flex;gap:10px;flex-shrink:0">
+          <button style="background:#14213d;color:#fff;border:none;border-radius:6px;padding:9px 18px;font-size:12.5px;font-weight:600;cursor:pointer;white-space:nowrap">Choose Files</button>
+          <button style="background:#fff;color:#3a3f47;border:1px solid #e2e1dc;border-radius:6px;padding:9px 18px;font-size:12.5px;font-weight:600;cursor:pointer;white-space:nowrap">Browse Templates</button>
+        </div>
+      </div>
+
+      <!-- CONSOLIDATED DOCUMENT COVERAGE CARD -->
+      <div style="background:#fff;border:1px solid #ececea;border-radius:10px;overflow:hidden;margin-bottom:28px;box-shadow:0 1px 2px rgba(0,0,0,.02)">
+        <div onClick="{{ toggleCoverageCard }}" style="padding:18px 22px;display:flex;justify-content:space-between;align-items:center;border-bottom:1px solid #f2f1ec;cursor:pointer">
+          <div style="display:flex;gap:10px;align-items:flex-start">
+            <span style="font-size:11px;color:#c3c2bd;margin-top:4px">{{ coverageChevron }}</span>
+            <div>
+              <div style="font-size:15px;font-weight:700;color:#1a2233">Document coverage</div>
+              <div style="font-size:12.5px;color:#8a8a86;margin-top:2px">5 documents uploaded across 2 of 10 types — you have enough to run the model; the rest sharpen the projection.</div>
+            </div>
+          </div>
+          <div style="text-align:right;flex-shrink:0">
+            <div style="font-size:20px;font-weight:700;color:#1a2233">5<span style="color:#c3c2bd;font-weight:500;font-size:13px"> docs</span></div>
+            <div style="width:110px;height:5px;background:#f0efeb;border-radius:3px;margin-top:6px"><div style="width:20%;height:100%;background:#14213d;border-radius:3px"></div></div>
+          </div>
+        </div>
+
+        <sc-if value="{{ coverageExpanded }}" hint-placeholder-val="{{ true }}">
+        <sc-for list="{{ categories }}" as="cat" hint-placeholder-count="10">
+          <div onDragOver="{{ cat.onDragOver }}" onDrop="{{ cat.onDrop }}" style="border-bottom:1px solid #f2f1ec;outline:{{ cat.dropOutline }};outline-offset:-2px;transition:outline .1s">
+            <div onClick="{{ cat.toggle }}" style="display:flex;align-items:center;gap:12px;padding:13px 22px;cursor:pointer">
+              <span style="font-size:15px;color:{{ cat.iconColor }}">{{ cat.icon }}</span>
+              <div style="flex:1;font-size:13.5px;font-weight:600;color:#1a2233">{{ cat.name }}</div>
+              <span style="font-size:11.5px;font-weight:600;color:{{ cat.countColor }};background:{{ cat.countBg }};padding:3px 10px;border-radius:14px">{{ cat.countLabel }}</span>
+              <span style="font-size:11px;color:#c3c2bd;width:14px;text-align:center">{{ cat.chevron }}</span>
+            </div>
+            <sc-if value="{{ cat.expanded }}" hint-placeholder-val="{{ false }}">
+              <div style="padding:0 22px 16px 44px;display:flex;flex-direction:column;gap:8px">
+                <sc-for list="{{ cat.docs }}" as="d" hint-placeholder-count="2">
+                  <div draggable="{{ d.draggable }}" onDragStart="{{ d.onDragStart }}" onDragEnd="{{ d.onDragEnd }}" style="border-top:1px solid #f5f4f0;padding-top:10px;cursor:grab">
+                    <div style="display:flex;align-items:center;gap:10px;margin-bottom:8px">
+                      <div style="flex:1;display:flex;align-items:center;gap:6px;overflow:hidden">
+                        <span style="font-size:12.5px;color:#1a2233;font-weight:500;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">⠿ {{ d.name }}</span>
+                        <span onClick="{{ d.openInNewTab }}" title="Open in new tab" style="cursor:pointer;font-size:13px;color:#8a8a86;flex-shrink:0">↗</span>
+                        <span onClick="{{ d.download }}" title="Download" style="cursor:pointer;font-size:13px;color:#8a8a86;flex-shrink:0">⬇</span>
+                      </div>
+                    </div>
+                    <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
+                      <sc-if value="{{ cat.isFinancial }}" hint-placeholder-val="{{ false }}">
+                        <select style="font-size:12px;border:1px solid #e2e1dc;border-radius:6px;padding:5px 8px;color:#3a3f47">
+                          <option selected="{{ d.isPLSub }}">P&amp;L</option>
+                          <option selected="{{ d.isT12Sub }}">T-12</option>
+                        </select>
+                        <select style="font-size:12px;border:1px solid #e2e1dc;border-radius:6px;padding:5px 8px;color:#3a3f47">
+                          <option selected="{{ d.isAnnual }}">Annual</option>
+                          <option selected="{{ d.isMonthly }}">Monthly</option>
+                          <option selected="{{ d.isYTD }}">Year-To-Date</option>
+                          <option selected="{{ d.isNotSure }}">Not Sure</option>
+                        </select>
+                        <input value="{{ d.year }}" style="font-size:12px;border:1px solid #e2e1dc;border-radius:6px;padding:5px 8px;color:#3a3f47;width:70px" />
+                      </sc-if>
+                      <span style="font-size:11.5px;color:#8a8a86;margin-left:auto">{{ d.fields }} fields · <span style="color:{{ d.confidenceColor }};font-weight:600">{{ d.conf }}% confidence</span></span>
+                      <sc-if value="{{ d.review }}" hint-placeholder-val="{{ false }}">
+                        <span style="font-size:11px;font-weight:600;color:oklch(50% 0.14 40);background:oklch(56% 0.12 40 / .12);padding:3px 9px;border-radius:14px;white-space:nowrap">⚠ {{ d.review }} to review</span>
+                      </sc-if>
+                      <sc-if value="{{ d.isPLView }}" hint-placeholder-val="{{ false }}">
+                        <button onClick="{{ d.viewPL }}" title="Opens this document's extracted data in the Financials tab" style="background:#14213d;color:#fff;border:none;border-radius:6px;padding:6px 12px;font-size:12px;font-weight:600;white-space:nowrap;cursor:pointer">View Financials</button>
+                      </sc-if>
+                      <sc-if value="{{ d.isNotPLView }}" hint-placeholder-val="{{ false }}">
+                        <button onClick="{{ d.viewData }}" style="background:#fff;color:#3a3f47;border:1px solid #e2e1dc;border-radius:6px;padding:6px 12px;font-size:12px;font-weight:600;white-space:nowrap;cursor:pointer">View data →</button>
+                      </sc-if>
+                    </div>
+                  </div>
+                </sc-for>
+              </div>
+            </sc-if>
+          </div>
+        </sc-for>
+        </sc-if>
+      </div>
+      </sc-if>
+
+      <sc-if value="{{ isDetailView }}" hint-placeholder-val="{{ false }}">
+        <div style="display:flex;align-items:center;gap:12px;margin-bottom:6px">
+          <button onClick="{{ backToCoverage }}" style="background:#fff;border:1px solid #e2e1dc;color:#3a3f47;border-radius:6px;padding:6px 12px;font-size:12px;font-weight:600;cursor:pointer">← Back</button>
+          <div style="font-size:15px;font-weight:700;color:#1a2233">{{ detailDoc.name }}</div>
+        </div>
+        <div style="font-size:12.5px;color:#8a8a86;margin:2px 0 14px">{{ detailDoc.fields }} fields extracted · <span style="color:{{ detailDoc.confidenceColor }};font-weight:600">{{ detailDoc.conf }}% confidence</span> · <span onClick="{{ goReview }}" style="color:{{ reviewCountColor }};font-weight:600;cursor:pointer">{{ reviewCountLabel }}</span></div>
+
+        <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:10px;position:relative">
+          <sc-for list="{{ dPills }}" as="p" hint-placeholder-count="3">
+            <button onClick="{{ p.select }}" style="display:inline-flex;align-items:center;gap:7px;font-family:inherit;font-size:12px;font-weight:600;padding:6px 12px;border-radius:6px;border:{{ p.border }};background:{{ p.bg }};color:{{ p.color }};cursor:pointer;white-space:nowrap">
+              <sc-if value="{{ p.hasDot }}" hint-placeholder-val="{{ false }}">
+                <span style="width:7px;height:7px;border-radius:50%;background:oklch(50% 0.14 40);display:inline-block;flex-shrink:0"></span>
+              </sc-if>
+              {{ p.label }}<span style="color:{{ p.countColor }};font-weight:600">{{ p.n }}</span>
+            </button>
+          </sc-for>
+          <span style="margin-left:auto;display:flex;align-items:center;gap:8px">
+            <span style="display:inline-flex;align-items:center;gap:7px;border:1px solid #e2e1dc;background:#fff;border-radius:6px;padding:6px 10px;width:300px">
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="#9a9a95" stroke-width="2" style="flex-shrink:0"><circle cx="11" cy="11" r="7"></circle><path d="M20 20l-3.5-3.5"></path></svg>
+              <input value="{{ dSearch }}" onChange="{{ onSearch }}" placeholder="Search fields or values…" style="border:none;outline:none;font-family:inherit;font-size:12.5px;color:#1a2233;width:100%;background:transparent" />
+            </span>
+            <span style="position:relative;display:inline-flex">
+            <button onClick="{{ toggleDFilter }}" title="Filter" style="display:inline-flex;align-items:center;gap:6px;font-family:inherit;font-size:12px;font-weight:600;color:#3a3f47;background:{{ dFilterBg }};border:1px solid #e2e1dc;border-radius:6px;padding:6px 11px;cursor:pointer">
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 5h18l-7 8v6l-4 2v-8z"></path></svg>Filter
+            </button>
+          <sc-if value="{{ dFilterOpen }}" hint-placeholder-val="{{ false }}">
+            <div style="position:absolute;top:calc(100% + 6px);right:0;z-index:30;background:#fff;border:1px solid #e2e1dc;border-radius:8px;box-shadow:0 10px 26px rgba(0,0,0,.12);padding:10px;width:240px;display:flex;flex-direction:column;gap:8px">
+              <div style="font-size:9.5px;font-weight:700;letter-spacing:.07em;color:#b0afaa;text-transform:uppercase">Confidence</div>
+              <sc-for list="{{ dConfOptions }}" as="o" hint-placeholder-count="4">
+                <div onClick="{{ o.select }}" style="display:flex;align-items:center;gap:8px;font-size:12.5px;color:#1a2233;font-weight:{{ o.weight }};padding:5px 6px;border-radius:5px;cursor:pointer"><span style="width:11px">{{ o.check }}</span>{{ o.label }}</div>
+              </sc-for>
+              <div style="font-size:9.5px;font-weight:700;letter-spacing:.07em;color:#b0afaa;text-transform:uppercase;border-top:1px solid #f2f1ec;padding-top:8px">Section</div>
+              <sc-for list="{{ dSectionOptions }}" as="o" hint-placeholder-count="4">
+                <div onClick="{{ o.select }}" style="display:flex;align-items:center;gap:8px;font-size:12.5px;color:#1a2233;font-weight:{{ o.weight }};padding:5px 6px;border-radius:5px;cursor:pointer"><span style="width:11px">{{ o.check }}</span>{{ o.label }}</div>
+              </sc-for>
+            </div>
+          </sc-if>
+            </span>
+          </span>
+        </div>
+
+        <div style="display:flex;align-items:center;gap:12px;margin-bottom:10px;font-size:11.5px;color:#9a9a95">
+          <span>{{ dResultLabel }}</span>
+          <sc-if value="{{ dHasFilters }}" hint-placeholder-val="{{ false }}">
+            <span onClick="{{ clearFilters }}" style="color:#2f4a8c;font-weight:600;cursor:pointer">Clear filters</span>
+          </sc-if>
+        </div>
+
+        <div style="background:#fff;border:1px solid #ececea;border-radius:10px;overflow:hidden;box-shadow:0 1px 2px rgba(0,0,0,.02)">
+          <div style="display:grid;grid-template-columns:1fr 200px 110px 150px;background:#14213d">
+            <div style="padding:9px 22px;font-size:11px;font-weight:600;color:#c9cede">FIELD</div>
+            <div style="padding:9px 16px;font-size:11px;font-weight:600;color:#c9cede;text-align:right">EXTRACTED VALUE</div>
+            <div style="padding:9px 16px;font-size:11px;font-weight:600;color:#c9cede;text-align:right">CONFIDENCE</div>
+            <div style="padding:9px 16px;font-size:11px;font-weight:600;color:#c9cede;text-align:right"></div>
+          </div>
+          <sc-if value="{{ dNoResults }}" hint-placeholder-val="{{ false }}">
+            <div style="padding:26px 22px;font-size:12.5px;color:#9a9a95;text-align:center">No fields match these filters.</div>
+          </sc-if>
+          <sc-for list="{{ detailSections }}" as="sec" hint-placeholder-count="3">
+            <div style="padding:9px 22px;background:#f0f0ee;border-bottom:1px solid #d8d7d1;font-size:11px;font-weight:700;color:#6b6f76;text-transform:uppercase;letter-spacing:.03em">{{ sec.label }}</div>
+            <sc-for list="{{ sec.fields }}" as="f" hint-placeholder-count="4">
+              <div style="display:grid;grid-template-columns:1fr 200px 110px 150px;border-bottom:1px solid #f2f1ec;background:{{ f.rowBg }};align-items:center">
+                <div style="padding:11px 22px;font-size:13px;color:#1a2233;display:flex;flex-direction:column;gap:3px">
+                  <span>{{ f.label }}</span>
+                  <sc-if value="{{ f.hasReason }}" hint-placeholder-val="{{ false }}">
+                    <span style="font-size:11px;color:oklch(50% 0.14 40);line-height:1.45">{{ f.reviewReason }}</span>
+                  </sc-if>
+                </div>
+                <sc-if value="{{ f.isEditing }}" hint-placeholder-val="{{ false }}">
+                  <div style="padding:6px 16px;text-align:right">
+                    <input value="{{ f.editDraft }}" onChange="{{ f.onDraftChange }}" style="width:100%;font-size:13px;text-align:right;border:1px solid #e2e1dc;border-radius:6px;padding:5px 8px;font-variant-numeric:tabular-nums" />
+                  </div>
+                </sc-if>
+                <sc-if value="{{ f.notEditing }}" hint-placeholder-val="{{ true }}">
+                  <div style="padding:11px 16px;font-size:13px;color:#1a2233;text-align:right;font-variant-numeric:tabular-nums">{{ f.value }}</div>
+                </sc-if>
+                <div style="padding:11px 16px;text-align:right">
+                  <span style="font-size:11px;font-weight:600;color:{{ f.confColor }};background:{{ f.confBg }};padding:3px 9px;border-radius:14px">{{ f.confLabel }}</span>
+                </div>
+                <div style="padding:11px 16px;text-align:right;display:flex;gap:6px;justify-content:flex-end;align-items:center">
+                  <sc-if value="{{ f.isEditing }}" hint-placeholder-val="{{ false }}">
+                    <button onClick="{{ f.saveEdit }}" style="background:#14213d;color:#fff;border:none;border-radius:6px;padding:5px 10px;font-size:11.5px;font-weight:600;cursor:pointer">Save</button>
+                    <button onClick="{{ f.cancelEdit }}" style="background:#fff;border:1px solid #e2e1dc;color:#3a3f47;border-radius:6px;padding:5px 10px;font-size:11.5px;font-weight:600;cursor:pointer">Cancel</button>
+                  </sc-if>
+                  <sc-if value="{{ f.isFlagged }}" hint-placeholder-val="{{ false }}">
+                    <button onClick="{{ f.accept }}" title="Accept" style="background:oklch(56% 0.12 155);color:#fff;border:none;border-radius:6px;padding:5px 10px;font-size:11.5px;font-weight:600;cursor:pointer;white-space:nowrap">Accept</button>
+                    <button onClick="{{ f.startEdit }}" title="Edit" style="background:#fff;border:1px solid #e2e1dc;color:#3a3f47;border-radius:6px;padding:5px 10px;font-size:11.5px;font-weight:600;cursor:pointer;white-space:nowrap">Edit ✎</button>
+                  </sc-if>
+                  <sc-if value="{{ f.isPlainEditable }}" hint-placeholder-val="{{ false }}">
+                    <button onClick="{{ f.startEdit }}" title="Edit" style="background:#fff;border:1px solid #e2e1dc;color:#3a3f47;border-radius:6px;padding:5px 10px;font-size:11.5px;font-weight:600;cursor:pointer;white-space:nowrap">Edit ✎</button>
+                  </sc-if>
+                  <sc-if value="{{ f.isVerified }}" hint-placeholder-val="{{ false }}">
+                    <span style="font-size:11px;color:oklch(45% 0.12 155)">✓ Verified</span>
+                  </sc-if>
+                  <sc-if value="{{ f.isEdited }}" hint-placeholder-val="{{ false }}">
+                    <span style="font-size:11px;color:oklch(45% 0.1 260)">✎ Edited</span>
+                  </sc-if>
+                </div>
+              </div>
+            </sc-for>
+          </sc-for>
+        </div>
+      </sc-if>
+
+    </div>
+  </div>
+</div>
+
+<sc-if value="{{ copilotClosedForDock }}" hint-placeholder-val="{{ true }}">
+  <div onClick="{{ toggleCopilot }}" title="Ask Atlas" style="position:fixed;bottom:24px;right:24px;width:48px;height:48px;border-radius:50%;background:#14213d;color:#fff;display:flex;align-items:center;justify-content:center;font-size:19px;cursor:pointer;box-shadow:0 4px 14px rgba(0,0,0,.25);z-index:39">✦</div>
+</sc-if>
+<sc-if value="{{ copilotOpen }}" hint-placeholder-val="{{ false }}">
+  <div onClick="{{ closeCopilot }}" style="position:fixed;inset:0;background:rgba(15,20,35,.25);z-index:40"></div>
+</sc-if>
+<div style="position:fixed;top:0;right:0;height:100vh;width:380px;max-width:92vw;background:#fff;border-left:1px solid #e2e1dc;box-shadow:-4px 0 24px rgba(0,0,0,.1);z-index:41;display:flex;flex-direction:column;transform:{{ copilotTransform }};transition:transform .25s ease">
+  <div style="padding:16px 18px;border-bottom:1px solid #f0efeb;display:flex;align-items:center;justify-content:space-between;flex-shrink:0">
+    <div style="display:flex;align-items:center;gap:10px">
+      <div style="width:30px;height:30px;border-radius:8px;background:#14213d;display:flex;align-items:center;justify-content:center;color:#fff;font-size:14px">✦</div>
+      <div>
+        <div style="font-size:13.5px;font-weight:700;color:#1a2233">Atlas</div>
+        <div style="font-size:11px;color:#9a9a95">AI Underwriting Copilot</div>
+      </div>
+    </div>
+    <span onClick="{{ closeCopilot }}" style="cursor:pointer;color:#8a8a86;font-size:16px">✕</span>
+  </div>
+  <div style="padding:10px 18px;border-bottom:1px solid #f0efeb;flex-shrink:0">
+    <div style="font-size:10px;font-weight:700;color:#9a9a95;letter-spacing:.04em;margin-bottom:6px">UNDERWRITING PROGRESS</div>
+    <div style="display:flex;flex-direction:column;gap:3px">
+      <sc-for list="{{ copilotProgress }}" as="p" hint-placeholder-count="5">
+        <div style="display:flex;align-items:center;gap:6px;font-size:11.5px;color:{{ p.color }};font-weight:{{ p.weight }}"><span style="width:14px">{{ p.mark }}</span>{{ p.label }}</div>
+      </sc-for>
+    </div>
+  </div>
+  <div style="flex:1;overflow-y:auto;padding:16px 18px;display:flex;flex-direction:column;gap:10px">
+    <sc-for list="{{ copilotMessages }}" as="m" hint-placeholder-count="1">
+      <div style="max-width:88%;align-self:{{ m.align }};background:{{ m.bg }};color:{{ m.color }};border-radius:10px;padding:9px 12px;font-size:12.5px;line-height:1.5;white-space:pre-wrap">{{ m.text }}</div>
+    </sc-for>
+  </div>
+  <div style="padding:10px 14px;border-top:1px solid #f0efeb;display:flex;gap:6px;flex-wrap:wrap;flex-shrink:0">
+    <sc-for list="{{ copilotSuggestions }}" as="s" hint-placeholder-count="3">
+      <div onClick="{{ s.onClick }}" style="font-size:11px;color:#2f4a8c;background:#eef2fb;border-radius:14px;padding:5px 10px;cursor:pointer;white-space:nowrap">{{ s.label }}</div>
+    </sc-for>
+  </div>
+  <div style="padding:12px 14px;border-top:1px solid #f0efeb;display:flex;gap:8px;flex-shrink:0">
+    <input value="{{ copilotDraft }}" onChange="{{ onCopilotDraftChange }}" onKeyDown="{{ onCopilotKeyDown }}" placeholder="Ask about this deal…" style="flex:1;font-size:12.5px;border:1px solid #e2e1dc;border-radius:6px;padding:8px 10px" />
+    <button onClick="{{ sendCopilotMessage }}" style="background:#14213d;color:#fff;border:none;border-radius:6px;padding:8px 14px;font-size:12.5px;font-weight:600;cursor:pointer">Send</button>
+  </div>
+</div>
+
+</x-dc>
+<script type="text/x-dc" data-dc-script>
+class Component extends DCLogic {
+  buildNavItems(active, onNavigate) {
+    const ICONS = {
+      dataroom: "M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7z",
+      overview: "M6 3h9l4 4v14a1 1 0 0 1-1 1H6a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1zM9 12h6M9 16h6",
+      market: "M12 4a4 4 0 100 8 4 4 0 000-8zM4 21c0-4 3.6-6 8-6s8 2 8 6",
+      financials: "M4 20V10M11 20V4M18 20v-7",
+      investment: "M3 8h18v12a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V8zM8 8V6a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2",
+      debt: "M12 3a9 9 0 100 18 9 9 0 000-18zM12 7v10M9.5 9.5c0-1.4 1.1-2.5 2.5-2.5s2.5.7 2.5 2c0 2-5 1.5-5 4 0 1.3 1.1 2.5 2.5 2.5s2.5-1.1 2.5-2.5",
+      partnership: "M9 11a3 3 0 100-6 3 3 0 000 6zM17 11a3 3 0 100-6 3 3 0 000 6zM2 20c0-3 3-5 7-5M13 20c0-3 3-5 7-5",
+      cashflow: "M3 12h4l3 7 4-14 3 7h4",
+      returns: "M3 17l6-6 4 4 8-8M15 7h6v6",
+      scenarios: "M4 7h13l-3-3M4 7l3 3M20 17H7l3 3M20 17l-3-3",
+      icmemo: "M6 3h9l4 4v14a1 1 0 0 1-1 1H6a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1zM9 12h6M9 16h4M14 3v5h5",
+    };
+    const HREFS = {
+      dataroom: './Data Room v2.dc.html', overview: './Overview Tab v3.dc.html', market: './Market Tab.dc.html',
+      financials: './Financials Tab.dc.html', investment: './Investment Tab.dc.html', debt: './Debt Tab.dc.html',
+      partnership: './Partnership Tab.dc.html', cashflow: './Cash Flow Tab.dc.html', returns: './Returns Tab.dc.html',
+      scenarios: './Scenarios Tab.dc.html', icmemo: './IC Memo Tab.dc.html',
+    };
+    const items = [
+      ['dataroom','Data Room'], ['overview','Overview'], ['market','Market'], ['financials','Financials'],
+      ['investment','Investment'], ['debt','Debt'], ['partnership','Partnership'], ['cashflow','Cash Flow'],
+      ['returns','Returns'], ['scenarios','Scenario Analysis'], ['icmemo','IC Memo'],
+    ];
+    return items.map(([key, label]) => ({
+      key, label, icon: ICONS[key],
+      color: key === active ? '#14213d' : '#9a9a95',
+      weight: key === active ? 700 : 500,
+      border: key === active ? '2px solid #14213d' : '2px solid transparent',
+      onClick: key === active ? null : () => { if (onNavigate) onNavigate(key); else window.location.href = HREFS[key]; },
+    }));
+  }
+  allDocs = [
+    { name: 'Miami Beach Anglers Offering Memorandum.pdf', subcategory: 'OM', period: 'One-time', year: '2026', category: 'Offering Memorandum', id: 'om', ext: 'PDF', fields: 440, conf: 97, review: 1, isPL: false },
+    { name: 'Angler_s 2024 November Detailed P&L.xlsm', subcategory: 'P&L', period: 'Monthly', year: '2024', category: 'Financial Statements', id: 'nov1', ext: 'XLS', fields: 375, conf: 93, review: 2, isPL: true },
+    { name: 'The Angler_s - November 2024 Financials.xlsx', subcategory: 'P&L', period: 'Monthly', year: '2024', category: 'Financial Statements', id: 'nov2', ext: 'XLS', fields: 156, conf: 88, review: 4, isPL: true },
+    { name: 'The Angler_s - December 2024 Financials.xlsx', subcategory: 'P&L', period: 'Monthly', year: '2024', category: 'Financial Statements', id: 'dec', ext: 'XLS', fields: 143, conf: 87, review: 5, isPL: true },
+    { name: 'Angler_s 2024 Full Year Detailed P&L.xlsm', subcategory: 'T-12', period: 'Annual', year: '2024', category: 'Financial Statements', id: 'fullyear', ext: 'XLS', fields: 646, conf: 94, review: 12, isPL: true },
+  ];
+
+  state = {
+    expanded: { 'Financial Statements': true },
+    coverageExpanded: true,
+    copilotOpen: false, copilotDraft: '',
+    copilotMessages: [
+      { from: 'bot', text: "Hi, I'm Atlas — ask me about this deal's documents, coverage gaps, or what still needs review." },
+    ],
+    docsExpanded: true,
+    docCategory: Object.fromEntries(this.allDocs.map(d => [d.name, d.category])),
+    dragName: null,
+    view: this.props.defaultView || 'coverage', detailDocId: this.props.defaultDocId || null,
+    fieldStatus: {}, fieldValue: {}, editingField: null, editDraft: '',
+  };
+
+  reviewCountFor(doc) {
+    let n = 0;
+    this.mockFieldSections(doc).forEach(sec => sec.fields.forEach(f => {
+      const st = this.state.fieldStatus[doc.id + '::' + f.label];
+      if (st !== 'verified' && st !== 'edited' && (!!f.review || f.conf < 80)) n++;
+    }));
+    return n;
+  }
+  fieldCountFor(doc) {
+    return this.mockFieldSections(doc).reduce((a, sec) => a + sec.fields.length, 0);
+  }
+
+  mockFieldSections(doc) {
+    return [
+      { label: 'Property Overview', fields: [
+        { label: 'Property Name', value: "The Angler's Miami Beach", conf: 98 },
+        { label: 'Address', value: '660 Washington Avenue, Miami Beach, FL 33139', conf: 98 },
+        { label: 'Total Keys', value: '132', conf: 99 },
+        { label: 'Year Built', value: '1998', conf: 95 },
+        { label: 'Renovation Year', value: '2019', conf: 62, review: 'Low extraction confidence — the scan is ambiguous' },
+        { label: 'Property Type', value: 'Full-Service Hotel', conf: 96 },
+      ]},
+      { label: 'Financial Summary', fields: [
+        { label: 'Asking Price', value: '$28,500,000', conf: 94, review: 'Requires explicit acceptance — drives Purchase Price' },
+        { label: 'Trailing 12-Month NOI', value: '$4,430,428', conf: 91 },
+        { label: 'Cap Rate', value: '6.2%', conf: 89, review: 'Conflicts with the T-12: 6.2% here vs. 7.0% on the trailing statement' },
+        { label: 'Trailing 12-Month RevPAR', value: '$245.20', conf: 93 },
+      ]},
+      { label: 'Ownership & Legal', fields: [
+        { label: 'Current Owner Entity', value: 'Washington Ave Hospitality LLC', conf: 97 },
+        { label: 'Franchise Agreement', value: 'Independent', conf: 90 },
+        { label: 'Ground Lease', value: 'None', conf: 85, review: 'Failed validation — no lease document in the data room to confirm against' },
+        { label: 'Zoning', value: 'RM-2', conf: 88 },
+      ]},
+    ];
+  }
+
+  toggleCat(name) {
+    this.setState(s => ({ expanded: { ...s.expanded, [name]: !s.expanded[name] } }));
+  }
+
+  moveDoc(name, targetCategory) {
+    this.setState(s => ({
+      docCategory: { ...s.docCategory, [name]: targetCategory },
+      expanded: { ...s.expanded, [targetCategory]: true },
+    }));
+  }
+
+  renderVals() {
+    const catNames = ['Offering Memorandum', 'Financial Statements', 'STR / Comp Set Report', 'Insurance Records', 'Property Taxes', 'Room Mix / Unit Mix', 'Historical CapEx', 'Basic Property Info', 'Leases & Agreements', 'Surveys & Reviews', 'Debt / Loan', 'Partnership / JV', 'Other'];
+    const dragName = this.state.dragName;
+    const catDefs = catNames.map(name => ({
+      name,
+      docs: this.allDocs.filter(d => this.state.docCategory[d.name] === name).map(d => ({ ...d,
+        fields: this.fieldCountFor(d), review: this.reviewCountFor(d),
+        isPLSub: d.subcategory === 'P&L', isT12Sub: d.subcategory === 'T-12',
+        isAnnual: d.period === 'Annual', isMonthly: d.period === 'Monthly', isYTD: d.period === 'Year-To-Date', isNotSure: d.period === 'Not Sure',
+        draggable: true,
+        onDragStart: () => this.setState({ dragName: d.name }),
+        onDragEnd: () => this.setState({ dragName: null }),
+        openInNewTab: () => window.open('about:blank', '_blank'),
+        download: () => { const a = document.createElement('a'); a.href = 'about:blank'; a.download = d.name; a.click(); },
+        confidenceColor: d.conf >= 90 ? 'oklch(45% 0.12 155)' : d.conf >= 80 ? 'oklch(50% 0.12 55)' : 'oklch(50% 0.14 40)',
+        isPLView: d.isPL,
+        isNotPLView: !d.isPL,
+        viewPL: () => { this.props.onNavigate ? this.props.onNavigate('financials', { doc: d.id }) : window.location.href = './Financials Tab.dc.html?doc=' + encodeURIComponent(d.id); },
+        viewData: () => this.setState({ view: 'detail', detailDocId: d.id }),
+      })),
+    }));
+
+    const categories = catDefs.map(c => {
+      const uploaded = c.docs.length > 0;
+      return {
+        name: c.name,
+        icon: uploaded ? '✓' : '○',
+        iconColor: uploaded ? 'oklch(45% 0.12 155)' : '#d8d7d2',
+        countLabel: uploaded ? `${c.docs.length} file${c.docs.length > 1 ? 's' : ''}` : 'Not uploaded',
+        countColor: uploaded ? 'oklch(45% 0.12 155)' : '#9a9a95',
+        countBg: uploaded ? 'oklch(56% 0.12 155 / .12)' : '#f3f2ee',
+        chevron: this.state.expanded[c.name] ? '▾' : '▸',
+        expanded: uploaded && !!this.state.expanded[c.name],
+        toggle: () => uploaded && this.toggleCat(c.name),
+        isFinancial: c.name === 'Financial Statements',
+        isNotFinancial: c.name !== 'Financial Statements',
+        docs: c.docs,
+        dropOutline: dragName ? '2px dashed #9db3e0' : 'none',
+        onDragOver: (e) => e.preventDefault(),
+        onDrop: (e) => { e.preventDefault(); if (dragName) this.moveDoc(dragName, c.name); },
+      };
+    });
+
+    const detailDocRaw = this.state.detailDocId ? this.allDocs.find(d => d.id === this.state.detailDocId) : null;
+    const detailDoc = detailDocRaw ? { ...detailDocRaw, fields: this.fieldCountFor(detailDocRaw), confidenceColor: detailDocRaw.conf >= 90 ? 'oklch(45% 0.12 155)' : detailDocRaw.conf >= 80 ? 'oklch(50% 0.12 55)' : 'oklch(50% 0.14 40)' } : null;
+    const dq = (this.state.dSearch || '').trim().toLowerCase();
+    const dFilter = this.state.dFilter || 'all';
+    const dConf = this.state.dConf || 'all';
+    const dSection = this.state.dSection || 'all';
+    let reviewTotal = 0, fieldTotal = 0, shownTotal = 0;
+
+    const detailSections = detailDocRaw ? this.mockFieldSections(detailDocRaw).map(sec => ({
+      label: sec.label,
+      fields: sec.fields.map(f => {
+        const key = `${detailDocRaw.id}::${f.label}`;
+        const status = this.state.fieldStatus[key];
+        const value = this.state.fieldValue[key] !== undefined ? this.state.fieldValue[key] : f.value;
+        const resolved = status === 'verified' || status === 'edited';
+        const needsReview = !resolved && (!!f.review || f.conf < 80);
+        const flagged = needsReview;
+        const isEditing = this.state.editingField === key;
+        fieldTotal++;
+        if (needsReview) reviewTotal++;
+        const matchesSearch = !dq || [f.label, String(value), sec.label].some(t => String(t).toLowerCase().indexOf(dq) >= 0);
+        const matchesPill = dFilter === 'all' || (dFilter === 'review' ? needsReview : !needsReview);
+        const matchesConf = dConf === 'all' || (dConf === 'lt90' ? f.conf < 90 : dConf === 'mid' ? (f.conf >= 90 && f.conf < 95) : f.conf >= 95);
+        const matchesSection = dSection === 'all' || dSection === sec.label;
+        const visible = matchesSearch && matchesPill && matchesConf && matchesSection;
+        if (visible) shownTotal++;
+        return {
+          label: f.label, value, visible,
+          reviewReason: needsReview ? (f.review || 'Low extraction confidence') : '',
+          hasReason: needsReview && !!f.review,
+          rowBg: flagged ? 'oklch(56% 0.12 40 / .06)' : '#fff',
+          confColor: f.conf >= 90 ? 'oklch(45% 0.12 155)' : f.conf >= 80 ? 'oklch(50% 0.12 55)' : 'oklch(50% 0.14 40)',
+          confBg: f.conf >= 90 ? 'oklch(56% 0.12 155 / .12)' : f.conf >= 80 ? 'oklch(56% 0.1 55 / .12)' : 'oklch(56% 0.12 40 / .12)',
+          confLabel: `${f.conf}%`,
+          isFlagged: flagged, isPlainEditable: !flagged && status !== 'verified' && status !== 'edited',
+          isVerified: status === 'verified', isEdited: status === 'edited',
+          isEditing, notEditing: !isEditing,
+          editDraft: this.state.editDraft,
+          onDraftChange: (e) => this.setState({ editDraft: e.target.value }),
+          startEdit: () => this.setState({ editingField: key, editDraft: value }),
+          cancelEdit: () => this.setState({ editingField: null }),
+          saveEdit: () => this.setState(s => ({ editingField: null, fieldValue: { ...s.fieldValue, [key]: s.editDraft }, fieldStatus: { ...s.fieldStatus, [key]: 'edited' } })),
+          accept: () => this.setState(s => ({ fieldStatus: { ...s.fieldStatus, [key]: 'verified' } })),
+        };
+      }),
+    })).map(sec => ({ label: sec.label, fields: sec.fields.filter(f => f.visible) })).filter(sec => sec.fields.length) : [];
+
+    return {
+      categories,
+      isCoverageView: this.state.view === 'coverage',
+      isDetailView: this.state.view === 'detail',
+      detailDoc, detailSections,
+      dPills: [
+        { id: 'all', label: 'All', n: fieldTotal, dot: false },
+        { id: 'review', label: 'Needs Review', n: reviewTotal, dot: true },
+        { id: 'reviewed', label: 'Reviewed', n: fieldTotal - reviewTotal, dot: false },
+      ].map(p => ({
+        label: p.label, n: String(p.n), hasDot: p.dot,
+        bg: dFilter === p.id ? '#14213d' : '#fff', color: dFilter === p.id ? '#fff' : '#3a3f47',
+        border: dFilter === p.id ? '1px solid #14213d' : '1px solid #e2e1dc',
+        countColor: dFilter === p.id ? '#9fb2df' : '#9a9a95',
+        select: () => this.setState({ dFilter: p.id }),
+      })),
+      dSearch: this.state.dSearch || '',
+      onSearch: (e) => this.setState({ dSearch: e.target.value }),
+      reviewCountLabel: reviewTotal + ' need review',
+      reviewCountColor: reviewTotal ? 'oklch(50% 0.14 40)' : '#8a8a86',
+      goReview: () => this.setState({ dFilter: 'review' }),
+      dFilterOpen: !!this.state.dFilterOpen,
+      toggleDFilter: () => this.setState(s => ({ dFilterOpen: !s.dFilterOpen })),
+      dFilterBg: (dConf !== 'all' || dSection !== 'all') ? '#eef2fb' : '#fff',
+      dConfOptions: [
+        { id: 'all', label: 'All confidence' }, { id: 'lt90', label: 'Below 90%' },
+        { id: 'mid', label: '90–95%' }, { id: 'high', label: '95% and above' },
+      ].map(o => ({ label: o.label, check: dConf === o.id ? '✓' : '', weight: dConf === o.id ? 600 : 400, select: () => this.setState({ dConf: o.id }) })),
+      dSectionOptions: ['all'].concat(detailDocRaw ? this.mockFieldSections(detailDocRaw).map(s => s.label) : [])
+        .map(name => ({ label: name === 'all' ? 'All sections' : name, check: dSection === name ? '✓' : '', weight: dSection === name ? 600 : 400, select: () => this.setState({ dSection: name }) })),
+      dResultLabel: 'Showing ' + shownTotal + ' of ' + (dFilter === 'review' ? reviewTotal + ' review items' : dFilter === 'reviewed' ? (fieldTotal - reviewTotal) + ' reviewed fields' : fieldTotal + ' fields'),
+      dHasFilters: dFilter !== 'all' || !!dq || dConf !== 'all' || dSection !== 'all',
+      clearFilters: () => this.setState({ dFilter: 'all', dSearch: '', dConf: 'all', dSection: 'all', dFilterOpen: false }),
+      dNoResults: shownTotal === 0,
+      backToCoverage: () => this.setState({ view: 'coverage', detailDocId: null }),
+      refreshCoverage: () => {},
+      coverageExpanded: this.state.coverageExpanded,
+      coverageChevron: this.state.coverageExpanded ? '▾' : '▸',
+      toggleCoverageCard: () => this.setState(s => ({ coverageExpanded: !s.coverageExpanded })),
+      docsExpanded: this.state.docsExpanded,
+      docsChevron: this.state.docsExpanded ? '▾' : '▸',
+      toggleDocsCard: () => this.setState(s => ({ docsExpanded: !s.docsExpanded })),
+      navItems: this.buildNavItems('dataroom', this.props.onNavigate),
+      goToFinancials: () => { this.props.onNavigate ? this.props.onNavigate('financials') : window.location.href = './Financials Tab.dc.html'; },
+      goToOverview: () => { this.props.onNavigate ? this.props.onNavigate('overview') : window.location.href = './Overview Tab v3.dc.html'; },
+      copilotOpen: this.state.copilotOpen,
+      copilotClosedForDock: !this.state.copilotOpen,
+      copilotTransform: this.state.copilotOpen ? 'translateX(0)' : 'translateX(100%)',
+      toggleCopilot: () => this.setState(s => ({ copilotOpen: !s.copilotOpen })),
+      closeCopilot: () => this.setState({ copilotOpen: false }),
+      copilotMessages: this.state.copilotMessages.map(m => ({
+        text: m.text,
+        align: m.from === 'user' ? 'flex-end' : 'flex-start',
+        bg: m.from === 'user' ? '#14213d' : '#f3f2ee',
+        color: m.from === 'user' ? '#fff' : '#1a2233',
+      })),
+      copilotDraft: this.state.copilotDraft,
+      onCopilotDraftChange: (e) => this.setState({ copilotDraft: e.target.value }),
+      onCopilotKeyDown: (e) => { if (e.key === 'Enter') this.sendCopilotMessage(); },
+      sendCopilotMessage: () => this.sendCopilotMessage(),
+      copilotProgress: [
+        { label: 'Documents', state: 'current' }, { label: 'Historical Financials', state: 'todo' },
+        { label: 'Projections', state: 'todo' }, { label: 'Underwriting', state: 'todo' }, { label: 'Investment Review', state: 'todo' },
+      ].map(p => ({ label: p.label, mark: p.state === 'done' ? '✓' : p.state === 'current' ? '→' : '○', color: p.state === 'done' ? 'oklch(45% 0.12 155)' : p.state === 'current' ? '#2f4a8c' : '#9a9a95', weight: p.state === 'current' ? 700 : 400 })),
+      copilotSuggestions: [
+        { label: 'What should I do next?', onClick: () => this.pushCopilot('What should I do next?', "Your next best step\n\nReview document coverage — you're missing 2026 financials and only have annual (not monthly) data for 2024. Resolve those before moving to Historical P&L.") },
+        { label: 'Guide me through this', onClick: () => this.pushCopilot('Walk me through the Data Room', "Let's get this deal ready for underwriting.\n\n1. Confirm required documents\n2. Review document coverage\n3. Validate extracted data\n4. Investigate missing/inconsistent information\n5. Move to Historical P&L\n\nYou're at Step 2 — 2 coverage gaps still need attention.") },
+        { label: 'Deal Readiness', onClick: () => this.pushCopilot('What\'s my deal readiness?', "Deal Readiness: 82%. I found the OM, 2024 and 2025 operating statements, and the trailing-12 P&L. I'm missing current debt terms and the most recent occupancy/STR report — upload those to complete underwriting.") },
+        { label: 'Am I done with this step?', onClick: () => this.pushCopilot('Am I done with this step?', "Data Room review: 70% complete\n✓ 5/5 required categories uploaded\n✓ Documents categorized\n⚠ 2 coverage gaps (2026 financials, 2024 monthly)\n✓ No failed extractions\n\nRemaining: upload 2026 financials or confirm they don't exist yet.") },
+        { label: 'Compare OM vs. actuals', onClick: () => this.pushCopilot('Compare OM vs. actuals', 'OM Management Fee: 3.0% (standardized) vs. Actual: 4.2% (from the trailing-12 P&L). That 1.2pt gap is currently flowing into projected NOI — worth confirming which basis to underwrite on.') },
+      ],
+    };
+  }
+
+  pushCopilot(userText, botText) {
+    this.setState(s => ({ copilotMessages: [...s.copilotMessages, { from: 'user', text: userText }, { from: 'bot', text: botText }] }));
+  }
+
+  sendCopilotMessage() {
+    const text = this.state.copilotDraft.trim();
+    if (!text) return;
+    const t = text.toLowerCase();
+    let reply = "I can help with document coverage, flagged extractions, or a quick summary of this deal room — try a suggestion below or ask me directly.";
+    if (t.includes('ready') || t.includes('readiness')) reply = "Deal Readiness: 82%. I found the OM, 2024 and 2025 operating statements, and the trailing-12 P&L. I'm missing current debt terms and the most recent occupancy/STR report.";
+    else if (t.includes('om') && (t.includes('actual') || t.includes('vs'))) reply = 'OM Management Fee: 3.0% (standardized) vs. Actual: 4.2% (trailing-12 P&L). That gap is flowing into projected NOI.';
+    else if (t.includes('where') && t.includes('come')) reply = 'Every number traces back: Source document → Extracted value → Normalized value → Underwritten/calculated value. Click any cell in the Financials tab to see its chain.';
+    else if (t.includes('guide') || t.includes('walk me') || t.includes('start here')) reply = "Let's get this deal ready for underwriting.\n\n1. Confirm required documents\n2. Review document coverage\n3. Validate extracted data\n4. Investigate missing/inconsistent information\n5. Move to Historical P&L\n\nYou're at Step 2 — 2 coverage gaps still need attention.";
+    else if ((t.includes('next') && (t.includes('do') || t.includes('step'))) || t.includes('best step')) reply = "Your next best step\n\nReview document coverage — you're missing 2026 financials and only have annual (not monthly) data for 2024. Resolve those before moving to Historical P&L.";
+    else if (t.includes('am i done') || (t.includes('done') && t.includes('step'))) reply = "Data Room review: 70% complete\n✓ 5/5 required categories uploaded\n✓ Documents categorized\n⚠ 2 coverage gaps (2026 financials, 2024 monthly)\n✓ No failed extractions\n\nRemaining: upload 2026 financials or confirm they don't exist yet.";
+    else if (t.includes('missing') || t.includes('gap')) reply = "You're at 5/5 required categories, but Historical CapEx and Room Mix / Unit Mix still show gaps in the coverage checklist.";
+    else if (t.includes('summar')) reply = 'Kimpton Hotel, 132 keys — offering memorandum, financials, and STR report are in; a few supporting categories are still outstanding.';
+    else if (t.includes('flag') || t.includes('confiden')) reply = 'A few extracted financial cells are low-confidence — open the Financials tab and check the Flagged counter in the source panel.';
+    this.setState(s => ({ copilotDraft: '', copilotMessages: [...s.copilotMessages, { from: 'user', text }, { from: 'bot', text: reply }] }));
+  }
+}
+
+</script>
+</body>
+</html>

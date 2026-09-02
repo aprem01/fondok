@@ -1,0 +1,72 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+
+<div style="background:#fff;border:1px solid #ececea;border-radius:10px;overflow:hidden;box-shadow:0 1px 2px rgba(0,0,0,.02)">
+  <div style="background:#14213d;color:#fff;font-size:12.5px;font-weight:700;padding:9px 16px">{{ title }}</div>
+  <div style="padding:4px 0">
+    <sc-for list="{{ rows }}" as="r" hint-placeholder-count="6">
+      <div onClick="{{ r.onClick }}" onMouseEnter="{{ r.onHover }}" onMouseLeave="{{ r.onUnhover }}" style="display:flex;justify-content:space-between;align-items:center;gap:10px;padding:8px 16px;border-bottom:1px solid #f2f1ec;cursor:{{ r.cursor }};background:{{ r.rowBg }};position:relative">
+        <span style="font-size:12px;color:#6b6f76;flex-shrink:1;min-width:0">{{ r.label }}</span>
+        <sc-if value="{{ r.isEditing }}" hint-placeholder-val="{{ false }}">
+          <input value="{{ r.draft }}" onChange="{{ r.onDraftChange }}" onBlur="{{ r.saveEdit }}" onKeyDown="{{ r.onKeyDown }}" autoFocus="{{ true }}" style="font-size:12.5px;font-variant-numeric:tabular-nums;text-align:right;border:1px solid #1a73e8;border-radius:4px;padding:3px 6px;width:120px;flex-shrink:0" />
+        </sc-if>
+        <sc-if value="{{ r.notEditing }}" hint-placeholder-val="{{ true }}">
+          <span style="font-size:12.5px;font-variant-numeric:tabular-nums;text-align:right;color:{{ r.color }};font-weight:{{ r.weight }};white-space:pre-line;flex-shrink:0;line-height:1.4;text-decoration:{{ r.underline }}">{{ r.displayValue }}</span>
+        </sc-if>
+        <sc-if value="{{ r.showTip }}" hint-placeholder-val="{{ false }}">
+          <div style="position:absolute;bottom:100%;right:16px;margin-bottom:4px;background:#1a2233;color:#fff;font-size:11px;font-weight:500;padding:6px 10px;border-radius:6px;white-space:pre-line;text-align:right;line-height:1.5;box-shadow:0 4px 10px rgba(0,0,0,.18);z-index:20;max-width:260px">{{ r.tipText }}</div>
+        </sc-if>
+      </div>
+    </sc-for>
+  </div>
+</div>
+
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props="{&quot;$preview&quot;:{&quot;width&quot;:340,&quot;height&quot;:220},&quot;title&quot;:{&quot;editor&quot;:&quot;text&quot;,&quot;default&quot;:&quot;Section&quot;,&quot;tsType&quot;:&quot;string&quot;},&quot;rows&quot;:{&quot;editor&quot;:null,&quot;default&quot;:[],&quot;tsType&quot;:&quot;{label:string,value:string,color:string,weight:number,editable:boolean}[]&quot;}}">
+class Component extends DCLogic {
+  state = { editingIdx: null, draft: '', hoveredIdx: null };
+  tipFor(r) {
+    if (r.calc) return r.calc;
+    if (r.editable) return 'User input — click to edit';
+    if (r.color === 'oklch(45% 0.12 155)') return 'Linked to market data';
+    if (r.weight === 700) return 'Calculated total — sum of the lines above';
+    return 'Calculated — not editable';
+  }
+  renderVals() {
+    const rows = (this.props.rows || []).map((r, i) => {
+      const isEditing = this.state.editingIdx === i;
+      const value = this.state.overrides && this.state.overrides[i] !== undefined ? this.state.overrides[i] : r.value;
+      return {
+        ...r,
+        displayValue: value,
+        isEditing, notEditing: !isEditing,
+        draft: this.state.draft,
+        cursor: r.editable ? 'pointer' : 'default',
+        rowBg: isEditing ? '#f6f8fd' : 'transparent',
+        underline: r.editable ? 'underline dotted' : 'none',
+        onClick: r.editable && !isEditing ? () => this.setState({ editingIdx: i, draft: value }) : () => {},
+        onDraftChange: (e) => this.setState({ draft: e.target.value }),
+        saveEdit: () => this.setState(s => ({ editingIdx: null, overrides: { ...(s.overrides || {}), [i]: s.draft } })),
+        onKeyDown: (e) => {
+          if (e.key === 'Enter') this.setState(s => ({ editingIdx: null, overrides: { ...(s.overrides || {}), [i]: s.draft } }));
+          if (e.key === 'Escape') this.setState({ editingIdx: null });
+        },
+        showTip: this.state.hoveredIdx === i,
+        tipText: this.tipFor(r),
+        onHover: () => this.setState({ hoveredIdx: i }),
+        onUnhover: () => this.setState({ hoveredIdx: null }),
+      };
+    });
+    return { title: this.props.title, rows };
+  }
+}
+</script>
+</body>
+</html>

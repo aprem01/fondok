@@ -1,0 +1,171 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+
+<helmet data-dc-atomics>
+<meta name="design_doc_mode" content="canvas">
+<style>
+  body{margin:0;background:#eeece6;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,Arial,sans-serif}
+  .dv-turn{padding:40px 44px 32px;border-bottom:1px solid rgba(0,0,0,.08)}
+  .dv-thd{display:flex;align-items:baseline;gap:10px;margin:0 0 20px}
+  .dv-tid{font:600 10px ui-monospace,Menlo,monospace;padding:3px 7px;background:#14213d;color:#fff;border-radius:4px;text-decoration:none}
+  .dv-tname{font:600 13px/1.2 system-ui,sans-serif;color:#1a1a1a}
+  .dv-opts{display:flex;flex-wrap:wrap;gap:28px;align-items:flex-start}
+  .dv-opt{flex:none;display:flex;flex-direction:column;gap:9px}
+  .dv-oid{font:600 10.5px ui-monospace,Menlo,monospace;padding:3px 7px;background:rgba(0,0,0,.08);color:#1a1a1a;border-radius:5px;text-decoration:none}
+  .dv-olabel{display:flex;align-items:baseline;gap:8px;font:400 11px/1.3 system-ui,sans-serif;color:rgba(0,0,0,.55)}
+  .dv-card{background:#fff;border:1px solid rgba(0,0,0,.08);border-radius:10px;box-shadow:0 1px 3px rgba(0,0,0,.06);overflow:hidden}
+  .dv-next{margin:22px 0 0;font:12px/1.5 system-ui,sans-serif;color:rgba(0,0,0,.5)}
+  .fin-mono{font-family:ui-monospace,monospace;font-size:11.5px;letter-spacing:.01em}
+</style>
+</helmet>
+
+<section class="dv-turn" id="t1">
+<div class="dv-thd"><a class="dv-tid" href="#t1">1</a><span class="dv-tname">Financials tab — 3 directions</span></div>
+<div class="dv-opts">
+
+  <!-- OPTION 1A: Table-first, slide-over source -->
+  <div class="dv-opt" id="1a">
+    <div class="dv-olabel"><a class="dv-oid" href="#1a">1a</a>Table-first · source slides over on click</div>
+    <div class="dv-card" style="width:960px">
+      <div style="padding:16px 22px;border-bottom:1px solid #eee;display:flex;justify-content:space-between;align-items:center">
+        <div style="font-size:16px;font-weight:700;color:#1a2233">Financials</div>
+        <div style="display:flex;gap:10px;align-items:center">
+          <div style="position:relative"><input placeholder="Search line items…" style="font-size:12px;border:1px solid #e2e1dc;border-radius:6px;padding:6px 10px 6px 26px;width:180px;color:#3a3f47" /><span style="position:absolute;left:8px;top:6px;font-size:11px;color:#9a9a95">⌕</span></div>
+          <span style="font-size:11px;color:oklch(50% 0.1 155);background:oklch(56% 0.12 155 / .1);padding:5px 10px;border-radius:6px">94% confidence</span>
+        </div>
+      </div>
+      <div style="padding:12px 22px;border-bottom:1px solid #f2f1ec;display:flex;justify-content:space-between;align-items:center">
+        <div style="display:flex;gap:2px;background:#f3f2ee;border-radius:7px;padding:3px">
+          <div style="padding:6px 14px;font-size:12px;font-weight:600;color:#fff;background:#14213d;border-radius:5px">FY</div>
+          <div style="padding:6px 14px;font-size:12px;font-weight:500;color:#6b6f76">T-12</div>
+          <div style="padding:6px 14px;font-size:12px;font-weight:500;color:#6b6f76">Monthly</div>
+        </div>
+        <div style="display:flex;align-items:center;gap:8px;font-size:12px;color:#6b6f76">
+          <span>2024 Full Year</span>
+          <span style="width:1px;height:14px;background:#e2e1dc"></span>
+          <span style="display:flex;align-items:center;gap:6px;cursor:pointer;color:#2f4a8c;font-weight:600">Drill into months ⌄</span>
+        </div>
+      </div>
+      <div style="border:1px solid #dadce0;margin:0 22px;border-radius:2px;overflow:hidden">
+        <div style="display:grid;grid-template-columns:2.2fr 1fr;background:#f8f9fa">
+          <div style="padding:7px 14px;border-right:1px solid #dadce0;border-bottom:1px solid #dadce0;font-size:11px;font-weight:600;color:#5f6368">Line item</div><div style="padding:7px 14px;border-bottom:1px solid #dadce0;text-align:right;font-size:11px;font-weight:600;color:#5f6368">FY 2024</div>
+        </div>
+        <div style="display:grid;grid-template-columns:2.2fr 1fr;background:#fff">
+          <div style="padding:7px 14px;border-right:1px solid #e1e3e6;border-bottom:1px solid #e1e3e6;font-weight:700;color:#1a2233;font-size:12.5px">Total Revenue</div><div class="fin-mono" style="padding:7px 14px;border-bottom:1px solid #e1e3e6;text-align:right;color:#1a2233;font-weight:700">8,452,687</div>
+        </div>
+        <div style="display:grid;grid-template-columns:2.2fr 1fr;background:#fff">
+          <div style="padding:7px 14px 7px 30px;border-right:1px solid #e1e3e6;border-bottom:1px solid #e1e3e6;color:#3a3f47;font-size:12.5px">Rooms Revenue</div><div class="fin-mono" style="padding:7px 14px;border-bottom:1px solid #e1e3e6;text-align:right;color:#1a2233">5,602,867</div>
+        </div>
+        <div style="display:grid;grid-template-columns:2.2fr 1fr;background:#fafbfd">
+          <div style="padding:7px 14px 7px 30px;border-right:1px solid #e1e3e6;border-bottom:1px solid #e1e3e6;color:#3a3f47;font-size:12.5px;display:flex;align-items:center;gap:8px">Miscellaneous Income <span onclick="" style="font-size:11px;color:#2f4a8c;font-weight:600;cursor:pointer;border:1px solid #dbe3f5;border-radius:5px;padding:2px 7px">+ break out</span></div>
+          <div class="fin-mono" style="padding:7px 14px;border-bottom:1px solid #e1e3e6;text-align:right;color:oklch(50% 0.14 40);cursor:pointer;outline:2px solid #1a73e8;outline-offset:-2px">13,284 ⚠</div>
+        </div>
+        <div style="display:grid;grid-template-columns:2.2fr 1fr;background:#fff;color:#8a8a86">
+          <div style="padding:7px 14px 7px 46px;border-right:1px solid #e1e3e6;border-bottom:1px solid #e1e3e6;font-size:11.5px">↳ Parking Revenue <span style="color:#c3c2bd">(new)</span></div><div class="fin-mono" style="padding:7px 14px;border-bottom:1px solid #e1e3e6;text-align:right;font-size:11px">—</div>
+        </div>
+        <div style="display:grid;grid-template-columns:2.2fr 1fr;background:#fff">
+          <div style="padding:7px 14px;border-right:1px solid #e1e3e6;font-weight:700;color:#1a2233;font-size:12.5px">EBITDA</div><div class="fin-mono" style="padding:7px 14px;text-align:right;color:#1a2233;font-weight:700">2,193,252</div>
+        </div>
+      </div>
+      <div style="padding:14px 22px;background:#faf9f6;font-size:11.5px;color:#9a9a95">Click any value to see its source row from the original document — opens as an overlay, keeps the table full width.</div>
+    </div>
+  </div>
+
+  <!-- OPTION 1B: Split table/source, refined density -->
+  <div class="dv-opt" id="1b">
+    <div class="dv-olabel"><a class="dv-oid" href="#1b">1b</a>Persistent split panel · quiet confidence cues</div>
+    <div class="dv-card" style="width:960px">
+      <div style="padding:16px 22px;border-bottom:1px solid #eee;display:flex;justify-content:space-between;align-items:center">
+        <div style="display:flex;align-items:center;gap:12px">
+          <div style="font-size:16px;font-weight:700;color:#1a2233">Financials</div>
+          <div style="display:flex;align-items:center;gap:6px;font-size:12px;color:#6b6f76">
+            <select style="font-size:12px;border:1px solid #e2e1dc;border-radius:6px;padding:5px 8px">
+              <option selected>Full Year</option><option>Trailing 12 (month-end)</option><option>Monthly</option>
+            </select>
+            <select style="font-size:12px;border:1px solid #e2e1dc;border-radius:6px;padding:5px 8px"><option>2024</option><option>2023</option></select>
+          </div>
+        </div>
+        <div style="position:relative"><input placeholder="Search…" style="font-size:12px;border:1px solid #e2e1dc;border-radius:6px;padding:6px 10px 6px 26px;width:150px" /><span style="position:absolute;left:8px;top:6px;font-size:11px;color:#9a9a95">⌕</span></div>
+      </div>
+      <div style="padding:10px 22px;border-bottom:1px solid #f2f1ec;display:flex;align-items:center;gap:10px;background:#fbfbf9">
+        <span style="font-size:11.5px;color:#6b6f76">View granularity:</span>
+        <div style="display:flex;background:#f0efeb;border-radius:6px;padding:2px">
+          <div style="padding:4px 12px;font-size:11.5px;font-weight:600;background:#fff;border-radius:5px;box-shadow:0 1px 2px rgba(0,0,0,.06)">Annual</div>
+          <div style="padding:4px 12px;font-size:11.5px;color:#8a8a86">Monthly</div>
+        </div>
+        <span style="font-size:11px;color:#c3c2bd">— toggle to inspect seasonality or trace a value to its source month</span>
+      </div>
+      <div style="display:flex">
+        <div style="flex:1;min-width:0;border:1px solid #dadce0;margin:14px;border-radius:2px;overflow:hidden">
+          <div style="display:grid;grid-template-columns:2fr 1fr;background:#f8f9fa">
+            <div style="padding:7px 16px;border-right:1px solid #dadce0;border-bottom:1px solid #dadce0;font-size:11px;font-weight:600;color:#5f6368">LINE ITEM</div><div style="padding:7px 16px;border-bottom:1px solid #dadce0;text-align:right;font-size:11px;font-weight:600;color:#5f6368">FY 2024</div>
+          </div>
+          <div style="display:grid;grid-template-columns:2fr 1fr;background:#fff"><div style="padding:7px 16px;border-right:1px solid #e1e3e6;border-bottom:1px solid #e1e3e6;font-weight:700;font-size:12.5px;color:#1a2233">Total Revenue</div><div class="fin-mono" style="padding:7px 16px;border-bottom:1px solid #e1e3e6;text-align:right">8,452,687</div></div>
+          <div style="display:grid;grid-template-columns:2fr 1fr;background:#fff"><div style="padding:7px 16px 7px 30px;border-right:1px solid #e1e3e6;border-bottom:1px solid #e1e3e6;font-size:12.5px;color:#3a3f47">Rooms Revenue</div><div class="fin-mono" style="padding:7px 16px;border-bottom:1px solid #e1e3e6;text-align:right">5,602,867</div></div>
+          <div style="display:grid;grid-template-columns:2fr 1fr;background:#eef2fb"><div style="padding:7px 16px 7px 30px;border-right:1px solid #e1e3e6;border-bottom:1px solid #e1e3e6;font-size:12.5px;color:#3a3f47">Miscellaneous Income</div><div class="fin-mono" style="padding:7px 16px;border-bottom:1px solid #e1e3e6;text-align:right;color:oklch(50% 0.14 40);outline:2px solid #1a73e8;outline-offset:-2px">13,284 ⚠</div></div>
+          <div style="display:grid;grid-template-columns:2fr 1fr;background:#fff"><div style="padding:7px 16px;border-right:1px solid #e1e3e6;font-weight:700;font-size:12.5px;color:#1a2233">EBITDA</div><div class="fin-mono" style="padding:7px 16px;text-align:right">2,193,252</div></div>
+        </div>
+        <div style="width:290px;flex-shrink:0;border-left:1px solid #eae9e4;background:#fbfbf9;padding:16px 18px">
+          <div style="font-size:10.5px;font-weight:700;color:#9a9a95;letter-spacing:.03em;margin-bottom:8px">SOURCE · P. 4</div>
+          <div style="height:110px;border:1px solid #eae9e4;border-radius:6px;background:repeating-linear-gradient(135deg,#f7f6f2,#f7f6f2 10px,#f0efeb 10px,#f0efeb 20px);position:relative;margin-bottom:12px"><div style="position:absolute;top:40%;left:8%;right:8%;height:22px;border:2px solid #2f4a8c;border-radius:4px;background:rgba(47,74,140,.08)"></div></div>
+          <div style="font-size:11.5px;color:#6b6f76;margin-bottom:2px">Miscellaneous Income</div>
+          <div class="fin-mono" style="font-size:16px;color:#1a2233;font-weight:600;margin-bottom:8px">13,284</div>
+          <div style="font-size:11px;color:oklch(50% 0.14 40);background:oklch(56% 0.12 40 / .1);padding:4px 8px;border-radius:5px;display:inline-block;margin-bottom:10px">61% confidence — please confirm</div>
+          <div style="display:flex;gap:6px"><button style="flex:1;background:oklch(56% 0.12 155);color:#fff;border:none;border-radius:6px;padding:7px;font-size:12px;font-weight:600">Accept</button><button style="flex:1;background:#fff;border:1px solid #e2e1dc;border-radius:6px;padding:7px;font-size:12px;font-weight:600">Edit</button></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- OPTION 1C: KPI summary strip + guardrailed table -->
+  <div class="dv-opt" id="1c">
+    <div class="dv-olabel"><a class="dv-oid" href="#1c">1c</a>KPI strip on top · modal-guided breakout</div>
+    <div class="dv-card" style="width:960px">
+      <div style="padding:16px 22px;border-bottom:1px solid #eee;display:flex;justify-content:space-between;align-items:center">
+        <div style="font-size:16px;font-weight:700;color:#1a2233">Financials</div>
+        <div style="display:flex;gap:8px">
+          <div style="display:flex;background:#f3f2ee;border-radius:7px;padding:3px">
+            <div style="padding:5px 12px;font-size:11.5px;font-weight:600;background:#fff;border-radius:5px;box-shadow:0 1px 2px rgba(0,0,0,.06)">FY</div>
+            <div style="padding:5px 12px;font-size:11.5px;color:#8a8a86">T-12</div>
+            <div style="padding:5px 12px;font-size:11.5px;color:#8a8a86">Monthly</div>
+          </div>
+          <div style="position:relative"><input placeholder="Search…" style="font-size:12px;border:1px solid #e2e1dc;border-radius:6px;padding:6px 10px 6px 26px;width:130px" /><span style="position:absolute;left:8px;top:6px;font-size:11px;color:#9a9a95">⌕</span></div>
+        </div>
+      </div>
+      <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:1px;background:#eae9e4;border-bottom:1px solid #eae9e4">
+        <div style="background:#fff;padding:14px 20px"><div style="font-size:10.5px;color:#9a9a95;font-weight:700;letter-spacing:.03em;margin-bottom:4px">TOTAL REVENUE</div><div class="fin-mono" style="font-size:17px;color:#1a2233;font-weight:600">8.45M</div></div>
+        <div style="background:#fff;padding:14px 20px"><div style="font-size:10.5px;color:#9a9a95;font-weight:700;letter-spacing:.03em;margin-bottom:4px">EBITDA</div><div class="fin-mono" style="font-size:17px;color:#1a2233;font-weight:600">2.19M</div></div>
+        <div style="background:#fff;padding:14px 20px"><div style="font-size:10.5px;color:#9a9a95;font-weight:700;letter-spacing:.03em;margin-bottom:4px">EBITDA MARGIN</div><div class="fin-mono" style="font-size:17px;color:#1a2233;font-weight:600">25.9%</div></div>
+        <div style="background:#fff;padding:14px 20px"><div style="font-size:10.5px;color:#9a9a95;font-weight:700;letter-spacing:.03em;margin-bottom:4px">CONFIDENCE</div><div class="fin-mono" style="font-size:17px;color:oklch(45% 0.12 155);font-weight:600">94%</div></div>
+      </div>
+      <div style="padding:10px 22px;border-bottom:1px solid #f2f1ec;background:#fbfbf9;display:flex;align-items:center;gap:8px;font-size:11.5px;color:#6b6f76">Viewing: <b style="color:#1a2233">FY 2024</b> <span style="color:#c3c2bd">·</span> <span style="color:#2f4a8c;font-weight:600;cursor:pointer">drill into months →</span></div>
+      <div style="border:1px solid #dadce0;margin:0 22px;border-radius:2px;overflow:hidden">
+        <div style="display:grid;grid-template-columns:2.2fr 1fr;background:#fff"><div style="padding:7px 14px;border-right:1px solid #e1e3e6;border-bottom:1px solid #e1e3e6;font-weight:700;font-size:12.5px;color:#1a2233">Total Revenue</div><div class="fin-mono" style="padding:7px 14px;border-bottom:1px solid #e1e3e6;text-align:right">8,452,687</div></div>
+        <div style="display:grid;grid-template-columns:2.2fr 1fr;background:#fff"><div style="padding:7px 14px 7px 30px;border-right:1px solid #e1e3e6;border-bottom:1px solid #e1e3e6;font-size:12.5px;color:#3a3f47">Miscellaneous Income</div><div class="fin-mono" style="padding:7px 14px;border-bottom:1px solid #e1e3e6;text-align:right;color:oklch(50% 0.14 40);outline:2px solid #1a73e8;outline-offset:-2px">13,284 ⚠</div></div>
+        <div style="display:grid;grid-template-columns:2.2fr 1fr;background:#fff"><div style="padding:7px 14px;border-right:1px solid #e1e3e6;font-weight:700;font-size:12.5px;color:#1a2233">EBITDA</div><div class="fin-mono" style="padding:7px 14px;text-align:right">2,193,252</div></div>
+      </div>
+      <div style="padding:12px 22px;display:flex;justify-content:center">
+        <div style="font-size:11.5px;color:#2f4a8c;font-weight:600;cursor:pointer;border:1px solid #dbe3f5;border-radius:6px;padding:6px 14px">+ Break out a line item (guided)</div>
+      </div>
+      <div style="margin:0 22px 18px;padding:14px 16px;border:1px solid #eae9e4;border-radius:8px;background:#fbfbf9">
+        <div style="font-size:11.5px;font-weight:700;color:#1a2233;margin-bottom:6px">Break out from "Miscellaneous Income"</div>
+        <div style="font-size:11px;color:#8a8a86;margin-bottom:10px">Choose a name — the original source line stays visible for comparison.</div>
+        <div style="display:flex;gap:8px"><input placeholder="e.g. Parking Revenue" style="flex:1;font-size:12px;border:1px solid #e2e1dc;border-radius:6px;padding:7px 10px" /><button style="background:#14213d;color:#fff;border:none;border-radius:6px;padding:7px 14px;font-size:12px;font-weight:600">Add</button></div>
+      </div>
+    </div>
+  </div>
+
+</div>
+<p class="dv-next">Try next: "more like <a class="dv-oid" href="#1b">1b</a> but with the KPI strip from <a class="dv-oid" href="#1c">1c</a>" · "build out <a class="dv-oid" href="#1a">1a</a> as the working prototype" · "show the monthly drill-down state"</p>
+</section>
+
+</x-dc>
+</body>
+</html>
