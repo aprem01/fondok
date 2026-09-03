@@ -595,6 +595,36 @@ async def _assert_deal_belongs_to_tenant(
         )
 
 
+async def _load_field_overrides(
+    session: AsyncSession,
+    *,
+    deal_id: str | UUID,
+    tenant_id: str | UUID,
+) -> dict[str, Any]:
+    """Return a deal's ``field_overrides`` blob, tenant-scoped.
+
+    Tenant-safe by construction — the predicate filters on the caller's
+    ``tenant_id`` so one workspace can never read another's overrides.
+    Missing / malformed rows collapse to ``{}`` via ``_coerce_overrides``.
+    """
+    row = (
+        await session.execute(
+            text(
+                """
+                SELECT field_overrides
+                  FROM deals
+                 WHERE id = :id AND tenant_id = :tenant
+                 LIMIT 1
+                """
+            ),
+            {"id": str(deal_id), "tenant": str(tenant_id)},
+        )
+    ).first()
+    if row is None:
+        return {}
+    return _coerce_overrides(row._mapping.get("field_overrides"))
+
+
 # ─────────────────────────── routes ───────────────────────────
 
 
@@ -1682,9 +1712,22 @@ async def get_memo(
             error=None,
             generated_at=None,
         )
+
+    # Layer the analyst's persisted IC-Memo-tab edits (verdict / thesis /
+    # highlights / risks) authoritatively on top of the generated
+    # sections. Deterministic and strictly opt-in — with no ``memo_*``
+    # override present the sections are returned byte-identical to what
+    # the Analyst produced. See :mod:`app.memo_overrides`.
+    from ..memo_overrides import apply_memo_overrides
+
+    overrides = await _load_field_overrides(
+        session, deal_id=deal_id, tenant_id=tenant_id
+    )
+    sections = apply_memo_overrides(snapshot["sections"], overrides)
+
     return MemoEnvelope(
         deal_id=deal_id,
-        sections=snapshot["sections"],
+        sections=sections,
         citations=snapshot["citations"],
         status=snapshot["status"],
         error=snapshot["error"],
