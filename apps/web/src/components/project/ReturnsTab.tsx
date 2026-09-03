@@ -430,22 +430,28 @@ function LiveSensitivities() {
   // Worker sensitivity grids ONLY. The canonical engine is the single source of
   // truth — mixing worker grids with client-TS ``defaultSensitivities`` is the
   // exact cross-tab "two different Base" drift the engine-output contract
-  // exists to prevent. The engine emits named matrices for Levered IRR and
-  // Equity Multiple (FON-53 ``matrices[]``); older runs carry only the
-  // top-level primary matrix, which we still accept as the IRR grid.
+  // exists to prevent. The engine emits named matrices for Levered IRR, Equity
+  // Multiple, and (FON-68 step 5) Year-1 Cash-on-Cash (FON-53 ``matrices[]``);
+  // older runs carry only the top-level primary matrix, which we still accept
+  // as the IRR grid.
   const cards = useMemo(() => {
     const list =
       getEngineField<WorkerMatrixRaw[]>(outputs, 'sensitivity', 'matrices') ?? [];
     const byKey = (k: string) => list.find(m => m?.key === k) ?? null;
     const irrRaw = byKey('irr_exit_revpar') ?? topLevelSensitivityMatrix(outputs);
     const emRaw = byKey('em_exit_revpar');
+    // FON-68 step 5 — the Year-1 Cash-on-Cash grid. Unlike the IRR/EM grids
+    // (exit cap × RevPAR growth), CoC is flat against those levers, so the
+    // worker flexes it over a financing pair: loan amount × loan rate
+    // (``coc_loan_rate``, metric ``year_one_coc``). Its axes come from the
+    // matrix's own row/col_variable via matrixFromWorkerObj — we do NOT assume
+    // the IRR grid's axes. Absent on an older run → the .filter below drops it,
+    // so the third grid simply doesn't render (never a fabricated grid).
+    const cocRaw = byKey('coc_loan_rate');
     return [
       { title: 'Levered IRR', matrix: irrRaw ? matrixFromWorkerObj(irrRaw) : null },
       { title: 'Equity Multiple (MOIC)', matrix: emRaw ? matrixFromWorkerObj(emRaw) : null },
-      // TODO(FON-68 step 5): the worker sensitivity engine ships no year_one_coc
-      // spec, so there is no canonical Year-1 Cash-on-Cash grid to render here.
-      // Do NOT reintroduce lib/engines' defaultSensitivities() TS grid to fill
-      // it (step 5 owns removing that module) — add a worker CoC spec instead.
+      { title: 'Year-1 Cash-on-Cash', matrix: cocRaw ? matrixFromWorkerObj(cocRaw) : null },
     ].filter((c): c is { title: string; matrix: SensitivityMatrix } => c.matrix != null);
   }, [outputs]);
 
@@ -528,6 +534,7 @@ function matrixFromWorkerObj(out: WorkerMatrixRaw): SensitivityMatrix | null {
     interest_rate: 'Interest Rate',
     hold_years: 'Hold',
     purchase_price: 'Purchase Price',
+    loan_amount: 'Loan Amount',
   } as Record<string, string>)[key] ?? key;
 
   return {
@@ -552,8 +559,13 @@ function SensitivityCard({ matrix, title, source = 'ts' }: { matrix: Sensitivity
     if (t > 0.33) return 'bg-warn-50 text-warn-700';
     return 'bg-danger-50 text-danger-700';
   };
+  // Axis headers: Hold is years, Loan Amount is dollars (the CoC grid's row
+  // axis is a loan balance, not a rate — formatting it as a percent would print
+  // a nonsense value like 3500000000.0%); everything else is a rate/percent.
   const formatHeader = (v: number, key: string) =>
-    key === 'Hold' ? `${v}y` : `${(v * 100).toFixed(1)}%`;
+    key === 'Hold' ? `${v}y`
+      : key === 'Loan Amount' ? `$${(v / 1e6).toFixed(1)}M`
+      : `${(v * 100).toFixed(1)}%`;
   const formatCell = (v: number) =>
     matrix.unit === 'multiple' ? `${v.toFixed(2)}x` : `${(v * 100).toFixed(1)}%`;
 
