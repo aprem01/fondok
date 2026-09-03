@@ -351,6 +351,27 @@ function fmtIndex(v: number | null): string {
   if (v == null) return '—';
   return v.toFixed(1);
 }
+// Signed index-point delta, e.g. "+1.4" / "−0.6". Null → em dash.
+function fmtSignedPts(v: number | null): string {
+  if (v == null) return '—';
+  return `${v >= 0 ? '+' : '−'}${Math.abs(v).toFixed(1)}`;
+}
+// Signed dollar variance, e.g. "$12" / "−$5". Null → em dash.
+function fmtVarDollar(v: number | null): string {
+  if (v == null) return '—';
+  return `${v >= 0 ? '' : '−'}$${Math.abs(v).toLocaleString('en-US', { maximumFractionDigits: 0 })}`;
+}
+// Share ratio (0..1) → percent with 2 decimals. Null → em dash.
+function fmtShare(v: number | null): string {
+  if (v == null) return '—';
+  return `${(v * 100).toFixed(2)}%`;
+}
+// Revenue opportunity at par — only a positive gap is an opportunity; ≤0 or
+// unreported renders "—" (never a fabricated number).
+function fmtOppty(v: number | null): string {
+  if (v == null || v <= 0) return '—';
+  return `$${Math.round(v).toLocaleString('en-US')}`;
+}
 
 // Negative growth → red parens "(36.0%)"; positive → "12.5%"; null → "N/A".
 function GrowthCell({ value }: { value: number | null }) {
@@ -371,9 +392,16 @@ interface TableProps {
   title: string;
   keys: number | null;
   series: YearSeries;
+  /** Subject rows carry the underwriting forecast — forecast-year Occupancy /
+   *  ADR / RevPAR cells render in assumption blue so a forecast is never read
+   *  as an STR actual (canonical Index Analysis). Comp-set rows stay green. */
+  subject?: boolean;
 }
 
-function IndexTable({ title, keys, series }: TableProps) {
+function IndexTable({ title, keys, series, subject = false }: TableProps) {
+  // Historical → green (grounded actual); subject forecast → assumption blue.
+  const metricClass = (i: number): string =>
+    subject && i >= HISTORICAL_YEARS.length ? 'text-brand-700' : 'text-success-700';
   // Derived rows. When the room count is unknown, Available/Occupied Rooms are
   // N/A (null) rather than 0 — a 0 would misread as "no rooms available"
   // (FON-61 c). Occupied is also null wherever occupancy itself is unreported.
@@ -471,21 +499,23 @@ function IndexTable({ title, keys, series }: TableProps) {
           />
           <Row
             label="Occupancy"
-            cells={series.occupancy.map((v) => fmtPct(v, 1))}
+            cells={series.occupancy.map((v, i) => (
+              <span className={metricClass(i)}>{fmtPct(v, 1)}</span>
+            ))}
             stickyL={stickyL}
           />
           <Row
             label="ADR"
-            cells={series.adr.map((v) => (
-              <span className="text-success-700">{fmtDollar(v)}</span>
+            cells={series.adr.map((v, i) => (
+              <span className={metricClass(i)}>{fmtDollar(v)}</span>
             ))}
             stickyL={stickyL}
             zebra
           />
           <Row
             label="RevPAR"
-            cells={series.revpar.map((v) => (
-              <span className="text-success-700">{fmtDollar(v)}</span>
+            cells={series.revpar.map((v, i) => (
+              <span className={metricClass(i)}>{fmtDollar(v)}</span>
             ))}
             stickyL={stickyL}
           />
@@ -525,10 +555,14 @@ function PenetrationTable({
   subject,
   comp,
   indices,
+  subjectKeys,
+  compKeys,
 }: {
   subject: YearSeries;
   comp: YearSeries;
   indices?: { mpi: number | null; ari: number | null; rgi: number | null } | null;
+  subjectKeys: number | null;
+  compKeys: number | null;
 }) {
   const anchorIdx = HISTORICAL_YEARS.length - 1;
   const rowFor = (
@@ -547,6 +581,31 @@ function PenetrationTable({
   const mpi = rowFor(indices?.mpi ?? null, subject.occupancy, comp.occupancy);
   const ari = rowFor(indices?.ari ?? null, subject.adr, comp.adr);
   const rgi = rowFor(indices?.rgi ?? null, subject.revpar, comp.revpar);
+
+  // Analytical penetration rows. Each renders only where BOTH inputs are
+  // reported — otherwise "—" (never a fabricated number). MPI/ARI/RGI come
+  // from the STR path above; these derive from the subject + comp series and
+  // the room counts, matching the canonical Penetration / Index Analysis group.
+  const days = ALL_YEARS.map((y) => (isLeapYear(y) ? 366 : 365));
+  const rgiGrowth = ALL_YEARS.map((_, i) =>
+    i === 0 || rgi[i] == null || rgi[i - 1] == null ? null : rgi[i]! - rgi[i - 1]!,
+  );
+  const revparVariance = ALL_YEARS.map((_, i) =>
+    subject.revpar[i] != null && comp.revpar[i] != null ? subject.revpar[i]! - comp.revpar[i]! : null,
+  );
+  const kv = subjectKeys != null && subjectKeys > 0 ? subjectKeys : null;
+  const ckv = compKeys != null && compKeys > 0 ? compKeys : null;
+  const fairShare = ALL_YEARS.map(() => (kv != null && ckv != null ? kv / ckv : null));
+  const actualShare = ALL_YEARS.map((_, i) => {
+    const so = subject.occupancy[i];
+    const co = comp.occupancy[i];
+    if (kv == null || ckv == null || so == null || co == null || co <= 0) return null;
+    return (kv * so) / (ckv * co);
+  });
+  const revOppty = ALL_YEARS.map((_, i) => {
+    if (kv == null || subject.revpar[i] == null || comp.revpar[i] == null) return null;
+    return (comp.revpar[i]! - subject.revpar[i]!) * kv * days[i];
+  });
   const stickyL = 'sticky left-0 bg-card z-10 border-r border-border';
 
   return (
@@ -602,6 +661,24 @@ function PenetrationTable({
             zebra
           />
           <Row label="RevPAR Index (RGI)" cells={rgi.map((v) => fmtIndex(v))} stickyL={stickyL} />
+          <Row label="RGI Growth (pts)" cells={rgiGrowth.map((v) => fmtSignedPts(v))} stickyL={stickyL} zebra />
+          <Row
+            label="RevPAR Variance to Comp Set"
+            cells={revparVariance.map((v) => fmtVarDollar(v))}
+            stickyL={stickyL}
+          />
+          <Row label="Fair Share of Supply" cells={fairShare.map((v) => fmtShare(v))} stickyL={stickyL} zebra />
+          <Row
+            label="Actual Share of Demand"
+            cells={actualShare.map((v) => fmtShare(v))}
+            stickyL={stickyL}
+          />
+          <Row
+            label="Revenue Opportunity at Par"
+            cells={revOppty.map((v) => fmtOppty(v))}
+            stickyL={stickyL}
+            zebra
+          />
         </tbody>
       </table>
     </div>
@@ -772,6 +849,7 @@ export default function IndexAnalysisSection({
           title="Subject Property"
           keys={subjectKeys}
           series={subjectSeries}
+          subject
         />
       </Card>
 
@@ -787,6 +865,8 @@ export default function IndexAnalysisSection({
         <PenetrationTable
           subject={subjectSeries}
           comp={compSeries}
+          subjectKeys={subjectKeys}
+          compKeys={compKeys}
           indices={{
             mpi: indexPoints(marketData?.str_trend?.mpi_occupancy_index),
             ari: indexPoints(marketData?.str_trend?.ari_adr_index),

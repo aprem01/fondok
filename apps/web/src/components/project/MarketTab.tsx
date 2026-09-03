@@ -1,29 +1,50 @@
 'use client';
-import { useEffect, useState } from 'react';
+/**
+ * MarketTab — canonical rebuild (FON-72).
+ *
+ * Rebuilt to match `design/canonical/Market Tab.dc.html` using the shared
+ * design-system layer (`@/components/design`: KpiTile, SectionCard, SubTabNav,
+ * StatementTable, ProvenanceDot + tokens). Three sub-tabs — Market Overview,
+ * Transaction Comps, Index Analysis — each wired to live data from the market
+ * API / engine outputs. NOTHING is a prototype placeholder: every value reads
+ * from `api.market.*`, `getEngineField`, or is rendered as the canonical
+ * "awaiting data" treatment (never a fabricated number). Provenance origin is
+ * consulted from `/provenance` where a matching engine field exists and falls
+ * back to the value's derived origin otherwise.
+ *
+ * The one canonical Data Key strip lives in `projects/[id]/page.tsx` (full
+ * width, under the tab bar) — this tab renders NO per-tab legend.
+ */
+import { useEffect, useState, type CSSProperties, type ReactNode } from 'react';
 import { useParams } from 'next/navigation';
 import Link from 'next/link';
-import {
-  LineChart, Line, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip,
-  Legend, ResponsiveContainer,
-} from 'recharts';
 import { MapPinned, Loader2 } from 'lucide-react';
-import { Card } from '@/components/ui/Card';
-import { Button } from '@/components/ui/Button';
-import { Badge } from '@/components/ui/Badge';
-import { useToast } from '@/components/ui/Toast';
 import {
   api,
   isWorkerConnected,
   workerUrl,
   type TransactionCompsResult,
+  type ValueState,
+  type EngineName,
+  type DealProvenanceResponse,
 } from '@/lib/api';
 import { useDeal } from '@/lib/hooks/useDeal';
 import { useEngineRun } from '@/lib/hooks/useEngineRun';
-import { cn } from '@/lib/format';
-import { IntroCard } from '@/components/help/IntroCard';
+import { useEngineOutputs, getEngineField } from '@/lib/hooks/useEngineOutputs';
+import { useToast } from '@/components/ui/Toast';
+import {
+  palette,
+  prov,
+  KpiTile,
+  SectionCard,
+  SubTabNav,
+  ProvenanceDot,
+  StatementTable,
+} from '@/components/design';
 import IndexAnalysisSection from './pl/IndexAnalysisSection';
 
-// FON-47 — real STR/CoStar market data served by /deals/{id}/market-data
+// ─── worker payload shapes ──────────────────────────────────────────────────
+// Real STR/CoStar market data served by /deals/{id}/market-data
 // (apps/worker/app/api/documents.py _aggregate_market_data). Populated once an
 // STR_TREND / CoStar report is uploaded + extracted.
 interface StrCompRow {
@@ -49,12 +70,8 @@ interface MarketDataResp {
   str_trend: StrTrend | null;
   sources?: Record<string, unknown>;
 }
-
-const subTabs = ['Market Overview', 'Transaction Comps', 'Index Analysis'];
-
-// Worker `GET /market/{deal_id}/overview` shape — mirrors
-// apps/worker/app/api/market.py MarketOverview. Indices are null
-// until the STR/CoStar feed is wired up.
+// `GET /market/{deal_id}/overview` — mirrors apps/worker/app/api/market.py
+// MarketOverview. Indices are null until the STR/CoStar feed is wired up.
 interface WorkerMarketOverview {
   deal_id: string;
   market: string | null;
@@ -67,26 +84,50 @@ interface WorkerMarketOverview {
   revpar_index: number | null;
 }
 
-const tooltipStyle = {
-  contentStyle: { background: '#fff', border: '1px solid #e5e7eb', borderRadius: 6, fontSize: 12 },
-  labelStyle: { color: '#64748b', fontSize: 11 },
-};
+const SUB_TABS = ['Market Overview', 'Transaction Comps', 'Index Analysis'] as const;
+type SubTab = (typeof SUB_TABS)[number];
 
-// STR occupancy arrives as a 0..1 fraction (0.715); some sources send a whole
-// percent (71.5). Normalize to a whole-percent number for display so we never
-// render "0.7%" for a 72%-occupied hotel (Sam QA).
+// ─── canonical colors (from design tokens) ──────────────────────────────────
+const GREEN = prov.green; // document-sourced market metric
+const GRAY = prov.gray; // calculated
+const MUTED = prov.muted; // awaiting data
+const AMBER = 'oklch(50% 0.14 40)'; // negative delta (canonical AMBER)
+
+// ─── formatters (never fabricate — null → em dash) ──────────────────────────
+const money0 = (v: number): string => `$${Math.round(v).toLocaleString('en-US')}`;
+const pct1 = (v: number): string => `${v.toFixed(1)}%`;
+// STR occupancy arrives as a 0..1 fraction (0.715) or a whole percent (71.5);
+// normalize to a whole-percent number so we never render "0.7%" for a 72% hotel.
 const occPct = (v: number): number => (v <= 1.5 ? v * 100 : v);
 
+function fmtSalePrice(usd: number | null): string {
+  if (usd == null) return '—';
+  if (usd >= 1_000_000) return `$${(usd / 1_000_000).toFixed(1)}M`;
+  if (usd >= 1_000) return `$${(usd / 1_000).toFixed(0)}K`;
+  return `$${usd.toFixed(0)}`;
+}
+function fmtPerKey(usd: number | null): string {
+  if (usd == null) return '—';
+  return `$${usd.toLocaleString('en-US', { maximumFractionDigits: 0 })}`;
+}
+function fmtCap2(pct: number | null): string {
+  if (pct == null) return '—';
+  return `${pct.toFixed(2)}%`;
+}
+function fmtSaleDate(s: string | null): string {
+  if (!s) return '—';
+  const t = s.trim();
+  return /^\d{4}-\d{2}-\d{2}/.test(t) ? t.slice(0, 10) : t;
+}
+
 // STR / CoStar anonymize per-property comp performance, so every competitor's
-// Occ/ADR/RevPAR comes back null. But the report DOES publish the subject's
-// index vs the comp-set aggregate — MPI (occupancy), ARI (ADR), RGI (RevPAR) —
-// where each index = subject metric ÷ comp-set metric. So the blended comp-set
-// performance is fully recoverable: comp metric = subject metric ÷ index. This
-// is the standard way an analyst benchmarks a subject to its comp set. Indices
-// may arrive as a ratio (1.098) or as index points (109.8); normalize both.
-function deriveCompSet(
-  t: StrTrend | null,
-): { occ: number | null; adr: number | null; revpar: number | null } | null {
+// Occ/ADR/RevPAR comes back null. But the report publishes the subject's index
+// vs the comp-set aggregate — MPI (occupancy), ARI (ADR), RGI (RevPAR) — where
+// each index = subject metric ÷ comp-set metric. So the blended comp-set
+// performance is recoverable: comp metric = subject metric ÷ index. Indices may
+// arrive as a ratio (1.098) or index points (109.8); normalize both.
+type DerivedComp = { occ: number | null; adr: number | null; revpar: number | null } | null;
+function deriveCompSet(t: StrTrend | null): DerivedComp {
   if (!t) return null;
   const ratio = (idx: number | null): number | null =>
     idx == null || idx <= 0 ? null : idx > 3 ? idx / 100 : idx;
@@ -101,158 +142,921 @@ function deriveCompSet(
   if (occ == null && adr == null && revpar == null) return null;
   return { occ, adr, revpar };
 }
+// STR penetration index → display points (109.8). ratio (1.098) or points both ok.
+const idxPoints = (idx: number | null): number | null =>
+  idx == null || idx <= 0 ? null : idx > 3 ? idx : idx * 100;
 
-type DerivedComp = { occ: number | null; adr: number | null; revpar: number | null } | null;
+// ─── small shared bits ──────────────────────────────────────────────────────
+function AwaitingPanel({ children }: { children: ReactNode }) {
+  return (
+    <div
+      style={{
+        border: '1px dashed #d9d8d2',
+        borderRadius: 8,
+        background: palette.surfaceTint,
+        padding: '16px 18px',
+        display: 'flex',
+        flexDirection: 'column',
+        gap: 7,
+      }}
+    >
+      <span
+        style={{
+          fontSize: 10,
+          fontWeight: 700,
+          letterSpacing: '.05em',
+          color: palette.eyebrow,
+          textTransform: 'uppercase',
+        }}
+      >
+        Awaiting data
+      </span>
+      <span style={{ fontSize: 12.5, color: '#3a3f47', lineHeight: 1.5 }}>{children}</span>
+    </div>
+  );
+}
 
-// FON-60 Market Overview §1 — an executive submarket read built from the
-// competitive-set aggregate (the subject's local market): inventory from the
-// comp-set roster, Occupancy/ADR/RevPAR from the blended comp metrics. Demand
-// and supply growth need a multi-year trend report, so they read "—" (never a
-// fabricated fixture value — FON-60 requirement #10).
+// The canonical 12-bar seasonality curve (design's bars). Rendered only when a
+// monthly index series is available; otherwise the host card shows the awaiting
+// state (no monthly STR feed is extracted yet — flagged gap).
+function SeasonalityBars({ data }: { data: number[] }) {
+  const months = ['J', 'F', 'M', 'A', 'M', 'J', 'J', 'A', 'S', 'O', 'N', 'D'];
+  const max = Math.max(...data, 1);
+  return (
+    <div style={{ display: 'flex', alignItems: 'flex-end', gap: 4, height: 72, marginTop: 4 }}>
+      {data.map((v, i) => {
+        const h = (v / max) * 100;
+        return (
+          <div
+            key={i}
+            title={`Index ${v}`}
+            style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 4 }}
+          >
+            <div
+              style={{
+                width: '100%',
+                height: `${h}%`,
+                background: h > 85 ? 'oklch(55% 0.09 200)' : 'oklch(78% 0.05 200)',
+                borderRadius: '2px 2px 0 0',
+              }}
+            />
+            <span style={{ fontSize: 9, color: palette.textFaint }}>{months[i]}</span>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+// ─── §1 Submarket Snapshot ──────────────────────────────────────────────────
 function SubmarketSnapshot({
-  derivedComp, compSetSize, compKeyCount, submarketLabel,
+  derivedComp,
+  compSetSize,
+  compKeyCount,
+  submarketLabel,
 }: {
   derivedComp: DerivedComp;
   compSetSize: number | null;
   compKeyCount: number | null;
   submarketLabel: string | null;
 }) {
-  const inventory = compSetSize && compKeyCount
-    ? `${compSetSize} hotels · ${compKeyCount.toLocaleString()} keys`
-    : compKeyCount ? `${compKeyCount.toLocaleString()} keys` : '—';
-  const kpis = [
-    { label: 'Inventory', value: inventory, sub: 'competitive set' },
-    { label: 'Market Occupancy', value: derivedComp?.occ != null ? `${derivedComp.occ.toFixed(1)}%` : '—', sub: 'comp-set blend' },
-    { label: 'Market ADR', value: derivedComp?.adr != null ? `$${derivedComp.adr.toFixed(0)}` : '—', sub: 'comp-set blend' },
-    { label: 'Market RevPAR', value: derivedComp?.revpar != null ? `$${derivedComp.revpar.toFixed(0)}` : '—', sub: 'comp-set blend' },
-    { label: 'Demand Growth', value: '—', sub: 'needs trend report' },
-    { label: 'Supply Growth', value: '—', sub: 'needs trend report' },
+  const inventory =
+    compSetSize && compKeyCount
+      ? `${compSetSize} hotels`
+      : compKeyCount
+        ? `${compKeyCount.toLocaleString()} keys`
+        : '—';
+  const invSub = compKeyCount ? `${compKeyCount.toLocaleString()} keys in comp set` : 'competitive set';
+  const tiles: { label: string; value: string; sub: string; color: string; awaiting?: boolean }[] = [
+    { label: 'Inventory', value: inventory, sub: invSub, color: GREEN },
+    {
+      label: 'Market Occupancy',
+      value: derivedComp?.occ != null ? pct1(derivedComp.occ) : '—',
+      sub: derivedComp?.occ != null ? 'TTM · comp-set blend' : 'awaiting STR report',
+      color: derivedComp?.occ != null ? GREEN : MUTED,
+      awaiting: derivedComp?.occ == null,
+    },
+    {
+      label: 'Market ADR',
+      value: derivedComp?.adr != null ? money0(derivedComp.adr) : '—',
+      sub: derivedComp?.adr != null ? 'TTM · comp-set blend' : 'awaiting STR report',
+      color: derivedComp?.adr != null ? GREEN : MUTED,
+      awaiting: derivedComp?.adr == null,
+    },
+    {
+      label: 'Market RevPAR',
+      value: derivedComp?.revpar != null ? money0(derivedComp.revpar) : '—',
+      sub: derivedComp?.revpar != null ? 'Occupancy × ADR' : 'awaiting STR report',
+      color: derivedComp?.revpar != null ? GRAY : MUTED,
+      awaiting: derivedComp?.revpar == null,
+    },
+    { label: 'Demand Growth', value: '—', sub: 'awaiting CoStar submarket report', color: MUTED, awaiting: true },
+    { label: 'Supply Growth', value: '—', sub: 'awaiting CoStar submarket report', color: MUTED, awaiting: true },
   ];
+  const context = submarketLabel
+    ? `${submarketLabel} · competitive-set aggregate`
+    : "Subject's local competitive set";
   return (
-    <Card className="p-0 overflow-hidden">
-      <div className="px-5 py-3 border-b border-border bg-surface-2/40">
-        <h3 className="text-[14px] font-semibold text-ink-900">Submarket Snapshot</h3>
-        <p className="text-[11.5px] text-ink-500 mt-0.5">
-          {submarketLabel ? `${submarketLabel} · ` : ''}Competitive-set aggregate — the subject&apos;s local market.
-        </p>
-      </div>
-      <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 divide-x divide-y lg:divide-y-0 divide-border">
-        {kpis.map((k) => (
-          <div key={k.label} className="px-4 py-3.5">
-            <div className="text-[10px] uppercase tracking-wide text-ink-500">{k.label}</div>
-            <div className="text-[17px] font-semibold text-ink-900 tabular-nums mt-0.5">{k.value}</div>
-            <div className="text-[9.5px] text-ink-400 mt-0.5">{k.sub}</div>
-          </div>
+    <SectionCard title="Submarket Snapshot" note={context}>
+      <div
+        style={{
+          display: 'grid',
+          gridTemplateColumns: 'repeat(auto-fit,minmax(158px,1fr))',
+          gap: 10,
+          marginTop: 12,
+        }}
+      >
+        {tiles.map((t) => (
+          <KpiTile
+            key={t.label}
+            label={t.label}
+            value={t.value}
+            sub={t.sub}
+            valueColor={t.color}
+            style={t.awaiting ? { background: palette.surfaceTint } : undefined}
+          />
         ))}
       </div>
-    </Card>
+    </SectionCard>
   );
 }
 
-// FON-60 Market Overview §5 — a concise MPI / ARI / RGI read. The detailed
-// historical + forecast penetration series lives on Index Analysis; this is the
-// executive summary. Values come straight from the STR report indices.
-function MarketIndexSummary({ strTrend }: { strTrend: StrTrend }) {
-  const pt = (idx: number | null): number | null =>
-    idx == null || idx <= 0 ? null : idx > 3 ? idx : idx * 100;
+// ─── §2 Historical Market Performance ───────────────────────────────────────
+// Multi-year submarket history needs an STR Trend Report (36-month). Only the
+// trailing-twelve-month blend is extracted today, so the table renders a single
+// real TTM column (from the recovered comp set) — never fabricated year columns.
+function HistoricalMarketPerf({ derivedComp, ttmLabel }: { derivedComp: DerivedComp; ttmLabel: string }) {
+  const has = derivedComp && (derivedComp.occ != null || derivedComp.adr != null);
+  return (
+    <SectionCard variant="title" title="Historical Market Performance" note="STR · comp-set blend">
+      {has && derivedComp ? (
+        <StatementTable
+          lineItemHeader="METRIC"
+          columns={[ttmLabel]}
+          showDots={false}
+          gridTemplateColumns="minmax(150px,1.4fr) minmax(110px,1fr)"
+          rows={[
+            {
+              label: 'Market Occupancy',
+              cells: [{ text: derivedComp.occ != null ? pct1(derivedComp.occ) : '—', color: derivedComp.occ != null ? GREEN : MUTED }],
+            },
+            {
+              label: 'Market ADR',
+              cells: [{ text: derivedComp.adr != null ? money0(derivedComp.adr) : '—', color: derivedComp.adr != null ? GREEN : MUTED }],
+            },
+            {
+              label: 'Market RevPAR',
+              cells: [{ text: derivedComp.revpar != null ? money0(derivedComp.revpar) : '—', color: derivedComp.revpar != null ? GRAY : MUTED }],
+            },
+            { label: 'RevPAR Growth', cells: [{ text: '—', color: MUTED }] },
+          ]}
+          footnote="Multi-year submarket Occupancy / ADR / RevPAR history populates from an STR Trend Report (36-month). Prior-year columns stay blank until it is in the Data Room."
+        />
+      ) : (
+        <div style={{ padding: '16px 18px' }}>
+          <AwaitingPanel>
+            Multi-year submarket Occupancy / ADR / RevPAR trends populate from an <b>STR Trend Report
+            (36-month)</b> for this deal&apos;s comp set.
+          </AwaitingPanel>
+        </div>
+      )}
+    </SectionCard>
+  );
+}
+
+// ─── §3 Monthly / TTM Performance ───────────────────────────────────────────
+// Monthly movement + the 12-bar seasonality curve need a monthly STR Trend
+// Report, which is not extracted yet — so this renders the canonical awaiting
+// state. `SeasonalityBars` is wired for when a monthly index series lands.
+function MonthlyTtmCard({ seasonality }: { seasonality: number[] | null }) {
+  return (
+    <SectionCard variant="title" title="Monthly / TTM Performance" note="STR Trend Report" bodyStyle={{ padding: '16px 18px' }}>
+      {seasonality && seasonality.length === 12 ? (
+        <SeasonalityBars data={seasonality} />
+      ) : (
+        <AwaitingPanel>
+          Monthly movement and the 12-month seasonality curve populate from an <b>STR Trend Report
+          (36-month, monthly)</b>. Only the trailing-twelve-month blend (shown in Subject vs. Comp Set
+          below) is available today.
+        </AwaitingPanel>
+      )}
+    </SectionCard>
+  );
+}
+
+// ─── §4 Subject vs. Comp Set ────────────────────────────────────────────────
+function SubjectVsCompSet({
+  strTrend,
+  derivedComp,
+  compKeyCount,
+  strSeeded,
+  strRunning,
+  onToggleStr,
+  dealId,
+  subjectState,
+}: {
+  strTrend: StrTrend;
+  derivedComp: DerivedComp;
+  compKeyCount: number | null;
+  strSeeded: boolean;
+  strRunning: boolean;
+  onToggleStr: () => void;
+  dealId: string;
+  subjectState: ValueState;
+}) {
+  const subjOcc = strTrend.subject_occupancy_pct != null ? occPct(strTrend.subject_occupancy_pct) : null;
+  const subjAdr = strTrend.subject_adr_usd;
+  const subjRevpar =
+    strTrend.subject_revpar_usd != null
+      ? strTrend.subject_revpar_usd
+      : subjOcc != null && subjAdr != null
+        ? (subjOcc / 100) * subjAdr
+        : null;
+
+  // Subject-vs-comp delta annotations.
+  const delta = (subj: number | null, comp: number | null): number | null =>
+    subj != null && comp != null ? subj - comp : null;
+  const occDelta = delta(subjOcc, derivedComp?.occ ?? null);
+  const adrDelta = delta(subjAdr, derivedComp?.adr ?? null);
+  const revparDelta = delta(subjRevpar, derivedComp?.revpar ?? null);
+  const deltaColor = (d: number | null): string => (d == null ? MUTED : d >= 0 ? GREEN : AMBER);
+  const ptsText = (d: number | null): string =>
+    d == null ? 'no comp set' : `${d >= 0 ? '+' : '−'}${Math.abs(d).toFixed(1)} pts vs. comp set`;
+  const dollarText = (d: number | null): string =>
+    d == null ? 'no comp set' : `${d >= 0 ? '+' : '−'}$${Math.abs(d).toFixed(0)} vs. comp set`;
+
+  const subjectMetrics = [
+    { label: 'Occupancy', value: subjOcc != null ? pct1(subjOcc) : '—', delta: ptsText(occDelta), dc: deltaColor(occDelta) },
+    { label: 'ADR', value: subjAdr != null ? `$${subjAdr.toFixed(2)}` : '—', delta: dollarText(adrDelta), dc: deltaColor(adrDelta) },
+    { label: 'RevPAR', value: subjRevpar != null ? `$${subjRevpar.toFixed(2)}` : '—', delta: dollarText(revparDelta), dc: deltaColor(revparDelta) },
+  ];
+  const blended = [
+    { label: 'Keys', value: compKeyCount != null ? compKeyCount.toLocaleString() : '—' },
+    { label: 'Occupancy', value: derivedComp?.occ != null ? pct1(derivedComp.occ) : '—' },
+    { label: 'ADR', value: derivedComp?.adr != null ? money0(derivedComp.adr) : '—' },
+    { label: 'RevPAR', value: derivedComp?.revpar != null ? money0(derivedComp.revpar) : '—' },
+  ];
+
+  const strOcc = derivedComp?.occ != null ? pct1(derivedComp.occ) : '—';
+  const strAdr = derivedComp?.adr != null ? money0(derivedComp.adr) : '—';
+  const t12Occ = subjOcc != null ? pct1(subjOcc) : '—';
+  const t12Adr = subjAdr != null ? money0(subjAdr) : '—';
+
+  const contextNote = `Trailing 12 months · STR${
+    strTrend.comp_set_size ? ` · ${strTrend.comp_set_size}-property comp set` : ''
+  }${compKeyCount ? ` · ${compKeyCount.toLocaleString()} keys` : ''}`;
+
+  const compset = strTrend.compset ?? [];
+  const anonymized = compset.length > 0 && compset.every((c) => c.occupancy_pct == null && c.adr_usd == null && c.revpar_usd == null);
+  const compGrid = 'minmax(200px,2fr) 68px repeat(3,minmax(72px,1fr))';
+
+  const secBtn: CSSProperties = {
+    background: '#fff',
+    border: '1px solid #e2e1dc',
+    color: '#3a3f47',
+    borderRadius: 5,
+    padding: '6px 12px',
+    fontSize: 11.5,
+    fontWeight: 600,
+    cursor: 'pointer',
+    fontFamily: 'inherit',
+  };
+  const navyBtn: CSSProperties = {
+    background: palette.inkNavy,
+    color: '#fff',
+    border: 'none',
+    borderRadius: 5,
+    padding: '6px 12px',
+    fontSize: 11.5,
+    fontWeight: 600,
+    cursor: strRunning ? 'default' : 'pointer',
+    fontFamily: 'inherit',
+    opacity: strRunning ? 0.6 : 1,
+  };
+
+  return (
+    <SectionCard title="Subject vs. Comp Set" note={contextNote}>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 14, marginTop: 12 }}>
+        {/* Subject property + blended benchmark */}
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(300px,1fr))', gap: 12 }}>
+          <div style={{ border: '1px solid #dbe3f5', background: 'oklch(97.5% 0.015 250)', borderRadius: 9, padding: '13px 15px' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 9 }}>
+              <ProvenanceDot state={subjectState} size={8} />
+              <span style={{ fontSize: 10, fontWeight: 700, letterSpacing: '.05em', color: '#2f4a8c', textTransform: 'uppercase' }}>
+                Subject property
+              </span>
+            </div>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3,1fr)', gap: 10 }}>
+              {subjectMetrics.map((m) => (
+                <div key={m.label}>
+                  <div style={{ fontSize: 10, fontWeight: 700, letterSpacing: '.04em', color: palette.eyebrow, textTransform: 'uppercase', marginBottom: 4 }}>
+                    {m.label}
+                  </div>
+                  <div style={{ fontSize: 20, fontWeight: 700, color: palette.ink, fontVariantNumeric: 'tabular-nums' }}>{m.value}</div>
+                  <div style={{ fontSize: 10.5, color: m.dc, marginTop: 3 }}>{m.delta}</div>
+                </div>
+              ))}
+            </div>
+          </div>
+          <div style={{ border: `1px solid ${palette.border}`, borderRadius: 9, padding: '13px 15px' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 9 }}>
+              <ProvenanceDot state="calculated" size={8} />
+              <span style={{ fontSize: 10, fontWeight: 700, letterSpacing: '.05em', color: palette.eyebrow, textTransform: 'uppercase' }}>
+                Blended competitive set — benchmark
+              </span>
+            </div>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4,1fr)', gap: 10 }}>
+              {blended.map((m) => (
+                <div key={m.label}>
+                  <div style={{ fontSize: 10, fontWeight: 700, letterSpacing: '.04em', color: palette.eyebrow, textTransform: 'uppercase', marginBottom: 4 }}>
+                    {m.label}
+                  </div>
+                  <div style={{ fontSize: 17, fontWeight: 700, color: GREEN, fontVariantNumeric: 'tabular-nums' }}>{m.value}</div>
+                </div>
+              ))}
+            </div>
+            <div style={{ fontSize: 11, color: palette.textMuted, marginTop: 9, lineHeight: 1.45 }}>
+              The blended comp set is the benchmark every index on this page is measured against — recovered
+              from the STR penetration indices (MPI · ARI · RGI) against the subject shown at left.
+            </div>
+          </div>
+        </div>
+
+        {/* Comp-set roster (per-property perf anonymized by STR) */}
+        {compset.length > 0 && (
+          <div>
+            <div
+              style={{
+                display: 'grid',
+                gridTemplateColumns: compGrid,
+                fontSize: 10,
+                fontWeight: 700,
+                letterSpacing: '.05em',
+                color: palette.textFaint,
+                textTransform: 'uppercase',
+                paddingBottom: 6,
+                borderBottom: `1px solid ${palette.border}`,
+              }}
+            >
+              <span>Competitive set hotel</span>
+              <span style={{ textAlign: 'right' }}>Keys</span>
+              <span style={{ textAlign: 'right' }}>Occ</span>
+              <span style={{ textAlign: 'right' }}>ADR</span>
+              <span style={{ textAlign: 'right' }}>RevPAR</span>
+            </div>
+            {compset.map((h, i) => (
+              <div
+                key={`${h.name}-${i}`}
+                style={{
+                  display: 'grid',
+                  gridTemplateColumns: compGrid,
+                  fontSize: 12.5,
+                  padding: '6px 0',
+                  borderBottom: `1px solid ${palette.hairlineRow}`,
+                  alignItems: 'center',
+                }}
+              >
+                <span style={{ color: palette.ink, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{h.name}</span>
+                <span style={{ textAlign: 'right', color: '#3a3f47', fontVariantNumeric: 'tabular-nums' }}>{h.keys ?? '—'}</span>
+                <span style={{ textAlign: 'right', color: h.occupancy_pct != null ? '#3a3f47' : palette.textFaint }}>
+                  {h.occupancy_pct != null ? pct1(occPct(h.occupancy_pct)) : '—'}
+                </span>
+                <span style={{ textAlign: 'right', color: h.adr_usd != null ? '#3a3f47' : palette.textFaint }}>
+                  {h.adr_usd != null ? money0(h.adr_usd) : '—'}
+                </span>
+                <span style={{ textAlign: 'right', color: h.revpar_usd != null ? '#3a3f47' : palette.textFaint }}>
+                  {h.revpar_usd != null ? money0(h.revpar_usd) : '—'}
+                </span>
+              </div>
+            ))}
+            {anonymized && (
+              <div style={{ fontSize: 11, color: palette.textMuted, marginTop: 8, lineHeight: 1.45 }}>
+                STR does not publish per-property Occupancy, ADR or RevPAR for the comp set — only the blended
+                figures above. Individual rows show key counts only.
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* STR-rate model input toggle */}
+        {strSeeded ? (
+          <div
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: 14,
+              flexWrap: 'wrap',
+              background: 'oklch(96.5% 0.03 155)',
+              border: '1px solid oklch(85% 0.05 155)',
+              borderRadius: 8,
+              padding: '10px 14px',
+            }}
+          >
+            <span style={{ fontSize: 10, fontWeight: 700, letterSpacing: '.05em', color: 'oklch(40% 0.12 155)', textTransform: 'uppercase' }}>
+              STR rates active
+            </span>
+            <span style={{ fontSize: 12.5, color: palette.ink }}>
+              The model is using these STR market rates for Year-1 Occupancy &amp; ADR — <b>{strOcc}</b> and{' '}
+              <b>{strAdr}</b>, feeding Financials → Projections.
+            </span>
+            <span style={{ display: 'flex', gap: 8, marginLeft: 'auto', alignItems: 'center' }}>
+              {strRunning && (
+                <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6, fontSize: 11.5, color: '#2f4a8c' }}>
+                  <Loader2 size={12} className="animate-spin" /> Re-modeling…
+                </span>
+              )}
+              <Link href={`/projects/${dealId}?tab=pl`} style={{ textDecoration: 'none' }}>
+                <span style={secBtn}>View Projections →</span>
+              </Link>
+              <button onClick={onToggleStr} disabled={strRunning} style={navyBtn}>
+                Revert to T-12 actuals
+              </button>
+            </span>
+          </div>
+        ) : (
+          <div
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: 14,
+              flexWrap: 'wrap',
+              background: palette.surfaceTint,
+              border: `1px solid ${palette.border}`,
+              borderRadius: 8,
+              padding: '10px 14px',
+            }}
+          >
+            <span style={{ fontSize: 10, fontWeight: 700, letterSpacing: '.05em', color: palette.eyebrow, textTransform: 'uppercase' }}>
+              Model input
+            </span>
+            <span style={{ fontSize: 12.5, color: palette.ink }}>
+              Year-1 Occupancy &amp; ADR are on <b>T-12 actuals</b> ({t12Occ} · {t12Adr}). STR market rates
+              would set <b>{strOcc}</b> · <b>{strAdr}</b>.
+            </span>
+            <span style={{ display: 'flex', gap: 8, marginLeft: 'auto', alignItems: 'center' }}>
+              {strRunning && (
+                <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6, fontSize: 11.5, color: '#2f4a8c' }}>
+                  <Loader2 size={12} className="animate-spin" /> Re-modeling…
+                </span>
+              )}
+              <button onClick={onToggleStr} disabled={strRunning} style={navyBtn}>
+                Use STR rates in the model
+              </button>
+            </span>
+          </div>
+        )}
+      </div>
+    </SectionCard>
+  );
+}
+
+// ─── §5 Index Summary ───────────────────────────────────────────────────────
+function IndexSummary({ strTrend, onOpenIndex, state }: { strTrend: StrTrend; onOpenIndex: () => void; state: ValueState }) {
   const items = [
-    { key: 'MPI', label: 'Occupancy Index', v: pt(strTrend.mpi_occupancy_index) },
-    { key: 'ARI', label: 'ADR Index', v: pt(strTrend.ari_adr_index) },
-    { key: 'RGI', label: 'RevPAR Index', v: pt(strTrend.rgi_revpar_index) },
+    { key: 'MPI', label: 'Occupancy Index / MPI', v: idxPoints(strTrend.mpi_occupancy_index) },
+    { key: 'ARI', label: 'ADR Index / ARI', v: idxPoints(strTrend.ari_adr_index) },
+    { key: 'RGI', label: 'RevPAR Index / RGI', v: idxPoints(strTrend.rgi_revpar_index) },
   ];
   if (!items.some((i) => i.v != null)) return null;
+  const note = (
+    <span onClick={onOpenIndex} style={{ color: palette.linkBlue, fontWeight: 600, cursor: 'pointer' }}>
+      Full 2019–2033 series in Index Analysis →
+    </span>
+  );
   return (
-    <Card className="p-0 overflow-hidden">
-      <div className="px-5 py-3 border-b border-border bg-surface-2/40">
-        <h3 className="text-[14px] font-semibold text-ink-900">Subject vs Comp Set — Index Summary</h3>
-        <p className="text-[11.5px] text-ink-500 mt-0.5">100 = at par with the comp set · &gt;100 = the subject outperforms.</p>
-      </div>
-      <div className="grid grid-cols-3 divide-x divide-border">
+    <SectionCard title="Index Summary" note={note}>
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(210px,1fr))', gap: 12, marginTop: 12 }}>
         {items.map((it) => {
           const over = it.v != null && it.v >= 100;
+          const color = it.v == null ? MUTED : over ? GREEN : AMBER;
+          const width = it.v != null ? Math.min(100, it.v / 2) : 0;
           return (
-            <div key={it.key} className="px-5 py-4">
-              <div className="text-[10px] uppercase tracking-wide text-ink-500">{it.label} <span className="text-ink-400">· {it.key}</span></div>
-              <div className={cn('text-[24px] font-semibold tabular-nums mt-1', it.v == null ? 'text-ink-400' : over ? 'text-success-700' : 'text-warn-700')}>
-                {it.v != null ? it.v.toFixed(1) : '—'}
+            <div key={it.key} style={{ border: `1px solid ${palette.border}`, borderRadius: 8, padding: '12px 14px' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', gap: 8, marginBottom: 8 }}>
+                <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6, fontSize: 10, fontWeight: 700, letterSpacing: '.04em', color: palette.eyebrow, textTransform: 'uppercase' }}>
+                  <ProvenanceDot state={state} size={7} /> {it.label}
+                </span>
+                <span style={{ fontSize: 19, fontWeight: 700, color, fontVariantNumeric: 'tabular-nums' }}>
+                  {it.v != null ? it.v.toFixed(1) : '—'}
+                </span>
               </div>
-              <div className="text-[10.5px] text-ink-500 mt-0.5">
+              <div style={{ position: 'relative', height: 6, background: '#f0efeb', borderRadius: 3, overflow: 'hidden' }}>
+                <div style={{ position: 'absolute', left: 0, top: 0, height: '100%', width: `${width}%`, background: color, borderRadius: 3 }} />
+                <div style={{ position: 'absolute', left: '50%', top: 0, height: '100%', width: 1, background: '#c9c8c2' }} />
+              </div>
+              <div style={{ fontSize: 11, color: palette.textSecondary, marginTop: 7 }}>
                 {it.v == null
                   ? 'not published'
                   : over
-                    ? `subject leads by ${(it.v - 100).toFixed(0)} pts`
-                    : `subject trails by ${(100 - it.v).toFixed(0)} pts`}
+                    ? `Subject leads by ${(it.v - 100).toFixed(1)} points`
+                    : `Subject trails by ${(100 - it.v).toFixed(1)} points`}
               </div>
             </div>
           );
         })}
       </div>
-      <div className="px-5 py-2.5 border-t border-border text-[11px] text-ink-500">
-        Full historical + forecast penetration series on <span className="font-medium text-ink-700">Index Analysis</span>.
+      <div style={{ fontSize: 11, color: palette.textMuted, marginTop: 10 }}>
+        100 = at par with the comp set · &gt;100 = subject outperforms
       </div>
-    </Card>
+    </SectionCard>
   );
 }
 
-// FON-60 Market Overview §2/3/6/7 — sections in Sam's hierarchy whose data
-// source isn't extracted yet. Shown as labeled "awaiting data" rows (never a
-// fixture) so the structure is visible and it's clear what report populates each.
-function PendingMarketCard({ title, items }: { title: string; items: { label: string; note: string }[] }) {
+// ─── §6 Supply Pipeline ─────────────────────────────────────────────────────
+function SupplyPipeline({ compKeyCount }: { compKeyCount: number | null }) {
+  const rows: { label: string; value: string; color: string; weight: number; awaiting?: boolean }[] = [
+    {
+      label: 'Existing comp set supply',
+      value: compKeyCount != null ? `${compKeyCount.toLocaleString()} keys` : '—',
+      color: compKeyCount != null ? GREEN : MUTED,
+      weight: 400,
+      awaiting: compKeyCount == null,
+    },
+    { label: 'Under construction', value: '—', color: MUTED, weight: 400, awaiting: true },
+    { label: 'Expected deliveries', value: '—', color: MUTED, weight: 400, awaiting: true },
+    { label: 'Comp set growth', value: '—', color: MUTED, weight: 400, awaiting: true },
+    { label: 'Planned / unentitled', value: '—', color: MUTED, weight: 400, awaiting: true },
+  ];
   return (
-    <Card className="p-0 overflow-hidden">
-      <div className="px-5 py-3 border-b border-border bg-surface-2/40">
-        <h3 className="text-[14px] font-semibold text-ink-900">{title}</h3>
-      </div>
-      <div className="divide-y divide-border">
-        {items.map((it) => (
-          <div key={it.label} className="flex items-start justify-between gap-4 px-5 py-3">
-            <div>
-              <div className="text-[12.5px] font-medium text-ink-800">{it.label}</div>
-              <div className="text-[11px] text-ink-500 mt-0.5 leading-relaxed">{it.note}</div>
-            </div>
-            <span className="shrink-0 mt-0.5 text-[9.5px] uppercase tracking-wide text-ink-400 bg-ink-100/60 rounded px-1.5 py-0.5">Awaiting data</span>
+    <SectionCard title="Supply Pipeline" note="CoStar Hospitality">
+      <div style={{ marginTop: 10 }}>
+        {rows.map((r) => (
+          <div
+            key={r.label}
+            style={{
+              display: 'flex',
+              justifyContent: 'space-between',
+              gap: 12,
+              fontSize: 12.5,
+              padding: '6px 0',
+              borderBottom: `1px solid ${palette.hairlineRow}`,
+            }}
+          >
+            <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6, color: palette.textSecondary }}>
+              {r.awaiting && <ProvenanceDot state="awaiting_data" size={7} />}
+              {r.label}
+            </span>
+            <span style={{ color: r.color, fontWeight: r.weight, fontVariantNumeric: 'tabular-nums' }}>{r.value}</span>
           </div>
         ))}
       </div>
-    </Card>
+    </SectionCard>
   );
 }
 
+// ─── §7 Demand Drivers ──────────────────────────────────────────────────────
+function DemandDrivers() {
+  return (
+    <SectionCard title="Demand Drivers" note="CoStar Submarket Report" bodyStyle={{ minHeight: 0 }}>
+      <div style={{ marginTop: 10 }}>
+        <AwaitingPanel>
+          Demand segmentation — transient / group / contract mix and demand growth by source — populates
+          from a <b>CoStar Submarket Report</b>.
+        </AwaitingPanel>
+      </div>
+    </SectionCard>
+  );
+}
+
+// ─── Transaction Comps sub-tab ──────────────────────────────────────────────
+type SortKey = 'Sale date' | '$ / Key' | 'Cap rate';
+
+function TransactionCompsSection({
+  workerComps,
+  dealId,
+  entryPerKey,
+  entryCapPct,
+  exitCapPct,
+}: {
+  workerComps: TransactionCompsResult | null;
+  dealId: string;
+  entryPerKey: number | null;
+  entryCapPct: number | null;
+  exitCapPct: number | null;
+}) {
+  const [sort, setSort] = useState<SortKey>('Sale date');
+  const [showAll, setShowAll] = useState(false);
+
+  if (!workerComps) {
+    return (
+      <SectionCard variant="title" title="Transaction Comparables">
+        <div style={{ fontSize: 12, color: palette.textMuted, padding: '32px 18px', textAlign: 'center' }}>
+          Loading transaction comps…
+        </div>
+      </SectionCard>
+    );
+  }
+  const comps = workerComps.comps;
+  if (comps.length === 0) {
+    return (
+      <SectionCard variant="title" title="Transaction Comparables">
+        <div style={{ fontSize: 12, color: palette.textMuted, padding: '32px 18px', textAlign: 'center' }}>
+          {workerComps.note ??
+            'No comparable sales extracted yet. Upload an OM with a Comparable Sales table to populate this view.'}
+        </div>
+      </SectionCard>
+    );
+  }
+
+  const perKeys = comps.map((c) => c.price_per_key_usd).filter((v): v is number => v != null);
+  const caps = comps.filter((c) => c.cap_rate_pct != null);
+  const median = workerComps.median_price_per_key;
+  const medianCap = workerComps.median_cap_rate_pct;
+
+  // Context callouts — entry basis / cap from engine outputs (getEngineField),
+  // never a placeholder. Falls back to a neutral anchor line when unavailable.
+  const perKeyContext =
+    entryPerKey != null && median != null && median > 0
+      ? `Underwritten entry basis of ${money0(entryPerKey)} / key sits ${Math.abs((1 - entryPerKey / median) * 100).toFixed(1)}% ${
+          entryPerKey <= median ? 'below' : 'above'
+        } the median comp — ${entryPerKey <= median ? 'supportive of' : 'rich versus'} the entry valuation.`
+      : 'Anchor for entry / exit valuation.';
+  const capContext =
+    entryCapPct != null && medianCap != null
+      ? `Entry cap of ${entryCapPct.toFixed(2)}% is ${Math.abs(Math.round((entryCapPct - medianCap) * 100))} bps ${
+          entryCapPct >= medianCap ? 'above' : 'below'
+        } the median${exitCapPct != null ? `; the ${exitCapPct.toFixed(2)}% exit assumption anchors terminal value` : ''}.`
+      : 'Anchor for exit-cap rate selection.';
+
+  const summary = [
+    {
+      label: 'Median $ / Key',
+      value: median != null ? money0(median) : '—',
+      range: perKeys.length
+        ? `Range ${money0(Math.min(...perKeys))} – ${money0(Math.max(...perKeys))}`
+        : 'No $/key disclosed',
+      context: perKeyContext,
+    },
+    {
+      label: 'Median Cap Rate',
+      value: fmtCap2(medianCap),
+      range: `${caps.length} of ${comps.length} comps disclose a cap rate`,
+      context: capContext,
+    },
+  ];
+
+  const sorted = [...comps].sort((a, b) => {
+    if (sort === '$ / Key') return (b.price_per_key_usd ?? -Infinity) - (a.price_per_key_usd ?? -Infinity);
+    if (sort === 'Cap rate') return (a.cap_rate_pct ?? Infinity) - (b.cap_rate_pct ?? Infinity);
+    return 0; // Sale date — preserve the worker's date-sorted order
+  });
+  const visible = showAll ? sorted : sorted.slice(0, 14);
+
+  const compsCaption =
+    'Extracted from Offering Memorandums and market reports in the Data Room · property names deep-link to the source page';
+  const columns: { label: string; align: 'left' | 'right' }[] = [
+    { label: 'PROPERTY', align: 'left' },
+    { label: 'MARKET', align: 'left' },
+    { label: 'SALE DATE', align: 'left' },
+    { label: 'KEYS', align: 'right' },
+    { label: 'SALE PRICE', align: 'right' },
+    { label: '$ / KEY', align: 'right' },
+    { label: 'CAP RATE', align: 'right' },
+    { label: 'BUYER', align: 'left' },
+    { label: 'SELLER', align: 'left' },
+  ];
+  const gridCols =
+    'minmax(210px,1.6fr) minmax(120px,1fr) 96px 62px 108px 100px 84px minmax(150px,1fr) minmax(150px,1fr)';
+
+  const pill = (label: SortKey): CSSProperties => {
+    const active = label === sort;
+    return {
+      fontSize: 11.5,
+      fontFamily: 'inherit',
+      border: `1px solid ${active ? '#dbe3f5' : '#e2e1dc'}`,
+      background: active ? '#eef2fb' : '#fff',
+      color: active ? '#2f4a8c' : palette.textSecondary,
+      fontWeight: active ? 700 : 500,
+      borderRadius: 6,
+      padding: '5px 11px',
+      cursor: 'pointer',
+      whiteSpace: 'nowrap',
+    };
+  };
+  const cellBase: CSSProperties = {
+    padding: '7px 12px',
+    borderBottom: `1px solid ${palette.hairlineSection}`,
+    fontSize: 12,
+    overflow: 'hidden',
+    textOverflow: 'ellipsis',
+    whiteSpace: 'nowrap',
+  };
+
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+      {/* Headline anchors */}
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(300px,1fr))', gap: 14 }}>
+        {summary.map((c) => (
+          <div key={c.label} style={{ background: palette.cardWhite, border: `1px solid ${palette.border}`, borderRadius: 10, padding: '16px 18px' }}>
+            <div style={{ fontSize: 10, fontWeight: 700, letterSpacing: '.04em', color: palette.eyebrow, textTransform: 'uppercase', marginBottom: 7 }}>
+              {c.label}
+            </div>
+            <div style={{ display: 'flex', alignItems: 'baseline', gap: 12, flexWrap: 'wrap' }}>
+              <span style={{ fontSize: 26, fontWeight: 700, color: palette.ink, fontVariantNumeric: 'tabular-nums' }}>{c.value}</span>
+              <span style={{ fontSize: 11.5, color: palette.textMuted }}>{c.range}</span>
+            </div>
+            <div style={{ fontSize: 12, color: '#3a3f47', lineHeight: 1.5, marginTop: 8 }}>{c.context}</div>
+          </div>
+        ))}
+      </div>
+
+      {/* Comparables grid */}
+      <SectionCard
+        variant="title"
+        title={
+          <span style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+            <span style={{ fontSize: 13.5, fontWeight: 700, color: palette.ink }}>Transaction Comparables</span>
+            <span style={{ fontSize: 11, color: palette.textMuted, fontWeight: 400 }}>{compsCaption}</span>
+          </span>
+        }
+        note={
+          <span style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+            {(['Sale date', '$ / Key', 'Cap rate'] as SortKey[]).map((s) => (
+              <button key={s} onClick={() => setSort(s)} style={pill(s)}>
+                {s}
+              </button>
+            ))}
+          </span>
+        }
+      >
+        <div style={{ overflowX: 'auto' }}>
+          <div style={{ display: 'grid', gridTemplateColumns: gridCols, width: 'max-content', minWidth: '100%' }}>
+            {columns.map((h) => (
+              <div
+                key={h.label}
+                style={{
+                  padding: '8px 12px',
+                  background: palette.inkNavy,
+                  color: palette.gridHeaderText,
+                  fontSize: 10.5,
+                  fontWeight: 600,
+                  letterSpacing: '.03em',
+                  textAlign: h.align,
+                  borderRight: `1px solid ${palette.gridHeaderDivider}`,
+                  position: 'sticky',
+                  top: 0,
+                }}
+              >
+                {h.label}
+              </div>
+            ))}
+            {visible.map((c, i) => {
+              const bg = i % 2 ? palette.surfaceTint : '#fff';
+              const citationHref =
+                c.source_document_id && c.source_page
+                  ? `${workerUrl()}/deals/${dealId}/documents/${c.source_document_id}/download#page=${c.source_page}`
+                  : null;
+              const buyer = c.buyer_name ?? c.buyer_type ?? null;
+              return (
+                <div key={`${c.name}-${i}`} style={{ display: 'contents' }}>
+                  <div style={{ ...cellBase, background: bg, color: palette.ink, fontWeight: 600, fontSize: 12.5 }}>
+                    {citationHref ? (
+                      <Link href={citationHref} target="_blank" rel="noreferrer" style={{ color: palette.ink }}>
+                        {c.name}
+                      </Link>
+                    ) : (
+                      c.name
+                    )}
+                  </div>
+                  <div style={{ ...cellBase, background: bg, color: palette.textSecondary }}>{c.market ?? '—'}</div>
+                  <div style={{ ...cellBase, background: bg, color: palette.textSecondary }}>{fmtSaleDate(c.sale_date)}</div>
+                  <div style={{ ...cellBase, background: bg, color: '#3a3f47', textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>
+                    {c.keys != null ? c.keys.toLocaleString() : '—'}
+                  </div>
+                  <div style={{ ...cellBase, background: bg, color: '#3a3f47', textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>
+                    {fmtSalePrice(c.sale_price_usd)}
+                  </div>
+                  <div style={{ ...cellBase, background: bg, color: palette.ink, fontWeight: 600, fontSize: 12.5, textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>
+                    {fmtPerKey(c.price_per_key_usd)}
+                  </div>
+                  <div
+                    style={{
+                      ...cellBase,
+                      background: bg,
+                      color: c.cap_rate_pct != null ? palette.ink : MUTED,
+                      fontWeight: 600,
+                      fontSize: 12.5,
+                      textAlign: 'right',
+                      fontVariantNumeric: 'tabular-nums',
+                    }}
+                  >
+                    {fmtCap2(c.cap_rate_pct)}
+                  </div>
+                  <div style={{ ...cellBase, background: bg, color: buyer ? palette.textSecondary : MUTED }}>{buyer ?? '—'}</div>
+                  <div style={{ ...cellBase, background: bg, color: c.seller ? palette.textSecondary : MUTED }}>{c.seller ?? '—'}</div>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+        <div style={{ padding: '11px 18px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
+          <span style={{ fontSize: 11.5, color: palette.textMuted }}>
+            Showing {visible.length} of {comps.length} comps · sorted by {sort.toLowerCase()}
+          </span>
+          {comps.length > 14 && (
+            <button
+              onClick={() => setShowAll((s) => !s)}
+              style={{
+                background: '#fff',
+                border: '1px solid #e2e1dc',
+                color: '#3a3f47',
+                borderRadius: 6,
+                padding: '6px 13px',
+                fontSize: 11.5,
+                fontWeight: 600,
+                cursor: 'pointer',
+                fontFamily: 'inherit',
+              }}
+            >
+              {showAll ? 'Show top 14' : `Show all ${comps.length} comps`}
+            </button>
+          )}
+        </div>
+      </SectionCard>
+    </div>
+  );
+}
+
+// ─── main ───────────────────────────────────────────────────────────────────
 export default function MarketTab({ projectId }: { projectId: number | string }) {
-  const [tab, setTab] = useState('Market Overview');
+  const [tab, setTab] = useState<SubTab>('Market Overview');
   const { toast } = useToast();
   const params = useParams();
   const dealId = (params?.id as string | undefined) ?? String(projectId);
   const { deal, refresh: refreshDeal } = useDeal(dealId);
+  const liveDeal = !!dealId && !/^\d+$/.test(dealId);
 
-  // FON-47 (a) — fetch the REAL aggregated STR/CoStar market data. The tab
-  // previously only hit /market/overview (indices null) and showed an empty
-  // state even when an STR report was uploaded.
+  // Real aggregated STR/CoStar market data.
   const [marketData, setMarketData] = useState<MarketDataResp | null>(null);
   useEffect(() => {
-    if (!isWorkerConnected() || !dealId || /^\d+$/.test(dealId)) return;
+    if (!isWorkerConnected() || !liveDeal) return;
     const ctrl = new AbortController();
     api.market
       .data(dealId, ctrl.signal)
       .then((d) => { if (d) setMarketData(d as MarketDataResp); })
       .catch(() => { /* silent — empty state covers it */ });
     return () => ctrl.abort();
-  }, [dealId]);
+  }, [dealId, liveDeal]);
+
+  // Worker market overview (submarket label / keys).
+  const [workerMarket, setWorkerMarket] = useState<WorkerMarketOverview | null>(null);
+  useEffect(() => {
+    if (!isWorkerConnected() || !liveDeal) return;
+    const ctrl = new AbortController();
+    api.market
+      .overview(dealId, ctrl.signal)
+      .then((d) => { if (d) setWorkerMarket(d as WorkerMarketOverview); })
+      .catch(() => {});
+    return () => ctrl.abort();
+  }, [dealId, liveDeal]);
+
+  // Transaction comps (extracted from OMs).
+  const [workerComps, setWorkerComps] = useState<TransactionCompsResult | null>(null);
+  useEffect(() => {
+    if (!isWorkerConnected() || !liveDeal) return;
+    const ctrl = new AbortController();
+    api.market
+      .transactionComps(dealId, ctrl.signal)
+      .then((res) => setWorkerComps(res))
+      .catch(() => {});
+    return () => ctrl.abort();
+  }, [dealId, liveDeal]);
+
+  // Per-value provenance — consulted for the origin dot where an engine field
+  // matches; market-derived values fall back to their derived origin.
+  const [dealProv, setDealProv] = useState<DealProvenanceResponse | null>(null);
+  useEffect(() => {
+    if (!isWorkerConnected() || !liveDeal) return;
+    const ctrl = new AbortController();
+    api.deals
+      .provenance(dealId, ctrl.signal)
+      .then((p) => { if (p) setDealProv(p); })
+      .catch(() => {});
+    return () => ctrl.abort();
+  }, [dealId, liveDeal]);
+  const stateOf = (engine: EngineName, path: string, fallback: ValueState): ValueState =>
+    (dealProv?.engines?.[engine]?.[path]?.state as ValueState | undefined) ?? fallback;
+
+  // Engine outputs — entry basis / cap for the comps context callouts.
+  const { outputs } = useEngineOutputs(dealId);
+  const entryPerKey = getEngineField<number>(outputs, 'capital', 'price_per_key') ?? null;
+  const entryCapRaw = getEngineField<number>(outputs, 'capital', 'entry_cap_rate') ?? null;
+  const exitCapRaw = getEngineField<number>(outputs, 'returns', 'exit_cap_rate') ?? null;
+  // Engine cap rates are fractions (0.075); the median from the comps endpoint
+  // is already a percent (7.5). Normalize both to percent for the callout math.
+  const asPct = (v: number | null): number | null => (v == null ? null : v <= 1 ? v * 100 : v);
+  const entryCapPct = asPct(entryCapRaw);
+  const exitCapPct = asPct(exitCapRaw);
+
   const strTrend = marketData?.str_trend ?? null;
   const hasStr = !!(strTrend && (strTrend.subject_occupancy_pct != null || strTrend.subject_adr_usd != null));
-  // Blended comp-set benchmark recovered from the STR indices (see deriveCompSet).
   const derivedComp = deriveCompSet(strTrend);
-  // Comp-set room count = sum of the named roster's keys. This (not the extracted
-  // `total_keys` rollup, which has proven unreliable — e.g. 1011 for a 424-key
-  // set) is the figure shown consistently across the header, the blended comp-set
-  // row, and Index Analysis, so all three agree (FON-61 a).
+  // Comp-set room count = sum of the named roster's keys (the extracted
+  // total_keys rollup has proven unreliable). Shown consistently across the tab.
   const compKeyCount =
     strTrend?.compset?.reduce((s, c) => s + (c.keys && c.keys > 0 ? c.keys : 0), 0) || null;
 
-  // FON-47 (b) — let the analyst drive the model's Year-1 occupancy/ADR from
-  // the STR market rates. The revenue engine already reads
-  // `revenue_seed_from_str_forecast` from field_overrides (default off); this
-  // toggles that override + re-runs (same mechanism as the FON-27 overrides).
+  // STR-rate model seed — same field_overrides mechanism as the FON-27 overrides.
   const { run, status: runStatus } = useEngineRun(dealId, 'returns', { runMode: 'all' });
   const strRunning = runStatus === 'running' || runStatus === 'queued';
   const overrides = (deal?.field_overrides ?? {}) as Record<string, unknown>;
@@ -263,8 +1067,6 @@ export default function MarketTab({ projectId }: { projectId: number | string })
   const toggleStrSeed = async () => {
     const next = { ...overrides };
     if (strSeeded) delete next['revenue_seed_from_str_forecast'];
-    // Same {value, note} shape the FON-27 overrides use (engine reads it via
-    // _normalize_override_shape → base["revenue_seed_from_str_forecast"]).
     else next['revenue_seed_from_str_forecast'] = { value: true, note: 'STR market rates enabled from the Market tab' };
     try {
       await api.deals.update(dealId, { field_overrides: next });
@@ -279,435 +1081,141 @@ export default function MarketTab({ projectId }: { projectId: number | string })
     }
   };
 
-  // Worker market overview — populated for live deals once
-  // /market/{deal_id}/overview returns. Indices are null until the STR
-  // feed is wired in (TODO(str-integration) on the worker side), so we
-  // only use the response for the submarket label / keys readout.
-  const [workerMarket, setWorkerMarket] = useState<WorkerMarketOverview | null>(null);
-  useEffect(() => {
-    if (!isWorkerConnected()) return;
-    if (!dealId || /^\d+$/.test(dealId)) return; // mock id, no UUID
-    const ctrl = new AbortController();
-    api.market
-      .overview(dealId, ctrl.signal)
-      .then((data) => { if (data) setWorkerMarket(data as WorkerMarketOverview); })
-      .catch(() => { /* silent — empty state covers it */ });
-    return () => ctrl.abort();
-  }, [dealId]);
-
-  // Transaction comps — extracted from OMs by the worker. Sam called
-  // these "critical for anchoring exit cap rate" (May 7 call summary).
-  // For the Kimpton demo deal we keep the curated fixture so the demo
-  // story stays clean. For every other deal we hit the worker
-  // endpoint; an empty array surfaces the "awaiting OM extraction"
-  // empty state.
-  const [workerComps, setWorkerComps] =
-    useState<TransactionCompsResult | null>(null);
-  useEffect(() => {
-    if (!isWorkerConnected()) return;
-    if (!dealId || /^\d+$/.test(dealId)) return;
-    const ctrl = new AbortController();
-    api.market
-      .transactionComps(dealId, ctrl.signal)
-      .then((res) => setWorkerComps(res))
-      .catch(() => { /* silent — empty state covers it */ });
-    return () => ctrl.abort();
-  }, [dealId]);
-
-  // Submarket label: deal.city wins for live deals; falls back to the
-  // worker's market overview label.
   const submarketLabel = deal?.city ?? workerMarket?.market ?? null;
+  const compCount = workerComps?.comps.length ?? null;
+  const tabCaption =
+    tab === 'Market Overview'
+      ? `STR · CoStar Hospitality${strTrend?.comp_set_size ? ` — ${strTrend.comp_set_size}-property comp set` : ''}`
+      : tab === 'Transaction Comps'
+        ? compCount != null
+          ? `${compCount} comp${compCount === 1 ? '' : 's'} extracted from OMs`
+          : 'Extracted from Offering Memorandums'
+        : 'Subject vs. competitive set · 2019–2033';
+  const ttmLabel = 'TTM';
 
   return (
-      <div>
-        <IntroCard
-          dismissKey="market-intro"
-          title="The Market view"
-          body={
-            <>
-              What&apos;s happening in this submarket — recent performance trends, new hotels being
-              built (the supply pipeline), what&apos;s driving demand, and recent sales of comparable
-              hotels. The basis for your projections and exit valuation.
-            </>
-          }
-        />
-        <Card className="p-5 mb-5">
-          <div className="flex items-start justify-between">
-            <div>
-              <h2 className="text-[15px] font-semibold text-ink-900">Market Data</h2>
-              <p className="text-[12.5px] text-ink-500 mt-1">
-                Submarket performance, supply pipeline, demand drivers, and recent transaction comparables.
-              </p>
-            </div>
-          </div>
-        </Card>
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+      {/* Intro card (canonical copy) */}
+      <div
+        style={{
+          background: palette.cardWhite,
+          border: `1px solid ${palette.border}`,
+          borderRadius: 10,
+          padding: '12px 16px',
+          display: 'flex',
+          flexDirection: 'column',
+          gap: 3,
+        }}
+      >
+        <span style={{ fontSize: 13.5, fontWeight: 700, color: palette.ink }}>Market</span>
+        <span style={{ fontSize: 12.5, color: palette.textSecondary, lineHeight: 1.55, maxWidth: 960 }}>
+          What&apos;s happening in this submarket — recent performance trends, the supply pipeline, demand
+          drivers, and recent sales of comparable hotels. The basis for your projections and exit valuation.
+        </span>
+      </div>
 
-        {/* FON-60/61 — real deals get the same 3 sub-tabs as the demo
-            (Market Overview / Transaction Comps / Index Analysis), each wired
-            to live data. Previously this early-return path rendered only the
-            STR card and skipped the sub-tab shell entirely. */}
-        <div className="flex items-center gap-1 mb-5 border-b border-border">
-          {subTabs.map((st) => (
-            <button key={st} onClick={() => setTab(st)}
-              className={cn(
-                'px-4 py-2 text-[12.5px] border-b-2 transition-colors -mb-px',
-                tab === st ? 'border-brand-500 text-brand-700 font-medium' : 'border-transparent text-ink-500 hover:text-ink-900'
-              )}>
-              {st}
-            </button>
-          ))}
-        </div>
+      <SubTabNav
+        items={SUB_TABS.map((s) => ({ id: s, label: s }))}
+        activeId={tab}
+        onSelect={(id) => setTab(id as SubTab)}
+        caption={tabCaption}
+      />
 
-        {tab === 'Market Overview' && (hasStr && strTrend ? (
-          // FON-60 — executive Market Overview: submarket read, subject-vs-comp
-          // benchmark, index summary, and the sections awaiting a submarket feed.
-          <div className="space-y-5">
-            {/* §1 — Submarket snapshot (competitive-set aggregate) */}
+      {tab === 'Market Overview' &&
+        (hasStr && strTrend ? (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
             <SubmarketSnapshot
               derivedComp={derivedComp}
               compSetSize={strTrend.comp_set_size ?? null}
               compKeyCount={compKeyCount}
               submarketLabel={submarketLabel}
             />
-
-            {/* §2 & §3 — market performance trends (need a multi-year/monthly feed) */}
-            <PendingMarketCard
-              title="Market Performance Trends"
-              items={[
-                { label: 'Historical Market Performance', note: 'Multi-year submarket Occupancy / ADR / RevPAR trends — populates from a multi-year STR / CoStar trend report.' },
-                { label: 'Monthly / TTM Performance', note: 'Recent performance and seasonality. TTM subject metrics appear below; monthly detail needs a monthly STR report.' },
-              ]}
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(430px,1fr))', gap: 14 }}>
+              <HistoricalMarketPerf derivedComp={derivedComp} ttmLabel={ttmLabel} />
+              <MonthlyTtmCard seasonality={null} />
+            </div>
+            <SubjectVsCompSet
+              strTrend={strTrend}
+              derivedComp={derivedComp}
+              compKeyCount={compKeyCount}
+              strSeeded={strSeeded}
+              strRunning={strRunning}
+              onToggleStr={toggleStrSeed}
+              dealId={dealId}
+              subjectState={stateOf('revenue', 'year1_occupancy', 'document_sourced')}
             />
-
-          {/* §4 — Subject vs Comp Set snapshot (blended STR, live from /market-data) */}
-          <Card className="p-0 overflow-hidden">
-            <div className="flex flex-wrap items-center justify-between gap-3 px-5 py-3 border-b border-border bg-surface-2/40">
-              <div>
-                <h3 className="text-[14px] font-semibold text-ink-900">Subject vs Comp Set</h3>
-                <p className="text-[11.5px] text-ink-500 mt-0.5">
-                  Subject TTM vs the blended competitive set · from this deal&apos;s uploaded STR / CoStar Trend report
-                  {strTrend.comp_set_size ? ` · ${strTrend.comp_set_size}-property comp set` : ''}
-                  {compKeyCount ? ` · ${compKeyCount.toLocaleString()} keys` : ''}.
-                </p>
-              </div>
-            </div>
-            <div className="grid grid-cols-3 divide-x divide-border border-b border-border">
-              {[
-                { label: 'Occupancy', value: strTrend.subject_occupancy_pct != null ? `${occPct(strTrend.subject_occupancy_pct).toFixed(1)}%` : '—' },
-                { label: 'ADR', value: strTrend.subject_adr_usd != null ? `$${strTrend.subject_adr_usd.toFixed(2)}` : '—' },
-                { label: 'RevPAR', value: strTrend.subject_revpar_usd != null ? `$${strTrend.subject_revpar_usd.toFixed(2)}` : '—' },
-              ].map((mm) => (
-                <div key={mm.label} className="px-5 py-4">
-                  <div className="text-[10px] uppercase tracking-wide text-ink-500">{mm.label} <span className="text-ink-400 normal-case">· subject</span></div>
-                  <div className="text-[20px] font-semibold text-ink-900 tabular-nums mt-0.5">{mm.value}</div>
-                </div>
-              ))}
-            </div>
-            <div className="flex flex-wrap items-center justify-between gap-3 px-5 py-3 border-b border-border bg-brand-50/30">
-              <div className="text-[12px] text-ink-700 max-w-xl">
-                <span className="font-semibold">Drive Year-1 from STR rates.</span>{' '}
-                {strSeeded
-                  ? 'The model is using these STR market rates for Year-1 occupancy & ADR.'
-                  : 'By default Year-1 uses the T-12 actuals. Switch to these STR market rates instead.'}
-              </div>
-              <div className="flex items-center gap-2 shrink-0">
-                {strRunning && (
-                  <span className="inline-flex items-center gap-1.5 text-[11.5px] text-brand-700">
-                    <Loader2 size={12} className="animate-spin" /> Re-modeling…
-                  </span>
-                )}
-                <Button variant={strSeeded ? 'secondary' : 'primary'} size="sm" onClick={toggleStrSeed} disabled={strRunning}>
-                  {strSeeded ? 'Revert to T-12 actuals' : 'Use STR rates in the model'}
-                </Button>
-              </div>
-            </div>
-            {strTrend.compset && strTrend.compset.length > 0 && (
-              <div className="overflow-x-auto">
-                <table className="w-full text-[12px]">
-                  <thead>
-                    <tr className="text-ink-500 text-[10px] uppercase tracking-wide border-b border-border">
-                      <th className="text-left font-semibold px-5 py-2">Comp set</th>
-                      <th className="text-right font-semibold px-3 py-2">Keys</th>
-                      <th className="text-right font-semibold px-3 py-2">Occupancy</th>
-                      <th className="text-right font-semibold px-3 py-2">ADR</th>
-                      <th className="text-right font-semibold px-5 py-2">RevPAR</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {derivedComp && (
-                      // Blended comp-set benchmark FIRST — it's the real, analyst-facing
-                      // number (recovered from the STR indices). Per-property performance is
-                      // anonymized, so leading with the aggregate keeps the table from reading
-                      // as a wall of blanks.
-                      <tr className="border-b-2 border-brand-300 bg-brand-50/60">
-                        <td className="px-5 py-3 font-semibold text-ink-900">
-                          Comp Set
-                          <span className="ml-1.5 rounded bg-brand-100 px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-wide text-brand-700">blended</span>
-                        </td>
-                        <td className="px-3 py-3 text-right tabular-nums text-ink-800">
-                          {compKeyCount ?? '—'}
-                        </td>
-                        <td className="px-3 py-3 text-right tabular-nums font-semibold text-ink-900">{derivedComp.occ != null ? `${derivedComp.occ.toFixed(1)}%` : '—'}</td>
-                        <td className="px-3 py-3 text-right tabular-nums font-semibold text-ink-900">{derivedComp.adr != null ? `$${derivedComp.adr.toFixed(0)}` : '—'}</td>
-                        <td className="px-5 py-3 text-right tabular-nums font-semibold text-ink-900">{derivedComp.revpar != null ? `$${derivedComp.revpar.toFixed(0)}` : '—'}</td>
-                      </tr>
-                    )}
-                    {derivedComp && (
-                      <tr>
-                        <td colSpan={5} className="px-5 pt-2.5 pb-1 text-[10px] font-medium uppercase tracking-wide text-ink-400">
-                          Comp-set members · per-property performance not published
-                        </td>
-                      </tr>
-                    )}
-                    {strTrend.compset.map((c, i) => {
-                      // When per-property performance is anonymized (the common case), mute the
-                      // empty cells to a faint dash so they recede instead of reading as "missing".
-                      const perf = (v: string | null, cls = '') =>
-                        v != null
-                          ? <span className={cn('tabular-nums text-ink-700', cls)}>{v}</span>
-                          : <span className="text-ink-300">—</span>;
-                      return (
-                        <tr key={`${c.name}-${i}`} className="border-b border-border/60">
-                          <td className="px-5 py-2 text-ink-800">{c.name}</td>
-                          <td className="px-3 py-2 text-right tabular-nums text-ink-700">{c.keys ?? '—'}</td>
-                          <td className="px-3 py-2 text-right">{perf(c.occupancy_pct != null ? `${occPct(c.occupancy_pct).toFixed(1)}%` : null)}</td>
-                          <td className="px-3 py-2 text-right">{perf(c.adr_usd != null ? `$${c.adr_usd.toFixed(0)}` : null)}</td>
-                          <td className="px-5 py-2 text-right">{perf(c.revpar_usd != null ? `$${c.revpar_usd.toFixed(0)}` : null)}</td>
-                        </tr>
-                      );
-                    })}
-                  </tbody>
-                </table>
-                {strTrend.compset.length > 0
-                  && strTrend.compset.every((c) => c.occupancy_pct == null && c.adr_usd == null && c.revpar_usd == null) && (
-                  <div className="px-5 py-2.5 border-t border-border text-[11px] text-ink-500 leading-relaxed">
-                    {derivedComp ? (
-                      <>
-                        STR / CoStar anonymize <span className="font-medium">per-property</span> performance, so the
-                        individual rows show key counts only. The <span className="font-medium text-ink-700">Comp Set · blended</span> row
-                        is the aggregate the subject is benchmarked against — recovered from the report&apos;s STR indices
-                        (MPI&nbsp;occupancy · ARI&nbsp;rate · RGI&nbsp;RevPAR) against the subject shown above.
-                      </>
-                    ) : (
-                      <>
-                        STR / CoStar reports anonymize competitor performance — per-property Occupancy / ADR / RevPAR
-                        isn&apos;t published, so only key counts appear here. The subject&apos;s own performance is shown above.
-                      </>
-                    )}
-                  </div>
-                )}
-              </div>
-            )}
-          </Card>
-
-            {/* §5 — Index summary (MPI / ARI / RGI); detail lives on Index Analysis */}
-            <MarketIndexSummary strTrend={strTrend} />
-
-            {/* §6 & §7 — supply pipeline + demand drivers (need a submarket feed) */}
-            <PendingMarketCard
-              title="Supply Pipeline & Demand Drivers"
-              items={[
-                { label: 'Supply Pipeline', note: 'Upcoming hotels / rooms, development status, expected opening — populates from a CoStar submarket supply report.' },
-                { label: 'Demand Drivers', note: 'Key market demand generators — populates from submarket demand data where supported.' },
-              ]}
+            <IndexSummary
+              strTrend={strTrend}
+              onOpenIndex={() => setTab('Index Analysis')}
+              state={stateOf('revenue', 'rgi_revpar_index', 'document_sourced')}
             />
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(400px,1fr))', gap: 14 }}>
+              <SupplyPipeline compKeyCount={compKeyCount} />
+              <DemandDrivers />
+            </div>
           </div>
         ) : (
-          <Card className="p-16 text-center">
-            <div className="w-12 h-12 rounded-lg bg-ink-300/20 flex items-center justify-center mx-auto mb-4">
-              <MapPinned size={20} className="text-ink-400" />
+          <div
+            style={{
+              background: palette.cardWhite,
+              border: `1px solid ${palette.border}`,
+              borderRadius: 10,
+              padding: '64px 24px',
+              textAlign: 'center',
+            }}
+          >
+            <div
+              style={{
+                width: 48,
+                height: 48,
+                borderRadius: 10,
+                background: 'rgba(176,175,170,.18)',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                margin: '0 auto 16px',
+              }}
+            >
+              <MapPinned size={20} color={palette.textFaint} />
             </div>
-            <h3 className="text-[15px] font-semibold text-ink-900">No market data yet</h3>
+            <h3 style={{ fontSize: 15, fontWeight: 700, color: palette.ink, margin: 0 }}>No market data yet</h3>
             {submarketLabel && (
-              <p className="text-[12px] text-ink-700 mt-1.5 font-medium">{submarketLabel}</p>
+              <p style={{ fontSize: 12, color: palette.textSecondary, marginTop: 6, fontWeight: 600 }}>{submarketLabel}</p>
             )}
-            <p className="text-[12.5px] text-ink-500 mt-1 max-w-md mx-auto leading-relaxed">
-              We don&apos;t have benchmark data for this submarket yet. Open the
-              <span className="font-medium"> Data Library</span> to add it (paste in an STR report or
-              attach a saved market).
+            <p style={{ fontSize: 12.5, color: palette.textMuted, marginTop: 4, maxWidth: 460, marginInline: 'auto', lineHeight: 1.6 }}>
+              We don&apos;t have benchmark data for this submarket yet. Open the Data Library to add it (paste in
+              an STR report or attach a saved market).
             </p>
-            <Link href="/data-library?tab=market" className="inline-block mt-4">
-              <Button variant="primary" size="sm">Open Data Library</Button>
+            <Link
+              href="/data-library?tab=market"
+              style={{
+                display: 'inline-block',
+                marginTop: 16,
+                background: palette.inkNavy,
+                color: '#fff',
+                borderRadius: 6,
+                padding: '8px 16px',
+                fontSize: 12.5,
+                fontWeight: 600,
+                textDecoration: 'none',
+              }}
+            >
+              Open Data Library
             </Link>
-          </Card>
+          </div>
         ))}
 
-        {tab === 'Transaction Comps' && (
-          <TransactionCompsSection
-            workerComps={workerComps}
-            dealId={dealId}
-          />
-        )}
+      {tab === 'Transaction Comps' && (
+        <TransactionCompsSection
+          workerComps={workerComps}
+          dealId={dealId}
+          entryPerKey={entryPerKey}
+          entryCapPct={entryCapPct}
+          exitCapPct={exitCapPct}
+        />
+      )}
 
-        {tab === 'Index Analysis' && (
-          <IndexAnalysisSection dealId={dealId} />
-        )}
-      </div>
-    );
-}
-
-function fmtSalePrice(usd: number | null): string {
-  if (usd == null) return '—';
-  if (usd >= 1_000_000) return `$${(usd / 1_000_000).toFixed(1)}M`;
-  if (usd >= 1_000) return `$${(usd / 1_000).toFixed(0)}K`;
-  return `$${usd.toFixed(0)}`;
-}
-
-function fmtPerKey(usd: number | null): string {
-  if (usd == null) return '—';
-  if (usd >= 1_000_000) return `$${(usd / 1_000_000).toFixed(2)}M`;
-  return `$${usd.toLocaleString(undefined, { maximumFractionDigits: 0 })}`;
-}
-
-function fmtCapRate(pct: number | null): string {
-  if (pct == null) return '—';
-  return `${pct.toFixed(1)}%`;
-}
-
-function fmtSaleDate(s: string | null): string {
-  if (!s) return '—';
-  // Worker may emit ISO date or a free-form string; show first 10 chars
-  // when ISO, otherwise pass through trimmed.
-  const trimmed = s.trim();
-  return /^\d{4}-\d{2}-\d{2}/.test(trimmed) ? trimmed.slice(0, 10) : trimmed;
-}
-
-function TransactionCompsSection({
-  workerComps,
-  dealId,
-}: {
-  workerComps: TransactionCompsResult | null;
-  dealId: string;
-}) {
-  // Live deal path. Empty result + worker connected = OM not yet
-  // extracted. Null result = haven't fetched yet.
-  if (!workerComps) {
-    return (
-      <Card className="p-5">
-        <h3 className="text-[13px] font-semibold text-ink-900 mb-3">
-          Transaction Comparables
-        </h3>
-        <div className="text-[12px] text-ink-500 py-8 text-center">
-          Loading transaction comps…
-        </div>
-      </Card>
-    );
-  }
-
-  if (workerComps.comps.length === 0) {
-    return (
-      <Card className="p-5">
-        <h3 className="text-[13px] font-semibold text-ink-900 mb-3">
-          Transaction Comparables
-        </h3>
-        <div className="text-[12px] text-ink-500 py-8 text-center">
-          {workerComps.note ??
-            'No comparable sales extracted yet. Upload an OM with a Comparable Sales table to populate this view.'}
-        </div>
-      </Card>
-    );
-  }
-
-  return (
-    <Card className="p-5">
-      <div className="flex items-center justify-between mb-3">
-        <h3 className="text-[13px] font-semibold text-ink-900">
-          Transaction Comparables
-        </h3>
-        <div className="text-[10.5px] text-ink-500">
-          {workerComps.comps.length} comp
-          {workerComps.comps.length === 1 ? '' : 's'} from extracted OMs
-        </div>
-      </div>
-
-      {/* Headline anchors — median $/key + median cap rate. The exit-cap
-          conversation in the IC memo grounds on these two numbers. */}
-      <div className="grid grid-cols-2 gap-3 mb-4">
-        <Card className="p-3 bg-slate-50/50">
-          <div className="text-[10px] text-ink-500 uppercase tracking-wide">
-            Median $/Key
-          </div>
-          <div className="text-[18px] font-semibold tabular-nums mt-0.5 text-ink-900">
-            {fmtPerKey(workerComps.median_price_per_key)}
-          </div>
-          <div className="text-[10.5px] text-ink-500 mt-0.5">
-            Anchor for entry / exit valuation
-          </div>
-        </Card>
-        <Card className="p-3 bg-slate-50/50">
-          <div className="text-[10px] text-ink-500 uppercase tracking-wide">
-            Median Cap Rate
-          </div>
-          <div className="text-[18px] font-semibold tabular-nums mt-0.5 text-ink-900">
-            {fmtCapRate(workerComps.median_cap_rate_pct)}
-          </div>
-          <div className="text-[10.5px] text-ink-500 mt-0.5">
-            Anchor for exit-cap rate selection
-          </div>
-        </Card>
-      </div>
-
-      <table className="w-full text-[12px]">
-        <thead>
-          <tr className="text-ink-500 text-[10.5px] border-b border-border">
-            <th className="text-left font-medium pb-2">Property</th>
-            <th className="text-left font-medium pb-2">Market</th>
-            <th className="text-left font-medium pb-2">Sale Date</th>
-            <th className="text-right font-medium pb-2">Keys</th>
-            <th className="text-right font-medium pb-2">Sale Price</th>
-            <th className="text-right font-medium pb-2">$/Key</th>
-            <th className="text-right font-medium pb-2">Cap Rate</th>
-            <th className="text-left font-medium pb-2">Buyer</th>
-          </tr>
-        </thead>
-        <tbody>
-          {workerComps.comps.map((c, i) => {
-            const citationHref =
-              c.source_document_id && c.source_page
-                ? `${workerUrl()}/deals/${dealId}/documents/${c.source_document_id}/download#page=${c.source_page}`
-                : null;
-            return (
-              <tr key={`${c.name}-${i}`} className="border-b border-border/50">
-                <td className="py-2 font-medium">
-                  {citationHref ? (
-                    <Link
-                      href={citationHref}
-                      target="_blank"
-                      rel="noreferrer"
-                      className="text-ink-900 hover:text-brand-700 underline-offset-2 hover:underline"
-                    >
-                      {c.name}
-                    </Link>
-                  ) : (
-                    c.name
-                  )}
-                </td>
-                <td className="text-ink-700">{c.market ?? '—'}</td>
-                <td className="text-ink-700">{fmtSaleDate(c.sale_date)}</td>
-                <td className="text-right tabular-nums">
-                  {c.keys != null ? c.keys.toLocaleString() : '—'}
-                </td>
-                <td className="text-right tabular-nums">
-                  {fmtSalePrice(c.sale_price_usd)}
-                </td>
-                <td className="text-right tabular-nums">
-                  {fmtPerKey(c.price_per_key_usd)}
-                </td>
-                <td className="text-right tabular-nums">
-                  {fmtCapRate(c.cap_rate_pct)}
-                </td>
-                <td className="text-ink-700">
-                  {c.buyer_name ?? c.buyer_type ?? '—'}
-                </td>
-              </tr>
-            );
-          })}
-        </tbody>
-      </table>
-      <div className="text-[10.5px] text-ink-400 mt-2">
-        Source: extracted from this deal&apos;s OM. Property names
-        deep-link to the source page in the OM.
-      </div>
-    </Card>
+      {tab === 'Index Analysis' && <IndexAnalysisSection dealId={dealId} />}
+    </div>
   );
 }

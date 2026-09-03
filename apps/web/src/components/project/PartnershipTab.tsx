@@ -1,52 +1,101 @@
 'use client';
-import { useState, useEffect, useRef, useCallback } from 'react';
+import {
+  useState,
+  useEffect,
+  useRef,
+  useCallback,
+  type ReactNode,
+} from 'react';
 import { useParams } from 'next/navigation';
-import { Users } from 'lucide-react';
-import { Card } from '@/components/ui/Card';
-import { Button } from '@/components/ui/Button';
-import { useToast } from '@/components/ui/Toast';
-import { api, isWorkerConnected } from '@/lib/api';
+import { api, isWorkerConnected, type ValueState } from '@/lib/api';
 import { useEngineRun } from '@/lib/hooks/useEngineRun';
 import { useDeal } from '@/lib/hooks/useDeal';
+import { useToast } from '@/components/ui/Toast';
+import { getEngineField, useEngineOutputs } from '@/lib/hooks/useEngineOutputs';
+import { useTraceGraph } from '@/lib/hooks/useValueTrace';
 import EngineHeader from './EngineHeader';
 import EngineRightRail from './EngineRightRail';
 import EngineRunHistory from './EngineRunHistory';
 import WhatJustHappened from './WhatJustHappened';
-import { fmtCurrency, fmtPct, cn } from '@/lib/format';
-import { getEngineField, useEngineOutputs } from '@/lib/hooks/useEngineOutputs';
-import { useFlash } from '@/lib/hooks/useFlash';
 import { IntroCard } from '@/components/help/IntroCard';
-import { MetricLabel } from '@/components/help/MetricLabel';
-import { GLOSSARY } from '@/lib/glossary';
+import { fmtCurrency, fmtPct, cn } from '@/lib/format';
+import {
+  SectionCard,
+  SubTabNav,
+  StatementTable,
+  ProvenanceDot,
+  palette,
+  prov,
+  radius,
+} from '@/components/design';
 
-const subTabs = ['Summary', 'Waterfall Structure', 'Distribution Timeline', 'Returns Summary'];
+// ─── Canonical structure (design/canonical/Partnership Tab.dc.html) ──────────
+// Three sub-tabs, exactly as the prototype: Summary · Waterfall · Cash Flows.
+const SUB_TABS = [
+  { id: 'Summary', label: 'Summary' },
+  { id: 'Waterfall', label: 'Waterfall' },
+  { id: 'Cash Flows', label: 'Cash Flows' },
+];
+const SUB_CAPTION: Record<string, string> = {
+  Summary: 'Equity split, waterfall terms and partner returns',
+  Waterfall: 'The partnership assumption workspace',
+  'Cash Flows': 'Contributions and distributions through exit',
+};
 
-// InvestmentTab-style display helpers.
-const pickNum = (
-  worker: number | undefined,
-): number | undefined => (worker != null ? worker : undefined);
-const fmtOrDash = (
-  n: number | undefined,
-  formatter: (v: number) => string,
-): string => (n != null ? formatter(n) : '—');
-
-// FON-66 — the promote waterfall seed. This MIRRORS the worker's
-// `_KIMPTON_WATERFALL_REFERENCE` (engine_runner.py): the deal-agnostic
-// institutional benchmark an analyst edits from the Waterfall Structure
-// sub-tab. Each tier's editable fields persist as indexed field_overrides
-// (`partnership.waterfall.<idx>.<field>`) the worker layers over this
-// seed. `hurdle`/`gp` are fractions; LP split derives as `1 - gp`.
-const WATERFALL_SEED: Array<{ label: string; hurdle: number; gp: number }> = [
-  { label: 'Preferred (to 10%)', hurdle: 0.10, gp: 0.00 },
-  { label: 'Tier 2 (to 15%)', hurdle: 0.15, gp: 0.20 },
-  { label: 'Tier 3 (to 20%)', hurdle: 0.20, gp: 0.25 },
-  { label: 'Tier 4 (to 25%)', hurdle: 0.25, gp: 0.25 },
-  { label: 'Tier 5 (to 30%)', hurdle: 0.30, gp: 0.25 },
-  { label: 'Tier 6 (>30%)', hurdle: 0.50, gp: 0.50 },
+const COMPOUNDING_OPTIONS = [
+  'Annual / cumulative',
+  'Annual / non-cumulative',
+  'Quarterly / cumulative',
 ];
 
-// Read a scalar override, tolerating both the flat scalar and the
-// structured `{ value, note }` shape the override panel writes.
+// FON-66 — the editable promote-band seed. This MIRRORS the worker's
+// `_KIMPTON_WATERFALL_REFERENCE` (engine_runner.py): the deal-agnostic
+// institutional benchmark an analyst edits from the Waterfall sub-tab. Each
+// tier's editable fields persist as indexed field_overrides
+// (`partnership.waterfall.<idx>.<field>`) the worker layers over this seed.
+// `hurdle`/`gp` are fractions; LP split derives as `1 - gp`. Index order is
+// load-bearing — the worker keys overrides by position, so the six bands stay
+// editable here to avoid regressing the existing save path.
+const WATERFALL_SEED: Array<{ hurdle: number; gp: number }> = [
+  { hurdle: 0.10, gp: 0.00 },
+  { hurdle: 0.15, gp: 0.20 },
+  { hurdle: 0.20, gp: 0.25 },
+  { hurdle: 0.25, gp: 0.25 },
+  { hurdle: 0.30, gp: 0.25 },
+  { hurdle: 0.50, gp: 0.50 },
+];
+
+// Worker partnership PartnerReturn shape (runtime nested `gp`/`lp` objects).
+interface PartnerReturn {
+  partner: string;
+  contributed_equity: number;
+  distributions: number;
+  irr: number;
+  equity_multiple: number;
+}
+
+// FON-72 — one row of the dollar waterfall ("Allocation of Projected Proceeds").
+interface TierAllocation {
+  label: string;
+  kind: 'return_of_capital' | 'preferred' | 'catch_up' | 'promote';
+  gp_amount: number;
+  lp_amount: number;
+  total_amount: number;
+}
+
+const has = (v: unknown): v is number => typeof v === 'number' && Number.isFinite(v);
+const money = (v: number | undefined): string => (has(v) ? fmtCurrency(v) : '—');
+const moneyC = (v: number | undefined): string =>
+  has(v) ? fmtCurrency(v, { compact: true }) : '—';
+const pctv = (v: number | undefined, d = 1): string => (has(v) ? fmtPct(v, d) : '—');
+const multv = (v: number | undefined): string => (has(v) ? `${v.toFixed(2)}x` : '—');
+
+function round6(n: number): number {
+  return Math.round(n * 1e6) / 1e6;
+}
+
+// Read a scalar override, tolerating both the flat scalar and the structured
+// `{ value, note }` shape the override panel writes.
 function readOverrideNum(
   overrides: Record<string, unknown>,
   path: string,
@@ -61,17 +110,6 @@ function readOverrideNum(
   return Number.isFinite(n) ? n : fallback;
 }
 
-// Resolve the live promote structure = seed + any analyst tier overrides.
-// Returns display rows { tier, gp, lp } as whole-percent numbers.
-function resolveWaterfall(
-  overrides: Record<string, unknown>,
-): Array<{ tier: string; gp: number; lp: number }> {
-  return WATERFALL_SEED.map((t, idx) => {
-    const gp = readOverrideNum(overrides, `partnership.waterfall.${idx}.gp_split`, t.gp);
-    return { tier: t.label, gp: Math.round(gp * 100), lp: Math.round((1 - gp) * 100) };
-  });
-}
-
 export default function PartnershipTab() {
   const [tab, setTab] = useState('Summary');
   const { toast } = useToast();
@@ -81,11 +119,19 @@ export default function PartnershipTab() {
   const [computing, setComputing] = useState(false);
   const [runToken, setRunToken] = useState<number | null>(null);
 
+  // Compounding is a display-only workspace control in this release (the
+  // prototype models it locally; no backend field consumes it yet).
+  const [compounding, setCompounding] = useState(COMPOUNDING_OPTIONS[0]);
+
+  // Single inline-editor cursor (canonical `state.editing`) + its draft string.
+  const [editing, setEditing] = useState<string | null>(null);
+  const [draft, setDraft] = useState('');
+
   // ─── FON-66: editable waterfall assumptions ────────────────────────
-  // Live deals (real UUID + worker connected) can edit ownership,
-  // preferred return, and the promote tiers. Edits PATCH the deal's
-  // field_overrides and kick a debounced run-all so GP/LP outputs
-  // re-derive. Demo (id 7) and mock numeric deals stay read-only.
+  // Live deals (real UUID + worker connected) can edit ownership, preferred
+  // return, and the promote bands. Edits PATCH the deal's field_overrides and
+  // kick a debounced run-all so GP/LP outputs re-derive. Demo / mock numeric
+  // deals stay read-only.
   const isMockId = /^\d+$/.test(dealId);
   const liveMode = isWorkerConnected() && !isMockId;
   const { deal, refresh: refreshDeal } = useDeal(dealId);
@@ -99,9 +145,19 @@ export default function PartnershipTab() {
     if (rerunTimerRef.current) clearTimeout(rerunTimerRef.current);
   }, []);
 
+  // Provenance dots read the real /provenance `state` for a partnership output
+  // path, falling back to the value's semantic kind. The partnership engine may
+  // ship without a provenance sidecar — the fallback is expected, not an error.
+  const partnershipTrace = useTraceGraph('partnership');
+  const dotState = useCallback(
+    (path: string, fallback: ValueState): ValueState =>
+      partnershipTrace.get(path)?.state ?? fallback,
+    [partnershipTrace],
+  );
+
   // Persist one or more overrides in a single PATCH. Complementary fields
-  // (GP/LP ownership, GP/LP tier split) are saved together so the engine
-  // never sees an inconsistent pair. A null value clears that override.
+  // (GP/LP ownership, GP/LP tier split) are saved together so the engine never
+  // sees an inconsistent pair. A null value clears that override.
   const onSaveOverride = useCallback(
     async (patch: Record<string, number | null>) => {
       if (!liveMode) {
@@ -131,32 +187,39 @@ export default function PartnershipTab() {
     [overrides, dealId, liveMode, toast, refreshDeal, fullRun],
   );
 
-  // Worker partnership engine fields. The runtime engine returns nested
-  // `gp` / `lp` PartnerReturn objects; the export schema flattens them as
-  // `gp_equity_usd` / `lp_irr` / etc. We accept both shapes — whichever the
-  // worker produced for this deal.
-  type PartnerReturn = {
-    partner: string;
-    contributed_equity: number;
-    distributions: number;
-    irr: number;
-    equity_multiple: number;
-  };
+  // Commit the inline editor: `raw` (whole-percent string) → fraction, routed to
+  // the given override key(s). Complementary keys derive `1 - fraction`.
+  const commitPct = useCallback(
+    (primaryKey: string, complementKey?: string) => {
+      const t = draft.trim();
+      setEditing(null);
+      setDraft('');
+      if (t === '') return;
+      const p = Number(t.replace(/[^0-9.\-]/g, ''));
+      if (!Number.isFinite(p)) return;
+      const frac = round6(p / 100);
+      const patch: Record<string, number> = { [primaryKey]: frac };
+      if (complementKey) patch[complementKey] = round6(1 - frac);
+      void onSaveOverride(patch);
+    },
+    [draft, onSaveOverride],
+  );
+  const startEdit = useCallback((id: string, currentFraction: number) => {
+    setEditing(id);
+    setDraft((currentFraction * 100).toFixed(currentFraction * 100 % 1 === 0 ? 0 : 1));
+  }, []);
+  const cancelEdit = useCallback(() => {
+    setEditing(null);
+    setDraft('');
+  }, []);
+
+  // ─── Worker partnership fields (dual-shape: nested objects OR flat export) ──
   const wGp = getEngineField<PartnerReturn>(outputs, 'partnership', 'gp');
   const wLp = getEngineField<PartnerReturn>(outputs, 'partnership', 'lp');
-  const wPromote = getEngineField<number>(outputs, 'partnership', 'promote_amount');
-  const wGpFlows = getEngineField<number[]>(outputs, 'partnership', 'gp_cash_flows');
-  const wLpFlows = getEngineField<number[]>(outputs, 'partnership', 'lp_cash_flows');
-
-  // Flat-schema reads (export-style fixtures: lp_equity_usd, gp_irr, ...).
   const wGpEquityFlat = getEngineField<number>(outputs, 'partnership', 'gp_equity_usd');
   const wLpEquityFlat = getEngineField<number>(outputs, 'partnership', 'lp_equity_usd');
   const wTotalEquityFlat = getEngineField<number>(outputs, 'partnership', 'total_equity_usd');
   const wLpPrefPct = getEngineField<number>(outputs, 'partnership', 'lp_pref_pct');
-  const wTier1Pct = getEngineField<number>(outputs, 'partnership', 'gp_promote_tier_1_pct');
-  const wTier1Hurdle = getEngineField<number>(outputs, 'partnership', 'gp_promote_tier_1_irr_hurdle');
-  const wTier2Pct = getEngineField<number>(outputs, 'partnership', 'gp_promote_tier_2_pct');
-  const wTier2Hurdle = getEngineField<number>(outputs, 'partnership', 'gp_promote_tier_2_irr_hurdle');
   const wGpIrrFlat = getEngineField<number>(outputs, 'partnership', 'gp_irr')
     ?? getEngineField<number>(outputs, 'partnership', 'gp_irr_after_promote');
   const wLpIrrFlat = getEngineField<number>(outputs, 'partnership', 'lp_irr')
@@ -166,300 +229,407 @@ export default function PartnershipTab() {
   const wLpMultipleFlat = getEngineField<number>(outputs, 'partnership', 'lp_multiple')
     ?? getEngineField<number>(outputs, 'partnership', 'lp_equity_multiple');
 
-  const wGpIrr = wGp?.irr ?? wGpIrrFlat;
-  const wLpIrr = wLp?.irr ?? wLpIrrFlat;
-  const wGpEquity = wGp?.contributed_equity ?? wGpEquityFlat;
-  const wLpEquity = wLp?.contributed_equity ?? wLpEquityFlat;
-  const wGpMultiple = wGp?.equity_multiple ?? wGpMultipleFlat;
-  const wLpMultiple = wLp?.equity_multiple ?? wLpMultipleFlat;
-  const wGpDist = wGp?.distributions;
-  const wLpDist = wLp?.distributions;
+  const gpEquity = wGp?.contributed_equity ?? wGpEquityFlat;
+  const lpEquity = wLp?.contributed_equity ?? wLpEquityFlat;
+  const gpIrr = wGp?.irr ?? wGpIrrFlat;
+  const lpIrr = wLp?.irr ?? wLpIrrFlat;
+  const gpMultiple = wGp?.equity_multiple ?? wGpMultipleFlat;
+  const lpMultiple = wLp?.equity_multiple ?? wLpMultipleFlat;
+  const gpDist = wGp?.distributions;
+  const lpDist = wLp?.distributions;
+  const wGpFlows = getEngineField<number[]>(outputs, 'partnership', 'gp_cash_flows');
+  const wLpFlows = getEngineField<number[]>(outputs, 'partnership', 'lp_cash_flows');
+  const promote = getEngineField<number>(outputs, 'partnership', 'promote_amount')
+    ?? getEngineField<number>(outputs, 'partnership', 'promote_earned');
+
+  // FON-72 — the dollar waterfall + reconciliation, straight from the engine.
+  const tierAllocations = getEngineField<TierAllocation[]>(outputs, 'partnership', 'tier_allocations');
+  const totalDistributableFlat = getEngineField<number>(outputs, 'partnership', 'total_distributable');
+  const reconcilesFlag = getEngineField<boolean>(outputs, 'partnership', 'reconciles');
+  const catchUpAmount = getEngineField<number>(outputs, 'partnership', 'catch_up_amount');
+
+  // Deal-level economics come from the Returns engine source-of-truth (levered),
+  // never a prototype placeholder.
+  const dealIrr = getEngineField<number>(outputs, 'returns', 'levered_irr');
+  const dealMoicEngine = getEngineField<number>(outputs, 'returns', 'equity_multiple');
+  const holdYears = getEngineField<number>(outputs, 'returns', 'hold_years');
+
+  // Derived totals — every value is grounded in an engine field or undefined.
+  const totalEquity = (has(gpEquity) && has(lpEquity))
+    ? gpEquity + lpEquity
+    : wTotalEquityFlat;
+  const totalDist = has(totalDistributableFlat)
+    ? totalDistributableFlat
+    : (has(gpDist) && has(lpDist) ? gpDist + lpDist : undefined);
+  const dealMoic = has(dealMoicEngine)
+    ? dealMoicEngine
+    : (has(totalDist) && has(totalEquity) && totalEquity > 0 ? totalDist / totalEquity : undefined);
+  const dealProfit = (has(totalDist) && has(totalEquity)) ? totalDist - totalEquity : undefined;
+  const gpProfit = (has(gpDist) && has(gpEquity)) ? gpDist - gpEquity : undefined;
+  const lpProfit = (has(lpDist) && has(lpEquity)) ? lpDist - lpEquity : undefined;
+
+  // Ownership split — an analyst override wins, else derived from the engine's
+  // contributed equity, else the institutional default.
+  const gpPctOverride = 'gp_equity_pct' in overrides
+    ? readOverrideNum(overrides, 'gp_equity_pct', 0.10)
+    : undefined;
+  const gpPctComputed = (has(gpEquity) && has(lpEquity) && gpEquity + lpEquity > 0)
+    ? gpEquity / (gpEquity + lpEquity)
+    : undefined;
+  const gpPct = gpPctOverride ?? gpPctComputed ?? 0.10;
+  const lpPct = 1 - gpPct;
+
+  const prefOverride = 'pref_rate' in overrides
+    ? readOverrideNum(overrides, 'pref_rate', 0.08)
+    : undefined;
+  const prefRate = prefOverride ?? (has(wLpPrefPct) ? wLpPrefPct : 0.08);
 
   const hasWorkerPartnership = wGp != null || wLp != null
+    || (tierAllocations != null && tierAllocations.length > 0)
     || wGpEquityFlat != null || wLpEquityFlat != null
     || wGpIrrFlat != null || wLpIrrFlat != null;
-  const gpIrrPick = pickNum(wGpIrr);
-  const lpIrrPick = pickNum(wLpIrr);
-  const promotePick = pickNum(wPromote);
-  const gpIrrLabel = fmtOrDash(gpIrrPick, v => fmtPct(v, 2));
-  const lpIrrLabel = fmtOrDash(lpIrrPick, v => fmtPct(v, 2));
-  const promoteLabel = fmtOrDash(promotePick, v => fmtCurrency(v, { compact: true }));
 
-  // Total deal profit = total cash returned to all equity - equity contributed.
-  // We can compute it when both distributions and equity are present from the
-  // engine; otherwise it is undefined and renders as '—'.
-  const totalDistributions = (wGpDist ?? 0) + (wLpDist ?? 0);
-  const totalEquityRuntime = (wGpEquity ?? 0) + (wLpEquity ?? 0);
-  const totalEquity = wTotalEquityFlat ?? totalEquityRuntime;
-  const canComputeDealProfit = wGpDist != null && wLpDist != null
-    && (wGpEquity != null || wLpEquity != null || wTotalEquityFlat != null);
-  const dealProfitPick = canComputeDealProfit
-    ? Math.max(0, totalDistributions - totalEquity)
+  const hasCatchUp = (has(catchUpAmount) && catchUpAmount > 0)
+    || !!tierAllocations?.some((t) => t.kind === 'catch_up');
+
+  // Dollar-waterfall totals (sum the tier rows; total prefers the engine field).
+  const lpAllocTotal = tierAllocations?.reduce((s, t) => s + (t.lp_amount || 0), 0);
+  const gpAllocTotal = tierAllocations?.reduce((s, t) => s + (t.gp_amount || 0), 0);
+  const allocTotal = has(totalDistributableFlat)
+    ? totalDistributableFlat
+    : tierAllocations?.reduce((s, t) => s + (t.total_amount || 0), 0);
+
+  // Exit-year distribution = final period of the partner cash-flow series.
+  const exitDist = (Array.isArray(wGpFlows) && Array.isArray(wLpFlows)
+    && wGpFlows.length > 0 && wGpFlows.length === wLpFlows.length)
+    ? (wGpFlows[wGpFlows.length - 1] ?? 0) + (wLpFlows[wLpFlows.length - 1] ?? 0)
     : undefined;
-  const dealProfitLabel = fmtOrDash(dealProfitPick, v => fmtCurrency(v, { compact: true }));
-
-  if (!hasWorkerPartnership) {
-    return (
-      <div className="flex gap-4">
-        <div className="flex-1 min-w-0">
-          <IntroCard
-            dismissKey="partnership-intro"
-            title="The Partnership Engine"
-            body={
-              <>
-                How the deal&apos;s profits split between the sponsor (you, the
-                <span className="font-semibold"> GP</span>) and outside investors
-                (<span className="font-semibold">LPs</span>). The waterfall pays LPs their preferred
-                return first, then promotes the GP on the upside.
-              </>
-            }
-          />
-          <EngineHeader
-            name="Partnership Engine"
-            desc="Models GP/LP waterfall structures, promote calculations, and investor distributions."
-            outputs={['GP IRR', 'LP IRR', 'GP Promote', '+1']}
-            dependsOn="Returns"
-            dealId={dealId}
-            engineName="partnership"
-            onRunStart={() => setComputing(true)}
-            onRunComplete={() => {
-              setComputing(false);
-              setRunToken(Date.now());
-            }}
-          />
-          <Card className="p-16 text-center">
-            <div className="w-12 h-12 rounded-lg bg-ink-300/20 flex items-center justify-center mx-auto mb-4">
-              <Users size={20} className="text-ink-400" />
-            </div>
-            <h3 className="text-[15px] font-semibold text-ink-900">Partnership Engine unavailable</h3>
-            <p className="text-[12.5px] text-ink-500 mt-1 max-w-md mx-auto leading-relaxed">
-              The waterfall splits depend on total deal returns, so this engine waits for
-              <span className="font-medium"> Returns</span> to finish. Run the model from the Returns
-              tab to populate GP/LP splits.
-            </p>
-            <Button
-              variant="primary"
-              size="sm"
-              className="mt-4"
-              onClick={() => toast('Engine queued — check back shortly', { type: 'info' })}
-            >
-              Run Partnership Engine
-            </Button>
-          </Card>
-          <EngineRunHistory dealId={dealId} />
-        </div>
-        <EngineRightRail />
-      </div>
-    );
-  }
 
   return (
     <div className="flex gap-4">
       <div className="flex-1 min-w-0">
-      <IntroCard
-        dismissKey="partnership-intro"
-        title="The Partnership Engine"
-        body={
-          <>
-            How the deal&apos;s profits split between the sponsor (you, the
-            <span className="font-semibold"> GP</span>) and outside investors
-            (<span className="font-semibold">LPs</span>). The waterfall pays LPs their preferred
-            return first, then promotes the GP on the upside.
-          </>
-        }
-      />
-      <EngineHeader
-        name="Partnership Engine"
-        desc="Models GP/LP waterfall structures, promote calculations, and investor distributions."
-        outputs={['GP IRR', 'LP IRR', 'GP Promote', '+1']}
-        dependsOn="Returns"
-        complete
-        dealId={dealId}
-        engineName="partnership"
-        runMode="all"
-        onRunStart={() => setComputing(true)}
-        onRunComplete={() => {
-          setComputing(false);
-          setRunToken(Date.now());
-        }}
-      />
+        <IntroCard
+          dismissKey="partnership-intro"
+          title="The Partnership Engine"
+          body={
+            <>
+              How the deal&apos;s profits split between the sponsor (you, the
+              <span className="font-semibold"> GP</span>) and outside investors
+              (<span className="font-semibold">LPs</span>). The waterfall pays LPs their preferred
+              return first, then promotes the GP on the upside.
+            </>
+          }
+        />
+        <EngineHeader
+          name="Partnership Engine"
+          desc="Models GP/LP waterfall structures, promote calculations, and investor distributions."
+          outputs={['GP IRR', 'LP IRR', 'GP Promote', '+1']}
+          dependsOn="Returns"
+          complete={hasWorkerPartnership}
+          dealId={dealId}
+          engineName="partnership"
+          runMode="all"
+          onRunStart={() => setComputing(true)}
+          onRunComplete={() => {
+            setComputing(false);
+            setRunToken(Date.now());
+          }}
+        />
 
-      <WhatJustHappened
-        engine="partnership"
-        engineLabel="Partnership"
-        outputs={outputs}
-        previous={previous}
-        runToken={runToken}
-      />
+        <WhatJustHappened
+          engine="partnership"
+          engineLabel="Partnership"
+          outputs={outputs}
+          previous={previous}
+          runToken={runToken}
+        />
 
-      <div className="flex items-center gap-1 mb-3 border-b border-border">
-        {subTabs.map(t => (
-          <button key={t} onClick={() => setTab(t)}
-            className={cn(
-              'px-4 py-2 text-[12.5px] border-b-2 transition-colors -mb-px',
-              tab === t ? 'border-brand-500 text-brand-700 font-medium' : 'border-transparent text-ink-500 hover:text-ink-900'
-            )}>
-            {t}
-          </button>
-        ))}
-      </div>
+        <SubTabNav
+          items={SUB_TABS}
+          activeId={tab}
+          onSelect={(id) => { setTab(id); cancelEdit(); }}
+          caption={SUB_CAPTION[tab]}
+          style={{ marginBottom: 14 }}
+        />
 
-      {tab === 'Summary' && (
+        {/* Manual-inputs banner — partnership terms are entered by hand in this
+            release (not extracted from the JV agreement). Canonical blue card. */}
+        <ManualInputsBanner onEdit={() => setTab('Waterfall')} />
+        {/* TODO(FON-72): a manual-entry-only preview endpoint would let the
+            waterfall/allocation render from unsaved inputs before a full engine
+            run. Backend flagged this; endpoint intentionally not built here. */}
+
         <div className={cn(computing && 'relative pointer-events-none opacity-60')}>
-          <div className="grid grid-cols-4 gap-4 mb-5">
-            <KPI label="GP LIRR (Net to Sponsor)" tip="The General Partner's (sponsor's) levered IRR after the promote — what you take home for putting the deal together." value={gpIrrLabel} flashKey={gpIrrLabel} />
-            <KPI label="LP LIRR (Net to Investors)" tip="The Limited Partners' (outside investors') levered IRR after waterfall splits. What your LPs actually earn." value={lpIrrLabel} flashKey={lpIrrLabel} />
-            <KPI label="GP Profit (Carry)" tip={GLOSSARY['Promote']} value={promoteLabel} flashKey={promoteLabel} />
-            <KPI label="Deal Profit (Levered)" tip="Total cash to all equity holders over the hold, minus equity invested. The pie that gets split GP/LP." value={dealProfitLabel} flashKey={dealProfitLabel} />
-          </div>
+          {tab === 'Summary' && (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+              {/* Equity Structure + Waterfall Terms */}
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(430px,1fr))', gap: 14 }}>
+                <SectionCard title="Equity Structure" note="Total equity comes from the deal financing">
+                  <KeyRow
+                    label="Total Equity"
+                    dot={dotState('total_equity_usd', 'linked')}
+                    value={money(totalEquity)}
+                    valueColor={prov.green}
+                    bold
+                    link={{ label: '→ Investment', tab: 'investment' }}
+                    note="Total uses less senior debt and key money — set by the deal financing, not here"
+                  />
+                  <KeyRow
+                    label="GP / Sponsor Ownership"
+                    dot="assumption"
+                    editable={liveMode}
+                    editing={editing === 'gpPct-sum'}
+                    draft={draft}
+                    onStart={() => startEdit('gpPct-sum', gpPct)}
+                    onDraft={setDraft}
+                    onCommit={() => commitPct('gp_equity_pct', 'lp_equity_pct')}
+                    onCancel={cancelEdit}
+                    value={pctv(gpPct, 0)}
+                    valueColor={prov.blue}
+                  />
+                  <KeyRow
+                    label="LP Investor Ownership"
+                    dot="calculated"
+                    value={pctv(lpPct, 0)}
+                    valueColor={prov.gray}
+                  />
+                  <KeyRow label="GP Contribution" dot="calculated" value={money(gpEquity)} valueColor={prov.gray} />
+                  <KeyRow label="LP Contribution" dot="calculated" value={money(lpEquity)} valueColor={prov.gray} />
+                </SectionCard>
 
-          <div className="grid grid-cols-2 gap-5 mb-5">
-            <Card className="p-5">
-              <h3 className="text-[13px] font-semibold text-ink-900 mb-3">Equity Structure</h3>
-              <table className="w-full text-[12.5px]">
-                <thead>
-                  <tr className="text-ink-500 text-[11px] border-b border-border">
-                    <th className="text-left font-medium pb-2">Partner</th>
-                    <th className="text-right font-medium pb-2">% Ownership</th>
-                    <th className="text-right font-medium pb-2">Equity</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {(() => {
-                    const gpEqPick = pickNum(wGpEquity);
-                    const lpEqPick = pickNum(wLpEquity);
-                    const totalPick = (gpEqPick != null && lpEqPick != null)
-                      ? gpEqPick + lpEqPick
-                      : pickNum(wTotalEquityFlat);
-                    const gpPctStr = (gpEqPick != null && totalPick && totalPick > 0)
-                      ? `${((gpEqPick / totalPick) * 100).toFixed(1)}%`
-                      : '—';
-                    const lpPctStr = (lpEqPick != null && totalPick && totalPick > 0)
-                      ? `${((lpEqPick / totalPick) * 100).toFixed(1)}%`
-                      : '—';
-                    return (
-                      <>
-                        <tr className="border-b border-border/50">
-                          <td className="py-2">Sponsor / GP (General Partner)</td>
-                          <td className="text-right tabular-nums">{gpPctStr}</td>
-                          <td className="text-right tabular-nums">{fmtOrDash(gpEqPick, fmtCurrency)}</td>
-                        </tr>
-                        <tr className="border-b border-border/50">
-                          <td className="py-2">LP Investors (Limited Partners)</td>
-                          <td className="text-right tabular-nums">{lpPctStr}</td>
-                          <td className="text-right tabular-nums">{fmtOrDash(lpEqPick, fmtCurrency)}</td>
-                        </tr>
-                        <tr className="font-semibold border-t border-border">
-                          <td className="py-2">Total Equity</td>
-                          <td className="text-right tabular-nums">{totalPick != null ? '100.0%' : '—'}</td>
-                          <td className="text-right tabular-nums">{fmtOrDash(totalPick, fmtCurrency)}</td>
-                        </tr>
-                      </>
-                    );
-                  })()}
-                </tbody>
-              </table>
-            </Card>
+                <SectionCard title="Waterfall Terms" note="Your inputs — not extracted from the JV agreement">
+                  <KeyRow
+                    label="Preferred Return"
+                    dot="assumption"
+                    editable={liveMode}
+                    editing={editing === 'pref-sum'}
+                    draft={draft}
+                    onStart={() => startEdit('pref-sum', prefRate)}
+                    onDraft={setDraft}
+                    onCommit={() => commitPct('pref_rate')}
+                    onCancel={cancelEdit}
+                    value={pctv(prefRate, 0)}
+                    valueColor={prov.blue}
+                  />
+                  <KeyRow
+                    label="Compounding"
+                    dot="assumption"
+                    value={compounding}
+                    valueColor={prov.blue}
+                    note="Edit in the Waterfall tab"
+                  />
+                  <KeyRow
+                    label="GP Catch-Up"
+                    dot="assumption"
+                    value={hasCatchUp ? 'Full catch-up until GP promote share met' : 'None configured'}
+                    valueColor={hasCatchUp ? prov.blue : prov.muted}
+                  />
+                  <KeyRow
+                    label="Promote Above Pref"
+                    dot="assumption"
+                    value={pctv(readOverrideNum(overrides, 'partnership.waterfall.1.gp_split', WATERFALL_SEED[1].gp), 0)}
+                    valueColor={prov.blue}
+                    note="Edit in the Waterfall tab"
+                  />
+                  <KeyRow
+                    label="Additional Hurdles"
+                    dot="calculated"
+                    value={`${pctv(WATERFALL_SEED[1].hurdle, 0)} LP IRR · +${WATERFALL_SEED.length - 2} tiers`}
+                    valueColor={prov.gray}
+                  />
+                </SectionCard>
+              </div>
 
-            <Card className="p-5">
-              <h3 className="text-[13px] font-semibold text-ink-900 mb-3">Partner Returns Comparison</h3>
-              <table className="w-full text-[12.5px]">
-                <thead>
-                  <tr className="text-ink-500 text-[11px] border-b border-border">
-                    <th className="text-left font-medium pb-2">&nbsp;</th>
-                    <th className="text-right font-medium pb-2">LIRR</th>
-                    <th className="text-right font-medium pb-2">Multiple</th>
-                    <th className="text-right font-medium pb-2">Profit</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {(() => {
-                    // Profit = distributions - contributed equity for each partner.
-                    const gpProfitNum = (wGpDist != null && wGpEquity != null)
-                      ? Math.max(0, wGpDist - wGpEquity)
-                      : undefined;
-                    const lpProfitNum = (wLpDist != null && wLpEquity != null)
-                      ? Math.max(0, wLpDist - wLpEquity)
-                      : undefined;
-                    const gpProfitPick = pickNum(gpProfitNum);
-                    const lpProfitPick = pickNum(lpProfitNum);
-                    const gpMultiplePick = pickNum(wGpMultiple);
-                    const lpMultiplePick = pickNum(wLpMultiple);
-                    return (
-                      <>
-                        <tr className="border-b border-border/50">
-                          <td className="py-2">GP / Sponsor</td>
-                          <td className="text-right tabular-nums">{gpIrrLabel}</td>
-                          <td className="text-right tabular-nums">{fmtOrDash(gpMultiplePick, v => `${v.toFixed(2)}x`)}</td>
-                          <td className="text-right tabular-nums">{fmtOrDash(gpProfitPick, fmtCurrency)}</td>
-                        </tr>
-                        <tr>
-                          <td className="py-2">LP / Investors</td>
-                          <td className="text-right tabular-nums">{lpIrrLabel}</td>
-                          <td className="text-right tabular-nums">{fmtOrDash(lpMultiplePick, v => `${v.toFixed(2)}x`)}</td>
-                          <td className="text-right tabular-nums">{fmtOrDash(lpProfitPick, fmtCurrency)}</td>
-                        </tr>
-                      </>
-                    );
-                  })()}
-                </tbody>
-              </table>
-            </Card>
-          </div>
+              {/* Partner Returns — deal, LP, GP cards */}
+              <SectionCard title="Partner Returns" note="Deal-level economics, then what each partner receives after the waterfall">
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(250px,1fr))', gap: 12, marginTop: 4 }}>
+                  <MetricCard
+                    title="Deal level"
+                    note="Before the partnership split — what the investment itself generates."
+                    metrics={[
+                      { label: 'IRR', value: pctv(dealIrr), size: 18 },
+                      { label: 'MOIC', value: multv(dealMoic), size: 18 },
+                      { label: 'Total profit', value: money(dealProfit), size: 14 },
+                    ]}
+                  />
+                  <MetricCard
+                    title="LP investors"
+                    note={`${pctv(lpPct, 0)} of the equity · receives pref before any promote is paid.`}
+                    metrics={[
+                      { label: 'LP IRR', value: pctv(lpIrr), size: 18 },
+                      { label: 'LP MOIC', value: multv(lpMultiple), size: 18 },
+                      { label: 'LP profit', value: money(lpProfit), size: 14 },
+                    ]}
+                  />
+                  <MetricCard
+                    title="GP / sponsor"
+                    accent
+                    note={`Co-invest of ${pctv(gpPct, 0)} plus promote earned through the waterfall.`}
+                    metrics={[
+                      { label: 'GP IRR', value: pctv(gpIrr), size: 18 },
+                      { label: 'GP MOIC', value: multv(gpMultiple), size: 18 },
+                      { label: 'Total GP profit', value: money(gpProfit), size: 14 },
+                      { label: 'Promote / carry earned', value: money(promote), size: 14 },
+                      { label: 'GP co-invest', value: pctv(gpPct, 0), size: 14 },
+                    ]}
+                  />
+                </div>
+              </SectionCard>
 
-          <Card className="p-5">
-            <h3 className="text-[13px] font-semibold text-ink-900 mb-3">Cash Flow Waterfall</h3>
-            {(() => {
-              // Build the waterfall tier table from worker fields when the
-              // export-style schema is present.
-              type Tier = { tier: string; gp: number; lp: number };
-              const workerTiers: Tier[] | null = (() => {
-                const tiers: Tier[] = [];
-                if (wLpPrefPct != null) {
-                  tiers.push({ tier: `Pref Return (${(wLpPrefPct * 100).toFixed(0)}%)`, gp: 0, lp: 100 });
+              {/* Waterfall Allocation Preview — the dollar waterfall */}
+              <SectionCard
+                title="Waterfall Allocation Preview"
+                note={
+                  <span
+                    onClick={() => setTab('Waterfall')}
+                    style={{ fontSize: 11.5, color: palette.linkBlue, fontWeight: 600, cursor: 'pointer' }}
+                  >
+                    View / edit waterfall →
+                  </span>
                 }
-                if (wTier1Pct != null && wTier1Hurdle != null) {
-                  tiers.push({
-                    tier: `Tier 1 — Promote above ${(wTier1Hurdle * 100).toFixed(0)}% LP IRR`,
-                    gp: Math.round(wTier1Pct * 100),
-                    lp: Math.round((1 - wTier1Pct) * 100),
-                  });
-                }
-                if (wTier2Pct != null && wTier2Hurdle != null) {
-                  tiers.push({
-                    tier: `Tier 2 — Promote above ${(wTier2Hurdle * 100).toFixed(0)}% LP IRR`,
-                    gp: Math.round(wTier2Pct * 100),
-                    lp: Math.round((1 - wTier2Pct) * 100),
-                  });
-                }
-                return tiers.length > 0 ? tiers : null;
-              })();
-              // Prefer worker-emitted tier fields; otherwise show the live
-              // promote structure (benchmark seed + analyst overrides) so the
-              // waterfall is never empty on a real deal.
-              const rows = workerTiers ?? resolveWaterfall(overrides);
-              return (
-                <table className="w-full text-[12.5px]">
-                  <thead>
-                    <tr className="text-ink-500 text-[11px] border-b border-border">
-                      <th className="text-left font-medium pb-2">Tier</th>
-                      <th className="text-right font-medium pb-2">GP Cash Flow</th>
-                      <th className="text-right font-medium pb-2">LP Cash Flow</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {rows.map(w => (
-                      <tr key={w.tier} className="border-b border-border/50">
-                        <td className="py-2">{w.tier}</td>
-                        <td className="text-right tabular-nums">{w.gp}%</td>
-                        <td className="text-right tabular-nums">{w.lp}%</td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              );
-            })()}
-          </Card>
+              >
+                <AllocationTable
+                  allocations={tierAllocations}
+                  lpTotal={lpAllocTotal}
+                  gpTotal={gpAllocTotal}
+                  total={allocTotal}
+                  reconciles={reconcilesFlag === true}
+                  footnote={`Allocation of all projected distributions across the ${has(holdYears) ? holdYears : '—'}-year hold. The promote applies only to residual proceeds above the preferred return and catch-up.`}
+                />
+              </SectionCard>
+            </div>
+          )}
+
+          {tab === 'Waterfall' && (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+              {/* Ownership & Preferred Return */}
+              <SectionCard
+                title="Ownership & Preferred Return"
+                note="Entered by you — Fondok does not read the JV agreement in this release"
+              >
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(320px,1fr))', gap: '0 32px' }}>
+                  <KeyRow
+                    label="GP / Sponsor Ownership"
+                    dot="assumption"
+                    editable={liveMode}
+                    editing={editing === 'gpPct-wf'}
+                    draft={draft}
+                    onStart={() => startEdit('gpPct-wf', gpPct)}
+                    onDraft={setDraft}
+                    onCommit={() => commitPct('gp_equity_pct', 'lp_equity_pct')}
+                    onCancel={cancelEdit}
+                    value={pctv(gpPct, 0)}
+                    valueColor={prov.blue}
+                  />
+                  <KeyRow label="LP Investor Ownership" dot="calculated" value={pctv(lpPct, 0)} valueColor={prov.gray} />
+                  <KeyRow
+                    label="Preferred Return"
+                    dot="assumption"
+                    editable={liveMode}
+                    editing={editing === 'pref-wf'}
+                    draft={draft}
+                    onStart={() => startEdit('pref-wf', prefRate)}
+                    onDraft={setDraft}
+                    onCommit={() => commitPct('pref_rate')}
+                    onCancel={cancelEdit}
+                    value={pctv(prefRate, 0)}
+                    valueColor={prov.blue}
+                  />
+                  <CompoundingRow value={compounding} onChange={setCompounding} />
+                </div>
+              </SectionCard>
+
+              {/* Promote Waterfall — typed tiers (ROC / Preferred / Catch-Up / Promote) */}
+              <SectionCard title="Promote Waterfall">
+                <PromoteWaterfall
+                  prefRate={prefRate}
+                  hasCatchUp={hasCatchUp}
+                  liveMode={liveMode}
+                  overrides={overrides}
+                  editing={editing}
+                  draft={draft}
+                  setDraft={setDraft}
+                  startEdit={startEdit}
+                  cancelEdit={cancelEdit}
+                  commitPct={commitPct}
+                />
+                {/* TODO(FON-72): +Add tier / remove tier need a variable-length
+                    waterfall on the backend (the override model keys tiers by
+                    fixed index). Not built here — the six editable bands map
+                    1:1 to the worker seed and preserve the existing save path. */}
+              </SectionCard>
+
+              {/* Allocation of Projected Proceeds — the dollar waterfall */}
+              <SectionCard
+                title="Allocation of Projected Proceeds"
+                note="Calculated from the tiers above and the modeled deal cash flow"
+              >
+                <AllocationTable
+                  allocations={tierAllocations}
+                  lpTotal={lpAllocTotal}
+                  gpTotal={gpAllocTotal}
+                  total={allocTotal}
+                  reconciles={reconcilesFlag === true}
+                />
+              </SectionCard>
+            </div>
+          )}
+
+          {tab === 'Cash Flows' && (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+              <SectionCard
+                variant="title"
+                title="Partner Cash Flows"
+                note={`Annual · close through disposition in year ${has(holdYears) ? holdYears : '—'}`}
+              >
+                <PartnerCashFlows
+                  gpEquity={gpEquity}
+                  lpEquity={lpEquity}
+                  gpFlows={wGpFlows}
+                  lpFlows={wLpFlows}
+                  gpDist={gpDist}
+                  lpDist={lpDist}
+                  totalDist={totalDist}
+                  holdYears={holdYears}
+                />
+              </SectionCard>
+
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(360px,1fr))', gap: 14 }}>
+                <ReconCard
+                  title="Contributions, distributions and profit"
+                  note="Net profit is total distributions less total contributions — not a cash-flow total."
+                  rows={[
+                    { label: 'Total contributions', value: money(totalEquity) },
+                    { label: 'Total distributions', value: money(totalDist) },
+                    { label: 'Net profit', value: money(dealProfit), total: true },
+                  ]}
+                />
+                <ReconCard
+                  title="Invested equity"
+                  note="Contributions are drawn in full at close in this structure."
+                  rows={[
+                    { label: 'Initial equity required', value: money(totalEquity) },
+                    { label: 'Additional contributions', value: money(0), muted: true },
+                    { label: 'Total invested equity', value: money(totalEquity), total: true },
+                    { label: 'GP share', value: money(gpEquity) },
+                    { label: 'LP share', value: money(lpEquity) },
+                  ]}
+                />
+                <ReconCard
+                  title="Distributions"
+                  note="GP and LP distributions reconcile to the deal cash flow above."
+                  rows={[
+                    { label: 'Operating distributions', value: (has(totalDist) && has(exitDist)) ? money(totalDist - exitDist) : '—' },
+                    { label: 'Exit distributions', value: money(exitDist) },
+                    { label: 'Total distributions', value: money(totalDist), total: true },
+                    { label: 'GP distributions', value: money(gpDist) },
+                    { label: 'LP distributions', value: money(lpDist) },
+                  ]}
+                />
+              </div>
+            </div>
+          )}
+
           {computing && (
             <div className="absolute inset-0 bg-bg/60 backdrop-blur-[1px] flex items-start justify-center pt-12 rounded-md">
               <span className="inline-flex items-center gap-2 px-3 py-1.5 bg-white border border-border rounded-md shadow-card text-[12.5px] font-medium text-ink-700">
@@ -469,337 +639,600 @@ export default function PartnershipTab() {
             </div>
           )}
         </div>
-      )}
-
-      {tab === 'Waterfall Structure' && (
-        <div className="space-y-5">
-          {/* Ownership & preferred return — editable assumptions */}
-          <Card className="p-5">
-            <div className="flex items-center justify-between mb-1">
-              <h3 className="text-[13px] font-semibold text-ink-900">Ownership &amp; Preferred Return</h3>
-              <span className={cn('text-[11px]', liveMode ? 'text-ink-500' : 'text-ink-400')}>
-                {liveMode ? 'Editable · changes re-run the model' : 'Read-only on demo deals'}
-              </span>
-            </div>
-            <p className="text-[11.5px] text-ink-500 mb-4">
-              The equity split between sponsor and investors, and the LP preferred return paid before any promote.
-              LP ownership derives from GP so the two always total 100%.
-            </p>
-            {(() => {
-              const gpOwn = readOverrideNum(overrides, 'gp_equity_pct', 0.10);
-              const lpOwn = readOverrideNum(overrides, 'lp_equity_pct', 0.90);
-              const gpEqPick = pickNum(wGpEquity);
-              const lpEqPick = pickNum(wLpEquity);
-              return (
-                <div className="grid grid-cols-3 gap-5">
-                  <PctField
-                    label="GP / Sponsor Ownership"
-                    valueFraction={gpOwn}
-                    overridden={'gp_equity_pct' in overrides}
-                    liveMode={liveMode}
-                    onCommit={(f) => onSaveOverride({ gp_equity_pct: f, lp_equity_pct: round6(1 - f) })}
-                    sub={fmtOrDash(gpEqPick, v => fmtCurrency(v, { compact: true }))}
-                  />
-                  <div>
-                    <label className="block text-[11.5px] text-ink-500 mb-1">LP Investor Ownership</label>
-                    <div className="w-full px-3 py-2 text-[13px] border border-transparent rounded-md bg-ink-300/10 tabular-nums text-ink-600">
-                      {(lpOwn * 100).toFixed(0)}%
-                    </div>
-                    <div className="text-[10.5px] text-ink-400 mt-1">
-                      {fmtOrDash(lpEqPick, v => fmtCurrency(v, { compact: true }))} · derived
-                    </div>
-                  </div>
-                  <PctField
-                    label="Preferred Return"
-                    valueFraction={readOverrideNum(overrides, 'pref_rate', 0.10)}
-                    overridden={'pref_rate' in overrides}
-                    liveMode={liveMode}
-                    onCommit={(f) => onSaveOverride({ pref_rate: f })}
-                    sub="LP hurdle before promote"
-                  />
-                </div>
-              );
-            })()}
-          </Card>
-
-          {/* Promote waterfall — editable hurdles + GP split per tier */}
-          <Card className="p-5">
-            <div className="flex items-center justify-between mb-1">
-              <h3 className="text-[13px] font-semibold text-ink-900">Promote Waterfall</h3>
-              <span className={cn('text-[11px]', liveMode ? 'text-ink-500' : 'text-ink-400')}>
-                {liveMode ? 'Editable · LP split derives from GP' : 'Read-only on demo deals'}
-              </span>
-            </div>
-            <p className="text-[11.5px] text-ink-500 mb-4">
-              Each tier splits residual cash once cumulative LP IRR clears its hurdle. Seeded from the
-              institutional benchmark — edit any hurdle or GP split to model a different promote.
-            </p>
-            <table className="w-full text-[12.5px]">
-              <thead>
-                <tr className="text-ink-500 text-[11px] border-b border-border">
-                  <th className="text-left font-medium pb-2">Tier</th>
-                  <th className="text-right font-medium pb-2 w-36">IRR Hurdle</th>
-                  <th className="text-right font-medium pb-2 w-36">GP Split</th>
-                  <th className="text-right font-medium pb-2 w-24">LP Split</th>
-                </tr>
-              </thead>
-              <tbody>
-                {WATERFALL_SEED.map((t, idx) => {
-                  const gpPath = `partnership.waterfall.${idx}.gp_split`;
-                  const hurdlePath = `partnership.waterfall.${idx}.hurdle_rate`;
-                  const gpFrac = readOverrideNum(overrides, gpPath, t.gp);
-                  const hurdleFrac = readOverrideNum(overrides, hurdlePath, t.hurdle);
-                  return (
-                    <tr key={t.label} className="border-b border-border/50">
-                      <td className="py-2 text-ink-800">{t.label}</td>
-                      <td className="py-1 text-right">
-                        <CellPct
-                          valueFraction={hurdleFrac}
-                          overridden={hurdlePath in overrides}
-                          liveMode={liveMode}
-                          onCommit={(f) => onSaveOverride({ [hurdlePath]: f })}
-                        />
-                      </td>
-                      <td className="py-1 text-right">
-                        <CellPct
-                          valueFraction={gpFrac}
-                          overridden={gpPath in overrides}
-                          liveMode={liveMode}
-                          onCommit={(f) => onSaveOverride({ [gpPath]: f, [`partnership.waterfall.${idx}.lp_split`]: round6(1 - f) })}
-                        />
-                      </td>
-                      <td className="py-2 text-right tabular-nums text-ink-500">
-                        {Math.round((1 - gpFrac) * 100)}%
-                      </td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
-            {!liveMode && (
-              <div className="mt-4 text-[11.5px] text-ink-400">
-                Waterfall editing is available on live deals. The demo shows the benchmark structure.
-              </div>
-            )}
-          </Card>
-        </div>
-      )}
-
-      {tab === 'Distribution Timeline' && (
-        <Card className="p-5">
-          <h3 className="text-[13px] font-semibold text-ink-900 mb-3">Annual Distributions</h3>
-          {(() => {
-            // Worker GP/LP cash flows are the source of truth. Final element is the exit year.
-            const useWorker = Array.isArray(wGpFlows) && Array.isArray(wLpFlows)
-              && wGpFlows.length > 0 && wGpFlows.length === wLpFlows.length;
-            const rows: Array<[string, number, number, number]> = useWorker
-              ? wGpFlows!.map((gp, i) => {
-                  const lp = wLpFlows![i] ?? 0;
-                  const yearLabel = i === wGpFlows!.length - 1
-                    ? `Year ${i + 1} (Exit)`
-                    : `Year ${i + 1}`;
-                  return [yearLabel, gp, lp, gp + lp];
-                })
-              : [];
-            if (rows.length === 0) {
-              return (
-                <div className="py-6 text-center text-[12px] text-ink-500">
-                  Run the Partnership engine to populate annual distributions.
-                </div>
-              );
-            }
-            return (
-              <table className="w-full text-[12.5px]">
-                <thead>
-                  <tr className="text-ink-500 text-[11px] border-b border-border">
-                    <th className="text-left font-medium pb-2">Year</th>
-                    <th className="text-right font-medium pb-2">GP Distribution</th>
-                    <th className="text-right font-medium pb-2">LP Distribution</th>
-                    <th className="text-right font-medium pb-2">Total</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {rows.map(([y, gp, lp, t]) => (
-                    <DistRow key={y} y={y} gp={gp} lp={lp} t={t} />
-                  ))}
-                </tbody>
-              </table>
-            );
-          })()}
-        </Card>
-      )}
-
-      {tab === 'Returns Summary' && (() => {
-        const gpMultiplePick = pickNum(wGpMultiple);
-        const lpMultiplePick = pickNum(wLpMultiple);
-        const gpDistPick = pickNum(wGpDist);
-        const lpDistPick = pickNum(wLpDist);
-        const prefMet = wLpIrr != null
-          ? (wLpIrr >= 0.10 ? 'Yes' : 'No')
-          : '—';
-        return (
-          <div className="grid grid-cols-2 gap-5">
-            <Card className="p-5">
-              <h3 className="text-[13px] font-semibold text-ink-900 mb-3">GP Returns</h3>
-              <div className="space-y-2 text-[12.5px]">
-                <Row k="LIRR" v={gpIrrLabel} />
-                <Row k="Equity Multiple" v={fmtOrDash(gpMultiplePick, v => `${v.toFixed(2)}x`)} />
-                <Row k="Promote" v={promoteLabel} />
-                <Row k="Total Distributions" v={fmtOrDash(gpDistPick, fmtCurrency)} />
-              </div>
-            </Card>
-            <Card className="p-5">
-              <h3 className="text-[13px] font-semibold text-ink-900 mb-3">LP Returns</h3>
-              <div className="space-y-2 text-[12.5px]">
-                <Row k="LIRR" v={lpIrrLabel} />
-                <Row k="Equity Multiple" v={fmtOrDash(lpMultiplePick, v => `${v.toFixed(2)}x`)} />
-                <Row k="Pref Met" v={prefMet} />
-                <Row k="Total Distributions" v={fmtOrDash(lpDistPick, fmtCurrency)} />
-              </div>
-            </Card>
-          </div>
-        );
-      })()}
-      <EngineRunHistory dealId={dealId} seedDemo />
+        <EngineRunHistory dealId={dealId} seedDemo />
       </div>
       <EngineRightRail />
     </div>
   );
 }
 
-function KPI({ label, value, flashKey, tip }: { label: string; value: string; flashKey?: unknown; tip?: string }) {
-  const flash = useFlash(flashKey ?? value);
+// ─────────────────────────────────────────────────────────────────────
+// Manual-inputs banner (canonical blue card between the sub-tabs and body).
+// ─────────────────────────────────────────────────────────────────────
+function ManualInputsBanner({ onEdit }: { onEdit: () => void }) {
   return (
-    <Card className={cn('p-4', flash && 'value-flash')}>
-      <div className="text-[10.5px] text-ink-500 uppercase tracking-wide">
-        {tip ? <MetricLabel label={label} tip={tip} /> : label}
-      </div>
-      <div className="text-[20px] font-semibold tabular-nums mt-1 text-ink-900">{value}</div>
-    </Card>
-  );
-}
-function DistRow({ y, gp, lp, t }: { y: string; gp: number; lp: number; t: number }) {
-  const flash = useFlash(t);
-  return (
-    <tr className={cn('border-b border-border/50', flash && 'value-flash')}>
-      <td className="py-2 font-medium">{y}</td>
-      <td className="text-right tabular-nums">{fmtCurrency(gp)}</td>
-      <td className="text-right tabular-nums">{fmtCurrency(lp)}</td>
-      <td className="text-right tabular-nums font-medium">{fmtCurrency(t)}</td>
-    </tr>
-  );
-}
-
-function Row({ k, v }: { k: string; v: string }) {
-  return (
-    <div className="flex justify-between py-1.5 border-b border-border/50 last:border-0">
-      <span className="text-ink-500">{k}</span>
-      <span className="font-medium tabular-nums">{v}</span>
-    </div>
-  );
-}
-
-function round6(n: number): number {
-  return Math.round(n * 1e6) / 1e6;
-}
-
-// Labeled editable percent field — displays whole-percent, saves a fraction.
-function PctField({
-  label, valueFraction, overridden, liveMode, onCommit, sub,
-}: {
-  label: string;
-  valueFraction: number;
-  overridden: boolean;
-  liveMode: boolean;
-  onCommit: (fraction: number) => void;
-  sub?: string;
-}) {
-  const [draft, setDraft] = useState<string | null>(null);
-  const shown = draft ?? (valueFraction * 100).toFixed(0);
-  const commit = () => {
-    if (draft === null) return;
-    const t = draft.trim();
-    setDraft(null);
-    if (t === '') return;
-    const pct = Number(t);
-    if (Number.isFinite(pct)) onCommit(round6(pct / 100));
-  };
-  return (
-    <div>
-      <label className="block text-[11.5px] text-ink-500 mb-1">
-        {label}
-        {overridden && (
-          <span className="ml-1.5 text-[10px] text-blue-600" title="Analyst override">• edited</span>
-        )}
-      </label>
-      <div className={cn(
-        'flex items-center gap-1 px-3 py-2 rounded-md border',
-        liveMode
-          ? 'border-border focus-within:border-brand-500 focus-within:ring-2 focus-within:ring-brand-100'
-          : 'border-transparent bg-ink-300/10',
-        overridden && 'border-blue-400',
-      )}>
-        <input
-          value={shown}
-          onChange={(e) => setDraft(e.target.value)}
-          onBlur={commit}
-          onKeyDown={(e) => {
-            if (e.key === 'Enter') e.currentTarget.blur();
-            if (e.key === 'Escape') { setDraft(null); e.currentTarget.blur(); }
+    <div style={{
+      background: 'oklch(97.5% 0.015 250)', border: '1px solid #dbe3f5', borderRadius: 9,
+      padding: '12px 16px', marginBottom: 14, display: 'flex', flexDirection: 'column', gap: 8,
+    }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 14, flexWrap: 'wrap' }}>
+        <span style={{
+          display: 'flex', alignItems: 'center', gap: 6, fontSize: 10, fontWeight: 700,
+          letterSpacing: '.05em', color: palette.linkBlue, textTransform: 'uppercase', whiteSpace: 'nowrap',
+        }}>
+          <span style={{ width: 8, height: 8, borderRadius: '50%', background: prov.blue, display: 'inline-block' }} />
+          Manual inputs · current release
+        </span>
+        <span style={{ fontSize: 12.5, color: palette.ink, lineHeight: 1.5 }}>
+          Partnership terms are entered manually in this release and are not extracted from JV or
+          partnership documents. Fondok calculates the waterfall, allocations and partner returns from
+          what you enter.
+        </span>
+        <button
+          onClick={onEdit}
+          style={{
+            marginLeft: 'auto', background: palette.inkNavy, color: '#fff', border: 'none',
+            borderRadius: radius.button, padding: '6px 13px', fontSize: 11.5, fontWeight: 600,
+            cursor: 'pointer', fontFamily: 'inherit', whiteSpace: 'nowrap',
           }}
-          readOnly={!liveMode}
-          inputMode="decimal"
-          aria-label={label}
-          className="w-full bg-transparent text-[13px] tabular-nums text-ink-900 focus:outline-none"
-        />
-        <span className="text-ink-400 text-[12px]">%</span>
+        >
+          Edit assumptions →
+        </button>
       </div>
-      {sub && <div className="text-[10.5px] text-ink-400 mt-1">{sub}</div>}
+      <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap', borderTop: '1px solid #dbe3f5', paddingTop: 8 }}>
+        <span style={{
+          fontSize: 9.5, fontWeight: 700, letterSpacing: '.06em', color: palette.textSecondary,
+          textTransform: 'uppercase', background: '#fff', border: '1px solid #e2e1dc',
+          borderRadius: radius.pill, padding: '3px 9px', whiteSpace: 'nowrap',
+        }}>
+          Coming soon · document extraction
+        </span>
+        <span style={{ fontSize: 11.5, color: palette.textSecondary, lineHeight: 1.45 }}>
+          Upload partnership documents and automatically extract ownership, preferred return, promote and
+          waterfall terms in a future release.
+        </span>
+      </div>
     </div>
   );
 }
 
-// Compact editable percent cell for the waterfall table.
-function CellPct({
-  valueFraction, overridden, liveMode, onCommit,
-}: {
-  valueFraction: number;
-  overridden: boolean;
-  liveMode: boolean;
-  onCommit: (fraction: number) => void;
-}) {
-  const [draft, setDraft] = useState<string | null>(null);
-  const shown = draft ?? (valueFraction * 100).toFixed(0);
-  const commit = () => {
-    if (draft === null) return;
-    const t = draft.trim();
-    setDraft(null);
-    if (t === '') return;
-    const pct = Number(t);
-    if (Number.isFinite(pct)) onCommit(round6(pct / 100));
-  };
+// ─────────────────────────────────────────────────────────────────────
+// Key/value row — dot · label · optional link · value (editable inline).
+// ─────────────────────────────────────────────────────────────────────
+interface KeyRowProps {
+  label: string;
+  dot: ValueState;
+  value: ReactNode;
+  valueColor?: string;
+  bold?: boolean;
+  note?: string;
+  link?: { label: string; tab: string };
+  editable?: boolean;
+  editing?: boolean;
+  draft?: string;
+  onStart?: () => void;
+  onDraft?: (v: string) => void;
+  onCommit?: () => void;
+  onCancel?: () => void;
+}
+
+function KeyRow(p: KeyRowProps) {
   return (
-    <span className={cn(
-      'inline-flex items-center gap-0.5 justify-end rounded border px-1.5 py-0.5',
-      liveMode
-        ? 'border-border focus-within:border-brand-500 focus-within:ring-2 focus-within:ring-brand-100'
-        : 'border-transparent',
-      overridden && 'border-blue-400 bg-blue-50',
-    )}>
-      <input
-        value={shown}
-        onChange={(e) => setDraft(e.target.value)}
-        onBlur={commit}
-        onKeyDown={(e) => {
-          if (e.key === 'Enter') e.currentTarget.blur();
-          if (e.key === 'Escape') { setDraft(null); e.currentTarget.blur(); }
+    <>
+      <div style={{
+        display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12,
+        fontSize: 13, padding: '7px 0', borderBottom: `1px solid ${palette.hairlineRow}`,
+      }}>
+        <span style={{ display: 'flex', alignItems: 'center', gap: 7, minWidth: 0 }}>
+          <ProvenanceDot state={p.dot} size={8} />
+          <span style={{ color: palette.textSecondary, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+            {p.label}
+          </span>
+          {p.link && (
+            <a href={`?tab=${p.link.tab}`} style={{ fontSize: 10.5, color: palette.linkBlue, fontWeight: 600, whiteSpace: 'nowrap', textDecoration: 'none' }}>
+              {p.link.label}
+            </a>
+          )}
+        </span>
+        {p.editing ? (
+          <InlineEditor
+            draft={p.draft ?? ''}
+            width={120}
+            onDraft={p.onDraft}
+            onCommit={p.onCommit}
+            onCancel={p.onCancel}
+          />
+        ) : (
+          <span
+            onClick={p.editable ? p.onStart : undefined}
+            style={{
+              color: p.valueColor ?? palette.ink,
+              fontWeight: p.bold ? 700 : 400,
+              textDecoration: p.editable ? 'underline dotted' : undefined,
+              cursor: p.editable ? 'pointer' : 'default',
+              fontVariantNumeric: 'tabular-nums', whiteSpace: 'nowrap', flexShrink: 0,
+            }}
+          >
+            {p.value}
+          </span>
+        )}
+      </div>
+      {p.note && (
+        <div style={{ fontSize: 10.5, color: palette.textMuted, padding: '0 0 6px 15px', lineHeight: 1.45 }}>
+          {p.note}
+        </div>
+      )}
+    </>
+  );
+}
+
+// Compounding — canonical <select> (display-only workspace control).
+function CompoundingRow({ value, onChange }: { value: string; onChange: (v: string) => void }) {
+  return (
+    <div style={{
+      display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12,
+      fontSize: 13, padding: '7px 0', borderBottom: `1px solid ${palette.hairlineRow}`,
+    }}>
+      <span style={{ display: 'flex', alignItems: 'center', gap: 7, minWidth: 0 }}>
+        <ProvenanceDot state="assumption" size={8} />
+        <span style={{ color: palette.textSecondary, whiteSpace: 'nowrap' }}>Compounding</span>
+      </span>
+      <select
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        aria-label="Compounding"
+        style={{
+          fontSize: 12, fontFamily: 'inherit', fontWeight: 600, color: prov.blue,
+          background: palette.surfaceTint, border: '1px solid #e2e1dc', borderRadius: radius.button,
+          padding: '4px 8px', cursor: 'pointer',
         }}
-        readOnly={!liveMode}
+      >
+        {COMPOUNDING_OPTIONS.map((o) => <option key={o} value={o}>{o}</option>)}
+      </select>
+    </div>
+  );
+}
+
+// Shared inline percent editor (input + navy Save), canonical styling.
+function InlineEditor({
+  draft, width, onDraft, onCommit, onCancel,
+}: {
+  draft: string;
+  width: number;
+  onDraft?: (v: string) => void;
+  onCommit?: () => void;
+  onCancel?: () => void;
+}) {
+  return (
+    <span style={{ display: 'flex', alignItems: 'center', gap: 6, flexShrink: 0 }}>
+      <input
+        autoFocus
+        value={draft}
+        onChange={(e) => onDraft?.(e.target.value)}
+        onKeyDown={(e) => {
+          if (e.key === 'Enter') onCommit?.();
+          if (e.key === 'Escape') onCancel?.();
+        }}
         inputMode="decimal"
         aria-label="percent"
-        className="w-9 bg-transparent text-right text-[12.5px] tabular-nums text-ink-900 focus:outline-none"
+        style={{
+          width, fontSize: 12.5, fontFamily: 'inherit', border: `1px solid ${palette.linkBlue}`,
+          borderRadius: radius.control, padding: '4px 7px', textAlign: 'right', fontVariantNumeric: 'tabular-nums',
+        }}
       />
-      <span className="text-ink-400 text-[11px]">%</span>
+      <button
+        onClick={onCommit}
+        style={{
+          background: palette.inkNavy, color: '#fff', border: 'none', borderRadius: radius.control,
+          padding: '5px 9px', fontSize: 11, fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit',
+        }}
+      >
+        Save
+      </button>
     </span>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────────
+// Partner Returns metric card (Deal / LP / GP).
+// ─────────────────────────────────────────────────────────────────────
+function MetricCard({
+  title, note, metrics, accent,
+}: {
+  title: string;
+  note: string;
+  metrics: { label: string; value: ReactNode; size: number }[];
+  accent?: boolean;
+}) {
+  return (
+    <div style={{
+      border: `1px solid ${accent ? '#dbe3f5' : palette.border}`,
+      background: accent ? 'oklch(97.5% 0.015 250)' : palette.cardWhite,
+      borderRadius: 9, padding: '14px 16px',
+    }}>
+      <div style={{
+        fontSize: 10, fontWeight: 700, letterSpacing: '.05em',
+        color: accent ? palette.linkBlue : palette.eyebrow, textTransform: 'uppercase', marginBottom: 10,
+      }}>
+        {title}
+      </div>
+      {metrics.map((m) => (
+        <div key={m.label} style={{
+          display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', gap: 12,
+          padding: '5px 0', borderBottom: `1px solid ${palette.hairlineSection}`,
+        }}>
+          <span style={{ fontSize: 12, color: palette.textSecondary }}>{m.label}</span>
+          <span style={{ fontSize: m.size, fontWeight: 700, color: palette.ink, fontVariantNumeric: 'tabular-nums' }}>
+            {m.value}
+          </span>
+        </div>
+      ))}
+      <div style={{ fontSize: 10.5, color: palette.textMuted, marginTop: 8, lineHeight: 1.45 }}>{note}</div>
+    </div>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────────
+// Allocation of Projected Proceeds — the dollar waterfall (Tier / LP / GP /
+// Allocated proceeds) with a "Reconciles ✓" badge. Reads tier_allocations[].
+// ─────────────────────────────────────────────────────────────────────
+const ALLOC_GRID = 'minmax(190px,1.6fr) minmax(110px,1fr) minmax(110px,1fr) minmax(120px,1fr)';
+
+function AllocationTable({
+  allocations, lpTotal, gpTotal, total, reconciles, footnote,
+}: {
+  allocations: TierAllocation[] | undefined;
+  lpTotal: number | undefined;
+  gpTotal: number | undefined;
+  total: number | undefined;
+  reconciles: boolean;
+  footnote?: string;
+}) {
+  if (!allocations || allocations.length === 0) {
+    return (
+      <div style={{ fontSize: 12.5, color: palette.textMuted, padding: '10px 0' }}>
+        Run the Partnership engine to populate the allocation of projected proceeds.
+      </div>
+    );
+  }
+  const cell = (v: number | undefined, color: string, weight: number): ReactNode => (
+    <span style={{ textAlign: 'right', color, fontWeight: weight, fontVariantNumeric: 'tabular-nums' }}>
+      {money(v)}
+    </span>
+  );
+  return (
+    <>
+      <div style={{
+        display: 'grid', gridTemplateColumns: ALLOC_GRID, fontSize: 10, fontWeight: 700,
+        letterSpacing: '.05em', color: palette.textFaint, textTransform: 'uppercase',
+        paddingBottom: 7, borderBottom: `1px solid ${palette.border}`,
+      }}>
+        <span>Tier</span>
+        <span style={{ textAlign: 'right' }}>LP</span>
+        <span style={{ textAlign: 'right' }}>GP</span>
+        <span style={{ textAlign: 'right' }}>Allocated proceeds</span>
+      </div>
+      {allocations.map((a, i) => (
+        <div key={`${a.label}-${i}`} style={{
+          display: 'grid', gridTemplateColumns: ALLOC_GRID, fontSize: 12.5, padding: '7px 0',
+          borderBottom: `1px solid ${palette.hairlineRow}`, alignItems: 'center',
+        }}>
+          <span style={{ display: 'flex', alignItems: 'center', gap: 7, minWidth: 0 }}>
+            <ProvenanceDot state="calculated" size={8} />
+            <span style={{ color: palette.ink, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+              {a.label}
+            </span>
+          </span>
+          {cell(a.lp_amount, prov.gray, 400)}
+          {cell(a.gp_amount, prov.gray, 400)}
+          {cell(a.total_amount, prov.gray, 400)}
+        </div>
+      ))}
+      <div style={{
+        display: 'grid', gridTemplateColumns: ALLOC_GRID, fontSize: 12.5, padding: '7px 0',
+        borderBottom: `1px solid ${palette.hairlineRow}`, alignItems: 'center',
+      }}>
+        <span style={{ color: palette.ink, fontWeight: 700 }}>Total distributions</span>
+        {cell(lpTotal, prov.black, 700)}
+        {cell(gpTotal, prov.black, 700)}
+        {cell(total, prov.black, 700)}
+      </div>
+      {reconciles && (
+        <div style={{
+          display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap',
+          background: 'oklch(96.5% 0.03 155)', border: '1px solid oklch(88% 0.05 155)',
+          borderRadius: 7, padding: '8px 12px', marginTop: 10,
+        }}>
+          <span style={{ fontSize: 10, fontWeight: 700, letterSpacing: '.05em', color: 'oklch(40% 0.12 155)', textTransform: 'uppercase' }}>
+            Reconciles
+          </span>
+          <span style={{ fontSize: 11.5, color: palette.ink, fontVariantNumeric: 'tabular-nums' }}>
+            LP {money(lpTotal)} + GP {money(gpTotal)} = {money(total)} total deal distributions ✓
+          </span>
+        </div>
+      )}
+      {footnote && (
+        <div style={{ fontSize: 11, color: palette.textMuted, marginTop: 9, lineHeight: 1.5 }}>{footnote}</div>
+      )}
+    </>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────────
+// Promote Waterfall — typed tiers. Structural rows (ROC / Preferred /
+// Catch-Up) are derived read-only; the promote bands are the editable seed
+// mapped 1:1 to the worker override indices (existing save path preserved).
+// ─────────────────────────────────────────────────────────────────────
+const TIER_GRID = '38px minmax(180px,1.5fr) minmax(120px,1fr) 90px 90px minmax(210px,1.5fr)';
+
+function PromoteWaterfall({
+  prefRate, hasCatchUp, liveMode, overrides, editing, draft, setDraft, startEdit, cancelEdit, commitPct,
+}: {
+  prefRate: number;
+  hasCatchUp: boolean;
+  liveMode: boolean;
+  overrides: Record<string, unknown>;
+  editing: string | null;
+  draft: string;
+  setDraft: (v: string) => void;
+  startEdit: (id: string, fraction: number) => void;
+  cancelEdit: () => void;
+  commitPct: (primaryKey: string, complementKey?: string) => void;
+}) {
+  // Structural (read-only) rows first, then the editable promote bands.
+  const structural: Array<{ name: string; hurdle: string; gp: string; lp: string; desc: string; dot: ValueState }> = [
+    {
+      name: 'Tier I — Return of Capital', hurdle: 'Contributed capital', gp: '—', lp: '—',
+      desc: 'Contributed capital returned pro-rata before any return', dot: 'calculated',
+    },
+    {
+      name: 'Tier II — Preferred Return', hurdle: `${fmtPct(prefRate, 0)} preferred return`, gp: '—', lp: '—',
+      desc: 'LP preferred return on unreturned capital', dot: 'calculated',
+    },
+  ];
+  if (hasCatchUp) {
+    structural.push({
+      name: 'Tier III — GP Catch-Up', hurdle: 'Until GP catches up', gp: '100%', lp: '0%',
+      desc: 'Until the GP has caught up to its promote share', dot: 'calculated',
+    });
+  }
+
+  let idx = 0;
+  const structuralRows = structural.map((s) => {
+    idx += 1;
+    return (
+      <div key={s.name} style={{
+        display: 'grid', gridTemplateColumns: TIER_GRID, fontSize: 12.5, padding: '8px 0',
+        borderBottom: `1px solid ${palette.hairlineRow}`, alignItems: 'center',
+      }}>
+        <span style={{ color: palette.textMuted, fontVariantNumeric: 'tabular-nums' }}>{idx}</span>
+        <span style={{ display: 'flex', alignItems: 'center', gap: 7, minWidth: 0 }}>
+          <ProvenanceDot state={s.dot} size={8} />
+          <span style={{ color: palette.ink, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{s.name}</span>
+        </span>
+        <span style={{ textAlign: 'right', color: prov.gray, fontVariantNumeric: 'tabular-nums' }}>{s.hurdle}</span>
+        <span style={{ textAlign: 'right', color: prov.gray, fontVariantNumeric: 'tabular-nums' }}>{s.gp}</span>
+        <span style={{ textAlign: 'right', color: prov.gray, fontVariantNumeric: 'tabular-nums', paddingRight: 16 }}>{s.lp}</span>
+        <span style={{ color: palette.textMuted, lineHeight: 1.4, fontSize: 11.5 }}>{s.desc}</span>
+      </div>
+    );
+  });
+
+  const promoteRows = WATERFALL_SEED.map((t, i) => {
+    idx += 1;
+    const gpPath = `partnership.waterfall.${i}.gp_split`;
+    const hurdlePath = `partnership.waterfall.${i}.hurdle_rate`;
+    const gpFrac = readOverrideNum(overrides, gpPath, t.gp);
+    const hurdleFrac = readOverrideNum(overrides, hurdlePath, t.hurdle);
+    const last = i === WATERFALL_SEED.length - 1;
+    const name = last
+      ? `Promote — above ${fmtPct(hurdleFrac, 0)} LP IRR`
+      : `Promote — to ${fmtPct(hurdleFrac, 0)} LP IRR`;
+    const hurdleId = `t${i}-h`;
+    const splitId = `t${i}-s`;
+    return (
+      <div key={`promote-${i}`} style={{
+        display: 'grid', gridTemplateColumns: TIER_GRID, fontSize: 12.5, padding: '8px 0',
+        borderBottom: `1px solid ${palette.hairlineRow}`, alignItems: 'center',
+      }}>
+        <span style={{ color: palette.textMuted, fontVariantNumeric: 'tabular-nums' }}>{idx}</span>
+        <span style={{ display: 'flex', alignItems: 'center', gap: 7, minWidth: 0 }}>
+          <ProvenanceDot state="assumption" size={8} />
+          <span style={{ color: palette.ink, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{name}</span>
+        </span>
+        {/* Hurdle (editable) */}
+        <span style={{ display: 'flex', justifyContent: 'flex-end' }}>
+          {editing === hurdleId ? (
+            <InlineEditor
+              draft={draft} width={66}
+              onDraft={setDraft}
+              onCommit={() => commitPct(hurdlePath)}
+              onCancel={cancelEdit}
+            />
+          ) : (
+            <span
+              onClick={liveMode ? () => startEdit(hurdleId, hurdleFrac) : undefined}
+              style={{
+                textAlign: 'right', color: liveMode ? prov.blue : prov.gray,
+                textDecoration: liveMode ? 'underline dotted' : undefined,
+                cursor: liveMode ? 'pointer' : 'default', fontVariantNumeric: 'tabular-nums',
+              }}
+            >
+              {`Until ${fmtPct(hurdleFrac, 0)} LP IRR`}
+            </span>
+          )}
+        </span>
+        {/* GP split (editable) */}
+        <span style={{ display: 'flex', justifyContent: 'flex-end' }}>
+          {editing === splitId ? (
+            <InlineEditor
+              draft={draft} width={56}
+              onDraft={setDraft}
+              onCommit={() => commitPct(gpPath, `partnership.waterfall.${i}.lp_split`)}
+              onCancel={cancelEdit}
+            />
+          ) : (
+            <span
+              onClick={liveMode ? () => startEdit(splitId, gpFrac) : undefined}
+              style={{
+                textAlign: 'right', color: liveMode ? prov.blue : prov.gray,
+                textDecoration: liveMode ? 'underline dotted' : undefined,
+                cursor: liveMode ? 'pointer' : 'default', fontVariantNumeric: 'tabular-nums',
+              }}
+            >
+              {fmtPct(gpFrac, 0)}
+            </span>
+          )}
+        </span>
+        <span style={{ textAlign: 'right', color: prov.gray, fontVariantNumeric: 'tabular-nums', paddingRight: 16 }}>
+          {fmtPct(1 - gpFrac, 0)}
+        </span>
+        <span style={{ color: palette.textMuted, lineHeight: 1.4, fontSize: 11.5 }}>
+          {last ? 'All remaining proceeds above the final hurdle' : 'Residual split until LP IRR reaches the hurdle'}
+        </span>
+      </div>
+    );
+  });
+
+  return (
+    <>
+      <div style={{
+        display: 'grid', gridTemplateColumns: TIER_GRID, fontSize: 10, fontWeight: 700,
+        letterSpacing: '.05em', color: palette.textFaint, textTransform: 'uppercase',
+        paddingBottom: 7, borderBottom: `1px solid ${palette.border}`,
+      }}>
+        <span>Tier</span>
+        <span>Name</span>
+        <span style={{ textAlign: 'right' }}>Hurdle</span>
+        <span style={{ textAlign: 'right' }}>GP split</span>
+        <span style={{ textAlign: 'right', paddingRight: 16 }}>LP split</span>
+        <span>Description</span>
+      </div>
+      {structuralRows}
+      {promoteRows}
+      <div style={{ fontSize: 11, color: palette.textMuted, marginTop: 9, lineHeight: 1.5 }}>
+        LP split is always 100% − GP split. Hurdles are LP IRR thresholds; the final tier takes everything
+        above the last hurdle.
+        {!liveMode && ' Waterfall editing is available on live deals.'}
+      </div>
+    </>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────────
+// Partner Cash Flows — navy statement grid (contributions vs distributions).
+// Grounded entirely in the partnership engine's own series; the deal
+// operating/exit split is intentionally omitted (needs the Returns/Cash Flow
+// series threaded in — flagged, not fabricated).
+// ─────────────────────────────────────────────────────────────────────
+function PartnerCashFlows({
+  gpEquity, lpEquity, gpFlows, lpFlows, gpDist, lpDist, totalDist, holdYears,
+}: {
+  gpEquity: number | undefined;
+  lpEquity: number | undefined;
+  gpFlows: number[] | undefined;
+  lpFlows: number[] | undefined;
+  gpDist: number | undefined;
+  lpDist: number | undefined;
+  totalDist: number | undefined;
+  holdYears: number | undefined;
+}) {
+  const usable = Array.isArray(gpFlows) && Array.isArray(lpFlows)
+    && gpFlows.length > 0 && gpFlows.length === lpFlows.length;
+
+  if (!usable) {
+    return (
+      <div style={{ fontSize: 12.5, color: palette.textMuted, padding: '14px 18px' }}>
+        Run the Partnership engine to populate partner cash flows.
+      </div>
+    );
+  }
+
+  const columns = ['Total deal cash flow', 'GP contribution', 'LP contribution', 'GP distribution', 'LP distribution'];
+  const dash = { text: '—', color: palette.textFaint };
+
+  const rows = [
+    {
+      label: 'Close', bg: palette.surfaceTint,
+      cells: [
+        dash,
+        { text: money(gpEquity), color: prov.blue },
+        { text: money(lpEquity), color: prov.blue },
+        dash, dash,
+      ],
+    },
+    ...gpFlows!.map((gp, i) => {
+      const lp = lpFlows![i] ?? 0;
+      const isExit = i === gpFlows!.length - 1;
+      return {
+        label: isExit ? `Year ${i + 1} / Exit` : `Year ${i + 1}`,
+        bg: 'transparent',
+        cells: [
+          { text: money(gp + lp), color: prov.gray },
+          dash, dash,
+          { text: money(gp), color: prov.gray },
+          { text: money(lp), color: prov.gray },
+        ],
+      };
+    }),
+    {
+      label: 'Total', bg: palette.surfaceTint, total: true,
+      cells: [
+        { text: money(totalDist), color: prov.black },
+        { text: money(gpEquity), color: prov.black },
+        { text: money(lpEquity), color: prov.black },
+        { text: money(gpDist), color: prov.black },
+        { text: money(lpDist), color: prov.black },
+      ],
+    },
+  ];
+
+  return (
+    <StatementTable
+      columns={columns}
+      lineItemHeader="Period"
+      showDots={false}
+      gridTemplateColumns={`100px repeat(${columns.length}, minmax(122px,1fr))`}
+      rows={rows.map((r) => ({
+        label: r.label,
+        total: (r as { total?: boolean }).total,
+        bg: r.bg,
+        cells: r.cells.map((c) => ({ text: c.text, color: c.color })),
+      }))}
+      footnote={`Contributions and distributions are shown separately — a contribution is never a negative distribution. The schedule ends at the modeled disposition in year ${has(holdYears) ? holdYears : '—'}.`}
+    />
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────────
+// Reconciliation card — label / value list (no dots), bold totals.
+// ─────────────────────────────────────────────────────────────────────
+function ReconCard({
+  title, note, rows,
+}: {
+  title: string;
+  note: string;
+  rows: { label: string; value: ReactNode; total?: boolean; muted?: boolean }[];
+}) {
+  return (
+    <SectionCard title={title}>
+      {rows.map((r) => (
+        <div key={r.label} style={{
+          display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12,
+          fontSize: 13, padding: '7px 0', borderBottom: `1px solid ${palette.hairlineRow}`,
+        }}>
+          <span style={{ color: r.total ? palette.ink : palette.textSecondary, fontWeight: r.total ? 700 : 400 }}>
+            {r.label}
+          </span>
+          <span style={{
+            color: r.total ? prov.black : r.muted ? prov.muted : prov.gray,
+            fontWeight: r.total ? 700 : 400, fontVariantNumeric: 'tabular-nums',
+          }}>
+            {r.value}
+          </span>
+        </div>
+      ))}
+      <div style={{ fontSize: 11, color: palette.textMuted, marginTop: 9, lineHeight: 1.5 }}>{note}</div>
+    </SectionCard>
   );
 }
