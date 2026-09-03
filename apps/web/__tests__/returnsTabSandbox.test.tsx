@@ -136,7 +136,6 @@ vi.mock('@/lib/api', async () => {
 // headline KPIs + the Live Assumptions card.
 vi.mock('@/components/project/EngineHeader', () => ({ default: () => null }));
 vi.mock('@/components/project/EngineRightRail', () => ({ default: () => null }));
-vi.mock('@/components/project/EngineLegend', () => ({ default: () => null }));
 vi.mock('@/components/project/EngineRunHistory', () => ({ default: () => null }));
 vi.mock('@/components/project/WhatJustHappened', () => ({ default: () => null }));
 vi.mock('@/components/project/PricingSensitivityPanel', () => ({ default: () => null }));

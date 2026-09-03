@@ -13,8 +13,24 @@ import PricingSensitivityPanel from './PricingSensitivityPanel';
 import MaxPricePanel from './MaxPricePanel';
 import { fmtPct, cn } from '@/lib/format';
 import { api, isWorkerConnected, type ReturnsPreviewResponse } from '@/lib/api';
-import type { SensitivityMatrix } from '@/lib/engines';
-import type { SensitivityCell } from '@/lib/engines/types';
+// Sensitivity grid shapes (relocated here when the client-side lib/engines model
+// was retired — the worker sensitivity engine is now the only source).
+interface SensitivityCell {
+  value: number;
+  rowVal: number;
+  colVal: number;
+  isBase: boolean;
+}
+interface SensitivityMatrix {
+  rowLabel: string;
+  colLabel: string;
+  rows: number[];
+  cols: number[];
+  cells: SensitivityCell[][];
+  unit: 'pct' | 'multiple';
+  baseRow: number;
+  baseCol: number;
+}
 import { getEngineField, useEngineOutputs } from '@/lib/hooks/useEngineOutputs';
 import { useFlash } from '@/lib/hooks/useFlash';
 import { IntroCard } from '@/components/help/IntroCard';

@@ -160,7 +160,6 @@ const hoisted = vi.hoisted(() => ({ outputs: null as EngineOutputsResponse | nul
 vi.mock('next/navigation', () => ({ useParams: () => ({ id: 'deal-1' }) }));
 vi.mock('@/components/project/EngineHeader', () => ({ default: () => null }));
 vi.mock('@/components/project/EngineRightRail', () => ({ default: () => null }));
-vi.mock('@/components/project/EngineLegend', () => ({ default: () => null }));
 vi.mock('@/components/project/EngineRunHistory', () => ({ default: () => null }));
 vi.mock('@/components/help/IntroCard', () => ({ IntroCard: () => null }));
 vi.mock('@/components/ui/Toast', () => ({ useToast: () => ({ toast: vi.fn() }) }));
