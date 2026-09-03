@@ -28,6 +28,8 @@ import type { EngineOutputsResponse } from '@/lib/api';
 
 vi.mock('next/navigation', () => ({
   useParams: () => ({ id: 'deal-1' }),
+  useRouter: () => ({ push: vi.fn(), replace: vi.fn(), prefetch: vi.fn(), back: vi.fn() }),
+  useSearchParams: () => new URLSearchParams(),
 }));
 
 // The worker outputs under test. The headline + sandbox base both read from
@@ -191,6 +193,9 @@ describe('ReturnsTab ephemeral sandbox', () => {
 
   it('raises the guardrail banner + calls the non-persisting preview on slider change', async () => {
     render(<ReturnsTab />);
+    // Rebuilt ReturnsTab: the Live Assumptions sandbox moved to the
+    // Sensitivities sub-tab, so navigate there before the sliders exist.
+    fireEvent.click(screen.getByRole('tab', { name: 'Sensitivities' }));
     const sliders = screen.getAllByRole('slider');
     expect(sliders.length).toBe(5);
     // Drag Exit Cap Rate off its 0.07 base.
@@ -210,6 +215,8 @@ describe('ReturnsTab ephemeral sandbox', () => {
 
   it('"Reset to base case" restores base and clears the banner without persisting', async () => {
     render(<ReturnsTab />);
+    // Sandbox lives on the Sensitivities sub-tab (rebuilt ReturnsTab).
+    fireEvent.click(screen.getByRole('tab', { name: 'Sensitivities' }));
     const sliders = screen.getAllByRole('slider');
     fireEvent.change(sliders[0], { target: { value: '0.09' } });
     expect(screen.getByText(/Sensitivity override active/i)).toBeInTheDocument();

@@ -132,7 +132,10 @@ vi.mock('@/lib/api', async () => {
     isWorkerConnected: () => true,
     api: {
       ...actual.api,
-      deals: { ...actual.api.deals, update: updateSpy },
+      // Lazy-wrapped: a direct `update: updateSpy` is read when the hoisted
+      // vi.mock factory builds this object (before `updateSpy`'s const is
+      // initialized) → "Cannot access 'updateSpy' before initialization".
+      deals: { ...actual.api.deals, update: (...a: unknown[]) => updateSpy(...(a as Parameters<typeof updateSpy>)) },
     },
   };
 });

@@ -157,7 +157,7 @@ describe('cashFlowStatement — pure view-model helpers', () => {
 
 const hoisted = vi.hoisted(() => ({ outputs: null as EngineOutputsResponse | null }));
 
-vi.mock('next/navigation', () => ({ useParams: () => ({ id: 'deal-1' }) }));
+vi.mock('next/navigation', () => ({ useParams: () => ({ id: 'deal-1' }), useRouter: () => ({ push: vi.fn(), replace: vi.fn(), prefetch: vi.fn(), back: vi.fn() }), useSearchParams: () => new URLSearchParams() }));
 vi.mock('@/components/project/EngineHeader', () => ({ default: () => null }));
 vi.mock('@/components/project/EngineRightRail', () => ({ default: () => null }));
 vi.mock('@/components/project/EngineRunHistory', () => ({ default: () => null }));
@@ -188,17 +188,19 @@ describe('CashFlowTab — render', () => {
     render(<CashFlowTab />);
 
     // Summary sub-tab (default): KPI cards + bridge from the worker output.
-    expect(screen.getByText('Total Equity Invested')).toBeInTheDocument();
+    // Rebuilt tab renders KPI labels in canonical sentence case
+    // (KPI_LABEL_CANONICAL) — "Total equity invested", not title case.
+    expect(screen.getByText('Total equity invested')).toBeInTheDocument();
     expect(screen.getByText('Cash Flow Bridge')).toBeInTheDocument();
     // Output-only framing per the canonical design.
     expect(screen.getByText('Output only')).toBeInTheDocument();
 
-    // Switch to the levered statement — a line unique to it should appear,
-    // along with the provenance Data Key legend.
-    fireEvent.click(screen.getByRole('button', { name: 'Levered / Equity' }));
+    // Switch to the levered statement — a line unique to it should appear.
+    // Sub-tabs are now the shared SubTabNav (role="tab", not a plain button).
+    // The per-tab Data Key legend was removed (mounted once at page level), so
+    // the levered statement rendering is asserted via its unique line item.
+    fireEvent.click(screen.getByRole('tab', { name: 'Levered / Equity' }));
     expect(screen.getByText('Exit Debt Payoff')).toBeInTheDocument();
-    expect(screen.getByText('Data Key')).toBeInTheDocument();
-    expect(screen.getByText('Linked')).toBeInTheDocument();
   });
 
   it('renders the Run Model placeholder when no cash_flow output exists', () => {

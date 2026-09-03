@@ -174,7 +174,7 @@ describe('OverviewTab — engine-sourced KPI tiles (value-add)', () => {
     expect(screen.getByText('$43.00M')).toBeInTheDocument(); // total capitalization
     expect(screen.getByText('$4.62M')).toBeInTheDocument();  // renovation
     expect(screen.getByText('$3.64M')).toBeInTheDocument();  // stabilized NOI
-    expect(screen.getByText('19.8%')).toBeInTheDocument();   // levered IRR
+    expect(screen.getAllByText('19.8%').length).toBeGreaterThan(0); // levered IRR (shown in >1 place)
   });
 });
 
@@ -218,7 +218,10 @@ describe('OverviewTab — "Where this came from" popover', () => {
     render(<OverviewTab projectId="deal-uuid-1" />);
 
     // The Entry Valuation "Purchase Price" row shows the full-dollar value.
-    const cell = screen.getByText('$34,000,000');
+    // It also appears in the Transaction Sources & Uses table, which renders
+    // AFTER Entry Valuation (see section order above), so the first match in
+    // DOM order is the Entry Valuation cell this test means to open.
+    const [cell] = screen.getAllByText('$34,000,000');
     fireEvent.click(cell);
 
     // The shared WhereThisCameFrom popover (role=dialog, aria-labelled by field).
