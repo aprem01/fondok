@@ -1,6 +1,6 @@
 'use client';
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
-import { useParams } from 'next/navigation';
+import { useParams, useRouter } from 'next/navigation';
 import { TrendingUp } from 'lucide-react';
 import { Card } from '@/components/ui/Card';
 import { Button } from '@/components/ui/Button';
@@ -8,11 +8,10 @@ import { useToast } from '@/components/ui/Toast';
 import EngineHeader from './EngineHeader';
 import EngineRightRail from './EngineRightRail';
 import EngineRunHistory from './EngineRunHistory';
-import WhatJustHappened from './WhatJustHappened';
 import PricingSensitivityPanel from './PricingSensitivityPanel';
 import MaxPricePanel from './MaxPricePanel';
 import { fmtPct, cn } from '@/lib/format';
-import { api, isWorkerConnected, type ReturnsPreviewResponse } from '@/lib/api';
+import { api, isWorkerConnected, type ReturnsPreviewResponse, type ValueState } from '@/lib/api';
 // Sensitivity grid shapes (relocated here when the client-side lib/engines model
 // was retired — the worker sensitivity engine is now the only source).
 interface SensitivityCell {
@@ -33,24 +32,39 @@ interface SensitivityMatrix {
 }
 import { getEngineField, useEngineOutputs } from '@/lib/hooks/useEngineOutputs';
 import { useFlash } from '@/lib/hooks/useFlash';
+import { useTrace } from '@/lib/hooks/useValueTrace';
 import { IntroCard } from '@/components/help/IntroCard';
-import { MetricLabel } from '@/components/help/MetricLabel';
 import { CoachMark } from '@/components/help/CoachMark';
 import { Traced } from '@/components/help/Traced';
-import { GLOSSARY } from '@/lib/glossary';
+import {
+  SubTabNav,
+  KpiTile,
+  SectionCard,
+  ProvenanceDot,
+  palette,
+  prov,
+  radius,
+} from '@/components/design';
 
 // FON-68 — MVP Returns is three sub-tabs. Scenario management lives on
 // Scenario Analysis; comps live on Market → Transaction Comps.
-const subTabs = ['Returns Summary', 'Sensitivities', 'Pricing'];
+const SUB_TABS = ['Returns Summary', 'Sensitivities', 'Pricing'] as const;
+type SubTab = (typeof SUB_TABS)[number];
+
+type EngineOutputs = ReturnType<typeof useEngineOutputs>['outputs'];
+
+// ── Formatting helpers (canonical: money() / mm() / pct() / x()) ──
+const money = (v: number) =>
+  `${v < 0 ? '−$' : '$'}${Math.round(Math.abs(v)).toLocaleString('en-US')}`;
+const mm = (v: number) => `${v < 0 ? '−$' : '$'}${(Math.abs(v) / 1e6).toFixed(2)}M`;
+const fmtM = (v: number | null | undefined) => (v == null ? '—' : mm(v));
+const fmtX = (v: number | null | undefined) => (v == null ? '—' : `${v.toFixed(2)}x`);
 
 export default function ReturnsTab() {
-  const [tab, setTab] = useState('Returns Summary');
   const params = useParams();
   const dealId = (params?.id as string | undefined) ?? '';
   const { toast } = useToast();
-  const { outputs, previous } = useEngineOutputs(dealId);
-  const [computing, setComputing] = useState(false);
-  const [runToken, setRunToken] = useState<number | null>(null);
+  const { outputs } = useEngineOutputs(dealId);
 
   // Has the Returns engine been run for this deal? Used to decide whether to
   // render the placeholder or the live UI.
@@ -79,10 +93,6 @@ export default function ReturnsTab() {
             dependsOn="Cash Flow"
             dealId={dealId}
             engineName="returns"
-            onRunComplete={() => {
-              setComputing(false);
-              setRunToken(Date.now());
-            }}
           />
           <Card className="p-16 text-center">
             <div className="w-12 h-12 rounded-lg bg-ink-300/20 flex items-center justify-center mx-auto mb-4">
@@ -114,99 +124,43 @@ export default function ReturnsTab() {
   // outputs. The Returns tab no longer consumes the page assumptions
   // provider — its Live Assumptions sliders are a local, ephemeral sandbox
   // (FON-68 step 3), so nothing here can mutate Investment/Debt's model.
-  return (
-    <div className="flex gap-4">
-      <div className="flex-1 min-w-0">
-      <IntroCard
-        dismissKey="returns-intro"
-        title="The Returns Engine"
-        body={
-          <>
-            The headline numbers — IRR, equity multiple, cash-on-cash — and how sensitive
-            they are to your assumptions. This is what investors actually earn over the
-            hold period after debt service.
-          </>
-        }
-      />
-      <EngineHeader
-        name="Returns Engine"
-        desc="Computes IRR, equity multiple, and scenario sensitivities for investment analysis."
-        outputs={['Levered IRR', 'Unlevered IRR', 'Equity Multiple', '+1']}
-        dependsOn="Cash Flow"
-        complete
-        dealId={dealId}
-        engineName="returns"
-        runMode="all"
-        onRunStart={() => setComputing(true)}
-        onRunComplete={() => {
-          setComputing(false);
-          setRunToken(Date.now());
-        }}
-      />
-
-      <div className="flex items-center gap-1 mb-3 border-b border-border">
-        {subTabs.map(t => (
-          <button key={t} onClick={() => setTab(t)}
-            className={cn(
-              'px-4 py-2 text-[12.5px] border-b-2 transition-colors -mb-px',
-              tab === t ? 'border-brand-500 text-brand-700 font-medium' : 'border-transparent text-ink-500 hover:text-ink-900'
-            )}>
-            {t}
-          </button>
-        ))}
-      </div>
-
-      <WhatJustHappened
-        engine="returns"
-        engineLabel="Returns"
-        outputs={outputs}
-        previous={previous}
-        runToken={runToken}
-      />
-
-      <div className={cn(computing && 'relative pointer-events-none opacity-60')}>
-        {tab === 'Returns Summary' && <LiveReturnsSummary outputs={outputs} />}
-        {tab === 'Sensitivities' && <LiveSensitivities />}
-        {tab === 'Pricing' && (
-          <div className="flex flex-col gap-4">
-            <PricingSensitivityPanel dealId={dealId} />
-            <MaxPricePanel dealId={dealId} />
-          </div>
-        )}
-        {computing && (
-          <div className="absolute inset-0 bg-bg/60 backdrop-blur-[1px] flex items-center justify-center text-[12.5px] font-medium text-ink-700 rounded-md">
-            <span className="inline-flex items-center gap-2 px-3 py-1.5 bg-white border border-border rounded-md shadow-card">
-              <span className="w-1.5 h-1.5 rounded-full bg-brand-500 animate-pulse" />
-              Recomputing…
-            </span>
-          </div>
-        )}
-      </div>
-      <EngineRunHistory dealId={dealId} seedDemo />
-      </div>
-      <EngineRightRail />
-    </div>
-  );
+  return <ReturnsWorkspace outputs={outputs} dealId={dealId} />;
 }
 
 // ───────────────────────────────────────────────────────────────────
-// Live Returns Summary — headline reads WORKER outputs only; the Live
-// Assumptions card is an EPHEMERAL, LOCAL sensitivity sandbox backed by
-// the non-persisting /engines/returns/preview endpoint (FON-68 step 3).
-// Dragging a slider NEVER mutates the shared assumptions store, so the
-// canonical case in Investment / Debt is untouched.
+// Ephemeral Live-Assumptions sandbox — LOCAL state only (FON-68 step 3).
+// Dragging a slider NEVER mutates the shared assumptions store; it drives
+// the non-persisting POST /engines/returns/preview call. Canonical case in
+// Investment / Debt is untouched. Lifted to workspace level so the override
+// banner (top, spans sub-tabs) and the Live Assumptions card (Sensitivities)
+// share one source of truth — exactly the canonical `state.ov` model.
 // ───────────────────────────────────────────────────────────────────
 
 type SandboxKey = 'exitCapRate' | 'revparGrowth' | 'holdYears' | 'ltv' | 'interestRate';
 type SandboxValues = Record<SandboxKey, number>;
 
+interface SandboxField {
+  key: SandboxKey;
+  label: string;
+  min: number;
+  max: number;
+  step: number;
+  fmt: (v: number) => string;
+}
+
+const SANDBOX_FIELDS: SandboxField[] = [
+  { key: 'exitCapRate', label: 'Exit Cap Rate', min: 0.04, max: 0.12, step: 0.001, fmt: (v) => fmtPct(v, 2) },
+  { key: 'revparGrowth', label: 'RevPAR Growth', min: 0, max: 0.06, step: 0.0025, fmt: (v) => fmtPct(v, 2) },
+  { key: 'holdYears', label: 'Hold Period', min: 3, max: 10, step: 1, fmt: (v) => `${Math.round(v)} years` },
+  { key: 'ltv', label: 'LTV', min: 0.4, max: 0.8, step: 0.01, fmt: (v) => fmtPct(v, 0) },
+  { key: 'interestRate', label: 'Interest Rate', min: 0.04, max: 0.1, step: 0.00125, fmt: (v) => fmtPct(v, 3) },
+];
+
 // Read the canonical slider base case straight off the returns engine's
 // persisted ``inputs.assumptions`` blob — the SAME canonical run the headline
 // reads — so the sandbox starts on the deal's real numbers with no dependency
 // on the page assumptions provider.
-function readSandboxBase(
-  outputs: ReturnType<typeof useEngineOutputs>['outputs'],
-): SandboxValues {
+function readSandboxBase(outputs: EngineOutputs): SandboxValues {
   const rIn = ((outputs?.engines?.returns?.inputs as Record<string, unknown> | undefined)
     ?.assumptions ?? {}) as Record<string, unknown>;
   const n = (v: unknown, fallback: number) =>
@@ -221,27 +175,20 @@ function readSandboxBase(
 }
 
 function sandboxDiffers(a: SandboxValues, b: SandboxValues): boolean {
-  return (Object.keys(a) as SandboxKey[]).some(k => Math.abs(a[k] - b[k]) > 1e-9);
+  return (Object.keys(a) as SandboxKey[]).some((k) => Math.abs(a[k] - b[k]) > 1e-9);
 }
 
-function LiveReturnsSummary({ outputs }: { outputs: ReturnType<typeof useEngineOutputs>['outputs'] }) {
-  const params = useParams();
-  const dealId = (params?.id as string | undefined) ?? '';
+interface SandboxState {
+  sandbox: SandboxValues;
+  setSandbox: React.Dispatch<React.SetStateAction<SandboxValues>>;
+  base: SandboxValues;
+  dirty: boolean;
+  preview: ReturnsPreviewResponse | null;
+  previewing: boolean;
+  resetToBase: () => void;
+}
 
-  // ── Canonical headline — WORKER outputs only, no client TS fallback. ──
-  // FON-68 split-headline fix: the CoC field is ``year_one_coc`` on the returns
-  // engine (returns.py:563). The old ``cash_on_cash_year_one`` read always
-  // missed and silently fell back to the client TS model, so IRR/EM came from
-  // the worker while CoC came from TS — a split headline. Every KPI below now
-  // resolves from the same worker run.
-  const irr = getEngineField<number>(outputs, 'returns', 'levered_irr');
-  const mult = getEngineField<number>(outputs, 'returns', 'equity_multiple');
-  const coc = getEngineField<number>(outputs, 'returns', 'year_one_coc');
-  const exitValue = getEngineField<number>(outputs, 'returns', 'gross_sale_price');
-  const dscrY1 = getEngineField<number>(outputs, 'debt', 'year_one_dscr');
-  const holdYears = getEngineField<number>(outputs, 'returns', 'hold_years');
-
-  // ── Ephemeral sandbox — LOCAL state only. ──
+function useReturnsSandbox(outputs: EngineOutputs, dealId: string): SandboxState {
   const base = useMemo(() => readSandboxBase(outputs), [outputs]);
   const [sandbox, setSandbox] = useState<SandboxValues>(base);
   const prevBaseRef = useRef(base);
@@ -250,7 +197,7 @@ function LiveReturnsSummary({ outputs }: { outputs: ReturnType<typeof useEngineO
   // a background refetch.
   useEffect(() => {
     const prev = prevBaseRef.current;
-    setSandbox(cur => (sandboxDiffers(cur, prev) ? cur : base));
+    setSandbox((cur) => (sandboxDiffers(cur, prev) ? cur : base));
     prevBaseRef.current = base;
   }, [base]);
 
@@ -298,134 +245,578 @@ function LiveReturnsSummary({ outputs }: { outputs: ReturnType<typeof useEngineO
   }, [dirty, dealId, sandbox]);
 
   const resetToBase = () => setSandbox(base);
+  return { sandbox, setSandbox, base, dirty, preview, previewing, resetToBase };
+}
 
-  // What the card's live-result line shows: the sandbox preview when an
-  // override is active, else the canonical values (so it always reconciles
-  // with the headline on the base case).
-  const sIrr = dirty && preview ? preview.levered_irr : irr;
-  const sMult = dirty && preview ? preview.equity_multiple : mult;
-  const sExit = dirty && preview ? preview.exit_value : exitValue;
-  const sDscr = dirty && preview ? preview.dscr_y1 : dscrY1;
-  const fmtM = (v: number | null | undefined) =>
-    v == null ? '—' : `$${(v / 1e6).toFixed(2)}M`;
-  const fmtX = (v: number | null | undefined) =>
-    v == null ? '—' : `${v.toFixed(2)}x`;
+// ───────────────────────────────────────────────────────────────────
+// Workspace — canonical single-column layout (Returns Tab.dc.html):
+// title card → Data Key strip → sub-tab nav → override banner → sub-tab
+// content. Rebuilt on the shared design system (@/components/design).
+// ───────────────────────────────────────────────────────────────────
+
+function ReturnsWorkspace({ outputs, dealId }: { outputs: EngineOutputs; dealId: string }) {
+  const router = useRouter();
+  const [tab, setTab] = useState<SubTab>('Returns Summary');
+  const { sandbox, setSandbox, base, dirty, preview, previewing, resetToBase } = useReturnsSandbox(
+    outputs,
+    dealId,
+  );
+
+  const subTabCaption =
+    tab === 'Returns Summary'
+      ? 'What the deal earns and where it comes from'
+      : tab === 'Sensitivities'
+        ? 'How returns move with the key assumptions'
+        : 'What price the deal can carry';
+
+  const overrideSummary = SANDBOX_FIELDS.filter((f) => Math.abs(sandbox[f.key] - base[f.key]) > 1e-9)
+    .map((f) => `${f.label} ${f.fmt(base[f.key])} → ${f.fmt(sandbox[f.key])}`)
+    .join(' · ');
+
+  const goInvestment = () => router.push(`/projects/${dealId}?tab=investment`, { scroll: false });
+  const goCashFlow = () => router.push(`/projects/${dealId}?tab=cash-flow`, { scroll: false });
 
   return (
-    <>
+    <div style={{ maxWidth: 1320 }}>
+      {/* Title card — canonical "Returns" + subtitle (replaces the old
+          IntroCard + EngineHeader "Returns Engine" chrome). */}
+      <div
+        style={{
+          background: palette.cardWhite,
+          border: `1px solid ${palette.border}`,
+          borderRadius: radius.card,
+          padding: '12px 16px',
+          marginBottom: 14,
+          display: 'flex',
+          flexDirection: 'column',
+          gap: 3,
+        }}
+      >
+        <span style={{ fontSize: 13.5, fontWeight: 700, color: palette.ink }}>Returns</span>
+        <span
+          style={{ fontSize: 12.5, color: palette.textSecondary, lineHeight: 1.55, maxWidth: 960 }}
+        >
+          What the deal earns, what drives those returns, and what price it can carry while still
+          clearing the hurdles. Calculated from the Cash Flow series — nothing is underwritten here.
+        </span>
+      </div>
+
+      <SubTabNav
+        items={SUB_TABS.map((t) => ({ id: t, label: t }))}
+        activeId={tab}
+        onSelect={(id) => setTab(id as SubTab)}
+        caption={subTabCaption}
+        style={{ marginBottom: 14 }}
+      />
+
+      {/* Override banner — canonical: spans all sub-tabs while an override is
+          active. LOCAL sandbox only; Investment / Debt are untouched. */}
       {dirty && (
-        <div className="flex items-center gap-3 flex-wrap mb-4 rounded-md border border-brand-200 bg-brand-50 px-3.5 py-2 text-[12px] text-ink-900">
-          <span className="text-[10px] font-bold tracking-wide uppercase text-brand-700 whitespace-nowrap">
+        <div
+          style={{
+            display: 'flex',
+            alignItems: 'center',
+            gap: 14,
+            flexWrap: 'wrap',
+            background: 'oklch(97% 0.03 250)',
+            border: '1px solid #c9d4ee',
+            borderRadius: 8,
+            padding: '9px 14px',
+            marginBottom: 14,
+            fontSize: 12,
+            color: palette.ink,
+          }}
+        >
+          <span
+            style={{
+              fontSize: 10,
+              fontWeight: 700,
+              letterSpacing: '.05em',
+              color: palette.linkBlue,
+              textTransform: 'uppercase',
+              whiteSpace: 'nowrap',
+            }}
+          >
             Sensitivity override active
           </span>
-          <span className="text-ink-500">
+          {overrideSummary && <span>{overrideSummary}</span>}
+          <span style={{ color: palette.textSecondary }}>
             Testing only — the canonical assumptions in Investment and Debt are unchanged.
           </span>
           <button
             onClick={resetToBase}
-            className="ml-auto text-brand-700 font-semibold whitespace-nowrap hover:underline"
+            style={{
+              marginLeft: 'auto',
+              background: 'none',
+              border: 'none',
+              fontFamily: 'inherit',
+              color: palette.linkBlue,
+              fontWeight: 600,
+              cursor: 'pointer',
+              whiteSpace: 'nowrap',
+            }}
           >
             Reset to base case
           </button>
         </div>
       )}
 
-      <div className="grid grid-cols-3 gap-4 mb-5">
-        <CoachMark
-          anchorId="returns-levered-irr"
-          viewKey="returns"
-          order={0}
-          title="Why this number leads"
-          body="Levered IRR is the most institutionally cited return — it captures what your equity actually earns after debt service. Fondok solves it with Newton's method and a bisection fallback for numerical stability, same approach Argus uses."
-          side="top"
-          learnMoreHref="/methodology#engines"
-        >
-          <KPI label="Levered IRR" tip={GLOSSARY['IRR']} flashKey={irr}
-            value={<Traced engine="returns" path="levered_irr">{fmtPct(irr ?? 0, 2)}</Traced>} />
-        </CoachMark>
-        <KPI label="Equity Multiple" tip={GLOSSARY['Equity Multiple']} flashKey={mult}
-          value={<Traced engine="returns" path="equity_multiple">{`${(mult ?? 0).toFixed(2)}x`}</Traced>} />
-        <KPI label="Cash-on-Cash" tip={GLOSSARY['CoC']} value={fmtPct(coc ?? 0, 2)} flashKey={coc} />
-        <KPI label="Exit Value" value={fmtM(exitValue)} flashKey={exitValue} />
-        <KPI label="DSCR Y1" tip={GLOSSARY['DSCR']} value={fmtX(dscrY1)} flashKey={dscrY1} />
-        <KPI label="Hold Period" tip={GLOSSARY['Hold Period']}
-          value={holdYears != null ? `${holdYears} Years` : '—'} flashKey={holdYears} />
-      </div>
-
-      <Card className="p-5 mb-5">
-        <div className="flex items-baseline justify-between mb-3">
-          <h3 className="text-[14px] font-semibold text-ink-900">Live Assumptions</h3>
-          <span className="text-[11px] text-ink-500">
-            Temporary overrides for testing — the source of truth stays in Investment and Debt.
-          </span>
+      {tab === 'Returns Summary' && (
+        <ReturnsSummary outputs={outputs} onEditInvestment={goInvestment} onViewCashFlow={goCashFlow} />
+      )}
+      {tab === 'Sensitivities' && (
+        <Sensitivities
+          outputs={outputs}
+          sandbox={sandbox}
+          setSandbox={setSandbox}
+          dirty={dirty}
+          preview={preview}
+          previewing={previewing}
+          resetToBase={resetToBase}
+        />
+      )}
+      {tab === 'Pricing' && (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+          <PricingSensitivityPanel dealId={dealId} />
+          <MaxPricePanel dealId={dealId} />
         </div>
-        <div className="grid grid-cols-2 gap-x-8 gap-y-3">
-          <Slider
-            label="Exit Cap Rate"
-            min={0.04} max={0.12} step={0.001}
-            value={sandbox.exitCapRate}
-            onChange={v => setSandbox(s => ({ ...s, exitCapRate: v }))}
-            format={v => fmtPct(v, 2)}
-          />
-          <Slider
-            label="RevPAR Growth"
-            min={0} max={0.06} step={0.0025}
-            value={sandbox.revparGrowth}
-            onChange={v => setSandbox(s => ({ ...s, revparGrowth: v }))}
-            format={v => fmtPct(v, 2)}
-          />
-          <Slider
-            label="Hold Period"
-            min={3} max={10} step={1}
-            value={sandbox.holdYears}
-            onChange={v => setSandbox(s => ({ ...s, holdYears: Math.round(v) }))}
-            format={v => `${Math.round(v)} years`}
-          />
-          <Slider
-            label="LTV"
-            min={0.40} max={0.80} step={0.01}
-            value={sandbox.ltv}
-            onChange={v => setSandbox(s => ({ ...s, ltv: v }))}
-            format={v => fmtPct(v, 0)}
-          />
-          <Slider
-            label="Interest Rate"
-            min={0.04} max={0.10} step={0.00125}
-            value={sandbox.interestRate}
-            onChange={v => setSandbox(s => ({ ...s, interestRate: v }))}
-            format={v => fmtPct(v, 3)}
-          />
-        </div>
-        <div className="flex items-center gap-3 flex-wrap mt-4 pt-3 border-t border-border">
-          <span className="text-[11.5px] text-ink-500 tabular-nums">
-            {dirty ? (previewing ? 'Recomputing sandbox…' : 'Sandbox result:') : 'Base case:'}
-            <span className="mx-1.5 font-medium text-ink-900">IRR {fmtPct(sIrr ?? 0, 2)}</span>·
-            <span className="mx-1.5 font-medium text-ink-900">EM {fmtX(sMult)}</span>·
-            <span className="mx-1.5 font-medium text-ink-900">Exit {fmtM(sExit)}</span>·
-            <span className="mx-1.5 font-medium text-ink-900">DSCR {fmtX(sDscr)}</span>
-          </span>
-          <button
-            onClick={resetToBase}
-            disabled={!dirty}
-            className={cn(
-              'ml-auto rounded-md border px-3 py-1.5 text-[11.5px] font-semibold',
-              dirty
-                ? 'bg-white border-border text-ink-700 hover:bg-ink-50 cursor-pointer'
-                : 'bg-ink-50 border-border text-ink-400 cursor-not-allowed',
-            )}
-          >
-            Reset to base case
-          </button>
-        </div>
-      </Card>
-    </>
+      )}
+    </div>
   );
 }
 
-function LiveSensitivities() {
-  const params = useParams();
-  const dealId = (params?.id as string | undefined) ?? '';
-  const { outputs } = useEngineOutputs(dealId);
+// ───────────────────────────────────────────────────────────────────
+// Returns Summary — headline KPIs (WORKER outputs only) + Exit Assumptions
+// and Return Bridge cards (the two canonical cards previously missing).
+// ───────────────────────────────────────────────────────────────────
+
+function ReturnsSummary({
+  outputs,
+  onEditInvestment,
+  onViewCashFlow,
+}: {
+  outputs: EngineOutputs;
+  onEditInvestment: () => void;
+  onViewCashFlow: () => void;
+}) {
+  // ── Canonical headline — WORKER outputs only, no client TS fallback. ──
+  // FON-68 split-headline fix: the CoC field is ``year_one_coc`` on the returns
+  // engine (returns.py:586). The old ``cash_on_cash_year_one`` read always
+  // missed and silently fell back to the client TS model, so IRR/EM came from
+  // the worker while CoC came from TS — a split headline. Every KPI below now
+  // resolves from the same worker run (no ``?? model.*``).
+  const irr = getEngineField<number>(outputs, 'returns', 'levered_irr');
+  const mult = getEngineField<number>(outputs, 'returns', 'equity_multiple');
+  const coc = getEngineField<number>(outputs, 'returns', 'year_one_coc');
+  const exitValue = getEngineField<number>(outputs, 'returns', 'gross_sale_price');
+  const dscrY1 = getEngineField<number>(outputs, 'debt', 'year_one_dscr');
+  const holdYears = getEngineField<number>(outputs, 'returns', 'hold_years');
+
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+        <span
+          style={{
+            fontSize: 10.5,
+            fontWeight: 700,
+            letterSpacing: '.06em',
+            color: palette.eyebrow,
+            textTransform: 'uppercase',
+          }}
+        >
+          Deal-level returns · before GP/LP allocation
+        </span>
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(190px,1fr))', gap: 12 }}>
+          <CoachMark
+            anchorId="returns-levered-irr"
+            viewKey="returns"
+            order={0}
+            title="Why this number leads"
+            body="Levered IRR is the most institutionally cited return — it captures what your equity actually earns after debt service. Fondok solves it with Newton's method and a bisection fallback for numerical stability, same approach Argus uses."
+            side="top"
+            learnMoreHref="/methodology#engines"
+          >
+            <ReturnsKpi
+              label="Levered IRR"
+              engine="returns"
+              path="levered_irr"
+              flashKey={irr}
+              sub="Equity IRR over the hold, after debt service"
+              value={<Traced engine="returns" path="levered_irr">{fmtPct(irr ?? 0, 2)}</Traced>}
+            />
+          </CoachMark>
+          <ReturnsKpi
+            label="Equity Multiple"
+            engine="returns"
+            path="equity_multiple"
+            flashKey={mult}
+            sub="MOIC — total distributions ÷ equity"
+            value={<Traced engine="returns" path="equity_multiple">{`${(mult ?? 0).toFixed(2)}x`}</Traced>}
+          />
+          <ReturnsKpi
+            label="Cash-on-Cash"
+            engine="returns"
+            path="year_one_coc"
+            flashKey={coc}
+            sub="Year 1 — cash flow after debt ÷ equity"
+            value={fmtPct(coc ?? 0, 2)}
+          />
+          <ReturnsKpi
+            label="Exit Value"
+            engine="returns"
+            path="gross_sale_price"
+            flashKey={exitValue}
+            sub="Gross sale — forward NOI ÷ exit cap"
+            value={fmtM(exitValue)}
+          />
+          <ReturnsKpi
+            label="DSCR Y1"
+            engine="debt"
+            path="year_one_dscr"
+            flashKey={dscrY1}
+            sub="Year-1 debt-service coverage"
+            value={fmtX(dscrY1)}
+          />
+          <ReturnsKpi
+            label="Hold Period"
+            engine="returns"
+            path="hold_years"
+            flashKey={holdYears}
+            sub="Underwriting horizon"
+            value={holdYears != null ? `${holdYears} Years` : '—'}
+          />
+        </div>
+      </div>
+
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(430px,1fr))', gap: 14 }}>
+        <ExitAssumptionsCard outputs={outputs} onEdit={onEditInvestment} />
+        <ReturnBridgeCard outputs={outputs} onViewCashFlow={onViewCashFlow} />
+      </div>
+    </div>
+  );
+}
+
+// One headline KPI tile on the shared KpiTile chrome, with the flash-on-change
+// highlight (useFlash), a provenance dot resolved from /provenance `state`
+// (falling back to `calculated`, which every headline return is), the glossary
+// tooltip, and the <Traced> computed-value popover passed in via `value`.
+function ReturnsKpi({
+  label,
+  value,
+  sub,
+  flashKey,
+  engine,
+  path,
+}: {
+  label: string;
+  value: ReactNode;
+  sub?: ReactNode;
+  flashKey?: unknown;
+  engine: string;
+  path: string;
+}) {
+  const flash = useFlash(flashKey ?? value);
+  const state = (useTrace(engine, path)?.state ?? 'calculated') as ValueState;
+  return (
+    <KpiTile
+      className={cn(flash && 'value-flash')}
+      style={{ height: '100%' }}
+      label={label}
+      sub={sub}
+      value={
+        <span style={{ display: 'inline-flex', alignItems: 'center', gap: 7 }}>
+          <ProvenanceDot state={state} size={8} />
+          <span>{value}</span>
+        </span>
+      }
+    />
+  );
+}
+
+// ── Exit Assumptions — read-only; exit cap / hold / etc. are Investment- and
+// Debt-owned, so they are shown linked/calculated here with an "Edit in
+// Investment →" link. Values from the returns engine outputs (no fabrication;
+// missing values render as —). ──
+function ExitAssumptionsCard({ outputs, onEdit }: { outputs: EngineOutputs; onEdit: () => void }) {
+  const holdYears = getEngineField<number>(outputs, 'returns', 'hold_years');
+  const exitCap = getEngineField<number>(outputs, 'returns', 'exit_cap_rate');
+  const grossSale = getEngineField<number>(outputs, 'returns', 'gross_sale_price');
+  const sellingCosts = getEngineField<number>(outputs, 'returns', 'selling_costs');
+  const netProceeds = getEngineField<number>(outputs, 'returns', 'net_proceeds');
+
+  interface Row {
+    label: string;
+    value: string;
+    source: string;
+    state: ValueState;
+    color: string;
+    weight: number;
+    title: string;
+  }
+  const rows: Row[] = [
+    {
+      label: 'Hold Period',
+      value: holdYears != null ? `${holdYears} years` : '—',
+      source: 'Investment',
+      state: 'linked',
+      color: prov.green,
+      weight: 400,
+      title: 'Linked from Investment → Exit / Reversion',
+    },
+    {
+      label: 'Exit Year',
+      value: holdYears != null ? `Year ${holdYears}` : '—',
+      source: 'Calculated',
+      state: 'calculated',
+      color: prov.gray,
+      weight: 400,
+      title: 'Acquisition date plus hold period',
+    },
+    {
+      label: 'Exit Cap Rate',
+      value: exitCap != null ? fmtPct(exitCap, 2) : '—',
+      source: 'Investment',
+      state: 'linked',
+      color: prov.green,
+      weight: 400,
+      title: 'Linked from Investment → Exit / Reversion',
+    },
+    {
+      label: 'Gross Sale Price',
+      value: grossSale != null ? money(grossSale) : '—',
+      source: 'Calculated',
+      state: 'calculated',
+      color: prov.black,
+      weight: 700,
+      title: 'Forward NOI ÷ exit cap rate',
+    },
+    {
+      label: 'Selling Costs',
+      value: sellingCosts != null ? money(-Math.abs(sellingCosts)) : '—',
+      source: 'Calculated',
+      state: 'calculated',
+      color: prov.gray,
+      weight: 400,
+      title: 'Disposition costs and transfer tax',
+    },
+    {
+      label: 'Net Sale Proceeds',
+      value: netProceeds != null ? money(netProceeds) : '—',
+      source: 'Calculated',
+      state: 'calculated',
+      color: prov.black,
+      weight: 700,
+      title: 'Gross sale price less selling costs and the loan balance at exit',
+    },
+  ];
+
+  return (
+    <SectionCard
+      title="Exit Assumptions"
+      note={
+        <span
+          role="button"
+          tabIndex={0}
+          onClick={onEdit}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter' || e.key === ' ') onEdit();
+          }}
+          style={{ color: palette.linkBlue, fontWeight: 600, cursor: 'pointer', fontSize: 11.5 }}
+        >
+          Edit in Investment →
+        </span>
+      }
+    >
+      {rows.map((r) => (
+        <div
+          key={r.label}
+          title={r.title}
+          style={{
+            display: 'flex',
+            justifyContent: 'space-between',
+            alignItems: 'center',
+            gap: 12,
+            fontSize: 13,
+            padding: '7px 0',
+            borderBottom: `1px solid ${palette.hairlineRow}`,
+          }}
+        >
+          <span style={{ display: 'flex', alignItems: 'center', gap: 7, minWidth: 0 }}>
+            <ProvenanceDot state={r.state} size={8} />
+            <span style={{ color: palette.textSecondary }}>{r.label}</span>
+          </span>
+          <span style={{ display: 'flex', alignItems: 'baseline', gap: 8 }}>
+            <span style={{ color: r.color, fontWeight: r.weight, fontVariantNumeric: 'tabular-nums' }}>
+              {r.value}
+            </span>
+            <span style={{ fontSize: 10.5, color: palette.textFaint, whiteSpace: 'nowrap' }}>
+              {r.source}
+            </span>
+          </span>
+        </div>
+      ))}
+    </SectionCard>
+  );
+}
+
+// ── Return Bridge — deal-level returns, before GP/LP allocation. Built from
+// the levered cash-flow series the returns engine emits (``cash_flows`` =
+// [-equity, cf₁ … cfₙ + net exit proceeds]) so every number reconciles to Cash
+// Flow. "View cash flow →" jumps to the full series. ──
+function ReturnBridgeCard({
+  outputs,
+  onViewCashFlow,
+}: {
+  outputs: EngineOutputs;
+  onViewCashFlow: () => void;
+}) {
+  const flows = getEngineField<number[]>(outputs, 'returns', 'cash_flows');
+  const netProceeds = getEngineField<number>(outputs, 'returns', 'net_proceeds');
+
+  const note = (
+    <span
+      role="button"
+      tabIndex={0}
+      onClick={onViewCashFlow}
+      onKeyDown={(e) => {
+        if (e.key === 'Enter' || e.key === ' ') onViewCashFlow();
+      }}
+      style={{ color: palette.linkBlue, fontWeight: 600, cursor: 'pointer', fontSize: 11.5 }}
+    >
+      View cash flow →
+    </span>
+  );
+
+  if (!Array.isArray(flows) || flows.length < 2) {
+    return (
+      <SectionCard title="Return Bridge" note={note}>
+        <div style={{ fontSize: 12, color: palette.textMuted, lineHeight: 1.5, paddingTop: 2 }}>
+          Deal-level returns · before GP/LP allocation. The cash-flow series is unavailable — run the
+          Returns engine to see the bridge.
+        </div>
+      </SectionCard>
+    );
+  }
+
+  const initialEquity = flows[0]; // negative outflow at close
+  const equity = -initialEquity;
+  const totalToEquity = flows.slice(1).reduce((a, b) => a + b, 0);
+  const netExit = netProceeds ?? 0;
+  const operating = totalToEquity - netExit;
+
+  interface Bar {
+    label: string;
+    value: number;
+    bold?: boolean;
+  }
+  const items: Bar[] = [
+    { label: 'Initial equity', value: initialEquity },
+    { label: 'Operating cash flow to equity', value: operating },
+    { label: 'Net exit proceeds', value: netExit },
+    { label: 'Total cash flow to equity', value: totalToEquity, bold: true },
+  ];
+  const maxAbs = Math.max(1, ...items.map((b) => Math.abs(b.value)));
+
+  return (
+    <SectionCard title="Return Bridge" note={note}>
+      <div style={{ marginTop: 2 }}>
+        {items.map((b) => {
+          const abs = Math.abs(b.value);
+          const width = `${(abs / maxAbs) * 50}%`;
+          const left = b.value < 0 ? `${50 - (abs / maxAbs) * 50}%` : '50%';
+          const barBg = b.bold
+            ? palette.inkNavy
+            : b.value < 0
+              ? 'oklch(70% 0.10 40)'
+              : 'oklch(60% 0.10 155)';
+          const valueColor = b.bold ? prov.black : b.value < 0 ? prov.amber : prov.gray;
+          return (
+            <div key={b.label} style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '5px 0' }}>
+              <span
+                style={{
+                  width: 168,
+                  fontSize: 12,
+                  color: palette.ink,
+                  fontWeight: b.bold ? 700 : 400,
+                  flexShrink: 0,
+                }}
+              >
+                {b.label}
+              </span>
+              <span
+                style={{
+                  flex: 1,
+                  height: 10,
+                  background: '#f3f2ee',
+                  borderRadius: 5,
+                  position: 'relative',
+                  overflow: 'hidden',
+                }}
+              >
+                <span
+                  style={{ position: 'absolute', left, width, top: 0, bottom: 0, background: barBg, borderRadius: 5 }}
+                />
+              </span>
+              <span
+                style={{
+                  width: 96,
+                  textAlign: 'right',
+                  fontSize: 12.5,
+                  color: valueColor,
+                  fontWeight: b.bold ? 700 : 400,
+                  fontVariantNumeric: 'tabular-nums',
+                  flexShrink: 0,
+                }}
+              >
+                {mm(b.value)}
+              </span>
+            </div>
+          );
+        })}
+      </div>
+      <div style={{ fontSize: 11, color: palette.textMuted, marginTop: 10, lineHeight: 1.5 }}>
+        Deal-level returns · before GP/LP allocation. Reconciles to the Cash Flow series:{' '}
+        {mm(operating)} operating + {mm(netExit)} exit = {mm(totalToEquity)} returned on {mm(equity)}{' '}
+        invested.
+      </div>
+    </SectionCard>
+  );
+}
+
+// ───────────────────────────────────────────────────────────────────
+// Sensitivities — Live Assumptions sandbox (sliders + non-persisting preview)
+// then the worker sensitivity grids (IRR, Equity Multiple, Year-1 CoC).
+// ───────────────────────────────────────────────────────────────────
+
+function Sensitivities({
+  outputs,
+  sandbox,
+  setSandbox,
+  dirty,
+  preview,
+  previewing,
+  resetToBase,
+}: {
+  outputs: EngineOutputs;
+  sandbox: SandboxValues;
+  setSandbox: React.Dispatch<React.SetStateAction<SandboxValues>>;
+  dirty: boolean;
+  preview: ReturnsPreviewResponse | null;
+  previewing: boolean;
+  resetToBase: () => void;
+}) {
+  // Canonical base values (worker outputs) for the sandbox result line.
+  const irr = getEngineField<number>(outputs, 'returns', 'levered_irr');
+  const mult = getEngineField<number>(outputs, 'returns', 'equity_multiple');
+  const exitValue = getEngineField<number>(outputs, 'returns', 'gross_sale_price');
+  const dscrY1 = getEngineField<number>(outputs, 'debt', 'year_one_dscr');
+
+  // What the result line shows: the sandbox preview when an override is active,
+  // else the canonical values (so it reconciles with the Summary headline).
+  const sIrr = dirty && preview ? preview.levered_irr : irr;
+  const sMult = dirty && preview ? preview.equity_multiple : mult;
+  const sExit = dirty && preview ? preview.exit_value : exitValue;
+  const sDscr = dirty && preview ? preview.dscr_y1 : dscrY1;
 
   // Worker sensitivity grids ONLY. The canonical engine is the single source of
   // truth — mixing worker grids with client-TS ``defaultSensitivities`` is the
@@ -435,9 +826,8 @@ function LiveSensitivities() {
   // older runs carry only the top-level primary matrix, which we still accept
   // as the IRR grid.
   const cards = useMemo(() => {
-    const list =
-      getEngineField<WorkerMatrixRaw[]>(outputs, 'sensitivity', 'matrices') ?? [];
-    const byKey = (k: string) => list.find(m => m?.key === k) ?? null;
+    const list = getEngineField<WorkerMatrixRaw[]>(outputs, 'sensitivity', 'matrices') ?? [];
+    const byKey = (k: string) => list.find((m) => m?.key === k) ?? null;
     const irrRaw = byKey('irr_exit_revpar') ?? topLevelSensitivityMatrix(outputs);
     const emRaw = byKey('em_exit_revpar');
     // FON-68 step 5 — the Year-1 Cash-on-Cash grid. Unlike the IRR/EM grids
@@ -455,19 +845,86 @@ function LiveSensitivities() {
     ].filter((c): c is { title: string; matrix: SensitivityMatrix } => c.matrix != null);
   }, [outputs]);
 
-  if (cards.length === 0) {
-    return (
-      <Card className="p-8 text-center text-[12.5px] text-ink-500">
-        Sensitivity grids appear once the Returns engine has run.
-      </Card>
-    );
-  }
-
   return (
-    <div className="grid grid-cols-2 gap-4">
-      {cards.map((c, i) => (
-        <SensitivityCard key={i} matrix={c.matrix} title={c.title} source="worker" />
-      ))}
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+      <SectionCard
+        title="Live Assumptions"
+        note="Temporary overrides for testing — the source of truth stays in Investment and Debt"
+      >
+        <div
+          style={{
+            display: 'grid',
+            gridTemplateColumns: 'repeat(auto-fit,minmax(240px,1fr))',
+            gap: '14px 32px',
+            marginTop: 4,
+          }}
+        >
+          {SANDBOX_FIELDS.map((f) => (
+            <Slider
+              key={f.key}
+              label={f.label}
+              min={f.min}
+              max={f.max}
+              step={f.step}
+              value={sandbox[f.key]}
+              onChange={(v) =>
+                setSandbox((s) => ({ ...s, [f.key]: f.key === 'holdYears' ? Math.round(v) : v }))
+              }
+              format={f.fmt}
+            />
+          ))}
+        </div>
+        <div
+          style={{
+            display: 'flex',
+            alignItems: 'center',
+            gap: 14,
+            flexWrap: 'wrap',
+            marginTop: 12,
+            paddingTop: 12,
+            borderTop: `1px solid ${palette.border}`,
+          }}
+        >
+          <span style={{ fontSize: 11.5, color: palette.textSecondary, fontVariantNumeric: 'tabular-nums' }}>
+            {dirty ? (previewing ? 'Recomputing sandbox…' : 'Sandbox result:') : 'Base case:'}
+            <span style={{ margin: '0 6px', fontWeight: 600, color: palette.ink }}>
+              IRR {fmtPct(sIrr ?? 0, 2)}
+            </span>
+            ·
+            <span style={{ margin: '0 6px', fontWeight: 600, color: palette.ink }}>EM {fmtX(sMult)}</span>·
+            <span style={{ margin: '0 6px', fontWeight: 600, color: palette.ink }}>Exit {fmtM(sExit)}</span>·
+            <span style={{ margin: '0 6px', fontWeight: 600, color: palette.ink }}>DSCR {fmtX(sDscr)}</span>
+          </span>
+          <button
+            onClick={resetToBase}
+            disabled={!dirty}
+            style={{
+              marginLeft: 'auto',
+              fontFamily: 'inherit',
+              borderRadius: radius.button,
+              padding: '6px 12px',
+              fontSize: 11.5,
+              fontWeight: 600,
+              border: `1px solid ${palette.buttonSecondaryBorder}`,
+              background: dirty ? palette.cardWhite : palette.surfaceTint,
+              color: dirty ? palette.hoverInk : palette.textFaint,
+              cursor: dirty ? 'pointer' : 'not-allowed',
+            }}
+          >
+            Reset to base case
+          </button>
+        </div>
+      </SectionCard>
+
+      {cards.length === 0 ? (
+        <SectionCard>
+          <div style={{ padding: '18px 0', textAlign: 'center', fontSize: 12.5, color: palette.textMuted }}>
+            Sensitivity grids appear once the Returns engine has run.
+          </div>
+        </SectionCard>
+      ) : (
+        cards.map((c) => <SensitivityCard key={c.title} matrix={c.matrix} title={c.title} />)
+      )}
     </div>
   );
 }
@@ -490,9 +947,7 @@ interface WorkerMatrixRaw {
 }
 
 // The sensitivity engine's top-level primary matrix (pre-FON-53 shape).
-function topLevelSensitivityMatrix(
-  outputs: ReturnType<typeof useEngineOutputs>['outputs'],
-): WorkerMatrixRaw | null {
+function topLevelSensitivityMatrix(outputs: EngineOutputs): WorkerMatrixRaw | null {
   const out = getEngineField<WorkerMatrixRaw>(outputs, 'sensitivity');
   if (!out || !Array.isArray(out.rows) || !Array.isArray(out.cols)) return null;
   if (!Array.isArray(out.cells) || out.cells.length === 0) return null;
@@ -507,12 +962,13 @@ function matrixFromWorkerObj(out: WorkerMatrixRaw): SensitivityMatrix | null {
 
   // Worker emits a flat cell list — re-shape to a 2D grid keyed by (row, col).
   const grid: SensitivityCell[][] = [];
-  let baseRow = 0, baseCol = 0;
+  let baseRow = 0,
+    baseCol = 0;
   for (let i = 0; i < out.rows.length; i++) {
     const row: SensitivityCell[] = [];
     for (let j = 0; j < out.cols.length; j++) {
       const found = out.cells.find(
-        c => Math.abs(c.row_value - out.rows[i]) < 1e-9 && Math.abs(c.col_value - out.cols[j]) < 1e-9,
+        (c) => Math.abs(c.row_value - out.rows[i]) < 1e-9 && Math.abs(c.col_value - out.cols[j]) < 1e-9,
       );
       const cell: SensitivityCell = {
         value: found?.value ?? 0,
@@ -520,22 +976,28 @@ function matrixFromWorkerObj(out: WorkerMatrixRaw): SensitivityMatrix | null {
         colVal: out.cols[j],
         isBase: !!found?.is_base,
       };
-      if (cell.isBase) { baseRow = i; baseCol = j; }
+      if (cell.isBase) {
+        baseRow = i;
+        baseCol = j;
+      }
       row.push(cell);
     }
     grid.push(row);
   }
 
   // Pretty labels for axes — fall back to the raw key when unknown.
-  const labelFor = (key: string) => ({
-    exit_cap_rate: 'Exit Cap',
-    revpar_growth: 'RevPAR Growth',
-    ltv: 'LTV',
-    interest_rate: 'Interest Rate',
-    hold_years: 'Hold',
-    purchase_price: 'Purchase Price',
-    loan_amount: 'Loan Amount',
-  } as Record<string, string>)[key] ?? key;
+  const labelFor = (key: string) =>
+    (
+      {
+        exit_cap_rate: 'Exit Cap',
+        revpar_growth: 'RevPAR Growth',
+        ltv: 'LTV',
+        interest_rate: 'Interest Rate',
+        hold_years: 'Hold',
+        purchase_price: 'Purchase Price',
+        loan_amount: 'Loan Amount',
+      } as Record<string, string>
+    )[key] ?? key;
 
   return {
     rowLabel: labelFor(out.row_variable),
@@ -549,72 +1011,108 @@ function matrixFromWorkerObj(out: WorkerMatrixRaw): SensitivityMatrix | null {
   };
 }
 
-function SensitivityCard({ matrix, title, source = 'ts' }: { matrix: SensitivityMatrix; title: string; source?: 'worker' | 'ts' }) {
-  const flat = matrix.cells.flat().map(c => c.value);
-  const min = Math.min(...flat);
-  const max = Math.max(...flat);
-  const colorFor = (v: number) => {
-    const t = max === min ? 0.5 : (v - min) / (max - min);
-    if (t > 0.66) return 'bg-success-50 text-success-700';
-    if (t > 0.33) return 'bg-warn-50 text-warn-700';
-    return 'bg-danger-50 text-danger-700';
-  };
+// Footnotes per grid (matched by title). Absent → no footnote.
+const SENSITIVITY_FOOTNOTE: Record<string, string> = {
+  'Levered IRR':
+    'Each cell re-runs the full model at that combination; the ringed cell is your base case.',
+  'Equity Multiple (MOIC)':
+    'Higher leverage shrinks the equity base and lifts the multiple; the ringed cell is your base case.',
+  'Year-1 Cash-on-Cash':
+    'Year-1 operating cash flow after debt, over equity — both terms move with leverage. The ringed cell is your base case.',
+};
+
+// Canonical sensitivity grid (Returns Tab.dc.html `matrix`): navy corner +
+// column headers, tinted row-label column, and cell colour carrying only the
+// base-case highlight (navy ring + tint + bold) — no heat-map. Built on the
+// design tokens rather than the shared StatementTable because StatementTable's
+// cells cannot express the single-cell base-case ring/tint the canonical grid
+// depends on.
+function SensitivityCard({ matrix, title }: { matrix: SensitivityMatrix; title: string }) {
+  const corner = `${matrix.rowLabel} \\ ${matrix.colLabel}`.toUpperCase();
+  const caption = `${matrix.rowLabel} × ${matrix.colLabel}`;
+  const cols = `150px repeat(${matrix.cols.length}, minmax(96px,1fr))`;
   // Axis headers: Hold is years, Loan Amount is dollars (the CoC grid's row
   // axis is a loan balance, not a rate — formatting it as a percent would print
   // a nonsense value like 3500000000.0%); everything else is a rate/percent.
   const formatHeader = (v: number, key: string) =>
-    key === 'Hold' ? `${v}y`
-      : key === 'Loan Amount' ? `$${(v / 1e6).toFixed(1)}M`
-      : `${(v * 100).toFixed(1)}%`;
+    key === 'Hold' ? `${v}y` : key === 'Loan Amount' ? `$${(v / 1e6).toFixed(1)}M` : `${(v * 100).toFixed(1)}%`;
   const formatCell = (v: number) =>
     matrix.unit === 'multiple' ? `${v.toFixed(2)}x` : `${(v * 100).toFixed(1)}%`;
+  const footnote = SENSITIVITY_FOOTNOTE[title];
+
+  const navyHead: React.CSSProperties = {
+    padding: '7px 12px',
+    background: palette.inkNavy,
+    color: palette.gridHeaderText,
+    whiteSpace: 'nowrap',
+  };
 
   return (
-    <Card className="p-4">
-      <div className="flex items-center justify-between mb-2">
-        <h3 className="text-[12.5px] font-semibold text-ink-900">{title}</h3>
-        {source === 'worker' && (
-          <span className="text-[9.5px] uppercase tracking-wide text-success-700 bg-success-50 rounded px-1.5 py-0.5">
-            Live
-          </span>
-        )}
-      </div>
-      <div className="text-[10.5px] text-ink-500 mb-3">
-        {matrix.rowLabel} ↓ × {matrix.colLabel} →
-      </div>
-      <table className="w-full text-[10.5px]">
-        <thead>
-          <tr>
-            <th></th>
-            {matrix.cols.map((c, j) => (
-              <th key={j} className="font-medium text-ink-500 pb-1 px-1">
-                {formatHeader(c, matrix.colLabel)}
-              </th>
-            ))}
-          </tr>
-        </thead>
-        <tbody>
-          {matrix.cells.map((row, ri) => (
-            <tr key={ri}>
-              <td className="font-medium text-ink-500 pr-1 tabular-nums">
-                {formatHeader(matrix.rows[ri], matrix.rowLabel)}
-              </td>
-              {row.map((cell, ci) => (
-                <td key={ci} className="p-0.5">
-                  <div className={cn(
-                    'rounded px-1 py-1.5 text-center font-medium tabular-nums',
-                    colorFor(cell.value),
-                    cell.isBase && 'ring-2 ring-brand-500',
-                  )}>
-                    {formatCell(cell.value)}
-                  </div>
-                </td>
-              ))}
-            </tr>
+    <SectionCard title={title} note={caption}>
+      <div style={{ overflowX: 'auto', marginTop: 4 }}>
+        <div style={{ display: 'grid', gridTemplateColumns: cols, width: 'max-content', minWidth: '100%' }}>
+          <div style={{ ...navyHead, fontSize: 10, fontWeight: 700, letterSpacing: '.04em' }}>{corner}</div>
+          {matrix.cols.map((c, j) => (
+            <div
+              key={j}
+              style={{
+                ...navyHead,
+                fontSize: 10.5,
+                fontWeight: 600,
+                textAlign: 'right',
+                borderLeft: `1px solid ${palette.gridHeaderDivider}`,
+              }}
+            >
+              {formatHeader(c, matrix.colLabel)}
+            </div>
           ))}
-        </tbody>
-      </table>
-    </Card>
+          {matrix.cells.map((row, ri) => (
+            <div key={ri} style={{ display: 'contents' }}>
+              <div
+                style={{
+                  padding: '7px 12px',
+                  borderBottom: `1px solid ${palette.hairlineRow}`,
+                  fontSize: 12,
+                  color: palette.ink,
+                  fontWeight: 600,
+                  background: palette.surfaceTint,
+                  whiteSpace: 'nowrap',
+                }}
+              >
+                {formatHeader(matrix.rows[ri], matrix.rowLabel)}
+              </div>
+              {row.map((cell, ci) => (
+                <div
+                  key={ci}
+                  title={`${formatHeader(matrix.rows[ri], matrix.rowLabel)} · ${formatHeader(
+                    cell.colVal,
+                    matrix.colLabel,
+                  )}${cell.isBase ? ' — base case' : ''}`}
+                  style={{
+                    padding: '7px 12px',
+                    borderBottom: `1px solid ${palette.hairlineRow}`,
+                    borderLeft: `1px solid ${palette.hairlineRow}`,
+                    textAlign: 'right',
+                    fontSize: 12,
+                    fontVariantNumeric: 'tabular-nums',
+                    color: cell.isBase ? prov.black : prov.gray,
+                    fontWeight: cell.isBase ? 700 : 400,
+                    background: cell.isBase ? 'oklch(97% 0.03 250)' : 'transparent',
+                    boxShadow: cell.isBase ? 'inset 0 0 0 2px #2f4a8c' : undefined,
+                    whiteSpace: 'nowrap',
+                  }}
+                >
+                  {formatCell(cell.value)}
+                </div>
+              ))}
+            </div>
+          ))}
+        </div>
+      </div>
+      {footnote && (
+        <div style={{ fontSize: 11, color: palette.textMuted, marginTop: 9, lineHeight: 1.5 }}>{footnote}</div>
+      )}
+    </SectionCard>
   );
 }
 
@@ -622,39 +1120,50 @@ function SensitivityCard({ matrix, title, source = 'ts' }: { matrix: Sensitivity
 // Shared bits
 // ───────────────────────────────────────────────────────────────────
 
-function KPI({ label, value, flashKey, tip }: { label: string; value: ReactNode; flashKey?: unknown; tip?: string }) {
-  const flash = useFlash(flashKey ?? value);
-  return (
-    <Card className={cn('p-4', flash && 'value-flash')}>
-      <div className="text-[10.5px] text-ink-500 uppercase tracking-wide">
-        {tip ? <MetricLabel label={label} tip={tip} /> : label}
-      </div>
-      <div className="text-[22px] font-semibold tabular-nums mt-1 text-brand-700">{value}</div>
-    </Card>
-  );
-}
-
-
 function Slider({
-  label, value, min, max, step, onChange, format,
+  label,
+  value,
+  min,
+  max,
+  step,
+  onChange,
+  format,
 }: {
-  label: string; value: number; min: number; max: number; step: number;
-  onChange: (v: number) => void; format: (v: number) => string;
+  label: string;
+  value: number;
+  min: number;
+  max: number;
+  step: number;
+  onChange: (v: number) => void;
+  format: (v: number) => string;
 }) {
   return (
     <div>
-      <div className="flex items-baseline justify-between mb-1">
-        <label className="text-[11.5px] text-ink-500 uppercase tracking-wide">{label}</label>
-        <span className="text-[12.5px] font-semibold text-brand-700 tabular-nums">{format(value)}</span>
+      <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', marginBottom: 4 }}>
+        <label
+          style={{
+            fontSize: 10,
+            fontWeight: 700,
+            letterSpacing: '.04em',
+            color: palette.eyebrow,
+            textTransform: 'uppercase',
+          }}
+        >
+          {label}
+        </label>
+        <span style={{ fontSize: 13, fontWeight: 700, color: palette.ink, fontVariantNumeric: 'tabular-nums' }}>
+          {format(value)}
+        </span>
       </div>
       <input
         type="range"
-        min={min} max={max} step={step}
+        min={min}
+        max={max}
+        step={step}
         value={value}
-        onChange={e => onChange(parseFloat(e.target.value))}
-        className="w-full accent-brand-500"
+        onChange={(e) => onChange(parseFloat(e.target.value))}
+        style={{ width: '100%', accentColor: palette.linkBlue }}
       />
     </div>
   );
 }
-

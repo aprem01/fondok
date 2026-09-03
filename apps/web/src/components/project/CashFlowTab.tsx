@@ -1,6 +1,6 @@
 'use client';
-import { useMemo, useState, type CSSProperties } from 'react';
-import { useParams } from 'next/navigation';
+import { useMemo, useState } from 'react';
+import { useParams, useRouter } from 'next/navigation';
 import { Activity } from 'lucide-react';
 import { Card } from '@/components/ui/Card';
 import { Button } from '@/components/ui/Button';
@@ -16,6 +16,8 @@ import {
   StatementTable,
   KpiTile,
   SectionCard,
+  SubTabNav,
+  ProvenanceDot,
   palette,
   prov,
   type StatementRow,
@@ -34,67 +36,42 @@ import {
   rowState,
   type CashFlowKpi,
   type CashFlowBridgeRow,
-  type CashFlowSection,
 } from './cashFlowStatement';
 
 const subTabs = ['Summary', 'Unlevered', 'Levered / Equity'];
 
-// ── Data Key — the 6-state provenance vocabulary (FON-65). A minimal inline
-// mapping lives here; the shared canonical Data Key strip is a separate task.
-const STATE_ORDER: ValueState[] = [
-  'document_sourced',
-  'linked',
-  'assumption',
-  'calculated',
-  'awaiting_data',
-  'needs_review',
-];
+// Per-sub-tab caption, right-aligned on the sub-tab row (Cash Flow Tab.dc.html
+// `subTabCaption`).
+function subTabCaption(tab: string): string {
+  if (tab === 'Summary') return 'What the deal returns to equity, and when';
+  if (tab === 'Unlevered') return 'Property cash flow before financing';
+  return 'How debt, refinance and exit reach equity';
+}
 
-const STATE_META: Record<ValueState, { label: string; style: CSSProperties }> = {
-  document_sourced: { label: 'Document sourced', style: { background: 'oklch(45% 0.12 155)' } },
-  linked: { label: 'Linked', style: { background: '#fff', border: '2px solid oklch(45% 0.12 155)' } },
-  assumption: { label: 'Assumption', style: { background: 'oklch(45% 0.14 260)' } },
-  calculated: { label: 'Calculated', style: { background: '#5f656e' } },
-  awaiting_data: { label: 'Awaiting data', style: { background: '#fff', border: '1px dashed #b0afaa' } },
-  needs_review: { label: 'Needs review', style: { background: 'oklch(45% 0.12 155)', boxShadow: '0 0 0 3px oklch(88% 0.07 45)' } },
+// KPI tile labels — canonical casing (Cash Flow Tab.dc.html `summary`): sentence
+// case, not the title-case the view-model emits.
+const KPI_LABEL_CANONICAL: Record<string, string> = {
+  'Total Equity Invested': 'Total equity invested',
+  'Operating Cash Flow to Equity': 'Operating cash flow to equity',
+  'Net Refinance Proceeds': 'Net refinance proceeds',
+  'Net Exit Proceeds': 'Net exit proceeds',
+  'Total Cash Returned to Equity': 'Total cash returned to equity',
 };
 
-function StateDot({ state }: { state: ValueState }) {
-  return (
-    <span
-      title={STATE_META[state].label}
-      aria-label={STATE_META[state].label}
-      className="inline-block w-2 h-2 rounded-full flex-shrink-0"
-      style={STATE_META[state].style}
-    />
-  );
-}
+// The Data Key legend is mounted ONCE at the page level (page.tsx renders
+// <DataKey/> under the tab bar for every tab), so this tab shows no legend of
+// its own — only the per-row ProvenanceDots the StatementTable draws.
 
-function DataKey({ states }: { states: ValueState[] }) {
-  if (states.length === 0) return null;
-  return (
-    <div className="flex flex-wrap items-center gap-x-4 gap-y-1.5 mb-3 text-[11px] text-ink-500 bg-ink-300/5 border border-border rounded-md px-3 py-2">
-      <span className="font-semibold uppercase tracking-wide text-ink-400">Data Key</span>
-      {states.map((s) => (
-        <span key={s} className="flex items-center gap-1.5">
-          <StateDot state={s} /> {STATE_META[s].label}
-        </span>
-      ))}
-    </div>
-  );
-}
+// The 4 cross-tab link chips on the output-only banner (Cash Flow Tab.dc.html
+// banner). Tab ids match the project page's ?tab= routing.
+const CROSS_TAB_LINKS: { label: string; tab: string }[] = [
+  { label: 'Financials →', tab: 'pl' },
+  { label: 'Investment →', tab: 'investment' },
+  { label: 'Debt →', tab: 'debt' },
+  { label: 'Partnership →', tab: 'partnership' },
+];
 
-function statesPresent(
-  cf: CashFlowStatementOutput,
-  section: CashFlowSection,
-  lines: CashFlowStatementLine[],
-): ValueState[] {
-  const seen = new Set<ValueState>();
-  for (const l of lines) seen.add(rowState(cf, section, l));
-  return STATE_ORDER.filter((s) => seen.has(s));
-}
-
-function OutputOnlyBanner() {
+function OutputOnlyBanner({ onNavigate }: { onNavigate: (tab: string) => void }) {
   return (
     <div className="flex flex-wrap items-center gap-3 bg-ink-300/5 border border-border rounded-md px-3.5 py-2.5 mb-4 text-[11.5px] text-ink-500">
       <span className="text-[10px] font-semibold uppercase tracking-wide text-ink-400 whitespace-nowrap">
@@ -103,6 +80,19 @@ function OutputOnlyBanner() {
       <span>
         No assumptions are entered here — values flow from Financials, Investment and Debt.
         GP/LP allocation happens in Partnership.
+      </span>
+      <span className="flex gap-3 ml-auto">
+        {CROSS_TAB_LINKS.map((l) => (
+          <button
+            key={l.tab}
+            type="button"
+            onClick={() => onNavigate(l.tab)}
+            className="font-semibold whitespace-nowrap cursor-pointer"
+            style={{ color: '#2f4a8c' }}
+          >
+            {l.label}
+          </button>
+        ))}
       </span>
     </div>
   );
@@ -117,6 +107,7 @@ function cell(v: number | null | undefined): string {
 export default function CashFlowTab() {
   const [tab, setTab] = useState('Summary');
   const params = useParams();
+  const router = useRouter();
   const { toast } = useToast();
   const dealId = (params?.id as string | undefined) ?? '';
   const [computing, setComputing] = useState(false);
@@ -126,6 +117,13 @@ export default function CashFlowTab() {
   // ``cash_flow`` engine — no in-browser re-derivation.
   const cfOut = getEngineField<CashFlowStatementOutput>(outputs, 'cash_flow');
   const cf = useMemo(() => (hasCashFlowStatement(cfOut) ? cfOut : null), [cfOut]);
+
+  // Cross-tab navigation for the output-only banner chips — mirrors the project
+  // page's ?tab= routing without touching page.tsx.
+  const go = (tabId: string) => {
+    if (!dealId) return;
+    router.push(`/projects/${dealId}?tab=${tabId}`, { scroll: false });
+  };
 
   // Fallback: a deal whose canonical run predates the cash_flow engine has no
   // statement yet — keep the "Run Model" placeholder so the tab never renders
@@ -208,24 +206,15 @@ export default function CashFlowTab() {
           onRunComplete={() => setComputing(false)}
         />
 
-        <OutputOnlyBanner />
+        <OutputOnlyBanner onNavigate={go} />
 
-        <div className="flex items-center gap-1 mb-3 border-b border-border">
-          {subTabs.map((t) => (
-            <button
-              key={t}
-              onClick={() => setTab(t)}
-              className={cn(
-                'px-4 py-2 text-[12.5px] border-b-2 transition-colors -mb-px',
-                tab === t
-                  ? 'border-brand-500 text-brand-700 font-medium'
-                  : 'border-transparent text-ink-500 hover:text-ink-900',
-              )}
-            >
-              {t}
-            </button>
-          ))}
-        </div>
+        <SubTabNav
+          className="mb-3"
+          items={subTabs.map((t) => ({ id: t, label: t }))}
+          activeId={tab}
+          onSelect={setTab}
+          caption={subTabCaption(tab)}
+        />
 
         <div className={cn(computing && 'relative pointer-events-none opacity-60')}>
           {tab === 'Summary' && <SummaryView cf={cf} />}
@@ -275,16 +264,139 @@ function KpiCard({ kpi }: { kpi: CashFlowKpi }) {
   return (
     <KpiTile
       className={cn(flash && 'value-flash')}
-      label={kpi.label}
+      label={KPI_LABEL_CANONICAL[kpi.label] ?? kpi.label}
       value={kpi.value == null ? '—' : fmtMillions(kpi.value, 2)}
       sub={kpi.sub}
     />
   );
 }
 
+/**
+ * "Equity Funding Reference" (Cash Flow Tab.dc.html) — restates the equity
+ * funded into the deal, read straight from the worker ``cash_flow`` output
+ * (``levered_cash_flow``): the close-period outflow is the initial equity, and
+ * any negative operating period is an additional draw. Reference ONLY — this
+ * figure is already inside net cash flow to equity (the levered CF at close), so
+ * it is shown, never re-added. When the levered series is absent the rows fall
+ * back to awaiting-data em-dashes.
+ */
+function EquityFundingReference({ cf }: { cf: CashFlowStatementOutput }) {
+  const lev = cf.levered_cash_flow ?? [];
+  const hasData = lev.length > 0 && typeof lev[0] === 'number';
+  const initial = hasData ? lev[0] : null;
+  const additional = hasData
+    ? lev.slice(1).reduce<number>((s, v) => s + (typeof v === 'number' && v < 0 ? v : 0), 0)
+    : null;
+
+  const rows: { label: string; value: number | null; state: ValueState; title: string }[] = [
+    {
+      label: 'Initial equity required',
+      value: initial,
+      state: hasData ? 'linked' : 'awaiting_data',
+      title:
+        'Investment → Required equity. Reference only — equity funding is already reflected in net cash flow to equity and is not added again.',
+    },
+    {
+      label: 'Additional equity required',
+      value: additional,
+      state: hasData ? 'calculated' : 'awaiting_data',
+      title:
+        'Reference only — any additional equity is already reflected in net cash flow to equity and is not added again.',
+    },
+  ];
+
+  const valueColor = (state: ValueState, v: number | null): string =>
+    v == null ? prov.muted : state === 'linked' ? prov.green : prov.gray;
+
+  return (
+    <div
+      style={{
+        background: '#fff',
+        border: '1px solid #eae9e4',
+        borderRadius: 10,
+        padding: '16px 18px',
+        marginTop: 14,
+        marginBottom: 14,
+      }}
+    >
+      <div
+        style={{
+          display: 'flex',
+          justifyContent: 'space-between',
+          alignItems: 'baseline',
+          gap: 14,
+          marginBottom: 8,
+          flexWrap: 'wrap',
+        }}
+      >
+        <span
+          style={{
+            fontSize: 12,
+            fontWeight: 700,
+            color: '#8a8a86',
+            textTransform: 'uppercase',
+            letterSpacing: '.03em',
+          }}
+        >
+          Equity Funding Reference
+        </span>
+        <span style={{ fontSize: 11, color: '#b0afaa' }}>
+          Reference only — already reflected in net cash flow to equity, never added again
+        </span>
+      </div>
+      <div
+        style={{
+          display: 'grid',
+          gridTemplateColumns: 'repeat(auto-fit,minmax(280px,1fr))',
+          gap: '0 32px',
+        }}
+      >
+        {rows.map((r) => (
+          <div
+            key={r.label}
+            title={r.title}
+            style={{
+              display: 'flex',
+              justifyContent: 'space-between',
+              alignItems: 'center',
+              gap: 12,
+              fontSize: 13,
+              padding: '7px 0',
+              borderBottom: '1px solid #f7f6f3',
+            }}
+          >
+            <span style={{ display: 'flex', alignItems: 'center', gap: 7, minWidth: 0 }}>
+              <ProvenanceDot state={r.state} size={8} />
+              <span style={{ color: '#6b6f76' }}>{r.label}</span>
+            </span>
+            <span style={{ color: valueColor(r.state, r.value), fontVariantNumeric: 'tabular-nums' }}>
+              {cell(r.value)}
+            </span>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 function SummaryView({ cf }: { cf: CashFlowStatementOutput }) {
   const { kpis, bridge } = buildSummary(cf);
   const headers = periodHeaders(cf);
+
+  // summaryNote (Cash Flow Tab.dc.html) — the deal-level equity reconciliation
+  // sentence, built from the already-composed KPI values (no new math).
+  const kpiVal = (label: string) => kpis.find((k) => k.label === label)?.value ?? 0;
+  const summaryNote =
+    'Net cash flow to equity is the canonical deal-level equity cash-flow series: operating cash flow to equity ' +
+    fmtMillions(kpiVal('Operating Cash Flow to Equity'), 2) +
+    ' + net refinance ' +
+    fmtMillions(kpiVal('Net Refinance Proceeds'), 2) +
+    ' + net exit ' +
+    fmtMillions(kpiVal('Net Exit Proceeds'), 2) +
+    ' = ' +
+    fmtMillions(kpiVal('Total Cash Returned to Equity'), 2) +
+    '. Partnership allocates this cash between GP and LP; Returns calculates performance from the resulting cash flows.';
+
   return (
     <>
       <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-3 mb-4">
@@ -306,6 +418,22 @@ function SummaryView({ cf }: { cf: CashFlowStatementOutput }) {
           footnote="Every column foots: property cash flow plus financing equals net cash flow to equity. Net cash flow to equity is the canonical deal-level equity cash-flow series — Partnership allocates it between GP and LP; Returns calculates performance from it."
         />
       </SectionCard>
+
+      <EquityFundingReference cf={cf} />
+
+      <div
+        style={{
+          background: '#fbfbf9',
+          border: '1px solid #eae9e4',
+          borderRadius: 10,
+          padding: '14px 18px',
+          fontSize: 11.5,
+          color: '#6b6f76',
+          lineHeight: 1.55,
+        }}
+      >
+        {summaryNote}
+      </div>
     </>
   );
 }
@@ -389,14 +517,8 @@ function CashFlowStatement({
   footnote?: string;
 }) {
   const headers = periodHeaders(cf);
-  const states = statesPresent(cf, section, cf[section]);
   return (
     <SectionCard variant="title" title={title} note={caption}>
-      {states.length > 0 && (
-        <div style={{ padding: '12px 18px 0' }}>
-          <DataKey states={states} />
-        </div>
-      )}
       <StatementTable
         lineItemHeader="LINE ITEM"
         columns={headers}
