@@ -24,6 +24,7 @@ process.env.NEXT_PUBLIC_WORKER_URL = 'http://test-worker.local';
 // X-Tenant-Id header in these tests.
 vi.mock('@/lib/auth', () => ({
   getCurrentOrgId: () => null,
+  getClerkSessionToken: async () => null,
 }));
 
 import { api, TimeoutError } from '@/lib/api';
@@ -105,6 +106,12 @@ describe('Bug #3 — request() client-side timeout', () => {
       ctrl.signal,
     );
 
+    // Let request() progress past the async token read and reach fetch()
+    // (registering the combined-signal abort listener) before the caller
+    // aborts — this mirrors a real in-flight abort (e.g. useDeal unmount),
+    // not a synchronous pre-fetch abort.
+    await Promise.resolve();
+    await Promise.resolve();
     // Caller aborts BEFORE the timeout fires.
     ctrl.abort(new Error('user-cancelled'));
 
