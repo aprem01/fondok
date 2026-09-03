@@ -12,6 +12,15 @@ import { fmtCurrency, fmtMillions, cn } from '@/lib/format';
 import { getEngineField, useEngineOutputs } from '@/lib/hooks/useEngineOutputs';
 import { useFlash } from '@/lib/hooks/useFlash';
 import { IntroCard } from '@/components/help/IntroCard';
+import {
+  StatementTable,
+  KpiTile,
+  SectionCard,
+  palette,
+  prov,
+  type StatementRow,
+  type StatementCell,
+} from '@/components/design';
 import type {
   CashFlowStatementOutput,
   CashFlowStatementLine,
@@ -24,6 +33,7 @@ import {
   periodHeaders,
   rowState,
   type CashFlowKpi,
+  type CashFlowBridgeRow,
   type CashFlowSection,
 } from './cashFlowStatement';
 
@@ -220,7 +230,7 @@ export default function CashFlowTab() {
         <div className={cn(computing && 'relative pointer-events-none opacity-60')}>
           {tab === 'Summary' && <SummaryView cf={cf} />}
           {tab === 'Unlevered' && (
-            <StatementTable
+            <CashFlowStatement
               cf={cf}
               section="unlevered"
               title="Unlevered Cash Flow"
@@ -229,7 +239,7 @@ export default function CashFlowTab() {
             />
           )}
           {tab === 'Levered / Equity' && (
-            <StatementTable
+            <CashFlowStatement
               cf={cf}
               section="levered"
               title="Levered / Equity Cash Flow"
@@ -259,14 +269,16 @@ export default function CashFlowTab() {
 
 function KpiCard({ kpi }: { kpi: CashFlowKpi }) {
   const flash = useFlash(kpi.value ?? 0);
+  // Design KPI tile (Cash Flow Tab.dc.html `summary` cards): #fff · 1px #eae9e4 ·
+  // radius 10 · 13/15 padding · 10px/700 eyebrow · 19px/700 tabular value (ink).
+  // `value-flash` keeps the on-recompute highlight the light card had.
   return (
-    <Card className={cn('p-4', flash && 'value-flash')}>
-      <div className="text-[10px] font-semibold tracking-wide text-ink-400 uppercase">{kpi.label}</div>
-      <div className="text-[19px] font-semibold tabular-nums mt-1.5 text-ink-900">
-        {kpi.value == null ? '—' : fmtMillions(kpi.value, 2)}
-      </div>
-      <div className="text-[10.5px] text-ink-500 mt-1 leading-snug">{kpi.sub}</div>
-    </Card>
+    <KpiTile
+      className={cn(flash && 'value-flash')}
+      label={kpi.label}
+      value={kpi.value == null ? '—' : fmtMillions(kpi.value, 2)}
+      sub={kpi.sub}
+    />
   );
 }
 
@@ -281,63 +293,89 @@ function SummaryView({ cf }: { cf: CashFlowStatementOutput }) {
         ))}
       </div>
 
-      <Card className="p-0 overflow-hidden">
-        <div className="px-4 py-3 border-b border-border flex items-baseline justify-between gap-3 flex-wrap">
-          <h3 className="text-[13px] font-semibold text-ink-900">Cash Flow Bridge</h3>
-          <span className="text-[11px] text-ink-500">Property cash flow → financing → equity</span>
-        </div>
-        <div className="overflow-x-auto px-4 pt-3">
-          <table className="w-full text-[12px] min-w-[720px]">
-            <thead>
-              <tr className="text-ink-500 text-[10.5px] border-b border-border">
-                <th className="text-left font-medium pb-2 w-64">LINE ITEM</th>
-                {headers.map((h) => (
-                  <th key={h} className="text-right font-medium pb-2">{h}</th>
-                ))}
-              </tr>
-            </thead>
-            <tbody>
-              {bridge.map((row, ri) => {
-                const bold = !!row.bold;
-                return (
-                  <tr
-                    key={row.label}
-                    className={cn(
-                      'border-b border-border/40',
-                      ri % 2 === 1 && !bold && 'bg-ink-300/5',
-                      bold && 'font-semibold bg-brand-50/40 border-t border-border',
-                    )}
-                  >
-                    <td className="py-1.5">{row.label}</td>
-                    {headers.map((_, ci) => {
-                      const v = row.values[ci];
-                      const neg = (v ?? 0) < 0;
-                      return (
-                        <td
-                          key={ci}
-                          className={cn('text-right tabular-nums', neg && !bold && 'text-danger-700')}
-                        >
-                          {cell(v)}
-                        </td>
-                      );
-                    })}
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
-        </div>
-        <div className="px-4 py-3 text-[11px] text-ink-500 leading-relaxed">
-          Every column foots: property cash flow plus financing equals net cash flow to equity.
-          Net cash flow to equity is the canonical deal-level equity cash-flow series — Partnership
-          allocates it between GP and LP; Returns calculates performance from it.
-        </div>
-      </Card>
+      <SectionCard
+        variant="title"
+        title="Cash Flow Bridge"
+        note="Property cash flow → financing → equity"
+      >
+        <StatementTable
+          lineItemHeader="LINE ITEM"
+          columns={headers}
+          gridTemplateColumns={statementGridCols(headers.length)}
+          rows={bridgeRows(bridge, headers.length)}
+          footnote="Every column foots: property cash flow plus financing equals net cash flow to equity. Net cash flow to equity is the canonical deal-level equity cash-flow series — Partnership allocates it between GP and LP; Returns calculates performance from it."
+        />
+      </SectionCard>
     </>
   );
 }
 
-function StatementTable({
+// ── Dark-navy statement grid (design/canonical/Cash Flow Tab.dc.html) ───────
+// The canonical grid: 230px sticky LINE ITEM column + N right-aligned metric
+// cols; #14213d navy header, #c9cede header text, #2a3a5c header dividers, and
+// #f7f6f3 row hairlines. Values carry origin by COLOUR — a `calc` (composed
+// bottom line) renders bold near-black on the #fbfbf9 subtotal band; a `linked`
+// row renders green; a period the row doesn't touch renders a muted em-dash.
+// This is exactly the shared `StatementTable`'s `row()`/`dot()` treatment, so
+// we map the worker's lines onto it rather than restyling a bespoke table.
+
+/** Design grid template: 230px line-item column + N metric cols (minmax 126px). */
+function statementGridCols(n: number): string {
+  return `230px repeat(${n},minmax(126px,1fr))`;
+}
+
+/** Colour a value cell by the canonical `row()` rule — bold→near-black,
+ *  linked→green, calc→grey, absent→muted. Text keeps the signed `cell()`
+ *  formatting (parenthesised negatives, em-dash for null). */
+function statementCells(
+  values: (number | null | undefined)[],
+  n: number,
+  { total, linked }: { total: boolean; linked: boolean },
+): StatementCell[] {
+  const bodyColor = total ? prov.black : linked ? prov.green : prov.gray;
+  return Array.from({ length: n }, (_, ci) => {
+    const v = values[ci];
+    return { text: cell(v), color: v == null ? prov.muted : bodyColor };
+  });
+}
+
+/** Map a worker cash-flow section (unlevered / levered) onto dark-grid rows.
+ *  `total` (bold, #fbfbf9 band) tracks the existing `kind === 'calc'` semantics;
+ *  the provenance dot keeps the full 6-state `rowState`. */
+function sectionRows(
+  cf: CashFlowStatementOutput,
+  section: 'unlevered' | 'levered',
+  n: number,
+): StatementRow[] {
+  return cf[section].map((line: CashFlowStatementLine) => {
+    const total = line.kind === 'calc';
+    return {
+      label: line.label,
+      title: line.note ?? undefined,
+      state: rowState(cf, section, line),
+      total,
+      bg: total ? palette.surfaceTint : undefined,
+      cells: statementCells(line.values, n, { total, linked: line.kind === 'linked' }),
+    };
+  });
+}
+
+/** Summary "Cash Flow Bridge" rows — all composed (calc) lines, so the dot is
+ *  Calculated and the emphasised total foots the column. */
+function bridgeRows(bridge: CashFlowBridgeRow[], n: number): StatementRow[] {
+  return bridge.map((row) => {
+    const total = !!row.bold;
+    return {
+      label: row.label,
+      state: 'calculated' as ValueState,
+      total,
+      bg: total ? palette.surfaceTint : undefined,
+      cells: statementCells(row.values, n, { total, linked: false }),
+    };
+  });
+}
+
+function CashFlowStatement({
   cf,
   section,
   title,
@@ -350,72 +388,22 @@ function StatementTable({
   caption: string;
   footnote?: string;
 }) {
-  const lines = cf[section];
   const headers = periodHeaders(cf);
-  const states = statesPresent(cf, section, lines);
+  const states = statesPresent(cf, section, cf[section]);
   return (
-    <Card className="p-0 overflow-hidden">
-      <div className="px-4 py-3 border-b border-border flex items-baseline justify-between gap-3 flex-wrap">
-        <h3 className="text-[13px] font-semibold text-ink-900">{title}</h3>
-        <span className="text-[11px] text-ink-500">{caption}</span>
-      </div>
-      <div className="px-4 pt-3">
-        <DataKey states={states} />
-      </div>
-      <div className="overflow-x-auto px-4">
-        <table className="w-full text-[12px] min-w-[720px]">
-          <thead>
-            <tr className="text-ink-500 text-[10.5px] border-b border-border">
-              <th className="text-left font-medium pb-2 w-64">LINE ITEM</th>
-              {headers.map((h) => (
-                <th key={h} className="text-right font-medium pb-2">{h}</th>
-              ))}
-            </tr>
-          </thead>
-          <tbody>
-            {lines.map((line, li) => {
-              const isCalc = line.kind === 'calc';
-              const st = rowState(cf, section, line);
-              return (
-                <tr
-                  key={`${line.label}-${li}`}
-                  className={cn(
-                    'border-b border-border/40',
-                    li % 2 === 1 && !isCalc && 'bg-ink-300/5',
-                    isCalc && 'font-semibold bg-brand-50/40 border-t border-border',
-                  )}
-                >
-                  <td className="py-1.5">
-                    <span className="flex items-center gap-2" title={line.note ?? undefined}>
-                      <StateDot state={st} />
-                      <span>{line.label}</span>
-                    </span>
-                  </td>
-                  {headers.map((_, ci) => {
-                    const v = line.values[ci];
-                    const neg = (v ?? 0) < 0;
-                    return (
-                      <td
-                        key={ci}
-                        className={cn(
-                          'text-right tabular-nums',
-                          v == null && 'text-ink-400',
-                          neg && !isCalc && 'text-danger-700',
-                        )}
-                      >
-                        {cell(v)}
-                      </td>
-                    );
-                  })}
-                </tr>
-              );
-            })}
-          </tbody>
-        </table>
-      </div>
-      {footnote && (
-        <div className="px-4 py-3 text-[11px] text-ink-500 leading-relaxed">{footnote}</div>
+    <SectionCard variant="title" title={title} note={caption}>
+      {states.length > 0 && (
+        <div style={{ padding: '12px 18px 0' }}>
+          <DataKey states={states} />
+        </div>
       )}
-    </Card>
+      <StatementTable
+        lineItemHeader="LINE ITEM"
+        columns={headers}
+        gridTemplateColumns={statementGridCols(headers.length)}
+        rows={sectionRows(cf, section, headers.length)}
+        footnote={footnote}
+      />
+    </SectionCard>
   );
 }

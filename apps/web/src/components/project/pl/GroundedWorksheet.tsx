@@ -32,9 +32,11 @@ import { Card } from '@/components/ui/Card';
 import { cn, fmtCurrency } from '@/lib/format';
 import { useToast } from '@/components/ui/Toast';
 import { api } from '@/lib/api';
-import type { ExtractionField, ExtractionResult, WorkerDocument } from '@/lib/api';
+import type { ExtractionField, ExtractionResult, WorkerDocument, ValueState } from '@/lib/api';
 import { getEngineField, useEngineOutputs } from '@/lib/hooks/useEngineOutputs';
 import { useEngineRun } from '@/lib/hooks/useEngineRun';
+import { useTrace } from '@/lib/hooks/useValueTrace';
+import { ProvenanceDot } from '@/components/design';
 import { useDeal } from '@/lib/hooks/useDeal';
 import { useDocuments } from '@/lib/hooks/useDocuments';
 import { useHistoricals } from '@/lib/hooks/useHistoricals';
@@ -298,6 +300,18 @@ export default function GroundedWorksheet({
   // Design rewire: year-pill filtering + line-item search.
   const [hiddenYears, setHiddenYears] = useState<Set<string>>(new Set());
   const [search, setSearch] = useState('');
+  // Canonical Historicals toolbar toggles (design/canonical/Financials Tab.dc.html):
+  //   period      → Full Year / Trailing 12 (month-end) / Monthly
+  //   format      → Summary (subtotals only) / Detailed (every line)
+  //   granularity → Annual / Monthly
+  // Format drives real filtering (Summary collapses detail lines to the
+  // canonical subtotals + computed anchors). Period + Granularity are the
+  // design's view chrome; the worksheet renders normalized annual actuals, so
+  // they are presentational until monthly/T-12 series are wired through the
+  // historicals loader (flagged for follow-up).
+  const [periodType, setPeriodType] = useState<'FY' | 'T12' | 'Monthly'>('FY');
+  const [format, setFormat] = useState<'summary' | 'detailed'>('detailed');
+  const [granularity, setGranularity] = useState<'annual' | 'monthly'>('annual');
 
   const expY0 = useMemo(() => (getEngineField<Record<string, unknown>[]>(outputs, 'expense', 'years') ?? [])[0] ?? {}, [outputs]);
   const fbY0 = useMemo(() => (getEngineField<Record<string, unknown>[]>(outputs, 'fb', 'years') ?? [])[0] ?? {}, [outputs]);
@@ -460,11 +474,16 @@ export default function GroundedWorksheet({
     return items;
   }, [wl.layout, customize, modelLive]);
 
-  // Design rewire: line-item search filters the rendered rows by label.
+  // Design rewire: line-item search + Format toggle filter the rendered rows.
+  // Summary collapses to the canonical subtotals/computed anchors (drops the
+  // editable detail lines, their splits, and memo lines); Detailed shows all.
   const visibleRendered = useMemo(() => {
     const q = search.trim().toLowerCase();
-    if (!q) return rendered;
     return rendered.filter((item) => {
+      if (format === 'summary' && (item.type === 'input' || item.type === 'split' || item.type === 'curated')) {
+        return false;
+      }
+      if (!q) return true;
       if (item.type === 'section') return false;
       const label =
         item.type === 'split' ? item.child.label
@@ -472,7 +491,7 @@ export default function GroundedWorksheet({
         : item.row.label;
       return label.toLowerCase().includes(q);
     });
-  }, [rendered, search]);
+  }, [rendered, search, format]);
 
   // Deep-link focus: a "→ Financials" jump from the Data Room field review
   // carries ?focus=<field_name>. Resolve it to a worksheet row and scroll +
@@ -573,11 +592,23 @@ export default function GroundedWorksheet({
   return (
     <Card className="p-0 overflow-hidden">
       <div className="flex flex-wrap items-center justify-between gap-3 px-5 py-3 border-b border-border bg-surface-2/40">
-        <div>
-          <h3 className="text-[14px] font-semibold text-ink-900">Financials</h3>
-          <p className="text-[11.5px] text-ink-500 mt-0.5">
-            Historical operating actuals — click any cell’s dot to see its source, or a red-flagged value to review it.
-          </p>
+        <div className="flex items-center gap-3 flex-wrap">
+          <div>
+            <h3 className="text-[14px] font-semibold text-ink-900">Financials</h3>
+            <p className="text-[11.5px] text-ink-500 mt-0.5">
+              Historical operating actuals — click any cell’s dot to see its source, or a red-flagged value to review it.
+            </p>
+          </div>
+          <select
+            value={periodType}
+            onChange={(e) => setPeriodType(e.target.value as 'FY' | 'T12' | 'Monthly')}
+            title="View period"
+            style={{ fontSize: 12, border: '1px solid #e2e1dc', borderRadius: 6, padding: '6px 9px', color: '#3a3f47', background: '#fff' }}
+          >
+            <option value="FY">Full Year</option>
+            <option value="T12">Trailing 12 (month-end)</option>
+            <option value="Monthly">Monthly</option>
+          </select>
         </div>
         <div className="flex items-center gap-2">
           {running && (
@@ -585,12 +616,35 @@ export default function GroundedWorksheet({
               <Loader2 size={12} className="animate-spin" /> Working…
             </span>
           )}
-          {avgConfidence != null && (
-            <span className="inline-flex items-center gap-1 text-[11px] font-medium text-success-700 bg-success-50 border border-success-500/25 rounded-full px-2 py-0.5 tabular-nums">
-              {Math.round(avgConfidence * 100)}% extraction confidence
-            </span>
-          )}
         </div>
+      </div>
+      {/* Canonical row 2 — Format + Granularity view toggles + confidence chip. */}
+      <div className="flex flex-wrap items-center gap-4 px-5 py-2.5 border-b border-border" style={{ background: '#fbfbf9' }}>
+        <div className="flex items-center gap-2">
+          <span className="text-[11.5px] text-ink-500">Format:</span>
+          <SegToggle
+            options={[{ id: 'summary', label: 'Summary' }, { id: 'detailed', label: 'Detailed' }]}
+            value={format}
+            onChange={setFormat}
+          />
+        </div>
+        <div className="flex items-center gap-2">
+          <span className="text-[11.5px] text-ink-500">Granularity:</span>
+          <SegToggle
+            options={[{ id: 'annual', label: 'Annual' }, { id: 'monthly', label: 'Monthly' }]}
+            value={granularity}
+            onChange={setGranularity}
+          />
+        </div>
+        <span className="text-[11px]" style={{ color: '#c3c2bd' }}>Budget / prior-year comparison shown in annual view</span>
+        {avgConfidence != null && (
+          <span
+            className="ml-auto inline-flex items-center gap-1 text-[11px] font-medium text-success-700 bg-success-50 border border-success-500/25 rounded-full px-2 py-0.5 tabular-nums"
+            title="Average extraction confidence across the cells in this view — flagged (red) cells are the ones dragging it down."
+          >
+            {Math.round(avgConfidence * 100)}% extraction confidence
+          </span>
+        )}
       </div>
       {histYears.length > 0 && (
         <div className="flex flex-wrap items-center gap-3 px-5 py-2 border-b border-border">
@@ -842,6 +896,13 @@ function WorksheetCell({
   onInspect: (t: InspectTarget) => void;
 }) {
   const resolved = useSource(!historical ? row.overrideKey : undefined);
+  // FON-65 — per-value grounding state from GET /deals/{id}/provenance, powering
+  // the canonical 6-state dot for the Model (year-0) column. Historical columns
+  // derive their state from extraction confidence below.
+  const traced = useTrace(
+    !historical ? (row.y1Src ?? 'expense') : undefined,
+    !historical && row.y1Read ? `years[0].${row.y1Read.join('.')}` : undefined,
+  );
 
   // Value for this cell.
   let value: number | null = null;
@@ -870,12 +931,15 @@ function WorksheetCell({
     const k = resolved?.source ? sourceKind(resolved.source) : null;
     kind = k ?? 'benchmark';
   }
-  // Design taxonomy: grounded/extracted = green, input/assumption
-  // (override + benchmark) = blue, calculated = gray.
-  const dotCls =
-    kind === 'grounded' ? 'bg-emerald-500'
-    : kind === 'computed' ? 'bg-slate-400'
-    : 'bg-blue-500';
+  // Canonical 6-state dot: map the cell's origin to a ValueState, preferring
+  // the engine's own grounding state (/provenance) for the Model column.
+  // needs_review rides on top as the amber halo (flags stack, never replace).
+  const derivedState: ValueState =
+    kind === 'grounded' ? 'document_sourced'
+    : kind === 'computed' ? 'calculated'
+    : 'assumption'; // override + seed/benchmark are assumption-layer (blue)
+  const dotState: ValueState = (traced?.state as ValueState | undefined) ?? derivedState;
+  const dotReview = !!effReview;
 
   const openInspect = () => {
     if (value == null) return;
@@ -914,8 +978,10 @@ function WorksheetCell({
           type="button"
           onClick={openInspect}
           title="See where this came from"
-          className={cn('w-1.5 h-1.5 rounded-full shrink-0 hover:ring-2 hover:ring-offset-1 hover:ring-ink-300', dotCls)}
-        />
+          className="shrink-0 inline-flex rounded-full hover:ring-2 hover:ring-offset-1 hover:ring-ink-300"
+        >
+          <ProvenanceDot state={dotState} review={dotReview} size={8} />
+        </button>
         {editing ? (
           <input
             autoFocus
@@ -976,6 +1042,46 @@ function WorksheetCell({
         )}
       </span>
     </td>
+  );
+}
+
+// Canonical segmented toggle (design/canonical/Financials Tab.dc.html):
+// #f0efeb track, white active pill with a soft shadow. Used for the
+// Format (Summary/Detailed) + Granularity (Annual/Monthly) view controls.
+function SegToggle<T extends string>({
+  options, value, onChange,
+}: {
+  options: { id: T; label: string }[];
+  value: T;
+  onChange: (v: T) => void;
+}) {
+  return (
+    <div style={{ display: 'flex', background: '#f0efeb', borderRadius: 6, padding: 2 }}>
+      {options.map((o) => {
+        const active = o.id === value;
+        return (
+          <button
+            key={o.id}
+            type="button"
+            onClick={() => onChange(o.id)}
+            style={{
+              padding: '4px 12px',
+              fontSize: 11.5,
+              fontWeight: 600,
+              cursor: 'pointer',
+              borderRadius: 5,
+              border: 'none',
+              fontFamily: 'inherit',
+              background: active ? '#fff' : 'transparent',
+              color: active ? '#1a2233' : '#6b6f76',
+              boxShadow: active ? '0 1px 2px rgba(0,0,0,.08)' : 'none',
+            }}
+          >
+            {o.label}
+          </button>
+        );
+      })}
+    </div>
   );
 }
 

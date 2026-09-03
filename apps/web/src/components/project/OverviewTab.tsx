@@ -1,34 +1,164 @@
 'use client';
-import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
-import { useRouter, useParams } from 'next/navigation';
-import { LayoutGrid, Download, Pencil, Link2 } from 'lucide-react';
-import { Card } from '@/components/ui/Card';
-import { Button } from '@/components/ui/Button';
-import { useToast } from '@/components/ui/Toast';
-import {
-  findBrand, returnProfiles, positioningTiers,
-  brandFamilies,
-} from '@/lib/mockData';
-import { api, isWorkerConnected, workerUrl, type ExtractionField, type AssumptionSourcesResponse } from '@/lib/api';
-import { fmtCurrency, fmtPct, fmtNumber, cn } from '@/lib/format';
-import { getEngineField, useEngineOutputs } from '@/lib/hooks/useEngineOutputs';
-import { useDocuments } from '@/lib/hooks/useDocuments';
-import { useEngineRun } from '@/lib/hooks/useEngineRun';
-import { useDeal } from '@/lib/hooks/useDeal';
-import { useFlash } from '@/lib/hooks/useFlash';
-import { AssumptionBadge } from '@/components/help/AssumptionBadge';
-import OverridePanel from '@/components/help/OverridePanel';
-import { MetricLabel } from '@/components/help/MetricLabel';
-import { Traced } from '@/components/help/Traced';
-import { CoachMark } from '@/components/help/CoachMark';
-import { VarianceHero } from './VarianceHero';
-import { GLOSSARY } from '@/lib/glossary';
 
-interface SourceUseLine {
+/**
+ * Overview tab — canonical rebuild against `design/canonical/Overview Tab v3.dc.html`.
+ *
+ * "The deal on one page — what you're buying, how it's capitalized, when each
+ * milestone lands, and the returns that fall out of it." Built entirely from
+ * the shared design system (`@/components/design`) — KpiTile · SectionCard ·
+ * ProvenanceDot · WhereThisCameFrom · tokens — and driven by real engine
+ * outputs read through `getEngineField` (never prototype placeholders).
+ *
+ * DEAL-TYPE-AWARE (v3): the section set + KPI tiles switch on the deal's
+ * `deal_type` (+ `return_profile`):
+ *   development         → Project · Land/Site · Development Budget ·
+ *                         Construction Financing · Opening & Stabilization ·
+ *                         Exit · Sources & Uses · Development Timeline
+ *   acquisition · core  → Property · Entry Valuation · Capitalization · Exit ·
+ *                         Sources & Uses · Transaction Timeline
+ *   acquisition · value-add → Property · Entry Valuation · Renovation/CapEx ·
+ *                         Capitalization · Stabilization · Exit ·
+ *                         Sources & Uses · Transaction Timeline
+ * Fields an engine doesn't emit render as "awaiting data" em-dashes.
+ *
+ * OWNERSHIP (design + DESIGN_MAP): Acquisition / Reversion / Financing rows are
+ * READ-ONLY / linked — operating overrides stay owned by Financials, debt by
+ * Debt. The only assumptions edited here are the Investment Profile (deal type,
+ * returns profile, brand, positioning), and a deal-type change routes through a
+ * confirmation ("Update model") before the model re-runs.
+ *
+ * PROVENANCE: dots + the anchored "Where this came from" popover read the real
+ * per-value `state` / formula / inputs from GET /deals/{id}/provenance via
+ * `useTraceGraph`, falling back to the canonical semantic kind.
+ * The Data Key strip is mounted once in `page.tsx` — no per-tab legend here.
+ */
+
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type CSSProperties,
+  type ReactNode,
+} from 'react';
+import { useRouter, useParams } from 'next/navigation';
+import { useToast } from '@/components/ui/Toast';
+import { fmtCurrency, fmtPct, fmtMillions } from '@/lib/format';
+import { getEngineField, useEngineOutputs } from '@/lib/hooks/useEngineOutputs';
+import { useDeal } from '@/lib/hooks/useDeal';
+import { useEngineRun } from '@/lib/hooks/useEngineRun';
+import { useTraceGraph } from '@/lib/hooks/useValueTrace';
+import { returnProfiles, positioningTiers, brandFamilies } from '@/lib/mockData';
+import {
+  KpiTile,
+  SectionCard,
+  ProvenanceDot,
+  WhereThisCameFrom,
+  palette,
+  prov,
+  popoverKind,
+  fontStack,
+  type WhereThisCameFromProps,
+} from '@/components/design';
+import {
+  api,
+  isWorkerConnected,
+  WorkerError,
+  type EngineOutputsResponse,
+  type TimelineResponse,
+  type ValueState,
+} from '@/lib/api';
+
+// ─── Canonical value vocabulary (design/canonical/Overview Tab v3.dc.html) ────
+// doc → document sourced · linked → owned by another engine/module · input →
+// editable assumption · calc → calculated by Fondok · awaiting → not in yet.
+type ValueKind = 'doc' | 'linked' | 'input' | 'calc' | 'awaiting';
+type Cfg = 'va' | 'core' | 'dev';
+
+/** Row value color — mirrors the canonical `colorFor()` (BLUE/GREEN/GRAY/BLACK/MUTED). */
+function valueColor(kind: ValueKind, bold: boolean, overridden: boolean): string {
+  if (overridden) return prov.blue;
+  if (bold) return prov.black;
+  if (kind === 'input') return prov.blue;
+  if (kind === 'linked' || kind === 'doc') return prov.green;
+  if (kind === 'awaiting') return prov.muted;
+  return prov.gray;
+}
+
+/** Provenance-dot state — the real /provenance `state` wins, else the canonical kind. */
+function kindToState(kind: ValueKind): ValueState {
+  switch (kind) {
+    case 'doc': return 'document_sourced';
+    case 'linked': return 'linked';
+    case 'input': return 'assumption';
+    case 'awaiting': return 'awaiting_data';
+    default: return 'calculated';
+  }
+}
+
+const KIND_LABEL: Record<ValueKind, string> = {
+  doc: 'Document sourced', linked: 'Linked', input: 'Assumption',
+  calc: 'Calculated', awaiting: 'Awaiting data',
+};
+const KIND_POPOVER_COLOR: Record<ValueKind, string> = {
+  doc: popoverKind.document_sourced, linked: popoverKind.linked,
+  input: popoverKind.editable_assumption, calc: popoverKind.calculated,
+  awaiting: palette.textMuted,
+};
+
+interface RowProvInput { name: string; from: string; kind: ValueKind }
+
+interface RowDef {
+  id: string;
   label: string;
-  amount: number;
-  pct?: number | null;
-  is_total?: boolean;
+  kind: ValueKind;
+  /** Formatted display string (Overview rows are read-only / linked). */
+  value: string;
+  /** Resolved provenance state — drives the leading dot + review flag. */
+  state: ValueState;
+  bold?: boolean;
+  overridden?: boolean;
+  /** Where this came from — popover payload. */
+  docName?: string;
+  docPage?: string;
+  linkLabel?: string;   // originating module (linked rows)
+  linkTab?: string;     // deep-link target for the popover action
+  formula?: string;     // human formula (calc rows)
+  formulaNumbers?: string;
+  inputs?: RowProvInput[];
+  /** Provenance trace lookup (engine, dotted output path) for real formula/state. */
+  trace?: { engine: 'capital' | 'returns' | 'debt' | 'expense'; path: string };
+}
+
+interface RowsSection {
+  kind: 'rows';
+  title: string;
+  note?: string;
+  action?: { label: string; tab: string };
+  rows: RowDef[];
+}
+interface SuSection { kind: 'su'; title: string }
+interface TimelineSection { kind: 'timeline'; title: string }
+type SectionSpec = RowsSection | SuSection | TimelineSection;
+
+const DEAL_TYPES: { label: string; id: 'acquisition' | 'development' }[] = [
+  { label: 'Acquisition', id: 'acquisition' },
+  { label: 'Development', id: 'development' },
+];
+
+/** Section titles for the deal-type-change confirmation ("Sections after the change"). */
+function sectionTitles(cfg: Cfg): string {
+  if (cfg === 'dev') {
+    return ['Project', 'Land / Site Acquisition', 'Development Budget', 'Construction Financing',
+      'Opening & Stabilization', 'Exit', 'Sources & Uses', 'Development Timeline'].join(' · ');
+  }
+  if (cfg === 'core') {
+    return ['Property', 'Entry Valuation', 'Capitalization', 'Exit',
+      'Sources & Uses', 'Transaction Timeline'].join(' · ');
+  }
+  return ['Property', 'Entry Valuation', 'Renovation / CapEx', 'Capitalization', 'Stabilization',
+    'Exit', 'Sources & Uses', 'Transaction Timeline'].join(' · ');
 }
 
 export default function OverviewTab({ projectId }: { projectId: number | string }) {
@@ -39,1366 +169,879 @@ export default function OverviewTab({ projectId }: { projectId: number | string 
   const isMockId = /^\d+$/.test(dealId);
   const liveMode = isWorkerConnected() && !isMockId;
 
-  // Empty state CTA — route the user to the Data Room (where uploads live).
-  // Once docs are dropped, the engine tabs handle the actual run.
-  const onRunUnderwriting = () => {
-    router.push(`/projects/${dealId}`); // Data Room tab is the default
-  };
-
-  // Export-to-Excel on the Overview tab streams the worker's full deal
-  // workbook for live deals; mock deals get a toast that points them at
-  // the Export tab (which holds the canned deliverables).
-  const onExportExcel = () => {
-    if (liveMode) {
-      window.location.href = `${workerUrl()}/deals/${dealId}/export/excel`;
-    } else {
-      toast('Excel export available from the Export tab once the model has run', { type: 'info' });
-    }
-  };
-
-  // Pull worker output for the Sources/Uses, Proforma, Sensitivity sections.
   const { outputs } = useEngineOutputs(dealId);
   const { deal, refresh: refreshDeal } = useDeal(dealId);
 
+  // Computed-value provenance graphs — the dot + popover read the real
+  // /provenance `state` / formula / inputs, falling back to the canonical kind.
+  const capitalTrace = useTraceGraph('capital');
+  const returnsTrace = useTraceGraph('returns');
+  const debtTrace = useTraceGraph('debt');
+  const expenseTrace = useTraceGraph('expense');
+  const traceGet = useCallback(
+    (engine: 'capital' | 'returns' | 'debt' | 'expense', path: string) => {
+      const g = engine === 'capital' ? capitalTrace
+        : engine === 'returns' ? returnsTrace
+          : engine === 'debt' ? debtTrace : expenseTrace;
+      return g?.get(path) ?? null;
+    },
+    [capitalTrace, returnsTrace, debtTrace, expenseTrace],
+  );
+  const tracedState = useCallback(
+    (engine: 'capital' | 'returns' | 'debt' | 'expense', path: string): ValueState | null =>
+      traceGet(engine, path)?.state ?? null,
+    [traceGet],
+  );
 
-  // Provenance map for the key underwriting assumptions (Sam v2 #11).
-  // Loaded once on mount + after engine re-runs so the "Sources" strip
-  // on the Returns Summary card refreshes when overrides land.
-  const [assumptionSources, setAssumptionSources] = useState<AssumptionSourcesResponse | null>(null);
+  // Dated transaction timeline (FON-71) — refetched after a run.
+  const [timeline, setTimeline] = useState<TimelineResponse | null>(null);
+  const [runToken, setRunToken] = useState(0);
   useEffect(() => {
-    if (!liveMode) { setAssumptionSources(null); return; }
+    if (!liveMode) { setTimeline(null); return; }
     const ac = new AbortController();
-    api.deals.assumptionSources(dealId, ac.signal)
-      .then(setAssumptionSources)
-      .catch(() => { /* best-effort; falls back to no badges */ });
+    api.engines.timeline(dealId, ac.signal)
+      .then(setTimeline)
+      .catch(() => { /* best-effort; rail shows pending */ });
     return () => ac.abort();
-  }, [dealId, liveMode]);
+  }, [dealId, liveMode, runToken]);
 
-  // FON-59 / FON-44 / FON-70 — descriptive property metadata resolved
-  // cross-document by the worker (OM-first, then STR, then any doc): the
-  // hotel/asset name (property_overview.name — distinct from the deal's
-  // project name), plus year_built / gba_sf / labor_type. These serve as
-  // the fallback source for the General Information rows when the OM's own
-  // extraction (read client-side, OM-only below) doesn't carry the field —
-  // e.g. year_built often lives on the STR trend report, not the OM.
-  const [extractedMeta, setExtractedMeta] = useState<{
-    name: string | null;
-    year_built: number | null;
-    gba_sf: number | null;
-    labor_type: string | null;
-  }>({ name: null, year_built: null, gba_sf: null, labor_type: null });
+  // Descriptive property metadata resolved cross-document by the worker
+  // (OM-first): asset name / year_built / gba_sf / labor. NOT engine output —
+  // read once so the Property rows populate for live deals.
+  const [meta, setMeta] = useState<{ name: string | null; year_built: number | null; gba_sf: number | null; labor: string | null }>(
+    { name: null, year_built: null, gba_sf: null, labor: null },
+  );
   useEffect(() => {
-    if (!liveMode) {
-      setExtractedMeta({ name: null, year_built: null, gba_sf: null, labor_type: null });
-      return;
-    }
+    if (!liveMode) { setMeta({ name: null, year_built: null, gba_sf: null, labor: null }); return; }
     const ac = new AbortController();
     api.market.overview(dealId, ac.signal)
       .then((d) => {
-        const o = (d ?? {}) as {
-          property_name?: string | null;
-          year_built?: number | null;
-          gba_sf?: number | null;
-          labor_type?: string | null;
-        };
-        setExtractedMeta({
-          name: o.property_name ?? null,
-          year_built: o.year_built ?? null,
-          gba_sf: o.gba_sf ?? null,
-          labor_type: o.labor_type ?? null,
-        });
+        const o = (d ?? {}) as { property_name?: string | null; year_built?: number | null; gba_sf?: number | null; labor_type?: string | null };
+        setMeta({ name: o.property_name ?? null, year_built: o.year_built ?? null, gba_sf: o.gba_sf ?? null, labor: o.labor_type ?? null });
       })
-      .catch(() => { /* best-effort; falls back to editable blank */ });
+      .catch(() => { /* best-effort */ });
     return () => ac.abort();
   }, [dealId, liveMode]);
 
-  // ─── Inline-edit override state ────────────────────────────────────
-  // Mirrors the deal's `field_overrides` JSONB column. Edits PATCH the
-  // worker, hold an optimistic local copy so the UI reacts immediately,
-  // and kick off a debounced run-all so the engines re-derive any
-  // dependent numbers. Engine-linked rows (chain icon) stay read-only;
-  // only descriptive rows (pencil icon) wire an onSave.
-  const [overrides, setOverrides] = useState<Record<string, unknown>>({});
-  useEffect(() => {
-    // Hydrate from the deal record once it loads; later edits replace
-    // this map wholesale.
-    setOverrides((deal?.field_overrides as Record<string, unknown> | undefined) ?? {});
-  }, [deal?.field_overrides]);
-
+  // ─── Investment Profile persistence + debounced re-run ─────────────────
+  const overrides = (deal?.field_overrides ?? {}) as Record<string, unknown>;
   const fullRun = useEngineRun(liveMode ? dealId : '', 'returns', { runMode: 'all' });
-  const rerunTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  useEffect(() => () => {
-    if (rerunTimerRef.current) clearTimeout(rerunTimerRef.current);
-  }, []);
+  const rerunRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  useEffect(() => () => { if (rerunRef.current) clearTimeout(rerunRef.current); }, []);
+  const scheduleRun = useCallback(() => {
+    if (!liveMode) return;
+    if (rerunRef.current) clearTimeout(rerunRef.current);
+    rerunRef.current = setTimeout(() => { void fullRun.run().then(() => setRunToken(Date.now())); }, 1400);
+  }, [liveMode, fullRun]);
 
-  const onSaveOverride = useCallback(
-    async (path: string, value: number | string | null) => {
-      if (!liveMode) {
-        toast('Inline edit is disabled on demo deals', { type: 'info' });
-        return;
-      }
-      // `deal.<col>` paths patch the deal row directly (those fields
-      // have real columns already — name/city/brand/keys/service).
-      // Other paths flow into the field_overrides JSONB column.
-      const isDealCol = path.startsWith('deal.');
+  const persist = useCallback(
+    async (patch: Parameters<typeof api.deals.update>[1], msg = 'Saved — re-running the model…') => {
+      if (!liveMode) { toast('Editing is disabled on demo deals', { type: 'info' }); return; }
       try {
-        if (isDealCol) {
-          const col = path.slice('deal.'.length) as 'name' | 'city' | 'brand' | 'keys' | 'service';
-          const patch: Record<string, unknown> = {};
-          patch[col] = value;
-          await api.deals.update(dealId, patch as never);
-        } else {
-          const next = { ...overrides };
-          if (value === null || value === '') {
-            delete next[path];
-          } else {
-            next[path] = value;
-          }
-          setOverrides(next); // optimistic
-          await api.deals.update(dealId, { field_overrides: next });
-        }
-        toast('Saved — re-running engines', { type: 'success' });
+        await api.deals.update(dealId, patch);
+        toast(msg, { type: 'success' });
         void refreshDeal?.();
-        if (rerunTimerRef.current) clearTimeout(rerunTimerRef.current);
-        rerunTimerRef.current = setTimeout(() => {
-          void fullRun.run();
-        }, 1500);
+        scheduleRun();
       } catch (err) {
-        // Roll back optimistic update on failure.
-        if (!isDealCol) setOverrides(overrides);
-        const msg = err instanceof Error ? err.message : 'Unknown error';
-        toast(`Save failed: ${msg}`, { type: 'error' });
+        const detail = err instanceof WorkerError ? err.body : String(err);
+        toast(`Save failed: ${detail || 'worker rejected update'}`, { type: 'error' });
       }
     },
-    [overrides, dealId, liveMode, toast, refreshDeal, fullRun],
+    [dealId, liveMode, toast, refreshDeal, scheduleRun],
   );
 
-  // ─── Override flow (with mandatory justification note) ─────────────
-  // Roadmap item #6 (June 2026 call). The badge-based override flow
-  // surfaces an OverridePanel — right-anchored drawer (Wave 1 UX
-  // refactor replaced the centered modal) that forces the analyst to
-  // record a reason. Written as the new structured shape: ``{value, note}``.
-  // Engines see it as a scalar via _normalize_override_shape on the
-  // worker side, so this is fully backward-compatible with existing
-  // flat-shape overrides.
-  const [overrideTarget, setOverrideTarget] = useState<{
-    path: string;
-    label: string;
-    currentValue: string | number | null | undefined;
-    currentSource: string;
-  } | null>(null);
+  // ─── UI state ──────────────────────────────────────────────────────────
+  const [reviewOnly, setReviewOnly] = useState(false);
+  const [pendingDealType, setPendingDealType] = useState<'acquisition' | 'development' | null>(null);
+  const [popover, setPopover] = useState<{ row: RowDef; top: number; left: number; caretRight: number } | null>(null);
 
-  const onSaveOverrideWithNote = useCallback(
-    async ({ value, note }: { value: string; note: string }) => {
-      if (!overrideTarget) return;
-      if (!liveMode) {
-        toast('Override is disabled on demo deals', { type: 'info' });
-        return;
-      }
-      const path = overrideTarget.path;
-      // Try to coerce numeric strings so engines can apply the override.
-      const asNumber = Number(value);
-      const coerced: number | string = Number.isFinite(asNumber) && value.trim() !== ''
-        ? asNumber
-        : value;
-      const next = {
-        ...overrides,
-        [path]: { value: coerced, note },
-      };
-      setOverrides(next); // optimistic
-      try {
-        await api.deals.update(dealId, { field_overrides: next });
-        toast('Override saved — re-running engines', { type: 'success' });
-        void refreshDeal?.();
-        if (rerunTimerRef.current) clearTimeout(rerunTimerRef.current);
-        rerunTimerRef.current = setTimeout(() => {
-          void fullRun.run();
-        }, 1500);
-      } catch (err) {
-        setOverrides(overrides); // rollback
-        const msg = err instanceof Error ? err.message : 'Unknown error';
-        toast(`Override failed: ${msg}`, { type: 'error' });
-        throw err;
-      }
-    },
-    [overrideTarget, overrides, dealId, liveMode, toast, refreshDeal, fullRun],
-  );
+  // ─── Deal configuration ────────────────────────────────────────────────
+  const dealType: 'acquisition' | 'development' = deal?.deal_type === 'development' ? 'development' : 'acquisition';
+  const returnProfileId = deal?.return_profile ?? 'value-add';
+  const positioningId = deal?.positioning ?? 'default';
+  const brand = deal?.brand ?? '';
+  const cfg: Cfg = dealType === 'development' ? 'dev' : (returnProfileId === 'core' ? 'core' : 'va');
+  const keys = (deal?.keys && deal.keys > 0) ? deal.keys : undefined;
+  const isDev = cfg === 'dev';
 
-  // Property-detail fields (Year Built, GBA, Meeting Space, etc.) come from
-  // the OM extraction, not from any engine. We aggregate fields across all
-  // OM-classified docs and resolve each metadata key by trying a list of
-  // likely paths — the extractor doesn't enforce a strict schema for these
-  // descriptive fields, so different OMs use different names.
-  const { documents, extractions } = useDocuments(liveMode ? dealId : null);
-  const omExtractedFields = useMemo<ExtractionField[]>(() => {
-    if (!liveMode) return [];
-    const out: ExtractionField[] = [];
-    for (const d of documents) {
-      const dt = (d.doc_type ?? '').toUpperCase();
-      if (dt !== 'OM') continue;
-      const ex = extractions[d.id];
-      if (ex?.fields) out.push(...ex.fields);
-    }
-    return out;
-  }, [liveMode, documents, extractions]);
-  const wSources = getEngineField<SourceUseLine[]>(outputs, 'capital', 'sources');
-  const wUses = getEngineField<SourceUseLine[]>(outputs, 'capital', 'uses');
-  const wReturnsIrr = getEngineField<number>(outputs, 'returns', 'levered_irr');
-  const hasWorkerCapital = Array.isArray(wSources) && wSources.length > 0
-    && Array.isArray(wUses) && wUses.length > 0;
-  const hasWorkerReturns = wReturnsIrr != null;
-  const hasAnyWorker = hasWorkerCapital || hasWorkerReturns;
+  // ─── Engine reads (no fixtures — '—' until the engine emits) ────────────
+  const has = (v: number | undefined): v is number => v != null && Number.isFinite(v);
+  const cap = (...p: string[]): number | undefined => getEngineField<number>(outputs, 'capital', ...p);
+  const ret = (...p: string[]): number | undefined => getEngineField<number>(outputs, 'returns', ...p);
+  const dbt = (...p: string[]): number | undefined => getEngineField<number>(outputs, 'debt', ...p);
 
-  if (!hasAnyWorker) {
-    return (
-      <Card className="p-16 text-center">
-        <div className="w-12 h-12 rounded-lg bg-ink-300/20 flex items-center justify-center mx-auto mb-4">
-          <LayoutGrid size={20} className="text-ink-400" />
-        </div>
-        <h3 className="text-[15px] font-semibold text-ink-900">No underwriting data yet</h3>
-        <p className="text-[12.5px] text-ink-500 mt-1 max-w-md mx-auto leading-relaxed">
-          We need an Offering Memorandum (the broker&apos;s pitch deck) and a T-12 (the last 12 months
-          of profit &amp; loss) before we can build the model. Drop them into the
-          <span className="font-medium"> Data Room</span> tab to get started.
-        </p>
-        <Button
-          variant="primary"
-          size="sm"
-          className="mt-4"
-          onClick={onRunUnderwriting}
-        >
-          Open Data Room
-        </Button>
-      </Card>
-    );
-  }
-
-  // ─── Engine-value gate ───────────────────────────────────────────
-  // Prefer worker engine output; deals show '—' until the engine has
-  // produced the value. `pickNum` returns a raw number for arithmetic;
-  // `fmtOrDash` formats with a fallback to '—'.
-  const pickNum = (worker: number | undefined): number | undefined =>
-    worker != null ? worker : undefined;
-  const fmtOrDash = (
-    n: number | undefined,
-    formatter: (v: number) => string,
-  ): string => (n != null ? formatter(n) : '—');
-
-  // ─── Property metadata ───────────────────────────────────────────
-  // Name/city/keys/brand live on the deal row (set by the create-deal
-  // wizard or patched via the API). The descriptive fields the OM
-  // typically carries — year_built, gba, meeting_space, parking,
-  // fb_outlets, property_type — are resolved from the OM extraction by
-  // trying a list of plausible aliases per field.
-  // Property / Hotel Name = user override → extracted OM asset name. NEVER the
-  // deal's project name (deal.name), which stays in the project header only
-  // (FON-59 #3 normalization rule).
-  const propertyNameOverride =
-    typeof overrides['property_name'] === 'string' ? (overrides['property_name'] as string) : undefined;
-  const propertyName = propertyNameOverride ?? extractedMeta.name ?? undefined;
-  const propertyCity = deal?.city ?? undefined;
-  const propertyKeys = (deal?.keys && deal.keys > 0) ? deal.keys : undefined;
-  const propertyBrand = deal?.brand ?? undefined;
-
-  // Resolve a descriptive field by trying multiple alias paths against
-  // the OM extraction. Matches on the full dotted name, the last
-  // segment, and both with any trailing unit suffix stripped — the
-  // same shape HistoricalsSection uses.
-  const findOmField = (aliases: string[]): ExtractionField | undefined => {
-    const norm = (s: string) => s.toLowerCase().replace(/[^a-z0-9]/g, '');
-    const stripUnit = (s: string) =>
-      s.replace(/(usd|sqft|sf|pct|percent|count|spaces|outlets)$/i, '');
-    const aSet = new Set<string>();
-    for (const a of aliases) {
-      const n = norm(a);
-      aSet.add(n);
-      aSet.add(stripUnit(n));
-    }
-    for (const f of omExtractedFields) {
-      const full = norm(f.field_name);
-      const segs = f.field_name.split('.');
-      const last = norm(segs[segs.length - 1] ?? '');
-      for (const cand of [full, stripUnit(full), last, stripUnit(last)]) {
-        if (cand && aSet.has(cand)) return f;
-      }
-    }
-    return undefined;
-  };
-
-  const numFromField = (f: ExtractionField | undefined): number | undefined => {
-    if (!f || f.value == null) return undefined;
-    const n = typeof f.value === 'number' ? f.value : Number(f.value);
-    return Number.isFinite(n) ? n : undefined;
-  };
-  const strFromField = (f: ExtractionField | undefined): string | undefined => {
-    if (!f || f.value == null) return undefined;
-    const s = String(f.value).trim();
-    return s ? s : undefined;
-  };
-
-  // Resolve a descriptive field by first checking the analyst's
-  // override map (the canonical path = aliases[0]) and falling back to
-  // the OM extraction. Returns a tuple of (value, source) so the row
-  // metadata can flip from chain-linked to pencil-edited.
-  // Overrides land in TWO shapes (Roadmap item #6, June 2026):
-  //   legacy:     overrides['property_overview.year_built'] = 2005
-  //   structured: overrides['property_overview.year_built'] = {value: 2005, note: 'Per OM facade refresh'}
-  // Engines see the scalar (the worker normalizes via
-  // `_normalize_override_shape`); the UI also needs the scalar so
-  // resolve* helpers can flip badges to the override value AND show
-  // it instead of the OM-extracted number.
-  const unwrapOverride = (v: unknown): unknown => {
-    if (v && typeof v === 'object' && !Array.isArray(v) && 'value' in v) {
-      return (v as { value: unknown }).value;
-    }
-    return v;
-  };
-  const overrideNum = (path: string): number | undefined => {
-    const v = unwrapOverride(overrides[path]);
-    if (typeof v === 'number' && Number.isFinite(v)) return v;
-    if (typeof v === 'string' && v.trim() !== '') {
-      const n = Number(v);
-      return Number.isFinite(n) ? n : undefined;
-    }
-    return undefined;
-  };
-  const overrideStr = (path: string): string | undefined => {
-    const v = unwrapOverride(overrides[path]);
-    if (v == null) return undefined;
-    const s = String(v).trim();
-    return s ? s : undefined;
-  };
-  const resolveNum = (aliases: string[]): number | undefined =>
-    overrideNum(aliases[0]) ?? numFromField(findOmField(aliases));
-  const resolveStr = (aliases: string[]): string | undefined =>
-    overrideStr(aliases[0]) ?? strFromField(findOmField(aliases));
-
-  // OM-derived descriptive fields. Aliases cover the canonical
-  // `property_overview.*` namespace from the extractor prompt plus the
-  // common variants real-world OMs use. The first alias is the
-  // canonical path the override map writes to.
-  // For year_built / gba the worker's cross-document value (extractedMeta)
-  // is the fallback: an analyst override wins, then the OM's own field,
-  // then whatever doc the worker resolved it from (often the STR trend).
-  const omYearBuilt = resolveNum([
-    'property_overview.year_built', 'year_built', 'built',
-  ]) ?? extractedMeta.year_built ?? undefined;
-  const omGba = resolveNum([
-    'property_overview.gba_sf', 'property_overview.gba_sqft',
-    'property_overview.gba', 'gba_sf', 'gba_sqft', 'gba',
-    'property_overview.gross_building_area',
-    'property_overview.total_sf',
-  ]) ?? extractedMeta.gba_sf ?? undefined;
-  const omLabor = resolveStr([
-    'property_overview.labor_type', 'property_overview.labor',
-    'property_overview.union_status', 'labor_type', 'labor', 'union_status',
-  ]) ?? extractedMeta.labor_type ?? undefined;
-  const omMeetingSpace = resolveNum([
-    'property_overview.meeting_space_sf', 'property_overview.meeting_space_sqft',
-    'property_overview.meeting_space', 'meeting_space_sf', 'meeting_space_sqft',
-    'meeting_space', 'property_overview.function_space_sf',
-    'property_overview.function_space',
-  ]);
-  const omParking = resolveNum([
-    'property_overview.parking_spaces', 'property_overview.parking_count',
-    'property_overview.parking', 'parking_spaces', 'parking_count', 'parking',
-    'property_overview.parking_keys',
-  ]);
-  const omFbOutlets = resolveNum([
-    'property_overview.fb_outlets', 'property_overview.f_and_b_outlets',
-    'property_overview.food_beverage_outlets', 'property_overview.outlets',
-    'fb_outlets', 'f_and_b_outlets', 'outlets',
-  ]);
-  const omPropertyType = resolveStr([
-    'property_overview.property_type', 'property_overview.type',
-    'property_overview.service_level', 'property_type', 'service_level',
-    'property_overview.segment', 'property_overview.product_type',
-  ]);
-
-  // Service / Type: prefer the OM-extracted descriptor, fall back to
-  // the deal row (which the create-deal wizard captures as service
-  // level), then '—'.
-  const propertyService = omPropertyType ?? deal?.service ?? undefined;
-
-  // Brand tier enrichment: only valid when we have a brand string.
-  const brandMatch = propertyBrand ? findBrand(propertyBrand) : null;
-  const brandDisplay = propertyBrand
-    ? (brandMatch ? `${propertyBrand} (${brandMatch.brand.tier})` : propertyBrand)
-    : '—';
-
-  // Investment Profile rows (return strategy, IRR target, positioning tier).
-  // FON-59 — these are captured in the onboarding wizard and persisted on the
-  // deal (return_profile / positioning); read them for live deals. IRR target
-  // comes off the deal's target_irr.
-  const profileId = deal?.return_profile ?? undefined;
-  const positioningId = deal?.positioning ?? undefined;
-  const profile = profileId ? returnProfiles.find(r => r.id === profileId) : undefined;
-  const positioning = positioningId ? positioningTiers.find(p => p.id === positioningId) : undefined;
-
-  // ─── Headline engine reads ───────────────────────────────────────
-  // Acquisition / Reversion / Investment / Financing / Refi tiles all
-  // map to capital + returns + debt engine fields. Per-key derivations
-  // use propertyKeys; arithmetic falls back to undefined when the
-  // divisor is missing.
-  const wPurchase = getEngineField<number>(outputs, 'capital', 'purchase_price');
-  const wPricePerKey = getEngineField<number>(outputs, 'capital', 'price_per_key');
-  const wEntryCap = getEngineField<number>(outputs, 'capital', 'entry_cap_rate');
-  const wTotalCapital =
-    getEngineField<number>(outputs, 'capital', 'total_capital_usd') ??
-    getEngineField<number>(outputs, 'capital', 'total_capital');
-  const wDebtAmount = getEngineField<number>(outputs, 'capital', 'debt_amount');
-  const wLtv = getEngineField<number>(outputs, 'capital', 'ltv');
-  const wExitCap = getEngineField<number>(outputs, 'returns', 'exit_cap_rate');
-  const wTerminalNoi =
-    getEngineField<number>(outputs, 'returns', 'terminal_noi_usd') ??
-    getEngineField<number>(outputs, 'returns', 'terminal_noi');
-  const wGrossSale = getEngineField<number>(outputs, 'returns', 'gross_sale_price');
-  const wSellingCosts = getEngineField<number>(outputs, 'returns', 'selling_costs');
-  const wUnleveredIrr = getEngineField<number>(outputs, 'returns', 'unlevered_irr');
-  const wEquityMultiple =
-    getEngineField<number>(outputs, 'returns', 'equity_multiple') ??
-    getEngineField<number>(outputs, 'returns', 'moic');
-  const wYearOneCoC = getEngineField<number>(outputs, 'returns', 'year_one_coc');
-  const wHold = getEngineField<number>(outputs, 'returns', 'hold_years');
-  const wLoanAmount = getEngineField<number>(outputs, 'debt', 'loan_amount');
-  const wInterestRate = getEngineField<number>(outputs, 'debt', 'interest_rate');
-  const wDscr = getEngineField<number>(outputs, 'debt', 'year_one_dscr');
-  const wAnnualDebtService = getEngineField<number>(outputs, 'debt', 'annual_debt_service');
-  const wDebtTerm = getEngineField<number>(outputs, 'debt', 'term_years');
-  const wDebtAmort = getEngineField<number>(outputs, 'debt', 'amortization_years');
-  const wLtc = getEngineField<number>(outputs, 'capital', 'ltc');
-
-  // FON-59 — the capital engine carries the acquisition + investment line items
-  // in ``uses`` (Purchase Price / Closing Costs / Renovation / Working Capital /
-  // Soft Costs / Contingency …), and the Year-1 NOI comes off the expense
-  // engine. Read them by label so the Overview populates for LIVE deals, not
-  // only the Kimpton demo fixture (the prior reads used top-level capital paths
-  // that don't exist, so everything fell back to "—").
-  const capUses =
-    getEngineField<Array<{ label?: string; amount?: number }>>(outputs, 'capital', 'uses') ?? [];
-  const useAmt = (re: RegExp): number | undefined => {
+  const capUses = getEngineField<Array<{ label?: string; amount?: number }>>(outputs, 'capital', 'uses') ?? [];
+  const findUse = (re: RegExp): number | undefined => {
     const row = capUses.find((u) => re.test(String(u?.label ?? '')));
     return typeof row?.amount === 'number' ? row.amount : undefined;
   };
-  const usePurchase = useAmt(/purchase/i);
-  const wExpenseY1 = getEngineField<Array<{ noi?: number; noi_institutional?: number }>>(
-    outputs, 'expense', 'years',
-  )?.[0];
-  const y1Noi = wExpenseY1 ? (wExpenseY1.noi_institutional ?? wExpenseY1.noi) : undefined;
 
-  // Acquisition Assumptions
-  const acqPurchase = pickNum(wPurchase ?? usePurchase);
-  const acqPricePerKey = wPricePerKey != null
-    ? wPricePerKey
-    : (acqPurchase != null && propertyKeys && propertyKeys > 0)
-      ? acqPurchase / propertyKeys
-      : undefined;
-  // Entry cap = going-in (Year-1) NOI / purchase price when the engine doesn't
-  // publish it directly.
-  const acqEntryCap = pickNum(
-    wEntryCap ?? (y1Noi != null && acqPurchase ? y1Noi / acqPurchase : undefined),
-  );
-  const acqClosingCosts = pickNum(useAmt(/closing/i));
-  const acqWorkingCapital = pickNum(useAmt(/working/i));
+  const expYears = getEngineField<Array<{ noi?: number; noi_institutional?: number }>>(outputs, 'expense', 'years');
+  const y1Noi = expYears && expYears.length > 0 ? (expYears[0].noi_institutional ?? expYears[0].noi) : undefined;
 
-  // Returns Summary
-  const retLeveredIrr = pickNum(wReturnsIrr);
-  const retUnleveredIrr = pickNum(wUnleveredIrr);
-  const retEquityMultiple = pickNum(wEquityMultiple);
-  const retYearOneCoC = pickNum(wYearOneCoC);
-  const retHold = pickNum(wHold);
+  const wPurchase = cap('purchase_price');
+  const wPricePerKey = cap('price_per_key');
+  const wEntryCap = cap('entry_cap_rate');
+  const wTotalCapital = cap('total_capital_usd') ?? cap('total_capital');
+  const wEquity = cap('equity_amount');
+  const wDebtAmount = cap('debt_amount');
+  const wLtv = cap('ltv');
+  const wLtc = cap('ltc');
+  const wLoanAmount = dbt('loan_amount') ?? wDebtAmount;
+  const wInterestRate = dbt('interest_rate');
+  const wExitCap = ret('exit_cap_rate');
+  const wTerminalNoi = ret('terminal_noi_usd') ?? ret('terminal_noi');
+  const wGrossSale = ret('gross_sale_price');
+  const wSellingCosts = ret('selling_costs');
+  const wHoldYears = ret('hold_years');
+  const wLeveredIrr = ret('levered_irr');
 
-  // Reversion
-  const revExitCap = pickNum(wExitCap);
-  // Exit year = the hold period (Year N); worker doesn't emit an exit-year field.
-  const revExitYear = pickNum(retHold);
-  const revTerminalNoi = pickNum(wTerminalNoi);
-  const revGrossSale = pickNum(wGrossSale);
-  const revSellingCosts = pickNum(wSellingCosts);
+  // Derived (all engine-sourced or engine-arithmetic — never fabricated).
+  const purchase = wPurchase ?? findUse(/purchase/i);
+  const pricePerKey = wPricePerKey ?? (has(purchase) && has(keys) ? purchase / keys : undefined);
+  const entryCap = wEntryCap ?? (has(y1Noi) && has(purchase) && purchase > 0 ? y1Noi / purchase : undefined);
+  const closing = findUse(/closing/i);
+  const totalCapital = wTotalCapital;
+  const totalPerKey = has(totalCapital) && has(keys) ? totalCapital / keys : undefined;
+  const loan = wLoanAmount;
+  const equity = wEquity ?? (has(totalCapital) && has(loan) ? totalCapital - loan : undefined);
+  const ltv = wLtv ?? (has(loan) && has(purchase) && purchase > 0 ? loan / purchase : undefined);
+  const ltc = wLtc ?? (has(loan) && has(totalCapital) && totalCapital > 0 ? loan / totalCapital : undefined);
+  const financingCosts = findUse(/financ|loan cost|lender/i);
+  const renoBudget = findUse(/renovat|pip/i);
+  const hasReno = has(renoBudget) && renoBudget > 0;
+  const renoHard = has(renoBudget) ? renoBudget * 0.75 : undefined;
+  const renoSoft = has(renoBudget) ? renoBudget * 0.15 : undefined;
+  const renoProf = has(renoBudget) ? renoBudget * 0.10 : undefined;
+  const terminalNoi = wTerminalNoi;
+  const exitCap = wExitCap;
+  const grossExit = wGrossSale;
+  const exitPerKey = has(grossExit) && has(keys) ? grossExit / keys : undefined;
+  const sellingCosts = wSellingCosts;
+  const holdYears = wHoldYears;
+  const leveredIrr = wLeveredIrr;
+  // Development-specific budget lines (read by label where the engine emits them).
+  const landPrice = findUse(/land/i);
+  const hardCosts = findUse(/hard/i);
+  const softCosts = findUse(/soft/i);
+  const ffe = findUse(/ff&?e|ffe/i);
+  const profFees = findUse(/profession/i);
+  const contingency = findUse(/contingen/i);
 
-  // Investment — renovation / soft costs / contingency come from capital.uses.
-  const invRenoBudget = pickNum(useAmt(/renovat/i));
-  const invHardPerKey = pickNum(
-    invRenoBudget != null && propertyKeys && propertyKeys > 0 ? invRenoBudget / propertyKeys : undefined,
-  );
-  const invSoftCosts = pickNum(useAmt(/soft/i));
-  const invContingency = pickNum(useAmt(/contingen/i));
-  const invTotalCapital = pickNum(wTotalCapital);
+  // Formatting helpers (mirror the canonical money / mm / pct).
+  const money = (v: number | undefined): string => (has(v) ? fmtCurrency(v) : '—');
+  const mm = (v: number | undefined): string => (has(v) ? fmtMillions(v, 2) : '—');
+  const pctv = (v: number | undefined, d = 2): string => (has(v) ? fmtPct(v, d) : '—');
+  const perKey = (v: number | undefined): string => (has(v) && has(keys) ? fmtCurrency(v / keys) : '—');
 
-  // Acquisition Financing
-  const finLoanAmount = pickNum(wLoanAmount ?? wDebtAmount);
-  // LTV = loan / purchase price (derive when the engine only publishes LTC).
-  const finLtv = pickNum(
-    wLtv ?? wLtc ?? ((wDebtAmount ?? wLoanAmount) != null && acqPurchase
-      ? ((wDebtAmount ?? wLoanAmount) as number) / acqPurchase
-      : undefined),
-  );
-  const finInterestRate = pickNum(wInterestRate);
-  const finDscr = pickNum(wDscr);
-  const finAnnualDebtService = pickNum(wAnnualDebtService);
-  const finTerm = pickNum(wDebtTerm);
-  const finAmort = pickNum(wDebtAmort);
+  // ─── Row factory (resolves provenance state + review flag) ─────────────
+  const mk = (r: Omit<RowDef, 'state'> & { state?: ValueState }): RowDef => {
+    const state = r.trace ? (tracedState(r.trace.engine, r.trace.path) ?? kindToState(r.kind)) : (r.state ?? kindToState(r.kind));
+    return { ...r, state };
+  };
+  const doc = (id: string, label: string, value: string, docName?: string, docPage?: string, extra?: Partial<RowDef>): RowDef =>
+    mk({ id, label, kind: 'doc', value, docName, docPage, ...extra });
+  const lnk = (id: string, label: string, value: string, linkLabel: string, linkTab: string, extra?: Partial<RowDef>): RowDef =>
+    mk({ id, label, kind: 'linked', value, linkLabel, linkTab, ...extra });
+  const cal = (id: string, label: string, value: string, extra?: Partial<RowDef>): RowDef =>
+    mk({ id, label, kind: 'calc', value, ...extra });
+  const awa = (id: string, label: string, extra?: Partial<RowDef>): RowDef =>
+    mk({ id, label, kind: 'awaiting', value: '—', ...extra });
 
-  // Refi (no worker engine output yet)
-  const refiYear: number | undefined = undefined;
-  const refiLtv: number | undefined = undefined;
-  const refiRate: number | undefined = undefined;
-  const refiTerm: number | undefined = undefined;
-  const refiAmort: number | undefined = undefined;
+  // ─── Deal-type-aware section set ───────────────────────────────────────
+  const sections: SectionSpec[] = useMemo(() => {
+    const propertyRows = (): RowDef[] => [
+      doc('pName', isDev ? 'Project Name' : 'Property Name', meta.name ?? deal?.name ?? '—', 'Offering Memorandum', 'Executive Summary'),
+      doc('pType', 'Property Type', deal?.service ?? '—', 'Offering Memorandum', 'Property Overview'),
+      doc('pLoc', 'Location', deal?.city ?? '—', 'Offering Memorandum', 'Location'),
+      doc('pYear', 'Year Built', meta.year_built != null ? String(Math.round(meta.year_built)) : '—', 'Offering Memorandum', 'Property History'),
+      doc('pKeys', isDev ? 'Planned Keys' : 'Keys', keys != null ? String(keys) : '—', 'Offering Memorandum', 'Room Mix'),
+      awa('pFloors', isDev ? 'Planned Floors' : 'Floors'),
+      doc('pSF', isDev ? 'Planned SF' : 'Total SF', meta.gba_sf != null ? `${Math.round(meta.gba_sf).toLocaleString('en-US')} SF` : '—', 'Offering Memorandum', 'Building Summary'),
+      awa('pTitle', 'Title / Ownership'),
+      doc('pLabor', 'Labor / Union Status', meta.labor ?? '—', 'Offering Memorandum', 'Operations'),
+      lnk('brand', 'Brand', brand || '—', '→ Investment Profile', ''),
+      lnk('positioning', 'Positioning', positioningTiers.find((p) => p.id === positioningId)?.label ?? '—', '→ Investment Profile', ''),
+      lnk('mgmtFee', 'Management Fee', '—', '→ Financials', 'pl'),
+      lnk('franchiseFee', 'Franchise / Brand Fee', '—', '→ Financials', 'pl'),
+    ];
 
-  return (
-    <div className="space-y-3">
-      {/* Toolbar — actions on a single hairline row. The per-tab Data Key
-          legend was removed in favour of the one canonical <DataKey> strip
-          mounted under the tab bar (FON-72). */}
-      <div className="flex items-center justify-end py-1 gap-4">
-        <div className="flex items-center gap-2 shrink-0">
-          <Button variant="secondary" size="sm" onClick={onExportExcel}>
-            <Download size={12} /> Export to Excel
-          </Button>
-        </div>
-      </div>
+    const entryRows = (): RowDef[] => [
+      lnk('entryNOI', 'Run-Rate / Entry NOI', money(y1Noi), '→ Financials', 'pl'),
+      cal('entryCap', 'Entry Cap Rate', pctv(entryCap), { trace: { engine: 'capital', path: 'entry_cap_rate' }, formula: 'Entry NOI ÷ Purchase Price', inputs: [{ name: 'Entry NOI', from: 'Financials → Historicals', kind: 'linked' }, { name: 'Purchase Price', from: 'Calculated', kind: 'calc' }] }),
+      cal('purchase', 'Purchase Price', money(purchase), { bold: true, trace: { engine: 'capital', path: 'purchase_price' }, formula: 'Entry NOI ÷ Entry Cap Rate', inputs: [{ name: 'Entry NOI', from: 'Financials → Historicals', kind: 'linked' }, { name: 'Entry Cap Rate', from: 'Calculated', kind: 'calc' }] }),
+      cal('pricePerKey', 'Price / Key', money(pricePerKey), { trace: { engine: 'capital', path: 'price_per_key' }, formula: 'Purchase Price ÷ Keys', inputs: [{ name: 'Purchase Price', from: 'Calculated', kind: 'calc' }, { name: 'Keys', from: 'OM · Room Mix', kind: 'doc' }] }),
+      lnk('acqDate', 'Acquisition Date', fmtISODate(timeline?.close_date), '→ Timeline (drives the schedule)', ''),
+      awa('closingPct', 'Closing Costs %'),
+      cal('closing', 'Closing Costs', money(closing), { trace: { engine: 'capital', path: 'closing_costs' }, formula: 'Purchase Price × Closing Costs %' }),
+    ];
 
-      {/* Big bet #2 — variance-as-hero: answer "is this deal as good as the
-          broker says?" at the top, not buried in the Variance tab. */}
-      {liveMode && <VarianceHero dealId={dealId} />}
+    const renovationRows = (): RowDef[] => [
+      doc('renoScope', 'Renovation Scope', '—', 'PIP Scope of Work', 'Scope Summary'),
+      lnk('renoPerKey', 'Renovation / Key', perKey(renoBudget), '→ Investment (renovation)', 'investment'),
+      cal('renoHard', 'Hard Costs', money(renoHard), { formula: '75% of base renovation budget (PIP allocation)' }),
+      cal('renoSoft', 'Soft Costs', money(renoSoft), { formula: '15% of base renovation budget' }),
+      cal('renoProf', 'Professional Fees', money(renoProf), { formula: '10% of base renovation budget' }),
+      awa('renoContPct', 'Contingency %'),
+      cal('renoTotal', 'Total Renovation Budget', money(renoBudget), { bold: true, formula: 'Base renovation budget incl. contingency' }),
+      cal('renoTotalPerKey', 'Total Renovation / Key', perKey(renoBudget), { formula: 'Total Renovation Budget ÷ Keys' }),
+      awa('renoStart', 'Renovation Start'),
+      lnk('renoDuration', 'Renovation Duration', timelineDuration(timeline, /renov/i), '→ Investment (schedule)', 'investment'),
+    ];
 
+    const capitalizationRows = (): RowDef[] => [
+      lnk('loan', isDev ? 'Construction Loan' : 'Acquisition Loan', money(loan), '→ Debt (senior loan)', 'debt'),
+      lnk('ltv', 'LTV', pctv(ltv, 1), '→ Debt (capital structure)', 'debt'),
+      cal('ltc', 'LTC', pctv(ltc, 1), { formula: 'Loan ÷ Total Uses', inputs: [{ name: 'Loan', from: 'Debt module', kind: 'linked' }, { name: 'Total Uses', from: 'Calculated', kind: 'calc' }] }),
+      lnk('bench', 'Benchmark', '—', '→ Debt (loan terms)', 'debt'),
+      doc('spread', 'Spread over Benchmark', '—', 'Senior Loan Term Sheet', 'Pricing'),
+      cal('allIn', 'All-In Rate', pctv(wInterestRate), { trace: { engine: 'debt', path: 'interest_rate' }, formula: 'Benchmark + Spread' }),
+      lnk('finCosts', 'Financing Costs', money(financingCosts), '→ Debt (origination + legal)', 'debt'),
+      cal('equity', isDev ? 'Equity Contribution' : 'Equity', money(equity), { bold: true, trace: { engine: 'capital', path: 'equity_amount' }, formula: 'Total Uses − Loan', inputs: [{ name: 'Total Uses', from: 'Calculated', kind: 'calc' }, { name: 'Loan', from: 'Debt module', kind: 'linked' }] }),
+      awa('refi', isDev ? 'Permanent Financing' : 'Planned Refinancing'),
+    ];
 
-      <div className="grid grid-cols-2 gap-3">
-        <Section
-          title="General Information"
-          onSaveOverride={onSaveOverride}
-          rows={[
-            { label: 'Property Name', kind: 'editable',
-              fieldPath: 'property_name', inputType: 'text',
-              raw: propertyName,
-              value: propertyName ?? '—' },
-            { label: 'Location', kind: 'editable',
-              fieldPath: 'deal.city', inputType: 'text',
-              raw: propertyCity,
-              value: propertyCity ?? '—' },
-            { label: 'Type', kind: 'editable',
-              fieldPath: 'property_overview.property_type', inputType: 'text',
-              raw: propertyService,
-              value: propertyService ?? '—' },
-            { label: 'Brand', kind: 'editable',
-              fieldPath: 'deal.brand', inputType: 'text',
-              raw: propertyBrand,
-              value: brandDisplay },
-            { label: 'Keys', kind: 'editable',
-              fieldPath: 'deal.keys', inputType: 'number',
-              raw: propertyKeys,
-              value: propertyKeys != null ? fmtNumber(propertyKeys) : '—' },
-            { label: 'Year Built', kind: 'editable',
-              fieldPath: 'property_overview.year_built', inputType: 'number',
-              raw: omYearBuilt,
-              value: omYearBuilt != null ? String(Math.round(omYearBuilt)) : '—' },
-            { label: 'GBA (SF)', kind: 'editable',
-              fieldPath: 'property_overview.gba_sf', inputType: 'number',
-              raw: omGba,
-              value: omGba != null ? fmtNumber(Math.round(omGba)) : '—' },
-            { label: 'Meeting Space', kind: 'editable',
-              fieldPath: 'property_overview.meeting_space_sf', inputType: 'number',
-              raw: omMeetingSpace,
-              value: omMeetingSpace != null ? `${fmtNumber(Math.round(omMeetingSpace))} SF` : '—' },
-            { label: 'Parking Spaces', kind: 'editable',
-              fieldPath: 'property_overview.parking_spaces', inputType: 'number',
-              raw: omParking,
-              value: omParking != null ? fmtNumber(Math.round(omParking)) : '—' },
-            { label: 'F&B Outlets', kind: 'editable',
-              fieldPath: 'property_overview.fb_outlets', inputType: 'number',
-              raw: omFbOutlets,
-              value: omFbOutlets != null ? String(Math.round(omFbOutlets)) : '—' },
-            { label: 'Labor', kind: 'editable',
-              fieldPath: 'property_overview.labor_type', inputType: 'text',
-              raw: omLabor,
-              value: omLabor ?? '—' },
-          ]}
-        />
+    const stabilizationRows = (): RowDef[] => [
+      ...(hasReno ? [lnk('renoImpact', 'Renovation Impact', '—', '→ Financials (disruption)', 'pl')] : []),
+      awa('stabDate', 'Stabilization Date'),
+      lnk('stabOcc', 'Stabilized Occupancy', '—', '→ Financials (projections)', 'pl'),
+      lnk('stabADR', 'Stabilized ADR', '—', '→ Financials (projections)', 'pl'),
+      lnk('stabRev', 'Stabilized Revenue', '—', '→ Financials (projections)', 'pl'),
+      lnk('stabNOI', 'Stabilized NOI', money(terminalNoi), '→ Financials (projections)', 'pl', { bold: true, trace: { engine: 'returns', path: 'terminal_noi' } }),
+      cal('stabMargin', 'Stabilized NOI Margin', '—', { formula: 'Stabilized NOI ÷ Stabilized Revenue' }),
+    ];
 
-        {/* FON-59 — Investment Profile is editable inline (Deal Type / Returns
-            Profile / Brand / Positioning); the Model Settings modal is gone. */}
-        {liveMode ? (
-          <ModelSettings
-            dealId={String(dealId)}
-            defaults={{
-              dealType: deal?.deal_type === 'development' ? 'development' : 'acquisition',
-              returnProfile: profileId ?? 'value-add',
-              brand: propertyBrand ?? '',
-              positioning: positioningId ?? 'default',
-            }}
-            onSaved={() => { void refreshDeal?.(); }}
-          />
-        ) : (
-          <Section title="Investment Profile" rows={[
-            ['Return Strategy', profile?.label ?? '—'],
-            ['IRR Target', profile?.target ?? '—'],
-            ['Positioning Tier', positioning?.label ?? '—'],
-          ]} />
-        )}
-      </div>
+    const exitRows = (): RowDef[] => [
+      lnk('hold', 'Hold Period', has(holdYears) ? `${holdYears} years` : '—', '→ Investment (exit)', 'investment'),
+      cal('exitDate', 'Exit Date', fmtISODate(timeline?.exit_date), { formula: 'Acquisition Date + Hold Period' }),
+      lnk('fwdNOI', 'Forward 12-Month NOI', money(terminalNoi), '→ Financials (projections)', 'pl'),
+      lnk('exitCap', 'Exit Cap Rate', pctv(exitCap), '→ Investment (exit)', 'investment'),
+      cal('exitValue', 'Gross Exit Value', money(grossExit), { bold: true, trace: { engine: 'returns', path: 'gross_sale_price' }, formula: 'Forward NOI ÷ Exit Cap Rate', inputs: [{ name: 'Forward NOI', from: 'Financials → Projections', kind: 'linked' }, { name: 'Exit Cap Rate', from: 'Investment assumption', kind: 'input' }] }),
+      cal('exitPerKey', 'Exit Value / Key', money(exitPerKey), { formula: 'Gross Exit Value ÷ Keys' }),
+      lnk('salesPct', 'Disposition Costs', money(sellingCosts), '→ Returns', 'returns', { trace: { engine: 'returns', path: 'selling_costs' } }),
+      awa('transferPct', 'Transfer Tax'),
+    ];
 
-      <div className="grid grid-cols-1 gap-3">
-        <Section title="Acquisition Assumptions" rows={[
-          { label: 'Purchase Price', kind: 'linked',
-            value: fmtOrDash(acqPurchase, fmtCurrency) },
-          { label: 'Price/Key', kind: 'linked',
-            value: fmtOrDash(acqPricePerKey, fmtCurrency) },
-          { label: 'Entry Cap Rate', kind: 'linked',
-            value: fmtOrDash(acqEntryCap, v => fmtPct(v, 2)) },
-          { label: 'Closing Costs', kind: 'linked',
-            value: fmtOrDash(acqClosingCosts, fmtCurrency) },
-          { label: 'Working Capital', kind: 'linked',
-            value: fmtOrDash(acqWorkingCapital, fmtCurrency) },
-        ]} />
-      </div>
+    // ── Development-specific sections ──
+    const projectRows = (): RowDef[] => [
+      lnk('pName', 'Project Name', meta.name ?? deal?.name ?? '—', '→ Investment Profile', ''),
+      lnk('pLoc', 'Location', deal?.city ?? '—', '→ Investment Profile', ''),
+      lnk('brand', 'Brand', brand || '—', '→ Investment Profile', ''),
+      lnk('positioning', 'Positioning', positioningTiers.find((p) => p.id === positioningId)?.label ?? '—', '→ Investment Profile', ''),
+      lnk('pKeys', 'Planned Keys', keys != null ? String(keys) : '—', '→ Investment Profile', ''),
+      awa('pFloors', 'Planned Floors'),
+      awa('pSF', 'Planned SF'),
+      doc('pZoning', 'Zoning / Entitlement', '—', 'Zoning Report', 'Entitlement Status'),
+      lnk('mgmtFee', 'Management Fee', '—', '→ Financials', 'pl'),
+      lnk('franchiseFee', 'Franchise / Brand Fee', '—', '→ Financials', 'pl'),
+    ];
+    const landRows = (): RowDef[] => [
+      doc('landPrice', 'Land Purchase Price', money(landPrice), 'Land Purchase & Sale Agreement', 'Purchase Price'),
+      cal('landPerKey', 'Land Cost / Key', perKey(landPrice), { formula: 'Land Purchase Price ÷ Planned Keys' }),
+      awa('landClose', 'Land Closing Date'),
+      awa('landCostPct', 'Acquisition Costs %'),
+      awa('landCosts', 'Acquisition Costs'),
+    ];
+    const devBudgetRows = (): RowDef[] => [
+      cal('bLand', 'Land Cost', money(landPrice), { formula: 'Land Purchase Price + Acquisition Costs' }),
+      awa('hardPerKey', 'Hard Cost / Key'),
+      cal('hard', 'Hard Costs', money(hardCosts), { trace: { engine: 'capital', path: 'hard_costs' } }),
+      awa('softPct', 'Soft Costs %'),
+      cal('soft', 'Soft Costs', money(softCosts)),
+      awa('ffePerKey', 'FF&E / Key'),
+      cal('ffe', 'FF&E', money(ffe)),
+      cal('profFees', 'Professional Fees', money(profFees)),
+      awa('devFee', 'Development Fee'),
+      awa('preOpen', 'Pre-Opening Costs'),
+      awa('contPct', 'Contingency %'),
+      cal('contingency', 'Contingency', money(contingency)),
+      lnk('loanFees', 'Financing Costs', money(financingCosts), '→ Debt', 'debt'),
+      lnk('interestReserve', 'Interest Reserve', '—', '→ Debt (draw schedule)', 'debt'),
+      cal('tdc', 'Total Development Cost', money(totalCapital), { bold: true, trace: { engine: 'capital', path: 'total_capital_usd' }, formula: 'Sum of all development budget lines' }),
+      cal('tdcPerKey', 'Development Cost / Key', money(totalPerKey), { formula: 'Total Development Cost ÷ Planned Keys' }),
+    ];
+    const constFinRows = (): RowDef[] => [
+      lnk('loan', 'Construction Loan', money(loan), '→ Debt (construction facility)', 'debt'),
+      cal('ltc', 'LTC', pctv(ltc, 1), { formula: 'Construction Loan ÷ Total Development Cost' }),
+      lnk('bench', 'Benchmark', '—', '→ Debt (loan terms)', 'debt'),
+      doc('spread', 'Spread over Benchmark', '—', 'Construction Loan Term Sheet', 'Pricing'),
+      cal('allIn', 'All-In Rate', pctv(wInterestRate), { trace: { engine: 'debt', path: 'interest_rate' }, formula: 'Benchmark + Spread' }),
+      lnk('loanFees', 'Financing Costs', money(financingCosts), '→ Debt', 'debt'),
+      lnk('draws', 'Loan Draws', '—', '→ Debt (draw schedule)', 'debt'),
+      lnk('interestReserve', 'Interest Reserve', '—', '→ Debt (draw schedule)', 'debt'),
+      cal('equity', 'Equity Contribution', money(equity), { bold: true, trace: { engine: 'capital', path: 'equity_amount' }, formula: 'Total Development Cost − Construction Loan' }),
+      awa('permFin', 'Permanent Financing'),
+    ];
+    const openingRows = (): RowDef[] => [
+      cal('openDate', 'Opening Date', fmtISODate(timeline?.stabilization_date), { formula: 'Land Close + pre-construction + build' }),
+      awa('ramp', 'Ramp-Up Period'),
+      awa('stabDate', 'Stabilization Date'),
+      lnk('stabOcc', 'Stabilized Occupancy', '—', '→ Financials (projections)', 'pl'),
+      lnk('stabADR', 'Stabilized ADR', '—', '→ Financials (projections)', 'pl'),
+      cal('stabRevPAR', 'Stabilized RevPAR', '—', { formula: 'Stabilized Occupancy × Stabilized ADR' }),
+      lnk('stabRev', 'Stabilized Revenue', '—', '→ Financials (projections)', 'pl'),
+      lnk('stabNOI', 'Stabilized NOI', money(terminalNoi), '→ Financials (projections)', 'pl', { bold: true, trace: { engine: 'returns', path: 'terminal_noi' } }),
+      cal('yieldOnCost', 'Yield on Cost', has(terminalNoi) && has(totalCapital) && totalCapital > 0 ? fmtPct(terminalNoi / totalCapital, 2) : '—', { formula: 'Stabilized NOI ÷ Total Development Cost' }),
+    ];
 
-      <Card className="p-3 bg-brand-50 border-brand-100">
-        <div className="flex items-start justify-between mb-2 gap-3">
-          <h3 className="text-[12px] font-semibold text-ink-900 uppercase tracking-wide">Returns Summary <span className="font-normal normal-case tracking-normal text-ink-500">— hold-period investor returns</span></h3>
-          {assumptionSources && Object.keys(assumptionSources.sources).length === 0 && liveMode && (
-            <div className="text-[10.5px] text-ink-500">
-              Upload an OM + T-12 to populate source badges.
-            </div>
-          )}
-          {assumptionSources && Object.keys(assumptionSources.sources).length > 0 && (
-            <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-[10.5px] text-ink-500 max-w-[55%] justify-end">
-              {([
-                ['Y1 Occ', 'starting_occupancy'],
-                ['Y1 ADR', 'starting_adr'],
-                ['RevPAR g', 'revpar_growth'],
-                ['ADR g', 'adr_growth'],
-                ['Exit Cap', 'exit_cap_rate'],
-                ['Mgmt Fee %', 'mgmt_fee_pct'],
-              ] as const).map(([label, key], idx) => {
-                const src = assumptionSources.sources[key];
-                if (!src) return null;
-                const docId = assumptionSources.source_documents?.[key];
-                const currentValue = assumptionSources.values?.[key] as number | string | null | undefined;
-                // Pull the existing note (if any) so the badge tooltip
-                // surfaces it without opening the modal.
-                const existing = overrides[key];
-                const existingNote =
-                  existing && typeof existing === 'object' && 'note' in existing
-                    ? String((existing as { note?: unknown }).note ?? '')
-                    : null;
-                const badge = (
-                  <AssumptionBadge
-                    source={src}
-                    documentId={docId}
-                    dealId={dealId}
-                    overrideNote={existingNote}
-                    onOverride={
-                      liveMode
-                        ? () =>
-                            setOverrideTarget({
-                              path: key,
-                              label,
-                              currentValue,
-                              currentSource: src,
-                            })
-                        : undefined
-                    }
-                  />
-                );
-                return (
-                  <span key={key} className="inline-flex items-center gap-1 whitespace-nowrap">
-                    <span className="text-ink-700">{label}:</span>
-                    {idx === 0 ? (
-                      <CoachMark
-                        anchorId="overview-source-badge"
-                        viewKey="overview"
-                        order={0}
-                        title="Every number carries a source"
-                        body="Hover any source badge to see where the value came from. Click the pencil to override with a justification note — required for IC review trails."
-                        side="bottom"
-                        layout="inline"
-                        learnMoreHref="/methodology#sources"
-                      >
-                        {badge}
-                      </CoachMark>
-                    ) : (
-                      badge
-                    )}
-                  </span>
-                );
-              })}
-              {/* PIP displacement — only render when it's actually
-                  applied (non-zero) so the line stays quiet on
-                  no-renovation deals. */}
-              {((assumptionSources.values['y1_occupancy_displacement_pct'] as number | undefined) ?? 0) > 0 && (
-                <span
-                  className="inline-flex items-center gap-1 whitespace-nowrap text-warn-700"
-                  title="Year-1 occupancy + ADR ramp-down applied because this deal carries a >$5k/key PIP. Overrideable via Overview inline edit."
-                >
-                  Y1 PIP: −{Math.round(((assumptionSources.values['y1_occupancy_displacement_pct'] as number) ?? 0) * 100)}% occ
-                  · −{Math.round(((assumptionSources.values['y1_adr_displacement_pct'] as number) ?? 0) * 100)}% ADR
-                </span>
-              )}
-            </div>
-          )}
-        </div>
-        <div className="grid grid-cols-5 gap-4">
-          {([
-            { label: 'Levered IRR',
-              value: <Traced engine="returns" path="levered_irr">{fmtOrDash(retLeveredIrr, v => fmtPct(v, 2))}</Traced>,
-              tip: GLOSSARY['IRR'] + ' "Levered" means after debt service.' },
-            { label: 'Unlevered IRR',
-              value: <Traced engine="returns" path="unlevered_irr">{fmtOrDash(retUnleveredIrr, v => fmtPct(v, 2))}</Traced>,
-              tip: 'Asset-level IRR before debt — what you\'d earn if the hotel were paid for in cash.' },
-            { label: 'Equity Multiple',
-              value: <Traced engine="returns" path="equity_multiple">{fmtOrDash(retEquityMultiple, v => `${v.toFixed(2)}x`)}</Traced>,
-              tip: GLOSSARY['Equity Multiple'] },
-            { label: 'Year-1 CoC', value: fmtOrDash(retYearOneCoC, v => fmtPct(v, 1)),
-              tip: GLOSSARY['CoC'] + ' Year-1 is the first full year after acquisition.' },
-            { label: 'Hold Period', value: fmtOrDash(retHold, v => `${v} Years`),
-              tip: GLOSSARY['Hold Period'] },
-          ]).map(s => (
-            <div key={s.label}>
-              <div className="text-[11px] text-ink-500 uppercase tracking-wide">
-                <MetricLabel label={s.label} tip={s.tip} />
-              </div>
-              <div className="text-[20px] font-semibold text-brand-700 tabular-nums mt-0.5">{s.value}</div>
-            </div>
-          ))}
-        </div>
-      </Card>
-
-      <div className="grid grid-cols-2 gap-3">
-        <Section title="Reversion Assumptions" rows={[
-          { label: 'Exit Cap Rate', kind: 'linked',
-            value: fmtOrDash(revExitCap, v => fmtPct(v, 2)) },
-          { label: 'Exit Year', kind: 'linked',
-            value: revExitYear != null ? `Year ${revExitYear}` : '—' },
-          { label: 'Terminal NOI', kind: 'linked',
-            value: fmtOrDash(revTerminalNoi, fmtCurrency) },
-          { label: 'Gross Sale Price', kind: 'linked',
-            value: fmtOrDash(revGrossSale, fmtCurrency),
-            display: <Traced engine="returns" path="gross_sale_price">{fmtOrDash(revGrossSale, fmtCurrency)}</Traced> },
-          { label: 'Selling Costs', kind: 'linked',
-            value: fmtOrDash(revSellingCosts, fmtCurrency),
-            display: <Traced engine="returns" path="selling_costs">{fmtOrDash(revSellingCosts, fmtCurrency)}</Traced> },
-        ]} />
-
-        <Section title="Investment Assumptions" rows={[
-          { label: 'Renovation Budget', kind: 'linked',
-            value: fmtOrDash(invRenoBudget, fmtCurrency) },
-          { label: 'Hard Costs/Key', kind: 'linked',
-            value: fmtOrDash(invHardPerKey, fmtCurrency) },
-          { label: 'Soft Costs', kind: 'linked',
-            value: fmtOrDash(invSoftCosts, fmtCurrency) },
-          { label: 'Contingency', kind: 'linked',
-            value: fmtOrDash(invContingency, fmtCurrency) },
-          { label: 'Total Capital', kind: 'linked',
-            value: fmtOrDash(invTotalCapital, fmtCurrency) },
-        ]} />
-      </div>
-
-      <div className="grid grid-cols-2 gap-3">
-        <Section title="Acquisition Financing" rows={[
-          { label: 'Loan Amount', kind: 'linked',
-            value: fmtOrDash(finLoanAmount, fmtCurrency) },
-          { label: 'LTV', kind: 'linked',
-            value: fmtOrDash(finLtv, v => fmtPct(v, 0)) },
-          { label: 'Interest Rate', kind: 'linked',
-            value: fmtOrDash(finInterestRate, v => fmtPct(v, 2)) },
-          { label: 'DSCR', kind: 'linked',
-            value: fmtOrDash(finDscr, v => `${v.toFixed(2)}x`) },
-          { label: 'Annual Debt Service', kind: 'linked',
-            value: fmtOrDash(finAnnualDebtService, fmtCurrency) },
-          { label: 'Term', kind: 'linked',
-            value: fmtOrDash(finTerm, v => `${v} Years`) },
-          { label: 'Amortization', kind: 'linked',
-            value: fmtOrDash(finAmort, v => `${v} Years`) },
-        ]} />
-
-        <Section title="Refinancing Assumptions" rows={[
-          { label: 'Refi Year', kind: 'linked',
-            value: refiYear != null ? `Year ${refiYear}` : '—' },
-          { label: 'Refi LTV', kind: 'linked',
-            value: fmtOrDash(refiLtv, v => fmtPct(v, 0)) },
-          { label: 'Refi Rate', kind: 'linked',
-            value: fmtOrDash(refiRate, v => fmtPct(v, 2)) },
-          { label: 'Refi Term', kind: 'linked',
-            value: fmtOrDash(refiTerm, v => `${v} Years`) },
-          { label: 'Amortization', kind: 'linked',
-            value: fmtOrDash(refiAmort, v => `${v} Years`) },
-        ]} />
-      </div>
-
-      <div className="grid grid-cols-2 gap-3">
-        <SourcesPanel
-          sources={hasWorkerCapital ? wSources! : []}
-          keys={propertyKeys ?? 0}
-          source={hasWorkerCapital ? 'worker' : 'mock'}
-        />
-        <UsesPanel
-          uses={hasWorkerCapital ? wUses! : []}
-          source={hasWorkerCapital ? 'worker' : 'mock'}
-        />
-      </div>
-
-      {/* ProformaPanel removed from Overview (Wave 1 UX reduction) — the P&L
-          tab carries the full USALI operating statement. FON-53 — the
-          sensitivity heatmaps moved to the dedicated Scenario Analysis tab, so
-          Overview stays a high-level snapshot (no duplication). */}
-
-      {/* Override panel — right-anchored drawer that slides in when an
-          AssumptionBadge's onOverride callback fires (Sources strip on
-          the Returns Summary card). Replaces the centered OverrideModal
-          (Wave 1 UX refactor). Roadmap item #6 from the June 2026 call. */}
-      <OverridePanel
-        open={overrideTarget !== null}
-        fieldPath={overrideTarget?.path ?? ''}
-        fieldLabel={overrideTarget?.label ?? ''}
-        currentValue={overrideTarget?.currentValue}
-        currentSource={overrideTarget?.currentSource ?? ''}
-        onClose={() => setOverrideTarget(null)}
-        onSubmit={onSaveOverrideWithNote}
-      />
-    </div>
-  );
-}
-
-// ──────────────────────────────────────────────────────────
-// Model Settings — inline editor sitting above the General Info grid.
-// Local state only; "X Changes Pending" pill flips amber when any
-// field diverges from its initial default. No persistence yet.
-// ──────────────────────────────────────────────────────────
-
-interface ModelSettingsState {
-  dealType: 'acquisition' | 'development';
-  returnProfile: string;
-  brand: string;
-  positioning: string;
-}
-
-function ModelSettings({
-  defaults,
-  dealId,
-  onSaved,
-}: {
-  defaults: ModelSettingsState;
-  dealId: string;
-  onSaved?: () => void;
-}) {
-  const [state, setState] = useState<ModelSettingsState>(defaults);
-  // FON-59 #2 — `defaults` is empty on first paint (before useDeal resolves);
-  // useState only honors its INITIAL value, so without this re-sync the Brand /
-  // Returns Profile / Positioning selects stay blank even though the deal
-  // carries them. Depend on the primitive values (not the object ref, which is
-  // recreated every render) so a select commit doesn't fight the sync.
-  useEffect(() => {
-    setState(defaults);
+    if (cfg === 'dev') {
+      return [
+        { kind: 'rows', title: 'Project', rows: projectRows() },
+        { kind: 'rows', title: 'Land / Site Acquisition', rows: landRows() },
+        { kind: 'rows', title: 'Development Budget', action: { label: 'View development details →', tab: 'investment' }, rows: devBudgetRows() },
+        { kind: 'rows', title: 'Construction Financing', action: { label: 'View Debt details →', tab: 'debt' }, rows: constFinRows() },
+        { kind: 'rows', title: 'Opening & Stabilization', action: { label: 'View Projections →', tab: 'pl' }, rows: openingRows() },
+        { kind: 'rows', title: 'Exit', rows: exitRows() },
+        { kind: 'su', title: 'Transaction Sources & Uses' },
+        { kind: 'timeline', title: 'Development Timeline' },
+      ];
+    }
+    if (cfg === 'core') {
+      return [
+        { kind: 'rows', title: 'Property', note: 'Extracted from diligence documents — override where needed', rows: propertyRows() },
+        { kind: 'rows', title: 'Entry Valuation', rows: entryRows() },
+        { kind: 'rows', title: 'Capitalization', action: { label: 'View Debt details →', tab: 'debt' }, rows: capitalizationRows() },
+        { kind: 'rows', title: 'Exit', rows: exitRows() },
+        { kind: 'su', title: 'Transaction Sources & Uses' },
+        { kind: 'timeline', title: 'Transaction Timeline' },
+      ];
+    }
+    // value-add
+    return [
+      { kind: 'rows', title: 'Property', note: 'Extracted from diligence documents — override where needed', rows: propertyRows() },
+      { kind: 'rows', title: 'Entry Valuation', rows: entryRows() },
+      { kind: 'rows', title: 'Renovation / CapEx', action: { label: 'View renovation details →', tab: 'investment' }, rows: renovationRows() },
+      { kind: 'rows', title: 'Capitalization', action: { label: 'View Debt details →', tab: 'debt' }, rows: capitalizationRows() },
+      { kind: 'rows', title: 'Stabilization', action: { label: 'View Projections →', tab: 'pl' }, rows: stabilizationRows() },
+      { kind: 'rows', title: 'Exit', rows: exitRows() },
+      { kind: 'su', title: 'Transaction Sources & Uses' },
+      { kind: 'timeline', title: 'Transaction Timeline' },
+    ];
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [defaults.dealType, defaults.returnProfile, defaults.brand, defaults.positioning]);
-  const { toast } = useToast();
-  // FON-59 — the Investment Profile is editable inline now (the Model Settings
-  // modal is gone). Each change persists to the deal + re-runs the engines.
-  const persist = useCallback(
-    async (patch: Parameters<typeof api.deals.update>[1]) => {
-      try {
-        await api.deals.update(dealId, patch);
-        toast('Saved — re-running engines', { type: 'success' });
-        onSaved?.();
-      } catch (e) {
-        toast(`Save failed: ${e instanceof Error ? e.message : String(e)}`, { type: 'error' });
-      }
-    },
-    [dealId, toast, onSaved],
-  );
+  }, [cfg, isDev, meta, deal, keys, brand, positioningId, timeline, outputs, tracedState]);
 
-  // Flatten all known brands for the picker (family > brand[]).
-  const brandOptions = useMemo(() => {
-    return brandFamilies.flatMap(f =>
-      f.brands.map(b => ({ value: b.name, label: `${b.name} (${b.tier})`, family: f.family }))
-    );
+  // ─── Review count (real needs-review provenance) ───────────────────────
+  const reviewCount = useMemo(() => {
+    let n = 0;
+    for (const s of sections) if (s.kind === 'rows') for (const r of s.rows) if (r.state === 'needs_review') n++;
+    return n;
+  }, [sections]);
+
+  const displaySections: SectionSpec[] = useMemo(() => {
+    if (!reviewOnly) return sections;
+    return sections
+      .filter((s): s is RowsSection => s.kind === 'rows')
+      .map((s) => ({ ...s, action: undefined, note: undefined, rows: s.rows.filter((r) => r.state === 'needs_review') }))
+      .filter((s) => s.rows.length > 0);
+  }, [reviewOnly, sections]);
+
+  // ─── KPI tiles (deal-type-aware) ───────────────────────────────────────
+  const kpis: { label: string; value: string; sub?: string }[] = useMemo(() => {
+    if (cfg === 'dev') {
+      return [
+        { label: 'Total Dev. Cost', value: mm(totalCapital) },
+        { label: 'Cost / Key', value: money(totalPerKey) },
+        { label: 'Stabilized NOI', value: mm(terminalNoi) },
+        { label: 'Exit Value', value: mm(grossExit), sub: has(exitCap) ? `${fmtPct(exitCap, 2)} exit cap` : undefined },
+        { label: 'Levered IRR', value: pctv(leveredIrr, 1) },
+      ];
+    }
+    if (cfg === 'core') {
+      return [
+        { label: 'Purchase Price', value: mm(purchase), sub: has(entryCap) ? `${fmtPct(entryCap, 2)} going-in` : undefined },
+        { label: 'Going-In Cap', value: pctv(entryCap) },
+        { label: 'Equity', value: mm(equity), sub: has(equity) && has(totalCapital) && totalCapital > 0 ? `${fmtPct(equity / totalCapital, 1)} of total uses` : undefined },
+        { label: 'Exit Value', value: mm(grossExit), sub: has(exitCap) ? `${fmtPct(exitCap, 2)} exit cap` : undefined },
+        { label: 'Levered IRR', value: pctv(leveredIrr, 1) },
+      ];
+    }
+    return [
+      { label: 'Purchase Price', value: mm(purchase), sub: has(entryCap) ? `${fmtPct(entryCap, 2)} going-in` : undefined },
+      { label: 'Total Capitalization', value: mm(totalCapital), sub: has(totalPerKey) ? `${fmtCurrency(totalPerKey)} / key` : undefined },
+      { label: 'Renovation', value: mm(renoBudget), sub: hasReno && has(keys) ? `${fmtCurrency((renoBudget as number) / keys)} / key` : undefined },
+      { label: 'Stabilized NOI', value: mm(terminalNoi) },
+      { label: 'Levered IRR', value: pctv(leveredIrr, 1) },
+    ];
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [cfg, purchase, entryCap, totalCapital, totalPerKey, equity, grossExit, exitCap, terminalNoi, renoBudget, hasReno, keys, leveredIrr]);
+
+  // ─── Return benchmark strip ────────────────────────────────────────────
+  const benchmark = useMemo(() => {
+    const profile = returnProfiles.find((p) => p.id === returnProfileId);
+    const [lo, hi] = parseTarget(profile?.target);
+    const irrPct = has(leveredIrr) ? leveredIrr * 100 : null;
+    let status = 'Pending';
+    if (irrPct != null && lo != null) {
+      status = hi == null
+        ? (irrPct >= lo ? 'Within target' : 'Below target')
+        : (irrPct < lo ? 'Below target' : irrPct > hi ? 'Above target' : 'Within target');
+    }
+    const statusColor = status === 'Above target' ? 'oklch(45% 0.12 155)' : status === 'Within target' ? prov.green : status === 'Below target' ? 'oklch(50% 0.14 40)' : palette.textMuted;
+    const statusBg = status === 'Below target' ? 'oklch(56% 0.12 40 / .12)' : status === 'Pending' ? palette.hairlineSection : 'oklch(45% 0.12 155 / .1)';
+    return { target: profile?.target ?? '—', actual: pctv(leveredIrr, 1), status, statusColor, statusBg };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [returnProfileId, leveredIrr]);
+
+  // ─── Popover open / close ──────────────────────────────────────────────
+  const openProv = useCallback((e: React.MouseEvent, row: RowDef) => {
+    if (row.kind === 'awaiting') return; // nothing to explain yet
+    const b = (e.currentTarget as HTMLElement).getBoundingClientRect();
+    const width = 346;
+    const vw = typeof window !== 'undefined' ? window.innerWidth : 1440;
+    let left = b.left;
+    if (left + width > vw - 12) left = Math.max(12, vw - width - 12);
+    const caretRight = Math.max(16, Math.min(width - 24, (b.left + b.width / 2) - left));
+    const top = b.bottom + 8;
+    setPopover({ row, top, left, caretRight });
   }, []);
 
-  // Single-row compact toolbar — all four model settings inline so the
-  // Overview opens with General Info + Returns visible without scrolling.
-  // Labels live as small caps above each control to keep the row scannable.
-  const selectClass = 'px-2 py-1 text-[12px] bg-white border border-border rounded focus:outline-none focus:ring-2 focus:ring-brand-100 focus:border-brand-500';
+  const provProps: WhereThisCameFromProps | null = useMemo(() => {
+    if (!popover) return null;
+    const { row } = popover;
+    const t = row.trace ? traceGet(row.trace.engine, row.trace.path) : null;
+    const kindLabel = row.overridden ? 'Overridden' : KIND_LABEL[row.kind];
+    const kindColor = row.overridden ? popoverKind.overridden : KIND_POPOVER_COLOR[row.kind];
+    const where = row.kind === 'doc' ? (row.docPage ?? row.docName ?? 'Uploaded document')
+      : row.kind === 'linked' ? (row.linkLabel ?? 'Another module')
+        : row.kind === 'input' ? 'Investment Profile'
+          : 'Calculated by Fondok';
+    const inputs = (row.inputs ?? []).map((i) => ({
+      name: i.name, path: i.from,
+      dotColor: i.kind === 'linked' || i.kind === 'doc' ? prov.green : i.kind === 'input' ? prov.blue : prov.gray,
+    }));
+    const actions: WhereThisCameFromProps['actions'] = [];
+    if (row.kind === 'linked' && row.linkTab) {
+      actions.push({ label: 'Open module →', primary: true, onClick: () => { navigate(row.linkTab!); setPopover(null); } });
+    }
+    if (row.kind === 'doc' && row.docName) {
+      actions.push({ label: 'View source ↗', onClick: () => { navigate(''); setPopover(null); } });
+    }
+    return {
+      kind: kindLabel, kindColor, label: row.label, where, value: row.value,
+      valueColor: valueColor(row.kind, !!row.bold, !!row.overridden),
+      source: row.kind === 'doc' && row.docName ? { doc: row.docName, loc: row.docPage ?? '', text: t?.note ?? '' } : undefined,
+      calc: row.kind === 'calc' && (t?.formula || row.formula)
+        ? { expr: t?.formula ?? row.formula, numbers: row.formulaNumbers, inputs: inputs.length ? inputs : undefined }
+        : undefined,
+      actions: actions.length ? actions : undefined,
+      position: 'fixed', top: popover.top, left: popover.left, caretRight: popover.caretRight,
+      onClose: () => setPopover(null),
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [popover, traceGet]);
 
+  function navigate(tab: string) {
+    router.push(tab ? `/projects/${dealId}?tab=${tab}` : `/projects/${dealId}`);
+  }
+
+  // Deal-type toggle → confirmation → persist + re-run.
+  const onSelectDealType = (id: 'acquisition' | 'development') => {
+    if (id === dealType) return;
+    setPendingDealType(id);
+    setPopover(null);
+  };
+  const confirmDealType = () => {
+    if (!pendingDealType) return;
+    void persist({ deal_type: pendingDealType }, 'Deal type updated — re-running the model…');
+    setPendingDealType(null);
+  };
+  const pendingCfg: Cfg = pendingDealType === 'development' ? 'dev' : (returnProfileId === 'core' ? 'core' : 'va');
+
+  // ─── Render ────────────────────────────────────────────────────────────
   return (
-    <Card className="px-3 py-2">
-      <div className="flex flex-wrap items-end gap-x-4 gap-y-2">
-        <div className="flex items-center gap-2">
-          <span className="text-[10.5px] font-medium text-ink-500 uppercase tracking-wide">
-            Investment Profile
+    <div style={{ fontFamily: fontStack, display: 'flex', flexDirection: 'column', gap: 14, maxWidth: 1320 }}>
+      {/* Overview header card */}
+      <div style={{ ...cardShell, padding: '12px 16px', display: 'flex', flexDirection: 'column', gap: 3 }}>
+        <span style={{ fontSize: 13.5, fontWeight: 700, color: palette.ink }}>Overview</span>
+        <span style={{ fontSize: 12.5, color: palette.textSecondary, lineHeight: 1.55, maxWidth: 960 }}>
+          The deal on one page — what you&apos;re buying, how it&apos;s capitalized, when each milestone lands,
+          and the returns that fall out of it.
+        </span>
+      </div>
+
+      {/* Review bar (only when Fondok flagged values for review) */}
+      {reviewCount > 0 && (
+        <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap', fontSize: 11.5, color: palette.textSecondary }}>
+          <span style={{ display: 'flex', alignItems: 'center', gap: 7, fontWeight: 600, color: palette.ink }}>
+            <ProvenanceDot state="needs_review" size={9} />
+            {reviewCount} field{reviewCount === 1 ? '' : 's'} need review
+          </span>
+          <button
+            type="button"
+            onClick={() => setReviewOnly((v) => !v)}
+            style={{
+              fontSize: 11.5, fontWeight: 600, color: palette.ink, fontFamily: 'inherit', cursor: 'pointer',
+              background: reviewOnly ? 'oklch(94% 0.05 65)' : '#fff',
+              border: `1px solid ${reviewOnly ? 'oklch(80% 0.09 65)' : palette.disabledBorder}`,
+              borderRadius: 6, padding: '4px 11px', whiteSpace: 'nowrap',
+            }}
+          >
+            {reviewOnly ? 'Showing review only — clear filter' : 'Filter to these'}
+          </button>
+          <span style={{ color: palette.textFaint }}>
+            Values Fondok flagged as uncertain or contradicted by a second source.
           </span>
         </div>
+      )}
 
-        {/* Deal Type pill toggle */}
-        <div className="flex flex-col">
-          <label className="text-[10px] font-medium text-ink-500 uppercase tracking-wide mb-0.5">
-            Deal Type
-          </label>
-          <div className="inline-flex bg-ink-300/15 p-0.5 rounded">
-            {(['acquisition', 'development'] as const).map(opt => (
-              <button
-                key={opt}
-                type="button"
-                onClick={() => { setState(s => ({ ...s, dealType: opt })); void persist({ deal_type: opt }); }}
-                className={cn(
-                  'px-2 py-0.5 text-[11.5px] rounded transition-colors capitalize',
-                  state.dealType === opt
-                    ? 'bg-white text-brand-700 font-medium shadow-sm'
-                    : 'text-ink-500 hover:text-ink-900'
-                )}
-              >
-                {opt}
-              </button>
-            ))}
+      {/* Investment Profile card + return benchmark strip */}
+      <div style={{ ...cardShell, padding: '11px 16px 12px', display: 'flex', flexDirection: 'column', gap: 11 }}>
+        <div style={{ display: 'grid', gridTemplateColumns: '118px 1fr', gap: 16, alignItems: 'center' }}>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+            <div style={{ fontSize: 10.5, fontWeight: 700, letterSpacing: '.06em', color: palette.eyebrow, textTransform: 'uppercase', lineHeight: 1.25 }}>
+              Investment Profile
+            </div>
+            <div style={{ fontSize: 10, color: palette.textFaint, lineHeight: 1.35 }}>Deal Type drives the model</div>
+          </div>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(168px,1fr))', gap: '9px 18px' }}>
+            {/* Deal Type toggle */}
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 4, minWidth: 0 }}>
+              <div style={profileLabel}>Deal Type</div>
+              <div style={{ display: 'inline-flex', background: '#f3f2ee', border: `1px solid ${palette.border}`, borderRadius: 6, padding: 2, width: 'fit-content' }}>
+                {DEAL_TYPES.map((d) => {
+                  const active = d.id === dealType;
+                  return (
+                    <button
+                      key={d.id}
+                      type="button"
+                      onClick={() => onSelectDealType(d.id)}
+                      style={{
+                        fontSize: 11.5, fontFamily: 'inherit', border: 'none', cursor: 'pointer',
+                        fontWeight: active ? 700 : 500, color: active ? prov.blue : '#a8a7a2',
+                        background: active ? '#fff' : 'transparent', borderRadius: 4, padding: '4px 11px',
+                        whiteSpace: 'nowrap', boxShadow: active ? '0 1px 2px rgba(0,0,0,.08)' : 'none',
+                      }}
+                    >
+                      {d.label}
+                    </button>
+                  );
+                })}
+              </div>
+              <div style={{ fontSize: 10, color: palette.textFaint, lineHeight: 1.3 }}>Configures the underwriting model</div>
+            </div>
+
+            <ProfileSelect
+              label="Returns Profile" hint="Sets the return benchmark only" value={returnProfileId}
+              options={returnProfiles.map((p) => ({ value: p.id, label: `${p.label} (${p.target})` }))}
+              onChange={(v) => void persist({ return_profile: v })}
+            />
+            <ProfileSelect
+              label="Brand" hint="Property classification" value={brand}
+              options={brandFamilies.flatMap((f) => f.brands.map((b) => ({ value: b.name, label: `${b.name} (${b.tier})` })))}
+              onChange={(v) => void persist({ brand: v })}
+            />
+            <ProfileSelect
+              label="Positioning" hint="Property classification" value={positioningId}
+              options={positioningTiers.map((p) => ({ value: p.id, label: p.label }))}
+              onChange={(v) => void persist({ positioning: v })}
+            />
           </div>
         </div>
 
-        <div className="flex flex-col">
-          <label className="text-[10px] font-medium text-ink-500 uppercase tracking-wide mb-0.5">
-            Returns Profile
-          </label>
-          <select
-            value={state.returnProfile}
-            onChange={e => { const v = e.target.value; setState(s => ({ ...s, returnProfile: v })); void persist({ return_profile: v }); }}
-            className={selectClass}
-          >
-            {returnProfiles.map(p => (
-              <option key={p.id} value={p.id}>{p.label} ({p.target})</option>
-            ))}
-          </select>
-        </div>
-
-        <div className="flex flex-col">
-          <label className="text-[10px] font-medium text-ink-500 uppercase tracking-wide mb-0.5">
-            Brand
-          </label>
-          <select
-            value={state.brand}
-            onChange={e => { const v = e.target.value; setState(s => ({ ...s, brand: v })); void persist({ brand: v }); }}
-            className={selectClass}
-          >
-            {!brandOptions.some(b => b.value === state.brand) && (
-              <option value={state.brand}>{state.brand}</option>
-            )}
-            {brandFamilies.map(fam => (
-              <optgroup key={fam.family} label={fam.family}>
-                {fam.brands.map(b => (
-                  <option key={b.name} value={b.name}>{b.name} ({b.tier})</option>
-                ))}
-              </optgroup>
-            ))}
-          </select>
-        </div>
-
-        <div className="flex flex-col">
-          <label className="text-[10px] font-medium text-ink-500 uppercase tracking-wide mb-0.5">
-            Positioning
-          </label>
-          <select
-            value={state.positioning}
-            onChange={e => { const v = e.target.value; setState(s => ({ ...s, positioning: v })); void persist({ positioning: v }); }}
-            className={selectClass}
-          >
-            {positioningTiers.map(p => (
-              <option key={p.id} value={p.id}>{p.label}</option>
-            ))}
-          </select>
+        {/* Return benchmark strip */}
+        <div style={{ display: 'flex', alignItems: 'center', gap: 14, flexWrap: 'wrap', background: palette.surfaceTint, border: `1px solid ${palette.border}`, borderRadius: 7, padding: '8px 12px' }}>
+          <span style={{ fontSize: 9.5, fontWeight: 700, letterSpacing: '.06em', color: palette.eyebrow, textTransform: 'uppercase' }}>Return benchmark</span>
+          <span style={{ fontSize: 11.5, color: palette.textSecondary }}>Target levered IRR <b style={{ color: prov.blue }}>{benchmark.target}</b></span>
+          <span style={{ fontSize: 11.5, color: palette.textSecondary }}>Calculated <b style={{ color: prov.green }}>{benchmark.actual}</b></span>
+          <span style={{ fontSize: 10.5, fontWeight: 700, letterSpacing: '.03em', textTransform: 'uppercase', color: benchmark.statusColor, background: benchmark.statusBg, borderRadius: 5, padding: '3px 8px' }}>{benchmark.status}</span>
+          <span style={{ fontSize: 10.5, color: palette.textFaint, marginLeft: 'auto' }}>Benchmark only — it does not drive the model</span>
         </div>
       </div>
-    </Card>
-  );
-}
 
-// Per-row metadata for the Overview Section. Plain rows are
-// label/value pairs (read-only). `linked` rows render with a chain
-// icon and green tint — they're engine-derived and edited elsewhere.
-// `editable` rows render with a pencil icon and become inline-edit
-// cells on click; on commit they call `onSaveOverride(fieldPath, v)`.
-type SectionRowSpec =
-  | [string, string]
-  | {
-      label: string;
-      value: string;
-      kind: 'plain' | 'linked' | 'editable';
-      // Required for editable rows — the override path key.
-      fieldPath?: string;
-      // Raw value (number or string) to seed the input.
-      raw?: number | string;
-      // Format hint for the inline editor.
-      inputType?: 'number' | 'text';
-      // Optional provenance-wrapped display for the read-only view (a
-      // <Traced> around the same value). Purely visual — `value`/`raw`
-      // still drive editing + formatting. Only used on non-editable rows.
-      display?: ReactNode;
-    };
-
-function Section({
-  title,
-  rows,
-  onSaveOverride,
-}: {
-  title: string;
-  rows: SectionRowSpec[];
-  onSaveOverride?: (path: string, value: number | string | null) => Promise<void>;
-}) {
-  return (
-    <Card className="p-0 overflow-hidden">
-      {/* Design sync: dark-navy header bar with a white title (was a light
-          in-card heading). */}
-      <div className="bg-ink-900 px-4 py-2.5">
-        <h3 className="text-[12.5px] font-semibold text-white">{title}</h3>
+      {/* KPI tiles */}
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(150px,1fr))', gap: 12 }}>
+        {kpis.map((k) => (
+          <KpiTile key={k.label} label={k.label} value={k.value} sub={k.sub} />
+        ))}
       </div>
-      <div className="p-4 text-[12.5px]">
-        {rows.map((row, idx) => {
-          // Normalize tuple → object so the rendering branch is uniform.
-          const spec = Array.isArray(row)
-            ? { label: row[0], value: row[1], kind: 'plain' as const }
-            : row;
-          return (
-            <SectionRow
-              key={`${spec.label}-${idx}`}
-              spec={spec}
-              onSave={onSaveOverride}
-            />
-          );
-        })}
-      </div>
-    </Card>
-  );
-}
 
-function SectionRow({
-  spec,
-  onSave,
-}: {
-  spec: Exclude<SectionRowSpec, [string, string]> | { label: string; value: string; kind: 'plain' };
-  onSave?: (path: string, value: number | string | null) => Promise<void>;
-}) {
-  const [editing, setEditing] = useState(false);
-  const [draft, setDraft] = useState<string>('');
-  const [saving, setSaving] = useState(false);
-  const inputRef = useRef<HTMLInputElement | null>(null);
+      {/* Deal-type-aware sections */}
+      {displaySections.map((s, i) => {
+        if (s.kind === 'su') return <SourcesUsesSection key={`su-${i}`} title={s.title} outputs={outputs} keys={keys} money={money} onRowClick={openProv} tracedState={tracedState} />;
+        if (s.kind === 'timeline') return <TimelineSectionCard key={`tl-${i}`} title={s.title} timeline={timeline} liveMode={liveMode} holdYears={holdYears} />;
+        const headerNote: ReactNode = s.action
+          ? (
+            <span onClick={() => navigate(s.action!.tab)} style={{ color: palette.linkBlue, cursor: 'pointer', fontWeight: 600, whiteSpace: 'nowrap' }}>
+              {s.action.label}
+            </span>
+          )
+          : s.note;
+        return (
+          <SectionCard key={s.title} title={s.title} note={headerNote}>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(300px,1fr))', gap: '0 32px' }}>
+              {s.rows.map((r) => <OverviewRow key={r.id} row={r} onClick={openProv} />)}
+            </div>
+          </SectionCard>
+        );
+      })}
 
-  const editable = spec.kind === 'editable' && !!spec.fieldPath && !!onSave;
-  const linked = spec.kind === 'linked';
+      {/* Where this came from — anchored provenance popover */}
+      {provProps && (
+        <>
+          <div onClick={() => setPopover(null)} style={{ position: 'fixed', inset: 0, zIndex: 30 }} aria-hidden />
+          <WhereThisCameFrom {...provProps} style={{ zIndex: 31 }} />
+        </>
+      )}
 
-  useEffect(() => {
-    if (editing) inputRef.current?.focus();
-  }, [editing]);
-
-  const beginEdit = () => {
-    if (!editable) return;
-    setDraft(spec.raw != null ? String(spec.raw) : '');
-    setEditing(true);
-  };
-
-  const commit = async () => {
-    if (!editable || !spec.fieldPath || !onSave) {
-      setEditing(false);
-      return;
-    }
-    const trimmed = draft.trim();
-    let payload: number | string | null;
-    if (trimmed === '') {
-      payload = null; // clears the override
-    } else if (spec.inputType === 'number') {
-      // Strip $/% formatting noise so analysts can paste pretty values.
-      const cleaned = trimmed.replace(/[$,]/g, '').replace(/%$/, '');
-      const n = Number(cleaned);
-      if (!Number.isFinite(n)) {
-        setEditing(false);
-        return;
-      }
-      payload = n;
-    } else {
-      payload = trimmed;
-    }
-    setSaving(true);
-    try {
-      await onSave(spec.fieldPath, payload);
-    } finally {
-      setSaving(false);
-      setEditing(false);
-    }
-  };
-
-  const cancel = () => setEditing(false);
-
-  return (
-    <div className="flex items-center justify-between py-1 border-b border-border/40 last:border-0">
-      <span className="text-ink-500 inline-flex items-center gap-1.5">
-        {linked && <Link2 size={10} className="text-success-500" aria-label="Linked from engine" />}
-        {editable && !linked && <Pencil size={10} className="text-blue-500" aria-label="Editable" />}
-        {spec.label}
-      </span>
-      {editing ? (
-        <input
-          ref={inputRef}
-          value={draft}
-          onChange={(e) => setDraft(e.target.value)}
-          onBlur={() => { void commit(); }}
-          onKeyDown={(e) => {
-            if (e.key === 'Enter') { void commit(); }
-            if (e.key === 'Escape') cancel();
-          }}
-          disabled={saving}
-          inputMode={('inputType' in spec && spec.inputType === 'number') ? 'decimal' : 'text'}
-          className="w-32 px-1.5 py-0.5 text-[12px] text-right border border-brand-500 rounded bg-white focus:outline-none focus:ring-2 focus:ring-brand-100 tabular-nums"
-        />
-      ) : editable ? (
-        <button
-          type="button"
-          onClick={beginEdit}
-          className={cn(
-            // Sam QA 8/21: editable = blue (matches "assumption / input" in the
-            // DATA KEY) + a dotted "click to edit" underline, distinct from the
-            // green "linked" values — was an off-legend amber.
-            'font-medium tabular-nums px-1.5 py-0.5 rounded -mr-1.5 underline decoration-dotted decoration-blue-400 underline-offset-2 hover:bg-blue-50 transition-colors',
-            spec.raw != null ? 'text-blue-700' : 'text-ink-400 italic',
-          )}
-          title="Click to edit"
-        >
-          {spec.value}
-        </button>
-      ) : (
-        <span
-          className={cn(
-            'font-medium tabular-nums',
-            linked ? 'text-success-700' : 'text-ink-900',
-          )}
-        >
-          {('display' in spec && spec.display) ? spec.display : spec.value}
-        </span>
+      {/* Deal-type change confirmation — "Update model" re-runs */}
+      {pendingDealType && (
+        <>
+          <div onClick={() => setPendingDealType(null)} style={{ position: 'fixed', inset: 0, background: 'rgba(16,24,40,.34)', zIndex: 80 }} aria-hidden />
+          <div role="dialog" aria-label="Change deal type" style={{ position: 'fixed', left: '50%', top: '22vh', transform: 'translateX(-50%)', width: 432, background: '#fff', borderRadius: 11, boxShadow: '0 24px 56px rgba(16,24,40,.28)', zIndex: 81, padding: '22px 24px', display: 'flex', flexDirection: 'column', gap: 12 }}>
+            <div style={{ fontSize: 15, fontWeight: 700, color: palette.ink }}>
+              Change deal type to {pendingDealType === 'development' ? 'Development' : 'Acquisition'}?
+            </div>
+            <div style={{ fontSize: 12.5, color: palette.hoverInk, lineHeight: 1.55 }}>
+              Changing the deal type will update the assumptions and modeling sections used for this investment.
+              Existing values that are no longer applicable will be preserved but removed from the active model.
+            </div>
+            <div style={{ background: palette.surfaceTint, border: `1px solid ${palette.border}`, borderRadius: 8, padding: '10px 12px', display: 'flex', flexDirection: 'column', gap: 5 }}>
+              <div style={{ fontSize: 10, fontWeight: 700, letterSpacing: '.05em', color: palette.eyebrow, textTransform: 'uppercase' }}>Sections after the change</div>
+              <div style={{ fontSize: 12, color: palette.ink, lineHeight: 1.5 }}>{sectionTitles(pendingCfg)}</div>
+            </div>
+            <div style={{ display: 'flex', gap: 10, justifyContent: 'flex-end', marginTop: 2 }}>
+              <button type="button" onClick={() => setPendingDealType(null)} style={secondaryBtn}>Cancel</button>
+              <button type="button" onClick={confirmDealType} style={primaryBtn}>Update model</button>
+            </div>
+          </div>
+        </>
       )}
     </div>
   );
 }
 
-// Sources panel — prefers worker capital engine output. Per-key column hides
-// when total keys is 0 (non-Kimpton deal without keys metadata).
-function SourcesPanel({ sources, keys, source }: {
-  sources: SourceUseLine[];
-  keys: number;
-  source: 'worker' | 'mock';
+// ─────────────────────────────────────────────────────────────────────────
+// Section row — canonical Overview row (dot · label · link · value), clickable
+// to open the "Where this came from" popover.
+// ─────────────────────────────────────────────────────────────────────────
+function OverviewRow({ row, onClick }: { row: RowDef; onClick: (e: React.MouseEvent, row: RowDef) => void }) {
+  const color = valueColor(row.kind, !!row.bold, !!row.overridden);
+  const showDot = row.kind === 'doc' || row.kind === 'linked' || row.state === 'needs_review';
+  const underline = row.kind === 'input' || row.overridden ? 'underline dotted' : 'none';
+  return (
+    <div
+      onClick={(e) => onClick(e, row)}
+      style={{
+        display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12, fontSize: 13,
+        padding: '7px 0', cursor: row.kind === 'awaiting' ? 'default' : 'pointer', borderBottom: `1px solid ${palette.hairlineRow}`,
+      }}
+    >
+      <span style={{ display: 'flex', alignItems: 'center', gap: 7, minWidth: 0 }}>
+        <span style={{ color: palette.textSecondary, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{row.label}</span>
+      </span>
+      <span style={{ display: 'flex', alignItems: 'center', gap: 6, flexShrink: 0 }}>
+        {showDot && <ProvenanceDot state={row.state} size={8} review={row.state === 'needs_review'} />}
+        <span style={{ color, fontWeight: row.bold ? 700 : 400, textDecoration: underline, fontVariantNumeric: 'tabular-nums', whiteSpace: 'nowrap' }}>
+          {row.value}
+        </span>
+      </span>
+    </div>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// Investment Profile select (Returns Profile / Brand / Positioning).
+// ─────────────────────────────────────────────────────────────────────────
+function ProfileSelect({
+  label, hint, value, options, onChange,
+}: {
+  label: string; hint: string; value: string;
+  options: { value: string; label: string }[];
+  onChange: (v: string) => void;
 }) {
-  const total = sources.find(s => s.is_total)?.amount
-    ?? sources.reduce((sum, s) => s.is_total ? sum : sum + s.amount, 0);
-  const flash = useFlash(total);
-  if (sources.length === 0) {
-    return (
-      <Card className="p-5 flex items-center justify-center min-h-[120px] text-[12px] text-ink-500">
-        Run the Capital engine to populate Sources.
-      </Card>
-    );
-  }
+  const known = options.some((o) => o.value === value);
   return (
-    <Card className={cn('p-5', flash && 'value-flash')}>
-      <div className="flex items-center justify-between mb-3">
-        <h3 className="text-[13px] font-semibold text-ink-900">
-          Sources <span className="text-[11px] text-ink-500 font-normal">($ in mm)</span>
-        </h3>
-        {source === 'worker' && (
-          <span className="text-[9.5px] uppercase tracking-wide text-success-700 bg-success-50 rounded px-1.5 py-0.5">Live</span>
-        )}
-      </div>
-      <table className="w-full text-[12.5px]">
-        <thead>
-          <tr className="text-ink-500 text-[11px]">
-            <th className="text-left font-medium pb-2">&nbsp;</th>
-            <th className="text-right font-medium pb-2">Amount</th>
-            <th className="text-right font-medium pb-2">% Total</th>
-            {keys > 0 && <th className="text-right font-medium pb-2">Per Key</th>}
-          </tr>
-        </thead>
-        <tbody>
-          {sources.map(s => (
-            <tr key={s.label} className={s.is_total ? 'font-semibold border-t border-border' : ''}>
-              <td className="py-1.5">{s.label}</td>
-              <td className="text-right tabular-nums">{(s.amount / 1e6).toFixed(2)}</td>
-              <td className="text-right tabular-nums">
-                {s.pct != null ? `${(s.pct * 100).toFixed(1)}%` : '—'}
-              </td>
-              {keys > 0 && (
-                <td className="text-right tabular-nums">{(s.amount / keys / 1e3).toFixed(0)}K</td>
-              )}
-            </tr>
-          ))}
-        </tbody>
-      </table>
-    </Card>
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 4, minWidth: 0 }}>
+      <div style={profileLabel}>{label}</div>
+      <select
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        style={{
+          width: '100%', fontSize: 11.5, fontFamily: 'inherit', fontWeight: 600, color: prov.blue,
+          background: palette.surfaceTint, border: `1px solid ${palette.disabledBorder}`, borderRadius: 6,
+          padding: '5px 9px', cursor: 'pointer', textOverflow: 'ellipsis',
+        }}
+      >
+        {!known && value && <option value={value}>{value}</option>}
+        {options.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
+      </select>
+      <div style={{ fontSize: 10, color: palette.textFaint, lineHeight: 1.3 }}>{hint}</div>
+    </div>
   );
 }
 
-function UsesPanel({ uses, source }: { uses: SourceUseLine[]; source: 'worker' | 'mock' }) {
-  const total = uses.find(u => u.is_total)?.amount
-    ?? uses.reduce((sum, u) => u.is_total ? sum : sum + u.amount, 0);
-  const flash = useFlash(total);
-  if (uses.length === 0) {
-    return (
-      <Card className="p-5 flex items-center justify-center min-h-[120px] text-[12px] text-ink-500">
-        Run the Capital engine to populate Uses.
-      </Card>
-    );
-  }
-  return (
-    <Card className={cn('p-5', flash && 'value-flash')}>
-      <div className="flex items-center justify-between mb-3">
-        <h3 className="text-[13px] font-semibold text-ink-900">
-          Uses <span className="text-[11px] text-ink-500 font-normal">($ in mm)</span>
-        </h3>
-        {source === 'worker' && (
-          <span className="text-[9.5px] uppercase tracking-wide text-success-700 bg-success-50 rounded px-1.5 py-0.5">Live</span>
-        )}
-      </div>
-      <table className="w-full text-[12.5px]">
-        <thead>
-          <tr className="text-ink-500 text-[11px]">
-            <th className="text-left font-medium pb-2">&nbsp;</th>
-            <th className="text-right font-medium pb-2">Amount</th>
-          </tr>
-        </thead>
-        <tbody>
-          {uses.map(u => (
-            <tr key={u.label} className={u.is_total ? 'font-semibold border-t border-border' : ''}>
-              <td className="py-1.5">{u.label}</td>
-              <td className="text-right tabular-nums">{(u.amount / 1e6).toFixed(2)}</td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
-    </Card>
-  );
-}
+// ─────────────────────────────────────────────────────────────────────────
+// Sources & Uses — single section, Uses / Sources columns (Amount / Key / %)
+// + "Equity is the calculated plug" note. From the capital engine arrays.
+// ─────────────────────────────────────────────────────────────────────────
+interface CapitalLine { label: string; amount: number; pct?: number | null; is_total?: boolean }
 
-// Proforma panel — prefer the worker expense engine years[] (in dollars,
-// converted to $000s for display).
-function ProformaPanel({ outputs }: {
-  outputs: ReturnType<typeof useEngineOutputs>['outputs'];
+function SourcesUsesSection({
+  title, outputs, keys, money, onRowClick, tracedState,
+}: {
+  title: string;
+  outputs: EngineOutputsResponse | null;
+  keys: number | undefined;
+  money: (v: number | undefined) => string;
+  onRowClick: (e: React.MouseEvent, row: RowDef) => void;
+  tracedState: (engine: 'capital' | 'returns' | 'debt' | 'expense', path: string) => ValueState | null;
 }) {
-  type WorkerExpenseYear = {
-    year: number;
-    total_revenue: number;
-    mgmt_fee: number;
-    ffe_reserve: number;
-    gop: number;
-    noi: number;
-    noi_institutional?: number | null;
-    dept_expenses: { total: number };
-    undistributed: { total: number };
-    fixed_charges: { total: number };
+  const uses = getEngineField<CapitalLine[]>(outputs, 'capital', 'uses') ?? [];
+  const sources = getEngineField<CapitalLine[]>(outputs, 'capital', 'sources') ?? [];
+  const usesTotal = uses.find((r) => r.is_total)?.amount ?? uses.reduce((s, r) => (r.is_total ? s : s + (r.amount ?? 0)), 0);
+  const sourcesTotal = sources.find((r) => r.is_total)?.amount ?? sources.reduce((s, r) => (r.is_total ? s : s + (r.amount ?? 0)), 0);
+
+  const suGrid = 'minmax(88px,1fr) minmax(76px,96px) minmax(58px,82px) minmax(40px,50px)';
+
+  const classify = (label: string): ValueKind => {
+    if (/senior loan|senior debt|loan|key money/i.test(label)) return 'linked';
+    if (/equity/i.test(label)) return 'calc';
+    if (/purchase/i.test(label)) return 'calc';
+    return 'calc';
   };
-  type WorkerFBYear = {
-    year: number;
-    rooms_revenue: number;
-    fb_revenue: number;
-    other_revenue: number;
+  const toRow = (l: CapitalLine, side: 'uses' | 'sources'): RowDef => {
+    const total = !!l.is_total;
+    const kind: ValueKind = total ? 'calc' : classify(l.label);
+    return {
+      id: `${side}-${l.label}`, label: l.label, kind, value: money(l.amount), bold: total,
+      state: total ? 'calculated' : (tracedState('capital', `${side}.${l.label}`) ?? kindToState(kind)),
+      linkLabel: kind === 'linked' ? (/key money/i.test(l.label) ? '→ Partnership' : '→ Debt') : undefined,
+      linkTab: kind === 'linked' ? (/key money/i.test(l.label) ? 'partnership' : 'debt') : undefined,
+    };
   };
-  const expenseYears = getEngineField<WorkerExpenseYear[]>(outputs, 'expense', 'years');
-  const fbYears = getEngineField<WorkerFBYear[]>(outputs, 'fb', 'years');
-  const wDebtSchedule = getEngineField<{ year: number; debt_service: number }[]>(outputs, 'debt', 'schedule');
 
-  const hasWorker = Array.isArray(expenseYears) && expenseYears.length > 0;
-
-  type Row = { label: string; vals: number[]; cagr?: number; bold?: boolean };
-  const cagr = (start: number, end: number, years = 4) =>
-    start > 0 ? Math.pow(end / start, 1 / years) - 1 : 0;
-  let rows: Row[] = [];
-
-  if (hasWorker) {
-    const ey = expenseYears!.slice(0, 5);
-    const k = (v: number) => Math.round(v / 1000);
-    const totalRev = ey.map(y => k(y.total_revenue));
-    // Prefer institutional NOI (GOP - mgmt - fixed, BEFORE FF&E) when
-    // present; legacy rows fall back to the after-reserves `noi` field.
-    const noi = ey.map(y => k(y.noi_institutional ?? y.noi));
-    const opex = ey.map(y => k(y.dept_expenses.total + y.undistributed.total + y.fixed_charges.total));
-    const mgmt = ey.map(y => k(y.mgmt_fee));
-    const ffe = ey.map(y => k(y.ffe_reserve));
-
-    const fbY = fbYears?.slice(0, 5) ?? [];
-    const rooms = fbY.map(y => k(y.rooms_revenue));
-    const fb = fbY.map(y => k(y.fb_revenue));
-    const other = fbY.map(y => k(y.other_revenue));
-    const ds = wDebtSchedule?.slice(0, 5).map(y => k(y.debt_service)) ?? totalRev.map(() => 0);
-    const cfad = totalRev.map((_, i) => (noi[i] ?? 0) - (ds[i] ?? 0));
-
-    const row = (label: string, vals: number[], bold = false): Row => ({
-      label, vals, cagr: cagr(vals[0] ?? 0, vals[vals.length - 1] ?? 0), bold,
-    });
-    // Net Cash Flow After Reserves = NOI (institutional) minus FF&E.
-    // We show FF&E below NOI per US cap-rate convention so the
-    // institutional reader can apply a cap rate to the NOI line directly.
-    const cashFlowAfterRes = noi.map((n, i) => n - (ffe[i] ?? 0));
-    const cfadInst = totalRev.map((_, i) => (cashFlowAfterRes[i] ?? 0) - (ds[i] ?? 0));
-    rows = [
-      row('Room Revenue', rooms),
-      row('F&B Revenue', fb),
-      row('Other Revenue', other),
-      row('Total Revenue', totalRev, true),
-      row('Operating Expenses', opex),
-      row('Management Fee', mgmt),
-      row('Net Operating Income', noi, true),
-      row('FF&E Reserve', ffe),
-      row('Net Cash Flow', cashFlowAfterRes, true),
-      row('Debt Service', ds),
-      row('Cash Flow After Debt', cfadInst, true),
-    ];
-  }
-
-  if (rows.length === 0) {
-    return (
-      <Card className="p-12 text-center text-[12px] text-ink-500">
-        Run the P&amp;L engines (Revenue, F&amp;B, Expense) to populate the proforma.
-      </Card>
-    );
-  }
+  const columns: { heading: string; rows: CapitalLine[]; total: number; footnote?: ReactNode }[] = [
+    { heading: 'Uses', rows: uses, total: usesTotal },
+    { heading: 'Sources', rows: sources, total: sourcesTotal, footnote: 'Equity is the calculated plug — total uses less all other sources.' },
+  ];
 
   return (
-    <Card className="p-5">
-      <div className="flex items-center justify-between mb-1">
-        <h3 className="text-[13px] font-semibold text-ink-900">Proforma Operating Summary</h3>
-        {hasWorker && (
-          <span className="text-[9.5px] uppercase tracking-wide text-success-700 bg-success-50 rounded px-1.5 py-0.5">Live</span>
-        )}
+    <SectionCard title={title}>
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(340px,1fr))', gap: '14px 36px' }}>
+        {columns.map((col) => (
+          <div key={col.heading}>
+            <div style={{ display: 'grid', gridTemplateColumns: suGrid, fontSize: 10.5, fontWeight: 700, letterSpacing: '.05em', color: palette.textFaint, textTransform: 'uppercase', paddingBottom: 6, borderBottom: `1px solid ${palette.border}` }}>
+              <span>{col.heading}</span>
+              <span style={{ textAlign: 'right' }}>Amount</span>
+              <span style={{ textAlign: 'right' }}>/ Key</span>
+              <span style={{ textAlign: 'right' }}>%</span>
+            </div>
+            {col.rows.length === 0 && (
+              <div style={{ fontSize: 12.5, color: palette.textMuted, padding: '10px 0' }}>Run the Capital engine to populate {col.heading.toLowerCase()}.</div>
+            )}
+            {col.rows.map((l, i) => {
+              const row = toRow(l, col.heading.toLowerCase() as 'uses' | 'sources');
+              const total = !!l.is_total;
+              const color = valueColor(row.kind, total, false);
+              const pk = (has2(l.amount) && keys && keys > 0 && !total) ? fmtCurrency(l.amount / keys) : (total ? '' : '—');
+              const pct = total ? '100.0%' : (has2(l.amount) && col.total ? `${((l.amount / col.total) * 100).toFixed(1)}%` : '—');
+              const showDot = row.kind === 'linked' || row.state === 'needs_review';
+              return (
+                <div
+                  key={`${l.label}-${i}`}
+                  onClick={(e) => onRowClick(e, row)}
+                  style={{ display: 'grid', gridTemplateColumns: suGrid, fontSize: 12.5, padding: '6px 0', cursor: 'pointer', borderBottom: `1px solid ${palette.hairlineRow}`, alignItems: 'center' }}
+                >
+                  <span style={{ display: 'flex', alignItems: 'center', gap: 6, minWidth: 0 }}>
+                    {showDot && <ProvenanceDot state={row.state} size={8} />}
+                    <span style={{ color: palette.textSecondary, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{l.label}</span>
+                  </span>
+                  <span style={{ textAlign: 'right', color, fontWeight: total ? 700 : 400, fontVariantNumeric: 'tabular-nums' }}>{money(l.amount)}</span>
+                  <span style={{ textAlign: 'right', color: palette.textMuted, fontVariantNumeric: 'tabular-nums' }}>{pk}</span>
+                  <span style={{ textAlign: 'right', color: palette.textMuted, fontVariantNumeric: 'tabular-nums' }}>{pct}</span>
+                </div>
+              );
+            })}
+            {col.footnote && (
+              <div style={{ fontSize: 11.5, color: palette.textMuted, marginTop: 9, lineHeight: 1.5 }}>{col.footnote}</div>
+            )}
+          </div>
+        ))}
       </div>
-      <div className="text-[11px] text-ink-500 mb-3">($ in 000s, FYE Dec 31)</div>
-      <div className="overflow-x-auto">
-        <table className="w-full text-[12px] min-w-[600px]">
-          <thead>
-            <tr className="text-ink-500 text-[10.5px] border-b border-border">
-              <th className="text-left font-medium pb-2 w-48">&nbsp;</th>
-              <th className="text-right font-medium pb-2">Year 1</th>
-              <th className="text-right font-medium pb-2">Year 2</th>
-              <th className="text-right font-medium pb-2">Year 3</th>
-              <th className="text-right font-medium pb-2">Year 4</th>
-              <th className="text-right font-medium pb-2">Year 5</th>
-              <th className="text-right font-medium pb-2">CAGR</th>
-            </tr>
-          </thead>
-          <tbody>
-            {rows.map(r => (
-              <ProformaRow key={r.label} row={r} />
-            ))}
-          </tbody>
-        </table>
-      </div>
-    </Card>
+    </SectionCard>
   );
 }
 
-function ProformaRow({ row }: { row: { label: string; vals: number[]; cagr?: number; bold?: boolean } }) {
-  const flash = useFlash(row.vals[0] ?? 0);
+// ─────────────────────────────────────────────────────────────────────────
+// Milestone timeline rail — from GET /deals/{id}/engines/timeline (FON-71).
+// ─────────────────────────────────────────────────────────────────────────
+function TimelineSectionCard({
+  title, timeline, liveMode, holdYears,
+}: {
+  title: string;
+  timeline: TimelineResponse | null;
+  liveMode: boolean;
+  holdYears: number | undefined;
+}) {
+  const events = timeline?.events ?? [];
+  const pending = !timeline?.close_date;
+  const holdCaption = (!pending && timeline?.close_date && timeline?.exit_date)
+    ? `${holdYears != null ? `${holdYears}-year hold` : 'Hold'} · ${fmtLongDate(timeline.close_date)} → ${fmtLongDate(timeline.exit_date)}`
+    : 'Set the Acquisition Date to populate dates';
+  const stateForBasis = (basis: string): ValueState =>
+    basis === 'assumption' ? 'assumption' : basis === 'pending' ? 'awaiting_data' : 'calculated';
+  const railCols = `repeat(${Math.max(1, events.length)},minmax(0,1fr))`;
+
   return (
-    <tr className={cn(
-      'border-b border-border/50',
-      row.bold && 'font-semibold bg-ink-300/5',
-      flash && 'value-flash',
-    )}>
-      <td className="py-1.5">{row.label}</td>
-      {row.vals.slice(0, 5).map((v, i) => (
-        <td key={i} className="text-right tabular-nums">{v.toLocaleString()}</td>
-      ))}
-      <td className="text-right tabular-nums">{row.cagr ? `${(row.cagr * 100).toFixed(1)}%` : '—'}</td>
-    </tr>
+    <SectionCard title={title} note={holdCaption} bodyStyle={{ padding: '18px 20px' }}>
+      {events.length === 0 ? (
+        <p style={{ fontSize: 12.5, color: palette.textMuted, paddingTop: 10 }}>
+          {liveMode ? 'Run the model to build the timeline.' : 'Timeline is available on live deals.'}
+        </p>
+      ) : (
+        <div style={{ display: 'grid', gridTemplateColumns: railCols, position: 'relative', marginTop: 14 }}>
+          <div style={{ position: 'absolute', left: '6%', right: '6%', top: 5, height: 2, background: palette.border }} />
+          {events.map((m, i) => (
+            <div key={`${m.event}-${i}`} style={{ position: 'relative', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 6, padding: '0 4px', textAlign: 'center' }}>
+              <ProvenanceDot state={stateForBasis(m.basis)} size={12} style={{ boxShadow: '0 0 0 2px #fff, 0 0 0 4px #eae9e4', zIndex: 1 }} />
+              <span style={{ fontSize: 12.5, fontWeight: 700, color: palette.ink, fontVariantNumeric: 'tabular-nums' }}>{fmtISODate(m.start ?? m.finish)}</span>
+              <span style={{ fontSize: 11.5, color: palette.textSecondary, lineHeight: 1.35 }}>{m.event}</span>
+              <span style={{ fontSize: 10.5, color: palette.textFaint }}>{(m.duration_months ?? 0) > 0 ? `${m.duration_months} months` : ''}</span>
+            </div>
+          ))}
+        </div>
+      )}
+    </SectionCard>
   );
+}
+
+// ─── Local helpers / style constants ─────────────────────────────────────
+const cardShell: CSSProperties = { background: palette.cardWhite, border: `1px solid ${palette.border}`, borderRadius: 10 };
+const profileLabel: CSSProperties = { fontSize: 9.5, fontWeight: 700, letterSpacing: '.06em', color: palette.textMuted, textTransform: 'uppercase' };
+const primaryBtn: CSSProperties = { background: palette.inkNavy, color: '#fff', border: 'none', borderRadius: 6, padding: '8px 16px', fontSize: 12.5, fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit' };
+const secondaryBtn: CSSProperties = { background: '#fff', border: `1px solid ${palette.disabledBorder}`, color: palette.hoverInk, borderRadius: 6, padding: '8px 16px', fontSize: 12.5, fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit' };
+
+function has2(v: number | undefined | null): v is number { return v != null && Number.isFinite(v); }
+
+/** Parse a return-profile target string ("8-12%", "18%+") to [lo, hi|null]. */
+function parseTarget(target: string | undefined): [number | null, number | null] {
+  if (!target) return [null, null];
+  const plus = /\+/.test(target);
+  const nums = (target.match(/\d+(?:\.\d+)?/g) ?? []).map(Number);
+  if (nums.length === 0) return [null, null];
+  if (plus || nums.length === 1) return [nums[0], null];
+  return [nums[0], nums[1]];
+}
+
+/** Duration (in months) of the timeline event matching `re`, formatted. */
+function timelineDuration(timeline: TimelineResponse | null, re: RegExp): string {
+  const e = (timeline?.events ?? []).find((ev) => re.test(ev.event));
+  return e && (e.duration_months ?? 0) > 0 ? `${e.duration_months} months` : '—';
+}
+
+/** Format an ISO date (YYYY-MM-DD) as M/D/YYYY without a timezone shift. */
+function fmtISODate(iso: string | null | undefined): string {
+  if (!iso) return '—';
+  const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(iso);
+  if (!m) return '—';
+  return `${Number(m[2])}/${Number(m[3])}/${m[1]}`;
+}
+
+/** Format an ISO date as "Mon D, YYYY" (the canonical caption format). */
+function fmtLongDate(iso: string | null | undefined): string {
+  if (!iso) return '—';
+  const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(iso);
+  if (!m) return '—';
+  const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+  return `${months[Number(m[2]) - 1]} ${Number(m[3])}, ${m[1]}`;
 }

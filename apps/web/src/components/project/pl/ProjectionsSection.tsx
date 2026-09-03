@@ -19,9 +19,11 @@
  *   %Rev = Amount / Total Revenue   × 100
  */
 
-import { useMemo, useState, useCallback, useContext, createContext, type ReactNode } from 'react';
+import { useMemo, useState, useEffect, useCallback, useContext, createContext, type ReactNode, type CSSProperties } from 'react';
+import Link from 'next/link';
 import { Sparkles, Download, FileText, ExternalLink } from 'lucide-react';
 import { Card } from '@/components/ui/Card';
+import { ProvenanceDot } from '@/components/design';
 import { Button } from '@/components/ui/Button';
 import { Badge } from '@/components/ui/Badge';
 import Modal from '@/components/ui/Modal';
@@ -242,6 +244,14 @@ export default function ProjectionsSection({
   const [noiResult, setNoiResult] = useState<AskAnswerResult | null>(null);
   const [noiError, setNoiError] = useState<string | null>(null);
 
+  // Canonical Projections view controls. Period trims the forecast horizon
+  // shown in the table (real behaviour, capped at the engine-provided years);
+  // Base year + View are the design's chrome — the projection horizon and the
+  // Monthly breakout come from the engine, so they are presentational until a
+  // base-year override + monthly series are wired through (flagged follow-up).
+  const [projYearsSel, setProjYearsSel] = useState<number | null>(null);
+  const [projView, setProjView] = useState<'annual' | 'monthly'>('annual');
+
   const noiQuestion = useMemo(() => {
     if (!years || years.length === 0) {
       return 'Summarize the deal NOI trajectory across the projection horizon.';
@@ -416,6 +426,12 @@ export default function ProjectionsSection({
     toast('Projections exported', { type: 'success' });
   };
 
+  // Period control trims the forecast horizon shown (base year + N forecast
+  // years), capped at the engine-provided years.
+  const forecastCount = Math.max(1, years.length - 1);
+  const shownForecast = projYearsSel == null ? forecastCount : Math.max(1, Math.min(projYearsSel, forecastCount));
+  const visibleYears = years.slice(0, shownForecast + 1);
+
   return (
     <>
       <Card className="p-0 overflow-hidden">
@@ -441,8 +457,25 @@ export default function ProjectionsSection({
           </div>
         </div>
 
+        <ProjectionsControls
+          years={years}
+          shownForecast={shownForecast}
+          forecastCount={forecastCount}
+          onDec={() => setProjYearsSel(Math.max(1, shownForecast - 1))}
+          onInc={() => setProjYearsSel(Math.min(forecastCount, shownForecast + 1))}
+          view={projView}
+          onView={setProjView}
+        />
+
+        <AssumptionsPanel
+          dealId={dealId}
+          overrides={overrides}
+          onApply={applyOverride}
+          running={overrideCtx.running}
+        />
+
         <AssumptionOverrideContext.Provider value={overrideCtx}>
-          <ProjectionsTable years={years} />
+          <ProjectionsTable years={visibleYears} />
         </AssumptionOverrideContext.Provider>
       </Card>
 
@@ -1316,5 +1349,247 @@ function SubCells({
       <td className={cn(td, 'text-ink-700')}>{par > 0 ? fmtAmount(par, { decimals: 0, prefix: '$' }) : '—'}</td>
       <td className={cn(td, 'text-ink-700')}>{por > 0 ? fmtAmount(por, { decimals: 0, prefix: '$' }) : '—'}</td>
     </>
+  );
+}
+
+// ────────────────────────────────────────────────────────────────────
+// Canonical Projections chrome — view controls + Assumptions panel
+// (design/canonical/Financials Tab.dc.html). Built with the design's exact
+// tokens (inline styles + oklch/hex from the source).
+// ────────────────────────────────────────────────────────────────────
+
+// Canonical segmented control (#f0efeb track, white active pill).
+function SegControl<T extends string>({
+  options, value, onChange,
+}: {
+  options: { id: T; label: string }[];
+  value: T;
+  onChange: (v: T) => void;
+}) {
+  return (
+    <div style={{ display: 'flex', background: '#f0efeb', borderRadius: 6, padding: 2 }}>
+      {options.map((o) => {
+        const active = o.id === value;
+        return (
+          <button
+            key={o.id}
+            type="button"
+            onClick={() => onChange(o.id)}
+            style={{
+              padding: '5px 11px', fontSize: 11.5, fontWeight: 600, cursor: 'pointer',
+              borderRadius: 5, border: 'none', fontFamily: 'inherit',
+              background: active ? '#fff' : 'transparent',
+              color: active ? '#1a2233' : '#6b6f76',
+              boxShadow: active ? '0 1px 2px rgba(0,0,0,.08)' : 'none',
+            }}
+          >
+            {o.label}
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
+// The Base year / Period / View control bar above the Assumptions panel.
+function ProjectionsControls({
+  years, shownForecast, forecastCount, onDec, onInc, view, onView,
+}: {
+  years: ProjYear[];
+  shownForecast: number;
+  forecastCount: number;
+  onDec: () => void;
+  onInc: () => void;
+  view: 'annual' | 'monthly';
+  onView: (v: 'annual' | 'monthly') => void;
+}) {
+  const baseYear = years[0]?.year ?? new Date().getFullYear();
+  const ctrlLabel: CSSProperties = { fontSize: 11, color: '#6b6f76', fontWeight: 600 };
+  const stepBtn: CSSProperties = {
+    width: 24, height: 26, border: '1px solid #e2e1dc', background: '#fff',
+    borderRadius: 6, cursor: 'pointer', fontSize: 14, color: '#3a3f47', lineHeight: 1,
+  };
+  return (
+    <div style={{ padding: '12px 22px', borderBottom: '1px solid #eee', background: '#fbfbf9', display: 'flex', alignItems: 'center', gap: 16, flexWrap: 'wrap' }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+        <span style={ctrlLabel}>Base year</span>
+        <span
+          title="Base year follows the earliest engine projection year."
+          style={{ fontSize: 12.5, fontWeight: 600, border: '1px solid #e2e1dc', borderRadius: 6, padding: '6px 8px', color: '#1a2233', background: '#fff' }}
+        >
+          {baseYear}
+        </span>
+      </div>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+        <span style={ctrlLabel}>Period</span>
+        <button type="button" onClick={onDec} disabled={shownForecast <= 1} style={{ ...stepBtn, opacity: shownForecast <= 1 ? 0.5 : 1 }}>−</button>
+        <span style={{ fontSize: 12.5, fontWeight: 700, color: '#1a2233', minWidth: 56, textAlign: 'center' }}>{shownForecast} years</span>
+        <button type="button" onClick={onInc} disabled={shownForecast >= forecastCount} style={{ ...stepBtn, opacity: shownForecast >= forecastCount ? 0.5 : 1 }}>+</button>
+      </div>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+        <span style={ctrlLabel}>View</span>
+        <SegControl
+          options={[{ id: 'annual', label: 'Annual' }, { id: 'monthly', label: 'Monthly' }]}
+          value={view}
+          onChange={onView}
+        />
+      </div>
+    </div>
+  );
+}
+
+// Engine-default assumptions (mirror apps/worker services/engine_runner.py base).
+// Used as the display fallback when a key has no override and no resolved source.
+const ASSUMPTION_DEFAULTS: Record<string, number> = {
+  revpar_growth: 0.045,
+  expense_growth: 0.035,
+  other_expense_growth: 0.03,
+  resort_fee_per_night: 35,
+  resort_fee_capture_y1: 0.6,
+  resort_fee_capture_y2: 0.8,
+  resort_fee_capture_y3: 0.95,
+  mgmt_fee_pct: 0.03,
+  exit_cap_rate: 0.07,
+};
+
+// Read a numeric value out of a field_overrides entry ({value, note} or scalar).
+function ovValue(overrides: Record<string, unknown>, key: string): number | null {
+  const raw = overrides[key];
+  if (raw == null) return null;
+  if (typeof raw === 'number') return Number.isFinite(raw) ? raw : null;
+  if (typeof raw === 'object' && 'value' in (raw as object)) {
+    const v = (raw as { value?: unknown }).value;
+    const n = typeof v === 'number' ? v : Number(v);
+    return Number.isFinite(n) ? n : null;
+  }
+  const n = Number(raw);
+  return Number.isFinite(n) ? n : null;
+}
+
+// One editable assumption row: label + right-aligned numeric input with affixes.
+// Commits on blur / Enter; pct fields store as a fraction (value/100).
+function AssumptionField({
+  label, value, unit, prefix, suffix, onCommit, disabled,
+}: {
+  label: string;
+  value: number;
+  unit: 'pct' | 'dollar';
+  prefix?: string;
+  suffix?: string;
+  onCommit: (engineValue: number) => void;
+  disabled?: boolean;
+}) {
+  const display = unit === 'pct' ? value * 100 : value;
+  const fmt = (n: number) => (Number.isInteger(n) ? String(n) : String(Math.round(n * 10) / 10));
+  const [draft, setDraft] = useState<string>(fmt(display));
+  useEffect(() => { setDraft(fmt(display)); }, [display]);
+  const commit = () => {
+    const n = Number(draft.replace(/[$,%\s]/g, ''));
+    if (!Number.isFinite(n)) { setDraft(fmt(display)); return; }
+    const eng = unit === 'pct' ? n / 100 : n;
+    if (Math.abs(eng - value) < 1e-9) return; // no change — skip the re-run
+    onCommit(eng);
+  };
+  return (
+    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10 }}>
+      <span style={{ fontSize: 12, color: '#6b6f76' }}>{label}</span>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 3 }}>
+        {prefix && <span style={{ fontSize: 11, color: '#6b6f76' }}>{prefix}</span>}
+        <input
+          type="number"
+          value={draft}
+          disabled={disabled}
+          onChange={(e) => setDraft(e.target.value)}
+          onBlur={commit}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter') (e.target as HTMLInputElement).blur();
+            if (e.key === 'Escape') { setDraft(fmt(display)); (e.target as HTMLInputElement).blur(); }
+          }}
+          style={{ fontSize: 13, fontWeight: 600, border: '1px solid #e2e1dc', borderRadius: 6, padding: '5px 7px', color: '#1a2233', width: 46, textAlign: 'right' }}
+        />
+        {suffix && <span style={{ fontSize: 11, color: '#6b6f76' }}>{suffix}</span>}
+      </div>
+    </div>
+  );
+}
+
+// "These drive every projected year" — the canonical Assumptions panel.
+// Each editable field writes the deal's field_overrides and re-runs the whole
+// model (the canonical edit path, shared with the driver cells). Exit cap rate
+// is Investment-owned, so it is shown here linked / read-only.
+function AssumptionsPanel({
+  dealId, overrides, onApply, running,
+}: {
+  dealId: string;
+  overrides: Record<string, unknown>;
+  onApply: (key: string, value: number, note: string) => Promise<void>;
+  running: boolean;
+}) {
+  // Exit cap rate is owned by Investment — resolve its live value (never edited here).
+  const exitCapSrc = useSource('exit_cap_rate');
+  const exitCapFraction =
+    (typeof exitCapSrc?.value === 'number' ? exitCapSrc.value : ovValue(overrides, 'exit_cap_rate'))
+    ?? ASSUMPTION_DEFAULTS.exit_cap_rate;
+  const cur = (key: string) => ovValue(overrides, key) ?? ASSUMPTION_DEFAULTS[key];
+
+  const cardStyle: CSSProperties = { flex: 1, minWidth: 220, border: '1px solid #e2e1dc', borderRadius: 8, padding: '12px 14px', background: '#fbfbf9' };
+  const cardTitle: CSSProperties = { fontSize: 11, fontWeight: 700, color: '#1a2233', marginBottom: 10 };
+  const rowsWrap: CSSProperties = { display: 'flex', flexDirection: 'column', gap: 8 };
+
+  return (
+    <div style={{ padding: '16px 22px', borderBottom: '1px solid #eee', background: '#fff' }}>
+      <div style={{ fontSize: 11, fontWeight: 700, color: '#6b6f76', textTransform: 'uppercase', letterSpacing: '.04em', marginBottom: 2 }}>
+        Assumptions
+      </div>
+      <div style={{ fontSize: 12, color: '#9a9a95', marginBottom: 14, display: 'flex', alignItems: 'center', gap: 8 }}>
+        These drive every projected year below — change any value to see the statement recompute.
+        {running && <span style={{ color: '#2f4a8c', fontWeight: 600 }}>Re-modeling…</span>}
+      </div>
+      <div style={{ display: 'flex', gap: 14, flexWrap: 'wrap' }}>
+        {/* Growth */}
+        <div style={cardStyle}>
+          <div style={cardTitle}>Growth</div>
+          <div style={rowsWrap}>
+            <AssumptionField label="Revenue inflation" unit="pct" suffix="%/yr" value={cur('revpar_growth')} disabled={running} onCommit={(v) => onApply('revpar_growth', v, 'Revenue inflation set on the Projections page')} />
+            <AssumptionField label="Dept. expense inflation" unit="pct" suffix="%/yr" value={cur('expense_growth')} disabled={running} onCommit={(v) => onApply('expense_growth', v, 'Dept. expense inflation set on the Projections page')} />
+            <AssumptionField label="Other expense inflation" unit="pct" suffix="%/yr" value={cur('other_expense_growth')} disabled={running} onCommit={(v) => onApply('other_expense_growth', v, 'Other expense inflation set on the Projections page')} />
+          </div>
+        </div>
+        {/* Resort fee revenue */}
+        <div style={cardStyle}>
+          <div style={cardTitle}>Resort fee revenue</div>
+          <div style={rowsWrap}>
+            <AssumptionField label="Resort fee" unit="dollar" prefix="$" suffix="/night" value={cur('resort_fee_per_night')} disabled={running} onCommit={(v) => onApply('resort_fee_per_night', v, 'Resort fee/night set on the Projections page')} />
+            <AssumptionField label="Capture Yr 1" unit="pct" suffix="%" value={cur('resort_fee_capture_y1')} disabled={running} onCommit={(v) => onApply('resort_fee_capture_y1', v, 'Resort-fee capture Yr 1 set on the Projections page')} />
+            <AssumptionField label="Capture Yr 2" unit="pct" suffix="%" value={cur('resort_fee_capture_y2')} disabled={running} onCommit={(v) => onApply('resort_fee_capture_y2', v, 'Resort-fee capture Yr 2 set on the Projections page')} />
+            <AssumptionField label="Capture Yr 3+" unit="pct" suffix="%" value={cur('resort_fee_capture_y3')} disabled={running} onCommit={(v) => onApply('resort_fee_capture_y3', v, 'Resort-fee capture Yr 3+ set on the Projections page')} />
+          </div>
+        </div>
+        {/* Deal economics */}
+        <div style={cardStyle}>
+          <div style={cardTitle}>Deal economics</div>
+          <div style={rowsWrap}>
+            <AssumptionField label="Management fee" unit="pct" suffix="% of rev" value={cur('mgmt_fee_pct')} disabled={running} onCommit={(v) => onApply('mgmt_fee_pct', v, 'Management fee set on the Projections page')} />
+            {/* Exit cap rate is Investment-owned — linked / read-only reference. */}
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10 }}>
+              <span style={{ fontSize: 12, color: '#6b6f76' }}>Exit cap rate</span>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                <span style={{ display: 'inline-flex', alignItems: 'center', gap: 5, fontSize: 13, fontWeight: 600, color: '#1a2233', fontVariantNumeric: 'tabular-nums' }}>
+                  <ProvenanceDot state="linked" size={8} title="Linked from the Investment tab" />
+                  {(exitCapFraction * 100).toFixed(1)}%
+                </span>
+                <Link
+                  href={`/projects/${dealId}?tab=investment`}
+                  title="Exit cap rate is owned by the Investment tab"
+                  style={{ fontSize: 10.5, color: '#2f4a8c', textDecoration: 'none', whiteSpace: 'nowrap' }}
+                >
+                  Investment →
+                </Link>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
   );
 }

@@ -28,7 +28,9 @@ import { IntroCard } from '@/components/help/IntroCard';
 import { MetricLabel } from '@/components/help/MetricLabel';
 import { GLOSSARY } from '@/lib/glossary';
 import ProjectionsSection from './pl/ProjectionsSection';
-import GroundedWorksheet from './pl/GroundedWorksheet';
+import GroundedWorksheet, { fieldMatchesKey } from './pl/GroundedWorksheet';
+import { SubTabNav } from '@/components/design';
+import { useDocuments } from '@/lib/hooks/useDocuments';
 
 // Review is NOT its own screen — it lives inside Historicals, where the
 // financial data already is (upload → fix/review in place → use the app).
@@ -263,7 +265,36 @@ export default function PLTab() {
   const dealId = (params?.id as string | undefined) ?? '';
   const { outputs, previous } = useEngineOutputs(dealId);
   const { deal, loading: dealLoading } = useDeal(dealId);
+  const { documents, extractions } = useDocuments(dealId);
   const [computing, setComputing] = useState(false);
+
+  // Arrival banner (canonical: "Opened from Data Room · extracted from {doc}").
+  // The Data Room's "review financials / view data" CTAs deep-link here with a
+  // `fin` sub-tab selector (and optionally `?focus=<field>`); that routed
+  // arrival is the trigger. Doc name resolves to the statement behind the
+  // focused field, else the deal's most recent financial P&L.
+  const focusField = searchParams?.get('focus') ?? null;
+  const [arrivalDismissed, setArrivalDismissed] = useState(false);
+  const arrivalDocName = useMemo(() => {
+    if (focusField) {
+      for (const d of documents) {
+        const ex = extractions[d.id];
+        if (ex?.fields?.some((f) => fieldMatchesKey(f.field_name, focusField))) {
+          return d.filename;
+        }
+      }
+    }
+    const fin = documents.find((d) => {
+      const t = (d.doc_type ?? '').toUpperCase();
+      return t.includes('T12') || t.includes('PNL') || t.includes('P&L') || t.includes('PROFIT');
+    });
+    return fin?.filename ?? documents[0]?.filename ?? null;
+  }, [documents, extractions, focusField]);
+  const showArrival = (!!finParam || !!focusField) && !arrivalDismissed;
+  const subTabCaption =
+    tab === 'Projections'
+      ? 'The forward model — assumptions, growth and projected performance'
+      : 'Actual operating history, normalized and traceable to the P&L';
   const [runToken, setRunToken] = useState<number | null>(null);
   // Per-Key / Departmental dividers must use the real deal's room count.
   // Sam QA re-test: when ``useDeal`` was still loading we silently fell
@@ -385,17 +416,30 @@ export default function PLTab() {
   return (
     <div className="flex gap-4">
       <div className="flex-1 min-w-0">
-      <IntroCard
-        dismissKey="pl-intro"
-        title="Financial Statements"
-        body={
-          <>
-            Profit and Loss — every dollar of revenue and expense across the hold period,
-            formatted in industry-standard <span className="font-semibold">USALI</span> categories
-            so you can compare any two hotels apples-to-apples.
-          </>
-        }
-      />
+      {showArrival && (
+        <div
+          style={{
+            display: 'flex', alignItems: 'center', gap: 10,
+            background: '#eef2fb', border: '1px solid #dbe3f5', borderRadius: 8,
+            padding: '10px 16px', marginBottom: 18, fontSize: 12.5, color: '#2f4a8c',
+          }}
+        >
+          <span aria-hidden>📄</span>
+          <span style={{ flex: 1 }}>
+            Opened from Data Room · extracted from{' '}
+            <strong>{arrivalDocName ?? 'your uploaded documents'}</strong> — values
+            populated from this document.
+          </span>
+          <button
+            type="button"
+            onClick={() => setArrivalDismissed(true)}
+            aria-label="Dismiss"
+            style={{ cursor: 'pointer', color: '#8a8a86', fontSize: 14, background: 'none', border: 'none', lineHeight: 1 }}
+          >
+            ✕
+          </button>
+        </div>
+      )}
       <EngineHeader
         name="Financial Statements"
         desc="Models room revenue, F&B, and operating expenses across the projection period in USALI format."
@@ -420,17 +464,27 @@ export default function PLTab() {
         runToken={runToken}
       />
 
-      <div className="flex items-center gap-1 mb-3 border-b border-border">
-        {subTabs.map(t => (
-          <button key={t} onClick={() => setTab(t)}
-            className={cn(
-              'px-4 py-2 text-[12.5px] border-b-2 transition-colors -mb-px',
-              tab === t ? 'border-brand-500 text-brand-700 font-medium' : 'border-transparent text-ink-500 hover:text-ink-900'
-            )}>
-            {t}
-          </button>
-        ))}
+      {/* Canonical section header card — "Financials" + the two-sided framing. */}
+      <div
+        style={{
+          background: '#fff', border: '1px solid #eae9e4', borderRadius: 10,
+          padding: '12px 16px', marginBottom: 14, display: 'flex', flexDirection: 'column', gap: 3,
+        }}
+      >
+        <span style={{ fontSize: 13.5, fontWeight: 700, color: '#1a2233' }}>Financials</span>
+        <span style={{ fontSize: 12.5, color: '#6b6f76', lineHeight: 1.55, maxWidth: 960 }}>
+          Verify and shape this deal&apos;s P&amp;L — normalized operating history on one
+          side, the forward model that drives value on the other.
+        </span>
       </div>
+
+      <SubTabNav
+        className="mb-3.5"
+        items={subTabs.map((t) => ({ id: t, label: t }))}
+        activeId={tab}
+        onSelect={(id) => setTab(id as SubTab)}
+        caption={subTabCaption}
+      />
 
       <div className={cn(computing && 'relative pointer-events-none opacity-60')}>
         {tab === 'Historicals' && (
