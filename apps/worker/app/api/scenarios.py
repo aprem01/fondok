@@ -74,6 +74,7 @@ class ScenarioRecord(BaseModel):
     name: str
     description: str | None = None
     is_base: bool = False
+    in_memo: bool = False
     overrides: list[ScenarioOverrideBody] = Field(default_factory=list)
     last_run_id: UUID | None = None
     created_at: datetime
@@ -101,6 +102,9 @@ class UpdateScenarioBody(BaseModel):
     name: Annotated[str, Field(min_length=1, max_length=120)] | None = None
     description: Annotated[str, Field(max_length=2000)] | None = None
     overrides: list[ScenarioOverrideBody] | None = None
+    # Durable IC-memo comparison-set membership. Toggled by
+    # ScenarioComparePanel's "Add to memo" action (was localStorage-only).
+    in_memo: bool | None = None
 
 
 class ScenarioRunResponse(BaseModel):
@@ -195,6 +199,7 @@ def _row_to_record(row: Any) -> ScenarioRecord:
         name=m["name"],
         description=m.get("description"),
         is_base=bool(m.get("is_base")),
+        in_memo=bool(m.get("in_memo")),
         overrides=[ScenarioOverrideBody(**o) for o in _coerce_overrides(m.get("overrides"))],
         last_run_id=UUID(str(m["last_run_id"])) if m.get("last_run_id") else None,
         created_at=_coerce_dt(m.get("created_at")),
@@ -203,7 +208,7 @@ def _row_to_record(row: Any) -> ScenarioRecord:
 
 
 _SCENARIO_COLUMNS = (
-    "id, deal_id, tenant_id, name, description, is_base, overrides, "
+    "id, deal_id, tenant_id, name, description, is_base, in_memo, overrides, "
     "last_run_id, created_at, updated_at"
 )
 
@@ -600,6 +605,12 @@ async def update_scenario(
     if "description" in changes:
         set_clauses.append("description = :description")
         params["description"] = changes["description"]
+    if "in_memo" in changes:
+        # Bind a Python bool — SQLite stores it as 0/1 (INTEGER column),
+        # Postgres as BOOLEAN; ``_row_to_record`` bools it back on read,
+        # identical to the ``is_base`` handling.
+        set_clauses.append("in_memo = :in_memo")
+        params["in_memo"] = bool(changes["in_memo"])
     if "overrides" in changes:
         # ``changes['overrides']`` is the dumped list of dicts at this
         # point; rebuild the typed list so we get strict validation on

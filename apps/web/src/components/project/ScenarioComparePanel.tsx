@@ -19,12 +19,13 @@
  * is a read-only comparison lens.
  *
  * ── Add to memo persistence ──────────────────────────────────────────────
- * There is NO worker endpoint for an IC-memo scenario comparison set today
- * (only /memo/generate + /memo/{section}/edits). Per the build brief we do NOT
- * edit the worker: the set is persisted device-local (localStorage), matching
- * the established interim pattern in `useWorksheetLayout`. BACKEND FOLLOW-UP:
- * add a first-class `POST /deals/{id}/memo/scenarios` (or an `in_memo` flag on
- * the scenario record) and swap `readMemoSet`/`writeMemoSet` for the round-trip.
+ * Membership of the IC-memo comparison set is DURABLE server-side: an
+ * `in_memo` boolean on the scenario record, toggled via
+ * `api.scenarios.setInMemo` (PATCH /deals/{id}/scenarios/{id}). It rides on the
+ * `ScenarioRecord[]` this panel already receives, so the "In memo" badges seed
+ * straight from the server on load. localStorage (`readMemoSet`/`writeMemoSet`)
+ * survives ONLY as the fallback for mock/preview deals (numeric id or no worker
+ * configured), matching the app's liveMode gating.
  */
 import { useEffect, useMemo, useState } from 'react';
 import { ArrowRight, Check, FileText, Loader2 } from 'lucide-react';
@@ -33,6 +34,7 @@ import { Button } from '@/components/ui/Button';
 import { useToast } from '@/components/ui/Toast';
 import {
   api,
+  isWorkerConnected,
   type EngineName,
   type EngineOutputsResponse,
   type ScenarioCompareResponse,
@@ -127,24 +129,55 @@ export default function ScenarioComparePanel({ dealId, scenarios }: Props) {
   }, [scenarios, base, focusedId]);
   const focused = scenarios.find((s) => s.id === focusedId) ?? base;
 
-  // IC-memo comparison set (device-local — see file header BACKEND FOLLOW-UP).
+  // IC-memo comparison set. Durable server-side (`in_memo` on the scenario
+  // record) for live deals; localStorage only for mock/preview deals.
+  const isLive = useMemo(
+    () => !!dealId && !/^\d+$/.test(dealId) && isWorkerConnected(),
+    [dealId],
+  );
+  // Server-persisted membership, serialized so the seed effect re-runs only
+  // when it actually changes — never clobbering an optimistic toggle on an
+  // unrelated re-render.
+  const serverMemoIds = useMemo(
+    () => scenarios.filter((s) => s.in_memo).map((s) => s.id),
+    [scenarios],
+  );
+  const serverMemoKey = serverMemoIds.slice().sort().join(',');
+
   const [memoIds, setMemoIds] = useState<string[]>([]);
   useEffect(() => {
-    setMemoIds(readMemoSet(dealId));
-  }, [dealId]);
-  function toggleMemo(scenario: ScenarioRecord) {
-    setMemoIds((prev) => {
-      const has = prev.includes(scenario.id);
-      const next = has ? prev.filter((x) => x !== scenario.id) : [...prev, scenario.id];
-      writeMemoSet(dealId, next);
-      toast(
-        has
-          ? `Removed “${scenario.name}” from the IC memo comparison set.`
-          : `Added “${scenario.name}” to the IC memo comparison set.`,
-        { type: has ? 'info' : 'success' },
-      );
-      return next;
-    });
+    setMemoIds(isLive ? serverMemoIds : readMemoSet(dealId));
+    // serverMemoKey is the stable identity of serverMemoIds; depending on it
+    // (not the array) keeps optimistic toggles from being reset on re-render.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [dealId, isLive, serverMemoKey]);
+
+  async function toggleMemo(scenario: ScenarioRecord) {
+    const has = memoIds.includes(scenario.id);
+    const prev = memoIds;
+    const next = has ? prev.filter((x) => x !== scenario.id) : [...prev, scenario.id];
+    setMemoIds(next); // optimistic
+    toast(
+      has
+        ? `Removed “${scenario.name}” from the IC memo comparison set.`
+        : `Added “${scenario.name}” to the IC memo comparison set.`,
+      { type: has ? 'info' : 'success' },
+    );
+    if (isLive) {
+      try {
+        await api.scenarios.setInMemo(dealId, scenario.id, !has);
+      } catch (e) {
+        setMemoIds(prev); // revert on failure
+        toast(
+          `Couldn't ${has ? 'remove' : 'add'} “${scenario.name}” — ${
+            e instanceof Error ? e.message : 'please retry'
+          }.`,
+          { type: 'error' },
+        );
+      }
+    } else {
+      writeMemoSet(dealId, next); // mock/preview deals: device-local fallback
+    }
   }
 
   // Compare-table selection (base + first two named by default; up to 4).
@@ -851,7 +884,9 @@ function formatKpi(kind: KpiRow['format'], v: number): string {
   }
 }
 
-// ── IC-memo comparison set (device-local; see file-header BACKEND FOLLOW-UP) ──
+// ── IC-memo comparison set — localStorage FALLBACK for mock/preview deals ──
+// Live deals persist membership server-side (`in_memo`); these two helpers run
+// only when there's no worker / a numeric mock id. See the file-header note.
 const memoKey = (dealId: string) => `fondok:memoScenarios:${dealId}`;
 
 function readMemoSet(dealId: string): string[] {

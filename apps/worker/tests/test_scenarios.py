@@ -754,6 +754,102 @@ async def test_capex_override_in_scenario() -> None:
 
 
 @pytest.mark.asyncio
+async def test_in_memo_defaults_false_and_toggles_durably() -> None:
+    """`in_memo` defaults false and PATCH toggles it; GET/list reflect it."""
+    from httpx import ASGITransport, AsyncClient
+
+    from app.main import app
+
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://test"
+    ) as client:
+        deal_id = await _create_deal_via_api(client)
+
+        # Fresh scenarios (base + named) start out of the memo set.
+        r = await client.post(
+            f"/deals/{deal_id}/scenarios",
+            json={"name": "downside", "overrides": []},
+        )
+        assert r.status_code == 201, r.text
+        created = r.json()
+        assert created["in_memo"] is False
+        sid = created["id"]
+
+        base = (await client.get(f"/deals/{deal_id}/scenarios")).json()
+        assert all(s["in_memo"] is False for s in base)
+
+        # Toggle ON via the existing PATCH path.
+        r = await client.patch(
+            f"/deals/{deal_id}/scenarios/{sid}",
+            json={"in_memo": True},
+        )
+        assert r.status_code == 200, r.text
+        assert r.json()["in_memo"] is True
+
+        # GET reflects the persisted flag…
+        r = await client.get(f"/deals/{deal_id}/scenarios/{sid}")
+        assert r.json()["in_memo"] is True
+        # …and only that scenario is in the set (base untouched).
+        listed = (await client.get(f"/deals/{deal_id}/scenarios")).json()
+        in_memo = {s["id"] for s in listed if s["in_memo"]}
+        assert in_memo == {sid}
+
+        # Toggle OFF round-trips back to false.
+        r = await client.patch(
+            f"/deals/{deal_id}/scenarios/{sid}",
+            json={"in_memo": False},
+        )
+        assert r.status_code == 200
+        assert r.json()["in_memo"] is False
+        r = await client.get(f"/deals/{deal_id}/scenarios/{sid}")
+        assert r.json()["in_memo"] is False
+
+
+@pytest.mark.asyncio
+async def test_in_memo_toggle_tenant_scoped() -> None:
+    """A cross-tenant PATCH of `in_memo` 404s and never mutates the row."""
+    from httpx import ASGITransport, AsyncClient
+
+    from app.main import app
+
+    tenant_a = str(uuid4())
+    tenant_b = str(uuid4())
+
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://test"
+    ) as client:
+        # Tenant A owns the deal + scenario.
+        r = await client.post(
+            "/deals",
+            json={"name": "Tenant A", "city": "NYC", "keys": 100},
+            headers={"X-Tenant-Id": tenant_a},
+        )
+        assert r.status_code == 201
+        deal_id = r.json()["id"]
+        r = await client.post(
+            f"/deals/{deal_id}/scenarios",
+            json={"name": "stress", "overrides": []},
+            headers={"X-Tenant-Id": tenant_a},
+        )
+        sid = r.json()["id"]
+
+        # Tenant B cannot toggle it — 404 (never leaks existence).
+        r = await client.patch(
+            f"/deals/{deal_id}/scenarios/{sid}",
+            json={"in_memo": True},
+            headers={"X-Tenant-Id": tenant_b},
+        )
+        assert r.status_code == 404, r.text
+
+        # Row is untouched for tenant A.
+        r = await client.get(
+            f"/deals/{deal_id}/scenarios/{sid}",
+            headers={"X-Tenant-Id": tenant_a},
+        )
+        assert r.json()["in_memo"] is False
+
+
+@pytest.mark.asyncio
 async def test_last_run_id_updates_on_run() -> None:
     """POST /scenarios/{id}/run stamps ``scenarios.last_run_id``."""
     from httpx import ASGITransport, AsyncClient

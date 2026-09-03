@@ -942,6 +942,16 @@ MIGRATIONS: list[tuple[str, str]] = [
         ON scenarios (deal_id, tenant_id)
         """,
     ),
+    # ``in_memo`` — durable membership of the IC-memo scenario comparison
+    # set (formerly a localStorage-only flag in ScenarioComparePanel).
+    # Toggled via PATCH /deals/{id}/scenarios/{id}. Additive + defaulted so
+    # an older worker pod keeps booting; ON DELETE CASCADE on the row means
+    # deleting a scenario drops its membership with no stale-id cleanup.
+    (
+        "scenarios.add_in_memo",
+        "ALTER TABLE scenarios ADD COLUMN IF NOT EXISTS "
+        "in_memo BOOLEAN NOT NULL DEFAULT FALSE",
+    ),
     # ─────────────────── Wave 4 W4.1 — Portfolio P&L Library ───────────────
     # Firm-level benchmark roll-ups. Sam's June 2026 ask: "Apollo (and
     # other capital partners) own hotels in the same market and want to
@@ -1689,6 +1699,13 @@ SQLITE_MIGRATIONS: list[tuple[str, str]] = [
         CREATE INDEX IF NOT EXISTS idx_scenarios_deal_tenant
         ON scenarios (deal_id, tenant_id)
         """,
+    ),
+    # ``in_memo`` mirror — BOOLEAN → INTEGER 0/1 (same as ``is_base``). The
+    # startup runner has no ``ADD COLUMN IF NOT EXISTS`` on SQLite, so it
+    # PRAGMA-guards the add via _SQLITE_ADD_COLUMN_RE; keep the plain form.
+    (
+        "scenarios.add_in_memo",
+        "ALTER TABLE scenarios ADD COLUMN in_memo INTEGER NOT NULL DEFAULT 0",
     ),
     # ─────────────────── Wave 4 W4.1 — Portfolio P&L Library ───────────────
     (

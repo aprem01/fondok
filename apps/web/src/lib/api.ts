@@ -648,6 +648,8 @@ export interface ScenarioRecord {
   name: string;
   description: string | null;
   is_base: boolean;
+  /** Durable membership of the IC-memo scenario comparison set. */
+  in_memo: boolean;
   overrides: ScenarioOverride[];
   last_run_id: string | null;
   created_at: string;
@@ -664,6 +666,7 @@ export interface UpdateScenarioBody {
   name?: string;
   description?: string | null;
   overrides?: ScenarioOverride[];
+  in_memo?: boolean;
 }
 
 export interface ScenarioRunResponse {
@@ -1658,6 +1661,15 @@ export const api = {
         'PATCH',
         `/deals/${dealId}/scenarios/${scenarioId}`,
         patch,
+      ),
+    /** Durably toggle a scenario's membership in the IC-memo comparison set
+     *  (the "Add to memo" action). Thin wrapper over the PATCH route so the
+     *  intent reads clearly at the call site. */
+    setInMemo: (dealId: string, scenarioId: string, inMemo: boolean) =>
+      request<ScenarioRecord>(
+        'PATCH',
+        `/deals/${dealId}/scenarios/${scenarioId}`,
+        { in_memo: inMemo },
       ),
     delete: (dealId: string, scenarioId: string) =>
       request<ScenarioRecord>(
