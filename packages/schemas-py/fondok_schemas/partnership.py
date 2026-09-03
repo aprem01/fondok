@@ -7,6 +7,7 @@ from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
+from .provenance import ValueTrace
 from .underwriting import ReturnsEngineOutput
 
 
@@ -59,3 +60,8 @@ class PartnershipOutput(BaseModel):
     gp: PartnerReturn
     lp: PartnerReturn
     promote_earned: Annotated[float, Field(ge=0)] = 0.0
+    # FON-25/65 — per-value provenance sidecar (see provenance.py). Keyed by
+    # dotted output path (e.g. "gp.irr", "tier_allocations[0].total_amount") →
+    # ValueTrace(formula, inputs, state). Empty by default so legacy rows and
+    # the canonical PartnershipInput→Output path stay valid.
+    provenance: dict[str, ValueTrace] = Field(default_factory=dict)

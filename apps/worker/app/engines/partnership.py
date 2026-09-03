@@ -27,6 +27,7 @@ from fondok_schemas.partnership import (
     PartnershipOutput,
     WaterfallTier,
 )
+from fondok_schemas.provenance import ValueInput, ValueTrace, apply_states
 
 from .base import BaseEngine
 from .returns import irr, xirr
@@ -119,6 +120,138 @@ def _reconciles(tiers: list["TierAllocation"], distributed: float) -> bool:
     """
     s = sum(t.total_amount for t in tiers)
     return abs(s - distributed) < max(1.0, 1e-6 * abs(distributed))
+
+
+def _partnership_provenance(
+    *,
+    gp: PartnerReturn,
+    lp: PartnerReturn,
+    gp_irr_flows: list[float],
+    lp_irr_flows: list[float],
+    promote: float,
+    tier_allocations: list["TierAllocation"],
+    total_distributed: float,
+    contributed_formula: str,
+    contributed_inputs_gp: list[ValueInput],
+    contributed_inputs_lp: list[ValueInput],
+    period_label: str,
+) -> dict[str, ValueTrace]:
+    """Shared per-value provenance for the Partnership tab (FON-25/65).
+
+    Every figure the tab renders — GP/LP contributed equity, distributions,
+    IRR, equity multiple, the promote, the total distributable, and each
+    dollar-waterfall tier row — is a computed value, so each reads as
+    ``calculated``. The IRRs use the formula-as-definition form (no closed
+    form; solved iteratively) and list the exact flow stream the solver ran
+    over, mirroring the Returns engine's IRR traces.
+    """
+
+    def _flow_inputs(flows: list[float]) -> list[ValueInput]:
+        return [
+            ValueInput(name=f"cash_flow_{period_label}_{i}", value=float(cf))
+            for i, cf in enumerate(flows)
+        ]
+
+    prov: dict[str, ValueTrace] = {
+        "gp.contributed_equity": ValueTrace(
+            value=gp.contributed_equity,
+            formula=contributed_formula,
+            inputs=contributed_inputs_gp,
+            note="GP share of invested equity.",
+        ),
+        "lp.contributed_equity": ValueTrace(
+            value=lp.contributed_equity,
+            formula=contributed_formula,
+            inputs=contributed_inputs_lp,
+            note="LP share of invested equity.",
+        ),
+        "gp.distributions": ValueTrace(
+            value=gp.distributions,
+            formula="gp_distributions = Σ GP tier proceeds across the hold",
+            note="Total cash distributed to the GP through the waterfall.",
+        ),
+        "lp.distributions": ValueTrace(
+            value=lp.distributions,
+            formula="lp_distributions = Σ LP tier proceeds across the hold",
+            note="Total cash distributed to the LP through the waterfall.",
+        ),
+        "gp.irr": ValueTrace(
+            value=gp.irr,
+            formula="gp_irr = rate r where Σ CFₜ ÷ (1 + r)ᵗ = 0",
+            inputs=_flow_inputs(gp_irr_flows),
+            note=(
+                "Calculated, not sourced — solved iteratively over the GP cash "
+                "flow stream (period 0 = −GP contributed equity)."
+            ),
+        ),
+        "lp.irr": ValueTrace(
+            value=lp.irr,
+            formula="lp_irr = rate r where Σ CFₜ ÷ (1 + r)ᵗ = 0",
+            inputs=_flow_inputs(lp_irr_flows),
+            note=(
+                "Calculated, not sourced — solved iteratively over the LP cash "
+                "flow stream (period 0 = −LP contributed equity)."
+            ),
+        ),
+        "gp.equity_multiple": ValueTrace(
+            value=gp.equity_multiple,
+            formula="gp_equity_multiple = gp_distributions ÷ gp_contributed_equity",
+            inputs=[
+                ValueInput(name="gp_distributions", value=gp.distributions, traces_to="gp.distributions"),
+                ValueInput(name="gp_contributed_equity", value=gp.contributed_equity, traces_to="gp.contributed_equity"),
+            ],
+        ),
+        "lp.equity_multiple": ValueTrace(
+            value=lp.equity_multiple,
+            formula="lp_equity_multiple = lp_distributions ÷ lp_contributed_equity",
+            inputs=[
+                ValueInput(name="lp_distributions", value=lp.distributions, traces_to="lp.distributions"),
+                ValueInput(name="lp_contributed_equity", value=lp.contributed_equity, traces_to="lp.contributed_equity"),
+            ],
+        ),
+        "promote_earned": ValueTrace(
+            value=promote,
+            formula="promote_earned = Σ (GP tier share − GP pro-rata share)",
+            note="GP carried interest above its pro-rata equity share.",
+        ),
+        "total_distributable": ValueTrace(
+            value=total_distributed,
+            formula="total_distributable = gp_distributions + lp_distributions",
+            inputs=[
+                ValueInput(name="gp_distributions", value=gp.distributions, traces_to="gp.distributions"),
+                ValueInput(name="lp_distributions", value=lp.distributions, traces_to="lp.distributions"),
+            ],
+        ),
+    }
+    # promote_amount mirrors promote_earned on the Ext output — trace both so
+    # whichever the tab reads carries a state badge.
+    prov["promote_amount"] = ValueTrace(
+        value=promote,
+        formula="promote_amount = promote_earned",
+        inputs=[ValueInput(name="promote_earned", value=promote, traces_to="promote_earned")],
+    )
+
+    # Dollar-waterfall rows ("Allocation of Projected Proceeds").
+    for i, tier in enumerate(tier_allocations):
+        prov[f"tier_allocations[{i}].gp_amount"] = ValueTrace(
+            value=tier.gp_amount,
+            formula=f"gp_amount = GP split of the '{tier.label}' tier's distributed cash",
+            note=f"{tier.kind} tier.",
+        )
+        prov[f"tier_allocations[{i}].lp_amount"] = ValueTrace(
+            value=tier.lp_amount,
+            formula=f"lp_amount = LP split of the '{tier.label}' tier's distributed cash",
+            note=f"{tier.kind} tier.",
+        )
+        prov[f"tier_allocations[{i}].total_amount"] = ValueTrace(
+            value=tier.total_amount,
+            formula="total_amount = gp_amount + lp_amount",
+            inputs=[
+                ValueInput(name="gp_amount", value=tier.gp_amount, traces_to=f"tier_allocations[{i}].gp_amount"),
+                ValueInput(name="lp_amount", value=tier.lp_amount, traces_to=f"tier_allocations[{i}].lp_amount"),
+            ],
+        )
+    return prov
 
 
 def _monthly_period_days(close_iso: str | None, n: int) -> list[float]:
@@ -283,22 +416,38 @@ class PartnershipEngine(BaseEngine[PartnershipInputExt, PartnershipOutputExt]):
         total_distributed = gp_dist + lp_dist
         reconciles = _reconciles(tier_allocations, total_distributed)
 
+        gp_return = PartnerReturn(
+            partner="GP",
+            contributed_equity=gp_contrib_total,
+            distributions=gp_dist,
+            irr=gp_irr,
+            equity_multiple=gp_em,
+        )
+        lp_return = PartnerReturn(
+            partner="LP",
+            contributed_equity=lp_contrib_total,
+            distributions=lp_dist,
+            irr=lp_irr,
+            equity_multiple=lp_em,
+        )
+        prov = _partnership_provenance(
+            gp=gp_return,
+            lp=lp_return,
+            gp_irr_flows=gp_cf,
+            lp_irr_flows=lp_cf,
+            promote=promote_total,
+            tier_allocations=tier_allocations,
+            total_distributed=total_distributed,
+            contributed_formula="contributed_equity = Σ pro-rata monthly equity draws",
+            contributed_inputs_gp=[ValueInput(name="gp_equity_pct", value=gp_pct)],
+            contributed_inputs_lp=[ValueInput(name="lp_equity_pct", value=lp_pct)],
+            period_label="month",
+        )
+
         return PartnershipOutputExt(
             deal_id=payload.deal_id,
-            gp=PartnerReturn(
-                partner="GP",
-                contributed_equity=gp_contrib_total,
-                distributions=gp_dist,
-                irr=gp_irr,
-                equity_multiple=gp_em,
-            ),
-            lp=PartnerReturn(
-                partner="LP",
-                contributed_equity=lp_contrib_total,
-                distributions=lp_dist,
-                irr=lp_irr,
-                equity_multiple=lp_em,
-            ),
+            gp=gp_return,
+            lp=lp_return,
             promote_earned=promote_total,
             gp_cash_flows=gp_cf,
             lp_cash_flows=lp_cf,
@@ -307,6 +456,7 @@ class PartnershipEngine(BaseEngine[PartnershipInputExt, PartnershipOutputExt]):
             total_distributable=total_distributed,
             reconciles=reconciles,
             catch_up_amount=0.0,
+            provenance=apply_states(prov),
         )
 
     def run(self, payload: PartnershipInputExt) -> PartnershipOutputExt:
@@ -513,22 +663,44 @@ class PartnershipEngine(BaseEngine[PartnershipInputExt, PartnershipOutputExt]):
         total_distributed = gp_distributions_total + lp_distributions_total
         reconciles = _reconciles(tier_allocations, total_distributed)
 
+        gp_return = PartnerReturn(
+            partner="GP",
+            contributed_equity=gp_eq,
+            distributions=gp_distributions_total,
+            irr=gp_irr,
+            equity_multiple=gp_em,
+        )
+        lp_return = PartnerReturn(
+            partner="LP",
+            contributed_equity=lp_eq,
+            distributions=lp_distributions_total,
+            irr=lp_irr,
+            equity_multiple=lp_em,
+        )
+        prov = _partnership_provenance(
+            gp=gp_return,
+            lp=lp_return,
+            gp_irr_flows=gp_flows,
+            lp_irr_flows=lp_flows,
+            promote=promote_total,
+            tier_allocations=tier_allocations,
+            total_distributed=total_distributed,
+            contributed_formula="contributed_equity = total_equity × equity_pct",
+            contributed_inputs_gp=[
+                ValueInput(name="total_equity", value=payload.total_equity),
+                ValueInput(name="gp_equity_pct", value=payload.gp_equity_pct),
+            ],
+            contributed_inputs_lp=[
+                ValueInput(name="total_equity", value=payload.total_equity),
+                ValueInput(name="lp_equity_pct", value=payload.lp_equity_pct),
+            ],
+            period_label="year",
+        )
+
         return PartnershipOutputExt(
             deal_id=payload.deal_id,
-            gp=PartnerReturn(
-                partner="GP",
-                contributed_equity=gp_eq,
-                distributions=gp_distributions_total,
-                irr=gp_irr,
-                equity_multiple=gp_em,
-            ),
-            lp=PartnerReturn(
-                partner="LP",
-                contributed_equity=lp_eq,
-                distributions=lp_distributions_total,
-                irr=lp_irr,
-                equity_multiple=lp_em,
-            ),
+            gp=gp_return,
+            lp=lp_return,
             promote_earned=promote_total,
             gp_cash_flows=gp_cf,
             lp_cash_flows=lp_cf,
@@ -537,6 +709,7 @@ class PartnershipEngine(BaseEngine[PartnershipInputExt, PartnershipOutputExt]):
             total_distributable=total_distributed,
             reconciles=reconciles,
             catch_up_amount=alloc_catchup,
+            provenance=apply_states(prov),
         )
 
 

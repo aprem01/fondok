@@ -13,6 +13,8 @@ from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from fondok_schemas.provenance import ValueInput, ValueTrace, apply_states
+
 from .base import BaseEngine
 from .debt import DebtEngine, DebtEngineInputExt
 from .returns import ReturnsEngine, ReturnsEngineInputExt
@@ -119,6 +121,11 @@ class SensitivityOutput(BaseModel):
     cells: list[SensitivityCell]
     # FON-53 — the full set of named sensitivities (includes the primary one).
     matrices: list[SensitivityMatrix] = Field(default_factory=list)
+    # FON-25/65 — per-value provenance sidecar (see provenance.py). Keyed by
+    # dotted output path (e.g. "cells[0].value", "matrices[0].cells[3].value").
+    # Every grid cell is a re-run of the Returns engine over a flexed
+    # assumption pair → ``calculated``. Empty by default.
+    provenance: dict[str, ValueTrace] = Field(default_factory=dict)
 
 
 @dataclass
@@ -152,6 +159,32 @@ def _flex(
     a = base.assumptions
     new_assumptions = a.model_copy(update={variable: value if variable != "hold_years" else int(value)})
     return base.model_copy(update={"assumptions": new_assumptions})
+
+
+def _cell_trace(
+    cell: SensitivityCell,
+    metric: SensitivityMetric,
+    row_variable: SensitivityVariable,
+    col_variable: SensitivityVariable,
+) -> ValueTrace:
+    """Provenance for one grid cell — a re-run of the Returns engine over a
+    flexed (row, col) assumption pair, so the cell reads as ``calculated``."""
+    return ValueTrace(
+        value=cell.value,
+        formula=(
+            f"{metric} = ReturnsEngine(flex {row_variable}={cell.row_value}, "
+            f"{col_variable}={cell.col_value}).{metric}"
+        ),
+        inputs=[
+            ValueInput(name=row_variable, value=cell.row_value),
+            ValueInput(name=col_variable, value=cell.col_value),
+        ],
+        note=(
+            "Base-case cell (matches the deal's headline metric)."
+            if cell.is_base
+            else "Scenario cell — the metric recomputed at this assumption pair."
+        ),
+    )
 
 
 class SensitivityEngine(BaseEngine[SensitivityInput, SensitivityOutput]):
@@ -310,6 +343,20 @@ class SensitivityEngine(BaseEngine[SensitivityInput, SensitivityOutput]):
                 )
             )
 
+        # ─── FON-25/65 provenance sidecar — one trace per grid cell (top-level
+        # primary grid + every named matrix). Cells are Returns-engine re-runs
+        # → ``calculated``. Metadata only; no cell value changes. ───
+        prov: dict[str, ValueTrace] = {}
+        for j, cell in enumerate(primary_cells):
+            prov[f"cells[{j}].value"] = _cell_trace(
+                cell, payload.metric, payload.row_variable, payload.col_variable
+            )
+        for m, matrix in enumerate(matrices):
+            for j, cell in enumerate(matrix.cells):
+                prov[f"matrices[{m}].cells[{j}].value"] = _cell_trace(
+                    cell, matrix.metric, matrix.row_variable, matrix.col_variable
+                )
+
         return SensitivityOutput(
             deal_id=payload.deal_id,
             row_variable=payload.row_variable,
@@ -319,6 +366,7 @@ class SensitivityEngine(BaseEngine[SensitivityInput, SensitivityOutput]):
             cols=list(payload.col_values),
             cells=primary_cells,
             matrices=matrices,
+            provenance=apply_states(prov),
         )
 
 
