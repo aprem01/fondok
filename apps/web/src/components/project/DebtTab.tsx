@@ -546,7 +546,7 @@ export default function DebtTab() {
           {tab === 'Debt Overview' && (
             <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
               <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(430px,1fr))', gap: 14 }}>
-                <SectionCard title="Capital Structure" note="Loan amount is your input — LTV and LTC are outputs">
+                <SectionCard title="Capital Structure" note="LTV is your input — the loan amount and LTC are outputs">
                   {capitalStructure.map((r) => <DebtRow key={r.id} row={r} />)}
                 </SectionCard>
                 <SectionCard
@@ -557,7 +557,7 @@ export default function DebtTab() {
                 </SectionCard>
               </div>
 
-              <SectionCard title="Credit Metrics" note="Each metric names the covenant behind it">
+              <SectionCard title="Credit Metrics" note="Each metric names the NOI period behind it">
                 <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(196px,1fr))', gap: 12, marginTop: 4 }}>
                   {creditMetrics.length === 0 && (
                     <div style={{ fontSize: 12.5, color: palette.textMuted }}>Run the model to compute credit metrics.</div>
@@ -624,7 +624,7 @@ export default function DebtTab() {
               <SectionCard title="Full Loan Terms" note="Entered by you — Fondok does not read the term sheet in this release">
                 {fullTerms.map((r) => <DebtRow key={r.id} row={r} />)}
               </SectionCard>
-              <SectionCard title="Covenants" note="Current reading vs each threshold">
+              <SectionCard title="Covenants" note="Tested quarterly on a trailing-12 basis">
                 <div style={{
                   display: 'grid', gridTemplateColumns: 'minmax(150px,1.3fr) 90px 90px minmax(88px,1fr)',
                   fontSize: 10, fontWeight: 700, letterSpacing: '.05em', color: palette.textFaint,

@@ -387,6 +387,45 @@ export default function ProjectDetailPage() {
     }
   };
 
+  // Canonical ••• menu — Duplicate clones the selected scenario's overrides
+  // into a brand-new scenario; Delete permanently removes a named one.
+  const handleDuplicateScenario = async (s: ScenarioRecord) => {
+    if (!liveMode) return;
+    try {
+      const created = await workerApi.scenarios.create(rawId, {
+        name: `${s.name} copy`,
+        description: s.description,
+        overrides: s.overrides,
+      });
+      await refreshScenarios();
+      setActiveScenarioId(created.id);
+      toast(`Duplicated "${s.name}" → ${created.name}`, { type: 'success' });
+    } catch (e) {
+      toast(
+        `Duplicate failed: ${e instanceof Error ? e.message : 'Unknown error'}`,
+        { type: 'error' },
+      );
+    }
+  };
+
+  const handleDeleteScenario = async (s: ScenarioRecord) => {
+    if (!liveMode) return;
+    try {
+      await workerApi.scenarios.delete(rawId, s.id);
+      if (activeScenarioId === s.id) {
+        const base = scenarios.find((x) => x.is_base);
+        setActiveScenarioId(base ? base.id : null);
+      }
+      await refreshScenarios();
+      toast(`Deleted scenario "${s.name}"`, { type: 'info' });
+    } catch (e) {
+      toast(
+        `Delete failed: ${e instanceof Error ? e.message : 'Unknown error'}`,
+        { type: 'error' },
+      );
+    }
+  };
+
   // ─── UUID deal load gate (Wave 4 reliability fix — Bug #1) ─────────
   // UUID deals MUST resolve to a real worker payload before rendering
   // the project chrome. The previous fallback to ``projects[0]`` (=
@@ -699,6 +738,8 @@ export default function ProjectDetailPage() {
             setScenarioEditor({ open: true, scenario: null })
           }
           onEdit={(s) => setScenarioEditor({ open: true, scenario: s })}
+          onDuplicate={(s) => void handleDuplicateScenario(s)}
+          onDelete={(s) => void handleDeleteScenario(s)}
         />
       )}
 

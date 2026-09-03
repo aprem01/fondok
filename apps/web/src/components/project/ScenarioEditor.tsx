@@ -15,7 +15,7 @@
  * Pydantic on every field path the engine accepts).
  */
 import { useEffect, useMemo, useState } from 'react';
-import { X, Plus, Trash2, Save, Play, Loader2 } from 'lucide-react';
+import { X, Trash2, Save, Play, Loader2 } from 'lucide-react';
 import { Button } from '@/components/ui/Button';
 import { useToast } from '@/components/ui/Toast';
 import {
@@ -390,10 +390,9 @@ export default function ScenarioEditor({
                 onClick={() =>
                   setRows((rs) => [...rs, { field_path: '', value: '' }])
                 }
-                className="flex items-center gap-1 text-[11.5px] text-brand-700 hover:text-brand-900"
+                className="text-[11.5px] font-medium text-brand-700 hover:text-brand-900"
               >
-                <Plus size={12} aria-hidden="true" />
-                Add row
+                + Add override
               </button>
             </div>
             <div className="space-y-2">

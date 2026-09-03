@@ -154,7 +154,7 @@ function sectionTitles(cfg: Cfg): string {
       'Opening & Stabilization', 'Exit', 'Sources & Uses', 'Development Timeline'].join(' · ');
   }
   if (cfg === 'core') {
-    return ['Property', 'Entry Valuation', 'Capitalization', 'Exit',
+    return ['Property', 'Entry', 'Capitalization', 'Exit',
       'Sources & Uses', 'Transaction Timeline'].join(' · ');
   }
   return ['Property', 'Entry Valuation', 'Renovation / CapEx', 'Capitalization', 'Stabilization',
@@ -310,9 +310,13 @@ export default function OverviewTab({ projectId }: { projectId: number | string 
   const financingCosts = findUse(/financ|loan cost|lender/i);
   const renoBudget = findUse(/renovat|pip/i);
   const hasReno = has(renoBudget) && renoBudget > 0;
-  const renoHard = has(renoBudget) ? renoBudget * 0.75 : undefined;
-  const renoSoft = has(renoBudget) ? renoBudget * 0.15 : undefined;
-  const renoProf = has(renoBudget) ? renoBudget * 0.10 : undefined;
+  // Hard / soft / professional-fee split — read straight from the capital
+  // engine's renovation_breakdown (defaults 75/15/10), never re-derived here.
+  // Absent (no renovation budget → breakdown is null) renders '—' via money().
+  const renoBreakdown = getEngineField<{ hard?: number; soft?: number; fees?: number }>(outputs, 'capital', 'renovation_breakdown');
+  const renoHard = renoBreakdown?.hard;
+  const renoSoft = renoBreakdown?.soft;
+  const renoProf = renoBreakdown?.fees;
   const terminalNoi = wTerminalNoi;
   const exitCap = wExitCap;
   const grossExit = wGrossSale;
@@ -499,7 +503,7 @@ export default function OverviewTab({ projectId }: { projectId: number | string 
     if (cfg === 'core') {
       return [
         { kind: 'rows', title: 'Property', note: 'Extracted from diligence documents — override where needed', rows: propertyRows() },
-        { kind: 'rows', title: 'Entry Valuation', rows: entryRows() },
+        { kind: 'rows', title: 'Entry', rows: entryRows() },
         { kind: 'rows', title: 'Capitalization', action: { label: 'View Debt details →', tab: 'debt' }, rows: capitalizationRows() },
         { kind: 'rows', title: 'Exit', rows: exitRows() },
         { kind: 'su', title: 'Transaction Sources & Uses' },

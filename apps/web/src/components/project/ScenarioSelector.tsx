@@ -14,7 +14,7 @@
  * can do so without re-implementing the pill row.
  */
 import { useEffect, useState } from 'react';
-import { Plus, Pencil } from 'lucide-react';
+import { Plus, Pencil, Copy, Trash2 } from 'lucide-react';
 import type { ScenarioRecord } from '@/lib/api';
 import { cn } from '@/lib/format';
 
@@ -25,6 +25,10 @@ interface Props {
   onCreate: () => void;
   /** FON-69 — open the editor for a saved scenario. */
   onEdit?: (scenario: ScenarioRecord) => void;
+  /** Canonical ••• actions — clone this scenario's overrides into a new one. */
+  onDuplicate?: (scenario: ScenarioRecord) => void;
+  /** Canonical ••• actions — permanently remove a named scenario. */
+  onDelete?: (scenario: ScenarioRecord) => void;
   loading?: boolean;
 }
 
@@ -34,6 +38,8 @@ export default function ScenarioSelector({
   onSelect,
   onCreate,
   onEdit,
+  onDuplicate,
+  onDelete,
   loading,
 }: Props) {
   const base = scenarios.find((s) => s.is_base) ?? null;
@@ -75,6 +81,8 @@ export default function ScenarioSelector({
           isActive={activeScenarioId === s.id}
           onSelect={() => onSelect(s.id)}
           onEdit={onEdit ? () => onEdit(s) : undefined}
+          onDuplicate={onDuplicate ? () => onDuplicate(s) : undefined}
+          onDelete={onDelete ? () => onDelete(s) : undefined}
           baseScenario={base}
         />
       ))}
@@ -107,10 +115,12 @@ interface PillProps {
   isActive: boolean;
   onSelect: () => void;
   onEdit?: () => void;
+  onDuplicate?: () => void;
+  onDelete?: () => void;
   baseScenario: ScenarioRecord | null;
 }
 
-function ScenarioPill({ scenario, isActive, onSelect, onEdit, baseScenario }: PillProps) {
+function ScenarioPill({ scenario, isActive, onSelect, onEdit, onDuplicate, onDelete, baseScenario }: PillProps) {
   const [hovering, setHovering] = useState(false);
   const baseOverrides = baseScenario?.overrides ?? [];
   const delta = computeDelta(baseOverrides, scenario.overrides);
@@ -207,14 +217,36 @@ function ScenarioPill({ scenario, isActive, onSelect, onEdit, baseScenario }: Pi
               {scenario.description}
             </p>
           )}
-          {onEdit && (
-            <button
-              type="button"
-              onClick={onEdit}
-              className="mt-2 pt-2 w-full border-t border-border text-left text-[11px] font-medium text-brand-700 hover:text-brand-800 inline-flex items-center gap-1"
-            >
-              <Pencil size={11} aria-hidden="true" /> Edit scenario
-            </button>
+          {(onEdit || onDuplicate || onDelete) && (
+            <div className="mt-2 pt-2 border-t border-border flex items-center gap-3">
+              {onEdit && (
+                <button
+                  type="button"
+                  onClick={onEdit}
+                  className="text-[11px] font-medium text-brand-700 hover:text-brand-800 inline-flex items-center gap-1"
+                >
+                  <Pencil size={11} aria-hidden="true" /> Edit overrides
+                </button>
+              )}
+              {onDuplicate && (
+                <button
+                  type="button"
+                  onClick={onDuplicate}
+                  className="text-[11px] font-medium text-brand-700 hover:text-brand-800 inline-flex items-center gap-1"
+                >
+                  <Copy size={11} aria-hidden="true" /> Duplicate
+                </button>
+              )}
+              {onDelete && (
+                <button
+                  type="button"
+                  onClick={onDelete}
+                  className="ml-auto text-[11px] font-medium text-red-600 hover:text-red-700 inline-flex items-center gap-1"
+                >
+                  <Trash2 size={11} aria-hidden="true" /> Delete
+                </button>
+              )}
+            </div>
           )}
         </div>
       )}

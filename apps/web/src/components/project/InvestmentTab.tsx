@@ -290,12 +290,14 @@ export default function InvestmentTab() {
   const closingPct = (has(closing) && has(purchase) && purchase > 0) ? closing / purchase : undefined;
 
   const renoBudget = findUse(/renovat/i);
-  // Canonical hard/soft/professional split of the day-one renovation budget
-  // (75 / 15 / 10, per design/canonical/Investment Tab.dc.html). See report:
-  // the engine's `renovation_breakdown` uses a 75/20/5 split — flagged.
-  const renoHard = has(renoBudget) ? renoBudget * 0.75 : undefined;
-  const renoSoft = has(renoBudget) ? renoBudget * 0.15 : undefined;
-  const renoProf = has(renoBudget) ? renoBudget * 0.10 : undefined;
+  // Hard / soft / professional-fee split — read straight from the capital
+  // engine's renovation_breakdown output (defaults 75/15/10, per
+  // design/canonical/Investment Tab.dc.html), never re-derived from the total
+  // here. Absent (no renovation budget → breakdown is null) renders '—'.
+  const renoBreakdown = getEngineField<{ hard?: number; soft?: number; fees?: number }>(outputs, 'capital', 'renovation_breakdown');
+  const renoHard = renoBreakdown?.hard;
+  const renoSoft = renoBreakdown?.soft;
+  const renoProf = renoBreakdown?.fees;
 
   const totalUses = wTotalCapital;
   const totalUsesPerKey = has(wTotalCapitalPerKey)
