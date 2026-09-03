@@ -76,6 +76,16 @@ class ExpenseEngineInput(BaseModel):
     mgmt_fee_pct: Annotated[float, Field(ge=0.0, le=0.10)] = 0.03
     ffe_reserve_pct: Annotated[float, Field(ge=0.0, le=0.10)] = 0.04
     expense_growth: Annotated[float, Field(ge=-0.5, le=0.5)] = 0.035
+    # Opt-in separate inflation rate for the UNDISTRIBUTED operating
+    # expense category (admin & general, IT, sales & marketing, property
+    # operations, utilities) — the "Other expense inflation" knob on the
+    # Financials Projections panel. When set, undistributed lines grow at
+    # this rate in the ``grow_opex_independently`` path INSTEAD of the
+    # blanket ``expense_growth``; departmental and fixed charges keep
+    # growing at ``expense_growth``. When ``None`` (the default) the
+    # undistributed category grows at ``expense_growth`` exactly as today,
+    # so existing deals are byte-identical.
+    other_expense_growth: Annotated[float, Field(ge=-0.5, le=0.5)] | None = None
     overrides: dict[str, float] = Field(default_factory=dict)
     grow_opex_independently: bool = Field(
         default=False,
@@ -238,12 +248,23 @@ class ExpenseEngine(BaseEngine[ExpenseEngineInput, ExpenseEngineOutput]):
 
             if payload.grow_opex_independently and idx > 0:
                 growth = (1.0 + payload.expense_growth) ** idx
+                # Undistributed ("other") expenses grow at their own rate
+                # when the analyst set ``other_expense_growth`` on the
+                # Projections panel; otherwise they track ``expense_growth``
+                # exactly as before (None → byte-identical out-years).
+                other_growth = (
+                    (1.0 + payload.other_expense_growth) ** idx
+                    if payload.other_expense_growth is not None
+                    else growth
+                )
                 dept_rooms = y1_dept_rooms * growth
                 dept_fb = y1_dept_fb * growth
                 dept_other = y1_dept_other * growth
-                undist_lines = {k: v * growth for k, v in y1_undist_lines.items()}
+                undist_lines = {
+                    k: v * other_growth for k, v in y1_undist_lines.items()
+                }
                 fixed_lines = {k: v * growth for k, v in y1_fixed_lines.items()}
-                undist_total = y1_undist_total * growth
+                undist_total = y1_undist_total * other_growth
                 fixed_total = y1_fixed_total * growth
             else:
                 # Departmental — Y1 actuals if present, else ratio.

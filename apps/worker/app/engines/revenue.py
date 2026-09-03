@@ -202,6 +202,41 @@ class RevenueEngine(BaseEngine[RevenueEngineInput, RevenueEngineOutput]):
         y1_adr_disp = payload.y1_adr_displacement_pct
         use_segments = bool(payload.segments)
 
+        # Opt-in bottom-up resort-fee build-up. When ``resort_fee_per_night``
+        # is set (> 0) resort-fee revenue is computed per year from
+        # per-night × occupied-room-nights × capture[year] and REPLACES the
+        # flat ``starting_resort_fees`` anchor. When it's None/0 the legacy
+        # flat + ``resort_fees_growth`` path below runs byte-identically.
+        resort_fee_per_night = payload.resort_fee_per_night
+        use_resort_fee_buildup = (
+            resort_fee_per_night is not None and resort_fee_per_night > 0
+        )
+        # Capture ramp with carry-forward defaults: a missing year inherits
+        # the prior year's capture (y1 defaults to full capture, 1.0), so a
+        # single supplied capture value carries across the whole hold.
+        cap_y1 = (
+            payload.resort_fee_capture_y1
+            if payload.resort_fee_capture_y1 is not None
+            else 1.0
+        )
+        cap_y2 = (
+            payload.resort_fee_capture_y2
+            if payload.resort_fee_capture_y2 is not None
+            else cap_y1
+        )
+        cap_y3 = (
+            payload.resort_fee_capture_y3
+            if payload.resort_fee_capture_y3 is not None
+            else cap_y2
+        )
+
+        def _resort_fee_capture(year: int) -> float:
+            if year <= 1:
+                return cap_y1
+            if year == 2:
+                return cap_y2
+            return cap_y3  # y3 carries forward for every year past 3
+
         # Wave 2 P2.4 — structured PIP displacement (closure strategy +
         # % rooms offline + brand recovery curve). When set with a real
         # strategy, this object overrides the legacy flat-pct path. When
@@ -260,9 +295,17 @@ class RevenueEngine(BaseEngine[RevenueEngineInput, RevenueEngineOutput]):
                 else:
                     occ = base_occ_y
                     adr = base_adr_y
-                resort_fees = resort_fees * (1.0 + payload.resort_fees_growth)
+                if not use_resort_fee_buildup:
+                    resort_fees = resort_fees * (1.0 + payload.resort_fees_growth)
 
             occupied = rooms_available * occ
+
+            # Bottom-up resort-fee build-up overrides the flat anchor once
+            # the year's occupied-room-nights (``occupied``) are known.
+            if use_resort_fee_buildup:
+                resort_fees = (
+                    resort_fee_per_night * occupied * _resort_fee_capture(y)
+                )
 
             # ─── Rooms revenue: segmented vs. single-line ───
             segment_breakdown: list[SegmentYear] = []
@@ -360,6 +403,28 @@ class RevenueEngine(BaseEngine[RevenueEngineInput, RevenueEngineOutput]):
                     ),
                 )
             prov[f"years[{idx}].rooms_revenue"] = rooms_trace
+            if use_resort_fee_buildup:
+                prov[f"years[{idx}].resort_fees"] = ValueTrace(
+                    value=resort_fees,
+                    formula=(
+                        "resort_fees = resort_fee_per_night × occupied_rooms "
+                        "× capture_pct"
+                    ),
+                    inputs=[
+                        ValueInput(
+                            name="resort_fee_per_night",
+                            value=resort_fee_per_night,
+                        ),
+                        ValueInput(name="occupied_rooms", value=occupied),
+                        ValueInput(
+                            name="capture_pct", value=_resort_fee_capture(y)
+                        ),
+                    ],
+                    note=(
+                        "Bottom-up resort-fee build-up; capture ramps "
+                        f"y1={cap_y1:.4f} / y2={cap_y2:.4f} / y3+={cap_y3:.4f}."
+                    ),
+                )
             prov[f"years[{idx}].total_revenue"] = ValueTrace(
                 value=total_revenue,
                 formula=(

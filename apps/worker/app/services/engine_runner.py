@@ -3518,6 +3518,62 @@ async def _load_str_forecast_for_seed(
 # ─────────────────────────── Per-engine input ─────────────────────────
 
 
+# ── Financials Projections assumption keys (opt-in) ────────────────────
+# These three keys are edited on the Financials Projections panel and
+# persisted in ``field_overrides``. The override-routing loop above drops
+# each into ``base`` via its generic scalar branch; the coercers below
+# turn the raw JSONB primitive (which may arrive as a str) into the typed,
+# range-safe engine input. Every coercer returns ``None`` for an unset /
+# malformed value so the engines fall back to their existing behavior —
+# the feature is strictly opt-in and no-ops when the key is absent.
+
+
+def _coerce_resort_fee_per_night(value: Any) -> float | None:
+    """Dollars/occupied-night for the resort-fee build-up, else ``None``.
+
+    A value <= 0 (or unparseable) means "off" → ``None`` so the revenue
+    engine keeps the flat ``starting_resort_fees`` path.
+    """
+    if value is None or value == "":
+        return None
+    try:
+        v = float(value)
+    except (TypeError, ValueError):
+        return None
+    return v if v > 0 else None
+
+
+def _coerce_capture_pct(value: Any) -> float | None:
+    """Resort-fee capture fraction, clamped to [0, 1]; ``None`` when unset.
+
+    Stored as a fraction (the Projections panel divides the typed percent
+    by 100 before persisting). Clamped so an out-of-range value can never
+    trip the schema validator and crash a run.
+    """
+    if value is None or value == "":
+        return None
+    try:
+        v = float(value)
+    except (TypeError, ValueError):
+        return None
+    return max(0.0, min(1.0, v))
+
+
+def _coerce_other_expense_growth(value: Any) -> float | None:
+    """Undistributed-expense inflation fraction, clamped to [-0.5, 0.5].
+
+    ``None`` when unset → the expense engine grows the undistributed
+    category at the blanket ``expense_growth`` exactly as today.
+    """
+    if value is None or value == "":
+        return None
+    try:
+        v = float(value)
+    except (TypeError, ValueError):
+        return None
+    return max(-0.5, min(0.5, v))
+
+
 def _build_input_for(
     engine_name: str,
     deal_id: str,
@@ -3568,6 +3624,22 @@ def _build_input_for(
             # zero so the UI hides the row on legacy deals.
             starting_resort_fees=base.get("starting_resort_fees", 0.0),
             resort_fees_growth=base.get("resort_fees_growth", base.get("revpar_growth", 0.03)),
+            # Financials Projections panel (opt-in). When set, the engine
+            # builds resort-fee revenue bottom-up from per-night × occupied
+            # room-nights × capture ramp, replacing ``starting_resort_fees``.
+            # All default to None → the flat anchor path is unchanged.
+            resort_fee_per_night=_coerce_resort_fee_per_night(
+                base.get("resort_fee_per_night")
+            ),
+            resort_fee_capture_y1=_coerce_capture_pct(
+                base.get("resort_fee_capture_y1")
+            ),
+            resort_fee_capture_y2=_coerce_capture_pct(
+                base.get("resort_fee_capture_y2")
+            ),
+            resort_fee_capture_y3=_coerce_capture_pct(
+                base.get("resort_fee_capture_y3")
+            ),
             hold_years=base["hold_years"],
             # Y1 renovation/PIP displacement (Eshan v2 QA). Defaults
             # come from ``_load_engine_inputs`` which sets non-zero
@@ -3601,6 +3673,12 @@ def _build_input_for(
             mgmt_fee_pct=base["mgmt_fee_pct"],
             ffe_reserve_pct=base["ffe_reserve_pct"],
             expense_growth=base["expense_growth"],
+            # Financials Projections panel (opt-in). When set, the
+            # undistributed ("other") expense category grows at this rate
+            # instead of ``expense_growth``. None → unchanged behavior.
+            other_expense_growth=_coerce_other_expense_growth(
+                base.get("other_expense_growth")
+            ),
             grow_opex_independently=base["grow_opex_independently"],
             # Benchmark overrides populated by `_load_engine_inputs`
             # from the CBRE / brand catalog. Previously dropped before

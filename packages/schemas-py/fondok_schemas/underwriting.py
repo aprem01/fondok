@@ -333,6 +333,22 @@ class RevenueEngineInput(BaseModel):
     # when no T-12 anchor is present).
     starting_resort_fees: Annotated[float, Field(ge=0)] = 0.0
     resort_fees_growth: Annotated[float, Field(ge=-0.50, le=0.50)] = 0.03
+    # Opt-in bottom-up resort-fee build-up (Financials Projections panel).
+    # When ``resort_fee_per_night`` is set (> 0) the engine computes
+    # resort-fee revenue per year as
+    #   per-night × occupied-room-nights × capture[year]
+    # where occupied-room-nights is that year's ``occupied`` basis
+    # (keys × 365 × occupancy, post growth/displacement) and the capture
+    # ramp steps y1→y2→y3 with y3 carried forward for every year past 3.
+    # This REPLACES the flat ``starting_resort_fees`` anchor above. When
+    # ``resort_fee_per_night`` is ``None`` (or 0) the engine falls back to
+    # the ``starting_resort_fees`` path byte-identically — existing deals
+    # are unaffected. A missing capture year defaults to the prior year's
+    # capture (y1 → 1.0), so a single supplied capture carries forward.
+    resort_fee_per_night: Annotated[float, Field(ge=0)] | None = None
+    resort_fee_capture_y1: Annotated[float, Field(ge=0.0, le=1.0)] | None = None
+    resort_fee_capture_y2: Annotated[float, Field(ge=0.0, le=1.0)] | None = None
+    resort_fee_capture_y3: Annotated[float, Field(ge=0.0, le=1.0)] | None = None
     hold_years: Annotated[int, Field(ge=1, le=20)]
     # Year-1 renovation/PIP displacement (Eshan v2 QA). When the deal
     # carries a renovation budget the engine treats Year-1 as a
