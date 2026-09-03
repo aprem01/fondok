@@ -329,6 +329,13 @@ export default function GroundedWorksheet({
   // year-pill filter lets the reviewer hide any period they don't want.
   const histYears = populatedHistYears;
   const coverage = useMemo(() => buildCoverage(documents, populatedHistYears), [documents, populatedHistYears]);
+  // Resolve a source docId → its filename for the per-cell source tooltip
+  // (canonical Financials design). Same documents list the SourcePanel resolves
+  // against (d.filename); unresolved ids fall back to a generic label.
+  const docNameById = useCallback(
+    (id: string): string | undefined => documents.find((d) => d.id === id)?.filename,
+    [documents],
+  );
   // Design rewire: overall extraction confidence chip — average of the
   // per-line confidences captured on the historical years.
   const avgConfidence = useMemo(() => {
@@ -843,6 +850,7 @@ export default function GroundedWorksheet({
                       onCancel={() => row.overrideKey && setDraft((d) => { const { [row.overrideKey!]: _x, ...rest } = d; return rest; })}
                       onInspect={(t) => setInspect(t)}
                       colLabel={c.label}
+                      docNameById={docNameById}
                     />
                   ))}
                 </tr>
@@ -879,7 +887,7 @@ export default function GroundedWorksheet({
 // ── One cell (historical read-only, model editable, computed) ──────────
 function WorksheetCell({
   row, historical, histYear, modelLive, overridden, review, draft, saving, colLabel,
-  onDraft, onSave, onCancel, onInspect,
+  onDraft, onSave, onCancel, onInspect, docNameById,
 }: {
   row: RowDef;
   historical: boolean;
@@ -894,7 +902,9 @@ function WorksheetCell({
   onSave: () => void;
   onCancel: () => void;
   onInspect: (t: InspectTarget) => void;
+  docNameById: (id: string) => string | undefined;
 }) {
+  const [hovered, setHovered] = useState(false);
   const resolved = useSource(!historical ? row.overrideKey : undefined);
   // FON-65 — per-value grounding state from GET /deals/{id}/provenance, powering
   // the canonical 6-state dot for the Model (year-0) column. Historical columns
@@ -971,13 +981,36 @@ function WorksheetCell({
   const editing = draft != null;
   const editable = !historical && !!row.overrideKey;
 
+  // Custom source tooltip (canonical Financials design): a dark navy bubble
+  // that NAMES the actual source document on hover. Supplements — never
+  // replaces — the existing click-to-source (openInspect).
+  const sourceDocId = historical ? histMeta?.docId : resolved?.docId;
+  const sourceDoc =
+    overridden ? 'Entered by you'
+    : kind === 'computed' ? 'Calculated total — sum of the lines above'
+    : sourceDocId ? `Extracted from ${docNameById(sourceDocId) ?? 'the source document'}`
+    : kind === 'grounded' ? 'Extracted from the source document'
+    : 'Calculated by Fondok';
+
   return (
-    <td className="px-3 py-1.5 text-right whitespace-nowrap">
+    <td
+      className="relative px-3 py-1.5 text-right whitespace-nowrap"
+      onMouseEnter={() => setHovered(true)}
+      onMouseLeave={() => setHovered(false)}
+    >
+      {hovered && (
+        <div
+          role="tooltip"
+          className="pointer-events-none absolute bottom-full right-2 z-30 mb-1.5 rounded-md bg-fondok-navy px-2 py-1 text-[11px] font-medium text-white whitespace-nowrap shadow-lg"
+        >
+          {sourceDoc}
+        </div>
+      )}
       <span className="inline-flex items-center gap-1.5 justify-end">
         <button
           type="button"
           onClick={openInspect}
-          title="See where this came from"
+          aria-label="See where this came from"
           className="shrink-0 inline-flex rounded-full hover:ring-2 hover:ring-offset-1 hover:ring-ink-300"
         >
           <ProvenanceDot state={dotState} review={dotReview} size={8} />
@@ -996,7 +1029,7 @@ function WorksheetCell({
             type="button"
             onClick={() => onDraft(String(Math.round(value!)))}
             disabled={saving}
-            title={review ? `Low confidence (${Math.round(review.confidence * 100)}%) — click to check or edit` : 'Click to edit'}
+            aria-label={review ? `Low confidence (${Math.round(review.confidence * 100)}%) — click to check or edit` : 'Click to edit'}
             className={cn(
               'tabular-nums px-1 rounded hover:bg-brand-50',
               review ? 'ring-1 ring-red-400 bg-red-50 text-red-700' : overridden ? 'text-blue-700 font-medium' : 'text-ink-900',
@@ -1008,7 +1041,7 @@ function WorksheetCell({
           <button
             type="button"
             onClick={openInspect}
-            title={review ? `Low confidence (${Math.round(review.confidence * 100)}%) — click to check or correct` : 'Click to see source or correct'}
+            aria-label={review ? `Low confidence (${Math.round(review.confidence * 100)}%) — click to check or correct` : 'Click to see source or correct'}
             className={cn('tabular-nums px-1 rounded hover:bg-brand-50', review ? 'ring-1 ring-red-400 bg-red-50 text-red-700' : 'text-ink-700')}
           >
             {fmtRowValue(value, row.fmt)}
@@ -1019,7 +1052,7 @@ function WorksheetCell({
           <button
             type="button"
             onClick={openInspect}
-            title={`Low confidence (${Math.round(effReview.confidence * 100)}%) — click to review its source`}
+            aria-label={`Low confidence (${Math.round(effReview.confidence * 100)}%) — click to review its source`}
             className="tabular-nums px-1 rounded ring-1 ring-red-400 bg-red-50 text-red-700 inline-flex items-center gap-1"
           >
             {fmtRowValue(value, row.fmt)}
@@ -1030,7 +1063,7 @@ function WorksheetCell({
           <button
             type="button"
             onClick={openInspect}
-            title="Extracted — click to see its source"
+            aria-label="Extracted — click to see its source"
             className="tabular-nums px-1 rounded text-emerald-700 underline decoration-dotted decoration-emerald-500/60 underline-offset-2 hover:bg-emerald-50"
           >
             {fmtRowValue(value, row.fmt)}

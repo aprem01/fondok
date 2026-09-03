@@ -76,8 +76,13 @@ const eyebrow: CSSProperties = { fontWeight: 700, color: palette.eyebrow, letter
 const item: CSSProperties = { display: 'flex', alignItems: 'center', gap: 6 };
 
 export function DataKey({
-  totalSample,
-  editableSample,
+  // Canonical legend swatches from `Fondok Data Key.dc.html` — illustrative
+  // examples that demonstrate the two structural modifiers (bold = Total /
+  // summary, dotted underline = Editable), exactly like the six origin dots are
+  // colour examples. Part of the KEY, not deal data. Defaulted to the canonical
+  // values so the strip matches the design on every tab; pass to override.
+  totalSample = '1,240',
+  editableSample = '123',
   helpOpen,
   onHelpOpenChange,
   className,
