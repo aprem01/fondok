@@ -233,6 +233,9 @@ export default function AtlasCopilot({
   };
 
   // ── Collapsed: a slim strip pinned right, always accessible ──────────────
+  // Chrome maps to the canonical Atlas accent: navy (#14213d) sparkle tile +
+  // light-blue (#eef2fb / #dbe3f5) hover, mirroring the design's docked rail.
+  // `fondok-*` Tailwind classes are the class-mirror of components/design tokens.
   if (collapsed) {
     return (
       <div className="sticky top-6 self-start shrink-0 ml-2">
@@ -240,57 +243,68 @@ export default function AtlasCopilot({
           type="button"
           onClick={toggle}
           aria-label="Open Atlas AI Copilot"
-          className="group flex flex-col items-center gap-2 w-11 py-3 rounded-lg border border-border bg-white hover:bg-brand-50 hover:border-brand-500/40 transition-colors shadow-sm"
+          className="group flex flex-col items-center gap-2 w-11 py-3 rounded-[10px] border border-fondok-border bg-white hover:bg-[#eef2fb] hover:border-[#dbe3f5] transition-colors shadow-sm"
         >
-          <Sparkles size={16} className="text-brand-600" />
+          <span className="h-6 w-6 rounded-md bg-fondok-navy flex items-center justify-center shrink-0">
+            <Sparkles size={13} className="text-white" />
+          </span>
           <span
-            className="text-[10px] font-semibold tracking-[0.14em] text-ink-500 group-hover:text-brand-700"
+            className="text-[10px] font-semibold tracking-[0.14em] text-fondok-link"
             style={{ writingMode: 'vertical-rl' }}
           >
             ATLAS
           </span>
-          <ChevronLeft size={13} className="text-ink-400" />
+          <ChevronLeft size={13} className="text-fondok-text-muted" />
         </button>
       </div>
     );
   }
 
   // ── Expanded: the docked panel ───────────────────────────────────────────
+  // Chrome extracted from the canonical Atlas panel (design/canonical/*.dc.html):
+  // 340px card, white header with a navy (#14213d) sparkle tile + "AI Underwriting
+  // Copilot" subtitle, light-blue (#eef2fb / #dbe3f5 / #2f4a8c) context + suggested
+  // chips, warm answer bubble, and a navy Send button. `fondok-*` Tailwind classes
+  // mirror components/design tokens (navy = #14213d, link = #2f4a8c, border = #eae9e4).
   return (
-    <aside className="sticky top-6 self-start shrink-0 w-[336px] ml-4">
-      <div className="flex flex-col max-h-[calc(100vh-3rem)] rounded-lg border border-border bg-white shadow-sm overflow-hidden">
-        {/* Header */}
-        <div className="flex items-center justify-between px-4 py-3 bg-ink-900 text-white shrink-0">
-          <div className="flex items-center gap-2 min-w-0">
-            <Sparkles size={15} className="text-brand-300 shrink-0" />
-            <span className="text-[13px] font-semibold">Atlas</span>
-            <span className="text-[9px] uppercase tracking-wide px-1.5 py-0.5 rounded bg-white/15 text-white/80">
-              Copilot
+    <aside className="sticky top-6 self-start shrink-0 w-[340px] ml-4">
+      <div className="flex flex-col max-h-[calc(100vh-3rem)] rounded-[10px] border border-fondok-border bg-white shadow-sm overflow-hidden">
+        {/* Header — white with a navy sparkle tile (canonical Atlas header). */}
+        <div className="flex items-center justify-between px-[18px] py-4 bg-white border-b border-fondok-border shrink-0">
+          <div className="flex items-center gap-2.5 min-w-0">
+            <span className="shrink-0 h-[30px] w-[30px] rounded-lg bg-fondok-navy flex items-center justify-center">
+              <Sparkles size={15} className="text-white" />
             </span>
+            <div className="min-w-0">
+              <div className="text-[13.5px] font-bold text-fondok-ink leading-tight">Atlas</div>
+              <div className="text-[11px] text-fondok-text-muted leading-tight">
+                AI Underwriting Copilot
+              </div>
+            </div>
           </div>
           <button
             type="button"
             onClick={toggle}
             aria-label="Collapse Atlas"
-            className="text-white/70 hover:text-white p-0.5 rounded"
+            className="text-fondok-text-muted hover:text-fondok-ink p-0.5 rounded"
           >
             <ChevronRight size={16} />
           </button>
         </div>
 
         {/* Scrollable body */}
-        <div className="flex-1 overflow-y-auto px-4 py-4 space-y-4">
-          {/* Page context */}
-          <div>
-            <div className="text-[10px] uppercase tracking-wide text-ink-400 mb-1">
+        <div className="flex-1 overflow-y-auto px-[18px] py-4 space-y-3.5">
+          {/* Page context — light-blue Atlas info card. */}
+          <div className="rounded-lg bg-[#eef2fb] border border-[#dbe3f5] px-3 py-2.5">
+            <div className="text-[10px] uppercase tracking-wide font-semibold text-fondok-link mb-1">
               You&apos;re on · {guide.title}
             </div>
-            <p className="text-[12px] text-ink-600 leading-relaxed">{guide.guide}</p>
+            <p className="text-[12.5px] text-fondok-ink leading-relaxed">{guide.guide}</p>
           </div>
 
-          {/* Suggested questions */}
+          {/* Suggested questions — light-blue Atlas chips. */}
           <div>
-            <div className="flex items-center gap-1.5 text-[10px] uppercase tracking-wide text-ink-400 mb-1.5">
+            <div className="flex items-center gap-1.5 text-[10px] uppercase tracking-wide font-semibold text-fondok-text-muted mb-1.5">
               <Lightbulb size={11} /> Suggested
             </div>
             <div className="flex flex-col gap-1.5">
@@ -300,7 +314,7 @@ export default function AtlasCopilot({
                   type="button"
                   onClick={() => ask(s)}
                   disabled={asking}
-                  className="text-left text-[11.5px] leading-snug px-2.5 py-1.5 rounded-md border border-border bg-ink-50/40 hover:bg-brand-50 hover:border-brand-500/40 text-ink-700 disabled:opacity-50 transition-colors"
+                  className="text-left text-[11.5px] leading-snug px-2.5 py-1.5 rounded-lg bg-[#eef2fb] border border-[#dbe3f5] text-fondok-link hover:bg-[#e3eaf9] hover:border-[#c9d5ef] disabled:opacity-50 transition-colors"
                 >
                   {s}
                 </button>
@@ -325,13 +339,13 @@ export default function AtlasCopilot({
             </div>
           )}
 
-          {/* Latest answer */}
+          {/* Latest answer — warm Atlas bubble (canonical #f3f2ee). */}
           {answer && (
-            <div className="rounded-md border border-border bg-ink-50/30 p-3">
-              <div className="text-[10px] uppercase tracking-wide text-ink-400 mb-0.5">Question</div>
-              <div className="text-[12px] font-medium text-ink-900 mb-2">{answer.question}</div>
-              <div className="flex items-center gap-1.5 text-[10px] uppercase tracking-wide text-ink-400 mb-1">
-                <Sparkles size={10} className="text-brand-500" /> Answer
+            <div className="rounded-[10px] border border-fondok-border bg-[#f3f2ee] p-3">
+              <div className="text-[10px] uppercase tracking-wide text-fondok-text-muted mb-0.5">Question</div>
+              <div className="text-[12px] font-medium text-fondok-ink mb-2">{answer.question}</div>
+              <div className="flex items-center gap-1.5 text-[10px] uppercase tracking-wide text-fondok-text-muted mb-1">
+                <Sparkles size={10} className="text-fondok-link" /> Answer
                 <span
                   className={cn(
                     'ml-auto normal-case tracking-normal px-1.5 py-0.5 rounded text-[10px] font-medium',
@@ -345,14 +359,14 @@ export default function AtlasCopilot({
                   {(answer.confidence * 100).toFixed(0)}% conf.
                 </span>
               </div>
-              <div className="text-[12px] text-ink-700 leading-relaxed whitespace-pre-wrap">
+              <div className="text-[12px] text-fondok-ink leading-relaxed whitespace-pre-wrap">
                 {answer.answer || (
-                  <span className="text-ink-500 italic">{answer.note ?? 'No answer returned.'}</span>
+                  <span className="text-fondok-text-muted italic">{answer.note ?? 'No answer returned.'}</span>
                 )}
               </div>
               {answer.citations.length > 0 && (
                 <div className="mt-2 flex flex-wrap gap-1 items-baseline">
-                  <span className="text-[9.5px] uppercase tracking-wide text-ink-400">Sources:</span>
+                  <span className="text-[9.5px] uppercase tracking-wide text-fondok-text-muted">Sources:</span>
                   {answer.citations.map((c, i) => (
                     <CitationChip
                       key={`${c.document_id ?? 'unknown'}:${c.page ?? 0}:${i}`}
@@ -372,7 +386,7 @@ export default function AtlasCopilot({
         </div>
 
         {/* Ask input */}
-        <div className="border-t border-border p-3 shrink-0">
+        <div className="border-t border-fondok-border p-3 shrink-0">
           <div className="flex items-end gap-2">
             <textarea
               value={question}
@@ -385,19 +399,19 @@ export default function AtlasCopilot({
               }}
               placeholder="Ask Atlas about this deal…"
               rows={2}
-              className="flex-1 text-[12px] px-2.5 py-2 border border-border rounded-md resize-none focus:outline-none focus:ring-2 focus:ring-brand-500"
+              className="flex-1 text-[12.5px] px-2.5 py-2 border border-fondok-border rounded-md resize-none text-fondok-ink placeholder:text-fondok-text-faint focus:outline-none focus:ring-2 focus:ring-fondok-navy/30"
             />
             <button
               type="button"
               onClick={() => ask(question)}
               disabled={!question.trim() || asking}
               aria-label="Ask Atlas"
-              className="shrink-0 h-9 w-9 flex items-center justify-center rounded-md bg-brand-600 text-white hover:bg-brand-700 disabled:opacity-40 transition-colors"
+              className="shrink-0 h-9 w-9 flex items-center justify-center rounded-md bg-fondok-navy text-white hover:bg-fondok-navy-sidebar disabled:opacity-40 transition-colors"
             >
               {asking ? <Loader2 size={14} className="animate-spin" /> : <Send size={14} />}
             </button>
           </div>
-          <div className="text-[10px] text-ink-400 mt-1.5">
+          <div className="text-[10px] text-fondok-text-muted mt-1.5">
             Grounded on this deal · answers cite source pages
           </div>
         </div>
