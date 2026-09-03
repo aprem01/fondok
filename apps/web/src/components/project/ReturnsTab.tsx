@@ -32,7 +32,6 @@ interface SensitivityMatrix {
 }
 import { getEngineField, useEngineOutputs } from '@/lib/hooks/useEngineOutputs';
 import { useFlash } from '@/lib/hooks/useFlash';
-import { useTrace } from '@/lib/hooks/useValueTrace';
 import { IntroCard } from '@/components/help/IntroCard';
 import { CoachMark } from '@/components/help/CoachMark';
 import { Traced } from '@/components/help/Traced';
@@ -399,21 +398,43 @@ function ReturnsSummary({
   onEditInvestment: () => void;
   onViewCashFlow: () => void;
 }) {
-  // ── Canonical headline — WORKER outputs only, no client TS fallback. ──
-  // FON-68 split-headline fix: the CoC field is ``year_one_coc`` on the returns
-  // engine (returns.py:586). The old ``cash_on_cash_year_one`` read always
-  // missed and silently fell back to the client TS model, so IRR/EM came from
-  // the worker while CoC came from TS — a split headline. Every KPI below now
-  // resolves from the same worker run (no ``?? model.*``).
+  // ── Hero row (4 navy tiles) — WORKER outputs only, no client TS fallback. ──
   const irr = getEngineField<number>(outputs, 'returns', 'levered_irr');
   const mult = getEngineField<number>(outputs, 'returns', 'equity_multiple');
-  const coc = getEngineField<number>(outputs, 'returns', 'year_one_coc');
-  const exitValue = getEngineField<number>(outputs, 'returns', 'gross_sale_price');
-  const dscrY1 = getEngineField<number>(outputs, 'debt', 'year_one_dscr');
+  // Canonical headline shows the HOLD-AVERAGE cash-on-cash (``avg_coc``), not
+  // year 1 — both exist on the returns engine (returns.py). year_one_coc feeds
+  // the sublabel only.
+  const avgCoc = getEngineField<number>(outputs, 'returns', 'avg_coc');
+  const yearOneCoc = getEngineField<number>(outputs, 'returns', 'year_one_coc');
   const holdYears = getEngineField<number>(outputs, 'returns', 'hold_years');
+
+  // Yield on Cost — DERIVED (no stored field): stabilized NOI ÷ total cost
+  // basis. Stabilized NOI = the last operating-year NOI from the returns
+  // engine's own ``noi_by_year``; total cost basis = ``capital.total_capital``.
+  // If either is unsourceable we render '—' rather than a fabricated number.
+  const noiByYear = getEngineField<number[]>(outputs, 'returns', 'noi_by_year');
+  const totalCapital = getEngineField<number>(outputs, 'capital', 'total_capital');
+  const stabilizedNoi =
+    Array.isArray(noiByYear) && noiByYear.length > 0 ? noiByYear[noiByYear.length - 1] : undefined;
+  const yieldOnCost =
+    stabilizedNoi != null && totalCapital != null && totalCapital > 0
+      ? stabilizedNoi / totalCapital
+      : undefined;
+
+  // ── Secondary row (3 white cards). Equity Profit + Initial Equity read off
+  // the canonical levered cash-flow series so they reconcile to the bridge. ──
+  const flows = getEngineField<number[]>(outputs, 'returns', 'cash_flows');
+  const exitValue = getEngineField<number>(outputs, 'returns', 'gross_sale_price');
+  const exitCap = getEngineField<number>(outputs, 'returns', 'exit_cap_rate');
+  const hasFlows = Array.isArray(flows) && flows.length >= 2;
+  const initialEquity = hasFlows ? -flows![0] : undefined; // −close-period outflow
+  const totalToEquity = hasFlows ? flows!.slice(1).reduce((a, b) => a + b, 0) : undefined;
+  const equityProfit =
+    totalToEquity != null && initialEquity != null ? totalToEquity - initialEquity : undefined;
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+      {/* Hero — 4 dark-navy tiles (canonical `headline`). */}
       <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
         <span
           style={{
@@ -437,55 +458,69 @@ function ReturnsSummary({
             learnMoreHref="/methodology#engines"
           >
             <ReturnsKpi
+              variant="navy"
               label="Levered IRR"
               engine="returns"
               path="levered_irr"
               flashKey={irr}
-              sub="Equity IRR over the hold, after debt service"
-              value={<Traced engine="returns" path="levered_irr">{fmtPct(irr ?? 0, 2)}</Traced>}
+              sub={holdYears != null ? `Equity IRR over the ${holdYears}-year hold` : 'Equity IRR after debt service'}
+              value={fmtPct(irr ?? 0, 2)}
             />
           </CoachMark>
           <ReturnsKpi
+            variant="navy"
             label="Equity Multiple"
             engine="returns"
             path="equity_multiple"
             flashKey={mult}
-            sub="MOIC — total distributions ÷ equity"
-            value={<Traced engine="returns" path="equity_multiple">{`${(mult ?? 0).toFixed(2)}x`}</Traced>}
+            sub={initialEquity != null ? `MOIC on ${mm(initialEquity)} invested` : 'MOIC — total distributions ÷ equity'}
+            value={`${(mult ?? 0).toFixed(2)}x`}
           />
           <ReturnsKpi
-            label="Cash-on-Cash"
+            variant="navy"
+            label="Avg. Cash-on-Cash"
             engine="returns"
-            path="year_one_coc"
-            flashKey={coc}
-            sub="Year 1 — cash flow after debt ÷ equity"
-            value={fmtPct(coc ?? 0, 2)}
+            path="avg_coc"
+            flashKey={avgCoc}
+            sub={
+              holdYears != null && yearOneCoc != null
+                ? `Years 1–${holdYears} average — year 1 alone is ${fmtPct(yearOneCoc, 2)}`
+                : 'Hold-average annual cash yield'
+            }
+            value={fmtPct(avgCoc ?? 0, 2)}
           />
           <ReturnsKpi
-            label="Exit Value"
-            engine="returns"
-            path="gross_sale_price"
-            flashKey={exitValue}
-            sub="Gross sale — forward NOI ÷ exit cap"
-            value={fmtM(exitValue)}
-          />
-          <ReturnsKpi
-            label="DSCR Y1"
-            engine="debt"
-            path="year_one_dscr"
-            flashKey={dscrY1}
-            sub="Year-1 debt-service coverage"
-            value={fmtX(dscrY1)}
-          />
-          <ReturnsKpi
-            label="Hold Period"
-            engine="returns"
-            path="hold_years"
-            flashKey={holdYears}
-            sub="Underwriting horizon"
-            value={holdYears != null ? `${holdYears} Years` : '—'}
+            variant="navy"
+            label="Yield on Cost"
+            flashKey={yieldOnCost}
+            sub="Stabilized NOI ÷ total cost basis"
+            value={yieldOnCost != null ? fmtPct(yieldOnCost, 2) : '—'}
           />
         </div>
+      </div>
+
+      {/* Secondary — 3 white cards (canonical `secondary`). */}
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(190px,1fr))', gap: 12 }}>
+        <ReturnsKpi
+          label="Exit Value"
+          engine="returns"
+          path="gross_sale_price"
+          flashKey={exitValue}
+          sub={exitCap != null ? `${fmtPct(exitCap, 2)} exit cap` : 'Gross sale — forward NOI ÷ exit cap'}
+          value={fmtM(exitValue)}
+        />
+        <ReturnsKpi
+          label="Equity Profit"
+          flashKey={equityProfit}
+          sub="Cash returned less equity invested"
+          value={fmtM(equityProfit)}
+        />
+        <ReturnsKpi
+          label="Initial Equity Invested"
+          flashKey={initialEquity}
+          sub="Funded in full at close"
+          value={fmtM(initialEquity)}
+        />
       </div>
 
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(430px,1fr))', gap: 14 }}>
@@ -496,10 +531,10 @@ function ReturnsSummary({
   );
 }
 
-// One headline KPI tile on the shared KpiTile chrome, with the flash-on-change
-// highlight (useFlash), a provenance dot resolved from /provenance `state`
-// (falling back to `calculated`, which every headline return is), the glossary
-// tooltip, and the <Traced> computed-value popover passed in via `value`.
+// One KPI tile on the shared KpiTile chrome, with the flash-on-change highlight
+// (useFlash) and — when an engine/path is given — the <Traced> computed-value
+// popover so the number stays interrogable. The canonical Returns Summary tiles
+// carry no always-on provenance dot (provenance stays available via <Traced>).
 function ReturnsKpi({
   label,
   value,
@@ -507,28 +542,33 @@ function ReturnsKpi({
   flashKey,
   engine,
   path,
+  variant = 'white',
 }: {
   label: string;
   value: ReactNode;
   sub?: ReactNode;
   flashKey?: unknown;
-  engine: string;
-  path: string;
+  engine?: string;
+  path?: string;
+  variant?: 'white' | 'navy';
 }) {
   const flash = useFlash(flashKey ?? value);
-  const state = (useTrace(engine, path)?.state ?? 'calculated') as ValueState;
+  const body =
+    engine && path ? (
+      <Traced engine={engine} path={path}>
+        {value}
+      </Traced>
+    ) : (
+      value
+    );
   return (
     <KpiTile
       className={cn(flash && 'value-flash')}
       style={{ height: '100%' }}
+      variant={variant}
       label={label}
       sub={sub}
-      value={
-        <span style={{ display: 'inline-flex', alignItems: 'center', gap: 7 }}>
-          <ProvenanceDot state={state} size={8} />
-          <span>{value}</span>
-        </span>
-      }
+      value={body}
     />
   );
 }
@@ -542,7 +582,15 @@ function ExitAssumptionsCard({ outputs, onEdit }: { outputs: EngineOutputs; onEd
   const exitCap = getEngineField<number>(outputs, 'returns', 'exit_cap_rate');
   const grossSale = getEngineField<number>(outputs, 'returns', 'gross_sale_price');
   const sellingCosts = getEngineField<number>(outputs, 'returns', 'selling_costs');
-  const netProceeds = getEngineField<number>(outputs, 'returns', 'net_proceeds');
+  // Net Sale Proceeds here is GROSS − SELLING (computed client-side) so the
+  // three visible rows foot. (The engine's ``net_proceeds`` is net-to-equity —
+  // gross less selling, transfer tax AND the loan payoff — which would not
+  // reconcile with only the two rows above it; that figure lives in the Return
+  // Bridge's "Net exit proceeds".)
+  const netSaleProceeds =
+    grossSale != null && sellingCosts != null
+      ? grossSale - Math.abs(sellingCosts)
+      : undefined;
 
   interface Row {
     label: string;
@@ -601,12 +649,12 @@ function ExitAssumptionsCard({ outputs, onEdit }: { outputs: EngineOutputs; onEd
     },
     {
       label: 'Net Sale Proceeds',
-      value: netProceeds != null ? money(netProceeds) : '—',
+      value: netSaleProceeds != null ? money(netSaleProceeds) : '—',
       source: 'Calculated',
       state: 'calculated',
       color: prov.black,
       weight: 700,
-      title: 'Gross sale price less selling costs and the loan balance at exit',
+      title: 'Gross sale price less selling costs',
     },
   ];
 
@@ -659,10 +707,12 @@ function ExitAssumptionsCard({ outputs, onEdit }: { outputs: EngineOutputs; onEd
   );
 }
 
-// ── Return Bridge — deal-level returns, before GP/LP allocation. Built from
+// ── Return Bridge — deal-level returns, before GP/LP allocation. Anchored to
 // the levered cash-flow series the returns engine emits (``cash_flows`` =
 // [-equity, cf₁ … cfₙ + net exit proceeds]) so every number reconciles to Cash
-// Flow. "View cash flow →" jumps to the full series. ──
+// Flow. Canonical 6-row breakdown: initial equity (−) · operating cash flow (+)
+// · debt service (−) · refinance proceeds (+) · net exit proceeds (+) · total.
+// "View cash flow →" jumps to the full series. ──
 function ReturnBridgeCard({
   outputs,
   onViewCashFlow,
@@ -672,6 +722,13 @@ function ReturnBridgeCard({
 }) {
   const flows = getEngineField<number[]>(outputs, 'returns', 'cash_flows');
   const netProceeds = getEngineField<number>(outputs, 'returns', 'net_proceeds');
+  const noiByYear = getEngineField<number[]>(outputs, 'returns', 'noi_by_year');
+  const refiCashOut = getEngineField<number>(outputs, 'debt', 'refi_cash_out');
+  const refiYear = getEngineField<number>(outputs, 'debt', 'refi_year');
+  // The composed, reconciled levered statement — its Interest Expense +
+  // Principal Amortization (+ any Refinance/Junior debt-service delta) rows are
+  // the debt-service figure this bridge displays.
+  const leveredStmt = getEngineField<LeveredStatementLine[]>(outputs, 'cash_flow', 'levered');
 
   const note = (
     <span
@@ -702,39 +759,83 @@ function ReturnBridgeCard({
   const equity = -initialEquity;
   const totalToEquity = flows.slice(1).reduce((a, b) => a + b, 0);
   const netExit = netProceeds ?? 0;
-  const operating = totalToEquity - netExit;
+  const refi = refiYear != null && refiCashOut != null && refiCashOut > 0 ? refiCashOut : 0;
+  // Net operating cash flow to equity (after debt, before refi/exit) — the leg
+  // that operating + debt service must net to.
+  const operatingNet = totalToEquity - netExit - refi;
+
+  // Debt service Σ(Interest + Principal) over the hold. Prefer the reconciled
+  // cash_flow levered statement; else reconstruct it exactly from the returns
+  // NOI identity (Σ NOI − net operating). Operating cash flow is then the
+  // PRE-debt-service figure (operatingNet + debt service), so the bridge always
+  // foots to Total cash flow to equity and ties to the levered series.
+  const sumStatementRows = (labels: string[]): number | undefined => {
+    if (!Array.isArray(leveredStmt)) return undefined;
+    let total = 0;
+    let found = false;
+    for (const line of leveredStmt) {
+      if (line && labels.includes(line.label) && Array.isArray(line.values)) {
+        found = true;
+        for (const v of line.values) if (typeof v === 'number') total += v;
+      }
+    }
+    return found ? total : undefined;
+  };
+  const dsFromStatement = sumStatementRows([
+    'Interest Expense',
+    'Principal Amortization',
+    'Refinance / Junior Debt Service',
+  ]);
+  let debtService: number | undefined;
+  if (dsFromStatement != null) {
+    debtService = Math.abs(dsFromStatement);
+  } else if (Array.isArray(noiByYear) && noiByYear.length > 0) {
+    debtService = noiByYear.reduce((a, b) => a + b, 0) - operatingNet;
+  }
+  const operatingGross = debtService != null ? operatingNet + debtService : operatingNet;
 
   interface Bar {
     label: string;
     value: number;
     bold?: boolean;
+    /** No refi on this deal — list the row (design always shows it) but as '—'. */
+    awaiting?: boolean;
   }
   const items: Bar[] = [
     { label: 'Initial equity', value: initialEquity },
-    { label: 'Operating cash flow to equity', value: operating },
-    { label: 'Net exit proceeds', value: netExit },
-    { label: 'Total cash flow to equity', value: totalToEquity, bold: true },
+    { label: 'Operating cash flow', value: operatingGross },
   ];
-  const maxAbs = Math.max(1, ...items.map((b) => Math.abs(b.value)));
+  if (debtService != null) items.push({ label: 'Debt service', value: -debtService });
+  items.push({ label: 'Refinance proceeds', value: refi, awaiting: refi === 0 });
+  items.push({ label: 'Net exit proceeds', value: netExit });
+  items.push({ label: 'Total cash flow to equity', value: totalToEquity, bold: true });
+
+  const maxAbs = Math.max(1, ...items.filter((b) => !b.awaiting).map((b) => Math.abs(b.value)));
 
   return (
     <SectionCard title="Return Bridge" note={note}>
       <div style={{ marginTop: 2 }}>
         {items.map((b) => {
           const abs = Math.abs(b.value);
-          const width = `${(abs / maxAbs) * 50}%`;
+          const width = b.awaiting ? '0%' : `${(abs / maxAbs) * 50}%`;
           const left = b.value < 0 ? `${50 - (abs / maxAbs) * 50}%` : '50%';
           const barBg = b.bold
             ? palette.inkNavy
             : b.value < 0
               ? 'oklch(70% 0.10 40)'
               : 'oklch(60% 0.10 155)';
-          const valueColor = b.bold ? prov.black : b.value < 0 ? prov.amber : prov.gray;
+          const valueColor = b.awaiting
+            ? palette.textFaint
+            : b.bold
+              ? prov.black
+              : b.value < 0
+                ? prov.amber
+                : prov.gray;
           return (
             <div key={b.label} style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '5px 0' }}>
               <span
                 style={{
-                  width: 168,
+                  width: 150,
                   fontSize: 12,
                   color: palette.ink,
                   fontWeight: b.bold ? 700 : 400,
@@ -753,13 +854,15 @@ function ReturnBridgeCard({
                   overflow: 'hidden',
                 }}
               >
-                <span
-                  style={{ position: 'absolute', left, width, top: 0, bottom: 0, background: barBg, borderRadius: 5 }}
-                />
+                {!b.awaiting && (
+                  <span
+                    style={{ position: 'absolute', left, width, top: 0, bottom: 0, background: barBg, borderRadius: 5 }}
+                  />
+                )}
               </span>
               <span
                 style={{
-                  width: 96,
+                  width: 112,
                   textAlign: 'right',
                   fontSize: 12.5,
                   color: valueColor,
@@ -768,7 +871,7 @@ function ReturnBridgeCard({
                   flexShrink: 0,
                 }}
               >
-                {mm(b.value)}
+                {b.awaiting ? '—' : mm(b.value)}
               </span>
             </div>
           );
@@ -776,11 +879,19 @@ function ReturnBridgeCard({
       </div>
       <div style={{ fontSize: 11, color: palette.textMuted, marginTop: 10, lineHeight: 1.5 }}>
         Deal-level returns · before GP/LP allocation. Reconciles to the Cash Flow series:{' '}
-        {mm(operating)} operating + {mm(netExit)} exit = {mm(totalToEquity)} returned on {mm(equity)}{' '}
-        invested.
+        {mm(operatingNet)} operating {refi > 0 ? `+ ${mm(refi)} refinance ` : ''}+ {mm(netExit)} exit ={' '}
+        {mm(totalToEquity)} returned on {mm(equity)} invested.
       </div>
     </SectionCard>
   );
+}
+
+// Minimal shape of a composed levered cash-flow statement row (see
+// apps/worker/app/engines/cash_flow.py → CashFlowStatementLine). ``values`` is
+// indexed 0..hold (index 0 = at close); nulls mark periods with no entry.
+interface LeveredStatementLine {
+  label: string;
+  values: (number | null)[];
 }
 
 // ───────────────────────────────────────────────────────────────────
