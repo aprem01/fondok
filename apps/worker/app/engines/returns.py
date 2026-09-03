@@ -367,6 +367,14 @@ class ReturnsEngineOutputExt(ReturnsEngineOutput):
 
     cash_flows: list[float] = Field(default_factory=list)
     cash_flows_unlevered: list[float] = Field(default_factory=list)
+    # The exact operating NOI series (per year 1..hold) this engine used to
+    # build ``cash_flows_unlevered`` — i.e. the override-aware ``noi_series``
+    # (``noi_override_by_year`` when set, else the projected/expense series).
+    # The cash_flow view composes its NOI row from THIS so it always ties out
+    # to the returns engine, even on deals whose expense NOI differs from the
+    # override the returns engine ran on. Empty → cash_flow falls back to the
+    # expense NOI (byte-identical to the pre-FON behavior for non-override deals).
+    noi_by_year: list[float] = Field(default_factory=list)
     # FON-59 — surface the reversion assumptions so the Overview's Reversion
     # tile can show Exit Cap Rate + Terminal NOI instead of "—".
     exit_cap_rate: float | None = None
@@ -609,6 +617,7 @@ class ReturnsEngine(BaseEngine[ReturnsEngineInputExt, ReturnsEngineOutputExt]):
             terminal_noi=terminal_noi,
             cash_flows=levered_flows,
             cash_flows_unlevered=unlevered_flows,
+            noi_by_year=list(noi_series),
             provenance=apply_states({
                 **_exit_value_provenance(
                     terminal_noi=terminal_noi,
@@ -694,6 +703,7 @@ def returns_from_cash_flow(
         terminal_noi=payload.terminal_noi,
         cash_flows=levered_flows,
         cash_flows_unlevered=unlevered_flows,
+        noi_by_year=list(noi_series),
         provenance=apply_states({
             **_exit_value_provenance(
                 terminal_noi=payload.terminal_noi,

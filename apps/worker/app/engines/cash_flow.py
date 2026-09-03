@@ -113,14 +113,27 @@ class CashFlowStatementEngine(
             return [None] * n
 
         # ── upstream reads, aligned to operating years 1..hold ──
+        ret_noi = list(getattr(ret, "noi_by_year", None) or [])
+
         def _noi_before_reserve(y: int) -> float:
             """NOI *before* the FF&E reserve (institutional / cap-rate basis).
 
             The returns engine's unlevered series carries NOI net of the FF&E
             reserve, so we add it back here and subtract it on its own line —
             the pair nets to the canonical NOI, and the reserve is visible.
+
+            Source the net-of-reserve NOI from the returns engine's own
+            ``noi_by_year`` when it published it (the override-aware series it
+            actually built ``cash_flows_unlevered`` from). On a deal carrying
+            ``noi_override_by_year`` the expense engine's NOI differs from that
+            override, so composing from expense NOI would fail the
+            reconciliation guard. Falling back to ``exp.years[y-1].noi`` keeps
+            non-override deals — and any deal where returns didn't populate the
+            series — byte-identical to the prior behavior.
             """
             yr = exp.years[y - 1]
+            if y - 1 < len(ret_noi):
+                return float(ret_noi[y - 1]) + float(yr.ffe_reserve)
             return float(yr.noi) + float(yr.ffe_reserve)
 
         def _ffe(y: int) -> float:
