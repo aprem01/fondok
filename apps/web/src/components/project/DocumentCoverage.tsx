@@ -19,9 +19,13 @@ import {
   CheckCircle2,
   Circle,
   ChevronRight,
+  ChevronDown,
   FileText,
   Rocket,
   AlertCircle,
+  GripVertical,
+  ExternalLink,
+  Download,
 } from 'lucide-react';
 import { Card } from '@/components/ui/Card';
 import { Badge } from '@/components/ui/Badge';
@@ -67,6 +71,10 @@ export interface DocumentCoverageProps {
   ) => void;
   /** Open a file's extracted-data / review panel. */
   onOpenDoc: (docId: string, financial?: boolean) => void;
+  /** Open the raw uploaded file in a new browser tab (↗). */
+  onOpenInNewTab?: (docId: string) => void;
+  /** Download the raw uploaded file (⬇). */
+  onDownload?: (docId: string) => void;
   /** Doc id whose reclassify is in flight (disables its controls). */
   busyDocId?: string | null;
   className?: string;
@@ -111,20 +119,22 @@ const REQUIRED_TOTAL = CATEGORIES.filter((c) => !c.optional).length;
 function familyOf(docType: string): 'T-12' | 'P&L' {
   return docType.toUpperCase() === 'T12' ? 'T-12' : 'P&L';
 }
-function periodOf(docType: string): 'Annual' | 'Monthly' | 'YTD' {
+// Full-label period vocabulary (canonical Data Room v2 uses the spelled-out
+// labels plus a "Not Sure" escape hatch). "Not Sure" carries no distinct
+// backend token — it resolves to a generic annual P&L so the doc still counts.
+type Period = 'Annual' | 'Monthly' | 'Year-To-Date' | 'Not Sure';
+const PERIOD_OPTIONS: Period[] = ['Annual', 'Monthly', 'Year-To-Date', 'Not Sure'];
+function periodOf(docType: string): Period {
   const t = docType.toUpperCase();
   if (t === 'PNL_MONTHLY') return 'Monthly';
-  if (t === 'PNL_YTD') return 'YTD';
+  if (t === 'PNL_YTD') return 'Year-To-Date';
   return 'Annual';
 }
-function composeDocType(
-  family: 'T-12' | 'P&L',
-  period: 'Annual' | 'Monthly' | 'YTD',
-): string {
+function composeDocType(family: 'T-12' | 'P&L', period: Period): string {
   if (family === 'T-12') return 'T12';
   if (period === 'Monthly') return 'PNL_MONTHLY';
-  if (period === 'YTD') return 'PNL_YTD';
-  return 'PNL';
+  if (period === 'Year-To-Date') return 'PNL_YTD';
+  return 'PNL'; // Annual or Not Sure
 }
 
 const YEARS: number[] = (() => {
@@ -168,6 +178,8 @@ export function DocumentCoverage({
   files,
   onReclassify,
   onOpenDoc,
+  onOpenInNewTab,
+  onDownload,
   busyDocId,
   className,
 }: DocumentCoverageProps) {
@@ -183,14 +195,15 @@ export function DocumentCoverage({
     else unclassified.push(f);
   }
 
-  const coveredRequired = CATEGORIES.filter(
-    (c) => !c.optional && (byCategory.get(c.id)!.length > 0),
-  ).length;
-  const typesCovered = CATEGORIES.filter(
+  // The canonical Data Room v2 header counts against the 10 core diligence
+  // types (the required checklist) — the first 10 CATEGORIES; Debt / Partnership
+  // / Other are extra optional buckets that don't move the "of 10" number.
+  const CORE_TOTAL = 10;
+  const coreCovered = CATEGORIES.slice(0, CORE_TOTAL).filter(
     (c) => byCategory.get(c.id)!.length > 0,
   ).length;
   const canRun = (byCategory.get('financials')!.length ?? 0) > 0;
-  const pct = Math.round((coveredRequired / REQUIRED_TOTAL) * 100);
+  const pct = Math.round((coreCovered / CORE_TOTAL) * 100);
 
   // Covered categories are open by default; we track only what the analyst
   // explicitly COLLAPSED. This way async-loaded files show without a click
@@ -203,12 +216,37 @@ export function DocumentCoverage({
       return next;
     });
 
+  // Whole-card collapse (the header chevron ▾/▸ in the design).
+  const [cardCollapsed, setCardCollapsed] = useState(false);
+
+  // Drag-to-recategorize: the doc id currently being dragged. Dropping it on a
+  // category row reclassifies it to that category's representative doc_type
+  // (financials default to a generic annual P&L) — the same reclassify endpoint
+  // the inline type dropdowns fire.
+  const [dragDocId, setDragDocId] = useState<string | null>(null);
+  const dropDocInto = (cat: CategorySpec) => {
+    if (!dragDocId) return;
+    const token = cat.id === 'financials' ? 'PNL' : cat.match[0];
+    onReclassify(dragDocId, { doc_type: token });
+    setDragDocId(null);
+  };
+
   return (
     <Card className={cn('overflow-hidden', className)} aria-label="Document coverage">
-      {/* Header + gate */}
+      {/* Header + gate — clicking the header collapses/expands the whole card. */}
       <div className="p-5 border-b border-border">
-        <div className="flex items-start justify-between gap-3 mb-2">
+        <button
+          type="button"
+          onClick={() => setCardCollapsed((v) => !v)}
+          aria-expanded={!cardCollapsed}
+          className="w-full flex items-start justify-between gap-3 mb-2 text-left"
+        >
           <div className="flex items-center gap-2">
+            {cardCollapsed ? (
+              <ChevronRight size={15} className="text-ink-400 flex-shrink-0" aria-hidden="true" />
+            ) : (
+              <ChevronDown size={15} className="text-ink-400 flex-shrink-0" aria-hidden="true" />
+            )}
             <span className="w-1.5 h-1.5 rounded-full bg-brand-500" aria-hidden="true" />
             <h3 className="text-[15px] font-semibold text-ink-900">Document coverage</h3>
           </div>
@@ -218,10 +256,10 @@ export function DocumentCoverage({
             </span>
             <span className="text-[11px] text-ink-500 ml-1">docs</span>
           </div>
-        </div>
+        </button>
         <p className="text-[12.5px] text-ink-500 leading-relaxed mb-3">
           {files.length} document{files.length === 1 ? '' : 's'} uploaded across{' '}
-          {typesCovered} of {REQUIRED_TOTAL} types
+          {coreCovered} of {CORE_TOTAL} types
           {canRun ? (
             <> — you have enough to run the model; the rest sharpen the projection.</>
           ) : (
@@ -249,13 +287,28 @@ export function DocumentCoverage({
       </div>
 
       {/* Category rows */}
+      {!cardCollapsed && (
       <ul role="list">
         {CATEGORIES.map((cat) => {
           const catFiles = byCategory.get(cat.id)!;
           const covered = catFiles.length > 0;
           const isOpen = covered && !collapsed.has(cat.id);
+          const dropActive = dragDocId != null;
           return (
-            <li key={cat.id} className="border-b border-border last:border-0">
+            <li
+              key={cat.id}
+              className={cn(
+                'border-b border-border last:border-0 transition-[outline] outline-offset-[-2px]',
+                dropActive && 'outline-dashed outline-2 outline-brand-500/50',
+              )}
+              onDragOver={(e) => {
+                if (dragDocId) e.preventDefault();
+              }}
+              onDrop={(e) => {
+                e.preventDefault();
+                dropDocInto(cat);
+              }}
+            >
               <button
                 type="button"
                 onClick={() => covered && toggle(cat.id)}
@@ -311,8 +364,13 @@ export function DocumentCoverage({
                       file={f}
                       financial={!!cat.financial}
                       busy={busyDocId === f.id}
+                      dragging={dragDocId === f.id}
+                      onDragStart={() => setDragDocId(f.id)}
+                      onDragEnd={() => setDragDocId(null)}
                       onReclassify={onReclassify}
                       onOpenDoc={onOpenDoc}
+                      onOpenInNewTab={onOpenInNewTab}
+                      onDownload={onDownload}
                     />
                   ))}
                 </ul>
@@ -321,11 +379,12 @@ export function DocumentCoverage({
           );
         })}
       </ul>
+      )}
 
       {/* Mis-tagged files (doc_type matched no category — e.g. an OM stored
           as "EXTRACTOR"). Surfaced so they don't vanish from coverage; set
           the right type to make them count. */}
-      {unclassified.length > 0 && (
+      {!cardCollapsed && unclassified.length > 0 && (
         <div className="border-t border-border">
           <div className="flex items-center gap-2 px-5 py-2.5 bg-warn-50/50">
             <AlertCircle size={15} className="text-warn-700 flex-shrink-0" />
@@ -343,6 +402,8 @@ export function DocumentCoverage({
                 busy={busyDocId === f.id}
                 onReclassify={onReclassify}
                 onOpenDoc={onOpenDoc}
+                onOpenInNewTab={onOpenInNewTab}
+                onDownload={onDownload}
               />
             ))}
           </ul>
@@ -352,16 +413,62 @@ export function DocumentCoverage({
   );
 }
 
+// The per-row "Open in new tab (↗)" + "Download (⬇)" affordances from the
+// canonical Data Room v2 doc rows. Rendered only when the host wires handlers.
+function FileActions({
+  docId,
+  name,
+  onOpenInNewTab,
+  onDownload,
+}: {
+  docId: string;
+  name: string;
+  onOpenInNewTab?: (docId: string) => void;
+  onDownload?: (docId: string) => void;
+}) {
+  if (!onOpenInNewTab && !onDownload) return null;
+  return (
+    <span className="inline-flex items-center gap-1.5 flex-shrink-0">
+      {onOpenInNewTab && (
+        <button
+          type="button"
+          onClick={() => onOpenInNewTab(docId)}
+          title="Open in new tab"
+          aria-label={`Open ${name} in a new tab`}
+          className="text-ink-500 hover:text-ink-900 transition-colors"
+        >
+          <ExternalLink size={13} aria-hidden="true" />
+        </button>
+      )}
+      {onDownload && (
+        <button
+          type="button"
+          onClick={() => onDownload(docId)}
+          title="Download"
+          aria-label={`Download ${name}`}
+          className="text-ink-500 hover:text-ink-900 transition-colors"
+        >
+          <Download size={13} aria-hidden="true" />
+        </button>
+      )}
+    </span>
+  );
+}
+
 function UnclassifiedRow({
   file,
   busy,
   onReclassify,
   onOpenDoc,
+  onOpenInNewTab,
+  onDownload,
 }: {
   file: CoverageFile;
   busy: boolean;
   onReclassify: DocumentCoverageProps['onReclassify'];
   onOpenDoc: DocumentCoverageProps['onOpenDoc'];
+  onOpenInNewTab?: (docId: string) => void;
+  onDownload?: (docId: string) => void;
 }) {
   return (
     <li className="flex flex-wrap items-center gap-x-3 gap-y-2 px-5 py-3 pl-12 border-t border-border/60">
@@ -372,6 +479,12 @@ function UnclassifiedRow({
       >
         {file.name}
       </span>
+      <FileActions
+        docId={file.id}
+        name={file.name}
+        onOpenInNewTab={onOpenInNewTab}
+        onDownload={onDownload}
+      />
       {file.docType && (
         <span
           className="text-[10px] text-ink-500"
@@ -423,14 +536,24 @@ function CoverageFileRow({
   file,
   financial,
   busy,
+  dragging,
+  onDragStart,
+  onDragEnd,
   onReclassify,
   onOpenDoc,
+  onOpenInNewTab,
+  onDownload,
 }: {
   file: CoverageFile;
   financial: boolean;
   busy: boolean;
+  dragging?: boolean;
+  onDragStart?: () => void;
+  onDragEnd?: () => void;
   onReclassify: DocumentCoverageProps['onReclassify'];
   onOpenDoc: DocumentCoverageProps['onOpenDoc'];
+  onOpenInNewTab?: (docId: string) => void;
+  onDownload?: (docId: string) => void;
 }) {
   const family = familyOf(file.docType);
   const period = periodOf(file.docType);
@@ -443,11 +566,30 @@ function CoverageFileRow({
     'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-500 disabled:opacity-50';
 
   return (
-    <li className="flex flex-wrap items-center gap-x-3 gap-y-2 px-5 py-3 pl-12 border-t border-border/60">
+    <li
+      draggable
+      onDragStart={onDragStart}
+      onDragEnd={onDragEnd}
+      className={cn(
+        'flex flex-wrap items-center gap-x-3 gap-y-2 px-5 py-3 pl-12 border-t border-border/60 cursor-grab',
+        dragging && 'opacity-50',
+      )}
+    >
+      <GripVertical
+        size={14}
+        className="text-ink-400 flex-shrink-0 -ml-6"
+        aria-label="Drag to move to another category"
+      />
       <FileText size={14} className="text-ink-500 flex-shrink-0" aria-hidden="true" />
       <span className="text-[12.5px] text-ink-900 font-medium truncate max-w-[220px]" title={file.name}>
         {file.name}
       </span>
+      <FileActions
+        docId={file.id}
+        name={file.name}
+        onOpenInNewTab={onOpenInNewTab}
+        onDownload={onDownload}
+      />
 
       {financial ? (
         <div className="flex items-center gap-1.5 flex-wrap">
@@ -490,13 +632,15 @@ function CoverageFileRow({
             value={period}
             disabled={busy || family === 'T-12'}
             onChange={(e) => {
-              const per = e.target.value as 'Annual' | 'Monthly' | 'YTD';
+              const per = e.target.value as Period;
               onReclassify(file.id, { doc_type: composeDocType(family, per) });
             }}
           >
-            <option value="Annual">Annual</option>
-            <option value="Monthly">Monthly</option>
-            <option value="YTD">YTD</option>
+            {PERIOD_OPTIONS.map((p) => (
+              <option key={p} value={p}>
+                {p}
+              </option>
+            ))}
           </select>
           <select
             aria-label={`Year for ${file.name}`}

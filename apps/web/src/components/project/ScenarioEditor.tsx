@@ -14,12 +14,14 @@
  * result. Validation is deferred to the worker (which already runs
  * Pydantic on every field path the engine accepts).
  */
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { X, Plus, Trash2, Save, Play, Loader2 } from 'lucide-react';
 import { Button } from '@/components/ui/Button';
 import { useToast } from '@/components/ui/Toast';
 import {
   api,
+  isWorkerConnected,
+  type ReturnsPreviewResponse,
   type ScenarioOverride,
   type ScenarioRecord,
 } from '@/lib/api';
@@ -45,30 +47,86 @@ interface OverrideRow {
 // or raw fractions. Each entry maps a human label + unit to the canonical
 // override path the engines accept. `pct` fields let the user type "8.5" and
 // store 0.085; `usd` accepts "$36.4M"-style numbers; `years` are integers.
-type Unit = 'pct' | 'usd' | 'years' | 'number';
-const ASSUMPTION_CATALOG: { path: string; label: string; unit: Unit; group: string }[] = [
-  { path: 'starting_occupancy', label: 'Year-1 Occupancy', unit: 'pct', group: 'Revenue' },
-  { path: 'starting_adr', label: 'Year-1 ADR', unit: 'usd', group: 'Revenue' },
-  { path: 'revpar_growth', label: 'RevPAR Growth', unit: 'pct', group: 'Revenue' },
-  { path: 'adr_growth', label: 'ADR Growth', unit: 'pct', group: 'Revenue' },
-  { path: 'occupancy_growth', label: 'Occupancy Growth', unit: 'pct', group: 'Revenue' },
-  { path: 'expense_growth', label: 'Expense Growth', unit: 'pct', group: 'Expenses' },
-  { path: 'mgmt_fee_pct', label: 'Management Fee', unit: 'pct', group: 'Expenses' },
-  { path: 'ffe_reserve_pct', label: 'FF&E Reserve', unit: 'pct', group: 'Expenses' },
-  { path: 'purchase_price', label: 'Purchase Price', unit: 'usd', group: 'Acquisition' },
-  { path: 'exit_cap_rate', label: 'Exit Cap Rate', unit: 'pct', group: 'Exit' },
-  { path: 'hold_years', label: 'Hold Period', unit: 'years', group: 'Exit' },
-  { path: 'ltv', label: 'LTV', unit: 'pct', group: 'Debt' },
-  { path: 'interest_rate', label: 'Interest Rate', unit: 'pct', group: 'Debt' },
-  { path: 'amortization_years', label: 'Amortization (yrs)', unit: 'years', group: 'Debt' },
-  { path: 'term_years', label: 'Loan Term (yrs)', unit: 'years', group: 'Debt' },
-  { path: 'pref_rate', label: 'Preferred Return', unit: 'pct', group: 'Partnership' },
+//
+// Exported (FON-53 canonical alignment) so the inline per-scenario override
+// table in ScenarioComparePanel reads labels / units / the source tab from the
+// SAME source of truth — the override table and this drawer never drift.
+export type ScenarioUnit = 'pct' | 'usd' | 'years' | 'number';
+export type ScenarioSourceTab =
+  | 'financials'
+  | 'investment'
+  | 'debt'
+  | 'partnership'
+  | 'market';
+export interface AssumptionMeta {
+  path: string;
+  label: string;
+  unit: ScenarioUnit;
+  group: string;
+  /** The model tab that owns this assumption (the override table's Source →). */
+  source: ScenarioSourceTab;
+  sourceLabel: string;
+  /** Decimal places for pct display (exit cap / rate want 2). */
+  dec?: number;
+}
+export const ASSUMPTION_CATALOG: AssumptionMeta[] = [
+  { path: 'starting_occupancy', label: 'Year-1 Occupancy', unit: 'pct', group: 'Revenue', source: 'financials', sourceLabel: 'Financials' },
+  { path: 'starting_adr', label: 'Year-1 ADR', unit: 'usd', group: 'Revenue', source: 'financials', sourceLabel: 'Financials' },
+  { path: 'revpar_growth', label: 'RevPAR Growth', unit: 'pct', group: 'Revenue', source: 'financials', sourceLabel: 'Financials' },
+  { path: 'adr_growth', label: 'ADR Growth', unit: 'pct', group: 'Revenue', source: 'financials', sourceLabel: 'Financials' },
+  { path: 'occupancy_growth', label: 'Occupancy Growth', unit: 'pct', group: 'Revenue', source: 'financials', sourceLabel: 'Financials' },
+  { path: 'expense_growth', label: 'Expense Growth', unit: 'pct', group: 'Expenses', source: 'financials', sourceLabel: 'Financials' },
+  { path: 'mgmt_fee_pct', label: 'Management Fee', unit: 'pct', group: 'Expenses', source: 'financials', sourceLabel: 'Financials' },
+  { path: 'ffe_reserve_pct', label: 'FF&E Reserve', unit: 'pct', group: 'Expenses', source: 'financials', sourceLabel: 'Financials' },
+  { path: 'purchase_price', label: 'Purchase Price', unit: 'usd', group: 'Acquisition', source: 'investment', sourceLabel: 'Investment' },
+  { path: 'exit_cap_rate', label: 'Exit Cap Rate', unit: 'pct', group: 'Exit', source: 'investment', sourceLabel: 'Investment', dec: 2 },
+  { path: 'hold_years', label: 'Hold Period', unit: 'years', group: 'Exit', source: 'investment', sourceLabel: 'Investment' },
+  { path: 'ltv', label: 'LTV', unit: 'pct', group: 'Debt', source: 'debt', sourceLabel: 'Debt' },
+  { path: 'interest_rate', label: 'Interest Rate', unit: 'pct', group: 'Debt', source: 'debt', sourceLabel: 'Debt', dec: 2 },
+  { path: 'amortization_years', label: 'Amortization (yrs)', unit: 'years', group: 'Debt', source: 'debt', sourceLabel: 'Debt' },
+  { path: 'term_years', label: 'Loan Term (yrs)', unit: 'years', group: 'Debt', source: 'debt', sourceLabel: 'Debt' },
+  { path: 'pref_rate', label: 'Preferred Return', unit: 'pct', group: 'Partnership', source: 'partnership', sourceLabel: 'Partnership' },
 ];
-const CATALOG_BY_PATH = new Map(ASSUMPTION_CATALOG.map((a) => [a.path, a]));
+export const CATALOG_BY_PATH = new Map(ASSUMPTION_CATALOG.map((a) => [a.path, a]));
 const CATALOG_GROUPS = Array.from(new Set(ASSUMPTION_CATALOG.map((a) => a.group)));
 
-function unitFor(path: string): Unit | null {
+export function unitFor(path: string): ScenarioUnit | null {
   return CATALOG_BY_PATH.get(path)?.unit ?? null;
+}
+/** Human label for a field path (falls back to the raw path). */
+export function labelForPath(path: string): string {
+  return CATALOG_BY_PATH.get(path)?.label ?? path;
+}
+/** Format a stored (canonical) value for read-only display, keyed off unit. */
+export function fmtAssumption(path: string, v: unknown): string {
+  if (typeof v !== 'number' || !Number.isFinite(v)) {
+    return v == null || v === '' ? '—' : String(v);
+  }
+  const meta = CATALOG_BY_PATH.get(path);
+  const u = meta?.unit ?? 'number';
+  if (u === 'pct') return `${(v * 100).toFixed(meta?.dec ?? 1)}%`;
+  if (u === 'usd') {
+    return Math.abs(v) >= 1_000_000
+      ? `$${(v / 1_000_000).toFixed(1)}M`
+      : `$${Math.round(v).toLocaleString('en-US')}`;
+  }
+  if (u === 'years') return `${v} yr${Math.abs(v) === 1 ? '' : 's'}`;
+  return String(v);
+}
+/** Change string (scenario − base), keyed off unit: bps / $M / yrs. */
+export function fmtAssumptionChange(
+  path: string,
+  base: number,
+  scenario: number,
+): string {
+  const u = CATALOG_BY_PATH.get(path)?.unit ?? 'number';
+  const diff = scenario - base;
+  const sign = diff >= 0 ? '+' : '−';
+  if (u === 'pct') return `${sign}${Math.abs(diff * 10000).toFixed(0)} bps`;
+  if (u === 'usd') return `${sign}$${Math.abs(diff / 1_000_000).toFixed(1)}M`;
+  if (u === 'years')
+    return `${diff >= 0 ? '+' : ''}${diff} yr${Math.abs(diff) === 1 ? '' : 's'}`;
+  return `${diff >= 0 ? '+' : ''}${diff}`;
 }
 // Stored (canonical) → what the input shows.
 function toDisplay(path: string, stored: unknown): string {
@@ -107,6 +165,13 @@ export default function ScenarioEditor({
   const [rows, setRows] = useState<OverrideRow[]>([]);
   const [saving, setSaving] = useState(false);
   const [running, setRunning] = useState(false);
+  // Pre-save Preview (FON-53 canonical) — projected metric deltas vs Base,
+  // computed by the NON-persisting returns/preview endpoint. Never writes.
+  const [preview, setPreview] = useState<{
+    base: ReturnsPreviewResponse | null;
+    scenario: ReturnsPreviewResponse | null;
+  }>({ base: null, scenario: null });
+  const [previewLoading, setPreviewLoading] = useState(false);
 
   // Reset whenever the editor opens onto a new scenario.
   useEffect(() => {
@@ -137,6 +202,43 @@ export default function ScenarioEditor({
     return () => window.removeEventListener('keydown', onKey);
   }, [open, onClose]);
 
+  // The recognized, numeric override map to preview. Serialized so the effect
+  // only re-runs when the actual values change (not on every keystroke object).
+  const previewKey = useMemo(() => {
+    const o: Record<string, number> = {};
+    for (const r of rows) {
+      const path = r.field_path.trim();
+      if (!path) continue;
+      const val = fromDisplay(path, r.value);
+      if (typeof val === 'number' && Number.isFinite(val)) o[path] = val;
+    }
+    return JSON.stringify(o);
+  }, [rows]);
+
+  // Debounced dual preview: Base (no overrides) + this scenario's overrides.
+  useEffect(() => {
+    if (!open) return;
+    if (!isWorkerConnected()) return;
+    const overrides = JSON.parse(previewKey) as Record<string, number>;
+    const ac = new AbortController();
+    const t = setTimeout(() => {
+      setPreviewLoading(true);
+      Promise.all([
+        api.engines.returnsPreview(dealId, { overrides: {} }, ac.signal),
+        api.engines.returnsPreview(dealId, { overrides }, ac.signal),
+      ])
+        .then(([base, scenario]) => setPreview({ base, scenario }))
+        .catch(() => {
+          /* preview is best-effort; silence aborts / worker gaps */
+        })
+        .finally(() => setPreviewLoading(false));
+    }, 350);
+    return () => {
+      clearTimeout(t);
+      ac.abort();
+    };
+  }, [open, dealId, previewKey]);
+
   if (!open) return null;
 
   const isBase = scenario?.is_base ?? false;
@@ -147,6 +249,8 @@ export default function ScenarioEditor({
       field_path: r.field_path.trim(),
       value: fromDisplay(r.field_path.trim(), r.value),
     }));
+
+  const previewTiles = buildPreviewTiles(preview.base, preview.scenario);
 
   async function handleSave() {
     if (!name.trim()) {
@@ -369,6 +473,98 @@ export default function ScenarioEditor({
               A scenario is these overrides layered on top of the Base case.
             </p>
           </div>
+
+          {/* Pre-save Preview — projected metric deltas vs Base (FON-53). */}
+          <div
+            data-testid="scenario-preview"
+            style={{
+              border: `1px solid ${PV.border}`,
+              borderRadius: 6,
+              padding: '12px 14px',
+              display: 'flex',
+              flexDirection: 'column',
+              gap: 8,
+            }}
+          >
+            <div
+              style={{
+                display: 'flex',
+                justifyContent: 'space-between',
+                alignItems: 'center',
+              }}
+            >
+              <span
+                style={{
+                  fontSize: 10,
+                  fontWeight: 700,
+                  letterSpacing: '.06em',
+                  color: PV.eyebrow,
+                  textTransform: 'uppercase',
+                }}
+              >
+                Preview
+              </span>
+              {previewLoading && (
+                <Loader2
+                  size={12}
+                  className="animate-spin"
+                  style={{ color: PV.muted }}
+                  aria-hidden="true"
+                />
+              )}
+            </div>
+            <div
+              style={{
+                display: 'grid',
+                gridTemplateColumns: 'repeat(3,1fr)',
+                gap: 10,
+              }}
+            >
+              {previewTiles.map((t) => (
+                <div
+                  key={t.label}
+                  style={{ display: 'flex', flexDirection: 'column', gap: 2 }}
+                >
+                  <span
+                    style={{
+                      fontSize: 10,
+                      fontWeight: 700,
+                      letterSpacing: '.04em',
+                      color: PV.eyebrow,
+                      textTransform: 'uppercase',
+                    }}
+                  >
+                    {t.label}
+                  </span>
+                  <span
+                    style={{
+                      fontSize: 17,
+                      fontWeight: 700,
+                      color: PV.ink,
+                      fontVariantNumeric: 'tabular-nums',
+                    }}
+                  >
+                    {t.value}
+                  </span>
+                  <span
+                    style={{
+                      fontSize: 10.5,
+                      color: t.color,
+                      fontVariantNumeric: 'tabular-nums',
+                    }}
+                  >
+                    {t.delta || ' '}
+                  </span>
+                </div>
+              ))}
+            </div>
+            <span
+              style={{ fontSize: 10.5, color: PV.muted, lineHeight: 1.5 }}
+            >
+              Projected live from the model — returns drivers (exit cap, growth,
+              hold, LTV, rate) move the preview; other overrides apply on Save.
+            </span>
+          </div>
         </div>
 
         <div className="flex items-center justify-between gap-2 px-4 py-3 border-t border-border bg-surface-muted">
@@ -411,6 +607,51 @@ export default function ScenarioEditor({
       </aside>
     </>
   );
+}
+
+// Canonical Preview palette (Scenarios Tab.dc.html).
+const PV = {
+  border: '#e6e5e0',
+  eyebrow: '#8a8a86',
+  ink: '#1a2233',
+  muted: '#b0afaa',
+  green: 'oklch(45% 0.12 155)',
+  red: 'oklch(50% 0.15 30)',
+} as const;
+
+interface PreviewTile {
+  label: string;
+  value: string;
+  delta: string;
+  color: string;
+}
+
+function buildPreviewTiles(
+  base: ReturnsPreviewResponse | null,
+  scenario: ReturnsPreviewResponse | null,
+): PreviewTile[] {
+  const tile = (
+    label: string,
+    bv: number | null | undefined,
+    sv: number | null | undefined,
+    kind: 'pct' | 'mult',
+  ): PreviewTile => {
+    if (sv == null) return { label, value: '—', delta: '', color: PV.muted };
+    const value = kind === 'mult' ? `${sv.toFixed(2)}x` : `${(sv * 100).toFixed(1)}%`;
+    if (bv == null) return { label, value, delta: '', color: PV.muted };
+    const diff = sv - bv;
+    const delta =
+      kind === 'mult'
+        ? `${diff >= 0 ? '+' : ''}${diff.toFixed(2)}x vs Base`
+        : `${diff >= 0 ? '+' : ''}${(diff * 100).toFixed(1)} pts vs Base`;
+    const color = Math.abs(diff) < 1e-9 ? PV.muted : diff >= 0 ? PV.green : PV.red;
+    return { label, value, delta, color };
+  };
+  return [
+    tile('Levered IRR', base?.levered_irr, scenario?.levered_irr, 'pct'),
+    tile('Equity Multiple', base?.equity_multiple, scenario?.equity_multiple, 'mult'),
+    tile('Year-1 CoC', base?.year_one_coc, scenario?.year_one_coc, 'pct'),
+  ];
 }
 
 function stringifyValue(v: unknown): string {

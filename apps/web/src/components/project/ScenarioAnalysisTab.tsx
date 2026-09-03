@@ -87,16 +87,19 @@ export default function ScenarioAnalysisTab({ dealId }: { dealId: string }) {
 
   if (matrices.length === 0 || !selected) {
     return (
-      <Card className="p-8 text-center">
-        <div className="w-12 h-12 mx-auto rounded-lg bg-brand-50 flex items-center justify-center mb-3">
-          <Grid3x3 size={20} className="text-brand-500" />
-        </div>
-        <h3 className="text-[14px] font-semibold text-ink-900 mb-1">Scenario analysis not computed</h3>
-        <p className="text-[12.5px] text-ink-500 max-w-md mx-auto leading-relaxed">
-          Run the underwriting engines on this deal and the sensitivity grids populate here —
-          Levered IRR and Equity Multiple flexed across exit cap, RevPAR growth, and entry basis.
-        </p>
-      </Card>
+      <div className="space-y-4">
+        <ScenarioIntroCard />
+        <Card className="p-8 text-center">
+          <div className="w-12 h-12 mx-auto rounded-lg bg-brand-50 flex items-center justify-center mb-3">
+            <Grid3x3 size={20} className="text-brand-500" />
+          </div>
+          <h3 className="text-[14px] font-semibold text-ink-900 mb-1">Scenario analysis not computed</h3>
+          <p className="text-[12.5px] text-ink-500 max-w-md mx-auto leading-relaxed">
+            Run the underwriting engines on this deal and the sensitivity grids populate here —
+            Levered IRR and Equity Multiple flexed across exit cap, RevPAR growth, and entry basis.
+          </p>
+        </Card>
+      </div>
     );
   }
 
@@ -108,14 +111,17 @@ export default function ScenarioAnalysisTab({ dealId }: { dealId: string }) {
     selected.cells.find((x) => x.row_value === r && x.col_value === c) ?? null;
 
   return (
-    <div className="space-y-5">
+    <div className="space-y-4">
+      <ScenarioIntroCard />
       <Card className="p-5">
         <div className="flex flex-wrap items-center justify-between gap-3 mb-1">
           <div>
-            <h2 className="text-[15px] font-semibold text-ink-900">Scenario Analysis</h2>
-            <p className="text-[12.5px] text-ink-500 mt-0.5">
-              How sensitive is this deal to its key underwriting assumptions? Pick a sensitivity;
-              the base case is outlined.
+            <span className="block text-[11px] font-bold uppercase tracking-[0.06em] text-ink-500">
+              Sensitivity analysis — two-variable stress testing
+            </span>
+            <p className="text-[12px] text-ink-500 mt-1">
+              How sensitive is this deal to its key underwriting assumptions? Pick a pairing;
+              the Base Case cell is outlined.
             </p>
           </div>
           {/* Sensitivity selector */}
@@ -213,11 +219,29 @@ export default function ScenarioAnalysisTab({ dealId }: { dealId: string }) {
         </div>
 
         <p className="text-[11px] text-ink-400 mt-3 leading-relaxed">
-          Grids are computed live by the sensitivity engine, which re-runs the underwriting model
-          across each cell — including the Debt engine for the loan-amount × rate grids.
-          Partner-distribution (WDP) sensitivities are coming next.
+          Each cell re-runs the full underwriting model — operating, financing, exit and equity —
+          holding every other Base assumption constant. Nothing here changes the canonical underwriting.
         </p>
       </Card>
     </div>
+  );
+}
+
+/**
+ * Canonical intro card (Scenarios Tab.dc.html) — the tab's title + one-line
+ * framing. The Base-is-canonical rule lives in the copy: comparisons never
+ * change the Base Case.
+ */
+function ScenarioIntroCard() {
+  return (
+    <Card className="px-4 py-3">
+      <div className="flex flex-col gap-1">
+        <span className="text-[13.5px] font-bold text-ink-900">Scenario Analysis</span>
+        <span className="text-[12.5px] text-ink-600 leading-relaxed max-w-[960px]">
+          Stress-test the deal across key assumptions or compare named underwriting
+          scenarios — without changing the Base Case.
+        </span>
+      </div>
+    </Card>
   );
 }

@@ -1,11 +1,12 @@
 'use client';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import type { CSSProperties } from 'react';
 import { useParams, useRouter, useSearchParams } from 'next/navigation';
 import {
   UploadCloud, FileText, FileSpreadsheet,
   CheckCircle2, Loader2, Circle, AlertTriangle, ArrowRight,
   ClipboardList, Sparkles, Wallet, Receipt, Banknote, TrendingUp, Coins, Users2,
-  Search, X as CloseIcon, Star,
+  Search, X as CloseIcon, Star, Filter,
 } from 'lucide-react';
 import { Card } from '@/components/ui/Card';
 import { Button } from '@/components/ui/Button';
@@ -31,6 +32,7 @@ import { useToast } from '@/components/ui/Toast';
 import { useCurrentRole } from '@/lib/auth';
 import { cn } from '@/lib/format';
 import { humanizeFieldName } from '@/lib/fieldLabels';
+import { ProvenanceDot, SectionCard, palette, radius } from '@/components/design';
 import { CoachMark } from '@/components/help/CoachMark';
 import { UsaliBadge } from './validation/UsaliBadge';
 import { UsaliDeviationsAccordion } from './validation/UsaliDeviationsAccordion';
@@ -507,21 +509,16 @@ export default function DataRoomTab({ projectId }: { projectId: number | string 
     return [];
   }, [liveMode, documents, extractions]);
 
-  // Deep-link a reviewed field to the screen where its data is seeded/used —
-  // with an optional focus field so the destination can highlight it.
-  const goToScreen = useCallback(
-    (tab: string, focus?: string) => {
-      let q = tab === 'pl' ? '?tab=pl&fin=historicals' : `?tab=${tab}`;
-      if (focus) q += `&focus=${encodeURIComponent(focus)}`;
-      router.push(`/projects/${rawId}${q}`, { scroll: false });
-    },
-    [router, rawId],
-  );
-
   const reviewDocRow = useMemo(
     () => docs.find((d) => d.id === reviewDocId) ?? null,
     [docs, reviewDocId],
   );
+
+  // Coverage vs. inline detail-review sub-view (canonical Data Room v2
+  // `isDetailView`). Selecting a non-financial document (reviewDocId) swaps the
+  // coverage list for the inline field-review table; clearing it returns to
+  // coverage. Financial statements still deep-link to the Financials tab.
+  const view: 'coverage' | 'detail' = reviewDocRow ? 'detail' : 'coverage';
 
   // Build the required-doc checklist by intersecting our canonical 10-item
   // list against the live `documents` array's doc_type values. An item
@@ -842,6 +839,32 @@ export default function DataRoomTab({ projectId }: { projectId: number | string 
         className="hidden"
       />
 
+      {/* Intro card — Data Room title + one-line purpose. Stays visible above
+          both the coverage list and the inline field-review (canonical Data
+          Room v2 keeps this and the Data Key strip across both sub-views). */}
+      <div
+        style={{
+          background: palette.cardWhite,
+          border: `1px solid ${palette.border}`,
+          borderRadius: radius.card,
+          padding: '12px 16px',
+          display: 'flex',
+          flexDirection: 'column',
+          gap: 3,
+        }}
+      >
+        <span style={{ fontSize: 13.5, fontWeight: 700, color: palette.ink }}>Data Room</span>
+        <span
+          style={{ fontSize: 12.5, color: palette.textSecondary, lineHeight: 1.55, maxWidth: 960 }}
+        >
+          Every diligence document for this deal, what Fondok extracted from each one, and what is
+          still missing. Confirm classifications here, then validate any statement’s extracted data
+          in Financials.
+        </span>
+      </div>
+
+      {view === 'coverage' && (
+        <>
       {/* Route financial-data validation to the Financials tab's guided
           Review (source doc + line for each flagged value). */}
       {liveMode && flaggedFinancialCount > 0 && (
@@ -1069,13 +1092,27 @@ export default function DataRoomTab({ projectId }: { projectId: number | string 
           onReclassify={handleReclassify}
           onOpenDoc={(docId, financial) => {
             // Sam QA 8/21: Financial Statements' "View data" jumps straight to
-            // the Financials tab (where their data lands); other documents open
-            // a dedicated document-detail screen.
+            // the Financials tab (where their data lands). Other documents open
+            // the inline field-review in place (canonical Data Room v2
+            // `isDetailView`) — the /documents/[docId] route still works if a
+            // deep-link lands on it directly, we just no longer hop to it.
             if (financial) {
               router.push(`/projects/${rawId}?tab=pl&fin=historicals`, { scroll: false });
             } else {
-              router.push(`/projects/${rawId}/documents/${docId}`, { scroll: false });
+              setReviewDocId(docId);
             }
+          }}
+          onOpenInNewTab={(docId) => {
+            const u = api.documents.downloadUrl(rawId, docId);
+            if (u) window.open(u, '_blank', 'noopener,noreferrer');
+          }}
+          onDownload={(docId) => {
+            const u = api.documents.downloadUrl(rawId, docId);
+            if (!u) return;
+            const a = document.createElement('a');
+            a.href = u;
+            a.rel = 'noopener';
+            a.click();
           }}
           busyDocId={reclassifyingDoc}
         />
@@ -1183,13 +1220,15 @@ export default function DataRoomTab({ projectId }: { projectId: number | string 
         )}
       </div>
 
-      {reviewDocRow && (
-        <DocumentReviewDrawer
+        </>
+      )}
+
+      {view === 'detail' && reviewDocRow && (
+        <InlineDocumentReview
           doc={reviewDocRow}
           liveMode={liveMode}
           highlightField={highlightField}
-          onClose={() => setReviewDocId(null)}
-          onGoTo={(t, focus) => { setReviewDocId(null); goToScreen(t, focus); }}
+          onBack={() => { setReviewDocId(null); setHighlightField(null); }}
           onReview={handleReviewField}
         />
       )}
@@ -1197,261 +1236,577 @@ export default function DataRoomTab({ projectId }: { projectId: number | string 
   );
 }
 
-// Focused, in-place field review — opens as a right-side drawer from "View
-// data" so the analyst reviews a document AND jumps to where each field is used,
-// without scrolling to a distant section. Reuses DataRow (accept/edit + the
-// per-field "→ Screen" deep-link).
-function DocumentReviewDrawer({
-  doc, liveMode, highlightField, onClose, onGoTo, onReview,
+// ── Inline document review — canonical Data Room v2 `isDetailView` ─────────
+// Replaces the old right-side field drawer with the full-width, section-grouped
+// field table the design specifies: filter pills (All / Needs Review /
+// Reviewed), a Confidence + Section facet dropdown, a per-field plain-language
+// "why flagged" reason, colored confidence pills, and inline Accept / Edit with
+// ✓ Verified / ✎ Edited markers. Extraction values, the accept/edit action and
+// the refetch are the SAME production wiring the drawer used
+// (api.documents.reviewField via `onReview`, refetched upstream).
+
+// Section = the schema prefix before the first dot, mapped to a business label.
+const SECTION_LABELS: Record<string, string> = {
+  property_overview: 'Property Overview',
+  ttm_summary_per_om: 'TTM Summary',
+  ttm_performance: 'TTM Performance',
+  p_and_l_usali: 'P&L (USALI)',
+  fb_operations: 'F&B Operations',
+  parking_operations: 'Parking Operations',
+  in_place_debt: 'In-Place Debt',
+  transaction_comps: 'Transaction Comps',
+  comparable_sales: 'Comparable Sales',
+  market_overview: 'Market Overview',
+  broker_proforma: 'Broker Pro Forma',
+  asking_price: 'Pricing',
+  capex: 'Capital Plan',
+  capital_plan: 'Capital Plan',
+};
+
+function sectionLabelFor(fieldName: string): string {
+  if (!fieldName) return 'Extracted Fields';
+  const top = fieldName.includes('.') ? fieldName.split('.')[0].toLowerCase() : '';
+  if (!top) return 'Extracted Fields';
+  return SECTION_LABELS[top] ?? humanizeFieldName(top);
+}
+
+// The three confidence bands the design tints (green ≥90, amber ≥80, red <80).
+function confStyle(conf: number): { color: string; bg: string } {
+  if (conf >= 90) return { color: 'oklch(45% 0.12 155)', bg: 'oklch(56% 0.12 155 / .12)' };
+  if (conf >= 80) return { color: 'oklch(50% 0.12 55)', bg: 'oklch(56% 0.1 55 / .12)' };
+  return { color: 'oklch(50% 0.14 40)', bg: 'oklch(56% 0.12 40 / .12)' };
+}
+
+// Plain-language "why is this flagged" line. Production extraction carries no
+// free-text reason, so we synthesize one from the signal we do have — the
+// confidence band + the source page the analyst can verify against.
+function reviewReasonFor(conf: number, sourcePage: number | null | undefined): string {
+  const where = sourcePage != null && sourcePage > 0 ? ` (source p.${sourcePage})` : '';
+  if (conf < 70) {
+    return `Low extraction confidence (${conf}%) — the source is ambiguous; verify against the document${where}.`;
+  }
+  return `Below the review threshold (${conf}%) — confirm this value against the source document${where}.`;
+}
+
+// Needs-review gate — the 85% threshold used across the app, so the per-doc
+// "N to review" counts reconcile with the coverage card.
+const REVIEW_THRESHOLD = 85;
+
+type ReviewField = {
+  key: string;
+  fieldName: string;
+  label: string;
+  value: string;
+  conf: number;
+  reviewed: string | null;
+  resolved: boolean;
+  needsReview: boolean;
+  sourcePage: number | null;
+};
+
+function InlineDocumentReview({
+  doc,
+  liveMode,
+  highlightField,
+  onBack,
+  onReview,
 }: {
   doc: { id: string; name: string; type: string; confidence: number; fieldList?: ExtractionField[] };
   liveMode: boolean;
   highlightField?: string | null;
-  onClose: () => void;
-  onGoTo: (tab: string, focus?: string) => void;
-  onReview: (docId: string, fieldName: string, action: 'accept' | 'edit' | 'reject', value?: string) => Promise<void>;
+  onBack: () => void;
+  onReview: (
+    docId: string,
+    fieldName: string,
+    action: 'accept' | 'edit' | 'reject',
+    value?: string,
+  ) => Promise<void>;
 }) {
-  const fields = doc.fieldList ?? [];
-  // Needs-review first (low-confidence, unreviewed), then by confidence asc.
-  const sorted = useMemo(
-    () => [...fields].sort((a, b) => (a.confidence ?? 1) - (b.confidence ?? 1)),
-    [fields],
-  );
-  const low = fields.filter((f) => (f.confidence ?? 1) < 0.85 && !f.reviewed).length;
-  // Distinct screens this document feeds — a multi-destination doc (the OM)
-  // can jump to any of them directly, not just per-field.
-  const dests = useMemo(() => {
-    const ORDER = ['overview', 'investment', 'pl', 'debt', 'cash-flow', 'returns', 'market', 'forecasting'];
-    const seen = new Map<string, { tab: string; label: string }>();
-    for (const f of fields) {
-      const d = fieldDestination(f.field_name);
-      if (d && !seen.has(d.tab)) seen.set(d.tab, d);
-    }
-    // A financial statement doesn't only feed Financials — its NOI / GOP drive
-    // Cash Flow, Returns, Debt (DSCR) and the Overview KPIs. Surface that reach.
-    const dt = (doc.type ?? '').toUpperCase();
-    if (['T12', 'PNL', 'PNL_MONTHLY', 'PNL_YTD'].includes(dt)) {
-      for (const d of [
-        { tab: 'pl', label: 'Financials' },
-        { tab: 'overview', label: 'Overview' },
-        { tab: 'cash-flow', label: 'Cash Flow' },
-        { tab: 'returns', label: 'Returns' },
-        { tab: 'debt', label: 'Debt' },
-      ]) if (!seen.has(d.tab)) seen.set(d.tab, d);
-    }
-    return [...seen.values()].sort((a, b) => ORDER.indexOf(a.tab) - ORDER.indexOf(b.tab));
-  }, [fields, doc.type]);
+  const [pill, setPill] = useState<'all' | 'review' | 'reviewed'>('all');
+  const [q, setQ] = useState('');
+  const [confFacet, setConfFacet] = useState<'all' | 'lt90' | 'mid' | 'high'>('all');
+  const [sectionFacet, setSectionFacet] = useState<string>('all');
+  const [filterOpen, setFilterOpen] = useState(false);
 
-  // The document's dominant per-field destination. A field only shows its
-  // "→ Screen" chip when it DIFFERS from this, so a P&L (every field →
-  // Financials) isn't a wall of identical chips, while the OM still flags the
-  // fields that land somewhere unexpected. The top "Feeds these screens" row
-  // carries the always-visible navigation.
-  const dominantTab = useMemo(() => {
-    const tally = new Map<string, number>();
+  const fields = doc.fieldList ?? [];
+
+  // Group extracted fields under section labels, in first-appearance (schema)
+  // order so the table reads like the document.
+  const sections = useMemo(() => {
+    const order: string[] = [];
+    const map = new Map<string, ReviewField[]>();
     for (const f of fields) {
-      const d = fieldDestination(f.field_name);
-      if (d) tally.set(d.tab, (tally.get(d.tab) ?? 0) + 1);
+      const label = sectionLabelFor(f.field_name);
+      if (!map.has(label)) {
+        map.set(label, []);
+        order.push(label);
+      }
+      const conf = Math.round((f.confidence ?? 0) * 100);
+      const reviewed = f.reviewed ?? null;
+      const resolved = reviewed === 'verified' || reviewed === 'edited' || reviewed === 'accepted';
+      map.get(label)!.push({
+        key: f.field_name,
+        fieldName: f.field_name,
+        label: humanizeFieldName(f.field_name),
+        value: formatValue(f.value, f.unit, f.field_name),
+        conf,
+        reviewed,
+        resolved,
+        needsReview: !resolved && conf < REVIEW_THRESHOLD,
+        sourcePage: f.source_page ?? null,
+      });
     }
-    let best: string | null = null;
-    let max = 0;
-    for (const [tab, n] of tally) if (n > max) { max = n; best = tab; }
-    return best;
+    return order.map((label) => ({ label, fields: map.get(label)! }));
   }, [fields]);
 
-  // Search across all extracted fields (label, raw path, or value) — a doc can
-  // carry hundreds of fields, so jumping to "insurance" / "mgmt fee" / a number
-  // matters.
-  const [q, setQ] = useState('');
+  const sectionNames = useMemo(() => sections.map((s) => s.label), [sections]);
+  const fieldTotal = fields.length;
+  const reviewTotal = useMemo(
+    () => sections.reduce((a, s) => a + s.fields.filter((f) => f.needsReview).length, 0),
+    [sections],
+  );
+
   const query = q.trim().toLowerCase();
-  const visible = useMemo(() => {
-    if (!query) return sorted;
-    return sorted.filter((f) => (
-      humanizeFieldName(f.field_name).toLowerCase().includes(query) ||
-      (f.field_name ?? '').toLowerCase().includes(query) ||
-      String(formatValue(f.value, f.unit, f.field_name)).toLowerCase().includes(query)
-    ));
-  }, [sorted, query]);
+  const matchesConf = (conf: number) =>
+    confFacet === 'all' ||
+    (confFacet === 'lt90'
+      ? conf < 90
+      : confFacet === 'mid'
+        ? conf >= 90 && conf < 95
+        : conf >= 95);
+
+  const visibleSections = useMemo(
+    () =>
+      sections
+        .map((sec) => ({
+          label: sec.label,
+          fields: sec.fields.filter((f) => {
+            const matchesSearch =
+              !query ||
+              [f.label, f.value, sec.label].some((t) => String(t).toLowerCase().includes(query));
+            const matchesPill =
+              pill === 'all' || (pill === 'review' ? f.needsReview : !f.needsReview);
+            const matchesSection = sectionFacet === 'all' || sectionFacet === sec.label;
+            return matchesSearch && matchesPill && matchesConf(f.conf) && matchesSection;
+          }),
+        }))
+        .filter((sec) => sec.fields.length > 0),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [sections, query, pill, confFacet, sectionFacet],
+  );
+
+  const shownTotal = visibleSections.reduce((a, s) => a + s.fields.length, 0);
+  const hasFilters = pill !== 'all' || !!query || confFacet !== 'all' || sectionFacet !== 'all';
+  const clearFilters = () => {
+    setPill('all');
+    setQ('');
+    setConfFacet('all');
+    setSectionFacet('all');
+    setFilterOpen(false);
+  };
+
+  const pillDefs = [
+    { id: 'all' as const, label: 'All', n: fieldTotal, dot: false },
+    { id: 'review' as const, label: 'Needs Review', n: reviewTotal, dot: true },
+    { id: 'reviewed' as const, label: 'Reviewed', n: fieldTotal - reviewTotal, dot: false },
+  ];
+  const confFacetOptions = [
+    { id: 'all' as const, label: 'All confidence' },
+    { id: 'lt90' as const, label: 'Below 90%' },
+    { id: 'mid' as const, label: '90–95%' },
+    { id: 'high' as const, label: '95% and above' },
+  ];
+  const resultLabel =
+    'Showing ' +
+    shownTotal +
+    ' of ' +
+    (pill === 'review'
+      ? reviewTotal + ' review items'
+      : pill === 'reviewed'
+        ? fieldTotal - reviewTotal + ' reviewed fields'
+        : fieldTotal + ' fields');
+
+  const gridCols = '1fr 200px 110px 150px';
+  const headCell = (extra?: CSSProperties): CSSProperties => ({
+    padding: '9px 16px',
+    fontSize: 11,
+    fontWeight: 600,
+    color: palette.gridHeaderText,
+    textAlign: 'right',
+    ...extra,
+  });
 
   return (
-    <div className="fixed inset-0 z-50 flex justify-end" onClick={onClose}>
-      <div className="absolute inset-0 bg-ink-900/25" />
-      <div
-        className="relative w-full max-w-[540px] h-full bg-card border-l border-border shadow-xl overflow-y-auto"
-        onClick={(e) => e.stopPropagation()}
-      >
-        <div className="sticky top-0 z-10 bg-card border-b border-border px-5 py-4 flex items-start justify-between">
-          <div className="min-w-0">
-            <div className="text-[10.5px] uppercase tracking-wider text-ink-500">Field review</div>
-            <h4 className="text-[14px] font-semibold text-ink-900 truncate" title={doc.name}>{doc.name}</h4>
-            <div className="flex items-center gap-2 mt-1 text-[11px] text-ink-500">
-              <Badge tone="gray">{DOC_TYPE_LABEL[doc.type] ?? doc.type}</Badge>
-              <span className="tabular-nums">{fields.length} fields</span>
-              {low > 0 && <span className="text-warn-700 tabular-nums">· {low} to review</span>}
-            </div>
-          </div>
-          <button type="button" onClick={onClose} aria-label="Close" className="p-1 text-ink-400 hover:text-ink-900">
-            <CloseIcon size={16} />
-          </button>
-        </div>
-        {dests.length > 0 && (
-          <div className="px-5 py-3 border-b border-border">
-            <div className="text-[10px] uppercase tracking-wider text-ink-500 mb-1.5">Feeds these screens</div>
-            <div className="flex flex-wrap gap-1.5">
-              {dests.map((d) => (
-                <button
-                  key={d.tab}
-                  type="button"
-                  onClick={() => onGoTo(d.tab)}
-                  className="text-[11px] px-2.5 py-1 rounded-full border border-border text-ink-700 hover:border-brand-500 hover:text-brand-700 transition-colors inline-flex items-center gap-1"
-                >
-                  {d.label} <ArrowRight size={11} />
-                </button>
-              ))}
-            </div>
-          </div>
-        )}
-        <div className="px-5 py-2.5 border-b border-border bg-card sticky top-0 z-[5]">
-          <div className="relative">
-            <Search size={13} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-ink-400 pointer-events-none" aria-hidden="true" />
-            <input
-              type="text"
-              value={q}
-              onChange={(e) => setQ(e.target.value)}
-              placeholder="Search fields — e.g. insurance, mgmt fee, 88,150"
-              aria-label="Search extracted fields"
-              className="w-full text-[11.5px] rounded-md border border-border bg-card pl-8 pr-8 py-1.5 text-ink-900 placeholder:text-ink-400 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-500"
-            />
-            {q && (
-              <button type="button" onClick={() => setQ('')} aria-label="Clear search" className="absolute right-2 top-1/2 -translate-y-1/2 text-ink-400 hover:text-ink-700">
-                <CloseIcon size={13} />
-              </button>
-            )}
-          </div>
-          <div className="text-[10.5px] text-ink-500 mt-1.5">
-            {query
-              ? `${visible.length} result${visible.length === 1 ? '' : 's'} for “${q.trim()}”`
-              : <>Click any field’s <span className="text-brand-700 font-medium">→</span> to jump to exactly where it’s used.</>}
-          </div>
-        </div>
-        <div className="px-5 pb-6">
-          {!liveMode ? (
-            <div className="text-[11.5px] text-ink-500 py-6 text-center">Field review is available on live deals.</div>
-          ) : visible.length === 0 ? (
-            <div className="text-[11.5px] text-ink-500 py-6 text-center">
-              {query ? `No fields match “${q.trim()}”.` : 'No extracted fields on this document.'}
-            </div>
-          ) : (
-            visible.map((f) => (
-              <DataRow
-                key={f.field_name}
-                label={humanizeFieldName(f.field_name)}
-                value={formatValue(f.value, f.unit, f.field_name)}
-                confidence={Math.round((f.confidence ?? 0) * 100)}
-                rawLabel={f.field_name}
-                reviewed={f.reviewed ?? null}
-                snippet={f.raw_text ?? null}
-                sourcePage={f.source_page ?? null}
-                highlight={highlightField != null && f.field_name === highlightField}
-                destination={fieldDestination(f.field_name)}
-                dominantTab={dominantTab}
-                onGoTo={onGoTo}
-                onReview={(action, value) => onReview(doc.id, f.field_name, action, value)}
-              />
-            ))
-          )}
+    <div>
+      {/* Back + document name */}
+      <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 6 }}>
+        <button
+          type="button"
+          onClick={onBack}
+          style={{
+            background: '#fff',
+            border: `1px solid ${palette.disabledBorder}`,
+            color: palette.hoverInk,
+            borderRadius: 6,
+            padding: '6px 12px',
+            fontSize: 12,
+            fontWeight: 600,
+            cursor: 'pointer',
+          }}
+        >
+          ← Back
+        </button>
+        <div style={{ fontSize: 15, fontWeight: 700, color: palette.ink }} title={doc.name}>
+          {doc.name}
         </div>
       </div>
+
+      {/* Fields extracted · confidence · needs-review */}
+      <div style={{ fontSize: 12.5, color: palette.eyebrow, margin: '2px 0 14px' }}>
+        {fieldTotal} fields extracted ·{' '}
+        <span style={{ color: confStyle(doc.confidence).color, fontWeight: 600 }}>
+          {doc.confidence}% confidence
+        </span>
+        {' · '}
+        <span
+          role="button"
+          tabIndex={0}
+          onClick={() => setPill('review')}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter' || e.key === ' ') setPill('review');
+          }}
+          style={{
+            color: reviewTotal ? 'oklch(50% 0.14 40)' : palette.eyebrow,
+            fontWeight: 600,
+            cursor: 'pointer',
+          }}
+        >
+          {reviewTotal} need review
+        </span>
+      </div>
+
+      {/* Filter pills + search + facet dropdown */}
+      <div
+        style={{
+          display: 'flex',
+          alignItems: 'center',
+          gap: 10,
+          flexWrap: 'wrap',
+          marginBottom: 10,
+          position: 'relative',
+        }}
+      >
+        {pillDefs.map((p) => {
+          const active = pill === p.id;
+          return (
+            <button
+              key={p.id}
+              type="button"
+              onClick={() => setPill(p.id)}
+              aria-pressed={active}
+              style={{
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: 7,
+                fontFamily: 'inherit',
+                fontSize: 12,
+                fontWeight: 600,
+                padding: '6px 12px',
+                borderRadius: 6,
+                border: active ? `1px solid ${palette.inkNavy}` : `1px solid ${palette.disabledBorder}`,
+                background: active ? palette.inkNavy : '#fff',
+                color: active ? '#fff' : palette.hoverInk,
+                cursor: 'pointer',
+                whiteSpace: 'nowrap',
+              }}
+            >
+              {p.dot && (
+                <span
+                  style={{
+                    width: 7,
+                    height: 7,
+                    borderRadius: '50%',
+                    background: 'oklch(50% 0.14 40)',
+                    display: 'inline-block',
+                    flexShrink: 0,
+                  }}
+                />
+              )}
+              {p.label}
+              <span style={{ color: active ? '#9fb2df' : palette.textMuted, fontWeight: 600 }}>
+                {p.n}
+              </span>
+            </button>
+          );
+        })}
+        <span style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 8 }}>
+          <span
+            style={{
+              display: 'inline-flex',
+              alignItems: 'center',
+              gap: 7,
+              border: `1px solid ${palette.disabledBorder}`,
+              background: '#fff',
+              borderRadius: 6,
+              padding: '6px 10px',
+              width: 300,
+              maxWidth: '60vw',
+            }}
+          >
+            <Search size={13} style={{ flexShrink: 0, color: palette.textMuted }} aria-hidden="true" />
+            <input
+              value={q}
+              onChange={(e) => setQ(e.target.value)}
+              placeholder="Search fields or values…"
+              aria-label="Search extracted fields"
+              style={{
+                border: 'none',
+                outline: 'none',
+                fontFamily: 'inherit',
+                fontSize: 12.5,
+                color: palette.ink,
+                width: '100%',
+                background: 'transparent',
+              }}
+            />
+          </span>
+          <span style={{ position: 'relative', display: 'inline-flex' }}>
+            <button
+              type="button"
+              onClick={() => setFilterOpen((o) => !o)}
+              title="Filter"
+              aria-haspopup="menu"
+              aria-expanded={filterOpen}
+              style={{
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: 6,
+                fontFamily: 'inherit',
+                fontSize: 12,
+                fontWeight: 600,
+                color: palette.hoverInk,
+                background: confFacet !== 'all' || sectionFacet !== 'all' ? '#eef2fb' : '#fff',
+                border: `1px solid ${palette.disabledBorder}`,
+                borderRadius: 6,
+                padding: '6px 11px',
+                cursor: 'pointer',
+              }}
+            >
+              <Filter size={13} aria-hidden="true" /> Filter
+            </button>
+            {filterOpen && (
+              <div
+                role="menu"
+                style={{
+                  position: 'absolute',
+                  top: 'calc(100% + 6px)',
+                  right: 0,
+                  zIndex: 30,
+                  background: '#fff',
+                  border: `1px solid ${palette.disabledBorder}`,
+                  borderRadius: 8,
+                  boxShadow: '0 10px 26px rgba(0,0,0,.12)',
+                  padding: 10,
+                  width: 240,
+                  display: 'flex',
+                  flexDirection: 'column',
+                  gap: 8,
+                }}
+              >
+                <div
+                  style={{
+                    fontSize: 9.5,
+                    fontWeight: 700,
+                    letterSpacing: '.07em',
+                    color: palette.textFaint,
+                    textTransform: 'uppercase',
+                  }}
+                >
+                  Confidence
+                </div>
+                {confFacetOptions.map((o) => (
+                  <div
+                    key={o.id}
+                    role="menuitemradio"
+                    aria-checked={confFacet === o.id}
+                    onClick={() => setConfFacet(o.id)}
+                    style={{
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: 8,
+                      fontSize: 12.5,
+                      color: palette.ink,
+                      fontWeight: confFacet === o.id ? 600 : 400,
+                      padding: '5px 6px',
+                      borderRadius: 5,
+                      cursor: 'pointer',
+                    }}
+                  >
+                    <span style={{ width: 11 }}>{confFacet === o.id ? '✓' : ''}</span>
+                    {o.label}
+                  </div>
+                ))}
+                <div
+                  style={{
+                    fontSize: 9.5,
+                    fontWeight: 700,
+                    letterSpacing: '.07em',
+                    color: palette.textFaint,
+                    textTransform: 'uppercase',
+                    borderTop: `1px solid ${palette.hairlineSection}`,
+                    paddingTop: 8,
+                  }}
+                >
+                  Section
+                </div>
+                {['all', ...sectionNames].map((name) => (
+                  <div
+                    key={name}
+                    role="menuitemradio"
+                    aria-checked={sectionFacet === name}
+                    onClick={() => setSectionFacet(name)}
+                    style={{
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: 8,
+                      fontSize: 12.5,
+                      color: palette.ink,
+                      fontWeight: sectionFacet === name ? 600 : 400,
+                      padding: '5px 6px',
+                      borderRadius: 5,
+                      cursor: 'pointer',
+                    }}
+                  >
+                    <span style={{ width: 11 }}>{sectionFacet === name ? '✓' : ''}</span>
+                    {name === 'all' ? 'All sections' : name}
+                  </div>
+                ))}
+              </div>
+            )}
+          </span>
+        </span>
+      </div>
+
+      {/* Result count + clear */}
+      <div
+        style={{
+          display: 'flex',
+          alignItems: 'center',
+          gap: 12,
+          marginBottom: 10,
+          fontSize: 11.5,
+          color: palette.textMuted,
+        }}
+      >
+        <span>{resultLabel}</span>
+        {hasFilters && (
+          <span
+            role="button"
+            tabIndex={0}
+            onClick={clearFilters}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter' || e.key === ' ') clearFilters();
+            }}
+            style={{ color: palette.linkBlue, fontWeight: 600, cursor: 'pointer' }}
+          >
+            Clear filters
+          </span>
+        )}
+      </div>
+
+      {/* Section-grouped field table (navy header, per-section subheads) */}
+      <SectionCard variant="title" style={{ boxShadow: '0 1px 2px rgba(0,0,0,.02)' }}>
+        <div style={{ display: 'grid', gridTemplateColumns: gridCols, background: palette.inkNavy }}>
+          <div style={headCell({ textAlign: 'left', padding: '9px 22px' })}>FIELD</div>
+          <div style={headCell()}>EXTRACTED VALUE</div>
+          <div style={headCell()}>CONFIDENCE</div>
+          <div style={headCell()} />
+        </div>
+        {!liveMode ? (
+          <div
+            style={{
+              padding: '26px 22px',
+              fontSize: 12.5,
+              color: palette.textMuted,
+              textAlign: 'center',
+            }}
+          >
+            Field review is available on live deals.
+          </div>
+        ) : shownTotal === 0 ? (
+          <div
+            style={{
+              padding: '26px 22px',
+              fontSize: 12.5,
+              color: palette.textMuted,
+              textAlign: 'center',
+            }}
+          >
+            No fields match these filters.
+          </div>
+        ) : (
+          visibleSections.map((sec) => (
+            <div key={sec.label}>
+              <div
+                style={{
+                  padding: '9px 22px',
+                  background: '#f0f0ee',
+                  borderBottom: '1px solid #d8d7d1',
+                  fontSize: 11,
+                  fontWeight: 700,
+                  color: palette.textSecondary,
+                  textTransform: 'uppercase',
+                  letterSpacing: '.03em',
+                }}
+              >
+                {sec.label}
+              </div>
+              {sec.fields.map((f) => (
+                <ReviewFieldRow
+                  key={f.key}
+                  field={f}
+                  gridCols={gridCols}
+                  highlight={highlightField != null && f.fieldName === highlightField}
+                  onReview={(action, value) => onReview(doc.id, f.fieldName, action, value)}
+                />
+              ))}
+            </div>
+          ))
+        )}
+      </SectionCard>
     </div>
   );
 }
 
-// Map an extracted field to the screen where its data is seeded / used, so the
-// review pane can deep-link any field straight to where it lands — for ANY
-// document type. Prefix-first (authoritative), keyword fallback second.
-function fieldDestination(fieldName?: string): { tab: string; label: string } | null {
-  if (!fieldName) return null;
-  const n = fieldName.toLowerCase();
-  const FIN = { tab: 'pl', label: 'Financials' };
-  // Prefix routing (the field's schema section is the strongest signal).
-  if (n.startsWith('p_and_l_usali') || n.startsWith('fb_operations') || n.startsWith('parking_operations')) return FIN;
-  if (n.startsWith('ttm_performance')) return { tab: 'forecasting', label: 'Forecasting' };
-  if (n.startsWith('in_place_debt')) return { tab: 'debt', label: 'Debt' };
-  if (n.startsWith('transaction_comps') || n.startsWith('comparable_sales') || n.startsWith('market_overview')) return { tab: 'market', label: 'Market' };
-  if (n.startsWith('broker_proforma') || n.startsWith('asking_price')) return { tab: 'investment', label: 'Investment' };
-  if (n.startsWith('property_overview') || n.startsWith('ttm_summary_per_om')) return { tab: 'overview', label: 'Overview' };
-  if (n.startsWith('capex') || n.startsWith('capital_plan')) return { tab: 'investment', label: 'Investment' };
-  // Keyword fallback for flat/legacy field names.
-  if (/(occupancy|adr|revpar|revenue|expense|\bnoi\b|\bgop\b|insurance|property_tax|mgmt|ffe|departmental|undistributed|fixed_charge)/.test(n)) return FIN;
-  if (/(loan|interest_rate|amortization|\bltv\b|debt)/.test(n)) return { tab: 'debt', label: 'Debt' };
-  if (/(cap_rate|comp_|comparable)/.test(n)) return { tab: 'market', label: 'Market' };
-  if (/(purchase|price_per_key|renovation|asking)/.test(n)) return { tab: 'investment', label: 'Investment' };
-  if (/(keys|year_built|chain_scale|brand)/.test(n)) return { tab: 'overview', label: 'Overview' };
-  return null;
-}
-
-// Reformat scientific-notation numbers (4.30618e+06) inside a source snippet
-// into readable, comma-grouped integers so the grounding quote reads like the
-// document, not a machine dump.
-function formatSnippet(s: string): string {
-  return s.replace(/\b\d+(?:\.\d+)?e[+-]?\d+\b/gi, (m) => {
-    const n = Number(m);
-    return Number.isFinite(n) ? Math.round(n).toLocaleString() : m;
-  });
-}
-
-function DataRow({
-  label,
-  value,
-  confidence,
-  rawLabel,
-  reviewed,
-  snippet,
-  sourcePage,
+// A single field row in the inline review table — owns its edit draft + busy
+// state, renders the value / confidence pill / action cell, and scrolls into
+// view when a validation finding deep-links to it (FON-24).
+function ReviewFieldRow({
+  field,
+  gridCols,
   highlight,
   onReview,
-  onViewSource,
-  destination,
-  dominantTab,
-  onGoTo,
 }: {
-  label: string;
-  value: string;
-  confidence: number;
-  rawLabel?: string;
-  reviewed?: string | null;
-  // FON-24: true when a validation finding deep-linked to this field.
+  field: ReviewField;
+  gridCols: string;
   highlight?: boolean;
-  // FON-23: present only for live low-confidence rows. Runs the
-  // accept/edit/reject action and resolves once the refetch lands.
-  onReview?: (action: 'accept' | 'edit' | 'reject', value?: string) => Promise<void>;
-  // FON-23 — opens the source document at this field's page for validation.
-  onViewSource?: () => void;
-  // FON-23 — source snippet + page shown inline on needs-review rows so the
-  // analyst can validate against the document without opening the pane.
-  snippet?: string | null;
-  sourcePage?: number | null;
-  // Where this field's data is seeded/used — deep-link to that screen.
-  destination?: { tab: string; label: string } | null;
-  // Only show this field's "→ Screen" chip when its destination differs from
-  // the document's dominant one (avoids an identical chip on every P&L row).
-  dominantTab?: string | null;
-  onGoTo?: (tab: string, focus?: string) => void;
+  onReview: (action: 'accept' | 'edit' | 'reject', value?: string) => Promise<void>;
 }) {
-  const reviewable = !!onReview && confidence < 85 && !reviewed;
   const [editing, setEditing] = useState(false);
-  const [draft, setDraft] = useState(value);
+  const [draft, setDraft] = useState(field.value);
   const [busy, setBusy] = useState(false);
   const rowRef = useRef<HTMLDivElement>(null);
-  // FON-24: scroll the deep-linked field into view when a finding links here.
+
   useEffect(() => {
     if (highlight && rowRef.current) {
       rowRef.current.scrollIntoView({ behavior: 'smooth', block: 'center' });
     }
   }, [highlight]);
 
+  const c = confStyle(field.conf);
+  const flagged = field.needsReview && !field.resolved;
+
   const act = async (action: 'accept' | 'edit' | 'reject', v?: string) => {
-    if (!onReview) return;
     setBusy(true);
     try {
       await onReview(action, v);
@@ -1461,137 +1816,199 @@ function DataRow({
     }
   };
 
+  const rowBg = highlight ? '#f4f6fb' : flagged ? 'oklch(56% 0.12 40 / .06)' : '#fff';
+  const btnGhost: CSSProperties = {
+    background: '#fff',
+    border: `1px solid ${palette.disabledBorder}`,
+    color: palette.hoverInk,
+    borderRadius: 6,
+    padding: '5px 10px',
+    fontSize: 11.5,
+    fontWeight: 600,
+    cursor: 'pointer',
+    whiteSpace: 'nowrap',
+  };
+
   return (
     <div
       ref={rowRef}
-      className={cn(
-        'py-2.5 border-b border-border last:border-0 transition-colors',
-        highlight && 'bg-brand-50 ring-2 ring-brand-500/40 rounded-md -mx-1.5 px-1.5',
-      )}
+      style={{
+        display: 'grid',
+        gridTemplateColumns: gridCols,
+        borderBottom: `1px solid ${palette.hairlineSection}`,
+        background: rowBg,
+        alignItems: 'center',
+        boxShadow: highlight ? 'inset 2px 0 0 #1a4fa0' : undefined,
+      }}
     >
-      {/* Line 1 — label + value only, so neither gets crowded. */}
-      <div className="flex items-start justify-between gap-3">
-        <span className="text-[12.5px] font-medium text-ink-800 leading-snug" title={rawLabel && rawLabel !== label ? rawLabel : undefined}>
-          {label}
+      <div
+        style={{
+          padding: '11px 22px',
+          fontSize: 13,
+          color: palette.ink,
+          display: 'flex',
+          flexDirection: 'column',
+          gap: 3,
+        }}
+      >
+        <span style={{ display: 'inline-flex', alignItems: 'center', gap: 7 }}>
+          <ProvenanceDot state="document_sourced" review={flagged} size={8} />
+          {field.label}
         </span>
-        <div className="flex items-center gap-1.5 shrink-0">
-          {editing ? (
-            <input
-              autoFocus
-              value={draft}
-              onChange={(e) => setDraft(e.target.value)}
-              className="w-28 text-right font-semibold tabular-nums text-ink-900 border border-brand-500/40 rounded px-1.5 py-0.5 text-[12.5px] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-500"
-              aria-label={`Corrected value for ${label}`}
-            />
-          ) : (
-            <span className="font-semibold tabular-nums text-ink-900 text-[14px] whitespace-nowrap">{value}</span>
-          )}
-          {onViewSource && !editing && (
+        {flagged && (
+          <span style={{ fontSize: 11, color: 'oklch(50% 0.14 40)', lineHeight: 1.45 }}>
+            {reviewReasonFor(field.conf, field.sourcePage)}
+          </span>
+        )}
+      </div>
+
+      {editing ? (
+        <div style={{ padding: '6px 16px', textAlign: 'right' }}>
+          <input
+            autoFocus
+            value={draft}
+            onChange={(e) => setDraft(e.target.value)}
+            aria-label={`Corrected value for ${field.label}`}
+            style={{
+              width: '100%',
+              fontSize: 13,
+              textAlign: 'right',
+              border: `1px solid ${palette.disabledBorder}`,
+              borderRadius: 6,
+              padding: '5px 8px',
+              fontVariantNumeric: 'tabular-nums',
+            }}
+          />
+        </div>
+      ) : (
+        <div
+          style={{
+            padding: '11px 16px',
+            fontSize: 13,
+            color: palette.ink,
+            textAlign: 'right',
+            fontVariantNumeric: 'tabular-nums',
+          }}
+        >
+          {field.value}
+        </div>
+      )}
+
+      <div style={{ padding: '11px 16px', textAlign: 'right' }}>
+        <span
+          style={{
+            fontSize: 11,
+            fontWeight: 600,
+            color: c.color,
+            background: c.bg,
+            padding: '3px 9px',
+            borderRadius: 14,
+          }}
+        >
+          {field.conf}%
+        </span>
+      </div>
+
+      <div
+        style={{
+          padding: '11px 16px',
+          textAlign: 'right',
+          display: 'flex',
+          gap: 6,
+          justifyContent: 'flex-end',
+          alignItems: 'center',
+        }}
+      >
+        {editing ? (
+          <>
             <button
               type="button"
-              onClick={onViewSource}
-              title="View in source document"
-              aria-label={`View ${label} in source document`}
-              className="text-ink-400 hover:text-brand-600 transition-colors p-0.5 -m-0.5 rounded focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-500"
+              disabled={busy}
+              onClick={() => act('edit', draft)}
+              style={{
+                background: palette.inkNavy,
+                color: '#fff',
+                border: 'none',
+                borderRadius: 6,
+                padding: '5px 10px',
+                fontSize: 11.5,
+                fontWeight: 600,
+                cursor: 'pointer',
+              }}
             >
-              <FileText size={12} aria-hidden="true" />
+              Save
             </button>
-          )}
-        </div>
-      </div>
-      {/* Line 2 — meta: where it's used, confidence, review status. */}
-      <div className="flex items-center gap-2 flex-wrap mt-1.5">
-        {destination && onGoTo && destination.tab !== dominantTab && (
+            <button
+              type="button"
+              disabled={busy}
+              onClick={() => {
+                setEditing(false);
+                setDraft(field.value);
+              }}
+              style={btnGhost}
+            >
+              Cancel
+            </button>
+          </>
+        ) : field.resolved ? (
+          field.reviewed === 'edited' ? (
+            <span style={{ fontSize: 11, color: 'oklch(45% 0.1 260)' }}>✎ Edited</span>
+          ) : (
+            <span style={{ fontSize: 11, color: 'oklch(45% 0.12 155)' }}>✓ Verified</span>
+          )
+        ) : flagged ? (
+          <>
+            <button
+              type="button"
+              disabled={busy}
+              onClick={() => act('accept')}
+              title="Accept"
+              style={{
+                background: 'oklch(56% 0.12 155)',
+                color: '#fff',
+                border: 'none',
+                borderRadius: 6,
+                padding: '5px 10px',
+                fontSize: 11.5,
+                fontWeight: 600,
+                cursor: 'pointer',
+                whiteSpace: 'nowrap',
+              }}
+            >
+              Accept
+            </button>
+            <button
+              type="button"
+              disabled={busy}
+              onClick={() => {
+                setDraft(field.value);
+                setEditing(true);
+              }}
+              title="Edit"
+              style={btnGhost}
+            >
+              Edit ✎
+            </button>
+          </>
+        ) : (
           <button
             type="button"
-            onClick={() => onGoTo(destination.tab, rawLabel)}
-            title={`See where this is used — ${destination.label}`}
-            className="text-[10px] px-2 py-0.5 rounded-full border border-border text-brand-700 hover:border-brand-500 hover:text-brand-500 transition-colors inline-flex items-center gap-0.5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-500"
+            disabled={busy}
+            onClick={() => {
+              setDraft(field.value);
+              setEditing(true);
+            }}
+            title="Edit"
+            style={btnGhost}
           >
-            {destination.label} <ArrowRight size={9} aria-hidden="true" />
+            Edit ✎
           </button>
         )}
-        {reviewed ? (
-          <span className="text-[10px] font-medium px-2 py-0.5 rounded-full bg-success-50 text-success-700 border border-success-500/25">
-            {reviewed === 'edited' ? '✓ Edited' : '✓ Verified'}
-          </span>
-        ) : confidence < 85 ? (
-          <span className="text-[10px] font-medium px-2 py-0.5 rounded-full bg-warn-50 text-warn-700 border border-warn-500/25 tabular-nums">
-            Needs review · {confidence}%
-          </span>
-        ) : (
-          <span className="text-[10px] px-2 py-0.5 rounded-full bg-ink-300/10 text-ink-500 tabular-nums">
-            {confidence}%
-          </span>
-        )}
       </div>
-      {/* FON-23: inline accept/edit/reject for Needs-Review fields. */}
-      {reviewable && snippet && !editing && (
-        <div className="mt-1.5 text-[10.5px] text-ink-500 bg-ink-300/10 rounded px-2 py-1 leading-snug">
-          {sourcePage != null && (
-            <span className="font-mono text-ink-700">p.{sourcePage} · </span>
-          )}
-          <span className="italic">
-            &ldquo;{(() => { const s = formatSnippet(snippet); return s.length > 140 ? `${s.slice(0, 140)}…` : s; })()}&rdquo;
-          </span>
-        </div>
-      )}
-      {reviewable && (
-        <div className="flex items-center gap-1 mt-1.5 justify-end">
-          {editing ? (
-            <>
-              <button
-                type="button"
-                disabled={busy}
-                onClick={() => act('edit', draft)}
-                className="text-[10.5px] font-medium px-2.5 py-1 rounded-md bg-brand-600 text-white hover:bg-brand-700 disabled:opacity-50"
-              >
-                Save
-              </button>
-              <button
-                type="button"
-                disabled={busy}
-                onClick={() => { setEditing(false); setDraft(value); }}
-                className="text-[10.5px] font-medium px-2 py-1 rounded-md text-ink-600 hover:bg-ink-100 disabled:opacity-50"
-              >
-                Cancel
-              </button>
-            </>
-          ) : (
-            <>
-              {/* Accept is the primary action → soft filled. Edit / Reject are
-                  quiet ghosts so the value stays the hero, not the buttons. */}
-              <button
-                type="button"
-                disabled={busy}
-                onClick={() => act('accept')}
-                className="text-[10.5px] font-medium px-2.5 py-1 rounded-md bg-success-50 text-success-700 border border-success-500/25 hover:bg-success-100 disabled:opacity-50"
-              >
-                Accept
-              </button>
-              <button
-                type="button"
-                disabled={busy}
-                onClick={() => { setDraft(value); setEditing(true); }}
-                className="text-[10.5px] font-medium px-2 py-1 rounded-md text-ink-600 hover:bg-ink-100 disabled:opacity-50"
-              >
-                Edit
-              </button>
-              <button
-                type="button"
-                disabled={busy}
-                onClick={() => act('reject')}
-                className="text-[10.5px] font-medium px-2 py-1 rounded-md text-danger-700 hover:bg-danger-50 disabled:opacity-50"
-              >
-                Reject
-              </button>
-            </>
-          )}
-        </div>
-      )}
     </div>
   );
 }
+
 
 // Browse Templates popover — anchors to the trigger via absolute positioning.
 // Backdrop catches outside clicks; the parent owns the open/close state so

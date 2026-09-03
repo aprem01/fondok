@@ -14,7 +14,7 @@
  * can do so without re-implementing the pill row.
  */
 import { useEffect, useState } from 'react';
-import { Pin, Plus, Pencil } from 'lucide-react';
+import { Plus, Pencil } from 'lucide-react';
 import type { ScenarioRecord } from '@/lib/api';
 import { cn } from '@/lib/format';
 
@@ -150,8 +150,17 @@ function ScenarioPill({ scenario, isActive, onSelect, onEdit, baseScenario }: Pi
             : 'bg-white border-border text-ink-700 hover:border-brand-400 hover:text-brand-700',
         )}
       >
-        {scenario.is_base && <Pin size={11} aria-hidden="true" />}
         <span>{scenario.name}</span>
+        {scenario.is_base && (
+          // Canonical "SOURCE OF TRUTH" badge — Base is the one deal the model
+          // tabs render; scenarios are a comparison lens seen only here.
+          <span
+            title="The canonical underwriting — edited in Financials, Investment, Debt and Partnership"
+            className="text-[9px] font-bold uppercase tracking-[0.06em] text-ink-500 bg-ink-100 rounded-[3px] px-1 py-0.5 leading-none"
+          >
+            SOURCE OF TRUTH
+          </span>
+        )}
         {!scenario.is_base && delta.length > 0 && (
           <span
             className={cn(
