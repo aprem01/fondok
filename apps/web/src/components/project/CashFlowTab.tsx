@@ -58,6 +58,17 @@ const KPI_LABEL_CANONICAL: Record<string, string> = {
   'Total Cash Returned to Equity': 'Total cash returned to equity',
 };
 
+// Statement row labels — canonical strings (Cash Flow Tab.dc.html `renderVals`).
+// The worker's ``cash_flow`` engine emits the fuller "Net Operating Income" /
+// "FF&E Reserve" labels; the canonical unlevered statement uses the terse "NOI" /
+// "CapEx". This is a DISPLAY-ONLY relabel: the row's provenance dot, footing and
+// every ``lineByLabel`` lookup keep using the worker's original ``line.label``
+// (only the visible text changes), so no engine value or reconciliation moves.
+const STATEMENT_LABEL_CANONICAL: Record<string, string> = {
+  'Net Operating Income': 'NOI',
+  'FF&E Reserve': 'CapEx',
+};
+
 // The Data Key legend is mounted ONCE at the page level (page.tsx renders
 // <DataKey/> under the tab bar for every tab), so this tab shows no legend of
 // its own — only the per-row ProvenanceDots the StatementTable draws.
@@ -478,7 +489,9 @@ function sectionRows(
   return cf[section].map((line: CashFlowStatementLine) => {
     const total = line.kind === 'calc';
     return {
-      label: line.label,
+      // Display-only canonical relabel (NOI / CapEx); provenance + footing below
+      // still key off the worker's original ``line.label``.
+      label: STATEMENT_LABEL_CANONICAL[line.label] ?? line.label,
       title: line.note ?? undefined,
       state: rowState(cf, section, line),
       total,

@@ -489,6 +489,12 @@ export default function InvestmentTab() {
             ];
 
             // ─── Initial Renovation / PIP section ─────────────────────
+            // Renovation window (start + duration) comes from the worker's FON-71
+            // timeline endpoint (`Renovation` event); '—' until the close date is
+            // set or when the deal has no renovation budget.
+            const renoEvent = (timeline?.events ?? []).find((ev) => /renov/i.test(ev.event));
+            const renoStartAvail = !!renoEvent?.start;
+            const renoDurAvail = !!(renoEvent && (renoEvent.duration_months ?? 0) > 0);
             const renovation: RowDef[] = [
               { id: 'renoBudget', label: 'Renovation Budget', kind: 'input', bold: false,
                 state: overridden('renovation_budget') ? 'assumption' : 'assumption',
@@ -502,12 +508,27 @@ export default function InvestmentTab() {
                 ),
               },
               { id: 'renoPerKey', label: 'Budget / Key', kind: 'calc', state: 'calculated', value: (has(renoBudget) && has(keys)) ? money(renoBudget / keys) : '—' },
+              // Base budget = capital engine's "Renovation" use (hard+soft+fees,
+              // before the separate project contingency line).
+              { id: 'renoBase', label: 'Base Budget', kind: 'calc', state: 'calculated', value: money(renoBudget) },
               { id: 'renoHard', label: 'Hard Costs', kind: 'calc', state: 'calculated', value: money(renoHard), note: '75% of base budget per the PIP scope of work' },
               { id: 'renoSoft', label: 'Soft Costs', kind: 'calc', state: 'calculated', value: money(renoSoft) },
               { id: 'renoProf', label: 'Professional Fees', kind: 'calc', state: 'calculated', value: money(renoProf) },
+              // Renovation-specific contingency % is not emitted by the capital
+              // engine (only a project-level Contingency use line exists) → '—'.
+              { id: 'renoContPct', label: 'Contingency %', kind: 'awaiting', state: 'awaiting_data', value: '—' },
               { id: 'renoCont', label: 'Contingency', kind: 'awaiting', state: 'awaiting_data', value: '—' },
               { id: 'renoTotal', label: 'Total Renovation / PIP', kind: 'calc', bold: true, state: 'calculated', value: money(renoBudget) },
+              { id: 'renoTotalKey', label: '$ / Key', kind: 'calc', state: 'calculated', value: (has(renoBudget) && has(keys)) ? money(renoBudget / keys) : '—' },
               { id: 'renoSf', label: '$ / SF', kind: 'awaiting', state: 'awaiting_data', value: '—' },
+              { id: 'renoStart', label: 'Renovation Start',
+                kind: renoStartAvail ? 'linked' : 'awaiting',
+                state: renoStartAvail ? 'linked' : 'awaiting_data',
+                value: renoStartAvail ? fmtISODate(renoEvent!.start) : '—' },
+              { id: 'renoDuration', label: 'Duration',
+                kind: renoDurAvail ? 'linked' : 'awaiting',
+                state: renoDurAvail ? 'linked' : 'awaiting_data',
+                value: renoDurAvail ? `${renoEvent!.duration_months} months` : '—' },
             ];
 
             // ─── Ongoing Capex section (hold-period, funded from operations) ──
