@@ -311,16 +311,85 @@ class CashFlowStatementEngine(
             )
 
         if debt.refi_cash_out and debt.refi_cash_out > 0 and debt.refi_year:
-            refi = _blank()
             ry = int(debt.refi_year)
             if 1 <= ry <= hold:
-                refi[ry] = float(debt.refi_cash_out)
-                lev_lines.append(
-                    CashFlowStatementLine(
-                        label="Net Refinance Cash-Out", values=refi, kind="linked",
-                        note="Debt → refinance proceeds returned to equity.",
-                    )
+                # Canonical 4-row refinance split (design/canonical/Cash Flow
+                # Tab.dc.html): Refinance proceeds (+) · Existing debt payoff (−)
+                # · Refinance fees (−) · Net refinance cash-out (=). The three
+                # components are linked reads off the debt engine's already-
+                # computed refi detail; the net is a calc subtotal (NOT summed —
+                # ``_sum_rows`` skips calc rows) so the levered stream still ties
+                # out to exactly ``refi_cash_out``. When any component is missing
+                # (a run predating the debt-engine detail) or the three don't
+                # foot to the net, fall back to the single net line so the
+                # reconciliation guard is never at risk and older runs are
+                # byte-identical.
+                net_cash_out = float(debt.refi_cash_out)
+                proceeds_v = debt.refi_new_loan_proceeds
+                payoff_v = debt.refi_existing_balance_repaid
+                fees_v = debt.refi_financing_costs
+                components_present = (
+                    proceeds_v is not None
+                    and payoff_v is not None
+                    and fees_v is not None
                 )
+                foots = components_present and (
+                    abs(
+                        (float(proceeds_v) - float(payoff_v) - float(fees_v))
+                        - net_cash_out
+                    )
+                    <= _CENT
+                )
+                if foots:
+                    proceeds_row = _blank()
+                    proceeds_row[ry] = float(proceeds_v)
+                    payoff_row = _blank()
+                    payoff_row[ry] = -float(payoff_v)
+                    fees_row = _blank()
+                    fees_row[ry] = -float(fees_v)
+                    net_row = _blank()
+                    net_row[ry] = net_cash_out
+                    lev_lines.append(
+                        CashFlowStatementLine(
+                            label="Refinance Proceeds", values=proceeds_row,
+                            kind="linked",
+                            note="Debt → refinance new loan proceeds.",
+                        )
+                    )
+                    lev_lines.append(
+                        CashFlowStatementLine(
+                            label="Existing Debt Payoff", values=payoff_row,
+                            kind="linked",
+                            note="Debt → existing senior balance repaid at refinance.",
+                        )
+                    )
+                    lev_lines.append(
+                        CashFlowStatementLine(
+                            label="Refinance Fees", values=fees_row,
+                            kind="linked",
+                            note="Debt → refinance financing costs.",
+                        )
+                    )
+                    lev_lines.append(
+                        CashFlowStatementLine(
+                            label="Net Refinance Cash-Out", values=net_row,
+                            kind="calc",
+                            note=(
+                                "Refinance proceeds − existing payoff − fees = "
+                                "net cash-out to equity."
+                            ),
+                        )
+                    )
+                else:
+                    refi = _blank()
+                    refi[ry] = net_cash_out
+                    lev_lines.append(
+                        CashFlowStatementLine(
+                            label="Net Refinance Cash-Out", values=refi,
+                            kind="linked",
+                            note="Debt → refinance proceeds returned to equity.",
+                        )
+                    )
 
         payoff = _blank()
         payoff[hold] = -float(
@@ -399,8 +468,18 @@ class CashFlowStatementEngine(
 
     @staticmethod
     def _sum_rows(lines: list[CashFlowStatementLine], n: int) -> list[float]:
+        # Only ``linked`` component rows contribute to the composed bottom line.
+        # ``calc`` rows are subtotals this view derives (e.g. the refinance
+        # "Net Refinance Cash-Out" that sits between its own component rows), so
+        # summing them would double-count. This mirrors the frontend's
+        # ``footLinked`` and the reconciliation test's ``_composed`` helper,
+        # both of which already skip non-linked rows. No existing behavior
+        # changes: no ``calc`` row is present in ``lines`` at the point this is
+        # called for a no-refi deal, so the composed totals stay byte-identical.
         totals = [0.0] * n
         for line in lines:
+            if line.kind != "linked":
+                continue
             for i, v in enumerate(line.values):
                 if v is not None and i < n:
                     totals[i] += float(v)
@@ -449,6 +528,9 @@ class CashFlowStatementEngine(
             "Interest Expense": "debt.schedule",
             "Principal Amortization": "debt.schedule",
             "Refinance / Junior Debt Service": "debt.debt_service_by_year",
+            "Refinance Proceeds": "debt.refi_new_loan_proceeds",
+            "Existing Debt Payoff": "debt.refi_existing_balance_repaid",
+            "Refinance Fees": "debt.refi_financing_costs",
             "Net Refinance Cash-Out": "debt.refi_cash_out",
             "Exit Debt Payoff": "debt.balance_at_exit",
             "Net Cash Flow to Equity": "returns.cash_flows",

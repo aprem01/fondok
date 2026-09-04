@@ -58,6 +58,14 @@ class MarketOverview(BaseModel):
     year_built: int | None = None
     gba_sf: int | None = None
     labor_type: str | None = None
+    # Trailing-12 average subject occupancy (0-1 fraction) and ADR (USD) — the
+    # SAME trailing-12 the STR forward-forecast uses as its baseline (read via
+    # ``str_forecast.trailing_12_occ_adr`` off the deal's STR_TREND
+    # extractions). Canonical Overview v3 renders a single combined
+    # "Trailing-12 Occupancy / ADR" row sourced from Financials → Historicals.
+    # Both None when the deal has no STR history on file, so the UI shows "—".
+    trailing_12_occupancy: float | None = None
+    trailing_12_adr: float | None = None
     occupancy_index: float | None = None
     adr_index: float | None = None
     revpar_index: float | None = None
@@ -187,6 +195,24 @@ async def market_overview(
     meta = await _extracted_property_meta(
         session, deal_id=deal_id, tenant_id=tenant_id
     )
+    # Trailing-12 subject occupancy / ADR from the deal's STR_TREND history —
+    # the same trailing-12 the STR forward-forecast baselines off. Best-effort:
+    # a deal with no STR history (or any read failure) leaves both None so the
+    # Overview row renders "—" rather than the endpoint 500-ing.
+    trailing_12_occupancy: float | None = None
+    trailing_12_adr: float | None = None
+    try:
+        from ..engines.str_forecast import trailing_12_occ_adr
+        from ..services.str_forecast_loader import load_str_history_for_deal
+
+        history = await load_str_history_for_deal(
+            session, deal_id=str(deal_id), tenant_id=str(tenant_id)
+        )
+        trailing = trailing_12_occ_adr(history)
+        if trailing is not None:
+            trailing_12_occupancy, trailing_12_adr = trailing
+    except Exception:  # noqa: BLE001 — overview must never fail on the STR read
+        logger.exception("market_overview: trailing-12 STR read failed")
     return MarketOverview(
         deal_id=deal_id,
         market=m.get("city"),
@@ -197,6 +223,8 @@ async def market_overview(
         year_built=meta.get("year_built"),
         gba_sf=meta.get("gba_sf"),
         labor_type=meta.get("labor_type"),
+        trailing_12_occupancy=trailing_12_occupancy,
+        trailing_12_adr=trailing_12_adr,
     )
 
 

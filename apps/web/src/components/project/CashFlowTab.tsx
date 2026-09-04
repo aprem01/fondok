@@ -67,6 +67,13 @@ const KPI_LABEL_CANONICAL: Record<string, string> = {
 const STATEMENT_LABEL_CANONICAL: Record<string, string> = {
   'Net Operating Income': 'NOI',
   'FF&E Reserve': 'CapEx',
+  // Canonical refinance split (Cash Flow Tab.dc.html) — display in the
+  // prototype's sentence case; the worker keeps Title-case labels for footing +
+  // provenance keys and the buildSummary/footnote lookups.
+  'Refinance Proceeds': 'Refinance proceeds',
+  'Existing Debt Payoff': 'Existing debt payoff',
+  'Refinance Fees': 'Refinance fees',
+  'Net Refinance Cash-Out': 'Net refinance cash-out',
 };
 
 // The Data Key legend is mounted ONCE at the page level (page.tsx renders

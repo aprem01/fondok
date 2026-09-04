@@ -195,6 +195,25 @@ def _trailing_avg(history: list[STRMonth]) -> tuple[float, float, float, float, 
     )
 
 
+def trailing_12_occ_adr(
+    historical_months: list[STRMonth],
+) -> tuple[float, float] | None:
+    """Trailing-12 average ``(occupancy 0-1, adr USD)`` from STR history.
+
+    A read-only convenience over the SAME source ``build_str_forecast`` uses for
+    its trailing-12 baseline: it sorts the history ASC and clips to the trailing
+    24 months (``_sorted_history``), then averages the trailing 12
+    (``_trailing_avg``). Nothing is persisted or recomputed — it only reads the
+    rows passed in. Returns ``None`` when there is no usable history so callers
+    (e.g. the Market overview) can render an em-dash instead of a fabricated 0.
+    """
+    history = _sorted_history(historical_months)
+    if not history:
+        return None
+    occ, adr, *_rest = _trailing_avg(history)
+    return occ, adr
+
+
 def _add_months(yyyy_mm: str, delta: int) -> str:
     """Return YYYY-MM ``delta`` months after ``yyyy_mm``.
 
@@ -412,4 +431,5 @@ def build_str_forecast(
 __all__ = [
     "build_str_forecast",
     "default_scenarios",
+    "trailing_12_occ_adr",
 ]

@@ -208,16 +208,16 @@ export default function OverviewTab({ projectId }: { projectId: number | string 
   // Descriptive property metadata resolved cross-document by the worker
   // (OM-first): asset name / year_built / gba_sf / labor. NOT engine output —
   // read once so the Property rows populate for live deals.
-  const [meta, setMeta] = useState<{ name: string | null; year_built: number | null; gba_sf: number | null; labor: string | null }>(
-    { name: null, year_built: null, gba_sf: null, labor: null },
+  const [meta, setMeta] = useState<{ name: string | null; year_built: number | null; gba_sf: number | null; labor: string | null; trailingOcc: number | null; trailingAdr: number | null }>(
+    { name: null, year_built: null, gba_sf: null, labor: null, trailingOcc: null, trailingAdr: null },
   );
   useEffect(() => {
-    if (!liveMode) { setMeta({ name: null, year_built: null, gba_sf: null, labor: null }); return; }
+    if (!liveMode) { setMeta({ name: null, year_built: null, gba_sf: null, labor: null, trailingOcc: null, trailingAdr: null }); return; }
     const ac = new AbortController();
     api.market.overview(dealId, ac.signal)
       .then((d) => {
-        const o = (d ?? {}) as { property_name?: string | null; year_built?: number | null; gba_sf?: number | null; labor_type?: string | null };
-        setMeta({ name: o.property_name ?? null, year_built: o.year_built ?? null, gba_sf: o.gba_sf ?? null, labor: o.labor_type ?? null });
+        const o = (d ?? {}) as { property_name?: string | null; year_built?: number | null; gba_sf?: number | null; labor_type?: string | null; trailing_12_occupancy?: number | null; trailing_12_adr?: number | null };
+        setMeta({ name: o.property_name ?? null, year_built: o.year_built ?? null, gba_sf: o.gba_sf ?? null, labor: o.labor_type ?? null, trailingOcc: o.trailing_12_occupancy ?? null, trailingAdr: o.trailing_12_adr ?? null });
       })
       .catch(() => { /* best-effort */ });
     return () => ac.abort();
@@ -364,6 +364,14 @@ export default function OverviewTab({ projectId }: { projectId: number | string 
       doc('pSF', isDev ? 'Planned SF' : 'Total SF', meta.gba_sf != null ? `${Math.round(meta.gba_sf).toLocaleString('en-US')} SF` : '—', 'Offering Memorandum', 'Building Summary'),
       awa('pTitle', 'Title / Ownership'),
       doc('pLabor', 'Labor / Union Status', meta.labor ?? '—', 'Offering Memorandum', 'Operations'),
+      // Canonical Overview v3 — single combined trailing-12 occupancy / ADR row,
+      // sourced from the STR historicals (Financials → Historicals). '—' when
+      // the deal has no STR history on file.
+      lnk('opsTrail', 'Trailing-12 Occupancy / ADR',
+        (meta.trailingOcc != null && Number.isFinite(meta.trailingOcc) && meta.trailingAdr != null && Number.isFinite(meta.trailingAdr))
+          ? `${fmtPct(meta.trailingOcc, 1)} / ${fmtCurrency(meta.trailingAdr)}`
+          : '—',
+        '→ Financials (historicals)', 'pl'),
       lnk('brand', 'Brand', brand || '—', '→ Investment Profile', ''),
       lnk('positioning', 'Positioning', positioningTiers.find((p) => p.id === positioningId)?.label ?? '—', '→ Investment Profile', ''),
       lnk('mgmtFee', 'Management Fee', '—', '→ Financials', 'pl'),
