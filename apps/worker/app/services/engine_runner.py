@@ -889,13 +889,33 @@ async def _load_engine_inputs(
                             debt_overrides[field] = num_value
                             sources[path] = SOURCE_ANALYST_OVERRIDE
                 continue
-            elif path in _OVERRIDE_PARTNERSHIP_KEYS:
-                # FON-66 — partnership waterfall tier override. Indexed
+            elif path == _PARTNERSHIP_TIER_COUNT_KEY:
+                # FON-66 Part A — analyst-controlled promote-tier COUNT. Sets
+                # the exact number of promote tiers the builder emits. A higher
+                # count adds tiers (defined by per-index overrides beyond the
+                # seed); a lower count drops the highest tiers. Absent → the
+                # seed length exactly (byte-identical default). Lands as a plain
+                # int on ``base`` for the partnership builder to read.
+                try:
+                    n_tiers = (
+                        int(float(value))
+                        if isinstance(value, (int, float, str))
+                        else None
+                    )
+                except (TypeError, ValueError):
+                    n_tiers = None
+                if n_tiers is not None:
+                    base["partnership_waterfall_tier_count"] = n_tiers
+                    sources[path] = SOURCE_ANALYST_OVERRIDE
+                continue
+            elif _parse_partnership_override_path(path) is not None:
+                # FON-66 — partnership waterfall per-tier field override. Indexed
                 # scalars (``partnership.waterfall.<idx>.<field>``) land in
-                # ``base['partnership_waterfall_overrides'][idx][field]``;
-                # the partnership builder seeds the Kimpton reference stack
-                # and layers these on top (deriving the complementary split
-                # so a single-side edit keeps gp + lp == 1.0).
+                # ``base['partnership_waterfall_overrides'][idx][field]``; the
+                # partnership builder seeds the Kimpton reference stack and layers
+                # these on top (deriving the complementary split so a single-side
+                # edit keeps gp + lp == 1.0). Any index is accepted, so an
+                # analyst-added tier beyond the seed routes here too.
                 parsed_wf = _parse_partnership_override_path(path)
                 if parsed_wf is not None:
                     idx, field = parsed_wf
@@ -1168,6 +1188,12 @@ _OVERRIDE_PARTNERSHIP_KEYS: frozenset[str] = frozenset(
     for idx in _PARTNERSHIP_TIER_INDEXES
     for field in _PARTNERSHIP_WATERFALL_FIELDS
 )
+# FON-66 Part A — the analyst controls the promote-tier COUNT via a single
+# ``partnership.waterfall.tier_count`` integer override. Bounded so a
+# malformed / abusive value can't build an unbounded tier list; 1 is the
+# floor (the waterfall must have at least one promote tier).
+_PARTNERSHIP_TIER_COUNT_KEY = "partnership.waterfall.tier_count"
+_MAX_PARTNERSHIP_TIERS = 12
 
 
 def _parse_partnership_override_path(path: str) -> tuple[int, str] | None:
@@ -1191,44 +1217,115 @@ def _parse_partnership_override_path(path: str) -> tuple[int, str] | None:
     return (idx, field)
 
 
+def _resolve_partnership_tier_count(tier_count: int | None) -> int:
+    """Clamp the analyst's tier-count override to a sane range.
+
+    ``None`` (no override) → the seed length exactly, so a deal that never
+    touched the count builds the byte-identical default stack. An explicit
+    value is bounded to ``[1, _MAX_PARTNERSHIP_TIERS]``.
+    """
+    seed_len = len(_KIMPTON_WATERFALL_REFERENCE)
+    if tier_count is None:
+        return seed_len
+    try:
+        count = int(tier_count)
+    except (TypeError, ValueError):
+        return seed_len
+    return max(1, min(count, _MAX_PARTNERSHIP_TIERS))
+
+
 def _build_partnership_waterfall(
     overrides: dict[int, dict[str, float]] | None,
+    tier_count: int | None = None,
 ) -> list[WaterfallTier]:
     """Seed the Kimpton reference promote stack and layer analyst edits.
 
-    Each tier starts from ``_KIMPTON_WATERFALL_REFERENCE``. An override on
-    ``gp_split`` (or ``lp_split``) alone derives the complementary split so
-    the ``WaterfallTier`` ``gp + lp == 1`` validator is never tripped by a
-    single-field edit; overriding both sides uses the analyst's exact
-    values (their responsibility to keep the sum at 1.0).
+    Each in-seed tier starts from ``_KIMPTON_WATERFALL_REFERENCE``. An
+    override on ``gp_split`` (or ``lp_split``) alone derives the
+    complementary split so the ``WaterfallTier`` ``gp + lp == 1`` validator
+    is never tripped by a single-field edit; overriding both sides uses the
+    analyst's exact values (their responsibility to keep the sum at 1.0).
+
+    FON-66 Part A — ``tier_count`` sets the EXACT number of promote tiers:
+
+    * ``None`` → the seed length (the byte-identical default — every deal
+      that never set the count is unchanged).
+    * ``N < seed_len`` → the lowest ``N`` seed tiers; the highest tiers are
+      dropped (removal). Their now-orphaned per-index overrides are ignored
+      because those indices are never visited.
+    * ``N > seed_len`` → the seed tiers plus analyst-added tiers at indices
+      ``[seed_len, N)`` defined ENTIRELY by per-index overrides. There is no
+      seed fallback beyond the seed: an added tier is emitted only when the
+      analyst has supplied ``hurdle_rate`` and at least one split (the other
+      derives). An incomplete or invalid added tier is OMITTED — never
+      backfilled with a fabricated split that would silently shift the GP/LP
+      allocation. It simply has no effect until the analyst completes it.
     """
     overrides = overrides or {}
+    seed = _KIMPTON_WATERFALL_REFERENCE
+    seed_len = len(seed)
+    count = _resolve_partnership_tier_count(tier_count)
     tiers: list[WaterfallTier] = []
-    for idx, ref in enumerate(_KIMPTON_WATERFALL_REFERENCE):
+    for idx in range(count):
         ov = overrides.get(idx, {})
-        hurdle = float(ov.get("hurdle_rate", ref["hurdle_rate"]))
-        gp_ov = "gp_split" in ov
-        lp_ov = "lp_split" in ov
-        if gp_ov and lp_ov:
-            gp_split = float(ov["gp_split"])
-            lp_split = float(ov["lp_split"])
-        elif gp_ov:
-            gp_split = float(ov["gp_split"])
-            lp_split = round(1.0 - gp_split, 6)
-        elif lp_ov:
-            lp_split = float(ov["lp_split"])
-            gp_split = round(1.0 - lp_split, 6)
-        else:
-            gp_split = float(ref["gp_split"])
-            lp_split = float(ref["lp_split"])
-        tiers.append(
-            WaterfallTier(
-                label=str(ref["label"]),
-                hurdle_rate=hurdle,
-                gp_split=gp_split,
-                lp_split=lp_split,
+        if idx < seed_len:
+            ref = seed[idx]
+            hurdle = float(ov.get("hurdle_rate", ref["hurdle_rate"]))
+            gp_ov = "gp_split" in ov
+            lp_ov = "lp_split" in ov
+            if gp_ov and lp_ov:
+                gp_split = float(ov["gp_split"])
+                lp_split = float(ov["lp_split"])
+            elif gp_ov:
+                gp_split = float(ov["gp_split"])
+                lp_split = round(1.0 - gp_split, 6)
+            elif lp_ov:
+                lp_split = float(ov["lp_split"])
+                gp_split = round(1.0 - lp_split, 6)
+            else:
+                gp_split = float(ref["gp_split"])
+                lp_split = float(ref["lp_split"])
+            tiers.append(
+                WaterfallTier(
+                    label=str(ref["label"]),
+                    hurdle_rate=hurdle,
+                    gp_split=gp_split,
+                    lp_split=lp_split,
+                )
             )
-        )
+        else:
+            # Analyst-added tier beyond the seed — defined only by the
+            # per-index overrides. Require hurdle_rate + at least one split;
+            # otherwise omit (honest incomplete, never a fabricated default).
+            if "hurdle_rate" not in ov:
+                continue
+            gp_ov = "gp_split" in ov
+            lp_ov = "lp_split" in ov
+            if not gp_ov and not lp_ov:
+                continue
+            try:
+                hurdle = float(ov["hurdle_rate"])
+                if gp_ov and lp_ov:
+                    gp_split = float(ov["gp_split"])
+                    lp_split = float(ov["lp_split"])
+                elif gp_ov:
+                    gp_split = float(ov["gp_split"])
+                    lp_split = round(1.0 - gp_split, 6)
+                else:
+                    lp_split = float(ov["lp_split"])
+                    gp_split = round(1.0 - lp_split, 6)
+                tiers.append(
+                    WaterfallTier(
+                        label=f"Tier {idx + 1} (to {hurdle:.0%})",
+                        hurdle_rate=hurdle,
+                        gp_split=gp_split,
+                        lp_split=lp_split,
+                    )
+                )
+            except (ValueError, TypeError):
+                # Invalid values (e.g. splits that don't sum to 1.0, or a
+                # hurdle outside 0..1) — omit rather than crash the run.
+                continue
     return tiers
 
 
@@ -3978,8 +4075,11 @@ def _build_input_for(
             flows = [returns_out.equity_multiple * capital_out.equity_amount / max(1, base["hold_years"])]
         # FON-66 — seed the Kimpton benchmark promote stack, then layer any
         # analyst per-tier overrides (partnership.waterfall.<idx>.<field>).
+        # FON-66 Part A — an analyst tier-count override sets how many promote
+        # tiers are built (add/remove); absent → the seed length exactly.
         waterfall = _build_partnership_waterfall(
-            base.get("partnership_waterfall_overrides")
+            base.get("partnership_waterfall_overrides"),
+            base.get("partnership_waterfall_tier_count"),
         )
         # FON-66/67 — auto-select the monthly IRR-hurdle waterfall for deals with
         # sub-annual timing (a mid-year close, an off-cycle exit, or a refi),

@@ -64,6 +64,13 @@ const WATERFALL_SEED: Array<{ hurdle: number; gp: number }> = [
   { hurdle: 0.30, gp: 0.25 },
   { hurdle: 0.50, gp: 0.50 },
 ];
+// FON-66 Part A — the analyst can change the promote-tier COUNT (add/remove
+// tiers), not just edit the seed bands. The count persists as a single
+// `partnership.waterfall.tier_count` field_override the worker reads. Absent →
+// the seed length exactly (byte-identical default). Bounds mirror the worker
+// (`_MAX_PARTNERSHIP_TIERS`) so the UI can't request a stack the engine clamps.
+const TIER_COUNT_PATH = 'partnership.waterfall.tier_count';
+const MAX_TIERS = 12;
 
 // Worker partnership PartnerReturn shape (runtime nested `gp`/`lp` objects).
 interface PartnerReturn {
@@ -212,6 +219,73 @@ export default function PartnershipTab() {
     setEditing(null);
     setDraft('');
   }, []);
+
+  // ─── FON-66 Part A: variable promote-tier count ────────────────────
+  // How many promote tiers this deal has. An analyst override wins; absent →
+  // the seed length. Clamped to the worker's [1, MAX_TIERS] range so the UI
+  // and engine never disagree on the count.
+  const tierCount = Math.max(
+    1,
+    Math.min(
+      MAX_TIERS,
+      Math.round(readOverrideNum(overrides, TIER_COUNT_PATH, WATERFALL_SEED.length)),
+    ),
+  );
+  // A tier's current hurdle/GP split: analyst override wins, else the seed
+  // value (in-seed indices only — beyond-seed tiers have no seed fallback).
+  const tierHurdleAt = useCallback(
+    (i: number): number =>
+      readOverrideNum(overrides, `partnership.waterfall.${i}.hurdle_rate`, WATERFALL_SEED[i]?.hurdle ?? 0),
+    [overrides],
+  );
+
+  // "+ Add tier" — append a promote tier. It starts as a coherent, honest
+  // default the analyst must complete: a hurdle one step above the current top
+  // tier and a 100% LP / 0% GP split (NO promote is fabricated — the analyst
+  // raises the GP split deliberately). Persisted together with the bumped
+  // tier_count so the worker sees a complete tier on the next run.
+  const onAddTier = useCallback(() => {
+    if (!liveMode) {
+      toast('Editing is disabled on demo deals', { type: 'info' });
+      return;
+    }
+    if (tierCount >= MAX_TIERS) {
+      toast(`Waterfalls are capped at ${MAX_TIERS} tiers`, { type: 'info' });
+      return;
+    }
+    const newIdx = tierCount; // 0-based index of the appended tier
+    const prevHurdle = tierHurdleAt(tierCount - 1);
+    const newHurdle = round6(Math.min(0.99, prevHurdle + 0.05));
+    void onSaveOverride({
+      [TIER_COUNT_PATH]: tierCount + 1,
+      [`partnership.waterfall.${newIdx}.hurdle_rate`]: newHurdle,
+      [`partnership.waterfall.${newIdx}.gp_split`]: 0,
+      [`partnership.waterfall.${newIdx}.lp_split`]: 1,
+    });
+  }, [liveMode, tierCount, tierHurdleAt, onSaveOverride, toast]);
+
+  // "Remove" — drop the top (highest) promote tier. Decrements tier_count and
+  // clears that index's per-tier overrides so they can't linger. When the
+  // count returns to the seed length we clear tier_count entirely (restores the
+  // pure default). Only the last tier is removable — this mirrors the worker,
+  // where a lower tier_count drops the highest tiers.
+  const onRemoveTier = useCallback(
+    (idx: number) => {
+      if (!liveMode) {
+        toast('Editing is disabled on demo deals', { type: 'info' });
+        return;
+      }
+      if (tierCount <= 1) return;
+      const newCount = tierCount - 1;
+      void onSaveOverride({
+        [TIER_COUNT_PATH]: newCount === WATERFALL_SEED.length ? null : newCount,
+        [`partnership.waterfall.${idx}.hurdle_rate`]: null,
+        [`partnership.waterfall.${idx}.gp_split`]: null,
+        [`partnership.waterfall.${idx}.lp_split`]: null,
+      });
+    },
+    [liveMode, tierCount, onSaveOverride, toast],
+  );
 
   // ─── Worker partnership fields (dual-shape: nested objects OR flat export) ──
   const wGp = getEngineField<PartnerReturn>(outputs, 'partnership', 'gp');
@@ -434,7 +508,7 @@ export default function PartnershipTab() {
                   <KeyRow
                     label="Additional Hurdles"
                     dot="calculated"
-                    value={`${pctv(WATERFALL_SEED[1].hurdle, 0)} LP IRR · +${WATERFALL_SEED.length - 2} tiers`}
+                    value={`${pctv(tierHurdleAt(1), 0)} LP IRR · +${Math.max(0, tierCount - 2)} tiers`}
                     valueColor={prov.gray}
                   />
                 </SectionCard>
@@ -552,11 +626,10 @@ export default function PartnershipTab() {
                   startEdit={startEdit}
                   cancelEdit={cancelEdit}
                   commitPct={commitPct}
+                  tierCount={tierCount}
+                  onAddTier={onAddTier}
+                  onRemoveTier={onRemoveTier}
                 />
-                {/* TODO(FON-72): +Add tier / remove tier need a variable-length
-                    waterfall on the backend (the override model keys tiers by
-                    fixed index). Not built here — the six editable bands map
-                    1:1 to the worker seed and preserve the existing save path. */}
               </SectionCard>
 
               {/* Allocation of Projected Proceeds — the dollar waterfall */}
@@ -967,6 +1040,7 @@ const TIER_GRID = '38px minmax(180px,1.5fr) minmax(120px,1fr) 90px 90px minmax(2
 
 function PromoteWaterfall({
   prefRate, hasCatchUp, liveMode, overrides, editing, draft, setDraft, startEdit, cancelEdit, commitPct,
+  tierCount, onAddTier, onRemoveTier,
 }: {
   prefRate: number;
   hasCatchUp: boolean;
@@ -978,6 +1052,10 @@ function PromoteWaterfall({
   startEdit: (id: string, fraction: number) => void;
   cancelEdit: () => void;
   commitPct: (primaryKey: string, complementKey?: string) => void;
+  // FON-66 Part A — variable tier count + add/remove controls.
+  tierCount: number;
+  onAddTier: () => void;
+  onRemoveTier: (idx: number) => void;
 }) {
   // Structural (read-only) rows first, then the editable promote bands.
   const structural: Array<{ name: string; hurdle: string; gp: string; lp: string; desc: string; dot: ValueState }> = [
@@ -1018,18 +1096,34 @@ function PromoteWaterfall({
     );
   });
 
-  const promoteRows = WATERFALL_SEED.map((t, i) => {
+  const seedLen = WATERFALL_SEED.length;
+  const promoteRows = Array.from({ length: tierCount }).map((_, i) => {
     idx += 1;
+    const seed = WATERFALL_SEED[i]; // undefined for analyst-added tiers
+    const beyondSeed = i >= seedLen;
     const gpPath = `partnership.waterfall.${i}.gp_split`;
     const hurdlePath = `partnership.waterfall.${i}.hurdle_rate`;
-    const gpFrac = readOverrideNum(overrides, gpPath, t.gp);
-    const hurdleFrac = readOverrideNum(overrides, hurdlePath, t.hurdle);
-    const last = i === WATERFALL_SEED.length - 1;
-    const name = last
-      ? `Promote — above ${fmtPct(hurdleFrac, 0)} LP IRR`
-      : `Promote — to ${fmtPct(hurdleFrac, 0)} LP IRR`;
+    // In-seed tiers always have a value (seed fallback). Beyond-seed tiers are
+    // defined ONLY by the analyst's overrides — a missing value renders as
+    // incomplete (NaN → "Set …"), never a fabricated number, mirroring the
+    // worker (which omits an incomplete added tier rather than inventing one).
+    const gpFrac = readOverrideNum(overrides, gpPath, seed ? seed.gp : NaN);
+    const hurdleFrac = readOverrideNum(overrides, hurdlePath, seed ? seed.hurdle : NaN);
+    const gpComplete = Number.isFinite(gpFrac);
+    const hurdleComplete = Number.isFinite(hurdleFrac);
+    const incomplete = beyondSeed && !(gpComplete && hurdleComplete);
+    const last = i === tierCount - 1;
+    const removable = liveMode && tierCount > 1 && last;
+    const name = incomplete
+      ? `Promote — tier ${i + 1} · incomplete`
+      : last
+        ? `Promote — above ${fmtPct(hurdleFrac, 0)} LP IRR`
+        : `Promote — to ${fmtPct(hurdleFrac, 0)} LP IRR`;
     const hurdleId = `t${i}-h`;
     const splitId = `t${i}-s`;
+    // Safe seed values for the inline editor when a value is not yet set.
+    const hurdleStart = hurdleComplete ? hurdleFrac : 0;
+    const gpStart = gpComplete ? gpFrac : 0;
     return (
       <div key={`promote-${i}`} style={{
         display: 'grid', gridTemplateColumns: TIER_GRID, fontSize: 12.5, padding: '8px 0',
@@ -1038,7 +1132,7 @@ function PromoteWaterfall({
         <span style={{ color: palette.textMuted, fontVariantNumeric: 'tabular-nums' }}>{idx}</span>
         <span style={{ display: 'flex', alignItems: 'center', gap: 7, minWidth: 0 }}>
           <ProvenanceDot state="assumption" size={8} />
-          <span style={{ color: palette.ink, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{name}</span>
+          <span style={{ color: incomplete ? prov.amber : palette.ink, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{name}</span>
         </span>
         {/* Hurdle (editable) */}
         <span style={{ display: 'flex', justifyContent: 'flex-end' }}>
@@ -1051,14 +1145,14 @@ function PromoteWaterfall({
             />
           ) : (
             <span
-              onClick={liveMode ? () => startEdit(hurdleId, hurdleFrac) : undefined}
+              onClick={liveMode ? () => startEdit(hurdleId, hurdleStart) : undefined}
               style={{
-                textAlign: 'right', color: liveMode ? prov.blue : prov.gray,
+                textAlign: 'right', color: !hurdleComplete ? prov.amber : liveMode ? prov.blue : prov.gray,
                 textDecoration: liveMode ? 'underline dotted' : undefined,
                 cursor: liveMode ? 'pointer' : 'default', fontVariantNumeric: 'tabular-nums',
               }}
             >
-              {`Until ${fmtPct(hurdleFrac, 0)} LP IRR`}
+              {hurdleComplete ? `Until ${fmtPct(hurdleFrac, 0)} LP IRR` : 'Set hurdle'}
             </span>
           )}
         </span>
@@ -1073,22 +1167,40 @@ function PromoteWaterfall({
             />
           ) : (
             <span
-              onClick={liveMode ? () => startEdit(splitId, gpFrac) : undefined}
+              onClick={liveMode ? () => startEdit(splitId, gpStart) : undefined}
               style={{
-                textAlign: 'right', color: liveMode ? prov.blue : prov.gray,
+                textAlign: 'right', color: !gpComplete ? prov.amber : liveMode ? prov.blue : prov.gray,
                 textDecoration: liveMode ? 'underline dotted' : undefined,
                 cursor: liveMode ? 'pointer' : 'default', fontVariantNumeric: 'tabular-nums',
               }}
             >
-              {fmtPct(gpFrac, 0)}
+              {gpComplete ? fmtPct(gpFrac, 0) : 'Set split'}
             </span>
           )}
         </span>
         <span style={{ textAlign: 'right', color: prov.gray, fontVariantNumeric: 'tabular-nums', paddingRight: 16 }}>
-          {fmtPct(1 - gpFrac, 0)}
+          {gpComplete ? fmtPct(1 - gpFrac, 0) : '—'}
         </span>
-        <span style={{ color: palette.textMuted, lineHeight: 1.4, fontSize: 11.5 }}>
-          {last ? 'All remaining proceeds above the final hurdle' : 'Residual split until LP IRR reaches the hurdle'}
+        <span style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8, minWidth: 0 }}>
+          <span style={{ color: incomplete ? prov.amber : palette.textMuted, lineHeight: 1.4, fontSize: 11.5, minWidth: 0 }}>
+            {incomplete
+              ? 'Set the hurdle and GP split to activate this tier'
+              : last ? 'All remaining proceeds above the final hurdle' : 'Residual split until LP IRR reaches the hurdle'}
+          </span>
+          {removable && (
+            <button
+              onClick={() => onRemoveTier(i)}
+              aria-label={`Remove tier ${i + 1}`}
+              title="Remove this tier"
+              style={{
+                flexShrink: 0, background: 'transparent', border: `1px solid ${palette.border}`,
+                borderRadius: radius.control, color: palette.textSecondary, cursor: 'pointer',
+                fontSize: 11, fontWeight: 600, padding: '2px 8px', fontFamily: 'inherit', lineHeight: 1.4,
+              }}
+            >
+              Remove
+            </button>
+          )}
         </span>
       </div>
     );
@@ -1110,6 +1222,29 @@ function PromoteWaterfall({
       </div>
       {structuralRows}
       {promoteRows}
+      {liveMode && (
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginTop: 10, flexWrap: 'wrap' }}>
+          <button
+            onClick={onAddTier}
+            disabled={tierCount >= MAX_TIERS}
+            style={{
+              display: 'inline-flex', alignItems: 'center', gap: 6,
+              background: 'transparent', border: `1px dashed ${palette.linkBlue}`, borderRadius: radius.button,
+              color: tierCount >= MAX_TIERS ? palette.textMuted : palette.linkBlue,
+              cursor: tierCount >= MAX_TIERS ? 'default' : 'pointer',
+              fontSize: 11.5, fontWeight: 600, padding: '6px 12px', fontFamily: 'inherit',
+              opacity: tierCount >= MAX_TIERS ? 0.55 : 1,
+            }}
+          >
+            + Add tier
+          </button>
+          <span style={{ fontSize: 11, color: palette.textMuted }}>
+            {tierCount >= MAX_TIERS
+              ? `Maximum ${MAX_TIERS} tiers`
+              : 'New tiers start at 100% LP / 0% GP — set the GP split to create a promote.'}
+          </span>
+        </div>
+      )}
       <div style={{ fontSize: 11, color: palette.textMuted, marginTop: 9, lineHeight: 1.5 }}>
         LP split is always 100% − GP split. Hurdles are LP IRR thresholds; the final tier takes everything
         above the last hurdle.
