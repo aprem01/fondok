@@ -43,6 +43,7 @@ import { api, isWorkerConnected } from '@/lib/api';
 import type { ValueState } from '@/lib/api';
 import type { Project } from '@/lib/mockData';
 import { ProvenanceDot, palette } from '@/components/design';
+import { useToast } from '@/components/ui/Toast';
 
 // ── canonical colours (design/canonical/IC Memo Tab.dc.html) ───────────────
 const GREEN = 'oklch(45% 0.12 155)';
@@ -338,6 +339,45 @@ export default function ICMemoTab({ project }: { project: Project }) {
 
   const metrics = useMemo(() => extractMetrics(outputs, deal, project), [outputs, deal, project]);
   const rec = useMemo(() => buildRecommendation(metrics), [metrics]);
+
+  // ── Export deliverables (FON-54) — render the LIVE deal via the worker's
+  // authenticated export routes, stream the file back and trigger a browser
+  // save. Gated on a completed model run + live deal (never for demo/mock ids).
+  const { toast } = useToast();
+  const [exportBusy, setExportBusy] = useState<null | 'excel' | 'memo.pdf' | 'presentation.pptx'>(null);
+  const hasRun = outputs != null && Object.keys(outputs.engines ?? {}).length > 0;
+  const canExport = liveMode && hasRun;
+  const EXPORT_LABELS: Record<'excel' | 'memo.pdf' | 'presentation.pptx', string> = {
+    excel: 'Excel model',
+    'memo.pdf': 'IC memo',
+    'presentation.pptx': 'deal presentation',
+  };
+  const exportFilename = (ext: string): string => {
+    const base = metrics.propertyName || project.name || 'deal';
+    const slug =
+      base.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 60) ||
+      'deal';
+    return `fondok-${slug}${ext}`;
+  };
+  const handleExport = async (
+    path: 'excel' | 'memo.pdf' | 'presentation.pptx',
+    ext: string,
+  ): Promise<void> => {
+    if (!canExport || exportBusy) return;
+    setExportBusy(path);
+    toast(`Generating ${EXPORT_LABELS[path]}…`, { type: 'info' });
+    try {
+      await api.exports.download(dealId, path, exportFilename(ext));
+      toast(`${EXPORT_LABELS[path]} downloaded`, { type: 'success' });
+    } catch (err) {
+      toast(
+        `Couldn't generate ${EXPORT_LABELS[path]}: ${err instanceof Error ? err.message : 'Unknown error'}`,
+        { type: 'error' },
+      );
+    } finally {
+      setExportBusy(null);
+    }
+  };
 
   // Computed-value provenance — per-figure dots read the real /provenance state.
   const capitalTrace = useTraceGraph('capital');
@@ -1019,21 +1059,29 @@ export default function ICMemoTab({ project }: { project: Project }) {
             </div>
           </div>
 
-          {/* ── Export & share (Coming Soon) ── */}
+          {/* ── Export & share ── */}
           <div style={{ ...card(), marginBottom: 16 }}>
             <div style={{ padding: '11px 16px', borderBottom: '1px solid #f2f1ec', display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', gap: 12, flexWrap: 'wrap' }}>
               <span style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
                 <span style={eyebrow()}>Export &amp; share</span>
-                <span style={{ fontSize: 11.5, color: palette.textMuted }}>Deliverables will be generated from the latest completed Base Case model run.</span>
+                <span style={{ fontSize: 11.5, color: palette.textMuted }}>
+                  {canExport
+                    ? 'Deliverables render from the latest completed Base Case model run.'
+                    : 'Run the model to generate deliverables from the completed Base Case run.'}
+                </span>
               </span>
-              <span style={{ fontSize: 10.5, color: palette.textFaint }}>Base Case · Latest model run</span>
+              <span style={{ fontSize: 10.5, color: palette.textFaint }}>
+                {canExport ? 'Base Case · Latest model run' : 'Awaiting model run'}
+              </span>
             </div>
             <div style={{ padding: '14px 16px', display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 14 }}>
-              {[
-                ['Excel Model', '.xlsx', 'Complete underwriting model with assumptions, calculations and source references.'],
-                ['IC Memo', '.pdf', 'Investment Committee memo based on the configuration above.'],
-                ['Deal Presentation', '.pptx', 'Presentation-ready summary of the investment case, market, underwriting and returns.'],
-              ].map(([title, ext, body]) => (
+              {([
+                { title: 'Excel Model', ext: '.xlsx', body: 'Complete underwriting model with assumptions, calculations and source references.', path: 'excel' },
+                { title: 'IC Memo', ext: '.pdf', body: 'Investment Committee memo based on the configuration above.', path: 'memo.pdf' },
+                { title: 'Deal Presentation', ext: '.pptx', body: 'Presentation-ready summary of the investment case, market, underwriting and returns.', path: 'presentation.pptx' },
+              ] as { title: string; ext: string; body: string; path: 'excel' | 'memo.pdf' | 'presentation.pptx' }[]).map(({ title, ext, body, path }) => {
+                const busy = exportBusy === path;
+                return (
                 <div key={title} style={{ border: '1px solid #eae9e4', borderRadius: 8, padding: '14px 15px', display: 'flex', flexDirection: 'column', gap: 7 }}>
                   <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', gap: 10 }}>
                     <span style={{ fontSize: 13, fontWeight: 600, color: palette.ink }}>{title}</span>
@@ -1041,12 +1089,26 @@ export default function ICMemoTab({ project }: { project: Project }) {
                   </div>
                   <span style={{ fontSize: 12, color: palette.textSecondary, lineHeight: 1.55, flex: 1 }}>{body}</span>
                   <div style={{ display: 'flex', alignItems: 'center', gap: 12, paddingTop: 2 }}>
-                    <button disabled style={{ fontFamily: 'inherit', fontSize: 12, fontWeight: 600, padding: '7px 14px', borderRadius: 6, border: '1px solid #eae9e4', background: palette.ground, color: '#a8a7a2', cursor: 'default' }}>
-                      🔒 Coming Soon
+                    <button
+                      type="button"
+                      disabled={!canExport || exportBusy !== null}
+                      onClick={() => void handleExport(path, ext)}
+                      title={canExport ? `Download ${ext}` : 'Available after model run'}
+                      style={{
+                        fontFamily: 'inherit', fontSize: 12, fontWeight: 600, padding: '7px 14px', borderRadius: 6,
+                        border: canExport ? `1px solid ${NAVY}` : '1px solid #eae9e4',
+                        background: canExport ? NAVY : palette.ground,
+                        color: canExport ? '#fff' : '#a8a7a2',
+                        cursor: canExport && !exportBusy ? 'pointer' : 'default',
+                        opacity: canExport && exportBusy && !busy ? 0.6 : 1,
+                      }}
+                    >
+                      {busy ? 'Generating…' : canExport ? `Download ${ext}` : '🔒 Available after model run'}
                     </button>
                   </div>
                 </div>
-              ))}
+                );
+              })}
             </div>
             <div style={{ padding: '0 16px 14px', display: 'flex', gap: 16, alignItems: 'center', flexWrap: 'wrap' }}>
               <button disabled style={{ fontFamily: 'inherit', fontSize: 12, fontWeight: 600, padding: '7px 14px', borderRadius: 6, border: '1px solid #eae9e4', background: palette.ground, color: '#a8a7a2', cursor: 'default' }}>

@@ -1004,6 +1004,71 @@ async function request<T>(
   }
 }
 
+/**
+ * Authenticated GET that returns the raw response body as a ``Blob`` — for
+ * file downloads (Excel model / IC memo PDF / deck PPTX). Mirrors
+ * ``request``'s auth headers (Bearer session JWT + ``X-Tenant-Id``) so a
+ * live multi-tenant deal's export resolves the right tenant, then streams the
+ * binary instead of parsing JSON. Exports render server-side (WeasyPrint /
+ * python-pptx) so the default timeout is generous.
+ */
+async function requestBlob(
+  path: string,
+  opts?: { timeoutMs?: number },
+): Promise<Blob> {
+  if (!BASE) {
+    throw new WorkerError(
+      'NEXT_PUBLIC_WORKER_URL is not configured',
+      0,
+      'worker not connected',
+    );
+  }
+  const url = `${BASE}${path}`;
+  const headers: Record<string, string> = {};
+  const token = await getClerkSessionToken();
+  if (token) headers['Authorization'] = `Bearer ${token}`;
+  const orgId = getCurrentOrgId();
+  if (orgId) headers['X-Tenant-Id'] = orgId;
+
+  const timeoutMs = opts?.timeoutMs ?? 120_000;
+  const ctrl = new AbortController();
+  let timedOut = false;
+  const handle =
+    timeoutMs > 0
+      ? setTimeout(() => {
+          timedOut = true;
+          ctrl.abort(
+            new TimeoutError(
+              `Request timed out after ${timeoutMs}ms: GET ${path}`,
+              'GET',
+              path,
+              timeoutMs,
+            ),
+          );
+        }, timeoutMs)
+      : null;
+  try {
+    const res = await fetch(url, { method: 'GET', headers, signal: ctrl.signal });
+    if (!res.ok) {
+      const text = await res.text().catch(() => '');
+      throw new WorkerError(`GET ${path} → ${res.status}`, res.status, text);
+    }
+    return await res.blob();
+  } catch (err) {
+    if (timedOut) {
+      throw new TimeoutError(
+        `Request timed out after ${timeoutMs}ms: GET ${path}`,
+        'GET',
+        path,
+        timeoutMs,
+      );
+    }
+    throw err;
+  } finally {
+    if (handle !== null) clearTimeout(handle);
+  }
+}
+
 // ─────────────────────────── public api ───────────────────────────
 
 // ────────────────────────────── admin cost ──────────────────────────────
@@ -1352,6 +1417,32 @@ export const api = {
         body,
         { signal },
       ),
+  },
+  exports: {
+    /** Download an export deliverable with worker auth and trigger a browser
+     *  save. ``path`` is one of the worker export routes
+     *  (``excel`` | ``memo.pdf`` | ``presentation.pptx``). Resolves once the
+     *  file has been handed to the browser; throws WorkerError/TimeoutError on
+     *  failure so the caller can toast it. */
+    download: async (
+      dealId: string,
+      path: 'excel' | 'memo.pdf' | 'presentation.pptx',
+      filename: string,
+    ): Promise<void> => {
+      const blob = await requestBlob(`/deals/${dealId}/export/${path}`);
+      const objectUrl = URL.createObjectURL(blob);
+      try {
+        const a = document.createElement('a');
+        a.href = objectUrl;
+        a.download = filename;
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+      } finally {
+        // Revoke after a tick so the click has time to start the download.
+        setTimeout(() => URL.revokeObjectURL(objectUrl), 1_000);
+      }
+    },
   },
   analysis: {
     /** Deterministic broker-vs-T12 variance flags for a deal. */

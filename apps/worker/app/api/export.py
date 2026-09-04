@@ -31,10 +31,46 @@ from ..audit import log_audit
 from ..database import get_session
 from ..export import build_excel, build_memo_pdf, build_pptx
 from ..export.fixtures import load_demo_payload
+from ..export.live_payload import load_live_payload
 from .deals import get_tenant_id
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
+
+
+def _is_real_uuid(deal_id: str) -> bool:
+    """True for a real DB deal id (UUID), False for a slug/demo id.
+
+    Slug deals (e.g. ``kimpton-angler-2026``) keep the hard-coded fixture so
+    the Kimpton golden export stays byte-identical; real UUID deals render the
+    live deal via :func:`load_live_payload`.
+    """
+    try:
+        UUID(deal_id)
+        return True
+    except (TypeError, ValueError):
+        return False
+
+
+async def _load_payload(
+    session: AsyncSession, deal_id: str, tenant_id: UUID
+) -> tuple[dict[str, Any], dict[str, Any], dict[str, Any]]:
+    """Return ``(deal, model, memo)`` for either a live UUID deal or a demo slug.
+
+    Live deals assemble from the canonical engine snapshot + cached memo +
+    real uploaded docs (:func:`load_live_payload`). Demo/slug deals keep the
+    Kimpton fixture, with the memo appendix's ``documents_reviewed`` swapped to
+    any real uploads (a no-op for the pure Kimpton slug — see
+    :func:`_real_documents_reviewed`).
+    """
+    if _is_real_uuid(deal_id):
+        return await load_live_payload(session, deal_id, str(tenant_id))
+    deal, model, memo = load_demo_payload(deal_id)
+    real_docs = await _real_documents_reviewed(
+        session, deal_id=deal_id, tenant_id=str(tenant_id)
+    )
+    _patch_memo_appendix(memo, real_docs)
+    return deal, model, memo
 
 
 async def _real_documents_reviewed(
@@ -168,7 +204,7 @@ async def export_excel(
 ) -> FileResponse:
     """Build and stream the multi-tab Excel acquisition model."""
     deal_uuid = _coerce_deal_uuid(deal_id)
-    _deal, model, _memo = load_demo_payload(deal_id)
+    _deal, model, _memo = await _load_payload(session, deal_id, tenant_id)
     out = _tmp_path(deal_id, ".xlsx")
     build_excel(deal_uuid, model, out)
     logger.info("excel export built deal=%s size=%s", deal_id, out.stat().st_size)
@@ -195,11 +231,7 @@ async def export_memo_pdf(
 ) -> FileResponse:
     """Build and stream the IC memo PDF."""
     _coerce_deal_uuid(deal_id)
-    _deal, model, memo = load_demo_payload(deal_id)
-    real_docs = await _real_documents_reviewed(
-        session, deal_id=deal_id, tenant_id=str(tenant_id)
-    )
-    _patch_memo_appendix(memo, real_docs)
+    _deal, model, memo = await _load_payload(session, deal_id, tenant_id)
     out = _tmp_path(deal_id, "-memo.pdf")
     build_memo_pdf(memo, model, out)
     logger.info("memo pdf built deal=%s size=%s", deal_id, out.stat().st_size)
@@ -226,11 +258,7 @@ async def export_pptx(
 ) -> FileResponse:
     """Build and stream the 8-slide IC presentation."""
     _coerce_deal_uuid(deal_id)
-    deal, model, memo = load_demo_payload(deal_id)
-    real_docs = await _real_documents_reviewed(
-        session, deal_id=deal_id, tenant_id=str(tenant_id)
-    )
-    _patch_memo_appendix(memo, real_docs)
+    deal, model, memo = await _load_payload(session, deal_id, tenant_id)
     out = _tmp_path(deal_id, "-deck.pptx")
     build_pptx(deal, model, memo, out)
     logger.info("pptx built deal=%s size=%s", deal_id, out.stat().st_size)
