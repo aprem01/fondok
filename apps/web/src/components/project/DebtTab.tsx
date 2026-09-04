@@ -407,8 +407,17 @@ export default function DebtTab() {
       value: money(wEquity), link: { label: '→ Investment', tab: 'investment' } },
   ];
 
+  // Divergence #1 (canonical Loan Terms): the fixed/floating flag exists on the
+  // debt-stack senior tranche (rate_type), so we label the all-in rate row per
+  // rate type and bold it like the canonical headline term. The Benchmark →
+  // Spread build-up is NOT emitted by the engine (see BACKEND-NEEDED), so only
+  // the all-in `interest_rate` is rendered.
+  const rateLabel =
+    seniorRateType === 'floating' ? 'Underwritten All-In Rate'
+    : seniorRateType === 'fixed' ? 'Fixed Interest Rate'
+    : 'Interest Rate';
   const loanTerms: RowDef[] = [
-    { id: 'rate', label: 'Interest Rate', kind: 'calc', state: 'assumption', value: pctv(wRate, 2) },
+    { id: 'rate', label: rateLabel, kind: 'calc', state: 'assumption', value: pctv(wRate, 2), bold: !!seniorRateType },
     { id: 'amort', label: 'Amortization', kind: 'calc', state: 'assumption',
       value: has(wAmortYears) ? `${wAmortYears} years` : '—' },
     { id: 'term', label: 'Maturity', kind: 'calc', state: 'assumption',
@@ -432,7 +441,14 @@ export default function DebtTab() {
   ];
 
   // Credit metric cards (Debt Overview) — read straight from covenants[].
-  const creditMetrics = wCovenants.map((c) => ({
+  // Divergence #2: canonical groups leverage + Debt-Yield before DSCR
+  // (LTV · LTC · Debt Yield · DSCR); the engine emits [ltv, ltc, dscr, debt_yield],
+  // so reorder to match. The Entry-vs-Stabilized splits canonical also shows are
+  // BACKEND-NEEDED (no stabilized debt-yield / stabilized-DSCR fields emitted).
+  const COV_ORDER: Record<string, number> = { ltv: 0, ltc: 1, debt_yield: 2, dscr: 3 };
+  const creditMetrics = [...wCovenants]
+    .sort((a, b) => (COV_ORDER[a.name] ?? 99) - (COV_ORDER[b.name] ?? 99))
+    .map((c) => ({
     label: c.label,
     value: covCurrent(c),
     basis: COV_BASIS[c.name] ?? '',
@@ -518,6 +534,19 @@ export default function DebtTab() {
               Loan terms are entered manually in this release and are not extracted from financing documents.
               Fondok sizes the schedule, credit metrics and covenants from what you enter.
             </span>
+            {/* Divergence #6 (canonical): "Edit terms →" jumps to the Full Loan
+                Terms sheet on the Loan Terms & Covenants sub-tab. */}
+            <button
+              type="button"
+              onClick={() => setTab('Loan Terms & Covenants')}
+              style={{
+                marginLeft: 'auto', background: palette.inkNavy, color: '#fff', border: 'none',
+                borderRadius: 6, padding: '6px 13px', fontSize: 11.5, fontWeight: 600,
+                cursor: 'pointer', fontFamily: 'inherit', whiteSpace: 'nowrap',
+              }}
+            >
+              Edit terms →
+            </button>
           </div>
           <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap', borderTop: `1px solid #dbe3f5`, paddingTop: 8 }}>
             <span style={{
@@ -551,7 +580,7 @@ export default function DebtTab() {
                 </SectionCard>
                 <SectionCard
                   title="Loan Terms"
-                  note={seniorRateType ? `${seniorRateType === 'floating' ? 'Floating' : 'Fixed'}-rate senior` : 'Entered by you'}
+                  note={seniorRateType ? <RateTypeToggle rateType={seniorRateType} /> : 'Entered by you'}
                 >
                   {loanTerms.map((r) => <DebtRow key={r.id} row={r} />)}
                 </SectionCard>
@@ -819,12 +848,13 @@ function EditableValue({
 // Segmented pill toggle (canonical `pill()` control).
 // ─────────────────────────────────────────────────────────────────────
 function Pill({
-  options, value, onSelect, disabled = [],
+  options, value, onSelect, disabled = [], disabledTitle,
 }: {
   options: string[];
   value: string;
   onSelect: (v: string) => void;
   disabled?: string[];
+  disabledTitle?: string;
 }) {
   return (
     <span style={{ display: 'inline-flex', background: '#eeede8', border: `1px solid ${palette.disabledBorder}`, borderRadius: 7, padding: 2, gap: 2 }}>
@@ -834,7 +864,7 @@ function Pill({
         return (
           <button key={o} type="button" disabled={isDisabled}
             onClick={() => !isDisabled && onSelect(o)}
-            title={isDisabled ? 'Single tranche — senior loan only.' : undefined}
+            title={isDisabled ? (disabledTitle ?? 'Single tranche — senior loan only.') : undefined}
             style={{
               fontSize: 11.5, fontFamily: 'inherit', border: 'none', cursor: isDisabled ? 'not-allowed' : 'pointer',
               fontWeight: active ? 700 : 500, color: active ? palette.inkNavy : palette.eyebrow,
@@ -846,6 +876,26 @@ function Pill({
         );
       })}
     </span>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────────
+// Read-only Floating/Fixed indicator (canonical Loan Terms toggle). The rate
+// type is engine-owned (debt-stack senior tranche `rate_type`). The app cannot
+// switch the rate basis because the engine does not emit the benchmark + spread
+// build-up (see BACKEND-NEEDED), so the inactive side is disabled, not clickable.
+// ─────────────────────────────────────────────────────────────────────
+function RateTypeToggle({ rateType }: { rateType: string }) {
+  const active = rateType === 'floating' ? 'Floating' : 'Fixed';
+  const inactive = active === 'Floating' ? 'Fixed' : 'Floating';
+  return (
+    <Pill
+      options={['Floating', 'Fixed']}
+      value={active}
+      onSelect={() => { /* read-only — rate type comes from the term sheet on file */ }}
+      disabled={[inactive]}
+      disabledTitle="Rate type is read from the term sheet on file. Floating prices off a benchmark plus spread."
+    />
   );
 }
 
