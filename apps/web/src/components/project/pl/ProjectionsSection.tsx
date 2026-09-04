@@ -154,6 +154,34 @@ interface ProjYear {
 
 const isLeap = (y: number) => (y % 4 === 0 && y % 100 !== 0) || y % 400 === 0;
 
+// Engine-default assumptions (mirror apps/worker services/engine_runner.py base).
+// Used as the display fallback when a key has no override and no resolved source.
+const ASSUMPTION_DEFAULTS: Record<string, number> = {
+  revpar_growth: 0.045,
+  expense_growth: 0.035,
+  other_expense_growth: 0.03,
+  resort_fee_per_night: 35,
+  resort_fee_capture_y1: 0.6,
+  resort_fee_capture_y2: 0.8,
+  resort_fee_capture_y3: 0.95,
+  mgmt_fee_pct: 0.03,
+  exit_cap_rate: 0.07,
+};
+
+// Read a numeric value out of a field_overrides entry ({value, note} or scalar).
+function ovValue(overrides: Record<string, unknown>, key: string): number | null {
+  const raw = overrides[key];
+  if (raw == null) return null;
+  if (typeof raw === 'number') return Number.isFinite(raw) ? raw : null;
+  if (typeof raw === 'object' && 'value' in (raw as object)) {
+    const v = (raw as { value?: unknown }).value;
+    const n = typeof v === 'number' ? v : Number(v);
+    return Number.isFinite(n) ? n : null;
+  }
+  const n = Number(raw);
+  return Number.isFinite(n) ? n : null;
+}
+
 export default function ProjectionsSection({
   dealId,
 }: {
@@ -208,6 +236,19 @@ export default function ProjectionsSection({
     }),
     [overrides, applyOverride, resetOverride, runStatus],
   );
+
+  // Exit cap rate drives the Implied Exit Value line at the bottom of the
+  // forward statement. It's owned by the Investment tab, so we resolve it the
+  // same way the Assumptions panel does: live provenance source → override →
+  // engine default. Capitalising each year's EBITDA at this rate mirrors the
+  // canonical Projections statement's "Implied Exit Value" line.
+  const exitCapSrc = useSource('exit_cap_rate');
+  const exitCapRate = useMemo(() => {
+    if (typeof exitCapSrc?.value === 'number' && Number.isFinite(exitCapSrc.value)) {
+      return exitCapSrc.value;
+    }
+    return ovValue(overrides, 'exit_cap_rate') ?? ASSUMPTION_DEFAULTS.exit_cap_rate;
+  }, [exitCapSrc, overrides]);
 
   // Resolve key count: real deal.keys; default 0 until known.
   const keys = deal?.keys && deal.keys > 0 ? deal.keys : 0;
@@ -475,7 +516,7 @@ export default function ProjectionsSection({
         />
 
         <AssumptionOverrideContext.Provider value={overrideCtx}>
-          <ProjectionsTable years={visibleYears} />
+          <ProjectionsTable years={visibleYears} exitCapRate={exitCapRate} />
         </AssumptionOverrideContext.Provider>
       </Card>
 
@@ -642,10 +683,16 @@ function buildFromWorker(
 // Table
 // ────────────────────────────────────────────────────────────────────
 
-function ProjectionsTable({ years }: { years: ProjYear[] }) {
+function ProjectionsTable({ years, exitCapRate }: { years: ProjYear[]; exitCapRate: number }) {
   // Hotel Delivery — render the base year period-end as the anchor date.
   const baseYear = years[0]?.year ?? new Date().getFullYear();
   const hotelDelivery = `9/30/${baseYear}`;
+
+  // The forward statement below Total Revenue only renders when the expense
+  // engine emitted its waterfall (real worker runs). Demo / revenue-only
+  // output leaves these undefined, so the table stays topline-only — same
+  // gate the xlsx export uses.
+  const hasExpenseDetail = years.some((y) => y.deptTotalExpense != null);
 
   // Annual RevPAR growth — Y0 N/A, Y1+ vs prior.
   const revparGrowth = years.map((y, i) => {
@@ -956,6 +1003,232 @@ function ProjectionsTable({ years }: { years: ProjYear[] }) {
             traceEngine="revenue"
             tracePath={(i) => `years[${i}].total_revenue`}
           />
+
+          {/* ── Forward statement below Total Revenue (canonical Projections
+              statement: Financials Tab.dc.html → projDefs). Every figure comes
+              from the expense engine (apps/worker/app/engines/expense.py) that
+              ProjYear already carries; subtotals foot to the visible rows. ── */}
+          {hasExpenseDetail && (
+            <>
+              {/* DEPARTMENTAL EXPENSE */}
+              <tr className="bg-brand-500/95">
+                <td
+                  colSpan={2 + years.length * 4}
+                  className="px-3 py-1.5 text-[10.5px] font-semibold uppercase tracking-[0.12em] text-white"
+                >
+                  Departmental Expense
+                </td>
+              </tr>
+              <FullRow
+                label="Rooms"
+                indexLabel=""
+                unit="$"
+                years={years}
+                amountOf={(y) => y.deptRoomsExpense ?? 0}
+                fmtAmount={fmtAmount}
+                pctRev={pctRev}
+                par={par}
+                por={por}
+              />
+              <FullRow
+                label="Food & Beverage"
+                indexLabel=""
+                unit="$"
+                years={years}
+                amountOf={(y) => y.deptFbExpense ?? 0}
+                fmtAmount={fmtAmount}
+                pctRev={pctRev}
+                par={par}
+                por={por}
+              />
+              <FullRow
+                label="Other Operated Departments"
+                indexLabel=""
+                unit="$"
+                years={years}
+                amountOf={(y) => y.deptOtherExpense ?? 0}
+                fmtAmount={fmtAmount}
+                pctRev={pctRev}
+                par={par}
+                por={por}
+              />
+              {/* Total Departmental Expense = Σ departmental expense lines
+                  (worker dept_expenses.total). */}
+              <FullRow
+                label="Total Departmental Expense"
+                indexLabel=""
+                unit="$"
+                years={years}
+                amountOf={(y) => y.deptTotalExpense ?? 0}
+                fmtAmount={fmtAmount}
+                pctRev={pctRev}
+                par={par}
+                por={por}
+                bold
+              />
+              {/* Total Departmental Profit = Total Revenue − Total Departmental
+                  Expense. */}
+              <FullRow
+                label="Total Departmental Profit"
+                indexLabel=""
+                unit="$"
+                years={years}
+                amountOf={(y) => y.totalRevenue - (y.deptTotalExpense ?? 0)}
+                fmtAmount={fmtAmount}
+                pctRev={pctRev}
+                par={par}
+                por={por}
+                bold
+              />
+
+              {/* UNDISTRIBUTED EXPENSES */}
+              <tr className="bg-brand-500/95">
+                <td
+                  colSpan={2 + years.length * 4}
+                  className="px-3 py-1.5 text-[10.5px] font-semibold uppercase tracking-[0.12em] text-white"
+                >
+                  Undistributed Expenses
+                </td>
+              </tr>
+              <FullRow
+                label="Administrative & General"
+                indexLabel=""
+                unit="$"
+                years={years}
+                amountOf={(y) => y.undistAdminGeneral ?? 0}
+                fmtAmount={fmtAmount}
+                pctRev={pctRev}
+                par={par}
+                por={por}
+              />
+              <FullRow
+                label="Information & Telecom Systems"
+                indexLabel=""
+                unit="$"
+                years={years}
+                amountOf={(y) => y.undistInfoTelecom ?? 0}
+                fmtAmount={fmtAmount}
+                pctRev={pctRev}
+                par={par}
+                por={por}
+              />
+              <FullRow
+                label="Sales & Marketing"
+                indexLabel=""
+                unit="$"
+                years={years}
+                amountOf={(y) => y.undistSalesMarketing ?? 0}
+                fmtAmount={fmtAmount}
+                pctRev={pctRev}
+                par={par}
+                por={por}
+              />
+              <FullRow
+                label="Property Operation & Maintenance"
+                indexLabel=""
+                unit="$"
+                years={years}
+                amountOf={(y) => y.undistPropertyOps ?? 0}
+                fmtAmount={fmtAmount}
+                pctRev={pctRev}
+                par={par}
+                por={por}
+              />
+              <FullRow
+                label="Utilities"
+                indexLabel=""
+                unit="$"
+                years={years}
+                amountOf={(y) => y.undistUtilities ?? 0}
+                fmtAmount={fmtAmount}
+                pctRev={pctRev}
+                par={par}
+                por={por}
+              />
+              {/* Total Undistributed Expenses = Σ undistributed lines
+                  (worker undistributed.total). */}
+              <FullRow
+                label="Total Undistributed Expenses"
+                indexLabel=""
+                unit="$"
+                years={years}
+                amountOf={(y) => y.undistTotal ?? 0}
+                fmtAmount={fmtAmount}
+                pctRev={pctRev}
+                par={par}
+                por={por}
+                bold
+              />
+              {/* Gross Operating Profit = Total Departmental Profit − Total
+                  Undistributed Expenses (worker gop). Traced to the engine. */}
+              <FullRow
+                label="Gross Operating Profit"
+                indexLabel=""
+                unit="$"
+                years={years}
+                amountOf={(y) => y.gop ?? 0}
+                fmtAmount={fmtAmount}
+                pctRev={pctRev}
+                par={par}
+                por={por}
+                bold
+                traceEngine="expense"
+                tracePath={(i) => `years[${i}].gop`}
+              />
+              {/* Management Fees — % of total revenue (worker mgmt_fee). */}
+              <FullRow
+                label="Management Fees"
+                indexLabel=""
+                unit="$"
+                years={years}
+                amountOf={(y) => y.mgmtFee ?? 0}
+                fmtAmount={fmtAmount}
+                pctRev={pctRev}
+                par={par}
+                por={por}
+              />
+              {/* EBITDA = Gross Operating Profit − Management Fees (canonical
+                  Projections definition; foots to the two rows above). */}
+              <FullRow
+                label="EBITDA"
+                indexLabel=""
+                unit="$"
+                years={years}
+                amountOf={(y) => (y.gop ?? 0) - (y.mgmtFee ?? 0)}
+                fmtAmount={fmtAmount}
+                pctRev={pctRev}
+                par={par}
+                por={por}
+                bold
+              />
+              {/* Implied Exit Value — each year's EBITDA capitalised at the
+                  exit cap rate (canonical: ExitValue = EBITDA ÷ exit_cap_rate).
+                  Rendered as a single spanning stat value per year (a valuation,
+                  not an operating %Rev/PAR/POR breakdown). */}
+              <tr className="border-b border-border/60 bg-brand-50/30 font-semibold">
+                <td className="px-3 py-2 text-[11px] text-ink-900 font-semibold border-r border-border bg-bg/30">
+                  Implied Exit Value
+                </td>
+                <td className="px-3 py-2 text-[11px] text-ink-500 border-r border-border bg-bg/30">
+                  $
+                </td>
+                {years.map((y, i) => {
+                  const ebitda = (y.gop ?? 0) - (y.mgmtFee ?? 0);
+                  const exitVal = exitCapRate > 0 ? ebitda / exitCapRate : 0;
+                  return (
+                    <td
+                      key={`ev-${i}`}
+                      colSpan={4}
+                      title={`Implied Exit Value = EBITDA ÷ exit cap rate (${(exitCapRate * 100).toFixed(1)}%)`}
+                      className="px-2 py-2 text-center text-[11px] text-ink-900 font-semibold tabular-nums border-l border-border"
+                    >
+                      {exitCapRate > 0 ? fmtAmount(exitVal, { prefix: '$' }) : '—'}
+                    </td>
+                  );
+                })}
+              </tr>
+            </>
+          )}
         </tbody>
       </table>
       <div className="px-5 py-3 border-t border-border text-[11px] text-ink-500 flex items-center gap-1.5">
@@ -1436,34 +1709,6 @@ function ProjectionsControls({
       </div>
     </div>
   );
-}
-
-// Engine-default assumptions (mirror apps/worker services/engine_runner.py base).
-// Used as the display fallback when a key has no override and no resolved source.
-const ASSUMPTION_DEFAULTS: Record<string, number> = {
-  revpar_growth: 0.045,
-  expense_growth: 0.035,
-  other_expense_growth: 0.03,
-  resort_fee_per_night: 35,
-  resort_fee_capture_y1: 0.6,
-  resort_fee_capture_y2: 0.8,
-  resort_fee_capture_y3: 0.95,
-  mgmt_fee_pct: 0.03,
-  exit_cap_rate: 0.07,
-};
-
-// Read a numeric value out of a field_overrides entry ({value, note} or scalar).
-function ovValue(overrides: Record<string, unknown>, key: string): number | null {
-  const raw = overrides[key];
-  if (raw == null) return null;
-  if (typeof raw === 'number') return Number.isFinite(raw) ? raw : null;
-  if (typeof raw === 'object' && 'value' in (raw as object)) {
-    const v = (raw as { value?: unknown }).value;
-    const n = typeof v === 'number' ? v : Number(v);
-    return Number.isFinite(n) ? n : null;
-  }
-  const n = Number(raw);
-  return Number.isFinite(n) ? n : null;
 }
 
 // One editable assumption row: label + right-aligned numeric input with affixes.
