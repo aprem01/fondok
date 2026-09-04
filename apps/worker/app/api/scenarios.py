@@ -34,6 +34,7 @@ from ..audit import log_audit
 from ..database import get_session
 from ..services.engine_runner import (
     ENGINE_NAMES,
+    get_canonical_run_id,
     get_latest_outputs,
     get_run_status,
     run_all_engines,
@@ -906,12 +907,29 @@ async def compare_scenarios(
         # different run and got filtered out — leaving the Base column blank
         # even though its outputs exist. A run_id-scoped read pins each column
         # to its own run.
+        #
+        # The BASE column, however, tracks the deal's CANONICAL run
+        # (``get_canonical_run_id``) rather than the base scenario's cached
+        # ``last_run_id``. The base scenario always carries empty overrides, so
+        # its run is canonical-by-definition — but a deal-level "run model"
+        # refreshes the canonical run WITHOUT re-pointing the base scenario's
+        # ``last_run_id``, so the two drift (FON-69: Returns 38.6% vs a stale
+        # Base -0.8%). Pinning the Base column to the canonical run keeps it
+        # equal to the deal-wide tabs (Returns / Financials / …) and can't drift.
+        # Falls back to the base scenario's own run when no full chain exists.
         scoped: dict[str, dict[str, Any]] = {}
-        if record.last_run_id is not None:
+        run_id_to_read = record.last_run_id
+        if record.is_base:
+            canonical_run = await get_canonical_run_id(
+                session, deal_id=str(deal_id), tenant_id=str(tenant_id)
+            )
+            if canonical_run:
+                run_id_to_read = UUID(str(canonical_run))
+        if run_id_to_read is not None:
             run_rows = await get_run_status(
                 session,
                 deal_id=str(deal_id),
-                run_id=str(record.last_run_id),
+                run_id=str(run_id_to_read),
                 tenant_id=str(tenant_id),
             )
             for entry in run_rows:
