@@ -51,6 +51,16 @@ const LEAF_LABELS: Record<string, string> = {
   property_name: 'Property Name',
   key_count: 'Keys',
   keys: 'Keys',
+  // Partnership / JV terms (FON-66). ``_pct`` is stripped before this
+  // lookup, so key the equity shares on the stripped stem too.
+  gp_equity_pct: 'GP / Sponsor Ownership',
+  gp_equity: 'GP / Sponsor Ownership',
+  lp_equity_pct: 'LP / Investor Ownership',
+  lp_equity: 'LP / Investor Ownership',
+  pref_rate: 'Preferred Return',
+  hurdle_rate: 'IRR Hurdle',
+  gp_split: 'GP Split',
+  lp_split: 'LP Split',
 };
 
 // Word-level acronym / casing fixes for the generic fallback. Empty string

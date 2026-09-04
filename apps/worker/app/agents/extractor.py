@@ -426,6 +426,60 @@ include:
            ``pnl_benchmark.noi_par``,
            ``pnl_benchmark.rooms_revenue_por``,
            ``pnl_benchmark.fb_revenue_por``.
+   * **PARTNERSHIP (operating agreement / JV / equity waterfall).**
+     A prose legal document — an LLC operating agreement, a joint-
+     venture agreement, or an equity term sheet — that lays out the
+     GP/LP ownership split, the preferred return, and the promote
+     waterfall. The terms are written in sentences and defined-term
+     paragraphs, NOT a clean grid, so read the meaning and map it onto
+     these EXACT canonical paths (downstream reads them verbatim):
+       * ``partnership.gp_equity_pct`` — the sponsor / general
+         partner / managing-member ownership share. Aliases in the
+         source: "Sponsor", "GP", "General Partner", "Managing Member",
+         "Promote Member", "Class B".
+       * ``partnership.lp_equity_pct`` — the investor / limited
+         partner / capital-member ownership share. Aliases: "LP",
+         "Limited Partner", "Investor Member", "Capital Member",
+         "Class A".
+       * ``partnership.pref_rate`` — the preferred return / hurdle the
+         LP earns before any promote. Aliases: "Preferred Return",
+         "Pref", "Priority Return", "Preferred Distribution rate".
+       * ``partnership.waterfall.<idx>.hurdle_rate`` — the IRR (or
+         return) hurdle that DEFINES promote tier ``<idx>`` (the
+         threshold the band is gated on). Tiers are read low-to-high.
+       * ``partnership.waterfall.<idx>.gp_split`` — the GP/sponsor
+         (promote) share of distributions WITHIN that tier.
+       * ``partnership.waterfall.<idx>.lp_split`` — the LP/investor
+         share within that tier.
+
+     Waterfall tier rules — read carefully, they prevent fabrication:
+       * ``<idx>`` is a 0-based integer, counting UP from the lowest
+         hurdle. Tier 0 is the preferred/return-of-capital tier (its
+         hurdle is the pref itself, often GP 0% / LP 100%); each higher
+         tier is the next promote band ("thereafter to a 15% IRR,
+         80/20"; "above 20% IRR, 70/30").
+       * Emit a tier ONLY when you can ground BOTH its ``hurdle_rate``
+         AND at least one split (``gp_split`` or ``lp_split``) in the
+         document. If only one split side is stated, emit just that one
+         — the downstream builder derives the complement so the two
+         sum to 1.0. Never invent the missing hurdle or a split you did
+         not read.
+       * Number the tiers CONTIGUOUSLY from 0 with no gaps. If the
+         agreement describes only two promote bands, emit only tiers 0
+         and 1. Do not pad to a fixed count.
+       * If the document states ownership and pref but no promote
+         waterfall at all, emit just the scalars and NO
+         ``partnership.waterfall.*`` fields.
+
+     **Units — CRITICAL.** Every partnership value is a 0..1 FRACTION
+     with ``unit`` ``ratio``: a 90% LP share is ``0.90``, an 8%
+     preferred return is ``0.08``, a 20% promote is ``0.20``. Do NOT
+     emit 90 / 8 / 20. Downstream applies these verbatim with no
+     percent-to-fraction conversion, so a raw percent would be read as
+     a 9000% / 800% / 2000% share. When in doubt about a number that
+     could be either ownership or a dollar capital contribution, only
+     emit the ownership fraction under these paths; leave capital
+     dollars to a generic ``partnership.<...>`` path.
 
 2. ``value``        — the extracted scalar (number, string, or bool).
                       Strip thousand-separators; use a decimal between
@@ -501,6 +555,15 @@ Coverage targets per document type:
     and per-department labor breakdown when present. Peer set size,
     subject + peer keys / occupancy / ADR / RevPAR are mandatory
     headers.
+  * **PARTNERSHIP** — the ownership split (``partnership.gp_equity_pct``
+    + ``partnership.lp_equity_pct``) and the preferred return
+    (``partnership.pref_rate``) are the priority fields; extract them
+    whenever the agreement states them. Then emit every promote tier
+    you can ground as ``partnership.waterfall.<idx>.{hurdle_rate,
+    gp_split,lp_split}`` (0-based, contiguous, bias to None — a partial
+    tier is omitted, never padded). All values are 0..1 fractions. A
+    JV doc that yields ownership + pref + two promote tiers is a good
+    extraction; missing terms are left absent, never guessed.
 
 Tone: institutional. Never hallucinate a field that isn't in the
 source — silence is acceptable, fabrication is not.

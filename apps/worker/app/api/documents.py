@@ -5836,6 +5836,13 @@ _PREFILTER_SKIP_DOC_TYPES: frozenset[str] = frozenset({
     "INSURANCE",
     "PROPERTY_TAX",
     "CAPEX",
+    # A partnership / JV operating agreement is prose-heavy legal text —
+    # the equity split, preferred return, and promote waterfall live in
+    # defined-term paragraphs, not a dollar-dense grid. The strict signal
+    # gate (which keys off currency / P&L / STR vocab) would drop the very
+    # pages that carry the terms, so treat it like LEASES / CONTRACT and
+    # keep every chunk. FON-66 Part B (prose partnership extraction).
+    "PARTNERSHIP",
 })
 
 # Doc types where the strict gate applies — tabular, narrow schema, low-
