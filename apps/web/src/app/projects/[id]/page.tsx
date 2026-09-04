@@ -811,7 +811,11 @@ export default function ProjectDetailPage() {
           <ErrorBoundary tabName="Scenario Analysis">
             <div className="space-y-6">
               <ScenarioAnalysisTab dealId={String(id)} />
-              {liveMode && <ScenarioComparePanel dealId={rawId} scenarios={scenarios} />}
+              {/* Canonical (Scenarios Tab.dc.html) always shows the Scenario
+                  Comparison section — the Base column always exists. The panel
+                  self-guards live vs mock deals internally (compare API only
+                  fires when ≥2 scenarios are saved). */}
+              <ScenarioComparePanel dealId={rawId} scenarios={scenarios} />
             </div>
           </ErrorBoundary>
         )}

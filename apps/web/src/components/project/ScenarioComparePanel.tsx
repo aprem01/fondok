@@ -86,30 +86,51 @@ interface EnginePayload {
   summary?: string;
 }
 
+// Canonical comparison rows (Scenarios Tab.dc.html):
+//   Levered IRR · Equity Multiple · Avg. Cash-on-Cash · Stabilized NOI ·
+//   Exit Value · Avg. DSCR · Total Equity Required
+// Every value reads the same per-scenario engine result object the compare
+// endpoint already returns — display-only; no engine math changed here.
 const KPI_ROWS: KpiRow[] = [
   { key: 'irr', label: 'Levered IRR', format: 'pct', pick: (e) => num(e.returns?.outputs, ['levered_irr']) },
   { key: 'em', label: 'Equity Multiple', format: 'multiple', pick: (e) => num(e.returns?.outputs, ['equity_multiple']) },
-  { key: 'noi_y1', label: 'NOI Y1', format: 'usd', pick: (e) => num(e.expense?.outputs, ['years', 0, 'noi']) },
-  { key: 'noi_y5', label: 'NOI Y5', format: 'usd', pick: (e) => num(e.expense?.outputs, ['years', 4, 'noi']) },
   {
-    key: 'cap',
-    label: 'Exit Cap Rate',
+    key: 'avg_coc',
+    label: 'Avg. Cash-on-Cash',
     format: 'pct',
+    pick: (e) => num(e.returns?.outputs, ['avg_coc']),
+  },
+  {
+    key: 'stab_noi',
+    label: 'Stabilized NOI',
+    format: 'usd',
+    // Terminal-year (stabilized) NOI: last element of returns.noi_by_year,
+    // falling back to the last expense-engine operating year.
     pick: (e) =>
-      num(e.returns?.outputs, ['exit_cap_rate']) ?? num(e.sensitivity?.outputs, ['exit_cap_rate']),
+      lastNumInArray(e.returns?.outputs, 'noi_by_year') ??
+      lastYearField(e.expense?.outputs, 'years', 'noi'),
+  },
+  {
+    key: 'exit_value',
+    label: 'Exit Value',
+    format: 'usd',
+    pick: (e) =>
+      num(e.returns?.outputs, ['gross_sale_price']) ?? num(e.returns?.outputs, ['exit_value']),
   },
   {
     key: 'dscr',
-    label: 'Avg DSCR',
+    label: 'Avg. DSCR',
     format: 'ratio',
     pick: (e) => num(e.debt?.outputs, ['avg_dscr']) ?? num(e.debt?.outputs, ['dscr']),
   },
   {
-    key: 'total_cost',
-    label: 'Total Project Cost',
+    key: 'total_equity',
+    label: 'Total Equity Required',
     format: 'usd',
+    // Total equity = −cash_flows[0] (levered flows open with −equity), else the
+    // capital engine's equity_amount.
     pick: (e) =>
-      num(e.capital?.outputs, ['total_project_cost']) ?? num(e.capital?.outputs, ['total_cost']),
+      equityFromCashFlows(e.returns?.outputs) ?? num(e.capital?.outputs, ['equity_amount']),
   },
 ];
 
@@ -851,6 +872,39 @@ function numAt(root: unknown, path: string[]): number | undefined {
     }
   }
   return typeof cur === 'number' && Number.isFinite(cur) ? cur : undefined;
+}
+
+/** Last finite number in a numeric array field on an engine output — e.g.
+ *  returns.noi_by_year → the stabilized/terminal-year NOI. */
+function lastNumInArray(obj: unknown, key: string): number | null {
+  if (!obj || typeof obj !== 'object') return null;
+  const arr = (obj as Record<string, unknown>)[key];
+  if (!Array.isArray(arr) || arr.length === 0) return null;
+  const v = arr[arr.length - 1];
+  return typeof v === 'number' && Number.isFinite(v) ? v : null;
+}
+
+/** Field on the last element of an array-of-objects — e.g.
+ *  expense.years[last].noi (fallback stabilized-NOI source). */
+function lastYearField(obj: unknown, arrKey: string, field: string): number | null {
+  if (!obj || typeof obj !== 'object') return null;
+  const arr = (obj as Record<string, unknown>)[arrKey];
+  if (!Array.isArray(arr) || arr.length === 0) return null;
+  const last = arr[arr.length - 1];
+  if (!last || typeof last !== 'object') return null;
+  const v = (last as Record<string, unknown>)[field];
+  return typeof v === 'number' && Number.isFinite(v) ? v : null;
+}
+
+/** Total equity required = −cash_flows[0]; the levered flow series opens with
+ *  −equity, so negating the first period yields the equity outlay. */
+function equityFromCashFlows(obj: unknown): number | null {
+  if (!obj || typeof obj !== 'object') return null;
+  const cf = (obj as Record<string, unknown>)['cash_flows'];
+  if (!Array.isArray(cf) || cf.length === 0) return null;
+  const first = cf[0];
+  if (typeof first !== 'number' || !Number.isFinite(first)) return null;
+  return -first;
 }
 
 function num(obj: unknown, path: (string | number)[]): number | null {
