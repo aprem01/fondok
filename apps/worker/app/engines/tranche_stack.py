@@ -102,6 +102,14 @@ class TrancheResult(BaseModel):
     # FON-63 follow-up — surface the amortization so the Debt tab can render
     # and edit it (None / interest-only shows as "IO").
     amortization_years: int | None = None
+    # FON-72 follow-up — the floating-rate build-up echoed straight from the
+    # INPUT tranche (index name, index rate assumption, spread) so the Debt tab's
+    # Loan Terms card can render Benchmark → Spread → All-In. A fixed-rate tranche
+    # carries none of these (all None) and the tab renders those rows "—". These
+    # are pure pass-throughs — nothing in the rate/DSCR math reads them.
+    benchmark_name: str | None = None
+    benchmark_rate: float | None = None
+    spread: float | None = None
 
 
 class DebtStackResult(BaseModel):
@@ -167,6 +175,8 @@ def compute_debt_stack(
                 rate_type=t.rate_type, annual_debt_service=None,
                 interest_only=t.interest_only, terms_pending=True,
                 amortization_years=t.amortization_years,
+                benchmark_name=t.index_name, benchmark_rate=t.index_assumption,
+                spread=t.spread,
             ))
             continue
         ds = _annual_debt_service(t, rate)
@@ -178,6 +188,8 @@ def compute_debt_stack(
             rate_type=t.rate_type, annual_debt_service=ds,
             interest_only=t.interest_only, terms_pending=False,
             amortization_years=t.amortization_years,
+            benchmark_name=t.index_name, benchmark_rate=t.index_assumption,
+            spread=t.spread,
         ))
 
     weighted_avg_rate = rate_weight / priced_debt if priced_debt > 0 else None

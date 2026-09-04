@@ -87,7 +87,7 @@ def test_compute_refi_sizes_off_min_of_dy_and_dscr() -> None:
     schedule = DebtEngine().run(_debt_input()).schedule
     noi = [3_000_000, 3_300_000, 3_600_000, 4_000_000, 4_400_000]
     senior_ds = [yr.debt_service for yr in schedule]
-    ds, cash_out, proceeds, k = _compute_refi(
+    ds, cash_out, proceeds, k, _detail = _compute_refi(
         {"year": 4.0, "debt_yield": 0.07, "dscr_min": 1.25, "rate": 0.065},
         schedule, noi, 5, senior_ds,
     )

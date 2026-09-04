@@ -15,6 +15,13 @@
  *   • covenants[] (DebtCovenantStatus — current, signed headroom, pass/fail)
  *   • LTV is now Debt-owned (Investment dropped its LTV) — editable here
  *   • refi_year / refi_cash_out / balance_at_exit (Refinance section)
+ *   • benchmark_name / benchmark_rate / spread on the senior tranche — the
+ *     Loan Terms Benchmark → Spread → All-In build-up (floating; "—" if fixed)
+ *   • refi_value_at_refinance / refi_ltv / refi_new_loan_proceeds /
+ *     refi_existing_balance_repaid / refi_new_interest_rate /
+ *     refi_financing_costs — the Refinance Assumptions detail
+ *   • entry_debt_yield / entry_dscr — the entry credit metrics (stabilized_*
+ *     stay null until a stabilized-year source exists → "—" cards)
  *
  * Edits take the canonical path: PATCH field_overrides then a debounced full
  * run so DSCR / leverage / returns re-derive. LTV resizes the senior tranche
@@ -85,8 +92,16 @@ interface DebtMonthLite {
   payment: number;
   ending_balance: number;
 }
+interface DebtStackTrancheLite {
+  kind: string;
+  rate_type: string;
+  all_in_rate?: number | null;
+  benchmark_name?: string | null;
+  benchmark_rate?: number | null;
+  spread?: number | null;
+}
 interface DebtStackLite {
-  tranches?: { kind: string; rate_type: string }[];
+  tranches?: DebtStackTrancheLite[];
 }
 
 // ─── Canonical value vocabulary (mirrors Investment tab) ────────────────
@@ -257,6 +272,15 @@ export default function DebtTab() {
   const wRefiYear = getEngineField<number>(outputs, 'debt', 'refi_year');
   const wRefiCashOut = getEngineField<number>(outputs, 'debt', 'refi_cash_out');
   const wBalanceAtExit = getEngineField<number>(outputs, 'debt', 'balance_at_exit');
+  // FON-72 follow-up — refinance detail + entry/stabilized credit split.
+  const wRefiValue = getEngineField<number>(outputs, 'debt', 'refi_value_at_refinance');
+  const wRefiLtv = getEngineField<number>(outputs, 'debt', 'refi_ltv');
+  const wRefiProceeds = getEngineField<number>(outputs, 'debt', 'refi_new_loan_proceeds');
+  const wRefiPayoff = getEngineField<number>(outputs, 'debt', 'refi_existing_balance_repaid');
+  const wRefiRate = getEngineField<number>(outputs, 'debt', 'refi_new_interest_rate');
+  const wRefiCosts = getEngineField<number>(outputs, 'debt', 'refi_financing_costs');
+  const wStabDy = getEngineField<number>(outputs, 'debt', 'stabilized_debt_yield');
+  const wStabDscr = getEngineField<number>(outputs, 'debt', 'stabilized_dscr');
 
   const wPurchase = getEngineField<number>(outputs, 'capital', 'purchase_price');
   const wTotalBasis =
@@ -280,8 +304,15 @@ export default function DebtTab() {
     (has(loanN) && has(wPurchase) && wPurchase > 0 ? loanN / wPurchase : undefined);
   const ltcN = covByName('ltc')?.current ?? wLtcCapital;
 
-  const seniorRateType = wStack?.tranches?.find((t) => t.kind === 'senior')?.rate_type
-    ?? wStack?.tranches?.[0]?.rate_type;
+  const seniorTranche = wStack?.tranches?.find((t) => t.kind === 'senior') ?? wStack?.tranches?.[0];
+  const seniorRateType = seniorTranche?.rate_type;
+  // FON-72 follow-up — the floating rate build-up echoed from the senior
+  // tranche. Fixed-rate deals carry no benchmark/spread → those rows render "—".
+  const benchmarkName = seniorTranche?.benchmark_name ?? undefined;
+  const benchmarkRate = seniorTranche?.benchmark_rate ?? undefined;
+  const seniorSpread = seniorTranche?.spread ?? undefined;
+  const allInRate = seniorTranche?.all_in_rate ?? wRate;
+  const hasBenchmarkBuildUp = has(benchmarkRate) || has(seniorSpread);
 
   // Debt engine hasn't produced a loan → empty state (Sam QA #4 short-circuit).
   const hasWorkerDebtOutput = wLoan != null;
@@ -407,17 +438,32 @@ export default function DebtTab() {
       value: money(wEquity), link: { label: '→ Investment', tab: 'investment' } },
   ];
 
-  // Divergence #1 (canonical Loan Terms): the fixed/floating flag exists on the
-  // debt-stack senior tranche (rate_type), so we label the all-in rate row per
-  // rate type and bold it like the canonical headline term. The Benchmark →
-  // Spread build-up is NOT emitted by the engine (see BACKEND-NEEDED), so only
-  // the all-in `interest_rate` is rendered.
+  // Canonical Loan Terms build-up: Benchmark → Spread → All-In Rate. The senior
+  // tranche now carries its benchmark name/rate and spread (FON-72 follow-up).
+  // Floating deals show the full build-up; a fixed-rate deal legitimately has no
+  // benchmark → those rows render "—" and the all-in rate carries the fixed rate.
   const rateLabel =
-    seniorRateType === 'floating' ? 'Underwritten All-In Rate'
+    hasBenchmarkBuildUp ? 'Underwritten All-In Rate'
     : seniorRateType === 'fixed' ? 'Fixed Interest Rate'
     : 'Interest Rate';
+  const benchmarkDisplay = hasBenchmarkBuildUp
+    ? [benchmarkName, has(benchmarkRate) ? pctv(benchmarkRate, 2) : null]
+        .filter(Boolean)
+        .join(' · ') || '—'
+    : '—';
   const loanTerms: RowDef[] = [
-    { id: 'rate', label: rateLabel, kind: 'calc', state: 'assumption', value: pctv(wRate, 2), bold: !!seniorRateType },
+    { id: 'benchmark', label: 'Benchmark',
+      kind: hasBenchmarkBuildUp ? 'linked' : 'awaiting',
+      state: hasBenchmarkBuildUp ? 'linked' : 'awaiting_data',
+      value: benchmarkDisplay,
+      ...(hasBenchmarkBuildUp ? { link: { label: '→ Market', tab: 'market' } } : {}) },
+    { id: 'spread', label: 'Spread',
+      kind: has(seniorSpread) ? 'calc' : 'awaiting',
+      state: has(seniorSpread) ? 'assumption' : 'awaiting_data',
+      value: has(seniorSpread) ? pctv(seniorSpread, 2) : '—' },
+    { id: 'rate', label: rateLabel, kind: 'calc', state: 'assumption',
+      value: pctv(allInRate, 2), bold: true,
+      note: hasBenchmarkBuildUp ? 'Benchmark + Spread' : undefined },
     { id: 'amort', label: 'Amortization', kind: 'calc', state: 'assumption',
       value: has(wAmortYears) ? `${wAmortYears} years` : '—' },
     { id: 'term', label: 'Maturity', kind: 'calc', state: 'assumption',
@@ -440,23 +486,48 @@ export default function DebtTab() {
     { id: 'ratecap', label: 'Rate Cap', kind: 'awaiting', state: 'awaiting_data', value: '—' },
   ];
 
-  // Credit metric cards (Debt Overview) — read straight from covenants[].
-  // Divergence #2: canonical groups leverage + Debt-Yield before DSCR
-  // (LTV · LTC · Debt Yield · DSCR); the engine emits [ltv, ltc, dscr, debt_yield],
-  // so reorder to match. The Entry-vs-Stabilized splits canonical also shows are
-  // BACKEND-NEEDED (no stabilized debt-yield / stabilized-DSCR fields emitted).
-  const COV_ORDER: Record<string, number> = { ltv: 0, ltc: 1, debt_yield: 2, dscr: 3 };
-  const creditMetrics = [...wCovenants]
-    .sort((a, b) => (COV_ORDER[a.name] ?? 99) - (COV_ORDER[b.name] ?? 99))
-    .map((c) => ({
-    label: c.label,
-    value: covCurrent(c),
-    basis: COV_BASIS[c.name] ?? '',
-    covenant: covCovenantCaption(c),
-    status: c.passes == null ? 'Awaiting' : c.passes ? 'Within covenant' : 'Breach',
-    statusColor: c.passes == null ? palette.textMuted : c.passes ? 'oklch(40% 0.12 155)' : 'oklch(45% 0.15 40)',
-    statusBg: c.passes == null ? '#f5f4f0' : c.passes ? 'oklch(96.5% 0.03 155)' : 'oklch(96% 0.04 40)',
-  }));
+  // Credit metric cards (Debt Overview) — canonical entry-vs-stabilized split:
+  // LTV · LTC · Debt Yield — Entry · Debt Yield — Stabilized · DSCR — Year 1 ·
+  // DSCR — Stabilized. Entry aliases the Year-1 metrics (the debt_yield / dscr
+  // covenants); stabilized reads stabilized_debt_yield / stabilized_dscr, which
+  // are null until a stabilized-year source exists → those cards render "—".
+  const covLtv = covByName('ltv');
+  const covLtc = covByName('ltc');
+  const covDy = covByName('debt_yield');
+  const covDscr = covByName('dscr');
+  const statusOf = (passes: boolean | null) => ({
+    status: passes == null ? 'Awaiting' : passes ? 'Within covenant' : 'Breach',
+    statusColor: passes == null ? palette.textMuted : passes ? 'oklch(40% 0.12 155)' : 'oklch(45% 0.15 40)',
+    statusBg: passes == null ? '#f5f4f0' : passes ? 'oklch(96.5% 0.03 155)' : 'oklch(96% 0.04 40)',
+  });
+  const covCard = (c: DebtCovenantStatus | null, label: string, basis: string) =>
+    c
+      ? { label, value: covCurrent(c), basis, covenant: covCovenantCaption(c), ...statusOf(c.passes) }
+      : { label, value: '—', basis, covenant: '—', ...statusOf(null) };
+  const stabCard = (
+    label: string, v: number | undefined, isDscr: boolean,
+    threshCov: DebtCovenantStatus | null, basis: string,
+  ) => {
+    // DSCR and debt yield are floors → pass when value ≥ threshold. Null (no
+    // stabilized value) renders "—" with an Awaiting status — never fabricated.
+    const threshold = threshCov?.threshold ?? null;
+    const passes = has(v) && threshold != null ? v >= threshold : null;
+    return {
+      label,
+      value: has(v) ? (isDscr ? `${v.toFixed(2)}x` : fmtPct(v, 1)) : '—',
+      basis,
+      covenant: threshCov ? covCovenantCaption(threshCov) : '—',
+      ...statusOf(passes),
+    };
+  };
+  const creditMetrics = [
+    covCard(covLtv, covLtv?.label ?? 'LTV', COV_BASIS.ltv),
+    covCard(covLtc, covLtc?.label ?? 'LTC', COV_BASIS.ltc),
+    covCard(covDy, 'Debt Yield — Entry', 'Entry NOI ÷ loan'),
+    stabCard('Debt Yield — Stabilized', wStabDy, false, covDy, 'Stabilized NOI ÷ loan'),
+    covCard(covDscr, 'DSCR — Year 1', COV_BASIS.dscr),
+    stabCard('DSCR — Stabilized', wStabDscr, true, covDscr, 'Stabilized NOI ÷ exit-year debt service'),
+  ];
 
   const financingImpact = [
     { label: 'Equity Requirement', value: mm(wEquity), source: 'Calculated in Investment', state: 'linked' as ValueState },
@@ -683,6 +754,24 @@ export default function DebtTab() {
                     </div>
                   </div>
                 ))}
+                {/* Completion Guarantee — canonical lists it, but the debt model
+                    carries no completion-guarantee flag, so it renders "—" here
+                    (never a fabricated "Required"/"In place"). Needs a backend
+                    source before it can show a real status (see report). */}
+                {wCovenants.length > 0 && (
+                  <div style={{
+                    display: 'grid', gridTemplateColumns: 'minmax(150px,1.3fr) 90px 90px minmax(88px,1fr)',
+                    fontSize: 12.5, padding: '7px 0', borderBottom: `1px solid ${palette.hairlineRow}`, alignItems: 'center',
+                  }}>
+                    <span style={{ display: 'flex', alignItems: 'center', gap: 7, minWidth: 0 }}>
+                      <ProvenanceDot state="awaiting_data" size={8} />
+                      <span style={{ color: palette.ink, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>Completion Guarantee</span>
+                    </span>
+                    <span style={{ textAlign: 'right', color: palette.textSecondary, fontVariantNumeric: 'tabular-nums' }}>—</span>
+                    <span style={{ textAlign: 'right', color: palette.ink, fontWeight: 600, fontVariantNumeric: 'tabular-nums' }}>—</span>
+                    <span style={{ textAlign: 'right', color: palette.textMuted, fontVariantNumeric: 'tabular-nums' }}>—</span>
+                  </div>
+                )}
                 <div style={{ fontSize: 11, color: palette.textMuted, marginTop: 9, lineHeight: 1.5 }}>
                   LTV and LTC are ceilings; DSCR and debt yield are floors. Headroom is signed room toward a breach.
                 </div>
@@ -700,6 +789,12 @@ export default function DebtTab() {
               refiCashOut={wRefiCashOut}
               balanceAtExit={wBalanceAtExit}
               leveredIrr={wLeveredIrr}
+              refiValue={wRefiValue}
+              refiLtv={wRefiLtv}
+              refiProceeds={wRefiProceeds}
+              refiPayoff={wRefiPayoff}
+              refiRate={wRefiRate}
+              refiCosts={wRefiCosts}
               onSaveOverride={onSaveOverride}
               toast={toast}
             />
@@ -881,9 +976,10 @@ function Pill({
 
 // ─────────────────────────────────────────────────────────────────────
 // Read-only Floating/Fixed indicator (canonical Loan Terms toggle). The rate
-// type is engine-owned (debt-stack senior tranche `rate_type`). The app cannot
-// switch the rate basis because the engine does not emit the benchmark + spread
-// build-up (see BACKEND-NEEDED), so the inactive side is disabled, not clickable.
+// type is engine-owned (debt-stack senior tranche `rate_type`). The benchmark +
+// spread build-up is now surfaced in the Loan Terms card, but switching the rate
+// basis is a term-sheet change (not a UI toggle), so the inactive side stays
+// disabled, not clickable.
 // ─────────────────────────────────────────────────────────────────────
 function RateTypeToggle({ rateType }: { rateType: string }) {
   const active = rateType === 'floating' ? 'Floating' : 'Fixed';
@@ -906,6 +1002,7 @@ function RateTypeToggle({ rateType }: { rateType: string }) {
 // ─────────────────────────────────────────────────────────────────────
 function RefinanceView({
   active, liveMode, refiYear, refiYearOverride, refiCashOut, balanceAtExit, leveredIrr,
+  refiValue, refiLtv, refiProceeds, refiPayoff, refiRate, refiCosts,
   onSaveOverride, toast,
 }: {
   active: boolean;
@@ -915,6 +1012,12 @@ function RefinanceView({
   refiCashOut?: number;
   balanceAtExit?: number;
   leveredIrr?: number;
+  refiValue?: number;
+  refiLtv?: number;
+  refiProceeds?: number;
+  refiPayoff?: number;
+  refiRate?: number;
+  refiCosts?: number;
   onSaveOverride: (patch: Record<string, number | null>) => void | Promise<void>;
   toast: ReturnType<typeof useToast>['toast'];
 }) {
@@ -928,6 +1031,14 @@ function RefinanceView({
     if (refiYearOverride > 0) { void onSaveOverride({ 'debt_stack.refi_test_year': Math.round(refiYearOverride) }); return; }
     toast('Set a refinance year below to include the refinance.', { type: 'info' });
   };
+
+  const detailRow = (
+    id: string, label: string, present: boolean, value: string,
+    opts: { kind?: ValueKind; state?: ValueState; bold?: boolean } = {},
+  ): RowDef =>
+    present
+      ? { id, label, kind: opts.kind ?? 'calc', state: opts.state ?? 'calculated', value, bold: opts.bold }
+      : { id, label, kind: 'awaiting', state: 'awaiting_data', value: '—' };
 
   const refiRows: RowDef[] = [
     {
@@ -947,10 +1058,14 @@ function RefinanceView({
       ),
       note: 'Blank = single-phase deal. Sets the mid-hold refinance year the engine sizes off.',
     },
-    { id: 'refiValue', label: 'Value at Refinance', kind: 'awaiting', state: 'awaiting_data', value: '—' },
-    { id: 'refiLtv', label: 'Refinance LTV', kind: 'awaiting', state: 'awaiting_data', value: '—' },
-    { id: 'refiPayoff', label: 'Existing Balance Repaid', kind: 'awaiting', state: 'awaiting_data', value: '—' },
-    { id: 'refiCost', label: 'Financing Costs', kind: 'awaiting', state: 'awaiting_data', value: '—' },
+    // Canonical refinance detail — every value the refi model already computes.
+    // Absent (no-refi deal) → canonical "awaiting data" em-dashes, never faked.
+    detailRow('refiValue', 'Value at Refinance', has(refiValue), money(refiValue)),
+    detailRow('refiLtv', 'Refinance LTV', has(refiLtv), pctv(refiLtv, 1)),
+    detailRow('refiProceeds', 'New Loan Proceeds', has(refiProceeds), money(refiProceeds), { bold: true }),
+    detailRow('refiPayoff', 'Existing Balance Repaid', has(refiPayoff), money(refiPayoff)),
+    detailRow('refiRate', 'New Interest Rate', has(refiRate), pctv(refiRate, 2), { kind: 'input', state: 'assumption' }),
+    detailRow('refiCost', 'Financing Costs', has(refiCosts), money(refiCosts)),
   ];
 
   const impact = [

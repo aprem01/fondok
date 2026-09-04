@@ -2030,6 +2030,34 @@ export interface DebtEngineOutputExtras {
   exit_fee_usd: number | null;
   /** LTV / LTC / DSCR / debt-yield covenants with current + headroom. */
   covenants: DebtCovenantStatus[];
+  /** FON-72 follow-up — refinance detail (all null on a single-phase deal).
+   *  Every value is one the refi model already computed. */
+  refi_value_at_refinance: number | null;
+  /** Sizing LTV when LTV-sized, else implied proceeds ÷ value (fraction). */
+  refi_ltv: number | null;
+  refi_new_loan_proceeds: number | null;
+  refi_existing_balance_repaid: number | null;
+  refi_new_interest_rate: number | null;
+  refi_financing_costs: number | null;
+  /** FON-72 follow-up — entry credit metrics alias the Year-1 metrics. The
+   *  stabilized pair are null until a stabilized-year source is defined. */
+  entry_debt_yield: number | null;
+  entry_dscr: number | null;
+  stabilized_debt_yield: number | null;
+  stabilized_dscr: number | null;
+}
+
+/** One priced/pending tranche in the debt stack (subset the Debt tab reads).
+ *  Mirrors apps/worker/app/engines/tranche_stack.py TrancheResult. */
+export interface DebtTrancheResult {
+  kind: string;
+  rate_type: string;
+  all_in_rate: number | null;
+  /** FON-72 follow-up — floating-rate build-up echoed from the input tranche.
+   *  All null on a fixed-rate tranche (no benchmark → the tab renders "—"). */
+  benchmark_name: string | null;
+  benchmark_rate: number | null;
+  spread: number | null;
 }
 
 // ─── Partnership dollar waterfall (FON-72) ──────────────────────────

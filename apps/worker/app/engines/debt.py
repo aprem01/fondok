@@ -233,6 +233,26 @@ class DebtEngineOutputExt(DebtEngineOutput):
     # vs its threshold (LTV / LTC / DSCR / debt-yield), so the Debt tab stops
     # hardcoding the covenant table. Empty only for pre-covenant legacy runs.
     covenants: list[DebtCovenantStatus] = Field(default_factory=list)
+    # FON-72 follow-up — refinance detail so the Debt tab's Refinance
+    # Assumptions section reads from the engine, not placeholders. Every field
+    # is the SAME value the refi model already computed (nothing new is derived
+    # except refi_ltv's implied fallback below). All None on a single-phase
+    # (no-refi) deal, which keeps that section in its awaiting state.
+    refi_value_at_refinance: Annotated[float, Field(ge=0)] | None = None
+    refi_ltv: Annotated[float, Field(ge=0)] | None = None
+    refi_new_loan_proceeds: Annotated[float, Field(ge=0)] | None = None
+    refi_existing_balance_repaid: Annotated[float, Field(ge=0)] | None = None
+    refi_new_interest_rate: Annotated[float, Field(ge=0)] | None = None
+    refi_financing_costs: Annotated[float, Field(ge=0)] | None = None
+    # FON-72 follow-up — entry-vs-stabilized credit split. The entry_* pair are
+    # explicit aliases of the existing Year-1 metrics (byte-identical). The
+    # stabilized_* pair stay None: the debt engine has no stabilized-year
+    # definition to key off without inventing one, so the tab renders the
+    # stabilized cards "—" (see report — needs a stabilized-year source).
+    entry_debt_yield: Annotated[float, Field(ge=0)] | None = None
+    entry_dscr: Annotated[float, Field(ge=0)] | None = None
+    stabilized_debt_yield: Annotated[float, Field(ge=0)] | None = None
+    stabilized_dscr: Annotated[float, Field(ge=0)] | None = None
 
 
 def pmt(rate: float, nper: int, pv: float) -> float:
@@ -396,11 +416,18 @@ def _compute_refi(
     noi_by_year: list[float],
     horizon: int,
     senior_ds_by_year: list[float],
-) -> tuple[list[float], float, float, int] | None:
+) -> tuple[list[float], float, float, int, dict[str, float]] | None:
     """Model a mid-hold refinance: size the new loan off the refi-year NOI
     (min of the debt-yield and DSCR limits), retire the senior balance, and
     return the phased debt service, the net cash-out to equity, the (interest-
-    only) refi balance at exit, and the refi year. None when out of range."""
+    only) refi balance at exit, the refi year, and a detail sidecar. None when
+    out of range.
+
+    FON-72 follow-up — the fifth element is a read-only ``detail`` dict of the
+    intermediate figures the refi model already computes (value at refinance,
+    LTV, new-loan proceeds, existing balance repaid, new rate, financing costs)
+    so the Debt tab can render them. It changes NO existing return value: the
+    first four elements are byte-identical to before."""
     k = int(refi["year"])
     if k < 1 or k >= horizon:  # refi must land strictly before the exit year
         return None
@@ -443,7 +470,15 @@ def _compute_refi(
             )
         else:
             ds_by_year.append(refi_ds)
-    return ds_by_year, refi_cash_out, refi_proceeds, k
+    detail = {
+        "value_at_refinance": stabilized_value,
+        "ltv": refi.get("ltv", 0.0),
+        "new_loan_proceeds": refi_proceeds,
+        "existing_balance_repaid": senior_balance_at_k,
+        "new_interest_rate": rate,
+        "financing_costs": refi_fee,
+    }
+    return ds_by_year, refi_cash_out, refi_proceeds, k, detail
 
 
 class DebtEngine(BaseEngine[DebtEngineInputExt, DebtEngineOutputExt]):
@@ -646,6 +681,7 @@ class DebtEngine(BaseEngine[DebtEngineInputExt, DebtEngineOutputExt]):
         debt_service_by_year: list[float] = []
         refi_cash_out = 0.0
         refi_year_out: int | None = None
+        refi_detail: dict[str, float] | None = None
         balance_at_exit_out: float | None = (
             schedule[-1].ending_balance if schedule else None
         )
@@ -663,7 +699,33 @@ class DebtEngine(BaseEngine[DebtEngineInputExt, DebtEngineOutputExt]):
                     refi_cash_out,
                     balance_at_exit_out,
                     refi_year_out,
+                    refi_detail,
                 ) = computed
+
+        # FON-72 follow-up — surface the refi detail the model already computed.
+        # refi_ltv prefers the input LTV (the sizing basis); when the loan was
+        # sized off debt-yield/DSCR instead (input LTV = 0) it falls back to the
+        # implied proceeds ÷ value — a display ratio of two already-computed
+        # numbers, not a new modeling input. All None on a no-refi deal.
+        refi_value_at_refinance: float | None = None
+        refi_ltv_out: float | None = None
+        refi_new_loan_proceeds: float | None = None
+        refi_existing_balance_repaid: float | None = None
+        refi_new_interest_rate: float | None = None
+        refi_financing_costs: float | None = None
+        if refi_detail is not None:
+            _val = refi_detail.get("value_at_refinance") or 0.0
+            _proceeds = refi_detail.get("new_loan_proceeds") or 0.0
+            _in_ltv = refi_detail.get("ltv") or 0.0
+            refi_value_at_refinance = _val if _val > 0 else None
+            refi_new_loan_proceeds = refi_detail.get("new_loan_proceeds")
+            refi_existing_balance_repaid = refi_detail.get("existing_balance_repaid")
+            refi_new_interest_rate = refi_detail.get("new_interest_rate")
+            refi_financing_costs = refi_detail.get("financing_costs")
+            if _in_ltv > 0:
+                refi_ltv_out = _in_ltv
+            elif _val > 0:
+                refi_ltv_out = _proceeds / _val
 
         # FON-72 — financing fees. Echo the senior tranche's (analyst-editable)
         # fee percentages, and aggregate fee dollars across every priced tranche
@@ -731,6 +793,18 @@ class DebtEngine(BaseEngine[DebtEngineInputExt, DebtEngineOutputExt]):
             refi_cash_out=refi_cash_out,
             refi_year=refi_year_out,
             balance_at_exit=balance_at_exit_out,
+            refi_value_at_refinance=refi_value_at_refinance,
+            refi_ltv=refi_ltv_out,
+            refi_new_loan_proceeds=refi_new_loan_proceeds,
+            refi_existing_balance_repaid=refi_existing_balance_repaid,
+            refi_new_interest_rate=refi_new_interest_rate,
+            refi_financing_costs=refi_financing_costs,
+            # Entry credit metrics = the existing Year-1 metrics (explicit
+            # aliases). Stabilized left None — no stabilized-year source.
+            entry_debt_yield=year1_dy,
+            entry_dscr=year1_dscr,
+            stabilized_debt_yield=None,
+            stabilized_dscr=None,
             origination_fee_pct=origination_fee_pct,
             exit_fee_pct=exit_fee_pct,
             origination_fee_usd=origination_fee_usd,
