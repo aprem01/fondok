@@ -36,6 +36,7 @@ from __future__ import annotations
 
 import json
 import logging
+from dataclasses import asdict
 from typing import Any
 from uuid import UUID
 
@@ -495,6 +496,713 @@ async def _market_kpis(
     return kpis
 
 
+# ─────────────────── Wave 2/3 conditional sheets (FON-54 follow-up) ───────────────────
+#
+# Each helper below sources ONE conditional Excel sheet (or the PPTX scenario
+# cards) from the live deal and returns ``None`` / ``[]`` when the deal has no
+# data for it. The caller then omits the key, so the builder skips the sheet —
+# never a fixture row, never a fabricated zero. Every helper is best-effort:
+# a read failure logs at debug and omits that sheet rather than failing the
+# whole export.
+#
+# Live source per sheet (same source the UI surface reads):
+#   variance_flags      GET /analysis/{id}/variance  (Financials variance chips)
+#   market_comps        GET /market/{id}/transaction-comps  (Market tab comps table)
+#   comp_sales          GET /deals/{id}/comp-sales  (Comparable Sales engine)
+#   named_scenarios /   scenarios table + each scenario's own run, Base pinned to
+#   scenario_outputs      the canonical run (as ``compare_scenarios`` does)
+#   historical_baseline GET /deals/{id}/historical-baseline  (P&L docs → baseline)
+#   str_forecast        GET /deals/{id}/str-forecast  (STR_TREND history → 24-mo fcst)
+#   capex_schedule      capital ``uses`` Renovation line + expense ``ffe_reserve``
+#                         (+ persisted ``capex_plan.*`` overrides when set)
+#   op_ratio_provenance ``_load_engine_inputs`` ``__sources__`` map (AssumptionBadge)
+#   sensitivity_grid /  POST /analysis/{id}/pricing/{sensitivity,max-price,loi}
+#   max_price / loi_draft  — the Pricing panel's read-only in-memory chain walk
+#
+# Deliberately NOT wired (no live source that avoids a fabricated value):
+#   pip_displacement    the revenue engine carries the PIP spec on its INPUTS
+#                       but emits no displacement-dollar output, and the
+#                       Renovation Plan sheet headlines ``Y1 Displacement`` —
+#                       it would print a fabricated $0. Omitted.
+
+
+_SEVERITY_LABELS: dict[str, str] = {
+    "critical": "CRITICAL",
+    "warn": "WARN",
+    "warning": "WARN",
+    "info": "INFO",
+}
+
+_ACRONYMS: dict[str, str] = {
+    "noi": "NOI", "adr": "ADR", "revpar": "RevPAR", "gop": "GOP",
+    "fb": "F&B", "ag": "A&G", "ffe": "FF&E", "cbre": "CBRE", "t12": "T-12",
+    "y1": "Y1", "usd": "USD", "pct": "%",
+}
+
+
+def _attr(obj: Any, key: str) -> Any:
+    """Read ``key`` off a pydantic model / dataclass / dict alike."""
+    if isinstance(obj, dict):
+        return obj.get(key)
+    return getattr(obj, key, None)
+
+
+def _humanize_field(field: str) -> str:
+    """``broker_adr_growth_vs_market`` → ``Broker ADR Growth vs Market``."""
+    words = str(field or "").replace(".", " ").replace("_", " ").split()
+    out: list[str] = []
+    for w in words:
+        lw = w.lower()
+        if lw in _ACRONYMS:
+            out.append(_ACRONYMS[lw])
+        elif lw == "vs":
+            out.append("vs")
+        else:
+            out.append(w.capitalize())
+    return " ".join(out) or "—"
+
+
+def _variance_flags_from_out(flags: list[Any]) -> list[dict[str, Any]]:
+    """Map ``VarianceFlagOut`` rows onto the builder's ``variance_flags`` shape.
+
+    Input is the ``/analysis/{id}/variance`` flag list (the same rows the
+    Financials variance chips render): ``field`` / ``severity`` / ``broker`` /
+    ``actual`` / ``delta_pct`` / ``note`` / ``rule_id``. Output keys match the
+    fixture rows the Variance sheet reads (``flag_id`` / ``severity`` /
+    ``metric`` / ``broker_value`` / ``t12_value`` / ``variance_pct`` /
+    ``recommended_action``). Absent numbers are omitted, not zeroed.
+    """
+    out: list[dict[str, Any]] = []
+    for i, f in enumerate(flags, start=1):
+        sev_raw = str(_attr(f, "severity") or "info").lower()
+        row: dict[str, Any] = {
+            "flag_id": f"VF-{i:03d}",
+            "severity": _SEVERITY_LABELS.get(sev_raw, "INFO"),
+            "metric": _humanize_field(str(_attr(f, "field") or "")),
+        }
+        _set(row, "rule_id", _attr(f, "rule_id"))
+        _set(row, "broker_value", _num(_attr(f, "broker")))
+        _set(row, "t12_value", _num(_attr(f, "actual")))
+        _set(row, "variance_pct", _num(_attr(f, "delta_pct")))
+        _set(row, "recommended_action", _attr(f, "note"))
+        out.append(row)
+    return out
+
+
+async def _variance_flags(
+    session: AsyncSession, deal_id: str, tenant_id: str
+) -> list[dict[str, Any]]:
+    """Live variance flags — the deterministic broker-vs-T-12 (+ broker-vs-CBRE)
+    rule pass behind ``GET /analysis/{id}/variance``. Empty until both an
+    OM/broker proforma and a T-12 have been extracted on the deal."""
+    try:
+        from ..api.analysis import get_variance
+
+        resp = await get_variance(
+            deal_id=UUID(deal_id), session=session, tenant_id=UUID(tenant_id)
+        )
+    except Exception:  # noqa: BLE001 — sheet is best-effort
+        logger.debug("live export: variance read failed", exc_info=True)
+        return []
+    return _variance_flags_from_out(list(resp.flags or []))
+
+
+def _fmt_money_compact(value: float | None) -> str:
+    """``245_000_000`` → ``$245M``; ``392_000`` → ``$392k`` (fixture style)."""
+    if value is None:
+        return ""
+    v = float(value)
+    a = abs(v)
+    if a >= 1_000_000:
+        s = f"{v / 1_000_000:.1f}".rstrip("0").rstrip(".")
+        return f"${s}M"
+    if a >= 1_000:
+        return f"${v / 1_000:.0f}k"
+    return f"${v:,.0f}"
+
+
+def _market_comps_from_entries(entries: list[Any]) -> list[dict[str, Any]]:
+    """Map ``TransactionCompEntry`` rows onto the Market Comps sheet rows.
+
+    The sheet's columns are display strings (``price`` / ``per_key`` / ``cap``
+    carry no number format), so they're rendered fixture-style; the numeric
+    originals ride along under their API names for any numeric consumer.
+    ``keys`` is ``None`` (blank cell) when the OM row didn't carry it — never 0.
+    """
+    out: list[dict[str, Any]] = []
+    for c in entries:
+        name = _attr(c, "name")
+        if not name:
+            continue
+        keys = _attr(c, "keys")
+        price = _num(_attr(c, "sale_price_usd"))
+        per_key = _num(_attr(c, "price_per_key_usd"))
+        cap = _num(_attr(c, "cap_rate_pct"))
+        row: dict[str, Any] = {
+            "name": str(name),
+            "keys": int(keys) if keys is not None else None,
+            "date": _attr(c, "sale_date") or "",
+            "price": _fmt_money_compact(price),
+            "per_key": _fmt_money_compact(per_key),
+            "cap": f"{cap:.1f}%" if cap is not None else "",
+            "buyer": _attr(c, "buyer_name") or _attr(c, "buyer_type") or "",
+        }
+        _set(row, "sale_price_usd", price)
+        _set(row, "price_per_key_usd", per_key)
+        _set(row, "cap_rate_pct", cap)
+        _set(row, "market", _attr(c, "market"))
+        _set(row, "seller", _attr(c, "seller"))
+        _set(row, "source_document_id", _attr(c, "source_document_id"))
+        out.append(row)
+    return out
+
+
+async def _market_comps(
+    session: AsyncSession, deal_id: str, tenant_id: str
+) -> list[dict[str, Any]]:
+    """Live transaction comps — the OM's ``transaction_comps.<n>.*`` extraction
+    rows behind ``GET /market/{id}/transaction-comps`` (the Market tab table).
+    The STR/CoStar comp-set endpoint (``/market/{id}/comps``) is still a stub
+    that returns ``[]``, so transaction comps are the only live comp source."""
+    try:
+        from ..api.market import transaction_comps
+
+        resp = await transaction_comps(
+            deal_id=UUID(deal_id), session=session, tenant_id=UUID(tenant_id)
+        )
+    except Exception:  # noqa: BLE001
+        logger.debug("live export: transaction comps read failed", exc_info=True)
+        return []
+    return _market_comps_from_entries(list(resp.comps or []))
+
+
+async def _comp_sales(
+    session: AsyncSession, deal_id: str, tenant_id: str
+) -> dict[str, Any] | None:
+    """Live Comparable Sales set (W3.1) — the same in-memory engine run behind
+    ``GET /deals/{id}/comp-sales`` (analyst exclude-list applied). ``None``
+    when the deal's OM carries no comp table."""
+    try:
+        from ..api.deals import _load_subject_market_and_chain
+        from ..services.engine_runner import _build_comp_sales_set
+
+        market, chain = await _load_subject_market_and_chain(
+            session, deal_id=UUID(deal_id), tenant_id=UUID(tenant_id)
+        )
+        comp_set = await _build_comp_sales_set(
+            session,
+            deal_id=deal_id,
+            tenant_id=tenant_id,
+            subject_market=market,
+            subject_chain_scale=chain,
+        )
+    except Exception:  # noqa: BLE001
+        logger.debug("live export: comp sales read failed", exc_info=True)
+        return None
+    if not hasattr(comp_set, "model_dump"):
+        return None
+    data = comp_set.model_dump(mode="json")
+    if not data.get("transactions"):
+        return None
+    return data
+
+
+def _scenario_kpis(engines: dict[str, dict[str, Any]]) -> dict[str, Any]:
+    """Named-Scenarios KPI row from one run's engine envelopes.
+
+    Year-1 NOI is the first projected year's ``noi``; stabilized NOI is the
+    hold-year's ``noi`` (last projected year when the hold exceeds the
+    projection) — the same rows the Operating Proforma sheet prints.
+    """
+    returns = _outputs(engines, "returns")
+    expense = _outputs(engines, "expense")
+    debt = _outputs(engines, "debt")
+    kpis: dict[str, Any] = {}
+    _set(kpis, "levered_irr", _num(returns.get("levered_irr")))
+    _set(kpis, "equity_multiple", _num(returns.get("equity_multiple")))
+    years = expense.get("years") if isinstance(expense.get("years"), list) else []
+    by_year: dict[int, dict[str, Any]] = {}
+    for y in years:
+        if isinstance(y, dict) and y.get("year") is not None:
+            try:
+                by_year[int(y["year"])] = y
+            except (TypeError, ValueError):
+                continue
+    if by_year:
+        _set(kpis, "year1_noi_usd", _num(by_year[min(by_year)].get("noi")))
+        hold = int(_num(returns.get("hold_years")) or 0)
+        stab_year = hold if hold in by_year else max(by_year)
+        _set(kpis, "stabilized_noi_usd", _num(by_year[stab_year].get("noi")))
+    _set(kpis, "exit_cap_pct", _num(returns.get("exit_cap_rate")))
+    _set(kpis, "year1_dscr", _num(debt.get("year_one_dscr")))
+    return kpis
+
+
+def _scenario_output_row(
+    name: str, engines: dict[str, dict[str, Any]], *, is_base: bool
+) -> dict[str, Any]:
+    """PPTX scenario card (``scenario_outputs`` row) from one run's returns."""
+    returns = _outputs(engines, "returns")
+    row: dict[str, Any] = {"name": name}
+    _set(row, "irr", _num(returns.get("levered_irr")))
+    _set(row, "unlevered_irr", _num(returns.get("unlevered_irr")))
+    _set(row, "multiple", _num(returns.get("equity_multiple")))
+    _set(row, "avg_coc", _num(returns.get("avg_coc")))
+    _set(row, "exit_value_usd", _num(returns.get("gross_sale_price")))
+    if is_base:
+        row["base"] = True
+    return row
+
+
+async def _scenarios(
+    session: AsyncSession,
+    deal_id: str,
+    tenant_id: str,
+    canonical: dict[str, dict[str, Any]],
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    """``(named_scenarios, scenario_outputs)`` from the deal's saved scenarios.
+
+    Read-only reuse of the ``compare_scenarios`` read path: each scenario's
+    column is its OWN run (``scenarios.last_run_id``), and the Base column is
+    pinned to the deal's canonical run (``get_canonical_run_id``) — never the
+    base scenario's possibly-stale ``last_run_id``. Scenarios that have never
+    been run are skipped (an export never triggers an engine run). When the
+    deal predates base-scenario rows, the canonical snapshot itself is the
+    Base Case.
+    """
+    named: list[dict[str, Any]] = []
+    outputs: list[dict[str, Any]] = []
+    try:
+        from ..services.engine_runner import (
+            ENGINE_NAMES,
+            get_canonical_run_id,
+            get_run_status,
+        )
+    except Exception:  # noqa: BLE001
+        logger.debug("live export: engine_runner import failed", exc_info=True)
+        return named, outputs
+
+    try:
+        rows = (
+            await session.execute(
+                text(
+                    # tenant-scope predicate required by tenant_middleware
+                    """
+                    SELECT id, name, description, is_base, last_run_id
+                      FROM scenarios
+                     WHERE deal_id = :deal AND tenant_id = :tenant
+                     ORDER BY is_base DESC, created_at ASC
+                    """
+                ),
+                {"deal": deal_id, "tenant": tenant_id},
+            )
+        ).fetchall()
+    except Exception:  # noqa: BLE001 — scenarios table absent on old DBs
+        logger.debug("live export: scenarios read failed", exc_info=True)
+        rows = []
+
+    canonical_run: str | None = None
+    try:
+        canonical_run = await get_canonical_run_id(
+            session, deal_id=deal_id, tenant_id=tenant_id
+        )
+    except Exception:  # noqa: BLE001
+        canonical_run = None
+
+    seen_base = False
+    for r in rows:
+        m = r._mapping
+        is_base = bool(m.get("is_base"))
+        last_run = str(m["last_run_id"]) if m.get("last_run_id") else None
+        run_id = (canonical_run or last_run) if is_base else last_run
+        if run_id is None:
+            continue
+        try:
+            run_rows = await get_run_status(
+                session, deal_id=deal_id, run_id=run_id, tenant_id=tenant_id
+            )
+        except Exception:  # noqa: BLE001
+            continue
+        engines = {
+            e["engine"]: e for e in run_rows if e.get("engine") in ENGINE_NAMES
+        }
+        kpis = _scenario_kpis(engines)
+        if not kpis:
+            continue
+        entry: dict[str, Any] = {
+            "name": str(m.get("name") or "—"),
+            "is_base": is_base,
+            "kpis": kpis,
+        }
+        _set(entry, "description", m.get("description"))
+        named.append(entry)
+        if is_base:
+            seen_base = True
+        out_row = _scenario_output_row(entry["name"], engines, is_base=is_base)
+        if "irr" in out_row:
+            outputs.append(out_row)
+
+    if not seen_base and _outputs(canonical, "returns"):
+        kpis = _scenario_kpis(canonical)
+        if kpis:
+            named.insert(0, {"name": "Base Case", "is_base": True, "kpis": kpis})
+            out_row = _scenario_output_row("Base Case", canonical, is_base=True)
+            if "irr" in out_row:
+                outputs.insert(0, out_row)
+    return named, outputs
+
+
+async def _historical_baseline(
+    session: AsyncSession, deal_id: str, tenant_id: str
+) -> dict[str, Any] | None:
+    """Live 5-year historical baseline + YoY walk — the engine behind
+    ``GET /deals/{id}/historical-baseline`` (extracted T12/PNL docs with a
+    fiscal year). ``None`` when coverage is zero. The walk keeps only rows with
+    a computable YoY % (first-year / zero-prior rows carry none)."""
+    try:
+        from ..engines.historical_baseline import (
+            baseline_to_dict,
+            build_historical_baseline,
+            walk_to_list,
+            walk_yoy,
+        )
+
+        baseline = await build_historical_baseline(
+            session, deal_id=deal_id, tenant_id=tenant_id
+        )
+    except Exception:  # noqa: BLE001
+        logger.debug("live export: historical baseline read failed", exc_info=True)
+        return None
+    if not baseline.years or float(baseline.coverage_pct or 0) <= 0:
+        return None
+    data = baseline_to_dict(baseline)
+    data["walk"] = [
+        d for d in walk_to_list(walk_yoy(baseline)) if d.get("yoy_pct") is not None
+    ]
+    return data
+
+
+async def _str_forecast(
+    session: AsyncSession, deal_id: str, tenant_id: str
+) -> dict[str, Any] | None:
+    """Live STR forward forecast (W3.3) — ``GET /deals/{id}/str-forecast``:
+    the deal's STR_TREND history through the forecast engine with the default
+    downside / base / upside scenarios. ``None`` with no STR history on file."""
+    try:
+        from ..engines.str_forecast import build_str_forecast
+        from ..services.str_forecast_loader import load_str_history_for_deal
+
+        history = await load_str_history_for_deal(
+            session, deal_id=deal_id, tenant_id=tenant_id
+        )
+        if not history:
+            return None
+        forecast = build_str_forecast(deal_id=deal_id, historical_months=history)
+    except Exception:  # noqa: BLE001
+        logger.debug("live export: STR forecast read failed", exc_info=True)
+        return None
+    data = forecast.model_dump(mode="json")
+    if not data.get("historical_months"):
+        return None
+    return data
+
+
+async def _engine_base_inputs(
+    session: AsyncSession, deal_id: str, tenant_id: str
+) -> dict[str, Any]:
+    """The resolved assumption set (+ ``__sources__`` provenance map and the
+    routed ``capex_plan_overrides``) — ``engine_runner._load_engine_inputs``,
+    the same read the ``assumption_sources`` endpoint does. ``{}`` on failure."""
+    try:
+        from ..services.engine_runner import _load_engine_inputs
+
+        base = await _load_engine_inputs(session, deal_id, tenant_id=tenant_id)
+    except Exception:  # noqa: BLE001
+        logger.debug("live export: engine inputs read failed", exc_info=True)
+        return {}
+    return base if isinstance(base, dict) else {}
+
+
+def _build_capex_schedule(
+    *,
+    capital: dict[str, Any],
+    expense: dict[str, Any],
+    revenue: dict[str, Any],
+    returns: dict[str, Any],
+    keys: int | None,
+    capex_overrides: Any,
+) -> list[dict[str, Any]] | None:
+    """Capital Plan (3-bucket) rows from LIVE outputs — no default plan.
+
+    * **PIP** — the capital engine's Renovation ``uses`` line. The model books
+      it as a closing-day cost, so it lands in Year 1 unless a persisted
+      ``capex_plan.pip.timing_pct_by_year`` phases it; an explicit
+      ``capex_plan.pip.total_usd`` override wins over the line.
+    * **Non-PIP FF&E** — the expense engine's per-year ``ffe_reserve`` (what
+      the Operating Proforma actually deducts). When the analyst persisted a
+      ``capex_plan.non_pip`` plan (% of revenue / per-key floor), that plan's
+      ``max(pct × revenue, floor × keys)`` is used instead — the CapexPlanPanel
+      formula with the analyst's own inputs.
+    * **ROI** — persisted ``capex_plan.roi_projects`` through the shared pure
+      :func:`app.engines.capex_plan.build_capex_schedule` helper; zero otherwise.
+
+    Returns ``None`` when every bucket is zero, so a deal with no renovation,
+    no FF&E reserve and no plan gets no sheet (never a table of zeros).
+    """
+    rev_years = revenue.get("years") if isinstance(revenue.get("years"), list) else []
+    exp_years = expense.get("years") if isinstance(expense.get("years"), list) else []
+    hold = int(_num(returns.get("hold_years")) or 0) or len(rev_years)
+    if hold <= 0:
+        return None
+
+    revenue_by_year = [_num(y.get("total_revenue")) or 0.0 for y in rev_years if isinstance(y, dict)]
+    ffe_by_year: dict[int, float | None] = {}
+    for y in exp_years:
+        if isinstance(y, dict) and y.get("year") is not None:
+            try:
+                ffe_by_year[int(y["year"])] = _num(y.get("ffe_reserve"))
+            except (TypeError, ValueError):
+                continue
+
+    ovr = capex_overrides if isinstance(capex_overrides, dict) else {}
+    pip_ovr = ovr.get("pip") if isinstance(ovr.get("pip"), dict) else {}
+    non_pip_ovr = ovr.get("non_pip") if isinstance(ovr.get("non_pip"), dict) else {}
+    roi_ovr = ovr.get("roi_projects") if isinstance(ovr.get("roi_projects"), list) else []
+
+    pip_total = _num(pip_ovr.get("total_usd"))
+    if pip_total is None:
+        uses = capital.get("uses") if isinstance(capital.get("uses"), list) else []
+        pip_total = _use_amount(uses, "renovation", "pip")
+    timing_raw = pip_ovr.get("timing_pct_by_year")
+    timing: list[float] = [1.0]
+    if isinstance(timing_raw, list) and timing_raw:
+        parsed = [_num(t) for t in timing_raw]
+        if all(t is not None for t in parsed):
+            timing = [float(t) for t in parsed]  # type: ignore[arg-type]
+
+    # Non-PIP plan (analyst-persisted) — schema defaults fill any field the
+    # override map didn't carry, exactly as the engine would construct it.
+    plan_non_pip: Any = None
+    if non_pip_ovr:
+        try:
+            from fondok_schemas.underwriting import NonPIPCapex
+
+            plan_non_pip = NonPIPCapex(
+                **{k: v for k, v in non_pip_ovr.items() if k in NonPIPCapex.model_fields}
+            )
+        except Exception:  # noqa: BLE001 — malformed override → fall back to ffe_reserve
+            plan_non_pip = None
+
+    # ROI bucket via the shared pure helper (PIP / non-PIP zeroed here — they
+    # are sourced above).
+    roi_rows: dict[int, Any] = {}
+    if roi_ovr:
+        try:
+            from fondok_schemas.underwriting import CapexPlan, NonPIPCapex, ROICapex
+
+            from ..engines.capex_plan import build_capex_schedule
+
+            projects = [
+                ROICapex(**{k: v for k, v in p.items() if k in ROICapex.model_fields})
+                for p in roi_ovr
+                if isinstance(p, dict)
+            ]
+            plan = CapexPlan(
+                pip=None,
+                non_pip=NonPIPCapex(annual_pct_of_revenue=0.0, minimum_per_key_per_year=0.0),
+                roi_projects=projects,
+            )
+            roi_rows = {
+                r.year: r
+                for r in build_capex_schedule(
+                    plan, hold_years=hold, revenue_by_year=[0.0] * hold, room_count=0
+                )
+            }
+        except Exception:  # noqa: BLE001
+            logger.debug("live export: ROI capex plan build failed", exc_info=True)
+            roi_rows = {}
+
+    schedule: list[dict[str, Any]] = []
+    any_nonzero = False
+    for y in range(1, hold + 1):
+        share = timing[y - 1] if y - 1 < len(timing) else 0.0
+        pip_usd = (pip_total or 0.0) * share
+        rev_y = revenue_by_year[y - 1] if y - 1 < len(revenue_by_year) else 0.0
+        if plan_non_pip is not None:
+            non_pip = max(
+                max(0.0, rev_y) * float(plan_non_pip.annual_pct_of_revenue),
+                max(0, keys or 0) * float(plan_non_pip.minimum_per_key_per_year),
+            )
+        else:
+            non_pip = ffe_by_year.get(y) or 0.0
+        roi = roi_rows.get(y)
+        roi_inv = float(roi.roi_investment_usd) if roi is not None else 0.0
+        roi_lift = float(roi.roi_noi_lift_usd) if roi is not None else 0.0
+        total = pip_usd + non_pip + roi_inv
+        if total > 0 or roi_lift > 0:
+            any_nonzero = True
+        schedule.append(
+            {
+                "year": y,
+                "pip_usd": pip_usd,
+                "non_pip_usd": non_pip,
+                "roi_investment_usd": roi_inv,
+                "roi_noi_lift_usd": roi_lift,
+                "total_capex_usd": total,
+            }
+        )
+    return schedule if any_nonzero else None
+
+
+# Op-ratio keys the engine loader resolves (``base['overrides']`` for the
+# per-line ratios, top-level for mgmt fee / FF&E) — both the ``pnl_benchmark``
+# and ``portfolio_pnl`` maps in engine_runner land on these names.
+_OP_RATIO_CATALOG: tuple[tuple[str, str], ...] = (
+    ("rooms_dept_pct", "Rooms Dept Exp %"),
+    ("fb_dept_pct", "F&B Dept Exp %"),
+    ("other_dept_pct", "Other Dept Exp %"),
+    ("other_ops_dept_pct", "Other Ops Dept Exp %"),
+    ("admin_pct", "A&G %"),
+    ("undistributed_pct_revenue", "Undistributed %"),
+    ("sales_marketing_pct", "Sales & Marketing %"),
+    ("sales_pct", "Sales %"),
+    ("marketing_pct", "Marketing %"),
+    ("prop_ops_pct", "Property Ops & Maintenance %"),
+    ("utilities_pct", "Utilities %"),
+    ("fixed_pct_revenue", "Fixed Charges %"),
+    ("property_taxes_pct", "Property Tax %"),
+    ("property_tax_pct", "Property Tax %"),
+    ("insurance_pct", "Insurance %"),
+    ("mgmt_fee_pct", "Management Fee %"),
+    ("ffe_reserve_pct", "FF&E Reserve %"),
+    ("gop_margin", "GOP Margin"),
+    ("noi_margin", "NOI Margin"),
+)
+
+
+def _build_op_ratio_provenance(base: dict[str, Any]) -> dict[str, Any] | None:
+    """Op-Ratio Provenance rows from the loader's ``__sources__`` map.
+
+    One line per catalog ratio that the loader resolved AND tagged with a
+    source (``t12_actual`` / ``portfolio_pnl`` / ``cbre_horizons`` /
+    ``pnl_benchmark`` / ``analyst_override`` / ``seed``). Untagged values are
+    skipped rather than guessed. The sheet is omitted when every resolved ratio
+    is a seed — that would only restate the fixture defaults.
+    """
+    sources = base.get("__sources__") if isinstance(base.get("__sources__"), dict) else {}
+    overrides = base.get("overrides") if isinstance(base.get("overrides"), dict) else {}
+    lines: list[dict[str, Any]] = []
+    non_seed = False
+    for key, label in _OP_RATIO_CATALOG:
+        value = _num(overrides.get(key)) if key in overrides else _num(base.get(key))
+        if value is None or key not in sources:
+            continue
+        source = str(sources[key] or "seed")
+        if source != "seed":
+            non_seed = True
+        lines.append({"field": label, "value": value, "source": source, "document_id": None})
+    if not lines or not non_seed:
+        return None
+    return {"lines": lines}
+
+
+async def _pricing_sheets(
+    session: AsyncSession,
+    deal_id: str,
+    tenant_id: str,
+    *,
+    asset_name: str,
+    asset_address: str,
+    rooms: int,
+) -> tuple[dict[str, Any] | None, dict[str, Any] | None, dict[str, Any] | None]:
+    """``(sensitivity_grid, max_price, loi_draft)`` — the Pricing panel's math.
+
+    Reuses ``analysis._build_returns_input_for_deal`` (the read-only in-memory
+    chain walk behind ``POST /analysis/{id}/pricing/*``) and the three
+    endpoints' request-model defaults (target IRR / EM; template LOI terms).
+    The LOI is the same one-click draft the panel renders: the proposed price
+    is the live max-price-for-IRR solve; buyer / seller / EMD / DD days are the
+    generator's documented placeholders, not deal data — the analyst edits
+    them in the panel. Any of the three is ``None`` on failure.
+    """
+    try:
+        from ..api.analysis import (
+            _LOIRequest,
+            _MaxPriceRequest,
+            _SensitivityRequest,
+            _build_returns_input_for_deal,
+        )
+        from ..engines.loi_generator import draft_loi
+        from ..engines.price_solver import solve_max_price
+        from ..engines.pricing_sensitivity import run_sensitivity_grid
+
+        base_input = await _build_returns_input_for_deal(
+            session, deal_id=UUID(deal_id), tenant_id=UUID(tenant_id)
+        )
+    except Exception:  # noqa: BLE001
+        logger.debug("live export: pricing base input failed", exc_info=True)
+        return None, None, None
+
+    grid_d: dict[str, Any] | None = None
+    try:
+        sens_req = _SensitivityRequest()
+        kwargs = {
+            k: getattr(sens_req, k)
+            for k in ("target_irr", "cap_axis", "noi_axis")
+            if hasattr(sens_req, k)
+        }
+        grid = run_sensitivity_grid(base_input, **kwargs)
+        grid_d = asdict(grid)
+        _set(grid_d, "target_irr", kwargs.get("target_irr"))
+        if not grid_d.get("cells"):
+            grid_d = None
+    except Exception:  # noqa: BLE001
+        logger.debug("live export: sensitivity grid failed", exc_info=True)
+        grid_d = None
+
+    mp_d: dict[str, Any] | None = None
+    mpr: Any = None
+    try:
+        mp_req = _MaxPriceRequest()
+        mpr = solve_max_price(
+            base_input,
+            target_irr=mp_req.target_irr,
+            target_em=mp_req.target_em,
+            rooms=rooms or None,
+        )
+        mp_d = asdict(mpr)
+    except Exception:  # noqa: BLE001
+        logger.debug("live export: max-price solve failed", exc_info=True)
+        mpr = None
+        mp_d = None
+
+    loi_d: dict[str, Any] | None = None
+    if mpr is not None and rooms > 0:
+        try:
+            loi_req = _LOIRequest()
+            loi_kwargs = {
+                k: v
+                for k, v in loi_req.model_dump().items()
+                if k not in ("target_irr", "target_em")
+            }
+            draft = draft_loi(
+                asset_name=asset_name,
+                asset_address=asset_address,
+                rooms=rooms,
+                max_price_result=mpr,
+                **loi_kwargs,
+            )
+            loi_d = asdict(draft)
+            loi_d["binding_constraint"] = mpr.binding_constraint
+            if not (loi_d.get("rendered_markdown") or "").strip():
+                loi_d = None
+        except Exception:  # noqa: BLE001
+            logger.debug("live export: LOI draft failed", exc_info=True)
+            loi_d = None
+
+    return grid_d, mp_d, loi_d
+
+
 # ─────────────────────────── public entrypoint ───────────────────────────
 
 
@@ -601,6 +1309,70 @@ async def load_live_payload(
         model["segments_by_year"] = segments
 
     model["market"] = {"kpis": await _market_kpis(session, deal_id, tenant_id, city=city)}
+
+    # ── Wave 2/3 conditional sheets + PPTX scenario cards. Each key is set
+    # ── only when the live deal has data for it (see the helper block above);
+    # ── the builders skip absent sheets. The modeled sheets (scenarios, capex,
+    # ── pricing) additionally require a completed run so they stay consistent
+    # ── with the Returns / Proforma sheets exported from the same snapshot.
+    variance_flags = await _variance_flags(session, deal_id, tenant_id)
+    if variance_flags:
+        model["variance_flags"] = variance_flags
+
+    market_comps = await _market_comps(session, deal_id, tenant_id)
+    if market_comps:
+        model["market_comps"] = market_comps
+
+    comp_sales = await _comp_sales(session, deal_id, tenant_id)
+    if comp_sales:
+        model["comp_sales"] = comp_sales
+
+    historical = await _historical_baseline(session, deal_id, tenant_id)
+    if historical:
+        model["historical_baseline"] = historical
+
+    str_forecast = await _str_forecast(session, deal_id, tenant_id)
+    if str_forecast:
+        model["str_forecast"] = str_forecast
+
+    if returns:
+        named_scenarios, scenario_outputs = await _scenarios(
+            session, deal_id, tenant_id, snapshot
+        )
+        if named_scenarios:
+            model["named_scenarios"] = named_scenarios
+        if scenario_outputs:
+            model["scenario_outputs"] = scenario_outputs
+
+        engine_base = await _engine_base_inputs(session, deal_id, tenant_id)
+        capex = _build_capex_schedule(
+            capital=capital,
+            expense=expense,
+            revenue=revenue,
+            returns=returns,
+            keys=keys,
+            capex_overrides=engine_base.get("capex_plan_overrides"),
+        )
+        if capex:
+            model["capex_schedule"] = capex
+        op_prov = _build_op_ratio_provenance(engine_base)
+        if op_prov:
+            model["op_ratio_provenance"] = op_prov
+
+        grid, max_price, loi = await _pricing_sheets(
+            session,
+            deal_id,
+            tenant_id,
+            asset_name=property_name or deal_name or "—",
+            asset_address=city or "—",
+            rooms=keys or 0,
+        )
+        if grid:
+            model["sensitivity_grid"] = grid
+        if max_price:
+            model["max_price"] = max_price
+        if loi:
+            model["loi_draft"] = loi
 
     # ── Deal dict (title + property/market slides). String-safe values with
     # ── "—" for absent fields so the deck never shows "None" or a fixture
