@@ -313,13 +313,11 @@ async def test_live_payload_wires_scenarios_capex_and_pricing() -> None:
         min(mp["max_price_for_irr"], mp["max_price_for_em"]) / 150
     )
 
-    loi = model["loi_draft"]
-    assert loi["asset_name"] == "Harbor House Test"
-    assert loi["rooms"] == 150
-    assert loi["proposed_price"] == pytest.approx(mp["max_price_for_irr"])
-    assert loi["binding_constraint"] == mp["binding_constraint"]
-    assert "Harbor House Test" in loi["rendered_markdown"]
-    assert "150 guest rooms" in loi["rendered_markdown"]
+    # LOI is intentionally OMITTED for live deals (product decision): the
+    # one-click draft carries template placeholders ([TBD] parties, default
+    # EMD / DD) — only price/name/keys would be real — so per the no-fake-data
+    # rule we do not ship a placeholder LOI in an LP-facing export.
+    assert model.get("loi_draft") is None
 
     # ── Sheets with no live source on this deal are OMITTED ────────────
     for absent in (
@@ -378,14 +376,16 @@ async def test_live_payload_builds_full_excel_with_new_sheets(tmp_path: Path) ->
     names = set(wb.sheetnames)
     wb.close()
 
-    for present in ("Named Scenarios", "Capital Plan", "Pricing Sensitivity",
-                    "LOI Appendix"):
+    for present in ("Named Scenarios", "Capital Plan", "Pricing Sensitivity"):
         assert present in names, f"{present} missing from live workbook: {sorted(names)}"
     # Conditional sheets whose live source is empty on a bare deal must NOT
     # render (Revenue Mix needs an STR_SEGMENTATION extraction; the rest need
     # OM comps / P&L history / STR history / a PIP spec / grounded op-ratios).
+    # LOI Appendix is intentionally omitted for live deals (template-placeholder
+    # terms — no-fake-data product decision).
     for absent in ("Revenue Mix", "Renovation Plan", "Comparable Sales",
-                   "Historical Baseline", "STR Forecast", "Op-Ratio Provenance"):
+                   "Historical Baseline", "STR Forecast", "Op-Ratio Provenance",
+                   "LOI Appendix"):
         assert absent not in names, f"{absent} must not render with no live data"
     # Always-on legacy sheets still ship (Variance / Market Comps render empty
     # tables rather than fixture rows when the deal has no flags / comps).

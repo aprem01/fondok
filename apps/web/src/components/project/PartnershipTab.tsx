@@ -1024,6 +1024,24 @@ function MetricCard({
 // ─────────────────────────────────────────────────────────────────────
 const ALLOC_GRID = 'minmax(190px,1.6fr) minmax(110px,1fr) minmax(110px,1fr) minmax(120px,1fr)';
 
+// Renumber the "Tier N" captions to visible order — DISPLAY ONLY. After a
+// mid-stack removal the worker keeps each surviving tier's original label (the
+// labels key the tier_allocations rows, so the default stays byte-identical),
+// which leaves gaps like "Tier 4" sitting at position 3. Here we rewrite only
+// the leading tier number to a running counter, preserving each tier's own
+// hurdle suffix (e.g. " (to 25%)") and every amount/kind/order. The first
+// Tier-numbered row keeps its base number; later ones increment from it, so a
+// deck that starts at "Tier 2" (after the Preferred row) still reads 2,3,4…
+function renumberTierLabels(rows: TierAllocation[]): TierAllocation[] {
+  let n: number | null = null;
+  return rows.map((a) => {
+    const m = /^Tier\s+(\d+)(.*)$/i.exec(a.label ?? '');
+    if (!m) return a;
+    n = n === null ? parseInt(m[1], 10) : n + 1;
+    return { ...a, label: `Tier ${n}${m[2]}` };
+  });
+}
+
 function AllocationTable({
   allocations, lpTotal, gpTotal, total, reconciles, footnote,
 }: {
@@ -1058,7 +1076,7 @@ function AllocationTable({
         <span style={{ textAlign: 'right' }}>GP</span>
         <span style={{ textAlign: 'right' }}>Allocated proceeds</span>
       </div>
-      {allocations.map((a, i) => (
+      {renumberTierLabels(allocations).map((a, i) => (
         <div key={`${a.label}-${i}`} style={{
           display: 'grid', gridTemplateColumns: ALLOC_GRID, fontSize: 12.5, padding: '7px 0',
           borderBottom: `1px solid ${palette.hairlineRow}`, alignItems: 'center',

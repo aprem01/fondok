@@ -1127,12 +1127,10 @@ async def _pricing_sheets(
     """
     try:
         from ..api.analysis import (
-            _LOIRequest,
             _MaxPriceRequest,
             _SensitivityRequest,
             _build_returns_input_for_deal,
         )
-        from ..engines.loi_generator import draft_loi
         from ..engines.price_solver import solve_max_price
         from ..engines.pricing_sensitivity import run_sensitivity_grid
 
@@ -1176,29 +1174,13 @@ async def _pricing_sheets(
         mpr = None
         mp_d = None
 
+    # LOI: the one-click draft carries TEMPLATE placeholders — buyer/seller
+    # "[TBD]", a default EMD and DD period — with only price / name / keys as
+    # real deal data. Per the no-fake-data rule we do NOT ship placeholder LOI
+    # terms in an LP-facing export, so the LOI sheet is OMITTED for live deals
+    # until real LOI terms are captured. (The Pricing panel still renders the
+    # one-click draft in-app, where the analyst fills the terms in.)
     loi_d: dict[str, Any] | None = None
-    if mpr is not None and rooms > 0:
-        try:
-            loi_req = _LOIRequest()
-            loi_kwargs = {
-                k: v
-                for k, v in loi_req.model_dump().items()
-                if k not in ("target_irr", "target_em")
-            }
-            draft = draft_loi(
-                asset_name=asset_name,
-                asset_address=asset_address,
-                rooms=rooms,
-                max_price_result=mpr,
-                **loi_kwargs,
-            )
-            loi_d = asdict(draft)
-            loi_d["binding_constraint"] = mpr.binding_constraint
-            if not (loi_d.get("rendered_markdown") or "").strip():
-                loi_d = None
-        except Exception:  # noqa: BLE001
-            logger.debug("live export: LOI draft failed", exc_info=True)
-            loi_d = None
 
     return grid_d, mp_d, loi_d
 
