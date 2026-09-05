@@ -178,6 +178,15 @@ const COV_BASIS: Record<string, string> = {
   debt_yield: 'Year-1 NOI ÷ loan',
 };
 
+// FON-72 follow-up — Completion Guarantee qualitative statuses.
+const CG_OPTIONS: { key: string; label: string }[] = [
+  { key: 'required', label: 'Required' },
+  { key: 'in_place', label: 'In place' },
+  { key: 'not_required', label: 'Not required' },
+];
+const cgLabel = (v: string | undefined): string =>
+  CG_OPTIONS.find((o) => o.key === v)?.label ?? '—';
+
 function readOverrideNum(
   overrides: Record<string, unknown>,
   path: string,
@@ -226,7 +235,7 @@ export default function DebtTab() {
     if (rerunTimerRef.current) clearTimeout(rerunTimerRef.current);
   }, []);
   const onSaveOverride = useCallback(
-    async (patch: Record<string, number | null>) => {
+    async (patch: Record<string, number | string | null>) => {
       if (!liveMode) {
         toast('Editing is disabled on demo deals', { type: 'info' });
         return;
@@ -281,6 +290,14 @@ export default function DebtTab() {
   const wRefiCosts = getEngineField<number>(outputs, 'debt', 'refi_financing_costs');
   const wStabDy = getEngineField<number>(outputs, 'debt', 'stabilized_debt_yield');
   const wStabDscr = getEngineField<number>(outputs, 'debt', 'stabilized_dscr');
+  // FON-72 follow-up — Completion Guarantee covenant status (qualitative). The
+  // engine echoes the saved override; before a re-run lands we read the pending
+  // override optimistically so the control reflects the analyst's pick at once.
+  const wCompletionGuarantee = getEngineField<string>(outputs, 'debt', 'completion_guarantee');
+  const cgOverride = overrides['debt.completion_guarantee'];
+  const completionGuarantee: string | undefined =
+    (typeof cgOverride === 'string' ? cgOverride : undefined) ??
+    (wCompletionGuarantee ?? undefined);
 
   const wPurchase = getEngineField<number>(outputs, 'capital', 'purchase_price');
   const wTotalBasis =
@@ -475,10 +492,24 @@ export default function DebtTab() {
 
   // ─── Loan Terms & Covenants — full term sheet (descriptive fields await
   //     the loan doc, deferred out of MVP scope → honest em-dashes). ──────
+  const cgOverridden = overridden('debt.completion_guarantee');
   const fullTerms: RowDef[] = [
     ...loanTerms,
     { id: 'exit', label: 'Exit Fee', kind: 'calc', state: 'assumption',
       value: has(wExitFeePct) ? `${feePct(wExitFeePct)}${has(wExitFeeUsd) ? ` · ${fmtCurrency(wExitFeeUsd)}` : ''}` : '—' },
+    // Completion Guarantee — analyst-entered qualitative status (feeds the
+    // Completion Guarantee covenant row in the Covenants card).
+    { id: 'completionGuarantee', label: 'Completion Guarantee', kind: 'input',
+      state: completionGuarantee ? 'assumption' : 'awaiting_data',
+      overridden: cgOverridden,
+      value: (
+        <CompletionGuaranteeControl
+          value={completionGuarantee}
+          editable={liveMode}
+          onSave={(v) => onSaveOverride({ 'debt.completion_guarantee': v })}
+        />
+      ),
+      note: 'Lender completion guarantee on the renovation — enter its status' },
     { id: 'lender', label: 'Lender', kind: 'awaiting', state: 'awaiting_data', value: '—' },
     { id: 'recourse', label: 'Recourse', kind: 'awaiting', state: 'awaiting_data', value: '—' },
     { id: 'prepay', label: 'Prepayment', kind: 'awaiting', state: 'awaiting_data', value: '—' },
@@ -754,21 +785,20 @@ export default function DebtTab() {
                     </div>
                   </div>
                 ))}
-                {/* Completion Guarantee — canonical lists it, but the debt model
-                    carries no completion-guarantee flag, so it renders "—" here
-                    (never a fabricated "Required"/"In place"). Needs a backend
-                    source before it can show a real status (see report). */}
+                {/* Completion Guarantee — qualitative covenant. Reads the
+                    analyst-entered status (set in Full Loan Terms); "—" until
+                    entered (never a fabricated status). */}
                 {wCovenants.length > 0 && (
                   <div style={{
                     display: 'grid', gridTemplateColumns: 'minmax(150px,1.3fr) 90px 90px minmax(88px,1fr)',
                     fontSize: 12.5, padding: '7px 0', borderBottom: `1px solid ${palette.hairlineRow}`, alignItems: 'center',
                   }}>
                     <span style={{ display: 'flex', alignItems: 'center', gap: 7, minWidth: 0 }}>
-                      <ProvenanceDot state="awaiting_data" size={8} />
+                      <ProvenanceDot state={completionGuarantee ? 'assumption' : 'awaiting_data'} size={8} />
                       <span style={{ color: palette.ink, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>Completion Guarantee</span>
                     </span>
                     <span style={{ textAlign: 'right', color: palette.textSecondary, fontVariantNumeric: 'tabular-nums' }}>—</span>
-                    <span style={{ textAlign: 'right', color: palette.ink, fontWeight: 600, fontVariantNumeric: 'tabular-nums' }}>—</span>
+                    <span style={{ textAlign: 'right', color: completionGuarantee ? palette.linkBlue : palette.ink, fontWeight: 600, fontVariantNumeric: 'tabular-nums' }}>{cgLabel(completionGuarantee)}</span>
                     <span style={{ textAlign: 'right', color: palette.textMuted, fontVariantNumeric: 'tabular-nums' }}>—</span>
                   </div>
                 )}
@@ -996,6 +1026,50 @@ function RateTypeToggle({ rateType }: { rateType: string }) {
 }
 
 // ─────────────────────────────────────────────────────────────────────
+// Completion Guarantee — segmented Required / In place / Not required. A
+// qualitative covenant input; persists debt.completion_guarantee via the
+// override save path. Read-only (status text) on demo deals.
+// ─────────────────────────────────────────────────────────────────────
+function CompletionGuaranteeControl({
+  value, editable, onSave,
+}: {
+  value: string | undefined;
+  editable: boolean;
+  onSave: (v: string) => void | Promise<void>;
+}) {
+  if (!editable) {
+    return (
+      <span style={{ color: value ? prov.blue : prov.muted, fontVariantNumeric: 'tabular-nums' }}>
+        {cgLabel(value)}
+      </span>
+    );
+  }
+  return (
+    <span style={{ display: 'inline-flex', background: '#eeede8', border: `1px solid ${palette.disabledBorder}`, borderRadius: 7, padding: 2, gap: 2 }}>
+      {CG_OPTIONS.map((o) => {
+        const active = o.key === value;
+        return (
+          <button
+            key={o.key}
+            type="button"
+            data-testid={`cg-${o.key}`}
+            onClick={() => { if (!active) void onSave(o.key); }}
+            style={{
+              fontSize: 11, fontFamily: 'inherit', border: 'none', cursor: 'pointer',
+              fontWeight: active ? 700 : 500, color: active ? palette.inkNavy : palette.eyebrow,
+              background: active ? '#fff' : 'transparent', borderRadius: 5, padding: '3px 9px',
+              boxShadow: active ? '0 1px 2px rgba(0,0,0,.09)' : 'none',
+            }}
+          >
+            {o.label}
+          </button>
+        );
+      })}
+    </span>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────────
 // Refinance view — banner + include/remove toggle · assumptions · impact.
 // Reads refi fields from the debt output; values the engine doesn't emit
 // render as canonical "awaiting data" em-dashes (never fabricated).
@@ -1018,7 +1092,7 @@ function RefinanceView({
   refiPayoff?: number;
   refiRate?: number;
   refiCosts?: number;
-  onSaveOverride: (patch: Record<string, number | null>) => void | Promise<void>;
+  onSaveOverride: (patch: Record<string, number | string | null>) => void | Promise<void>;
   toast: ReturnType<typeof useToast>['toast'];
 }) {
   const bannerColor = active ? 'oklch(40% 0.12 155)' : palette.eyebrow;

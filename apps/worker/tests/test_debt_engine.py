@@ -130,3 +130,82 @@ def test_covenant_thresholds_are_override_driven() -> None:
     # current 0.625 > 0.60 → breach.
     assert ltv.passes is False
     assert ltv.headroom == pytest.approx(0.60 - 0.625)  # negative
+
+
+# ─────────────── FON-72 follow-up: stabilized credit metrics ──────────
+
+
+def test_stabilized_metrics_populate_and_entry_unchanged() -> None:
+    """Stabilized DSCR / debt yield populate to sane values; the existing
+    Year-1 (entry) metrics and schedule stay byte-identical.
+
+    The golden-style ``_input`` is a stabilized acquisition (steady 3% NOI
+    growth, no ramp, no occupancy signal) → the NOI-plateau fallback puts the
+    stabilized year at Year 1, so stabilized == entry (a stabilized asset)."""
+    inp = _input(loan=20_000_000.0, noi=2_400_000.0)
+    baseline = DebtEngine().run(inp)  # what the tab shows today (stabilized None)
+
+    out = DebtEngine().run(inp)
+    # Existing numbers unchanged.
+    assert out.year_one_dscr == pytest.approx(baseline.year_one_dscr)
+    assert out.year_one_debt_yield == pytest.approx(baseline.year_one_debt_yield)
+    assert out.entry_dscr == pytest.approx(baseline.entry_dscr)
+    assert out.entry_debt_yield == pytest.approx(baseline.entry_debt_yield)
+    assert out.annual_debt_service == pytest.approx(baseline.annual_debt_service)
+    assert [y.debt_service for y in out.schedule] == pytest.approx(
+        [y.debt_service for y in baseline.schedule]
+    )
+    # Stabilized now populates to sane values.
+    assert out.stabilized_dscr is not None and out.stabilized_dscr > 0
+    assert out.stabilized_debt_yield is not None and out.stabilized_debt_yield > 0
+    # Stabilized == entry for a stabilized (no-ramp) acquisition.
+    assert out.stabilized_dscr == pytest.approx(out.entry_dscr)
+    assert out.stabilized_debt_yield == pytest.approx(out.entry_debt_yield)
+
+
+def test_stabilized_year_from_occupancy_signal_when_ramping() -> None:
+    """With an occupancy ramp + stabilized-occupancy assumption, the stabilized
+    year is the first year occupancy reaches the assumption — and the stabilized
+    metrics reflect THAT year's NOI, distinct from entry."""
+    noi = [2_000_000.0, 2_500_000.0, 2_900_000.0, 3_100_000.0, 3_150_000.0]
+    inp = _input(loan=25_000_000.0).model_copy(
+        update={
+            "noi_by_year": noi,
+            # Ramps to the 0.76 stabilized assumption in Year 4 (index 3).
+            "occupancy_by_year": [0.60, 0.68, 0.74, 0.76, 0.762],
+            "stabilized_occupancy": 0.76,
+        }
+    )
+    out = DebtEngine().run(inp)
+    stab_noi = noi[3]
+    # Debt yield uses the loan denominator (total_debt == senior on this stack).
+    assert out.stabilized_debt_yield == pytest.approx(stab_noi / out.loan_amount)
+    # DSCR uses the stabilized-year (Y4) debt service off the same schedule.
+    stab_ds = out.schedule[3].debt_service
+    assert out.stabilized_dscr == pytest.approx(stab_noi / stab_ds)
+    # Clearly a stabilized-year (Y4) reading, not Year 1.
+    assert out.stabilized_debt_yield > (out.entry_debt_yield or 0.0)
+    # Entry metrics untouched (Year-1 NOI ÷ loan).
+    assert out.entry_debt_yield == pytest.approx(noi[0] / out.loan_amount)
+
+
+def test_stabilized_year_noi_plateau_fallback() -> None:
+    """No occupancy signal → derive the stabilized year from the NOI plateau:
+    the year after the last above-terminal growth step."""
+    # Big early ramp (30%, 11.5%, 3.4%) settling to ~2% terminal → stabilizes Y4.
+    noi = [100.0, 130.0, 145.0, 150.0, 153.0]
+    inp = _input(loan=25_000_000.0).model_copy(update={"noi_by_year": noi})
+    out = DebtEngine().run(inp)
+    stab_noi = noi[3]  # Year 4
+    assert out.stabilized_debt_yield == pytest.approx(stab_noi / out.loan_amount)
+    assert out.stabilized_dscr == pytest.approx(
+        stab_noi / out.schedule[3].debt_service
+    )
+
+
+def test_completion_guarantee_echoed_from_input() -> None:
+    """The qualitative Completion Guarantee status round-trips to the output;
+    absent it stays None (the tab renders "—")."""
+    assert DebtEngine().run(_input()).completion_guarantee is None
+    inp = _input().model_copy(update={"completion_guarantee": "in_place"})
+    assert DebtEngine().run(inp).completion_guarantee == "in_place"

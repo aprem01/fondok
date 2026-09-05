@@ -3797,6 +3797,16 @@ def _build_input_for(
             if _senior not in (None, "") and float(_senior) > 0
             else None
         )
+        # FON-71 follow-up — renovation contingency percent (of hard costs).
+        # Arrives as a top-level field_override scalar; absent → 0.0 (no fold-in,
+        # byte-identical).
+        _rcp = base.get("renovation_contingency_pct")
+        try:
+            renovation_contingency_pct = (
+                float(_rcp) if _rcp not in (None, "") else 0.0
+            )
+        except (TypeError, ValueError):
+            renovation_contingency_pct = 0.0
         return CapitalEngineInput(
             deal_id=deal_uuid,
             purchase_price=base["purchase_price"],
@@ -3811,6 +3821,7 @@ def _build_input_for(
             senior_loan_amount=senior_loan_amount,
             ltv=base["ltv"],
             debt_basis="purchase",
+            renovation_contingency_pct=renovation_contingency_pct,
         )
 
     if engine_name == "debt":
@@ -3825,6 +3836,29 @@ def _build_input_for(
                 noi_by_year = [float(x) for x in _noi_ovr]
             except (TypeError, ValueError):
                 pass
+        # FON-72 follow-up — stabilized-year signal for the stabilized credit
+        # metrics. The revenue engine's projected occupancy path + the deal's
+        # stabilized-occupancy assumption let the debt engine key the stabilized
+        # year off occupancy (the approved definition). Best-effort: absent the
+        # revenue output the debt engine falls back to the NOI plateau.
+        revenue_out = accumulated.get("revenue")
+        occupancy_by_year = (
+            [yr.occupancy for yr in revenue_out.years]
+            if revenue_out is not None and getattr(revenue_out, "years", None)
+            else None
+        )
+        _stab_occ = base.get("starting_occupancy")
+        try:
+            stabilized_occupancy = (
+                float(_stab_occ) if _stab_occ not in (None, "") else None
+            )
+        except (TypeError, ValueError):
+            stabilized_occupancy = None
+        # FON-72 follow-up — Completion Guarantee covenant status (qualitative).
+        _cg = base.get("debt.completion_guarantee")
+        completion_guarantee = (
+            _cg if _cg in ("required", "in_place", "not_required") else None
+        )
         return DebtEngineInputExt(
             deal_id=deal_uuid,
             loan_amount=capital_out.debt_amount,
@@ -3852,6 +3886,10 @@ def _build_input_for(
                 if base.get("senior_spread_pct") not in (None, "")
                 else None
             ),
+            # FON-72 follow-up — stabilized-year signal + Completion Guarantee.
+            occupancy_by_year=occupancy_by_year,
+            stabilized_occupancy=stabilized_occupancy,
+            completion_guarantee=completion_guarantee,
         )
 
     if engine_name == "returns":

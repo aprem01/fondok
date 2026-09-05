@@ -62,6 +62,22 @@ class DebtEngineInputExt(DebtEngineInput):
     sofr_curve: list[float] | None = None
     # Senior margin over SOFR (e.g. 0.035). Only used when ``sofr_curve`` is set.
     senior_spread_pct: Annotated[float, Field(ge=0.0, le=1.0)] | None = None
+    # FON-72 follow-up — stabilized-year signal for the stabilized DSCR / debt
+    # yield. ``occupancy_by_year`` is the revenue engine's projected occupancy
+    # path (index 0 = year 1); ``stabilized_occupancy`` is the deal's post-ramp
+    # stabilized-occupancy assumption. When both are present the stabilized year
+    # is the first projection year occupancy reaches the stabilized assumption
+    # (the approved definition); absent them the engine derives it from the NOI
+    # plateau (see ``_resolve_stabilized_year_index``). Both None keeps legacy
+    # callers byte-for-byte unchanged.
+    occupancy_by_year: list[float] | None = None
+    stabilized_occupancy: Annotated[float, Field(ge=0.0, le=1.0)] | None = None
+    # FON-72 follow-up — Completion Guarantee covenant status (qualitative; no
+    # numeric covenant math). Threaded from ``debt.completion_guarantee`` in the
+    # deal's field_overrides. None → the Debt tab's covenant row stays "—".
+    completion_guarantee: (
+        Literal["required", "in_place", "not_required"] | None
+    ) = None
 
 
 class DebtMonth(BaseModel):
@@ -246,13 +262,22 @@ class DebtEngineOutputExt(DebtEngineOutput):
     refi_financing_costs: Annotated[float, Field(ge=0)] | None = None
     # FON-72 follow-up — entry-vs-stabilized credit split. The entry_* pair are
     # explicit aliases of the existing Year-1 metrics (byte-identical). The
-    # stabilized_* pair stay None: the debt engine has no stabilized-year
-    # definition to key off without inventing one, so the tab renders the
-    # stabilized cards "—" (see report — needs a stabilized-year source).
+    # stabilized_* pair are the stabilized-year metrics: stabilized-year NOI ÷
+    # loan (debt yield) and ÷ stabilized-year debt service (DSCR), where the
+    # stabilized year is resolved by ``_resolve_stabilized_year_index`` (the
+    # first year occupancy reaches the stabilized assumption, else the NOI
+    # plateau). They stay None only when no stabilized year can be determined
+    # (no NOI series) → the tab renders those cards "—".
     entry_debt_yield: Annotated[float, Field(ge=0)] | None = None
     entry_dscr: Annotated[float, Field(ge=0)] | None = None
     stabilized_debt_yield: Annotated[float, Field(ge=0)] | None = None
     stabilized_dscr: Annotated[float, Field(ge=0)] | None = None
+    # FON-72 follow-up — Completion Guarantee covenant status (qualitative).
+    # Echoed from the analyst's ``debt.completion_guarantee`` override; None
+    # keeps the Debt tab's Completion Guarantee covenant row "—".
+    completion_guarantee: (
+        Literal["required", "in_place", "not_required"] | None
+    ) = None
 
 
 def pmt(rate: float, nper: int, pv: float) -> float:
@@ -263,6 +288,61 @@ def pmt(rate: float, nper: int, pv: float) -> float:
         return pv / nper
     factor = (1.0 + rate) ** nper
     return pv * (rate * factor) / (factor - 1.0)
+
+
+def _resolve_stabilized_year_index(
+    *,
+    occupancy_by_year: list[float] | None,
+    stabilized_occupancy: float | None,
+    noi_by_year: list[float],
+) -> int | None:
+    """0-based index of the first stabilized projection year, or None.
+
+    Primary signal (approved definition): the first year the projected
+    occupancy reaches the deal's post-ramp stabilized-occupancy assumption.
+    The revenue engine treats ``starting_occupancy`` as the stabilized
+    baseline and only Year 1 (and, under a PIP, its recovery) sits below it,
+    so an un-displaced deal stabilizes in Year 1.
+
+    Fallback (no occupancy signal): the NOI plateau — walk the NOI series and
+    take the year AFTER the last above-terminal growth step, i.e. the first
+    year year-over-year NOI growth has settled to the terminal (final-period)
+    rate and the ramp is complete. A series with no ramp (growth never exceeds
+    terminal) is stabilized from Year 1 (index 0).
+    """
+    # Primary — occupancy reaches the stabilized assumption.
+    if (
+        occupancy_by_year
+        and stabilized_occupancy is not None
+        and stabilized_occupancy > 0
+    ):
+        eps = 1e-9
+        for i, occ in enumerate(occupancy_by_year):
+            if occ is not None and occ >= stabilized_occupancy - eps:
+                return i
+        return None
+
+    # Fallback — NOI plateau.
+    n = len(noi_by_year)
+    if n == 0:
+        return None
+    if n == 1:
+        return 0
+    terminal_growth = (
+        (noi_by_year[-1] / noi_by_year[-2] - 1.0)
+        if noi_by_year[-2] > 0
+        else 0.0
+    )
+    tol = 0.005  # 0.5 percentage-point tolerance on the terminal rate
+    last_ramp_step = -1
+    for j in range(n - 1):
+        prev = noi_by_year[j]
+        growth = (noi_by_year[j + 1] / prev - 1.0) if prev > 0 else 0.0
+        if growth > terminal_growth + tol:
+            last_ramp_step = j
+    if last_ramp_step < 0:
+        return 0
+    return min(last_ramp_step + 1, n - 1)
 
 
 # FON-63 — a forward-SOFR assumption for any floating tranche the analyst
@@ -776,6 +856,56 @@ class DebtEngine(BaseEngine[DebtEngineInputExt, DebtEngineOutputExt]):
                 note="Year-1 debt yield — lender's NOI-to-loan cushion.",
             )
 
+        # FON-72 follow-up — stabilized credit metrics. The stabilized year is
+        # the first projection year occupancy reaches the stabilized assumption
+        # (else the NOI plateau). Debt yield uses the same loan denominator as
+        # entry (total_debt == the senior loan on the default stack); DSCR uses
+        # the stabilized-year debt service off the same schedule entry DSCR
+        # uses (senior schedule DS + any priced junior tranche). Both stay None
+        # only when no stabilized year can be determined → the tab renders "—".
+        stabilized_debt_yield: float | None = None
+        stabilized_dscr: float | None = None
+        stab_idx = _resolve_stabilized_year_index(
+            occupancy_by_year=payload.occupancy_by_year,
+            stabilized_occupancy=payload.stabilized_occupancy,
+            noi_by_year=payload.noi_by_year,
+        )
+        if (
+            stab_idx is not None
+            and payload.noi_by_year
+            and 0 <= stab_idx < len(payload.noi_by_year)
+            and schedule
+        ):
+            stab_noi = payload.noi_by_year[stab_idx]
+            sched_i = min(stab_idx, len(schedule) - 1)
+            stab_ds = schedule[sched_i].debt_service + extra_ds
+            if total_debt > 0:
+                stabilized_debt_yield = stab_noi / total_debt
+            if stab_ds > 0:
+                stabilized_dscr = stab_noi / stab_ds
+            if stabilized_dscr is not None:
+                prov["stabilized_dscr"] = ValueTrace(
+                    value=stabilized_dscr,
+                    formula="stabilized_dscr = stabilized_year_noi ÷ stabilized_year_debt_service",
+                    inputs=[
+                        ValueInput(name="stabilized_year", value=float(stab_idx + 1)),
+                        ValueInput(name="stabilized_year_noi", value=stab_noi),
+                        ValueInput(name="stabilized_year_debt_service", value=stab_ds),
+                    ],
+                    note="Stabilized-year Debt Service Coverage Ratio (post-ramp).",
+                )
+            if stabilized_debt_yield is not None:
+                prov["stabilized_debt_yield"] = ValueTrace(
+                    value=stabilized_debt_yield,
+                    formula="stabilized_debt_yield = stabilized_year_noi ÷ total_debt",
+                    inputs=[
+                        ValueInput(name="stabilized_year", value=float(stab_idx + 1)),
+                        ValueInput(name="stabilized_year_noi", value=stab_noi),
+                        ValueInput(name="total_debt", value=total_debt),
+                    ],
+                    note="Stabilized-year debt yield (post-ramp).",
+                )
+
         return DebtEngineOutputExt(
             deal_id=payload.deal_id,
             annual_debt_service=annual_ds,
@@ -800,11 +930,13 @@ class DebtEngine(BaseEngine[DebtEngineInputExt, DebtEngineOutputExt]):
             refi_new_interest_rate=refi_new_interest_rate,
             refi_financing_costs=refi_financing_costs,
             # Entry credit metrics = the existing Year-1 metrics (explicit
-            # aliases). Stabilized left None — no stabilized-year source.
+            # aliases). Stabilized = the stabilized-year metrics (or None when
+            # no stabilized year can be determined).
             entry_debt_yield=year1_dy,
             entry_dscr=year1_dscr,
-            stabilized_debt_yield=None,
-            stabilized_dscr=None,
+            stabilized_debt_yield=stabilized_debt_yield,
+            stabilized_dscr=stabilized_dscr,
+            completion_guarantee=payload.completion_guarantee,
             origination_fee_pct=origination_fee_pct,
             exit_fee_pct=exit_fee_pct,
             origination_fee_usd=origination_fee_usd,

@@ -298,6 +298,18 @@ export default function InvestmentTab() {
   const renoHard = renoBreakdown?.hard;
   const renoSoft = renoBreakdown?.soft;
   const renoProf = renoBreakdown?.fees;
+  // FON-71 follow-up — renovation contingency fold-in. Base = analyst budget;
+  // Total = base + contingency (== the "Renovation" use line). Fall back to the
+  // Renovation use line for engines predating these fields; with no contingency
+  // base/total coincide, so the display is unchanged.
+  const renoBaseW = getEngineField<number>(outputs, 'capital', 'renovation_base_usd');
+  const renoContPctW = getEngineField<number>(outputs, 'capital', 'renovation_contingency_pct');
+  const renoContUsdW = getEngineField<number>(outputs, 'capital', 'renovation_contingency_usd');
+  const renoTotalW = getEngineField<number>(outputs, 'capital', 'renovation_total_usd');
+  const renoBase = has(renoBaseW) ? renoBaseW : renoBudget;
+  const renoTotal = has(renoTotalW) ? renoTotalW : renoBudget;
+  const renoContPct = renoContPctW;
+  const renoCont = renoContUsdW;
 
   const totalUses = wTotalCapital;
   const totalUsesPerKey = has(wTotalCapitalPerKey)
@@ -376,7 +388,7 @@ export default function InvestmentTab() {
             const kpis = [
               { label: 'Total Cost Basis', value: mm(totalUses), sub: has(totalUsesPerKey) ? `${fmtCurrency(totalUsesPerKey)} / key` : '' },
               { label: 'Purchase Price', value: mm(purchase), sub: has(entryCap) ? `${fmtPct(entryCap, 2)} going-in` : '' },
-              { label: 'Renovation / PIP', value: mm(renoBudget), sub: (has(renoBudget) && has(keys)) ? `${fmtCurrency(renoBudget / keys)} / key` : '' },
+              { label: 'Renovation / PIP', value: mm(renoTotal), sub: (has(renoTotal) && has(keys)) ? `${fmtCurrency(renoTotal / keys)} / key` : '' },
               { label: 'Required Equity', value: mm(equity), sub: (has(equity) && has(totalUses) && totalUses > 0) ? `${fmtPct(equity / totalUses, 1)} of total uses` : '' },
               { label: 'Gross Exit Value', value: mm(grossExit), sub: has(exitCap) ? `${fmtPct(exitCap, 2)} exit cap` : '' },
             ];
@@ -500,26 +512,37 @@ export default function InvestmentTab() {
                 state: overridden('renovation_budget') ? 'assumption' : 'assumption',
                 overridden: overridden('renovation_budget'),
                 value: (
-                  <AssumptionField value={renoBudget} editable={liveMode} format={fmtCurrency}
+                  <AssumptionField value={renoBase} editable={liveMode} format={fmtCurrency}
                     toDraft={(v) => String(Math.round(v))}
                     parse={(s) => { const n = parseFloat(s.replace(/[,$\s]/g, '')); return Number.isFinite(n) && n >= 0 ? n : null; }}
                     onSave={(v) => onSaveAssumption('renovation_budget', v)} width="w-36"
                     color={valueColor('input', false, overridden('renovation_budget'))} />
                 ),
               },
-              { id: 'renoPerKey', label: 'Budget / Key', kind: 'calc', state: 'calculated', value: (has(renoBudget) && has(keys)) ? money(renoBudget / keys) : '—' },
-              // Base budget = capital engine's "Renovation" use (hard+soft+fees,
-              // before the separate project contingency line).
-              { id: 'renoBase', label: 'Base Budget', kind: 'calc', state: 'calculated', value: money(renoBudget) },
+              { id: 'renoPerKey', label: 'Budget / Key', kind: 'calc', state: 'calculated', value: (has(renoBase) && has(keys)) ? money(renoBase / keys) : '—' },
+              // Base budget = the analyst's renovation budget (hard+soft+fees),
+              // before contingency.
+              { id: 'renoBase', label: 'Base Budget', kind: 'calc', state: 'calculated', value: money(renoBase) },
               { id: 'renoHard', label: 'Hard Costs', kind: 'calc', state: 'calculated', value: money(renoHard), note: '75% of base budget per the PIP scope of work' },
               { id: 'renoSoft', label: 'Soft Costs', kind: 'calc', state: 'calculated', value: money(renoSoft) },
               { id: 'renoProf', label: 'Professional Fees', kind: 'calc', state: 'calculated', value: money(renoProf) },
-              // Renovation-specific contingency % is not emitted by the capital
-              // engine (only a project-level Contingency use line exists) → '—'.
-              { id: 'renoContPct', label: 'Contingency %', kind: 'awaiting', state: 'awaiting_data', value: '—' },
-              { id: 'renoCont', label: 'Contingency', kind: 'awaiting', state: 'awaiting_data', value: '—' },
-              { id: 'renoTotal', label: 'Total Renovation / PIP', kind: 'calc', bold: true, state: 'calculated', value: money(renoBudget) },
-              { id: 'renoTotalKey', label: '$ / Key', kind: 'calc', state: 'calculated', value: (has(renoBudget) && has(keys)) ? money(renoBudget / keys) : '—' },
+              // Renovation contingency % (of hard costs) — analyst input that
+              // folds into the renovation total below.
+              { id: 'renoContPct', label: 'Contingency %', kind: 'input',
+                state: overridden('renovation_contingency_pct') ? 'assumption' : 'assumption',
+                overridden: overridden('renovation_contingency_pct'),
+                note: 'Percent of renovation hard costs — folds into the total below',
+                value: (
+                  <AssumptionField value={renoContPct} editable={liveMode} format={(v) => fmtPct(v, 1)}
+                    toDraft={(v) => (v * 100).toFixed(2)} suffix="%"
+                    parse={(s) => { const n = parseFloat(s); return Number.isFinite(n) && n >= 0 ? n / 100 : null; }}
+                    onSave={(v) => onSaveAssumption('renovation_contingency_pct', v)} width="w-20"
+                    color={valueColor('input', false, overridden('renovation_contingency_pct'))} />
+                ),
+              },
+              { id: 'renoCont', label: 'Contingency', kind: 'calc', state: 'calculated', value: money(renoCont) },
+              { id: 'renoTotal', label: 'Total Renovation / PIP', kind: 'calc', bold: true, state: 'calculated', value: money(renoTotal) },
+              { id: 'renoTotalKey', label: '$ / Key', kind: 'calc', state: 'calculated', value: (has(renoTotal) && has(keys)) ? money(renoTotal / keys) : '—' },
               { id: 'renoSf', label: '$ / SF', kind: 'awaiting', state: 'awaiting_data', value: '—' },
               { id: 'renoStart', label: 'Renovation Start',
                 kind: renoStartAvail ? 'linked' : 'awaiting',

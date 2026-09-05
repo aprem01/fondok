@@ -64,6 +64,12 @@ class CapitalEngineInput(InvestmentEngineInput):
     renovation_hard_pct: Annotated[float, Field(ge=0.0, le=1.0)] = 0.75
     renovation_soft_pct: Annotated[float, Field(ge=0.0, le=1.0)] = 0.15
     renovation_fees_pct: Annotated[float, Field(ge=0.0, le=1.0)] = 0.10
+    # FON-71 follow-up — renovation contingency as a percent of the renovation
+    # HARD costs (the construction-risk base). When > 0 the contingency dollars
+    # fold into the renovation total (base budget + contingency), so the
+    # "Renovation" use line — and therefore total cost / LTC / equity / returns
+    # — reflect it. Default 0.0 keeps every existing number byte-identical.
+    renovation_contingency_pct: Annotated[float, Field(ge=0.0, le=1.0)] = 0.0
 
 
 class RenovationBreakdown(BaseModel):
@@ -87,6 +93,15 @@ class CapitalEngineOutput(InvestmentEngineOutput):
     # None when there is no renovation budget (so the UI shows '—' rather
     # than a fabricated $0 split).
     renovation_breakdown: RenovationBreakdown | None = None
+    # FON-71 follow-up — renovation contingency fold-in. ``renovation_base_usd``
+    # is the analyst's renovation budget; ``renovation_contingency_usd`` =
+    # renovation_contingency_pct × hard costs; ``renovation_total_usd`` = base +
+    # contingency (== the "Renovation" use line). With no contingency the total
+    # equals the base and the pct/usd are 0 → byte-identical to before.
+    renovation_base_usd: Annotated[float, Field(ge=0)] = 0.0
+    renovation_contingency_pct: Annotated[float, Field(ge=0.0, le=1.0)] = 0.0
+    renovation_contingency_usd: Annotated[float, Field(ge=0)] = 0.0
+    renovation_total_usd: Annotated[float, Field(ge=0)] = 0.0
     # FON-67 — the property/capital uses (Total Uses minus financing costs)
     # and the senior loan fee, surfaced separately so the source-model
     # convention (property uses kept apart from financing) is legible.
@@ -108,7 +123,16 @@ class CapitalEngine(BaseEngine[CapitalEngineInput, CapitalEngineOutput]):
         # Closing costs may have been provided absolutely; otherwise apply pct.
         closing_costs = payload.closing_costs or payload.purchase_price * payload.closing_costs_pct
 
-        cost_basis = payload.purchase_price + closing_costs + payload.renovation_budget
+        # FON-71 follow-up — renovation contingency (percent of hard costs)
+        # folds into the renovation total. Contingency 0 → total == base ==
+        # renovation_budget, so the Renovation use line (and everything
+        # downstream) is byte-identical to before.
+        reno_base = payload.renovation_budget
+        reno_hard_costs = reno_base * payload.renovation_hard_pct
+        reno_contingency = payload.renovation_contingency_pct * reno_hard_costs
+        reno_total = reno_base + reno_contingency
+
+        cost_basis = payload.purchase_price + closing_costs + reno_total
         basis = payload.purchase_price if payload.debt_basis == "purchase" else cost_basis
         # FON-67 — explicit senior loan wins over LTV sizing when provided, so
         # the stack reconciles to a source model's confirmed senior amount.
@@ -125,7 +149,8 @@ class CapitalEngine(BaseEngine[CapitalEngineInput, CapitalEngineOutput]):
         property_lines = [
             SourceUseLine(label="Purchase Price", amount=payload.purchase_price),
             SourceUseLine(label="Closing Costs", amount=closing_costs),
-            SourceUseLine(label="Renovation", amount=payload.renovation_budget),
+            # Renovation appears once, as the TOTAL PIP budget incl. contingency.
+            SourceUseLine(label="Renovation", amount=reno_total),
             SourceUseLine(label="Working Capital", amount=payload.working_capital),
             SourceUseLine(label="Insurance Reserve", amount=payload.insurance_reserve),
             SourceUseLine(label="Soft Costs", amount=payload.soft_costs),
@@ -230,6 +255,20 @@ class CapitalEngine(BaseEngine[CapitalEngineInput, CapitalEngineOutput]):
                         ValueInput(name="property_uses", value=property_uses, traces_to="property_uses_usd"),
                         ValueInput(name="senior_loan_fee", value=senior_loan_fee, traces_to="senior_loan_fee_usd"),
                     ],
+                )
+            elif line.label == "Renovation" and reno_contingency > 0:
+                prov[key] = ValueTrace(
+                    value=line.amount,
+                    formula="renovation_total = renovation_budget + renovation_contingency",
+                    inputs=[
+                        ValueInput(name="renovation_budget", value=reno_base),
+                        ValueInput(
+                            name="renovation_contingency",
+                            value=reno_contingency,
+                            traces_to="renovation_contingency_usd",
+                        ),
+                    ],
+                    note="Base PIP budget plus contingency (pct × renovation hard costs).",
                 )
             elif line.label in _input_use_labels:
                 prov[key] = ValueTrace(
@@ -359,6 +398,26 @@ class CapitalEngine(BaseEngine[CapitalEngineInput, CapitalEngineOutput]):
                         ValueInput(name=f"renovation_{part}_pct", value=pct),
                     ],
                 )
+        # FON-71 follow-up — contingency provenance (only when set, so a deal
+        # with no contingency keeps a byte-identical provenance map).
+        if reno_contingency > 0:
+            prov["renovation_contingency_usd"] = ValueTrace(
+                value=reno_contingency,
+                formula="renovation_contingency = renovation_contingency_pct × renovation_hard_costs",
+                inputs=[
+                    ValueInput(name="renovation_contingency_pct", value=payload.renovation_contingency_pct),
+                    ValueInput(name="renovation_hard_costs", value=reno_hard_costs),
+                ],
+                note="Contingency on the renovation hard costs.",
+            )
+            prov["renovation_total_usd"] = ValueTrace(
+                value=reno_total,
+                formula="renovation_total = renovation_budget + renovation_contingency",
+                inputs=[
+                    ValueInput(name="renovation_budget", value=reno_base),
+                    ValueInput(name="renovation_contingency", value=reno_contingency, traces_to="renovation_contingency_usd"),
+                ],
+            )
 
         return CapitalEngineOutput(
             deal_id=payload.deal_id,
@@ -370,6 +429,10 @@ class CapitalEngine(BaseEngine[CapitalEngineInput, CapitalEngineOutput]):
             equity_amount=equity,
             ltc=debt / total_uses if total_uses else 0.0,
             renovation_breakdown=reno_breakdown,
+            renovation_base_usd=reno_base,
+            renovation_contingency_pct=payload.renovation_contingency_pct,
+            renovation_contingency_usd=reno_contingency,
+            renovation_total_usd=reno_total,
             property_uses_usd=property_uses,
             senior_loan_fee_usd=senior_loan_fee,
             provenance=apply_states(prov),

@@ -2131,11 +2131,16 @@ export interface DebtEngineOutputExtras {
   refi_new_interest_rate: number | null;
   refi_financing_costs: number | null;
   /** FON-72 follow-up — entry credit metrics alias the Year-1 metrics. The
-   *  stabilized pair are null until a stabilized-year source is defined. */
+   *  stabilized pair are the stabilized-year metrics (first year occupancy
+   *  reaches the stabilized assumption, else the NOI plateau); null only when
+   *  no stabilized year can be determined. */
   entry_debt_yield: number | null;
   entry_dscr: number | null;
   stabilized_debt_yield: number | null;
   stabilized_dscr: number | null;
+  /** FON-72 follow-up — Completion Guarantee covenant status (qualitative).
+   *  Analyst-set via the debt.completion_guarantee override; null → "—". */
+  completion_guarantee: 'required' | 'in_place' | 'not_required' | null;
 }
 
 /** One priced/pending tranche in the debt stack (subset the Debt tab reads).
