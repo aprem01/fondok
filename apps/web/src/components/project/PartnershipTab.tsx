@@ -758,11 +758,12 @@ function ManualInputsBanner({ onEdit }: { onEdit: () => void }) {
           textTransform: 'uppercase', background: '#fff', border: '1px solid #e2e1dc',
           borderRadius: radius.pill, padding: '3px 9px', whiteSpace: 'nowrap',
         }}>
-          Coming soon · document extraction
+          Live · document extraction
         </span>
         <span style={{ fontSize: 11.5, color: palette.textSecondary, lineHeight: 1.45 }}>
-          Upload partnership documents and automatically extract ownership, preferred return, promote and
-          waterfall terms in a future release.
+          Upload a partnership / JV agreement in the Data Room — Fondok extracts the ownership split,
+          preferred return and promote waterfall, and you review each term (with its confidence) on the
+          document page before it drives the model.
         </span>
       </div>
     </div>

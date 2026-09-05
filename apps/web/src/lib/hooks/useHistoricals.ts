@@ -46,14 +46,20 @@ export function useHistoricals(
     async function load() {
       setLoading(true);
 
-      // 1) endpoint (currently 404s; kept for when it lands).
+      // 1) endpoint — not implemented in the worker yet, so probing it just
+      //    logged a 404 in every browser console on the Financials tab. Gated
+      //    off until the route lands (flip when it does); the multi-doc T-12
+      //    fallback below renders the historicals today.
+      const HISTORICALS_ENDPOINT_READY = false;
       try {
-        const res = await fetch(`${workerUrl()}/deals/${dealId}/historicals`);
-        if (res.ok) {
-          const json = (await res.json()) as Partial<HistData> | null;
-          if (json && Array.isArray(json.years) && json.years.length > 0) {
-            if (!cancelled) setData({ keys: json.keys ?? keysHint, years: json.years as HistYear[] });
-            return;
+        if (HISTORICALS_ENDPOINT_READY) {
+          const res = await fetch(`${workerUrl()}/deals/${dealId}/historicals`);
+          if (res.ok) {
+            const json = (await res.json()) as Partial<HistData> | null;
+            if (json && Array.isArray(json.years) && json.years.length > 0) {
+              if (!cancelled) setData({ keys: json.keys ?? keysHint, years: json.years as HistYear[] });
+              return;
+            }
           }
         }
       } catch {

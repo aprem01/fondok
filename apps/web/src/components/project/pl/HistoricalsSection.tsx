@@ -664,22 +664,30 @@ export default function HistoricalsSection({
         return;
       }
       setLoading(true);
+      // The `/deals/{id}/historicals` endpoint isn't implemented in the worker
+      // yet, so probing it logged a 404 in every browser console on the
+      // Financials tab. Skip straight to the T-12 multi-doc fallback (which
+      // renders the table today) until the endpoint ships — flip this flag
+      // when it does.
+      const HISTORICALS_ENDPOINT_READY = false;
       try {
-        const base = workerUrl();
-        const res = await fetch(`${base}/deals/${dealId}/historicals`);
-        if (res.ok) {
-          const json = (await res.json()) as Partial<HistData> | null;
-          if (json && Array.isArray(json.years) && json.years.length > 0) {
-            if (!cancelled) {
-              setData({
-                keys: json.keys ?? deal?.keys ?? 0,
-                years: json.years as HistYear[],
-              });
+        if (HISTORICALS_ENDPOINT_READY) {
+          const base = workerUrl();
+          const res = await fetch(`${base}/deals/${dealId}/historicals`);
+          if (res.ok) {
+            const json = (await res.json()) as Partial<HistData> | null;
+            if (json && Array.isArray(json.years) && json.years.length > 0) {
+              if (!cancelled) {
+                setData({
+                  keys: json.keys ?? deal?.keys ?? 0,
+                  years: json.years as HistYear[],
+                });
+              }
+              return;
             }
-            return;
           }
+          // 404 (or empty payload) → fall through to T-12 fallback.
         }
-        // 404 (or empty payload) → fall through to T-12 fallback.
       } catch {
         // Worker offline / route absent — fall through.
       } finally {
