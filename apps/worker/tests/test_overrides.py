@@ -216,6 +216,85 @@ async def test_load_engine_inputs_consumes_persisted_override() -> None:
 
 
 @pytest.mark.asyncio
+async def test_partnership_waterfall_tombstone_round_trips_through_loader() -> None:
+    """FON-66 follow-up — the per-index tier tombstone
+    (``partnership.waterfall.<idx>.removed``) persisted by the Partnership tab
+    is routed by the override loop as a bool flag beside that index's numeric
+    overrides, is NEVER coerced into a hurdle/split, and the builder then
+    drops exactly that tier. Also pins that the shipped ``tier_count`` +
+    per-tier numeric keys still route unchanged alongside it."""
+    from datetime import UTC, datetime
+
+    from app.database import get_session_factory
+    from app.services.engine_runner import (
+        SOURCE_ANALYST_OVERRIDE,
+        _build_partnership_waterfall,
+        _load_engine_inputs,
+    )
+
+    deal_id = str(uuid4())
+    tenant_id = str(uuid4())
+    factory = get_session_factory()
+    async with factory() as session:
+        await session.execute(
+            text(
+                """
+                INSERT INTO deals (id, tenant_id, name, status, field_overrides, created_at, updated_at)
+                VALUES (:id, :tenant, :name, 'Draft', :overrides, :now, :now)
+                """
+            ),
+            {
+                "id": deal_id,
+                "tenant": tenant_id,
+                "name": "Tombstone Waterfall Hotel",
+                "overrides": json.dumps(
+                    {
+                        # Flat bool — what PartnershipTab writes on Remove.
+                        "partnership.waterfall.2.removed": True,
+                        # Structured shape a note-bearing panel could write.
+                        "partnership.waterfall.4.removed": {"value": "false", "note": "kept"},
+                        # Shipped numeric + count keys, still routed as before.
+                        "partnership.waterfall.1.gp_split": {"value": 0.30, "note": "sponsor ask"},
+                        "partnership.waterfall.tier_count": 7,
+                        "partnership.waterfall.6.hurdle_rate": 0.55,
+                        "partnership.waterfall.6.gp_split": 0.60,
+                        "partnership.waterfall.6.lp_split": 0.40,
+                    }
+                ),
+                "now": datetime.now(UTC),
+            },
+        )
+        await session.commit()
+
+        base = await _load_engine_inputs(session, deal_id, tenant_id=tenant_id)
+
+    wf_ov = base["partnership_waterfall_overrides"]
+    assert wf_ov[2] == {"removed": True}
+    assert wf_ov[4] == {"removed": False}
+    assert wf_ov[1] == {"gp_split": 0.30}
+    assert wf_ov[6] == {"hurdle_rate": 0.55, "gp_split": 0.60, "lp_split": 0.40}
+    assert base["partnership_waterfall_tier_count"] == 7
+    # The tombstone was ROUTED, not dumped as a stray top-level base key, and
+    # never landed as a numeric field on the index.
+    assert "partnership.waterfall.2.removed" not in base
+    assert "removed" not in wf_ov[6]
+    sources = base["__sources__"]
+    assert sources["partnership.waterfall.2.removed"] == SOURCE_ANALYST_OVERRIDE
+    assert sources["partnership.waterfall.4.removed"] == SOURCE_ANALYST_OVERRIDE
+    assert sources["partnership.waterfall.1.gp_split"] == SOURCE_ANALYST_OVERRIDE
+
+    # The builder — exactly what the partnership engine step feeds the engine.
+    wf = _build_partnership_waterfall(wf_ov, base["partnership_waterfall_tier_count"])
+    labels = [t.label for t in wf]
+    assert len(wf) == 6  # 6 seed − idx 2 removed + idx 6 added
+    assert "Tier 3 (to 20%)" not in labels  # the tombstoned band is gone
+    assert "Tier 5 (to 30%)" in labels  # removed:"false" kept idx 4
+    assert labels[-1] == "Tier 7 (to 55%)"
+    assert (wf[1].gp_split, wf[1].lp_split) == (0.30, 0.70)
+    assert [t.hurdle_rate for t in wf] == sorted(t.hurdle_rate for t in wf)
+
+
+@pytest.mark.asyncio
 async def test_assumption_sources_endpoint_shows_override() -> None:
     """``GET /deals/{id}/assumption_sources`` returns the override value
     AND the ``analyst_override`` source label — what the UI badges read."""

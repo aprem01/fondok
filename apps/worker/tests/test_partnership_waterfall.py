@@ -19,8 +19,11 @@ from app.services.engine_runner import (
     _MAX_PARTNERSHIP_TIERS,
     _OVERRIDE_PARTNERSHIP_KEYS,
     _build_partnership_waterfall,
+    _coerce_override_flag,
     _parse_partnership_override_path,
+    _parse_partnership_tombstone_path,
     _resolve_partnership_tier_count,
+    _tier_is_tombstoned,
 )
 
 
@@ -320,3 +323,167 @@ def test_tier_count_path_not_parsed_as_field() -> None:
         6,
         "gp_split",
     )
+
+
+# ─────────── FON-66 follow-up — remove ANY tier via per-index tombstones ───────────
+
+
+def _hurdles(wf: list) -> list[float]:
+    return [t.hurdle_rate for t in wf]
+
+
+def _alloc_rows(out: "object") -> list[tuple]:
+    return [(t.label, t.kind, t.gp_amount, t.lp_amount) for t in out.tier_allocations]  # type: ignore[attr-defined]
+
+
+def test_no_tombstones_is_byte_identical_default() -> None:
+    """(a) No tombstones → the identical tier list AND identical GP/LP dollars.
+
+    Covers the pure default, an explicit ``removed: False`` (a cleared
+    tombstone), an empty per-index dict, and the shipped Part A tier_count
+    mechanism — none of them move by a byte."""
+    seed_len = len(_KIMPTON_WATERFALL_REFERENCE)
+    base = _build_partnership_waterfall(None)
+    assert _tier_tuples(_build_partnership_waterfall({})) == _tier_tuples(base)
+    assert _tier_tuples(_build_partnership_waterfall({2: {}})) == _tier_tuples(base)
+    assert _tier_tuples(_build_partnership_waterfall({2: {"removed": False}})) == _tier_tuples(base)
+    # Shipped tier_count deals are untouched by the tombstone work.
+    assert _tier_tuples(_build_partnership_waterfall({}, seed_len - 1)) == _tier_tuples(base)[: seed_len - 1]
+    added = {seed_len: {"hurdle_rate": 0.55, "gp_split": 0.60, "lp_split": 0.40}}
+    assert len(_build_partnership_waterfall(added, seed_len + 1)) == seed_len + 1
+
+    out_default = _run_with(base)
+    out_cleared = _run_with(_build_partnership_waterfall({2: {"removed": False}}))
+    # Same inputs → bit-for-bit the same dollars (exact, not approx).
+    assert out_cleared.gp.distributions == out_default.gp.distributions
+    assert out_cleared.lp.distributions == out_default.lp.distributions
+    assert out_cleared.promote_amount == out_default.promote_amount
+    assert _alloc_rows(out_cleared) == _alloc_rows(out_default)
+    assert out_default.reconciles is True
+
+
+def test_remove_middle_tier_drops_exactly_that_tier_and_reconciles() -> None:
+    """(b) Tombstone a MIDDLE seed tier → exactly that tier is gone; every
+    survivor keeps its OWN hurdle/split (nothing shifts onto a neighbour's
+    seed); hurdles stay ascending for the engine's sort; the dollar
+    waterfall recomputes and still reconciles."""
+    full = _tier_tuples(_build_partnership_waterfall(None))
+    wf = _build_partnership_waterfall({1: {"removed": True}})
+    assert len(wf) == len(full) - 1
+    assert _tier_tuples(wf) == full[:1] + full[2:]
+    assert full[1] not in _tier_tuples(wf)
+    assert _hurdles(wf) == sorted(_hurdles(wf))
+
+    # A survivor's own override still applies at its new position — the
+    # tier kept its identity (seed idx 3 → position 2) rather than being
+    # re-seeded from the index it now occupies.
+    wf2 = _build_partnership_waterfall(
+        {1: {"gp_split": 0.30}, 2: {"removed": True}, 3: {"hurdle_rate": 0.27}}
+    )
+    assert (wf2[1].hurdle_rate, wf2[1].gp_split, wf2[1].lp_split) == (0.15, 0.30, 0.70)
+    assert (wf2[2].label, wf2[2].hurdle_rate, wf2[2].gp_split) == ("Tier 4 (to 25%)", 0.27, 0.25)
+    assert len(wf2) == len(full) - 1
+
+    out = _run_with(wf)
+    distributed = out.gp.distributions + out.lp.distributions
+    assert sum(t.total_amount for t in out.tier_allocations) == pytest.approx(
+        distributed, rel=1e-9, abs=1.0
+    )
+    assert out.reconciles is True
+    # The removed band never appears in the dollar waterfall …
+    assert all(t.label != "Tier 2 (to 15%)" for t in out.tier_allocations)
+    # … and the removal had a real effect: the 10–20% band now pays the GP
+    # 25% instead of 20%, so the GP takes more than on the default stack.
+    out_default = _run_with(_build_partnership_waterfall(None))
+    assert out.gp.distributions > out_default.gp.distributions
+    assert out.lp.distributions < out_default.lp.distributions
+
+
+def test_tombstone_at_or_beyond_tier_count_bound_is_inert() -> None:
+    """tier_count stays the upper bound — a tombstone on an index the builder
+    never visits changes nothing."""
+    seed_len = len(_KIMPTON_WATERFALL_REFERENCE)
+    trimmed = _tier_tuples(_build_partnership_waterfall(None, seed_len - 1))
+    assert _tier_tuples(
+        _build_partnership_waterfall({seed_len - 1: {"removed": True}}, seed_len - 1)
+    ) == trimmed
+    assert _tier_tuples(_build_partnership_waterfall({40: {"removed": True}})) == _tier_tuples(
+        _build_partnership_waterfall(None)
+    )
+
+
+def test_remove_then_readd_never_resurrects_stale_values() -> None:
+    """(c) Remove a mid tier, then +Add → the added tier is a NEW index at the
+    bound; the tombstoned index stays out even when stale numeric overrides
+    linger on it, and none of those values leak onto any survivor."""
+    seed_len = len(_KIMPTON_WATERFALL_REFERENCE)
+    overrides = {
+        2: {"removed": True, "gp_split": 0.90, "hurdle_rate": 0.21},  # stale + tombstoned
+        seed_len: {"hurdle_rate": 0.55, "gp_split": 0.60, "lp_split": 0.40},  # re-added
+    }
+    wf = _build_partnership_waterfall(overrides, seed_len + 1)
+    assert len(wf) == seed_len  # 6 seed − 1 removed + 1 added
+    assert all(t.gp_split != 0.90 and t.hurdle_rate != 0.21 for t in wf)
+    assert _tier_tuples(wf)[-1] == ("Tier 7 (to 55%)", 0.55, 0.60, 0.40)
+    assert "Tier 3 (to 20%)" not in [t.label for t in wf]
+    assert _hurdles(wf) == sorted(_hurdles(wf))
+    out = _run_with(wf)
+    assert out.reconciles is True
+
+
+def test_clearing_tombstone_restores_tier_explicitly() -> None:
+    """Un-removing (``removed: False`` or the key gone) rebuilds the tier from
+    its seed plus whatever overrides sit on that index — explicit, never a
+    surprise. With the numeric overrides cleared (what the UI does on Remove)
+    it is the pure seed tier again; an override deliberately left on the
+    index applies once un-removed."""
+    full = _tier_tuples(_build_partnership_waterfall(None))
+    assert _tier_tuples(_build_partnership_waterfall({2: {"removed": False}})) == full
+    assert _tier_tuples(_build_partnership_waterfall({2: {"removed": "false"}})) == full
+    wf = _build_partnership_waterfall({2: {"removed": False, "gp_split": 0.30}})
+    assert len(wf) == len(full)
+    assert (wf[2].gp_split, wf[2].lp_split) == (0.30, 0.70)
+
+
+def test_tombstoning_every_tier_keeps_floor_of_one() -> None:
+    """The stack is never empty (``WaterfallTier`` list min_length=1 — the
+    same floor tier_count has): tombstoning every index keeps exactly the
+    lowest tier. Nothing is invented — it is the seed preferred tier."""
+    seed_len = len(_KIMPTON_WATERFALL_REFERENCE)
+    wf = _build_partnership_waterfall({i: {"removed": True} for i in range(seed_len)})
+    assert _tier_tuples(wf) == _tier_tuples(_build_partnership_waterfall(None))[:1]
+    assert _run_with(wf).reconciles is True
+
+
+def test_tombstone_path_not_parsed_as_numeric_field() -> None:
+    """(d) ``<idx>.removed`` is never a numeric tier field; the numeric fields
+    and the count key are never tombstones; the flag coercion is strict enough
+    that an unreadable value never removes a tier."""
+    assert _parse_partnership_override_path("partnership.waterfall.2.removed") is None
+    assert _parse_partnership_tombstone_path("partnership.waterfall.2.removed") == 2
+    assert _parse_partnership_tombstone_path("partnership.waterfall.11.removed") == 11
+    for p in (
+        "partnership.waterfall.2.gp_split",
+        "partnership.waterfall.2.hurdle_rate",
+        "partnership.waterfall.2.lp_split",
+        "partnership.waterfall.tier_count",
+        "partnership.waterfall.x.removed",
+        "partnership.waterfall.removed",
+        "partnership.waterfall.2.removed.extra",
+        "debt_stack.tranches.0.removed",
+    ):
+        assert _parse_partnership_tombstone_path(p) is None, p
+    # Flag coercion.
+    assert _coerce_override_flag(True) is True
+    assert _coerce_override_flag("true") is True
+    assert _coerce_override_flag(1) is True
+    assert _coerce_override_flag(False) is False
+    assert _coerce_override_flag("false") is False
+    assert _coerce_override_flag(0) is False
+    assert _coerce_override_flag("maybe") is None
+    assert _coerce_override_flag(None) is None
+    assert _coerce_override_flag([True]) is None
+    assert _tier_is_tombstoned({"removed": True})
+    assert not _tier_is_tombstoned({"removed": "no"})
+    assert not _tier_is_tombstoned({"gp_split": 0.3})
+    assert not _tier_is_tombstoned({})

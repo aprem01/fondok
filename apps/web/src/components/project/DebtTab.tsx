@@ -557,7 +557,7 @@ export default function DebtTab() {
     covCard(covDy, 'Debt Yield — Entry', 'Entry NOI ÷ loan'),
     stabCard('Debt Yield — Stabilized', wStabDy, false, covDy, 'Stabilized NOI ÷ loan'),
     covCard(covDscr, 'DSCR — Year 1', COV_BASIS.dscr),
-    stabCard('DSCR — Stabilized', wStabDscr, true, covDscr, 'Stabilized NOI ÷ exit-year debt service'),
+    stabCard('DSCR — Stabilized', wStabDscr, true, covDscr, 'Stabilized NOI ÷ stabilized-year debt service'),
   ];
 
   const financingImpact = [

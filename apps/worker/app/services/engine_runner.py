@@ -908,6 +908,27 @@ async def _load_engine_inputs(
                     base["partnership_waterfall_tier_count"] = n_tiers
                     sources[path] = SOURCE_ANALYST_OVERRIDE
                 continue
+            elif (tomb_idx := _parse_partnership_tombstone_path(path)) is not None:
+                # FON-66 follow-up — per-index tier TOMBSTONE
+                # (``partnership.waterfall.<idx>.removed``). Lands as a bool
+                # flag beside that index's numeric overrides in
+                # ``base['partnership_waterfall_overrides'][idx]``; the
+                # partnership builder skips a tombstoned index and packs the
+                # survivors contiguously (removes ANY tier, mid-stack
+                # included — not only the top one via tier_count). Checked
+                # BEFORE the numeric per-tier parser so the bool can never be
+                # coerced into a hurdle/split. An unreadable value is ignored
+                # (a tier is never removed by accident).
+                flag = _coerce_override_flag(value)
+                if flag is not None:
+                    wf_overrides = base.setdefault(
+                        "partnership_waterfall_overrides", {}
+                    )
+                    wf_overrides.setdefault(tomb_idx, {})[
+                        _PARTNERSHIP_TIER_REMOVED_FIELD
+                    ] = flag
+                    sources[path] = SOURCE_ANALYST_OVERRIDE
+                continue
             elif _parse_partnership_override_path(path) is not None:
                 # FON-66 — partnership waterfall per-tier field override. Indexed
                 # scalars (``partnership.waterfall.<idx>.<field>``) land in
@@ -1194,13 +1215,27 @@ _OVERRIDE_PARTNERSHIP_KEYS: frozenset[str] = frozenset(
 # floor (the waterfall must have at least one promote tier).
 _PARTNERSHIP_TIER_COUNT_KEY = "partnership.waterfall.tier_count"
 _MAX_PARTNERSHIP_TIERS = 12
+# FON-66 follow-up — an analyst can remove ANY promote tier (mid-stack, not
+# just the top one) via a per-index TOMBSTONE override
+# ``partnership.waterfall.<idx>.removed = true``. The builder skips a
+# tombstoned index and packs the survivors contiguously, so the emitted
+# list has no gaps and the engine's ``sorted(..., key=hurdle_rate)`` walk is
+# unaffected. ``tier_count`` stays the upper bound of the index space.
+# Tombstones only ever come from analyst overrides — the field is
+# deliberately NOT in ``_PARTNERSHIP_WATERFALL_FIELDS``, so the numeric
+# per-tier parser (and the partnership-document loader built on it) can
+# never mistake it for a hurdle/split value, and a document can never
+# remove a tier. No tombstones → the builder is byte-identical to before.
+_PARTNERSHIP_TIER_REMOVED_FIELD = "removed"
 
 
 def _parse_partnership_override_path(path: str) -> tuple[int, str] | None:
     """Split ``partnership.waterfall.<idx>.<field>`` → ``(index, field)``.
 
     Returns ``None`` for paths that don't fit the pattern or name a field
-    outside ``_PARTNERSHIP_WATERFALL_FIELDS``.
+    outside ``_PARTNERSHIP_WATERFALL_FIELDS`` (so the tombstone path
+    ``partnership.waterfall.<idx>.removed`` is never parsed as a numeric
+    tier field — see ``_parse_partnership_tombstone_path``).
     """
     if not path.startswith("partnership.waterfall."):
         return None
@@ -1215,6 +1250,49 @@ def _parse_partnership_override_path(path: str) -> tuple[int, str] | None:
     if field not in _PARTNERSHIP_WATERFALL_FIELDS:
         return None
     return (idx, field)
+
+
+def _parse_partnership_tombstone_path(path: str) -> int | None:
+    """``partnership.waterfall.<idx>.removed`` → ``idx``; anything else → None.
+
+    The tombstone is the ONLY non-numeric per-tier override path. It is
+    parsed separately from ``_parse_partnership_override_path`` so the two
+    families can never collide.
+    """
+    if not path.startswith("partnership.waterfall."):
+        return None
+    parts = path.split(".")
+    if len(parts) != 4 or parts[3] != _PARTNERSHIP_TIER_REMOVED_FIELD:
+        return None
+    try:
+        return int(parts[2])
+    except ValueError:
+        return None
+
+
+def _coerce_override_flag(value: Any) -> bool | None:
+    """Read a boolean override value leniently; ``None`` when unreadable.
+
+    The Partnership tab writes a JSON ``true``; the override panel may wrap
+    it as ``{value: true}`` (unwrapped upstream), a scenario may carry a
+    string. ``False``/``"false"``/``0`` explicitly clear a tombstone.
+    """
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, (int, float)):
+        return bool(value)
+    if isinstance(value, str):
+        v = value.strip().lower()
+        if v in ("true", "1", "yes", "y", "t"):
+            return True
+        if v in ("false", "0", "no", "n", "f", ""):
+            return False
+    return None
+
+
+def _tier_is_tombstoned(tier_overrides: Mapping[str, Any]) -> bool:
+    """True when the analyst has removed this tier index."""
+    return _coerce_override_flag(tier_overrides.get(_PARTNERSHIP_TIER_REMOVED_FIELD)) is True
 
 
 def _resolve_partnership_tier_count(tier_count: int | None) -> int:
@@ -1235,7 +1313,7 @@ def _resolve_partnership_tier_count(tier_count: int | None) -> int:
 
 
 def _build_partnership_waterfall(
-    overrides: dict[int, dict[str, float]] | None,
+    overrides: dict[int, dict[str, Any]] | None,
     tier_count: int | None = None,
 ) -> list[WaterfallTier]:
     """Seed the Kimpton reference promote stack and layer analyst edits.
@@ -1260,13 +1338,56 @@ def _build_partnership_waterfall(
       derives). An incomplete or invalid added tier is OMITTED — never
       backfilled with a fabricated split that would silently shift the GP/LP
       allocation. It simply has no effect until the analyst completes it.
+
+    FON-66 follow-up — per-index TOMBSTONES remove ANY tier, mid-stack
+    included. ``overrides[idx]["removed"] is True`` (the
+    ``partnership.waterfall.<idx>.removed`` override) makes the builder skip
+    that index; the surviving tiers are packed contiguously, each keeping
+    its OWN hurdle/split values (nothing shifts onto a neighbour's seed).
+    ``tier_count`` remains the upper bound of the index space, so a
+    tombstone at or beyond the bound is inert. Any numeric overrides left on
+    a tombstoned index are ignored (never carried to a survivor), and clearing
+    the tombstone (``False`` / key absent) simply rebuilds the tier from its
+    seed + whatever overrides sit on that index. Floor of one: if honoring
+    every tombstone would leave NO promote tier (the ``WaterfallTier`` list
+    must be non-empty — same floor ``_resolve_partnership_tier_count``
+    applies to the count), the tombstone on the lowest index is ignored so
+    exactly that tier survives. No tombstones → byte-identical to before.
     """
     overrides = overrides or {}
+    count = _resolve_partnership_tier_count(tier_count)
+    tombstoned = frozenset(
+        idx for idx in range(count) if _tier_is_tombstoned(overrides.get(idx, {}))
+    )
+    tiers = _assemble_partnership_tiers(overrides, count, skip=tombstoned)
+    if not tiers and tombstoned:
+        # Floor of one promote tier — never emit an empty stack. Ignore only
+        # the lowest tombstone (the lowest index is always the in-seed
+        # preferred tier when every buildable index is tombstoned).
+        tiers = _assemble_partnership_tiers(
+            overrides, count, skip=tombstoned - {min(tombstoned)}
+        )
+    return tiers
+
+
+def _assemble_partnership_tiers(
+    overrides: dict[int, dict[str, Any]],
+    count: int,
+    *,
+    skip: frozenset[int],
+) -> list[WaterfallTier]:
+    """Walk indices ``[0, count)``, skipping ``skip``, building each tier.
+
+    The per-index construction is exactly the shipped FON-66 Part A logic;
+    ``skip`` is empty when no tombstones exist, so the default path is
+    unchanged. Survivors are appended in index order — contiguous, no gaps.
+    """
     seed = _KIMPTON_WATERFALL_REFERENCE
     seed_len = len(seed)
-    count = _resolve_partnership_tier_count(tier_count)
     tiers: list[WaterfallTier] = []
     for idx in range(count):
+        if idx in skip:
+            continue
         ov = overrides.get(idx, {})
         if idx < seed_len:
             ref = seed[idx]
@@ -4115,6 +4236,8 @@ def _build_input_for(
         # analyst per-tier overrides (partnership.waterfall.<idx>.<field>).
         # FON-66 Part A — an analyst tier-count override sets how many promote
         # tiers are built (add/remove); absent → the seed length exactly.
+        # FON-66 follow-up — per-index tombstones (``<idx>.removed``) remove
+        # any tier mid-stack; the builder packs the survivors contiguously.
         waterfall = _build_partnership_waterfall(
             base.get("partnership_waterfall_overrides"),
             base.get("partnership_waterfall_tier_count"),

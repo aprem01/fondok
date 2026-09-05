@@ -4,6 +4,7 @@ import {
   useEffect,
   useRef,
   useCallback,
+  useMemo,
   type ReactNode,
 } from 'react';
 import { useParams } from 'next/navigation';
@@ -71,6 +72,15 @@ const WATERFALL_SEED: Array<{ hurdle: number; gp: number }> = [
 // (`_MAX_PARTNERSHIP_TIERS`) so the UI can't request a stack the engine clamps.
 const TIER_COUNT_PATH = 'partnership.waterfall.tier_count';
 const MAX_TIERS = 12;
+// FON-66 follow-up — an analyst can remove ANY promote tier (mid-stack, not
+// just the top). A removed index persists as a per-index TOMBSTONE override
+// (`partnership.waterfall.<idx>.removed = true`) that the worker's builder
+// skips, packing the survivors contiguously. `tier_count` stays the upper
+// bound of the index space; the UI renders only the non-tombstoned indices
+// below it, numbered contiguously to match the built stack. `removed` is
+// deliberately not one of the numeric tier fields, so the worker can never
+// read it as a hurdle or split.
+const tierRemovedPath = (i: number): string => `partnership.waterfall.${i}.removed`;
 
 // Worker partnership PartnerReturn shape (runtime nested `gp`/`lp` objects).
 interface PartnerReturn {
@@ -115,6 +125,19 @@ function readOverrideNum(
   if (val == null || val === '') return fallback;
   const n = typeof val === 'number' ? val : Number(val);
   return Number.isFinite(n) ? n : fallback;
+}
+
+// Read a boolean override (the tier tombstone), tolerating the structured
+// `{ value }` shape and string/number encodings. Absent or unreadable → false,
+// so a tier is never hidden by accident.
+function readOverrideFlag(overrides: Record<string, unknown>, path: string): boolean {
+  const raw = overrides[path];
+  const val = raw && typeof raw === 'object' && 'value' in raw
+    ? (raw as { value: unknown }).value
+    : raw;
+  if (val === true || val === 1) return true;
+  if (typeof val === 'string') return ['true', '1', 'yes'].includes(val.trim().toLowerCase());
+  return false;
 }
 
 export default function PartnershipTab() {
@@ -164,9 +187,10 @@ export default function PartnershipTab() {
 
   // Persist one or more overrides in a single PATCH. Complementary fields
   // (GP/LP ownership, GP/LP tier split) are saved together so the engine never
-  // sees an inconsistent pair. A null value clears that override.
+  // sees an inconsistent pair. A null value clears that override. Booleans
+  // carry the per-tier tombstone (`<idx>.removed`).
   const onSaveOverride = useCallback(
-    async (patch: Record<string, number | null>) => {
+    async (patch: Record<string, number | boolean | null>) => {
       if (!liveMode) {
         toast('Editing is disabled on demo deals', { type: 'info' });
         return;
@@ -231,6 +255,16 @@ export default function PartnershipTab() {
       Math.round(readOverrideNum(overrides, TIER_COUNT_PATH, WATERFALL_SEED.length)),
     ),
   );
+  // FON-66 follow-up — the tiers actually in the stack: every index below the
+  // bound that has NOT been tombstoned, in index order. This mirrors the
+  // worker builder exactly (skip tombstones, pack the survivors), so the rows
+  // the analyst sees are the tiers the engine runs. Floor of one, also
+  // mirrored: if every index is tombstoned the worker keeps the lowest one.
+  const visibleTierIndices = useMemo(() => {
+    const all = Array.from({ length: tierCount }, (_, i) => i);
+    const visible = all.filter((i) => !readOverrideFlag(overrides, tierRemovedPath(i)));
+    return visible.length > 0 ? visible : all.slice(0, 1);
+  }, [overrides, tierCount]);
   // A tier's current hurdle/GP split: analyst override wins, else the seed
   // value (in-seed indices only — beyond-seed tiers have no seed fallback).
   const tierHurdleAt = useCallback(
@@ -243,7 +277,9 @@ export default function PartnershipTab() {
   // default the analyst must complete: a hurdle one step above the current top
   // tier and a 100% LP / 0% GP split (NO promote is fabricated — the analyst
   // raises the GP split deliberately). Persisted together with the bumped
-  // tier_count so the worker sees a complete tier on the next run.
+  // tier_count so the worker sees a complete tier on the next run. The new
+  // tier is ALWAYS a fresh index at the bound — a tombstoned hole is never
+  // reused, so a removed tier's values can never resurface through +Add.
   const onAddTier = useCallback(() => {
     if (!liveMode) {
       toast('Editing is disabled on demo deals', { type: 'info' });
@@ -254,7 +290,8 @@ export default function PartnershipTab() {
       return;
     }
     const newIdx = tierCount; // 0-based index of the appended tier
-    const prevHurdle = tierHurdleAt(tierCount - 1);
+    const topVisible = visibleTierIndices[visibleTierIndices.length - 1] ?? tierCount - 1;
+    const prevHurdle = tierHurdleAt(topVisible);
     const newHurdle = round6(Math.min(0.99, prevHurdle + 0.05));
     void onSaveOverride({
       [TIER_COUNT_PATH]: tierCount + 1,
@@ -262,30 +299,56 @@ export default function PartnershipTab() {
       [`partnership.waterfall.${newIdx}.gp_split`]: 0,
       [`partnership.waterfall.${newIdx}.lp_split`]: 1,
     });
-  }, [liveMode, tierCount, tierHurdleAt, onSaveOverride, toast]);
+  }, [liveMode, tierCount, visibleTierIndices, tierHurdleAt, onSaveOverride, toast]);
 
-  // "Remove" — drop the top (highest) promote tier. Decrements tier_count and
-  // clears that index's per-tier overrides so they can't linger. When the
-  // count returns to the seed length we clear tier_count entirely (restores the
-  // pure default). Only the last tier is removable — this mirrors the worker,
-  // where a lower tier_count drops the highest tiers.
+  // "Remove" — drop ANY promote tier (FON-66 follow-up). Two persistence
+  // shapes, both read by the worker builder:
+  //  * Removing the TOP visible tier lowers tier_count to just above the next
+  //    surviving tier and clears every override (values AND tombstones) at or
+  //    beyond the new bound. With no tombstones present this is exactly the
+  //    shipped Part A behaviour (count − 1, clear that index); with trailing
+  //    tombstones it compacts them away so the index space stays tight. When
+  //    the count returns to the seed length we clear tier_count entirely
+  //    (restores the pure default).
+  //  * Removing a MID-STACK tier writes the per-index tombstone
+  //    (`<idx>.removed = true`) and clears that index's hurdle/split
+  //    overrides so no stale value can ever resurface. tier_count and every
+  //    other tier's values are untouched — the worker skips the index and
+  //    packs the survivors, each keeping its own hurdle and splits.
+  // The last surviving tier can't be removed (the waterfall needs one promote
+  // tier — the worker enforces the same floor).
   const onRemoveTier = useCallback(
     (idx: number) => {
       if (!liveMode) {
         toast('Editing is disabled on demo deals', { type: 'info' });
         return;
       }
-      if (tierCount <= 1) return;
-      const newCount = tierCount - 1;
-      void onSaveOverride({
-        [TIER_COUNT_PATH]: newCount === WATERFALL_SEED.length ? null : newCount,
-        [`partnership.waterfall.${idx}.hurdle_rate`]: null,
-        [`partnership.waterfall.${idx}.gp_split`]: null,
-        [`partnership.waterfall.${idx}.lp_split`]: null,
-      });
+      const visible = visibleTierIndices;
+      if (visible.length <= 1 || !visible.includes(idx)) return;
+      const patch: Record<string, number | boolean | null> = {};
+      const topVisible = visible[visible.length - 1];
+      if (idx === topVisible) {
+        const newCount = visible[visible.length - 2] + 1; // next survivor + 1
+        patch[TIER_COUNT_PATH] = newCount === WATERFALL_SEED.length ? null : newCount;
+        for (let j = newCount; j < tierCount; j += 1) {
+          patch[`partnership.waterfall.${j}.hurdle_rate`] = null;
+          patch[`partnership.waterfall.${j}.gp_split`] = null;
+          patch[`partnership.waterfall.${j}.lp_split`] = null;
+          patch[tierRemovedPath(j)] = null;
+        }
+      } else {
+        patch[tierRemovedPath(idx)] = true;
+        patch[`partnership.waterfall.${idx}.hurdle_rate`] = null;
+        patch[`partnership.waterfall.${idx}.gp_split`] = null;
+        patch[`partnership.waterfall.${idx}.lp_split`] = null;
+      }
+      void onSaveOverride(patch);
     },
-    [liveMode, tierCount, onSaveOverride, toast],
+    [liveMode, tierCount, visibleTierIndices, onSaveOverride, toast],
   );
+  // Summary-tab helper: the first promote band above the preferred tier is the
+  // SECOND visible tier (not a fixed index — a tombstone may have removed 1).
+  const promoteAbovePrefIdx: number | undefined = visibleTierIndices[1];
 
   // ─── Worker partnership fields (dual-shape: nested objects OR flat export) ──
   const wGp = getEngineField<PartnerReturn>(outputs, 'partnership', 'gp');
@@ -501,14 +564,22 @@ export default function PartnershipTab() {
                   <KeyRow
                     label="Promote Above Pref"
                     dot="assumption"
-                    value={pctv(readOverrideNum(overrides, 'partnership.waterfall.1.gp_split', WATERFALL_SEED[1].gp), 0)}
+                    value={promoteAbovePrefIdx == null
+                      ? '—'
+                      : pctv(readOverrideNum(
+                        overrides,
+                        `partnership.waterfall.${promoteAbovePrefIdx}.gp_split`,
+                        WATERFALL_SEED[promoteAbovePrefIdx]?.gp ?? NaN,
+                      ), 0)}
                     valueColor={prov.blue}
                     note="Edit in the Waterfall tab"
                   />
                   <KeyRow
                     label="Additional Hurdles"
                     dot="calculated"
-                    value={`${pctv(tierHurdleAt(1), 0)} LP IRR · +${Math.max(0, tierCount - 2)} tiers`}
+                    value={promoteAbovePrefIdx == null
+                      ? '—'
+                      : `${pctv(tierHurdleAt(promoteAbovePrefIdx), 0)} LP IRR · +${Math.max(0, visibleTierIndices.length - 2)} tiers`}
                     valueColor={prov.gray}
                   />
                 </SectionCard>
@@ -627,6 +698,7 @@ export default function PartnershipTab() {
                   cancelEdit={cancelEdit}
                   commitPct={commitPct}
                   tierCount={tierCount}
+                  tierIndices={visibleTierIndices}
                   onAddTier={onAddTier}
                   onRemoveTier={onRemoveTier}
                 />
@@ -1041,7 +1113,7 @@ const TIER_GRID = '38px minmax(180px,1.5fr) minmax(120px,1fr) 90px 90px minmax(2
 
 function PromoteWaterfall({
   prefRate, hasCatchUp, liveMode, overrides, editing, draft, setDraft, startEdit, cancelEdit, commitPct,
-  tierCount, onAddTier, onRemoveTier,
+  tierCount, tierIndices, onAddTier, onRemoveTier,
 }: {
   prefRate: number;
   hasCatchUp: boolean;
@@ -1053,8 +1125,11 @@ function PromoteWaterfall({
   startEdit: (id: string, fraction: number) => void;
   cancelEdit: () => void;
   commitPct: (primaryKey: string, complementKey?: string) => void;
-  // FON-66 Part A — variable tier count + add/remove controls.
+  // FON-66 Part A — variable tier count + add/remove controls. `tierCount` is
+  // the index-space bound (the +Add cap); `tierIndices` are the surviving
+  // (non-tombstoned) indices actually rendered, in index order.
   tierCount: number;
+  tierIndices: number[];
   onAddTier: () => void;
   onRemoveTier: (idx: number) => void;
 }) {
@@ -1098,7 +1173,11 @@ function PromoteWaterfall({
   });
 
   const seedLen = WATERFALL_SEED.length;
-  const promoteRows = Array.from({ length: tierCount }).map((_, i) => {
+  const visibleCount = tierIndices.length;
+  // Rows are the SURVIVING indices, numbered contiguously (`idx`) so the
+  // display matches the packed stack the worker builds; `i` stays the raw
+  // override index each row's edits persist under.
+  const promoteRows = tierIndices.map((i, pos) => {
     idx += 1;
     const seed = WATERFALL_SEED[i]; // undefined for analyst-added tiers
     const beyondSeed = i >= seedLen;
@@ -1113,10 +1192,12 @@ function PromoteWaterfall({
     const gpComplete = Number.isFinite(gpFrac);
     const hurdleComplete = Number.isFinite(hurdleFrac);
     const incomplete = beyondSeed && !(gpComplete && hurdleComplete);
-    const last = i === tierCount - 1;
-    const removable = liveMode && tierCount > 1 && last;
+    const last = pos === visibleCount - 1;
+    // FON-66 follow-up — EVERY promote tier is removable (mid-stack included),
+    // as long as one survives.
+    const removable = liveMode && visibleCount > 1;
     const name = incomplete
-      ? `Promote — tier ${i + 1} · incomplete`
+      ? `Promote — tier ${pos + 1} · incomplete`
       : last
         ? `Promote — above ${fmtPct(hurdleFrac, 0)} LP IRR`
         : `Promote — to ${fmtPct(hurdleFrac, 0)} LP IRR`;
@@ -1191,8 +1272,8 @@ function PromoteWaterfall({
           {removable && (
             <button
               onClick={() => onRemoveTier(i)}
-              aria-label={`Remove tier ${i + 1}`}
-              title="Remove this tier"
+              aria-label={`Remove promote tier ${pos + 1}`}
+              title="Remove this tier — the other tiers keep their own hurdles and splits"
               style={{
                 flexShrink: 0, background: 'transparent', border: `1px solid ${palette.border}`,
                 borderRadius: radius.control, color: palette.textSecondary, cursor: 'pointer',
@@ -1248,7 +1329,7 @@ function PromoteWaterfall({
       )}
       <div style={{ fontSize: 11, color: palette.textMuted, marginTop: 9, lineHeight: 1.5 }}>
         LP split is always 100% − GP split. Hurdles are LP IRR thresholds; the final tier takes everything
-        above the last hurdle.
+        above the last hurdle. Any tier can be removed; the remaining tiers keep their own hurdles and splits.
         {!liveMode && ' Waterfall editing is available on live deals.'}
       </div>
     </>
