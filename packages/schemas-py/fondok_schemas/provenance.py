@@ -32,6 +32,8 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from .reasons import ReasonCode
+
 # ─────────────────────────── FON-65 state vocabulary ──────────────────────
 #
 # A per-value ``state`` tag classifies *how grounded* a modeled value is, so
@@ -64,6 +66,18 @@ _ASSUMPTION_LABELS: frozenset[str] = frozenset(
 # Labels that force a review badge (a flagged conflict / low-confidence read).
 _NEEDS_REVIEW_LABELS: frozenset[str] = frozenset(
     {"needs_review", "conflicting_override", "low_confidence"}
+)
+# Phase 0.4 — a set ``ValueTrace.reason`` is a refusal: the value could not
+# be produced. These codes describe a figure that exists but cannot be
+# trusted / compared and so read as ``needs_review``; every other code means
+# the figure is not there yet and reads as ``awaiting_data``.
+_REASON_NEEDS_REVIEW: frozenset[ReasonCode] = frozenset(
+    {
+        ReasonCode.NEEDS_REVIEW,
+        ReasonCode.BASIS_MISMATCH,
+        ReasonCode.PERIOD_MISMATCH,
+        ReasonCode.UNIT_UNKNOWN,
+    }
 )
 # Engine names — a ``traces_to`` whose first dotted segment is one of these is
 # a cross-engine link (e.g. "expense.years[0].noi"); a bare "years[0].noi" is a
@@ -122,6 +136,13 @@ class ValueTrace(BaseModel):
     # :func:`classify_state` (or, for the cash_flow view, directly from a row's
     # linked/calc kind). The UI reads it for a single consistent badge.
     state: State | None = None
+    # Phase 0.4 — why this value is a dash, when it is one. Optional + defaults
+    # to None so every persisted trace (and every pre-existing engine) stays
+    # valid; when set, :func:`classify_state` derives ``state`` from it (see
+    # ``_REASON_NEEDS_REVIEW``). Only the code travels here — the fuller
+    # :class:`fondok_schemas.reasons.Refusal` carrier is for the surfaces that
+    # need detail / concept / document context.
+    reason: ReasonCode | None = None
 
 
 def _has_cross_engine_link(trace: ValueTrace) -> bool:
@@ -149,6 +170,10 @@ def classify_state(
     key the caller associates with the value; it falls back to ``trace.source``.
     Precedence, most-specific first:
 
+      0. a set ``reason`` (Phase 0.4 refusal code) → ``needs_review`` for
+         ``needs_review`` / ``basis_mismatch`` / ``period_mismatch`` /
+         ``unit_unknown``, ``awaiting_data`` for every other code — nothing
+         below is consulted. With ``reason`` unset the mapping is unchanged:
       1. an explicit conflict / low-confidence label → ``needs_review``;
       2. a document-grounded label (``t12_actual``, ``om_*``, ``str_*``,
          ``portfolio_pnl`` …) → ``document_sourced``;
@@ -159,6 +184,10 @@ def classify_state(
       6. no value yet → ``awaiting_data``;
       7. otherwise a bare leaf constant → ``assumption``.
     """
+    reason = getattr(trace, "reason", None)
+    if reason is not None:
+        return "needs_review" if reason in _REASON_NEEDS_REVIEW else "awaiting_data"
+
     label = (source_label if source_label is not None else trace.source) or ""
     label = label.strip().lower()
 

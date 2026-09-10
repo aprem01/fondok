@@ -5,6 +5,7 @@
 // and consumers should fall back to `lib/mockData.ts`.
 
 import { getCurrentOrgId, getClerkSessionToken } from './auth';
+import type { ReasonCode } from './ontology/reasons.generated';
 
 const BASE = (process.env.NEXT_PUBLIC_WORKER_URL ?? '').replace(/\/+$/, '');
 
@@ -305,6 +306,9 @@ export interface ValueTrace {
   note?: string | null;
   /** How grounded the value is — derived server-side (FON-65). */
   state?: ValueState | null;
+  /** Phase 0.4 — why this value is a dash, when it is one. Mirrors
+   *  fondok_schemas.provenance.ValueTrace.reason; absent on older traces. */
+  reason?: ReasonCode | null;
 }
 
 /** GET /deals/{id}/provenance — per-value calculation provenance for the

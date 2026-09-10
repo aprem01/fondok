@@ -13,3 +13,11 @@ build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
 packages = ["fondok_schemas"]
+
+# Package-local unit tests (pure Pydantic — no worker dependencies). CI runs
+# the worker suite (apps/worker/tests), which imports this package; these run
+# with any interpreter that has pydantic: `python -m pytest -q` from this dir.
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+addopts = "-ra"
