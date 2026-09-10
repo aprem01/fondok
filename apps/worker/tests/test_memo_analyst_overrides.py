@@ -376,3 +376,97 @@ async def test_get_memo_overrides_are_tenant_scoped() -> None:
     assert r2.status_code == 200, r2.text
     rec = _by_id(r2.json()["sections"])["recommendation"]["body"]
     assert rec.startswith("IC recommendation: Proceed.")
+
+
+# Phase 4.3 - "Pending analyst decision" gets a reason code
+# ---------------------------------------------------------
+# The label is a refusal wearing prose: the memo declines to print a verdict
+# because the analyst has not recorded one. ``recommendation_reason`` is the
+# same fact, machine-readable. Every string above is unchanged - the tests in
+# this section only read the new field.
+
+
+def test_ic_recommendation_reason_tracks_the_label() -> None:
+    from fondok_schemas.reasons import ReasonCode
+
+    from app.memo_overrides import (
+        PENDING_DECISION,
+        ic_recommendation_label,
+        ic_recommendation_reason,
+    )
+
+    pending = [
+        None,
+        {},
+        {"memo_thesis": "no verdict here"},
+        # Selected but NOT confirmed - still pending under the FON-54a rule.
+        {"memo_recommendation_override": "Proceed"},
+        {"memo_recommendation_override": "Proceed", "memo_recommendation_confirmed": False},
+        # Out of vocabulary - never a decision.
+        {"memo_recommendation_override": "Maybe", "memo_recommendation_confirmed": True},
+    ]
+    for overrides in pending:
+        assert ic_recommendation_label(overrides) == PENDING_DECISION
+        assert ic_recommendation_reason(overrides) is ReasonCode.AWAITING_ANALYST
+
+    for verdict in ("Proceed", "Proceed with Conditions", "Do Not Proceed"):
+        confirmed = {
+            "memo_recommendation_override": verdict,
+            "memo_recommendation_confirmed": True,
+        }
+        assert ic_recommendation_label(confirmed) == verdict
+        assert ic_recommendation_reason(confirmed) is None
+
+
+@pytest.mark.asyncio
+async def test_get_memo_envelope_carries_recommendation_reason() -> None:
+    from httpx import ASGITransport, AsyncClient
+
+    from app.main import app
+
+    # (a) confirmed verdict -> nothing is being refused any more.
+    confirmed_id = uuid4()
+    await _insert_deal(
+        confirmed_id,
+        field_overrides={
+            "memo_recommendation_override": "Do Not Proceed",
+            "memo_recommendation_confirmed": True,
+        },
+    )
+    await _seed_memo_cache(confirmed_id, _base_sections())
+
+    # (b) selected but unconfirmed -> still awaiting the analyst.
+    unconfirmed_id = uuid4()
+    await _insert_deal(
+        unconfirmed_id,
+        field_overrides={"memo_recommendation_override": "Proceed"},
+    )
+    await _seed_memo_cache(unconfirmed_id, _base_sections())
+
+    # (c) no memo generated at all -> the envelope still answers.
+    empty_id = uuid4()
+    await _insert_deal(empty_id, field_overrides={})
+
+    async with AsyncClient(
+        transport=ASGITransport(app=app),
+        base_url="http://test",
+        headers=_TENANT_HEADERS,
+    ) as client:
+        confirmed = (await client.get(f"/deals/{confirmed_id}/memo")).json()
+        unconfirmed = (await client.get(f"/deals/{unconfirmed_id}/memo")).json()
+        empty = (await client.get(f"/deals/{empty_id}/memo")).json()
+
+    # Bare code on the wire (the ``assumption_sources`` convention), not an
+    # object, and never a substitute for the existing string.
+    assert confirmed["recommendation_reason"] is None
+    assert _by_id(confirmed["sections"])["recommendation"]["body"].startswith(
+        "IC recommendation: Do Not Proceed."
+    )
+
+    assert unconfirmed["recommendation_reason"] == "awaiting_analyst"
+    assert _by_id(unconfirmed["sections"])["recommendation"]["body"].startswith(
+        "IC recommendation: Pending analyst decision."
+    )
+
+    assert empty["status"] == "not_yet_generated"
+    assert empty["recommendation_reason"] == "awaiting_analyst"

@@ -1,0 +1,96 @@
+{
+  "bare": {
+    "deal": {
+      "brand": "\u2014",
+      "city": "\u2014",
+      "keys": "\u2014",
+      "location": "\u2014",
+      "name": "Hotel",
+      "service": "\u2014",
+      "year_built": "\u2014"
+    },
+    "memo": {
+      "appendix": {
+        "documents_reviewed": [],
+        "engines_run": []
+      },
+      "header": {
+        "deal_stage": "Draft",
+        "location": "",
+        "recommendation": "Pending analyst decision",
+        "subject_property": "\u2014",
+        "title": "Investment Committee Memorandum"
+      },
+      "sections": []
+    },
+    "model": {
+      "deal_name": "",
+      "market": {
+        "kpis": {
+          "Submarket": "\u2014"
+        }
+      },
+      "model_version": "fondok-engine-live"
+    },
+    "model_keys": [
+      "deal_name",
+      "market",
+      "model_version"
+    ]
+  },
+  "modeled": {
+    "deal": {
+      "brand": "\u2014",
+      "city": "Tampa, FL",
+      "keys": 150,
+      "location": "Tampa, FL",
+      "name": "Harbor House Test",
+      "service": "\u2014",
+      "year_built": "\u2014"
+    },
+    "memo": {
+      "appendix": {
+        "documents_reviewed": [],
+        "engines_run": [
+          "revenue",
+          "fb",
+          "expense",
+          "capital",
+          "debt",
+          "returns",
+          "sensitivity",
+          "partnership",
+          "cash_flow"
+        ]
+      },
+      "header": {
+        "deal_stage": "Draft",
+        "location": "Tampa, FL",
+        "recommendation": "Pending analyst decision",
+        "subject_property": "Harbor House Test",
+        "title": "Investment Committee Memorandum"
+      },
+      "sections": []
+    },
+    "model_keys": [
+      "capex_schedule",
+      "cash_flow_engine",
+      "deal_name",
+      "debt_engine",
+      "investment_engine",
+      "keys",
+      "location",
+      "market",
+      "max_price",
+      "model_version",
+      "named_scenarios",
+      "p_and_l_engine_proforma",
+      "partnership_engine",
+      "returns_engine",
+      "scenario_outputs",
+      "sensitivity_grid",
+      "sources",
+      "uses"
+    ]
+  }
+}

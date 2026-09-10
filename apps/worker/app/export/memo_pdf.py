@@ -57,44 +57,85 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
+from fondok_schemas.reasons import REFUSAL_GLYPH, ReasonCode
+
+from .refusals import (
+    collect_refusals,
+    distinct_codes,
+    reason_explanation,
+    reason_label,
+    refuse,
+)
+
 # WeasyPrint must be importable. We import lazily inside build_memo_pdf
 # so module import doesn't blow up when system libs are missing.
 
 
-def _fmt_usd(v: float | int | None, scale: int = 1) -> str:
+# ─────────────────────── formatters (Phase 4.2) ───────────────────────
+#
+# A ``None`` reaching a formatter means the payload omitted the key rather
+# than carrying a zero (``live_payload``'s no-fake-data contract), so the
+# default code is ``no_source``. A caller that knows better — an engine that
+# was skipped, an analyst decision not yet made — passes ``code``. The
+# rendered string is unchanged in every branch: ``refuse`` returns the same
+# ``"—"`` these functions returned as a literal.
+
+
+def _fmt_usd(
+    v: float | int | None,
+    scale: int = 1,
+    *,
+    code: ReasonCode = ReasonCode.NO_SOURCE,
+    concept: str | None = None,
+) -> str:
     if v is None:
-        return "—"
+        return refuse(code, "no value on the export payload", concept)
     try:
         return f"${float(v) / scale:,.0f}"
     except (TypeError, ValueError):
-        return "—"
+        return refuse(code, f"value {v!r} is not a number", concept)
 
 
-def _fmt_usd_m(v: float | int | None) -> str:
+def _fmt_usd_m(
+    v: float | int | None,
+    *,
+    code: ReasonCode = ReasonCode.NO_SOURCE,
+    concept: str | None = None,
+) -> str:
     if v is None:
-        return "—"
+        return refuse(code, "no value on the export payload", concept)
     try:
         return f"${float(v) / 1_000_000:.2f}M"
     except (TypeError, ValueError):
-        return "—"
+        return refuse(code, f"value {v!r} is not a number", concept)
 
 
-def _fmt_pct(v: float | None) -> str:
+def _fmt_pct(
+    v: float | None,
+    *,
+    code: ReasonCode = ReasonCode.NO_SOURCE,
+    concept: str | None = None,
+) -> str:
     if v is None:
-        return "—"
+        return refuse(code, "no value on the export payload", concept)
     try:
         return f"{float(v) * 100:.2f}%"
     except (TypeError, ValueError):
-        return "—"
+        return refuse(code, f"value {v!r} is not a number", concept)
 
 
-def _fmt_mult(v: float | None) -> str:
+def _fmt_mult(
+    v: float | None,
+    *,
+    code: ReasonCode = ReasonCode.NO_SOURCE,
+    concept: str | None = None,
+) -> str:
     if v is None:
-        return "—"
+        return refuse(code, "no value on the export payload", concept)
     try:
         return f"{float(v):.2f}x"
     except (TypeError, ValueError):
-        return "—"
+        return refuse(code, f"value {v!r} is not a number", concept)
 
 
 CSS = """
@@ -475,7 +516,13 @@ def _render_revenue_mix(segments: list[dict[str, Any]] | None) -> str:
     rows: list[str] = []
     ota_flagged = False
     for seg in segments:
-        name = html.escape(str(seg.get("name", "—")))
+        name = html.escape(
+            str(seg["name"])
+            if "name" in seg
+            else refuse(
+                ReasonCode.NO_SOURCE, "revenue segment has no name", "segment.name"
+            )
+        )
         mix = float(seg.get("mix_pct") or 0)
         net_rev = float(seg.get("net_revenue") or 0)
         channel_cost = float(seg.get("channel_cost_pct") or 0)
@@ -520,11 +567,20 @@ def _render_pip_plan(pip: dict[str, Any] | None) -> str:
     if not pip:
         return ""
 
+    _closure = pip.get("closure_strategy") or ""
     strategy_label = {
         "rolling": "Rolling",
         "full_closure": "Full Closure",
         "wing_by_wing": "Wing-by-Wing",
-    }.get(pip.get("closure_strategy") or "", str(pip.get("closure_strategy") or "—"))
+    }.get(_closure) or (
+        str(_closure)
+        if _closure
+        else refuse(
+            ReasonCode.NO_SOURCE,
+            "PIP spec carries no closure strategy",
+            "pip.closure_strategy",
+        )
+    )
 
     sched = pip.get("schedule") or []
     sched_html = "".join(
@@ -549,7 +605,11 @@ def _render_pip_plan(pip: dict[str, Any] | None) -> str:
     )
 
     brand = pip.get("brand") or "Independent"
-    recovery_months = pip.get("occupancy_recovery_months") or "—"
+    recovery_months = pip.get("occupancy_recovery_months") or refuse(
+        ReasonCode.NO_SOURCE,
+        "PIP spec carries no occupancy recovery period",
+        "pip.occupancy_recovery_months",
+    )
     revpar_uplift = pip.get("revpar_index_post_reno")
 
     return (
@@ -653,7 +713,16 @@ def _render_op_ratio_provenance(op_prov: dict[str, Any] | None) -> str:
 
     rows = []
     for line in lines:
-        field_name = html.escape(str(line.get("field") or "—"))
+        field_name = html.escape(
+            str(
+                line.get("field")
+                or refuse(
+                    ReasonCode.NO_SOURCE,
+                    "op-ratio provenance line has no field name",
+                    "op_ratio.field",
+                )
+            )
+        )
         value = line.get("value")
         source = str(line.get("source") or "seed")
         display, tag_class = _SOURCE_DISPLAY.get(source, (source.title(), "seed"))
@@ -663,7 +732,11 @@ def _render_op_ratio_provenance(op_prov: dict[str, Any] | None) -> str:
             if isinstance(value, float) and 0 <= value <= 1
             else _fmt_usd(value)
             if value
-            else "—"
+            else refuse(
+                ReasonCode.NO_SOURCE,
+                "op-ratio provenance line carries no value",
+                "op_ratio.value",
+            )
         )
         cite = (
             f"<div class='cite'>doc: {html.escape(str(doc))}</div>"
@@ -982,7 +1055,49 @@ def _render_loi_appendix(loi: dict[str, Any] | None) -> str:
 # ───────────────────────────────────────────────────────────────────────
 
 
+def _refusal_footnote(refusals: list[Any]) -> str:
+    """Footnote listing the distinct reasons this memo printed a dash for.
+
+    Phase 4.2: the memo already refused to invent numbers; now it says why.
+    One line per distinct :class:`ReasonCode` the render hit, labelled and
+    explained straight from ``REASON_META`` (never typed here), so the reader
+    of a PDF has the same vocabulary as the app. Returns ``""`` when the memo
+    printed no dash at all — a complete memo gains nothing.
+    """
+    codes = distinct_codes(refusals)
+    if not codes:
+        return ""
+    items = "".join(
+        f"<li><strong>{html.escape(REFUSAL_GLYPH)} {html.escape(reason_label(c))}</strong> "
+        f"(<code>{html.escape(c.value)}</code>) — {html.escape(reason_explanation(c))}</li>"
+        for c in codes
+    )
+    return (
+        '<div class="footer-note" id="refusal-footnote">'
+        "<strong>Why some figures show a dash.</strong> Fondok never fills a gap "
+        "with a placeholder. Each dash in this memo is one of the following:"
+        f'<ul style="margin:4px 0 0 14px;padding:0;">{items}</ul>'
+        "</div>"
+    )
+
+
 def _render_html(memo: dict[str, Any], model: dict[str, Any]) -> str:
+    """Render the memo HTML, then append the refusal footnote it earned.
+
+    The body render runs inside a refusal collector so every ``—`` a
+    formatter wrote is typed; the footnote is appended afterwards, before
+    ``</body>``. The body itself is byte-identical to the pre-Phase-4.2
+    render — the footnote is an addition, never a rewrite.
+    """
+    with collect_refusals() as log:
+        body = _render_html_body(memo, model)
+    footnote = _refusal_footnote(log)
+    if not footnote:
+        return body
+    return body.replace("\n</body>", f"\n{footnote}\n\n</body>", 1)
+
+
+def _render_html_body(memo: dict[str, Any], model: dict[str, Any]) -> str:
     header = memo.get("header", {})
     sections = memo.get("sections", [])
     appendix = memo.get("appendix", {}) or {}
@@ -1132,10 +1247,10 @@ def _render_html(memo: dict[str, Any], model: dict[str, Any]) -> str:
 </div>
 
 <div class="metrics">
-  <div class="metric"><div class="k">RevPAR (Y1)</div><div class="v">{("$" + f"{revpar_y1:,.0f}") if revpar_y1 else "—"}</div></div>
-  <div class="metric"><div class="k">NOI (Y1)</div><div class="v">{_fmt_usd_m((noi_y1 or 0) * 1000) if noi_y1 else "—"}</div></div>
-  <div class="metric"><div class="k">Cap Rate</div><div class="v">{_fmt_pct(inv.get('entry_cap_rate_year1_uw'))}</div></div>
-  <div class="metric"><div class="k">Levered IRR</div><div class="v">{_fmt_pct(ret.get('levered_irr'))}</div></div>
+  <div class="metric"><div class="k">RevPAR (Y1)</div><div class="v">{("$" + f"{revpar_y1:,.0f}") if revpar_y1 else refuse(ReasonCode.ENGINE_SKIPPED, "no Year-1 RevPAR on the export payload", "revpar")}</div></div>
+  <div class="metric"><div class="k">NOI (Y1)</div><div class="v">{_fmt_usd_m((noi_y1 or 0) * 1000) if noi_y1 else refuse(ReasonCode.ENGINE_SKIPPED, "no Year-1 NOI on the export payload", "noi")}</div></div>
+  <div class="metric"><div class="k">Cap Rate</div><div class="v">{_fmt_pct(inv.get('entry_cap_rate_year1_uw'), code=ReasonCode.ENGINE_SKIPPED, concept='entry_cap_rate')}</div></div>
+  <div class="metric"><div class="k">Levered IRR</div><div class="v">{_fmt_pct(ret.get('levered_irr'), code=ReasonCode.ENGINE_SKIPPED, concept='levered_irr')}</div></div>
 </div>
 
 <div class="two-col">
@@ -1185,7 +1300,7 @@ def _render_html(memo: dict[str, Any], model: dict[str, Any]) -> str:
 {loi_html}
 
 <div class="footer-note">
-  <strong>Documents reviewed:</strong> {docs_html or '—'}<br/>
+  <strong>Documents reviewed:</strong> {docs_html or refuse(ReasonCode.NO_DOCUMENT, 'no documents uploaded to the deal', 'documents_reviewed')}<br/>
   <strong>Engines run:</strong> {", ".join(html.escape(e) for e in appendix.get("engines_run", []))}<br/>
   Drafted by Fondok AI · {html.escape(drafted_at)}
 </div>
@@ -1213,9 +1328,11 @@ def build_memo_pdf(memo: dict[str, Any], model: dict[str, Any], output_path: Pat
 __all__ = [
     "_aggregate_wave2_for_memo",
     "_markdown_to_html",
+    "_refusal_footnote",
     "_render_capex_plan",
     "_render_historical_walk",
     "_render_html",
+    "_render_html_body",
     "_render_loi_appendix",
     "_render_max_price_callout",
     "_render_op_ratio_provenance",

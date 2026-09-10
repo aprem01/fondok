@@ -31,6 +31,7 @@ from ..costs import build_cost_report
 from ..database import get_session
 from ..memo_edits import list_edits, record_edit
 from fondok_schemas import LineageRecord, ValueTrace
+from fondok_schemas.reasons import ReasonCode
 
 try:
     from fondok_schemas import DealCostReport
@@ -467,6 +468,17 @@ class MemoEnvelope(BaseModel):
     status: str = "not_yet_generated"
     error: str | None = None
     generated_at: str | None = None
+    # Phase 4.3 — why the memo's IC recommendation reads "Pending analyst
+    # decision" (:data:`app.memo_overrides.PENDING_DECISION`). That string is
+    # a refusal wearing prose; this is the same fact as a ``ReasonCode``:
+    # ``awaiting_analyst`` while the verdict is unselected or unconfirmed,
+    # ``None`` once the analyst has confirmed one. The recommendation string
+    # in ``sections`` is unchanged in every case. Serialised as the bare code
+    # (``"awaiting_analyst"``), matching the ``assumption_sources`` wire
+    # convention for a single reason field. Defaults to ``awaiting_analyst``
+    # so an envelope built without reading the deal's overrides never claims
+    # a decision was made.
+    recommendation_reason: ReasonCode | None = ReasonCode.AWAITING_ANALYST
 
 
 # ─────────────────────────── helpers ───────────────────────────
@@ -1870,7 +1882,21 @@ async def get_memo(
     await _assert_deal_belongs_to_tenant(
         session, deal_id=deal_id, tenant_id=tenant_id
     )
+    # Layer the analyst's persisted IC-Memo-tab edits (verdict / thesis /
+    # highlights / risks) authoritatively on top of the generated
+    # sections. Deterministic and strictly opt-in — with no ``memo_*``
+    # override present the sections are returned byte-identical to what
+    # the Analyst produced. See :mod:`app.memo_overrides`.
+    from ..memo_overrides import apply_memo_overrides, ic_recommendation_reason
     from ..streaming.broadcast import get_memo_cache
+
+    overrides = await _load_field_overrides(
+        session, deal_id=deal_id, tenant_id=tenant_id
+    )
+    # Phase 4.3 — the machine-readable twin of "Pending analyst decision".
+    # Read on both branches so the envelope never claims a decision was made
+    # (nor that one is pending) without having looked.
+    recommendation_reason = ic_recommendation_reason(overrides)
 
     cache = get_memo_cache()
     snapshot = await cache.get(str(deal_id))
@@ -1882,18 +1908,9 @@ async def get_memo(
             status="not_yet_generated",
             error=None,
             generated_at=None,
+            recommendation_reason=recommendation_reason,
         )
 
-    # Layer the analyst's persisted IC-Memo-tab edits (verdict / thesis /
-    # highlights / risks) authoritatively on top of the generated
-    # sections. Deterministic and strictly opt-in — with no ``memo_*``
-    # override present the sections are returned byte-identical to what
-    # the Analyst produced. See :mod:`app.memo_overrides`.
-    from ..memo_overrides import apply_memo_overrides
-
-    overrides = await _load_field_overrides(
-        session, deal_id=deal_id, tenant_id=tenant_id
-    )
     sections = apply_memo_overrides(snapshot["sections"], overrides)
 
     return MemoEnvelope(
@@ -1903,6 +1920,7 @@ async def get_memo(
         status=snapshot["status"],
         error=snapshot["error"],
         generated_at=snapshot["generated_at"],
+        recommendation_reason=recommendation_reason,
     )
 
 
@@ -2934,6 +2952,7 @@ async def memo_status(
     await _assert_deal_belongs_to_tenant(
         session, deal_id=deal_id, tenant_id=tenant_id
     )
+    from ..memo_overrides import ic_recommendation_reason
     from ..streaming.broadcast import get_memo_cache
 
     row = (
@@ -2950,6 +2969,12 @@ async def memo_status(
             {"d": deal_id},
         )
     ).first()
+
+    # Phase 4.3 — same reason channel the ``GET /memo`` envelope carries, so a
+    # client polling this lane reads the decision state the same way.
+    recommendation_reason = ic_recommendation_reason(
+        await _load_field_overrides(session, deal_id=deal_id, tenant_id=tenant_id)
+    )
 
     memo_cache = get_memo_cache()
 
@@ -2983,6 +3008,7 @@ async def memo_status(
                 status=snapshot["status"],
                 error=snapshot["error"],
                 generated_at=snapshot["generated_at"],
+                recommendation_reason=recommendation_reason,
             )
             return MemoStatusResponse(
                 status="complete", batch_id=batch_id, memo=memo
@@ -3013,6 +3039,7 @@ async def memo_status(
             status=snapshot["status"],
             error=snapshot["error"],
             generated_at=snapshot["generated_at"],
+            recommendation_reason=recommendation_reason,
         )
         return MemoStatusResponse(status="complete", memo=memo)
     if snapshot is not None and snapshot["status"] == "failed":

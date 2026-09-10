@@ -105,6 +105,28 @@ async def capture() -> dict[str, Any]:
     return out
 
 
+#: Keys Phase 4.1 ADDED to the variance response — the machine-readable
+#: reason channel. The pin below still holds the pre-4.1 bytes; stripping
+#: exactly these keys and comparing proves the addition is an addition and
+#: nothing else moved. Do NOT grow this list to make a failure go away: a new
+#: entry here is a claim that a key is additive, and the assertions under
+#: :func:`test_phase4_reason_channel_is_purely_additive` have to back it.
+_PHASE4_ADDED_KEYS: frozenset[str] = frozenset({"reason", "reasons"})
+
+
+def _strip_phase4(node: Any) -> Any:
+    """Recursively drop the Phase 4.1 reason keys from a response dump."""
+    if isinstance(node, dict):
+        return {
+            k: _strip_phase4(v)
+            for k, v in node.items()
+            if k not in _PHASE4_ADDED_KEYS
+        }
+    if isinstance(node, list):
+        return [_strip_phase4(v) for v in node]
+    return node
+
+
 @pytest.mark.asyncio
 async def test_variance_endpoint_is_byte_identical_to_the_pre_registry_pin() -> None:
     assert PIN_PATH.exists(), f"missing pin {PIN_PATH} — regenerate on un-adapted code"
@@ -114,10 +136,47 @@ async def test_variance_endpoint_is_byte_identical_to_the_pre_registry_pin() -> 
     assert list(live) == list(pinned)
     for name in pinned:
         # Compare the serialised form so key ORDER and list ORDER are pinned
-        # too, not just structural equality.
+        # too, not just structural equality. Phase 4.1's additive reason keys
+        # are stripped first — the pin is the pre-4.1 wire and stays that way.
         want = json.dumps(pinned[name], ensure_ascii=False)
-        got = json.dumps(live[name], ensure_ascii=False)
+        got = json.dumps(_strip_phase4(live[name]), ensure_ascii=False)
         assert got == want, f"{name}: variance response drifted from the pin"
+
+
+@pytest.mark.asyncio
+async def test_phase4_reason_channel_is_purely_additive() -> None:
+    """The only keys the live response gained over the pin are the 4.1 ones.
+
+    Guards the strip above: if the endpoint ever grows another key, this
+    fails rather than the pin quietly ignoring it.
+    """
+    pinned = json.loads(PIN_PATH.read_text())
+    live = await capture()
+
+    def _keys(node: Any, trail: str = "") -> set[str]:
+        out: set[str] = set()
+        if isinstance(node, dict):
+            for k, v in node.items():
+                out.add(f"{trail}.{k}")
+                out |= _keys(v, f"{trail}.{k}")
+        elif isinstance(node, list):
+            for v in node:
+                out |= _keys(v, f"{trail}[]")
+        return out
+
+    for name in pinned:
+        added = _keys(live[name]) - _keys(pinned[name])
+        assert added, f"{name}: expected the Phase 4.1 reason keys to be present"
+        # Every new path must sit at, or under, one of the added keys.
+        offenders = [
+            path
+            for path in added
+            if not any(
+                seg.removesuffix("[]") in _PHASE4_ADDED_KEYS
+                for seg in path.split(".")
+            )
+        ]
+        assert not offenders, f"{name}: non-additive keys appeared: {sorted(offenders)}"
 
 
 @pytest.mark.asyncio

@@ -11,7 +11,7 @@ import { describe, it, expect, vi, afterEach } from 'vitest';
 import { render, screen, within, cleanup } from '@testing-library/react';
 import React from 'react';
 import MethodologyPage from '@/app/methodology/page';
-import { REASONS, REASON_CODES, REFUSAL_GLYPH } from '@/lib/ontology/reasons.generated';
+import { REASONS, REASON_CODES, REFUSAL_GLYPH, type ReasonCode } from '@/lib/ontology/reasons.generated';
 
 vi.mock('next/navigation', () => ({
   useRouter: () => ({ push: vi.fn(), replace: vi.fn(), prefetch: vi.fn(), back: vi.fn() }),
@@ -68,5 +68,77 @@ describe('Methodology — Section 7 "What a dash means"', () => {
     for (const id of ['extraction', 'projection', 'sources', 'engines', 'pricing', 'ic-memo', 'reasons']) {
       expect(document.getElementById(id)).not.toBeNull();
     }
+  });
+});
+
+
+describe('Methodology - Sections 3 and 6 name their reason codes (Phase 4.5)', () => {
+  /** Every tag on the page, as `code -> rendered text`. */
+  function tags(): Map<string, string> {
+    const out = new Map<string, string>();
+    for (const el of Array.from(document.querySelectorAll('[data-reason-tag]'))) {
+      const code = el.getAttribute('data-reason-tag') as string;
+      out.set(code, (el.textContent || '').trim());
+    }
+    return out;
+  }
+
+  it('renders each tag label from the generated module, never a literal', () => {
+    render(<MethodologyPage />);
+    const found = tags();
+    expect(found.size).toBeGreaterThan(0);
+
+    for (const [code, text] of found) {
+      // The code is real vocabulary...
+      expect(REASON_CODES).toContain(code as ReasonCode);
+      // ...and the label beside it is REASONS[code].label, verbatim.
+      expect(text).toContain(code);
+      expect(text).toContain(REASONS[code as ReasonCode].label);
+    }
+  });
+
+  it('names the refusal codes Sections 3 and 6 describe', () => {
+    render(<MethodologyPage />);
+    const found = tags();
+
+    // Section 3 - market-data assumptions.
+    for (const code of ['str_unavailable', 'not_knowable_as_of', 'as_of_unknown', 'pin_active', 'no_document']) {
+      expect(found.has(code)).toBe(true);
+    }
+    // Section 6 - IC memo: the decision and the variance refusals.
+    for (const code of ['awaiting_analyst', 'basis_excluded', 'unit_unknown', 'period_mismatch', 'basis_mismatch']) {
+      expect(found.has(code)).toBe(true);
+    }
+  });
+
+  it('leaves the existing refusal sentences intact', () => {
+    render(<MethodologyPage />);
+    // The user-visible strings an external tester is mid-QA on do not move.
+    // (`getAllByText` because Section 7's table restates some of them.)
+    for (const sentence of [
+      /STR rates were requested but could not populate/,
+      /The IC recommendation reads/,
+      /two numbers that far apart are on different bases/,
+      /it shows .* until the OM is extracted/,
+      /A value whose unit cannot be established/,
+      /Fondok never compares a month against a year/,
+    ]) {
+      expect(screen.getAllByText(sentence).length).toBeGreaterThan(0);
+    }
+    // ...and the section numbering is untouched.
+    for (const n of ['1', '2', '3', '4', '5', '6', '7', '8', '9']) {
+      expect(screen.getByText(`Section ${n}`)).toBeInTheDocument();
+    }
+  });
+
+  it('keeps the Section 7 table as the one place every code is listed', () => {
+    render(<MethodologyPage />);
+    const table = screen.getByTestId('reason-code-table');
+    const rows = within(table)
+      .getAllByRole('row')
+      .filter((r) => r.hasAttribute('data-reason-code'));
+    expect(rows).toHaveLength(REASON_CODES.length);
+    // A tag never lives inside the table - the table has its own Code column.
+    expect(table.querySelectorAll('[data-reason-tag]')).toHaveLength(0);
   });
 });

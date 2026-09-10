@@ -25,6 +25,24 @@ Y1 yield-on-cost, per-key figures, annual cash-flow-after-debt) are derived
 arithmetically from two live engine outputs; these are presentation-layer
 aggregations, not new engine math.
 
+Typed refusals (Phase 4.2)
+--------------------------
+The dashes this module writes itself — the deck's property / city / brand /
+service / keys / year-built strings, the submarket KPI, a scenario with no
+name — go through :func:`app.export.refusals.refuse`, which returns the same
+glyph as before *and* records why. The distinct set lands on the payload as
+``model["refusals"]``: a ``list[Refusal]``, the machine-readable twin of every
+dash the payload carries. Every pre-existing key, and every rendered value,
+is byte-identical to before — ``tests/test_export_refusals.py`` pins that
+against a snapshot captured from the pre-change tree.
+
+Phase 4.3 adds one more: ``memo["header"]["recommendation_reason"]``, the bare
+``ReasonCode`` beside the header's IC recommendation. It is exactly what
+``GET /deals/{id}/memo`` carries as ``recommendation_reason`` — the label
+"Pending analyst decision" is a refusal wearing prose, and a consumer holding
+this header should never have to re-derive the decision state from the deal's
+``field_overrides``.
+
 The engine-output field names differ from the fixture's ``model`` keys (e.g.
 returns emits ``net_proceeds`` / ``year_one_coc`` / ``exit_cap_rate``, debt emits
 ``year_one_dscr`` / ``year_one_debt_yield``, capital emits ``uses[]`` line items
@@ -40,8 +58,11 @@ from dataclasses import asdict
 from typing import Any
 from uuid import UUID
 
+from fondok_schemas.reasons import ReasonCode
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
+
+from .refusals import collect_refusals, dedupe, refuse
 
 logger = logging.getLogger(__name__)
 
@@ -403,15 +424,29 @@ def _build_memo(
     # the canonical "Pending analyst decision" — never the model's inferred
     # verdict, never a selected-but-unconfirmed one, never the pptx builder's
     # "PROCEED TO LOI" default. Same helper the memo body uses.
-    from ..memo_overrides import ic_recommendation_label
+    #
+    # Phase 4.3: the reason code travels beside the label, so a consumer that
+    # holds this header never has to re-derive the decision state from the
+    # deal's ``field_overrides``. ``None`` once the verdict is confirmed;
+    # the bare ``"awaiting_analyst"`` code while it is pending — the same
+    # value ``GET /deals/{id}/memo`` carries as ``recommendation_reason``.
+    from ..memo_overrides import ic_recommendation_label, ic_recommendation_reason
 
     recommendation = ic_recommendation_label(overrides)
+    _rec_reason = ic_recommendation_reason(overrides)
 
     header: dict[str, Any] = {
         "title": "Investment Committee Memorandum",
-        "subject_property": property_name or deal_name or "—",
+        "subject_property": property_name
+        or deal_name
+        or refuse(
+            ReasonCode.NO_SOURCE,
+            "no extracted property name and no project name on the deal",
+            "property_overview.name",
+        ),
         "location": location or "",
         "recommendation": recommendation,
+        "recommendation_reason": _rec_reason.value if _rec_reason is not None else None,
         "deal_stage": deal_stage or "",
     }
 
@@ -477,7 +512,10 @@ async def _market_kpis(
     the same figures the Overview surfaces; both omitted when the deal has no
     STR history on file.
     """
-    kpis: dict[str, Any] = {"Submarket": city or "—"}
+    kpis: dict[str, Any] = {
+        "Submarket": city
+        or refuse(ReasonCode.NO_SOURCE, "no city on the deal row", "deal.city")
+    }
     try:
         from ..engines.str_forecast import trailing_12_occ_adr
         from ..services.str_forecast_loader import load_str_history_for_deal
@@ -560,7 +598,11 @@ def _humanize_field(field: str) -> str:
             out.append("vs")
         else:
             out.append(w.capitalize())
-    return " ".join(out) or "—"
+    return " ".join(out) or refuse(
+        ReasonCode.NO_SOURCE,
+        "variance flag carries no field path to label",
+        "variance.field",
+    )
 
 
 def _variance_flags_from_out(
@@ -864,7 +906,14 @@ async def _scenarios(
         if not kpis:
             continue
         entry: dict[str, Any] = {
-            "name": str(m.get("name") or "—"),
+            "name": str(
+                m.get("name")
+                or refuse(
+                    ReasonCode.NO_SOURCE,
+                    "saved scenario has no name",
+                    "scenario.name",
+                )
+            ),
             "is_base": is_base,
             "kpis": kpis,
         }
@@ -1230,7 +1279,22 @@ async def load_live_payload(
     Degrades gracefully: a deal with no completed engine run yields empty engine
     blocks (builders render ``—`` / empty sections); a deal with no cached memo
     yields a header-only memo. Never raises for missing data.
+
+    Phase 4.2: the assembly runs inside a refusal collector, so every dash this
+    module writes is recorded as a typed :class:`Refusal` and the distinct set
+    is published on ``model["refusals"]``. Purely additive — the ``deal`` /
+    ``model`` / ``memo`` values themselves are unchanged.
     """
+    with collect_refusals() as log:
+        deal, model, memo = await _assemble_live_payload(session, deal_id, tenant_id)
+    model["refusals"] = dedupe(log)
+    return deal, model, memo
+
+
+async def _assemble_live_payload(
+    session: AsyncSession, deal_id: str, tenant_id: str
+) -> tuple[dict[str, Any], dict[str, Any], dict[str, Any]]:
+    """The assembly itself — see :func:`load_live_payload`, which wraps it."""
     from ..api.market import _extracted_property_meta
     from ..services.engine_runner import get_run_scoped_outputs
 
@@ -1386,8 +1450,15 @@ async def load_live_payload(
             session,
             deal_id,
             tenant_id,
-            asset_name=property_name or deal_name or "—",
-            asset_address=city or "—",
+            asset_name=property_name
+            or deal_name
+            or refuse(
+                ReasonCode.NO_SOURCE,
+                "no extracted property name and no project name on the deal",
+                "property_overview.name",
+            ),
+            asset_address=city
+            or refuse(ReasonCode.NO_SOURCE, "no city on the deal row", "deal.city"),
             rooms=keys or 0,
         )
         if grid:
@@ -1399,16 +1470,32 @@ async def load_live_payload(
 
     # ── Deal dict (title + property/market slides). String-safe values with
     # ── "—" for absent fields so the deck never shows "None" or a fixture
-    # ── default (e.g. the pptx "Lifestyle Boutique" service fallback).
+    # ── default (e.g. the pptx "Lifestyle Boutique" service fallback). Each
+    # ── dash goes through ``refuse`` — same glyph, now with a reason code.
+    _city = city or refuse(
+        ReasonCode.NO_SOURCE, "no city on the deal row", "deal.city"
+    )
     deal: dict[str, Any] = {
         "id": deal_id,
         "name": property_name or deal_name or "Hotel",
-        "city": city or "—",
-        "location": city or "—",
-        "brand": brand or "—",
-        "keys": keys if keys is not None else "—",
-        "year_built": year_built if year_built is not None else "—",
-        "service": service or "—",
+        "city": _city,
+        "location": _city,
+        "brand": brand
+        or refuse(ReasonCode.NO_SOURCE, "no brand on the deal row", "deal.brand"),
+        "keys": keys
+        if keys is not None
+        else refuse(ReasonCode.NO_SOURCE, "no key count on the deal row", "deal.keys"),
+        "year_built": year_built
+        if year_built is not None
+        else refuse(
+            ReasonCode.NO_SOURCE,
+            "year built not extracted from the offering documents",
+            "property_overview.year_built",
+        ),
+        "service": service
+        or refuse(
+            ReasonCode.NO_SOURCE, "no service level on the deal row", "deal.service"
+        ),
     }
 
     # ── Memo (cache snapshot + analyst overrides + real docs).

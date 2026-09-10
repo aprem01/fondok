@@ -34,6 +34,7 @@ from typing import Annotated, Any
 from uuid import UUID, uuid4, uuid5
 
 from fondok_schemas import ExtractionField, ModelCall, Severity, USALIFinancials
+from fondok_schemas.reasons import ReasonCode
 from fondok_schemas.variance import VarianceFlag, VarianceReport
 from langchain_core.messages import HumanMessage
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
@@ -635,6 +636,31 @@ STR_DOC_TYPES: frozenset[str] = frozenset({"STR", "STR_TREND", "STR_SEGMENTATION
 MARKET_DOC_TYPES: frozenset[str] = frozenset({"CBRE_HORIZONS", "CBRE", "PNL_BENCHMARK", "HOTSTATS", "BENCHMARK"})
 
 
+#: Every unit refusal :func:`normalize_broker_value` produces ends with this.
+#: It is the one rejection that is NOT about where the row came from, so it is
+#: the one that maps to ``unit_unknown`` rather than ``basis_excluded``
+#: (Phase 4.1). The prose itself is unchanged — the existing FON-54a tests
+#: assert ``"not established" in reason`` and still do.
+UNIT_UNESTABLISHED = "unit not established"
+
+
+def exclusion_code(reason: str) -> ReasonCode:
+    """Machine-readable code for one prose ``excluded`` reason (Phase 4.1).
+
+    The prose stays exactly as FON-54a wrote it — an analyst reading the
+    Technical detail sees the same sentence. This is the parallel channel:
+    a row dropped because its unit could not be established is
+    ``unit_unknown``; every other rejection is a *source* rejection (an
+    actuals / STR / market document, a comp-set segment, the OM's history)
+    and is ``basis_excluded`` — "not admitted as a broker claim".
+    """
+    return (
+        ReasonCode.UNIT_UNKNOWN
+        if reason.strip().endswith(UNIT_UNESTABLISHED)
+        else ReasonCode.BASIS_EXCLUDED
+    )
+
+
 def non_broker_source_reason(doc_type: str | None) -> str:
     """Why a claim-path row from ``doc_type`` is NOT the broker's claim (FON-54a part 3).
 
@@ -763,6 +789,7 @@ def _broker_fields_from_extraction(
     doc_type: str | None = None,
     strict: bool = False,
     excluded: list[tuple[ExtractionField, str]] | None = None,
+    out_of_scope: list[tuple[ExtractionField, ReasonCode]] | None = None,
 ) -> list[VarianceBrokerField]:
     """Pull the broker-proforma rows out of an Extractor field list.
 
@@ -787,6 +814,13 @@ def _broker_fields_from_extraction(
     (they were never candidates). Values are unit-normalised
     (:func:`normalize_broker_value`); a value whose unit cannot be established
     is excluded with the reason.
+
+    Phase 4.1: pass ``out_of_scope`` to also collect the silent drops with a
+    :class:`ReasonCode` — a monthly / YTD slice is ``period_mismatch``, a
+    forward projection ``not_applicable``. ``excluded`` is untouched by this
+    (the FON-54a disclosure list keeps exactly the rows it had), so the
+    variance report can say "this concept was never comparable" without
+    changing what Technical detail shows.
     """
     out: list[VarianceBrokerField] = []
     dtype = (doc_type or "").strip().upper() or None
@@ -818,6 +852,15 @@ def _broker_fields_from_extraction(
         # or a forward projection would produce nonsense flags (single-month
         # broker $702K vs annual T-12 $14M, etc.). Drop them up-front.
         if is_period_slice(name) or ".ttm." in lower or is_forward_projection(name):
+            if out_of_scope is not None:
+                out_of_scope.append(
+                    (
+                        f,
+                        ReasonCode.NOT_APPLICABLE
+                        if is_forward_projection(name)
+                        else ReasonCode.PERIOD_MISMATCH,
+                    )
+                )
             continue
         # Source guards (FON-54a).
         if is_market_segment(name):
@@ -835,7 +878,7 @@ def _broker_fields_from_extraction(
             continue
         value, unit_note = normalize_broker_value(name, float(f.value), f.unit)
         if value is None:
-            _reject(f, unit_note or "unit not established")
+            _reject(f, unit_note or UNIT_UNESTABLISHED)
             continue
         out.append(
             VarianceBrokerField(

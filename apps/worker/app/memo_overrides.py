@@ -77,6 +77,8 @@ from __future__ import annotations
 
 from typing import Any
 
+from fondok_schemas.reasons import ReasonCode
+
 # Frontend verdict vocabulary — must match ICMemoTab.tsx exactly.
 VALID_VERDICTS: frozenset[str] = frozenset(
     {"Proceed", "Proceed with Conditions", "Do Not Proceed"}
@@ -172,6 +174,22 @@ def ic_recommendation_label(overrides: dict[str, Any] | None) -> str:
     """
     verdict, confirmed = recommendation_decision(overrides)
     return verdict if (verdict is not None and confirmed) else PENDING_DECISION
+
+
+def ic_recommendation_reason(overrides: dict[str, Any] | None) -> ReasonCode | None:
+    """Why the IC recommendation is a dash, as a :class:`ReasonCode`.
+
+    Phase 4.3: :func:`ic_recommendation_label` has always said
+    :data:`PENDING_DECISION` until an analyst selects *and* confirms a
+    verdict; that string is a refusal wearing prose. This is the same fact,
+    machine-readable — ``awaiting_analyst`` while pending, ``None`` once the
+    verdict is confirmed (there is nothing being refused any more).
+
+    The label itself is untouched: a consumer that prints the string keeps
+    printing exactly what it printed before.
+    """
+    _verdict, confirmed = recommendation_decision(overrides)
+    return None if confirmed else ReasonCode.AWAITING_ANALYST
 
 
 def diligence_status(overrides: dict[str, Any] | None) -> dict[str, dict[str, Any]]:
@@ -310,5 +328,6 @@ __all__ = [
     "diligence_status",
     "has_memo_overrides",
     "ic_recommendation_label",
+    "ic_recommendation_reason",
     "recommendation_decision",
 ]

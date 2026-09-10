@@ -234,3 +234,51 @@ async def test_str_rows_never_headline_the_broker_flag() -> None:
         for r in f.raw_fields:
             if not r.excluded_reason:
                 assert r.source_doc_type == "OM", (f.concept, r.field, r.source_doc_type)
+
+
+# ═══════════════ Phase 4.1 — the exclusion carries a code ═══════════════
+#
+# Additive: the assertions above are the FON-54a contract and are unchanged.
+# These read the parallel ``ReasonCode`` channel — an STR / CoStar reading is
+# "not admitted as a broker claim" in the shared vocabulary, not just in prose.
+
+
+@pytest.mark.asyncio
+async def test_str_exclusions_carry_basis_excluded_and_name_the_concept() -> None:
+    from fondok_schemas.reasons import ReasonCode
+
+    from app.api.analysis import get_variance
+    from app.database import get_session_factory
+
+    deal_id = uuid4()
+    await _seed(deal_id)
+    async with get_session_factory()() as s:
+        resp = await get_variance(deal_id=deal_id, session=s, tenant_id=UUID(_TENANT))
+
+    str_rows = [
+        r
+        for f in resp.flags
+        for r in f.raw_fields
+        if r.excluded_reason and r.source_doc_type == "STR_TREND"
+    ]
+    assert str_rows, "expected the STR / CoStar rows to still be disclosed"
+    for r in str_rows:
+        # The prose is untouched…
+        assert "STR-reported" in r.excluded_reason
+        # …and now carries its code.
+        assert r.reason is ReasonCode.BASIS_EXCLUDED
+
+    # An admitted OM row is a real comparison and refuses nothing.
+    for f in resp.flags:
+        for r in f.raw_fields:
+            if not r.excluded_reason:
+                assert r.reason is None or r.reason is ReasonCode.BASIS_MISMATCH
+        assert f.reason is None or f.reason is ReasonCode.BASIS_MISMATCH
+
+    # Whatever the report could not compare is named with a code, deduped.
+    flagged = {f.concept for f in resp.flags}
+    for refusal in resp.reasons:
+        assert refusal.concept not in flagged
+        assert refusal.code is not None and refusal.detail
+    keys = [(r.code, r.concept) for r in resp.reasons]
+    assert len(keys) == len(set(keys))
