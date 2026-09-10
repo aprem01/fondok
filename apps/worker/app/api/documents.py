@@ -23,7 +23,7 @@ import json
 import logging
 import os
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 from typing import Annotated, Any, Literal
 from uuid import UUID, uuid4
 
@@ -427,6 +427,19 @@ class DocumentRecord(BaseModel):
     # deviations: [...]}``.
     usali_score: float | None = None
     usali_deviations: list[dict] | dict | None = None
+    # Phase 2.2 — the date this document's content is current AS OF,
+    # derived by ``services.as_of.derive_report_as_of`` from what the
+    # document STATES (the P&L's ``period_ending``, the STR report's
+    # ``report_year``, the CBRE header's ``publication_date``, the OM's
+    # newest comparable sale). ``None`` means the document stated no
+    # date — we never guess one. ``report_as_of_precision`` says how
+    # much of the date was stated: ``day`` | ``month`` | ``quarter`` |
+    # ``year``, so the UI can render "Q3 2024" instead of implying a
+    # spurious 30 September. Annotated as ``date`` so it validates on
+    # both dialects (Postgres DATE returns a ``date``; SQLite TEXT
+    # returns an ISO string Pydantic coerces).
+    report_as_of: date | None = None
+    report_as_of_precision: str | None = None
     # Guided-onboarding wizard signals (ROADMAP #1).
     #   * ``user_provided_doc_type`` — the analyst's tag at upload time
     #     (e.g. "T12", "PNL_MONTHLY", "STR_TREND"). Stays sticky even
@@ -4572,6 +4585,18 @@ async def rescore_usali(
             },
         )
         await session.commit()
+
+        # Phase 2.2 — re-derive the document's as-of date off the same
+        # persisted extraction while we have it in hand, so a rescore
+        # backfills the date on docs extracted before this shipped.
+        as_of, as_of_precision = await _persist_report_as_of(
+            session,
+            deal_id=str(deal_id),
+            doc_id=str(doc_id),
+            tenant_id=str(tenant_id),
+            doc_type=dt,
+            fields=fields,
+        )
         return {
             "ok": True,
             "doc_id": str(doc_id),
@@ -4582,6 +4607,9 @@ async def rescore_usali(
             "deviations": len(result.deviations),
             "flat_keys": len(flat),
             "also_cleared_misclassified": also_cleared_misclassified,
+            # Additive Phase 2.2 keys — existing keys above are unchanged.
+            "report_as_of": as_of.isoformat() if as_of is not None else None,
+            "report_as_of_precision": as_of_precision,
         }
     except Exception as exc:
         import traceback
@@ -5750,6 +5778,22 @@ async def _run_extraction_pipeline_inner(
                 doc_id=doc_id,
                 tenant_id=tenant_id,
                 doc_type=scoring_doc_type or "",
+                fields=fields,
+            )
+
+            # Phase 2.2 — give the document an as-of date. Runs for
+            # EVERY doc type (unlike USALI scoring, which is P&L-only):
+            # an OM, an STR Trend and a CBRE Horizons report all need
+            # placing in time. Derived from what the document STATES;
+            # a document that states nothing stays undated rather than
+            # getting a guessed date. Best-effort — never blocks
+            # completion.
+            await _persist_report_as_of(
+                session,
+                deal_id=deal_id,
+                doc_id=doc_id,
+                tenant_id=tenant_id,
+                doc_type=scoring_doc_type or classified_doc_type or "",
                 fields=fields,
             )
         except Exception as exc:
@@ -7170,6 +7214,80 @@ async def _persist_usali_score(
             )
         except Exception:
             pass
+
+
+# ─────────────────────── document as-of date ───────────────────────
+
+
+async def _persist_report_as_of(
+    session: AsyncSession,
+    *,
+    deal_id: str,
+    doc_id: str,
+    tenant_id: str,
+    doc_type: str,
+    fields: list[dict[str, Any]],
+) -> tuple[date | None, str | None]:
+    """Date the document from what it states and persist the result.
+
+    Phase 2.2. Unlike ``_persist_usali_score`` this runs for EVERY
+    document type — an OM, an STR Trend and a CBRE Horizons report all
+    need placing in time, not just the P&L family. The derivation lives
+    in ``services.as_of.derive_report_as_of``; here we only persist.
+
+    ``(None, None)`` is written when the document states no readable
+    date. That is a real answer, not a failure: we never guess an
+    as-of date (the registry carries an ``as_of_unknown`` refusal
+    reason for exactly this). The columns are therefore also cleared on
+    a re-derivation that finds nothing, so a stale date can't survive a
+    re-extraction.
+
+    Best-effort: any failure logs and returns ``(None, None)`` —
+    dating a document is additive intelligence on top of extraction,
+    never a gate on it.
+    """
+    try:
+        from sqlalchemy import Date, bindparam
+
+        from ..services.as_of import derive_report_as_of
+
+        as_of, precision = derive_report_as_of(fields, doc_type)
+
+        # Bind through SQLAlchemy's ``Date`` so the same statement works
+        # on both dialects: asyncpg wants a ``datetime.date`` for the
+        # Postgres DATE column, SQLite stores the ISO string the type
+        # processor produces (see migrations.py, Phase 2.2 entries).
+        stmt = text(
+            "UPDATE documents "
+            "SET report_as_of = :as_of, report_as_of_precision = :precision "
+            "WHERE id = :id AND tenant_id = :tenant"
+        ).bindparams(bindparam("as_of", type_=Date()))
+        await session.execute(
+            stmt,
+            {
+                "as_of": as_of,
+                "precision": precision,
+                "id": str(doc_id),
+                "tenant": str(tenant_id),
+            },
+        )
+        await session.commit()
+        logger.info(
+            "report_as_of: deal=%s doc=%s doc_type=%s as_of=%s precision=%s",
+            deal_id,
+            doc_id,
+            (doc_type or "").upper() or "UNKNOWN",
+            as_of.isoformat() if as_of is not None else "UNSTATED",
+            precision or "-",
+        )
+        return (as_of, precision)
+    except Exception:  # noqa: BLE001 — dating is additive, never a gate
+        logger.exception(
+            "report_as_of: derivation/persist failed for doc=%s deal=%s",
+            doc_id,
+            deal_id,
+        )
+        return (None, None)
 
 
 # ─────────────────────────── critic ───────────────────────────
