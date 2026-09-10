@@ -355,6 +355,10 @@ export default function MethodologyPage() {
             <li>
               <span className="font-semibold text-ink-900">Known gap — exports.</span>{' '}
               The IC memo / Excel max-price section still prints the legacy 15% / 1.80x hurdles until the export path is migrated to the deal&apos;s targets.
+            </li>
+          </ul>
+        </Card>
+      </Section>
 
       {/* ─── 6. IC Memo — diligence flags and the decision (FON-54a) ── */}
       <Section
