@@ -17,12 +17,67 @@
  *  2. CLIENT-ONLY STATE. Relative "3m ago" labels (Date.now()) and
  *     localStorage-driven state can only be known in the browser, so they
  *     render after mount (``useMounted``) — the server HTML never carries them.
+ *
+ *  3. CLERK-TIMED STATE (the production source, intermittent). The server
+ *     renders the sidebar persona with Clerk NOT loaded (placeholder name /
+ *     no role badge / no email, no admin-only nav or tabs). On a warm load
+ *     clerk-js is initialised before React hydrates, so ``useUser()`` /
+ *     ``useOrganization()`` return ``isLoaded: true`` on the client's FIRST
+ *     render — three text nodes differ (#418 ×3) and the root falls back
+ *     (#423). The ``lib/auth`` shims must therefore render the placeholder
+ *     until mount whatever Clerk reports, and only then the real values.
  */
 import { describe, it, expect, afterEach, vi } from 'vitest';
 import React from 'react';
 import { renderToString } from 'react-dom/server';
+import { hydrateRoot } from 'react-dom/client';
+import { act, render, screen } from '@testing-library/react';
 import { fmtDate, fmtDateTime } from '@/lib/format';
 import { useMounted } from '@/lib/hooks/useMounted';
+
+// ─── Clerk mock — settable "is clerk-js already loaded on the client?" ────
+// Hoisted so ``lib/auth``'s module-level ``isClerkConfigured`` sees a real key
+// when it is first imported, and so the mock factory can read the flag.
+const clerk = vi.hoisted(() => {
+  process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY = 'pk_test_hydration_determinism';
+  return { loaded: false };
+});
+vi.mock('@clerk/nextjs', () => ({
+  useUser: () =>
+    clerk.loaded
+      ? {
+          isLoaded: true,
+          isSignedIn: true,
+          user: {
+            id: 'user_prem',
+            firstName: 'Prem',
+            lastName: 'Kr',
+            primaryEmailAddress: { emailAddress: 'prem@fondok.test' },
+            publicMetadata: { role: 'Analyst' },
+            organizationMemberships: [],
+          },
+        }
+      : { isLoaded: false, isSignedIn: undefined, user: undefined },
+  useOrganization: () =>
+    clerk.loaded
+      ? {
+          isLoaded: true,
+          organization: { id: 'org_fondok', name: 'Fondok Capital', slug: 'fondok', publicMetadata: {} },
+          membership: { role: 'org:admin' },
+          memberships: { data: [] },
+        }
+      : { isLoaded: false, organization: undefined, membership: undefined, memberships: undefined },
+  useAuth: () => ({ getToken: async () => null, sessionId: clerk.loaded ? 'sess_1' : null }),
+  useClerk: () => ({ signOut: async () => {}, setActive: async () => {} }),
+  OrganizationSwitcher: () => React.createElement('div', { 'data-testid': 'org-switcher' }),
+}));
+vi.mock('next/navigation', () => ({
+  usePathname: () => '/projects/deal-uuid-1',
+  useRouter: () => ({ push: vi.fn(), replace: vi.fn() }),
+}));
+
+import Sidebar from '@/components/layout/Sidebar';
+import { useCurrentRole, useCurrentUser } from '@/lib/auth';
 
 const ORIGINAL_TZ = process.env.TZ;
 const ZONES = ['Pacific/Kiritimati', 'America/New_York'] as const;
@@ -67,6 +122,7 @@ function LastRun({ at }: { at: number }) {
 
 afterEach(() => {
   vi.restoreAllMocks();
+  clerk.loaded = false;
 });
 
 describe('fmtDate / fmtDateTime are time-zone independent', () => {
@@ -119,6 +175,79 @@ describe('server render (renderToString) is identical across zones', () => {
       withTz(tz, () => renderToString(<NaiveDealMeta createdAt={NEAR_MIDNIGHT_ISO} />)),
     );
     expect(html[0]).not.toBe(html[1]);
+  });
+});
+
+// ─── Clerk-timed persona (the production #418 ×3 / #423 source) ───────────
+function RoleProbe() {
+  const role = useCurrentRole();
+  const user = useCurrentUser();
+  return (
+    <div>
+      <span data-testid="role">{role}</span>
+      <span data-testid="name">{user.name}</span>
+    </div>
+  );
+}
+
+describe('Clerk-backed shell renders the server placeholder on the client’s first render', () => {
+  it('server HTML (Clerk not loaded) carries the placeholder, never the persona', () => {
+    clerk.loaded = false;
+    const server = renderToString(<Sidebar />);
+    expect(server).not.toContain('Prem');
+    expect(server).not.toContain('prem@fondok.test');
+    expect(server).not.toContain('Admin');
+    expect(server).not.toContain('/admin/cost'); // admin-only nav absent
+  });
+
+  it('client first render with clerk-js ALREADY loaded is byte-identical to the server render', () => {
+    clerk.loaded = false;
+    const server = renderToString(<Sidebar />);
+    clerk.loaded = true; // warm load: isLoaded:true before React hydrates
+    const clientFirstRender = renderToString(<Sidebar />); // no effects run = pre-effect render
+    expect(clientFirstRender).toBe(server);
+  });
+
+  it('hydrating the server HTML with Clerk loaded raises NO recoverable error, then the persona appears after mount', async () => {
+    clerk.loaded = false;
+    const container = document.createElement('div');
+    container.innerHTML = renderToString(<Sidebar />);
+    document.body.appendChild(container);
+
+    clerk.loaded = true;
+    const recoverable: unknown[] = [];
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
+    let root: ReturnType<typeof hydrateRoot> | null = null;
+    await act(async () => {
+      root = hydrateRoot(container, <Sidebar />, {
+        onRecoverableError: (e) => recoverable.push(e),
+      });
+    });
+    const hydrationErrors = consoleError.mock.calls.filter((c) =>
+      /hydrat|did not match|server-rendered/i.test(String(c[0])),
+    );
+    expect(recoverable).toEqual([]);
+    expect(hydrationErrors).toEqual([]);
+    // After effects (mount) the gate releases and the real persona renders.
+    expect(container.textContent).toContain('Prem Kr');
+    expect(container.textContent).toContain('prem@fondok.test');
+    expect(container.textContent).toContain('Admin');
+    await act(async () => {
+      root!.unmount();
+    });
+    container.remove();
+  });
+
+  it('admin role (adminOnly tabs / nav) is "unknown" until mount even when Clerk reports org:admin', async () => {
+    clerk.loaded = true;
+    // Pre-effect render = what the client's hydration pass sees.
+    const first = renderToString(<RoleProbe />);
+    expect(first).toContain('>unknown<');
+    expect(first).not.toContain('Prem');
+    // A full client render (effects run) releases to the real role + persona.
+    render(<RoleProbe />);
+    expect(await screen.findByTestId('role')).toHaveTextContent('org:admin');
+    expect(screen.getByTestId('name')).toHaveTextContent('Prem Kr');
   });
 });
 
