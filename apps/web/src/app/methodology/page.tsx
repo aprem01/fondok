@@ -168,7 +168,7 @@ export default function MethodologyPage() {
               Set via the Overview inline editor. Wins over every other source.
             </BadgeRow>
             <BadgeRow source="str_forecast" name="STR Forecast">
-              Year-1 occupancy &amp; ADR seeded from STR — the Market tab&apos;s &quot;Use STR rates in the model&quot; writes the comp-set rates the card shows as explicit overrides (note: &quot;STR comp-set market rates (Market tab)&quot;), else the subject TTM or the BASE forward forecast. Financials → Projections shows &quot;Active basis: Market / STR · Revert&quot; only when the rates carry this tag.
+              Year-1 occupancy &amp; ADR seeded from STR — the Market tab&apos;s &quot;Use STR rates in the model&quot; writes the comp-set rates the card shows as explicit overrides (note: &quot;STR comp-set market rates (Market tab)&quot;), else the subject TTM or the BASE forward forecast. Financials → Projections shows &quot;Active basis: Market / STR · Revert&quot; only when the rates carry this tag, and the Market tab&apos;s STR card reads the same tags — &quot;STR rates active&quot;, &quot;STR rates unavailable — using T-12 base&quot;, or &quot;Pending re-run&quot; when the worker has not tagged the rates yet — never the request flag alone.
             </BadgeRow>
             <BadgeRow source="str_forecast_unavailable" name="STR Unavailable">
               STR rates were requested but could not populate (no STR Trend extraction, coverage too low, or a loader failure). The model stays on the T-12 base and says so — the STR seed is never silently &quot;active&quot;.
@@ -198,6 +198,10 @@ export default function MethodologyPage() {
             <li>
               <span className="font-semibold text-ink-900">Outputs — “how was this computed?”</span>{' '}
               Modeled values (rooms &amp; total revenue, NOI, GOP, debt service, DSCR, equity multiple, gross sale, IRR) hover to show the exact formula plus every named input, and each input chains one hop further — back to a source document, a seed/benchmark, an analyst override, or another computed value. Follow any number to ground.
+            </li>
+            <li>
+              <span className="font-semibold text-ink-900">NOI pin (reconciliation override).</span>{' '}
+              A deal can carry <code>noi_override_by_year</code> — an analyst-entered per-year NOI schedule (the FON-67 lever used to reconcile to a source model) — and optionally <code>terminal_noi_override</code> for the exit-year reversion NOI. While either is set, the Debt and Returns engines read that schedule instead of the operating model, so RevPAR-growth / expense edits do not move NOI. Financials → Projections shows an &quot;NOI pinned to an analyst schedule&quot; notice whenever the pin is present (and says when terminal NOI is also pinned); <b>Clear pin</b> deletes the override(s) from <code>field_overrides</code> and re-runs the model, after which NOI follows the operating assumptions again.
             </li>
             <li>
               <span className="font-semibold text-ink-900">IRR is calculated, and says so.</span>{' '}

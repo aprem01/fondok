@@ -15,6 +15,52 @@ export const fmtMillions = (n: number, decimals = 1) => `$${(n / 1e6).toFixed(de
 export const fmtThousands = (n: number) => `$${(n / 1e3).toFixed(0)}K`;
 export const cn = (...classes: (string | false | null | undefined)[]) => classes.filter(Boolean).join(' ');
 
+// ─── Deterministic date formatting (SSR-safe) ────────────────────────────────
+//
+// `new Date(iso).toLocaleDateString()` renders differently on the server
+// (UTC, server locale) and in the browser (user TZ + locale) — a React
+// hydration mismatch (#418 → #423 root fallback in production) on any page
+// that renders a timestamp during SSR. These helpers pin locale + zone so the
+// server HTML and the client's first render are byte-identical. Dates render
+// as UTC calendar dates: a deal's ``created_at`` / ``updated_at`` is an audit
+// stamp, not a local appointment, so the zone pin is honest. Anything that is
+// inherently client-only (relative "3m ago", localStorage state) must render
+// after mount instead — see ``lib/hooks/useMounted``.
+
+const DATE_FMT = new Intl.DateTimeFormat('en-US', {
+  month: 'numeric',
+  day: 'numeric',
+  year: 'numeric',
+  timeZone: 'UTC',
+});
+const DATE_TIME_FMT = new Intl.DateTimeFormat('en-US', {
+  month: 'numeric',
+  day: 'numeric',
+  year: 'numeric',
+  hour: 'numeric',
+  minute: '2-digit',
+  timeZone: 'UTC',
+  timeZoneName: 'short',
+});
+
+function toDate(v: string | number | Date | null | undefined): Date | null {
+  if (v == null || v === '') return null;
+  const d = v instanceof Date ? v : new Date(v);
+  return Number.isFinite(d.getTime()) ? d : null;
+}
+
+/** ``M/D/YYYY`` (UTC, en-US) — identical on server and client; ``—`` when unparseable. */
+export function fmtDate(v: string | number | Date | null | undefined): string {
+  const d = toDate(v);
+  return d ? DATE_FMT.format(d) : '—';
+}
+
+/** ``M/D/YYYY, h:mm AM UTC`` — deterministic replacement for ``toLocaleString()``. */
+export function fmtDateTime(v: string | number | Date | null | undefined): string {
+  const d = toDate(v);
+  return d ? DATE_TIME_FMT.format(d) : '—';
+}
+
 /**
  * Format one extracted field value using its unit + field name — occupancy /
  * *_pct / margins render as percent, USD renders $/K/M, ratios/percent convert,

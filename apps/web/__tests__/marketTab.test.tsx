@@ -117,8 +117,21 @@ vi.mock('@/lib/hooks/useDeal', () => ({
   }),
 }));
 
+// Stable spy so the STR card's "Re-run model" action can be asserted.
+const engineRunSpy = vi.fn(async () => {});
 vi.mock('@/lib/hooks/useEngineRun', () => ({
-  useEngineRun: () => ({ run: vi.fn(async () => {}), status: 'idle' }),
+  useEngineRun: () => ({ run: engineRunSpy, status: 'idle' }),
+}));
+
+// FON-61 (D4) — the STR card reads the WORKER's source tags (settable per
+// test), exactly like Financials → Projections. ``mockProvSettled`` = whether
+// the provenance fetch has finished (false → "Checking model basis…").
+let mockSources: Record<string, string> = {};
+let mockProvSettled = true;
+vi.mock('@/lib/hooks/useDealProvenance', () => ({
+  useSource: (key: string | undefined) =>
+    key && mockSources[key] ? { source: mockSources[key], value: null } : null,
+  useProvenanceState: () => ({ ready: Object.keys(mockSources).length > 0, settled: mockProvSettled }),
 }));
 
 // Keep the REAL getEngineField; swap the hook to serve no outputs (context
@@ -142,8 +155,13 @@ import { STR_MARKET_OVERRIDE_NOTE } from '@/lib/provenance';
 beforeEach(() => {
   cleanup();
   mockOverrides = {};
+  mockSources = {};
+  mockProvSettled = true;
+  engineRunSpy.mockClear();
   vi.mocked(api.deals.update).mockClear();
 });
+
+const STR_FLAG = { value: true, note: 'STR market rates enabled from the Market tab' };
 
 // FON-61 (D4) — Market → Financials propagation is EXPLICIT: "Use STR rates"
 // writes starting_occupancy / starting_adr = the comp-set values the card
@@ -174,12 +192,15 @@ describe('MarketTab — "Use STR rates in the model" writes explicit Year-1 over
 
   it('"Revert" deletes the flag and the STR-noted keys, keeping an analyst override on the same key', async () => {
     mockOverrides = {
-      revenue_seed_from_str_forecast: { value: true, note: 'STR market rates enabled from the Market tab' },
+      revenue_seed_from_str_forecast: STR_FLAG,
       starting_occupancy: { value: 0.692, note: STR_MARKET_OVERRIDE_NOTE },
       // The analyst later pinned ADR themselves — that intent must survive.
       starting_adr: { value: 310, note: 'Broker guidance' },
       mgmt_fee_pct: { value: 0.03, note: 'Analyst' },
     };
+    // The worker tags the STR-noted key ``str_forecast`` and the analyst's own
+    // ADR override ``analyst_override`` — occupancy on STR = basis is active.
+    mockSources = { starting_occupancy: 'str_forecast', starting_adr: 'analyst_override' };
     render(<MarketTab projectId="deal-uuid-1" />);
     expect(await screen.findByText('STR rates active')).toBeInTheDocument();
 
@@ -191,6 +212,76 @@ describe('MarketTab — "Use STR rates in the model" writes explicit Year-1 over
       starting_adr: { value: 310, note: 'Broker guidance' },
       mgmt_fee_pct: { value: 0.03, note: 'Analyst' },
     });
+  });
+});
+
+// The "STR rates" card is TAG-HONEST: its state is the worker's source tag on
+// starting_occupancy / starting_adr (the same tags Financials → Projections
+// reads), never the ``revenue_seed_from_str_forecast`` flag alone.
+describe('MarketTab — the STR rates card reads the worker source tags, not the flag', () => {
+  it('flag on + str_forecast tag → "STR rates active"', async () => {
+    mockOverrides = { revenue_seed_from_str_forecast: STR_FLAG };
+    mockSources = { starting_occupancy: 'str_forecast', starting_adr: 'str_forecast' };
+    render(<MarketTab projectId="deal-uuid-1" />);
+    expect(await screen.findByTestId('str-card-active')).toHaveTextContent('STR rates active');
+    expect(screen.queryByTestId('str-card-unavailable')).not.toBeInTheDocument();
+    expect(screen.queryByTestId('str-card-pending')).not.toBeInTheDocument();
+  });
+
+  it('flag on + str_forecast_unavailable tag → honest "STR rates unavailable — using T-12 base"; Clear STR request drops the flag', async () => {
+    mockOverrides = {
+      revenue_seed_from_str_forecast: STR_FLAG,
+      mgmt_fee_pct: { value: 0.03, note: 'Analyst' },
+    };
+    mockSources = {
+      revenue_seed_from_str_forecast: 'str_forecast_unavailable',
+      starting_occupancy: 't12_actual',
+      starting_adr: 't12_actual',
+    };
+    render(<MarketTab projectId="deal-uuid-1" />);
+    const card = await screen.findByTestId('str-card-unavailable');
+    expect(card).toHaveTextContent('STR rates unavailable — using T-12 base');
+    expect(card).toHaveTextContent('the model is on the T-12 base');
+    expect(screen.queryByText('STR rates active')).not.toBeInTheDocument();
+
+    // Same write as Revert: the flag goes, unrelated overrides survive.
+    fireEvent.click(screen.getByText('Clear STR request'));
+    await waitFor(() => expect(api.deals.update).toHaveBeenCalledTimes(1));
+    const [, body] = vi.mocked(api.deals.update).mock.calls[0] as unknown as [string, { field_overrides: Record<string, unknown> }];
+    expect(body.field_overrides).toEqual({ mgmt_fee_pct: { value: 0.03, note: 'Analyst' } });
+  });
+
+  it('flag on + NO tag from the worker → "Pending re-run", never "active"; Re-run model triggers the run', async () => {
+    mockOverrides = { revenue_seed_from_str_forecast: STR_FLAG };
+    mockSources = {}; // provenance loaded, but the worker returned no tag for these keys
+    render(<MarketTab projectId="deal-uuid-1" />);
+    const card = await screen.findByTestId('str-card-pending');
+    expect(card).toHaveTextContent('Pending re-run');
+    expect(screen.queryByText('STR rates active')).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByText('Re-run model'));
+    await waitFor(() => expect(engineRunSpy).toHaveBeenCalledTimes(1));
+    expect(api.deals.update).not.toHaveBeenCalled(); // re-run writes nothing
+  });
+
+  it('flag on while the provenance map is still loading → "Checking model basis…" (no re-run offered yet)', async () => {
+    mockOverrides = { revenue_seed_from_str_forecast: STR_FLAG };
+    mockSources = {};
+    mockProvSettled = false;
+    render(<MarketTab projectId="deal-uuid-1" />);
+    const card = await screen.findByTestId('str-card-pending');
+    expect(card).toHaveTextContent('Checking model basis…');
+    expect(screen.queryByText('Re-run model')).not.toBeInTheDocument();
+    expect(screen.queryByText('STR rates active')).not.toBeInTheDocument();
+  });
+
+  it('flag off → the "Model input" card with "Use STR rates in the model", whatever the tags say', async () => {
+    mockOverrides = {};
+    mockSources = { starting_occupancy: 't12_actual', starting_adr: 't12_actual' };
+    render(<MarketTab projectId="deal-uuid-1" />);
+    expect(await screen.findByText('Use STR rates in the model')).toBeInTheDocument();
+    expect(screen.queryByTestId('str-card-active')).not.toBeInTheDocument();
+    expect(screen.queryByTestId('str-card-pending')).not.toBeInTheDocument();
   });
 });
 

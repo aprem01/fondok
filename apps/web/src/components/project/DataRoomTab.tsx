@@ -30,7 +30,7 @@ import { useEngineOutputs } from '@/lib/hooks/useEngineOutputs';
 import { useEngineRun } from '@/lib/hooks/useEngineRun';
 import { useToast } from '@/components/ui/Toast';
 import { useCurrentRole } from '@/lib/auth';
-import { cn } from '@/lib/format';
+import { cn, fmtDate } from '@/lib/format';
 import { humanizeFieldName } from '@/lib/fieldLabels';
 import { ProvenanceDot, SectionCard, palette, radius } from '@/components/design';
 import { CoachMark } from '@/components/help/CoachMark';
@@ -487,7 +487,7 @@ export default function DataRoomTab({ projectId }: { projectId: number | string 
           status: statusLabel(d.status),
           rawStatus: d.status,
           size: formatBytes(d.size_bytes),
-          date: d.uploaded_at ? new Date(d.uploaded_at).toLocaleDateString() : '—',
+          date: d.uploaded_at ? fmtDate(d.uploaded_at) : '—',
           fields: fieldList.length,
           confidence: Math.round(overall * 100),
           populates: [],

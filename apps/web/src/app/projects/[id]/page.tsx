@@ -15,7 +15,7 @@ import { ErrorBoundary } from '@/components/ui/ErrorBoundary';
 import KebabMenu from '@/components/ui/KebabMenu';
 import { useToast } from '@/components/ui/Toast';
 import { projects } from '@/lib/mockData';
-import { cn } from '@/lib/format';
+import { cn, fmtDate } from '@/lib/format';
 import { useDeal } from '@/lib/hooks/useDeal';
 import { ProvenanceProvider } from '@/lib/hooks/useDealProvenance';
 import { ValueTraceProvider } from '@/lib/hooks/useValueTrace';
@@ -257,8 +257,13 @@ export default function ProjectDetailPage() {
     aiConfidence: Math.round((deal.ai_confidence ?? 0) * 100),
     assignee: '—',
     docs: '0/0',
-    updatedAt: deal.updated_at ? new Date(deal.updated_at).toLocaleDateString() : '—',
-    createdAt: deal.created_at ? new Date(deal.created_at).toLocaleDateString() : undefined,
+    // Deterministic (UTC / en-US). ``toLocaleDateString()`` depends on the
+    // renderer's zone + locale, so any render path that has ``deal`` on both
+    // the server and the first client render would hydrate-mismatch (React
+    // #418 → #423). Today ``deal`` only arrives client-side, but pin it anyway
+    // so the header date can never diverge from the server or by viewer zone.
+    updatedAt: deal.updated_at ? fmtDate(deal.updated_at) : '—',
+    createdAt: deal.created_at ? fmtDate(deal.created_at) : undefined,
     noDocs: true,
   } : (isMockId && !workerConnected ? projects[0] : null));
 
