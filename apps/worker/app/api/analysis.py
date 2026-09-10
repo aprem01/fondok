@@ -27,6 +27,7 @@ from __future__ import annotations
 import json
 import logging
 from datetime import UTC, datetime
+from functools import lru_cache
 from typing import Annotated, Any, Literal
 from uuid import UUID, uuid4
 
@@ -82,10 +83,10 @@ class VarianceRawFieldOut(BaseModel):
     """One raw broker-field comparison folded into a consolidated flag.
 
     FON-54a: the IC-facing flag is one-per-concept; every raw extractor
-    path that fed it (``broker_proforma.rooms_revenue_usd``,
-    ``broker.rooms_revenue``, a flat ``rooms_revenue_usd`` …) is kept here
-    with its own numbers + rule so the "Technical detail" disclosure can
-    show exactly what was reconciled. Never the IC-facing title.
+    path that fed it (the proforma path, the ``broker.*`` path, the flat
+    unit-suffixed key …) is kept here with its own numbers + rule so the
+    "Technical detail" disclosure can show exactly what was reconciled.
+    Never the IC-facing title.
     """
 
     model_config = ConfigDict(extra="forbid")
@@ -168,40 +169,65 @@ class VarianceReportResponse(BaseModel):
 
 # ──────────────── FON-54a: consolidate variance flags by concept ────────────────
 #
-# ``_broker_fields_from_extraction`` admits every ``broker_proforma.*`` /
-# ``broker.*`` path *and* any flat key in ``_BROKER_RULE_BY_FIELD``, so one
-# T-12 line (rooms revenue) can produce three flags with machine-named
-# titles. The IC memo wants one flag per business concept, a readable label,
-# the max severity across the duplicates, and an honest statement of what
-# the delta means for NOI. Pure + deterministic; the raw rows survive in
-# ``raw_fields`` for the Technical-detail disclosure.
+# ``_broker_fields_from_extraction`` admits every explicitly-broker path *and*
+# any flat key in the agent's rule table, so one T-12 line (rooms revenue) can
+# produce three flags with machine-named titles. The IC memo wants one flag
+# per business concept, a readable label, the max severity across the
+# duplicates, and an honest statement of what the delta means for NOI. Pure +
+# deterministic; the raw rows survive in ``raw_fields`` for the
+# Technical-detail disclosure.
+#
+# Phase 1.3d: the concept catalog below and the grouping key are the concept
+# registry's answers (``bindings.variance_concept`` and
+# ``registry.concept_for_path``) — this module no longer keeps its own copy.
 
-# concept key → (business-readable label, impact basis). ``"noi"`` is
-# reserved for the concepts whose delta IS an NOI delta.
-_VARIANCE_CONCEPTS: dict[str, tuple[str, VarianceImpactBasis]] = {
-    "noi": ("NOI", "noi"),
-    "gop": ("GOP", "noi"),
-    "rooms_revenue": ("Rooms revenue", "revenue"),
-    "fb_revenue": ("F&B revenue", "revenue"),
-    "other_revenue": ("Other revenue", "revenue"),
-    "resort_fees": ("Resort fees", "revenue"),
-    "total_revenue": ("Total revenue", "revenue"),
-    "occupancy": ("Occupancy", "revenue"),
-    "adr": ("ADR", "revenue"),
-    "revpar": ("RevPAR", "revenue"),
-    "departmental_expenses": ("Departmental expenses", "expense"),
-    "undistributed_expenses": ("Undistributed expenses", "expense"),
-    "mgmt_fee": ("Management fee", "expense"),
-    "ffe_reserve": ("FF&E reserve", "expense"),
-    "fixed_charges": ("Fixed charges", "expense"),
-    "insurance": ("Insurance", "expense"),
-    "property_taxes": ("Property taxes", "expense"),
-    "broker_adr_growth_vs_market": ("ADR growth vs. market forecast", "other"),
-    "broker_revpar_growth_vs_market": ("RevPAR growth vs. market forecast", "other"),
+
+@lru_cache(maxsize=1)
+def _variance_concepts() -> dict[str, tuple[str, VarianceImpactBasis]]:
+    """concept key → (business-readable label, impact basis).
+
+    Straight from ``bindings.variance_concept``; ``"noi"`` as the impact
+    basis is reserved (in the registry) for the concepts whose delta IS an
+    NOI delta.
+    """
+    from ..ontology.registry import get_registry
+
+    out: dict[str, tuple[str, VarianceImpactBasis]] = {}
+    for concept in get_registry().concepts.values():
+        binding = concept.bindings.variance_concept
+        if binding is not None:
+            out[binding.key] = (binding.label, binding.impact_basis)
+    return out
+
+
+@lru_cache(maxsize=1)
+def _ratio_concepts() -> frozenset[str]:
+    """Concepts whose values are ratios (delta_pct is absolute points, not pct)."""
+    from ..ontology.registry import get_registry
+
+    return frozenset(
+        c.bindings.variance_concept.key
+        for c in get_registry().concepts.values()
+        if c.bindings.variance_concept is not None and c.unit == "ratio"
+    )
+
+
+#: Pre-1.3d names, resolved lazily so importing this router never pulls the
+#: registry in at import time (``api/ontology.py`` keeps the same contract: a
+#: broken ``concepts.yaml`` degrades that endpoint and ``/health``, it does not
+#: stop the worker booting).
+_LAZY_VOCABULARY: dict[str, Any] = {
+    "_VARIANCE_CONCEPTS": _variance_concepts,
+    "_RATIO_CONCEPTS": _ratio_concepts,
 }
 
-# Concepts whose values are ratios (delta_pct is absolute points, not pct).
-_RATIO_CONCEPTS: frozenset[str] = frozenset({"occupancy"})
+
+def __getattr__(name: str) -> Any:
+    build = _LAZY_VOCABULARY.get(name)
+    if build is None:
+        raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+    return build()
+
 
 _SEVERITY_RANK: dict[str, int] = {"critical": 2, "warn": 1, "warning": 1, "info": 0}
 
@@ -219,19 +245,15 @@ def _severity_rank(severity: str | None) -> int:
 def variance_concept(field: str) -> str:
     """Canonical concept key for a raw broker field path.
 
-    ``broker_proforma.rooms_revenue_usd`` / ``broker.rooms_revenue`` /
-    ``rooms_revenue_usd`` → ``rooms_revenue``; ``occupancy_pct`` →
-    ``occupancy``. Reuses the agent's ``_normalize_field_key`` so the
-    grouping matches how the flags were built.
+    The proforma path, the ``broker.*`` path and the flat unit-suffixed key
+    for one line all collapse onto that line's registry concept key
+    (``rooms_revenue``); an occupancy path onto ``occupancy``. Delegates to
+    the agent (``registry.concept_for_path`` → ``bindings.variance_concept``)
+    so the grouping matches how the flags were built.
     """
-    from ..agents.variance import _normalize_field_key
+    from ..agents.variance import variance_field_concept
 
-    key = _normalize_field_key(field)
-    for suffix in ("_usd", "_pct"):
-        if key.endswith(suffix) and len(key) > len(suffix):
-            key = key[: -len(suffix)]
-            break
-    return key
+    return variance_field_concept(field)
 
 
 def _concept_label_fallback(concept: str) -> str:
@@ -254,13 +276,13 @@ def _concept_label_fallback(concept: str) -> str:
 
 
 def _fmt_concept_value(concept: str, value: float) -> str:
-    if concept in _RATIO_CONCEPTS:
+    if concept in _ratio_concepts():
         return f"{value:.1%}"
     return f"${value:,.0f}"
 
 
 def _fmt_concept_delta_pct(concept: str, delta_pct: float) -> str:
-    if concept in _RATIO_CONCEPTS:
+    if concept in _ratio_concepts():
         return f"{abs(delta_pct) * 100:.1f} pts"
     return f"{abs(delta_pct):.1%}"
 
@@ -342,7 +364,7 @@ def consolidate_variance_flags(
             pool,
             key=lambda m: (_severity_rank(m.severity), abs(m.delta_pct or 0.0)),
         )
-        label, basis = _VARIANCE_CONCEPTS.get(key, (_concept_label_fallback(key), "other"))
+        label, basis = _variance_concepts().get(key, (_concept_label_fallback(key), "other"))
         raw = [
             VarianceRawFieldOut(
                 field=m.field,
@@ -494,11 +516,11 @@ async def get_variance(
     # FON-54a broker-side admission: pull every extraction row on the deal
     # WITH its source document, and admit as the broker's claim only what
     # actually is one (``strict=True`` — see ``_broker_fields_from_extraction``).
-    # On Sam's deal the old document-blind scan admitted a 2019 P&L's
-    # ``p_and_l_usali.gop``, a 2023 P&L's ``ttm_summary_per_om.occupancy_pct``
-    # and the OM's ``ttm_performance.segment.*`` comp-set rows as broker
-    # figures. Rejected rows are kept (with the reason) for the Technical
-    # detail so the report is honest about what was excluded.
+    # On Sam's deal the old document-blind scan admitted a 2019 P&L's bare
+    # GOP line, a 2023 P&L row written on the OM's summary-block path, and
+    # the OM's own comp-set segment rows as broker figures. Rejected rows are
+    # kept (with the reason) for the Technical detail so the report is honest
+    # about what was excluded.
     rows = await session.execute(
         text(
             """
@@ -618,7 +640,7 @@ async def get_variance(
     # over-projecting forward growth.
     market_flags = await _broker_vs_market_flags(
         session, deal_id=str(deal_id), tenant_id=str(tenant_id),
-        broker_proforma=broker, actuals=actuals,
+        broker_claim=broker, actuals=actuals,
     )
     raw_flags.extend(market_flags)
 
@@ -652,7 +674,7 @@ async def _broker_vs_market_flags(
     *,
     deal_id: str,
     tenant_id: str,
-    broker_proforma: Any,
+    broker_claim: Any,
     actuals: Any,
 ) -> list[VarianceFlagOut]:
     """Compare broker-projected ADR / RevPAR growth vs CBRE Horizons.
@@ -684,11 +706,11 @@ async def _broker_vs_market_flags(
     market_adr_growth = market_overrides.get("adr_growth")
     if (
         market_adr_growth is not None
-        and getattr(broker_proforma, "adr", None)
+        and getattr(broker_claim, "adr", None)
         and getattr(actuals, "adr", None)
         and actuals.adr > 0
     ):
-        broker_adr_growth = (broker_proforma.adr / actuals.adr) - 1.0
+        broker_adr_growth = (broker_claim.adr / actuals.adr) - 1.0
         delta = broker_adr_growth - market_adr_growth
         severity = (
             "Critical" if abs(delta) >= 0.05
@@ -716,11 +738,11 @@ async def _broker_vs_market_flags(
     market_revpar_growth = market_overrides.get("revpar_growth")
     if (
         market_revpar_growth is not None
-        and getattr(broker_proforma, "revpar", None)
+        and getattr(broker_claim, "revpar", None)
         and getattr(actuals, "revpar", None)
         and actuals.revpar > 0
     ):
-        broker_revpar_growth = (broker_proforma.revpar / actuals.revpar) - 1.0
+        broker_revpar_growth = (broker_claim.revpar / actuals.revpar) - 1.0
         delta = broker_revpar_growth - market_revpar_growth
         severity = (
             "Critical" if abs(delta) >= 0.05
@@ -921,6 +943,32 @@ def _coerce_fields_blob(raw: Any) -> list[dict[str, Any]]:
     return out
 
 
+#: The registry's statement-period concepts, in the order the year probe
+#: reads them: the label first (it usually spells the year out), then the end
+#: date, then the start date.
+_PERIOD_METADATA_CONCEPTS: tuple[str, ...] = ("period_label", "period_ending", "period_start")
+
+
+@lru_cache(maxsize=1)
+def _period_metadata_keys() -> tuple[str, ...]:
+    """Extractor paths that carry a statement's period, statement-namespaced
+    paths first, then the bare keys — straight off the registry's aliases."""
+    from ..ontology.registry import get_registry
+
+    registry = get_registry()
+    concepts = [
+        registry.concepts[cid] for cid in _PERIOD_METADATA_CONCEPTS if cid in registry.concepts
+    ]
+    dotted = [
+        a.path
+        for c in concepts
+        for a in c.aliases.get("PNL_FAMILY", ())
+        if "." in a.path and "{" not in a.path
+    ]
+    bare = [a.path for c in concepts for a in c.aliases.get("*", ()) if "." not in a.path]
+    return tuple(dict.fromkeys([*dotted, *bare]))
+
+
 async def _load_historical_pnls(
     session: AsyncSession, *, deal_id: str, tenant_id: str
 ) -> list[dict[str, Any]]:
@@ -934,9 +982,9 @@ async def _load_historical_pnls(
        PNL/T12 family doc.
     2. For each row, flatten the ``fields`` list into ``{field_name: value}``.
     3. Resolve the document's year — preferring ``documents.fiscal_year``
-       (set explicitly by the wizard), falling back to the period
-       metadata fields the extractor emits
-       (``p_and_l_usali.period_ending`` / ``period_label``).
+       (set explicitly by the wizard), falling back to the period-metadata
+       fields the extractor emits (the registry's statement-period concepts —
+       see :func:`_period_metadata_keys`).
     4. When two docs land on the same year, the most-recent extraction
        wins (the SQL orders by ``created_at DESC`` and we keep the
        first row per year).
@@ -1000,13 +1048,7 @@ async def _load_historical_pnls(
             if isinstance(extracted, int) and 1900 < extracted < 2100:
                 year = extracted
         if year is None:
-            for key in (
-                "p_and_l_usali.period_label",
-                "p_and_l_usali.period_ending",
-                "p_and_l_usali.period_start",
-                "period_label",
-                "period_ending",
-            ):
+            for key in _period_metadata_keys():
                 v = flat.get(key)
                 if isinstance(v, str):
                     for token in v.replace("-", " ").replace("/", " ").split():
