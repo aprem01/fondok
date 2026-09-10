@@ -17,11 +17,23 @@ import {
 import { createElement } from 'react';
 import { api, isWorkerConnected } from '@/lib/api';
 import type { AssumptionSourcesResponse } from '@/lib/api';
+import { isReasonCode, type ReasonCode } from '@/lib/ontology/reasons.generated';
 
 export interface ResolvedSource {
+  /**
+   * SOURCE_* label. Empty string on the reason-only entry described in
+   * ``get`` below — falsy, exactly like the `null` those callers used to
+   * receive, so every `resolved?.source ? …` guard behaves as it did.
+   */
   source: string;
   value: number | string | boolean | null;
   docId?: string;
+  /**
+   * Phase 4.4 — why this key has no usable value, when the worker says so
+   * (`assumption_sources.reasons`, a bare ``ReasonCode``). Absent on older
+   * worker builds; `useRefusal` in `components/help/Refused` reads it.
+   */
+  reason?: ReasonCode | null;
 }
 
 interface ProvCtx {
@@ -70,11 +82,18 @@ export function ProvenanceProvider({
       get: (key: string) => {
         if (!data) return null;
         const src = data.sources?.[key];
-        if (src == null) return null;
+        const raw = data.reasons?.[key];
+        const reason = isReasonCode(raw) ? raw : null;
+        // A key the worker refused but never tagged with a source still has
+        // something to say, so it resolves — with an EMPTY source label,
+        // which is falsy and therefore invisible to every existing
+        // `resolved?.source` guard. No source and no reason stays null.
+        if (src == null && reason == null) return null;
         return {
-          source: typeof src === 'string' ? src : String(src),
+          source: src == null ? '' : typeof src === 'string' ? src : String(src),
           value: data.values?.[key] ?? null,
           docId: data.source_documents?.[key],
+          reason,
         };
       },
     }),

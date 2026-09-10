@@ -29,6 +29,7 @@ import { useToast } from '@/components/ui/Toast';
 import { cn } from '@/lib/format';
 import { Traced } from '@/components/help/Traced';
 import { Sourced } from '@/components/help/Sourced';
+import { useRefusal } from '@/components/help/Refused';
 import { useSource } from '@/lib/hooks/useDealProvenance';
 import { sourceKind, sourceLabel, sourceExplanation, KIND_TONE, isStrMarketOverride } from '@/lib/provenance';
 import { getEngineField, useEngineOutputs } from '@/lib/hooks/useEngineOutputs';
@@ -279,8 +280,17 @@ export default function ProjectionsSection({
   // here do NOT move NOI. ``terminal_noi_override`` likewise pins the exit-year
   // NOI for the reversion. Say so, and offer a one-click clear through the same
   // field_overrides PATCH path every other override in this section uses.
-  const noiPinned = hasListOverride(overrides, 'noi_override_by_year');
-  const terminalNoiPinned = ovValue(overrides, 'terminal_noi_override') != null;
+  // Phase 4.4 — the worker's own refusal code is the first authority: when it
+  // tags either pin key ``pin_active`` we take its word for it. The local
+  // field_overrides inspection stays as the fallback, so on a worker that does
+  // not emit the code yet (all of them, today) this resolves EXACTLY as it did
+  // before — same notice, same copy, same Clear-pin button.
+  const noiPinReason = useRefusal('noi_override_by_year');
+  const terminalNoiPinReason = useRefusal('terminal_noi_override');
+  const noiPinned =
+    noiPinReason === 'pin_active' || hasListOverride(overrides, 'noi_override_by_year');
+  const terminalNoiPinned =
+    terminalNoiPinReason === 'pin_active' || ovValue(overrides, 'terminal_noi_override') != null;
   const clearNoiPin = useCallback(async () => {
     const what = terminalNoiPinned
       ? 'the NOI schedule pin and the terminal NOI pin'

@@ -32,6 +32,7 @@ import { useDeal } from '@/lib/hooks/useDeal';
 import { useEngineRun } from '@/lib/hooks/useEngineRun';
 import { useEngineOutputs, getEngineField } from '@/lib/hooks/useEngineOutputs';
 import { useSource, useProvenanceState } from '@/lib/hooks/useDealProvenance';
+import { useRefusal } from '@/components/help/Refused';
 import { useToast } from '@/components/ui/Toast';
 import { STR_MARKET_OVERRIDE_NOTE, isStrMarketOverride } from '@/lib/provenance';
 import {
@@ -1173,11 +1174,19 @@ export default function MarketTab({ projectId }: { projectId: number | string })
   const adrSrc = useSource('starting_adr');
   const seedSrc = useSource('revenue_seed_from_str_forecast');
   const { settled: strBasisSettled } = useProvenanceState();
+  // Phase 4.4 — the worker's machine-readable refusal is read FIRST: a
+  // ``str_unavailable`` code on the seed key says "unavailable" outright. The
+  // ``str_forecast_unavailable`` source-tag sniff stays as the fallback, and
+  // the worker sets both together today, so this card is identical before and
+  // after the code ships. An ACTIVE tag still wins over either — a populated
+  // model is never re-labelled as a refusal.
+  const strSeedRefusal = useRefusal('revenue_seed_from_str_forecast');
   const strBasis: StrBasis = !strSeeded
     ? 'off'
     : occSrc?.source === 'str_forecast' || adrSrc?.source === 'str_forecast'
       ? 'active'
-      : [seedSrc, occSrc, adrSrc].some((s) => s?.source === 'str_forecast_unavailable')
+      : strSeedRefusal === 'str_unavailable'
+        || [seedSrc, occSrc, adrSrc].some((s) => s?.source === 'str_forecast_unavailable')
         ? 'unavailable'
         : 'pending';
   // FON-61 (D4) — Market → Financials propagation is EXPLICIT. "Use STR rates"

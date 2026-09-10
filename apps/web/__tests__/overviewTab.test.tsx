@@ -160,13 +160,25 @@ vi.mock('@/lib/api', async () => {
 
 vi.mock('@/components/ui/Toast', () => ({ useToast: () => ({ toast: vi.fn() }) }));
 
+// Phase 4.4 — the deal's refusal codes ride the assumption_sources payload
+// (`reasons[key]`, a bare ReasonCode) beside the source tags. EMPTY unless a
+// test sets one, which is exactly what a provider-free render resolved to
+// before, so every pre-existing expectation below is untouched.
+let mockReasons: Record<string, string> = {};
+vi.mock('@/lib/hooks/useDealProvenance', () => ({
+  useSource: (key: string | undefined) =>
+    key && mockReasons[key] ? { source: '', value: null, reason: mockReasons[key] } : null,
+}));
+
 import OverviewTab from '@/components/project/OverviewTab';
+import { REASONS } from '@/lib/ontology/reasons.generated';
 
 beforeEach(() => {
   cleanup();
   updateSpy.mockClear();
   timelineSpy.mockClear();
   engineRunSpy.mockClear();
+  mockReasons = {};
   overviewRef.value = {};
   mockDealRef.deal = {
     id: 'deal-uuid-1', keys: 132, deal_type: 'acquisition', return_profile: 'value-add',
@@ -467,3 +479,63 @@ describe('OverviewTab — FON-59 Project Name vs Property Name', () => {
     expect(engineRunSpy).not.toHaveBeenCalled();
   });
 });
+
+// ── Phase 4.4 — the bare dash learns to say why ──────────────────────────
+// An Overview row whose dash is attributable to exactly ONE assumption key
+// now reads the worker's `assumption_sources.reasons` entry for that key and
+// carries it on hover. With no code (every worker build today) the row's
+// markup is unchanged — the same em dash, the same DOM, no tooltip.
+describe('OverviewTab — a dash carries the worker\'s refusal code', () => {
+  // Rows the engine fixture leaves empty — a dash today, and the key that
+  // explains it. (Hold Period / Exit Cap Rate / LTV are wired too, but this
+  // fixture gives them values, so they are exercised by the "never turned
+  // into a refusal" case below instead.)
+  const WIRED: [label: string, key: string][] = [
+    ['Management Fee', 'mgmt_fee_pct'],
+    ['Stabilized Occupancy', 'starting_occupancy'],
+    ['Stabilized ADR', 'starting_adr'],
+  ];
+
+  it.each(WIRED)('%s reads the code on `%s` and still renders the em dash', (label, key) => {
+    mockReasons = { [key]: 'no_document' };
+    render(<OverviewTab projectId="deal-uuid-1" />);
+    const cell = rowFor(label).lastElementChild as HTMLElement;
+    const refusal = cell.querySelector('[data-refused]') as HTMLElement;
+    expect(refusal).toBeTruthy();
+    expect(refusal.getAttribute('data-refused')).toBe('no_document');
+    expect(refusal.getAttribute('aria-label')).toBe(REASONS.no_document.label);
+    // The value a tester reads is unchanged.
+    expect(rowValue(label)).toBe('—');
+  });
+
+  it.each(WIRED)('%s renders a plain dash with no code on `%s`', (label, key) => {
+    mockReasons = {}; // the worker has said nothing
+    render(<OverviewTab projectId="deal-uuid-1" />);
+    const cell = rowFor(label).lastElementChild as HTMLElement;
+    expect(cell.querySelector('[data-refused]')).toBeNull();
+    expect(rowValue(label)).toBe('—');
+    expect(key).toBeTruthy();
+  });
+
+  it.each([
+    ['Keys', 'keys', '132'],
+    ['Hold Period', 'hold_years', '5 years'],
+    ['Exit Cap Rate', 'exit_cap_rate', '7.00%'],
+  ])('%s HAS a value, so a code on `%s` never turns it into a refusal', (label, key, shown) => {
+    mockReasons = { [key]: 'no_document' };
+    render(<OverviewTab projectId="deal-uuid-1" />);
+    expect(rowValue(label)).toBe(shown);
+    expect((rowFor(label).lastElementChild as HTMLElement).querySelector('[data-refused]')).toBeNull();
+  });
+
+  it('an unwired dash row is left exactly as it was — no code is invented for it', () => {
+    // Franchise / Brand Fee has no single attributable assumption key, so it
+    // stays a bare dash even while other keys are refused.
+    mockReasons = { mgmt_fee_pct: 'no_source', starting_adr: 'no_source' };
+    render(<OverviewTab projectId="deal-uuid-1" />);
+    const cell = rowFor('Franchise / Brand Fee').lastElementChild as HTMLElement;
+    expect(cell.querySelector('[data-refused]')).toBeNull();
+    expect(rowValue('Franchise / Brand Fee')).toBe('—');
+  });
+});
+

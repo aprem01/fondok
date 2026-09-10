@@ -128,9 +128,16 @@ vi.mock('@/lib/hooks/useEngineRun', () => ({
 // the provenance fetch has finished (false → "Checking model basis…").
 let mockSources: Record<string, string> = {};
 let mockProvSettled = true;
+// Phase 4.4 — the worker's machine-readable refusal codes ride the SAME
+// assumption_sources payload as the source tags (`reasons[key]`, a bare
+// ReasonCode). Empty here unless a test sets one, so every pre-existing
+// expectation below sees exactly the object it saw before.
+let mockReasons: Record<string, string> = {};
 vi.mock('@/lib/hooks/useDealProvenance', () => ({
   useSource: (key: string | undefined) =>
-    key && mockSources[key] ? { source: mockSources[key], value: null } : null,
+    key && (mockSources[key] || mockReasons[key])
+      ? { source: mockSources[key] ?? '', value: null, reason: mockReasons[key] ?? null }
+      : null,
   useProvenanceState: () => ({ ready: Object.keys(mockSources).length > 0, settled: mockProvSettled }),
 }));
 
@@ -156,6 +163,7 @@ beforeEach(() => {
   cleanup();
   mockOverrides = {};
   mockSources = {};
+  mockReasons = {};
   mockProvSettled = true;
   engineRunSpy.mockClear();
   vi.mocked(api.deals.update).mockClear();
@@ -275,6 +283,52 @@ describe('MarketTab — the STR rates card reads the worker source tags, not the
     expect(screen.queryByText('STR rates active')).not.toBeInTheDocument();
   });
 
+  // Phase 4.4 — the card now reads the worker's REFUSAL CODE first and only
+  // then sniffs the source tag. Both paths must land on the same card, so the
+  // strip is identical before and after the worker starts emitting codes.
+  it('flag on + worker reason `str_unavailable` (no source tag at all) → the same unavailable card', async () => {
+    mockOverrides = { revenue_seed_from_str_forecast: STR_FLAG };
+    mockSources = {}; // the worker tagged nothing — the CODE is the whole signal
+    mockReasons = { revenue_seed_from_str_forecast: 'str_unavailable' };
+    render(<MarketTab projectId="deal-uuid-1" />);
+    const card = await screen.findByTestId('str-card-unavailable');
+    expect(card).toHaveTextContent('STR rates unavailable — using T-12 base');
+    expect(card).toHaveTextContent('the model is on the T-12 base');
+    // Same copy, same actions — the code changed nothing a tester can see.
+    expect(screen.getByText('Clear STR request')).toBeInTheDocument();
+    expect(screen.queryByTestId('str-card-pending')).not.toBeInTheDocument();
+    expect(screen.queryByTestId('str-card-active')).not.toBeInTheDocument();
+  });
+
+  it('flag on + the code ABSENT → falls back to the str_forecast_unavailable tag, same card', async () => {
+    mockOverrides = { revenue_seed_from_str_forecast: STR_FLAG };
+    mockSources = { revenue_seed_from_str_forecast: 'str_forecast_unavailable' };
+    mockReasons = {}; // every worker build today
+    render(<MarketTab projectId="deal-uuid-1" />);
+    expect(await screen.findByTestId('str-card-unavailable')).toHaveTextContent(
+      'STR rates unavailable — using T-12 base',
+    );
+    expect(screen.queryByTestId('str-card-pending')).not.toBeInTheDocument();
+  });
+
+  it('a populated model still wins: an active str_forecast tag is never re-labelled by a stale code', async () => {
+    mockOverrides = { revenue_seed_from_str_forecast: STR_FLAG };
+    mockSources = { starting_occupancy: 'str_forecast', starting_adr: 'str_forecast' };
+    mockReasons = { revenue_seed_from_str_forecast: 'str_unavailable' };
+    render(<MarketTab projectId="deal-uuid-1" />);
+    expect(await screen.findByTestId('str-card-active')).toHaveTextContent('STR rates active');
+    expect(screen.queryByTestId('str-card-unavailable')).not.toBeInTheDocument();
+  });
+
+  it('an unrelated reason code on the seed key does NOT flip the card to unavailable', async () => {
+    mockOverrides = { revenue_seed_from_str_forecast: STR_FLAG };
+    mockSources = {};
+    mockReasons = { revenue_seed_from_str_forecast: 'as_of_unknown' };
+    render(<MarketTab projectId="deal-uuid-1" />);
+    expect(await screen.findByTestId('str-card-pending')).toHaveTextContent('Pending re-run');
+    expect(screen.queryByTestId('str-card-unavailable')).not.toBeInTheDocument();
+  });
+
   it('flag off → the "Model input" card with "Use STR rates in the model", whatever the tags say', async () => {
     mockOverrides = {};
     mockSources = { starting_occupancy: 't12_actual', starting_adr: 't12_actual' };
@@ -347,3 +401,4 @@ describe('MarketTab — Market Overview awaiting-data em dashes', () => {
     expect(screen.getAllByText('69.2%').length).toBeGreaterThan(0); // 71.4% ÷ 1.032
   });
 });
+

@@ -152,6 +152,7 @@ vi.mock('@/lib/api', async () => {
 });
 
 import ICMemoTab from '@/components/project/ICMemoTab';
+import { REASONS } from '@/lib/ontology/reasons.generated';
 import type { Project } from '@/lib/mockData';
 
 const PROJECT = { id: 0, name: 'Kimpton Hotel' } as unknown as Project;
@@ -222,6 +223,49 @@ describe('ICMemoTab — IC recommendation is a decision, not an inference', () =
     render(<ICMemoTab project={PROJECT} />);
     expect(screen.getByText('Pending analyst decision')).toBeInTheDocument();
     expect(screen.getByText('Proceed with Conditions selected — confirm to record the decision')).toBeInTheDocument();
+  });
+});
+
+// Phase 4.4 — the pending recommendation is a REFUSAL carrying a machine
+// code, not a loose string. The words on screen are unchanged in both
+// directions: `REASONS.awaiting_analyst.label` IS "Pending analyst decision".
+describe('ICMemoTab — the pending recommendation carries its reason code', () => {
+  it('with the code ABSENT, falls back to awaiting_analyst and prints the canonical string', async () => {
+    fx.fieldOverrides = {}; // every worker build today
+    render(<ICMemoTab project={PROJECT} />);
+    const refusal = screen.getByTestId('ic-recommendation-refusal');
+    expect(refusal).toHaveTextContent('Pending analyst decision');
+    expect(refusal.getAttribute('data-refused')).toBe('awaiting_analyst');
+    expect(refusal.getAttribute('aria-label')).toBe(REASONS.awaiting_analyst.label);
+    expect(REASONS.awaiting_analyst.label).toBe('Pending analyst decision');
+
+    // The tooltip is the only thing that is new — the copy is the ontology's.
+    fireEvent.mouseEnter(refusal);
+    const tip = await screen.findByRole('tooltip');
+    expect(tip).toHaveTextContent(REASONS.awaiting_analyst.explanation);
+  });
+
+  it('reads a worker-supplied `recommendation_reason` when present', () => {
+    fx.fieldOverrides = { recommendation_reason: 'needs_review' };
+    render(<ICMemoTab project={PROJECT} />);
+    const refusal = screen.getByTestId('ic-recommendation-refusal');
+    expect(refusal.getAttribute('data-refused')).toBe('needs_review');
+    expect(refusal).toHaveTextContent(REASONS.needs_review.label);
+  });
+
+  it('ignores an unknown code from a newer worker and keeps the canonical string', () => {
+    fx.fieldOverrides = { recommendation_reason: 'brand_new_code' };
+    render(<ICMemoTab project={PROJECT} />);
+    const refusal = screen.getByTestId('ic-recommendation-refusal');
+    expect(refusal.getAttribute('data-refused')).toBe('awaiting_analyst');
+    expect(refusal).toHaveTextContent('Pending analyst decision');
+  });
+
+  it('a confirmed verdict is a decision, not a refusal — no refusal node at all', () => {
+    fx.fieldOverrides = { memo_recommendation_override: 'Proceed', memo_recommendation_confirmed: true };
+    render(<ICMemoTab project={PROJECT} />);
+    expect(screen.queryByTestId('ic-recommendation-refusal')).toBeNull();
+    expect(screen.getByText('✓ Analyst confirmed')).toBeInTheDocument();
   });
 });
 
@@ -372,3 +416,4 @@ describe('ICMemoTab — diligence (FON-54a consolidated flags)', () => {
     expect(updateSpy).not.toHaveBeenCalled(); // hydration never writes back
   });
 });
+

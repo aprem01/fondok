@@ -56,6 +56,7 @@ import { getEngineField, useEngineOutputs } from '@/lib/hooks/useEngineOutputs';
 import { useDeal } from '@/lib/hooks/useDeal';
 import { useEngineRun } from '@/lib/hooks/useEngineRun';
 import { useTraceGraph } from '@/lib/hooks/useValueTrace';
+import { Refused, useRefusal, REFUSAL_GLYPH } from '@/components/help/Refused';
 import { returnProfiles, positioningTiers, brandFamilies } from '@/lib/mockData';
 import {
   KpiTile,
@@ -153,6 +154,13 @@ interface RowDef {
   original?: { value: string; docName?: string | null; page?: number | null };
   /** FON-59 — analyst-input row persisted to a deal column (Project Name → deals.name). */
   dealField?: 'name';
+  /**
+   * Phase 4.4 — the canonical assumption key whose refusal explains this
+   * row's dash. Set it ONLY where the dash is attributable to exactly one
+   * key the worker tags in ``assumption_sources.reasons``; a row without it
+   * (or whose value is not the bare glyph) renders as it always has.
+   */
+  reasonKey?: string;
 }
 
 /** FON-59 — the field_overrides key the worker's market_overview honors as the Property Name. */
@@ -539,7 +547,7 @@ export default function OverviewTab({ projectId }: { projectId: number | string 
       doc('pType', 'Property Type', deal?.service ?? '—', 'Offering Memorandum', 'Property Overview'),
       doc('pLoc', 'Location', deal?.city ?? '—', 'Offering Memorandum', 'Location'),
       doc('pYear', 'Year Built', meta.year_built != null ? String(Math.round(meta.year_built)) : '—', 'Offering Memorandum', 'Property History'),
-      doc('pKeys', isDev ? 'Planned Keys' : 'Keys', keys != null ? String(keys) : '—', 'Offering Memorandum', 'Room Mix'),
+      doc('pKeys', isDev ? 'Planned Keys' : 'Keys', keys != null ? String(keys) : '—', 'Offering Memorandum', 'Room Mix', { reasonKey: 'keys' }),
       awa('pFloors', isDev ? 'Planned Floors' : 'Floors'),
       doc('pSF', isDev ? 'Planned SF' : 'Total SF', meta.gba_sf != null ? `${Math.round(meta.gba_sf).toLocaleString('en-US')} SF` : '—', 'Offering Memorandum', 'Building Summary'),
       awa('pTitle', 'Title / Ownership'),
@@ -554,7 +562,7 @@ export default function OverviewTab({ projectId }: { projectId: number | string 
         '→ Financials (historicals)', 'pl'),
       lnk('brand', 'Brand', brand || '—', '→ Investment Profile', ''),
       lnk('positioning', 'Positioning', positioningTiers.find((p) => p.id === positioningId)?.label ?? '—', '→ Investment Profile', ''),
-      lnk('mgmtFee', 'Management Fee', '—', '→ Financials', 'pl'),
+      lnk('mgmtFee', 'Management Fee', '—', '→ Financials', 'pl', { reasonKey: 'mgmt_fee_pct' }),
       lnk('franchiseFee', 'Franchise / Brand Fee', '—', '→ Financials', 'pl'),
     ];
 
@@ -583,7 +591,7 @@ export default function OverviewTab({ projectId }: { projectId: number | string 
 
     const capitalizationRows = (): RowDef[] => [
       lnk('loan', isDev ? 'Construction Loan' : 'Acquisition Loan', money(loan), '→ Debt (senior loan)', 'debt'),
-      lnk('ltv', 'LTV', pctv(ltv, 1), '→ Debt (capital structure)', 'debt'),
+      lnk('ltv', 'LTV', pctv(ltv, 1), '→ Debt (capital structure)', 'debt', { reasonKey: 'ltv' }),
       cal('ltc', 'LTC', pctv(ltc, 1), { formula: 'Loan ÷ Total Uses', inputs: [{ name: 'Loan', from: 'Debt module', kind: 'linked' }, { name: 'Total Uses', from: 'Calculated', kind: 'calc' }] }),
       lnk('bench', 'Benchmark', '—', '→ Debt (loan terms)', 'debt'),
       doc('spread', 'Spread over Benchmark', '—', 'Senior Loan Term Sheet', 'Pricing'),
@@ -596,18 +604,18 @@ export default function OverviewTab({ projectId }: { projectId: number | string 
     const stabilizationRows = (): RowDef[] => [
       ...(hasReno ? [lnk('renoImpact', 'Renovation Impact', '—', '→ Financials (disruption)', 'pl')] : []),
       awa('stabDate', 'Stabilization Date'),
-      lnk('stabOcc', 'Stabilized Occupancy', '—', '→ Financials (projections)', 'pl'),
-      lnk('stabADR', 'Stabilized ADR', '—', '→ Financials (projections)', 'pl'),
+      lnk('stabOcc', 'Stabilized Occupancy', '—', '→ Financials (projections)', 'pl', { reasonKey: 'starting_occupancy' }),
+      lnk('stabADR', 'Stabilized ADR', '—', '→ Financials (projections)', 'pl', { reasonKey: 'starting_adr' }),
       lnk('stabRev', 'Stabilized Revenue', '—', '→ Financials (projections)', 'pl'),
       lnk('stabNOI', 'Stabilized NOI', money(terminalNoi), '→ Financials (projections)', 'pl', { bold: true, trace: { engine: 'returns', path: 'terminal_noi' } }),
       cal('stabMargin', 'Stabilized NOI Margin', '—', { formula: 'Stabilized NOI ÷ Stabilized Revenue' }),
     ];
 
     const exitRows = (): RowDef[] => [
-      lnk('hold', 'Hold Period', has(holdYears) ? `${holdYears} years` : '—', '→ Investment (exit)', 'investment'),
+      lnk('hold', 'Hold Period', has(holdYears) ? `${holdYears} years` : '—', '→ Investment (exit)', 'investment', { reasonKey: 'hold_years' }),
       cal('exitDate', 'Exit Date', fmtISODate(timeline?.exit_date), { formula: 'Acquisition Date + Hold Period' }),
       lnk('fwdNOI', 'Forward 12-Month NOI', money(terminalNoi), '→ Financials (projections)', 'pl'),
-      lnk('exitCap', 'Exit Cap Rate', pctv(exitCap), '→ Investment (exit)', 'investment'),
+      lnk('exitCap', 'Exit Cap Rate', pctv(exitCap), '→ Investment (exit)', 'investment', { reasonKey: 'exit_cap_rate' }),
       cal('exitValue', 'Gross Exit Value', money(grossExit), { bold: true, trace: { engine: 'returns', path: 'gross_sale_price' }, formula: 'Forward NOI ÷ Exit Cap Rate', inputs: [{ name: 'Forward NOI', from: 'Financials → Projections', kind: 'linked' }, { name: 'Exit Cap Rate', from: 'Investment assumption', kind: 'input' }] }),
       cal('exitPerKey', 'Exit Value / Key', money(exitPerKey), { formula: 'Gross Exit Value ÷ Keys' }),
       lnk('salesPct', 'Disposition Costs', money(sellingCosts), '→ Returns', 'returns', { trace: { engine: 'returns', path: 'selling_costs' } }),
@@ -620,11 +628,11 @@ export default function OverviewTab({ projectId }: { projectId: number | string 
       lnk('pLoc', 'Location', deal?.city ?? '—', '→ Investment Profile', ''),
       lnk('brand', 'Brand', brand || '—', '→ Investment Profile', ''),
       lnk('positioning', 'Positioning', positioningTiers.find((p) => p.id === positioningId)?.label ?? '—', '→ Investment Profile', ''),
-      lnk('pKeys', 'Planned Keys', keys != null ? String(keys) : '—', '→ Investment Profile', ''),
+      lnk('pKeys', 'Planned Keys', keys != null ? String(keys) : '—', '→ Investment Profile', '', { reasonKey: 'keys' }),
       awa('pFloors', 'Planned Floors'),
       awa('pSF', 'Planned SF'),
       doc('pZoning', 'Zoning / Entitlement', '—', 'Zoning Report', 'Entitlement Status'),
-      lnk('mgmtFee', 'Management Fee', '—', '→ Financials', 'pl'),
+      lnk('mgmtFee', 'Management Fee', '—', '→ Financials', 'pl', { reasonKey: 'mgmt_fee_pct' }),
       lnk('franchiseFee', 'Franchise / Brand Fee', '—', '→ Financials', 'pl'),
     ];
     const landRows = (): RowDef[] => [
@@ -668,8 +676,8 @@ export default function OverviewTab({ projectId }: { projectId: number | string 
       cal('openDate', 'Opening Date', fmtISODate(timeline?.stabilization_date), { formula: 'Land Close + pre-construction + build' }),
       awa('ramp', 'Ramp-Up Period'),
       awa('stabDate', 'Stabilization Date'),
-      lnk('stabOcc', 'Stabilized Occupancy', '—', '→ Financials (projections)', 'pl'),
-      lnk('stabADR', 'Stabilized ADR', '—', '→ Financials (projections)', 'pl'),
+      lnk('stabOcc', 'Stabilized Occupancy', '—', '→ Financials (projections)', 'pl', { reasonKey: 'starting_occupancy' }),
+      lnk('stabADR', 'Stabilized ADR', '—', '→ Financials (projections)', 'pl', { reasonKey: 'starting_adr' }),
       cal('stabRevPAR', 'Stabilized RevPAR', '—', { formula: 'Stabilized Occupancy × Stabilized ADR' }),
       lnk('stabRev', 'Stabilized Revenue', '—', '→ Financials (projections)', 'pl'),
       lnk('stabNOI', 'Stabilized NOI', money(terminalNoi), '→ Financials (projections)', 'pl', { bold: true, trace: { engine: 'returns', path: 'terminal_noi' } }),
@@ -1085,6 +1093,11 @@ function OverviewRow({ row, onClick }: { row: RowDef; onClick: (e: React.MouseEv
   const color = valueColor(row.kind, !!row.bold, !!row.overridden);
   const showDot = row.kind === 'doc' || row.kind === 'linked' || row.state === 'needs_review';
   const underline = row.kind === 'input' || row.overridden ? 'underline dotted' : 'none';
+  // Phase 4.4 — a bare dash on a row whose assumption key the worker has
+  // refused gets the reason on hover. Null reason (every build today, and
+  // every row with no `reasonKey`) renders the glyph and nothing else.
+  const reason = useRefusal(row.reasonKey);
+  const refusable = row.value === REFUSAL_GLYPH && reason != null;
   // Awaiting rows are inert — unless they can be overridden / edited (FON-59).
   const interactive = row.kind !== 'awaiting' || !!row.overridePath || !!row.dealField;
   return (
@@ -1101,7 +1114,7 @@ function OverviewRow({ row, onClick }: { row: RowDef; onClick: (e: React.MouseEv
       <span style={{ display: 'flex', alignItems: 'center', gap: 6, flexShrink: 0 }}>
         {showDot && <ProvenanceDot state={row.state} size={8} review={row.state === 'needs_review'} />}
         <span style={{ color, fontWeight: row.bold ? 700 : 400, textDecoration: underline, fontVariantNumeric: 'tabular-nums', whiteSpace: 'nowrap' }}>
-          {row.value}
+          {refusable ? <Refused reason={reason} /> : row.value}
         </span>
       </span>
     </div>
