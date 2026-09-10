@@ -20,7 +20,7 @@
  *     the engine output is present.
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, fireEvent, cleanup } from '@testing-library/react';
+import { render, screen, fireEvent, cleanup, within } from '@testing-library/react';
 import type { EngineOutputsResponse } from '@/lib/api';
 
 vi.mock('next/navigation', () => ({
@@ -76,6 +76,26 @@ const OUTPUTS = {
   },
 } as unknown as EngineOutputsResponse;
 
+// Mutable handle so one test can serve an enriched envelope (the FON-67
+// additional-contribution fields) while the default fixture stays a run that
+// PREDATES them — the "—, never $0" contract.
+let activeOutputs: EngineOutputsResponse = OUTPUTS;
+function withPartnershipOutputs(patch: Record<string, unknown>): EngineOutputsResponse {
+  const base = OUTPUTS as unknown as {
+    engines: Record<string, unknown> & { partnership: { outputs: Record<string, unknown> } };
+  };
+  return {
+    ...base,
+    engines: {
+      ...base.engines,
+      partnership: {
+        ...base.engines.partnership,
+        outputs: { ...base.engines.partnership.outputs, ...patch },
+      },
+    },
+  } as unknown as EngineOutputsResponse;
+}
+
 // Keep the REAL getEngineField; only swap the hook to serve our fixture.
 vi.mock('@/lib/hooks/useEngineOutputs', async () => {
   const actual = await vi.importActual<typeof import('@/lib/hooks/useEngineOutputs')>(
@@ -84,7 +104,7 @@ vi.mock('@/lib/hooks/useEngineOutputs', async () => {
   return {
     ...actual,
     useEngineOutputs: () => ({
-      outputs: OUTPUTS,
+      outputs: activeOutputs,
       previous: null,
       loading: false,
       lastRunAt: null,
@@ -139,6 +159,7 @@ import PartnershipTab from '@/components/project/PartnershipTab';
 
 beforeEach(() => {
   cleanup();
+  activeOutputs = OUTPUTS;
   updateSpy.mockClear();
   engineRunSpy.mockClear();
   refreshDealSpy.mockClear();
@@ -221,5 +242,54 @@ describe('PartnershipTab — partner returns + cash flows', () => {
     // Reconciliation cards.
     expect(screen.getByText('Contributions, distributions and profit')).toBeInTheDocument();
     expect(screen.getByText('Invested equity')).toBeInTheDocument();
+  });
+});
+
+// FON-67 (D3) — "Additional contributions" is READ from the partnership engine
+// (gp_/lp_additional_contributions + total_contributions), never a hardcoded $0.
+describe('PartnershipTab — FON-67 additional contributions read from the engine', () => {
+  const row = (label: string) => screen.getByText(label).parentElement as HTMLElement;
+
+  it('renders "—" (never $0) when the run predates the additional-contribution fields', () => {
+    render(<PartnershipTab />);
+    fireEvent.click(screen.getByRole('tab', { name: 'Cash Flows' }));
+
+    for (const label of ['Additional contributions — GP', 'Additional contributions — LP', 'Additional contributions', 'Total invested equity']) {
+      expect(within(row(label)).getByText('—')).toBeInTheDocument();
+      expect(within(row(label)).queryByText('$0')).not.toBeInTheDocument();
+    }
+    // Pre-FON-67 ``contributed_equity`` was the close draw only — it is still
+    // the honest "Initial equity required".
+    expect(within(row('Initial equity required')).getByText('$18,836,676')).toBeInTheDocument();
+  });
+
+  it('shows the GP/LP split, the total, and dates a deficit-year draw as a contribution', () => {
+    activeOutputs = withPartnershipOutputs({
+      // contributed_equity now INCLUDES the draws (worker contract), so the
+      // close draw is total − additional.
+      gp_additional_contributions: 100_000,
+      lp_additional_contributions: 900_000,
+      total_contributions: 18_836_676,
+      // Year 2 is a deficit year — a pro-rata capital call, NOT a negative
+      // distribution.
+      gp_cash_flows: [100_000, -100_000, 300_000, 400_000, 3_583_668],
+      lp_cash_flows: [500_000, -900_000, 700_000, 800_000, 24_153_008],
+    });
+    render(<PartnershipTab />);
+    fireEvent.click(screen.getByRole('tab', { name: 'Cash Flows' }));
+
+    expect(within(row('Additional contributions — GP')).getByText('$100,000')).toBeInTheDocument();
+    expect(within(row('Additional contributions — LP')).getByText('$900,000')).toBeInTheDocument();
+    expect(within(row('Additional contributions')).getByText('$1,000,000')).toBeInTheDocument();
+    expect(within(row('Total invested equity')).getByText('$18,836,676')).toBeInTheDocument();
+    expect(within(row('Initial equity required')).getByText('$17,836,676')).toBeInTheDocument();
+    // Close row carries the initial draw only (total − additional).
+    expect(screen.getByText('$1,783,668')).toBeInTheDocument();
+    expect(screen.getByText('$16,053,008')).toBeInTheDocument();
+    // The draw never renders as a negative partner distribution.
+    expect(screen.queryByText('-$100,000')).not.toBeInTheDocument();
+    expect(screen.queryByText('-$900,000')).not.toBeInTheDocument();
+    // Stated on both the Invested-equity card and the grid footnote.
+    expect(screen.getAllByText(/dated pro-rata GP\/LP capital call/i).length).toBeGreaterThan(0);
   });
 });

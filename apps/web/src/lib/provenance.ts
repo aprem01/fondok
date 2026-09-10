@@ -19,7 +19,29 @@ const GROUNDED_SOURCES = new Set([
   'portfolio_pnl',
   'str_forecast',
 ]);
-const OVERRIDE_SOURCES = new Set(['analyst_override']);
+// FON-69 — ``adr_growth`` derived by the worker from an analyst RevPAR-growth
+// override is analyst intent, so it reads as an input / assumption (blue).
+const OVERRIDE_SOURCES = new Set(['analyst_override', 'derived_from_revpar_growth']);
+
+/**
+ * FON-61 (D4) — the EXACT note the Market tab writes on the explicit
+ * ``starting_occupancy`` / ``starting_adr`` field_overrides when "Use STR
+ * rates in the model" is clicked. The worker recognizes this note and tags
+ * those keys ``str_forecast`` (STR data) rather than a generic analyst
+ * override. Mirrors ``STR_MARKET_OVERRIDE_NOTE`` in
+ * apps/worker/app/services/engine_runner.py — keep the string identical.
+ */
+export const STR_MARKET_OVERRIDE_NOTE = 'STR comp-set market rates (Market tab)';
+
+/** True when a ``field_overrides`` entry is the Market tab's STR comp-set
+ *  seed (a structured ``{value, note}`` record carrying the exact note). */
+export function isStrMarketOverride(entry: unknown): boolean {
+  return (
+    typeof entry === 'object' &&
+    entry !== null &&
+    (entry as { note?: unknown }).note === STR_MARKET_OVERRIDE_NOTE
+  );
+}
 
 export function sourceKind(source: string): SourceKind {
   if (OVERRIDE_SOURCES.has(source)) return 'override';
@@ -38,6 +60,11 @@ export const SOURCE_LABEL: Record<string, string> = {
   om_broker: 'OM broker',
   analyst_override: 'Analyst override',
   str_forecast: 'STR forecast',
+  // FON-61 (D4) — the STR seed was requested but could not populate; the
+  // value shown fell back to the T-12 base.
+  str_forecast_unavailable: 'STR unavailable',
+  // FON-69 — adr_growth derived from an analyst RevPAR-growth override.
+  derived_from_revpar_growth: 'Derived from RevPAR growth',
 };
 
 export function sourceLabel(source: string): string {
@@ -59,6 +86,10 @@ export function sourceExplanation(source: string): string {
       return 'From your portfolio P&L library.';
     case 'str_forecast':
       return 'From the STR / comp-set forecast.';
+    case 'str_forecast_unavailable':
+      return 'STR rates were requested but could not populate (no STR Trend extraction or coverage too low) — the model is on the T-12 base.';
+    case 'derived_from_revpar_growth':
+      return 'Derived from the analyst’s RevPAR-growth override: ADR growth = (1 + RevPAR growth) ÷ (1 + occupancy growth) − 1, with the occupancy path held.';
     case 'cbre_horizons':
       return 'CBRE Horizons market benchmark — not this deal’s own data.';
     case 'pnl_benchmark':

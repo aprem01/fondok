@@ -30,7 +30,7 @@ import { cn } from '@/lib/format';
 import { Traced } from '@/components/help/Traced';
 import { Sourced } from '@/components/help/Sourced';
 import { useSource } from '@/lib/hooks/useDealProvenance';
-import { sourceKind, sourceLabel, sourceExplanation, KIND_TONE } from '@/lib/provenance';
+import { sourceKind, sourceLabel, sourceExplanation, KIND_TONE, isStrMarketOverride } from '@/lib/provenance';
 import { getEngineField, useEngineOutputs } from '@/lib/hooks/useEngineOutputs';
 import { useEngineRun } from '@/lib/hooks/useEngineRun';
 import { useDeal } from '@/lib/hooks/useDeal';
@@ -229,6 +229,36 @@ export default function ProjectionsSection({
     [overrides, applyOverride, resetOverride, runStatus],
   );
 
+  // FON-61 (D4) — the Year-1 basis is read from the worker's source tags,
+  // never inferred from the flag alone. ``str_forecast`` on starting_occupancy
+  // / starting_adr means the Market / STR rates ARE the active basis;
+  // ``str_forecast_unavailable`` (the worker tags the flag key when the seed
+  // was requested but could not populate) means the model stayed on T-12.
+  const occSrc = useSource('starting_occupancy');
+  const adrSrc = useSource('starting_adr');
+  const strSeedSrc = useSource('revenue_seed_from_str_forecast');
+  const strBasisActive = occSrc?.source === 'str_forecast' || adrSrc?.source === 'str_forecast';
+  const strBasisUnavailable =
+    !strBasisActive &&
+    [strSeedSrc, occSrc, adrSrc].some((s) => s?.source === 'str_forecast_unavailable');
+  // Revert = the Market tab's revert: drop the flag + both STR-noted keys
+  // (an analyst's later explicit override on either key survives), re-run.
+  const revertStrBasis = useCallback(async () => {
+    const next = { ...overrides };
+    delete next['revenue_seed_from_str_forecast'];
+    for (const key of ['starting_occupancy', 'starting_adr'] as const) {
+      if (isStrMarketOverride(next[key])) delete next[key];
+    }
+    try {
+      await api.deals.update(dealId, { field_overrides: next });
+      refreshDeal();
+      await run();
+      toast('Reverted Year-1 to the T-12 actuals — re-modeled', { type: 'success' });
+    } catch {
+      toast('Could not revert the STR basis', { type: 'error' });
+    }
+  }, [overrides, dealId, refreshDeal, run, toast]);
+
   // Exit cap rate drives the Implied Exit Value line at the bottom of the
   // forward statement. It's owned by the Investment tab, so we resolve it the
   // same way the Assumptions panel does: live provenance source → override →
@@ -426,6 +456,37 @@ export default function ProjectionsSection({
           </h3>
         </div>
         <div className="flex items-center gap-2">
+          {/* FON-61 (D4) — honest Year-1 basis. Active only when the worker
+              tagged the rates ``str_forecast``; "unavailable" when the seed was
+              requested but could not populate; nothing for analyst / seed. */}
+          {strBasisActive && (
+            <span
+              data-testid="str-basis-chip"
+              className="inline-flex items-center gap-1.5 rounded-md border border-success-500/30 bg-success-50 px-2 py-1 text-[11px] font-medium text-success-700"
+            >
+              <span className="w-1.5 h-1.5 rounded-full bg-success-500" aria-hidden="true" />
+              Active basis: Market / STR
+              <span className="text-success-700/50" aria-hidden="true">·</span>
+              <button
+                type="button"
+                onClick={revertStrBasis}
+                disabled={overrideCtx.running}
+                className="font-semibold underline decoration-dotted underline-offset-2 hover:opacity-80 disabled:opacity-50"
+              >
+                Revert
+              </button>
+            </span>
+          )}
+          {strBasisUnavailable && (
+            <span
+              data-testid="str-basis-unavailable"
+              className="inline-flex items-center gap-1.5 rounded-md border border-warn-500/30 bg-warn-50 px-2 py-1 text-[11px] font-medium text-warn-700"
+              title="STR rates were requested but could not populate (no STR Trend extraction or coverage too low). The model is on the T-12 base."
+            >
+              <span className="w-1.5 h-1.5 rounded-full bg-warn-500" aria-hidden="true" />
+              STR rates unavailable — using T-12 base
+            </span>
+          )}
           <Button variant="secondary" size="sm" onClick={onExport}>
             <Download size={11} /> Export
           </Button>
@@ -1648,7 +1709,9 @@ function AssumptionsPanel({
         <div style={cardStyle}>
           <div style={cardTitle}>Growth</div>
           <div style={rowsWrap}>
-            <AssumptionField label="Revenue inflation" unit="pct" suffix="%/yr" value={cur('revpar_growth')} disabled={running} onCommit={(v) => onApply('revpar_growth', v, 'Revenue inflation set on the Projections page')} />
+            {/* FON-69 — a RevPAR-growth override derives adr_growth in the worker
+                (occupancy path held) so operating NOI moves; the label says so. */}
+            <AssumptionField label="RevPAR growth (drives ADR; occupancy path held)" unit="pct" suffix="%/yr" value={cur('revpar_growth')} disabled={running} onCommit={(v) => onApply('revpar_growth', v, 'RevPAR growth set on the Projections page')} />
             <AssumptionField label="Dept. expense inflation" unit="pct" suffix="%/yr" value={cur('expense_growth')} disabled={running} onCommit={(v) => onApply('expense_growth', v, 'Dept. expense inflation set on the Projections page')} />
             <AssumptionField label="Other expense inflation" unit="pct" suffix="%/yr" value={cur('other_expense_growth')} disabled={running} onCommit={(v) => onApply('other_expense_growth', v, 'Other expense inflation set on the Projections page')} />
           </div>

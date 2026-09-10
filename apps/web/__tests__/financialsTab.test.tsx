@@ -101,9 +101,12 @@ vi.mock('@/lib/hooks/useEngineOutputs', async () => {
 });
 
 const refreshDealSpy = vi.fn();
+// Settable per-test (read at render time — the factory itself is hoisted) so
+// the FON-61 Revert can start from a deal that carries the STR seed.
+let mockFieldOverrides: Record<string, unknown> = {};
 vi.mock('@/lib/hooks/useDeal', () => ({
   useDeal: () => ({
-    deal: { id: 'deal-uuid-1', keys: 132, field_overrides: {} },
+    deal: { id: 'deal-uuid-1', keys: 132, field_overrides: mockFieldOverrides },
     status: null,
     loading: false,
     error: null,
@@ -119,8 +122,12 @@ vi.mock('@/lib/hooks/useEngineRun', () => ({
 
 // Exit cap has no resolvable source in this fixture → panel falls back to the
 // engine default (7.0%). The reference stays linked / read-only regardless.
+// Settable per-test so the FON-61 Year-1 basis chip (driven by the worker's
+// source tags, never the flag alone) can be exercised.
+let mockSources: Record<string, string> = {};
 vi.mock('@/lib/hooks/useDealProvenance', () => ({
-  useSource: () => null,
+  useSource: (key: string | undefined) =>
+    key && mockSources[key] ? { source: mockSources[key], value: null } : null,
 }));
 
 // api surface — spy on the field_overrides PATCH (the canonical edit path).
@@ -143,9 +150,12 @@ vi.mock('@/lib/api', async () => {
 vi.mock('@/components/ui/Toast', () => ({ useToast: () => ({ toast: vi.fn() }) }));
 
 import ProjectionsSection from '@/components/project/pl/ProjectionsSection';
+import { STR_MARKET_OVERRIDE_NOTE } from '@/lib/provenance';
 
 beforeEach(() => {
   cleanup();
+  mockSources = {};
+  mockFieldOverrides = {};
   updateSpy.mockClear();
   engineRunSpy.mockClear();
   refreshDealSpy.mockClear();
@@ -161,7 +171,8 @@ describe('Financials · Projections — Assumptions panel renders from engine ou
     ).toBeInTheDocument();
 
     // Growth card.
-    expect(screen.getByText('Revenue inflation')).toBeInTheDocument();
+    // FON-69 — relabeled: the lever drives ADR growth with the occupancy path held.
+    expect(screen.getByText('RevPAR growth (drives ADR; occupancy path held)')).toBeInTheDocument();
     expect(screen.getByText('Dept. expense inflation')).toBeInTheDocument();
     expect(screen.getByText('Other expense inflation')).toBeInTheDocument();
     // Resort fee card.
@@ -209,5 +220,54 @@ describe('Financials · Projections — Exit cap is Investment-owned (read-only)
     const ref = screen.getByText('Investment →');
     expect(ref).toBeInTheDocument();
     expect(ref.closest('a')?.getAttribute('href')).toContain('tab=investment');
+  });
+});
+
+// FON-61 (D4) — the Year-1 basis chip reads the WORKER's source tags. It is
+// never inferred from the flag alone, so the STR seed can't be shown as
+// "active" when it did not populate.
+describe('Financials · Projections — Year-1 basis chip is driven by worker source tags', () => {
+  it('shows "Active basis: Market / STR · Revert" on str_forecast; Revert drops the flag + STR-noted keys only', async () => {
+    mockSources = {
+      starting_occupancy: 'str_forecast',
+      starting_adr: 'str_forecast',
+      revenue_seed_from_str_forecast: 'str_forecast',
+    };
+    mockFieldOverrides = {
+      revenue_seed_from_str_forecast: { value: true, note: 'STR market rates enabled from the Market tab' },
+      starting_occupancy: { value: 0.692, note: STR_MARKET_OVERRIDE_NOTE },
+      starting_adr: { value: 295, note: STR_MARKET_OVERRIDE_NOTE },
+      mgmt_fee_pct: { value: 0.03, note: 'Analyst' }, // unrelated — must survive
+    };
+    render(<ProjectionsSection dealId="deal-uuid-1" />);
+
+    expect(screen.getByTestId('str-basis-chip')).toHaveTextContent('Active basis: Market / STR');
+    expect(screen.queryByTestId('str-basis-unavailable')).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Revert' }));
+    await waitFor(() => expect(updateSpy).toHaveBeenCalledTimes(1));
+    const [, body] = updateSpy.mock.calls[0] as [string, { field_overrides: Record<string, unknown> }];
+    expect(body.field_overrides).toEqual({ mgmt_fee_pct: { value: 0.03, note: 'Analyst' } });
+    expect(engineRunSpy).toHaveBeenCalled(); // re-modeled
+  });
+
+  it('shows the honest "STR rates unavailable — using T-12 base" state on str_forecast_unavailable', () => {
+    mockSources = {
+      revenue_seed_from_str_forecast: 'str_forecast_unavailable',
+      starting_occupancy: 't12_actual',
+      starting_adr: 't12_actual',
+    };
+    render(<ProjectionsSection dealId="deal-uuid-1" />);
+
+    expect(screen.getByTestId('str-basis-unavailable')).toHaveTextContent('STR rates unavailable — using T-12 base');
+    expect(screen.queryByTestId('str-basis-chip')).not.toBeInTheDocument();
+  });
+
+  it('renders no basis chip for analyst / seed sources', () => {
+    mockSources = { starting_occupancy: 'analyst_override', starting_adr: 'seed' };
+    render(<ProjectionsSection dealId="deal-uuid-1" />);
+
+    expect(screen.queryByTestId('str-basis-chip')).not.toBeInTheDocument();
+    expect(screen.queryByTestId('str-basis-unavailable')).not.toBeInTheDocument();
   });
 });

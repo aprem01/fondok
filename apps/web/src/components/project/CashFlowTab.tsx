@@ -298,8 +298,11 @@ function KpiCard({ kpi }: { kpi: CashFlowKpi }) {
  * (``levered_cash_flow``): the close-period outflow is the initial equity, and
  * any negative operating period is an additional draw. Reference ONLY — this
  * figure is already inside net cash flow to equity (the levered CF at close), so
- * it is shown, never re-added. When the levered series is absent the rows fall
- * back to awaiting-data em-dashes.
+ * it is shown, never re-added. FON-67 (D3): the additional draws are funded in
+ * Partnership as dated pro-rata GP/LP capital calls (by ownership split) that
+ * add to unreturned capital — the preferred return accrues on them — so Cash
+ * Flow → Partnership → Returns carry ONE treatment of additional equity. When
+ * the levered series is absent the rows fall back to awaiting-data em-dashes.
  */
 function EquityFundingReference({ cf }: { cf: CashFlowStatementOutput }) {
   const lev = cf.levered_cash_flow ?? [];
@@ -322,7 +325,7 @@ function EquityFundingReference({ cf }: { cf: CashFlowStatementOutput }) {
       value: additional,
       state: hasData ? 'calculated' : 'awaiting_data',
       title:
-        'Reference only — any additional equity is already reflected in net cash flow to equity and is not added again.',
+        'Funded as dated pro-rata GP/LP capital calls in Partnership — the preferred return accrues on them. Reference only — already reflected in net cash flow to equity and not added again.',
     },
   ];
 
@@ -364,6 +367,12 @@ function EquityFundingReference({ cf }: { cf: CashFlowStatementOutput }) {
         <span style={{ fontSize: 11, color: '#b0afaa' }}>
           Reference only — already reflected in net cash flow to equity, never added again
         </span>
+      </div>
+      {/* FON-67 (D3) — the ONE treatment of additional equity, stated where the
+          reference row lives so it can never be read as a second, unfunded draw. */}
+      <div style={{ fontSize: 11.5, color: '#6b6f76', lineHeight: 1.5, marginBottom: 8 }}>
+        Additional equity required is funded as dated pro-rata GP/LP capital calls in Partnership — the
+        preferred return accrues on them.
       </div>
       <div
         style={{

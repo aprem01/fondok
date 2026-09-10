@@ -70,11 +70,18 @@ export interface WorkerDealStatus {
  *    om_comps          — median of OM transaction comps (exit_cap_rate)
  *    om_broker         — broker proforma value on the OM
  *    analyst_override  — set via deal.field_overrides
+ *    str_forecast      — Year-1 occupancy / ADR seeded from STR (the Market
+ *                        tab's comp-set rates, the subject TTM, or the
+ *                        forward forecast)
+ *    str_forecast_unavailable — (FON-61) the STR seed was requested but
+ *                        could not populate; the value fell back to T-12
+ *    derived_from_revpar_growth — (FON-69) adr_growth derived from an
+ *                        analyst RevPAR-growth override
  */
 export type AssumptionSource =
   | 'seed' | 'deal_row' | 't12_actual' | 'cbre_horizons'
   | 'pnl_benchmark' | 'portfolio_pnl' | 'om_comps' | 'om_broker' | 'analyst_override'
-  | 'str_forecast';
+  | 'str_forecast' | 'str_forecast_unavailable' | 'derived_from_revpar_growth';
 
 /** Multi-deal pipeline row (Wave 3 W3.5). One per active deal in the
  *  current tenant, enriched with the LATEST engine-output snapshot per

@@ -167,6 +167,15 @@ export default function MethodologyPage() {
             <BadgeRow source="analyst_override" name="Analyst Override">
               Set via the Overview inline editor. Wins over every other source.
             </BadgeRow>
+            <BadgeRow source="str_forecast" name="STR Forecast">
+              Year-1 occupancy &amp; ADR seeded from STR — the Market tab&apos;s &quot;Use STR rates in the model&quot; writes the comp-set rates the card shows as explicit overrides (note: &quot;STR comp-set market rates (Market tab)&quot;), else the subject TTM or the BASE forward forecast. Financials → Projections shows &quot;Active basis: Market / STR · Revert&quot; only when the rates carry this tag.
+            </BadgeRow>
+            <BadgeRow source="str_forecast_unavailable" name="STR Unavailable">
+              STR rates were requested but could not populate (no STR Trend extraction, coverage too low, or a loader failure). The model stays on the T-12 base and says so — the STR seed is never silently &quot;active&quot;.
+            </BadgeRow>
+            <BadgeRow source="derived_from_revpar_growth" name="Derived from RevPAR Growth">
+              An analyst RevPAR-growth override derives ADR growth — (1 + RevPAR growth) ÷ (1 + occupancy growth) − 1 — with the occupancy path held, so the lever moves operating NOI. Setting ADR growth explicitly takes direct control.
+            </BadgeRow>
             <BadgeRow source="seed" name="Seed Default">
               Kimpton fixture default. Surfaced as a Seed badge with grey tone — no deal-specific data has overridden this yet.
             </BadgeRow>
@@ -230,7 +239,7 @@ export default function MethodologyPage() {
               ['Debt', 'Senior loan amortization with hand-rolled IRR (Newton method, bisection fallback); DSCR; refi optionality.'],
               ['Returns', 'Levered + unlevered IRR, equity multiple, Year-1 CoC, terminal value via exit cap × terminal NOI. Handles loss-making (underwater) deals — a negative IRR or sub-1x multiple is reported honestly, not floored or crashed.'],
               ['Sensitivity', 'IRR heatmap across exit cap × hold years (or other configurable pairs).'],
-              ['Partnership', 'GP / LP waterfall with preferred return, catch-up, promote tiers.'],
+              ['Partnership', 'GP / LP waterfall with preferred return, catch-up, promote tiers. A deficit period is funded as a dated pro-rata GP/LP capital call (by ownership split) that adds to unreturned capital — the preferred return accrues on it — and is reported as additional contributions; Cash Flow → Partnership → Returns carry one treatment of additional equity.'],
             ].map(([name, desc]) => (
               <li key={name} className="flex items-start gap-2">
                 <span className="font-semibold text-ink-900 min-w-[88px]">{name}</span>

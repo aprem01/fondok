@@ -207,7 +207,27 @@ const SOURCE_META: Record<AssumptionSource, SourceMeta> = {
     label: 'STR Fcst',
     tone: 'bg-brand-50 text-brand-700 border-brand-500/30',
     tooltip:
-      'Seeded from the BASE STR forward-forecast scenario (Month 12). The forecast engine projects 24 months ahead off the trailing STR Trend history; turn off via the Forecasting tab to fall back to T-12 / CBRE / seed defaults.',
+      'Seeded from STR — the Market tab’s comp-set rates (“Use STR rates in the model”), the subject TTM, or the BASE forward-forecast scenario (Month 12). Revert from the Market tab or Financials → Projections to fall back to T-12 / CBRE / seed defaults.',
     Icon: BarChart3,
+  },
+  // FON-61 (D4) — the STR seed is never silent. The analyst asked for STR
+  // rates but the worker could not populate them (no STR Trend extraction,
+  // coverage too low, or a loader failure) — the model stayed on the T-12
+  // base and this badge says so rather than claiming STR is active.
+  str_forecast_unavailable: {
+    label: 'STR unavailable',
+    tone: 'bg-warn-50 text-warn-700 border-warn-500/30',
+    tooltip:
+      'STR rates were requested but could not populate (no STR Trend extraction or coverage too low) — the model is on the T-12 base. Upload an STR Trend report or use the Market tab’s comp-set rates.',
+    Icon: BarChart3,
+  },
+  // FON-69 — an analyst RevPAR-growth override derives adr_growth so
+  // operating NOI moves: adr_growth = (1 + revpar_growth) / (1 + occupancy_growth) − 1.
+  derived_from_revpar_growth: {
+    label: 'Derived from RevPAR growth',
+    tone: 'bg-blue-50 text-blue-700 border-blue-500/30',
+    tooltip:
+      'ADR growth derived from the analyst’s RevPAR-growth override — (1 + RevPAR growth) ÷ (1 + occupancy growth) − 1 — with the occupancy path held. Set ADR growth explicitly to take direct control.',
+    Icon: Pencil,
   },
 };

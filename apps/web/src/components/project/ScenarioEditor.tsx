@@ -72,7 +72,9 @@ export interface AssumptionMeta {
 export const ASSUMPTION_CATALOG: AssumptionMeta[] = [
   { path: 'starting_occupancy', label: 'Year-1 Occupancy', unit: 'pct', group: 'Revenue', source: 'financials', sourceLabel: 'Financials' },
   { path: 'starting_adr', label: 'Year-1 ADR', unit: 'usd', group: 'Revenue', source: 'financials', sourceLabel: 'Financials' },
-  { path: 'revpar_growth', label: 'RevPAR Growth', unit: 'pct', group: 'Revenue', source: 'financials', sourceLabel: 'Financials' },
+  // FON-69 — a RevPAR-growth override derives adr_growth (occupancy path
+  // held) so operating NOI moves; the label says what the lever does.
+  { path: 'revpar_growth', label: 'RevPAR growth (drives ADR; occupancy path held)', unit: 'pct', group: 'Revenue', source: 'financials', sourceLabel: 'Financials' },
   { path: 'adr_growth', label: 'ADR Growth', unit: 'pct', group: 'Revenue', source: 'financials', sourceLabel: 'Financials' },
   { path: 'occupancy_growth', label: 'Occupancy Growth', unit: 'pct', group: 'Revenue', source: 'financials', sourceLabel: 'Financials' },
   { path: 'expense_growth', label: 'Expense Growth', unit: 'pct', group: 'Expenses', source: 'financials', sourceLabel: 'Financials' },

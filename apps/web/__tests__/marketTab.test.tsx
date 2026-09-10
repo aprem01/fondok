@@ -17,7 +17,7 @@
  * fixtures, no prototype numbers.
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, fireEvent, cleanup, within } from '@testing-library/react';
+import { render, screen, fireEvent, cleanup, within, waitFor } from '@testing-library/react';
 import React from 'react';
 
 vi.mock('next/navigation', () => ({
@@ -107,9 +107,12 @@ vi.mock('@/lib/api', async () => {
   };
 });
 
+// Mutable so the FON-61 tests can start from a deal that already carries the
+// STR seed (read at render time — the factory itself is hoisted).
+let mockOverrides: Record<string, unknown> = {};
 vi.mock('@/lib/hooks/useDeal', () => ({
   useDeal: () => ({
-    deal: { id: 'deal-uuid-1', keys: 132, city: 'Miami Beach', field_overrides: {} },
+    deal: { id: 'deal-uuid-1', keys: 132, city: 'Miami Beach', field_overrides: mockOverrides },
     refresh: vi.fn(),
   }),
 }));
@@ -133,9 +136,62 @@ vi.mock('@/lib/hooks/useEngineOutputs', async () => {
 vi.mock('@/components/ui/Toast', () => ({ useToast: () => ({ toast: vi.fn() }) }));
 
 import MarketTab from '@/components/project/MarketTab';
+import { api } from '@/lib/api';
+import { STR_MARKET_OVERRIDE_NOTE } from '@/lib/provenance';
 
 beforeEach(() => {
   cleanup();
+  mockOverrides = {};
+  vi.mocked(api.deals.update).mockClear();
+});
+
+// FON-61 (D4) — Market → Financials propagation is EXPLICIT: "Use STR rates"
+// writes starting_occupancy / starting_adr = the comp-set values the card
+// shows, each carrying the exact note the worker keys the ``str_forecast``
+// tag on. "Revert" removes the flag + both STR-noted keys (an analyst's own
+// override on either key survives).
+describe('MarketTab — "Use STR rates in the model" writes explicit Year-1 overrides', () => {
+  // From MARKET: occ = 71.4 / 1.032 = 69.186… → card shows 69.2% → 0.692;
+  // ADR = 278 / 0.942 = 295.1… → card shows $295 → 295.
+  it('writes starting_occupancy / starting_adr = the displayed comp-set values with the exact STR note', async () => {
+    render(<MarketTab projectId="deal-uuid-1" />);
+    // The market payload loads async — wait for the card. The values the card
+    // displays are the values that get written.
+    expect((await screen.findAllByText('69.2%')).length).toBeGreaterThan(0);
+    expect(screen.getAllByText('$295').length).toBeGreaterThan(0);
+
+    fireEvent.click(await screen.findByText('Use STR rates in the model'));
+    await waitFor(() => expect(api.deals.update).toHaveBeenCalledTimes(1));
+
+    const [, body] = vi.mocked(api.deals.update).mock.calls[0] as unknown as [string, { field_overrides: Record<string, { value: unknown; note: string }> }];
+    const ov = body.field_overrides;
+    expect(ov.revenue_seed_from_str_forecast).toEqual({ value: true, note: 'STR market rates enabled from the Market tab' });
+    expect(STR_MARKET_OVERRIDE_NOTE).toBe('STR comp-set market rates (Market tab)');
+    expect(ov.starting_occupancy.note).toBe('STR comp-set market rates (Market tab)');
+    expect(ov.starting_occupancy.value).toBeCloseTo(0.692, 9);
+    expect(ov.starting_adr).toEqual({ value: 295, note: 'STR comp-set market rates (Market tab)' });
+  });
+
+  it('"Revert" deletes the flag and the STR-noted keys, keeping an analyst override on the same key', async () => {
+    mockOverrides = {
+      revenue_seed_from_str_forecast: { value: true, note: 'STR market rates enabled from the Market tab' },
+      starting_occupancy: { value: 0.692, note: STR_MARKET_OVERRIDE_NOTE },
+      // The analyst later pinned ADR themselves — that intent must survive.
+      starting_adr: { value: 310, note: 'Broker guidance' },
+      mgmt_fee_pct: { value: 0.03, note: 'Analyst' },
+    };
+    render(<MarketTab projectId="deal-uuid-1" />);
+    expect(await screen.findByText('STR rates active')).toBeInTheDocument();
+
+    fireEvent.click(screen.getByText('Revert to T-12 actuals'));
+    await waitFor(() => expect(api.deals.update).toHaveBeenCalledTimes(1));
+
+    const [, body] = vi.mocked(api.deals.update).mock.calls[0] as unknown as [string, { field_overrides: Record<string, unknown> }];
+    expect(body.field_overrides).toEqual({
+      starting_adr: { value: 310, note: 'Broker guidance' },
+      mgmt_fee_pct: { value: 0.03, note: 'Analyst' },
+    });
+  });
 });
 
 describe('MarketTab — Transaction Comps SELLER column (new backend field)', () => {

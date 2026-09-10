@@ -385,6 +385,16 @@ export default function PartnershipTab() {
   const reconcilesFlag = getEngineField<boolean>(outputs, 'partnership', 'reconciles');
   const catchUpAmount = getEngineField<number>(outputs, 'partnership', 'catch_up_amount');
 
+  // FON-67 (D3) — additional equity. A deficit period (negative project cash)
+  // is funded by a dated PRO-RATA GP/LP capital call (by ownership split) that
+  // adds to unreturned capital, so the preferred return accrues on it. The
+  // worker reports the partner draws AFTER the close and the peak equity
+  // funded (initial + every draw). All three are ABSENT on runs from before
+  // this change — those render "—", never a fabricated $0.
+  const gpAdditional = getEngineField<number>(outputs, 'partnership', 'gp_additional_contributions');
+  const lpAdditional = getEngineField<number>(outputs, 'partnership', 'lp_additional_contributions');
+  const totalContributionsFlat = getEngineField<number>(outputs, 'partnership', 'total_contributions');
+
   // Deal-level economics come from the Returns engine source-of-truth (levered),
   // never a prototype placeholder.
   const dealIrr = getEngineField<number>(outputs, 'returns', 'levered_irr');
@@ -404,6 +414,22 @@ export default function PartnershipTab() {
   const dealProfit = (has(totalDist) && has(totalEquity)) ? totalDist - totalEquity : undefined;
   const gpProfit = (has(gpDist) && has(gpEquity)) ? gpDist - gpEquity : undefined;
   const lpProfit = (has(lpDist) && has(lpEquity)) ? lpDist - lpEquity : undefined;
+
+  // FON-67 (D3) — invested-equity breakdown. On a run that reports the
+  // additional-contribution fields, ``contributed_equity`` already INCLUDES
+  // the draws, so the close draw is total − additional. On an older run the
+  // fields are absent: ``contributed_equity`` was the close draw only, and
+  // the additional / total-invested rows are unknowable → "—".
+  const hasAdditional = has(gpAdditional) && has(lpAdditional);
+  const additionalTotal = hasAdditional ? gpAdditional + lpAdditional : undefined;
+  const totalContributions = has(totalContributionsFlat)
+    ? totalContributionsFlat
+    : (hasAdditional ? totalEquity : undefined);
+  const initialEquity = hasAdditional
+    ? ((has(totalContributions) && has(additionalTotal)) ? totalContributions - additionalTotal : undefined)
+    : totalEquity;
+  const gpInitialEquity = (has(gpEquity) && has(gpAdditional)) ? gpEquity - gpAdditional : gpEquity;
+  const lpInitialEquity = (has(lpEquity) && has(lpAdditional)) ? lpEquity - lpAdditional : lpEquity;
 
   // Ownership split — an analyst override wins, else derived from the engine's
   // contributed equity, else the institutional default.
@@ -736,6 +762,8 @@ export default function PartnershipTab() {
                 <PartnerCashFlows
                   gpEquity={gpEquity}
                   lpEquity={lpEquity}
+                  gpInitialEquity={gpInitialEquity}
+                  lpInitialEquity={lpInitialEquity}
                   gpFlows={wGpFlows}
                   lpFlows={wLpFlows}
                   gpDist={gpDist}
@@ -757,11 +785,19 @@ export default function PartnershipTab() {
                 />
                 <ReconCard
                   title="Invested equity"
-                  note="Contributions are drawn in full at close in this structure."
+                  note={
+                    hasAdditional
+                      ? 'Initial equity is drawn at close. A deficit period is funded as a dated pro-rata GP/LP capital call (by ownership split) that adds to unreturned capital — the preferred return accrues on it.'
+                      : 'This run predates additional-contribution tracking — re-run the Partnership engine to report deficit-period capital calls (funded pro-rata GP/LP; the preferred return accrues on them).'
+                  }
                   rows={[
-                    { label: 'Initial equity required', value: money(totalEquity) },
-                    { label: 'Additional contributions', value: money(0), muted: true },
-                    { label: 'Total invested equity', value: money(totalEquity), total: true },
+                    { label: 'Initial equity required', value: money(initialEquity) },
+                    // FON-67 (D3) — read from the engine; "—" when the run predates
+                    // the fields. Muted only when the engine reports no draws.
+                    { label: 'Additional contributions — GP', value: money(gpAdditional), muted: has(gpAdditional) && gpAdditional === 0 },
+                    { label: 'Additional contributions — LP', value: money(lpAdditional), muted: has(lpAdditional) && lpAdditional === 0 },
+                    { label: 'Additional contributions', value: money(additionalTotal), muted: has(additionalTotal) && additionalTotal === 0 },
+                    { label: 'Total invested equity', value: money(totalContributions), total: true },
                     { label: 'GP share', value: money(gpEquity) },
                     { label: 'LP share', value: money(lpEquity) },
                   ]}
@@ -1352,10 +1388,15 @@ function PromoteWaterfall({
 // series threaded in — flagged, not fabricated).
 // ─────────────────────────────────────────────────────────────────────
 function PartnerCashFlows({
-  gpEquity, lpEquity, gpFlows, lpFlows, gpDist, lpDist, totalDist, holdYears,
+  gpEquity, lpEquity, gpInitialEquity, lpInitialEquity, gpFlows, lpFlows, gpDist, lpDist, totalDist, holdYears,
 }: {
+  /** Total contributed (close draw + every additional draw) — the Total row. */
   gpEquity: number | undefined;
   lpEquity: number | undefined;
+  /** The close draw only — the Close row (FON-67: additional draws are dated
+   *  in the year they are called, below). */
+  gpInitialEquity: number | undefined;
+  lpInitialEquity: number | undefined;
   gpFlows: number[] | undefined;
   lpFlows: number[] | undefined;
   gpDist: number | undefined;
@@ -1382,22 +1423,28 @@ function PartnerCashFlows({
       label: 'Close', bg: palette.surfaceTint,
       cells: [
         dash,
-        { text: money(gpEquity), color: prov.blue },
-        { text: money(lpEquity), color: prov.blue },
+        { text: money(gpInitialEquity), color: prov.blue },
+        { text: money(lpInitialEquity), color: prov.blue },
         dash, dash,
       ],
     },
     ...gpFlows!.map((gp, i) => {
       const lp = lpFlows![i] ?? 0;
       const isExit = i === gpFlows!.length - 1;
+      // FON-67 (D3) — a negative partner flow is a dated pro-rata capital call
+      // (the engine funds a deficit period that way). It belongs in the
+      // contribution column, never rendered as a negative distribution.
+      const gpDraw = gp < 0;
+      const lpDraw = lp < 0;
       return {
         label: isExit ? `Year ${i + 1} / Exit` : `Year ${i + 1}`,
         bg: 'transparent',
         cells: [
           { text: money(gp + lp), color: prov.gray },
-          dash, dash,
-          { text: money(gp), color: prov.gray },
-          { text: money(lp), color: prov.gray },
+          gpDraw ? { text: money(-gp), color: prov.blue } : dash,
+          lpDraw ? { text: money(-lp), color: prov.blue } : dash,
+          gpDraw ? dash : { text: money(gp), color: prov.gray },
+          lpDraw ? dash : { text: money(lp), color: prov.gray },
         ],
       };
     }),
@@ -1425,7 +1472,7 @@ function PartnerCashFlows({
         bg: r.bg,
         cells: r.cells.map((c) => ({ text: c.text, color: c.color })),
       }))}
-      footnote={`Contributions and distributions are shown separately — a contribution is never a negative distribution. The schedule ends at the modeled disposition in year ${has(holdYears) ? holdYears : '—'}.`}
+      footnote={`Contributions and distributions are shown separately — a contribution is never a negative distribution. A deficit period is funded as a dated pro-rata GP/LP capital call (the preferred return accrues on it). The schedule ends at the modeled disposition in year ${has(holdYears) ? holdYears : '—'}.`}
     />
   );
 }

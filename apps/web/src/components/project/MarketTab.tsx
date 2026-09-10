@@ -32,6 +32,7 @@ import { useDeal } from '@/lib/hooks/useDeal';
 import { useEngineRun } from '@/lib/hooks/useEngineRun';
 import { useEngineOutputs, getEngineField } from '@/lib/hooks/useEngineOutputs';
 import { useToast } from '@/components/ui/Toast';
+import { STR_MARKET_OVERRIDE_NOTE, isStrMarketOverride } from '@/lib/provenance';
 import {
   palette,
   prov,
@@ -1064,10 +1065,34 @@ export default function MarketTab({ projectId }: { projectId: number | string })
   const strSeeded =
     rawSeed === true ||
     (typeof rawSeed === 'object' && rawSeed !== null && (rawSeed as { value?: unknown }).value === true);
+  // FON-61 (D4) — Market → Financials propagation is EXPLICIT. "Use STR rates"
+  // writes ``starting_occupancy`` / ``starting_adr`` field_overrides carrying
+  // exactly the comp-set values the card displays (occupancy at the card's
+  // 0.1-pt precision as a fraction; ADR at the card's whole-dollar precision),
+  // each with the exact ``STR_MARKET_OVERRIDE_NOTE`` so the worker badges
+  // them ``str_forecast`` rather than a generic analyst override. When the
+  // comp set can't supply both values the card shows "—" and only the flag
+  // is written — the worker then seeds from the subject TTM / forecast, or
+  // tags the flag ``str_forecast_unavailable`` (never a silent "active").
+  // "Revert" deletes the flag AND both keys — but only keys that carry the
+  // STR note, so an analyst's later explicit override on either key survives.
   const toggleStrSeed = async () => {
     const next = { ...overrides };
-    if (strSeeded) delete next['revenue_seed_from_str_forecast'];
-    else next['revenue_seed_from_str_forecast'] = { value: true, note: 'STR market rates enabled from the Market tab' };
+    if (strSeeded) {
+      delete next['revenue_seed_from_str_forecast'];
+      for (const key of ['starting_occupancy', 'starting_adr'] as const) {
+        if (isStrMarketOverride(next[key])) delete next[key];
+      }
+    } else {
+      next['revenue_seed_from_str_forecast'] = { value: true, note: 'STR market rates enabled from the Market tab' };
+      if (derivedComp?.occ != null && derivedComp?.adr != null) {
+        next['starting_occupancy'] = {
+          value: Math.round(derivedComp.occ * 10) / 10 / 100,
+          note: STR_MARKET_OVERRIDE_NOTE,
+        };
+        next['starting_adr'] = { value: Math.round(derivedComp.adr), note: STR_MARKET_OVERRIDE_NOTE };
+      }
+    }
     try {
       await api.deals.update(dealId, { field_overrides: next });
       refreshDeal();
