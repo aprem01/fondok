@@ -22,6 +22,7 @@ more ``ExtractorDocument`` payloads (filename + doc_type + content).
 
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
 import time
@@ -573,6 +574,29 @@ outside the schema.
 """
 
 
+def prompt_sha(instructions: str) -> str:
+    """Short content hash of an Extractor system-instructions block.
+
+    ``sha256(instructions)[:8]`` -- the ``ps=`` segment stamped into
+    ``extraction_results.agent_version`` (see
+    ``documents._tag_agent_version``) so a persisted row records WHICH
+    instructions produced it. Only the agent-instructions block is
+    hashed: the USALI rules / brand catalog / schema-addendum blocks
+    that follow it in the system prompt are versioned separately via
+    ``catalog_version``.
+    """
+    return hashlib.sha256(instructions.encode("utf-8")).hexdigest()[:8]
+
+
+# SHA of the legacy embedded SYSTEM_PROMPT -- the instructions every
+# extraction sends unless EXTRACTOR_USE_DYNAMIC_SCHEMAS=1 swaps in a
+# per-doc-type schema. ``run_extractor`` hashes whichever text it
+# actually sent and reports it on ``ExtractorOutput.prompt_sha``; this
+# constant is the dispatcher's fallback for rows that never sent a
+# prompt (mock / template / sibling reuse).
+PROMPT_SHA = prompt_sha(SYSTEM_PROMPT)
+
+
 # ─────────────────────── structured-output envelope ───────────────────────
 
 
@@ -655,6 +679,14 @@ class ExtractorOutput(BaseModel):
     success: bool = True
     error: str | None = None
     model_calls: list[ModelCall] = Field(default_factory=list)
+    # Provenance stamps (Phase 0.2). ``prompt_sha`` is
+    # ``prompt_sha(<agent instructions actually sent>)`` for this run --
+    # legacy SYSTEM_PROMPT or the dynamic per-doc-type schema -- and
+    # ``agent_version`` is the ``extractor;ps=<sha>`` token the
+    # dispatcher splices into ``extraction_results.agent_version``.
+    # Both stay None on the early-return paths where no prompt is sent.
+    prompt_sha: str | None = None
+    agent_version: str | None = None
 
 
 # ─────────────────────── helpers ───────────────────────
@@ -1254,6 +1286,9 @@ async def run_extractor(payload: ExtractorInput) -> ExtractorOutput:
     )
     dynamic = _dyn_prompt(candidate_doc_type) if candidate_doc_type else None
     agent_instructions = dynamic if dynamic is not None else SYSTEM_PROMPT
+    # Hash the instructions ACTUALLY sent (legacy or dynamic) so the
+    # persisted agent_version reflects this run, not the module default.
+    used_prompt_sha = prompt_sha(agent_instructions)
     if dynamic is not None:
         logger.info(
             "extractor: using dynamic schema prompt for doc_type=%s "
@@ -1317,11 +1352,12 @@ async def run_extractor(payload: ExtractorInput) -> ExtractorOutput:
 
     elapsed_ms = int((time.monotonic() - t0) * 1000)
     logger.info(
-        "extractor OK deal=%s docs=%d fields=%d in %dms",
+        "extractor OK deal=%s docs=%d fields=%d in %dms ps=%s",
         payload.deal_id,
         len(results),
         sum(len(r.fields) for r in results),
         elapsed_ms,
+        used_prompt_sha,
     )
 
     # Persist all per-document calls for the cost dashboard. Best-effort.
@@ -1340,6 +1376,8 @@ async def run_extractor(payload: ExtractorInput) -> ExtractorOutput:
         confidence=confidence,
         success=all(r.success for r in results),
         model_calls=model_calls,
+        prompt_sha=used_prompt_sha,
+        agent_version=f"extractor;ps={used_prompt_sha}",
     )
 
 

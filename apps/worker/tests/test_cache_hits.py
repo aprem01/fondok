@@ -11,8 +11,14 @@ asserts that:
      (USALI rules + brand catalog + schema addendum) is hitting cache
      and not being rebuilt.
 
-Gated on ``ANTHROPIC_API_KEY`` so CI runs without burning tokens.
-The full module costs ~$0.10 of Sonnet input on a successful run.
+LIVE-MODEL TEST, OPT-IN: marked ``pytest.mark.live_llm`` and skipped
+unless ``FONDOK_LIVE_LLM=1`` AND a real ``ANTHROPIC_API_KEY`` are both
+in the shell environment (no ``.env`` hydration). CI deselects the
+marker. The full module costs ~$0.10 of Sonnet input on a successful
+run::
+
+    cd apps/worker
+    FONDOK_LIVE_LLM=1 ANTHROPIC_API_KEY=sk-ant-... uv run pytest tests/test_cache_hits.py -v -m live_llm
 """
 
 from __future__ import annotations
@@ -27,56 +33,43 @@ import pytest
 # Force the SQLite dev DSN before app modules import.
 os.environ.setdefault("DATABASE_URL", "sqlite+aiosqlite:///./fondok.db")
 
-
-def _load_dotenv_if_unset() -> None:
-    """Mirror the .env-loading hack from test_agents.py for the API key."""
-    if os.environ.get("ANTHROPIC_API_KEY"):
-        return
-    env_path = Path(__file__).resolve().parents[1] / ".env"
-    if not env_path.exists():
-        return
-    for line in env_path.read_text(encoding="utf-8").splitlines():
-        line = line.strip()
-        if not line or line.startswith("#") or "=" not in line:
-            continue
-        key, _, value = line.partition("=")
-        key = key.strip()
-        value = value.strip().strip('"').strip("'")
-        if key == "ANTHROPIC_API_KEY" and value and not os.environ.get(key):
-            os.environ[key] = value
-            break
-
-
-_load_dotenv_if_unset()
-
-
 _REPO_ROOT = Path(__file__).resolve().parents[3]
 _GOLDEN_DIR = _REPO_ROOT / "evals" / "golden-set" / "kimpton-angler" / "input"
 
 
+_PLACEHOLDER_KEY_PREFIXES = ("sk-ant-test-", "sk-test-")
+
+
+def _live_llm_skip_reason() -> str | None:
+    """Same opt-in gate as test_agents.py (kept inline: pytest modules
+    should not import each other). Reads ONLY the process environment."""
+    if os.environ.get("FONDOK_LIVE_LLM", "").strip() != "1":
+        return (
+            "live-model test: opt in with FONDOK_LIVE_LLM=1 (plus a real "
+            "ANTHROPIC_API_KEY); skipped by default so no run burns tokens."
+        )
+    key = os.environ.get("ANTHROPIC_API_KEY", "").strip()
+    if not key or key.startswith(_PLACEHOLDER_KEY_PREFIXES) or "dummy" in key:
+        return (
+            "FONDOK_LIVE_LLM=1 but ANTHROPIC_API_KEY is unset or a test "
+            "placeholder: export a real key to run live-model tests."
+        )
+    return None
+
+
+_SKIP_REASON = _live_llm_skip_reason()
+
+# Live cache-hit probe -- marked ``live_llm`` (deselected in CI) and
+# skipped unless explicitly opted in, so a bare ``pytest`` reports it as
+# skipped, never failed.
+# NOTE (2026-07-10): the '0 cache_creation_tokens' symptom this used to
+# track was a telemetry bug (langchain_anthropic 1.4 splits cache
+# creation into ephemeral_5m/1h keys), fixed in app/usage.py -- prompt
+# caching itself was always working. Opt in to spot-check live cache
+# behavior.
 pytestmark = [
-    pytest.mark.skipif(
-        not os.environ.get("ANTHROPIC_API_KEY"),
-        reason="ANTHROPIC_API_KEY unset — skipping LLM cache-hit tests.",
-    ),
-    # Gate live-LLM tests behind an explicit opt-in so they don't burn
-    # tokens on every local run. The standard pytest suite shouldn't
-    # depend on a ~$0.10 round-trip to Anthropic completing successfully;
-    # caching breakpoint regressions surface as failing extractor runs
-    # in the eval harness, which is the right place to gate them.
-    # Set RUN_LIVE_LLM_TESTS=1 to opt in locally.
-    pytest.mark.skipif(
-        not os.environ.get("RUN_LIVE_LLM_TESTS"),
-        reason=(
-            "RUN_LIVE_LLM_TESTS unset — live cache-hit test gated to "
-            "avoid burning tokens. NOTE (2026-07-10): the '0 "
-            "cache_creation_tokens' symptom this used to track was a "
-            "telemetry bug (langchain_anthropic 1.4 splits cache "
-            "creation into ephemeral_5m/1h keys), fixed in app/usage.py "
-            "— prompt caching itself was always working. Re-enable to "
-            "spot-check live cache behavior."
-        ),
-    ),
+    pytest.mark.live_llm,
+    pytest.mark.skipif(_SKIP_REASON is not None, reason=_SKIP_REASON or ""),
 ]
 
 

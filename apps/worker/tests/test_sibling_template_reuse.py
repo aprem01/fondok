@@ -711,7 +711,11 @@ async def test_dispatch_flag_off_passthrough_and_flag_on_hit(
             )
         ).first()
     assert row is not None
-    assert row._mapping["agent_version"] == "template:sibling:v1;pv=v1"
+    sibling_av = row._mapping["agent_version"]
+    # Phase 0.2 stamps ``;ps=<prompt sha>;reg=<registry v>`` in front of
+    # the ``;pv=`` suffix; the base token and the suffix are the contract.
+    assert sibling_av.startswith("template:sibling:v1;")
+    assert sibling_av.endswith(";pv=v1")
     fields = json.loads(row._mapping["fields"])
     got = {f["field_name"]: f["value"] for f in fields}
     assert got["p_and_l_usali.revenues.total_revenues_usd"] == 588000
