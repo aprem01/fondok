@@ -9,6 +9,13 @@ import { Card } from '@/components/ui/Card';
 import { Button } from '@/components/ui/Button';
 import { AssumptionBadge } from '@/components/help/AssumptionBadge';
 import { REASONS, type ReasonCode } from '@/lib/ontology/reasons.generated';
+import { CONCEPTS, CONCEPT_IDS, REGISTRY_VERSION } from '@/lib/ontology/concepts.generated';
+
+// Section 8 — rows come from the GENERATED registry module, never literals.
+// Critic cross-field checks (group "synthetic") are computed inputs with no
+// document line, so they are left off the reference table.
+const REGISTRY_ROWS = CONCEPT_IDS.map((id) => CONCEPTS[id]).filter((c) => c.group !== 'synthetic');
+
 
 /**
  * Methodology — institutional explanation of how Fondok underwrites.
@@ -473,6 +480,51 @@ export default function MethodologyPage() {
               An engine that could not finish shows the red banner described in Section 4, with a Re-run. A dash is the model declining to invent a number it has no grounds for — the code says which grounds are missing.
             </li>
           </ul>
+        </Card>
+      </Section>
+
+      {/* ─── 8. Concept registry (Phase 1.1 / 1.2) ─────────────────── */}
+      <Section
+        id="concept-registry"
+        number="8"
+        title="Concept registry"
+        intro={`Every P&L line, operating statistic, OM figure, debt term and market metric Fondok names is defined once, in a registry the worker validates at boot and the web app is generated from. Registry v${REGISTRY_VERSION} · ${REGISTRY_ROWS.length} concepts on this table.`}
+      >
+        <Card className="p-5">
+          <p className="text-[12.5px] text-ink-600 leading-relaxed">
+            The same line reaches Fondok under many names — an extractor may emit <code className="text-[11.5px]">p_and_l_usali.gross_operating_profit</code>, <code className="text-[11.5px]">gop_usd</code> or <code className="text-[11.5px]">ttm_summary_per_om.gop_usd</code> for one GOP figure — and until now each screen and engine kept its own list of those names. The registry (<code className="text-[11.5px]">apps/worker/app/ontology/concepts.yaml</code>) holds one entry per concept: its USALI line, unit, sign and period, the identity it must satisfy (GOP = Total Revenue − Departmental − Undistributed), the USALI rules that test it, the engines that consume it, and its aliases per document type — each alias tagged with the basis it carries (a T-12 line is an <em>actual</em>; a <code className="text-[11.5px]">broker_proforma.*</code> line is the <em>broker&apos;s claim</em>; the OM&apos;s historical-year block and comp-set stats are neither) and, where the path says so, its period. The worker validates the registry when it starts (duplicate aliases, unknown rule ids or engines, an identity naming an unknown concept all fail the load) and reports the version on <code className="text-[11.5px]">/health</code> as <code className="text-[11.5px]">ontology_version</code>; <code className="text-[11.5px]">GET /ontology/concepts</code> serves it, and this page and the web app read a generated copy that CI refuses to let drift. Resolution is deterministic: an exact path listed for the document type wins, then a path listed for any document, then a unit-suffix-stripped match, then the field&apos;s last segment against a bare alias — a monthly, quarterly or year-to-date slice is never served as an annual figure, and a request for the broker&apos;s claim never returns the OM&apos;s history. The dash reasons in Section 7 are drawn from this same registry. Today the registry is the declared vocabulary and the drift gate; the engines, the USALI scorer, the variance report and the worksheet are re-wired onto it in the next phase, and their behaviour on the live system is unchanged until then.
+          </p>
+        </Card>
+
+        <Card className="p-5 mt-4">
+          <h4 className="text-[13px] font-semibold text-ink-900 mb-2">Concepts (generated from the registry)</h4>
+          <div className="overflow-x-auto">
+            <table className="w-full text-[12px]">
+              <thead>
+                <tr className="text-ink-500 text-[11px] uppercase tracking-wide">
+                  <th className="text-left font-medium px-2 py-1.5">Concept</th>
+                  <th className="text-left font-medium px-2 py-1.5">USALI line</th>
+                  <th className="text-left font-medium px-2 py-1.5">Unit</th>
+                  <th className="text-left font-medium px-2 py-1.5">Period</th>
+                  <th className="text-left font-medium px-2 py-1.5">Engines</th>
+                </tr>
+              </thead>
+              <tbody>
+                {REGISTRY_ROWS.map((c) => (
+                  <tr key={c.id} className="border-t border-border/50 align-top">
+                    <td className="px-2 py-1.5 whitespace-nowrap">
+                      <span className="font-medium text-ink-900">{c.label}</span>{' '}
+                      <code className="text-[11px] text-ink-500">{c.id}</code>
+                    </td>
+                    <td className="px-2 py-1.5 text-ink-600 whitespace-nowrap">{c.usali?.line ?? '—'}</td>
+                    <td className="px-2 py-1.5 text-ink-600">{c.unit}</td>
+                    <td className="px-2 py-1.5 text-ink-600">{c.period}</td>
+                    <td className="px-2 py-1.5 text-ink-600">{c.engines.length ? c.engines.join(', ') : '—'}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
         </Card>
       </Section>
 

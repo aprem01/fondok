@@ -1,0 +1,3231 @@
+# Fondok concept registry — ONE vocabulary for P&L, KPI, OM, debt, returns
+# and market concepts.
+#
+# This file absorbs nine hand-maintained alias maps (see DRIFT_NOTES.md for
+# the list, and for every place two of them disagreed). It is validated at
+# import by ``app/ontology/registry.py`` and rendered to the web app by
+# ``apps/worker/scripts/gen_ontology.py`` → ``apps/web/src/lib/ontology/``.
+#
+# Schema (every concept key is required unless marked optional):
+#   label / short           human names
+#   group                   kpi | revenue | dept_expense | undistributed |
+#                           fees_reserves | fixed_charges | rollup | labor |
+#                           period | property | capital | debt | returns |
+#                           market | comps | growth | synthetic
+#   usali                   {line, section, edition} or null
+#   unit                    usd | pct | ratio | count | keys | date | text |
+#                           index | usd_per_key | usd_per_occupied_room | years
+#   sign                    positive | expense_positive | signed
+#   period                  flow | average | point
+#   default_scope           annual | ttm | ytd | quarterly | monthly | unknown
+#   identity (optional)     arithmetic over concept ids (+ - * / parentheses)
+#   identity_optional_terms (optional) terms treated as 0 when unresolved
+#   identity_tolerance      relative drift tolerance
+#   usali_rules             rule ids from evals/golden-set/usali-rules.csv whose
+#                           formula names one of this concept's scorer keys.
+#                           Validated for exact equality against the CSV.
+#   engines                 engine names (engine_runner / provenance names,
+#                           plus the historical / STR / comps engines)
+#   bindings                the legacy consumer keys the next-phase adapters
+#                           will read (all optional; see DRIFT_NOTES.md)
+#   aliases                 per doc type — a DocType value, a family name
+#                           (``families`` below) or "*" (any). An alias is a
+#                           string or {path, basis, scope}. ``{year}`` /
+#                           ``{n}`` / ``{yyyy_mm}`` are wildcard segments.
+#                           Order matters: within a resolver tier the FIRST
+#                           listed alias present in the payload wins.
+#   as_of                   the concept id that dates the value (or null)
+#
+# Basis when an alias does not say: broker_proforma.* / broker.* → broker;
+# a .budget. / .forecast. / .plan. / .adjusted. namespace → budget / plan /
+# plan / adjusted (owner plans, projections, seller-adjusted sheets — eval
+# corpus 2026-09-10); a four-digit-year or historical_performance.* segment
+# → om_history (the OM's history block, FON-54a); a segment / market /
+# comp_set namespace → market; otherwise by document — T12/PNL family →
+# actual, OM → broker, STR / CBRE / benchmark documents → market.
+#
+# Scope when an alias does not say: monthly / quarterly / ytd / weekly
+# namespaces (``subordinate_namespaces``) give their scope; a TTM namespace
+# gives ttm — EXCEPT ``ttm_summary_per_om``, whose "ttm" is only the
+# extractor's label (on the live OM it is the "Year Ended Dec 31, 2024"
+# column: actuals through November + a December forecast), so its scope is
+# the alias's (OM: annual) or the document's; otherwise the document's own
+# ``period_type`` line (via ``period_types``). A month-name segment marks a
+# monthly slice but is never trusted for WHICH month (the live extractor
+# labelled Jan–Mar 2025 columns ``monthly.jan_2024`` …).
+# ``default_scope: null`` is allowed only on a point fact carrying a ``note``.
+
+version: 1
+
+# The router's DocType enum (packages/schemas-py/fondok_schemas/document.py),
+# verified at load. COMPARABLE_SALES is NOT a router doc type — comps are
+# read from the OM's ``transaction_comps.<n>.*`` block (see DRIFT_NOTES.md).
+doc_types:
+  - OM
+  - T12
+  - PNL
+  - PNL_MONTHLY
+  - PNL_YTD
+  - STR
+  - STR_TREND
+  - STR_SEGMENTATION
+  - CBRE_HORIZONS
+  - PNL_BENCHMARK
+  - PORTFOLIO_PNL
+  - PARTNERSHIP
+  - RENT_ROLL
+  - ROOM_MIX
+  - MARKET_STUDY
+  - CONTRACT
+  - INSURANCE
+  - PROPERTY_TAX
+  - CAPEX
+  - PROPERTY_INFO
+  - LEASES
+  - SURVEYS
+  - DEBT
+  - OTHER
+
+# Alias-map keys that expand to several doc types.
+families:
+  PNL_FAMILY: [T12, PNL, PNL_MONTHLY, PNL_YTD]
+  STR_FAMILY: [STR, STR_TREND, STR_SEGMENTATION]
+
+# Moved verbatim from extraction/field_catalog.yaml ``period_type_rank``.
+# Lower rank = preferred. Annual and TTM are both complete operating years.
+period_types:
+  annual: 0
+  fiscal_year: 0
+  full_year: 0
+  trailing_twelve: 1
+  ttm: 1
+  t12: 1
+  rolling_twelve: 1
+  ytd: 5
+  year_to_date: 5
+  quarterly: 7
+  quarter: 7
+  monthly: 9
+  month: 9
+
+# Path segments that mark a subordinate slice — never a period total. The
+# union of usali_scorer._has_subordinate_namespace, HistoricalsSection
+# hasSubordinateNamespace, structural_recognizer._SUBORDINATE_TOKENS and
+# variance._PERIOD_SLICE_TAGS (see DRIFT_NOTES.md for where they differ).
+subordinate_namespaces:
+  - monthly
+  - quarterly
+  - ytd
+  - per_month
+  - page
+  - q1
+  - q2
+  - q3
+  - q4
+  - forecast
+  - budget
+  - prior_year
+  # variance._PERIOD_SLICE_TAGS / str_trend.md slices (weekly, daily,
+  # month-to-date, quarter-to-date, day-of-week) — never a period total.
+  - weekly
+  - daily
+  - mtd
+  - qtd
+  - day_of_week
+
+concepts:
+  # ═══════════════════════════ Operating statistics / KPIs ═══════════════
+  occupancy:
+    label: Occupancy
+    short: Occ
+    group: kpi
+    usali: {line: Occupancy, section: statistics, edition: 11}
+    unit: ratio
+    sign: positive
+    period: average
+    default_scope: annual
+    identity: null
+    identity_tolerance: 0.005
+    usali_rules: [REVPAR_CHECK, OCCUPANCY_RANGE, OCC_VS_COMPSET, BROKER_VS_T12_OCC_VARIANCE, MULTI_FIELD_REVPAR_INTERNAL_INCONSISTENCY]
+    engines: [revenue, historical_baseline, historical_variance]
+    bindings:
+      field_catalog: {namespace: t12_revenue, key: occupancy}
+      critic_key: occupancy
+      variance_rule: BROKER_VS_T12_OCC_VARIANCE
+      variance_concept: {key: occupancy, label: Occupancy, impact_basis: revenue}
+      actuals_attr: occupancy
+      scorer_key: occupancy
+      scorer_variants: {broker_occupancy: {basis: broker}, t12_occupancy: {basis: actual}}
+      recognizer: occupancy
+      worksheet: {row: occ, hist_key: occupancyPct, meta_key: occ, fmt: pct, y1_src: revenue, y1_read: [occupancy]}
+    aliases:
+      PNL_FAMILY:
+        - p_and_l_usali.operational_kpis.occupancy_pct
+        - p_and_l_usali.operational_kpis.occupancy
+        - p_and_l_usali.occupancy_pct
+        - p_and_l_usali.occupancy
+      OM:
+        - {path: broker_proforma.occupancy_pct, basis: broker}
+        - {path: broker_proforma.occupancy, basis: broker}
+        - {path: proforma_occupancy, basis: broker}
+        # OM "TTM" block = the OM's latest full-year column (actuals + a
+        # forecast month) — the broker's claim, annual, not a true TTM.
+        - {path: ttm_summary_per_om.occupancy_pct, basis: broker, scope: annual}
+        - {path: ttm_summary_per_om.occupancy, basis: broker, scope: annual}
+        - {path: "p_and_l_usali.{year}.occupancy_pct", basis: om_history, scope: annual}
+      STR_FAMILY:
+        - {path: "ttm_performance.subject.annual.{year}.occupancy_pct", basis: market, scope: annual}
+        - {path: "str_segmentation.{n}.overall.occupancy_pct", basis: market}
+      PNL_BENCHMARK:
+        - {path: pnl_benchmark.subject_occupancy_pct, basis: market}
+      "*":
+        - ttm_summary_per_om.occupancy_pct
+        - ttm_summary_per_om.occupancy
+        - {path: ttm_performance.subject.occupancy_pct, scope: ttm}
+        - {path: ttm_performance.subject.occupancy, scope: ttm}
+        - occupancy_pct
+        - occupancy
+        - occupancy_percent
+        - occ
+        - occ_pct
+        - {path: t12_occupancy, basis: actual}
+        - {path: t12.occupancy, basis: actual}
+        - {path: actual_occupancy, basis: actual}
+        - {path: broker_occupancy, basis: broker}
+    as_of: period_ending
+
+  adr:
+    label: Average Daily Rate
+    short: ADR
+    group: kpi
+    usali: {line: Average Daily Rate, section: statistics, edition: 11}
+    unit: usd
+    sign: positive
+    period: average
+    default_scope: annual
+    identity: null
+    identity_tolerance: 0.005
+    usali_rules: [REVPAR_CHECK, ADR_RANGE, ADR_VS_COMPSET, BROKER_VS_T12_ADR_VARIANCE, MULTI_FIELD_REVPAR_INTERNAL_INCONSISTENCY]
+    engines: [revenue, historical_baseline, historical_variance]
+    bindings:
+      field_catalog: {namespace: t12_revenue, key: adr}
+      critic_key: adr
+      variance_rule: BROKER_VS_T12_ADR_VARIANCE
+      variance_concept: {key: adr, label: ADR, impact_basis: revenue}
+      actuals_attr: adr
+      scorer_key: adr
+      scorer_variants: {broker_adr: {basis: broker}, t12_adr: {basis: actual}}
+      recognizer: adr
+      worksheet: {row: adr, hist_key: adr, meta_key: adr, fmt: dollar, y1_src: revenue, y1_read: [adr]}
+    aliases:
+      PNL_FAMILY:
+        - p_and_l_usali.operational_kpis.adr_usd
+        - p_and_l_usali.operational_kpis.adr
+        - p_and_l_usali.adr_usd
+        - p_and_l_usali.adr
+      OM:
+        - {path: broker_proforma.adr_usd, basis: broker}
+        - {path: broker_proforma.adr, basis: broker}
+        - {path: proforma_adr, basis: broker}
+        - {path: ttm_summary_per_om.adr_usd, basis: broker, scope: annual}
+        - {path: ttm_summary_per_om.adr, basis: broker, scope: annual}
+        - {path: "p_and_l_usali.{year}.adr_usd", basis: om_history, scope: annual}
+      STR_FAMILY:
+        - {path: "ttm_performance.subject.annual.{year}.adr_usd", basis: market, scope: annual}
+        - {path: "str_segmentation.{n}.overall.adr_usd", basis: market}
+      PNL_BENCHMARK:
+        - {path: pnl_benchmark.subject_adr_usd, basis: market}
+      "*":
+        - ttm_summary_per_om.adr_usd
+        - ttm_summary_per_om.adr
+        - {path: ttm_performance.subject.adr_usd, scope: ttm}
+        - {path: ttm_performance.subject.adr, scope: ttm}
+        - adr_usd
+        - adr
+        - average_daily_rate
+        - average_daily_rate_usd
+        - {path: t12_adr, basis: actual}
+        - {path: t12.adr, basis: actual}
+        - {path: actual_adr, basis: actual}
+        - {path: broker_adr, basis: broker}
+    as_of: period_ending
+
+  revpar:
+    label: Revenue per Available Room
+    short: RevPAR
+    group: kpi
+    usali: {line: RevPAR, section: statistics, edition: 11}
+    unit: usd
+    sign: positive
+    period: average
+    default_scope: annual
+    identity: "occupancy * adr"
+    identity_tolerance: 0.005
+    usali_rules: [REVPAR_CHECK, REVPAR_VS_COMPSET, T12_VS_T24_TREND, MULTI_FIELD_REVPAR_INTERNAL_INCONSISTENCY]
+    engines: [revenue, historical_baseline, historical_variance]
+    bindings:
+      field_catalog: {namespace: t12_revenue, key: revpar}
+      critic_key: revpar
+      variance_rule: REVPAR_GROWTH_RANGE
+      variance_concept: {key: revpar, label: RevPAR, impact_basis: revenue}
+      actuals_attr: revpar
+      scorer_key: revpar
+      scorer_variants: {t12_revpar: {basis: actual, scope: ttm}}
+      recognizer: revpar
+      worksheet: {row: revpar, hist_key: revpar, meta_key: revpar, fmt: dollar, y1_src: revenue, y1_read: [revpar]}
+    aliases:
+      PNL_FAMILY:
+        - p_and_l_usali.operational_kpis.revpar_usd
+        - p_and_l_usali.operational_kpis.revpar
+        - p_and_l_usali.revpar_usd
+        - p_and_l_usali.revpar
+      OM:
+        - {path: broker_proforma.revpar_usd, basis: broker}
+        - {path: broker_proforma.revpar, basis: broker}
+        - {path: ttm_summary_per_om.revpar_usd, basis: broker, scope: annual}
+        - {path: ttm_summary_per_om.revpar, basis: broker, scope: annual}
+        - {path: "p_and_l_usali.{year}.revpar_usd", basis: om_history, scope: annual}
+      STR_FAMILY:
+        - {path: "ttm_performance.subject.annual.{year}.revpar_usd", basis: market, scope: annual}
+        - {path: "str_segmentation.{n}.overall.revpar_usd", basis: market}
+      PNL_BENCHMARK:
+        - {path: pnl_benchmark.subject_revpar_usd, basis: market}
+      "*":
+        - ttm_summary_per_om.revpar_usd
+        - ttm_summary_per_om.revpar
+        - {path: ttm_performance.subject.revpar_usd, scope: ttm}
+        - {path: ttm_performance.subject.revpar, scope: ttm}
+        - revpar_usd
+        - revpar
+        - {path: t12_revpar, basis: actual, scope: ttm}
+        - {path: t12.revpar, basis: actual, scope: ttm}
+    as_of: period_ending
+
+  revpar_prior_ttm:
+    label: RevPAR — prior trailing twelve (T-24)
+    short: T-24 RevPAR
+    group: kpi
+    usali: null
+    unit: usd
+    sign: positive
+    period: average
+    default_scope: ttm
+    identity: null
+    identity_tolerance: 0.005
+    usali_rules: [T12_VS_T24_TREND]
+    engines: []
+    bindings:
+      scorer_key: t24_revpar
+    aliases:
+      "*":
+        - {path: t24_revpar, basis: actual, scope: ttm}
+        - {path: t24.revpar, basis: actual, scope: ttm}
+    as_of: null
+
+  revpar_yoy_growth:
+    label: RevPAR growth (year over year)
+    short: RevPAR YoY
+    group: growth
+    usali: null
+    unit: ratio
+    sign: signed
+    period: flow
+    default_scope: annual
+    identity: null
+    identity_tolerance: 0.005
+    usali_rules: [REVPAR_GROWTH_RANGE]
+    engines: [historical_variance]
+    bindings:
+      scorer_key: revpar_yoy_growth
+    aliases:
+      PNL_FAMILY:
+        - p_and_l_usali.revpar_yoy_growth
+      "*":
+        - revpar_yoy_growth
+        - revpar_yoy
+    as_of: period_ending
+
+  monthly_revpar:
+    label: Monthly RevPAR series
+    short: Monthly RevPAR
+    group: kpi
+    usali: null
+    unit: usd
+    sign: positive
+    period: average
+    default_scope: monthly
+    identity: null
+    identity_tolerance: 0.005
+    usali_rules: [SEASONALITY_CHECK]
+    engines: []
+    bindings:
+      scorer_key: monthly_revpar
+    aliases:
+      "*":
+        - {path: monthly_revpar, scope: monthly}
+        - {path: "p_and_l_usali.monthly.{yyyy_mm}.revpar_usd", scope: monthly}
+        - {path: "p_and_l_usali.monthly.{yyyy_mm}.revpar", scope: monthly}
+        - {path: "ttm_performance.subject.monthly.{yyyy_mm}.revpar_usd", scope: monthly}
+    as_of: period_ending
+
+  rooms_sold:
+    label: Rooms sold
+    short: Rooms sold
+    group: kpi
+    usali: {line: Rooms Sold, section: statistics, edition: 11}
+    unit: count
+    sign: positive
+    period: flow
+    default_scope: annual
+    identity: null
+    identity_tolerance: 0.005
+    usali_rules: []
+    engines: []
+    bindings: {}
+    aliases:
+      PNL_FAMILY:
+        - p_and_l_usali.rooms_sold.total
+        - p_and_l_usali.rooms.rooms_sold_total
+        - p_and_l_usali.rooms.total_rooms_sold_annual
+        - p_and_l_usali.total_rooms_sold
+      "*":
+        - property_overview.rooms_sold_annual
+        - property_overview.rooms_occupied_annual
+        - rooms_sold
+    as_of: period_ending
+
+  available_rooms:
+    label: Available rooms
+    short: Avail. rooms
+    group: kpi
+    usali: {line: Rooms Available, section: statistics, edition: 11}
+    unit: count
+    sign: positive
+    period: flow
+    default_scope: annual
+    identity: null
+    identity_tolerance: 0.005
+    usali_rules: []
+    engines: []
+    bindings: {}
+    aliases:
+      PNL_FAMILY:
+        - p_and_l_usali.available_rooms.total
+        - p_and_l_usali.rooms.available_rooms_total
+        - p_and_l_usali.available_rooms
+      "*":
+        - property_overview.available_rooms_annual
+        - available_rooms
+    as_of: period_ending
+
+  # ═══════════════════════════════ Revenue ═══════════════════════════════
+  rooms_revenue:
+    label: Rooms Revenue
+    short: Rooms
+    group: revenue
+    usali: {line: Rooms Revenue, section: revenue, edition: 11}
+    unit: usd
+    sign: positive
+    period: flow
+    default_scope: annual
+    identity: null
+    identity_tolerance: 0.005
+    usali_rules: [REVENUE_SUM, ROOMS_DEPT_MARGIN_SELECT, ROOMS_DEPT_MARGIN_FULL, FRANCHISE_FEE_RANGE, FRANCHISE_MARKETING_FEE_RANGE]
+    engines: [revenue, historical_baseline, historical_variance]
+    bindings:
+      field_catalog: {namespace: t12_revenue, key: rooms_revenue}
+      critic_key: rooms_revenue
+      variance_rule: BROKER_VS_T12_NOI_VARIANCE
+      variance_concept: {key: rooms_revenue, label: Rooms revenue, impact_basis: revenue}
+      actuals_attr: rooms_revenue
+      scorer_key: rooms_revenue
+      recognizer: rooms_revenue
+      worksheet: {row: rooms_rev, hist_key: rooms, meta_key: rooms, review_key: rooms_revenue, y1_src: fb, y1_read: [rooms_revenue]}
+    aliases:
+      PNL_FAMILY:
+        - p_and_l_usali.operating_revenue.rooms_revenue
+        - p_and_l_usali.operating_revenue.rooms_revenue_usd
+        - p_and_l_usali.rooms.revenue_usd
+        - p_and_l_usali.rooms.revenue
+        - p_and_l_usali.revenues.rooms_usd
+        - p_and_l_usali.revenues.rooms
+        - p_and_l_usali.revenues.rooms_revenue
+        - p_and_l_usali.revenue.rooms_revenue_usd
+        - p_and_l_usali.revenue.rooms_revenue
+        - p_and_l_usali.rooms_revenue
+      OM:
+        - {path: broker_proforma.rooms_revenue_usd, basis: broker}
+        - {path: broker_proforma.rooms_revenue, basis: broker}
+        - {path: ttm_summary_per_om.rooms_revenue_usd, basis: broker, scope: annual}
+        - {path: "p_and_l_usali.{year}.rooms_revenue_usd", basis: om_history, scope: annual}
+      "*":
+        - ttm_summary_per_om.rooms_revenue_usd
+        - rooms_revenue_usd
+        - rooms_revenue
+        - room_revenue
+        - total_rooms_revenue
+        - t12_rooms_revenue
+    as_of: period_ending
+
+  fb_revenue:
+    label: Food & Beverage Revenue
+    short: F&B
+    group: revenue
+    usali: {line: Food and Beverage Revenue, section: revenue, edition: 11}
+    unit: usd
+    sign: positive
+    period: flow
+    default_scope: annual
+    identity: null
+    identity_tolerance: 0.005
+    usali_rules: [REVENUE_SUM, FB_DEPT_MARGIN_FULL, FB_DEPT_NA_SELECT]
+    engines: [fb, historical_baseline, historical_variance]
+    bindings:
+      field_catalog: {namespace: t12_revenue, key: fb_revenue}
+      critic_key: fb_revenue
+      variance_rule: FB_DEPT_MARGIN_FULL
+      variance_concept: {key: fb_revenue, label: F&B revenue, impact_basis: revenue}
+      actuals_attr: fb_revenue
+      scorer_key: fb_revenue
+      recognizer: fb_revenue
+      worksheet: {row: fb_rev, hist_key: fb, meta_key: fb, review_key: fb_revenue, y1_src: fb, y1_read: [fb_revenue]}
+    aliases:
+      PNL_FAMILY:
+        - p_and_l_usali.operating_revenue.food_beverage_revenue
+        - p_and_l_usali.operating_revenue.fb_revenue
+        - p_and_l_usali.food_and_beverage.revenue_usd
+        - p_and_l_usali.food_and_beverage.revenue
+        - p_and_l_usali.fb.revenue_usd
+        - p_and_l_usali.fb.revenue
+        - p_and_l_usali.revenues.fb_usd
+        - p_and_l_usali.revenues.fb
+        - p_and_l_usali.revenues.food_beverage_revenue
+        - p_and_l_usali.revenue.fb_revenue_usd
+        - p_and_l_usali.revenue.fb_revenue
+        - p_and_l_usali.fb_revenue
+      OM:
+        - {path: broker_proforma.fb_revenue_usd, basis: broker}
+        - {path: "p_and_l_usali.{year}.fb_revenue_usd", basis: om_history, scope: annual}
+      "*":
+        - fb_revenue_usd
+        - fb_revenue
+        - food_beverage_revenue
+        - food_beverage_revenue_usd
+        - fnb_revenue
+        - food_beverage
+    as_of: period_ending
+
+  other_revenue:
+    label: Other Operated Departments Revenue
+    short: Other rev.
+    group: revenue
+    usali: {line: Other Operated Departments Revenue, section: revenue, edition: 11}
+    unit: usd
+    sign: positive
+    period: flow
+    default_scope: annual
+    identity: null
+    identity_tolerance: 0.005
+    usali_rules: [REVENUE_SUM]
+    engines: [revenue, historical_baseline]
+    bindings:
+      field_catalog: {namespace: t12_revenue, key: other_revenue}
+      critic_key: other_revenue
+      variance_concept: {key: other_revenue, label: Other revenue, impact_basis: revenue}
+      actuals_attr: other_revenue
+      scorer_key: other_revenue
+      recognizer: other_revenue
+      worksheet: {row: other_rev, hist_key: misc, meta_key: misc, review_key: other_revenue, y1_src: fb, y1_read: [other_revenue]}
+    aliases:
+      PNL_FAMILY:
+        - p_and_l_usali.operating_revenue.other_revenue
+        - p_and_l_usali.other_operated_departments.revenue_usd
+        - p_and_l_usali.other_operated_departments.revenue
+        - p_and_l_usali.revenues.other_operated_departments_usd
+        - p_and_l_usali.revenues.other_operated_departments
+        - p_and_l_usali.revenues.other_revenue
+        - p_and_l_usali.revenue.other_revenue_usd
+        - p_and_l_usali.other_revenue
+      "*":
+        - other_revenue_usd
+        - other_revenue
+        - other_operated_revenue
+    as_of: period_ending
+
+  misc_revenue:
+    label: Miscellaneous Income
+    short: Misc.
+    group: revenue
+    usali: {line: Miscellaneous Income, section: revenue, edition: 11}
+    unit: usd
+    sign: positive
+    period: flow
+    default_scope: annual
+    identity: null
+    identity_tolerance: 0.005
+    usali_rules: []
+    engines: [revenue, historical_baseline]
+    bindings:
+      field_catalog: {namespace: t12_revenue, key: misc_revenue}
+      scorer_key: misc_revenue
+      recognizer: misc_revenue
+    aliases:
+      PNL_FAMILY:
+        - p_and_l_usali.operating_revenue.misc_revenue
+        - p_and_l_usali.miscellaneous_income.revenue_usd
+        - p_and_l_usali.miscellaneous_income.revenue
+        - p_and_l_usali.revenues.miscellaneous_income_usd
+        - p_and_l_usali.revenues.misc_revenue
+        - p_and_l_usali.revenue.misc_revenue_usd
+        - p_and_l_usali.revenue.misc_income_usd
+      "*":
+        - misc_revenue_usd
+        - misc_revenue
+        - misc_income
+        - miscellaneous_income
+    as_of: period_ending
+
+  resort_fees:
+    label: Resort Fees
+    short: Resort fees
+    group: revenue
+    usali: {line: Resort Fees, section: revenue, edition: 11}
+    unit: usd
+    sign: positive
+    period: flow
+    default_scope: annual
+    identity: null
+    identity_tolerance: 0.005
+    usali_rules: []
+    engines: [revenue, historical_baseline]
+    bindings:
+      field_catalog: {namespace: t12_revenue, key: resort_fees}
+      critic_key: resort_fees
+      variance_concept: {key: resort_fees, label: Resort fees, impact_basis: revenue}
+      actuals_attr: resort_fees
+      scorer_key: resort_fees
+      recognizer: resort_fees
+    aliases:
+      PNL_FAMILY:
+        - p_and_l_usali.operating_revenue.resort_fees
+        - p_and_l_usali.revenues.resort_fees
+        - p_and_l_usali.revenues.resort_fees_usd
+        - p_and_l_usali.resort_fees
+      "*":
+        - resort_fees_usd
+        - resort_fees
+    as_of: period_ending
+
+  total_revenue:
+    label: Total Operating Revenue
+    short: Total rev.
+    group: revenue
+    usali: {line: Total Operating Revenue, section: revenue, edition: 11}
+    unit: usd
+    sign: positive
+    period: flow
+    default_scope: annual
+    identity: "rooms_revenue + fb_revenue + other_revenue + misc_revenue + resort_fees"
+    identity_optional_terms: [misc_revenue, resort_fees]
+    identity_tolerance: 0.005
+    usali_rules: [REVENUE_SUM, GOP_IDENTITY, GOP_MARGIN_RANGE, NOI_MARGIN_RANGE, FFE_RESERVE_RANGE, FFE_RESERVE_BRAND_FLOOR, MGMT_FEE_RANGE, FB_DEPT_NA_SELECT, LABOR_PCT_REVENUE_SELECT, LABOR_PCT_REVENUE_FULL, MARKETING_PCT_REVENUE, RM_PCT_REVENUE, A_AND_G_PCT_REVENUE, PARKING_REVENUE_PCT, SPA_REVENUE_PCT, MEETING_SPACE_REVENUE_PCT]
+    engines: [revenue, expense, historical_baseline, historical_variance]
+    bindings:
+      critic_key: total_revenue
+      variance_rule: BROKER_VS_T12_NOI_VARIANCE
+      variance_concept: {key: total_revenue, label: Total revenue, impact_basis: revenue}
+      actuals_attr: total_revenue
+      scorer_key: total_revenue
+      recognizer: total_revenue
+      worksheet: {row: total_rev, hist_key: null, meta_key: null}
+    aliases:
+      PNL_FAMILY:
+        - p_and_l_usali.operating_revenue.total_revenue
+        - p_and_l_usali.operating_revenue.total
+        - p_and_l_usali.total_revenues_usd
+        - p_and_l_usali.total_revenue_usd
+        - p_and_l_usali.total_revenue
+        - p_and_l_usali.revenues.total_revenues_usd
+        - p_and_l_usali.revenues.total_revenue
+      OM:
+        - {path: broker_proforma.total_revenue_usd, basis: broker}
+        - {path: ttm_summary_per_om.total_revenue_usd, basis: broker, scope: annual}
+        - {path: "p_and_l_usali.{year}.total_revenue_usd", basis: om_history, scope: annual}
+      "*":
+        - ttm_summary_per_om.total_revenue_usd
+        - total_revenue_usd
+        - total_revenues_usd
+        - total_revenue
+        - total_revenues
+        - total_operating_revenue
+        - total_operating_revenue_usd
+    as_of: period_ending
+
+  parking_revenue:
+    label: Parking Revenue
+    short: Parking
+    group: revenue
+    usali: {line: Parking Revenue, section: revenue, edition: 11}
+    unit: usd
+    sign: positive
+    period: flow
+    default_scope: annual
+    identity: null
+    identity_tolerance: 0.005
+    usali_rules: [PARKING_REVENUE_PCT]
+    engines: []
+    bindings:
+      scorer_key: parking_revenue
+    aliases:
+      "*":
+        - parking_revenue_usd
+        - parking_revenue
+    as_of: period_ending
+
+  spa_revenue:
+    label: Spa Revenue
+    short: Spa
+    group: revenue
+    usali: {line: Spa Revenue, section: revenue, edition: 11}
+    unit: usd
+    sign: positive
+    period: flow
+    default_scope: annual
+    identity: null
+    identity_tolerance: 0.005
+    usali_rules: [SPA_REVENUE_PCT]
+    engines: []
+    bindings:
+      scorer_key: spa_revenue
+    aliases:
+      "*":
+        - spa_revenue_usd
+        - spa_revenue
+    as_of: period_ending
+
+  meeting_space_revenue:
+    label: Meeting & Banquet Revenue
+    short: Meeting
+    group: revenue
+    usali: {line: Meeting Space Revenue, section: revenue, edition: 11}
+    unit: usd
+    sign: positive
+    period: flow
+    default_scope: annual
+    identity: null
+    identity_tolerance: 0.005
+    usali_rules: [MEETING_SPACE_REVENUE_PCT]
+    engines: []
+    bindings:
+      scorer_key: meeting_space_revenue
+    aliases:
+      "*":
+        - meeting_space_revenue
+        - meeting_revenue
+        - banquet_revenue
+    as_of: period_ending
+
+  # ═══════════════════════ Departmental expenses / profit ═══════════════
+  rooms_dept_expense:
+    label: Rooms Department Expense
+    short: Rooms exp.
+    group: dept_expense
+    usali: {line: Rooms Expenses, section: departmental, edition: 11}
+    unit: usd
+    sign: expense_positive
+    period: flow
+    default_scope: annual
+    identity: null
+    identity_tolerance: 0.005
+    usali_rules: []
+    engines: [expense, historical_baseline]
+    bindings:
+      field_catalog: {namespace: t12_expense, key: rooms_dept_expense}
+      critic_key: departmental_rooms
+      actuals_attr: dept_expenses.rooms
+      scorer_key: rooms_dept_expense
+      recognizer: rooms_dept_expense
+      worksheet: {row: rooms_dept, hist_key: rooms_dept_expense, meta_key: rooms_dept, override_key: rooms_dept_expense, y1_read: [dept_expenses, rooms]}
+    aliases:
+      PNL_FAMILY:
+        - p_and_l_usali.departmental_expenses.rooms
+        - p_and_l_usali.rooms.expense_usd
+        - p_and_l_usali.rooms.departmental_expense_usd
+        - p_and_l_usali.rooms.departmental_expense
+        - p_and_l_usali.departmental_expense.rooms_usd
+        - p_and_l_usali.departmental_expense.rooms
+      "*":
+        - rooms_dept_expense
+        - rooms_departmental_expenses
+        - rooms_departmental_expense
+    as_of: period_ending
+
+  fb_dept_expense:
+    label: Food & Beverage Department Expense
+    short: F&B exp.
+    group: dept_expense
+    usali: {line: Food and Beverage Expenses, section: departmental, edition: 11}
+    unit: usd
+    sign: expense_positive
+    period: flow
+    default_scope: annual
+    identity: null
+    identity_tolerance: 0.005
+    usali_rules: []
+    engines: [expense, historical_baseline]
+    bindings:
+      field_catalog: {namespace: t12_expense, key: fb_dept_expense}
+      critic_key: departmental_fb
+      actuals_attr: dept_expenses.food_beverage
+      scorer_key: fb_dept_expense
+      recognizer: fb_dept_expense
+      worksheet: {row: fb_dept, hist_key: fb_dept_expense, meta_key: fb_dept, override_key: fb_dept_expense, y1_read: [dept_expenses, food_beverage]}
+    aliases:
+      PNL_FAMILY:
+        - p_and_l_usali.departmental_expenses.food_beverage
+        - p_and_l_usali.food_and_beverage.expense_usd
+        - p_and_l_usali.food_and_beverage.departmental_expense_usd
+        - p_and_l_usali.fb.expense_usd
+        - p_and_l_usali.fb.departmental_expense_usd
+        - p_and_l_usali.fb.departmental_expense
+        - p_and_l_usali.departmental_expense.fb_usd
+        - p_and_l_usali.departmental_expense.fb
+        - p_and_l_usali.departmental_expense.food_beverage_usd
+      "*":
+        - fb_dept_expense
+        - food_beverage_departmental_expenses
+        - food_beverage_dept_expense
+        - fnb_dept_expense
+    as_of: period_ending
+
+  other_dept_expense:
+    label: Other Operated Departments Expense
+    short: Other exp.
+    group: dept_expense
+    usali: {line: Other Operated Departments Expenses, section: departmental, edition: 11}
+    unit: usd
+    sign: expense_positive
+    period: flow
+    default_scope: annual
+    identity: null
+    identity_tolerance: 0.005
+    usali_rules: []
+    engines: [expense, historical_baseline]
+    bindings:
+      field_catalog: {namespace: t12_expense, key: other_dept_expense}
+      actuals_attr: dept_expenses.other_operated
+      scorer_key: other_dept_expense
+      recognizer: other_dept_expense
+      worksheet: {row: other_dept, hist_key: other_dept_expense, meta_key: other_dept, override_key: other_dept_expense, y1_read: [dept_expenses, other_operated]}
+    aliases:
+      PNL_FAMILY:
+        - p_and_l_usali.departmental_expenses.other_operated
+        - p_and_l_usali.other_operated_departments.expense_usd
+        - p_and_l_usali.other_operated_departments.departmental_expense_usd
+        - p_and_l_usali.other_operated_departments.departmental_expense
+        - p_and_l_usali.departmental_expense.other_operated_departments_usd
+        - p_and_l_usali.departmental_expense.other_operated_usd
+      "*":
+        - other_dept_expense
+        - other_operated_dept_expense
+    as_of: period_ending
+
+  dept_expenses:
+    label: Total Departmental Expenses
+    short: Dept. exp.
+    group: dept_expense
+    usali: {line: Total Departmental Expenses, section: departmental, edition: 11}
+    unit: usd
+    sign: expense_positive
+    period: flow
+    default_scope: annual
+    identity: "rooms_dept_expense + fb_dept_expense + other_dept_expense"
+    identity_optional_terms: [other_dept_expense]
+    identity_tolerance: 0.005
+    usali_rules: [DEPT_EXPENSE_SUM, GOP_IDENTITY]
+    engines: [expense, historical_baseline]
+    bindings:
+      critic_key: departmental_expenses
+      variance_rule: DEPT_EXPENSE_SUM
+      variance_concept: {key: departmental_expenses, label: Departmental expenses, impact_basis: expense}
+      actuals_attr: dept_expenses.total
+      scorer_key: dept_expenses
+      scorer_synonyms: [total_dept_expense]
+    aliases:
+      PNL_FAMILY:
+        - p_and_l_usali.departmental_expenses.total
+        - p_and_l_usali.total_departmental_expense_usd
+        - p_and_l_usali.total_departmental_expense
+        - p_and_l_usali.departmental_expense.total_usd
+        - p_and_l_usali.dept_expenses
+      OM:
+        - {path: broker_proforma.departmental_expenses_usd, basis: broker}
+      "*":
+        - departmental_expenses
+        - departmental_expenses_usd
+        - dept_expenses
+        - total_dept_expense
+        - total_dept_expense_usd
+    as_of: period_ending
+
+  dept_expenses_by_line:
+    label: Departmental expense line items
+    short: Dept. lines
+    group: dept_expense
+    usali: null
+    unit: usd
+    sign: expense_positive
+    period: flow
+    default_scope: annual
+    identity: null
+    identity_tolerance: 0.005
+    usali_rules: [DEPT_EXPENSE_SUM]
+    engines: []
+    bindings:
+      scorer_key: dept_expenses_by_line
+    aliases:
+      "*":
+        - dept_expenses_by_line
+    as_of: period_ending
+
+  dept_profit:
+    label: Total Departmental Profit
+    short: Dept. profit
+    group: dept_expense
+    usali: {line: Total Departmental Profit, section: departmental, edition: 11}
+    unit: usd
+    sign: signed
+    period: flow
+    default_scope: annual
+    identity: "total_revenue - dept_expenses"
+    identity_tolerance: 0.005
+    usali_rules: []
+    engines: []
+    bindings: {}
+    aliases:
+      PNL_FAMILY:
+        - p_and_l_usali.total_departmental_profit_usd
+        - p_and_l_usali.total_departmental_profit
+        - p_and_l_usali.departmental_profit.total
+      "*":
+        - total_departmental_profit
+        - departmental_profit
+    as_of: period_ending
+
+  rooms_dept_profit:
+    label: Rooms Departmental Profit
+    short: Rooms profit
+    group: dept_expense
+    usali: {line: Rooms Departmental Profit, section: departmental, edition: 11}
+    unit: usd
+    sign: signed
+    period: flow
+    default_scope: annual
+    identity: "rooms_revenue - rooms_dept_expense"
+    identity_tolerance: 0.005
+    usali_rules: [ROOMS_DEPT_MARGIN_SELECT, ROOMS_DEPT_MARGIN_FULL]
+    engines: []
+    bindings:
+      scorer_key: rooms_dept_profit
+    aliases:
+      PNL_FAMILY:
+        - p_and_l_usali.rooms_dept_profit
+      "*":
+        - rooms_dept_profit
+        - rooms_profit
+    as_of: period_ending
+
+  fb_dept_profit:
+    label: Food & Beverage Departmental Profit
+    short: F&B profit
+    group: dept_expense
+    usali: {line: Food and Beverage Departmental Profit, section: departmental, edition: 11}
+    unit: usd
+    sign: signed
+    period: flow
+    default_scope: annual
+    identity: "fb_revenue - fb_dept_expense"
+    identity_tolerance: 0.005
+    usali_rules: [FB_DEPT_MARGIN_FULL]
+    engines: []
+    bindings:
+      scorer_key: fb_dept_profit
+    aliases:
+      PNL_FAMILY:
+        - p_and_l_usali.fb_dept_profit
+      "*":
+        - fb_dept_profit
+        - fb_profit
+    as_of: period_ending
+
+  # ═══════════════════════ Undistributed operating expenses ═════════════
+  administrative_general:
+    label: Administrative & General
+    short: A&G
+    group: undistributed
+    usali: {line: Administrative and General, section: undistributed, edition: 11}
+    unit: usd
+    sign: expense_positive
+    period: flow
+    default_scope: annual
+    identity: null
+    identity_tolerance: 0.005
+    usali_rules: [A_AND_G_PCT_REVENUE]
+    engines: [expense, historical_baseline]
+    bindings:
+      field_catalog: {namespace: t12_expense, key: administrative_general}
+      actuals_attr: undistributed.administrative_general
+      scorer_key: ag_expense
+      recognizer: ag_expense
+      worksheet: {row: ag, override_key: administrative_general, y1_read: [undistributed, administrative_general]}
+    aliases:
+      PNL_FAMILY:
+        - p_and_l_usali.undistributed.administrative_general
+        - p_and_l_usali.administrative_and_general.expense_usd
+        - p_and_l_usali.undistributed.administrative_and_general_usd
+        - p_and_l_usali.undistributed.administrative_and_general
+        - p_and_l_usali.undistributed_expenses.administrative_general_usd
+        - p_and_l_usali.admin_general
+      "*":
+        - administrative_general
+        - admin_general
+        - a_and_g
+        - ag_expense
+    as_of: period_ending
+
+  information_telecom:
+    label: Information & Telecommunications Systems
+    short: IT
+    group: undistributed
+    usali: {line: Information and Telecommunications Systems, section: undistributed, edition: 11}
+    unit: usd
+    sign: expense_positive
+    period: flow
+    default_scope: annual
+    identity: null
+    identity_tolerance: 0.005
+    usali_rules: []
+    engines: [expense, historical_baseline]
+    bindings:
+      field_catalog: {namespace: t12_expense, key: information_telecom}
+      actuals_attr: undistributed.information_telecom
+      scorer_key: information_telecom
+      recognizer: information_telecom
+      worksheet: {row: it, override_key: information_telecom, y1_read: [undistributed, information_telecom]}
+    aliases:
+      PNL_FAMILY:
+        - p_and_l_usali.undistributed.information_telecom
+        - p_and_l_usali.information_and_telecom.expense_usd
+        - p_and_l_usali.undistributed.information_and_telecom_usd
+        - p_and_l_usali.undistributed.information_and_telecom
+        - p_and_l_usali.undistributed.information_telecom_systems_usd
+        - p_and_l_usali.undistributed.information_telecom_systems
+        - p_and_l_usali.undistributed_expenses.information_telecom_systems_usd
+      "*":
+        - information_telecom
+        - information_and_telecom
+    as_of: period_ending
+
+  sales_marketing:
+    label: Sales & Marketing
+    short: S&M
+    group: undistributed
+    usali: {line: Sales and Marketing, section: undistributed, edition: 11}
+    unit: usd
+    sign: expense_positive
+    period: flow
+    default_scope: annual
+    identity: null
+    identity_tolerance: 0.005
+    usali_rules: [MARKETING_PCT_REVENUE]
+    engines: [expense, historical_baseline]
+    bindings:
+      field_catalog: {namespace: t12_expense, key: sales_marketing}
+      actuals_attr: undistributed.sales_marketing
+      scorer_key: marketing_expense
+      recognizer: marketing_expense
+      worksheet: {row: sm, override_key: sales_marketing, y1_read: [undistributed, sales_marketing]}
+    aliases:
+      PNL_FAMILY:
+        - p_and_l_usali.undistributed.sales_marketing
+        - p_and_l_usali.sales_and_marketing.expense_usd
+        - p_and_l_usali.undistributed.sales_and_marketing_usd
+        - p_and_l_usali.undistributed.sales_and_marketing
+        - p_and_l_usali.undistributed_expenses.sales_marketing_usd
+        - p_and_l_usali.marketing
+      "*":
+        - sales_marketing
+        - marketing_expense
+        - marketing
+    as_of: period_ending
+
+  property_operations:
+    label: Property Operations & Maintenance
+    short: POM
+    group: undistributed
+    usali: {line: Property Operation and Maintenance, section: undistributed, edition: 11}
+    unit: usd
+    sign: expense_positive
+    period: flow
+    default_scope: annual
+    identity: null
+    identity_tolerance: 0.005
+    usali_rules: [RM_PCT_REVENUE]
+    engines: [expense, historical_baseline]
+    bindings:
+      field_catalog: {namespace: t12_expense, key: property_operations}
+      actuals_attr: undistributed.property_operations
+      scorer_key: rm_expense
+      recognizer: rm_expense
+      worksheet: {row: pom, override_key: property_operations, y1_read: [undistributed, property_operations]}
+    aliases:
+      PNL_FAMILY:
+        - p_and_l_usali.undistributed.property_operations
+        - p_and_l_usali.property_operations_and_maintenance.expense_usd
+        - p_and_l_usali.undistributed.property_operations_and_maintenance_usd
+        - p_and_l_usali.undistributed.property_operations_maintenance_usd
+        - p_and_l_usali.undistributed.property_operations_maintenance
+        - p_and_l_usali.undistributed_expenses.property_operations_maintenance_usd
+        - p_and_l_usali.repairs_maintenance
+      "*":
+        - property_operations
+        - repairs_maintenance
+        - rm_expense
+        - rm
+    as_of: period_ending
+
+  utilities:
+    label: Utilities
+    short: Utilities
+    group: undistributed
+    usali: {line: Utilities, section: undistributed, edition: 11}
+    unit: usd
+    sign: expense_positive
+    period: flow
+    default_scope: annual
+    identity: null
+    identity_tolerance: 0.005
+    usali_rules: [UTILITIES_PER_KEY]
+    engines: [expense, historical_baseline]
+    bindings:
+      field_catalog: {namespace: t12_expense, key: utilities}
+      actuals_attr: undistributed.utilities
+      scorer_key: utilities_expense
+      recognizer: utilities_expense
+      worksheet: {row: util, override_key: utilities, y1_read: [undistributed, utilities]}
+    aliases:
+      PNL_FAMILY:
+        - p_and_l_usali.undistributed.utilities
+        - p_and_l_usali.utilities.expense_usd
+        - p_and_l_usali.undistributed.utilities_usd
+        - p_and_l_usali.undistributed_expenses.utilities_usd
+        - p_and_l_usali.utilities
+      "*":
+        - utilities
+        - utilities_expense
+    as_of: period_ending
+
+  undistributed_expenses:
+    label: Total Undistributed Operating Expenses
+    short: Undistributed
+    group: undistributed
+    usali: {line: Total Undistributed Operating Expenses, section: undistributed, edition: 11}
+    unit: usd
+    sign: expense_positive
+    period: flow
+    default_scope: annual
+    identity: "administrative_general + information_telecom + sales_marketing + property_operations + utilities"
+    identity_optional_terms: [information_telecom]
+    identity_tolerance: 0.005
+    usali_rules: [GOP_IDENTITY]
+    engines: [expense, historical_baseline]
+    bindings:
+      critic_key: undistributed_expenses
+      variance_rule: A_AND_G_PCT_REVENUE
+      variance_concept: {key: undistributed_expenses, label: Undistributed expenses, impact_basis: expense}
+      actuals_attr: undistributed.total
+      scorer_key: undistributed_expenses
+      worksheet: {row: undist_total, hist_key: undistributed, meta_key: undistributed}
+    aliases:
+      PNL_FAMILY:
+        - p_and_l_usali.undistributed.total
+        - p_and_l_usali.total_undistributed_expenses_usd
+        - p_and_l_usali.total_undistributed_expenses
+        - p_and_l_usali.undistributed_expenses.total_usd
+        - p_and_l_usali.undistributed.total_undistributed_expenses_usd
+        - p_and_l_usali.undistributed_expenses
+      OM:
+        - {path: broker_proforma.undistributed_expenses_usd, basis: broker}
+      "*":
+        - undistributed_expenses
+        - undistributed_expenses_usd
+        - total_undistributed_expenses_usd
+        - undistributed
+    as_of: period_ending
+
+  # ═══════════════════════════ Fees & reserves ═══════════════════════════
+  mgmt_fee:
+    label: Management Fee
+    short: Mgmt fee
+    group: fees_reserves
+    usali: {line: Management Fees, section: management_fees, edition: 11}
+    unit: usd
+    sign: expense_positive
+    period: flow
+    default_scope: annual
+    identity: null
+    identity_tolerance: 0.005
+    usali_rules: [NOI_IDENTITY, MGMT_FEE_RANGE]
+    engines: [expense, historical_baseline]
+    bindings:
+      field_catalog: {namespace: t12_expense, key: mgmt_fee}
+      critic_key: mgmt_fee
+      variance_rule: MGMT_FEE_RANGE
+      variance_concept: {key: mgmt_fee, label: Management fee, impact_basis: expense}
+      actuals_attr: mgmt_fee
+      scorer_key: mgmt_fee
+      recognizer: mgmt_fee
+      worksheet: {row: mgmt, hist_key: mgmt_fee, meta_key: mgmt_fee, override_key: mgmt_fee, y1_read: [mgmt_fee]}
+    aliases:
+      PNL_FAMILY:
+        - p_and_l_usali.fees_and_reserves.mgmt_fee
+        - p_and_l_usali.fees_and_reserves.management_fee
+        - p_and_l_usali.management_fees_usd
+        - p_and_l_usali.management_fees.total_usd
+        - p_and_l_usali.management_fees.total
+        - p_and_l_usali.mgmt_fee
+      OM:
+        - {path: broker_proforma.mgmt_fee_usd, basis: broker}
+      "*":
+        - mgmt_fee
+        - mgmt_fee_usd
+        - management_fee
+    as_of: period_ending
+
+  incentive_mgmt_fee:
+    label: Incentive Management Fee
+    short: IMF
+    group: fees_reserves
+    usali: {line: Incentive Management Fees, section: management_fees, edition: 11}
+    unit: usd
+    sign: expense_positive
+    period: flow
+    default_scope: annual
+    identity: null
+    identity_tolerance: 0.005
+    usali_rules: [INCENTIVE_MGMT_FEE_RANGE]
+    engines: []
+    bindings:
+      scorer_key: incentive_mgmt_fee
+    aliases:
+      PNL_FAMILY:
+        - p_and_l_usali.incentive_mgmt_fee
+      "*":
+        - incentive_mgmt_fee
+        - incentive_fee
+    as_of: period_ending
+
+  ffe_reserve:
+    label: FF&E Reserve
+    short: FF&E
+    group: fees_reserves
+    usali: {line: Replacement Reserve, section: reserve, edition: 11}
+    unit: usd
+    sign: expense_positive
+    period: flow
+    default_scope: annual
+    identity: null
+    identity_tolerance: 0.005
+    usali_rules: [NOI_IDENTITY, FFE_RESERVE_RANGE, FFE_RESERVE_BRAND_FLOOR]
+    engines: [expense, historical_baseline]
+    bindings:
+      field_catalog: {namespace: t12_expense, key: ffe_reserve}
+      critic_key: ffe_reserve
+      variance_rule: FFE_RESERVE_RANGE
+      variance_concept: {key: ffe_reserve, label: FF&E reserve, impact_basis: expense}
+      actuals_attr: ffe_reserve
+      scorer_key: ffe_reserve
+      recognizer: ffe_reserve
+      worksheet: {row: ffe, override_key: ffe_reserve, y1_read: [ffe_reserve]}
+    aliases:
+      PNL_FAMILY:
+        - p_and_l_usali.fees_and_reserves.ffe_reserve
+        - p_and_l_usali.ffe_replacement_reserve_usd
+        - p_and_l_usali.ffe_reserve.proforma_calculation_usd
+        - p_and_l_usali.ffe_reserve.total_usd
+        - p_and_l_usali.ffe_reserve
+      OM:
+        - {path: broker_proforma.ffe_reserve_usd, basis: broker}
+      "*":
+        - ffe_reserve
+        - ffe_reserve_usd
+    as_of: period_ending
+
+  franchise_royalty_fee:
+    label: Franchise Royalty Fee
+    short: Royalty
+    group: fees_reserves
+    usali: {line: Franchise Fees, section: undistributed, edition: 11}
+    unit: usd
+    sign: expense_positive
+    period: flow
+    default_scope: annual
+    identity: null
+    identity_tolerance: 0.005
+    usali_rules: [FRANCHISE_FEE_RANGE]
+    engines: []
+    bindings:
+      scorer_key: franchise_royalty_fee
+    aliases:
+      PNL_FAMILY:
+        - p_and_l_usali.franchise_royalty_fee
+      "*":
+        - franchise_royalty_fee
+        - royalty_fee
+    as_of: period_ending
+
+  franchise_marketing_fee:
+    label: Franchise Marketing / Program Fee
+    short: Brand mktg fee
+    group: fees_reserves
+    usali: {line: Franchise Marketing Fees, section: undistributed, edition: 11}
+    unit: usd
+    sign: expense_positive
+    period: flow
+    default_scope: annual
+    identity: null
+    identity_tolerance: 0.005
+    usali_rules: [FRANCHISE_MARKETING_FEE_RANGE]
+    engines: []
+    bindings:
+      scorer_key: franchise_marketing_fee
+    aliases:
+      PNL_FAMILY:
+        - p_and_l_usali.franchise_marketing_fee
+      "*":
+        - franchise_marketing_fee
+        - marketing_program_fee
+    as_of: period_ending
+
+  # ═══════════════════════ Fixed charges / non-operating ════════════════
+  property_taxes:
+    label: Property Taxes
+    short: Taxes
+    group: fixed_charges
+    usali: {line: Property and Other Taxes, section: non_operating, edition: 11}
+    unit: usd
+    sign: expense_positive
+    period: flow
+    default_scope: annual
+    identity: null
+    identity_tolerance: 0.005
+    usali_rules: [PROPERTY_TAX_PER_KEY]
+    engines: [expense, historical_baseline]
+    bindings:
+      field_catalog: {namespace: t12_expense, key: property_taxes}
+      critic_key: property_taxes
+      variance_concept: {key: property_taxes, label: Property taxes, impact_basis: expense}
+      actuals_attr: fixed_charges.property_taxes
+      scorer_key: property_tax
+      recognizer: property_tax
+      worksheet: {row: taxes, hist_key: property_tax, meta_key: property_tax, override_key: property_taxes, y1_read: [fixed_charges, property_taxes]}
+    aliases:
+      PNL_FAMILY:
+        - p_and_l_usali.fixed_charges.property_taxes
+        - p_and_l_usali.non_operating.property_and_other_taxes_usd
+        - p_and_l_usali.non_operating.property_other_taxes_usd
+        - p_and_l_usali.non_operating.property_taxes
+        - p_and_l_usali.property_taxes
+        - p_and_l_usali.property_tax
+      "*":
+        - property_taxes
+        - property_tax
+        - property_tax_usd
+    as_of: period_ending
+
+  insurance:
+    label: Insurance
+    short: Insurance
+    group: fixed_charges
+    usali: {line: Insurance, section: non_operating, edition: 11}
+    unit: usd
+    sign: expense_positive
+    period: flow
+    default_scope: annual
+    identity: null
+    identity_tolerance: 0.005
+    usali_rules: [INSURANCE_PER_KEY, INSURANCE_PER_KEY_COASTAL]
+    engines: [expense, historical_baseline]
+    bindings:
+      field_catalog: {namespace: t12_expense, key: insurance}
+      critic_key: insurance
+      variance_rule: INSURANCE_PER_KEY
+      variance_concept: {key: insurance, label: Insurance, impact_basis: expense}
+      actuals_attr: fixed_charges.insurance
+      scorer_key: insurance_expense
+      recognizer: insurance_expense
+      worksheet: {row: insurance, hist_key: insurance, meta_key: insurance, override_key: insurance, y1_read: [fixed_charges, insurance]}
+    aliases:
+      PNL_FAMILY:
+        - p_and_l_usali.fixed_charges.insurance
+        - p_and_l_usali.non_operating.insurance_usd
+        - p_and_l_usali.non_operating.insurance
+        - p_and_l_usali.insurance
+      OM:
+        - {path: broker_proforma.insurance_usd, basis: broker}
+      "*":
+        - insurance
+        - insurance_usd
+        - insurance_expense
+    as_of: period_ending
+
+  rent_expense:
+    label: Rent (ground lease)
+    short: Rent
+    group: fixed_charges
+    usali: {line: Rent, section: non_operating, edition: 11}
+    unit: usd
+    sign: expense_positive
+    period: flow
+    default_scope: annual
+    identity: null
+    identity_tolerance: 0.005
+    usali_rules: []
+    engines: []
+    bindings:
+      actuals_attr: fixed_charges.rent
+    aliases:
+      PNL_FAMILY:
+        - p_and_l_usali.fixed_charges.rent
+        - p_and_l_usali.non_operating.rent_usd
+        - p_and_l_usali.non_operating.rent
+      "*":
+        - rent_expense
+        - ground_rent
+        - rent_usd
+    as_of: period_ending
+
+  nonop_income:
+    label: Non-Operating Income
+    short: Non-op income
+    group: fixed_charges
+    usali: {line: Non-Operating Income, section: non_operating, edition: 11}
+    unit: usd
+    sign: positive
+    period: flow
+    default_scope: annual
+    identity: null
+    identity_tolerance: 0.005
+    usali_rules: []
+    engines: []
+    bindings: {}
+    aliases:
+      PNL_FAMILY:
+        - p_and_l_usali.non_operating.income_usd
+        - p_and_l_usali.non_operating.income
+      "*":
+        - nonop_income
+        - non_operating_income
+    as_of: period_ending
+
+  other_nonop_expense:
+    label: Other Non-Operating Expense
+    short: Other non-op
+    group: fixed_charges
+    usali: {line: Other Non-Operating Expenses, section: non_operating, edition: 11}
+    unit: usd
+    sign: expense_positive
+    period: flow
+    default_scope: annual
+    identity: null
+    identity_tolerance: 0.005
+    usali_rules: []
+    engines: []
+    bindings:
+      actuals_attr: fixed_charges.other_fixed
+    aliases:
+      PNL_FAMILY:
+        - p_and_l_usali.non_operating.other_usd
+        - p_and_l_usali.non_operating.other
+        - p_and_l_usali.fixed_charges.other_fixed
+      "*":
+        - other_nonop_expense
+        - other_fixed
+    as_of: period_ending
+
+  fixed_charges:
+    label: Total Fixed Charges (non-operating expenses)
+    short: Fixed
+    group: fixed_charges
+    usali: {line: Total Non-Operating Income and Expenses, section: non_operating, edition: 11}
+    unit: usd
+    sign: expense_positive
+    period: flow
+    default_scope: annual
+    # USALI "Total Non-Operating Income and Expenses": taxes + insurance +
+    # rent + other, net of non-operating income (eval corpus: the statement
+    # row the live T-12 prints; 543,094 + 1,392,610 + 8,452 − 21,924 ≈ 1,922,240).
+    identity: "property_taxes + insurance + rent_expense + other_nonop_expense - nonop_income"
+    identity_optional_terms: [rent_expense, other_nonop_expense, nonop_income]
+    identity_tolerance: 0.005
+    usali_rules: [NOI_IDENTITY]
+    engines: [expense, historical_baseline]
+    bindings:
+      critic_key: fixed_charges
+      variance_rule: INSURANCE_PER_KEY
+      variance_concept: {key: fixed_charges, label: Fixed charges, impact_basis: expense}
+      actuals_attr: fixed_charges.total
+      scorer_key: fixed_charges
+      worksheet: {row: fixed_total, hist_key: fixed_expenses}
+    aliases:
+      PNL_FAMILY:
+        - p_and_l_usali.fixed_charges.total
+        - p_and_l_usali.total_non_operating_income_and_expenses_usd
+        - p_and_l_usali.fixed_charges.total_nonop
+        - p_and_l_usali.total_non_operating_expenses_usd
+        - p_and_l_usali.non_operating.total_usd
+        - p_and_l_usali.fixed_charges
+      OM:
+        - {path: broker_proforma.fixed_charges_usd, basis: broker}
+      "*":
+        - fixed_charges
+        - fixed_charges_usd
+    as_of: period_ending
+
+  # ═══════════════════════════════ Roll-ups ══════════════════════════════
+  gop:
+    label: Gross Operating Profit
+    short: GOP
+    group: rollup
+    usali: {line: Gross Operating Profit, section: profit, edition: 11}
+    unit: usd
+    sign: signed
+    period: flow
+    default_scope: annual
+    identity: "total_revenue - dept_expenses - undistributed_expenses"
+    identity_tolerance: 0.005
+    usali_rules: [GOP_IDENTITY, NOI_IDENTITY, GOP_MARGIN_RANGE, INCENTIVE_MGMT_FEE_RANGE]
+    engines: [expense, historical_baseline, historical_variance]
+    bindings:
+      critic_key: gop
+      variance_rule: GOP_MARGIN_RANGE
+      variance_concept: {key: gop, label: GOP, impact_basis: noi}
+      actuals_attr: gop
+      scorer_key: gop
+      recognizer: gop
+      worksheet: {row: gop, hist_key: gop, meta_key: gop}
+    aliases:
+      PNL_FAMILY:
+        - p_and_l_usali.gross_operating_profit
+        - p_and_l_usali.gross_operating_profit_usd
+        - p_and_l_usali.gross_operating_profit.gop_usd
+        - p_and_l_usali.gross_operating_profit.total_usd
+        - p_and_l_usali.gross_operating_profit.total
+        - p_and_l_usali.gop.gross_operating_profit_usd
+        - p_and_l_usali.gop.gop_usd
+        - p_and_l_usali.gop.total_usd
+        - p_and_l_usali.gop_usd
+        - p_and_l_usali.gop
+      OM:
+        - {path: broker_proforma.gop_usd, basis: broker}
+        - {path: broker_proforma.gop, basis: broker}
+        - {path: ttm_summary_per_om.gop_usd, basis: broker, scope: annual}
+        - {path: "p_and_l_usali.{year}.gop_usd", basis: om_history, scope: annual}
+        - {path: "p_and_l_usali.{year}.gop", basis: om_history, scope: annual}
+      "*":
+        - ttm_summary_per_om.gop_usd
+        - gop
+        - gop_usd
+        - gross_operating_profit
+        - gross_operating_profit_usd
+    as_of: period_ending
+
+  income_before_nonop:
+    label: Income Before Non-Operating Income and Expenses
+    short: IBNOIE
+    group: rollup
+    usali: {line: Income Before Non-Operating Income and Expenses, section: profit, edition: 11}
+    unit: usd
+    sign: signed
+    period: flow
+    default_scope: annual
+    identity: "gop - mgmt_fee"
+    identity_tolerance: 0.005
+    usali_rules: []
+    engines: []
+    bindings: {}
+    aliases:
+      PNL_FAMILY:
+        - p_and_l_usali.income_before_non_operating_usd
+        - p_and_l_usali.income_before_non_operating
+        - p_and_l_usali.income_before_nonop
+      "*":
+        - income_before_non_operating
+        - income_before_nonop
+    as_of: period_ending
+
+  ebitda:
+    label: EBITDA
+    short: EBITDA
+    group: rollup
+    usali: {line: EBITDA, section: profit, edition: 11}
+    unit: usd
+    sign: signed
+    period: flow
+    default_scope: annual
+    identity: "income_before_nonop - fixed_charges"
+    identity_tolerance: 0.005
+    usali_rules: []
+    engines: []
+    bindings:
+      recognizer: ebitda
+    aliases:
+      PNL_FAMILY:
+        - p_and_l_usali.ebitda_usd
+        - p_and_l_usali.ebitda
+        - p_and_l_usali.net_operating_income.ebitda
+      "*":
+        - ebitda
+        - ebitda_usd
+    as_of: period_ending
+
+  noi:
+    label: Net Operating Income
+    short: NOI
+    group: rollup
+    usali: {line: EBITDA Less Replacement Reserve, section: profit, edition: 11}
+    unit: usd
+    sign: signed
+    period: flow
+    default_scope: annual
+    identity: "gop - mgmt_fee - ffe_reserve - fixed_charges"
+    identity_tolerance: 0.005
+    usali_rules: [NOI_IDENTITY, NOI_MARGIN_RANGE, DEBT_YIELD_MIN, DSCR_MIN, BROKER_VS_T12_NOI_VARIANCE]
+    engines: [expense, debt, returns, historical_baseline, historical_variance]
+    bindings:
+      critic_key: noi
+      variance_rule: BROKER_VS_T12_NOI_VARIANCE
+      variance_concept: {key: noi, label: NOI, impact_basis: noi}
+      actuals_attr: noi
+      scorer_key: noi
+      scorer_variants: {broker_noi: {basis: broker}, t12_noi: {basis: actual}}
+      recognizer: noi
+      worksheet: {row: noi, hist_key: noi, meta_key: noi}
+    aliases:
+      PNL_FAMILY:
+        - p_and_l_usali.net_operating_income.noi_usd
+        - p_and_l_usali.net_operating_income.net_operating_income_usd
+        - p_and_l_usali.net_operating_income.total_usd
+        - p_and_l_usali.net_operating_income.total
+        - p_and_l_usali.net_operating_income
+        - p_and_l_usali.noi.noi_usd
+        - p_and_l_usali.noi.net_operating_income_usd
+        - p_and_l_usali.noi.net_operating_income
+        - p_and_l_usali.noi.total_usd
+        - p_and_l_usali.noi
+        - p_and_l_usali.income_statement.noi_usd
+        - p_and_l_usali.income_statement.net_operating_income_usd
+        - p_and_l_usali.ebitda_less_replacement_reserve_usd
+        - p_and_l_usali.ebitda_less_replacement_reserve.total_usd
+      OM:
+        - {path: broker_proforma.noi_usd, basis: broker}
+        - {path: broker_proforma.noi, basis: broker}
+        - {path: broker_proforma.noi_year_1_usd, basis: broker}
+        - {path: proforma_noi, basis: broker}
+        - {path: ttm_summary_per_om.noi_usd, basis: broker, scope: annual}
+        - {path: "p_and_l_usali.{year}.noi_usd", basis: om_history, scope: annual}
+        - {path: "p_and_l_usali.{year}.noi", basis: om_history, scope: annual}
+      "*":
+        - ttm_summary_per_om.noi_usd
+        - noi
+        - noi_usd
+        - net_operating_income
+        - net_operating_income_usd
+        - {path: t12_noi, basis: actual}
+        - {path: t12.noi, basis: actual}
+        - {path: actual_noi, basis: actual}
+        - {path: broker_noi, basis: broker}
+    as_of: period_ending
+
+  noi_per_key:
+    label: NOI per key
+    short: NOI/key
+    group: rollup
+    usali: null
+    unit: usd_per_key
+    sign: signed
+    period: flow
+    default_scope: annual
+    identity: "noi / keys"
+    identity_tolerance: 0.005
+    usali_rules: []
+    engines: []
+    bindings: {}
+    aliases:
+      PNL_FAMILY:
+        - p_and_l_usali.noi_per_key_usd
+        - p_and_l_usali.noi_per_key
+      OM:
+        - {path: broker_proforma.noi_per_key_usd, basis: broker}
+      "*":
+        - noi_per_key
+        - noi_per_key_usd
+        - noi_par
+    as_of: period_ending
+
+  # ════════════════════════════════ Labor ════════════════════════════════
+  total_labor:
+    label: Total Labor Cost
+    short: Labor
+    group: labor
+    usali: {line: Total Labor Costs and Related Expenses, section: labor, edition: 11}
+    unit: usd
+    sign: expense_positive
+    period: flow
+    default_scope: annual
+    identity: null
+    identity_tolerance: 0.005
+    usali_rules: [LABOR_PCT_REVENUE_SELECT, LABOR_PCT_REVENUE_FULL]
+    engines: []
+    bindings:
+      scorer_key: total_labor
+    aliases:
+      PNL_FAMILY:
+        - p_and_l_usali.total_labor
+        - p_and_l_usali.labor.total
+      "*":
+        - total_labor
+        - labor
+        - labor_cost
+    as_of: period_ending
+
+  labor_cost_per_occupied_room:
+    label: Labor Cost per Occupied Room
+    short: Labor POR
+    group: labor
+    usali: null
+    unit: usd_per_occupied_room
+    sign: expense_positive
+    period: average
+    default_scope: annual
+    identity: null
+    identity_tolerance: 0.005
+    usali_rules: [LABOR_PER_OCC_ROOM]
+    engines: []
+    bindings:
+      scorer_key: labor_cost_per_occupied_room
+    aliases:
+      "*":
+        - labor_cost_per_occupied_room
+        - labor_per_or
+        - labor_por
+    as_of: period_ending
+
+  # ═══════════════════════════════ Period ════════════════════════════════
+  period_ending:
+    label: Statement period end
+    short: Period end
+    group: period
+    usali: null
+    unit: date
+    sign: positive
+    period: point
+    default_scope: null
+    note: Point-in-time fact — no accounting period applies.
+    identity: null
+    identity_tolerance: 0.005
+    usali_rules: []
+    engines: [historical_baseline]
+    bindings: {}
+    aliases:
+      PNL_FAMILY:
+        - p_and_l_usali.period_ending
+      "*":
+        - period_ending
+        - property_overview.statement_period
+        - property_overview.statement_period_end
+    as_of: null
+
+  period_start:
+    label: Statement period start
+    short: Period start
+    group: period
+    usali: null
+    unit: date
+    sign: positive
+    period: point
+    default_scope: null
+    note: Point-in-time fact — no accounting period applies.
+    identity: null
+    identity_tolerance: 0.005
+    usali_rules: []
+    engines: [historical_baseline]
+    bindings: {}
+    aliases:
+      PNL_FAMILY:
+        - p_and_l_usali.period_start
+      "*":
+        - period_start
+    as_of: null
+
+  period_type:
+    label: Statement period type
+    short: Period type
+    group: period
+    usali: null
+    unit: text
+    sign: positive
+    period: point
+    default_scope: null
+    note: Point-in-time fact — no accounting period applies.
+    identity: null
+    identity_tolerance: 0.005
+    usali_rules: []
+    engines: [historical_baseline]
+    bindings: {}
+    aliases:
+      PNL_FAMILY:
+        - p_and_l_usali.period_type
+      "*":
+        - period_type
+    as_of: null
+
+  period_label:
+    label: Statement period label
+    short: Period label
+    group: period
+    usali: null
+    unit: text
+    sign: positive
+    period: point
+    default_scope: null
+    note: Point-in-time fact — no accounting period applies.
+    identity: null
+    identity_tolerance: 0.005
+    usali_rules: []
+    engines: [historical_baseline]
+    bindings: {}
+    aliases:
+      PNL_FAMILY:
+        - p_and_l_usali.period_label
+      "*":
+        - period_label
+    as_of: null
+
+  # ═══════════════════════════════ Property ══════════════════════════════
+  keys:
+    label: Keys (guest rooms)
+    short: Keys
+    group: property
+    usali: {line: Rooms Available (keys), section: statistics, edition: 11}
+    unit: keys
+    sign: positive
+    period: point
+    default_scope: null
+    note: Point-in-time fact — no accounting period applies.
+    identity: null
+    identity_tolerance: 0.005
+    usali_rules: [INSURANCE_PER_KEY, INSURANCE_PER_KEY_COASTAL, UTILITIES_PER_KEY, PIP_PER_KEY, RENOVATION_PER_KEY, PRICE_PER_KEY_RANGE]
+    engines: [revenue, capital]
+    bindings:
+      scorer_key: keys
+    aliases:
+      "*":
+        - property_overview.keys
+        - keys
+        - room_count
+    as_of: null
+
+  property_name:
+    label: Property name
+    short: Name
+    group: property
+    usali: null
+    unit: text
+    sign: positive
+    period: point
+    default_scope: null
+    note: Point-in-time fact — no accounting period applies.
+    identity: null
+    identity_tolerance: 0.005
+    usali_rules: []
+    engines: []
+    bindings: {}
+    aliases:
+      STR_FAMILY:
+        - ttm_performance.subject.name
+      "*":
+        - property_overview.name
+        - property_name
+    as_of: null
+
+  brand:
+    label: Brand / flag
+    short: Brand
+    group: property
+    usali: null
+    unit: text
+    sign: positive
+    period: point
+    default_scope: null
+    note: Point-in-time fact — no accounting period applies.
+    identity: null
+    identity_tolerance: 0.005
+    usali_rules: []
+    engines: []
+    bindings: {}
+    aliases:
+      "*":
+        - property_overview.brand
+        - brand
+    as_of: null
+
+  year_built:
+    label: Year built
+    short: Built
+    group: property
+    usali: null
+    unit: years
+    sign: positive
+    period: point
+    default_scope: null
+    note: Point-in-time fact — no accounting period applies.
+    identity: null
+    identity_tolerance: 0.005
+    usali_rules: []
+    engines: [capital]
+    bindings:
+      field_catalog: {namespace: om_capital, key: year_built}
+    aliases:
+      "*":
+        - property_overview.year_built
+        - year_built
+    as_of: null
+
+  year_renovated:
+    label: Year renovated
+    short: Renovated
+    group: property
+    usali: null
+    unit: years
+    sign: positive
+    period: point
+    default_scope: null
+    note: Point-in-time fact — no accounting period applies.
+    identity: null
+    identity_tolerance: 0.005
+    usali_rules: []
+    engines: []
+    bindings: {}
+    aliases:
+      "*":
+        - property_overview.year_renovated
+        - year_renovated
+    as_of: null
+
+  address:
+    label: Address
+    short: Address
+    group: property
+    usali: null
+    unit: text
+    sign: positive
+    period: point
+    default_scope: null
+    note: Point-in-time fact — no accounting period applies.
+    identity: null
+    identity_tolerance: 0.005
+    usali_rules: []
+    engines: []
+    bindings: {}
+    aliases:
+      "*":
+        - property_overview.address
+    as_of: null
+
+  gba_sf:
+    label: Gross building area
+    short: GBA
+    group: property
+    usali: null
+    unit: count
+    sign: positive
+    period: point
+    default_scope: null
+    note: Point-in-time fact — no accounting period applies.
+    identity: null
+    identity_tolerance: 0.005
+    usali_rules: []
+    engines: []
+    bindings: {}
+    aliases:
+      "*":
+        - property_overview.gba_sf
+        - gba_sf
+    as_of: null
+
+  meeting_space_sf:
+    label: Meeting space
+    short: Meeting SF
+    group: property
+    usali: null
+    unit: count
+    sign: positive
+    period: point
+    default_scope: null
+    note: Point-in-time fact — no accounting period applies.
+    identity: null
+    identity_tolerance: 0.005
+    usali_rules: []
+    engines: []
+    bindings: {}
+    aliases:
+      "*":
+        - property_overview.meeting_space_sf
+        - meeting_space_sf
+    as_of: null
+
+  parking_spaces:
+    label: Parking spaces
+    short: Parking
+    group: property
+    usali: null
+    unit: count
+    sign: positive
+    period: point
+    default_scope: null
+    note: Point-in-time fact — no accounting period applies.
+    identity: null
+    identity_tolerance: 0.005
+    usali_rules: []
+    engines: []
+    bindings: {}
+    aliases:
+      "*":
+        - property_overview.parking_spaces
+        - parking_spaces
+    as_of: null
+
+  fb_outlets:
+    label: F&B outlets
+    short: Outlets
+    group: property
+    usali: null
+    unit: count
+    sign: positive
+    period: point
+    default_scope: null
+    note: Point-in-time fact — no accounting period applies.
+    identity: null
+    identity_tolerance: 0.005
+    usali_rules: []
+    engines: []
+    bindings: {}
+    aliases:
+      "*":
+        - property_overview.fb_outlets
+        - fb_outlets
+    as_of: null
+
+  property_type:
+    label: Service level / segment
+    short: Type
+    group: property
+    usali: null
+    unit: text
+    sign: positive
+    period: point
+    default_scope: null
+    note: Point-in-time fact — no accounting period applies.
+    identity: null
+    identity_tolerance: 0.005
+    usali_rules: []
+    engines: []
+    bindings: {}
+    aliases:
+      "*":
+        - property_overview.property_type
+        - property_overview.str_market_class
+        - property_type
+    as_of: null
+
+  submarket:
+    label: Submarket
+    short: Submarket
+    group: property
+    usali: null
+    unit: text
+    sign: positive
+    period: point
+    default_scope: null
+    note: Point-in-time fact — no accounting period applies.
+    identity: null
+    identity_tolerance: 0.005
+    usali_rules: []
+    engines: []
+    bindings: {}
+    aliases:
+      CBRE_HORIZONS:
+        - cbre_horizons.submarket
+      "*":
+        - property_overview.submarket
+        - property_overview.market
+        - submarket
+    as_of: null
+
+  property_value:
+    label: Property value (assessed)
+    short: Value
+    group: property
+    usali: null
+    unit: usd
+    sign: positive
+    period: point
+    default_scope: null
+    note: Point-in-time fact — no accounting period applies.
+    identity: null
+    identity_tolerance: 0.005
+    usali_rules: [PROPERTY_TAX_PER_KEY, LTV_MAX]
+    engines: []
+    bindings:
+      scorer_key: property_value
+    aliases:
+      "*":
+        - property_overview.property_value
+        - property_value
+        - assessed_value
+    as_of: null
+
+  # ═══════════════════════ Capital / pricing / valuation ════════════════
+  purchase_price:
+    label: Purchase price (asking price)
+    short: Price
+    group: capital
+    usali: null
+    unit: usd
+    sign: positive
+    period: point
+    default_scope: null
+    note: Point-in-time fact — no accounting period applies.
+    identity: null
+    identity_tolerance: 0.005
+    usali_rules: [PRICE_PER_KEY_RANGE]
+    engines: [capital]
+    bindings:
+      field_catalog: {namespace: om_capital, key: purchase_price}
+      scorer_key: purchase_price
+    aliases:
+      OM:
+        - {path: asking_price.headline_price_usd, basis: broker}
+        - {path: asking_price.purchase_price, basis: broker}
+      "*":
+        - headline_price_usd
+        - purchase_price
+        - deal.purchase_price
+        - price
+    as_of: null
+
+  price_per_key:
+    label: Price per key
+    short: $/key
+    group: capital
+    usali: null
+    unit: usd_per_key
+    sign: positive
+    period: point
+    default_scope: null
+    note: Point-in-time fact — no accounting period applies.
+    identity: null
+    identity_tolerance: 0.005
+    usali_rules: []
+    engines: [capital]
+    bindings:
+      field_catalog: {namespace: om_capital, key: price_per_key}
+    aliases:
+      OM:
+        - {path: asking_price.price_per_key_usd, basis: broker}
+      "*":
+        - price_per_key_usd
+        - price_per_key
+    as_of: null
+
+  renovation_budget:
+    label: Renovation / PIP budget
+    short: PIP budget
+    group: capital
+    usali: null
+    unit: usd
+    sign: positive
+    period: point
+    default_scope: null
+    note: Point-in-time fact — no accounting period applies.
+    identity: null
+    identity_tolerance: 0.005
+    usali_rules: []
+    engines: [capital]
+    bindings:
+      field_catalog: {namespace: om_capital, key: renovation_budget}
+    aliases:
+      OM:
+        - {path: broker_proforma.renovation_budget_usd, basis: broker}
+      "*":
+        - renovation_budget_usd
+        - renovation_budget
+    as_of: null
+
+  pip_estimate:
+    label: PIP estimate
+    short: PIP
+    group: capital
+    usali: null
+    unit: usd
+    sign: positive
+    period: point
+    default_scope: null
+    note: Point-in-time fact — no accounting period applies.
+    identity: null
+    identity_tolerance: 0.005
+    usali_rules: [PIP_PER_KEY]
+    engines: []
+    bindings:
+      scorer_key: pip_estimate
+    aliases:
+      "*":
+        - pip_estimate
+    as_of: null
+
+  renovation_hard_costs:
+    label: Renovation hard costs
+    short: Hard costs
+    group: capital
+    usali: null
+    unit: usd
+    sign: positive
+    period: point
+    default_scope: null
+    note: Point-in-time fact — no accounting period applies.
+    identity: null
+    identity_tolerance: 0.005
+    usali_rules: [RENOVATION_PER_KEY]
+    engines: []
+    bindings:
+      scorer_key: renovation_hard_costs
+    aliases:
+      "*":
+        - renovation_hard_costs
+    as_of: null
+
+  entry_cap_rate:
+    label: Entry (going-in) cap rate
+    short: Entry cap
+    group: capital
+    usali: null
+    unit: ratio
+    sign: positive
+    period: point
+    default_scope: null
+    note: Point-in-time fact — no accounting period applies.
+    identity: null
+    identity_tolerance: 0.005
+    usali_rules: [CAP_RATE_RANGE, EXIT_CAP_VS_ENTRY]
+    engines: [capital]
+    bindings:
+      field_catalog: {namespace: om_capital, key: entry_cap_rate, percentage_key: true}
+      scorer_key: entry_cap_rate
+    aliases:
+      OM:
+        - {path: broker_proforma.entry_cap_rate, basis: broker}
+        - {path: broker_proforma.cap_rate, basis: broker}
+      "*":
+        - entry_cap_rate
+        - cap_rate
+        - financing.entry_cap_rate
+        - valuation.entry_cap_rate
+    as_of: null
+
+  exit_cap_rate:
+    label: Exit cap rate
+    short: Exit cap
+    group: returns
+    usali: null
+    unit: ratio
+    sign: positive
+    period: point
+    default_scope: null
+    note: Point-in-time fact — no accounting period applies.
+    identity: null
+    identity_tolerance: 0.005
+    usali_rules: [EXIT_CAP_VS_ENTRY]
+    engines: [returns]
+    bindings:
+      scorer_key: exit_cap_rate
+    aliases:
+      "*":
+        - exit_cap_rate
+        - valuation.exit_cap_rate
+    as_of: null
+
+  total_capital:
+    label: Total capitalization
+    short: Total cap.
+    group: capital
+    usali: null
+    unit: usd
+    sign: positive
+    period: point
+    default_scope: null
+    note: Point-in-time fact — no accounting period applies.
+    identity: null
+    identity_tolerance: 0.005
+    usali_rules: [LTC_MAX, YIELD_ON_COST_MIN]
+    engines: [capital]
+    bindings:
+      scorer_key: total_capital
+    aliases:
+      "*":
+        - total_capital
+        - total_capitalization
+        - valuation.total_capital
+    as_of: null
+
+  closing_costs:
+    label: Closing costs
+    short: Closing
+    group: capital
+    usali: null
+    unit: usd
+    sign: expense_positive
+    period: point
+    default_scope: null
+    note: Point-in-time fact — no accounting period applies. Capital-engine input (CapitalEngineInput.closing_costs); no extractor path today.
+    identity: null
+    identity_tolerance: 0.005
+    usali_rules: []
+    engines: [capital]
+    bindings: {}
+    aliases:
+      "*":
+        - closing_costs
+        - closing_costs_usd
+    as_of: null
+
+  working_capital:
+    label: Working capital
+    short: Working cap.
+    group: capital
+    usali: null
+    unit: usd
+    sign: positive
+    period: point
+    default_scope: null
+    note: Point-in-time fact — no accounting period applies. Capital-engine input (CapitalEngineInput.working_capital); no extractor path today.
+    identity: null
+    identity_tolerance: 0.005
+    usali_rules: []
+    engines: [capital]
+    bindings: {}
+    aliases:
+      "*":
+        - working_capital
+        - working_capital_usd
+    as_of: null
+
+  stabilized_noi:
+    label: Stabilized NOI
+    short: Stab. NOI
+    group: returns
+    usali: null
+    unit: usd
+    sign: signed
+    period: flow
+    default_scope: annual
+    identity: null
+    identity_tolerance: 0.005
+    usali_rules: [YIELD_ON_COST_MIN]
+    engines: [returns]
+    bindings:
+      scorer_key: stabilized_noi
+    aliases:
+      OM:
+        - {path: broker_proforma.noi_stabilized_usd, basis: broker}
+      "*":
+        - stabilized_noi
+        - valuation.stabilized_noi
+    as_of: null
+
+  # ═══════════════════════════════ Debt ══════════════════════════════════
+  loan_amount:
+    label: Loan amount
+    short: Loan
+    group: debt
+    usali: null
+    unit: usd
+    sign: positive
+    period: point
+    default_scope: null
+    note: Point-in-time fact — no accounting period applies.
+    identity: null
+    identity_tolerance: 0.005
+    usali_rules: [DEBT_YIELD_MIN, LTV_MAX, LTC_MAX]
+    engines: [debt]
+    bindings:
+      field_catalog: {namespace: om_debt, key: loan_amount}
+      scorer_key: loan_amount
+    aliases:
+      OM:
+        - {path: in_place_debt.loan_balance_usd, basis: broker}
+      "*":
+        - loan_balance_usd
+        - loan_amount
+        - financing.loan_amount
+        - debt.loan_amount
+    as_of: null
+
+  interest_rate:
+    label: Interest rate
+    short: Rate
+    group: debt
+    usali: null
+    unit: ratio
+    sign: positive
+    period: point
+    default_scope: null
+    note: Point-in-time fact — no accounting period applies.
+    identity: null
+    identity_tolerance: 0.005
+    usali_rules: [INTEREST_RATE_RANGE]
+    engines: [debt]
+    bindings:
+      field_catalog: {namespace: om_debt, key: interest_rate, percentage_key: true}
+      scorer_key: interest_rate
+    aliases:
+      OM:
+        - {path: in_place_debt.interest_rate_pct, basis: broker}
+      "*":
+        - interest_rate_pct
+        - interest_rate
+        - financing.interest_rate
+    as_of: null
+
+  amortization_years:
+    label: Amortization
+    short: Amort.
+    group: debt
+    usali: null
+    unit: years
+    sign: positive
+    period: point
+    default_scope: null
+    note: Point-in-time fact — no accounting period applies.
+    identity: null
+    identity_tolerance: 0.005
+    usali_rules: []
+    engines: [debt]
+    bindings:
+      field_catalog: {namespace: om_debt, key: amortization_years}
+    aliases:
+      OM:
+        - {path: in_place_debt.amortization_years, basis: broker}
+      "*":
+        - amortization_years
+    as_of: null
+
+  term_years:
+    label: Loan term
+    short: Term
+    group: debt
+    usali: null
+    unit: years
+    sign: positive
+    period: point
+    default_scope: null
+    note: Point-in-time fact — no accounting period applies.
+    identity: null
+    identity_tolerance: 0.005
+    usali_rules: []
+    engines: [debt]
+    bindings:
+      field_catalog: {namespace: om_debt, key: term_years}
+    aliases:
+      OM:
+        - {path: in_place_debt.term_years, basis: broker}
+      "*":
+        - term_years
+    as_of: null
+
+  ltv:
+    label: Loan-to-value
+    short: LTV
+    group: debt
+    usali: null
+    unit: ratio
+    sign: positive
+    period: point
+    default_scope: null
+    note: Point-in-time fact — no accounting period applies.
+    identity: null
+    identity_tolerance: 0.005
+    usali_rules: []
+    engines: [debt]
+    bindings:
+      field_catalog: {namespace: om_debt, key: ltv, percentage_key: true}
+    aliases:
+      OM:
+        - {path: in_place_debt.ltv_pct, basis: broker}
+      "*":
+        - ltv_pct
+        - ltv
+    as_of: null
+
+  maturity_date:
+    label: Loan maturity
+    short: Maturity
+    group: debt
+    usali: null
+    unit: date
+    sign: positive
+    period: point
+    default_scope: null
+    note: Point-in-time fact — no accounting period applies.
+    identity: null
+    identity_tolerance: 0.005
+    usali_rules: []
+    engines: []
+    bindings: {}
+    aliases:
+      OM:
+        - {path: in_place_debt.maturity_date, basis: broker}
+      "*":
+        - maturity_date
+    as_of: null
+
+  annual_debt_service:
+    label: Annual debt service
+    short: Debt service
+    group: debt
+    usali: null
+    unit: usd
+    sign: expense_positive
+    period: flow
+    default_scope: annual
+    identity: null
+    identity_tolerance: 0.005
+    usali_rules: [DSCR_MIN]
+    engines: [debt]
+    bindings:
+      scorer_key: annual_debt_service
+    aliases:
+      "*":
+        - annual_debt_service
+        - financing.annual_debt_service
+        - debt_service
+    as_of: null
+
+  # ═══════════════════════════════ Returns ═══════════════════════════════
+  levered_irr:
+    label: Levered IRR
+    short: IRR
+    group: returns
+    usali: null
+    unit: ratio
+    sign: signed
+    period: point
+    default_scope: null
+    note: Point-in-time fact — no accounting period applies.
+    identity: null
+    identity_tolerance: 0.005
+    usali_rules: [IRR_RANGE_CORE, IRR_RANGE_VALUE_ADD, IRR_RANGE_OPPORTUNISTIC]
+    engines: [returns]
+    bindings:
+      scorer_key: levered_irr
+    aliases:
+      "*":
+        - levered_irr
+        - returns.levered_irr
+    as_of: null
+
+  equity_multiple:
+    label: Equity multiple
+    short: MOIC
+    group: returns
+    usali: null
+    unit: ratio
+    sign: positive
+    period: point
+    default_scope: null
+    note: Point-in-time fact — no accounting period applies.
+    identity: null
+    identity_tolerance: 0.005
+    usali_rules: [EQUITY_MULTIPLE_MIN]
+    engines: [returns]
+    bindings:
+      scorer_key: equity_multiple
+    aliases:
+      "*":
+        - equity_multiple
+        - returns.equity_multiple
+    as_of: null
+
+  # ══════════════════════ Market / STR comp set (Phase 2 stub) ═══════════
+  str_report_year:
+    label: STR report year
+    short: STR year
+    group: market
+    usali: null
+    unit: years
+    sign: positive
+    period: point
+    default_scope: null
+    note: Point-in-time fact — no accounting period applies.
+    identity: null
+    identity_tolerance: 0.005
+    usali_rules: []
+    engines: [str_forecast]
+    bindings: {}
+    aliases:
+      STR_FAMILY:
+        - str_trend.report_year
+        - str_segmentation.report_year
+    as_of: null
+
+  compset_adr:
+    label: Comp-set ADR
+    short: Comp ADR
+    group: market
+    usali: null
+    unit: usd
+    sign: positive
+    period: average
+    default_scope: ttm
+    identity: null
+    identity_tolerance: 0.005
+    usali_rules: [ADR_VS_COMPSET]
+    engines: [str_forecast]
+    bindings:
+      scorer_key: compset_adr
+    aliases:
+      "*":
+        - {path: comp_set.adr, basis: market}
+        - {path: compset.adr_usd, basis: market}
+        - {path: compset_adr, basis: market}
+    as_of: str_report_year
+
+  compset_revpar:
+    label: Comp-set RevPAR
+    short: Comp RevPAR
+    group: market
+    usali: null
+    unit: usd
+    sign: positive
+    period: average
+    default_scope: ttm
+    identity: null
+    identity_tolerance: 0.005
+    usali_rules: [REVPAR_VS_COMPSET]
+    engines: [str_forecast]
+    bindings:
+      scorer_key: compset_revpar
+    aliases:
+      OM:
+        - {path: market_overview_per_om.compset_revpar_usd, basis: market}
+      "*":
+        - {path: comp_set.revpar, basis: market}
+        - {path: compset.revpar_usd, basis: market}
+        - {path: compset_revpar, basis: market}
+    as_of: str_report_year
+
+  compset_occupancy:
+    label: Comp-set occupancy
+    short: Comp occ
+    group: market
+    usali: null
+    unit: ratio
+    sign: positive
+    period: average
+    default_scope: ttm
+    identity: null
+    identity_tolerance: 0.005
+    usali_rules: [OCC_VS_COMPSET]
+    engines: [str_forecast]
+    bindings:
+      scorer_key: compset_occupancy
+    aliases:
+      OM:
+        - {path: market_overview_per_om.compset_occupancy_pct, basis: market}
+      "*":
+        - {path: comp_set.occupancy, basis: market}
+        - {path: compset.occupancy_pct, basis: market}
+        - {path: compset_occupancy, basis: market}
+    as_of: str_report_year
+
+  mpi:
+    label: Market Penetration Index (occupancy)
+    short: MPI
+    group: market
+    usali: null
+    unit: index
+    sign: positive
+    period: average
+    default_scope: ttm
+    identity: null
+    identity_tolerance: 0.005
+    usali_rules: []
+    engines: [str_forecast]
+    bindings:
+      recognizer: mpi_occupancy_index
+    aliases:
+      STR_FAMILY:
+        - {path: ttm_performance.indices.mpi_occupancy_index, basis: market}
+      "*":
+        - {path: mpi_occupancy_index, basis: market}
+        - {path: mpi, basis: market}
+        - {path: occupancy_index, basis: market}
+    as_of: str_report_year
+
+  ari:
+    label: Average Rate Index (ADR)
+    short: ARI
+    group: market
+    usali: null
+    unit: index
+    sign: positive
+    period: average
+    default_scope: ttm
+    identity: null
+    identity_tolerance: 0.005
+    usali_rules: []
+    engines: [str_forecast]
+    bindings:
+      recognizer: ari_adr_index
+    aliases:
+      STR_FAMILY:
+        - {path: ttm_performance.indices.ari_adr_index, basis: market}
+      "*":
+        - {path: ari_adr_index, basis: market}
+        - {path: ari, basis: market}
+        - {path: adr_index, basis: market}
+    as_of: str_report_year
+
+  rgi:
+    label: RevPAR Generation Index
+    short: RGI
+    group: market
+    usali: null
+    unit: index
+    sign: positive
+    period: average
+    default_scope: ttm
+    identity: null
+    identity_tolerance: 0.005
+    usali_rules: []
+    engines: [str_forecast]
+    bindings:
+      recognizer: rgi_revpar_index
+    aliases:
+      STR_FAMILY:
+        - {path: ttm_performance.indices.rgi_revpar_index, basis: market}
+      "*":
+        - {path: rgi_revpar_index, basis: market}
+        - {path: rgi, basis: market}
+        - {path: revpar_index, basis: market}
+    as_of: str_report_year
+
+  comp_set_size:
+    label: Comp-set size
+    short: Comp size
+    group: market
+    usali: null
+    unit: count
+    sign: positive
+    period: point
+    default_scope: null
+    note: Point-in-time fact — no accounting period applies.
+    identity: null
+    identity_tolerance: 0.005
+    usali_rules: []
+    engines: [str_forecast]
+    bindings:
+      recognizer: comp_set_size
+    aliases:
+      "*":
+        - {path: comp_set.comp_set_size, basis: market}
+        - {path: comp_set_size, basis: market}
+    as_of: str_report_year
+
+  comp_set_total_keys:
+    label: Comp-set total keys
+    short: Comp keys
+    group: market
+    usali: null
+    unit: keys
+    sign: positive
+    period: point
+    default_scope: null
+    note: Point-in-time fact — no accounting period applies.
+    identity: null
+    identity_tolerance: 0.005
+    usali_rules: []
+    engines: [str_forecast]
+    bindings:
+      recognizer: comp_set_total_keys
+    aliases:
+      "*":
+        - {path: comp_set.total_keys, basis: market}
+        - {path: comp_set_total_keys, basis: market}
+    as_of: str_report_year
+
+  # ═══════════════════════ Transaction comps (Phase 2 stub) ══════════════
+  comp_sale_price:
+    label: Comparable sale price
+    short: Comp price
+    group: comps
+    usali: null
+    unit: usd
+    sign: positive
+    period: point
+    default_scope: null
+    note: Point-in-time fact — no accounting period applies.
+    identity: null
+    identity_tolerance: 0.005
+    usali_rules: []
+    engines: [comp_sales]
+    bindings: {}
+    aliases:
+      OM:
+        - {path: "transaction_comps.{n}.sale_price_usd", basis: market}
+      "*":
+        - {path: "comparable_sales.{n}.sale_price_usd", basis: market}
+    as_of: null
+
+  comp_cap_rate:
+    label: Comparable cap rate
+    short: Comp cap
+    group: comps
+    usali: null
+    unit: ratio
+    sign: positive
+    period: point
+    default_scope: null
+    note: Point-in-time fact — no accounting period applies.
+    identity: null
+    identity_tolerance: 0.005
+    usali_rules: []
+    engines: [comp_sales]
+    bindings: {}
+    aliases:
+      OM:
+        - {path: "transaction_comps.{n}.cap_rate_pct", basis: market}
+      "*":
+        - {path: "comparable_sales.{n}.cap_rate_pct", basis: market}
+    as_of: null
+
+  comp_price_per_key:
+    label: Comparable price per key
+    short: Comp $/key
+    group: comps
+    usali: null
+    unit: usd_per_key
+    sign: positive
+    period: point
+    default_scope: null
+    note: Point-in-time fact — no accounting period applies.
+    identity: null
+    identity_tolerance: 0.005
+    usali_rules: []
+    engines: [comp_sales]
+    bindings: {}
+    aliases:
+      OM:
+        - {path: "transaction_comps.{n}.price_per_key_usd", basis: market}
+      "*":
+        - {path: "comparable_sales.{n}.sale_price_per_key_usd", basis: market}
+    as_of: null
+
+  # ═══════════════════ Broker growth vs market (variance report) ═════════
+  adr_growth_vs_market:
+    label: ADR growth vs. market forecast
+    short: ADR vs mkt
+    group: growth
+    usali: null
+    unit: ratio
+    sign: signed
+    period: flow
+    default_scope: annual
+    identity: null
+    identity_tolerance: 0.005
+    usali_rules: []
+    engines: []
+    bindings:
+      variance_concept: {key: broker_adr_growth_vs_market, label: ADR growth vs. market forecast, impact_basis: other}
+    aliases:
+      "*":
+        - {path: broker_adr_growth_vs_market, basis: broker}
+    as_of: null
+
+  revpar_growth_vs_market:
+    label: RevPAR growth vs. market forecast
+    short: RevPAR vs mkt
+    group: growth
+    usali: null
+    unit: ratio
+    sign: signed
+    period: flow
+    default_scope: annual
+    identity: null
+    identity_tolerance: 0.005
+    usali_rules: []
+    engines: []
+    bindings:
+      variance_concept: {key: broker_revpar_growth_vs_market, label: RevPAR growth vs. market forecast, impact_basis: other}
+    aliases:
+      "*":
+        - {path: broker_revpar_growth_vs_market, basis: broker}
+    as_of: null
+
+  # ═══════════ Critic cross-field checks (computed, never extracted) ═════
+  broker_noi_yoy_growth_with_flat_opex_ratio:
+    label: Broker NOI growth with flat OpEx ratio
+    short: NOI growth / flat opex
+    group: synthetic
+    usali: null
+    unit: ratio
+    sign: signed
+    period: flow
+    default_scope: annual
+    identity: null
+    identity_tolerance: 0.005
+    usali_rules: [MULTI_FIELD_NOI_GROWTH_WITHOUT_OPEX_PRESSURE]
+    engines: []
+    bindings:
+      scorer_key: broker_noi_yoy_growth_with_flat_opex_ratio
+    aliases:
+      "*":
+        - broker_noi_yoy_growth_with_flat_opex_ratio
+    as_of: null
+
+  coastal_insurance_yoy_increase:
+    label: Coastal insurance year-over-year increase
+    short: Coastal ins. YoY
+    group: synthetic
+    usali: null
+    unit: ratio
+    sign: signed
+    period: flow
+    default_scope: annual
+    identity: null
+    identity_tolerance: 0.005
+    usali_rules: [MULTI_FIELD_INSURANCE_COASTAL_RISK]
+    engines: []
+    bindings:
+      scorer_key: coastal_insurance_yoy_increase
+    aliases:
+      "*":
+        - coastal_insurance_yoy_increase
+    as_of: null
+
+  debt_yield_growth_with_dscr_shrinkage:
+    label: Debt yield growth with DSCR shrinkage
+    short: DY vs DSCR
+    group: synthetic
+    usali: null
+    unit: ratio
+    sign: signed
+    period: flow
+    default_scope: annual
+    identity: null
+    identity_tolerance: 0.005
+    usali_rules: [MULTI_FIELD_DEBT_YIELD_VS_DSCR_DIVERGENCE]
+    engines: []
+    bindings:
+      scorer_key: debt_yield_growth_with_dscr_shrinkage
+    aliases:
+      "*":
+        - debt_yield_growth_with_dscr_shrinkage
+    as_of: null
+
+  labor_yoy_growth_vs_market_wage_growth:
+    label: Labor growth vs. market wage growth
+    short: Labor vs wages
+    group: synthetic
+    usali: null
+    unit: ratio
+    sign: signed
+    period: flow
+    default_scope: annual
+    identity: null
+    identity_tolerance: 0.005
+    usali_rules: [MULTI_FIELD_LABOR_INFLATION_MISSING]
+    engines: []
+    bindings:
+      scorer_key: labor_yoy_growth_vs_market_wage_growth
+    aliases:
+      "*":
+        - labor_yoy_growth_vs_market_wage_growth
+    as_of: null
+
+  q1_q3_revpar_swing_in_seasonal_market:
+    label: Q1–Q3 RevPAR swing in a seasonal market
+    short: Seasonal swing
+    group: synthetic
+    usali: null
+    unit: ratio
+    sign: signed
+    period: flow
+    default_scope: annual
+    identity: null
+    identity_tolerance: 0.005
+    usali_rules: [MULTI_FIELD_SEASONAL_PATTERN_MISSING]
+    engines: []
+    bindings:
+      scorer_key: q1_q3_revpar_swing_in_seasonal_market
+    aliases:
+      "*":
+        - q1_q3_revpar_swing_in_seasonal_market
+    as_of: null
+
+  revenue_growth_in_flat_demand_market:
+    label: Revenue growth in a flat-demand market
+    short: Rev growth / flat mkt
+    group: synthetic
+    usali: null
+    unit: ratio
+    sign: signed
+    period: flow
+    default_scope: annual
+    identity: null
+    identity_tolerance: 0.005
+    usali_rules: [MULTI_FIELD_REVENUE_GROWTH_WITHOUT_DEMAND_DRIVER]
+    engines: []
+    bindings:
+      scorer_key: revenue_growth_in_flat_demand_market
+    aliases:
+      "*":
+        - revenue_growth_in_flat_demand_market
+    as_of: null
+
+  fb_margin_on_select_service_property:
+    label: F&B margin on a select-service property
+    short: F&B margin (select)
+    group: synthetic
+    usali: null
+    unit: ratio
+    sign: signed
+    period: flow
+    default_scope: annual
+    identity: null
+    identity_tolerance: 0.005
+    usali_rules: [MULTI_FIELD_FNB_MARGIN_AGGRESSIVE]
+    engines: []
+    bindings:
+      scorer_key: fb_margin_on_select_service_property
+    aliases:
+      "*":
+        - fb_margin_on_select_service_property
+    as_of: null
+
+  year_one_noi_dip_during_pip:
+    label: Year-1 NOI dip during PIP
+    short: Y1 PIP dip
+    group: synthetic
+    usali: null
+    unit: ratio
+    sign: signed
+    period: flow
+    default_scope: annual
+    identity: null
+    identity_tolerance: 0.005
+    usali_rules: [MULTI_FIELD_PIP_TIMING_INCONSISTENT]
+    engines: []
+    bindings:
+      scorer_key: year_one_noi_dip_during_pip
+    aliases:
+      "*":
+        - year_one_noi_dip_during_pip
+    as_of: null
+
+# ═══════════════════════════ Provenance vocabulary ═══════════════════════
+# Every SOURCE_* label in services/engine_runner.py. ``label`` is the web's
+# SOURCE_LABEL text, ``badge`` the AssumptionBadge short text, ``kind`` the
+# registry's classification (grounded | assumption | calculated | override |
+# refusal), ``doc_types`` from engine_runner._SOURCE_TO_DOC_TYPES (plus the
+# STR / PIP / segmentation producers that map is silent on — DRIFT_NOTES.md).
+sources:
+  seed:
+    label: Seed default
+    badge: Seed
+    kind: assumption
+    doc_types: []
+    explanation: A default assumption — no deal-specific data has grounded this yet. Upload a T-12 / OM / STR to ground it.
+  deal_row:
+    label: Deal entry
+    badge: Deal
+    kind: grounded
+    doc_types: []
+    explanation: Entered on the deal record (create-deal wizard or a PATCH via the API).
+  t12_actual:
+    label: T-12 actual
+    badge: T-12
+    kind: grounded
+    doc_types: [T12, PNL, PNL_MONTHLY, PNL_YTD]
+    explanation: Extracted from the deal’s T-12 / P&L actuals. Out-years are grown forward at the configured growth rates.
+  cbre_horizons:
+    label: CBRE benchmark
+    badge: CBRE
+    kind: assumption
+    doc_types: [CBRE_HORIZONS]
+    explanation: CBRE Horizons market forecast for the subject submarket / chain scale — not this deal’s own data.
+  pnl_benchmark:
+    label: Industry benchmark
+    badge: PNL Bench
+    kind: assumption
+    doc_types: [PNL_BENCHMARK]
+    explanation: Industry (USALI / HOST) benchmark ratio applied as a USALI ratio override — not this deal’s own data.
+  portfolio_pnl:
+    label: Portfolio P&L
+    badge: Portfolio
+    kind: grounded
+    doc_types: [PORTFOLIO_PNL]
+    explanation: Ratio from the firm’s in-house portfolio P&L library — hotels the firm already operates at this chain scale. Outranks generic benchmarks.
+  om_comps:
+    label: OM comps
+    badge: OM Comps
+    kind: grounded
+    doc_types: [OM]
+    explanation: Median cap rate derived from the offering memorandum’s comparable-sales table.
+  om_broker:
+    label: OM broker
+    badge: OM
+    kind: grounded
+    doc_types: [OM]
+    explanation: Broker pro forma value extracted from the offering memorandum — the broker’s claim, not an actual.
+  analyst_override:
+    label: Analyst override
+    badge: Override
+    kind: override
+    doc_types: []
+    explanation: Set by an analyst with a justification note. Wins over every other source.
+  str_segmentation_default:
+    label: STR segmentation
+    badge: STR Seg
+    kind: assumption
+    doc_types: [STR_SEGMENTATION]
+    explanation: Default revenue-segment mix seeded from the deal’s STR Segmentation extraction.
+  pip_om:
+    label: PIP (OM)
+    badge: PIP OM
+    kind: grounded
+    doc_types: [OM]
+    explanation: PIP displacement / cost read from the broker’s published PIP budget in the OM.
+  pip_user:
+    label: PIP (analyst)
+    badge: PIP
+    kind: override
+    doc_types: []
+    explanation: PIP displacement or cost set by the analyst.
+  capex_ffe_default:
+    label: FF&E default
+    badge: FF&E default
+    kind: assumption
+    doc_types: []
+    explanation: FF&E reserve leg of the capex plan at the default reserve rate.
+  roi_user:
+    label: ROI capex (analyst)
+    badge: ROI
+    kind: override
+    doc_types: []
+    explanation: Discretionary ROI capex set by the analyst.
+  str_forecast:
+    label: STR forecast
+    badge: STR Fcst
+    kind: grounded
+    doc_types: [STR, STR_TREND]
+    explanation: Seeded from STR — the Market tab’s comp-set rates, the subject TTM, or the BASE forward-forecast scenario (Month 12).
+  str_forecast_unavailable:
+    label: STR unavailable
+    badge: STR unavailable
+    kind: refusal
+    doc_types: [STR, STR_TREND]
+    explanation: STR rates were requested but could not populate (no STR Trend extraction or coverage too low) — the model is on the T-12 base.
+    reason: str_unavailable
+  derived_from_revpar_growth:
+    label: Derived from RevPAR growth
+    badge: Derived from RevPAR growth
+    kind: calculated
+    doc_types: []
+    explanation: ADR growth derived from the analyst’s RevPAR-growth override — (1 + RevPAR growth) ÷ (1 + occupancy growth) − 1 — with the occupancy path held.
+  partnership_doc:
+    label: Partnership document
+    badge: Partnership
+    kind: grounded
+    doc_types: [PARTNERSHIP]
+    explanation: Ownership split, preferred return and promote waterfall extracted from an uploaded partnership / JV document.
+
+# ═══════════════════════════════ Refusal reasons ═════════════════════════
+# The 16 codes shared with packages/schemas-py/fondok_schemas/reasons.py and
+# apps/web/src/lib/ontology/reasons.generated.ts (``ui`` is the short text
+# shown in place of a value; ``explanation`` the hover body).
+reasons:
+  no_document:
+    label: No document
+    ui: No document
+    explanation: No document of the required type has been uploaded for this deal.
+  no_source:
+    label: No source
+    ui: Not in documents
+    explanation: The uploaded documents do not carry this line under any known name.
+  unit_unknown:
+    label: Unit unknown
+    ui: Unit unknown
+    explanation: A value was found but its unit could not be established, so it is not shown.
+  period_mismatch:
+    label: Period mismatch
+    ui: Period mismatch
+    explanation: The only values found are for a different period (a month or quarter where an annual figure is needed).
+  basis_mismatch:
+    label: Basis mismatch
+    ui: Basis mismatch
+    explanation: The two figures are on different bases (a percent against a fraction, a month against a year) and are not compared.
+  basis_excluded:
+    label: Basis excluded
+    ui: Excluded
+    explanation: The only values found are from an excluded basis (the OM’s history block, a comp-set stat, or market data) rather than the basis requested.
+  awaiting_analyst:
+    label: Awaiting analyst
+    ui: Awaiting input
+    explanation: This value needs an analyst decision or input before it can be shown.
+  needs_review:
+    label: Needs review
+    ui: Needs review
+    explanation: The extracted value is low-confidence or conflicts with another source and has not been reviewed.
+  pin_active:
+    label: Pinned
+    ui: Pinned
+    explanation: An analyst pin holds a different value for this line.
+  str_unavailable:
+    label: STR unavailable
+    ui: STR unavailable
+    explanation: STR rates were requested but no STR Trend extraction (or too little coverage) is available.
+  not_knowable_as_of:
+    label: Not knowable as of date
+    ui: Not yet knowable
+    explanation: The value is dated after the as-of date of this view and cannot be known yet.
+  as_of_unknown:
+    label: As-of date unknown
+    ui: Undated
+    explanation: The value carries no date, so it cannot be placed on the timeline.
+  stale_run:
+    label: Stale run
+    ui: Stale
+    explanation: The last engine run predates the inputs that feed this value — re-run the model.
+  engine_skipped:
+    label: Engine skipped
+    ui: Not run
+    explanation: The engine that produces this value did not run because an upstream engine failed.
+  inconclusive:
+    label: Inconclusive
+    ui: Inconclusive
+    explanation: Too few applicable checks to state a result.
+  not_applicable:
+    label: Not applicable
+    ui: N/A
+    explanation: This line does not apply to the deal (for example F&B on a select-service hotel).
