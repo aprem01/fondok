@@ -292,7 +292,15 @@ async def test_every_kpi_root_is_present_and_typed() -> None:
 @pytest.mark.asyncio
 async def test_year_one_noi_walks_to_the_revenue_assumptions() -> None:
     """Year-1 NOI reaches BOTH revenue anchors — the T-12 occupancy and the
-    T-12 ADR — through the expense → revenue bridge."""
+    T-12 ADR — through the revenue chain the engines now assert.
+
+    The hop the expense engine asserts is ``fb.years[0].total_revenue``, NOT
+    ``revenue.years[0].total_revenue``: ``ExpenseEngineInput.revenue`` is the
+    F&B engine's output, and the F&B engine re-composes total revenue (resort
+    fees, ratio fall-backs) on top of the revenue projection. The lineage
+    bridge this replaces had been pointing one engine too far up — a
+    plausible-looking inference that skipped a real step in the chain.
+    """
     from app.database import get_session_factory
     from app.services.lineage import build_lineage
 
@@ -308,9 +316,20 @@ async def test_year_one_noi_walks_to_the_revenue_assumptions() -> None:
         record = await build_lineage(session, deal_id, tenant_id, run_id=run_id)
 
     paths = _walk(record, "kpi:expense.year_one_noi")
-    assert "engine:revenue.years[0].total_revenue" in paths
+    assert "engine:fb.years[0].total_revenue" in paths
+    assert "engine:revenue.years[0].rooms_revenue" in paths
     assert "assumption:starting_occupancy" in paths
     assert "assumption:starting_adr" in paths
+    # And the hop onto the revenue side is the engine's own claim, not an
+    # inference — it used to be a bridge.
+    gop_to_revenue = [
+        e
+        for e in record.edges
+        if e.src == "engine:expense.years[0].gop"
+        and e.dst == "engine:fb.years[0].total_revenue"
+    ]
+    assert gop_to_revenue, "expense GOP no longer links to the F&B total"
+    assert gop_to_revenue[0].meta["link"] == "traces_to"
 
 
 @pytest.mark.asyncio
@@ -738,3 +757,324 @@ async def test_lineage_endpoint_serves_the_canonical_run_and_404s_a_foreign_tena
         with pytest.raises(HTTPException) as exc:
             await get_deal_lineage(UUID(deal_id), session, uuid4())
     assert exc.value.status_code == 404
+
+
+# ────── 6. asserted vs inferred, and where every chain ends ──────────
+#
+# The engines now name the assumption behind a value themselves. What is left
+# for the lineage service to infer is measurable — and must keep shrinking.
+
+#: Bridge (inferred, dependency-graph) links on this exact seeded deal BEFORE
+#: the engines asserted their own links, measured on 6787202. The engines'
+#: assertions retired the expense→revenue, debt→expense NOI and returns→
+#: capital/expense bridges; what survives is only the multi-target links no
+#: single ``traces_to`` can express (a cash flow is NOI *less* debt service).
+_BRIDGE_LINKS_BEFORE = 38
+
+
+def _link_counts(record) -> dict[str, int]:
+    counts = {"asserted": 0, "traces_to": 0, "name_match": 0, "bridge": 0}
+    for edge in record.edges:
+        kind = (edge.meta or {}).get("link")
+        if kind in counts:
+            counts[kind] += 1
+    return counts
+
+
+@pytest.mark.asyncio
+async def test_link_provenance_summary_matches_the_edges_it_describes() -> None:
+    """``meta.link_provenance`` is the record's honesty tally, and it ties out
+    to the edges — a summary that could drift from the graph is worthless."""
+    from app.database import get_session_factory
+    from app.services.lineage import build_lineage
+
+    deal_id = str(uuid4())
+    tenant_id = str(uuid4())
+    run_id = str(uuid4())
+
+    factory = get_session_factory()
+    async with factory() as session:
+        await _seed_and_run(
+            session, deal_id=deal_id, tenant_id=tenant_id, run_id=run_id
+        )
+        record = await build_lineage(session, deal_id, tenant_id, run_id=run_id)
+
+    summary = record.meta["link_provenance"]
+    assert set(summary) == {"asserted", "traces_to", "name_match", "bridge"}
+    assert summary == _link_counts(record)
+    assert record.meta["links_asserted"] == summary["asserted"] + summary["traces_to"]
+    assert record.meta["links_inferred"] == summary["name_match"] + summary["bridge"]
+    # The engines carry the chain; inference is the minority.
+    assert summary["asserted"] > 0
+    assert summary["traces_to"] > 0
+    assert record.meta["links_asserted"] > record.meta["links_inferred"]
+    # Every link edge says which of the four it is; no untagged provenance hop.
+    for edge in record.edges:
+        if edge.rel in ("computed_from", "seeded_from") and edge.src.startswith(
+            "engine:"
+        ):
+            assert (edge.meta or {}).get("link") in summary, (
+                f"{edge.src} -> {edge.dst} does not say how it was established"
+            )
+
+
+@pytest.mark.asyncio
+async def test_inferred_links_strictly_decrease_on_the_seeded_deal() -> None:
+    """The bridges the engines made unnecessary are gone, not left as dead
+    fallback — and nothing is resolved by name-matching any more."""
+    from app.database import get_session_factory
+    from app.services.lineage import build_lineage
+
+    deal_id = str(uuid4())
+    tenant_id = str(uuid4())
+    run_id = str(uuid4())
+
+    factory = get_session_factory()
+    async with factory() as session:
+        await _seed_and_run(
+            session, deal_id=deal_id, tenant_id=tenant_id, run_id=run_id
+        )
+        record = await build_lineage(session, deal_id, tenant_id, run_id=run_id)
+
+    counts = _link_counts(record)
+    assert counts["bridge"] < _BRIDGE_LINKS_BEFORE, (
+        f"bridge links did not fall below the pre-assertion count "
+        f"({counts['bridge']} vs {_BRIDGE_LINKS_BEFORE})"
+    )
+    assert counts["name_match"] == 0, (
+        "an input is still being resolved by matching its NAME against the "
+        "assumption vocabulary; the engine should assert the key instead"
+    )
+    # Every surviving bridge is labelled as an inference on the edge itself.
+    for edge in record.edges:
+        if (edge.meta or {}).get("link") == "bridge":
+            assert "lineage bridge" in (edge.formula or "")
+
+
+def _leaves_from(record, root: str) -> list[str]:
+    adjacency: dict[str, list[str]] = {}
+    for e in record.edges:
+        adjacency.setdefault(e.src, []).append(e.dst)
+    seen: set[str] = set()
+    stack = [root]
+    leaves: list[str] = []
+    while stack:
+        current = stack.pop()
+        if current in seen:
+            continue
+        seen.add(current)
+        children = adjacency.get(current, ())
+        if not children:
+            leaves.append(current)
+        stack.extend(children)
+    return leaves
+
+
+@pytest.mark.asyncio
+async def test_wizard_entered_inputs_terminate_explicitly_and_no_root_is_refused() -> None:
+    """The real-QA shape: purchase price, LTV and renovation budget come from
+    the deal record / the analyst, not from an extraction.
+
+    Two things must hold, and neither did. Every chain has to END somewhere a
+    reader can recognise — a document page, or a node that says why there is no
+    page — rather than simply running out of edges at ``capital.property_uses_usd``.
+    And no refusal may name a KPI root: the root is never the thing that is
+    missing, and six of them used to crowd out the entries that name a real gap.
+    """
+    from fondok_schemas.reasons import ReasonCode
+
+    from app.database import get_session_factory
+    from app.services.engine_runner import run_all_engines
+    from app.services.lineage import build_lineage
+
+    deal_id = str(uuid4())
+    tenant_id = str(uuid4())
+    run_id = str(uuid4())
+    # LTV + renovation budget entered by the analyst; price + keys on the deal
+    # row. No documents at all — nothing here can reach a page, by design.
+    overrides = {
+        "ltv": {"value": 0.60, "note": "Term sheet from Ladder, 60% LTV."},
+        "renovation_budget": {"value": 4_100_000, "note": "PIP scope, Nov 2025."},
+    }
+
+    factory = get_session_factory()
+    async with factory() as session:
+        await session.execute(
+            text(
+                "INSERT INTO deals (id, tenant_id, name, keys, purchase_price, "
+                "field_overrides) VALUES (:id, :t, :n, :k, :p, :fo)"
+            ),
+            {
+                "id": deal_id,
+                "t": tenant_id,
+                "n": "Wizard-only deal",
+                "k": 132,
+                "p": 36_400_000,
+                "fo": json.dumps(overrides),
+            },
+        )
+        await session.commit()
+        await run_all_engines(
+            session, deal_id=deal_id, tenant_id=tenant_id, run_id=run_id
+        )
+        await session.commit()
+        record = await build_lineage(session, deal_id, tenant_id, run_id=run_id)
+
+    nodes = _index(record)
+
+    # 1. No refusal names a root.
+    root_refusals = [r for r in record.unresolved if (r.concept or "") in set(record.roots)]
+    assert not root_refusals, (
+        "refusals must name the link that could not be walked, not the KPI: "
+        f"{[(r.code.value, r.concept) for r in root_refusals]}"
+    )
+
+    # 2. The capital chain reaches the wizard's own inputs instead of stopping.
+    paths = _walk(record, "kpi:returns.levered_irr")
+    assert "engine:capital.property_uses_usd" in paths
+    assert "assumption:purchase_price" in paths, (
+        "levered IRR still does not reach the purchase price; reachable "
+        f"assumptions: {sorted(n for n in paths if n.startswith('assumption:'))}"
+    )
+    assert "assumption:renovation_budget" in paths
+    assert "assumption:ltv" in paths
+
+    # 3. Those terminate EXPLICITLY: the deal-row value on a seed node that
+    #    says "not applicable" (there is no document behind a typed number),
+    #    the analyst's on an override node carrying the note.
+    price_seed = nodes["seed:purchase_price"]
+    assert price_seed.source == "deal_row"
+    assert price_seed.reason == ReasonCode.NOT_APPLICABLE
+    assert price_seed.meta["terminal"] == "analyst_input"
+    assert nodes["override:ltv"].meta["note"].startswith("Term sheet")
+
+    # 4. And nothing anywhere just runs out of edges: every leaf of every root
+    #    is a page, a terminal node kind, or carries a reason.
+    terminal_kinds = {"page", "seed", "benchmark", "override", "memo_section"}
+    for root in record.roots:
+        for leaf in _leaves_from(record, root):
+            node = nodes.get(leaf)
+            assert node is not None, leaf
+            assert node.kind in terminal_kinds or node.reason is not None, (
+                f"{leaf} ({node.kind}) ends the chain without saying why"
+            )
+
+    # 5. A deal-row / override terminal is not a failure, so it is not reported.
+    reported = {r.concept for r in record.unresolved}
+    assert "assumption:purchase_price" not in reported
+    assert "assumption:ltv" not in reported
+
+
+# ─────────── 7. evidence that is removed, not just moved ─────────────
+
+
+@pytest.mark.asyncio
+async def test_lineage_is_stale_once_a_source_document_is_deleted() -> None:
+    """Deleting the evidence must age the run.
+
+    ``_is_stale`` only ever watched inputs move FORWARD (uploaded_at /
+    updated_at). ``delete_document`` hard-deletes the row and its extractions
+    and never bumps ``deals.updated_at``, so a run whose T-12 had been removed
+    read as perfectly fresh — the one case where "nothing moved" is the worst
+    possible answer.
+    """
+    from app.database import get_session_factory
+    from app.services.lineage import build_lineage, load_persisted, persist_for_run
+
+    deal_id = str(uuid4())
+    tenant_id = str(uuid4())
+    run_id = str(uuid4())
+
+    factory = get_session_factory()
+    async with factory() as session:
+        await _seed_and_run(
+            session, deal_id=deal_id, tenant_id=tenant_id, run_id=run_id
+        )
+        await persist_for_run(session, deal_id, tenant_id, run_id)
+        assert (
+            await build_lineage(session, deal_id, tenant_id, run_id=run_id)
+        ).stale is False
+
+        t12_id = (
+            await session.execute(
+                text(
+                    "SELECT id FROM documents WHERE deal_id = :d AND doc_type = 'T12'"
+                ),
+                {"d": deal_id},
+            )
+        ).scalar_one()
+        await session.execute(
+            text("DELETE FROM extraction_results WHERE document_id = :d"),
+            {"d": str(t12_id)},
+        )
+        await session.execute(
+            text("DELETE FROM documents WHERE id = :d"), {"d": str(t12_id)}
+        )
+        await session.commit()
+
+        rebuilt = await build_lineage(session, deal_id, tenant_id, run_id=run_id)
+        loaded = await load_persisted(
+            session, deal_id=deal_id, tenant_id=tenant_id, run_id=run_id
+        )
+
+    assert rebuilt.stale is True, "a run whose evidence was deleted is not fresh"
+    assert loaded is not None and loaded.stale is True
+    assert str(t12_id) in rebuilt.meta["evidence_deleted"]
+    assert any(
+        (r.detail or "").find(str(t12_id)) >= 0 for r in rebuilt.unresolved
+    ), "the deletion is not reported anywhere in unresolved"
+
+
+@pytest.mark.asyncio
+async def test_persisted_lineage_stops_citing_a_deleted_document() -> None:
+    """The endpoint must not hand an analyst a page that cannot be opened.
+
+    ``load_persisted`` replays the stored node list verbatim, so after the T-12
+    was deleted ``GET /deals/{id}/lineage`` still served ``doc:<id>`` and
+    ``page:<id>:4`` reachable from the levered IRR, with ``stale=False``. The
+    stored row is a fine audit record; what the read path serves has to be
+    walkable, so a cited-document deletion forces a rebuild.
+    """
+    from app.api.deals import get_deal_lineage
+    from app.database import get_session_factory
+    from app.services.lineage import persist_for_run
+
+    deal_id = str(uuid4())
+    tenant_id = str(uuid4())
+    run_id = str(uuid4())
+
+    factory = get_session_factory()
+    async with factory() as session:
+        await _seed_and_run(
+            session, deal_id=deal_id, tenant_id=tenant_id, run_id=run_id
+        )
+        await persist_for_run(session, deal_id, tenant_id, run_id)
+        before = await get_deal_lineage(UUID(deal_id), session, UUID(tenant_id))
+        t12_id = str(
+            (
+                await session.execute(
+                    text(
+                        "SELECT id FROM documents WHERE deal_id = :d "
+                        "AND doc_type = 'T12'"
+                    ),
+                    {"d": deal_id},
+                )
+            ).scalar_one()
+        )
+        assert f"doc:{t12_id}" in {n.id for n in before.nodes}
+
+        await session.execute(
+            text("DELETE FROM extraction_results WHERE document_id = :d"),
+            {"d": t12_id},
+        )
+        await session.execute(
+            text("DELETE FROM documents WHERE id = :d"), {"d": t12_id}
+        )
+        await session.commit()
+        after = await get_deal_lineage(UUID(deal_id), session, UUID(tenant_id))
+
+    ids = {n.id for n in after.nodes}
+    assert f"doc:{t12_id}" not in ids, "the response still cites the deleted document"
+    assert not any(n.startswith(f"page:{t12_id}:") for n in ids)
+    assert after.stale is True
+    assert t12_id in after.meta["evidence_deleted"]

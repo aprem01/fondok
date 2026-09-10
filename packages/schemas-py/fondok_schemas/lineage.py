@@ -146,6 +146,20 @@ class LineageEdge(BaseModel):
     #: one (``"noi = gop less management_fee, ffe_reserve and fixed_charges"``),
     #: or the reason a bridge edge exists when the lineage service derived it.
     formula: str | None = None
+    #: Free-form extras. ``meta["link"]`` says HOW the link was established and
+    #: is the honesty tell for the whole record:
+    #:
+    #: * ``"asserted"``   — the engine named the assumption on the trace itself
+    #:                      (``ValueInput.assumption_key`` / ``ValueTrace.assumption_key``);
+    #: * ``"traces_to"``  — the engine pointed at another traced value;
+    #: * ``"name_match"`` — inferred: the input's NAME matched the canonical
+    #:                      assumption vocabulary;
+    #: * ``"bridge"``     — inferred: derived from the engine dependency graph.
+    #:
+    #: The first two are assertions by the engine that computed the value; the
+    #: last two are inferences by the lineage service. See
+    #: :attr:`LineageRecord.meta` for the per-record tally.
+    meta: dict[str, Any] = Field(default_factory=dict)
 
 
 class LineageRecord(BaseModel):
@@ -172,6 +186,13 @@ class LineageRecord(BaseModel):
     #: True when a document was uploaded — or the deal row edited — after the
     #: run started, so the graph describes inputs that have since moved.
     stale: bool = False
+    #: Record-level extras. ``meta["link_provenance"]`` tallies
+    #: :attr:`LineageEdge.meta`'s ``link`` across the whole graph —
+    #: ``{"asserted": n, "traces_to": n, "name_match": n, "bridge": n}`` — so
+    #: how much of a given deal's evidence chain is *asserted by the engines*
+    #: versus *inferred by this service* is measurable, not a matter of
+    #: reading the code.
+    meta: dict[str, Any] = Field(default_factory=dict)
 
 
 __all__ = [

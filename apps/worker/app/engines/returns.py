@@ -37,21 +37,44 @@ def _exit_value_provenance(
     total_distributions: float,
     equity: float,
     equity_multiple: float,
+    terminal_noi_ref: str | None = None,
 ) -> dict[str, ValueTrace]:
     """Shared exit-value trace map for both returns construction paths.
 
     Traces the exit-value chain analysts most want to interrogate:
     gross_sale_price → net_proceeds → equity_multiple.
+
+    ``terminal_noi_ref`` is the traced value the reversion NOI was grown from
+    (``"expense.years[N].noi"``), when the engine can honestly name one — i.e.
+    the NOI path really is the expense engine's and the analyst has not pinned
+    a ``terminal_noi_override``. ``None`` where it cannot, and the note says so.
     """
     return {
         "gross_sale_price": ValueTrace(
             value=gross_sale,
             formula="gross_sale_price = terminal_noi ÷ exit_cap_rate",
             inputs=[
-                ValueInput(name="terminal_noi", value=terminal_noi),
-                ValueInput(name="exit_cap_rate", value=exit_cap_rate),
+                ValueInput(
+                    name="terminal_noi",
+                    value=terminal_noi,
+                    traces_to=terminal_noi_ref,
+                ),
+                ValueInput(
+                    name="exit_cap_rate",
+                    value=exit_cap_rate,
+                    assumption_key="exit_cap_rate",
+                ),
             ],
-            note="Direct-cap terminal value at the end of the hold.",
+            note=(
+                "Direct-cap terminal value at the end of the hold."
+                + (
+                    " terminal_noi is the final projected year's NOI grown one"
+                    " more year at revpar_growth."
+                    if terminal_noi_ref
+                    else " terminal_noi is pinned or projected outside the"
+                    " expense engine's schedule, so no upstream value is asserted."
+                )
+            ),
         ),
         "selling_costs": ValueTrace(
             value=selling_costs,
@@ -62,7 +85,11 @@ def _exit_value_provenance(
                     value=gross_sale,
                     traces_to="gross_sale_price",
                 ),
-                ValueInput(name="selling_costs_pct", value=selling_costs_pct),
+                ValueInput(
+                    name="selling_costs_pct",
+                    value=selling_costs_pct,
+                    assumption_key="selling_costs_pct",
+                ),
             ],
         ),
         "net_proceeds": ValueTrace(
@@ -87,8 +114,13 @@ def _exit_value_provenance(
             value=equity_multiple,
             formula="equity_multiple = total_distributions ÷ equity",
             inputs=[
+                # total_distributions is a sum over every year's cash flow plus
+                # the exit — several upstream values, not one, so it carries no
+                # single pointer (the lineage bridge still fans it out).
                 ValueInput(name="total_distributions", value=total_distributions),
-                ValueInput(name="equity", value=equity),
+                ValueInput(
+                    name="equity", value=equity, traces_to="capital.equity_amount"
+                ),
             ],
             note=(
                 "total_distributions = Σ annual cash-flow-after-debt "
@@ -166,8 +198,12 @@ def _coc_provenance(
             value=year_one_coc,
             formula="year_one_coc = year_1_cash_flow_after_debt ÷ equity",
             inputs=[
+                # NOI less debt service — two upstream values, so no single
+                # pointer; the lineage bridge fans it out to both.
                 ValueInput(name="year_1_cash_flow_after_debt", value=year_one_cfad),
-                ValueInput(name="equity", value=equity),
+                ValueInput(
+                    name="equity", value=equity, traces_to="capital.equity_amount"
+                ),
             ],
             note="Year-1 levered cash yield on invested equity.",
         ),
@@ -177,7 +213,9 @@ def _coc_provenance(
             inputs=[
                 ValueInput(name="total_cash_flow_after_debt", value=total_cfad),
                 ValueInput(name="years", value=float(n_years)),
-                ValueInput(name="equity", value=equity),
+                ValueInput(
+                    name="equity", value=equity, traces_to="capital.equity_amount"
+                ),
             ],
             note="Average annual levered cash yield across the hold.",
         ),
@@ -360,6 +398,12 @@ class ReturnsEngineInputExt(BaseModel):
             "scenario or a normalized terminal NOI."
         ),
     )
+    # PROVENANCE ONLY — never read by any calculation. True (the default) means
+    # ``noi_by_year[i]`` is the expense engine's ``years[i].noi``, so the exit
+    # trace can ASSERT where the reversion NOI came from instead of leaving the
+    # lineage service to infer it. The runner sets it False when it substitutes
+    # the analyst's ``noi_override_by_year`` pin (FON-67).
+    noi_from_expense_engine: bool = True
 
 
 class ReturnsEngineOutputExt(ReturnsEngineOutput):
@@ -420,6 +464,21 @@ class ReturnsEngine(BaseEngine[ReturnsEngineInputExt, ReturnsEngineOutputExt]):
             payload.terminal_noi_override
             if payload.terminal_noi_override is not None
             else noi_series[-1] * (1.0 + assumptions.revpar_growth)
+        )
+        # PROVENANCE ONLY — the traced value the reversion NOI was grown from,
+        # named only when it honestly IS the expense engine's final projected
+        # year: not pinned by an override, sourced from the expense engine, and
+        # inside the series the runner handed over (a hold longer than the P&L
+        # is extrapolated here, and no upstream value backs that).
+        terminal_noi_ref = (
+            f"expense.years[{hold - 1}].noi"
+            if (
+                payload.terminal_noi_override is None
+                and payload.noi_from_expense_engine
+                and hold >= 1
+                and len(payload.noi_by_year) >= hold
+            )
+            else None
         )
         gross_sale = terminal_noi / assumptions.exit_cap_rate
         selling_costs = gross_sale * assumptions.selling_costs_pct
@@ -630,6 +689,7 @@ class ReturnsEngine(BaseEngine[ReturnsEngineInputExt, ReturnsEngineOutputExt]):
                     total_distributions=total_distributions,
                     equity=payload.equity,
                     equity_multiple=equity_multiple,
+                    terminal_noi_ref=terminal_noi_ref,
                 ),
                 **_irr_provenance(
                     levered_irr=levered_irr,

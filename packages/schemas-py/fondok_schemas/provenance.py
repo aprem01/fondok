@@ -24,6 +24,15 @@ chaining vocabulary:
   * **another computed value** — set ``traces_to`` to that value's dotted path
     in the same map, so the provenance graph is navigable end-to-end;
   * a **leaf constant** — leave all three unset.
+
+A traced *value* that IS an assumption — read straight off the underwriting
+inputs with no formula at all (``capital.uses[0].amount``, the Purchase Price
+line) — sets :attr:`ValueTrace.assumption_key` instead. Naming the key on the
+trace rather than inventing a single self-referential input keeps
+:func:`classify_state` reading it as ``assumption`` (not ``calculated``) while
+still letting the lineage walk chain it to the assumption badge. An engine that
+populates either field is *asserting* the link; where it does not, a consumer
+(``app.services.lineage``) has to infer one, and says so.
 """
 
 from __future__ import annotations
@@ -129,6 +138,13 @@ class ValueTrace(BaseModel):
     inputs: list[ValueInput] = Field(default_factory=list)
     # For values read straight from a source (not computed) — the SOURCE_* label.
     source: str | None = None
+    # For values that ARE an underwriting assumption rather than a computation
+    # over one (a Sources & Uses input line, the purchase-price anchor): the
+    # ``__sources__`` key, asserted by the engine. Deliberately NOT consulted by
+    # :func:`classify_state` — such a value stays ``assumption``, which is what
+    # the badge must keep saying; it exists so the lineage walk can chain the
+    # value to its assumption without guessing from the output path's name.
+    assumption_key: str | None = None
     # Optional extra rationale: caveats, which branch was taken, assumptions.
     note: str | None = None
     # FON-65 — per-value grounding classification. Optional + defaults to None
@@ -179,10 +195,17 @@ def classify_state(
          ``portfolio_pnl`` …) → ``document_sourced``;
       3. an assumption / benchmark label (``seed``, ``analyst_override``,
          ``cbre_horizons``, ``*_default``) → ``assumption``;
-      4. an input that links to another engine's value → ``linked``;
-      5. a value computed by a formula over named inputs → ``calculated``;
+      4. a value computed by a formula over named inputs → ``calculated``;
+      5. a value with NO formula whose input links to another engine's value —
+         a pass-through — → ``linked``;
       6. no value yet → ``awaiting_data``;
       7. otherwise a bare leaf constant → ``assumption``.
+
+    4 sits above 5 deliberately: ``linked`` means the number WAS another
+    engine's, not that one of a formula's inputs was. A DSCR that divides the
+    expense engine's NOI by this engine's debt service is a calculation whose
+    inputs are now honestly pointed at their sources; badging it ``linked``
+    because of that would say the engine merely copied it.
     """
     reason = getattr(trace, "reason", None)
     if reason is not None:
@@ -201,9 +224,11 @@ def classify_state(
         return "document_sourced"
     if label and (label in _ASSUMPTION_LABELS or label.endswith("_default")):
         return "assumption"
+    if trace.formula:
+        return "calculated"
     if _has_cross_engine_link(trace):
         return "linked"
-    if trace.formula or trace.inputs:
+    if trace.inputs:
         return "calculated"
     # ``value`` is a required float today; guard for a future optional so a
     # never-populated value reads as awaiting data rather than a bare constant.

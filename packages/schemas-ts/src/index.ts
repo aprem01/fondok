@@ -506,6 +506,9 @@ export const ValueTrace = z.object({
   // Phase 0.4 — why this value is a dash, when it is one. Optional so every
   // persisted trace stays valid; see fondok_schemas.provenance.ValueTrace.
   reason: ReasonCode.nullable().optional(),
+  // The `__sources__` key when the traced value IS an assumption rather than a
+  // computation over one (a Sources & Uses input line). Asserted by the engine.
+  assumption_key: z.string().nullable().optional(),
 });
 export type ValueTrace = z.infer<typeof ValueTrace>;
 
@@ -1120,6 +1123,12 @@ export const LineageEdge = z.object({
   dst: z.string(),
   rel: EdgeRel,
   formula: z.string().nullable().optional(),
+  /**
+   * `meta.link` says HOW the link was established: `"asserted"` /
+   * `"traces_to"` (the engine said so) vs `"name_match"` / `"bridge"` (the
+   * lineage service inferred it). See LineageRecord.meta.link_provenance.
+   */
+  meta: z.record(z.string(), z.unknown()).default({}),
 });
 export type LineageEdge = z.infer<typeof LineageEdge>;
 
@@ -1141,5 +1150,12 @@ export const LineageRecord = z.object({
   unresolved: z.array(Refusal).default([]),
   /** A document was uploaded — or the deal edited — after the run started. */
   stale: z.boolean().default(false),
+  /**
+   * `meta.link_provenance` tallies the edges' `link` kinds across the graph —
+   * `{ asserted, traces_to, name_match, bridge }` — so how much of the chain
+   * the engines assert (the first two) versus how much the lineage service
+   * infers (the last two) is measurable per deal.
+   */
+  meta: z.record(z.string(), z.unknown()).default({}),
 });
 export type LineageRecord = z.infer<typeof LineageRecord>;

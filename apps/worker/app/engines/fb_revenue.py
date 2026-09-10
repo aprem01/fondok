@@ -149,9 +149,27 @@ class FBRevenueEngine(BaseEngine[FBRevenueInput, FBRevenueOutput]):
                             value=rooms,
                             traces_to=f"years[{idx}].rooms_revenue",
                         ),
-                        ValueInput(name="fb_ratio", value=fb_ratio),
+                        # The ratio is the ``fb_ratio`` assumption only when the
+                        # analyst actually set one; otherwise it is the
+                        # hotel-type table default, which is not an assumption
+                        # key at all — so the engine asserts nothing there.
+                        ValueInput(
+                            name="fb_ratio",
+                            value=fb_ratio,
+                            assumption_key=(
+                                "fb_ratio" if payload.fb_ratio is not None else None
+                            ),
+                        ),
                     ],
-                    note="Ratio estimate — no T-12 F&B actual on this year.",
+                    note=(
+                        "Ratio estimate — no T-12 F&B actual on this year."
+                        if payload.fb_ratio is not None
+                        else (
+                            "Ratio estimate — no T-12 F&B actual on this year, and "
+                            f"no fb_ratio assumption set, so the {payload.hotel_type} "
+                            "hotel-type default is used."
+                        )
+                    ),
                 )
             # Resort fees pass through from the Revenue projection.
             prov[f"years[{idx}].resort_fees"] = ValueTrace(
@@ -188,9 +206,25 @@ class FBRevenueEngine(BaseEngine[FBRevenueInput, FBRevenueOutput]):
                             value=rooms,
                             traces_to=f"years[{idx}].rooms_revenue",
                         ),
-                        ValueInput(name="other_ratio", value=other_ratio),
+                        ValueInput(
+                            name="other_ratio",
+                            value=other_ratio,
+                            assumption_key=(
+                                "other_ratio"
+                                if payload.other_ratio is not None
+                                else None
+                            ),
+                        ),
                     ],
-                    note="Ratio estimate — no T-12 other-operated actual on this year.",
+                    note=(
+                        "Ratio estimate — no T-12 other-operated actual on this year."
+                        if payload.other_ratio is not None
+                        else (
+                            "Ratio estimate — no T-12 other-operated actual on this "
+                            "year, and no other_ratio assumption set, so the "
+                            f"{payload.hotel_type} hotel-type default is used."
+                        )
+                    ),
                 )
             # Total revenue is composed by this engine (same-engine inputs →
             # calculated, not linked).

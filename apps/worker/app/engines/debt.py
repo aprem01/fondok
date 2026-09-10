@@ -43,6 +43,13 @@ class DebtEngineInputExt(DebtEngineInput):
     model_config = ConfigDict(extra="forbid")
 
     noi_by_year: list[Annotated[float, Field(ge=0)]] = Field(default_factory=list)
+    # PROVENANCE ONLY — never read by any calculation. True (the default) means
+    # ``noi_by_year[i]`` is the expense engine's ``years[i].noi``, so the DSCR
+    # traces can ASSERT ``traces_to="expense.years[i].noi"`` instead of leaving
+    # the lineage service to infer that link from the dependency graph. The
+    # engine runner sets it False when it substitutes the analyst's
+    # ``noi_override_by_year`` pin (FON-67), where that claim would be false.
+    noi_from_expense_engine: bool = True
     # FON-63 — deal basis for the multi-tranche stack's LTV / LTC. Optional so
     # the legacy single-loan callers don't have to supply them.
     purchase_price_usd: Annotated[float, Field(ge=0)] | None = None
@@ -678,6 +685,23 @@ class DebtEngine(BaseEngine[DebtEngineInputExt, DebtEngineOutputExt]):
         schedule: list[DebtServiceYear] = []
         # FON-25 — per-value provenance sidecar for the debt schedule.
         prov: dict[str, ValueTrace] = {}
+
+        def _noi_ref(year_index: int) -> str | None:
+            """The traced value a DSCR's NOI came from, when we can assert it."""
+            return (
+                f"expense.years[{year_index}].noi"
+                if payload.noi_from_expense_engine
+                else None
+            )
+
+        _noi_note = (
+            "noi is the expense engine's projected NOI for the same year."
+            if payload.noi_from_expense_engine
+            else (
+                "noi comes from the analyst's noi_override_by_year pin, not the "
+                "expense engine's projection, so no upstream value is asserted."
+            )
+        )
         for y in range(1, payload.term_years + 1):
             window = monthly_schedule[(y - 1) * 12 : y * 12]
             if not window:
@@ -697,12 +721,18 @@ class DebtEngine(BaseEngine[DebtEngineInputExt, DebtEngineOutputExt]):
                 value=ds,
                 formula="debt_service = interest + principal",
                 inputs=[
+                    # interest and principal are both products of the sized
+                    # loan, the rate and the amortization term walking a
+                    # monthly balance down — no one assumption owns either, so
+                    # neither claims a key.
                     ValueInput(name="interest", value=interest_sum),
                     ValueInput(name="principal", value=principal_sum),
                 ],
                 note=(
                     "Annual roll-up of the monthly amortization schedule "
-                    f"(12 months of year {y})."
+                    f"(12 months of year {y}). interest and principal are joint "
+                    "products of the sized loan, interest_rate and "
+                    "amortization_years, so neither names a single assumption."
                 ),
             )
             if dscr is not None:
@@ -710,14 +740,19 @@ class DebtEngine(BaseEngine[DebtEngineInputExt, DebtEngineOutputExt]):
                     value=dscr,
                     formula="dscr = noi ÷ debt_service",
                     inputs=[
-                        ValueInput(name="noi", value=noi_y),
+                        ValueInput(
+                            name="noi", value=noi_y, traces_to=_noi_ref(idx)
+                        ),
                         ValueInput(
                             name="debt_service",
                             value=ds,
                             traces_to=f"schedule[{idx}].debt_service",
                         ),
                     ],
-                    note="Debt Service Coverage Ratio — lender's cushion test.",
+                    note=(
+                        "Debt Service Coverage Ratio — lender's cushion test. "
+                        + _noi_note
+                    ),
                 )
             schedule.append(
                 DebtServiceYear(
@@ -885,20 +920,41 @@ class DebtEngine(BaseEngine[DebtEngineInputExt, DebtEngineOutputExt]):
                 value=year1_dscr,
                 formula="year_one_dscr = year_1_noi ÷ annual_debt_service",
                 inputs=[
-                    ValueInput(name="year_1_noi", value=payload.noi_by_year[0]),
-                    ValueInput(name="annual_debt_service", value=annual_ds),
+                    ValueInput(
+                        name="year_1_noi",
+                        value=payload.noi_by_year[0],
+                        traces_to=_noi_ref(0),
+                    ),
+                    # Stack-wide: the senior schedule's Year-1 debt service plus
+                    # any priced junior tranche, so it is not schedule[0] alone
+                    # unless the stack is senior-only.
+                    ValueInput(
+                        name="annual_debt_service",
+                        value=annual_ds,
+                        traces_to=(
+                            "schedule[0].debt_service" if extra_ds == 0.0 else None
+                        ),
+                    ),
                 ],
-                note="Year-1 stack-wide Debt Service Coverage Ratio.",
+                note=(
+                    "Year-1 stack-wide Debt Service Coverage Ratio. " + _noi_note
+                ),
             )
         if year1_dy is not None and payload.noi_by_year:
             prov["year_one_debt_yield"] = ValueTrace(
                 value=year1_dy,
                 formula="year_one_debt_yield = year_1_noi ÷ total_debt",
                 inputs=[
-                    ValueInput(name="year_1_noi", value=payload.noi_by_year[0]),
+                    ValueInput(
+                        name="year_1_noi",
+                        value=payload.noi_by_year[0],
+                        traces_to=_noi_ref(0),
+                    ),
+                    # The whole stack's principal — the sized senior plus every
+                    # funded junior tranche, not one assumption.
                     ValueInput(name="total_debt", value=total_debt),
                 ],
-                note="Year-1 debt yield — lender's NOI-to-loan cushion.",
+                note="Year-1 debt yield — lender's NOI-to-loan cushion. " + _noi_note,
             )
 
         # FON-72 follow-up — stabilized credit metrics. The stabilized year is
@@ -934,10 +990,17 @@ class DebtEngine(BaseEngine[DebtEngineInputExt, DebtEngineOutputExt]):
                     formula="stabilized_dscr = stabilized_year_noi ÷ stabilized_year_debt_service",
                     inputs=[
                         ValueInput(name="stabilized_year", value=float(stab_idx + 1)),
-                        ValueInput(name="stabilized_year_noi", value=stab_noi),
+                        ValueInput(
+                            name="stabilized_year_noi",
+                            value=stab_noi,
+                            traces_to=_noi_ref(stab_idx),
+                        ),
                         ValueInput(name="stabilized_year_debt_service", value=stab_ds),
                     ],
-                    note="Stabilized-year Debt Service Coverage Ratio (post-ramp).",
+                    note=(
+                        "Stabilized-year Debt Service Coverage Ratio (post-ramp). "
+                        + _noi_note
+                    ),
                 )
             if stabilized_debt_yield is not None:
                 prov["stabilized_debt_yield"] = ValueTrace(
@@ -945,10 +1008,14 @@ class DebtEngine(BaseEngine[DebtEngineInputExt, DebtEngineOutputExt]):
                     formula="stabilized_debt_yield = stabilized_year_noi ÷ total_debt",
                     inputs=[
                         ValueInput(name="stabilized_year", value=float(stab_idx + 1)),
-                        ValueInput(name="stabilized_year_noi", value=stab_noi),
+                        ValueInput(
+                            name="stabilized_year_noi",
+                            value=stab_noi,
+                            traces_to=_noi_ref(stab_idx),
+                        ),
                         ValueInput(name="total_debt", value=total_debt),
                     ],
-                    note="Stabilized-year debt yield (post-ramp).",
+                    note="Stabilized-year debt yield (post-ramp). " + _noi_note,
                 )
 
         return DebtEngineOutputExt(
