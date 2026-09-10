@@ -178,9 +178,14 @@ PENDING: dict[str, str] = {
         "move this path into ENFORCED."
     ),
     "apps/worker/app/api/documents.py": (
-        "documents._load_critic_inputs adapter not landed yet (_canonical_key "
-        "/ _ANNUAL_HINTS still spell extractor paths). When it does: move this "
-        "path into ENFORCED."
+        "Phase 1.3c LANDED: _load_critic_inputs is registry-driven and its "
+        "region carries no extractor literals (test_ontology_critic_parity "
+        "asserts that over inspect.getsource). The remaining hits are OTHER "
+        "regions -- extraction period / doc-type verification and the STR / "
+        "comp-set block builders, lines 460, 985, 1045, 2731-2733, 2800-2805, "
+        "5486, 5515 -- which are not ontology aliases and have no adapter "
+        "planned. This entry stays xfail until those are registry-driven or "
+        "explicitly allowlisted; it is NOT a signal that 1.3c is outstanding."
     ),
     "apps/web/src/components/project/pl/HistoricalsSection.tsx": (
         "web historicals adapter not landed yet (buildHistYear still spells "
