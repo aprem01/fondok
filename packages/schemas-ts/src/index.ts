@@ -279,6 +279,155 @@ export const ModelAssumptions = z.object({
 });
 export type ModelAssumptions = z.infer<typeof ModelAssumptions>;
 
+// ─────────────────────────── Reasons (Phase 0.3) ───────────────────────────
+
+// Mirror of fondok_schemas.reasons — the one vocabulary for "why is this a
+// dash?". Hand-kept in lockstep with the Python enum until Phase 1, when
+// apps/worker/scripts/gen_ontology.py generates this block. The web app's
+// copy is apps/web/src/lib/ontology/reasons.generated.ts.
+
+export const ReasonCode = z.enum([
+  "no_document",        // required document type not on the deal
+  "no_source",          // documents exist, no field resolves to the concept
+  "unit_unknown",
+  "period_mismatch",    // only a monthly/YTD slice where annual is required
+  "basis_mismatch",     // >300% plausibility guard
+  "basis_excluded",     // market segment / OM history not admitted as a broker claim
+  "awaiting_analyst",   // "Pending analyst decision"
+  "needs_review",
+  "pin_active",         // noi_override_by_year / terminal_noi_override
+  "str_unavailable",
+  "not_knowable_as_of",
+  "as_of_unknown",
+  "stale_run",
+  "engine_skipped",
+  "inconclusive",       // USALI scorer < 5 applicable rules
+  "not_applicable",
+]);
+export type ReasonCode = z.infer<typeof ReasonCode>;
+
+/** Presentation metadata for one ReasonCode (mirror of fondok_schemas.reasons.ReasonMeta). */
+export interface ReasonMeta {
+  /** Short human label — what a badge or a legend row says. */
+  label: string;
+  /** The glyph shown in place of the value. One glyph for every code today. */
+  ui: string;
+  /** One plain sentence for a tester: what the code means and what it implies. */
+  explanation: string;
+}
+
+/** The single glyph every refusal renders as today. */
+export const REFUSAL_GLYPH = "—";
+
+export const REASON_META: Record<ReasonCode, ReasonMeta> = {
+  no_document: {
+    label: "No source document",
+    ui: REFUSAL_GLYPH,
+    explanation:
+      "The document type this figure needs (for example a T-12 or an OM) has not been uploaded to the deal.",
+  },
+  no_source: {
+    label: "No matching field",
+    ui: REFUSAL_GLYPH,
+    explanation:
+      "Documents are on the deal, but none of their extracted fields resolves to this concept.",
+  },
+  unit_unknown: {
+    label: "Unit unknown",
+    ui: REFUSAL_GLYPH,
+    explanation:
+      "A value was found but its unit could not be established (for example an occupancy above 100), so it is not used.",
+  },
+  period_mismatch: {
+    label: "Period mismatch",
+    ui: REFUSAL_GLYPH,
+    explanation:
+      "Only a monthly or year-to-date slice exists where an annual figure is required, so nothing is compared.",
+  },
+  basis_mismatch: {
+    label: "Basis mismatch — needs review",
+    ui: REFUSAL_GLYPH,
+    explanation:
+      "The two figures are more than 300% apart, so they sit on different bases and are not compared as a variance.",
+  },
+  basis_excluded: {
+    label: "Not admitted as a broker claim",
+    ui: REFUSAL_GLYPH,
+    explanation:
+      "The row is a market-segment stat, an STR / CoStar reading or the OM's historical block, so it is not treated as the broker's claim.",
+  },
+  awaiting_analyst: {
+    label: "Pending analyst decision",
+    ui: REFUSAL_GLYPH,
+    explanation:
+      "This figure is a recorded decision the analyst has not yet made or confirmed.",
+  },
+  needs_review: {
+    label: "Needs review",
+    ui: REFUSAL_GLYPH,
+    explanation:
+      "A low-confidence read or a conflicting override is waiting on an analyst before the figure is used.",
+  },
+  pin_active: {
+    label: "NOI pinned",
+    ui: REFUSAL_GLYPH,
+    explanation:
+      "An analyst NOI schedule (noi_override_by_year / terminal_noi_override) is active, so the operating model's own figure is not shown.",
+  },
+  str_unavailable: {
+    label: "STR unavailable",
+    ui: REFUSAL_GLYPH,
+    explanation:
+      "STR rates were requested but could not populate (no STR Trend extraction, coverage too low or a loader failure); the model stays on the T-12 base.",
+  },
+  not_knowable_as_of: {
+    label: "Not knowable as of this date",
+    ui: REFUSAL_GLYPH,
+    explanation:
+      "The figure depends on information that did not exist as of the run's as-of date.",
+  },
+  as_of_unknown: {
+    label: "As-of date unknown",
+    ui: REFUSAL_GLYPH,
+    explanation:
+      "The reporting date of the source could not be established, so the figure cannot be placed in time.",
+  },
+  stale_run: {
+    label: "Stale run",
+    ui: REFUSAL_GLYPH,
+    explanation:
+      "Inputs changed after the last engine run; re-run the model to refresh this figure.",
+  },
+  engine_skipped: {
+    label: "Engine did not run",
+    ui: REFUSAL_GLYPH,
+    explanation:
+      "The engine that produces this figure was skipped or failed, so there is no output to show.",
+  },
+  inconclusive: {
+    label: "Inconclusive",
+    ui: REFUSAL_GLYPH,
+    explanation:
+      "Fewer than 5 USALI rules applied to the statement, so a compliance score is not reported.",
+  },
+  not_applicable: {
+    label: "Not applicable",
+    ui: REFUSAL_GLYPH,
+    explanation:
+      "This figure does not apply to the deal as configured (for example a tranche that is not funded).",
+  },
+};
+
+/** A typed "no value" — mirror of fondok_schemas.reasons.Refusal. */
+export const Refusal = z.object({
+  code: ReasonCode,
+  detail: z.string().nullable().optional(),
+  concept: z.string().nullable().optional(),
+  document_id: z.string().uuid().nullable().optional(),
+  since: z.string().datetime().nullable().optional(),
+});
+export type Refusal = z.infer<typeof Refusal>;
+
 // ─────────────────────────── Underwriting Engines ───────────────────────────
 
 export const SourceUseLine = z.object({
@@ -354,6 +503,9 @@ export const ValueTrace = z.object({
   inputs: z.array(ValueInput).default([]),
   source: z.string().nullable().optional(),
   note: z.string().nullable().optional(),
+  // Phase 0.4 — why this value is a dash, when it is one. Optional so every
+  // persisted trace stays valid; see fondok_schemas.provenance.ValueTrace.
+  reason: ReasonCode.nullable().optional(),
 });
 export type ValueTrace = z.infer<typeof ValueTrace>;
 

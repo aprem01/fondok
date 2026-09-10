@@ -99,6 +99,13 @@ from .provenance import (
     apply_states,
     classify_state,
 )
+from .reasons import (
+    REASON_META,
+    REFUSAL_GLYPH,
+    ReasonCode,
+    ReasonMeta,
+    Refusal,
+)
 from .scenario import Scenario, ScenarioOverride
 from .underwriting import (
     CapexPlan,
@@ -240,6 +247,12 @@ __all__ = [
     "ValueTrace",
     "apply_states",
     "classify_state",
+    # reasons (Phase 0.3 — the one vocabulary for "why is this a dash?")
+    "REASON_META",
+    "REFUSAL_GLYPH",
+    "ReasonCode",
+    "ReasonMeta",
+    "Refusal",
     # scenario (Wave 3 W3.2 — named what-if scenarios)
     "Scenario",
     "ScenarioOverride",

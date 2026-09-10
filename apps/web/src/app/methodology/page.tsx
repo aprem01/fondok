@@ -8,6 +8,7 @@ import PageHeader from '@/components/ui/PageHeader';
 import { Card } from '@/components/ui/Card';
 import { Button } from '@/components/ui/Button';
 import { AssumptionBadge } from '@/components/help/AssumptionBadge';
+import { REASONS, type ReasonCode } from '@/lib/ontology/reasons.generated';
 
 /**
  * Methodology — institutional explanation of how Fondok underwrites.
@@ -29,6 +30,10 @@ import { AssumptionBadge } from '@/components/help/AssumptionBadge';
  *   5. Return targets & pricing (FON-68) — the Investment Profile owns
  *      the hurdles; the Max Price Solver and pricing grid read them and
  *      never default one.
+ *   6. IC Memo — diligence flags and the decision (FON-54a).
+ *   7. What a dash means (Phase 0.3) — the ReasonCode vocabulary, rendered
+ *      from `@/lib/ontology/reasons.generated` so the page cannot drift
+ *      from the code.
  *
  * Loom walkthrough embed slot is reserved at the top — drops in
  * without a code change once the video lands.
@@ -406,6 +411,66 @@ export default function MethodologyPage() {
             <li>
               <span className="font-semibold text-ink-900">Plausibility guard.</span>{' '}
               As a last line of defence, a pair of figures more than 300% apart is reported as &ldquo;Basis mismatch — needs review&rdquo; with both raw figures and no severity, instead of a Critical variance: two numbers that far apart are on different bases, not evidence of a broker overstatement.
+            </li>
+          </ul>
+        </Card>
+      </Section>
+
+      {/* ─── 7. What a dash means (Phase 0.3 — ReasonCode vocabulary) ── */}
+      <Section
+        id="reasons"
+        number="7"
+        title="What a dash means"
+        intro="Where Fondok cannot produce a figure it shows a dash — never a placeholder, a zero, or a number carried over from a prototype. Every such refusal resolves to one of the reason codes below. They are one shared vocabulary (packages/schemas-py/fondok_schemas/reasons.py, mirrored in TypeScript) and this table is rendered from that module, so it cannot drift from what the code does."
+      >
+        <Card className="p-0 overflow-hidden">
+          <div className="overflow-x-auto">
+            <table className="w-full text-[12.5px]" data-testid="reason-code-table">
+              <thead>
+                <tr className="text-ink-500 text-[10.5px] border-b border-border bg-ink-300/5">
+                  <th className="text-left font-medium px-5 py-2">Shown</th>
+                  <th className="text-left font-medium px-3 py-2">Code</th>
+                  <th className="text-left font-medium px-3 py-2">Meaning</th>
+                  <th className="text-left font-medium px-3 py-2">What it tells you</th>
+                </tr>
+              </thead>
+              <tbody>
+                {(Object.keys(REASONS) as ReasonCode[]).map((code) => {
+                  const meta = REASONS[code];
+                  return (
+                    <tr
+                      key={code}
+                      data-reason-code={code}
+                      className="border-b border-border last:border-b-0 align-top"
+                    >
+                      <td className="px-5 py-2.5 text-ink-900 tabular-nums">{meta.ui}</td>
+                      <td className="px-3 py-2.5">
+                        <code className="text-[11.5px] text-ink-700">{code}</code>
+                      </td>
+                      <td className="px-3 py-2.5 font-medium text-ink-900">{meta.label}</td>
+                      <td className="px-3 py-2.5 text-ink-500 leading-relaxed">{meta.explanation}</td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        </Card>
+
+        <Card className="p-5 mt-4">
+          <h4 className="text-[13px] font-semibold text-ink-900 mb-2">How to read a dash</h4>
+          <ul className="space-y-2 text-[12.5px] text-ink-600 leading-relaxed">
+            <li>
+              <span className="font-semibold text-ink-900">One glyph, many reasons.</span>{' '}
+              Today every code renders the same &ldquo;&mdash;&rdquo;; the code is what distinguishes them. It travels on the value&apos;s provenance record (<code className="text-[11.5px]">reason</code>, alongside the source and formula that &ldquo;Hover any number to trace it&rdquo; in Section 3 describes) as each tab and export adopts the vocabulary.
+            </li>
+            <li>
+              <span className="font-semibold text-ink-900">Where it lands on the Data Key.</span>{' '}
+              <code className="text-[11.5px]">needs_review</code>, <code className="text-[11.5px]">basis_mismatch</code>, <code className="text-[11.5px]">period_mismatch</code> and <code className="text-[11.5px]">unit_unknown</code> describe a figure that exists but cannot be trusted or compared, so they read as <em>Needs review</em>. Every other code means the figure is not there yet and reads as <em>Awaiting data</em>.
+            </li>
+            <li>
+              <span className="font-semibold text-ink-900">A dash is not an error.</span>{' '}
+              An engine that could not finish shows the red banner described in Section 4, with a Re-run. A dash is the model declining to invent a number it has no grounds for — the code says which grounds are missing.
             </li>
           </ul>
         </Card>
