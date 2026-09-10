@@ -446,6 +446,33 @@ BROKER_DOC_TYPES: frozenset[str] = frozenset({"OM", "BROKER", "BROKER_PROFORMA",
 #: Document types whose extraction is the subject's ACTUALS.
 ACTUALS_DOC_TYPES: frozenset[str] = frozenset({"T12", "PNL", "P&L", "FINANCIALS"})
 
+#: STR / CoStar reports — STR-reported subject (or submarket) performance.
+STR_DOC_TYPES: frozenset[str] = frozenset({"STR", "STR_TREND", "STR_SEGMENTATION", "COSTAR"})
+
+#: Third-party market data (CBRE Horizons, benchmarks) — not the broker's claim.
+MARKET_DOC_TYPES: frozenset[str] = frozenset({"CBRE_HORIZONS", "CBRE", "PNL_BENCHMARK", "HOTSTATS", "BENCHMARK"})
+
+
+def non_broker_source_reason(doc_type: str | None) -> str:
+    """Why a claim-path row from ``doc_type`` is NOT the broker's claim (FON-54a part 3).
+
+    Live on Sam's deal: ``ttm_performance.subject.*`` rows from STR_TREND
+    documents (CoStar submarket PDFs, STR ``ANG-…-USD-E`` reports) were
+    admitted as broker claims and one headlined the occupancy flag. STR-
+    reported performance is a *reading* of the subject / submarket, not what
+    the broker asserts in the OM.
+    """
+    dtype = (doc_type or "").strip().upper()
+    if not dtype:
+        return "document type unknown — cannot be established as broker material; not the broker's claim"
+    if dtype in ACTUALS_DOC_TYPES:
+        return f"from an actuals document ({dtype}) — a T-12 / P&L line, not a broker claim"
+    if dtype in STR_DOC_TYPES:
+        return f"STR-reported subject / submarket performance ({dtype}), not the broker's claim"
+    if dtype in MARKET_DOC_TYPES:
+        return f"third-party market data ({dtype}), not the broker's claim"
+    return f"from a {dtype} document — not broker material, not the broker's claim"
+
 _PERIOD_SLICE_TAGS: tuple[str, ...] = (
     ".monthly.",
     ".quarterly.",
@@ -536,21 +563,24 @@ def _broker_fields_from_extraction(
 
     ``strict=True`` (the variance endpoint, which sees EVERY document's rows):
     a row is the broker's claim only when
-      * its path is under :data:`BROKER_CLAIM_PREFIXES`, or it is a flat known
-        key on a broker document (``doc_type`` in :data:`BROKER_DOC_TYPES`);
-      * and it does not come from an actuals document (T-12 / P&L) — unless the
-        path is explicitly ``broker_proforma.*`` / ``broker.*``.
+      * its path is explicitly ``broker_proforma.*`` / ``broker.*`` (wherever
+        it sits), or
+      * it is a claim path (:data:`BROKER_CLAIM_PREFIXES`) or a flat known key
+        ON BROKER MATERIAL (``doc_type`` in :data:`BROKER_DOC_TYPES`).
+    A claim-path row from any other document — a T-12 / P&L (actuals), an STR
+    / CoStar report (STR-reported subject or submarket performance), CBRE or
+    another market report, CAPEX / INSURANCE / PROPERTY_INFO, or an unknown
+    document type — is excluded with :func:`non_broker_source_reason`.
     In both modes market-segment rows, the OM's historical-year blocks,
     period slices and forward projections are dropped. Rows rejected for a
-    *source* reason (actuals document / segment / historical year) are appended
-    to ``excluded`` with the reason so the report can disclose them; period
-    slices and projections are dropped silently (they were never candidates).
-    Values are unit-normalised (:func:`normalize_broker_value`); a value whose
-    unit cannot be established is excluded with the reason.
+    *source* reason are appended to ``excluded`` with the reason so the report
+    can disclose them; period slices and projections are dropped silently
+    (they were never candidates). Values are unit-normalised
+    (:func:`normalize_broker_value`); a value whose unit cannot be established
+    is excluded with the reason.
     """
     out: list[VarianceBrokerField] = []
     dtype = (doc_type or "").strip().upper() or None
-    from_actuals_doc = dtype in ACTUALS_DOC_TYPES
     from_broker_doc = dtype in BROKER_DOC_TYPES
 
     def _reject(f: ExtractionField, reason: str) -> None:
@@ -582,15 +612,13 @@ def _broker_fields_from_extraction(
         if is_om_historical_year(name):
             _reject(f, "OM historical-year block — history, not the proforma claim")
             continue
-        if strict:
-            if from_actuals_doc and not explicit_broker:
-                _reject(f, f"from an actuals document ({dtype}) — a T-12 / P&L line, not a broker claim")
-                continue
-            if not claim_path and not from_broker_doc:
-                # A flat known key on a non-broker (or unknown) document is
-                # not evidence of a broker claim.
-                _reject(f, f"flat key on a non-broker document ({dtype or 'unknown'})")
-                continue
+        if strict and not explicit_broker and not from_broker_doc:
+            # A claim path or a flat known key is the broker's claim ONLY on
+            # broker material. From a T-12 / P&L it is an actual; from an STR
+            # / CoStar report it is STR-reported performance; from CBRE it is
+            # market data; from anything else it is simply not broker material.
+            _reject(f, non_broker_source_reason(dtype))
+            continue
         value, unit_note = normalize_broker_value(name, float(f.value), f.unit)
         if value is None:
             _reject(f, unit_note or "unit not established")
