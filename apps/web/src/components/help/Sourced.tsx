@@ -24,9 +24,11 @@ import {
   sourceLabel,
   sourceExplanation,
   formatAssumptionValue,
+  humanizeAssumptionKey,
   KIND_TONE,
 } from '@/lib/provenance';
 import { useSource } from '@/lib/hooks/useDealProvenance';
+import { TraceToSourceAction } from '@/components/project/LineageDrawer';
 
 export function Sourced({
   sourceKey,
@@ -108,6 +110,22 @@ export function Sourced({
             >
               View source document →
             </button>
+          )}
+          {/* Phase 2.4 — walk this assumption down to the page it came from.
+              The graph keys assumptions by key; an overridden or seeded value
+              carries its own node, so all three are offered as candidates. */}
+          {dealId && sourceKey && (
+            <span className="mt-2 block">
+              <TraceToSourceAction
+                dealId={dealId}
+                rootId={[
+                  `assumption:${sourceKey}`,
+                  `override:${sourceKey}`,
+                  `seed:${sourceKey}`,
+                ]}
+                title={humanizeAssumptionKey(sourceKey)}
+              />
+            </span>
           )}
           {dealId && (
             <span className="block mt-1.5 text-[10px] text-ink-400">

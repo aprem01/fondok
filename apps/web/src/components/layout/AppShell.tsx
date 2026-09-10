@@ -5,6 +5,7 @@ import Sidebar from './Sidebar';
 import FondokMark from '@/components/brand/FondokMark';
 import { ToastProvider } from '@/components/ui/Toast';
 import SourceDocPane from '@/components/citations/SourceDocPane';
+import { LineageDrawerHost } from '@/components/project/LineageDrawer';
 import { ClerkTokenBridge } from '@/lib/auth';
 
 export default function AppShell({ children }: { children: React.ReactNode }) {
@@ -36,6 +37,10 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
       {/* Globally mounted citation viewer — listens for fondok:citation-focus
           events from anywhere in the app and slides in from the right. */}
       <SourceDocPane />
+      {/* Globally mounted lineage drawer — listens for fondok:lineage-open
+          ("Trace to source") from any surface and walks the value down to
+          the document page it came from. Renders nothing until asked. */}
+      <LineageDrawerHost />
     </div>
     </ToastProvider>
   );

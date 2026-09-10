@@ -15,9 +15,11 @@
  */
 
 import { useState, type ReactNode } from 'react';
+import { useParams } from 'next/navigation';
 import { cn } from '@/lib/format';
 import { sourceLabel } from '@/lib/provenance';
 import { useTrace, useTraceGraph } from '@/lib/hooks/useValueTrace';
+import { TraceToSourceAction } from '@/components/project/LineageDrawer';
 
 function fmtTraceValue(v: number): string {
   if (!Number.isFinite(v)) return '—';
@@ -41,6 +43,8 @@ export function Traced({
 }) {
   const trace = useTrace(engine, path);
   const graph = useTraceGraph(engine);
+  const params = useParams();
+  const dealId = (params?.id as string | undefined) ?? '';
   const [open, setOpen] = useState(false);
 
   // Only decorate genuinely-computed values (a formula to explain).
@@ -111,6 +115,18 @@ export function Traced({
           {trace.note && (
             <span className="block mt-2 text-[10.5px] text-ink-500 leading-snug border-t border-border pt-1.5">
               {trace.note}
+            </span>
+          )}
+          {/* Phase 2.4 — the formula explains the hop; this walks the whole
+              chain down to the document page. A headline figure is a `kpi:`
+              node and an intermediate one an `engine:` node — offer both. */}
+          {dealId && (
+            <span className="mt-2 block">
+              <TraceToSourceAction
+                dealId={dealId}
+                rootId={[`kpi:${engine}.${path}`, `engine:${engine}.${path}`]}
+                title={path}
+              />
             </span>
           )}
         </span>

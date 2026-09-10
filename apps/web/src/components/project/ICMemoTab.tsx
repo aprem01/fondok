@@ -59,6 +59,7 @@ import type { ValueState } from '@/lib/api';
 import type { Project } from '@/lib/mockData';
 import { ProvenanceDot, palette } from '@/components/design';
 import { useToast } from '@/components/ui/Toast';
+import { openLineage } from '@/components/project/LineageDrawer';
 
 // ── canonical colours (design/canonical/IC Memo Tab.dc.html) ───────────────
 const GREEN = 'oklch(45% 0.12 155)';
@@ -777,18 +778,22 @@ export default function ICMemoTab({ project }: { project: Project }) {
     value: string;
     state: ValueState;
     src: string;
+    /** Engine + dotted output path — the lineage graph's node id for this
+     *  figure ("kpi:returns.levered_irr"). Phase 2.4. */
+    engine: string;
+    path: string;
   }
   const overriddenPP = (deal?.field_overrides ?? {})['purchase_price'] != null;
   const snapshot: Snap[] = [
-    { label: 'Purchase Price', value: mm(metrics.purchasePrice), state: provState('capital', 'purchase_price', overriddenPP ? 'assumption' : 'linked'), src: 'Investment' },
-    { label: 'Price / Key', value: perKeyK(metrics.pricePerKey), state: provState('capital', 'price_per_key', 'calculated'), src: 'Investment' },
-    { label: 'RevPAR', value: whole$(metrics.revpar), state: provState('revenue', 'years.0.revpar', 'linked'), src: 'Financials / Projections' },
-    { label: 'NOI (Y1)', value: mm(metrics.noi), state: provState('expense', 'years.0.noi', 'calculated'), src: 'Financials / Projections' },
-    { label: 'Going-In Cap Rate', value: pctOr(metrics.capRate, 2), state: provState('capital', 'entry_cap_rate', 'calculated'), src: 'Investment' },
-    { label: 'Levered IRR', value: pctOr(metrics.leveredIrr), state: provState('returns', 'levered_irr', 'calculated'), src: 'Returns' },
-    { label: 'Equity Multiple', value: xMult(metrics.equityMultiple), state: provState('returns', 'equity_multiple', 'calculated'), src: 'Returns' },
-    { label: 'DSCR (Y1)', value: xMult(metrics.dscr), state: provState('debt', 'year_one_dscr', 'calculated'), src: 'Debt' },
-    { label: 'Hold Period', value: metrics.holdYears != null ? `${metrics.holdYears} years` : '—', state: provState('returns', 'hold_years', 'assumption'), src: 'Investment' },
+    { label: 'Purchase Price', value: mm(metrics.purchasePrice), state: provState('capital', 'purchase_price', overriddenPP ? 'assumption' : 'linked'), src: 'Investment', engine: 'capital', path: 'purchase_price' },
+    { label: 'Price / Key', value: perKeyK(metrics.pricePerKey), state: provState('capital', 'price_per_key', 'calculated'), src: 'Investment', engine: 'capital', path: 'price_per_key' },
+    { label: 'RevPAR', value: whole$(metrics.revpar), state: provState('revenue', 'years.0.revpar', 'linked'), src: 'Financials / Projections', engine: 'revenue', path: 'years.0.revpar' },
+    { label: 'NOI (Y1)', value: mm(metrics.noi), state: provState('expense', 'years.0.noi', 'calculated'), src: 'Financials / Projections', engine: 'expense', path: 'years.0.noi' },
+    { label: 'Going-In Cap Rate', value: pctOr(metrics.capRate, 2), state: provState('capital', 'entry_cap_rate', 'calculated'), src: 'Investment', engine: 'capital', path: 'entry_cap_rate' },
+    { label: 'Levered IRR', value: pctOr(metrics.leveredIrr), state: provState('returns', 'levered_irr', 'calculated'), src: 'Returns', engine: 'returns', path: 'levered_irr' },
+    { label: 'Equity Multiple', value: xMult(metrics.equityMultiple), state: provState('returns', 'equity_multiple', 'calculated'), src: 'Returns', engine: 'returns', path: 'equity_multiple' },
+    { label: 'DSCR (Y1)', value: xMult(metrics.dscr), state: provState('debt', 'year_one_dscr', 'calculated'), src: 'Debt', engine: 'debt', path: 'year_one_dscr' },
+    { label: 'Hold Period', value: metrics.holdYears != null ? `${metrics.holdYears} years` : '—', state: provState('returns', 'hold_years', 'assumption'), src: 'Investment', engine: 'returns', path: 'hold_years' },
   ];
 
   // ── underwriting summary groups ────────────────────────────────────────
@@ -966,19 +971,7 @@ export default function ICMemoTab({ project }: { project: Project }) {
               <HeaderRow title="Deal snapshot" note="Base Case · Latest model run" />
               <div style={{ display: 'grid', gridTemplateColumns: 'repeat(9, 1fr)', gap: 0 }}>
                 {snapshot.map((m, i) => (
-                  <div
-                    key={m.label}
-                    title={`${m.label} → ${m.src} · Base Case output, read-only here`}
-                    style={{ display: 'flex', flexDirection: 'column', gap: 4, padding: '2px 14px 2px 0', borderLeft: i === 0 ? 'none' : '1px solid #f2f1ec', paddingLeft: i === 0 ? 0 : 14, cursor: 'help' }}
-                  >
-                    <span style={{ fontSize: 9.5, fontWeight: 700, letterSpacing: '.04em', color: palette.textMuted, textTransform: 'uppercase', lineHeight: 1.3 }}>
-                      {m.label}
-                    </span>
-                    <span style={{ display: 'inline-flex', alignItems: 'center', gap: 5, fontSize: 16, fontWeight: 600, color: palette.ink, fontVariantNumeric: 'tabular-nums' }}>
-                      <ProvenanceDot state={m.state} size={7} />
-                      {m.value}
-                    </span>
-                  </div>
+                  <SnapshotTile key={m.label} m={m} first={i === 0} dealId={dealId} />
                 ))}
               </div>
             </div>
@@ -1376,6 +1369,66 @@ function HeaderRow({ title, note, divider }: { title: string; note: string; divi
     >
       <span style={eyebrow()}>{title}</span>
       <span style={{ fontSize: 10.5, color: palette.textFaint }}>{note}</span>
+    </div>
+  );
+}
+
+/**
+ * One Deal-snapshot KPI tile. Identical to what it always rendered — the
+ * label, the origin dot and the Base Case value — plus the Phase 2.4
+ * traceability affordance: the tile is a button that walks the figure down
+ * to the page it came from, and a "Trace to source" caption appears ON HOVER
+ * ONLY, floated under the tile so nothing on the card reflows.
+ */
+function SnapshotTile({
+  m,
+  first,
+  dealId,
+}: {
+  m: { label: string; value: string; state: ValueState; src: string; engine: string; path: string };
+  first: boolean;
+  dealId: string;
+}) {
+  const [hover, setHover] = useState(false);
+  const trace = () =>
+    openLineage({
+      dealId,
+      // A headline figure is a `kpi:` node; fall back to the raw engine
+      // value when the graph did not promote it.
+      rootId: [`kpi:${m.engine}.${m.path}`, `engine:${m.engine}.${m.path}`],
+      title: m.label,
+    });
+  return (
+    <div
+      role="button"
+      tabIndex={0}
+      aria-label={`Trace ${m.label} to source`}
+      onClick={trace}
+      onKeyDown={(e) => {
+        if (e.key === 'Enter' || e.key === ' ') {
+          e.preventDefault();
+          trace();
+        }
+      }}
+      onMouseEnter={() => setHover(true)}
+      onMouseLeave={() => setHover(false)}
+      onFocus={() => setHover(true)}
+      onBlur={() => setHover(false)}
+      title={`${m.label} → ${m.src} · Base Case output, read-only here`}
+      style={{ position: 'relative', display: 'flex', flexDirection: 'column', gap: 4, padding: '2px 14px 2px 0', borderLeft: first ? 'none' : '1px solid #f2f1ec', paddingLeft: first ? 0 : 14, cursor: hover ? 'pointer' : 'help' }}
+    >
+      <span style={{ fontSize: 9.5, fontWeight: 700, letterSpacing: '.04em', color: palette.textMuted, textTransform: 'uppercase', lineHeight: 1.3 }}>
+        {m.label}
+      </span>
+      <span style={{ display: 'inline-flex', alignItems: 'center', gap: 5, fontSize: 16, fontWeight: 600, color: palette.ink, fontVariantNumeric: 'tabular-nums' }}>
+        <ProvenanceDot state={m.state} size={7} />
+        {m.value}
+      </span>
+      {hover && (
+        <span style={{ position: 'absolute', top: '100%', left: first ? 0 : 14, marginTop: 1, fontSize: 9, fontWeight: 600, letterSpacing: '.02em', color: LINK, whiteSpace: 'nowrap', pointerEvents: 'none' }}>
+          Trace to source →
+        </span>
+      )}
     </div>
   );
 }

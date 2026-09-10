@@ -261,6 +261,26 @@ export interface AssumptionSourcesResponse {
    *  the value. Only populated for source labels backed by an
    *  uploaded doc; seed / deal_row / analyst_override are omitted. */
   source_documents?: Record<string, string>;
+  /** Phase 2.4 — per-assumption field + page locator ("read off the
+   *  `Rooms revenue` line, page 4"). OPTIONAL: absent on worker builds
+   *  that predate lineage, in which case the ledger renders exactly as
+   *  it did before. */
+  source_fields?: Record<string, AssumptionSourceField>;
+  /** Phase 2.4 — per-assumption refusal code explaining a dash. Indexes
+   *  ``REASONS`` in ``lib/ontology/reasons.generated``. OPTIONAL, same
+   *  degrade rule as ``source_fields``. */
+  reasons?: Record<string, ReasonCode>;
+}
+
+/** Where one assumption was read from inside its source document. Every
+ *  member is optional — the ledger shows whichever half it is given. */
+export interface AssumptionSourceField {
+  /** Extracted field / line label, e.g. "Rooms revenue". */
+  field?: string | null;
+  /** 1-based page number in the source document. */
+  page?: number | null;
+  document_id?: string | null;
+  filename?: string | null;
 }
 
 /** One named input that fed a modeled value's formula (FON-25/27).
@@ -309,6 +329,105 @@ export interface ValueTrace {
 export interface DealProvenanceResponse {
   deal_id: string;
   engines: Record<string, Record<string, ValueTrace>>;
+}
+
+/* ─── Value lineage (Phase 2.4) ────────────────────────────────────────
+ * GET /deals/{id}/lineage — the walkable graph behind every headline
+ * number: KPI → engine value → assumption / normalized line → extracted
+ * field → document page. One record per deal run, so an analyst can walk
+ * any figure down to the page it was read off.
+ *
+ * The endpoint is additive and may not exist yet on a given worker build:
+ * ``api.deals.lineage`` resolves ``null`` on 404/405/501 so every consumer
+ * degrades to the pre-lineage behaviour instead of surfacing an error.
+ */
+
+/** What a lineage node stands for. */
+export type LineageNodeKind =
+  | 'kpi'
+  | 'engine_value'
+  | 'assumption'
+  | 'normalized_line'
+  | 'extracted_field'
+  | 'document'
+  | 'page'
+  | 'override'
+  | 'seed'
+  | 'benchmark'
+  | 'memo_section';
+
+/** How one node depends on the next one down the chain. Read as
+ *  "``src`` <rel> ``dst``" — e.g. a KPI is `computed_from` an engine value,
+ *  an extracted field is `located_on` a page. */
+export type LineageEdgeRel =
+  | 'computed_from'
+  | 'seeded_from'
+  | 'normalized_from'
+  | 'extracted_from'
+  | 'located_on'
+  | 'overridden_by'
+  | 'cited_in';
+
+/**
+ * One node in the lineage graph.
+ *
+ * Ids are namespaced by kind so a walk can start from any surface:
+ *   ``kpi:<engine>.<path>`` · ``engine:<engine>.<path>`` ·
+ *   ``assumption:<key>`` · ``field:<extraction_result_id>:<field_name>`` ·
+ *   ``doc:<document_id>`` · ``page:<document_id>:<n>`` ·
+ *   ``override:<key>`` · ``seed:<key>`` · ``memo:<section_id>``.
+ */
+export interface LineageNode {
+  id: string;
+  kind: LineageNodeKind;
+  label: string;
+  value: number | string | null;
+  unit: string | null;
+  concept: string | null;
+  /** SOURCE_* label when the node carries one (see ``lib/provenance``). */
+  source: string | null;
+  /** ``ValueState`` when the node carries one. */
+  state: string | null;
+  /** Refusal code when this node is a dash rather than a number. */
+  reason: string | null;
+  meta: Record<string, unknown>;
+}
+
+/** One dependency link. ``formula`` is the human expression behind a
+ *  `computed_from` edge, null everywhere else. */
+export interface LineageEdge {
+  src: string;
+  dst: string;
+  rel: LineageEdgeRel;
+  formula: string | null;
+}
+
+/** Why a link in the chain is a dash. ``code`` indexes ``REASONS`` in
+ *  ``lib/ontology/reasons.generated``. */
+export interface LineageRefusal {
+  code: ReasonCode;
+  detail?: string | null;
+  /** Concept (or node id) the refusal applies to. */
+  concept?: string | null;
+  /** Document the refusal applies to, when it is document-scoped. */
+  document_id?: string | null;
+  since?: string | null;
+}
+
+/** GET /deals/{id}/lineage — one deal's lineage graph for the latest run. */
+export interface LineageRecord {
+  deal_id: string;
+  run_id: string | null;
+  registry_version: number;
+  pipeline_version: string;
+  generated_at: string;
+  /** Node ids a walk can start from (the deal's headline figures). */
+  roots: string[];
+  nodes: LineageNode[];
+  edges: LineageEdge[];
+  unresolved: LineageRefusal[];
+  /** True when the run predates the deal's latest document or override. */
+  stale: boolean;
 }
 
 export interface NewDealBody {
@@ -1224,6 +1343,33 @@ export const api = {
         undefined,
         { signal },
       ),
+    /** Walkable lineage graph for the deal's latest run — every headline
+     *  number down to the document page it came from (Phase 2.4).
+     *
+     *  ADDITIVE + OPTIONAL: resolves ``null`` when the worker build has no
+     *  lineage route (404 / 405 / 501) or returns an empty body, so callers
+     *  degrade to the pre-lineage UI instead of raising. Every other failure
+     *  (network, 5xx, timeout) still throws so a real outage is visible. */
+    lineage: async (
+      id: string,
+      signal?: AbortSignal,
+    ): Promise<LineageRecord | null> => {
+      try {
+        const r = await request<LineageRecord | null>(
+          'GET',
+          `/deals/${id}/lineage`,
+          undefined,
+          { signal },
+        );
+        return r ?? null;
+      } catch (e) {
+        const status = (e as WorkerError | undefined)?.status;
+        if (e instanceof WorkerError && (status === 404 || status === 405 || status === 501)) {
+          return null;
+        }
+        throw e;
+      }
+    },
     /** Per-deal LLM cost report. MUST go through the authed client — the
      *  endpoint is tenant-scoped, so a raw fetch (no Authorization /
      *  X-Tenant-Id) resolves the wrong tenant and 404s. */

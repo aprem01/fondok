@@ -20,6 +20,8 @@ import { Card } from '@/components/ui/Card';
 import { cn } from '@/lib/format';
 import { api, isWorkerConnected } from '@/lib/api';
 import type { AssumptionSourcesResponse } from '@/lib/api';
+import { REASONS, isReasonCode, REFUSAL_GLYPH } from '@/lib/ontology/reasons.generated';
+import type { ReasonCode } from '@/lib/ontology/reasons.generated';
 import {
   sourceKind,
   sourceLabel,
@@ -36,6 +38,22 @@ interface Row {
   sourceLabel: string;
   kind: SourceKind;
   docId?: string;
+  /** Phase 2.4 — "Rooms revenue · p.4". Null when the worker sent no
+   *  ``source_fields`` entry for this key. */
+  fieldPage: string | null;
+  /** Phase 2.4 — why this key is a dash, when the worker says so. */
+  reason: ReasonCode | null;
+}
+
+/** "Rooms revenue · p.4" from whichever half the worker supplied. */
+function fieldPageLabel(
+  f: { field?: string | null; page?: number | null } | undefined,
+): string | null {
+  if (!f) return null;
+  const parts: string[] = [];
+  if (f.field) parts.push(f.field);
+  if (f.page != null && Number.isFinite(f.page)) parts.push(`p.${f.page}`);
+  return parts.length ? parts.join(' · ') : null;
 }
 
 export function ProvenanceLedger({ dealId }: { dealId: string }) {
@@ -80,10 +98,18 @@ export function ProvenanceLedger({ dealId }: { dealId: string }) {
           sourceLabel: sourceLabel(source),
           kind: sourceKind(source),
           docId: data.source_documents?.[key],
+          fieldPage: fieldPageLabel(data.source_fields?.[key]),
+          reason: isReasonCode(data.reasons?.[key]) ? (data.reasons?.[key] as ReasonCode) : null,
         };
       })
       .sort((a, b) => a.label.localeCompare(b.label));
   }, [data]);
+
+  // Phase 2.4 — the two lineage columns are shown ONLY when the worker
+  // actually sent the block, so a build without lineage renders exactly the
+  // ledger it rendered before.
+  const showFieldPage = rows.some((r) => r.fieldPage != null);
+  const showReason = rows.some((r) => r.reason != null);
 
   const benchmarkCount = rows.filter((r) => r.kind === 'benchmark').length;
   const overrideCount = rows.filter((r) => r.kind === 'override').length;
@@ -196,6 +222,12 @@ export function ProvenanceLedger({ dealId }: { dealId: string }) {
               <th className="text-right font-semibold px-3 py-2">Value</th>
               <th className="text-left font-semibold px-3 py-2">Source</th>
               <th className="text-left font-semibold px-5 py-2">Doc</th>
+              {showFieldPage && (
+                <th className="text-left font-semibold px-3 py-2">Field / page</th>
+              )}
+              {showReason && (
+                <th className="text-left font-semibold px-5 py-2">Reason</th>
+              )}
             </tr>
           </thead>
           <tbody>
@@ -224,6 +256,22 @@ export function ProvenanceLedger({ dealId }: { dealId: string }) {
                     <span className="text-ink-400">—</span>
                   )}
                 </td>
+                {showFieldPage && (
+                  <td className="px-3 py-2 text-ink-600">
+                    {r.fieldPage ?? <span className="text-ink-400">{REFUSAL_GLYPH}</span>}
+                  </td>
+                )}
+                {showReason && (
+                  <td className="px-5 py-2 text-ink-600">
+                    {r.reason ? (
+                      <span title={REASONS[r.reason].explanation}>
+                        {REASONS[r.reason].label}
+                      </span>
+                    ) : (
+                      <span className="text-ink-400">{REFUSAL_GLYPH}</span>
+                    )}
+                  </td>
+                )}
               </tr>
             ))}
           </tbody>
