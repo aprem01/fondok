@@ -257,10 +257,7 @@ export default function GroundedWorksheet({
   const rawId = String(dealId);
   const { outputs, refresh, settled: outputsSettled } = useEngineOutputs(rawId);
   const { deal, error: dealError, refresh: refreshDeal } = useDeal(rawId);
-  const {
-    documents, extractions, refreshExtraction,
-    settled: documentsSettled, extractionFailures,
-  } = useDocuments(rawId);
+  const { documents, extractions, refreshExtraction, settled: documentsSettled } = useDocuments(rawId);
   const { toast } = useToast();
   const { run, status } = useEngineRun(rawId, 'returns', { runMode: 'all' });
   const running = status === 'running' || status === 'queued';
@@ -303,7 +300,6 @@ export default function GroundedWorksheet({
     documents,
     extractions,
     documentsSettled,
-    extractionFailures,
   });
   const populatedHistYears = useMemo(() => allHistYears.filter(histHasData), [allHistYears]);
   // FON-15 — render EVERY available normalized period, not a fixed last-4
@@ -488,11 +484,14 @@ export default function GroundedWorksheet({
   );
   const pinnedRef = useRef<string | null>(null);
   useEffect(() => {
-    if (!pinnedYear || pinnedRef.current === pinnedYear) return;
+    // Pin only once the historicals have settled: extractions stream in from
+    // the shared store one document at a time, and pinning on the first
+    // column to appear would leave later columns un-hidden.
+    if (!pinnedYear || histLoading || pinnedRef.current === pinnedYear) return;
     pinnedRef.current = pinnedYear;
     setHiddenYears(new Set(histYears.filter((y) => y.year !== pinnedYear).map((y) => y.year)));
     setFormat('detailed');
-  }, [pinnedYear, histYears]);
+  }, [pinnedYear, histYears, histLoading]);
   const focusRowId = useMemo(() => {
     if (focusField) {
       for (const r of ROWS) {

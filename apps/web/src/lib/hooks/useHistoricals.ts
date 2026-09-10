@@ -135,10 +135,11 @@ export interface HistoricalsInputs {
   /** The caller's useDocuments state — the SAME objects the review state reads. */
   documents: WorkerDocument[];
   extractions: Record<string, ExtractionResult | undefined>;
-  /** useDocuments.settled — the first document-list fetch has completed. */
+  /** useDocuments.settled — the shared per-deal store has completed its first
+   *  list fetch and every EXTRACTED doc's extraction is loaded-or-failed
+   *  (latched, so a late-arriving doc never flips a rendered grid back to a
+   *  skeleton). Omit for callers that don't hold a skeleton. */
   documentsSettled?: boolean;
-  /** useDocuments.extractionFailures — docs whose extraction fetch gave up. */
-  extractionFailures?: Record<string, boolean>;
 }
 
 export function useHistoricals(
@@ -146,7 +147,7 @@ export function useHistoricals(
   opts: HistoricalsInputs,
 ): { years: HistYear[]; keys: number; loading: boolean } {
   const keysHint = opts.keys ?? 0;
-  const { documents, extractions, documentsSettled = true, extractionFailures } = opts;
+  const { documents, extractions, documentsSettled = true } = opts;
   const [endpoint, setEndpoint] = useState<HistData | null>(null);
 
   // 1) endpoint — not implemented in the worker yet, so probing it just
@@ -181,18 +182,12 @@ export function useHistoricals(
     [documents, extractions, keysHint],
   );
 
-  // Loading is honest: the list hasn't been fetched yet, or a statement that
-  // feeds the columns has neither an extraction nor a recorded fetch failure.
-  const pending = useMemo(
-    () => documents.some((d) => isHistoricalSourceDoc(d) && !extractions[d.id] && !extractionFailures?.[d.id]),
-    [documents, extractions, extractionFailures],
-  );
-  const loading = !documentsSettled || pending;
-
+  // Loading is honest and comes from the shared store: until the first list
+  // fetch has completed and every EXTRACTED doc is loaded-or-failed.
   return {
     years: endpoint?.years ?? built,
     keys: endpoint?.keys ?? keysHint,
-    loading,
+    loading: !documentsSettled,
   };
 }
 

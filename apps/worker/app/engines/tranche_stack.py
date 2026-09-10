@@ -47,6 +47,11 @@ class LoanTranche(BaseModel):
 
     interest_only: bool = True
     amortization_years: Annotated[int, Field(ge=0, le=40)] | None = None
+    # FON-63 (Wave 2) — interest-only stub (months) before an amortizing
+    # tranche starts paying principal. None = no tranche-level stub (the deal's
+    # ``interest_only_years`` applies for the senior). Irrelevant when the
+    # tranche is ``interest_only`` for its whole term.
+    io_months: Annotated[int, Field(ge=0, le=480)] | None = None
     term_years: Annotated[int, Field(ge=0, le=40)] | None = None
 
     origination_fee_pct: Annotated[float, Field(ge=0.0, le=10.0)] = 0.0
@@ -55,6 +60,17 @@ class LoanTranche(BaseModel):
     # Set when the tranche's economics are intentionally unresolved (the PACE
     # piece in the Kimpton template). Also inferred when no rate can be derived.
     terms_pending: bool = False
+
+    def resolved_index(self, default_index: float) -> float:
+        """The benchmark actually used by a floating tranche: the analyst's
+        index assumption when entered, else the engine's flat default index,
+        clamped to the floor / cap when set."""
+        idx = self.index_assumption if self.index_assumption is not None else default_index
+        if self.rate_floor is not None:
+            idx = max(idx, self.rate_floor)
+        if self.rate_cap is not None:
+            idx = min(idx, self.rate_cap)
+        return idx
 
     def effective_rate(self, default_index: float) -> float | None:
         """Resolve the all-in annual rate, or None when it can't be computed."""
@@ -65,12 +81,7 @@ class LoanTranche(BaseModel):
         # Floating.
         if self.spread is None:
             return None
-        idx = self.index_assumption if self.index_assumption is not None else default_index
-        if self.rate_floor is not None:
-            idx = max(idx, self.rate_floor)
-        if self.rate_cap is not None:
-            idx = min(idx, self.rate_cap)
-        return self.spread + idx
+        return self.spread + self.resolved_index(default_index)
 
 
 class DebtCovenants(BaseModel):
@@ -102,14 +113,25 @@ class TrancheResult(BaseModel):
     # FON-63 follow-up — surface the amortization so the Debt tab can render
     # and edit it (None / interest-only shows as "IO").
     amortization_years: int | None = None
-    # FON-72 follow-up — the floating-rate build-up echoed straight from the
-    # INPUT tranche (index name, index rate assumption, spread) so the Debt tab's
-    # Loan Terms card can render Benchmark → Spread → All-In. A fixed-rate tranche
-    # carries none of these (all None) and the tab renders those rows "—". These
-    # are pure pass-throughs — nothing in the rate/DSCR math reads them.
+    # FON-72 follow-up — the floating-rate build-up so the Debt tab's Loan
+    # Terms card can render Benchmark → Spread → All-In. A fixed-rate tranche
+    # carries none of these (all None). ``benchmark_rate`` is the index the
+    # rate math actually used (the analyst's index assumption, else the engine's
+    # flat default — flagged by ``benchmark_is_default`` so the tab can say so
+    # instead of presenting a default as an entered term). Floor / cap echo the
+    # input tranche.
     benchmark_name: str | None = None
     benchmark_rate: float | None = None
+    benchmark_is_default: bool | None = None
     spread: float | None = None
+    rate_floor: float | None = None
+    rate_cap: float | None = None
+    # FON-63 (Wave 2) — the remaining editable terms echoed back so the Debt
+    # tab renders every tranche from the engine, never from a placeholder.
+    io_months: int | None = None
+    term_years: int | None = None
+    origination_fee_pct: float | None = None
+    exit_fee_pct: float | None = None
 
 
 class DebtStackResult(BaseModel):
@@ -130,15 +152,42 @@ class DebtStackResult(BaseModel):
 
 
 def _annual_debt_service(tranche: LoanTranche, rate: float) -> float:
-    """IO tranches pay interest only; amortizing tranches use a level P&I PMT."""
+    """Year-1 debt service. IO tranches pay interest only; amortizing tranches
+    use a level P&I PMT, with an IO stub (``io_months``) paying interest only
+    for that part of the year."""
     if tranche.interest_only or not tranche.amortization_years:
         return tranche.loan_amount * rate
     n = tranche.amortization_years
     if rate <= 0:
-        return tranche.loan_amount / n
-    # Annual level payment (amortization in years).
-    factor = (1 + rate) ** n
-    return tranche.loan_amount * rate * factor / (factor - 1)
+        level = tranche.loan_amount / n
+    else:
+        # Annual level payment (amortization in years).
+        factor = (1 + rate) ** n
+        level = tranche.loan_amount * rate * factor / (factor - 1)
+    io = tranche.io_months or 0
+    if io >= 12:
+        return tranche.loan_amount * rate
+    if io > 0:
+        return (io / 12.0) * tranche.loan_amount * rate + ((12 - io) / 12.0) * level
+    return level
+
+
+def _echo_terms(t: LoanTranche, default_index: float) -> dict:
+    """Input terms echoed onto the TrancheResult (shared by both branches)."""
+    floating = t.rate_type == "floating"
+    return dict(
+        amortization_years=t.amortization_years,
+        benchmark_name=t.index_name if floating else None,
+        benchmark_rate=t.resolved_index(default_index) if floating else None,
+        benchmark_is_default=(t.index_assumption is None) if floating else None,
+        spread=t.spread if floating else None,
+        rate_floor=t.rate_floor if floating else None,
+        rate_cap=t.rate_cap if floating else None,
+        io_months=t.io_months,
+        term_years=t.term_years,
+        origination_fee_pct=t.origination_fee_pct,
+        exit_fee_pct=t.exit_fee_pct,
+    )
 
 
 def compute_debt_stack(
@@ -174,9 +223,7 @@ def compute_debt_stack(
                 kind=t.kind, label=label, loan_amount=t.loan_amount, all_in_rate=None,
                 rate_type=t.rate_type, annual_debt_service=None,
                 interest_only=t.interest_only, terms_pending=True,
-                amortization_years=t.amortization_years,
-                benchmark_name=t.index_name, benchmark_rate=t.index_assumption,
-                spread=t.spread,
+                **_echo_terms(t, default_index),
             ))
             continue
         ds = _annual_debt_service(t, rate)
@@ -187,9 +234,7 @@ def compute_debt_stack(
             kind=t.kind, label=label, loan_amount=t.loan_amount, all_in_rate=rate,
             rate_type=t.rate_type, annual_debt_service=ds,
             interest_only=t.interest_only, terms_pending=False,
-            amortization_years=t.amortization_years,
-            benchmark_name=t.index_name, benchmark_rate=t.index_assumption,
-            spread=t.spread,
+            **_echo_terms(t, default_index),
         ))
 
     weighted_avg_rate = rate_weight / priced_debt if priced_debt > 0 else None

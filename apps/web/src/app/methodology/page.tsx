@@ -168,7 +168,7 @@ export default function MethodologyPage() {
               Set via the Overview inline editor. Wins over every other source.
             </BadgeRow>
             <BadgeRow source="str_forecast" name="STR Forecast">
-              Year-1 occupancy &amp; ADR seeded from STR — the Market tab&apos;s &quot;Use STR rates in the model&quot; writes the comp-set rates the card shows as explicit overrides (note: &quot;STR comp-set market rates (Market tab)&quot;), else the subject TTM or the BASE forward forecast. Financials → Projections shows &quot;Active basis: Market / STR · Revert&quot; only when the rates carry this tag.
+              Year-1 occupancy &amp; ADR seeded from STR — the Market tab&apos;s &quot;Use STR rates in the model&quot; writes the comp-set rates the card shows as explicit overrides (note: &quot;STR comp-set market rates (Market tab)&quot;), else the subject TTM or the BASE forward forecast. Financials → Projections shows &quot;Active basis: Market / STR · Revert&quot; only when the rates carry this tag, and the Market tab&apos;s STR card reads the same tags — &quot;STR rates active&quot;, &quot;STR rates unavailable — using T-12 base&quot;, or &quot;Pending re-run&quot; when the worker has not tagged the rates yet — never the request flag alone.
             </BadgeRow>
             <BadgeRow source="str_forecast_unavailable" name="STR Unavailable">
               STR rates were requested but could not populate (no STR Trend extraction, coverage too low, or a loader failure). The model stays on the T-12 base and says so — the STR seed is never silently &quot;active&quot;.
@@ -180,9 +180,16 @@ export default function MethodologyPage() {
               Kimpton fixture default. Surfaced as a Seed badge with grey tone — no deal-specific data has overridden this yet.
             </BadgeRow>
             <BadgeRow source="deal_row" name="Deal Row">
-              Sourced from the deals table (entered on the create-deal wizard or PATCHed via the API). Property name, city, brand, keys, service level.
+              Sourced from the deals table (entered on the create-deal wizard or PATCHed via the API). Project name, city, brand, keys, service level. The Property Name is not a deal-row field — see below.
             </BadgeRow>
           </div>
+        </Card>
+
+        <Card className="p-5 mb-4">
+          <h4 className="text-[13px] font-semibold text-ink-900 mb-3">Project Name vs Property Name</h4>
+          <p className="text-[12.5px] text-ink-500 leading-relaxed">
+            <span className="font-semibold text-ink-900">Project Name</span> is the analyst&apos;s confidential deal identifier (e.g. &quot;Project Unicorn&quot;) — a deal-row field you set and rename on the Overview; document extraction never writes it. <span className="font-semibold text-ink-900">Property Name</span> is the asset as named in the offering documents (OM first, then the STR subject name) and is never inferred from the Project Name — it shows &quot;—&quot; until the OM is extracted. The two are stored independently and editing one never changes the other. An analyst may override the Property Name from its Overview row: the override is stored as <code className="text-[11.5px]">field_overrides[&quot;property_overview.name&quot;]</code>, the extracted value and its source page are preserved, and &quot;Restore sourced value&quot; drops the override so the extracted name comes back.
+          </p>
         </Card>
 
         <Card className="p-5 mb-4">
@@ -198,6 +205,10 @@ export default function MethodologyPage() {
             <li>
               <span className="font-semibold text-ink-900">Outputs — “how was this computed?”</span>{' '}
               Modeled values (rooms &amp; total revenue, NOI, GOP, debt service, DSCR, equity multiple, gross sale, IRR) hover to show the exact formula plus every named input, and each input chains one hop further — back to a source document, a seed/benchmark, an analyst override, or another computed value. Follow any number to ground.
+            </li>
+            <li>
+              <span className="font-semibold text-ink-900">NOI pin (reconciliation override).</span>{' '}
+              A deal can carry <code>noi_override_by_year</code> — an analyst-entered per-year NOI schedule (the FON-67 lever used to reconcile to a source model) — and optionally <code>terminal_noi_override</code> for the exit-year reversion NOI. While either is set, the Debt and Returns engines read that schedule instead of the operating model, so RevPAR-growth / expense edits do not move NOI. Financials → Projections shows an &quot;NOI pinned to an analyst schedule&quot; notice whenever the pin is present (and says when terminal NOI is also pinned); <b>Clear pin</b> deletes the override(s) from <code>field_overrides</code> and re-runs the model, after which NOI follows the operating assumptions again.
             </li>
             <li>
               <span className="font-semibold text-ink-900">IRR is calculated, and says so.</span>{' '}
@@ -240,7 +251,7 @@ export default function MethodologyPage() {
               ['F&B', 'Per-occupied-room F&B model with food/beverage split; resort fees handled as a separate line.'],
               ['Expense', 'USALI 11th departmental + undistributed + management fee + FF&E reserve + fixed charges → GOP, NOI (institutional), Net Cash Flow.'],
               ['Capital', 'Purchase price + closing costs + renovation budget + working capital → total capital; Sources & Uses.'],
-              ['Debt', 'Senior loan amortization with hand-rolled IRR (Newton method, bisection fallback); DSCR; refi optionality.'],
+              ['Debt', 'Senior + PACE tranche stack from analyst-entered terms (fixed or index + spread with floor / cap, amortization or interest-only, IO stub, maturity); monthly amortization schedule; DSCR, debt yield, LTV / LTC; analyst-entered covenant thresholds; refi optionality.'],
               ['Returns', 'Levered + unlevered IRR, equity multiple, Year-1 CoC, terminal value via exit cap × terminal NOI. Handles loss-making (underwater) deals — a negative IRR or sub-1x multiple is reported honestly, not floored or crashed.'],
               ['Sensitivity', 'IRR heatmap across exit cap × hold years (or other configurable pairs).'],
               ['Partnership', 'GP / LP waterfall with preferred return, catch-up, promote tiers. A deficit period is funded as a dated pro-rata GP/LP capital call (by ownership split) that adds to unreturned capital — the preferred return accrues on it — and is reported as additional contributions; Cash Flow → Partnership → Returns carry one treatment of additional equity.'],
@@ -250,6 +261,39 @@ export default function MethodologyPage() {
                 <span className="text-ink-500">{desc}</span>
               </li>
             ))}
+          </ul>
+        </Card>
+
+        <Card className="p-5 mt-4">
+          <h4 className="text-[13px] font-semibold text-ink-900 mb-2">Debt is an assumptions workspace</h4>
+          <p className="text-[12.5px] text-ink-500 leading-relaxed mb-3">
+            Debt documents are optional. The Debt tab is where the financing is entered, and every core term is an analyst input the model runs on — Fondok does not read the term sheet in this release. Each edit is persisted as an analyst override <AssumptionBadge source="analyst_override" /> and re-runs the chain, so the Debt Schedule, DSCR, debt yield, LTV / LTC, Cash Flow and Returns all reflect what was entered.
+          </p>
+          <ul className="space-y-2 text-[12.5px] text-ink-600 leading-relaxed">
+            <li>
+              <span className="font-semibold text-ink-900">Senior loan (tranche 1).</span>{' '}
+              Amount (or LTV — either resizes the same loan), rate basis, amortization (0 = interest-only for the full term), an interest-only stub in months before principal begins, and maturity. Fixed prices off the entered coupon; Floating prices off the index assumption plus spread, clamped to an optional floor / cap. Switching basis asks for the term the new basis needs (a spread or a coupon) in the same save. Until an index is entered the floating build-up shows Fondok&apos;s flat SOFR assumption and says so — it is not market data.
+            </li>
+            <li>
+              <span className="font-semibold text-ink-900">PACE loan (tranche 2).</span>{' '}
+              Funding an amount adds it to Total Debt, LTV, LTC and debt yield immediately. Until a rate is entered the tranche is <em>terms pending</em>: it stays out of debt service and DSCR rather than running on an invented rate, and the tab says so next to the input.
+            </li>
+            <li>
+              <span className="font-semibold text-ink-900">Covenants.</span>{' '}
+              Maximum LTV / LTC and minimum DSCR / debt yield are thresholds you enter. There is no default package — a covenant without an entered threshold shows its live Current reading, an &ldquo;Enter threshold&rdquo; input, and no pass / fail verdict. Entered thresholds are tested against the modeled Year-1 metrics (LTV / LTC at close).
+            </li>
+            <li>
+              <span className="font-semibold text-ink-900">Maturity.</span>{' '}
+              The schedule runs to maturity. A take-out before exit is modeled on the Refinance sub-tab; without one the loan balance at the end of the schedule is what the model repays at sale.
+            </li>
+            <li>
+              <span className="font-semibold text-ink-900">Fees.</span>{' '}
+              Origination and exit fees are displayed from the entered percentages but are not yet carried into Sources &amp; Uses, Cash Flow or Returns — the tab labels them display-only rather than implying they move the numbers.
+            </li>
+            <li>
+              <span className="font-semibold text-ink-900">Missing inputs are inputs.</span>{' '}
+              Wherever a required assumption is absent, the Debt tab renders the input to provide (&ldquo;Enter rate&rdquo;, &ldquo;Enter spread&rdquo;, &ldquo;Enter threshold&rdquo;) with the consequence stated, instead of an unexplained dash.
+            </li>
           </ul>
         </Card>
 

@@ -11,7 +11,7 @@ import { Button } from '@/components/ui/Button';
 import { StatusBadge } from '@/components/ui/Badge';
 import KebabMenu from '@/components/ui/KebabMenu';
 import { projects as mockProjects, projectStatuses, Project } from '@/lib/mockData';
-import { cn } from '@/lib/format';
+import { cn, fmtDate } from '@/lib/format';
 import { useDeals } from '@/lib/hooks/useDeals';
 import { WorkerDeal, api, isWorkerConnected } from '@/lib/api';
 import { useCurrentRole } from '@/lib/auth';
@@ -144,7 +144,7 @@ function fromWorkerDeal(d: WorkerDeal): DisplayDeal {
     aiConfidence: Math.round((d.ai_confidence ?? 0) * 100),
     assignee: '—',
     docs: String(d.document_count ?? 0),
-    updatedAt: d.updated_at ? new Date(d.updated_at).toLocaleDateString() : '—',
+    updatedAt: d.updated_at ? fmtDate(d.updated_at) : '—',
     noDocs: (d.document_count ?? 0) === 0,
     isMock: false,
   };

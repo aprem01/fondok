@@ -26,10 +26,15 @@ export interface ResolvedSource {
 
 interface ProvCtx {
   get: (key: string) => ResolvedSource | null;
+  /** True once the assumption_sources payload has loaded. */
   ready: boolean;
+  /** True once the fetch has finished (success OR failure), or when there is
+   *  nothing to fetch (no worker / mock deal). Lets a consumer tell "still
+   *  checking" from "the worker returned no tag for this key". */
+  settled: boolean;
 }
 
-const Ctx = createContext<ProvCtx>({ get: () => null, ready: false });
+const Ctx = createContext<ProvCtx>({ get: () => null, ready: false, settled: false });
 
 export function ProvenanceProvider({
   dealId,
@@ -39,20 +44,29 @@ export function ProvenanceProvider({
   children: ReactNode;
 }) {
   const [data, setData] = useState<AssumptionSourcesResponse | null>(null);
+  const [settled, setSettled] = useState(false);
 
   useEffect(() => {
-    if (!isWorkerConnected() || !dealId || /^\d+$/.test(dealId)) return;
+    if (!isWorkerConnected() || !dealId || /^\d+$/.test(dealId)) {
+      setSettled(true);
+      return;
+    }
     const ac = new AbortController();
+    setSettled(false);
     api.deals
       .assumptionSources(dealId, ac.signal)
       .then(setData)
-      .catch(() => {});
+      .catch(() => {})
+      .finally(() => {
+        if (!ac.signal.aborted) setSettled(true);
+      });
     return () => ac.abort();
   }, [dealId]);
 
   const value = useMemo<ProvCtx>(
     () => ({
       ready: !!data,
+      settled,
       get: (key: string) => {
         if (!data) return null;
         const src = data.sources?.[key];
@@ -64,10 +78,16 @@ export function ProvenanceProvider({
         };
       },
     }),
-    [data],
+    [data, settled],
   );
 
   return createElement(Ctx.Provider, { value }, children);
+}
+
+/** Load state of the deal's provenance map — see ``ProvCtx.settled``. */
+export function useProvenanceState(): { ready: boolean; settled: boolean } {
+  const { ready, settled } = useContext(Ctx);
+  return { ready, settled };
 }
 
 /** Resolve one assumption key's source, or null when unknown / no provider. */

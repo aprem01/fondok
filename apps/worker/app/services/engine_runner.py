@@ -963,6 +963,18 @@ async def _load_engine_inputs(
                         tranche_overrides = debt_overrides.setdefault(
                             "tranches", {}
                         )
+                        if field in _DEBT_STACK_TRANCHE_STRING_FIELDS:
+                            # Wave 2 — ``rate_type`` is a string pick; only
+                            # the two known bases are accepted.
+                            str_value = (
+                                str(value).strip().lower()
+                                if isinstance(value, str)
+                                else None
+                            )
+                            if str_value in ("fixed", "floating"):
+                                tranche_overrides.setdefault(idx, {})[field] = str_value
+                                sources[path] = SOURCE_ANALYST_OVERRIDE
+                            continue
                         try:
                             num_value = float(value) if isinstance(value, (int, float, str)) else None
                         except (TypeError, ValueError):
@@ -1237,27 +1249,47 @@ _OVERRIDE_COMPS_KEYS: frozenset[str] = frozenset({
 })
 
 
-# Wave 4 W4.4 — debt stack v2 overrides. The OverridePanel writes
+# Wave 4 W4.4 — debt stack v2 overrides. The Debt tab writes
 # tranche-indexed scalars (``debt_stack.tranches.<idx>.<field>``) for
 # rate/principal/amort along with the stack-level refi knobs. Every
 # override here lands on ``base['debt_stack_overrides']`` as a nested
 # map the debt-stack builder consumes; provenance is tagged
 # SOURCE_ANALYST_OVERRIDE so the UI badge reads "Analyst override".
+# FON-63 (Wave 2) — the Loan Terms workspace adds the floating build-up
+# (rate_type / spread / index / floor / cap); keep in lockstep with
+# ``engines.debt._TRANCHE_OVERRIDE_FIELDS``. ``rate_type`` is the one
+# string-valued tranche field ("fixed" | "floating").
 _DEBT_STACK_TRANCHE_FIELDS: tuple[str, ...] = (
     "rate_pct",
+    "rate_type",
+    "spread_pct",
+    "index_rate_pct",
+    "rate_floor_pct",
+    "rate_cap_pct",
     "principal_usd",
     "amortization_months",
     "io_period_months",
     "upfront_fee_pct",
     "exit_fee_pct",
 )
+_DEBT_STACK_TRANCHE_STRING_FIELDS: frozenset[str] = frozenset({"rate_type"})
 _DEBT_STACK_TRANCHE_INDEXES: tuple[int, ...] = (0, 1, 2)
+# FON-63 (Wave 2) — covenant thresholds are analyst inputs on the Debt tab
+# (fractions for LTV / LTC / debt yield, a ratio for DSCR). They land on the
+# stack-level map exactly where ``engines.debt._covenant_thresholds`` reads.
+_DEBT_STACK_COVENANT_KEYS: frozenset[str] = frozenset({
+    "debt_stack.covenant_max_ltv",
+    "debt_stack.covenant_max_ltc",
+    "debt_stack.covenant_min_dscr",
+    "debt_stack.covenant_min_debt_yield",
+})
 _OVERRIDE_DEBT_KEYS: frozenset[str] = frozenset(
     {
         f"debt_stack.tranches.{idx}.{field}"
         for idx in _DEBT_STACK_TRANCHE_INDEXES
         for field in _DEBT_STACK_TRANCHE_FIELDS
     }
+    | _DEBT_STACK_COVENANT_KEYS
     | {
         "debt_stack.refi_test_year",
         "debt_stack.refi_market_debt_yield_pct",

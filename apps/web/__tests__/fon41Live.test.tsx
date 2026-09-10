@@ -138,10 +138,13 @@ describe('FON-41 live — real loaders + worksheet: red cells == Data Room badge
       PARAMS = { doc: c.doc.id };
       const expected = dataRoomBadges().get(c.doc.id) ?? 0;
       render(<GroundedWorksheet dealId={LIVE_DEAL_ID} />);
-      // Skeleton first (documents + extractions loading), then the pinned grid.
-      expect(screen.getByTestId('worksheet-loading')).toBeInTheDocument();
-      await waitFor(() => activePill(c.pill), { timeout: 8000 });
-      expect(screen.getByRole('button', { name: c.other }).className).toContain('text-ink-400');
+      // (The shared per-deal store is warm after the first test, so a
+      // skeleton is not guaranteed here — only the settled, pinned grid is.
+      // Store updates land outside act, so wait for the pin to be applied.)
+      await waitFor(() => {
+        activePill(c.pill);
+        expect(screen.getByRole('button', { name: c.other }).className).toContain('text-ink-400');
+      }, { timeout: 8000 });
       expect(screen.queryAllByRole('button', { name: RED_CELL })).toHaveLength(expected);
       if (expected > 0) expect(screen.getByText(String(expected))).toBeInTheDocument();
     }, 10000);

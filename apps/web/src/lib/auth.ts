@@ -16,6 +16,19 @@
 import { useEffect } from 'react';
 import { useAuth, useUser, useOrganization, useClerk } from '@clerk/nextjs';
 import { workspace as mockWorkspace, currentUser as mockUser } from './mockData';
+import { useMounted } from './hooks/useMounted';
+
+// ─── Hydration determinism ─────────────────────────────────────────────────
+// The server renders these shims with Clerk NOT loaded (static ClerkProvider,
+// no initialState), i.e. the placeholder persona / "unknown" role. On a warm
+// load clerk-js is already initialised before React hydrates, so Clerk's hooks
+// return ``isLoaded: true`` on the client's FIRST render — the sidebar name,
+// role badge and email (and any admin-gated nav/tab) then differ from the
+// server HTML: React #418 ×3 → #423 whole-root client fallback (production,
+// intermittent, Clerk-timed). Every rendering shim therefore returns the
+// server-equivalent placeholder until ``useMounted()`` flips, regardless of
+// what Clerk reports, and only then the real values. Effects that consume
+// these values re-run on that flip.
 
 // ─── Role types (Wave 5 RBAC) ────────────────────────────────────────
 // Clerk's ``useOrganization().membership?.role`` returns the native
@@ -62,6 +75,8 @@ function deriveInitials(first: string | null | undefined, last: string | null | 
  * branching on auth state.
  */
 export function useCurrentUser(): CurrentUser {
+  // Called first so the hook order is identical on every render path.
+  const mounted = useMounted();
   // Hooks must be called unconditionally. When Clerk isn't configured,
   // `useUser` will throw because there is no Provider — guard with the
   // module-level flag so we only call it when safe.
@@ -76,7 +91,9 @@ export function useCurrentUser(): CurrentUser {
   }
   // eslint-disable-next-line react-hooks/rules-of-hooks
   const { user, isLoaded } = useUser();
-  if (!isLoaded || !user) {
+  // Pre-mount = the server's view (Clerk never loaded on the server) — see
+  // the hydration note at the top of this file.
+  if (!mounted || !isLoaded || !user) {
     // Pre-load fallback so we don't flash the mock persona during the
     // brief window before Clerk hydrates. Render a clean skeleton via
     // empty strings so the UI doesn't show a "Loading…" placeholder.
@@ -105,6 +122,7 @@ export function useCurrentUser(): CurrentUser {
  * In demo mode returns the static Brookfield Real Estate workspace.
  */
 export function useCurrentOrg(): CurrentOrg {
+  const mounted = useMounted();
   if (!isClerkConfigured) {
     return {
       id: null,
@@ -115,11 +133,18 @@ export function useCurrentOrg(): CurrentOrg {
   }
   // eslint-disable-next-line react-hooks/rules-of-hooks
   const { organization } = useOrganization();
-  if (!organization) {
-    // Personal workspace — no org selected. Pretend it's a "Personal"
-    // workspace so the sidebar pill still renders something useful.
+  // The org ``id`` is NOT gated on mount: it is never rendered as text (only
+  // consumed by effects — ``setCurrentOrgId`` for the X-Tenant-Id header), and
+  // gating it would let the Sidebar's mount effect write ``null`` over the id
+  // ``ClerkTokenBridge`` just installed, re-opening the FON-20 org-less
+  // first-request race. The rendered fields (name / plan / url) ARE gated.
+  const liveId = organization?.id ?? null;
+  if (!mounted || !organization) {
+    // Personal workspace — no org selected (and the server's view before
+    // mount). Pretend it's a "Personal" workspace so the sidebar pill still
+    // renders something useful.
     return {
-      id: null,
+      id: liveId,
       name: 'Personal Workspace',
       plan: 'Free',
       url: 'personal',
@@ -173,12 +198,13 @@ export interface OrgMembersState {
  * state rather than the old mock `teamMembers` fixture.
  */
 export function useOrgMembers(): OrgMembersState {
+  const mounted = useMounted();
   if (!isClerkConfigured) {
     return { members: [], loading: false, demo: true };
   }
   // eslint-disable-next-line react-hooks/rules-of-hooks
   const { memberships, isLoaded } = useOrganization({ memberships: true });
-  if (!isLoaded) {
+  if (!mounted || !isLoaded) {
     return { members: [], loading: true, demo: false };
   }
   const rows = memberships?.data ?? [];
@@ -228,13 +254,18 @@ export function getCurrentOrgId(): string | null {
 // stays hidden.
 
 export function useCurrentRole(): AuthRole {
+  const mounted = useMounted();
   if (!isClerkConfigured) {
     // Demo persona — treat as admin. See note above.
     return 'org:admin';
   }
   // eslint-disable-next-line react-hooks/rules-of-hooks
   const { organization, membership, isLoaded } = useOrganization();
-  if (!isLoaded) return 'unknown';
+  // ``unknown`` until mount: admin-gated nav links / tabs (Cost, Activity,
+  // per-doc delete) must be absent on the client's first render exactly as
+  // they are in the server HTML — an admin-only tab appearing only on the
+  // client is the same hydration-mismatch class as the sidebar persona.
+  if (!mounted || !isLoaded) return 'unknown';
   if (!organization || !membership) return 'unknown';
   const role = membership.role;
   if (role === 'org:admin' || role === 'org:member') return role;
