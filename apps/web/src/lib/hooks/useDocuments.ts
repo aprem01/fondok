@@ -28,7 +28,13 @@ import {
 //   • ONE list poller per deal runs only while some doc is still in flight,
 //     backs off after a long stall, and stops when every doc is terminal;
 //   • ``refreshExtraction`` (FON-23) force-fetches one doc and the store
-//     broadcast converges every instance on the fresh result (FON-41a).
+//     broadcast converges every instance on the fresh result (FON-41a);
+//   • FON-41a: the store carries a per-deal ``settled`` flag — latched true
+//     once the first list attempt has completed AND every EXTRACTED doc's
+//     extraction is loaded-or-failed — and ``extractionFailures`` (docs whose
+//     bounded retry gave up with no record). The Financials worksheet holds a
+//     skeleton on ``!settled`` instead of a false empty state, and never waits
+//     on a doc that will never load.
 // ─────────────────────────────────────────────────────────────────────────────
 
 const LIST_POLL_MS = 2000;
@@ -59,6 +65,8 @@ const TERMINAL_EXTRACTION_STATUSES = new Set(['EXTRACTED', 'FAILED', 'PARSE_FAIL
 interface Subscriber {
   onDocuments: (rows: WorkerDocument[]) => void;
   onExtraction: (docId: string, result: ExtractionResult) => void;
+  /** FON-41a: settled flag + per-doc give-ups, after every store transition. */
+  onMeta: (settled: boolean, failures: Record<string, boolean>) => void;
 }
 
 interface DealStore {
@@ -75,6 +83,12 @@ interface DealStore {
   lastSignature: string;
   lastChangeAt: number;
   subscribers: Set<Subscriber>;
+  /** FON-41a: the first list fetch has completed (success or failure). */
+  listAttempted: boolean;
+  /** FON-41a: docs whose extraction fetch gave up (bounded retries, no record). */
+  failures: Set<string>;
+  /** FON-41a: latched — list attempted + every EXTRACTED doc loaded-or-failed. */
+  settled: boolean;
 }
 
 const stores = new Map<string, DealStore>();
@@ -94,6 +108,9 @@ function getStore(dealId: string): DealStore {
       lastSignature: '',
       lastChangeAt: Date.now(),
       subscribers: new Set(),
+      listAttempted: false,
+      failures: new Set(),
+      settled: false,
     };
     stores.set(dealId, s);
   }
@@ -108,6 +125,33 @@ function broadcastExtraction(store: DealStore, docId: string, result: Extraction
   for (const s of store.subscribers) s.onExtraction(docId, result);
 }
 
+function snapshotFailures(store: DealStore): Record<string, boolean> {
+  const out: Record<string, boolean> = {};
+  store.failures.forEach((id) => {
+    out[id] = true;
+  });
+  return out;
+}
+
+/** A doc no longer holds up `settled`: nothing to fetch for its status, or an
+ *  extraction record landed, or the bounded retry gave up. */
+function isResolved(store: DealStore, doc: WorkerDocument): boolean {
+  if (!FETCHABLE_DOC_STATUSES.has(doc.status)) return true;
+  return store.results.has(doc.id) || store.failures.has(doc.id);
+}
+
+/** FON-41a: latch `settled` the first time every EXTRACTED doc is resolved,
+ *  then tell every instance. Latched on purpose — a doc that finishes
+ *  extracting later just appears when its record lands; it must not flip a
+ *  rendered worksheet back to a skeleton. */
+function recomputeMeta(store: DealStore): void {
+  if (!store.settled && store.listAttempted && (store.documents ?? []).every((d) => isResolved(store, d))) {
+    store.settled = true;
+  }
+  const failures = snapshotFailures(store);
+  for (const s of store.subscribers) s.onMeta(store.settled, failures);
+}
+
 function runExtractionFetch(
   store: DealStore,
   dealId: string,
@@ -120,18 +164,24 @@ function runExtractionFetch(
     .extraction(dealId, docId)
     .then((r) => {
       store.results.set(docId, r);
+      store.failures.delete(docId);
       broadcastExtraction(store, docId, r);
       const status = (r?.status as string | undefined) ?? '';
       if (!TERMINAL_EXTRACTION_STATUSES.has(status) && attempt < EXTRACTION_MAX_ATTEMPTS) {
         scheduleExtractionRetry(store, dealId, docId, listStatus, attempt + 1);
       }
+      recomputeMeta(store);
     })
     .catch(() => {
       // Sam QA 2026-07-02 — never let one broken extraction row burn worker
       // cycles: bounded retries, then give up for this list status.
       if (attempt < EXTRACTION_MAX_ATTEMPTS) {
         scheduleExtractionRetry(store, dealId, docId, listStatus, attempt + 1);
+        return;
       }
+      // FON-41a: gave up with no record — record it so nothing waits on it.
+      if (!store.results.has(docId)) store.failures.add(docId);
+      recomputeMeta(store);
     })
     .finally(() => {
       if (store.inflight.get(docId) === p) store.inflight.delete(docId);
@@ -172,8 +222,10 @@ function applyDocuments(store: DealStore, dealId: string, rows: WorkerDocument[]
     store.lastChangeAt = Date.now();
   }
   store.documents = rows;
+  store.listAttempted = true;
   for (const s of store.subscribers) s.onDocuments(rows);
   for (const d of rows) ensureExtraction(store, dealId, d);
+  recomputeMeta(store);
   schedulePoll(store, dealId);
 }
 
@@ -182,12 +234,24 @@ function fetchList(store: DealStore, dealId: string): Promise<WorkerDocument[]> 
   const seq = ++store.listSeq;
   const p = api.documents
     .list(dealId)
-    .then((rows) => {
-      // Only the latest-started fetch may apply — a slow earlier response
-      // must not overwrite fresher rows.
-      if (seq === store.listSeq) applyDocuments(store, dealId, rows);
-      return rows;
-    })
+    .then(
+      (rows) => {
+        // Only the latest-started fetch may apply — a slow earlier response
+        // must not overwrite fresher rows.
+        if (seq === store.listSeq) applyDocuments(store, dealId, rows);
+        return rows;
+      },
+      (err: unknown) => {
+        // FON-41a: a failed first list still "settles" the deal (with no
+        // documents) so a consumer holding a skeleton can show its honest
+        // empty / error state instead of waiting forever.
+        if (!store.listAttempted) {
+          store.listAttempted = true;
+          recomputeMeta(store);
+        }
+        throw err;
+      },
+    )
     .finally(() => {
       if (store.listInflight === p) store.listInflight = null;
     });
@@ -235,13 +299,27 @@ function snapshotResults(store: DealStore): Record<string, ExtractionResult | un
   return out;
 }
 
+const sameKeys = (a: Record<string, boolean>, b: Record<string, boolean>): boolean => {
+  const ka = Object.keys(a);
+  const kb = Object.keys(b);
+  return ka.length === kb.length && ka.every((k) => b[k]);
+};
+
 export interface DocumentsState {
   documents: WorkerDocument[];
   loading: boolean;
+  /** FON-41a: latched true once the first list fetch has completed (success or
+   *  failure) AND every EXTRACTED doc's extraction is loaded-or-failed — lets
+   *  consumers hold a skeleton instead of an empty state until then. Shared
+   *  per deal: a late-mounting tab on a warm store is settled at once. */
+  settled: boolean;
   error: string | null;
   uploading: boolean;
   /** Per-doc extraction results, keyed by document id. */
   extractions: Record<string, ExtractionResult | undefined>;
+  /** FON-41a: docs whose extraction fetch gave up (bounded retries, no record),
+   *  so a consumer waiting on "every extraction loaded" doesn't wait forever. */
+  extractionFailures: Record<string, boolean>;
   refresh: () => void;
   /** FON-23: force-refetch one doc's extraction after an analyst review. */
   refreshExtraction: (docId: string) => Promise<void>;
@@ -254,6 +332,8 @@ export function useDocuments(dealId: string | null | undefined): DocumentsState 
     Record<string, ExtractionResult | undefined>
   >({});
   const [loading, setLoading] = useState<boolean>(false);
+  const [settled, setSettled] = useState<boolean>(false);
+  const [extractionFailures, setExtractionFailures] = useState<Record<string, boolean>>({});
   const [error, setError] = useState<string | null>(null);
   const [uploading, setUploading] = useState(false);
   const tick = useRef(0);
@@ -266,14 +346,24 @@ export function useDocuments(dealId: string | null | undefined): DocumentsState 
   // below) and seed from whatever other instances already fetched, so a
   // late-mounting tab shows the extractions with zero extra requests.
   useEffect(() => {
-    if (!live) return;
+    if (!live) {
+      // Nothing will ever load for a mock / offline deal — settled at once.
+      setSettled(true);
+      return;
+    }
     const store = getStore(idStr);
     const unsub = subscribe(store, idStr, {
       onDocuments: (rows) => setDocuments(rows),
       onExtraction: (docId, r) => setExtractions((prev) => ({ ...prev, [docId]: r })),
+      onMeta: (s, failures) => {
+        setSettled(s);
+        setExtractionFailures((prev) => (sameKeys(prev, failures) ? prev : failures));
+      },
     });
     if (store.documents) setDocuments(store.documents);
     if (store.results.size > 0) setExtractions(snapshotResults(store));
+    setSettled(store.settled);
+    setExtractionFailures(snapshotFailures(store));
     return unsub;
   }, [idStr, live]);
 
@@ -353,9 +443,11 @@ export function useDocuments(dealId: string | null | undefined): DocumentsState 
   return {
     documents,
     loading,
+    settled,
     error,
     uploading,
     extractions,
+    extractionFailures,
     refresh,
     refreshExtraction,
     upload,

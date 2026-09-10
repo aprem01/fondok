@@ -1,23 +1,30 @@
 'use client';
 
 /**
- * useHistoricals — multi-year historical P&L for a deal, resilient loader.
+ * useHistoricals — multi-year historical P&L columns for a deal.
  *
- * The `/deals/{id}/historicals` endpoint isn't implemented in the worker, so
- * that path always 404s and the real work is the MULTI-DOC FALLBACK: build one
- * historical column per EXTRACTED P&L / T-12 document, labelled by its fiscal
- * year (or filename). This is the exact logic HistoricalsSection has shipped
- * and QA'd (Sam 2026-05-14) — reused here (not reimplemented) so the grounded
- * worksheet renders the same grounded historical columns as the old table did.
+ * One column per EXTRACTED P&L / T-12 document (plus OM-embedded prior years),
+ * labelled by fiscal year — the multi-doc logic HistoricalsSection shipped and
+ * QA'd (Sam 2026-05-14), kept as the pure `buildHistoricalYears` below.
  *
- * FON-41: the column-building step is the pure `buildHistoricalYears` below,
- * exported so the Data Room can derive the SAME columns from the documents +
- * extractions it already holds (no second fetch) and count "to review" per
- * document against exactly the cells the worksheet renders.
+ * FON-41 (Sam's deal, 2026-09-09): this hook used to fetch its OWN copy of the
+ * document list and every extraction — serially, and only once the Financials
+ * worksheet had mounted behind the tab's skeleton gate — while the Data Room
+ * built its "N to review" badge from useDocuments' state (parallel, from page
+ * load). Until that second chain finished, the worksheet had no columns at
+ * all: "9 to review" in the Data Room, zero red cells in Financials. The hook
+ * now builds columns from the SAME documents + extractions the caller already
+ * holds, so both surfaces are one function over one state, and it reports
+ * `loading` honestly so the worksheet can hold a skeleton instead of a false
+ * empty state.
+ *
+ * The worker has no `/deals/{id}/historicals` route yet. The gated endpoint
+ * branch stays so flipping HISTORICALS_ENDPOINT_READY prefers the server
+ * payload when it lands — no route is added here.
  */
 
-import { useEffect, useState } from 'react';
-import { api, isWorkerConnected, workerUrl, type ExtractionResult, type WorkerDocument } from '@/lib/api';
+import { useEffect, useMemo, useState } from 'react';
+import { isWorkerConnected, workerUrl, type ExtractionResult, type WorkerDocument } from '@/lib/api';
 import {
   actualsOnly,
   baseYearLabel,
@@ -34,6 +41,11 @@ const isPnlDoc = (d: WorkerDocument) => {
   const dt = (d.doc_type ?? '').toUpperCase();
   return (dt.includes('T12') || dt === 'T-12' || dt === 'PNL' || dt === 'P&L' || dt.includes('PROFIT'));
 };
+const isOmDoc = (d: WorkerDocument) => (d.doc_type ?? '').toUpperCase() === 'OM';
+
+/** A document whose extraction feeds the historical columns. */
+export const isHistoricalSourceDoc = (d: WorkerDocument): boolean =>
+  d.status === 'EXTRACTED' && (isPnlDoc(d) || isOmDoc(d));
 
 const isAnnualLabel = (label: string) => /^\d{4}$/.test(baseYearLabel(label));
 const isT12Label = (label: string) => baseYearLabel(label) === 'T-12';
@@ -52,7 +64,7 @@ export function buildHistoricalYears(
   if (!(keys > 0)) return [];
   const extracted = (docs ?? []).filter((d) => d.status === 'EXTRACTED');
   const pnlDocs = extracted.filter(isPnlDoc);
-  const omDocs = extracted.filter((d) => (d.doc_type ?? '').toUpperCase() === 'OM');
+  const omDocs = extracted.filter(isOmDoc);
   if (pnlDocs.length === 0 && omDocs.length === 0) return [];
 
   const byLabel = new Map<string, HistYear>();
@@ -117,74 +129,66 @@ export function buildHistoricalYears(
   return [...annualCols, ...t12Cols];
 }
 
+export interface HistoricalsInputs {
+  /** Deal key count — columns can't be built until it is known. */
+  keys?: number | null;
+  /** The caller's useDocuments state — the SAME objects the review state reads. */
+  documents: WorkerDocument[];
+  extractions: Record<string, ExtractionResult | undefined>;
+  /** useDocuments.settled — the shared per-deal store has completed its first
+   *  list fetch and every EXTRACTED doc's extraction is loaded-or-failed
+   *  (latched, so a late-arriving doc never flips a rendered grid back to a
+   *  skeleton). Omit for callers that don't hold a skeleton. */
+  documentsSettled?: boolean;
+}
+
 export function useHistoricals(
   dealId: string,
-  opts: { keys?: number | null } = {},
+  opts: HistoricalsInputs,
 ): { years: HistYear[]; keys: number; loading: boolean } {
-  const [data, setData] = useState<HistData | null>(null);
-  const [loading, setLoading] = useState(false);
   const keysHint = opts.keys ?? 0;
+  const { documents, extractions, documentsSettled = true } = opts;
+  const [endpoint, setEndpoint] = useState<HistData | null>(null);
 
+  // 1) endpoint — not implemented in the worker yet, so probing it just
+  //    logged a 404 in every browser console on the Financials tab. Gated
+  //    off until the route lands (flip when it does); when it answers, its
+  //    years take precedence over the client-built columns.
   useEffect(() => {
+    const HISTORICALS_ENDPOINT_READY = false;
+    if (!HISTORICALS_ENDPOINT_READY) return;
     const isMockId = /^\d+$/.test(dealId);
-    if (!dealId || isMockId || !isWorkerConnected()) { setData(null); return; }
-
+    if (!dealId || isMockId || !isWorkerConnected()) { setEndpoint(null); return; }
     let cancelled = false;
-    async function load() {
-      setLoading(true);
-
-      // 1) endpoint — not implemented in the worker yet, so probing it just
-      //    logged a 404 in every browser console on the Financials tab. Gated
-      //    off until the route lands (flip when it does); the multi-doc T-12
-      //    fallback below renders the historicals today.
-      const HISTORICALS_ENDPOINT_READY = false;
+    (async () => {
       try {
-        if (HISTORICALS_ENDPOINT_READY) {
-          const res = await fetch(`${workerUrl()}/deals/${dealId}/historicals`);
-          if (res.ok) {
-            const json = (await res.json()) as Partial<HistData> | null;
-            if (json && Array.isArray(json.years) && json.years.length > 0) {
-              if (!cancelled) setData({ keys: json.keys ?? keysHint, years: json.years as HistYear[] });
-              return;
-            }
-          }
+        const res = await fetch(`${workerUrl()}/deals/${dealId}/historicals`);
+        if (!res.ok) return;
+        const json = (await res.json()) as Partial<HistData> | null;
+        if (json && Array.isArray(json.years) && json.years.length > 0 && !cancelled) {
+          setEndpoint({ keys: json.keys ?? keysHint, years: json.years as HistYear[] });
         }
       } catch {
-        /* worker offline / route absent — fall through */
+        /* worker offline / route absent — client-built columns stand */
       }
-
-      // 2) multi-doc fallback: fetch each extracted P&L / OM extraction, then
-      //    build the columns with the shared pure builder.
-      try {
-        const docs = (await api.documents.list(String(dealId))) as WorkerDocument[];
-        const extracted = (docs ?? []).filter((d) => d.status === 'EXTRACTED');
-        const wanted = extracted.filter((d) => isPnlDoc(d) || (d.doc_type ?? '').toUpperCase() === 'OM');
-        if (wanted.length > 0 && keysHint > 0) {
-          const extractions: Record<string, ExtractionResult | undefined> = {};
-          for (const doc of wanted) {
-            try {
-              extractions[doc.id] = await api.documents.extraction(String(dealId), doc.id);
-            } catch {
-              /* skip this doc — others may still populate */
-            }
-          }
-          const years = buildHistoricalYears(docs, extractions, keysHint);
-          if (years.length > 0 && !cancelled) {
-            setData({ keys: keysHint, years });
-            return;
-          }
-        }
-      } catch {
-        /* ignore — empty below */
-      }
-
-      if (!cancelled) setData(null);
-    }
-    load().finally(() => { if (!cancelled) setLoading(false); });
+    })();
     return () => { cancelled = true; };
   }, [dealId, keysHint]);
 
-  return { years: data?.years ?? [], keys: data?.keys ?? keysHint, loading };
+  // 2) client-built columns from the caller's documents + extractions — the
+  //    same inputs the Data Room badge is computed from (FON-41).
+  const built = useMemo(
+    () => buildHistoricalYears(documents, extractions, keysHint),
+    [documents, extractions, keysHint],
+  );
+
+  // Loading is honest and comes from the shared store: until the first list
+  // fetch has completed and every EXTRACTED doc is loaded-or-failed.
+  return {
+    years: endpoint?.years ?? built,
+    keys: endpoint?.keys ?? keysHint,
+    loading: !documentsSettled,
+  };
 }
 
 function blankYear(year: string): HistYear {
