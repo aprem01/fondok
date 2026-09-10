@@ -91,9 +91,10 @@ vi.mock('@/lib/hooks/useEngineOutputs', async () => {
   return {
     ...actual,
     useEngineOutputs: () => ({
-      outputs: OUTPUTS,
+      outputs: OUTPUTS_OVERRIDE === undefined ? OUTPUTS : OUTPUTS_OVERRIDE,
       previous: null,
       loading: false,
+      settled: SETTLED,
       lastRunAt: null,
       refresh: vi.fn(async () => {}),
     }),
@@ -101,6 +102,11 @@ vi.mock('@/lib/hooks/useEngineOutputs', async () => {
 });
 
 const refreshDealSpy = vi.fn();
+// Read at render time by the hoisted useEngineOutputs mock: `settled` gates
+// PLTab's loading skeleton; OUTPUTS_OVERRIDE lets a test serve null outputs.
+let SETTLED = true;
+let OUTPUTS_OVERRIDE: EngineOutputsResponse | null | undefined = undefined;
+void SETTLED; void OUTPUTS_OVERRIDE;
 // Settable per-test (read at render time — the factory itself is hoisted) so
 // the FON-61 Revert can start from a deal that carries the STR seed.
 let mockFieldOverrides: Record<string, unknown> = {};

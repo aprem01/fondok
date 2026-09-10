@@ -96,6 +96,9 @@ export interface UseEngineOutputsResult {
   /** Previous outputs snapshot — used to compute "what just changed". */
   previous: EngineOutputsResponse | null;
   loading: boolean;
+  /** True once the first fetch has completed (success or failure) — lets
+   *  consumers hold a skeleton instead of an empty state during it. */
+  settled: boolean;
   lastRunAt: Date | null;
   refresh: () => Promise<void>;
 }
@@ -105,11 +108,14 @@ export function useEngineOutputs(dealId: string | number): UseEngineOutputsResul
   const previousRef = useRef<EngineOutputsResponse | null>(null);
   const [previous, setPrevious] = useState<EngineOutputsResponse | null>(null);
   const [loading, setLoading] = useState(false);
+  const [settled, setSettled] = useState(false);
   const [lastRunAt, setLastRunAt] = useState<Date | null>(null);
 
   const refresh = useCallback(async () => {
-    if (!isWorkerConnected()) return;
-    if (!dealId) return;
+    if (!isWorkerConnected() || !dealId) {
+      setSettled(true);
+      return;
+    }
     setLoading(true);
     try {
       const data = await api.engines.getAll(String(dealId));
@@ -128,6 +134,7 @@ export function useEngineOutputs(dealId: string | number): UseEngineOutputsResul
       // Silent — fall back to mock data in callers.
     } finally {
       setLoading(false);
+      setSettled(true);
     }
   }, [dealId]);
 
@@ -144,7 +151,7 @@ export function useEngineOutputs(dealId: string | number): UseEngineOutputsResul
     });
   }, [dealId, refresh]);
 
-  return { outputs, previous, loading, lastRunAt, refresh };
+  return { outputs, previous, loading, settled, lastRunAt, refresh };
 }
 
 export function useEngineRunHistory(dealId: string | number): EngineRunRecord[] {

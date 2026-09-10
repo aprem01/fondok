@@ -263,7 +263,7 @@ export default function PLTab() {
   const params = useParams();
   const { toast } = useToast();
   const dealId = (params?.id as string | undefined) ?? '';
-  const { outputs, previous } = useEngineOutputs(dealId);
+  const { outputs, previous, settled: outputsSettled } = useEngineOutputs(dealId);
   const { deal, loading: dealLoading } = useDeal(dealId);
   const { documents, extractions } = useDocuments(dealId);
   const [computing, setComputing] = useState(false);
@@ -343,6 +343,30 @@ export default function PLTab() {
     }
     return 0;
   }, [revenueYears, statement, propertyKeys]);
+
+  // Sam QA 9/9 follow-up: the engine-outputs fetch is async and the empty
+  // state below used to render during it — on a deal with a complete run,
+  // reviewers saw "No P&L output yet" flash for seconds (longer on a cold
+  // worker). Hold a skeleton until the first fetch settles, so the empty
+  // state is only ever a true statement.
+  if (!statement && !outputsSettled) {
+    return (
+      <div className="flex gap-4" data-testid="pl-loading">
+        <div className="flex-1 min-w-0">
+          <Card className="p-6" aria-busy="true" aria-label="Loading financial statements">
+            <div className="h-4 w-48 rounded bg-ink-300/20 animate-pulse" />
+            <div className="mt-3 h-3 w-80 rounded bg-ink-300/10 animate-pulse" />
+            <div className="mt-6 grid grid-cols-3 gap-3">
+              <div className="h-20 rounded bg-ink-300/10 animate-pulse" />
+              <div className="h-20 rounded bg-ink-300/10 animate-pulse" />
+              <div className="h-20 rounded bg-ink-300/10 animate-pulse" />
+            </div>
+          </Card>
+        </div>
+        <EngineRightRail />
+      </div>
+    );
+  }
 
   if (!statement) {
     return (
