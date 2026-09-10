@@ -40,7 +40,7 @@ worker-dev:
 	cd apps/worker && DATABASE_URL=sqlite+aiosqlite:///./fondok.db uv run uvicorn app.main:app --reload --port 8001
 
 worker-test:
-	cd apps/worker && uv run pytest tests/ -v --ignore=tests/test_agents.py --ignore=tests/test_cache_hits.py
+	cd apps/worker && uv run pytest tests/ -v
 
 # ─── data plane ──────────────────────────────────────────────────────
 db-up:

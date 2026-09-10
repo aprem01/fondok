@@ -2,17 +2,30 @@
 
 Each test loads the Kimpton Angler golden-set fixtures, runs ONE agent
 end-to-end against real Claude API calls, and asserts a structural +
-numerical contract. Every test is gated on ``ANTHROPIC_API_KEY`` being
-set so CI can run the rest of the suite without burning tokens.
+numerical contract.
+
+LIVE-MODEL TESTS ARE OPT-IN. The whole module is marked
+``pytest.mark.live_llm`` and skips unless BOTH hold:
+
+  * ``FONDOK_LIVE_LLM=1`` is set in the environment, and
+  * ``ANTHROPIC_API_KEY`` is a real key (not a ``sk-ant-test-...`` /
+    ``sk-test-...`` placeholder -- CI exports one so the rest of the
+    suite can import the app).
+
+Nothing here reads ``apps/worker/.env``: the key must be in the shell,
+so an ordinary ``pytest`` run never burns tokens by accident. CI
+deselects the marker outright (``-m "not live_llm and not slow"``).
 
 Cost ceiling: the full module is engineered to spend < $1 per run when
 all five tests fire (Haiku router + 1 Sonnet extract + 1 Sonnet
-normalize + 1 Sonnet variance narration + 1 Opus memo draft).
+normalize + 1 Sonnet variance narration + 1 Opus memo draft). The
+Analyst test in particular costs the most (~$0.30-$0.50 of Opus input
+tokens with prompt caching).
 
-The Analyst test in particular costs the most (~$0.30-$0.50 of Opus
-input tokens with prompt caching). The full module is gated by
-``FONDOK_RUN_LLM_TESTS`` defaulting to "1" — set it to "0" to opt out
-locally without unsetting the API key.
+Run locally::
+
+    cd apps/worker
+    FONDOK_LIVE_LLM=1 ANTHROPIC_API_KEY=sk-ant-... uv run pytest tests/test_agents.py -v -m live_llm
 """
 
 from __future__ import annotations
@@ -28,46 +41,44 @@ import pytest
 # test_smoke.py — so settings don't bleed in from the developer shell.
 os.environ.setdefault("DATABASE_URL", "sqlite+aiosqlite:///./fondok.db")
 
-
-def _load_dotenv_if_unset() -> None:
-    """Hydrate ANTHROPIC_API_KEY from apps/worker/.env when it isn't
-    already in the shell environment.
-
-    The pydantic Settings layer reads .env on its own, but the pytest
-    skip gate below runs *before* any app module imports — so we mirror
-    that .env lookup here, just for the API key.
-    """
-    if os.environ.get("ANTHROPIC_API_KEY"):
-        return
-    env_path = Path(__file__).resolve().parents[1] / ".env"
-    if not env_path.exists():
-        return
-    for line in env_path.read_text(encoding="utf-8").splitlines():
-        line = line.strip()
-        if not line or line.startswith("#") or "=" not in line:
-            continue
-        key, _, value = line.partition("=")
-        key = key.strip()
-        value = value.strip().strip('"').strip("'")
-        if key == "ANTHROPIC_API_KEY" and value and not os.environ.get(key):
-            os.environ[key] = value
-            break
-
-
-_load_dotenv_if_unset()
-
 # Resolve fixtures off the repo root, deterministically.
 _REPO_ROOT = Path(__file__).resolve().parents[3]
 _GOLDEN_DIR = _REPO_ROOT / "evals" / "golden-set" / "kimpton-angler" / "input"
 
 
-# Skip the entire module when the API key is missing — agents call
-# real Anthropic endpoints. CI without a key still picks up the smoke
-# tests; this module reports as skipped, not failed.
-pytestmark = pytest.mark.skipif(
-    not os.environ.get("ANTHROPIC_API_KEY"),
-    reason="ANTHROPIC_API_KEY unset — skipping LLM integration tests.",
-)
+_PLACEHOLDER_KEY_PREFIXES = ("sk-ant-test-", "sk-test-")
+
+
+def _live_llm_skip_reason() -> str | None:
+    """Return a skip reason, or ``None`` when live-model tests may run.
+
+    Two distinct reasons so a developer who exported ``FONDOK_LIVE_LLM=1``
+    and still sees a skip knows the key is the missing half. Deliberately
+    reads ONLY the process environment -- no ``.env`` hydration.
+    """
+    if os.environ.get("FONDOK_LIVE_LLM", "").strip() != "1":
+        return (
+            "live-model test: opt in with FONDOK_LIVE_LLM=1 (plus a real "
+            "ANTHROPIC_API_KEY); skipped by default so no run burns tokens."
+        )
+    key = os.environ.get("ANTHROPIC_API_KEY", "").strip()
+    if not key or key.startswith(_PLACEHOLDER_KEY_PREFIXES) or "dummy" in key:
+        return (
+            "FONDOK_LIVE_LLM=1 but ANTHROPIC_API_KEY is unset or a test "
+            "placeholder: export a real key to run live-model tests."
+        )
+    return None
+
+
+_SKIP_REASON = _live_llm_skip_reason()
+
+# Every test here calls a real Anthropic endpoint: mark the module
+# ``live_llm`` (deselected in CI) AND skip unless explicitly opted in,
+# so a bare ``pytest`` reports these as skipped, never failed.
+pytestmark = [
+    pytest.mark.live_llm,
+    pytest.mark.skipif(_SKIP_REASON is not None, reason=_SKIP_REASON or ""),
+]
 
 
 # ─────────────────────── fixtures ───────────────────────

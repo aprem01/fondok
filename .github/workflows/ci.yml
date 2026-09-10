@@ -76,7 +76,10 @@ jobs:
         env:
           DATABASE_URL: postgresql+asyncpg://fondok:fondok@localhost:5432/fondok
           ANTHROPIC_API_KEY: sk-ant-test-dummy
-        run: uv run pytest tests/ -v
+        # live_llm = opt-in tests that hit Anthropic (need FONDOK_LIVE_LLM=1
+        # + a real key; the dummy key above is a placeholder they refuse);
+        # slow = >10s parse jobs. Both markers: apps/worker/pyproject.toml.
+        run: uv run pytest tests/ -v -m "not live_llm and not slow"
 
       - name: Import smoke
         working-directory: apps/worker

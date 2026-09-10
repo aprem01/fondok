@@ -118,6 +118,50 @@ DOC_STATUS_FAILED = "FAILED"
 EXTRACTION_PIPELINE_VERSION = "v1"
 
 
+# Phase 0.2 provenance stamps. Every persisted ``agent_version`` now reads
+#
+#     {base};ps={prompt sha8};reg={ontology registry version};pv=vN
+#
+# ``ps=`` is ``sha256(<extractor instructions actually sent>)[:8]`` (see
+# ``agents.extractor.prompt_sha``); ``reg=`` is the ontology registry
+# version. Both sit in FRONT of ``;pv=vN`` because the cache lookup below
+# is a SUFFIX match on ``;pv=`` -- any new segment must go before it.
+#
+# Soft import: ``app.ontology.registry`` is being built in a parallel
+# change; until it lands every row stamps ``reg=0``.
+try:
+    from ..ontology.registry import registry_version
+except ImportError:  # pragma: no cover -- exercised until the registry lands
+
+    def registry_version() -> int:
+        return 0
+
+
+def _current_registry_version() -> str:
+    """The ``reg=`` token: the ontology registry version in effect, as
+    text. Never raises -- a misbehaving registry must not fail an
+    extraction (falls back to ``"0"``)."""
+    try:
+        value = registry_version()
+    except Exception:
+        return "0"
+    token = str(value).strip()
+    return token if token and ";" not in token else "0"
+
+
+def _current_prompt_sha() -> str | None:
+    """The ``ps=`` fallback for rows that never sent a prompt (mock /
+    template / sibling reuse): the SHA of the extractor's default
+    instructions in effect at write time -- a code-version stamp like
+    ``pv``, not a claim that an LLM ran. LLM rows carry the SHA of the
+    instructions actually used, spliced in by ``_run_graph_extraction``."""
+    try:
+        from ..agents.extractor import PROMPT_SHA
+    except Exception:
+        return None
+    return PROMPT_SHA
+
+
 # Per-tenant cache-hit counter surfaced via /health so ops can eyeball
 # cache efficiency (Sam: "I want to know how much we're saving each
 # week"). Process-local — sums are reset on worker restart, which is
@@ -185,9 +229,11 @@ def _reset_extraction_cache_metrics() -> None:
 def _parse_route_from_agent_version(agent_version: str | None) -> str | None:
     """Pull the Router's route out of an ``agent_version`` string.
 
-    Real extractor rows use the format ``router:{route};extractor;pv=vN``
-    (see the tail of ``_run_graph_extraction``); mock rows use
-    ``mock-evals;pv=vN`` and carry no route. Returns ``None`` when the
+    Real extractor rows use the format
+    ``router:{route};dt:{doc_type};extractor;ps={sha8};reg={v};pv=vN``
+    (see the tail of ``_run_graph_extraction``; ``ps=``/``reg=`` are the
+    Phase 0.2 stamps and are ignored here); mock rows use
+    ``mock-evals;...;pv=vN`` and carry no route. Returns ``None`` when the
     string doesn't carry a ``router:`` segment — the cache-hit branch
     then falls through to the same "no classified type" behavior the
     mock path uses.
@@ -205,7 +251,8 @@ def _parse_route_from_agent_version(agent_version: str | None) -> str | None:
 def _parse_doc_type_from_agent_version(agent_version: str | None) -> str | None:
     """Pull the persisted doc_type out of an ``agent_version`` string.
 
-    Format ``router:{route};dt:{doc_type};extractor;pv=vN``. The ``dt:``
+    Format ``router:{route};dt:{doc_type};extractor;ps={sha8};reg={v};pv=vN``
+    (the ``ps=``/``reg=`` stamps are ignored here). The ``dt:``
     segment was added after the cache-hit path was found reading the graph
     ROUTE ("extractor") back as the doc_type — which stamped the bogus
     "EXTRACTOR" token onto every cloned doc. Legacy rows carry no ``dt:``
@@ -220,17 +267,72 @@ def _parse_doc_type_from_agent_version(agent_version: str | None) -> str | None:
     return None
 
 
-def _tag_agent_version(base: str) -> str:
-    """Suffix an agent_version string with the current pipeline version.
+def _parse_prompt_sha_from_agent_version(agent_version: str | None) -> str | None:
+    """Pull the ``ps=`` prompt SHA out of an ``agent_version`` string.
 
-    The cache lookup filters on this suffix so a code change that bumps
-    ``EXTRACTION_PIPELINE_VERSION`` invalidates every prior row without
-    a manual purge. Idempotent — re-applying the suffix is a no-op.
+    Format ``router:{route};dt:{doc_type};extractor;ps={sha8};reg={v};pv=vN``
+    (Phase 0.2). Legacy rows carry no ``ps=`` segment -> None.
+    """
+    if not agent_version:
+        return None
+    for segment in agent_version.split(";"):
+        segment = segment.strip()
+        if segment.startswith("ps="):
+            return segment[len("ps="):].strip() or None
+    return None
+
+
+def _parse_registry_version_from_agent_version(
+    agent_version: str | None,
+) -> str | None:
+    """Pull the ``reg=`` ontology-registry version out of ``agent_version``.
+
+    Returned as text (compare against ``str(registry_version())``) so a
+    registry that later moves to dotted versions round-trips losslessly.
+    Legacy rows carry no ``reg=`` segment -> None.
+    """
+    if not agent_version:
+        return None
+    for segment in agent_version.split(";"):
+        segment = segment.strip()
+        if segment.startswith("reg="):
+            return segment[len("reg="):].strip() or None
+    return None
+
+
+def _tag_agent_version(base: str, *, prompt_sha: str | None = None) -> str:
+    """Stamp an agent_version string with provenance + pipeline version.
+
+    Output shape (Phase 0.2)::
+
+        {base};ps={prompt sha8};reg={registry version};pv={EXTRACTION_PIPELINE_VERSION}
+
+    ``;pv=vN`` stays the LAST segment: ``_lookup_extraction_cache`` filters
+    with ``LIKE '%;pv=vN'`` (a suffix match), so every new segment goes
+    in front of it, and a code change that bumps
+    ``EXTRACTION_PIPELINE_VERSION`` still invalidates every prior row
+    without a manual purge.
+
+    ``ps=`` is kept when ``base`` already carries one -- the extractor's
+    own token (``extractor;ps=<sha>``) hashes the instructions actually
+    sent for that run; otherwise ``prompt_sha`` or the extractor's
+    default-instructions SHA fills it. ``reg=`` comes from
+    ``app.ontology.registry.registry_version`` (``0`` until it lands).
+
+    Idempotent -- a string already ending in the ``;pv=`` suffix is
+    returned unchanged.
     """
     suffix = f";pv={EXTRACTION_PIPELINE_VERSION}"
     if base.endswith(suffix):
         return base
-    return f"{base}{suffix}"
+    stamped = base
+    if _parse_prompt_sha_from_agent_version(stamped) is None:
+        sha = prompt_sha or _current_prompt_sha()
+        if sha:
+            stamped = f"{stamped};ps={sha}"
+    if _parse_registry_version_from_agent_version(stamped) is None:
+        stamped = f"{stamped};reg={_current_registry_version()}"
+    return f"{stamped}{suffix}"
 
 
 async def _lookup_extraction_cache(
@@ -6451,8 +6553,15 @@ async def _run_graph_extraction(
 
     # Encode the doc_type (dt:) alongside the route so a later cache hit
     # recovers the real classification instead of misreading the route as
-    # the doc_type (the "EXTRACTOR" bug — FON-18).
-    return fields, confidence, f"router:{route};dt:{doc_type};extractor", doc_type
+    # the doc_type (the "EXTRACTOR" bug — FON-18). The extractor's own
+    # token (``extractor;ps=<sha>``) carries the SHA of the instructions
+    # it actually sent this run; ``_tag_agent_version`` then appends
+    # ``;reg=<v>;pv=vN`` (Phase 0.2).
+    _extractor_av = getattr(extractor_out, "agent_version", None)
+    extractor_token = (
+        _extractor_av if isinstance(_extractor_av, str) and _extractor_av else "extractor"
+    )
+    return fields, confidence, f"router:{route};dt:{doc_type};{extractor_token}", doc_type
 
 
 def _mock_extraction_payload() -> tuple[list[dict[str, Any]], dict[str, Any]]:
