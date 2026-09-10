@@ -5276,10 +5276,16 @@ def _build_input_for(
         noi_by_year = [yr.noi for yr in expense_out.years]
         # FON-67 — reconciliation input: pin the operating NOI path to the
         # source model's schedule when the analyst provides it (list override).
+        # ``noi_from_expense_engine`` is PROVENANCE ONLY — no calculation reads
+        # it. It tells the engine whether it may honestly assert
+        # ``traces_to="expense.years[i].noi"`` on the traces that consume this
+        # series; once the pin replaces it, that claim would be false.
+        noi_from_expense_engine = True
         _noi_ovr = base.get("noi_override_by_year")
         if isinstance(_noi_ovr, list) and _noi_ovr:
             try:
                 noi_by_year = [float(x) for x in _noi_ovr]
+                noi_from_expense_engine = False
             except (TypeError, ValueError):
                 pass
         # FON-72 follow-up — stabilized-year signal for the stabilized credit
@@ -5314,6 +5320,7 @@ def _build_input_for(
             amortization_years=base["amortization_years"],
             interest_only_years=base.get("interest_only_years", 0),
             noi_by_year=noi_by_year,
+            noi_from_expense_engine=noi_from_expense_engine,
             # FON-63 — deal basis for the multi-tranche stack's LTV / LTC.
             purchase_price_usd=base.get("purchase_price"),
             total_capital_usd=getattr(capital_out, "total_capital", None),
@@ -5345,10 +5352,16 @@ def _build_input_for(
         noi_by_year = [yr.noi for yr in expense_out.years]
         # FON-67 — reconciliation input: pin the operating NOI path to the
         # source model's schedule when the analyst provides it (list override).
+        # ``noi_from_expense_engine`` is PROVENANCE ONLY — no calculation reads
+        # it. It tells the engine whether it may honestly assert
+        # ``traces_to="expense.years[i].noi"`` on the traces that consume this
+        # series; once the pin replaces it, that claim would be false.
+        noi_from_expense_engine = True
         _noi_ovr = base.get("noi_override_by_year")
         if isinstance(_noi_ovr, list) and _noi_ovr:
             try:
                 noi_by_year = [float(x) for x in _noi_ovr]
+                noi_from_expense_engine = False
             except (TypeError, ValueError):
                 pass
         assumptions = ModelAssumptions(
@@ -5395,6 +5408,7 @@ def _build_input_for(
             assumptions=assumptions,
             year_one_noi=noi_by_year[0],
             noi_by_year=noi_by_year,
+            noi_from_expense_engine=noi_from_expense_engine,
             annual_debt_service=debt_out.annual_debt_service,
             debt_service_by_year=getattr(debt_out, "debt_service_by_year", []) or [],
             loan_amount=capital_out.debt_amount,

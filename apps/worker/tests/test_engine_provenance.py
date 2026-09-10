@@ -24,13 +24,31 @@ from app.engines.returns import ReturnsEngine, ReturnsEngineInputExt  # noqa: E4
 
 TOL = 0.5  # dollars — these are large-magnitude values
 
+# Engine names, so a cross-engine ``traces_to`` is recognised as one.
+_ENGINES = {
+    "revenue", "fb", "expense", "capital", "debt", "returns",
+    "sensitivity", "partnership", "cash_flow",
+}
+
 
 def _assert_no_dangling(prov: dict) -> None:
+    """Every SAME-ENGINE ``traces_to`` resolves to another key in this map.
+
+    A cross-engine reference (``"expense.years[0].noi"``) is by construction not
+    in this engine's own map — it is the engine ASSERTING which upstream value
+    an input came from, and ``app.services.lineage`` resolves it against the run's
+    other engines. ``tests/test_lineage_walk.py`` covers those end to end.
+    """
     keys = set(prov)
     for trace in prov.values():
         for inp in trace.inputs:
-            if inp.traces_to is not None:
-                assert inp.traces_to in keys, f"dangling traces_to: {inp.traces_to}"
+            ref = inp.traces_to
+            if ref is None:
+                continue
+            head = ref.split(".", 1)[0].split("[", 1)[0]
+            if head in _ENGINES:
+                continue  # cross-engine link — resolves in another map
+            assert ref in keys, f"dangling traces_to: {ref}"
 
 
 # ─────────────────────────── Expense / P&L ───────────────────────────

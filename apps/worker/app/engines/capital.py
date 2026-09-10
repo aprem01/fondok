@@ -114,6 +114,42 @@ class CapitalEngineOutput(InvestmentEngineOutput):
     provenance: dict[str, ValueTrace] = Field(default_factory=dict)
 
 
+# Which Sources & Uses labels are raw analyst inputs, and the canonical
+# ``__sources__`` key each one IS. Asserting the key on the trace is what lets
+# a Sources & Uses line be walked back to its assumption badge (and on to the
+# deal record / override / document behind it) instead of dead-ending on a
+# display label no consumer can match against the assumption vocabulary — the
+# line reads "Renovation", the assumption is ``renovation_budget``.
+_USE_LABEL_ASSUMPTIONS: dict[str, str] = {
+    "Purchase Price": "purchase_price",
+    "Renovation": "renovation_budget",
+    "Working Capital": "working_capital",
+    "Insurance Reserve": "insurance_reserve",
+    "Soft Costs": "soft_costs",
+    "Contingency": "contingency",
+}
+
+
+def _property_line_input(line: SourceUseLine, reno_contingency: float) -> ValueInput:
+    """One ``property_uses`` summand, linked to what it actually came from.
+
+    A Renovation line that already folded in a contingency is no longer the
+    ``renovation_budget`` assumption — it is this engine's own
+    ``renovation_total_usd``, so it points there instead of claiming a key it
+    is not. Closing Costs is likewise a calculation, not an assumption, and
+    gets neither.
+    """
+    if line.label == "Renovation" and reno_contingency > 0:
+        return ValueInput(
+            name=line.label, value=line.amount, traces_to="renovation_total_usd"
+        )
+    return ValueInput(
+        name=line.label,
+        value=line.amount,
+        assumption_key=_USE_LABEL_ASSUMPTIONS.get(line.label),
+    )
+
+
 class CapitalEngine(BaseEngine[CapitalEngineInput, CapitalEngineOutput]):
     """Build sources & uses; size senior debt at LTV x cost basis."""
 
@@ -215,15 +251,7 @@ class CapitalEngine(BaseEngine[CapitalEngineInput, CapitalEngineOutput]):
         senior_explicit = (
             payload.senior_loan_amount is not None and payload.senior_loan_amount > 0
         )
-        # Which uses labels are raw analyst inputs (leaf assumptions).
-        _input_use_labels = {
-            "Purchase Price",
-            "Renovation",
-            "Working Capital",
-            "Insurance Reserve",
-            "Soft Costs",
-            "Contingency",
-        }
+        _input_use_labels = set(_USE_LABEL_ASSUMPTIONS)
 
         # Sources & Uses table rows — one trace per rendered line.
         for i, line in enumerate(uses_lines):
@@ -233,8 +261,16 @@ class CapitalEngine(BaseEngine[CapitalEngineInput, CapitalEngineOutput]):
                     value=line.amount,
                     formula="closing_costs = purchase_price × closing_costs_pct",
                     inputs=[
-                        ValueInput(name="purchase_price", value=payload.purchase_price),
-                        ValueInput(name="closing_costs_pct", value=payload.closing_costs_pct),
+                        ValueInput(
+                            name="purchase_price",
+                            value=payload.purchase_price,
+                            assumption_key="purchase_price",
+                        ),
+                        ValueInput(
+                            name="closing_costs_pct",
+                            value=payload.closing_costs_pct,
+                            assumption_key="closing_costs_pct",
+                        ),
                     ],
                 )
             elif line.label == "Senior Loan Fee":
@@ -243,7 +279,11 @@ class CapitalEngine(BaseEngine[CapitalEngineInput, CapitalEngineOutput]):
                     formula="senior_loan_fee = senior_debt × loan_costs_pct",
                     inputs=[
                         ValueInput(name="senior_debt", value=debt, traces_to="debt_amount"),
-                        ValueInput(name="loan_costs_pct", value=payload.loan_costs_pct),
+                        ValueInput(
+                            name="loan_costs_pct",
+                            value=payload.loan_costs_pct,
+                            assumption_key="loan_costs_pct",
+                        ),
                     ],
                     note="Financing cost funded at close, kept apart from property uses.",
                 )
@@ -261,7 +301,11 @@ class CapitalEngine(BaseEngine[CapitalEngineInput, CapitalEngineOutput]):
                     value=line.amount,
                     formula="renovation_total = renovation_budget + renovation_contingency",
                     inputs=[
-                        ValueInput(name="renovation_budget", value=reno_base),
+                        ValueInput(
+                            name="renovation_budget",
+                            value=reno_base,
+                            assumption_key="renovation_budget",
+                        ),
                         ValueInput(
                             name="renovation_contingency",
                             value=reno_contingency,
@@ -271,8 +315,12 @@ class CapitalEngine(BaseEngine[CapitalEngineInput, CapitalEngineOutput]):
                     note="Base PIP budget plus contingency (pct × renovation hard costs).",
                 )
             elif line.label in _input_use_labels:
+                # A raw analyst input line — the value IS the assumption, so the
+                # key lands on the trace (not on a self-referential input) and
+                # the FON-65 badge stays ``assumption``.
                 prov[key] = ValueTrace(
                     value=line.amount,
+                    assumption_key=_USE_LABEL_ASSUMPTIONS[line.label],
                     note="Analyst-provided capital use.",
                 )
             else:  # Closing Costs provided absolutely, or any other input line
@@ -285,6 +333,7 @@ class CapitalEngine(BaseEngine[CapitalEngineInput, CapitalEngineOutput]):
         prov["sources[0].amount"] = (
             ValueTrace(
                 value=debt,
+                assumption_key="senior_loan_amount",
                 note="Analyst-confirmed senior loan amount (source-model reconciliation).",
             )
             if senior_explicit
@@ -292,8 +341,19 @@ class CapitalEngine(BaseEngine[CapitalEngineInput, CapitalEngineOutput]):
                 value=debt,
                 formula=f"senior_debt = {payload.debt_basis}_basis × ltv",
                 inputs=[
-                    ValueInput(name=f"{payload.debt_basis}_basis", value=basis),
-                    ValueInput(name="ltv", value=payload.ltv),
+                    ValueInput(
+                        name=f"{payload.debt_basis}_basis",
+                        value=basis,
+                        # ``purchase`` basis IS the purchase-price assumption;
+                        # a ``cost`` basis is purchase + closing + renovation,
+                        # which no single assumption owns.
+                        assumption_key=(
+                            "purchase_price"
+                            if payload.debt_basis == "purchase"
+                            else None
+                        ),
+                    ),
+                    ValueInput(name="ltv", value=payload.ltv, assumption_key="ltv"),
                 ],
             )
         )
@@ -317,19 +377,27 @@ class CapitalEngine(BaseEngine[CapitalEngineInput, CapitalEngineOutput]):
         # Headline scalar figures the Investment tab surfaces above the table.
         prov["purchase_price"] = ValueTrace(
             value=payload.purchase_price,
+            assumption_key="purchase_price",
             note="Analyst / OM purchase price — the deal's capital anchor.",
         )
         prov["price_per_key"] = ValueTrace(
             value=price_per_key,
             formula="price_per_key = purchase_price ÷ keys",
             inputs=[
-                ValueInput(name="purchase_price", value=payload.purchase_price),
-                ValueInput(name="keys", value=float(payload.keys)),
+                ValueInput(
+                    name="purchase_price",
+                    value=payload.purchase_price,
+                    assumption_key="purchase_price",
+                ),
+                ValueInput(
+                    name="keys", value=float(payload.keys), assumption_key="keys"
+                ),
             ],
         )
         prov["debt_amount"] = (
             ValueTrace(
                 value=debt,
+                assumption_key="senior_loan_amount",
                 note="Analyst-confirmed senior loan amount (source-model reconciliation).",
             )
             if senior_explicit
@@ -337,8 +405,19 @@ class CapitalEngine(BaseEngine[CapitalEngineInput, CapitalEngineOutput]):
                 value=debt,
                 formula=f"debt_amount = {payload.debt_basis}_basis × ltv",
                 inputs=[
-                    ValueInput(name=f"{payload.debt_basis}_basis", value=basis),
-                    ValueInput(name="ltv", value=payload.ltv),
+                    ValueInput(
+                        name=f"{payload.debt_basis}_basis",
+                        value=basis,
+                        # ``purchase`` basis IS the purchase-price assumption;
+                        # a ``cost`` basis is purchase + closing + renovation,
+                        # which no single assumption owns.
+                        assumption_key=(
+                            "purchase_price"
+                            if payload.debt_basis == "purchase"
+                            else None
+                        ),
+                    ),
+                    ValueInput(name="ltv", value=payload.ltv, assumption_key="ltv"),
                 ],
             )
         )
@@ -370,18 +449,28 @@ class CapitalEngine(BaseEngine[CapitalEngineInput, CapitalEngineOutput]):
         prov["property_uses_usd"] = ValueTrace(
             value=property_uses,
             formula="property_uses = Σ property capital lines",
-            inputs=[
-                ValueInput(name=line.label, value=line.amount)
-                for line in property_lines
-            ],
-            note="Purchase + closing + renovation + reserves, excl. financing fee.",
+            # Each summed line names the assumption it IS. Without this the
+            # chain died here: a lineage walk cannot match a display label
+            # ("Working Capital") against the assumption vocabulary, so
+            # Total Uses → Equity → Levered IRR had no path to the deal's
+            # purchase price, renovation budget or reserves at all.
+            inputs=[_property_line_input(line, reno_contingency) for line in property_lines],
+            note=(
+                "Purchase + closing + renovation + reserves, excl. financing fee. "
+                "Closing Costs is itself a calculation (purchase_price × "
+                "closing_costs_pct), so it names no single assumption here."
+            ),
         )
         prov["senior_loan_fee_usd"] = ValueTrace(
             value=senior_loan_fee,
             formula="senior_loan_fee = debt_amount × loan_costs_pct",
             inputs=[
                 ValueInput(name="debt_amount", value=debt, traces_to="debt_amount"),
-                ValueInput(name="loan_costs_pct", value=payload.loan_costs_pct),
+                ValueInput(
+                    name="loan_costs_pct",
+                    value=payload.loan_costs_pct,
+                    assumption_key="loan_costs_pct",
+                ),
             ],
         )
         if reno_breakdown is not None:
@@ -394,8 +483,16 @@ class CapitalEngine(BaseEngine[CapitalEngineInput, CapitalEngineOutput]):
                     value=getattr(reno_breakdown, part),
                     formula=f"renovation_{part} = renovation_budget × renovation_{part}_pct",
                     inputs=[
-                        ValueInput(name="renovation_budget", value=payload.renovation_budget),
-                        ValueInput(name=f"renovation_{part}_pct", value=pct),
+                        ValueInput(
+                            name="renovation_budget",
+                            value=payload.renovation_budget,
+                            assumption_key="renovation_budget",
+                        ),
+                        ValueInput(
+                            name=f"renovation_{part}_pct",
+                            value=pct,
+                            assumption_key=f"renovation_{part}_pct",
+                        ),
                     ],
                 )
         # FON-71 follow-up — contingency provenance (only when set, so a deal
@@ -405,16 +502,30 @@ class CapitalEngine(BaseEngine[CapitalEngineInput, CapitalEngineOutput]):
                 value=reno_contingency,
                 formula="renovation_contingency = renovation_contingency_pct × renovation_hard_costs",
                 inputs=[
-                    ValueInput(name="renovation_contingency_pct", value=payload.renovation_contingency_pct),
+                    ValueInput(
+                        name="renovation_contingency_pct",
+                        value=payload.renovation_contingency_pct,
+                        assumption_key="renovation_contingency_pct",
+                    ),
+                    # hard costs = renovation_budget × renovation_hard_pct —
+                    # two assumptions, so neither is claimed here.
                     ValueInput(name="renovation_hard_costs", value=reno_hard_costs),
                 ],
-                note="Contingency on the renovation hard costs.",
+                note=(
+                    "Contingency on the renovation hard costs. renovation_hard_costs "
+                    "is itself renovation_budget × renovation_hard_pct, so it names "
+                    "no single assumption."
+                ),
             )
             prov["renovation_total_usd"] = ValueTrace(
                 value=reno_total,
                 formula="renovation_total = renovation_budget + renovation_contingency",
                 inputs=[
-                    ValueInput(name="renovation_budget", value=reno_base),
+                    ValueInput(
+                        name="renovation_budget",
+                        value=reno_base,
+                        assumption_key="renovation_budget",
+                    ),
                     ValueInput(name="renovation_contingency", value=reno_contingency, traces_to="renovation_contingency_usd"),
                 ],
             )

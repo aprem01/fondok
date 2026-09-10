@@ -369,28 +369,65 @@ class ExpenseEngine(BaseEngine[ExpenseEngineInput, ExpenseEngineOutput]):
             # ─── Provenance for the two P&L waterfall values analysts most
             # want to explain: GOP and NOI (FON-25) ───
             idx = len(years)
+            # Which upstream value each of these two really came from. The
+            # engine's revenue payload is the F&B engine's output (see
+            # ``ExpenseEngineInput.revenue: FBRevenueOutput``), so the honest
+            # cross-engine pointer is ``fb.*`` — the revenue engine's own
+            # total_revenue is one hop further up, reached through fb's inputs.
+            mgmt_from_actual = use_actuals and "mgmt_fee" in actuals
+            ffe_from_actual = use_actuals and "ffe_reserve" in actuals
             prov[f"years[{idx}].gop"] = ValueTrace(
                 value=gop,
                 formula="gop = total_revenue − departmental_expenses − undistributed_expenses",
                 inputs=[
-                    ValueInput(name="total_revenue", value=total),
+                    ValueInput(
+                        name="total_revenue",
+                        value=total,
+                        traces_to=f"fb.years[{idx}].total_revenue",
+                    ),
+                    # Departmental / undistributed are each a sum over several
+                    # USALI lines — some T-12 actuals, some ratio shares — so
+                    # no single assumption owns either; none is asserted.
                     ValueInput(name="departmental_expenses", value=dept_total),
                     ValueInput(name="undistributed_expenses", value=undist_total),
                 ],
-                note="Gross Operating Profit — USALI line above management fee.",
+                note=(
+                    "Gross Operating Profit — USALI line above management fee. "
+                    "departmental_expenses and undistributed_expenses are each a "
+                    "sum over several USALI lines (T-12 actuals where extracted, "
+                    "ratio shares otherwise), so neither names one assumption."
+                ),
             )
             prov[f"years[{idx}].noi"] = ValueTrace(
                 value=noi,
                 formula="noi = gop − management_fee − ffe_reserve − fixed_charges",
                 inputs=[
                     ValueInput(name="gop", value=gop, traces_to=f"years[{idx}].gop"),
-                    ValueInput(name="management_fee", value=mgmt_fee),
-                    ValueInput(name="ffe_reserve", value=ffe),
+                    # A Year-1 T-12 actual IS the ``mgmt_fee`` assumption; every
+                    # other year is revenue × the ``mgmt_fee_pct`` assumption.
+                    # Naming the right one is the whole point — the two ground
+                    # to different evidence.
+                    ValueInput(
+                        name="management_fee",
+                        value=mgmt_fee,
+                        assumption_key="mgmt_fee" if mgmt_from_actual else "mgmt_fee_pct",
+                    ),
+                    ValueInput(
+                        name="ffe_reserve",
+                        value=ffe,
+                        assumption_key=(
+                            "ffe_reserve" if ffe_from_actual else "ffe_reserve_pct"
+                        ),
+                    ),
+                    # Property taxes + insurance + other fixed — several lines,
+                    # no single assumption.
                     ValueInput(name="fixed_charges", value=fixed_total),
                 ],
                 note=(
                     "NOI after FF&E reserve (legacy cap-rate convention). "
-                    "noi_institutional excludes the FF&E reserve."
+                    "noi_institutional excludes the FF&E reserve. "
+                    "fixed_charges sums property taxes, insurance and other "
+                    "fixed, so it names no single assumption."
                 ),
             )
 

@@ -31,29 +31,51 @@ Four existing spines, none of which previously knew about the others:
     assumption; ``app.ontology.registry.resolve`` then says which FIELD on that
     document's newest extraction carries the concept, and on which page.
 
-Where the engines stop, this module bridges
--------------------------------------------
+Asserted links, and where this module still has to infer one
+------------------------------------------------------------
 
-No engine emits ``ValueInput.assumption_key`` today, and the returns engine's
-IRR trace lists its cash-flow stream rather than the upstream values that
-produced it. So the walk resolves an input in this order:
+The engines now name the assumption behind a value themselves — on
+``ValueInput.assumption_key`` when one input of a formula IS an assumption, and
+on ``ValueTrace.assumption_key`` when the whole traced value is one (a Sources &
+Uses input line). The walk resolves an input in this order, and **records which
+step won on every edge** (``LineageEdge.meta["link"]``):
 
-1. an explicit ``assumption_key`` → the assumption node;
-2. an explicit ``traces_to`` → that engine value (exact key, else every key
-   under it when the reference is a prefix like ``"expense.years"``);
-3. the input's *name* matched against the canonical assumption vocabulary
-   (:data:`_INPUT_ASSUMPTION_KEYS` — e.g. the revenue engine's ``occupied_rooms``
-   / ``adr``, whose own trace note says they "chain back to the
-   starting_occupancy / starting_adr assumptions");
-4. a **bridge** derived from the engine dependency graph
-   (:func:`_bridge_targets` — e.g. the returns engine's ``cash_flow_year_3`` is
-   Year-3 NOI less Year-3 debt service). Bridge edges carry their rationale in
-   ``LineageEdge.formula`` and say ``(lineage bridge)`` so they are never
+1. ``"asserted"``   — an explicit ``assumption_key`` → the assumption node;
+2. ``"traces_to"``  — an explicit pointer at another traced value (exact key,
+   else every key under it when the reference is a prefix like
+   ``"expense.years"``);
+3. ``"name_match"`` — *inferred*: the input's NAME matched the canonical
+   assumption vocabulary (:data:`_INPUT_ASSUMPTION_KEYS`);
+4. ``"bridge"``     — *inferred*: derived from the engine dependency graph
+   (:func:`_bridge_targets` — the returns engine's ``cash_flow_year_3`` is
+   Year-3 NOI less Year-3 debt service, a relationship no single ``traces_to``
+   can express because it has two targets). Bridge edges carry their rationale
+   in ``LineageEdge.formula`` and say ``(lineage bridge)`` so they are never
    mistaken for something an engine asserted.
 
-Anything still unresolved is recorded, never dropped: a root or an assumption
-that does not reach a ``page:`` node lands in ``LineageRecord.unresolved`` as a
-typed :class:`~fondok_schemas.reasons.Refusal`.
+The first two are the engine's own claims; the last two are this module's
+inferences. :attr:`LineageRecord.meta`'s ``link_provenance`` tallies all four
+so the honesty of a given deal's chain is a number, not a matter of opinion.
+
+Every chain ends somewhere, and the record says which somewhere
+---------------------------------------------------------------
+
+A walk that stops must be legible as a *terminal*, never as a missing link:
+
+* an assumption entered on the deal record rather than read off a document
+  ends on a ``seed:`` node carrying :attr:`ReasonCode.NOT_APPLICABLE` — there
+  is no page behind an analyst's own input, by design, and it is not reported
+  as unresolved;
+* an assumption that a document *should* have grounded but did not ends on a
+  ``seed:`` / ``benchmark:`` node with ``no_document`` / ``no_source``, and IS
+  reported;
+* an engine value whose inputs are entirely internal to its own calculation
+  (a debt-service roll-up over an amortization schedule) is marked terminal on
+  the node itself, so a reader can tell "no more links exist" from "the link
+  is missing".
+
+Refusals name the link that broke — the assumption or the engine value — never
+the KPI root, which is the one node that is never what is missing.
 """
 
 from __future__ import annotations
@@ -290,8 +312,6 @@ _REFUSAL_LABELS: dict[str, ReasonCode] = {
 # ───────────────────────── cross-engine bridges ───────────────────────
 
 _CASH_FLOW_YEAR = re.compile(r"^cash_flow_year_(\d+)$")
-_YEARS_INDEX = re.compile(r"years\[(\d+)\]")
-_SCHEDULE_INDEX = re.compile(r"schedule\[(\d+)\]")
 
 # A prefix ``traces_to`` (``"expense.years"``) can match many traced keys.
 # Cap the fan-out so one loose reference cannot explode the graph.
@@ -301,14 +321,36 @@ _MAX_PREFIX_FANOUT = 24
 def _bridge_targets(
     engine: str, trace_path: str, input_name: str, *, last_year_index: int
 ) -> list[tuple[str, str]]:
-    """Cross-engine links the engines do not (yet) assert themselves.
+    """Cross-engine links no single ``traces_to`` can express.
 
-    Returns ``[(target_engine, target_path)]``. Every entry restates a
-    relationship the engine chain already implements — the returns engine
-    consumes the cash-flow view built from expense NOI and debt service; the
-    expense engine's GOP consumes revenue's total revenue; the debt engine's
-    DSCR consumes the same year's NOI. Nothing here invents a number: the
-    bridge only says which *traced value* the input came from.
+    Returns ``[(target_engine, target_path)]``. Every survivor here is a link
+    with **more than one target** — a cash flow is NOI *less* debt service (and,
+    in the exit year, *plus* net proceeds), and ``ValueInput.traces_to`` holds
+    exactly one path. Those stay inferences, labelled as such on the edge.
+
+    Everything that had a single honest target has been retired in favour of the
+    engine asserting it (see each engine's provenance sidecar):
+
+    ``expense.total_revenue``
+        now ``traces_to="fb.years[i].total_revenue"`` — and note the bridge had
+        been pointing one hop too far up, at the *revenue* engine, when the
+        expense engine's payload is the F&B engine's output.
+    ``debt.noi`` / ``debt.year_noi`` / ``debt.year_1_noi``
+        now ``traces_to="expense.years[i].noi"``, asserted only when the runner
+        confirms the NOI series really is the expense engine's (it is not when
+        an analyst pins ``noi_override_by_year``, where the bridge was wrong).
+    ``debt.annual_debt_service``
+        now ``traces_to="schedule[0].debt_service"``, asserted only when the
+        stack is senior-only — with a funded junior tranche the bridge's single
+        target was wrong.
+    ``returns.terminal_noi``
+        now ``traces_to="expense.years[N].noi"``, asserted only when no
+        ``terminal_noi_override`` is pinned and the hold fits the NOI series.
+    ``returns.equity``
+        now ``traces_to="capital.equity_amount"``.
+
+    Nothing here invents a number: a bridge only says which *traced value* an
+    input came from.
     """
     name = input_name.strip().lower()
 
@@ -333,38 +375,28 @@ def _bridge_targets(
             return targets
         if name == "total_distributions":
             # "total_distributions = Σ annual cash-flow-after-debt + net_proceeds
-            # at exit" — the equity-multiple trace's own note.
+            # at exit" — the equity-multiple trace's own note. Every year's flow
+            # plus the exit, so more than one target.
             return [("returns", "net_proceeds")]
-        if name in ("terminal_noi",):
-            return [("expense", f"years[{last_year_index}].noi")]
-        if name in ("equity",):
-            return [("capital", "equity_amount")]
         if name in ("year_1_cash_flow_after_debt", "year_one_cfad"):
             return [("expense", "years[0].noi"), ("debt", "schedule[0].debt_service")]
-        return []
-
-    if engine == "expense":
-        if name == "total_revenue":
-            m = _YEARS_INDEX.search(trace_path)
-            idx = m.group(1) if m else "0"
-            return [("revenue", f"years[{idx}].total_revenue")]
-        return []
-
-    if engine == "debt":
-        if name in ("noi", "year_noi"):
-            m = _SCHEDULE_INDEX.search(trace_path)
-            idx = m.group(1) if m else "0"
-            return [("expense", f"years[{idx}].noi")]
-        if name == "year_1_noi":
-            return [("expense", "years[0].noi")]
-        if name == "annual_debt_service":
-            return [("debt", "schedule[0].debt_service")]
         return []
 
     return []
 
 
 _BRIDGE_NOTE = "(lineage bridge — derived from the engine dependency graph)"
+
+#: How a link was established. The first two are the engine's own assertion;
+#: the last two are this module inferring one. Order is the resolution order.
+LinkKind = str
+_LINK_KINDS: tuple[str, ...] = ("asserted", "traces_to", "name_match", "bridge")
+
+#: Labels that mean the number was entered on the deal record by an analyst
+#: (the onboarding wizard writes these) rather than read off a document. There
+#: is no page behind such a value BY DESIGN, so its chain terminates cleanly
+#: instead of being reported as evidence that failed to resolve.
+_ANALYST_INPUT_LABELS: frozenset[str] = frozenset({"deal_row"})
 
 
 # ───────────────────────────── timestamps ─────────────────────────────
@@ -408,6 +440,16 @@ class _Builder:
         self._edge_keys: set[tuple[str, str, str]] = set()
         self.unresolved: list[Refusal] = []
         self._refusal_keys: set[tuple[str, str | None, str | None]] = set()
+        #: Node ids / concepts already carrying a refusal, so one broken step
+        #: is reported once rather than once per way of describing it.
+        self.refused_concepts: set[str] = set()
+        #: Tally of how each provenance link was established — the record's
+        #: honesty summary. Only edges that resolve a traced value's input are
+        #: counted; the structural hops below an assumption (field → doc →
+        #: page) are not links that could have been asserted or inferred.
+        self.link_counts: dict[str, int] = dict.fromkeys(_LINK_KINDS, 0)
+        #: Node ids that produced at least one outgoing provenance edge.
+        self.linked_sources: set[str] = set()
 
     def node(self, node: LineageNode) -> str:
         existing = self.nodes.get(node.id)
@@ -420,12 +462,33 @@ class _Builder:
             self.nodes[node.id] = node
         return node.id
 
-    def edge(self, src: str, dst: str, rel: str, formula: str | None = None) -> None:
+    def edge(
+        self,
+        src: str,
+        dst: str,
+        rel: str,
+        formula: str | None = None,
+        *,
+        link: LinkKind | None = None,
+    ) -> None:
+        """Add one edge. ``link`` records HOW the link was established.
+
+        ``None`` is for the structural hops (assumption → field → document →
+        page, memo citations): those are lookups, not claims about which value
+        fed which, so they are neither asserted nor inferred and are not tallied.
+        """
+        if link is not None:
+            self.linked_sources.add(src)
         key = (src, dst, rel)
         if key in self._edge_keys:
             return
         self._edge_keys.add(key)
-        self.edges.append(LineageEdge(src=src, dst=dst, rel=rel, formula=formula))
+        meta: dict[str, Any] = {"link": link} if link is not None else {}
+        if link is not None:
+            self.link_counts[link] = self.link_counts.get(link, 0) + 1
+        self.edges.append(
+            LineageEdge(src=src, dst=dst, rel=rel, formula=formula, meta=meta)
+        )
 
     def refuse(
         self,
@@ -439,6 +502,8 @@ class _Builder:
         if key in self._refusal_keys:
             return
         self._refusal_keys.add(key)
+        if concept:
+            self.refused_concepts.add(concept)
         self.unresolved.append(
             Refusal(code=code, detail=detail, concept=concept, document_id=document_id)
         )
@@ -715,11 +780,40 @@ async def build_lineage(
     deal_updated = await _deal_updated_at(
         session, deal_id=deal_str, tenant_id=tenant_str
     )
+    deleted_evidence = await _deleted_evidence_for_run(
+        session,
+        deal_id=deal_str,
+        tenant_id=tenant_str,
+        run_id=resolved_run,
+        documents=documents,
+    )
+    for document_id in deleted_evidence:
+        builder.refuse(
+            ReasonCode.NO_DOCUMENT,
+            detail=(
+                f"document {document_id} backed this run's numbers but has since "
+                "been deleted from the deal, so the evidence behind them can no "
+                "longer be opened."
+            ),
+            concept=_document_node(document_id),
+            document_id=_maybe_uuid(document_id),
+        )
     stale = _is_stale(
-        run_started=run_started, documents=documents, deal_updated=deal_updated
+        run_started=run_started,
+        documents=documents,
+        deal_updated=deal_updated,
+        deleted_evidence=deleted_evidence,
     )
 
     registry_version, pipeline_version = _versions()
+    # How much of this deal's chain the ENGINES assert vs how much this module
+    # infers. ``asserted`` + ``traces_to`` are the engines' own claims;
+    # ``name_match`` + ``bridge`` are inferences and are the number to drive
+    # down. Always all four keys, so a consumer can render the split without
+    # guarding for absent ones.
+    link_provenance = {k: builder.link_counts.get(k, 0) for k in _LINK_KINDS}
+    inferred = link_provenance["name_match"] + link_provenance["bridge"]
+    asserted = link_provenance["asserted"] + link_provenance["traces_to"]
     return LineageRecord(
         deal_id=deal_uuid,
         run_id=UUID(resolved_run) if resolved_run else None,
@@ -731,6 +825,15 @@ async def build_lineage(
         edges=builder.edges,
         unresolved=builder.unresolved,
         stale=stale,
+        meta={
+            "link_provenance": link_provenance,
+            "links_asserted": asserted,
+            "links_inferred": inferred,
+            # Documents this run was grounded in that no longer exist. Carried
+            # on the record so the loss survives a re-persist (the rebuilt node
+            # list cannot cite what is gone).
+            **({"evidence_deleted": deleted_evidence} if deleted_evidence else {}),
+        },
     )
 
 
@@ -739,12 +842,25 @@ def _is_stale(
     run_started: datetime | None,
     documents: Mapping[str, Mapping[str, Any]],
     deal_updated: datetime | None,
+    deleted_evidence: Sequence[str] = (),
 ) -> bool:
-    """True when an input moved after the run started.
+    """True when an input moved — or was removed — after the run started.
+
+    Timestamps only see inputs moving FORWARD: a document uploaded after the
+    run, a deal row edited after it. A document that was *deleted* leaves no
+    timestamp at all (``delete_document`` hard-deletes the row and its
+    extractions, and does not touch ``deals.updated_at``), so a run whose
+    evidence has been removed used to read as perfectly fresh. It is not:
+    ``deleted_evidence`` carries the document ids the run's own lineage cited
+    that the deal no longer has, and any one of them makes the record stale.
 
     A record with no run to be measured against is not stale — it is
-    ungrounded, which ``run_id is None`` already says.
+    ungrounded, which ``run_id is None`` already says. Deleted evidence is the
+    exception: it is a fact about the record's own citations, not about timing,
+    so it stands on its own.
     """
+    if deleted_evidence:
+        return True
     if run_started is None:
         return False
     if deal_updated is not None and deal_updated > run_started:
@@ -754,6 +870,82 @@ def _is_stale(
         if uploaded is not None and uploaded > run_started:
             return True
     return False
+
+
+def _cited_document_ids(record: LineageRecord) -> set[str]:
+    """Every ``document_id`` a record's nodes point at."""
+    out: set[str] = set()
+    for node in record.nodes:
+        if node.id.startswith("doc:"):
+            out.add(node.id.split(":", 1)[1])
+        doc = node.meta.get("document_id") if node.meta else None
+        if isinstance(doc, str) and doc:
+            out.add(doc)
+    return out
+
+
+async def _deleted_evidence_for_run(
+    session: AsyncSession,
+    *,
+    deal_id: str,
+    tenant_id: str,
+    run_id: str | None,
+    documents: Mapping[str, Mapping[str, Any]],
+) -> list[str]:
+    """Documents the run's STORED lineage cited that the deal no longer has.
+
+    A freshly-built record can only cite documents that still exist, so the
+    deletion is invisible to it. The stored record for the same run is the one
+    durable statement of what that run's evidence was, which makes it the only
+    place the loss is visible. Best-effort: no stored record, or no table yet,
+    means nothing to report — never an exception on a read path.
+    """
+    if run_id is None:
+        return []
+    try:
+        row = (
+            await session.execute(
+                text(
+                    # tenant-scope predicate required by tenant_middleware
+                    """
+                    SELECT record FROM lineage_records
+                     WHERE deal_id = :deal AND tenant_id = :tenant AND run_id = :run
+                     ORDER BY created_at DESC
+                     LIMIT 1
+                    """
+                ),
+                {"deal": deal_id, "tenant": tenant_id, "run": run_id},
+            )
+        ).first()
+    except Exception:  # pragma: no cover - table not migrated in a bare test DB
+        return []
+    if row is None:
+        return []
+    raw = row._mapping.get("record")
+    if isinstance(raw, str):
+        try:
+            raw = json.loads(raw)
+        except json.JSONDecodeError:
+            return []
+    if not isinstance(raw, dict):
+        return []
+    cited: set[str] = set()
+    for node in raw.get("nodes") or []:
+        if not isinstance(node, dict):
+            continue
+        node_id = node.get("id")
+        if isinstance(node_id, str) and node_id.startswith("doc:"):
+            cited.add(node_id.split(":", 1)[1])
+        meta = node.get("meta")
+        doc = meta.get("document_id") if isinstance(meta, dict) else None
+        if isinstance(doc, str) and doc:
+            cited.add(doc)
+    # A previous read already established the loss — keep saying so even after
+    # the record has been re-persisted without the deleted document's nodes.
+    prior = (raw.get("meta") or {}).get("evidence_deleted")
+    if isinstance(prior, list):
+        cited.update(str(d) for d in prior)
+    return sorted(cited - set(documents))
 
 
 class _WalkContext:
@@ -901,6 +1093,9 @@ class _WalkContext:
                 concept=concept or root_id,
             )
             return root_id
+        # Structural, not a provenance claim: the KPI and the engine value are
+        # the same number under two names (see ``_SIMPLE_ROOTS``), so this hop
+        # is not tallied in ``link_provenance``.
         target = self._ensure_engine_node(engine, path)
         self.b.edge(root_id, target, "computed_from", trace.get("formula"))
         return root_id
@@ -959,24 +1154,85 @@ class _WalkContext:
             return
         formula = trace.get("formula")
         inputs = trace.get("inputs")
-        if not isinstance(inputs, list) or not inputs:
-            # A pure leaf (no formula, no inputs) is a value read straight off
-            # an input — ``capital.purchase_price`` is the canonical case. When
-            # its output path names a canonical assumption, that is the link.
-            if not formula:
-                await self._link_leaf(engine, path, node_id)
-            return
-        for raw in inputs:
-            if not isinstance(raw, dict):
-                continue
-            await self._link_input(engine, path, node_id, raw, formula)
+        # A value that IS an assumption says so on the TRACE — ``capital.
+        # uses[0].amount`` (the Purchase Price line) is the canonical case. The
+        # key lives there rather than on a self-referential input so the value
+        # keeps its ``assumption`` badge instead of reading as a calculation.
+        key = trace.get("assumption_key")
+        asserted_on_trace = False
+        if isinstance(key, str) and key and self._known_assumption(key):
+            await self._link_assumption(node_id, key, formula, link="asserted")
+            asserted_on_trace = True
+        if isinstance(inputs, list) and inputs:
+            for raw in inputs:
+                if not isinstance(raw, dict):
+                    continue
+                await self._link_input(engine, path, node_id, raw, formula)
+        elif not asserted_on_trace:
+            await self._link_leaf(path, node_id)
+        self._mark_terminal(engine, path, node_id, trace)
 
-    async def _link_leaf(self, engine: str, path: str, node_id: str) -> None:
-        """Link a leaf traced value to the assumption its path names."""
+    def _mark_terminal(
+        self, engine: str, path: str, node_id: str, trace: Mapping[str, Any]
+    ) -> None:
+        """Say, on the node, why a value that links to nothing links to nothing.
+
+        Without this a walk that ran out of edges is indistinguishable from one
+        whose link is missing. Two honest endings:
+
+        * the trace declares HOW it was computed but every input is internal to
+          that computation (the debt-service roll-up over an amortization
+          schedule) — a terminal calculation, :attr:`ReasonCode.NOT_APPLICABLE`,
+          and not an unresolved link;
+        * the trace names no formula and no assumption — nothing says where the
+          number came from, which IS a gap: ``no_source``, and reported.
+        """
+        if node_id in self.b.linked_sources:
+            return
+        node = self.b.nodes.get(node_id)
+        if node is None or node.reason is not None:
+            return
+        if node_id in self.b.refused_concepts:
+            # A pointer that failed to resolve is already reported, on this
+            # exact node, with the reference it named. Saying "and it links to
+            # nothing" as well would report one break twice.
+            node.reason = ReasonCode.NO_SOURCE
+            node.meta["terminal"] = "unlinked"
+            return
+        if trace.get("formula"):
+            node.reason = ReasonCode.NOT_APPLICABLE
+            node.meta["terminal"] = "calculation"
+            return
+        node.reason = ReasonCode.NO_SOURCE
+        node.meta["terminal"] = "unlinked"
+        self.b.refuse(
+            ReasonCode.NO_SOURCE,
+            detail=(
+                f"{engine}.{path} carries neither a formula, an upstream traced "
+                "value nor an assumption key, so the chain cannot be walked "
+                "past it."
+            ),
+            concept=node_id,
+        )
+
+    def _known_assumption(self, key: str) -> bool:
+        """Is ``key`` part of THIS deal's assumption vocabulary?
+
+        An engine asserting a key the deal does not carry must not conjure an
+        empty assumption node — the walk falls through to the next resolution
+        step instead. ``__source_fields__`` counts: the T-12 expense canonicals
+        (``mgmt_fee``, ``ffe_reserve``) live there and in ``t12_expense_actuals``
+        rather than as top-level ``__sources__`` entries.
+        """
+        return key in self.sources or key in self.base or key in self.source_fields
+
+    async def _link_leaf(self, path: str, node_id: str) -> None:
+        """INFERRED fallback for a leaf the engine did not name: the output
+        path's own tail matched against the canonical assumption vocabulary."""
         tail = path.rsplit(".", 1)[-1].split("[", 1)[0].strip().lower()
         mapped = _INPUT_ASSUMPTION_KEYS.get(tail)
-        if mapped and (mapped in self.sources or mapped in self.base):
-            await self._link_assumption(node_id, mapped, None)
+        if mapped and self._known_assumption(mapped):
+            await self._link_assumption(node_id, mapped, None, link="name_match")
 
     async def _link_input(
         self,
@@ -991,8 +1247,8 @@ class _WalkContext:
 
         # 1. an assumption the engine named outright.
         key = inp.get("assumption_key")
-        if isinstance(key, str) and key:
-            await self._link_assumption(node_id, key, formula)
+        if isinstance(key, str) and key and self._known_assumption(key):
+            await self._link_assumption(node_id, key, formula, link="asserted")
             linked = True
 
         # 2. an explicit pointer at another traced value.
@@ -1006,6 +1262,7 @@ class _WalkContext:
                         self._ensure_engine_node(target_engine, target_path),
                         "computed_from",
                         formula,
+                        link="traces_to",
                     )
                 linked = True
             else:
@@ -1021,13 +1278,14 @@ class _WalkContext:
         if linked or not name:
             return
 
-        # 3. the input's name IS a canonical assumption for this deal.
+        # 3. INFERRED — the input's name IS a canonical assumption for this deal.
         mapped = _INPUT_ASSUMPTION_KEYS.get(name.lower())
-        if mapped and (mapped in self.sources or mapped in self.base):
-            await self._link_assumption(node_id, mapped, formula)
+        if mapped and self._known_assumption(mapped):
+            await self._link_assumption(node_id, mapped, formula, link="name_match")
             return
 
-        # 4. a bridge the engine chain implements but does not assert.
+        # 4. INFERRED — a multi-target link the engine chain implements but no
+        #    single ``traces_to`` can express.
         for target_engine, target_path in _bridge_targets(
             engine, path, name, last_year_index=self.last_year_index
         ):
@@ -1037,6 +1295,7 @@ class _WalkContext:
                     self._ensure_engine_node(target_engine, target_path),
                     "computed_from",
                     f"{name} {_BRIDGE_NOTE}",
+                    link="bridge",
                 )
 
     def _resolve_ref(self, engine: str, ref: str) -> list[tuple[str, str]]:
@@ -1073,10 +1332,10 @@ class _WalkContext:
     # ── assumptions → evidence ───────────────────────────────────────
 
     async def _link_assumption(
-        self, node_id: str, key: str, formula: str | None
+        self, node_id: str, key: str, formula: str | None, *, link: LinkKind
     ) -> None:
         assumption_id = await self._ensure_assumption(key)
-        self.b.edge(node_id, assumption_id, "seeded_from", formula)
+        self.b.edge(node_id, assumption_id, "seeded_from", formula, link=link)
 
     async def _ensure_assumption(self, key: str) -> str:
         assumption_id = _assumption_node(key)
@@ -1186,6 +1445,7 @@ class _WalkContext:
 
         # Everything else — a seed, the deal record, a derived default — is a
         # terminal node carrying the reason it never reaches a page.
+        analyst_entered = (label or "") in _ANALYST_INPUT_LABELS
         seed_id = self.b.node(
             LineageNode(
                 id=_seed_node(key),
@@ -1194,8 +1454,29 @@ class _WalkContext:
                 value=_as_value(self.base.get(key)),
                 concept=concept,
                 source=label or "seed",
-                reason=self._terminal_reason(),
-                meta={"assumption_key": key},
+                # A number the analyst typed onto the deal record has no page
+                # behind it BY DESIGN, so it terminates as "not applicable"
+                # rather than borrowing the vocabulary of a failed extraction.
+                reason=(
+                    ReasonCode.NOT_APPLICABLE
+                    if analyst_entered
+                    else self._terminal_reason()
+                ),
+                meta={
+                    "assumption_key": key,
+                    **(
+                        {
+                            "terminal": "analyst_input",
+                            "terminal_detail": (
+                                "Entered on the deal record (onboarding), not "
+                                "read off a document — there is no page to "
+                                "reach."
+                            ),
+                        }
+                        if analyst_entered
+                        else {}
+                    ),
+                },
             )
         )
         self.b.edge(assumption_id, seed_id, "seeded_from", None)
@@ -1446,30 +1727,43 @@ class _WalkContext:
     # ── refusals ─────────────────────────────────────────────────────
 
     def record_unreached(self, roots: Sequence[str]) -> None:
-        """Every root / assumption that does not reach a page states why."""
+        """Every ASSUMPTION that should reach a page but does not states why.
+
+        A KPI root is deliberately NOT reported. The root is never the thing
+        that is missing — "kpi:returns.levered_irr: no_source" tells a reader
+        nothing they can act on, and six of them crowded out the entries that
+        actually name a gap. The refusal belongs on the link that could not be
+        walked, which is either an assumption here or an engine value marked
+        terminal in :meth:`_mark_terminal`.
+
+        An assumption that terminates on the analyst's own input — the deal
+        record, an override — has reached its evidence. It is a terminal, not
+        a failure, and is left out.
+        """
         for root in roots:
             node = self.b.nodes.get(root)
-            if node is None:
+            if node is None or "page" in self.b.reachable_kinds(root):
                 continue
-            if "page" in self.b.reachable_kinds(root):
-                continue
-            self.b.refuse(
-                self._terminal_reason(),
-                detail=(
-                    f"{node.label} does not reach a document page — every path from "
-                    "it ends at a seed, a benchmark, an analyst override or an "
-                    "untraced value."
-                ),
-                # The node id, not the concept: a refusal is about ONE step, and
-                # a consumer attaches it by matching either.
-                concept=node.id,
-            )
+            # Not a refusal — a fact about the root, carried on the root, so a
+            # UI can still badge "no document evidence" without the record
+            # claiming the KPI itself is what went missing.
+            node.meta["reaches_page"] = False
         for key in sorted(self._assumptions_done):
             assumption_id = _assumption_node(key)
             node = self.b.nodes.get(assumption_id)
             if node is None:
                 continue
             if "page" in self.b.reachable_kinds(assumption_id):
+                continue
+            kinds = self.b.reachable_kinds(assumption_id)
+            terminal_reasons = {
+                self.b.nodes[e.dst].reason
+                for e in self.b.edges
+                if e.src == assumption_id and e.dst in self.b.nodes
+            }
+            if "override" in kinds or ReasonCode.NOT_APPLICABLE in terminal_reasons:
+                # Analyst-entered or analyst-overridden: the chain ends where
+                # the evidence ends, which is not a gap.
                 continue
             source = node.source or "seed"
             self.b.refuse(
@@ -1659,6 +1953,20 @@ async def load_persisted(
     ``stale`` is recomputed on read: a document uploaded after the record was
     persisted makes it stale, and an analyst reading the endpoint has to see
     that even though the stored row still says otherwise.
+
+    **Deleted evidence forces a rebuild.** A stored record replays its node
+    list verbatim, so once a cited document is deleted the endpoint would keep
+    offering ``doc:<id>`` and ``page:<id>:4`` — a chain to a page nobody can
+    open, presented exactly like one that still resolves. Serving a stale
+    record is fine; serving one that silently cites deleted evidence is not.
+    So when any cited document is gone the record is rebuilt from the same
+    run's engine outputs: the walk then terminates honestly (the assumption
+    ends on a seed carrying ``no_document`` instead of on a phantom page), the
+    deletion is reported in ``unresolved``, and ``stale`` is True.
+
+    The stored row is left untouched — what the run *was* grounded in is still
+    on disk for an audit; it is only what the read path hands an analyst to
+    click that must be walkable.
     """
     try:
         row = (
@@ -1694,6 +2002,59 @@ async def load_persisted(
 
     from .engine_runner import get_run_status
 
+    documents = await _load_documents(
+        session, deal_id=str(deal_id), tenant_id=str(tenant_id)
+    )
+    # Cited evidence that no longer exists — check FIRST, because it decides
+    # whether this record may be served at all.
+    deleted_evidence = sorted(_cited_document_ids(record) - set(documents))
+    prior = (record.meta or {}).get("evidence_deleted")
+    if isinstance(prior, list):
+        deleted_evidence = sorted(set(deleted_evidence) | {str(d) for d in prior})
+    if deleted_evidence:
+        rebuilt = None
+        try:
+            rebuilt = await build_lineage(session, deal_id, tenant_id, run_id=run_id)
+        except Exception:  # pragma: no cover - defensive; a read must not 500
+            logger.exception(
+                "lineage: rebuild after evidence deletion failed for deal=%s run=%s",
+                deal_id,
+                run_id,
+            )
+        if rebuilt is not None:
+            # ``build_lineage`` re-derives the deletion from the stored row and
+            # already refuses + flags it; belt and braces in case the stored
+            # row has since been replaced.
+            rebuilt.stale = True
+            meta = dict(rebuilt.meta or {})
+            meta["evidence_deleted"] = deleted_evidence
+            rebuilt.meta = meta
+            return rebuilt
+        # Could not rebuild: serve the snapshot, but say plainly that part of
+        # what it cites is gone rather than letting it read as resolvable.
+        record.stale = True
+        meta = dict(record.meta or {})
+        meta["evidence_deleted"] = deleted_evidence
+        record.meta = meta
+        known = {(r.code, r.concept) for r in record.unresolved}
+        for document_id in deleted_evidence:
+            concept = _document_node(document_id)
+            if (ReasonCode.NO_DOCUMENT, concept) in known:
+                continue
+            record.unresolved.append(
+                Refusal(
+                    code=ReasonCode.NO_DOCUMENT,
+                    detail=(
+                        f"document {document_id} is cited by this run's lineage "
+                        "but has been deleted from the deal — the page it points "
+                        "at can no longer be opened."
+                    ),
+                    concept=concept,
+                    document_id=_maybe_uuid(document_id),
+                )
+            )
+        return record
+
     try:
         rows = await get_run_status(
             session,
@@ -1708,9 +2069,6 @@ async def load_persisted(
         started = _parse_ts(r.get("started_at"))
         if started is not None and (run_started is None or started < run_started):
             run_started = started
-    documents = await _load_documents(
-        session, deal_id=str(deal_id), tenant_id=str(tenant_id)
-    )
     deal_updated = await _deal_updated_at(
         session, deal_id=str(deal_id), tenant_id=str(tenant_id)
     )

@@ -385,7 +385,10 @@ class RevenueEngine(BaseEngine[RevenueEngineInput, RevenueEngineOutput]):
                     ],
                     note=(
                         f"Net of channel cost across {len(segment_breakdown)} demand "
-                        "segments; see segment_breakdown for the per-segment split."
+                        "segments; see segment_breakdown for the per-segment split. "
+                        "No single assumption owns this value — each segment carries "
+                        "its own mix, ADR and channel cost — so no assumption_key is "
+                        "asserted on either input."
                     ),
                 )
             else:
@@ -393,13 +396,33 @@ class RevenueEngine(BaseEngine[RevenueEngineInput, RevenueEngineOutput]):
                     value=rooms_revenue,
                     formula="rooms_revenue = occupied_rooms × ADR",
                     inputs=[
-                        ValueInput(name="occupied_rooms", value=occupied),
-                        ValueInput(name="adr", value=adr),
+                        # The engine ASSERTS which assumption each factor is
+                        # anchored to, so the lineage walk never has to infer
+                        # it from the input's name. Years 2+ compound the same
+                        # baseline forward — the key names the anchor, not the
+                        # only input (the note below says what else applies).
+                        ValueInput(
+                            name="occupied_rooms",
+                            value=occupied,
+                            assumption_key="starting_occupancy",
+                        ),
+                        ValueInput(
+                            name="adr", value=adr, assumption_key="starting_adr"
+                        ),
                     ],
                     note=(
                         f"occupied_rooms = keys ({keys}) × {DAYS_PER_YEAR} days × "
                         f"occupancy ({occ:.4f}); occupancy and ADR chain back to the "
                         "starting_occupancy / starting_adr assumptions."
+                        + (
+                            ""
+                            if y == 1
+                            else (
+                                f" Year {y} compounds that baseline by "
+                                "occupancy_growth / adr_growth, so those two "
+                                "assumptions also move this value."
+                            )
+                        )
                     ),
                 )
             prov[f"years[{idx}].rooms_revenue"] = rooms_trace
@@ -414,17 +437,92 @@ class RevenueEngine(BaseEngine[RevenueEngineInput, RevenueEngineOutput]):
                         ValueInput(
                             name="resort_fee_per_night",
                             value=resort_fee_per_night,
+                            assumption_key="resort_fee_per_night",
                         ),
-                        ValueInput(name="occupied_rooms", value=occupied),
+                        ValueInput(
+                            name="occupied_rooms",
+                            value=occupied,
+                            assumption_key="starting_occupancy",
+                        ),
+                        # capture_pct carries forward across three assumption
+                        # keys (resort_fee_capture_y1/y2/y3) — a missing year
+                        # inherits the prior one — so no single key owns it.
                         ValueInput(
                             name="capture_pct", value=_resort_fee_capture(y)
                         ),
                     ],
                     note=(
                         "Bottom-up resort-fee build-up; capture ramps "
-                        f"y1={cap_y1:.4f} / y2={cap_y2:.4f} / y3+={cap_y3:.4f}."
+                        f"y1={cap_y1:.4f} / y2={cap_y2:.4f} / y3+={cap_y3:.4f}. "
+                        "capture_pct carries forward across the three "
+                        "resort_fee_capture_y* assumptions, so no assumption_key "
+                        "is asserted on it."
                     ),
                 )
+            else:
+                # The flat anchor path. Traced too, so the F&B engine's
+                # pass-through (``traces_to="revenue.years[i].resort_fees"``)
+                # resolves on EVERY deal rather than only on the bottom-up ones
+                # — an unresolvable pointer reads as a broken chain.
+                prov[f"years[{idx}].resort_fees"] = ValueTrace(
+                    value=resort_fees,
+                    formula=(
+                        "resort_fees = starting_resort_fees"
+                        if y == 1
+                        else "resort_fees = prior_year × (1 + resort_fees_growth)"
+                    ),
+                    inputs=[
+                        ValueInput(
+                            name="starting_resort_fees",
+                            value=resort_fees,
+                            assumption_key="starting_resort_fees",
+                        )
+                    ],
+                    note=(
+                        "Flat Year-1 resort-fee anchor"
+                        + (
+                            "."
+                            if y == 1
+                            else f" grown {y - 1} year(s) at resort_fees_growth."
+                        )
+                    ),
+                )
+            # F&B and other-operated revenue, each a direct function of one
+            # assumption. Traced so the F&B engine's grounded pass-throughs
+            # resolve — before this they pointed at keys the revenue engine
+            # never emitted, and the walk dead-ended on every year.
+            prov[f"years[{idx}].fb_revenue"] = ValueTrace(
+                value=fb_revenue,
+                formula="fb_revenue = occupied_rooms × fb_revenue_per_occupied_room",
+                inputs=[
+                    ValueInput(
+                        name="occupied_rooms",
+                        value=occupied,
+                        assumption_key="starting_occupancy",
+                    ),
+                    ValueInput(
+                        name="fb_revenue_per_occupied_room",
+                        value=payload.fb_revenue_per_occupied_room,
+                        assumption_key="fb_revenue_per_occupied_room",
+                    ),
+                ],
+            )
+            prov[f"years[{idx}].other_revenue"] = ValueTrace(
+                value=other_revenue,
+                formula="other_revenue = rooms_revenue × other_revenue_pct_of_rooms",
+                inputs=[
+                    ValueInput(
+                        name="rooms_revenue",
+                        value=rooms_revenue,
+                        traces_to=f"years[{idx}].rooms_revenue",
+                    ),
+                    ValueInput(
+                        name="other_revenue_pct_of_rooms",
+                        value=payload.other_revenue_pct_of_rooms,
+                        assumption_key="other_revenue_pct_of_rooms",
+                    ),
+                ],
+            )
             prov[f"years[{idx}].total_revenue"] = ValueTrace(
                 value=total_revenue,
                 formula=(
@@ -437,9 +535,21 @@ class RevenueEngine(BaseEngine[RevenueEngineInput, RevenueEngineOutput]):
                         value=rooms_revenue,
                         traces_to=f"years[{idx}].rooms_revenue",
                     ),
-                    ValueInput(name="fb_revenue", value=fb_revenue),
-                    ValueInput(name="resort_fees", value=resort_fees),
-                    ValueInput(name="other_revenue", value=other_revenue),
+                    ValueInput(
+                        name="fb_revenue",
+                        value=fb_revenue,
+                        traces_to=f"years[{idx}].fb_revenue",
+                    ),
+                    ValueInput(
+                        name="resort_fees",
+                        value=resort_fees,
+                        traces_to=f"years[{idx}].resort_fees",
+                    ),
+                    ValueInput(
+                        name="other_revenue",
+                        value=other_revenue,
+                        traces_to=f"years[{idx}].other_revenue",
+                    ),
                 ],
             )
 

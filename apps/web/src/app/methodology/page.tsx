@@ -575,7 +575,7 @@ export default function MethodologyPage() {
       >
         <Card className="p-5">
           <p className="text-[12.5px] text-ink-600 leading-relaxed">
-            The pieces already existed separately: each engine emits a per-value trace (the formula, its named inputs, and a pointer at whichever other value fed it — Section 3&apos;s &ldquo;hover any number&rdquo;), the assumption loader records which source produced every input, each extracted field carries the page it was read from, and the IC memo carries its citations. <code className="text-[11.5px]">GET /deals/{'{id}'}/lineage</code> joins them into one graph and serves it for the same run every tab is pinned to, so the chain always describes the numbers on screen rather than a newer or older model run.
+            The pieces already existed separately: each engine emits a per-value trace (the formula, its named inputs, and a pointer at whichever other value fed it — Section 3&apos;s &ldquo;hover any number&rdquo;), the assumption loader records which source produced every input, each extracted field carries the page it was read from, and the IC memo carries its citations. <code className="text-[11.5px]">GET /deals/{'{id}'}/lineage</code> joins them into one graph and serves it for the same run every tab is pinned to, so the chain always describes the numbers on screen rather than a newer or older model run. Each link in that graph also says how it was established: <strong className="text-ink-700">asserted</strong> when the engine that computed the value named the assumption or the upstream value itself, and <strong className="text-ink-700">inferred</strong> when Fondok had to derive the connection from the engine dependency graph instead — a genuine link either way, but only the asserted one is the engine&apos;s own claim, and every deal&apos;s chain carries the count of each.
           </p>
         </Card>
 
@@ -632,7 +632,7 @@ export default function MethodologyPage() {
         <Card className="p-5 mt-4">
           <h4 className="text-[13px] font-semibold text-ink-900 mb-2">What &ldquo;stale&rdquo; means</h4>
           <p className="text-[12.5px] text-ink-600 leading-relaxed">
-            A chain describes one engine run, so it is only as current as that run&apos;s inputs. When a document is uploaded — or the deal record edited — <em>after</em> the run started, the chain is marked <strong className="text-ink-700">stale</strong>. Stale does not mean wrong and it does not hide the chain: the evidence shown is still exactly what produced the numbers you are looking at. It means the deal has moved since, and re-running the model will produce a different chain. It is the same condition Section 7&apos;s <code className="text-[11.5px]">stale_run</code> describes, surfaced on the evidence rather than on a single figure.
+            A chain describes one engine run, so it is only as current as that run&apos;s inputs. When a document is uploaded — or the deal record edited, or a document the run relied on deleted — <em>after</em> the run started, the chain is marked <strong className="text-ink-700">stale</strong>. Stale does not mean wrong and it does not hide the chain: the evidence shown is still exactly what produced the numbers you are looking at. It means the deal has moved since, and re-running the model will produce a different chain. It is the same condition Section 7&apos;s <code className="text-[11.5px]">stale_run</code> describes, surfaced on the evidence rather than on a single figure.
           </p>
         </Card>
       </Section>

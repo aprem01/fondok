@@ -495,8 +495,20 @@ class PartnershipEngine(BaseEngine[PartnershipInputExt, PartnershipOutputExt]):
             tier_allocations=tier_allocations,
             total_distributed=total_distributed,
             contributed_formula="contributed_equity = Σ pro-rata monthly equity draws",
-            contributed_inputs_gp=[ValueInput(name="gp_equity_pct", value=gp_pct)],
-            contributed_inputs_lp=[ValueInput(name="lp_equity_pct", value=lp_pct)],
+            contributed_inputs_gp=[
+                ValueInput(
+                    name="gp_equity_pct",
+                    value=gp_pct,
+                    assumption_key="gp_equity_pct",
+                )
+            ],
+            contributed_inputs_lp=[
+                ValueInput(
+                    name="lp_equity_pct",
+                    value=lp_pct,
+                    assumption_key="lp_equity_pct",
+                )
+            ],
             period_label="month",
             gp_additional=gp_additional,
             lp_additional=lp_additional,
@@ -773,12 +785,31 @@ class PartnershipEngine(BaseEngine[PartnershipInputExt, PartnershipOutputExt]):
         )
         has_additional = (gp_additional + lp_additional) > 0.0
         contributed_inputs_gp = [
-            ValueInput(name="total_equity", value=payload.total_equity),
-            ValueInput(name="gp_equity_pct", value=payload.gp_equity_pct),
+            # total_equity is the capital engine's sized equity; the split is
+            # the deal's ownership assumption. Both asserted here so the
+            # Partnership tab's contributed-equity rows walk back on their own.
+            ValueInput(
+                name="total_equity",
+                value=payload.total_equity,
+                traces_to="capital.equity_amount",
+            ),
+            ValueInput(
+                name="gp_equity_pct",
+                value=payload.gp_equity_pct,
+                assumption_key="gp_equity_pct",
+            ),
         ]
         contributed_inputs_lp = [
-            ValueInput(name="total_equity", value=payload.total_equity),
-            ValueInput(name="lp_equity_pct", value=payload.lp_equity_pct),
+            ValueInput(
+                name="total_equity",
+                value=payload.total_equity,
+                traces_to="capital.equity_amount",
+            ),
+            ValueInput(
+                name="lp_equity_pct",
+                value=payload.lp_equity_pct,
+                assumption_key="lp_equity_pct",
+            ),
         ]
         if has_additional:
             contributed_formula = (

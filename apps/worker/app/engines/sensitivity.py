@@ -176,13 +176,29 @@ def _cell_trace(
             f"{col_variable}={cell.col_value}).{metric}"
         ),
         inputs=[
-            ValueInput(name=row_variable, value=cell.row_value),
-            ValueInput(name=col_variable, value=cell.col_value),
+            # Only the BASE cell runs at the deal's actual assumptions; every
+            # other cell is a deliberate departure from them, so naming the
+            # assumption there would claim the grid's flexed value IS the
+            # underwriting input, which it is not.
+            ValueInput(
+                name=row_variable,
+                value=cell.row_value,
+                assumption_key=row_variable if cell.is_base else None,
+            ),
+            ValueInput(
+                name=col_variable,
+                value=cell.col_value,
+                assumption_key=col_variable if cell.is_base else None,
+            ),
         ],
         note=(
             "Base-case cell (matches the deal's headline metric)."
             if cell.is_base
-            else "Scenario cell — the metric recomputed at this assumption pair."
+            else (
+                "Scenario cell — the metric recomputed at this assumption pair. "
+                f"{row_variable} / {col_variable} are flexed away from the deal's "
+                "assumptions here, so neither is chained to an assumption badge."
+            )
         ),
     )
 
