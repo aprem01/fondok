@@ -24,7 +24,7 @@ from __future__ import annotations
 import json
 import logging
 from datetime import date
-from typing import Annotated, Any
+from typing import Annotated, Any, Literal
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, status
@@ -33,10 +33,20 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..database import get_session
-from .deals import _assert_deal_belongs_to_tenant, get_tenant_id
+from .deals import _assert_deal_belongs_to_tenant, _coerce_overrides, get_tenant_id
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
+
+
+class PropertyNameOriginal(BaseModel):
+    """The document-extracted property name + where it came from (FON-59)."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    value: str
+    doc_name: str | None = None
+    page: int | None = None
 
 
 class MarketOverview(BaseModel):
@@ -48,8 +58,19 @@ class MarketOverview(BaseModel):
     brand: str | None = None
     service: str | None = None
     # The subject hotel's actual name, extracted from the documents (OM wins).
-    # Distinct from the deal row's `name`, which is the user's project name.
+    # Distinct from the deal row's `name`, which is the user's project name —
+    # this endpoint NEVER falls back to the project name (FON-59: the two are
+    # stored independently and displayed distinctly).
     property_name: str | None = None
+    # FON-59 — an analyst may override the extracted name via
+    # ``field_overrides["property_overview.name"]`` (bare string or the
+    # structured ``{value, note}`` record). When set it wins as
+    # ``property_name`` and ``property_name_source`` says so; the extracted
+    # value is preserved in ``property_name_original`` (+ the OM it came
+    # from, when known) so the override can be restored. All null when
+    # nothing applies — additive, older clients ignore them.
+    property_name_original: PropertyNameOriginal | None = None
+    property_name_source: Literal["analyst_override", "document"] | None = None
     # FON-70 — descriptive property metadata extracted from the OM
     # (property_overview.*). None when no document carried the field, so the UI
     # shows a blank rather than a fabricated value. Title / transfer tax are not
@@ -99,14 +120,18 @@ async def _extracted_property_meta(
     it (so the UI shows a blank rather than a fabricated value). Name is
     ``property_overview.name`` (or the STR subject name); the rest are
     ``property_overview.*`` from the OM (FON-59 / FON-70). Rows are OM-first, so
-    the first hit per field is the OM's value. Title (ownership type) and
-    transfer tax are deliberately not surfaced — the OM doesn't carry a title
-    type and transfer tax needs a jurisdiction lookup, so they stay blank."""
+    the first hit per field is the OM's value. When a name is found,
+    ``name_doc_name`` / ``name_page`` carry the source document's filename and
+    1-indexed page (when the extractor recorded one) so the Overview can cite
+    "Original: <name> · <doc> p.<n>" next to an analyst override. Title
+    (ownership type) and transfer tax are deliberately not surfaced — the OM
+    doesn't carry a title type and transfer tax needs a jurisdiction lookup,
+    so they stay blank."""
     out: dict[str, Any] = {}
     rows = await session.execute(
         text(
             """
-            SELECT er.fields, d.doc_type
+            SELECT er.fields, d.doc_type, d.filename
               FROM extraction_results er
               JOIN documents d ON d.id = er.document_id
              WHERE er.deal_id = :deal
@@ -124,6 +149,7 @@ async def _extracted_property_meta(
     )
     for r in rows.fetchall():
         raw = r._mapping.get("fields")
+        doc_name = r._mapping.get("filename")
         if isinstance(raw, str):
             try:
                 raw = json.loads(raw)
@@ -139,6 +165,11 @@ async def _extracted_property_meta(
             if fn in ("property_overview.name", "ttm_performance.subject.name"):
                 if "name" not in out and isinstance(val, str) and val.strip():
                     out["name"] = val.strip()
+                    if isinstance(doc_name, str) and doc_name.strip():
+                        out["name_doc_name"] = doc_name.strip()
+                    page = _coerce_int(f.get("source_page") or f.get("page_number"))
+                    if page is not None and page >= 1:
+                        out["name_page"] = page
             elif fn == "property_overview.year_built":
                 if "year_built" not in out:
                     yb = _coerce_int(val)
@@ -153,6 +184,28 @@ async def _extracted_property_meta(
                 if "labor_type" not in out and isinstance(val, str) and val.strip():
                     out["labor_type"] = val.strip()
     return out
+
+
+# FON-59 — the field_overrides key the Overview writes for a Property Name
+# override. Mirrors the extractor path so the override and the extracted
+# value are addressed by the same name.
+PROPERTY_NAME_OVERRIDE_KEY = "property_overview.name"
+
+
+def _property_name_override(overrides: dict[str, Any]) -> str | None:
+    """The analyst's Property Name override, if one is set.
+
+    Accepts both shapes the app writes: a bare string (legacy) and the
+    structured ``{value, note}`` record every other override uses. A blank /
+    non-string value counts as "no override" so a stray empty save can never
+    blank out the extracted name.
+    """
+    raw = overrides.get(PROPERTY_NAME_OVERRIDE_KEY)
+    if isinstance(raw, dict):
+        raw = raw.get("value")
+    if isinstance(raw, str) and raw.strip():
+        return raw.strip()
+    return None
 
 
 @router.get("/{deal_id}/overview", response_model=MarketOverview)
@@ -172,7 +225,7 @@ async def market_overview(
         await session.execute(
             text(
                 """
-                SELECT city, keys, brand, service
+                SELECT city, keys, brand, service, field_overrides
                   FROM deals
                  WHERE id = :id AND tenant_id = :tenant
                 """
@@ -186,6 +239,7 @@ async def market_overview(
             detail=f"deal {deal_id} not found",
         )
     m = row._mapping
+    overrides = _coerce_overrides(m.get("field_overrides"))
     keys: int | None = None
     if m.get("keys") is not None:
         try:
@@ -213,13 +267,34 @@ async def market_overview(
             trailing_12_occupancy, trailing_12_adr = trailing
     except Exception:  # noqa: BLE001 — overview must never fail on the STR read
         logger.exception("market_overview: trailing-12 STR read failed")
+    # FON-59 — Property Name resolution: analyst override > extracted (OM
+    # first) > null. The deal row's ``name`` (the confidential project name)
+    # is deliberately NOT a fallback here.
+    extracted_name = meta.get("name")
+    name_override = _property_name_override(overrides)
+    property_name_original = (
+        PropertyNameOriginal(
+            value=extracted_name,
+            doc_name=meta.get("name_doc_name"),
+            page=meta.get("name_page"),
+        )
+        if extracted_name
+        else None
+    )
+    property_name_source: Literal["analyst_override", "document"] | None = (
+        "analyst_override" if name_override
+        else "document" if extracted_name
+        else None
+    )
     return MarketOverview(
         deal_id=deal_id,
         market=m.get("city"),
         keys=keys,
         brand=m.get("brand"),
         service=m.get("service"),
-        property_name=meta.get("name"),
+        property_name=name_override or extracted_name,
+        property_name_original=property_name_original,
+        property_name_source=property_name_source,
         year_built=meta.get("year_built"),
         gba_sf=meta.get("gba_sf"),
         labor_type=meta.get("labor_type"),

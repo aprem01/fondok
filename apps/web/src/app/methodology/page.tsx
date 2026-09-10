@@ -180,9 +180,16 @@ export default function MethodologyPage() {
               Kimpton fixture default. Surfaced as a Seed badge with grey tone — no deal-specific data has overridden this yet.
             </BadgeRow>
             <BadgeRow source="deal_row" name="Deal Row">
-              Sourced from the deals table (entered on the create-deal wizard or PATCHed via the API). Property name, city, brand, keys, service level.
+              Sourced from the deals table (entered on the create-deal wizard or PATCHed via the API). Project name, city, brand, keys, service level. The Property Name is not a deal-row field — see below.
             </BadgeRow>
           </div>
+        </Card>
+
+        <Card className="p-5 mb-4">
+          <h4 className="text-[13px] font-semibold text-ink-900 mb-3">Project Name vs Property Name</h4>
+          <p className="text-[12.5px] text-ink-500 leading-relaxed">
+            <span className="font-semibold text-ink-900">Project Name</span> is the analyst&apos;s confidential deal identifier (e.g. &quot;Project Unicorn&quot;) — a deal-row field you set and rename on the Overview; document extraction never writes it. <span className="font-semibold text-ink-900">Property Name</span> is the asset as named in the offering documents (OM first, then the STR subject name) and is never inferred from the Project Name — it shows &quot;—&quot; until the OM is extracted. The two are stored independently and editing one never changes the other. An analyst may override the Property Name from its Overview row: the override is stored as <code className="text-[11.5px]">field_overrides[&quot;property_overview.name&quot;]</code>, the extracted value and its source page are preserved, and &quot;Restore sourced value&quot; drops the override so the extracted name comes back.
+          </p>
         </Card>
 
         <Card className="p-5 mb-4">

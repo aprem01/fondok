@@ -16,10 +16,17 @@
  *  3. WHERE THIS CAME FROM — clicking a provenance-bearing row (Purchase Price)
  *     opens the shared `WhereThisCameFrom` popover with the calculation formula.
  *
+ *  4. FON-59 PROJECT NAME vs PROPERTY NAME — Project Name (deals.name) renders
+ *     directly above Property Name; Property Name never falls back to the
+ *     deal name; Override writes `field_overrides['property_overview.name'] =
+ *     { value, note }`, flips the row to the assumption state, the popover
+ *     cites the original + Restore deletes the key; Rename writes
+ *     `api.deals.update({ name })` and never touches property_overview.name.
+ *
  * NOTE: authored per the task but NOT run here (vitest is executed centrally).
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, fireEvent, cleanup, waitFor } from '@testing-library/react';
+import { render, screen, fireEvent, cleanup, waitFor, within } from '@testing-library/react';
 import React from 'react';
 import type { EngineOutputsResponse, TimelineResponse } from '@/lib/api';
 
@@ -126,9 +133,10 @@ vi.mock('@/lib/hooks/useEngineRun', () => ({
   useEngineRun: () => ({ run: engineRunSpy, running: false, error: null }),
 }));
 
-// api surface — serve the timeline + a bare market overview; spy the PATCH.
+// api surface — serve the timeline + a configurable market overview; spy the PATCH.
 const updateSpy = vi.fn(async () => ({ id: 'deal-uuid-1' }));
 const timelineSpy = vi.fn(async () => TIMELINE);
+const overviewRef: { value: Record<string, unknown> } = { value: {} };
 vi.mock('@/lib/api', async () => {
   const actual = await vi.importActual<typeof import('@/lib/api')>('@/lib/api');
   return {
@@ -138,7 +146,7 @@ vi.mock('@/lib/api', async () => {
       ...actual.api,
       deals: { ...actual.api.deals, update: (...a: unknown[]) => updateSpy(...(a as [])) },
       engines: { ...actual.api.engines, timeline: (...a: unknown[]) => timelineSpy(...(a as [])) },
-      market: { ...actual.api.market, overview: async () => ({}) },
+      market: { ...actual.api.market, overview: async () => overviewRef.value },
     },
   };
 });
@@ -152,11 +160,39 @@ beforeEach(() => {
   updateSpy.mockClear();
   timelineSpy.mockClear();
   engineRunSpy.mockClear();
+  overviewRef.value = {};
   mockDealRef.deal = {
     id: 'deal-uuid-1', keys: 132, deal_type: 'acquisition', return_profile: 'value-add',
     positioning: 'default', brand: 'Kimpton Hotels & Restaurants', field_overrides: {},
   };
 });
+
+// ─── FON-59 helpers ──────────────────────────────────────────────────────
+const EXTRACTED = "Kimpton Angler's South Beach";
+const OVERRIDE_KEY = 'property_overview.name';
+const OVERVIEW_EXTRACTED = {
+  property_name: EXTRACTED,
+  property_name_source: 'document',
+  property_name_original: { value: EXTRACTED, doc_name: 'Anglers OM.pdf', page: 1 },
+};
+
+/** The Overview row element for a General-Information label (label span → left span → row div).
+ *  Scoped outside the popover, whose header repeats the label text. */
+function rowFor(label: string): HTMLElement {
+  const span = screen.getAllByText(label).find((el) => !el.closest('[role="dialog"]'));
+  if (!span) throw new Error(`no Overview row labelled ${label}`);
+  return span.parentElement!.parentElement!;
+}
+/** The value cell text of a row (the right-hand span's last child). */
+function rowValue(label: string): string {
+  const right = rowFor(label).lastElementChild as HTMLElement;
+  return (right.lastElementChild as HTMLElement).textContent ?? '';
+}
+/** The provenance dot's accessible label on a row (null when no dot). */
+function rowDotLabel(label: string): string | null {
+  const dot = (rowFor(label).lastElementChild as HTMLElement).querySelector('[aria-label]');
+  return dot?.getAttribute('aria-label') ?? null;
+}
 
 describe('OverviewTab — engine-sourced KPI tiles (value-add)', () => {
   it('renders the 5 deal-type-aware KPI tiles from the mocked engine outputs', () => {
@@ -246,5 +282,110 @@ describe('OverviewTab — deal-type-aware (development)', () => {
     expect(screen.getByText('Total Dev. Cost')).toBeInTheDocument();
     expect(screen.getByText('Cost / Key')).toBeInTheDocument();
     expect(screen.getByText('$43.00M')).toBeInTheDocument(); // total development cost
+  });
+});
+
+describe('OverviewTab — FON-59 Project Name vs Property Name', () => {
+  it('renders Project Name (deal.name) directly above Property Name, which never falls back to the deal name', async () => {
+    mockDealRef.deal = { ...mockDealRef.deal, name: 'Project Unicorn' };
+    overviewRef.value = {}; // nothing extracted yet
+    render(<OverviewTab projectId="deal-uuid-1" />);
+    await waitFor(() => expect(timelineSpy).toHaveBeenCalled());
+
+    const projectLabel = screen.getByText('Project Name');
+    const propertyLabel = screen.getByText('Property Name');
+    // Project Name precedes Property Name in DOM order (directly above it).
+    expect(projectLabel.compareDocumentPosition(propertyLabel) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(rowFor('Project Name').nextElementSibling).toBe(rowFor('Property Name'));
+
+    expect(rowValue('Project Name')).toBe('Project Unicorn');
+    // The deal name appears exactly once — never as the Property Name.
+    expect(screen.getAllByText('Project Unicorn')).toHaveLength(1);
+    expect(rowValue('Property Name')).toBe('—');
+  });
+
+  it('shows both rows on a development deal too (Property Name "—" when none extracted)', async () => {
+    mockDealRef.deal = { ...mockDealRef.deal, deal_type: 'development', name: 'Project Gulch' };
+    render(<OverviewTab projectId="deal-uuid-1" />);
+    await waitFor(() => expect(timelineSpy).toHaveBeenCalled());
+    expect(rowValue('Project Name')).toBe('Project Gulch');
+    expect(rowValue('Property Name')).toBe('—');
+    expect(screen.getAllByText('Project Gulch')).toHaveLength(1);
+  });
+
+  it('overrides Property Name via field_overrides, flips the row to the assumption state, cites the original and restores', async () => {
+    mockDealRef.deal = { ...mockDealRef.deal, name: 'Project Unicorn' };
+    overviewRef.value = OVERVIEW_EXTRACTED;
+    const { rerender } = render(<OverviewTab projectId="deal-uuid-1" />);
+    expect(await screen.findByText(EXTRACTED)).toBeInTheDocument();
+    expect(rowDotLabel('Property Name')).toMatch(/document/i);
+
+    // Open the popover on the extracted value → Override → type → Save value.
+    fireEvent.click(screen.getByText(EXTRACTED));
+    let dialog = screen.getByRole('dialog', { name: /Where Property Name came from/i });
+    expect(within(dialog).getByText('Document sourced')).toBeInTheDocument();
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Override' }));
+    const input = within(dialog).getByRole('textbox', { name: /Property Name value/i });
+    fireEvent.change(input, { target: { value: 'The Anglers Hotel' } });
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Save value' }));
+
+    await waitFor(() => expect(updateSpy).toHaveBeenCalledTimes(1));
+    expect(updateSpy).toHaveBeenCalledWith('deal-uuid-1', {
+      field_overrides: { [OVERRIDE_KEY]: { value: 'The Anglers Hotel', note: expect.any(String) } },
+    });
+    // The override never writes the project name.
+    expect(JSON.stringify(updateSpy.mock.calls)).not.toContain('"name"');
+
+    // Simulate the deal refresh + worker read-back (override wins, original kept).
+    mockDealRef.deal = {
+      ...mockDealRef.deal,
+      field_overrides: { [OVERRIDE_KEY]: { value: 'The Anglers Hotel', note: 'Analyst override — Overview · Property Name' } },
+    };
+    overviewRef.value = { ...OVERVIEW_EXTRACTED, property_name: 'The Anglers Hotel', property_name_source: 'analyst_override' };
+    rerender(<OverviewTab projectId="deal-uuid-1" />);
+
+    // Row flips: override value, blue assumption dot; Project Name untouched.
+    expect(rowValue('Property Name')).toBe('The Anglers Hotel');
+    expect(rowDotLabel('Property Name')).toMatch(/assumption/i);
+    expect(rowValue('Project Name')).toBe('Project Unicorn');
+
+    // Popover (still open, resolved live) shows Overridden + "Original: <extracted> · <doc> p.<n>" + Restore.
+    dialog = screen.getByRole('dialog', { name: /Where Property Name came from/i });
+    expect(within(dialog).getByText('Overridden')).toBeInTheDocument();
+    expect(within(dialog).getByText('Original')).toBeInTheDocument();
+    expect(within(dialog).getByText(`${EXTRACTED} · Anglers OM.pdf p.1`)).toBeInTheDocument();
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Restore sourced value' }));
+
+    await waitFor(() => expect(updateSpy).toHaveBeenCalledTimes(2));
+    // Restore deletes the key (the extracted value comes back from the worker).
+    expect(updateSpy).toHaveBeenLastCalledWith('deal-uuid-1', { field_overrides: {} });
+  });
+
+  it('renames the project via api.deals.update({ name }) and never writes property_overview.name', async () => {
+    mockDealRef.deal = { ...mockDealRef.deal, name: 'Project Unicorn' };
+    overviewRef.value = OVERVIEW_EXTRACTED;
+    render(<OverviewTab projectId="deal-uuid-1" />);
+    expect(await screen.findByText(EXTRACTED)).toBeInTheDocument();
+
+    fireEvent.click(screen.getByText('Project Unicorn'));
+    const dialog = screen.getByRole('dialog', { name: /Where Project Name came from/i });
+    // An analyst input, not a document row — no Override / View source here.
+    expect(within(dialog).getByText('Assumption')).toBeInTheDocument();
+    expect(within(dialog).queryByRole('button', { name: 'Override' })).not.toBeInTheDocument();
+    expect(within(dialog).queryByRole('button', { name: /View source/ })).not.toBeInTheDocument();
+
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Rename' }));
+    const input = within(dialog).getByRole('textbox', { name: /Project Name value/i });
+    fireEvent.change(input, { target: { value: 'Project Pelican' } });
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Save name' }));
+
+    await waitFor(() => expect(updateSpy).toHaveBeenCalledTimes(1));
+    expect(updateSpy).toHaveBeenCalledWith('deal-uuid-1', { name: 'Project Pelican' });
+    expect(JSON.stringify(updateSpy.mock.calls)).not.toContain(OVERRIDE_KEY);
+    expect(JSON.stringify(updateSpy.mock.calls)).not.toContain('field_overrides');
+    // Property Name is untouched by the rename.
+    expect(rowValue('Property Name')).toBe(EXTRACTED);
+    // No model re-run for a rename — names feed no engine.
+    expect(engineRunSpy).not.toHaveBeenCalled();
   });
 });

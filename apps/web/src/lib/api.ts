@@ -1117,6 +1117,39 @@ export interface AdminCostResponse {
   by_deal: AdminCostByDeal[];
 }
 
+/** FON-59 — the document-extracted property name + where it came from. */
+export interface PropertyNameOriginal {
+  value: string;
+  doc_name?: string | null;
+  page?: number | null;
+}
+
+/**
+ * GET /market/{deal_id}/overview. `property_name` resolves analyst override
+ * (`field_overrides["property_overview.name"]`) > extracted (OM first) > null —
+ * never the deal's project `name`. `property_name_original` keeps the extracted
+ * value (+ source doc) while an override is active so it can be restored.
+ * FON-59 fields are additive (older workers omit them).
+ */
+export interface MarketOverviewResult {
+  deal_id?: string;
+  market?: string | null;
+  keys?: number | null;
+  brand?: string | null;
+  service?: string | null;
+  property_name?: string | null;
+  property_name_original?: PropertyNameOriginal | null;
+  property_name_source?: 'analyst_override' | 'document' | null;
+  year_built?: number | null;
+  gba_sf?: number | null;
+  labor_type?: string | null;
+  trailing_12_occupancy?: number | null;
+  trailing_12_adr?: number | null;
+  occupancy_index?: number | null;
+  adr_index?: number | null;
+  revpar_index?: number | null;
+}
+
 export const api = {
   health: () => request<{ status: string; version: string; db: string }>('GET', '/health'),
   admin: {
