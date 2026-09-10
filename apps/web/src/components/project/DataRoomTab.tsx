@@ -42,7 +42,7 @@ import { YearMismatchBanner } from './wizard/YearMismatchBanner';
 import { DocumentCoverage, type CoverageFile } from './DocumentCoverage';
 import { WORKSHEET_ROWS } from './pl/GroundedWorksheet';
 import { useDeal } from '@/lib/hooks/useDeal';
-import { buildHistoricalYears } from '@/lib/hooks/useHistoricals';
+import { useHistoricals } from '@/lib/hooks/useHistoricals';
 import { buildReviewState, histHasData } from '@/lib/reviewState';
 
 // FON-41 — doc types whose data lands in the Financials historical view. Their
@@ -266,16 +266,16 @@ export default function DataRoomTab({ projectId }: { projectId: number | string 
     useDocuments(rawId);
 
   // FON-41 — the SAME historical columns + review state the Financials
-  // worksheet renders, built from the documents / extractions already loaded
-  // here (no second fetch). A financial doc's badge = flagged cells in its
-  // column; the global count = the sum. `keys` gates the column builder
+  // worksheet renders: the same hook, over this tab's own documents /
+  // extractions (no second fetch). A financial doc's badge = flagged cells in
+  // its column; the global count = the sum. `keys` gates the column builder
   // exactly as it gates the worksheet, so the two can't diverge.
   const { deal } = useDeal(rawId);
-  const dealKeys = deal?.keys ?? 0;
-  const reviewState = useMemo(() => {
-    const years = buildHistoricalYears(documents, extractions, dealKeys).filter(histHasData);
-    return buildReviewState(documents, extractions, WORKSHEET_ROWS, years);
-  }, [documents, extractions, dealKeys]);
+  const { years: histYearsAll } = useHistoricals(rawId, { keys: deal?.keys, documents, extractions });
+  const reviewState = useMemo(
+    () => buildReviewState(documents, extractions, WORKSHEET_ROWS, histYearsAll.filter(histHasData)),
+    [documents, extractions, histYearsAll],
+  );
 
   // FON-24: deep-link from a validation finding → open the cited doc's
   // review and highlight the cited field. A finding on the Analysis tab

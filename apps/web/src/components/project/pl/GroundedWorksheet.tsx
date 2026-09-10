@@ -39,7 +39,8 @@ import { useTrace } from '@/lib/hooks/useValueTrace';
 import { ProvenanceDot } from '@/components/design';
 import { useDeal } from '@/lib/hooks/useDeal';
 import { useDocuments } from '@/lib/hooks/useDocuments';
-import { useHistoricals } from '@/lib/hooks/useHistoricals';
+import { isHistoricalSourceDoc, useHistoricals } from '@/lib/hooks/useHistoricals';
+import TabLoadingSkeleton from '@/components/project/TabLoadingSkeleton';
 import { baseYearLabel, type HistYear } from '@/components/project/pl/HistoricalsSection';
 import { buildReviewState, cellKey, cellsForYear, histHasData, histValue, type ReviewRow } from '@/lib/reviewState';
 import { useSource } from '@/lib/hooks/useDealProvenance';
@@ -254,9 +255,12 @@ export default function GroundedWorksheet({
   dealId: string | number;
 }) {
   const rawId = String(dealId);
-  const { outputs, refresh } = useEngineOutputs(rawId);
-  const { deal, refresh: refreshDeal } = useDeal(rawId);
-  const { documents, extractions, refreshExtraction } = useDocuments(rawId);
+  const { outputs, refresh, settled: outputsSettled } = useEngineOutputs(rawId);
+  const { deal, error: dealError, refresh: refreshDeal } = useDeal(rawId);
+  const {
+    documents, extractions, refreshExtraction,
+    settled: documentsSettled, extractionFailures,
+  } = useDocuments(rawId);
   const { toast } = useToast();
   const { run, status } = useEngineRun(rawId, 'returns', { runMode: 'all' });
   const running = status === 'running' || status === 'queued';
@@ -289,10 +293,18 @@ export default function GroundedWorksheet({
   const fbY0 = useMemo(() => (getEngineField<Record<string, unknown>[]>(outputs, 'fb', 'years') ?? [])[0] ?? {}, [outputs]);
   const revY0 = useMemo(() => (getEngineField<Record<string, unknown>[]>(outputs, 'revenue', 'years') ?? [])[0] ?? {}, [outputs]);
 
-  // Multi-year grounded columns — reuses HistoricalsSection's tested loader
-  // (endpoint + multi-doc fallback) via useHistoricals. Keep the last 4
-  // populated years; empty on deals with no extracted P&Ls (Model col alone).
-  const { years: allHistYears } = useHistoricals(rawId, { keys: deal?.keys });
+  // Multi-year grounded columns, built from the SAME documents + extractions
+  // the review state (and the Data Room badge) reads — FON-41: the hook used
+  // to run its own serial fetch chain after this component mounted, and until
+  // it finished the grid had no columns while the Data Room already counted
+  // "N to review". One state, one builder, both surfaces.
+  const { years: allHistYears, loading: histLoading } = useHistoricals(rawId, {
+    keys: deal?.keys,
+    documents,
+    extractions,
+    documentsSettled,
+    extractionFailures,
+  });
   const populatedHistYears = useMemo(() => allHistYears.filter(histHasData), [allHistYears]);
   // FON-15 — render EVERY available normalized period, not a fixed last-4
   // window. Any year the analyst uploaded (2019, a partial/YTD 2025, …) is
@@ -546,10 +558,27 @@ export default function GroundedWorksheet({
     [overrides, rawId, refreshDeal, run, refresh, toast],
   );
 
-  if (num(expY0['total_revenue']) === 0) {
+  // FON-41 (Sam QA 9/9): the empty state used to render whenever the engine's
+  // Year-0 revenue was 0 — which is also true while outputs, the deal and the
+  // extractions are still loading, so a complete deal showed "Run the model…"
+  // for ~50 s. Hold a skeleton until every input has settled (this component's
+  // own engine-outputs fetch, the deal row, the document list + extractions);
+  // only then is the empty state a true statement about the deal.
+  const dealPending = !deal && !dealError;
+  if (!outputsSettled || dealPending || histLoading) {
     return (
-      <Card className="p-6 text-[13px] text-ink-500">
-        Run the model (upload financials + run the engines) to populate the worksheet.
+      <div data-testid="worksheet-loading">
+        <TabLoadingSkeleton rows={10} />
+      </div>
+    );
+  }
+  if (histYears.length === 0) {
+    const hasStatements = documents.some(isHistoricalSourceDoc);
+    return (
+      <Card className="p-6 text-[13px] text-ink-500" data-testid="worksheet-empty">
+        {hasStatements
+          ? 'Extracted statements are present, but no historical column could be built yet — the deal’s key count is missing or no P&L lines were recognized. Check the statements in the Data Room.'
+          : 'No extracted financial statements yet — upload a T-12 or annual P&L in the Data Room; each extracted year appears here as a column.'}
       </Card>
     );
   }

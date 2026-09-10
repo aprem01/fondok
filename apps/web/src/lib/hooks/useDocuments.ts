@@ -41,10 +41,16 @@ function publishExtraction(
 export interface DocumentsState {
   documents: WorkerDocument[];
   loading: boolean;
+  /** FON-41: true once the first document-list fetch has completed (success
+   *  or failure) — lets consumers hold a skeleton instead of an empty state. */
+  settled: boolean;
   error: string | null;
   uploading: boolean;
   /** Per-doc extraction results, keyed by document id. */
   extractions: Record<string, ExtractionResult | undefined>;
+  /** FON-41: docs whose extraction fetch gave up (3 consecutive errors), so a
+   *  consumer waiting on "every extraction loaded" doesn't wait forever. */
+  extractionFailures: Record<string, boolean>;
   refresh: () => void;
   /** FON-23: force-refetch one doc's extraction after an analyst review. */
   refreshExtraction: (docId: string) => Promise<void>;
@@ -57,6 +63,8 @@ export function useDocuments(dealId: string | null | undefined): DocumentsState 
     Record<string, ExtractionResult | undefined>
   >({});
   const [loading, setLoading] = useState<boolean>(false);
+  const [settled, setSettled] = useState<boolean>(false);
+  const [extractionFailures, setExtractionFailures] = useState<Record<string, boolean>>({});
   const [error, setError] = useState<string | null>(null);
   const [uploading, setUploading] = useState(false);
   const tick = useRef(0);
@@ -66,6 +74,7 @@ export function useDocuments(dealId: string | null | undefined): DocumentsState 
   const refresh = useCallback(() => {
     if (!isWorkerConnected() || !idStr || /^\d+$/.test(idStr)) {
       setLoading(false);
+      setSettled(true);
       return;
     }
     const localTick = ++tick.current;
@@ -86,6 +95,7 @@ export function useDocuments(dealId: string | null | undefined): DocumentsState 
       .finally(() => {
         if (localTick !== tick.current) return;
         setLoading(false);
+        setSettled(true);
       });
     return () => ctrl.abort();
   }, [idStr]);
@@ -181,6 +191,7 @@ export function useDocuments(dealId: string | null | undefined): DocumentsState 
           .then((r) => {
             errorStreak = 0;
             setExtractions((prev) => ({ ...prev, [d.id]: r }));
+            setExtractionFailures((prev) => (prev[d.id] ? { ...prev, [d.id]: false } : prev));
             const finalStatus = r?.status as string | undefined;
             if (
               finalStatus === 'EXTRACTED' ||
@@ -196,7 +207,9 @@ export function useDocuments(dealId: string | null | undefined): DocumentsState 
             if (errorStreak >= 3) {
               // Give up on this doc for the lifetime of the effect —
               // any user interaction that changes the docs list will
-              // rebuild the effect and start over.
+              // rebuild the effect and start over. Record it so a
+              // consumer waiting on this extraction can stop waiting.
+              setExtractionFailures((prev) => ({ ...prev, [d.id]: true }));
               stop();
             }
           });
@@ -237,9 +250,11 @@ export function useDocuments(dealId: string | null | undefined): DocumentsState 
   return {
     documents,
     loading,
+    settled,
     error,
     uploading,
     extractions,
+    extractionFailures,
     refresh,
     refreshExtraction,
     upload,

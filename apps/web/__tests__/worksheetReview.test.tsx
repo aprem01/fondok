@@ -80,11 +80,21 @@ const OUTPUTS = {
   },
 } as unknown as EngineOutputsResponse;
 
+// Read at render time (the factories are hoisted) so the loading-gate tests can
+// drive each input independently: engine outputs settled?, deal loaded?,
+// historicals loading? / present?
+let SETTLED = true;
+let OUTPUTS_OVERRIDE: EngineOutputsResponse | null | undefined = undefined;
+let DEAL_OVERRIDE: { deal: unknown; error: string | null } | null = null;
+let HIST_OVERRIDE: { years?: unknown[]; loading?: boolean } | null = null;
 vi.mock('@/lib/hooks/useEngineOutputs', async () => {
   const actual = await vi.importActual<typeof import('@/lib/hooks/useEngineOutputs')>('@/lib/hooks/useEngineOutputs');
   return {
     ...actual,
-    useEngineOutputs: () => ({ outputs: OUTPUTS, previous: null, loading: false, settled: true, lastRunAt: null, refresh: vi.fn(async () => {}) }),
+    useEngineOutputs: () => ({
+      outputs: OUTPUTS_OVERRIDE === undefined ? OUTPUTS : OUTPUTS_OVERRIDE,
+      previous: null, loading: !SETTLED, settled: SETTLED, lastRunAt: null, refresh: vi.fn(async () => {}),
+    }),
   };
 });
 vi.mock('@/lib/hooks/useEngineRun', () => ({
@@ -92,8 +102,8 @@ vi.mock('@/lib/hooks/useEngineRun', () => ({
 }));
 vi.mock('@/lib/hooks/useDeal', () => ({
   useDeal: () => ({
-    deal: { id: DEAL_ID, keys: KEYS, field_overrides: {} },
-    status: null, loading: false, error: null, fromMock: false, refresh: vi.fn(),
+    deal: DEAL_OVERRIDE ? DEAL_OVERRIDE.deal : { id: DEAL_ID, keys: KEYS, field_overrides: {} },
+    status: null, loading: false, error: DEAL_OVERRIDE ? DEAL_OVERRIDE.error : null, fromMock: false, refresh: vi.fn(),
   }),
 }));
 vi.mock('@/lib/hooks/useDealProvenance', () => ({ useSource: () => null }));
@@ -103,13 +113,16 @@ vi.mock('@/components/ui/Toast', () => ({ useToast: () => ({ toast: vi.fn() }) }
 // ── documents: STATEFUL mock so refreshExtraction() re-renders with the
 //    worker's post-accept field, exactly like the real hook does. ──────────
 let LIVE_AFTER_REFRESH: Record<string, ExtractionResult> = {};
+let DOCS_OVERRIDE: typeof DOCS | null = null;
 vi.mock('@/lib/hooks/useDocuments', async () => {
   const ReactMod = await import('react');
   return {
     useDocuments: () => {
       const [extractions, setExtractions] = ReactMod.useState<Record<string, ExtractionResult | undefined>>(EXTRACTIONS);
       return {
-        documents: DOCS,
+        documents: DOCS_OVERRIDE ?? DOCS,
+        settled: true,
+        extractionFailures: {},
         loading: false,
         error: null,
         uploading: false,
@@ -133,7 +146,14 @@ vi.mock('@/lib/hooks/useHistoricals', async () => {
   const { histHasData } = await import('@/lib/reviewState');
   const fx = await import('./helpers/fon41Fixture');
   const years = actual.buildHistoricalYears(fx.DOCS, fx.EXTRACTIONS, fx.KEYS).filter(histHasData);
-  return { ...actual, useHistoricals: () => ({ years, keys: fx.KEYS, loading: false }) };
+  return {
+    ...actual,
+    useHistoricals: () => ({
+      years: HIST_OVERRIDE?.years ?? years,
+      keys: fx.KEYS,
+      loading: HIST_OVERRIDE?.loading ?? false,
+    }),
+  };
 });
 
 import GroundedWorksheet from '@/components/project/pl/GroundedWorksheet';
@@ -144,6 +164,11 @@ const scrollSpy = vi.fn();
 beforeEach(() => {
   PARAMS = {};
   LIVE_AFTER_REFRESH = {};
+  SETTLED = true;
+  OUTPUTS_OVERRIDE = undefined;
+  DEAL_OVERRIDE = null;
+  HIST_OVERRIDE = null;
+  DOCS_OVERRIDE = null;
   reviewFieldSpy.mockClear();
   scrollSpy.mockClear();
   // jsdom has no scrollIntoView; the deep-link focus calls it on the row.
@@ -229,6 +254,64 @@ describe('Historicals worksheet — SOURCE panel is pinned to the column’s own
     expect(screen.getByText('2019 P&L.xlsx')).toBeInTheDocument();
     expect(screen.queryByText('2023 P&L.xlsx')).not.toBeInTheDocument();
     expect(screen.getByText('60% confidence')).toBeInTheDocument();
+  });
+});
+
+describe('Historicals worksheet — loading gate before any empty state (FON-41a follow-up, Sam QA 9/9)', () => {
+  const EMPTY = /No extracted financial statements yet/;
+
+  it('holds a skeleton while this component’s own engine-outputs fetch is unsettled', () => {
+    SETTLED = false;
+    render(<GroundedWorksheet dealId={DEAL_ID} />);
+    expect(screen.getByTestId('worksheet-loading')).toBeInTheDocument();
+    expect(screen.queryByText(EMPTY)).not.toBeInTheDocument();
+    expect(screen.queryByRole('table')).not.toBeInTheDocument();
+  });
+
+  it('holds a skeleton while the deal row is still loading', () => {
+    DEAL_OVERRIDE = { deal: null, error: null };
+    render(<GroundedWorksheet dealId={DEAL_ID} />);
+    expect(screen.getByTestId('worksheet-loading')).toBeInTheDocument();
+  });
+
+  it('holds a skeleton while the historicals (documents / extractions) are still loading', () => {
+    HIST_OVERRIDE = { years: [], loading: true };
+    render(<GroundedWorksheet dealId={DEAL_ID} />);
+    expect(screen.getByTestId('worksheet-loading')).toBeInTheDocument();
+    expect(screen.queryByText(EMPTY)).not.toBeInTheDocument();
+  });
+
+  it('shows the true empty state only once everything has settled with no columns (no statements uploaded)', () => {
+    DOCS_OVERRIDE = [];
+    HIST_OVERRIDE = { years: [], loading: false };
+    render(<GroundedWorksheet dealId={DEAL_ID} />);
+    expect(screen.queryByTestId('worksheet-loading')).not.toBeInTheDocument();
+    expect(screen.getByTestId('worksheet-empty')).toHaveTextContent(EMPTY);
+  });
+
+  it('says so honestly when statements exist but no column could be built (e.g. key count missing)', () => {
+    HIST_OVERRIDE = { years: [], loading: false };
+    render(<GroundedWorksheet dealId={DEAL_ID} />);
+    expect(screen.queryByTestId('worksheet-loading')).not.toBeInTheDocument();
+    expect(screen.getByTestId('worksheet-empty')).toHaveTextContent(/Extracted statements are present, but no historical column could be built/);
+    expect(screen.queryByText(EMPTY)).not.toBeInTheDocument();
+  });
+
+  it('renders the historical grid from extracted statements even before any engine run (outputs null)', () => {
+    OUTPUTS_OVERRIDE = null;
+    render(<GroundedWorksheet dealId={DEAL_ID} />);
+    expect(screen.queryByTestId('worksheet-loading')).not.toBeInTheDocument();
+    expect(screen.queryByTestId('worksheet-empty')).not.toBeInTheDocument();
+    expect(pill('2019')).toBeInTheDocument();
+    expect(screen.getAllByRole('button', { name: RED_CELL })).toHaveLength(EXPECTED.total);
+  });
+
+  it('a failed deal fetch does not hold the skeleton forever', () => {
+    DEAL_OVERRIDE = { deal: null, error: 'boom' };
+    HIST_OVERRIDE = { years: [], loading: false };
+    render(<GroundedWorksheet dealId={DEAL_ID} />);
+    expect(screen.queryByTestId('worksheet-loading')).not.toBeInTheDocument();
+    expect(screen.getByTestId('worksheet-empty')).toBeInTheDocument();
   });
 });
 
