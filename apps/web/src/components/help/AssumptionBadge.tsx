@@ -3,6 +3,9 @@ import { Database, Sparkles, Pencil, FileText, BarChart3, Map, ExternalLink } fr
 import { useRouter } from 'next/navigation';
 import { cn } from '@/lib/format';
 import type { AssumptionSource } from '@/lib/api';
+import {
+  SOURCE_BADGE_FROM_REGISTRY, SOURCE_EXPLANATION_FROM_REGISTRY,
+} from '@/lib/ontology/adapters';
 import { Tooltip } from './Tooltip';
 
 /**
@@ -131,38 +134,62 @@ type SourceMeta = {
   Icon: typeof Database;
 };
 
-const SOURCE_META: Record<AssumptionSource, SourceMeta> = {
+/**
+ * Phase 1.4 — the badge TEXT and the set of labels come from the generated
+ * registry: ``label`` is ``SOURCES[id].badge`` and ``AssumptionSource`` is the
+ * registry's ``SourceId``. All 12 badge strings this map hand-maintained match
+ * the registry byte-for-byte; the widening is that the six labels the worker
+ * emits which this map never had — ``str_segmentation_default``, ``pip_om``,
+ * ``pip_user``, ``capex_ffe_default``, ``roi_user``, ``partnership_doc`` — now
+ * badge as themselves instead of falling through to ``SOURCE_META.seed``. A
+ * PIP read off the OM used to render "Seed".
+ *
+ * TONE, ICON and TOOLTIP COPY stay hand-authored. The tooltip is the wording
+ * Sam reads (the seed line is quoted verbatim on /methodology), so a refactor
+ * must not touch it — where the registry's explanation differs, the web text
+ * below wins and the difference is recorded in
+ * ``lib/ontology/DRIFT_NOTES.web.md``. The six new labels have no web copy and
+ * take the registry's explanation.
+ */
+const TONE = {
+  neutral: 'bg-ink-300/20 text-ink-700 border-ink-300/40',
+  grounded: 'bg-success-50 text-success-700 border-success-500/30',
+  brand: 'bg-brand-50 text-brand-700 border-brand-500/30',
+  input: 'bg-blue-50 text-blue-700 border-blue-500/30',
+  warn: 'bg-warn-50 text-warn-700 border-warn-500/30',
+} as const;
+
+/** Hand-authored presentation per source. ``tooltip`` omitted → the registry's
+ *  explanation is used. */
+type SourceStyle = { tone: string; Icon: typeof Database; tooltip?: string };
+
+const SOURCE_STYLE: Record<AssumptionSource, SourceStyle> = {
   seed: {
-    label: 'Seed',
-    tone: 'bg-ink-300/20 text-ink-700 border-ink-300/40',
+    tone: TONE.neutral,
     tooltip:
       'Kimpton fixture default — no deal-specific data has overridden this yet. Upload an OM / T-12 / CBRE Horizons doc to ground it.',
     Icon: Sparkles,
   },
   deal_row: {
-    label: 'Deal',
-    tone: 'bg-ink-300/20 text-ink-700 border-ink-300/40',
+    tone: TONE.neutral,
     tooltip:
       'Sourced from the deals table (entered on the create-deal wizard or PATCHed via the API).',
     Icon: Database,
   },
   t12_actual: {
-    label: 'T-12',
-    tone: 'bg-success-50 text-success-700 border-success-500/30',
+    tone: TONE.grounded,
     tooltip:
       'Year-1 actual from the deal’s extracted T-12. Out-years grown forward at the configured expense / revenue growth rate.',
     Icon: BarChart3,
   },
   cbre_horizons: {
-    label: 'CBRE',
-    tone: 'bg-brand-50 text-brand-700 border-brand-500/30',
+    tone: TONE.brand,
     tooltip:
       'Forecast curve extracted from an uploaded CBRE Horizons report (subject submarket / chain-scale segment).',
     Icon: Map,
   },
   pnl_benchmark: {
-    label: 'PNL Bench',
-    tone: 'bg-brand-50 text-brand-700 border-brand-500/30',
+    tone: TONE.brand,
     tooltip:
       'Industry benchmark margin (HotStats-equivalent P&L benchmark doc) applied as a USALI ratio override.',
     Icon: BarChart3,
@@ -170,31 +197,27 @@ const SOURCE_META: Record<AssumptionSource, SourceMeta> = {
   // Wave 2 P2.7 — analyst's in-house portfolio P&L roll-up. Outranks
   // PNL Bench (generic HostStats) and CBRE Horizons for op-ratios.
   portfolio_pnl: {
-    label: 'Portfolio',
-    tone: 'bg-brand-50 text-brand-700 border-brand-500/30',
+    tone: TONE.brand,
     tooltip:
       "Ratio sourced from your firm's in-house portfolio P&L benchmark — aggregated across hotels you already operate at this chain scale. Outranks generic HostStats / CBRE because you own the underlying P&Ls.",
     Icon: BarChart3,
   },
   om_comps: {
-    label: 'OM Comps',
-    tone: 'bg-brand-50 text-brand-700 border-brand-500/30',
+    tone: TONE.brand,
     tooltip:
       'Median cap rate derived from the OM’s "Comparable Sales" transaction-comps table.',
     Icon: FileText,
   },
   om_broker: {
-    label: 'OM',
-    tone: 'bg-brand-50 text-brand-700 border-brand-500/30',
+    tone: TONE.brand,
     tooltip:
       'Broker proforma value extracted from the Offering Memorandum.',
     Icon: FileText,
   },
   analyst_override: {
-    label: 'Override',
     // FON-65 — analyst override is an "input/assumption" value, so it uses the
     // canonical blue (matches KIND_TONE.override + the DATA KEY), not amber.
-    tone: 'bg-blue-50 text-blue-700 border-blue-500/30',
+    tone: TONE.input,
     tooltip:
       'Analyst override set via the Overview inline editor. Wins over every other source.',
     Icon: Pencil,
@@ -204,8 +227,7 @@ const SOURCE_META: Record<AssumptionSource, SourceMeta> = {
   // starting_adr are pulled from the BASE scenario's Month-12 forecast
   // point so the revenue engine inherits the forecast's bottom-up math.
   str_forecast: {
-    label: 'STR Fcst',
-    tone: 'bg-brand-50 text-brand-700 border-brand-500/30',
+    tone: TONE.brand,
     tooltip:
       'Seeded from STR — the Market tab’s comp-set rates (“Use STR rates in the model”), the subject TTM, or the BASE forward-forecast scenario (Month 12). Revert from the Market tab or Financials → Projections to fall back to T-12 / CBRE / seed defaults.',
     Icon: BarChart3,
@@ -215,8 +237,7 @@ const SOURCE_META: Record<AssumptionSource, SourceMeta> = {
   // coverage too low, or a loader failure) — the model stayed on the T-12
   // base and this badge says so rather than claiming STR is active.
   str_forecast_unavailable: {
-    label: 'STR unavailable',
-    tone: 'bg-warn-50 text-warn-700 border-warn-500/30',
+    tone: TONE.warn,
     tooltip:
       'STR rates were requested but could not populate (no STR Trend extraction or coverage too low) — the model is on the T-12 base. Upload an STR Trend report or use the Market tab’s comp-set rates.',
     Icon: BarChart3,
@@ -224,10 +245,29 @@ const SOURCE_META: Record<AssumptionSource, SourceMeta> = {
   // FON-69 — an analyst RevPAR-growth override derives adr_growth so
   // operating NOI moves: adr_growth = (1 + revpar_growth) / (1 + occupancy_growth) − 1.
   derived_from_revpar_growth: {
-    label: 'Derived from RevPAR growth',
-    tone: 'bg-blue-50 text-blue-700 border-blue-500/30',
+    tone: TONE.input,
     tooltip:
       'ADR growth derived from the analyst’s RevPAR-growth override — (1 + RevPAR growth) ÷ (1 + occupancy growth) − 1 — with the occupancy path held. Set ADR growth explicitly to take direct control.',
     Icon: Pencil,
   },
+  // ── Phase 1.4: labels the worker has always emitted that this map did not
+  //    know. They badged as "Seed". Tooltip copy comes from the registry.
+  str_segmentation_default: { tone: TONE.brand, Icon: BarChart3 },
+  pip_om: { tone: TONE.brand, Icon: FileText },
+  pip_user: { tone: TONE.input, Icon: Pencil },
+  capex_ffe_default: { tone: TONE.neutral, Icon: Sparkles },
+  roi_user: { tone: TONE.input, Icon: Pencil },
+  partnership_doc: { tone: TONE.brand, Icon: FileText },
 };
+
+const SOURCE_META: Record<AssumptionSource, SourceMeta> = Object.fromEntries(
+  (Object.keys(SOURCE_STYLE) as AssumptionSource[]).map((id) => [
+    id,
+    {
+      label: SOURCE_BADGE_FROM_REGISTRY[id],
+      tone: SOURCE_STYLE[id].tone,
+      Icon: SOURCE_STYLE[id].Icon,
+      tooltip: SOURCE_STYLE[id].tooltip ?? SOURCE_EXPLANATION_FROM_REGISTRY[id],
+    },
+  ]),
+) as Record<AssumptionSource, SourceMeta>;

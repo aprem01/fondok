@@ -6,6 +6,7 @@
 
 import { getCurrentOrgId, getClerkSessionToken } from './auth';
 import type { ReasonCode } from './ontology/reasons.generated';
+import type { SourceId } from './ontology/concepts.generated';
 
 const BASE = (process.env.NEXT_PUBLIC_WORKER_URL ?? '').replace(/\/+$/, '');
 
@@ -62,31 +63,23 @@ export interface WorkerDealStatus {
   last_event: string | null;
 }
 
-/** Per-assumption provenance map. Sources:
- *    seed              — Kimpton fixture default
- *    deal_row          — set on the deals table (keys, purchase_price)
- *    t12_actual        — extracted from an uploaded T-12
- *    cbre_horizons     — extracted from a CBRE Horizons forecast
- *    pnl_benchmark     — extracted from a generic P&L benchmark (HotStats-style)
- *    portfolio_pnl     — analyst's in-house portfolio P&L benchmark
- *                        (Wave 2 P2.7; outranks pnl_benchmark + cbre_horizons
- *                         for op-ratios because the firm's own portfolio is
- *                         the most credible peer set)
- *    om_comps          — median of OM transaction comps (exit_cap_rate)
- *    om_broker         — broker proforma value on the OM
- *    analyst_override  — set via deal.field_overrides
- *    str_forecast      — Year-1 occupancy / ADR seeded from STR (the Market
- *                        tab's comp-set rates, the subject TTM, or the
- *                        forward forecast)
- *    str_forecast_unavailable — (FON-61) the STR seed was requested but
- *                        could not populate; the value fell back to T-12
- *    derived_from_revpar_growth — (FON-69) adr_growth derived from an
- *                        analyst RevPAR-growth override
+/**
+ * Per-assumption provenance label.
+ *
+ * Phase 1.4: this is the generated registry's ``SourceId`` — one entry per
+ * ``SOURCE_*`` constant in ``apps/worker/app/services/engine_runner.py``,
+ * generated from ``concepts.yaml`` and CI-gated, so the union cannot fall
+ * behind the worker again. It used to be a hand-written 12-label union while
+ * the worker emitted 18; the six it did not know
+ * (``str_segmentation_default``, ``pip_om``, ``pip_user``,
+ * ``capex_ffe_default``, ``roi_user``, ``partnership_doc``) fell back to the
+ * ``seed`` badge, so a PIP read off the OM rendered as "Seed".
+ *
+ * Each label's human name, badge text, explanation and kind live in
+ * ``SOURCES`` (``lib/ontology/concepts.generated``); the web's colour mapping
+ * is in ``lib/provenance``.
  */
-export type AssumptionSource =
-  | 'seed' | 'deal_row' | 't12_actual' | 'cbre_horizons'
-  | 'pnl_benchmark' | 'portfolio_pnl' | 'om_comps' | 'om_broker' | 'analyst_override'
-  | 'str_forecast' | 'str_forecast_unavailable' | 'derived_from_revpar_growth';
+export type AssumptionSource = SourceId;
 
 /** Multi-deal pipeline row (Wave 3 W3.5). One per active deal in the
  *  current tenant, enriched with the LATEST engine-output snapshot per
