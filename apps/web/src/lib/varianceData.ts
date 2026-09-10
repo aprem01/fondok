@@ -63,6 +63,10 @@ export interface VarianceFlag {
   impact_basis?: 'noi' | 'revenue' | 'expense' | 'other';
   /** FON-54a — raw extractor rows consolidated into this flag (Technical detail). */
   raw_fields?: VarianceRawField[];
+  /** FON-54a — the broker and T-12 figures are not on the same basis; needs review, no severity. */
+  basis_mismatch?: boolean;
+  unit_note?: string | null;
+  source_doc_type?: string | null;
 }
 
 /** FON-54a — one raw broker-field comparison behind a consolidated flag. */
@@ -75,6 +79,12 @@ export interface VarianceRawField {
   delta?: number | null;
   delta_pct?: number | null;
   source_page?: number | null;
+  source_doc_type?: string | null;
+  source_document?: string | null;
+  unit_note?: string | null;
+  /** Set ⇒ the row was NOT admitted as the broker's claim (and why). */
+  excluded_reason?: string | null;
+  basis_mismatch?: boolean;
 }
 
 // --- Severity counts (kept in sync with flags array below) ----------------

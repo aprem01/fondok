@@ -1960,6 +1960,14 @@ export interface VarianceRawFieldResult {
   delta?: number | null;
   delta_pct?: number | null;
   source_page?: number | null;
+  /** FON-54a input honesty: where the row came from / what was done to it. */
+  source_doc_type?: string | null;
+  source_document?: string | null;
+  unit_note?: string | null;
+  /** Set ⇒ the row was NOT admitted as the broker's claim (and why). */
+  excluded_reason?: string | null;
+  /** |delta_pct| beyond the plausibility guard — not on the same basis. */
+  basis_mismatch?: boolean;
 }
 
 /**
@@ -1985,6 +1993,11 @@ export interface VarianceFlagResult {
   concept_label?: string | null;
   impact_basis?: VarianceImpactBasis | null;
   raw_fields?: VarianceRawFieldResult[];
+  source_doc_type?: string | null;
+  source_document?: string | null;
+  unit_note?: string | null;
+  /** Every admitted row failed the plausibility guard — "Basis mismatch — needs review". */
+  basis_mismatch?: boolean;
 }
 
 export interface VarianceReportResult {

@@ -118,6 +118,10 @@ class VarianceBrokerField(BaseModel):
     value: float
     source_document_id: UUID | None = None
     source_page: Annotated[int, Field(ge=1)] | None = None
+    # FON-54a provenance: which document type the claim came from (``OM`` …)
+    # and any unit conversion applied before comparing (``83% → 0.83``).
+    source_doc_type: str | None = None
+    unit_note: str | None = None
 
 
 class VarianceInput(BaseModel):
@@ -295,6 +299,19 @@ def _build_flags(
             # Numerically identical — skip the flag entirely.
             continue
 
+        # FON-54a plausibility guard (last line of defence): two figures more
+        # than BASIS_MISMATCH_PCT apart are not on the same basis (a percent
+        # vs a fraction, a month vs a year). Report both raw figures for
+        # review at INFO severity — never escalate to a Critical variance.
+        note: str | None = None
+        if delta_pct is not None and abs(delta_pct) > BASIS_MISMATCH_PCT:
+            severity = Severity.INFO
+            note = (
+                f"Basis mismatch — needs review: broker {float(bf.value):,.4g} vs "
+                f"T-12 {float(actual):,.4g} on {bf.field} are not on the same basis "
+                f"({abs(delta_pct):.0%} apart). No variance severity assigned."
+            )
+
         flag_uuid = uuid5(namespace, bf.field)
         flags.append(
             VarianceFlag(
@@ -309,10 +326,15 @@ def _build_flags(
                 rule_id=rule_id,
                 source_document_id=bf.source_document_id,
                 source_page=bf.source_page,
-                note=None,
+                note=note,
             )
         )
     return flags
+
+
+def is_basis_mismatch(delta_pct: float | None) -> bool:
+    """True when a flag's |delta_pct| exceeds the plausibility guard."""
+    return delta_pct is not None and abs(delta_pct) > BASIS_MISMATCH_PCT
 
 
 def _validate_rule_ids(flags: list[VarianceFlag]) -> list[str]:
@@ -390,78 +412,196 @@ def _to_uuid(deal_id: str) -> UUID:
         return uuid5(UUID("00000000-0000-0000-0000-000000000000"), deal_id)
 
 
+# ─────────────── FON-54a: broker-claim admission + unit normalisation ───────────────
+#
+# Sam's deal (FON-54, "implausibly large variances") showed the two ways a
+# raw extractor row can masquerade as the broker's claim about the subject:
+#   * it comes from an ACTUALS document (a T-12 / P&L) whose extractor output
+#     happens to use a broker-style path (``ttm_summary_per_om.occupancy_pct``
+#     on a 2023 P&L, ``p_and_l_usali.gop`` on a 2019 P&L) or a flat key that
+#     is in the rule table;
+#   * it is a market / historical row inside the OM — a ``ttm_performance.
+#     segment.*`` competitive-set stat, or the OM's historical-year block
+#     ``p_and_l_usali.<year>.*`` — neither is the broker's pro-forma claim.
+# ``_broker_fields_from_extraction(strict=True, doc_type=…)`` admits only the
+# broker's own claim; the rejected rows are handed back (``excluded``) so the
+# variance report can show *what* was excluded and why.
+
+#: |delta_pct| above which two figures are not on the same basis (a percent vs
+#: a fraction, a month vs a year). Reported as "Basis mismatch — needs
+#: review" at INFO severity instead of a Critical variance.
+BASIS_MISMATCH_PCT = 3.0
+
+#: Paths that ARE the broker's claim about the subject property.
+BROKER_CLAIM_PREFIXES: tuple[str, ...] = (
+    "broker_proforma.",
+    "broker.",
+    "ttm_summary_per_om.",
+    "ttm_performance.subject.",
+)
+
+#: Document types whose extraction is broker material (the OM / proforma).
+BROKER_DOC_TYPES: frozenset[str] = frozenset({"OM", "BROKER", "BROKER_PROFORMA", "PROFORMA"})
+
+#: Document types whose extraction is the subject's ACTUALS.
+ACTUALS_DOC_TYPES: frozenset[str] = frozenset({"T12", "PNL", "P&L", "FINANCIALS"})
+
+_PERIOD_SLICE_TAGS: tuple[str, ...] = (
+    ".monthly.",
+    ".quarterly.",
+    ".weekly.",
+    ".daily.",
+    ".ytd.",
+    ".mtd.",
+    ".qtd.",
+)
+
+_MULTI_YEAR_TAGS: tuple[str, ...] = (
+    "_year_2_", "_year_3_", "_year_4_", "_year_5_",
+    "_year2_", "_year3_", "_year4_", "_year5_",
+    "_stabilized_", "stabilized.",
+    "year_2.", "year_3.", "year_4.", "year_5.",
+)
+
+_RATIO_CONCEPTS: frozenset[str] = frozenset({"occupancy", "occupancy_pct"})
+
+
+def is_period_slice(path: str) -> bool:
+    """A monthly / quarterly / YTD … slice — never comparable to an annual T-12 line."""
+    lower = path.lower()
+    return any(tag in lower for tag in _PERIOD_SLICE_TAGS)
+
+
+def is_om_historical_year(path: str) -> bool:
+    """The OM's historical-year block (``p_and_l_usali.2021.gop_usd``,
+    ``historical_performance.2022.*``) — history, not a proforma claim."""
+    lower = path.lower()
+    if lower.startswith(("historical_performance.", "historical.")):
+        return True
+    parts = lower.split(".")
+    return any(p.isdigit() and len(p) == 4 and p.startswith(("19", "20")) for p in parts[:-1])
+
+
+def is_market_segment(path: str) -> bool:
+    """A competitive-set / market-segment stat (``ttm_performance.segment.*``)."""
+    lower = path.lower()
+    return ".segment." in lower or lower.startswith(("segment.", "market.", "comp_set.", "compset."))
+
+
+def is_forward_projection(path: str) -> bool:
+    lower = path.lower()
+    if ".forecast." in lower or ".projection." in lower:
+        return True
+    return any(tag in lower for tag in _MULTI_YEAR_TAGS)
+
+
+def normalize_broker_value(
+    field: str, value: float, unit: str | None = None
+) -> tuple[float | None, str | None]:
+    """Bring a raw extractor value onto the T-12's basis before comparing.
+
+    * occupancy-style ratios → a fraction in [0, 1]: ``83`` / ``83%`` → 0.83;
+      a value above 100 has no established unit → ``(None, reason)``;
+    * currency → whole dollars: a unit of thousands (``$000``, ``k``,
+      ``thousands``) is scaled ×1,000; anything else is taken as dollars.
+    Returns ``(normalised_value, note)`` — ``note`` explains any conversion.
+    """
+    key = _normalize_field_key(field)
+    u = (unit or "").strip().lower()
+    if key in _RATIO_CONCEPTS:
+        if value < 0:
+            return None, f"occupancy {value} is negative — unit not established"
+        if value <= 1.0:
+            return float(value), None
+        if value <= 100.0:
+            return float(value) / 100.0, f"occupancy {value:g}% read as {value / 100.0:.3f}"
+        return None, f"occupancy {value:g} exceeds 100% — unit not established"
+    if u in ("$000", "$000s", "000", "000s", "k", "$k", "thousands", "usd_thousands", "usd000"):
+        return float(value) * 1000.0, f"{unit} scaled ×1,000 to dollars"
+    return float(value), None
+
+
 def _broker_fields_from_extraction(
     fields: list[ExtractionField],
+    *,
+    doc_type: str | None = None,
+    strict: bool = False,
+    excluded: list[tuple[ExtractionField, str]] | None = None,
 ) -> list[VarianceBrokerField]:
     """Pull the broker-proforma rows out of an Extractor field list.
 
-    Anything under a ``broker_proforma.*`` path or the legacy flat
-    ``*_usd`` keys we know about ends up in the comparison set.
+    Legacy (``strict=False``) behaviour: anything under a ``broker_proforma.*``
+    / ``broker.*`` path or a flat key the rule table knows about is admitted —
+    the pipeline hands this function the OM's extraction only.
+
+    ``strict=True`` (the variance endpoint, which sees EVERY document's rows):
+    a row is the broker's claim only when
+      * its path is under :data:`BROKER_CLAIM_PREFIXES`, or it is a flat known
+        key on a broker document (``doc_type`` in :data:`BROKER_DOC_TYPES`);
+      * and it does not come from an actuals document (T-12 / P&L) — unless the
+        path is explicitly ``broker_proforma.*`` / ``broker.*``.
+    In both modes market-segment rows, the OM's historical-year blocks,
+    period slices and forward projections are dropped. Rows rejected for a
+    *source* reason (actuals document / segment / historical year) are appended
+    to ``excluded`` with the reason so the report can disclose them; period
+    slices and projections are dropped silently (they were never candidates).
+    Values are unit-normalised (:func:`normalize_broker_value`); a value whose
+    unit cannot be established is excluded with the reason.
     """
     out: list[VarianceBrokerField] = []
+    dtype = (doc_type or "").strip().upper() or None
+    from_actuals_doc = dtype in ACTUALS_DOC_TYPES
+    from_broker_doc = dtype in BROKER_DOC_TYPES
+
+    def _reject(f: ExtractionField, reason: str) -> None:
+        if excluded is not None:
+            excluded.append((f, reason))
+
     for f in fields:
         name = f.field_name
+        lower = name.lower()
         key = _normalize_field_key(name)
-        path_match = name.startswith("broker_proforma.") or name.startswith("broker.")
+        explicit_broker = lower.startswith(("broker_proforma.", "broker."))
+        claim_path = lower.startswith(BROKER_CLAIM_PREFIXES)
         known = key in _BROKER_RULE_BY_FIELD
-        if not (path_match or known):
+        if not (claim_path or known):
             continue
         if not isinstance(f.value, int | float):
             continue
-        # Scope guard (Sam QA 2026-05-13): the variance comparison
-        # only makes sense between the broker's Year-1 proforma and
-        # the T-12 actual for the same line. Any field whose path
-        # implies a different time slice — monthly/quarterly/YTD/TTM,
-        # historical prior-year data, or forward forecast — would
-        # produce nonsense flags (single-month broker $702K vs annual
-        # T-12 $14M, etc.). Drop them up-front.
-        lower = name.lower()
-        out_of_scope_prefixes = (
-            ".monthly.",
-            ".quarterly.",
-            ".ytd.",
-            ".ttm.",
-            ".weekly.",
-            ".daily.",
-        )
-        if any(p in lower for p in out_of_scope_prefixes):
+        # Scope guard (Sam QA 2026-05-13): the variance comparison only makes
+        # sense between the broker's Year-1 proforma and the T-12 actual for
+        # the same line. Any field whose path implies a different time slice
+        # or a forward projection would produce nonsense flags (single-month
+        # broker $702K vs annual T-12 $14M, etc.). Drop them up-front.
+        if is_period_slice(name) or ".ttm." in lower or is_forward_projection(name):
             continue
-        # Historical prior-year rows (e.g. ``historical_performance.2022.gop_usd``)
-        # and forward-forecast rows (``p_and_l_usali.forecast.*``,
-        # ``broker_proforma.year_3_*``) are also wrong-scope for the
-        # T-12-actuals comparison.
-        if lower.startswith("historical_performance.") or lower.startswith("historical."):
+        # Source guards (FON-54a).
+        if is_market_segment(name):
+            _reject(f, "market-segment stat, not the broker's claim about the subject")
             continue
-        if ".forecast." in lower or ".projection." in lower:
+        if is_om_historical_year(name):
+            _reject(f, "OM historical-year block — history, not the proforma claim")
             continue
-        # Multi-year broker projection rows: keep year-1, drop the rest.
-        # Naming conventions: ``broker_proforma.noi_year_2_usd``,
-        # ``broker_proforma.noi_year_3_usd``, ``…_stabilized_…``.
-        if any(
-            tag in lower
-            for tag in (
-                "_year_2_",
-                "_year_3_",
-                "_year_4_",
-                "_year_5_",
-                "_year2_",
-                "_year3_",
-                "_year4_",
-                "_year5_",
-                "_stabilized_",
-                "stabilized.",
-                "year_2.",
-                "year_3.",
-                "year_4.",
-                "year_5.",
-            )
-        ):
+        if strict:
+            if from_actuals_doc and not explicit_broker:
+                _reject(f, f"from an actuals document ({dtype}) — a T-12 / P&L line, not a broker claim")
+                continue
+            if not claim_path and not from_broker_doc:
+                # A flat known key on a non-broker (or unknown) document is
+                # not evidence of a broker claim.
+                _reject(f, f"flat key on a non-broker document ({dtype or 'unknown'})")
+                continue
+        value, unit_note = normalize_broker_value(name, float(f.value), f.unit)
+        if value is None:
+            _reject(f, unit_note or "unit not established")
             continue
         out.append(
             VarianceBrokerField(
                 field=name,
-                value=float(f.value),
+                value=value,
                 source_page=f.source_page if f.source_page >= 1 else None,
+                source_doc_type=dtype,
+                unit_note=unit_note,
             )
         )
     return out

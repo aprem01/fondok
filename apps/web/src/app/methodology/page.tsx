@@ -387,6 +387,28 @@ export default function MethodologyPage() {
             </li>
           </ul>
         </Card>
+
+        <Card className="p-5 mt-4">
+          <h4 className="text-[13px] font-semibold text-ink-900 mb-2">What a variance flag compares — and what it refuses to</h4>
+          <ul className="space-y-2.5 text-[12.5px] text-ink-600 leading-relaxed">
+            <li>
+              <span className="font-semibold text-ink-900">Only the broker&apos;s own claim is the &ldquo;broker&rdquo; side.</span>{' '}
+              A row counts as the broker&apos;s claim about the subject only when it comes from the OM / broker materials under a claim path (<code className="text-[11.5px]">broker_proforma.*</code>, <code className="text-[11.5px]">broker.*</code>, <code className="text-[11.5px]">ttm_summary_per_om.*</code>, <code className="text-[11.5px]">ttm_performance.subject.*</code>). A line from a T-12 or P&amp;L document is an actual, never a broker figure, even when the extractor labelled it with an OM-style path; a competitive-set stat (<code className="text-[11.5px]">ttm_performance.segment.*</code>) and the OM&apos;s historical-year block (<code className="text-[11.5px]">p_and_l_usali.2021.*</code>) are neither. Rows excluded for one of these reasons are still listed under Technical detail with the reason and their source document — the report says what it left out.
+            </li>
+            <li>
+              <span className="font-semibold text-ink-900">Units are normalised before comparing.</span>{' '}
+              Occupancy and other ratio lines are compared as fractions (an extracted 83 or 83% reads as 0.83; the conversion is noted on the row); currency is compared in whole dollars (a &ldquo;$000&rdquo; unit is scaled). A value whose unit cannot be established — an occupancy above 100, for example — is not compared at all, and the Technical detail says why.
+            </li>
+            <li>
+              <span className="font-semibold text-ink-900">Annual against annual.</span>{' '}
+              The T-12 side is the document&apos;s annual / trailing-twelve-month line (annual rooms revenue, gross operating profit, net operating income), never a monthly or quarterly slice, and the T-12 is preferred over a supporting P&amp;L. If no annual actual exists for a concept there is no flag — Fondok never compares a month against a year.
+            </li>
+            <li>
+              <span className="font-semibold text-ink-900">Plausibility guard.</span>{' '}
+              As a last line of defence, a pair of figures more than 300% apart is reported as &ldquo;Basis mismatch — needs review&rdquo; with both raw figures and no severity, instead of a Critical variance: two numbers that far apart are on different bases, not evidence of a broker overstatement.
+            </li>
+          </ul>
+        </Card>
       </Section>
 
       <div className="flex items-center gap-3 mt-8">
