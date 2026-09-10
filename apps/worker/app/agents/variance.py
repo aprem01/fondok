@@ -29,6 +29,7 @@ from __future__ import annotations
 import logging
 import time
 from datetime import UTC, datetime
+from functools import lru_cache
 from typing import Annotated, Any
 from uuid import UUID, uuid4, uuid5
 
@@ -151,91 +152,277 @@ class VarianceOutput(BaseModel):
 
 
 # ─────────────────────── deterministic comparison ───────────────────────
+#
+# Phase 1.3d — the vocabulary below is DERIVED from ``app.ontology.registry``
+# (``concepts.yaml``), not hand-maintained here:
+#
+#   * ``_BROKER_RULE_BY_FIELD``  ← ``bindings.variance_rule`` over each
+#     concept's own flat aliases (which catalog rule bands the severity);
+#   * ``_actual_for``            ← ``bindings.actuals_attr`` (where the T-12
+#     actual lives on ``USALIFinancials``);
+#   * ``_normalize_field_key``   ← ``registry.concept_for_path`` (the legacy
+#     last-segment strip survives only as the fallback for a path the
+#     registry cannot classify — see :data:`REGISTRY_FALLBACKS`);
+#   * the broker-claim namespaces ← the aliases the registry annotates as the
+#     broker's own claim on broker material (:func:`broker_claim_prefixes`).
+#
+# ``variance_rule`` is deliberately NOT "the rule that tests this concept"
+# (RevPAR bands on a growth rule, fixed charges on the insurance rule) —
+# see DRIFT_NOTES.md §3.7. Do not "fix" it to match ``usali_rules``.
 
 
-# Map canonical field names to (T-12 actual extractor, BROKER_VS_T12 rule_id).
-# Each entry: how to read the actual off ``USALIFinancials`` and which
-# rule from the catalog covers it.
+#: Unit → the suffix that unit wears on a flat extractor key. ``ratio`` is the
+#: registry's unit for a dimensionless fraction (occupancy is stored 0-1); the
+#: extractor still writes it with a ``_pct`` tail.
+_UNIT_SUFFIX: dict[str, str] = {"usd": "_usd", "pct": "_pct", "ratio": "_pct"}
 
-_BROKER_RULE_BY_FIELD: dict[str, str] = {
-    "noi": "BROKER_VS_T12_NOI_VARIANCE",
-    "noi_usd": "BROKER_VS_T12_NOI_VARIANCE",
-    "occupancy": "BROKER_VS_T12_OCC_VARIANCE",
-    "occupancy_pct": "BROKER_VS_T12_OCC_VARIANCE",
-    "adr": "BROKER_VS_T12_ADR_VARIANCE",
-    "adr_usd": "BROKER_VS_T12_ADR_VARIANCE",
-    "revpar": "REVPAR_GROWTH_RANGE",
-    "revpar_usd": "REVPAR_GROWTH_RANGE",
-    "rooms_revenue": "BROKER_VS_T12_NOI_VARIANCE",
-    "rooms_revenue_usd": "BROKER_VS_T12_NOI_VARIANCE",
-    "fb_revenue": "FB_DEPT_MARGIN_FULL",
-    "fb_revenue_usd": "FB_DEPT_MARGIN_FULL",
-    "total_revenue": "BROKER_VS_T12_NOI_VARIANCE",
-    "total_revenue_usd": "BROKER_VS_T12_NOI_VARIANCE",
-    "departmental_expenses": "DEPT_EXPENSE_SUM",
-    "departmental_expenses_usd": "DEPT_EXPENSE_SUM",
-    "undistributed_expenses": "A_AND_G_PCT_REVENUE",
-    "undistributed_expenses_usd": "A_AND_G_PCT_REVENUE",
-    "gop": "GOP_MARGIN_RANGE",
-    "gop_usd": "GOP_MARGIN_RANGE",
-    "mgmt_fee": "MGMT_FEE_RANGE",
-    "mgmt_fee_usd": "MGMT_FEE_RANGE",
-    "ffe_reserve": "FFE_RESERVE_RANGE",
-    "ffe_reserve_usd": "FFE_RESERVE_RANGE",
-    "fixed_charges": "INSURANCE_PER_KEY",
-    "fixed_charges_usd": "INSURANCE_PER_KEY",
-    "insurance": "INSURANCE_PER_KEY",
-    "insurance_usd": "INSURANCE_PER_KEY",
-}
+#: The registry unit that means "a dimensionless fraction" — a delta on one of
+#: these is absolute POINTS, never a percent of the actual.
+_RATIO_UNIT = "ratio"
+
+#: Off-catalog comparisons fall back to the generic broker-vs-T12 NOI bands.
+_DEFAULT_BROKER_RULE = "BROKER_VS_T12_NOI_VARIANCE"
+
+#: Raw paths the registry could not classify AT ALL — the adapter fell back to
+#: the pre-registry last-segment strip. Bounded; read by the drift notes / QA
+#: to see whether ``concepts.yaml`` is missing an alias. A path that resolves
+#: to a concept the variance report simply does not name (EBITDA, a comp-set
+#: stat) is NOT a fallback and is not recorded here.
+REGISTRY_FALLBACKS: dict[str, str] = {}
+_FALLBACK_CAP = 500
 
 
-def _normalize_field_key(name: str) -> str:
-    """Strip namespace prefixes and unit suffixes the OM extractor uses."""
+def _registry() -> Any:
+    from ..ontology.registry import get_registry
+
+    return get_registry()
+
+
+def _record_fallback(field: str, key: str) -> None:
+    if field in REGISTRY_FALLBACKS or len(REGISTRY_FALLBACKS) >= _FALLBACK_CAP:
+        return
+    REGISTRY_FALLBACKS[field] = key
+    logger.debug("variance: no registry concept for %r — legacy key %r", field, key)
+
+
+def _legacy_field_key(name: str) -> str:
+    """The pre-registry normaliser: last path segment, lower-cased.
+
+    Still the ADMISSION key (see :func:`_broker_fields_from_extraction`) and
+    the fallback whenever the registry has no concept for a path.
+    """
     s = name.strip()
-    # Drop dotted path prefixes ("broker_proforma.noi_usd" → "noi_usd").
     if "." in s:
         s = s.rsplit(".", 1)[-1]
     return s.lower()
 
 
+def _build_broker_rule_map() -> dict[str, str]:
+    """``{flat field key: rule_id}`` derived from ``bindings.variance_rule``.
+
+    A concept contributes the flat keys it actually lists as bare (undotted)
+    aliases among its own canonical forms — its ``variance_concept.key`` and
+    that key carrying the concept's unit suffix. The wider synonym set
+    (``net_operating_income``, ``management_fee``, ``occupancy_percent`` …)
+    is deliberately NOT included: this map doubles as the flat-key admission
+    gate, and widening it would admit — and then disclose as excluded — rows
+    the endpoint has never reported. See DRIFT_NOTES.md "Phase 1.3d parity
+    exceptions".
+    """
+    out: dict[str, str] = {}
+    for concept in _registry().concepts.values():
+        rule = concept.bindings.variance_rule
+        variance_concept = concept.bindings.variance_concept
+        if not rule or variance_concept is None:
+            continue
+        bare = {
+            alias.path.strip().lower()
+            for aliases in concept.aliases.values()
+            for alias in aliases
+            if "." not in alias.path
+        }
+        base = variance_concept.key
+        suffix = _UNIT_SUFFIX.get(concept.unit)
+        for key in (base, f"{base}{suffix}" if suffix else None):
+            if key and key in bare:
+                out[key] = rule
+    return out
+
+
+def _build_ratio_field_keys() -> frozenset[str]:
+    """Flat keys whose value is a RATIO (delta is absolute points, not a pct).
+
+    Registry-derived: the variance concepts carried in the dimensionless
+    fraction unit. Both the registry answer (the concept key) and the legacy
+    fallback (the same key wearing its unit suffix) are included so a fallback
+    path still gets the ratio treatment.
+    """
+    rules = _broker_rule_by_field()
+    out: set[str] = set()
+    for concept in _registry().concepts.values():
+        variance_concept = concept.bindings.variance_concept
+        if variance_concept is None or concept.unit != _RATIO_UNIT:
+            continue
+        base = variance_concept.key
+        out.add(base)
+        out.update(k for k in rules if _strip_unit_suffix(k) == base)
+    return frozenset(out)
+
+
+def _build_claim_prefixes() -> tuple[str, ...]:
+    """The namespaces the registry annotates as the broker's own claim.
+
+    A dotted alias of a variance concept, listed under the OM key or the
+    doc-type-agnostic bucket, whose basis ON BROKER MATERIAL is ``broker``,
+    reduced to its namespace. On today's registry that is the proforma block,
+    the OM's latest-full-year summary block and the OM's subject-performance
+    block — the three shapes FON-54a admits. Wildcard aliases (the OM's
+    historical-year block) are skipped; they resolve to ``om_history``.
+    """
+    from ..ontology.registry import concept_for_path
+
+    prefixes: list[str] = []
+    for cid, concept in _registry().concepts.items():
+        if concept.bindings.variance_concept is None:
+            continue
+        for key in ("OM", "*"):
+            for alias in concept.aliases.get(key, ()):
+                path = alias.path.strip().lower()
+                if "." not in path or "{" in path:
+                    continue
+                hit = concept_for_path(path, doc_type="OM")
+                if hit is None or hit[0] != cid or hit[1] != "broker":
+                    continue
+                namespace = path.rsplit(".", 1)[0] + "."
+                if namespace not in prefixes:
+                    prefixes.append(namespace)
+    return tuple(prefixes)
+
+
+def _strip_unit_suffix(key: str) -> str:
+    for suffix in _UNIT_SUFFIX.values():
+        if key.endswith(suffix) and len(key) > len(suffix):
+            return key[: -len(suffix)]
+    return key
+
+
+@lru_cache(maxsize=1)
+def _broker_rule_by_field() -> dict[str, str]:
+    return _build_broker_rule_map()
+
+
+@lru_cache(maxsize=1)
+def _ratio_field_keys() -> frozenset[str]:
+    return _build_ratio_field_keys()
+
+
+@lru_cache(maxsize=1)
+def broker_claim_prefixes() -> tuple[str, ...]:
+    return _build_claim_prefixes()
+
+
+@lru_cache(maxsize=1)
+def _actuals_attr_by_concept() -> dict[str, str]:
+    return {
+        cid: c.bindings.actuals_attr
+        for cid, c in _registry().concepts.items()
+        if c.bindings.actuals_attr
+    }
+
+
+def _concept_for_field(field: str) -> str | None:
+    """The registry concept id for a raw extractor path (``None`` if unknown)."""
+    from ..ontology.registry import concept_for_path
+
+    hit = concept_for_path(field)
+    return hit[0] if hit is not None else None
+
+
+def _variance_key_or_none(field: str) -> str | None:
+    """The registry's variance key for a path, or ``None`` when it has none.
+
+    ``None`` means one of two things, only the first of which is a registry
+    gap: the path resolves to no concept at all (recorded in
+    :data:`REGISTRY_FALLBACKS` — ``concepts.yaml`` is probably missing an
+    alias), or it resolves to a concept the variance report does not name
+    (EBITDA, a comp-set stat) — an ordinary outcome, not a miss.
+    """
+    cid = _concept_for_field(field)
+    if cid is None:
+        _record_fallback(field, _legacy_field_key(field))
+        return None
+    binding = _registry().concepts[cid].bindings.variance_concept
+    return binding.key if binding is not None else None
+
+
+def _normalize_field_key(name: str) -> str:
+    """Canonical variance key for a raw extractor path.
+
+    ``registry.concept_for_path`` answers first — a path resolves to its
+    concept's ``variance_concept.key``, so the OM's summary-block line, the
+    proforma path and the flat key all normalise to one key. Without a
+    registry answer the pre-registry last-segment strip stands in.
+    """
+    return _variance_key_or_none(name) or _legacy_field_key(name)
+
+
+def variance_field_concept(field: str) -> str:
+    """Grouping key for the IC-facing consolidation (``api.analysis``).
+
+    Same registry answer as :func:`_normalize_field_key`; the legacy fallback
+    additionally drops one unit suffix, which is what the pre-registry
+    ``variance_concept()`` did.
+    """
+    return _variance_key_or_none(field) or _strip_unit_suffix(_legacy_field_key(field))
+
+
 def _actual_for(field: str, actuals: USALIFinancials) -> float | None:
-    """Read the matching T-12 actual for a canonical broker field."""
-    f = _normalize_field_key(field)
-    if f in ("noi", "noi_usd"):
-        return actuals.noi
-    if f in ("occupancy", "occupancy_pct"):
-        return actuals.occupancy
-    if f in ("adr", "adr_usd"):
-        return actuals.adr
-    if f in ("revpar", "revpar_usd"):
-        return actuals.revpar
-    if f in ("rooms_revenue", "rooms_revenue_usd"):
-        return actuals.rooms_revenue
-    if f in ("fb_revenue", "fb_revenue_usd"):
-        return actuals.fb_revenue
-    if f in ("total_revenue", "total_revenue_usd"):
-        return actuals.total_revenue
-    if f in ("departmental_expenses", "departmental_expenses_usd"):
-        return actuals.dept_expenses.total
-    if f in ("undistributed_expenses", "undistributed_expenses_usd"):
-        return actuals.undistributed.total
-    if f in ("gop", "gop_usd"):
-        return actuals.gop
-    if f in ("mgmt_fee", "mgmt_fee_usd"):
-        return actuals.mgmt_fee
-    if f in ("ffe_reserve", "ffe_reserve_usd"):
-        return actuals.ffe_reserve
-    if f in ("fixed_charges", "fixed_charges_usd"):
-        return actuals.fixed_charges.total
-    if f in ("insurance", "insurance_usd"):
-        return actuals.fixed_charges.insurance
-    return None
+    """Read the matching T-12 actual for a canonical broker field.
+
+    The attribute path comes from the registry (``bindings.actuals_attr``);
+    a concept the ``USALIFinancials`` envelope does not carry reads ``None``.
+    """
+    cid = _concept_for_field(field)
+    attr = _actuals_attr_by_concept().get(cid or "")
+    if not attr:
+        return None
+    node: Any = actuals
+    for segment in attr.split("."):
+        node = getattr(node, segment, None)
+        if node is None:
+            return None
+    if isinstance(node, bool) or not isinstance(node, int | float):
+        return None
+    return float(node)
 
 
 def _rule_for_field(field: str) -> str:
     """Map a broker field onto the catalog rule_id used to flag it."""
-    f = _normalize_field_key(field)
-    return _BROKER_RULE_BY_FIELD.get(f, "BROKER_VS_T12_NOI_VARIANCE")
+    cid = _concept_for_field(field)
+    if cid is not None:
+        rule = _registry().concepts[cid].bindings.variance_rule
+        if rule:
+            return rule
+    return _broker_rule_by_field().get(_legacy_field_key(field), _DEFAULT_BROKER_RULE)
+
+
+#: Read-only views of the derived vocabulary, kept under their pre-1.3d names
+#: for callers and tests. They are module attributes rather than constants so
+#: importing this module never pulls the registry in at import time — a broken
+#: ``concepts.yaml`` degrades ``/ontology/concepts`` and ``/health`` instead of
+#: taking the worker down at boot (same contract as ``api/ontology.py``).
+_LAZY_VOCABULARY: dict[str, Any] = {
+    "_BROKER_RULE_BY_FIELD": _broker_rule_by_field,
+    "BROKER_CLAIM_PREFIXES": broker_claim_prefixes,
+    "_RATIO_CONCEPTS": _ratio_field_keys,
+}
+
+
+def __getattr__(name: str) -> Any:
+    build = _LAZY_VOCABULARY.get(name)
+    if build is None:
+        raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+    return build()
 
 
 def _severity_for(rule_id: str, delta_pct: float, *, idx: dict) -> Severity:
@@ -284,10 +471,7 @@ def _build_flags(
         delta = float(actual) - float(bf.value)
         # For percentage / ratio fields ``actual`` is already in [0,1];
         # use the raw delta for those. Everything else uses pct-of-actual.
-        is_ratio = _normalize_field_key(bf.field) in (
-            "occupancy",
-            "occupancy_pct",
-        )
+        is_ratio = _normalize_field_key(bf.field) in _ratio_field_keys()
         if is_ratio:
             delta_pct = abs(delta)
         else:
@@ -417,28 +601,26 @@ def _to_uuid(deal_id: str) -> UUID:
 # Sam's deal (FON-54, "implausibly large variances") showed the two ways a
 # raw extractor row can masquerade as the broker's claim about the subject:
 #   * it comes from an ACTUALS document (a T-12 / P&L) whose extractor output
-#     happens to use a broker-style path (``ttm_summary_per_om.occupancy_pct``
-#     on a 2023 P&L, ``p_and_l_usali.gop`` on a 2019 P&L) or a flat key that
-#     is in the rule table;
-#   * it is a market / historical row inside the OM — a ``ttm_performance.
-#     segment.*`` competitive-set stat, or the OM's historical-year block
-#     ``p_and_l_usali.<year>.*`` — neither is the broker's pro-forma claim.
+#     happens to use a broker-style path (the OM's own summary-block path on a
+#     2023 P&L, a bare P&L GOP line on a 2019 P&L) or a flat key that is in
+#     the rule table;
+#   * it is a market / historical row inside the OM — a competitive-set
+#     segment stat, or the OM's historical-year block — neither of which is
+#     the broker's pro-forma claim.
 # ``_broker_fields_from_extraction(strict=True, doc_type=…)`` admits only the
 # broker's own claim; the rejected rows are handed back (``excluded``) so the
 # variance report can show *what* was excluded and why.
+#
+# Phase 1.3d: which namespaces ARE the broker's claim is now the registry's
+# answer (:func:`broker_claim_prefixes` — the aliases whose basis on broker
+# material is ``broker``), and "explicitly the broker's, wherever it sits" is
+# the registry's own path rule (:func:`is_explicit_broker_path`). The
+# doc-type buckets below stay local: they are about the DOCUMENT, not a path.
 
 #: |delta_pct| above which two figures are not on the same basis (a percent vs
 #: a fraction, a month vs a year). Reported as "Basis mismatch — needs
 #: review" at INFO severity instead of a Critical variance.
 BASIS_MISMATCH_PCT = 3.0
-
-#: Paths that ARE the broker's claim about the subject property.
-BROKER_CLAIM_PREFIXES: tuple[str, ...] = (
-    "broker_proforma.",
-    "broker.",
-    "ttm_summary_per_om.",
-    "ttm_performance.subject.",
-)
 
 #: Document types whose extraction is broker material (the OM / proforma).
 BROKER_DOC_TYPES: frozenset[str] = frozenset({"OM", "BROKER", "BROKER_PROFORMA", "PROFORMA"})
@@ -456,11 +638,11 @@ MARKET_DOC_TYPES: frozenset[str] = frozenset({"CBRE_HORIZONS", "CBRE", "PNL_BENC
 def non_broker_source_reason(doc_type: str | None) -> str:
     """Why a claim-path row from ``doc_type`` is NOT the broker's claim (FON-54a part 3).
 
-    Live on Sam's deal: ``ttm_performance.subject.*`` rows from STR_TREND
-    documents (CoStar submarket PDFs, STR ``ANG-…-USD-E`` reports) were
-    admitted as broker claims and one headlined the occupancy flag. STR-
-    reported performance is a *reading* of the subject / submarket, not what
-    the broker asserts in the OM.
+    Live on Sam's deal: subject-performance rows from STR_TREND documents
+    (CoStar submarket PDFs, STR ``ANG-…-USD-E`` reports) were admitted as
+    broker claims and one headlined the occupancy flag. STR-reported
+    performance is a *reading* of the subject / submarket, not what the
+    broker asserts in the OM.
     """
     dtype = (doc_type or "").strip().upper()
     if not dtype:
@@ -490,9 +672,6 @@ _MULTI_YEAR_TAGS: tuple[str, ...] = (
     "year_2.", "year_3.", "year_4.", "year_5.",
 )
 
-_RATIO_CONCEPTS: frozenset[str] = frozenset({"occupancy", "occupancy_pct"})
-
-
 def is_period_slice(path: str) -> bool:
     """A monthly / quarterly / YTD … slice — never comparable to an annual T-12 line."""
     lower = path.lower()
@@ -500,19 +679,49 @@ def is_period_slice(path: str) -> bool:
 
 
 def is_om_historical_year(path: str) -> bool:
-    """The OM's historical-year block (``p_and_l_usali.2021.gop_usd``,
-    ``historical_performance.2022.*``) — history, not a proforma claim."""
-    lower = path.lower()
-    if lower.startswith(("historical_performance.", "historical.")):
-        return True
-    parts = lower.split(".")
-    return any(p.isdigit() and len(p) == 4 and p.startswith(("19", "20")) for p in parts[:-1])
+    """The OM's historical-year block — history, not a proforma claim.
+
+    A statement namespace carrying a four-digit year segment, or an explicit
+    ``historical_performance.*`` / ``historical.*`` path. The registry owns
+    the rule (``registry.is_om_historical_year``, which feeds its
+    ``om_history`` basis); this is the variance agent's name for it.
+    """
+    from ..ontology.registry import is_om_historical_year as _rule
+
+    return _rule(path)
 
 
 def is_market_segment(path: str) -> bool:
-    """A competitive-set / market-segment stat (``ttm_performance.segment.*``)."""
-    lower = path.lower()
-    return ".segment." in lower or lower.startswith(("segment.", "market.", "comp_set.", "compset."))
+    """A competitive-set / market-segment stat — market data, not the subject.
+
+    The registry owns the rule (``registry.is_market_segment``, which feeds
+    its ``market`` basis).
+    """
+    from ..ontology.registry import is_market_segment as _rule
+
+    return _rule(path)
+
+
+def is_explicit_broker_path(path: str) -> bool:
+    """The path itself says "this is the broker's", wherever the row sits.
+
+    The registry's basis rule with no document to lean on: only a path the
+    registry reads as explicitly the broker's own comes back ``broker``
+    (a document default cannot apply without a document type).
+    """
+    from ..ontology.registry import _basis_for
+
+    return _basis_for(path.strip().lower(), None, None) == "broker"
+
+
+def is_broker_claim_path(path: str) -> bool:
+    """The path is the broker's claim about the subject (FON-54a).
+
+    Either explicitly the broker's, or inside one of the namespaces the
+    registry annotates as the broker's claim on broker material.
+    """
+    lower = path.strip().lower()
+    return is_explicit_broker_path(lower) or lower.startswith(broker_claim_prefixes())
 
 
 def is_forward_projection(path: str) -> bool:
@@ -535,7 +744,7 @@ def normalize_broker_value(
     """
     key = _normalize_field_key(field)
     u = (unit or "").strip().lower()
-    if key in _RATIO_CONCEPTS:
+    if key in _ratio_field_keys():
         if value < 0:
             return None, f"occupancy {value} is negative — unit not established"
         if value <= 1.0:
@@ -557,15 +766,15 @@ def _broker_fields_from_extraction(
 ) -> list[VarianceBrokerField]:
     """Pull the broker-proforma rows out of an Extractor field list.
 
-    Legacy (``strict=False``) behaviour: anything under a ``broker_proforma.*``
-    / ``broker.*`` path or a flat key the rule table knows about is admitted —
-    the pipeline hands this function the OM's extraction only.
+    Legacy (``strict=False``) behaviour: anything on an explicitly-broker path
+    or a flat key the rule table knows about is admitted — the pipeline hands
+    this function the OM's extraction only.
 
     ``strict=True`` (the variance endpoint, which sees EVERY document's rows):
     a row is the broker's claim only when
-      * its path is explicitly ``broker_proforma.*`` / ``broker.*`` (wherever
-        it sits), or
-      * it is a claim path (:data:`BROKER_CLAIM_PREFIXES`) or a flat known key
+      * its path is explicitly the broker's wherever it sits
+        (:func:`is_explicit_broker_path`), or
+      * it is a claim path (:func:`is_broker_claim_path`) or a flat known key
         ON BROKER MATERIAL (``doc_type`` in :data:`BROKER_DOC_TYPES`).
     A claim-path row from any other document — a T-12 / P&L (actuals), an STR
     / CoStar report (STR-reported subject or submarket performance), CBRE or
@@ -590,10 +799,15 @@ def _broker_fields_from_extraction(
     for f in fields:
         name = f.field_name
         lower = name.lower()
-        key = _normalize_field_key(name)
-        explicit_broker = lower.startswith(("broker_proforma.", "broker."))
-        claim_path = lower.startswith(BROKER_CLAIM_PREFIXES)
-        known = key in _BROKER_RULE_BY_FIELD
+        explicit_broker = is_explicit_broker_path(lower)
+        claim_path = explicit_broker or lower.startswith(broker_claim_prefixes())
+        # Parity exception (Phase 1.3d): the flat-key gate stays keyed on the
+        # PRE-registry last-segment strip. Classifying the gate through
+        # ``concept_for_path`` would admit — and then disclose as excluded —
+        # statement rows the endpoint has never reported (a bare
+        # ``gross_operating_profit`` line, a parent-qualified rooms revenue).
+        # See DRIFT_NOTES.md "Phase 1.3d parity exceptions".
+        known = _legacy_field_key(name) in _broker_rule_by_field()
         if not (claim_path or known):
             continue
         if not isinstance(f.value, int | float):

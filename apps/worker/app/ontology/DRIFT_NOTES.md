@@ -655,3 +655,87 @@ bolted onto the scorer.
 `broker_proforma.` / `ttm_performance.` string survives in `usali_scorer.py`
 (code, comments or docstrings) — every extraction path it used to name now
 lives in `concepts.yaml`.
+
+## 9. Phase 1.3d parity exceptions (variance adapter)
+
+`agents/variance.py` and `api/analysis.py` now read the registry:
+`_BROKER_RULE_BY_FIELD` ← `bindings.variance_rule`, `_actual_for` ←
+`bindings.actuals_attr`, `_normalize_field_key` / `variance_concept` ←
+`concept_for_path` → `bindings.variance_concept`, the broker-claim
+namespaces ← the aliases whose basis on broker material is `broker`, and
+`_VARIANCE_CONCEPTS` ← `bindings.variance_concept`. Both derived maps are
+byte-identical to the hand-written ones, and `GET /analysis/{id}/variance` is
+byte-identical on every FON-54a fixture
+(`tests/test_ontology_variance_parity.py` against
+`tests/fixtures/ontology/variance_pre_registry.json`, pinned on `08bf554`).
+**No registry addition was needed** — `concepts.yaml` already carried every
+alias and binding the old maps implied — and no fixture path fell back to the
+legacy normaliser (`variance.REGISTRY_FALLBACKS` is empty after a full
+capture; the parity suite asserts it).
+
+The four places the adapter deliberately keeps the OLD behaviour, each
+because the registry's answer would move the wire:
+
+1. **The flat-key admission gate stays on the pre-registry key.**
+   `_broker_fields_from_extraction` decides "is this row even a candidate"
+   with `_legacy_field_key(name) in _BROKER_RULE_BY_FIELD` — the last path
+   segment, lower-cased — NOT with `concept_for_path`. Classifying the gate
+   through the registry admits statement rows whose tail is not a flat key
+   but whose concept IS a variance concept, and strict mode then discloses
+   every one of them as an excluded row: on the FON-54a fixture the `gop`
+   flag gains two `raw_fields` (the bare gross-operating-profit line on the
+   T-12 and on the 2024 P&L) and `rooms_revenue` gains two (the
+   parent-qualified rooms revenue on the 2023 / 2019 P&Ls). Sam's
+   Technical-detail list would grow with rows the endpoint has never
+   reported. Revisit when widening that disclosure is a product decision
+   rather than a side effect.
+2. **`_BROKER_RULE_BY_FIELD` is derived from each concept's CANONICAL flat
+   forms only** — `variance_concept.key`, and that key wearing the concept's
+   unit suffix (`_usd`; `_pct` for the `ratio` unit) — and only when the
+   registry actually lists that form as a bare alias. Flattening every bare
+   alias instead would add `net_operating_income`, `management_fee`,
+   `occupancy_percent`, `occ`, `total_dept_expense`, the `t12_*` and
+   `broker_*` variants … and because this map doubles as the gate in (1),
+   each of those widens admission. Result: the same 28 keys, the same 28
+   rule ids.
+3. **`BROKER_CLAIM_PREFIXES` is now three prefixes, not four.** The registry
+   supplies the proforma block, the OM's latest-full-year summary block and
+   the OM's subject-performance block (dotted aliases of a variance concept,
+   under the `OM` or `"*"` key, whose basis on an OM is `broker`). The fourth
+   legacy prefix — "explicitly the broker's, wherever the row sits" — is the
+   registry's own path rule, applied as a predicate (`is_explicit_broker_path`
+   = `registry._basis_for(path, None, None) == "broker"`), so
+   `is_broker_claim_path()` admits exactly what the four-prefix tuple did.
+   That predicate is deliberately the PATH rule and not
+   `concept_for_path(...)[1] == "broker"`: the latter would also read the
+   `broker_*` bare aliases (`broker_noi`, `broker_occupancy` — `"*"` aliases
+   annotated `basis: broker`) as claims wherever they sit, admitting them off
+   a T-12.
+4. **The statement-period probe in `_load_historical_pnls` gained one key.**
+   It is now the registry's `period_label` / `period_ending` / `period_start`
+   aliases (PNL-family paths first, then bare), which reproduces the old
+   five-key tuple in order and appends a bare `period_start`. Additive; the
+   broker-question suites are unchanged.
+
+Two registry answers that are WIDER than the old maps and were kept — no
+fixture moves, and each is the fix the registry exists to make:
+
+* **`_actual_for` now answers for every concept carrying an `actuals_attr`**,
+  not just the fourteen the hand-written `if`-ladder listed. An admitted
+  broker claim on property taxes, other revenue, resort fees or a single
+  undistributed line now produces a flag (off-catalog → the generic
+  `BROKER_VS_T12_NOI_VARIANCE` bands) where it previously produced silence.
+  Those concepts were already in `_VARIANCE_CONCEPTS`; only the T-12 reader
+  was missing.
+* **The ratio set is "variance concepts whose unit is `ratio`"**, which adds
+  `broker_adr_growth_vs_market` / `broker_revpar_growth_vs_market` to the
+  `occupancy` / `occupancy_pct` pair. Inert on both sides: those two are
+  synthesised in `api/analysis.py` and never extracted, and `_concept_note`
+  returns before the ratio formatter for any `*_vs_market` concept.
+
+Consumer note: the derived vocabularies are exposed under their pre-1.3d
+names (`variance._BROKER_RULE_BY_FIELD`, `variance.BROKER_CLAIM_PREFIXES`,
+`variance._RATIO_CONCEPTS`, `analysis._VARIANCE_CONCEPTS`) through a module
+`__getattr__`, so neither module imports the registry at import time — a
+broken `concepts.yaml` still degrades `/ontology/concepts` and `/health`
+rather than stopping the worker from booting (`api/ontology.py`'s contract).

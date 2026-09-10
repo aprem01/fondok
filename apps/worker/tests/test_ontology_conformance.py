@@ -157,26 +157,17 @@ _LITERAL_RE = re.compile(
 )
 
 #: Clean today — a regression here fails the build.
-ENFORCED: tuple[str, ...] = ("apps/worker/app/extraction/field_catalog.py",)
+ENFORCED: tuple[str, ...] = (
+    "apps/worker/app/extraction/field_catalog.py",
+    "apps/worker/app/services/usali_scorer.py",
+    "apps/worker/app/agents/variance.py",
+    "apps/worker/app/api/analysis.py",
+)
 
 #: Still owned by another adapter builder. ``xfail(strict=True)``: when the
 #: owner lands their adapter the file goes clean, the test XPASSes, and pytest
 #: fails with the reason below — which tells them to move the entry up.
 PENDING: dict[str, str] = {
-    "apps/worker/app/services/usali_scorer.py": (
-        "usali_scorer adapter not landed yet (_ALIASES still spells extractor "
-        "paths). When it does: move this path into ENFORCED."
-    ),
-    "apps/worker/app/agents/variance.py": (
-        "variance adapter not landed yet (_BROKER_RULE_BY_FIELD / "
-        "BROKER_CLAIM_PREFIXES still spell extractor paths). When it does: "
-        "move this path into ENFORCED."
-    ),
-    "apps/worker/app/api/analysis.py": (
-        "analysis adapter not landed yet (_VARIANCE_CONCEPTS / the "
-        "growth-vs-market flags still spell extractor paths). When it does: "
-        "move this path into ENFORCED."
-    ),
     "apps/worker/app/api/documents.py": (
         "Phase 1.3c LANDED: _load_critic_inputs is registry-driven and its "
         "region carries no extractor literals (test_ontology_critic_parity "
