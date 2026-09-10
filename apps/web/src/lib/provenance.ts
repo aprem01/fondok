@@ -7,21 +7,60 @@
  *   grounded  🟢  from THIS deal's documents / entry
  *   benchmark 🟡  a market / seed default — NOT this deal's data
  *   override  🟣  analyst-set
+ *
+ * Phase 1.4 — the vocabulary (which labels exist, what each is called, what
+ * each means) is the GENERATED registry ``SOURCES``; the 3-colour mapping and
+ * the wording the web shows stay here. Every disagreement between the two is
+ * pinned below and recorded in ``lib/ontology/DRIFT_NOTES.web.md``.
  */
+
+import {
+  SOURCE_IDS,
+  SOURCE_LABEL_FROM_REGISTRY,
+  SOURCE_EXPLANATION_FROM_REGISTRY,
+  SOURCE_REGISTRY_KIND,
+} from '@/lib/ontology/adapters';
 
 export type SourceKind = 'grounded' | 'benchmark' | 'override';
 
-const GROUNDED_SOURCES = new Set([
-  't12_actual',
-  'deal_row',
-  'om_comps',
-  'om_broker',
-  'portfolio_pnl',
-  'str_forecast',
+/**
+ * Registry kind → the web's 3-colour kind.
+ *
+ * ``calculated`` maps to ``override``: FON-69's ``derived_from_revpar_growth``
+ * is a formula over an analyst override, so it reads as analyst intent (blue)
+ * — the registry records it as `calculated` and explicitly leaves the colour
+ * to the UI (worker DRIFT_NOTES.md §3.10). ``refusal`` maps to ``benchmark``
+ * because a refused STR seed falls back to a T-12/seed value.
+ */
+const KIND_FROM_REGISTRY: Record<string, SourceKind> = {
+  grounded: 'grounded',
+  override: 'override',
+  calculated: 'override',
+  assumption: 'benchmark',
+  refusal: 'benchmark',
+};
+
+/**
+ * DRIFT PIN — the six labels the web never listed. They have always fallen
+ * through ``sourceKind`` to ``benchmark``; the registry would put ``pip_om``
+ * and ``partnership_doc`` on green (grounded) and ``pip_user`` / ``roi_user``
+ * on override. Phase 1.4 changes no colours and no Provenance Ledger counts,
+ * so the OLD classification wins and flipping them stays a product decision —
+ * delete an id from this set to adopt the registry's. Their LABEL and BADGE
+ * do widen (see SOURCE_LABEL). DRIFT_NOTES.web.md → "kind disagreements".
+ */
+const LEGACY_UNCLASSIFIED = new Set<string>([
+  'str_segmentation_default', 'pip_om', 'pip_user',
+  'capex_ffe_default', 'roi_user', 'partnership_doc',
 ]);
+
+const kindOf = (id: string): SourceKind | null =>
+  LEGACY_UNCLASSIFIED.has(id) ? null : KIND_FROM_REGISTRY[SOURCE_REGISTRY_KIND[id]] ?? null;
+
+const GROUNDED_SOURCES = new Set<string>(SOURCE_IDS.filter((id) => kindOf(id) === 'grounded'));
 // FON-69 — ``adr_growth`` derived by the worker from an analyst RevPAR-growth
 // override is analyst intent, so it reads as an input / assumption (blue).
-const OVERRIDE_SOURCES = new Set(['analyst_override', 'derived_from_revpar_growth']);
+const OVERRIDE_SOURCES = new Set<string>(SOURCE_IDS.filter((id) => kindOf(id) === 'override'));
 
 /**
  * FON-61 (D4) — the EXACT note the Market tab writes on the explicit
@@ -49,57 +88,55 @@ export function sourceKind(source: string): SourceKind {
   return 'benchmark'; // seed / cbre_horizons / pnl_benchmark / *_default
 }
 
-export const SOURCE_LABEL: Record<string, string> = {
-  seed: 'Seed default',
-  deal_row: 'Deal entry',
-  t12_actual: 'T-12 actual',
-  cbre_horizons: 'CBRE benchmark',
-  pnl_benchmark: 'Industry benchmark',
-  portfolio_pnl: 'Portfolio P&L',
-  om_comps: 'OM comps',
-  om_broker: 'OM broker',
-  analyst_override: 'Analyst override',
-  str_forecast: 'STR forecast',
-  // FON-61 (D4) — the STR seed was requested but could not populate; the
-  // value shown fell back to the T-12 base.
-  str_forecast_unavailable: 'STR unavailable',
-  // FON-69 — adr_growth derived from an analyst RevPAR-growth override.
-  derived_from_revpar_growth: 'Derived from RevPAR growth',
-};
+/**
+ * Long source labels — straight from the registry (``SOURCES[id].label``).
+ *
+ * All 12 labels the web hand-maintained match the registry byte-for-byte, so
+ * this is a pure widening: the six labels the worker emits that the web never
+ * knew (``str_segmentation_default``, ``pip_om``, ``pip_user``,
+ * ``capex_ffe_default``, ``roi_user``, ``partnership_doc``) now read as
+ * themselves instead of falling through to the underscore-stripped id.
+ */
+export const SOURCE_LABEL: Record<string, string> = { ...SOURCE_LABEL_FROM_REGISTRY };
 
 export function sourceLabel(source: string): string {
   return SOURCE_LABEL[source] ?? source.replace(/_/g, ' ');
 }
 
-/** One-line, human explanation of what a source means — the hover body. */
+/**
+ * DRIFT PIN — hover copy the web has shipped, kept verbatim.
+ *
+ * The registry carries a longer, worker-oriented explanation for most of
+ * these (it appends the growth-forward rule to ``t12_actual``, "Wins over
+ * every other source" to ``analyst_override``, and so on). Phase 1.4 changes
+ * no copy Sam sees, so where the two disagree the WEB text wins and the
+ * registry's is recorded in DRIFT_NOTES.web.md. ``seed`` and
+ * ``str_forecast_unavailable`` already match the registry exactly and are
+ * left to fall through.
+ */
+const WEB_EXPLANATION: Record<string, string> = {
+  t12_actual: 'Extracted from the deal’s T-12 actuals.',
+  deal_row: 'Entered on the deal record.',
+  om_comps: 'From the offering memorandum’s comparable set.',
+  om_broker: 'From the broker’s pro forma in the OM.',
+  portfolio_pnl: 'From your portfolio P&L library.',
+  str_forecast: 'From the STR / comp-set forecast.',
+  derived_from_revpar_growth:
+    'Derived from the analyst’s RevPAR-growth override: ADR growth = (1 + RevPAR growth) ÷ (1 + occupancy growth) − 1, with the occupancy path held.',
+  cbre_horizons: 'CBRE Horizons market benchmark — not this deal’s own data.',
+  pnl_benchmark: 'Industry (USALI/HOST) benchmark — not this deal’s own data.',
+  analyst_override: 'Set by an analyst with a justification note.',
+};
+
+/** One-line, human explanation of what a source means — the hover body.
+ *  Web copy first, then the registry's (which covers the six labels the web
+ *  never had), then the seed default for anything unknown. */
 export function sourceExplanation(source: string): string {
-  switch (source) {
-    case 't12_actual':
-      return 'Extracted from the deal’s T-12 actuals.';
-    case 'deal_row':
-      return 'Entered on the deal record.';
-    case 'om_comps':
-      return 'From the offering memorandum’s comparable set.';
-    case 'om_broker':
-      return 'From the broker’s pro forma in the OM.';
-    case 'portfolio_pnl':
-      return 'From your portfolio P&L library.';
-    case 'str_forecast':
-      return 'From the STR / comp-set forecast.';
-    case 'str_forecast_unavailable':
-      return 'STR rates were requested but could not populate (no STR Trend extraction or coverage too low) — the model is on the T-12 base.';
-    case 'derived_from_revpar_growth':
-      return 'Derived from the analyst’s RevPAR-growth override: ADR growth = (1 + RevPAR growth) ÷ (1 + occupancy growth) − 1, with the occupancy path held.';
-    case 'cbre_horizons':
-      return 'CBRE Horizons market benchmark — not this deal’s own data.';
-    case 'pnl_benchmark':
-      return 'Industry (USALI/HOST) benchmark — not this deal’s own data.';
-    case 'analyst_override':
-      return 'Set by an analyst with a justification note.';
-    case 'seed':
-    default:
-      return 'A default assumption — no deal-specific data has grounded this yet. Upload a T-12 / OM / STR to ground it.';
-  }
+  return (
+    WEB_EXPLANATION[source] ??
+    SOURCE_EXPLANATION_FROM_REGISTRY[source] ??
+    SOURCE_EXPLANATION_FROM_REGISTRY.seed
+  );
 }
 
 // Design-mockup taxonomy: green = linked / extracted (this deal's data),

@@ -28,6 +28,9 @@ import {
 } from '@/lib/api';
 import { useDeal } from '@/lib/hooks/useDeal';
 import { downloadXlsx, type XlsxCell } from '@/lib/exportXlsx';
+import {
+  HISTORICALS_ALIASES, PERIOD_ALIASES, isSubordinatePath,
+} from '@/lib/ontology/adapters';
 
 // ─────────────────────────── Data shape ───────────────────────────
 // One historical year column. ``amount`` for Rooms / F&B / Misc / dept
@@ -115,50 +118,40 @@ function num(field: ExtractionField | undefined): number | null {
  * ``true`` for monthly / page / quarterly / per-month slices that must
  * never be matched as a period total.
  *
- * MUST stay in sync with ``_has_subordinate_namespace`` in
- * ``apps/worker/app/services/usali_scorer.py`` — both layers see the
- * same flat extraction payload and need to reject the same subordinate
- * namespaces before annual-canonical lookups. If you add a new
- * subordinate prefix on the worker side, mirror it here.
+ * Phase 1.4: the namespace list is no longer hand-maintained here — it is
+ * filtered out of the registry's ``SUBORDINATE_NAMESPACES`` by
+ * ``isSubordinatePath`` (``lib/ontology/adapters``), which is generated from
+ * ``concepts.yaml`` and so cannot drift from the worker resolver.
  *
- * Sam QA 2026-06-30 (deal b5f532ad…): the real prod T-12 ships
- * ``p_and_l_usali.monthly.jan.rooms_revenue_usd`` (and 11 sibling
- * months). ``findField`` matched the last dotted segment
- * (``rooms_revenue_usd`` → unit-stripped ``rooms_revenue``), so the
+ * Sam QA 2026-06-30 (deal b5f532ad…): the real prod T-12 ships a monthly
+ * January slice of Rooms revenue (and 11 sibling months). ``findField``
+ * matched the last dotted segment (the unit-stripped canonical), so the
  * JANUARY value ($1,086) was shown as both 2023 and 2025 Rooms revenue
  * across the Historicals tab. The worker resolver
  * (``_token_match_candidates``) already filters subordinate namespaces
  * out of its candidate pool; this is the matching frontend filter.
  */
 function hasSubordinateNamespace(key: string): boolean {
-  const lowered = key.toLowerCase();
-  return (
-    lowered.includes('.monthly.') ||
-    lowered.includes('.page') ||
-    lowered.includes('.per_month.') ||
-    lowered.includes('.quarterly.') ||
-    lowered.includes('.q1.') ||
-    lowered.includes('.q2.') ||
-    lowered.includes('.q3.') ||
-    lowered.includes('.q4.')
-  );
+  return isSubordinatePath(key);
 }
 
 /**
  * Match an extracted field by alias. The extractor emits fields under
- * dotted USALI paths (``p_and_l_usali.operating_revenue.rooms_revenue``)
- * and with unit suffixes (``adr_usd``, ``occupancy_pct``). The old
- * exact-normalized-match only caught bare names like ``occupancy_pct``,
- * which is why the Historicals T-12 column showed Occupancy but blanked
- * ADR / RevPAR / every revenue line (Sam QA 2026-05-14 #1).
+ * dotted USALI paths and with unit suffixes (``adr_usd``,
+ * ``occupancy_pct``). The old exact-normalized-match only caught bare
+ * names like ``occupancy_pct``, which is why the Historicals T-12 column
+ * showed Occupancy but blanked ADR / RevPAR / every revenue line
+ * (Sam QA 2026-05-14 #1).
  *
  * Matching strategy — for each field, try the full normalized name,
- * the last dotted segment, and both with the unit suffix stripped.
+ * the last dotted segment, and both with the unit suffix stripped. This
+ * IS tier 4 + tier 5 of the registry resolver (DRIFT_NOTES.md §7): the
+ * unit strip and the tail match, with the alias sets coming from
+ * ``CONCEPTS[id].aliases``.
  *
- * Subordinate-namespace guard — fields under ``.monthly.`` / ``.page`` /
- * ``.quarterly.`` / ``.q1.`` etc. are skipped BEFORE the alias match,
- * because their tail segment looks identical to the annual canonical
- * (``monthly.jan.rooms_revenue_usd`` → ``rooms_revenue``). See
+ * Subordinate-namespace guard — fields under a monthly / page /
+ * quarterly / q1-q4 namespace are skipped BEFORE the alias match, because
+ * their tail segment looks identical to the annual canonical. See
  * ``hasSubordinateNamespace`` and the matching worker helper
  * ``_has_subordinate_namespace``.
  */
@@ -195,19 +188,20 @@ export function findField(fields: ExtractionField[], aliases: string[]): Extract
 /**
  * Drop forward-looking fields before any historical building.
  *
- * Sam QA 2026-05-14: the T-12 doc carries BOTH actuals
- * (``p_and_l_usali.period_ending`` = 2025-05-31) AND a forecast block
- * (``forecast.period_ending`` = 2025-12-31). ``findField`` matches on
- * the last dotted segment, so ``forecast.period_ending`` shadowed the
- * real period_ending — the T-12 doc got mislabeled "2025" (December)
- * instead of "T-12", and its data landed in the wrong column with the
- * real T-12 column left blank. The Historicals tab is actuals-only;
- * strip anything under a forecast/projection/budget namespace.
+ * Sam QA 2026-05-14: the T-12 doc carries BOTH actuals (period_ending =
+ * 2025-05-31) AND a forecast block (``forecast.period_ending`` =
+ * 2025-12-31). ``findField`` matches on the last dotted segment, so
+ * ``forecast.period_ending`` shadowed the real period_ending — the T-12
+ * doc got mislabeled "2025" (December) instead of "T-12", and its data
+ * landed in the wrong column with the real T-12 column left blank. The
+ * Historicals tab is actuals-only; strip anything under a
+ * forecast/projection/budget namespace.
  *
  * Sam QA 2026-06-30: also drop subordinate-period namespaces (monthly /
- * page / quarterly / per_month / q1-q4) so a stray
- * ``p_and_l_usali.monthly.jan_2025.fb_revenue_usd`` slice never wins
- * over the period total. Mirrors ``_has_subordinate_namespace`` in
+ * page / quarterly / per_month / q1-q4) so a stray monthly slice never
+ * wins over the period total. That list is the registry's
+ * ``SUBORDINATE_NAMESPACES`` via ``isSubordinatePath``, which mirrors
+ * ``_has_subordinate_namespace`` in
  * ``apps/worker/app/services/usali_scorer.py``.
  */
 export function actualsOnly(fields: ExtractionField[]): ExtractionField[] {
@@ -223,14 +217,7 @@ export function actualsOnly(fields: ExtractionField[]): ExtractionField[] {
       n.includes('.projected.') ||
       n.includes('.budget.') ||
       // Subordinate-period slices — never a period total.
-      n.includes('.monthly.') ||
-      n.includes('.page') ||
-      n.includes('.per_month.') ||
-      n.includes('.quarterly.') ||
-      n.includes('.q1.') ||
-      n.includes('.q2.') ||
-      n.includes('.q3.') ||
-      n.includes('.q4.')
+      isSubordinatePath(n)
     );
   });
 }
@@ -283,16 +270,11 @@ export function deriveYearLabel(
     if (ny) return ny[1];
   }
 
-  const periodEnding = strVal(findField(fields, [
-    'period_ending', 'p_and_l_usali.period_ending',
-    'period_end', 'statement_period_end',
-  ]));
-  const periodType = strVal(findField(fields, [
-    'period_type', 'p_and_l_usali.period_type',
-  ]));
-  const periodLabel = strVal(findField(fields, [
-    'period_label', 'p_and_l_usali.period_label',
-  ]));
+  // Alias lists come from the generated registry (Phase 1.4) — see
+  // ``PERIOD_ALIASES`` in lib/ontology/adapters.
+  const periodEnding = strVal(findField(fields, PERIOD_ALIASES.period_ending));
+  const periodType = strVal(findField(fields, PERIOD_ALIASES.period_type));
+  const periodLabel = strVal(findField(fields, PERIOD_ALIASES.period_label));
 
   // 1. period_type + period_ending — the cleanest signal. Annual →
   //    the calendar year of period_ending. Anything rolling/partial
@@ -402,223 +384,57 @@ export function buildHistYear(
   // wrapper over findField that records meta then returns the numeric value —
   // the value logic below is unchanged.
   const meta: Record<string, HistLineMeta> = {};
-  const pick = (key: string, aliases: string[]): number | null => {
-    const f = findField(fields, aliases);
+  const pick = (key: string): number | null => {
+    const f = findField(fields, HISTORICALS_ALIASES[key] ?? []);
     if (f && typeof f.confidence === 'number') {
       meta[key] = { confidence: f.confidence, field: f.field_name, docId };
     }
     return num(f);
   };
 
-  // ─── Alias lists mirror the canonical map in ───
-  //   ``apps/worker/app/services/usali_scorer.py:_ALIASES``
-  // The extractor is non-deterministic across years: 2022 may emit
-  // ``p_and_l_usali.revenue.fb_revenue_usd``, 2023 may emit
-  // ``p_and_l_usali.food_and_beverage.revenue_usd``, and 2019/2021 may
-  // emit yet another shape. ``findField`` matches both the full
-  // normalized name and the last dotted segment (with unit suffix
-  // stripped), so the deep USALI paths below cover their variants via
-  // segment fallback too.
+  // ─── Alias lists come from the GENERATED concept registry (Phase 1.4) ───
+  //   src/lib/ontology/concepts.generated.ts
+  //     ← apps/worker/app/ontology/concepts.yaml  (CI-gated: gen_ontology.py --check)
   //
-  // FUTURE DRIFT WARNING: when the backend ``_ALIASES`` map grows a new
-  // path variant, this list needs to grow in lockstep. The backend file
-  // is the source of truth; this is an explicit duplicate to ship the
-  // bugfix in <1 hr (Wave 1, 2026-06-30 Sam QA). The right long-term
-  // fix is a worker ``GET /deals/{id}/historicals/normalized`` endpoint
-  // that runs the backend resolver server-side.
-  const occ = pick('occ', [
-    'occupancy', 'occupancy_pct', 'occ', 't12_occupancy',
-    'p_and_l_usali.occupancy', 'p_and_l_usali.occupancy_pct',
-    'p_and_l_usali.operational_kpis.occupancy',
-    'p_and_l_usali.operational_kpis.occupancy_pct',
-    'ttm_summary_per_om.occupancy_pct', 'ttm_summary_per_om.occupancy',
-  ]);
-  const adr = pick('adr', [
-    'adr', 'adr_usd', 'average_daily_rate', 't12_adr',
-    'p_and_l_usali.adr', 'p_and_l_usali.adr_usd',
-    'p_and_l_usali.operational_kpis.adr',
-    'p_and_l_usali.operational_kpis.adr_usd',
-    'ttm_summary_per_om.adr_usd', 'ttm_summary_per_om.adr',
-  ]);
-  const revpar = pick('revpar', [
-    'revpar', 'revpar_usd', 't12_revpar',
-    'p_and_l_usali.revpar', 'p_and_l_usali.revpar_usd',
-    'p_and_l_usali.operational_kpis.revpar',
-    'p_and_l_usali.operational_kpis.revpar_usd',
-    'ttm_summary_per_om.revpar_usd', 'ttm_summary_per_om.revpar',
-  ]);
-  const rooms = pick('rooms', [
-    'rooms_revenue', 'room_revenue', 'total_rooms_revenue',
-    't12_rooms_revenue', 'rooms_revenue_usd',
-    'p_and_l_usali.rooms_revenue',
-    // T-12 prod: per-dept bucket carries revenue under ``.revenue_usd``.
-    'p_and_l_usali.rooms.revenue_usd',
-    'p_and_l_usali.rooms.revenue',
-    // Annual P&L prod: revenues namespace.
-    'p_and_l_usali.revenues.rooms_usd',
-    'p_and_l_usali.revenues.rooms',
-    'p_and_l_usali.revenues.rooms_revenue',
-    // Schema-doc canonical (legacy fixture path).
-    'p_and_l_usali.operating_revenue.rooms_revenue',
-    'p_and_l_usali.operating_revenue.rooms_revenue_usd',
-    // 2022 variant Sam hit
-    'p_and_l_usali.revenue.rooms_revenue_usd',
-    'p_and_l_usali.revenue.rooms_revenue',
-  ]);
-  const fb = pick('fb', [
-    'fb_revenue', 'food_beverage_revenue', 'fnb_revenue', 'food_beverage',
-    'fb_revenue_usd',
-    'p_and_l_usali.fb_revenue',
-    // Abbreviated per-dept bucket (mirrors rooms.revenue_usd) — some P&Ls emit
-    // ``p_and_l_usali.fb.revenue_usd`` rather than the full food_and_beverage
-    // namespace (Sam QA 8/21 — F&B was rendering "—" on Kimpton Test 8/21).
-    'p_and_l_usali.fb.revenue_usd',
-    'p_and_l_usali.fb.revenue',
-    // T-12 prod
-    'p_and_l_usali.food_and_beverage.revenue_usd',
-    'p_and_l_usali.food_and_beverage.revenue',
-    // Annual P&L prod
-    'p_and_l_usali.revenues.fb_usd',
-    'p_and_l_usali.revenues.fb',
-    'p_and_l_usali.revenues.food_beverage_revenue',
-    // Schema-doc canonical
-    'p_and_l_usali.operating_revenue.food_beverage_revenue',
-    'p_and_l_usali.operating_revenue.fb_revenue',
-    // 2022 variant Sam hit
-    'p_and_l_usali.revenue.fb_revenue_usd',
-    'p_and_l_usali.revenue.fb_revenue',
-  ]);
-  // Misc/other-revenue: backend splits ``other_revenue`` (other
-  // operated departments) and ``misc_revenue`` (miscellaneous income).
-  // Historicals collapses them into a single "Misc. Income" column,
-  // so we accept paths from BOTH canonicals.
-  const misc = pick('misc', [
-    'other_revenue', 'misc_revenue', 'misc_income', 'miscellaneous_income',
-    'other_operated_revenue', 'other_revenue_usd', 'misc_revenue_usd',
-    'p_and_l_usali.other_revenue',
-    // T-12 prod
-    'p_and_l_usali.other_operated_departments.revenue_usd',
-    'p_and_l_usali.other_operated_departments.revenue',
-    'p_and_l_usali.miscellaneous_income.revenue_usd',
-    'p_and_l_usali.miscellaneous_income.revenue',
-    // Annual P&L prod
-    'p_and_l_usali.revenues.other_operated_departments_usd',
-    'p_and_l_usali.revenues.other_operated_departments',
-    'p_and_l_usali.revenues.other_revenue',
-    'p_and_l_usali.revenues.miscellaneous_income_usd',
-    'p_and_l_usali.revenues.misc_revenue',
-    // Schema-doc canonical
-    'p_and_l_usali.operating_revenue.other_revenue',
-    'p_and_l_usali.operating_revenue.misc_revenue',
-    // 2022 variant Sam hit
-    'p_and_l_usali.revenue.other_revenue_usd',
-    'p_and_l_usali.revenue.misc_revenue_usd',
-    'p_and_l_usali.revenue.misc_income_usd',
-  ]);
+  // The extractor is non-deterministic across years: one year emits the
+  // revenue namespace, the next the per-department bucket, 2019/2021 yet
+  // another shape. Every shape any resolver has ever accepted now lives in
+  // the registry, so this file no longer carries the hand-maintained copy
+  // that used to sit here under a "FUTURE DRIFT WARNING" (Wave 1,
+  // 2026-06-30 Sam QA). ``HISTORICALS_ALIASES`` flattens
+  // ``CONCEPTS[id].aliases`` for the P&L family; ``findField`` matches both
+  // the full normalized name and the last dotted segment with the unit
+  // suffix stripped — tiers 4-5 of the worker resolver.
+  //
+  // Historicals COLLAPSES the registry's two revenue concepts —
+  // ``other_revenue`` (Other Operated Departments) and ``misc_revenue``
+  // (Miscellaneous Income) — into the single "Misc. Income" column, so the
+  // ``misc`` list is the union of both. See DRIFT_NOTES.web.md.
+  const occ = pick('occ');
+  const adr = pick('adr');
+  const revpar = pick('revpar');
+  const rooms = pick('rooms');
+  const fb = pick('fb');
+  const misc = pick('misc');
 
-  // ─── Expenses / profitability (Task C 2026-06-29; aliases expanded 2026-06-30) ───
-  const roomsDept = pick('rooms_dept', [
-    'rooms_dept_expense', 'rooms_departmental_expense',
-    'p_and_l_usali.departmental_expenses.rooms',
-    // T-12 prod (two flavors observed on the SAME workbook).
-    'p_and_l_usali.rooms.expense_usd',
-    'p_and_l_usali.rooms.departmental_expense_usd',
-    // Annual P&L prod
-    'p_and_l_usali.departmental_expense.rooms_usd',
-    'p_and_l_usali.departmental_expense.rooms',
-  ]);
-  const fbDept = pick('fb_dept', [
-    'fb_dept_expense', 'food_beverage_dept_expense', 'fnb_dept_expense',
-    'p_and_l_usali.departmental_expenses.food_beverage',
-    // Abbreviated per-dept bucket (mirrors rooms.expense_usd).
-    'p_and_l_usali.fb.expense_usd',
-    'p_and_l_usali.fb.departmental_expense_usd',
-    // T-12 prod
-    'p_and_l_usali.food_and_beverage.expense_usd',
-    'p_and_l_usali.food_and_beverage.departmental_expense_usd',
-    // Annual P&L prod
-    'p_and_l_usali.departmental_expense.fb_usd',
-    'p_and_l_usali.departmental_expense.fb',
-    'p_and_l_usali.departmental_expense.food_beverage_usd',
-  ]);
-  const otherDept = pick('other_dept', [
-    'other_dept_expense', 'other_operated_dept_expense',
-    'p_and_l_usali.departmental_expenses.other_operated',
-    // T-12 prod
-    'p_and_l_usali.other_operated_departments.expense_usd',
-    'p_and_l_usali.other_operated_departments.departmental_expense_usd',
-    // Annual P&L prod
-    'p_and_l_usali.departmental_expense.other_operated_departments_usd',
-    'p_and_l_usali.departmental_expense.other_operated_usd',
-  ]);
-  const undistributed = pick('undistributed', [
-    'undistributed_expenses', 'undistributed',
-    'total_undistributed_expenses_usd',
-    'p_and_l_usali.undistributed_expenses',
-    'p_and_l_usali.undistributed.total',
-    // T-12 prod
-    'p_and_l_usali.total_undistributed_expenses_usd',
-    // Annual P&L prod
-    'p_and_l_usali.undistributed_expenses.total_usd',
-  ]);
-  const gop = pick('gop', [
-    'gop', 'gop_usd', 'gross_operating_profit',
-    'p_and_l_usali.gop', 'p_and_l_usali.gross_operating_profit',
-    'p_and_l_usali.gross_operating_profit.gop_usd',
-    // T-12 prod
-    'p_and_l_usali.gross_operating_profit_usd',
-    // Annual P&L prod (nested-sibling pattern).
-    'p_and_l_usali.gop.gross_operating_profit_usd',
-    'p_and_l_usali.gop.gop_usd',
-    'p_and_l_usali.gop.total_usd',
-    'p_and_l_usali.gross_operating_profit.total_usd',
-    'p_and_l_usali.gross_operating_profit.total',
-  ]);
-  const propTax = pick('property_tax', [
-    'property_tax', 'property_taxes', 'property_tax_usd',
-    'p_and_l_usali.property_tax', 'p_and_l_usali.property_taxes',
-    'p_and_l_usali.fixed_charges.property_taxes',
-    // Real prod: bucketed under non_operating, not fixed_charges.
-    'p_and_l_usali.non_operating.property_and_other_taxes_usd',
-    'p_and_l_usali.non_operating.property_other_taxes_usd',
-    'p_and_l_usali.non_operating.property_taxes',
-  ]);
-  const insurance = pick('insurance', [
-    'insurance_expense', 'insurance', 'insurance_usd',
-    'p_and_l_usali.insurance',
-    'p_and_l_usali.fixed_charges.insurance',
-    // Real prod
-    'p_and_l_usali.non_operating.insurance_usd',
-    'p_and_l_usali.non_operating.insurance',
-  ]);
-  const mgmtFee = pick('mgmt_fee', [
-    'mgmt_fee', 'management_fee', 'mgmt_fee_usd',
-    'p_and_l_usali.mgmt_fee',
-    'p_and_l_usali.fees_and_reserves.mgmt_fee',
-    'p_and_l_usali.fees_and_reserves.management_fee',
-    // T-12 prod
-    'p_and_l_usali.management_fees_usd',
-    // Annual P&L prod
-    'p_and_l_usali.management_fees.total_usd',
-    'p_and_l_usali.management_fees.total',
-  ]);
+  // ─── Expenses / profitability (Task C 2026-06-29) ───
+  const roomsDept = pick('rooms_dept');
+  const fbDept = pick('fb_dept');
+  const otherDept = pick('other_dept');
+  const undistributed = pick('undistributed');
+  const gop = pick('gop');
+  const propTax = pick('property_tax');
+  const insurance = pick('insurance');
+  const mgmtFee = pick('mgmt_fee');
   const fixedParts = [propTax, insurance, mgmtFee].filter(
     (v): v is number => v != null,
   );
   const fixedExpenses = fixedParts.length ? fixedParts.reduce((a, b) => a + b, 0) : null;
-  const noi = pick('noi', [
-    'noi', 'noi_usd', 'net_operating_income',
-    'p_and_l_usali.noi', 'p_and_l_usali.net_operating_income',
-    'p_and_l_usali.net_operating_income.noi_usd',
-    // Nested-sibling pattern (mirrors GOP).
-    'p_and_l_usali.noi.noi_usd',
-    'p_and_l_usali.noi.net_operating_income_usd',
-    'p_and_l_usali.noi.total_usd',
-    // EBITDA-less-reserve as a reasonable NOI proxy when the doc
-    // never publishes a NOI line directly.
-    'p_and_l_usali.ebitda_less_replacement_reserve_usd',
-    'p_and_l_usali.ebitda_less_replacement_reserve.total_usd',
-  ]);
+  // NOI also accepts the "EBITDA less Replacement Reserve" line as a
+  // reasonable proxy when the statement never publishes NOI directly —
+  // those paths are on the ``noi`` concept in the registry
+  // (DRIFT_NOTES.md §3.4).
+  const noi = pick('noi');
 
   // Need at least one of {rooms, occupancy, adr} to render anything.
   if (rooms == null && occ == null && adr == null) return null;

@@ -47,6 +47,7 @@ import { useSource } from '@/lib/hooks/useDealProvenance';
 import { sourceKind, sourceExplanation } from '@/lib/provenance';
 import { useWorksheetLayout } from '@/lib/hooks/useWorksheetLayout';
 import type { SplitChild, CuratedLine } from '@/lib/hooks/useWorksheetLayout';
+import { worksheetBinding } from '@/lib/ontology/adapters';
 
 // ── Row model ──────────────────────────────────────────────────────────
 // Historical values are mapped by row id in histValue(); overrideKey (present
@@ -86,46 +87,71 @@ const DEPT_IDS = ['rooms_dept', 'fb_dept', 'other_dept'];
 // cell — revenue, expense, subtotal or NOI — can flag low confidence and open
 // the SOURCE panel at its own statement. Lines the P&Ls don't break out
 // (A&G, S&M, FF&E, …) have no metaKey and render "—" in historical columns.
+//
+// Phase 1.4: a row's KEYS (overrideKey / reviewKey / metaKey / y1Read / y1Src /
+// fmt) come from the generated registry — ``CONCEPTS[id].bindings.worksheet``,
+// via ``ws()`` below — so the field_overrides key, the HistYear.meta key and
+// the engine path can never drift from the worker again. What stays
+// hand-authored here is LAYOUT: which rows exist, in what ORDER, under which
+// section, with which label, and how a subtotal/computed row is computed.
+/** Registry-bound keys for one worksheet row. Emits a key only when the
+ *  registry binds one, so an unbound row keeps `undefined` (``y1Read`` is
+ *  read as a truthiness test — an empty array would change behaviour). */
+function ws(row: string): Pick<RowDef, 'id' | 'overrideKey' | 'reviewKey' | 'metaKey' | 'y1Read' | 'y1Src' | 'fmt'> {
+  const b = worksheetBinding(row);
+  return {
+    id: row,
+    ...(b.override_key ? { overrideKey: b.override_key } : {}),
+    ...(b.review_key ? { reviewKey: b.review_key } : {}),
+    ...(b.meta_key ? { metaKey: b.meta_key } : {}),
+    ...(b.y1_read.length ? { y1Read: [...b.y1_read] } : {}),
+    ...(b.y1_src ? { y1Src: b.y1_src } : {}),
+    // 'currency' is the RowDef default — leaving it undefined keeps the row
+    // objects identical to the hand-written table they replace.
+    ...(b.fmt !== 'currency' ? { fmt: b.fmt } : {}),
+  };
+}
+
 const ROWS: RowDef[] = [
   { id: 's_ops', label: 'Operating Statistics', kind: 'section' },
-  { id: 'occ', label: 'Occupancy', kind: 'input', fmt: 'pct', y1Src: 'revenue', y1Read: ['occupancy'], metaKey: 'occ' },
-  { id: 'adr', label: 'ADR', kind: 'input', fmt: 'dollar', y1Src: 'revenue', y1Read: ['adr'], metaKey: 'adr' },
-  { id: 'revpar', label: 'RevPAR', kind: 'input', fmt: 'dollar', y1Src: 'revenue', y1Read: ['revpar'], metaKey: 'revpar' },
+  { ...ws('occ'), label: 'Occupancy', kind: 'input' },
+  { ...ws('adr'), label: 'ADR', kind: 'input' },
+  { ...ws('revpar'), label: 'RevPAR', kind: 'input' },
 
   { id: 's_rev', label: 'Revenue', kind: 'section' },
-  { id: 'rooms_rev', label: 'Rooms Revenue', kind: 'input', y1Src: 'fb', y1Read: ['rooms_revenue'], reviewKey: 'rooms_revenue', metaKey: 'rooms' },
-  { id: 'fb_rev', label: 'Food & Beverage Revenue', kind: 'input', y1Src: 'fb', y1Read: ['fb_revenue'], reviewKey: 'fb_revenue', metaKey: 'fb' },
-  { id: 'other_rev', label: 'Other Revenue', kind: 'input', y1Src: 'fb', y1Read: ['other_revenue'], reviewKey: 'other_revenue', metaKey: 'misc' },
-  { id: 'total_rev', label: 'Total Revenue', kind: 'subtotal',
+  { ...ws('rooms_rev'), label: 'Rooms Revenue', kind: 'input' },
+  { ...ws('fb_rev'), label: 'Food & Beverage Revenue', kind: 'input' },
+  { ...ws('other_rev'), label: 'Other Revenue', kind: 'input' },
+  { ...ws('total_rev'), label: 'Total Revenue', kind: 'subtotal',
     compute: (v) => v.rooms_rev + v.fb_rev + v.other_rev },
 
   { id: 's_dept', label: 'Departmental Expenses', kind: 'section' },
-  { id: 'rooms_dept', label: 'Rooms', kind: 'input', overrideKey: 'rooms_dept_expense', y1Read: ['dept_expenses', 'rooms'], metaKey: 'rooms_dept' },
-  { id: 'fb_dept', label: 'Food & Beverage', kind: 'input', overrideKey: 'fb_dept_expense', y1Read: ['dept_expenses', 'food_beverage'], metaKey: 'fb_dept' },
-  { id: 'other_dept', label: 'Other Operated', kind: 'input', overrideKey: 'other_dept_expense', y1Read: ['dept_expenses', 'other_operated'], metaKey: 'other_dept' },
+  { ...ws('rooms_dept'), label: 'Rooms', kind: 'input' },
+  { ...ws('fb_dept'), label: 'Food & Beverage', kind: 'input' },
+  { ...ws('other_dept'), label: 'Other Operated', kind: 'input' },
 
   { id: 's_undist', label: 'Undistributed Operating Expenses', kind: 'section' },
-  { id: 'ag', label: 'Administrative & General', kind: 'input', overrideKey: 'administrative_general', y1Read: ['undistributed', 'administrative_general'] },
-  { id: 'sm', label: 'Sales & Marketing', kind: 'input', overrideKey: 'sales_marketing', y1Read: ['undistributed', 'sales_marketing'] },
-  { id: 'pom', label: 'Property Operations', kind: 'input', overrideKey: 'property_operations', y1Read: ['undistributed', 'property_operations'] },
-  { id: 'util', label: 'Utilities', kind: 'input', overrideKey: 'utilities', y1Read: ['undistributed', 'utilities'] },
-  { id: 'it', label: 'Information & Telecom', kind: 'input', overrideKey: 'information_telecom', y1Read: ['undistributed', 'information_telecom'] },
-  { id: 'undist_total', label: 'Total Undistributed', kind: 'subtotal',
-    compute: (v) => sumKeys(v, UNDIST_IDS), metaKey: 'undistributed' },
+  { ...ws('ag'), label: 'Administrative & General', kind: 'input' },
+  { ...ws('sm'), label: 'Sales & Marketing', kind: 'input' },
+  { ...ws('pom'), label: 'Property Operations', kind: 'input' },
+  { ...ws('util'), label: 'Utilities', kind: 'input' },
+  { ...ws('it'), label: 'Information & Telecom', kind: 'input' },
+  { ...ws('undist_total'), label: 'Total Undistributed', kind: 'subtotal',
+    compute: (v) => sumKeys(v, UNDIST_IDS) },
 
-  { id: 'gop', label: 'Gross Operating Profit (GOP)', kind: 'computed',
-    compute: (v) => v.total_rev - sumKeys(v, DEPT_IDS) - sumKeys(v, UNDIST_IDS), metaKey: 'gop' },
+  { ...ws('gop'), label: 'Gross Operating Profit (GOP)', kind: 'computed',
+    compute: (v) => v.total_rev - sumKeys(v, DEPT_IDS) - sumKeys(v, UNDIST_IDS) },
 
   { id: 's_fixed', label: 'Management Fee & Fixed Charges', kind: 'section' },
-  { id: 'mgmt', label: 'Management Fee', kind: 'input', overrideKey: 'mgmt_fee', y1Read: ['mgmt_fee'], metaKey: 'mgmt_fee' },
-  { id: 'ffe', label: 'FF&E Reserve', kind: 'input', overrideKey: 'ffe_reserve', y1Read: ['ffe_reserve'] },
-  { id: 'taxes', label: 'Property Taxes', kind: 'input', overrideKey: 'property_taxes', y1Read: ['fixed_charges', 'property_taxes'], metaKey: 'property_tax' },
-  { id: 'insurance', label: 'Insurance', kind: 'input', overrideKey: 'insurance', y1Read: ['fixed_charges', 'insurance'], metaKey: 'insurance' },
-  { id: 'fixed_total', label: 'Total Fees & Fixed', kind: 'subtotal',
+  { ...ws('mgmt'), label: 'Management Fee', kind: 'input' },
+  { ...ws('ffe'), label: 'FF&E Reserve', kind: 'input' },
+  { ...ws('taxes'), label: 'Property Taxes', kind: 'input' },
+  { ...ws('insurance'), label: 'Insurance', kind: 'input' },
+  { ...ws('fixed_total'), label: 'Total Fees & Fixed', kind: 'subtotal',
     compute: (v) => sumKeys(v, FIXED_FEE_IDS) },
 
-  { id: 'noi', label: 'Net Operating Income (NOI)', kind: 'computed',
-    compute: (v) => v.total_rev - sumKeys(v, DEPT_IDS) - sumKeys(v, UNDIST_IDS) - sumKeys(v, FIXED_FEE_IDS), metaKey: 'noi' },
+  { ...ws('noi'), label: 'Net Operating Income (NOI)', kind: 'computed',
+    compute: (v) => v.total_rev - sumKeys(v, DEPT_IDS) - sumKeys(v, UNDIST_IDS) - sumKeys(v, FIXED_FEE_IDS) },
 ];
 
 // Input (editable) member rows per section, and a row lookup — used by the

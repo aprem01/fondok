@@ -26,6 +26,7 @@
 
 import type { ExtractionResult, WorkerDocument } from '@/lib/api';
 import type { HistYear } from '@/components/project/pl/HistoricalsSection';
+import { HIST_KEY_BY_ROW } from '@/lib/ontology/adapters';
 
 /** Below this extraction confidence a value is "to review" until accepted/edited. */
 export const REVIEW_THRESHOLD = 0.85;
@@ -80,33 +81,23 @@ const nOrNull = (x: unknown): number | null =>
  * render "—". Lives here (not in the worksheet) because "does this cell render
  * a value" is part of the review predicate — a value that has no cell has no
  * place to be reviewed, so it must not be counted anywhere.
+ *
+ * Phase 1.4: the row → HistYear-field map is the generated registry's
+ * ``bindings.worksheet.hist_key`` (``HIST_KEY_BY_ROW``), not a hand-written
+ * switch. Fixed-charge parts (Part B — mgmt fee / property tax / insurance)
+ * are extracted individually and are optional on HistYear, so older payloads
+ * still render. ``total_rev`` is the ONE row whose historical value is a SUM
+ * of other fields rather than a single extracted line; it carries no
+ * ``hist_key`` in the registry and stays computed here.
  */
 export function histValue(rowId: string, h: HistYear): number | null {
-  switch (rowId) {
-    case 'occ': return nOrNull(h.occupancyPct);
-    case 'adr': return nOrNull(h.adr);
-    case 'revpar': return nOrNull(h.revpar);
-    case 'rooms_rev': return nOrNull(h.rooms);
-    case 'fb_rev': return nOrNull(h.fb);
-    case 'other_rev': return nOrNull(h.misc);
-    case 'total_rev': {
-      const parts = [h.rooms, h.fb, h.misc].map(nOrNull).filter((x): x is number => x != null);
-      return parts.length ? parts.reduce((a, b) => a + b, 0) : null;
-    }
-    case 'rooms_dept': return nOrNull(h.rooms_dept_expense);
-    case 'fb_dept': return nOrNull(h.fb_dept_expense);
-    case 'other_dept': return nOrNull(h.other_dept_expense);
-    case 'undist_total': return nOrNull(h.undistributed);
-    case 'gop': return nOrNull(h.gop);
-    // Fixed-charge parts (Part B) — extracted individually; their sum is
-    // fixed_expenses. Optional on HistYear so older payloads still render.
-    case 'mgmt': return nOrNull(h.mgmt_fee);
-    case 'taxes': return nOrNull(h.property_tax);
-    case 'insurance': return nOrNull(h.insurance);
-    case 'fixed_total': return nOrNull(h.fixed_expenses);
-    case 'noi': return nOrNull(h.noi);
-    default: return null;
+  if (rowId === 'total_rev') {
+    const parts = [h.rooms, h.fb, h.misc].map(nOrNull).filter((x): x is number => x != null);
+    return parts.length ? parts.reduce((a, b) => a + b, 0) : null;
   }
+  const key = HIST_KEY_BY_ROW[rowId];
+  if (!key) return null;
+  return nOrNull((h as unknown as Record<string, unknown>)[key]);
 }
 
 /**
