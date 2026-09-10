@@ -251,7 +251,7 @@ export default function MethodologyPage() {
               ['F&B', 'Per-occupied-room F&B model with food/beverage split; resort fees handled as a separate line.'],
               ['Expense', 'USALI 11th departmental + undistributed + management fee + FF&E reserve + fixed charges → GOP, NOI (institutional), Net Cash Flow.'],
               ['Capital', 'Purchase price + closing costs + renovation budget + working capital → total capital; Sources & Uses.'],
-              ['Debt', 'Senior loan amortization with hand-rolled IRR (Newton method, bisection fallback); DSCR; refi optionality.'],
+              ['Debt', 'Senior + PACE tranche stack from analyst-entered terms (fixed or index + spread with floor / cap, amortization or interest-only, IO stub, maturity); monthly amortization schedule; DSCR, debt yield, LTV / LTC; analyst-entered covenant thresholds; refi optionality.'],
               ['Returns', 'Levered + unlevered IRR, equity multiple, Year-1 CoC, terminal value via exit cap × terminal NOI. Handles loss-making (underwater) deals — a negative IRR or sub-1x multiple is reported honestly, not floored or crashed.'],
               ['Sensitivity', 'IRR heatmap across exit cap × hold years (or other configurable pairs).'],
               ['Partnership', 'GP / LP waterfall with preferred return, catch-up, promote tiers. A deficit period is funded as a dated pro-rata GP/LP capital call (by ownership split) that adds to unreturned capital — the preferred return accrues on it — and is reported as additional contributions; Cash Flow → Partnership → Returns carry one treatment of additional equity.'],
@@ -261,6 +261,39 @@ export default function MethodologyPage() {
                 <span className="text-ink-500">{desc}</span>
               </li>
             ))}
+          </ul>
+        </Card>
+
+        <Card className="p-5 mt-4">
+          <h4 className="text-[13px] font-semibold text-ink-900 mb-2">Debt is an assumptions workspace</h4>
+          <p className="text-[12.5px] text-ink-500 leading-relaxed mb-3">
+            Debt documents are optional. The Debt tab is where the financing is entered, and every core term is an analyst input the model runs on — Fondok does not read the term sheet in this release. Each edit is persisted as an analyst override <AssumptionBadge source="analyst_override" /> and re-runs the chain, so the Debt Schedule, DSCR, debt yield, LTV / LTC, Cash Flow and Returns all reflect what was entered.
+          </p>
+          <ul className="space-y-2 text-[12.5px] text-ink-600 leading-relaxed">
+            <li>
+              <span className="font-semibold text-ink-900">Senior loan (tranche 1).</span>{' '}
+              Amount (or LTV — either resizes the same loan), rate basis, amortization (0 = interest-only for the full term), an interest-only stub in months before principal begins, and maturity. Fixed prices off the entered coupon; Floating prices off the index assumption plus spread, clamped to an optional floor / cap. Switching basis asks for the term the new basis needs (a spread or a coupon) in the same save. Until an index is entered the floating build-up shows Fondok&apos;s flat SOFR assumption and says so — it is not market data.
+            </li>
+            <li>
+              <span className="font-semibold text-ink-900">PACE loan (tranche 2).</span>{' '}
+              Funding an amount adds it to Total Debt, LTV, LTC and debt yield immediately. Until a rate is entered the tranche is <em>terms pending</em>: it stays out of debt service and DSCR rather than running on an invented rate, and the tab says so next to the input.
+            </li>
+            <li>
+              <span className="font-semibold text-ink-900">Covenants.</span>{' '}
+              Maximum LTV / LTC and minimum DSCR / debt yield are thresholds you enter. There is no default package — a covenant without an entered threshold shows its live Current reading, an &ldquo;Enter threshold&rdquo; input, and no pass / fail verdict. Entered thresholds are tested against the modeled Year-1 metrics (LTV / LTC at close).
+            </li>
+            <li>
+              <span className="font-semibold text-ink-900">Maturity.</span>{' '}
+              The schedule runs to maturity. A take-out before exit is modeled on the Refinance sub-tab; without one the loan balance at the end of the schedule is what the model repays at sale.
+            </li>
+            <li>
+              <span className="font-semibold text-ink-900">Fees.</span>{' '}
+              Origination and exit fees are displayed from the entered percentages but are not yet carried into Sources &amp; Uses, Cash Flow or Returns — the tab labels them display-only rather than implying they move the numbers.
+            </li>
+            <li>
+              <span className="font-semibold text-ink-900">Missing inputs are inputs.</span>{' '}
+              Wherever a required assumption is absent, the Debt tab renders the input to provide (&ldquo;Enter rate&rdquo;, &ldquo;Enter spread&rdquo;, &ldquo;Enter threshold&rdquo;) with the consequence stated, instead of an unexplained dash.
+            </li>
           </ul>
         </Card>
 
