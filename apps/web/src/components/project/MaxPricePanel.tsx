@@ -1,185 +1,258 @@
 'use client';
 /**
- * MaxPricePanel — Wave 2 P2.8
+ * MaxPricePanel — the canonical "Max Price Solver" block (FON-68).
  *
- * Two-number headline card: "Max price for X% IRR" + "Max price for Y× EM".
- * Binding-constraint chip indicates which target is tighter (the offerable
- * price is min(irr_price, em_price)).
+ * Source: `design/canonical/Returns Tab.dc.html` → Pricing sub-tab
+ * (`pricingKpis` / `pricingConstraints` / `pricingNote`).
  *
- * Inline "Re-solve" form lets the analyst change targets without leaving
- * the panel. Per Wave 1 no-modals rule the form opens in-place below the
- * cards.
+ *   • 4 KPI tiles — current purchase price · max price · headroom / gap ·
+ *     max price / key
+ *   • constraint rows — Target levered IRR · Target MOIC (both LINKED from
+ *     the Investment Profile) · max price @ IRR · max price @ MOIC ·
+ *     binding constraint · hold · exit cap · LTV / rate (context)
+ *   • note — the lower-of rule spelled out with the solved numbers
+ *
+ * The hurdles are READ from the deal (`deal.target_irr` / `deal.target_moic`,
+ * set on Overview → Investment Profile). There are no panel-local hurdle
+ * inputs and no default: when the deal has no target the block shows the
+ * worker's 422 copy plus a "→ Investment Profile" link and NO numbers.
+ * Every figure comes from `POST /analysis/{id}/pricing/max-price`.
  */
-import { useEffect, useState } from 'react';
-import { Card } from '@/components/ui/Card';
-import { Button } from '@/components/ui/Button';
-import { fmtCurrency, fmtPct } from '@/lib/format';
-import { api } from '@/lib/api';
-import type { PricingMaxPriceResponse } from '@/lib/api';
+import { useEffect, useState, type CSSProperties } from 'react';
+import { fmtPct } from '@/lib/format';
+import {
+  api,
+  WorkerError,
+  type EngineOutputsResponse,
+  type PricingMaxPriceResponse,
+  type WorkerDeal,
+} from '@/lib/api';
+import { ProvenanceDot, palette, prov, radius } from '@/components/design';
+
+export const NO_TARGET_MESSAGE =
+  'No return target set — set Target Levered IRR / Target MOIC on the Investment Profile or pass them explicitly';
+
+export const BINDING_LABEL: Record<PricingMaxPriceResponse['binding_constraint'], string> = {
+  irr: 'IRR',
+  em: 'MOIC',
+  both: 'IRR + MOIC',
+};
+
+const mm = (v: number) => `${v < 0 ? '−$' : '$'}${(Math.abs(v) / 1e6).toFixed(2)}M`;
+const money = (v: number) => `${v < 0 ? '−$' : '$'}${Math.round(Math.abs(v)).toLocaleString('en-US')}`;
+const x = (v: number) => `${v.toFixed(2)}x`;
+
+/** True when the deal carries at least one hurdle the solver can use. */
+export function dealHasTarget(deal: WorkerDeal | null | undefined): boolean {
+  return deal?.target_irr != null || deal?.target_moic != null;
+}
+
+/** Pull the worker's `detail` out of a 422; fall back to the raw message. */
+export function pricingErrorMessage(err: unknown): string {
+  if (err instanceof WorkerError) {
+    try {
+      const parsed = JSON.parse(err.body) as { detail?: unknown };
+      if (typeof parsed.detail === 'string') return parsed.detail;
+    } catch {
+      /* not JSON — fall through */
+    }
+    return err.body || err.message;
+  }
+  return err instanceof Error ? err.message : 'Failed to solve max price';
+}
 
 interface Props {
   dealId: string;
+  /** The deal record — its `target_irr` / `target_moic` are the hurdles. */
+  deal: WorkerDeal | null;
+  /** Canonical engine outputs (unused for numbers here; the solver reports
+   *  its own base price so the headline and headroom share one input). */
+  outputs?: EngineOutputsResponse | null;
+  /** Navigate to Overview → Investment Profile (where the hurdles live). */
+  onGoToProfile: () => void;
 }
 
-const BINDING_CHIP: Record<
-  PricingMaxPriceResponse['binding_constraint'],
-  { label: string; className: string }
-> = {
-  irr: {
-    label: 'Binding: IRR',
-    className: 'bg-brand-50 text-brand-700 border-brand-200',
-  },
-  em: {
-    label: 'Binding: EM',
-    className: 'bg-violet-50 text-violet-700 border-violet-200',
-  },
-  both: {
-    label: 'Binding: IRR + EM',
-    className: 'bg-ink-100 text-ink-700 border-border',
-  },
-};
-
-export default function MaxPricePanel({ dealId }: Props) {
+export default function MaxPricePanel({ dealId, deal, onGoToProfile }: Props) {
   const [data, setData] = useState<PricingMaxPriceResponse | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const [showForm, setShowForm] = useState(false);
-  const [targetIrr, setTargetIrr] = useState('15');
-  const [targetEm, setTargetEm] = useState('1.8');
-
-  const fetchMaxPrice = async (irrPct?: number, em?: number) => {
-    setLoading(true);
-    setError(null);
-    try {
-      const res = await api.analysis.pricing.maxPrice(dealId, {
-        target_irr: irrPct ?? 0.15,
-        target_em: em ?? 1.8,
-      });
-      setData(res);
-    } catch (e) {
-      setError(e instanceof Error ? e.message : 'Failed to solve max price');
-    } finally {
-      setLoading(false);
-    }
-  };
+  const targetIrr = deal?.target_irr ?? null;
+  const targetMoic = deal?.target_moic ?? null;
+  const hasTarget = dealHasTarget(deal);
 
   useEffect(() => {
-    if (dealId) void fetchMaxPrice();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [dealId]);
+    if (!dealId || !deal || !hasTarget) {
+      setData(null);
+      setError(null);
+      return;
+    }
+    const ctrl = new AbortController();
+    setLoading(true);
+    setError(null);
+    // Empty body — the worker reads the hurdles from the deal.
+    api.analysis.pricing
+      .maxPrice(dealId, {}, ctrl.signal)
+      .then((res) => setData(res))
+      .catch((err: unknown) => {
+        if ((err as { name?: string })?.name === 'AbortError') return;
+        setData(null);
+        setError(pricingErrorMessage(err));
+      })
+      .finally(() => setLoading(false));
+    return () => ctrl.abort();
+  }, [dealId, deal, hasTarget, targetIrr, targetMoic]);
 
-  const onSubmit = (e: React.FormEvent) => {
-    e.preventDefault();
-    const irr = Number(targetIrr) / 100;
-    const em = Number(targetEm);
-    if (!isFinite(irr) || !isFinite(em)) return;
-    void fetchMaxPrice(irr, em);
-    setShowForm(false);
-  };
-
-  const chip = data && BINDING_CHIP[data.binding_constraint];
+  const profileLink = (
+    <button type="button" onClick={onGoToProfile} style={linkBtn}>
+      → Investment Profile
+    </button>
+  );
 
   return (
-    <Card className="p-4">
-      <div className="flex items-baseline justify-between mb-3">
-        <div>
-          <h3 className="text-[14px] font-semibold text-ink-900">
-            Max-Price Solver
-          </h3>
-          <p className="text-[12px] text-ink-500">
-            Bisects on purchase price to hit your IRR + EM hurdles.
-          </p>
-        </div>
-        <Button variant="ghost" onClick={() => setShowForm(s => !s)}>
-          {showForm ? 'Cancel' : 'Re-solve'}
-        </Button>
+    <div style={{ background: palette.cardWhite, border: `1px solid ${palette.border}`, borderRadius: radius.card, padding: '16px 18px' }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', gap: 14, marginBottom: 12, flexWrap: 'wrap' }}>
+        <span style={{ fontSize: 12, fontWeight: 700, color: palette.eyebrow, textTransform: 'uppercase', letterSpacing: '.03em' }}>
+          Max Price Solver
+        </span>
+        <span style={{ fontSize: 11, color: palette.textFaint }}>Solved against the hurdles on the Investment Profile</span>
       </div>
 
-      {error && (
-        <div className="text-[12.5px] text-rose-700 bg-rose-50 border border-rose-200 rounded px-3 py-2 mb-3">
-          {error}
-        </div>
+      {!deal && <div style={{ fontSize: 12, color: palette.textMuted }}>Loading deal…</div>}
+
+      {deal && !hasTarget && (
+        <NoTarget message={NO_TARGET_MESSAGE} link={profileLink} />
       )}
 
-      {loading && (
-        <div className="text-[12px] text-ink-500">Bisecting…</div>
+      {deal && hasTarget && error && <NoTarget message={error} link={profileLink} />}
+
+      {deal && hasTarget && !error && loading && !data && (
+        <div style={{ fontSize: 12, color: palette.textMuted }}>Bisecting on purchase price…</div>
       )}
 
-      {data && !loading && (
-        <>
-          <div className="grid grid-cols-2 gap-3">
-            <div className="border border-border rounded p-3">
-              <div className="text-[11px] uppercase tracking-wide text-ink-500 font-semibold">
-                Max price for {fmtPct(data.target_irr)} IRR
-              </div>
-              <div className="text-[20px] font-bold text-ink-900 mt-1">
-                {fmtCurrency(data.max_price_for_irr)}
-              </div>
-            </div>
-            <div className="border border-border rounded p-3">
-              <div className="text-[11px] uppercase tracking-wide text-ink-500 font-semibold">
-                Max price for {data.target_em.toFixed(2)}× EM
-              </div>
-              <div className="text-[20px] font-bold text-ink-900 mt-1">
-                {fmtCurrency(data.max_price_for_em)}
-              </div>
-            </div>
-          </div>
-
-          <div className="flex items-center justify-between mt-3 text-[12px]">
-            {chip && (
-              <span
-                className={`inline-flex items-center px-2 py-0.5 rounded border ${chip.className} font-medium`}
-              >
-                {chip.label}
-              </span>
-            )}
-            {data.final_price_per_key > 0 && (
-              <span className="text-ink-700">
-                Offerable per-key:{' '}
-                <span className="font-semibold">
-                  {fmtCurrency(data.final_price_per_key)}
-                </span>
-              </span>
-            )}
-            <span className="text-ink-500">{data.iters} iters</span>
-          </div>
-        </>
+      {deal && hasTarget && !error && data && (
+        <SolvedBlock data={data} link={profileLink} />
       )}
-
-      {showForm && (
-        <form onSubmit={onSubmit} className="mt-3 border-t border-border pt-3">
-          <div className="grid grid-cols-2 gap-3">
-            <label className="text-[12px] text-ink-700">
-              Target IRR (%)
-              <input
-                type="number"
-                step="0.5"
-                value={targetIrr}
-                onChange={e => setTargetIrr(e.target.value)}
-                className="mt-1 w-full border border-border rounded px-2 py-1 text-[13px]"
-              />
-            </label>
-            <label className="text-[12px] text-ink-700">
-              Target EM (×)
-              <input
-                type="number"
-                step="0.05"
-                value={targetEm}
-                onChange={e => setTargetEm(e.target.value)}
-                className="mt-1 w-full border border-border rounded px-2 py-1 text-[13px]"
-              />
-            </label>
-          </div>
-          <div className="mt-2 flex justify-end gap-2">
-            <Button type="button" variant="ghost" onClick={() => setShowForm(false)}>
-              Cancel
-            </Button>
-            <Button type="submit">Re-solve</Button>
-          </div>
-        </form>
-      )}
-    </Card>
+    </div>
   );
 }
+
+// ── The "no hurdle" state: the worker's copy + the link, no numbers. ──
+function NoTarget({ message, link }: { message: string; link: React.ReactNode }) {
+  return (
+    <div
+      role="status"
+      style={{
+        display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap',
+        background: palette.surfaceTint, border: `1px solid ${palette.border}`, borderRadius: 8,
+        padding: '10px 12px', fontSize: 12.5, color: palette.hoverInk, lineHeight: 1.5,
+      }}
+    >
+      <span style={{ flex: 1, minWidth: 240 }}>{message}</span>
+      {link}
+    </div>
+  );
+}
+
+// ── Solved: 4 tiles + constraint rows + the lower-of note. ──
+function SolvedBlock({ data, link }: { data: PricingMaxPriceResponse; link: React.ReactNode }) {
+  const rooms = data.rooms && data.rooms > 0 ? data.rooms : null;
+  const base = data.base_purchase_price;
+  const maxPrice = data.max_price;
+  const headroom = maxPrice != null ? maxPrice - base : null;
+  const bindingStatus = data.binding_constraint === 'irr' ? data.irr_status
+    : data.binding_constraint === 'em' ? data.em_status
+      : (data.irr_status === 'converged' && data.em_status === 'converged' ? 'converged' : data.irr_status);
+  const noPriceSub = bindingStatus === 'above_ceiling'
+    ? 'Clears the hurdles at every price up to 2× the current basis'
+    : 'No price clears the hurdles';
+
+  const tiles: { label: string; value: string; sub: string; color: string; border: string; bg: string }[] = [
+    {
+      label: 'Current purchase price', value: mm(base),
+      sub: rooms ? `${money(base / rooms)} / key` : 'Purchase price in the model',
+      color: prov.black, border: palette.border, bg: palette.cardWhite,
+    },
+    {
+      label: 'Max price', value: maxPrice != null ? mm(maxPrice) : '—',
+      sub: maxPrice != null ? 'Maximum price clearing all hurdles' : noPriceSub,
+      color: prov.black, border: '#dbe3f5', bg: 'oklch(97.5% 0.015 250)',
+    },
+    {
+      label: headroom != null && headroom >= 0 ? 'Headroom' : 'Gap',
+      value: headroom == null ? '—' : `${headroom >= 0 ? '+' : ''}${mm(headroom)}`,
+      sub: headroom == null ? '' : headroom >= 0 ? 'Room above the current basis' : 'Current basis exceeds the max price',
+      color: headroom != null && headroom >= 0 ? prov.green : prov.amber, border: palette.border, bg: palette.cardWhite,
+    },
+    {
+      label: 'Max price / key', value: maxPrice != null && rooms ? money(maxPrice / rooms) : '—',
+      sub: 'At the binding hurdle', color: prov.black, border: palette.border, bg: palette.cardWhite,
+    },
+  ];
+
+  const irrLabel = data.target_irr != null ? fmtPct(data.target_irr, 1) : '—';
+  const moicLabel = data.target_em != null ? x(data.target_em) : '—';
+  const irrPrice = data.max_price_for_irr;
+  const emPrice = data.max_price_for_em;
+  const solvedValue = (price: number | null, status: PricingMaxPriceResponse['irr_status']): string => {
+    if (price != null) return mm(price);
+    if (status === 'not_requested') return '— not set';
+    if (status === 'above_ceiling') return '≥ 2× basis';
+    return '— unreachable';
+  };
+
+  interface Row { label: string; value: string; state: 'linked' | 'calculated'; color: string; weight: number; title: string }
+  const rows: Row[] = [
+    { label: 'Target levered IRR', value: irrLabel, state: 'linked', color: prov.green, weight: 400, title: 'Linked from Overview → Investment Profile (analyst input)' },
+    { label: 'Target MOIC', value: moicLabel, state: 'linked', color: prov.green, weight: 400, title: 'Linked from Overview → Investment Profile (analyst input)' },
+    { label: `Max price @ ${irrLabel} IRR`, value: solvedValue(irrPrice, data.irr_status), state: 'calculated', color: prov.gray, weight: 400, title: 'Bisection on purchase price until levered IRR equals the target' },
+    { label: `Max price @ ${moicLabel} MOIC`, value: solvedValue(emPrice, data.em_status), state: 'calculated', color: prov.gray, weight: 400, title: 'Bisection on purchase price until the equity multiple equals the target' },
+    { label: 'Binding constraint', value: BINDING_LABEL[data.binding_constraint], state: 'calculated', color: prov.black, weight: 700, title: 'The hurdle that yields the lower max price' },
+    { label: 'Hold period', value: `${Number.isInteger(data.hold_years) ? data.hold_years : data.hold_years.toFixed(1)} years`, state: 'linked', color: prov.green, weight: 400, title: 'Linked from Investment → Exit / Reversion' },
+    { label: 'Exit cap rate', value: fmtPct(data.exit_cap_rate, 2), state: 'linked', color: prov.green, weight: 400, title: 'Linked from Investment → Exit / Reversion' },
+    { label: 'LTV / interest rate', value: `${fmtPct(data.ltv, 1)} · ${fmtPct(data.interest_rate, 2)}`, state: 'linked', color: prov.green, weight: 400, title: 'Linked from Debt' },
+  ];
+
+  const bindingNote = data.binding_constraint === 'both'
+    ? 'both bind at the same price'
+    : `the ${BINDING_LABEL[data.binding_constraint]} hurdle binds`;
+  const note = data.target_irr != null && data.target_em != null
+    ? `Hurdles come from the Investment Profile, not from Returns. Each hurdle is solved independently and the lower price governs: ${irrPrice != null ? mm(irrPrice) : '—'} at the IRR hurdle, ${emPrice != null ? mm(emPrice) : '—'} at the MOIC hurdle — ${bindingNote}.`
+    : `Hurdles come from the Investment Profile, not from Returns. Only the ${BINDING_LABEL[data.binding_constraint]} hurdle is set, so it governs on its own — set the other target to price against both.`;
+
+  return (
+    <>
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(190px,1fr))', gap: 12 }}>
+        {tiles.map((k) => (
+          <div key={k.label} style={{ border: `1px solid ${k.border}`, background: k.bg, borderRadius: 9, padding: '13px 15px' }}>
+            <div style={{ fontSize: 10, fontWeight: 700, letterSpacing: '.04em', color: palette.eyebrow, textTransform: 'uppercase', marginBottom: 6 }}>{k.label}</div>
+            <div style={{ fontSize: 21, fontWeight: 700, color: k.color, fontVariantNumeric: 'tabular-nums' }}>{k.value}</div>
+            <div style={{ fontSize: 10.5, color: palette.textMuted, marginTop: 4, lineHeight: 1.4 }}>{k.sub}</div>
+          </div>
+        ))}
+      </div>
+
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(300px,1fr))', gap: '0 32px', marginTop: 14 }}>
+        {rows.map((r) => (
+          <div key={r.label} title={r.title} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12, fontSize: 12.5, padding: '6px 0', borderBottom: `1px solid ${palette.hairlineRow}` }}>
+            <span style={{ display: 'flex', alignItems: 'center', gap: 7, minWidth: 0 }}>
+              <ProvenanceDot state={r.state} size={8} />
+              <span style={{ color: palette.textSecondary }}>{r.label}</span>
+            </span>
+            <span style={{ color: r.color, fontWeight: r.weight, fontVariantNumeric: 'tabular-nums' }}>{r.value}</span>
+          </div>
+        ))}
+      </div>
+
+      <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap', marginTop: 10 }}>
+        <span style={{ fontSize: 11, color: palette.textMuted, lineHeight: 1.5, flex: 1, minWidth: 240 }}>{note}</span>
+        {link}
+      </div>
+    </>
+  );
+}
+
+const linkBtn: CSSProperties = {
+  background: 'none', border: 'none', padding: 0, fontFamily: 'inherit', fontSize: 11.5,
+  color: palette.linkBlue, fontWeight: 600, cursor: 'pointer', whiteSpace: 'nowrap',
+};

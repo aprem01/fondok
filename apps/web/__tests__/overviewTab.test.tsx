@@ -16,6 +16,13 @@
  *  3. WHERE THIS CAME FROM — clicking a provenance-bearing row (Purchase Price)
  *     opens the shared `WhereThisCameFrom` popover with the calculation formula.
  *
+ *  5. FON-68 RETURN TARGETS — Target Levered IRR / Target MOIC are analyst
+ *     inputs on the Investment Profile (`api.deals.update({ target_irr })` /
+ *     `{ target_moic }`, no model re-run). Unset renders "—" + an explicit
+ *     "Use profile midpoint (15%)" action — the profile band is never applied
+ *     implicitly. The Return benchmark strip compares the calculated levered
+ *     IRR to the deal's target: Below / Within / Above target.
+ *
  *  4. FON-59 PROJECT NAME vs PROPERTY NAME — Project Name (deals.name) renders
  *     directly above Property Name; Property Name never falls back to the
  *     deal name; Override writes `field_overrides['property_overview.name'] =
@@ -229,10 +236,81 @@ describe('OverviewTab — value-add section set + benchmark strip', () => {
     expect(screen.getByText(/Equity is the calculated plug/i)).toBeInTheDocument();
     expect(screen.getAllByText('/ Key').length).toBe(2);
 
-    // Return benchmark strip — profile target (value-add → 12-18%).
+    // Return benchmark strip — FON-68: no target on the deal → "—" + "No target";
+    // the value-add band (12-18%) is only offered as an explicit action.
     expect(screen.getByText('Return benchmark')).toBeInTheDocument();
     expect(screen.getByText('Target levered IRR')).toBeInTheDocument();
-    expect(screen.getByText('12-18%')).toBeInTheDocument();
+    expect(screen.getByText('No target')).toBeInTheDocument();
+    expect(screen.getByText('Set Target Levered IRR above')).toBeInTheDocument();
+    expect(screen.getByText('Benchmark only — it does not drive the model')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Use profile midpoint (15%)' })).toBeInTheDocument();
+    expect(screen.queryByText('12-18%')).not.toBeInTheDocument();
+    expect(updateSpy).not.toHaveBeenCalled();
+  });
+});
+
+describe('OverviewTab — FON-68 return targets on the Investment Profile', () => {
+  it('"Use profile midpoint" writes the band midpoint explicitly and never re-runs the model', async () => {
+    render(<OverviewTab projectId="deal-uuid-1" />);
+    fireEvent.click(screen.getByRole('button', { name: 'Use profile midpoint (15%)' }));
+    await waitFor(() => expect(updateSpy).toHaveBeenCalledTimes(1));
+    expect(updateSpy).toHaveBeenCalledWith('deal-uuid-1', { target_irr: 0.15 });
+    expect(engineRunSpy).not.toHaveBeenCalled();
+  });
+
+  it('offers the band floor for an open-ended profile (opportunistic → 18%+)', () => {
+    mockDealRef.deal = { ...mockDealRef.deal, return_profile: 'opportunistic' };
+    render(<OverviewTab projectId="deal-uuid-1" />);
+    expect(screen.getByRole('button', { name: 'Use profile floor (18%)' })).toBeInTheDocument();
+  });
+
+  it('editing Target Levered IRR / Target MOIC writes target_irr / target_moic (no re-run)', async () => {
+    render(<OverviewTab projectId="deal-uuid-1" />);
+    const irr = screen.getByRole('spinbutton', { name: 'Target Levered IRR value' });
+    expect(irr).toHaveValue(null); // unset → "—" placeholder, no invented number
+    fireEvent.change(irr, { target: { value: '16' } });
+    fireEvent.blur(irr);
+    await waitFor(() => expect(updateSpy).toHaveBeenCalledWith('deal-uuid-1', { target_irr: 0.16 }));
+
+    const moic = screen.getByRole('spinbutton', { name: 'Target MOIC value' });
+    expect(moic).toHaveValue(null);
+    fireEvent.change(moic, { target: { value: '1.8' } });
+    fireEvent.keyDown(moic, { key: 'Enter' });
+    fireEvent.blur(moic);
+    await waitFor(() => expect(updateSpy).toHaveBeenCalledWith('deal-uuid-1', { target_moic: 1.8 }));
+    expect(engineRunSpy).not.toHaveBeenCalled();
+    expect(JSON.stringify(updateSpy.mock.calls)).not.toContain('field_overrides');
+  });
+
+  it('shows the set targets and clears one back to null', async () => {
+    mockDealRef.deal = { ...mockDealRef.deal, target_irr: 0.15, target_moic: 1.8 };
+    render(<OverviewTab projectId="deal-uuid-1" />);
+    expect(screen.getByRole('spinbutton', { name: 'Target Levered IRR value' })).toHaveValue(15);
+    expect(screen.getByRole('spinbutton', { name: 'Target MOIC value' })).toHaveValue(1.8);
+    // The midpoint action disappears once a target is set.
+    expect(screen.queryByRole('button', { name: /Use profile/ })).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Clear Target MOIC' }));
+    await waitFor(() => expect(updateSpy).toHaveBeenCalledWith('deal-uuid-1', { target_moic: null }));
+  });
+
+  it('benchmark strip classifies the calculated levered IRR against the deal target', () => {
+    // Calculated 19.8% (mocked returns run). Target 15% → more than 200bp over → Above.
+    mockDealRef.deal = { ...mockDealRef.deal, target_irr: 0.15 };
+    const { rerender } = render(<OverviewTab projectId="deal-uuid-1" />);
+    expect(screen.getByText('15.0%')).toBeInTheDocument();
+    expect(screen.getByText('Above target')).toBeInTheDocument();
+    expect(screen.queryByText('No target')).not.toBeInTheDocument();
+    expect(screen.queryByText('Set Target Levered IRR above')).not.toBeInTheDocument();
+
+    // Target 19% → within 200bp → Within.
+    mockDealRef.deal = { ...mockDealRef.deal, target_irr: 0.19 };
+    rerender(<OverviewTab projectId="deal-uuid-1" />);
+    expect(screen.getByText('Within target')).toBeInTheDocument();
+
+    // Target 21% → calculated falls short → Below.
+    mockDealRef.deal = { ...mockDealRef.deal, target_irr: 0.21 };
+    rerender(<OverviewTab projectId="deal-uuid-1" />);
+    expect(screen.getByText('Below target')).toBeInTheDocument();
   });
 });
 

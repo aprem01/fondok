@@ -1,250 +1,199 @@
 'use client';
 /**
- * PricingSensitivityPanel — Wave 2 P2.8
+ * PricingSensitivityPanel — "Pricing Sensitivity — Max Purchase Price" (FON-68).
  *
- * 5x5 heatmap flexing exit cap rate × NOI multiplier. Rows = NOI
- * multiplier (1.15× at top, 0.85× at bottom). Cols = exit cap rate
- * (cheapest left, most expensive right). Cells colour-coded against
- * the deal's target IRR (default 15%):
+ * Source: `design/canonical/Returns Tab.dc.html` → Pricing sub-tab
+ * (`pricingMatrices`). Exit cap rate (rows) × NOI growth (columns); every
+ * cell is the highest purchase price that still clears BOTH hurdles on the
+ * Investment Profile — each hurdle solved independently, the lower price
+ * governs, and the binding constraint is marked in the cell.
  *
- *   green    — IRR >= target
- *   amber    — IRR within 200bp of target
- *   red      — IRR below target - 200bp
- *
- * Center cell is the base case and is rendered with a distinctive
- * outline + a "Base" pill. Hover any cell to see the full payload
- * (going-in cap, DSCR Y1, EM).
- *
- * Read-only: this panel never persists state. The grid is recomputed
- * server-side on each request.
+ * Driven entirely by `POST /analysis/{id}/pricing/max-price-grid`, which
+ * reads the hurdles from the deal. No hard-coded target: with no target set
+ * the card shows the worker's copy plus a "→ Investment Profile" link and
+ * renders no numbers. A cell where no price clears the hurdles renders "—".
  */
-import { useEffect, useMemo, useState } from 'react';
-import { Card } from '@/components/ui/Card';
-import { Button } from '@/components/ui/Button';
-import { cn, fmtPct } from '@/lib/format';
-import { api } from '@/lib/api';
-import type {
-  PricingSensitivityCell,
-  PricingSensitivityResponse,
+import { useEffect, useMemo, useState, type CSSProperties } from 'react';
+import { fmtPct } from '@/lib/format';
+import {
+  api,
+  type PricingMaxPriceGridCell,
+  type PricingMaxPriceGridResponse,
+  type WorkerDeal,
 } from '@/lib/api';
+import { palette, prov, radius } from '@/components/design';
+import { BINDING_LABEL, NO_TARGET_MESSAGE, dealHasTarget, pricingErrorMessage } from './MaxPricePanel';
+
+const mm = (v: number) => `${v < 0 ? '−$' : '$'}${(Math.abs(v) / 1e6).toFixed(2)}M`;
+const money = (v: number) => `${v < 0 ? '−$' : '$'}${Math.round(Math.abs(v)).toLocaleString('en-US')}`;
+const x = (v: number) => `${v.toFixed(2)}x`;
 
 interface Props {
   dealId: string;
-  /** IRR hurdle used for the breakeven sweep + heatmap colouring.
-   *  Defaults to 15% — institutional hospitality value-add hurdle. */
-  targetIrr?: number;
+  /** The deal record — its `target_irr` / `target_moic` are the hurdles. */
+  deal: WorkerDeal | null;
+  onGoToProfile: () => void;
 }
 
-type CellTier = 'pass' | 'marginal' | 'fail';
-
-function classifyCell(irr: number, target: number): CellTier {
-  if (irr >= target) return 'pass';
-  if (irr >= target - 0.02) return 'marginal';
-  return 'fail';
-}
-
-const TIER_CLASSES: Record<CellTier, string> = {
-  pass: 'bg-emerald-50 text-emerald-900 border-emerald-200',
-  marginal: 'bg-amber-50 text-amber-900 border-amber-200',
-  fail: 'bg-rose-50 text-rose-900 border-rose-200',
-};
-
-/** Build a 2D matrix indexed [rowIdx][colIdx]. Rows = NOI multiplier
- *  (descending — high at top), cols = exit cap (ascending — left to
- *  right). The worker already emits cells in this row-major order, but
- *  we re-derive for safety so a swap on the worker doesn't silently
- *  re-shape the heatmap. */
-function gridify(grid: PricingSensitivityResponse) {
-  const uniqueCaps = Array.from(
-    new Set(grid.cells.map(c => c.exit_cap_pct)),
-  ).sort((a, b) => a - b);
-  const uniqueNois = Array.from(
-    new Set(grid.cells.map(c => c.noi_multiplier)),
-  ).sort((a, b) => b - a);
-
-  const byKey = new Map<string, PricingSensitivityCell>();
-  for (const c of grid.cells) {
-    byKey.set(`${c.exit_cap_pct}__${c.noi_multiplier}`, c);
-  }
-  const rows: (PricingSensitivityCell | undefined)[][] = uniqueNois.map(nm =>
-    uniqueCaps.map(cap => byKey.get(`${cap}__${nm}`)),
-  );
-  return { uniqueCaps, uniqueNois, rows };
-}
-
-export default function PricingSensitivityPanel({
-  dealId,
-  targetIrr = 0.15,
-}: Props) {
-  const [grid, setGrid] = useState<PricingSensitivityResponse | null>(null);
+export default function PricingSensitivityPanel({ dealId, deal, onGoToProfile }: Props) {
+  const [grid, setGrid] = useState<PricingMaxPriceGridResponse | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [hoverCell, setHoverCell] = useState<PricingSensitivityCell | null>(
-    null,
-  );
 
-  const fetchGrid = async () => {
-    setLoading(true);
-    setError(null);
-    try {
-      const res = await api.analysis.pricing.sensitivity(dealId, {
-        target_irr: targetIrr,
-      });
-      setGrid(res);
-    } catch (e) {
-      setError(e instanceof Error ? e.message : 'Failed to load grid');
-    } finally {
-      setLoading(false);
-    }
-  };
+  const targetIrr = deal?.target_irr ?? null;
+  const targetMoic = deal?.target_moic ?? null;
+  const hasTarget = dealHasTarget(deal);
 
   useEffect(() => {
-    if (dealId) void fetchGrid();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [dealId, targetIrr]);
+    if (!dealId || !deal || !hasTarget) {
+      setGrid(null);
+      setError(null);
+      return;
+    }
+    const ctrl = new AbortController();
+    setLoading(true);
+    setError(null);
+    // Empty body — axes default around the deal's own assumptions and the
+    // hurdles come from the deal.
+    api.analysis.pricing
+      .maxPriceGrid(dealId, {}, ctrl.signal)
+      .then((res) => setGrid(res))
+      .catch((err: unknown) => {
+        if ((err as { name?: string })?.name === 'AbortError') return;
+        setGrid(null);
+        setError(pricingErrorMessage(err));
+      })
+      .finally(() => setLoading(false));
+    return () => ctrl.abort();
+  }, [dealId, deal, hasTarget, targetIrr, targetMoic]);
 
-  const matrix = useMemo(() => (grid ? gridify(grid) : null), [grid]);
+  const rows = useMemo(() => {
+    if (!grid) return [];
+    const byKey = new Map<string, PricingMaxPriceGridCell>();
+    for (const c of grid.cells) byKey.set(`${c.exit_cap_pct}__${c.noi_growth_pct}`, c);
+    return grid.cap_axis.map((cap) => ({
+      cap,
+      cells: grid.noi_growth_axis.map((g) => byKey.get(`${cap}__${g}`)),
+    }));
+  }, [grid]);
+
+  const bothHurdles = grid ? grid.target_irr != null && grid.target_em != null : hasTarget && targetIrr != null && targetMoic != null;
+  const hurdleText = grid
+    ? [
+        grid.target_irr != null ? `${fmtPct(grid.target_irr, 1)} IRR` : null,
+        grid.target_em != null ? `${x(grid.target_em)} MOIC` : null,
+      ].filter(Boolean).join(' and ')
+    : '';
+
+  const profileLink = (
+    <button type="button" onClick={onGoToProfile} style={linkBtn}>
+      → Investment Profile
+    </button>
+  );
 
   return (
-    <Card className="p-4">
-      <div className="flex items-baseline justify-between mb-3">
-        <div>
-          <h3 className="text-[14px] font-semibold text-ink-900">
-            Pricing Sensitivity
-          </h3>
-          <p className="text-[12px] text-ink-500">
-            Exit cap × NOI multiplier. Cells coloured against{' '}
-            {fmtPct(targetIrr)} target IRR.
-          </p>
-        </div>
-        <Button
-          variant="ghost"
-          onClick={() => void fetchGrid()}
-          disabled={loading}
-        >
-          {loading ? 'Recomputing…' : 'Refresh'}
-        </Button>
+    <div style={{ background: palette.cardWhite, border: `1px solid ${palette.border}`, borderRadius: radius.card, padding: '16px 18px' }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', gap: 14, marginBottom: 12, flexWrap: 'wrap' }}>
+        <span style={{ fontSize: 12, fontWeight: 700, color: palette.eyebrow, textTransform: 'uppercase', letterSpacing: '.03em' }}>
+          Pricing Sensitivity — Max Purchase Price
+        </span>
+        <span style={{ fontSize: 11, color: palette.textFaint }}>
+          Exit cap rate × NOI growth · highest price that still clears {bothHurdles ? 'both hurdles' : 'the hurdle'}
+        </span>
       </div>
 
-      {error && (
-        <div className="text-[12.5px] text-rose-700 bg-rose-50 border border-rose-200 rounded px-3 py-2 mb-3">
-          {error}
+      {!deal && <div style={{ fontSize: 12, color: palette.textMuted }}>Loading deal…</div>}
+
+      {deal && (!hasTarget || error) && (
+        <div
+          role="status"
+          style={{
+            display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap',
+            background: palette.surfaceTint, border: `1px solid ${palette.border}`, borderRadius: 8,
+            padding: '10px 12px', fontSize: 12.5, color: palette.hoverInk, lineHeight: 1.5,
+          }}
+        >
+          <span style={{ flex: 1, minWidth: 240 }}>{error ?? NO_TARGET_MESSAGE}</span>
+          {profileLink}
         </div>
       )}
 
-      {matrix && grid && (
+      {deal && hasTarget && !error && loading && !grid && (
+        <div style={{ fontSize: 12, color: palette.textMuted }}>Solving {'≤'}25 cells…</div>
+      )}
+
+      {deal && hasTarget && !error && grid && (
         <>
-          <div className="overflow-x-auto">
-            <table className="text-[11.5px] border-collapse">
-              <thead>
-                <tr>
-                  <th className="p-1" />
-                  {matrix.uniqueCaps.map(cap => (
-                    <th
-                      key={cap}
-                      className="px-2 py-1 text-center text-ink-500 font-medium"
-                    >
-                      Cap {fmtPct(cap)}
-                    </th>
-                  ))}
-                </tr>
-              </thead>
-              <tbody>
-                {matrix.rows.map((row, rIdx) => (
-                  <tr key={rIdx}>
-                    <td className="pr-2 text-right text-ink-500 font-medium whitespace-nowrap">
-                      NOI ×{matrix.uniqueNois[rIdx].toFixed(3)}
-                    </td>
-                    {row.map((cell, cIdx) => {
-                      if (!cell) return <td key={cIdx} className="p-1" />;
-                      const tier = classifyCell(cell.levered_irr, targetIrr);
-                      const isBase =
-                        Math.abs(cell.exit_cap_pct - grid.base_exit_cap_pct) <
-                          1e-9 &&
-                        Math.abs(cell.noi_multiplier - 1.0) < 1e-9;
-                      return (
-                        <td key={cIdx} className="p-1">
-                          <div
-                            onMouseEnter={() => setHoverCell(cell)}
-                            onMouseLeave={() => setHoverCell(null)}
-                            className={cn(
-                              'rounded border px-2 py-2 min-w-[72px] cursor-default',
-                              TIER_CLASSES[tier],
-                              isBase && 'ring-2 ring-brand-500',
-                              cell.breaches_dscr_floor &&
-                                'outline outline-1 outline-dashed outline-rose-400',
-                            )}
-                            title={
-                              cell.breaches_dscr_floor
-                                ? 'DSCR < 1.0x'
-                                : undefined
-                            }
-                          >
-                            <div className="text-[13px] font-semibold">
-                              {fmtPct(cell.levered_irr)}
-                            </div>
-                            <div className="text-[10.5px] opacity-70">
-                              {cell.equity_multiple.toFixed(2)}× EM
-                            </div>
-                            {isBase && (
-                              <div className="text-[9px] uppercase tracking-wider font-semibold opacity-70 mt-0.5">
-                                Base
-                              </div>
-                            )}
-                          </div>
-                        </td>
-                      );
-                    })}
-                  </tr>
-                ))}
-              </tbody>
-            </table>
+          <div style={{ overflowX: 'auto' }}>
+            <div
+              role="table"
+              aria-label="Max purchase price by exit cap rate and NOI growth"
+              style={{ display: 'grid', gridTemplateColumns: `150px repeat(${grid.noi_growth_axis.length},minmax(132px,1fr))`, width: 'max-content', minWidth: '100%' }}
+            >
+              <div style={{ padding: '7px 12px', background: palette.inkNavy, color: palette.gridHeaderText, fontSize: 10, fontWeight: 700, letterSpacing: '.04em', whiteSpace: 'nowrap' }}>
+                EXIT CAP \ NOI GROWTH
+              </div>
+              {grid.noi_growth_axis.map((g) => (
+                <div key={g} style={{ padding: '7px 12px', background: palette.inkNavy, color: palette.gridHeaderText, fontSize: 10.5, fontWeight: 600, textAlign: 'right', borderLeft: `1px solid ${palette.gridHeaderDivider}`, whiteSpace: 'nowrap' }}>
+                  {fmtPct(g, 1)}
+                </div>
+              ))}
+              {rows.map((row) => (
+                <RowCells key={row.cap} cap={row.cap} cells={row.cells} rooms={grid.rooms} />
+              ))}
+            </div>
           </div>
-
-          {/* Hover detail */}
-          {hoverCell && (
-            <div className="mt-3 text-[12px] text-ink-700 bg-ink-50 border border-border rounded px-3 py-2">
-              <span className="font-medium">
-                Exit cap {fmtPct(hoverCell.exit_cap_pct)}, NOI ×
-                {hoverCell.noi_multiplier.toFixed(3)}:
-              </span>{' '}
-              IRR {fmtPct(hoverCell.levered_irr)} · EM{' '}
-              {hoverCell.equity_multiple.toFixed(2)}× · Going-in cap{' '}
-              {fmtPct(hoverCell.going_in_cap_rate)} · DSCR Y1{' '}
-              {hoverCell.dscr_y1.toFixed(2)}×
-              {hoverCell.breaches_dscr_floor && (
-                <span className="ml-2 text-rose-700 font-semibold">
-                  ⚠ DSCR &lt; 1.0
-                </span>
-              )}
-            </div>
-          )}
-
-          {/* Breakeven summary */}
-          <div className="mt-3 grid grid-cols-2 gap-3 text-[12px]">
-            <div className="border border-border rounded p-2">
-              <div className="text-ink-500">
-                Breakeven exit cap ({fmtPct(targetIrr)} IRR)
-              </div>
-              <div className="font-semibold text-ink-900">
-                {grid.breakeven_exit_cap_pct != null
-                  ? fmtPct(grid.breakeven_exit_cap_pct)
-                  : '—'}
-              </div>
-            </div>
-            <div className="border border-border rounded p-2">
-              <div className="text-ink-500">
-                Breakeven NOI multiplier ({fmtPct(targetIrr)} IRR)
-              </div>
-              <div className="font-semibold text-ink-900">
-                {grid.breakeven_noi_multiplier != null
-                  ? `×${grid.breakeven_noi_multiplier.toFixed(3)}`
-                  : '—'}
-              </div>
-            </div>
+          <div style={{ fontSize: 11, color: palette.textMuted, marginTop: 9, lineHeight: 1.5 }}>
+            Each cell solves for the maximum purchase price that still meets {bothHurdles ? 'both ' : ''}the {hurdleText} hurdle{bothHurdles ? 's' : ''}; the tag names the binding constraint and “—” means no price clears the hurdles at that combination. Sensitivities answers how returns move; Pricing answers how much you can pay. NOI growth re-tilts the model’s NOI series relative to the base growth assumption ({fmtPct(grid.base_noi_growth_pct, 1)}); the outlined base cell equals the Max Price Solver headline.
           </div>
         </>
       )}
-    </Card>
+    </div>
   );
 }
+
+function RowCells({ cap, cells, rooms }: { cap: number; cells: (PricingMaxPriceGridCell | undefined)[]; rooms: number | null }) {
+  return (
+    <>
+      <div style={{ padding: '7px 12px', borderBottom: `1px solid ${palette.hairlineRow}`, fontSize: 12, color: palette.ink, fontWeight: 600, background: palette.surfaceTint, whiteSpace: 'nowrap' }}>
+        {fmtPct(cap, 2)}
+      </div>
+      {cells.map((c, i) => {
+        if (!c) return <div key={i} style={{ padding: '7px 12px', borderBottom: `1px solid ${palette.hairlineRow}` }} />;
+        const solvable = c.max_price != null;
+        const perKey = solvable && rooms && rooms > 0 ? `${money((c.max_price as number) / rooms)} / key` : '';
+        const title = solvable
+          ? `${fmtPct(c.exit_cap_pct, 2)} exit cap · ${fmtPct(c.noi_growth_pct, 1)} NOI growth — binding constraint ${BINDING_LABEL[c.binding_constraint]}`
+          : 'No price clears the hurdles at this combination';
+        return (
+          <div
+            key={i}
+            role="cell"
+            title={title}
+            data-base={c.is_base ? 'true' : undefined}
+            data-binding={solvable ? c.binding_constraint : undefined}
+            style={{
+              padding: '7px 12px', borderBottom: `1px solid ${palette.hairlineRow}`, borderLeft: `1px solid ${palette.hairlineRow}`,
+              textAlign: 'right', fontSize: 12, fontVariantNumeric: 'tabular-nums',
+              color: c.is_base ? prov.black : solvable ? prov.gray : prov.muted,
+              fontWeight: c.is_base ? 700 : 400,
+              background: c.is_base ? 'oklch(97% 0.03 250)' : 'transparent',
+              boxShadow: c.is_base ? 'inset 0 0 0 2px #2f4a8c' : 'none',
+              whiteSpace: 'nowrap', display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 2,
+            }}
+          >
+            <span>{solvable ? mm(c.max_price as number) : '—'}</span>
+            <span style={{ fontSize: 10.5, fontWeight: 400, color: palette.textMuted }}>
+              {solvable ? `${perKey}${perKey ? ' · ' : ''}${BINDING_LABEL[c.binding_constraint]}` : ''}
+            </span>
+          </div>
+        );
+      })}
+    </>
+  );
+}
+
+const linkBtn: CSSProperties = {
+  background: 'none', border: 'none', padding: 0, fontFamily: 'inherit', fontSize: 11.5,
+  color: palette.linkBlue, fontWeight: 600, cursor: 'pointer', whiteSpace: 'nowrap',
+};

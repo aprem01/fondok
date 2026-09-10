@@ -24,8 +24,15 @@
  * OWNERSHIP (design + DESIGN_MAP): Acquisition / Reversion / Financing rows are
  * READ-ONLY / linked — operating overrides stay owned by Financials, debt by
  * Debt. The only assumptions edited here are the Investment Profile (deal type,
- * returns profile, brand, positioning), and a deal-type change routes through a
+ * returns profile, brand, positioning, and — FON-68 — the return targets:
+ * Target Levered IRR / Target MOIC), and a deal-type change routes through a
  * confirmation ("Update model") before the model re-runs.
+ *
+ * RETURN TARGETS (FON-68): `deal.target_irr` / `deal.target_moic` are analyst
+ * inputs and the single source of truth for the Return benchmark strip and
+ * the Returns → Pricing Max Price Solver. The returns-profile band ("12-18%")
+ * is only a suggestion — "Use profile midpoint" writes it explicitly; nothing
+ * defaults. Saving a target never re-runs the model (benchmark only).
  *
  * PROVENANCE: dots + the anchored "Where this came from" popover read the real
  * per-value `state` / formula / inputs from GET /deals/{id}/provenance via
@@ -302,6 +309,22 @@ export default function OverviewTab({ projectId }: { projectId: number | string 
       }
     },
     [dealId, liveMode, toast, refreshDeal, scheduleRun],
+  );
+
+  // ─── FON-68 — return targets (benchmark + pricing hurdles; no re-run) ───
+  const persistTarget = useCallback(
+    async (patch: { target_irr?: number | null; target_moic?: number | null }) => {
+      if (!liveMode) { toast('Editing is disabled on demo deals', { type: 'info' }); return; }
+      try {
+        await api.deals.update(dealId, patch);
+        toast('Target saved — benchmark and pricing hurdle only; the model is unchanged', { type: 'success' });
+        void refreshDeal?.();
+      } catch (err) {
+        const detail = err instanceof WorkerError ? err.body : String(err);
+        toast(`Save failed: ${detail || 'worker rejected update'}`, { type: 'error' });
+      }
+    },
+    [dealId, liveMode, toast, refreshDeal],
   );
 
   // ─── FON-59 — per-row analyst override + Project Name rename ───────────
@@ -734,22 +757,22 @@ export default function OverviewTab({ projectId }: { projectId: number | string 
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [cfg, purchase, entryCap, totalCapital, totalPerKey, equity, grossExit, exitCap, terminalNoi, renoBudget, hasReno, keys, leveredIrr]);
 
-  // ─── Return benchmark strip ────────────────────────────────────────────
+  // ─── Return targets + benchmark strip (FON-68) ─────────────────────────
+  // The strip compares the CALCULATED levered IRR (canonical returns run)
+  // against the analyst's Target Levered IRR on the deal. Display only.
+  const targetIrr = deal?.target_irr ?? null;
+  const targetMoic = deal?.target_moic ?? null;
+  const profileSuggestion = useMemo(
+    () => suggestedTarget(returnProfiles.find((p) => p.id === returnProfileId)?.target),
+    [returnProfileId],
+  );
   const benchmark = useMemo(() => {
-    const profile = returnProfiles.find((p) => p.id === returnProfileId);
-    const [lo, hi] = parseTarget(profile?.target);
-    const irrPct = has(leveredIrr) ? leveredIrr * 100 : null;
-    let status = 'Pending';
-    if (irrPct != null && lo != null) {
-      status = hi == null
-        ? (irrPct >= lo ? 'Within target' : 'Below target')
-        : (irrPct < lo ? 'Below target' : irrPct > hi ? 'Above target' : 'Within target');
-    }
+    const status = benchmarkStatus(targetIrr, has(leveredIrr) ? leveredIrr : null);
     const statusColor = status === 'Above target' ? 'oklch(45% 0.12 155)' : status === 'Within target' ? prov.green : status === 'Below target' ? 'oklch(50% 0.14 40)' : palette.textMuted;
-    const statusBg = status === 'Below target' ? 'oklch(56% 0.12 40 / .12)' : status === 'Pending' ? palette.hairlineSection : 'oklch(45% 0.12 155 / .1)';
-    return { target: profile?.target ?? '—', actual: pctv(leveredIrr, 1), status, statusColor, statusBg };
+    const statusBg = status === 'Below target' ? 'oklch(56% 0.12 40 / .12)' : (status === 'Pending' || status === 'No target') ? palette.hairlineSection : 'oklch(45% 0.12 155 / .1)';
+    return { target: targetIrr != null ? fmtPct(targetIrr, 1) : '—', actual: pctv(leveredIrr, 1), status, statusColor, statusBg };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [returnProfileId, leveredIrr]);
+  }, [targetIrr, leveredIrr]);
 
   // ─── Popover open / close ──────────────────────────────────────────────
   const openProv = useCallback((e: React.MouseEvent, row: RowDef) => {
@@ -939,7 +962,7 @@ export default function OverviewTab({ projectId }: { projectId: number | string 
             </div>
 
             <ProfileSelect
-              label="Returns Profile" hint="Sets the return benchmark only" value={returnProfileId}
+              label="Returns Profile" hint="Suggests the target band only" value={returnProfileId}
               options={returnProfiles.map((p) => ({ value: p.id, label: `${p.label} (${p.target})` }))}
               onChange={(v) => void persist({ return_profile: v })}
             />
@@ -953,6 +976,29 @@ export default function OverviewTab({ projectId }: { projectId: number | string 
               options={positioningTiers.map((p) => ({ value: p.id, label: p.label }))}
               onChange={(v) => void persist({ positioning: v })}
             />
+            {/* FON-68 — return targets: analyst inputs, source of truth for the
+                benchmark strip + Returns → Pricing. Unset renders "—"; the
+                profile band is offered as an explicit action, never applied. */}
+            <TargetField
+              label="Target Levered IRR"
+              hint="Analyst input · benchmark and pricing hurdle"
+              value={targetIrr}
+              unit="%"
+              step={0.5}
+              onSave={(v) => void persistTarget({ target_irr: v })}
+              action={targetIrr == null && profileSuggestion ? {
+                label: `Use profile ${profileSuggestion.kind} (${profileSuggestion.pct}%)`,
+                onClick: () => void persistTarget({ target_irr: profileSuggestion.pct / 100 }),
+              } : undefined}
+            />
+            <TargetField
+              label="Target MOIC"
+              hint="Analyst input · pricing hurdle"
+              value={targetMoic}
+              unit="x"
+              step={0.05}
+              onSave={(v) => void persistTarget({ target_moic: v })}
+            />
           </div>
         </div>
 
@@ -962,6 +1008,9 @@ export default function OverviewTab({ projectId }: { projectId: number | string 
           <span style={{ fontSize: 11.5, color: palette.textSecondary }}>Target levered IRR <b style={{ color: prov.blue }}>{benchmark.target}</b></span>
           <span style={{ fontSize: 11.5, color: palette.textSecondary }}>Calculated <b style={{ color: prov.green }}>{benchmark.actual}</b></span>
           <span style={{ fontSize: 10.5, fontWeight: 700, letterSpacing: '.03em', textTransform: 'uppercase', color: benchmark.statusColor, background: benchmark.statusBg, borderRadius: 5, padding: '3px 8px' }}>{benchmark.status}</span>
+          {targetIrr == null && (
+            <span style={{ fontSize: 10.5, color: palette.textMuted }}>Set Target Levered IRR above</span>
+          )}
           <span style={{ fontSize: 10.5, color: palette.textFaint, marginLeft: 'auto' }}>Benchmark only — it does not drive the model</span>
         </div>
       </div>
@@ -1085,6 +1134,74 @@ function ProfileSelect({
         {!known && value && <option value={value}>{value}</option>}
         {options.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
       </select>
+      <div style={{ fontSize: 10, color: palette.textFaint, lineHeight: 1.3 }}>{hint}</div>
+    </div>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// FON-68 — Investment Profile return target (Target Levered IRR / Target MOIC).
+// An analyst input (blue assumption dot). Unset renders "—" in the input
+// with the optional explicit action beside it; Enter / blur saves; the ×
+// clears (writes null). Percent targets are typed as "15" and stored 0.15.
+// ─────────────────────────────────────────────────────────────────────────
+function TargetField({
+  label, hint, value, unit, step, onSave, action,
+}: {
+  label: string; hint: string; value: number | null; unit: '%' | 'x'; step: number;
+  onSave: (v: number | null) => void;
+  action?: { label: string; onClick: () => void };
+}) {
+  const shown = value == null ? '' : unit === '%' ? String(Math.round(value * 1000) / 10) : String(Math.round(value * 100) / 100);
+  const [draft, setDraft] = useState(shown);
+  useEffect(() => { setDraft(shown); }, [shown]);
+  const commit = () => {
+    const t = draft.trim();
+    if (t === '') { if (value != null) onSave(null); return; }
+    const n = Number(t);
+    if (!Number.isFinite(n)) { setDraft(shown); return; }
+    const next = unit === '%' ? n / 100 : n;
+    if (value != null && Math.abs(next - value) < 1e-9) return;
+    onSave(next);
+  };
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 4, minWidth: 0 }}>
+      <div style={{ ...profileLabel, display: 'flex', alignItems: 'center', gap: 5 }}>
+        <ProvenanceDot state="assumption" size={7} title="Analyst input" />
+        {label}
+      </div>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 6, minWidth: 0 }}>
+        <div style={{ position: 'relative', flex: 1, minWidth: 0 }}>
+          <input
+            type="number"
+            step={step}
+            aria-label={`${label} value`}
+            placeholder="—"
+            value={draft}
+            onChange={(e) => setDraft(e.target.value)}
+            onBlur={commit}
+            onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); (e.currentTarget as HTMLInputElement).blur(); } }}
+            style={{
+              width: '100%', fontSize: 11.5, fontFamily: 'inherit', fontWeight: 600, color: prov.blue,
+              background: palette.surfaceTint, border: `1px solid ${palette.disabledBorder}`, borderRadius: 6,
+              padding: '5px 22px 5px 9px', fontVariantNumeric: 'tabular-nums',
+            }}
+          />
+          <span style={{ position: 'absolute', right: 8, top: '50%', transform: 'translateY(-50%)', fontSize: 11, color: palette.textMuted, pointerEvents: 'none' }}>{unit}</span>
+        </div>
+        {value != null && (
+          <button type="button" aria-label={`Clear ${label}`} title="Clear target" onClick={() => onSave(null)}
+            style={{ background: 'none', border: 'none', color: palette.textMuted, cursor: 'pointer', fontSize: 13, padding: '0 2px', fontFamily: 'inherit' }}>
+            ×
+          </button>
+        )}
+      </div>
+      {action && (
+        <button type="button" onClick={action.onClick}
+          style={{ alignSelf: 'flex-start', background: 'none', border: 'none', padding: 0, fontFamily: 'inherit', fontSize: 10.5, fontWeight: 600, color: palette.linkBlue, cursor: 'pointer' }}>
+          {action.label}
+        </button>
+      )}
       <div style={{ fontSize: 10, color: palette.textFaint, lineHeight: 1.3 }}>{hint}</div>
     </div>
   );
@@ -1241,6 +1358,28 @@ function parseTarget(target: string | undefined): [number | null, number | null]
   if (nums.length === 0) return [null, null];
   if (plus || nums.length === 1) return [nums[0], null];
   return [nums[0], nums[1]];
+}
+
+/** FON-68 — the explicit action offered for an unset Target Levered IRR:
+ *  the band midpoint ("12-18%" → 15) or, for an open band ("18%+"), its
+ *  floor. Never applied implicitly. */
+function suggestedTarget(target: string | undefined): { pct: number; kind: 'midpoint' | 'floor' } | null {
+  const [lo, hi] = parseTarget(target);
+  if (lo == null) return null;
+  if (hi == null) return { pct: lo, kind: 'floor' };
+  return { pct: Math.round(((lo + hi) / 2) * 10) / 10, kind: 'midpoint' };
+}
+
+/** FON-68 — benchmark badge. A hurdle is a floor: below it = "Below target";
+ *  at or above it = "Within target" up to 200bp over (the same 200bp band the
+ *  sensitivity classification uses), beyond that "Above target". */
+function benchmarkStatus(target: number | null, calculated: number | null):
+  'Within target' | 'Above target' | 'Below target' | 'Pending' | 'No target' {
+  if (target == null) return 'No target';
+  if (calculated == null || !Number.isFinite(calculated)) return 'Pending';
+  if (calculated < target) return 'Below target';
+  if (calculated >= target + 0.02) return 'Above target';
+  return 'Within target';
 }
 
 /** Duration (in months) of the timeline event matching `re`, formatted. */

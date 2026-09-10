@@ -164,6 +164,10 @@ class CreateDealBody(BaseModel):
     # NULL means "no opinion yet" — UI shows a dash and the summary
     # aggregates skip the deal in the meets-target tally.
     target_irr: float | None = Field(default=None, ge=-0.5, le=2.0)
+    # FON-68 — analyst-declared target MOIC (equity multiple, e.g. 1.8).
+    # Paired with target_irr as the Max Price Solver's hurdles; NULL =
+    # not set (the solver never defaults a hurdle the analyst didn't set).
+    target_moic: float | None = Field(default=None, ge=0.0, le=20.0)
 
 
 class UpdateDealBody(BaseModel):
@@ -190,6 +194,8 @@ class UpdateDealBody(BaseModel):
     # clear it ("no opinion") or a fraction in [-0.5, 2.0] (e.g. 0.18 =
     # 18% IRR threshold).
     target_irr: float | None = Field(default=None, ge=-0.5, le=2.0)
+    # FON-68 — patch the per-deal target MOIC. Pass null to clear it.
+    target_moic: float | None = Field(default=None, ge=0.0, le=20.0)
     # Per-field analyst overrides (canonical extractor field path →
     # primitive value). When present, this dict REPLACES the deal's
     # current overrides — clients send the full merged map. Engines pick
@@ -241,6 +247,10 @@ class DealRecord(BaseModel):
     # view's "deals meeting target IRR" KPI ignores deals with no
     # target rather than counting them as misses.
     target_irr: float | None = None
+    # FON-68 — analyst-declared target MOIC (raw multiple). NULL when the
+    # analyst hasn't set one; the Max Price Solver 422s rather than
+    # inventing a hurdle.
+    target_moic: float | None = None
     # Per-field analyst overrides — keyed by extractor field path (e.g.
     # ``property_overview.year_built``) → either a scalar (legacy) or
     # a ``FieldOverrideRecord``-shaped dict ``{value, note, overridden_by,
@@ -515,6 +525,7 @@ def _row_to_record(row: dict[str, Any]) -> DealRecord:
         purchase_price=_coerce_float(row.get("purchase_price")),
         sourcing_channel=row.get("sourcing_channel"),
         target_irr=_coerce_float(row.get("target_irr")),
+        target_moic=_coerce_float(row.get("target_moic")),
         field_overrides=_coerce_overrides(row.get("field_overrides")),
         state=row.get("state") or "ONBOARDING",
         validation_started_at=_coerce_dt_optional(row.get("validation_started_at")),
@@ -528,7 +539,7 @@ def _row_to_record(row: dict[str, Any]) -> DealRecord:
 _DEAL_COLUMNS = (
     "id, tenant_id, name, city, keys, service, deal_type, status, deal_stage, "
     "risk, ai_confidence, return_profile, brand, positioning, "
-    "purchase_price, sourcing_channel, target_irr, field_overrides, "
+    "purchase_price, sourcing_channel, target_irr, target_moic, field_overrides, "
     "state, validation_started_at, validation_complete_at, "
     "created_at, updated_at"
 )
@@ -680,6 +691,7 @@ async def create_deal(
         "purchase_price": body.purchase_price,
         "sourcing_channel": body.sourcing_channel,
         "target_irr": body.target_irr,
+        "target_moic": body.target_moic,
         "created_at": now,
         "updated_at": now,
     }
@@ -691,12 +703,12 @@ async def create_deal(
                 id, tenant_id, name, city, keys, service, deal_type, status,
                 deal_stage, risk, ai_confidence, return_profile,
                 brand, positioning, purchase_price, sourcing_channel,
-                target_irr, created_at, updated_at
+                target_irr, target_moic, created_at, updated_at
             ) VALUES (
                 :id, :tenant, :name, :city, :keys, :service, :deal_type, :status,
                 :deal_stage, :risk, :ai_confidence, :return_profile,
                 :brand, :positioning, :purchase_price, :sourcing_channel,
-                :target_irr, :created_at, :updated_at
+                :target_irr, :target_moic, :created_at, :updated_at
             )
             """
         ),
@@ -758,6 +770,7 @@ async def create_deal(
         purchase_price=body.purchase_price,
         sourcing_channel=body.sourcing_channel,
         target_irr=body.target_irr,
+        target_moic=body.target_moic,
         created_at=now,
         updated_at=now,
     )
