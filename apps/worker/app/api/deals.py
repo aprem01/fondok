@@ -1453,11 +1453,22 @@ async def get_assumption_sources(
             session, deal_id=deal_id, tenant_id=tenant_id, source_fields=source_fields
         )
     raw_reasons = base.pop("__reasons__", None)
+    # The runner emits either a bare ``ReasonCode`` or ``{"code": …,
+    # "detail": …}``; the wire carries the bare code either way. The prose
+    # behind a reason travels on ``GET /deals/{id}/lineage`` as
+    # ``unresolved[].detail``, so nothing is lost by flattening here.
+    def _reason_code(value: Any) -> str | None:
+        if isinstance(value, dict):
+            value = value.get("code")
+        if value is None:
+            return None
+        return str(getattr(value, "value", value))
+
     assumption_reasons: dict[str, str] = (
         {
-            k: (v.value if hasattr(v, "value") else str(v))
+            k: code
             for k, v in raw_reasons.items()
-            if v is not None
+            if (code := _reason_code(v)) is not None
         }
         if isinstance(raw_reasons, dict)
         else {}
@@ -1487,23 +1498,6 @@ async def get_assumption_sources(
         )
     except Exception:
         source_documents = {}
-
-    # Phase 2.1 — serialise the two additive blocks. ``ReasonCode`` is a
-    # ``str`` enum; emit its value so the JSON carries the plain code.
-    source_fields: dict[str, Any] = {
-        key: dict(entry)
-        for key, entry in (raw_source_fields or {}).items()
-        if isinstance(entry, dict)
-    }
-    reasons: dict[str, Any] = {}
-    for key, entry in (raw_reasons or {}).items():
-        if not isinstance(entry, dict):
-            continue
-        code = entry.get("code")
-        reasons[key] = {
-            "code": getattr(code, "value", code),
-            "detail": entry.get("detail"),
-        }
 
     return AssumptionSourcesResponse(
         id=deal_id,

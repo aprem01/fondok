@@ -27,6 +27,7 @@ from pathlib import Path
 from uuid import UUID, uuid4
 
 import pytest
+from fondok_schemas.reasons import ReasonCode
 from sqlalchemy import text
 
 # Force a per-test SQLite DB BEFORE app modules import.
@@ -250,11 +251,15 @@ async def test_endpoint_serves_the_same_two_blocks_plus_the_new_ones() -> None:
     # Additive blocks are present and JSON-clean.
     assert isinstance(body["source_fields"], dict)
     assert isinstance(body["reasons"], dict)
-    for entry in body["reasons"].values():
-        assert isinstance(entry["code"], str), entry
-        assert set(entry) == {"code", "detail"}
+    # The wire carries the BARE ReasonCode string, matching what the web's
+    # ProvenanceLedger and lineage drawer read (`Record<key, ReasonCode>`).
+    # The prose behind a reason travels on GET /deals/{id}/lineage as
+    # `unresolved[].detail`, so flattening here loses nothing.
+    for key, code in body["reasons"].items():
+        assert isinstance(code, str), (key, code)
+        assert code in {c.value for c in ReasonCode}, (key, code)
     # This fixture has no CBRE report, so growth is a seed with a reason.
-    assert body["reasons"]["adr_growth"]["code"] == "no_document"
+    assert body["reasons"]["adr_growth"] == "no_document"
 
 
 @pytest.mark.asyncio

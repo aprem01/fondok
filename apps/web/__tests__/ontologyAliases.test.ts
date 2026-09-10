@@ -257,10 +257,14 @@ describe('ontology adapters — the widening', () => {
     'capex_ffe_default', 'roi_user', 'partnership_doc',
   ];
 
-  it('AssumptionSource now covers all 18 worker labels, not 12', () => {
+  it('AssumptionSource covers every worker label, not just the original 12', () => {
+    // The count is not pinned: the registry gains sources as the wave lands
+    // (Phase 2.1 added the two as-of refusal labels). What must hold is that
+    // nothing the union carried before was dropped, and that the six that
+    // used to badge as "Seed" are present.
     const before = pinned.assumption_source_union as string[];
     expect(before).toHaveLength(12);
-    expect(SOURCE_IDS).toHaveLength(18);
+    expect(SOURCE_IDS.length).toBeGreaterThanOrEqual(18);
     for (const id of before) expect(SOURCE_IDS, id).toContain(id);
     for (const id of WIDENED) expect(SOURCE_IDS, id).toContain(id);
   });
