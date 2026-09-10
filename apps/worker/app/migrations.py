@@ -1089,6 +1089,34 @@ MIGRATIONS: list[tuple[str, str]] = [
         ON pending_batches (tenant_id, deal_id, submitted_at DESC)
         """,
     ),
+    # ───────────────── Phase 2.2 — document as-of date ────────────────
+    # "What date is this document current as of?" Derived by
+    # ``services.as_of.derive_report_as_of`` from what the document
+    # actually STATES — the registry's ``as_of`` bindings
+    # (``p_and_l_usali.period_ending`` for the P&L family,
+    # ``str_trend.report_year`` for STR), plus the two real shapes with
+    # no concept yet (``cbre_horizons.publication_date`` and the OM's
+    # newest ``transaction_comps.<n>.sale_date``).
+    #
+    # NULL is a meaningful state: the document stated no date and we
+    # never guess one (the registry already carries the
+    # ``as_of_unknown`` refusal reason for it).
+    #
+    # ``report_as_of_precision`` records how much of the date was
+    # stated — ``day`` | ``month`` | ``quarter`` | ``year`` — so the UI
+    # can render "Q3 2024" rather than implying a spurious 30 September.
+    # Left unconstrained (plain TEXT, no CHECK) to match the other
+    # additive TEXT columns on this table and keep an older worker pod
+    # bootable against a newer schema.
+    (
+        "documents.add_report_as_of",
+        "ALTER TABLE documents ADD COLUMN IF NOT EXISTS report_as_of DATE",
+    ),
+    (
+        "documents.add_report_as_of_precision",
+        "ALTER TABLE documents ADD COLUMN IF NOT EXISTS "
+        "report_as_of_precision TEXT",
+    ),
 ]
 
 
@@ -1843,6 +1871,19 @@ SQLITE_MIGRATIONS: list[tuple[str, str]] = [
         CREATE INDEX IF NOT EXISTS idx_pending_batches_tenant_deal
         ON pending_batches (tenant_id, deal_id, submitted_at DESC)
         """,
+    ),
+    # Phase 2.2 document as-of date — SQLite mirror of the Postgres
+    # migration above. SQLite has no DATE affinity worth relying on, so
+    # the date is stored as an ISO ``YYYY-MM-DD`` TEXT string;
+    # ``api.documents._persist_report_as_of`` binds through
+    # SQLAlchemy's ``Date`` type so both dialects get the right form.
+    (
+        "documents.add_report_as_of",
+        "ALTER TABLE documents ADD COLUMN report_as_of TEXT",
+    ),
+    (
+        "documents.add_report_as_of_precision",
+        "ALTER TABLE documents ADD COLUMN report_as_of_precision TEXT",
     ),
 ]
 
