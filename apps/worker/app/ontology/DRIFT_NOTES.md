@@ -430,3 +430,144 @@ mapping (sorted) and the per-canonical alias lists IN ORDER — not the grouping
 order — and deliberately does not reorder `concepts.yaml`, since concept order
 is also the resolver's "first seen" tiebreak and moving blocks there WOULD
 change behaviour.
+
+## 7. Phase 1.3c parity exceptions (`documents._load_critic_inputs`)
+
+The critic / variance input loader is registry-driven as of Phase 1.3c:
+`_canonical_key` → `concept_for_path(path, doc_type)` → `bindings.critic_key`;
+`_ANNUAL_HINTS` → the resolved `scope` (`annual` / `ttm` rank ahead of the
+rest); the period-slice test → `subordinate_namespaces` (via
+`registry._subordinate_scope`); the OM basis rules → the resolved `basis`
+(`om_history` and `market` feed neither side, `broker` is the broker's claim
+wherever it sits); the occupancy → fraction step → the concept's `unit`. The
+loader keeps only the two rules that are its own: the T-12 outranks a P&L, and
+`_build`'s composition.
+
+Output parity is pinned by
+`tests/fixtures/ontology/critic_inputs_pre_registry.json` and checked by
+`tests/test_ontology_critic_parity.py` over six corpora: the two real
+extraction payloads (`tests/fixtures/real_payloads/`, alone and together), the
+two Sam-facing FON-54a fixtures, and the FON-41 live capture of deal
+`e577f547` (four financial documents; rows synthesised from each document's
+`low_conf_unreviewed` block). **Both FON-54a scenarios are byte-identical with
+or without the freeze below** — the exceptions are all on the real payloads and
+the live capture.
+
+**No alias was added to `concepts.yaml`**: every path the pre-registry loader
+mapped to a critic slot already resolves to the same concept. (The 36
+`…monthly.<month>.revpar_usd` rows resolve to `monthly_revpar` rather than
+`revpar` — both the old and new loader drop them as period slices, so nothing
+is lost.)
+
+### 7a. The reach freeze — what the registry WOULD add
+
+`_canonical_key` keyed a row by its LAST path segment through an eight-entry
+synonym table (`gop` / `noi` / `rooms_revenue` / `fb_revenue` /
+`total_revenue` / `occupancy` / `adr` / `revpar`), and every other critic slot
+was filled only when that segment was LITERALLY the slot name — it never
+unit-stripped the fallback tail, so `…insurance_usd` did not reach the
+`insurance` slot. The registry knows the full dotted USALI paths, so switching
+to it moves numbers the analyst sees. This phase keeps the old reach
+(`documents._PRE_REGISTRY_CRITIC_TAILS` / `_PRE_REGISTRY_CRITIC_PARENTS` +
+`_pre_registry_critic_reach`); the table and its guard come out in one commit
+once the widening is signed off, together with a regenerated pin.
+
+What the freeze currently withholds, on the pinned corpora
+(`USALIFinancials` field ← the registry's path, frozen value → registry value):
+
+| Field | Real T-12 payload | Real annual-P&L payload | FON-41 live capture |
+|---|---|---|---|
+| `noi` | 0 → 1,948,560 | 0 → 1,957,310 | unchanged (already 1,794,100) |
+| `gop` | unchanged (5,081,540) | 0 → 4,736,470 | unchanged |
+| `rooms_revenue` | unchanged | 0 → 9,807,990 | unchanged |
+| `fb_revenue` | 0 → 3,394,470 | 0 → 2,111,540 | unchanged |
+| `other_revenue` | 0 → 21,656.6 | 0 → 15,885.6 | unchanged |
+| `dept_expenses.{rooms,food_beverage,total}` | 0 → 2,766,470 / 2,612,850 / 5,387,660 | 0 → 2,592,840 / 2,040,350 / 4,640,390 | 0 → 2,770,770 / 2,533,250 / 5,311,430 |
+| `mgmt_fee` | 0 → 650,353 | 0 → 404,604 | unchanged |
+| `ffe_reserve` | 0 → 560,393 | 0 → 517,608 | unchanged |
+| `fixed_charges.total` | 0 → 1,922,240 | 0 → 1,856,960 | 0 → 1,984,820 |
+| `fixed_charges.insurance` | 0 → 1,392,610 | 0 → 1,351,730 | unchanged (1,429,570) |
+| `fixed_charges.property_taxes` | 0 → 543,094 | 0 → 496,949 | unchanged |
+| `opex_ratio` | 1.0 → 0.8609 | 1.0 → 0.8487 | unchanged |
+
+The paths the freeze blocks, by critic slot (doc type in brackets):
+
+* `departmental_rooms` — `p_and_l_usali.rooms.expense_usd` [T12, PNL],
+  `p_and_l_usali.rooms.departmental_expense(_usd)` [T12, PNL],
+  `p_and_l_usali.departmental_expense.rooms_usd` [PNL],
+  `p_and_l_usali.departmental_expenses.rooms` [T12];
+* `departmental_fb` — `p_and_l_usali.food_and_beverage.expense_usd` /
+  `.departmental_expense_usd` [T12], `p_and_l_usali.fb.expense_usd` /
+  `.departmental_expense` [PNL], `p_and_l_usali.departmental_expense.fb_usd`
+  [PNL], `p_and_l_usali.departmental_expenses.food_beverage` [T12];
+* `departmental_expenses` — `p_and_l_usali.total_departmental_expense(_usd)`
+  [T12, PNL], `p_and_l_usali.departmental_expense.total_usd` [PNL],
+  `p_and_l_usali.departmental_expenses.total` [T12];
+* `fb_revenue` — `p_and_l_usali.food_and_beverage.revenue_usd` [T12],
+  `p_and_l_usali.revenues.fb_usd` [PNL];
+* `rooms_revenue` — `p_and_l_usali.revenues.rooms_usd` [PNL];
+* `other_revenue` — `p_and_l_usali.other_operated_departments.revenue_usd`
+  [T12], `p_and_l_usali.revenues.other_operated_departments_usd` [PNL];
+* `gop` — `p_and_l_usali.gross_operating_profit.total_usd` [PNL];
+* `noi` — `p_and_l_usali.ebitda_less_replacement_reserve(_usd)` /
+  `.total_usd` [T12, PNL] (§3 item 4: NOI ≡ EBITDA less replacement reserve);
+* `mgmt_fee` — `p_and_l_usali.management_fees_usd` [T12],
+  `p_and_l_usali.management_fees.total_usd` [PNL];
+* `ffe_reserve` — `p_and_l_usali.ffe_replacement_reserve_usd` [T12],
+  `p_and_l_usali.ffe_reserve.proforma_calculation_usd` [PNL];
+* `insurance` — `p_and_l_usali.non_operating.insurance_usd` [T12, PNL];
+* `property_taxes` — `p_and_l_usali.non_operating.property_and_other_taxes_usd`
+  [T12], `…property_other_taxes_usd` [PNL];
+* `fixed_charges` — `p_and_l_usali.total_non_operating_expenses(_usd)` [T12,
+  PNL], `p_and_l_usali.total_non_operating_income_and_expenses_usd` [T12],
+  `p_and_l_usali.non_operating.total_usd` [PNL],
+  `p_and_l_usali.fixed_charges.total_nonop` [T12].
+
+Note for the confirmation session: `fixed_charges` picks the *income and
+expenses* row where the T-12 prints both (§3b "Decision — fixed charges"), so
+lifting the freeze also closes the NOI chain on the live T-12.
+
+### 7b. Rules that changed meaning without changing a number
+
+Recorded because they will bite a document the corpora do not contain:
+
+1. **Annual ranking is now scope, not substrings.** `_ANNUAL_HINTS` matched
+   `ttm_summary`, `ttm_performance`, `operating_revenue.`,
+   `gross_operating_profit`, `net_operating_income`, `total_revenue`,
+   `annual`, `_ttm`, `trailing` anywhere in the path; the registry ranks on
+   `concept_for_path(...).scope`, which is `annual` / `ttm` only when the path
+   itself says so (a four-digit-year segment, a TTM namespace, `_ttm`,
+   `trailing`, `annual`) and `unknown` otherwise. So
+   `p_and_l_usali.gross_operating_profit` [T12/PNL],
+   `p_and_l_usali.operating_revenue.*`, `p_and_l_usali.total_revenues_usd` and
+   `ttm_summary_per_om.{occupancy_pct,adr_usd,revpar_usd}` on an actuals
+   document drop from rank 0 to rank 1, and the OM's `p_and_l_usali.<year>.*`
+   rows rise from rank 1 to rank 0 (they are excluded as `om_history` anyway).
+   On the pinned corpora no slot changes winner. `concept_for_path` does not
+   read the document's `period_type` line — `resolve()` does; wiring the doc
+   scope in is the follow-up that would make rank 0 mean "annual" again.
+2. **The period-slice list widened.** Legacy: `.monthly.` `.quarterly.`
+   `.weekly.` `.daily.` `.ytd.` `.mtd.` `.qtd.`. Registry
+   `subordinate_namespaces` adds `per_month`, `page`, `q1`–`q4`,
+   `prior_year`, `day_of_week` and (via `registry._subordinate_scope`) any
+   month-name or `pageN` segment; `.budget.` / `.forecast.` are a BASIS, not a
+   slice. Live example: `p_and_l_usali.page5.insurance_usd` on the real T-12
+   is now dropped as a slice (it was already unreachable under the freeze).
+3. **`market` basis no longer reaches the actual side.** Legacy filtered
+   market segments and the OM's history off the BROKER side only, so a
+   `comp_set.*` / `…segment.*` row on a T-12 or P&L fed the actual side. The
+   registry excludes basis `market` and `om_history` from both sides. Not
+   present in the corpora.
+4. **The actual side is still gated on the document type.** The registry gives
+   basis `actual` on `PNL_MONTHLY` / `PNL_YTD` too; the loader keeps the
+   pre-registry admission (`_CRITIC_ACTUAL_DOC_TYPES = ("T12", "PNL")`), so a
+   monthly or YTD P&L document still contributes nothing. Widening this is a
+   product decision, not a refactor.
+5. **Ratio normalisation is driven by `unit`, not by the tail.**
+   `variance.normalize_broker_value` keys its occupancy branch off
+   `_RATIO_CONCEPTS = {occupancy, occupancy_pct}`, so a path ending
+   `occupancy_percent` / `occ` / `occ_pct` was NOT normalised; the loader now
+   hands that helper the concept's critic key whenever the registry says
+   `unit: ratio | pct`, so all five spellings normalise. Not present in the
+   corpora. When `variance.py` becomes registry-driven, `_RATIO_CONCEPTS`
+   should be derived from `unit` and this hand-off deleted.

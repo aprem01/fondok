@@ -7290,6 +7290,101 @@ async def _persist_critic_report(
         )
 
 
+# ── critic inputs: registry adapter (Phase 1.3c) ───────────────────────────
+#
+# The alias table, the annual/TTM test and the basis rules that used to live
+# in ``_load_critic_inputs`` are the concept registry's now
+# (``app/ontology/concepts.yaml``): ``concept_for_path`` gives the concept,
+# ``bindings.critic_key`` the bucket, ``scope`` says whether the line is a
+# period total and ``basis`` says whose number it is. What stays here are the
+# two rules the loader owns — the T-12 outranks a P&L, and a ratio line is
+# normalised to a fraction before the schema sees it.
+
+#: Documents whose extraction is the subject's ACTUALS, best first: the T-12
+#: is the reference statement, a P&L is the fallback.
+_CRITIC_ACTUAL_DOC_TYPES: tuple[str, ...] = ("T12", "PNL")
+#: Documents whose extraction is broker material.
+_CRITIC_BROKER_DOC_TYPES: tuple[str, ...] = ("OM",)
+#: Registry scopes that ARE an annual line for the critic's purposes (what the
+#: hand-written ``_ANNUAL_HINTS`` substring list used to decide).
+_CRITIC_ANNUAL_SCOPES: frozenset[str] = frozenset({"annual", "ttm"})
+#: Registry bases that are neither the subject's actual nor the broker's own
+#: claim: a comp-set / market stat, and the OM's historical-year block.
+_CRITIC_EXCLUDED_BASES: frozenset[str] = frozenset({"om_history", "market"})
+#: Registry units the loader normalises to a fraction (occupancy 83 → 0.83).
+_CRITIC_RATIO_UNITS: frozenset[str] = frozenset({"ratio", "pct"})
+
+#: ── Phase 1.3c parity freeze ──────────────────────────────────────────────
+#: The pre-registry ``_canonical_key`` keyed a row by its LAST path segment,
+#: remapped through an eight-entry synonym table; every other critic slot was
+#: filled only when that segment was LITERALLY the slot name. The registry
+#: recognises the full dotted USALI paths too, so switching to it would newly
+#: fill ``dept_expenses`` / ``mgmt_fee`` / ``ffe_reserve`` / ``fixed_charges``
+#: / ``insurance`` / ``property_taxes`` / ``other_revenue`` / ``noi`` on Sam's
+#: live deal — real numbers, but Sam-facing numbers, so not a refactor's call.
+#: This phase keeps the old reach; every path the registry would have added is
+#: listed in ``app/ontology/DRIFT_NOTES.md`` § "Phase 1.3c parity exceptions".
+#: Delete this table and ``_pre_registry_critic_reach`` in one commit once the
+#: widening is signed off.
+_PRE_REGISTRY_CRITIC_TAILS: dict[str, frozenset[str]] = {
+    "gop": frozenset(
+        {"gross_operating_profit", "gross_operating_profit_usd", "gop", "gop_usd"}
+    ),
+    "noi": frozenset(
+        {"noi", "noi_usd", "net_operating_income", "net_operating_income_usd"}
+    ),
+    "rooms_revenue": frozenset({"rooms_revenue", "rooms_revenue_usd"}),
+    "fb_revenue": frozenset(
+        {"fb_revenue", "fb_revenue_usd", "food_beverage_revenue", "food_beverage_revenue_usd"}
+    ),
+    "total_revenue": frozenset(
+        {"total_revenue", "total_revenue_usd", "total_revenues", "total_revenues_usd",
+         "total_operating_revenue", "total_operating_revenue_usd"}
+    ),
+    "occupancy": frozenset(
+        {"occupancy", "occupancy_pct", "occupancy_percent", "occ", "occ_pct"}
+    ),
+    "adr": frozenset({"adr", "adr_usd", "average_daily_rate", "average_daily_rate_usd"}),
+    "revpar": frozenset({"revpar", "revpar_usd"}),
+    # Slots the old helper could only reach by an exact tail (its fallback was
+    # the raw last segment, and ``_build`` reads these spellings).
+    "resort_fees": frozenset({"resort_fees", "resort_fees_usd"}),
+    "other_revenue": frozenset({"other_revenue", "other_revenue_usd"}),
+    "departmental_rooms": frozenset({"departmental_rooms"}),
+    "departmental_fb": frozenset({"departmental_fb"}),
+    "departmental_expenses": frozenset({"departmental_expenses"}),
+    "undistributed_expenses": frozenset({"undistributed_expenses"}),
+    "mgmt_fee": frozenset({"mgmt_fee"}),
+    "ffe_reserve": frozenset({"ffe_reserve"}),
+    "insurance": frozenset({"insurance"}),
+    "property_taxes": frozenset({"property_taxes"}),
+    "fixed_charges": frozenset({"fixed_charges"}),
+}
+#: The two parent-qualified forms the old helper special-cased:
+#: ``<parent>.<tail>`` → ``{parents}``, ``{tails}``.
+_PRE_REGISTRY_CRITIC_PARENTS: dict[str, tuple[frozenset[str], frozenset[str]]] = {
+    "rooms_revenue": (frozenset({"rooms"}), frozenset({"revenue", "revenue_usd"})),
+    "fb_revenue": (
+        frozenset({"fb", "food_beverage"}), frozenset({"revenue", "revenue_usd"})
+    ),
+}
+
+
+def _pre_registry_critic_reach(lname: str, critic_key: str) -> bool:
+    """Would the pre-registry ``_canonical_key`` have mapped ``lname`` here?
+
+    The Phase 1.3c parity guard — see ``_PRE_REGISTRY_CRITIC_TAILS``.
+    """
+    parts = lname.split(".")
+    tail = parts[-1]
+    if tail in _PRE_REGISTRY_CRITIC_TAILS.get(critic_key, frozenset()):
+        return True
+    parents, tails = _PRE_REGISTRY_CRITIC_PARENTS.get(
+        critic_key, (frozenset(), frozenset())
+    )
+    return len(parts) > 1 and parts[-2] in parents and tail in tails
+
+
 async def _load_critic_inputs(
     session: AsyncSession,
     *,
@@ -7345,8 +7440,9 @@ async def _load_critic_inputs(
             except (TypeError, ValueError):
                 pass
 
-    # Walk every extraction result on the deal, bucketing fields by
-    # T-12 (USALI P&L paths) vs broker proforma (broker_proforma.*).
+    # Walk every extraction result on the deal, bucketing fields by the
+    # subject's actuals (a T-12 / P&L line) vs the broker's own proforma
+    # claim — which side a path is on comes from the registry's basis.
     rows = await session.execute(
         text(
             # tenant-scope predicate required by tenant_middleware
@@ -7366,66 +7462,44 @@ async def _load_critic_inputs(
 
     # FON-54a — actual-side period sanity + broker-side source sanity.
     #
-    # The previous bucketing keyed every row by its LAST path segment with
-    # first-seen-wins across ``created_at DESC`` rows, so on Sam's deal a
-    # monthly slice from the newest extraction (``p_and_l_usali.monthly.
-    # apr_2024.rooms_revenue`` = 954K, ``….gop`` = 515K) shadowed the T-12's
-    # annual ``operating_revenue.rooms_revenue`` (9.33M) / ``gross_operating_
-    # profit`` (4.97M), and a percent occupancy (``occupancy_pct`` = 71.6)
-    # either failed validation or lost to a monthly ``occupancy`` = 1. Rules:
-    #   * period slices (``.monthly.`` / ``.quarterly.`` / ``.ytd.`` …) never
-    #     feed either side — an annual line or nothing;
-    #   * rows map to a CANONICAL key (``rooms.revenue`` → rooms_revenue,
-    #     ``gross_operating_profit`` → gop, ``net_operating_income.noi_usd`` →
-    #     noi …) rather than a bare last segment;
-    #   * actuals prefer the T-12 document over a P&L, and an annual-named
-    #     path over a generic one; broker rows come only from the OM's own
-    #     claim (never its historical-year block or a market-segment stat);
-    #   * occupancy is normalised to a fraction before the schema sees it.
-    from ..agents.variance import (
-        is_market_segment,
-        is_om_historical_year,
-        is_period_slice,
-        normalize_broker_value,
-    )
+    # The bucketing before FON-54a keyed every row by its LAST path segment
+    # with first-seen-wins across ``created_at DESC`` rows, so on Sam's deal a
+    # monthly slice from the newest extraction (an ``…monthly.apr_2024.``
+    # rooms revenue of 954K / GOP of 515K) shadowed the T-12's annual rooms
+    # revenue (9.33M) / gross operating profit (4.97M), and a percent
+    # occupancy (71.6) either failed validation or lost to a monthly
+    # occupancy of 1. Rules:
+    #   * period slices (a month / quarter / YTD / page namespace — the
+    #     registry's ``subordinate_namespaces``) never feed either side;
+    #   * rows map to a CANONICAL key — the registry's concept for the path
+    #     (``bindings.critic_key``) rather than a bare last segment;
+    #   * actuals prefer the T-12 document over a P&L, and a line the registry
+    #     scopes annual / TTM over a generically-scoped one; broker rows come
+    #     only from the OM's own claim (registry basis ``broker``, never
+    #     ``om_history`` or ``market``);
+    #   * a ratio line (registry ``unit``) is normalised to a fraction before
+    #     the schema sees it.
+    from ..agents.variance import normalize_broker_value
+    from ..ontology import registry as ontology
 
-    def _canonical_key(lname: str) -> str:
-        parts = lname.split(".")
-        last = parts[-1]
-        parent = parts[-2] if len(parts) > 1 else ""
-        if last in ("gross_operating_profit", "gross_operating_profit_usd", "gop", "gop_usd"):
-            return "gop"
-        if last in ("noi", "noi_usd", "net_operating_income", "net_operating_income_usd"):
-            return "noi"
-        if last in ("rooms_revenue", "rooms_revenue_usd") or (
-            parent == "rooms" and last in ("revenue", "revenue_usd")
-        ):
-            return "rooms_revenue"
-        if last in ("fb_revenue", "fb_revenue_usd", "food_beverage_revenue", "food_beverage_revenue_usd") or (
-            parent in ("fb", "food_beverage") and last in ("revenue", "revenue_usd")
-        ):
-            return "fb_revenue"
-        if last in (
-            "total_revenue", "total_revenue_usd", "total_revenues", "total_revenues_usd",
-            "total_operating_revenue", "total_operating_revenue_usd",
-        ):
-            return "total_revenue"
-        if last in ("occupancy", "occupancy_pct", "occupancy_percent", "occ", "occ_pct"):
-            return "occupancy"
-        if last in ("adr", "adr_usd", "average_daily_rate", "average_daily_rate_usd"):
-            return "adr"
-        if last in ("revpar", "revpar_usd"):
-            return "revpar"
-        return last
+    reg = ontology.get_registry()
 
-    _ANNUAL_HINTS = (
-        "ttm_summary", "ttm_performance", "operating_revenue.", "gross_operating_profit",
-        "net_operating_income", "total_revenue", "annual", "_ttm", "trailing",
-    )
+    def _critic_concept(lname: str, doc_type: str) -> tuple[str, str, str, str] | None:
+        """``(critic_key, basis, scope, unit)`` for a raw extraction path.
 
-    def _path_rank(lname: str) -> int:
-        # 0 = explicitly annual / TTM-named line, 1 = generic line.
-        return 0 if any(h in lname for h in _ANNUAL_HINTS) else 1
+        ``None`` when the registry does not know the path, when the concept
+        has no ``critic_key``, or when the pre-registry loader would not have
+        reached that slot (the Phase 1.3c parity freeze).
+        """
+        hit = ontology.concept_for_path(lname, doc_type=doc_type)
+        if hit is None:
+            return None
+        concept_id, basis, scope = hit
+        concept = reg.concepts[concept_id]
+        key = concept.bindings.critic_key
+        if not key or not _pre_registry_critic_reach(lname, key):
+            return None
+        return key, basis, scope, concept.unit
 
     # canonical key → (rank tuple, value); lower rank wins, ties keep first seen.
     broker_ranked: dict[str, tuple[tuple[int, int, int], float]] = {}
@@ -7454,7 +7528,7 @@ async def _load_critic_inputs(
             continue
         doc_type = (m.get("doc_type") or "").upper()
         # Actuals: the T-12 is the reference document; a P&L is the fallback.
-        actual_doc_rank = 0 if doc_type == "T12" else 1
+        actual_doc_rank = 0 if doc_type == _CRITIC_ACTUAL_DOC_TYPES[0] else 1
         for f in raw_fields:
             if not isinstance(f, dict):
                 continue
@@ -7464,27 +7538,42 @@ async def _load_critic_inputs(
                 continue
             order += 1
             lname = name.lower()
-            if is_period_slice(lname):
-                continue  # a month / quarter is never an annual line
-            key = _canonical_key(lname)
-            explicit_broker = lname.startswith(("broker_proforma.", "broker."))
-            if explicit_broker:
-                side = "broker"
-            elif doc_type in ("T12", "PNL"):
+            hit = _critic_concept(lname, doc_type)
+            if hit is None:
+                continue  # not a concept the critic compares
+            key, basis, scope, unit = hit
+            # ``subordinate_namespaces`` plus the month-name / ``pageN``
+            # segment rules; the resolver's own helper, per the adapter plan
+            # in DRIFT_NOTES §4 (a ``.budget.`` / ``.forecast.`` namespace is
+            # a basis there, not a slice).
+            is_slice, _slice_scope = ontology._subordinate_scope(lname, reg._subordinate)
+            if is_slice:
+                continue  # a month / quarter / page slice is never an annual line
+            if basis in _CRITIC_EXCLUDED_BASES:
+                continue  # a comp-set stat / the OM's history is not the broker's claim
+            if basis == "broker":
+                side = "broker"  # an explicit broker claim, wherever it sits
+            elif doc_type in _CRITIC_ACTUAL_DOC_TYPES:
                 side = "actual"
-            elif doc_type == "OM":
+            elif doc_type in _CRITIC_BROKER_DOC_TYPES:
                 side = "broker"
             else:
                 continue
-            if side == "broker" and (is_market_segment(lname) or is_om_historical_year(lname)):
-                continue  # a comp-set stat / the OM's history is not the broker's claim
-            norm, _note = normalize_broker_value(name, float(value), f.get("unit"))
+            # ``normalize_broker_value`` keys its occupancy branch off the field
+            # tail; the registry's ``unit`` is what decides, so hand it the
+            # concept when the line is a ratio and the raw name otherwise (the
+            # currency branch reads the extractor's ``unit``, not the name).
+            norm, _note = normalize_broker_value(
+                key if unit in _CRITIC_RATIO_UNITS else name, float(value), f.get("unit")
+            )
             if norm is None:
                 continue  # unit could not be established — do not compare
+            # 0 = a line the registry scopes annual / TTM, 1 = a generic line.
+            path_rank = 0 if scope in _CRITIC_ANNUAL_SCOPES else 1
             if side == "broker":
-                _offer(broker_ranked, key, (0, _path_rank(lname), order), norm)
+                _offer(broker_ranked, key, (0, path_rank, order), norm)
             else:
-                _offer(actual_ranked, key, (actual_doc_rank, _path_rank(lname), order), norm)
+                _offer(actual_ranked, key, (actual_doc_rank, path_rank, order), norm)
 
     broker_fields: dict[str, float] = {k: v for k, (_r, v) in broker_ranked.items()}
     actual_fields: dict[str, float] = {k: v for k, (_r, v) in actual_ranked.items()}
