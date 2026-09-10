@@ -18,7 +18,7 @@
  * Write-only — not part of the run set for this change.
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, fireEvent, cleanup, waitFor } from '@testing-library/react';
+import { render, screen, fireEvent, cleanup, waitFor, act } from '@testing-library/react';
 import React from 'react';
 import type { EngineOutputsResponse } from '@/lib/api';
 
@@ -275,5 +275,81 @@ describe('Financials · Projections — Year-1 basis chip is driven by worker so
 
     expect(screen.queryByTestId('str-basis-chip')).not.toBeInTheDocument();
     expect(screen.queryByTestId('str-basis-unavailable')).not.toBeInTheDocument();
+  });
+});
+
+// FON-67 — ``noi_override_by_year`` pins the operating NOI path the worker
+// feeds the debt + returns engines, so operating-assumption edits don't move
+// NOI while it is set. The section must SAY so and offer a clear.
+describe('Financials · Projections — NOI pin notice (FON-67 reconciliation lever)', () => {
+  const NOTICE =
+    "NOI pinned to an analyst schedule — operating assumption edits won't move NOI until the pin is cleared";
+
+  it('renders no notice when the deal carries no pin', () => {
+    mockFieldOverrides = { mgmt_fee_pct: { value: 0.03, note: 'Analyst' } };
+    render(<ProjectionsSection dealId="deal-uuid-1" />);
+    expect(screen.queryByTestId('noi-pin-notice')).not.toBeInTheDocument();
+  });
+
+  it('shows the notice for a {value: [...]} pin; Clear pin confirms, deletes ONLY the pin, and re-runs', async () => {
+    mockFieldOverrides = {
+      noi_override_by_year: { value: [4_100_000, 4_300_000, 4_500_000], note: "Sam's model NOI" },
+      mgmt_fee_pct: { value: 0.03, note: 'Analyst' }, // unrelated — must survive
+    };
+    const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(true);
+    render(<ProjectionsSection dealId="deal-uuid-1" />);
+
+    const notice = screen.getByTestId('noi-pin-notice');
+    expect(notice).toHaveTextContent(NOTICE);
+    expect(notice).not.toHaveTextContent('Terminal NOI is also pinned');
+
+    fireEvent.click(screen.getByRole('button', { name: 'Clear pin' }));
+    expect(confirmSpy).toHaveBeenCalledTimes(1);
+    await waitFor(() => expect(updateSpy).toHaveBeenCalledTimes(1));
+    const [, body] = updateSpy.mock.calls[0] as [string, { field_overrides: Record<string, unknown> }];
+    expect(body.field_overrides).toEqual({ mgmt_fee_pct: { value: 0.03, note: 'Analyst' } });
+    expect(refreshDealSpy).toHaveBeenCalled();
+    expect(engineRunSpy).toHaveBeenCalled(); // re-modeled so NOI follows the assumptions again
+    confirmSpy.mockRestore();
+  });
+
+  it('says when terminal NOI is also pinned and clears both overrides together', async () => {
+    mockFieldOverrides = {
+      noi_override_by_year: [4_100_000, 4_300_000], // legacy raw-list shape
+      terminal_noi_override: { value: 4_650_000, note: 'Reversion NOI' },
+      exit_cap_rate: { value: 0.07, note: 'Analyst' },
+    };
+    const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(true);
+    render(<ProjectionsSection dealId="deal-uuid-1" />);
+
+    expect(screen.getByTestId('noi-pin-notice')).toHaveTextContent('Terminal NOI is also pinned');
+
+    fireEvent.click(screen.getByRole('button', { name: 'Clear pin' }));
+    await waitFor(() => expect(updateSpy).toHaveBeenCalledTimes(1));
+    const [, body] = updateSpy.mock.calls[0] as [string, { field_overrides: Record<string, unknown> }];
+    expect(body.field_overrides).toEqual({ exit_cap_rate: { value: 0.07, note: 'Analyst' } });
+    confirmSpy.mockRestore();
+  });
+
+  it('cancelling the confirm leaves the pin untouched (no PATCH, no re-run)', async () => {
+    mockFieldOverrides = { noi_override_by_year: { value: [4_100_000], note: 'pin' } };
+    const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(false);
+    render(<ProjectionsSection dealId="deal-uuid-1" />);
+
+    fireEvent.click(screen.getByRole('button', { name: 'Clear pin' }));
+    expect(confirmSpy).toHaveBeenCalledTimes(1);
+    await act(async () => {
+      await new Promise((r) => setTimeout(r, 20));
+    });
+    expect(updateSpy).not.toHaveBeenCalled();
+    expect(engineRunSpy).not.toHaveBeenCalled();
+    expect(screen.getByTestId('noi-pin-notice')).toBeInTheDocument();
+    confirmSpy.mockRestore();
+  });
+
+  it('an empty list is not a pin', () => {
+    mockFieldOverrides = { noi_override_by_year: { value: [], note: 'cleared' } };
+    render(<ProjectionsSection dealId="deal-uuid-1" />);
+    expect(screen.queryByTestId('noi-pin-notice')).not.toBeInTheDocument();
   });
 });

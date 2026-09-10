@@ -31,6 +31,7 @@ import {
 import { useDeal } from '@/lib/hooks/useDeal';
 import { useEngineRun } from '@/lib/hooks/useEngineRun';
 import { useEngineOutputs, getEngineField } from '@/lib/hooks/useEngineOutputs';
+import { useSource, useProvenanceState } from '@/lib/hooks/useDealProvenance';
 import { useToast } from '@/components/ui/Toast';
 import { STR_MARKET_OVERRIDE_NOTE, isStrMarketOverride } from '@/lib/provenance';
 import {
@@ -87,6 +88,22 @@ interface WorkerMarketOverview {
 
 const SUB_TABS = ['Market Overview', 'Transaction Comps', 'Index Analysis'] as const;
 type SubTab = (typeof SUB_TABS)[number];
+
+/**
+ * FON-61 (D4) — what the "STR rates" card says, read from the WORKER's source
+ * tags (never inferred from the ``revenue_seed_from_str_forecast`` flag alone),
+ * exactly like Financials → Projections' Year-1 basis chip:
+ *   off         — flag not set → "Model input · Use STR rates in the model".
+ *   active      — flag set AND starting_occupancy / starting_adr tagged
+ *                 ``str_forecast`` → "STR rates active".
+ *   unavailable — flag set but the worker tagged ``str_forecast_unavailable``
+ *                 (no STR Trend extraction / coverage too low) → the model is
+ *                 on the T-12 base and the card says so.
+ *   pending     — flag set but the worker returned NO tag for these keys (the
+ *                 provenance fetch failed, or the deployed worker predates the
+ *                 tags) → "Pending re-run" — never shown as "active".
+ */
+type StrBasis = 'off' | 'active' | 'unavailable' | 'pending';
 
 // ─── canonical colors (from design tokens) ──────────────────────────────────
 const GREEN = prov.green; // document-sourced market metric
@@ -350,18 +367,25 @@ function SubjectVsCompSet({
   strTrend,
   derivedComp,
   compKeyCount,
-  strSeeded,
+  strBasis,
+  strBasisSettled,
   strRunning,
   onToggleStr,
+  onRerun,
   dealId,
   subjectState,
 }: {
   strTrend: StrTrend;
   derivedComp: DerivedComp;
   compKeyCount: number | null;
-  strSeeded: boolean;
+  /** Tag-honest card state — see ``StrBasis``. */
+  strBasis: StrBasis;
+  /** False while the provenance map is still loading (pending card reads
+   *  "checking" instead of "pending re-run"). */
+  strBasisSettled: boolean;
   strRunning: boolean;
   onToggleStr: () => void;
+  onRerun: () => void;
   dealId: string;
   subjectState: ValueState;
 }) {
@@ -539,9 +563,11 @@ function SubjectVsCompSet({
           </div>
         )}
 
-        {/* STR-rate model input toggle */}
-        {strSeeded ? (
+        {/* STR-rate model input toggle — the card state is the WORKER's
+            source tag (see ``StrBasis``), never the flag alone. */}
+        {strBasis === 'active' ? (
           <div
+            data-testid="str-card-active"
             style={{
               display: 'flex',
               alignItems: 'center',
@@ -572,6 +598,80 @@ function SubjectVsCompSet({
               <button onClick={onToggleStr} disabled={strRunning} style={navyBtn}>
                 Revert to T-12 actuals
               </button>
+            </span>
+          </div>
+        ) : strBasis === 'unavailable' ? (
+          <div
+            data-testid="str-card-unavailable"
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: 14,
+              flexWrap: 'wrap',
+              background: 'oklch(97% 0.03 80)',
+              border: '1px solid oklch(85% 0.08 80)',
+              borderRadius: 8,
+              padding: '10px 14px',
+            }}
+          >
+            <span style={{ fontSize: 10, fontWeight: 700, letterSpacing: '.05em', color: 'oklch(42% 0.12 60)', textTransform: 'uppercase' }}>
+              STR rates unavailable — using T-12 base
+            </span>
+            <span style={{ fontSize: 12.5, color: palette.ink }}>
+              STR rates were requested but could not populate (no STR Trend extraction or coverage too low).
+              Year-1 Occupancy &amp; ADR stay on the <b>T-12 actuals</b> ({t12Occ} · {t12Adr}) — the model is on
+              the T-12 base, not the STR rates.
+            </span>
+            <span style={{ display: 'flex', gap: 8, marginLeft: 'auto', alignItems: 'center' }}>
+              {strRunning && (
+                <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6, fontSize: 11.5, color: '#2f4a8c' }}>
+                  <Loader2 size={12} className="animate-spin" /> Re-modeling…
+                </span>
+              )}
+              <Link href={`/projects/${dealId}?tab=pl`} style={{ textDecoration: 'none' }}>
+                <span style={secBtn}>View Projections →</span>
+              </Link>
+              <button onClick={onToggleStr} disabled={strRunning} style={navyBtn}>
+                Clear STR request
+              </button>
+            </span>
+          </div>
+        ) : strBasis === 'pending' ? (
+          <div
+            data-testid="str-card-pending"
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: 14,
+              flexWrap: 'wrap',
+              background: palette.surfaceTint,
+              border: `1px solid ${palette.border}`,
+              borderRadius: 8,
+              padding: '10px 14px',
+            }}
+          >
+            <span style={{ fontSize: 10, fontWeight: 700, letterSpacing: '.05em', color: palette.eyebrow, textTransform: 'uppercase' }}>
+              {strBasisSettled ? 'Pending re-run' : 'Checking model basis…'}
+            </span>
+            <span style={{ fontSize: 12.5, color: palette.ink }}>
+              STR rates (<b>{strOcc}</b> · <b>{strAdr}</b>) were requested, but the model has not confirmed the
+              Year-1 basis yet
+              {strBasisSettled ? ' — the saved run predates the source tags. Re-run the model to apply and confirm them.' : '.'}
+            </span>
+            <span style={{ display: 'flex', gap: 8, marginLeft: 'auto', alignItems: 'center' }}>
+              {strRunning && (
+                <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6, fontSize: 11.5, color: '#2f4a8c' }}>
+                  <Loader2 size={12} className="animate-spin" /> Re-modeling…
+                </span>
+              )}
+              <button onClick={onToggleStr} disabled={strRunning} style={secBtn}>
+                Revert to T-12 actuals
+              </button>
+              {strBasisSettled && (
+                <button onClick={onRerun} disabled={strRunning} style={navyBtn}>
+                  Re-run model
+                </button>
+              )}
             </span>
           </div>
         ) : (
@@ -1065,6 +1165,21 @@ export default function MarketTab({ projectId }: { projectId: number | string })
   const strSeeded =
     rawSeed === true ||
     (typeof rawSeed === 'object' && rawSeed !== null && (rawSeed as { value?: unknown }).value === true);
+  // Tag-honest card state — the same worker source tags Financials →
+  // Projections reads for its Year-1 basis chip. The flag only says the seed
+  // was REQUESTED; only a ``str_forecast`` tag on the rate keys says it is
+  // what the model is actually using.
+  const occSrc = useSource('starting_occupancy');
+  const adrSrc = useSource('starting_adr');
+  const seedSrc = useSource('revenue_seed_from_str_forecast');
+  const { settled: strBasisSettled } = useProvenanceState();
+  const strBasis: StrBasis = !strSeeded
+    ? 'off'
+    : occSrc?.source === 'str_forecast' || adrSrc?.source === 'str_forecast'
+      ? 'active'
+      : [seedSrc, occSrc, adrSrc].some((s) => s?.source === 'str_forecast_unavailable')
+        ? 'unavailable'
+        : 'pending';
   // FON-61 (D4) — Market → Financials propagation is EXPLICIT. "Use STR rates"
   // writes ``starting_occupancy`` / ``starting_adr`` field_overrides carrying
   // exactly the comp-set values the card displays (occupancy at the card's
@@ -1163,9 +1278,11 @@ export default function MarketTab({ projectId }: { projectId: number | string })
               strTrend={strTrend}
               derivedComp={derivedComp}
               compKeyCount={compKeyCount}
-              strSeeded={strSeeded}
+              strBasis={strBasis}
+              strBasisSettled={strBasisSettled}
               strRunning={strRunning}
               onToggleStr={toggleStrSeed}
+              onRerun={() => void run()}
               dealId={dealId}
               subjectState={stateOf('revenue', 'year1_occupancy', 'document_sourced')}
             />

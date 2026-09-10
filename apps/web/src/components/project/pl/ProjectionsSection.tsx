@@ -160,6 +160,19 @@ const ASSUMPTION_DEFAULTS: Record<string, number> = {
   exit_cap_rate: 0.07,
 };
 
+// True when a field_overrides entry is a non-empty JSON list — raw (legacy
+// shape) or wrapped ``{value: [...], note}`` (the OverridePanel shape). The
+// worker unwraps both (``_normalize_override_shape``) before the list guard.
+function hasListOverride(overrides: Record<string, unknown>, key: string): boolean {
+  const raw = overrides[key];
+  if (Array.isArray(raw)) return raw.length > 0;
+  if (typeof raw === 'object' && raw !== null && 'value' in (raw as object)) {
+    const v = (raw as { value?: unknown }).value;
+    return Array.isArray(v) && v.length > 0;
+  }
+  return false;
+}
+
 // Read a numeric value out of a field_overrides entry ({value, note} or scalar).
 function ovValue(overrides: Record<string, unknown>, key: string): number | null {
   const raw = overrides[key];
@@ -258,6 +271,40 @@ export default function ProjectionsSection({
       toast('Could not revert the STR basis', { type: 'error' });
     }
   }, [overrides, dealId, refreshDeal, run, toast]);
+
+  // FON-67 — the NOI reconciliation pin. While ``noi_override_by_year`` (a
+  // per-year NOI list) is set, the worker pins the operating NOI path in the
+  // debt + returns engines to that schedule (engine_runner reads
+  // ``base['noi_override_by_year']``), so RevPAR-growth / expense edits made
+  // here do NOT move NOI. ``terminal_noi_override`` likewise pins the exit-year
+  // NOI for the reversion. Say so, and offer a one-click clear through the same
+  // field_overrides PATCH path every other override in this section uses.
+  const noiPinned = hasListOverride(overrides, 'noi_override_by_year');
+  const terminalNoiPinned = ovValue(overrides, 'terminal_noi_override') != null;
+  const clearNoiPin = useCallback(async () => {
+    const what = terminalNoiPinned
+      ? 'the NOI schedule pin and the terminal NOI pin'
+      : 'the NOI schedule pin';
+    if (
+      typeof window !== 'undefined' &&
+      !window.confirm(`Clear ${what}? NOI will follow the operating assumptions again once the model re-runs.`)
+    ) {
+      return;
+    }
+    const {
+      noi_override_by_year: _noiPin,
+      terminal_noi_override: _terminalPin,
+      ...rest
+    } = overrides;
+    try {
+      await api.deals.update(dealId, { field_overrides: rest });
+      refreshDeal();
+      await run();
+      toast('NOI pin cleared — re-modeled', { type: 'success' });
+    } catch {
+      toast('Could not clear the NOI pin', { type: 'error' });
+    }
+  }, [overrides, terminalNoiPinned, dealId, refreshDeal, run, toast]);
 
   // Exit cap rate drives the Implied Exit Value line at the bottom of the
   // forward statement. It's owned by the Investment tab, so we resolve it the
@@ -485,6 +532,29 @@ export default function ProjectionsSection({
             >
               <span className="w-1.5 h-1.5 rounded-full bg-warn-500" aria-hidden="true" />
               STR rates unavailable — using T-12 base
+            </span>
+          )}
+          {/* FON-67 — NOI pin notice. Shown ONLY when the deal carries the
+              per-year NOI override; explains why operating edits don't move
+              NOI and offers the one-click clear. */}
+          {noiPinned && (
+            <span
+              data-testid="noi-pin-notice"
+              className="inline-flex flex-wrap items-center gap-1.5 rounded-md border border-warn-500/30 bg-warn-50 px-2 py-1 text-[11px] font-medium text-warn-700 max-w-[560px]"
+              title="field_overrides.noi_override_by_year pins the operating NOI path used by the Debt and Returns engines to an analyst-entered schedule (FON-67 reconciliation lever). Clear it to let NOI follow the operating assumptions again."
+            >
+              <span className="w-1.5 h-1.5 rounded-full bg-warn-500" aria-hidden="true" />
+              NOI pinned to an analyst schedule — operating assumption edits won&apos;t move NOI until the pin is cleared
+              {terminalNoiPinned ? '. Terminal NOI is also pinned' : ''}
+              <span className="text-warn-700/50" aria-hidden="true">·</span>
+              <button
+                type="button"
+                onClick={clearNoiPin}
+                disabled={overrideCtx.running}
+                className="font-semibold underline decoration-dotted underline-offset-2 hover:opacity-80 disabled:opacity-50"
+              >
+                Clear pin
+              </button>
             </span>
           )}
           <Button variant="secondary" size="sm" onClick={onExport}>
