@@ -202,6 +202,9 @@ def test_apply_overrides_maps_each_key() -> None:
             {"t": "PIP execution risk", "ai": False},
         ],
         "memo_recommendation_override": "Do Not Proceed",
+        # FON-54a: the verdict headline is a recorded decision — it requires
+        # the analyst's confirmation (unconfirmed → "Pending analyst decision").
+        "memo_recommendation_confirmed": True,
     }
     out = apply_memo_overrides(sections, overrides)
     got = _by_id(out)
@@ -269,6 +272,7 @@ async def test_get_memo_reflects_analyst_overrides() -> None:
                 {"t": "PIP execution risk", "ai": False},
             ],
             "memo_recommendation_override": "Do Not Proceed",
+            "memo_recommendation_confirmed": True,  # FON-54a: confirmed decision
         },
     )
     await _seed_memo_cache(deal_id, _base_sections())
@@ -345,7 +349,10 @@ async def test_get_memo_overrides_are_tenant_scoped() -> None:
     await _insert_deal(
         deal_id,
         tenant=_TENANT,
-        field_overrides={"memo_recommendation_override": "Proceed"},
+        field_overrides={
+            "memo_recommendation_override": "Proceed",
+            "memo_recommendation_confirmed": True,  # FON-54a: confirmed decision
+        },
     )
     await _seed_memo_cache(deal_id, _base_sections())
 

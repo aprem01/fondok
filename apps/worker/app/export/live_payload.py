@@ -399,12 +399,13 @@ def _build_memo(
                 sections.append(alias)
                 break
 
-    # Verdict: the analyst's persisted IC verdict, else an honest neutral (never
-    # the pptx builder's "PROCEED TO LOI" default).
-    from ..memo_overrides import VALID_VERDICTS
+    # Verdict (FON-54a): the analyst's persisted AND confirmed IC verdict, else
+    # the canonical "Pending analyst decision" — never the model's inferred
+    # verdict, never a selected-but-unconfirmed one, never the pptx builder's
+    # "PROCEED TO LOI" default. Same helper the memo body uses.
+    from ..memo_overrides import ic_recommendation_label
 
-    verdict = overrides.get("memo_recommendation_override")
-    recommendation = verdict if verdict in VALID_VERDICTS else "In Review"
+    recommendation = ic_recommendation_label(overrides)
 
     header: dict[str, Any] = {
         "title": "Investment Committee Memorandum",
@@ -562,7 +563,10 @@ def _humanize_field(field: str) -> str:
     return " ".join(out) or "—"
 
 
-def _variance_flags_from_out(flags: list[Any]) -> list[dict[str, Any]]:
+def _variance_flags_from_out(
+    flags: list[Any],
+    diligence: dict[str, dict[str, Any]] | None = None,
+) -> list[dict[str, Any]]:
     """Map ``VarianceFlagOut`` rows onto the builder's ``variance_flags`` shape.
 
     Input is the ``/analysis/{id}/variance`` flag list (the same rows the
@@ -571,30 +575,60 @@ def _variance_flags_from_out(flags: list[Any]) -> list[dict[str, Any]]:
     fixture rows the Variance sheet reads (``flag_id`` / ``severity`` /
     ``metric`` / ``broker_value`` / ``t12_value`` / ``variance_pct`` /
     ``recommended_action``). Absent numbers are omitted, not zeroed.
+
+    FON-54a: consolidated flags carry ``concept`` / ``concept_label`` /
+    ``impact_basis`` — the Metric column prefers the business-readable
+    ``concept_label`` over a humanised raw path — and the row carries the
+    analyst's persisted diligence status for that concept
+    (``diligence_status`` / ``diligence_note``) read from the same
+    ``memo_diligence`` override the IC Memo tab writes. Absent → ``Open``.
     """
+    diligence = diligence or {}
     out: list[dict[str, Any]] = []
     for i, f in enumerate(flags, start=1):
         sev_raw = str(_attr(f, "severity") or "info").lower()
+        field = str(_attr(f, "field") or "")
+        concept = _attr(f, "concept")
+        concept_label = _attr(f, "concept_label")
         row: dict[str, Any] = {
             "flag_id": f"VF-{i:03d}",
             "severity": _SEVERITY_LABELS.get(sev_raw, "INFO"),
-            "metric": _humanize_field(str(_attr(f, "field") or "")),
+            "metric": (
+                str(concept_label) if concept_label else _humanize_field(field)
+            ),
         }
         _set(row, "rule_id", _attr(f, "rule_id"))
+        _set(row, "concept", concept)
+        _set(row, "impact_basis", _attr(f, "impact_basis"))
         _set(row, "broker_value", _num(_attr(f, "broker")))
         _set(row, "t12_value", _num(_attr(f, "actual")))
         _set(row, "variance_pct", _num(_attr(f, "delta_pct")))
         _set(row, "recommended_action", _attr(f, "note"))
+        raw_fields = _attr(f, "raw_fields") or []
+        raw_paths = [str(_attr(r, "field") or "") for r in raw_fields]
+        raw_paths = [p for p in raw_paths if p]
+        if raw_paths:
+            row["raw_fields"] = raw_paths
+        if concept:
+            entry = diligence.get(str(concept)) or {}
+            row["diligence_status"] = entry.get("status") or "Open"
+            _set(row, "diligence_note", entry.get("note"))
         out.append(row)
     return out
 
 
 async def _variance_flags(
-    session: AsyncSession, deal_id: str, tenant_id: str
+    session: AsyncSession,
+    deal_id: str,
+    tenant_id: str,
+    *,
+    diligence: dict[str, dict[str, Any]] | None = None,
 ) -> list[dict[str, Any]]:
     """Live variance flags — the deterministic broker-vs-T-12 (+ broker-vs-CBRE)
     rule pass behind ``GET /analysis/{id}/variance``. Empty until both an
-    OM/broker proforma and a T-12 have been extracted on the deal."""
+    OM/broker proforma and a T-12 have been extracted on the deal.
+    ``diligence`` is the normalised ``memo_diligence`` override map
+    (:func:`app.memo_overrides.diligence_status`)."""
     try:
         from ..api.analysis import get_variance
 
@@ -604,7 +638,7 @@ async def _variance_flags(
     except Exception:  # noqa: BLE001 — sheet is best-effort
         logger.debug("live export: variance read failed", exc_info=True)
         return []
-    return _variance_flags_from_out(list(resp.flags or []))
+    return _variance_flags_from_out(list(resp.flags or []), diligence=diligence)
 
 
 def _fmt_money_compact(value: float | None) -> str:
@@ -1297,7 +1331,14 @@ async def load_live_payload(
     # ── the builders skip absent sheets. The modeled sheets (scenarios, capex,
     # ── pricing) additionally require a completed run so they stay consistent
     # ── with the Returns / Proforma sheets exported from the same snapshot.
-    variance_flags = await _variance_flags(session, deal_id, tenant_id)
+    # FON-54a: the Variance sheet reads the analyst's persisted diligence
+    # status from the same ``memo_diligence`` override the IC Memo tab
+    # writes — one source of truth, no export-side copy.
+    from ..memo_overrides import diligence_status
+
+    variance_flags = await _variance_flags(
+        session, deal_id, tenant_id, diligence=diligence_status(overrides)
+    )
     if variance_flags:
         model["variance_flags"] = variance_flags
 

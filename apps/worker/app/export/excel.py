@@ -822,7 +822,15 @@ def _build_variance(wb: Workbook, model: dict[str, Any]) -> None:
     ws = wb.create_sheet("Variance")
     flags = model.get("variance_flags", []) or []
 
-    headers = ["Flag ID", "Severity", "Metric", "Broker / Value", "T-12 / Threshold", "Variance", "Action"]
+    # FON-54a: the live payload rows also carry the analyst's persisted
+    # diligence status (``diligence_status`` / ``diligence_note`` — from the
+    # same ``memo_diligence`` override the IC Memo tab writes) and the raw
+    # extractor paths that were consolidated into the row (``raw_fields``).
+    # Both columns are blank for rows that don't carry them (fixture rows).
+    headers = [
+        "Flag ID", "Severity", "Metric", "Broker / Value", "T-12 / Threshold",
+        "Variance", "Action", "Diligence", "Technical detail",
+    ]
     for i, h in enumerate(headers, start=1):
         ws.cell(row=1, column=i, value=h)
     _style_header_row(ws, 1, len(headers))
@@ -855,8 +863,22 @@ def _build_variance(wb: Workbook, model: dict[str, Any]) -> None:
             ws.cell(row=r, column=6, value=f"{f['variance_pct_pts']} pts")
         ws.cell(row=r, column=7, value=f.get("recommended_action", ""))
         ws.cell(row=r, column=7).alignment = Alignment(wrap_text=True, vertical="top")
+        if f.get("diligence_status"):
+            dil = str(f["diligence_status"])
+            if f.get("diligence_note"):
+                dil = f"{dil} — {f['diligence_note']}"
+            ws.cell(row=r, column=8, value=dil)
+            ws.cell(row=r, column=8).alignment = Alignment(wrap_text=True, vertical="top")
+        tech_parts: list[str] = []
+        if f.get("rule_id"):
+            tech_parts.append(f"rule {f['rule_id']}")
+        if f.get("raw_fields"):
+            tech_parts.append("fields " + ", ".join(str(p) for p in f["raw_fields"]))
+        if tech_parts:
+            ws.cell(row=r, column=9, value=" · ".join(tech_parts))
+            ws.cell(row=r, column=9).alignment = Alignment(wrap_text=True, vertical="top")
 
-    _autosize(ws, [10, 12, 22, 18, 18, 14, 60])
+    _autosize(ws, [10, 12, 22, 18, 18, 14, 60, 22, 48])
     _freeze_top(ws, row=2)
 
 

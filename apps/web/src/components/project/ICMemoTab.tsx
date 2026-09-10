@@ -20,15 +20,30 @@
  *     numbers-grounded synthesis (`buildRecommendation`) and can be overridden;
  *   • per-figure provenance dots read the real `/provenance` `state`.
  *
- * PERSISTENCE (see report / needs a worker+schema follow-up to be durable and
- * consumed): analyst edits persist through `api.deals.update` into
+ * PERSISTENCE: analyst edits persist through `api.deals.update` into
  * `deal.field_overrides` under the keys `memo_thesis`, `memo_thesis_edited`,
- * `memo_highlights`, `memo_risks`, `memo_recommendation_override`. The worker
- * currently accepts arbitrary `field_overrides` but does not yet read these
- * memo_* keys back into the memo generator — so persistence round-trips through
- * the deal record but is not yet consumed downstream. Diligence resolve/accept,
- * memo format, section toggles, preview + IC-ready state are session-local
- * workspace state (as in the canonical prototype).
+ * `memo_highlights`, `memo_risks`, `memo_recommendation_override`,
+ * `memo_recommendation_confirmed` and `memo_diligence`. The worker layers them
+ * back through `app/memo_overrides.py` (memo body, live Excel export) — one
+ * source of truth. Memo format, section toggles, preview + IC-ready state are
+ * session-local workspace state (as in the canonical prototype).
+ *
+ * FON-54a (Sam's finding — duplicate machine-named variance flags with
+ * implausibly large "NOI impact"):
+ *   • diligence items are ONE per business concept (the worker consolidates
+ *     `broker_proforma.x_usd` / `broker.x` / `x_usd` into one flag); the title
+ *     is business-readable and the raw paths + rule ids live under
+ *     "Technical detail";
+ *   • "Estimated NOI impact $X" is printed ONLY when the flag's impact basis
+ *     is NOI/GOP — a revenue- or expense-line delta says "NOI impact not
+ *     estimated", never a dollar figure derived from a revenue delta;
+ *   • Resolve / Accept variance status persists (`memo_diligence`, keyed by
+ *     concept) so IC readiness reads the same status after a reload and the
+ *     Excel export prints it;
+ *   • the IC recommendation is a DECISION, not an inference: it reads
+ *     "Pending analyst decision" until the analyst selects a verdict AND
+ *     confirms it (`memo_recommendation_confirmed`). The Model Assessment card
+ *     keeps showing the model's inferred verdict, labelled as such.
  */
 
 import Link from 'next/link';
@@ -313,6 +328,50 @@ function asPoints(v: unknown): MemoPoint[] | null {
   return out;
 }
 
+// ─────────────────────────── decision + diligence model ───────────────────
+// Canonical wording while no verdict has been selected AND confirmed. Must
+// match the worker's `app/memo_overrides.py::PENDING_DECISION` — the memo body
+// and the live Excel export print the same string.
+const PENDING_DECISION = 'Pending analyst decision';
+
+type DilStatus = 'Open' | 'Resolved' | 'Accepted';
+/** Persisted shape (`field_overrides.memo_diligence[concept]`) + UI-only `details`. */
+interface DilState {
+  status: DilStatus;
+  note?: string;
+  updated_at?: string;
+  details: boolean;
+}
+const DIL_STATUSES: readonly DilStatus[] = ['Open', 'Resolved', 'Accepted'];
+
+/** Hydrate the persisted `memo_diligence` map; unknown statuses read as Open. */
+function asDiligence(v: unknown): Record<string, DilState> | null {
+  if (!v || typeof v !== 'object' || Array.isArray(v)) return null;
+  const out: Record<string, DilState> = {};
+  for (const [concept, entry] of Object.entries(v as Record<string, unknown>)) {
+    if (!concept.trim()) continue;
+    const e = (entry && typeof entry === 'object' ? entry : { status: entry }) as Record<string, unknown>;
+    const status = e.status;
+    if (typeof status !== 'string' || !(DIL_STATUSES as readonly string[]).includes(status)) continue;
+    out[concept] = {
+      status: status as DilStatus,
+      note: typeof e.note === 'string' && e.note.trim() ? e.note : undefined,
+      updated_at: typeof e.updated_at === 'string' ? e.updated_at : undefined,
+      details: false,
+    };
+  }
+  return out;
+}
+
+/** Strip UI-only state before persisting — status (+ note / timestamp) only. */
+function serializeDiligence(d: Record<string, DilState>): Record<string, { status: DilStatus; note?: string; updated_at?: string }> {
+  const out: Record<string, { status: DilStatus; note?: string; updated_at?: string }> = {};
+  for (const [concept, s] of Object.entries(d)) {
+    out[concept] = { status: s.status, ...(s.note ? { note: s.note } : {}), ...(s.updated_at ? { updated_at: s.updated_at } : {}) };
+  }
+  return out;
+}
+
 // ─────────────────────────── section toggles ──────────────────────────────
 interface Sections {
   deal: boolean;
@@ -411,8 +470,10 @@ export default function ICMemoTab({ project }: { project: Project }) {
   const [rowMenu, setRowMenu] = useState<string | null>(null);
   const [drag, setDrag] = useState<{ list: ListKey; index: number } | null>(null);
 
+  // ── diligence status — persisted per concept (`memo_diligence`); `details`
+  //    (the Technical-detail disclosure) is UI-only and never persisted.
+  const [dil, setDil] = useState<Record<string, DilState>>({});
   // ── session-local workspace state (as in the canonical prototype) ──────
-  const [dil, setDil] = useState<Record<string, { status: 'Open' | 'Resolved' | 'Accepted'; details: boolean }>>({});
   const [format, setFormat] = useState<MemoFormat>('Standard');
   const [sections, setSections] = useState<Sections>({ deal: true, thesis: true, hr: true, uw: true, scen: true, dil: true });
   const [generated, setGenerated] = useState(false);
@@ -442,13 +503,17 @@ export default function ICMemoTab({ project }: { project: Project }) {
       ov.memo_recommendation_override === 'Do Not Proceed'
     ) {
       setVerdictOverride(ov.memo_recommendation_override);
-      setVerdictConfirmed(true);
+      // A verdict is a recorded decision only once explicitly confirmed. A
+      // legacy row with a verdict but no `_confirmed` flag reads as pending.
+      setVerdictConfirmed(ov.memo_recommendation_confirmed === true);
     }
+    const persistedDil = asDiligence(ov.memo_diligence);
+    if (persistedDil) setDil(persistedDil);
     hydratedRef.current = true;
   }, [deal]);
 
-  // Persist a patch into deal.field_overrides (durable round-trip; see header
-  // note — the worker does not yet consume these memo_* keys).
+  // Persist a patch into deal.field_overrides (durable round-trip; the worker
+  // reads these memo_* keys back via app/memo_overrides.py).
   const persist = useCallback(
     (patch: Record<string, unknown>) => {
       if (!liveMode) return; // mock / preview deals edit locally only
@@ -462,8 +527,12 @@ export default function ICMemoTab({ project }: { project: Project }) {
   );
 
   // ── effective (derived-or-overridden) values ───────────────────────────
-  const effVerdict: Verdict = verdictOverride ?? rec?.verdict ?? 'Proceed with Conditions';
-  const effTone = toneForVerdict(effVerdict);
+  // The IC recommendation is a decision, not an inference: only a verdict the
+  // analyst has selected AND confirmed is shown; otherwise the canonical
+  // "Pending analyst decision". The model's inferred verdict lives on the
+  // Model Assessment card only.
+  const decidedVerdict: Verdict | null = verdictConfirmed && verdictOverride ? verdictOverride : null;
+  const recommendationLabel = decidedVerdict ?? PENDING_DECISION;
   const effThesis = thesisText ?? rec?.thesis ?? '';
   const effHighlights: MemoPoint[] = highlights ?? (rec ? rec.highlights.map((t) => ({ t, ai: true })) : []);
   const effRisks: MemoPoint[] = risks ?? (rec ? rec.risks.map((t) => ({ t, ai: true })) : []);
@@ -555,20 +624,24 @@ export default function ICMemoTab({ project }: { project: Project }) {
     }, 500);
   };
 
-  // ── verdict ───────────────────────────────────────────────────────────
+  // ── verdict — select, then confirm; both persisted ─────────────────────
   const selectVerdict = (v: Verdict) => {
     setVerdictOverride(v);
     setVerdictConfirmed(false);
     setRecMenuOpen(false);
-    persist({ memo_recommendation_override: v });
+    persist({ memo_recommendation_override: v, memo_recommendation_confirmed: false });
   };
   const toggleConfirm = () => {
-    setVerdictConfirmed((c) => !c);
+    if (!verdictOverride) return; // nothing selected — nothing to confirm
+    const next = !verdictConfirmed;
+    setVerdictConfirmed(next);
     setRecMenuOpen(false);
+    persist({ memo_recommendation_override: verdictOverride, memo_recommendation_confirmed: next });
   };
 
-  // ── diligence (mapped from live variance flags) ────────────────────────
+  // ── diligence (one item per business concept, from the consolidated flags) ──
   interface DilItem {
+    /** Concept key — the persisted `memo_diligence` key, stable across reloads. */
     id: string;
     severity: 'Critical' | 'Minor';
     sevColor: string;
@@ -579,34 +652,85 @@ export default function ICMemoTab({ project }: { project: Project }) {
   }
   const dilItems: DilItem[] = useMemo(() => {
     const flags = variance.flags ?? [];
+    const rank: Record<string, number> = { CRITICAL: 2, WARN: 1, INFO: 0 };
     return [...flags]
-      .sort((a, b) => Math.abs(b.noi_impact_usd) - Math.abs(a.noi_impact_usd))
+      .sort(
+        (a, b) =>
+          (rank[b.severity] ?? 0) - (rank[a.severity] ?? 0) ||
+          Math.abs(b.variance_abs ?? 0) - Math.abs(a.variance_abs ?? 0),
+      )
       .slice(0, 6)
       .map((f) => {
         const critical = f.severity === 'CRITICAL';
-        return {
-          id: f.flag_id,
-          severity: critical ? 'Critical' : 'Minor',
-          sevColor: critical ? RED : AMBER,
-          title: f.field_label
-            ? `${f.field_label} — broker vs T-12 variance`
-            : 'Broker vs T-12 variance',
-          body: f.explanation,
-          impact:
-            Math.abs(f.noi_impact_usd) > 0
-              ? `Estimated NOI impact: ${fmtCurrency(Math.abs(f.noi_impact_usd), { compact: true })} · ${f.recommended_action}`
-              : f.recommended_action,
-          raw: `rule ${f.rule_id} · field ${f.metric}`,
-        };
+        const id = f.concept ?? f.metric;
+        const label = f.field_label || 'Broker vs T-12';
+        const basis = f.impact_basis ?? 'other';
+        const isPercent = f.format === 'percent';
+        const isMarket = /_vs_market$/.test(id);
+        const fmtV = (v: number) => (isPercent ? fmtPct(v, 1) : fmtCurrency(v, { compact: true }));
+        const pctText =
+          f.variance_pct != null
+            ? isPercent
+              ? `${(Math.abs(f.variance_pct) * 100).toFixed(1)} pts`
+              : fmtPct(Math.abs(f.variance_pct), 1)
+            : null;
+
+        // Title: "{Concept} — broker overstates T-12 by {pct}" (or understates).
+        const title = isMarket
+          ? `${label} — broker projects ${pctText ? `${pctText} ` : ''}${f.broker_overstates ? 'above' : 'below'} the market forecast`
+          : `${label} — broker ${f.broker_overstates ? 'overstates' : 'understates'} T-12${pctText ? ` by ${pctText}` : ''}`;
+
+        // Body: business-readable, numbers from the flag itself.
+        const body =
+          isMarket || f.broker_value == null || f.t12_value == null
+            ? f.explanation
+            : `${label}: broker materials report ${fmtV(f.broker_value)} against ${fmtV(f.t12_value)} in the trailing-twelve-month operating statements.`;
+
+        // Impact: a dollar figure ONLY for an NOI-basis flag.
+        const impact =
+          basis === 'noi' && Math.abs(f.noi_impact_usd) > 0
+            ? `Estimated NOI impact ${fmtCurrency(Math.abs(f.noi_impact_usd), { compact: true })} · broker figure taken at face vs. the T-12`
+            : basis === 'revenue'
+              ? 'Revenue-line variance — NOI impact not estimated'
+              : basis === 'expense'
+                ? 'Expense-line variance — NOI impact not estimated'
+                : isMarket
+                  ? 'Market-forecast variance — NOI impact not estimated'
+                  : 'NOI impact not estimated';
+
+        // Technical detail: the normalized concept, every raw path + rule id.
+        const fmtRaw = (v: number | null | undefined) =>
+          v == null ? '—' : isPercent ? fmtPct(v, 1) : `$${Math.round(v).toLocaleString()}`;
+        const rawRows = f.raw_fields && f.raw_fields.length > 0
+          ? f.raw_fields
+          : [{ field: f.metric, rule_id: f.rule_id, severity: f.severity, broker: f.broker_value ?? null, actual: f.t12_value ?? null, source_page: f.source_documents[0]?.page ?? null }];
+        const rawLines = rawRows.map(
+          (r) =>
+            `rule ${r.rule_id ?? f.rule_id} · field ${r.field} · broker ${fmtRaw(r.broker)} vs T-12 ${fmtRaw(r.actual)}${r.source_page ? ` · p.${r.source_page}` : ''}`,
+        );
+        const raw = [
+          `concept ${id} · impact basis ${basis} · ${rawRows.length} raw field${rawRows.length === 1 ? '' : 's'} consolidated`,
+          ...rawLines,
+        ].join('\n');
+
+        return { id, severity: critical ? 'Critical' : 'Minor', sevColor: critical ? RED : AMBER, title, body, impact, raw };
       });
   }, [variance.flags]);
 
-  const dilStatus = (id: string) => dil[id] ?? { status: 'Open' as const, details: false };
+  const dilStatus = (id: string): DilState => dil[id] ?? { status: 'Open', details: false };
   const openCritical = dilItems.filter((d) => d.severity === 'Critical' && dilStatus(d.id).status === 'Open').length;
-  const setDilStatus = (id: string, status: 'Resolved' | 'Accepted') =>
-    setDil((s) => ({ ...s, [id]: { status, details: false } }));
+  // Resolve / Accept / Reopen — persisted per concept so IC readiness (and the
+  // Excel export) read the same status after a reload.
+  const setDilStatus = (id: string, status: DilStatus) => {
+    const next: Record<string, DilState> = {
+      ...dil,
+      [id]: { ...(dil[id] ?? {}), status, updated_at: new Date().toISOString(), details: false },
+    };
+    setDil(next);
+    persist({ memo_diligence: serializeDiligence(next) });
+  };
   const toggleDilDetails = (id: string) =>
-    setDil((s) => ({ ...s, [id]: { status: (s[id] ?? { status: 'Open' }).status, details: !(s[id]?.details) } }));
+    setDil((s) => ({ ...s, [id]: { ...(s[id] ?? { status: 'Open' }), details: !(s[id]?.details) } }));
 
   // ── IC-readiness checklist ─────────────────────────────────────────────
   const checklist = useMemo(() => {
@@ -621,10 +745,11 @@ export default function ICMemoTab({ project }: { project: Project }) {
           : 'Critical diligence items resolved',
         ok: openCritical === 0,
       },
+      { label: verdictConfirmed ? 'IC recommendation confirmed by analyst' : 'IC recommendation pending analyst decision', ok: verdictConfirmed },
       { label: generated ? 'IC memo previewed and reviewed' : 'IC memo not yet previewed', ok: generated },
     ];
     return items;
-  }, [metrics, scenariosAvailable, openCritical, ack, generated]);
+  }, [metrics, scenariosAvailable, openCritical, ack, generated, verdictConfirmed]);
   const blockers = checklist.filter((c) => !c.ok).length;
   const canMark = blockers === 0 || (openCritical > 0 && ack && generated);
 
@@ -749,8 +874,11 @@ export default function ICMemoTab({ project }: { project: Project }) {
                 <span style={{ fontSize: 10.5, color: '#6b7794', maxWidth: 220, lineHeight: 1.45 }}>
                   Levered IRR {pctOr(metrics.leveredIrr)} vs. ≥{Math.round(IRR_STRONG * 100)}% target · DSCR {xMult(metrics.dscr)} vs. ≥{DSCR_FLOOR.toFixed(2)}x minimum
                 </span>
+                <span style={{ fontSize: 10.5, color: '#6b7794', maxWidth: 220, lineHeight: 1.45 }}>
+                  Model-inferred: {rec.verdict} — the model&apos;s assessment, not the IC decision
+                </span>
               </div>
-              {/* IC recommendation — selectable verdict + confirm. */}
+              {/* IC recommendation — a DECISION: select a verdict, then confirm. */}
               <div style={{ display: 'flex', flexDirection: 'column', gap: 6, position: 'relative' }}>
                 <span style={{ fontSize: 9.5, fontWeight: 700, letterSpacing: '.08em', color: '#8b93a7', textTransform: 'uppercase' }}>
                   IC recommendation
@@ -761,13 +889,17 @@ export default function ICMemoTab({ project }: { project: Project }) {
                   aria-haspopup="listbox"
                   aria-expanded={recMenuOpen}
                   onClick={(e) => { e.stopPropagation(); setRecMenuOpen((o) => !o); }}
-                  style={{ display: 'inline-flex', alignItems: 'center', gap: 8, fontSize: 16, fontWeight: 600, color: '#fff', cursor: 'pointer' }}
+                  style={{ display: 'inline-flex', alignItems: 'center', gap: 8, fontSize: 16, fontWeight: 600, color: decidedVerdict ? '#fff' : '#c8cbd6', cursor: 'pointer' }}
                 >
-                  {effVerdict}
+                  {recommendationLabel}
                   <span style={{ fontSize: 11, color: '#8b93a7' }}>⌄</span>
                 </span>
                 <span style={{ fontSize: 10.5, color: verdictConfirmed ? '#7fbf9a' : '#c8a86b' }}>
-                  {verdictConfirmed ? '✓ Analyst confirmed' : 'Awaiting analyst confirmation'}
+                  {verdictConfirmed
+                    ? '✓ Analyst confirmed'
+                    : verdictOverride
+                      ? `${verdictOverride} selected — confirm to record the decision`
+                      : 'Select a verdict, then confirm to record the decision'}
                 </span>
                 {recMenuOpen && (
                   <div
@@ -782,20 +914,25 @@ export default function ICMemoTab({ project }: { project: Project }) {
                       <div
                         key={label}
                         role="option"
-                        aria-selected={label === effVerdict}
+                        aria-selected={label === verdictOverride}
                         onClick={() => selectVerdict(label)}
                         style={{
                           display: 'flex', alignItems: 'center', gap: 8, fontSize: 12.5, color: palette.ink,
-                          fontWeight: label === effVerdict ? 600 : 400, padding: '8px 9px', borderRadius: 5, cursor: 'pointer',
+                          fontWeight: label === verdictOverride ? 600 : 400, padding: '8px 9px', borderRadius: 5, cursor: 'pointer',
                         }}
                       >
-                        <span style={{ width: 11 }}>{label === effVerdict ? '✓' : ''}</span>
+                        <span style={{ width: 11 }}>{label === verdictOverride ? '✓' : ''}</span>
                         {label}
                       </div>
                     ))}
                     <div
+                      role="button"
+                      aria-disabled={!verdictOverride}
                       onClick={toggleConfirm}
-                      style={{ borderTop: '1px solid #f2f1ec', marginTop: 4, padding: '8px 9px', fontSize: 12, color: LINK, fontWeight: 600, cursor: 'pointer' }}
+                      style={{
+                        borderTop: '1px solid #f2f1ec', marginTop: 4, padding: '8px 9px', fontSize: 12, fontWeight: 600,
+                        color: verdictOverride ? LINK : palette.textMuted, cursor: verdictOverride ? 'pointer' : 'not-allowed',
+                      }}
                     >
                       {verdictConfirmed ? 'Withdraw confirmation' : 'Confirm recommendation'}
                     </div>
@@ -972,7 +1109,7 @@ export default function ICMemoTab({ project }: { project: Project }) {
                         <span style={{ fontSize: 13, fontWeight: 600, color: open ? palette.ink : palette.eyebrow }}>{title}</span>
                         <span style={{ fontSize: 12.5, color: palette.textSecondary, lineHeight: 1.6 }}>{d.body}</span>
                         <span style={{ fontSize: 11.5, color: palette.eyebrow }}>{d.impact}</span>
-                        {open && (
+                        {open ? (
                           <span style={{ display: 'flex', gap: 16, alignItems: 'center', paddingTop: 4, flexWrap: 'wrap' }}>
                             <Link href={`/projects/${dealId}`} style={{ fontSize: 11.5, color: LINK, fontWeight: 600, cursor: 'pointer', textDecoration: 'none' }}>Review source →</Link>
                             <span role="button" tabIndex={0} onClick={() => setDilStatus(d.id, 'Resolved')} style={{ fontSize: 11.5, color: LINK, fontWeight: 600, cursor: 'pointer' }}>Resolve</span>
@@ -981,9 +1118,16 @@ export default function ICMemoTab({ project }: { project: Project }) {
                               {st.details ? 'Hide technical detail' : 'Technical detail'}
                             </span>
                           </span>
+                        ) : (
+                          <span style={{ display: 'flex', gap: 16, alignItems: 'center', paddingTop: 4, flexWrap: 'wrap' }}>
+                            <span role="button" tabIndex={0} onClick={() => setDilStatus(d.id, 'Open')} style={{ fontSize: 11.5, color: palette.textSecondary, cursor: 'pointer' }}>Reopen</span>
+                            <span role="button" tabIndex={0} onClick={() => toggleDilDetails(d.id)} style={{ fontSize: 11.5, color: palette.textMuted, cursor: 'pointer' }}>
+                              {st.details ? 'Hide technical detail' : 'Technical detail'}
+                            </span>
+                          </span>
                         )}
                         {st.details && (
-                          <div style={{ background: '#fbfbf9', border: '1px solid #f0efeb', borderRadius: 6, padding: '9px 11px', marginTop: 6, fontSize: 11, color: palette.eyebrow, lineHeight: 1.6, fontFamily: 'ui-monospace,SFMono-Regular,Menlo,monospace' }}>
+                          <div style={{ background: '#fbfbf9', border: '1px solid #f0efeb', borderRadius: 6, padding: '9px 11px', marginTop: 6, fontSize: 11, color: palette.eyebrow, lineHeight: 1.6, fontFamily: 'ui-monospace,SFMono-Regular,Menlo,monospace', whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>
                             {d.raw}
                           </div>
                         )}

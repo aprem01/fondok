@@ -3,14 +3,26 @@
 The IC Memo tab (``apps/web/.../ICMemoTab.tsx``) is a decision *workspace*:
 the analyst records the committee decision — the verdict, an editable
 thesis, curated highlights, curated risks — and those edits persist into
-``deals.field_overrides`` under five keys:
+``deals.field_overrides`` under these keys:
 
-    * ``memo_recommendation_override`` — IC verdict, one of
-      ``"Proceed" | "Proceed with Conditions" | "Do Not Proceed"``.
-    * ``memo_thesis``                  — the investment-thesis prose.
-    * ``memo_thesis_edited``           — bookkeeping flag (not consumed here).
-    * ``memo_highlights``              — list of ``{"t": str, "ai": bool}``.
-    * ``memo_risks``                   — list of ``{"t": str, "ai": bool}``.
+    * ``memo_recommendation_override``  — IC verdict the analyst selected, one
+      of ``"Proceed" | "Proceed with Conditions" | "Do Not Proceed"``.
+    * ``memo_recommendation_confirmed`` — ``True`` once the analyst confirmed
+      that verdict (FON-54a). The IC recommendation is a *decision*, not an
+      inference: until a verdict is both selected and confirmed every
+      consumer (memo body, live export header) says
+      :data:`PENDING_DECISION` — never the model's inferred verdict.
+    * ``memo_thesis``                   — the investment-thesis prose.
+    * ``memo_thesis_edited``            — bookkeeping flag (not consumed here).
+    * ``memo_highlights``               — list of ``{"t": str, "ai": bool}``.
+    * ``memo_risks``                    — list of ``{"t": str, "ai": bool}``.
+    * ``memo_diligence``                — FON-54a diligence status keyed by the
+      variance *concept* (``rooms_revenue``, ``noi`` … — the ``concept`` on
+      ``GET /analysis/{id}/variance`` flags):
+      ``{concept: {"status": "Open"|"Resolved"|"Accepted", "note"?: str,
+      "updated_at"?: iso-str}}``. Read back by the IC Memo tab (IC readiness)
+      and the live Excel export (Variance sheet) through
+      :func:`diligence_status` — one source of truth.
 
 The Analyst agent (:mod:`app.agents.analyst`) drafts the memo as six
 prose sections and never reads these keys back, so a regenerate/reload of
@@ -46,10 +58,16 @@ Section mapping (live 6-section memo — see ``REQUIRED_SECTION_ORDER`` in
                                      so highlights ride inside the thesis —
                                      "the case for it".
     memo_recommendation_override → ``recommendation``     body (authoritative
-                                     verdict headline, generated rationale
-                                     preserved beneath it)
+      + _confirmed                   verdict headline once CONFIRMED —
+                                     "IC recommendation: Pending analyst
+                                     decision." while a selected verdict is
+                                     unconfirmed; generated rationale
+                                     preserved beneath either headline)
     memo_risks                   → ``risk_factors``       body (replace with
                                      the analyst's curated bullet list)
+    memo_diligence               → not a memo section; exposed via
+                                     :func:`diligence_status` for the IC Memo
+                                     tab + live export
 
 An override whose target section is absent from the produced memo is a
 no-op — there is nothing to layer it onto.
@@ -64,6 +82,14 @@ VALID_VERDICTS: frozenset[str] = frozenset(
     {"Proceed", "Proceed with Conditions", "Do Not Proceed"}
 )
 
+# Canonical wording (IC Memo banner, memo body, live export header) while the
+# analyst has not selected + confirmed a verdict. Must match ICMemoTab.tsx.
+PENDING_DECISION = "Pending analyst decision"
+
+# Diligence vocabulary — must match the IC Memo tab's Resolve / Accept
+# variance actions exactly. Anything else is treated as ``Open``.
+DILIGENCE_STATUSES: frozenset[str] = frozenset({"Open", "Resolved", "Accepted"})
+
 _THESIS_SECTION = "investment_thesis"
 _RECOMMENDATION_SECTION = "recommendation"
 _RISK_SECTION = "risk_factors"
@@ -74,7 +100,9 @@ _OVERRIDE_KEYS: tuple[str, ...] = (
     "memo_thesis",
     "memo_highlights",
     "memo_recommendation_override",
+    "memo_recommendation_confirmed",
     "memo_risks",
+    "memo_diligence",
 )
 
 
@@ -115,6 +143,75 @@ def _bullets(points: list[str]) -> str:
     return "\n".join(f"• {p}" for p in points)
 
 
+def recommendation_decision(
+    overrides: dict[str, Any] | None,
+) -> tuple[str | None, bool]:
+    """``(selected_verdict, confirmed)`` from the persisted memo overrides.
+
+    ``selected_verdict`` is ``None`` unless ``memo_recommendation_override``
+    is in vocabulary; ``confirmed`` is ``True`` only when
+    ``memo_recommendation_confirmed`` is literally ``True`` *and* a valid
+    verdict is selected. Legacy rows that carry a verdict but no
+    ``_confirmed`` key are unconfirmed — the decision was never explicitly
+    recorded under the FON-54a rule, so it is reported as pending.
+    """
+    if not isinstance(overrides, dict):
+        return None, False
+    verdict = _verdict(overrides.get("memo_recommendation_override"))
+    confirmed = verdict is not None and overrides.get(
+        "memo_recommendation_confirmed"
+    ) is True
+    return verdict, confirmed
+
+
+def ic_recommendation_label(overrides: dict[str, Any] | None) -> str:
+    """The IC recommendation as every consumer must print it.
+
+    The confirmed verdict, else :data:`PENDING_DECISION` — never the
+    model's inferred verdict, never a selected-but-unconfirmed verdict.
+    """
+    verdict, confirmed = recommendation_decision(overrides)
+    return verdict if (verdict is not None and confirmed) else PENDING_DECISION
+
+
+def diligence_status(overrides: dict[str, Any] | None) -> dict[str, dict[str, Any]]:
+    """Normalised ``memo_diligence`` map: ``concept → {"status", "note"?, "updated_at"?}``.
+
+    Accepts the frontend shape (``{concept: {"status": ..., ...}}``) and,
+    defensively, ``{concept: "Resolved"}``. Entries whose status is not in
+    :data:`DILIGENCE_STATUSES` are dropped (i.e. read as ``Open``); an
+    absent concept is ``Open``. Pure — no clock, no I/O.
+    """
+    if not isinstance(overrides, dict):
+        return {}
+    raw = overrides.get("memo_diligence")
+    if not isinstance(raw, dict):
+        return {}
+    out: dict[str, dict[str, Any]] = {}
+    for concept, entry in raw.items():
+        if not isinstance(concept, str) or not concept.strip():
+            continue
+        if isinstance(entry, str):
+            status: Any = entry
+            note: str | None = None
+            updated_at: str | None = None
+        elif isinstance(entry, dict):
+            status = entry.get("status")
+            note = _clean_str(entry.get("note"))
+            updated_at = _clean_str(entry.get("updated_at"))
+        else:
+            continue
+        if not isinstance(status, str) or status not in DILIGENCE_STATUSES:
+            continue
+        normalised: dict[str, Any] = {"status": status}
+        if note is not None:
+            normalised["note"] = note
+        if updated_at is not None:
+            normalised["updated_at"] = updated_at
+        out[concept.strip()] = normalised
+    return out
+
+
 def has_memo_overrides(overrides: dict[str, Any] | None) -> bool:
     """True iff ``overrides`` carries at least one *meaningful* memo_* key.
 
@@ -147,10 +244,12 @@ def _thesis_body(original_body: str, overrides: dict[str, Any]) -> str:
 
 
 def _recommendation_body(original_body: str, overrides: dict[str, Any]) -> str:
-    verdict = _verdict(overrides.get("memo_recommendation_override"))
+    verdict, confirmed = recommendation_decision(overrides)
     if verdict is None:
         return original_body
-    headline = f"IC recommendation: {verdict}."
+    # A selected-but-unconfirmed verdict is not a decision yet: the memo says
+    # so rather than printing the draft verdict as if it were recorded.
+    headline = f"IC recommendation: {verdict if confirmed else PENDING_DECISION}."
     return f"{headline}\n\n{original_body}" if original_body else headline
 
 
@@ -203,4 +302,13 @@ def apply_memo_overrides(
     return out
 
 
-__all__ = ["apply_memo_overrides", "has_memo_overrides", "VALID_VERDICTS"]
+__all__ = [
+    "DILIGENCE_STATUSES",
+    "PENDING_DECISION",
+    "VALID_VERDICTS",
+    "apply_memo_overrides",
+    "diligence_status",
+    "has_memo_overrides",
+    "ic_recommendation_label",
+    "recommendation_decision",
+]
