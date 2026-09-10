@@ -290,11 +290,18 @@ async def test_get_variance_endpoint_consolidates_duplicate_broker_paths() -> No
     assert all(f.concept_label and f.impact_basis for f in resp.flags)
 
     rooms = next(f for f in resp.flags if f.concept == "rooms_revenue")
-    assert {r.field for r in rooms.raw_fields} == {
+    admitted = [r for r in rooms.raw_fields if not r.excluded_reason]
+    assert {r.field for r in admitted} == {
         "broker_proforma.rooms_revenue_usd",
         "broker.rooms_revenue",
         "rooms_revenue_usd",
     }
+    assert all(r.source_doc_type == "OM" for r in admitted)
+    # FON-54a input honesty: the T-12's own flat ``rooms_revenue`` line is a
+    # candidate by name but NOT a broker claim — disclosed as excluded.
+    excluded = [r for r in rooms.raw_fields if r.excluded_reason]
+    assert [(r.field, r.source_doc_type) for r in excluded] == [("rooms_revenue", "T12")]
+    assert "actuals document" in (excluded[0].excluded_reason or "")
     assert rooms.impact_basis == "revenue"
     assert rooms.concept_label == "Rooms revenue"
     rank = {"critical": 2, "warn": 1, "info": 0}
@@ -304,7 +311,9 @@ async def test_get_variance_endpoint_consolidates_duplicate_broker_paths() -> No
 
     noi = next(f for f in resp.flags if f.concept == "noi")
     assert noi.impact_basis == "noi"
-    assert len(noi.raw_fields) == 1
+    assert len([r for r in noi.raw_fields if not r.excluded_reason]) == 1
+    # The T-12's own ``noi`` line is disclosed as excluded, never compared.
+    assert [(r.field, r.source_doc_type) for r in noi.raw_fields if r.excluded_reason] == [("noi", "T12")]
 
     # Severity counts are taken from the consolidated list (case-insensitive).
     assert resp.critical_count + resp.warn_count + resp.info_count == len(resp.flags)

@@ -222,6 +222,9 @@ export function mapWorkerFlag(
       : [],
     concept,
     impact_basis,
+    basis_mismatch: f.basis_mismatch === true,
+    unit_note: f.unit_note ?? null,
+    source_doc_type: f.source_doc_type ?? null,
     raw_fields: (f.raw_fields ?? []).map((r) => ({
       field: r.field,
       rule_id: r.rule_id ?? null,
@@ -231,6 +234,11 @@ export function mapWorkerFlag(
       delta: r.delta ?? null,
       delta_pct: r.delta_pct ?? null,
       source_page: r.source_page ?? null,
+      source_doc_type: r.source_doc_type ?? null,
+      source_document: r.source_document ?? null,
+      unit_note: r.unit_note ?? null,
+      excluded_reason: r.excluded_reason ?? null,
+      basis_mismatch: r.basis_mismatch === true,
     })),
   };
 }

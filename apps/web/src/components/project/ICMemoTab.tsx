@@ -675,20 +675,28 @@ export default function ICMemoTab({ project }: { project: Project }) {
               : fmtPct(Math.abs(f.variance_pct), 1)
             : null;
 
+        // FON-54a plausibility guard: the two figures are not on the same
+        // basis (a percent vs a fraction, a month vs a year) — say so, never
+        // dress it up as a variance with a severity.
+        const mismatch = f.basis_mismatch === true;
+
         // Title: "{Concept} — broker overstates T-12 by {pct}" (or understates).
-        const title = isMarket
-          ? `${label} — broker projects ${pctText ? `${pctText} ` : ''}${f.broker_overstates ? 'above' : 'below'} the market forecast`
-          : `${label} — broker ${f.broker_overstates ? 'overstates' : 'understates'} T-12${pctText ? ` by ${pctText}` : ''}`;
+        const title = mismatch
+          ? `${label} — basis mismatch, needs review`
+          : isMarket
+            ? `${label} — broker projects ${pctText ? `${pctText} ` : ''}${f.broker_overstates ? 'above' : 'below'} the market forecast`
+            : `${label} — broker ${f.broker_overstates ? 'overstates' : 'understates'} T-12${pctText ? ` by ${pctText}` : ''}`;
 
         // Body: business-readable, numbers from the flag itself.
         const body =
-          isMarket || f.broker_value == null || f.t12_value == null
+          mismatch || isMarket || f.broker_value == null || f.t12_value == null
             ? f.explanation
             : `${label}: broker materials report ${fmtV(f.broker_value)} against ${fmtV(f.t12_value)} in the trailing-twelve-month operating statements.`;
 
         // Impact: a dollar figure ONLY for an NOI-basis flag.
-        const impact =
-          basis === 'noi' && Math.abs(f.noi_impact_usd) > 0
+        const impact = mismatch
+          ? 'Basis mismatch — the broker and T-12 figures are not on the same basis; no variance severity assigned'
+          : basis === 'noi' && Math.abs(f.noi_impact_usd) > 0
             ? `Estimated NOI impact ${fmtCurrency(Math.abs(f.noi_impact_usd), { compact: true })} · broker figure taken at face vs. the T-12`
             : basis === 'revenue'
               ? 'Revenue-line variance — NOI impact not estimated'
@@ -698,19 +706,29 @@ export default function ICMemoTab({ project }: { project: Project }) {
                   ? 'Market-forecast variance — NOI impact not estimated'
                   : 'NOI impact not estimated';
 
-        // Technical detail: the normalized concept, every raw path + rule id.
+        // Technical detail: the normalized concept, every raw path + rule id,
+        // its source document, any unit conversion, and the rows that were
+        // EXCLUDED from the comparison with the reason.
         const fmtRaw = (v: number | null | undefined) =>
           v == null ? '—' : isPercent ? fmtPct(v, 1) : `$${Math.round(v).toLocaleString()}`;
-        const rawRows = f.raw_fields && f.raw_fields.length > 0
+        const allRows = f.raw_fields && f.raw_fields.length > 0
           ? f.raw_fields
           : [{ field: f.metric, rule_id: f.rule_id, severity: f.severity, broker: f.broker_value ?? null, actual: f.t12_value ?? null, source_page: f.source_documents[0]?.page ?? null }];
-        const rawLines = rawRows.map(
+        const admitted = allRows.filter((r) => !('excluded_reason' in r && r.excluded_reason));
+        const excluded = allRows.filter((r) => 'excluded_reason' in r && r.excluded_reason);
+        const src = (r: { source_doc_type?: string | null; source_document?: string | null }) =>
+          r.source_doc_type || r.source_document ? ` · source ${[r.source_doc_type, r.source_document].filter(Boolean).join(' ')}` : '';
+        const rawLines = admitted.map(
           (r) =>
-            `rule ${r.rule_id ?? f.rule_id} · field ${r.field} · broker ${fmtRaw(r.broker)} vs T-12 ${fmtRaw(r.actual)}${r.source_page ? ` · p.${r.source_page}` : ''}`,
+            `rule ${r.rule_id ?? f.rule_id} · field ${r.field} · broker ${fmtRaw(r.broker)} vs T-12 ${fmtRaw(r.actual)}${r.source_page ? ` · p.${r.source_page}` : ''}${src(r)}${'unit_note' in r && r.unit_note ? ` · ${r.unit_note}` : ''}${'basis_mismatch' in r && r.basis_mismatch ? ' · basis mismatch' : ''}`,
+        );
+        const excludedLines = excluded.map(
+          (r) => `excluded · field ${r.field}${r.broker != null ? ` · value ${fmtRaw(r.broker)}` : ''}${src(r)} · ${r.excluded_reason}`,
         );
         const raw = [
-          `concept ${id} · impact basis ${basis} · ${rawRows.length} raw field${rawRows.length === 1 ? '' : 's'} consolidated`,
+          `concept ${id} · impact basis ${basis} · ${admitted.length} raw field${admitted.length === 1 ? '' : 's'} consolidated${excluded.length ? ` · ${excluded.length} excluded` : ''}`,
           ...rawLines,
+          ...excludedLines,
         ].join('\n');
 
         return { id, severity: critical ? 'Critical' : 'Minor', sevColor: critical ? RED : AMBER, title, body, impact, raw };

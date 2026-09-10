@@ -79,6 +79,29 @@ describe('mapWorkerFlag — FON-54a', () => {
     expect(noiLegacy.noi_impact_usd).toBe(1_019_000);
   });
 
+  it('passes basis_mismatch, provenance and excluded rows through', () => {
+    const f = mapWorkerFlag(
+      {
+        ...ROOMS, field: 'occupancy', concept: 'occupancy', concept_label: 'Occupancy', impact_basis: 'revenue',
+        actual: 0.716, broker: 83, delta: -82.284, delta_pct: 82.284, basis_mismatch: true,
+        unit_note: null, source_doc_type: 'OM',
+        raw_fields: [
+          { field: 'ttm_summary_per_om.occupancy_pct', severity: 'Info', broker: 83, actual: 0.716, source_doc_type: 'OM', source_document: 'OM.pdf', basis_mismatch: true },
+          { field: 'p_and_l_usali.gop', severity: 'Info', broker: 1_912_060, source_doc_type: 'PNL', source_document: '2019 P&L.xlsx', excluded_reason: 'from an actuals document (PNL) — a T-12 / P&L line, not a broker claim' },
+        ],
+      },
+      3,
+      'deal-1',
+    );
+    expect(f.basis_mismatch).toBe(true);
+    expect(f.source_doc_type).toBe('OM');
+    expect(f.raw_fields?.[0]).toMatchObject({ source_doc_type: 'OM', source_document: 'OM.pdf', basis_mismatch: true, excluded_reason: null });
+    expect(f.raw_fields?.[1]).toMatchObject({ source_doc_type: 'PNL', basis_mismatch: false });
+    expect(f.raw_fields?.[1].excluded_reason).toMatch(/actuals document/);
+    // A legacy worker (no flag) → false, never undefined.
+    expect(mapWorkerFlag({ ...ROOMS, basis_mismatch: undefined }, 4, 'deal-1').basis_mismatch).toBe(false);
+  });
+
   it('formats occupancy as a percent flag', () => {
     const f = mapWorkerFlag(
       { ...ROOMS, field: 'occupancy', concept: 'occupancy', concept_label: 'Occupancy', impact_basis: 'revenue', actual: 0.762, broker: 0.8, delta: -0.038, delta_pct: 0.038, raw_fields: [] },

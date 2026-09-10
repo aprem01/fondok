@@ -328,6 +328,39 @@ describe('ICMemoTab — diligence (FON-54a consolidated flags)', () => {
     expect(screen.getByText(/1 critical diligence item remain open/)).toBeInTheDocument();
   });
 
+  it('reports a basis mismatch for review instead of a variance, and discloses excluded rows', () => {
+    const MISMATCH_FLAG = {
+      ...ROOMS_FLAG,
+      flag_id: 'BROKER_VS_T12_OCC_VARIANCE-2', rule_id: 'BROKER_VS_T12_OCC_VARIANCE', severity: 'INFO',
+      metric: 'occupancy', field_label: 'Occupancy', format: 'percent',
+      broker_value: 83, t12_value: 0.716, variance_abs: -82.284, variance_pct: 82.284,
+      broker_overstates: true, noi_impact_usd: 0, concept: 'occupancy', impact_basis: 'revenue',
+      basis_mismatch: true,
+      explanation: 'Basis mismatch — needs review: broker 83 vs T-12 0.716 on ttm_summary_per_om.occupancy_pct are not on the same basis (8,228% apart). No variance severity assigned.',
+      raw_fields: [
+        { field: 'ttm_summary_per_om.occupancy_pct', rule_id: 'BROKER_VS_T12_OCC_VARIANCE', severity: 'Info', broker: 83, actual: 0.716, source_doc_type: 'OM', source_document: 'Anglers OM.pdf', basis_mismatch: true },
+        { field: 'ttm_performance.segment.luxury_upper_upscale.occupancy_pct', severity: 'Info', broker: 0.741, source_doc_type: 'OM', source_document: 'Anglers OM.pdf', excluded_reason: 'market-segment stat, not the broker\'s claim about the subject' },
+        { field: 'ttm_summary_per_om.occupancy_pct', severity: 'Info', broker: 0.72, source_doc_type: 'PNL', source_document: '2023 P&L.xlsx', excluded_reason: 'from an actuals document (PNL) — a T-12 / P&L line, not a broker claim' },
+      ],
+    } as unknown as VarianceFlag;
+    fx.flags = [MISMATCH_FLAG];
+    render(<ICMemoTab project={PROJECT} />);
+
+    expect(screen.getByText('Occupancy — basis mismatch, needs review')).toBeInTheDocument();
+    expect(screen.getByText(/^Basis mismatch — needs review: broker 83 vs T-12 0\.716/)).toBeInTheDocument();
+    expect(screen.getByText('Basis mismatch — the broker and T-12 figures are not on the same basis; no variance severity assigned')).toBeInTheDocument();
+    // Info severity → not a critical diligence item, nothing "overstates".
+    expect(screen.getByText('Minor')).toBeInTheDocument();
+    expect(screen.queryByText(/overstates T-12/)).not.toBeInTheDocument();
+    expect(screen.getByText('All critical diligence items resolved')).toBeInTheDocument();
+
+    fireEvent.click(screen.getByText('Technical detail'));
+    const detail = screen.getByText(/concept occupancy · impact basis revenue · 1 raw field consolidated · 2 excluded/);
+    expect(detail.textContent).toContain('field ttm_summary_per_om.occupancy_pct · broker 8300.0% vs T-12 71.6% · source OM Anglers OM.pdf · basis mismatch');
+    expect(detail.textContent).toContain('excluded · field ttm_performance.segment.luxury_upper_upscale.occupancy_pct · value 74.1% · source OM Anglers OM.pdf · market-segment stat');
+    expect(detail.textContent).toContain('excluded · field ttm_summary_per_om.occupancy_pct · value 72.0% · source PNL 2023 P&L.xlsx · from an actuals document (PNL)');
+  });
+
   it('reads a persisted diligence status on reload into IC readiness', () => {
     fx.fieldOverrides = { memo_diligence: { rooms_revenue: { status: 'Accepted', updated_at: '2026-09-10T00:00:00Z' } } };
     render(<ICMemoTab project={PROJECT} />);

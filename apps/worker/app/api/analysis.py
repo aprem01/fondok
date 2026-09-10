@@ -98,6 +98,16 @@ class VarianceRawFieldOut(BaseModel):
     delta: float | None = None
     delta_pct: float | None = None
     source_page: int | None = None
+    # FON-54a (input honesty): where the row came from, what was done to its
+    # value, and — for rows that were NOT admitted as the broker's claim —
+    # why (``excluded_reason`` set ⇒ the row did not feed the flag).
+    source_doc_type: str | None = None
+    source_document: str | None = None
+    unit_note: str | None = None
+    excluded_reason: str | None = None
+    #: |delta_pct| beyond the plausibility guard — the two figures are not on
+    #: the same basis; reported for review, never escalated.
+    basis_mismatch: bool = False
 
 
 VarianceImpactBasis = Literal["noi", "revenue", "expense", "other"]
@@ -136,6 +146,13 @@ class VarianceFlagOut(BaseModel):
     concept_label: str | None = None
     impact_basis: VarianceImpactBasis | None = None
     raw_fields: list[VarianceRawFieldOut] = Field(default_factory=list)
+    # FON-54a input honesty (also present on the pre-consolidation rows).
+    source_doc_type: str | None = None
+    source_document: str | None = None
+    unit_note: str | None = None
+    #: True when every admitted row for this concept failed the plausibility
+    #: guard — "Basis mismatch — needs review", severity Info, no escalation.
+    basis_mismatch: bool = False
 
 
 class VarianceReportResponse(BaseModel):
@@ -279,7 +296,10 @@ def _concept_note(
     return "".join(parts)
 
 
-def consolidate_variance_flags(flags: list[VarianceFlagOut]) -> list[VarianceFlagOut]:
+def consolidate_variance_flags(
+    flags: list[VarianceFlagOut],
+    excluded: list[VarianceRawFieldOut] | None = None,
+) -> list[VarianceFlagOut]:
     """One IC-facing flag per business concept.
 
     Grouping key: :func:`variance_concept` of ``field``. Within a group the
@@ -288,6 +308,16 @@ def consolidate_variance_flags(flags: list[VarianceFlagOut]) -> list[VarianceFla
     ``severity`` = max across the group. ``impact_basis`` comes from the
     concept catalog (``noi`` only for NOI / GOP), ``other`` for anything off
     catalog. Output order = first-seen concept order (stable).
+
+    FON-54a input honesty:
+    * rows flagged ``basis_mismatch`` never become the primary while a
+      same-basis row exists; when EVERY row for a concept is a mismatch the
+      flag itself is a "Basis mismatch — needs review" at Info severity;
+    * ``excluded`` rows (not admitted as the broker's claim — from an actuals
+      document, a market segment, the OM's history, an unestablished unit)
+      are appended to their concept's ``raw_fields`` with ``excluded_reason``
+      so the Technical detail shows what was left out; they never create a
+      flag on their own and never influence severity or numbers.
     """
     groups: dict[str, list[VarianceFlagOut]] = {}
     order: list[str] = []
@@ -298,11 +328,18 @@ def consolidate_variance_flags(flags: list[VarianceFlagOut]) -> list[VarianceFla
             order.append(key)
         groups[key].append(f)
 
+    excluded_by_concept: dict[str, list[VarianceRawFieldOut]] = {}
+    for x in excluded or []:
+        excluded_by_concept.setdefault(variance_concept(x.field), []).append(x)
+
     out: list[VarianceFlagOut] = []
     for key in order:
         members = groups[key]
+        same_basis = [m for m in members if not m.basis_mismatch]
+        all_mismatch = not same_basis
+        pool = members if all_mismatch else same_basis
         primary = max(
-            members,
+            pool,
             key=lambda m: (_severity_rank(m.severity), abs(m.delta_pct or 0.0)),
         )
         label, basis = _VARIANCE_CONCEPTS.get(key, (_concept_label_fallback(key), "other"))
@@ -316,27 +353,45 @@ def consolidate_variance_flags(flags: list[VarianceFlagOut]) -> list[VarianceFla
                 delta=m.delta,
                 delta_pct=m.delta_pct,
                 source_page=m.source_page,
+                source_doc_type=m.source_doc_type,
+                source_document=m.source_document,
+                unit_note=m.unit_note,
+                basis_mismatch=m.basis_mismatch,
             )
             for m in members
         ]
+        raw.extend(excluded_by_concept.get(key, []))
         source_page = primary.source_page
         if source_page is None:
-            source_page = next((m.source_page for m in members if m.source_page), None)
+            source_page = next((m.source_page for m in pool if m.source_page), None)
+        if all_mismatch:
+            severity = "Info"
+            note = primary.note or (
+                f"Basis mismatch — needs review: broker {primary.broker} vs T-12 "
+                f"{primary.actual} on {label} are not on the same basis."
+            )
+        else:
+            severity = primary.severity
+            note = _concept_note(key, label, basis, primary, len(same_basis))
         out.append(
             VarianceFlagOut(
                 field=key,
                 rule_id=primary.rule_id,
-                severity=primary.severity,
+                severity=severity,
                 actual=primary.actual,
                 broker=primary.broker,
                 delta=primary.delta,
                 delta_pct=primary.delta_pct,
                 source_page=source_page,
-                note=_concept_note(key, label, basis, primary, len(members)),
+                note=note,
                 concept=key,
                 concept_label=label,
                 impact_basis=basis,
                 raw_fields=raw,
+                source_doc_type=primary.source_doc_type,
+                source_document=primary.source_document,
+                unit_note=primary.unit_note,
+                basis_mismatch=all_mismatch,
             )
         )
     return out
@@ -425,6 +480,7 @@ async def get_variance(
     from ..agents.variance import (
         _broker_fields_from_extraction,
         _build_flags,
+        is_basis_mismatch,
     )
 
     try:
@@ -435,45 +491,88 @@ async def get_variance(
             detail="fondok_schemas unavailable",
         ) from exc
 
-    # Pull every extracted field on the deal so we can rebuild the
-    # broker-proforma input set the same way the agent does.
+    # FON-54a broker-side admission: pull every extraction row on the deal
+    # WITH its source document, and admit as the broker's claim only what
+    # actually is one (``strict=True`` — see ``_broker_fields_from_extraction``).
+    # On Sam's deal the old document-blind scan admitted a 2019 P&L's
+    # ``p_and_l_usali.gop``, a 2023 P&L's ``ttm_summary_per_om.occupancy_pct``
+    # and the OM's ``ttm_performance.segment.*`` comp-set rows as broker
+    # figures. Rejected rows are kept (with the reason) for the Technical
+    # detail so the report is honest about what was excluded.
     rows = await session.execute(
         text(
             """
-            SELECT er.fields
+            SELECT er.fields, d.doc_type, d.id AS document_id, d.filename
               FROM extraction_results er
-             WHERE er.deal_id = :deal AND er.tenant_id = :tenant
+              JOIN documents d ON d.id = er.document_id
+             WHERE er.deal_id = :deal
+               AND er.tenant_id = :tenant
+               AND d.tenant_id = :tenant
+             ORDER BY er.created_at DESC
             """
         ),
         {"deal": str(deal_id), "tenant": str(tenant_id)},
     )
-    all_fields: list[Any] = []
+    broker_fields: list[Any] = []
+    excluded_rows: list[VarianceRawFieldOut] = []
+    provenance: dict[tuple[str, float], tuple[str | None, str | None, str | None]] = {}
     for r in rows.fetchall():
-        raw = r._mapping["fields"]
+        m = r._mapping
+        raw = m["fields"]
         if isinstance(raw, str):
             try:
                 raw = json.loads(raw)
             except json.JSONDecodeError:
                 continue
-        if isinstance(raw, list):
-            for f in raw:
-                if not isinstance(f, dict):
-                    continue
-                try:
-                    all_fields.append(ExtractionField.model_validate(f))
-                except Exception:
-                    continue
-
-    broker_fields = _broker_fields_from_extraction(all_fields)
-    if not broker_fields:
-        return VarianceReportResponse(
-            deal_id=deal_id,
-            flags=[],
-            note=(
-                "no broker proforma fields detected in extractions yet — "
-                "upload + extract an OM/broker proforma to populate variance"
-            ),
+        if not isinstance(raw, list):
+            continue
+        doc_type = (m.get("doc_type") or "").upper() or None
+        filename = m.get("filename")
+        doc_fields: list[Any] = []
+        for f in raw:
+            if not isinstance(f, dict):
+                continue
+            try:
+                doc_fields.append(ExtractionField.model_validate(f))
+            except Exception:
+                continue
+        rejected: list[tuple[Any, str]] = []
+        admitted = _broker_fields_from_extraction(
+            doc_fields, doc_type=doc_type, strict=True, excluded=rejected
         )
+        try:
+            doc_uuid = UUID(str(m.get("document_id"))) if m.get("document_id") else None
+        except (TypeError, ValueError):
+            doc_uuid = None
+        for bf in admitted:
+            bf.source_document_id = doc_uuid
+            provenance[(bf.field, bf.value)] = (doc_type, filename, bf.unit_note)
+            broker_fields.append(bf)
+        for ef, reason in rejected:
+            excluded_rows.append(
+                VarianceRawFieldOut(
+                    field=ef.field_name,
+                    severity="Info",
+                    broker=float(ef.value) if isinstance(ef.value, int | float) else None,
+                    source_page=ef.source_page if ef.source_page >= 1 else None,
+                    source_doc_type=doc_type,
+                    source_document=filename,
+                    excluded_reason=reason,
+                )
+            )
+
+    if not broker_fields:
+        note = (
+            "no broker proforma fields detected in extractions yet — "
+            "upload + extract an OM/broker proforma to populate variance"
+        )
+        if excluded_rows:
+            note = (
+                f"no broker-claim fields admitted ({len(excluded_rows)} candidate rows "
+                "excluded: actuals documents, market segments or OM history are not the "
+                "broker's claim) — upload + extract an OM/broker proforma to populate variance"
+            )
+        return VarianceReportResponse(deal_id=deal_id, flags=[], note=note)
 
     flags = _build_flags(
         deal_uuid=deal_id, actuals=actuals, broker_fields=broker_fields
@@ -482,6 +581,10 @@ async def get_variance(
     raw_flags: list[VarianceFlagOut] = []
     for f in flags:
         sev = f.severity.value if hasattr(f.severity, "value") else str(f.severity)
+        src_doc_type, src_document, unit_note = provenance.get(
+            (f.field, f.broker), (None, None, None)
+        )
+        mismatch = is_basis_mismatch(f.delta_pct)
         raw_flags.append(
             VarianceFlagOut(
                 field=f.field,
@@ -492,12 +595,18 @@ async def get_variance(
                 delta=f.delta,
                 delta_pct=f.delta_pct,
                 source_page=f.source_page,
-                # Deterministic stand-in for the LLM-generated note.
+                # Deterministic stand-in for the LLM-generated note (the
+                # plausibility guard's own note wins when it fired).
                 # Skipping LLM keeps this endpoint free + idempotent.
-                note=(
+                note=f.note
+                or (
                     f"{f.field}: broker={f.broker:,.2f} vs actual={f.actual:,.2f} "
                     f"({(f.delta_pct or 0):.1%}); rule {f.rule_id}"
                 ),
+                source_doc_type=src_doc_type,
+                source_document=src_document,
+                unit_note=unit_note,
+                basis_mismatch=mismatch,
             )
         )
 
@@ -518,7 +627,7 @@ async def get_variance(
     # counts are taken from the consolidated list, case-insensitively —
     # the Severity enum values are title-case ("Critical"), so the prior
     # lowercase comparison under-counted critical/warn flags.
-    out_flags = consolidate_variance_flags(raw_flags)
+    out_flags = consolidate_variance_flags(raw_flags, excluded=excluded_rows)
     crit = warn = info = 0
     for cf in out_flags:
         rank = _severity_rank(cf.severity)

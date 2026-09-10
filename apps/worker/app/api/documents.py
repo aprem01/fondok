@@ -7255,8 +7255,84 @@ async def _load_critic_inputs(
         {"deal": deal_id, "tenant": tenant_id},
     )
 
-    broker_fields: dict[str, float] = {}
-    actual_fields: dict[str, float] = {}
+    # FON-54a — actual-side period sanity + broker-side source sanity.
+    #
+    # The previous bucketing keyed every row by its LAST path segment with
+    # first-seen-wins across ``created_at DESC`` rows, so on Sam's deal a
+    # monthly slice from the newest extraction (``p_and_l_usali.monthly.
+    # apr_2024.rooms_revenue`` = 954K, ``….gop`` = 515K) shadowed the T-12's
+    # annual ``operating_revenue.rooms_revenue`` (9.33M) / ``gross_operating_
+    # profit`` (4.97M), and a percent occupancy (``occupancy_pct`` = 71.6)
+    # either failed validation or lost to a monthly ``occupancy`` = 1. Rules:
+    #   * period slices (``.monthly.`` / ``.quarterly.`` / ``.ytd.`` …) never
+    #     feed either side — an annual line or nothing;
+    #   * rows map to a CANONICAL key (``rooms.revenue`` → rooms_revenue,
+    #     ``gross_operating_profit`` → gop, ``net_operating_income.noi_usd`` →
+    #     noi …) rather than a bare last segment;
+    #   * actuals prefer the T-12 document over a P&L, and an annual-named
+    #     path over a generic one; broker rows come only from the OM's own
+    #     claim (never its historical-year block or a market-segment stat);
+    #   * occupancy is normalised to a fraction before the schema sees it.
+    from ..agents.variance import (
+        is_market_segment,
+        is_om_historical_year,
+        is_period_slice,
+        normalize_broker_value,
+    )
+
+    def _canonical_key(lname: str) -> str:
+        parts = lname.split(".")
+        last = parts[-1]
+        parent = parts[-2] if len(parts) > 1 else ""
+        if last in ("gross_operating_profit", "gross_operating_profit_usd", "gop", "gop_usd"):
+            return "gop"
+        if last in ("noi", "noi_usd", "net_operating_income", "net_operating_income_usd"):
+            return "noi"
+        if last in ("rooms_revenue", "rooms_revenue_usd") or (
+            parent == "rooms" and last in ("revenue", "revenue_usd")
+        ):
+            return "rooms_revenue"
+        if last in ("fb_revenue", "fb_revenue_usd", "food_beverage_revenue", "food_beverage_revenue_usd") or (
+            parent in ("fb", "food_beverage") and last in ("revenue", "revenue_usd")
+        ):
+            return "fb_revenue"
+        if last in (
+            "total_revenue", "total_revenue_usd", "total_revenues", "total_revenues_usd",
+            "total_operating_revenue", "total_operating_revenue_usd",
+        ):
+            return "total_revenue"
+        if last in ("occupancy", "occupancy_pct", "occupancy_percent", "occ", "occ_pct"):
+            return "occupancy"
+        if last in ("adr", "adr_usd", "average_daily_rate", "average_daily_rate_usd"):
+            return "adr"
+        if last in ("revpar", "revpar_usd"):
+            return "revpar"
+        return last
+
+    _ANNUAL_HINTS = (
+        "ttm_summary", "ttm_performance", "operating_revenue.", "gross_operating_profit",
+        "net_operating_income", "total_revenue", "annual", "_ttm", "trailing",
+    )
+
+    def _path_rank(lname: str) -> int:
+        # 0 = explicitly annual / TTM-named line, 1 = generic line.
+        return 0 if any(h in lname for h in _ANNUAL_HINTS) else 1
+
+    # canonical key → (rank tuple, value); lower rank wins, ties keep first seen.
+    broker_ranked: dict[str, tuple[tuple[int, int, int], float]] = {}
+    actual_ranked: dict[str, tuple[tuple[int, int, int], float]] = {}
+    order = 0
+
+    def _offer(
+        bucket: dict[str, tuple[tuple[int, int, int], float]],
+        key: str,
+        rank: tuple[int, int, int],
+        value: float,
+    ) -> None:
+        cur = bucket.get(key)
+        if cur is None or rank < cur[0]:
+            bucket[key] = (rank, value)
+
     for r in rows.fetchall():
         m = r._mapping
         raw_fields = m["fields"]
@@ -7268,6 +7344,8 @@ async def _load_critic_inputs(
         if not isinstance(raw_fields, list):
             continue
         doc_type = (m.get("doc_type") or "").upper()
+        # Actuals: the T-12 is the reference document; a P&L is the fallback.
+        actual_doc_rank = 0 if doc_type == "T12" else 1
         for f in raw_fields:
             if not isinstance(f, dict):
                 continue
@@ -7275,16 +7353,32 @@ async def _load_critic_inputs(
             value = f.get("value")
             if not name or not isinstance(value, (int, float)):
                 continue
-            value_f = float(value)
+            order += 1
             lname = name.lower()
-            # broker_proforma.* always feeds broker side regardless of doc_type.
-            if "broker_proforma." in lname or "broker." in lname:
-                broker_fields.setdefault(lname.rsplit(".", 1)[-1], value_f)
+            if is_period_slice(lname):
+                continue  # a month / quarter is never an annual line
+            key = _canonical_key(lname)
+            explicit_broker = lname.startswith(("broker_proforma.", "broker."))
+            if explicit_broker:
+                side = "broker"
             elif doc_type in ("T12", "PNL"):
-                actual_fields.setdefault(lname.rsplit(".", 1)[-1], value_f)
+                side = "actual"
             elif doc_type == "OM":
-                # OM headlines feed the broker side.
-                broker_fields.setdefault(lname.rsplit(".", 1)[-1], value_f)
+                side = "broker"
+            else:
+                continue
+            if side == "broker" and (is_market_segment(lname) or is_om_historical_year(lname)):
+                continue  # a comp-set stat / the OM's history is not the broker's claim
+            norm, _note = normalize_broker_value(name, float(value), f.get("unit"))
+            if norm is None:
+                continue  # unit could not be established — do not compare
+            if side == "broker":
+                _offer(broker_ranked, key, (0, _path_rank(lname), order), norm)
+            else:
+                _offer(actual_ranked, key, (actual_doc_rank, _path_rank(lname), order), norm)
+
+    broker_fields: dict[str, float] = {k: v for k, (_r, v) in broker_ranked.items()}
+    actual_fields: dict[str, float] = {k: v for k, (_r, v) in actual_ranked.items()}
 
     def _build(values: dict[str, float], label: str) -> Any | None:
         if not values:
