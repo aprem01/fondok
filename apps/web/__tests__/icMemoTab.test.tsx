@@ -245,16 +245,22 @@ describe('ICMemoTab — the pending recommendation carries its reason code', () 
     expect(tip).toHaveTextContent(REASONS.awaiting_analyst.explanation);
   });
 
-  it('reads a worker-supplied `recommendation_reason` when present', () => {
-    fx.fieldOverrides = { recommendation_reason: 'needs_review' };
+  it('mirrors the worker: a selected-but-unconfirmed verdict is still pending', () => {
+    // The worker derives `recommendation_reason` on the MEMO ENVELOPE from
+    // these same two persisted keys (memo_overrides.ic_recommendation_reason);
+    // it is never written into field_overrides, so the web derives it from the
+    // same inputs rather than reading a key that will never exist.
+    fx.fieldOverrides = { memo_recommendation_override: 'Proceed' };
     render(<ICMemoTab project={PROJECT} />);
     const refusal = screen.getByTestId('ic-recommendation-refusal');
-    expect(refusal.getAttribute('data-refused')).toBe('needs_review');
-    expect(refusal).toHaveTextContent(REASONS.needs_review.label);
+    expect(refusal.getAttribute('data-refused')).toBe('awaiting_analyst');
+    expect(refusal).toHaveTextContent('Pending analyst decision');
   });
 
-  it('ignores an unknown code from a newer worker and keeps the canonical string', () => {
-    fx.fieldOverrides = { recommendation_reason: 'brand_new_code' };
+  it('a stray recommendation_reason in field_overrides is ignored', () => {
+    // Guards the contract: the worker confirmed it never persists this key,
+    // so a value found there must not be able to relabel the banner.
+    fx.fieldOverrides = { recommendation_reason: 'needs_review' };
     render(<ICMemoTab project={PROJECT} />);
     const refusal = screen.getByTestId('ic-recommendation-refusal');
     expect(refusal.getAttribute('data-refused')).toBe('awaiting_analyst');

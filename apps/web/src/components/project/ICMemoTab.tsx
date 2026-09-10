@@ -60,8 +60,8 @@ import type { Project } from '@/lib/mockData';
 import { ProvenanceDot, palette } from '@/components/design';
 import { useToast } from '@/components/ui/Toast';
 import { openLineage } from '@/components/project/LineageDrawer';
-import { Refused, asReasonCode } from '@/components/help/Refused';
-import { REASONS, type ReasonCode } from '@/lib/ontology/reasons.generated';
+import { Refused } from '@/components/help/Refused';
+import { type ReasonCode } from '@/lib/ontology/reasons.generated';
 
 // ── canonical colours (design/canonical/IC Memo Tab.dc.html) ───────────────
 const GREEN = 'oklch(45% 0.12 155)';
@@ -536,24 +536,28 @@ export default function ICMemoTab({ project }: { project: Project }) {
   // Model Assessment card only.
   const decidedVerdict: Verdict | null = verdictConfirmed && verdictOverride ? verdictOverride : null;
   // Phase 4.4 — a pending recommendation is a REFUSAL with a code, not a
-  // loose string. The worker's own ``recommendation_reason`` (a bare
-  // ``ReasonCode``, carried on the deal beside the other memo_* keys) is read
-  // first; absent — which is every build today — we fall back to the local
-  // "no confirmed verdict" check, whose code is `awaiting_analyst`. The two
-  // print the same words: REASONS.awaiting_analyst.label IS the canonical
-  // `PENDING_DECISION` string the memo body and the Excel export use, so the
-  // banner reads exactly as it does today either way.
-  const recommendationReason: ReasonCode = useMemo(() => {
-    const ov = (deal?.field_overrides ?? {}) as Record<string, unknown>;
-    return (
-      asReasonCode(ov.recommendation_reason ?? ov.memo_recommendation_reason)
-      ?? 'awaiting_analyst'
-    );
-  }, [deal]);
-  const pendingLabel =
-    recommendationReason === 'awaiting_analyst'
-      ? PENDING_DECISION
-      : REASONS[recommendationReason].label;
+  // loose string.
+  //
+  // The worker carries the authoritative value as ``recommendation_reason`` on
+  // the MEMO ENVELOPE (`GET /deals/{id}/memo`, and `/memo/status`), not in
+  // `field_overrides` — it is derived, never persisted. This tab does not load
+  // that envelope, so rather than fetch one field we derive it from the SAME
+  // two persisted keys the worker derives it from
+  // (`memo_recommendation_override` + `memo_recommendation_confirmed`, already
+  // in scope here as `verdictOverride` / `verdictConfirmed`), mirroring
+  // `memo_overrides.ic_recommendation_reason`: a decision that was selected
+  // AND confirmed has no refusal; anything else is `awaiting_analyst`.
+  //
+  // `REASONS.awaiting_analyst.label` IS the canonical `PENDING_DECISION`
+  // string the memo body and the Excel export print, so the banner reads
+  // identically to before.
+  const recommendationReason: ReasonCode | null = useMemo(
+    () => (verdictConfirmed && verdictOverride ? null : 'awaiting_analyst'),
+    [verdictConfirmed, verdictOverride],
+  );
+  // Both outcomes of the derivation above print the canonical string:
+  // `REASONS.awaiting_analyst.label` IS `PENDING_DECISION`.
+  const pendingLabel = PENDING_DECISION;
   const recommendationLabel = decidedVerdict ?? pendingLabel;
   const effThesis = thesisText ?? rec?.thesis ?? '';
   const effHighlights: MemoPoint[] = highlights ?? (rec ? rec.highlights.map((t) => ({ t, ai: true })) : []);
