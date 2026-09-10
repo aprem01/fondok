@@ -88,7 +88,7 @@ vi.mock('@/lib/auth', () => ({ useCurrentRole: () => 'org:member' }));
 // Heavy siblings that only render in the coverage sub-view (not the detail
 // review under test) — neutralize their import graph.
 vi.mock('@/components/project/pl/GroundedWorksheet', () => ({
-  isReviewableFinancialField: () => true,
+  WORKSHEET_ROWS: [],
 }));
 vi.mock('@/components/project/validation/GapChipsStrip', () => ({ GapChipsStrip: () => null }));
 vi.mock('@/components/help/CoachMark', () => ({

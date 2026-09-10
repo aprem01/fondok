@@ -22,6 +22,22 @@ const ACTIVE_DOC_STATUSES = new Set([
   'PROCESSING',
 ]);
 
+// FON-41 — cross-instance sync. Each mounted useDocuments (Data Room, the
+// Financials worksheet, PLTab's arrival banner) holds its own extraction map.
+// After an analyst Accept/Edit the reviewing instance refetches the doc and
+// publishes the fresh result, so every other instance on the same deal
+// converges on ONE review state without a second round-trip.
+type ExtractionListener = (dealId: string, docId: string, result: ExtractionResult) => void;
+const extractionListeners = new Set<ExtractionListener>();
+function publishExtraction(
+  origin: ExtractionListener | null,
+  dealId: string,
+  docId: string,
+  result: ExtractionResult,
+) {
+  for (const l of extractionListeners) if (l !== origin) l(dealId, docId, result);
+}
+
 export interface DocumentsState {
   documents: WorkerDocument[];
   loading: boolean;
@@ -77,12 +93,27 @@ export function useDocuments(dealId: string | null | undefined): DocumentsState 
   // FON-23: force a refetch of ONE doc's extraction after an analyst
   // review. The polling loop skips already-EXTRACTED docs, so a plain
   // refresh() wouldn't pick up the corrected fields / confidence.
+  const listenerRef = useRef<ExtractionListener | null>(null);
+  useEffect(() => {
+    const l: ExtractionListener = (dealId, docId, r) => {
+      if (dealId !== idStr) return;
+      setExtractions((prev) => ({ ...prev, [docId]: r }));
+    };
+    listenerRef.current = l;
+    extractionListeners.add(l);
+    return () => {
+      extractionListeners.delete(l);
+      listenerRef.current = null;
+    };
+  }, [idStr]);
+
   const refreshExtraction = useCallback(
     async (docId: string) => {
       if (!isWorkerConnected() || !idStr || /^\d+$/.test(idStr)) return;
       try {
         const r = await api.documents.extraction(idStr, docId);
         setExtractions((prev) => ({ ...prev, [docId]: r }));
+        publishExtraction(listenerRef.current, idStr, docId, r);
       } catch {
         // Best-effort — the row keeps its prior state on failure.
       }

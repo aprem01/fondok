@@ -40,7 +40,8 @@ import { ProvenanceDot } from '@/components/design';
 import { useDeal } from '@/lib/hooks/useDeal';
 import { useDocuments } from '@/lib/hooks/useDocuments';
 import { useHistoricals } from '@/lib/hooks/useHistoricals';
-import type { HistYear } from '@/components/project/pl/HistoricalsSection';
+import { baseYearLabel, type HistYear } from '@/components/project/pl/HistoricalsSection';
+import { buildReviewState, cellKey, cellsForYear, histHasData, histValue, type ReviewRow } from '@/lib/reviewState';
 import { useSource } from '@/lib/hooks/useDealProvenance';
 import { sourceKind, sourceExplanation } from '@/lib/provenance';
 import { useWorksheetLayout } from '@/lib/hooks/useWorksheetLayout';
@@ -79,11 +80,16 @@ const UNDIST_IDS = ['ag', 'sm', 'pom', 'util', 'it'];
 const FIXED_FEE_IDS = ['mgmt', 'ffe', 'taxes', 'insurance'];
 const DEPT_IDS = ['rooms_dept', 'fb_dept', 'other_dept'];
 
+// metaKey (FON-41 Part B): every line ``buildHistYear`` resolves from a P&L
+// carries its per-year source meta under this key, so ANY extracted historical
+// cell — revenue, expense, subtotal or NOI — can flag low confidence and open
+// the SOURCE panel at its own statement. Lines the P&Ls don't break out
+// (A&G, S&M, FF&E, …) have no metaKey and render "—" in historical columns.
 const ROWS: RowDef[] = [
   { id: 's_ops', label: 'Operating Statistics', kind: 'section' },
-  { id: 'occ', label: 'Occupancy', kind: 'input', fmt: 'pct', y1Src: 'revenue', y1Read: ['occupancy'] },
-  { id: 'adr', label: 'ADR', kind: 'input', fmt: 'dollar', y1Src: 'revenue', y1Read: ['adr'] },
-  { id: 'revpar', label: 'RevPAR', kind: 'input', fmt: 'dollar', y1Src: 'revenue', y1Read: ['revpar'] },
+  { id: 'occ', label: 'Occupancy', kind: 'input', fmt: 'pct', y1Src: 'revenue', y1Read: ['occupancy'], metaKey: 'occ' },
+  { id: 'adr', label: 'ADR', kind: 'input', fmt: 'dollar', y1Src: 'revenue', y1Read: ['adr'], metaKey: 'adr' },
+  { id: 'revpar', label: 'RevPAR', kind: 'input', fmt: 'dollar', y1Src: 'revenue', y1Read: ['revpar'], metaKey: 'revpar' },
 
   { id: 's_rev', label: 'Revenue', kind: 'section' },
   { id: 'rooms_rev', label: 'Rooms Revenue', kind: 'input', y1Src: 'fb', y1Read: ['rooms_revenue'], reviewKey: 'rooms_revenue', metaKey: 'rooms' },
@@ -93,9 +99,9 @@ const ROWS: RowDef[] = [
     compute: (v) => v.rooms_rev + v.fb_rev + v.other_rev },
 
   { id: 's_dept', label: 'Departmental Expenses', kind: 'section' },
-  { id: 'rooms_dept', label: 'Rooms', kind: 'input', overrideKey: 'rooms_dept_expense', y1Read: ['dept_expenses', 'rooms'] },
-  { id: 'fb_dept', label: 'Food & Beverage', kind: 'input', overrideKey: 'fb_dept_expense', y1Read: ['dept_expenses', 'food_beverage'] },
-  { id: 'other_dept', label: 'Other Operated', kind: 'input', overrideKey: 'other_dept_expense', y1Read: ['dept_expenses', 'other_operated'] },
+  { id: 'rooms_dept', label: 'Rooms', kind: 'input', overrideKey: 'rooms_dept_expense', y1Read: ['dept_expenses', 'rooms'], metaKey: 'rooms_dept' },
+  { id: 'fb_dept', label: 'Food & Beverage', kind: 'input', overrideKey: 'fb_dept_expense', y1Read: ['dept_expenses', 'food_beverage'], metaKey: 'fb_dept' },
+  { id: 'other_dept', label: 'Other Operated', kind: 'input', overrideKey: 'other_dept_expense', y1Read: ['dept_expenses', 'other_operated'], metaKey: 'other_dept' },
 
   { id: 's_undist', label: 'Undistributed Operating Expenses', kind: 'section' },
   { id: 'ag', label: 'Administrative & General', kind: 'input', overrideKey: 'administrative_general', y1Read: ['undistributed', 'administrative_general'] },
@@ -104,21 +110,21 @@ const ROWS: RowDef[] = [
   { id: 'util', label: 'Utilities', kind: 'input', overrideKey: 'utilities', y1Read: ['undistributed', 'utilities'] },
   { id: 'it', label: 'Information & Telecom', kind: 'input', overrideKey: 'information_telecom', y1Read: ['undistributed', 'information_telecom'] },
   { id: 'undist_total', label: 'Total Undistributed', kind: 'subtotal',
-    compute: (v) => sumKeys(v, UNDIST_IDS) },
+    compute: (v) => sumKeys(v, UNDIST_IDS), metaKey: 'undistributed' },
 
   { id: 'gop', label: 'Gross Operating Profit (GOP)', kind: 'computed',
-    compute: (v) => v.total_rev - sumKeys(v, DEPT_IDS) - sumKeys(v, UNDIST_IDS) },
+    compute: (v) => v.total_rev - sumKeys(v, DEPT_IDS) - sumKeys(v, UNDIST_IDS), metaKey: 'gop' },
 
   { id: 's_fixed', label: 'Management Fee & Fixed Charges', kind: 'section' },
-  { id: 'mgmt', label: 'Management Fee', kind: 'input', overrideKey: 'mgmt_fee', y1Read: ['mgmt_fee'] },
+  { id: 'mgmt', label: 'Management Fee', kind: 'input', overrideKey: 'mgmt_fee', y1Read: ['mgmt_fee'], metaKey: 'mgmt_fee' },
   { id: 'ffe', label: 'FF&E Reserve', kind: 'input', overrideKey: 'ffe_reserve', y1Read: ['ffe_reserve'] },
-  { id: 'taxes', label: 'Property Taxes', kind: 'input', overrideKey: 'property_taxes', y1Read: ['fixed_charges', 'property_taxes'] },
-  { id: 'insurance', label: 'Insurance', kind: 'input', overrideKey: 'insurance', y1Read: ['fixed_charges', 'insurance'] },
+  { id: 'taxes', label: 'Property Taxes', kind: 'input', overrideKey: 'property_taxes', y1Read: ['fixed_charges', 'property_taxes'], metaKey: 'property_tax' },
+  { id: 'insurance', label: 'Insurance', kind: 'input', overrideKey: 'insurance', y1Read: ['fixed_charges', 'insurance'], metaKey: 'insurance' },
   { id: 'fixed_total', label: 'Total Fees & Fixed', kind: 'subtotal',
     compute: (v) => sumKeys(v, FIXED_FEE_IDS) },
 
   { id: 'noi', label: 'Net Operating Income (NOI)', kind: 'computed',
-    compute: (v) => v.total_rev - sumKeys(v, DEPT_IDS) - sumKeys(v, UNDIST_IDS) - sumKeys(v, FIXED_FEE_IDS) },
+    compute: (v) => v.total_rev - sumKeys(v, DEPT_IDS) - sumKeys(v, UNDIST_IDS) - sumKeys(v, FIXED_FEE_IDS), metaKey: 'noi' },
 ];
 
 // Input (editable) member rows per section, and a row lookup — used by the
@@ -139,44 +145,9 @@ const INPUT_BY_ID: Record<string, RowDef> = Object.fromEntries(
 
 const num = (x: unknown): number => (typeof x === 'number' && Number.isFinite(x) ? x : 0);
 
-const nOrNull = (x: unknown): number | null =>
-  typeof x === 'number' && Number.isFinite(x) ? x : null;
-
-// Historical value for a worksheet row from one HistYear (see useHistoricals).
-// Detail rows (A&G, insurance, mgmt fee, …) return null — the source P&Ls only
-// carry the rolled-up subtotals, so those cells render "—".
-function histValue(rowId: string, h: HistYear): number | null {
-  switch (rowId) {
-    case 'occ': return nOrNull(h.occupancyPct);
-    case 'adr': return nOrNull(h.adr);
-    case 'revpar': return nOrNull(h.revpar);
-    case 'rooms_rev': return nOrNull(h.rooms);
-    case 'fb_rev': return nOrNull(h.fb);
-    case 'other_rev': return nOrNull(h.misc);
-    case 'total_rev': {
-      const parts = [h.rooms, h.fb, h.misc].map(nOrNull).filter((x): x is number => x != null);
-      return parts.length ? parts.reduce((a, b) => a + b, 0) : null;
-    }
-    case 'rooms_dept': return nOrNull(h.rooms_dept_expense);
-    case 'fb_dept': return nOrNull(h.fb_dept_expense);
-    case 'other_dept': return nOrNull(h.other_dept_expense);
-    case 'undist_total': return nOrNull(h.undistributed);
-    case 'gop': return nOrNull(h.gop);
-    case 'fixed_total': return nOrNull(h.fixed_expenses);
-    case 'noi': return nOrNull(h.noi);
-    default: return null;
-  }
-}
-
-// A year earns a column only if it carries REAL data — skeleton placeholders
-// (populated:false) and all-zero years are dropped so the grid isn't padded
-// with empty $0 columns.
-const histHasData = (h: HistYear) =>
-  h.populated !== false &&
-  [h.rooms, h.fb, h.gop, h.noi].some((x) => {
-    const n = nOrNull(x);
-    return n != null && n !== 0;
-  });
+// Historical cell values (histValue) and the "year earns a column" filter
+// (histHasData) come from lib/reviewState — shared with the review predicate
+// and the Data Room so "renders a cell" and "can be flagged" never drift.
 
 // FON-26: historical-coverage strip. The worksheet drops years that carry no
 // data, which left analysts unable to tell a missing year apart from one that
@@ -240,7 +211,8 @@ function buildCoverage(docs: WorkerDocument[], populatedYears: HistYear[]): { ye
   // A year that made it into the grid is uploaded regardless of doc source
   // (an OM-embedded P&L has no standalone financial doc of its own).
   for (const y of populatedYears) {
-    if (/^\d{4}$/.test(y.year) || y.year === 'T-12') bump(y.year, 'uploaded');
+    const base = baseYearLabel(y.year); // "2023 (2)" still counts as 2023 coverage
+    if (/^\d{4}$/.test(base) || base === 'T-12') bump(base, 'uploaded');
   }
   const numeric = [...byYear.keys()].filter((y) => /^\d{4}$/.test(y)).map(Number).sort((a, b) => a - b);
   if (numeric.length >= 2) {
@@ -385,28 +357,16 @@ export default function GroundedWorksheet({
   const overrides = (deal?.field_overrides ?? {}) as Record<string, unknown>;
   const isOverridden = (key?: string) => !!key && key in overrides;
 
-  // Low-confidence review, folded IN (no separate screen): map each editable
-  // model key to its unreviewed low-confidence extracted field, so the cell can
-  // flag it amber and the source panel can accept/edit it in place.
-  const reviewMap = useMemo<Record<string, { docId: string; field: string; confidence: number }>>(() => {
-    const out: Record<string, { docId: string; field: string; confidence: number }> = {};
-    for (const d of documents) {
-      const ex = extractions[d.id];
-      if (!ex?.fields) continue;
-      for (const f of ex.fields) {
-        if (f.confidence == null || f.confidence >= 0.85 || f.reviewed) continue;
-        for (const r of ROWS) {
-          const rk = r.overrideKey ?? r.reviewKey;
-          if (!rk || out[rk]) continue;
-          if (fieldMatchesKey(f.field_name, rk)) {
-            out[rk] = { docId: d.id, field: f.field_name, confidence: f.confidence };
-            break;
-          }
-        }
-      }
-    }
-    return out;
-  }, [documents, extractions]);
+  // FON-41 — ONE canonical review state (lib/reviewState), shared with the
+  // Data Room badge: a flag lives on a (row × year) cell and is pinned to that
+  // column's own statement. It reads the LIVE extractions, so an Accept/Edit
+  // clears the cell, the banner count and the Data Room counts from the same
+  // state. (The old row-keyed reviewMap let the first low-confidence field
+  // across ALL documents answer for every year — Sam's 2019-vs-2023 mix-up.)
+  const reviewState = useMemo(
+    () => buildReviewState(documents, extractions, ROWS, histYears),
+    [documents, extractions, histYears],
+  );
 
   const acceptReview = useCallback(
     async (docId: string, field: string) => {
@@ -504,14 +464,35 @@ export default function GroundedWorksheet({
   // carries ?focus=<field_name>. Resolve it to a worksheet row and scroll +
   // pulse it so the analyst lands exactly on the value that needs attention.
   const focusField = searchParams?.get('focus') ?? null;
+  // FON-41 — a document deep-link (?doc=<id>, from the Data Room's "N to
+  // review" badge / "View Financials") pins that statement's column: every
+  // other year pill is switched off once and the first flagged cell in the
+  // column is scrolled into view, so the badge count and the red cells in the
+  // grid line up 1:1. The analyst can re-enable the other pills afterwards.
+  const docParam = searchParams?.get('doc') ?? null;
+  const pinnedYear = useMemo(
+    () => (docParam ? histYears.find((y) => y.docId === docParam)?.year ?? null : null),
+    [docParam, histYears],
+  );
+  const pinnedRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (!pinnedYear || pinnedRef.current === pinnedYear) return;
+    pinnedRef.current = pinnedYear;
+    setHiddenYears(new Set(histYears.filter((y) => y.year !== pinnedYear).map((y) => y.year)));
+    setFormat('detailed');
+  }, [pinnedYear, histYears]);
   const focusRowId = useMemo(() => {
-    if (!focusField) return null;
-    for (const r of ROWS) {
-      const rk = r.overrideKey ?? r.reviewKey;
-      if (rk && fieldMatchesKey(focusField, rk)) return r.id;
+    if (focusField) {
+      for (const r of ROWS) {
+        const rk = r.overrideKey ?? r.reviewKey;
+        if (rk && fieldMatchesKey(focusField, rk)) return r.id;
+      }
     }
+    // Pinned document: land on its first flagged cell (row order); after each
+    // Accept the focus advances to the next one until the column is clean.
+    if (pinnedYear) return cellsForYear(reviewState, ROWS, pinnedYear)[0]?.rowId ?? null;
     return null;
-  }, [focusField]);
+  }, [focusField, pinnedYear, reviewState]);
   const focusRowRef = useRef<HTMLTableRowElement>(null);
   const [pulse, setPulse] = useState(false);
   useEffect(() => {
@@ -583,18 +564,19 @@ export default function GroundedWorksheet({
     year: y,
   }));
 
-  // FON-41 — this worksheet renders historical columns only, so red flags come
-  // entirely from per-cell extraction confidence (histYear.meta), never the
-  // forecast reviewMap. Count exactly the cells that render red so the banner
-  // equals the flagged values actually visible in the table (Sam's 8-vs-3).
-  const flaggedCount = cols.reduce((acc, c) => {
-    for (const row of ROWS) {
-      if (!row.metaKey) continue;
-      const m = c.year.meta?.[row.metaKey];
-      if (m && m.docId && m.confidence < 0.85 && histValue(row.id, c.year) != null) acc += 1;
-    }
-    return acc;
-  }, 0);
+  // FON-41 — the banner counts exactly the cells that render red in the shown
+  // columns, from the same review state the Data Room badge reads (Sam's
+  // 8-vs-3 / 6-vs-0 mismatches). Hidden year pills drop their cells.
+  const flaggedCount = cols.reduce(
+    (acc, c) => acc + cellsForYear(reviewState, ROWS, c.year.year).length,
+    0,
+  );
+  // Same-period collisions ("2023" + "2023 (2)") — surfaced on the coverage
+  // strip so the analyst knows two statements claim one year (fix the year
+  // tag in the Data Room) rather than wondering why a column repeats.
+  const collidedPeriods = Array.from(
+    new Set(histYears.filter((y) => y.year !== baseYearLabel(y.year)).map((y) => baseYearLabel(y.year))),
+  );
 
   return (
     <Card className="p-0 overflow-hidden">
@@ -701,6 +683,12 @@ export default function GroundedWorksheet({
           </span>
         </div>
       )}
+      {docParam && histYears.length > 0 && !pinnedYear && (
+        <div className="px-5 py-2 bg-warn-50 border-b border-warn-500/30 text-[11.5px] text-warn-800 flex items-center gap-1.5">
+          <AlertTriangle size={11} className="shrink-0" />
+          <span>The statement you opened has no extracted column here yet — it may still be processing, or its P&amp;L lines could not be read.</span>
+        </div>
+      )}
       {coverage.length > 0 && (
         <div className="px-5 py-2.5 border-b border-border bg-surface-2/20 flex flex-wrap items-center gap-x-2 gap-y-1.5">
           <span className="text-[10px] uppercase tracking-wider text-ink-500 font-semibold mr-1">Historical coverage</span>
@@ -714,6 +702,15 @@ export default function GroundedWorksheet({
               {c.year}
             </span>
           ))}
+          {collidedPeriods.length > 0 && (
+            <span
+              title="Two or more statements resolve to the same period, so each gets its own column (e.g. “2023” and “2023 (2)”). Fix the year tag on one of them in the Data Room if that isn’t intended."
+              className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-[11px] font-medium border border-warn-500/30 bg-warn-50 text-warn-700"
+            >
+              <AlertTriangle size={10} aria-hidden="true" />
+              {collidedPeriods.join(', ')}: more than one statement — check year tags
+            </span>
+          )}
           <span className="text-[10.5px] text-ink-400 ml-auto hidden md:inline">
             <span className="text-emerald-500">●</span> uploaded ·{' '}
             <span className="text-amber-500">●</span> processing ·{' '}
@@ -842,7 +839,7 @@ export default function GroundedWorksheet({
                       histYear={c.year}
                       modelLive={modelLive}
                       overridden={!c.historical && isOverridden(row.overrideKey)}
-                      review={!c.historical ? reviewMap[row.overrideKey ?? row.reviewKey ?? ''] : undefined}
+                      review={reviewState.byCell.get(cellKey(row.id, c.year.year))}
                       draft={row.overrideKey ? draft[row.overrideKey] : undefined}
                       saving={!!row.overrideKey && savingKey === row.overrideKey}
                       onDraft={(s) => row.overrideKey && setDraft((d) => ({ ...d, [row.overrideKey!]: s }))}
@@ -922,15 +919,12 @@ function WorksheetCell({
     value = modelLive[row.id] ?? 0;
   }
 
-  // Design rewire: historical cells flag from per-cell extraction confidence
-  // captured on HistYear.meta (low confidence → red, opens the SOURCE panel at
-  // that year's document). Model cells keep the passed-in `review`.
+  // FON-41: the red flag is the shared review state's cell for (row × this
+  // column) — pinned to the column's own statement and read from the live
+  // extraction, so it clears the moment the value is accepted/edited. histMeta
+  // only supplies the source document for in-confidence (green) cells.
   const histMeta = historical && row.metaKey ? histYear?.meta?.[row.metaKey] : undefined;
-  const histReview =
-    histMeta && histMeta.docId && histMeta.confidence < 0.85
-      ? { docId: histMeta.docId, field: histMeta.field, confidence: histMeta.confidence }
-      : undefined;
-  const effReview = review ?? histReview;
+  const effReview = review;
 
   // Provenance kind for the dot.
   let kind: InspectTarget['kind'];
@@ -1269,14 +1263,22 @@ function SourcePanel({
     .map((id) => documents.find((d) => d.id === id))
     .filter((d): d is WorkerDocument => Boolean(d));
 
-  // Try to locate the exact extracted field behind a model-column / review key.
+  // Locate the exact extracted field behind the cell. When the target pins a
+  // document (every historical cell does — its column's own statement) look
+  // ONLY there, exact field name first: another year's statement must never
+  // answer for this one (FON-41 — the panel named the 2019 P&L for a 2023
+  // cell because the scan below used to run over every document).
   const key = target.reviewKey ?? target.overrideKey;
+  const pinnedDocId = target.review?.docId ?? (target.kind === 'grounded' ? target.docIds[0] : undefined);
   const field: (ExtractionField & { docName: string; docId: string }) | null = (() => {
     if (!key) return null;
-    for (const d of documents) {
+    const scan = pinnedDocId ? documents.filter((d) => d.id === pinnedDocId) : documents;
+    for (const d of scan) {
       const ex = extractions[d.id];
       if (!ex?.fields) continue;
-      const f = ex.fields.find((ff) => fieldMatchesKey(ff.field_name, key));
+      const f =
+        ex.fields.find((ff) => ff.field_name === key) ??
+        ex.fields.find((ff) => fieldMatchesKey(ff.field_name, key));
       if (f) return { ...f, docName: d.filename, docId: d.id };
     }
     return null;
@@ -1470,22 +1472,9 @@ export function fieldMatchesKey(fieldName: string, key: string): boolean {
   return cands.some((c) => c.length > 2 && fn.includes(c));
 }
 
-// FON-41 — the model-row keys the historical financial view (this worksheet)
-// exposes for review, derived from ROWS so the two never drift. Shared with the
-// Data Room so its "to review" count reconciles to what's actually reviewable
-// here — instead of counting every low-confidence field, including ones that
-// have no home in the historical grid.
-export const REVIEWABLE_FINANCIAL_KEYS: string[] = Array.from(
-  new Set(
-    ROWS.map((r) => r.overrideKey ?? r.reviewKey).filter(
-      (k): k is string => typeof k === 'string' && k.length > 0,
-    ),
-  ),
-);
-
-/** True when a low-confidence extracted field maps to a value the analyst can
- *  review/edit in the Financials historical view. */
-export function isReviewableFinancialField(fieldName: string): boolean {
-  if (!fieldName) return false;
-  return REVIEWABLE_FINANCIAL_KEYS.some((k) => fieldMatchesKey(fieldName, k));
-}
+// FON-41 — the worksheet's row model (id + metaKey), exported so the Data Room
+// builds its per-document "to review" badge from the SAME rows this grid
+// renders, through the same lib/reviewState predicate. This replaces the old
+// key-alias predicate (isReviewableFinancialField), which counted fields that
+// had no cell here and so could never be flagged.
+export const WORKSHEET_ROWS: ReadonlyArray<ReviewRow> = ROWS;

@@ -274,8 +274,15 @@ export default function PLTab() {
   // arrival is the trigger. Doc name resolves to the statement behind the
   // focused field, else the deal's most recent financial P&L.
   const focusField = searchParams?.get('focus') ?? null;
+  // FON-41: a ?doc=<id> deep-link (Data Room badge / "View Financials") names
+  // that exact statement — never a guess from the first matching field.
+  const docParam = searchParams?.get('doc') ?? null;
   const [arrivalDismissed, setArrivalDismissed] = useState(false);
   const arrivalDocName = useMemo(() => {
+    if (docParam) {
+      const pinned = documents.find((d) => d.id === docParam);
+      if (pinned) return pinned.filename;
+    }
     if (focusField) {
       for (const d of documents) {
         const ex = extractions[d.id];
@@ -289,7 +296,7 @@ export default function PLTab() {
       return t.includes('T12') || t.includes('PNL') || t.includes('P&L') || t.includes('PROFIT');
     });
     return fin?.filename ?? documents[0]?.filename ?? null;
-  }, [documents, extractions, focusField]);
+  }, [documents, extractions, focusField, docParam]);
   const showArrival = (!!finParam || !!focusField) && !arrivalDismissed;
   const subTabCaption =
     tab === 'Projections'

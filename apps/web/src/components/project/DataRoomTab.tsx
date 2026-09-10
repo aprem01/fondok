@@ -40,10 +40,15 @@ import { GapChipsStrip } from './validation/GapChipsStrip';
 import { MisclassificationBanner } from './wizard/MisclassificationBanner';
 import { YearMismatchBanner } from './wizard/YearMismatchBanner';
 import { DocumentCoverage, type CoverageFile } from './DocumentCoverage';
-import { isReviewableFinancialField } from './pl/GroundedWorksheet';
+import { WORKSHEET_ROWS } from './pl/GroundedWorksheet';
+import { useDeal } from '@/lib/hooks/useDeal';
+import { buildHistoricalYears } from '@/lib/hooks/useHistoricals';
+import { buildReviewState, histHasData } from '@/lib/reviewState';
 
 // FON-41 — doc types whose data lands in the Financials historical view. Their
-// "to review" count is reconciled to what that view surfaces.
+// "to review" count IS that view's flagged-cell count for the document (one
+// shared review state — lib/reviewState), so the badge, the red cells and the
+// global count can never disagree.
 const FINANCIAL_DOC_TYPES = new Set([
   'T12', 'PNL', 'PNL_MONTHLY', 'PNL_YTD', 'PNL_BENCHMARK',
 ]);
@@ -259,6 +264,18 @@ export default function DataRoomTab({ projectId }: { projectId: number | string 
 
   const { documents, uploading, upload, extractions, error: docsError, refresh, refreshExtraction } =
     useDocuments(rawId);
+
+  // FON-41 — the SAME historical columns + review state the Financials
+  // worksheet renders, built from the documents / extractions already loaded
+  // here (no second fetch). A financial doc's badge = flagged cells in its
+  // column; the global count = the sum. `keys` gates the column builder
+  // exactly as it gates the worksheet, so the two can't diverge.
+  const { deal } = useDeal(rawId);
+  const dealKeys = deal?.keys ?? 0;
+  const reviewState = useMemo(() => {
+    const years = buildHistoricalYears(documents, extractions, dealKeys).filter(histHasData);
+    return buildReviewState(documents, extractions, WORKSHEET_ROWS, years);
+  }, [documents, extractions, dealKeys]);
 
   // FON-24: deep-link from a validation finding → open the cited doc's
   // review and highlight the cited field. A finding on the Analysis tab
@@ -812,21 +829,11 @@ export default function DataRoomTab({ projectId }: { projectId: number | string 
     await handleUpload(dropped);
   };
 
-  // Data Room → Financials: count low-confidence values on financial docs so
-  // we can route the analyst into the guided Review on the Financials tab
-  // (validation lives there now, not a duplicate P&L here — team sync 2026-08).
-  const flaggedFinancialCount = useMemo(() => {
-    if (!liveMode) return 0;
-    const FIN = new Set(['T12', 'PNL', 'PNL_MONTHLY', 'PNL_YTD', 'PNL_BENCHMARK']);
-    let n = 0;
-    for (const d of documents) {
-      if (!FIN.has((d.doc_type ?? '').toUpperCase())) continue;
-      for (const f of extractions[d.id]?.fields ?? []) {
-        if (!f.reviewed && (f.confidence ?? 1) < 0.85) n += 1;
-      }
-    }
-    return n;
-  }, [liveMode, documents, extractions]);
+  // Data Room → Financials: the global "values need your review" count is the
+  // shared review state's total — exactly the red cells the worksheet shows
+  // across every statement's column (validation lives there now, not a
+  // duplicate P&L here — team sync 2026-08).
+  const flaggedFinancialCount = liveMode ? reviewState.total : 0;
 
   return (
     <div className="space-y-5">
@@ -1072,19 +1079,16 @@ export default function DataRoomTab({ projectId }: { projectId: number | string 
               docType: d.type === '—' ? '' : d.type,
               fields: d.fields,
               confidence: d.confidence,
-              // FON-41 — on financial statements, count only low-confidence
-              // fields the analyst can actually review in the Financials
-              // historical view, so this badge reconciles with what that view
-              // surfaces. Non-financial docs keep their full low-confidence
-              // count (reviewed via the document-detail panel).
-              toReview: (d.fieldList ?? []).filter((f) => {
-                if (Math.round((f.confidence ?? 0) * 100) >= 85 || f.reviewed) {
-                  return false;
-                }
-                return FINANCIAL_DOC_TYPES.has(d.type)
-                  ? isReviewableFinancialField(f.field_name ?? '')
-                  : true;
-              }).length,
+              // FON-41 — on financial statements the badge IS the number of
+              // flagged cells in that document's column of the Financials
+              // historical view (shared review state), so it reconciles by
+              // construction. Non-financial docs keep their full
+              // low-confidence count (reviewed via the document-detail panel).
+              toReview: FINANCIAL_DOC_TYPES.has(d.type)
+                ? (reviewState.byDoc.get(d.id) ?? 0)
+                : (d.fieldList ?? []).filter(
+                    (f) => !(Math.round((f.confidence ?? 0) * 100) >= 85 || f.reviewed),
+                  ).length,
               fiscalYear: d.fiscalYear ?? null,
               status: d.rawStatus,
             }),
@@ -1092,12 +1096,17 @@ export default function DataRoomTab({ projectId }: { projectId: number | string 
           onReclassify={handleReclassify}
           onOpenDoc={(docId, financial) => {
             // Sam QA 8/21: Financial Statements' "View data" jumps straight to
-            // the Financials tab (where their data lands). Other documents open
-            // the inline field-review in place (canonical Data Room v2
-            // `isDetailView`) — the /documents/[docId] route still works if a
-            // deep-link lands on it directly, we just no longer hop to it.
+            // the Financials tab (where their data lands). FON-41: it carries
+            // ?doc=<id> so Historicals pins THAT statement's column and scrolls
+            // to its first flagged cell. Other documents open the inline
+            // field-review in place (canonical Data Room v2 `isDetailView`) —
+            // the /documents/[docId] route still works if a deep-link lands on
+            // it directly, we just no longer hop to it.
             if (financial) {
-              router.push(`/projects/${rawId}?tab=pl&fin=historicals`, { scroll: false });
+              router.push(
+                `/projects/${rawId}?tab=pl&fin=historicals&doc=${encodeURIComponent(docId)}`,
+                { scroll: false },
+              );
             } else {
               setReviewDocId(docId);
             }

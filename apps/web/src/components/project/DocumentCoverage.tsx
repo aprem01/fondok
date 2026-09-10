@@ -696,9 +696,18 @@ function CoverageFileRow({
           <span className={confTone}>{file.confidence}% confidence</span>
         )}
         {file.toReview > 0 && (
-          <span className="inline-flex items-center gap-1 text-danger-700">
+          // FON-41 — the count is an action: it lands on the flagged cells
+          // themselves (Financials → Historicals pinned to this statement, or
+          // the inline field review for non-financial docs).
+          <button
+            type="button"
+            onClick={() => onOpenDoc(file.id, financial)}
+            aria-label={`Review ${file.toReview} flagged value${file.toReview === 1 ? '' : 's'} in ${file.name}`}
+            title={financial ? 'Open Financials → Historicals at this statement’s flagged cells' : 'Open this document’s field review'}
+            className="inline-flex items-center gap-1 text-danger-700 hover:underline underline-offset-2"
+          >
             <AlertCircle size={11} /> {file.toReview} to review
-          </span>
+          </button>
         )}
         <button
           type="button"

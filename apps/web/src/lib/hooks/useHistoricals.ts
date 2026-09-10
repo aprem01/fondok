@@ -10,17 +10,22 @@
  * and QA'd (Sam 2026-05-14) — reused here (not reimplemented) so the grounded
  * worksheet renders the same grounded historical columns as the old table did.
  *
- * Returns the last `keep` populated years (plus any T-12) so callers get a
- * tidy multi-year grid without empty placeholder columns.
+ * FON-41: the column-building step is the pure `buildHistoricalYears` below,
+ * exported so the Data Room can derive the SAME columns from the documents +
+ * extractions it already holds (no second fetch) and count "to review" per
+ * document against exactly the cells the worksheet renders.
  */
 
 import { useEffect, useState } from 'react';
-import { api, isWorkerConnected, workerUrl, type WorkerDocument } from '@/lib/api';
+import { api, isWorkerConnected, workerUrl, type ExtractionResult, type WorkerDocument } from '@/lib/api';
 import {
   actualsOnly,
+  baseYearLabel,
   buildHistYear,
   deriveYearLabel,
   emptyFiveYearSkeleton,
+  labelOrdinal,
+  uniqueYearLabel,
   type HistData,
   type HistYear,
 } from '@/components/project/pl/HistoricalsSection';
@@ -29,6 +34,88 @@ const isPnlDoc = (d: WorkerDocument) => {
   const dt = (d.doc_type ?? '').toUpperCase();
   return (dt.includes('T12') || dt === 'T-12' || dt === 'PNL' || dt === 'P&L' || dt.includes('PROFIT'));
 };
+
+const isAnnualLabel = (label: string) => /^\d{4}$/.test(baseYearLabel(label));
+const isT12Label = (label: string) => baseYearLabel(label) === 'T-12';
+
+/**
+ * Pure column builder — one HistYear per EXTRACTED P&L / T-12 document (plus
+ * OM-embedded prior years that no statement covers). Same-label collisions
+ * keep BOTH columns ("2023", "2023 (2)") instead of silently overwriting.
+ * Returns [] until `keys` is known (the rooms fallback needs it).
+ */
+export function buildHistoricalYears(
+  docs: WorkerDocument[],
+  extractions: Record<string, ExtractionResult | undefined>,
+  keys: number,
+): HistYear[] {
+  if (!(keys > 0)) return [];
+  const extracted = (docs ?? []).filter((d) => d.status === 'EXTRACTED');
+  const pnlDocs = extracted.filter(isPnlDoc);
+  const omDocs = extracted.filter((d) => (d.doc_type ?? '').toUpperCase() === 'OM');
+  if (pnlDocs.length === 0 && omDocs.length === 0) return [];
+
+  const byLabel = new Map<string, HistYear>();
+  const sorted = [...pnlDocs].sort((a, b) => (a.uploaded_at ?? '').localeCompare(b.uploaded_at ?? ''));
+  for (const doc of sorted) {
+    const ext = extractions[doc.id];
+    if (!ext?.fields) continue;
+    const fields = actualsOnly(ext.fields);
+    const base = deriveYearLabel(
+      fields, doc.filename ?? '', doc.doc_type,
+      doc.fiscal_year ?? doc.extracted_period_year,
+    );
+    // Build on the base label (day-count / leap-year logic keys off it), then
+    // stamp the unique column label.
+    const built = buildHistYear(fields, keys, base, doc.id);
+    if (!built) continue;
+    const label = uniqueYearLabel(base, new Set(byLabel.keys()));
+    built.year = label;
+    byLabel.set(label, built);
+  }
+  // OM-embedded prior years fill gaps a standalone statement doesn't cover
+  // (e.g. an OM's own 2021-2023 P&L). Actual statements always win on a
+  // shared year — the OM only backfills missing history.
+  for (const doc of omDocs) {
+    const ext = extractions[doc.id];
+    if (!ext?.fields) continue;
+    const embedded = extractEmbeddedYears(ext.fields);
+    for (const [yr, vals] of Object.entries(embedded)) {
+      if (!byLabel.has(yr) && Object.keys(vals).length >= 6) {
+        byLabel.set(yr, omYearToHistYear(vals, yr));
+      }
+    }
+  }
+  if (byLabel.size === 0) return [];
+
+  const byOrdinal = (a: string, b: string) => {
+    const ya = baseYearLabel(a), yb = baseYearLabel(b);
+    if (ya !== yb) return ya < yb ? -1 : 1;
+    return labelOrdinal(a) - labelOrdinal(b);
+  };
+  const annualLabels = [...byLabel.keys()].filter(isAnnualLabel).sort(byOrdinal);
+  const t12Labels = [...byLabel.keys()].filter(isT12Label).sort(byOrdinal);
+
+  // Pad short histories with the 5-year skeleton so the grid keeps its
+  // headers; padded years are populated:false and dropped by callers that
+  // only want real data.
+  const distinctAnnual = new Set(annualLabels.map(baseYearLabel));
+  const skelAnnual = emptyFiveYearSkeleton().years.slice(0, -1);
+  const labels = new Set<string>(annualLabels);
+  if (distinctAnnual.size < skelAnnual.length) {
+    for (const s of skelAnnual) if (!distinctAnnual.has(s.year)) labels.add(s.year);
+  }
+  const orderedAnnual = [...labels].sort(byOrdinal);
+  const annualCols: HistYear[] = orderedAnnual.map((label) => {
+    const real = byLabel.get(label);
+    if (real) return real;
+    return skelAnnual.find((y) => y.year === label) ?? blankYear(label);
+  });
+  const t12Cols: HistYear[] = t12Labels.length
+    ? t12Labels.map((l) => byLabel.get(l)!)
+    : [blankYear('T-12')];
+  return [...annualCols, ...t12Cols];
+}
 
 export function useHistoricals(
   dealId: string,
@@ -66,60 +153,24 @@ export function useHistoricals(
         /* worker offline / route absent — fall through */
       }
 
-      // 2) multi-doc fallback: one column per extracted P&L / T-12 doc, PLUS
-      //    any multi-year P&L embedded in an OM (p_and_l_usali.YYYY.*).
+      // 2) multi-doc fallback: fetch each extracted P&L / OM extraction, then
+      //    build the columns with the shared pure builder.
       try {
         const docs = (await api.documents.list(String(dealId))) as WorkerDocument[];
         const extracted = (docs ?? []).filter((d) => d.status === 'EXTRACTED');
-        const pnlDocs = extracted.filter(isPnlDoc);
-        const omDocs = extracted.filter((d) => (d.doc_type ?? '').toUpperCase() === 'OM');
-        if ((pnlDocs.length > 0 || omDocs.length > 0) && keysHint > 0) {
-          const byYear = new Map<string, HistYear>();
-          const sorted = [...pnlDocs].sort((a, b) => (a.uploaded_at ?? '').localeCompare(b.uploaded_at ?? ''));
-          for (const doc of sorted) {
+        const wanted = extracted.filter((d) => isPnlDoc(d) || (d.doc_type ?? '').toUpperCase() === 'OM');
+        if (wanted.length > 0 && keysHint > 0) {
+          const extractions: Record<string, ExtractionResult | undefined> = {};
+          for (const doc of wanted) {
             try {
-              const ext = await api.documents.extraction(String(dealId), doc.id);
-              const fields = actualsOnly(ext.fields ?? []);
-              const label = deriveYearLabel(
-                fields, doc.filename ?? '', doc.doc_type,
-                doc.fiscal_year ?? doc.extracted_period_year,
-              );
-              const built = buildHistYear(fields, keysHint, label, doc.id);
-              if (built) byYear.set(label, built);
+              extractions[doc.id] = await api.documents.extraction(String(dealId), doc.id);
             } catch {
               /* skip this doc — others may still populate */
             }
           }
-          // OM-embedded prior years fill gaps a standalone statement doesn't
-          // cover (e.g. an OM's own 2021-2023 P&L). Actual statements always
-          // win on a shared year — the OM only backfills missing history.
-          for (const doc of omDocs) {
-            try {
-              const ext = await api.documents.extraction(String(dealId), doc.id);
-              const embedded = extractEmbeddedYears(ext.fields ?? []);
-              for (const [yr, vals] of Object.entries(embedded)) {
-                if (!byYear.has(yr) && Object.keys(vals).length >= 6) {
-                  byYear.set(yr, omYearToHistYear(vals, yr));
-                }
-              }
-            } catch {
-              /* skip — OM may lack an embedded P&L */
-            }
-          }
-          if (byYear.size > 0 && !cancelled) {
-            const t12 = byYear.get('T-12') ?? null;
-            const annualYears = [...byYear.keys()].filter((y) => /^\d{4}$/.test(y)).sort();
-            const skelAnnual = emptyFiveYearSkeleton().years.slice(0, -1);
-            const realByYear = new Map(annualYears.map((y) => [y, byYear.get(y)!]));
-            const labels = new Set<string>(annualYears);
-            if (annualYears.length < skelAnnual.length) for (const s of skelAnnual) labels.add(s.year);
-            const orderedAnnual = [...labels].sort();
-            const annualCols: HistYear[] = orderedAnnual.map((label) => {
-              const real = realByYear.get(label);
-              if (real) return real;
-              return skelAnnual.find((y) => y.year === label) ?? blankYear(label);
-            });
-            setData({ keys: keysHint, years: [...annualCols, t12 ?? blankYear('T-12')] });
+          const years = buildHistoricalYears(docs, extractions, keysHint);
+          if (years.length > 0 && !cancelled) {
+            setData({ keys: keysHint, years });
             return;
           }
         }

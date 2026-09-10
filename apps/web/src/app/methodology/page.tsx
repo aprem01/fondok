@@ -211,6 +211,10 @@ export default function MethodologyPage() {
               <span className="font-semibold text-ink-900">Cross-checked across statements.</span>{' '}
               When more than one full-year statement is uploaded, Fondok doesn&apos;t just trust the top-ranked one — it cross-checks each revenue and expense line across all of them and grounds Year-1 on the corroborated (median) value. So if a single statement mis-reads one line — say F&amp;B revenue comes through an order of magnitude low — the other full-year statements outvote it and the model isn&apos;t skewed by one bad extraction. A line reported by only one statement is used as-is.
             </li>
+            <li>
+              <span className="font-semibold text-ink-900">One review state, Data Room ↔ Financials.</span>{' '}
+              An extracted historical value is &quot;to review&quot; when its extraction confidence is below 85% and it hasn&apos;t been accepted or corrected — and only if it has a cell in Financials → Historicals (a value with nowhere to land is never counted). The Data Room&apos;s per-statement &quot;N to review&quot; badge is exactly the number of red cells in that statement&apos;s column; the global count is their sum. Every red cell is pinned to its own column&apos;s statement, so its SOURCE panel names — and its Accept / Edit acts on — that document, never another year&apos;s. Clicking a badge opens Historicals with that statement&apos;s column pinned and the first flagged cell in view; accepting or correcting a value clears the cell and both counts at once. Two statements that resolve to the same period keep separate columns (&quot;2023&quot;, &quot;2023 (2)&quot;) and the coverage strip says so.
+            </li>
           </ul>
         </Card>
 

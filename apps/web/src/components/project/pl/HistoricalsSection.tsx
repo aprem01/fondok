@@ -66,10 +66,22 @@ export interface HistYear {
   noi: number | null;
   /** ``true`` when all numeric series are present; ``false`` for placeholder/empty columns. */
   populated: boolean;
+  /** FON-41 Part B — the fixed-charge parts behind ``fixed_expenses``, kept
+   *  individually so the worksheet's Management Fee / Property Taxes /
+   *  Insurance cells can render (and flag) the extracted line. Optional:
+   *  absent on OM-embedded years and older payloads. */
+  mgmt_fee?: number | null;
+  property_tax?: number | null;
+  insurance?: number | null;
+  /** The statement this column was built from (absent for OM-embedded years).
+   *  Lets a Data Room deep-link (?doc=<id>) pin the column without scanning
+   *  meta. */
+  docId?: string;
   /** Design rewire: per-line source metadata for review flagging — worksheet
    *  line id → { extraction confidence 0..1, matched field name, source doc
-   *  id }. Populated for the reviewable lines so historical cells can flag
-   *  low-confidence values and open the SOURCE panel at the right document. */
+   *  id }. Recorded for EVERY line ``buildHistYear`` resolves (FON-41 Part B)
+   *  so any low-confidence historical cell can flag and open the SOURCE panel
+   *  at its own document. */
   meta?: Record<string, HistLineMeta>;
 }
 
@@ -344,6 +356,34 @@ export function deriveYearLabel(
 }
 
 /**
+ * FON-41 — column-label collisions. Two statements can resolve to the same
+ * label (two "2023" P&Ls, or a T-12 plus a re-upload of it). They used to
+ * overwrite each other in the year map, so one document's "N to review" had
+ * no column to land on. Each column now keeps a unique label: the first keeps
+ * the bare label, later ones get an ordinal — "2023", "2023 (2)", "T-12 (2)".
+ * ``baseYearLabel`` recovers the underlying period for sorting / coverage.
+ */
+const LABEL_ORDINAL = /^(.*?)\s\((\d+)\)$/;
+
+export function baseYearLabel(label: string): string {
+  const m = LABEL_ORDINAL.exec(label);
+  return m ? m[1] : label;
+}
+
+export function labelOrdinal(label: string): number {
+  const m = LABEL_ORDINAL.exec(label);
+  return m ? Number(m[2]) : 1;
+}
+
+export function uniqueYearLabel(label: string, taken: ReadonlySet<string>): string {
+  if (!taken.has(label)) return label;
+  for (let n = 2; ; n++) {
+    const candidate = `${label} (${n})`;
+    if (!taken.has(candidate)) return candidate;
+  }
+}
+
+/**
  * Build one historical-year column from a P&L / T-12 extraction.
  * ``yearLabel`` comes from ``deriveYearLabel``; ``days`` is 365 for a
  * T-12 and a real day count for an annual column.
@@ -386,27 +426,27 @@ export function buildHistYear(
   // bugfix in <1 hr (Wave 1, 2026-06-30 Sam QA). The right long-term
   // fix is a worker ``GET /deals/{id}/historicals/normalized`` endpoint
   // that runs the backend resolver server-side.
-  const occ = num(findField(fields, [
+  const occ = pick('occ', [
     'occupancy', 'occupancy_pct', 'occ', 't12_occupancy',
     'p_and_l_usali.occupancy', 'p_and_l_usali.occupancy_pct',
     'p_and_l_usali.operational_kpis.occupancy',
     'p_and_l_usali.operational_kpis.occupancy_pct',
     'ttm_summary_per_om.occupancy_pct', 'ttm_summary_per_om.occupancy',
-  ]));
-  const adr = num(findField(fields, [
+  ]);
+  const adr = pick('adr', [
     'adr', 'adr_usd', 'average_daily_rate', 't12_adr',
     'p_and_l_usali.adr', 'p_and_l_usali.adr_usd',
     'p_and_l_usali.operational_kpis.adr',
     'p_and_l_usali.operational_kpis.adr_usd',
     'ttm_summary_per_om.adr_usd', 'ttm_summary_per_om.adr',
-  ]));
-  const revpar = num(findField(fields, [
+  ]);
+  const revpar = pick('revpar', [
     'revpar', 'revpar_usd', 't12_revpar',
     'p_and_l_usali.revpar', 'p_and_l_usali.revpar_usd',
     'p_and_l_usali.operational_kpis.revpar',
     'p_and_l_usali.operational_kpis.revpar_usd',
     'ttm_summary_per_om.revpar_usd', 'ttm_summary_per_om.revpar',
-  ]));
+  ]);
   const rooms = pick('rooms', [
     'rooms_revenue', 'room_revenue', 'total_rooms_revenue',
     't12_rooms_revenue', 'rooms_revenue_usd',
@@ -477,7 +517,7 @@ export function buildHistYear(
   ]);
 
   // ─── Expenses / profitability (Task C 2026-06-29; aliases expanded 2026-06-30) ───
-  const roomsDept = num(findField(fields, [
+  const roomsDept = pick('rooms_dept', [
     'rooms_dept_expense', 'rooms_departmental_expense',
     'p_and_l_usali.departmental_expenses.rooms',
     // T-12 prod (two flavors observed on the SAME workbook).
@@ -486,8 +526,8 @@ export function buildHistYear(
     // Annual P&L prod
     'p_and_l_usali.departmental_expense.rooms_usd',
     'p_and_l_usali.departmental_expense.rooms',
-  ]));
-  const fbDept = num(findField(fields, [
+  ]);
+  const fbDept = pick('fb_dept', [
     'fb_dept_expense', 'food_beverage_dept_expense', 'fnb_dept_expense',
     'p_and_l_usali.departmental_expenses.food_beverage',
     // Abbreviated per-dept bucket (mirrors rooms.expense_usd).
@@ -500,8 +540,8 @@ export function buildHistYear(
     'p_and_l_usali.departmental_expense.fb_usd',
     'p_and_l_usali.departmental_expense.fb',
     'p_and_l_usali.departmental_expense.food_beverage_usd',
-  ]));
-  const otherDept = num(findField(fields, [
+  ]);
+  const otherDept = pick('other_dept', [
     'other_dept_expense', 'other_operated_dept_expense',
     'p_and_l_usali.departmental_expenses.other_operated',
     // T-12 prod
@@ -510,8 +550,8 @@ export function buildHistYear(
     // Annual P&L prod
     'p_and_l_usali.departmental_expense.other_operated_departments_usd',
     'p_and_l_usali.departmental_expense.other_operated_usd',
-  ]));
-  const undistributed = num(findField(fields, [
+  ]);
+  const undistributed = pick('undistributed', [
     'undistributed_expenses', 'undistributed',
     'total_undistributed_expenses_usd',
     'p_and_l_usali.undistributed_expenses',
@@ -520,8 +560,8 @@ export function buildHistYear(
     'p_and_l_usali.total_undistributed_expenses_usd',
     // Annual P&L prod
     'p_and_l_usali.undistributed_expenses.total_usd',
-  ]));
-  const gop = num(findField(fields, [
+  ]);
+  const gop = pick('gop', [
     'gop', 'gop_usd', 'gross_operating_profit',
     'p_and_l_usali.gop', 'p_and_l_usali.gross_operating_profit',
     'p_and_l_usali.gross_operating_profit.gop_usd',
@@ -533,8 +573,8 @@ export function buildHistYear(
     'p_and_l_usali.gop.total_usd',
     'p_and_l_usali.gross_operating_profit.total_usd',
     'p_and_l_usali.gross_operating_profit.total',
-  ]));
-  const propTax = num(findField(fields, [
+  ]);
+  const propTax = pick('property_tax', [
     'property_tax', 'property_taxes', 'property_tax_usd',
     'p_and_l_usali.property_tax', 'p_and_l_usali.property_taxes',
     'p_and_l_usali.fixed_charges.property_taxes',
@@ -542,16 +582,16 @@ export function buildHistYear(
     'p_and_l_usali.non_operating.property_and_other_taxes_usd',
     'p_and_l_usali.non_operating.property_other_taxes_usd',
     'p_and_l_usali.non_operating.property_taxes',
-  ]));
-  const insurance = num(findField(fields, [
+  ]);
+  const insurance = pick('insurance', [
     'insurance_expense', 'insurance', 'insurance_usd',
     'p_and_l_usali.insurance',
     'p_and_l_usali.fixed_charges.insurance',
     // Real prod
     'p_and_l_usali.non_operating.insurance_usd',
     'p_and_l_usali.non_operating.insurance',
-  ]));
-  const mgmtFee = num(findField(fields, [
+  ]);
+  const mgmtFee = pick('mgmt_fee', [
     'mgmt_fee', 'management_fee', 'mgmt_fee_usd',
     'p_and_l_usali.mgmt_fee',
     'p_and_l_usali.fees_and_reserves.mgmt_fee',
@@ -561,12 +601,12 @@ export function buildHistYear(
     // Annual P&L prod
     'p_and_l_usali.management_fees.total_usd',
     'p_and_l_usali.management_fees.total',
-  ]));
+  ]);
   const fixedParts = [propTax, insurance, mgmtFee].filter(
     (v): v is number => v != null,
   );
   const fixedExpenses = fixedParts.length ? fixedParts.reduce((a, b) => a + b, 0) : null;
-  const noi = num(findField(fields, [
+  const noi = pick('noi', [
     'noi', 'noi_usd', 'net_operating_income',
     'p_and_l_usali.noi', 'p_and_l_usali.net_operating_income',
     'p_and_l_usali.net_operating_income.noi_usd',
@@ -578,7 +618,7 @@ export function buildHistYear(
     // never publishes a NOI line directly.
     'p_and_l_usali.ebitda_less_replacement_reserve_usd',
     'p_and_l_usali.ebitda_less_replacement_reserve.total_usd',
-  ]));
+  ]);
 
   // Need at least one of {rooms, occupancy, adr} to render anything.
   if (rooms == null && occ == null && adr == null) return null;
@@ -611,8 +651,12 @@ export function buildHistYear(
     undistributed,
     gop,
     fixed_expenses: fixedExpenses,
+    mgmt_fee: mgmtFee,
+    property_tax: propTax,
+    insurance,
     noi,
     populated: true,
+    docId,
     meta,
   };
 }
