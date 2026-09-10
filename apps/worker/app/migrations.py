@@ -1116,6 +1116,34 @@ MIGRATIONS: list[tuple[str, str]] = [
         "documents.add_report_as_of_precision",
         "ALTER TABLE documents ADD COLUMN IF NOT EXISTS "
         "report_as_of_precision TEXT",
+    # ────────── Phase 2.3 — the evidence chain, per run ──────────────
+    # One row per (deal, run): the whole KPI → engine → assumption →
+    # field → doc → page graph as ``fondok_schemas.lineage.LineageRecord``
+    # JSON. Written by ``services.lineage.persist_for_run`` at the end of a
+    # full engine chain and served by ``GET /deals/{id}/lineage``; the
+    # endpoint rebuilds on the fly when no row exists, so this table is a
+    # cache of a derivable fact and never the source of truth.
+    (
+        "lineage_records.create_table",
+        """
+        CREATE TABLE IF NOT EXISTS lineage_records (
+            id                UUID PRIMARY KEY,
+            deal_id           UUID NOT NULL,
+            tenant_id         UUID NOT NULL,
+            run_id            UUID,
+            registry_version  INTEGER NOT NULL DEFAULT 0,
+            record            JSONB NOT NULL,
+            stale             BOOLEAN NOT NULL DEFAULT FALSE,
+            created_at        TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        )
+        """,
+    ),
+    (
+        "lineage_records.idx_deal_run",
+        """
+        CREATE INDEX IF NOT EXISTS idx_lineage_records_deal_run
+        ON lineage_records (deal_id, run_id)
+        """,
     ),
 ]
 
@@ -1884,6 +1912,30 @@ SQLITE_MIGRATIONS: list[tuple[str, str]] = [
     (
         "documents.add_report_as_of_precision",
         "ALTER TABLE documents ADD COLUMN report_as_of_precision TEXT",
+    # ────────── Phase 2.3 — the evidence chain, per run ──────────────
+    # SQLite mirror of the Postgres entry (see there for semantics):
+    # UUID → TEXT, JSONB → TEXT, BOOLEAN → INTEGER, TIMESTAMPTZ → TEXT.
+    (
+        "lineage_records.create_table",
+        """
+        CREATE TABLE IF NOT EXISTS lineage_records (
+            id                TEXT PRIMARY KEY,
+            deal_id           TEXT NOT NULL,
+            tenant_id         TEXT NOT NULL,
+            run_id            TEXT,
+            registry_version  INTEGER NOT NULL DEFAULT 0,
+            record            TEXT NOT NULL,
+            stale             INTEGER NOT NULL DEFAULT 0,
+            created_at        TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+        )
+        """,
+    ),
+    (
+        "lineage_records.idx_deal_run",
+        """
+        CREATE INDEX IF NOT EXISTS idx_lineage_records_deal_run
+        ON lineage_records (deal_id, run_id)
+        """,
     ),
 ]
 

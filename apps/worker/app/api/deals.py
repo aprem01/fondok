@@ -30,7 +30,7 @@ from ..config import get_settings
 from ..costs import build_cost_report
 from ..database import get_session
 from ..memo_edits import list_edits, record_edit
-from fondok_schemas import ValueTrace
+from fondok_schemas import LineageRecord, ValueTrace
 
 try:
     from fondok_schemas import DealCostReport
@@ -311,6 +311,22 @@ class AssumptionSourcesResponse(BaseModel):
     # are omitted. The web UI uses these for "click NOI → jump to the
     # T-12 row" deep links.
     source_documents: dict[str, str] = Field(default_factory=dict)
+    # Phase 2.3 — the per-field sidecar, when the engine-input loader
+    # supplies it (``__source_fields__``): for each canonical key, the
+    # exact extraction row behind it — ``{document_id, extraction_result_id,
+    # field_name, source_page, concept, scope, basis, doc_type, as_of}``,
+    # plus the display aliases the badge popover reads (``field`` =
+    # ``field_name``, ``page`` = ``source_page``, ``filename`` looked up from
+    # ``documents``). Both spellings travel so neither side translates.
+    # Feature-detected, so it is ``{}`` on a worker whose loader does not
+    # emit the sidecar yet; ``source_documents`` above stays the coarse
+    # fallback either way. See ``GET /deals/{id}/lineage`` for the walk
+    # that consumes it.
+    source_fields: dict[str, dict[str, Any]] = Field(default_factory=dict)
+    # Phase 2.3 — per-assumption ``ReasonCode`` (``__reasons__``) when the
+    # loader supplies it: why a key has no grounded value. Also
+    # feature-detected, also ``{}`` until then.
+    reasons: dict[str, str] = Field(default_factory=dict)
 
 
 class DealProvenanceResponse(BaseModel):
@@ -1333,6 +1349,49 @@ async def get_deal_status(
     )
 
 
+async def _enrich_source_fields(
+    session: AsyncSession,
+    *,
+    deal_id: UUID,
+    tenant_id: UUID,
+    source_fields: dict[str, Any],
+) -> dict[str, dict[str, Any]]:
+    """Add the display aliases the web app reads to each ``__source_fields__``
+    entry, without dropping any key the engine runner emitted.
+
+    The runner speaks storage names (``field_name`` / ``source_page``); the
+    badge popover wants ``field`` / ``page`` / ``filename``. Both travel, so
+    neither side has to translate and neither can silently drift.
+    """
+    filenames: dict[str, str] = {}
+    try:
+        rows = await session.execute(
+            text(
+                # tenant-scope predicate required by tenant_middleware
+                "SELECT id, filename FROM documents "
+                "WHERE deal_id = :deal AND tenant_id = :tenant"
+            ),
+            {"deal": str(deal_id), "tenant": str(tenant_id)},
+        )
+        filenames = {str(r._mapping["id"]): r._mapping["filename"] for r in rows.fetchall()}
+    except Exception:
+        filenames = {}
+
+    enriched: dict[str, dict[str, Any]] = {}
+    for key, entry in source_fields.items():
+        if not isinstance(entry, dict):
+            continue
+        merged = dict(entry)
+        document_id = entry.get("document_id")
+        merged.setdefault("field", entry.get("field_name"))
+        merged.setdefault("page", entry.get("source_page"))
+        filename = filenames.get(str(document_id)) if document_id else None
+        if filename is not None:
+            merged.setdefault("filename", filename)
+        enriched[key] = merged
+    return enriched
+
+
 @router.get("/{deal_id}/assumption_sources", response_model=AssumptionSourcesResponse)
 async def get_assumption_sources(
     deal_id: UUID,
@@ -1375,6 +1434,29 @@ async def get_assumption_sources(
         session, str(deal_id), tenant_id=str(tenant_id)
     )
     sources = base.pop("__sources__", {})
+    # Phase 2.3 — feature-detected sidecars. Absent on a worker whose loader
+    # does not emit them yet, in which case both stay empty and every
+    # existing field of this response is byte-identical to before.
+    raw_source_fields = base.pop("__source_fields__", None)
+    source_fields: dict[str, dict[str, Any]] = (
+        {k: v for k, v in raw_source_fields.items() if isinstance(v, dict)}
+        if isinstance(raw_source_fields, dict)
+        else {}
+    )
+    if source_fields:
+        source_fields = await _enrich_source_fields(
+            session, deal_id=deal_id, tenant_id=tenant_id, source_fields=source_fields
+        )
+    raw_reasons = base.pop("__reasons__", None)
+    assumption_reasons: dict[str, str] = (
+        {
+            k: (v.value if hasattr(v, "value") else str(v))
+            for k, v in raw_reasons.items()
+            if v is not None
+        }
+        if isinstance(raw_reasons, dict)
+        else {}
+    )
     # Strip the t12_*_actuals dicts and other non-scalar fields from
     # `values` — they're internal plumbing, not assumptions the UI
     # would badge directly.
@@ -1406,6 +1488,8 @@ async def get_assumption_sources(
         sources=sources_filtered,
         values=values,
         source_documents=source_documents,
+        source_fields=source_fields,
+        reasons=assumption_reasons,
     )
 
 
@@ -1456,6 +1540,64 @@ async def get_deal_provenance(
             engines[name] = prov
 
     return DealProvenanceResponse(deal_id=deal_id, engines=engines)
+
+
+@router.get("/{deal_id}/lineage", response_model=LineageRecord)
+async def get_deal_lineage(
+    deal_id: UUID,
+    session: Annotated[AsyncSession, Depends(get_session)],
+    tenant_id: Annotated[UUID, Depends(get_tenant_id)],
+) -> LineageRecord:
+    """Phase 2.3 — the deal's evidence chain, KPI down to a document page.
+
+    Where ``/provenance`` exposes each engine's per-value traces and
+    ``/assumption_sources`` badges the input assumptions, this joins them (plus
+    the extraction rows, the documents and their pages, the analyst's
+    overrides and the IC memo's citations) into ONE walkable graph:
+
+        kpi:returns.levered_irr → engine:… → assumption:starting_occupancy
+            → field:<extraction_result_id>:<field_name> → doc:<id> → page:<id>:4
+
+    Roots are the deal's headline numbers — levered / unlevered IRR, equity
+    multiple, Year-1 cash-on-cash, minimum DSCR, Year-1 NOI (and max price when
+    a run persisted one). The record is pinned to the SAME canonical run every
+    deal-wide tab reads, so the graph always describes the numbers on screen.
+
+    Anything the walk cannot take all the way to a page is reported in
+    ``unresolved`` with a ``ReasonCode`` — an empty list means every root
+    reached a document page, never that we stopped looking. ``stale`` is true
+    when a document was uploaded (or the deal edited) after the run started.
+
+    Served from ``lineage_records`` when the run persisted one, and built on
+    the fly otherwise — the response is identical either way.
+    """
+    # Verify deal exists + tenant authorization (same pattern as
+    # get_deal_provenance — a cross-tenant id must 404, not leak).
+    row = (
+        await session.execute(
+            text("SELECT id FROM deals WHERE id = :id AND tenant_id = :tenant"),
+            {"id": str(deal_id), "tenant": str(tenant_id)},
+        )
+    ).first()
+    if row is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"deal {deal_id} not found",
+        )
+
+    from ..services.engine_runner import get_canonical_run_id
+    from ..services.lineage import build_lineage, load_persisted
+
+    run_id = await get_canonical_run_id(
+        session, deal_id=str(deal_id), tenant_id=str(tenant_id)
+    )
+    if run_id is not None:
+        stored = await load_persisted(
+            session, deal_id=deal_id, tenant_id=tenant_id, run_id=run_id
+        )
+        if stored is not None:
+            return stored
+    return await build_lineage(session, deal_id, tenant_id, run_id=run_id)
 
 
 @router.post("/{deal_id}/gate1", response_model=GateResponse)

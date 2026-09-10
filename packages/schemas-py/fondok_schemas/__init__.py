@@ -65,6 +65,13 @@ from .financial import (
     UtilitiesDetail,
 )
 from .gates import Gate1Decision, Gate2Decision, GateDecision
+from .lineage import (
+    EdgeRel,
+    LineageEdge,
+    LineageNode,
+    LineageRecord,
+    NodeKind,
+)
 from .market import (
     BuyerType,
     CompSet,
@@ -217,6 +224,12 @@ __all__ = [
     "Gate1Decision",
     "Gate2Decision",
     "GateDecision",
+    # lineage (Phase 2.3 — KPI → engine → assumption → field → doc → page)
+    "EdgeRel",
+    "LineageEdge",
+    "LineageNode",
+    "LineageRecord",
+    "NodeKind",
     # market
     "BuyerType",
     "CompSet",
