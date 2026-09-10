@@ -162,6 +162,7 @@ ENFORCED: tuple[str, ...] = (
     "apps/worker/app/services/usali_scorer.py",
     "apps/worker/app/agents/variance.py",
     "apps/worker/app/api/analysis.py",
+    "apps/web/src/components/project/pl/HistoricalsSection.tsx",
 )
 
 #: Still owned by another adapter builder. ``xfail(strict=True)``: when the
@@ -177,10 +178,6 @@ PENDING: dict[str, str] = {
         "5486, 5515 -- which are not ontology aliases and have no adapter "
         "planned. This entry stays xfail until those are registry-driven or "
         "explicitly allowlisted; it is NOT a signal that 1.3c is outstanding."
-    ),
-    "apps/web/src/components/project/pl/HistoricalsSection.tsx": (
-        "web historicals adapter not landed yet (buildHistYear still spells "
-        "extractor paths). When it does: move this path into ENFORCED."
     ),
     "apps/worker/app/extraction/field_catalog.yaml": (
         "Phase-1.3a scope gate — this file is the only remaining reason "
