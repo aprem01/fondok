@@ -1,0 +1,1318 @@
+{
+  "_note": "Phase 1.3c \u2014 the exact broker / actuals `_load_critic_inputs` produced BEFORE the registry adapter landed. Regenerating this file is a Sam-facing change: every difference must be recorded in app/ontology/DRIFT_NOTES.md under 'Phase 1.3c parity exceptions'.",
+  "generated": "2026-09-10",
+  "scenarios": [
+    {
+      "name": "real_payload_t12_only",
+      "why": "tests/fixtures/real_payloads/anglers_t12_real.json as the only document",
+      "docs": [
+        {
+          "filename": "anglers_t12_real",
+          "doc_type": "T12",
+          "hours": 0,
+          "fields_file": "real_payloads/anglers_t12_real.json"
+        }
+      ],
+      "expected": {
+        "broker": null,
+        "actuals": {
+          "period_label": "T-12 Actual",
+          "rooms_revenue": 9322920.0,
+          "fb_revenue": 0.0,
+          "resort_fees": 0.0,
+          "other_revenue": 0.0,
+          "total_revenue": 14009800.0,
+          "dept_expenses": {
+            "rooms": 0.0,
+            "food_beverage": 0.0,
+            "other_operated": 0.0,
+            "total": 0.0,
+            "fb_detail": null
+          },
+          "undistributed": {
+            "administrative_general": 0.0,
+            "information_telecom": 0.0,
+            "sales_marketing": 0.0,
+            "property_operations": 0.0,
+            "utilities": 0.0,
+            "service_charge_distribution": 0.0,
+            "total": 0.0,
+            "utilities_detail": null
+          },
+          "mgmt_fee": 0.0,
+          "ffe_reserve": 0.0,
+          "fixed_charges": {
+            "property_taxes": 0.0,
+            "insurance": 0.0,
+            "rent": 0.0,
+            "other_fixed": 0.0,
+            "total": 0.0
+          },
+          "gop": 5081540.0,
+          "noi": 0.0,
+          "opex_ratio": 1.0,
+          "occupancy": 0.828892,
+          "adr": 233.446,
+          "revpar": 193.502,
+          "labor_by_dept": {}
+        }
+      }
+    },
+    {
+      "name": "real_payload_annual_pnl_only",
+      "why": "tests/fixtures/real_payloads/anglers_annual_pnl_real.json as the only document",
+      "docs": [
+        {
+          "filename": "anglers_annual_pnl_real",
+          "doc_type": "PNL",
+          "hours": 0,
+          "fields_file": "real_payloads/anglers_annual_pnl_real.json"
+        }
+      ],
+      "expected": {
+        "broker": null,
+        "actuals": {
+          "period_label": "T-12 Actual",
+          "rooms_revenue": 0.0,
+          "fb_revenue": 0.0,
+          "resort_fees": 0.0,
+          "other_revenue": 0.0,
+          "total_revenue": 12940200.0,
+          "dept_expenses": {
+            "rooms": 0.0,
+            "food_beverage": 0.0,
+            "other_operated": 0.0,
+            "total": 0.0,
+            "fb_detail": null
+          },
+          "undistributed": {
+            "administrative_general": 0.0,
+            "information_telecom": 0.0,
+            "sales_marketing": 0.0,
+            "property_operations": 0.0,
+            "utilities": 0.0,
+            "service_charge_distribution": 0.0,
+            "total": 0.0,
+            "utilities_detail": null
+          },
+          "mgmt_fee": 0.0,
+          "ffe_reserve": 0.0,
+          "fixed_charges": {
+            "property_taxes": 0.0,
+            "insurance": 0.0,
+            "rent": 0.0,
+            "other_fixed": 0.0,
+            "total": 0.0
+          },
+          "gop": 0.0,
+          "noi": 0.0,
+          "opex_ratio": 1.0,
+          "occupancy": 0.82391,
+          "adr": 247.078,
+          "revpar": 203.57,
+          "labor_by_dept": {}
+        }
+      }
+    },
+    {
+      "name": "real_payload_t12_and_annual_pnl",
+      "why": "both real payloads on one deal \u2014 the T-12-outranks-P&L rule",
+      "docs": [
+        {
+          "filename": "anglers_annual_pnl_real",
+          "doc_type": "PNL",
+          "hours": 1,
+          "fields_file": "real_payloads/anglers_annual_pnl_real.json"
+        },
+        {
+          "filename": "anglers_t12_real",
+          "doc_type": "T12",
+          "hours": 0,
+          "fields_file": "real_payloads/anglers_t12_real.json"
+        }
+      ],
+      "expected": {
+        "broker": null,
+        "actuals": {
+          "period_label": "T-12 Actual",
+          "rooms_revenue": 9322920.0,
+          "fb_revenue": 0.0,
+          "resort_fees": 0.0,
+          "other_revenue": 0.0,
+          "total_revenue": 14009800.0,
+          "dept_expenses": {
+            "rooms": 0.0,
+            "food_beverage": 0.0,
+            "other_operated": 0.0,
+            "total": 0.0,
+            "fb_detail": null
+          },
+          "undistributed": {
+            "administrative_general": 0.0,
+            "information_telecom": 0.0,
+            "sales_marketing": 0.0,
+            "property_operations": 0.0,
+            "utilities": 0.0,
+            "service_charge_distribution": 0.0,
+            "total": 0.0,
+            "utilities_detail": null
+          },
+          "mgmt_fee": 0.0,
+          "ffe_reserve": 0.0,
+          "fixed_charges": {
+            "property_taxes": 0.0,
+            "insurance": 0.0,
+            "rent": 0.0,
+            "other_fixed": 0.0,
+            "total": 0.0
+          },
+          "gop": 5081540.0,
+          "noi": 0.0,
+          "opex_ratio": 1.0,
+          "occupancy": 0.828892,
+          "adr": 233.446,
+          "revpar": 193.502,
+          "labor_by_dept": {}
+        }
+      }
+    },
+    {
+      "name": "fon54a_inputs",
+      "why": "tests/test_variance_inputs_fon54a.py::_seed_sams_deal (Sam-facing)",
+      "docs": [
+        {
+          "filename": "Copy of Miami Beach Anglers Offering Memorandum.pdf",
+          "doc_type": "OM",
+          "hours": 0,
+          "fields": [
+            {
+              "field_name": "ttm_summary_per_om.rooms_revenue_usd",
+              "value": 9541537,
+              "source_page": 14,
+              "confidence": 0.8
+            },
+            {
+              "field_name": "ttm_summary_per_om.gop_usd",
+              "value": 5088268,
+              "source_page": 14,
+              "confidence": 0.8
+            },
+            {
+              "field_name": "ttm_summary_per_om.noi_usd",
+              "value": 3356709,
+              "source_page": 14,
+              "confidence": 0.8
+            },
+            {
+              "field_name": "ttm_summary_per_om.occupancy_pct",
+              "value": 83,
+              "source_page": 12,
+              "confidence": 0.8
+            },
+            {
+              "field_name": "ttm_performance.subject.adr_usd",
+              "value": 385,
+              "source_page": 12,
+              "confidence": 0.8
+            },
+            {
+              "field_name": "ttm_performance.subject.revpar_usd",
+              "value": 319,
+              "source_page": 12,
+              "confidence": 0.8
+            },
+            {
+              "field_name": "ttm_performance.segment.luxury_upper_upscale.occupancy_pct",
+              "value": 74.1,
+              "source_page": 20,
+              "confidence": 0.8
+            },
+            {
+              "field_name": "ttm_performance.segment.luxury_upper_upscale.adr_usd",
+              "value": 452.1,
+              "source_page": 20,
+              "confidence": 0.8
+            },
+            {
+              "field_name": "ttm_performance.segment.luxury_upper_upscale.revpar_usd",
+              "value": 335.0,
+              "source_page": 20,
+              "confidence": 0.8
+            },
+            {
+              "field_name": "p_and_l_usali.2021.gop_usd",
+              "value": 4851106,
+              "source_page": 16,
+              "confidence": 0.8
+            },
+            {
+              "field_name": "p_and_l_usali.2021.rooms_revenue_usd",
+              "value": 8100000,
+              "source_page": 16,
+              "confidence": 0.8
+            },
+            {
+              "field_name": "p_and_l_usali.2022.rooms_revenue_usd",
+              "value": 9000000,
+              "source_page": 16,
+              "confidence": 0.8
+            },
+            {
+              "field_name": "p_and_l_usali.2023.rooms_revenue_usd",
+              "value": 9400000,
+              "source_page": 16,
+              "confidence": 0.8
+            }
+          ]
+        },
+        {
+          "filename": "Copy of The Angler_s - March 2025 Financials.xlsx",
+          "doc_type": "T12",
+          "hours": 1,
+          "fields": [
+            {
+              "field_name": "p_and_l_usali.monthly.apr_2024.rooms_revenue",
+              "value": 954187,
+              "source_page": 2,
+              "confidence": 0.8
+            },
+            {
+              "field_name": "p_and_l_usali.monthly.apr_2024.gop",
+              "value": 514931,
+              "source_page": 2,
+              "confidence": 0.8
+            },
+            {
+              "field_name": "p_and_l_usali.monthly.apr_2024.occupancy",
+              "value": 1,
+              "source_page": 2,
+              "confidence": 0.8
+            },
+            {
+              "field_name": "p_and_l_usali.monthly.apr_2024.adr",
+              "value": 300,
+              "source_page": 2,
+              "confidence": 0.8
+            },
+            {
+              "field_name": "occupancy_pct",
+              "value": 71.6,
+              "source_page": 1,
+              "confidence": 0.8
+            },
+            {
+              "field_name": "adr_usd",
+              "value": 372.4,
+              "source_page": 1,
+              "confidence": 0.8
+            },
+            {
+              "field_name": "revpar_usd",
+              "value": 266.6,
+              "source_page": 1,
+              "confidence": 0.8
+            },
+            {
+              "field_name": "p_and_l_usali.operating_revenue.rooms_revenue",
+              "value": 9332100,
+              "source_page": 2,
+              "confidence": 0.8
+            },
+            {
+              "field_name": "p_and_l_usali.operating_revenue.food_beverage_revenue",
+              "value": 3216620,
+              "source_page": 2,
+              "confidence": 0.8
+            },
+            {
+              "field_name": "p_and_l_usali.operating_revenue.total_revenue",
+              "value": 13796340,
+              "source_page": 2,
+              "confidence": 0.8
+            },
+            {
+              "field_name": "p_and_l_usali.gross_operating_profit",
+              "value": 4970460,
+              "source_page": 2,
+              "confidence": 0.8
+            },
+            {
+              "field_name": "p_and_l_usali.net_operating_income.noi_usd",
+              "value": 1794100,
+              "source_page": 2,
+              "confidence": 0.8
+            },
+            {
+              "field_name": "p_and_l_usali.net_operating_income.ebitda",
+              "value": 2346710,
+              "source_page": 2,
+              "confidence": 0.8
+            }
+          ]
+        },
+        {
+          "filename": "Copy of Angler_s 2024 Full Year Detailed P&L.xlsm",
+          "doc_type": "PNL",
+          "hours": 3,
+          "fields": [
+            {
+              "field_name": "p_and_l_usali.monthly.jan.rooms_revenue",
+              "value": 954187,
+              "source_page": 1,
+              "confidence": 0.8
+            },
+            {
+              "field_name": "p_and_l_usali.monthly.jan.gop",
+              "value": 514931,
+              "source_page": 1,
+              "confidence": 0.8
+            },
+            {
+              "field_name": "occupancy_pct",
+              "value": 70.2,
+              "source_page": 1,
+              "confidence": 0.8
+            },
+            {
+              "field_name": "ttm_summary_per_om.occupancy_pct",
+              "value": 70.2,
+              "source_page": 1,
+              "confidence": 0.8
+            },
+            {
+              "field_name": "p_and_l_usali.operating_revenue.rooms_revenue",
+              "value": 9100000,
+              "source_page": 1,
+              "confidence": 0.8
+            },
+            {
+              "field_name": "p_and_l_usali.gross_operating_profit",
+              "value": 4800000,
+              "source_page": 1,
+              "confidence": 0.8
+            }
+          ]
+        },
+        {
+          "filename": "Copy of Angler_s 2023 P&L.xlsx",
+          "doc_type": "PNL",
+          "hours": 2,
+          "fields": [
+            {
+              "field_name": "ttm_summary_per_om.occupancy_pct",
+              "value": 72.0,
+              "source_page": 1,
+              "confidence": 0.8
+            },
+            {
+              "field_name": "p_and_l_usali.gop_usd",
+              "value": 4736470,
+              "source_page": 1,
+              "confidence": 0.8
+            },
+            {
+              "field_name": "p_and_l_usali.total_revenues_usd",
+              "value": 12940200,
+              "source_page": 1,
+              "confidence": 0.8
+            },
+            {
+              "field_name": "p_and_l_usali.rooms.revenue_usd",
+              "value": 9000000,
+              "source_page": 1,
+              "confidence": 0.8
+            }
+          ]
+        },
+        {
+          "filename": "Copy of Angler_s 2019 P&L.xlsx",
+          "doc_type": "PNL",
+          "hours": 2,
+          "fields": [
+            {
+              "field_name": "ttm_performance.subject.occupancy",
+              "value": 1,
+              "source_page": 1,
+              "confidence": 0.8
+            },
+            {
+              "field_name": "p_and_l_usali.gop",
+              "value": 1912060,
+              "source_page": 1,
+              "confidence": 0.8
+            },
+            {
+              "field_name": "p_and_l_usali.rooms.revenue",
+              "value": 6339940,
+              "source_page": 1,
+              "confidence": 0.8
+            },
+            {
+              "field_name": "p_and_l_usali.total_revenue",
+              "value": 8385990,
+              "source_page": 1,
+              "confidence": 0.8
+            }
+          ]
+        }
+      ],
+      "expected": {
+        "broker": {
+          "period_label": "Broker Proforma Year 1",
+          "rooms_revenue": 9541537.0,
+          "fb_revenue": 0.0,
+          "resort_fees": 0.0,
+          "other_revenue": 0.0,
+          "total_revenue": 9541537.0,
+          "dept_expenses": {
+            "rooms": 0.0,
+            "food_beverage": 0.0,
+            "other_operated": 0.0,
+            "total": 0.0,
+            "fb_detail": null
+          },
+          "undistributed": {
+            "administrative_general": 0.0,
+            "information_telecom": 0.0,
+            "sales_marketing": 0.0,
+            "property_operations": 0.0,
+            "utilities": 0.0,
+            "service_charge_distribution": 0.0,
+            "total": 0.0,
+            "utilities_detail": null
+          },
+          "mgmt_fee": 0.0,
+          "ffe_reserve": 0.0,
+          "fixed_charges": {
+            "property_taxes": 0.0,
+            "insurance": 0.0,
+            "rent": 0.0,
+            "other_fixed": 0.0,
+            "total": 0.0
+          },
+          "gop": 5088268.0,
+          "noi": 3356709.0,
+          "opex_ratio": 0.6482003895179571,
+          "occupancy": 0.83,
+          "adr": 385.0,
+          "revpar": 319.0,
+          "labor_by_dept": {}
+        },
+        "actuals": {
+          "period_label": "T-12 Actual",
+          "rooms_revenue": 9332100.0,
+          "fb_revenue": 3216620.0,
+          "resort_fees": 0.0,
+          "other_revenue": 0.0,
+          "total_revenue": 13796340.0,
+          "dept_expenses": {
+            "rooms": 0.0,
+            "food_beverage": 0.0,
+            "other_operated": 0.0,
+            "total": 0.0,
+            "fb_detail": null
+          },
+          "undistributed": {
+            "administrative_general": 0.0,
+            "information_telecom": 0.0,
+            "sales_marketing": 0.0,
+            "property_operations": 0.0,
+            "utilities": 0.0,
+            "service_charge_distribution": 0.0,
+            "total": 0.0,
+            "utilities_detail": null
+          },
+          "mgmt_fee": 0.0,
+          "ffe_reserve": 0.0,
+          "fixed_charges": {
+            "property_taxes": 0.0,
+            "insurance": 0.0,
+            "rent": 0.0,
+            "other_fixed": 0.0,
+            "total": 0.0
+          },
+          "gop": 4970460.0,
+          "noi": 1794100.0,
+          "opex_ratio": 0.8699582642932836,
+          "occupancy": 0.716,
+          "adr": 372.4,
+          "revpar": 266.6,
+          "labor_by_dept": {}
+        }
+      }
+    },
+    {
+      "name": "fon54a_str_admission",
+      "why": "tests/test_variance_str_admission_fon54a.py::_seed (Sam-facing)",
+      "docs": [
+        {
+          "filename": "Copy of Miami Beach Anglers Offering Memorandum.pdf",
+          "doc_type": "OM",
+          "hours": 0,
+          "fields": [
+            {
+              "field_name": "ttm_summary_per_om.occupancy_pct",
+              "value": 0.831,
+              "source_page": 12,
+              "confidence": 0.8
+            },
+            {
+              "field_name": "broker_proforma.occupancy_pct",
+              "value": 0.8,
+              "source_page": 30,
+              "confidence": 0.8
+            },
+            {
+              "field_name": "ttm_summary_per_om.adr_usd",
+              "value": 237.64,
+              "source_page": 12,
+              "confidence": 0.8
+            },
+            {
+              "field_name": "broker_proforma.adr_usd",
+              "value": 251.89,
+              "source_page": 30,
+              "confidence": 0.8
+            },
+            {
+              "field_name": "ttm_summary_per_om.rooms_revenue_usd",
+              "value": 9541537,
+              "source_page": 14,
+              "confidence": 0.8
+            },
+            {
+              "field_name": "ttm_summary_per_om.noi_usd",
+              "value": 3356709,
+              "source_page": 14,
+              "confidence": 0.8
+            }
+          ]
+        },
+        {
+          "filename": "Copy of The Angler_s - March 2025 Financials.xlsx",
+          "doc_type": "T12",
+          "hours": 1,
+          "fields": [
+            {
+              "field_name": "occupancy_pct",
+              "value": 0.83,
+              "source_page": 1,
+              "confidence": 0.8
+            },
+            {
+              "field_name": "adr_usd",
+              "value": 232.77,
+              "source_page": 1,
+              "confidence": 0.8
+            },
+            {
+              "field_name": "p_and_l_usali.operating_revenue.rooms_revenue",
+              "value": 9332100,
+              "source_page": 2,
+              "confidence": 0.8
+            },
+            {
+              "field_name": "p_and_l_usali.operating_revenue.total_revenue",
+              "value": 13796340,
+              "source_page": 2,
+              "confidence": 0.8
+            },
+            {
+              "field_name": "p_and_l_usali.gross_operating_profit",
+              "value": 4970460,
+              "source_page": 2,
+              "confidence": 0.8
+            },
+            {
+              "field_name": "p_and_l_usali.net_operating_income.noi_usd",
+              "value": 1794100,
+              "source_page": 2,
+              "confidence": 0.8
+            }
+          ]
+        },
+        {
+          "filename": "Miami Beach-Hospitality-Capital Submarket-2025-12-10.pdf",
+          "doc_type": "STR_TREND",
+          "hours": 4,
+          "fields": [
+            {
+              "field_name": "ttm_performance.subject.occupancy_pct",
+              "value": 0.7118,
+              "source_page": 1,
+              "confidence": 0.8
+            },
+            {
+              "field_name": "ttm_performance.subject.adr_usd",
+              "value": 288.0,
+              "source_page": 1,
+              "confidence": 0.8
+            }
+          ]
+        },
+        {
+          "filename": "Miami Beach-Hospitality-Submarket-2025-06-01.pdf",
+          "doc_type": "STR_TREND",
+          "hours": 3,
+          "fields": [
+            {
+              "field_name": "ttm_performance.subject.occupancy_pct",
+              "value": 0.716,
+              "source_page": 1,
+              "confidence": 0.8
+            }
+          ]
+        },
+        {
+          "filename": "Copy of ANG-20250500-USD-E.xlsx",
+          "doc_type": "STR_TREND",
+          "hours": 2,
+          "fields": [
+            {
+              "field_name": "ttm_performance.subject.occupancy_pct",
+              "value": 0.829,
+              "source_page": 1,
+              "confidence": 0.8
+            }
+          ]
+        },
+        {
+          "filename": "Copy of ANG-20231200-USD-E.xlsx",
+          "doc_type": "STR_TREND",
+          "hours": 2,
+          "fields": [
+            {
+              "field_name": "ttm_performance.subject.occupancy_pct",
+              "value": 0.824,
+              "source_page": 1,
+              "confidence": 0.8
+            }
+          ]
+        }
+      ],
+      "expected": {
+        "broker": {
+          "period_label": "Broker Proforma Year 1",
+          "rooms_revenue": 9541537.0,
+          "fb_revenue": 0.0,
+          "resort_fees": 0.0,
+          "other_revenue": 0.0,
+          "total_revenue": 9541537.0,
+          "dept_expenses": {
+            "rooms": 0.0,
+            "food_beverage": 0.0,
+            "other_operated": 0.0,
+            "total": 0.0,
+            "fb_detail": null
+          },
+          "undistributed": {
+            "administrative_general": 0.0,
+            "information_telecom": 0.0,
+            "sales_marketing": 0.0,
+            "property_operations": 0.0,
+            "utilities": 0.0,
+            "service_charge_distribution": 0.0,
+            "total": 0.0,
+            "utilities_detail": null
+          },
+          "mgmt_fee": 0.0,
+          "ffe_reserve": 0.0,
+          "fixed_charges": {
+            "property_taxes": 0.0,
+            "insurance": 0.0,
+            "rent": 0.0,
+            "other_fixed": 0.0,
+            "total": 0.0
+          },
+          "gop": 3356709.0,
+          "noi": 3356709.0,
+          "opex_ratio": 0.6482003895179571,
+          "occupancy": 0.831,
+          "adr": 237.64,
+          "revpar": null,
+          "labor_by_dept": {}
+        },
+        "actuals": {
+          "period_label": "T-12 Actual",
+          "rooms_revenue": 9332100.0,
+          "fb_revenue": 0.0,
+          "resort_fees": 0.0,
+          "other_revenue": 0.0,
+          "total_revenue": 13796340.0,
+          "dept_expenses": {
+            "rooms": 0.0,
+            "food_beverage": 0.0,
+            "other_operated": 0.0,
+            "total": 0.0,
+            "fb_detail": null
+          },
+          "undistributed": {
+            "administrative_general": 0.0,
+            "information_telecom": 0.0,
+            "sales_marketing": 0.0,
+            "property_operations": 0.0,
+            "utilities": 0.0,
+            "service_charge_distribution": 0.0,
+            "total": 0.0,
+            "utilities_detail": null
+          },
+          "mgmt_fee": 0.0,
+          "ffe_reserve": 0.0,
+          "fixed_charges": {
+            "property_taxes": 0.0,
+            "insurance": 0.0,
+            "rent": 0.0,
+            "other_fixed": 0.0,
+            "total": 0.0
+          },
+          "gop": 4970460.0,
+          "noi": 1794100.0,
+          "opex_ratio": 0.8699582642932836,
+          "occupancy": 0.83,
+          "adr": 232.77,
+          "revpar": null,
+          "labor_by_dept": {}
+        }
+      }
+    },
+    {
+      "name": "fon41_live_capture",
+      "why": "/Users/prem/fon41_live.json \u2014 four financial docs, rows synthesised from each doc's low_conf_unreviewed block",
+      "docs": [
+        {
+          "filename": "Copy of The Angler_s - March 2025 Financials.xlsx",
+          "doc_type": "T12",
+          "hours": 0,
+          "fields": [
+            {
+              "field_name": "p_and_l_usali.income_before_nonop",
+              "value": 4331540,
+              "source_page": 2,
+              "confidence": 0.5,
+              "reviewed": null
+            },
+            {
+              "field_name": "p_and_l_usali.undistributed.total",
+              "value": 3533430,
+              "source_page": 2,
+              "confidence": 0.5,
+              "reviewed": null
+            },
+            {
+              "field_name": "p_and_l_usali.gross_operating_profit",
+              "value": 4970460,
+              "source_page": 2,
+              "confidence": 0.5,
+              "reviewed": null
+            },
+            {
+              "field_name": "p_and_l_usali.fixed_charges.insurance",
+              "value": 1429570,
+              "source_page": 2,
+              "confidence": 0.5,
+              "reviewed": null
+            },
+            {
+              "field_name": "p_and_l_usali.departmental_profit.total",
+              "value": 8503890,
+              "source_page": 2,
+              "confidence": 0.5,
+              "reviewed": null
+            },
+            {
+              "field_name": "p_and_l_usali.fixed_charges.total_nonop",
+              "value": 1984820,
+              "source_page": 2,
+              "confidence": 0.5,
+              "reviewed": null
+            },
+            {
+              "field_name": "p_and_l_usali.departmental_expenses.rooms",
+              "value": 2770770,
+              "source_page": 2,
+              "confidence": 0.5,
+              "reviewed": null
+            },
+            {
+              "field_name": "p_and_l_usali.departmental_expenses.total",
+              "value": 5311430,
+              "source_page": 2,
+              "confidence": 0.5,
+              "reviewed": null
+            },
+            {
+              "field_name": "p_and_l_usali.net_operating_income.ebitda",
+              "value": 2346710,
+              "source_page": 2,
+              "confidence": 0.5,
+              "reviewed": null
+            },
+            {
+              "field_name": "p_and_l_usali.net_operating_income.noi_usd",
+              "value": 1794100,
+              "source_page": 2,
+              "confidence": 0.5,
+              "reviewed": null
+            },
+            {
+              "field_name": "p_and_l_usali.undistributed.sales_marketing",
+              "value": 1161320,
+              "source_page": 2,
+              "confidence": 0.5,
+              "reviewed": null
+            },
+            {
+              "field_name": "p_and_l_usali.monthly.dec_2024.rooms_revenue",
+              "value": 1001890,
+              "source_page": 2,
+              "confidence": 0.5,
+              "reviewed": null
+            },
+            {
+              "field_name": "p_and_l_usali.monthly.feb_2024.rooms_revenue",
+              "value": 1168900,
+              "source_page": 2,
+              "confidence": 0.5,
+              "reviewed": null
+            },
+            {
+              "field_name": "p_and_l_usali.monthly.jan_2024.rooms_revenue",
+              "value": 1040720,
+              "source_page": 2,
+              "confidence": 0.5,
+              "reviewed": null
+            },
+            {
+              "field_name": "p_and_l_usali.monthly.mar_2024.rooms_revenue",
+              "value": 1109860,
+              "source_page": 2,
+              "confidence": 0.5,
+              "reviewed": null
+            },
+            {
+              "field_name": "p_and_l_usali.operating_revenue.misc_revenue",
+              "value": 1247620,
+              "source_page": 2,
+              "confidence": 0.5,
+              "reviewed": null
+            },
+            {
+              "field_name": "p_and_l_usali.monthly.apr_2024.total_revenues",
+              "value": 1319410,
+              "source_page": 2,
+              "confidence": 0.5,
+              "reviewed": null
+            },
+            {
+              "field_name": "p_and_l_usali.monthly.dec_2024.total_revenues",
+              "value": 1434480,
+              "source_page": 2,
+              "confidence": 0.5,
+              "reviewed": null
+            },
+            {
+              "field_name": "p_and_l_usali.monthly.feb_2024.total_revenues",
+              "value": 1686090,
+              "source_page": 2,
+              "confidence": 0.5,
+              "reviewed": null
+            },
+            {
+              "field_name": "p_and_l_usali.monthly.jan_2024.total_revenues",
+              "value": 1504430,
+              "source_page": 2,
+              "confidence": 0.5,
+              "reviewed": null
+            },
+            {
+              "field_name": "p_and_l_usali.monthly.mar_2024.total_revenues",
+              "value": 1589910,
+              "source_page": 2,
+              "confidence": 0.5,
+              "reviewed": null
+            },
+            {
+              "field_name": "p_and_l_usali.monthly.may_2024.total_revenues",
+              "value": 1164850,
+              "source_page": 2,
+              "confidence": 0.5,
+              "reviewed": null
+            },
+            {
+              "field_name": "p_and_l_usali.monthly.nov_2024.total_revenues",
+              "value": 1047680,
+              "source_page": 2,
+              "confidence": 0.5,
+              "reviewed": null
+            },
+            {
+              "field_name": "p_and_l_usali.operating_revenue.rooms_revenue",
+              "value": 9332100,
+              "source_page": 2,
+              "confidence": 0.5,
+              "reviewed": null
+            },
+            {
+              "field_name": "p_and_l_usali.departmental_expenses.food_beverage",
+              "value": 2533250,
+              "source_page": 2,
+              "confidence": 0.5,
+              "reviewed": null
+            },
+            {
+              "field_name": "p_and_l_usali.undistributed.administrative_general",
+              "value": 1291420,
+              "source_page": 2,
+              "confidence": 0.5,
+              "reviewed": null
+            },
+            {
+              "field_name": "p_and_l_usali.operating_revenue.food_beverage_revenue",
+              "value": 3216620,
+              "source_page": 2,
+              "confidence": 0.5,
+              "reviewed": null
+            }
+          ]
+        },
+        {
+          "filename": "Copy of Angler_s 2024 Full Year Detailed P&L.xlsm",
+          "doc_type": "PNL",
+          "hours": 1,
+          "fields": []
+        },
+        {
+          "filename": "Copy of Angler_s 2023 P&L.xlsx",
+          "doc_type": "PNL",
+          "hours": 2,
+          "fields": [
+            {
+              "field_name": "property_overview.keys",
+              "value": 132,
+              "source_page": 1,
+              "confidence": 0.5,
+              "reviewed": null
+            },
+            {
+              "field_name": "p_and_l_usali.miscellaneous_income.revenue_usd",
+              "value": 1004790,
+              "source_page": 1,
+              "confidence": 0.5,
+              "reviewed": null
+            },
+            {
+              "field_name": "p_and_l_usali.total_revenues_usd",
+              "value": 12940200,
+              "source_page": 1,
+              "confidence": 0.5,
+              "reviewed": null
+            },
+            {
+              "field_name": "p_and_l_usali.rooms.expense_usd",
+              "value": 2592840,
+              "source_page": 1,
+              "confidence": 0.5,
+              "reviewed": null
+            },
+            {
+              "field_name": "p_and_l_usali.fb.expense_usd",
+              "value": 2040350,
+              "source_page": 1,
+              "confidence": 0.5,
+              "reviewed": null
+            },
+            {
+              "field_name": "p_and_l_usali.total_departmental_expense_usd",
+              "value": 4640390,
+              "source_page": 1,
+              "confidence": 0.5,
+              "reviewed": null
+            },
+            {
+              "field_name": "p_and_l_usali.total_departmental_profit_usd",
+              "value": 8299810,
+              "source_page": 1,
+              "confidence": 0.5,
+              "reviewed": null
+            },
+            {
+              "field_name": "p_and_l_usali.undistributed.administrative_and_general_usd",
+              "value": 1205100,
+              "source_page": 1,
+              "confidence": 0.5,
+              "reviewed": null
+            },
+            {
+              "field_name": "p_and_l_usali.undistributed.sales_and_marketing_usd",
+              "value": 1182350,
+              "source_page": 1,
+              "confidence": 0.5,
+              "reviewed": null
+            },
+            {
+              "field_name": "p_and_l_usali.undistributed.total_undistributed_expenses_usd",
+              "value": 3563340,
+              "source_page": 1,
+              "confidence": 0.5,
+              "reviewed": null
+            },
+            {
+              "field_name": "p_and_l_usali.gop_usd",
+              "value": 4736470,
+              "source_page": 1,
+              "confidence": 0.5,
+              "reviewed": null
+            },
+            {
+              "field_name": "p_and_l_usali.income_before_non_operating_usd",
+              "value": 4331870,
+              "source_page": 1,
+              "confidence": 0.5,
+              "reviewed": null
+            },
+            {
+              "field_name": "p_and_l_usali.non_operating.insurance_usd",
+              "value": 1351730,
+              "source_page": 1,
+              "confidence": 0.5,
+              "reviewed": null
+            },
+            {
+              "field_name": "p_and_l_usali.non_operating.total_non_operating_usd",
+              "value": 1856960,
+              "source_page": 1,
+              "confidence": 0.5,
+              "reviewed": null
+            },
+            {
+              "field_name": "p_and_l_usali.ebitda_usd",
+              "value": 2474910,
+              "source_page": 1,
+              "confidence": 0.5,
+              "reviewed": null
+            },
+            {
+              "field_name": "p_and_l_usali.ebitda_less_replacement_reserve_usd",
+              "value": 1957310,
+              "source_page": 1,
+              "confidence": 0.5,
+              "reviewed": null
+            },
+            {
+              "field_name": "p_and_l_usali.rooms.dept_profit_usd",
+              "value": 7215150,
+              "source_page": 1,
+              "confidence": 0.5,
+              "reviewed": null
+            },
+            {
+              "field_name": "p_and_l_usali.monthly.jan.total_revenue_usd",
+              "value": 1462160,
+              "source_page": 1,
+              "confidence": 0.5,
+              "reviewed": null
+            },
+            {
+              "field_name": "p_and_l_usali.monthly.feb.total_revenue_usd",
+              "value": 1536610,
+              "source_page": 1,
+              "confidence": 0.5,
+              "reviewed": null
+            },
+            {
+              "field_name": "p_and_l_usali.monthly.mar.total_revenue_usd",
+              "value": 1534400,
+              "source_page": 1,
+              "confidence": 0.5,
+              "reviewed": null
+            },
+            {
+              "field_name": "p_and_l_usali.monthly.apr.total_revenue_usd",
+              "value": 1170310,
+              "source_page": 1,
+              "confidence": 0.5,
+              "reviewed": null
+            },
+            {
+              "field_name": "p_and_l_usali.monthly.may.total_revenue_usd",
+              "value": 1083530,
+              "source_page": 1,
+              "confidence": 0.5,
+              "reviewed": null
+            },
+            {
+              "field_name": "p_and_l_usali.monthly.dec.total_revenue_usd",
+              "value": 1438290,
+              "source_page": 1,
+              "confidence": 0.5,
+              "reviewed": null
+            }
+          ]
+        },
+        {
+          "filename": "Copy of Angler_s 2019 P&L.xlsx",
+          "doc_type": "PNL",
+          "hours": 3,
+          "fields": [
+            {
+              "field_name": "p_and_l_usali.rooms.revenue",
+              "value": 6339940,
+              "source_page": 1,
+              "confidence": 0.5,
+              "reviewed": null
+            },
+            {
+              "field_name": "p_and_l_usali.fb.revenue",
+              "value": 1028110,
+              "source_page": 1,
+              "confidence": 0.5,
+              "reviewed": null
+            },
+            {
+              "field_name": "p_and_l_usali.total_revenue",
+              "value": 8385990,
+              "source_page": 1,
+              "confidence": 0.5,
+              "reviewed": null
+            },
+            {
+              "field_name": "p_and_l_usali.rooms.departmental_expense",
+              "value": 1763710,
+              "source_page": 1,
+              "confidence": 0.5,
+              "reviewed": null
+            },
+            {
+              "field_name": "p_and_l_usali.fb.departmental_expense",
+              "value": 1365820,
+              "source_page": 1,
+              "confidence": 0.5,
+              "reviewed": null
+            },
+            {
+              "field_name": "p_and_l_usali.total_departmental_expense",
+              "value": 3407850,
+              "source_page": 1,
+              "confidence": 0.5,
+              "reviewed": null
+            },
+            {
+              "field_name": "p_and_l_usali.total_departmental_profit",
+              "value": 4978140,
+              "source_page": 1,
+              "confidence": 0.5,
+              "reviewed": null
+            },
+            {
+              "field_name": "p_and_l_usali.undistributed.administrative_and_general",
+              "value": 1042260,
+              "source_page": 1,
+              "confidence": 0.5,
+              "reviewed": null
+            },
+            {
+              "field_name": "p_and_l_usali.undistributed.sales_and_marketing",
+              "value": 1152220,
+              "source_page": 1,
+              "confidence": 0.5,
+              "reviewed": null
+            },
+            {
+              "field_name": "p_and_l_usali.total_undistributed_expenses",
+              "value": 3066080,
+              "source_page": 1,
+              "confidence": 0.5,
+              "reviewed": null
+            },
+            {
+              "field_name": "p_and_l_usali.gop",
+              "value": 1912060,
+              "source_page": 1,
+              "confidence": 0.5,
+              "reviewed": null
+            },
+            {
+              "field_name": "p_and_l_usali.income_before_non_operating",
+              "value": 1644310,
+              "source_page": 1,
+              "confidence": 0.5,
+              "reviewed": null
+            },
+            {
+              "field_name": "p_and_l_usali.total_non_operating_expenses",
+              "value": 1221150,
+              "source_page": 1,
+              "confidence": 0.5,
+              "reviewed": null
+            },
+            {
+              "field_name": "p_and_l_usali.rooms.departmental_profit",
+              "value": 4576230,
+              "source_page": 1,
+              "confidence": 0.5,
+              "reviewed": null
+            },
+            {
+              "field_name": "p_and_l_usali.fb.departmental_profit",
+              "value": -337710,
+              "source_page": 1,
+              "confidence": 0.5,
+              "reviewed": null
+            },
+            {
+              "field_name": "p_and_l_usali.monthly.dec.total_revenue",
+              "value": 1154120,
+              "source_page": 1,
+              "confidence": 0.5,
+              "reviewed": null
+            }
+          ]
+        }
+      ],
+      "expected": {
+        "broker": null,
+        "actuals": {
+          "period_label": "T-12 Actual",
+          "rooms_revenue": 9332100.0,
+          "fb_revenue": 3216620.0,
+          "resort_fees": 0.0,
+          "other_revenue": 0.0,
+          "total_revenue": 8385990.0,
+          "dept_expenses": {
+            "rooms": 0.0,
+            "food_beverage": 0.0,
+            "other_operated": 0.0,
+            "total": 0.0,
+            "fb_detail": null
+          },
+          "undistributed": {
+            "administrative_general": 0.0,
+            "information_telecom": 0.0,
+            "sales_marketing": 0.0,
+            "property_operations": 0.0,
+            "utilities": 0.0,
+            "service_charge_distribution": 0.0,
+            "total": 0.0,
+            "utilities_detail": null
+          },
+          "mgmt_fee": 0.0,
+          "ffe_reserve": 0.0,
+          "fixed_charges": {
+            "property_taxes": 0.0,
+            "insurance": 1429570.0,
+            "rent": 0.0,
+            "other_fixed": 0.0,
+            "total": 0.0
+          },
+          "gop": 4970460.0,
+          "noi": 1794100.0,
+          "opex_ratio": 0.7860598450510912,
+          "occupancy": null,
+          "adr": null,
+          "revpar": null,
+          "labor_by_dept": {}
+        }
+      }
+    }
+  ]
+}
