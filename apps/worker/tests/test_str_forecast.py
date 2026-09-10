@@ -496,3 +496,176 @@ async def test_seed_revenue_from_forecast_month_12_when_flag_set() -> None:
             seeded["starting_occupancy"] != baseline_occ
             or seeded["starting_adr"] != baseline_adr
         )
+
+
+# ─────────────── FON-61 (D4) — "Use STR rates" is never silent ───────────────
+#
+# Sam: "STR selection is updating the Market UI state but is not actually
+# propagating." The worker used to no-op silently whenever the seed could not
+# populate. Two worker-side branches now exist:
+#   (1) explicit ``starting_occupancy`` / ``starting_adr`` field_overrides that
+#       carry the STR note (the Market tab writes exactly what its card shows)
+#       are badged ``str_forecast`` and are never overwritten by the loader seed;
+#   (2) the seed flag on a deal where the seed cannot populate is tagged
+#       ``str_forecast_unavailable`` — the UI can never claim "active" without
+#       ``starting_*`` carrying ``str_forecast``.
+
+
+@pytest.mark.asyncio
+async def test_str_noted_explicit_overrides_are_tagged_str_forecast() -> None:
+    from httpx import ASGITransport, AsyncClient
+
+    from app.database import get_session_factory
+    from app.main import app
+    from app.services.engine_runner import (
+        SOURCE_ANALYST_OVERRIDE,
+        SOURCE_STR_FORECAST,
+        SOURCE_STR_UNAVAILABLE,
+        STR_MARKET_OVERRIDE_NOTE,
+        _load_engine_inputs,
+    )
+
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://test"
+    ) as client:
+        r = await client.post(
+            "/deals",
+            json={"name": "STR Noted Hotel", "city": "Tampa, FL"},
+            headers={"X-Tenant-Id": TENANT_A},
+        )
+        assert r.status_code == 201, r.text
+        deal_id = r.json()["id"]
+        # The Market tab's "Use STR rates" writes the card's numbers verbatim
+        # with the STR note; an unrelated analyst override carries no note.
+        r = await client.patch(
+            f"/deals/{deal_id}",
+            json={
+                "field_overrides": {
+                    "starting_occupancy": {"value": 0.713, "note": STR_MARKET_OVERRIDE_NOTE},
+                    "starting_adr": {"value": 231.5, "note": STR_MARKET_OVERRIDE_NOTE},
+                    "exit_cap_rate": {"value": 0.075, "note": "IC guidance"},
+                }
+            },
+            headers={"X-Tenant-Id": TENANT_A},
+        )
+        assert r.status_code == 200, r.text
+
+    factory = get_session_factory()
+    async with factory() as session:
+        base = await _load_engine_inputs(session, deal_id=deal_id, tenant_id=TENANT_A)
+        sources = base["__sources__"]
+        # Values are exactly what the Market card seeded; provenance says STR.
+        assert base["starting_occupancy"] == 0.713
+        assert base["starting_adr"] == 231.5
+        assert sources["starting_occupancy"] == SOURCE_STR_FORECAST
+        assert sources["starting_adr"] == SOURCE_STR_FORECAST
+        # A note that is NOT the STR marker stays a plain analyst override.
+        assert base["exit_cap_rate"] == 0.075
+        assert sources["exit_cap_rate"] == SOURCE_ANALYST_OVERRIDE
+
+        # With the legacy seed flag ALSO on (and no STR extraction on this deal)
+        # the explicit STR-noted values are the seed — kept verbatim, flag
+        # reported active, never "unavailable".
+        seeded = await _load_engine_inputs(
+            session,
+            deal_id=deal_id,
+            overrides={"revenue_seed_from_str_forecast": True},
+            tenant_id=TENANT_A,
+        )
+        assert seeded["starting_occupancy"] == 0.713
+        assert seeded["starting_adr"] == 231.5
+        assert seeded["__sources__"]["starting_occupancy"] == SOURCE_STR_FORECAST
+        assert seeded["__sources__"]["revenue_seed_from_str_forecast"] == SOURCE_STR_FORECAST
+        assert seeded["__sources__"]["revenue_seed_from_str_forecast"] != SOURCE_STR_UNAVAILABLE
+
+
+@pytest.mark.asyncio
+async def test_str_seed_flag_without_extraction_is_tagged_unavailable() -> None:
+    """(2) Flag on, no STR_TREND extraction → the seed cannot populate. The
+    Year-1 rates keep their prior source/values and the flag key carries an
+    explicit ``str_forecast_unavailable`` tag — never a silent no-op."""
+    from httpx import ASGITransport, AsyncClient
+
+    from app.database import get_session_factory
+    from app.main import app
+    from app.services.engine_runner import (
+        SOURCE_STR_FORECAST,
+        SOURCE_STR_UNAVAILABLE,
+        _load_engine_inputs,
+    )
+
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://test"
+    ) as client:
+        r = await client.post(
+            "/deals",
+            json={"name": "No STR Hotel", "city": "Tampa, FL"},
+            headers={"X-Tenant-Id": TENANT_A},
+        )
+        assert r.status_code == 201, r.text
+        deal_id = r.json()["id"]
+
+    factory = get_session_factory()
+    async with factory() as session:
+        baseline = await _load_engine_inputs(session, deal_id=deal_id, tenant_id=TENANT_A)
+        # Flag off (default): no STR tag of either kind anywhere.
+        assert "revenue_seed_from_str_forecast" not in baseline["__sources__"]
+        assert SOURCE_STR_UNAVAILABLE not in baseline["__sources__"].values()
+
+        seeded = await _load_engine_inputs(
+            session,
+            deal_id=deal_id,
+            overrides={"revenue_seed_from_str_forecast": True},
+            tenant_id=TENANT_A,
+        )
+        src = seeded["__sources__"]
+        assert src["revenue_seed_from_str_forecast"] == SOURCE_STR_UNAVAILABLE
+        # Nothing claims to be STR-seeded, and the rates are untouched.
+        assert src["starting_occupancy"] != SOURCE_STR_FORECAST
+        assert src["starting_adr"] != SOURCE_STR_FORECAST
+        assert src["starting_occupancy"] == baseline["__sources__"]["starting_occupancy"]
+        assert seeded["starting_occupancy"] == baseline["starting_occupancy"]
+        assert seeded["starting_adr"] == baseline["starting_adr"]
+
+
+@pytest.mark.asyncio
+async def test_str_seed_flag_with_extraction_tags_flag_active() -> None:
+    """Success branch of the legacy seed: with an STR_TREND extraction the
+    flag key itself is tagged ``str_forecast`` alongside the two rate keys, so
+    the UI reads one consistent "active" signal."""
+    from httpx import ASGITransport, AsyncClient
+
+    from app.database import get_session_factory
+    from app.main import app
+    from app.services.engine_runner import (
+        SOURCE_STR_FORECAST,
+        SOURCE_STR_UNAVAILABLE,
+        _load_engine_inputs,
+    )
+
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://test"
+    ) as client:
+        r = await client.post(
+            "/deals",
+            json={"name": "STR Active Hotel", "city": "Tampa, FL"},
+            headers={"X-Tenant-Id": TENANT_A},
+        )
+        assert r.status_code == 201, r.text
+        deal_id = r.json()["id"]
+
+    await _seed_str_trend(deal_id=deal_id, tenant_id=TENANT_A)
+
+    factory = get_session_factory()
+    async with factory() as session:
+        seeded = await _load_engine_inputs(
+            session,
+            deal_id=deal_id,
+            overrides={"revenue_seed_from_str_forecast": True},
+            tenant_id=TENANT_A,
+        )
+    src = seeded["__sources__"]
+    assert src["starting_occupancy"] == SOURCE_STR_FORECAST
+    assert src["starting_adr"] == SOURCE_STR_FORECAST
+    assert src["revenue_seed_from_str_forecast"] == SOURCE_STR_FORECAST
+    assert SOURCE_STR_UNAVAILABLE not in src.values()

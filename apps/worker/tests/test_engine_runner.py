@@ -608,3 +608,53 @@ async def test_unknown_engine_raises() -> None:
                 tenant_id=str(uuid4()),
                 engine_name="nope",
             )
+
+
+# ─────────────── FON-44 (D2) — no universal soft-cost / contingency seed ───────────────
+#
+# Sam: "S&U separately includes Soft Costs = $528K, Contingency = $528K…
+# expected Total Uses would be $43.6589M rather than the displayed $44.7149M."
+# ``_kimpton_assumptions()`` seeded 528K/528K on EVERY deal (a demo-fixture
+# leftover); the capital engine emitted them as two extra uses and the returns
+# basis carried them. The seed is now 0/0 (the demo export's own fixture in
+# ``app/export/fixtures.py`` is untouched); ``working_capital`` stays at 500K.
+
+
+def test_kimpton_seed_carries_no_universal_soft_costs_or_contingency() -> None:
+    from app.services.engine_runner import _kimpton_assumptions
+
+    seed = _kimpton_assumptions()
+    assert seed["soft_costs"] == 0.0
+    assert seed["contingency"] == 0.0
+    # Sam accepted working capital in her expected total — it stays.
+    assert seed["working_capital"] == 500_000
+
+
+@pytest.mark.asyncio
+async def test_default_run_emits_no_soft_cost_or_contingency_uses() -> None:
+    """A pure-seed run (non-UUID demo id → Kimpton defaults only) lists no
+    Soft Costs / Contingency use lines and its total uses reconcile to the
+    remaining lines exactly."""
+    from app.database import get_session_factory
+    from app.services.engine_runner import run_all_engines
+
+    factory = get_session_factory()
+    async with factory() as session:
+        results = await run_all_engines(
+            session,
+            deal_id="kimpton-angler-2026",
+            tenant_id=str(uuid4()),
+            run_id=str(uuid4()),
+        )
+
+    cap = results["capital"]["outputs"]
+    labels = [u["label"] for u in cap["uses"]]
+    assert "Soft Costs" not in labels
+    assert "Contingency" not in labels
+    line_total = sum(u["amount"] for u in cap["uses"] if u["label"] != "Total Uses")
+    assert cap["total_capital"] == pytest.approx(line_total)
+    # Kimpton seed: 36.4M + 2% closing + 5.28M reno + 500K WC + 1.5% loan fee
+    # on the 65% LTV senior — no 528K/528K pair.
+    expected = 36_400_000 * 1.02 + 5_280_000 + 500_000 + (36_400_000 * 0.65) * 0.015
+    assert cap["total_capital"] == pytest.approx(expected)
+    assert cap["total_capital"] == pytest.approx(43_262_900.0)

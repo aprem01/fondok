@@ -487,3 +487,192 @@ def test_tombstone_path_not_parsed_as_numeric_field() -> None:
     assert not _tier_is_tombstoned({"removed": "no"})
     assert not _tier_is_tombstoned({"gp_split": 0.3})
     assert not _tier_is_tombstoned({})
+
+
+# ─────────────── FON-67 (D3) — partner deficits are pro-rata capital calls ───────────────
+#
+# Sam: "Cash Flow identifies Additional equity required = ($1,868,774)…
+# Partnership shows Additional contributions = $0." The annual waterfall gated
+# every allocation on ``remaining > 0``, so a negative year appended $0 to both
+# partners and the deficit vanished (partner IRR / EM overstated). Now a deficit
+# year is funded by a dated pro-rata draw (by ownership split), added to
+# unreturned capital (pref accrues on it) — mirroring ``_run_monthly``.
+#
+# The all-positive pins below are the EXACT floats the engine produced before
+# this change (captured from the pre-change code on the same inputs), so any
+# arithmetic drift on the default (all-positive) path fails loudly.
+
+_PIN_ALL_POSITIVE_PREF_08 = {
+    "gp_irr": 0.2987531735702786,
+    "lp_irr": 0.1956282012702891,
+    "gp_em": 3.12,
+    "lp_em": 2.097777777777778,
+    "gp_dist": 3120000.0,
+    "lp_dist": 18880000.0,
+    "promote": 920000.0,
+    "gp_cf": [100000.0, 150000.0, 200000.0, 250000.0, 2420000.0],
+    "lp_cf": [900000.0, 1350000.0, 1800000.0, 2250000.0, 12580000.0],
+    "tiers": [
+        ("Return of Capital", 1000000.0, 9000000.0),
+        ("Preferred Return", 280000.0, 2520000.0),
+        ("Tier 2 (to 15%)", 1840000.0, 7360000.0),
+    ],
+}
+
+_PIN_KIMPTON_REF_PREF_10 = {
+    "gp_irr": 0.2927709062032841,
+    "lp_irr": 0.19657934678188843,
+    "gp_em": 3.05,
+    "lp_em": 2.1055555555555556,
+    "gp_dist": 3050000.0,
+    "lp_dist": 18950000.0,
+    "promote": 850000.0,
+    "gp_cf": [100000.0, 150000.0, 200000.0, 250000.0, 2350000.0],
+    "lp_cf": [900000.0, 1350000.0, 1800000.0, 2250000.0, 12650000.0],
+    "tiers": [
+        ("Return of Capital", 1000000.0, 9000000.0),
+        ("Preferred Return", 350000.0, 3150000.0),
+        ("Tier 2 (to 15%)", 1700000.0, 6800000.0),
+    ],
+}
+
+
+def _assert_pinned(out: object, pin: dict) -> None:
+    # Exact equality on purpose — these are byte-identical pins, not tolerances.
+    assert out.gp.irr == pin["gp_irr"]
+    assert out.lp.irr == pin["lp_irr"]
+    assert out.gp.equity_multiple == pin["gp_em"]
+    assert out.lp.equity_multiple == pin["lp_em"]
+    assert out.gp.distributions == pin["gp_dist"]
+    assert out.lp.distributions == pin["lp_dist"]
+    assert out.promote_amount == pin["promote"]
+    assert out.gp_cash_flows == pin["gp_cf"]
+    assert out.lp_cash_flows == pin["lp_cf"]
+    assert [(t.label, t.gp_amount, t.lp_amount) for t in out.tier_allocations] == pin["tiers"]
+    assert out.gp.contributed_equity == 1_000_000.0
+    assert out.lp.contributed_equity == 9_000_000.0
+    # Additive fields: zero on an all-positive series.
+    assert out.gp_additional_contributions == 0.0
+    assert out.lp_additional_contributions == 0.0
+    assert out.total_contributions == 10_000_000.0
+    assert out.reconciles is True
+
+
+def test_all_positive_series_is_byte_identical_to_pre_deficit_fix() -> None:
+    """(1) Exact-equality pin of the pre-change outputs on an all-positive
+    annual series (pref 8%) — the default deal path is unchanged."""
+    _assert_pinned(PartnershipEngine().run(_annual_input()), _PIN_ALL_POSITIVE_PREF_08)
+
+
+def test_kimpton_reference_all_positive_annual_unchanged() -> None:
+    """(3) Kimpton benchmark stack + 10% pref on an all-positive annual series
+    — exact pre-change pin (the FON-67 reference deal is all-positive on the
+    annual path)."""
+    out = PartnershipEngine().run(
+        PartnershipInputExt(
+            deal_id=uuid4(),
+            total_equity=10_000_000,
+            gp_equity_pct=0.10,
+            lp_equity_pct=0.90,
+            pref_rate=0.10,
+            waterfall=_build_partnership_waterfall(None),
+            cash_flows=list(_CASH_FLOWS),
+        )
+    )
+    _assert_pinned(out, _PIN_KIMPTON_REF_PREF_10)
+
+
+_DEFICIT = 1_868_774.0  # Sam's "Additional equity required" figure
+_DEFICIT_SERIES = [1_200_000.0, -_DEFICIT, 1_500_000.0, 2_000_000.0, 15_000_000.0]
+
+
+def test_deficit_year_is_funded_pro_rata_and_agrees_with_monthly() -> None:
+    """(2) A negative year is a pro-rata capital call: the draw lands on both
+    partners by ownership split, is reported as additional contributions, and
+    the annual and monthly paths agree on the contributions."""
+    wf = _build_partnership_waterfall(None)
+    annual = PartnershipEngine().run(
+        PartnershipInputExt(
+            deal_id=uuid4(),
+            total_equity=10_000_000,
+            gp_equity_pct=0.10,
+            lp_equity_pct=0.90,
+            pref_rate=0.10,
+            waterfall=wf,
+            cash_flows=list(_DEFICIT_SERIES),
+        )
+    )
+    # The draw is split by ownership (10 / 90) and shows up as a NEGATIVE
+    # partner cash flow in the deficit year — the deficit no longer vanishes.
+    assert annual.gp_cash_flows[1] == pytest.approx(-_DEFICIT * 0.10)
+    assert annual.lp_cash_flows[1] == pytest.approx(-_DEFICIT * 0.90)
+    assert annual.gp_additional_contributions == pytest.approx(_DEFICIT * 0.10)
+    assert annual.lp_additional_contributions == pytest.approx(_DEFICIT * 0.90)
+    assert annual.total_contributions == pytest.approx(10_000_000 + _DEFICIT)
+    # Contributed equity carries the draw; distributions are the positive flows only.
+    assert annual.gp.contributed_equity == pytest.approx(1_000_000 + _DEFICIT * 0.10)
+    assert annual.lp.contributed_equity == pytest.approx(9_000_000 + _DEFICIT * 0.90)
+    assert annual.gp.distributions == pytest.approx(sum(v for v in annual.gp_cash_flows if v > 0))
+    assert annual.lp.distributions == pytest.approx(sum(v for v in annual.lp_cash_flows if v > 0))
+    assert annual.gp.equity_multiple == pytest.approx(
+        annual.gp.distributions / annual.gp.contributed_equity
+    )
+    # Every distributed dollar is still accounted for by the tier rows.
+    assert annual.reconciles is True
+    assert annual.total_distributable == pytest.approx(
+        annual.gp.distributions + annual.lp.distributions
+    )
+    # Provenance traces the additive fields and the contributed-equity chain.
+    prov = annual.provenance
+    assert prov["gp_additional_contributions"].value == pytest.approx(_DEFICIT * 0.10)
+    assert prov["lp_additional_contributions"].value == pytest.approx(_DEFICIT * 0.90)
+    assert prov["total_contributions"].value == pytest.approx(annual.total_contributions)
+    assert any(
+        i.traces_to == "lp_additional_contributions" for i in prov["lp.contributed_equity"].inputs
+    )
+
+    # Carrying the deficit MUST lower the partner returns vs. the old
+    # "deficit vanished" treatment (same series with the deficit year zeroed).
+    vanished = PartnershipEngine().run(
+        PartnershipInputExt(
+            deal_id=uuid4(),
+            total_equity=10_000_000,
+            gp_equity_pct=0.10,
+            lp_equity_pct=0.90,
+            pref_rate=0.10,
+            waterfall=wf,
+            cash_flows=[1_200_000.0, 0.0, 1_500_000.0, 2_000_000.0, 15_000_000.0],
+        )
+    )
+    assert annual.lp.irr < vanished.lp.irr
+    assert annual.gp.irr < vanished.gp.irr
+    assert annual.lp.equity_multiple < vanished.lp.equity_multiple
+
+    # Monthly path on the same dated flows: same draw, same split, same totals.
+    mcf = [0.0] * 61
+    mcf[0] = -10_000_000.0
+    mcf[12] = 1_200_000.0
+    mcf[24] = -_DEFICIT
+    mcf[36] = 1_500_000.0
+    mcf[48] = 2_000_000.0
+    mcf[60] = 15_000_000.0
+    monthly = PartnershipEngine().run(
+        PartnershipInputExt(
+            deal_id=uuid4(),
+            total_equity=10_000_000,
+            gp_equity_pct=0.10,
+            lp_equity_pct=0.90,
+            pref_rate=0.10,
+            waterfall=wf,
+            cash_flows=[1.0],
+            period="monthly",
+            cash_flows_monthly=mcf,
+        )
+    )
+    assert monthly.gp_additional_contributions == pytest.approx(annual.gp_additional_contributions)
+    assert monthly.lp_additional_contributions == pytest.approx(annual.lp_additional_contributions)
+    assert monthly.total_contributions == pytest.approx(annual.total_contributions)
+    assert monthly.gp.contributed_equity == pytest.approx(annual.gp.contributed_equity)
+    assert monthly.lp.contributed_equity == pytest.approx(annual.lp.contributed_equity)
+    assert monthly.gp_cash_flows[24] == pytest.approx(annual.gp_cash_flows[1])
+    assert monthly.lp_cash_flows[24] == pytest.approx(annual.lp_cash_flows[1])

@@ -887,3 +887,177 @@ async def test_last_run_id_updates_on_run() -> None:
         assert second_run != first_run
         r = await client.get(f"/deals/{deal_id}/scenarios/{sid}")
         assert r.json()["last_run_id"] == second_run
+
+
+# ─────────────── FON-69 — RevPAR-growth override moves operating NOI ───────────────
+#
+# Sam: "reducing RevPAR Growth from 4.5% to 2.5% leaves Stabilized NOI unchanged
+# at $1.98M." The revenue engine grows rooms revenue by occupancy_growth x
+# adr_growth only; ``revpar_growth`` reached returns as terminal-NOI growth. Now
+# an analyst ``revpar_growth`` override WITHOUT an ``adr_growth`` override
+# derives adr_growth = (1 + revpar) / (1 + occ_growth) - 1 (tagged
+# ``derived_from_revpar_growth``); both overridden → no derivation; no override
+# → byte-identical.
+
+
+async def _run_base_and_scenario(client, deal_id: str, overrides: list[dict]) -> tuple[dict, dict, str]:
+    base_scenarios = (await client.get(f"/deals/{deal_id}/scenarios")).json()
+    base_sid = next(s["id"] for s in base_scenarios if s["is_base"])
+    r = await client.post(f"/deals/{deal_id}/scenarios/{base_sid}/run")
+    assert r.status_code == 200, r.text
+    base_run = r.json()["engines"]
+    r = await client.post(
+        f"/deals/{deal_id}/scenarios",
+        json={"name": "revpar-flex", "overrides": overrides},
+    )
+    assert r.status_code == 201, r.text
+    sid = r.json()["id"]
+    r = await client.post(f"/deals/{deal_id}/scenarios/{sid}/run")
+    assert r.status_code == 200, r.text
+    return base_run, r.json()["engines"], sid
+
+
+def _noi_series(engines: dict) -> list[float]:
+    return [y["noi"] for y in engines["expense"]["outputs"]["years"]]
+
+
+@pytest.mark.asyncio
+async def test_revpar_growth_override_moves_stabilized_noi() -> None:
+    """(1) A scenario ``revpar_growth`` override (4.5% → 2.5%) lowers every
+    post-Y1 NOI year because adr_growth is derived from it."""
+    from httpx import ASGITransport, AsyncClient
+
+    from app.database import get_session_factory
+    from app.main import app
+    from app.services.engine_runner import (
+        SOURCE_ANALYST_OVERRIDE,
+        SOURCE_DERIVED_FROM_REVPAR_GROWTH,
+        _load_engine_inputs,
+    )
+
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://test"
+    ) as client:
+        deal_id = await _create_deal_via_api(client, keys=132)
+        base_run, scen_run, sid = await _run_base_and_scenario(
+            client, deal_id, [{"field_path": "revpar_growth", "value": 0.025}]
+        )
+
+    base_noi = _noi_series(base_run)
+    scen_noi = _noi_series(scen_run)
+    assert len(base_noi) == len(scen_noi) >= 3
+    # Y1 is the un-grown baseline — untouched by a growth override.
+    assert scen_noi[0] == pytest.approx(base_noi[0])
+    # Stabilized (Y3+) NOI MUST move — this is the inert-override bug.
+    for y in range(2, len(base_noi)):
+        assert scen_noi[y] < base_noi[y], (
+            f"Y{y + 1} NOI did not move: {scen_noi[y]} vs {base_noi[y]}"
+        )
+
+    factory = get_session_factory()
+    async with factory() as session:
+        base = await _load_engine_inputs(session, deal_id, scenario_id=sid)
+    occ_g = base["occupancy_growth"]
+    assert base["revpar_growth"] == 0.025
+    assert base["__sources__"]["revpar_growth"] == SOURCE_ANALYST_OVERRIDE
+    assert base["adr_growth"] == pytest.approx((1.025 / (1.0 + occ_g)) - 1.0)
+    assert base["__sources__"]["adr_growth"] == SOURCE_DERIVED_FROM_REVPAR_GROWTH
+
+
+@pytest.mark.asyncio
+async def test_revpar_and_adr_both_overridden_no_derivation() -> None:
+    """(2) When the analyst overrides BOTH revpar_growth and adr_growth the
+    explicit adr_growth wins verbatim — no double-apply. With adr_growth pinned
+    at the seed value the operating NOI is identical to the base."""
+    from httpx import ASGITransport, AsyncClient
+
+    from app.database import get_session_factory
+    from app.main import app
+    from app.services.engine_runner import (
+        SOURCE_ANALYST_OVERRIDE,
+        _kimpton_assumptions,
+        _load_engine_inputs,
+    )
+
+    seed_adr_growth = _kimpton_assumptions()["adr_growth"]
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://test"
+    ) as client:
+        deal_id = await _create_deal_via_api(client, keys=132)
+        base_run, scen_run, sid = await _run_base_and_scenario(
+            client,
+            deal_id,
+            [
+                {"field_path": "revpar_growth", "value": 0.025},
+                {"field_path": "adr_growth", "value": seed_adr_growth},
+            ],
+        )
+
+    # Operating NOI identical: adr_growth was NOT re-derived from RevPAR.
+    assert _noi_series(scen_run) == pytest.approx(_noi_series(base_run), rel=1e-12)
+
+    factory = get_session_factory()
+    async with factory() as session:
+        base = await _load_engine_inputs(session, deal_id, scenario_id=sid)
+    assert base["adr_growth"] == seed_adr_growth
+    assert base["__sources__"]["adr_growth"] == SOURCE_ANALYST_OVERRIDE
+    assert base["__sources__"]["revpar_growth"] == SOURCE_ANALYST_OVERRIDE
+
+
+@pytest.mark.asyncio
+async def test_no_growth_override_is_byte_identical() -> None:
+    """(3) No override → adr_growth stays the seed, nothing is tagged derived,
+    and the base scenario's revenue / NOI series equal a no-scenario run
+    exactly."""
+    from httpx import ASGITransport, AsyncClient
+
+    from app.database import get_session_factory
+    from app.main import app
+    from app.services.engine_runner import (
+        SOURCE_DERIVED_FROM_REVPAR_GROWTH,
+        SOURCE_SEED,
+        _kimpton_assumptions,
+        _load_engine_inputs,
+        run_all_engines,
+    )
+
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://test"
+    ) as client:
+        deal_id = await _create_deal_via_api(client, keys=132)
+        base_scenarios = (await client.get(f"/deals/{deal_id}/scenarios")).json()
+        base_sid = next(s["id"] for s in base_scenarios if s["is_base"])
+        tenant_id = None
+
+    factory = get_session_factory()
+    async with factory() as session:
+        row = (
+            await session.execute(
+                text("SELECT tenant_id FROM deals WHERE id = :id"), {"id": deal_id}
+            )
+        ).first()
+        tenant_id = str(row[0])
+        base = await _load_engine_inputs(session, deal_id, tenant_id=tenant_id)
+        assert base["adr_growth"] == _kimpton_assumptions()["adr_growth"]
+        assert base["__sources__"]["adr_growth"] == SOURCE_SEED
+        assert base["__sources__"]["revpar_growth"] == SOURCE_SEED
+        assert SOURCE_DERIVED_FROM_REVPAR_GROWTH not in base["__sources__"].values()
+
+    async with factory() as s1:
+        no_scenario = await run_all_engines(
+            s1, deal_id=deal_id, tenant_id=tenant_id, run_id=str(uuid4())
+        )
+    async with factory() as s2:
+        with_base = await run_all_engines(
+            s2, deal_id=deal_id, tenant_id=tenant_id, run_id=str(uuid4()),
+            scenario_id=str(base_sid),
+        )
+    assert _noi_series(no_scenario) == _noi_series(with_base)
+    assert (
+        no_scenario["revenue"]["outputs"]["years"]
+        == with_base["revenue"]["outputs"]["years"]
+    )
+    assert (
+        no_scenario["returns"]["outputs"]["levered_irr"]
+        == with_base["returns"]["outputs"]["levered_irr"]
+    )

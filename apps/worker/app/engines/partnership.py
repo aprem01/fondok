@@ -10,6 +10,12 @@ Implements an annual European-style waterfall:
 
 Annual cash flows are walked year-by-year so cumulative LP IRR controls
 which tier the residual lands in.
+
+FON-67 (D3): a deficit period on EITHER path is funded by a dated pro-rata
+capital call (by ownership split) — a negative partner cash flow that adds to
+unreturned capital (the pref accrues on it). The output reports the partner
+``*_additional_contributions`` and ``total_contributions`` so Cash Flow →
+Partnership → Returns carry one canonical treatment of additional equity.
 """
 
 from __future__ import annotations
@@ -102,6 +108,17 @@ class PartnershipOutputExt(PartnershipOutput):
     total_distributable: Annotated[float, Field(ge=0)] = 0.0
     reconciles: bool = False
     catch_up_amount: Annotated[float, Field(ge=0)] = 0.0
+    # FON-67 (D3) — additional equity. A deficit period (negative project
+    # cash) is funded by a dated PRO-RATA capital call on both the annual and
+    # monthly paths, so Cash Flow ("Additional equity required") →
+    # Partnership ("Additional contributions") → Returns carry ONE canonical
+    # treatment. These are the partner draws AFTER the initial equity;
+    # ``total_contributions`` is initial equity + every additional draw (GP +
+    # LP) — the peak equity funded into the deal. All 0 on an all-positive
+    # series (the default deal), so existing numbers are unchanged.
+    gp_additional_contributions: Annotated[float, Field(ge=0)] = 0.0
+    lp_additional_contributions: Annotated[float, Field(ge=0)] = 0.0
+    total_contributions: Annotated[float, Field(ge=0)] = 0.0
 
 
 def _lp_irr_to_date(
@@ -135,6 +152,9 @@ def _partnership_provenance(
     contributed_inputs_gp: list[ValueInput],
     contributed_inputs_lp: list[ValueInput],
     period_label: str,
+    gp_additional: float = 0.0,
+    lp_additional: float = 0.0,
+    total_contributions: float = 0.0,
 ) -> dict[str, ValueTrace]:
     """Shared per-value provenance for the Partnership tab (FON-25/65).
 
@@ -231,6 +251,35 @@ def _partnership_provenance(
         inputs=[ValueInput(name="promote_earned", value=promote, traces_to="promote_earned")],
     )
 
+    # FON-67 (D3) — additional equity (deficit-period capital calls) and the
+    # total contributed, so the Partnership tab's "Additional contributions"
+    # row is traceable to the pro-rata draw math rather than a blank $0.
+    prov["gp_additional_contributions"] = ValueTrace(
+        value=gp_additional,
+        formula="gp_additional_contributions = Σ deficit-period equity draws × gp_equity_pct",
+        note=(
+            "GP share of every capital call funded pro-rata by ownership split "
+            "when a period's project cash is negative."
+        ),
+    )
+    prov["lp_additional_contributions"] = ValueTrace(
+        value=lp_additional,
+        formula="lp_additional_contributions = Σ deficit-period equity draws × lp_equity_pct",
+        note=(
+            "LP share of every capital call funded pro-rata by ownership split "
+            "when a period's project cash is negative."
+        ),
+    )
+    prov["total_contributions"] = ValueTrace(
+        value=total_contributions,
+        formula="total_contributions = gp_contributed_equity + lp_contributed_equity",
+        inputs=[
+            ValueInput(name="gp_contributed_equity", value=gp.contributed_equity, traces_to="gp.contributed_equity"),
+            ValueInput(name="lp_contributed_equity", value=lp.contributed_equity, traces_to="lp.contributed_equity"),
+        ],
+        note="Initial equity plus every additional contribution — the peak equity funded.",
+    )
+
     # Dollar-waterfall rows ("Allocation of Projected Proceeds").
     for i, tier in enumerate(tier_allocations):
         prov[f"tier_allocations[{i}].gp_amount"] = ValueTrace(
@@ -313,6 +362,10 @@ class PartnershipEngine(BaseEngine[PartnershipInputExt, PartnershipOutputExt]):
         lp_cf: list[float] = []
         gp_contrib_total = 0.0
         lp_contrib_total = 0.0
+        # FON-67 (D3) — draws AFTER the close (month 0) are additional
+        # contributions; the month-0 draw is the initial equity.
+        gp_additional = 0.0
+        lp_additional = 0.0
         promote_total = 0.0
         # FON-72 — dollar waterfall by hurdle band (monthly path folds return of
         # capital + preferred into the lowest hurdle's LP balance, so tiers are
@@ -343,6 +396,9 @@ class PartnershipEngine(BaseEngine[PartnershipInputExt, PartnershipOutputExt]):
                 lp_cf.append(-lp_c)
                 lp_contrib_total += lp_c
                 gp_contrib_total += gp_c
+                if idx > 0:
+                    gp_additional += gp_c
+                    lp_additional += lp_c
                 continue
 
             remaining = cf
@@ -442,6 +498,9 @@ class PartnershipEngine(BaseEngine[PartnershipInputExt, PartnershipOutputExt]):
             contributed_inputs_gp=[ValueInput(name="gp_equity_pct", value=gp_pct)],
             contributed_inputs_lp=[ValueInput(name="lp_equity_pct", value=lp_pct)],
             period_label="month",
+            gp_additional=gp_additional,
+            lp_additional=lp_additional,
+            total_contributions=gp_contrib_total + lp_contrib_total,
         )
 
         return PartnershipOutputExt(
@@ -456,6 +515,9 @@ class PartnershipEngine(BaseEngine[PartnershipInputExt, PartnershipOutputExt]):
             total_distributable=total_distributed,
             reconciles=reconciles,
             catch_up_amount=0.0,
+            gp_additional_contributions=gp_additional,
+            lp_additional_contributions=lp_additional,
+            total_contributions=gp_contrib_total + lp_contrib_total,
             provenance=apply_states(prov),
         )
 
@@ -470,6 +532,9 @@ class PartnershipEngine(BaseEngine[PartnershipInputExt, PartnershipOutputExt]):
         gp_pref_accrued = 0.0
         lp_pref_accrued = 0.0
         promote_total = 0.0
+        # FON-67 (D3) — additional equity funded through deficit years.
+        gp_additional = 0.0
+        lp_additional = 0.0
 
         gp_cf: list[float] = []
         lp_cf: list[float] = []
@@ -503,6 +568,28 @@ class PartnershipEngine(BaseEngine[PartnershipInputExt, PartnershipOutputExt]):
             # Accrue preferred return on unreturned capital (annual compounding).
             gp_pref_accrued += gp_unreturned * payload.pref_rate
             lp_pref_accrued += lp_unreturned * payload.pref_rate
+
+            # FON-67 (D3) — a deficit year is an additional equity call, funded
+            # pro-rata by ownership split exactly as ``_run_monthly`` funds a
+            # negative month. The draw is a NEGATIVE partner cash flow (so the
+            # partner IRRs / multiples carry it instead of overstating) and
+            # adds to unreturned capital, so the preferred return accrues on
+            # it from the following year. Nothing is distributable in a
+            # deficit year, so no tier allocation happens. Previously every
+            # tier was gated on ``remaining > 0`` and a negative year silently
+            # appended $0 — the deficit vanished.
+            if cash < -1e-9:
+                draw = -cash
+                gp_c = draw * payload.gp_equity_pct
+                lp_c = draw * payload.lp_equity_pct
+                gp_unreturned += gp_c
+                lp_unreturned += lp_c
+                gp_additional += gp_c
+                lp_additional += lp_c
+                gp_cf.append(-gp_c)
+                lp_cf.append(-lp_c)
+                lp_distributions.append(-lp_c)
+                continue
 
             # Tier 0 — return of capital, pro-rata
             total_unreturned = gp_unreturned + lp_unreturned
@@ -605,10 +692,17 @@ class PartnershipEngine(BaseEngine[PartnershipInputExt, PartnershipOutputExt]):
         gp_irr = irr(gp_flows)
         lp_irr = irr(lp_flows)
 
-        gp_distributions_total = sum(gp_cf)
-        lp_distributions_total = sum(lp_cf)
-        gp_em = gp_distributions_total / gp_eq if gp_eq else 0.0
-        lp_em = lp_distributions_total / lp_eq if lp_eq else 0.0
+        # Distributions are the POSITIVE partner flows; a deficit-year draw is
+        # a contribution, not a negative distribution (mirrors the monthly
+        # path). On an all-positive series this is exactly ``sum(gp_cf)`` —
+        # adding 0.0 terms is exact in IEEE arithmetic — so existing deals
+        # are byte-identical.
+        gp_distributions_total = sum(v for v in gp_cf if v > 0)
+        lp_distributions_total = sum(v for v in lp_cf if v > 0)
+        gp_contributed = gp_eq + gp_additional
+        lp_contributed = lp_eq + lp_additional
+        gp_em = gp_distributions_total / gp_contributed if gp_contributed else 0.0
+        lp_em = lp_distributions_total / lp_contributed if lp_contributed else 0.0
 
         # FON-72 — assemble the dollar waterfall ("Allocation of Projected
         # Proceeds"): Return of Capital → Preferred → GP Catch-Up (when opted
@@ -665,18 +759,47 @@ class PartnershipEngine(BaseEngine[PartnershipInputExt, PartnershipOutputExt]):
 
         gp_return = PartnerReturn(
             partner="GP",
-            contributed_equity=gp_eq,
+            contributed_equity=gp_contributed,
             distributions=gp_distributions_total,
             irr=gp_irr,
             equity_multiple=gp_em,
         )
         lp_return = PartnerReturn(
             partner="LP",
-            contributed_equity=lp_eq,
+            contributed_equity=lp_contributed,
             distributions=lp_distributions_total,
             irr=lp_irr,
             equity_multiple=lp_em,
         )
+        has_additional = (gp_additional + lp_additional) > 0.0
+        contributed_inputs_gp = [
+            ValueInput(name="total_equity", value=payload.total_equity),
+            ValueInput(name="gp_equity_pct", value=payload.gp_equity_pct),
+        ]
+        contributed_inputs_lp = [
+            ValueInput(name="total_equity", value=payload.total_equity),
+            ValueInput(name="lp_equity_pct", value=payload.lp_equity_pct),
+        ]
+        if has_additional:
+            contributed_formula = (
+                "contributed_equity = total_equity × equity_pct + additional_contributions"
+            )
+            contributed_inputs_gp.append(
+                ValueInput(
+                    name="gp_additional_contributions",
+                    value=gp_additional,
+                    traces_to="gp_additional_contributions",
+                )
+            )
+            contributed_inputs_lp.append(
+                ValueInput(
+                    name="lp_additional_contributions",
+                    value=lp_additional,
+                    traces_to="lp_additional_contributions",
+                )
+            )
+        else:
+            contributed_formula = "contributed_equity = total_equity × equity_pct"
         prov = _partnership_provenance(
             gp=gp_return,
             lp=lp_return,
@@ -685,16 +808,13 @@ class PartnershipEngine(BaseEngine[PartnershipInputExt, PartnershipOutputExt]):
             promote=promote_total,
             tier_allocations=tier_allocations,
             total_distributed=total_distributed,
-            contributed_formula="contributed_equity = total_equity × equity_pct",
-            contributed_inputs_gp=[
-                ValueInput(name="total_equity", value=payload.total_equity),
-                ValueInput(name="gp_equity_pct", value=payload.gp_equity_pct),
-            ],
-            contributed_inputs_lp=[
-                ValueInput(name="total_equity", value=payload.total_equity),
-                ValueInput(name="lp_equity_pct", value=payload.lp_equity_pct),
-            ],
+            contributed_formula=contributed_formula,
+            contributed_inputs_gp=contributed_inputs_gp,
+            contributed_inputs_lp=contributed_inputs_lp,
             period_label="year",
+            gp_additional=gp_additional,
+            lp_additional=lp_additional,
+            total_contributions=gp_contributed + lp_contributed,
         )
 
         return PartnershipOutputExt(
@@ -709,6 +829,9 @@ class PartnershipEngine(BaseEngine[PartnershipInputExt, PartnershipOutputExt]):
             total_distributable=total_distributed,
             reconciles=reconciles,
             catch_up_amount=alloc_catchup,
+            gp_additional_contributions=gp_additional,
+            lp_additional_contributions=lp_additional,
+            total_contributions=gp_contributed + lp_contributed,
             provenance=apply_states(prov),
         )
 

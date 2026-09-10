@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import json
 import logging
+import math
 import statistics
 import time
 from collections.abc import Callable, Mapping
@@ -187,7 +188,9 @@ def _kimpton_assumptions() -> dict[str, Any]:
 
     Mirrors ``apps/worker/app/export/fixtures.py`` so a single Run Model
     click on the demo deal reproduces the headline numbers shown in the
-    seeded UI (~$4.7M Y1 NOI, ~23% levered IRR).
+    seeded UI (~$4.7M Y1 NOI, ~23% levered IRR) — except ``soft_costs`` /
+    ``contingency``, which are 0 here (FON-44, see below) while the demo
+    export keeps its own 528K pair.
     """
     return {
         "keys": 132,
@@ -207,8 +210,15 @@ def _kimpton_assumptions() -> dict[str, Any]:
         "expense_growth": 0.035,
         "grow_opex_independently": True,
         "renovation_budget": 5_280_000,
-        "soft_costs": 528_000,
-        "contingency": 528_000,
+        # FON-44 (D2) — no universal soft-cost / contingency allowance. The
+        # 528K/528K pair was a demo-fixture leftover that landed on EVERY
+        # deal as two extra Sources & Uses lines (+$1.056M of total uses and
+        # of the unlevered basis). Zero means the lines are omitted (the
+        # capital engine filters zero uses); an analyst who carries them
+        # enters the amounts explicitly. ``working_capital`` stays — it is a
+        # real use the source models carry.
+        "soft_costs": 0.0,
+        "contingency": 0.0,
         "working_capital": 500_000,
         "closing_costs_pct": 0.02,
         "loan_costs_pct": 0.015,
@@ -274,11 +284,82 @@ SOURCE_ROI_USER = "roi_user"
 # the forecast's bottom-up math (rather than the T-12 / Kimpton seed).
 # Default is OFF — no regression to existing deals.
 SOURCE_STR_FORECAST = "str_forecast"
+# FON-61 (D4) — the STR seed is never silent. When the analyst has flipped
+# ``revenue_seed_from_str_forecast`` on but the seed cannot populate (no
+# STR_TREND extraction, coverage too low, or a loader failure) the flag key is
+# tagged with this label. The UI must never show the seed as "active" unless
+# ``starting_occupancy`` / ``starting_adr`` carry ``SOURCE_STR_FORECAST``.
+SOURCE_STR_UNAVAILABLE = "str_forecast_unavailable"
+# FON-61 (D4) — the Market tab's "Use STR rates" writes EXPLICIT
+# ``starting_occupancy`` / ``starting_adr`` field_overrides (exactly the
+# numbers the Market card shows) carrying this note. The loader recognizes
+# the note and badges those keys ``SOURCE_STR_FORECAST`` rather than a
+# generic analyst override, so the provenance is honest about where the
+# Year-1 rates came from.
+STR_MARKET_OVERRIDE_NOTE = "STR comp-set market rates (Market tab)"
+_STR_SEEDED_KEYS: tuple[str, ...] = ("starting_occupancy", "starting_adr")
+# FON-69 — ``adr_growth`` DERIVED from an analyst RevPAR-growth override. The
+# revenue engine grows rooms revenue by occupancy_growth x adr_growth only;
+# ``revpar_growth`` on its own reaches the returns engine as terminal-NOI
+# growth (and the resort-fee growth fallback), so a Scenario / Projections
+# edit of RevPAR growth never moved operating NOI. When ``revpar_growth`` is
+# overridden and ``adr_growth`` is NOT, the loader derives
+#     adr_growth = (1 + revpar_growth) / (1 + occupancy_growth) - 1
+# and tags it with this label ("derived from RevPAR growth").
+SOURCE_DERIVED_FROM_REVPAR_GROWTH = "derived_from_revpar_growth"
 # FON-66 Slice B — partnership/JV terms extracted from an uploaded
 # PARTNERSHIP-classified document (ownership split, preferred return, promote
 # waterfall). Sits between the Kimpton benchmark seed and an analyst override:
 # seed < partnership_doc < analyst_override.
 SOURCE_PARTNERSHIP_DOC = "partnership_doc"
+
+
+def _is_str_market_note(note: Any) -> bool:
+    """True when an override note marks the value as the STR comp-set market
+    rate the Market tab seeded (see ``STR_MARKET_OVERRIDE_NOTE``).
+
+    Tolerant of casing / whitespace so a hand-typed variant still badges
+    correctly, but requires the note to lead with "STR" AND name the market
+    or comp-set so an unrelated analyst note never masquerades as STR data.
+    """
+    if not isinstance(note, str):
+        return False
+    n = " ".join(note.lower().split())
+    if not n.startswith("str"):
+        return False
+    return any(m in n for m in ("comp-set", "compset", "comp set", "market"))
+
+
+def _derive_adr_growth_from_revpar_override(
+    base: dict[str, Any], sources: dict[str, str]
+) -> None:
+    """FON-69 — make an analyst ``revpar_growth`` override move operating NOI.
+
+    Derives ``adr_growth`` ONLY when ``revpar_growth`` carries an analyst
+    override (deal ``field_overrides``, a scenario, or the run request body)
+    AND ``adr_growth`` does not — an analyst who set both keeps both (no
+    double-apply). With no RevPAR override this returns without touching
+    ``base`` / ``sources``, so every default run is byte-identical.
+    """
+    if sources.get("revpar_growth") != SOURCE_ANALYST_OVERRIDE:
+        return
+    if sources.get("adr_growth") == SOURCE_ANALYST_OVERRIDE:
+        return
+    try:
+        revpar_g = float(base.get("revpar_growth"))  # type: ignore[arg-type]
+        occ_g = float(base.get("occupancy_growth", 0.0))
+    except (TypeError, ValueError):
+        return
+    if not (math.isfinite(revpar_g) and math.isfinite(occ_g)) or occ_g <= -1.0:
+        return
+    derived = (1.0 + revpar_g) / (1.0 + occ_g) - 1.0
+    # The revenue engine accepts adr_growth in [-50%, +50%]; outside that the
+    # override is nonsensical — leave adr_growth alone rather than feed the
+    # engine a value it would reject.
+    if not math.isfinite(derived) or not (-0.50 <= derived <= 0.50):
+        return
+    base["adr_growth"] = derived
+    sources["adr_growth"] = SOURCE_DERIVED_FROM_REVPAR_GROWTH
 
 
 async def _load_engine_inputs(
@@ -338,6 +419,9 @@ async def _load_engine_inputs(
             base.update(overrides)
             for k in overrides:
                 sources[k] = SOURCE_ANALYST_OVERRIDE
+            # FON-69 — a request-body RevPAR-growth override derives
+            # adr_growth here too (no-op without one).
+            _derive_adr_growth_from_revpar_override(base, sources)
         base["__sources__"] = sources
         return base
 
@@ -724,9 +808,15 @@ async def _load_engine_inputs(
     # because nothing in the engine chain read ``field_overrides`` for
     # these top-level keys. Applied last so analyst intent beats every
     # other data source (T12 actuals, CBRE, OM comps, deal row, seed).
-    persisted_overrides = await _load_deal_overrides(
+    # FON-61 (D4) — read the RAW column once so the structured entries'
+    # ``note`` survives alongside the scalar the engines consume (the STR
+    # "Use STR rates" seed is recognized by its note, below).
+    raw_deal_overrides = await _load_deal_overrides_raw(
         session, deal_id=deal_id, tenant_id=effective_tenant
     )
+    persisted_overrides = _normalize_override_shape(raw_deal_overrides)
+    override_notes = _override_notes(raw_deal_overrides)
+    scenario_overrides: dict[str, Any] = {}
     if scenario_id:
         # Wave 3 W3.2 — overlay the scenario's overrides on top of the
         # deal's persisted overrides; scenario values win on conflict
@@ -959,37 +1049,72 @@ async def _load_engine_inputs(
                 base[path] = value
             sources[path] = SOURCE_ANALYST_OVERRIDE
 
+    # FON-61 (D4) — an explicit Year-1 rate override whose note marks it as
+    # the STR comp-set market rate IS the Market tab's "Use STR rates" seed
+    # (it carries exactly what the Market card shows). Badge it as STR data,
+    # not a generic analyst override. A scenario override on the same key
+    # wins and keeps its analyst label; a note on an override the loop did
+    # not apply (non-scalar) tags nothing.
+    str_noted_keys: set[str] = {
+        key
+        for key in _STR_SEEDED_KEYS
+        if key not in scenario_overrides
+        and sources.get(key) == SOURCE_ANALYST_OVERRIDE
+        and _is_str_market_note(override_notes.get(key))
+    }
+    for key in str_noted_keys:
+        sources[key] = SOURCE_STR_FORECAST
+
+    # FON-69 — an analyst RevPAR-growth override (deal / scenario / request
+    # body) derives adr_growth so operating NOI moves; no-op without one.
+    _derive_adr_growth_from_revpar_override(base, sources)
+
     # Wave 3 W3.3 — optional STR forward-forecast seed. When the analyst
     # has flipped ``revenue_seed_from_str_forecast`` to True (default is
     # False so existing deals are unaffected), seed the revenue engine's
     # ``starting_occupancy`` + ``starting_adr`` from the BASE scenario's
-    # Month-12 forecast point. Implemented as a no-op when:
-    #   * the flag is False / absent (default — no regression);
-    #   * the STR Trend extraction is missing or below coverage;
-    #   * the load fails (best-effort — analyst sees badge stay at the
-    #     prior source rather than a 500).
+    # Month-12 forecast point. The flag is False / absent by default (no
+    # regression). FON-61 (D4): when the flag is ON the outcome is NEVER
+    # silent — the flag key is tagged ``SOURCE_STR_FORECAST`` when the seed
+    # landed (or the explicit STR-noted overrides above already carry it)
+    # and ``SOURCE_STR_UNAVAILABLE`` when it could not populate (STR Trend
+    # extraction missing / below coverage / loader failure), so the UI can
+    # never claim the seed is active without the tag.
     if base.get("revenue_seed_from_str_forecast") is True:
-        # Sam QA 8/25: prefer the STR SUBJECT TTM (the current performance the
-        # Market tab displays) over the forecast Month-12 point, which could
-        # land far below the subject actual and tank the deal (a −19% IRR
-        # foot-gun). Fall back to the forecast only when the subject TTM isn't
-        # extracted.
-        from .str_forecast_loader import load_str_subject_ttm
+        if len(str_noted_keys) == len(_STR_SEEDED_KEYS):
+            # The explicit overrides ARE the STR seed (exactly what the Market
+            # card shows) — the loader must not overwrite them with a
+            # differently-derived point.
+            sources["revenue_seed_from_str_forecast"] = SOURCE_STR_FORECAST
+        else:
+            # Sam QA 8/25: prefer the STR SUBJECT TTM (the current performance
+            # the Market tab displays) over the forecast Month-12 point, which
+            # could land far below the subject actual and tank the deal (a
+            # −19% IRR foot-gun). Fall back to the forecast only when the
+            # subject TTM isn't extracted.
+            from .str_forecast_loader import load_str_subject_ttm
 
-        try:
-            seed = await load_str_subject_ttm(
-                session, deal_id=deal_id, tenant_id=effective_tenant
-            ) or await _load_str_forecast_for_seed(
-                session, deal_id=deal_id, tenant_id=effective_tenant
-            )
-        except Exception:
-            seed = None
-        if seed is not None:
-            seed_occ, seed_adr = seed
-            base["starting_occupancy"] = seed_occ
-            base["starting_adr"] = seed_adr
-            sources["starting_occupancy"] = SOURCE_STR_FORECAST
-            sources["starting_adr"] = SOURCE_STR_FORECAST
+            try:
+                seed = await load_str_subject_ttm(
+                    session, deal_id=deal_id, tenant_id=effective_tenant
+                ) or await _load_str_forecast_for_seed(
+                    session, deal_id=deal_id, tenant_id=effective_tenant
+                )
+            except Exception:
+                logger.exception(
+                    "str seed: loader failed for deal %s — tagging unavailable",
+                    deal_id,
+                )
+                seed = None
+            if seed is not None:
+                seed_occ, seed_adr = seed
+                base["starting_occupancy"] = seed_occ
+                base["starting_adr"] = seed_adr
+                sources["starting_occupancy"] = SOURCE_STR_FORECAST
+                sources["starting_adr"] = SOURCE_STR_FORECAST
+                sources["revenue_seed_from_str_forecast"] = SOURCE_STR_FORECAST
+            else:
+                sources["revenue_seed_from_str_forecast"] = SOURCE_STR_UNAVAILABLE
 
     base["__sources__"] = sources
     return base
@@ -2199,19 +2324,20 @@ async def _load_scenario_overrides(
     return out
 
 
-async def _load_deal_overrides(
+async def _load_deal_overrides_raw(
     session: AsyncSession,
     *,
     deal_id: str,
     tenant_id: str,
 ) -> dict[str, Any]:
-    """Read the deal's `field_overrides` JSONB column.
+    """Read the deal's ``field_overrides`` JSONB column AS STORED.
 
-    Returns ``{}`` for non-UUID ids, missing rows, or schemas where the
-    migration hasn't run yet (test DBs). The column is keyed by canonical
-    extractor field path (e.g. ``property_overview.year_built``) →
-    primitive value. See ``_normalize_override_shape`` for the legacy /
-    structured shape handling.
+    Entries are either a primitive (legacy) or the structured
+    ``{value, note, overridden_by, overridden_at}`` record — see
+    ``_normalize_override_shape``. Returns ``{}`` for non-UUID ids, missing
+    rows, or schemas where the migration hasn't run yet (test DBs). Callers
+    that only need the scalars use :func:`_load_deal_overrides`; the engine
+    input loader reads this raw shape so the ``note`` survives (FON-61).
     """
     try:
         UUID(deal_id)
@@ -2234,7 +2360,7 @@ async def _load_deal_overrides(
         return {}
     raw = row._mapping.get("field_overrides")
     if isinstance(raw, dict):
-        return _normalize_override_shape(raw)
+        return raw
     if isinstance(raw, str):
         try:
             parsed = json.loads(raw)
@@ -2242,8 +2368,41 @@ async def _load_deal_overrides(
             return {}
         if not isinstance(parsed, dict):
             return {}
-        return _normalize_override_shape(parsed)
+        return parsed
     return {}
+
+
+async def _load_deal_overrides(
+    session: AsyncSession,
+    *,
+    deal_id: str,
+    tenant_id: str,
+) -> dict[str, Any]:
+    """Read the deal's `field_overrides` JSONB column.
+
+    Returns ``{}`` for non-UUID ids, missing rows, or schemas where the
+    migration hasn't run yet (test DBs). The column is keyed by canonical
+    extractor field path (e.g. ``property_overview.year_built``) →
+    primitive value. See ``_normalize_override_shape`` for the legacy /
+    structured shape handling.
+    """
+    return _normalize_override_shape(
+        await _load_deal_overrides_raw(
+            session, deal_id=deal_id, tenant_id=tenant_id
+        )
+    )
+
+
+def _override_notes(raw: dict[str, Any]) -> dict[str, str]:
+    """``{path: note}`` for the structured override entries carrying a
+    non-empty note (legacy scalar entries have none)."""
+    out: dict[str, str] = {}
+    for path, val in raw.items():
+        if isinstance(val, dict):
+            note = val.get("note")
+            if isinstance(note, str) and note.strip():
+                out[path] = note
+    return out
 
 
 def _apply_overrides(
