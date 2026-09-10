@@ -19,7 +19,7 @@ export type ImpactBasis = 'noi' | 'revenue' | 'expense' | 'other';
 
 export type ConceptId = "occupancy" | "adr" | "revpar" | "revpar_prior_ttm" | "revpar_yoy_growth" | "monthly_revpar" | "rooms_sold" | "available_rooms" | "rooms_revenue" | "fb_revenue" | "other_revenue" | "misc_revenue" | "resort_fees" | "total_revenue" | "parking_revenue" | "spa_revenue" | "meeting_space_revenue" | "rooms_dept_expense" | "fb_dept_expense" | "other_dept_expense" | "dept_expenses" | "dept_expenses_by_line" | "dept_profit" | "rooms_dept_profit" | "fb_dept_profit" | "administrative_general" | "information_telecom" | "sales_marketing" | "property_operations" | "utilities" | "undistributed_expenses" | "mgmt_fee" | "incentive_mgmt_fee" | "ffe_reserve" | "franchise_royalty_fee" | "franchise_marketing_fee" | "property_taxes" | "insurance" | "rent_expense" | "nonop_income" | "other_nonop_expense" | "fixed_charges" | "gop" | "income_before_nonop" | "ebitda" | "noi" | "noi_per_key" | "total_labor" | "labor_cost_per_occupied_room" | "period_ending" | "period_start" | "period_type" | "period_label" | "keys" | "property_name" | "brand" | "year_built" | "year_renovated" | "address" | "gba_sf" | "meeting_space_sf" | "parking_spaces" | "fb_outlets" | "property_type" | "submarket" | "property_value" | "purchase_price" | "price_per_key" | "renovation_budget" | "pip_estimate" | "renovation_hard_costs" | "entry_cap_rate" | "exit_cap_rate" | "total_capital" | "closing_costs" | "working_capital" | "stabilized_noi" | "loan_amount" | "interest_rate" | "amortization_years" | "term_years" | "ltv" | "maturity_date" | "annual_debt_service" | "levered_irr" | "equity_multiple" | "str_report_year" | "compset_adr" | "compset_revpar" | "compset_occupancy" | "mpi" | "ari" | "rgi" | "comp_set_size" | "comp_set_total_keys" | "comp_sale_price" | "comp_cap_rate" | "comp_price_per_key" | "adr_growth_vs_market" | "revpar_growth_vs_market" | "broker_noi_yoy_growth_with_flat_opex_ratio" | "coastal_insurance_yoy_increase" | "debt_yield_growth_with_dscr_shrinkage" | "labor_yoy_growth_vs_market_wage_growth" | "q1_q3_revpar_swing_in_seasonal_market" | "revenue_growth_in_flat_demand_market" | "fb_margin_on_select_service_property" | "year_one_noi_dip_during_pip";
 
-export type SourceId = "seed" | "deal_row" | "t12_actual" | "cbre_horizons" | "pnl_benchmark" | "portfolio_pnl" | "om_comps" | "om_broker" | "analyst_override" | "str_segmentation_default" | "pip_om" | "pip_user" | "capex_ffe_default" | "roi_user" | "str_forecast" | "str_forecast_unavailable" | "derived_from_revpar_growth" | "partnership_doc";
+export type SourceId = "seed" | "deal_row" | "t12_actual" | "cbre_horizons" | "pnl_benchmark" | "portfolio_pnl" | "om_comps" | "om_broker" | "analyst_override" | "str_segmentation_default" | "pip_om" | "pip_user" | "capex_ffe_default" | "roi_user" | "str_forecast" | "str_forecast_unavailable" | "cbre_horizons_unavailable" | "om_comps_unavailable" | "derived_from_revpar_growth" | "partnership_doc";
 
 export type DocType = "OM" | "T12" | "PNL" | "PNL_MONTHLY" | "PNL_YTD" | "STR" | "STR_TREND" | "STR_SEGMENTATION" | "CBRE_HORIZONS" | "PNL_BENCHMARK" | "PORTFOLIO_PNL" | "PARTNERSHIP" | "RENT_ROLL" | "ROOM_MIX" | "MARKET_STUDY" | "CONTRACT" | "INSURANCE" | "PROPERTY_TAX" | "CAPEX" | "PROPERTY_INFO" | "LEASES" | "SURVEYS" | "DEBT" | "OTHER";
 
@@ -8203,6 +8203,26 @@ export const SOURCES: Record<SourceId, SourceDef> = {
     ],
     "explanation": "STR rates were requested but could not populate (no STR Trend extraction or coverage too low) — the model is on the T-12 base.",
     "reason": "str_unavailable"
+  },
+  "cbre_horizons_unavailable": {
+    "label": "CBRE unavailable",
+    "badge": "CBRE unavailable",
+    "kind": "refusal",
+    "doc_types": [
+      "CBRE_HORIZONS"
+    ],
+    "explanation": "A CBRE Horizons report is on the deal but it is dated after the underwriting as-of date, so it was not knowable then — the growth rates stay on their prior basis.",
+    "reason": "not_knowable_as_of"
+  },
+  "om_comps_unavailable": {
+    "label": "OM comps unavailable",
+    "badge": "OM Comps unavailable",
+    "kind": "refusal",
+    "doc_types": [
+      "OM"
+    ],
+    "explanation": "The offering memorandum's comparable-sales table is dated after the underwriting as-of date, so it was not knowable then — the exit cap rate stays on its prior basis.",
+    "reason": "not_knowable_as_of"
   },
   "derived_from_revpar_growth": {
     "label": "Derived from RevPAR growth",

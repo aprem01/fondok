@@ -27,7 +27,8 @@ import math
 import statistics
 import time
 from collections.abc import Callable, Mapping
-from datetime import UTC, datetime
+from dataclasses import dataclass
+from datetime import UTC, date, datetime
 from typing import Any
 from uuid import UUID, uuid4
 
@@ -37,6 +38,24 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from fondok_schemas.financial import ModelAssumptions
 from fondok_schemas.partnership import WaterfallTier
+from fondok_schemas.reasons import ReasonCode
+
+# Phase 2.1 — provenance carriers. ``Resolution`` is the registry's own
+# "what resolved, from where" record; ``concept_for_path`` classifies a raw
+# extraction path into (concept, basis, scope). Neither is used to CHOOSE a
+# value here: the loaders keep their existing ``field_catalog`` alias
+# matching (DRIFT_NOTES §6 — widening the vocabulary is a separate change
+# set with a golden diff, and needs the basis filter first). The registry is
+# used only to DESCRIBE the row the legacy matcher already picked.
+from ..ontology.registry import Resolution, concept_for_path
+
+# Phase 2.1 — run lineage. ``services/lineage.py`` is landing on a sibling
+# branch; guard the import so this branch is mergeable before it does. When
+# the module is absent the hook in ``run_all_engines`` is a no-op.
+try:  # pragma: no cover - exercised by whichever branch merges first
+    from .lineage import persist_for_run
+except ImportError:  # pragma: no cover
+    persist_for_run = None  # type: ignore[assignment]
 
 # Field alias maps + period-type ranks are externalized to
 # apps/worker/app/extraction/field_catalog.yaml (Phase 2 of the
@@ -312,6 +331,304 @@ SOURCE_DERIVED_FROM_REVPAR_GROWTH = "derived_from_revpar_growth"
 # waterfall). Sits between the Kimpton benchmark seed and an analyst override:
 # seed < partnership_doc < analyst_override.
 SOURCE_PARTNERSHIP_DOC = "partnership_doc"
+# Phase 2.1 (as-of gate) — the market-report siblings of
+# ``str_forecast_unavailable``. A CBRE Horizons report or an OM comp table
+# published AFTER the deal's underwriting as-of date is not knowable at that
+# date, so the loader refuses it and the key keeps its prior (seed) value
+# with an honest "unavailable" badge + a ``not_knowable_as_of`` reason.
+# Both labels are inert unless the deal carries an explicit
+# ``underwriting_as_of`` override (never ``acquisition_close_date`` — see
+# ``_underwriting_as_of_from``).
+SOURCE_CBRE_HORIZONS_UNAVAILABLE = "cbre_horizons_unavailable"
+SOURCE_OM_COMPS_UNAVAILABLE = "om_comps_unavailable"
+
+
+# ───────────────────────── Phase 2.1 — source fields ──────────────────────
+
+
+@dataclass(frozen=True)
+class SourceField:
+    """The extraction ROW that supplied one assumption value.
+
+    ``resolution`` is the registry's :class:`~app.ontology.registry.Resolution`
+    describing the row (concept / scope / basis / unit / page); the three
+    extra members are the identity the registry cannot know — which document
+    and which extraction result the row came off, and that document's
+    ``report_as_of`` (``None`` = the column is absent or NULL, i.e. unknown).
+
+    The loaders keep returning their plain ``dict[str, float]``; the parallel
+    ``dict[str, SourceField]`` only appears when a caller passes
+    ``with_provenance=True``, so every existing caller and test is untouched.
+    """
+
+    resolution: Resolution
+    document_id: str | None = None
+    extraction_result_id: str | None = None
+    as_of: str | None = None
+
+    def as_dict(self) -> dict[str, Any]:
+        """The wire shape of one ``__source_fields__`` entry."""
+        r = self.resolution
+        return {
+            "document_id": self.document_id,
+            "extraction_result_id": self.extraction_result_id,
+            "field_name": r.field_name,
+            "source_page": r.source_page,
+            "concept": r.concept,
+            "scope": r.scope,
+            "basis": r.basis,
+            "doc_type": r.doc_type,
+            "as_of": self.as_of,
+        }
+
+
+def _row_provenance(
+    *,
+    canonical: str,
+    field: Mapping[str, Any],
+    value: Any,
+    doc_type: str | None,
+    document_id: Any = None,
+    extraction_result_id: Any = None,
+    as_of: Any = None,
+) -> SourceField:
+    """Describe one extraction row as a :class:`SourceField`.
+
+    The row has ALREADY been chosen by the loader's ``field_catalog`` alias
+    match — this only classifies it. ``concept_for_path`` gives the registry
+    concept + basis + scope for the raw path; when the registry does not know
+    the path (the catalog is a gated subset, so this is possible) we fall back
+    to the loader's own canonical key with ``unknown`` basis / scope rather
+    than inventing a classification.
+    """
+    name = str(field.get("field_name") or "").strip()
+    dt = (doc_type or "").strip().upper() or None
+    classified = concept_for_path(name, doc_type=dt) if name else None
+    if classified is not None:
+        concept, basis, scope = classified
+    else:
+        concept, basis, scope = canonical, "unknown", "unknown"
+    page = field.get("source_page")
+    conf = field.get("confidence")
+    reviewed = field.get("reviewed")
+    return SourceField(
+        resolution=Resolution(
+            concept=concept,
+            value=value,
+            field_name=name or None,
+            source_page=int(page) if isinstance(page, int) else None,
+            unit=field.get("unit") if isinstance(field.get("unit"), str) else None,
+            confidence=float(conf) if isinstance(conf, (int, float)) else None,
+            reviewed=reviewed if isinstance(reviewed, str) else None,
+            doc_type=dt,
+            scope=scope,
+            basis=basis,
+            reason=None,
+            candidates=(),
+        ),
+        document_id=str(document_id) if document_id else None,
+        extraction_result_id=(
+            str(extraction_result_id) if extraction_result_id else None
+        ),
+        as_of=_as_iso_date(as_of),
+    )
+
+
+def _derived_provenance(
+    *,
+    concept: str,
+    value: Any,
+    doc_type: str | None,
+    basis: str = "unknown",
+    document_id: Any = None,
+    extraction_result_id: Any = None,
+    as_of: Any = None,
+) -> SourceField:
+    """Provenance for a value DERIVED from more than one row (a CAGR over a
+    forecast curve, an even-count median). ``field_name`` / ``source_page``
+    are ``None`` on purpose — no single row carries the number — but the
+    document identity is real, so click-to-source still lands on the report.
+    """
+    return SourceField(
+        resolution=Resolution(
+            concept=concept,
+            value=value,
+            field_name=None,
+            source_page=None,
+            unit=None,
+            confidence=None,
+            reviewed=None,
+            doc_type=(doc_type or "").strip().upper() or None,
+            scope="unknown",
+            basis=basis,
+            reason=None,
+            candidates=(),
+        ),
+        document_id=str(document_id) if document_id else None,
+        extraction_result_id=(
+            str(extraction_result_id) if extraction_result_id else None
+        ),
+        as_of=_as_iso_date(as_of),
+    )
+
+
+def _as_iso_date(value: Any) -> str | None:
+    """``YYYY-MM-DD`` for a date / datetime / ISO string; ``None`` otherwise.
+
+    ``documents.report_as_of`` is being added by another builder right now
+    (``services/as_of.py::derive_report_as_of``); until it lands every read
+    yields ``None``, which the as-of gate reads as "unknown", never as a
+    refusal.
+    """
+    if value is None:
+        return None
+    if isinstance(value, datetime):
+        return value.date().isoformat()
+    if isinstance(value, date):
+        return value.isoformat()
+    if isinstance(value, str) and value.strip():
+        try:
+            return date.fromisoformat(value.strip()[:10]).isoformat()
+        except ValueError:
+            return None
+    return None
+
+
+def _as_of_date(value: Any) -> date | None:
+    """The parsed ``date`` behind :func:`_as_iso_date` (``None`` = unknown)."""
+    iso = _as_iso_date(value)
+    return date.fromisoformat(iso) if iso else None
+
+
+def _underwriting_as_of_from(overrides: Mapping[str, Any] | None) -> date | None:
+    """The deal's EXPLICIT underwriting as-of date, or ``None``.
+
+    Only ``underwriting_as_of`` counts. ``acquisition_close_date`` is
+    deliberately NOT a fallback: it is a modelling input, not a knowledge
+    horizon. On the live QA deal e577f547 it is 2021-06-01 (the deal
+    reconciles to a historical model) while the STR / CoStar material is
+    from 2025 — treating the close date as the as-of would refuse every one
+    of those documents and blank the Market tab on a deal mid-QA.
+
+    ``None`` — the case for every deal today — makes the whole as-of gate
+    inert: no loader changes behaviour, no source label flips, no
+    ``not_knowable_as_of`` reason is attached.
+    """
+    if not overrides:
+        return None
+    return _as_of_date(overrides.get("underwriting_as_of"))
+
+
+def _is_after_as_of(
+    report_as_of: Any, precision: Any, as_of: date | None
+) -> bool:
+    """True when a document is dated strictly AFTER the underwriting date
+    **at the document's own precision**.
+
+    ``documents.report_as_of_precision`` is ``day | month | quarter | year``.
+    The as-of builder dates a report to the END of its known period — a May
+    2025 STAR report with only a ``report_year`` becomes ``2025-12-31`` at
+    ``year`` precision — so comparing those raw dates would refuse a report
+    that is perfectly knowable. We therefore compare year-to-year for
+    ``year``, quarter-to-quarter for ``quarter``, month-to-month for
+    ``month``, and only day-to-day for ``day`` (and for a NULL precision,
+    which means the date is exact). A ``year``-precision document whose year
+    EQUALS the underwriting year is admitted.
+
+    An unknown (missing column / NULL / unparseable) ``report_as_of`` is
+    never "after" — the gate is a flag, not a refusal, in that case. That
+    keeps Sam's numbers on every deal whose documents predate the column.
+    """
+    if as_of is None:
+        return False
+    reported = _as_of_date(report_as_of)
+    if reported is None:
+        return False
+    prec = str(precision or "").strip().lower()
+    if prec == "year":
+        return reported.year > as_of.year
+    if prec == "quarter":
+        return (reported.year, (reported.month - 1) // 3) > (
+            as_of.year,
+            (as_of.month - 1) // 3,
+        )
+    if prec == "month":
+        return (reported.year, reported.month) > (as_of.year, as_of.month)
+    return reported > as_of
+
+
+_REPORT_AS_OF_CACHE_KEY = "fondok_documents_has_report_as_of"
+#: The as-of SELECT columns for a caller that does not need them at all.
+_NO_AS_OF_COLS = "NULL AS report_as_of, NULL AS report_as_of_precision"
+
+
+async def _documents_has_report_as_of(session: AsyncSession) -> frozenset[str]:
+    """Which as-of columns ``documents`` carries on the live schema.
+
+    Introspects the catalog rather than probing with a SELECT: a failed
+    statement inside an open transaction poisons the session, and this runs
+    on the hot ``_load_engine_inputs`` path. Any failure answers "none", so
+    a missing column degrades to "as-of unknown" instead of an error.
+
+    Memoised on ``session.info`` so one ``_load_engine_inputs`` pass asks
+    once, not once per loader.
+    """
+    try:
+        cached = session.info.get(_REPORT_AS_OF_CACHE_KEY)
+    except Exception:  # noqa: BLE001
+        cached = None
+    if isinstance(cached, frozenset):
+        return cached
+    answer = await _probe_report_as_of(session)
+    try:
+        session.info[_REPORT_AS_OF_CACHE_KEY] = answer
+    except Exception:  # noqa: BLE001
+        pass
+    return answer
+
+
+async def _probe_report_as_of(session: AsyncSession) -> frozenset[str]:
+    """Which of the two as-of columns exist on ``documents`` right now."""
+    wanted = {"report_as_of", "report_as_of_precision"}
+    try:
+        from ..config import get_settings as _gs
+
+        is_sqlite = str(_gs().async_database_url).startswith("sqlite")
+    except Exception:  # noqa: BLE001
+        is_sqlite = False
+    try:
+        if is_sqlite:
+            rows = await session.execute(text("PRAGMA table_info(documents)"))
+            have = {str(r[1]).lower() for r in rows.fetchall()}
+        else:
+            rows = await session.execute(
+                text(
+                    "SELECT column_name FROM information_schema.columns "
+                    "WHERE table_name = 'documents'"
+                )
+            )
+            have = {str(r[0]).lower() for r in rows.fetchall()}
+    except Exception:  # noqa: BLE001
+        return frozenset()
+    return frozenset(wanted & have)
+
+
+async def _report_as_of_expr(session: AsyncSession) -> str:
+    """The two as-of SELECT columns, aliased — real when the columns exist,
+    NULL stand-ins otherwise.
+
+    Every loader SELECT can then name ``report_as_of`` /
+    ``report_as_of_precision`` unconditionally, and a schema without the
+    columns (another builder is adding them right now) reads as "unknown".
+    """
+    have = await _documents_has_report_as_of(session)
+    as_of = "d.report_as_of" if "report_as_of" in have else "NULL"
+    prec = (
+        "d.report_as_of_precision"
+        if "report_as_of_precision" in have
+        else "NULL"
+    )
+    return f"{as_of} AS report_as_of, {prec} AS report_as_of_precision"
 
 
 def _is_str_market_note(note: Any) -> bool:
@@ -383,6 +700,21 @@ async def _load_engine_inputs(
     pick specific keys with .get() and ignore the metadata; the
     ``GET /deals/{id}/assumption_sources`` endpoint reads it.
 
+    Phase 2.1 adds two more ``__``-prefixed metadata keys, both additive
+    and both invisible to the engines (``_build_input_for`` reads named
+    keys; every serializer filters the ``__`` prefix):
+
+    * ``base["__source_fields__"]`` — ``{assumption_key: {document_id,
+      extraction_result_id, field_name, source_page, concept, scope, basis,
+      doc_type, as_of}}``: the exact extraction row behind each grounded
+      number. A derived number (a CAGR, an even-count median, a forecast
+      point) names its document with ``field_name = None`` rather than
+      pointing at a row that does not carry it.
+    * ``base["__reasons__"]`` — ``{assumption_key: {"code": ReasonCode,
+      "detail": str | None}}``: why a key is still a seed
+      (``no_document`` / ``no_source`` / ``str_unavailable``), or what the
+      as-of gate did (``not_knowable_as_of`` / ``as_of_unknown``).
+
     The web app's demo deal id (legacy int 7) does not parse as a UUID
     and never lands in the deals table; that path uses the pure Kimpton
     defaults.
@@ -400,6 +732,10 @@ async def _load_engine_inputs(
     # web app surfaces gets badged — extras are tracked anyway so
     # downstream callers can introspect freely.
     sources: dict[str, str] = {k: SOURCE_SEED for k in base.keys()}
+    # Phase 2.1 — the row behind each grounded number, and the reason
+    # behind each ungrounded one. Both additive; neither reaches an engine.
+    source_fields: dict[str, SourceField] = {}
+    reasons: dict[str, dict[str, Any]] = {}
     # Resolve tenant_id up-front so every helper below can scope its
     # SELECT — production callers always pass one; test / demo callers
     # (Kimpton fixture) fall back to the seed tenant.
@@ -423,7 +759,33 @@ async def _load_engine_inputs(
             # adr_growth here too (no-op without one).
             _derive_adr_growth_from_revpar_override(base, sources)
         base["__sources__"] = sources
+        base["__source_fields__"] = {}
+        base["__reasons__"] = {}
         return base
+
+    # Phase 2.1 — the underwriting as-of date, resolved BEFORE the market
+    # loaders run so a report published after it can be refused. Read from
+    # the deal's persisted overrides, the active scenario, then the request
+    # body (last write wins, same precedence the loop below uses).
+    # ONLY an explicit ``underwriting_as_of`` counts — never
+    # ``acquisition_close_date`` (see ``_underwriting_as_of_from``). With no
+    # such key the whole gate is inert and every loader behaves as today.
+    as_of_overrides: dict[str, Any] = {}
+    try:
+        as_of_overrides = _normalize_override_shape(
+            await _load_deal_overrides_raw(
+                session, deal_id=deal_id, tenant_id=effective_tenant
+            )
+        )
+        if scenario_id:
+            as_of_overrides.update(
+                await _load_scenario_overrides(session, scenario_id=scenario_id)
+            )
+    except Exception:  # noqa: BLE001
+        as_of_overrides = {}
+    if overrides:
+        as_of_overrides.update(overrides)
+    underwriting_as_of = _underwriting_as_of_from(as_of_overrides)
 
     try:
         row = (
@@ -478,23 +840,44 @@ async def _load_engine_inputs(
     # $905K Utilities vs actual $288K) cascaded into wrong DSCR / returns
     # / per-key metrics). Best-effort — partial extraction degrades to
     # ratio synthesis line-by-line.
-    base["t12_expense_actuals"] = await _load_t12_expense_actuals(
-        session, deal_id=deal_id, tenant_id=effective_tenant
+    expense_actuals, expense_prov = await _load_t12_expense_actuals(
+        session,
+        deal_id=deal_id,
+        tenant_id=effective_tenant,
+        with_provenance=True,
     )
+    base["t12_expense_actuals"] = expense_actuals
+    # Expense canonicals ARE the assumption keys the override panel edits
+    # (``_OVERRIDE_EXPENSE_ACTUAL_KEYS``), so they carry straight across.
+    source_fields.update(expense_prov)
 
     # Same idea on the revenue side (Sam QA #16): when a T-12 has been
     # extracted, prefer the actual occupancy / ADR over the Kimpton seed
     # so the Per-Key tab and downstream rooms-revenue projection reflect
     # the real property instead of the demo defaults.
-    revenue_actuals = await _load_t12_revenue_actuals(
-        session, deal_id=deal_id, tenant_id=effective_tenant
+    revenue_actuals, revenue_prov = await _load_t12_revenue_actuals(
+        session,
+        deal_id=deal_id,
+        tenant_id=effective_tenant,
+        with_provenance=True,
     )
+
+    def _ground(assumption_key: str, canonical: str) -> None:
+        """Record the T-12 row behind an assumption key (no-op if absent)."""
+        hit = revenue_prov.get(canonical)
+        if hit is not None:
+            source_fields[assumption_key] = hit
+        else:
+            source_fields.pop(assumption_key, None)
+
     if "occupancy" in revenue_actuals:
         base["starting_occupancy"] = revenue_actuals["occupancy"]
         sources["starting_occupancy"] = SOURCE_T12_ACTUAL
+        _ground("starting_occupancy", "occupancy")
     if "adr" in revenue_actuals:
         base["starting_adr"] = revenue_actuals["adr"]
         sources["starting_adr"] = SOURCE_T12_ACTUAL
+        _ground("starting_adr", "adr")
     # RevPAR is occupancy × ADR — only consume the extracted RevPAR when
     # one of the two underlying drivers wasn't itself extracted, to avoid
     # contradicting them. (The engine doesn't take RevPAR directly; we
@@ -507,6 +890,7 @@ async def _load_engine_inputs(
     ):
         base["starting_adr"] = revenue_actuals["revpar"] / revenue_actuals["occupancy"]
         sources["starting_adr"] = SOURCE_T12_ACTUAL
+        _ground("starting_adr", "revpar")
     elif (
         "revpar" in revenue_actuals
         and "occupancy" not in revenue_actuals
@@ -517,6 +901,7 @@ async def _load_engine_inputs(
             0.95, revenue_actuals["revpar"] / revenue_actuals["adr"]
         )
         sources["starting_occupancy"] = SOURCE_T12_ACTUAL
+        _ground("starting_occupancy", "revpar")
 
     # When the T-12 carries Y1 revenue dollars, derive the engine's
     # per-occupied-room F&B anchor and the other-revenue ratio so the
@@ -537,6 +922,7 @@ async def _load_engine_inputs(
     # we'd double-count revenue.
     if resort_fees > 0:
         base["starting_resort_fees"] = resort_fees
+        _ground("starting_resort_fees", "resort_fees")
         other_pool = other_rev + misc_rev
     else:
         other_pool = other_rev + misc_rev
@@ -551,10 +937,17 @@ async def _load_engine_inputs(
 
     if fb_rev and occupied_room_nights > 0:
         base["fb_revenue_per_occupied_room"] = fb_rev / occupied_room_nights
+        # The ratio is derived, but ONE extracted line (F&B revenue) is its
+        # numerator — that is the row an analyst wants to click through to.
+        _ground("fb_revenue_per_occupied_room", "fb_revenue")
     if other_pool and rooms_rev and rooms_rev > 0:
         # Cap the ratio at a sane upper bound so a partial extraction
         # (rooms revenue missing, all other_pool present) can't blow up.
         base["other_revenue_pct_of_rooms"] = min(0.30, other_pool / rooms_rev)
+        _ground(
+            "other_revenue_pct_of_rooms",
+            "other_revenue" if "other_revenue" in revenue_prov else "misc_revenue",
+        )
 
     # When the deal has an extracted OM, prefer the broker's published
     # capital + debt numbers over the Kimpton seed so the capital stack
@@ -563,21 +956,32 @@ async def _load_engine_inputs(
     # defaults — a user-edited purchase price on the deals row is never
     # clobbered by the broker's headline. Best-effort — partial
     # extraction degrades to Kimpton key-by-key.
-    capital_actuals = await _load_om_capital_actuals(
-        session, deal_id=deal_id, tenant_id=effective_tenant
+    capital_actuals, capital_prov = await _load_om_capital_actuals(
+        session,
+        deal_id=deal_id,
+        tenant_id=effective_tenant,
+        with_provenance=True,
     )
     for key, value in capital_actuals.items():
         if key in deals_table_keys:
+            # The deals row wins — the OM row did NOT supply this number.
             continue
         base[key] = value
+        if key in capital_prov:
+            source_fields[key] = capital_prov[key]
 
-    debt_actuals = await _load_om_debt_actuals(
-        session, deal_id=deal_id, tenant_id=effective_tenant
+    debt_actuals, debt_prov = await _load_om_debt_actuals(
+        session,
+        deal_id=deal_id,
+        tenant_id=effective_tenant,
+        with_provenance=True,
     )
     for key, value in debt_actuals.items():
         if key in deals_table_keys:
             continue
         base[key] = value
+        if key in debt_prov:
+            source_fields[key] = debt_prov[key]
 
     # External market reports (May 7 scope): when CBRE Horizons has
     # been extracted, derive ADR + RevPAR growth from its 5-year
@@ -585,12 +989,38 @@ async def _load_engine_inputs(
     # the P&L benchmark has landed, use its margins as expense
     # synthesis ratios so unit economics reflect peer-set norms
     # rather than the Kimpton seed.
-    cbre_overrides = await _load_cbre_horizons_overrides(
-        session, deal_id=deal_id, tenant_id=effective_tenant
+    cbre_overrides, cbre_prov, cbre_reason = await _load_cbre_horizons_overrides(
+        session,
+        deal_id=deal_id,
+        tenant_id=effective_tenant,
+        with_provenance=True,
+        as_of=underwriting_as_of,
     )
     for key, value in cbre_overrides.items():
         base[key] = value
         sources[key] = SOURCE_CBRE_HORIZONS
+        if key in cbre_prov:
+            source_fields[key] = cbre_prov[key]
+    if cbre_reason is ReasonCode.NOT_KNOWABLE_AS_OF:
+        # The report exists but post-dates the underwriting date. Keep the
+        # value the deal already has (a seed) and say why the market view
+        # is missing — never silently fall back.
+        for key in ("adr_growth", "revpar_growth"):
+            if sources.get(key) == SOURCE_SEED:
+                sources[key] = SOURCE_CBRE_HORIZONS_UNAVAILABLE
+                reasons[key] = _reason(
+                    ReasonCode.NOT_KNOWABLE_AS_OF,
+                    f"CBRE Horizons report is dated after the underwriting "
+                    f"as-of date ({underwriting_as_of}).",
+                )
+    elif cbre_reason is ReasonCode.AS_OF_UNKNOWN:
+        for key in cbre_overrides:
+            reasons[key] = _reason(
+                ReasonCode.AS_OF_UNKNOWN,
+                "The CBRE Horizons report carries no reporting date, so it "
+                "cannot be placed against the underwriting as-of date. The "
+                "value is used.",
+            )
     # Wire CBRE Year-1 ADR/RevPAR as the Year-1 anchor when the deal
     # has no T-12 actual on those metrics. Previously cbre_year_1_adr
     # was written to base but never read (Eshan's QA #5: the engine
@@ -692,12 +1122,36 @@ async def _load_engine_inputs(
     # table gives us market-specific cap rates we should prefer over
     # the 7.0% seed. Analyst overrides via field_overrides still win
     # because they're applied last.
-    om_median_cap = await _load_om_transaction_comps_cap_rate(
-        session, deal_id=deal_id, tenant_id=effective_tenant
+    (
+        om_median_cap,
+        om_comps_prov,
+        om_comps_reason,
+    ) = await _load_om_transaction_comps_cap_rate(
+        session,
+        deal_id=deal_id,
+        tenant_id=effective_tenant,
+        with_provenance=True,
+        as_of=underwriting_as_of,
     )
     if om_median_cap is not None:
         base["exit_cap_rate"] = om_median_cap
         sources["exit_cap_rate"] = SOURCE_OM_COMPS
+        if om_comps_prov is not None:
+            source_fields["exit_cap_rate"] = om_comps_prov
+        if om_comps_reason is ReasonCode.AS_OF_UNKNOWN:
+            reasons["exit_cap_rate"] = _reason(
+                ReasonCode.AS_OF_UNKNOWN,
+                "The offering memorandum carries no reporting date, so its "
+                "comp table cannot be placed against the underwriting as-of "
+                "date. The value is used.",
+            )
+    elif om_comps_reason is ReasonCode.NOT_KNOWABLE_AS_OF:
+        sources["exit_cap_rate"] = SOURCE_OM_COMPS_UNAVAILABLE
+        reasons["exit_cap_rate"] = _reason(
+            ReasonCode.NOT_KNOWABLE_AS_OF,
+            f"The offering memorandum's comparable-sales table is dated "
+            f"after the underwriting as-of date ({underwriting_as_of}).",
+        )
 
     # Year-1 renovation displacement (Eshan v2 QA). When the deal has
     # a non-trivial PIP, Y1 occupancy + ADR get knocked down to
@@ -1106,18 +1560,59 @@ async def _load_engine_inputs(
             # subject TTM isn't extracted.
             from .str_forecast_loader import load_str_subject_ttm
 
+            str_prov: SourceField | None = None
+            str_reason: ReasonCode | None = None
             try:
-                seed = await load_str_subject_ttm(
-                    session, deal_id=deal_id, tenant_id=effective_tenant
-                ) or await _load_str_forecast_for_seed(
-                    session, deal_id=deal_id, tenant_id=effective_tenant
+                # As-of gate. The subject-TTM read lives in
+                # ``str_forecast_loader`` (which owns the STR field read), so
+                # the gate is applied HERE — otherwise the TTM path, which
+                # usually wins, would slip past it. Inert when the deal has
+                # no ``underwriting_as_of``.
+                str_docs = (
+                    await _str_documents(
+                        session, deal_id=deal_id, tenant_id=effective_tenant
+                    )
+                    if underwriting_as_of is not None
+                    else []
                 )
+                if str_docs and all(
+                    _is_after_as_of(
+                        d.get("report_as_of"),
+                        d.get("report_as_of_precision"),
+                        underwriting_as_of,
+                    )
+                    for d in str_docs
+                ):
+                    seed = None
+                    str_reason = ReasonCode.NOT_KNOWABLE_AS_OF
+                else:
+                    seed = await load_str_subject_ttm(
+                        session, deal_id=deal_id, tenant_id=effective_tenant
+                    )
+                    if seed is not None and str_docs and not any(
+                        _as_of_date(d.get("report_as_of")) for d in str_docs
+                    ):
+                        str_reason = ReasonCode.AS_OF_UNKNOWN
+                    if seed is None:
+                        (
+                            seed,
+                            str_prov,
+                            str_reason,
+                        ) = await _load_str_forecast_for_seed(
+                            session,
+                            deal_id=deal_id,
+                            tenant_id=effective_tenant,
+                            with_provenance=True,
+                            as_of=underwriting_as_of,
+                        )
             except Exception:
                 logger.exception(
                     "str seed: loader failed for deal %s — tagging unavailable",
                     deal_id,
                 )
                 seed = None
+                str_prov = None
+                str_reason = None
             if seed is not None:
                 seed_occ, seed_adr = seed
                 base["starting_occupancy"] = seed_occ
@@ -1125,11 +1620,193 @@ async def _load_engine_inputs(
                 sources["starting_occupancy"] = SOURCE_STR_FORECAST
                 sources["starting_adr"] = SOURCE_STR_FORECAST
                 sources["revenue_seed_from_str_forecast"] = SOURCE_STR_FORECAST
+                if str_prov is not None:
+                    source_fields["starting_occupancy"] = str_prov
+                    source_fields["starting_adr"] = str_prov
+                else:
+                    # The subject-TTM path owns the read; it does not carry
+                    # row identity, so drop any stale T-12 attribution
+                    # rather than pointing at a row that is no longer used.
+                    source_fields.pop("starting_occupancy", None)
+                    source_fields.pop("starting_adr", None)
+                if str_reason is ReasonCode.AS_OF_UNKNOWN:
+                    reasons["revenue_seed_from_str_forecast"] = _reason(
+                        ReasonCode.AS_OF_UNKNOWN,
+                        "The STR report carries no reporting date, so it "
+                        "cannot be placed against the underwriting as-of "
+                        "date. The seed is used.",
+                    )
             else:
                 sources["revenue_seed_from_str_forecast"] = SOURCE_STR_UNAVAILABLE
+                source_fields.pop("revenue_seed_from_str_forecast", None)
+                reasons["revenue_seed_from_str_forecast"] = _reason(
+                    str_reason or ReasonCode.STR_UNAVAILABLE,
+                    (
+                        f"The STR report is dated after the underwriting "
+                        f"as-of date ({underwriting_as_of})."
+                        if str_reason is ReasonCode.NOT_KNOWABLE_AS_OF
+                        else "STR rates were requested but could not "
+                        "populate; the model stays on the T-12 base."
+                    ),
+                )
+
+    # ── Phase 2.1 — a source field only survives on a DOCUMENT-backed key.
+    # An analyst override, a deals-row entry or a derived value does not come
+    # off an extraction row, so pointing at one would mis-badge it.
+    for key in [
+        k for k in source_fields if sources.get(k) in _NON_DOCUMENT_SOURCES
+    ]:
+        source_fields.pop(key, None)
+
+    # ── Phase 2.1 — explain every remaining seed ────────────────────────
+    reasons.update(
+        await _seed_reasons(
+            session,
+            deal_id=deal_id,
+            tenant_id=effective_tenant,
+            sources=sources,
+            already=reasons,
+            # A key that names a real extraction row is grounded, whatever
+            # its (possibly stale) source label says — never tell the
+            # analyst "no source" about a number we can point at.
+            grounded=frozenset(source_fields),
+        )
+    )
 
     base["__sources__"] = sources
+    base["__source_fields__"] = {
+        key: sf.as_dict() for key, sf in source_fields.items()
+    }
+    base["__reasons__"] = reasons
     return base
+
+
+def _reason(code: ReasonCode, detail: str | None = None) -> dict[str, Any]:
+    """One ``__reasons__`` entry."""
+    return {"code": code, "detail": detail}
+
+
+#: Source labels that CONTRADICT document provenance — an analyst typed the
+#: number, the deals row carried it, it was derived from another assumption,
+#: or it was refused. A key tagged with one of these carries no
+#: ``__source_fields__`` entry.
+#:
+#: ``seed`` is deliberately NOT here. Two derived Year-1 anchors
+#: (``fb_revenue_per_occupied_room``, ``other_revenue_pct_of_rooms``) are
+#: computed from extracted T-12 revenue lines but have always kept the
+#: ``seed`` label — a pre-existing labelling gap in ``__sources__`` that
+#: Phase 2.1 must not "fix", because that map is the live contract an
+#: external tester is mid-QA against. Recording the row those numbers came
+#: off is additive and makes the gap visible instead of hiding it.
+_NON_DOCUMENT_SOURCES: frozenset[str] = frozenset({
+    SOURCE_DEAL_ROW,
+    SOURCE_ANALYST_OVERRIDE,
+    SOURCE_DERIVED_FROM_REVPAR_GROWTH,
+    SOURCE_PIP_USER,
+    SOURCE_ROI_USER,
+    SOURCE_CAPEX_FFE_DEFAULT,
+    SOURCE_STR_UNAVAILABLE,
+    SOURCE_CBRE_HORIZONS_UNAVAILABLE,
+    SOURCE_OM_COMPS_UNAVAILABLE,
+})
+
+
+# Phase 2.1 — which document types would ground each headline assumption.
+# Used ONLY to explain a value that is still a seed: ``no_document`` when
+# the deal carries none of those types, ``no_source`` when it does and
+# nothing resolved. Keys not listed here get no reason (they are modelling
+# choices — hold_years, closing_costs_pct — that no document grounds).
+_SEED_REASON_DOC_TYPES: dict[str, tuple[str, ...]] = {
+    "starting_occupancy": ("T12", "PNL", "PNL_MONTHLY", "PNL_YTD"),
+    "starting_adr": ("T12", "PNL", "PNL_MONTHLY", "PNL_YTD"),
+    "fb_revenue_per_occupied_room": ("T12", "PNL", "PNL_MONTHLY", "PNL_YTD"),
+    "other_revenue_pct_of_rooms": ("T12", "PNL", "PNL_MONTHLY", "PNL_YTD"),
+    "purchase_price": ("OM",),
+    "keys": ("OM",),
+    "renovation_budget": ("OM",),
+    "entry_cap_rate": ("OM",),
+    "ltv": ("OM",),
+    "interest_rate": ("OM",),
+    "amortization_years": ("OM",),
+    "term_years": ("OM",),
+    "exit_cap_rate": ("OM",),
+    "adr_growth": ("CBRE_HORIZONS",),
+    "revpar_growth": ("CBRE_HORIZONS",),
+    "mgmt_fee_pct": ("PNL_BENCHMARK", "PORTFOLIO_PNL"),
+    "ffe_reserve_pct": ("PNL_BENCHMARK", "PORTFOLIO_PNL"),
+}
+
+
+async def _deal_doc_types(
+    session: AsyncSession, *, deal_id: str, tenant_id: str
+) -> frozenset[str]:
+    """Uppercased ``doc_type``s of the deal's EXTRACTED documents.
+
+    Best-effort — an empty set on any failure, which makes every seed read
+    as ``no_document``: the honest answer when we cannot see the deal's
+    documents at all.
+    """
+    try:
+        rows = await session.execute(
+            text(
+                # tenant-scope predicate required by tenant_middleware
+                """
+                SELECT DISTINCT UPPER(COALESCE(d.doc_type, '')) AS dt
+                  FROM documents d
+                 WHERE d.deal_id = :deal
+                   AND d.tenant_id = :tenant
+                """
+            ),
+            {"deal": deal_id, "tenant": tenant_id},
+        )
+        return frozenset(str(r[0]) for r in rows.fetchall() if r[0])
+    except Exception:  # noqa: BLE001
+        return frozenset()
+
+
+async def _seed_reasons(
+    session: AsyncSession,
+    *,
+    deal_id: str,
+    tenant_id: str,
+    sources: Mapping[str, str],
+    already: Mapping[str, Any],
+    grounded: frozenset[str] = frozenset(),
+) -> dict[str, dict[str, Any]]:
+    """``no_document`` / ``no_source`` for every key still on the seed.
+
+    A key that already carries a reason (the as-of gate got there first) is
+    left alone — that reason is more specific. So is a key in ``grounded``:
+    it names a real extraction row, so "no source" would be a lie even
+    though its label still reads ``seed``.
+    """
+    pending = [
+        key
+        for key, doc_types in _SEED_REASON_DOC_TYPES.items()
+        if sources.get(key) == SOURCE_SEED
+        and key not in already
+        and key not in grounded
+        and doc_types
+    ]
+    if not pending:
+        return {}
+    have = await _deal_doc_types(session, deal_id=deal_id, tenant_id=tenant_id)
+    out: dict[str, dict[str, Any]] = {}
+    for key in pending:
+        doc_types = _SEED_REASON_DOC_TYPES[key]
+        wanted = " / ".join(doc_types)
+        if have & set(doc_types):
+            out[key] = _reason(
+                ReasonCode.NO_SOURCE,
+                f"The deal has a {wanted} document but none of its "
+                f"extracted fields resolves to this assumption.",
+            )
+        else:
+            out[key] = _reason(
+                ReasonCode.NO_DOCUMENT,
+                f"No {wanted} document has been uploaded to the deal.",
+            )
+    return out
 
 
 # Canonical T-12 expense-actual keys (per-line dollar amounts). When the
@@ -1844,6 +2521,21 @@ def _pnl_completeness_score(raw_fields: list[Any]) -> int:
 def _rank_pnl_rows(rows: list[Any]) -> list[tuple[list[Any], str]]:
     """Pre-parse + rank P&L extraction rows, best first.
 
+    Thin wrapper over :func:`_rank_pnl_shims` that drops the third member
+    (the originating row). The two-tuple shape is the long-standing
+    contract ``tests/test_pnl_ranking_completeness.py`` pins.
+    """
+    return [(fields, doc_type) for fields, doc_type, _ in _rank_pnl_shims(rows)]
+
+
+def _rank_pnl_shims(rows: list[Any]) -> list[tuple[list[Any], str, Any]]:
+    """:func:`_rank_pnl_rows` plus the ROW each ranked field-list came from.
+
+    Phase 2.1 needs the winning row's ``document_id`` / ``extraction_result_id``
+    / ``report_as_of``, which the ranked ``(fields, doc_type)`` pair discards.
+    Ranking is byte-identical — this is the same function body; the caller
+    just gets a handle on the source row as well.
+
     Preference order:
       1. **Period tier** — full-year sources (annual + trailing-twelve) rank
          above partial periods (YTD / quarterly / monthly).
@@ -1856,7 +2548,7 @@ def _rank_pnl_rows(rows: list[Any]) -> list[tuple[list[Any], str]]:
          same period.
       4. **Upload recency** — final tiebreaker (idx; SQL sorted newest-first).
     """
-    parsed: list[tuple[int, int, int, int, list[Any], str]] = []
+    parsed: list[tuple[int, int, int, int, list[Any], str, Any]] = []
     for idx, r in enumerate(rows):
         # Accept both SQLAlchemy Row objects and plain dict shims —
         # the terse-expansion call sites pre-process rows (await the
@@ -1882,10 +2574,10 @@ def _rank_pnl_rows(rows: list[Any]) -> list[tuple[list[Any], str]]:
         recency = _period_end_sortkey(_extract_period_ending(raw_fields))
         completeness = _pnl_completeness_score(raw_fields)
         parsed.append(
-            (tier, -recency, -completeness, idx, raw_fields, m.get("doc_type") or "")
+            (tier, -recency, -completeness, idx, raw_fields, m.get("doc_type") or "", m)
         )
     parsed.sort(key=lambda t: (t[0], t[1], t[2], t[3]))
-    return [(p[4], p[5]) for p in parsed]
+    return [(p[4], p[5], p[6]) for p in parsed]
 
 
 # Source-label → list of doc_types that produce that label. Used by
@@ -2046,7 +2738,8 @@ async def _load_t12_revenue_actuals(
     *,
     deal_id: str,
     tenant_id: str,
-) -> dict[str, float]:
+    with_provenance: bool = False,
+) -> dict[str, float] | tuple[dict[str, float], dict[str, SourceField]]:
     """Read Year-1 occupancy / ADR / RevPAR off the deal's most recent T-12.
 
     Returns ``{}`` (no overrides — engine falls back to the Kimpton seed)
@@ -2055,17 +2748,27 @@ async def _load_t12_revenue_actuals(
 
     Occupancy is normalized to a 0..1 fraction (extractors sometimes emit
     it as a percent like ``70.1`` and sometimes as a ratio like ``0.701``).
+
+    Phase 2.1 — ``with_provenance=True`` returns
+    ``(actuals, {canonical: SourceField})``: the exact extraction row that
+    supplied each canonical line. Value selection is UNCHANGED (same alias
+    map, same corroboration median), so the plain call is byte-identical.
+    A canonical whose value came out of the multi-document MEDIAN carries a
+    derived provenance record (no single row owns that number).
     """
     try:
         UUID(deal_id)
     except (ValueError, TypeError):
-        return {}
+        return ({}, {}) if with_provenance else {}
+    as_of_expr = await _report_as_of_expr(session) if with_provenance else _NO_AS_OF_COLS
     try:
         rows = await session.execute(
             text(
                 # tenant-scope predicate required by tenant_middleware
-                """
-                SELECT er.fields, d.doc_type, er.catalog_version
+                f"""
+                SELECT er.fields, d.doc_type, er.catalog_version,
+                       er.id AS extraction_result_id, er.document_id,
+                       {as_of_expr}
                   FROM extraction_results er
                   JOIN documents d ON d.id = er.document_id
                  WHERE er.deal_id = :deal
@@ -2073,12 +2776,12 @@ async def _load_t12_revenue_actuals(
                    AND d.tenant_id = :tenant
                    AND d.doc_type IN ('T12','PNL','PNL_MONTHLY','PNL_YTD')
                  ORDER BY er.created_at DESC
-                """
+                """  # as_of_expr is a fixed column literal, never user input
             ),
             {"deal": deal_id, "tenant": tenant_id},
         )
     except Exception:
-        return {}
+        return ({}, {}) if with_provenance else {}
 
     # Rank-then-merge so a true annual T-12 wins over a YTD-monthly upload
     # even when the monthly was extracted later.
@@ -2099,7 +2802,18 @@ async def _load_t12_revenue_actuals(
         catalog_version = row[2] if len(row) > 2 else None
         if isinstance(raw_fields, list):
             raw_fields = read_extraction_fields(raw_fields, catalog_version)
-        shims.append({"fields": raw_fields, "doc_type": row[1]})
+        shims.append(
+            {
+                "fields": raw_fields,
+                "doc_type": row[1],
+                # Phase 2.1 — row identity rides along on the shim so
+                # ``_rank_pnl_shims`` can hand it back with the winner.
+                "extraction_result_id": row[3] if len(row) > 3 else None,
+                "document_id": row[4] if len(row) > 4 else None,
+                "report_as_of": row[5] if len(row) > 5 else None,
+                "report_as_of_precision": row[6] if len(row) > 6 else None,
+            }
+        )
 
     # Corroboration-based grounding (2026-08 fix): instead of blindly
     # freezing the first (top-ranked) doc's value for each canonical line,
@@ -2119,8 +2833,8 @@ async def _load_t12_revenue_actuals(
     # ``_extract_period_type`` — the cleanest read that leaves the shared
     # ``_rank_pnl_rows`` signature (also used by the provenance loader)
     # untouched.
-    candidates: dict[str, list[tuple[float, bool]]] = {}
-    for ranked_fields, _ in _rank_pnl_rows(shims):
+    candidates: dict[str, list[tuple[float, bool, SourceField | None]]] = {}
+    for ranked_fields, ranked_doc_type, shim in _rank_pnl_shims(shims):
         is_full_year = _extract_period_type(ranked_fields) in _FULL_YEAR_PERIOD_TYPES
         seen_in_row: set[str] = set()
         for f in ranked_fields:
@@ -2143,16 +2857,42 @@ async def _load_t12_revenue_actuals(
                 if v > 1.0:
                     v = v / 100.0
                 v = max(0.0, min(0.99, v))
-            candidates.setdefault(canonical, []).append((v, is_full_year))
+            prov = (
+                _row_provenance(
+                    canonical=canonical,
+                    field=f,
+                    value=v,
+                    doc_type=ranked_doc_type,
+                    document_id=shim.get("document_id"),
+                    extraction_result_id=shim.get("extraction_result_id"),
+                    as_of=shim.get("report_as_of"),
+                )
+                if with_provenance
+                else None
+            )
+            candidates.setdefault(canonical, []).append((v, is_full_year, prov))
 
     actuals: dict[str, float] = {}
+    provenance: dict[str, SourceField] = {}
     for canonical, cands in candidates.items():
-        full_year_vals = [v for v, is_fy in cands if is_fy]
-        if len(full_year_vals) >= 2:
-            actuals[canonical] = float(statistics.median(full_year_vals))
+        full_year = [(v, p) for v, is_fy, p in cands if is_fy]
+        if len(full_year) >= 2:
+            chosen = float(statistics.median([v for v, _ in full_year]))
+            picked = next((p for v, p in full_year if v == chosen), None)
         else:
-            actuals[canonical] = cands[0][0]
-    return actuals
+            chosen = cands[0][0]
+            picked = cands[0][2]
+        actuals[canonical] = chosen
+        if with_provenance:
+            provenance[canonical] = picked or _derived_provenance(
+                # An EVEN-count corroboration median is the average of two
+                # rows across two documents — no single row carries it.
+                concept=canonical,
+                value=chosen,
+                doc_type="T12",
+                basis="actual",
+            )
+    return (actuals, provenance) if with_provenance else actuals
 
 
 async def _load_t12_expense_actuals(
@@ -2160,23 +2900,32 @@ async def _load_t12_expense_actuals(
     *,
     deal_id: str,
     tenant_id: str,
-) -> dict[str, float]:
+    with_provenance: bool = False,
+) -> dict[str, float] | tuple[dict[str, float], dict[str, SourceField]]:
     """Read Year-1 expense actuals off the deal's most recent T-12 extraction.
 
     Returns ``{}`` (no overrides — engine falls back to USALI ratios) when
     no T-12 has been extracted, when the deal id isn't a UUID, or when
     the migrations haven't been applied to the test DB.
+
+    Phase 2.1 — ``with_provenance=True`` returns
+    ``(actuals, {canonical: SourceField})``. Selection is unchanged (same
+    alias map, same zero-leak guard, same corroboration median), so the
+    plain call is byte-identical.
     """
     try:
         UUID(deal_id)
     except (ValueError, TypeError):
-        return {}
+        return ({}, {}) if with_provenance else {}
+    as_of_expr = await _report_as_of_expr(session) if with_provenance else _NO_AS_OF_COLS
     try:
         rows = await session.execute(
             text(
                 # tenant-scope predicate required by tenant_middleware
-                """
-                SELECT er.fields, d.doc_type, er.catalog_version
+                f"""
+                SELECT er.fields, d.doc_type, er.catalog_version,
+                       er.id AS extraction_result_id, er.document_id,
+                       {as_of_expr}
                   FROM extraction_results er
                   JOIN documents d ON d.id = er.document_id
                  WHERE er.deal_id = :deal
@@ -2184,12 +2933,12 @@ async def _load_t12_expense_actuals(
                    AND d.tenant_id = :tenant
                    AND d.doc_type IN ('T12','PNL','PNL_MONTHLY','PNL_YTD')
                  ORDER BY er.created_at DESC
-                """
+                """  # as_of_expr is a fixed column literal, never user input
             ),
             {"deal": deal_id, "tenant": tenant_id},
         )
     except Exception:
-        return {}
+        return ({}, {}) if with_provenance else {}
 
     # Rank-then-merge so an annual T-12's expense lines win over a
     # partial-year YTD extract that's missing some buckets.
@@ -2205,7 +2954,17 @@ async def _load_t12_expense_actuals(
         catalog_version = row[2] if len(row) > 2 else None
         if isinstance(raw_fields, list):
             raw_fields = read_extraction_fields(raw_fields, catalog_version)
-        shims.append({"fields": raw_fields, "doc_type": row[1]})
+        shims.append(
+            {
+                "fields": raw_fields,
+                "doc_type": row[1],
+                # Phase 2.1 — row identity for ``__source_fields__``.
+                "extraction_result_id": row[3] if len(row) > 3 else None,
+                "document_id": row[4] if len(row) > 4 else None,
+                "report_as_of": row[5] if len(row) > 5 else None,
+                "report_as_of_precision": row[6] if len(row) > 6 else None,
+            }
+        )
 
     # Corroboration-based grounding — mirrors ``_load_t12_revenue_actuals``:
     # gather each doc's candidate value per canonical line (tagged with its
@@ -2215,8 +2974,8 @@ async def _load_t12_expense_actuals(
     # applies — non-positive values never enter the candidate pool, so the
     # median is taken over real positive lines only and the USALI ratio
     # fallback still supplies any dropped line.
-    candidates: dict[str, list[tuple[float, bool]]] = {}
-    for ranked_fields, _ in _rank_pnl_rows(shims):
+    candidates: dict[str, list[tuple[float, bool, SourceField | None]]] = {}
+    for ranked_fields, ranked_doc_type, shim in _rank_pnl_shims(shims):
         is_full_year = _extract_period_type(ranked_fields) in _FULL_YEAR_PERIOD_TYPES
         seen_in_row: set[str] = set()
         for f in ranked_fields:
@@ -2245,16 +3004,40 @@ async def _load_t12_expense_actuals(
             if v <= 0.0:
                 continue
             seen_in_row.add(canonical)
-            candidates.setdefault(canonical, []).append((v, is_full_year))
+            prov = (
+                _row_provenance(
+                    canonical=canonical,
+                    field=f,
+                    value=v,
+                    doc_type=ranked_doc_type,
+                    document_id=shim.get("document_id"),
+                    extraction_result_id=shim.get("extraction_result_id"),
+                    as_of=shim.get("report_as_of"),
+                )
+                if with_provenance
+                else None
+            )
+            candidates.setdefault(canonical, []).append((v, is_full_year, prov))
 
     actuals: dict[str, float] = {}
+    provenance: dict[str, SourceField] = {}
     for canonical, cands in candidates.items():
-        full_year_vals = [v for v, is_fy in cands if is_fy]
-        if len(full_year_vals) >= 2:
-            actuals[canonical] = float(statistics.median(full_year_vals))
+        full_year = [(v, p) for v, is_fy, p in cands if is_fy]
+        if len(full_year) >= 2:
+            chosen = float(statistics.median([v for v, _ in full_year]))
+            picked = next((p for v, p in full_year if v == chosen), None)
         else:
-            actuals[canonical] = cands[0][0]
-    return actuals
+            chosen = cands[0][0]
+            picked = cands[0][2]
+        actuals[canonical] = chosen
+        if with_provenance:
+            provenance[canonical] = picked or _derived_provenance(
+                concept=canonical,
+                value=chosen,
+                doc_type="T12",
+                basis="actual",
+            )
+    return (actuals, provenance) if with_provenance else actuals
 
 
 # Map extracted OM field paths onto the canonical capital-side keys the
@@ -2548,7 +3331,8 @@ async def _load_om_capital_actuals(
     *,
     deal_id: str,
     tenant_id: str,
-) -> dict[str, float]:
+    with_provenance: bool = False,
+) -> dict[str, float] | tuple[dict[str, float], dict[str, SourceField]]:
     """Read capital-side broker numbers off the deal's most recent OM.
 
     Returns ``{}`` (no overrides — engine falls back to the Kimpton seed)
@@ -2558,17 +3342,25 @@ async def _load_om_capital_actuals(
     Percentage-style keys (``entry_cap_rate``) are normalized from a
     ``0..100`` percent to a ``0..1`` fraction when the broker emitted the
     raw percent.
+
+    Phase 2.1 — ``with_provenance=True`` returns
+    ``(actuals, {canonical: SourceField})``. A key an ANALYST override
+    replaced carries NO source field: the number no longer comes off a
+    document, and claiming otherwise would mis-badge the override.
     """
     try:
         UUID(deal_id)
     except (ValueError, TypeError):
-        return {}
+        return ({}, {}) if with_provenance else {}
+    as_of_expr = await _report_as_of_expr(session) if with_provenance else _NO_AS_OF_COLS
     try:
         rows = await session.execute(
             text(
                 # tenant-scope predicate required by tenant_middleware
-                """
-                SELECT er.fields, d.doc_type
+                f"""
+                SELECT er.fields, d.doc_type,
+                       er.id AS extraction_result_id, er.document_id,
+                       {as_of_expr}
                   FROM extraction_results er
                   JOIN documents d ON d.id = er.document_id
                  WHERE er.deal_id = :deal
@@ -2576,16 +3368,18 @@ async def _load_om_capital_actuals(
                    AND d.tenant_id = :tenant
                    AND d.doc_type = 'OM'
                  ORDER BY er.created_at DESC
-                """
+                """  # as_of_expr is a fixed column literal, never user input
             ),
             {"deal": deal_id, "tenant": tenant_id},
         )
     except Exception:
-        return {}
+        return ({}, {}) if with_provenance else {}
 
     actuals: dict[str, float] = {}
+    provenance: dict[str, SourceField] = {}
     for r in rows.fetchall():
-        raw_fields = r._mapping["fields"]
+        m = r._mapping
+        raw_fields = m["fields"]
         if isinstance(raw_fields, str):
             try:
                 raw_fields = json.loads(raw_fields)
@@ -2610,16 +3404,32 @@ async def _load_om_capital_actuals(
             if canonical in _OM_PERCENTAGE_KEYS and v > 1.0:
                 v = v / 100.0
             actuals[canonical] = v
+            if with_provenance:
+                provenance[canonical] = _row_provenance(
+                    canonical=canonical,
+                    field=f,
+                    value=v,
+                    doc_type=m.get("doc_type") or "OM",
+                    document_id=m.get("document_id"),
+                    extraction_result_id=m.get("extraction_result_id"),
+                    as_of=m.get("report_as_of"),
+                )
     # Analyst overrides win over extracted broker numbers.
     overrides = await _load_deal_overrides(
         session, deal_id=deal_id, tenant_id=tenant_id
     )
+    before = dict(actuals) if with_provenance else None
     _apply_overrides(
         actuals,
         overrides,
         _OM_CAPITAL_FIELD_ALIASES,
         percentage_keys=_OM_PERCENTAGE_KEYS,
     )
+    if with_provenance and before is not None:
+        for key, v in actuals.items():
+            if key not in before or before[key] != v:
+                provenance.pop(key, None)
+        return actuals, provenance
     return actuals
 
 
@@ -2628,7 +3438,9 @@ async def _load_om_transaction_comps_cap_rate(
     *,
     deal_id: str,
     tenant_id: str,
-) -> float | None:
+    with_provenance: bool = False,
+    as_of: date | None = None,
+) -> float | None | tuple[float | None, SourceField | None, ReasonCode | None]:
     """Derive a median exit-cap-rate anchor from OM transaction comps.
 
     The Extractor emits ``transaction_comps.<n>.cap_rate_pct`` per
@@ -2639,17 +3451,36 @@ async def _load_om_transaction_comps_cap_rate(
 
     Returns the median as a 0..1 fraction (extractor may emit either),
     or ``None`` when fewer than 3 cap-rate-bearing comps are extracted.
+
+    Phase 2.1
+    ---------
+    ``with_provenance=True`` returns ``(value, SourceField | None, reason)``.
+    An ODD comp count means the median IS one extracted row, so the source
+    field names it exactly; an EVEN count averages two rows and gets a
+    derived record (no ``field_name``).
+
+    ``as_of`` (the deal's underwriting date) drops every OM whose
+    ``documents.report_as_of`` is strictly LATER — a comp table published
+    after the underwriting date was not knowable then. When that leaves no
+    OM at all the reason is ``not_knowable_as_of``; when the OMs carry no
+    ``report_as_of`` the value LOADS as today and the reason is
+    ``as_of_unknown`` — a flag, never a refusal. ``as_of=None`` (no
+    underwriting date on the deal) is exactly today's behaviour.
     """
     try:
         UUID(deal_id)
     except (ValueError, TypeError):
-        return None
+        return (None, None, None) if with_provenance else None
+    need_as_of = with_provenance or as_of is not None
+    as_of_expr = await _report_as_of_expr(session) if need_as_of else _NO_AS_OF_COLS
     try:
         rows = await session.execute(
             text(
                 # tenant-scope predicate required by tenant_middleware
-                """
-                SELECT er.fields
+                f"""
+                SELECT er.fields,
+                       er.id AS extraction_result_id, er.document_id,
+                       {as_of_expr}
                   FROM extraction_results er
                   JOIN documents d ON d.id = er.document_id
                  WHERE er.deal_id = :deal
@@ -2657,16 +3488,27 @@ async def _load_om_transaction_comps_cap_rate(
                    AND d.tenant_id = :tenant
                    AND d.doc_type = 'OM'
                  ORDER BY er.created_at DESC
-                """
+                """  # as_of_expr is a fixed column literal, never user input
             ),
             {"deal": deal_id, "tenant": tenant_id},
         )
     except Exception:
-        return None
+        return (None, None, None) if with_provenance else None
 
-    cap_rates: list[float] = []
+    # (value, row, source-row mapping)
+    cap_rates: list[tuple[float, dict[str, Any], Any]] = []
+    saw_any_om = False
+    gated_count = 0
+    any_known_as_of = False
     for r in rows.fetchall():
-        raw_fields = r._mapping["fields"]
+        m = r._mapping
+        saw_any_om = True
+        if _as_of_date(m.get("report_as_of")) is not None:
+            any_known_as_of = True
+        if _is_after_as_of(m.get("report_as_of"), m.get("report_as_of_precision"), as_of):
+            gated_count += 1
+            continue
+        raw_fields = m["fields"]
         if isinstance(raw_fields, str):
             try:
                 raw_fields = json.loads(raw_fields)
@@ -2698,15 +3540,61 @@ async def _load_om_transaction_comps_cap_rate(
             # $4.4M NOI gives a ~$29.5M sale vs a ~$63M sale at 7%). Anything
             # outside 4-11% is broken data, not a cap rate.
             if 0.04 <= v <= 0.11:
-                cap_rates.append(v)
+                cap_rates.append((v, f, m))
+
+    def _wrap(
+        value: float | None,
+        prov: SourceField | None,
+        reason: ReasonCode | None,
+    ) -> Any:
+        return (value, prov, reason) if with_provenance else value
 
     if len(cap_rates) < 3:
-        return None
-    cap_rates.sort()
+        if gated_count and not cap_rates:
+            return _wrap(None, None, ReasonCode.NOT_KNOWABLE_AS_OF)
+        if not saw_any_om:
+            return _wrap(None, None, ReasonCode.NO_DOCUMENT)
+        return _wrap(None, None, ReasonCode.NO_SOURCE)
+
+    cap_rates.sort(key=lambda t: t[0])
     n = len(cap_rates)
+    unknown = (
+        ReasonCode.AS_OF_UNKNOWN
+        if (as_of is not None and not any_known_as_of)
+        else None
+    )
     if n % 2:
-        return cap_rates[n // 2]
-    return (cap_rates[n // 2 - 1] + cap_rates[n // 2]) / 2
+        v, f, m = cap_rates[n // 2]
+        prov = (
+            _row_provenance(
+                canonical="exit_cap_rate",
+                field=f,
+                value=v,
+                doc_type="OM",
+                document_id=m.get("document_id"),
+                extraction_result_id=m.get("extraction_result_id"),
+                as_of=m.get("report_as_of"),
+            )
+            if with_provenance
+            else None
+        )
+        return _wrap(v, prov, unknown)
+    lo, hi = cap_rates[n // 2 - 1], cap_rates[n // 2]
+    v = (lo[0] + hi[0]) / 2
+    prov = (
+        _derived_provenance(
+            concept="exit_cap_rate",
+            value=v,
+            doc_type="OM",
+            basis="broker",
+            document_id=lo[2].get("document_id"),
+            extraction_result_id=lo[2].get("extraction_result_id"),
+            as_of=lo[2].get("report_as_of"),
+        )
+        if with_provenance
+        else None
+    )
+    return _wrap(v, prov, unknown)
 
 
 async def _load_comp_transactions(
@@ -2960,6 +3848,15 @@ async def _build_comp_sales_set(
     on the side as a "pinned" indicator the UI surfaces; the engine
     runner is responsible for actually wiring the pinned number to
     ``exit_cap_rate``.
+
+    Phase 2.1 — when the deal carries an explicit ``underwriting_as_of``
+    override it becomes the engine's ``today`` anchor, so the 5-year
+    lookback window and the recency weights are measured from the
+    underwriting date rather than from the wall clock. (``acquisition_close_date``
+    is NOT read here — see ``_underwriting_as_of_from``.) This is an INPUT
+    change: ``build_comp_set``
+    already takes ``today`` and defaults it to ``date.today()``, which is
+    exactly what a deal with no as-of date still gets.
     """
     from app.engines.comp_sales import build_comp_set
 
@@ -2995,6 +3892,9 @@ async def _build_comp_sales_set(
         subject_chain_scale=subject_chain_scale,
         lookback_years=lookback_years,
         exclude_transaction_ids=exclude_ids,
+        # ``None`` when the deal has no as-of date → engine default
+        # ``date.today()`` → today's behaviour, unchanged.
+        today=_underwriting_as_of_from(overrides),
     )
     return comp_set
 
@@ -3004,7 +3904,8 @@ async def _load_om_debt_actuals(
     *,
     deal_id: str,
     tenant_id: str,
-) -> dict[str, float]:
+    with_provenance: bool = False,
+) -> dict[str, float] | tuple[dict[str, float], dict[str, SourceField]]:
     """Read in-place debt terms off the deal's most recent OM extraction.
 
     Returns ``{}`` (no overrides — engine falls back to the Kimpton seed)
@@ -3014,17 +3915,24 @@ async def _load_om_debt_actuals(
     Percentage-style keys (``interest_rate``, ``ltv``) are normalized
     from ``0..100`` percent to ``0..1`` fraction when the broker emitted
     the raw percent.
+
+    Phase 2.1 — ``with_provenance=True`` returns
+    ``(actuals, {canonical: SourceField})``; an analyst-overridden key
+    carries no source field (see ``_load_om_capital_actuals``).
     """
     try:
         UUID(deal_id)
     except (ValueError, TypeError):
-        return {}
+        return ({}, {}) if with_provenance else {}
+    as_of_expr = await _report_as_of_expr(session) if with_provenance else _NO_AS_OF_COLS
     try:
         rows = await session.execute(
             text(
                 # tenant-scope predicate required by tenant_middleware
-                """
-                SELECT er.fields, d.doc_type
+                f"""
+                SELECT er.fields, d.doc_type,
+                       er.id AS extraction_result_id, er.document_id,
+                       {as_of_expr}
                   FROM extraction_results er
                   JOIN documents d ON d.id = er.document_id
                  WHERE er.deal_id = :deal
@@ -3032,16 +3940,18 @@ async def _load_om_debt_actuals(
                    AND d.tenant_id = :tenant
                    AND d.doc_type = 'OM'
                  ORDER BY er.created_at DESC
-                """
+                """  # as_of_expr is a fixed column literal, never user input
             ),
             {"deal": deal_id, "tenant": tenant_id},
         )
     except Exception:
-        return {}
+        return ({}, {}) if with_provenance else {}
 
     actuals: dict[str, float] = {}
+    provenance: dict[str, SourceField] = {}
     for r in rows.fetchall():
-        raw_fields = r._mapping["fields"]
+        m = r._mapping
+        raw_fields = m["fields"]
         if isinstance(raw_fields, str):
             try:
                 raw_fields = json.loads(raw_fields)
@@ -3066,16 +3976,32 @@ async def _load_om_debt_actuals(
             if canonical in _OM_PERCENTAGE_KEYS and v > 1.0:
                 v = v / 100.0
             actuals[canonical] = v
+            if with_provenance:
+                provenance[canonical] = _row_provenance(
+                    canonical=canonical,
+                    field=f,
+                    value=v,
+                    doc_type=m.get("doc_type") or "OM",
+                    document_id=m.get("document_id"),
+                    extraction_result_id=m.get("extraction_result_id"),
+                    as_of=m.get("report_as_of"),
+                )
     # Analyst overrides win over extracted broker numbers.
     overrides = await _load_deal_overrides(
         session, deal_id=deal_id, tenant_id=tenant_id
     )
+    before = dict(actuals) if with_provenance else None
     _apply_overrides(
         actuals,
         overrides,
         _OM_DEBT_FIELD_ALIASES,
         percentage_keys=_OM_PERCENTAGE_KEYS,
     )
+    if with_provenance and before is not None:
+        for key, v in actuals.items():
+            if key not in before or before[key] != v:
+                provenance.pop(key, None)
+        return actuals, provenance
     return actuals
 
 
@@ -3083,8 +4009,16 @@ async def _load_om_debt_actuals(
 
 
 async def _load_cbre_horizons_overrides(
-    session: AsyncSession, *, deal_id: str, tenant_id: str
-) -> dict[str, float]:
+    session: AsyncSession,
+    *,
+    deal_id: str,
+    tenant_id: str,
+    with_provenance: bool = False,
+    as_of: date | None = None,
+) -> (
+    dict[str, float]
+    | tuple[dict[str, float], dict[str, SourceField], ReasonCode | None]
+):
     """Translate the deal's extracted CBRE Horizons report into engine
     growth-rate overrides.
 
@@ -3109,17 +4043,34 @@ async def _load_cbre_horizons_overrides(
 
     Returns ``{}`` on missing data or when neither path yields a
     valid CAGR.
+
+    Phase 2.1
+    ---------
+    ``with_provenance=True`` returns ``(overrides, source_fields, reason)``.
+    The three ``long_run_avg_*`` keys and the two ``cbre_year_1_*`` anchors
+    each come off ONE extraction row and name it exactly; ``adr_growth`` /
+    ``revpar_growth`` are CAGRs over a curve, so they get a derived record
+    (document identity, no ``field_name``).
+
+    ``as_of`` drops every CBRE report dated strictly LATER than the deal's
+    underwriting date — a forecast published after the underwriting date
+    was not knowable then (``not_knowable_as_of``). A report with no
+    ``report_as_of`` LOADS as today and flags ``as_of_unknown``.
     """
     try:
         UUID(deal_id)
     except (TypeError, ValueError):
-        return {}
+        return ({}, {}, None) if with_provenance else {}
+    need_as_of = with_provenance or as_of is not None
+    as_of_expr = await _report_as_of_expr(session) if need_as_of else _NO_AS_OF_COLS
     try:
         rows = await session.execute(
             text(
                 # tenant-scope predicate required by tenant_middleware
-                """
-                SELECT er.fields
+                f"""
+                SELECT er.fields,
+                       er.id AS extraction_result_id, er.document_id,
+                       {as_of_expr}
                   FROM extraction_results er
                   JOIN documents d ON d.id = er.document_id
                  WHERE er.deal_id = :deal
@@ -3127,12 +4078,12 @@ async def _load_cbre_horizons_overrides(
                    AND d.tenant_id = :tenant
                    AND UPPER(COALESCE(d.doc_type, '')) = 'CBRE_HORIZONS'
                  ORDER BY er.created_at DESC
-                """
+                """  # as_of_expr is a fixed column literal, never user input
             ),
             {"deal": deal_id, "tenant": tenant_id},
         )
     except Exception:
-        return {}
+        return ({}, {}, None) if with_provenance else {}
 
     # Legacy (1-indexed forecast-year) path
     legacy_adr: dict[int, float] = {}
@@ -3145,9 +4096,25 @@ async def _load_cbre_horizons_overrides(
     long_run_revpar_growth: float | None = None
     long_run_adr_change: float | None = None
     long_run_occupancy: float | None = None
+    # Phase 2.1 — the row behind each single-row key, and the document
+    # identity used for the derived (CAGR) keys.
+    prov_rows: dict[str, tuple[dict[str, Any], Any]] = {}
+    doc_ident: Any = None
+    saw_any_doc = False
+    gated_count = 0
+    any_known_as_of = False
 
     for r in rows.fetchall():
-        raw = r._mapping["fields"]
+        m = r._mapping
+        saw_any_doc = True
+        if _as_of_date(m.get("report_as_of")) is not None:
+            any_known_as_of = True
+        if _is_after_as_of(m.get("report_as_of"), m.get("report_as_of_precision"), as_of):
+            gated_count += 1
+            continue
+        if doc_ident is None:
+            doc_ident = m
+        raw = m["fields"]
         if isinstance(raw, str):
             try:
                 raw = json.loads(raw) if raw else None
@@ -3168,16 +4135,19 @@ async def _load_cbre_horizons_overrides(
                 value, (int, float)
             ):
                 long_run_revpar_growth = _normalize_pct(float(value))
+                prov_rows.setdefault("long_run_avg_revpar_growth", (f, m))
                 continue
             if name == "cbre_horizons.long_run_avg.adr_change_pct" and isinstance(
                 value, (int, float)
             ):
                 long_run_adr_change = _normalize_pct(float(value))
+                prov_rows.setdefault("long_run_avg_adr_change", (f, m))
                 continue
             if name == "cbre_horizons.long_run_avg.occupancy_pct" and isinstance(
                 value, (int, float)
             ):
                 long_run_occupancy = _normalize_pct(float(value))
+                prov_rows.setdefault("long_run_avg_occupancy", (f, m))
                 continue
 
             if not isinstance(value, (int, float)):
@@ -3194,8 +4164,12 @@ async def _load_cbre_horizons_overrides(
                     continue
                 if metric in ("adr_usd", "adr"):
                     segment_adr.setdefault(scope, {}).setdefault(year_idx, v)
+                    if scope == "all":
+                        prov_rows.setdefault(f"__adr_year_{year_idx}", (f, m))
                 elif metric in ("revpar_usd", "revpar"):
                     segment_revpar.setdefault(scope, {}).setdefault(year_idx, v)
+                    if scope == "all":
+                        prov_rows.setdefault(f"__revpar_year_{year_idx}", (f, m))
                 elif metric == "period":
                     # Stored numerically as 0/1 by some extractors; only
                     # the segmented forecast filter uses this hint.
@@ -3211,10 +4185,14 @@ async def _load_cbre_horizons_overrides(
                     continue
                 if metric in ("adr_usd", "adr"):
                     legacy_adr.setdefault(year_idx, v)
+                    prov_rows.setdefault(f"__legacy_adr_year_{year_idx}", (f, m))
                 elif metric in ("revpar_usd", "revpar"):
                     legacy_revpar.setdefault(year_idx, v)
+                    prov_rows.setdefault(f"__legacy_revpar_year_{year_idx}", (f, m))
 
     out: dict[str, float] = {}
+    # ``cbre_year_1_*`` is one row on the curve — remember which.
+    y1_row_key: dict[str, str] = {}
 
     def _cagr(series: dict[int, float]) -> float | None:
         if len(series) < 2:
@@ -3258,10 +4236,12 @@ async def _load_cbre_horizons_overrides(
             first = sorted(forecast_adr)[0]
             if forecast_adr[first] > 0:
                 out["cbre_year_1_adr"] = forecast_adr[first]
+                y1_row_key["cbre_year_1_adr"] = f"__adr_year_{first}"
         if forecast_revpar:
             first = sorted(forecast_revpar)[0]
             if forecast_revpar[first] > 0:
                 out["cbre_year_1_revpar"] = forecast_revpar[first]
+                y1_row_key["cbre_year_1_revpar"] = f"__revpar_year_{first}"
     else:
         # Legacy path — only emit if no segmented data was present.
         adr_cagr = _cagr(legacy_adr)
@@ -3272,8 +4252,10 @@ async def _load_cbre_horizons_overrides(
             out["revpar_growth"] = revpar_cagr
         if 1 in legacy_adr and legacy_adr[1] > 0:
             out["cbre_year_1_adr"] = legacy_adr[1]
+            y1_row_key["cbre_year_1_adr"] = "__legacy_adr_year_1"
         if 1 in legacy_revpar and legacy_revpar[1] > 0:
             out["cbre_year_1_revpar"] = legacy_revpar[1]
+            y1_row_key["cbre_year_1_revpar"] = "__legacy_revpar_year_1"
 
     if long_run_revpar_growth is not None and -0.20 <= long_run_revpar_growth <= 0.20:
         out["long_run_avg_revpar_growth"] = long_run_revpar_growth
@@ -3282,7 +4264,51 @@ async def _load_cbre_horizons_overrides(
     if long_run_occupancy is not None and 0 < long_run_occupancy <= 1.0:
         out["long_run_avg_occupancy"] = long_run_occupancy
 
-    return out
+    if not with_provenance:
+        return out
+
+    # ── Phase 2.1 provenance ────────────────────────────────────────────
+    provenance: dict[str, SourceField] = {}
+    for key in out:
+        row_key = y1_row_key.get(key, key)
+        hit = prov_rows.get(row_key)
+        if hit is not None:
+            f_row, m_row = hit
+            provenance[key] = _row_provenance(
+                canonical=key,
+                field=f_row,
+                value=out[key],
+                doc_type="CBRE_HORIZONS",
+                document_id=m_row.get("document_id"),
+                extraction_result_id=m_row.get("extraction_result_id"),
+                as_of=m_row.get("report_as_of"),
+            )
+        else:
+            # adr_growth / revpar_growth are CAGRs over the whole curve —
+            # no single row carries them, so name the report instead.
+            provenance[key] = _derived_provenance(
+                concept=key,
+                value=out[key],
+                doc_type="CBRE_HORIZONS",
+                basis="market",
+                document_id=doc_ident.get("document_id") if doc_ident else None,
+                extraction_result_id=(
+                    doc_ident.get("extraction_result_id") if doc_ident else None
+                ),
+                as_of=doc_ident.get("report_as_of") if doc_ident else None,
+            )
+
+    reason: ReasonCode | None = None
+    if not out:
+        if gated_count and doc_ident is None:
+            reason = ReasonCode.NOT_KNOWABLE_AS_OF
+        elif not saw_any_doc:
+            reason = ReasonCode.NO_DOCUMENT
+        else:
+            reason = ReasonCode.NO_SOURCE
+    elif as_of is not None and not any_known_as_of:
+        reason = ReasonCode.AS_OF_UNKNOWN
+    return out, provenance, reason
 
 
 def _normalize_pct(v: float) -> float:
@@ -3882,9 +4908,55 @@ async def _load_per_deal_portfolio_pnl_overrides(
     return out
 
 
-async def _load_str_forecast_for_seed(
+async def _str_documents(
     session: AsyncSession, *, deal_id: str, tenant_id: str
-) -> tuple[float, float] | None:
+) -> list[Any]:
+    """The deal's STR / STR_TREND extraction rows, newest first.
+
+    Identity + ``report_as_of`` only — the field payloads stay with
+    ``str_forecast_loader``, which owns the STR read. Returns ``[]`` on any
+    failure so the STR path degrades exactly as it does today.
+    """
+    try:
+        UUID(deal_id)
+    except (TypeError, ValueError):
+        return []
+    as_of_expr = await _report_as_of_expr(session)
+    try:
+        rows = await session.execute(
+            text(
+                # tenant-scope predicate required by tenant_middleware
+                f"""
+                SELECT er.id AS extraction_result_id, er.document_id,
+                       {as_of_expr}
+                  FROM extraction_results er
+                  JOIN documents d ON d.id = er.document_id
+                 WHERE er.deal_id = :deal
+                   AND er.tenant_id = :tenant
+                   AND d.tenant_id = :tenant
+                   AND UPPER(COALESCE(d.doc_type, '')) IN ('STR', 'STR_TREND')
+                 ORDER BY er.created_at DESC
+                """  # as_of_expr is a fixed column literal, never user input
+            ),
+            {"deal": deal_id, "tenant": tenant_id},
+        )
+        return [r._mapping for r in rows.fetchall()]
+    except Exception:  # noqa: BLE001
+        return []
+
+
+async def _load_str_forecast_for_seed(
+    session: AsyncSession,
+    *,
+    deal_id: str,
+    tenant_id: str,
+    with_provenance: bool = False,
+    as_of: date | None = None,
+) -> (
+    tuple[float, float]
+    | None
+    | tuple[tuple[float, float] | None, SourceField | None, ReasonCode | None]
+):
     """Seed (starting_occupancy, starting_adr) from the BASE STR forecast.
 
     Wave 3 W3.3 — when the analyst opts in
@@ -3899,11 +4971,61 @@ async def _load_str_forecast_for_seed(
     or when the base forecast list is empty for any reason. Caller
     leaves the prior ``starting_occupancy`` / ``starting_adr`` (and
     their source badges) untouched in those cases.
+
+    Phase 2.1
+    ---------
+    ``with_provenance=True`` returns ``(seed, SourceField | None, reason)``.
+    The seed is a forecast POINT computed over the whole STR history, so
+    the source field names the STR document, never a single row.
+
+    ``as_of`` refuses the seed when EVERY STR extraction on the deal is
+    dated after the underwriting date (``not_knowable_as_of``). The gate is
+    document-SET level rather than per-document because
+    ``str_forecast_loader.load_str_history_for_deal`` owns the STR field
+    read; a mixed set (some reports knowable, some not) still loads, and
+    that limitation is deliberate — the alternative is a silent partial
+    history, which would move a number.
     """
+    # Only pay for the identity query when someone actually needs it — the
+    # plain call keeps exactly the SQL it had.
+    docs = (
+        await _str_documents(session, deal_id=deal_id, tenant_id=tenant_id)
+        if (with_provenance or as_of is not None)
+        else []
+    )
+    ident = docs[0] if docs else None
+
+    def _wrap(
+        seed: tuple[float, float] | None, reason: ReasonCode | None
+    ) -> Any:
+        if not with_provenance:
+            return seed
+        prov = (
+            _derived_provenance(
+                concept="str_forecast_seed",
+                value=list(seed) if seed else None,
+                doc_type="STR_TREND",
+                basis="market",
+                document_id=ident.get("document_id") if ident else None,
+                extraction_result_id=(
+                    ident.get("extraction_result_id") if ident else None
+                ),
+                as_of=ident.get("report_as_of") if ident else None,
+            )
+            if seed is not None
+            else None
+        )
+        return seed, prov, reason
+
     try:
         UUID(deal_id)
     except (TypeError, ValueError):
-        return None
+        return _wrap(None, ReasonCode.STR_UNAVAILABLE)
+
+    if as_of is not None and docs and all(
+        _is_after_as_of(d.get("report_as_of"), d.get("report_as_of_precision"), as_of) for d in docs
+    ):
+        return _wrap(None, ReasonCode.NOT_KNOWABLE_AS_OF)
 
     from ..engines.str_forecast import build_str_forecast
     from .str_forecast_loader import load_str_history_for_deal
@@ -3913,15 +5035,27 @@ async def _load_str_forecast_for_seed(
         session, deal_id=deal_id, tenant_id=tenant_id
     )
     if not history:
-        return None
+        return _wrap(
+            None,
+            ReasonCode.NO_DOCUMENT if not docs else ReasonCode.STR_UNAVAILABLE,
+        )
     forecast = build_str_forecast(deal_id=deal_id, historical_months=history)
     if forecast.coverage_quality == "low":
-        return None
+        return _wrap(None, ReasonCode.STR_UNAVAILABLE)
     base_months = forecast.forecast_months.get("base") or []
     if len(base_months) < 12:
-        return None
+        return _wrap(None, ReasonCode.STR_UNAVAILABLE)
     month12 = base_months[11]
-    return (month12.occupancy, month12.adr)
+    unknown = (
+        ReasonCode.AS_OF_UNKNOWN
+        if (
+            as_of is not None
+            and docs
+            and not any(_as_of_date(d.get("report_as_of")) for d in docs)
+        )
+        else None
+    )
+    return _wrap((month12.occupancy, month12.adr), unknown)
 
 
 # ─────────────────────────── Per-engine input ─────────────────────────
@@ -4868,6 +6002,20 @@ async def run_all_engines(
         results[name] = result
         if on_complete:
             on_complete(name, result)
+
+    # Phase 2.1 — persist this run's value lineage. Best-effort by design:
+    # a lineage failure must never fail a model run, and the module is
+    # landing on a sibling branch, so the import is guarded too.
+    if persist_for_run is not None:
+        try:
+            await persist_for_run(session, deal_id, tenant_id, run_id)
+        except Exception:  # noqa: BLE001
+            logger.exception(
+                "lineage: persist_for_run failed for deal %s run %s "
+                "(engine results are unaffected)",
+                deal_id,
+                run_id,
+            )
 
     return results
 

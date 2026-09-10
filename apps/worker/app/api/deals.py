@@ -311,6 +311,20 @@ class AssumptionSourcesResponse(BaseModel):
     # are omitted. The web UI uses these for "click NOI → jump to the
     # T-12 row" deep links.
     source_documents: dict[str, str] = Field(default_factory=dict)
+    # Phase 2.1 — the exact extraction ROW behind each grounded assumption
+    # (``source_documents`` only ever named the document). One entry per key
+    # the loader could attribute: ``{document_id, extraction_result_id,
+    # field_name, source_page, concept, scope, basis, doc_type, as_of}``.
+    # A value derived from several rows (a CAGR, an even-count median,
+    # a forecast point) names its document with ``field_name: null``.
+    # Additive: ``sources`` / ``values`` / ``source_documents`` are byte-
+    # identical to the pre-2.1 contract.
+    source_fields: dict[str, dict[str, Any]] = Field(default_factory=dict)
+    # Phase 2.1 — why a key is NOT grounded, as a machine-readable
+    # ``fondok_schemas.reasons.ReasonCode`` plus optional prose:
+    # ``{key: {"code": "no_document" | "no_source" | "str_unavailable" |
+    # "not_knowable_as_of" | "as_of_unknown", "detail": str | null}}``.
+    reasons: dict[str, dict[str, Any]] = Field(default_factory=dict)
 
 
 class DealProvenanceResponse(BaseModel):
@@ -1375,6 +1389,10 @@ async def get_assumption_sources(
         session, str(deal_id), tenant_id=str(tenant_id)
     )
     sources = base.pop("__sources__", {})
+    # Phase 2.1 — additive blocks. Popped alongside ``__sources__`` so the
+    # ``values`` filter below never sees them (it also skips ``__`` keys).
+    raw_source_fields = base.pop("__source_fields__", {})
+    raw_reasons = base.pop("__reasons__", {})
     # Strip the t12_*_actuals dicts and other non-scalar fields from
     # `values` — they're internal plumbing, not assumptions the UI
     # would badge directly.
@@ -1401,11 +1419,30 @@ async def get_assumption_sources(
     except Exception:
         source_documents = {}
 
+    # Phase 2.1 — serialise the two additive blocks. ``ReasonCode`` is a
+    # ``str`` enum; emit its value so the JSON carries the plain code.
+    source_fields: dict[str, Any] = {
+        key: dict(entry)
+        for key, entry in (raw_source_fields or {}).items()
+        if isinstance(entry, dict)
+    }
+    reasons: dict[str, Any] = {}
+    for key, entry in (raw_reasons or {}).items():
+        if not isinstance(entry, dict):
+            continue
+        code = entry.get("code")
+        reasons[key] = {
+            "code": getattr(code, "value", code),
+            "detail": entry.get("detail"),
+        }
+
     return AssumptionSourcesResponse(
         id=deal_id,
         sources=sources_filtered,
         values=values,
         source_documents=source_documents,
+        source_fields=source_fields,
+        reasons=reasons,
     )
 
 

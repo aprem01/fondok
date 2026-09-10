@@ -153,6 +153,13 @@ export default function MethodologyPage() {
             Departmental, undistributed, and fixed-charge lines source from the T-12 first. Zero-valued extractor rows are treated as "not present" rather than authoritative — those gaps are filled from USALI 11th industry benchmarks (CBRE Benchmarker / HotStats) when uploaded, with brand-specific overrides as the final layer. NOI is computed as GOP minus management fee minus fixed charges (excludes FF&E reserve, matching the US cap-rate convention). FF&E reserve sits below NOI in the waterfall and contributes to Net Cash Flow.
           </p>
         </Card>
+
+        <Card className="p-5 mt-4">
+          <h4 className="text-[13px] font-semibold text-ink-900 mb-3">When a chain falls through to the seed</h4>
+          <p className="text-[12.5px] text-ink-500 leading-relaxed">
+            Every precedence chain above can end at the Kimpton seed, and when it does the seed now carries a machine-readable reason rather than an unexplained default — one of the codes in Section 7: <code className="text-[11.5px]">no_document</code> when the deal carries no document of the type that would ground it, <code className="text-[11.5px]">no_source</code> when the document is there but none of its extracted fields resolves to that assumption, and <code className="text-[11.5px]">str_unavailable</code> when STR rates were requested but could not populate. Each grounded value carries the opposite record: the exact extraction row behind it — document, field path, page and the concept it resolved to — so &quot;which line of which statement is this?&quot; is answered from data, not inference. A figure derived from several rows (a growth CAGR, a corroborated median across statements) names its document and says so instead of pointing at a row that does not carry the number.
+          </p>
+        </Card>
       </Section>
 
       {/* ─── 3. Market-data assumptions ────────────────────────────── */}
@@ -242,6 +249,13 @@ export default function MethodologyPage() {
               An extracted historical value is &quot;to review&quot; when its extraction confidence is below 85% and it hasn&apos;t been accepted or corrected — and only if it has a cell in Financials → Historicals (a value with nowhere to land is never counted). The Data Room&apos;s per-statement &quot;N to review&quot; badge is exactly the number of red cells in that statement&apos;s column; the global count is their sum. Every red cell is pinned to its own column&apos;s statement, so its SOURCE panel names — and its Accept / Edit acts on — that document, never another year&apos;s. Clicking a badge opens Historicals with that statement&apos;s column pinned and the first flagged cell in view; accepting or correcting a value clears the cell and both counts at once. Two statements that resolve to the same period keep separate columns (&quot;2023&quot;, &quot;2023 (2)&quot;) and the coverage strip says so.
             </li>
           </ul>
+        </Card>
+
+        <Card className="p-5 mb-4">
+          <h4 className="text-[13px] font-semibold text-ink-900 mb-3">As-of rule</h4>
+          <p className="text-[12.5px] text-ink-500 leading-relaxed">
+            An underwriting is a claim about what was knowable on a date. When a deal sets an underwriting as-of date, Fondok will not ground a market assumption on a report published after it: a CBRE Horizons forecast, an OM comparable-sales table or an STR report dated later is refused, the assumption keeps the basis it already had, and the badge says <em>unavailable</em> with the reason <code className="text-[11.5px]">not_knowable_as_of</code> — never a silent substitution. The comparison respects how precisely the report is dated: a document known only to a year is compared year-to-year, a quarter quarter-to-quarter, so a report from the underwriting year is admitted rather than refused on a 31-December stamp. A report whose date cannot be established is <em>used</em>, flagged <code className="text-[11.5px]">as_of_unknown</code> — a missing date is a caveat, not grounds to withhold a number. The same date anchors the comparable-sales engine: the five-year lookback and the recency weighting are measured from the underwriting date rather than from today, so re-opening a deal months later does not quietly age its comp set out of the window. A deal that has not set an underwriting as-of date is unaffected in every respect — the acquisition close date is a modelling input and is never read as a knowledge horizon.
+          </p>
         </Card>
 
         <Card className="p-5">

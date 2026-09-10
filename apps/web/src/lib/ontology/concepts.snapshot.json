@@ -7980,6 +7980,26 @@
       "explanation": "STR rates were requested but could not populate (no STR Trend extraction or coverage too low) — the model is on the T-12 base.",
       "reason": "str_unavailable"
     },
+    "cbre_horizons_unavailable": {
+      "label": "CBRE unavailable",
+      "badge": "CBRE unavailable",
+      "kind": "refusal",
+      "doc_types": [
+        "CBRE_HORIZONS"
+      ],
+      "explanation": "A CBRE Horizons report is on the deal but it is dated after the underwriting as-of date, so it was not knowable then — the growth rates stay on their prior basis.",
+      "reason": "not_knowable_as_of"
+    },
+    "om_comps_unavailable": {
+      "label": "OM comps unavailable",
+      "badge": "OM Comps unavailable",
+      "kind": "refusal",
+      "doc_types": [
+        "OM"
+      ],
+      "explanation": "The offering memorandum's comparable-sales table is dated after the underwriting as-of date, so it was not knowable then — the exit cap rate stays on its prior basis.",
+      "reason": "not_knowable_as_of"
+    },
     "derived_from_revpar_growth": {
       "label": "Derived from RevPAR growth",
       "badge": "Derived from RevPAR growth",

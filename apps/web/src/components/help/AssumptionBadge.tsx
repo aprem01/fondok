@@ -242,6 +242,22 @@ const SOURCE_STYLE: Record<AssumptionSource, SourceStyle> = {
       'STR rates were requested but could not populate (no STR Trend extraction or coverage too low) — the model is on the T-12 base. Upload an STR Trend report or use the Market tab’s comp-set rates.',
     Icon: BarChart3,
   },
+  // Phase 2.1 — the as-of siblings of str_forecast_unavailable. Emitted only
+  // when the deal sets an underwriting as-of date and the market report is
+  // dated after it. ``SOURCE_STYLE`` is ``Record<SourceId, …>``, so these two
+  // entries are what keeps the type exhaustive after the registry edit.
+  cbre_horizons_unavailable: {
+    tone: TONE.warn,
+    tooltip:
+      'A CBRE Horizons report is on the deal but it is dated after the underwriting as-of date, so it was not knowable then — the growth rates stay on their prior basis.',
+    Icon: Map,
+  },
+  om_comps_unavailable: {
+    tone: TONE.warn,
+    tooltip:
+      'The offering memorandum’s comparable-sales table is dated after the underwriting as-of date, so it was not knowable then — the exit cap rate stays on its prior basis.',
+    Icon: Map,
+  },
   // FON-69 — an analyst RevPAR-growth override derives adr_growth so
   // operating NOI moves: adr_growth = (1 + revpar_growth) / (1 + occupancy_growth) − 1.
   derived_from_revpar_growth: {

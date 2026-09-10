@@ -206,6 +206,19 @@ async def test_load_engine_inputs_uses_t12_expense_and_revenue_actuals() -> None
     assert actuals["utilities"] == pytest.approx(290_000.0)
     assert actuals["sales_marketing"] == pytest.approx(800_000.0)
 
+    # Phase 2.1 — every one of those expense lines names the row it came
+    # off, keyed by the same canonical name the override panel edits.
+    src = base["__source_fields__"]
+    assert src["insurance"]["field_name"] == "p_and_l_usali.fixed_charges.insurance"
+    assert src["utilities"]["field_name"] == "p_and_l_usali.undistributed.utilities"
+    assert src["insurance"]["doc_type"] == "T12"
+    assert src["insurance"]["basis"] == "actual"
+    # …and so do the revenue-derived anchors.
+    assert src["starting_resort_fees"]["field_name"] == (
+        "p_and_l_usali.operating_revenue.resort_fees"
+    )
+    assert src["fb_revenue_per_occupied_room"]["concept"] == "fb_revenue"
+
 
 @pytest.mark.asyncio
 async def test_load_engine_inputs_partial_t12_falls_back_to_kimpton() -> None:
@@ -449,3 +462,299 @@ async def test_load_engine_inputs_normalizes_percent_occupancy() -> None:
     # Coerced down to a 0..1 ratio and clamped under 0.99.
     assert 0.0 < base["starting_occupancy"] < 1.0
     assert base["starting_occupancy"] == pytest.approx(0.715, abs=0.001)
+
+
+# ═══════════ Phase 2.1 — with_provenance: which ROW supplied the value ═════
+
+
+_REAL_T12 = (
+    Path(__file__).resolve().parent
+    / "fixtures"
+    / "real_payloads"
+    / "anglers_t12_real.json"
+)
+
+
+async def _insert_real_anglers_t12(deal_id: UUID) -> tuple[UUID, UUID]:
+    """Insert the REAL Anglers T-12 extraction; return ``(doc_id, er_id)``.
+
+    Same shape as ``_insert_t12_extraction`` but hands back the identity so
+    the provenance assertions can pin ``document_id`` /
+    ``extraction_result_id`` exactly, not just "some uuid".
+    """
+    from app.database import get_session_factory
+
+    payload = json.loads(_REAL_T12.read_text(encoding="utf-8"))
+    fields = payload["fields"]
+    factory = get_session_factory()
+    doc_id = uuid4()
+    er_id = uuid4()
+    ts = datetime.now(UTC)
+    async with factory() as session:
+        await session.execute(
+            text(
+                """
+                INSERT INTO documents (
+                    id, deal_id, tenant_id, filename, doc_type, status,
+                    uploaded_at, page_count
+                ) VALUES (
+                    :id, :deal, :tenant, 'anglers_t12.xlsx', 'T12',
+                    'EXTRACTED', :ts, :pages
+                )
+                """
+            ),
+            {
+                "id": str(doc_id),
+                "deal": str(deal_id),
+                "tenant": _TENANT,
+                "ts": ts,
+                "pages": payload.get("page_count") or 1,
+            },
+        )
+        await session.execute(
+            text(
+                """
+                INSERT INTO extraction_results (
+                    id, document_id, deal_id, tenant_id, fields,
+                    confidence_report, agent_version, created_at
+                ) VALUES (
+                    :id, :doc, :deal, :tenant, :fields, '{}', 'test', :ts
+                )
+                """
+            ),
+            {
+                "id": str(er_id),
+                "doc": str(doc_id),
+                "deal": str(deal_id),
+                "tenant": _TENANT,
+                "fields": json.dumps(fields),
+                "ts": ts,
+            },
+        )
+        await session.commit()
+    return doc_id, er_id
+
+
+@pytest.mark.asyncio
+async def test_with_provenance_names_the_exact_row_on_the_real_t12() -> None:
+    """``with_provenance=True`` returns the EXACT extraction row behind each
+    canonical line of the real Anglers T-12 — path, page and row identity.
+
+    Occupancy / ADR / RevPAR all live on page 4 of the workbook under
+    ``ttm_summary_per_om.*``; the loader has always used them, it just threw
+    away which row they came from. Pinning the page here is what makes
+    "click the number → jump to the source" a contract rather than a hope.
+    """
+    from app.database import get_session_factory
+    from app.services.engine_runner import _load_t12_revenue_actuals
+
+    deal_id = uuid4()
+    await _insert_deal(deal_id, name="Angler's Hotel", keys=132, purchase=36_400_000)
+    doc_id, er_id = await _insert_real_anglers_t12(deal_id)
+
+    factory = get_session_factory()
+    async with factory() as session:
+        actuals, provenance = await _load_t12_revenue_actuals(
+            session,
+            deal_id=str(deal_id),
+            tenant_id=_TENANT,
+            with_provenance=True,
+        )
+
+    expected = {
+        "occupancy": ("ttm_summary_per_om.occupancy_pct", 4),
+        "adr": ("ttm_summary_per_om.adr_usd", 4),
+        "revpar": ("ttm_summary_per_om.revpar_usd", 4),
+        # The gated alias set resolves rooms revenue off the January 2025
+        # monthly block (page 6) — pinned as-is; Phase 2.1 does not widen
+        # the vocabulary, it only records what the loader already chose.
+        "rooms_revenue": ("p_and_l_usali.monthly.jan_2025.rooms_revenue_usd", 6),
+    }
+    assert set(provenance) == set(actuals)
+    for canonical, (field_name, page) in expected.items():
+        sf = provenance[canonical]
+        assert sf.resolution.field_name == field_name, canonical
+        assert sf.resolution.source_page == page, canonical
+        assert sf.resolution.value == pytest.approx(actuals[canonical])
+        assert sf.document_id == str(doc_id)
+        assert sf.extraction_result_id == str(er_id)
+        assert sf.resolution.doc_type == "T12"
+        # No ``report_as_of`` on this document → unknown, never invented.
+        assert sf.as_of is None
+
+
+@pytest.mark.asyncio
+async def test_with_provenance_classifies_scope_and_basis() -> None:
+    """The registry classifies the row the loader picked: a monthly slice is
+    reported as ``monthly``, and a T-12 line as ``actual`` basis."""
+    from app.database import get_session_factory
+    from app.services.engine_runner import _load_t12_revenue_actuals
+
+    deal_id = uuid4()
+    await _insert_deal(deal_id, name="Angler's Hotel", keys=132, purchase=36_400_000)
+    await _insert_real_anglers_t12(deal_id)
+
+    factory = get_session_factory()
+    async with factory() as session:
+        _actuals, provenance = await _load_t12_revenue_actuals(
+            session,
+            deal_id=str(deal_id),
+            tenant_id=_TENANT,
+            with_provenance=True,
+        )
+
+    assert provenance["rooms_revenue"].resolution.scope == "monthly"
+    assert provenance["occupancy"].resolution.concept == "occupancy"
+    assert {p.resolution.basis for p in provenance.values()} == {"actual"}
+
+
+@pytest.mark.asyncio
+async def test_with_provenance_default_off_is_byte_identical() -> None:
+    """The plain call returns the same plain dict it always did — same keys,
+    same values, no tuple. Every existing caller is untouched."""
+    from app.database import get_session_factory
+    from app.services.engine_runner import (
+        _load_t12_expense_actuals,
+        _load_t12_revenue_actuals,
+    )
+
+    deal_id = uuid4()
+    await _insert_deal(deal_id, name="Angler's Hotel", keys=132, purchase=36_400_000)
+    await _insert_real_anglers_t12(deal_id)
+
+    factory = get_session_factory()
+    async with factory() as session:
+        plain_rev = await _load_t12_revenue_actuals(
+            session, deal_id=str(deal_id), tenant_id=_TENANT
+        )
+        with_rev, _ = await _load_t12_revenue_actuals(
+            session,
+            deal_id=str(deal_id),
+            tenant_id=_TENANT,
+            with_provenance=True,
+        )
+        plain_exp = await _load_t12_expense_actuals(
+            session, deal_id=str(deal_id), tenant_id=_TENANT
+        )
+        with_exp, _ = await _load_t12_expense_actuals(
+            session,
+            deal_id=str(deal_id),
+            tenant_id=_TENANT,
+            with_provenance=True,
+        )
+
+    assert isinstance(plain_rev, dict) and isinstance(plain_exp, dict)
+    assert plain_rev == with_rev
+    assert plain_exp == with_exp
+
+
+@pytest.mark.asyncio
+async def test_load_engine_inputs_exposes_source_fields_and_reasons() -> None:
+    """``__source_fields__`` / ``__reasons__`` land on ``base`` in the shape
+    the endpoint serialises, and never leak into the engine-visible keys."""
+    from app.database import get_session_factory
+    from app.services.engine_runner import _load_engine_inputs
+    from fondok_schemas.reasons import ReasonCode
+
+    deal_id = uuid4()
+    await _insert_deal(deal_id, name="Angler's Hotel", keys=132, purchase=36_400_000)
+    doc_id, er_id = await _insert_real_anglers_t12(deal_id)
+
+    factory = get_session_factory()
+    async with factory() as session:
+        base = await _load_engine_inputs(session, str(deal_id), tenant_id=_TENANT)
+
+    src = base["__source_fields__"]
+    assert set(src["starting_occupancy"]) == {
+        "document_id",
+        "extraction_result_id",
+        "field_name",
+        "source_page",
+        "concept",
+        "scope",
+        "basis",
+        "doc_type",
+        "as_of",
+    }
+    assert src["starting_occupancy"]["field_name"] == (
+        "ttm_summary_per_om.occupancy_pct"
+    )
+    assert src["starting_occupancy"]["source_page"] == 4
+    assert src["starting_occupancy"]["document_id"] == str(doc_id)
+    assert src["starting_occupancy"]["extraction_result_id"] == str(er_id)
+    assert src["starting_adr"]["field_name"] == "ttm_summary_per_om.adr_usd"
+
+    # A deals-row value is NOT document-sourced — no source field for it.
+    assert "purchase_price" not in src
+    assert "keys" not in src
+
+    # Seeds carry a machine-readable reason. This deal has a T-12 but no OM
+    # and no CBRE report.
+    reasons = base["__reasons__"]
+    assert reasons["exit_cap_rate"]["code"] is ReasonCode.NO_DOCUMENT
+    assert reasons["adr_growth"]["code"] is ReasonCode.NO_DOCUMENT
+    # The T-12 IS on the deal — the F&B anchor just did not resolve.
+    assert reasons["fb_revenue_per_occupied_room"]["code"] is ReasonCode.NO_SOURCE
+    # A key the T-12 grounded has no reason at all.
+    assert "starting_occupancy" not in reasons
+
+
+# ═══════════════════ Phase 2.1 — the run-lineage hook ══════════════════
+
+
+@pytest.mark.asyncio
+async def test_run_all_engines_calls_the_lineage_hook() -> None:
+    """``run_all_engines`` persists the run's lineage at the end of the
+    chain, with ``(session, deal_id, tenant_id, run_id)``."""
+    from app.database import get_session_factory
+    from app.services import engine_runner
+
+    calls: list[tuple] = []
+
+    async def _recorder(session, deal_id, tenant_id, run_id):
+        calls.append((deal_id, tenant_id, run_id))
+
+    deal_id = "kimpton-angler-2026"
+    tenant_id = str(uuid4())
+    run_id = str(uuid4())
+    original = engine_runner.persist_for_run
+    engine_runner.persist_for_run = _recorder
+    try:
+        factory = get_session_factory()
+        async with factory() as session:
+            await engine_runner.run_all_engines(
+                session, deal_id=deal_id, tenant_id=tenant_id, run_id=run_id
+            )
+    finally:
+        engine_runner.persist_for_run = original
+
+    assert calls == [(deal_id, tenant_id, run_id)]
+
+
+@pytest.mark.asyncio
+async def test_lineage_hook_failure_never_fails_a_run() -> None:
+    """A lineage failure is logged and swallowed — a model run must never
+    fail because a side-car write did."""
+    from app.database import get_session_factory
+    from app.services import engine_runner
+
+    async def _boom(session, deal_id, tenant_id, run_id):
+        raise RuntimeError("lineage table not migrated yet")
+
+    deal_id = "kimpton-angler-2026"
+    tenant_id = str(uuid4())
+    original = engine_runner.persist_for_run
+    engine_runner.persist_for_run = _boom
+    try:
+        factory = get_session_factory()
+        async with factory() as session:
+            results = await engine_runner.run_all_engines(
+                session,
+                deal_id=deal_id,
+                tenant_id=tenant_id,
+                run_id=str(uuid4()),
+            )
+    finally:
+        engine_runner.persist_for_run = original
+
+    assert results["revenue"]["status"] == "complete"
