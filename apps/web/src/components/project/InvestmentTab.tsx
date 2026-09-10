@@ -24,6 +24,7 @@ import { useDeal } from '@/lib/hooks/useDeal';
 import { useEngineRun } from '@/lib/hooks/useEngineRun';
 import { useTraceGraph } from '@/lib/hooks/useValueTrace';
 import { IntroCard } from '@/components/help/IntroCard';
+import { Refused, useRefusal, REFUSAL_GLYPH } from '@/components/help/Refused';
 import {
   KpiTile,
   SectionCard,
@@ -94,6 +95,13 @@ interface RowDef {
   overridden?: boolean;
   note?: string;
   link?: { label: string; tab: string };
+  /**
+   * Phase 4.4 — the canonical assumption key whose refusal explains this
+   * row's dash. Set it ONLY where the dash is attributable to exactly one
+   * key the worker tags in ``assumption_sources.reasons``; a row without it
+   * (or whose value is not the bare glyph) renders as it always has.
+   */
+  reasonKey?: string;
 }
 
 export default function InvestmentTab() {
@@ -556,7 +564,10 @@ export default function InvestmentTab() {
 
             // ─── Ongoing Capex section (hold-period, funded from operations) ──
             const ongoing: RowDef[] = [
-              { id: 'ffee', label: 'FF&E Reserve', kind: 'linked', state: 'linked', value: '—', link: { label: '→ Financials', tab: 'pl' } },
+              // The reserve is the operating model's ``ffe_reserve_pct``
+              // assumption — the one Ongoing-Capex dash whose absence the
+              // worker can actually explain.
+              { id: 'ffee', label: 'FF&E Reserve', kind: 'linked', state: 'linked', value: '—', reasonKey: 'ffe_reserve_pct', link: { label: '→ Financials', tab: 'pl' } },
               { id: 'roi', label: 'ROI Projects', kind: 'awaiting', state: 'awaiting_data', value: '—', note: 'Funded from operations — never appears in Sources & Uses' },
               { id: 'otherCapex', label: 'Other Recurring Capex', kind: 'awaiting', state: 'awaiting_data', value: '—', note: 'Awaiting the property condition assessment' },
             ];
@@ -678,6 +689,11 @@ export default function InvestmentTab() {
 function SectionRow({ row }: { row: RowDef }) {
   const color = valueColor(row.kind, !!row.bold, !!row.overridden);
   const valueIsNode = typeof row.value !== 'string' && typeof row.value !== 'number';
+  // Phase 4.4 — a bare dash on a row whose assumption key the worker has
+  // refused gets the reason on hover. Null reason (every build today, and
+  // every row with no `reasonKey`) renders the glyph and nothing else.
+  const reason = useRefusal(row.reasonKey);
+  const refusable = row.value === REFUSAL_GLYPH && reason != null;
   return (
     <>
       <div style={{
@@ -703,7 +719,7 @@ function SectionRow({ row }: { row: RowDef }) {
             color, fontWeight: row.bold ? 700 : 400,
             fontVariantNumeric: 'tabular-nums', whiteSpace: 'nowrap', flexShrink: 0,
           }}>
-            {row.value}
+            {refusable ? <Refused reason={reason} /> : row.value}
           </span>
         )}
       </div>

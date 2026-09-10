@@ -178,7 +178,18 @@ vi.mock('@/components/project/HistoricalBaselinePanel', () => ({ default: () => 
 vi.mock('@/components/help/IntroCard', () => ({ IntroCard: () => null }));
 vi.mock('@/components/ui/Toast', () => ({ useToast: () => ({ toast: vi.fn() }) }));
 
+// Phase 4.4 — the deal's refusal codes ride the assumption_sources payload
+// (`reasons[key]`, a bare ReasonCode) beside the source tags. EMPTY unless a
+// test sets one, which is exactly what this provider-free render resolved to
+// before, so every pre-existing expectation below is untouched.
+let mockReasons: Record<string, string> = {};
+vi.mock('@/lib/hooks/useDealProvenance', () => ({
+  useSource: (key: string | undefined) =>
+    key && mockReasons[key] ? { source: '', value: null, reason: mockReasons[key] } : null,
+}));
+
 import InvestmentTab from '@/components/project/InvestmentTab';
+import { REASONS } from '@/lib/ontology/reasons.generated';
 
 beforeEach(() => {
   cleanup();
@@ -186,6 +197,7 @@ beforeEach(() => {
   timelineSpy.mockClear();
   engineRunSpy.mockClear();
   refreshDealSpy.mockClear();
+  mockReasons = {};
 });
 
 describe('InvestmentTab — engine-sourced KPI tiles (no provider present)', () => {
@@ -268,3 +280,47 @@ describe('InvestmentTab — canonical save path (field_overrides, not local stor
     expect(body.field_overrides.purchase_price).toBe(35_000_000);
   });
 });
+
+// ── Phase 4.4 — the bare dash learns to say why ──────────────────────────
+// Ongoing Capex → FF&E Reserve is the one Investment dash attributable to a
+// single assumption key (`ffe_reserve_pct`), so it reads the worker's
+// `assumption_sources.reasons` entry and carries it on hover. Everything else
+// on the tab is left exactly as it was.
+describe('InvestmentTab — the FF&E Reserve dash carries its refusal code', () => {
+  /** The value cell of the section row with this label. */
+  function valueCell(label: string): HTMLElement {
+    const labelEl = screen.getAllByText(label)[0];
+    const row = labelEl.closest('div') as HTMLElement; // dot · label · link | value
+    return row.lastElementChild as HTMLElement;
+  }
+
+  it('renders the reason from the worker code, still showing the em dash', () => {
+    mockReasons = { ffe_reserve_pct: 'no_document' };
+    render(<InvestmentTab />);
+    const cell = valueCell('FF&E Reserve');
+    const refusal = cell.querySelector('[data-refused]') as HTMLElement;
+    expect(refusal).toBeTruthy();
+    expect(refusal.getAttribute('data-refused')).toBe('no_document');
+    expect(refusal.getAttribute('aria-label')).toBe(REASONS.no_document.label);
+    expect(cell.textContent).toBe('—');
+  });
+
+  it('with the code ABSENT renders a bare dash — no wrapper, no tooltip', () => {
+    mockReasons = {}; // every worker build today
+    render(<InvestmentTab />);
+    const cell = valueCell('FF&E Reserve');
+    expect(cell.querySelector('[data-refused]')).toBeNull();
+    expect(cell.textContent).toBe('—');
+  });
+
+  it('leaves the unwired Ongoing Capex dashes exactly as they were', () => {
+    mockReasons = { ffe_reserve_pct: 'no_source' };
+    render(<InvestmentTab />);
+    for (const label of ['ROI Projects', 'Other Recurring Capex', 'Transfer Tax']) {
+      const cell = valueCell(label);
+      expect(cell.querySelector('[data-refused]')).toBeNull();
+      expect(cell.textContent).toBe('—');
+    }
+  });
+});
+

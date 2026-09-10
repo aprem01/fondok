@@ -131,9 +131,16 @@ vi.mock('@/lib/hooks/useEngineRun', () => ({
 // Settable per-test so the FON-61 Year-1 basis chip (driven by the worker's
 // source tags, never the flag alone) can be exercised.
 let mockSources: Record<string, string> = {};
+// Phase 4.4 — the worker's machine-readable refusal codes ride the SAME
+// assumption_sources payload as the source tags (`reasons[key]`, a bare
+// ReasonCode). EMPTY unless a test sets one, so every pre-existing
+// expectation below sees exactly the object it saw before.
+let mockReasons: Record<string, string> = {};
 vi.mock('@/lib/hooks/useDealProvenance', () => ({
   useSource: (key: string | undefined) =>
-    key && mockSources[key] ? { source: mockSources[key], value: null } : null,
+    key && (mockSources[key] || mockReasons[key])
+      ? { source: mockSources[key] ?? '', value: null, reason: mockReasons[key] ?? null }
+      : null,
 }));
 
 // api surface — spy on the field_overrides PATCH (the canonical edit path).
@@ -161,6 +168,7 @@ import { STR_MARKET_OVERRIDE_NOTE } from '@/lib/provenance';
 beforeEach(() => {
   cleanup();
   mockSources = {};
+  mockReasons = {};
   mockFieldOverrides = {};
   updateSpy.mockClear();
   engineRunSpy.mockClear();
@@ -352,4 +360,39 @@ describe('Financials · Projections — NOI pin notice (FON-67 reconciliation le
     render(<ProjectionsSection dealId="deal-uuid-1" />);
     expect(screen.queryByTestId('noi-pin-notice')).not.toBeInTheDocument();
   });
+
+  // Phase 4.4 — the pin is now a typed refusal: the worker's `pin_active`
+  // code on either pin key is read FIRST, with the field_overrides
+  // inspection as the fallback. Both paths render the identical notice.
+  it('a worker `pin_active` code raises the same notice with NO local override present', () => {
+    mockFieldOverrides = {}; // nothing in field_overrides at all
+    mockReasons = { noi_override_by_year: 'pin_active' };
+    render(<ProjectionsSection dealId="deal-uuid-1" />);
+    const notice = screen.getByTestId('noi-pin-notice');
+    expect(notice).toHaveTextContent(NOTICE);
+    expect(notice).not.toHaveTextContent('Terminal NOI is also pinned');
+    expect(screen.getByRole('button', { name: 'Clear pin' })).toBeInTheDocument();
+  });
+
+  it('a worker `pin_active` code on the terminal key adds the terminal sentence', () => {
+    mockFieldOverrides = { noi_override_by_year: { value: [4_100_000], note: 'pin' } };
+    mockReasons = { terminal_noi_override: 'pin_active' };
+    render(<ProjectionsSection dealId="deal-uuid-1" />);
+    expect(screen.getByTestId('noi-pin-notice')).toHaveTextContent('Terminal NOI is also pinned');
+  });
+
+  it('with the code ABSENT the local field_overrides check is unchanged', () => {
+    mockReasons = {}; // every worker build today
+    mockFieldOverrides = { noi_override_by_year: { value: [4_100_000], note: 'pin' } };
+    render(<ProjectionsSection dealId="deal-uuid-1" />);
+    expect(screen.getByTestId('noi-pin-notice')).toHaveTextContent(NOTICE);
+  });
+
+  it('an unrelated reason code on a pin key does NOT raise the notice', () => {
+    mockFieldOverrides = {};
+    mockReasons = { noi_override_by_year: 'needs_review' };
+    render(<ProjectionsSection dealId="deal-uuid-1" />);
+    expect(screen.queryByTestId('noi-pin-notice')).not.toBeInTheDocument();
+  });
 });
+

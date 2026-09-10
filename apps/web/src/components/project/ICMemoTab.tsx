@@ -60,6 +60,8 @@ import type { Project } from '@/lib/mockData';
 import { ProvenanceDot, palette } from '@/components/design';
 import { useToast } from '@/components/ui/Toast';
 import { openLineage } from '@/components/project/LineageDrawer';
+import { Refused, asReasonCode } from '@/components/help/Refused';
+import { REASONS, type ReasonCode } from '@/lib/ontology/reasons.generated';
 
 // ── canonical colours (design/canonical/IC Memo Tab.dc.html) ───────────────
 const GREEN = 'oklch(45% 0.12 155)';
@@ -533,7 +535,26 @@ export default function ICMemoTab({ project }: { project: Project }) {
   // "Pending analyst decision". The model's inferred verdict lives on the
   // Model Assessment card only.
   const decidedVerdict: Verdict | null = verdictConfirmed && verdictOverride ? verdictOverride : null;
-  const recommendationLabel = decidedVerdict ?? PENDING_DECISION;
+  // Phase 4.4 — a pending recommendation is a REFUSAL with a code, not a
+  // loose string. The worker's own ``recommendation_reason`` (a bare
+  // ``ReasonCode``, carried on the deal beside the other memo_* keys) is read
+  // first; absent — which is every build today — we fall back to the local
+  // "no confirmed verdict" check, whose code is `awaiting_analyst`. The two
+  // print the same words: REASONS.awaiting_analyst.label IS the canonical
+  // `PENDING_DECISION` string the memo body and the Excel export use, so the
+  // banner reads exactly as it does today either way.
+  const recommendationReason: ReasonCode = useMemo(() => {
+    const ov = (deal?.field_overrides ?? {}) as Record<string, unknown>;
+    return (
+      asReasonCode(ov.recommendation_reason ?? ov.memo_recommendation_reason)
+      ?? 'awaiting_analyst'
+    );
+  }, [deal]);
+  const pendingLabel =
+    recommendationReason === 'awaiting_analyst'
+      ? PENDING_DECISION
+      : REASONS[recommendationReason].label;
+  const recommendationLabel = decidedVerdict ?? pendingLabel;
   const effThesis = thesisText ?? rec?.thesis ?? '';
   const effHighlights: MemoPoint[] = highlights ?? (rec ? rec.highlights.map((t) => ({ t, ai: true })) : []);
   const effRisks: MemoPoint[] = risks ?? (rec ? rec.risks.map((t) => ({ t, ai: true })) : []);
@@ -914,7 +935,19 @@ export default function ICMemoTab({ project }: { project: Project }) {
                   onClick={(e) => { e.stopPropagation(); setRecMenuOpen((o) => !o); }}
                   style={{ display: 'inline-flex', alignItems: 'center', gap: 8, fontSize: 16, fontWeight: 600, color: decidedVerdict ? '#fff' : '#c8cbd6', cursor: 'pointer' }}
                 >
-                  {recommendationLabel}
+                  {decidedVerdict ? recommendationLabel : (
+                    // The refusal wears its reason: same words, now with the
+                    // ontology's own explanation of what "pending" means.
+                    <Refused
+                      reason={recommendationReason}
+                      testId="ic-recommendation-refusal"
+                      // The label is the verdict dropdown's own trigger text —
+                      // keep its pointer cursor, don't swap in `help`.
+                      style={{ cursor: 'inherit' }}
+                    >
+                      {recommendationLabel}
+                    </Refused>
+                  )}
                   <span style={{ fontSize: 11, color: '#8b93a7' }}>⌄</span>
                 </span>
                 <span style={{ fontSize: 10.5, color: verdictConfirmed ? '#7fbf9a' : '#c8a86b' }}>
