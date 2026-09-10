@@ -1,4 +1,31 @@
-# Field catalog — externalized alias maps for the underwriting engines.
+# Field catalog — SUPERSEDED by the concept registry (Phase 1.3a).
+#
+# ⚠ This file no longer defines any alias→canonical mapping. That moved to
+#   app/ontology/concepts.yaml (`bindings.field_catalog: {namespace, key,
+#   percentage_key}` + the concept's `aliases`), and
+#   app/extraction/field_catalog.py derives the six engine constants from the
+#   registry. `period_type_rank` and `percentage_keys` below are DEAD — the
+#   loader reads `registry.period_types` and the `percentage_key` bindings
+#   instead; they are kept only so the diff of this file stays reviewable.
+#
+#   The alias lists below survive one more phase in one narrow role: the
+#   Phase-1.3a SCOPE GATE. The registry knows strictly more aliases per
+#   canonical key than this file ever listed, and Phase 1.3a is a parity phase
+#   — no engine may start matching a path it did not match before. The loader
+#   therefore intersects the registry's alias lists with the paths named here,
+#   and asserts at import that every path here IS a registry alias of the bound
+#   concept (so this file can never drift away from the registry again).
+#
+#   Widening the engines to the full registry vocabulary is a real underwriting
+#   behaviour change and needs its own change set + golden diff. When that
+#   lands, delete this file together with `_load_scope` / `_gate` /
+#   `_CATALOG_PATH` in field_catalog.py.
+#
+#   Adding or changing an alias: edit app/ontology/concepts.yaml. Editing this
+#   file alone does nothing except (possibly) fail the import-time assertion.
+#
+# ─────────────────────────────────────────────────────────────────────────
+# Historical note (pre-Phase-1.3a):
 #
 # Each top-level key is a "namespace" the engine_runner uses to translate
 # extracted Extractor-agent field paths onto the canonical keys the

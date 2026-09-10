@@ -1,0 +1,365 @@
+{
+  "_note": "Pre-registry snapshot of apps/worker/app/extraction/field_catalog.py's six public constants, taken before the registry adapter landed (Phase 1.3a). 'constants' holds the exported values with sorted keys; 'insertion_order' pins the key order each dict was built in; 'source_lists' holds the {canonical: [alias, ...]} lists from field_catalog.yaml in their original order, which is what the inverted dicts' ordering semantics derive from.",
+  "constants": {
+    "T12_EXPENSE_FIELD_ALIASES": {
+      "admin_general": "administrative_general",
+      "administrative_general": "administrative_general",
+      "fb_dept_expense": "fb_dept_expense",
+      "ffe_reserve": "ffe_reserve",
+      "food_beverage_departmental_expenses": "fb_dept_expense",
+      "information_telecom": "information_telecom",
+      "insurance": "insurance",
+      "management_fee": "mgmt_fee",
+      "mgmt_fee": "mgmt_fee",
+      "other_dept_expense": "other_dept_expense",
+      "p_and_l_usali.departmental_expenses.food_beverage": "fb_dept_expense",
+      "p_and_l_usali.departmental_expenses.other_operated": "other_dept_expense",
+      "p_and_l_usali.departmental_expenses.rooms": "rooms_dept_expense",
+      "p_and_l_usali.fees_and_reserves.ffe_reserve": "ffe_reserve",
+      "p_and_l_usali.fees_and_reserves.mgmt_fee": "mgmt_fee",
+      "p_and_l_usali.fixed_charges.insurance": "insurance",
+      "p_and_l_usali.fixed_charges.property_taxes": "property_taxes",
+      "p_and_l_usali.undistributed.administrative_general": "administrative_general",
+      "p_and_l_usali.undistributed.information_telecom": "information_telecom",
+      "p_and_l_usali.undistributed.property_operations": "property_operations",
+      "p_and_l_usali.undistributed.sales_marketing": "sales_marketing",
+      "p_and_l_usali.undistributed.utilities": "utilities",
+      "property_operations": "property_operations",
+      "property_taxes": "property_taxes",
+      "repairs_maintenance": "property_operations",
+      "rooms_departmental_expenses": "rooms_dept_expense",
+      "rooms_dept_expense": "rooms_dept_expense",
+      "sales_marketing": "sales_marketing",
+      "utilities": "utilities"
+    },
+    "T12_REVENUE_FIELD_ALIASES": {
+      "adr": "adr",
+      "adr_usd": "adr",
+      "fb_revenue": "fb_revenue",
+      "fb_revenue_usd": "fb_revenue",
+      "food_beverage_revenue": "fb_revenue",
+      "misc_revenue": "misc_revenue",
+      "occupancy": "occupancy",
+      "occupancy_pct": "occupancy",
+      "other_revenue": "other_revenue",
+      "other_revenue_usd": "other_revenue",
+      "p_and_l_usali.operating_revenue.fb_revenue": "fb_revenue",
+      "p_and_l_usali.operating_revenue.food_beverage_revenue": "fb_revenue",
+      "p_and_l_usali.operating_revenue.misc_revenue": "misc_revenue",
+      "p_and_l_usali.operating_revenue.other_revenue": "other_revenue",
+      "p_and_l_usali.operating_revenue.resort_fees": "resort_fees",
+      "p_and_l_usali.operating_revenue.rooms_revenue": "rooms_revenue",
+      "p_and_l_usali.operating_revenue.rooms_revenue_usd": "rooms_revenue",
+      "p_and_l_usali.operational_kpis.adr_usd": "adr",
+      "p_and_l_usali.operational_kpis.occupancy_pct": "occupancy",
+      "p_and_l_usali.operational_kpis.revpar_usd": "revpar",
+      "resort_fees": "resort_fees",
+      "resort_fees_usd": "resort_fees",
+      "revpar": "revpar",
+      "revpar_usd": "revpar",
+      "rooms_revenue": "rooms_revenue",
+      "rooms_revenue_usd": "rooms_revenue"
+    },
+    "OM_CAPITAL_FIELD_ALIASES": {
+      "asking_price.headline_price_usd": "purchase_price",
+      "asking_price.price_per_key_usd": "price_per_key",
+      "asking_price.purchase_price": "purchase_price",
+      "broker_proforma.cap_rate": "entry_cap_rate",
+      "broker_proforma.entry_cap_rate": "entry_cap_rate",
+      "broker_proforma.renovation_budget_usd": "renovation_budget",
+      "cap_rate": "entry_cap_rate",
+      "entry_cap_rate": "entry_cap_rate",
+      "headline_price_usd": "purchase_price",
+      "price_per_key_usd": "price_per_key",
+      "property_overview.year_built": "year_built",
+      "renovation_budget": "renovation_budget",
+      "renovation_budget_usd": "renovation_budget",
+      "year_built": "year_built"
+    },
+    "OM_DEBT_FIELD_ALIASES": {
+      "amortization_years": "amortization_years",
+      "in_place_debt.amortization_years": "amortization_years",
+      "in_place_debt.interest_rate_pct": "interest_rate",
+      "in_place_debt.loan_balance_usd": "loan_amount",
+      "in_place_debt.ltv_pct": "ltv",
+      "in_place_debt.term_years": "term_years",
+      "interest_rate_pct": "interest_rate",
+      "loan_balance_usd": "loan_amount",
+      "ltv_pct": "ltv",
+      "term_years": "term_years"
+    },
+    "PERIOD_TYPE_RANK": {
+      "annual": 0,
+      "fiscal_year": 0,
+      "full_year": 0,
+      "month": 9,
+      "monthly": 9,
+      "quarter": 7,
+      "quarterly": 7,
+      "rolling_twelve": 1,
+      "t12": 1,
+      "trailing_twelve": 1,
+      "ttm": 1,
+      "year_to_date": 5,
+      "ytd": 5
+    },
+    "OM_PERCENTAGE_KEYS": [
+      "entry_cap_rate",
+      "interest_rate",
+      "ltv"
+    ]
+  },
+  "insertion_order": {
+    "T12_EXPENSE_FIELD_ALIASES": [
+      "p_and_l_usali.departmental_expenses.rooms",
+      "rooms_dept_expense",
+      "rooms_departmental_expenses",
+      "p_and_l_usali.departmental_expenses.food_beverage",
+      "fb_dept_expense",
+      "food_beverage_departmental_expenses",
+      "p_and_l_usali.departmental_expenses.other_operated",
+      "other_dept_expense",
+      "p_and_l_usali.undistributed.administrative_general",
+      "administrative_general",
+      "admin_general",
+      "p_and_l_usali.undistributed.information_telecom",
+      "information_telecom",
+      "p_and_l_usali.undistributed.sales_marketing",
+      "sales_marketing",
+      "p_and_l_usali.undistributed.property_operations",
+      "property_operations",
+      "repairs_maintenance",
+      "p_and_l_usali.undistributed.utilities",
+      "utilities",
+      "p_and_l_usali.fees_and_reserves.mgmt_fee",
+      "mgmt_fee",
+      "management_fee",
+      "p_and_l_usali.fees_and_reserves.ffe_reserve",
+      "ffe_reserve",
+      "p_and_l_usali.fixed_charges.property_taxes",
+      "property_taxes",
+      "p_and_l_usali.fixed_charges.insurance",
+      "insurance"
+    ],
+    "T12_REVENUE_FIELD_ALIASES": [
+      "p_and_l_usali.operational_kpis.occupancy_pct",
+      "occupancy_pct",
+      "occupancy",
+      "p_and_l_usali.operational_kpis.adr_usd",
+      "adr_usd",
+      "adr",
+      "p_and_l_usali.operational_kpis.revpar_usd",
+      "revpar_usd",
+      "revpar",
+      "p_and_l_usali.operating_revenue.rooms_revenue",
+      "p_and_l_usali.operating_revenue.rooms_revenue_usd",
+      "rooms_revenue_usd",
+      "rooms_revenue",
+      "p_and_l_usali.operating_revenue.food_beverage_revenue",
+      "p_and_l_usali.operating_revenue.fb_revenue",
+      "fb_revenue_usd",
+      "fb_revenue",
+      "food_beverage_revenue",
+      "p_and_l_usali.operating_revenue.other_revenue",
+      "other_revenue_usd",
+      "other_revenue",
+      "p_and_l_usali.operating_revenue.resort_fees",
+      "resort_fees_usd",
+      "resort_fees",
+      "p_and_l_usali.operating_revenue.misc_revenue",
+      "misc_revenue"
+    ],
+    "OM_CAPITAL_FIELD_ALIASES": [
+      "asking_price.headline_price_usd",
+      "asking_price.purchase_price",
+      "headline_price_usd",
+      "asking_price.price_per_key_usd",
+      "price_per_key_usd",
+      "broker_proforma.renovation_budget_usd",
+      "renovation_budget_usd",
+      "renovation_budget",
+      "broker_proforma.entry_cap_rate",
+      "broker_proforma.cap_rate",
+      "entry_cap_rate",
+      "cap_rate",
+      "property_overview.year_built",
+      "year_built"
+    ],
+    "OM_DEBT_FIELD_ALIASES": [
+      "in_place_debt.loan_balance_usd",
+      "loan_balance_usd",
+      "in_place_debt.interest_rate_pct",
+      "interest_rate_pct",
+      "in_place_debt.amortization_years",
+      "amortization_years",
+      "in_place_debt.term_years",
+      "term_years",
+      "in_place_debt.ltv_pct",
+      "ltv_pct"
+    ],
+    "PERIOD_TYPE_RANK": [
+      "annual",
+      "fiscal_year",
+      "full_year",
+      "trailing_twelve",
+      "ttm",
+      "t12",
+      "rolling_twelve",
+      "ytd",
+      "year_to_date",
+      "quarterly",
+      "quarter",
+      "monthly",
+      "month"
+    ]
+  },
+  "source_lists": {
+    "t12_expense": {
+      "rooms_dept_expense": [
+        "p_and_l_usali.departmental_expenses.rooms",
+        "rooms_dept_expense",
+        "rooms_departmental_expenses"
+      ],
+      "fb_dept_expense": [
+        "p_and_l_usali.departmental_expenses.food_beverage",
+        "fb_dept_expense",
+        "food_beverage_departmental_expenses"
+      ],
+      "other_dept_expense": [
+        "p_and_l_usali.departmental_expenses.other_operated",
+        "other_dept_expense"
+      ],
+      "administrative_general": [
+        "p_and_l_usali.undistributed.administrative_general",
+        "administrative_general",
+        "admin_general"
+      ],
+      "information_telecom": [
+        "p_and_l_usali.undistributed.information_telecom",
+        "information_telecom"
+      ],
+      "sales_marketing": [
+        "p_and_l_usali.undistributed.sales_marketing",
+        "sales_marketing"
+      ],
+      "property_operations": [
+        "p_and_l_usali.undistributed.property_operations",
+        "property_operations",
+        "repairs_maintenance"
+      ],
+      "utilities": [
+        "p_and_l_usali.undistributed.utilities",
+        "utilities"
+      ],
+      "mgmt_fee": [
+        "p_and_l_usali.fees_and_reserves.mgmt_fee",
+        "mgmt_fee",
+        "management_fee"
+      ],
+      "ffe_reserve": [
+        "p_and_l_usali.fees_and_reserves.ffe_reserve",
+        "ffe_reserve"
+      ],
+      "property_taxes": [
+        "p_and_l_usali.fixed_charges.property_taxes",
+        "property_taxes"
+      ],
+      "insurance": [
+        "p_and_l_usali.fixed_charges.insurance",
+        "insurance"
+      ]
+    },
+    "t12_revenue": {
+      "occupancy": [
+        "p_and_l_usali.operational_kpis.occupancy_pct",
+        "occupancy_pct",
+        "occupancy"
+      ],
+      "adr": [
+        "p_and_l_usali.operational_kpis.adr_usd",
+        "adr_usd",
+        "adr"
+      ],
+      "revpar": [
+        "p_and_l_usali.operational_kpis.revpar_usd",
+        "revpar_usd",
+        "revpar"
+      ],
+      "rooms_revenue": [
+        "p_and_l_usali.operating_revenue.rooms_revenue",
+        "p_and_l_usali.operating_revenue.rooms_revenue_usd",
+        "rooms_revenue_usd",
+        "rooms_revenue"
+      ],
+      "fb_revenue": [
+        "p_and_l_usali.operating_revenue.food_beverage_revenue",
+        "p_and_l_usali.operating_revenue.fb_revenue",
+        "fb_revenue_usd",
+        "fb_revenue",
+        "food_beverage_revenue"
+      ],
+      "other_revenue": [
+        "p_and_l_usali.operating_revenue.other_revenue",
+        "other_revenue_usd",
+        "other_revenue"
+      ],
+      "resort_fees": [
+        "p_and_l_usali.operating_revenue.resort_fees",
+        "resort_fees_usd",
+        "resort_fees"
+      ],
+      "misc_revenue": [
+        "p_and_l_usali.operating_revenue.misc_revenue",
+        "misc_revenue"
+      ]
+    },
+    "om_capital": {
+      "purchase_price": [
+        "asking_price.headline_price_usd",
+        "asking_price.purchase_price",
+        "headline_price_usd"
+      ],
+      "price_per_key": [
+        "asking_price.price_per_key_usd",
+        "price_per_key_usd"
+      ],
+      "renovation_budget": [
+        "broker_proforma.renovation_budget_usd",
+        "renovation_budget_usd",
+        "renovation_budget"
+      ],
+      "entry_cap_rate": [
+        "broker_proforma.entry_cap_rate",
+        "broker_proforma.cap_rate",
+        "entry_cap_rate",
+        "cap_rate"
+      ],
+      "year_built": [
+        "property_overview.year_built",
+        "year_built"
+      ]
+    },
+    "om_debt": {
+      "loan_amount": [
+        "in_place_debt.loan_balance_usd",
+        "loan_balance_usd"
+      ],
+      "interest_rate": [
+        "in_place_debt.interest_rate_pct",
+        "interest_rate_pct"
+      ],
+      "amortization_years": [
+        "in_place_debt.amortization_years",
+        "amortization_years"
+      ],
+      "term_years": [
+        "in_place_debt.term_years",
+        "term_years"
+      ],
+      "ltv": [
+        "in_place_debt.ltv_pct",
+        "ltv_pct"
+      ]
+    }
+  }
+}

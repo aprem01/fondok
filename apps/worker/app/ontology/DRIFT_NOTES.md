@@ -6,7 +6,9 @@ of those maps disagreed and which side the registry took, and (3) what each
 adapter must wire. Line numbers are as of the branch this landed on; `~`
 marks an approximate anchor.
 
-Nothing in this phase changes any consumer: `field_catalog.py`,
+Nothing in **Phase 1.1/1.2** changes any consumer (§6 records the first
+adapter — `field_catalog.py` went registry-driven in Phase 1.3a):
+`field_catalog.py`,
 `usali_scorer.py`, `documents.py`, `variance.py`, `analysis.py`,
 `engine_runner.py`, `HistoricalsSection.tsx`, `GroundedWorksheet.tsx`,
 `reviewState.ts`, `provenance.ts`, `AssumptionBadge.tsx` are untouched. The
@@ -315,7 +317,8 @@ unmapped); below-EBITDA lines `interest_expense`, `depreciation`,
 
 ## 4. What each adapter wires (next phase)
 
-* **field_catalog adapter** — replace `_invert_aliases` inputs with
+* **field_catalog adapter** — ✅ LANDED, Phase 1.3a (see §6). As planned:
+  replace `_invert_aliases` inputs with
   `{c.bindings.field_catalog.key: [a.path for aliases…]}` per namespace;
   `PERIOD_TYPE_RANK = registry.period_types`; `OM_PERCENTAGE_KEYS = {keys
   with percentage_key}`. Keep the module-level constant names so
@@ -355,3 +358,75 @@ doc type's default: T12 → ttm, PNL → annual, PNL_MONTHLY → monthly,
 PNL_YTD → ytd); `want="annual"` admits annual, ttm and unknown. `reason`
 (set iff `value is None`): `basis_excluded` > `period_mismatch` >
 `unit_unknown` > `no_source`, i.e. the most specific exclusion seen.
+
+## 6. Phase 1.3a parity exceptions (`field_catalog` adapter)
+
+`extraction/field_catalog.py` is now registry-driven: the six constants
+`engine_runner.py:45-51` imports are derived from
+`bindings.field_catalog: {namespace, key, percentage_key}` plus the bound
+concept's `aliases`, from `registry.period_types`, and from the
+`percentage_key` flags. Parity against the pre-adapter loader is pinned in
+`tests/fixtures/ontology/field_catalog_pre_registry.json` and asserted by
+`tests/test_ontology_conformance.py::test_field_catalog_parity`.
+
+**No mapping disagreement was found.** Every one of the 79 legacy aliases is
+an alias of the concept that carries the matching `field_catalog` binding, and
+the registry's alias ORDER is an order-preserving superset of the YAML's for
+all 30 canonical keys — so `concepts.yaml` needed **no** order fixes, and the
+inverted dicts, `PERIOD_TYPE_RANK` (registry `period_types` verbatim, same
+order) and `OM_PERCENTAGE_KEYS` come out byte-identical.
+
+**Exception 1 — the registry is a strict alias SUPERSET, so the adapter gates
+it.** Adding the extra aliases would change which extractor paths the engines
+match on real documents, which a parity phase may not do. `field_catalog.yaml`
+therefore survives one more phase in one narrow role — the *scope gate*
+(`field_catalog._load_scope` / `_gate`): it contributes alias PATHS only, never
+a canonical key, and the loader raises at import if any scoped path is not a
+registry alias of the bound concept. Sizes:
+
+| namespace | canonical keys | aliases the engines see (gated) | aliases the registry knows | withheld |
+|---|---|---|---|---|
+| `t12_expense` | 12 | 29 | 108 | +79 |
+| `t12_revenue` | 8 | 26 | 107 | +81 |
+| `om_capital` | 5 | 14 | 20 | +6 |
+| `om_debt` | 5 | 10 | 16 | +6 |
+| **total** | **30** | **79** | **251** | **+172** |
+
+Only four keys are already at full width (`renovation_budget`, `year_built`,
+`amortization_years`, `term_years`). Examples of what is withheld:
+`occupancy` gains the un-nested USALI form, `occ`, `occ_pct`, the OM-summary
+and broker/actual-qualified forms (3 → 17); `insurance` gains the
+`non_operating` shapes and `insurance_expense` (2 → 7); `purchase_price` gains
+`purchase_price`, `price`, `deal.purchase_price` (3 → 6).
+
+Widening to the full registry vocabulary is a real underwriting-behaviour
+change and needs its own change set with a golden diff — several withheld
+aliases are basis-qualified (`broker_occupancy`, `broker_proforma.*`,
+`ttm_summary_per_om.*`) and the flat `dict.get` in `engine_runner` has no basis
+filter, so the widening should land together with a `resolve(..., basis=...)`
+call rather than as a bigger dict. When it does, `_load_scope`, `_gate`,
+`_CATALOG_PATH` and `field_catalog.yaml` delete together, and
+`test_field_catalog_scope_gate_is_a_registry_subset` flips to an equality
+assertion. The gate is visible in
+`test_registry_literals_are_confined_to_the_registry`, where
+`field_catalog.yaml` is listed as an `xfail(strict=True)` entry alongside the
+five consumers the other adapter builders own.
+
+**Exception 2 — `OM_PERCENTAGE_KEYS` is selected by the binding flag, not the
+unit.** The plan said "`unit == pct` concepts with an OM binding", but
+`entry_cap_rate`, `interest_rate` and `ltv` all carry `unit: ratio` (the
+registry's unit is the concept's TRUE unit; `percentage_key: true` is the
+binding that says the wire format may arrive as 0..100). Selecting on
+`bindings.field_catalog.percentage_key` + an `om_*` namespace reproduces the
+legacy set exactly; selecting on `unit == pct` would produce the empty set.
+
+**Non-exception, recorded so nobody "fixes" it** — the inverted dicts' KEY
+INSERTION order differs from the legacy one for `t12_revenue`
+(`misc_revenue` / `resort_fees` swap) and `om_capital` (`year_built` leads),
+because the adapter iterates concepts in registry declaration order. This is
+inert: `_invert_aliases` raises if two canonicals ever claim one alias, so
+every key is unique and the dicts are lookup-only. The parity test asserts the
+mapping (sorted) and the per-canonical alias lists IN ORDER — not the grouping
+order — and deliberately does not reorder `concepts.yaml`, since concept order
+is also the resolver's "first seen" tiebreak and moving blocks there WOULD
+change behaviour.
