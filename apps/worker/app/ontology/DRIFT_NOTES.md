@@ -355,3 +355,87 @@ doc type's default: T12 → ttm, PNL → annual, PNL_MONTHLY → monthly,
 PNL_YTD → ytd); `want="annual"` admits annual, ttm and unknown. `reason`
 (set iff `value is None`): `basis_excluded` > `period_mismatch` >
 `unit_unknown` > `no_source`, i.e. the most specific exclusion seen.
+
+## 6. Phase 1.3b parity exceptions (usali_scorer adapter)
+
+`services/usali_scorer.py` is now registry-driven: `_ALIASES` is a read-only
+view over `bindings.scorer_key` / `scorer_synonyms` / `scorer_variants` plus
+the concept's aliases, `_resolve_field` delegates to `registry.resolve(...,
+allow_token_match=…)`, and `_has_subordinate_namespace` reads
+`subordinate_namespaces`. `_evaluate` stayed put (`identities.py` imports it).
+
+The acceptance criterion was score parity, pinned in
+`tests/fixtures/ontology/usali_scorer_pre_registry.json` (27 cases: the nine
+saved extraction payloads under `tests/fixtures/{usali_v3,usali_v4,
+real_payloads}/`, each flattened bare / with deal `keys` / with `keys` +
+market-context flags) and asserted by `tests/test_ontology_scorer_parity.py`.
+**Every score, `applicable_count`, `passed_count` and per-rule outcome is
+byte-identical to the pre-change scorer.** No alias had to be added to
+`concepts.yaml`: the registry already carried every path the old `_ALIASES`
+map listed (verified path-by-path — the view is a strict superset, 61 → 73
+canonicals, the 12 extra being the synthetic cross-field names and
+`dept_expenses_by_line` / `monthly_revpar` / `pip_estimate` /
+`renovation_hard_costs`).
+
+Four places where the registry's answer differs from the old scorer's. In each
+the registry is, in my judgement, right — but this phase does not move a score,
+so the first is held OLD in code and the rest are recorded rather than adopted.
+
+1. **`fixed_charges` on every T-12 — HELD OLD in the adapter.**
+   *Old:* `p_and_l_usali.total_non_operating_expenses_usd` → **1,699,740**.
+   *Registry:* `…total_non_operating_income_and_expenses_usd`, listed first
+   per §3b "Decision — fixed charges" → **1,922,240**.
+   The registry is right: with 1,922,240 the NOI chain closes on the live
+   T-12 (GOP 5,081,540 − mgmt 650,353 − FF&E 560,393 − fixed 1,922,240 =
+   1,948,554 vs the stated 1,948,560), and `NOI_IDENTITY` flips from FAIL
+   (11.4 % drift) to PASS — moving the T-12 score 76.19 → 80.95 on all four
+   T-12 fixtures. That is a scoring change, so the income-inclusive row is
+   held out by `usali_scorer._PARITY_HOLD_OUT_SUFFIXES` until it is signed
+   off. **Adopting it is a one-line delete plus a re-pin of the fixture.**
+   Note this also un-blocks the §3b `REVENUE_SUM` observation: both are
+   "the CSV / the old map disagrees with USALI 11th ed." findings on the
+   same statement.
+
+2. **`broker_adr` on the OM — registry adopted, no score moves.**
+   *Old:* `broker_proforma.year_5_adr_usd` → **340** (the old resolver could
+   only reach `broker_adr` through its token matcher, which demanded a
+   literal `broker` token; the year-5 column was the only key carrying both
+   `broker` and `adr`). *Registry:* concept `adr` filtered to `basis:
+   broker` → `broker_proforma.average_daily_rate_usd` = **312**. The
+   registry is right — "the broker's ADR" is the pro-forma's ADR line, not
+   its year-5 projection. No catalog rule that fires on this fixture reads
+   `broker_adr`, so every rule outcome and the score are unchanged; the pair
+   is declared in `test_ontology_scorer_parity._RESOLUTION_EXCEPTIONS` so a
+   drift to a third value still fails.
+
+3. **Tier 5 (tail vs bare alias) reaches paths the old exact-alias walk could
+   not** — observed only on an UN-flattened payload. Scoring the alternate
+   T-12 run's raw `{field_name: value}` dict (no `flatten_extraction_fields`),
+   the registry resolves `pages.rollups.gross_operating_profit` → `gop` and
+   `pages.non_op.insurance` → `insurance_expense`, where the old resolver
+   returned `None` (its alias lookup was exact-match only, and its token
+   matcher has no `gross`→`gop` synonym). This never reaches production:
+   `flatten_extraction_fields` already tail-writes those keys, so on every
+   flattened fixture the two agree. Recorded because it is the one place the
+   adapter is strictly more capable than what it replaced.
+
+4. **The token blocklist is now the caller's opt-out, per §3.16.**
+   `_TOKEN_RESOLVE_BLOCKLIST` survives verbatim as the set of canonicals for
+   which `_resolve_field` passes `allow_token_match=False`. Dropping it would
+   let the token tier resolve `dept_expenses` / `fixed_charges` /
+   `undistributed_expenses` / `keys` off a per-line or per-page field —
+   confirmed on the alternate-run raw payload, where it turns two skipped
+   rules into one pass and one fail. Keep the opt-out until the roll-up
+   synthesis moves to `identities.py`.
+
+**Cost note.** `registry.resolve` rescans the whole payload per concept, so a
+292-field T-12 goes from ~26 ms to ~520 ms for flatten + score (the roll-up
+synthesis alone makes ~40 resolver calls). That is noise next to the LLM
+extraction it follows, and no test-suite runtime moved, so nothing was cached
+here — the fix, when it is wanted, is an index inside `registry`, not a memo
+bolted onto the scorer.
+
+**Removed literals.** No `p_and_l_usali.` / `ttm_summary_per_om.` /
+`broker_proforma.` / `ttm_performance.` string survives in `usali_scorer.py`
+(code, comments or docstrings) — every extraction path it used to name now
+lives in `concepts.yaml`.

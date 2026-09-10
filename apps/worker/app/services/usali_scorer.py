@@ -38,10 +38,12 @@ Rule patterns (mapped from ``evals/golden-set/usali-rules.csv``):
 
 Field-name resolution: the catalog uses canonical names
 (``revpar``, ``total_revenue``, ``mgmt_fee``, …); the extraction
-payload upstream can carry slightly different paths
-(``p_and_l_usali.revpar_usd``, ``broker_proforma.total_revenue``). The
-``_ALIASES`` map below lists tolerated alternative names per canonical
-field so the scorer doesn't fail valid documents on a path mismatch.
+payload upstream can carry slightly different dotted paths for the same
+line (a namespaced RevPAR, a broker pro-forma's total revenue, …). The
+tolerated alternatives per canonical field live in the concept registry
+(``app/ontology/concepts.yaml``) as that concept's aliases, so the scorer
+doesn't fail valid documents on a path mismatch — see the
+"registry-derived alias view" section below.
 """
 
 from __future__ import annotations
@@ -49,6 +51,7 @@ from __future__ import annotations
 import ast
 import logging
 import math
+from collections.abc import Iterator, Mapping
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -111,427 +114,155 @@ class USALIScore:
 _INCONCLUSIVE_FLOOR = 5
 
 
-# ─────────────────────────── alias map ───────────────────────────
+# ─────────────────────── registry-derived alias view ───────────────────────
 
 
-# Canonical field name → tolerated alternative paths that the extractor
-# may emit on real uploads. The first hit wins. The canonical name is
-# always tried first (so a payload that already uses ``revpar`` doesn't
-# pay the alias cost).
+# Phase 1.3b — the hand-maintained ``canonical → tolerated paths`` map that
+# used to live here is now the concept registry
+# (``app/ontology/concepts.yaml``). Every path the scorer used to enumerate is
+# an alias on the concept that owns the scorer's canonical name:
 #
-# Keep this list conservative — every alias is a place a real upload
-# might collide with the wrong number. The choices below mirror what
-# the extractor actually emits today (see ``apps/worker/app/agents/
-# extractor`` and the ``_load_critic_inputs`` resolver in
-# ``api/documents.py`` for the same kind of soft-resolution).
-_ALIASES: dict[str, tuple[str, ...]] = {
-    # Top-line ops KPIs. The Extractor emits bare ``revpar_usd`` /
-    # ``adr_usd`` / ``occupancy_pct`` per ``extraction_schemas/t12.md``
-    # AND occasionally the fully-namespaced
-    # ``p_and_l_usali.operational_kpis.*`` form when the LLM mirrors
-    # the prompt's hierarchy. List both.
-    #
-    # Sam QA Bug #3 v2 (June 2026): the REAL prod T-12 (saved as
-    # ``tests/fixtures/real_payloads/anglers_t12_real.json``) emits ops
-    # KPIs at ``ttm_summary_per_om.{occupancy_pct, adr_usd, revpar_usd}``
-    # — completely orthogonal to the schema doc. Listed below as the
-    # bare-extractor fallback so the rule catalog can resolve them.
-    "revpar": (
-        "revpar_usd",
-        "p_and_l_usali.revpar",
-        "p_and_l_usali.revpar_usd",
-        "p_and_l_usali.operational_kpis.revpar",
-        "p_and_l_usali.operational_kpis.revpar_usd",
-        # Real prod payload: TTM summary block.
-        "ttm_summary_per_om.revpar_usd",
-        "ttm_summary_per_om.revpar",
-    ),
-    "occupancy": (
-        "occupancy_pct",
-        "p_and_l_usali.occupancy",
-        "p_and_l_usali.occupancy_pct",
-        "p_and_l_usali.operational_kpis.occupancy",
-        "p_and_l_usali.operational_kpis.occupancy_pct",
-        "ttm_summary_per_om.occupancy_pct",
-        "ttm_summary_per_om.occupancy",
-    ),
-    "adr": (
-        "adr_usd",
-        "p_and_l_usali.adr",
-        "p_and_l_usali.adr_usd",
-        "p_and_l_usali.operational_kpis.adr",
-        "p_and_l_usali.operational_kpis.adr_usd",
-        "ttm_summary_per_om.adr_usd",
-        "ttm_summary_per_om.adr",
-    ),
-    # Revenue rollups. ``total_revenue`` is derived in
-    # ``flatten_extraction_fields`` from the operating_revenue
-    # components when the extractor doesn't emit it directly.
-    #
-    # Sam QA Bug #3 v2: real prod emits the canonical totals DIRECTLY
-    # at the bucket-root level (``p_and_l_usali.total_revenues_usd``)
-    # OR under a ``revenues.`` namespace (the annual P&L flavor).
-    # Listed first so we don't have to synthesize when the extractor
-    # already did.
-    "total_revenue": (
-        "total_revenue_usd",
-        "total_revenues_usd",
-        "p_and_l_usali.total_revenue",
-        "p_and_l_usali.total_revenue_usd",
-        "p_and_l_usali.total_revenues_usd",  # T-12 prod
-        "p_and_l_usali.revenues.total_revenues_usd",  # annual P&L prod
-        "p_and_l_usali.revenues.total_revenue",
-        "p_and_l_usali.operating_revenue.total_revenue",
-        "p_and_l_usali.operating_revenue.total",
-    ),
-    "rooms_revenue": (
-        "rooms_revenue_usd",
-        "p_and_l_usali.rooms_revenue",
-        # T-12 prod: per-dept bucket carries revenue under ``.revenue_usd``.
-        "p_and_l_usali.rooms.revenue_usd",
-        "p_and_l_usali.rooms.revenue",
-        # Annual P&L prod: revenues namespace.
-        "p_and_l_usali.revenues.rooms_usd",
-        "p_and_l_usali.revenues.rooms",
-        "p_and_l_usali.revenues.rooms_revenue",
-        # Schema-doc canonical (legacy fixture path).
-        "p_and_l_usali.operating_revenue.rooms_revenue",
-        "p_and_l_usali.operating_revenue.rooms_revenue_usd",
-    ),
-    "fb_revenue": (
-        "fb_revenue_usd",
-        "food_beverage_revenue",
-        "p_and_l_usali.fb_revenue",
-        # T-12 prod
-        "p_and_l_usali.food_and_beverage.revenue_usd",
-        "p_and_l_usali.food_and_beverage.revenue",
-        # Annual P&L prod
-        "p_and_l_usali.revenues.fb_usd",
-        "p_and_l_usali.revenues.fb",
-        "p_and_l_usali.revenues.food_beverage_revenue",
-        # Schema-doc canonical
-        "p_and_l_usali.operating_revenue.food_beverage_revenue",
-        "p_and_l_usali.operating_revenue.fb_revenue",
-    ),
-    "other_revenue": (
-        "other_revenue_usd",
-        "p_and_l_usali.other_revenue",
-        # T-12 prod
-        "p_and_l_usali.other_operated_departments.revenue_usd",
-        "p_and_l_usali.other_operated_departments.revenue",
-        # Annual P&L prod
-        "p_and_l_usali.revenues.other_operated_departments_usd",
-        "p_and_l_usali.revenues.other_operated_departments",
-        "p_and_l_usali.revenues.other_revenue",
-        # Schema-doc canonical
-        "p_and_l_usali.operating_revenue.other_revenue",
-    ),
-    "misc_revenue": (
-        "misc_revenue_usd",
-        # T-12 prod
-        "p_and_l_usali.miscellaneous_income.revenue_usd",
-        "p_and_l_usali.miscellaneous_income.revenue",
-        # Annual P&L prod
-        "p_and_l_usali.revenues.miscellaneous_income_usd",
-        "p_and_l_usali.revenues.misc_revenue",
-        # Schema-doc canonical
-        "p_and_l_usali.operating_revenue.misc_revenue",
-    ),
-    "resort_fees": (
-        "resort_fees_usd",
-        "p_and_l_usali.resort_fees",
-        "p_and_l_usali.operating_revenue.resort_fees",
-        "p_and_l_usali.revenues.resort_fees",
-        "p_and_l_usali.revenues.resort_fees_usd",
-    ),
-    # Departmental — extractor flavors:
-    #   * T-12 prod: ``p_and_l_usali.{rooms,food_and_beverage,other_operated_departments}.expense_usd``
-    #                OR same path with ``.departmental_expense_usd`` suffix.
-    #   * Annual P&L prod: ``p_and_l_usali.departmental_expense.{rooms,fb,other_operated_departments}_usd``.
-    #   * Schema doc: ``p_and_l_usali.departmental_expenses.{rooms,food_beverage,other_operated}``.
-    # All listed so the rule resolver hits one of them.
-    "total_dept_expense": (
-        "departmental_expenses",
-        "dept_expenses",
-        "total_dept_expense_usd",
-        "p_and_l_usali.dept_expenses",
-        "p_and_l_usali.total_departmental_expense_usd",  # T-12 prod
-        "p_and_l_usali.departmental_expense.total_usd",  # annual P&L prod
-        "p_and_l_usali.departmental_expenses.total",
-    ),
-    "dept_expenses": (
-        "departmental_expenses",
-        "total_dept_expense",
-        "p_and_l_usali.dept_expenses",
-        "p_and_l_usali.total_departmental_expense_usd",
-        "p_and_l_usali.departmental_expense.total_usd",
-        "p_and_l_usali.departmental_expenses.total",
-    ),
-    "rooms_dept_expense": (
-        "p_and_l_usali.departmental_expenses.rooms",
-        # T-12 prod (two flavors observed on the SAME workbook —
-        # both ``.expense_usd`` and ``.departmental_expense_usd``).
-        "p_and_l_usali.rooms.expense_usd",
-        "p_and_l_usali.rooms.departmental_expense_usd",
-        # Annual P&L prod
-        "p_and_l_usali.departmental_expense.rooms_usd",
-        "p_and_l_usali.departmental_expense.rooms",
-    ),
-    "fb_dept_expense": (
-        "p_and_l_usali.departmental_expenses.food_beverage",
-        "food_beverage_dept_expense",
-        # T-12 prod
-        "p_and_l_usali.food_and_beverage.expense_usd",
-        "p_and_l_usali.food_and_beverage.departmental_expense_usd",
-        # Annual P&L prod
-        "p_and_l_usali.departmental_expense.fb_usd",
-        "p_and_l_usali.departmental_expense.fb",
-        "p_and_l_usali.departmental_expense.food_beverage_usd",
-    ),
-    "other_dept_expense": (
-        "p_and_l_usali.departmental_expenses.other_operated",
-        "other_operated_dept_expense",
-        # T-12 prod
-        "p_and_l_usali.other_operated_departments.expense_usd",
-        "p_and_l_usali.other_operated_departments.departmental_expense_usd",
-        # Annual P&L prod
-        "p_and_l_usali.departmental_expense.other_operated_departments_usd",
-        "p_and_l_usali.departmental_expense.other_operated_usd",
-    ),
-    # Undistributed roll-up — derived from the five undistributed
-    # line items when not emitted directly.
-    #
-    # Sam QA Bug #3 v2: real prod emits the rollup DIRECTLY at
-    # ``p_and_l_usali.total_undistributed_expenses_usd`` (T-12) and
-    # ``p_and_l_usali.undistributed_expenses.total_usd`` (annual P&L).
-    "undistributed_expenses": (
-        "p_and_l_usali.undistributed_expenses",
-        "undistributed",
-        "p_and_l_usali.undistributed.total",
-        "p_and_l_usali.total_undistributed_expenses_usd",  # T-12 prod
-        "p_and_l_usali.undistributed_expenses.total_usd",  # annual P&L prod
-        "total_undistributed_expenses_usd",
-    ),
-    # GOP / NOI. Both real prod flavors emit GOP directly; we honor it
-    # before falling back to the synthesis path in
-    # ``_derive_usali_rollups``.
-    "gop": (
-        "gop_usd",
-        "p_and_l_usali.gop",
-        "gross_operating_profit",
-        "p_and_l_usali.gross_operating_profit",
-        "p_and_l_usali.gross_operating_profit.gop_usd",
-        # T-12 prod
-        "p_and_l_usali.gross_operating_profit_usd",
-        # Annual P&L prod (the 2022 schema variant Sam hit — the
-        # extractor nests dollar + margin siblings under
-        # `p_and_l_usali.gop.*`; the explicit dollar alias here means
-        # the token-match v3 fallback never runs and `gop_margin_pct`
-        # can't beat the dollar field on path length).
-        "p_and_l_usali.gop.gross_operating_profit_usd",
-        "p_and_l_usali.gop.gop_usd",
-        "p_and_l_usali.gop.total_usd",
-        "p_and_l_usali.gross_operating_profit.total_usd",
-        "p_and_l_usali.gross_operating_profit.total",
-    ),
-    "noi": (
-        "noi_usd",
-        "p_and_l_usali.noi",
-        "net_operating_income",
-        "p_and_l_usali.net_operating_income",
-        "p_and_l_usali.net_operating_income.noi_usd",
-        # Nested-sibling pattern. Sam QA 2026-06-30 noted NOI blank
-        # on certain years on the clean deal — the extractor lands
-        # NOI under varied nestings per-year. These paths cover the
-        # common variants; the gop-style siblings come first so the
-        # explicit alias hits before the v3 token-match fallback.
-        "p_and_l_usali.noi.noi_usd",
-        "p_and_l_usali.noi.net_operating_income_usd",
-        "p_and_l_usali.noi.total_usd",
-        "p_and_l_usali.noi.net_operating_income",
-        "p_and_l_usali.net_operating_income.net_operating_income_usd",
-        "p_and_l_usali.net_operating_income.total_usd",
-        "p_and_l_usali.net_operating_income.total",
-        # Some real-prod schemas bury NOI under an income_statement
-        # rollup parent.
-        "p_and_l_usali.income_statement.noi_usd",
-        "p_and_l_usali.income_statement.net_operating_income_usd",
-        # Real prod emits EBITDA-less-reserve which is a reasonable
-        # NOI proxy when the doc never publishes a NOI line directly
-        # (the rule catalog's NOI margin band is generous enough that
-        # EBITDA-less-reserve falls inside it).
-        "p_and_l_usali.ebitda_less_replacement_reserve_usd",
-        "p_and_l_usali.ebitda_less_replacement_reserve.total_usd",
-    ),
-    # Fees / reserves / fixed — schema-doc emits under
-    # ``p_and_l_usali.fees_and_reserves.*`` + ``fixed_charges.*``; real
-    # prod emits ``p_and_l_usali.management_fees_usd`` (T-12) and
-    # ``p_and_l_usali.management_fees.total_usd`` (annual P&L).
-    "mgmt_fee": (
-        "management_fee",
-        "mgmt_fee_usd",
-        "p_and_l_usali.mgmt_fee",
-        "p_and_l_usali.fees_and_reserves.mgmt_fee",
-        "p_and_l_usali.fees_and_reserves.management_fee",
-        # T-12 prod
-        "p_and_l_usali.management_fees_usd",
-        # Annual P&L prod
-        "p_and_l_usali.management_fees.total_usd",
-        "p_and_l_usali.management_fees.total",
-    ),
-    "ffe_reserve": (
-        "ffe_reserve_usd",
-        "p_and_l_usali.ffe_reserve",
-        "p_and_l_usali.fees_and_reserves.ffe_reserve",
-        # T-12 prod
-        "p_and_l_usali.ffe_replacement_reserve_usd",
-        # Annual P&L prod
-        "p_and_l_usali.ffe_reserve.proforma_calculation_usd",
-        "p_and_l_usali.ffe_reserve.total_usd",
-    ),
-    # Fixed charges = property tax + insurance. Real prod buckets these
-    # under ``non_operating`` (not ``fixed_charges``) — covered by the
-    # individual aliases for ``insurance_expense`` and ``property_tax``;
-    # the rollup is synthesized in ``_derive_usali_rollups``.
-    "fixed_charges": (
-        "fixed_charges_usd",
-        "p_and_l_usali.fixed_charges",
-        "p_and_l_usali.fixed_charges.total",
-        # Real prod treats fixed charges as the non-operating bucket
-        # total (insurance + taxes + rent + other). Match the rollup
-        # field name when the extractor emits it.
-        "p_and_l_usali.total_non_operating_expenses_usd",
-        "p_and_l_usali.non_operating.total_usd",
-    ),
-    "insurance_expense": (
-        "insurance",
-        "insurance_usd",
-        "p_and_l_usali.insurance",
-        "p_and_l_usali.fixed_charges.insurance",
-        # Real prod (both T-12 and annual P&L bucket insurance under
-        # non_operating, not fixed_charges).
-        "p_and_l_usali.non_operating.insurance_usd",
-        "p_and_l_usali.non_operating.insurance",
-    ),
-    "property_tax": (
-        "property_taxes",
-        "property_tax_usd",
-        "p_and_l_usali.property_taxes",
-        "p_and_l_usali.fixed_charges.property_taxes",
-        # Real prod paths
-        "p_and_l_usali.non_operating.property_and_other_taxes_usd",
-        "p_and_l_usali.non_operating.property_other_taxes_usd",
-        "p_and_l_usali.non_operating.property_taxes",
-    ),
-    "utilities_expense": (
-        "utilities",
-        "p_and_l_usali.utilities",
-        "p_and_l_usali.undistributed.utilities",
-        # T-12 prod (per-dept bucket carries the expense).
-        "p_and_l_usali.utilities.expense_usd",
-        "p_and_l_usali.undistributed.utilities_usd",
-        # Annual P&L prod
-        "p_and_l_usali.undistributed_expenses.utilities_usd",
-    ),
-    "marketing_expense": (
-        "marketing",
-        "sales_marketing",
-        "p_and_l_usali.marketing",
-        "p_and_l_usali.undistributed.sales_marketing",
-        # T-12 prod
-        "p_and_l_usali.sales_and_marketing.expense_usd",
-        "p_and_l_usali.undistributed.sales_and_marketing_usd",
-        # Annual P&L prod
-        "p_and_l_usali.undistributed_expenses.sales_marketing_usd",
-    ),
-    "rm_expense": (
-        "repairs_maintenance",
-        "rm",
-        "p_and_l_usali.repairs_maintenance",
-        "p_and_l_usali.undistributed.property_operations",
-        "property_operations",
-        # T-12 prod
-        "p_and_l_usali.property_operations_and_maintenance.expense_usd",
-        "p_and_l_usali.undistributed.property_operations_and_maintenance_usd",
-        # Annual P&L prod
-        "p_and_l_usali.undistributed_expenses.property_operations_maintenance_usd",
-    ),
-    "ag_expense": (
-        "admin_general",
-        "a_and_g",
-        "p_and_l_usali.admin_general",
-        "p_and_l_usali.undistributed.administrative_general",
-        "administrative_general",
-        # T-12 prod
-        "p_and_l_usali.administrative_and_general.expense_usd",
-        "p_and_l_usali.undistributed.administrative_and_general_usd",
-        # Annual P&L prod
-        "p_and_l_usali.undistributed_expenses.administrative_general_usd",
-    ),
-    # Information & telecom (one of the 5 undistributed lines — needed
-    # for the undistributed rollup synthesis).
-    "information_telecom": (
-        "information_and_telecom",
-        # T-12 prod
-        "p_and_l_usali.information_and_telecom.expense_usd",
-        "p_and_l_usali.undistributed.information_and_telecom_usd",
-        # Annual P&L prod
-        "p_and_l_usali.undistributed_expenses.information_telecom_systems_usd",
-        # Schema doc
-        "p_and_l_usali.undistributed.information_telecom",
-    ),
-    "total_labor": (
-        "labor",
-        "labor_cost",
-        "p_and_l_usali.total_labor",
-        "p_and_l_usali.labor.total",
-    ),
-    "labor_cost_per_occupied_room": ("labor_per_or", "labor_por"),
-    # Department margins. Extractor emits revenue + expense per
-    # department; ``rooms_dept_profit`` is derived in
-    # ``flatten_extraction_fields`` (rooms_revenue - rooms_dept_expense).
-    "rooms_dept_profit": ("rooms_profit", "p_and_l_usali.rooms_dept_profit"),
-    "fb_dept_profit": ("fb_profit", "p_and_l_usali.fb_dept_profit"),
-    "incentive_mgmt_fee": ("incentive_fee", "p_and_l_usali.incentive_mgmt_fee"),
-    "franchise_royalty_fee": ("royalty_fee", "p_and_l_usali.franchise_royalty_fee"),
-    "franchise_marketing_fee": ("marketing_program_fee", "p_and_l_usali.franchise_marketing_fee"),
-    # Property metadata.
-    "keys": ("room_count", "property_overview.keys"),
-    "property_value": ("assessed_value", "property_overview.property_value"),
-    "purchase_price": ("price", "deal.purchase_price"),
-    # Variance / growth (broker vs actual).
-    "broker_noi": ("broker_proforma.noi", "proforma_noi"),
-    "t12_noi": ("t12.noi", "actual_noi"),
-    "broker_occupancy": ("broker_proforma.occupancy", "proforma_occupancy"),
-    "t12_occupancy": ("t12.occupancy", "actual_occupancy"),
-    "broker_adr": ("broker_proforma.adr", "proforma_adr"),
-    "t12_adr": ("t12.adr", "actual_adr"),
-    "t12_revpar": ("t12.revpar",),
-    "t24_revpar": ("t24.revpar",),
-    "revpar_yoy_growth": ("revpar_yoy", "p_and_l_usali.revpar_yoy_growth"),
-    # Financing.
-    "loan_amount": ("financing.loan_amount", "debt.loan_amount"),
-    "annual_debt_service": ("financing.annual_debt_service", "debt_service"),
-    "interest_rate": ("financing.interest_rate",),
-    "entry_cap_rate": ("financing.entry_cap_rate", "valuation.entry_cap_rate"),
-    "exit_cap_rate": ("valuation.exit_cap_rate",),
-    "total_capital": ("valuation.total_capital", "total_capitalization"),
-    "stabilized_noi": ("valuation.stabilized_noi",),
-    # Returns.
-    "levered_irr": ("returns.levered_irr",),
-    "equity_multiple": ("returns.equity_multiple",),
-    # STR comp-set.
-    "compset_adr": ("comp_set.adr", "compset.adr_usd"),
-    "compset_revpar": ("comp_set.revpar", "compset.revpar_usd"),
-    "compset_occupancy": ("comp_set.occupancy", "compset.occupancy_pct"),
-    # Other operated.
-    "parking_revenue": ("parking_revenue_usd",),
-    "spa_revenue": ("spa_revenue_usd",),
-    "meeting_space_revenue": ("meeting_revenue", "banquet_revenue"),
-    # Seasonality / cross-field — these come from list-of-month data
-    # the extractor doesn't ship today; rules that need them will skip
-    # via the missing-field path.
-}
+#   * ``bindings.scorer_key``      — the concept's primary scorer canonical.
+#     The registry id follows the ENGINE's key where the two disagree
+#     (``property_taxes`` is the id, ``property_tax`` the scorer's name), so
+#     this binding is a lookup, never a rename.
+#   * ``bindings.scorer_synonyms`` — sibling canonicals that aliased each
+#     other in the old map (``dept_expenses`` ↔ ``total_dept_expense``).
+#   * ``bindings.scorer_variants`` — the basis-qualified canonicals
+#     (``broker_noi`` / ``t12_noi``, ``broker_adr`` / ``t12_adr``, …). These
+#     are NOT separate concepts: they are the same line read on a different
+#     basis, so the adapter forwards the variant's ``basis`` (and ``scope``)
+#     to the resolver instead of carrying a second alias list.
+#
+# ``_ALIASES`` survives as a read-only VIEW over the registry — same name,
+# same ``{canonical: (path, …)}`` shape — because
+# ``tests/test_ontology_registry.test_usali_scorer_aliases_round_trip`` and
+# any other external reader still index it. Nothing inside this module walks
+# it any more: ``_resolve_field`` delegates to ``registry.resolve``, which
+# applies the same alias set through its own tiered matcher (tiers 1-5 are
+# the old exact-path chase plus the unit-strip and tail rules the web's
+# ``findField`` already had; tier 6 is this module's own token resolver,
+# opt-in — see ``ontology/DRIFT_NOTES.md`` §5).
+
+
+def _registry() -> Any:
+    """The ontology registry module, imported lazily.
+
+    ``registry.resolve`` reaches back into this module for its token-match
+    tier, so the import is deferred to first use rather than taken at import
+    time.
+    """
+    from ..ontology import registry as _reg
+
+    return _reg
+
+
+@dataclass(frozen=True)
+class _ScorerBinding:
+    """How one scorer canonical name reads a registry concept.
+
+    ``basis`` / ``want`` are set only for ``scorer_variants`` — the
+    basis-qualified names. A plain canonical asks for no particular basis and
+    for the document's own annual/TTM total, which is what the old map's
+    unqualified paths meant.
+    """
+
+    concept: str
+    basis: str | None = None
+    want: str = "annual"
+
+
+#: Built once on first use: ``({canonical: _ScorerBinding}, {canonical: paths})``.
+_SCORER_INDEX: tuple[dict[str, _ScorerBinding], dict[str, tuple[str, ...]]] | None = None
+_SUBORDINATE_NAMESPACES: frozenset[str] | None = None
+
+
+def _alias_key_order(reg: Any) -> list[str]:
+    """Alias-map keys in the order a doc-type-agnostic read walks them.
+
+    Mirrors the resolver's own ordering when no document type is known: the
+    ``"*"`` bucket first, then each document type, then the family keys.
+    """
+    keys: list[str] = ["*"]
+    for group in (reg.doc_types, reg.families):
+        keys.extend(k for k in group if k not in keys)
+    return keys
+
+
+def _build_scorer_index() -> tuple[dict[str, _ScorerBinding], dict[str, tuple[str, ...]]]:
+    reg = _registry().get_registry()
+    order = _alias_key_order(reg)
+    bindings: dict[str, _ScorerBinding] = {}
+    aliases: dict[str, tuple[str, ...]] = {}
+    for cid, concept in reg.concepts.items():
+        b = concept.bindings
+        named: list[tuple[str, _ScorerBinding]] = []
+        if b.scorer_key:
+            named.append((b.scorer_key, _ScorerBinding(cid)))
+        named.extend((syn, _ScorerBinding(cid)) for syn in b.scorer_synonyms)
+        named.extend(
+            (name, _ScorerBinding(cid, v.basis, v.scope or "annual"))
+            for name, v in b.scorer_variants.items()
+        )
+        if not named:
+            continue
+        keys = order + [k for k in concept.aliases if k not in order]
+        paths: list[str] = []
+        for key in keys:
+            for alias in concept.aliases.get(key, ()):
+                # Wildcard patterns (``historical_performance.{year}.noi``)
+                # are matched by the resolver, never by a literal lookup —
+                # they are not part of the flat view.
+                if "{" in alias.path or alias.path in paths:
+                    continue
+                paths.append(alias.path)
+        for name, binding in named:
+            bindings[name] = binding
+            aliases[name] = tuple(p for p in paths if p != name)
+    return bindings, aliases
+
+
+def _scorer_index() -> tuple[dict[str, _ScorerBinding], dict[str, tuple[str, ...]]]:
+    global _SCORER_INDEX
+    if _SCORER_INDEX is None:
+        _SCORER_INDEX = _build_scorer_index()
+    return _SCORER_INDEX
+
+
+def _subordinate_namespaces() -> frozenset[str]:
+    global _SUBORDINATE_NAMESPACES
+    if _SUBORDINATE_NAMESPACES is None:
+        _SUBORDINATE_NAMESPACES = frozenset(
+            _registry().get_registry().subordinate_namespaces
+        )
+    return _SUBORDINATE_NAMESPACES
+
+
+class _AliasView(Mapping):
+    """Read-only ``{scorer canonical: (alias path, …)}`` over the registry.
+
+    Lazy: the registry is read on the first mapping operation, so importing
+    this module costs nothing extra.
+    """
+
+    __slots__ = ()
+
+    def __getitem__(self, key: str) -> tuple[str, ...]:
+        return _scorer_index()[1][key]
+
+    def __iter__(self) -> Iterator[str]:
+        return iter(_scorer_index()[1])
+
+    def __len__(self) -> int:
+        return len(_scorer_index()[1])
+
+    def __repr__(self) -> str:  # pragma: no cover - debugging aid
+        return f"_AliasView({_scorer_index()[1]!r})"
+
+
+#: Canonical field name → tolerated alternative paths, derived from the
+#: registry. Kept under the historical name for external readers.
+_ALIASES: Mapping[str, tuple[str, ...]] = _AliasView()
 
 
 # Rule families that require an explicit market-context flag the deal
@@ -568,8 +299,8 @@ _MARKET_CONTEXT_RULES: dict[str, tuple[tuple[str, ...], str]] = {
 # Background. v1 expanded the alias map against schema docs. v2 expanded
 # it against the saved-fixture prod paths. Both still left Sam's
 # day-of-QA upload at "Inconclusive" because the Extractor LLM emits a
-# slightly different namespace on every run (``p_and_l_usali.rooms.revenue_usd``
-# one day, ``p_and_l_usali.revenues.rooms_usd`` the next, ``p_and_l.rooms_dept.revenue_usd``
+# slightly different namespace on every run (``<pnl>.rooms.revenue_usd``
+# one day, ``<pnl>.revenues.rooms_usd`` the next, ``<pnl>.rooms_dept.revenue_usd``
 # the day after — see the divergence between the T-12 and annual
 # fixtures already saved under ``tests/fixtures/real_payloads/``).
 #
@@ -655,9 +386,9 @@ _TOKEN_SYNONYMS: dict[str, frozenset[str]] = {
 # with ``expense`` / ``profit`` even though the rest of the tokens
 # match.
 def _split_tokens(name: str) -> list[str]:
-    """Tokenize a flat-path key like
-    ``p_and_l_usali.rooms.revenue_usd`` into
-    ``['p', 'and', 'l', 'usali', 'rooms', 'revenue', 'usd']``."""
+    """Tokenize a flat-path key like ``pnl.rooms.revenue_usd`` into
+    ``['pnl', 'rooms', 'revenue', 'usd']`` — split on ``.`` and ``_``,
+    lowercased, empties dropped."""
     return [t for t in name.replace(".", "_").lower().split("_") if t]
 
 
@@ -673,8 +404,8 @@ _TOKEN_FORBIDDEN: dict[str, frozenset[str]] = {
     "reserve": frozenset({"profit", "margin"}),
     # GOP / NOI dollar-canonicals must reject margin / pct / ratio
     # candidates. Without this, the token-match v3 fallback prefers
-    # `p_and_l_usali.gop.gop_margin_pct` (shorter path, "gop" token
-    # appears twice) over `p_and_l_usali.gop.gross_operating_profit_usd`
+    # `<pnl>.gop.gop_margin_pct` (shorter path, "gop" token appears
+    # twice) over `<pnl>.gop.gross_operating_profit_usd`
     # — Sam QA 2026-06-29 saw the broker engine emit
     # "GOP $4.85M → $0" because 0.40 is a valid float and slipped past
     # the dict/list/NaN guard (commit 287f602).
@@ -692,19 +423,18 @@ def _expand_with_synonyms(token: str) -> frozenset[str]:
 
 
 def _has_subordinate_namespace(key: str) -> bool:
-    """``True`` for monthly / page / quarterly / per-month slices that
-    must never be matched as a period total."""
-    lowered = key.lower()
-    return (
-        ".monthly." in lowered
-        or ".page" in lowered
-        or ".per_month." in lowered
-        or ".quarterly." in lowered
-        or ".q1." in lowered
-        or ".q2." in lowered
-        or ".q3." in lowered
-        or ".q4." in lowered
-    )
+    """``True`` for a slice namespace that must never be matched as a period
+    total — monthly / quarterly / YTD / per-month / numbered page / weekly /
+    daily / MTD / QTD / prior-year / day-of-week, plus month-name segments.
+
+    The namespace list is the registry's ``subordinate_namespaces`` (the union
+    of the five hand-maintained lists this used to duplicate — see
+    ``ontology/DRIFT_NOTES.md`` §3.6) and the segment test is the registry's
+    own, so a path is a slice here exactly when ``registry.resolve`` treats it
+    as one. A basis namespace (``.budget.`` / ``.forecast.`` / ``.plan.`` /
+    ``.adjusted.``) is a basis, not a slice, and is not excluded here.
+    """
+    return _registry()._subordinate_scope(key.lower(), _subordinate_namespaces())[0]
 
 
 # "Soft" concept tokens. When the canonical contains one of these, the
@@ -875,11 +605,11 @@ _TOKEN_RESOLVE_BLOCKLIST: frozenset[str] = frozenset({
     "year_one_noi_dip_during_pip",
     # Roll-up totals — the token resolver can't disambiguate
     # "total dept expense" from a single per-dept expense line because
-    # both share the ``dept`` + ``expense`` token bag. The explicit
-    # alias map covers the canonical TOTAL paths
-    # (``p_and_l_usali.total_departmental_expense_usd``,
-    # ``p_and_l_usali.departmental_expense.total_usd``); when neither
-    # alias hits, the synthesis sums the per-dept components instead.
+    # both share the ``dept`` + ``expense`` token bag. The registry's
+    # ``dept_expenses`` concept already carries the canonical TOTAL
+    # paths (the T-12's total-departmental-expense line and the annual
+    # P&L's departmental-expense total); when no alias hits, the
+    # synthesis sums the per-dept components instead.
     # Listed here so the token resolver doesn't grab a single per-dept
     # line and mis-report it as the rollup.
     "dept_expenses",
@@ -892,44 +622,78 @@ _TOKEN_RESOLVE_BLOCKLIST: frozenset[str] = frozenset({
 })
 
 
+#: Phase 1.3b parity hold-out — ``{scorer canonical: (path suffix, …)}``.
+#:
+#: The registry's ``fixed_charges`` concept lists the statement's *Total
+#: non-operating income & expenses* row ahead of *Total non-operating
+#: expenses* (``ontology/DRIFT_NOTES.md`` §3b, "Decision — fixed charges"); the
+#: hand-written map this adapter replaces never carried the income-inclusive
+#: row at all. On the live Angler's T-12 the two rows differ by the
+#: non-operating income line — 1,922,240 vs 1,699,740 — and adopting the
+#: registry's answer flips ``NOI_IDENTITY`` from fail to pass on every T-12
+#: fixture. That is a real scoring change, and this phase is score-parity
+#: only, so the row is held out here and the case is recorded under
+#: "Phase 1.3b parity exceptions" in ``DRIFT_NOTES.md``. Held out by path
+#: SUFFIX so the hold-out is namespace-agnostic.
+_PARITY_HOLD_OUT_SUFFIXES: dict[str, tuple[str, ...]] = {
+    "fixed_charges": ("total_non_operating_income_and_expenses_usd",),
+}
+
+
 def _resolve_field(fields: dict[str, Any], canonical: str) -> Any | None:
-    """Look up ``canonical`` on ``fields``, then walk the alias list,
-    then fall back to the v3 token-match resolver.
+    """Look up ``canonical`` on ``fields`` through the concept registry.
 
     Resolution order (first non-``None`` wins):
 
     1. Direct hit: ``fields[canonical]``.
-    2. Explicit alias map: each entry in ``_ALIASES[canonical]``.
-    3. Token-match resolver (v3): tokenize canonical + payload keys,
-       require synonym-aware coverage of every concept token, reject
-       on discriminator forbidden tokens, pick tightest candidate.
+    2. ``registry.resolve`` on the concept that owns ``canonical``. Its tiers
+       1-3 are the exact-path chase the old ``_ALIASES`` walk did (same paths,
+       now declared once in ``concepts.yaml``); tiers 4-5 add the unit-suffix
+       strip and the guarded tail match; tier 6 is this module's own v3
+       token-match resolver, opted into per call.
+    3. For a name no concept owns — the synthetic cross-field checks the
+       critic fills in separately — the v3 token resolver directly, so the
+       behaviour of an unbound name is unchanged.
 
-    Step 3 is gated by ``_TOKEN_RESOLVE_BLOCKLIST`` to keep
-    single-token / synthetic / list-typed canonicals from over-matching
-    the payload.
+    Step 1 is deliberately kept ahead of the registry: the flat dict's own
+    canonical key is what the structural-recogniser pre-pass, the roll-up
+    synthesis and ``extra_context`` (deal-level ``keys`` / ``purchase_price`` /
+    ``coastal``) write, and those must beat any extracted path.
 
-    Tolerates dotted paths the extractor uses
-    (``p_and_l_usali.revpar_usd``) at the top level of ``fields`` —
-    they're stored as flat keys with the dot baked in, not as nested
-    dicts, so a single ``fields.get(name)`` covers both.
+    ``_TOKEN_RESOLVE_BLOCKLIST`` is now expressed as "the caller does not opt
+    in": token matching is off by default in the resolver, and this adapter
+    turns it on for every canonical except the blocklisted ones
+    (``ontology/DRIFT_NOTES.md`` §3.16).
 
-    Returns the raw value (caller numeric-coerces). ``None`` only when
-    neither the canonical key, any alias, NOR a token-match produced a
-    value.
+    Basis-qualified canonicals (``broker_noi`` / ``t12_adr`` / …) are the same
+    concept as their unqualified sibling, so the binding's ``basis`` (and
+    ``scope``) is forwarded as a resolver FILTER — that is what keeps
+    ``t12_adr`` from resolving to a broker proforma ADR and vice versa.
+
+    Tolerates dotted extractor paths at the top level of ``fields`` — they're
+    stored as flat keys with the dot baked in, not as nested dicts.
+
+    Returns the value (caller numeric-coerces; the resolver already coerces
+    numeric concepts). ``None`` only when nothing resolved.
     """
     val = fields.get(canonical)
     if val is not None:
         return val
-    for alias in _ALIASES.get(canonical, ()):
-        val = fields.get(alias)
-        if val is not None:
-            return val
-    # v3 fallback — token-aware match. Skipped for names on the
-    # blocklist to keep ``keys`` / synthetic-cross-field names from
-    # over-matching.
-    if canonical in _TOKEN_RESOLVE_BLOCKLIST:
-        return None
-    return _resolve_via_tokens(fields, canonical)
+    binding = _scorer_index()[0].get(canonical)
+    allow_tokens = canonical not in _TOKEN_RESOLVE_BLOCKLIST
+    if binding is None:
+        # No concept owns this name (the synthetic cross-field checks).
+        return _resolve_via_tokens(fields, canonical) if allow_tokens else None
+    held = _PARITY_HOLD_OUT_SUFFIXES.get(canonical)
+    if held:
+        fields = {k: v for k, v in fields.items() if not k.lower().endswith(held)}
+    return _registry().resolve(
+        fields,
+        binding.concept,
+        want=binding.want,
+        basis=binding.basis,
+        allow_token_match=allow_tokens,
+    ).value
 
 
 def _coerce_number(v: Any) -> float | None:
@@ -1215,9 +979,10 @@ def score_extraction(
 
     Args:
         fields: flat ``{name: value}`` dict of extracted fields. Keys
-            may be canonical (``revpar``) or any of the alternates
-            listed in ``_ALIASES`` (``p_and_l_usali.revpar_usd``).
-            Numeric strings ("$185.40", "74%") are coerced.
+            may be canonical (``revpar``) or any of the alternate
+            paths the registry lists for that concept (a namespaced
+            ``revpar_usd``, say). Numeric strings ("$185.40", "74%")
+            are coerced.
         rules: optional override of the rule catalog — defaults to
             ``load_usali_rules()`` (the canonical 66-rule CSV).
 
@@ -1395,12 +1160,11 @@ def flatten_extraction_fields(
     """Convert the extractor's list-of-records into a flat
     ``{name: value}`` dict the scorer can read.
 
-    The extractor emits ``[{"field_name": "p_and_l_usali.revpar_usd",
+    The extractor emits ``[{"field_name": "<pnl>.revpar_usd",
     "value": 137.2, ...}, ...]``. We also strip a few common path
-    prefixes so a payload that uses ``p_and_l_usali.revpar_usd`` works
-    the same as one that uses bare ``revpar`` — both end up as
-    ``revpar`` in the resolver's lookup chain (we keep both forms so
-    direct alias hits still work).
+    prefixes so a namespaced ``revpar_usd`` works the same as a bare
+    ``revpar`` — both end up as ``revpar`` in the resolver's lookup
+    chain (we keep both forms so direct alias hits still work).
 
     ``extra_context`` is merged in last and wins over extractor values
     when both are present — it carries deal-level fields like
@@ -1455,20 +1219,20 @@ def flatten_extraction_fields(
         value = f.get("value")
         if value is None:
             continue
-        # Raw extractor paths (e.g. ``p_and_l_usali.rooms.revenue_usd``)
+        # Raw extractor paths (e.g. ``<pnl>.rooms.revenue_usd``)
         # are written under their literal name — the recognizer wrote
         # under the canonical name (``rooms_revenue``), so the two don't
         # collide. The dotted-path key is still needed for direct hits
         # the alias map enumerates AND for the v3 token resolver.
         flat[name] = value
         # Also expose the last path component so a payload using
-        # ``p_and_l_usali.revpar_usd`` becomes resolvable under
-        # ``revpar_usd`` (which the alias map already maps to
-        # canonical ``revpar``).
+        # ``<pnl>.revpar_usd`` becomes resolvable under ``revpar_usd``
+        # (which the registry already lists as an alias of the
+        # ``revpar`` concept).
         #
         # Sam QA Bug #3 v2: SKIP the tail-write for monthly / per-page
         # records. The real prod T-12 ships dozens of
-        # ``p_and_l_usali.monthly.jan_2025.rooms_revenue_usd`` entries
+        # ``<pnl>.monthly.jan_2025.rooms_revenue_usd`` entries
         # — tail-writing them clobbers ``rooms_revenue_usd`` with a
         # single-month figure, which then leaks through the alias map
         # and lands as the per-period ``rooms_revenue`` (1M instead of
@@ -1635,9 +1399,9 @@ def _derive_usali_rollups(flat: dict[str, Any]) -> None:
         _setdefault_synth("fixed_charges", sum(fixed_parts))
 
     # gop = total_revenue - dept_expenses - undistributed_expenses.
-    # We honor a direct GOP emission first (real prod ships it under
-    # ``p_and_l_usali.gross_operating_profit_usd`` / ``.total_usd``);
-    # the synthesis only fires when it isn't directly emitted.
+    # We honor a direct GOP emission first (real prod ships a
+    # gross-operating-profit dollar line, flat or under a ``.total_usd``
+    # sibling); the synthesis only fires when it isn't directly emitted.
     tr = _via_alias("total_revenue")
     de = _via_alias("dept_expenses") or _via_alias("total_dept_expense")
     ue = _via_alias("undistributed_expenses")
