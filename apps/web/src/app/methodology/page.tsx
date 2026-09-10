@@ -217,7 +217,7 @@ export default function MethodologyPage() {
               Year-1 occupancy &amp; ADR seeded from STR — the Market tab&apos;s &quot;Use STR rates in the model&quot; writes the comp-set rates the card shows as explicit overrides (note: &quot;STR comp-set market rates (Market tab)&quot;), else the subject TTM or the BASE forward forecast. Financials → Projections shows &quot;Active basis: Market / STR · Revert&quot; only when the rates carry this tag, and the Market tab&apos;s STR card reads the same tags — &quot;STR rates active&quot;, &quot;STR rates unavailable — using T-12 base&quot;, or &quot;Pending re-run&quot; when the worker has not tagged the rates yet — never the request flag alone.
             </BadgeRow>
             <BadgeRow source="str_forecast_unavailable" name="STR Unavailable">
-              STR rates were requested but could not populate (no STR Trend extraction, coverage too low, or a loader failure). The model stays on the T-12 base and says so — the STR seed is never silently &quot;active&quot;.
+              STR rates were requested but could not populate (no STR Trend extraction, coverage too low, or a loader failure). The model stays on the T-12 base and says so — the STR seed is never silently &quot;active&quot;. Reason code: <ReasonTag code="str_unavailable" />.
             </BadgeRow>
             <BadgeRow source="derived_from_revpar_growth" name="Derived from RevPAR Growth">
               An analyst RevPAR-growth override derives ADR growth — (1 + RevPAR growth) ÷ (1 + occupancy growth) − 1 — with the occupancy path held, so the lever moves operating NOI. Setting ADR growth explicitly takes direct control.
@@ -234,7 +234,7 @@ export default function MethodologyPage() {
         <Card className="p-5 mb-4">
           <h4 className="text-[13px] font-semibold text-ink-900 mb-3">Project Name vs Property Name</h4>
           <p className="text-[12.5px] text-ink-500 leading-relaxed">
-            <span className="font-semibold text-ink-900">Project Name</span> is the analyst&apos;s confidential deal identifier (e.g. &quot;Project Unicorn&quot;) — a deal-row field you set and rename on the Overview; document extraction never writes it. <span className="font-semibold text-ink-900">Property Name</span> is the asset as named in the offering documents (OM first, then the STR subject name) and is never inferred from the Project Name — it shows &quot;—&quot; until the OM is extracted. The two are stored independently and editing one never changes the other. An analyst may override the Property Name from its Overview row: the override is stored as <code className="text-[11.5px]">field_overrides[&quot;property_overview.name&quot;]</code>, the extracted value and its source page are preserved, and &quot;Restore sourced value&quot; drops the override so the extracted name comes back.
+            <span className="font-semibold text-ink-900">Project Name</span> is the analyst&apos;s confidential deal identifier (e.g. &quot;Project Unicorn&quot;) — a deal-row field you set and rename on the Overview; document extraction never writes it. <span className="font-semibold text-ink-900">Property Name</span> is the asset as named in the offering documents (OM first, then the STR subject name) and is never inferred from the Project Name — it shows &quot;—&quot; until the OM is extracted (<ReasonTag code="no_document" />). The two are stored independently and editing one never changes the other. An analyst may override the Property Name from its Overview row: the override is stored as <code className="text-[11.5px]">field_overrides[&quot;property_overview.name&quot;]</code>, the extracted value and its source page are preserved, and &quot;Restore sourced value&quot; drops the override so the extracted name comes back.
           </p>
         </Card>
 
@@ -254,7 +254,7 @@ export default function MethodologyPage() {
             </li>
             <li>
               <span className="font-semibold text-ink-900">NOI pin (reconciliation override).</span>{' '}
-              A deal can carry <code>noi_override_by_year</code> — an analyst-entered per-year NOI schedule (the FON-67 lever used to reconcile to a source model) — and optionally <code>terminal_noi_override</code> for the exit-year reversion NOI. While either is set, the Debt and Returns engines read that schedule instead of the operating model, so RevPAR-growth / expense edits do not move NOI. Financials → Projections shows an &quot;NOI pinned to an analyst schedule&quot; notice whenever the pin is present (and says when terminal NOI is also pinned); <b>Clear pin</b> deletes the override(s) from <code>field_overrides</code> and re-runs the model, after which NOI follows the operating assumptions again.
+              A deal can carry <code>noi_override_by_year</code> — an analyst-entered per-year NOI schedule (the FON-67 lever used to reconcile to a source model) — and optionally <code>terminal_noi_override</code> for the exit-year reversion NOI. While either is set, the Debt and Returns engines read that schedule instead of the operating model, so RevPAR-growth / expense edits do not move NOI. Financials → Projections shows an &quot;NOI pinned to an analyst schedule&quot; notice whenever the pin is present (and says when terminal NOI is also pinned) — the operating model&apos;s own figure is withheld under <ReasonTag code="pin_active" />; <b>Clear pin</b> deletes the override(s) from <code>field_overrides</code> and re-runs the model, after which NOI follows the operating assumptions again.
             </li>
             <li>
               <span className="font-semibold text-ink-900">IRR is calculated, and says so.</span>{' '}
@@ -278,7 +278,7 @@ export default function MethodologyPage() {
         <Card className="p-5 mb-4">
           <h4 className="text-[13px] font-semibold text-ink-900 mb-3">As-of rule</h4>
           <p className="text-[12.5px] text-ink-500 leading-relaxed">
-            An underwriting is a claim about what was knowable on a date. When a deal sets an underwriting as-of date, Fondok will not ground a market assumption on a report published after it: a CBRE Horizons forecast, an OM comparable-sales table or an STR report dated later is refused, the assumption keeps the basis it already had, and the badge says <em>unavailable</em> with the reason <code className="text-[11.5px]">not_knowable_as_of</code> — never a silent substitution. The comparison respects how precisely the report is dated: a document known only to a year is compared year-to-year, a quarter quarter-to-quarter, so a report from the underwriting year is admitted rather than refused on a 31-December stamp. A report whose date cannot be established is <em>used</em>, flagged <code className="text-[11.5px]">as_of_unknown</code> — a missing date is a caveat, not grounds to withhold a number. The same date anchors the comparable-sales engine: the five-year lookback and the recency weighting are measured from the underwriting date rather than from today, so re-opening a deal months later does not quietly age its comp set out of the window. A deal that has not set an underwriting as-of date is unaffected in every respect — the acquisition close date is a modelling input and is never read as a knowledge horizon.
+            An underwriting is a claim about what was knowable on a date. When a deal sets an underwriting as-of date, Fondok will not ground a market assumption on a report published after it: a CBRE Horizons forecast, an OM comparable-sales table or an STR report dated later is refused, the assumption keeps the basis it already had, and the badge says <em>unavailable</em> with the reason <ReasonTag code="not_knowable_as_of" /> — never a silent substitution. The comparison respects how precisely the report is dated: a document known only to a year is compared year-to-year, a quarter quarter-to-quarter, so a report from the underwriting year is admitted rather than refused on a 31-December stamp. A report whose date cannot be established is <em>used</em>, flagged <ReasonTag code="as_of_unknown" /> — a missing date is a caveat, not grounds to withhold a number. The same date anchors the comparable-sales engine: the five-year lookback and the recency weighting are measured from the underwriting date rather than from today, so re-opening a deal months later does not quietly age its comp set out of the window. A deal that has not set an underwriting as-of date is unaffected in every respect — the acquisition close date is a modelling input and is never read as a knowledge horizon.
           </p>
         </Card>
 
@@ -433,7 +433,7 @@ export default function MethodologyPage() {
             </li>
             <li>
               <span className="font-semibold text-ink-900">The IC recommendation is a decision, not an inference.</span>{' '}
-              The Model Assessment card shows the model&apos;s own read of the Base Case (Clears Hurdles / Clears with Conditions / Below Hurdles, with the inferred verdict labelled as the model&apos;s). The IC recommendation reads <em>Pending analyst decision</em> until the analyst selects Proceed, Proceed with Conditions or Do Not Proceed <em>and</em> confirms it. Only the confirmed verdict is written into the memo&apos;s Recommendation section and the export header; a selected-but-unconfirmed verdict, or a verdict recorded before confirmation existed, still reads Pending analyst decision. Confirmation is part of the IC-readiness checklist.
+              The Model Assessment card shows the model&apos;s own read of the Base Case (Clears Hurdles / Clears with Conditions / Below Hurdles, with the inferred verdict labelled as the model&apos;s). The IC recommendation reads <em>Pending analyst decision</em> until the analyst selects Proceed, Proceed with Conditions or Do Not Proceed <em>and</em> confirms it. Only the confirmed verdict is written into the memo&apos;s Recommendation section and the export header; a selected-but-unconfirmed verdict, or a verdict recorded before confirmation existed, still reads Pending analyst decision, under the reason code <ReasonTag code="awaiting_analyst" />. Confirmation is part of the IC-readiness checklist.
             </li>
           </ul>
         </Card>
@@ -443,19 +443,19 @@ export default function MethodologyPage() {
           <ul className="space-y-2.5 text-[12.5px] text-ink-600 leading-relaxed">
             <li>
               <span className="font-semibold text-ink-900">Only the broker&apos;s own claim is the &ldquo;broker&rdquo; side.</span>{' '}
-              A row counts as the broker&apos;s claim about the subject only when it comes from the OM / broker materials under a claim path (<code className="text-[11.5px]">broker_proforma.*</code>, <code className="text-[11.5px]">broker.*</code>, <code className="text-[11.5px]">ttm_summary_per_om.*</code>, <code className="text-[11.5px]">ttm_performance.subject.*</code>). A line from a T-12 or P&amp;L document is an actual, never a broker figure, even when the extractor labelled it with an OM-style path; a subject or submarket reading from an STR / CoStar report is STR-reported performance, not the broker&apos;s claim; a competitive-set stat (<code className="text-[11.5px]">ttm_performance.segment.*</code>), the OM&apos;s historical-year block (<code className="text-[11.5px]">p_and_l_usali.2021.*</code>), and lines from CBRE, CapEx, insurance or property-information documents are none of these either. Rows excluded for one of these reasons are still listed under Technical detail with the reason and their source document — the report says what it left out.
+              A row counts as the broker&apos;s claim about the subject only when it comes from the OM / broker materials under a claim path (<code className="text-[11.5px]">broker_proforma.*</code>, <code className="text-[11.5px]">broker.*</code>, <code className="text-[11.5px]">ttm_summary_per_om.*</code>, <code className="text-[11.5px]">ttm_performance.subject.*</code>). A line from a T-12 or P&amp;L document is an actual, never a broker figure, even when the extractor labelled it with an OM-style path; a subject or submarket reading from an STR / CoStar report is STR-reported performance, not the broker&apos;s claim; a competitive-set stat (<code className="text-[11.5px]">ttm_performance.segment.*</code>), the OM&apos;s historical-year block (<code className="text-[11.5px]">p_and_l_usali.2021.*</code>), and lines from CBRE, CapEx, insurance or property-information documents are none of these either. Rows excluded for one of these reasons are still listed under Technical detail with the reason and their source document, each carrying <ReasonTag code="basis_excluded" /> — the report says what it left out.
             </li>
             <li>
               <span className="font-semibold text-ink-900">Units are normalised before comparing.</span>{' '}
-              Occupancy and other ratio lines are compared as fractions (an extracted 83 or 83% reads as 0.83; the conversion is noted on the row); currency is compared in whole dollars (a &ldquo;$000&rdquo; unit is scaled). A value whose unit cannot be established — an occupancy above 100, for example — is not compared at all, and the Technical detail says why.
+              Occupancy and other ratio lines are compared as fractions (an extracted 83 or 83% reads as 0.83; the conversion is noted on the row); currency is compared in whole dollars (a &ldquo;$000&rdquo; unit is scaled). A value whose unit cannot be established — an occupancy above 100, for example — is not compared at all (<ReasonTag code="unit_unknown" />), and the Technical detail says why.
             </li>
             <li>
               <span className="font-semibold text-ink-900">Annual against annual.</span>{' '}
-              The T-12 side is the document&apos;s annual / trailing-twelve-month line (annual rooms revenue, gross operating profit, net operating income), never a monthly or quarterly slice, and the T-12 is preferred over a supporting P&amp;L. If no annual actual exists for a concept there is no flag — Fondok never compares a month against a year.
+              The T-12 side is the document&apos;s annual / trailing-twelve-month line (annual rooms revenue, gross operating profit, net operating income), never a monthly or quarterly slice, and the T-12 is preferred over a supporting P&amp;L. If no annual actual exists for a concept there is no flag — Fondok never compares a month against a year, and the report names the concept it could not compare with <ReasonTag code="period_mismatch" /> or <ReasonTag code="no_source" />.
             </li>
             <li>
               <span className="font-semibold text-ink-900">Plausibility guard.</span>{' '}
-              As a last line of defence, a pair of figures more than 300% apart is reported as &ldquo;Basis mismatch — needs review&rdquo; with both raw figures and no severity, instead of a Critical variance: two numbers that far apart are on different bases, not evidence of a broker overstatement.
+              As a last line of defence, a pair of figures more than 300% apart is reported as &ldquo;Basis mismatch — needs review&rdquo; (<ReasonTag code="basis_mismatch" />) with both raw figures and no severity, instead of a Critical variance: two numbers that far apart are on different bases, not evidence of a broker overstatement.
             </li>
           </ul>
         </Card>
@@ -716,6 +716,28 @@ function Chain({ steps }: { steps: { label: string; desc: string }[] }) {
         </li>
       ))}
     </ol>
+  );
+}
+
+/**
+ * Section 4.5 — name the reason code beside a refusal sentence.
+ *
+ * The label and the hover explanation come from
+ * `@/lib/ontology/reasons.generated` (which CI regenerates from
+ * `reasons.py`), never from a literal here, so a rename in the vocabulary
+ * reaches this page instead of drifting from it. Purely additive: the
+ * sentence it sits beside is unchanged.
+ */
+function ReasonTag({ code }: { code: ReasonCode }) {
+  return (
+    <span
+      data-reason-tag={code}
+      title={REASONS[code].explanation}
+      className="inline-flex items-baseline gap-1 whitespace-nowrap align-baseline"
+    >
+      <code className="text-[11.5px] text-ink-700">{code}</code>
+      <span className="text-[11px] text-ink-500">({REASONS[code].label})</span>
+    </span>
   );
 }
 

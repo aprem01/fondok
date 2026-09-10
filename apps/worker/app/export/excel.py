@@ -44,6 +44,7 @@ Sheet catalog (in build order — only those with data are included):
     17. STR Forecast                — when str_forecast set
     18. Named Scenarios             — when named_scenarios set
     19. LOI Appendix                — when loi_draft set
+    20. Refusals                    — when the payload carries refusals
 
 Backward compat: every new sheet builder no-ops when its source data is
 None / empty. The legacy 9-sheet workbook is still produced when no
@@ -53,6 +54,18 @@ that lack sensitivity_grid drop the sensitivity sheet entirely rather
 than synthesizing one).
 
 Number formats follow institutional convention (currency, percent, x).
+
+──────────────────────────────────────────────────────────────────────
+Phase 4.2 — typed refusals.
+
+The dashes this workbook writes go through
+:func:`app.export.refusals.refuse`, which returns the same glyph and
+records why. The "Refusals" sheet then lists what the export declined to
+produce — the concept, where it appeared, the reason code, and its meaning
+from ``REASON_META``. It renders only when the payload itself carried
+refusals (``model["refusals"]``), so the Kimpton fixture workbook and a
+barebones live workbook keep exactly the sheets, cells and values they
+had before.
 """
 
 from __future__ import annotations
@@ -62,12 +75,15 @@ from pathlib import Path
 from typing import Any
 from uuid import UUID
 
+from fondok_schemas.reasons import REASON_META, ReasonCode
 from openpyxl import Workbook
 from openpyxl.comments import Comment
 from openpyxl.formatting.rule import ColorScaleRule
 from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
 from openpyxl.utils import get_column_letter
 from openpyxl.worksheet.worksheet import Worksheet
+
+from .refusals import collect_refusals, dedupe, refuse
 
 # ─────────────────────────── styling helpers ───────────────────────────
 
@@ -945,7 +961,15 @@ def _build_revenue_mix(wb: Workbook, segments_by_year: list[dict[str, Any]] | No
         year_gross = 0.0
         year_net = 0.0
         for seg in breakdown:
-            ws.cell(row=row, column=1, value=str(seg.get("name", "—")))
+            ws.cell(
+                row=row,
+                column=1,
+                value=str(seg["name"])
+                if "name" in seg
+                else refuse(
+                    ReasonCode.NO_SOURCE, "revenue segment has no name", "segment.name"
+                ),
+            )
             ws.cell(row=row, column=2, value=year).number_format = INT_FMT
             c = ws.cell(row=row, column=3, value=float(seg.get("mix_pct") or 0))
             c.number_format = PCT_FMT
@@ -1000,11 +1024,20 @@ def _build_renovation_plan(wb: Workbook, pip: dict[str, Any] | None) -> bool:
 
     ws = wb.create_sheet("Renovation Plan")
 
+    _closure = pip.get("closure_strategy") or ""
     strategy_label = {
         "rolling": "Rolling",
         "full_closure": "Full Closure",
         "wing_by_wing": "Wing-by-Wing",
-    }.get(pip.get("closure_strategy") or "", str(pip.get("closure_strategy") or "—"))
+    }.get(_closure) or (
+        str(_closure)
+        if _closure
+        else refuse(
+            ReasonCode.NO_SOURCE,
+            "PIP spec carries no closure strategy",
+            "pip.closure_strategy",
+        )
+    )
 
     ws["A1"] = "Renovation Plan (PIP Displacement)"
     _style_header_row(ws, 1, 4)
@@ -1182,10 +1215,21 @@ def _build_op_ratio_provenance(wb: Workbook, op_prov: dict[str, Any] | None) -> 
 
     row = 2
     for line in lines:
-        field = str(line.get("field") or "—")
+        field = str(
+            line.get("field")
+            or refuse(
+                ReasonCode.NO_SOURCE,
+                "op-ratio provenance line has no field name",
+                "op_ratio.field",
+            )
+        )
         value = line.get("value")
         source = str(line.get("source") or "seed")
-        doc = line.get("document_id") or "—"
+        doc = line.get("document_id") or refuse(
+            ReasonCode.NO_DOCUMENT,
+            "op-ratio source is not a document on the deal",
+            "op_ratio.document_id",
+        )
 
         ws.cell(row=row, column=1, value=field)
         c = ws.cell(row=row, column=2, value=value if value is not None else 0)
@@ -1266,7 +1310,18 @@ def _build_sensitivity_grid(wb: Workbook, grid: dict[str, Any] | None) -> bool:
         c.number_format = USD_FMT
         row += 1
         ws.cell(row=row, column=1, value="Binding Constraint").font = Font(bold=True)
-        ws.cell(row=row, column=2, value=str(max_price.get("binding_constraint") or "—").upper())
+        ws.cell(
+            row=row,
+            column=2,
+            value=str(
+                max_price.get("binding_constraint")
+                or refuse(
+                    ReasonCode.NO_SOURCE,
+                    "max-price solve names no binding constraint",
+                    "max_price.binding_constraint",
+                )
+            ).upper(),
+        )
         row += 1
     row += 1
 
@@ -1419,7 +1474,16 @@ def _build_comparable_sales(wb: Workbook, comp_sales: dict[str, Any] | None) -> 
             value=(float(cap_v) / 100.0) if cap_v is not None else None,
         )
         c.number_format = PCT_FMT
-        ws.cell(row=row, column=9, value=txn.get("chain_scale") or "—")
+        ws.cell(
+            row=row,
+            column=9,
+            value=txn.get("chain_scale")
+            or refuse(
+                ReasonCode.NO_SOURCE,
+                "comparable sale carries no chain scale",
+                "comp_sale.chain_scale",
+            ),
+        )
         excluded = bool(txn.get("excluded"))
         ws.cell(row=row, column=10, value="Yes" if excluded else "No")
         if excluded:
@@ -1614,7 +1678,16 @@ def _build_named_scenarios(
     ws.cell(row=1, column=1, value="KPI")
     col = 2
     for s in [base] + others:
-        ws.cell(row=1, column=col, value=str(s.get("name") or "—"))
+        ws.cell(
+            row=1,
+            column=col,
+            value=str(
+                s.get("name")
+                or refuse(
+                    ReasonCode.NO_SOURCE, "saved scenario has no name", "scenario.name"
+                )
+            ),
+        )
         col += 1
         ws.cell(row=1, column=col, value="Δ vs Base")
         col += 1
@@ -1708,6 +1781,79 @@ def _build_loi_appendix(wb: Workbook, loi: dict[str, Any] | None) -> bool:
     return True
 
 
+def _refusal_row(item: Any) -> tuple[str, str, str, str] | None:
+    """``(concept, where, code, meaning)`` for one refusal, or ``None``.
+
+    Accepts a :class:`~fondok_schemas.reasons.Refusal` or the same shape as a
+    plain dict, so a payload that has been round-tripped through JSON reads
+    the same as one held in memory.
+    """
+    if isinstance(item, dict):
+        raw_code = item.get("code")
+        concept = item.get("concept")
+        detail = item.get("detail")
+    else:
+        raw_code = getattr(item, "code", None)
+        concept = getattr(item, "concept", None)
+        detail = getattr(item, "detail", None)
+    if raw_code is None:
+        return None
+    try:
+        code = ReasonCode(getattr(raw_code, "value", raw_code))
+    except ValueError:
+        return None
+    return (
+        str(concept) if concept else "",
+        str(detail) if detail else "",
+        code.value,
+        REASON_META[code]["label"],
+    )
+
+
+def _build_refusals(wb: Workbook, refusals: list[Any] | None) -> bool:
+    """Refusals sheet — what this export declined to produce, and why.
+
+    One row per distinct refusal the payload (and this workbook's own dash
+    writes) recorded: the concept, where it appeared, the machine-readable
+    reason code and its meaning straight from ``REASON_META``. Conditional
+    like every Wave 2/3 sheet — a complete export gains no sheet.
+    """
+    rows = [r for r in (_refusal_row(item) for item in refusals or []) if r]
+    if not rows:
+        return False
+
+    ws = wb.create_sheet("Refusals")
+    ws["A1"] = "REFUSALS — FIGURES THIS EXPORT DECLINED TO PRODUCE"
+    _style_header_row(ws, 1, 4)
+
+    headers = ["Concept", "Where it appeared", "Reason code", "Meaning"]
+    for i, h in enumerate(headers, start=1):
+        ws.cell(row=2, column=i, value=h)
+    _style_subhead_row(ws, 2, len(headers))
+
+    row = 3
+    for concept, where, code, meaning in rows:
+        ws.cell(row=row, column=1, value=concept)
+        cell = ws.cell(row=row, column=2, value=where)
+        cell.alignment = Alignment(wrap_text=True, vertical="top")
+        ws.cell(row=row, column=3, value=code)
+        ws.cell(row=row, column=4, value=meaning)
+        row += 1
+
+    ws.cell(
+        row=row + 1,
+        column=1,
+        value=(
+            "Every dash in this workbook is one of the codes above — Fondok "
+            "never fills a gap with a placeholder value."
+        ),
+    ).font = Font(italic=True, size=9, color="6B7280")
+
+    _autosize(ws, [30, 52, 22, 34])
+    _freeze_top(ws, row=3)
+    return True
+
+
 # ─────────────────────────── public API ───────────────────────────
 
 
@@ -1723,7 +1869,28 @@ def build_excel(deal_id: UUID | str, model: dict[str, Any], output_path: Path) -
 
     Wave 2/3 sheets render conditionally on presence of their source
     data, so a barebones deal still produces a valid workbook.
+
+    Phase 4.2: the whole build runs inside a refusal collector, and the
+    "Refusals" sheet is appended when the payload itself carried refusals
+    (``model["refusals"]``) — so a fixture / barebones workbook keeps
+    exactly the sheets it had, while a live export says why each dash is
+    a dash.
     """
+    payload_refusals = list(model.get("refusals") or [])
+    with collect_refusals() as own_refusals:
+        return _build_excel_sheets(
+            deal_id, model, output_path, payload_refusals, own_refusals
+        )
+
+
+def _build_excel_sheets(
+    deal_id: UUID | str,
+    model: dict[str, Any],
+    output_path: Path,
+    payload_refusals: list[Any],
+    own_refusals: list[Any],
+) -> Path:
+    """The sheet assembly — see :func:`build_excel`, which wraps it."""
     wave = _aggregate_wave2_3_for_excel(model)
 
     wb = Workbook()
@@ -1776,6 +1943,14 @@ def build_excel(deal_id: UUID | str, model: dict[str, Any], output_path: Path) -
     if _build_loi_appendix(wb, wave["loi"]):
         sections_included.append("LOI Appendix")
 
+    # Phase 4.2 — the typed twin of every dash above. Gated on the PAYLOAD's
+    # refusals so a fixture / barebones workbook is untouched; when it does
+    # render it also carries this workbook's own dash writes, deduped.
+    if payload_refusals and _build_refusals(
+        wb, dedupe([*payload_refusals, *own_refusals])
+    ):
+        sections_included.append("Refusals")
+
     # Now render the Cover with the actual section list. The active
     # sheet is still our reserved Cover blank, so _build_cover mutates
     # it in place.
@@ -1790,5 +1965,6 @@ def build_excel(deal_id: UUID | str, model: dict[str, Any], output_path: Path) -
 __all__ = [
     "_aggregate_wave2_3_for_excel",
     "_apply_color_scale",
+    "_build_refusals",
     "build_excel",
 ]

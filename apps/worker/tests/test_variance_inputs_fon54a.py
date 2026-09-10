@@ -370,3 +370,144 @@ async def test_variance_endpoint_on_sams_deal_compares_like_with_like() -> None:
         if f.delta_pct is not None and abs(f.delta_pct) > 3.0:
             assert f.basis_mismatch and f.severity == "Info", f.concept
     assert resp.critical_count + resp.warn_count + resp.info_count == len(resp.flags)
+
+
+# ═══════════════ Phase 4.1 — the same facts, machine-readable ═══════════════
+#
+# Additive only. Every assertion above is the FON-54a contract and is
+# unchanged; these read the parallel ``ReasonCode`` channel that Phase 4.1
+# hung beside it — the prose stays authoritative for the analyst, the code is
+# what a client branches on.
+
+
+def test_exclusion_code_classifies_the_two_kinds_of_rejection() -> None:
+    from fondok_schemas.reasons import ReasonCode
+
+    from app.agents.variance import (
+        exclusion_code,
+        non_broker_source_reason,
+        normalize_broker_value,
+    )
+
+    # A *source* rejection — the row is real, it just is not the broker's claim.
+    for dtype in ("PNL", "T12", "STR_TREND", "COSTAR", "CBRE_HORIZONS", None, "CAPEX"):
+        assert exclusion_code(non_broker_source_reason(dtype)) is ReasonCode.BASIS_EXCLUDED
+    assert (
+        exclusion_code("market-segment stat, not the broker's claim about the subject")
+        is ReasonCode.BASIS_EXCLUDED
+    )
+    assert (
+        exclusion_code("OM historical-year block — history, not the proforma claim")
+        is ReasonCode.BASIS_EXCLUDED
+    )
+
+    # A *unit* rejection — the value cannot be placed on the T-12's basis.
+    _v, note = normalize_broker_value("occupancy_pct", 150.0)
+    assert exclusion_code(note or "") is ReasonCode.UNIT_UNKNOWN
+    _v, note = normalize_broker_value("occupancy_pct", -3.0)
+    assert exclusion_code(note or "") is ReasonCode.UNIT_UNKNOWN
+    assert exclusion_code("unit not established") is ReasonCode.UNIT_UNKNOWN
+
+
+def test_out_of_scope_collects_period_slices_without_touching_excluded() -> None:
+    """The silent scope drops become typed — the disclosure list does not move."""
+    from fondok_schemas.reasons import ReasonCode
+
+    from app.agents.variance import _broker_fields_from_extraction
+
+    rejected: list = []
+    dropped: list = []
+    out = _broker_fields_from_extraction(
+        [
+            _ef("ttm_summary_per_om.rooms_revenue_usd", 9_541_537, page=14),
+            _ef("p_and_l_usali.monthly.jan.rooms_revenue_usd", 800_000, page=16),
+            _ef("broker_proforma.year_3.noi_usd", 4_000_000, page=18),
+        ],
+        doc_type="OM", strict=True, excluded=rejected, out_of_scope=dropped,
+    )
+    assert [b.field for b in out] == ["ttm_summary_per_om.rooms_revenue_usd"]
+    # FON-54a's ``excluded`` still carries ONLY the source/unit rejections.
+    assert rejected == []
+    by_field = {f.field_name: code for f, code in dropped}
+    assert by_field["p_and_l_usali.monthly.jan.rooms_revenue_usd"] is ReasonCode.PERIOD_MISMATCH
+    assert by_field["broker_proforma.year_3.noi_usd"] is ReasonCode.NOT_APPLICABLE
+
+
+@pytest.mark.asyncio
+async def test_variance_endpoint_carries_reason_codes_on_sams_deal() -> None:
+    from fondok_schemas.reasons import ReasonCode
+
+    from app.api.analysis import get_variance
+    from app.database import get_session_factory
+
+    deal_id = uuid4()
+    await _seed_sams_deal(deal_id)
+    factory = get_session_factory()
+    async with factory() as s:
+        resp = await get_variance(deal_id=deal_id, session=s, tenant_id=UUID(_TENANT))
+
+    # Every disclosed exclusion now carries the code beside its prose, and the
+    # prose is exactly what FON-54a wrote.
+    excluded = [r for f in resp.flags for r in f.raw_fields if r.excluded_reason]
+    assert excluded
+    for r in excluded:
+        assert r.reason in (ReasonCode.BASIS_EXCLUDED, ReasonCode.UNIT_UNKNOWN)
+    seg = next(r for r in excluded if ".segment." in r.field)
+    assert seg.reason is ReasonCode.BASIS_EXCLUDED
+    assert seg.excluded_reason == (
+        "market-segment stat, not the broker's claim about the subject"
+    )
+
+    # A real comparison refuses nothing.
+    for f in resp.flags:
+        if not f.basis_mismatch:
+            assert f.reason is None, (f.concept, f.reason)
+        else:
+            assert f.reason is ReasonCode.BASIS_MISMATCH
+
+    # Concepts the report could not compare are named, not silently dropped.
+    flagged = {f.concept for f in resp.flags}
+    assert resp.reasons, "expected at least one concept the report could not compare"
+    for refusal in resp.reasons:
+        assert refusal.concept not in flagged
+        assert refusal.code in {
+            ReasonCode.NO_DOCUMENT, ReasonCode.NO_SOURCE, ReasonCode.PERIOD_MISMATCH,
+            ReasonCode.BASIS_EXCLUDED, ReasonCode.UNIT_UNKNOWN,
+        }
+        assert refusal.detail
+    # Deduped by (code, concept).
+    keys = [(r.code, r.concept) for r in resp.reasons]
+    assert len(keys) == len(set(keys))
+
+
+@pytest.mark.asyncio
+async def test_variance_reasons_say_no_document_when_a_side_is_missing() -> None:
+    from fondok_schemas.reasons import ReasonCode
+
+    from app.api.analysis import get_variance
+    from app.database import get_session_factory
+    from app.migrations import run_startup_migrations
+
+    deal_id = uuid4()
+    await run_startup_migrations()
+    factory = get_session_factory()
+    async with factory() as s:  # a deal row with no documents at all
+        await s.execute(
+            text(
+                "INSERT INTO deals (id, tenant_id, name, status, ai_confidence, "
+                "created_at, updated_at) VALUES (:id,:t,'Empty (FON-54a)','Draft',0.0,:ts,:ts)"
+            ),
+            {"id": str(deal_id), "t": _TENANT, "ts": datetime.now(UTC)},
+        )
+        await s.commit()
+    async with factory() as s:
+        resp = await get_variance(deal_id=deal_id, session=s, tenant_id=UUID(_TENANT))
+
+    assert resp.flags == []
+    # The existing prose note is untouched…
+    assert resp.note is not None and "no flags computed: missing" in resp.note
+    # …and the same fact is now machine-readable, one per missing side.
+    assert {r.code for r in resp.reasons} == {ReasonCode.NO_DOCUMENT}
+    assert len(resp.reasons) == 2
+    assert any("T-12" in (r.detail or "") for r in resp.reasons)
+    assert any("OM" in (r.detail or "") for r in resp.reasons)

@@ -32,6 +32,7 @@ from typing import Annotated, Any, Literal
 from uuid import UUID, uuid4
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fondok_schemas.reasons import ReasonCode, Refusal
 from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -109,6 +110,15 @@ class VarianceRawFieldOut(BaseModel):
     #: |delta_pct| beyond the plausibility guard — the two figures are not on
     #: the same basis; reported for review, never escalated.
     basis_mismatch: bool = False
+    #: Phase 4.1 — the machine-readable twin of ``excluded_reason`` (and of
+    #: ``basis_mismatch``). The prose is unchanged and stays authoritative for
+    #: the analyst; this is the code a client can branch on:
+    #: ``basis_excluded`` (not admitted as a broker claim — an actuals / STR /
+    #: market document, a comp-set segment, the OM's history),
+    #: ``unit_unknown`` (the row's unit could not be established), or
+    #: ``basis_mismatch`` (the row failed the 300% plausibility guard).
+    #: Serialised as the bare code string.
+    reason: ReasonCode | None = None
 
 
 VarianceImpactBasis = Literal["noi", "revenue", "expense", "other"]
@@ -154,9 +164,31 @@ class VarianceFlagOut(BaseModel):
     #: True when every admitted row for this concept failed the plausibility
     #: guard — "Basis mismatch — needs review", severity Info, no escalation.
     basis_mismatch: bool = False
+    #: Phase 4.1 — why this flag is not a usable comparison, as a
+    #: ``ReasonCode``: ``basis_mismatch`` (every admitted row failed the 300%
+    #: plausibility guard — the same condition ``basis_mismatch`` above
+    #: reports, now machine-readable), or, for a concept left with nothing but
+    #: rejected rows, the rejection's own code (``basis_excluded`` /
+    #: ``unit_unknown`` / ``period_mismatch``). ``None`` on a flag that IS a
+    #: real broker-vs-T-12 comparison. Serialised as the bare code string;
+    #: the boolean and every existing string are untouched.
+    reason: ReasonCode | None = None
 
 
 class VarianceReportResponse(BaseModel):
+    """The deal's variance report — the flags, and what could not be flagged.
+
+    Phase 4.1: a concept the report could not compare at all used to just not
+    appear. ``reasons`` is that missing half, made explicit — one
+    :class:`Refusal` per concept the report declined to compare, carrying the
+    code, the prose behind it, and the document it was raised against.
+    Full ``Refusal`` objects here (a list is the natural shape); the single
+    ``reason`` fields on the flags carry the bare code.
+
+    Every pre-existing field — ``flags``, the three counts, ``note`` — is
+    byte-identical to before.
+    """
+
     model_config = ConfigDict(extra="forbid")
 
     deal_id: UUID
@@ -165,6 +197,17 @@ class VarianceReportResponse(BaseModel):
     warn_count: int = 0
     info_count: int = 0
     note: str | None = None
+    #: Concepts that produced no flag, and why — the deal carries no OM /
+    #: broker material or no T-12 / P&L (``no_document``), no annual actual
+    #: resolves to the concept (``no_source``), every candidate row was a
+    #: monthly / YTD slice (``period_mismatch``), or every candidate row was
+    #: rejected (``basis_excluded`` / ``unit_unknown``). Deduped by
+    #: ``(code, concept)``, in the order the scan hit them. ``document_id`` is
+    #: deliberately left unset: the endpoint's response is pinned byte-for-byte
+    #: across runs (``test_ontology_variance_parity``) and a per-run upload id
+    #: would make it non-deterministic — the source document is named in
+    #: ``detail`` and on the raw row's ``source_document`` instead.
+    reasons: list[Refusal] = Field(default_factory=list)
 
 
 # ──────────────── FON-54a: consolidate variance flags by concept ────────────────
@@ -318,6 +361,37 @@ def _concept_note(
     return "".join(parts)
 
 
+def _dedupe_refusals(refusals: list[Refusal]) -> list[Refusal]:
+    """First occurrence of each ``(code, concept)``, input order preserved."""
+    seen: set[tuple[str, str | None]] = set()
+    out: list[Refusal] = []
+    for r in refusals:
+        key = (r.code.value, r.concept)
+        if key in seen:
+            continue
+        seen.add(key)
+        out.append(r)
+    return out
+
+
+def _flag_reason(
+    all_mismatch: bool, raw: list[VarianceRawFieldOut]
+) -> ReasonCode | None:
+    """Why a consolidated flag is not a usable comparison (Phase 4.1).
+
+    ``basis_mismatch`` when every admitted row failed the plausibility guard.
+    Otherwise, when the concept is left with nothing but rejected rows, the
+    first rejection's own code — so a flag never says "compared" when nothing
+    was. ``None`` for a flag that IS a broker-vs-T-12 comparison, which is
+    every flag the endpoint emits today.
+    """
+    if all_mismatch:
+        return ReasonCode.BASIS_MISMATCH
+    if raw and all(r.excluded_reason for r in raw):
+        return next((r.reason for r in raw if r.reason is not None), None)
+    return None
+
+
 def consolidate_variance_flags(
     flags: list[VarianceFlagOut],
     excluded: list[VarianceRawFieldOut] | None = None,
@@ -340,6 +414,10 @@ def consolidate_variance_flags(
       are appended to their concept's ``raw_fields`` with ``excluded_reason``
       so the Technical detail shows what was left out; they never create a
       flag on their own and never influence severity or numbers.
+
+    Phase 4.1 (additive): each raw row carries the ``ReasonCode`` that matches
+    its prose, and the consolidated flag carries ``reason`` when it is not a
+    usable comparison. No string, severity, count or number changes.
     """
     groups: dict[str, list[VarianceFlagOut]] = {}
     order: list[str] = []
@@ -379,6 +457,7 @@ def consolidate_variance_flags(
                 source_document=m.source_document,
                 unit_note=m.unit_note,
                 basis_mismatch=m.basis_mismatch,
+                reason=ReasonCode.BASIS_MISMATCH if m.basis_mismatch else None,
             )
             for m in members
         ]
@@ -414,6 +493,7 @@ def consolidate_variance_flags(
                 source_document=primary.source_document,
                 unit_note=primary.unit_note,
                 basis_mismatch=all_mismatch,
+                reason=_flag_reason(all_mismatch, raw),
             )
         )
     return out
@@ -491,7 +571,27 @@ async def get_variance(
             + ". Upload + extract both an OM/broker-proforma and a T-12 "
             "to populate variance."
         )
-        return VarianceReportResponse(deal_id=deal_id, flags=[], note=note)
+        # Phase 4.1 — the same fact, machine-readable. One ``no_document``
+        # per missing side; the ``note`` string above is unchanged.
+        return VarianceReportResponse(
+            deal_id=deal_id,
+            flags=[],
+            note=note,
+            reasons=[
+                Refusal(
+                    code=ReasonCode.NO_DOCUMENT,
+                    detail=(
+                        f"no {side} on the deal — upload + extract "
+                        + (
+                            "a T-12 / P&L"
+                            if side == "T-12 actuals"
+                            else "an OM / broker proforma"
+                        )
+                    ),
+                )
+                for side in missing
+            ],
+        )
 
     # We have both sides. Run the deterministic flag builder via the
     # public agent entrypoint — but skip persistence and the LLM pass.
@@ -500,8 +600,10 @@ async def get_variance(
     # we call the underlying flag builder directly. It's stable API
     # within the worker — exported by the variance module for tests.
     from ..agents.variance import (
+        _actual_for,
         _broker_fields_from_extraction,
         _build_flags,
+        exclusion_code,
         is_basis_mismatch,
     )
 
@@ -537,6 +639,11 @@ async def get_variance(
     )
     broker_fields: list[Any] = []
     excluded_rows: list[VarianceRawFieldOut] = []
+    # Phase 4.1 — every candidate row that did NOT become a comparison, as a
+    # typed refusal keyed by the concept it was about. Filtered at the end to
+    # the concepts that ended up with no flag at all, so the report says why a
+    # concept is absent rather than leaving it silently missing.
+    candidate_refusals: list[Refusal] = []
     provenance: dict[tuple[str, float], tuple[str | None, str | None, str | None]] = {}
     for r in rows.fetchall():
         m = r._mapping
@@ -559,8 +666,13 @@ async def get_variance(
             except Exception:
                 continue
         rejected: list[tuple[Any, str]] = []
+        dropped: list[tuple[Any, ReasonCode]] = []
         admitted = _broker_fields_from_extraction(
-            doc_fields, doc_type=doc_type, strict=True, excluded=rejected
+            doc_fields,
+            doc_type=doc_type,
+            strict=True,
+            excluded=rejected,
+            out_of_scope=dropped,
         )
         try:
             doc_uuid = UUID(str(m.get("document_id"))) if m.get("document_id") else None
@@ -571,6 +683,7 @@ async def get_variance(
             provenance[(bf.field, bf.value)] = (doc_type, filename, bf.unit_note)
             broker_fields.append(bf)
         for ef, reason in rejected:
+            code = exclusion_code(reason)
             excluded_rows.append(
                 VarianceRawFieldOut(
                     field=ef.field_name,
@@ -580,6 +693,31 @@ async def get_variance(
                     source_doc_type=doc_type,
                     source_document=filename,
                     excluded_reason=reason,
+                    reason=code,
+                )
+            )
+            candidate_refusals.append(
+                Refusal(
+                    code=code,
+                    detail=(
+                        f"{ef.field_name}: {reason}"
+                        + (f" (from {filename})" if filename else "")
+                    ),
+                    concept=variance_concept(ef.field_name),
+                )
+            )
+        # Silent scope drops (a monthly / YTD slice, a forward projection)
+        # never entered the FON-54a disclosure list and still do not — but a
+        # concept left with ONLY those is a concept the report could not
+        # compare, and it says so here.
+        for ef, code in dropped:
+            candidate_refusals.append(
+                Refusal(
+                    code=code,
+                    detail=(
+                        f"{ef.field_name} is not comparable to an annual T-12 line"
+                    ),
+                    concept=variance_concept(ef.field_name),
                 )
             )
 
@@ -594,7 +732,23 @@ async def get_variance(
                 "excluded: actuals documents, market segments or OM history are not the "
                 "broker's claim) — upload + extract an OM/broker proforma to populate variance"
             )
-        return VarianceReportResponse(deal_id=deal_id, flags=[], note=note)
+        # Phase 4.1 — nothing was admitted, so every candidate refusal stands.
+        # ``no_document`` when there was not even a candidate row.
+        return VarianceReportResponse(
+            deal_id=deal_id,
+            flags=[],
+            note=note,
+            reasons=_dedupe_refusals(candidate_refusals)
+            or [
+                Refusal(
+                    code=ReasonCode.NO_DOCUMENT,
+                    detail=(
+                        "no OM / broker-proforma extraction on the deal — "
+                        "nothing to compare the T-12 against"
+                    ),
+                )
+            ],
+        )
 
     flags = _build_flags(
         deal_uuid=deal_id, actuals=actuals, broker_fields=broker_fields
@@ -660,12 +814,36 @@ async def get_variance(
         else:
             info += 1
 
+    # Phase 4.1 — a concept with no annual T-12 actual never reaches
+    # ``_build_flags`` (it skips ``actual is None or actual == 0``), so it used
+    # to vanish from the report entirely. Say so instead. A concept that WAS
+    # compared and simply came out numerically identical is not a refusal.
+    for bf in broker_fields:
+        if _actual_for(bf.field, actuals):
+            continue
+        candidate_refusals.append(
+            Refusal(
+                code=ReasonCode.NO_SOURCE,
+                detail=(
+                    f"no annual T-12 / P&L actual resolves to {bf.field} — "
+                    "the broker's figure has nothing to be compared against"
+                ),
+                concept=variance_concept(bf.field),
+            )
+        )
+
+    flagged = {f.concept or f.field for f in out_flags}
+    reasons = _dedupe_refusals(
+        [r for r in candidate_refusals if r.concept not in flagged]
+    )
+
     return VarianceReportResponse(
         deal_id=deal_id,
         flags=out_flags,
         critical_count=crit,
         warn_count=warn,
         info_count=info,
+        reasons=reasons,
     )
 
 
