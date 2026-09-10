@@ -25,9 +25,13 @@ regression hides:
   the critic's inputs and the OM-anchored figures have no seed behind them,
   so they must return nothing at all.
 
-Two tests are ``xfail(strict=True)``. They are NOT flaky and they are not
-scaffolding: they encode the honest behaviour and currently fail, so they
-flip green the moment the finding is fixed. See FINDING notes on each.
+Two of these started life as ``xfail(strict=True)`` — they encoded honest
+behaviour the app did not yet have, so they would flip green (and fail the
+suite, demanding attention) the moment someone fixed the finding. That is
+exactly what happened: the lineage work now marks a run stale when a cited
+document is deleted, and rebuilds on read rather than serving a chain to a
+page that no longer exists. Both are plain assertions again; their FINDING
+notes are kept as the record of what was wrong.
 """
 
 from __future__ import annotations
@@ -639,18 +643,6 @@ async def test_rebuilt_lineage_names_no_deleted_document_after_a_rerun() -> None
     assert after.unresolved, "an all-seed run reported nothing unresolved"
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "FINDING (Phase 5.3): deleting a source document does not mark the run "
-        "stale. lineage._is_stale only fires when an input moved FORWARD "
-        "(documents.uploaded_at > run_started, or deals.updated_at > "
-        "run_started); a document that VANISHED is invisible to it, and "
-        "DELETE /deals/{id}/documents/{doc_id} does not touch deals.updated_at. "
-        "So the record for the run that consumed the deleted T-12 still reports "
-        "stale=False — it claims to describe today's evidence."
-    ),
-)
 @pytest.mark.asyncio
 async def test_lineage_is_stale_once_a_source_document_is_deleted() -> None:
     from app.database import get_session_factory
@@ -674,18 +666,6 @@ async def test_lineage_is_stale_once_a_source_document_is_deleted() -> None:
     assert stored.stale is True, "the persisted record did not mark the run stale"
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "FINDING (Phase 5.3): the PERSISTED lineage record is never revisited "
-        "when a document is deleted. lineage.load_persisted replays the stored "
-        "node list verbatim (recomputing only `stale`, which itself misses "
-        "deletions — see the test above), so GET /deals/{id}/lineage keeps "
-        "serving doc:<deleted-id> and page:<deleted-id>:N nodes: a walkable "
-        "chain from levered IRR down to a page of a document the deal no "
-        "longer has."
-    ),
-)
 @pytest.mark.asyncio
 async def test_persisted_lineage_stops_citing_a_deleted_document() -> None:
     from app.database import get_session_factory
