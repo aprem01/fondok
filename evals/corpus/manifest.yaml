@@ -1,0 +1,267 @@
+# Labelled extraction corpus — document manifest (Phase 5.1).
+#
+# One case per source document. Kept in a deliberately small YAML subset so
+# validate_corpus.py (stdlib only) can parse it: top-level scalars, and lists of
+# flat "- key: value" mappings. Do not add nesting or multi-line strings.
+#
+# path_base: corpus_dir -> relative to $FONDOK_CORPUS_DIR (default below, relative to repo root)
+#            repo       -> relative to the repository root
+# live_document_id: document id on the live deal (deal e577f547-a3cd-4e78-9ee1-8d761b0c4777) when known
+# payload_fixture / golden_case: stored real extraction payload / evals/golden-set/documents case id
+# md5: of the file in the corpus dir on 2026-09-10 (identity check; golden fixtures were matched by hash)
+version: 1
+built_at: "2026-09-10"
+corpus_dir_env: FONDOK_CORPUS_DIR
+corpus_dir_default: "FL Miami South Beach Anglers (Eshan)"
+property: "Kimpton Angler's South Beach, 660 Washington Avenue, Miami Beach, FL 33139 (132 keys)"
+live_deal_id: "e577f547-a3cd-4e78-9ee1-8d761b0c4777"
+
+cases:
+  - id: anglers_hma_summary
+    filename: "Angler_s HMA Summary.docx"
+    live_filename: "Angler's HMA Summary.docx"
+    doc_type: PROPERTY_INFO
+    path: "7 - Key Agreements/Angler_s HMA Summary.docx"
+    path_base: corpus_dir
+    document_available: true
+    live_document_id: null
+    payload_fixture: null
+    golden_case: null
+    md5: 79d74fe2d385bda313d521e7be462fc5
+    notes: "Key HMA terms (base fee 3.25% + $76,000 in-lieu, 15% incentive above 10% of cost, 4% FF&E reserve, term to 12/31/2033). docx = single logical page (page 1). All labels are contract terms with concept null + proposed_concept; the registry has no percentage-term concepts yet."
+  - id: anglers_business_plan_2024
+    filename: "2024 Business Plan.docx"
+    live_filename: "2024 Business Plan.docx"
+    doc_type: PROPERTY_INFO
+    path: "9 - Sales & Marketing/2024 Business Plan.docx"
+    path_base: corpus_dir
+    document_available: true
+    live_document_id: null
+    payload_fixture: null
+    golden_case: null
+    md5: fb88dfa3b25d7889e5a32963dc7d21b6
+    notes: "Narrative sales plan. Only the stated segment RevPAR goals / YTD figures are labelled (concept null, proposed group_revpar / transient_revpar). Goals use basis=broker as the closest enum for an operator plan target — see _provisional_policy.md."
+  - id: anglers_capex
+    filename: "Anglers CapEx.xlsx"
+    live_filename: "Anglers CapEx.xlsx"
+    doc_type: CAPEX
+    path: "3 - CapEx/Anglers CapEx.xlsx"
+    path_base: corpus_dir
+    document_available: true
+    live_document_id: null
+    payload_fixture: null
+    golden_case: null
+    md5: bba1627840090c8c129a348133b10900
+    notes: "Sheet 1 '5-Year' = 2025 5-year capex plan (rows 4-11 category rollup, detail below); sheets 2-5 = completed projects 2024/2023/2022/2021 with the year total in E2. Plan years labelled with basis=broker (owner plan), history with basis=actual. No registry concept for owner capex (renovation_budget is the buyer's PIP input) — proposed capex_plan_total / capex_actual_total."
+  - id: anglers_room_mix
+    filename: "ROOM TYPES COUNT LOCATION.xlsx"
+    live_filename: "ROOM TYPES COUNT LOCATION.xlsx"
+    doc_type: ROOM_MIX
+    path: "5 - Floor Plans & Rooms Matrix/ROOM TYPES COUNT LOCATION.xlsx"
+    path_base: corpus_dir
+    document_available: true
+    live_document_id: null
+    payload_fixture: null
+    golden_case: null
+    md5: 854d8f425e1ad6af510a94460d7cbd5e
+    notes: "12 room types with booking code, count and building; Grand Total C50 = 132 (keys, confirmed). Per-type counts are concept null + proposed room_type_count."
+  - id: anglers_insurance_summary
+    filename: "Angler_s Insurance Summary.xlsx"
+    live_filename: "Angler's Insurance Summary.xlsx"
+    doc_type: INSURANCE
+    path: "6 - Property Taxes & Insurance/Angler_s Insurance Summary.xlsx"
+    path_base: corpus_dir
+    document_available: true
+    live_document_id: null
+    payload_fixture: null
+    golden_case: null
+    md5: db423126ae288a9ea9627311b4b2fcc6
+    notes: "Property insurance + manager GL, 2022-2024 actual and 2025 projected (basis=broker for the projection). 2023 total 1,351,728 matches the 2023 P&L insurance row; 2024 total 1,468,819 differs from the 2024 detailed P&L (1,474,459) and the OM (1,461,690) — flagged for the confirmation session."
+  - id: miami_beach_supply_2025_12
+    filename: "Miami Beach Supply 12.10.25.xlsx"
+    live_filename: "Miami Beach Supply 12.10.25.xlsx"
+    doc_type: STR_TREND
+    path: "Model/Supply/Miami Beach Supply 12.10.25.xlsx"
+    path_base: corpus_dir
+    document_available: true
+    live_document_id: null
+    payload_fixture: null
+    golden_case: null
+    md5: 86b3d6610248a26e70d456550a922f11
+    notes: "CoStar supply export (pipeline / inventory). No extraction captured and no registry concept for supply — no labels yet (empty list)."
+  - id: miami_beach_sales_comps_2025_12
+    filename: "Miami Beach Sales Comps 12.10.25.xlsx"
+    live_filename: "Miami Beach Sales Comps 12.10.25.xlsx"
+    doc_type: STR_TREND
+    path: "Model/Sales Comps/Miami Beach Sales Comps 12.10.25.xlsx"
+    path_base: corpus_dir
+    document_available: true
+    live_document_id: null
+    payload_fixture: null
+    golden_case: null
+    md5: bb8803356c745e9be1d309ab2c223444
+    notes: "CoStar hotel sales comparables. No extraction captured; comp price-per-key is not a registry concept — no labels yet (empty list)."
+  - id: costar_miami_beach_hospitality_submarket_2025_12
+    filename: "Miami Beach-Hospitality-Submarket-2025-12-10.pdf"
+    live_filename: "Miami Beach-Hospitality-Submarket-2025-12-10.pdf"
+    doc_type: STR_TREND
+    path: "Model/Costar and STR Reports/Miami Beach-Hospitality-Submarket-2025-12-10.pdf"
+    path_base: corpus_dir
+    document_available: true
+    live_document_id: null
+    payload_fixture: null
+    golden_case: null
+    md5: f849b4d6fb4e013fe9bff1b8e726496a
+    notes: "CoStar submarket report. No extraction captured — no labels yet (empty list). Candidate market-basis labels: submarket occupancy / ADR / RevPAR once a reviewer cites the page."
+  - id: costar_miami_beach_hospitality_capital_submarket_2025_12
+    filename: "Miami Beach-Hospitality-Capital Submarket-2025-12-10.pdf"
+    live_filename: "Miami Beach-Hospitality-Capital Submarket-2025-12-10.pdf"
+    doc_type: STR_TREND
+    path: "Model/Costar and STR Reports/Miami Beach-Hospitality-Capital Submarket-2025-12-10.pdf"
+    path_base: corpus_dir
+    document_available: true
+    live_document_id: null
+    payload_fixture: null
+    golden_case: null
+    md5: a1acebe016aec6b9b0289714fff85ede
+    notes: "CoStar capital-markets submarket report (cap rates, sales volume). No extraction captured — no labels yet (empty list)."
+  - id: str_ang_2025_05
+    filename: "ANG-20250500-USD-E.xlsx"
+    live_filename: "ANG-20250500-USD-E.xlsx"
+    doc_type: STR_TREND
+    path: "2 - STR Reports/ANG-20250500-USD-E.xlsx"
+    path_base: corpus_dir
+    document_available: true
+    live_document_id: null
+    payload_fixture: null
+    golden_case: null
+    md5: 5f7165a1b768f1abb7cfa571266fa89d
+    notes: "Monthly STAR report for May 2025 (STR id 56387). Labels read from sheet 2 'Glance_1': subject (basis actual) and comp set (basis market) Occ/ADR/RevPAR for current month, YTD, running 3 month and running 12 month, plus MPI/ARI/RGI (proposed concepts). Running-12 subject KPIs equal the May-2025 T-12 workbook."
+  - id: str_ang_2023_12
+    filename: "ANG-20231200-USD-E.xlsx"
+    live_filename: "ANG-20231200-USD-E.xlsx"
+    doc_type: STR_TREND
+    path: "2 - STR Reports/ANG-20231200-USD-E.xlsx"
+    path_base: corpus_dir
+    document_available: true
+    live_document_id: null
+    payload_fixture: null
+    golden_case: null
+    md5: 6590b2f4bb13856a74ef71db35403f91
+    notes: "Monthly STAR report for December 2023. Same layout and label set as str_ang_2025_05. Running-12 subject KPIs equal the 2023 P&L (0.82391 / 247.078 / 203.57)."
+  - id: str_weekly_2025_07_13
+    filename: "56387-20250713-USD-E.xlsx"
+    live_filename: "56387-20250713-USD-E.xlsx"
+    doc_type: STR_TREND
+    path: "2 - STR Reports/56387-20250713-USD-E.xlsx"
+    path_base: corpus_dir
+    document_available: true
+    live_document_id: null
+    payload_fixture: null
+    golden_case: null
+    md5: 553b7043c82890e8bf41c460e0568937
+    notes: "Weekly STAR report (week of July 13-19, 2025). The scope enum has no weekly value, so nothing is labelled yet (empty list); add labels once the registry defines a weekly scope."
+  - id: anglers_t12_2025_03
+    filename: "The Angler_s - March 2025 Financials.xlsx"
+    live_filename: "Copy of The Angler_s - March 2025 Financials.xlsx"
+    doc_type: T12
+    path: "1 - Financials/Summary Financials/The Angler_s - March 2025 Financials.xlsx"
+    path_base: corpus_dir
+    document_available: true
+    live_document_id: "9aba088d-c6fd-4324-9282-ba3bbfaeeb89"
+    payload_fixture: null
+    golden_case: null
+    md5: 8648078c0f97f85592f2577693b339fb
+    notes: "Live T-12 (period ending 2025-03-31, Apr-2024..Mar-2025). Sheet 1 'P&L' = March 2025 month, sheet 2 'T12' = the T-12 (page 2). 6 audit-confirmed labels; the other 24 live low-confidence fields plus 14 direct cell reads are provisional. The live extractor mislabels Jan-Mar 2025 monthly values as 2024 — see label notes."
+  - id: anglers_pnl_2024
+    filename: "Angler_s 2024 Full Year Detailed P&L.xlsm"
+    live_filename: "Copy of Angler_s 2024 Full Year Detailed P&L.xlsm"
+    doc_type: PNL
+    path: "1 - Financials/Detailed Financials/Angler_s 2024 Full Year Detailed P&L.xlsm"
+    path_base: corpus_dir
+    document_available: true
+    live_document_id: "136a204d-226f-431c-a1da-74d3438feb04"
+    payload_fixture: null
+    golden_case: null
+    md5: 3042212712b68878c21c3d9b808d134c
+    notes: "74-sheet IHG detailed workbook (most sheets veryHidden). Page 5 = 'Summary', column Z = 2024 TOTAL. 3 audit-confirmed KPIs; every other Summary row is a provisional direct cell read (live extraction had 645 fields, none low-confidence, values not captured)."
+  - id: anglers_pnl_2023
+    filename: "Angler_s 2023 P&L.xlsx"
+    live_filename: "Copy of Angler_s 2023 P&L.xlsx"
+    doc_type: PNL
+    path: "1 - Financials/Summary Financials/Angler_s 2023 P&L.xlsx"
+    path_base: corpus_dir
+    document_available: true
+    live_document_id: "e37f4379-1760-4ab3-b480-2a48b027e77f"
+    payload_fixture: "apps/worker/tests/fixtures/real_payloads/anglers_annual_pnl_real.json"
+    golden_case: anglers_2023_annual_pnl
+    golden_fixture: "apps/worker/tests/fixtures/sam_anglers_2023_pnl.xlsx"
+    md5: 0a050ebe0656480d45203ee54c8a95c4
+    notes: "Byte-identical to the golden fixture sam_anglers_2023_pnl.xlsx (md5 match). Single sheet 'P&L' (page 1), column O = TOTAL. 8 confirmed (3 audit KPIs + golden canonical rooms/total/GOP/NOI + keys); annual rows and the full 12-month series from the June-2026 payload are provisional. Live and June extractions use different field namespaces — labels carry the live name and cite the June name."
+  - id: anglers_pnl_2019
+    filename: "Angler_s 2019 P&L.xlsx"
+    live_filename: "Copy of Angler_s 2019 P&L.xlsx"
+    doc_type: PNL
+    path: "1 - Financials/Summary Financials/Angler_s 2019 P&L.xlsx"
+    path_base: corpus_dir
+    document_available: true
+    live_document_id: "b9a90f5d-ce38-4b47-babd-bd62c10bdf53"
+    payload_fixture: null
+    golden_case: null
+    md5: bf91e169be14e5964eb55f305199b006
+    notes: "Single sheet 'P&L' (page 1), column O = TOTAL. 3 audit-confirmed KPIs; 16 live low-confidence fields and 17 direct cell reads are provisional. Pre-pandemic year — Data Room badge marked verify by QA."
+  - id: anglers_om
+    filename: "Miami Beach Anglers Offering Memorandum.pdf"
+    live_filename: "Miami Beach Anglers Offering Memorandum.pdf"
+    doc_type: OM
+    path: "0 - Offering Memorandum/Miami Beach Anglers Offering Memorandum.pdf"
+    path_base: corpus_dir
+    document_available: true
+    live_document_id: null
+    payload_fixture: null
+    golden_case: anglers_om
+    golden_fixture: "apps/worker/tests/fixtures/sam_anglers_om.pdf"
+    md5: 14382a8d65a04c526982ee4ae7b0d64e
+    notes: "45-page HWE offering memorandum; byte-identical to the golden fixture sam_anglers_om.pdf. Page 40 = historical operating statement 2021-2024 (the 2024 column is actuals through Nov-2024 + Dec forecast, footnote 3 — this is what the extractor calls ttm_summary_per_om); page 41 = broker pro forma 2025-2029; page 6 = property snapshot. 9 audit-confirmed labels; the rest of the 2024, 2023 and Year-One columns are provisional, each value verified as present in the page text."
+  - id: anglers_t12_2025_05_adj
+    filename: "The Angler_s - May 2025 Financials (Adjusted).xlsx"
+    live_filename: null
+    doc_type: T12
+    path: "1 - Financials/Summary Financials/The Angler_s - May 2025 Financials (Adjusted).xlsx"
+    path_base: corpus_dir
+    document_available: true
+    live_document_id: null
+    payload_fixture: "apps/worker/tests/fixtures/real_payloads/anglers_t12_real.json"
+    golden_case: anglers_t12
+    golden_fixture: "apps/worker/tests/fixtures/sam_anglers_t12.xlsx"
+    md5: c53d26f6ac3cc5a72e984f4f96f45a97
+    notes: "NOT on the live deal — this is the golden anglers_t12 document (sam_anglers_t12.xlsx is byte-identical), a different T-12 from anglers_t12_2025_03 (period ending 2025-05-31; GOP 5,081,540 vs 4,970,460). Pages: 1-2 hidden IHG sheets, 3 'P&L', 4 'T12', 5 'Adjusted T-12' (seller-adjusted, basis=broker), 6 'Adjusted Forecast' (Jan-May 2025 actual, Jun-Dec forecast; only actual months labelled). 8 golden-confirmed labels."
+  - id: sample_str_trend
+    filename: "sample_str_trend.xls"
+    live_filename: null
+    doc_type: STR_TREND
+    path: "apps/worker/tests/fixtures/sample_str_trend.xls"
+    path_base: repo
+    document_available: true
+    live_document_id: null
+    payload_fixture: null
+    golden_case: sample_str_trend
+    md5: 6575057c1010befd924ee6fafb6fd65c
+    notes: "Existing golden document (CoStar STR Trend .xls, not the Angler's). The golden case pins parse signals only (no canonical fields) — no labels yet (empty list)."
+  - id: sample_cbre_horizons
+    filename: "sample_cbre_horizons.pdf"
+    live_filename: null
+    doc_type: CBRE_HORIZONS
+    path: "apps/worker/tests/fixtures/sample_cbre_horizons.pdf"
+    path_base: repo
+    document_available: true
+    live_document_id: null
+    payload_fixture: null
+    golden_case: sample_cbre_horizons
+    md5: 20e2a9003183cde439ea6466bea091ac
+    notes: "Existing golden document (CBRE Hotel Horizons forecast, not the Angler's). Parse signals only in the golden case — no labels yet (empty list)."
+
+excluded:
+  - id: kimpton_angler_synthetic_golden
+    path: "evals/golden-set/kimpton-angler"
+    reason: "The kimpton-angler golden set is explicitly SYNTHETIC (its input files say so and model.json reconciles to the removed mockData prototype: ADR 385, rooms revenue 14.1M). It is not a document and its numbers are not the Angler's — never merge them into these labels."
