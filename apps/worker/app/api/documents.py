@@ -371,7 +371,11 @@ async def _lookup_extraction_cache(
                   JOIN documents d ON d.id = er.document_id
                  WHERE er.tenant_id = :tenant
                    AND d.content_hash = :h
-                   AND d.status = :status
+                   -- Case-insensitive to match every other status reader
+                   -- (e.g. engines/historical_baseline.py uses UPPER(...)).
+                   -- A document stored as 'Extracted' silently disabled the
+                   -- cache before this; found by the evidence-ablation suite.
+                   AND UPPER(COALESCE(d.status, '')) = :status
                    AND er.agent_version LIKE :suffix
                  ORDER BY er.created_at DESC
                  LIMIT 1

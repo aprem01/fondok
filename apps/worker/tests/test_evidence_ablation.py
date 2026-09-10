@@ -147,12 +147,13 @@ async def _seed_document(
     fields: list[dict[str, Any]],
     fiscal_year: int | None = None,
     content_hash: str,
+    status: str = "EXTRACTED",
 ) -> str:
     """One EXTRACTED document + its extraction_results row.
 
-    ``status='EXTRACTED'`` (upper) matters: the loaders normalise with
-    ``UPPER()`` but ``_lookup_extraction_cache`` compares exactly, so a
-    mixed-case seed would make the cache positive control pass vacuously.
+    ``status`` defaults to ``'EXTRACTED'`` (upper) so the cache positive
+    control cannot pass vacuously. It is overridable so the case-insensitivity
+    regression below can seed the mixed-case spelling that finding 6 hit.
     ``agent_version`` carries the ``;pv=<version>`` suffix the cache filters on.
     """
     from app.api.documents import EXTRACTION_PIPELINE_VERSION
@@ -162,9 +163,10 @@ async def _seed_document(
         text(
             "INSERT INTO documents (id, deal_id, tenant_id, filename, doc_type, "
             "status, fiscal_year, content_hash, page_count) "
-            "VALUES (:id, :deal, :tenant, :f, :dt, 'EXTRACTED', :fy, :h, 10)"
+            "VALUES (:id, :deal, :tenant, :f, :dt, :st, :fy, :h, 10)"
         ),
         {
+            "st": status,
             "id": doc_id,
             "deal": deal_id,
             "tenant": tenant_id,
@@ -878,3 +880,43 @@ async def test_the_rerun_carries_no_value_and_no_id_from_the_deleted_documents()
                 f"engine {m['engine_name']} still names deleted document {doc_id}"
             )
     assert lineage.run_id is not None and str(lineage.run_id) == run_after
+
+
+@pytest.mark.asyncio
+async def test_extraction_cache_matches_status_case_insensitively() -> None:
+    """A document stored as ``'Extracted'`` must still serve a cache hit.
+
+    Finding 6 of this sweep: ``_lookup_extraction_cache`` compared
+    ``d.status = 'EXTRACTED'`` verbatim while every other status reader
+    normalises (``engines/historical_baseline.py`` uses ``UPPER(...)``). Two
+    test files and several docstrings use the mixed-case spelling, so the
+    divergence was one careless write away from silently disabling the cache.
+    """
+    from app.api.documents import _lookup_extraction_cache
+    from app.database import get_session_factory
+
+    deal_id, tenant_id = str(uuid4()), str(uuid4())
+    content_hash = "case-insensitive-cache-probe"
+    factory = get_session_factory()
+    async with factory() as session:
+        await _seed_deal(session, deal_id=deal_id, tenant_id=tenant_id)
+        await _seed_document(
+            session,
+            deal_id=deal_id,
+            tenant_id=tenant_id,
+            filename="MixedCaseStatus.xlsx",
+            doc_type="T12",
+            fields=[{"field_name": "adr_usd", "value": 233.446, "confidence": 0.98}],
+            content_hash=content_hash,
+            status="Extracted",
+        )
+        await session.commit()
+
+        hit = await _lookup_extraction_cache(
+            session, tenant_id=tenant_id, content_hash=content_hash
+        )
+
+    assert hit is not None, (
+        "a document whose status is stored as 'Extracted' must still serve a "
+        "cache hit — the comparison is normalised with UPPER() now"
+    )
