@@ -1950,6 +1950,25 @@ export interface AskAnswerResult {
 // ─── Analysis ───────────────────────────────────────────────────────
 // Mirrors apps/worker/app/api/analysis.py VarianceReportResponse shape.
 
+/** FON-54a — one raw broker-field comparison folded into a consolidated flag. */
+export interface VarianceRawFieldResult {
+  field: string;
+  rule_id?: string | null;
+  severity: string;
+  actual?: number | null;
+  broker?: number | null;
+  delta?: number | null;
+  delta_pct?: number | null;
+  source_page?: number | null;
+}
+
+/**
+ * FON-54a — what a dollar delta on a flag *is*. Only `'noi'` (NOI / GOP
+ * concepts) may be read as an estimated NOI impact; a revenue- or
+ * expense-line delta is never printed as an NOI impact.
+ */
+export type VarianceImpactBasis = 'noi' | 'revenue' | 'expense' | 'other';
+
 export interface VarianceFlagResult {
   field: string;
   rule_id: string | null;
@@ -1961,6 +1980,11 @@ export interface VarianceFlagResult {
   delta_pct: number | null;
   source_page: number | null;
   note: string | null;
+  /** FON-54a consolidation (additive; absent on older worker builds). */
+  concept?: string | null;
+  concept_label?: string | null;
+  impact_basis?: VarianceImpactBasis | null;
+  raw_fields?: VarianceRawFieldResult[];
 }
 
 export interface VarianceReportResult {

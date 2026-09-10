@@ -78,8 +78,48 @@ class AnalysisResponse(BaseModel):
     status: str = "queued"
 
 
+class VarianceRawFieldOut(BaseModel):
+    """One raw broker-field comparison folded into a consolidated flag.
+
+    FON-54a: the IC-facing flag is one-per-concept; every raw extractor
+    path that fed it (``broker_proforma.rooms_revenue_usd``,
+    ``broker.rooms_revenue``, a flat ``rooms_revenue_usd`` …) is kept here
+    with its own numbers + rule so the "Technical detail" disclosure can
+    show exactly what was reconciled. Never the IC-facing title.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    field: str
+    rule_id: str | None = None
+    severity: str
+    actual: float | None = None
+    broker: float | None = None
+    delta: float | None = None
+    delta_pct: float | None = None
+    source_page: int | None = None
+
+
+VarianceImpactBasis = Literal["noi", "revenue", "expense", "other"]
+
+
 class VarianceFlagOut(BaseModel):
-    """One variance flag — broker proforma vs T-12 actual on a single field."""
+    """One variance flag — broker proforma vs T-12 actual on a single field.
+
+    FON-54a consolidation contract (additive — every pre-existing field
+    keeps its meaning for older callers/tests):
+
+    * ``concept`` / ``concept_label`` — the canonical business concept the
+      flag is about (``rooms_revenue`` / ``Rooms revenue``). After
+      :func:`consolidate_variance_flags` there is exactly one flag per
+      concept and ``field`` carries the concept key rather than a raw path.
+    * ``impact_basis`` — what a dollar delta on this flag *is*. Only
+      ``"noi"`` (NOI / GOP concepts) may be read as an estimated NOI
+      impact; a revenue- or expense-line delta is NOT an NOI impact and the
+      UI must not print one (Sam FON-54: "implausibly large variances").
+    * ``raw_fields`` — the raw comparisons that were merged (Technical
+      detail). Severity of the consolidated flag = max over ``raw_fields``.
+    """
 
     model_config = ConfigDict(extra="forbid")
 
@@ -92,6 +132,10 @@ class VarianceFlagOut(BaseModel):
     delta_pct: float | None = None
     source_page: int | None = None
     note: str | None = None
+    concept: str | None = None
+    concept_label: str | None = None
+    impact_basis: VarianceImpactBasis | None = None
+    raw_fields: list[VarianceRawFieldOut] = Field(default_factory=list)
 
 
 class VarianceReportResponse(BaseModel):
@@ -103,6 +147,199 @@ class VarianceReportResponse(BaseModel):
     warn_count: int = 0
     info_count: int = 0
     note: str | None = None
+
+
+# ──────────────── FON-54a: consolidate variance flags by concept ────────────────
+#
+# ``_broker_fields_from_extraction`` admits every ``broker_proforma.*`` /
+# ``broker.*`` path *and* any flat key in ``_BROKER_RULE_BY_FIELD``, so one
+# T-12 line (rooms revenue) can produce three flags with machine-named
+# titles. The IC memo wants one flag per business concept, a readable label,
+# the max severity across the duplicates, and an honest statement of what
+# the delta means for NOI. Pure + deterministic; the raw rows survive in
+# ``raw_fields`` for the Technical-detail disclosure.
+
+# concept key → (business-readable label, impact basis). ``"noi"`` is
+# reserved for the concepts whose delta IS an NOI delta.
+_VARIANCE_CONCEPTS: dict[str, tuple[str, VarianceImpactBasis]] = {
+    "noi": ("NOI", "noi"),
+    "gop": ("GOP", "noi"),
+    "rooms_revenue": ("Rooms revenue", "revenue"),
+    "fb_revenue": ("F&B revenue", "revenue"),
+    "other_revenue": ("Other revenue", "revenue"),
+    "resort_fees": ("Resort fees", "revenue"),
+    "total_revenue": ("Total revenue", "revenue"),
+    "occupancy": ("Occupancy", "revenue"),
+    "adr": ("ADR", "revenue"),
+    "revpar": ("RevPAR", "revenue"),
+    "departmental_expenses": ("Departmental expenses", "expense"),
+    "undistributed_expenses": ("Undistributed expenses", "expense"),
+    "mgmt_fee": ("Management fee", "expense"),
+    "ffe_reserve": ("FF&E reserve", "expense"),
+    "fixed_charges": ("Fixed charges", "expense"),
+    "insurance": ("Insurance", "expense"),
+    "property_taxes": ("Property taxes", "expense"),
+    "broker_adr_growth_vs_market": ("ADR growth vs. market forecast", "other"),
+    "broker_revpar_growth_vs_market": ("RevPAR growth vs. market forecast", "other"),
+}
+
+# Concepts whose values are ratios (delta_pct is absolute points, not pct).
+_RATIO_CONCEPTS: frozenset[str] = frozenset({"occupancy"})
+
+_SEVERITY_RANK: dict[str, int] = {"critical": 2, "warn": 1, "warning": 1, "info": 0}
+
+_LABEL_ACRONYMS: dict[str, str] = {
+    "noi": "NOI", "adr": "ADR", "revpar": "RevPAR", "gop": "GOP", "fb": "F&B",
+    "ffe": "FF&E", "cbre": "CBRE", "t12": "T-12", "ytd": "YTD", "ttm": "TTM",
+    "usd": "", "pct": "",
+}
+
+
+def _severity_rank(severity: str | None) -> int:
+    return _SEVERITY_RANK.get(str(severity or "").lower(), 0)
+
+
+def variance_concept(field: str) -> str:
+    """Canonical concept key for a raw broker field path.
+
+    ``broker_proforma.rooms_revenue_usd`` / ``broker.rooms_revenue`` /
+    ``rooms_revenue_usd`` → ``rooms_revenue``; ``occupancy_pct`` →
+    ``occupancy``. Reuses the agent's ``_normalize_field_key`` so the
+    grouping matches how the flags were built.
+    """
+    from ..agents.variance import _normalize_field_key
+
+    key = _normalize_field_key(field)
+    for suffix in ("_usd", "_pct"):
+        if key.endswith(suffix) and len(key) > len(suffix):
+            key = key[: -len(suffix)]
+            break
+    return key
+
+
+def _concept_label_fallback(concept: str) -> str:
+    """Sentence-case label for a concept outside the catalog (acronym-aware)."""
+    words: list[str] = []
+    for w in concept.replace(".", "_").split("_"):
+        if not w:
+            continue
+        if w in _LABEL_ACRONYMS:
+            if _LABEL_ACRONYMS[w]:
+                words.append(_LABEL_ACRONYMS[w])
+            continue
+        words.append(w)
+    if not words:
+        return concept
+    first = words[0]
+    if first not in _LABEL_ACRONYMS.values():
+        first = first[:1].upper() + first[1:]
+    return " ".join([first, *words[1:]])
+
+
+def _fmt_concept_value(concept: str, value: float) -> str:
+    if concept in _RATIO_CONCEPTS:
+        return f"{value:.1%}"
+    return f"${value:,.0f}"
+
+
+def _fmt_concept_delta_pct(concept: str, delta_pct: float) -> str:
+    if concept in _RATIO_CONCEPTS:
+        return f"{abs(delta_pct) * 100:.1f} pts"
+    return f"{abs(delta_pct):.1%}"
+
+
+def _concept_note(
+    concept: str,
+    label: str,
+    basis: VarianceImpactBasis,
+    primary: VarianceFlagOut,
+    merged: int,
+) -> str | None:
+    """Business-readable, deterministic description of a consolidated flag."""
+    if (
+        concept.endswith("_vs_market")  # market-forecast rows narrate themselves
+        or primary.broker is None
+        or primary.actual is None
+    ):
+        return primary.note
+    direction = "overstates" if primary.broker > primary.actual else "understates"
+    parts = [
+        f"{label}: broker proforma {_fmt_concept_value(concept, primary.broker)} "
+        f"vs T-12 actual {_fmt_concept_value(concept, primary.actual)}"
+    ]
+    if primary.delta_pct is not None and abs(primary.delta_pct) > 0:
+        parts.append(
+            f" — broker {direction} the T-12 by "
+            f"{_fmt_concept_delta_pct(concept, primary.delta_pct)}."
+        )
+    else:
+        parts.append(".")
+    if merged > 1:
+        parts.append(f" Consolidated from {merged} broker fields on this line.")
+    return "".join(parts)
+
+
+def consolidate_variance_flags(flags: list[VarianceFlagOut]) -> list[VarianceFlagOut]:
+    """One IC-facing flag per business concept.
+
+    Grouping key: :func:`variance_concept` of ``field``. Within a group the
+    *primary* row is the highest-severity one (ties → largest ``|delta_pct|``,
+    then first seen); its numbers/rule/page become the consolidated flag's.
+    ``severity`` = max across the group. ``impact_basis`` comes from the
+    concept catalog (``noi`` only for NOI / GOP), ``other`` for anything off
+    catalog. Output order = first-seen concept order (stable).
+    """
+    groups: dict[str, list[VarianceFlagOut]] = {}
+    order: list[str] = []
+    for f in flags:
+        key = variance_concept(f.field)
+        if key not in groups:
+            groups[key] = []
+            order.append(key)
+        groups[key].append(f)
+
+    out: list[VarianceFlagOut] = []
+    for key in order:
+        members = groups[key]
+        primary = max(
+            members,
+            key=lambda m: (_severity_rank(m.severity), abs(m.delta_pct or 0.0)),
+        )
+        label, basis = _VARIANCE_CONCEPTS.get(key, (_concept_label_fallback(key), "other"))
+        raw = [
+            VarianceRawFieldOut(
+                field=m.field,
+                rule_id=m.rule_id,
+                severity=m.severity,
+                actual=m.actual,
+                broker=m.broker,
+                delta=m.delta,
+                delta_pct=m.delta_pct,
+                source_page=m.source_page,
+            )
+            for m in members
+        ]
+        source_page = primary.source_page
+        if source_page is None:
+            source_page = next((m.source_page for m in members if m.source_page), None)
+        out.append(
+            VarianceFlagOut(
+                field=key,
+                rule_id=primary.rule_id,
+                severity=primary.severity,
+                actual=primary.actual,
+                broker=primary.broker,
+                delta=primary.delta,
+                delta_pct=primary.delta_pct,
+                source_page=source_page,
+                note=_concept_note(key, label, basis, primary, len(members)),
+                concept=key,
+                concept_label=label,
+                impact_basis=basis,
+                raw_fields=raw,
+            )
+        )
+    return out
 
 
 @router.post("/{deal_id}/analyze", response_model=AnalysisResponse)
@@ -242,17 +479,10 @@ async def get_variance(
         deal_uuid=deal_id, actuals=actuals, broker_fields=broker_fields
     )
 
-    out_flags: list[VarianceFlagOut] = []
-    crit = warn = info = 0
+    raw_flags: list[VarianceFlagOut] = []
     for f in flags:
         sev = f.severity.value if hasattr(f.severity, "value") else str(f.severity)
-        if sev == "critical":
-            crit += 1
-        elif sev == "warn":
-            warn += 1
-        else:
-            info += 1
-        out_flags.append(
+        raw_flags.append(
             VarianceFlagOut(
                 field=f.field,
                 rule_id=f.rule_id,
@@ -281,14 +511,23 @@ async def get_variance(
         session, deal_id=str(deal_id), tenant_id=str(tenant_id),
         broker_proforma=broker, actuals=actuals,
     )
-    for mf in market_flags:
-        if mf.severity == "Critical":
+    raw_flags.extend(market_flags)
+
+    # FON-54a: one IC-facing flag per business concept (max severity across
+    # the merged raw paths, readable label, honest impact basis). Severity
+    # counts are taken from the consolidated list, case-insensitively —
+    # the Severity enum values are title-case ("Critical"), so the prior
+    # lowercase comparison under-counted critical/warn flags.
+    out_flags = consolidate_variance_flags(raw_flags)
+    crit = warn = info = 0
+    for cf in out_flags:
+        rank = _severity_rank(cf.severity)
+        if rank >= 2:
             crit += 1
-        elif mf.severity == "Warn":
+        elif rank == 1:
             warn += 1
         else:
             info += 1
-        out_flags.append(mf)
 
     return VarianceReportResponse(
         deal_id=deal_id,

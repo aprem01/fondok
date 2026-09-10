@@ -48,11 +48,33 @@ export interface VarianceFlag {
   format: 'currency' | 'percent' | 'currency_per_key' | 'index';
   /** True when broker direction is favorable (i.e. overstated NOI/Occ/ADR). */
   broker_overstates: boolean;
-  /** Estimated $ impact on underwritten NOI if broker number is taken at face. */
+  /**
+   * Estimated $ impact on underwritten NOI if broker number is taken at face.
+   * FON-54a: populated ONLY when `impact_basis === 'noi'` (NOI / GOP concepts);
+   * a revenue- or expense-line delta is not an NOI impact and reads 0 here.
+   */
   noi_impact_usd: number;
   explanation: string;
   recommended_action: string;
   source_documents: VarianceSourceDoc[];
+  /** FON-54a — canonical concept key (`rooms_revenue`, `noi` …); the diligence-status key. */
+  concept?: string;
+  /** FON-54a — what the delta is: 'noi' | 'revenue' | 'expense' | 'other'. */
+  impact_basis?: 'noi' | 'revenue' | 'expense' | 'other';
+  /** FON-54a — raw extractor rows consolidated into this flag (Technical detail). */
+  raw_fields?: VarianceRawField[];
+}
+
+/** FON-54a — one raw broker-field comparison behind a consolidated flag. */
+export interface VarianceRawField {
+  field: string;
+  rule_id?: string | null;
+  severity: string;
+  broker?: number | null;
+  actual?: number | null;
+  delta?: number | null;
+  delta_pct?: number | null;
+  source_page?: number | null;
 }
 
 // --- Severity counts (kept in sync with flags array below) ----------------

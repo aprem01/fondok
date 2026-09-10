@@ -1,12 +1,15 @@
 /**
- * IC Memo tab — canonical rebuild (FON-54 / FON-72): the EDITABLE decision
- * workspace. These tests lock the four workspace editors the canonical design
- * introduces on top of the read-only one-pager:
+ * IC Memo tab — canonical rebuild (FON-54 / FON-72) + FON-54a (Sam's finding:
+ * duplicate machine-named variance flags with implausibly large "NOI impact";
+ * the recommendation shown as an inference). These tests lock:
  *
- *  1. VERDICT OVERRIDE — the IC recommendation is a selectable dropdown that
- *     DEFAULTS to the deterministic, numbers-grounded verdict and, when the
- *     analyst overrides it, PATCHes `field_overrides.memo_recommendation_override`
- *     via `api.deals.update`.
+ *  1. IC RECOMMENDATION IS A DECISION — the banner reads "Pending analyst
+ *     decision" until a verdict is selected AND confirmed; selecting persists
+ *     `memo_recommendation_override` + `memo_recommendation_confirmed: false`,
+ *     confirming persists `memo_recommendation_confirmed: true`. The Model
+ *     Assessment card keeps the model's inferred verdict, labelled as such. A
+ *     persisted confirmed verdict hydrates; a legacy unconfirmed one reads
+ *     pending.
  *
  *  2. EDITABLE THESIS — Edit toggles the thesis paragraph into an editable
  *     state ("Done editing"); the "narrative only" guarantee is shown.
@@ -14,13 +17,14 @@
  *  3. HIGHLIGHTS — "+ Add point" appends a highlight and persists the list to
  *     `field_overrides.memo_highlights`; the ••• "Move down" action reorders it.
  *
- *  4. DILIGENCE — an open broker-vs-T-12 variance flag renders with a Resolve
- *     action that flips the item's status and clears the open-critical summary.
- *
- * NOTE: written per the task but NOT run here (tsc-only verification).
+ *  4. DILIGENCE (FON-54a) — one item per concept with a business-readable
+ *     title; "Estimated NOI impact $X" ONLY for an NOI-basis flag, a revenue
+ *     line says "NOI impact not estimated"; the raw paths + rule ids sit under
+ *     "Technical detail"; Resolve persists `memo_diligence[concept]` and a
+ *     persisted status hydrates into IC readiness on reload.
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, fireEvent, cleanup, waitFor, within } from '@testing-library/react';
+import { render, screen, fireEvent, cleanup, waitFor } from '@testing-library/react';
 import React from 'react';
 import type { EngineOutputsResponse } from '@/lib/api';
 import type { VarianceFlag } from '@/lib/varianceData';
@@ -80,24 +84,57 @@ vi.mock('@/lib/hooks/useEngineOutputs', async () => {
   };
 });
 
-const refreshDealSpy = vi.fn();
+// Per-test fixtures — hoisted so the mock factories can read the live value.
+const fx = vi.hoisted(() => ({
+  fieldOverrides: {} as Record<string, unknown>,
+  flags: [] as unknown[],
+  refreshDealSpy: vi.fn(),
+}));
+
 vi.mock('@/lib/hooks/useDeal', () => ({
   useDeal: () => ({
-    deal: { id: 'deal-uuid-1', name: 'Kimpton Angler', city: 'Miami Beach, FL', keys: 132, brand: 'Kimpton', field_overrides: {} },
-    status: null, loading: false, error: null, fromMock: false, refresh: refreshDealSpy,
+    deal: { id: 'deal-uuid-1', name: 'Kimpton Angler', city: 'Miami Beach, FL', keys: 132, brand: 'Kimpton', field_overrides: fx.fieldOverrides },
+    status: null, loading: false, error: null, fromMock: false, refresh: fx.refreshDealSpy,
   }),
 }));
 
-const CRITICAL_FLAG = {
-  flag_id: 'f1', rule_id: 'BROKER_VS_T12_NOI_VARIANCE', severity: 'CRITICAL',
-  metric: 'total_revenue', field_label: 'Total Revenue',
-  noi_impact_usd: 180_000, explanation: 'Broker materials report $12.9M vs $12.3M in the TTM statements.',
+vi.mock('@/lib/hooks/useVariance', () => ({
+  useVariance: () => ({
+    flags: fx.flags,
+    critical: (fx.flags as { severity: string }[]).filter((f) => f.severity === 'CRITICAL').length,
+    warn: 0, info: 0, note: null, loading: false, error: null,
+  }),
+}));
+
+// A consolidated revenue-line flag exactly as `mapWorkerFlag` produces it from
+// the FON-54a worker contract (three raw paths → one concept).
+const ROOMS_FLAG = {
+  flag_id: 'BROKER_VS_T12_NOI_VARIANCE-0', rule_id: 'BROKER_VS_T12_NOI_VARIANCE', severity: 'CRITICAL',
+  metric: 'rooms_revenue', field_label: 'Rooms revenue',
+  broker_value: 12_950_000, t12_value: 12_300_000, variance_abs: -650_000, variance_pct: -0.0528,
+  format: 'currency', broker_overstates: true, noi_impact_usd: 0,
+  explanation: 'Rooms revenue: broker proforma $12,950,000 vs T-12 actual $12,300,000 — broker overstates the T-12 by 5.3%.',
   recommended_action: 'Review the cited T-12 line and re-underwrite the broker assumption.',
+  source_documents: [{ document_id: 'deal-uuid-1', page: 14, field: 'rooms_revenue' }],
+  concept: 'rooms_revenue', impact_basis: 'revenue',
+  raw_fields: [
+    { field: 'broker_proforma.rooms_revenue_usd', rule_id: 'BROKER_VS_T12_NOI_VARIANCE', severity: 'Warn', broker: 12_900_000, actual: 12_300_000, source_page: 14 },
+    { field: 'broker.rooms_revenue', rule_id: 'BROKER_VS_T12_NOI_VARIANCE', severity: 'Critical', broker: 12_950_000, actual: 12_300_000 },
+    { field: 'rooms_revenue_usd', rule_id: 'BROKER_VS_T12_NOI_VARIANCE', severity: 'Info', broker: 12_400_000, actual: 12_300_000 },
+  ],
 } as unknown as VarianceFlag;
 
-vi.mock('@/lib/hooks/useVariance', () => ({
-  useVariance: () => ({ flags: [CRITICAL_FLAG], critical: 1, warn: 0, info: 0, note: null, loading: false, error: null }),
-}));
+const NOI_FLAG = {
+  flag_id: 'BROKER_VS_T12_NOI_VARIANCE-1', rule_id: 'BROKER_VS_T12_NOI_VARIANCE', severity: 'CRITICAL',
+  metric: 'noi', field_label: 'NOI',
+  broker_value: 5_200_000, t12_value: 4_181_000, variance_abs: -1_019_000, variance_pct: -0.2437,
+  format: 'currency', broker_overstates: true, noi_impact_usd: 1_019_000,
+  explanation: 'NOI: broker proforma $5,200,000 vs T-12 actual $4,181,000 — broker overstates the T-12 by 24.4%.',
+  recommended_action: 'Review the cited T-12 line and re-underwrite the broker assumption.',
+  source_documents: [],
+  concept: 'noi', impact_basis: 'noi',
+  raw_fields: [{ field: 'broker_proforma.noi_usd', rule_id: 'BROKER_VS_T12_NOI_VARIANCE', severity: 'Critical', broker: 5_200_000, actual: 4_181_000 }],
+} as unknown as VarianceFlag;
 
 // api surface — spy the field_overrides PATCH; serve empty scenarios.
 const updateSpy = vi.fn(async () => ({ id: 'deal-uuid-1' }));
@@ -128,24 +165,63 @@ function lastOverrides(): Record<string, unknown> {
 beforeEach(() => {
   cleanup();
   updateSpy.mockClear();
-  refreshDealSpy.mockClear();
+  fx.refreshDealSpy.mockClear();
+  fx.fieldOverrides = {};
+  fx.flags = [ROOMS_FLAG];
 });
 
-describe('ICMemoTab — IC recommendation verdict override', () => {
-  it('defaults to the derived verdict and persists an override', async () => {
+describe('ICMemoTab — IC recommendation is a decision, not an inference', () => {
+  it('reads "Pending analyst decision" until a verdict is selected AND confirmed, persisting both steps', async () => {
     render(<ICMemoTab project={PROJECT} />);
-    // Strong returns → the deterministic default is "Proceed".
-    expect(screen.getByText('Proceed')).toBeInTheDocument();
 
-    // Open the recommendation dropdown and override the verdict.
-    fireEvent.click(screen.getByText('Proceed'));
+    // Strong returns → the MODEL says Proceed, but only on the assessment card.
+    expect(screen.getByText('Clears Hurdles')).toBeInTheDocument();
+    expect(screen.getByText(/Model-inferred: Proceed — the model.s assessment, not the IC decision/)).toBeInTheDocument();
+    // The recommendation itself is pending — the inferred verdict is NOT shown as the decision.
+    expect(screen.getByText('Pending analyst decision')).toBeInTheDocument();
+    expect(screen.getByText('Select a verdict, then confirm to record the decision')).toBeInTheDocument();
+    expect(screen.getByText('IC recommendation pending analyst decision')).toBeInTheDocument();
+
+    // Select a verdict → persisted as selected-but-unconfirmed; still pending.
+    fireEvent.click(screen.getByText('Pending analyst decision'));
     fireEvent.click(screen.getByText('Do Not Proceed'));
-
-    // The banner now shows the overridden verdict…
-    expect(screen.getByText('Do Not Proceed')).toBeInTheDocument();
-    // …and the override is persisted through field_overrides.
     await waitFor(() => expect(updateSpy).toHaveBeenCalled());
     expect(lastOverrides().memo_recommendation_override).toBe('Do Not Proceed');
+    expect(lastOverrides().memo_recommendation_confirmed).toBe(false);
+    expect(screen.getByText('Pending analyst decision')).toBeInTheDocument();
+    expect(screen.getByText('Do Not Proceed selected — confirm to record the decision')).toBeInTheDocument();
+
+    // Confirm → the decision is recorded and shown.
+    fireEvent.click(screen.getByText('Pending analyst decision'));
+    fireEvent.click(screen.getByText('Confirm recommendation'));
+    await waitFor(() => expect(lastOverrides().memo_recommendation_confirmed).toBe(true));
+    expect(lastOverrides().memo_recommendation_override).toBe('Do Not Proceed');
+    expect(screen.getByText('Do Not Proceed')).toBeInTheDocument();
+    expect(screen.getByText('✓ Analyst confirmed')).toBeInTheDocument();
+    expect(screen.getByText('IC recommendation confirmed by analyst')).toBeInTheDocument();
+    expect(screen.queryByText('Pending analyst decision')).not.toBeInTheDocument();
+  });
+
+  it('cannot confirm before a verdict is selected', () => {
+    render(<ICMemoTab project={PROJECT} />);
+    fireEvent.click(screen.getByText('Pending analyst decision'));
+    fireEvent.click(screen.getByText('Confirm recommendation'));
+    expect(updateSpy).not.toHaveBeenCalled();
+    expect(screen.getByText('Pending analyst decision')).toBeInTheDocument();
+  });
+
+  it('hydrates a persisted confirmed verdict, and reads a legacy unconfirmed one as pending', () => {
+    fx.fieldOverrides = { memo_recommendation_override: 'Proceed with Conditions', memo_recommendation_confirmed: true };
+    render(<ICMemoTab project={PROJECT} />);
+    expect(screen.getByText('Proceed with Conditions')).toBeInTheDocument();
+    expect(screen.getByText('✓ Analyst confirmed')).toBeInTheDocument();
+    cleanup();
+
+    // A verdict persisted before the confirm flag existed is not a recorded decision.
+    fx.fieldOverrides = { memo_recommendation_override: 'Proceed with Conditions' };
+    render(<ICMemoTab project={PROJECT} />);
+    expect(screen.getByText('Pending analyst decision')).toBeInTheDocument();
+    expect(screen.getByText('Proceed with Conditions selected — confirm to record the decision')).toBeInTheDocument();
   });
 });
 
@@ -191,17 +267,75 @@ describe('ICMemoTab — highlights: add + reorder', () => {
   });
 });
 
-describe('ICMemoTab — diligence resolve action', () => {
-  it('resolves an open critical variance item', () => {
+describe('ICMemoTab — diligence (FON-54a consolidated flags)', () => {
+  it('titles a revenue-line flag by concept and never prints a dollar NOI impact for it', () => {
     render(<ICMemoTab project={PROJECT} />);
-    // The open critical item surfaces its severity + Resolve action.
     expect(screen.getByText('Critical')).toBeInTheDocument();
-    expect(screen.getByText(/critical diligence item.*remain open/)).toBeInTheDocument();
+    expect(screen.getByText('Rooms revenue — broker overstates T-12 by 5.3%')).toBeInTheDocument();
+    expect(
+      screen.getByText('Rooms revenue: broker materials report $12.9M against $12.3M in the trailing-twelve-month operating statements.'),
+    ).toBeInTheDocument();
+    expect(screen.getByText('Revenue-line variance — NOI impact not estimated')).toBeInTheDocument();
+    expect(screen.queryByText(/Estimated NOI impact/)).not.toBeInTheDocument();
+    // No raw extractor path is used as an IC-facing title.
+    expect(screen.queryByText(/broker_proforma\./)).not.toBeInTheDocument();
+  });
+
+  it('prints "Estimated NOI impact $X" only for an NOI-basis flag', () => {
+    fx.flags = [ROOMS_FLAG, NOI_FLAG];
+    render(<ICMemoTab project={PROJECT} />);
+    expect(screen.getByText('NOI — broker overstates T-12 by 24.4%')).toBeInTheDocument();
+    expect(screen.getByText(/^Estimated NOI impact \$1\.0M/)).toBeInTheDocument();
+    // Exactly one dollar impact on the page — the revenue line still says not estimated.
+    expect(screen.getAllByText(/Estimated NOI impact/)).toHaveLength(1);
+    expect(screen.getByText('Revenue-line variance — NOI impact not estimated')).toBeInTheDocument();
+    expect(screen.getByText(/2 critical diligence items remain open/)).toBeInTheDocument();
+  });
+
+  it('lists the raw paths + rule ids under Technical detail', () => {
+    render(<ICMemoTab project={PROJECT} />);
+    expect(screen.queryByText(/broker\.rooms_revenue/)).not.toBeInTheDocument();
+    fireEvent.click(screen.getByText('Technical detail'));
+    const detail = screen.getByText(/concept rooms_revenue · impact basis revenue · 3 raw fields consolidated/);
+    expect(detail.textContent).toContain('rule BROKER_VS_T12_NOI_VARIANCE · field broker_proforma.rooms_revenue_usd · broker $12,900,000 vs T-12 $12,300,000 · p.14');
+    expect(detail.textContent).toContain('field broker.rooms_revenue · broker $12,950,000 vs T-12 $12,300,000');
+    expect(detail.textContent).toContain('field rooms_revenue_usd · broker $12,400,000 vs T-12 $12,300,000');
+    expect(screen.getByText('Hide technical detail')).toBeInTheDocument();
+  });
+
+  it('resolves an open critical item and persists the status keyed by concept', async () => {
+    render(<ICMemoTab project={PROJECT} />);
+    expect(screen.getByText(/1 critical diligence item remain open/)).toBeInTheDocument();
 
     fireEvent.click(screen.getByText('Resolve'));
 
-    // Status flips to Resolved and the summary clears.
+    // Status flips, the summary clears, and the readiness checklist follows.
     expect(screen.getByText('Resolved')).toBeInTheDocument();
     expect(screen.getByText('All critical diligence items resolved')).toBeInTheDocument();
+    expect(screen.getByText('Critical diligence items resolved')).toBeInTheDocument();
+    await waitFor(() => expect(updateSpy).toHaveBeenCalled());
+    const dil = lastOverrides().memo_diligence as Record<string, { status: string; updated_at?: string; details?: unknown }>;
+    expect(dil.rooms_revenue.status).toBe('Resolved');
+    expect(typeof dil.rooms_revenue.updated_at).toBe('string');
+    expect('details' in dil.rooms_revenue).toBe(false); // UI-only state never persisted
+
+    // Reopen is available and persists too.
+    fireEvent.click(screen.getByText('Reopen'));
+    await waitFor(() => {
+      const again = lastOverrides().memo_diligence as Record<string, { status: string }>;
+      expect(again.rooms_revenue.status).toBe('Open');
+    });
+    expect(screen.getByText(/1 critical diligence item remain open/)).toBeInTheDocument();
+  });
+
+  it('reads a persisted diligence status on reload into IC readiness', () => {
+    fx.fieldOverrides = { memo_diligence: { rooms_revenue: { status: 'Accepted', updated_at: '2026-09-10T00:00:00Z' } } };
+    render(<ICMemoTab project={PROJECT} />);
+    expect(screen.getByText('Accepted')).toBeInTheDocument();
+    expect(screen.getByText('Rooms revenue — broker overstates T-12 by 5.3% — variance accepted')).toBeInTheDocument();
+    expect(screen.getByText('All critical diligence items resolved')).toBeInTheDocument();
+    expect(screen.getByText('Critical diligence items resolved')).toBeInTheDocument();
+    expect(screen.queryByText('Resolve')).not.toBeInTheDocument();
+    expect(updateSpy).not.toHaveBeenCalled(); // hydration never writes back
   });
 });

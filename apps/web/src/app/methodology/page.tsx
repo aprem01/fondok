@@ -355,6 +355,31 @@ export default function MethodologyPage() {
             <li>
               <span className="font-semibold text-ink-900">Known gap — exports.</span>{' '}
               The IC memo / Excel max-price section still prints the legacy 15% / 1.80x hurdles until the export path is migrated to the deal&apos;s targets.
+
+      {/* ─── 6. IC Memo — diligence flags and the decision (FON-54a) ── */}
+      <Section
+        id="ic-memo"
+        number="6"
+        title="IC Memo — diligence flags and the decision"
+        intro="How broker-vs-T-12 variance flags reach the committee, what an 'NOI impact' on a flag means, how diligence status is kept, and why the IC recommendation is a recorded decision rather than a model inference."
+      >
+        <Card className="p-5">
+          <ul className="space-y-2.5 text-[12.5px] text-ink-600 leading-relaxed">
+            <li>
+              <span className="font-semibold text-ink-900">One flag per business concept.</span>{' '}
+              The extractor can emit the same broker line under several field paths (for example <code className="text-[11.5px]">broker_proforma.rooms_revenue_usd</code>, <code className="text-[11.5px]">broker.rooms_revenue</code> and a flat <code className="text-[11.5px]">rooms_revenue_usd</code>). The variance report groups those by their normalized concept — rooms revenue, F&amp;B revenue, total revenue, occupancy, ADR, RevPAR, GOP, NOI, and each expense line — and the IC memo lists one item per concept with a business-readable title (&ldquo;Rooms revenue — broker overstates T-12 by 5.3%&rdquo;). The consolidated severity is the highest severity across the merged rows. The normalized keys, every raw field path, its own broker and T-12 values, and the USALI rule ids stay available under <em>Technical detail</em> on each item and in the Technical detail column of the exported Variance sheet.
+            </li>
+            <li>
+              <span className="font-semibold text-ink-900">&ldquo;Estimated NOI impact&rdquo; only when the delta is an NOI delta.</span>{' '}
+              A dollar NOI impact is shown only for the NOI and GOP concepts, where the broker-vs-T-12 delta <em>is</em> the NOI difference. A revenue-line, KPI, or expense-line variance shows &ldquo;Revenue-line variance — NOI impact not estimated&rdquo; (or the expense / market-forecast equivalent) rather than a dollar figure — Fondok does not translate a revenue or expense delta into NOI without a flow-through assumption, and it never presents a revenue delta as if it were NOI.
+            </li>
+            <li>
+              <span className="font-semibold text-ink-900">Diligence status is persisted per concept.</span>{' '}
+              Resolve, Accept variance and Reopen are recorded on the deal (<code className="text-[11.5px]">memo_diligence</code>, keyed by concept), so the IC-readiness checklist reads the same open / resolved status after a reload, and the Excel export&apos;s Variance sheet prints the same status in its Diligence column. A concept with no recorded status is Open. Status is analyst-recorded only — Fondok never auto-resolves a flag.
+            </li>
+            <li>
+              <span className="font-semibold text-ink-900">The IC recommendation is a decision, not an inference.</span>{' '}
+              The Model Assessment card shows the model&apos;s own read of the Base Case (Clears Hurdles / Clears with Conditions / Below Hurdles, with the inferred verdict labelled as the model&apos;s). The IC recommendation reads <em>Pending analyst decision</em> until the analyst selects Proceed, Proceed with Conditions or Do Not Proceed <em>and</em> confirms it. Only the confirmed verdict is written into the memo&apos;s Recommendation section and the export header; a selected-but-unconfirmed verdict, or a verdict recorded before confirmation existed, still reads Pending analyst decision. Confirmation is part of the IC-readiness checklist.
             </li>
           </ul>
         </Card>

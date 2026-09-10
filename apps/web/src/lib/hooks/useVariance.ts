@@ -131,9 +131,18 @@ const FIELD_LABELS: Record<string, string> = {
 const PERCENT_FIELDS = new Set(['occupancy', 'occupancy_pct']);
 const PER_KEY_FIELDS = new Set<string>(); // none yet from worker
 
+/** Concepts whose dollar delta IS an NOI delta (mirrors the worker catalog). */
+const NOI_CONCEPTS = new Set(['noi', 'gop']);
+
+/** Strip the extractor's namespace prefix + unit suffix → concept key. */
+function conceptKey(field: string): string {
+  const tail = field.includes('.') ? field.slice(field.lastIndexOf('.') + 1) : field;
+  return tail.toLowerCase().replace(/_(usd|pct)$/, '');
+}
+
 function fieldLabel(field: string): string {
-  const key = field.toLowerCase().replace(/_usd$/, '');
-  return FIELD_LABELS[key] ?? humanize(field);
+  const key = conceptKey(field);
+  return FIELD_LABELS[key] ?? humanize(key);
 }
 
 function humanize(field: string): string {
@@ -144,7 +153,7 @@ function humanize(field: string): string {
 }
 
 function detectFormat(field: string): VarianceFlag['format'] {
-  const key = field.toLowerCase().replace(/_usd$/, '');
+  const key = conceptKey(field);
   if (PERCENT_FIELDS.has(key)) return 'percent';
   if (PER_KEY_FIELDS.has(key)) return 'currency_per_key';
   return 'currency';
@@ -157,7 +166,20 @@ function normalizeSeverity(s: string): LocalSeverity {
   return 'INFO';
 }
 
-function mapWorkerFlag(
+/**
+ * Map one worker flag onto the web `VarianceFlag` shape.
+ *
+ * FON-54a honesty rules:
+ *  • the IC-facing label is the worker's business-readable `concept_label`
+ *    when present; a raw extractor path is never humanised into a title
+ *    when the label exists (older workers without labels still fall back
+ *    to the local catalog / humaniser);
+ *  • `noi_impact_usd` is |delta| ONLY when the impact basis is `'noi'`
+ *    (NOI / GOP). A revenue- or expense-line delta is NOT an NOI impact
+ *    and is never dressed up as one — it reads 0 and the UI says
+ *    "NOI impact not estimated".
+ */
+export function mapWorkerFlag(
   f: VarianceFlagResult,
   index: number,
   dealId: string,
@@ -166,16 +188,17 @@ function mapWorkerFlag(
   const t12_value = f.actual ?? undefined;
   const delta = f.delta ?? undefined;
   const delta_pct = f.delta_pct ?? undefined;
-  // Estimate NOI impact: when the field is NOI itself, the delta IS the
-  // impact. Otherwise we don't have a precise translation, so we use the
-  // absolute delta as a stand-in — accurate enough for heatmap sizing.
-  const noi_impact_usd = Math.abs(delta ?? 0);
+  const concept = (f.concept && f.concept.trim()) || conceptKey(f.field);
+  const impact_basis: VarianceFlag['impact_basis'] =
+    f.impact_basis ?? (NOI_CONCEPTS.has(concept) ? 'noi' : 'other');
+  const noi_impact_usd = impact_basis === 'noi' ? Math.abs(delta ?? 0) : 0;
+  const label = (f.concept_label && f.concept_label.trim()) || fieldLabel(f.field);
   return {
     flag_id: `${f.rule_id ?? 'flag'}-${index}`,
     rule_id: f.rule_id ?? 'BROKER_VS_T12_NOI_VARIANCE',
     severity: normalizeSeverity(f.severity),
     metric: f.field,
-    field_label: fieldLabel(f.field),
+    field_label: label,
     broker_value,
     t12_value,
     variance_abs: delta,
@@ -185,7 +208,7 @@ function mapWorkerFlag(
     noi_impact_usd,
     explanation:
       f.note ??
-      `Broker pro forma ${broker_value !== undefined ? broker_value : '—'} vs T-12 actual ${t12_value !== undefined ? t12_value : '—'} on ${fieldLabel(f.field)}. Delta ${delta !== undefined ? delta.toLocaleString() : '—'}.`,
+      `Broker pro forma ${broker_value !== undefined ? broker_value : '—'} vs T-12 actual ${t12_value !== undefined ? t12_value : '—'} on ${label}. Delta ${delta !== undefined ? delta.toLocaleString() : '—'}.`,
     recommended_action:
       'Review the cited T-12 line and re-underwrite the broker assumption.',
     source_documents: f.source_page
@@ -197,5 +220,17 @@ function mapWorkerFlag(
           },
         ]
       : [],
+    concept,
+    impact_basis,
+    raw_fields: (f.raw_fields ?? []).map((r) => ({
+      field: r.field,
+      rule_id: r.rule_id ?? null,
+      severity: r.severity,
+      broker: r.broker ?? null,
+      actual: r.actual ?? null,
+      delta: r.delta ?? null,
+      delta_pct: r.delta_pct ?? null,
+      source_page: r.source_page ?? null,
+    })),
   };
 }
