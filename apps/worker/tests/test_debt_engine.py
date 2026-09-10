@@ -97,10 +97,40 @@ def test_output_surfaces_senior_fees_from_overrides() -> None:
     assert out.exit_fee_usd == pytest.approx(25_000_000.0 * 0.005)
 
 
+def test_covenants_without_thresholds_carry_current_but_no_verdict() -> None:
+    """FON-63 (Wave 2) — covenant thresholds are analyst inputs. With none
+    entered the output still carries every live Current reading, but NO
+    threshold, headroom or pass/fail (no Kimpton default package leaks in)."""
+    out = DebtEngine().run(_input_with_basis(loan=25_000_000.0, noi=2_500_000.0))
+    by = {c.name: c for c in out.covenants}
+    assert set(by) == {"ltv", "ltc", "dscr", "debt_yield"}
+
+    ltv = by["ltv"]
+    assert ltv.kind == "max"
+    assert ltv.current == pytest.approx(25_000_000.0 / 40_000_000.0)  # 0.625
+    assert ltv.threshold is None
+    assert ltv.headroom is None
+    assert ltv.passes is None
+    for c in out.covenants:
+        assert c.current is not None and c.current > 0
+        assert c.threshold is None and c.headroom is None and c.passes is None
+
+
 def test_output_exposes_covenant_current_and_headroom() -> None:
     """Debt output carries LTV/LTC/DSCR/debt-yield covenants, each with a live
-    Current reading and signed Headroom vs the threshold."""
-    out = DebtEngine().run(_input_with_basis(loan=25_000_000.0, noi=2_500_000.0))
+    Current reading and signed Headroom vs the ANALYST-ENTERED threshold
+    (``debt_stack.covenant_*`` overrides)."""
+    inp = _input_with_basis(loan=25_000_000.0, noi=2_500_000.0).model_copy(
+        update={
+            "debt_stack_overrides": {
+                "covenant_max_ltv": 0.65,
+                "covenant_max_ltc": 0.75,
+                "covenant_min_dscr": 1.25,
+                "covenant_min_debt_yield": 0.10,
+            }
+        }
+    )
+    out = DebtEngine().run(inp)
     by = {c.name: c for c in out.covenants}
     assert set(by) == {"ltv", "ltc", "dscr", "debt_yield"}
 
@@ -115,8 +145,53 @@ def test_output_exposes_covenant_current_and_headroom() -> None:
     dscr = by["dscr"]
     assert dscr.kind == "min"
     assert dscr.current is not None and dscr.current > 0
+    assert dscr.threshold == pytest.approx(1.25)
     # Floor headroom = current − threshold.
     assert dscr.headroom == pytest.approx(dscr.current - dscr.threshold)
+
+    # A partial package tests only what was entered; a non-positive or junk
+    # value is treated as "not entered", never coerced into a verdict.
+    partial = DebtEngine().run(
+        _input_with_basis(loan=25_000_000.0).model_copy(
+            update={
+                "debt_stack_overrides": {
+                    "covenant_min_dscr": 1.30,
+                    "covenant_max_ltv": 0,
+                    "covenant_max_ltc": "n/a",
+                }
+            }
+        )
+    )
+    pby = {c.name: c for c in partial.covenants}
+    assert pby["dscr"].threshold == pytest.approx(1.30)
+    assert pby["dscr"].passes is not None
+    assert pby["ltv"].threshold is None and pby["ltv"].passes is None
+    assert pby["ltc"].threshold is None and pby["ltc"].passes is None
+    assert pby["debt_yield"].threshold is None
+
+
+def test_output_echoes_resolved_senior_terms() -> None:
+    """FON-63 (Wave 2) — ``interest_rate`` / ``amortization_years`` /
+    ``interest_only_months`` echo the senior tranche the schedule actually
+    ran on (Debt-tab edits included), not the deal seed."""
+    base = DebtEngine().run(_input())
+    assert base.interest_rate == pytest.approx(0.068)
+    assert base.amortization_years == 30
+    assert base.interest_only_months == 0
+
+    edited = DebtEngine().run(
+        _input().model_copy(
+            update={
+                "debt_stack_overrides": {
+                    "tranches": {0: {"rate_pct": 0.0725, "amortization_months": 0}}
+                }
+            }
+        )
+    )
+    assert edited.interest_rate == pytest.approx(0.0725)
+    assert edited.amortization_years == 0  # interest-only
+    assert edited.interest_only_months == 5 * 12  # IO for the whole term
+    assert all(m.principal == 0.0 for m in edited.monthly_schedule)
 
 
 def test_covenant_thresholds_are_override_driven() -> None:

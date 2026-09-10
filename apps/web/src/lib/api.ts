@@ -2120,6 +2120,12 @@ export interface DebtCovenantStatus {
  *  of DebtEngineOutputExt — just the FON-72 Wave-0 additions the Debt tab reads
  *  so it stops hardcoding fees + covenants. */
 export interface DebtEngineOutputExtras {
+  /** FON-63 (Wave 2) — the interest-only stub (months before principal
+   *  starts) the senior schedule actually ran on; the full term when the loan
+   *  is interest-only throughout. Pairs with `interest_rate` /
+   *  `amortization_years`, which echo the RESOLVED senior tranche (analyst
+   *  Debt-tab edits included), not the deal seed. */
+  interest_only_months: number | null;
   /** Senior tranche fee percentages (0..10 percent, e.g. 1.0 = 1.00%). */
   origination_fee_pct: number | null;
   exit_fee_pct: number | null;

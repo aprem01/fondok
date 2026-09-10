@@ -330,3 +330,77 @@ async def test_assumption_sources_endpoint_shows_override() -> None:
         body = r.json()
         assert body["values"]["starting_occupancy"] == 0.55
         assert body["sources"]["starting_occupancy"] == "analyst_override"
+
+
+@pytest.mark.asyncio
+async def test_load_engine_inputs_routes_debt_loan_terms_and_covenants() -> None:
+    """FON-63 (Wave 2) — the Debt tab's Loan Terms + covenant threshold
+    overrides land on ``base['debt_stack_overrides']`` exactly where the debt
+    engine reads them: tranche scalars under ``tranches[idx]`` (with the
+    string ``rate_type`` accepted), covenant thresholds at the stack level,
+    the top-level ``term_years`` on ``base`` — all tagged analyst_override."""
+    from datetime import UTC, datetime
+
+    from app.database import get_session_factory
+    from app.services.engine_runner import (
+        SOURCE_ANALYST_OVERRIDE,
+        _load_engine_inputs,
+    )
+
+    deal_id = str(uuid4())
+    tenant_id = str(uuid4())
+    factory = get_session_factory()
+    async with factory() as session:
+        await session.execute(
+            text(
+                """
+                INSERT INTO deals (id, tenant_id, name, status, field_overrides, created_at, updated_at)
+                VALUES (:id, :tenant, :name, 'Draft', :overrides, :now, :now)
+                """
+            ),
+            {
+                "id": deal_id,
+                "tenant": tenant_id,
+                "name": "Debt Workspace Hotel",
+                "overrides": json.dumps(
+                    {
+                        "debt_stack.tranches.0.rate_type": "floating",
+                        "debt_stack.tranches.0.spread_pct": 0.03,
+                        "debt_stack.tranches.0.index_rate_pct": 0.04,
+                        "debt_stack.tranches.0.rate_floor_pct": 0.02,
+                        "debt_stack.tranches.0.io_period_months": 24,
+                        "debt_stack.tranches.1.principal_usd": 5_000_000,
+                        "debt_stack.covenant_min_dscr": 1.3,
+                        "debt_stack.covenant_max_ltv": {"value": 0.6, "note": "Term sheet"},
+                        "debt_stack.tranches.0.bogus_field": 1,
+                        "term_years": 7,
+                    }
+                ),
+                "now": datetime.now(UTC),
+            },
+        )
+        await session.commit()
+
+        base = await _load_engine_inputs(session, deal_id, tenant_id=tenant_id)
+
+    dso = base["debt_stack_overrides"]
+    assert dso["tranches"][0]["rate_type"] == "floating"
+    assert dso["tranches"][0]["spread_pct"] == 0.03
+    assert dso["tranches"][0]["index_rate_pct"] == 0.04
+    assert dso["tranches"][0]["rate_floor_pct"] == 0.02
+    assert dso["tranches"][0]["io_period_months"] == 24
+    assert dso["tranches"][1]["principal_usd"] == 5_000_000
+    assert "bogus_field" not in dso["tranches"][0]
+    assert dso["covenant_min_dscr"] == 1.3
+    assert dso["covenant_max_ltv"] == 0.6
+    assert base["term_years"] == 7
+
+    sources = base["__sources__"]
+    for key in (
+        "debt_stack.tranches.0.rate_type",
+        "debt_stack.tranches.0.spread_pct",
+        "debt_stack.covenant_min_dscr",
+        "debt_stack.covenant_max_ltv",
+        "term_years",
+    ):
+        assert sources[key] == SOURCE_ANALYST_OVERRIDE, key

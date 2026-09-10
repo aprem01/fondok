@@ -116,37 +116,37 @@ class DebtCovenantStatus(BaseModel):
     passes: bool | None = None
 
 
-# FON-72 — institutional covenant defaults (Kimpton Angler senior package:
-# 65% LTV / 1.25x combined DSCR / 10% debt yield). Analyst-overridable via the
-# ``covenant_*`` keys on ``debt_stack_overrides``. LTC has no source default so
-# a conservative 75% ceiling is used until an analyst sets one.
-_COVENANT_DEFAULTS: dict[str, float] = {
-    "max_ltv": 0.65,
-    "max_ltc": 0.75,
-    "min_dscr": 1.25,
-    "min_debt_yield": 0.10,
+# FON-63 (Wave 2) — covenant thresholds are ANALYST INPUTS, entered on the Debt
+# tab and persisted as ``debt_stack.covenant_*`` field_overrides (routed by
+# engine_runner onto ``debt_stack_overrides``). There is deliberately no
+# default package: a lender covenant Fondok did not read from a term sheet and
+# the analyst did not enter is unknown, so the test carries ``threshold=None``
+# and NO pass/fail verdict (the tab shows an "Enter threshold" input). The
+# Kimpton 65% / 75% / 1.25x / 10% globals that used to fill the gap were a
+# demo fixture leaking onto every deal.
+_COVENANT_OVERRIDE_KEYS: dict[str, str] = {
+    "max_ltv": "covenant_max_ltv",
+    "max_ltc": "covenant_max_ltc",
+    "min_dscr": "covenant_min_dscr",
+    "min_debt_yield": "covenant_min_debt_yield",
 }
 
 
-def _covenant_thresholds(overrides: dict[str, Any] | None) -> dict[str, float]:
-    """Resolve covenant thresholds from analyst overrides, else defaults."""
+def _covenant_thresholds(overrides: dict[str, Any] | None) -> dict[str, float | None]:
+    """Resolve covenant thresholds from analyst overrides; None when unset."""
     ov = overrides or {}
 
-    def _f(key: str, default: float) -> float:
+    def _f(key: str) -> float | None:
         v = ov.get(key)
+        if v is None or v == "":
+            return None
         try:
-            return float(v) if v is not None else default
+            f = float(v)
         except (TypeError, ValueError):
-            return default
+            return None
+        return f if f > 0 else None
 
-    return {
-        "max_ltv": _f("covenant_max_ltv", _COVENANT_DEFAULTS["max_ltv"]),
-        "max_ltc": _f("covenant_max_ltc", _COVENANT_DEFAULTS["max_ltc"]),
-        "min_dscr": _f("covenant_min_dscr", _COVENANT_DEFAULTS["min_dscr"]),
-        "min_debt_yield": _f(
-            "covenant_min_debt_yield", _COVENANT_DEFAULTS["min_debt_yield"]
-        ),
-    }
+    return {name: _f(key) for name, key in _COVENANT_OVERRIDE_KEYS.items()}
 
 
 def _build_covenant_statuses(
@@ -155,9 +155,11 @@ def _build_covenant_statuses(
     ltc: float | None,
     dscr: float | None,
     debt_yield: float | None,
-    thresholds: dict[str, float],
+    thresholds: dict[str, float | None],
 ) -> list[DebtCovenantStatus]:
-    """Assemble the four covenant readings (current + headroom vs threshold)."""
+    """Assemble the four covenant readings (current + headroom vs threshold).
+    A covenant with no analyst threshold keeps its live Current reading but
+    carries no headroom and no pass/fail — never a fabricated verdict."""
 
     def _status(
         name: str,
@@ -218,9 +220,15 @@ class DebtEngineOutputExt(DebtEngineOutput):
     year_one_debt_yield: Annotated[float, Field(ge=0)] | None = None
     # FON-59 — echo the loan terms so the Overview Financing tile can render
     # Interest Rate / Term / Amortization without re-fetching the debt inputs.
+    # FON-63 (Wave 2) — these echo the RESOLVED senior tranche the schedule
+    # actually ran on (analyst Debt-tab edits included), not the deal seed:
+    # ``interest_rate`` is the all-in rate, ``amortization_years`` is 0 for an
+    # interest-only loan, ``interest_only_months`` is the IO stub before
+    # principal starts (the full term when the loan is IO throughout).
     interest_rate: Annotated[float, Field(ge=0)] | None = None
     term_years: Annotated[int, Field(ge=0)] | None = None
     amortization_years: Annotated[int, Field(ge=0)] | None = None
+    interest_only_months: Annotated[int, Field(ge=0)] | None = None
     # FON-63 — the institutional multi-tranche view. Seeded from the deal's own
     # extracted senior loan; a user adds PACE / mezz + floating terms in the
     # Debt tab. Optional so legacy consumers ignore it.
@@ -351,10 +359,18 @@ _SOFR_DEFAULT = 0.043
 
 # FON-63 — the editable per-tranche fields, keyed by the override path
 # ``debt_stack.tranches.<idx>.<field>``. Values arrive as fractions (rates,
-# fees) or raw units (USD, months), matching the Debt tab inputs.
+# spreads, floor/cap), 0..10 percent (fees) or raw units (USD, months),
+# matching the Debt tab inputs. ``rate_type`` is the one string field
+# ("fixed" | "floating"). Keep in lockstep with
+# ``engine_runner._DEBT_STACK_TRANCHE_FIELDS``.
 _TRANCHE_OVERRIDE_FIELDS = (
     "principal_usd",
+    "rate_type",
     "rate_pct",
+    "spread_pct",
+    "index_rate_pct",
+    "rate_floor_pct",
+    "rate_cap_pct",
     "amortization_months",
     "io_period_months",
     "upfront_fee_pct",
@@ -416,7 +432,27 @@ def _apply_tranche_overrides(
         if "rate_pct" in ov:
             data["fixed_rate"] = float(ov["rate_pct"])
             data["rate_type"] = "fixed"
-            data["terms_pending"] = False
+        # Floating build-up (Wave 2): spread over the index, an optional index
+        # assumption (benchmark) and an optional floor / cap on the index.
+        if "spread_pct" in ov:
+            data["spread"] = float(ov["spread_pct"])
+        if "index_rate_pct" in ov:
+            data["index_assumption"] = float(ov["index_rate_pct"])
+            data["index_name"] = data.get("index_name") or "SOFR"
+        if "rate_floor_pct" in ov:
+            _fl = float(ov["rate_floor_pct"])
+            data["rate_floor"] = _fl if _fl > 0 else None
+        if "rate_cap_pct" in ov:
+            _cp = float(ov["rate_cap_pct"])
+            data["rate_cap"] = _cp if _cp > 0 else None
+        # An explicit rate-type pick wins over the implicit "rate_pct ⇒ fixed"
+        # so a Floating toggle with a stale fixed-rate override still floats.
+        if "rate_type" in ov:
+            _rt = str(ov["rate_type"]).strip().lower()
+            if _rt in ("fixed", "floating"):
+                data["rate_type"] = _rt
+                if _rt == "floating":
+                    data["index_name"] = data.get("index_name") or "SOFR"
         if "amortization_months" in ov:
             # FON-63 follow-up: a single Amort control covers both cases —
             # >0 amortizes over that term, 0 means interest-only.
@@ -428,22 +464,25 @@ def _apply_tranche_overrides(
                 data["amortization_years"] = None
                 data["interest_only"] = True
         if "io_period_months" in ov:
-            io_months = float(ov["io_period_months"])
-            data["interest_only"] = io_months > 0
-            if io_months > 0:
-                data["amortization_years"] = None
+            # Wave 2 — an interest-only STUB (months before principal starts)
+            # on an amortizing tranche. It no longer flips the whole tranche
+            # to IO; use Amortization = 0 for a full-term interest-only loan.
+            io_months = max(0, int(round(float(ov["io_period_months"]))))
+            data["io_months"] = io_months
         if "upfront_fee_pct" in ov:
             data["origination_fee_pct"] = float(ov["upfront_fee_pct"])
         if "exit_fee_pct" in ov:
             data["exit_fee_pct"] = float(ov["exit_fee_pct"])
-        # A tranche with a principal but still no resolvable rate stays pending
-        # (compute_debt_stack will exclude it from debt service, not invent one).
-        if (
-            data.get("fixed_rate") is None
-            and data.get("spread") is None
-            and data["loan_amount"] > 0
-        ):
-            data["terms_pending"] = True
+        # Pending = the rate the tranche's basis needs is missing (fixed rate
+        # for a fixed tranche, spread for a floating one). A funded tranche
+        # with no resolvable rate stays in leverage but out of debt service —
+        # compute_debt_stack excludes it rather than inventing a rate. A $0
+        # tranche keeps its seed flag (the PACE placeholder stays pending).
+        if data["loan_amount"] > 0:
+            if data.get("rate_type") == "floating":
+                data["terms_pending"] = data.get("spread") is None
+            else:
+                data["terms_pending"] = data.get("fixed_rate") is None
         out.append(LoanTranche(**data))
     return out
 
@@ -597,7 +636,13 @@ class DebtEngine(BaseEngine[DebtEngineInputExt, DebtEngineOutputExt]):
             io_months = (payload.term_years or 0) * 12
         else:
             amort_months = (senior.amortization_years or 0) * 12
-            io_months = payload.interest_only_years * 12
+            # Wave 2 — the tranche-level IO stub (Debt tab) wins; the deal's
+            # ``interest_only_years`` is the fallback for untouched deals.
+            io_months = (
+                int(senior.io_months)
+                if senior.io_months is not None
+                else payload.interest_only_years * 12
+            )
 
         # Monthly payment for the amortizing portion.
         amortizing_pmt = pmt(monthly_rate, amort_months, loan) if amort_months else 0.0
@@ -915,9 +960,14 @@ class DebtEngine(BaseEngine[DebtEngineInputExt, DebtEngineOutputExt]):
             monthly_schedule=monthly_schedule,
             year_one_dscr=year1_dscr,
             year_one_debt_yield=year1_dy,
-            interest_rate=payload.interest_rate,
+            # Wave 2 — echo the RESOLVED senior terms the schedule ran on so
+            # Overview / IC Memo / the Debt tab agree after a Debt-tab edit.
+            interest_rate=annual_rate,
             term_years=payload.term_years,
-            amortization_years=payload.amortization_years,
+            amortization_years=(
+                0 if senior.interest_only else (senior.amortization_years or 0)
+            ),
+            interest_only_months=io_months,
             debt_stack=debt_stack,
             debt_service_by_year=debt_service_by_year,
             refi_cash_out=refi_cash_out,
