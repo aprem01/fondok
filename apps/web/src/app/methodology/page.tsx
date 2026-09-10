@@ -16,6 +16,24 @@ import { CONCEPTS, CONCEPT_IDS, REGISTRY_VERSION } from '@/lib/ontology/concepts
 // document line, so they are left off the reference table.
 const REGISTRY_ROWS = CONCEPT_IDS.map((id) => CONCEPTS[id]).filter((c) => c.group !== 'synthetic');
 
+// Section 9 — the node vocabulary of the lineage graph, mirroring
+// `fondok_schemas.lineage.NodeKind` and its id prefixes. `line:` is reserved
+// (no normalized-statement hop is emitted yet) and is listed so the shape of
+// the chain is documented before it gains that step.
+const LINEAGE_KINDS: { label: string; id: string; desc: string }[] = [
+  { label: 'KPI', id: 'kpi:', desc: 'A headline number a tab renders — the root of a chain.' },
+  { label: 'Engine value', id: 'engine:', desc: 'One modeled value in an engine’s output, with the formula and inputs that produced it.' },
+  { label: 'Assumption', id: 'assumption:', desc: 'A canonical underwriting input, carrying the source that set it.' },
+  { label: 'Statement line', id: 'line:', desc: 'A USALI-normalized statement line. Reserved — the walk gains this step when normalized spreads are stored per run.' },
+  { label: 'Extracted field', id: 'field:', desc: 'One field on one extraction, with its concept, basis and period.' },
+  { label: 'Document', id: 'doc:', desc: 'An uploaded document on the deal.' },
+  { label: 'Page', id: 'page:', desc: 'The page of that document the value was read from.' },
+  { label: 'Override', id: 'override:', desc: 'An analyst override, carrying the justification note. Terminal.' },
+  { label: 'Seed', id: 'seed:', desc: 'A platform default no document supports. Terminal, with its reason.' },
+  { label: 'Benchmark', id: 'benchmark:', desc: 'A benchmark or market feed — CBRE Horizons, HOST, your portfolio P&L, STR.' },
+  { label: 'Memo section', id: 'memo:', desc: 'An IC-memo section, linked from the document and page it cites.' },
+];
+
 
 /**
  * Methodology — institutional explanation of how Fondok underwrites.
@@ -41,6 +59,12 @@ const REGISTRY_ROWS = CONCEPT_IDS.map((id) => CONCEPTS[id]).filter((c) => c.grou
  *   7. What a dash means (Phase 0.3) — the ReasonCode vocabulary, rendered
  *      from `@/lib/ontology/reasons.generated` so the page cannot drift
  *      from the code.
+ *   8. Concept registry (Phase 1.1 / 1.2) — one vocabulary for every named
+ *      figure, rendered from the generated registry.
+ *   9. Every number traces back (Phase 2.3) — the KPI → engine →
+ *      assumption → field → document → page walk that
+ *      `GET /deals/{id}/lineage` serves, what each step is, when a link
+ *      states a reason instead of closing, and what `stale` means.
  *
  * Loom walkthrough embed slot is reserved at the top — drops in
  * without a code change once the video lands.
@@ -525,6 +549,77 @@ export default function MethodologyPage() {
               </tbody>
             </table>
           </div>
+        </Card>
+      </Section>
+
+      {/* ─── 9. Every number traces back (Phase 2.3) ───────────────── */}
+      <Section
+        id="lineage"
+        number="9"
+        title="Every number traces back"
+        intro="Pick any headline number on a deal and Fondok can show you the chain that produced it, one step at a time, down to the page of the document it was read from — or state, in the vocabulary of Section 7, exactly why the chain stops short."
+      >
+        <Card className="p-5">
+          <p className="text-[12.5px] text-ink-600 leading-relaxed">
+            The pieces already existed separately: each engine emits a per-value trace (the formula, its named inputs, and a pointer at whichever other value fed it — Section 3&apos;s &ldquo;hover any number&rdquo;), the assumption loader records which source produced every input, each extracted field carries the page it was read from, and the IC memo carries its citations. <code className="text-[11.5px]">GET /deals/{'{id}'}/lineage</code> joins them into one graph and serves it for the same run every tab is pinned to, so the chain always describes the numbers on screen rather than a newer or older model run.
+          </p>
+        </Card>
+
+        <Card className="p-5 mt-4">
+          <h4 className="text-[13px] font-semibold text-ink-900 mb-2">The walk</h4>
+          <Chain
+            steps={[
+              { label: 'KPI', desc: 'a headline number — levered IRR, unlevered IRR, equity multiple, Year-1 cash-on-cash, minimum DSCR, Year-1 NOI. These are the roots you can start from.' },
+              { label: 'Engine value', desc: 'the modeled value behind it, and each modeled value behind that — IRR to the cash flows, cash flows to NOI and debt service, NOI to GOP, GOP to total revenue, revenue to rooms revenue.' },
+              { label: 'Assumption', desc: 'the underwriting input the calculation rests on — starting occupancy, starting ADR, exit cap rate, LTV — carrying the source that produced it.' },
+              { label: 'Extracted field', desc: 'the exact field on the exact extraction that supplied the assumption, with the concept it resolved to (Section 8) and the basis and period it carries.' },
+              { label: 'Document → page', desc: 'the uploaded document, and the page the number sits on. This is where a walk that closes ends.' },
+            ]}
+          />
+          <p className="text-[12.5px] text-ink-500 leading-relaxed mt-3">
+            Three chains end deliberately short of a page, and each says so rather than looking grounded. An <strong className="text-ink-700">analyst override</strong> ends at the override, carrying the justification note the analyst saved with it. A <strong className="text-ink-700">seed</strong> — a platform default no document on the deal supports — ends at the seed. A <strong className="text-ink-700">benchmark</strong> — CBRE Horizons, the HOST default set, your own portfolio P&amp;L, an STR feed — ends at the benchmark, and continues to a page only when the benchmark itself arrived as an uploaded document.
+          </p>
+        </Card>
+
+        <Card className="p-5 mt-4">
+          <h4 className="text-[13px] font-semibold text-ink-900 mb-2">What each step is</h4>
+          <p className="text-[12.5px] text-ink-600 leading-relaxed mb-3">
+            Every step in a chain is one of eleven kinds, and its identifier says which — so a link into the chain is stable and points at exactly one thing.
+          </p>
+          <div className="overflow-x-auto">
+            <table className="w-full text-[12px]">
+              <thead>
+                <tr className="text-ink-500 text-[11px] uppercase tracking-wide">
+                  <th className="text-left font-medium px-2 py-1.5">Step</th>
+                  <th className="text-left font-medium px-2 py-1.5">Identifier</th>
+                  <th className="text-left font-medium px-2 py-1.5">What it is</th>
+                </tr>
+              </thead>
+              <tbody>
+                {LINEAGE_KINDS.map((k) => (
+                  <tr key={k.id} className="border-t border-border/50 align-top">
+                    <td className="px-2 py-1.5 whitespace-nowrap font-medium text-ink-900">{k.label}</td>
+                    <td className="px-2 py-1.5"><code className="text-[11px] text-ink-500">{k.id}</code></td>
+                    <td className="px-2 py-1.5 text-ink-600">{k.desc}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </Card>
+
+        <Card className="p-5 mt-4">
+          <h4 className="text-[13px] font-semibold text-ink-900 mb-2">A link that does not close states its reason</h4>
+          <p className="text-[12.5px] text-ink-600 leading-relaxed">
+            Anything the walk cannot take all the way to a page is reported, never dropped: each unresolved link names the step it broke on and carries a reason code from the Section 7 vocabulary — <code className="text-[11.5px]">no_document</code> when nothing on the deal could ground it, <code className="text-[11.5px]">no_source</code> when documents exist but none of their fields resolves to the concept, <code className="text-[11.5px]">str_unavailable</code> when a requested feed did not populate. An empty list means every root reached a document page. It never means the search stopped early.
+          </p>
+        </Card>
+
+        <Card className="p-5 mt-4">
+          <h4 className="text-[13px] font-semibold text-ink-900 mb-2">What &ldquo;stale&rdquo; means</h4>
+          <p className="text-[12.5px] text-ink-600 leading-relaxed">
+            A chain describes one engine run, so it is only as current as that run&apos;s inputs. When a document is uploaded — or the deal record edited — <em>after</em> the run started, the chain is marked <strong className="text-ink-700">stale</strong>. Stale does not mean wrong and it does not hide the chain: the evidence shown is still exactly what produced the numbers you are looking at. It means the deal has moved since, and re-running the model will produce a different chain. It is the same condition Section 7&apos;s <code className="text-[11.5px]">stale_run</code> describes, surfaced on the evidence rather than on a single figure.
+          </p>
         </Card>
       </Section>
 

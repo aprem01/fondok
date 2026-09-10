@@ -1046,3 +1046,100 @@ export function verificationPassRate(report: VerificationReport): number {
   );
   return passed.length / verifiable.length;
 }
+
+// ─────────────────── Lineage — the evidence chain (Phase 2.3) ───────────────
+//
+// Mirror of packages/schemas-py/fondok_schemas/lineage.py, served by
+// `GET /deals/{id}/lineage`. One graph joining the per-value provenance
+// traces above, the assumption sources, the extraction rows and their pages,
+// the analyst's overrides and the IC memo's citations.
+//
+// Edges read left to right as "src ⟨rel⟩ dst" and always descend: following
+// the edges whose `src` is the current node walks a root DOWN toward the
+// evidence, one step per level.
+
+/** What a node is. The prefix on `LineageNode.id` mirrors it 1:1. */
+export const NodeKind = z.enum([
+  "kpi", // kpi:returns.levered_irr
+  "engine_value", // engine:expense.years[0].noi
+  "assumption", // assumption:starting_occupancy
+  "normalized_line", // line:<extraction_result_id>:<concept> — reserved
+  "extracted_field", // field:<extraction_result_id>:<field_name>
+  "document", // doc:<document_id>
+  "page", // page:<document_id>:<n>
+  "override", // override:<assumption_key>
+  "seed", // seed:<assumption_key>
+  "benchmark", // benchmark:<assumption_key>
+  "memo_section", // memo:<section_id>
+]);
+export type NodeKind = z.infer<typeof NodeKind>;
+
+/** How a node relates to the node it points at. */
+export const EdgeRel = z.enum([
+  "computed_from",
+  "seeded_from",
+  "normalized_from",
+  "extracted_from",
+  "located_on",
+  "overridden_by",
+  "cited_in",
+]);
+export type EdgeRel = z.infer<typeof EdgeRel>;
+
+/**
+ * FON-65 grounding classification carried through from a value's trace.
+ * Mirror of fondok_schemas.provenance.State — declared here because the TS
+ * ValueTrace above predates the tag and does not carry it yet.
+ */
+export const LineageState = z.enum([
+  "document_sourced",
+  "linked",
+  "assumption",
+  "calculated",
+  "awaiting_data",
+  "needs_review",
+]);
+export type LineageState = z.infer<typeof LineageState>;
+
+export const LineageNode = z.object({
+  id: z.string(),
+  kind: NodeKind,
+  label: z.string(),
+  value: z.union([z.number(), z.string()]).nullable().optional(),
+  unit: z.string().nullable().optional(),
+  concept: z.string().nullable().optional(),
+  source: z.string().nullable().optional(),
+  state: LineageState.nullable().optional(),
+  reason: ReasonCode.nullable().optional(),
+  meta: z.record(z.string(), z.unknown()).default({}),
+});
+export type LineageNode = z.infer<typeof LineageNode>;
+
+export const LineageEdge = z.object({
+  src: z.string(),
+  dst: z.string(),
+  rel: EdgeRel,
+  formula: z.string().nullable().optional(),
+});
+export type LineageEdge = z.infer<typeof LineageEdge>;
+
+export const LineageRecord = z.object({
+  deal_id: z.string().uuid(),
+  run_id: z.string().uuid().nullable().optional(),
+  registry_version: z.number().int(),
+  pipeline_version: z.string(),
+  generated_at: z.string().datetime(),
+  /** Node ids of the KPI roots — the entry points a UI offers. */
+  roots: z.array(z.string()).default([]),
+  nodes: z.array(LineageNode).default([]),
+  edges: z.array(LineageEdge).default([]),
+  /**
+   * Every link the walk could not complete. `concept` holds either the
+   * ontology concept id or the full node id the refusal belongs to, so a
+   * consumer can attach each one to the exact step it broke on.
+   */
+  unresolved: z.array(Refusal).default([]),
+  /** A document was uploaded — or the deal edited — after the run started. */
+  stale: z.boolean().default(false),
+});
+export type LineageRecord = z.infer<typeof LineageRecord>;
