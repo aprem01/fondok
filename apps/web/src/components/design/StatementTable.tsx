@@ -157,7 +157,12 @@ export function StatementTable({
                   title={row.title}
                   style={{
                     padding: '6px 14px',
-                    paddingLeft: row.indent != null ? row.indent : undefined,
+                    // FON-60 — only emit the longhand when an indent is requested.
+                    // `paddingLeft: undefined` next to the `padding` shorthand makes
+                    // React write `style.paddingLeft = ''` AFTER the shorthand, which
+                    // cleared the left inset: metric labels rendered flush-left while
+                    // the header sat at 14px (Sam, 2026-09-09).
+                    ...(row.indent != null ? { paddingLeft: row.indent } : {}),
                     borderBottom: `1px solid ${palette.hairlineRow}`,
                     fontSize: 12,
                     color: palette.ink,

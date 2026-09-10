@@ -340,7 +340,7 @@ export default function ICMemoTab({ project }: { project: Project }) {
   const metrics = useMemo(() => extractMetrics(outputs, deal, project), [outputs, deal, project]);
   const rec = useMemo(() => buildRecommendation(metrics), [metrics]);
 
-  // ── Export deliverables (FON-54) — render the LIVE deal via the worker's
+  // ── Export deliverables (FON-54; PDF/PPTX re-gated FON-54b) — render the LIVE deal via the worker's
   // authenticated export routes, stream the file back and trigger a browser
   // save. Gated on a completed model run + live deal (never for demo/mock ids).
   const { toast } = useToast();
@@ -1075,11 +1075,16 @@ export default function ICMemoTab({ project }: { project: Project }) {
               </span>
             </div>
             <div style={{ padding: '14px 16px', display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 14 }}>
+              {/* FON-54b (decision D1, 2026-09-09) — Excel stays live; the IC Memo
+                  PDF and Deal Presentation PPTX cards are re-gated to "Coming Soon"
+                  (the same treatment they carried before FON-54 enabled them). The
+                  worker endpoints and `api.exports.download` stay wired — flip
+                  `live` to re-enable a deliverable. */}
               {([
-                { title: 'Excel Model', ext: '.xlsx', body: 'Complete underwriting model with assumptions, calculations and source references.', path: 'excel' },
-                { title: 'IC Memo', ext: '.pdf', body: 'Investment Committee memo based on the configuration above.', path: 'memo.pdf' },
-                { title: 'Deal Presentation', ext: '.pptx', body: 'Presentation-ready summary of the investment case, market, underwriting and returns.', path: 'presentation.pptx' },
-              ] as { title: string; ext: string; body: string; path: 'excel' | 'memo.pdf' | 'presentation.pptx' }[]).map(({ title, ext, body, path }) => {
+                { title: 'Excel Model', ext: '.xlsx', body: 'Complete underwriting model with assumptions, calculations and source references.', path: 'excel', live: true },
+                { title: 'IC Memo', ext: '.pdf', body: 'Investment Committee memo based on the configuration above.', path: 'memo.pdf', live: false },
+                { title: 'Deal Presentation', ext: '.pptx', body: 'Presentation-ready summary of the investment case, market, underwriting and returns.', path: 'presentation.pptx', live: false },
+              ] as { title: string; ext: string; body: string; path: 'excel' | 'memo.pdf' | 'presentation.pptx'; live: boolean }[]).map(({ title, ext, body, path, live }) => {
                 const busy = exportBusy === path;
                 return (
                 <div key={title} style={{ border: '1px solid #eae9e4', borderRadius: 8, padding: '14px 15px', display: 'flex', flexDirection: 'column', gap: 7 }}>
@@ -1089,22 +1094,33 @@ export default function ICMemoTab({ project }: { project: Project }) {
                   </div>
                   <span style={{ fontSize: 12, color: palette.textSecondary, lineHeight: 1.55, flex: 1 }}>{body}</span>
                   <div style={{ display: 'flex', alignItems: 'center', gap: 12, paddingTop: 2 }}>
-                    <button
-                      type="button"
-                      disabled={!canExport || exportBusy !== null}
-                      onClick={() => void handleExport(path, ext)}
-                      title={canExport ? `Download ${ext}` : 'Available after model run'}
-                      style={{
-                        fontFamily: 'inherit', fontSize: 12, fontWeight: 600, padding: '7px 14px', borderRadius: 6,
-                        border: canExport ? `1px solid ${NAVY}` : '1px solid #eae9e4',
-                        background: canExport ? NAVY : palette.ground,
-                        color: canExport ? '#fff' : '#a8a7a2',
-                        cursor: canExport && !exportBusy ? 'pointer' : 'default',
-                        opacity: canExport && exportBusy && !busy ? 0.6 : 1,
-                      }}
-                    >
-                      {busy ? 'Generating…' : canExport ? `Download ${ext}` : '🔒 Available after model run'}
-                    </button>
+                    {live ? (
+                      <button
+                        type="button"
+                        disabled={!canExport || exportBusy !== null}
+                        onClick={() => void handleExport(path, ext)}
+                        title={canExport ? `Download ${ext}` : 'Available after model run'}
+                        style={{
+                          fontFamily: 'inherit', fontSize: 12, fontWeight: 600, padding: '7px 14px', borderRadius: 6,
+                          border: canExport ? `1px solid ${NAVY}` : '1px solid #eae9e4',
+                          background: canExport ? NAVY : palette.ground,
+                          color: canExport ? '#fff' : '#a8a7a2',
+                          cursor: canExport && !exportBusy ? 'pointer' : 'default',
+                          opacity: canExport && exportBusy && !busy ? 0.6 : 1,
+                        }}
+                      >
+                        {busy ? 'Generating…' : canExport ? `Download ${ext}` : '🔒 Available after model run'}
+                      </button>
+                    ) : (
+                      <button
+                        type="button"
+                        disabled
+                        title="Coming Soon"
+                        style={{ fontFamily: 'inherit', fontSize: 12, fontWeight: 600, padding: '7px 14px', borderRadius: 6, border: '1px solid #eae9e4', background: palette.ground, color: '#a8a7a2', cursor: 'default' }}
+                      >
+                        🔒 Coming Soon
+                      </button>
+                    )}
                   </div>
                 </div>
                 );

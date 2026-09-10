@@ -22,12 +22,11 @@ import { ValueTraceProvider } from '@/lib/hooks/useValueTrace';
 import { EngineFailuresBanner } from '@/components/project/EngineFailuresBanner';
 import { IntroCard } from '@/components/help/IntroCard';
 import { useDocuments } from '@/lib/hooks/useDocuments';
-import { isWorkerConnected, workerUrl } from '@/lib/api';
+import { isWorkerConnected } from '@/lib/api';
 import DataRoomTab from '@/components/project/DataRoomTab';
 import OverviewTab from '@/components/project/OverviewTab';
 import InvestmentTab from '@/components/project/InvestmentTab';
 import DebtTab from '@/components/project/DebtTab';
-import ExportTab from '@/components/project/ExportTab';
 import ScenarioSelector from '@/components/project/ScenarioSelector';
 import ScenarioComparePanel from '@/components/project/ScenarioComparePanel';
 import ScenarioAnalysisTab from '@/components/project/ScenarioAnalysisTab';
@@ -41,7 +40,7 @@ import { useCurrentRole } from '@/lib/auth';
 
 // Heavy tabs (Recharts-bound) lazy-loaded so the initial /projects/[id]
 // JS bundle drops by the size of recharts + each tab's own code.
-// Light tabs (Data Room / Overview / Investment / Debt / Export) stay
+// Light tabs (Data Room / Overview / Investment / Debt) stay
 // eagerly loaded since they're the most common landing tabs.
 const PLTab = dynamic(() => import('@/components/project/PLTab'), {
   loading: () => <TabLoadingSkeleton />,
@@ -100,7 +99,10 @@ type Tab = {
 // Financials → Projections; Analysis + Export are consolidated into IC Memo;
 // Validation stays engine-internal, still deep-linkable). Activity is
 // admin-only (FON-55). The removed tabs' render blocks below stay reachable via
-// ?tab= for internal use.
+// ?tab= for internal use — EXCEPT Export (FON-54b, 2026-09-09): the legacy
+// ExportTab surface is no longer routed at all, so it can't disagree with the
+// IC Memo export cards (it also used an unauthenticated window.location.href).
+// The ExportTab file is kept, just unmounted.
 const tabs: Tab[] = [
   { id: '', label: 'Data Room', icon: FolderOpen },
   { id: 'overview', label: 'Overview', icon: FileText },
@@ -149,27 +151,10 @@ export default function ProjectDetailPage() {
     if (workerConnected && isMockId) router.replace('/projects');
   }, [workerConnected, isMockId, router]);
 
-  // Header kebab actions — Export Excel / Export IC Memo / Mark IC Ready /
-  // Archive Project. Worker-backed deals (UUID rawId) actually hit the worker;
-  // mock deals show toasts so the affordance is still discoverable.
-  const onExportExcel = () => {
-    if (workerConnected && !isMockId) {
-      window.location.href = `${workerUrl()}/deals/${rawId}/export/excel`;
-    } else {
-      toast('Excel export available once worker is connected to this deal', {
-        type: 'info',
-      });
-    }
-  };
-  const onExportMemo = () => {
-    if (workerConnected && !isMockId) {
-      window.location.href = `${workerUrl()}/deals/${rawId}/export/memo.pdf`;
-    } else {
-      toast('IC Memo export available once worker is connected to this deal', {
-        type: 'info',
-      });
-    }
-  };
+  // Header kebab actions — Mark IC Ready / Archive Project. Exports live ONLY
+  // on the IC Memo tab's 'Export & share' card (authed api.exports.download;
+  // Excel live, PDF/PPTX Coming Soon per FON-54). The old kebab Excel/PDF items
+  // used an unauthenticated window.location.href and disagreed with that card.
   // FON-54 #9 — persist IC-Ready status (was a stub toast) so the header pill
   // + pipeline reflect it. Mock/demo deals just toast.
   const onMarkICReady = async () => {
@@ -235,8 +220,6 @@ export default function ProjectDetailPage() {
   };
 
   const headerMenu = [
-    { label: 'Export Excel', onSelect: onExportExcel },
-    { label: 'Export IC Memo', onSelect: onExportMemo },
     { label: 'Mark as IC Ready', onSelect: onMarkICReady },
     { label: 'Archive Project', onSelect: onArchive, danger: true },
     // Wave 5 RBAC — hard-delete gated to org:admin. Non-admins get the
@@ -824,9 +807,6 @@ export default function ProjectDetailPage() {
             <ActivityFeed dealId={String(id)} />
           </ErrorBoundary>
         )}
-        {activeTab === 'export' && (
-          <ErrorBoundary tabName="Export"><ExportTab project={project} /></ErrorBoundary>
-        )}
         {/* FON-54 — IC Memo: the IC-ready one-pager (Deal Summary + dynamic
             recommendation) with Configure → Preview → Export/Share folded in,
             consolidating the former Analysis + Export tabs. */}
@@ -919,3 +899,4 @@ export default function ProjectDetailPage() {
 
   return inner;
 }
+

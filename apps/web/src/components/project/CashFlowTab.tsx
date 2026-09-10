@@ -49,13 +49,16 @@ function subTabCaption(tab: string): string {
 }
 
 // KPI tile labels — canonical casing (Cash Flow Tab.dc.html `summary`): sentence
-// case, not the title-case the view-model emits.
+// case, not the title-case the view-model emits. DISPLAY-ONLY: the view-model
+// label (`buildSummary`) is still the lookup key everywhere.
+// FON-67 (Sam, 2026-09-09) — the Σ levered[1..] tile is labelled
+// "Net Cash Flow to Equity (Hold Period)" (Sam's wording, kept title-case).
 const KPI_LABEL_CANONICAL: Record<string, string> = {
   'Total Equity Invested': 'Total equity invested',
   'Operating Cash Flow to Equity': 'Operating cash flow to equity',
   'Net Refinance Proceeds': 'Net refinance proceeds',
   'Net Exit Proceeds': 'Net exit proceeds',
-  'Total Cash Returned to Equity': 'Total cash returned to equity',
+  'Total Cash Returned to Equity': 'Net Cash Flow to Equity (Hold Period)',
 };
 
 // Statement row labels — canonical strings (Cash Flow Tab.dc.html `renderVals`).
@@ -405,7 +408,7 @@ function SummaryView({ cf }: { cf: CashFlowStatementOutput }) {
   // sentence, built from the already-composed KPI values (no new math).
   const kpiVal = (label: string) => kpis.find((k) => k.label === label)?.value ?? 0;
   const summaryNote =
-    'Net cash flow to equity is the canonical deal-level equity cash-flow series: operating cash flow to equity ' +
+    'Net cash flow to equity (hold period) is the canonical deal-level equity cash-flow series: operating cash flow to equity ' +
     fmtMillions(kpiVal('Operating Cash Flow to Equity'), 2) +
     ' + net refinance ' +
     fmtMillions(kpiVal('Net Refinance Proceeds'), 2) +

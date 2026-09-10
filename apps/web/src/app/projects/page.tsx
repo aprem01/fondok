@@ -13,7 +13,7 @@ import KebabMenu from '@/components/ui/KebabMenu';
 import { projects as mockProjects, projectStatuses, Project } from '@/lib/mockData';
 import { cn } from '@/lib/format';
 import { useDeals } from '@/lib/hooks/useDeals';
-import { WorkerDeal, api, isWorkerConnected, workerUrl } from '@/lib/api';
+import { WorkerDeal, api, isWorkerConnected } from '@/lib/api';
 import { useCurrentRole } from '@/lib/auth';
 import { useToast } from '@/components/ui/Toast';
 import { GetStartedHero, useGetStartedHeroVisible } from '@/components/help/GetStartedHero';
@@ -32,16 +32,6 @@ const buildProjectMenu = (
   isAdmin: boolean,
 ) => {
   const liveMode = isWorkerConnected() && !isMock;
-  const onExport = (path: 'excel' | 'memo.pdf') => () => {
-    if (liveMode) {
-      window.location.href = `${workerUrl()}/deals/${id}/export/${path}`;
-    } else {
-      toast(
-        `${path === 'excel' ? 'Excel export' : 'IC memo export'} available once this deal has run the model`,
-        { type: 'info' },
-      );
-    }
-  };
   const onArchive = async () => {
     if (!liveMode) {
       toast('Archive available on worker-backed deals', { type: 'info' });
@@ -82,8 +72,6 @@ const buildProjectMenu = (
   };
   return [
     { label: 'View Details', onSelect: () => { window.location.href = `/projects/${id}`; } },
-    { label: 'Export Excel', onSelect: onExport('excel') },
-    { label: 'Export Memo', onSelect: onExport('memo.pdf') },
     { label: 'Archive', onSelect: onArchive, danger: true },
     // Wave 5 RBAC — hard-delete gated to org:admin.
     ...(isAdmin
@@ -470,3 +458,4 @@ export default function ProjectsPage() {
     </div>
   );
 }
+

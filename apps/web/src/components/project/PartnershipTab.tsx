@@ -489,8 +489,10 @@ export default function PartnershipTab() {
           style={{ marginBottom: 14 }}
         />
 
-        {/* Manual-inputs banner — partnership terms are entered by hand in this
-            release (not extracted from the JV agreement). Canonical blue card. */}
+        {/* Partnership-terms banner (FON-66 decision D6, 2026-09-09): ONE truthful
+            line — manual entry is always available AND JV / operating-agreement
+            extraction is live (prose extraction validated on prod 9/5; terms are
+            confirmed on the document page before they drive the model). */}
         <ManualInputsBanner onEdit={() => setTab('Waterfall')} />
         {/* TODO(FON-72): a manual-entry-only preview endpoint would let the
             waterfall/allocation render from unsaved inputs before a full engine
@@ -534,7 +536,7 @@ export default function PartnershipTab() {
                   <KeyRow label="LP Contribution" dot="calculated" value={money(lpEquity)} valueColor={prov.gray} />
                 </SectionCard>
 
-                <SectionCard title="Waterfall Terms" note="Your inputs — not extracted from the JV agreement">
+                <SectionCard title="Waterfall Terms" note="Your inputs — manual entry, or JV-agreement terms confirmed on the document page">
                   <KeyRow
                     label="Preferred Return"
                     dot="assumption"
@@ -561,16 +563,20 @@ export default function PartnershipTab() {
                     value={hasCatchUp ? 'Full catch-up until GP promote share met' : 'None configured'}
                     valueColor={hasCatchUp ? prov.blue : prov.muted}
                   />
+                  {/* FON-66 (Sam, 2026-09-09) — this row is the GP share of the FIRST
+                      promote tier above the pref (a single tier, not a multi-tier
+                      summary — "Additional Hurdles" below covers the rest), so it is
+                      labelled "Initial Promote Split: 20% GP". */}
                   <KeyRow
-                    label="Promote Above Pref"
+                    label="Initial Promote Split"
                     dot="assumption"
                     value={promoteAbovePrefIdx == null
                       ? '—'
-                      : pctv(readOverrideNum(
+                      : `${pctv(readOverrideNum(
                         overrides,
                         `partnership.waterfall.${promoteAbovePrefIdx}.gp_split`,
                         WATERFALL_SEED[promoteAbovePrefIdx]?.gp ?? NaN,
-                      ), 0)}
+                      ), 0)} GP`}
                     valueColor={prov.blue}
                     note="Edit in the Waterfall tab"
                   />
@@ -792,52 +798,37 @@ export default function PartnershipTab() {
 }
 
 // ─────────────────────────────────────────────────────────────────────
-// Manual-inputs banner (canonical blue card between the sub-tabs and body).
+// Partnership-terms banner (canonical blue card between the sub-tabs and body).
+// FON-66 D6 — a single truthful statement. Previously two rows said "manual only"
+// and then "LIVE · document extraction", which contradicted each other.
 // ─────────────────────────────────────────────────────────────────────
 function ManualInputsBanner({ onEdit }: { onEdit: () => void }) {
   return (
     <div style={{
       background: 'oklch(97.5% 0.015 250)', border: '1px solid #dbe3f5', borderRadius: 9,
-      padding: '12px 16px', marginBottom: 14, display: 'flex', flexDirection: 'column', gap: 8,
+      padding: '12px 16px', marginBottom: 14, display: 'flex', alignItems: 'center', gap: 14, flexWrap: 'wrap',
     }}>
-      <div style={{ display: 'flex', alignItems: 'center', gap: 14, flexWrap: 'wrap' }}>
-        <span style={{
-          display: 'flex', alignItems: 'center', gap: 6, fontSize: 10, fontWeight: 700,
-          letterSpacing: '.05em', color: palette.linkBlue, textTransform: 'uppercase', whiteSpace: 'nowrap',
-        }}>
-          <span style={{ width: 8, height: 8, borderRadius: '50%', background: prov.blue, display: 'inline-block' }} />
-          Manual inputs · current release
-        </span>
-        <span style={{ fontSize: 12.5, color: palette.ink, lineHeight: 1.5 }}>
-          Partnership terms are entered manually in this release and are not extracted from JV or
-          partnership documents. Fondok calculates the waterfall, allocations and partner returns from
-          what you enter.
-        </span>
-        <button
-          onClick={onEdit}
-          style={{
-            marginLeft: 'auto', background: palette.inkNavy, color: '#fff', border: 'none',
-            borderRadius: radius.button, padding: '6px 13px', fontSize: 11.5, fontWeight: 600,
-            cursor: 'pointer', fontFamily: 'inherit', whiteSpace: 'nowrap',
-          }}
-        >
-          Edit assumptions →
-        </button>
-      </div>
-      <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap', borderTop: '1px solid #dbe3f5', paddingTop: 8 }}>
-        <span style={{
-          fontSize: 9.5, fontWeight: 700, letterSpacing: '.06em', color: palette.textSecondary,
-          textTransform: 'uppercase', background: '#fff', border: '1px solid #e2e1dc',
-          borderRadius: radius.pill, padding: '3px 9px', whiteSpace: 'nowrap',
-        }}>
-          Live · document extraction
-        </span>
-        <span style={{ fontSize: 11.5, color: palette.textSecondary, lineHeight: 1.45 }}>
-          Upload a partnership / JV agreement in the Data Room — Fondok extracts the ownership split,
-          preferred return and promote waterfall, and you review each term (with its confidence) on the
-          document page before it drives the model.
-        </span>
-      </div>
+      <span style={{
+        display: 'flex', alignItems: 'center', gap: 6, fontSize: 10, fontWeight: 700,
+        letterSpacing: '.05em', color: palette.linkBlue, textTransform: 'uppercase', whiteSpace: 'nowrap',
+      }}>
+        <span style={{ width: 8, height: 8, borderRadius: '50%', background: prov.blue, display: 'inline-block' }} />
+        Partnership terms
+      </span>
+      <span style={{ fontSize: 12.5, color: palette.ink, lineHeight: 1.5 }}>
+        Manual entry always available · JV / operating-agreement extraction live — upload the
+        agreement in the Data Room and confirm the extracted terms on the document page.
+      </span>
+      <button
+        onClick={onEdit}
+        style={{
+          marginLeft: 'auto', background: palette.inkNavy, color: '#fff', border: 'none',
+          borderRadius: radius.button, padding: '6px 13px', fontSize: 11.5, fontWeight: 600,
+          cursor: 'pointer', fontFamily: 'inherit', whiteSpace: 'nowrap',
+        }}
+      >
+        Edit assumptions →
+      </button>
     </div>
   );
 }

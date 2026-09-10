@@ -152,8 +152,12 @@ describe('PartnershipTab — canonical structure', () => {
     expect(screen.getByRole('tab', { name: 'Cash Flows' })).toBeInTheDocument();
     // Ungated: the old "Partnership Engine unavailable" card must be gone.
     expect(screen.queryByText(/unavailable/i)).not.toBeInTheDocument();
-    // Manual-inputs banner (canonical) is present.
-    expect(screen.getByText(/Manual inputs · current release/i)).toBeInTheDocument();
+    // Partnership-terms banner (FON-66 D6): one truthful line — manual entry
+    // always available AND JV extraction live. The old contradictory pair
+    // ("manual only" + "LIVE · document extraction") must be gone.
+    expect(screen.getByText(/Manual entry always available/i)).toBeInTheDocument();
+    expect(screen.queryByText(/Manual inputs · current release/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/Live · document extraction/i)).not.toBeInTheDocument();
   });
 });
 

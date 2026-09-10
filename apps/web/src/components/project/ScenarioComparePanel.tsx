@@ -743,10 +743,10 @@ function CompareTable({ response, baseId, memoIds, scenarios, onToggleMemo }: Ta
                 <td className="px-4 py-2 text-ink-700">{row.label}</td>
                 {response.scenarios.map((cell) => {
                   const v = row.pick(cell.engines as Record<string, EnginePayload>);
+                  // FON-69 — delta vs Base in the row's NATIVE unit (not % change):
+                  // pts for rate rows, x for multiples/ratios, $ for dollar rows.
                   const delta =
-                    baseVal !== null && v !== null && !cell.is_base
-                      ? (v - baseVal) / Math.max(Math.abs(baseVal), 1e-9)
-                      : null;
+                    baseVal !== null && v !== null && !cell.is_base ? v - baseVal : null;
                   return (
                     <td key={cell.scenario_id} className="px-4 py-2 text-right tabular-nums">
                       <div className="text-ink-900">
@@ -759,8 +759,7 @@ function CompareTable({ response, baseId, memoIds, scenarios, onToggleMemo }: Ta
                             delta >= 0 ? 'text-emerald-600' : 'text-red-600',
                           )}
                         >
-                          {delta >= 0 ? '+' : ''}
-                          {(delta * 100).toFixed(1)}%
+                          {formatDelta(row.format, delta)}
                         </div>
                       )}
                     </td>
@@ -935,6 +934,25 @@ function formatKpi(kind: KpiRow['format'], v: number): string {
       if (Math.abs(v) >= 1_000_000) return `$${(v / 1_000_000).toFixed(2)}M`;
       if (Math.abs(v) >= 1_000) return `$${(v / 1_000).toFixed(0)}K`;
       return `$${v.toFixed(0)}`;
+  }
+}
+
+// FON-69 — scenario-vs-Base delta in the KPI's own unit (Sam, 2026-09-09):
+//   pct rows (IRR, CoC)        → percentage points, e.g. "-11.1 pts"
+//   multiple / ratio (EM, DSCR) → "x",                 e.g. "-0.82x"
+//   usd rows (NOI, Exit, Equity) → compact dollars,    e.g. "-$1.20M"
+// `delta` is the raw engine-unit difference (v − base); sign is explicit.
+function formatDelta(kind: KpiRow['format'], delta: number): string {
+  const sign = delta < 0 ? '-' : '+';
+  const abs = Math.abs(delta);
+  switch (kind) {
+    case 'pct':
+      return `${sign}${(abs * 100).toFixed(1)} pts`;
+    case 'multiple':
+    case 'ratio':
+      return `${sign}${abs.toFixed(2)}x`;
+    case 'usd':
+      return `${sign}${formatKpi('usd', abs)}`;
   }
 }
 

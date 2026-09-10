@@ -21,12 +21,10 @@
 
 import { useMemo, useState, useEffect, useCallback, useContext, createContext, type ReactNode, type CSSProperties } from 'react';
 import Link from 'next/link';
-import { Sparkles, Download, FileText, ExternalLink } from 'lucide-react';
+import { Sparkles, Download, FileText } from 'lucide-react';
 import { Card } from '@/components/ui/Card';
 import { ProvenanceDot } from '@/components/design';
 import { Button } from '@/components/ui/Button';
-import { Badge } from '@/components/ui/Badge';
-import Modal from '@/components/ui/Modal';
 import { useToast } from '@/components/ui/Toast';
 import { cn } from '@/lib/format';
 import { Traced } from '@/components/help/Traced';
@@ -36,13 +34,7 @@ import { sourceKind, sourceLabel, sourceExplanation, KIND_TONE } from '@/lib/pro
 import { getEngineField, useEngineOutputs } from '@/lib/hooks/useEngineOutputs';
 import { useEngineRun } from '@/lib/hooks/useEngineRun';
 import { useDeal } from '@/lib/hooks/useDeal';
-import {
-  api,
-  isWorkerConnected,
-  workerUrl,
-  WorkerError,
-  type AskAnswerResult,
-} from '@/lib/api';
+import { api } from '@/lib/api';
 import { downloadXlsx, type XlsxCell } from '@/lib/exportXlsx';
 
 // ────────────────────────────────────────────────────────────────────
@@ -268,22 +260,16 @@ export default function ProjectionsSection({
     return null;
   }, [hasWorker, revenueYears, fbYears, expenseYears, keys]);
 
-  // ── AI NOI Summary modal ────────────────────────────────────────
-  // Hits the worker's grounded Q&A endpoint (`/deals/{id}/ask`),
-  // which returns answer + per-fact citations back to source PDF
-  // pages. The fixed prompt frames the question around the projection
-  // years rendered in this table — keeps the answer on-topic for the
-  // P&L tab without dragging in unrelated assumptions.
+  // CRITICAL: every hook below MUST be declared BEFORE the early-return
+  // empty-state guard. React's Rules of Hooks require the same hook count on
+  // every render; placing hooks after the guard caused React error #310 when
+  // `years` flipped from null → populated between renders (2026-05-12 prod
+  // crash on the P&L tab).
   //
-  // CRITICAL: these hooks MUST be declared BEFORE the early-return
-  // empty-state guard below. React's Rules of Hooks require the same
-  // hook count on every render; placing them after the guard caused
-  // React error #310 when `years` flipped from null → populated
-  // between renders (2026-05-12 prod crash on the P&L tab).
-  const [noiModalOpen, setNoiModalOpen] = useState(false);
-  const [noiLoading, setNoiLoading] = useState(false);
-  const [noiResult, setNoiResult] = useState<AskAnswerResult | null>(null);
-  const [noiError, setNoiError] = useState<string | null>(null);
+  // FON-41b (Sam, 2026-09-09) — the "AI NOI Summary" button + modal that lived
+  // here were removed: the button dead-ended in a 404/error page. The worker's
+  // grounded Q&A endpoint (`/deals/{id}/ask`) is untouched; only this entry
+  // point (button, handler, modal, prompt builder) is gone.
 
   // Canonical Projections view controls. Period trims the forecast horizon
   // shown in the table (real behaviour, capped at the engine-provided years);
@@ -292,30 +278,6 @@ export default function ProjectionsSection({
   // base-year override + monthly series are wired through (flagged follow-up).
   const [projYearsSel, setProjYearsSel] = useState<number | null>(null);
   const [projView, setProjView] = useState<'annual' | 'monthly'>('annual');
-
-  const noiQuestion = useMemo(() => {
-    if (!years || years.length === 0) {
-      return 'Summarize the deal NOI trajectory across the projection horizon.';
-    }
-    const span = years.length - 1;
-    const baseYear = years[0]?.year;
-    const exitYear = years[years.length - 1]?.year;
-    const revSeries = years
-      .map(
-        (y) =>
-          `Year ${y.year}: Occ ${(y.occupancy * 100).toFixed(1)}%, ADR $${y.adr.toFixed(0)}, Rev $${y.totalRevenue.toLocaleString()}`,
-      )
-      .join('; ');
-    return [
-      `Summarize the NOI trajectory across this ${span}-year projection`,
-      `(${baseYear} → ${exitYear}). Underlying revenue series: ${revSeries}.`,
-      "Cover: (1) what's driving Year-1 NOI vs the broker proforma,",
-      '(2) the key revenue / expense levers in the ramp years,',
-      '(3) the terminal Year NOI vs entry, and (4) the top two risks',
-      'that would compress NOI below this trajectory. Cite source pages',
-      'when grounded.',
-    ].join(' ');
-  }, [years]);
 
   if (!years || years.length === 0) {
     return (
@@ -330,28 +292,6 @@ export default function ProjectionsSection({
       </Card>
     );
   }
-
-  const onNoiSummary = async () => {
-    if (!isWorkerConnected() || !dealId || /^\d+$/.test(dealId)) {
-      toast('AI NOI Summary needs a live deal — try the demo deal.', {
-        type: 'info',
-      });
-      return;
-    }
-    setNoiModalOpen(true);
-    setNoiLoading(true);
-    setNoiError(null);
-    setNoiResult(null);
-    try {
-      const res = await api.dossier.ask(dealId, noiQuestion);
-      setNoiResult(res);
-    } catch (err) {
-      const detail = err instanceof WorkerError ? err.body : String(err);
-      setNoiError(detail || 'Worker rejected the request.');
-    } finally {
-      setNoiLoading(false);
-    }
-  };
 
   const onExport = async () => {
     const headers: XlsxCell[] = [
@@ -474,135 +414,45 @@ export default function ProjectionsSection({
   const visibleYears = years.slice(0, shownForecast + 1);
 
   return (
-    <>
-      <Card className="p-0 overflow-hidden">
-        {/* Header */}
-        <div className="flex items-start justify-between gap-3 px-5 py-4 border-b border-border bg-bg/40">
-          <div>
-            <div className="text-[10.5px] uppercase tracking-[0.12em] text-ink-500 font-semibold">
-              Preliminary Hotel Underwriting
-            </div>
-            <h3 className="text-[15px] font-semibold text-ink-900 mt-0.5">
-              Proforma Projections
-            </h3>
+    <Card className="p-0 overflow-hidden">
+      {/* Header */}
+      <div className="flex items-start justify-between gap-3 px-5 py-4 border-b border-border bg-bg/40">
+        <div>
+          <div className="text-[10.5px] uppercase tracking-[0.12em] text-ink-500 font-semibold">
+            Preliminary Hotel Underwriting
           </div>
-          <div className="flex items-center gap-2">
-            <Button variant="secondary" size="sm" onClick={onNoiSummary}>
-              <Sparkles size={11} />
-              NOI Summary
-              <Badge tone="blue" className="ml-1 !py-0 !px-1.5 !text-[9px]">AI</Badge>
-            </Button>
-            <Button variant="secondary" size="sm" onClick={onExport}>
-              <Download size={11} /> Export
-            </Button>
-          </div>
+          <h3 className="text-[15px] font-semibold text-ink-900 mt-0.5">
+            Proforma Projections
+          </h3>
         </div>
-
-        <ProjectionsControls
-          years={years}
-          shownForecast={shownForecast}
-          forecastCount={forecastCount}
-          onDec={() => setProjYearsSel(Math.max(1, shownForecast - 1))}
-          onInc={() => setProjYearsSel(Math.min(forecastCount, shownForecast + 1))}
-          view={projView}
-          onView={setProjView}
-        />
-
-        <AssumptionsPanel
-          dealId={dealId}
-          overrides={overrides}
-          onApply={applyOverride}
-          running={overrideCtx.running}
-        />
-
-        <AssumptionOverrideContext.Provider value={overrideCtx}>
-          <ProjectionsTable years={visibleYears} exitCapRate={exitCapRate} />
-        </AssumptionOverrideContext.Provider>
-      </Card>
-
-      <Modal
-        open={noiModalOpen}
-        onClose={() => setNoiModalOpen(false)}
-        title="AI NOI Summary"
-        maxWidth="max-w-2xl"
-      >
-        <div className="px-5 py-4 space-y-3">
-          {noiLoading && (
-            <div className="text-[12.5px] text-ink-500 py-6 text-center">
-              <Sparkles className="inline-block w-3.5 h-3.5 mr-1.5 animate-pulse text-brand-500" />
-              Synthesizing NOI summary from extracted deal data…
-            </div>
-          )}
-
-          {noiError && (
-            <div className="text-[12.5px] text-error-700 bg-error-50 border border-error-200 rounded p-3">
-              <div className="font-semibold mb-1">Couldn&apos;t generate summary</div>
-              <div className="text-error-600">{noiError}</div>
-            </div>
-          )}
-
-          {noiResult && !noiLoading && (
-            <>
-              <div className="text-[12px] text-ink-500 leading-relaxed border-l-2 border-brand-200 pl-3 italic">
-                {noiQuestion}
-              </div>
-              <div className="text-[13px] text-ink-900 leading-relaxed whitespace-pre-wrap">
-                {noiResult.answer}
-              </div>
-              {noiResult.confidence != null && (
-                <div className="text-[11px] text-ink-500">
-                  Model confidence: {(noiResult.confidence * 100).toFixed(0)}%
-                  {noiResult.note && ` · ${noiResult.note}`}
-                </div>
-              )}
-              {noiResult.citations && noiResult.citations.length > 0 && (
-                <div className="border-t border-border pt-3">
-                  <div className="text-[10.5px] uppercase tracking-wide text-ink-500 font-semibold mb-2">
-                    Citations
-                  </div>
-                  <ul className="space-y-1.5 text-[11.5px] text-ink-700">
-                    {noiResult.citations.map((c, i) => {
-                      const href =
-                        c.document_id && c.page
-                          ? `${workerUrl()}/deals/${dealId}/documents/${c.document_id}/download#page=${c.page}`
-                          : null;
-                      return (
-                        <li key={`citation-${i}`} className="flex items-start gap-1.5">
-                          <FileText size={11} className="mt-0.5 text-ink-400 shrink-0" />
-                          <span>
-                            {href ? (
-                              <a
-                                href={href}
-                                target="_blank"
-                                rel="noreferrer"
-                                className="hover:underline inline-flex items-center gap-0.5"
-                              >
-                                {c.field ?? 'source'} (page {c.page})
-                                <ExternalLink size={10} />
-                              </a>
-                            ) : (
-                              <span className="text-ink-500">
-                                {c.field ?? 'source'}
-                              </span>
-                            )}
-                            {c.excerpt && (
-                              <span className="block text-[11px] text-ink-500 italic mt-0.5">
-                                &ldquo;{c.excerpt.slice(0, 200)}
-                                {c.excerpt.length > 200 ? '…' : ''}&rdquo;
-                              </span>
-                            )}
-                          </span>
-                        </li>
-                      );
-                    })}
-                  </ul>
-                </div>
-              )}
-            </>
-          )}
+        <div className="flex items-center gap-2">
+          <Button variant="secondary" size="sm" onClick={onExport}>
+            <Download size={11} /> Export
+          </Button>
         </div>
-      </Modal>
-    </>
+      </div>
+
+      <ProjectionsControls
+        years={years}
+        shownForecast={shownForecast}
+        forecastCount={forecastCount}
+        onDec={() => setProjYearsSel(Math.max(1, shownForecast - 1))}
+        onInc={() => setProjYearsSel(Math.min(forecastCount, shownForecast + 1))}
+        view={projView}
+        onView={setProjView}
+      />
+
+      <AssumptionsPanel
+        dealId={dealId}
+        overrides={overrides}
+        onApply={applyOverride}
+        running={overrideCtx.running}
+      />
+
+      <AssumptionOverrideContext.Provider value={overrideCtx}>
+        <ProjectionsTable years={visibleYears} exitCapRate={exitCapRate} />
+      </AssumptionOverrideContext.Provider>
+    </Card>
   );
 }
 
@@ -1740,6 +1590,9 @@ function AssumptionField({
       <span style={{ fontSize: 12, color: '#6b6f76' }}>{label}</span>
       <div style={{ display: 'flex', alignItems: 'center', gap: 3 }}>
         {prefix && <span style={{ fontSize: 11, color: '#6b6f76' }}>{prefix}</span>}
+        {/* FON-41b (Sam, 2026-09-09) — at 46px "4.5" clipped to "4.!" and "60" to
+            "6C" once the number spinner took its share. 72px + minWidth + tabular
+            figures so any 1–4 char value renders whole. */}
         <input
           type="number"
           value={draft}
@@ -1750,7 +1603,7 @@ function AssumptionField({
             if (e.key === 'Enter') (e.target as HTMLInputElement).blur();
             if (e.key === 'Escape') { setDraft(fmt(display)); (e.target as HTMLInputElement).blur(); }
           }}
-          style={{ fontSize: 13, fontWeight: 600, border: '1px solid #e2e1dc', borderRadius: 6, padding: '5px 7px', color: '#1a2233', width: 46, textAlign: 'right' }}
+          style={{ fontSize: 13, fontWeight: 600, border: '1px solid #e2e1dc', borderRadius: 6, padding: '5px 7px', color: '#1a2233', width: 72, minWidth: 72, textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}
         />
         {suffix && <span style={{ fontSize: 11, color: '#6b6f76' }}>{suffix}</span>}
       </div>
