@@ -26,6 +26,9 @@ import { AssumptionBadge } from '@/components/help/AssumptionBadge';
  *      and the precedence rules between them.
  *   4. Engine architecture — one-screen summary of the 8 engines and
  *      the dependency graph between them.
+ *   5. Return targets & pricing (FON-68) — the Investment Profile owns
+ *      the hurdles; the Max Price Solver and pricing grid read them and
+ *      never default one.
  *
  * Loom walkthrough embed slot is reserved at the top — drops in
  * without a code change once the video lands.
@@ -302,6 +305,58 @@ export default function MethodologyPage() {
           <p className="text-[12.5px] text-ink-500 leading-relaxed">
             Engines are deterministic and independent, so one can fail without taking down the rest. When one does, the deal shows a clear red banner naming the model, a plain-language reason, and a one-click Re-run — the numbers it feeds read as an explicit error, never as silent “—” dashes that look like missing data. Engines are also hardened against valid-but-extreme inputs (a deeply negative-return scenario, a zero base), so an ugly deal computes rather than crashes.
           </p>
+        </Card>
+      </Section>
+
+      {/* ─── 5. Return targets & pricing (FON-68) ─────────────────── */}
+      <Section
+        id="pricing"
+        number="5"
+        title="Return targets & the Max Price Solver"
+        intro="The hurdles a deal must clear are the analyst's, set once on Overview → Investment Profile. Returns → Pricing reads them from the deal — there is no hidden 15% / 1.80x default anywhere in the pricing path."
+      >
+        <Card className="p-5">
+          <h4 className="text-[13px] font-semibold text-ink-900 mb-2">The Investment Profile is the source of truth</h4>
+          <ul className="space-y-2 text-[12.5px] text-ink-600 leading-relaxed">
+            <li>
+              <span className="font-semibold text-ink-900">Two analyst inputs.</span>{' '}
+              <span className="font-medium">Target Levered IRR</span> and <span className="font-medium">Target MOIC</span> are stored on the deal (<code className="text-[11.5px]">target_irr</code> / <code className="text-[11.5px]">target_moic</code>) as analyst inputs <AssumptionBadge source="analyst_override" />. Either may be unset; an unset target renders as &ldquo;—&rdquo;.
+            </li>
+            <li>
+              <span className="font-semibold text-ink-900">The returns profile only suggests.</span>{' '}
+              A profile band such as Value Add (12-18%) is a suggestion. The &ldquo;Use profile midpoint&rdquo; action writes that midpoint (15%) to the deal explicitly — Fondok never applies a band implicitly, and an open band (18%+) offers its floor.
+            </li>
+            <li>
+              <span className="font-semibold text-ink-900">Benchmark only.</span>{' '}
+              Saving a target never re-runs the model. The Overview&apos;s Return benchmark strip compares the calculated levered IRR from the canonical returns run against Target Levered IRR: below the target is <em>Below target</em>, at or above it up to 200bp over is <em>Within target</em>, and more than 200bp over is <em>Above target</em>. It is display only and does not drive any engine.
+            </li>
+          </ul>
+        </Card>
+
+        <Card className="p-5 mt-4">
+          <h4 className="text-[13px] font-semibold text-ink-900 mb-2">Max Price Solver (Returns → Pricing)</h4>
+          <ul className="space-y-2 text-[12.5px] text-ink-600 leading-relaxed">
+            <li>
+              <span className="font-semibold text-ink-900">No silent hurdles.</span>{' '}
+              <code className="text-[11.5px]">POST /analysis/{'{id}'}/pricing/max-price</code> reads the deal&apos;s targets when the request omits them. If neither the deal nor the request carries at least one target, the worker answers 422 — &ldquo;No return target set — set Target Levered IRR / Target MOIC on the Investment Profile or pass them explicitly&rdquo; — and the Pricing block shows that message with a link to the Investment Profile and no numbers.
+            </li>
+            <li>
+              <span className="font-semibold text-ink-900">Lower-of rule.</span>{' '}
+              Each hurdle is solved independently by bisecting on purchase price (loan amount held fixed, equity flexes; 50%–200% of the current basis; ≤ 40 iterations). Max Price is the lower of the IRR-solved and MOIC-solved prices and the <em>binding constraint</em> is named (IRR, MOIC, or both when they land within $50K). With a single target set, that hurdle governs on its own.
+            </li>
+            <li>
+              <span className="font-semibold text-ink-900">Unreachable hurdles stay unreachable.</span>{' '}
+              A hurdle that no price down to 50% of the basis can clear reports &ldquo;no price clears the hurdles&rdquo; (Max Price &ldquo;—&rdquo;); one that clears even at 2× the basis reports &ldquo;≥ 2× basis&rdquo;. The bracket endpoint is never shown as a price.
+            </li>
+            <li>
+              <span className="font-semibold text-ink-900">Pricing sensitivity grid.</span>{' '}
+              <code className="text-[11.5px]">POST /analysis/{'{id}'}/pricing/max-price-grid</code> re-runs the solver per cell over exit cap rate (base ± 100bp in 50bp steps) × NOI growth (base ± 2pp in 1pp steps), at most 25 cells. Each cell shows the maximum purchase price clearing both hurdles with its binding constraint. NOI growth re-tilts the model&apos;s canonical NOI series relative to the base growth assumption — year 1 is unchanged, later years and the exit NOI move — so the base cell reproduces the headline solve exactly.
+            </li>
+            <li>
+              <span className="font-semibold text-ink-900">Known gap — exports.</span>{' '}
+              The IC memo / Excel max-price section still prints the legacy 15% / 1.80x hurdles until the export path is migrated to the deal&apos;s targets.
+            </li>
+          </ul>
         </Card>
       </Section>
 

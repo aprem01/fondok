@@ -12,6 +12,7 @@ import PricingSensitivityPanel from './PricingSensitivityPanel';
 import MaxPricePanel from './MaxPricePanel';
 import { fmtPct, cn } from '@/lib/format';
 import { api, isWorkerConnected, type ReturnsPreviewResponse, type ValueState } from '@/lib/api';
+import { useDeal } from '@/lib/hooks/useDeal';
 // Sensitivity grid shapes (relocated here when the client-side lib/engines model
 // was retired — the worker sensitivity engine is now the only source).
 interface SensitivityCell {
@@ -274,6 +275,8 @@ function ReturnsWorkspace({ outputs, dealId }: { outputs: EngineOutputs; dealId:
 
   const goInvestment = () => router.push(`/projects/${dealId}?tab=investment`, { scroll: false });
   const goCashFlow = () => router.push(`/projects/${dealId}?tab=cash-flow`, { scroll: false });
+  // FON-68 — the pricing hurdles live on Overview → Investment Profile.
+  const goProfile = () => router.push(`/projects/${dealId}?tab=overview`, { scroll: false });
 
   return (
     <div style={{ maxWidth: 1320 }}>
@@ -375,11 +378,34 @@ function ReturnsWorkspace({ outputs, dealId }: { outputs: EngineOutputs; dealId:
         />
       )}
       {tab === 'Pricing' && (
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
-          <PricingSensitivityPanel dealId={dealId} />
-          <MaxPricePanel dealId={dealId} />
-        </div>
+        <PricingSubTab dealId={dealId} outputs={outputs} onGoToProfile={goProfile} />
       )}
+    </div>
+  );
+}
+
+// ───────────────────────────────────────────────────────────────────
+// Pricing — canonical order: Max Price Solver block, then the max-price
+// grid (FON-68). Both read the hurdles from the deal record (Target
+// Levered IRR / Target MOIC on the Investment Profile); neither carries a
+// local hurdle input or a default. Mounted only on this sub-tab so the
+// deal fetch happens when the analyst actually opens Pricing.
+// ───────────────────────────────────────────────────────────────────
+
+function PricingSubTab({
+  dealId,
+  outputs,
+  onGoToProfile,
+}: {
+  dealId: string;
+  outputs: EngineOutputs;
+  onGoToProfile: () => void;
+}) {
+  const { deal } = useDeal(dealId);
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+      <MaxPricePanel dealId={dealId} deal={deal} outputs={outputs} onGoToProfile={onGoToProfile} />
+      <PricingSensitivityPanel dealId={dealId} deal={deal} onGoToProfile={onGoToProfile} />
     </div>
   );
 }

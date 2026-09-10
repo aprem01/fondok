@@ -1717,23 +1717,116 @@ class _SensitivityGridOut(BaseModel):
 
 
 class _MaxPriceRequest(BaseModel):
+    """LEGACY defaults — retained ONLY for ``export/live_payload.py``, which
+    instantiates this class to drive the exported max-price section. The
+    ``/pricing/max-price`` endpoint no longer uses it (FON-68): it takes
+    ``_MaxPriceTargetsBody`` and never defaults a hurdle. Migrating the
+    export to the deal's targets is a known follow-up.
+    """
+
     model_config = ConfigDict(extra="forbid")
 
     target_irr: float = Field(default=0.15, ge=-0.5, le=2.0)
     target_em: float = Field(default=1.8, ge=0.0, le=20.0)
 
 
+class _MaxPriceTargetsBody(BaseModel):
+    """POST body for ``/pricing/max-price`` (FON-68).
+
+    Both hurdles are optional with NO default: an omitted field is read
+    from the deal's Investment Profile (``deals.target_irr`` /
+    ``deals.target_moic``). When neither the body nor the deal provides
+    at least one target the endpoint returns 422 — a hurdle the analyst
+    never set is never invented.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    target_irr: float | None = Field(default=None, ge=-0.5, le=2.0)
+    target_em: float | None = Field(default=None, ge=0.0, le=20.0)
+
+
+_TargetSource = Literal["deal", "request", "mixed"]
+_SolveStatus = Literal["converged", "unreachable", "above_ceiling", "not_requested"]
+
+
 class _MaxPriceOut(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     deal_id: UUID
-    target_irr: float
-    target_em: float
-    max_price_for_irr: float
-    max_price_for_em: float
+    target_irr: float | None
+    target_em: float | None
+    # Where the targets came from: the deal's Investment Profile, the
+    # request body, or one of each.
+    target_source: _TargetSource
+    # Per-constraint solved price — null unless that search converged
+    # (an unreachable hurdle is reported via ``*_status``, not as the
+    # bracket endpoint).
+    max_price_for_irr: float | None
+    max_price_for_em: float | None
+    # The offerable headline: lower of the converged requested prices.
+    max_price: float | None
     binding_constraint: Literal["irr", "em", "both"]
+    irr_status: _SolveStatus
+    em_status: _SolveStatus
     final_price_per_key: float
+    # Context the Pricing block renders alongside (all from the same
+    # returns input the solver bisected on).
+    base_purchase_price: float
+    rooms: int | None
+    exit_cap_rate: float
+    ltv: float
+    interest_rate: float
+    hold_years: float
     iters: int
+
+
+class _MaxPriceGridRequest(BaseModel):
+    """POST body for ``/pricing/max-price-grid`` (FON-68).
+
+    Targets resolve exactly like ``/pricing/max-price``. Axes are
+    absolute values; omitted → the default ±100bp exit-cap / ±2pp
+    NOI-growth windows anchored at the deal's base assumptions. Capped
+    at 25 cells.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    target_irr: float | None = Field(default=None, ge=-0.5, le=2.0)
+    target_em: float | None = Field(default=None, ge=0.0, le=20.0)
+    cap_axis: list[float] | None = Field(default=None, max_length=5)
+    noi_growth_axis: list[float] | None = Field(default=None, max_length=5)
+
+
+class _MaxPriceGridCellOut(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    exit_cap_pct: float
+    noi_growth_pct: float
+    max_price_for_irr: float | None
+    max_price_for_em: float | None
+    max_price: float | None
+    binding_constraint: Literal["irr", "em", "both"]
+    irr_status: _SolveStatus
+    em_status: _SolveStatus
+    price_per_key: float | None
+    is_base: bool
+
+
+class _MaxPriceGridOut(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    deal_id: UUID
+    target_irr: float | None
+    target_em: float | None
+    target_source: _TargetSource
+    base_exit_cap_pct: float
+    base_noi_growth_pct: float
+    base_purchase_price: float
+    rooms: int | None
+    cap_axis: list[float]
+    noi_growth_axis: list[float]
+    cells: list[_MaxPriceGridCellOut]
 
 
 class _LOIRequest(BaseModel):
@@ -1862,6 +1955,58 @@ async def _load_asset_facts(
     return (name, address, rooms)
 
 
+async def _resolve_return_targets(
+    session: AsyncSession,
+    *,
+    deal_id: UUID,
+    tenant_id: UUID,
+    body_irr: float | None,
+    body_em: float | None,
+) -> tuple[float | None, float | None, str]:
+    """Resolve the solver's hurdles: request body first, else the deal's
+    Investment Profile (``target_irr`` / ``target_moic``).
+
+    Returns ``(target_irr, target_em, source)``. Raises 422 with the
+    canonical copy when neither side provides at least one target —
+    the solver never falls back to an institutional default (FON-68).
+    """
+    from ..engines.price_solver import NO_TARGET_MESSAGE
+
+    row = (
+        await session.execute(
+            text(
+                "SELECT target_irr, target_moic FROM deals "
+                "WHERE id = :id AND tenant_id = :tenant"
+            ),
+            {"id": str(deal_id), "tenant": str(tenant_id)},
+        )
+    ).first()
+    deal_irr = deal_em = None
+    if row is not None:
+        m = row._mapping
+        deal_irr = float(m["target_irr"]) if m.get("target_irr") is not None else None
+        deal_em = float(m["target_moic"]) if m.get("target_moic") is not None else None
+
+    target_irr = body_irr if body_irr is not None else deal_irr
+    target_em = body_em if body_em is not None else deal_em
+    if target_irr is None and target_em is None:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=NO_TARGET_MESSAGE,
+        )
+    from_request = [
+        v is not None
+        for v, t in ((body_irr, target_irr), (body_em, target_em))
+        if t is not None
+    ]
+    source = (
+        "request" if all(from_request)
+        else "deal" if not any(from_request)
+        else "mixed"
+    )
+    return target_irr, target_em, source
+
+
 @router.post(
     "/{deal_id}/pricing/sensitivity",
     response_model=_SensitivityGridOut,
@@ -1920,15 +2065,24 @@ async def get_pricing_sensitivity(
 )
 async def get_pricing_max_price(
     deal_id: UUID,
-    body: _MaxPriceRequest,
+    body: _MaxPriceTargetsBody,
     session: Annotated[AsyncSession, Depends(get_session)],
     tenant_id: Annotated[UUID, Depends(get_tenant_id)],
 ) -> _MaxPriceOut:
-    """Bisect-search the max purchase price hitting ``target_irr`` AND
-    ``target_em``. Returns both prices + binding-constraint chip.
+    """Bisect-search the max purchase price hitting the deal's Target
+    Levered IRR AND Target MOIC (Investment Profile). Body values, when
+    given, win over the deal's; with neither → 422, never a default.
+    Returns both prices, the lower-of headline and the binding chip.
     """
     await _assert_deal_belongs_to_tenant(
         session, deal_id=deal_id, tenant_id=tenant_id
+    )
+    target_irr, target_em, source = await _resolve_return_targets(
+        session,
+        deal_id=deal_id,
+        tenant_id=tenant_id,
+        body_irr=body.target_irr,
+        body_em=body.target_em,
     )
 
     from ..engines.price_solver import solve_max_price
@@ -1941,19 +2095,112 @@ async def get_pricing_max_price(
     )
     res = solve_max_price(
         base_input,
-        target_irr=body.target_irr,
-        target_em=body.target_em,
+        target_irr=target_irr,
+        target_em=target_em,
         rooms=rooms or None,
     )
+    a = base_input.assumptions
     return _MaxPriceOut(
         deal_id=deal_id,
         target_irr=res.target_irr,
         target_em=res.target_em,
-        max_price_for_irr=res.max_price_for_irr,
-        max_price_for_em=res.max_price_for_em,
+        target_source=source,
+        max_price_for_irr=(
+            res.max_price_for_irr if res.irr_status == "converged" else None
+        ),
+        max_price_for_em=(
+            res.max_price_for_em if res.em_status == "converged" else None
+        ),
+        max_price=res.max_price,
         binding_constraint=res.binding_constraint,
+        irr_status=res.irr_status,
+        em_status=res.em_status,
         final_price_per_key=res.final_price_per_key,
+        base_purchase_price=a.purchase_price,
+        rooms=rooms or None,
+        exit_cap_rate=a.exit_cap_rate,
+        ltv=a.ltv,
+        interest_rate=a.interest_rate,
+        hold_years=float(a.hold_years),
         iters=res.iters,
+    )
+
+
+@router.post(
+    "/{deal_id}/pricing/max-price-grid",
+    response_model=_MaxPriceGridOut,
+)
+async def get_pricing_max_price_grid(
+    deal_id: UUID,
+    body: _MaxPriceGridRequest,
+    session: Annotated[AsyncSession, Depends(get_session)],
+    tenant_id: Annotated[UUID, Depends(get_tenant_id)],
+) -> _MaxPriceGridOut:
+    """FON-68 — max purchase price per (exit cap × NOI growth) cell.
+
+    Each cell is an independent ``solve_max_price`` against the deal's
+    targets (resolved like ``/pricing/max-price``): IRR-solved price,
+    MOIC-solved price, the lower of the two and the binding constraint.
+    ≤ 25 cells. Read-only — never touches ``engine_outputs`` / ``deals``.
+    """
+    await _assert_deal_belongs_to_tenant(
+        session, deal_id=deal_id, tenant_id=tenant_id
+    )
+    target_irr, target_em, source = await _resolve_return_targets(
+        session,
+        deal_id=deal_id,
+        tenant_id=tenant_id,
+        body_irr=body.target_irr,
+        body_em=body.target_em,
+    )
+
+    from ..engines.max_price_grid import run_max_price_grid
+
+    base_input = await _build_returns_input_for_deal(
+        session, deal_id=deal_id, tenant_id=tenant_id
+    )
+    _name, _address, rooms = await _load_asset_facts(
+        session, deal_id=deal_id, tenant_id=tenant_id
+    )
+    try:
+        grid = run_max_price_grid(
+            base_input,
+            target_irr=target_irr,
+            target_em=target_em,
+            cap_axis=body.cap_axis,
+            noi_growth_axis=body.noi_growth_axis,
+            rooms=rooms or None,
+        )
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)
+        ) from exc
+    return _MaxPriceGridOut(
+        deal_id=deal_id,
+        target_irr=grid.target_irr,
+        target_em=grid.target_em,
+        target_source=source,
+        base_exit_cap_pct=grid.base_exit_cap_pct,
+        base_noi_growth_pct=grid.base_noi_growth_pct,
+        base_purchase_price=grid.base_purchase_price,
+        rooms=rooms or None,
+        cap_axis=grid.cap_axis,
+        noi_growth_axis=grid.noi_growth_axis,
+        cells=[
+            _MaxPriceGridCellOut(
+                exit_cap_pct=c.exit_cap_pct,
+                noi_growth_pct=c.noi_growth_pct,
+                max_price_for_irr=c.max_price_for_irr,
+                max_price_for_em=c.max_price_for_em,
+                max_price=c.max_price,
+                binding_constraint=c.binding_constraint,
+                irr_status=c.irr_status,
+                em_status=c.em_status,
+                price_per_key=c.price_per_key,
+                is_base=c.is_base,
+            )
+            for c in grid.cells
+        ],
     )
 
 

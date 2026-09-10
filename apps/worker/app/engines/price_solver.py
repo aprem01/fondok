@@ -23,6 +23,14 @@ the standard institutional question, not "what LTV would unlock the
 target" (different solver, future work).
 
 Wave 2 P2.8.
+
+FON-68 — the hurdles are the analyst's, not the solver's. ``solve_max_price``
+no longer carries default targets: the caller passes the Investment
+Profile's Target Levered IRR / Target MOIC (either may be ``None`` to
+solve a single constraint; both ``None`` is an error). Each requested
+search reports a ``*_status`` so a target that lies outside the
+50–200% price bracket renders as "no price clears the hurdle" rather
+than as the bracket endpoint dressed up as a price.
 """
 
 from __future__ import annotations
@@ -36,11 +44,20 @@ from .returns import ReturnsEngine, ReturnsEngineInputExt
 # ─────────────────────────── tuning ─────────────────────────────────
 
 
-# Default IRR target — typical institutional hospitality hurdle.
+# Legacy institutional norms. NOT used as solver defaults any more
+# (FON-68): they remain only for the export path
+# (``export/live_payload.py``) which still instantiates the historical
+# ``_MaxPriceRequest`` defaults — a known follow-up.
 DEFAULT_TARGET_IRR: float = 0.15
-
-# Default EM target — institutional value-add hospitality range.
 DEFAULT_TARGET_EM: float = 1.8
+
+# The 422 / ValueError copy when neither hurdle is available.
+NO_TARGET_MESSAGE: str = (
+    "No return target set — set Target Levered IRR / Target MOIC on the "
+    "Investment Profile or pass them explicitly"
+)
+
+SolveStatus = Literal["converged", "unreachable", "above_ceiling", "not_requested"]
 
 # Bisection bounds expressed as a multiplier of the base purchase price.
 PRICE_FLOOR_MULTIPLIER: float = 0.5
@@ -70,13 +87,23 @@ class MaxPriceResult:
     useful for telemetry and tests, not for end-user display.
     """
 
-    target_irr: float
-    target_em: float
-    max_price_for_irr: float
-    max_price_for_em: float
+    target_irr: float | None
+    target_em: float | None
+    max_price_for_irr: float | None
+    max_price_for_em: float | None
     binding_constraint: Literal["irr", "em", "both"]
     final_price_per_key: float
     iters: int
+    # FON-68 — the offerable headline: the lower of the *converged*
+    # requested prices. ``None`` when the binding constraint's search did
+    # not converge (target unreachable inside the bracket, or cleared even
+    # at the 200% ceiling) — the UI renders "—", never the bracket end.
+    max_price: float | None = None
+    # Per-search outcome. ``unreachable`` = no price ≥ the 50% floor clears
+    # the hurdle; ``above_ceiling`` = the hurdle clears even at 2× base
+    # (max price ≥ ceiling); ``not_requested`` = target was ``None``.
+    irr_status: SolveStatus = "converged"
+    em_status: SolveStatus = "converged"
 
 
 # ─────────────────────────── core bisect ────────────────────────────
@@ -167,19 +194,34 @@ def _bisect(
 # ─────────────────────────── public entrypoint ──────────────────────
 
 
+def _status(price: float, converged: bool, *, lo: float, hi: float) -> SolveStatus:
+    """Classify one bisection outcome.
+
+    ``_bisect`` only fails to converge when the target lies outside the
+    bracket, in which case it hands back the closer bracket end: the
+    floor (hurdle unreachable at any price ≥ 50% of base) or the ceiling
+    (hurdle clears even at 200% of base).
+    """
+    if converged:
+        return "converged"
+    if abs(price - lo) <= abs(price - hi):
+        return "unreachable"
+    return "above_ceiling"
+
+
 def solve_max_price(
     base_input: ReturnsEngineInputExt,
     *,
-    target_irr: float = DEFAULT_TARGET_IRR,
-    target_em: float = DEFAULT_TARGET_EM,
+    target_irr: float | None,
+    target_em: float | None,
     rooms: int | None = None,
 ) -> MaxPriceResult:
     """Solve for the max purchase price hitting ``target_irr`` AND ``target_em``.
 
-    Runs two independent bisections (one per metric), then takes the
-    binding (lower) price as the offerable headline. Both targets are
-    surfaced so the analyst can see which constraint binds and by how
-    much.
+    Runs one independent bisection per *requested* metric, then takes
+    the binding (lower) price as the offerable headline. Both targets
+    are surfaced so the analyst can see which constraint binds and by
+    how much.
 
     Parameters
     ----------
@@ -187,7 +229,9 @@ def solve_max_price(
         The returns engine input — same shape used by the rest of the
         pipeline.
     target_irr / target_em:
-        Hurdle return numbers. Defaults are institutional norms.
+        The analyst's hurdles (Investment Profile). ``None`` skips that
+        constraint; both ``None`` raises ``ValueError(NO_TARGET_MESSAGE)``
+        — there is no default hurdle (FON-68).
     rooms:
         Used to derive ``final_price_per_key``. When omitted, the
         per-key field is 0.0 — the headline number is still meaningful
@@ -196,43 +240,70 @@ def solve_max_price(
     Returns
     -------
     MaxPriceResult
-        Both prices + binding chip + per-key + iter count.
+        Both prices + binding chip + headline ``max_price`` + statuses.
     """
+    if target_irr is None and target_em is None:
+        raise ValueError(NO_TARGET_MESSAGE)
+
     base_price = base_input.assumptions.purchase_price
     lo = base_price * PRICE_FLOOR_MULTIPLIER
     hi = base_price * PRICE_CEILING_MULTIPLIER
 
-    irr_price, iters_irr, _conv_irr = _bisect(
-        base_input,
-        target=target_irr,
-        metric="levered_irr",
-        lo=lo,
-        hi=hi,
-    )
-    em_price, iters_em, _conv_em = _bisect(
-        base_input,
-        target=target_em,
-        metric="equity_multiple",
-        lo=lo,
-        hi=hi,
-    )
+    irr_price: float | None = None
+    em_price: float | None = None
+    irr_status: SolveStatus = "not_requested"
+    em_status: SolveStatus = "not_requested"
+    iters_irr = iters_em = 0
 
-    # Floor: never report a price below 50% of base.
-    irr_price = max(irr_price, lo)
-    em_price = max(em_price, lo)
+    if target_irr is not None:
+        raw, iters_irr, conv = _bisect(
+            base_input,
+            target=target_irr,
+            metric="levered_irr",
+            lo=lo,
+            hi=hi,
+        )
+        # Floor: never report a price below 50% of base.
+        irr_price = max(raw, lo)
+        irr_status = _status(irr_price, conv, lo=lo, hi=hi)
+    if target_em is not None:
+        raw, iters_em, conv = _bisect(
+            base_input,
+            target=target_em,
+            metric="equity_multiple",
+            lo=lo,
+            hi=hi,
+        )
+        em_price = max(raw, lo)
+        em_status = _status(em_price, conv, lo=lo, hi=hi)
 
     # Binding constraint: the smaller (more conservative) max price wins.
-    diff = abs(irr_price - em_price)
-    if diff < PRICE_TOLERANCE_USD:
-        binding: Literal["irr", "em", "both"] = "both"
-        final_price = (irr_price + em_price) / 2.0
-    elif irr_price < em_price:
+    binding: Literal["irr", "em", "both"]
+    if irr_price is not None and em_price is not None:
+        diff = abs(irr_price - em_price)
+        if diff < PRICE_TOLERANCE_USD:
+            binding = "both"
+            final_price = (irr_price + em_price) / 2.0
+            solvable = irr_status == "converged" and em_status == "converged"
+        elif irr_price < em_price:
+            binding = "irr"
+            final_price = irr_price
+            solvable = irr_status == "converged"
+        else:
+            binding = "em"
+            final_price = em_price
+            solvable = em_status == "converged"
+    elif irr_price is not None:
         binding = "irr"
         final_price = irr_price
+        solvable = irr_status == "converged"
     else:
+        assert em_price is not None
         binding = "em"
         final_price = em_price
+        solvable = em_status == "converged"
 
+    max_price = final_price if solvable else None
     per_key = (final_price / rooms) if rooms and rooms > 0 else 0.0
 
     return MaxPriceResult(
@@ -243,6 +314,9 @@ def solve_max_price(
         binding_constraint=binding,
         final_price_per_key=per_key,
         iters=iters_irr + iters_em,
+        max_price=max_price,
+        irr_status=irr_status,
+        em_status=em_status,
     )
 
 
@@ -250,9 +324,11 @@ __all__ = [
     "DEFAULT_TARGET_EM",
     "DEFAULT_TARGET_IRR",
     "MAX_ITERS",
+    "NO_TARGET_MESSAGE",
     "MaxPriceResult",
     "PRICE_CEILING_MULTIPLIER",
     "PRICE_FLOOR_MULTIPLIER",
     "PRICE_TOLERANCE_USD",
+    "SolveStatus",
     "solve_max_price",
 ]

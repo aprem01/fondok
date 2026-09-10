@@ -42,6 +42,10 @@ export interface WorkerDeal {
   // when no opinion is set. Surfaced on the Pipeline view's "meeting
   // target" badge + summary KPI.
   target_irr?: number | null;
+  // FON-68 — analyst-declared target MOIC (raw multiple, e.g. 1.8). NULL when
+  // unset. With target_irr these are the Max Price Solver's hurdles — the
+  // Investment Profile is the source of truth; the solver never defaults one.
+  target_moic?: number | null;
   // Count of uploaded documents (any status). Populated by the deal-list
   // endpoint so the projects grid only shows "No documents uploaded" when a
   // deal genuinely has none (FON-35). Omitted on older worker builds → 0.
@@ -1233,7 +1237,8 @@ export const api = {
       id: string,
       patch: Partial<Pick<WorkerDeal,
         'name' | 'city' | 'keys' | 'service' | 'brand'
-        | 'deal_type' | 'return_profile' | 'positioning' | 'status'>> & {
+        | 'deal_type' | 'return_profile' | 'positioning' | 'status'
+        | 'target_irr' | 'target_moic'>> & {
         field_overrides?: Record<string, unknown>;
       },
     ) =>
@@ -1519,6 +1524,19 @@ export const api = {
         request<PricingMaxPriceResponse>(
           'POST',
           `/analysis/${dealId}/pricing/max-price`,
+          body,
+          { signal },
+        ),
+      /** FON-68 — max purchase price clearing both hurdles per exit cap ×
+       *  NOI-growth cell (targets resolve exactly like `maxPrice`). */
+      maxPriceGrid: (
+        dealId: string,
+        body: PricingMaxPriceGridBody,
+        signal?: AbortSignal,
+      ) =>
+        request<PricingMaxPriceGridResponse>(
+          'POST',
+          `/analysis/${dealId}/pricing/max-price-grid`,
           body,
           { signal },
         ),
@@ -2011,20 +2029,81 @@ export interface PricingSensitivityResponse {
   breakeven_noi_multiplier: number | null;
 }
 
+/** FON-68 — both hurdles optional with NO default: an omitted field is read
+ *  from the deal's Investment Profile (`target_irr` / `target_moic`). When
+ *  neither the body nor the deal carries a target the worker answers 422
+ *  ("No return target set — …") instead of inventing one. */
 export interface PricingMaxPriceBody {
-  target_irr?: number;
-  target_em?: number;
+  target_irr?: number | null;
+  target_em?: number | null;
 }
+
+/** Outcome of one bisection: `unreachable` = no price ≥ 50% of the basis
+ *  clears the hurdle; `above_ceiling` = it clears even at 2× the basis;
+ *  `not_requested` = that hurdle is unset. */
+export type PricingSolveStatus = 'converged' | 'unreachable' | 'above_ceiling' | 'not_requested';
+export type PricingTargetSource = 'deal' | 'request' | 'mixed';
 
 export interface PricingMaxPriceResponse {
   deal_id: string;
-  target_irr: number;
-  target_em: number;
-  max_price_for_irr: number;
-  max_price_for_em: number;
+  target_irr: number | null;
+  target_em: number | null;
+  target_source: PricingTargetSource;
+  /** Solved price per constraint — null unless that search converged. */
+  max_price_for_irr: number | null;
+  max_price_for_em: number | null;
+  /** The offerable headline: lower of the converged requested prices. */
+  max_price: number | null;
   binding_constraint: 'irr' | 'em' | 'both';
+  irr_status: PricingSolveStatus;
+  em_status: PricingSolveStatus;
   final_price_per_key: number;
+  /** Context from the same returns input the solver bisected on. */
+  base_purchase_price: number;
+  rooms: number | null;
+  exit_cap_rate: number;
+  ltv: number;
+  interest_rate: number;
+  hold_years: number;
   iters: number;
+}
+
+/** FON-68 — max purchase price per (exit cap × NOI growth) cell. Axes are
+ *  absolute; omitted → ±100bp exit cap / ±2pp NOI growth around the deal's
+ *  base assumptions. ≤ 25 cells (≤ 5 per axis). */
+export interface PricingMaxPriceGridBody {
+  target_irr?: number | null;
+  target_em?: number | null;
+  cap_axis?: number[];
+  noi_growth_axis?: number[];
+}
+
+export interface PricingMaxPriceGridCell {
+  exit_cap_pct: number;
+  noi_growth_pct: number;
+  max_price_for_irr: number | null;
+  max_price_for_em: number | null;
+  /** Lower of the converged prices — null = no price clears the hurdles here. */
+  max_price: number | null;
+  binding_constraint: 'irr' | 'em' | 'both';
+  irr_status: PricingSolveStatus;
+  em_status: PricingSolveStatus;
+  price_per_key: number | null;
+  is_base: boolean;
+}
+
+export interface PricingMaxPriceGridResponse {
+  deal_id: string;
+  target_irr: number | null;
+  target_em: number | null;
+  target_source: PricingTargetSource;
+  base_exit_cap_pct: number;
+  base_noi_growth_pct: number;
+  base_purchase_price: number;
+  rooms: number | null;
+  cap_axis: number[];
+  noi_growth_axis: number[];
+  cells: PricingMaxPriceGridCell[];
 }
 
 export interface PricingLOIBody {

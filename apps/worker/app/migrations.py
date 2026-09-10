@@ -125,6 +125,15 @@ MIGRATIONS: list[tuple[str, str]] = [
         "ALTER TABLE deals ADD COLUMN IF NOT EXISTS target_irr NUMERIC(6,4)",
     ),
     (
+        # FON-68 — the Investment Profile is the source of truth for the
+        # return hurdles the Max Price Solver clears. Target MOIC (equity
+        # multiple, e.g. 1.8000) sits beside target_irr. NULL means "not
+        # set": the solver refuses to invent a hurdle (422) rather than
+        # defaulting to an institutional norm.
+        "deals.add_target_moic",
+        "ALTER TABLE deals ADD COLUMN IF NOT EXISTS target_moic NUMERIC(6,4)",
+    ),
+    (
         # FON-46 — Deal Type (acquisition / development / redevelopment).
         # Foundational project attribute set in the onboarding wizard;
         # downstream it scopes which engines / assumptions apply.
@@ -1151,6 +1160,11 @@ SQLITE_MIGRATIONS: list[tuple[str, str]] = [
         # Wave 3 W3.5 — SQLite mirror of the Postgres ALTER above.
         "deals.add_target_irr_sqlite",
         "ALTER TABLE deals ADD COLUMN target_irr REAL",
+    ),
+    (
+        # FON-68 — SQLite mirror of the Postgres target_moic ALTER above.
+        "deals.add_target_moic_sqlite",
+        "ALTER TABLE deals ADD COLUMN target_moic REAL",
     ),
     (
         # FON-46 — SQLite mirror of the Postgres deal_type ALTER above.
