@@ -322,6 +322,11 @@ class AssumptionSourcesResponse(BaseModel):
     # emit the sidecar yet; ``source_documents`` above stays the coarse
     # fallback either way. See ``GET /deals/{id}/lineage`` for the walk
     # that consumes it.
+    # Phase 2.1 note: a value derived from several rows (a CAGR, an
+    # even-count median, a forecast point) names its document with
+    # ``field_name: null``. ``sources`` / ``values`` / ``source_documents``
+    # stay byte-identical to the pre-2.1 contract. The prose behind a
+    # reason lives on ``GET /deals/{id}/lineage`` as ``unresolved[].detail``.
     source_fields: dict[str, dict[str, Any]] = Field(default_factory=dict)
     # Phase 2.3 — per-assumption ``ReasonCode`` (``__reasons__``) when the
     # loader supplies it: why a key has no grounded value. Also
@@ -1482,6 +1487,23 @@ async def get_assumption_sources(
         )
     except Exception:
         source_documents = {}
+
+    # Phase 2.1 — serialise the two additive blocks. ``ReasonCode`` is a
+    # ``str`` enum; emit its value so the JSON carries the plain code.
+    source_fields: dict[str, Any] = {
+        key: dict(entry)
+        for key, entry in (raw_source_fields or {}).items()
+        if isinstance(entry, dict)
+    }
+    reasons: dict[str, Any] = {}
+    for key, entry in (raw_reasons or {}).items():
+        if not isinstance(entry, dict):
+            continue
+        code = entry.get("code")
+        reasons[key] = {
+            "code": getattr(code, "value", code),
+            "detail": entry.get("detail"),
+        }
 
     return AssumptionSourcesResponse(
         id=deal_id,
