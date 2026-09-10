@@ -56,6 +56,11 @@ async def health(
         degraded_reasons.append("usali_catalog_missing")
     if recognizer_ok is False:
         degraded_reasons.append("structural_recognizer_unavailable")
+    # Phase 1.1 — concept registry boot invariant (same precedent as the
+    # USALI catalog): -1 means the registry failed validation at startup.
+    ontology_version = startup.get("ontology_version")
+    if isinstance(ontology_version, int) and ontology_version < 0:
+        degraded_reasons.append("ontology_invalid")
 
     # Storage backend snapshot — surfaces which RawStore class the
     # worker actually instantiated, so a misconfigured S3 cutover
@@ -94,6 +99,7 @@ async def health(
         "db": db_status,
         "usali_rules": rules_loaded,
         "structural_recognizer": recognizer_ok,
+        "ontology_version": ontology_version,
         "raw_store": {
             "kind": raw_store_kind,
             "bucket": raw_store_bucket,

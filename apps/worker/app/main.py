@@ -24,6 +24,7 @@ from .api import health as health_router
 from .api import market as market_router
 from .api import model as model_router
 from .api import observability as observability_router
+from .api import ontology as ontology_router
 from .api import pipeline_filters as pipeline_filters_router
 from .api import portfolio_library as portfolio_library_router
 from .api import scenarios as scenarios_router
@@ -50,6 +51,7 @@ logger = logging.getLogger(__name__)
 _STARTUP_STATE: dict[str, object] = {
     "usali_rules_loaded": None,  # int count, -1 on load error, None pre-boot
     "structural_recognizer_available": None,  # bool, None pre-boot
+    "ontology_version": None,  # int registry version, -1 on load error, None pre-boot
 }
 
 
@@ -118,6 +120,19 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
     except Exception as exc:
         logger.exception("usali-rules: catalog load failed: %s", exc)
         _STARTUP_STATE["usali_rules_loaded"] = -1  # -1 signals error
+    # Concept registry (Phase 1.1) — same precedent as the USALI catalog:
+    # the registry validates itself at import (duplicate aliases, unknown
+    # rule ids / engines / doc types, bad identities …). A defect must not
+    # crash the deploy but MUST be visible: /health reports the version and
+    # appends ``ontology_invalid`` when this records -1.
+    try:
+        from .ontology.registry import registry_version
+
+        _STARTUP_STATE["ontology_version"] = registry_version()
+        logger.info("ontology: concept registry v%s loaded at startup", registry_version())
+    except Exception as exc:
+        logger.exception("ontology: concept registry failed to load: %s", exc)
+        _STARTUP_STATE["ontology_version"] = -1  # -1 signals error
     # Structural recognizer importability probe — caught the
     # post-USALI-v4 deploy where the recognizer module shipped but
     # imports were failing silently in a swallowed try block.
@@ -248,6 +263,11 @@ def create_app() -> FastAPI:
         observability_router.router,
         prefix="/observability",
         tags=["observability"],
+    )
+    # Phase 1.1 — the validated concept registry, public read (no tenant
+    # data). Mirrors /health: no ``Depends(get_tenant_id)``.
+    app.include_router(
+        ontology_router.router, prefix="/ontology", tags=["ontology"]
     )
     # Task Q (2026-07) — tenant-scoped cost + cache rollup for Sam's
     # cost-optimization measurement loop. Complements /observability

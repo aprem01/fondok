@@ -71,6 +71,12 @@ jobs:
         run: uv run ruff check .
         continue-on-error: true
 
+      # Phase 1.2 — the web's ontology modules are generated from
+      # app/ontology/concepts.yaml; a YAML edit without a regen fails here.
+      - name: Ontology codegen drift gate
+        working-directory: apps/worker
+        run: uv run python scripts/gen_ontology.py --check
+
       - name: Pytest
         working-directory: apps/worker
         env:
