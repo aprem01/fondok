@@ -1116,6 +1116,7 @@ MIGRATIONS: list[tuple[str, str]] = [
         "documents.add_report_as_of_precision",
         "ALTER TABLE documents ADD COLUMN IF NOT EXISTS "
         "report_as_of_precision TEXT",
+    ),
     # ────────── Phase 2.3 — the evidence chain, per run ──────────────
     # One row per (deal, run): the whole KPI → engine → assumption →
     # field → doc → page graph as ``fondok_schemas.lineage.LineageRecord``
@@ -1912,6 +1913,7 @@ SQLITE_MIGRATIONS: list[tuple[str, str]] = [
     (
         "documents.add_report_as_of_precision",
         "ALTER TABLE documents ADD COLUMN report_as_of_precision TEXT",
+    ),
     # ────────── Phase 2.3 — the evidence chain, per run ──────────────
     # SQLite mirror of the Postgres entry (see there for semantics):
     # UUID → TEXT, JSONB → TEXT, BOOLEAN → INTEGER, TIMESTAMPTZ → TEXT.
