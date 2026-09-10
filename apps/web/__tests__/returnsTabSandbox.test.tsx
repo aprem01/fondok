@@ -46,6 +46,7 @@ const OUTPUTS = {
         levered_irr: 0.2301,
         equity_multiple: 2.37,
         year_one_coc: 0.081,
+        avg_coc: 0.0812,
         gross_sale_price: 52_000_000,
         hold_years: 5,
         exit_cap_rate: 0.07,
@@ -173,13 +174,18 @@ describe('ReturnsTab headline (split-headline regression)', () => {
     // IRR + EM from the worker.
     expect(screen.getByText('23.01%')).toBeInTheDocument();
     expect(screen.getByText('2.37x')).toBeInTheDocument();
-    // CoC reads year_one_coc (0.081 → 8.10%). If the old field name regressed,
-    // this would render 0.00% from a null fallback.
-    expect(screen.getByText('8.10%')).toBeInTheDocument();
+    // Canonical headline (Design 100% Returns rebuild) is the HOLD-AVERAGE
+    // cash-on-cash: avg_coc (0.0812 → 8.12%). year_one_coc stays in the
+    // fixture at 0.081 so a regression back to the Year-1 field (8.10%)
+    // — or to a dead field name (0.00%) — is caught.
+    expect(screen.getByText('8.12%')).toBeInTheDocument();
+    expect(screen.queryByText('8.10%')).not.toBeInTheDocument();
     expect(screen.queryByText('0.00%')).not.toBeInTheDocument();
-    // Exit value + DSCR also come off the worker (returns / debt).
+    // Exit value comes off the worker (returns). DSCR left the Returns
+    // headline in the canonical rebuild — it lives in the Debt tab's credit
+    // metrics (covered by debtTab.test.tsx).
     expect(screen.getByText('$52.00M')).toBeInTheDocument();
-    expect(screen.getByText('1.45x')).toBeInTheDocument();
+    expect(screen.queryByText('1.45x')).not.toBeInTheDocument();
   });
 });
 
