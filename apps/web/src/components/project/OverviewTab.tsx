@@ -66,6 +66,8 @@ import {
   isWorkerConnected,
   WorkerError,
   type EngineOutputsResponse,
+  type MarketOverviewResult,
+  type PropertyNameOriginal,
   type TimelineResponse,
   type ValueState,
 } from '@/lib/api';
@@ -129,7 +131,52 @@ interface RowDef {
   inputs?: RowProvInput[];
   /** Provenance trace lookup (engine, dotted output path) for real formula/state. */
   trace?: { engine: 'capital' | 'returns' | 'debt' | 'expense'; path: string };
+  /** Explicit popover "where" (wins over docPage / docName). */
+  where?: string;
+  /** Popover sub-line under the value — what this field is and how it behaves. */
+  sub?: string;
+  /**
+   * FON-59 — the `deal.field_overrides` key this row's worker read honors.
+   * Declaring it enables Override / Restore on the row. Wire it ONLY to rows
+   * whose backend path applies the override (Property Name today); keys /
+   * brand / city are deal columns synced from extraction and stay off it.
+   */
+  overridePath?: string;
+  /** The document-extracted value an override replaced (+ its source). */
+  original?: { value: string; docName?: string | null; page?: number | null };
+  /** FON-59 — analyst-input row persisted to a deal column (Project Name → deals.name). */
+  dealField?: 'name';
 }
+
+/** FON-59 — the field_overrides key the worker's market_overview honors as the Property Name. */
+const PROPERTY_NAME_OVERRIDE_PATH = 'property_overview.name';
+
+/** Read a string out of a field_overrides entry ({value, note} or bare string); blank → null. */
+function overrideText(overrides: Record<string, unknown>, path: string): string | null {
+  const raw = overrides[path];
+  const v = raw != null && typeof raw === 'object' && 'value' in (raw as object) ? (raw as { value?: unknown }).value : raw;
+  return typeof v === 'string' && v.trim() ? v.trim() : null;
+}
+/** The analyst note stored alongside a structured override, if any. */
+function overrideNote(overrides: Record<string, unknown>, path: string): string | null {
+  const raw = overrides[path];
+  const n = raw != null && typeof raw === 'object' ? (raw as { note?: unknown }).note : null;
+  return typeof n === 'string' && n.trim() ? n.trim() : null;
+}
+
+interface PropertyMeta {
+  name: string | null;
+  nameOriginal: PropertyNameOriginal | null;
+  nameSource: 'analyst_override' | 'document' | null;
+  year_built: number | null;
+  gba_sf: number | null;
+  labor: string | null;
+  trailingOcc: number | null;
+  trailingAdr: number | null;
+}
+const EMPTY_META: PropertyMeta = {
+  name: null, nameOriginal: null, nameSource: null, year_built: null, gba_sf: null, labor: null, trailingOcc: null, trailingAdr: null,
+};
 
 interface RowsSection {
   kind: 'rows';
@@ -207,21 +254,28 @@ export default function OverviewTab({ projectId }: { projectId: number | string 
 
   // Descriptive property metadata resolved cross-document by the worker
   // (OM-first): asset name / year_built / gba_sf / labor. NOT engine output —
-  // read once so the Property rows populate for live deals.
-  const [meta, setMeta] = useState<{ name: string | null; year_built: number | null; gba_sf: number | null; labor: string | null; trailingOcc: number | null; trailingAdr: number | null }>(
-    { name: null, year_built: null, gba_sf: null, labor: null, trailingOcc: null, trailingAdr: null },
-  );
+  // read once so the Property rows populate for live deals, and re-read after
+  // a Property Name override / restore (FON-59) so `property_name_original`
+  // and the resolved name stay in step with the worker.
+  const [meta, setMeta] = useState<PropertyMeta>(EMPTY_META);
+  const [metaToken, setMetaToken] = useState(0);
   useEffect(() => {
-    if (!liveMode) { setMeta({ name: null, year_built: null, gba_sf: null, labor: null, trailingOcc: null, trailingAdr: null }); return; }
+    if (!liveMode) { setMeta(EMPTY_META); return; }
     const ac = new AbortController();
     api.market.overview(dealId, ac.signal)
       .then((d) => {
-        const o = (d ?? {}) as { property_name?: string | null; year_built?: number | null; gba_sf?: number | null; labor_type?: string | null; trailing_12_occupancy?: number | null; trailing_12_adr?: number | null };
-        setMeta({ name: o.property_name ?? null, year_built: o.year_built ?? null, gba_sf: o.gba_sf ?? null, labor: o.labor_type ?? null, trailingOcc: o.trailing_12_occupancy ?? null, trailingAdr: o.trailing_12_adr ?? null });
+        const o = (d ?? {}) as MarketOverviewResult;
+        setMeta({
+          name: o.property_name?.trim() || null,
+          nameOriginal: o.property_name_original?.value ? o.property_name_original : null,
+          nameSource: o.property_name_source ?? null,
+          year_built: o.year_built ?? null, gba_sf: o.gba_sf ?? null, labor: o.labor_type ?? null,
+          trailingOcc: o.trailing_12_occupancy ?? null, trailingAdr: o.trailing_12_adr ?? null,
+        });
       })
       .catch(() => { /* best-effort */ });
     return () => ac.abort();
-  }, [dealId, liveMode]);
+  }, [dealId, liveMode, metaToken]);
 
   // ─── Investment Profile persistence + debounced re-run ─────────────────
   const overrides = (deal?.field_overrides ?? {}) as Record<string, unknown>;
@@ -249,6 +303,74 @@ export default function OverviewTab({ projectId }: { projectId: number | string 
     },
     [dealId, liveMode, toast, refreshDeal, scheduleRun],
   );
+
+  // ─── FON-59 — per-row analyst override + Project Name rename ───────────
+  // Property Name writes `field_overrides[row.overridePath] = { value, note }`
+  // through the canonical PATCH path; the worker reads it back as
+  // `property_name` and keeps the extracted value in `property_name_original`
+  // so Restore (delete the key) brings it back. Project Name writes the deal
+  // column (`deals.name`) and never touches field_overrides. Neither re-runs
+  // the model — names feed no engine — but both refresh the deal so the page
+  // header / rows update.
+  const [editing, setEditing] = useState<{ rowId: string; draft: string } | null>(null);
+  const [saving, setSaving] = useState(false);
+  const saveFailed = useCallback((err: unknown) => {
+    const detail = err instanceof WorkerError ? err.body : String(err);
+    toast(`Save failed: ${detail || 'worker rejected update'}`, { type: 'error' });
+  }, [toast]);
+  const saveOverride = useCallback(async (row: RowDef, draft: string) => {
+    if (!row.overridePath) return;
+    if (!liveMode) { toast('Editing is disabled on demo deals', { type: 'info' }); return; }
+    const value = draft.trim();
+    if (!value) { toast(`Enter a ${row.label.toLowerCase()}`, { type: 'error' }); return; }
+    setSaving(true);
+    try {
+      await api.deals.update(dealId, {
+        field_overrides: { ...overrides, [row.overridePath]: { value, note: `Analyst override — Overview · ${row.label}` } },
+      });
+      toast(`${row.label} overridden — the extracted value is kept so you can restore it`, { type: 'success' });
+      setEditing(null);
+      void refreshDeal?.();
+      setMetaToken(Date.now());
+    } catch (err) {
+      saveFailed(err);
+    } finally {
+      setSaving(false);
+    }
+  }, [dealId, liveMode, overrides, toast, refreshDeal, saveFailed]);
+  const restoreOverride = useCallback(async (row: RowDef) => {
+    if (!row.overridePath) return;
+    if (!liveMode) { toast('Editing is disabled on demo deals', { type: 'info' }); return; }
+    const { [row.overridePath]: _drop, ...rest } = overrides;
+    setSaving(true);
+    try {
+      await api.deals.update(dealId, { field_overrides: rest });
+      toast(row.original ? `${row.label} restored to the sourced value` : `${row.label} override cleared`, { type: 'success' });
+      setEditing(null);
+      void refreshDeal?.();
+      setMetaToken(Date.now());
+    } catch (err) {
+      saveFailed(err);
+    } finally {
+      setSaving(false);
+    }
+  }, [dealId, liveMode, overrides, toast, refreshDeal, saveFailed]);
+  const renameProject = useCallback(async (draft: string) => {
+    if (!liveMode) { toast('Editing is disabled on demo deals', { type: 'info' }); return; }
+    const name = draft.trim();
+    if (!name) { toast('Enter a project name', { type: 'error' }); return; }
+    setSaving(true);
+    try {
+      await api.deals.update(dealId, { name });
+      toast('Project name updated', { type: 'success' });
+      setEditing(null);
+      void refreshDeal?.();
+    } catch (err) {
+      saveFailed(err);
+    } finally {
+      setSaving(false);
+    }
+  }, [dealId, liveMode, toast, refreshDeal, saveFailed]);
 
   // ─── UI state ──────────────────────────────────────────────────────────
   const [reviewOnly, setReviewOnly] = useState(false);
@@ -354,8 +476,43 @@ export default function OverviewTab({ projectId }: { projectId: number | string 
 
   // ─── Deal-type-aware section set ───────────────────────────────────────
   const sections: SectionSpec[] = useMemo(() => {
+    // FON-59 — Project Name (the analyst's confidential deal identifier,
+    // deals.name) sits directly above Property Name (the asset as named in
+    // the OM). Stored independently, displayed distinctly; editing one never
+    // touches the other. Property Name NEVER falls back to the project name —
+    // it reads '—' until the OM is extracted (or the analyst overrides it).
+    const identityRows = (): RowDef[] => {
+      // Overridden when the deal carries the key (immediate after a save) OR
+      // the worker resolved the name from an override (authoritative read-back).
+      const nameOverride = overrideText(overrides, PROPERTY_NAME_OVERRIDE_PATH);
+      const overridden = nameOverride != null || (meta.nameSource === 'analyst_override' && meta.name != null);
+      const propertyName = nameOverride ?? meta.name ?? null;
+      const original = meta.nameOriginal;
+      const docName = original?.doc_name?.trim() || 'Offering Memorandum';
+      const docPage = original?.page != null ? `p. ${original.page}` : undefined;
+      return [
+        mk({
+          id: 'projName', label: 'Project Name', kind: 'input', state: 'assumption',
+          value: deal?.name?.trim() || '—', dealField: 'name', where: 'Analyst input',
+          sub: 'Your confidential identifier for this deal (e.g. "Project Unicorn"). Never overwritten by document extraction; renaming it never changes the Property Name.',
+        }),
+        mk({
+          id: 'pName', label: 'Property Name',
+          kind: propertyName ? 'doc' : 'awaiting',
+          state: overridden ? 'assumption' : propertyName ? 'document_sourced' : 'awaiting_data',
+          value: propertyName ?? '—',
+          docName, docPage,
+          where: overridden ? 'Analyst override' : propertyName ? [docName, docPage].filter(Boolean).join(' · ') : 'Awaiting the Offering Memorandum',
+          sub: 'The asset as named in the offering documents — distinct from the Project Name. Overriding keeps the extracted value so you can restore it.',
+          overridePath: PROPERTY_NAME_OVERRIDE_PATH,
+          overridden,
+          original: original ? { value: original.value, docName: original.doc_name, page: original.page } : undefined,
+        }),
+      ];
+    };
+
     const propertyRows = (): RowDef[] => [
-      doc('pName', isDev ? 'Project Name' : 'Property Name', meta.name ?? deal?.name ?? '—', 'Offering Memorandum', 'Executive Summary'),
+      ...identityRows(),
       doc('pType', 'Property Type', deal?.service ?? '—', 'Offering Memorandum', 'Property Overview'),
       doc('pLoc', 'Location', deal?.city ?? '—', 'Offering Memorandum', 'Location'),
       doc('pYear', 'Year Built', meta.year_built != null ? String(Math.round(meta.year_built)) : '—', 'Offering Memorandum', 'Property History'),
@@ -436,7 +593,7 @@ export default function OverviewTab({ projectId }: { projectId: number | string 
 
     // ── Development-specific sections ──
     const projectRows = (): RowDef[] => [
-      lnk('pName', 'Project Name', meta.name ?? deal?.name ?? '—', '→ Investment Profile', ''),
+      ...identityRows(),
       lnk('pLoc', 'Location', deal?.city ?? '—', '→ Investment Profile', ''),
       lnk('brand', 'Brand', brand || '—', '→ Investment Profile', ''),
       lnk('positioning', 'Positioning', positioningTiers.find((p) => p.id === positioningId)?.label ?? '—', '→ Investment Profile', ''),
@@ -530,7 +687,7 @@ export default function OverviewTab({ projectId }: { projectId: number | string 
       { kind: 'timeline', title: 'Transaction Timeline' },
     ];
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [cfg, isDev, meta, deal, keys, brand, positioningId, timeline, outputs, tracedState]);
+  }, [cfg, isDev, meta, deal, overrides, keys, brand, positioningId, timeline, outputs, tracedState]);
 
   // ─── Review count (real needs-review provenance) ───────────────────────
   const reviewCount = useMemo(() => {
@@ -596,7 +753,9 @@ export default function OverviewTab({ projectId }: { projectId: number | string 
 
   // ─── Popover open / close ──────────────────────────────────────────────
   const openProv = useCallback((e: React.MouseEvent, row: RowDef) => {
-    if (row.kind === 'awaiting') return; // nothing to explain yet
+    // Nothing to explain yet — unless the row can be overridden (Property
+    // Name pre-OM) or is an analyst input, which still open for editing.
+    if (row.kind === 'awaiting' && !row.overridePath && !row.dealField) return;
     const b = (e.currentTarget as HTMLElement).getBoundingClientRect();
     const width = 346;
     const vw = typeof window !== 'undefined' ? window.innerWidth : 1440;
@@ -604,43 +763,90 @@ export default function OverviewTab({ projectId }: { projectId: number | string 
     if (left + width > vw - 12) left = Math.max(12, vw - width - 12);
     const caretRight = Math.max(16, Math.min(width - 24, (b.left + b.width / 2) - left));
     const top = b.bottom + 8;
+    setEditing(null);
     setPopover({ row, top, left, caretRight });
   }, []);
 
   const provProps: WhereThisCameFromProps | null = useMemo(() => {
     if (!popover) return null;
-    const { row } = popover;
+    // Editable rows resolve live so the popover reflects a save / restore
+    // (value, kind, Original line) without being reopened.
+    const editable = !!(popover.row.overridePath || popover.row.dealField);
+    const live = editable
+      ? sections.flatMap((s) => (s.kind === 'rows' ? s.rows : [])).find((r) => r.id === popover.row.id)
+      : undefined;
+    const row = live ?? popover.row;
     const t = row.trace ? traceGet(row.trace.engine, row.trace.path) : null;
     const kindLabel = row.overridden ? 'Overridden' : KIND_LABEL[row.kind];
     const kindColor = row.overridden ? popoverKind.overridden : KIND_POPOVER_COLOR[row.kind];
-    const where = row.kind === 'doc' ? (row.docPage ?? row.docName ?? 'Uploaded document')
+    const where = row.where ?? (row.kind === 'doc' ? (row.docPage ?? row.docName ?? 'Uploaded document')
       : row.kind === 'linked' ? (row.linkLabel ?? 'Another module')
         : row.kind === 'input' ? 'Investment Profile'
-          : 'Calculated by Fondok';
+          : 'Calculated by Fondok');
     const inputs = (row.inputs ?? []).map((i) => ({
       name: i.name, path: i.from,
       dotColor: i.kind === 'linked' || i.kind === 'doc' ? prov.green : i.kind === 'input' ? prov.blue : prov.gray,
     }));
+    const isEditing = editing?.rowId === row.id;
+    const startEdit = () => setEditing({ rowId: row.id, draft: row.value === '—' ? '' : row.value });
     const actions: WhereThisCameFromProps['actions'] = [];
     if (row.kind === 'linked' && row.linkTab) {
       actions.push({ label: 'Open module →', primary: true, onClick: () => { navigate(row.linkTab!); setPopover(null); } });
     }
-    if (row.kind === 'doc' && row.docName) {
+    if (row.kind === 'doc' && row.docName && !row.overridden) {
       actions.push({ label: 'View source ↗', onClick: () => { navigate(''); setPopover(null); } });
     }
+    if (row.dealField === 'name' && !isEditing) {
+      actions.push({ label: 'Rename', primary: true, onClick: startEdit });
+    }
+    if (row.overridePath && !isEditing) {
+      actions.push({ label: row.overridden ? 'Edit override' : 'Override', primary: !row.overridden, onClick: startEdit });
+      if (row.overridden) {
+        actions.push({ label: row.original ? 'Restore sourced value' : 'Clear override', onClick: () => { void restoreOverride(row); } });
+      }
+    }
+    // Override card — "Original: <extracted> · <doc> p.<n>" (+ the stored note).
+    const originalLine = row.original
+      ? `${row.original.value} · ${row.original.docName?.trim() || 'Offering Memorandum'}${row.original.page != null ? ` p.${row.original.page}` : ''}`
+      : '— (awaiting the Offering Memorandum)';
+    const note = row.overridePath ? overrideNote(overrides, row.overridePath) : null;
+    const override: WhereThisCameFromProps['override'] = row.overridden && row.overridePath
+      ? {
+        orig: row.original?.value ?? '—', current: row.value,
+        meta: [{ k: 'Original', v: originalLine }, ...(note ? [{ k: 'Note', v: note }] : [])],
+      }
+      : undefined;
+    const editor: WhereThisCameFromProps['editor'] = isEditing && editing
+      ? {
+        value: editing.draft,
+        onChange: (v) => setEditing({ rowId: row.id, draft: v }),
+        onSave: () => { if (row.dealField === 'name') void renameProject(editing.draft); else void saveOverride(row, editing.draft); },
+        onCancel: () => setEditing(null),
+        hint: row.dealField === 'name'
+          ? 'Shown in the deal header and the Pipeline. Never changes the Property Name.'
+          : 'Overrides keep their original source so you can restore it.',
+        saveLabel: row.dealField === 'name' ? 'Save name' : 'Save value',
+        placeholder: row.dealField === 'name' ? 'e.g. Project Unicorn' : row.label,
+        saving,
+        ariaLabel: `${row.label} value`,
+      }
+      : undefined;
     return {
       kind: kindLabel, kindColor, label: row.label, where, value: row.value,
       valueColor: valueColor(row.kind, !!row.bold, !!row.overridden),
-      source: row.kind === 'doc' && row.docName ? { doc: row.docName, loc: row.docPage ?? '', text: t?.note ?? '' } : undefined,
+      sub: row.sub,
+      source: row.kind === 'doc' && row.docName && !row.overridden ? { doc: row.docName, loc: row.docPage ?? '', text: t?.note ?? '' } : undefined,
       calc: row.kind === 'calc' && (t?.formula || row.formula)
         ? { expr: t?.formula ?? row.formula, numbers: row.formulaNumbers, inputs: inputs.length ? inputs : undefined }
         : undefined,
+      override,
+      editor,
       actions: actions.length ? actions : undefined,
       position: 'fixed', top: popover.top, left: popover.left, caretRight: popover.caretRight,
-      onClose: () => setPopover(null),
+      onClose: () => { setEditing(null); setPopover(null); },
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [popover, traceGet]);
+  }, [popover, traceGet, sections, editing, saving, overrides, saveOverride, restoreOverride, renameProject]);
 
   function navigate(tab: string) {
     router.push(tab ? `/projects/${dealId}?tab=${tab}` : `/projects/${dealId}`);
@@ -830,12 +1036,14 @@ function OverviewRow({ row, onClick }: { row: RowDef; onClick: (e: React.MouseEv
   const color = valueColor(row.kind, !!row.bold, !!row.overridden);
   const showDot = row.kind === 'doc' || row.kind === 'linked' || row.state === 'needs_review';
   const underline = row.kind === 'input' || row.overridden ? 'underline dotted' : 'none';
+  // Awaiting rows are inert — unless they can be overridden / edited (FON-59).
+  const interactive = row.kind !== 'awaiting' || !!row.overridePath || !!row.dealField;
   return (
     <div
       onClick={(e) => onClick(e, row)}
       style={{
         display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12, fontSize: 13,
-        padding: '7px 0', cursor: row.kind === 'awaiting' ? 'default' : 'pointer', borderBottom: `1px solid ${palette.hairlineRow}`,
+        padding: '7px 0', cursor: interactive ? 'pointer' : 'default', borderBottom: `1px solid ${palette.hairlineRow}`,
       }}
     >
       <span style={{ display: 'flex', alignItems: 'center', gap: 7, minWidth: 0 }}>

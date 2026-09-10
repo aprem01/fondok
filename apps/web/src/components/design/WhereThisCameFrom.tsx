@@ -48,6 +48,24 @@ export interface ProvAction {
   primary?: boolean;
   onClick?: () => void;
 }
+/**
+ * Inline editor block — the canonical Overview v3 "edit value" anatomy
+ * (input · hint · full-width "Save value"). Host-controlled: the host owns
+ * the draft and decides what a save writes (an override, a deal field…).
+ */
+export interface ProvEditor {
+  value: string;
+  onChange: (v: string) => void;
+  onSave: () => void;
+  onCancel?: () => void;
+  hint?: ReactNode;
+  placeholder?: string;
+  /** Defaults to "Save value". */
+  saveLabel?: string;
+  saving?: boolean;
+  /** Accessible name for the input; defaults to "<label> value". */
+  ariaLabel?: string;
+}
 
 export interface WhereThisCameFromProps {
   /** e.g. "Document-sourced", "Overridden · was sourced". */
@@ -63,6 +81,8 @@ export interface WhereThisCameFromProps {
   source?: ProvSource;
   override?: ProvOverride;
   deps?: { count: string; items: { name: string; where: string }[] };
+  /** Inline editor (Override / Rename) rendered above the actions. */
+  editor?: ProvEditor;
   actions?: ProvAction[];
   /** Absolute-position offsets (host computes from the anchor cell). */
   top?: number | string;
@@ -98,6 +118,7 @@ export function WhereThisCameFrom({
   source,
   override,
   deps,
+  editor,
   actions,
   top,
   left,
@@ -307,6 +328,58 @@ export function WhereThisCameFrom({
                 <span style={{ color: palette.textMuted, marginLeft: 'auto', fontSize: 11 }}>{d.where}</span>
               </div>
             ))}
+          </div>
+        </div>
+      )}
+
+      {/* Inline editor — canonical Overview v3 edit block (input · hint · Save value) */}
+      {editor && (
+        <div style={{ ...section, display: 'flex', flexDirection: 'column', gap: 7 }}>
+          <input
+            autoFocus
+            aria-label={editor.ariaLabel ?? `${label} value`}
+            value={editor.value}
+            placeholder={editor.placeholder}
+            disabled={editor.saving}
+            onChange={(e) => editor.onChange(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter') { e.preventDefault(); editor.onSave(); }
+              else if (e.key === 'Escape') { e.preventDefault(); editor.onCancel?.(); }
+            }}
+            style={{
+              width: '100%', boxSizing: 'border-box', fontSize: 12.5, fontFamily: 'inherit', color: palette.ink,
+              border: '1px solid #e2e1dc', borderRadius: 6, padding: '7px 9px', fontVariantNumeric: 'tabular-nums', outline: 'none',
+            }}
+          />
+          {editor.hint != null && (
+            <div style={{ fontSize: 10.5, color: '#9a9a95', lineHeight: 1.4 }}>{editor.hint}</div>
+          )}
+          <div style={{ display: 'flex', gap: 7 }}>
+            <button
+              type="button"
+              onClick={editor.onSave}
+              disabled={editor.saving}
+              style={{
+                flex: 1, background: palette.inkNavy, color: '#fff', border: 'none', borderRadius: 6, padding: 8,
+                fontSize: 12, fontWeight: 600, cursor: editor.saving ? 'default' : 'pointer', fontFamily: 'inherit',
+                opacity: editor.saving ? 0.7 : 1,
+              }}
+            >
+              {editor.saving ? 'Saving…' : (editor.saveLabel ?? 'Save value')}
+            </button>
+            {editor.onCancel && (
+              <button
+                type="button"
+                onClick={editor.onCancel}
+                disabled={editor.saving}
+                style={{
+                  background: '#fff', border: `1px solid ${palette.buttonSecondaryBorder}`, color: palette.ink, borderRadius: 6,
+                  padding: '8px 11px', fontSize: 12, fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit',
+                }}
+              >
+                Cancel
+              </button>
+            )}
           </div>
         </div>
       )}
