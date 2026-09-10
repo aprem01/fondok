@@ -53,12 +53,14 @@ describe('Methodology — Section 7 "What a dash means"', () => {
     for (const code of REASON_CODES) expect(REASONS[code].ui).toBe(REFUSAL_GLYPH);
   });
 
-  it('does not renumber Sections 1–6', () => {
+  it('does not renumber Sections 1–6 and keeps 7 and 8 in place', () => {
     render(<MethodologyPage />);
     for (const n of ['1', '2', '3', '4', '5', '6', '7']) {
       expect(screen.getByText(`Section ${n}`)).toBeInTheDocument();
     }
-    expect(screen.queryByText('Section 8')).toBeNull();
+    // Section 8 (Concept registry) landed with Phase 1; nothing beyond it yet.
+    expect(screen.getByText('Section 8')).toBeInTheDocument();
+    expect(screen.queryByText('Section 9')).toBeNull();
     // Anchors external "Learn more →" links jump to stay put.
     for (const id of ['extraction', 'projection', 'sources', 'engines', 'pricing', 'ic-memo', 'reasons']) {
       expect(document.getElementById(id)).not.toBeNull();

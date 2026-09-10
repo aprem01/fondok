@@ -8001,84 +8001,84 @@
   },
   "reasons": {
     "no_document": {
-      "label": "No document",
-      "ui": "No document",
-      "explanation": "No document of the required type has been uploaded for this deal."
+      "label": "No source document",
+      "ui": "—",
+      "explanation": "The document type this figure needs (for example a T-12 or an OM) has not been uploaded to the deal."
     },
     "no_source": {
-      "label": "No source",
-      "ui": "Not in documents",
-      "explanation": "The uploaded documents do not carry this line under any known name."
+      "label": "No matching field",
+      "ui": "—",
+      "explanation": "Documents are on the deal, but none of their extracted fields resolves to this concept."
     },
     "unit_unknown": {
       "label": "Unit unknown",
-      "ui": "Unit unknown",
-      "explanation": "A value was found but its unit could not be established, so it is not shown."
+      "ui": "—",
+      "explanation": "A value was found but its unit could not be established (for example an occupancy above 100), so it is not used."
     },
     "period_mismatch": {
       "label": "Period mismatch",
-      "ui": "Period mismatch",
-      "explanation": "The only values found are for a different period (a month or quarter where an annual figure is needed)."
+      "ui": "—",
+      "explanation": "Only a monthly or year-to-date slice exists where an annual figure is required, so nothing is compared."
     },
     "basis_mismatch": {
-      "label": "Basis mismatch",
-      "ui": "Basis mismatch",
-      "explanation": "The two figures are on different bases (a percent against a fraction, a month against a year) and are not compared."
+      "label": "Basis mismatch — needs review",
+      "ui": "—",
+      "explanation": "The two figures are more than 300% apart, so they sit on different bases and are not compared as a variance."
     },
     "basis_excluded": {
-      "label": "Basis excluded",
-      "ui": "Excluded",
-      "explanation": "The only values found are from an excluded basis (the OM’s history block, a comp-set stat, or market data) rather than the basis requested."
+      "label": "Not admitted as a broker claim",
+      "ui": "—",
+      "explanation": "The row is a market-segment stat, an STR / CoStar reading or the OM's historical block, so it is not treated as the broker's claim."
     },
     "awaiting_analyst": {
-      "label": "Awaiting analyst",
-      "ui": "Awaiting input",
-      "explanation": "This value needs an analyst decision or input before it can be shown."
+      "label": "Pending analyst decision",
+      "ui": "—",
+      "explanation": "This figure is a recorded decision the analyst has not yet made or confirmed."
     },
     "needs_review": {
       "label": "Needs review",
-      "ui": "Needs review",
-      "explanation": "The extracted value is low-confidence or conflicts with another source and has not been reviewed."
+      "ui": "—",
+      "explanation": "A low-confidence read or a conflicting override is waiting on an analyst before the figure is used."
     },
     "pin_active": {
-      "label": "Pinned",
-      "ui": "Pinned",
-      "explanation": "An analyst pin holds a different value for this line."
+      "label": "NOI pinned",
+      "ui": "—",
+      "explanation": "An analyst NOI schedule (noi_override_by_year / terminal_noi_override) is active, so the operating model's own figure is not shown."
     },
     "str_unavailable": {
       "label": "STR unavailable",
-      "ui": "STR unavailable",
-      "explanation": "STR rates were requested but no STR Trend extraction (or too little coverage) is available."
+      "ui": "—",
+      "explanation": "STR rates were requested but could not populate (no STR Trend extraction, coverage too low or a loader failure); the model stays on the T-12 base."
     },
     "not_knowable_as_of": {
-      "label": "Not knowable as of date",
-      "ui": "Not yet knowable",
-      "explanation": "The value is dated after the as-of date of this view and cannot be known yet."
+      "label": "Not knowable as of this date",
+      "ui": "—",
+      "explanation": "The figure depends on information that did not exist as of the run's as-of date."
     },
     "as_of_unknown": {
       "label": "As-of date unknown",
-      "ui": "Undated",
-      "explanation": "The value carries no date, so it cannot be placed on the timeline."
+      "ui": "—",
+      "explanation": "The reporting date of the source could not be established, so the figure cannot be placed in time."
     },
     "stale_run": {
       "label": "Stale run",
-      "ui": "Stale",
-      "explanation": "The last engine run predates the inputs that feed this value — re-run the model."
+      "ui": "—",
+      "explanation": "Inputs changed after the last engine run; re-run the model to refresh this figure."
     },
     "engine_skipped": {
-      "label": "Engine skipped",
-      "ui": "Not run",
-      "explanation": "The engine that produces this value did not run because an upstream engine failed."
+      "label": "Engine did not run",
+      "ui": "—",
+      "explanation": "The engine that produces this figure was skipped or failed, so there is no output to show."
     },
     "inconclusive": {
       "label": "Inconclusive",
-      "ui": "Inconclusive",
-      "explanation": "Too few applicable checks to state a result."
+      "ui": "—",
+      "explanation": "Fewer than 5 USALI rules applied to the statement, so a compliance score is not reported."
     },
     "not_applicable": {
       "label": "Not applicable",
-      "ui": "N/A",
-      "explanation": "This line does not apply to the deal (for example F&B on a select-service hotel)."
+      "ui": "—",
+      "explanation": "This figure does not apply to the deal as configured (for example a tranche that is not funded)."
     }
   }
 }

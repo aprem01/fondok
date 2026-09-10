@@ -599,3 +599,18 @@ def test_codegen_is_up_to_date_and_deterministic() -> None:
     assert "export const REASONS" in reasons_ts
     for code in REASON_CODES:
         assert f'"{code}"' in reasons_ts
+
+
+def test_reasons_block_matches_schema_reason_meta():
+    """The registry's `reasons` block must mirror fondok_schemas.reasons.REASON_META
+    byte for byte — Phase 0 owns that vocabulary; the YAML only redistributes it."""
+    import yaml
+    from pathlib import Path
+    from fondok_schemas.reasons import REASON_META, ReasonCode
+
+    data = yaml.safe_load(Path("app/ontology/concepts.yaml").read_text())
+    got = data["reasons"]
+    assert set(got) == {c.value for c in ReasonCode}
+    for code in ReasonCode:
+        for key in ("label", "ui", "explanation"):
+            assert got[code.value][key] == REASON_META[code][key], (code, key)
