@@ -51,6 +51,21 @@ Six states every value carries: **Document sourced · Linked · Assumption ·
 Calculated · Awaiting data · Needs review**. Belongs as a per-field tag on the
 canonical deal-state object so every tab renders one consistent badge.
 
+## Deliberate deviations from canonical (Linear overrides the design)
+Per the conflict rule, the latest explicit Linear decision governs behaviour and
+the vendored `.dc.html` files are never edited to match the app.
+
+- **IC Memo — no Preview Memo action, 6-item readiness checklist (FON-54 §7,
+  Sam 09-11).** `IC Memo Tab.dc.html` still shows `Preview Memo` / `✓ Preview
+  reviewed` and the checklist item `IC memo previewed and reviewed`.
+  `ICMemoTab.tsx` has neither: the button rendered no artifact — it only flipped
+  a session flag implying an artifact had been reviewed — while IC Memo `.pdf`
+  and Deal Presentation `.pptx` are Coming Soon for MVP. The checklist is 6
+  items and `canMark` no longer requires the preview flag. `Configure IC memo`
+  (format + six included sections) and the export cards are unchanged.
+  **Restore when** PDF/PPT generation is enabled — bring Preview Memo back as an
+  actual rendered preview, and only then the checklist item with it.
+
 ## Archive — obsolete, DO NOT implement from
 `Data Room Redesign.dc.html`, `Overview Tab.dc.html`, `Overview Tab v2.dc.html`,
 `OverviewCard.dc.html`, `Financials Tab Options.dc.html`,

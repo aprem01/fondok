@@ -423,3 +423,79 @@ describe('ICMemoTab — diligence (FON-54a consolidated flags)', () => {
   });
 });
 
+
+/**
+ * FON-54 §7 (Sam 09-11) — the Preview Memo / "✓ Preview reviewed" action and the
+ * "IC memo previewed and reviewed" checklist item are cut for MVP: clicking
+ * Preview rendered no artifact, it only flipped a flag, while IC Memo .pdf and
+ * Deal Presentation .pptx are explicitly Coming Soon. Configure IC memo (format +
+ * included sections) stays, because it preserves the future export configuration.
+ */
+describe('ICMemoTab — no Preview Memo step (FON-54 §7)', () => {
+  /** The IC-readiness checklist labels, in render order. */
+  function readinessChecklist(): string[] {
+    const header = screen.getByText('Ready for Investment Committee?');
+    const cardEl = header.parentElement!.parentElement!; // span → header row → card
+    const grid = (cardEl.children[1] as HTMLElement).children[0] as HTMLElement;
+    return Array.from(grid.children).map((el) => (el.textContent ?? '').replace(/^[✓⚠]\s*/, '').trim());
+  }
+
+  it('the IC-readiness checklist has exactly 6 items and none mentions preview', () => {
+    render(<ICMemoTab project={PROJECT} />);
+    const items = readinessChecklist();
+    expect(items).toHaveLength(6);
+    expect(items).toEqual([
+      'Base model run complete',
+      'Required underwriting sections complete',
+      'Returns calculated',
+      'Scenario analysis not yet available',
+      '1 critical diligence item unresolved',
+      'IC recommendation pending analyst decision',
+    ]);
+    for (const label of items) expect(label).not.toMatch(/preview/i);
+  });
+
+  it('renders no Preview Memo action', () => {
+    render(<ICMemoTab project={PROJECT} />);
+    expect(screen.queryByText(/Preview Memo/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/Preview reviewed/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/previewed/i)).not.toBeInTheDocument();
+    // The export cards are untouched: Excel live, PDF/PPTX still Coming Soon.
+    expect(screen.getAllByText(/Coming Soon/).length).toBeGreaterThan(0);
+  });
+
+  it('can mark IC Ready with an acknowledged critical without any preview step', () => {
+    render(<ICMemoTab project={PROJECT} />);
+    const markReady = screen.getByRole('button', { name: 'Mark as IC Ready' });
+    expect(markReady).toBeDisabled();
+
+    fireEvent.click(screen.getByText('Acknowledge the unresolved critical items and proceed to committee'));
+    expect(markReady).not.toBeDisabled();
+
+    fireEvent.click(markReady);
+    expect(screen.getByText('✓ IC Ready · 1 acknowledged critical item')).toBeInTheDocument();
+  });
+
+  it('keeps Configure IC memo — the format toggle and all six section toggles', () => {
+    render(<ICMemoTab project={PROJECT} />);
+    expect(screen.getByText('Configure IC memo')).toBeInTheDocument();
+    for (const f of ['Condensed', 'Standard', 'Expanded']) {
+      expect(screen.getByRole('button', { name: f })).toBeInTheDocument();
+    }
+    const sections = [
+      'Deal Summary', 'Investment Thesis', 'Highlights & Risks',
+      'Underwriting Summary', 'Scenario Summary', 'Diligence & Open Items',
+    ];
+    for (const label of sections) {
+      // The accessible name carries the ✓ glyph while the section is included.
+      expect(screen.getByRole('checkbox', { name: new RegExp(`${label}$`) })).toHaveAttribute('aria-checked', 'true');
+    }
+    // Six section toggles and no seventh control in the Configure card.
+    const configCard = screen.getByText('Configure IC memo').parentElement!.parentElement!;
+    expect(configCard.querySelectorAll('[role="checkbox"]')).toHaveLength(6);
+    // Toggling a section still works now that the preview reset is gone.
+    const deal = screen.getByRole('checkbox', { name: /Deal Summary$/ });
+    fireEvent.click(deal);
+    expect(screen.getByRole('checkbox', { name: /Deal Summary$/ })).toHaveAttribute('aria-checked', 'false');
+  });
+});

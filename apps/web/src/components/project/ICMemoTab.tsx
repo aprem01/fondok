@@ -479,7 +479,6 @@ export default function ICMemoTab({ project }: { project: Project }) {
   // ── session-local workspace state (as in the canonical prototype) ──────
   const [format, setFormat] = useState<MemoFormat>('Standard');
   const [sections, setSections] = useState<Sections>({ deal: true, thesis: true, hr: true, uw: true, scen: true, dil: true });
-  const [generated, setGenerated] = useState(false);
   const [ack, setAck] = useState(false);
   const [icReady, setIcReady] = useState(false);
   const [scenariosAvailable, setScenariosAvailable] = useState(false);
@@ -790,12 +789,11 @@ export default function ICMemoTab({ project }: { project: Project }) {
         ok: openCritical === 0,
       },
       { label: verdictConfirmed ? 'IC recommendation confirmed by analyst' : 'IC recommendation pending analyst decision', ok: verdictConfirmed },
-      { label: generated ? 'IC memo previewed and reviewed' : 'IC memo not yet previewed', ok: generated },
     ];
     return items;
-  }, [metrics, scenariosAvailable, openCritical, ack, generated, verdictConfirmed]);
+  }, [metrics, scenariosAvailable, openCritical, ack, verdictConfirmed]);
   const blockers = checklist.filter((c) => !c.ok).length;
-  const canMark = blockers === 0 || (openCritical > 0 && ack && generated);
+  const canMark = blockers === 0 || (openCritical > 0 && ack);
 
   // ── deal snapshot (per-figure provenance dots) ─────────────────────────
   interface Snap {
@@ -1191,7 +1189,7 @@ export default function ICMemoTab({ project }: { project: Project }) {
           {/* ── Configure IC memo ── */}
           <div style={{ ...card(), marginBottom: 16 }}>
             <HeaderRow title="Configure IC memo" note={configSummary} divider />
-            <div style={{ padding: '13px 16px', display: 'grid', gridTemplateColumns: '300px 1fr auto', gap: 24, alignItems: 'start' }}>
+            <div style={{ padding: '13px 16px', display: 'grid', gridTemplateColumns: '300px 1fr', gap: 24, alignItems: 'start' }}>
               <div style={{ display: 'flex', flexDirection: 'column', gap: 7 }}>
                 <span style={{ fontSize: 9.5, fontWeight: 700, letterSpacing: '.07em', color: palette.textFaint, textTransform: 'uppercase' }}>Memo format</span>
                 <div style={{ display: 'inline-flex', border: '1px solid #e2e1dc', borderRadius: 6, overflow: 'hidden', width: 'fit-content' }}>
@@ -1201,7 +1199,7 @@ export default function ICMemoTab({ project }: { project: Project }) {
                       <button
                         key={f}
                         type="button"
-                        onClick={() => { setFormat(f); setGenerated(false); }}
+                        onClick={() => setFormat(f)}
                         style={{ fontFamily: 'inherit', fontSize: 12, fontWeight: on ? 700 : 500, padding: '6px 14px', border: 'none', borderRight: '1px solid #e2e1dc', background: on ? NAVY : '#fff', color: on ? '#fff' : palette.textSecondary, cursor: 'pointer' }}
                       >
                         {f}
@@ -1229,7 +1227,7 @@ export default function ICMemoTab({ project }: { project: Project }) {
                         role="checkbox"
                         aria-checked={on}
                         tabIndex={0}
-                        onClick={() => { setSections((s) => ({ ...s, [k]: !s[k] })); setGenerated(false); }}
+                        onClick={() => setSections((s) => ({ ...s, [k]: !s[k] }))}
                         style={{ display: 'flex', alignItems: 'center', gap: 9, fontSize: 12.5, color: on ? palette.ink : palette.textMuted, cursor: 'pointer', padding: '3px 0' }}
                       >
                         <span style={{ width: 14, height: 14, borderRadius: 4, border: on ? `1px solid ${NAVY}` : '1px solid #cfcec9', background: on ? NAVY : '#fff', color: '#fff', fontSize: 9.5, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
@@ -1241,13 +1239,7 @@ export default function ICMemoTab({ project }: { project: Project }) {
                   })}
                 </div>
               </div>
-              <button
-                type="button"
-                onClick={() => setGenerated(true)}
-                style={{ background: NAVY, color: '#fff', border: 'none', borderRadius: 6, padding: '9px 18px', fontSize: 12.5, fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit', whiteSpace: 'nowrap' }}
-              >
-                {generated ? '✓ Preview reviewed' : 'Preview Memo'}
-              </button>
+              {/* FON-54 §7 (Sam 09-11): Preview Memo / "✓ Preview reviewed" removed for MVP — it rendered no artifact, it only flipped a flag; when PDF/PPT generation is enabled, restore Preview Memo as an actual rendered preview. */}
             </div>
           </div>
 
