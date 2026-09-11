@@ -166,6 +166,18 @@ async def _seed_full_deal(deal_id: UUID) -> tuple[UUID, UUID]:
                             "confidence": 0.90,
                             "raw_text": "Net Operating Income: $7,890,123",
                         },
+                        # FON-54 §2: a real T-12 states BOTH profit lines. The
+                        # broker's NOI claim is before the FF&E reserve, so it
+                        # is compared against this one — never against the
+                        # after-reserve line above.
+                        {
+                            "field_name": "p_and_l_usali.net_operating_income.ebitda",
+                            "value": 8_500_000.0,
+                            "unit": "USD",
+                            "source_page": 1,
+                            "confidence": 0.90,
+                            "raw_text": "EBITDA (before FF&E reserve): $8,500,000",
+                        },
                         {
                             "field_name": "occupancy_pct",
                             "value": 0.712,
@@ -355,12 +367,12 @@ async def test_build_dossier_full_deal_composes_all_layers() -> None:
     assert str(om_doc_id) in doc_ids
     t12_doc = next(d for d in dossier.documents if d.document_id == str(t12_doc_id))
     assert t12_doc.doc_type == "T12"
-    assert t12_doc.field_count == 5
+    assert t12_doc.field_count == 6
     assert t12_doc.overall_confidence == pytest.approx(0.92)
     assert 1 in t12_doc.excerpts_by_page
 
     # Extracted fields — 5 from T-12 + 5 from OM
-    assert len(dossier.extracted_fields) == 10
+    assert len(dossier.extracted_fields) == 11
     noi_field = next(
         f
         for f in dossier.extracted_fields
@@ -376,17 +388,22 @@ async def test_build_dossier_full_deal_composes_all_layers() -> None:
     assert dossier.engines[0].name == "returns"
     assert dossier.engines[0].outputs["levered_irr"] == pytest.approx(0.231)
 
-    # Variance — broker NOI overstated, should fire flags
+    # Variance — broker NOI overstated, should fire flags. The NOI comparison
+    # is like-for-like on the before-FF&E-reserve basis (FON-54 §2): broker
+    # $9,600,000 vs the T-12's EBITDA $8,500,000, not its $7,890,123 Cash NOI.
     assert len(dossier.variance) > 0
     flag_fields = {v.field for v in dossier.variance}
     assert "noi" in flag_fields
+    noi_flag = next(v for v in dossier.variance if v.field == "noi")
+    assert noi_flag.actual == pytest.approx(8_500_000.0)
+    assert noi_flag.broker == pytest.approx(9_600_000.0)
 
     # Confidence rollup
     assert dossier.confidence.docs_extracted == 2
     assert dossier.confidence.docs_total == 2
     assert dossier.confidence.has_om is True
     assert dossier.confidence.has_t12_actuals is True
-    assert dossier.confidence.extracted_field_count == 10
+    assert dossier.confidence.extracted_field_count == 11
     assert 0.85 < dossier.confidence.avg_field_confidence < 0.95
 
 

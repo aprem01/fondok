@@ -351,6 +351,82 @@ def _strip_unit(s: str) -> str:
     return _UNIT_SUFFIX_RE.sub("", s)
 
 
+# ─── unit compatibility (FON-54 §2) ───
+#
+# Tier 4 (:data:`TIER_STRIPPED`) matches a path to an alias with the unit
+# suffix removed, so ``broker_proforma.rooms_revenue_pct`` — a %-of-revenue
+# column — matched the DOLLAR alias ``broker_proforma.rooms_revenue_usd`` and
+# ``1.0`` was compared against a $9,332,100 T-12 line as one dollar. The tier
+# is still right (it is how a ``_usd`` / bare sibling finds its concept); what
+# was missing is a check that the unit the path DECLARES is the kind of number
+# the concept carries. A declared-but-wrong unit is refused (``unit_unknown``),
+# never reinterpreted — reconstructing dollars from a percent would need a
+# denominator that is itself an unverified broker claim.
+
+#: A registry ``unit`` → the family it can be compared within. Two figures in
+#: different families are not the same kind of number, however alike the paths.
+UNIT_FAMILY: dict[str, str] = {
+    "usd": "usd",
+    "usd_per_key": "usd_per_key",
+    "usd_per_occupied_room": "usd_per_key",
+    "pct": "pct",
+    "ratio": "pct",
+    "index": "index",
+    "count": "count",
+    "keys": "count",
+    "years": "years",
+    "date": "date",
+    "text": "text",
+}
+
+#: The unit suffix a PATH wears → the family that suffix declares. ``_ratio``
+#: and ``_percent`` are the same dimensionless family as ``_pct``; ``_amount``
+#: is the same currency family as ``_usd``.
+_SUFFIX_FAMILY: dict[str, str] = {
+    "usd": "usd",
+    "amount": "usd",
+    "pct": "pct",
+    "percent": "pct",
+    "ratio": "pct",
+}
+
+#: A currency path whose stem names a denominator is a PER-UNIT dollar figure
+#: (``p_and_l_usali.noi_per_key_usd``), not a dollar total — the suffix alone
+#: would misfile it as ``usd`` and refuse every per-key alias in the registry.
+_PER_UNIT_STEM_RE = re.compile(r"_per_(key|room|available_room|occupied_room|unit)$")
+
+
+def path_unit_family(path: str) -> str | None:
+    """The unit family this PATH declares, or ``None`` when it declares none.
+
+    ``rooms_revenue_pct`` → ``"pct"``; ``noi_per_key_usd`` → ``"usd_per_key"``;
+    a bare ``rooms_revenue`` or ``broker_proforma.noi`` declares nothing.
+    """
+    lname = path.strip().lower()
+    m = _UNIT_SUFFIX_RE.search(lname)
+    if m is None:
+        return None
+    family = _SUFFIX_FAMILY.get(m.group(1))
+    if family == "usd" and _PER_UNIT_STEM_RE.search(_strip_unit(lname)):
+        return "usd_per_key"
+    return family
+
+
+def units_compatible(path: str, concept_unit: str) -> bool:
+    """``False`` only when the path declares a unit family and it disagrees.
+
+    A path that declares nothing stays admissible — that is today's behaviour
+    for every bare alias and must not regress.
+    """
+    declared = path_unit_family(path)
+    if declared is None:
+        return True
+    want = UNIT_FAMILY.get(concept_unit)
+    if want is None:  # a unit the family map does not classify — permissive
+        return True
+    return declared == want
+
+
 def _tail(lname: str) -> str:
     return lname.rsplit(".", 1)[-1]
 
@@ -941,6 +1017,11 @@ def resolve(
             excluded = "period_mismatch"
         elif basis is not None and b != basis:
             excluded = "basis_excluded"
+        elif not units_compatible(f.lname, c.unit):
+            # FON-54 §2 / §8: the path declares a unit the concept does not
+            # carry (a %-of-revenue column read against a dollar line). Refuse
+            # it — never reinterpret the number under the concept's unit.
+            excluded = "unit_unknown"
         elif f.value is None or (c.is_numeric() and _coerce_number(f.value) is None):
             excluded = "unit_unknown" if f.value is not None else "no_source"
         key = (tier, order, f.order)

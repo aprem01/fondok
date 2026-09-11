@@ -331,8 +331,15 @@ async def test_variance_flags_noi_overstatement(
     t12_fixture: dict[str, Any],
     deal_id: str,
 ) -> None:
-    """Variance should fire ≥7 flags including the broker NOI overstatement
-    (broker $5.20M vs T-12 $4.18M ≈ +24% over actual)."""
+    """Variance should fire ≥7 flags on the Kimpton fixture pair.
+
+    FON-54 §2: the NOI pair is deliberately NOT among them. This T-12 deducts
+    a $750,000 FF&E replacement reserve and states only the after-reserve NOI
+    ($4,181,000), while the broker's $5,200,000 is a before-reserve proforma
+    figure. The +24% that used to be reported was partly the reserve, so the
+    pair is refused as a ``basis_mismatch`` — both figures disclosed, no
+    severity — rather than flagged.
+    """
     from fondok_schemas import (
         DepartmentalExpenses,
         FixedCharges,
@@ -429,18 +436,29 @@ async def test_variance_flags_noi_overstatement(
     flags = out.report.flags
     assert len(flags) >= 7, f"expected ≥7 flags, got {len(flags)}"
 
-    # Find the NOI overstatement flag.
-    noi_flag = next(
-        (f for f in flags if f.field.lower() in ("noi", "noi_usd")),
-        None,
+    # FON-54 §2 — the NOI pair straddles the FF&E reserve, so it carries no
+    # severity and never becomes a flag.
+    assert not [f for f in flags if f.field.lower() in ("noi", "noi_usd")], (
+        "the NOI pair straddles the FF&E reserve and must not be flagged"
     )
-    assert noi_flag is not None, "no NOI variance flag emitted"
-    # Broker $5.20M vs actual $4.18M → broker is HIGHER, so actual−broker
-    # is negative (~-1.02M) — 24%-ish under broker.
-    assert (
-        abs(noi_flag.delta_pct or 0.0) >= 0.15
-    ), f"NOI delta_pct should be ≥15%, got {noi_flag.delta_pct}"
-    assert noi_flag.severity.value in ("Critical", "Warn")
+    # …and the refusal names both figures, machine-readably.
+    from uuid import UUID
+
+    from fondok_schemas.reasons import ReasonCode
+
+    from app.agents.variance import _build_flags, exclusion_code
+
+    basis_excluded: list = []
+    _build_flags(
+        deal_uuid=UUID(deal_id),
+        actuals=actuals,
+        broker_fields=broker_fields,
+        basis_excluded=basis_excluded,
+    )
+    assert [bf.field for bf, _r in basis_excluded] == ["noi"]
+    reason = basis_excluded[0][1]
+    assert exclusion_code(reason) is ReasonCode.BASIS_MISMATCH
+    assert "$5,200,000" in reason and "$4,181,000" in reason
     # Every flag must reference a real catalog rule.
     from app.usali_rules import rule_index
 

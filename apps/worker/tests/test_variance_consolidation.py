@@ -270,6 +270,8 @@ async def _seed_deal_with_duplicate_broker_paths(deal_id: UUID) -> None:
 
 @pytest.mark.asyncio
 async def test_get_variance_endpoint_consolidates_duplicate_broker_paths() -> None:
+    from fondok_schemas.reasons import ReasonCode
+
     from app.api.analysis import get_variance
     from app.database import get_session_factory
 
@@ -309,11 +311,19 @@ async def test_get_variance_endpoint_consolidates_duplicate_broker_paths() -> No
     # The consolidated page is one of the raw rows' pages (never invented).
     assert rooms.source_page in {r.source_page for r in rooms.raw_fields}
 
-    noi = next(f for f in resp.flags if f.concept == "noi")
-    assert noi.impact_basis == "noi"
-    assert len([r for r in noi.raw_fields if not r.excluded_reason]) == 1
-    # The T-12's own ``noi`` line is disclosed as excluded, never compared.
-    assert [(r.field, r.source_doc_type) for r in noi.raw_fields if r.excluded_reason] == [("noi", "T12")]
+    # FON-54 §2 — this T-12 states only the AFTER-FF&E-reserve NOI, so the
+    # broker's before-reserve claim has nothing like-for-like to be compared
+    # against. No flag, no severity: a ``basis_mismatch`` refusal naming both
+    # figures. (The T-12's own ``noi`` line is still disclosed as excluded.)
+    assert not [f for f in resp.flags if f.concept == "noi"]
+    noi_refusals = [r for r in resp.reasons if r.concept == "noi"]
+    mismatch = next(r for r in noi_refusals if r.code is ReasonCode.BASIS_MISMATCH)
+    assert "broker_proforma.noi_usd" in (mismatch.detail or "")
+    assert "$5,200,000" in (mismatch.detail or "") and "$4,181,000" in (mismatch.detail or "")
+    assert any(
+        r.code is ReasonCode.BASIS_EXCLUDED and "actuals document" in (r.detail or "")
+        for r in noi_refusals
+    )
 
     # Severity counts are taken from the consolidated list (case-insensitive).
     assert resp.critical_count + resp.warn_count + resp.info_count == len(resp.flags)
