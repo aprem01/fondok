@@ -134,6 +134,8 @@ interface RowDef {
   docPage?: string;
   linkLabel?: string;   // originating module (linked rows)
   linkTab?: string;     // deep-link target for the popover action
+  /** Sub-tab slug on that target — `?tab=<linkTab>&sub=<linkSub>` (FON-59 #4). */
+  linkSub?: string;
   formula?: string;     // human formula (calc rows)
   formulaNumbers?: string;
   inputs?: RowProvInput[];
@@ -197,7 +199,8 @@ interface RowsSection {
   kind: 'rows';
   title: string;
   note?: string;
-  action?: { label: string; tab: string };
+  /** Header link — `sub` names the target's sub-tab (`?tab=pl&sub=projections`). */
+  action?: { label: string; tab: string; sub?: string };
   rows: RowDef[];
 }
 interface SuSection { kind: 'su'; title: string }
@@ -498,6 +501,8 @@ export default function OverviewTab({ projectId }: { projectId: number | string 
   };
   const doc = (id: string, label: string, value: string, docName?: string, docPage?: string, extra?: Partial<RowDef>): RowDef =>
     mk({ id, label, kind: 'doc', value, docName, docPage, ...extra });
+  // `extra` carries the sub-tab: `{ linkSub: 'projections' }` → the popover's
+  // "Open module →" routes to ?tab=pl&sub=projections (FON-59 #4).
   const lnk = (id: string, label: string, value: string, linkLabel: string, linkTab: string, extra?: Partial<RowDef>): RowDef =>
     mk({ id, label, kind: 'linked', value, linkLabel, linkTab, ...extra });
   const cal = (id: string, label: string, value: string, extra?: Partial<RowDef>): RowDef =>
@@ -562,12 +567,12 @@ export default function OverviewTab({ projectId }: { projectId: number | string 
         '→ Financials (historicals)', 'pl'),
       lnk('brand', 'Brand', brand || '—', '→ Investment Profile', ''),
       lnk('positioning', 'Positioning', positioningTiers.find((p) => p.id === positioningId)?.label ?? '—', '→ Investment Profile', ''),
-      lnk('mgmtFee', 'Management Fee', '—', '→ Financials', 'pl', { reasonKey: 'mgmt_fee_pct' }),
-      lnk('franchiseFee', 'Franchise / Brand Fee', '—', '→ Financials', 'pl'),
+      lnk('mgmtFee', 'Management Fee', '—', '→ Financials', 'pl', { reasonKey: 'mgmt_fee_pct', linkSub: 'historicals' }),
+      lnk('franchiseFee', 'Franchise / Brand Fee', '—', '→ Financials', 'pl', { linkSub: 'historicals' }),
     ];
 
     const entryRows = (): RowDef[] => [
-      lnk('entryNOI', 'Run-Rate / Entry NOI', money(y1Noi), '→ Financials', 'pl'),
+      lnk('entryNOI', 'Run-Rate / Entry NOI', money(y1Noi), '→ Financials', 'pl', { linkSub: 'historicals' }),
       cal('entryCap', 'Entry Cap Rate', pctv(entryCap), { trace: { engine: 'capital', path: 'entry_cap_rate' }, formula: 'Entry NOI ÷ Purchase Price', inputs: [{ name: 'Entry NOI', from: 'Financials → Historicals', kind: 'linked' }, { name: 'Purchase Price', from: 'Calculated', kind: 'calc' }] }),
       cal('purchase', 'Purchase Price', money(purchase), { bold: true, trace: { engine: 'capital', path: 'purchase_price' }, formula: 'Entry NOI ÷ Entry Cap Rate', inputs: [{ name: 'Entry NOI', from: 'Financials → Historicals', kind: 'linked' }, { name: 'Entry Cap Rate', from: 'Calculated', kind: 'calc' }] }),
       cal('pricePerKey', 'Price / Key', money(pricePerKey), { trace: { engine: 'capital', path: 'price_per_key' }, formula: 'Purchase Price ÷ Keys', inputs: [{ name: 'Purchase Price', from: 'Calculated', kind: 'calc' }, { name: 'Keys', from: 'OM · Room Mix', kind: 'doc' }] }),
@@ -602,19 +607,19 @@ export default function OverviewTab({ projectId }: { projectId: number | string 
     ];
 
     const stabilizationRows = (): RowDef[] => [
-      ...(hasReno ? [lnk('renoImpact', 'Renovation Impact', '—', '→ Financials (disruption)', 'pl')] : []),
+      ...(hasReno ? [lnk('renoImpact', 'Renovation Impact', '—', '→ Financials (disruption)', 'pl', { linkSub: 'projections' })] : []),
       awa('stabDate', 'Stabilization Date'),
-      lnk('stabOcc', 'Stabilized Occupancy', '—', '→ Financials (projections)', 'pl', { reasonKey: 'starting_occupancy' }),
-      lnk('stabADR', 'Stabilized ADR', '—', '→ Financials (projections)', 'pl', { reasonKey: 'starting_adr' }),
-      lnk('stabRev', 'Stabilized Revenue', '—', '→ Financials (projections)', 'pl'),
-      lnk('stabNOI', 'Stabilized NOI', money(terminalNoi), '→ Financials (projections)', 'pl', { bold: true, trace: { engine: 'returns', path: 'terminal_noi' } }),
+      lnk('stabOcc', 'Stabilized Occupancy', '—', '→ Financials (projections)', 'pl', { reasonKey: 'starting_occupancy', linkSub: 'projections' }),
+      lnk('stabADR', 'Stabilized ADR', '—', '→ Financials (projections)', 'pl', { reasonKey: 'starting_adr', linkSub: 'projections' }),
+      lnk('stabRev', 'Stabilized Revenue', '—', '→ Financials (projections)', 'pl', { linkSub: 'projections' }),
+      lnk('stabNOI', 'Stabilized NOI', money(terminalNoi), '→ Financials (projections)', 'pl', { bold: true, linkSub: 'projections', trace: { engine: 'returns', path: 'terminal_noi' } }),
       cal('stabMargin', 'Stabilized NOI Margin', '—', { formula: 'Stabilized NOI ÷ Stabilized Revenue' }),
     ];
 
     const exitRows = (): RowDef[] => [
       lnk('hold', 'Hold Period', has(holdYears) ? `${holdYears} years` : '—', '→ Investment (exit)', 'investment', { reasonKey: 'hold_years' }),
       cal('exitDate', 'Exit Date', fmtISODate(timeline?.exit_date), { formula: 'Acquisition Date + Hold Period' }),
-      lnk('fwdNOI', 'Forward 12-Month NOI', money(terminalNoi), '→ Financials (projections)', 'pl'),
+      lnk('fwdNOI', 'Forward 12-Month NOI', money(terminalNoi), '→ Financials (projections)', 'pl', { linkSub: 'projections' }),
       lnk('exitCap', 'Exit Cap Rate', pctv(exitCap), '→ Investment (exit)', 'investment', { reasonKey: 'exit_cap_rate' }),
       cal('exitValue', 'Gross Exit Value', money(grossExit), { bold: true, trace: { engine: 'returns', path: 'gross_sale_price' }, formula: 'Forward NOI ÷ Exit Cap Rate', inputs: [{ name: 'Forward NOI', from: 'Financials → Projections', kind: 'linked' }, { name: 'Exit Cap Rate', from: 'Investment assumption', kind: 'input' }] }),
       cal('exitPerKey', 'Exit Value / Key', money(exitPerKey), { formula: 'Gross Exit Value ÷ Keys' }),
@@ -632,8 +637,8 @@ export default function OverviewTab({ projectId }: { projectId: number | string 
       awa('pFloors', 'Planned Floors'),
       awa('pSF', 'Planned SF'),
       doc('pZoning', 'Zoning / Entitlement', '—', 'Zoning Report', 'Entitlement Status'),
-      lnk('mgmtFee', 'Management Fee', '—', '→ Financials', 'pl', { reasonKey: 'mgmt_fee_pct' }),
-      lnk('franchiseFee', 'Franchise / Brand Fee', '—', '→ Financials', 'pl'),
+      lnk('mgmtFee', 'Management Fee', '—', '→ Financials', 'pl', { reasonKey: 'mgmt_fee_pct', linkSub: 'historicals' }),
+      lnk('franchiseFee', 'Franchise / Brand Fee', '—', '→ Financials', 'pl', { linkSub: 'historicals' }),
     ];
     const landRows = (): RowDef[] => [
       doc('landPrice', 'Land Purchase Price', money(landPrice), 'Land Purchase & Sale Agreement', 'Purchase Price'),
@@ -676,11 +681,11 @@ export default function OverviewTab({ projectId }: { projectId: number | string 
       cal('openDate', 'Opening Date', fmtISODate(timeline?.stabilization_date), { formula: 'Land Close + pre-construction + build' }),
       awa('ramp', 'Ramp-Up Period'),
       awa('stabDate', 'Stabilization Date'),
-      lnk('stabOcc', 'Stabilized Occupancy', '—', '→ Financials (projections)', 'pl', { reasonKey: 'starting_occupancy' }),
-      lnk('stabADR', 'Stabilized ADR', '—', '→ Financials (projections)', 'pl', { reasonKey: 'starting_adr' }),
+      lnk('stabOcc', 'Stabilized Occupancy', '—', '→ Financials (projections)', 'pl', { reasonKey: 'starting_occupancy', linkSub: 'projections' }),
+      lnk('stabADR', 'Stabilized ADR', '—', '→ Financials (projections)', 'pl', { reasonKey: 'starting_adr', linkSub: 'projections' }),
       cal('stabRevPAR', 'Stabilized RevPAR', '—', { formula: 'Stabilized Occupancy × Stabilized ADR' }),
-      lnk('stabRev', 'Stabilized Revenue', '—', '→ Financials (projections)', 'pl'),
-      lnk('stabNOI', 'Stabilized NOI', money(terminalNoi), '→ Financials (projections)', 'pl', { bold: true, trace: { engine: 'returns', path: 'terminal_noi' } }),
+      lnk('stabRev', 'Stabilized Revenue', '—', '→ Financials (projections)', 'pl', { linkSub: 'projections' }),
+      lnk('stabNOI', 'Stabilized NOI', money(terminalNoi), '→ Financials (projections)', 'pl', { bold: true, linkSub: 'projections', trace: { engine: 'returns', path: 'terminal_noi' } }),
       cal('yieldOnCost', 'Yield on Cost', has(terminalNoi) && has(totalCapital) && totalCapital > 0 ? fmtPct(terminalNoi / totalCapital, 2) : '—', { formula: 'Stabilized NOI ÷ Total Development Cost' }),
     ];
 
@@ -690,7 +695,7 @@ export default function OverviewTab({ projectId }: { projectId: number | string 
         { kind: 'rows', title: 'Land / Site Acquisition', rows: landRows() },
         { kind: 'rows', title: 'Development Budget', action: { label: 'View development details →', tab: 'investment' }, rows: devBudgetRows() },
         { kind: 'rows', title: 'Construction Financing', action: { label: 'View Debt details →', tab: 'debt' }, rows: constFinRows() },
-        { kind: 'rows', title: 'Opening & Stabilization', action: { label: 'View Projections →', tab: 'pl' }, rows: openingRows() },
+        { kind: 'rows', title: 'Opening & Stabilization', action: { label: 'View Projections →', tab: 'pl', sub: 'projections' }, rows: openingRows() },
         { kind: 'rows', title: 'Exit', rows: exitRows() },
         { kind: 'su', title: 'Transaction Sources & Uses' },
         { kind: 'timeline', title: 'Development Timeline' },
@@ -712,7 +717,7 @@ export default function OverviewTab({ projectId }: { projectId: number | string 
       { kind: 'rows', title: 'Entry Valuation', rows: entryRows() },
       { kind: 'rows', title: 'Renovation / CapEx', action: { label: 'View renovation details →', tab: 'investment' }, rows: renovationRows() },
       { kind: 'rows', title: 'Capitalization', action: { label: 'View Debt details →', tab: 'debt' }, rows: capitalizationRows() },
-      { kind: 'rows', title: 'Stabilization', action: { label: 'View Projections →', tab: 'pl' }, rows: stabilizationRows() },
+      { kind: 'rows', title: 'Stabilization', action: { label: 'View Projections →', tab: 'pl', sub: 'projections' }, rows: stabilizationRows() },
       { kind: 'rows', title: 'Exit', rows: exitRows() },
       { kind: 'su', title: 'Transaction Sources & Uses' },
       { kind: 'timeline', title: 'Transaction Timeline' },
@@ -822,7 +827,7 @@ export default function OverviewTab({ projectId }: { projectId: number | string 
     const startEdit = () => setEditing({ rowId: row.id, draft: row.value === '—' ? '' : row.value });
     const actions: WhereThisCameFromProps['actions'] = [];
     if (row.kind === 'linked' && row.linkTab) {
-      actions.push({ label: 'Open module →', primary: true, onClick: () => { navigate(row.linkTab!); setPopover(null); } });
+      actions.push({ label: 'Open module →', primary: true, onClick: () => { navigate(row.linkTab!, row.linkSub); setPopover(null); } });
     }
     if (row.kind === 'doc' && row.docName && !row.overridden) {
       actions.push({ label: 'View source ↗', onClick: () => { navigate(''); setPopover(null); } });
@@ -879,8 +884,12 @@ export default function OverviewTab({ projectId }: { projectId: number | string 
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [popover, traceGet, sections, editing, saving, overrides, saveOverride, restoreOverride, renameProject]);
 
-  function navigate(tab: string) {
-    router.push(tab ? `/projects/${dealId}?tab=${tab}` : `/projects/${dealId}`);
+  // FON-59 #4 — `?tab=<tab>&sub=<subtab>` is the sub-tab routing convention;
+  // without the `sub` half every "→ Financials (projections)" row landed on
+  // Historicals (the target's default).
+  function navigate(tab: string, sub?: string) {
+    if (!tab) { router.push(`/projects/${dealId}`); return; }
+    router.push(`/projects/${dealId}?tab=${tab}${sub ? `&sub=${sub}` : ''}`);
   }
 
   // Deal-type toggle → confirmation → persist + re-run.
@@ -1036,7 +1045,7 @@ export default function OverviewTab({ projectId }: { projectId: number | string 
         if (s.kind === 'timeline') return <TimelineSectionCard key={`tl-${i}`} title={s.title} timeline={timeline} liveMode={liveMode} holdYears={holdYears} />;
         const headerNote: ReactNode = s.action
           ? (
-            <span onClick={() => navigate(s.action!.tab)} style={{ color: palette.linkBlue, cursor: 'pointer', fontWeight: 600, whiteSpace: 'nowrap' }}>
+            <span onClick={() => navigate(s.action!.tab, s.action!.sub)} style={{ color: palette.linkBlue, cursor: 'pointer', fontWeight: 600, whiteSpace: 'nowrap' }}>
               {s.action.label}
             </span>
           )

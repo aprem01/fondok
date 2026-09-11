@@ -22,7 +22,6 @@ import { MapPinned, Loader2 } from 'lucide-react';
 import {
   api,
   isWorkerConnected,
-  workerUrl,
   type TransactionCompsResult,
   type ValueState,
   type EngineName,
@@ -593,7 +592,7 @@ function SubjectVsCompSet({
                   <Loader2 size={12} className="animate-spin" /> Re-modeling…
                 </span>
               )}
-              <Link href={`/projects/${dealId}?tab=pl`} style={{ textDecoration: 'none' }}>
+              <Link href={`/projects/${dealId}?tab=pl&sub=projections`} style={{ textDecoration: 'none' }}>
                 <span style={secBtn}>View Projections →</span>
               </Link>
               <button onClick={onToggleStr} disabled={strRunning} style={navyBtn}>
@@ -629,7 +628,7 @@ function SubjectVsCompSet({
                   <Loader2 size={12} className="animate-spin" /> Re-modeling…
                 </span>
               )}
-              <Link href={`/projects/${dealId}?tab=pl`} style={{ textDecoration: 'none' }}>
+              <Link href={`/projects/${dealId}?tab=pl&sub=projections`} style={{ textDecoration: 'none' }}>
                 <span style={secBtn}>View Projections →</span>
               </Link>
               <button onClick={onToggleStr} disabled={strRunning} style={navyBtn}>
@@ -905,7 +904,7 @@ function TransactionCompsSection({
   const visible = showAll ? sorted : sorted.slice(0, 14);
 
   const compsCaption =
-    'Extracted from Offering Memorandums and market reports in the Data Room · property names deep-link to the source page';
+    'Extracted from Offering Memorandums and market reports in the Data Room';
   const columns: { label: string; align: 'left' | 'right' }[] = [
     { label: 'PROPERTY', align: 'left' },
     { label: 'MARKET', align: 'left' },
@@ -1004,21 +1003,17 @@ function TransactionCompsSection({
             ))}
             {visible.map((c, i) => {
               const bg = i % 2 ? palette.surfaceTint : '#fff';
-              const citationHref =
-                c.source_document_id && c.source_page
-                  ? `${workerUrl()}/deals/${dealId}/documents/${c.source_document_id}/download#page=${c.source_page}`
-                  : null;
               const buyer = c.buyer_name ?? c.buyer_type ?? null;
               return (
                 <div key={`${c.name}-${i}`} style={{ display: 'contents' }}>
+                  {/* FON-60 §4 — the property name is plain text. The old
+                      source deep link was a raw worker download URL built from
+                      an unvalidated `source_document_id`, which returned
+                      "document not found on deal". `source_document_id` /
+                      `source_page` stay on the API type and in the export
+                      payload for a post-MVP restore. */}
                   <div style={{ ...cellBase, background: bg, color: palette.ink, fontWeight: 600, fontSize: 12.5 }}>
-                    {citationHref ? (
-                      <Link href={citationHref} target="_blank" rel="noreferrer" style={{ color: palette.ink }}>
-                        {c.name}
-                      </Link>
-                    ) : (
-                      c.name
-                    )}
+                    {c.name}
                   </div>
                   <div style={{ ...cellBase, background: bg, color: palette.textSecondary }}>{c.market ?? '—'}</div>
                   <div style={{ ...cellBase, background: bg, color: palette.textSecondary }}>{fmtSaleDate(c.sale_date)}</div>

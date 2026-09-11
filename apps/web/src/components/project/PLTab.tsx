@@ -24,6 +24,7 @@ import { fmtCurrency, fmtMillions, cn } from '@/lib/format';
 import { getEngineField, useEngineOutputs } from '@/lib/hooks/useEngineOutputs';
 import { useDeal } from '@/lib/hooks/useDeal';
 import { useFlash } from '@/lib/hooks/useFlash';
+import { useSubTab } from '@/lib/hooks/useSubTab';
 import { IntroCard } from '@/components/help/IntroCard';
 import { MetricLabel } from '@/components/help/MetricLabel';
 import { GLOSSARY } from '@/lib/glossary';
@@ -40,11 +41,14 @@ import { useDocuments } from '@/lib/hooks/useDocuments';
 // FON-60/61 — Index Analysis + Competitive Set moved to the Market tab (they're
 // competitive-set analysis, not financial statements). FON-61 (Sam QA) — Due
 // Diligence removed from Financials for now too.
+// FON-59 #4 / FON-61 §3 — the sub-tab *id* is the URL slug (`?tab=pl&sub=…`);
+// the label is display only. Ids are what `useSubTab` matches against.
 const subTabs = [
-  'Historicals',
-  'Projections',
+  { id: 'historicals', label: 'Historicals' },
+  { id: 'projections', label: 'Projections' },
 ] as const;
-type SubTab = typeof subTabs[number];
+type SubTab = typeof subTabs[number]['id'];
+const subTabIds = subTabs.map((t) => t.id) as readonly SubTab[];
 
 const tooltipStyle = {
   contentStyle: { background: '#fff', border: '1px solid #e5e7eb', borderRadius: 6, fontSize: 12 },
@@ -254,12 +258,12 @@ function buildStatementFromWorker(
 
 export default function PLTab() {
   const searchParams = useSearchParams();
-  // Deep-link from the Data Room's "review financials" CTA lands on Historicals
-  // (the review now lives inside the historical data screen — no separate tab).
-  const finParam = searchParams?.get('fin');
-  const [tab, setTab] = useState<SubTab>(
-    finParam === 'projections' ? 'Projections' : 'Historicals',
-  );
+  // FON-59 #4 / FON-61 §3 — one convention, `?tab=pl&sub=<slug>`. `fin` stays
+  // an accepted alias for one release so the Data Room's deep links and any
+  // bookmarks keep working. The hook (not a `useState` initializer) also
+  // re-syncs when the param changes while this tab is already mounted, which
+  // is what made Overview / Market "→ Projections" links land on Historicals.
+  const { sub: tab, setSub: setTab } = useSubTab(subTabIds, 'historicals', { legacyParam: 'fin' });
   const params = useParams();
   const { toast } = useToast();
   const dealId = (params?.id as string | undefined) ?? '';
@@ -297,9 +301,16 @@ export default function PLTab() {
     });
     return fin?.filename ?? documents[0]?.filename ?? null;
   }, [documents, extractions, focusField, docParam]);
-  const showArrival = (!!finParam || !!focusField) && !arrivalDismissed;
+  // The arrival banner names the Data Room specifically, so it keys off the
+  // Data Room's own params (`fin` alias / `doc`) read ONCE at mount: `setTab`
+  // now writes `?sub=` on every manual sub-tab click, and the Overview / Market
+  // "View Projections →" deep links are not Data Room arrivals.
+  const [arrivedFromDataRoom] = useState(
+    () => !!searchParams?.get('fin') || !!searchParams?.get('doc'),
+  );
+  const showArrival = (arrivedFromDataRoom || !!focusField) && !arrivalDismissed;
   const subTabCaption =
-    tab === 'Projections'
+    tab === 'projections'
       ? 'The forward model — assumptions, growth and projected performance'
       : 'Actual operating history, normalized and traceable to the P&L';
   const [runToken, setRunToken] = useState<number | null>(null);
@@ -511,14 +522,14 @@ export default function PLTab() {
 
       <SubTabNav
         className="mb-3.5"
-        items={subTabs.map((t) => ({ id: t, label: t }))}
+        items={subTabs.map((t) => ({ id: t.id, label: t.label }))}
         activeId={tab}
         onSelect={(id) => setTab(id as SubTab)}
         caption={subTabCaption}
       />
 
       <div className={cn(computing && 'relative pointer-events-none opacity-60')}>
-        {tab === 'Historicals' && (
+        {tab === 'historicals' && (
           // One table: the grounded worksheet is the single financial-data
           // surface — multi-year grounded columns (incl. Occupancy/ADR/RevPAR),
           // inline-editable Model column, click-to-source, low-confidence flags,
@@ -526,7 +537,7 @@ export default function PLTab() {
           // useHistoricals, so nothing was lost by retiring the old table here.
           <GroundedWorksheet dealId={dealId} />
         )}
-        {tab === 'Projections' && (
+        {tab === 'projections' && (
           <ProjectionsSection dealId={dealId} />
         )}
         {computing && (

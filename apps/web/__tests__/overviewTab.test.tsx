@@ -37,9 +37,10 @@ import { render, screen, fireEvent, cleanup, waitFor, within } from '@testing-li
 import React from 'react';
 import type { EngineOutputsResponse, TimelineResponse } from '@/lib/api';
 
+const nav = vi.hoisted(() => ({ push: vi.fn(), replace: vi.fn() }));
 vi.mock('next/navigation', () => ({
   useParams: () => ({ id: 'deal-uuid-1' }),
-  useRouter: () => ({ push: vi.fn(), replace: vi.fn() }),
+  useRouter: () => ({ push: nav.push, replace: nav.replace }),
 }));
 
 // The worker outputs under test — the whole tab reads from these.
@@ -178,6 +179,8 @@ beforeEach(() => {
   updateSpy.mockClear();
   timelineSpy.mockClear();
   engineRunSpy.mockClear();
+  nav.push.mockClear();
+  nav.replace.mockClear();
   mockReasons = {};
   overviewRef.value = {};
   mockDealRef.deal = {
@@ -539,3 +542,56 @@ describe('OverviewTab — a dash carries the worker\'s refusal code', () => {
   });
 });
 
+// FON-59 #4 — Overview emitted only a top-level tab id, so every
+// "→ Financials (projections)" row and CTA landed on Financials → Historicals
+// (the target's default). The emitters now carry the sub-tab half of the
+// `?tab=<tab>&sub=<subtab>` convention.
+describe('OverviewTab — deep links name the target sub-tab', () => {
+  it('the Stabilized NOI popover\'s "Open module →" routes to ?tab=pl&sub=projections', () => {
+    render(<OverviewTab projectId="deal-uuid-1" />);
+
+    // Stabilization renders before Exit, so the first $3,640,000 cell is the
+    // Stabilized NOI row (Exit's Forward 12-Month NOI shows the same figure).
+    const [cell] = screen.getAllByText('$3,640,000');
+    fireEvent.click(cell);
+    const dialog = screen.getByRole('dialog', { name: /Where Stabilized NOI came from/i });
+
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Open module →' }));
+    expect(nav.push).toHaveBeenCalledWith('/projects/deal-uuid-1?tab=pl&sub=projections');
+  });
+
+  it('the Stabilization section\'s "View Projections →" routes to ?tab=pl&sub=projections', () => {
+    render(<OverviewTab projectId="deal-uuid-1" />);
+
+    fireEvent.click(screen.getByText('View Projections →'));
+    expect(nav.push).toHaveBeenCalledWith('/projects/deal-uuid-1?tab=pl&sub=projections');
+  });
+
+  it('the Forward 12-Month NOI popover (Exit) also names Projections', () => {
+    render(<OverviewTab projectId="deal-uuid-1" />);
+
+    const cells = screen.getAllByText('$3,640,000');
+    fireEvent.click(cells[cells.length - 1]);
+    const dialog = screen.getByRole('dialog', { name: /Where Forward 12-Month NOI came from/i });
+
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Open module →' }));
+    expect(nav.push).toHaveBeenCalledWith('/projects/deal-uuid-1?tab=pl&sub=projections');
+  });
+
+  it('a Financials row that belongs on Historicals says so explicitly', () => {
+    render(<OverviewTab projectId="deal-uuid-1" />);
+
+    fireEvent.click(rowFor('Management Fee').lastElementChild as HTMLElement);
+    const dialog = screen.getByRole('dialog', { name: /Where Management Fee came from/i });
+
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Open module →' }));
+    expect(nav.push).toHaveBeenCalledWith('/projects/deal-uuid-1?tab=pl&sub=historicals');
+  });
+
+  it('a non-Financials link is unchanged — no sub is invented', () => {
+    render(<OverviewTab projectId="deal-uuid-1" />);
+
+    fireEvent.click(screen.getByText('View Debt details →'));
+    expect(nav.push).toHaveBeenCalledWith('/projects/deal-uuid-1?tab=debt');
+  });
+});

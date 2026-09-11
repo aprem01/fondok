@@ -873,7 +873,11 @@ export default function DataRoomTab({ projectId }: { projectId: number | string 
       {view === 'coverage' && (
         <>
       {/* Route financial-data validation to the Financials tab's guided
-          Review (source doc + line for each flagged value). */}
+          Review (source doc + line for each flagged value).
+          FON-59 #4: `fin=` is the legacy alias of `?sub=` — kept for one
+          release. It is also what tells Financials this was a Data Room
+          arrival (the "Opened from Data Room" banner), so it stays until that
+          banner gets its own signal. */}
       {liveMode && flaggedFinancialCount > 0 && (
         <button
           type="button"
