@@ -402,3 +402,65 @@ describe('MarketTab — Market Overview awaiting-data em dashes', () => {
   });
 });
 
+// FON-61 §3 — "View Projections →" from Market used to open Financials →
+// Historicals because it carried only `?tab=pl`. Both STR cards now name the
+// sub-tab (`?tab=pl&sub=projections`).
+describe('MarketTab — "View Projections →" deep-links to Financials → Projections', () => {
+  it('the active STR card links to ?tab=pl&sub=projections', async () => {
+    mockOverrides = { revenue_seed_from_str_forecast: STR_FLAG };
+    mockSources = { starting_occupancy: 'str_forecast', starting_adr: 'str_forecast' };
+    render(<MarketTab projectId="deal-uuid-1" />);
+
+    const card = await screen.findByTestId('str-card-active');
+    const link = within(card).getByRole('link', { name: 'View Projections →' });
+    expect(link).toHaveAttribute('href', '/projects/deal-uuid-1?tab=pl&sub=projections');
+  });
+
+  it('the STR-unavailable card links to ?tab=pl&sub=projections', async () => {
+    mockOverrides = { revenue_seed_from_str_forecast: STR_FLAG };
+    mockSources = {
+      revenue_seed_from_str_forecast: 'str_forecast_unavailable',
+      starting_occupancy: 't12_actual',
+      starting_adr: 't12_actual',
+    };
+    render(<MarketTab projectId="deal-uuid-1" />);
+
+    const card = await screen.findByTestId('str-card-unavailable');
+    const link = within(card).getByRole('link', { name: 'View Projections →' });
+    expect(link).toHaveAttribute('href', '/projects/deal-uuid-1?tab=pl&sub=projections');
+  });
+});
+
+// FON-60 §4 (Sam 09-11) — "remove property-name/source deep-linking from
+// Transaction Comps for now. Property names should display as normal text."
+// The old link was a raw worker download URL built from an unvalidated
+// `source_document_id`, which returned "document not found on deal".
+describe('MarketTab — Transaction Comps property names are plain text', () => {
+  it('renders the property name as plain text, never a source link', async () => {
+    render(<MarketTab projectId="deal-uuid-1" />);
+    fireEvent.click(screen.getByText('Transaction Comps'));
+    await screen.findByText('SELLER', undefined, { timeout: 5000 });
+
+    // The Betsy Hotel fixture carries BOTH source_document_id and source_page —
+    // the exact case that used to render a deep link.
+    expect(screen.getAllByText('The Betsy Hotel').length).toBeGreaterThan(0);
+    expect(screen.queryByRole('link', { name: 'The Betsy Hotel' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('link', { name: 'Z Ocean Hotel' })).not.toBeInTheDocument();
+
+    // No anchor anywhere points at a raw worker document download.
+    const hrefs = Array.from(document.querySelectorAll('a')).map((a) => a.getAttribute('href') ?? '');
+    expect(hrefs.some((h) => h.includes('/documents/'))).toBe(false);
+  });
+
+  it('the comps caption no longer promises source deep-linking', async () => {
+    render(<MarketTab projectId="deal-uuid-1" />);
+    fireEvent.click(screen.getByText('Transaction Comps'));
+    await screen.findByText('SELLER', undefined, { timeout: 5000 });
+
+    expect(
+      screen.getByText('Extracted from Offering Memorandums and market reports in the Data Room'),
+    ).toBeInTheDocument();
+    expect(screen.queryByText(/deep-link to the source page/)).not.toBeInTheDocument();
+  });
+});
+
