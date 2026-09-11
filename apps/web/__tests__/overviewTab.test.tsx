@@ -90,7 +90,7 @@ const OUTPUTS = {
     },
     expense: {
       deal_id: 'deal-uuid-1', engine: 'expense', status: 'complete', summary: '',
-      outputs: { years: [{ year: 1, noi: 2_550_000 }] },
+      outputs: { years: [{ year: 1, noi: 2_550_000, noi_institutional: 3_100_000 }] },
       inputs: {}, error: null, runtime_ms: 5, started_at: null, completed_at: null, run_id: 'run-1',
     },
   },
@@ -231,7 +231,10 @@ describe('OverviewTab — engine-sourced KPI tiles (value-add)', () => {
     expect(screen.getByText('$34.00M')).toBeInTheDocument(); // purchase price
     expect(screen.getByText('$43.00M')).toBeInTheDocument(); // total capitalization
     expect(screen.getByText('$4.62M')).toBeInTheDocument();  // renovation
-    expect(screen.getByText('$3.64M')).toBeInTheDocument();  // stabilized NOI
+    // Stabilized NOI tile is an honest dash until a Stabilization Year exists (FON-59 #1);
+    // the $3.64M reversion figure is no longer shown as stabilized.
+    expect(screen.queryByText('$3.64M')).toBeNull();
+    expect(screen.getByText('stabilization year not set')).toBeInTheDocument();
     expect(screen.getAllByText('19.8%').length).toBeGreaterThan(0); // levered IRR (shown in >1 place)
   });
 });
@@ -547,17 +550,27 @@ describe('OverviewTab — a dash carries the worker\'s refusal code', () => {
 // (the target's default). The emitters now carry the sub-tab half of the
 // `?tab=<tab>&sub=<subtab>` convention.
 describe('OverviewTab — deep links name the target sub-tab', () => {
-  it('the Stabilized NOI popover\'s "Open module →" routes to ?tab=pl&sub=projections', () => {
+  it('Stabilized NOI is a reasoned dash, never the exit-year reversion NOI (FON-59 #1)', () => {
     render(<OverviewTab projectId="deal-uuid-1" />);
 
-    // Stabilization renders before Exit, so the first $3,640,000 cell is the
-    // Stabilized NOI row (Exit's Forward 12-Month NOI shows the same figure).
-    const [cell] = screen.getAllByText('$3,640,000');
-    fireEvent.click(cell);
-    const dialog = screen.getByRole('dialog', { name: /Where Stabilized NOI came from/i });
+    // `returns.terminal_noi` ($3,640,000) is the year hold+1 reversion figure.
+    // Until a Stabilization Year exists it appears ONLY on the Exit row, and
+    // the Stabilization row explains its dash.
+    expect(screen.getAllByText('$3,640,000')).toHaveLength(1);
+    // The KPI tile shares the label, so pick the section row by its reasoned dash.
+    const rows = screen
+      .getAllByText('Stabilized NOI')
+      .filter((el) => !el.closest('[role="dialog"]'))
+      .map((el) => el.parentElement!.parentElement!);
+    const stabRow = rows.find((r) => r.querySelector('[data-refused]'));
+    expect(stabRow).toBeTruthy();
+    expect(stabRow!.querySelector('[data-refused="awaiting_analyst"]')).not.toBeNull();
+  });
 
-    fireEvent.click(within(dialog).getByRole('button', { name: 'Open module →' }));
-    expect(nav.push).toHaveBeenCalledWith('/projects/deal-uuid-1?tab=pl&sub=projections');
+  it('Entry NOI reads the before-reserve basis and no row is labelled a bare "NOI"', () => {
+    render(<OverviewTab projectId="deal-uuid-1" />);
+    expect(rowValue('Run-Rate / Entry NOI (before FF&E reserve)')).toBe('$3,100,000');
+    expect(screen.queryByText('NOI')).toBeNull();
   });
 
   it('the Stabilization section\'s "View Projections →" routes to ?tab=pl&sub=projections', () => {
@@ -567,12 +580,12 @@ describe('OverviewTab — deep links name the target sub-tab', () => {
     expect(nav.push).toHaveBeenCalledWith('/projects/deal-uuid-1?tab=pl&sub=projections');
   });
 
-  it('the Forward 12-Month NOI popover (Exit) also names Projections', () => {
+  it('the Forward 12-Month Cash NOI popover (Exit) names Projections', () => {
     render(<OverviewTab projectId="deal-uuid-1" />);
 
     const cells = screen.getAllByText('$3,640,000');
     fireEvent.click(cells[cells.length - 1]);
-    const dialog = screen.getByRole('dialog', { name: /Where Forward 12-Month NOI came from/i });
+    const dialog = screen.getByRole('dialog', { name: /Where Forward 12-Month Cash NOI \(after FF&E reserve\) came from/i });
 
     fireEvent.click(within(dialog).getByRole('button', { name: 'Open module →' }));
     expect(nav.push).toHaveBeenCalledWith('/projects/deal-uuid-1?tab=pl&sub=projections');

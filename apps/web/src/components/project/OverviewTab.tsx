@@ -57,6 +57,7 @@ import { useDeal } from '@/lib/hooks/useDeal';
 import { useEngineRun } from '@/lib/hooks/useEngineRun';
 import { useTraceGraph } from '@/lib/hooks/useValueTrace';
 import { Refused, useRefusal, REFUSAL_GLYPH } from '@/components/help/Refused';
+import type { ReasonCode } from '@/components/help/Refused';
 import { returnProfiles, positioningTiers, brandFamilies } from '@/lib/mockData';
 import {
   KpiTile,
@@ -163,6 +164,13 @@ interface RowDef {
    * (or whose value is not the bare glyph) renders as it always has.
    */
   reasonKey?: string;
+  /**
+   * A reason the ROW itself knows without asking the worker — used where the
+   * dash is structural (e.g. no stabilization year exists yet), so the
+   * explanation shows before any run tags the key. `reasonKey` wins once the
+   * worker does tag it.
+   */
+  reason?: ReasonCode;
 }
 
 /** FON-59 — the field_overrides key the worker's market_overview honors as the Property Name. */
@@ -572,7 +580,7 @@ export default function OverviewTab({ projectId }: { projectId: number | string 
     ];
 
     const entryRows = (): RowDef[] => [
-      lnk('entryNOI', 'Run-Rate / Entry NOI', money(y1Noi), '→ Financials', 'pl', { linkSub: 'historicals' }),
+      lnk('entryNOI', 'Run-Rate / Entry NOI (before FF&E reserve)', money(y1Noi), '→ Financials', 'pl', { linkSub: 'historicals' }),
       cal('entryCap', 'Entry Cap Rate', pctv(entryCap), { trace: { engine: 'capital', path: 'entry_cap_rate' }, formula: 'Entry NOI ÷ Purchase Price', inputs: [{ name: 'Entry NOI', from: 'Financials → Historicals', kind: 'linked' }, { name: 'Purchase Price', from: 'Calculated', kind: 'calc' }] }),
       cal('purchase', 'Purchase Price', money(purchase), { bold: true, trace: { engine: 'capital', path: 'purchase_price' }, formula: 'Entry NOI ÷ Entry Cap Rate', inputs: [{ name: 'Entry NOI', from: 'Financials → Historicals', kind: 'linked' }, { name: 'Entry Cap Rate', from: 'Calculated', kind: 'calc' }] }),
       cal('pricePerKey', 'Price / Key', money(pricePerKey), { trace: { engine: 'capital', path: 'price_per_key' }, formula: 'Purchase Price ÷ Keys', inputs: [{ name: 'Purchase Price', from: 'Calculated', kind: 'calc' }, { name: 'Keys', from: 'OM · Room Mix', kind: 'doc' }] }),
@@ -612,14 +620,18 @@ export default function OverviewTab({ projectId }: { projectId: number | string 
       lnk('stabOcc', 'Stabilized Occupancy', '—', '→ Financials (projections)', 'pl', { reasonKey: 'starting_occupancy', linkSub: 'projections' }),
       lnk('stabADR', 'Stabilized ADR', '—', '→ Financials (projections)', 'pl', { reasonKey: 'starting_adr', linkSub: 'projections' }),
       lnk('stabRev', 'Stabilized Revenue', '—', '→ Financials (projections)', 'pl', { linkSub: 'projections' }),
-      lnk('stabNOI', 'Stabilized NOI', money(terminalNoi), '→ Financials (projections)', 'pl', { bold: true, linkSub: 'projections', trace: { engine: 'returns', path: 'terminal_noi' } }),
+      // FON-59 #1 / #3 — `returns.terminal_noi` is the reversion NOI of year
+      // hold+1, not a stabilized year. Until the analyst's Stabilization Year
+      // exists (Wave 3) this is a dash with a reason, never a number borrowed
+      // from the exit.
+      awa('stabNOI', 'Stabilized NOI', { bold: true, reason: 'awaiting_analyst' }),
       cal('stabMargin', 'Stabilized NOI Margin', '—', { formula: 'Stabilized NOI ÷ Stabilized Revenue' }),
     ];
 
     const exitRows = (): RowDef[] => [
       lnk('hold', 'Hold Period', has(holdYears) ? `${holdYears} years` : '—', '→ Investment (exit)', 'investment', { reasonKey: 'hold_years' }),
       cal('exitDate', 'Exit Date', fmtISODate(timeline?.exit_date), { formula: 'Acquisition Date + Hold Period' }),
-      lnk('fwdNOI', 'Forward 12-Month NOI', money(terminalNoi), '→ Financials (projections)', 'pl', { linkSub: 'projections' }),
+      lnk('fwdNOI', 'Forward 12-Month Cash NOI (after FF&E reserve)', money(terminalNoi), '→ Financials (projections)', 'pl', { linkSub: 'projections' }),
       lnk('exitCap', 'Exit Cap Rate', pctv(exitCap), '→ Investment (exit)', 'investment', { reasonKey: 'exit_cap_rate' }),
       cal('exitValue', 'Gross Exit Value', money(grossExit), { bold: true, trace: { engine: 'returns', path: 'gross_sale_price' }, formula: 'Forward NOI ÷ Exit Cap Rate', inputs: [{ name: 'Forward NOI', from: 'Financials → Projections', kind: 'linked' }, { name: 'Exit Cap Rate', from: 'Investment assumption', kind: 'input' }] }),
       cal('exitPerKey', 'Exit Value / Key', money(exitPerKey), { formula: 'Gross Exit Value ÷ Keys' }),
@@ -685,8 +697,12 @@ export default function OverviewTab({ projectId }: { projectId: number | string 
       lnk('stabADR', 'Stabilized ADR', '—', '→ Financials (projections)', 'pl', { reasonKey: 'starting_adr', linkSub: 'projections' }),
       cal('stabRevPAR', 'Stabilized RevPAR', '—', { formula: 'Stabilized Occupancy × Stabilized ADR' }),
       lnk('stabRev', 'Stabilized Revenue', '—', '→ Financials (projections)', 'pl', { linkSub: 'projections' }),
-      lnk('stabNOI', 'Stabilized NOI', money(terminalNoi), '→ Financials (projections)', 'pl', { bold: true, linkSub: 'projections', trace: { engine: 'returns', path: 'terminal_noi' } }),
-      cal('yieldOnCost', 'Yield on Cost', has(terminalNoi) && has(totalCapital) && totalCapital > 0 ? fmtPct(terminalNoi / totalCapital, 2) : '—', { formula: 'Stabilized NOI ÷ Total Development Cost' }),
+      // FON-59 #1 / #3 — `returns.terminal_noi` is the reversion NOI of year
+      // hold+1, not a stabilized year. Until the analyst's Stabilization Year
+      // exists (Wave 3) this is a dash with a reason, never a number borrowed
+      // from the exit.
+      awa('stabNOI', 'Stabilized NOI', { bold: true, reason: 'awaiting_analyst' }),
+      awa('yieldOnCost', 'Yield on Cost', { reason: 'awaiting_analyst', formula: 'Stabilized NOI ÷ Total Development Cost' }),
     ];
 
     if (cfg === 'dev') {
@@ -746,7 +762,7 @@ export default function OverviewTab({ projectId }: { projectId: number | string 
       return [
         { label: 'Total Dev. Cost', value: mm(totalCapital) },
         { label: 'Cost / Key', value: money(totalPerKey) },
-        { label: 'Stabilized NOI', value: mm(terminalNoi) },
+        { label: 'Stabilized NOI', value: REFUSAL_GLYPH, sub: 'stabilization year not set' },
         { label: 'Exit Value', value: mm(grossExit), sub: has(exitCap) ? `${fmtPct(exitCap, 2)} exit cap` : undefined },
         { label: 'Levered IRR', value: pctv(leveredIrr, 1) },
       ];
@@ -764,7 +780,7 @@ export default function OverviewTab({ projectId }: { projectId: number | string 
       { label: 'Purchase Price', value: mm(purchase), sub: has(entryCap) ? `${fmtPct(entryCap, 2)} going-in` : undefined },
       { label: 'Total Capitalization', value: mm(totalCapital), sub: has(totalPerKey) ? `${fmtCurrency(totalPerKey)} / key` : undefined },
       { label: 'Renovation', value: mm(renoBudget), sub: hasReno && has(keys) ? `${fmtCurrency((renoBudget as number) / keys)} / key` : undefined },
-      { label: 'Stabilized NOI', value: mm(terminalNoi) },
+      { label: 'Stabilized NOI', value: REFUSAL_GLYPH, sub: 'stabilization year not set' },
       { label: 'Levered IRR', value: pctv(leveredIrr, 1) },
     ];
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -1105,7 +1121,8 @@ function OverviewRow({ row, onClick }: { row: RowDef; onClick: (e: React.MouseEv
   // Phase 4.4 — a bare dash on a row whose assumption key the worker has
   // refused gets the reason on hover. Null reason (every build today, and
   // every row with no `reasonKey`) renders the glyph and nothing else.
-  const reason = useRefusal(row.reasonKey);
+  const resolved = useRefusal(row.reasonKey);
+  const reason = resolved ?? row.reason ?? null;
   const refusable = row.value === REFUSAL_GLYPH && reason != null;
   // Awaiting rows are inert — unless they can be overridden / edited (FON-59).
   const interactive = row.kind !== 'awaiting' || !!row.overridePath || !!row.dealField;
