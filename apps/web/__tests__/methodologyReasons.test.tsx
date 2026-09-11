@@ -142,3 +142,38 @@ describe('Methodology - Sections 3 and 6 name their reason codes (Phase 4.5)', (
     expect(table.querySelectorAll('[data-reason-tag]')).toHaveLength(0);
   });
 });
+
+
+// ───────────── The two NOI definitions (FON-59 #1 / FON-67 #2) ─────────────
+
+describe('Methodology — the expense waterfall states BOTH NOI definitions', () => {
+  it('names each basis, says which engine field carries it, and what consumes it', () => {
+    render(<MethodologyPage />);
+
+    // Both display names, spelled exactly as every tab prints them.
+    expect(screen.getAllByText(/NOI \(before FF&E reserve\)/).length).toBeGreaterThan(0);
+    expect(screen.getAllByText(/Cash NOI \(after FF&E reserve\)/).length).toBeGreaterThan(0);
+
+    // Both engine fields, named — so a reader can go check the number.
+    expect(screen.getByText('expense.years[].noi_institutional')).toBeInTheDocument();
+    expect(screen.getByText('expense.years[].noi')).toBeInTheDocument();
+    // …and the registry concepts behind them (the Section-8 registry table
+    // lists them too, hence getAllByText).
+    expect(screen.getAllByText('ebitda').length).toBeGreaterThan(0);
+    expect(screen.getAllByText('noi').length).toBeGreaterThan(0);
+
+    // Which figure does what: before-reserve is the headline / entry-cap basis;
+    // Cash NOI drives DSCR, debt yield and the exit-cap reversion.
+    expect(
+      screen.getAllByText(/entry cap rate/i).length + screen.getAllByText(/cap-rate convention/i).length,
+    ).toBeGreaterThan(0);
+    expect(screen.getAllByText(/DSCR and debt yield/i).length).toBeGreaterThan(0);
+    expect(screen.getAllByText(/exit cap rate/i).length).toBeGreaterThan(0);
+
+    // The old single-definition sentence is gone — it asserted that "NOI"
+    // excludes the FF&E reserve without ever naming the other figure.
+    expect(
+      screen.queryByText(/NOI is computed as GOP minus management fee minus fixed charges/),
+    ).not.toBeInTheDocument();
+  });
+});

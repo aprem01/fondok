@@ -83,7 +83,8 @@ def _anglers_fields() -> list[dict[str, Any]]:
 def test_registry_loads_and_version_is_int() -> None:
     reg = get_registry()
     assert isinstance(registry_version(), int)
-    assert registry_version() == reg.version == 1
+    # v2 — the two NOI bases got distinct labels (FON-59 #1 / FON-67 #2).
+    assert registry_version() == reg.version == 2
     assert len(reg.concepts) >= 60
     assert set(reg.reasons) == set(REASON_CODES)
 
@@ -614,3 +615,44 @@ def test_reasons_block_matches_schema_reason_meta():
     for code in ReasonCode:
         for key in ("label", "ui", "explanation"):
             assert got[code.value][key] == REASON_META[code][key], (code, key)
+
+
+# ───────────────────────── NOI vs Cash NOI (FON-59 #1) ────────────────────
+
+
+def test_noi_and_ebitda_labels_are_distinct() -> None:
+    """The two NOI bases must never share a display name again.
+
+    ``apps/web/src/lib/fieldLabels.ts`` used to map BOTH ``noi`` and
+    ``noi_institutional`` to the single string 'NOI', which is how Investment
+    ($1,448,443) and Overview ($2,001,056) came to print different numbers
+    under the same label on Sam's deal (FON-59 #1 / FON-67 #2). The registry
+    is the vocabulary both sides generate from, so the guard lives here.
+    """
+    reg = get_registry()
+    ebitda = reg.concepts["ebitda"]
+    noi = reg.concepts["noi"]
+
+    # Distinct, and each says which side of the reserve it is on.
+    assert ebitda.label != noi.label
+    assert ebitda.short != noi.short
+    assert "FF&E" in ebitda.label
+    assert "FF&E" in noi.label
+    assert ebitda.label == "NOI (before FF&E reserve)"
+    assert noi.label == "Cash NOI (after FF&E reserve)"
+    # The bare word "NOI" is the BEFORE-reserve basis (founder decision).
+    assert ebitda.short == "NOI"
+    assert noi.short == "Cash NOI"
+
+    # ``ebitda`` now names the engine that emits it, and the field it is read
+    # from — so the concept and the number cannot drift apart.
+    assert "expense" in ebitda.engines
+    assert ebitda.bindings.engine_field == "expense.years[].noi_institutional"
+    assert "expense" in noi.engines
+
+    # No two concepts anywhere in the registry share a display label.
+    seen: dict[str, str] = {}
+    for cid, c in reg.concepts.items():
+        prior = seen.get(c.label)
+        assert prior is None, f"{cid} and {prior} both use the label {c.label!r}"
+        seen[c.label] = cid

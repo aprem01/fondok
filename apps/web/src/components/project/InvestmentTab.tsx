@@ -20,6 +20,7 @@ import HistoricalBaselinePanel from './HistoricalBaselinePanel';
 import { useHistoricalBaseline } from '@/lib/hooks/useHistoricalBaseline';
 import { fmtCurrency, fmtPct, fmtMillions, cn } from '@/lib/format';
 import { getEngineField, useEngineOutputs } from '@/lib/hooks/useEngineOutputs';
+import { noiBeforeReserve } from '@/lib/engines/noi';
 import { useDeal } from '@/lib/hooks/useDeal';
 import { useEngineRun } from '@/lib/hooks/useEngineRun';
 import { useTraceGraph } from '@/lib/hooks/useValueTrace';
@@ -42,8 +43,11 @@ import {
 } from '@/lib/api';
 
 // Expense engine year shape — mirrors apps/worker/app/engines/expense.py.
-// Only the fields we read on the Investment tab are typed here.
-interface ExpenseYearLite { year: number; noi: number }
+// Only the fields we read on the Investment tab are typed here. Both NOI
+// bases are carried: `noi_institutional` is NOI BEFORE the FF&E reserve (the
+// headline / entry-cap figure), `noi` is Cash NOI after it. Pre-upgrade rows
+// persist `noi_institutional: null` — see lib/engines/noi.ts.
+interface ExpenseYearLite { year: number; noi: number; noi_institutional?: number | null }
 // Revenue engine year shape - only the fields the capex panel reads.
 interface RevenueYearLite { year: number; total_revenue: number }
 
@@ -207,7 +211,12 @@ export default function InvestmentTab() {
   const wLoanAmount = getEngineField<number>(outputs, 'debt', 'loan_amount');
 
   const wExpenseYears = getEngineField<ExpenseYearLite[]>(outputs, 'expense', 'years');
-  const wYearOneNoi = wExpenseYears && wExpenseYears.length > 0 ? wExpenseYears[0].noi : undefined;
+  // FON-59 #1 / FON-67 #2 — Entry / Run-Rate NOI is the BEFORE-reserve basis
+  // (`noi_institutional`), the same field Overview reads, so the two tabs and
+  // their derived entry cap rates agree. `?? noi` keeps pre-upgrade runs
+  // rendering; the label then says the basis is unconfirmed.
+  const wEntryNoi = noiBeforeReserve(wExpenseYears?.[0]);
+  const wYearOneNoi = wEntryNoi.value;
 
   const wGrossSale = getEngineField<number>(outputs, 'returns', 'gross_sale_price');
   const wExitCap = getEngineField<number>(outputs, 'returns', 'exit_cap_rate');
@@ -422,7 +431,7 @@ export default function InvestmentTab() {
                 ),
               },
               {
-                id: 'entryNoi', label: 'Entry / Run-Rate NOI', kind: 'linked', state: 'linked',
+                id: 'entryNoi', label: `Entry / Run-Rate ${wEntryNoi.label}`, kind: 'linked', state: 'linked',
                 value: money(entryNoi), link: { label: '→ Financials', tab: 'pl' },
               },
               {

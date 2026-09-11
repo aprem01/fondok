@@ -174,7 +174,21 @@ export default function MethodologyPage() {
         <Card className="p-5">
           <h4 className="text-[13px] font-semibold text-ink-900 mb-3">Expense waterfall</h4>
           <p className="text-[12.5px] text-ink-500 leading-relaxed">
-            Departmental, undistributed, and fixed-charge lines source from the T-12 first. Zero-valued extractor rows are treated as "not present" rather than authoritative — those gaps are filled from USALI 11th industry benchmarks (CBRE Benchmarker / HotStats) when uploaded, with brand-specific overrides as the final layer. NOI is computed as GOP minus management fee minus fixed charges (excludes FF&E reserve, matching the US cap-rate convention). FF&E reserve sits below NOI in the waterfall and contributes to Net Cash Flow.
+            Departmental, undistributed, and fixed-charge lines source from the T-12 first. Zero-valued extractor rows are treated as &quot;not present&quot; rather than authoritative — those gaps are filled from USALI 11th industry benchmarks (CBRE Benchmarker / HotStats) when uploaded, with brand-specific overrides as the final layer.
+          </p>
+          <p className="text-[12.5px] text-ink-500 leading-relaxed mt-3">
+            The waterfall produces <strong>two</strong> distinct NOI figures, and every screen names which one it is showing:
+          </p>
+          <ul className="text-[12.5px] text-ink-500 leading-relaxed mt-2 space-y-2 list-disc pl-5">
+            <li>
+              <strong>NOI (before FF&amp;E reserve)</strong> — GOP minus management fee minus fixed charges, <em>excluding</em> the FF&amp;E reserve, matching the US cap-rate convention. Engine field <code className="text-[11.5px]">expense.years[].noi_institutional</code> (registry concept <code className="text-[11.5px]">ebitda</code>). This is the headline figure and the numerator of the entry cap rate. Where the product says simply &quot;NOI&quot;, it means this.
+            </li>
+            <li>
+              <strong>Cash NOI (after FF&amp;E reserve)</strong> — the same waterfall less the FF&amp;E reserve, i.e. cash flow after reserves. Engine field <code className="text-[11.5px]">expense.years[].noi</code> (registry concept <code className="text-[11.5px]">noi</code>). The Debt engine divides by it for DSCR and debt yield, and the Returns engine capitalises it at the exit cap rate to derive the reversion — so the exit value is a Cash-NOI valuation, not a before-reserve one.
+            </li>
+          </ul>
+          <p className="text-[12.5px] text-ink-500 leading-relaxed mt-3">
+            The two differ by exactly the FF&amp;E reserve. The reserve sits between them in the waterfall and contributes to Net Cash Flow. A pre-upgrade engine run that never persisted <code className="text-[11.5px]">noi_institutional</code> is labelled <em>&quot;NOI (basis unconfirmed — pre-upgrade run)&quot;</em> rather than claiming a basis it cannot prove.
           </p>
         </Card>
 

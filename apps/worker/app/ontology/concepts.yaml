@@ -55,7 +55,7 @@
 # labelled Jan–Mar 2025 columns ``monthly.jan_2024`` …).
 # ``default_scope: null`` is allowed only on a point fact carrying a ``note``.
 
-version: 1
+version: 2
 
 # The router's DocType enum (packages/schemas-py/fondok_schemas/document.py),
 # verified at load. COMPARABLE_SALES is NOT a router doc type — comps are
@@ -1565,8 +1565,12 @@ concepts:
     as_of: period_ending
 
   ebitda:
-    label: EBITDA
-    short: EBITDA
+    # The bare word "NOI" means NOI BEFORE the FF&E reserve (founder decision,
+    # FON-59 #1 / FON-67 #2): GOP - mgmt fee - fixed charges. That is this
+    # concept, and the engine field is ``expense.years[].noi_institutional``.
+    # The after-reserve figure is the ``noi`` concept below, "Cash NOI".
+    label: NOI (before FF&E reserve)
+    short: NOI
     group: rollup
     usali: {line: EBITDA, section: profit, edition: 11}
     unit: usd
@@ -1576,22 +1580,31 @@ concepts:
     identity: "income_before_nonop - fixed_charges"
     identity_tolerance: 0.005
     usali_rules: []
-    engines: []
+    engines: [expense]
     bindings:
       recognizer: ebitda
+      engine_field: expense.years[].noi_institutional
     aliases:
       PNL_FAMILY:
         - p_and_l_usali.ebitda_usd
         - p_and_l_usali.ebitda
         - p_and_l_usali.net_operating_income.ebitda
+        - p_and_l_usali.net_operating_income.ebitda_before_reserve
+        - p_and_l_usali.net_operating_income.noi_before_reserve_usd
       "*":
         - ebitda
         - ebitda_usd
+        - ebitda_before_reserve
+        - noi_before_reserve_usd
     as_of: period_ending
 
   noi:
-    label: Net Operating Income
-    short: NOI
+    # NOI net of the FF&E replacement reserve — the engine's
+    # ``expense.years[].noi`` field. Debt (DSCR / debt yield) and Returns
+    # (exit-cap capitalisation) consume THIS basis; the headline / entry-cap
+    # figure is the ``ebitda`` concept above.
+    label: Cash NOI (after FF&E reserve)
+    short: Cash NOI
     group: rollup
     usali: {line: EBITDA Less Replacement Reserve, section: profit, edition: 11}
     unit: usd

@@ -87,7 +87,9 @@ const OUTPUTS = {
       engine: 'expense',
       status: 'complete',
       summary: '',
-      outputs: { years: [{ year: 1, noi: 2_550_000 }] },
+      // Two DIFFERENT NOI bases: `noi_institutional` is NOI before the FF&E
+      // reserve (what Entry / Run-Rate NOI reads), `noi` is Cash NOI after it.
+      outputs: { years: [{ year: 1, noi: 2_550_000, noi_institutional: 3_100_000 }] },
       inputs: {},
       error: null,
       runtime_ms: 5,

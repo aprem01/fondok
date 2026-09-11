@@ -191,7 +191,11 @@ class CashFlowStatementEngine(
                 ffe_row[y] = -_ffe(y)
         unlev_lines.append(
             CashFlowStatementLine(
-                label="Net Operating Income",
+                # FON-59 #1 / FON-67 #2 — the bare word "NOI" means NOI BEFORE
+                # the FF&E reserve everywhere in the product; this row already
+                # carried that basis, so it now says so verbatim. Label string
+                # only — no value on this row moves.
+                label="NOI (before FF&E reserve)",
                 values=noi_row,
                 kind="linked",
                 note="Financials → Projections (NOI before FF&E reserve).",
@@ -517,7 +521,7 @@ class CashFlowStatementEngine(
         source_ref = {
             "Acquisition Uses at Close": "capital.total_capital",
             "Deferred Capital Held at Close": "returns.cash_flows_unlevered",
-            "Net Operating Income": "expense.years",
+            "NOI (before FF&E reserve)": "expense.years",
             "FF&E Reserve": "expense.years",
             "Gross Sale Proceeds": "returns.gross_sale_price",
             "Selling & Disposition Costs": "returns.selling_costs",

@@ -178,3 +178,31 @@ def test_t12_actuals_partial_override_falls_back_to_ratio() -> None:
     assert y1.dept_expenses.rooms > 0
     assert y1.dept_expenses.food_beverage > 0
     assert out.sourced_from_t12 == ["insurance"]
+
+
+def test_noi_bases_differ_by_exactly_the_reserve() -> None:
+    """The two NOI bases the product names are the engine's two fields, and
+    they differ by exactly the FF&E replacement reserve.
+
+    FON-59 #1 / FON-67 #2 — the bare word "NOI" means NOI BEFORE the reserve
+    (``noi_institutional``, registry concept ``ebitda``); ``noi`` is Cash NOI
+    after it (registry concept ``noi``). Sam saw $2,001,056 and $1,448,443 on
+    the same run, a $552,613 gap, and had no way to tell which was which. If
+    this assertion ever fails, the labels the UI prints have stopped being
+    true of the numbers behind them.
+    """
+    out = ExpenseEngine().run(_base_input())
+    assert out.years, "engine emitted no years"
+    for y in out.years:
+        assert y.noi_institutional is not None, "engine must emit both bases"
+        # Cash NOI is the before-reserve figure less the reserve, to the cent.
+        assert y.noi_institutional - y.noi == pytest.approx(y.ffe_reserve, abs=0.01)
+        # …and the before-reserve figure is the institutional identity:
+        # GOP - management fee - fixed charges (NO reserve term).
+        assert y.noi_institutional == pytest.approx(
+            y.gop - y.mgmt_fee - y.fixed_charges.total, abs=0.01
+        )
+        # The reserve is real on this payload, so the two bases are distinct —
+        # a fixture where they coincide cannot catch a label collision.
+        assert y.ffe_reserve > 0
+        assert y.noi_institutional != y.noi
