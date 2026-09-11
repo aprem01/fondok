@@ -21,6 +21,7 @@ import WhatJustHappened from './WhatJustHappened';
 import type { EngineOutputsResponse } from '@/lib/api';
 import { isWorkerConnected, workerUrl } from '@/lib/api';
 import { fmtCurrency, fmtMillions, cn } from '@/lib/format';
+import { noiBeforeReserveLabel } from '@/lib/engines/noi';
 import { getEngineField, useEngineOutputs } from '@/lib/hooks/useEngineOutputs';
 import { useDeal } from '@/lib/hooks/useDeal';
 import { useFlash } from '@/lib/hooks/useFlash';
@@ -209,6 +210,12 @@ function buildStatementFromWorker(
     ey.map(y => toThousands(safe(y.noi_institutional ?? y.noi))),
     0,
   );
+  // FON-59 #1 / FON-67 #2 — say which basis the subtotal is. A pre-upgrade
+  // run with no `noi_institutional` on ANY year is an after-reserve number,
+  // so it must not claim "before FF&E reserve".
+  const noiRowLabel = noiBeforeReserveLabel(
+    ey.some(y => typeof y.noi_institutional === 'number'),
+  );
   // Net Income = NOI (institutional) - FF&E Reserve. Management fee
   // is already subtracted inside the institutional NOI, so we don't
   // deduct it again here.
@@ -247,7 +254,7 @@ function buildStatementFromWorker(
     { label: 'Insurance', values: insurance, cagr: cagrCalc(insurance[0], insurance[4]), kind: 'detail' },
     { label: 'Property Taxes', values: propTax, cagr: cagrCalc(propTax[0], propTax[4]), kind: 'detail' },
     { label: 'Equipment Lease', values: equipLease, cagr: cagrCalc(equipLease[0], equipLease[4]), kind: 'detail' },
-    { label: 'Net Operating Income', values: noiCalc, cagr: cagrCalc(noiCalc[0], noiCalc[4]), kind: 'subtotal' },
+    { label: noiRowLabel, values: noiCalc, cagr: cagrCalc(noiCalc[0], noiCalc[4]), kind: 'subtotal' },
 
     { label: 'FF&E Reserve', values: ffe, cagr: cagrCalc(ffe[0], ffe[4]), kind: 'detail' },
     { label: 'Net Cash Flow', values: netIncome, cagr: cagrCalc(netIncome[0], netIncome[4]), kind: 'total' },
@@ -765,7 +772,7 @@ function PerKey({
   const room = findRow('Room Revenue');
   const fb = findRow('F&B Revenue');
   const total = findRow('Total Revenue');
-  const noi = findRow('Net Operating Income');
+  const noi = statement.totals.noi;
   const gopThousands = findRow('Gross Operating Profit (GOP)');
 
   const availableRoomNights = keys * 365;
@@ -859,7 +866,7 @@ function HistoricalProjected({
   const findRow = (label: string) =>
     statement.rows.find(r => r.label === label)?.values ?? [0, 0, 0, 0, 0];
   const totalRev = findRow('Total Revenue');
-  const noi = findRow('Net Operating Income');
+  const noi = statement.totals.noi;
   const gopRow = findRow('Gross Operating Profit (GOP)');
 
   const projected = [2026, 2027, 2028, 2029, 2030].map((year, i) => ({

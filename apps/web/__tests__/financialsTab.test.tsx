@@ -58,7 +58,11 @@ const expYear = (year: number) => ({
   ffe_reserve: 500_000,
   fixed_charges: { property_taxes: 700_000, insurance: 200_000, rent: 0, other_fixed: 0, total: 900_000 },
   gop: 5_310_000,
-  noi: 4_035_000,
+  // The two NOI bases must DIFFER in every fixture — an equal pair is exactly
+  // what let the Investment/Overview label collision survive (FON-59 #1).
+  // gop 5,310,000 - mgmt 375,000 - fixed 900,000 = 4,035,000 before reserve;
+  // less the 500,000 FF&E reserve = 3,535,000 Cash NOI.
+  noi: 3_535_000,
   noi_institutional: 4_035_000,
 });
 

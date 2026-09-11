@@ -22,8 +22,10 @@ const LEAF_LABELS: Record<string, string> = {
   occupancy: 'Occupancy',
   adr: 'ADR',
   revpar: 'RevPAR',
-  noi: 'NOI',
-  noi_institutional: 'NOI',
+  // Two distinct USALI bases — never the same string (FON-59 #1 / FON-67 #2).
+  // Registry: `noi` = concept `noi`, `noi_institutional` = concept `ebitda`.
+  noi: 'Cash NOI (after FF&E reserve)',
+  noi_institutional: 'NOI (before FF&E reserve)',
   gop: 'Gross Operating Profit',
   total_rooms_sold_annual: 'Rooms Sold',
   rooms_sold: 'Rooms Sold',

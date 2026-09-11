@@ -27,6 +27,7 @@ import { ProvenanceDot } from '@/components/design';
 import { Button } from '@/components/ui/Button';
 import { useToast } from '@/components/ui/Toast';
 import { cn } from '@/lib/format';
+import { noiBeforeReserveLabel } from '@/lib/engines/noi';
 import { Traced } from '@/components/help/Traced';
 import { Sourced } from '@/components/help/Sourced';
 import { useRefusal } from '@/components/help/Refused';
@@ -140,6 +141,9 @@ interface ProjYear {
   gop?: number;
   // Institutional NOI (GOP - mgmt fee - fixed charges, BEFORE FF&E reserve).
   noiInstitutional?: number;
+  // False when the run only carried the legacy after-reserve `noi` — the
+  // label must then say the basis is unconfirmed (lib/engines/noi.ts).
+  noiBasisConfirmed: boolean;
   ffeReserve?: number;
   // Net cash flow after FF&E reserve = NOI - FF&E.
   netCashFlow?: number;
@@ -484,7 +488,13 @@ export default function ProjectionsSection({
       plain('Other Fixed Charges', years.map(y => y.fixedOther));
       plain('Total Fixed Charges', years.map(y => y.fixedTotal));
     }
-    plain('Net Operating Income (NOI)', years.map(y => y.noiInstitutional));
+    // FON-59 #1 / FON-67 #2 — name the basis. `noiInstitutional` is
+    // `noi_institutional ?? noi`; a pre-upgrade run with neither field
+    // confirmed is an after-reserve number and must not claim otherwise.
+    plain(
+      noiBeforeReserveLabel(years.some(y => y.noiBasisConfirmed)),
+      years.map(y => y.noiInstitutional),
+    );
     plain('FF&E Reserve', years.map(y => y.ffeReserve));
     plain('Net Cash Flow', years.map(y => y.netCashFlow));
 
@@ -627,6 +637,7 @@ function buildFromWorker(
     // it. Older engine_outputs rows may not carry every field — fall
     // back to undefined so the xlsx export simply skips those rows.
     const noiInst = e?.noi_institutional ?? e?.noi;
+    const noiBasisConfirmed = typeof e?.noi_institutional === 'number';
     const ffe = e?.ffe_reserve;
     const netCashFlow =
       noiInst != null && ffe != null ? noiInst - ffe : undefined;
@@ -663,6 +674,7 @@ function buildFromWorker(
       fixedTotal: e?.fixed_charges?.total,
       gop: e?.gop,
       noiInstitutional: noiInst,
+      noiBasisConfirmed,
       ffeReserve: ffe,
       netCashFlow,
     });

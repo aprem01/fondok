@@ -59,6 +59,7 @@ from typing import Any
 
 from fondok_schemas.reasons import REFUSAL_GLYPH, ReasonCode
 
+from .labels import NOI_HEADLINE_LABELS
 from .refusals import (
     collect_refusals,
     distinct_codes,
@@ -1124,8 +1125,9 @@ def _render_html_body(memo: dict[str, Any], model: dict[str, Any]) -> str:
     # Wave 2 aggregator — single pass, then conditional renderers.
     wave2 = _aggregate_wave2_for_memo(model)
 
-    # Pull NOI from Y1 of the proforma if available
-    noi_y1 = next((row.get("y1") for row in lines if row.get("label") == "Net Operating Income"), None)
+    # Pull NOI from Y1 of the proforma if available. The headline row is the
+    # BEFORE-FF&E-reserve basis (FON-59 #1), never the "Cash NOI" row below it.
+    noi_y1 = next((row.get("y1") for row in lines if row.get("label") in NOI_HEADLINE_LABELS), None)
 
     # RevPAR — derive if we have keys + room revenue
     keys = model.get("keys") or 132

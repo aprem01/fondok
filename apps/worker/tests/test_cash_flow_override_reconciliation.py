@@ -157,7 +157,7 @@ def _build_input(*, returns, expense_noi: list[float]) -> CashFlowStatementInput
 
 
 def _noi_row(out):
-    return next(r for r in out.unlevered if r.label == "Net Operating Income")
+    return next(r for r in out.unlevered if r.label == "NOI (before FF&E reserve)")
 
 
 # ───────────────────────── (a) override path reconciles ─────────────────────

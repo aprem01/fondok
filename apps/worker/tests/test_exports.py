@@ -107,3 +107,107 @@ def test_pptx_builds(tmp_out: Path) -> None:
 
     prs = Presentation(str(out))
     assert len(prs.slides) == 8, f"expected 8 slides, got {len(prs.slides)}"
+
+
+# ───────────── NOI basis in the exported proforma (FON-54 #8) ──────────────
+
+
+def _proforma_lines(*, institutional: bool = True) -> list[dict]:
+    """Run the live-payload proforma builder over a two-year toy deal."""
+    from app.export.live_payload import _build_proforma_and_cf
+
+    def rev_year(n: int, total: float) -> dict:
+        return {
+            "year": n,
+            "rooms_revenue": total * 0.75,
+            "fb_revenue": total * 0.20,
+            "other_revenue": total * 0.05,
+            "resort_fees": 0.0,
+            "total_revenue": total,
+        }
+
+    def exp_year(n: int, total: float) -> dict:
+        # GOP - mgmt fee - fixed = NOI before reserve; less the reserve = Cash NOI.
+        dept, undist, fixed = total * 0.30, total * 0.20, total * 0.08
+        mgmt, ffe = total * 0.03, total * 0.04
+        gop = total - dept - undist
+        noi_inst = gop - mgmt - fixed
+        return {
+            "year": n,
+            "total_revenue": total,
+            "dept_expenses": {"total": dept},
+            "undistributed": {"total": undist},
+            "fixed_charges": {"total": fixed},
+            "mgmt_fee": mgmt,
+            "ffe_reserve": ffe,
+            "gop": gop,
+            "noi": noi_inst - ffe,
+            # A pre-upgrade engine_outputs row persists ``None`` here.
+            "noi_institutional": noi_inst if institutional else None,
+        }
+
+    revenue = {"years": [rev_year(1, 10_000_000.0), rev_year(2, 10_500_000.0)]}
+    expense = {"years": [exp_year(1, 10_000_000.0), exp_year(2, 10_500_000.0)]}
+    proforma, _cf, _noi_y1 = _build_proforma_and_cf(
+        revenue, expense, {"annual_debt_service": 1_000_000.0}
+    )
+    return proforma["lines"]
+
+
+def test_proforma_carries_both_noi_rows_and_foots() -> None:
+    """The exported workbook must show BOTH NOI bases, in waterfall order.
+
+    Sam's FON-54 #8 reconciliation failed because the workbook headline used
+    the before-reserve figure while the proforma row used the after-reserve
+    one, both labelled "NOI". Now the proforma emits "NOI (before FF&E
+    reserve)" above the reserve line and "Cash NOI (after FF&E reserve)"
+    below it, so the statement foots on the page.
+    """
+    from app.export.labels import CASH_NOI, NOI_BEFORE_RESERVE
+
+    lines = _proforma_lines()
+    labels = [row["label"] for row in lines]
+    assert NOI_BEFORE_RESERVE in labels
+    assert CASH_NOI in labels
+    # Order: ... Management Fee, NOI (before), FF&E Reserve, Cash NOI, ...
+    assert labels.index("Management Fee") < labels.index(NOI_BEFORE_RESERVE)
+    assert labels.index(NOI_BEFORE_RESERVE) < labels.index("FF&E Reserve")
+    assert labels.index("FF&E Reserve") < labels.index(CASH_NOI)
+    # No row is labelled a bare, ambiguous "NOI" / "Net Operating Income".
+    assert "NOI" not in labels
+    assert "Net Operating Income" not in labels
+
+    by_label = {row["label"]: row for row in lines}
+    for y in ("y1", "y2"):
+        before = by_label[NOI_BEFORE_RESERVE][y]
+        ffe = by_label["FF&E Reserve"][y]
+        cash = by_label[CASH_NOI][y]
+        # Values are rounded USD thousands, so allow a $1k rounding step.
+        assert abs((before - ffe) - cash) <= 1
+        assert before > cash
+        # ...and the before-reserve row foots to the revenue/expense rows above.
+        implied = (
+            by_label["Total Revenue"][y]
+            - by_label["Operating Expenses"][y]
+            - by_label["Management Fee"][y]
+        )
+        assert abs(implied - before) <= 1
+
+
+def test_proforma_legacy_run_does_not_claim_a_basis_it_cannot_prove() -> None:
+    """A pre-upgrade run persisted ``noi_institutional: null``. The value
+    still falls back to ``noi``, but the row must NOT then assert "before
+    FF&E reserve" about an after-reserve number."""
+    from app.export.labels import (
+        CASH_NOI,
+        NOI_BASIS_UNCONFIRMED,
+        NOI_BEFORE_RESERVE,
+        NOI_HEADLINE_LABELS,
+    )
+
+    labels = [row["label"] for row in _proforma_lines(institutional=False)]
+    assert NOI_BASIS_UNCONFIRMED in labels
+    assert NOI_BEFORE_RESERVE not in labels
+    assert CASH_NOI in labels
+    # The cover / memo headline lookup still finds the row.
+    assert any(lbl in NOI_HEADLINE_LABELS for lbl in labels)

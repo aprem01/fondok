@@ -89,7 +89,7 @@ def render_concepts_ts(data: dict[str, Any]) -> str:
         "  variance_rule: string | null;\n  variance_concept: VarianceConceptBinding | null;\n"
         "  actuals_attr: string | null;\n  scorer_key: string | null;\n  scorer_synonyms: string[];\n"
         "  scorer_variants: Record<string, ScorerVariant>;\n  recognizer: string | null;\n"
-        "  worksheet: WorksheetBinding | null;\n}\n\n"
+        "  worksheet: WorksheetBinding | null;\n  engine_field: string | null;\n}\n\n"
         "export interface ConceptDef {\n"
         "  id: ConceptId;\n  label: string;\n  short: string;\n  group: string;\n  usali: UsaliRef | null;\n"
         "  unit: ConceptUnit;\n  sign: ConceptSign;\n  period: ConceptPeriod;\n"

@@ -62,14 +62,19 @@ const KPI_LABEL_CANONICAL: Record<string, string> = {
 };
 
 // Statement row labels — canonical strings (Cash Flow Tab.dc.html `renderVals`).
-// The worker's ``cash_flow`` engine emits the fuller "Net Operating Income" /
-// "FF&E Reserve" labels; the canonical unlevered statement uses the terse "NOI" /
-// "CapEx". This is a DISPLAY-ONLY relabel: the row's provenance dot, footing and
-// every ``lineByLabel`` lookup keep using the worker's original ``line.label``
-// (only the visible text changes), so no engine value or reconciliation moves.
+// This is a DISPLAY-ONLY relabel: the row's provenance dot, footing and every
+// ``lineByLabel`` lookup keep using the worker's original ``line.label`` (only
+// the visible text changes), so no engine value or reconciliation moves.
+//
+// FON-59 #1 / FON-67 #2 — the NOI row keeps its basis qualifier rather than
+// shortening to a bare "NOI": this statement shows the before-reserve NOI and
+// the reserve on the next line, which is exactly the pair Sam asked to be able
+// to tell apart. FON-67 #3 — that reserve row is the recurring FF&E reserve
+// AND the capital plan's CapEx, so it says both.
 const STATEMENT_LABEL_CANONICAL: Record<string, string> = {
-  'Net Operating Income': 'NOI',
-  'FF&E Reserve': 'CapEx',
+  // (The worker's "NOI (before FF&E reserve)" row is deliberately absent —
+  // it passes through unshortened.)
+  'FF&E Reserve': 'FF&E Reserve / CapEx',
   // Canonical refinance split (Cash Flow Tab.dc.html) — display in the
   // prototype's sentence case; the worker keeps Title-case labels for footing +
   // provenance keys and the buildSummary/footnote lookups.
@@ -508,7 +513,7 @@ function sectionRows(
   return cf[section].map((line: CashFlowStatementLine) => {
     const total = line.kind === 'calc';
     return {
-      // Display-only canonical relabel (NOI / CapEx); provenance + footing below
+      // Display-only canonical relabel (NOI basis / FF&E Reserve / CapEx); provenance + footing below
       // still key off the worker's original ``line.label``.
       label: STATEMENT_LABEL_CANONICAL[line.label] ?? line.label,
       title: line.note ?? undefined,

@@ -221,6 +221,11 @@ class Bindings(_Strict):
     scorer_variants: dict[str, ScorerVariant] = Field(default_factory=dict)
     recognizer: str | None = None
     worksheet: WorksheetBinding | None = None
+    #: Dotted engine-output path this concept is displayed from, e.g.
+    #: ``expense.years[].noi_institutional``. Documentation only — nothing
+    #: reads it at runtime; it exists so the two NOI bases cannot drift from
+    #: the fields that carry them (FON-59 #1 / FON-67 #2).
+    engine_field: str | None = None
 
     def scorer_identifiers(self) -> set[str]:
         out: set[str] = set(self.scorer_synonyms) | set(self.scorer_variants)

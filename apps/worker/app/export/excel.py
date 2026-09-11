@@ -83,6 +83,7 @@ from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
 from openpyxl.utils import get_column_letter
 from openpyxl.worksheet.worksheet import Worksheet
 
+from .labels import NOI_HEADLINE_LABELS
 from .refusals import collect_refusals, dedupe, refuse
 
 # ─────────────────────────── styling helpers ───────────────────────────
@@ -316,12 +317,15 @@ def _build_cover(wb: Workbook, model: dict[str, Any], sections: list[str]) -> No
     ret = model.get("returns_engine", {})
     debt = model.get("debt_engine", {})
     pl_lines = (model.get("p_and_l_engine_proforma") or {}).get("lines", [])
+    # The headline NOI row is the BEFORE-FF&E-reserve basis (FON-59 #1); the
+    # proforma also carries a "Cash NOI (after FF&E reserve)" row below the
+    # reserve line, which the cover deliberately does NOT use.
     noi_y1 = next(
-        (row.get("y1", 0) * 1000 for row in pl_lines if row.get("label") == "Net Operating Income"),
+        (row.get("y1", 0) * 1000 for row in pl_lines if row.get("label") in NOI_HEADLINE_LABELS),
         0,
     )
     noi_stab = next(
-        (row.get("y5", 0) * 1000 for row in pl_lines if row.get("label") == "Net Operating Income"),
+        (row.get("y5", 0) * 1000 for row in pl_lines if row.get("label") in NOI_HEADLINE_LABELS),
         0,
     )
 

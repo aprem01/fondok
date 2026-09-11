@@ -4,7 +4,7 @@
 // CI fails on drift: scripts/gen_ontology.py --check
 /* eslint-disable */
 
-export const REGISTRY_VERSION = 1 as const;
+export const REGISTRY_VERSION = 2 as const;
 
 export type Scope = 'annual' | 'ttm' | 'ytd' | 'quarterly' | 'monthly' | 'weekly' | 'unknown';
 export type Basis =
@@ -74,6 +74,7 @@ export interface ConceptBindings {
   scorer_variants: Record<string, ScorerVariant>;
   recognizer: string | null;
   worksheet: WorksheetBinding | null;
+  engine_field: string | null;
 }
 
 export interface ConceptDef {
@@ -365,7 +366,8 @@ export const CONCEPTS: Record<ConceptId, ConceptDef> = {
           "occupancy"
         ],
         "fmt": "pct"
-      }
+      },
+      "engine_field": null
     },
     "aliases": {
       "PNL_FAMILY": [
@@ -579,7 +581,8 @@ export const CONCEPTS: Record<ConceptId, ConceptDef> = {
           "adr"
         ],
         "fmt": "dollar"
-      }
+      },
+      "engine_field": null
     },
     "aliases": {
       "PNL_FAMILY": [
@@ -783,7 +786,8 @@ export const CONCEPTS: Record<ConceptId, ConceptDef> = {
           "revpar"
         ],
         "fmt": "dollar"
-      }
+      },
+      "engine_field": null
     },
     "aliases": {
       "PNL_FAMILY": [
@@ -927,7 +931,8 @@ export const CONCEPTS: Record<ConceptId, ConceptDef> = {
       "scorer_synonyms": [],
       "scorer_variants": {},
       "recognizer": null,
-      "worksheet": null
+      "worksheet": null,
+      "engine_field": null
     },
     "aliases": {
       "*": [
@@ -975,7 +980,8 @@ export const CONCEPTS: Record<ConceptId, ConceptDef> = {
       "scorer_synonyms": [],
       "scorer_variants": {},
       "recognizer": null,
-      "worksheet": null
+      "worksheet": null,
+      "engine_field": null
     },
     "aliases": {
       "PNL_FAMILY": [
@@ -1028,7 +1034,8 @@ export const CONCEPTS: Record<ConceptId, ConceptDef> = {
       "scorer_synonyms": [],
       "scorer_variants": {},
       "recognizer": null,
-      "worksheet": null
+      "worksheet": null,
+      "engine_field": null
     },
     "aliases": {
       "*": [
@@ -1086,7 +1093,8 @@ export const CONCEPTS: Record<ConceptId, ConceptDef> = {
       "scorer_synonyms": [],
       "scorer_variants": {},
       "recognizer": null,
-      "worksheet": null
+      "worksheet": null,
+      "engine_field": null
     },
     "aliases": {
       "PNL_FAMILY": [
@@ -1161,7 +1169,8 @@ export const CONCEPTS: Record<ConceptId, ConceptDef> = {
       "scorer_synonyms": [],
       "scorer_variants": {},
       "recognizer": null,
-      "worksheet": null
+      "worksheet": null,
+      "engine_field": null
     },
     "aliases": {
       "PNL_FAMILY": [
@@ -1255,7 +1264,8 @@ export const CONCEPTS: Record<ConceptId, ConceptDef> = {
           "rooms_revenue"
         ],
         "fmt": "currency"
-      }
+      },
+      "engine_field": null
     },
     "aliases": {
       "PNL_FAMILY": [
@@ -1424,7 +1434,8 @@ export const CONCEPTS: Record<ConceptId, ConceptDef> = {
           "fb_revenue"
         ],
         "fmt": "currency"
-      }
+      },
+      "engine_field": null
     },
     "aliases": {
       "PNL_FAMILY": [
@@ -1590,7 +1601,8 @@ export const CONCEPTS: Record<ConceptId, ConceptDef> = {
           "other_revenue"
         ],
         "fmt": "currency"
-      }
+      },
+      "engine_field": null
     },
     "aliases": {
       "PNL_FAMILY": [
@@ -1692,7 +1704,8 @@ export const CONCEPTS: Record<ConceptId, ConceptDef> = {
       "scorer_synonyms": [],
       "scorer_variants": {},
       "recognizer": "misc_revenue",
-      "worksheet": null
+      "worksheet": null,
+      "engine_field": null
     },
     "aliases": {
       "PNL_FAMILY": [
@@ -1798,7 +1811,8 @@ export const CONCEPTS: Record<ConceptId, ConceptDef> = {
       "scorer_synonyms": [],
       "scorer_variants": {},
       "recognizer": "resort_fees",
-      "worksheet": null
+      "worksheet": null,
+      "engine_field": null
     },
     "aliases": {
       "PNL_FAMILY": [
@@ -1906,7 +1920,8 @@ export const CONCEPTS: Record<ConceptId, ConceptDef> = {
         "y1_src": null,
         "y1_read": [],
         "fmt": "currency"
-      }
+      },
+      "engine_field": null
     },
     "aliases": {
       "PNL_FAMILY": [
@@ -2035,7 +2050,8 @@ export const CONCEPTS: Record<ConceptId, ConceptDef> = {
       "scorer_synonyms": [],
       "scorer_variants": {},
       "recognizer": null,
-      "worksheet": null
+      "worksheet": null,
+      "engine_field": null
     },
     "aliases": {
       "*": [
@@ -2085,7 +2101,8 @@ export const CONCEPTS: Record<ConceptId, ConceptDef> = {
       "scorer_synonyms": [],
       "scorer_variants": {},
       "recognizer": null,
-      "worksheet": null
+      "worksheet": null,
+      "engine_field": null
     },
     "aliases": {
       "*": [
@@ -2135,7 +2152,8 @@ export const CONCEPTS: Record<ConceptId, ConceptDef> = {
       "scorer_synonyms": [],
       "scorer_variants": {},
       "recognizer": null,
-      "worksheet": null
+      "worksheet": null,
+      "engine_field": null
     },
     "aliases": {
       "*": [
@@ -2207,7 +2225,8 @@ export const CONCEPTS: Record<ConceptId, ConceptDef> = {
           "rooms"
         ],
         "fmt": "currency"
-      }
+      },
+      "engine_field": null
     },
     "aliases": {
       "PNL_FAMILY": [
@@ -2311,7 +2330,8 @@ export const CONCEPTS: Record<ConceptId, ConceptDef> = {
           "food_beverage"
         ],
         "fmt": "currency"
-      }
+      },
+      "engine_field": null
     },
     "aliases": {
       "PNL_FAMILY": [
@@ -2435,7 +2455,8 @@ export const CONCEPTS: Record<ConceptId, ConceptDef> = {
           "other_operated"
         ],
         "fmt": "currency"
-      }
+      },
+      "engine_field": null
     },
     "aliases": {
       "PNL_FAMILY": [
@@ -2529,7 +2550,8 @@ export const CONCEPTS: Record<ConceptId, ConceptDef> = {
       ],
       "scorer_variants": {},
       "recognizer": null,
-      "worksheet": null
+      "worksheet": null,
+      "engine_field": null
     },
     "aliases": {
       "PNL_FAMILY": [
@@ -2624,7 +2646,8 @@ export const CONCEPTS: Record<ConceptId, ConceptDef> = {
       "scorer_synonyms": [],
       "scorer_variants": {},
       "recognizer": null,
-      "worksheet": null
+      "worksheet": null,
+      "engine_field": null
     },
     "aliases": {
       "*": [
@@ -2667,7 +2690,8 @@ export const CONCEPTS: Record<ConceptId, ConceptDef> = {
       "scorer_synonyms": [],
       "scorer_variants": {},
       "recognizer": null,
-      "worksheet": null
+      "worksheet": null,
+      "engine_field": null
     },
     "aliases": {
       "PNL_FAMILY": [
@@ -2735,7 +2759,8 @@ export const CONCEPTS: Record<ConceptId, ConceptDef> = {
       "scorer_synonyms": [],
       "scorer_variants": {},
       "recognizer": null,
-      "worksheet": null
+      "worksheet": null,
+      "engine_field": null
     },
     "aliases": {
       "PNL_FAMILY": [
@@ -2792,7 +2817,8 @@ export const CONCEPTS: Record<ConceptId, ConceptDef> = {
       "scorer_synonyms": [],
       "scorer_variants": {},
       "recognizer": null,
-      "worksheet": null
+      "worksheet": null,
+      "engine_field": null
     },
     "aliases": {
       "PNL_FAMILY": [
@@ -2868,7 +2894,8 @@ export const CONCEPTS: Record<ConceptId, ConceptDef> = {
           "administrative_general"
         ],
         "fmt": "currency"
-      }
+      },
+      "engine_field": null
     },
     "aliases": {
       "PNL_FAMILY": [
@@ -2977,7 +3004,8 @@ export const CONCEPTS: Record<ConceptId, ConceptDef> = {
           "information_telecom"
         ],
         "fmt": "currency"
-      }
+      },
+      "engine_field": null
     },
     "aliases": {
       "PNL_FAMILY": [
@@ -3083,7 +3111,8 @@ export const CONCEPTS: Record<ConceptId, ConceptDef> = {
           "sales_marketing"
         ],
         "fmt": "currency"
-      }
+      },
+      "engine_field": null
     },
     "aliases": {
       "PNL_FAMILY": [
@@ -3189,7 +3218,8 @@ export const CONCEPTS: Record<ConceptId, ConceptDef> = {
           "property_operations"
         ],
         "fmt": "currency"
-      }
+      },
+      "engine_field": null
     },
     "aliases": {
       "PNL_FAMILY": [
@@ -3305,7 +3335,8 @@ export const CONCEPTS: Record<ConceptId, ConceptDef> = {
           "utilities"
         ],
         "fmt": "currency"
-      }
+      },
+      "engine_field": null
     },
     "aliases": {
       "PNL_FAMILY": [
@@ -3400,7 +3431,8 @@ export const CONCEPTS: Record<ConceptId, ConceptDef> = {
         "y1_src": null,
         "y1_read": [],
         "fmt": "currency"
-      }
+      },
+      "engine_field": null
     },
     "aliases": {
       "PNL_FAMILY": [
@@ -3522,7 +3554,8 @@ export const CONCEPTS: Record<ConceptId, ConceptDef> = {
           "mgmt_fee"
         ],
         "fmt": "currency"
-      }
+      },
+      "engine_field": null
     },
     "aliases": {
       "PNL_FAMILY": [
@@ -3616,7 +3649,8 @@ export const CONCEPTS: Record<ConceptId, ConceptDef> = {
       "scorer_synonyms": [],
       "scorer_variants": {},
       "recognizer": null,
-      "worksheet": null
+      "worksheet": null,
+      "engine_field": null
     },
     "aliases": {
       "PNL_FAMILY": [
@@ -3697,7 +3731,8 @@ export const CONCEPTS: Record<ConceptId, ConceptDef> = {
           "ffe_reserve"
         ],
         "fmt": "currency"
-      }
+      },
+      "engine_field": null
     },
     "aliases": {
       "PNL_FAMILY": [
@@ -3781,7 +3816,8 @@ export const CONCEPTS: Record<ConceptId, ConceptDef> = {
       "scorer_synonyms": [],
       "scorer_variants": {},
       "recognizer": null,
-      "worksheet": null
+      "worksheet": null,
+      "engine_field": null
     },
     "aliases": {
       "PNL_FAMILY": [
@@ -3838,7 +3874,8 @@ export const CONCEPTS: Record<ConceptId, ConceptDef> = {
       "scorer_synonyms": [],
       "scorer_variants": {},
       "recognizer": null,
-      "worksheet": null
+      "worksheet": null,
+      "engine_field": null
     },
     "aliases": {
       "PNL_FAMILY": [
@@ -3918,7 +3955,8 @@ export const CONCEPTS: Record<ConceptId, ConceptDef> = {
           "property_taxes"
         ],
         "fmt": "currency"
-      }
+      },
+      "engine_field": null
     },
     "aliases": {
       "PNL_FAMILY": [
@@ -4029,7 +4067,8 @@ export const CONCEPTS: Record<ConceptId, ConceptDef> = {
           "insurance"
         ],
         "fmt": "currency"
-      }
+      },
+      "engine_field": null
     },
     "aliases": {
       "PNL_FAMILY": [
@@ -4111,7 +4150,8 @@ export const CONCEPTS: Record<ConceptId, ConceptDef> = {
       "scorer_synonyms": [],
       "scorer_variants": {},
       "recognizer": null,
-      "worksheet": null
+      "worksheet": null,
+      "engine_field": null
     },
     "aliases": {
       "PNL_FAMILY": [
@@ -4181,7 +4221,8 @@ export const CONCEPTS: Record<ConceptId, ConceptDef> = {
       "scorer_synonyms": [],
       "scorer_variants": {},
       "recognizer": null,
-      "worksheet": null
+      "worksheet": null,
+      "engine_field": null
     },
     "aliases": {
       "PNL_FAMILY": [
@@ -4241,7 +4282,8 @@ export const CONCEPTS: Record<ConceptId, ConceptDef> = {
       "scorer_synonyms": [],
       "scorer_variants": {},
       "recognizer": null,
-      "worksheet": null
+      "worksheet": null,
+      "engine_field": null
     },
     "aliases": {
       "PNL_FAMILY": [
@@ -4328,7 +4370,8 @@ export const CONCEPTS: Record<ConceptId, ConceptDef> = {
         "y1_src": null,
         "y1_read": [],
         "fmt": "currency"
-      }
+      },
+      "engine_field": null
     },
     "aliases": {
       "PNL_FAMILY": [
@@ -4437,7 +4480,8 @@ export const CONCEPTS: Record<ConceptId, ConceptDef> = {
         "y1_src": null,
         "y1_read": [],
         "fmt": "currency"
-      }
+      },
+      "engine_field": null
     },
     "aliases": {
       "PNL_FAMILY": [
@@ -4579,7 +4623,8 @@ export const CONCEPTS: Record<ConceptId, ConceptDef> = {
       "scorer_synonyms": [],
       "scorer_variants": {},
       "recognizer": null,
-      "worksheet": null
+      "worksheet": null,
+      "engine_field": null
     },
     "aliases": {
       "PNL_FAMILY": [
@@ -4616,8 +4661,8 @@ export const CONCEPTS: Record<ConceptId, ConceptDef> = {
   },
   "ebitda": {
     "id": "ebitda",
-    "label": "EBITDA",
-    "short": "EBITDA",
+    "label": "NOI (before FF&E reserve)",
+    "short": "NOI",
     "group": "rollup",
     "usali": {
       "line": "EBITDA",
@@ -4633,7 +4678,9 @@ export const CONCEPTS: Record<ConceptId, ConceptDef> = {
     "identity_optional_terms": [],
     "identity_tolerance": 0.005,
     "usali_rules": [],
-    "engines": [],
+    "engines": [
+      "expense"
+    ],
     "bindings": {
       "field_catalog": null,
       "critic_key": null,
@@ -4644,7 +4691,8 @@ export const CONCEPTS: Record<ConceptId, ConceptDef> = {
       "scorer_synonyms": [],
       "scorer_variants": {},
       "recognizer": "ebitda",
-      "worksheet": null
+      "worksheet": null,
+      "engine_field": "expense.years[].noi_institutional"
     },
     "aliases": {
       "PNL_FAMILY": [
@@ -4662,6 +4710,16 @@ export const CONCEPTS: Record<ConceptId, ConceptDef> = {
           "path": "p_and_l_usali.net_operating_income.ebitda",
           "basis": null,
           "scope": null
+        },
+        {
+          "path": "p_and_l_usali.net_operating_income.ebitda_before_reserve",
+          "basis": null,
+          "scope": null
+        },
+        {
+          "path": "p_and_l_usali.net_operating_income.noi_before_reserve_usd",
+          "basis": null,
+          "scope": null
         }
       ],
       "*": [
@@ -4674,6 +4732,16 @@ export const CONCEPTS: Record<ConceptId, ConceptDef> = {
           "path": "ebitda_usd",
           "basis": null,
           "scope": null
+        },
+        {
+          "path": "ebitda_before_reserve",
+          "basis": null,
+          "scope": null
+        },
+        {
+          "path": "noi_before_reserve_usd",
+          "basis": null,
+          "scope": null
         }
       ]
     },
@@ -4681,8 +4749,8 @@ export const CONCEPTS: Record<ConceptId, ConceptDef> = {
   },
   "noi": {
     "id": "noi",
-    "label": "Net Operating Income",
-    "short": "NOI",
+    "label": "Cash NOI (after FF&E reserve)",
+    "short": "Cash NOI",
     "group": "rollup",
     "usali": {
       "line": "EBITDA Less Replacement Reserve",
@@ -4743,7 +4811,8 @@ export const CONCEPTS: Record<ConceptId, ConceptDef> = {
         "y1_src": null,
         "y1_read": [],
         "fmt": "currency"
-      }
+      },
+      "engine_field": null
     },
     "aliases": {
       "PNL_FAMILY": [
@@ -4931,7 +5000,8 @@ export const CONCEPTS: Record<ConceptId, ConceptDef> = {
       "scorer_synonyms": [],
       "scorer_variants": {},
       "recognizer": null,
-      "worksheet": null
+      "worksheet": null,
+      "engine_field": null
     },
     "aliases": {
       "PNL_FAMILY": [
@@ -5006,7 +5076,8 @@ export const CONCEPTS: Record<ConceptId, ConceptDef> = {
       "scorer_synonyms": [],
       "scorer_variants": {},
       "recognizer": null,
-      "worksheet": null
+      "worksheet": null,
+      "engine_field": null
     },
     "aliases": {
       "PNL_FAMILY": [
@@ -5069,7 +5140,8 @@ export const CONCEPTS: Record<ConceptId, ConceptDef> = {
       "scorer_synonyms": [],
       "scorer_variants": {},
       "recognizer": null,
-      "worksheet": null
+      "worksheet": null,
+      "engine_field": null
     },
     "aliases": {
       "*": [
@@ -5120,7 +5192,8 @@ export const CONCEPTS: Record<ConceptId, ConceptDef> = {
       "scorer_synonyms": [],
       "scorer_variants": {},
       "recognizer": null,
-      "worksheet": null
+      "worksheet": null,
+      "engine_field": null
     },
     "aliases": {
       "PNL_FAMILY": [
@@ -5178,7 +5251,8 @@ export const CONCEPTS: Record<ConceptId, ConceptDef> = {
       "scorer_synonyms": [],
       "scorer_variants": {},
       "recognizer": null,
-      "worksheet": null
+      "worksheet": null,
+      "engine_field": null
     },
     "aliases": {
       "PNL_FAMILY": [
@@ -5226,7 +5300,8 @@ export const CONCEPTS: Record<ConceptId, ConceptDef> = {
       "scorer_synonyms": [],
       "scorer_variants": {},
       "recognizer": null,
-      "worksheet": null
+      "worksheet": null,
+      "engine_field": null
     },
     "aliases": {
       "PNL_FAMILY": [
@@ -5274,7 +5349,8 @@ export const CONCEPTS: Record<ConceptId, ConceptDef> = {
       "scorer_synonyms": [],
       "scorer_variants": {},
       "recognizer": null,
-      "worksheet": null
+      "worksheet": null,
+      "engine_field": null
     },
     "aliases": {
       "PNL_FAMILY": [
@@ -5334,7 +5410,8 @@ export const CONCEPTS: Record<ConceptId, ConceptDef> = {
       "scorer_synonyms": [],
       "scorer_variants": {},
       "recognizer": null,
-      "worksheet": null
+      "worksheet": null,
+      "engine_field": null
     },
     "aliases": {
       "*": [
@@ -5383,7 +5460,8 @@ export const CONCEPTS: Record<ConceptId, ConceptDef> = {
       "scorer_synonyms": [],
       "scorer_variants": {},
       "recognizer": null,
-      "worksheet": null
+      "worksheet": null,
+      "engine_field": null
     },
     "aliases": {
       "STR_FAMILY": [
@@ -5434,7 +5512,8 @@ export const CONCEPTS: Record<ConceptId, ConceptDef> = {
       "scorer_synonyms": [],
       "scorer_variants": {},
       "recognizer": null,
-      "worksheet": null
+      "worksheet": null,
+      "engine_field": null
     },
     "aliases": {
       "*": [
@@ -5484,7 +5563,8 @@ export const CONCEPTS: Record<ConceptId, ConceptDef> = {
       "scorer_synonyms": [],
       "scorer_variants": {},
       "recognizer": null,
-      "worksheet": null
+      "worksheet": null,
+      "engine_field": null
     },
     "aliases": {
       "*": [
@@ -5528,7 +5608,8 @@ export const CONCEPTS: Record<ConceptId, ConceptDef> = {
       "scorer_synonyms": [],
       "scorer_variants": {},
       "recognizer": null,
-      "worksheet": null
+      "worksheet": null,
+      "engine_field": null
     },
     "aliases": {
       "*": [
@@ -5572,7 +5653,8 @@ export const CONCEPTS: Record<ConceptId, ConceptDef> = {
       "scorer_synonyms": [],
       "scorer_variants": {},
       "recognizer": null,
-      "worksheet": null
+      "worksheet": null,
+      "engine_field": null
     },
     "aliases": {
       "*": [
@@ -5611,7 +5693,8 @@ export const CONCEPTS: Record<ConceptId, ConceptDef> = {
       "scorer_synonyms": [],
       "scorer_variants": {},
       "recognizer": null,
-      "worksheet": null
+      "worksheet": null,
+      "engine_field": null
     },
     "aliases": {
       "*": [
@@ -5655,7 +5738,8 @@ export const CONCEPTS: Record<ConceptId, ConceptDef> = {
       "scorer_synonyms": [],
       "scorer_variants": {},
       "recognizer": null,
-      "worksheet": null
+      "worksheet": null,
+      "engine_field": null
     },
     "aliases": {
       "*": [
@@ -5699,7 +5783,8 @@ export const CONCEPTS: Record<ConceptId, ConceptDef> = {
       "scorer_synonyms": [],
       "scorer_variants": {},
       "recognizer": null,
-      "worksheet": null
+      "worksheet": null,
+      "engine_field": null
     },
     "aliases": {
       "*": [
@@ -5743,7 +5828,8 @@ export const CONCEPTS: Record<ConceptId, ConceptDef> = {
       "scorer_synonyms": [],
       "scorer_variants": {},
       "recognizer": null,
-      "worksheet": null
+      "worksheet": null,
+      "engine_field": null
     },
     "aliases": {
       "*": [
@@ -5787,7 +5873,8 @@ export const CONCEPTS: Record<ConceptId, ConceptDef> = {
       "scorer_synonyms": [],
       "scorer_variants": {},
       "recognizer": null,
-      "worksheet": null
+      "worksheet": null,
+      "engine_field": null
     },
     "aliases": {
       "*": [
@@ -5836,7 +5923,8 @@ export const CONCEPTS: Record<ConceptId, ConceptDef> = {
       "scorer_synonyms": [],
       "scorer_variants": {},
       "recognizer": null,
-      "worksheet": null
+      "worksheet": null,
+      "engine_field": null
     },
     "aliases": {
       "CBRE_HORIZONS": [
@@ -5895,7 +5983,8 @@ export const CONCEPTS: Record<ConceptId, ConceptDef> = {
       "scorer_synonyms": [],
       "scorer_variants": {},
       "recognizer": null,
-      "worksheet": null
+      "worksheet": null,
+      "engine_field": null
     },
     "aliases": {
       "*": [
@@ -5952,7 +6041,8 @@ export const CONCEPTS: Record<ConceptId, ConceptDef> = {
       "scorer_synonyms": [],
       "scorer_variants": {},
       "recognizer": null,
-      "worksheet": null
+      "worksheet": null,
+      "engine_field": null
     },
     "aliases": {
       "OM": [
@@ -6024,7 +6114,8 @@ export const CONCEPTS: Record<ConceptId, ConceptDef> = {
       "scorer_synonyms": [],
       "scorer_variants": {},
       "recognizer": null,
-      "worksheet": null
+      "worksheet": null,
+      "engine_field": null
     },
     "aliases": {
       "OM": [
@@ -6081,7 +6172,8 @@ export const CONCEPTS: Record<ConceptId, ConceptDef> = {
       "scorer_synonyms": [],
       "scorer_variants": {},
       "recognizer": null,
-      "worksheet": null
+      "worksheet": null,
+      "engine_field": null
     },
     "aliases": {
       "OM": [
@@ -6134,7 +6226,8 @@ export const CONCEPTS: Record<ConceptId, ConceptDef> = {
       "scorer_synonyms": [],
       "scorer_variants": {},
       "recognizer": null,
-      "worksheet": null
+      "worksheet": null,
+      "engine_field": null
     },
     "aliases": {
       "*": [
@@ -6175,7 +6268,8 @@ export const CONCEPTS: Record<ConceptId, ConceptDef> = {
       "scorer_synonyms": [],
       "scorer_variants": {},
       "recognizer": null,
-      "worksheet": null
+      "worksheet": null,
+      "engine_field": null
     },
     "aliases": {
       "*": [
@@ -6223,7 +6317,8 @@ export const CONCEPTS: Record<ConceptId, ConceptDef> = {
       "scorer_synonyms": [],
       "scorer_variants": {},
       "recognizer": null,
-      "worksheet": null
+      "worksheet": null,
+      "engine_field": null
     },
     "aliases": {
       "OM": [
@@ -6293,7 +6388,8 @@ export const CONCEPTS: Record<ConceptId, ConceptDef> = {
       "scorer_synonyms": [],
       "scorer_variants": {},
       "recognizer": null,
-      "worksheet": null
+      "worksheet": null,
+      "engine_field": null
     },
     "aliases": {
       "*": [
@@ -6342,7 +6438,8 @@ export const CONCEPTS: Record<ConceptId, ConceptDef> = {
       "scorer_synonyms": [],
       "scorer_variants": {},
       "recognizer": null,
-      "worksheet": null
+      "worksheet": null,
+      "engine_field": null
     },
     "aliases": {
       "*": [
@@ -6393,7 +6490,8 @@ export const CONCEPTS: Record<ConceptId, ConceptDef> = {
       "scorer_synonyms": [],
       "scorer_variants": {},
       "recognizer": null,
-      "worksheet": null
+      "worksheet": null,
+      "engine_field": null
     },
     "aliases": {
       "*": [
@@ -6439,7 +6537,8 @@ export const CONCEPTS: Record<ConceptId, ConceptDef> = {
       "scorer_synonyms": [],
       "scorer_variants": {},
       "recognizer": null,
-      "worksheet": null
+      "worksheet": null,
+      "engine_field": null
     },
     "aliases": {
       "*": [
@@ -6487,7 +6586,8 @@ export const CONCEPTS: Record<ConceptId, ConceptDef> = {
       "scorer_synonyms": [],
       "scorer_variants": {},
       "recognizer": null,
-      "worksheet": null
+      "worksheet": null,
+      "engine_field": null
     },
     "aliases": {
       "OM": [
@@ -6548,7 +6648,8 @@ export const CONCEPTS: Record<ConceptId, ConceptDef> = {
       "scorer_synonyms": [],
       "scorer_variants": {},
       "recognizer": null,
-      "worksheet": null
+      "worksheet": null,
+      "engine_field": null
     },
     "aliases": {
       "OM": [
@@ -6617,7 +6718,8 @@ export const CONCEPTS: Record<ConceptId, ConceptDef> = {
       "scorer_synonyms": [],
       "scorer_variants": {},
       "recognizer": null,
-      "worksheet": null
+      "worksheet": null,
+      "engine_field": null
     },
     "aliases": {
       "OM": [
@@ -6679,7 +6781,8 @@ export const CONCEPTS: Record<ConceptId, ConceptDef> = {
       "scorer_synonyms": [],
       "scorer_variants": {},
       "recognizer": null,
-      "worksheet": null
+      "worksheet": null,
+      "engine_field": null
     },
     "aliases": {
       "OM": [
@@ -6731,7 +6834,8 @@ export const CONCEPTS: Record<ConceptId, ConceptDef> = {
       "scorer_synonyms": [],
       "scorer_variants": {},
       "recognizer": null,
-      "worksheet": null
+      "worksheet": null,
+      "engine_field": null
     },
     "aliases": {
       "OM": [
@@ -6783,7 +6887,8 @@ export const CONCEPTS: Record<ConceptId, ConceptDef> = {
       "scorer_synonyms": [],
       "scorer_variants": {},
       "recognizer": null,
-      "worksheet": null
+      "worksheet": null,
+      "engine_field": null
     },
     "aliases": {
       "OM": [
@@ -6834,7 +6939,8 @@ export const CONCEPTS: Record<ConceptId, ConceptDef> = {
       "scorer_synonyms": [],
       "scorer_variants": {},
       "recognizer": null,
-      "worksheet": null
+      "worksheet": null,
+      "engine_field": null
     },
     "aliases": {
       "OM": [
@@ -6884,7 +6990,8 @@ export const CONCEPTS: Record<ConceptId, ConceptDef> = {
       "scorer_synonyms": [],
       "scorer_variants": {},
       "recognizer": null,
-      "worksheet": null
+      "worksheet": null,
+      "engine_field": null
     },
     "aliases": {
       "*": [
@@ -6939,7 +7046,8 @@ export const CONCEPTS: Record<ConceptId, ConceptDef> = {
       "scorer_synonyms": [],
       "scorer_variants": {},
       "recognizer": null,
-      "worksheet": null
+      "worksheet": null,
+      "engine_field": null
     },
     "aliases": {
       "*": [
@@ -6987,7 +7095,8 @@ export const CONCEPTS: Record<ConceptId, ConceptDef> = {
       "scorer_synonyms": [],
       "scorer_variants": {},
       "recognizer": null,
-      "worksheet": null
+      "worksheet": null,
+      "engine_field": null
     },
     "aliases": {
       "*": [
@@ -7033,7 +7142,8 @@ export const CONCEPTS: Record<ConceptId, ConceptDef> = {
       "scorer_synonyms": [],
       "scorer_variants": {},
       "recognizer": null,
-      "worksheet": null
+      "worksheet": null,
+      "engine_field": null
     },
     "aliases": {
       "STR_FAMILY": [
@@ -7081,7 +7191,8 @@ export const CONCEPTS: Record<ConceptId, ConceptDef> = {
       "scorer_synonyms": [],
       "scorer_variants": {},
       "recognizer": null,
-      "worksheet": null
+      "worksheet": null,
+      "engine_field": null
     },
     "aliases": {
       "*": [
@@ -7134,7 +7245,8 @@ export const CONCEPTS: Record<ConceptId, ConceptDef> = {
       "scorer_synonyms": [],
       "scorer_variants": {},
       "recognizer": null,
-      "worksheet": null
+      "worksheet": null,
+      "engine_field": null
     },
     "aliases": {
       "OM": [
@@ -7194,7 +7306,8 @@ export const CONCEPTS: Record<ConceptId, ConceptDef> = {
       "scorer_synonyms": [],
       "scorer_variants": {},
       "recognizer": null,
-      "worksheet": null
+      "worksheet": null,
+      "engine_field": null
     },
     "aliases": {
       "OM": [
@@ -7252,7 +7365,8 @@ export const CONCEPTS: Record<ConceptId, ConceptDef> = {
       "scorer_synonyms": [],
       "scorer_variants": {},
       "recognizer": "mpi_occupancy_index",
-      "worksheet": null
+      "worksheet": null,
+      "engine_field": null
     },
     "aliases": {
       "STR_FAMILY": [
@@ -7310,7 +7424,8 @@ export const CONCEPTS: Record<ConceptId, ConceptDef> = {
       "scorer_synonyms": [],
       "scorer_variants": {},
       "recognizer": "ari_adr_index",
-      "worksheet": null
+      "worksheet": null,
+      "engine_field": null
     },
     "aliases": {
       "STR_FAMILY": [
@@ -7368,7 +7483,8 @@ export const CONCEPTS: Record<ConceptId, ConceptDef> = {
       "scorer_synonyms": [],
       "scorer_variants": {},
       "recognizer": "rgi_revpar_index",
-      "worksheet": null
+      "worksheet": null,
+      "engine_field": null
     },
     "aliases": {
       "STR_FAMILY": [
@@ -7426,7 +7542,8 @@ export const CONCEPTS: Record<ConceptId, ConceptDef> = {
       "scorer_synonyms": [],
       "scorer_variants": {},
       "recognizer": "comp_set_size",
-      "worksheet": null
+      "worksheet": null,
+      "engine_field": null
     },
     "aliases": {
       "*": [
@@ -7472,7 +7589,8 @@ export const CONCEPTS: Record<ConceptId, ConceptDef> = {
       "scorer_synonyms": [],
       "scorer_variants": {},
       "recognizer": "comp_set_total_keys",
-      "worksheet": null
+      "worksheet": null,
+      "engine_field": null
     },
     "aliases": {
       "*": [
@@ -7518,7 +7636,8 @@ export const CONCEPTS: Record<ConceptId, ConceptDef> = {
       "scorer_synonyms": [],
       "scorer_variants": {},
       "recognizer": null,
-      "worksheet": null
+      "worksheet": null,
+      "engine_field": null
     },
     "aliases": {
       "OM": [
@@ -7566,7 +7685,8 @@ export const CONCEPTS: Record<ConceptId, ConceptDef> = {
       "scorer_synonyms": [],
       "scorer_variants": {},
       "recognizer": null,
-      "worksheet": null
+      "worksheet": null,
+      "engine_field": null
     },
     "aliases": {
       "OM": [
@@ -7614,7 +7734,8 @@ export const CONCEPTS: Record<ConceptId, ConceptDef> = {
       "scorer_synonyms": [],
       "scorer_variants": {},
       "recognizer": null,
-      "worksheet": null
+      "worksheet": null,
+      "engine_field": null
     },
     "aliases": {
       "OM": [
@@ -7664,7 +7785,8 @@ export const CONCEPTS: Record<ConceptId, ConceptDef> = {
       "scorer_synonyms": [],
       "scorer_variants": {},
       "recognizer": null,
-      "worksheet": null
+      "worksheet": null,
+      "engine_field": null
     },
     "aliases": {
       "*": [
@@ -7707,7 +7829,8 @@ export const CONCEPTS: Record<ConceptId, ConceptDef> = {
       "scorer_synonyms": [],
       "scorer_variants": {},
       "recognizer": null,
-      "worksheet": null
+      "worksheet": null,
+      "engine_field": null
     },
     "aliases": {
       "*": [
@@ -7748,7 +7871,8 @@ export const CONCEPTS: Record<ConceptId, ConceptDef> = {
       "scorer_synonyms": [],
       "scorer_variants": {},
       "recognizer": null,
-      "worksheet": null
+      "worksheet": null,
+      "engine_field": null
     },
     "aliases": {
       "*": [
@@ -7789,7 +7913,8 @@ export const CONCEPTS: Record<ConceptId, ConceptDef> = {
       "scorer_synonyms": [],
       "scorer_variants": {},
       "recognizer": null,
-      "worksheet": null
+      "worksheet": null,
+      "engine_field": null
     },
     "aliases": {
       "*": [
@@ -7830,7 +7955,8 @@ export const CONCEPTS: Record<ConceptId, ConceptDef> = {
       "scorer_synonyms": [],
       "scorer_variants": {},
       "recognizer": null,
-      "worksheet": null
+      "worksheet": null,
+      "engine_field": null
     },
     "aliases": {
       "*": [
@@ -7871,7 +7997,8 @@ export const CONCEPTS: Record<ConceptId, ConceptDef> = {
       "scorer_synonyms": [],
       "scorer_variants": {},
       "recognizer": null,
-      "worksheet": null
+      "worksheet": null,
+      "engine_field": null
     },
     "aliases": {
       "*": [
@@ -7912,7 +8039,8 @@ export const CONCEPTS: Record<ConceptId, ConceptDef> = {
       "scorer_synonyms": [],
       "scorer_variants": {},
       "recognizer": null,
-      "worksheet": null
+      "worksheet": null,
+      "engine_field": null
     },
     "aliases": {
       "*": [
@@ -7953,7 +8081,8 @@ export const CONCEPTS: Record<ConceptId, ConceptDef> = {
       "scorer_synonyms": [],
       "scorer_variants": {},
       "recognizer": null,
-      "worksheet": null
+      "worksheet": null,
+      "engine_field": null
     },
     "aliases": {
       "*": [
@@ -7994,7 +8123,8 @@ export const CONCEPTS: Record<ConceptId, ConceptDef> = {
       "scorer_synonyms": [],
       "scorer_variants": {},
       "recognizer": null,
-      "worksheet": null
+      "worksheet": null,
+      "engine_field": null
     },
     "aliases": {
       "*": [
@@ -8035,7 +8165,8 @@ export const CONCEPTS: Record<ConceptId, ConceptDef> = {
       "scorer_synonyms": [],
       "scorer_variants": {},
       "recognizer": null,
-      "worksheet": null
+      "worksheet": null,
+      "engine_field": null
     },
     "aliases": {
       "*": [

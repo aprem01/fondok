@@ -50,6 +50,7 @@ import Link from 'next/link';
 import { useParams } from 'next/navigation';
 import { useState, useEffect, useMemo, useRef, useCallback } from 'react';
 import { fmtCurrency, fmtPct } from '@/lib/format';
+import { stabilizedCashNoi, STABILIZED_CASH_NOI_LABEL } from '@/lib/engines/noi';
 import { useEngineOutputs, getEngineField } from '@/lib/hooks/useEngineOutputs';
 import { useDeal } from '@/lib/hooks/useDeal';
 import { useVariance } from '@/lib/hooks/useVariance';
@@ -811,7 +812,10 @@ export default function ICMemoTab({ project }: { project: Project }) {
     { label: 'Purchase Price', value: mm(metrics.purchasePrice), state: provState('capital', 'purchase_price', overriddenPP ? 'assumption' : 'linked'), src: 'Investment', engine: 'capital', path: 'purchase_price' },
     { label: 'Price / Key', value: perKeyK(metrics.pricePerKey), state: provState('capital', 'price_per_key', 'calculated'), src: 'Investment', engine: 'capital', path: 'price_per_key' },
     { label: 'RevPAR', value: whole$(metrics.revpar), state: provState('revenue', 'years.0.revpar', 'linked'), src: 'Financials / Projections', engine: 'revenue', path: 'years.0.revpar' },
-    { label: 'NOI (Y1)', value: mm(metrics.noi), state: provState('expense', 'years.0.noi', 'calculated'), src: 'Financials / Projections', engine: 'expense', path: 'years.0.noi' },
+    // FON-59 #1 — `metrics.noi` reads `noi_institutional` first (NOI before the
+    // FF&E reserve, the canonical bare-"NOI" basis), so the provenance popover
+    // must point at THAT field, not the after-reserve `noi` it used to explain.
+    { label: 'NOI (Y1)', value: mm(metrics.noi), state: provState('expense', 'years.0.noi_institutional', 'calculated'), src: 'Financials / Projections', engine: 'expense', path: 'years.0.noi_institutional' },
     { label: 'Going-In Cap Rate', value: pctOr(metrics.capRate, 2), state: provState('capital', 'entry_cap_rate', 'calculated'), src: 'Investment', engine: 'capital', path: 'entry_cap_rate' },
     { label: 'Levered IRR', value: pctOr(metrics.leveredIrr), state: provState('returns', 'levered_irr', 'calculated'), src: 'Returns', engine: 'returns', path: 'levered_irr' },
     { label: 'Equity Multiple', value: xMult(metrics.equityMultiple), state: provState('returns', 'equity_multiple', 'calculated'), src: 'Returns', engine: 'returns', path: 'equity_multiple' },
@@ -1641,7 +1645,10 @@ function ScenarioSummary({ dealId, isMock, onLoaded }: { dealId: string; isMock:
             isBase: c.is_base,
             irr: pathNum(e.returns?.outputs, ['levered_irr']),
             em: pathNum(e.returns?.outputs, ['equity_multiple']),
-            noi: pathNum(e.expense?.outputs, ['years', 0, 'noi']),
+            // FON-54 #1 — the SAME selector ScenarioComparePanel's `stab_noi`
+            // row uses (last of returns.noi_by_year), so IC Memo and Scenario
+            // Analysis cannot print two different "stabilized" numbers.
+            noi: stabilizedCashNoi(e),
             exit: pathNum(e.returns?.outputs, ['gross_sale_price']),
             dscr: pathNum(e.debt?.outputs, ['year_one_dscr']),
           };
@@ -1661,7 +1668,7 @@ function ScenarioSummary({ dealId, isMock, onLoaded }: { dealId: string; isMock:
   const METRICS: { key: keyof ScenarioKpi; label: string; fmt: (n: number) => string; delta: (d: number) => string }[] = [
     { key: 'irr', label: 'Levered IRR', fmt: (n) => fmtPct(n, 1), delta: (d) => `${d >= 0 ? '+' : '−'}${Math.abs(d * 100).toFixed(1)} pts` },
     { key: 'em', label: 'Equity Multiple', fmt: (n) => `${n.toFixed(2)}x`, delta: (d) => `${d >= 0 ? '+' : '−'}${Math.abs(d).toFixed(2)}x` },
-    { key: 'noi', label: 'Stabilized NOI', fmt: (n) => mm(n), delta: (d) => `${d >= 0 ? '+' : '−'}$${(Math.abs(d) / 1e6).toFixed(2)}M` },
+    { key: 'noi', label: STABILIZED_CASH_NOI_LABEL, fmt: (n) => mm(n), delta: (d) => `${d >= 0 ? '+' : '−'}$${(Math.abs(d) / 1e6).toFixed(2)}M` },
     { key: 'exit', label: 'Exit Value', fmt: (n) => mm(n), delta: (d) => `${d >= 0 ? '+' : '−'}$${(Math.abs(d) / 1e6).toFixed(2)}M` },
     { key: 'dscr', label: 'Avg. DSCR', fmt: (n) => `${n.toFixed(2)}x`, delta: (d) => `${d >= 0 ? '+' : '−'}${Math.abs(d).toFixed(2)}x` },
   ];

@@ -41,6 +41,7 @@ import {
   type ScenarioRecord,
 } from '@/lib/api';
 import { cn } from '@/lib/format';
+import { stabilizedCashNoi, STABILIZED_CASH_NOI_LABEL } from '@/lib/engines/noi';
 import { getEngineField, useEngineOutputs } from '@/lib/hooks/useEngineOutputs';
 import { ProvenanceDot } from '@/components/design';
 import {
@@ -102,13 +103,13 @@ const KPI_ROWS: KpiRow[] = [
   },
   {
     key: 'stab_noi',
-    label: 'Stabilized NOI',
+    label: STABILIZED_CASH_NOI_LABEL,
     format: 'usd',
     // Terminal-year (stabilized) NOI: last element of returns.noi_by_year,
-    // falling back to the last expense-engine operating year.
-    pick: (e) =>
-      lastNumInArray(e.returns?.outputs, 'noi_by_year') ??
-      lastYearField(e.expense?.outputs, 'years', 'noi'),
+    // falling back to the last expense-engine operating year. Both series are
+    // net of the FF&E reserve, hence "Cash NOI". FON-54 #1 — IC Memo's
+    // Scenario Summary reads this SAME selector so the two cannot drift.
+    pick: (e) => stabilizedCashNoi(e),
   },
   {
     key: 'exit_value',
@@ -871,28 +872,6 @@ function numAt(root: unknown, path: string[]): number | undefined {
     }
   }
   return typeof cur === 'number' && Number.isFinite(cur) ? cur : undefined;
-}
-
-/** Last finite number in a numeric array field on an engine output — e.g.
- *  returns.noi_by_year → the stabilized/terminal-year NOI. */
-function lastNumInArray(obj: unknown, key: string): number | null {
-  if (!obj || typeof obj !== 'object') return null;
-  const arr = (obj as Record<string, unknown>)[key];
-  if (!Array.isArray(arr) || arr.length === 0) return null;
-  const v = arr[arr.length - 1];
-  return typeof v === 'number' && Number.isFinite(v) ? v : null;
-}
-
-/** Field on the last element of an array-of-objects — e.g.
- *  expense.years[last].noi (fallback stabilized-NOI source). */
-function lastYearField(obj: unknown, arrKey: string, field: string): number | null {
-  if (!obj || typeof obj !== 'object') return null;
-  const arr = (obj as Record<string, unknown>)[arrKey];
-  if (!Array.isArray(arr) || arr.length === 0) return null;
-  const last = arr[arr.length - 1];
-  if (!last || typeof last !== 'object') return null;
-  const v = (last as Record<string, unknown>)[field];
-  return typeof v === 'number' && Number.isFinite(v) ? v : null;
 }
 
 /** Total equity required = −cash_flows[0]; the levered flow series opens with

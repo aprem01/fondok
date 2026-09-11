@@ -62,6 +62,7 @@ from fondok_schemas.reasons import ReasonCode
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from .labels import CASH_NOI, noi_before_reserve_label
 from .refusals import collect_refusals, dedupe, refuse
 
 logger = logging.getLogger(__name__)
@@ -205,8 +206,12 @@ def _build_proforma_and_cf(
     mgmt: dict[int, float] = {}
     ffe: dict[int, float] = {}
     noi: dict[int, float] = {}
+    noi_before_reserve: dict[int, float] = {}
     cfad: dict[int, float] = {}
     noi_y1_usd: float | None = None
+    # False when NO year carried ``noi_institutional`` — a pre-upgrade run,
+    # whose before-reserve row is really an after-reserve number.
+    noi_basis_confirmed = False
 
     for n in years:
         r = rev_by[n]
@@ -215,8 +220,14 @@ def _build_proforma_and_cf(
         undist = (e.get("undistributed") or {}).get("total")
         fixed = (e.get("fixed_charges") or {}).get("total")
         noi_usd = _num(e.get("noi"))
+        # Two distinct USALI bases (FON-59 #1 / FON-67 #2): ``noi_institutional``
+        # is NOI BEFORE the FF&E reserve (headline / entry-cap basis), ``noi`` is
+        # Cash NOI after it. The proforma emits both rows so the workbook foots.
+        noi_inst_usd = _num(e.get("noi_institutional"))
+        if noi_inst_usd is not None:
+            noi_basis_confirmed = True
         if n == 1:
-            noi_y1_usd = _num(e.get("noi_institutional")) or noi_usd
+            noi_y1_usd = noi_inst_usd or noi_usd
         ds = ds_series[n - 1] if n - 1 < len(ds_series) else (ds_series[-1] if ds_series else 0.0)
         ds = _num(ds) or 0.0
 
@@ -228,6 +239,7 @@ def _build_proforma_and_cf(
         mgmt[n] = k(_num(e.get("mgmt_fee")))
         ffe[n] = k(_num(e.get("ffe_reserve")))
         noi[n] = k(noi_usd)
+        noi_before_reserve[n] = k(noi_inst_usd if noi_inst_usd is not None else noi_usd)
         cfad[n] = k((noi_usd or 0.0) - ds)
 
     def row(label: str, src: dict[int, float], **extra: Any) -> dict[str, Any]:
@@ -250,8 +262,18 @@ def _build_proforma_and_cf(
         row("Total Revenue", total_rev, cagr=_num(revenue.get("total_revenue_cagr")), bold=True),
         row("Operating Expenses", opex),
         row("Management Fee", mgmt),
+        # FON-54 #8 — BOTH bases, in waterfall order, so the workbook foots:
+        # Total Revenue less Operating Expenses less the Management Fee = NOI
+        # (before FF&E reserve); less the FF&E Reserve = Cash NOI. The headline KPI
+        # (``noi_y1_usd`` above) is the before-reserve figure.
+        row(
+            noi_before_reserve_label(basis_confirmed=noi_basis_confirmed),
+            noi_before_reserve,
+            cagr=_num(expense.get("noi_cagr")),
+            bold=True,
+        ),
         row("FF&E Reserve", ffe),
-        row("Net Operating Income", noi, cagr=_num(expense.get("noi_cagr")), bold=True),
+        row(CASH_NOI, noi, bold=True),
         row("Debt Service", ds_row),
         row("Cash Flow After Debt", cfad, bold=True),
     ]
