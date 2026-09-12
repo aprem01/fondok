@@ -3,7 +3,7 @@
 /**
  * LineageDrawer — walk one number down to the page it came from (Phase 2.4).
  *
- * A right-anchored drawer (same anatomy as `help/OverridePanel`) that renders
+ * A right-anchored drawer that renders
  * ONE walk of the deal's lineage graph as a vertical chain:
  *
  *   Levered IRR            ← the KPI you clicked

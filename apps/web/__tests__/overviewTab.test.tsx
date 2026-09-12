@@ -428,16 +428,22 @@ describe('OverviewTab — FON-59 Project Name vs Property Name', () => {
     fireEvent.click(within(dialog).getByRole('button', { name: 'Save value' }));
 
     await waitFor(() => expect(updateSpy).toHaveBeenCalledTimes(1));
+    // FON-74 — the Property Name is a NAME, not a number an engine runs on, so
+    // no justification is demanded. What it must NOT carry is a note Fondok
+    // wrote for the analyst: the row used to persist
+    // `Analyst override — Overview · Property Name`, software prose sitting in
+    // the provenance card where a human justification belongs.
     expect(updateSpy).toHaveBeenCalledWith('deal-uuid-1', {
-      field_overrides: { [OVERRIDE_KEY]: { value: 'The Anglers Hotel', note: expect.any(String) } },
+      field_overrides: { [OVERRIDE_KEY]: { value: 'The Anglers Hotel' } },
     });
+    expect(JSON.stringify(updateSpy.mock.calls)).not.toContain('note');
     // The override never writes the project name.
     expect(JSON.stringify(updateSpy.mock.calls)).not.toContain('"name"');
 
     // Simulate the deal refresh + worker read-back (override wins, original kept).
     mockDealRef.deal = {
       ...mockDealRef.deal,
-      field_overrides: { [OVERRIDE_KEY]: { value: 'The Anglers Hotel', note: 'Analyst override — Overview · Property Name' } },
+      field_overrides: { [OVERRIDE_KEY]: { value: 'The Anglers Hotel', note: 'Renamed post-rebrand per the JV' } },
     };
     overviewRef.value = { ...OVERVIEW_EXTRACTED, property_name: 'The Anglers Hotel', property_name_source: 'analyst_override' };
     rerender(<OverviewTab projectId="deal-uuid-1" />);
@@ -452,6 +458,10 @@ describe('OverviewTab — FON-59 Project Name vs Property Name', () => {
     expect(within(dialog).getByText('Overridden')).toBeInTheDocument();
     expect(within(dialog).getByText('Original')).toBeInTheDocument();
     expect(within(dialog).getByText(`${EXTRACTED} · Anglers OM.pdf p.1`)).toBeInTheDocument();
+    // FON-74 — the popover's `Note` line renders the ANALYST's justification
+    // when one is stored, verbatim, and nothing when none is.
+    expect(within(dialog).getByText('Note')).toBeInTheDocument();
+    expect(within(dialog).getByText('Renamed post-rebrand per the JV')).toBeInTheDocument();
     fireEvent.click(within(dialog).getByRole('button', { name: 'Restore sourced value' }));
 
     await waitFor(() => expect(updateSpy).toHaveBeenCalledTimes(2));
@@ -669,5 +679,29 @@ describe('OverviewTab — Financing Costs is the senior origination fee', () => 
     expect(screen.getAllByText('$354,900').length).toBeGreaterThan(0);
     // The renamed Sources & Uses line carries the same number on the same page.
     expect(screen.getByText('Senior Loan Origination Fee')).toBeInTheDocument();
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────
+// FON-74 — the provenance popover shows the analyst's own words, or nothing.
+// ─────────────────────────────────────────────────────────────────────────
+describe('OverviewTab — FON-74 provenance note', () => {
+  it('an override stored WITHOUT a note renders no Note line (never a generated one)', async () => {
+    mockDealRef.deal = {
+      ...mockDealRef.deal,
+      field_overrides: { [OVERRIDE_KEY]: { value: 'The Anglers Hotel' } },
+    };
+    overviewRef.value = {
+      ...OVERVIEW_EXTRACTED,
+      property_name: 'The Anglers Hotel',
+      property_name_source: 'analyst_override',
+    };
+    render(<OverviewTab projectId="deal-uuid-1" />);
+    expect(await screen.findByText('The Anglers Hotel')).toBeInTheDocument();
+
+    fireEvent.click(screen.getByText('The Anglers Hotel'));
+    const dialog = screen.getByRole('dialog', { name: /Where Property Name came from/i });
+    expect(within(dialog).getByText('Overridden')).toBeInTheDocument();
+    expect(within(dialog).queryByText('Note')).not.toBeInTheDocument();
   });
 });

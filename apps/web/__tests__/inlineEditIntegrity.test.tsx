@@ -20,6 +20,11 @@
  *     must not over-suppress).
  *  6. Display-unit spellings collapse: "6.80" over a stored 0.068, "65" over
  *     0.65.
+ *  7. FON-74 — an edit that CHANGES an engine input is refused until the
+ *     analyst justifies it, and the justification is stored with the value.
+ *     Critically, the note gate sits AFTER the no-op guard: opening a field to
+ *     inspect it and saving it back unchanged must exit quietly, never demand a
+ *     reason for a change that isn't one.
  *
  * Reads exclusively from mocked engine envelopes — no fixtures, no prototype
  * numbers.
@@ -214,6 +219,7 @@ import DebtTab from '@/components/project/DebtTab';
 import InvestmentTab from '@/components/project/InvestmentTab';
 import PartnershipTab from '@/components/project/PartnershipTab';
 import { NO_OP_EDIT_MESSAGE } from '@/components/design';
+import { NOTE_REQUIRED_MESSAGE } from '@/lib/overrideNote';
 
 beforeEach(() => {
   cleanup();
@@ -233,10 +239,22 @@ const openEditor = (testId: string): HTMLInputElement => {
   expect(input).toBeTruthy();
   return input;
 };
-/** Open a Debt/Investment editor, type `value`, press Save. */
+/** FON-74 — the justification these tests type where one is required. */
+const WHY = 'Repriced off the term sheet';
+
+/** Type the justification an open editor is asking for, if it is asking. */
+function justify(testId?: string): void {
+  const note = testId
+    ? screen.queryByTestId(`${testId}-note`)
+    : screen.queryByLabelText('Override justification');
+  if (note) fireEvent.change(note, { target: { value: WHY } });
+}
+
+/** Open a Debt/Investment editor, type `value` (+ its justification), Save. */
 async function editAndSave(testId: string, value: string): Promise<void> {
   const input = openEditor(testId);
   fireEvent.change(input, { target: { value } });
+  justify(testId);
   fireEvent.click(saveBtn());
   await waitFor(() => expect(input).not.toBeInTheDocument());
 }
@@ -256,11 +274,21 @@ function openInvestmentEditor(shown: string): HTMLInputElement {
   return input;
 }
 
-/** The `field_overrides` body of the first PATCH. */
-const patchedOverrides = (): Record<string, unknown> => {
+/** The RAW `field_overrides` body of the first PATCH (FON-74 envelopes intact). */
+const patchedRaw = (): Record<string, unknown> => {
   const [, body] = updateSpy.mock.calls[0] as unknown as [string, { field_overrides: Record<string, unknown> }];
   return body.field_overrides;
 };
+
+/** The same body flattened — `{value, note}` and bare scalars both read as the
+ *  value, so the key/unit assertions below say what they always said. */
+const patchedOverrides = (): Record<string, unknown> =>
+  Object.fromEntries(
+    Object.entries(patchedRaw()).map(([k, v]) => [
+      k,
+      v && typeof v === 'object' && 'value' in v ? (v as { value: unknown }).value : v,
+    ]),
+  );
 
 // ─────────────────────────────────────────────────────────────────────────
 // 1. Save on an unchanged value writes nothing.
@@ -337,11 +365,15 @@ describe('Partnership complement key', () => {
     render(<PartnershipTab />);
     const input = openPartnershipEditor('GP / Sponsor Ownership');
     fireEvent.change(input, { target: { value: '12' } });
+    justify();
     fireEvent.click(saveBtn());
     await waitFor(() => expect(updateSpy).toHaveBeenCalled());
     const body = patchedOverrides();
     expect(body['gp_equity_pct']).toBeCloseTo(0.12);
     expect(body['lp_equity_pct']).toBeCloseTo(0.88);
+    // FON-74 — one justification, on both sides of the derived pair.
+    expect(patchedRaw()['gp_equity_pct']).toMatchObject({ note: WHY });
+    expect(patchedRaw()['lp_equity_pct']).toMatchObject({ note: WHY });
   });
 });
 
@@ -426,6 +458,16 @@ describe('a genuinely changed value still PATCHes the exact worker key', () => {
     expect(patchedOverrides()['debt_stack.tranches.0.rate_pct']).toBeCloseTo(0.0725);
   });
 
+  it('Debt — and the analyst\u2019s reason is stored with the number', async () => {
+    render(<DebtTab />);
+    await editAndSave('edit-senior-amount', '24000000');
+    await waitFor(() => expect(updateSpy).toHaveBeenCalled());
+    expect(patchedRaw()['debt_stack.tranches.0.principal_usd']).toEqual({
+      value: 24_000_000,
+      note: WHY,
+    });
+  });
+
   it('Investment — the purchase price', async () => {
     render(<InvestmentTab />);
     const input = openInvestmentEditor('$36,000,000');
@@ -479,6 +521,7 @@ describe('the rate-basis toggle', () => {
     fireEvent.click(screen.getByText('Floating'));
     const input = screen.getByTestId('rate-basis-input') as HTMLInputElement;
     fireEvent.change(input, { target: { value: '3.00' } });
+    fireEvent.change(screen.getByTestId('rate-basis-note'), { target: { value: WHY } });
     fireEvent.click(screen.getByTestId('rate-basis-save'));
     await waitFor(() => expect(updateSpy).toHaveBeenCalled());
     const body = patchedOverrides();
@@ -520,5 +563,81 @@ describe('every editor offers the canonical Save · Cancel pair', () => {
     openPartnershipEditor('GP / Sponsor Ownership');
     expect(saveBtn()).toBeInTheDocument();
     expect(cancelBtn()).toBeInTheDocument();
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────
+// 9. FON-74 — the justification gate, on the primitive every editor runs on.
+//
+// The founder's June 2026 rule: an analyst overriding a value must attach a
+// justification. It used to be implemented only in a drawer nothing mounted.
+// These assertions are about the live path.
+// ─────────────────────────────────────────────────────────────────────────
+describe('FON-74 — an override that changes a number carries a justification', () => {
+  it('Save with an empty note fires NO PATCH and says why', async () => {
+    render(<DebtTab />);
+    const input = openEditor('edit-senior-amount');
+    fireEvent.change(input, { target: { value: '24000000' } });
+    fireEvent.click(saveBtn());
+    await waitFor(() => expect(toastSpy).toHaveBeenCalledWith(NOTE_REQUIRED_MESSAGE, { type: 'error' }));
+    expect(updateSpy).not.toHaveBeenCalled();
+    // The editor stays open — the analyst adds the reason, not the edit again.
+    expect(input).toBeInTheDocument();
+  });
+
+  it('whitespace is not a justification', async () => {
+    render(<DebtTab />);
+    const input = openEditor('edit-senior-amount');
+    fireEvent.change(input, { target: { value: '24000000' } });
+    fireEvent.change(screen.getByTestId('edit-senior-amount-note'), { target: { value: '   ' } });
+    fireEvent.click(saveBtn());
+    await waitFor(() => expect(toastSpy).toHaveBeenCalledWith(NOTE_REQUIRED_MESSAGE, { type: 'error' }));
+    expect(updateSpy).not.toHaveBeenCalled();
+  });
+
+  it('Save WITH a note PATCHes {value, note}', async () => {
+    render(<DebtTab />);
+    await editAndSave('edit-senior-amount', '24000000');
+    await waitFor(() => expect(updateSpy).toHaveBeenCalled());
+    expect(patchedRaw()['debt_stack.tranches.0.principal_usd']).toEqual({
+      value: 24_000_000,
+      note: WHY,
+    });
+  });
+
+  it('a NO-OP edit short-circuits BEFORE the note check', async () => {
+    // The whole point: opening a field to inspect it must never demand a
+    // justification. Save on the untouched value exits with the no-op message
+    // and never mentions a note.
+    render(<DebtTab />);
+    const input = openEditor('edit-senior-amount');
+    fireEvent.click(saveBtn());
+    await waitFor(() => expect(input).not.toBeInTheDocument());
+    expect(updateSpy).not.toHaveBeenCalled();
+    expect(toastSpy).toHaveBeenCalledWith(NO_OP_EDIT_MESSAGE, { type: 'info' });
+    expect(toastSpy).not.toHaveBeenCalledWith(NOTE_REQUIRED_MESSAGE, { type: 'error' });
+  });
+
+  it('Cancel clears the note — a reason never outlives the change it explained', async () => {
+    render(<DebtTab />);
+    let input = openEditor('edit-senior-amount');
+    fireEvent.change(input, { target: { value: '24000000' } });
+    fireEvent.change(screen.getByTestId('edit-senior-amount-note'), { target: { value: 'abandoned reason' } });
+    fireEvent.click(cancelBtn());
+    await waitFor(() => expect(input).not.toBeInTheDocument());
+    expect(updateSpy).not.toHaveBeenCalled();
+
+    input = openEditor('edit-senior-amount');
+    fireEvent.change(input, { target: { value: '24000000' } });
+    expect((screen.getByTestId('edit-senior-amount-note') as HTMLInputElement).value).toBe('');
+  });
+
+  it('Partnership — the same gate, with the same message', async () => {
+    render(<PartnershipTab />);
+    const input = openPartnershipEditor('GP / Sponsor Ownership');
+    fireEvent.change(input, { target: { value: '12' } });
+    fireEvent.click(saveBtn());
+    await waitFor(() => expect(toastSpy).toHaveBeenCalledWith(NOTE_REQUIRED_MESSAGE, { type: 'error' }));
+    expect(updateSpy).not.toHaveBeenCalled();
   });
 });

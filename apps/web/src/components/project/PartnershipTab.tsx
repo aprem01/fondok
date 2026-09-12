@@ -35,6 +35,12 @@ import {
   NO_OP_EDIT_MESSAGE,
 } from '@/components/design';
 import { isNoOpEdit } from '@/lib/fieldValue';
+import {
+  applyOverridePatch,
+  patchRequiresNote,
+  requiresNote,
+  NOTE_REQUIRED_MESSAGE,
+} from '@/lib/overrideNote';
 
 // ─── Canonical structure (design/canonical/Partnership Tab.dc.html) ──────────
 // Three sub-tabs, exactly as the prototype: Summary · Waterfall · Cash Flows.
@@ -167,6 +173,9 @@ export default function PartnershipTab() {
   // Single inline-editor cursor (canonical `state.editing`) + its draft string.
   const [editing, setEditing] = useState<string | null>(null);
   const [draft, setDraft] = useState('');
+  // FON-74 — the justification for the draft above. Cleared on open and on
+  // every exit, so a reason can never outlive the change it explained.
+  const [note, setNote] = useState('');
   // The value the open editor started on (a fraction), so Save can tell a real
   // change from a re-save of what was already on screen. Null = not yet set.
   const editStartRef = useRef<number | null>(null);
@@ -203,17 +212,21 @@ export default function PartnershipTab() {
   // (GP/LP ownership, GP/LP tier split) are saved together so the engine never
   // sees an inconsistent pair. A null value clears that override. Booleans
   // carry the per-tier tombstone (`<idx>.removed`).
+  // FON-74 — the analyst's justification rides with every key in the patch, so
+  // a complementary pair (GP% + LP%, GP split + LP split) carries one reason on
+  // both sides. Refused here as well as by the API so the analyst reads the
+  // message rather than a 422.
   const onSaveOverride = useCallback(
-    async (patch: Record<string, number | boolean | null>) => {
+    async (patch: Record<string, number | boolean | null>, note = '') => {
       if (!liveMode) {
         toast('Editing is disabled on demo deals', { type: 'info' });
         return;
       }
-      const next = { ...overrides };
-      for (const [path, value] of Object.entries(patch)) {
-        if (value === null) delete next[path];
-        else next[path] = value;
+      if (!note.trim() && patchRequiresNote(patch)) {
+        toast(NOTE_REQUIRED_MESSAGE, { type: 'error' });
+        return;
       }
+      const next = applyOverridePatch(overrides, patch, note);
       setOverrides(next); // optimistic
       try {
         await api.deals.update(dealId, { field_overrides: next });
@@ -236,29 +249,39 @@ export default function PartnershipTab() {
   // the given override key(s). Complementary keys derive `1 - fraction`.
   const commitPct = useCallback(
     (primaryKey: string, complementKey?: string) => {
+      const close = () => { editStartRef.current = null; setEditing(null); setDraft(''); setNote(''); };
       const t = draft.trim();
-      setEditing(null);
-      setDraft('');
-      if (t === '') return;
+      if (t === '') { close(); return; }
       const p = Number(t.replace(/[^0-9.\-]/g, ''));
-      if (!Number.isFinite(p)) return;
+      if (!Number.isFinite(p)) { close(); return; }
       const frac = round6(p / 100);
       // FON-63 / FON-66 §1 — the guard runs on the PRIMARY key against the
       // value the editor opened on. An unchanged GP ownership must write
       // NEITHER gp nor lp: deriving the complement off a no-op was minting two
       // phantom overrides per stray Save.
       if (isNoOpEdit(frac, editStartRef.current, 'pct_fraction')) {
+        close();
         toast(NO_OP_EDIT_MESSAGE, { type: 'info' });
         return;
       }
       const patch: Record<string, number> = { [primaryKey]: frac };
       if (complementKey) patch[complementKey] = round6(1 - frac);
-      void onSaveOverride(patch);
+      // FON-74 — AFTER the no-op guard: re-saving a value unchanged exits
+      // quietly, and only a real change is asked to justify itself. The editor
+      // stays open so the analyst types the reason instead of losing the edit.
+      const justification = note.trim();
+      if (!justification && patchRequiresNote(patch)) {
+        toast(NOTE_REQUIRED_MESSAGE, { type: 'error' });
+        return;
+      }
+      close();
+      void onSaveOverride(patch, justification);
     },
-    [draft, onSaveOverride, toast],
+    [draft, note, onSaveOverride, toast],
   );
   const startEdit = useCallback((id: string, currentFraction: number | null) => {
     editStartRef.current = currentFraction;
+    setNote('');
     setEditing(id);
     setDraft(
       currentFraction == null
@@ -272,6 +295,7 @@ export default function PartnershipTab() {
     editStartRef.current = null;
     setEditing(null);
     setDraft('');
+    setNote('');
   }, []);
 
   // ─── FON-66 Part A: variable promote-tier count ────────────────────
@@ -310,7 +334,7 @@ export default function PartnershipTab() {
   // tier_count so the worker sees a complete tier on the next run. The new
   // tier is ALWAYS a fresh index at the bound — a tombstoned hole is never
   // reused, so a removed tier's values can never resurface through +Add.
-  const onAddTier = useCallback(() => {
+  const onAddTier = useCallback((note: string) => {
     if (!liveMode) {
       toast('Editing is disabled on demo deals', { type: 'info' });
       return;
@@ -323,12 +347,15 @@ export default function PartnershipTab() {
     const topVisible = visibleTierIndices[visibleTierIndices.length - 1] ?? tierCount - 1;
     const prevHurdle = tierHurdleAt(topVisible);
     const newHurdle = round6(Math.min(0.99, prevHurdle + 0.05));
+    // FON-74 — the tier COUNT is the waterfall's shape and needs no reason, but
+    // the hurdle and splits it seeds are numbers the engine runs on, so the
+    // analyst says why the tier exists.
     void onSaveOverride({
       [TIER_COUNT_PATH]: tierCount + 1,
       [`partnership.waterfall.${newIdx}.hurdle_rate`]: newHurdle,
       [`partnership.waterfall.${newIdx}.gp_split`]: 0,
       [`partnership.waterfall.${newIdx}.lp_split`]: 1,
-    });
+    }, note);
   }, [liveMode, tierCount, visibleTierIndices, tierHurdleAt, onSaveOverride, toast]);
 
   // "Remove" — drop ANY promote tier (FON-66 follow-up). Two persistence
@@ -579,6 +606,9 @@ export default function PartnershipTab() {
                     onDraft={setDraft}
                     onCommit={() => commitPct('gp_equity_pct', 'lp_equity_pct')}
                     onCancel={cancelEdit}
+                    requireNote={requiresNote('gp_equity_pct')}
+                    justification={note}
+                    onJustification={setNote}
                     value={pctv(gpPct, 0)}
                     valueColor={prov.blue}
                   />
@@ -603,6 +633,9 @@ export default function PartnershipTab() {
                     onDraft={setDraft}
                     onCommit={() => commitPct('pref_rate')}
                     onCancel={cancelEdit}
+                    requireNote={requiresNote('pref_rate')}
+                    justification={note}
+                    onJustification={setNote}
                     value={pctv(prefRate, 0)}
                     valueColor={prov.blue}
                   />
@@ -725,6 +758,9 @@ export default function PartnershipTab() {
                     onDraft={setDraft}
                     onCommit={() => commitPct('gp_equity_pct', 'lp_equity_pct')}
                     onCancel={cancelEdit}
+                    requireNote={requiresNote('gp_equity_pct')}
+                    justification={note}
+                    onJustification={setNote}
                     value={pctv(gpPct, 0)}
                     valueColor={prov.blue}
                   />
@@ -739,6 +775,9 @@ export default function PartnershipTab() {
                     onDraft={setDraft}
                     onCommit={() => commitPct('pref_rate')}
                     onCancel={cancelEdit}
+                    requireNote={requiresNote('pref_rate')}
+                    justification={note}
+                    onJustification={setNote}
                     value={pctv(prefRate, 0)}
                     valueColor={prov.blue}
                   />
@@ -756,6 +795,8 @@ export default function PartnershipTab() {
                   editing={editing}
                   draft={draft}
                   setDraft={setDraft}
+                  note={note}
+                  setNote={setNote}
                   startEdit={startEdit}
                   cancelEdit={cancelEdit}
                   commitPct={commitPct}
@@ -920,6 +961,11 @@ interface KeyRowProps {
   onDraft?: (v: string) => void;
   onCommit?: () => void;
   onCancel?: () => void;
+  /** FON-74 — the analyst justification for this row's override. */
+  requireNote?: boolean;
+  justification?: string;
+  onJustification?: (v: string) => void;
+  justificationTestId?: string;
 }
 
 function KeyRow(p: KeyRowProps) {
@@ -947,6 +993,10 @@ function KeyRow(p: KeyRowProps) {
             onDraft={p.onDraft}
             onCommit={p.onCommit}
             onCancel={p.onCancel}
+            requireNote={p.requireNote}
+            note={p.justification}
+            onNote={p.onJustification}
+            noteTestId={p.justificationTestId}
           />
         ) : (
           <span
@@ -1003,17 +1053,22 @@ function CompoundingRow({ value, onChange }: { value: string; onChange: (v: stri
 // FON-66 §1: Esc, Cancel and a click anywhere outside all discard the draft
 // without a network call; Save runs the no-op guard in `commitPct` first.
 function InlineEditor({
-  draft, width, onDraft, onCommit, onCancel,
+  draft, width, onDraft, onCommit, onCancel, requireNote, note, onNote, noteTestId,
 }: {
   draft: string;
   width: number;
   onDraft?: (v: string) => void;
   onCommit?: () => void;
   onCancel?: () => void;
+  /** FON-74 — this key routes into engine input, so Save needs a reason. */
+  requireNote?: boolean;
+  note?: string;
+  onNote?: (v: string) => void;
+  noteTestId?: string;
 }) {
   const outsideRef = useCancelOnOutside(true, () => onCancel?.());
   return (
-    <span ref={outsideRef} style={{ display: 'flex', alignItems: 'center', gap: 6, flexShrink: 0 }}>
+    <span ref={outsideRef} style={{ display: 'flex', alignItems: requireNote ? 'flex-start' : 'center', gap: 6, flexShrink: 0 }}>
       <input
         autoFocus
         value={draft}
@@ -1026,7 +1081,13 @@ function InlineEditor({
         aria-label="percent"
         style={{ ...inlineEditInputStyle, width }}
       />
-      <InlineEditControls onSave={() => onCommit?.()} onCancel={() => onCancel?.()} />
+      <InlineEditControls
+        onSave={() => onCommit?.()}
+        onCancel={() => onCancel?.()}
+        note={requireNote ? note ?? '' : undefined}
+        onNote={requireNote ? onNote : undefined}
+        noteTestId={noteTestId}
+      />
     </span>
   );
 }
@@ -1182,7 +1243,8 @@ function AllocationTable({
 const TIER_GRID = '38px minmax(180px,1.5fr) minmax(120px,1fr) 90px 90px minmax(210px,1.5fr)';
 
 function PromoteWaterfall({
-  prefRate, hasCatchUp, liveMode, overrides, editing, draft, setDraft, startEdit, cancelEdit, commitPct,
+  prefRate, hasCatchUp, liveMode, overrides, editing, draft, setDraft, note, setNote,
+  startEdit, cancelEdit, commitPct,
   tierCount, tierIndices, onAddTier, onRemoveTier,
 }: {
   prefRate: number;
@@ -1194,15 +1256,21 @@ function PromoteWaterfall({
   setDraft: (v: string) => void;
   startEdit: (id: string, fraction: number | null) => void;
   cancelEdit: () => void;
+  note: string;
+  setNote: (v: string) => void;
   commitPct: (primaryKey: string, complementKey?: string) => void;
   // FON-66 Part A — variable tier count + add/remove controls. `tierCount` is
   // the index-space bound (the +Add cap); `tierIndices` are the surviving
   // (non-tombstoned) indices actually rendered, in index order.
   tierCount: number;
   tierIndices: number[];
-  onAddTier: () => void;
+  onAddTier: (note: string) => void;
   onRemoveTier: (idx: number) => void;
 }) {
+  const { toast } = useToast();
+  // FON-74 — null: the "+ Add tier" button. A string: the justification row is
+  // open and holds what the analyst has typed so far.
+  const [addNote, setAddNote] = useState<string | null>(null);
   // Structural (read-only) rows first, then the editable promote bands.
   const structural: Array<{ name: string; hurdle: string; gp: string; lp: string; desc: string; dot: ValueState }> = [
     {
@@ -1291,6 +1359,9 @@ function PromoteWaterfall({
               onDraft={setDraft}
               onCommit={() => commitPct(hurdlePath)}
               onCancel={cancelEdit}
+              requireNote={requiresNote(hurdlePath)}
+              note={note}
+              onNote={setNote}
             />
           ) : (
             <span
@@ -1313,6 +1384,9 @@ function PromoteWaterfall({
               onDraft={setDraft}
               onCommit={() => commitPct(gpPath, `partnership.waterfall.${i}.lp_split`)}
               onCancel={cancelEdit}
+              requireNote={requiresNote(gpPath)}
+              note={note}
+              onNote={setNote}
             />
           ) : (
             <span
@@ -1371,10 +1445,30 @@ function PromoteWaterfall({
       </div>
       {structuralRows}
       {promoteRows}
-      {liveMode && (
+      {liveMode && addNote !== null && (
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 10, flexWrap: 'wrap' }}>
+          <InlineEditControls
+            onSave={() => {
+              if (!addNote.trim()) { toast(NOTE_REQUIRED_MESSAGE, { type: 'error' }); return; }
+              onAddTier(addNote);
+              setAddNote(null);
+            }}
+            onCancel={() => setAddNote(null)}
+            saveLabel="Add tier"
+            saveTestId="add-tier-save"
+            note={addNote}
+            onNote={setAddNote}
+            noteTestId="add-tier-note"
+          />
+          <span style={{ fontSize: 11, color: palette.textMuted }}>
+            A new tier seeds a hurdle and a 100% LP / 0% GP split — say why it belongs in the waterfall.
+          </span>
+        </div>
+      )}
+      {liveMode && addNote === null && (
         <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginTop: 10, flexWrap: 'wrap' }}>
           <button
-            onClick={onAddTier}
+            onClick={() => setAddNote('')}
             disabled={tierCount >= MAX_TIERS}
             style={{
               display: 'inline-flex', alignItems: 'center', gap: 6,

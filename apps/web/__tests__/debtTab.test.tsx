@@ -224,17 +224,38 @@ beforeEach(() => {
   mockDeal.field_overrides = {};
 });
 
-/** Open an inline editor by test id, type a value, press Save, and return the
- *  field_overrides body the tab PATCHed. */
+/** FON-74 — `{value, note}` and the legacy bare scalar, flattened to the value,
+ *  so the key/unit assertions below read exactly as they always have. */
+const flatten = (ov: Record<string, unknown>): Record<string, unknown> =>
+  Object.fromEntries(
+    Object.entries(ov).map(([k, v]) => [
+      k,
+      v && typeof v === 'object' && 'value' in v ? (v as { value: unknown }).value : v,
+    ]),
+  );
+
+/** The raw `field_overrides` body of the first PATCH. */
+const patchedRaw = (): Record<string, unknown> => {
+  const [, body] = updateSpy.mock.calls[0] as unknown as [string, { field_overrides: Record<string, unknown> }];
+  return body.field_overrides;
+};
+
+/** FON-74 — the justification these tests type. Every Debt editor changes a
+ *  number an engine runs on, so Save is refused without one. */
+const WHY = 'Term sheet 9/12';
+
+/** Open an inline editor by test id, type a value + its justification, press
+ *  Save, and return the field_overrides body the tab PATCHed (flattened). */
 async function editAndSave(testId: string, value: string): Promise<Record<string, unknown>> {
   fireEvent.click(screen.getByTestId(testId));
   const input = document.querySelector('input[type="number"]') as HTMLInputElement;
   expect(input).toBeTruthy();
   fireEvent.change(input, { target: { value } });
+  const note = screen.queryByTestId(`${testId}-note`);
+  if (note) fireEvent.change(note, { target: { value: WHY } });
   fireEvent.click(screen.getByText('Save'));
   await waitFor(() => expect(updateSpy).toHaveBeenCalled());
-  const [, body] = updateSpy.mock.calls[0] as unknown as [string, { field_overrides: Record<string, unknown> }];
-  return body.field_overrides;
+  return flatten(patchedRaw());
 }
 
 describe('DebtTab — canonical sub-tabs', () => {
@@ -452,11 +473,48 @@ describe('DebtTab — canonical edit path (field_overrides + full run)', () => {
     fireEvent.click(screen.getByText('Floating'));
     const input = screen.getByTestId('rate-basis-input') as HTMLInputElement;
     fireEvent.change(input, { target: { value: '3.00' } });
+    fireEvent.change(screen.getByTestId('rate-basis-note'), { target: { value: WHY } });
     fireEvent.click(screen.getByTestId('rate-basis-save'));
     await waitFor(() => expect(updateSpy).toHaveBeenCalled());
-    const [, body] = updateSpy.mock.calls[0] as unknown as [string, { field_overrides: Record<string, unknown> }];
-    expect(body.field_overrides['debt_stack.tranches.0.rate_type']).toBe('floating');
-    expect(body.field_overrides['debt_stack.tranches.0.spread_pct']).toBeCloseTo(0.03);
+    const body = flatten(patchedRaw());
+    expect(body['debt_stack.tranches.0.rate_type']).toBe('floating');
+    expect(body['debt_stack.tranches.0.spread_pct']).toBeCloseTo(0.03);
+    // FON-74 — ONE justification, on BOTH keys the basis switch writes.
+    expect(patchedRaw()['debt_stack.tranches.0.rate_type']).toEqual({ value: 'floating', note: WHY });
+    expect(patchedRaw()['debt_stack.tranches.0.spread_pct']).toMatchObject({ note: WHY });
+  });
+
+  // ── FON-74 — the justification gate on the live Debt path ──────────────
+  it('Save is refused until the analyst justifies the change, and then stores it', async () => {
+    render(<DebtTab />);
+    fireEvent.click(screen.getByTestId('edit-senior-amount'));
+    const input = document.querySelector('input[type="number"]') as HTMLInputElement;
+    fireEvent.change(input, { target: { value: '24000000' } });
+
+    // No note → no PATCH, and the editor stays open so the edit is not lost.
+    fireEvent.click(screen.getByText('Save'));
+    await waitFor(() => expect(screen.getByTestId('edit-senior-amount-note')).toBeInTheDocument());
+    expect(updateSpy).not.toHaveBeenCalled();
+
+    // With one → the value AND the reason land together.
+    fireEvent.change(screen.getByTestId('edit-senior-amount-note'), { target: { value: 'Lender resized the senior' } });
+    fireEvent.click(screen.getByText('Save'));
+    await waitFor(() => expect(updateSpy).toHaveBeenCalled());
+    expect(patchedRaw()['debt_stack.tranches.0.principal_usd']).toEqual({
+      value: 24_000_000,
+      note: 'Lender resized the senior',
+    });
+  });
+
+  it('re-saving an UNCHANGED value never asks why — the no-op guard runs first', async () => {
+    render(<DebtTab />);
+    fireEvent.click(screen.getByTestId('edit-senior-amount'));
+    const input = document.querySelector('input[type="number"]') as HTMLInputElement;
+    // Opening a field to inspect it and saving it back is not an override, so
+    // it must not demand a justification — it must exit quietly.
+    fireEvent.click(screen.getByText('Save'));
+    await waitFor(() => expect(input).not.toBeInTheDocument());
+    expect(updateSpy).not.toHaveBeenCalled();
   });
 
   it('an overridden term carries the analyst-override provenance badge', () => {

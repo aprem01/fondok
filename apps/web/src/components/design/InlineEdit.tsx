@@ -18,16 +18,20 @@
  *   • `submit()`   — asks `isNoOpEdit` FIRST. On a no-op it exits edit mode,
  *                    says so, and makes no request, so nothing is written and
  *                    the value keeps reporting the source it came from.
+ *                    THEN, and only then, asks for the justification (FON-74):
+ *                    opening a field to inspect it must never demand one.
  *
  * The visual is the canonical blue edit frame from `FieldValue.tsx`
  * ("Editing" specimen) — `InlineEditControls` renders the Save · Cancel pair
- * so every tab shows the same affordance in the same order.
+ * so every tab shows the same affordance in the same order, with the FON-74
+ * note row directly above it when the key needs a justification.
  */
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { CSSProperties } from 'react';
 import { useToast } from '@/components/ui/Toast';
 import { isNoOpEdit, type FieldUnit } from '@/lib/fieldValue';
+import { NOTE_PLACEHOLDER, NOTE_REQUIRED_MESSAGE } from '@/lib/overrideNote';
 import { palette, radius, field } from './tokens';
 
 /** What the analyst is told when Save changed nothing. */
@@ -40,20 +44,34 @@ export interface UseInlineEditOptions<T extends number | string> {
   unit: FieldUnit;
   /** Draft string → persisted value. `null` means "not a valid entry". */
   parse: (draft: string) => T | null;
-  /** Persist the changed value (the PATCH). Only ever called for a real change. */
-  onSave: (value: T) => void | Promise<void>;
+  /**
+   * Persist the changed value (the PATCH). Only ever called for a real change,
+   * and — when `requireNote` — only with a non-empty `note`.
+   */
+  onSave: (value: T, note: string) => void | Promise<void>;
   /** Persisted value → the draft string the editor opens with. */
   toDraft?: (current: T) => string;
   /** Message for an unparseable entry. */
   invalidMessage?: string;
   /** Notified when Save was a no-op (after edit mode has closed). */
   onNoOp?: () => void;
+  /**
+   * FON-74 — this edit changes a number an engine runs on, so Save is refused
+   * until the analyst types a justification. Resolve it with
+   * `requiresNote(key)` from `@/lib/overrideNote`; never hard-code true.
+   */
+  requireNote?: boolean;
 }
 
 export interface InlineEditApi<T extends number | string> {
   editing: boolean;
   draft: string;
   setDraft: (v: string) => void;
+  /** FON-74 — the analyst's justification. Empty until they type one. */
+  note: string;
+  setNote: (v: string) => void;
+  /** Whether this editor demands a justification before it will save. */
+  requireNote: boolean;
   /** Enter edit mode (optionally with an explicit draft). */
   start: (initial?: string) => void;
   /** Leave edit mode, restoring the draft. Never calls the network. */
@@ -102,9 +120,11 @@ export function useInlineEdit<T extends number | string>(
   opts: UseInlineEditOptions<T>,
 ): InlineEditApi<T> {
   const { current, unit, parse, onSave, toDraft, invalidMessage, onNoOp } = opts;
+  const requireNote = opts.requireNote ?? false;
   const { toast } = useToast();
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState('');
+  const [note, setNote] = useState('');
   const [saving, setSaving] = useState(false);
 
   const openDraft = useCallback(
@@ -119,14 +139,17 @@ export function useInlineEdit<T extends number | string>(
   const start = useCallback(
     (initial?: string) => {
       setDraft(openDraft(initial));
+      setNote('');
       setEditing(true);
     },
     [openDraft],
   );
 
   const cancel = useCallback(() => {
-    // Restore the pre-edit display and leave. Nothing is written.
+    // Restore the pre-edit display and leave. Nothing is written, and the
+    // abandoned justification goes with the abandoned value.
     setDraft(openDraft());
+    setNote('');
     setEditing(false);
   }, [openDraft]);
 
@@ -139,18 +162,28 @@ export function useInlineEdit<T extends number | string>(
     // FON-63 — the guard. An unchanged value is not an override.
     if (isNoOpEdit(parsed, current ?? null, unit)) {
       setEditing(false);
+      setNote('');
       toast(NO_OP_EDIT_MESSAGE, { type: 'info' });
       onNoOp?.();
       return;
     }
+    // FON-74 — the justification gate, deliberately AFTER the no-op guard:
+    // opening a field to inspect it and saving it back unchanged must exit
+    // quietly, never demand a reason for a change that isn't one.
+    const trimmed = note.trim();
+    if (requireNote && trimmed === '') {
+      toast(NOTE_REQUIRED_MESSAGE, { type: 'error' });
+      return;
+    }
     setSaving(true);
     try {
-      await onSave(parsed);
+      await onSave(parsed, trimmed);
+      setNote('');
       setEditing(false);
     } finally {
       setSaving(false);
     }
-  }, [draft, parse, current, unit, onSave, toast, invalidMessage, onNoOp]);
+  }, [draft, note, requireNote, parse, current, unit, onSave, toast, invalidMessage, onNoOp]);
 
   const onKeyDown = useCallback(
     (e: { key: string; preventDefault?: () => void }) => {
@@ -169,7 +202,10 @@ export function useInlineEdit<T extends number | string>(
   // must discard, exactly like Esc.
   const containerRef = useCancelOnOutside(editing, cancel);
 
-  return { editing, draft, setDraft, start, cancel, submit, saving, containerRef, onKeyDown };
+  return {
+    editing, draft, setDraft, note, setNote, requireNote,
+    start, cancel, submit, saving, containerRef, onKeyDown,
+  };
 }
 
 export interface InlineEditControlsProps {
@@ -184,11 +220,37 @@ export interface InlineEditControlsProps {
   /** Fill the row (popover editors) instead of hugging the value. */
   block?: boolean;
   style?: CSSProperties;
+  /**
+   * FON-74 — render the justification row above the Save · Cancel pair.
+   * Pass BOTH to turn it on; omit them on an editor that needs no note.
+   */
+  note?: string;
+  onNote?: (v: string) => void;
+  noteTestId?: string;
+  /** Label for the note field (screen readers + the e2e locator). */
+  noteLabel?: string;
 }
+
+/** The canonical justification input treatment. */
+const noteInputStyle: CSSProperties = {
+  fontSize: 11,
+  fontFamily: 'inherit',
+  border: `1px solid ${palette.linkBlue}`,
+  borderRadius: radius.control,
+  padding: '4px 7px',
+  textAlign: 'left',
+  outlineColor: field.input,
+  width: '100%',
+  minWidth: 150,
+};
 
 /**
  * The canonical Save · Cancel pair. Same order, same treatment, every tab —
  * navy Save, outlined Cancel, both labelled for the screen reader.
+ *
+ * FON-74: when `note` / `onNote` are given the justification field renders
+ * directly above the pair, so the affordance is identical on every editor that
+ * changes a number.
  */
 export function InlineEditControls({
   onSave,
@@ -200,9 +262,13 @@ export function InlineEditControls({
   cancelTestId,
   block = false,
   style,
+  note,
+  onNote,
+  noteTestId,
+  noteLabel = 'Override justification',
 }: InlineEditControlsProps) {
-  return (
-    <span style={{ display: 'inline-flex', alignItems: 'center', gap: 7, ...(block ? { width: '100%' } : null), ...style }}>
+  const buttons = (
+    <span style={{ display: 'inline-flex', alignItems: 'center', gap: 7, ...(block ? { width: '100%' } : null), ...(onNote ? null : style) }}>
       <button
         type="button"
         aria-label={saveLabel}
@@ -246,6 +312,29 @@ export function InlineEditControls({
       >
         Cancel
       </button>
+    </span>
+  );
+
+  if (!onNote) return buttons;
+
+  return (
+    <span style={{ display: 'inline-flex', flexDirection: 'column', alignItems: 'stretch', gap: 5, ...style }}>
+      <input
+        type="text"
+        value={note ?? ''}
+        aria-label={noteLabel}
+        placeholder={NOTE_PLACEHOLDER}
+        data-testid={noteTestId}
+        disabled={saving}
+        onChange={(e) => onNote(e.target.value)}
+        onKeyDown={(e) => {
+          // Same contract as the value field: Enter saves, Esc discards.
+          if (e.key === 'Enter') { e.preventDefault(); onSave(); }
+          if (e.key === 'Escape') { e.preventDefault(); onCancel(); }
+        }}
+        style={noteInputStyle}
+      />
+      {buttons}
     </span>
   );
 }

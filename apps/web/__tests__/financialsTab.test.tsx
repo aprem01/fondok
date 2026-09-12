@@ -233,11 +233,33 @@ describe('Financials · Projections — canonical edit path (field_overrides + r
     fireEvent.change(mgmtInput, { target: { value: '5' } });
     fireEvent.blur(mgmtInput);
 
+    // FON-74 — the management fee is engine input, so the change parks until
+    // the analyst says why. Nothing is written and nothing re-runs yet.
+    const note = await screen.findByTestId('assumption-panel-note-mgmt_fee_pct');
+    expect(updateSpy).not.toHaveBeenCalled();
+    expect(engineRunSpy).not.toHaveBeenCalled();
+
+    fireEvent.change(note, { target: { value: 'Operator agreement 9/12' } });
+    fireEvent.click(screen.getByTestId('assumption-panel-save-mgmt_fee_pct'));
+
     await waitFor(() => expect(updateSpy).toHaveBeenCalled());
     const lastCall = updateSpy.mock.calls.at(-1) as [string, { field_overrides: Record<string, unknown> }];
-    const entry = lastCall[1].field_overrides.mgmt_fee_pct as { value: number };
+    const entry = lastCall[1].field_overrides.mgmt_fee_pct as { value: number; note: string };
     expect(entry.value).toBeCloseTo(0.05); // pct persisted as a fraction
+    expect(entry.note).toBe('Operator agreement 9/12');
     expect(engineRunSpy).toHaveBeenCalled(); // full re-run
+  });
+
+  it('FON-74 — an assumption re-typed to its own value never asks why', async () => {
+    render(<ProjectionsSection dealId="deal-uuid-1" />);
+
+    const mgmtRow = screen.getByText('Management fee').parentElement as HTMLElement;
+    const mgmtInput = mgmtRow.querySelector('input[type="number"]') as HTMLInputElement;
+    fireEvent.change(mgmtInput, { target: { value: '3' } }); // the value on screen
+    fireEvent.blur(mgmtInput);
+
+    expect(screen.queryByTestId('assumption-panel-note-mgmt_fee_pct')).not.toBeInTheDocument();
+    expect(updateSpy).not.toHaveBeenCalled();
   });
 });
 
@@ -481,11 +503,27 @@ describe('Financials · Projections — the Stabilization Year', () => {
 
     await waitFor(() => expect(updateSpy).toHaveBeenCalled());
     const body = updateSpy.mock.calls[0][1] as { field_overrides: Record<string, unknown> };
-    expect(body.field_overrides.stabilization_year).toEqual({
-      value: 3,
-      note: 'Stabilization Year set on the Projections page',
-    });
+    // FON-74 — the Stabilization Year is DISPLAY-ONLY (it selects which
+    // projection year the stabilized figures are read from and moves no
+    // return), so it needs no justification — and the software-authored note it
+    // used to carry is gone. A blank note, never an invented one.
+    expect(body.field_overrides.stabilization_year).toEqual({ value: 3 });
+    expect(JSON.stringify(body)).not.toContain('note');
     expect(engineRunSpy).toHaveBeenCalled();
+    OUTPUTS_OVERRIDE = undefined;
+  });
+
+  it('FON-74 — and it never asks the analyst to justify it', async () => {
+    OUTPUTS_OVERRIDE = withBlock();
+    render(<ProjectionsSection dealId="deal-uuid-1" />);
+
+    fireEvent.click(screen.getByTestId('stabilization-year-value'));
+    fireEvent.change(screen.getByLabelText('Stabilization Year'), { target: { value: '3' } });
+    expect(screen.queryByLabelText('Override justification')).not.toBeInTheDocument();
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: 'Save' }));
+    });
+    await waitFor(() => expect(updateSpy).toHaveBeenCalled());
     OUTPUTS_OVERRIDE = undefined;
   });
 

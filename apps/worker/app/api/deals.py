@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 from collections.abc import AsyncIterator
 from datetime import UTC, datetime
 from typing import Annotated, Any, Literal
@@ -510,6 +511,67 @@ def _coerce_float(value: Any) -> float | None:
         return None
 
 
+#: FON-74 — ``field_overrides`` keys that reach ``base`` but move no NUMBER,
+#: so overriding them needs no analyst justification. This list EXTENDS the
+#: engine-input predicate the runner already owns (``_OVERRIDE_NON_ENGINE_KEYS``
+#: in ``services.engine_runner``, imported lazily at the gate); it never
+#: re-derives it. The web mirror is ``apps/web/src/lib/overrideNote.ts`` and
+#: ``apps/web/__tests__/overrideNote.test.ts`` reads BOTH halves of this file to
+#: pin the two together.
+#:
+#: Each entry carries its evidence:
+#:   stabilization_year        display-only; selects which projection year the
+#:                             stabilized figures are read from and moves no
+#:                             return (test_stabilization_year.py).
+#:   property_overview.name    the Property Name — text, not a number.
+#:   debt.completion_guarantee the debt engine's own field comment:
+#:                             "qualitative; no numeric covenant math".
+#:   partnership.waterfall.tier_count   the SHAPE of the waterfall (how many
+#:                             promote tiers), not a value inside one.
+_NOTE_EXEMPT_KEYS: frozenset[str] = frozenset(
+    {
+        "stabilization_year",
+        "property_overview.name",
+        "debt.completion_guarantee",
+        "partnership.waterfall.tier_count",
+    }
+)
+
+#: Pattern-shaped exemptions, same rule.
+#:   ^memo_                    IC-memo prose and its UI state — a justification
+#:                             for a justification is a note about a note.
+#:   waterfall.<i>.removed     a removed tier's tombstone; again, shape.
+_NOTE_EXEMPT_PATTERNS: tuple[re.Pattern[str], ...] = (
+    re.compile(r"^memo_"),
+    re.compile(r"^partnership\.waterfall\.\d+\.removed$"),
+)
+
+
+def _override_note(entry: Any) -> str | None:
+    """The analyst's justification on a ``field_overrides`` entry, or None.
+
+    Accepts both shapes: structured ``{"value": …, "note": …}`` and the legacy
+    bare scalar (which never carries one).
+    """
+    if not isinstance(entry, dict):
+        return None
+    note = entry.get("note")
+    return note.strip() if isinstance(note, str) and note.strip() else None
+
+
+def _override_needs_note(key: str, non_engine_keys: frozenset[str]) -> bool:
+    """FON-74 — does overriding ``key`` require an analyst justification?
+
+    True IFF the key routes into ENGINE INPUT. ``non_engine_keys`` is the
+    runner's own ``_OVERRIDE_NON_ENGINE_KEYS`` (passed in so the import stays
+    lazy); ``_NOTE_EXEMPT_*`` above adds the keys that reach ``base`` but move
+    no number.
+    """
+    if key in non_engine_keys or key in _NOTE_EXEMPT_KEYS:
+        return False
+    return not any(rx.search(key) for rx in _NOTE_EXEMPT_PATTERNS)
+
+
 def _coerce_overrides(value: Any) -> dict[str, Any]:
     """Normalize JSONB column reads — Postgres may hand us a parsed
     dict or a raw JSON string depending on driver/version. Anything
@@ -973,6 +1035,72 @@ async def update_deal(
         # Nothing to update — return the existing row.
         return _row_to_record(dict(existing._mapping))
 
+    # ── FON-74 — the analyst-justification gate ──────────────────────────
+    #
+    # The founder's June 2026 rule: an analyst who overrides a value must
+    # attach a justification. It has to live here and not only in the browser:
+    # an API that can be talked into an unjustified override is an API whose
+    # audit trail cannot be trusted.
+    #
+    # The gate fires ONLY on keys this PATCH actually changes, which is what
+    # makes it safe to turn on against live deals:
+    #   • a legacy bare scalar already stored on a deal is untouched until
+    #     something re-writes it;
+    #   • a SHADOW override (Save on an unchanged value — FON-63) is not a
+    #     change, so it never asks for a reason;
+    #   • CLEARING an override (the key leaves the blob) is a revert to source,
+    #     not an override, so it needs no justification either;
+    #   • `worksheet_layout` — and every other key that moves no number — is
+    #     exempt by name, so drag-to-reorder never 422s.
+    #
+    # The same diff feeds the ``override.set`` audit row below, so the two can
+    # never disagree about what changed.
+    prior_overrides = _coerce_overrides(existing._mapping.get("field_overrides"))
+    new_overrides: dict[str, Any] = {}
+    changed_keys: list[str] = []
+    if "field_overrides" in changes:
+        new_overrides = changes.get("field_overrides") or {}
+        before_flat = {
+            k: (v.get("value") if isinstance(v, dict) else v)
+            for k, v in prior_overrides.items()
+        }
+        after_flat = {
+            k: (v.get("value") if isinstance(v, dict) else v)
+            for k, v in new_overrides.items()
+        }
+        # Lazy import — engine_runner imports this module's siblings. Same
+        # pattern the audit diff below already uses.
+        from ..services.engine_runner import (
+            _OVERRIDE_NON_ENGINE_KEYS,
+            _is_shadow_override,
+        )
+
+        changed_keys = [
+            k
+            for k in (set(before_flat) | set(after_flat))
+            if not _is_shadow_override(before_flat.get(k), after_flat.get(k))
+        ]
+        missing = sorted(
+            k
+            for k in changed_keys
+            if k in new_overrides
+            and _override_needs_note(k, _OVERRIDE_NON_ENGINE_KEYS)
+            and not _override_note(new_overrides.get(k))
+        )
+        if missing:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail={
+                    "code": "override_note_required",
+                    "keys": missing,
+                    "message": (
+                        "An override that changes a number carries an analyst "
+                        "justification. Send it as "
+                        '{"value": …, "note": "why"} on each key listed.'
+                    ),
+                },
+            )
+
     set_clauses: list[str] = []
     params: dict[str, Any] = {"id": str(deal_id), "tenant": tenant_id_str}
     # Postgres stores `field_overrides` as JSONB and needs an explicit
@@ -1011,31 +1139,11 @@ async def update_deal(
     # as an ``override.set`` event with a one-line diff per changed field
     # so the Activity Feed renders "exit_cap_rate: 0.07 → 0.075" instead
     # of an opaque "deal.updated". Other patches keep the legacy shape.
-    prior_overrides = _coerce_overrides(existing._mapping.get("field_overrides"))
     if "field_overrides" in changes:
-        new_overrides = changes.get("field_overrides") or {}
-        # Both sides flattened to ``{path: value}`` for a clean diff.
-        before_flat = {
-            k: (v.get("value") if isinstance(v, dict) else v)
-            for k, v in prior_overrides.items()
-        }
-        after_flat = {
-            k: (v.get("value") if isinstance(v, dict) else v)
-            for k, v in new_overrides.items()
-        }
-        # FON-63 — a Save that changed nothing is not an override event. Without
-        # this the Activity Feed filled with phantom
-        # "exit_cap_rate: 0.07 → 0.07" rows every time an analyst opened a field
-        # to inspect it. Compared key by key with the same tolerance the engine
-        # loader uses, so a re-saved float never reads as a change.
-        # Lazy import — engine_runner imports this module's siblings.
-        from ..services.engine_runner import _is_shadow_override
-
-        changed_keys = [
-            k
-            for k in (set(before_flat) | set(after_flat))
-            if not _is_shadow_override(before_flat.get(k), after_flat.get(k))
-        ]
+        # `before_flat` / `after_flat` / `changed_keys` were computed by the
+        # FON-74 gate above — FON-63's rule still holds: a Save that changed
+        # nothing is not an override event, so the Activity Feed never fills
+        # with phantom "exit_cap_rate: 0.07 → 0.07" rows.
         if changed_keys:
             await log_audit(
                 session,
@@ -1049,7 +1157,21 @@ async def update_deal(
                 before=before_flat,
                 after=after_flat,
                 tags=["override", "wave1"],
-                metadata={"deal_id": str(deal_id), "changed_keys": changed_keys},
+                metadata={
+                    "deal_id": str(deal_id),
+                    "changed_keys": changed_keys,
+                    # FON-74 — the analyst's reason, on the row that records the
+                    # change. `metadata` lands in `payload['metadata']`, which
+                    # `AuditEntry` already carries, so the Activity Feed can
+                    # render it with no schema change. Only keys that HAVE a
+                    # note appear: an exempt key contributes nothing rather
+                    # than an empty string.
+                    "notes": {
+                        k: note
+                        for k in changed_keys
+                        if (note := _override_note(new_overrides.get(k)))
+                    },
+                },
             )
         # Still emit the legacy deal.updated trail so existing dashboards
         # that filter on action='deal.updated' keep firing.
