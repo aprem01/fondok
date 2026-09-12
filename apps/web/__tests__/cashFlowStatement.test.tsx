@@ -157,7 +157,21 @@ describe('cashFlowStatement — pure view-model helpers', () => {
 
 const hoisted = vi.hoisted(() => ({ outputs: null as EngineOutputsResponse | null }));
 
-vi.mock('next/navigation', () => ({ useParams: () => ({ id: 'deal-1' }), useRouter: () => ({ push: vi.fn(), replace: vi.fn(), prefetch: vi.fn(), back: vi.fn() }), useSearchParams: () => new URLSearchParams() }));
+// Mutable routing state (FON-59 #4) - `params` is a REAL URLSearchParams, what
+// Next's ReadonlyURLSearchParams behaves like, so `useSubTab`'s toString()
+// round-trip is exercised rather than stubbed.
+const nav = vi.hoisted(() => ({
+  params: new URLSearchParams(''),
+  pathname: '/projects/deal-1',
+  push: vi.fn(),
+  replace: vi.fn(),
+}));
+vi.mock('next/navigation', () => ({
+  useParams: () => ({ id: 'deal-1' }),
+  useRouter: () => ({ push: nav.push, replace: nav.replace, prefetch: vi.fn(), back: vi.fn() }),
+  useSearchParams: () => nav.params,
+  usePathname: () => nav.pathname,
+}));
 vi.mock('@/components/project/EngineHeader', () => ({ default: () => null }));
 vi.mock('@/components/project/EngineRightRail', () => ({ default: () => null }));
 vi.mock('@/components/project/EngineRunHistory', () => ({ default: () => null }));
@@ -210,5 +224,93 @@ describe('CashFlowTab — render', () => {
     expect(screen.getByRole('button', { name: 'Run Model' })).toBeInTheDocument();
     // No statement chrome leaks onto the placeholder.
     expect(screen.queryByText('Cash Flow Bridge')).not.toBeInTheDocument();
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────
+// Sub-tab routing convention (FON-59 #4 / FON-61 §3)
+//
+// Every sub-tab is now a URL slug on the shared `useSubTab` hook, so a deep
+// link lands where it says, the back button works, and `setSub` keeps every
+// other query param (`doc`, `focus`, `reviewField`) intact.
+// ─────────────────────────────────────────────────────────────────────────
+
+describe('CashFlowTab — `?tab=cash-flow&sub=<slug>` routing', () => {
+  const tabEl = (name: string) => screen.getByRole('tab', { name });
+
+  beforeEach(() => {
+    cleanup();
+    // The sub-tab nav only exists once there is a statement to show.
+    hoisted.outputs = envelope(CF);
+    nav.params = new URLSearchParams('');
+    nav.replace.mockClear();
+    nav.push.mockClear();
+  });
+
+  it('opens Levered / Equity on ?sub=levered-equity', () => {
+    nav.params = new URLSearchParams('tab=cash-flow&sub=levered-equity');
+    render(<CashFlowTab />);
+    expect(tabEl('Levered / Equity')).toHaveAttribute('aria-selected', 'true');
+    expect(tabEl('Summary')).toHaveAttribute('aria-selected', 'false');
+  });
+
+  it('opens Unlevered on ?sub=unlevered', () => {
+    nav.params = new URLSearchParams('tab=cash-flow&sub=unlevered');
+    render(<CashFlowTab />);
+    expect(tabEl('Unlevered')).toHaveAttribute('aria-selected', 'true');
+  });
+
+  it('falls back to Summary on an unknown sub value', () => {
+    nav.params = new URLSearchParams('tab=cash-flow&sub=not-a-sub-tab');
+    render(<CashFlowTab />);
+    expect(tabEl('Summary')).toHaveAttribute('aria-selected', 'true');
+  });
+
+  it('follows a param change while already mounted', () => {
+    nav.params = new URLSearchParams('tab=cash-flow&sub=unlevered');
+    const { rerender } = render(<CashFlowTab />);
+    expect(tabEl('Unlevered')).toHaveAttribute('aria-selected', 'true');
+
+    nav.params = new URLSearchParams('tab=cash-flow&sub=levered-equity');
+    rerender(<CashFlowTab />);
+    expect(tabEl('Levered / Equity')).toHaveAttribute('aria-selected', 'true');
+  });
+
+  it('setSub writes sub= and preserves doc / focus / reviewField', () => {
+    nav.params = new URLSearchParams('tab=cash-flow&doc=doc-9&focus=equity&reviewField=noi_usd');
+    render(<CashFlowTab />);
+    fireEvent.click(tabEl('Unlevered'));
+
+    expect(nav.replace).toHaveBeenCalledTimes(1);
+    const [url, opts] = nav.replace.mock.calls[0] as [string, { scroll: boolean }];
+    expect(opts).toEqual({ scroll: false });
+    const written = new URLSearchParams(url.split('?')[1]);
+    expect(written.get('sub')).toBe('unlevered');
+    expect(written.get('doc')).toBe('doc-9');
+    expect(written.get('focus')).toBe('equity');
+    expect(written.get('reviewField')).toBe('noi_usd');
+  });
+
+  // FON-67 §1 (Sam, 09-11) — "analysts should be able to trace each component
+  // upstream": every banner chip names the sub-tab that holds the figure.
+  it('the output-only banner chips carry the upstream sub-tab', () => {
+    render(<CashFlowTab />);
+    fireEvent.click(screen.getByRole('button', { name: 'Investment →' }));
+    expect(nav.push).toHaveBeenLastCalledWith(
+      '/projects/deal-1?tab=investment&sub=sources-and-uses',
+      { scroll: false },
+    );
+
+    fireEvent.click(screen.getByRole('button', { name: 'Financials →' }));
+    expect(nav.push).toHaveBeenLastCalledWith(
+      '/projects/deal-1?tab=pl&sub=projections',
+      { scroll: false },
+    );
+
+    fireEvent.click(screen.getByRole('button', { name: 'Debt →' }));
+    expect(nav.push).toHaveBeenLastCalledWith(
+      '/projects/deal-1?tab=debt&sub=debt-schedule',
+      { scroll: false },
+    );
   });
 });

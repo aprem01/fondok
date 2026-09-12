@@ -17,6 +17,7 @@
  */
 import { useEffect, useState, type CSSProperties, type ReactNode } from 'react';
 import { useParams } from 'next/navigation';
+import { useSubTab } from '@/lib/hooks/useSubTab';
 import Link from 'next/link';
 import { MapPinned, Loader2 } from 'lucide-react';
 import {
@@ -86,8 +87,15 @@ interface WorkerMarketOverview {
   revpar_index: number | null;
 }
 
-const SUB_TABS = ['Market Overview', 'Transaction Comps', 'Index Analysis'] as const;
-type SubTab = (typeof SUB_TABS)[number];
+// FON-59 #4 / FON-61 §3 — the sub-tab *id* is the URL slug
+// (`?tab=market&sub=…`); the label is display only.
+const SUB_TABS = [
+  { id: 'market-overview', label: 'Market Overview' },
+  { id: 'transaction-comps', label: 'Transaction Comps' },
+  { id: 'index-analysis', label: 'Index Analysis' },
+] as const;
+type SubTab = (typeof SUB_TABS)[number]['id'];
+const SUB_TAB_IDS = SUB_TABS.map((t) => t.id) as readonly SubTab[];
 
 /**
  * FON-61 (D4) — what the "STR rates" card says, read from the WORKER's source
@@ -1076,7 +1084,9 @@ function TransactionCompsSection({
 
 // ─── main ───────────────────────────────────────────────────────────────────
 export default function MarketTab({ projectId }: { projectId: number | string }) {
-  const [tab, setTab] = useState<SubTab>('Market Overview');
+  // One convention — `?tab=market&sub=<slug>`, deep-linkable and back-button
+  // correct, with every other query param (`doc`, `focus`, `reviewField`) kept.
+  const { sub: tab, setSub: setTab } = useSubTab(SUB_TAB_IDS, 'market-overview');
   const { toast } = useToast();
   const params = useParams();
   const dealId = (params?.id as string | undefined) ?? String(projectId);
@@ -1228,9 +1238,9 @@ export default function MarketTab({ projectId }: { projectId: number | string })
   const submarketLabel = deal?.city ?? workerMarket?.market ?? null;
   const compCount = workerComps?.comps.length ?? null;
   const tabCaption =
-    tab === 'Market Overview'
+    tab === 'market-overview'
       ? `STR · CoStar Hospitality${strTrend?.comp_set_size ? ` — ${strTrend.comp_set_size}-property comp set` : ''}`
-      : tab === 'Transaction Comps'
+      : tab === 'transaction-comps'
         ? compCount != null
           ? `${compCount} comp${compCount === 1 ? '' : 's'} extracted from OMs`
           : 'Extracted from Offering Memorandums'
@@ -1259,13 +1269,13 @@ export default function MarketTab({ projectId }: { projectId: number | string })
       </div>
 
       <SubTabNav
-        items={SUB_TABS.map((s) => ({ id: s, label: s }))}
+        items={SUB_TABS.map((s) => ({ id: s.id, label: s.label }))}
         activeId={tab}
         onSelect={(id) => setTab(id as SubTab)}
         caption={tabCaption}
       />
 
-      {tab === 'Market Overview' &&
+      {tab === 'market-overview' &&
         (hasStr && strTrend ? (
           <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
             <SubmarketSnapshot
@@ -1292,7 +1302,7 @@ export default function MarketTab({ projectId }: { projectId: number | string })
             />
             <IndexSummary
               strTrend={strTrend}
-              onOpenIndex={() => setTab('Index Analysis')}
+              onOpenIndex={() => setTab('index-analysis')}
               state={stateOf('revenue', 'rgi_revpar_index', 'document_sourced')}
             />
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(400px,1fr))', gap: 14 }}>
@@ -1351,7 +1361,7 @@ export default function MarketTab({ projectId }: { projectId: number | string })
           </div>
         ))}
 
-      {tab === 'Transaction Comps' && (
+      {tab === 'transaction-comps' && (
         <TransactionCompsSection
           workerComps={workerComps}
           dealId={dealId}
@@ -1361,7 +1371,7 @@ export default function MarketTab({ projectId }: { projectId: number | string })
         />
       )}
 
-      {tab === 'Index Analysis' && <IndexAnalysisSection dealId={dealId} />}
+      {tab === 'index-analysis' && <IndexAnalysisSection dealId={dealId} />}
     </div>
   );
 }

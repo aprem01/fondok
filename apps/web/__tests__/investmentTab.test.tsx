@@ -23,8 +23,20 @@ import { render, screen, fireEvent, cleanup, waitFor } from '@testing-library/re
 import React from 'react';
 import type { EngineOutputsResponse, TimelineResponse } from '@/lib/api';
 
+// Mutable routing state (FON-59 #4) - `params` is a REAL URLSearchParams, what
+// Next's ReadonlyURLSearchParams behaves like, so `useSubTab`'s toString()
+// round-trip is exercised rather than stubbed.
+const nav = vi.hoisted(() => ({
+  params: new URLSearchParams(''),
+  pathname: '/projects/deal-uuid-1',
+  push: vi.fn(),
+  replace: vi.fn(),
+}));
 vi.mock('next/navigation', () => ({
   useParams: () => ({ id: 'deal-uuid-1' }),
+  useRouter: () => ({ push: nav.push, replace: nav.replace, prefetch: vi.fn(), back: vi.fn() }),
+  useSearchParams: () => nav.params,
+  usePathname: () => nav.pathname,
 }));
 
 // The worker outputs under test — the whole tab reads from these.
@@ -326,3 +338,68 @@ describe('InvestmentTab — the FF&E Reserve dash carries its refusal code', () 
   });
 });
 
+
+// ─────────────────────────────────────────────────────────────────────────
+// Sub-tab routing convention (FON-59 #4 / FON-61 §3)
+//
+// Every sub-tab is now a URL slug on the shared `useSubTab` hook, so a deep
+// link lands where it says, the back button works, and `setSub` keeps every
+// other query param (`doc`, `focus`, `reviewField`) intact.
+// ─────────────────────────────────────────────────────────────────────────
+
+describe('InvestmentTab — `?tab=investment&sub=<slug>` routing', () => {
+  const tabEl = (name: string) => screen.getByRole('tab', { name });
+
+  beforeEach(() => {
+    cleanup();
+    nav.params = new URLSearchParams('');
+    nav.replace.mockClear();
+  });
+
+  // FON-66 (Sam, 09-11): "The → Investment link should ideally deep-link to
+  // Investment → Sources & Uses, where the initial equity requirement lives."
+  it('lands on Sources & Uses on ?sub=sources-and-uses (FON-66)', () => {
+    nav.params = new URLSearchParams('tab=investment&sub=sources-and-uses');
+    render(<InvestmentTab />);
+    expect(tabEl('Sources & Uses')).toHaveAttribute('aria-selected', 'true');
+    expect(tabEl('Deal Summary')).toHaveAttribute('aria-selected', 'false');
+    expect(screen.getByText(/Sources & Uses/)).toBeInTheDocument();
+  });
+
+  it('opens Timeline on ?sub=timeline', () => {
+    nav.params = new URLSearchParams('tab=investment&sub=timeline');
+    render(<InvestmentTab />);
+    expect(tabEl('Timeline')).toHaveAttribute('aria-selected', 'true');
+  });
+
+  it('falls back to Deal Summary on an unknown sub value', () => {
+    nav.params = new URLSearchParams('tab=investment&sub=not-a-sub-tab');
+    render(<InvestmentTab />);
+    expect(tabEl('Deal Summary')).toHaveAttribute('aria-selected', 'true');
+  });
+
+  it('follows a param change while already mounted', () => {
+    nav.params = new URLSearchParams('tab=investment&sub=sources-and-uses');
+    const { rerender } = render(<InvestmentTab />);
+    expect(tabEl('Sources & Uses')).toHaveAttribute('aria-selected', 'true');
+
+    nav.params = new URLSearchParams('tab=investment&sub=timeline');
+    rerender(<InvestmentTab />);
+    expect(tabEl('Timeline')).toHaveAttribute('aria-selected', 'true');
+  });
+
+  it('setSub writes sub= and preserves doc / focus / reviewField', () => {
+    nav.params = new URLSearchParams('tab=investment&doc=doc-9&focus=equity&reviewField=noi_usd');
+    render(<InvestmentTab />);
+    fireEvent.click(tabEl('Sources & Uses'));
+
+    expect(nav.replace).toHaveBeenCalledTimes(1);
+    const [url, opts] = nav.replace.mock.calls[0] as [string, { scroll: boolean }];
+    expect(opts).toEqual({ scroll: false });
+    const written = new URLSearchParams(url.split('?')[1]);
+    expect(written.get('sub')).toBe('sources-and-uses');
+    expect(written.get('doc')).toBe('doc-9');
+    expect(written.get('focus')).toBe('equity');
+    expect(written.get('reviewField')).toBe('noi_usd');
+  });
+});

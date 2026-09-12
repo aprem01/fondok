@@ -30,9 +30,20 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, fireEvent, cleanup, waitFor, act } from '@testing-library/react';
 import type { EngineOutputsResponse } from '@/lib/api';
 
+// Mutable routing state (FON-59 #4) - `params` is a REAL URLSearchParams, what
+// Next's ReadonlyURLSearchParams behaves like, so `useSubTab`'s toString()
+// round-trip is exercised rather than stubbed.
+const nav = vi.hoisted(() => ({
+  params: new URLSearchParams(''),
+  pathname: '/projects/deal-uuid-1',
+  push: vi.fn(),
+  replace: vi.fn(),
+}));
 vi.mock('next/navigation', () => ({
   useParams: () => ({ id: 'deal-uuid-1' }),
-  useRouter: () => ({ push: vi.fn() }),
+  useRouter: () => ({ push: nav.push, replace: nav.replace, prefetch: vi.fn(), back: vi.fn() }),
+  useSearchParams: () => nav.params,
+  usePathname: () => nav.pathname,
 }));
 
 const SENIOR_TRANCHE = {
@@ -575,5 +586,78 @@ describe('DebtTab — senior origination fee (FON-63)', () => {
     render(<DebtTab />);
     const body = await editAndSave('edit-orig-fee', '0');
     expect(body['debt_stack.tranches.0.upfront_fee_pct']).toBe(0);
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────
+// Sub-tab routing convention (FON-59 #4 / FON-61 §3)
+//
+// Every sub-tab is now a URL slug on the shared `useSubTab` hook, so a deep
+// link lands where it says, the back button works, and `setSub` keeps every
+// other query param (`doc`, `focus`, `reviewField`) intact.
+// ─────────────────────────────────────────────────────────────────────────
+
+describe('DebtTab — `?tab=debt&sub=<slug>` routing', () => {
+  const tabEl = (name: string) => screen.getByRole('tab', { name });
+
+  beforeEach(() => {
+    cleanup();
+    nav.params = new URLSearchParams('');
+    nav.replace.mockClear();
+  });
+
+  it('opens Debt Schedule on ?sub=debt-schedule', () => {
+    nav.params = new URLSearchParams('tab=debt&sub=debt-schedule');
+    render(<DebtTab />);
+    expect(tabEl('Debt Schedule')).toHaveAttribute('aria-selected', 'true');
+    expect(tabEl('Debt Overview')).toHaveAttribute('aria-selected', 'false');
+  });
+
+  it('opens Loan Terms & Covenants on ?sub=loan-terms', () => {
+    nav.params = new URLSearchParams('tab=debt&sub=loan-terms');
+    render(<DebtTab />);
+    expect(tabEl('Loan Terms & Covenants')).toHaveAttribute('aria-selected', 'true');
+  });
+
+  it('falls back to Debt Overview on an unknown sub value', () => {
+    nav.params = new URLSearchParams('tab=debt&sub=not-a-sub-tab');
+    render(<DebtTab />);
+    expect(tabEl('Debt Overview')).toHaveAttribute('aria-selected', 'true');
+  });
+
+  it('follows a param change while already mounted', () => {
+    nav.params = new URLSearchParams('tab=debt&sub=refinance');
+    const { rerender } = render(<DebtTab />);
+    expect(tabEl('Refinance')).toHaveAttribute('aria-selected', 'true');
+
+    nav.params = new URLSearchParams('tab=debt&sub=debt-schedule');
+    rerender(<DebtTab />);
+    expect(tabEl('Debt Schedule')).toHaveAttribute('aria-selected', 'true');
+  });
+
+  it('setSub writes sub= and preserves doc / focus / reviewField', () => {
+    nav.params = new URLSearchParams('tab=debt&doc=doc-9&focus=dscr&reviewField=noi_usd');
+    render(<DebtTab />);
+    fireEvent.click(tabEl('Debt Schedule'));
+
+    expect(nav.replace).toHaveBeenCalledTimes(1);
+    const [url, opts] = nav.replace.mock.calls[0] as [string, { scroll: boolean }];
+    expect(opts).toEqual({ scroll: false });
+    const written = new URLSearchParams(url.split('?')[1]);
+    expect(written.get('sub')).toBe('debt-schedule');
+    expect(written.get('doc')).toBe('doc-9');
+    expect(written.get('focus')).toBe('dscr');
+    expect(written.get('reviewField')).toBe('noi_usd');
+  });
+
+  // FON-66 / FON-67 §1 — the linked capital figures Debt echoes live on
+  // Investment → Sources & Uses, so that is where the link must land.
+  it('the "→ Investment" links deep-link to Sources & Uses', () => {
+    render(<DebtTab />);
+    const links = screen.getAllByRole('link', { name: '→ Investment' });
+    expect(links.length).toBeGreaterThan(0);
+    for (const a of links) {
+      expect(a.getAttribute('href')).toBe('?tab=investment&sub=sources-and-uses');
+    }
   });
 });

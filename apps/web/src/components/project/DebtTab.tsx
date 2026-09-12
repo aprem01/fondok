@@ -54,6 +54,7 @@ import {
   type ReactNode,
 } from 'react';
 import { useParams } from 'next/navigation';
+import { useSubTab } from '@/lib/hooks/useSubTab';
 import { DollarSign } from 'lucide-react';
 import { Card } from '@/components/ui/Card';
 import { Button } from '@/components/ui/Button';
@@ -93,12 +94,16 @@ import {
 import type { FieldUnit } from '@/lib/fieldValue';
 
 // ─── Canonical sub-tabs (design/canonical/Debt Tab.dc.html) ─────────────
+// FON-59 #4 — the sub-tab *id* is the URL slug (`?tab=debt&sub=…`); the label
+// is display only.
 const SUB_TABS = [
-  { id: 'Debt Overview', label: 'Debt Overview' },
-  { id: 'Loan Terms & Covenants', label: 'Loan Terms & Covenants' },
-  { id: 'Refinance', label: 'Refinance' },
-  { id: 'Debt Schedule', label: 'Debt Schedule' },
-];
+  { id: 'debt-overview', label: 'Debt Overview' },
+  { id: 'loan-terms', label: 'Loan Terms & Covenants' },
+  { id: 'refinance', label: 'Refinance' },
+  { id: 'debt-schedule', label: 'Debt Schedule' },
+] as const;
+type SubTab = (typeof SUB_TABS)[number]['id'];
+const SUB_TAB_IDS = SUB_TABS.map((t) => t.id) as readonly SubTab[];
 
 // ─── Worker output shapes (only the fields we read) ─────────────────────
 interface DebtYearLite {
@@ -209,7 +214,9 @@ interface RowDef {
    *  an overridden row always badges `analyst_override`. */
   source?: string | null;
   note?: ReactNode;
-  link?: { label: string; tab: string };
+  /** FON-66 / FON-67 §1 — `sub` names the target's sub-tab, so "→ Investment"
+   *  lands on Sources & Uses, the view that actually holds the figure. */
+  link?: { label: string; tab: string; sub?: string };
 }
 
 const has = (v: number | undefined | null): v is number => v != null && Number.isFinite(v);
@@ -275,7 +282,8 @@ function readOverrideNum(
 }
 
 export default function DebtTab() {
-  const [tab, setTab] = useState('Debt Overview');
+  // `?tab=debt&sub=<slug>` — one convention, deep-linkable.
+  const { sub: tab, setSub: setTab } = useSubTab(SUB_TAB_IDS, 'debt-overview');
   const [period, setPeriod] = useState<'Annual' | 'Monthly'>('Annual');
   const params = useParams();
   const dealId = (params?.id as string | undefined) ?? '';
@@ -497,11 +505,11 @@ export default function DebtTab() {
   const refiActive = has(wRefiYear) && wRefiYear > 0;
   const refiYearOverride = readOverrideNum(overrides, 'debt_stack.refi_test_year', 0);
 
-  const SUB_CAPTION: Record<string, string> = {
-    'Debt Overview': 'Sizing, pricing and the annual schedule',
-    'Loan Terms & Covenants': 'Full term sheet and covenant tests',
-    Refinance: refiActive ? 'Included in the model' : 'Excluded from the model until enabled',
-    'Debt Schedule': 'Period-by-period detail',
+  const SUB_CAPTION: Record<SubTab, string> = {
+    'debt-overview': 'Sizing, pricing and the annual schedule',
+    'loan-terms': 'Full term sheet and covenant tests',
+    refinance: refiActive ? 'Included in the model' : 'Excluded from the model until enabled',
+    'debt-schedule': 'Period-by-period detail',
   };
 
   // ─── Senior loan inputs (index 0) ────────────────────────────────────
@@ -598,10 +606,10 @@ export default function DebtTab() {
   // ─── Debt Overview rows ───────────────────────────────────────────────
   const capitalStructure: RowDef[] = [
     { id: 'purchase', label: 'Purchase Price / Property Value', kind: 'linked', state: 'linked',
-      value: money(wPurchase), link: { label: '→ Investment', tab: 'investment' },
+      value: money(wPurchase), link: { label: '→ Investment', tab: 'investment', sub: 'sources-and-uses' },
       note: 'The LTV denominator — purchase price at close' },
     { id: 'basis', label: 'Total Cost / Basis', kind: 'linked', state: 'linked',
-      value: money(wTotalBasis), link: { label: '→ Investment', tab: 'investment' },
+      value: money(wTotalBasis), link: { label: '→ Investment', tab: 'investment', sub: 'sources-and-uses' },
       note: 'Purchase plus renovation, closing costs and reserves — the LTC denominator' },
     { id: 'loan', label: 'Senior Loan Amount', kind: 'input',
       state: 'assumption', value: seniorAmountNode, overridden: ltvOverridden,
@@ -621,7 +629,7 @@ export default function DebtTab() {
     { id: 'ltc', label: 'LTC', kind: 'calc',
       state: tracedState('capital', 'ltc') ?? 'calculated', value: pctv(ltcN, 1) },
     { id: 'equity', label: 'Equity Requirement', kind: 'calc', bold: true, state: 'linked',
-      value: money(wEquity), link: { label: '→ Investment', tab: 'investment' } },
+      value: money(wEquity), link: { label: '→ Investment', tab: 'investment', sub: 'sources-and-uses' } },
   ];
 
   // ─── Loan Terms (senior) — every core term is an input ───────────────
@@ -1009,7 +1017,7 @@ export default function DebtTab() {
                 Terms sheet on the Loan Terms & Covenants sub-tab. */}
             <button
               type="button"
-              onClick={() => setTab('Loan Terms & Covenants')}
+              onClick={() => setTab('loan-terms')}
               style={{
                 marginLeft: 'auto', background: palette.inkNavy, color: '#fff', border: 'none',
                 borderRadius: 6, padding: '6px 13px', fontSize: 11.5, fontWeight: 600,
@@ -1034,16 +1042,16 @@ export default function DebtTab() {
         </div>
 
         <SubTabNav
-          items={SUB_TABS}
+          items={SUB_TABS.map((t) => ({ id: t.id, label: t.label }))}
           activeId={tab}
-          onSelect={setTab}
+          onSelect={(id) => setTab(id as SubTab)}
           caption={SUB_CAPTION[tab]}
           style={{ marginBottom: 14 }}
         />
 
         <div className={cn(computing && 'relative pointer-events-none opacity-60')}>
           {/* ─── Debt Overview ─────────────────────────────────────────── */}
-          {tab === 'Debt Overview' && (
+          {tab === 'debt-overview' && (
             <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
               <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(430px,1fr))', gap: 14 }}>
                 <SectionCard title="Capital Structure" note="Amounts and LTV are your inputs — LTC and equity are outputs">
@@ -1074,7 +1082,7 @@ export default function DebtTab() {
                         {m.needsThreshold ? (
                           <button
                             type="button"
-                            onClick={() => setTab('Loan Terms & Covenants')}
+                            onClick={() => setTab('loan-terms')}
                             style={{ fontSize: 10.5, color: palette.linkBlue, fontWeight: 600, background: 'none', border: 'none', padding: 0, cursor: 'pointer', fontFamily: 'inherit' }}
                           >
                             {m.covenant}
@@ -1091,7 +1099,7 @@ export default function DebtTab() {
               <SectionCard
                 variant="title"
                 title="Debt Schedule — Annual"
-                note={<a href="?tab=debt" onClick={(e) => { e.preventDefault(); setTab('Debt Schedule'); }} style={{ color: palette.linkBlue, fontWeight: 600, cursor: 'pointer', textDecoration: 'none' }}>Monthly detail in Debt Schedule →</a>}
+                note={<a href="?tab=debt" onClick={(e) => { e.preventDefault(); setTab('debt-schedule'); }} style={{ color: palette.linkBlue, fontWeight: 600, cursor: 'pointer', textDecoration: 'none' }}>Monthly detail in Debt Schedule →</a>}
               >
                 {annualSrc.length > 0 ? (
                   <StatementTable
@@ -1130,7 +1138,7 @@ export default function DebtTab() {
           )}
 
           {/* ─── Loan Terms & Covenants ────────────────────────────────── */}
-          {tab === 'Loan Terms & Covenants' && (
+          {tab === 'loan-terms' && (
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(430px,1fr))', gap: 14 }}>
               <SectionCard title="Full Loan Terms" note="Your inputs — Fondok does not read the term sheet in this release">
                 {fullTerms.map((r) => <DebtRow key={r.id} row={r} />)}
@@ -1228,7 +1236,7 @@ export default function DebtTab() {
           )}
 
           {/* ─── Refinance ─────────────────────────────────────────────── */}
-          {tab === 'Refinance' && (
+          {tab === 'refinance' && (
             <RefinanceView
               active={refiActive}
               liveMode={liveMode}
@@ -1249,7 +1257,7 @@ export default function DebtTab() {
           )}
 
           {/* ─── Debt Schedule ─────────────────────────────────────────── */}
-          {tab === 'Debt Schedule' && (
+          {tab === 'debt-schedule' && (
             <SectionCard
               variant="title"
               title="Debt Schedule"
@@ -1309,7 +1317,7 @@ function DebtRow({ row }: { row: RowDef }) {
           <ProvenanceDot state={row.state} size={8} />
           <span style={{ color: palette.textSecondary, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{row.label}</span>
           {row.link && (
-            <a href={`?tab=${row.link.tab}`} style={{ fontSize: 10.5, color: palette.linkBlue, fontWeight: 600, whiteSpace: 'nowrap', textDecoration: 'none' }}>{row.link.label}</a>
+            <a href={`?tab=${row.link.tab}${row.link.sub ? `&sub=${row.link.sub}` : ''}`} style={{ fontSize: 10.5, color: palette.linkBlue, fontWeight: 600, whiteSpace: 'nowrap', textDecoration: 'none' }}>{row.link.label}</a>
           )}
         </span>
         <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6, flexShrink: 0 }}>

@@ -23,8 +23,20 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, fireEvent, cleanup, within } from '@testing-library/react';
 import type { EngineOutputsResponse } from '@/lib/api';
 
+// Mutable routing state (FON-59 #4) - `params` is a REAL URLSearchParams, what
+// Next's ReadonlyURLSearchParams behaves like, so `useSubTab`'s toString()
+// round-trip is exercised rather than stubbed.
+const nav = vi.hoisted(() => ({
+  params: new URLSearchParams(''),
+  pathname: '/projects/deal-uuid-1',
+  push: vi.fn(),
+  replace: vi.fn(),
+}));
 vi.mock('next/navigation', () => ({
   useParams: () => ({ id: 'deal-uuid-1' }),
+  useRouter: () => ({ push: nav.push, replace: nav.replace, prefetch: vi.fn(), back: vi.fn() }),
+  useSearchParams: () => nav.params,
+  usePathname: () => nav.pathname,
 }));
 
 // The worker outputs under test — the whole tab reads from these.
@@ -291,5 +303,75 @@ describe('PartnershipTab — FON-67 additional contributions read from the engin
     expect(screen.queryByText('-$900,000')).not.toBeInTheDocument();
     // Stated on both the Invested-equity card and the grid footnote.
     expect(screen.getAllByText(/dated pro-rata GP\/LP capital call/i).length).toBeGreaterThan(0);
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────
+// Sub-tab routing convention (FON-59 #4 / FON-61 §3)
+//
+// Every sub-tab is now a URL slug on the shared `useSubTab` hook, so a deep
+// link lands where it says, the back button works, and `setSub` keeps every
+// other query param (`doc`, `focus`, `reviewField`) intact.
+// ─────────────────────────────────────────────────────────────────────────
+
+describe('PartnershipTab — `?tab=partnership&sub=<slug>` routing', () => {
+  const tabEl = (name: string) => screen.getByRole('tab', { name });
+
+  beforeEach(() => {
+    cleanup();
+    nav.params = new URLSearchParams('');
+    nav.replace.mockClear();
+  });
+
+  it('opens Waterfall on ?sub=waterfall', () => {
+    nav.params = new URLSearchParams('tab=partnership&sub=waterfall');
+    render(<PartnershipTab />);
+    expect(tabEl('Waterfall')).toHaveAttribute('aria-selected', 'true');
+    expect(tabEl('Summary')).toHaveAttribute('aria-selected', 'false');
+  });
+
+  it('opens Cash Flows on ?sub=cash-flows', () => {
+    nav.params = new URLSearchParams('tab=partnership&sub=cash-flows');
+    render(<PartnershipTab />);
+    expect(tabEl('Cash Flows')).toHaveAttribute('aria-selected', 'true');
+  });
+
+  it('falls back to Summary on an unknown sub value', () => {
+    nav.params = new URLSearchParams('tab=partnership&sub=not-a-sub-tab');
+    render(<PartnershipTab />);
+    expect(tabEl('Summary')).toHaveAttribute('aria-selected', 'true');
+  });
+
+  it('follows a param change while already mounted', () => {
+    nav.params = new URLSearchParams('tab=partnership&sub=waterfall');
+    const { rerender } = render(<PartnershipTab />);
+    expect(tabEl('Waterfall')).toHaveAttribute('aria-selected', 'true');
+
+    nav.params = new URLSearchParams('tab=partnership&sub=cash-flows');
+    rerender(<PartnershipTab />);
+    expect(tabEl('Cash Flows')).toHaveAttribute('aria-selected', 'true');
+  });
+
+  it('setSub writes sub= and preserves doc / focus / reviewField', () => {
+    nav.params = new URLSearchParams('tab=partnership&doc=doc-9&focus=promote&reviewField=noi_usd');
+    render(<PartnershipTab />);
+    fireEvent.click(tabEl('Cash Flows'));
+
+    expect(nav.replace).toHaveBeenCalledTimes(1);
+    const [url, opts] = nav.replace.mock.calls[0] as [string, { scroll: boolean }];
+    expect(opts).toEqual({ scroll: false });
+    const written = new URLSearchParams(url.split('?')[1]);
+    expect(written.get('sub')).toBe('cash-flows');
+    expect(written.get('doc')).toBe('doc-9');
+    expect(written.get('focus')).toBe('promote');
+    expect(written.get('reviewField')).toBe('noi_usd');
+  });
+
+  // FON-66 (Sam, 09-11) — Total Equity cites Investment; the initial equity
+  // requirement lives on Investment → Sources & Uses, so land there.
+  it('the "→ Investment" link deep-links to Sources & Uses (FON-66)', () => {
+    render(<PartnershipTab />);
+    const a = screen.getByRole('link', { name: '→ Investment' });
+    expect(a.getAttribute('href')).toBe('?tab=investment&sub=sources-and-uses');
   });
 });

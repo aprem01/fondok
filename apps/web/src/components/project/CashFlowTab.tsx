@@ -1,6 +1,7 @@
 'use client';
 import { useMemo, useState } from 'react';
 import { useParams, useRouter } from 'next/navigation';
+import { useSubTab } from '@/lib/hooks/useSubTab';
 import { Activity } from 'lucide-react';
 import { Card } from '@/components/ui/Card';
 import { Button } from '@/components/ui/Button';
@@ -38,13 +39,21 @@ import {
   type CashFlowBridgeRow,
 } from './cashFlowStatement';
 
-const subTabs = ['Summary', 'Unlevered', 'Levered / Equity'];
+// FON-59 #4 — the sub-tab *id* is the URL slug (`?tab=cash-flow&sub=…`); the
+// label is display only.
+const SUB_TABS = [
+  { id: 'summary', label: 'Summary' },
+  { id: 'unlevered', label: 'Unlevered' },
+  { id: 'levered-equity', label: 'Levered / Equity' },
+] as const;
+type SubTab = (typeof SUB_TABS)[number]['id'];
+const SUB_TAB_IDS = SUB_TABS.map((t) => t.id) as readonly SubTab[];
 
 // Per-sub-tab caption, right-aligned on the sub-tab row (Cash Flow Tab.dc.html
 // `subTabCaption`).
-function subTabCaption(tab: string): string {
-  if (tab === 'Summary') return 'What the deal returns to equity, and when';
-  if (tab === 'Unlevered') return 'Property cash flow before financing';
+function subTabCaption(tab: SubTab): string {
+  if (tab === 'summary') return 'What the deal returns to equity, and when';
+  if (tab === 'unlevered') return 'Property cash flow before financing';
   return 'How debt, refinance and exit reach equity';
 }
 
@@ -90,14 +99,21 @@ const STATEMENT_LABEL_CANONICAL: Record<string, string> = {
 
 // The 4 cross-tab link chips on the output-only banner (Cash Flow Tab.dc.html
 // banner). Tab ids match the project page's ?tab= routing.
-const CROSS_TAB_LINKS: { label: string; tab: string }[] = [
-  { label: 'Financials →', tab: 'pl' },
-  { label: 'Investment →', tab: 'investment' },
-  { label: 'Debt →', tab: 'debt' },
-  { label: 'Partnership →', tab: 'partnership' },
+//
+// FON-67 §1 (Sam, 09-11): "upstream/linked values are read-only AND
+// non-clickable … analysts should be able to trace each component upstream."
+// Each chip therefore names the SUB-TAB that actually holds the figure Cash
+// Flow is echoing — Initial Equity Required is on Investment → Sources & Uses,
+// the NOI path is on Financials → Projections, and the proceeds / interest /
+// amortization / payoff series is Debt → Debt Schedule.
+const CROSS_TAB_LINKS: { label: string; tab: string; sub: string }[] = [
+  { label: 'Financials →', tab: 'pl', sub: 'projections' },
+  { label: 'Investment →', tab: 'investment', sub: 'sources-and-uses' },
+  { label: 'Debt →', tab: 'debt', sub: 'debt-schedule' },
+  { label: 'Partnership →', tab: 'partnership', sub: 'cash-flows' },
 ];
 
-function OutputOnlyBanner({ onNavigate }: { onNavigate: (tab: string) => void }) {
+function OutputOnlyBanner({ onNavigate }: { onNavigate: (tab: string, sub: string) => void }) {
   return (
     <div className="flex flex-wrap items-center gap-3 bg-ink-300/5 border border-border rounded-md px-3.5 py-2.5 mb-4 text-[11.5px] text-ink-500">
       <span className="text-[10px] font-semibold uppercase tracking-wide text-ink-400 whitespace-nowrap">
@@ -112,7 +128,7 @@ function OutputOnlyBanner({ onNavigate }: { onNavigate: (tab: string) => void })
           <button
             key={l.tab}
             type="button"
-            onClick={() => onNavigate(l.tab)}
+            onClick={() => onNavigate(l.tab, l.sub)}
             className="font-semibold whitespace-nowrap cursor-pointer"
             style={{ color: '#2f4a8c' }}
           >
@@ -131,7 +147,8 @@ function cell(v: number | null | undefined): string {
 }
 
 export default function CashFlowTab() {
-  const [tab, setTab] = useState('Summary');
+  // `?tab=cash-flow&sub=<slug>` — one convention, deep-linkable.
+  const { sub: tab, setSub: setTab } = useSubTab(SUB_TAB_IDS, 'summary');
   const params = useParams();
   const router = useRouter();
   const { toast } = useToast();
@@ -146,9 +163,9 @@ export default function CashFlowTab() {
 
   // Cross-tab navigation for the output-only banner chips — mirrors the project
   // page's ?tab= routing without touching page.tsx.
-  const go = (tabId: string) => {
+  const go = (tabId: string, sub?: string) => {
     if (!dealId) return;
-    router.push(`/projects/${dealId}?tab=${tabId}`, { scroll: false });
+    router.push(`/projects/${dealId}?tab=${tabId}${sub ? `&sub=${sub}` : ''}`, { scroll: false });
   };
 
   // Fallback: a deal whose canonical run predates the cash_flow engine has no
@@ -236,15 +253,15 @@ export default function CashFlowTab() {
 
         <SubTabNav
           className="mb-3"
-          items={subTabs.map((t) => ({ id: t, label: t }))}
+          items={SUB_TABS.map((t) => ({ id: t.id, label: t.label }))}
           activeId={tab}
-          onSelect={setTab}
+          onSelect={(id) => setTab(id as SubTab)}
           caption={subTabCaption(tab)}
         />
 
         <div className={cn(computing && 'relative pointer-events-none opacity-60')}>
-          {tab === 'Summary' && <SummaryView cf={cf} />}
-          {tab === 'Unlevered' && (
+          {tab === 'summary' && <SummaryView cf={cf} />}
+          {tab === 'unlevered' && (
             <CashFlowStatement
               cf={cf}
               section="unlevered"
@@ -253,7 +270,7 @@ export default function CashFlowTab() {
               footnote="Terminal value is shown as its own bridge — gross sale proceeds less selling and disposition costs — rather than folded into a single unexplained exit-year number."
             />
           )}
-          {tab === 'Levered / Equity' && (
+          {tab === 'levered-equity' && (
             <CashFlowStatement
               cf={cf}
               section="levered"

@@ -20,10 +20,22 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, fireEvent, cleanup, within, waitFor } from '@testing-library/react';
 import React from 'react';
 
+// Non-numeric id → the live worker fetch path runs (numeric ids are treated
+// as mock/demo and skip the fetch).
+// Mutable routing state (FON-59 #4) - `params` is a REAL URLSearchParams, what
+// Next's ReadonlyURLSearchParams behaves like, so `useSubTab`'s toString()
+// round-trip is exercised rather than stubbed.
+const nav = vi.hoisted(() => ({
+  params: new URLSearchParams(''),
+  pathname: '/projects/deal-uuid-1',
+  push: vi.fn(),
+  replace: vi.fn(),
+}));
 vi.mock('next/navigation', () => ({
-  // Non-numeric id → the live worker fetch path runs (numeric ids are treated
-  // as mock/demo and skip the fetch).
   useParams: () => ({ id: 'deal-uuid-1' }),
+  useRouter: () => ({ push: nav.push, replace: nav.replace, prefetch: vi.fn(), back: vi.fn() }),
+  useSearchParams: () => nav.params,
+  usePathname: () => nav.pathname,
 }));
 
 // Real aggregated STR/CoStar market data. Subject metrics + published MPI/ARI/
@@ -464,3 +476,68 @@ describe('MarketTab — Transaction Comps property names are plain text', () => 
   });
 });
 
+
+// ─────────────────────────────────────────────────────────────────────────
+// Sub-tab routing convention (FON-59 #4 / FON-61 §3)
+//
+// Every sub-tab is now a URL slug on the shared `useSubTab` hook, so a deep
+// link lands where it says, the back button works, and `setSub` keeps every
+// other query param (`doc`, `focus`, `reviewField`) intact.
+// ─────────────────────────────────────────────────────────────────────────
+
+describe('MarketTab — `?tab=market&sub=<slug>` routing', () => {
+  const tabEl = (name: string) => screen.getByRole('tab', { name });
+  const mount = () => render(<MarketTab projectId="deal-uuid-1" />);
+
+  beforeEach(() => {
+    cleanup();
+    nav.params = new URLSearchParams('');
+    nav.replace.mockClear();
+  });
+
+  it('opens Transaction Comps on ?sub=transaction-comps', async () => {
+    nav.params = new URLSearchParams('tab=market&sub=transaction-comps');
+    mount();
+    await waitFor(() => expect(tabEl('Transaction Comps')).toHaveAttribute('aria-selected', 'true'));
+    expect(tabEl('Market Overview')).toHaveAttribute('aria-selected', 'false');
+  });
+
+  it('opens Index Analysis on ?sub=index-analysis', async () => {
+    nav.params = new URLSearchParams('tab=market&sub=index-analysis');
+    mount();
+    await waitFor(() => expect(tabEl('Index Analysis')).toHaveAttribute('aria-selected', 'true'));
+  });
+
+  it('falls back to Market Overview on an unknown sub value', async () => {
+    nav.params = new URLSearchParams('tab=market&sub=not-a-sub-tab');
+    mount();
+    await waitFor(() => expect(tabEl('Market Overview')).toHaveAttribute('aria-selected', 'true'));
+  });
+
+  it('follows a param change while already mounted', async () => {
+    nav.params = new URLSearchParams('tab=market&sub=transaction-comps');
+    const { rerender } = mount();
+    await waitFor(() => expect(tabEl('Transaction Comps')).toHaveAttribute('aria-selected', 'true'));
+
+    nav.params = new URLSearchParams('tab=market&sub=index-analysis');
+    rerender(<MarketTab projectId="deal-uuid-1" />);
+    await waitFor(() => expect(tabEl('Index Analysis')).toHaveAttribute('aria-selected', 'true'));
+  });
+
+  it('setSub writes sub= and preserves doc / focus / reviewField', async () => {
+    nav.params = new URLSearchParams('tab=market&doc=doc-9&focus=noi&reviewField=noi_usd');
+    mount();
+    await waitFor(() => expect(tabEl('Market Overview')).toHaveAttribute('aria-selected', 'true'));
+
+    fireEvent.click(tabEl('Index Analysis'));
+    expect(nav.replace).toHaveBeenCalledTimes(1);
+    const [url, opts] = nav.replace.mock.calls[0] as [string, { scroll: boolean }];
+    expect(opts).toEqual({ scroll: false });
+    const written = new URLSearchParams(url.split('?')[1]);
+    expect(written.get('sub')).toBe('index-analysis');
+    expect(written.get('doc')).toBe('doc-9');
+    expect(written.get('focus')).toBe('noi');
+    expect(written.get('reviewField')).toBe('noi_usd');
+    expect(tabEl('Index Analysis')).toHaveAttribute('aria-selected', 'true');
+  });
+});

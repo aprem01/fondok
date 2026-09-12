@@ -35,6 +35,7 @@ vi.mock('next/navigation', () => ({
   useParams: () => ({ id: 'deal-1' }),
   useRouter: () => ({ push: vi.fn(), replace: vi.fn(), prefetch: vi.fn(), back: vi.fn() }),
   useSearchParams: () => new URLSearchParams(),
+  usePathname: () => '/projects/deal-1',
 }));
 
 const NO_TARGET =

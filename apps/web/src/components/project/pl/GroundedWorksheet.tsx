@@ -331,10 +331,18 @@ export default function GroundedWorksheet({
   const running = status === 'running' || status === 'queued';
 
   const searchParams = useSearchParams();
-  const wl = useWorksheetLayout(rawId);
   // FON-41 §3 — structure editing (add / move / rename / hide / split) is an
-  // analyst affordance again. It is PRESENTATION-ONLY: the layout lives in
-  // ``useWorksheetLayout`` (device-local) and never reaches the engines.
+  // analyst affordance again. It is PRESENTATION-ONLY, but it is a DEAL
+  // artifact, not a per-browser preference: the layout persists to
+  // ``field_overrides.worksheet_layout`` so every reviewer opens the same
+  // statement. It still never reaches the engines.
+  const wl = useWorksheetLayout(rawId, {
+    deal,
+    onError: (msg) => toast(msg, { type: 'error' }),
+    // Keep the deal row current so the next layout PATCH merges onto the
+    // overrides the worker actually holds, not a stale copy.
+    onSaved: () => { void refreshDeal?.(); },
+  });
   const [customize, setCustomize] = useState(false);
   const [draft, setDraft] = useState<Record<string, string>>({});
   const [savingKey, setSavingKey] = useState<string | null>(null);
@@ -804,6 +812,24 @@ export default function GroundedWorksheet({
               <RotateCcw size={11} aria-hidden="true" /> Reset layout
             </button>
           )}
+          {/* A layout edit that did not reach the deal must never look saved
+              (FON-41). The chip stays until a retry succeeds. */}
+          {wl.saveError && (
+            <span
+              role="status"
+              title={wl.saveError}
+              className="inline-flex items-center gap-1.5 text-[11.5px] font-medium text-danger-700 bg-danger-50 border border-danger-500/30 rounded-md px-2 py-0.5"
+            >
+              <AlertTriangle size={11} aria-hidden="true" /> Layout not saved
+              <button
+                type="button"
+                onClick={() => wl.retrySave()}
+                className="underline underline-offset-2 hover:text-danger-600"
+              >
+                Retry
+              </button>
+            </span>
+          )}
         </div>
         <span className="text-[11px]" style={{ color: '#c3c2bd' }}>Budget / prior-year comparison shown in annual view</span>
         {avgConfidence != null && (
@@ -821,7 +847,8 @@ export default function GroundedWorksheet({
           <span>
             Structure editing is on — rename, reorder, hide or split a line, or add your own.
             It changes how this statement <span className="font-medium text-ink-900">reads</span>, never what the model computes,
-            and a line you add is an analyst line, not a document-sourced one.
+            and a line you add is an analyst line, not a document-sourced one. Your layout is saved
+            on the deal, so every reviewer opens the statement as you arranged it.
           </span>
         </div>
       )}

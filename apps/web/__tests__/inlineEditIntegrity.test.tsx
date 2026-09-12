@@ -30,7 +30,9 @@ import type { EngineOutputsResponse, TimelineResponse } from '@/lib/api';
 
 vi.mock('next/navigation', () => ({
   useParams: () => ({ id: 'deal-uuid-1' }),
-  useRouter: () => ({ push: vi.fn(), replace: vi.fn() }),
+  useRouter: () => ({ push: vi.fn(), replace: vi.fn(), prefetch: vi.fn(), back: vi.fn() }),
+  useSearchParams: () => new URLSearchParams(),
+  usePathname: () => '/projects/deal-uuid-1',
 }));
 
 // ── One envelope that serves Debt, Investment and Partnership ────────────

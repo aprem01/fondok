@@ -1,6 +1,7 @@
 'use client';
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { useParams, useRouter } from 'next/navigation';
+import { useSubTab } from '@/lib/hooks/useSubTab';
 import { TrendingUp } from 'lucide-react';
 import { Card } from '@/components/ui/Card';
 import { Button } from '@/components/ui/Button';
@@ -48,8 +49,15 @@ import {
 
 // FON-68 — MVP Returns is three sub-tabs. Scenario management lives on
 // Scenario Analysis; comps live on Market → Transaction Comps.
-const SUB_TABS = ['Returns Summary', 'Sensitivities', 'Pricing'] as const;
-type SubTab = (typeof SUB_TABS)[number];
+// FON-59 #4 — the sub-tab *id* is the URL slug (`?tab=returns&sub=…`); the
+// label is display only.
+const SUB_TABS = [
+  { id: 'returns-summary', label: 'Returns Summary' },
+  { id: 'sensitivities', label: 'Sensitivities' },
+  { id: 'pricing', label: 'Pricing' },
+] as const;
+type SubTab = (typeof SUB_TABS)[number]['id'];
+const SUB_TAB_IDS = SUB_TABS.map((t) => t.id) as readonly SubTab[];
 
 type EngineOutputs = ReturnType<typeof useEngineOutputs>['outputs'];
 
@@ -357,16 +365,19 @@ function useReturnsSandbox(outputs: EngineOutputs, dealId: string): SandboxState
 
 function ReturnsWorkspace({ outputs, dealId }: { outputs: EngineOutputs; dealId: string }) {
   const router = useRouter();
-  const [tab, setTab] = useState<SubTab>('Returns Summary');
+  // `?tab=returns&sub=<slug>` — deep-linkable, back-button correct. The
+  // sandbox lives above this hook and is keyed on the deal, so switching
+  // sub-tabs (a `router.replace`, no remount) never drops an override.
+  const { sub: tab, setSub: setTab } = useSubTab(SUB_TAB_IDS, 'returns-summary');
   const { sandbox, setSandbox, base, dirty, preview, previewing, resetToBase } = useReturnsSandbox(
     outputs,
     dealId,
   );
 
   const subTabCaption =
-    tab === 'Returns Summary'
+    tab === 'returns-summary'
       ? 'What the deal earns and where it comes from'
-      : tab === 'Sensitivities'
+      : tab === 'sensitivities'
         ? 'How returns move with the key assumptions'
         : 'What price the deal can carry';
 
@@ -378,8 +389,10 @@ function ReturnsWorkspace({ outputs, dealId }: { outputs: EngineOutputs; dealId:
     .map((f) => `${f.label} ${f.fmt(base[f.key])} → ${f.fmt(sandbox[f.key])}`)
     .join(' · ');
 
-  const goInvestment = () => router.push(`/projects/${dealId}?tab=investment`, { scroll: false });
-  const goCashFlow = () => router.push(`/projects/${dealId}?tab=cash-flow`, { scroll: false });
+  // FON-59 #4 — name the sub-tab that holds the value. "Edit in Investment →"
+  // sits on Exit Assumptions, which are Investment → Deal Summary rows.
+  const goInvestment = () => router.push(`/projects/${dealId}?tab=investment&sub=deal-summary`, { scroll: false });
+  const goCashFlow = () => router.push(`/projects/${dealId}?tab=cash-flow&sub=summary`, { scroll: false });
   // FON-68 — the pricing hurdles live on Overview → Investment Profile.
   const goProfile = () => router.push(`/projects/${dealId}?tab=overview`, { scroll: false });
 
@@ -409,7 +422,7 @@ function ReturnsWorkspace({ outputs, dealId }: { outputs: EngineOutputs; dealId:
       </div>
 
       <SubTabNav
-        items={SUB_TABS.map((t) => ({ id: t, label: t }))}
+        items={SUB_TABS.map((t) => ({ id: t.id, label: t.label }))}
         activeId={tab}
         onSelect={(id) => setTab(id as SubTab)}
         caption={subTabCaption}
@@ -468,7 +481,7 @@ function ReturnsWorkspace({ outputs, dealId }: { outputs: EngineOutputs; dealId:
         </div>
       )}
 
-      {tab === 'Returns Summary' && (
+      {tab === 'returns-summary' && (
         <ReturnsSummary
           outputs={outputs}
           preview={preview}
@@ -477,7 +490,7 @@ function ReturnsWorkspace({ outputs, dealId }: { outputs: EngineOutputs; dealId:
           onViewCashFlow={goCashFlow}
         />
       )}
-      {tab === 'Sensitivities' && (
+      {tab === 'sensitivities' && (
         <Sensitivities
           outputs={outputs}
           fields={fields}
@@ -489,7 +502,7 @@ function ReturnsWorkspace({ outputs, dealId }: { outputs: EngineOutputs; dealId:
           resetToBase={resetToBase}
         />
       )}
-      {tab === 'Pricing' && (
+      {tab === 'pricing' && (
         <PricingSubTab
           dealId={dealId}
           outputs={outputs}

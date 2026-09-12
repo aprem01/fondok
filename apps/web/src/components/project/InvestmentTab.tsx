@@ -7,6 +7,7 @@ import {
   type ReactNode,
 } from 'react';
 import { useParams } from 'next/navigation';
+import { useSubTab } from '@/lib/hooks/useSubTab';
 import { Briefcase, Pencil } from 'lucide-react';
 import { Card } from '@/components/ui/Card';
 import { Button } from '@/components/ui/Button';
@@ -55,16 +56,21 @@ interface ExpenseYearLite { year: number; noi: number; noi_institutional?: numbe
 // Revenue engine year shape - only the fields the capex panel reads.
 interface RevenueYearLite { year: number; total_revenue: number }
 
+// FON-59 #4 — the sub-tab *id* is the URL slug (`?tab=investment&sub=…`); the
+// label is display only. FON-66 / FON-67 §1: `sources-and-uses` is the deep-link
+// target for every "→ Investment" link that cites the equity requirement.
 const SUB_TABS = [
-  { id: 'Deal Summary', label: 'Deal Summary' },
-  { id: 'Sources & Uses', label: 'Sources & Uses' },
-  { id: 'Timeline', label: 'Timeline' },
-];
+  { id: 'deal-summary', label: 'Deal Summary' },
+  { id: 'sources-and-uses', label: 'Sources & Uses' },
+  { id: 'timeline', label: 'Timeline' },
+] as const;
+type SubTab = (typeof SUB_TABS)[number]['id'];
+const SUB_TAB_IDS = SUB_TABS.map((t) => t.id) as readonly SubTab[];
 
-const SUB_CAPTION: Record<string, string> = {
-  'Deal Summary': 'The assumptions that define the transaction',
-  'Sources & Uses': 'Capital required, and where it comes from',
-  Timeline: 'Key dates from acquisition through exit',
+const SUB_CAPTION: Record<SubTab, string> = {
+  'deal-summary': 'The assumptions that define the transaction',
+  'sources-and-uses': 'Capital required, and where it comes from',
+  timeline: 'Key dates from acquisition through exit',
 };
 
 // ─── Canonical value vocabulary (design/canonical/Investment Tab.dc.html) ──────
@@ -113,7 +119,8 @@ interface RowDef {
 }
 
 export default function InvestmentTab() {
-  const [tab, setTab] = useState('Deal Summary');
+  // `?tab=investment&sub=<slug>` — one convention, deep-linkable.
+  const { sub: tab, setSub: setTab } = useSubTab(SUB_TAB_IDS, 'deal-summary');
   const params = useParams();
   const dealId = (params?.id as string | undefined) ?? '';
   const { toast } = useToast();
@@ -395,16 +402,16 @@ export default function InvestmentTab() {
         />
 
         <SubTabNav
-          items={SUB_TABS}
+          items={SUB_TABS.map((t) => ({ id: t.id, label: t.label }))}
           activeId={tab}
-          onSelect={setTab}
+          onSelect={(id) => setTab(id as SubTab)}
           caption={SUB_CAPTION[tab]}
           style={{ marginBottom: 14 }}
         />
 
         <div className={cn(computing && 'relative pointer-events-none opacity-60')}>
 
-          {tab === 'Deal Summary' && (() => {
+          {tab === 'deal-summary' && (() => {
             // ─── KPI tiles (5) — design/canonical `kpis` ──────────────
             const kpis = [
               { label: 'Total Cost Basis', value: mm(totalUses), sub: has(totalUsesPerKey) ? `${fmtCurrency(totalUsesPerKey)} / key` : '' },
@@ -672,11 +679,11 @@ export default function InvestmentTab() {
             );
           })()}
 
-          {tab === 'Sources & Uses' && (
+          {tab === 'sources-and-uses' && (
             <SourcesUses outputs={outputs} money={money} keys={keys} />
           )}
 
-          {tab === 'Timeline' && (
+          {tab === 'timeline' && (
             <TimelinePanel timeline={timeline} liveMode={liveMode} holdYears={holdYears} />
           )}
 
