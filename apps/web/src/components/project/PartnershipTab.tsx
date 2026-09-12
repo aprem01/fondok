@@ -8,6 +8,7 @@ import {
   type ReactNode,
 } from 'react';
 import { useParams } from 'next/navigation';
+import { useSubTab } from '@/lib/hooks/useSubTab';
 import { api, isWorkerConnected, type ValueState } from '@/lib/api';
 import { useEngineRun } from '@/lib/hooks/useEngineRun';
 import { useDeal } from '@/lib/hooks/useDeal';
@@ -37,15 +38,19 @@ import { isNoOpEdit } from '@/lib/fieldValue';
 
 // ─── Canonical structure (design/canonical/Partnership Tab.dc.html) ──────────
 // Three sub-tabs, exactly as the prototype: Summary · Waterfall · Cash Flows.
+// FON-59 #4 — the sub-tab *id* is the URL slug (`?tab=partnership&sub=…`); the
+// label is display only.
 const SUB_TABS = [
-  { id: 'Summary', label: 'Summary' },
-  { id: 'Waterfall', label: 'Waterfall' },
-  { id: 'Cash Flows', label: 'Cash Flows' },
-];
-const SUB_CAPTION: Record<string, string> = {
-  Summary: 'Equity split, waterfall terms and partner returns',
-  Waterfall: 'The partnership assumption workspace',
-  'Cash Flows': 'Contributions and distributions through exit',
+  { id: 'summary', label: 'Summary' },
+  { id: 'waterfall', label: 'Waterfall' },
+  { id: 'cash-flows', label: 'Cash Flows' },
+] as const;
+type SubTab = (typeof SUB_TABS)[number]['id'];
+const SUB_TAB_IDS = SUB_TABS.map((t) => t.id) as readonly SubTab[];
+const SUB_CAPTION: Record<SubTab, string> = {
+  summary: 'Equity split, waterfall terms and partner returns',
+  waterfall: 'The partnership assumption workspace',
+  'cash-flows': 'Contributions and distributions through exit',
 };
 
 const COMPOUNDING_OPTIONS = [
@@ -146,7 +151,8 @@ function readOverrideFlag(overrides: Record<string, unknown>, path: string): boo
 }
 
 export default function PartnershipTab() {
-  const [tab, setTab] = useState('Summary');
+  // `?tab=partnership&sub=<slug>` — one convention, deep-linkable.
+  const { sub: tab, setSub: setTab } = useSubTab(SUB_TAB_IDS, 'summary');
   const { toast } = useToast();
   const params = useParams();
   const dealId = (params?.id as string | undefined) ?? '';
@@ -532,9 +538,9 @@ export default function PartnershipTab() {
         />
 
         <SubTabNav
-          items={SUB_TABS}
+          items={SUB_TABS.map((t) => ({ id: t.id, label: t.label }))}
           activeId={tab}
-          onSelect={(id) => { setTab(id); cancelEdit(); }}
+          onSelect={(id) => { setTab(id as SubTab); cancelEdit(); }}
           caption={SUB_CAPTION[tab]}
           style={{ marginBottom: 14 }}
         />
@@ -543,13 +549,13 @@ export default function PartnershipTab() {
             line — manual entry is always available AND JV / operating-agreement
             extraction is live (prose extraction validated on prod 9/5; terms are
             confirmed on the document page before they drive the model). */}
-        <ManualInputsBanner onEdit={() => setTab('Waterfall')} />
+        <ManualInputsBanner onEdit={() => setTab('waterfall')} />
         {/* TODO(FON-72): a manual-entry-only preview endpoint would let the
             waterfall/allocation render from unsaved inputs before a full engine
             run. Backend flagged this; endpoint intentionally not built here. */}
 
         <div className={cn(computing && 'relative pointer-events-none opacity-60')}>
-          {tab === 'Summary' && (
+          {tab === 'summary' && (
             <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
               {/* Equity Structure + Waterfall Terms */}
               <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(430px,1fr))', gap: 14 }}>
@@ -560,7 +566,7 @@ export default function PartnershipTab() {
                     value={money(totalEquity)}
                     valueColor={prov.green}
                     bold
-                    link={{ label: '→ Investment', tab: 'investment' }}
+                    link={{ label: '→ Investment', tab: 'investment', sub: 'sources-and-uses' }}
                     note="Total uses less senior debt and key money — set by the deal financing, not here"
                   />
                   <KeyRow
@@ -682,7 +688,7 @@ export default function PartnershipTab() {
                 title="Waterfall Allocation Preview"
                 note={
                   <span
-                    onClick={() => setTab('Waterfall')}
+                    onClick={() => setTab('waterfall')}
                     style={{ fontSize: 11.5, color: palette.linkBlue, fontWeight: 600, cursor: 'pointer' }}
                   >
                     View / edit waterfall →
@@ -701,7 +707,7 @@ export default function PartnershipTab() {
             </div>
           )}
 
-          {tab === 'Waterfall' && (
+          {tab === 'waterfall' && (
             <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
               {/* Ownership & Preferred Return */}
               <SectionCard
@@ -776,7 +782,7 @@ export default function PartnershipTab() {
             </div>
           )}
 
-          {tab === 'Cash Flows' && (
+          {tab === 'cash-flows' && (
             <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
               <SectionCard
                 variant="title"
@@ -903,7 +909,10 @@ interface KeyRowProps {
   valueColor?: string;
   bold?: boolean;
   note?: string;
-  link?: { label: string; tab: string };
+  /** FON-66 — `sub` names the target's sub-tab: Sam asked for "→ Investment"
+   *  to land on Investment → Sources & Uses, where the initial equity
+   *  requirement actually lives. */
+  link?: { label: string; tab: string; sub?: string };
   editable?: boolean;
   editing?: boolean;
   draft?: string;
@@ -926,7 +935,7 @@ function KeyRow(p: KeyRowProps) {
             {p.label}
           </span>
           {p.link && (
-            <a href={`?tab=${p.link.tab}`} style={{ fontSize: 10.5, color: palette.linkBlue, fontWeight: 600, whiteSpace: 'nowrap', textDecoration: 'none' }}>
+            <a href={`?tab=${p.link.tab}${p.link.sub ? `&sub=${p.link.sub}` : ''}`} style={{ fontSize: 10.5, color: palette.linkBlue, fontWeight: 600, whiteSpace: 'nowrap', textDecoration: 'none' }}>
               {p.link.label}
             </a>
           )}

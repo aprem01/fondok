@@ -824,9 +824,11 @@ export default function ICMemoTab({ project }: { project: Project }) {
   ];
 
   // ── underwriting summary groups ────────────────────────────────────────
-  const uwGroups: { title: string; link: string; tab: string; rows: [string, string][] }[] = [
+  // FON-67 §1 / FON-54 §3 — each group links to the SUB-TAB that holds the
+  // figures it summarizes (`?tab=<tab>&sub=<slug>`), not just the module.
+  const uwGroups: { title: string; link: string; tab: string; sub: string; rows: [string, string][] }[] = [
     {
-      title: 'Operating', link: 'View Financials →', tab: 'pl',
+      title: 'Operating', link: 'View Financials →', tab: 'pl', sub: 'projections',
       rows: [
         ['RevPAR', whole$(metrics.revpar)],
         ['Revenue (Y1)', mm(metrics.totalRevenue)],
@@ -835,7 +837,7 @@ export default function ICMemoTab({ project }: { project: Project }) {
       ],
     },
     {
-      title: 'Capitalization', link: 'View Investment →', tab: 'investment',
+      title: 'Capitalization', link: 'View Investment →', tab: 'investment', sub: 'sources-and-uses',
       rows: [
         ['Purchase Price', mm(metrics.purchasePrice)],
         ['Renovation / CapEx', mm(metrics.renovation)],
@@ -844,7 +846,7 @@ export default function ICMemoTab({ project }: { project: Project }) {
       ],
     },
     {
-      title: 'Debt', link: 'View Debt →', tab: 'debt',
+      title: 'Debt', link: 'View Debt →', tab: 'debt', sub: 'debt-overview',
       rows: [
         ['Loan Amount', mm(metrics.loanAmount)],
         ['LTV', metrics.loanAmount != null && metrics.purchasePrice ? pctOr(metrics.loanAmount / metrics.purchasePrice, 0) : '—'],
@@ -853,7 +855,7 @@ export default function ICMemoTab({ project }: { project: Project }) {
       ],
     },
     {
-      title: 'Returns', link: 'View Returns →', tab: 'returns',
+      title: 'Returns', link: 'View Returns →', tab: 'returns', sub: 'returns-summary',
       rows: [
         ['Unlevered IRR', pctOr(metrics.unleveredIrr)],
         ['Levered IRR', pctOr(metrics.leveredIrr)],
@@ -1113,7 +1115,7 @@ export default function ICMemoTab({ project }: { project: Project }) {
                         <span style={{ color: palette.ink, fontWeight: 500, fontVariantNumeric: 'tabular-nums' }}>{value}</span>
                       </div>
                     ))}
-                    <Link href={`/projects/${dealId}?tab=${grp.tab}`} style={{ display: 'inline-block', fontSize: 11, color: LINK, fontWeight: 600, paddingTop: 9, textDecoration: 'none' }}>
+                    <Link href={`/projects/${dealId}?tab=${grp.tab}&sub=${grp.sub}`} style={{ display: 'inline-block', fontSize: 11, color: LINK, fontWeight: 600, paddingTop: 9, textDecoration: 'none' }}>
                       {grp.link}
                     </Link>
                   </div>
@@ -1161,7 +1163,20 @@ export default function ICMemoTab({ project }: { project: Project }) {
                         <span style={{ fontSize: 11.5, color: palette.eyebrow }}>{d.impact}</span>
                         {open ? (
                           <span style={{ display: 'flex', gap: 16, alignItems: 'center', paddingTop: 4, flexWrap: 'wrap' }}>
-                            <Link href={`/projects/${dealId}`} style={{ fontSize: 11.5, color: LINK, fontWeight: 600, cursor: 'pointer', textDecoration: 'none' }}>Review source →</Link>
+                            {/* FON-54 §3 (Sam, 09-11): "Review source currently
+                                routes to the general Data Room rather than the
+                                specific evidence behind the exception."  A
+                                diligence item IS a broker-vs-T-12 variance
+                                flag, and that comparison — both figures, the
+                                rule and the cited page — lives on Analysis →
+                                Broker Variance. Land on the sub-tab that holds
+                                the value, not on the deal's landing page. */}
+                            <Link
+                              href={`/projects/${dealId}?tab=analysis&sub=variance`}
+                              style={{ fontSize: 11.5, color: LINK, fontWeight: 600, cursor: 'pointer', textDecoration: 'none' }}
+                            >
+                              Review source →
+                            </Link>
                             <span role="button" tabIndex={0} onClick={() => setDilStatus(d.id, 'Resolved')} style={{ fontSize: 11.5, color: LINK, fontWeight: 600, cursor: 'pointer' }}>Resolve</span>
                             <span role="button" tabIndex={0} onClick={() => setDilStatus(d.id, 'Accepted')} style={{ fontSize: 11.5, color: palette.textSecondary, cursor: 'pointer' }}>Accept variance</span>
                             <span role="button" tabIndex={0} onClick={() => toggleDilDetails(d.id)} style={{ fontSize: 11.5, color: palette.textMuted, cursor: 'pointer' }}>

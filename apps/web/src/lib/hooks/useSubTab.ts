@@ -45,11 +45,16 @@ export function useSubTab<T extends string>(
   const [sub, setSubState] = useState<T>(read);
 
   // Defect 3 — a param change under a mounted component must move the sub-tab.
+  // Keyed on the query STRING, not the params object: Next's
+  // `ReadonlyURLSearchParams` is referentially stable per URL, but anything
+  // that hands back a fresh object each render would otherwise re-run this on
+  // every render and stamp the fallback back over a manual selection.
+  const query = searchParams?.toString() ?? '';
   useEffect(() => {
     const next = read();
     setSubState((cur) => (next === cur ? cur : next));
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [searchParams]);
+  }, [query]);
 
   const setSub = useCallback(
     (id: T) => {

@@ -607,6 +607,16 @@ export default function MethodologyPage() {
             </li>
           </ul>
         </Card>
+
+        <Card className="p-5 mt-4">
+          <h4 className="text-[13px] font-semibold text-ink-900 mb-2">Structure edits change how a statement reads, never what it computes</h4>
+          <p className="text-[12.5px] text-ink-600 leading-relaxed">
+            On Financials &rarr; Historicals, <strong className="text-ink-700">Customize structure</strong> lets an analyst relabel a line, split one line into presentation children that must reconcile to the locked parent, reorder lines within their section, hide a line, and add an <strong className="text-ink-700">analyst line</strong> of their own. All five are <strong className="text-ink-700">presentation</strong>: the canonical value behind each row, the document it was read from and the Data Key state it carries are untouched by any of them, and a reordered row keeps its own lineage because the layout stores row identities, not values. An analyst line is marked as an assumption and carries an <em>Analyst line</em> chip — it is entered here, is read from no document, and no engine reads it.
+          </p>
+          <p className="text-[12.5px] text-ink-600 leading-relaxed mt-3">
+            The layout is stored <strong className="text-ink-700">on the deal</strong> (<code className="text-[11.5px]">field_overrides.worksheet_layout</code>), not in the browser, so every reviewer who opens the deal reads the statement as the analyst arranged it — a reordered statement is a deal artifact an IC reviewer must see, not a per-device preference. It is the one <code className="text-[11.5px]">field_overrides</code> key the engines never read: the worker skips it explicitly when it routes overrides into engine input, so a relabel, split, reorder, hide or added line cannot move a modeled number. If a layout edit fails to save, the worksheet says so and offers a retry rather than letting the arrangement look saved. <strong className="text-ink-700">Reset layout</strong> drops every structure edit and restores the canonical statement.
+          </p>
+        </Card>
       </Section>
 
       {/* ─── 8. Concept registry (Phase 1.1 / 1.2) ─────────────────── */}

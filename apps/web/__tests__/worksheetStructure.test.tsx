@@ -12,8 +12,10 @@
  *   1. "Customize structure" reveals add + move, and "Reset layout" appears
  *      once the layout is customized.
  *   2. A manually added row is an ANALYST line — assumption dot + "Analyst
- *      line" chip, never a green document-sourced dot. It is presentation
- *      only and never feeds an engine (no field_overrides write).
+ *      line" chip, never a green document-sourced dot. It is presentation only:
+ *      the layout persists to the deal (FON-41 — an IC reviewer must see the
+ *      same statement), but the ONLY `field_overrides` key it ever touches is
+ *      `worksheet_layout`; no engine input is written.
  *   3. Reordering a SOURCED row preserves its lineage: the SOURCE panel still
  *      names the same statement afterwards (the layout stores row ids).
  *   4. Reset restores the canonical order.
@@ -90,6 +92,20 @@ const rowLabels = () =>
   });
 const customizeToggle = () => screen.getByRole('button', { name: /Customize structure/ });
 
+/**
+ * The layout persists to the deal now, so a structure edit DOES PATCH. What it
+ * may never do is write anything else: every call must carry exactly one
+ * `field_overrides` key, `worksheet_layout`.
+ */
+function expectOnlyLayoutWrites() {
+  for (const call of updateSpy.mock.calls as unknown as [string, Record<string, unknown>][]) {
+    const patch = call[1];
+    expect(Object.keys(patch)).toEqual(['field_overrides']);
+    const fo = patch.field_overrides as Record<string, unknown>;
+    expect(Object.keys(fo)).toEqual(['worksheet_layout']);
+  }
+}
+
 /** The first structure-editable row that also carries an extracted value. */
 function firstSourcedEditableRow(): { tr: HTMLElement; label: string } {
   for (const tr of Array.from(grid().querySelectorAll('tbody tr')) as HTMLElement[]) {
@@ -149,8 +165,10 @@ describe('Historicals — a manually added row is an analyst line, not a documen
     expect(within(tr).getAllByRole('img', { name: 'Assumption' }).length).toBeGreaterThan(0);
     expect(within(tr).queryByRole('img', { name: 'Document sourced' })).toBeNull();
     expect(within(tr).queryByRole('img', { name: 'Needs review' })).toBeNull();
-    // Presentation only — adding a line never writes a deal field override.
-    expect(updateSpy).not.toHaveBeenCalled();
+    // Presentation only — the layout is saved on the deal, but the ONLY key it
+    // writes is `worksheet_layout`; no engine input moves.
+    await waitFor(() => expect(updateSpy).toHaveBeenCalled(), { timeout: 4000 });
+    expectOnlyLayoutWrites();
   }, 12000);
 });
 
@@ -170,7 +188,8 @@ describe('Historicals — reordering a sourced row keeps its lineage', () => {
 
     const moved = (screen.getByDisplayValue(label).closest('tr')) as HTMLElement;
     expect(sourceDocOf(moved)).toBe(before);
-    expect(updateSpy).not.toHaveBeenCalled();
+    await waitFor(() => expect(updateSpy).toHaveBeenCalled(), { timeout: 4000 });
+    expectOnlyLayoutWrites();
   }, 12000);
 
   it('Reset layout restores the canonical order and drops the added line', async () => {

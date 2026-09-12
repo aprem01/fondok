@@ -26,10 +26,20 @@ import {
 import React from 'react';
 import type { EngineOutputsResponse } from '@/lib/api';
 
+// Mutable routing state (FON-59 #4) - `params` is a REAL URLSearchParams, what
+// Next's ReadonlyURLSearchParams behaves like, so `useSubTab`'s toString()
+// round-trip is exercised rather than stubbed.
+const nav = vi.hoisted(() => ({
+  params: new URLSearchParams(''),
+  pathname: '/projects/deal-1',
+  push: vi.fn(),
+  replace: vi.fn(),
+}));
 vi.mock('next/navigation', () => ({
   useParams: () => ({ id: 'deal-1' }),
-  useRouter: () => ({ push: vi.fn(), replace: vi.fn(), prefetch: vi.fn(), back: vi.fn() }),
-  useSearchParams: () => new URLSearchParams(),
+  useRouter: () => ({ push: nav.push, replace: nav.replace, prefetch: vi.fn(), back: vi.fn() }),
+  useSearchParams: () => nav.params,
+  usePathname: () => nav.pathname,
 }));
 
 // The worker outputs under test. The headline + sandbox base both read from
@@ -402,5 +412,85 @@ describe('ReturnsTab — slider ranges and Pricing honesty', () => {
         /Solved on the canonical case; the active sensitivity is not applied/i,
       ),
     ).toBeInTheDocument();
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────
+// Sub-tab routing convention (FON-59 #4 / FON-61 §3)
+//
+// Every sub-tab is now a URL slug on the shared `useSubTab` hook, so a deep
+// link lands where it says, the back button works, and `setSub` keeps every
+// other query param (`doc`, `focus`, `reviewField`) intact.
+// ─────────────────────────────────────────────────────────────────────────
+
+describe('ReturnsTab — `?tab=returns&sub=<slug>` routing', () => {
+  const tabEl = (name: string) => screen.getByRole('tab', { name });
+
+  beforeEach(() => {
+    cleanup();
+    nav.params = new URLSearchParams('');
+    nav.replace.mockClear();
+  });
+
+  it('opens Sensitivities on ?sub=sensitivities', () => {
+    nav.params = new URLSearchParams('tab=returns&sub=sensitivities');
+    render(<ReturnsTab />);
+    expect(tabEl('Sensitivities')).toHaveAttribute('aria-selected', 'true');
+    expect(tabEl('Returns Summary')).toHaveAttribute('aria-selected', 'false');
+    expect(screen.getAllByRole('slider').length).toBe(5);
+  });
+
+  it('opens Pricing on ?sub=pricing', () => {
+    nav.params = new URLSearchParams('tab=returns&sub=pricing');
+    render(<ReturnsTab />);
+    expect(tabEl('Pricing')).toHaveAttribute('aria-selected', 'true');
+  });
+
+  it('falls back to Returns Summary on an unknown sub value', () => {
+    nav.params = new URLSearchParams('tab=returns&sub=not-a-sub-tab');
+    render(<ReturnsTab />);
+    expect(tabEl('Returns Summary')).toHaveAttribute('aria-selected', 'true');
+  });
+
+  it('follows a param change while already mounted', () => {
+    nav.params = new URLSearchParams('tab=returns&sub=sensitivities');
+    const { rerender } = render(<ReturnsTab />);
+    expect(tabEl('Sensitivities')).toHaveAttribute('aria-selected', 'true');
+
+    nav.params = new URLSearchParams('tab=returns&sub=pricing');
+    rerender(<ReturnsTab />);
+    expect(tabEl('Pricing')).toHaveAttribute('aria-selected', 'true');
+  });
+
+  it('setSub writes sub= and preserves doc / focus / reviewField', () => {
+    nav.params = new URLSearchParams('tab=returns&doc=doc-9&focus=irr&reviewField=noi_usd');
+    render(<ReturnsTab />);
+    fireEvent.click(tabEl('Sensitivities'));
+
+    expect(nav.replace).toHaveBeenCalledTimes(1);
+    const [url, opts] = nav.replace.mock.calls[0] as [string, { scroll: boolean }];
+    expect(opts).toEqual({ scroll: false });
+    const written = new URLSearchParams(url.split('?')[1]);
+    expect(written.get('sub')).toBe('sensitivities');
+    expect(written.get('doc')).toBe('doc-9');
+    expect(written.get('focus')).toBe('irr');
+    expect(written.get('reviewField')).toBe('noi_usd');
+  });
+
+  // Wave 2b shipped the session-persisted sandbox; routing must not disturb it.
+  it('the sandbox survives a sub-tab change within the deal', async () => {
+    render(<ReturnsTab />);
+    dirtyTheSandbox();
+    await waitFor(() => expect(previewSpy).toHaveBeenCalled());
+    expect(screen.getByText(/Sensitivity override active/i)).toBeInTheDocument();
+
+    // A sub-tab change is a router.replace, not a remount — the override rides
+    // along and the slider is still off its base when we come back.
+    fireEvent.click(tabEl('Pricing'));
+    expect(screen.getByText(/Sensitivity override active/i)).toBeInTheDocument();
+    fireEvent.click(tabEl('Returns Summary'));
+    expect(screen.getByText(/Sensitivity override active/i)).toBeInTheDocument();
+    fireEvent.click(tabEl('Sensitivities'));
+    expect((screen.getAllByRole('slider')[0] as HTMLInputElement).value).toBe('0.09');
   });
 });
