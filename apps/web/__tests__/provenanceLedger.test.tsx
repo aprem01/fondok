@@ -112,6 +112,48 @@ describe('ProvenanceLedger — with the new blocks', () => {
     expect(capCells[4]?.textContent).toBe('—'); // Field / page
   });
 
+  // FON-41 #4 — the worker has always shipped `scope` / `basis` / `as_of` on
+  // each `__source_fields__` entry (`SourceField.as_dict`); the web type used
+  // to drop them, so the ledger could name the document but never the period.
+  it('names the PERIOD as well as the field and page', async () => {
+    fx.served = {
+      ...BASE,
+      source_fields: {
+        rooms_revenue_usd: {
+          field: 'Rooms revenue',
+          page: 4,
+          document_id: 'doc-88',
+          filename: 'Kimpton_YTD_2025.pdf',
+          scope: 'ytd',
+          basis: 'actual',
+          as_of: '2025-03-31',
+        },
+      },
+    } as unknown as AssumptionSourcesResponse;
+    render(<ProvenanceLedger dealId="deal-uuid-1" />);
+    expect(await screen.findByText('Provenance ledger')).toBeInTheDocument();
+
+    const rooms = within(rowFor('Rooms Revenue'));
+    expect(rooms.getByText('Rooms revenue · p.4 · YTD through Mar 31, 2025')).toBeInTheDocument();
+  });
+
+  it('spells a trailing twelve and a full year the way Sam asked for them', async () => {
+    fx.served = {
+      ...BASE,
+      source_fields: {
+        rooms_revenue_usd: { field: 'Rooms revenue', scope: 'ttm', as_of: '2025-03-31' },
+        exit_cap_rate: { field: 'Exit cap', scope: 'annual', as_of: '2024-12-31' },
+      },
+    } as unknown as AssumptionSourcesResponse;
+    render(<ProvenanceLedger dealId="deal-uuid-1" />);
+    expect(await screen.findByText('Provenance ledger')).toBeInTheDocument();
+
+    expect(
+      within(rowFor('Rooms Revenue')).getByText('Rooms revenue · T-12 ending Mar 31, 2025'),
+    ).toBeInTheDocument();
+    expect(within(rowFor('Exit Cap Rate')).getByText('Exit cap · FY2024')).toBeInTheDocument();
+  });
+
   it('shows a column as soon as EITHER block carries a value', async () => {
     fx.served = { ...BASE, reasons: { exit_cap_rate: 'no_document' } } as unknown as AssumptionSourcesResponse;
     render(<ProvenanceLedger dealId="deal-uuid-1" />);

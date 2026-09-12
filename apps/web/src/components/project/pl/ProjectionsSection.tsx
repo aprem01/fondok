@@ -1836,9 +1836,22 @@ function AssumptionsPanel({
           <div style={cardTitle}>Resort fee revenue</div>
           <div style={rowsWrap}>
             <AssumptionField label="Resort fee" unit="dollar" prefix="$" suffix="/night" value={cur('resort_fee_per_night')} disabled={running} onCommit={(v) => onApply('resort_fee_per_night', v, 'Resort fee/night set on the Projections page')} />
-            <AssumptionField label="Capture Yr 1" unit="pct" suffix="%" value={cur('resort_fee_capture_y1')} disabled={running} onCommit={(v) => onApply('resort_fee_capture_y1', v, 'Resort-fee capture Yr 1 set on the Projections page')} />
-            <AssumptionField label="Capture Yr 2" unit="pct" suffix="%" value={cur('resort_fee_capture_y2')} disabled={running} onCommit={(v) => onApply('resort_fee_capture_y2', v, 'Resort-fee capture Yr 2 set on the Projections page')} />
-            <AssumptionField label="Capture Yr 3+" unit="pct" suffix="%" value={cur('resort_fee_capture_y3')} disabled={running} onCommit={(v) => onApply('resort_fee_capture_y3', v, 'Resort-fee capture Yr 3+ set on the Projections page')} />
+            {/* FON-41 — the three capture inputs are labelled by the COLUMN
+                they move, not by the engine's year index. The revenue engine
+                runs y = 1…hold_years and the statement heads y=1 as "Base
+                Year", so ``resort_fee_capture_y1`` has always landed on the
+                Base Year column, ``_y2`` on Year 1, ``_y3`` on Year 2 onward.
+                Founder decision: fix the COLUMN LABELS in Wave 3 rather than
+                re-index the engine — so these labels (and the note below)
+                name the columns the analyst actually reads. Engine math and
+                the ``field_overrides`` keys are untouched. */}
+            <AssumptionField label="Capture — Base Year" unit="pct" suffix="%" value={cur('resort_fee_capture_y1')} disabled={running} onCommit={(v) => onApply('resort_fee_capture_y1', v, 'Resort-fee capture for the Base Year column set on the Projections page')} />
+            <AssumptionField label="Capture — Year 1" unit="pct" suffix="%" value={cur('resort_fee_capture_y2')} disabled={running} onCommit={(v) => onApply('resort_fee_capture_y2', v, 'Resort-fee capture for the Year 1 column set on the Projections page')} />
+            <AssumptionField label="Capture — Year 2+" unit="pct" suffix="%" value={cur('resort_fee_capture_y3')} disabled={running} onCommit={(v) => onApply('resort_fee_capture_y3', v, 'Resort-fee capture for the Year 2+ columns set on the Projections page')} />
+            <p style={{ fontSize: 11, color: '#6b6f76', lineHeight: 1.45, margin: 0 }}>
+              Each capture applies to the column above it — Base Year is projection year 1,
+              Year 1 is projection year 2, and Year 2+ carries through every later year.
+            </p>
           </div>
         </div>
         {/* Deal economics */}

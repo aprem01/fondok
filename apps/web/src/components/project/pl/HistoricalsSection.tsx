@@ -31,6 +31,8 @@ import { downloadXlsx, type XlsxCell } from '@/lib/exportXlsx';
 import {
   HISTORICALS_ALIASES, PERIOD_ALIASES, isSubordinatePath,
 } from '@/lib/ontology/adapters';
+import { PERIOD_TYPES } from '@/lib/ontology/concepts.generated';
+import type { ReasonCode } from '@/lib/ontology/reasons.generated';
 
 // ─────────────────────────── Data shape ───────────────────────────
 // One historical year column. ``amount`` for Rooms / F&B / Misc / dept
@@ -43,8 +45,23 @@ import {
 // the per-deal /historicals endpoint ships a HistoricalYear payload from
 // the engine, no key remapping is needed — see task C 2026-06-29.
 export interface HistYear {
-  /** Calendar year label, e.g. 2023 or "T-12". */
+  /** Calendar year label, e.g. 2023 or "T-12".
+   *  STABLE KEY — the worksheet pins columns by it and ``reviewState`` keys
+   *  its review cells on it. Never render it as the column header; render
+   *  ``periodLabel``. */
   year: string;
+  /** FON-41 #4 / FON-61 §2 — what period this column actually IS. Mirrors
+   *  the worker registry's ``_doc_scope`` (annual / ttm / ytd / monthly);
+   *  ``UNKNOWN`` when nothing resolves it, and then ``basisReason`` says so
+   *  and the header falls back to the bare year — never a guessed FY. */
+  periodBasis: PeriodBasis;
+  /** ISO date the period ends on, when the statement (or its own filename)
+   *  states one. ``null`` when it does not — never inferred from a basis. */
+  periodEnd: string | null;
+  /** DISPLAY-ONLY header: "FY2024" | "YTD Mar 2025" | "T12 Mar 2025". */
+  periodLabel: string;
+  /** ``period_mismatch`` when the basis could not be established. */
+  basisReason?: ReasonCode;
   /** Days in the period (365/366 for a calendar year, 365 for T-12). */
   days: number;
   occupancyPct: number; // 0..1
@@ -222,6 +239,195 @@ export function actualsOnly(fields: ExtractionField[]): ExtractionField[] {
   });
 }
 
+// ───────────────── Period basis — FY / YTD / T12 (FON-41 #4, FON-61 §2) ─────────────────
+//
+// Sam, 2026-09-11: "the current generic 2025 column is too ambiguous when its
+// provenance points to March 2025 Financials.xlsx … Provenance should identify
+// the source period/basis in addition to the source document."
+//
+// The worker already resolves this — ``registry._doc_scope`` reads the
+// document's ``period_type`` through the generated ``PERIOD_TYPES`` rank map
+// and falls back to ``_DOC_DEFAULT_SCOPE`` (T12→ttm, PNL→annual,
+// PNL_MONTHLY→monthly, PNL_YTD→ytd). This is the WEB MIRROR of that resolver;
+// ``apps/worker/tests/test_doc_scope_pnl_family.py`` pins the worker half so
+// the two cannot drift. See DRIFT_NOTES.web.md.
+
+/** The bases the MVP models. ``MONTHLY`` is a statement basis (a single
+ *  month's P&L), distinct from the Annual/Monthly *granularity* toggle. */
+export type PeriodBasis = 'FY' | 'YTD' | 'T12' | 'MONTHLY' | 'UNKNOWN';
+
+export interface PeriodBasisResult {
+  periodBasis: PeriodBasis;
+  periodEnd: string | null;
+  periodLabel: string;
+  basisReason?: ReasonCode;
+}
+
+/** The worker's ``Scope`` vocabulary, for the subset the P&L family uses. */
+type DocScope = 'annual' | 'ttm' | 'ytd' | 'quarterly' | 'monthly';
+
+/** ``registry._doc_scope`` rank → scope, byte-for-byte with the worker
+ *  (0=annual, 1=ttm, 5=ytd, 7=quarterly, everything else monthly). An
+ *  unrecognized ``period_type`` value resolves to ``null``, which is the
+ *  worker's ``break`` → fall through to the doc-type default. */
+function scopeFromPeriodType(raw: string | null | undefined): DocScope | null {
+  if (!raw || !raw.trim()) return null;
+  const rank = PERIOD_TYPES[raw.trim().toLowerCase()];
+  if (rank == null) return null;
+  if (rank === 0) return 'annual';
+  if (rank === 1) return 'ttm';
+  if (rank === 5) return 'ytd';
+  if (rank === 7) return 'quarterly';
+  return 'monthly';
+}
+
+/** ``_DOC_DEFAULT_SCOPE`` — the classification's own default when the
+ *  statement never published a ``period_type``. */
+function docDefaultScope(docType: string | null | undefined): DocScope | null {
+  const dt = (docType ?? '').toUpperCase().trim();
+  if (!dt) return null;
+  if (dt === 'T12' || dt === 'T-12' || dt.includes('T12')) return 'ttm';
+  if (dt.includes('YTD')) return 'ytd';
+  if (dt.includes('MONTHLY')) return 'monthly';
+  if (dt === 'PNL' || dt === 'P&L' || dt === 'PL' || dt.includes('PROFIT')) return 'annual';
+  return null;
+}
+
+const MONTH_ABBR = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+// Month name + 4-digit year, e.g. "March 2025", "Mar. 2025", "may_2024". The
+// trailing word boundary on the month keeps "Mayfair 2025" from reading as May.
+const MONTH_YEAR_RE =
+  /\b(jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|jun(?:e)?|jul(?:y)?|aug(?:ust)?|sep(?:t|tember)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)\b\.?[\s,_-]*((?:19|20)\d{2})\b/i;
+
+function monthYearFrom(text: string | null | undefined): { month: number; year: number } | null {
+  if (!text) return null;
+  const m = MONTH_YEAR_RE.exec(text);
+  if (!m) return null;
+  const key = m[1].slice(0, 3).toLowerCase();
+  const idx = MONTH_ABBR.findIndex((a) => a.toLowerCase() === key);
+  if (idx < 0) return null;
+  return { month: idx + 1, year: Number(m[2]) };
+}
+
+/** Last calendar day of a month — arithmetic, not an assumption. */
+function lastDayIso(year: number, month: number): string {
+  const day = new Date(Date.UTC(year, month, 0)).getUTCDate();
+  return `${year}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+}
+
+/** The ISO date the period ends on, in the order the statement states it:
+ *  the extracted ``period_ending``, then ``period_label`` text, then — last
+ *  resort, the same tier ``deriveYearLabel`` already trusts — a month+year in
+ *  the analyst's own filename ("… March 2025 Financials.xlsx"). ``null`` when
+ *  none of the three says one; a period end is never inferred from a basis. */
+function resolvePeriodEnd(
+  periodEnding: string | null,
+  periodLabelText: string | null,
+  filename: string,
+): string | null {
+  for (const text of [periodEnding, periodLabelText]) {
+    if (!text) continue;
+    const iso = text.match(/((?:19|20)\d{2})-(\d{2})-(\d{2})/);
+    if (iso) return `${iso[1]}-${iso[2]}-${iso[3]}`;
+    const my = monthYearFrom(text);
+    if (my) return lastDayIso(my.year, my.month);
+  }
+  const fn = monthYearFrom(filename);
+  return fn ? lastDayIso(fn.year, fn.month) : null;
+}
+
+/** "Mar 2025" from an ISO period end. */
+export function formatPeriodEndShort(iso: string | null): string | null {
+  if (!iso) return null;
+  const m = /^((?:19|20)\d{2})-(\d{2})/.exec(iso);
+  if (!m) return null;
+  const mon = MONTH_ABBR[Number(m[2]) - 1];
+  return mon ? `${mon} ${m[1]}` : null;
+}
+
+/**
+ * What period this statement IS — the basis, its end date, and the header
+ * the analyst reads. Mirrors ``registry._doc_scope`` (above) and reuses the
+ * unchanged ``deriveYearLabel`` chain for the calendar year, so a column's
+ * header and its stable key can never disagree.
+ *
+ * The two refusals, both deliberate:
+ *   • ``quarterly`` has no MVP basis — UNKNOWN + ``period_mismatch`` rather
+ *     than rounding a quarter into a year.
+ *   • An ``annual`` scope that came from the DOC-TYPE DEFAULT (a
+ *     classification guess, not a stated ``period_type``) is refused when the
+ *     period does not close a calendar year — the "March 2025 Financials"
+ *     case. An explicitly annual statement ending in March is a real March
+ *     fiscal year and keeps FY. This is FON-29's silent assertion, closed
+ *     from the other side.
+ */
+export function derivePeriodBasis(
+  fields: ExtractionField[],
+  filename: string,
+  docType: string | null | undefined,
+  normalizedYear?: number | string | null,
+): PeriodBasisResult {
+  const strVal = (f: ExtractionField | undefined): string | null =>
+    f && typeof f.value === 'string' ? f.value : null;
+  const periodEnding = strVal(findField(fields, PERIOD_ALIASES.period_ending));
+  const periodTypeRaw = strVal(findField(fields, PERIOD_ALIASES.period_type));
+  const periodLabelText = strVal(findField(fields, PERIOD_ALIASES.period_label));
+
+  const explicitScope = scopeFromPeriodType(periodTypeRaw);
+  const scope = explicitScope ?? docDefaultScope(docType);
+  const periodEnd = resolvePeriodEnd(periodEnding, periodLabelText, filename);
+  const short = formatPeriodEndShort(periodEnd);
+  // The stable column key, from the untouched FON-15 / FON-29 chain.
+  const yearLabel = deriveYearLabel(fields, filename, docType, normalizedYear);
+  const isCalendarYearLabel = /^\d{4}$/.test(yearLabel);
+  const anchorYear = isCalendarYearLabel ? yearLabel : periodEnd?.slice(0, 4) ?? null;
+
+  if (scope === 'ttm') {
+    return { periodBasis: 'T12', periodEnd, periodLabel: short ? `T12 ${short}` : 'T-12' };
+  }
+  if (scope === 'ytd') {
+    return {
+      periodBasis: 'YTD',
+      periodEnd,
+      periodLabel: short ? `YTD ${short}` : anchorYear ? `YTD ${anchorYear}` : 'YTD',
+    };
+  }
+  if (scope === 'monthly') {
+    return {
+      periodBasis: 'MONTHLY',
+      periodEnd,
+      periodLabel: short ?? (anchorYear ? `Monthly ${anchorYear}` : 'Monthly'),
+    };
+  }
+  if (scope === 'annual' && isCalendarYearLabel) {
+    const closesCalendarYear = !periodEnd || periodEnd.slice(5, 7) === '12';
+    if (explicitScope === 'annual' || closesCalendarYear) {
+      // Live data (Sam's 2019 P&L) carries a ``statement_period`` from a
+      // DIFFERENT year than the statement's own. A period end that does not
+      // fall in this column's year does not describe this period, so it is
+      // dropped rather than travelling to the SOURCE panel as a fact.
+      const endsInThisYear = periodEnd?.slice(0, 4) === yearLabel;
+      return {
+        periodBasis: 'FY',
+        periodEnd: endsInThisYear ? periodEnd : null,
+        periodLabel: `FY${yearLabel}`,
+      };
+    }
+  }
+  return {
+    periodBasis: 'UNKNOWN',
+    periodEnd,
+    periodLabel: anchorYear ?? 'Period unknown',
+    basisReason: 'period_mismatch',
+  };
+}
+
+/** A column with no statement behind it (skeleton padding / OM gap filler)
+ *  states no basis at all. */
+export function unknownPeriod(yearLabel: string): PeriodBasisResult {
+  return { periodBasis: 'UNKNOWN', periodEnd: null, periodLabel: yearLabel };
+}
+
 /**
  * Derive the calendar-year label for a P&L / T-12 document from its
  * extracted fields, the document's classified ``doc_type``, and the
@@ -277,15 +483,23 @@ export function deriveYearLabel(
   const periodLabel = strVal(findField(fields, PERIOD_ALIASES.period_label));
 
   // 1. period_type + period_ending — the cleanest signal. Annual →
-  //    the calendar year of period_ending. Anything rolling/partial
-  //    → "T-12".
+  //    the calendar year of period_ending. Rolling → "T-12".
   if (periodType) {
     const pt = periodType.toLowerCase();
     if (pt === 'annual') {
       const yr = (periodEnding ?? periodLabel ?? '').match(/(20\d{2})/);
       if (yr) return yr[1];
     }
-    if (/trailing|ttm|t-?12|ytd|quarter|month/.test(pt)) return 'T-12';
+    if (/trailing|ttm|t-?12/.test(pt)) return 'T-12';
+    // FON-41 #4 / FON-29 — a YTD, quarterly or monthly statement is NOT a
+    // trailing twelve. This branch used to return 'T-12' for all three,
+    // silently asserting a trailing twelve that does not exist. The period
+    // belongs to the calendar year it ends in; ``derivePeriodBasis`` says
+    // which basis it is, and the column header states it.
+    if (/ytd|year.?to.?date|quarter|month/.test(pt)) {
+      const yr = (periodEnding ?? periodLabel ?? '').match(/(20\d{2})/);
+      if (yr) return yr[1];
+    }
   }
 
   // 2. period_ending alone — December-ending → calendar year;
@@ -375,6 +589,10 @@ export function buildHistYear(
   keys: number,
   yearLabel: string,
   docId?: string,
+  // FON-41 #4 — what period this column IS (``derivePeriodBasis``). Callers
+  // resolve it alongside ``yearLabel`` from the same inputs; omitted, the
+  // column states no basis rather than guessing one.
+  period?: PeriodBasisResult,
 ): HistYear | null {
   if (!fields.length) return null;
 
@@ -452,8 +670,13 @@ export function buildHistYear(
   const revparNorm = revpar ?? (adrNorm * occNorm);
   const roomsNorm = rooms ?? (keys > 0 ? revparNorm * keys * days : 0);
 
+  const per = period ?? unknownPeriod(yearLabel);
   return {
     year: yearLabel,
+    periodBasis: per.periodBasis,
+    periodEnd: per.periodEnd,
+    periodLabel: per.periodLabel,
+    ...(per.basisReason ? { basisReason: per.basisReason } : {}),
     days,
     occupancyPct: occNorm,
     adr: adrNorm,
@@ -487,6 +710,10 @@ export function emptyFiveYearSkeleton(): HistData {
     const y = thisYear - 1 - i; // last fully-closed year and back
     years.push({
       year: String(y),
+      // A placeholder for a year no statement covers — it states no basis.
+      periodBasis: 'UNKNOWN',
+      periodEnd: null,
+      periodLabel: String(y),
       days: y % 4 === 0 && (y % 100 !== 0 || y % 400 === 0) ? 366 : 365,
       occupancyPct: 0, adr: 0, revpar: 0,
       rooms: 0, fb: 0, misc: 0,
@@ -598,7 +825,11 @@ export default function HistoricalsSection({
                 fields, doc.filename ?? '', doc.doc_type,
                 doc.fiscal_year ?? doc.extracted_period_year,
               );
-              const built = buildHistYear(fields, keysForBuild, label);
+              const period = derivePeriodBasis(
+                fields, doc.filename ?? '', doc.doc_type,
+                doc.fiscal_year ?? doc.extracted_period_year,
+              );
+              const built = buildHistYear(fields, keysForBuild, label, undefined, period);
               if (built) byYear.set(label, built);
             } catch {
               // skip this doc — others may still populate.
@@ -638,6 +869,7 @@ export default function HistoricalsSection({
                 annualCols.push(
                   placeholder ?? {
                     year: label,
+                    ...unknownPeriod(label),
                     days: 365,
                     occupancyPct: 0, adr: 0, revpar: 0,
                     rooms: 0, fb: 0, misc: 0,
@@ -656,6 +888,7 @@ export default function HistoricalsSection({
                 ...annualCols,
                 t12 ?? {
                   year: 'T-12',
+                  ...unknownPeriod('T-12'),
                   days: 365,
                   occupancyPct: 0, adr: 0, revpar: 0,
                   rooms: 0, fb: 0, misc: 0,

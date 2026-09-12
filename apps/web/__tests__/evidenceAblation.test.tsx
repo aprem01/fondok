@@ -321,7 +321,8 @@ describe('evidence ablation — the rendered worksheet', () => {
     SERVED.extractions = LIVE_EXTRACTIONS as Record<string, unknown>;
     render(<GroundedWorksheet dealId={LIVE_DEAL_ID} />);
     await waitFor(
-      () => expect(screen.getByRole('button', { name: 'T-12' })).toBeInTheDocument(),
+      // FON-41 #4 — the pill states the period, not a bare "T-12".
+      () => expect(screen.getByRole('button', { name: 'T12 Mar 2025' })).toBeInTheDocument(),
       { timeout: 8000 },
     );
     const { review } = surfaces(LIVE_DOCS, LIVE_EXTRACTIONS);
@@ -338,11 +339,11 @@ describe('evidence ablation — the rendered worksheet', () => {
     render(<GroundedWorksheet dealId={LIVE_DEAL_ID} />);
 
     await waitFor(
-      () => expect(screen.getByRole('button', { name: '2023' })).toBeInTheDocument(),
+      () => expect(screen.getByRole('button', { name: 'FY2023' })).toBeInTheDocument(),
       { timeout: 8000 },
     );
-    expect(screen.queryByRole('button', { name: 'T-12' })).toBeNull();
-    expect(screen.getByRole('button', { name: '2019' })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'T12 Mar 2025' })).toBeNull();
+    expect(screen.getByRole('button', { name: 'FY2019' })).toBeInTheDocument();
 
     // The red cells that remain are exactly the survivors' — the T-12's nine
     // are gone, and nothing else moved.

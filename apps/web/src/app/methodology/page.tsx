@@ -296,6 +296,10 @@ export default function MethodologyPage() {
               IRR has no closed form — it&apos;s the discount rate that sets the NPV of the equity cash flows to zero, solved iteratively (Newton&apos;s method, bisection fallback). Its hover states that explicitly and lists the year-by-year cash-flow stream the solver ran over.
             </li>
             <li>
+              <span className="font-semibold text-ink-900">Every historical column states its period.</span>{' '}
+              A statement is read on one of three bases and the column says which: a <b>full year</b> (&quot;FY2024&quot;), <b>year-to-date</b> through a month end (&quot;YTD Mar 2025&quot;), or a <b>trailing twelve months</b> ending at a month end (&quot;T12 Mar 2025&quot;). The basis comes from the statement&apos;s own <code className="text-[11.5px]">period_type</code>, and failing that from its classified document type — the same resolution the engines use, so the column header and the number cannot disagree. The Period control on Financials → Historicals filters the columns by that basis, and the SOURCE panel names the period alongside the document (&quot;T-12 ending Mar 31, 2025&quot;) so a &quot;2025&quot; column is never ambiguous between a year-to-date and a trailing twelve. When the basis cannot be established — no stated period type, and a classification that would have to be guessed at — the column renders the <span className="font-semibold text-ink-900">bare year with a &quot;basis unknown&quot; chip</span> under <ReasonTag code="period_mismatch" />, never an invented FY or T-12. A period-end date that falls outside the column&apos;s own year is likewise dropped rather than shown.
+            </li>
+            <li>
               <span className="font-semibold text-ink-900">Primary financial source.</span>{' '}
               When several statements cover the same periods, Fondok ranks them — full-year sources over partial (monthly / YTD), most-recent period, then most-detailed — and badges the winner “Primary source” in the Data Room so it&apos;s clear which statement drives the historicals.
             </li>

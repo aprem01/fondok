@@ -27,6 +27,7 @@ import {
   sourceLabel,
   humanizeAssumptionKey,
   formatAssumptionValue,
+  formatPeriodBasis,
   type SourceKind,
 } from '@/lib/provenance';
 
@@ -45,14 +46,22 @@ interface Row {
   reason: ReasonCode | null;
 }
 
-/** "Rooms revenue · p.4" from whichever half the worker supplied. */
+/** "Rooms revenue · p.4 · YTD through Mar 31, 2025" from whichever halves the
+ *  worker supplied. FON-41 #4: the period/basis (``scope`` + ``as_of``) rides
+ *  along whenever the worker states one — it always shipped it on the wire and
+ *  the ledger simply had no type for it. A key without one renders exactly as
+ *  it did before. */
 function fieldPageLabel(
-  f: { field?: string | null; page?: number | null } | undefined,
+  f:
+    | { field?: string | null; page?: number | null; scope?: string | null; as_of?: string | null }
+    | undefined,
 ): string | null {
   if (!f) return null;
   const parts: string[] = [];
   if (f.field) parts.push(f.field);
   if (f.page != null && Number.isFinite(f.page)) parts.push(`p.${f.page}`);
+  const period = formatPeriodBasis(f.scope, f.as_of);
+  if (period) parts.push(period);
   return parts.length ? parts.join(' · ') : null;
 }
 
