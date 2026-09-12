@@ -3,7 +3,7 @@
  * PricingSensitivityPanel — "Pricing Sensitivity — Max Purchase Price" (FON-68).
  *
  * Source: `design/canonical/Returns Tab.dc.html` → Pricing sub-tab
- * (`pricingMatrices`). Exit cap rate (rows) × NOI growth (columns); every
+ * (`pricingMatrices`). Exit cap rate (rows) × RevPAR growth (columns); every
  * cell is the highest purchase price that still clears BOTH hurdles on the
  * Investment Profile — each hurdle solved independently, the lower price
  * governs, and the binding constraint is marked in the cell.
@@ -22,7 +22,13 @@ import {
   type WorkerDeal,
 } from '@/lib/api';
 import { palette, prov, radius } from '@/components/design';
-import { BINDING_LABEL, NO_TARGET_MESSAGE, dealHasTarget, pricingErrorMessage } from './MaxPricePanel';
+import {
+  BINDING_LABEL,
+  CanonicalOnlyNote,
+  NO_TARGET_MESSAGE,
+  dealHasTarget,
+  pricingErrorMessage,
+} from './MaxPricePanel';
 
 const mm = (v: number) => `${v < 0 ? '−$' : '$'}${(Math.abs(v) / 1e6).toFixed(2)}M`;
 const money = (v: number) => `${v < 0 ? '−$' : '$'}${Math.round(Math.abs(v)).toLocaleString('en-US')}`;
@@ -32,10 +38,18 @@ interface Props {
   dealId: string;
   /** The deal record — its `target_irr` / `target_moic` are the hurdles. */
   deal: WorkerDeal | null;
+  /** True while a Returns Live-Assumptions sandbox is active; this grid is
+   *  solved on the canonical case and says so (FON-68 §1). */
+  sandboxActive?: boolean;
   onGoToProfile: () => void;
 }
 
-export default function PricingSensitivityPanel({ dealId, deal, onGoToProfile }: Props) {
+export default function PricingSensitivityPanel({
+  dealId,
+  deal,
+  sandboxActive = false,
+  onGoToProfile,
+}: Props) {
   const [grid, setGrid] = useState<PricingMaxPriceGridResponse | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -98,9 +112,11 @@ export default function PricingSensitivityPanel({ dealId, deal, onGoToProfile }:
           Pricing Sensitivity — Max Purchase Price
         </span>
         <span style={{ fontSize: 11, color: palette.textFaint }}>
-          Exit cap rate × NOI growth · highest price that still clears {bothHurdles ? 'both hurdles' : 'the hurdle'}
+          Exit cap rate × RevPAR growth · highest price that still clears {bothHurdles ? 'both hurdles' : 'the hurdle'}
         </span>
       </div>
+
+      {sandboxActive && <CanonicalOnlyNote />}
 
       {!deal && <div style={{ fontSize: 12, color: palette.textMuted }}>Loading deal…</div>}
 
@@ -127,11 +143,11 @@ export default function PricingSensitivityPanel({ dealId, deal, onGoToProfile }:
           <div style={{ overflowX: 'auto' }}>
             <div
               role="table"
-              aria-label="Max purchase price by exit cap rate and NOI growth"
+              aria-label="Max purchase price by exit cap rate and RevPAR growth"
               style={{ display: 'grid', gridTemplateColumns: `150px repeat(${grid.noi_growth_axis.length},minmax(132px,1fr))`, width: 'max-content', minWidth: '100%' }}
             >
               <div style={{ padding: '7px 12px', background: palette.inkNavy, color: palette.gridHeaderText, fontSize: 10, fontWeight: 700, letterSpacing: '.04em', whiteSpace: 'nowrap' }}>
-                EXIT CAP \ NOI GROWTH
+                EXIT CAP \ REVPAR GROWTH
               </div>
               {grid.noi_growth_axis.map((g) => (
                 <div key={g} style={{ padding: '7px 12px', background: palette.inkNavy, color: palette.gridHeaderText, fontSize: 10.5, fontWeight: 600, textAlign: 'right', borderLeft: `1px solid ${palette.gridHeaderDivider}`, whiteSpace: 'nowrap' }}>
@@ -144,7 +160,7 @@ export default function PricingSensitivityPanel({ dealId, deal, onGoToProfile }:
             </div>
           </div>
           <div style={{ fontSize: 11, color: palette.textMuted, marginTop: 9, lineHeight: 1.5 }}>
-            Each cell solves for the maximum purchase price that still meets {bothHurdles ? 'both ' : ''}the {hurdleText} hurdle{bothHurdles ? 's' : ''}; the tag names the binding constraint and “—” means no price clears the hurdles at that combination. Sensitivities answers how returns move; Pricing answers how much you can pay. NOI growth re-tilts the model’s NOI series relative to the base growth assumption ({fmtPct(grid.base_noi_growth_pct, 1)}); the outlined base cell equals the Max Price Solver headline.
+            Each cell solves for the maximum purchase price that still meets {bothHurdles ? 'both ' : ''}the {hurdleText} hurdle{bothHurdles ? 's' : ''}; the tag names the binding constraint and “—” means no price clears the hurdles at that combination. Sensitivities answers how returns move; Pricing answers how much you can pay. RevPAR growth is the same lever the Sensitivities grids flex — here it also re-tilts the model’s NOI series relative to the base growth assumption ({fmtPct(grid.base_noi_growth_pct, 1)}), so a cell prices the whole hold at that growth rate. The outlined base cell equals the Max Price Solver headline.
           </div>
         </>
       )}
@@ -163,7 +179,7 @@ function RowCells({ cap, cells, rooms }: { cap: number; cells: (PricingMaxPriceG
         const solvable = c.max_price != null;
         const perKey = solvable && rooms && rooms > 0 ? `${money((c.max_price as number) / rooms)} / key` : '';
         const title = solvable
-          ? `${fmtPct(c.exit_cap_pct, 2)} exit cap · ${fmtPct(c.noi_growth_pct, 1)} NOI growth — binding constraint ${BINDING_LABEL[c.binding_constraint]}`
+          ? `${fmtPct(c.exit_cap_pct, 2)} exit cap · ${fmtPct(c.noi_growth_pct, 1)} RevPAR growth — binding constraint ${BINDING_LABEL[c.binding_constraint]}`
           : 'No price clears the hurdles at this combination';
         return (
           <div

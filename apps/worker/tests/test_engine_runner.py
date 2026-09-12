@@ -751,3 +751,354 @@ async def test_override_equal_to_its_source_keeps_the_underlying_badge() -> None
     # The genuinely changed key is untouched by the guard.
     assert base["hold_years"] == changed
     assert sources["hold_years"] == SOURCE_ANALYST_OVERRIDE
+
+
+# ── FON-63 — the senior origination fee has ONE owner: the Debt tab ────
+# Sam, 2026-09-11 (FON-63): "Overview Sources & Uses shows Senior Loan Fee =
+# $354,900 … However Debt Overview shows Origination Fee = 0.00% / $0 … These
+# should reconcile to a single authoritative Debt assumption." The runner now
+# seeds the senior tranche from the deal's ``loan_costs_pct`` and reads the
+# RESOLVED tranche fee back into the capital engine.
+
+
+async def _deal_with_overrides(session, overrides: dict) -> tuple[str, str]:
+    """Insert a deal carrying ``overrides`` in ``field_overrides``."""
+    import json
+    from datetime import UTC, datetime
+
+    deal_id, tenant_id = str(uuid4()), str(uuid4())
+    await session.execute(
+        text(
+            """
+            INSERT INTO deals (id, tenant_id, name, status, field_overrides,
+                               created_at, updated_at)
+            VALUES (:id, :tenant, :name, 'Draft', :ov, :now, :now)
+            """
+        ),
+        {
+            "id": deal_id, "tenant": tenant_id, "name": "Wave 2b Hotel",
+            "ov": json.dumps(overrides), "now": datetime.now(UTC),
+        },
+    )
+    await session.commit()
+    return deal_id, tenant_id
+
+
+def test_resolved_senior_origination_fee_prefers_the_tranche_edit() -> None:
+    """Seed from ``loan_costs_pct``; an analyst edit on Debt wins. Both the int
+    and the string tranche key are accepted (JSONB round-trips either way)."""
+    from app.services.engine_runner import _resolved_senior_origination_fee_pct
+
+    assert _resolved_senior_origination_fee_pct({"loan_costs_pct": 0.015}) == 1.50
+    assert _resolved_senior_origination_fee_pct(
+        {"loan_costs_pct": 0.015,
+         "debt_stack_overrides": {"tranches": {0: {"upfront_fee_pct": 0.0}}}}
+    ) == 0.0
+    assert _resolved_senior_origination_fee_pct(
+        {"loan_costs_pct": 0.015,
+         "debt_stack_overrides": {"tranches": {"0": {"upfront_fee_pct": 2.25}}}}
+    ) == 2.25
+    # A junior tranche's fee is NOT the senior's.
+    assert _resolved_senior_origination_fee_pct(
+        {"loan_costs_pct": 0.015,
+         "debt_stack_overrides": {"tranches": {1: {"upfront_fee_pct": 3.0}}}}
+    ) == 1.50
+
+
+@pytest.mark.asyncio
+async def test_default_senior_tranche_carries_the_deals_loan_costs_pct() -> None:
+    """Debt renders 1.50% / $354,900 on a $23,660,000 senior — not 0.00% / $0."""
+    from app.database import get_session_factory
+    from app.services.engine_runner import run_all_engines
+
+    factory = get_session_factory()
+    async with factory() as session:
+        results = await run_all_engines(
+            session, deal_id="kimpton-angler-2026",
+            tenant_id=str(uuid4()), run_id=str(uuid4()),
+        )
+    debt = results["debt"]["outputs"]
+    assert debt["loan_amount"] == pytest.approx(23_660_000)
+    assert debt["origination_fee_pct"] == pytest.approx(1.50)
+    assert debt["origination_fee_usd"] == pytest.approx(354_900)
+    # Same number, one owner: the S&U line equals the Debt tab fee.
+    cap = results["capital"]["outputs"]
+    assert cap["senior_loan_fee_usd"] == pytest.approx(debt["origination_fee_usd"])
+    labels = [u["label"] for u in cap["uses"]]
+    assert "Senior Loan Origination Fee" in labels
+    assert "Senior Loan Fee" not in labels
+
+
+@pytest.mark.asyncio
+async def test_kimpton_su_still_foots_to_43_658_900_with_the_tranche_fee() -> None:
+    """THE byte-identity pin (FON-44 / FON-67). Sam MVP Test 2 is the Kimpton
+    seed with a 10% renovation contingency; her reconciled Total Uses is
+    $43,658,900 and required equity $19,998,900. Surfacing the fee on Debt must
+    not move either — a default flip to 0% would drop them to $43,304,000 /
+    $19,644,000 and invalidate both reconciliations."""
+    from app.database import get_session_factory
+    from app.services.engine_runner import run_all_engines
+
+    factory = get_session_factory()
+    async with factory() as session:
+        deal_id, tenant_id = await _deal_with_overrides(
+            session, {"renovation_contingency_pct": 0.10}
+        )
+        results = await run_all_engines(
+            session, deal_id=deal_id, tenant_id=tenant_id, run_id=str(uuid4())
+        )
+    cap = results["capital"]["outputs"]
+    assert cap["total_capital"] == pytest.approx(43_658_900)
+    assert cap["equity_amount"] == pytest.approx(19_998_900)
+    assert cap["senior_loan_fee_usd"] == pytest.approx(354_900)
+    assert results["debt"]["outputs"]["origination_fee_pct"] == pytest.approx(1.50)
+    line_total = sum(u["amount"] for u in cap["uses"] if u["label"] != "Total Uses")
+    assert line_total == pytest.approx(43_658_900)
+
+
+@pytest.mark.asyncio
+async def test_upfront_fee_pct_on_tranche_0_drives_capital_senior_loan_fee_usd() -> None:
+    """The new wire: editing the Debt origination fee moves Sources & Uses,
+    Total Uses, required equity and LTC — one authoritative number."""
+    from app.database import get_session_factory
+    from app.services.engine_runner import run_all_engines
+
+    factory = get_session_factory()
+    async with factory() as session:
+        base_id, base_tenant = await _deal_with_overrides(session, {})
+        base = await run_all_engines(
+            session, deal_id=base_id, tenant_id=base_tenant, run_id=str(uuid4())
+        )
+        zero_id, zero_tenant = await _deal_with_overrides(
+            session, {"debt_stack.tranches.0.upfront_fee_pct": 0.0}
+        )
+        zero = await run_all_engines(
+            session, deal_id=zero_id, tenant_id=zero_tenant, run_id=str(uuid4())
+        )
+        two_id, two_tenant = await _deal_with_overrides(
+            session, {"debt_stack.tranches.0.upfront_fee_pct": 2.0}
+        )
+        two = await run_all_engines(
+            session, deal_id=two_id, tenant_id=two_tenant, run_id=str(uuid4())
+        )
+
+    b, z, t = base["capital"]["outputs"], zero["capital"]["outputs"], two["capital"]["outputs"]
+    assert b["senior_loan_fee_usd"] == pytest.approx(354_900)
+    # 0% removes the line and drops Total Uses by exactly the prior fee.
+    assert z["senior_loan_fee_usd"] == 0.0
+    assert "Senior Loan Origination Fee" not in [u["label"] for u in z["uses"]]
+    assert z["total_capital"] == pytest.approx(b["total_capital"] - 354_900)
+    assert z["equity_amount"] == pytest.approx(b["equity_amount"] - 354_900)
+    assert z["ltc"] > b["ltc"]  # same loan over a smaller basis
+    assert zero["debt"]["outputs"]["origination_fee_pct"] == pytest.approx(0.0)
+    # 2.00% on the $23,660,000 senior = $473,200.
+    assert t["senior_loan_fee_usd"] == pytest.approx(473_200)
+    assert two["debt"]["outputs"]["origination_fee_usd"] == pytest.approx(473_200)
+
+
+# ── FON-68 / FON-69 — the senior principal and the LTV lever ──────────
+
+
+@pytest.mark.asyncio
+async def test_principal_usd_mirrors_into_senior_loan_amount() -> None:
+    """A pinned senior principal sizes BOTH engines. Without the mirror the
+    capital engine kept sizing from ltv × purchase price while the debt engine
+    was hard-pinned to the stored principal."""
+    from app.database import get_session_factory
+    from app.services.engine_runner import _load_engine_inputs, run_all_engines
+
+    factory = get_session_factory()
+    async with factory() as session:
+        deal_id, tenant_id = await _deal_with_overrides(
+            session, {"debt_stack.tranches.0.principal_usd": 20_000_000}
+        )
+        base = await _load_engine_inputs(session, deal_id, tenant_id=tenant_id)
+        assert base["senior_loan_amount"] == pytest.approx(20_000_000)
+        results = await run_all_engines(
+            session, deal_id=deal_id, tenant_id=tenant_id, run_id=str(uuid4())
+        )
+    assert results["capital"]["outputs"]["debt_amount"] == pytest.approx(20_000_000)
+    assert results["debt"]["outputs"]["loan_amount"] == pytest.approx(20_000_000)
+    # The fee follows the loan it is charged on.
+    assert results["capital"]["outputs"]["senior_loan_fee_usd"] == pytest.approx(300_000)
+
+
+@pytest.mark.asyncio
+async def test_kimpton_canonical_run_is_byte_identical_after_the_mirror() -> None:
+    """On every existing deal the pinned principal already equals ltv ×
+    purchase price ($23,660,000), so the mirror moves nothing."""
+    from app.database import get_session_factory
+    from app.services.engine_runner import run_all_engines
+
+    factory = get_session_factory()
+    async with factory() as session:
+        plain_id, plain_tenant = await _deal_with_overrides(session, {})
+        plain = await run_all_engines(
+            session, deal_id=plain_id, tenant_id=plain_tenant, run_id=str(uuid4())
+        )
+        pinned_id, pinned_tenant = await _deal_with_overrides(
+            session, {"debt_stack.tranches.0.principal_usd": 23_660_000}
+        )
+        pinned = await run_all_engines(
+            session, deal_id=pinned_id, tenant_id=pinned_tenant, run_id=str(uuid4())
+        )
+
+    for engine, fields in (
+        ("capital", ("total_capital", "equity_amount", "ltc", "debt_amount",
+                     "senior_loan_fee_usd")),
+        ("debt", ("loan_amount", "annual_debt_service", "year_one_dscr",
+                  "year_one_debt_yield")),
+        ("returns", ("levered_irr", "unlevered_irr", "equity_multiple",
+                     "gross_sale_price")),
+    ):
+        for field in fields:
+            assert plain[engine]["outputs"][field] == pytest.approx(
+                pinned[engine]["outputs"][field]
+            ), f"{engine}.{field} moved"
+
+
+def test_release_pinned_senior_principal_keeps_junior_tranches_funded() -> None:
+    """Only the SENIOR pin conflicts with the LTV lever — a funded PACE tranche
+    keeps its principal, or the preview would silently de-fund it."""
+    from app.services.engine_runner import _release_pinned_senior_principal
+
+    base = {
+        "senior_loan_amount": 23_660_000,
+        "debt_stack_overrides": {
+            "refi_test_year": 3,
+            "tranches": {
+                0: {"principal_usd": 23_660_000, "rate_pct": 0.068},
+                1: {"principal_usd": 5_000_000, "rate_pct": 0.06},
+            },
+        },
+    }
+    _release_pinned_senior_principal(base)
+    assert base["senior_loan_amount"] is None
+    tranches = base["debt_stack_overrides"]["tranches"]
+    assert "principal_usd" not in tranches[0]
+    assert tranches[0]["rate_pct"] == 0.068       # other senior fields survive
+    assert tranches[1]["principal_usd"] == 5_000_000
+    assert base["debt_stack_overrides"]["refi_test_year"] == 3
+
+
+@pytest.mark.asyncio
+async def test_preview_with_ltv_over_a_pinned_principal_resizes_the_senior() -> None:
+    """FON-68 §3 — Sam: "displayed Year-1 DSCR remained 0.78x … please confirm
+    the sandbox is running the full Debt → Cash Flow → Returns chain."
+
+    It was; a pinned ``principal_usd`` was overriding it. The capital engine
+    sized from ``ltv × purchase_price`` while ``_apply_tranche_overrides``
+    hard-pinned the debt engine to the stored principal, so the preview reported
+    a levered IRR on one loan amount against another loan's debt service.
+    """
+    from app.database import get_session_factory
+    from app.services.engine_runner import run_all_engines, run_returns_preview
+
+    factory = get_session_factory()
+    async with factory() as session:
+        deal_id, tenant_id = await _deal_with_overrides(
+            session, {"debt_stack.tranches.0.principal_usd": 23_660_000}
+        )
+        canonical = await run_all_engines(
+            session, deal_id=deal_id, tenant_id=tenant_id, run_id=str(uuid4())
+        )
+        preview = await run_returns_preview(
+            session, deal_id=deal_id, tenant_id=tenant_id, overrides={"ltv": 0.70}
+        )
+
+    canonical_dscr = canonical["debt"]["outputs"]["year_one_dscr"]
+    # The flexed LTV resized the senior end-to-end: DSCR moved.
+    assert preview["dscr_y1"] is not None
+    assert abs(preview["dscr_y1"] - canonical_dscr) > 1e-6
+    # 70% of the $36,400,000 purchase price.
+    assert preview["loan_amount"] == pytest.approx(0.70 * 36_400_000)
+    # THE invariant violated before the fix: returns levered the capital
+    # engine's loan while debt service ran on the pinned principal.
+    assert preview["loan_amount"] == pytest.approx(preview["total_debt"])
+
+
+@pytest.mark.asyncio
+async def test_returns_preview_persists_nothing() -> None:
+    """A preview writes no ``engine_outputs`` row and leaves the deal's
+    ``field_overrides`` exactly as stored — the pin release is in-memory only."""
+    from app.database import get_session_factory
+    from app.services.engine_runner import run_all_engines, run_returns_preview
+
+    factory = get_session_factory()
+    async with factory() as session:
+        deal_id, tenant_id = await _deal_with_overrides(
+            session, {"debt_stack.tranches.0.principal_usd": 23_660_000}
+        )
+        await run_all_engines(
+            session, deal_id=deal_id, tenant_id=tenant_id, run_id=str(uuid4())
+        )
+        rows_before = (
+            await session.execute(
+                text("SELECT COUNT(*) FROM engine_outputs WHERE deal_id = :d"),
+                {"d": deal_id},
+            )
+        ).scalar()
+        ov_before = (
+            await session.execute(
+                text("SELECT field_overrides FROM deals WHERE id = :d"),
+                {"d": deal_id},
+            )
+        ).scalar()
+
+        await run_returns_preview(
+            session, deal_id=deal_id, tenant_id=tenant_id, overrides={"ltv": 0.70}
+        )
+
+        rows_after = (
+            await session.execute(
+                text("SELECT COUNT(*) FROM engine_outputs WHERE deal_id = :d"),
+                {"d": deal_id},
+            )
+        ).scalar()
+        ov_after = (
+            await session.execute(
+                text("SELECT field_overrides FROM deals WHERE id = :d"),
+                {"d": deal_id},
+            )
+        ).scalar()
+
+    assert rows_after == rows_before
+    assert ov_after == ov_before
+
+
+@pytest.mark.asyncio
+async def test_preview_that_does_not_move_ltv_keeps_the_pinned_senior() -> None:
+    """The Returns tab posts all five slider keys on every drag, so the pin may
+    only be released when the LTV lever ACTUALLY moved. An exit-cap-only preview
+    must still run on the analyst's pinned senior loan."""
+    from app.database import get_session_factory
+    from app.services.engine_runner import run_all_engines, run_returns_preview
+
+    # A pinned senior that deliberately DISAGREES with ltv x purchase price
+    # (0.65 x 36,400,000 = 23,660,000), so a stray release would be visible.
+    pinned = 20_000_000
+
+    factory = get_session_factory()
+    async with factory() as session:
+        deal_id, tenant_id = await _deal_with_overrides(
+            session, {"debt_stack.tranches.0.principal_usd": pinned}
+        )
+        canonical = await run_all_engines(
+            session, deal_id=deal_id, tenant_id=tenant_id, run_id=str(uuid4())
+        )
+        same_ltv = await run_returns_preview(
+            session, deal_id=deal_id, tenant_id=tenant_id,
+            overrides={"ltv": 0.65, "exit_cap_rate": 0.08},
+        )
+        moved_ltv = await run_returns_preview(
+            session, deal_id=deal_id, tenant_id=tenant_id,
+            overrides={"ltv": 0.70, "exit_cap_rate": 0.08},
+        )
+
+    # LTV untouched → the pin stands and the sandbox levers the same loan.
+    assert same_ltv["loan_amount"] == pytest.approx(pinned)
+    assert same_ltv["total_debt"] == pytest.approx(pinned)
+    assert canonical["capital"]["outputs"]["debt_amount"] == pytest.approx(pinned)
+    # LTV moved → the pin is released and the senior resizes end-to-end.
+    assert moved_ltv["loan_amount"] == pytest.approx(0.70 * 36_400_000)
+    assert moved_ltv["loan_amount"] == pytest.approx(moved_ltv["total_debt"])

@@ -211,3 +211,62 @@ def test_proforma_legacy_run_does_not_claim_a_basis_it_cannot_prove() -> None:
     assert CASH_NOI in labels
     # The cover / memo headline lookup still finds the row.
     assert any(lbl in NOI_HEADLINE_LABELS for lbl in labels)
+
+
+# ── FON-63 / FON-54 §8 — the Excel "Loan Costs" cell IS the Debt tab fee ──
+# Sam, FON-54 §8: "Export carries $354,900 Loan Costs, reinforcing the separate
+# Debt QA issue where the live Debt tab shows Origination Fee 0% / $0 despite
+# the model carrying a fee." One assumption now feeds both, so they must agree
+# to the cent — and the S&U label rename must not break the export's lookup.
+
+
+def test_excel_loan_costs_cell_equals_the_debt_tab_origination_fee() -> None:
+    from uuid import uuid4
+
+    from app.engines.capital import CapitalEngine, CapitalEngineInput
+    from app.engines.debt import DebtEngine, DebtEngineInputExt
+    from app.export.live_payload import _build_investment
+
+    # Sam MVP Test 2: $36.4M at 65% LTV → a $23,660,000 senior at a 1.50% fee.
+    capital_out = CapitalEngine().run(
+        CapitalEngineInput(
+            deal_id=uuid4(), purchase_price=36_400_000, keys=132,
+            closing_costs_pct=0.02, renovation_budget=5_280_000,
+            working_capital=500_000, ltv=0.65, loan_costs_pct=0.015,
+        )
+    )
+    debt_out = DebtEngine().run(
+        DebtEngineInputExt(
+            deal_id=uuid4(), loan_amount=capital_out.debt_amount, ltv=0.65,
+            interest_rate=0.068, term_years=5, amortization_years=30,
+            interest_only_years=0,
+            noi_by_year=[3_000_000, 3_100_000, 3_200_000, 3_300_000, 3_400_000],
+            senior_origination_fee_pct=1.50,
+        )
+    )
+
+    inv = _build_investment(
+        capital_out.model_dump(mode="json"), 132, 3_000_000.0
+    )
+    assert inv["loan_costs_usd"] == pytest.approx(354_900)
+    assert inv["loan_costs_usd"] == pytest.approx(debt_out.origination_fee_usd)
+    # The export reads the renamed Sources & Uses line, not the scalar fallback.
+    labels = [u.label for u in capital_out.uses]
+    assert "Senior Loan Origination Fee" in labels
+
+
+def test_excel_loan_costs_still_reads_a_legacy_senior_loan_fee_row() -> None:
+    """A run persisted before the rename still exports its Loan Costs cell."""
+    from app.export.live_payload import _build_investment
+
+    legacy = {
+        "uses": [
+            {"label": "Purchase Price", "amount": 36_400_000.0},
+            {"label": "Senior Loan Fee", "amount": 354_900.0},
+            {"label": "Total Uses", "amount": 43_262_900.0, "is_total": True},
+        ],
+        "total_capital": 43_262_900.0,
+    }
+    assert _build_investment(legacy, 132, None)["loan_costs_usd"] == pytest.approx(
+        354_900
+    )

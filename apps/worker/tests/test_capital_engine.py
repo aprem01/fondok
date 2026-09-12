@@ -54,7 +54,9 @@ def test_kimpton_source_reconciliation():
     assert round(out.total_capital) == 43_155_776
     # Financing cost is a separate line, not folded into the property uses.
     assert _line(out, "Insurance Reserve").amount == 299_057
-    assert _line(out, "Senior Loan Fee").amount == 463_740
+    # FON-63 — the line is named for the assumption the Debt tab owns.
+    assert _line(out, "Senior Loan Origination Fee").amount == 463_740
+    assert _line(out, "Senior Loan Fee") is None
     assert _line(out, "Loan Costs") is None
 
 
@@ -158,3 +160,75 @@ def test_contingency_leaves_hard_soft_fees_breakdown_on_base():
     assert out.renovation_breakdown.hard == pytest.approx(4_943_400 * 0.75)
     assert out.renovation_breakdown.soft == pytest.approx(4_943_400 * 0.15)
     assert out.renovation_breakdown.fees == pytest.approx(4_943_400 * 0.10)
+
+
+# ─── FON-63 / FON-44 — the senior loan fee is the DEBT TAB's origination fee ───
+# Sam, 2026-09-11: "Overview Sources & Uses shows Senior Loan Fee = $354,900 …
+# However Debt Overview shows Origination Fee = 0.00% / $0 … If the loan fee is
+# 1.50%, Debt should surface 1.50% / $354,900." The fee now has ONE owner; the
+# capital engine reads the resolved tranche fee. The pin below is what stops a
+# default flip from silently re-cutting Sam's reconciled Total Uses — the tests
+# above all pass ``loan_costs_pct`` explicitly, so they would not catch it.
+
+
+def _sam_input(**kw) -> CapitalEngineInput:
+    """Sam MVP Test 2 (FON-44 / FON-67): $36.4M at 65% LTV, 10% renovation
+    contingency — the deal whose Total Uses Sam reconciled at $43,658,900."""
+    base = dict(
+        deal_id=uuid4(), purchase_price=36_400_000, keys=132,
+        closing_costs_pct=0.02, renovation_budget=5_280_000,
+        renovation_contingency_pct=0.10, working_capital=500_000,
+        ltv=0.65, loan_costs_pct=0.015,
+    )
+    base.update(kw)
+    return CapitalEngineInput(**base)
+
+
+def test_kimpton_su_foots_to_43_658_900_with_the_tranche_fee():
+    """The byte-identity pin: surfacing the fee on Debt moves NO number.
+
+    1.50% of the $23,660,000 senior = $354,900, and Total Uses stays exactly
+    where Sam reconciled it. A default flip to 0% would drop this to
+    $43,304,000 and invalidate FON-44 and FON-67.
+    """
+    out = CapitalEngine().run(_sam_input())
+    assert out.debt_amount == pytest.approx(23_660_000)
+    assert out.senior_loan_fee_usd == pytest.approx(354_900)
+    assert _line(out, "Senior Loan Origination Fee").amount == pytest.approx(354_900)
+    assert out.total_capital == pytest.approx(43_658_900)
+    assert out.equity_amount == pytest.approx(19_998_900)
+    # The S&U table foots: every line but the total sums to the total.
+    line_total = sum(u.amount for u in out.uses if not u.is_total)
+    assert line_total == pytest.approx(43_658_900)
+
+
+def test_editing_the_debt_origination_fee_to_zero_removes_the_line():
+    """A 0% fee on Debt removes the S&U line and drops Total Uses by exactly
+    the prior fee — nothing else moves."""
+    base = CapitalEngine().run(_sam_input())
+    zero = CapitalEngine().run(_sam_input(loan_costs_pct=0.0))
+
+    assert _line(zero, "Senior Loan Origination Fee") is None
+    assert zero.senior_loan_fee_usd == 0.0
+    assert zero.total_capital == pytest.approx(
+        base.total_capital - base.senior_loan_fee_usd
+    )
+    assert zero.total_capital == pytest.approx(43_304_000)
+    # The fee funds out of equity, so equity drops by the same amount and the
+    # senior loan (and therefore the property uses) is untouched.
+    assert zero.debt_amount == pytest.approx(base.debt_amount)
+    assert zero.property_uses_usd == pytest.approx(base.property_uses_usd)
+    assert zero.equity_amount == pytest.approx(
+        base.equity_amount - base.senior_loan_fee_usd
+    )
+
+
+def test_senior_loan_fee_provenance_names_the_debt_tranche_fee():
+    """The trace points at the field an analyst can actually edit, in that
+    field's own 0..10 percent units — not at the platform constant."""
+    out = CapitalEngine().run(_sam_input())
+    trace = out.provenance["senior_loan_fee_usd"]
+    pct = next(i for i in trace.inputs if i.name == "senior_origination_fee_pct")
+    assert pct.assumption_key == "debt_stack.tranches.0.upfront_fee_pct"
+    assert pct.value == pytest.approx(1.50)
+    assert "loan_costs_pct" not in (trace.formula or "")

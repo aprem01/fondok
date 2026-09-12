@@ -66,6 +66,35 @@ const OUTPUTS = {
       completed_at: null,
       run_id: 'run-1',
     },
+    sensitivity: {
+      deal_id: 'deal-1',
+      engine: 'sensitivity',
+      status: 'complete',
+      summary: '',
+      outputs: {
+        matrices: [
+          {
+            key: 'irr_exit_revpar',
+            label: 'Levered IRR — Exit Cap × RevPAR Growth',
+            row_variable: 'exit_cap_rate',
+            col_variable: 'revpar_growth',
+            metric: 'levered_irr',
+            rows: [0.06, 0.065, 0.07, 0.075, 0.08],
+            // The grid runs to 7.50% — the sandbox slider must reach it.
+            cols: [0.025, 0.035, 0.045, 0.055, 0.075],
+            cells: [
+              { row_value: 0.07, col_value: 0.045, value: 0.2301, is_base: true },
+            ],
+          },
+        ],
+      },
+      inputs: {},
+      error: null,
+      runtime_ms: 20,
+      started_at: null,
+      completed_at: null,
+      run_id: 'run-1',
+    },
     debt: {
       deal_id: 'deal-1',
       engine: 'debt',
@@ -108,11 +137,17 @@ const previewSpy = vi.fn(async () => ({
   unlevered_irr: 0.14,
   equity_multiple: 2.05,
   year_one_coc: 0.079,
+  avg_coc: 0.0755,
   exit_value: 46_000_000,
   net_proceeds: 20_000_000,
   dscr_y1: 1.38,
   hold_years: 5,
   exit_cap_rate: 0.09,
+  loan_amount: 25_480_000,
+  total_debt: 25_480_000,
+  total_capital: 44_000_000,
+  noi_by_year: [3_000_000, 3_100_000, 3_200_000, 3_300_000, 3_400_000],
+  cash_flows: [-19_000_000, 1_400_000, 1_500_000, 1_600_000, 1_700_000, 21_000_000],
   sensitivity: null,
 }));
 const runOneSpy = vi.fn();
@@ -142,7 +177,18 @@ vi.mock('@/components/project/EngineRightRail', () => ({ default: () => null }))
 vi.mock('@/components/project/EngineRunHistory', () => ({ default: () => null }));
 vi.mock('@/components/project/WhatJustHappened', () => ({ default: () => null }));
 vi.mock('@/components/project/PricingSensitivityPanel', () => ({ default: () => null }));
-vi.mock('@/components/project/MaxPricePanel', () => ({ default: () => null }));
+vi.mock('@/components/project/MaxPricePanel', () => ({
+  // Surfaces the prop so the ReturnsWorkspace → PricingSubTab → panel wiring is
+  // asserted here; the note's own copy is covered in pricingMaxPrice.test.tsx.
+  default: ({ sandboxActive }: { sandboxActive?: boolean }) =>
+    React.createElement(
+      'div',
+      null,
+      sandboxActive
+        ? 'Solved on the canonical case; the active sensitivity is not applied.'
+        : 'canonical',
+    ),
+}));
 vi.mock('@/components/help/IntroCard', () => ({ IntroCard: () => null }));
 vi.mock('@/components/help/CoachMark', () => ({
   CoachMark: ({ children }: { children: React.ReactNode }) =>
@@ -166,6 +212,7 @@ beforeEach(() => {
   previewSpy.mockClear();
   runOneSpy.mockClear();
   runAllSpy.mockClear();
+  window.sessionStorage.clear();
 });
 
 describe('ReturnsTab headline (split-headline regression)', () => {
@@ -242,5 +289,118 @@ describe('ReturnsTab ephemeral sandbox', () => {
     // Never persisted anything.
     expect(runOneSpy).not.toHaveBeenCalled();
     expect(runAllSpy).not.toHaveBeenCalled();
+  });
+});
+
+
+// ── FON-68 — the sandbox is visible where it changes an answer, survives
+//    navigation within the deal, and is honest about what it does NOT reach ──
+
+const SANDBOX_KEY = 'fondok:returns-sandbox:deal-1';
+
+/** Open Sensitivities and drag Exit Cap Rate off its 0.07 base. */
+function dirtyTheSandbox(value = '0.09') {
+  fireEvent.click(screen.getByRole('tab', { name: 'Sensitivities' }));
+  fireEvent.change(screen.getAllByRole('slider')[0], { target: { value } });
+}
+
+describe('ReturnsTab — Returns Summary shows the sandbox case', () => {
+  it('hero KPIs move to the preview and are chipped Sandbox while dirty', async () => {
+    render(<ReturnsTab />);
+    // Canonical first.
+    expect(screen.getByText('23.01%')).toBeInTheDocument();
+    expect(screen.queryByText('Sandbox')).not.toBeInTheDocument();
+
+    dirtyTheSandbox();
+    await waitFor(() => expect(previewSpy).toHaveBeenCalled());
+    fireEvent.click(screen.getByRole('tab', { name: 'Returns Summary' }));
+
+    // The headline now reads the preview, not the canonical run.
+    await waitFor(() => expect(screen.getByText('19.02%')).toBeInTheDocument());
+    expect(screen.getByText('2.05x')).toBeInTheDocument();       // preview MOIC
+    expect(screen.getByText('7.55%')).toBeInTheDocument();       // preview avg CoC
+    expect(screen.getByText('$46.00M')).toBeInTheDocument();     // preview exit value
+    expect(screen.queryByText('23.01%')).not.toBeInTheDocument();
+    expect(screen.queryByText('2.37x')).not.toBeInTheDocument();
+    // …and every moved tile says so.
+    expect(screen.getAllByText('Sandbox').length).toBeGreaterThan(0);
+    expect(
+      screen.getByText(/sandbox case — Investment and Debt are unchanged/i),
+    ).toBeInTheDocument();
+  });
+
+  it('goes back to the canonical numbers on Reset to base case', async () => {
+    render(<ReturnsTab />);
+    dirtyTheSandbox();
+    await waitFor(() => expect(previewSpy).toHaveBeenCalled());
+    fireEvent.click(screen.getAllByText('Reset to base case')[0]);
+
+    fireEvent.click(screen.getByRole('tab', { name: 'Returns Summary' }));
+    await waitFor(() => expect(screen.getByText('23.01%')).toBeInTheDocument());
+    expect(screen.queryByText('Sandbox')).not.toBeInTheDocument();
+  });
+});
+
+describe('ReturnsTab — the sandbox persists within the deal (FON-68 §1)', () => {
+  it('survives an unmount/remount of the Returns workspace', async () => {
+    const { unmount } = render(<ReturnsTab />);
+    dirtyTheSandbox();
+    await waitFor(() =>
+      expect(window.sessionStorage.getItem(SANDBOX_KEY)).not.toBeNull(),
+    );
+    unmount();
+
+    // Sam: "after navigating Returns → Investment → Returns, the sensitivity
+    // had automatically reset to the base case."
+    render(<ReturnsTab />);
+    await waitFor(() =>
+      expect(screen.getByText(/Sensitivity override active/i)).toBeInTheDocument(),
+    );
+    fireEvent.click(screen.getByRole('tab', { name: 'Sensitivities' }));
+    expect((screen.getAllByRole('slider')[0] as HTMLInputElement).value).toBe('0.09');
+  });
+
+  it('Reset to base case clears the persisted sandbox', async () => {
+    render(<ReturnsTab />);
+    dirtyTheSandbox();
+    await waitFor(() =>
+      expect(window.sessionStorage.getItem(SANDBOX_KEY)).not.toBeNull(),
+    );
+    fireEvent.click(screen.getAllByText('Reset to base case')[0]);
+    await waitFor(() =>
+      expect(window.sessionStorage.getItem(SANDBOX_KEY)).toBeNull(),
+    );
+  });
+
+  it('is never written to the deal record or a URL param', async () => {
+    render(<ReturnsTab />);
+    dirtyTheSandbox();
+    await waitFor(() => expect(previewSpy).toHaveBeenCalled());
+    expect(runOneSpy).not.toHaveBeenCalled();
+    expect(runAllSpy).not.toHaveBeenCalled();
+    expect(window.location.search).toBe('');
+  });
+});
+
+describe('ReturnsTab — slider ranges and Pricing honesty', () => {
+  it('the RevPAR slider max equals the sensitivity matrix top axis value', () => {
+    render(<ReturnsTab />);
+    fireEvent.click(screen.getByRole('tab', { name: 'Sensitivities' }));
+    // SANDBOX_FIELDS order: exit cap, RevPAR growth, hold, LTV, rate.
+    const revpar = screen.getAllByRole('slider')[1] as HTMLInputElement;
+    // The matrix's top revpar_growth axis value is 0.075 — not the declared 0.06.
+    expect(revpar.max).toBe('0.075');
+  });
+
+  it('Pricing states that the active sensitivity is not applied', async () => {
+    render(<ReturnsTab />);
+    dirtyTheSandbox();
+    await waitFor(() => expect(previewSpy).toHaveBeenCalled());
+    fireEvent.click(screen.getByRole('tab', { name: 'Pricing' }));
+    expect(
+      screen.getByText(
+        /Solved on the canonical case; the active sensitivity is not applied/i,
+      ),
+    ).toBeInTheDocument();
   });
 });

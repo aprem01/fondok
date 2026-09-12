@@ -156,6 +156,77 @@ const SANDBOX_FIELDS: SandboxField[] = [
   { key: 'interestRate', label: 'Interest Rate', min: 0.04, max: 0.1, step: 0.00125, fmt: (v) => fmtPct(v, 3) },
 ];
 
+// FON-68 §2 (Sam) — the slider stopped at 6.00% while the sensitivity grids ran
+// past it, so the matrix offered a case the sandbox could not reproduce. Read
+// the top of the grid's OWN RevPAR-growth axis rather than restating it here:
+// the two cannot drift because there is only one number. Absent a matrix (an
+// older run) the declared default stands.
+function revparAxisMax(outputs: EngineOutputs): number | null {
+  const named = getEngineField<WorkerMatrixRaw[]>(outputs, 'sensitivity', 'matrices') ?? [];
+  const top = topLevelSensitivityMatrix(outputs);
+  let max: number | null = null;
+  const consider = (vals: unknown) => {
+    if (!Array.isArray(vals)) return;
+    for (const v of vals) {
+      if (typeof v === 'number' && Number.isFinite(v)) max = max == null ? v : Math.max(max, v);
+    }
+  };
+  for (const m of [...named, top]) {
+    if (!m) continue;
+    if (m.col_variable === 'revpar_growth') consider(m.cols);
+    if (m.row_variable === 'revpar_growth') consider(m.rows);
+  }
+  return max;
+}
+
+/** SANDBOX_FIELDS with the RevPAR slider aligned to the live matrix axis. */
+function sandboxFieldsFor(outputs: EngineOutputs): SandboxField[] {
+  const axisMax = revparAxisMax(outputs);
+  return SANDBOX_FIELDS.map((f) => {
+    if (f.key !== 'revparGrowth' || axisMax == null || axisMax <= f.min) return f;
+    return { ...f, max: Math.max(f.max, axisMax) };
+  });
+}
+
+// ── Session-scoped sandbox persistence (FON-68 §1, Sam: "recommend preserving
+// the active sandbox state while navigating within the deal until the user
+// explicitly resets it"). Keyed per deal, held in sessionStorage — never a URL
+// param and never written to the deal record, so it cannot outlive the tab or
+// leak into another analyst's session. Cleared by Reset to base case, by a deal
+// change, and by a canonical re-run (a new base). ──
+const SANDBOX_STORAGE_PREFIX = 'fondok:returns-sandbox:';
+const sandboxStorageKey = (dealId: string) => `${SANDBOX_STORAGE_PREFIX}${dealId}`;
+
+function readPersistedSandbox(dealId: string): SandboxValues | null {
+  if (typeof window === 'undefined' || !dealId) return null;
+  try {
+    const raw = window.sessionStorage.getItem(sandboxStorageKey(dealId));
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as Partial<Record<SandboxKey, unknown>>;
+    const out = {} as SandboxValues;
+    for (const f of SANDBOX_FIELDS) {
+      const v = parsed[f.key];
+      // A partial or non-numeric blob is not a sandbox — fall back to base
+      // rather than reconstructing half of one.
+      if (typeof v !== 'number' || !Number.isFinite(v)) return null;
+      out[f.key] = v;
+    }
+    return out;
+  } catch {
+    return null;
+  }
+}
+
+function writePersistedSandbox(dealId: string, values: SandboxValues | null): void {
+  if (typeof window === 'undefined' || !dealId) return;
+  try {
+    if (values == null) window.sessionStorage.removeItem(sandboxStorageKey(dealId));
+    else window.sessionStorage.setItem(sandboxStorageKey(dealId), JSON.stringify(values));
+  } catch {
+    /* private mode / blocked storage — the sandbox still works in-memory */
+  }
+}
+
 // Read the canonical slider base case straight off the returns engine's
 // persisted ``inputs.assumptions`` blob — the SAME canonical run the headline
 // reads — so the sandbox starts on the deal's real numbers with no dependency
@@ -192,16 +263,43 @@ function useReturnsSandbox(outputs: EngineOutputs, dealId: string): SandboxState
   const base = useMemo(() => readSandboxBase(outputs), [outputs]);
   const [sandbox, setSandbox] = useState<SandboxValues>(base);
   const prevBaseRef = useRef(base);
+  // Restore this deal's persisted sandbox — AFTER mount, because
+  // sessionStorage does not exist during SSR and reading it in the state
+  // initializer would desync hydration. Runs once per deal id: navigating to a
+  // different deal drops the previous deal's sandbox rather than carrying it.
+  const restoredForRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (restoredForRef.current === dealId) return;
+    restoredForRef.current = dealId;
+    const saved = readPersistedSandbox(dealId);
+    setSandbox(saved ?? base);
+  }, [dealId, base]);
   // Follow a new canonical base (e.g. after a real re-run) only when the user
   // hasn't started testing an override; otherwise their sandbox persists across
   // a background refetch.
   useEffect(() => {
     const prev = prevBaseRef.current;
-    setSandbox((cur) => (sandboxDiffers(cur, prev) ? cur : base));
+    if (sandboxDiffers(base, prev)) {
+      // A genuinely new canonical base — a re-run landed. The stale sandbox is
+      // no longer "an override of THIS run", so it is cleared from storage too.
+      setSandbox((cur) => {
+        if (sandboxDiffers(cur, prev)) return cur;
+        writePersistedSandbox(dealId, null);
+        return base;
+      });
+    }
     prevBaseRef.current = base;
-  }, [base]);
+  }, [base, dealId]);
 
   const dirty = sandboxDiffers(sandbox, base);
+
+  // Persist (or clear) whenever the sandbox settles. Writing only after the
+  // restore has run keeps a first paint from stamping the base over a saved
+  // sandbox.
+  useEffect(() => {
+    if (restoredForRef.current !== dealId) return;
+    writePersistedSandbox(dealId, dirty ? sandbox : null);
+  }, [dealId, sandbox, dirty]);
   const [preview, setPreview] = useState<ReturnsPreviewResponse | null>(null);
   const [previewing, setPreviewing] = useState(false);
 
@@ -244,7 +342,10 @@ function useReturnsSandbox(outputs: EngineOutputs, dealId: string): SandboxState
     };
   }, [dirty, dealId, sandbox]);
 
-  const resetToBase = () => setSandbox(base);
+  const resetToBase = () => {
+    writePersistedSandbox(dealId, null);
+    setSandbox(base);
+  };
   return { sandbox, setSandbox, base, dirty, preview, previewing, resetToBase };
 }
 
@@ -269,7 +370,11 @@ function ReturnsWorkspace({ outputs, dealId }: { outputs: EngineOutputs; dealId:
         ? 'How returns move with the key assumptions'
         : 'What price the deal can carry';
 
-  const overrideSummary = SANDBOX_FIELDS.filter((f) => Math.abs(sandbox[f.key] - base[f.key]) > 1e-9)
+  // One fields list for the banner and the sliders, with the RevPAR range read
+  // off the live sensitivity matrix so the two can never disagree.
+  const fields = useMemo(() => sandboxFieldsFor(outputs), [outputs]);
+  const overrideSummary = fields
+    .filter((f) => Math.abs(sandbox[f.key] - base[f.key]) > 1e-9)
     .map((f) => `${f.label} ${f.fmt(base[f.key])} → ${f.fmt(sandbox[f.key])}`)
     .join(' · ');
 
@@ -364,11 +469,18 @@ function ReturnsWorkspace({ outputs, dealId }: { outputs: EngineOutputs; dealId:
       )}
 
       {tab === 'Returns Summary' && (
-        <ReturnsSummary outputs={outputs} onEditInvestment={goInvestment} onViewCashFlow={goCashFlow} />
+        <ReturnsSummary
+          outputs={outputs}
+          preview={preview}
+          dirty={dirty}
+          onEditInvestment={goInvestment}
+          onViewCashFlow={goCashFlow}
+        />
       )}
       {tab === 'Sensitivities' && (
         <Sensitivities
           outputs={outputs}
+          fields={fields}
           sandbox={sandbox}
           setSandbox={setSandbox}
           dirty={dirty}
@@ -378,7 +490,12 @@ function ReturnsWorkspace({ outputs, dealId }: { outputs: EngineOutputs; dealId:
         />
       )}
       {tab === 'Pricing' && (
-        <PricingSubTab dealId={dealId} outputs={outputs} onGoToProfile={goProfile} />
+        <PricingSubTab
+          dealId={dealId}
+          outputs={outputs}
+          sandboxActive={dirty}
+          onGoToProfile={goProfile}
+        />
       )}
     </div>
   );
@@ -395,17 +512,33 @@ function ReturnsWorkspace({ outputs, dealId }: { outputs: EngineOutputs; dealId:
 function PricingSubTab({
   dealId,
   outputs,
+  sandboxActive = false,
   onGoToProfile,
 }: {
   dealId: string;
   outputs: EngineOutputs;
+  /** True while a Live-Assumptions sandbox is active. Pricing does NOT consume
+   *  it (a "max price under a hypothetical LTV" is a different question), so
+   *  both panels say so inline rather than silently answering the other one. */
+  sandboxActive?: boolean;
   onGoToProfile: () => void;
 }) {
   const { deal } = useDeal(dealId);
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
-      <MaxPricePanel dealId={dealId} deal={deal} outputs={outputs} onGoToProfile={onGoToProfile} />
-      <PricingSensitivityPanel dealId={dealId} deal={deal} onGoToProfile={onGoToProfile} />
+      <MaxPricePanel
+        dealId={dealId}
+        deal={deal}
+        outputs={outputs}
+        sandboxActive={sandboxActive}
+        onGoToProfile={onGoToProfile}
+      />
+      <PricingSensitivityPanel
+        dealId={dealId}
+        deal={deal}
+        sandboxActive={sandboxActive}
+        onGoToProfile={onGoToProfile}
+      />
     </div>
   );
 }
@@ -417,29 +550,53 @@ function PricingSubTab({
 
 function ReturnsSummary({
   outputs,
+  preview,
+  dirty = false,
   onEditInvestment,
   onViewCashFlow,
 }: {
   outputs: EngineOutputs;
+  /** The non-persisting sandbox preview, when one is active. */
+  preview?: ReturnsPreviewResponse | null;
+  /** True while the Live-Assumptions sandbox differs from the base case. */
+  dirty?: boolean;
   onEditInvestment: () => void;
   onViewCashFlow: () => void;
 }) {
+  // FON-68 §1 — with a sandbox active the banner announced an override while
+  // these tiles kept showing the canonical run. Every headline figure now reads
+  // the preview while dirty and carries a "Sandbox" chip, so the number and the
+  // banner can never tell two different stories. `sb` falls back to the
+  // canonical value whenever the preview has not returned that field.
+  const sandboxOn = dirty && preview != null;
+  const sb = <T,>(previewValue: T | null | undefined, canonical: T | undefined): T | undefined =>
+    sandboxOn && previewValue != null ? previewValue : canonical;
+
   // ── Hero row (4 navy tiles) — WORKER outputs only, no client TS fallback. ──
-  const irr = getEngineField<number>(outputs, 'returns', 'levered_irr');
-  const mult = getEngineField<number>(outputs, 'returns', 'equity_multiple');
+  const irr = sb(preview?.levered_irr, getEngineField<number>(outputs, 'returns', 'levered_irr'));
+  const mult = sb(
+    preview?.equity_multiple,
+    getEngineField<number>(outputs, 'returns', 'equity_multiple'),
+  );
   // Canonical headline shows the HOLD-AVERAGE cash-on-cash (``avg_coc``), not
   // year 1 — both exist on the returns engine (returns.py). year_one_coc feeds
   // the sublabel only.
-  const avgCoc = getEngineField<number>(outputs, 'returns', 'avg_coc');
-  const yearOneCoc = getEngineField<number>(outputs, 'returns', 'year_one_coc');
-  const holdYears = getEngineField<number>(outputs, 'returns', 'hold_years');
+  const avgCoc = sb(preview?.avg_coc, getEngineField<number>(outputs, 'returns', 'avg_coc'));
+  const yearOneCoc = sb(
+    preview?.year_one_coc,
+    getEngineField<number>(outputs, 'returns', 'year_one_coc'),
+  );
+  const holdYears = sb(preview?.hold_years, getEngineField<number>(outputs, 'returns', 'hold_years'));
 
   // Yield on Cost — DERIVED (no stored field): stabilized NOI ÷ total cost
   // basis. Stabilized NOI = the last operating-year NOI from the returns
   // engine's own ``noi_by_year``; total cost basis = ``capital.total_capital``.
   // If either is unsourceable we render '—' rather than a fabricated number.
-  const noiByYear = getEngineField<number[]>(outputs, 'returns', 'noi_by_year');
-  const totalCapital = getEngineField<number>(outputs, 'capital', 'total_capital');
+  const noiByYear = sb(preview?.noi_by_year, getEngineField<number[]>(outputs, 'returns', 'noi_by_year'));
+  const totalCapital = sb(
+    preview?.total_capital,
+    getEngineField<number>(outputs, 'capital', 'total_capital'),
+  );
   const stabilizedNoi =
     Array.isArray(noiByYear) && noiByYear.length > 0 ? noiByYear[noiByYear.length - 1] : undefined;
   const yieldOnCost =
@@ -449,9 +606,15 @@ function ReturnsSummary({
 
   // ── Secondary row (3 white cards). Equity Profit + Initial Equity read off
   // the canonical levered cash-flow series so they reconcile to the bridge. ──
-  const flows = getEngineField<number[]>(outputs, 'returns', 'cash_flows');
-  const exitValue = getEngineField<number>(outputs, 'returns', 'gross_sale_price');
-  const exitCap = getEngineField<number>(outputs, 'returns', 'exit_cap_rate');
+  const flows = sb(preview?.cash_flows, getEngineField<number[]>(outputs, 'returns', 'cash_flows'));
+  const exitValue = sb(
+    preview?.exit_value,
+    getEngineField<number>(outputs, 'returns', 'gross_sale_price'),
+  );
+  const exitCap = sb(
+    preview?.exit_cap_rate,
+    getEngineField<number>(outputs, 'returns', 'exit_cap_rate'),
+  );
   const hasFlows = Array.isArray(flows) && flows.length >= 2;
   const initialEquity = hasFlows ? -flows![0] : undefined; // −close-period outflow
   const totalToEquity = hasFlows ? flows!.slice(1).reduce((a, b) => a + b, 0) : undefined;
@@ -472,6 +635,11 @@ function ReturnsSummary({
           }}
         >
           Deal-level returns · before GP/LP allocation
+          {sandboxOn && (
+            <span style={{ marginLeft: 8, color: palette.linkBlue, letterSpacing: '.04em' }}>
+              · sandbox case — Investment and Debt are unchanged
+            </span>
+          )}
         </span>
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(190px,1fr))', gap: 12 }}>
           <CoachMark
@@ -486,6 +654,7 @@ function ReturnsSummary({
             <ReturnsKpi
               variant="navy"
               label="Levered IRR"
+              sandbox={sandboxOn}
               engine="returns"
               path="levered_irr"
               flashKey={irr}
@@ -496,6 +665,7 @@ function ReturnsSummary({
           <ReturnsKpi
             variant="navy"
             label="Equity Multiple"
+            sandbox={sandboxOn}
             engine="returns"
             path="equity_multiple"
             flashKey={mult}
@@ -505,6 +675,7 @@ function ReturnsSummary({
           <ReturnsKpi
             variant="navy"
             label="Avg. Cash-on-Cash"
+            sandbox={sandboxOn}
             engine="returns"
             path="avg_coc"
             flashKey={avgCoc}
@@ -518,6 +689,7 @@ function ReturnsSummary({
           <ReturnsKpi
             variant="navy"
             label="Yield on Cost"
+            sandbox={sandboxOn}
             flashKey={yieldOnCost}
             sub="Stabilized NOI ÷ total cost basis"
             value={yieldOnCost != null ? fmtPct(yieldOnCost, 2) : '—'}
@@ -529,6 +701,7 @@ function ReturnsSummary({
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(190px,1fr))', gap: 12 }}>
         <ReturnsKpi
           label="Exit Value"
+          sandbox={sandboxOn}
           engine="returns"
           path="gross_sale_price"
           flashKey={exitValue}
@@ -537,12 +710,14 @@ function ReturnsSummary({
         />
         <ReturnsKpi
           label="Equity Profit"
+          sandbox={sandboxOn}
           flashKey={equityProfit}
           sub="Cash returned less equity invested"
           value={fmtM(equityProfit)}
         />
         <ReturnsKpi
           label="Initial Equity Invested"
+          sandbox={sandboxOn}
           flashKey={initialEquity}
           sub="Funded in full at close"
           value={fmtM(initialEquity)}
@@ -569,6 +744,7 @@ function ReturnsKpi({
   engine,
   path,
   variant = 'white',
+  sandbox = false,
 }: {
   label: string;
   value: ReactNode;
@@ -577,16 +753,30 @@ function ReturnsKpi({
   engine?: string;
   path?: string;
   variant?: 'white' | 'navy';
+  /** Renders the "Sandbox" chip: this tile is showing the Live-Assumptions
+   *  preview, not the canonical run. */
+  sandbox?: boolean;
 }) {
   const flash = useFlash(flashKey ?? value);
-  const body =
-    engine && path ? (
+  // Provenance points at the canonical run, so it is suppressed on a sandbox
+  // tile — a trace popover explaining a number the tile is not showing is
+  // worse than none.
+  const traced =
+    engine && path && !sandbox ? (
       <Traced engine={engine} path={path}>
         {value}
       </Traced>
     ) : (
       value
     );
+  const body = sandbox ? (
+    <span style={{ display: 'inline-flex', alignItems: 'baseline', gap: 8, flexWrap: 'wrap' }}>
+      {traced}
+      <SandboxChip variant={variant} />
+    </span>
+  ) : (
+    traced
+  );
   return (
     <KpiTile
       className={cn(flash && 'value-flash')}
@@ -596,6 +786,30 @@ function ReturnsKpi({
       sub={sub}
       value={body}
     />
+  );
+}
+
+/** "Sandbox" — this figure is the ephemeral preview, not the canonical run. */
+function SandboxChip({ variant = 'white' }: { variant?: 'white' | 'navy' }) {
+  const navy = variant === 'navy';
+  return (
+    <span
+      title="Live-Assumptions sandbox — the canonical assumptions in Investment and Debt are unchanged"
+      style={{
+        fontSize: 9.5,
+        fontWeight: 700,
+        letterSpacing: '.06em',
+        textTransform: 'uppercase',
+        padding: '2px 6px',
+        borderRadius: 999,
+        whiteSpace: 'nowrap',
+        color: navy ? '#cddbff' : palette.linkBlue,
+        background: navy ? 'rgba(159,178,223,.22)' : 'oklch(97% 0.03 250)',
+        border: `1px solid ${navy ? 'rgba(205,219,255,.35)' : '#c9d4ee'}`,
+      }}
+    >
+      Sandbox
+    </span>
   );
 }
 
@@ -927,6 +1141,7 @@ interface LeveredStatementLine {
 
 function Sensitivities({
   outputs,
+  fields,
   sandbox,
   setSandbox,
   dirty,
@@ -935,6 +1150,8 @@ function Sensitivities({
   resetToBase,
 }: {
   outputs: EngineOutputs;
+  /** Slider definitions with the RevPAR range read off the live matrix axis. */
+  fields: SandboxField[];
   sandbox: SandboxValues;
   setSandbox: React.Dispatch<React.SetStateAction<SandboxValues>>;
   dirty: boolean;
@@ -996,7 +1213,7 @@ function Sensitivities({
             marginTop: 4,
           }}
         >
-          {SANDBOX_FIELDS.map((f) => (
+          {fields.map((f) => (
             <Slider
               key={f.key}
               label={f.label}

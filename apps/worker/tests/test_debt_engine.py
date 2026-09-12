@@ -284,3 +284,42 @@ def test_completion_guarantee_echoed_from_input() -> None:
     assert DebtEngine().run(_input()).completion_guarantee is None
     inp = _input().model_copy(update={"completion_guarantee": "in_place"})
     assert DebtEngine().run(inp).completion_guarantee == "in_place"
+
+
+# ─── FON-63 — the senior tranche carries the deal's own origination fee ───
+# Sam, 2026-09-11: "If the loan fee is 1.50%, Debt should surface 1.50% /
+# $354,900." The engine runner seeds ``senior_origination_fee_pct`` from the
+# deal's ``loan_costs_pct``, so the Debt tab shows the fee the capital engine
+# actually charges in Sources & Uses instead of a hard 0.00% / $0.
+
+
+def test_default_senior_tranche_carries_the_deals_loan_costs_pct() -> None:
+    """1.50% seeded on a $23,660,000 senior renders 1.50% / $354,900."""
+    out = DebtEngine().run(
+        _input(loan=23_660_000.0).model_copy(
+            update={"senior_origination_fee_pct": 1.50}
+        )
+    )
+    assert out.origination_fee_pct == pytest.approx(1.50)
+    assert out.origination_fee_usd == pytest.approx(354_900.0)
+
+
+def test_analyst_fee_edit_beats_the_seed() -> None:
+    """The Debt tab's own override is layered OVER the seed, so an edit wins."""
+    out = DebtEngine().run(
+        _input(loan=23_660_000.0).model_copy(
+            update={
+                "senior_origination_fee_pct": 1.50,
+                "debt_stack_overrides": {"tranches": {0: {"upfront_fee_pct": 0.0}}},
+            }
+        )
+    )
+    assert out.origination_fee_pct == pytest.approx(0.0)
+    assert out.origination_fee_usd == pytest.approx(0.0)
+
+
+def test_omitting_the_seed_is_byte_identical_to_the_legacy_zero() -> None:
+    """Callers that do not supply the seed keep the legacy 0.0 fee."""
+    out = DebtEngine().run(_input(loan=23_660_000.0))
+    assert out.origination_fee_pct == pytest.approx(0.0)
+    assert out.origination_fee_usd == pytest.approx(0.0)

@@ -242,12 +242,23 @@ describe('DebtTab — fees (new BE fields)', () => {
     expect(screen.getByText('0.75% · $172,500')).toBeInTheDocument();
   });
 
-  it('shows the exit fee on Loan Terms & Covenants as display-only', () => {
+  it('states honestly where the exit fee IS and is not consumed', () => {
+    // FON-63 — the debt engine DOES add the exit fee to the final month's
+    // payment on the tranche schedule; what ignores it is Sources & Uses /
+    // Cash Flow / Returns. The old copy claimed the opposite.
     render(<DebtTab />);
     fireEvent.click(screen.getByText('Loan Terms & Covenants'));
     expect(screen.getByText('Exit Fee')).toBeInTheDocument();
     expect(screen.getByText('0.50% · $115,000')).toBeInTheDocument();
-    expect(screen.getByText(/Display only — not modeled in the schedule/i)).toBeInTheDocument();
+    expect(
+      screen.getByText(/final month.s payment on the tranche schedule/i),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText(/not carried into Sources & Uses, Cash Flow or Returns/i),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByText(/not modeled in the schedule/i),
+    ).not.toBeInTheDocument();
   });
 });
 
@@ -525,5 +536,44 @@ describe('DebtTab — PACE tranche (index 1): missing inputs are inputs', () => 
 
     const body = await editAndSave('edit-pace-rate', '6.00');
     expect(body['debt_stack.tranches.1.rate_pct']).toBeCloseTo(0.06);
+  });
+});
+
+
+// ── FON-63 — the senior origination fee is the deal's own loan fee ───────
+// Sam, 2026-09-11: "Overview Sources & Uses shows Senior Loan Fee = $354,900 …
+// However Debt Overview shows Origination Fee = 0.00% / $0 … If the loan fee is
+// 1.50%, Debt should surface 1.50% / $354,900."
+
+describe('DebtTab — senior origination fee (FON-63)', () => {
+  it('renders 1.50% · $354,900 from the debt envelope, not 0.00%', () => {
+    currentOutputs = makeOutputs({
+      loan_amount: 23_660_000,
+      origination_fee_pct: 1.5,
+      origination_fee_usd: 354_900,
+    });
+    render(<DebtTab />);
+    expect(screen.getByTestId('edit-orig-fee')).toHaveTextContent('1.50% · $354,900');
+    expect(screen.queryByText('0.00% · $0')).not.toBeInTheDocument();
+  });
+
+  it('says the fee is a Fondok seed that drives Sources & Uses and Overview', () => {
+    render(<DebtTab />);
+    expect(
+      screen.getByText(/Fondok seed of 1\.50% of the senior loan/i),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText(/Senior Loan Origination Fee.*Overview Financing Costs/i),
+    ).toBeInTheDocument();
+    // The old "display only / not yet carried into Sources & Uses" copy is gone.
+    expect(
+      screen.queryByText(/not yet carried into Sources & Uses/i),
+    ).not.toBeInTheDocument();
+  });
+
+  it('an edit writes the senior tranche upfront fee the capital engine reads', async () => {
+    render(<DebtTab />);
+    const body = await editAndSave('edit-orig-fee', '0');
+    expect(body['debt_stack.tranches.0.upfront_fee_pct']).toBe(0);
   });
 });

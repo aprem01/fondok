@@ -130,7 +130,9 @@ def _build_investment(
     purchase = _use_amount(uses, "purchase price")
     total_capital = _num(capital.get("total_capital"))
     renovation = _use_amount(uses, "renovation")
-    loan_costs = _use_amount(uses, "senior loan fee", "loan fee")
+    # FON-63 — the S&U line is "Senior Loan Origination Fee"; the older
+    # "Senior Loan Fee" spelling is still matched so historical runs export.
+    loan_costs = _use_amount(uses, "origination fee", "senior loan fee", "loan fee")
     if loan_costs is None:
         loan_costs = _num(capital.get("senior_loan_fee_usd"))
 

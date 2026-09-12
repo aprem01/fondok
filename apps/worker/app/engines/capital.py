@@ -11,7 +11,10 @@ to a source model's confirmed senior figure.
     Property uses = Purchase + Closing + Renovation + Working Capital
                     + Insurance Reserve + Soft Costs + Contingency
     Debt          = senior_loan_amount, else LTV * basis
-    Senior fee    = Debt * loan_costs_pct   (financing cost at close)
+    Senior fee    = Debt * loan_costs_pct   (financing cost at close;
+                    the Debt tab's senior origination fee is its single
+                    owner — the engine runner resolves that tranche fee
+                    into ``loan_costs_pct``, FON-63)
     Total Uses    = Property uses + Senior fee
     Equity        = Total Uses - Debt
 
@@ -45,7 +48,11 @@ class CapitalEngineInput(InvestmentEngineInput):
 
     ltv: Annotated[float, Field(ge=0.0, le=1.0)] = 0.65
     closing_costs_pct: Annotated[float, Field(ge=0.0, le=0.10)] = 0.02
-    loan_costs_pct: Annotated[float, Field(ge=0.0, le=0.05)] = 0.015
+    # FON-63 — the senior ORIGINATION fee, as a fraction of the senior loan.
+    # Owned by the Debt tab (``debt_stack.tranches.0.upfront_fee_pct``, a
+    # 0..10 percent); the engine runner resolves that tranche fee into this
+    # field, so the range mirrors the tranche's rather than capping below it.
+    loan_costs_pct: Annotated[float, Field(ge=0.0, le=0.10)] = 0.015
     debt_basis: Literal["purchase", "cost"] = "purchase"
     # FON-67 — an explicit senior loan amount reconciles the stack to a source
     # model's confirmed senior figure. When set (> 0) it wins over LTV sizing;
@@ -120,6 +127,13 @@ class CapitalEngineOutput(InvestmentEngineOutput):
 # deal record / override / document behind it) instead of dead-ending on a
 # display label no consumer can match against the assumption vocabulary — the
 # line reads "Renovation", the assumption is ``renovation_budget``.
+# FON-63 — the ONE assumption that owns the senior origination fee. It lives
+# on the Debt tab as a 0..10 percent tranche field; the engine runner resolves
+# it into ``loan_costs_pct`` (a fraction) before this engine runs, so the
+# Sources & Uses line, Overview "Financing Costs" and the Debt tab all read
+# one number. Named here so the provenance walk lands on the editable field.
+_SENIOR_ORIGINATION_FEE_KEY = "debt_stack.tranches.0.upfront_fee_pct"
+
 _USE_LABEL_ASSUMPTIONS: dict[str, str] = {
     "Purchase Price": "purchase_price",
     "Renovation": "renovation_budget",
@@ -203,7 +217,10 @@ class CapitalEngine(BaseEngine[CapitalEngineInput, CapitalEngineOutput]):
         uses_lines = list(property_lines)
         if senior_loan_fee > 0:
             uses_lines.append(
-                SourceUseLine(label="Senior Loan Fee", amount=senior_loan_fee)
+                SourceUseLine(
+                    label="Senior Loan Origination Fee",
+                    amount=senior_loan_fee,
+                )
             )
 
         # Break the renovation budget into hard / soft / professional fees.
@@ -273,19 +290,26 @@ class CapitalEngine(BaseEngine[CapitalEngineInput, CapitalEngineOutput]):
                         ),
                     ],
                 )
-            elif line.label == "Senior Loan Fee":
+            elif line.label == "Senior Loan Origination Fee":
                 prov[key] = ValueTrace(
                     value=line.amount,
-                    formula="senior_loan_fee = senior_debt × loan_costs_pct",
+                    formula=(
+                        "senior_loan_fee = senior_debt × "
+                        "senior_origination_fee_pct ÷ 100"
+                    ),
                     inputs=[
                         ValueInput(name="senior_debt", value=debt, traces_to="debt_amount"),
                         ValueInput(
-                            name="loan_costs_pct",
-                            value=payload.loan_costs_pct,
-                            assumption_key="loan_costs_pct",
+                            name="senior_origination_fee_pct",
+                            value=payload.loan_costs_pct * 100.0,
+                            assumption_key=_SENIOR_ORIGINATION_FEE_KEY,
                         ),
                     ],
-                    note="Financing cost funded at close, kept apart from property uses.",
+                    note=(
+                        "Financing cost funded at close, kept apart from property "
+                        "uses. The percentage is the Debt tab's senior origination "
+                        "fee — edit it there."
+                    ),
                 )
             elif line.label == "Total Uses":
                 prov[key] = ValueTrace(
@@ -463,13 +487,15 @@ class CapitalEngine(BaseEngine[CapitalEngineInput, CapitalEngineOutput]):
         )
         prov["senior_loan_fee_usd"] = ValueTrace(
             value=senior_loan_fee,
-            formula="senior_loan_fee = debt_amount × loan_costs_pct",
+            formula=(
+                "senior_loan_fee = debt_amount × senior_origination_fee_pct ÷ 100"
+            ),
             inputs=[
                 ValueInput(name="debt_amount", value=debt, traces_to="debt_amount"),
                 ValueInput(
-                    name="loan_costs_pct",
-                    value=payload.loan_costs_pct,
-                    assumption_key="loan_costs_pct",
+                    name="senior_origination_fee_pct",
+                    value=payload.loan_costs_pct * 100.0,
+                    assumption_key=_SENIOR_ORIGINATION_FEE_KEY,
                 ),
             ],
         )

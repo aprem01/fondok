@@ -799,6 +799,15 @@ async def _load_engine_inputs(
     # web app surfaces gets badged — extras are tracked anyway so
     # downstream callers can introspect freely.
     sources: dict[str, str] = {k: SOURCE_SEED for k in base.keys()}
+    # FON-63 — the senior origination fee joins the deal's assumption vocabulary
+    # under the key the DEBT TAB edits, seeded from ``loan_costs_pct`` (1.50%).
+    # Two consequences, both wanted: the provenance walk lands on an editable
+    # field instead of a platform constant, and re-saving 1.50% unchanged has a
+    # prior to compare against, so the shadow-override guard recognizes it
+    # instead of minting a phantom analyst override. Re-resolved on the way out
+    # (below) once every source and override has had its say.
+    base[SENIOR_ORIGINATION_FEE_KEY] = _seed_senior_origination_fee_pct(base)
+    sources[SENIOR_ORIGINATION_FEE_KEY] = SOURCE_SEED
     # Phase 2.1 — the row behind each grounded number, and the reason
     # behind each ungrounded one. Both additive; neither reaches an engine.
     source_fields: dict[str, SourceField] = {}
@@ -825,6 +834,7 @@ async def _load_engine_inputs(
             # FON-69 — a request-body RevPAR-growth override derives
             # adr_growth here too (no-op without one).
             _derive_adr_growth_from_revpar_override(base, sources)
+        _resolve_senior_origination_fee(base, sources)
         base["__sources__"] = sources
         base["__source_fields__"] = {}
         base["__reasons__"] = {}
@@ -1546,6 +1556,25 @@ async def _load_engine_inputs(
                             num_value = None
                         if num_value is not None:
                             tranche_overrides.setdefault(idx, {})[field] = num_value
+                            if idx == 0 and field == "principal_usd":
+                                # FON-68/FON-69 — the senior's principal is the
+                                # ONE loan amount. ``_apply_tranche_overrides``
+                                # hard-pins the debt engine to it, while capital
+                                # would otherwise keep sizing from ltv ×
+                                # purchase price: a pinned principal that
+                                # disagreed with LTV produced a levered IRR on
+                                # one loan against another loan's debt service.
+                                # capital.py already prefers an explicit
+                                # ``senior_loan_amount`` over LTV sizing, so
+                                # mirroring here makes the two engines agree by
+                                # construction. On every existing deal the two
+                                # already coincide — byte-identical today.
+                                base["senior_loan_amount"] = num_value
+                            if idx == 0 and field == "upfront_fee_pct":
+                                # FON-63 — keep the assumption-vocabulary entry
+                                # (seeded above) on the RESOLVED fee, so the
+                                # lineage node shows what the engines charged.
+                                base[SENIOR_ORIGINATION_FEE_KEY] = num_value
                             _stamp_override_source(
                                 sources, analyst_override_paths, path,
                                 prior_value, num_value,
@@ -1805,6 +1834,7 @@ async def _load_engine_inputs(
         )
     )
 
+    _resolve_senior_origination_fee(base, sources)
     base["__sources__"] = sources
     base["__source_fields__"] = {
         key: sf.as_dict() for key, sf in source_fields.items()
@@ -2082,6 +2112,59 @@ _DEBT_STACK_TRANCHE_FIELDS: tuple[str, ...] = (
     "exit_fee_pct",
 )
 _DEBT_STACK_TRANCHE_STRING_FIELDS: frozenset[str] = frozenset({"rate_type"})
+# FON-63 — the senior origination fee has exactly ONE owner: the Debt tab. The
+# capital engine's ``loan_costs_pct`` (the Sources & Uses "Senior Loan
+# Origination Fee") and the Debt tab's tranche fee are the same assumption on
+# the same base, so both are resolved from this key. The deal's
+# ``loan_costs_pct`` (1.5%) is the SEED it starts on; an analyst edit wins.
+SENIOR_ORIGINATION_FEE_KEY = "debt_stack.tranches.0.upfront_fee_pct"
+
+
+def _seed_senior_origination_fee_pct(base: dict[str, Any]) -> float:
+    """The Fondok seed for the senior origination fee, as a 0..10 percent."""
+    try:
+        return max(0.0, float(base.get("loan_costs_pct", 0.015)) * 100.0)
+    except (TypeError, ValueError):
+        return 1.5
+
+
+def _resolve_senior_origination_fee(
+    base: dict[str, Any], sources: dict[str, str]
+) -> None:
+    """Land the RESOLVED senior origination fee on the assumption vocabulary.
+
+    Called on both ``_load_engine_inputs`` return paths so the key always
+    carries what the engines actually charged (the seed, or the analyst's Debt
+    tab edit). Its provenance label follows ``loan_costs_pct`` unless the
+    override loop already stamped it as an analyst override.
+    """
+    base[SENIOR_ORIGINATION_FEE_KEY] = _resolved_senior_origination_fee_pct(base)
+    if sources.get(SENIOR_ORIGINATION_FEE_KEY) in (None, SOURCE_SEED):
+        sources[SENIOR_ORIGINATION_FEE_KEY] = sources.get(
+            "loan_costs_pct", SOURCE_SEED
+        )
+
+
+def _resolved_senior_origination_fee_pct(base: dict[str, Any]) -> float:
+    """The senior origination fee the Debt tab RESOLVES to, as a 0..10 percent.
+
+    An analyst edit on the Debt tab lands in
+    ``base['debt_stack_overrides']['tranches'][0]['upfront_fee_pct']``; absent
+    one, the deal's own ``loan_costs_pct`` seed stands. Capital reads this so
+    editing the fee on Debt moves Sources & Uses, Total Uses, required equity
+    and LTC — one number, one owner.
+    """
+    tranches = ((base.get("debt_stack_overrides") or {}).get("tranches") or {})
+    ov = tranches.get(0)
+    if ov is None:
+        ov = tranches.get("0")
+    if isinstance(ov, dict) and "upfront_fee_pct" in ov:
+        try:
+            return max(0.0, float(ov["upfront_fee_pct"]))
+        except (TypeError, ValueError):
+            pass
+    return _seed_senior_origination_fee_pct(base)
+
 _DEBT_STACK_TRANCHE_INDEXES: tuple[int, ...] = (0, 1, 2)
 # FON-63 (Wave 2) — covenant thresholds are analyst inputs on the Debt tab
 # (fractions for LTV / LTC / debt yield, a ratio for DSCR). They land on the
@@ -5405,7 +5488,11 @@ def _build_input_for(
             working_capital=base.get("working_capital", 0.0),
             insurance_reserve=base.get("insurance_reserve", 0.0),
             closing_costs_pct=base.get("closing_costs_pct", 0.02),
-            loan_costs_pct=base.get("loan_costs_pct", 0.015),
+            # FON-63 — the senior loan fee is the DEBT TAB's origination fee.
+            # Reading the resolved tranche fee (seed, or the analyst's edit)
+            # is what makes Sources & Uses, Total Uses, equity and LTC move
+            # when the fee is changed where it is owned.
+            loan_costs_pct=_resolved_senior_origination_fee_pct(base) / 100.0,
             senior_loan_amount=senior_loan_amount,
             ltv=base["ltv"],
             debt_basis="purchase",
@@ -5469,6 +5556,10 @@ def _build_input_for(
             # FON-63 — analyst per-tranche edits (Senior rate/principal/amort,
             # activated PACE, etc.) layered over the default stack.
             debt_stack_overrides=base.get("debt_stack_overrides"),
+            # FON-63 — seed the senior tranche's origination fee from the deal's
+            # own senior loan fee so Debt renders 1.50% / $354,900, not 0.00%/$0.
+            # An analyst edit on the same field is layered over this seed.
+            senior_origination_fee_pct=_seed_senior_origination_fee_pct(base),
             # FON-63 — monthly SOFR forward curve + senior spread for a
             # floating senior priced off market data instead of a flat rate.
             sofr_curve=(
@@ -6194,6 +6285,55 @@ RETURNS_PREVIEW_KEYS: tuple[str, ...] = (
 )
 
 
+def _value_moved(prior: Any, new_value: float) -> bool:
+    """True when ``new_value`` is a real departure from ``prior``."""
+    if prior is None:
+        return True
+    try:
+        return abs(float(prior) - new_value) > 1e-9
+    except (TypeError, ValueError):
+        return True
+
+
+def _release_pinned_senior_principal(base: dict[str, Any]) -> None:
+    """Drop a pinned senior principal from an IN-MEMORY base so an LTV flex is honest.
+
+    FON-68 §3 — the Debt tab writes BOTH "Senior Loan Amount" and "LTV" as
+    ``debt_stack.tranches.0.principal_usd``. The sandbox, by contrast, flexes
+    ``ltv``. With the pin still in place the capital engine sized the loan from
+    ``ltv × purchase_price`` while ``_apply_tranche_overrides`` hard-pinned the
+    debt engine to the stored principal, so the preview reported a levered IRR
+    computed on one loan amount against another loan's debt service — and DSCR
+    never moved at all. Releasing the pin lets the flexed LTV resize the senior
+    end-to-end (interest, principal, debt service, DSCR).
+
+    Mutates the caller's in-memory copy ONLY. The deal's stored
+    ``field_overrides`` are never touched — this runs inside the non-persisting
+    preview path.
+    """
+    base["senior_loan_amount"] = None
+    dso = base.get("debt_stack_overrides")
+    if not isinstance(dso, dict):
+        return
+    tranches = dso.get("tranches")
+    if not isinstance(tranches, dict):
+        return
+    # Only the SENIOR pin conflicts with the LTV lever. A funded PACE / mezz
+    # tranche keeps its principal — LTV sizes the senior, so stripping the
+    # junior tranches would silently de-fund them in the preview.
+    base["debt_stack_overrides"] = {
+        **dso,
+        "tranches": {
+            idx: (
+                {f: v for f, v in fields.items() if f != "principal_usd"}
+                if str(idx) == "0" and isinstance(fields, dict)
+                else fields
+            )
+            for idx, fields in tranches.items()
+        },
+    }
+
+
 async def run_returns_preview(
     session: AsyncSession,
     *,
@@ -6218,6 +6358,12 @@ async def run_returns_preview(
     are ignored so a sandbox request can't reach unrelated engine inputs.
     """
     base = await _load_engine_inputs(session, deal_id, tenant_id=tenant_id)
+    # Did the sandbox actually MOVE the LTV lever? The Returns tab posts all five
+    # keys on every drag, so "ltv is present" is not the question — only a value
+    # that differs from the canonical one may release the pinned senior
+    # principal. Releasing it on an exit-cap-only preview would silently resize
+    # the loan of any deal whose pinned principal differs from ltv × price.
+    ltv_flexed = False
     if overrides:
         for key in RETURNS_PREVIEW_KEYS:
             if key not in overrides:
@@ -6231,9 +6377,14 @@ async def run_returns_preview(
                     continue
             else:
                 try:
-                    base[key] = float(value)
+                    new_value = float(value)
                 except (TypeError, ValueError):
                     continue
+                if key == "ltv":
+                    ltv_flexed = _value_moved(base.get(key), new_value)
+                base[key] = new_value
+        if ltv_flexed:
+            _release_pinned_senior_principal(base)
 
     accumulated: dict[str, BaseModel] = {}
     for name in ("revenue", "fb", "expense", "capital", "debt", "returns"):
@@ -6242,8 +6393,26 @@ async def run_returns_preview(
 
     returns_out = accumulated["returns"]
     debt_out = accumulated["debt"]
+    capital_out = accumulated["capital"]
 
     result: dict[str, Any] = {
+        # FON-68 §3 — the loan the sandbox actually ran on. ``loan_amount`` is
+        # what the capital engine sized (and therefore what the returns engine
+        # levered); ``total_debt`` is the debt engine's whole stack. On a
+        # senior-only deal they are the same number, and a preview where they
+        # disagree is reporting returns on one loan against another loan's debt
+        # service — exactly the desync the LTV pin-release above prevents.
+        "loan_amount": capital_out.debt_amount,
+        "total_debt": debt_out.loan_amount,
+        # FON-68 §1 — everything the Returns Summary headline renders, so a
+        # dirty sandbox can show its OWN numbers instead of leaving the hero
+        # tiles on the canonical case while the banner says an override is on.
+        # All real engine outputs from this in-memory chain; nothing derived
+        # here that the tab could not derive from the canonical run.
+        "avg_coc": returns_out.avg_coc,
+        "total_capital": capital_out.total_capital,
+        "noi_by_year": list(returns_out.noi_by_year),
+        "cash_flows": list(returns_out.cash_flows),
         "levered_irr": returns_out.levered_irr,
         "unlevered_irr": returns_out.unlevered_irr,
         "equity_multiple": returns_out.equity_multiple,
