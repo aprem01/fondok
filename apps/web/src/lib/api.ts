@@ -730,9 +730,25 @@ export interface EngineOutputResponse {
   run_id: string | null;
 }
 
+/**
+ * FON-75 — this snapshot predates part of the model that produced it.
+ *
+ * `missing_blocks` maps an engine name to the dotted paths of output fields
+ * the engine now publishes but this persisted run does not carry. A field the
+ * run carries with value `null` is never listed: the engine ran with it and
+ * honestly resolved no value, which is a refusal rather than staleness.
+ * Derived at read time by the worker (app/services/run_freshness.py).
+ */
+export interface StaleRun {
+  reason: 'stale_run';
+  missing_blocks: Record<string, string[]>;
+}
+
 export interface EngineOutputsResponse {
   deal_id: string;
   engines: Record<EngineName, EngineOutputResponse>;
+  /** Null (or absent, on an older worker) whenever the run is current. */
+  stale_run?: StaleRun | null;
 }
 
 export interface EngineRunKickoffResponse {
