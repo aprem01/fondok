@@ -36,8 +36,40 @@ from fondok_schemas.underwriting import (
 )
 
 from .base import BaseEngine
+from .timeline import parse_iso_date
 
 DAYS_PER_YEAR = 365
+
+
+def projection_start_year(close_date: str | None) -> int | None:
+    """Calendar year of operating Year 1, or ``None`` with no close date.
+
+    FON-41 #2. The projection's ``year`` field is an ordinal (1..hold_years);
+    this is the ONLY place the ordinal is mapped onto the calendar, and it
+    anchors on exactly the date the timeline engine anchors on
+    (``acquisition_close_date``). Operating Year 1 is the calendar year
+    containing the first operating month — close + 1 month — so a 2025-09-30
+    close projects Year 1 in 2025 and a 2025-12-15 close projects it in 2026.
+
+    An unparseable or absent date returns ``None``: the grid then renders the
+    ordinal alone. It never falls back to the wall clock — a guessed year is a
+    fabricated number.
+    """
+    d = parse_iso_date(close_date)
+    if d is None:
+        return None
+    # First operating month = close + 1 month; its calendar year is Year 1's.
+    return d.year + 1 if d.month == 12 else d.year
+
+
+def projection_calendar_years(
+    close_date: str | None, hold_years: int
+) -> list[int]:
+    """``[start, start+1, ...]`` for ``hold_years`` rows, or ``[]`` with no anchor."""
+    start = projection_start_year(close_date)
+    if start is None or hold_years <= 0:
+        return []
+    return [start + i for i in range(hold_years)]
 
 
 # ─────────────── Brand displacement multipliers (Wave 2 P2.4) ───────────────
@@ -576,16 +608,28 @@ class RevenueEngine(BaseEngine[RevenueEngineInput, RevenueEngineOutput]):
         else:
             cagr = 0.0
 
+        # FON-41 #2 — the projection calendar rides alongside the ordinal rows.
+        # Nothing in the math above reads it; it exists so the statement can
+        # print "Year 1 — 2025" instead of printing the ordinal as a year.
+        start_year = projection_start_year(payload.acquisition_close_date)
+        calendar_years = projection_calendar_years(
+            payload.acquisition_close_date, len(years)
+        )
+
         return RevenueEngineOutput(
             deal_id=payload.deal_id,
             years=years,
             total_revenue_cagr=cagr,
+            projection_start_year=start_year,
+            projection_calendar_years=calendar_years,
             provenance=apply_states(prov),
         )
 
 
 __all__ = [
     "RevenueEngine",
+    "projection_calendar_years",
+    "projection_start_year",
     "_BRAND_DISPLACEMENT_MULTIPLIERS",
     "_resolve_brand_multipliers",
 ]

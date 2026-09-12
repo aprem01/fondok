@@ -51,7 +51,7 @@ import {
   type ScenarioRecord,
 } from '@/lib/api';
 import { cn } from '@/lib/format';
-import { stabilizedCashNoi, STABILIZED_CASH_NOI_LABEL } from '@/lib/engines/noi';
+import { stabilizedNoiBeforeReserve, STABILIZED_NOI_LABEL } from '@/lib/engines/noi';
 import { getEngineField, useEngineOutputs } from '@/lib/hooks/useEngineOutputs';
 import { ProvenanceDot } from '@/components/design';
 import {
@@ -125,13 +125,14 @@ const KPI_ROWS: KpiRow[] = [
   },
   {
     key: 'stab_noi',
-    label: STABILIZED_CASH_NOI_LABEL,
+    label: STABILIZED_NOI_LABEL,
     format: 'usd',
-    // Terminal-year (stabilized) NOI: last element of returns.noi_by_year,
-    // falling back to the last expense-engine operating year. Both series are
-    // net of the FF&E reserve, hence "Cash NOI". FON-54 #1 — IC Memo's
-    // Scenario Summary reads this SAME selector so the two cannot drift.
-    pick: (e) => stabilizedCashNoi(e),
+    // FON-41 / FON-54 #1 / FON-59 #3 — the worker's published stabilization
+    // block (`expense.stabilization`), read off ITS stabilized year index.
+    // Not the last hold year, not the exit reversion. Overview and the IC
+    // memo read the same block, so the three cannot print three numbers.
+    // `null` (no block on this run) renders the row's dash.
+    pick: (e) => stabilizedNoiBeforeReserve(e),
   },
   {
     key: 'exit_value',

@@ -24,10 +24,9 @@
  * Flow, $M on the IC memo, $000s in the P&L statement), so (a)/(b) are
  * asserted in each surface's own format — the VALUE is what must match.
  *
- * OverviewTab is deliberately EXCLUDED for now: its link emitters are being
- * rewritten on the same lines in a parallel change, and its "Stabilized NOI"
- * row still renders the reversion NOI (a separate fix). Add it here once that
- * lands — it is the sixth surface this guard wants.
+ * OverviewTab's stabilized rows have their own parity guard now that they read
+ * the worker's published stabilization block — see stabilizedParity.test.tsx,
+ * which pins Overview === IC Memo === Scenario Analysis off one run.
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, fireEvent, cleanup, waitFor, within } from '@testing-library/react';
@@ -36,7 +35,7 @@ import type { EngineOutputsResponse } from '@/lib/api';
 import {
   NOI_BEFORE_RESERVE_LABEL,
   CASH_NOI_LABEL,
-  STABILIZED_CASH_NOI_LABEL,
+  STABILIZED_NOI_LABEL,
 } from '@/lib/engines/noi';
 
 // ── The one fixture ────────────────────────────────────────────────────
@@ -156,14 +155,35 @@ const OUTPUTS = {
         levered_irr: 0.26, unlevered_irr: 0.13, equity_multiple: 2.5,
         hold_years: 5, gross_sale_price: 52_000_000, exit_cap_rate: 0.07,
         selling_costs: 520_000, terminal_noi: 2_600_000,
-        // Stabilized Cash NOI = the LAST element (after-reserve basis).
+        // The after-reserve NOI series. Its last element is the TERMINAL
+        // year, which is no longer what any surface calls "stabilized".
         noi_by_year: [1_100_000, 1_250_000, 1_380_000, 1_420_000, CASH_NOI],
       },
       inputs: {}, error: null, runtime_ms: 1, started_at: null, completed_at: null, run_id: 'r1',
     },
     expense: {
       deal_id: 'deal-uuid-1', engine: 'expense', status: 'complete', summary: '',
-      outputs: { years: YEARS.map(expYear), noi_cagr: 0.05 },
+      outputs: {
+        years: YEARS.map(expYear),
+        noi_cagr: 0.05,
+        // FON-41 / FON-59 #3 — the published stabilized year. Every year in
+        // this fixture carries the same figures, so the stabilized NOI is the
+        // before-reserve $2,001,056 — NOT the after-reserve $1,448,443 the
+        // Scenario Summary used to print under a "stabilized" label.
+        stabilization: {
+          stabilized_year_index: 1,
+          stabilized_year: 2,
+          source: 'fondok_derived',
+          signal: 'occupancy',
+          derived_year: 2,
+          stabilized_occupancy: 0.76,
+          stabilized_adr: 385,
+          stabilized_revenue: TOTAL_REVENUE,
+          stabilized_noi_before_reserve: NOI_BEFORE,
+          stabilized_cash_noi: CASH_NOI,
+          stabilized_noi_margin: NOI_BEFORE / TOTAL_REVENUE,
+        },
+      },
       inputs: {}, error: null, runtime_ms: 1, started_at: null, completed_at: null, run_id: 'r1',
     },
     revenue: {
@@ -300,7 +320,7 @@ beforeEach(() => {
 
 /** (c) — no element on screen is labelled with the bare, unqualified word
  *  "NOI". A qualified label ("NOI (before FF&E reserve)", "Cash NOI",
- *  "NOI (Y1)", "Stabilized Cash NOI") is fine; a naked "NOI" is the exact
+ *  "NOI (Y1)", "Stabilized NOI") is fine; a naked "NOI" is the exact
  *  ambiguity that let $2.0M and $1.45M share a name. */
 function expectNoBareNoiLabel(): void {
   const bare = screen.queryAllByText((_content, el) => (el?.textContent ?? '').trim() === 'NOI');
@@ -369,7 +389,7 @@ describe('Cash Flow — the unlevered statement keeps the qualifier', () => {
   });
 });
 
-describe('IC Memo — Stabilized Cash NOI is the after-reserve basis', () => {
+describe('IC Memo — the stabilized figures name their basis', () => {
   it('prints the deal-snapshot NOI before the reserve ($2.00M)', async () => {
     render(<ICMemoTab project={PROJECT} />);
     // Two surfaces carry it: the Deal-snapshot tile and the Operating summary
@@ -384,15 +404,17 @@ describe('IC Memo — Stabilized Cash NOI is the after-reserve basis', () => {
     expectNoBareNoiLabel();
   });
 
-  it('prints the Scenario Summary row as Cash NOI ($1.45M = last of returns.noi_by_year)', async () => {
+  it('prints the Scenario Summary row from the published stabilization block', async () => {
     render(<ICMemoTab project={PROJECT} />);
-    const label = await screen.findByText(STABILIZED_CASH_NOI_LABEL);
+    const label = await screen.findByText(STABILIZED_NOI_LABEL);
     // The Scenario Summary is a CSS grid, not a table — the row is the
     // label's parent.
     const row = label.parentElement!;
-    expect(within(row).getByText('$1.45M')).toBeInTheDocument();
-    // …and it is NOT the before-reserve figure.
-    expect(within(row).queryByText('$2.00M')).not.toBeInTheDocument();
+    // The stabilized YEAR's NOI before the reserve — not the last element of
+    // returns.noi_by_year ($1.45M), which is a different year on a different
+    // basis (FON-41 / FON-59 #3).
+    expect(within(row).getByText('$2.00M')).toBeInTheDocument();
+    expect(within(row).queryByText('$1.45M')).not.toBeInTheDocument();
     expectNoBareNoiLabel();
   });
 });

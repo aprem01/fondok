@@ -3,15 +3,33 @@
  * ProjectionsSection — Lovable-parity multi-year proforma projections.
  *
  * Renders the "PRELIMINARY HOTEL UNDERWRITING / Proforma Projections"
- * table with a Base Year + 5 forecast year span. Each year column
- * shows Amount / % Rev / PAR / POR sub-columns. Rows include hotel
- * delivery, days, room counts, occupancy, ADR, RevPAR + RevPAR growth,
- * and the REVENUES section (Rooms / F&B / Other / Total).
+ * table. Each year column shows Amount / % Rev / PAR / POR sub-columns.
+ * Rows include hotel delivery, days, room counts, occupancy, ADR, RevPAR +
+ * RevPAR growth, and the REVENUES section (Rooms / F&B / Other / Total).
+ *
+ * FON-41 #2 — the column vocabulary, and why it reads the way it does:
+ *
+ *  • ``revenue.years[0]`` IS model operating Year 1. The engine runner passes
+ *    it to the returns engine as ``year_one_noi`` and the Cash Flow tab labels
+ *    the same value "Year 1". This statement used to call it "Base Year" and
+ *    then label index 1 "Year 1" — one number with two names, and every later
+ *    column a year ahead of its own label (Sam: *"Base Year and Year 1 are
+ *    both 2025"*). The first column is now **Base Year (Year 1)** and the rest
+ *    are shifted, so index 1 heads "Year 2". No engine value moved: the labels
+ *    were wrong, not the math.
+ *  • ``RevenueProjectionYear.year`` is an ORDINAL (1..hold_years), never a
+ *    calendar year. The calendar comes from ``revenue.projection_calendar_years``
+ *    (anchored on the acquisition close date). With no close date the column
+ *    shows its label alone — never a guessed year.
+ *  • The horizon is ``hold_years + 1`` columns: every modelled year plus the
+ *    **Exit Year**, which is display-only. It carries the Forward 12-Month
+ *    Cash NOI the reversion is valued on (``returns.terminal_noi``) and dashes
+ *    everywhere else, because year hold+1 is NOT run through the expense
+ *    waterfall. Modelling it would move gross sale, both IRRs and MOIC.
  *
  * Sources:
  *  - Worker: ``revenue.years`` + ``fb.years`` + ``expense.years`` via
- *    ``useEngineOutputs``. Year 0 (Base) = first engine year, treated
- *    as the T-12 anchor; Years 1-5 = engine years[0..4].
+ *    ``useEngineOutputs``. Column i = engine years[i], 1:1.
  *
  * Helpers (mirroring Historicals):
  *   PAR  = Amount / Available Rooms × 1000
@@ -23,12 +41,24 @@ import { useMemo, useState, useEffect, useCallback, useContext, createContext, t
 import Link from 'next/link';
 import { Sparkles, Download, FileText } from 'lucide-react';
 import { Card } from '@/components/ui/Card';
-import { ProvenanceDot, NO_OP_EDIT_MESSAGE } from '@/components/design';
+import {
+  ProvenanceDot,
+  NO_OP_EDIT_MESSAGE,
+  useInlineEdit,
+  InlineEditControls,
+  inlineEditInputStyle,
+} from '@/components/design';
 import { isNoOpEdit } from '@/lib/fieldValue';
 import { Button } from '@/components/ui/Button';
 import { useToast } from '@/components/ui/Toast';
 import { cn } from '@/lib/format';
-import { noiBeforeReserveLabel } from '@/lib/engines/noi';
+import {
+  noiBeforeReserveLabel,
+  stabilizedYearBlock,
+  stabilizationBadge,
+  stabilizationSignalNote,
+  type StabilizedYearBlock,
+} from '@/lib/engines/noi';
 import { Traced } from '@/components/help/Traced';
 import { Sourced } from '@/components/help/Sourced';
 import { useRefusal } from '@/components/help/Refused';
@@ -102,8 +132,12 @@ interface ExpenseYearWorker {
 // bucket; it's now its own field so the USALI waterfall renders
 // honestly.
 interface ProjYear {
+  /** The engine's ORDINAL (1..hold_years), not a calendar year. */
   year: number;
-  // Available Rooms = keys × days (in days for the year).
+  /** Calendar year from ``revenue.projection_calendar_years``; absent with no
+   *  acquisition close date on the deal. */
+  calendarYear?: number;
+  // Available Rooms = keys × days (a flat 365 — see DAYS_PER_PROJECTION_YEAR).
   days: number;
   rooms: number;
   availableRooms: number;
@@ -150,7 +184,39 @@ interface ProjYear {
   netCashFlow?: number;
 }
 
-const isLeap = (y: number) => (y % 4 === 0 && y % 100 !== 0) || y % 400 === 0;
+// The revenue engine projects on a flat 365-day year
+// (``apps/worker/app/engines/revenue.py`` DAYS_PER_YEAR), so the statement
+// must too: RevPAR × Available Rooms only foots to Rooms Revenue on the same
+// day count. This used to be ``isLeap(r.year)`` — which asked whether the
+// ORDINAL 1 was a leap year, so it was always 365 anyway. Now that the column
+// knows its calendar year, a leap-year 366 here would silently stop the
+// statement reconciling to the engine.
+const DAYS_PER_PROJECTION_YEAR = 365;
+
+/**
+ * The header for model-year column ``i``. Index 0 IS operating Year 1 — it
+ * keeps the "Base Year" name analysts read the statement by, and says which
+ * model year it is (founder decision, FON-41 #2). The engine is NOT re-indexed.
+ */
+export function projectionColumnLabel(i: number): string {
+  return i === 0 ? 'Base Year (Year 1)' : `Year ${i + 1}`;
+}
+
+/** The Exit Year column's header — display-only, never a modelled year. */
+export const EXIT_COLUMN_LABEL = 'Exit Year';
+
+/** The row the Exit Year column exists for. */
+export const FORWARD_NOI_LABEL = 'Forward 12-Month Cash NOI (after FF&E reserve)';
+
+/**
+ * A column subtitle: the calendar year, or an em dash. NEVER the ordinal —
+ * printing ``years[i].year`` here is what produced "Base Year 1 / Year 1 2".
+ */
+export function projectionColumnSubtitle(calendarYear?: number): string {
+  return calendarYear != null && Number.isFinite(calendarYear)
+    ? String(calendarYear)
+    : '—';
+}
 
 // Engine-default assumptions (mirror apps/worker services/engine_runner.py base).
 // Used as the display fallback when a key has no override and no resolved source.
@@ -191,6 +257,24 @@ function ovValue(overrides: Record<string, unknown>, key: string): number | null
   }
   const n = Number(raw);
   return Number.isFinite(n) ? n : null;
+}
+
+// Read an ISO date out of a field_overrides entry ({value, note} or scalar).
+// Returns null for anything that is not a YYYY-MM-DD — a half-typed date is
+// not a date, and this row must never render a guess.
+function overrideDate(overrides: Record<string, unknown>, key: string): string | null {
+  const raw = overrides[key];
+  const v = raw != null && typeof raw === 'object' && 'value' in (raw as object)
+    ? (raw as { value?: unknown }).value
+    : raw;
+  if (typeof v !== 'string') return null;
+  return /^\d{4}-\d{2}-\d{2}/.test(v.trim()) ? v.trim().slice(0, 10) : null;
+}
+
+/** ISO ``YYYY-MM-DD`` → ``M/D/YYYY``; anything else → an em dash. */
+function fmtIsoDate(iso: string | null | undefined): string {
+  const m = iso ? /^(\d{4})-(\d{2})-(\d{2})/.exec(iso) : null;
+  return m ? `${Number(m[2])}/${Number(m[3])}/${m[1]}` : '—';
 }
 
 export default function ProjectionsSection({
@@ -341,16 +425,35 @@ export default function ProjectionsSection({
   const revenueYears = getEngineField<RevenueYearWorker[]>(outputs, 'revenue', 'years');
   const fbYears = getEngineField<FBYearWorker[]>(outputs, 'fb', 'years');
   const expenseYears = getEngineField<ExpenseYearWorker[]>(outputs, 'expense', 'years');
+  // FON-41 #2 — the projection calendar, anchored on the acquisition close
+  // date by the revenue engine. Empty when the deal has no close date; the
+  // statement then shows column labels with no year underneath them.
+  const calendarYears = getEngineField<number[]>(outputs, 'revenue', 'projection_calendar_years');
+  // The exit is valued on the FORWARD 12-month Cash NOI — year hold+1, which
+  // is never run through the expense waterfall (returns.py extrapolates the
+  // last hold year at the RevPAR growth rate). Display-only here.
+  const terminalNoi =
+    getEngineField<number>(outputs, 'returns', 'terminal_noi_usd') ??
+    getEngineField<number>(outputs, 'returns', 'terminal_noi');
+  const revparGrowthAssumption =
+    getEngineField<number>(outputs, 'returns', 'revpar_growth') ??
+    ovValue(overrides, 'revpar_growth') ??
+    ASSUMPTION_DEFAULTS.revpar_growth;
   const hasWorker =
     Array.isArray(revenueYears) && revenueYears.length > 0 &&
     Array.isArray(expenseYears) && expenseYears.length > 0;
 
   const years = useMemo<ProjYear[] | null>(() => {
     if (hasWorker && keys > 0) {
-      return buildFromWorker(revenueYears!, fbYears ?? null, expenseYears!, keys);
+      return buildFromWorker(revenueYears!, fbYears ?? null, expenseYears!, keys, calendarYears);
     }
     return null;
-  }, [hasWorker, revenueYears, fbYears, expenseYears, keys]);
+  }, [hasWorker, revenueYears, fbYears, expenseYears, keys, calendarYears]);
+
+  // FON-41 / FON-59 #3 — the published stabilized year. The STABILIZED badge
+  // sits on that column; the editable Stabilization Year lives in the
+  // Assumptions panel and writes ``field_overrides.stabilization_year``.
+  const stabilization = stabilizedYearBlock(getEngineField<unknown>(outputs, 'expense'));
 
   // CRITICAL: every hook below MUST be declared BEFORE the early-return
   // empty-state guard. React's Rules of Hooks require the same hook count on
@@ -371,6 +474,22 @@ export default function ProjectionsSection({
   const [projYearsSel, setProjYearsSel] = useState<number | null>(null);
   const [projView, setProjView] = useState<'annual' | 'monthly'>('annual');
 
+  // FON-41 #2 — the acquisition close date. This is the deal assumption the
+  // TIMELINE engine is built on (``engine_runner`` reads
+  // ``base['acquisition_close_date']``), so the statement's Hotel Delivery row
+  // and the timeline rail cannot disagree. The old code synthesised
+  // ``'9/30/' + baseYear`` off the ORDINAL and rendered a literal "9/30/1" —
+  // a fabricated date. With no close date the row is a dash.
+  const closeDateIso = overrideDate(overrides, 'acquisition_close_date');
+  // The Exit Year is the year after the last modelled year — calendar only,
+  // and only when the projection actually carries a calendar.
+  const lastCalendarYear =
+    Array.isArray(calendarYears) && calendarYears.length > 0
+      ? calendarYears[calendarYears.length - 1]
+      : undefined;
+  const exitCalendarYear =
+    typeof lastCalendarYear === 'number' ? lastCalendarYear + 1 : undefined;
+
   if (!years || years.length === 0) {
     return (
       <Card className="p-12 text-center">
@@ -386,10 +505,16 @@ export default function ProjectionsSection({
   }
 
   const onExport = async () => {
+    // FON-41 #2 — the export header is the table header. They change together
+    // or the Excel column mapping shifts against what the analyst reviewed.
+    // ``y.year`` (the ordinal) is NEVER printed as a year; the calendar year
+    // is appended only when the deal carries an acquisition close date.
+    const colHeader = (label: string, calendarYear?: number) =>
+      calendarYear != null ? `${label} ${calendarYear}` : label;
     const headers: XlsxCell[] = [
       'Metric',
       ...years.flatMap((y, i) => {
-        const label = i === 0 ? `Base Year ${y.year}` : `Year ${i} ${y.year}`;
+        const label = colHeader(projectionColumnLabel(i), y.calendarYear);
         return [
           `${label} Amount`,
           `${label} % Rev`,
@@ -397,11 +522,22 @@ export default function ProjectionsSection({
           `${label} POR`,
         ];
       }),
+      ...(() => {
+        const label = colHeader(EXIT_COLUMN_LABEL, exitCalendarYear);
+        return [
+          `${label} Amount`,
+          `${label} % Rev`,
+          `${label} PAR`,
+          `${label} POR`,
+        ] as XlsxCell[];
+      })(),
     ];
     const rows: XlsxCell[][] = [headers];
     const trMap = years.map(y => y.totalRevenue);
     const arMap = years.map(y => y.availableRooms);
     const orMap = years.map(y => y.occupiedRooms);
+    // The Exit Year column is display-only on every row but the forward NOI.
+    const EXIT_BLANKS: XlsxCell[] = ['', '', '', ''];
     const expand = (label: string, vals: number[], asPct = false) => {
       const cells: XlsxCell[] = [label];
       vals.forEach((v, i) => {
@@ -422,6 +558,7 @@ export default function ProjectionsSection({
           : '';
         cells.push(amount, pctRev, par, por);
       });
+      cells.push(...EXIT_BLANKS);
       rows.push(cells);
     };
     // Emit a row of pure-numeric values (no % Rev / PAR / POR
@@ -434,13 +571,14 @@ export default function ProjectionsSection({
         ...vals.flatMap(v =>
           [v == null ? '' : Number(v.toFixed(0)), '', '', ''] as XlsxCell[],
         ),
+        ...EXIT_BLANKS,
       ]);
     };
 
-    rows.push(['Days', ...years.flatMap(y => [y.days, '', '', '']) as XlsxCell[]]);
-    rows.push(['Number of Rooms', ...years.flatMap(y => [y.rooms, '', '', '']) as XlsxCell[]]);
-    rows.push(['Available Rooms', ...years.flatMap(y => [y.availableRooms, '', '', '']) as XlsxCell[]]);
-    rows.push(['Occupied Rooms', ...years.flatMap(y => [y.occupiedRooms, '', '', '']) as XlsxCell[]]);
+    rows.push(['Days', ...years.flatMap(y => [y.days, '', '', '']) as XlsxCell[], ...EXIT_BLANKS]);
+    rows.push(['Number of Rooms', ...years.flatMap(y => [y.rooms, '', '', '']) as XlsxCell[], ...EXIT_BLANKS]);
+    rows.push(['Available Rooms', ...years.flatMap(y => [y.availableRooms, '', '', '']) as XlsxCell[], ...EXIT_BLANKS]);
+    rows.push(['Occupied Rooms', ...years.flatMap(y => [y.occupiedRooms, '', '', '']) as XlsxCell[], ...EXIT_BLANKS]);
     expand('Occupancy', years.map(y => y.occupancy), true);
     expand('Average Rate', years.map(y => y.adr));
     expand('RevPAR', years.map(y => y.revpar));
@@ -498,6 +636,15 @@ export default function ProjectionsSection({
     );
     plain('FF&E Reserve', years.map(y => y.ffeReserve));
     plain('Net Cash Flow', years.map(y => y.netCashFlow));
+    // FON-41 #2 — the Exit Year column's one figure: the forward 12-month Cash
+    // NOI the reversion capitalises. Blank on every modelled year, because it
+    // is not one of them.
+    rows.push([
+      FORWARD_NOI_LABEL,
+      ...years.flatMap(() => ['', '', '', ''] as XlsxCell[]),
+      terminalNoi != null ? Number(terminalNoi.toFixed(0)) : '',
+      '', '', '',
+    ]);
 
     await downloadXlsx(`projections-${dealId || 'deal'}`, [
       { name: 'Projections', rows },
@@ -586,6 +733,7 @@ export default function ProjectionsSection({
 
       <ProjectionsControls
         years={years}
+        closeDateIso={closeDateIso}
         shownForecast={shownForecast}
         forecastCount={forecastCount}
         onDec={() => setProjYearsSel(Math.max(1, shownForecast - 1))}
@@ -599,10 +747,32 @@ export default function ProjectionsSection({
         overrides={overrides}
         onApply={applyOverride}
         running={overrideCtx.running}
+        stabilization={stabilization}
+        modelYears={years.length}
+        calendarYears={calendarYears ?? null}
       />
 
       <AssumptionOverrideContext.Provider value={overrideCtx}>
-        <ProjectionsTable years={visibleYears} exitCapRate={exitCapRate} />
+        <ProjectionsTable
+          years={visibleYears}
+          exitCapRate={exitCapRate}
+          closeDateIso={closeDateIso}
+          exitColumn={
+            // The Exit Year belongs to the FULL horizon. When the Period
+            // control trims the view to a sub-window, hide it rather than let
+            // an exit-year figure sit next to "Year 3" — the exit does not
+            // move because fewer operating columns are on screen.
+            shownForecast === forecastCount
+              ? {
+                  calendarYear: exitCalendarYear,
+                  terminalNoi,
+                  // The formula the Exit Year column shows for its one figure.
+                  formula: `Forward 12-Month Cash NOI = Year ${years.length} Cash NOI × (1 + RevPAR growth ${(revparGrowthAssumption * 100).toFixed(1)}%)`,
+                }
+              : null
+          }
+          stabilizedYearIndex={stabilization?.stabilized_year_index}
+        />
       </AssumptionOverrideContext.Provider>
     </Card>
   );
@@ -617,16 +787,18 @@ function buildFromWorker(
   fbYears: FBYearWorker[] | null,
   expenseYears: ExpenseYearWorker[],
   keys: number,
+  calendarYears?: number[] | null,
 ): ProjYear[] {
-  // Slice up to first 6 entries; if worker only emits 5 forecast years
-  // without a base year, we render whatever we have anchored on Y0.
-  const span = Math.min(6, revenueYears.length);
+  // FON-41 #2 — every modelled year, not a hard-coded 6. The horizon is the
+  // deal's hold period; the Exit Year column is appended by the table on top
+  // of these (hold_years + 1 columns in total).
+  const span = revenueYears.length;
   const out: ProjYear[] = [];
   for (let i = 0; i < span; i++) {
     const r = revenueYears[i];
     const f = fbYears?.[i];
     const e = expenseYears[i];
-    const days = isLeap(r.year) ? 366 : 365;
+    const days = DAYS_PER_PROJECTION_YEAR;
     const availableRooms = keys * days;
     const occupiedRooms = Math.round(availableRooms * (r.occupancy ?? 0));
     const totalRevenue = e?.total_revenue ?? r.total_revenue;
@@ -644,6 +816,10 @@ function buildFromWorker(
       noiInst != null && ffe != null ? noiInst - ffe : undefined;
     out.push({
       year: r.year,
+      calendarYear:
+        Array.isArray(calendarYears) && typeof calendarYears[i] === 'number'
+          ? calendarYears[i]
+          : undefined,
       days,
       rooms: keys,
       availableRooms,
@@ -687,10 +863,49 @@ function buildFromWorker(
 // Table
 // ────────────────────────────────────────────────────────────────────
 
-function ProjectionsTable({ years, exitCapRate }: { years: ProjYear[]; exitCapRate: number }) {
-  // Hotel Delivery — render the base year period-end as the anchor date.
-  const baseYear = years[0]?.year ?? new Date().getFullYear();
-  const hotelDelivery = `9/30/${baseYear}`;
+interface ExitColumnSpec {
+  calendarYear?: number;
+  /** ``returns.terminal_noi`` — the forward 12-month Cash NOI. */
+  terminalNoi?: number;
+  formula: string;
+}
+
+/** Present-ness of the Exit Year column, so every row can close itself out
+ *  with one extra cell without prop-drilling through six row components. */
+const ExitColumnContext = createContext<boolean>(false);
+
+/** The Exit Year cell for an ordinary row: a dash. Year hold+1 is not modelled
+ *  through the expense waterfall, so there is nothing honest to print. */
+function ExitCells({ children }: { children?: ReactNode }) {
+  const present = useContext(ExitColumnContext);
+  if (!present) return null;
+  return (
+    <td
+      colSpan={4}
+      className="px-2 py-2 text-center text-[11px] text-ink-400 tabular-nums border-l-2 border-border"
+    >
+      {children ?? '—'}
+    </td>
+  );
+}
+
+function ProjectionsTable({
+  years, exitCapRate, closeDateIso, exitColumn, stabilizedYearIndex,
+}: {
+  years: ProjYear[];
+  exitCapRate: number;
+  closeDateIso: string | null;
+  exitColumn: ExitColumnSpec | null;
+  /** 0-based index of the published stabilized year — badges that column. */
+  stabilizedYearIndex?: number;
+}) {
+  // Hotel Delivery — the deal's acquisition close date, or a dash. It used to
+  // be `'9/30/' + years[0].year`, which printed "9/30/1" because `year` is an
+  // ordinal: a fabricated date under the no-invented-numbers rule (FON-41 #2).
+  const hotelDelivery = fmtIsoDate(closeDateIso);
+  const hasExit = exitColumn != null;
+  // Total year columns = every modelled year + the Exit Year (hold_years + 1).
+  const columnCount = years.length + (hasExit ? 1 : 0);
 
   // The forward statement below Total Revenue only renders when the expense
   // engine emitted its waterfall (real worker runs). Demo / revenue-only
@@ -733,6 +948,7 @@ function ProjectionsTable({ years, exitCapRate }: { years: ProjYear[]; exitCapRa
   };
 
   return (
+    <ExitColumnContext.Provider value={hasExit}>
     <div className="overflow-x-auto">
       <table className="w-full text-[11.5px] min-w-[1100px] border-collapse">
         <thead>
@@ -760,11 +976,31 @@ function ProjectionsTable({ years, exitCapRate }: { years: ProjYear[]; exitCapRa
                   'border-l border-border',
                 )}
               >
-                {i === 0 ? 'Base Year' : `Year ${i}`}
+                {projectionColumnLabel(i)}
+                {i === stabilizedYearIndex && (
+                  <span
+                    data-testid="stabilized-badge"
+                    title="The Stabilization Year — the projection year Overview's Stabilized Occupancy / ADR / Revenue / NOI all read."
+                    className="ml-1.5 inline-block align-middle rounded-sm bg-success-500/15 px-1 py-px text-[8.5px] font-bold tracking-wide text-success-700"
+                  >
+                    STABILIZED
+                  </span>
+                )}
               </th>
             ))}
+            {hasExit && (
+              <th
+                key="yh-exit"
+                colSpan={4}
+                title="Display-only. Year hold+1 is not run through the expense waterfall — it is the forward NOI the reversion is valued on."
+                className="text-center text-[10.5px] font-semibold uppercase tracking-wider px-2 pt-2 pb-0 bg-ink-300/10 text-ink-700 border-l-2 border-border"
+              >
+                {EXIT_COLUMN_LABEL}
+              </th>
+            )}
           </tr>
-          {/* Subtitle — actual years */}
+          {/* Subtitle — the CALENDAR year, or an em dash. Never the ordinal:
+              printing `y.year` here is what produced "Base Year 1 / Year 1 2". */}
           <tr className="border-b border-border">
             {years.map((y, i) => (
               <th
@@ -773,18 +1009,37 @@ function ProjectionsTable({ years, exitCapRate }: { years: ProjYear[]; exitCapRa
                 className={cn(
                   'text-center text-[11px] font-semibold tabular-nums px-2 pb-1',
                   i === 0 ? 'bg-ink-300/10 text-ink-900' : 'bg-brand-50/40 text-ink-900',
+                  y.calendarYear == null && 'text-ink-400',
                   'border-l border-border',
                 )}
+                title={
+                  y.calendarYear == null
+                    ? 'No acquisition close date on this deal, so the projection has no calendar year.'
+                    : undefined
+                }
               >
-                {y.year}
+                {projectionColumnSubtitle(y.calendarYear)}
               </th>
             ))}
+            {hasExit && (
+              <th
+                key="ys-exit"
+                colSpan={4}
+                className={cn(
+                  'text-center text-[11px] font-semibold tabular-nums px-2 pb-1 bg-ink-300/10 border-l-2 border-border',
+                  exitColumn?.calendarYear == null ? 'text-ink-400' : 'text-ink-900',
+                )}
+              >
+                {projectionColumnSubtitle(exitColumn?.calendarYear)}
+              </th>
+            )}
           </tr>
           {/* Sub-column headers */}
           <tr className="border-b border-border text-[9.5px] uppercase tracking-wider text-ink-500">
             {years.map((_, i) => (
               <SubHeaderGroup key={`sh-${i}`} dim={i === 0} />
             ))}
+            {hasExit && <SubHeaderGroup key="sh-exit" dim />}
           </tr>
         </thead>
         <tbody>
@@ -805,6 +1060,7 @@ function ProjectionsTable({ years, exitCapRate }: { years: ProjYear[]; exitCapRa
                 —
               </td>
             ))}
+            <ExitCells />
           </tr>
 
           {/* Days */}
@@ -909,12 +1165,13 @@ function ProjectionsTable({ years, exitCapRate }: { years: ProjYear[]; exitCapRa
                 </td>
               );
             })}
+            <ExitCells />
           </tr>
 
           {/* REVENUES section header */}
           <tr className="bg-brand-500/95">
             <td
-              colSpan={2 + years.length * 4}
+              colSpan={2 + columnCount * 4}
               className="px-3 py-1.5 text-[10.5px] font-semibold uppercase tracking-[0.12em] text-white"
             >
               Revenues
@@ -1017,7 +1274,7 @@ function ProjectionsTable({ years, exitCapRate }: { years: ProjYear[]; exitCapRa
               {/* DEPARTMENTAL EXPENSE */}
               <tr className="bg-brand-500/95">
                 <td
-                  colSpan={2 + years.length * 4}
+                  colSpan={2 + columnCount * 4}
                   className="px-3 py-1.5 text-[10.5px] font-semibold uppercase tracking-[0.12em] text-white"
                 >
                   Departmental Expense
@@ -1088,7 +1345,7 @@ function ProjectionsTable({ years, exitCapRate }: { years: ProjYear[]; exitCapRa
               {/* UNDISTRIBUTED EXPENSES */}
               <tr className="bg-brand-500/95">
                 <td
-                  colSpan={2 + years.length * 4}
+                  colSpan={2 + columnCount * 4}
                   className="px-3 py-1.5 text-[10.5px] font-semibold uppercase tracking-[0.12em] text-white"
                 >
                   Undistributed Expenses
@@ -1230,8 +1487,46 @@ function ProjectionsTable({ years, exitCapRate }: { years: ProjYear[]; exitCapRa
                     </td>
                   );
                 })}
+                <ExitCells />
               </tr>
             </>
+          )}
+          {/* FON-41 #2 — the exit's forward 12-month Cash NOI. It is NOT a
+              modelled column: returns.py extrapolates the last hold year at
+              the RevPAR growth rate. Shown here, with its formula, so the
+              horizon visibly reaches the figure the reversion is valued on
+              — without introducing a year hold+1 through the expense
+              waterfall, which would move gross sale and every IRR. */}
+          {hasExit && (
+            <tr className="border-b border-border/60 bg-ink-300/[0.06] font-semibold" data-testid="forward-noi-row">
+              <td
+                className="px-3 py-2 text-[11px] text-ink-900 font-semibold border-r border-border bg-bg/30"
+                title={exitColumn!.formula}
+              >
+                {FORWARD_NOI_LABEL}
+              </td>
+              <td className="px-3 py-2 text-[11px] text-ink-500 border-r border-border bg-bg/30">
+                $
+              </td>
+              {years.map((_, i) => (
+                <td
+                  key={`fnoi-${i}`}
+                  colSpan={4}
+                  className="px-2 py-2 text-center text-[11px] text-ink-400 border-l border-border"
+                >
+                  —
+                </td>
+              ))}
+              <ExitCells>
+                <ComputedValue note={exitColumn!.formula}>
+                  <span className="text-ink-900 font-semibold">
+                    {exitColumn!.terminalNoi != null
+                      ? fmtAmount(exitColumn!.terminalNoi, { prefix: '$' })
+                      : '—'}
+                  </span>
+                </ComputedValue>
+              </ExitCells>
+            </tr>
           )}
         </tbody>
       </table>
@@ -1240,6 +1535,7 @@ function ProjectionsTable({ years, exitCapRate }: { years: ProjYear[]; exitCapRa
         PAR = $/available room. POR = $/occupied room. % Rev = share of Total Revenue.
       </div>
     </div>
+    </ExitColumnContext.Provider>
   );
 }
 
@@ -1545,6 +1841,7 @@ function SimpleRow({
           </td>
         );
       })}
+      <ExitCells />
     </tr>
   );
 }
@@ -1619,6 +1916,7 @@ function FullRow({
           />
         );
       })}
+      <ExitCells />
     </tr>
   );
 }
@@ -1691,9 +1989,10 @@ function SegControl<T extends string>({
 
 // The Base year / Period / View control bar above the Assumptions panel.
 function ProjectionsControls({
-  years, shownForecast, forecastCount, onDec, onInc, view, onView,
+  years, closeDateIso, shownForecast, forecastCount, onDec, onInc, view, onView,
 }: {
   years: ProjYear[];
+  closeDateIso: string | null;
   shownForecast: number;
   forecastCount: number;
   onDec: () => void;
@@ -1701,7 +2000,10 @@ function ProjectionsControls({
   view: 'annual' | 'monthly';
   onView: (v: 'annual' | 'monthly') => void;
 }) {
-  const baseYear = years[0]?.year ?? new Date().getFullYear();
+  // The FIRST column's calendar year, derived from the acquisition close date
+  // by the revenue engine. `years[0].year` is the ordinal 1 — showing it here
+  // printed a literal "1" in the Base year chip.
+  const baseYear = years[0]?.calendarYear;
   const ctrlLabel: CSSProperties = { fontSize: 11, color: '#6b6f76', fontWeight: 600 };
   const stepBtn: CSSProperties = {
     width: 24, height: 26, border: '1px solid #e2e1dc', background: '#fff',
@@ -1712,10 +2014,14 @@ function ProjectionsControls({
       <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
         <span style={ctrlLabel}>Base year</span>
         <span
-          title="Base year follows the earliest engine projection year."
-          style={{ fontSize: 12.5, fontWeight: 600, border: '1px solid #e2e1dc', borderRadius: 6, padding: '6px 8px', color: '#1a2233', background: '#fff' }}
+          title={
+            baseYear != null
+              ? `Base Year (Year 1) is calendar ${baseYear}, derived from the acquisition close date${closeDateIso ? ` (${fmtIsoDate(closeDateIso)})` : ''}.`
+              : 'No acquisition close date on this deal, so the projection has no calendar year. Set it on the Overview tab.'
+          }
+          style={{ fontSize: 12.5, fontWeight: 600, border: '1px solid #e2e1dc', borderRadius: 6, padding: '6px 8px', color: baseYear != null ? '#1a2233' : '#9a9a95', background: '#fff' }}
         >
-          {baseYear}
+          {baseYear ?? '—'}
         </span>
       </div>
       <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
@@ -1787,17 +2093,137 @@ function AssumptionField({
   );
 }
 
+/**
+ * The editable Stabilization Year (FON-41 / FON-59 #3).
+ *
+ * A 1-based model year persisted to ``field_overrides.stabilization_year``.
+ * It goes through ``useInlineEdit`` + ``isNoOpEdit`` like every other editor,
+ * so Esc / click-away discard and re-saving the seeded value unchanged writes
+ * nothing — the badge keeps reading "Fondok-derived", which is what the worker
+ * publishes on ``stabilization.source`` for a value equal to its own signal.
+ *
+ * The year is DISPLAY-ONLY in the model: it selects which projection year the
+ * stabilized figures are read from. It moves no return.
+ */
+function StabilizationYearField({
+  stabilization, modelYears, calendarYears, disabled, onCommit,
+}: {
+  stabilization: StabilizedYearBlock | null;
+  modelYears: number;
+  calendarYears: number[] | null;
+  disabled?: boolean;
+  onCommit: (year: number) => void | Promise<void>;
+}) {
+  const current = stabilization?.stabilized_year ?? null;
+  const parse = (draft: string): number | null => {
+    const n = Number(draft.replace(/[^\d.-]/g, ''));
+    if (!Number.isFinite(n)) return null;
+    const year = Math.round(n);
+    // A year the projection does not have is not a year. No clamping — a
+    // silent clamp would persist a number the analyst never chose.
+    return year >= 1 && year <= modelYears ? year : null;
+  };
+  const ed = useInlineEdit<number>({
+    current,
+    unit: 'count',
+    parse,
+    onSave: onCommit,
+    toDraft: (v) => String(v),
+    invalidMessage: `Enter a projection year between 1 and ${modelYears}.`,
+  });
+
+  const calendarYear =
+    stabilization && calendarYears && calendarYears.length > stabilization.stabilized_year_index
+      ? calendarYears[stabilization.stabilized_year_index]
+      : undefined;
+  const badge = stabilizationBadge(stabilization);
+  const note = stabilizationSignalNote(stabilization);
+  const derived = stabilization?.source !== 'analyst_override';
+
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 5 }}>
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10 }}>
+        <span style={{ fontSize: 12, color: '#6b6f76' }}>Stabilization Year</span>
+        {!ed.editing ? (
+          <button
+            type="button"
+            data-testid="stabilization-year-value"
+            disabled={disabled || current == null}
+            title={current == null
+              ? 'No projection year has resolved yet — run the model.'
+              : 'Click to change the Stabilization Year'}
+            onClick={() => ed.start(current != null ? String(current) : '')}
+            style={{
+              fontSize: 13, fontWeight: 600, color: current == null ? '#9a9a95' : '#1a2233',
+              background: 'none', border: 'none', padding: 0, fontFamily: 'inherit',
+              cursor: current == null ? 'default' : 'pointer',
+              textDecoration: current == null ? 'none' : 'underline dotted',
+              fontVariantNumeric: 'tabular-nums',
+            }}
+          >
+            {current == null
+              ? '—'
+              : calendarYear != null
+                ? `Year ${current} — ${calendarYear}`
+                : `Year ${current}`}
+          </button>
+        ) : (
+          <span ref={ed.containerRef} style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+            <input
+              type="number" min={1} max={modelYears} value={ed.draft} autoFocus disabled={ed.saving}
+              aria-label="Stabilization Year"
+              onChange={(e) => ed.setDraft(e.target.value)}
+              onKeyDown={ed.onKeyDown}
+              style={{ ...inlineEditInputStyle, width: 64 }}
+            />
+            <InlineEditControls onSave={() => void ed.submit()} onCancel={ed.cancel} saving={ed.saving} />
+          </span>
+        )}
+      </div>
+      {badge && (
+        <span
+          data-testid="stabilization-year-badge"
+          title={note ?? undefined}
+          style={{
+            alignSelf: 'flex-end',
+            fontSize: 10, fontWeight: 700, letterSpacing: '.03em',
+            color: derived ? '#7a5c17' : '#2f4a8c',
+            background: derived ? 'rgba(214,168,50,.14)' : 'rgba(47,74,140,.10)',
+            borderRadius: 4, padding: '2px 5px',
+          }}
+        >
+          {badge}
+        </span>
+      )}
+      {note && (
+        <p style={{ fontSize: 11, color: '#6b6f76', lineHeight: 1.45, margin: 0 }}>{note}</p>
+      )}
+      {stabilization == null && (
+        <p style={{ fontSize: 11, color: '#6b6f76', lineHeight: 1.45, margin: 0 }}>
+          Awaiting a model run — Overview&apos;s Stabilization rows stay blank until a
+          projection year resolves.
+        </p>
+      )}
+    </div>
+  );
+}
+
 // "These drive every projected year" — the canonical Assumptions panel.
 // Each editable field writes the deal's field_overrides and re-runs the whole
 // model (the canonical edit path, shared with the driver cells). Exit cap rate
 // is Investment-owned, so it is shown here linked / read-only.
 function AssumptionsPanel({
-  dealId, overrides, onApply, running,
+  dealId, overrides, onApply, running, stabilization, modelYears, calendarYears,
 }: {
   dealId: string;
   overrides: Record<string, unknown>;
   onApply: (key: string, value: number, note: string) => Promise<void>;
   running: boolean;
+  /** The worker's published stabilized-year block (null until a run carries one). */
+  stabilization: StabilizedYearBlock | null;
+  /** How many modelled years the projection has — the editor's upper bound. */
+  modelYears: number;
+  calendarYears: number[] | null;
 }) {
   // Exit cap rate is owned by Investment — resolve its live value (never edited here).
   const exitCapSrc = useSource('exit_cap_rate');
@@ -1831,6 +2257,25 @@ function AssumptionsPanel({
             <AssumptionField label="Other expense inflation" unit="pct" suffix="%/yr" value={cur('other_expense_growth')} disabled={running} onCommit={(v) => onApply('other_expense_growth', v, 'Other expense inflation set on the Projections page')} />
           </div>
         </div>
+        {/* Stabilization Year — FON-41 / FON-59 #3. The analyst owns it; the
+            worker seeds it from the occupancy / NOI-plateau signal and says so
+            until it is confirmed. Overview's Stabilized Occupancy / ADR /
+            Revenue / NOI / Margin and the STABILIZED column badge all read the
+            year selected here. */}
+        <div style={cardStyle}>
+          <div style={cardTitle}>Stabilization</div>
+          <div style={rowsWrap}>
+            <StabilizationYearField
+              stabilization={stabilization}
+              modelYears={modelYears}
+              calendarYears={calendarYears}
+              disabled={running}
+              onCommit={(year) =>
+                onApply('stabilization_year', year, 'Stabilization Year set on the Projections page')
+              }
+            />
+          </div>
+        </div>
         {/* Resort fee revenue */}
         <div style={cardStyle}>
           <div style={cardTitle}>Resort fee revenue</div>
@@ -1845,12 +2290,13 @@ function AssumptionsPanel({
                 re-index the engine — so these labels (and the note below)
                 name the columns the analyst actually reads. Engine math and
                 the ``field_overrides`` keys are untouched. */}
-            <AssumptionField label="Capture — Base Year" unit="pct" suffix="%" value={cur('resort_fee_capture_y1')} disabled={running} onCommit={(v) => onApply('resort_fee_capture_y1', v, 'Resort-fee capture for the Base Year column set on the Projections page')} />
-            <AssumptionField label="Capture — Year 1" unit="pct" suffix="%" value={cur('resort_fee_capture_y2')} disabled={running} onCommit={(v) => onApply('resort_fee_capture_y2', v, 'Resort-fee capture for the Year 1 column set on the Projections page')} />
-            <AssumptionField label="Capture — Year 2+" unit="pct" suffix="%" value={cur('resort_fee_capture_y3')} disabled={running} onCommit={(v) => onApply('resort_fee_capture_y3', v, 'Resort-fee capture for the Year 2+ columns set on the Projections page')} />
+            <AssumptionField label="Capture — Base Year (Year 1)" unit="pct" suffix="%" value={cur('resort_fee_capture_y1')} disabled={running} onCommit={(v) => onApply('resort_fee_capture_y1', v, 'Resort-fee capture for the Base Year (Year 1) column set on the Projections page')} />
+            <AssumptionField label="Capture — Year 2" unit="pct" suffix="%" value={cur('resort_fee_capture_y2')} disabled={running} onCommit={(v) => onApply('resort_fee_capture_y2', v, 'Resort-fee capture for the Year 2 column set on the Projections page')} />
+            <AssumptionField label="Capture — Year 3+" unit="pct" suffix="%" value={cur('resort_fee_capture_y3')} disabled={running} onCommit={(v) => onApply('resort_fee_capture_y3', v, 'Resort-fee capture for the Year 3+ columns set on the Projections page')} />
             <p style={{ fontSize: 11, color: '#6b6f76', lineHeight: 1.45, margin: 0 }}>
-              Each capture applies to the column above it — Base Year is projection year 1,
-              Year 1 is projection year 2, and Year 2+ carries through every later year.
+              Each capture applies to the column above it — Base Year (Year 1) is the model&apos;s
+              first operating year, Year 2 is the one after it, and Year 3+ carries through every
+              later year.
             </p>
           </div>
         </div>

@@ -50,7 +50,7 @@ import Link from 'next/link';
 import { useParams } from 'next/navigation';
 import { useState, useEffect, useMemo, useRef, useCallback } from 'react';
 import { fmtCurrency, fmtPct } from '@/lib/format';
-import { stabilizedCashNoi, STABILIZED_CASH_NOI_LABEL } from '@/lib/engines/noi';
+import { stabilizedNoiBeforeReserve, STABILIZED_NOI_LABEL } from '@/lib/engines/noi';
 import { useEngineOutputs, getEngineField } from '@/lib/hooks/useEngineOutputs';
 import { useDeal } from '@/lib/hooks/useDeal';
 import { useVariance } from '@/lib/hooks/useVariance';
@@ -1660,10 +1660,11 @@ function ScenarioSummary({ dealId, isMock, onLoaded }: { dealId: string; isMock:
             isBase: c.is_base,
             irr: pathNum(e.returns?.outputs, ['levered_irr']),
             em: pathNum(e.returns?.outputs, ['equity_multiple']),
-            // FON-54 #1 — the SAME selector ScenarioComparePanel's `stab_noi`
-            // row uses (last of returns.noi_by_year), so IC Memo and Scenario
-            // Analysis cannot print two different "stabilized" numbers.
-            noi: stabilizedCashNoi(e),
+            // FON-54 #1 / FON-59 #3 — the SAME selector ScenarioComparePanel's
+            // `stab_noi` row uses: the worker's published stabilization block,
+            // read off its own stabilized year. IC Memo, Scenario Analysis and
+            // Overview therefore cannot print different "stabilized" numbers.
+            noi: stabilizedNoiBeforeReserve(e),
             exit: pathNum(e.returns?.outputs, ['gross_sale_price']),
             dscr: pathNum(e.debt?.outputs, ['year_one_dscr']),
           };
@@ -1683,7 +1684,7 @@ function ScenarioSummary({ dealId, isMock, onLoaded }: { dealId: string; isMock:
   const METRICS: { key: keyof ScenarioKpi; label: string; fmt: (n: number) => string; delta: (d: number) => string }[] = [
     { key: 'irr', label: 'Levered IRR', fmt: (n) => fmtPct(n, 1), delta: (d) => `${d >= 0 ? '+' : '−'}${Math.abs(d * 100).toFixed(1)} pts` },
     { key: 'em', label: 'Equity Multiple', fmt: (n) => `${n.toFixed(2)}x`, delta: (d) => `${d >= 0 ? '+' : '−'}${Math.abs(d).toFixed(2)}x` },
-    { key: 'noi', label: STABILIZED_CASH_NOI_LABEL, fmt: (n) => mm(n), delta: (d) => `${d >= 0 ? '+' : '−'}$${(Math.abs(d) / 1e6).toFixed(2)}M` },
+    { key: 'noi', label: STABILIZED_NOI_LABEL, fmt: (n) => mm(n), delta: (d) => `${d >= 0 ? '+' : '−'}$${(Math.abs(d) / 1e6).toFixed(2)}M` },
     { key: 'exit', label: 'Exit Value', fmt: (n) => mm(n), delta: (d) => `${d >= 0 ? '+' : '−'}$${(Math.abs(d) / 1e6).toFixed(2)}M` },
     { key: 'dscr', label: 'Avg. DSCR', fmt: (n) => `${n.toFixed(2)}x`, delta: (d) => `${d >= 0 ? '+' : '−'}${Math.abs(d).toFixed(2)}x` },
   ];

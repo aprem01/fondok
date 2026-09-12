@@ -50,6 +50,12 @@ from .sensitivity import (
     SensitivityOutput,
     SensitivitySpec,
 )
+from .stabilization import (
+    StabilizedYear,
+    build_stabilized_year,
+    resolve_stabilized_year,
+    resolve_stabilized_year_index,
+)
 
 __all__ = [
     "BaseEngine",
@@ -86,12 +92,16 @@ __all__ = [
     "SensitivityMatrix",
     "SensitivityOutput",
     "SensitivitySpec",
+    "StabilizedYear",
     "build_amort_schedule",
+    "build_stabilized_year",
     "build_stack_schedule",
     "draft_loi",
     "irr",
     "npv",
     "pmt",
+    "resolve_stabilized_year",
+    "resolve_stabilized_year_index",
     "run_refi_test",
     "run_sensitivity_grid",
     "solve_max_price",

@@ -647,6 +647,84 @@ def _is_str_market_note(note: Any) -> bool:
     return any(m in n for m in ("comp-set", "compset", "comp set", "market"))
 
 
+# ──────────────── Stabilization Year (FON-41 / FON-59 #3) ─────────────
+#
+# The analyst's stabilized operating year, 1-based (model "Year 2" → 2). It is
+# a persisted assumption on the deal's ``field_overrides``, NOT a deal column,
+# and it is DISPLAY-ONLY: the expense engine publishes the stabilized block
+# from it and nothing downstream reads that block, so setting or changing the
+# year cannot move gross sale, either IRR, MOIC or terminal NOI. The guard is
+# ``tests/test_stabilization_year.py::test_stabilization_year_does_not_move_returns``.
+#
+# It must trigger a FULL run (never a single-engine run) — the block lives on
+# the expense output, and a lone re-run of one engine would re-fragment the
+# canonical snapshot (FON-73).
+STABILIZATION_YEAR_KEY = "stabilization_year"
+
+# ──────────────── field_overrides keys that are NOT engine input ──────
+#
+# Some ``field_overrides`` entries are UI state the analyst persists on the
+# deal, not assumptions any engine consumes. They are skipped BY NAME in the
+# override-routing loop so nothing about their shape is load-bearing: an
+# incidental type-check (the scalar guard drops non-scalars) is not a contract,
+# and the day one of these becomes a scalar it would silently start reaching
+# ``base`` and changing engine input.
+#
+# ``worksheet_layout`` — the Grounded Worksheet's per-deal row layout
+# (relabel / split / reorder / memo). Presentation only; the worksheet's
+# numbers come from the engines regardless of how its rows are arranged.
+_OVERRIDE_NON_ENGINE_KEYS: frozenset[str] = frozenset({"worksheet_layout"})
+
+
+def _coerce_stabilization_year(value: Any) -> int | None:
+    """A 1-based model year, or ``None``. Never a guess, never a clamp to 1."""
+    if value is None or isinstance(value, bool):
+        return None
+    if isinstance(value, dict):
+        # The OverridePanel's ``{value, note}`` shape, if it reaches here raw.
+        value = value.get("value")
+    if value in (None, ""):
+        return None
+    try:
+        year = int(float(value))
+    except (TypeError, ValueError):
+        return None
+    return year if year >= 1 else None
+
+
+def _occupancy_by_year(accumulated: dict[str, BaseModel]) -> list[float] | None:
+    """The revenue engine's projected occupancy path (index 0 = Year 1)."""
+    revenue_out = accumulated.get("revenue")
+    years = getattr(revenue_out, "years", None) if revenue_out else None
+    if not years:
+        return None
+    return [yr.occupancy for yr in years]
+
+
+def _adr_by_year(accumulated: dict[str, BaseModel]) -> list[float] | None:
+    """The revenue engine's projected ADR path (index 0 = Year 1)."""
+    revenue_out = accumulated.get("revenue")
+    years = getattr(revenue_out, "years", None) if revenue_out else None
+    if not years:
+        return None
+    return [yr.adr for yr in years]
+
+
+def _stabilized_occupancy_assumption(base: dict[str, Any]) -> float | None:
+    """The deal's post-ramp stabilized occupancy — the derivation signal.
+
+    ``starting_occupancy`` IS the stabilized baseline in the revenue engine
+    (only Year 1, and a PIP's recovery year, sit below it). Exactly what the
+    debt builder passes for the stabilized DSCR / debt yield, so the two
+    resolve the same year.
+    """
+    value = base.get("starting_occupancy")
+    try:
+        return float(value) if value not in (None, "") else None
+    except (TypeError, ValueError):
+        return None
+
+
 def _is_shadow_override(prior: Any, new: Any) -> bool:
     """Is this override a SHADOW — the same value the deal already resolved to?
 
@@ -1347,8 +1425,12 @@ async def _load_engine_inputs(
     # reads this set, never the ``sources`` label.
     analyst_override_paths: set[str] = set()
     if overrides:
-        base.update(overrides)
-        for k in overrides:
+        # The same named skip the persisted-override loop applies below: UI
+        # state is never engine input, whatever route it arrives by.
+        for k, v in overrides.items():
+            if k in _OVERRIDE_NON_ENGINE_KEYS:
+                continue
+            base[k] = v
             sources[k] = SOURCE_ANALYST_OVERRIDE
             analyst_override_paths.add(k)
 
@@ -1382,6 +1464,15 @@ async def _load_engine_inputs(
             persisted_overrides = {**persisted_overrides, **scenario_overrides}
     if persisted_overrides:
         for path, value in persisted_overrides.items():
+            # UI state the analyst persists on the deal, never engine input.
+            # Skipped BY NAME (``_OVERRIDE_NON_ENGINE_KEYS``) so the skip does
+            # not depend on the value's shape: today the Grounded Worksheet's
+            # ``worksheet_layout`` is a JSON object that the scalar guard below
+            # would incidentally drop, but an incidental drop is not a
+            # contract — a layout that ever serialized as a string would start
+            # landing on ``base`` and changing engine input.
+            if path in _OVERRIDE_NON_ENGINE_KEYS:
+                continue
             # Wave 2 P2.5 — capex array overrides land first because
             # they're the only override paths that legitimately carry a
             # JSON list (``roi_projects``, ``timing_pct_by_year``). The
@@ -1634,6 +1725,22 @@ async def _load_engine_inputs(
                     _stamp_override_source(
                         sources, analyst_override_paths, path, prior_value, flag
                     )
+                continue
+            elif path == STABILIZATION_YEAR_KEY:
+                # FON-41 / FON-59 #3 — the analyst's stabilized operating year
+                # (1-based). Parked on ``base`` for the expense builder, which
+                # publishes the stabilized block; nothing downstream reads it,
+                # so it moves no return. Its PROVENANCE is deliberately NOT
+                # stamped here: whether this value is an analyst override or a
+                # re-confirmed Fondok-derived seed can only be known once the
+                # projection exists, so the expense engine decides it and
+                # publishes the answer on ``stabilization.source``. Stamping
+                # ``analyst_override`` here would contradict that block for
+                # every analyst who re-saved the seed unchanged (FON-65).
+                stab_year = _coerce_stabilization_year(value)
+                if stab_year is not None:
+                    base[STABILIZATION_YEAR_KEY] = stab_year
+                    analyst_override_paths.add(path)
                 continue
             elif _parse_partnership_override_path(path) is not None:
                 # FON-66 — partnership waterfall per-tier field override. Indexed
@@ -5422,6 +5529,16 @@ def _build_input_for(
             ),
             segments=segments,
             pip_displacement=_build_pip_displacement(base),
+            # FON-41 #2 — the projection calendar anchor. The SAME date the
+            # timeline engine is built on (below), so "Year 1 — 2025" on the
+            # statement and "Hotel Purchase 2025-09-30" on the timeline can
+            # never disagree. Absent → the engine emits no calendar and the
+            # statement shows the ordinal alone.
+            acquisition_close_date=(
+                str(base["acquisition_close_date"])
+                if base.get("acquisition_close_date") not in (None, "")
+                else None
+            ),
         )
 
     if engine_name == "fb":
@@ -5457,6 +5574,17 @@ def _build_input_for(
             # actuals over USALI benchmark ratios for Year 1. Loaded by
             # ``_load_engine_inputs`` below; absent on demo deals.
             t12_actuals=base.get("t12_expense_actuals", {}) or {},
+            # FON-41 / FON-59 #3 — the stabilized-year block. The expense engine
+            # publishes it (it is the one engine holding revenue AND NOI on the
+            # same year index); these are the inputs it cannot derive itself.
+            # ``stabilized_occupancy`` is EXACTLY what the debt engine is passed
+            # for its stabilized DSCR / debt yield, so both resolve one year.
+            occupancy_by_year=_occupancy_by_year(accumulated),
+            adr_by_year=_adr_by_year(accumulated),
+            stabilized_occupancy=_stabilized_occupancy_assumption(base),
+            stabilization_year=_coerce_stabilization_year(
+                base.get(STABILIZATION_YEAR_KEY)
+            ),
         )
 
     if engine_name == "capital":

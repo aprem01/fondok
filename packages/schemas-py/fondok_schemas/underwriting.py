@@ -374,6 +374,17 @@ class RevenueEngineInput(BaseModel):
     # ``apps/worker/app/engines/revenue.py``.
     pip_displacement: PIPDisplacement | None = None
 
+    # FON-41 #2 — the projection's CALENDAR anchor. ``year`` on each projection
+    # row is an ORDINAL (1..hold_years), so the grid had no calendar of its own
+    # and the UI printed the ordinal as if it were a year ("Base Year 1, Year 1
+    # 2"). The acquisition close date — the same date the timeline engine is
+    # anchored on — maps ordinal → calendar year: operating Year 1 is the
+    # calendar year containing close + 1 month, matching the timeline's first
+    # operating month. ISO ``YYYY-MM-DD``; ``None`` (no close date on the deal)
+    # emits NO calendar at all, so the UI renders the ordinal and never a
+    # guessed year.
+    acquisition_close_date: str | None = None
+
     @model_validator(mode="after")
     def _check_segment_mix_sums_to_one(self) -> "RevenueEngineInput":
         if not self.segments:
@@ -422,6 +433,13 @@ class RevenueEngineOutput(BaseModel):
     deal_id: UUID
     years: list[RevenueProjectionYear]
     total_revenue_cagr: float
+    # FON-41 #2 — the projection calendar. ``projection_start_year`` is the
+    # calendar year of operating Year 1; ``projection_calendar_years[i]`` is the
+    # calendar year of ``years[i]``. BOTH are empty / None when the deal carries
+    # no acquisition close date — the grid then shows the ordinal alone. A
+    # fabricated year (the wall clock, the extraction year) is never emitted.
+    projection_start_year: int | None = None
+    projection_calendar_years: list[int] = Field(default_factory=list)
     # FON-25 — per-value provenance sidecar. Keyed by dotted output path
     # (e.g. "years[0].rooms_revenue") → ValueTrace(formula, inputs, source).
     # Empty by default so legacy callers/tests are unaffected; the UI reads
