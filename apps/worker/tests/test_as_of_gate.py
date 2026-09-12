@@ -217,13 +217,18 @@ async def test_str_report_after_the_as_of_is_refused_not_used() -> None:
         is ReasonCode.NOT_KNOWABLE_AS_OF
     )
     # The value was NOT loaded — Year-1 stays off the STR rates.
-    assert sources["starting_adr"] != "str_forecast"
+    assert sources["starting_adr"] not in ("str_forecast", "str_subject_ttm")
     assert base["starting_adr"] != pytest.approx(412.0)
 
 
 @pytest.mark.asyncio
 async def test_str_report_with_no_date_loads_and_flags_as_of_unknown() -> None:
-    """No ``report_as_of`` is a FLAG, never a refusal — Sam's number stays."""
+    """No ``report_as_of`` is a FLAG, never a refusal — Sam's number stays.
+
+    FON-61 (61.2): ``_STR_SUBJECT_TTM`` is the subject property's own trailing
+    twelve months, so the seed is tagged ``str_subject_ttm`` — an actual, not
+    the forward forecast. The VALUE (412.0 / 0.785) is what it always was.
+    """
     from fondok_schemas.reasons import ReasonCode
 
     deal_id = uuid4()
@@ -239,7 +244,7 @@ async def test_str_report_with_no_date_loads_and_flags_as_of_unknown() -> None:
     )
 
     base = await _base_for(deal_id)
-    assert base["__sources__"]["revenue_seed_from_str_forecast"] == "str_forecast"
+    assert base["__sources__"]["revenue_seed_from_str_forecast"] == "str_subject_ttm"
     assert base["starting_adr"] == pytest.approx(412.0)
     assert base["starting_occupancy"] == pytest.approx(0.785)
     assert (
@@ -270,7 +275,7 @@ async def test_year_precision_report_in_the_as_of_year_is_admitted() -> None:
     )
 
     base = await _base_for(deal_id)
-    assert base["__sources__"]["revenue_seed_from_str_forecast"] == "str_forecast"
+    assert base["__sources__"]["revenue_seed_from_str_forecast"] == "str_subject_ttm"
     assert base["starting_adr"] == pytest.approx(412.0)
 
 
@@ -296,7 +301,7 @@ async def test_acquisition_close_date_is_not_an_as_of_date() -> None:
     )
 
     base = await _base_for(deal_id)
-    assert base["__sources__"]["revenue_seed_from_str_forecast"] == "str_forecast"
+    assert base["__sources__"]["revenue_seed_from_str_forecast"] == "str_subject_ttm"
     assert base["starting_adr"] == pytest.approx(412.0)
     assert base["__reasons__"].get("revenue_seed_from_str_forecast") is None
 

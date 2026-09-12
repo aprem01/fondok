@@ -38,9 +38,13 @@ import { useHistoricalBaseline } from '@/lib/hooks/useHistoricalBaseline';
 const HISTORICAL_YEARS = [2019, 2020, 2021, 2022, 2023, 2024];
 const FORECAST_YEARS = [2025, 2026, 2027, 2028, 2029, 2030, 2031, 2032, 2033];
 const ALL_YEARS = [...HISTORICAL_YEARS, ...FORECAST_YEARS];
+/** The column where the forecast starts — the one growth step that spans the
+ *  historical/forecast boundary, and the only one whose two sides can sit on
+ *  different period bases (FON-61 61.3). */
+const FIRST_FORECAST_INDEX = HISTORICAL_YEARS.length;
 
 const NOTES_TEXT =
-  'Notes: (1) Competitive-set performance is the STR/CoStar comp-set aggregate, recovered from the subject’s published penetration indices (MPI occupancy, ARI rate, RGI RevPAR) — comp = subject ÷ index — matching Market Overview. STR anonymizes per-property comp performance, so individual competitor Occ/ADR/RevPAR are not published. (2) The MPI/ARI/RGI penetration indices are the STR-published values, measured on STR’s trailing-twelve-month subject basis; the subject rows are the operating P&L series. (3) Absent a CBRE Horizons forecast, comp set and penetration are carried forward at the trailing-twelve-month relationship. (4) Blank cells are unreported data, not zero.';
+  'Notes: (1) Competitive-set performance is the STR/CoStar comp-set aggregate, recovered from the subject’s published penetration indices (MPI occupancy, ARI rate, RGI RevPAR) — comp = subject ÷ index — matching Market Overview. STR anonymizes per-property comp performance, so individual competitor Occ/ADR/RevPAR are not published. (2) The MPI/ARI/RGI penetration indices are the STR-published values, measured on STR’s trailing-twelve-month subject basis; the subject rows are the operating P&L series. (3) The forecast band names its own origin, and the caption above states the methodology behind it. (4) The first forecast year shows no growth rate when the last historical column is a different period basis from the model’s Base Year — a growth rate across two bases is not a modelled assumption. (5) Blank cells are unreported data, not zero.';
 
 interface RevenueYear {
   year: number;
@@ -48,6 +52,38 @@ interface RevenueYear {
   adr: number;
   revpar: number;
 }
+
+/**
+ * FON-61 (61.3) — is the last historical column comparable to the first
+ * forecast column?
+ *
+ * Sam: "Index Analysis currently shows 2025: Occupancy Growth 13.3% … produced
+ * by comparing the 2025 forecast against 2024 calendar-year historical
+ * performance … display N/A for the first forecast-year growth rows."
+ *
+ * The subject's 2024 column is filled from the historical-baseline engine when
+ * a full-year P&L was extracted — a FISCAL YEAR actual. The 2025 column is the
+ * revenue engine's ``years[1]``, grown off ``years[0]`` — the Base Year, which
+ * is a TRAILING TWELVE MONTHS window. Dividing one by the other is a growth
+ * rate between two different period bases, presented as a modelled assumption.
+ *
+ * The one case where they DO agree is the deal with no multi-year P&L: the
+ * anchor column then falls back to revenue ``years[0]`` itself, so the step is
+ * the model's own Base Year → Year 2 growth and is a real number.
+ */
+export type ForecastBoundary =
+  | { comparable: true }
+  | { comparable: false; note: string };
+
+const BOUNDARY_COMPARABLE: ForecastBoundary = { comparable: true };
+const BOUNDARY_FY_VS_TTM: ForecastBoundary = {
+  comparable: false,
+  note:
+    'Not applicable: the 2024 column is a full fiscal year of actuals while the ' +
+    'model grows off a trailing-twelve-month Base Year. A growth rate across two ' +
+    'different period bases would not be a modelled assumption. Growth from 2026 ' +
+    'onward compares forecast to forecast.',
+};
 interface CbreYear {
   year_index: number;
   occupancy_pct: number | null;
@@ -139,7 +175,7 @@ function occFraction(v: number | null | undefined): number | null {
 function buildSubjectSeries(
   outputs: EngineOutputsResponse | null,
   baseline: HistoricalBaselineResponse | null,
-): YearSeries {
+): YearSeries & { boundary: ForecastBoundary } {
   const series: YearSeries = {
     occupancy: ALL_YEARS.map(() => null),
     adr: ALL_YEARS.map(() => null),
@@ -175,12 +211,21 @@ function buildSubjectSeries(
   // when present, otherwise revenue years[0] serves as the fallback
   // anchor (preserves pre-baseline behavior for deals without P&L docs).
   const revYears = getEngineField<RevenueYear[]>(outputs, 'revenue', 'years');
+  // FON-61 (61.3) — default to comparable: with no revenue forecast at all
+  // there is no forecast column to refuse, and the fallback below sets the
+  // anchor to the Base Year itself, which IS the model's own basis.
+  let boundary: ForecastBoundary = BOUNDARY_COMPARABLE;
   if (revYears && revYears.length > 0) {
     const anchorIdx = HISTORICAL_YEARS.length - 1;
     if (series.occupancy[anchorIdx] == null) {
       series.occupancy[anchorIdx] = occFraction(revYears[0].occupancy);
       series.adr[anchorIdx] = posOrNull(revYears[0].adr);
       series.revpar[anchorIdx] = posOrNull(revYears[0].revpar);
+    } else {
+      // The anchor came from the multi-year P&L baseline — a fiscal year —
+      // while the forecast grows off the TTM Base Year, which this table never
+      // shows. The first forecast-year growth spans the two.
+      boundary = BOUNDARY_FY_VS_TTM;
     }
     for (let i = 1; i < revYears.length && i <= FORECAST_YEARS.length; i++) {
       const idx = anchorIdx + i;
@@ -209,7 +254,7 @@ function buildSubjectSeries(
       series.revpar[idx] = occPrev * series.adr[idx]!;
     }
   }
-  return series;
+  return { ...series, boundary };
 }
 
 // Build the CoStar comp-set year series from the market-data envelope. The
@@ -351,11 +396,6 @@ function fmtIndex(v: number | null): string {
   if (v == null) return '—';
   return v.toFixed(1);
 }
-// Signed index-point delta, e.g. "+1.4" / "−0.6". Null → em dash.
-function fmtSignedPts(v: number | null): string {
-  if (v == null) return '—';
-  return `${v >= 0 ? '+' : '−'}${Math.abs(v).toFixed(1)}`;
-}
 // Signed dollar variance, e.g. "$12" / "−$5". Null → em dash.
 function fmtVarDollar(v: number | null): string {
   if (v == null) return '—';
@@ -396,9 +436,22 @@ interface TableProps {
    *  ADR / RevPAR cells render in assumption blue so a forecast is never read
    *  as an STR actual (canonical Index Analysis). Comp-set rows stay green. */
   subject?: boolean;
+  /** FON-60 (60.4) — WHOSE forecast the forecast band is. The truth was in
+   *  footnote 3; it belongs on the column band. */
+  forecastOrigin: string;
+  /** FON-61 (61.3) — whether the first forecast column's growth compares two
+   *  periods on the same basis. When it does not, that one cell is N/A. */
+  boundary: ForecastBoundary;
 }
 
-function IndexTable({ title, keys, series, subject = false }: TableProps) {
+function IndexTable({
+  title,
+  keys,
+  series,
+  subject = false,
+  forecastOrigin,
+  boundary,
+}: TableProps) {
   // Historical → green (grounded actual); subject forecast → assumption blue.
   const metricClass = (i: number): string =>
     subject && i >= HISTORICAL_YEARS.length ? 'text-brand-700' : 'text-success-700';
@@ -414,15 +467,26 @@ function IndexTable({ title, keys, series, subject = false }: TableProps) {
     if (occ == null || av == null) return null;
     return Math.round(av * occ);
   });
-  const occGrowth = ALL_YEARS.map((_, i) =>
-    i === 0 ? null : growth(series.occupancy[i], series.occupancy[i - 1]),
-  );
-  const adrGrowth = ALL_YEARS.map((_, i) =>
-    i === 0 ? null : growth(series.adr[i], series.adr[i - 1]),
-  );
-  const revparGrowth = ALL_YEARS.map((_, i) =>
-    i === 0 ? null : growth(series.revpar[i], series.revpar[i - 1]),
-  );
+  // FON-61 (61.3) — the growth step into the first forecast year is REFUSED
+  // when its two sides sit on different period bases. Refused is not the same
+  // as missing: the cell says N/A and names the mismatch on hover, rather than
+  // printing a number that reads as a modelled growth assumption. Every later
+  // year is forecast-over-forecast and is untouched.
+  const refuseAtBoundary = !boundary.comparable;
+  const growthAt = (arr: (number | null)[], i: number): number | null =>
+    i === 0 ? null : i === FIRST_FORECAST_INDEX && refuseAtBoundary ? null : growth(arr[i], arr[i - 1]);
+  const boundaryNote = boundary.comparable ? null : boundary.note;
+  const growthCell = (v: number | null, i: number) =>
+    i === FIRST_FORECAST_INDEX && refuseAtBoundary ? (
+      <span className="text-ink-400" title={boundaryNote ?? undefined}>
+        N/A
+      </span>
+    ) : (
+      <GrowthCell value={v} />
+    );
+  const occGrowth = ALL_YEARS.map((_, i) => growthAt(series.occupancy, i));
+  const adrGrowth = ALL_YEARS.map((_, i) => growthAt(series.adr, i));
+  const revparGrowth = ALL_YEARS.map((_, i) => growthAt(series.revpar, i));
 
   // Sticky-leftmost column class shorthand.
   const stickyL = 'sticky left-0 bg-card z-10 border-r border-border';
@@ -447,11 +511,15 @@ function IndexTable({ title, keys, series, subject = false }: TableProps) {
             >
               Historical
             </th>
+            {/* FON-60 (60.4) — the band says WHOSE forecast this is. Absent a
+                real CBRE Horizons report the series is Fondok-derived (the
+                comp-set relationship carried forward), which used to be
+                admitted only in footnote 3. */}
             <th
               colSpan={FORECAST_YEARS.length}
               className="text-center font-semibold uppercase tracking-wide text-[10.5px] text-brand-700 bg-brand-50/40 border-l border-border px-2 py-2"
             >
-              Forecast
+              Forecast — {forecastOrigin}
             </th>
           </tr>
           {/* Sub-header — Metric + each year */}
@@ -521,18 +589,14 @@ function IndexTable({ title, keys, series, subject = false }: TableProps) {
           />
           <Row
             label="Occupancy Growth"
-            cells={occGrowth.map((v) => <GrowthCell value={v} />)}
+            cells={occGrowth.map(growthCell)}
             stickyL={stickyL}
             zebra
           />
-          <Row
-            label="ADR Growth"
-            cells={adrGrowth.map((v) => <GrowthCell value={v} />)}
-            stickyL={stickyL}
-          />
+          <Row label="ADR Growth" cells={adrGrowth.map(growthCell)} stickyL={stickyL} />
           <Row
             label="RevPAR Growth"
-            cells={revparGrowth.map((v) => <GrowthCell value={v} />)}
+            cells={revparGrowth.map(growthCell)}
             stickyL={stickyL}
             zebra
           />
@@ -557,12 +621,14 @@ function PenetrationTable({
   indices,
   subjectKeys,
   compKeys,
+  forecastOrigin,
 }: {
   subject: YearSeries;
   comp: YearSeries;
   indices?: { mpi: number | null; ari: number | null; rgi: number | null } | null;
   subjectKeys: number | null;
   compKeys: number | null;
+  forecastOrigin: string;
 }) {
   const anchorIdx = HISTORICAL_YEARS.length - 1;
   const rowFor = (
@@ -587,9 +653,12 @@ function PenetrationTable({
   // from the STR path above; these derive from the subject + comp series and
   // the room counts, matching the canonical Penetration / Index Analysis group.
   const days = ALL_YEARS.map((y) => (isLeapYear(y) ? 366 : 365));
-  const rgiGrowth = ALL_YEARS.map((_, i) =>
-    i === 0 || rgi[i] == null || rgi[i - 1] == null ? null : rgi[i]! - rgi[i - 1]!,
-  );
+  // FON-60 (60.5) — there is no ``RGI Growth (pts)`` row. STR publishes the
+  // penetration indices for the TTM window only, so ``rgi`` is held flat across
+  // every forecast column (see ``rowFor``): the row's forecast half was a wall
+  // of "+0.0" that read as a modelled assumption of zero index movement. The
+  // LEVEL rows (MPI / ARI / RGI) stay. Penetration-improvement assumptions are
+  // post-MVP; when they land, the growth row comes back with real movement.
   const revparVariance = ALL_YEARS.map((_, i) =>
     subject.revpar[i] != null && comp.revpar[i] != null ? subject.revpar[i]! - comp.revpar[i]! : null,
   );
@@ -631,7 +700,7 @@ function PenetrationTable({
               colSpan={FORECAST_YEARS.length}
               className="text-center font-semibold uppercase tracking-wide text-[10.5px] text-brand-700 bg-brand-50/40 border-l border-border px-2 py-2"
             >
-              Forecast
+              Forecast — {forecastOrigin}
             </th>
           </tr>
           <tr className="text-ink-500 text-[10.5px] border-b border-border">
@@ -661,11 +730,11 @@ function PenetrationTable({
             zebra
           />
           <Row label="RevPAR Index (RGI)" cells={rgi.map((v) => fmtIndex(v))} stickyL={stickyL} />
-          <Row label="RGI Growth (pts)" cells={rgiGrowth.map((v) => fmtSignedPts(v))} stickyL={stickyL} zebra />
           <Row
             label="RevPAR Variance to Comp Set"
             cells={revparVariance.map((v) => fmtVarDollar(v))}
             stickyL={stickyL}
+            zebra
           />
           <Row label="Fair Share of Supply" cells={fairShare.map((v) => fmtShare(v))} stickyL={stickyL} zebra />
           <Row
@@ -774,6 +843,33 @@ export default function IndexAnalysisSection({
     () => buildSubjectSeries(outputs, historicalBaseline),
     [outputs, historicalBaseline],
   );
+  // FON-60 (60.4) — a real CBRE Horizons projection, or Fondok's own carry-
+  // forward. ``buildCompSeries`` already branches on exactly this; the band
+  // header and the caption now say which branch was taken.
+  const hasCbreForecast = (marketData?.cbre_horizons?.years ?? []).length > 0;
+  const forecastOrigin = hasCbreForecast ? 'CBRE Horizons' : 'Fondok-derived';
+  // FON-61 (61.3) — the comp set's own boundary. Its 2024 column is always the
+  // STR trailing-twelve-month blend. With a CBRE report, 2025 is that report's
+  // calendar-year forecast — a different basis. Without one, the comp forecast
+  // is the anchor scaled by the SUBJECT's growth, so it inherits exactly the
+  // subject's comparability, and the refusal (when there is one) is about the
+  // subject's own mismatched step.
+  const compBoundary: ForecastBoundary = hasCbreForecast
+    ? {
+        comparable: false,
+        note:
+          'Not applicable: the 2024 comp-set column is the STR trailing-twelve-month blend while 2025 is the CBRE Horizons calendar-year forecast. Growth from 2026 onward compares forecast to forecast.',
+      }
+    : subjectSeries.boundary.comparable
+      ? BOUNDARY_COMPARABLE
+      : {
+          comparable: false,
+          note:
+            'Not applicable: absent a CBRE Horizons forecast the comp set is carried forward at the subject’s growth, and the subject’s own first forecast step spans a fiscal-year actual and a trailing-twelve-month Base Year. Growth from 2026 onward compares forecast to forecast.',
+        };
+  const forecastCaption = hasCbreForecast
+    ? 'Forecast columns are the uploaded CBRE Horizons projection for this submarket; years beyond its horizon carry the last known RevPAR forward at 3.0%.'
+    : 'Forecast columns are Fondok-derived: no CBRE Horizons report is on this deal, so the comp set and the penetration indices are carried forward at the trailing-twelve-month relationship, and the subject rows are the underwriting projection.';
   const compSeries = useMemo(
     () => buildCompSeries(marketData, subjectSeries),
     [marketData, subjectSeries],
@@ -842,6 +938,11 @@ export default function IndexAnalysisSection({
         <Badge tone="blue" uppercase>15-Year Series</Badge>
       </div>
 
+      {/* FON-60 (60.4) — the methodology line sits with the tables, not only in
+          the footnote block, so the forecast's origin is read before the
+          numbers rather than after them. */}
+      <div className="text-[11.5px] text-ink-500 leading-relaxed">{forecastCaption}</div>
+
       <div className="text-[11px] text-ink-500 italic leading-relaxed">{NOTES_TEXT}</div>
 
       <Card className="p-0 overflow-hidden">
@@ -850,6 +951,8 @@ export default function IndexAnalysisSection({
           keys={subjectKeys}
           series={subjectSeries}
           subject
+          forecastOrigin={forecastOrigin}
+          boundary={subjectSeries.boundary}
         />
       </Card>
 
@@ -858,6 +961,8 @@ export default function IndexAnalysisSection({
           title="CoStar Market — Competitive Set"
           keys={compKeys}
           series={compSeries}
+          forecastOrigin={forecastOrigin}
+          boundary={compBoundary}
         />
       </Card>
 
@@ -867,6 +972,7 @@ export default function IndexAnalysisSection({
           comp={compSeries}
           subjectKeys={subjectKeys}
           compKeys={compKeys}
+          forecastOrigin={forecastOrigin}
           indices={{
             mpi: indexPoints(marketData?.str_trend?.mpi_occupancy_index),
             ari: indexPoints(marketData?.str_trend?.ari_adr_index),

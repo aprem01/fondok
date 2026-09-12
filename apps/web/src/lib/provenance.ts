@@ -82,6 +82,29 @@ export function isStrMarketOverride(entry: unknown): boolean {
   );
 }
 
+/**
+ * FON-61 (61.2) — every source id that means "the Year-1 rates are on an STR
+ * basis". Mirrors ``STR_BASIS_SOURCES`` in
+ * apps/worker/app/services/engine_runner.py.
+ *
+ * There is ONE helper because there were two hand-rolled ``=== 'str_forecast'``
+ * equality checks (the Market tab's card state and Financials → Projections'
+ * basis chip), and a pair of them is how a single id came to stand for three
+ * different provenances in the first place. Any future STR basis id is added
+ * here once.
+ */
+const STR_BASIS_SOURCES = new Set<string>([
+  'str_forecast',      // the BASE forward forecast's Month-12 point
+  'str_subject_ttm',   // the subject property's own trailing twelve months
+  'str_comp_set',      // the Market tab's comp-set blended rates
+]);
+
+/** True when a resolved source says the Year-1 rates sit on an STR basis.
+ *  Tolerates `undefined` so callers can pass `src?.source` directly. */
+export function isStrBasisSource(source: string | null | undefined): boolean {
+  return !!source && STR_BASIS_SOURCES.has(source);
+}
+
 export function sourceKind(source: string): SourceKind {
   if (OVERRIDE_SOURCES.has(source)) return 'override';
   if (GROUNDED_SOURCES.has(source)) return 'grounded';
@@ -120,7 +143,14 @@ const WEB_EXPLANATION: Record<string, string> = {
   om_comps: 'From the offering memorandum’s comparable set.',
   om_broker: 'From the broker’s pro forma in the OM.',
   portfolio_pnl: 'From your portfolio P&L library.',
-  str_forecast: 'From the STR / comp-set forecast.',
+  // FON-61 (61.2) — this id used to cover three different things: the comp-set
+  // blended rates, the subject property's own TTM ACTUAL, and the forward
+  // forecast. Sam clicked a Base Year Occupancy that was the subject's TTM and
+  // was told it came from a forecast. The id is now the forward projection and
+  // nothing else; ``str_subject_ttm`` and ``str_comp_set`` fall through to the
+  // registry's own explanation (this file's DRIFT PIN convention — the web
+  // pins only copy it shipped before the registry existed).
+  str_forecast: 'From the STR forward forecast (the Month-12 point).',
   derived_from_revpar_growth:
     'Derived from the analyst’s RevPAR-growth override: ADR growth = (1 + RevPAR growth) ÷ (1 + occupancy growth) − 1, with the occupancy path held.',
   cbre_horizons: 'CBRE Horizons market benchmark — not this deal’s own data.',

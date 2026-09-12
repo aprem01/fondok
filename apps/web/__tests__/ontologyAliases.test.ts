@@ -30,7 +30,7 @@ import {
   SOURCE_BADGE_FROM_REGISTRY,
 } from '@/lib/ontology/adapters';
 import { SUBORDINATE_NAMESPACES } from '@/lib/ontology/concepts.generated';
-import { SOURCE_LABEL, sourceLabel, sourceExplanation, sourceKind } from '@/lib/provenance';
+import { SOURCE_LABEL, sourceLabel, sourceExplanation, sourceKind, isStrBasisSource } from '@/lib/provenance';
 import { WORKSHEET_ROWS } from '@/components/project/pl/GroundedWorksheet';
 import { histValue } from '@/lib/reviewState';
 import type { HistYear } from '@/components/project/pl/HistoricalsSection';
@@ -216,12 +216,48 @@ describe('ontology adapters — provenance labels', () => {
     }
   });
 
+  // FON-61 (61.2) — the ONE pinned explanation that changed, on purpose.
+  // ``str_forecast`` was stamped on three different provenances (the comp-set
+  // rates, the subject's TTM actual, the forward forecast), so its copy
+  // ("From the STR / comp-set forecast.") described a Base Year occupancy that
+  // was an ACTUAL as a forecast. Sam filed it; the id is now the forward
+  // projection alone and the other two have ids of their own. The fixture keeps
+  // the pre-registry text as the historical record — this is the carve-out.
+  const DELIBERATELY_RECOPIED = new Set(['str_forecast']);
+
   it('every pinned source explanation still maps to the same text', () => {
     for (const [id, text] of Object.entries(p.source_explanation)) {
+      if (DELIBERATELY_RECOPIED.has(id)) continue;
       expect(sourceExplanation(id), id).toBe(text);
     }
     // Unknown ids still fall back to the seed copy.
     expect(sourceExplanation('not_a_source')).toBe(p.source_explanation.seed);
+  });
+
+  it('the STR basis ids each explain a DIFFERENT provenance (FON-61)', () => {
+    expect(sourceExplanation('str_forecast')).toBe(
+      'From the STR forward forecast (the Month-12 point).',
+    );
+    // The two new ids carry the registry's own copy — no web pin to drift.
+    expect(sourceExplanation('str_subject_ttm')).toMatch(/trailing-twelve-month/);
+    expect(sourceExplanation('str_subject_ttm')).toMatch(/an actual, not a forecast/);
+    expect(sourceExplanation('str_comp_set')).toMatch(/comp-set/);
+    // Three ids, three distinct explanations — the bug was one id for three.
+    const copy = ['str_forecast', 'str_subject_ttm', 'str_comp_set'].map(sourceExplanation);
+    expect(new Set(copy).size).toBe(3);
+    // None of them may fall through to the seed default.
+    for (const c of copy) expect(c).not.toBe(p.source_explanation.seed);
+  });
+
+  it('isStrBasisSource covers exactly the three STR basis ids', () => {
+    for (const id of ['str_forecast', 'str_subject_ttm', 'str_comp_set']) {
+      expect(isStrBasisSource(id), id).toBe(true);
+    }
+    for (const id of ['str_forecast_unavailable', 't12_actual', 'analyst_override', '']) {
+      expect(isStrBasisSource(id), id).toBe(false);
+    }
+    expect(isStrBasisSource(undefined)).toBe(false);
+    expect(isStrBasisSource(null)).toBe(false);
   });
 
   it('every pinned source still classifies to the same colour kind', () => {

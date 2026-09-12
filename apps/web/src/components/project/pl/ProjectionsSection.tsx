@@ -63,7 +63,7 @@ import { Traced } from '@/components/help/Traced';
 import { Sourced } from '@/components/help/Sourced';
 import { useRefusal } from '@/components/help/Refused';
 import { useSource } from '@/lib/hooks/useDealProvenance';
-import { sourceKind, sourceLabel, sourceExplanation, KIND_TONE, isStrMarketOverride } from '@/lib/provenance';
+import { sourceKind, sourceLabel, sourceExplanation, KIND_TONE, isStrMarketOverride, isStrBasisSource } from '@/lib/provenance';
 import { getEngineField, useEngineOutputs } from '@/lib/hooks/useEngineOutputs';
 import { useEngineRun } from '@/lib/hooks/useEngineRun';
 import { useDeal } from '@/lib/hooks/useDeal';
@@ -333,14 +333,18 @@ export default function ProjectionsSection({
   );
 
   // FON-61 (D4) — the Year-1 basis is read from the worker's source tags,
-  // never inferred from the flag alone. ``str_forecast`` on starting_occupancy
-  // / starting_adr means the Market / STR rates ARE the active basis;
+  // never inferred from the flag alone. An STR basis tag on starting_occupancy
+  // / starting_adr (subject TTM, comp-set rates, or forward forecast — see
+  // ``isStrBasisSource``) means the Market / STR rates ARE the active basis;
   // ``str_forecast_unavailable`` (the worker tags the flag key when the seed
   // was requested but could not populate) means the model stayed on T-12.
   const occSrc = useSource('starting_occupancy');
   const adrSrc = useSource('starting_adr');
   const strSeedSrc = useSource('revenue_seed_from_str_forecast');
-  const strBasisActive = occSrc?.source === 'str_forecast' || adrSrc?.source === 'str_forecast';
+  // FON-61 (61.2) — ONE helper, not a hand-rolled equality: the STR seed's
+  // source id was split three ways (forward forecast / subject TTM actual /
+  // comp-set rates) and every one of them is an STR basis.
+  const strBasisActive = isStrBasisSource(occSrc?.source) || isStrBasisSource(adrSrc?.source);
   const strBasisUnavailable =
     !strBasisActive &&
     [strSeedSrc, occSrc, adrSrc].some((s) => s?.source === 'str_forecast_unavailable');
@@ -672,7 +676,7 @@ export default function ProjectionsSection({
         </div>
         <div className="flex items-center gap-2">
           {/* FON-61 (D4) — honest Year-1 basis. Active only when the worker
-              tagged the rates ``str_forecast``; "unavailable" when the seed was
+              tagged the rates with an STR basis; "unavailable" when the seed was
               requested but could not populate; nothing for analyst / seed. */}
           {strBasisActive && (
             <span

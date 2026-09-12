@@ -505,22 +505,27 @@ async def test_seed_revenue_from_forecast_month_12_when_flag_set() -> None:
 # populate. Two worker-side branches now exist:
 #   (1) explicit ``starting_occupancy`` / ``starting_adr`` field_overrides that
 #       carry the STR note (the Market tab writes exactly what its card shows)
-#       are badged ``str_forecast`` and are never overwritten by the loader seed;
+#       are badged as STR data and are never overwritten by the loader seed;
 #   (2) the seed flag on a deal where the seed cannot populate is tagged
 #       ``str_forecast_unavailable`` — the UI can never claim "active" without
-#       ``starting_*`` carrying ``str_forecast``.
+#       ``starting_*`` carrying one of the STR basis ids.
+#
+# FON-61 (61.2): "STR data" is three ids, not one. Branch (1) is the COMP SET's
+# blended rates (``str_comp_set``) — neither the subject's own actual nor a
+# forecast. The VALUES below are unchanged; only the label is now specific.
 
 
 @pytest.mark.asyncio
-async def test_str_noted_explicit_overrides_are_tagged_str_forecast() -> None:
+async def test_str_noted_explicit_overrides_are_tagged_as_the_comp_set() -> None:
     from httpx import ASGITransport, AsyncClient
 
     from app.database import get_session_factory
     from app.main import app
     from app.services.engine_runner import (
         SOURCE_ANALYST_OVERRIDE,
-        SOURCE_STR_FORECAST,
+        SOURCE_STR_COMP_SET,
         SOURCE_STR_UNAVAILABLE,
+        STR_BASIS_SOURCES,
         STR_MARKET_OVERRIDE_NOTE,
         _load_engine_inputs,
     )
@@ -557,8 +562,11 @@ async def test_str_noted_explicit_overrides_are_tagged_str_forecast() -> None:
         # Values are exactly what the Market card seeded; provenance says STR.
         assert base["starting_occupancy"] == 0.713
         assert base["starting_adr"] == 231.5
-        assert sources["starting_occupancy"] == SOURCE_STR_FORECAST
-        assert sources["starting_adr"] == SOURCE_STR_FORECAST
+        assert sources["starting_occupancy"] == SOURCE_STR_COMP_SET
+        assert sources["starting_adr"] == SOURCE_STR_COMP_SET
+        # …and it still reads as "an STR basis" to every consumer that asks
+        # that question rather than comparing against one id.
+        assert sources["starting_occupancy"] in STR_BASIS_SOURCES
         # A note that is NOT the STR marker stays a plain analyst override.
         assert base["exit_cap_rate"] == 0.075
         assert sources["exit_cap_rate"] == SOURCE_ANALYST_OVERRIDE
@@ -574,8 +582,8 @@ async def test_str_noted_explicit_overrides_are_tagged_str_forecast() -> None:
         )
         assert seeded["starting_occupancy"] == 0.713
         assert seeded["starting_adr"] == 231.5
-        assert seeded["__sources__"]["starting_occupancy"] == SOURCE_STR_FORECAST
-        assert seeded["__sources__"]["revenue_seed_from_str_forecast"] == SOURCE_STR_FORECAST
+        assert seeded["__sources__"]["starting_occupancy"] == SOURCE_STR_COMP_SET
+        assert seeded["__sources__"]["revenue_seed_from_str_forecast"] == SOURCE_STR_COMP_SET
         assert seeded["__sources__"]["revenue_seed_from_str_forecast"] != SOURCE_STR_UNAVAILABLE
 
 

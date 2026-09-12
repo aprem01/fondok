@@ -138,6 +138,17 @@ other twelve.
 worker-oriented text is not adopted. `seed` and `str_forecast_unavailable`
 already match and fall through to the registry.
 
+**FON-61 (61.2) — one pinned explanation was deliberately rewritten.** The
+`str_forecast` id was stamped on three different provenances (the Market tab's
+comp-set rates, the subject property's own TTM actual, the forward forecast's
+Month-12 point), so its pinned copy — "From the STR / comp-set forecast." —
+described a Base Year occupancy that is an ACTUAL as a forecast. Sam filed it.
+The id now means the forward projection alone, and the other two provenances
+have ids of their own: `str_subject_ttm` and `str_comp_set`, both of which have
+NO web pin and take the registry's explanation. The pre-registry text stays in
+`__tests__/fixtures/ontology/web_aliases_pre_registry.json` as the historical
+record, with the carve-out named in `ontologyAliases.test.ts`.
+
 | Source | Web (kept) | Registry (not adopted) |
 |---|---|---|
 | `t12_actual` | Extracted from the deal's T-12 actuals. | …T-12 / P&L actuals. Out-years are grown forward at the configured growth rates. |
@@ -145,7 +156,7 @@ already match and fall through to the registry.
 | `om_comps` | From the offering memorandum's comparable set. | Median cap rate derived from the OM's comparable-sales table. |
 | `om_broker` | From the broker's pro forma in the OM. | …the broker's claim, not an actual. |
 | `portfolio_pnl` | From your portfolio P&L library. | …hotels the firm already operates at this chain scale. Outranks generic benchmarks. |
-| `str_forecast` | From the STR / comp-set forecast. | Seeded from STR — comp-set rates, subject TTM, or BASE Month-12. |
+| `str_forecast` | From the STR forward forecast (the Month-12 point). | Seeded from the BASE STR forward-forecast scenario (the Month-12 point) — a projection, not an actual. |
 | `cbre_horizons` | CBRE Horizons market benchmark — not this deal's own data. | CBRE Horizons market forecast for the subject submarket / chain scale — … |
 | `pnl_benchmark` | Industry (USALI/HOST) benchmark — not this deal's own data. | …ratio applied as a USALI ratio override — … |
 | `analyst_override` | Set by an analyst with a justification note. | …Wins over every other source. |
