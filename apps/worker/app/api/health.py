@@ -93,6 +93,35 @@ async def health(
         logger.warning("health: extraction cache metrics failed: %s", exc)
         extraction_cache = {"error": type(exc).__name__}
 
+    # Semantic search (chunk store + Voyage embeddings). Both halves are
+    # optional and BOTH fail open — a missing ``document_chunks`` table or an
+    # absent VOYAGE_API_KEY silently degrades /deals/{id}/search to full-text
+    # only. That is a defensible fallback but an indefensible mystery, so the
+    # state is reported rather than inferred from behaviour. Not a degraded
+    # reason: full-text-only is a supported mode, not a fault.
+    semantic_search: dict[str, Any] = {}
+    try:
+        from ..extraction import embeddings as _emb
+        from ..extraction.context_store import _table_exists
+
+        embeddings_on = _emb.is_enabled()
+        chunks_on = await _table_exists(session)
+        semantic_search = {
+            "chunk_store": chunks_on,
+            "embeddings": embeddings_on,
+            "model": _emb.VOYAGE_MODEL if embeddings_on else None,
+            "mode": (
+                "hybrid"
+                if chunks_on and embeddings_on
+                else "fulltext_only"
+                if chunks_on
+                else "unavailable"
+            ),
+        }
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("health: semantic search probe failed: %s", exc)
+        semantic_search = {"error": type(exc).__name__}
+
     return {
         "status": "ok" if not degraded_reasons else "degraded",
         "version": __version__,
@@ -106,5 +135,6 @@ async def health(
             "region": raw_store_region,
         },
         "extraction_cache": extraction_cache,
+        "semantic_search": semantic_search,
         "degraded_reasons": degraded_reasons,
     }

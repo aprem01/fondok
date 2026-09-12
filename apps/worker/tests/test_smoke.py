@@ -99,6 +99,17 @@ async def test_health_endpoint() -> None:
             assert body["status"] == "ok", body.get("degraded_reasons")
             assert "version" in body
             assert "db" in body
+            # Semantic search must REPORT its mode, never leave it to be
+            # inferred from search behaviour. On SQLite there is no
+            # document_chunks table, so the honest answer is "unavailable"
+            # — and full-text-only is a supported mode, not a fault, so it
+            # never makes the worker degraded.
+            ss = body["semantic_search"]
+            assert ss["mode"] in {"hybrid", "fulltext_only", "unavailable"}
+            assert ss["chunk_store"] is False
+            assert ss["mode"] == "unavailable"
+            assert "embeddings" in ss
+            assert "semantic_search" not in body["degraded_reasons"]
 
 
 @pytest.mark.asyncio
