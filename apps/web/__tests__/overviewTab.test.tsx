@@ -57,10 +57,12 @@ const OUTPUTS = {
         total_capital_per_key: 325_758,
         equity_amount: 17_000_000,
         debt_amount: 26_000_000,
+        senior_loan_fee_usd: 354_900,
         uses: [
           { label: 'Purchase Price', amount: 34_000_000, pct: 0.79 },
           { label: 'Closing Costs', amount: 680_000, pct: 0.016 },
           { label: 'Renovation Budget', amount: 4_620_000, pct: 0.107 },
+          { label: 'Senior Loan Origination Fee', amount: 354_900, pct: 0.008 },
           { label: 'Total Uses', amount: 43_000_000, pct: 1, is_total: true },
         ],
         sources: [
@@ -650,5 +652,22 @@ describe('OverviewTab — an unchanged override is not an override', () => {
     );
     expect(updateSpy).not.toHaveBeenCalled();
     expect(rowValue('Property Name')).toBe(EXTRACTED);
+  });
+});
+
+
+// ── FON-63 / FON-59 — Capitalization "Financing Costs" is the senior fee ──
+// Sam, 2026-09-11: "Overview Capitalization shows Financing Costs = — …
+// These should reconcile to a single authoritative Debt assumption."
+
+describe('OverviewTab — Financing Costs is the senior origination fee', () => {
+  it('reads capital.senior_loan_fee_usd instead of rendering a dash', () => {
+    render(<OverviewTab projectId="deal-uuid-1" />);
+    expect(screen.getByText('Financing Costs')).toBeInTheDocument();
+    // $354,900 — 1.50% of the senior loan, the same number the Debt tab shows
+    // and the same number the S&U "Senior Loan Origination Fee" line carries.
+    expect(screen.getAllByText('$354,900').length).toBeGreaterThan(0);
+    // The renamed Sources & Uses line carries the same number on the same page.
+    expect(screen.getByText('Senior Loan Origination Fee')).toBeInTheDocument();
   });
 });

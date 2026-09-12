@@ -85,6 +85,14 @@ class DebtEngineInputExt(DebtEngineInput):
     completion_guarantee: (
         Literal["required", "in_place", "not_required"] | None
     ) = None
+    # FON-63 — the SEED for the senior tranche's origination fee, as a 0..10
+    # percent (1.5 = 1.50%). The engine runner passes the deal's own
+    # ``loan_costs_pct`` here so the Debt tab surfaces the same fee the capital
+    # engine charges in Sources & Uses instead of a hard 0.00% / $0. An analyst
+    # edit (``debt_stack.tranches.0.upfront_fee_pct``) still wins — it is layered
+    # over this seed by ``_apply_tranche_overrides``. None keeps the legacy 0.0,
+    # so callers that do not supply it are byte-for-byte unchanged.
+    senior_origination_fee_pct: Annotated[float, Field(ge=0.0, le=10.0)] | None = None
 
 
 class DebtMonth(BaseModel):
@@ -389,7 +397,12 @@ def _build_default_tranches(payload: DebtEngineInputExt) -> list[LoanTranche]:
     """Deal-agnostic institutional default stack: the deal's own senior loan
     (index 0) plus a PACE placeholder (index 1). PACE starts at $0 / pending so
     the default economics equal the legacy single-senior model until an analyst
-    activates it in the Debt tab."""
+    activates it in the Debt tab.
+
+    FON-63 — the senior's ``origination_fee_pct`` is SEEDED from the deal's own
+    senior loan fee (``senior_origination_fee_pct``, the same assumption the
+    capital engine charges in Sources & Uses) rather than hard-coded to zero, so
+    the Debt tab surfaces the fee it owns instead of 0.00% / $0."""
     senior_is_io = (
         payload.amortization_years == 0
         or payload.interest_only_years >= (payload.term_years or 0)
@@ -403,6 +416,14 @@ def _build_default_tranches(payload: DebtEngineInputExt) -> list[LoanTranche]:
         interest_only=senior_is_io,
         amortization_years=payload.amortization_years or None,
         term_years=payload.term_years or None,
+        # FON-63 — the deal's own senior origination fee, not a hard 0.0. It is
+        # the SAME percentage the capital engine charges as the Sources & Uses
+        # "Senior Loan Origination Fee", surfaced here because Debt owns it.
+        origination_fee_pct=(
+            float(payload.senior_origination_fee_pct)
+            if payload.senior_origination_fee_pct is not None
+            else 0.0
+        ),
     )
     pace = LoanTranche(
         kind="pace",

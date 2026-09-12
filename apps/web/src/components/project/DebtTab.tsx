@@ -11,7 +11,9 @@
  *   Debt Overview · Loan Terms & Covenants · Refinance · Debt Schedule
  *
  * New backend fields wired here (DebtEngineOutputExt):
- *   • origination_fee_pct / _usd + exit_fee_pct / _usd  (fees; origination editable)
+ *   • origination_fee_pct / _usd + exit_fee_pct / _usd  (fees; origination editable
+ *     and seeded from the deal's senior loan fee — FON-63, it drives the S&U
+ *     "Senior Loan Origination Fee" line and Overview Financing Costs)
  *   • covenants[] (DebtCovenantStatus — current, signed headroom, pass/fail)
  *   • LTV is now Debt-owned (Investment dropped its LTV) — editable here
  *   • refi_year / refi_cash_out / balance_at_exit (Refinance section)
@@ -570,7 +572,10 @@ export default function DebtTab() {
         : 'Priced — its debt service is in DSCR, Cash Flow and Returns';
 
   // Editable origination fee — writes the senior tranche upfront fee (percent).
-  // Display-only downstream: nothing in Cash Flow / Returns consumes it yet.
+  // FON-63: Debt OWNS this number. It is seeded from the deal's senior loan fee
+  // (a Fondok seed of 1.50% of the senior loan) and the capital engine reads it
+  // back, so editing it here moves the Sources & Uses "Senior Loan Origination
+  // Fee" line, Total Uses, required equity, LTC and Overview Financing Costs.
   const feeEditable = liveMode;
   const feeOverridden = overridden(tk(SENIOR, 'upfront_fee_pct'));
   const origFeeDisplay = has(wOrigFeePct)
@@ -761,7 +766,9 @@ export default function DebtTab() {
         : 'Interest-only stub before principal amortization begins' },
     { id: 'orig', label: 'Origination Fee', kind: 'input',
       state: 'assumption', value: origFeeNode, overridden: feeOverridden,
-      note: 'Display only in this release — not yet carried into Sources & Uses, Cash Flow or Returns' },
+      note: feeOverridden
+        ? 'Charged at close — the Sources & Uses "Senior Loan Origination Fee" line and Overview Financing Costs read this number'
+        : 'Fondok seed of 1.50% of the senior loan — charged at close as the Sources & Uses "Senior Loan Origination Fee" line and Overview Financing Costs. Click to change.' },
   ];
 
   // ─── PACE loan terms (index 1) — fixed-rate tranche ──────────────────
@@ -829,7 +836,7 @@ export default function DebtTab() {
     ...loanTerms,
     { id: 'exit', label: 'Exit Fee', kind: 'calc', state: has(wExitFeePct) ? 'calculated' : 'awaiting_data',
       value: has(wExitFeePct) ? `${feePct(wExitFeePct)}${has(wExitFeeUsd) ? ` · ${fmtCurrency(wExitFeeUsd)}` : ''}` : '—',
-      note: 'Display only — not modeled in the schedule, Cash Flow or Returns in this release' },
+      note: 'Added to the final month\u2019s payment on the tranche schedule — not carried into Sources & Uses, Cash Flow or Returns in this release' },
     // Completion Guarantee — analyst-entered qualitative status (feeds the
     // Completion Guarantee covenant row in the Covenants card).
     { id: 'completionGuarantee', label: 'Completion Guarantee', kind: 'input',

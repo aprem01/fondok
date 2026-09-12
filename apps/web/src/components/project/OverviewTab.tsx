@@ -487,7 +487,14 @@ export default function OverviewTab({ projectId }: { projectId: number | string 
   const equity = wEquity ?? (has(totalCapital) && has(loan) ? totalCapital - loan : undefined);
   const ltv = wLtv ?? (has(loan) && has(purchase) && purchase > 0 ? loan / purchase : undefined);
   const ltc = wLtc ?? (has(loan) && has(totalCapital) && totalCapital > 0 ? loan / totalCapital : undefined);
-  const financingCosts = findUse(/financ|loan cost|lender/i);
+  // FON-63 / FON-59 — Financing Costs IS the senior loan origination fee: one
+  // number owned by the Debt tab, charged by the capital engine as a Sources &
+  // Uses line. Read the engine field first (the authoritative scalar), then the
+  // S&U row by label so a run persisted before the rename still resolves. No
+  // fallback beyond that — an absent value renders '—', never a fabricated one.
+  const financingCosts =
+    getEngineField<number>(outputs, 'capital', 'senior_loan_fee_usd') ??
+    findUse(/origination fee|financ|loan cost|loan fee|lender/i);
   const renoBudget = findUse(/renovat|pip/i);
   const hasReno = has(renoBudget) && renoBudget > 0;
   // Hard / soft / professional-fee split — read straight from the capital
@@ -625,7 +632,7 @@ export default function OverviewTab({ projectId }: { projectId: number | string 
       lnk('bench', 'Benchmark', '—', '→ Debt (loan terms)', 'debt'),
       doc('spread', 'Spread over Benchmark', '—', 'Senior Loan Term Sheet', 'Pricing'),
       cal('allIn', 'All-In Rate', pctv(wInterestRate), { trace: { engine: 'debt', path: 'interest_rate' }, formula: 'Benchmark + Spread' }),
-      lnk('finCosts', 'Financing Costs', money(financingCosts), '→ Debt (origination + legal)', 'debt'),
+      lnk('finCosts', 'Financing Costs', money(financingCosts), '→ Debt (senior origination fee)', 'debt'),
       cal('equity', isDev ? 'Equity Contribution' : 'Equity', money(equity), { bold: true, trace: { engine: 'capital', path: 'equity_amount' }, formula: 'Total Uses − Loan', inputs: [{ name: 'Total Uses', from: 'Calculated', kind: 'calc' }, { name: 'Loan', from: 'Debt module', kind: 'linked' }] }),
       awa('refi', isDev ? 'Permanent Financing' : 'Planned Refinancing'),
     ];

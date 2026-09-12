@@ -388,6 +388,18 @@ class ReturnsPreviewResponse(BaseModel):
     dscr_y1: float | None = None
     hold_years: int | None = None
     exit_cap_rate: float | None = None
+    # FON-68 §3 — the loan the sandbox ran on. ``loan_amount`` is what the
+    # capital engine sized (what the returns engine levered); ``total_debt`` is
+    # the debt engine's whole stack. Equal on a senior-only deal.
+    loan_amount: float | None = None
+    total_debt: float | None = None
+    # FON-68 §1 — the rest of the Returns Summary headline, so a dirty sandbox
+    # can render its own hero tiles (avg CoC, yield on cost, equity profit)
+    # rather than leaving them on the canonical case.
+    avg_coc: float | None = None
+    total_capital: float | None = None
+    noi_by_year: list[float] | None = None
+    cash_flows: list[float] | None = None
     # Present only when ``include_sensitivity`` was requested — the serialized
     # sensitivity engine output (row/col axes + flat cell list), matching the
     # shape the web ``matrixFromWorker`` helper already consumes.

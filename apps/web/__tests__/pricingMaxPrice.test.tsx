@@ -210,9 +210,11 @@ describe('Pricing sensitivity grid — max purchase price per cell', () => {
     await waitFor(() => expect(gridSpy).toHaveBeenCalledTimes(1));
     expect(gridSpy.mock.calls[0][1]).toEqual({});
 
-    const table = await screen.findByRole('table', { name: /Max purchase price by exit cap rate and NOI growth/ });
+    // FON-68 §4 — the axis is `revpar_growth` (max_price_grid.py sets
+    // ``assumptions.revpar_growth`` per cell), so it carries that name here too.
+    const table = await screen.findByRole('table', { name: /Max purchase price by exit cap rate and RevPAR growth/ });
     expect(screen.getByText('Pricing Sensitivity — Max Purchase Price')).toBeInTheDocument();
-    expect(screen.getByText('EXIT CAP \\ NOI GROWTH')).toBeInTheDocument();
+    expect(screen.getByText('EXIT CAP \\ REVPAR GROWTH')).toBeInTheDocument();
     // Axis headers from the endpoint (no hard-coded axes).
     expect(within(table).getByText('2.0%')).toBeInTheDocument();
     expect(within(table).getByText('3.0%')).toBeInTheDocument();
@@ -300,5 +302,51 @@ describe('ReturnsTab → Pricing sub-tab wiring', () => {
     const grid = screen.getByText('Pricing Sensitivity — Max Purchase Price');
     expect(solver.compareDocumentPosition(grid) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
     expect(await screen.findByText('$40.00M')).toBeInTheDocument();
+  });
+});
+
+
+// ── FON-68 §1 — Pricing is solved on the canonical case, and says so ─────
+// The Max Price Solver calls the endpoint with an EMPTY override body, so an
+// active Live-Assumptions sandbox is not applied. Silence is the one
+// unacceptable option: both blocks carry the note while a sandbox is on.
+
+describe('Pricing — an active sandbox is not applied, and the panel says so', () => {
+  it('Max Price Solver states it is solved on the canonical case', async () => {
+    render(
+      <MaxPricePanel dealId="deal-1" deal={DEAL_WITH_TARGETS} sandboxActive onGoToProfile={vi.fn()} />,
+    );
+    expect(
+      await screen.findByText(
+        /Solved on the canonical case; the active sensitivity is not applied/i,
+      ),
+    ).toBeInTheDocument();
+    // …and the solver still calls the endpoint with no overrides.
+    await waitFor(() => expect(maxPriceSpy).toHaveBeenCalled());
+    expect(maxPriceSpy.mock.calls[0][1]).toEqual({});
+  });
+
+  it('says nothing when no sandbox is active', async () => {
+    render(<MaxPricePanel dealId="deal-1" deal={DEAL_WITH_TARGETS} onGoToProfile={vi.fn()} />);
+    await waitFor(() => expect(maxPriceSpy).toHaveBeenCalled());
+    expect(
+      screen.queryByText(/the active sensitivity is not applied/i),
+    ).not.toBeInTheDocument();
+  });
+
+  it('the max-price grid carries the same note', async () => {
+    render(
+      <PricingSensitivityPanel
+        dealId="deal-1"
+        deal={DEAL_WITH_TARGETS}
+        sandboxActive
+        onGoToProfile={vi.fn()}
+      />,
+    );
+    expect(
+      await screen.findByText(
+        /Solved on the canonical case; the active sensitivity is not applied/i,
+      ),
+    ).toBeInTheDocument();
   });
 });

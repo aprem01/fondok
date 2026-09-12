@@ -238,7 +238,7 @@ export default function MethodologyPage() {
               An analyst RevPAR-growth override derives ADR growth — (1 + RevPAR growth) ÷ (1 + occupancy growth) − 1 — with the occupancy path held, so the lever moves operating NOI. Setting ADR growth explicitly takes direct control.
             </BadgeRow>
             <BadgeRow source="seed" name="Seed Default">
-              Kimpton fixture default. Surfaced as a Seed badge with grey tone — no deal-specific data has overridden this yet.
+              Kimpton fixture default. Surfaced as a Seed badge with grey tone — no deal-specific data has overridden this yet. The senior origination fee (1.50% of the senior loan) is one of these: a Fondok seed, not a document-sourced figure, editable on Debt and the single source for the Sources &amp; Uses &ldquo;Senior Loan Origination Fee&rdquo; line and Overview &ldquo;Financing Costs&rdquo;.
             </BadgeRow>
             <BadgeRow source="deal_row" name="Deal Row">
               Sourced from the deals table (entered on the create-deal wizard or PATCHed via the API). Project name, city, brand, keys, service level. The Property Name is not a deal-row field — see below.
@@ -342,7 +342,7 @@ export default function MethodologyPage() {
               ['Revenue', 'Rooms × occupancy × ADR projection + F&B + Other Operated + Resort Fees + Misc.'],
               ['F&B', 'Per-occupied-room F&B model with food/beverage split; resort fees handled as a separate line.'],
               ['Expense', 'USALI 11th departmental + undistributed + management fee + FF&E reserve + fixed charges → GOP, NOI (institutional), Net Cash Flow.'],
-              ['Capital', 'Purchase price + closing costs + renovation budget + working capital → total capital; Sources & Uses.'],
+              ['Capital', 'Purchase price + closing costs + renovation budget + working capital → property uses; plus the senior origination fee (owned by the Debt tab) → total capital; Sources & Uses.'],
               ['Debt', 'Senior + PACE tranche stack from analyst-entered terms (fixed or index + spread with floor / cap, amortization or interest-only, IO stub, maturity); monthly amortization schedule; DSCR, debt yield, LTV / LTC; analyst-entered covenant thresholds; refi optionality.'],
               ['Returns', 'Levered + unlevered IRR, equity multiple, Year-1 CoC, terminal value via exit cap × terminal NOI. Handles loss-making (underwater) deals — a negative IRR or sub-1x multiple is reported honestly, not floored or crashed.'],
               ['Sensitivity', 'IRR heatmap across exit cap × hold years (or other configurable pairs).'],
@@ -379,12 +379,53 @@ export default function MethodologyPage() {
               The schedule runs to maturity. A take-out before exit is modeled on the Refinance sub-tab; without one the loan balance at the end of the schedule is what the model repays at sale.
             </li>
             <li>
-              <span className="font-semibold text-ink-900">Fees.</span>{' '}
-              Origination and exit fees are displayed from the entered percentages but are not yet carried into Sources &amp; Uses, Cash Flow or Returns — the tab labels them display-only rather than implying they move the numbers.
+              <span className="font-semibold text-ink-900">Senior origination fee.</span>{' '}
+              The senior loan&apos;s origination fee is a <span className="font-medium">Fondok seed of 1.50% of the senior loan</span> — a platform default, not a figure read from a term sheet or an OM, and it carries the Seed badge <AssumptionBadge source="seed" /> until you change it. It is editable on Debt, and Debt is its only owner: the capital engine charges the resolved tranche fee as the Sources &amp; Uses line <span className="font-medium">Senior Loan Origination Fee</span>, and Overview → Capitalization&apos;s <span className="font-medium">Financing Costs</span> reads that same number. Change it on Debt and Sources &amp; Uses, Total Uses, required equity and LTC all move; set it to 0% and the line disappears. One assumption, one number, three labels retired.
+            </li>
+            <li>
+              <span className="font-semibold text-ink-900">Exit fee.</span>{' '}
+              The exit fee is added to the final month&apos;s payment on the tranche schedule. It is <em>not</em> carried into Sources &amp; Uses, Cash Flow or Returns in this release, and the row says so — the same treatment as the PACE &ldquo;terms pending&rdquo; row.
             </li>
             <li>
               <span className="font-semibold text-ink-900">Missing inputs are inputs.</span>{' '}
               Wherever a required assumption is absent, the Debt tab renders the input to provide (&ldquo;Enter rate&rdquo;, &ldquo;Enter spread&rdquo;, &ldquo;Enter threshold&rdquo;) with the consequence stated, instead of an unexplained dash.
+            </li>
+          </ul>
+        </Card>
+
+        <Card className="p-5 mt-4">
+          <h4 className="text-[13px] font-semibold text-ink-900 mb-2">The Returns sensitivity sandbox</h4>
+          <p className="text-[12.5px] text-ink-500 leading-relaxed mb-3">
+            Returns → Sensitivities carries a <span className="font-medium">Live Assumptions</span> card whose sliders are a sandbox, not an edit. It answers &ldquo;what would this deal do if…&rdquo; without changing what the deal <em>is</em>.
+          </p>
+          <ul className="space-y-2 text-[12.5px] text-ink-600 leading-relaxed">
+            <li>
+              <span className="font-semibold text-ink-900">Five assumptions, and only five.</span>{' '}
+              Exit cap rate, RevPAR growth, hold period, LTV and interest rate. The worker applies those keys and ignores everything else in the request, so a sandbox call cannot reach an unrelated engine input.
+            </li>
+            <li>
+              <span className="font-semibold text-ink-900">It runs the whole chain, in memory.</span>{' '}
+              <code className="text-[11.5px]">POST /deals/{'{id}'}/engines/returns/preview</code> re-runs revenue → F&amp;B → expense → capital → debt → returns on a copy of the deal&apos;s canonical inputs. Nothing is written: no <code className="text-[11.5px]">engine_outputs</code> row, no run id, no advance of the canonical run, and no change to the deal&apos;s <code className="text-[11.5px]">field_overrides</code>. Investment and Debt keep showing the canonical case throughout — that is the point, not a bug.
+            </li>
+            <li>
+              <span className="font-semibold text-ink-900">The LTV lever is honest.</span>{' '}
+              The Debt tab writes both &ldquo;Senior Loan Amount&rdquo; and &ldquo;LTV&rdquo; as the same pinned senior principal. When the sandbox flexes LTV, that pin is released <em>on the in-memory copy only</em>, so the flexed LTV resizes the senior end-to-end — interest, principal, debt service and DSCR all move with it. Without the release the preview reported returns levered on one loan amount against another loan&apos;s debt service, and DSCR never moved at all. A funded PACE or mezzanine tranche keeps its principal: LTV sizes the senior.
+            </li>
+            <li>
+              <span className="font-semibold text-ink-900">Where the sandbox number shows, it says so.</span>{' '}
+              While the sandbox differs from the base case a banner spans every Returns sub-tab and each Returns Summary tile that moved carries a <span className="font-medium">Sandbox</span> chip. A tile showing a sandbox number does not offer a provenance popover — the trace describes the canonical run, which is not what the tile is showing.
+            </li>
+            <li>
+              <span className="font-semibold text-ink-900">It survives navigation, and only that.</span>{' '}
+              The sandbox is held in the browser session, per deal. Leaving Returns and coming back keeps it; <span className="font-medium">Reset to base case</span>, opening a different deal, or a fresh canonical run clears it. It is never a URL parameter and is never written to the deal record, so it cannot be shared, bookmarked, or seen by anyone else.
+            </li>
+            <li>
+              <span className="font-semibold text-ink-900">Pricing does not consume it.</span>{' '}
+              The Max Price Solver and the pricing grid are solved on the canonical case, and say so inline while a sandbox is active — a &ldquo;max price under a hypothetical LTV&rdquo; is a materially different question from the one the solver answers.
+            </li>
+            <li>
+              <span className="font-semibold text-ink-900">The slider ranges are the grid&apos;s ranges.</span>{' '}
+              The RevPAR-growth slider reads the top of the sensitivity matrix&apos;s own axis rather than restating it, so the sliders can never offer less than the grids show.
             </li>
           </ul>
         </Card>
@@ -439,7 +480,11 @@ export default function MethodologyPage() {
             </li>
             <li>
               <span className="font-semibold text-ink-900">Pricing sensitivity grid.</span>{' '}
-              <code className="text-[11.5px]">POST /analysis/{'{id}'}/pricing/max-price-grid</code> re-runs the solver per cell over exit cap rate (base ± 100bp in 50bp steps) × NOI growth (base ± 2pp in 1pp steps), at most 25 cells. Each cell shows the maximum purchase price clearing both hurdles with its binding constraint. NOI growth re-tilts the model&apos;s canonical NOI series relative to the base growth assumption — year 1 is unchanged, later years and the exit NOI move — so the base cell reproduces the headline solve exactly.
+              <code className="text-[11.5px]">POST /analysis/{'{id}'}/pricing/max-price-grid</code> re-runs the solver per cell over exit cap rate (base ± 100bp in 50bp steps) × RevPAR growth (base ± 2pp in 1pp steps), at most 25 cells. Each cell shows the maximum purchase price clearing both hurdles with its binding constraint. The growth axis is the deal&apos;s <code className="text-[11.5px]">revpar_growth</code> assumption — the same lever the Sensitivities grids flex and the same one the Financials assumption names — so both places call it RevPAR growth. Here it also re-tilts the model&apos;s canonical NOI series relative to the base growth assumption: year 1 is unchanged, later years and the exit NOI move, so the base cell reproduces the headline solve exactly.
+            </li>
+            <li>
+              <span className="font-semibold text-ink-900">The Returns sandbox is not applied.</span>{' '}
+              Both pricing blocks call the solver with no overrides, so an active Live Assumptions sandbox does not reach them. While one is on, each block says so inline rather than quietly answering a different question. Reset the sandbox on Sensitivities to compare like for like.
             </li>
             <li>
               <span className="font-semibold text-ink-900">Known gap — exports.</span>{' '}

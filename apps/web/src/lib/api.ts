@@ -2186,6 +2186,16 @@ export interface ReturnsPreviewResponse {
   dscr_y1: number | null;
   hold_years: number | null;
   exit_cap_rate: number | null;
+  /** The loan the sandbox ran on: `loan_amount` is what the capital engine
+   *  sized (what the returns engine levered), `total_debt` the debt engine's
+   *  whole stack. Equal on a senior-only deal. */
+  loan_amount?: number | null;
+  total_debt?: number | null;
+  /** The rest of the Returns Summary headline under the sandbox case. */
+  avg_coc?: number | null;
+  total_capital?: number | null;
+  noi_by_year?: number[] | null;
+  cash_flows?: number[] | null;
   /** Serialized sensitivity engine grid — present only when requested. */
   sensitivity: Record<string, unknown> | null;
 }

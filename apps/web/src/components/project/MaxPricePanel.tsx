@@ -68,11 +68,21 @@ interface Props {
   /** Canonical engine outputs (unused for numbers here; the solver reports
    *  its own base price so the headline and headroom share one input). */
   outputs?: EngineOutputsResponse | null;
+  /** True while a Returns Live-Assumptions sandbox is active. The solver does
+   *  NOT consume it — a "max price under a hypothetical LTV" is a materially
+   *  different question — so the panel says so inline rather than silently
+   *  answering a question the analyst did not ask (FON-68 §1). */
+  sandboxActive?: boolean;
   /** Navigate to Overview → Investment Profile (where the hurdles live). */
   onGoToProfile: () => void;
 }
 
-export default function MaxPricePanel({ dealId, deal, onGoToProfile }: Props) {
+export default function MaxPricePanel({
+  dealId,
+  deal,
+  sandboxActive = false,
+  onGoToProfile,
+}: Props) {
   const [data, setData] = useState<PricingMaxPriceResponse | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -118,6 +128,8 @@ export default function MaxPricePanel({ dealId, deal, onGoToProfile }: Props) {
         <span style={{ fontSize: 11, color: palette.textFaint }}>Solved against the hurdles on the Investment Profile</span>
       </div>
 
+      {sandboxActive && <CanonicalOnlyNote />}
+
       {!deal && <div style={{ fontSize: 12, color: palette.textMuted }}>Loading deal…</div>}
 
       {deal && !hasTarget && (
@@ -133,6 +145,35 @@ export default function MaxPricePanel({ dealId, deal, onGoToProfile }: Props) {
       {deal && hasTarget && !error && data && (
         <SolvedBlock data={data} link={profileLink} />
       )}
+    </div>
+  );
+}
+
+/** FON-68 §1 — a sandbox is on and this block ignores it. Say so. */
+export function CanonicalOnlyNote() {
+  return (
+    <div
+      style={{
+        display: 'flex',
+        gap: 8,
+        alignItems: 'baseline',
+        flexWrap: 'wrap',
+        background: 'oklch(97% 0.03 250)',
+        border: '1px solid #c9d4ee',
+        borderRadius: 8,
+        padding: '8px 12px',
+        marginBottom: 12,
+        fontSize: 11.5,
+        color: palette.ink,
+      }}
+    >
+      <span style={{ fontWeight: 700, color: palette.linkBlue, whiteSpace: 'nowrap' }}>
+        Canonical case
+      </span>
+      <span>
+        Solved on the canonical case; the active sensitivity is not applied. Reset the sandbox
+        on Sensitivities to compare like for like.
+      </span>
     </div>
   );
 }
