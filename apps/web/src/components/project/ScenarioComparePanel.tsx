@@ -321,7 +321,10 @@ export default function ScenarioComparePanel({
           (Scenarios Tab.dc.html:119-139). Base carries the SOURCE OF TRUTH
           badge; each saved scenario carries its override count and a •••. */}
       <div ref={chipRowRef}>
-        <div className="flex flex-wrap items-center gap-2">
+        {/* `data-testid` because "Base" / a scenario name also appear in the
+            comparison checkbox row and the table headers below — a test that
+            wants THE chip row has to be able to say so. */}
+        <div data-testid="scenario-chip-row" className="flex flex-wrap items-center gap-2">
           <FocusChip
             scenario={base}
             label="Base"

@@ -3,27 +3,18 @@
 /**
  * DocumentsStep — Wave 1 expansion (June 2026).
  *
- * Replaces the legacy 4-stage pill row with an 11-category vertical
- * sidebar matching the canonical IC-grade checklist:
+ * Replaces the legacy 4-stage pill row with a vertical category sidebar
+ * matching the canonical IC-grade checklist. `WIZARD_CATEGORIES` below is
+ * the catalog — read it there rather than trusting a list in a comment.
+ * FON-34 merged the old "T-12 / Trailing Twelve Months" and "Annual / YTD /
+ * Monthly P&L" buckets into one "Financial Statements" category with a
+ * per-file statement-type picker.
  *
- *   1. Offering Memorandum
- *   2. T-12 / Trailing Twelve Months
- *   3. Annual / YTD / Monthly P&L
- *   4. STR / Comp Set Report
- *   5. Insurance Records
- *   6. Property Taxes
- *   7. Room Mix / Unit Mix
- *   8. Historical CapEx
- *   9. Basic Property Info
- *  10. Leases & Agreements
- *  11. Surveys & Reviews (Optional)
- *
- * Locked Wave 1 product decision — ONLY Financials is hard-required to
- * advance Step 3 → Step 4. Financials = T-12 OR Annual / YTD / Monthly
- * P&L (either sub-stage with at least one upload satisfies the gate).
- * The other 9 stages surface red "Missing" pills in the right-rail but
- * never block the wizard. Most deals start without all docs; locking
- * the wizard behind 11 = no one ever finishes.
+ * Locked Wave 1 product decision — ONLY Financial Statements is hard-required
+ * to advance Step 3 → Step 4; one file of any statement type satisfies the
+ * gate. Every other category surfaces a red "Missing" dot in the sidebar but
+ * never blocks the wizard. Most deals start without all docs; locking the
+ * wizard behind the full checklist = no one ever finishes.
  *
  * The persistent right-rail DocumentsChecklist lives outside this
  * component — DocumentsStep is the content column. The page wires up
@@ -506,7 +497,12 @@ export function DocumentsStep({
   };
 
   return (
-    <div>
+    // `data-testid` rather than the heading text: the E2E suite needs a way
+    // to say "the wizard is on Step 3" that a copy edit cannot break. The
+    // previous spec waited on the words "Add documents", which this step has
+    // not said for some time, and it failed on every run instead of being
+    // updated.
+    <div data-testid="wizard-documents-step">
       <h2 className="text-[18px] font-semibold text-ink-900 mb-5">
         Documents
       </h2>

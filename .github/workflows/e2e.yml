@@ -27,13 +27,12 @@ jobs:
       - name: Install Playwright Chromium
         run: cd apps/web && npx playwright install --with-deps chromium
 
+      # Both dev servers, their Clerk key and their NEXT_PUBLIC_WORKER_URL are
+      # declared in apps/web/playwright.config.ts, so `pnpm test:e2e` behaves
+      # the same here as on a laptop. Nothing is configured twice: the suite
+      # runs two servers in two different backend modes and a job-level
+      # NEXT_PUBLIC_WORKER_URL could only contradict one of them.
       - name: Run E2E
-        env:
-          # Demo persona kicks in via lib/auth.ts when the key ends in _dummy.
-          NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY: pk_test_dummy
-          # Empty worker URL forces the API client into mock mode so
-          # tests never hit a real backend.
-          NEXT_PUBLIC_WORKER_URL: ''
         run: cd apps/web && pnpm test:e2e
 
       - name: Upload Playwright report

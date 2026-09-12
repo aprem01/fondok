@@ -50,6 +50,7 @@ import {
   type ReactNode,
 } from 'react';
 import { useRouter, useParams } from 'next/navigation';
+import { AlertTriangle } from 'lucide-react';
 import { useToast } from '@/components/ui/Toast';
 import { fmtCurrency, fmtPct, fmtMillions } from '@/lib/format';
 import { getEngineField, useEngineOutputs } from '@/lib/hooks/useEngineOutputs';
@@ -218,6 +219,14 @@ interface RowsSection {
   note?: string;
   /** Header link — `sub` names the target's sub-tab (`?tab=pl&sub=projections`). */
   action?: { label: string; tab: string; sub?: string };
+  /**
+   * A notice rendered ABOVE the rows, for when the whole section is dashes
+   * for one nameable reason the analyst can act on. The header `note` slot is
+   * taken by `action` on exactly the sections that need this, and a per-row
+   * refusal code explains one dash at a time — neither tells someone looking
+   * at six dashes what to do about it.
+   */
+  banner?: { testId: string; text: string };
   rows: RowDef[];
 }
 interface SuSection { kind: 'su'; title: string }
@@ -729,6 +738,30 @@ export default function OverviewTab({ projectId }: { projectId: number | string 
             : undefined,
       });
 
+    /**
+     * The banner the Stabilization section carries when the run published no
+     * stabilization block.
+     *
+     * This is the defect from 2026-09-12: a deal whose persisted
+     * `engine_outputs` predated `expense.outputs.stabilization` rendered
+     * Stabilized Occupancy / ADR / Revenue / NOI / Margin as five dashes,
+     * with nothing on screen saying that re-running the model fills them in.
+     * The dashes were correct — Fondok will not borrow another projection
+     * year — but a correct refusal the analyst cannot act on reads as a
+     * broken screen, and this one cost an investigation that blamed the
+     * engine. Say what to do; invent nothing.
+     */
+    const stabilizationBanner = (): RowsSection['banner'] =>
+      stab
+        ? undefined
+        : {
+            testId: 'stabilization-needs-rerun',
+            text:
+              'No stabilization block in this deal’s engine output, so every figure '
+              + 'here is a dash. Re-run the model (Investment tab → Re-run) to publish '
+              + 'one — Fondok will not stand another projection year in its place.',
+          };
+
     const stabilizationRows = (): RowDef[] => [
       stabYearRow(),
       stabOccRow(),
@@ -821,7 +854,7 @@ export default function OverviewTab({ projectId }: { projectId: number | string 
         { kind: 'rows', title: 'Land / Site Acquisition', rows: landRows() },
         { kind: 'rows', title: 'Development Budget', action: { label: 'View development details →', tab: 'investment' }, rows: devBudgetRows() },
         { kind: 'rows', title: 'Construction Financing', action: { label: 'View Debt details →', tab: 'debt' }, rows: constFinRows() },
-        { kind: 'rows', title: 'Opening & Stabilization', action: { label: 'View Projections →', tab: 'pl', sub: 'projections' }, rows: openingRows() },
+        { kind: 'rows', title: 'Opening & Stabilization', action: { label: 'View Projections →', tab: 'pl', sub: 'projections' }, banner: stabilizationBanner(), rows: openingRows() },
         { kind: 'rows', title: 'Exit', rows: exitRows() },
         { kind: 'su', title: 'Transaction Sources & Uses' },
         { kind: 'timeline', title: 'Development Timeline' },
@@ -843,7 +876,7 @@ export default function OverviewTab({ projectId }: { projectId: number | string 
       { kind: 'rows', title: 'Entry Valuation', rows: entryRows() },
       { kind: 'rows', title: 'Renovation / CapEx', action: { label: 'View renovation details →', tab: 'investment' }, rows: renovationRows() },
       { kind: 'rows', title: 'Capitalization', action: { label: 'View Debt details →', tab: 'debt' }, rows: capitalizationRows() },
-      { kind: 'rows', title: 'Stabilization', action: { label: 'View Projections →', tab: 'pl', sub: 'projections' }, rows: stabilizationRows() },
+      { kind: 'rows', title: 'Stabilization', action: { label: 'View Projections →', tab: 'pl', sub: 'projections' }, banner: stabilizationBanner(), rows: stabilizationRows() },
       { kind: 'rows', title: 'Exit', rows: exitRows() },
       { kind: 'su', title: 'Transaction Sources & Uses' },
       { kind: 'timeline', title: 'Transaction Timeline' },
@@ -862,7 +895,7 @@ export default function OverviewTab({ projectId }: { projectId: number | string 
     if (!reviewOnly) return sections;
     return sections
       .filter((s): s is RowsSection => s.kind === 'rows')
-      .map((s) => ({ ...s, action: undefined, note: undefined, rows: s.rows.filter((r) => r.state === 'needs_review') }))
+      .map((s) => ({ ...s, action: undefined, note: undefined, banner: undefined, rows: s.rows.filter((r) => r.state === 'needs_review') }))
       .filter((s) => s.rows.length > 0);
   }, [reviewOnly, sections]);
 
@@ -1187,7 +1220,30 @@ export default function OverviewTab({ projectId }: { projectId: number | string 
           )
           : s.note;
         return (
-          <SectionCard key={s.title} title={s.title} note={headerNote}>
+          <SectionCard
+            key={s.title}
+            title={s.title}
+            note={headerNote}
+            // Slug of the section title — a stable hook so a test can scope to
+            // one section instead of guessing at a text match that also hits
+            // the KPI tiles ("Stabilized NOI" is both a tile and a row).
+            data-testid={`overview-section-${s.title.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '')}`}
+          >
+            {s.banner && (
+              <div
+                role="status"
+                data-testid={s.banner.testId}
+                style={{
+                  display: 'flex', alignItems: 'flex-start', gap: 8,
+                  background: 'oklch(96% 0.04 85)', border: '1px solid oklch(85% 0.08 80)',
+                  borderRadius: 7, padding: '9px 12px', marginBottom: 14,
+                  fontSize: 12, lineHeight: 1.5, color: palette.hoverInk,
+                }}
+              >
+                <AlertTriangle size={13} aria-hidden="true" style={{ flexShrink: 0, marginTop: 2 }} />
+                <span>{s.banner.text}</span>
+              </div>
+            )}
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(300px,1fr))', gap: '0 32px' }}>
               {s.rows.map((r) => <OverviewRow key={r.id} row={r} onClick={openProv} />)}
             </div>

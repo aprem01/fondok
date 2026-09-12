@@ -266,6 +266,11 @@ describe('one stabilized NOI across Overview, IC Memo and Scenario Analysis', ()
     expect(screen.queryByText('stabilization year not set')).toBeNull();
   });
 
+  it('no re-run banner when the block IS published — the advice would be noise', () => {
+    render(<OverviewTab projectId="deal-uuid-1" />);
+    expect(screen.queryByTestId('stabilization-needs-rerun')).toBeNull();
+  });
+
   it('Renovation Impact is gone from the Stabilization section (Sam, MVP)', () => {
     render(<OverviewTab projectId="deal-uuid-1" />);
     expect(screen.queryByText('Renovation Impact')).toBeNull();
@@ -303,6 +308,21 @@ describe('with no stabilization block every row is a dash, and no row is $0', ()
     render(<OverviewTab projectId="deal-uuid-1" />);
     const stabRow = rowFor(STABILIZED_NOI_LABEL);
     expect(stabRow.querySelector('[data-refused="awaiting_analyst"]')).not.toBeNull();
+  });
+
+  // 2026-09-12 — a live deal showed these five dashes because its persisted
+  // engine output predated the stabilization block. The dashes were right;
+  // the screen just never said that re-running the model fills them in, so
+  // the investigation went after the engine instead. A per-row refusal code
+  // explains ONE dash on hover — it does not tell someone looking at six of
+  // them what to do next.
+  it('the section says to re-run the model, and names where the Re-run is', () => {
+    render(<OverviewTab projectId="deal-uuid-1" />);
+    const banner = screen.getByTestId('stabilization-needs-rerun');
+    expect(banner).toHaveTextContent(/re-run the model/i);
+    expect(banner).toHaveTextContent(/investment/i);
+    // It must not imply a number is available somewhere else.
+    expect(banner).toHaveTextContent(/will not stand another projection year/i);
   });
 
   it('IC Memo and Scenario Analysis render a dash rather than another year', async () => {

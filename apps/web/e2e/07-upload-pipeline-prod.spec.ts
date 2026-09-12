@@ -10,18 +10,22 @@ import { resolve } from 'node:path';
  * for: "uploaded T-12 silently lands with status=FAILED,
  * error_kind=db_insert_failed".
  *
- * This test is intentionally NOT run in CI by default — it exercises
- * the real worker and we don't want CI to write garbage deals into
- * production every push. Run it manually after a deploy:
+ * NEVER runs in CI. It writes a real deal into production and uploads a real
+ * document to the real worker; a push-triggered job doing that on every merge
+ * would fill the pipeline with junk deals. It is opt-in on an explicit
+ * environment flag, not on the shape of the base URL — a URL check is easy to
+ * satisfy by accident (a staging alias, a copied command) and this is a test
+ * that must only run when someone means it. Run it by hand after a deploy:
  *
- *   PLAYWRIGHT_BASE_URL=https://fondok-app.vercel.app pnpm test:e2e \
- *     07-upload-pipeline-prod
+ *   FONDOK_E2E_PROD=1 PLAYWRIGHT_BASE_URL=https://fondok-app.vercel.app \
+ *     pnpm test:e2e 07-upload-pipeline-prod
  */
 test.describe('@prod upload pipeline', () => {
   test.skip(() => {
-    const url = process.env.PLAYWRIGHT_BASE_URL ?? '';
-    return !url.includes('fondok-app.vercel.app');
-  }, 'Only runs against the production base URL.');
+    if (process.env.FONDOK_E2E_PROD !== '1') return true;
+    // Belt and braces: the flag says "I mean it", the URL says "against prod".
+    return !(process.env.PLAYWRIGHT_BASE_URL ?? '').includes('fondok-app.vercel.app');
+  }, 'Opt-in only: set FONDOK_E2E_PROD=1 and PLAYWRIGHT_BASE_URL to the prod deploy.');
 
   test('uploaded document lands with status != FAILED', async ({ page }) => {
     const fixturePath = resolve(__dirname, 'fixtures', 'sample-t12.pdf');
@@ -47,6 +51,8 @@ test.describe('@prod upload pipeline', () => {
     await page.getByRole('button', { name: /^next/i }).click();
     await page.getByRole('button', { name: /^next/i }).click();
 
+    // Only the ACTIVE category renders a panel; Step 3 opens on the OM.
+    await page.getByRole('button', { name: /^Financial Statements/ }).first().click();
     await page.locator('#wizard-financials-drop').setInputFiles(fixturePath);
     await page.getByRole('button', { name: /^next$/i }).last().click(); // Step 3 → 4
     await page.getByRole('button', { name: /^next$/i }).last().click(); // 4 → 5
