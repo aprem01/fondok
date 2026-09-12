@@ -56,10 +56,14 @@ const OUTPUTS = {
         total_capital_per_key: 325_758,
         equity_amount: 17_000_000,
         debt_amount: 26_000_000,
+        // Labels are the capital engine's own (`capital.py` property_lines),
+        // because `SU_LABEL_ASSUMPTION` mirrors its `_USE_LABEL_ASSUMPTIONS`
+        // map by exact label.
         uses: [
           { label: 'Purchase Price', amount: 34_000_000, pct: 0.79 },
           { label: 'Closing Costs', amount: 680_000, pct: 0.016 },
-          { label: 'Renovation Budget', amount: 4_620_000, pct: 0.107 },
+          { label: 'Renovation', amount: 4_620_000, pct: 0.107 },
+          { label: 'Working Capital', amount: 500_000, pct: 0.012 },
           { label: 'Total Uses', amount: 43_000_000, pct: 1, is_total: true },
         ],
         sources: [
@@ -118,7 +122,9 @@ const TIMELINE = {
   exit_date: '2032-03-31',
   stabilization_date: '2029-06-30',
   events: [
-    { event: 'Hotel Purchase', start: '2027-03-31', duration_months: 0, finish: '2027-03-31', basis: 'derived' },
+    // FON-44 §2 — the worker now stamps Hotel Purchase `linked`: it consumes
+    // the editable Acquisition Date rather than calculating anything.
+    { event: 'Hotel Purchase', start: '2027-03-31', duration_months: 0, finish: '2027-03-31', basis: 'linked' },
     { event: 'Renovation', start: '2027-06-30', duration_months: 12, finish: '2028-06-30', basis: 'assumption' },
     { event: 'Stabilized (FTM NOI, Value)', start: '2029-06-30', duration_months: 0, finish: '2029-06-30', basis: 'derived' },
     { event: 'Senior Loan Maturity', start: '2032-03-31', duration_months: 0, finish: '2032-03-31', basis: 'derived' },
@@ -197,9 +203,25 @@ vi.mock('@/components/ui/Toast', () => ({ useToast: () => ({ toast: vi.fn() }) }
 // test sets one, which is exactly what this provider-free render resolved to
 // before, so every pre-existing expectation below is untouched.
 let mockReasons: Record<string, string> = {};
+let mockSources: Record<string, string> = {};
 vi.mock('@/lib/hooks/useDealProvenance', () => ({
-  useSource: (key: string | undefined) =>
-    key && mockReasons[key] ? { source: '', value: null, reason: mockReasons[key] } : null,
+  useSource: (key: string | undefined) => {
+    if (!key) return null;
+    const source = mockSources[key];
+    const reason = mockReasons[key];
+    if (!source && !reason) return null;
+    return { source: source ?? '', value: null, reason: reason ?? null };
+  },
+}));
+
+// FON-44 §1 — the computed-value provenance graph. Empty by default, which is
+// exactly what the provider-free render resolved to before, so every
+// pre-existing expectation is untouched.
+let mockTraces: Record<string, Record<string, unknown>> = {};
+vi.mock('@/lib/hooks/useValueTrace', () => ({
+  useTraceGraph: (engine: string | undefined) => ({
+    get: (path: string) => (engine ? (mockTraces[engine]?.[path] ?? null) : null),
+  }),
 }));
 
 import InvestmentTab from '@/components/project/InvestmentTab';
@@ -212,6 +234,8 @@ beforeEach(() => {
   engineRunSpy.mockClear();
   refreshDealSpy.mockClear();
   mockReasons = {};
+  mockSources = {};
+  mockTraces = {};
 });
 
 describe('InvestmentTab — engine-sourced KPI tiles (no provider present)', () => {
@@ -276,22 +300,298 @@ describe('InvestmentTab — Transaction Timeline', () => {
 });
 
 describe('InvestmentTab — canonical save path (field_overrides, not local store)', () => {
-  it('editing Purchase Price PATCHes field_overrides via api.deals.update', async () => {
-    render(<InvestmentTab />);
-
-    // The Acquisition row shows the editable Purchase Price ($34,000,000).
-    const cell = screen.getByText('$34,000,000');
-    fireEvent.click(cell);
-
-    // An input appears (draft prefilled) — change it and Save.
+  /** Open the Purchase Price editor and type `value` into it. */
+  function editPurchasePrice(value: string): HTMLInputElement {
+    fireEvent.click(screen.getByText('$34,000,000'));
     const input = document.querySelector('input[type="number"]') as HTMLInputElement;
     expect(input).toBeTruthy();
-    fireEvent.change(input, { target: { value: '35000000' } });
-    fireEvent.click(screen.getByText('Save'));
+    fireEvent.change(input, { target: { value } });
+    return input;
+  }
+
+  // ── FON-74 / Slice A adoption ────────────────────────────────────────
+  // Slice A's server gate 422s `override_note_required` on any engine-input
+  // key written as a bare scalar. Every Investment assumption is an engine
+  // input, so every Investment save writes the `{value, note}` envelope —
+  // without this the whole Deal Summary is un-saveable.
+  it('editing Purchase Price PATCHes field_overrides as {value, note}', async () => {
+    render(<InvestmentTab />);
+    editPurchasePrice('35000000');
+    fireEvent.change(screen.getByLabelText('Override justification'), {
+      target: { value: 'Broker confirmed the revised bid.' },
+    });
+    fireEvent.click(screen.getByLabelText('Save'));
 
     await waitFor(() => expect(updateSpy).toHaveBeenCalled());
     const [, body] = updateSpy.mock.calls[0] as unknown as [string, { field_overrides: Record<string, unknown> }];
-    expect(body.field_overrides.purchase_price).toBe(35_000_000);
+    expect(body.field_overrides.purchase_price).toEqual({
+      value: 35_000_000,
+      note: 'Broker confirmed the revised bid.',
+    });
+  });
+
+  it('refuses the save — and writes nothing — when no justification is typed', async () => {
+    render(<InvestmentTab />);
+    editPurchasePrice('35000000');
+    fireEvent.click(screen.getByLabelText('Save'));
+
+    await new Promise((r) => setTimeout(r, 0));
+    expect(updateSpy).not.toHaveBeenCalled();
+    // Still in edit mode with the draft intact — nothing was discarded.
+    expect((document.querySelector('input[type="number"]') as HTMLInputElement).value).toBe('35000000');
+  });
+
+  it('a no-op edit short-circuits BEFORE the note check — no request, no demand', async () => {
+    render(<InvestmentTab />);
+    // Re-save the same number. `isNoOpEdit` runs first, so Save exits quietly
+    // rather than asking the analyst to justify a change that isn't one.
+    editPurchasePrice('34000000');
+    fireEvent.click(screen.getByLabelText('Save'));
+
+    await new Promise((r) => setTimeout(r, 0));
+    expect(updateSpy).not.toHaveBeenCalled();
+    // Edit mode closed (the no-op path), so there is no editor left open.
+    expect(document.querySelector('input[type="number"]')).toBeNull();
+  });
+
+  it('the Acquisition Date is an engine input, so it carries a note too', async () => {
+    render(<InvestmentTab />);
+    await waitFor(() => expect(timelineSpy).toHaveBeenCalled());
+    fireEvent.click(await screen.findByText('3/31/2027'));
+    const input = document.querySelector('input[type="date"]') as HTMLInputElement;
+    fireEvent.change(input, { target: { value: '2027-06-30' } });
+    fireEvent.change(screen.getByLabelText('Override justification'), {
+      target: { value: 'PSA amended — close pushed to the quarter end.' },
+    });
+    fireEvent.click(screen.getByLabelText('Save'));
+
+    await waitFor(() => expect(updateSpy).toHaveBeenCalled());
+    const [, body] = updateSpy.mock.calls[0] as unknown as [string, { field_overrides: Record<string, unknown> }];
+    expect(body.field_overrides.acquisition_close_date).toEqual({
+      value: '2027-06-30',
+      note: 'PSA amended — close pushed to the quarter end.',
+    });
+  });
+
+  // The room count is a deal COLUMN, not an override of a sourced value, so
+  // `requiresNote` answers false and the editor must not grow a note row.
+  it('the Keys column override asks for no justification', () => {
+    render(<InvestmentTab />);
+    fireEvent.click(screen.getByLabelText('Override room count'));
+    expect(screen.queryByLabelText('Override justification')).toBeNull();
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────
+// FON-44 §1 — Disposition Cost % is no longer hidden
+//
+// Sam (9/11): "The underlying 2.00% is currently hidden; only the calculated
+// dollar amount is displayed. Please expose Disposition Cost % = 2.00% as an
+// editable Investment assumption." The rate was always a real, routed engine
+// assumption; it had no row.
+// ─────────────────────────────────────────────────────────────────────────
+
+/** The value cell of the Deal Summary row carrying this label. */
+function rowValueCell(label: string): HTMLElement {
+  const labelEl = screen.getAllByText(label)[0];
+  const row = labelEl.closest('div') as HTMLElement;
+  return row.lastElementChild as HTMLElement;
+}
+/** The dot of the Deal Summary row carrying this label. */
+function rowDot(label: string): HTMLElement {
+  const labelEl = screen.getAllByText(label)[0];
+  const row = labelEl.closest('div') as HTMLElement;
+  return row.querySelector('[role="img"]') as HTMLElement;
+}
+
+describe('InvestmentTab — Disposition Cost % (FON-44 §1)', () => {
+  it('renders the rate from the returns engine trace input', () => {
+    mockTraces = {
+      returns: {
+        selling_costs: {
+          value: 520_000,
+          inputs: [
+            { name: 'gross_sale_price', value: 52_000_000 },
+            { name: 'selling_costs_pct', value: 0.02, assumption_key: 'selling_costs_pct' },
+          ],
+        },
+      },
+    };
+    render(<InvestmentTab />);
+    expect(rowValueCell('Disposition Cost %').textContent).toContain('2.00%');
+  });
+
+  it('falls back to the ratio of two engine outputs, never a hard-coded 2%', () => {
+    // No provenance sidecar. selling_costs 520,000 ÷ gross_sale 52,000,000.
+    render(<InvestmentTab />);
+    expect(rowValueCell('Disposition Cost %').textContent).toContain('1.00%');
+  });
+
+  it('badges as an analyst assumption and is editable, saving selling_costs_pct', async () => {
+    render(<InvestmentTab />);
+    expect(rowDot('Disposition Cost %').getAttribute('aria-label')).toBe('Assumption');
+
+    fireEvent.click(screen.getByText('1.00%'));
+    const input = document.querySelector('input[type="number"]') as HTMLInputElement;
+    fireEvent.change(input, { target: { value: '2.5' } });
+    fireEvent.change(screen.getByLabelText('Override justification'), {
+      target: { value: 'Miami brokerage quoted 2.5% all-in.' },
+    });
+    fireEvent.click(screen.getByLabelText('Save'));
+
+    await waitFor(() => expect(updateSpy).toHaveBeenCalled());
+    const [, body] = updateSpy.mock.calls[0] as unknown as [string, { field_overrides: Record<string, unknown> }];
+    expect(body.field_overrides.selling_costs_pct).toEqual({
+      value: 0.025,
+      note: 'Miami brokerage quoted 2.5% all-in.',
+    });
+  });
+
+  it('says on the row that this is the EXIT-side cost, not the acquisition one', () => {
+    // Sam asked explicitly that the two 2.00%s not read as the same number.
+    render(<InvestmentTab />);
+    expect(screen.getByText(/Blended cost of SELLING the asset/i).textContent)
+      .toMatch(/Separate from the acquisition Closing Costs %/i);
+    // Both rows exist, and they are different rows.
+    expect(screen.getByText('Closing Costs %')).toBeInTheDocument();
+    expect(screen.getByText('Disposition Cost %')).toBeInTheDocument();
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────
+// FON-44 §2 — three lineage rows badged the wrong owner
+// ─────────────────────────────────────────────────────────────────────────
+
+describe('InvestmentTab — Sources & Uses lineage (FON-44 §2)', () => {
+  /** The dot of the Sources & Uses line carrying this label. */
+  function suDot(label: string): HTMLElement {
+    const row = screen.getAllByText(label)[0].closest('div')!.parentElement as HTMLElement;
+    return row.querySelector('[role="img"]') as HTMLElement;
+  }
+
+  it('Working Capital badges as an assumption, not Calculated', () => {
+    // Sam: "shown with the gray Calculated indicator, but Atlas confirms it is
+    // stored as an analyst `working_capital` assumption."
+    render(<InvestmentTab />);
+    fireEvent.click(screen.getByText('Sources & Uses'));
+    expect(suDot('Working Capital').getAttribute('aria-label')).toBe('Assumption');
+    expect(screen.getAllByText('Analyst assumption, not a calculated line').length).toBeGreaterThan(0);
+  });
+
+  it('a line the worker sources from a document badges document_sourced', () => {
+    mockSources = { purchase_price: 'om_broker' }; // a `grounded` registry source
+    render(<InvestmentTab />);
+    fireEvent.click(screen.getByText('Sources & Uses'));
+    expect(suDot('Purchase Price').getAttribute('aria-label')).toBe('Document sourced');
+  });
+
+  it('Closing Costs stays Calculated — the worker calls it a calculation', () => {
+    render(<InvestmentTab />);
+    fireEvent.click(screen.getByText('Sources & Uses'));
+    expect(suDot('Closing Costs').getAttribute('aria-label')).toBe('Calculated');
+  });
+
+  it('Renovation badges as an assumption only while no contingency is folded in', () => {
+    render(<InvestmentTab />);
+    fireEvent.click(screen.getByText('Sources & Uses'));
+    expect(suDot('Renovation').getAttribute('aria-label')).toBe('Assumption');
+  });
+
+  it('…and drops back to Calculated once the engine folds one in', () => {
+    // `capital._property_line_input`: with a contingency the Renovation line
+    // "is no longer the `renovation_budget` assumption — it is this engine's
+    // own `renovation_total_usd`." The badge follows the worker.
+    const capital = (OUTPUTS as unknown as {
+      engines: { capital: { outputs: Record<string, unknown> } };
+    }).engines.capital.outputs;
+    capital.renovation_contingency_usd = 250_000;
+    try {
+      render(<InvestmentTab />);
+      fireEvent.click(screen.getByText('Sources & Uses'));
+      expect(suDot('Renovation').getAttribute('aria-label')).toBe('Calculated');
+    } finally {
+      delete capital.renovation_contingency_usd;
+    }
+  });
+});
+
+describe('InvestmentTab — the renovation window is an Investment assumption', () => {
+  it('Renovation Start shows the resolved DATE but edits the month offset', async () => {
+    render(<InvestmentTab />);
+    await waitFor(() => expect(timelineSpy).toHaveBeenCalled());
+
+    // Blue assumption dot, not the green "linked" one it used to carry.
+    await waitFor(() => expect(rowDot('Renovation Start').getAttribute('aria-label')).toBe('Assumption'));
+    // The DATE the worker resolved (close 3/31/2027 + 3 months).
+    expect(rowValueCell('Renovation Start').textContent).toContain('6/30/2027');
+    expect(screen.getByText(/Months after the acquisition close \(3\/31\/2027\)/)).toBeInTheDocument();
+
+    // The editor opens on the OFFSET, in months.
+    fireEvent.click(screen.getByText('6/30/2027'));
+    const input = document.querySelector('input[type="number"]') as HTMLInputElement;
+    expect(input.value).toBe('3');
+    fireEvent.change(input, { target: { value: '6' } });
+    fireEvent.change(screen.getByLabelText('Override justification'), {
+      target: { value: 'Permit approval pushed the start two quarters.' },
+    });
+    fireEvent.click(screen.getByLabelText('Save'));
+
+    await waitFor(() => expect(updateSpy).toHaveBeenCalled());
+    const [, body] = updateSpy.mock.calls[0] as unknown as [string, { field_overrides: Record<string, unknown> }];
+    expect(body.field_overrides.renovation_start_offset_months).toEqual({
+      value: 6,
+      note: 'Permit approval pushed the start two quarters.',
+    });
+    // Timeline-only key — it refetches the timeline rather than re-running.
+    expect(engineRunSpy).not.toHaveBeenCalled();
+  });
+
+  it('Duration is editable and saves renovation_duration_months', async () => {
+    render(<InvestmentTab />);
+    await waitFor(() => expect(timelineSpy).toHaveBeenCalled());
+    await waitFor(() => expect(rowDot('Duration').getAttribute('aria-label')).toBe('Assumption'));
+
+    fireEvent.click(screen.getAllByText('12 months')[0]);
+    const input = document.querySelector('input[type="number"]') as HTMLInputElement;
+    fireEvent.change(input, { target: { value: '18' } });
+    fireEvent.change(screen.getByLabelText('Override justification'), {
+      target: { value: 'GC schedule extended to 18 months.' },
+    });
+    fireEvent.click(screen.getByLabelText('Save'));
+
+    await waitFor(() => expect(updateSpy).toHaveBeenCalled());
+    const [, body] = updateSpy.mock.calls[0] as unknown as [string, { field_overrides: Record<string, unknown> }];
+    expect(body.field_overrides.renovation_duration_months).toEqual({
+      value: 18,
+      note: 'GC schedule extended to 18 months.',
+    });
+  });
+});
+
+describe('InvestmentTab — Hotel Purchase is linked, not calculated', () => {
+  it('reads the worker basis and names the Deal Summary as its owner', async () => {
+    render(<InvestmentTab />);
+    fireEvent.click(screen.getByText('Timeline'));
+    await waitFor(() => expect(timelineSpy).toHaveBeenCalled());
+    expect(await screen.findByText('Linked from Deal Summary')).toBeInTheDocument();
+    // Anything genuinely arithmetic on that date stays Calculated — Sam said so
+    // about the Exit explicitly, and Senior Loan Maturity is the same shape.
+    expect(screen.getAllByText('Calculated').length).toBeGreaterThan(0);
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────
+// FON-44 §3 — the two PIPs are different buckets, and say so
+// ─────────────────────────────────────────────────────────────────────────
+
+describe('InvestmentTab — Initial Renovation / PIP vs the hold-period plan', () => {
+  it('states that the initial renovation is already in Sources & Uses, once', () => {
+    render(<InvestmentTab />);
+    expect(screen.getByText('Initial Renovation / PIP')).toBeInTheDocument();
+    expect(screen.getByText('Day-one capital, funded at close')).toBeInTheDocument();
+    expect(
+      screen.getByText(/Already counted once in Sources & Uses, as the Renovation use line/i).textContent,
+    ).toMatch(/not a duplicate of this one/i);
   });
 });
 

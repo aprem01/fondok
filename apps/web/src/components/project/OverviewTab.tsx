@@ -1536,8 +1536,13 @@ function TimelineSectionCard({
   const holdCaption = (!pending && timeline?.close_date && timeline?.exit_date)
     ? `${holdYears != null ? `${holdYears}-year hold` : 'Hold'} · ${fmtLongDate(timeline.close_date)} → ${fmtLongDate(timeline.exit_date)}`
     : 'Set the Acquisition Date to populate dates';
+  // FON-44 §2 — the same timeline rail Investment renders, so the same basis
+  // vocabulary: a milestone that consumes an editable assumption reads 'linked',
+  // never 'calculated'. Two tabs showing one endpoint must not disagree.
   const stateForBasis = (basis: string): ValueState =>
-    basis === 'assumption' ? 'assumption' : basis === 'pending' ? 'awaiting_data' : 'calculated';
+    basis === 'assumption' ? 'assumption'
+      : basis === 'linked' ? 'linked'
+        : basis === 'pending' ? 'awaiting_data' : 'calculated';
   const railCols = `repeat(${Math.max(1, events.length)},minmax(0,1fr))`;
 
   return (

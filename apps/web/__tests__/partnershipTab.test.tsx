@@ -85,8 +85,40 @@ const OUTPUTS = {
       completed_at: null,
       run_id: 'run-1',
     },
+    // FON-66 §1 — the SAME run's capital engine, so the Summary's "Initial
+    // Equity Required → Investment" row can be tied out against the very
+    // Sources & Uses equity line the link lands on. Sam's complaint was that
+    // those two numbers disagreed ($20,401,403 vs $19,998,900).
+    capital: {
+      deal_id: 'deal-uuid-1',
+      engine: 'capital',
+      status: 'complete',
+      summary: '',
+      outputs: {
+        equity_amount: 17_836_676,
+        sources: [
+          { label: 'Senior Loan', amount: 26_000_000 },
+          { label: 'Equity', amount: 17_836_676 },
+          { label: 'Total Sources', amount: 43_836_676, is_total: true },
+        ],
+      },
+      inputs: {},
+      error: null,
+      runtime_ms: 7,
+      started_at: null,
+      completed_at: null,
+      run_id: 'run-1',
+    },
   },
 } as unknown as EngineOutputsResponse;
+
+/** The equity figure Investment › Sources & Uses shows for THIS fixture — read
+ *  out of the capital envelope above rather than restated as a literal. */
+const INVESTMENT_SU_EQUITY = (
+  (OUTPUTS as unknown as {
+    engines: { capital: { outputs: { sources: { label: string; amount: number }[] } } };
+  }).engines.capital.outputs.sources.find((l) => l.label === 'Equity') as { amount: number }
+).amount;
 
 // Mutable handle so one test can serve an enriched envelope (the FON-67
 // additional-contribution fields) while the default fixture stays a run that
@@ -303,6 +335,149 @@ describe('PartnershipTab — FON-67 additional contributions read from the engin
     expect(screen.queryByText('-$900,000')).not.toBeInTheDocument();
     // Stated on both the Invested-equity card and the grid footnote.
     expect(screen.getAllByText(/dated pro-rata GP\/LP capital call/i).length).toBeGreaterThan(0);
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────
+// FON-66 §1 — the Summary stops conflating initial with total invested equity
+//
+// Sam (9/11): "Summary currently shows Total Equity → Investment = $20,401,403.
+// At first glance this looks inconsistent with Investment S&U, which shows
+// Equity = $19,998,900 … the Summary label is simply conflating initial equity
+// with subsequent capital calls."
+// ─────────────────────────────────────────────────────────────────────────
+
+describe('PartnershipTab — Summary equity bridge (FON-66 §1)', () => {
+  const summaryRow = (label: string) =>
+    screen.getByText(label).parentElement!.parentElement as HTMLElement;
+  /** The FON-67 fields a modern run reports — the default fixture predates them. */
+  const withAdditional = () =>
+    withPartnershipOutputs({
+      gp_additional_contributions: 100_000,
+      lp_additional_contributions: 900_000,
+      total_contributions: 18_836_676,
+    });
+
+  it('splits the one row into initial, additional, and total invested', () => {
+    activeOutputs = withAdditional();
+    render(<PartnershipTab />);
+
+    // The conflating single row is gone.
+    expect(screen.queryByText('Total Equity')).not.toBeInTheDocument();
+
+    expect(within(summaryRow('Initial Equity Required')).getByText('$17,836,676')).toBeInTheDocument();
+    expect(within(summaryRow('Additional Contributions')).getByText('$1,000,000')).toBeInTheDocument();
+    expect(within(summaryRow('Total Invested Equity')).getByText('$18,836,676')).toBeInTheDocument();
+  });
+
+  // THE complaint, pinned: the row that cites Investment shows the number
+  // Investment owns — the Sources & Uses equity line of the SAME run.
+  it('Initial Equity Required equals the Investment Sources & Uses equity figure', () => {
+    activeOutputs = withAdditional();
+    render(<PartnershipTab />);
+
+    const shown = within(summaryRow('Initial Equity Required')).getByText(/^\$/).textContent;
+    expect(shown).toBe(`$${INVESTMENT_SU_EQUITY.toLocaleString('en-US')}`);
+    // …and it is NOT the total invested, which is what used to be shown here.
+    expect(shown).not.toBe('$18,836,676');
+  });
+
+  it('puts the → Investment link on the INITIAL row only', () => {
+    activeOutputs = withAdditional();
+    render(<PartnershipTab />);
+
+    const link = within(summaryRow('Initial Equity Required')).getByRole('link', { name: '→ Investment' });
+    expect(link.getAttribute('href')).toBe('?tab=investment&sub=sources-and-uses');
+    // Exactly one — neither the additional nor the total row claims Investment.
+    expect(screen.getAllByRole('link', { name: '→ Investment' })).toHaveLength(1);
+    // Additional contributions points at the sub-tab that dates them instead.
+    expect(
+      within(summaryRow('Additional Contributions'))
+        .getByRole('link', { name: '→ Partner Cash Flows' })
+        .getAttribute('href'),
+    ).toBe('?tab=partnership&sub=cash-flows');
+  });
+
+  it('GP / LP Contribution name the close draw so the split reconciles both ways', () => {
+    activeOutputs = withAdditional();
+    render(<PartnershipTab />);
+    // Totals on the row, the close draw on its sub-line.
+    expect(within(summaryRow('GP Contribution')).getByText('$1,883,668')).toBeInTheDocument();
+    expect(screen.getByText('$1,783,668 at close')).toBeInTheDocument();
+    expect(within(summaryRow('LP Contribution')).getByText('$16,953,008')).toBeInTheDocument();
+    expect(screen.getByText('$16,053,008 at close')).toBeInTheDocument();
+  });
+
+  it('on a run predating the tracking it carries the Cash Flows sentence, not a fabricated $0', () => {
+    render(<PartnershipTab />); // default fixture = the legacy run
+    const additional = summaryRow('Additional Contributions');
+    expect(within(additional).getByText('—')).toBeInTheDocument();
+    expect(within(additional).queryByText('$0')).not.toBeInTheDocument();
+    expect(within(summaryRow('Total Invested Equity')).getByText('—')).toBeInTheDocument();
+    // The SAME sentence the Invested-equity card on Cash Flows already used.
+    expect(
+      screen.getAllByText(/This run predates additional-contribution tracking — re-run the Partnership engine/i).length,
+    ).toBeGreaterThan(0);
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────
+// FON-66 §2 — waterfall table polish (the three items still open)
+// ─────────────────────────────────────────────────────────────────────────
+
+describe('PartnershipTab — waterfall table polish (FON-66 §2)', () => {
+  function openWaterfall() {
+    render(<PartnershipTab />);
+    fireEvent.click(screen.getByRole('tab', { name: 'Waterfall' }));
+  }
+  const removeBtn = () => screen.getByRole('button', { name: 'Remove promote tier 1' });
+
+  it('Remove is an icon with an accessible label, hidden until the row is hovered', () => {
+    openWaterfall();
+    // Not a bordered "Remove" word any more — an icon carrying its own label.
+    expect(removeBtn().textContent).toBe('');
+    expect(screen.queryByText('Remove')).toBeNull();
+    expect(removeBtn().querySelector('svg')).toBeTruthy();
+    // Present in the DOM and the tab order, but invisible until the row is
+    // hovered or the control takes focus — so the keyboard never loses it.
+    expect(removeBtn().style.opacity).toBe('0');
+
+    const row = removeBtn().closest('div[style*="grid"]') as HTMLElement;
+    fireEvent.mouseEnter(row);
+    expect(removeBtn().style.opacity).toBe('1');
+    fireEvent.mouseLeave(row);
+    expect(removeBtn().style.opacity).toBe('0');
+  });
+
+  it('keyboard focus reveals it too', () => {
+    openWaterfall();
+    fireEvent.focus(removeBtn());
+    expect(removeBtn().style.opacity).toBe('1');
+  });
+
+  it('"Add tier" is a row of the table, on the same grid as the tiers', () => {
+    openWaterfall();
+    const add = screen.getByRole('button', { name: /Add tier/ });
+    // Laid out on the tier grid, under the table's own hairline.
+    expect(add.style.display).toBe('grid');
+    expect(add.style.width).toBe('100%');
+    expect(add.style.borderTop).toContain('1px solid');
+    expect(add.style.borderBottom).toContain('dashed');
+    // Still opens the FON-74 justification row rather than adding silently.
+    fireEvent.click(add);
+    expect(screen.getByTestId('add-tier-note')).toBeInTheDocument();
+  });
+
+  it('keeps GP split and LP split as two independently editable columns', () => {
+    // FOUNDER DECISION — Sam's optional "consider presenting each economic
+    // split together (20% GP / 80% LP)" is DECLINED: two right-aligned numeric
+    // columns scan down a table better than a combined string, and both halves
+    // are independently editable, so collapsing them would cost an edit target
+    // to save a column.
+    openWaterfall();
+    expect(screen.getByText('GP split')).toBeInTheDocument();
+    expect(screen.getByText('LP split')).toBeInTheDocument();
+    expect(screen.queryByText(/\d+%\s*GP\s*\/\s*\d+%\s*LP/)).not.toBeInTheDocument();
   });
 });
 
