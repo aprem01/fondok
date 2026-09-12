@@ -14,13 +14,21 @@ This suite pins the worker half so the mirror cannot drift silently:
 
     default: T12 → ttm, PNL → annual, PNL_YTD → ytd, PNL_MONTHLY → monthly
 
-No engine value depends on this test; it is a vocabulary lock.
+No model value depends on this test; it is a vocabulary lock.
+
+FON-44 §4 added a second consumer of the same resolver: the historical
+baseline's YoY walk asks it what period each year's statement covers before
+it divides one year by another (``engines/historical_baseline._period_basis``
+→ ``HistoricalYear.period_basis`` / ``is_partial``). The last block below
+pins that projection, so the walk, the worksheet column header and the web
+mirror cannot come to three different answers about one document.
 """
 
 from __future__ import annotations
 
 import pytest
 
+from app.engines.historical_baseline import _period_basis
 from app.ontology.registry import _as_fields, _doc_scope, get_registry
 
 
@@ -29,6 +37,16 @@ def scope_of(doc_type: str | None, period_type: str | None = None) -> str:
         {"p_and_l_usali.period_type": period_type} if period_type is not None else {}
     )
     return _doc_scope(fields, doc_type, get_registry())
+
+
+def basis_of(
+    doc_type: str | None, period_type: str | None = None
+) -> tuple[str, bool]:
+    """``(period_basis, is_partial)`` as the historical baseline reads it."""
+    fields = (
+        {"p_and_l_usali.period_type": period_type} if period_type is not None else {}
+    )
+    return _period_basis(fields, doc_type)
 
 
 @pytest.mark.parametrize(
@@ -102,3 +120,66 @@ def test_the_rank_map_the_web_mirror_reads_is_the_registry_s_own() -> None:
     assert ranks["ytd"] == 5
     assert ranks["quarterly"] == 7
     assert ranks["monthly"] == 9
+
+
+# ───────── the historical baseline's projection of that scope ─────────
+
+
+@pytest.mark.parametrize(
+    ("doc_type", "expected"),
+    [
+        ("PNL", ("FY", False)),
+        ("T12", ("T12", False)),
+        ("PNL_YTD", ("YTD", True)),
+        ("PNL_MONTHLY", ("MONTHLY", True)),
+    ],
+)
+def test_period_basis_projects_the_doc_type_default(
+    doc_type: str, expected: tuple[str, bool]
+) -> None:
+    """Same four defaults, in the walk's vocabulary — ``FY`` reads as the
+    web's ``FY`` column header, and everything under twelve months is
+    partial.
+    """
+    assert basis_of(doc_type) == expected
+
+
+@pytest.mark.parametrize(
+    ("period_type", "expected"),
+    [
+        ("annual", ("FY", False)),
+        ("fiscal_year", ("FY", False)),
+        ("ttm", ("T12", False)),
+        ("trailing_twelve", ("T12", False)),
+        ("ytd", ("YTD", True)),
+        ("year_to_date", ("YTD", True)),
+        ("quarterly", ("QUARTERLY", True)),
+        ("monthly", ("MONTHLY", True)),
+    ],
+)
+def test_period_basis_follows_a_stated_period_type(
+    period_type: str, expected: tuple[str, bool]
+) -> None:
+    """A statement that says what it covers is believed over its filing —
+    the walk refuses a ``PNL`` that declares itself year-to-date.
+    """
+    assert basis_of("PNL", period_type) == expected
+
+
+def test_period_basis_is_case_insensitive_on_the_doc_type() -> None:
+    """The loader's SQL matches on ``UPPER(d.doc_type)``, so a lowercase
+    tag must not fall through to the annual default and be compared as a
+    full year.
+    """
+    assert basis_of("pnl_ytd") == ("YTD", True)
+    assert basis_of("t12") == ("T12", False)
+
+
+def test_period_basis_falls_back_to_annual_only_with_no_doc_type() -> None:
+    """A row with nothing to resolve from (the pure entrypoint's callers)
+    keeps the annual default, which is what those rows compared as before
+    the gate existed. The loader never reaches this: its SQL admits only
+    the four P&L-family doc types, each of which HAS a default scope.
+    """
+    assert scope_of(None) == "unknown"
+    assert basis_of(None) == ("FY", False)
