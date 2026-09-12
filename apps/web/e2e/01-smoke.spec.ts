@@ -22,7 +22,7 @@ test.describe('smoke', () => {
     await expect(page.getByText(/something went wrong/i)).not.toBeVisible();
   });
 
-  test('wizard renders all 11 document categories on Step 3', async ({ page }) => {
+  test('wizard renders every document category on Step 3', async ({ page }) => {
     await page.goto('/projects/new');
     // Pre-emptively disable coach marks so their pulsing rings + portals
     // don't intercept clicks. Reload so the override is picked up before
@@ -45,12 +45,20 @@ test.describe('smoke', () => {
     await expect(page.getByText(/return requirements/i)).toBeVisible();
     await page.getByRole('button', { name: /^next/i }).click();
 
-    // Step 3 — All 11 categories should render as sidebar buttons.
-    // The category catalog lives in DocumentsStep.tsx WIZARD_CATEGORIES.
+    // Step 3 — every category renders as a sidebar button. The catalog lives
+    // in components/project/wizard/DocumentsStep.tsx.
+    //
+    // Deliberately NOT pinned to a count. FON-34 merged the old "T-12 /
+    // Trailing Twelve Months" and "Annual / YTD / Monthly P&L" buckets into
+    // one "Financial Statements" category with a per-file statement-type
+    // picker, and this assertion — written as "all 11 categories" — went red
+    // and stayed red rather than being updated. A count pin turns every
+    // legitimate catalog change into a failure, which is how a suite gets
+    // ignored. Assert the categories that must exist; adding one is not a
+    // regression.
     const expectedCategories = [
       /Offering Memorandum/,
-      /T-12 \/ Trailing Twelve Months/,
-      /Annual \/ YTD \/ Monthly P&L/,
+      /Financial Statements/,
       /STR \/ Comp Set Report/,
       /Insurance Records/,
       /Property Taxes/,

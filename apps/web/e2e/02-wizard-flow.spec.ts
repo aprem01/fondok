@@ -56,12 +56,14 @@ test.describe('wizard end-to-end', () => {
     await page.getByRole('button', { name: /^next/i }).click();
     await page.getByRole('button', { name: /^next/i }).click();
 
-    // We should land on Step 3 with T-12 active by default.
+    // We should land on Step 3 with Financial Statements reachable.
     await expect(page.getByText(/add documents/i)).toBeVisible();
 
-    // Locate the file input scoped to the T-12 category drop zone.
-    // The category panels each render their own hidden <input id="wizard-{id}-drop">.
-    const fileInput = page.locator('#wizard-t12-drop');
+    // Locate the file input scoped to the Financial Statements drop zone.
+    // Each category panel renders its own hidden <input id="wizard-{id}-drop">.
+    // FON-34 merged the old `t12` and `pnl` buckets into `financials`; this
+    // selector still named `t12` and had been failing in CI since.
+    const fileInput = page.locator('#wizard-financials-drop');
     await fileInput.setInputFiles(fixturePath);
 
     // Wait for the file row to appear — confirms the staged list updated.
@@ -84,7 +86,7 @@ test.describe('wizard end-to-end', () => {
     await page.getByRole('button', { name: /^next/i }).click();
     await page.getByRole('button', { name: /^next/i }).click();
 
-    const fileInput = page.locator('#wizard-t12-drop');
+    const fileInput = page.locator('#wizard-financials-drop');
     await fileInput.setInputFiles(badFixture);
 
     // The rejection toast should fire — confirms the filter ran.

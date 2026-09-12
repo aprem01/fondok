@@ -47,7 +47,7 @@ test.describe('@prod upload pipeline', () => {
     await page.getByRole('button', { name: /^next/i }).click();
     await page.getByRole('button', { name: /^next/i }).click();
 
-    await page.locator('#wizard-t12-drop').setInputFiles(fixturePath);
+    await page.locator('#wizard-financials-drop').setInputFiles(fixturePath);
     await page.getByRole('button', { name: /^next$/i }).last().click(); // Step 3 → 4
     await page.getByRole('button', { name: /^next$/i }).last().click(); // 4 → 5
     await page.getByRole('button', { name: /^next$/i }).last().click(); // 5 → 6
