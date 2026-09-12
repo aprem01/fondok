@@ -129,3 +129,23 @@ describe('Historicals — the Period control filters the columns by basis', () =
     expect(headers().length).toBeGreaterThan(1);
   }, 12000);
 });
+
+// ── FON-41 — no dead controls ────────────────────────────────────────────
+// Period became a real filter in this wave; Granularity was the same class of
+// control (it changed nothing). Monthly is now offered only when a monthly
+// statement actually reached the worksheet, and says why when it has not.
+describe('Historicals — Granularity is honest about Monthly', () => {
+  it('disables Monthly and names the remedy when no monthly statement exists', async () => {
+    render(<GroundedWorksheet dealId={LIVE_DEAL_ID} />);
+    await waitFor(() => expect(headers()).toContain('T12 Mar 2025'), { timeout: 8000 });
+
+    // The live fixture carries FY and T-12 statements, no monthly one.
+    const monthly = screen.getByRole('button', { name: 'Monthly' });
+    expect(monthly).toBeDisabled();
+    expect(monthly.getAttribute('title')).toMatch(/no monthly statement/i);
+    expect(monthly.getAttribute('title')).toMatch(/upload a monthly P&L/i);
+
+    // Annual is still the live option, and it is not disabled.
+    expect(screen.getByRole('button', { name: 'Annual' })).not.toBeDisabled();
+  });
+});

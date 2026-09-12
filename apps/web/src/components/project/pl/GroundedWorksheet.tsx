@@ -386,6 +386,7 @@ export default function GroundedWorksheet({
     for (const y of histYears) m.set(y.periodBasis, (m.get(y.periodBasis) ?? 0) + 1);
     return m;
   }, [histYears]);
+  const hasMonthlyStatement = (basisCounts.get('MONTHLY') ?? 0) > 0;
   const effectiveBasis: PeriodFilter = useMemo(() => {
     if (periodBasis === 'ALL') return 'ALL';
     // A basis whose last column just disappeared (a statement removed, a
@@ -762,7 +763,20 @@ export default function GroundedWorksheet({
         <div className="flex items-center gap-2">
           <span className="text-[11.5px] text-ink-500">Granularity:</span>
           <SegToggle
-            options={[{ id: 'annual', label: 'Annual' }, { id: 'monthly', label: 'Monthly' }]}
+            options={[
+              { id: 'annual', label: 'Annual' },
+              // FON-41 — a control that does nothing is worse than one that is
+              // plainly unavailable. Monthly is offered only when a monthly
+              // statement actually reached the worksheet; otherwise it says why.
+              {
+                id: 'monthly',
+                label: 'Monthly',
+                disabled: !hasMonthlyStatement,
+                title: hasMonthlyStatement
+                  ? 'Show the monthly statement columns'
+                  : 'No monthly statement has been extracted for this deal yet — upload a monthly P&L to enable this view.',
+              },
+            ]}
             value={granularity}
             onChange={setGranularity}
           />
@@ -1291,7 +1305,7 @@ function WorksheetCell({
 function SegToggle<T extends string>({
   options, value, onChange,
 }: {
-  options: { id: T; label: string }[];
+  options: { id: T; label: string; disabled?: boolean; title?: string }[];
   value: T;
   onChange: (v: T) => void;
 }) {
@@ -1303,17 +1317,19 @@ function SegToggle<T extends string>({
           <button
             key={o.id}
             type="button"
-            onClick={() => onChange(o.id)}
+            onClick={() => { if (!o.disabled) onChange(o.id); }}
+            disabled={o.disabled}
+            title={o.title}
             style={{
               padding: '4px 12px',
               fontSize: 11.5,
               fontWeight: 600,
-              cursor: 'pointer',
+              cursor: o.disabled ? 'not-allowed' : 'pointer',
               borderRadius: 5,
               border: 'none',
               fontFamily: 'inherit',
               background: active ? '#fff' : 'transparent',
-              color: active ? '#1a2233' : '#6b6f76',
+              color: o.disabled ? '#a8acb3' : active ? '#1a2233' : '#6b6f76',
               boxShadow: active ? '0 1px 2px rgba(0,0,0,.08)' : 'none',
             }}
           >
