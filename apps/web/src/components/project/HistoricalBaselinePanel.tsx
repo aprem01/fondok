@@ -23,7 +23,28 @@
  *
  * "Coverage 3/5 yrs · Missing 2020-2021" chip. Renders nothing when
  * ``coverage_pct === 0`` (no historical docs uploaded — caller is
- * expected to filter at that level too, but defense-in-depth).
+ * expected to filter at that level too, but defense-in-depth). The
+ * coverage chip states its own denominator on hover: "3 of the 5 fiscal
+ * years in the lookback window ending 2024" — the number was previously
+ * a bare ratio with nothing saying what the 5 was (FON-44 §4).
+ *
+ * Year-over-year
+ * --------------
+ *
+ * The panel does NOT compute year-over-year growth. Every percentage in
+ * the historical columns is the engine's own ``walk`` entry for that
+ * (line, year), looked up by key. That matters: the engine refuses to
+ * divide across incomparable periods — a gap in the history, a
+ * year-to-date statement against a full fiscal year, a statement with no
+ * top line — and a panel doing its own division would put the refused
+ * number back on the screen. Sam, August 2026: "Fixed Expenses +11,170%,
+ * F&B Dept Expense +4,476% … driven by incomplete/partial or
+ * inconsistently classified historical periods." A refused comparison
+ * renders a dash carrying its reason, never a zero.
+ *
+ * The one exception is the Y1 Forecast column, which compares a FORECAST
+ * to the most recent actual. That is not a historical year-over-year and
+ * the engine's walk does not carry it.
  *
  * Walk panel (below the table)
  * ----------------------------
@@ -46,8 +67,26 @@ import { useRouter } from 'next/navigation';
 import { TrendingUp, TrendingDown } from 'lucide-react';
 import { Card } from '@/components/ui/Card';
 import { AssumptionBadge } from '@/components/help/AssumptionBadge';
+import { Refused, asReasonCode, type ReasonCode } from '@/components/help/Refused';
 import { fmtCurrency, fmtPct, cn } from '@/lib/format';
-import type { HistoricalBaselineResponse, HistoricalYear } from '@/lib/api';
+import type {
+  HistoricalBaselineResponse,
+  HistoricalYear,
+  YoYDelta,
+} from '@/lib/api';
+
+// The wire carries two FON-44 §4 additions the shared interfaces in
+// `lib/api.ts` do not name yet: the refusal code on a walk entry
+// (`YoYDelta.reason`) and the period each year's statement covers
+// (`HistoricalYear.period_basis` / `is_partial`). Both are read
+// structurally so this panel does not depend on those interfaces being
+// widened first; the worker's Pydantic models
+// (`api/documents.py YoYDeltaOut` / `HistoricalYearOut`) are the contract.
+type WalkEntry = YoYDelta & { reason?: string | null };
+type YearRow = HistoricalYear & {
+  period_basis?: string | null;
+  is_partial?: boolean | null;
+};
 
 // Canonical USALI line catalog the panel walks through. Order matches
 // the engine's ``WALK_LINES`` so the panel and the walk chips agree.
@@ -105,12 +144,21 @@ export default function HistoricalBaselinePanel({
     return null;
   }
 
-  const years = baseline.years;
+  const years = baseline.years as YearRow[];
   const hasForecast =
     forecastY1 !== undefined && Object.keys(forecastY1).length > 0;
 
   const coverageNum = Math.round(baseline.coverage_pct * baseline.look_back_years);
   const coverageDenom = baseline.look_back_years;
+  // The denominator is the lookback WINDOW, not the number of documents —
+  // "4/5" with nothing saying what the 5 is reads as a failure rate. The
+  // window ends at the most recent year with data, which is also the year
+  // the Missing chip counts back from.
+  const latestYear = years.length ? years[years.length - 1].fiscal_year : null;
+  const coverageTitle = latestYear
+    ? `${coverageNum} of the ${coverageDenom} fiscal years in the lookback `
+      + `window ending ${latestYear} carry an extracted P&L`
+    : `${coverageDenom}-year lookback window`;
 
   // Build the gap label — "Missing 2020-2021" or "Missing 2022".
   // Defense-in-depth: empty gaps array → null chip.
@@ -127,12 +175,36 @@ export default function HistoricalBaselinePanel({
   }, [baseline.gaps]);
 
   // Walk top-N — already sorted by abs(yoy_pct) DESC by the engine.
-  // Filter out the None-pct entries (no YoY signal) before slicing.
+  // Filter out the None-pct entries (no YoY signal) before slicing. A
+  // comparison the engine refused as incomparable arrives with
+  // ``yoy_pct === null`` and is dropped here with the rest, so a swing
+  // across a gap year is never offered as a broker question (FON-44 §4).
   const walkTop = useMemo(() => {
     return baseline.walk
       .filter(w => w.yoy_pct !== null)
       .slice(0, WALK_TOP_N);
   }, [baseline.walk]);
+
+  // The engine's walk, indexed by (line, year) — the single source of
+  // every historical percentage this panel renders. An absent entry means
+  // the engine produced no comparison for that cell: either the swing sat
+  // under its noise floor or the line was not extracted that year.
+  const walkIndex = useMemo(() => {
+    const byKey = new Map<string, WalkEntry>();
+    for (const w of baseline.walk as WalkEntry[]) {
+      byKey.set(`${w.line}|${w.year}`, w);
+    }
+    return byKey;
+  }, [baseline.walk]);
+
+  // Why a year's comparisons were refused, resolved once per COLUMN — the
+  // condition is a property of the period pair, identical for every line
+  // in it.
+  const detailByYear = useMemo(() => {
+    const byYear = new Map<number, string | null>();
+    for (const y of years) byYear.set(y.fiscal_year, refusalDetail(years, y));
+    return byYear;
+  }, [years]);
 
   // Click a walk chip → route to the Validation tab where the
   // Broker Questions panel lives. The user runs Refresh there to
@@ -150,6 +222,7 @@ export default function HistoricalBaselinePanel({
             Historical Baseline
           </span>
           <span
+            title={coverageTitle}
             className={cn(
               'inline-flex items-center px-2 py-0.5 rounded text-[10.5px] font-medium border tabular-nums',
               baseline.coverage_pct >= 0.6
@@ -194,17 +267,21 @@ export default function HistoricalBaselinePanel({
                 <td className="text-left text-ink-700 px-2 py-1.5 whitespace-nowrap">
                   {label}
                 </td>
-                {years.map((y, idx) => {
+                {years.map(y => {
                   const val = y[key] as number | null | undefined;
-                  const prior =
-                    idx === 0
-                      ? null
-                      : (years[idx - 1][key] as number | null | undefined);
+                  // The engine's verdict for this exact (line, year) —
+                  // never a division of our own. Absent entry → no
+                  // comparison was produced; a null pct WITH a reason →
+                  // the engine refused this pair (gap year, partial
+                  // period, missing top line) and the cell says so.
+                  const delta = walkIndex.get(`${String(key)}|${y.fiscal_year}`);
                   return (
                     <Cell
                       key={`${y.fiscal_year}-${String(key)}`}
                       value={val ?? null}
-                      prior={prior ?? null}
+                      yoyPct={delta?.yoy_pct ?? null}
+                      refusal={asReasonCode(delta?.reason)}
+                      refusalDetail={detailByYear.get(y.fiscal_year) ?? null}
                       isExpense={isExpense}
                       source="t12_actual"
                       dealId={dealId}
@@ -215,16 +292,22 @@ export default function HistoricalBaselinePanel({
                 {hasForecast && (
                   <Cell
                     value={forecastY1?.[key] ?? null}
-                    prior={
-                      // For Y1 forecast YoY, compare to the most-recent
-                      // historical year (last entry in ``years``).
+                    // The one comparison the engine's walk does NOT carry:
+                    // Y1 FORECAST against the most recent historical year.
+                    // Both sides are full-year by construction (the
+                    // proforma year and the latest actual), so it is
+                    // computed here and nowhere else.
+                    yoyPct={forecastYoY(
+                      forecastY1?.[key] ?? null,
                       years.length
                         ? ((years[years.length - 1][key] as
                             | number
                             | null
                             | undefined) ?? null)
-                        : null
-                    }
+                        : null,
+                    )}
+                    refusal={null}
+                    refusalDetail={null}
                     isExpense={isExpense}
                     source={forecastSource}
                     dealId={dealId}
@@ -289,15 +372,59 @@ export default function HistoricalBaselinePanel({
 // ────────────────────────── helpers ──────────────────────────
 
 
+/** Year-over-year for the Y1 FORECAST column only.
+ *
+ * The historical columns read the engine's walk; this compares a forecast
+ * to the most recent actual, which the walk does not carry. Kept as a
+ * named function so it is obvious there is exactly one place left in this
+ * panel that divides two numbers.
+ */
+function forecastYoY(value: number | null, prior: number | null): number | null {
+  if (value === null || prior === null || prior === 0) return null;
+  const pct = (value - prior) / prior;
+  // Same 0.5% floor the engine applies to the historical walk
+  // (``_YOY_NOISE_FLOOR``): a sub-half-percent drift is rounding, not a
+  // move, and this column has always suppressed it.
+  return Math.abs(pct) < 0.005 ? null : pct;
+}
+
+/** Case-specific prose for a refused comparison, or null for the
+ *  ontology's own explanation.
+ *
+ *  The reason CODE is the worker's (`period_mismatch` / `no_source`); this
+ *  only names which of the year's two disqualifying conditions the analyst
+ *  is looking at, from data already on the wire. It invents nothing: when
+ *  neither condition is visible here it returns null and `<Refused>` shows
+ *  the vocabulary's standard explanation alone.
+ */
+function refusalDetail(years: YearRow[], year: YearRow): string | null {
+  const prior = years.find(y => y.fiscal_year === year.fiscal_year - 1);
+  if (!prior) {
+    return `This deal has no ${year.fiscal_year - 1} statement, so `
+      + `${year.fiscal_year} has no prior year to grow from.`;
+  }
+  if (year.is_partial || prior.is_partial) {
+    return `${year.fiscal_year} is a ${year.period_basis ?? 'partial'} `
+      + `statement and ${prior.fiscal_year} is a `
+      + `${prior.period_basis ?? 'partial'} statement — they do not cover `
+      + `the same length of period.`;
+  }
+  return null;
+}
+
 /** One value cell in the historical table.
  *
- * Renders the dollar amount with a small YoY arrow + percent chip
- * when ``prior`` is non-null and non-zero. Em-dash when the value is
- * null (extractor didn't ship that line).
+ * Renders the dollar amount, then the engine's year-over-year percentage
+ * when it produced one. Em-dash when the VALUE is null (the extractor
+ * didn't ship that line); a second, smaller dash carrying the refusal
+ * reason when the value is there but the COMPARISON was refused. Never a
+ * zero standing in for a percentage that does not exist.
  */
 function Cell({
   value,
-  prior,
+  yoyPct,
+  refusal,
+  refusalDetail: detail,
   isExpense,
   source,
   dealId,
@@ -305,7 +432,11 @@ function Cell({
   className,
 }: {
   value: number | null;
-  prior: number | null;
+  /** The engine's ``yoy_pct`` for this cell, or null when there is none. */
+  yoyPct: number | null;
+  /** The engine's refusal code when a comparison was declined. */
+  refusal: ReasonCode | null;
+  refusalDetail: string | null;
   isExpense: boolean;
   source: string;
   dealId: string;
@@ -319,9 +450,6 @@ function Cell({
       </td>
     );
   }
-
-  const yoyPct =
-    prior !== null && prior !== 0 ? (value - prior) / prior : null;
 
   // Tone: revenue/profit lines treat increases as good (green), declines
   // as red. Expense lines invert (increases = amber). Sub-1% drifts
@@ -339,11 +467,18 @@ function Cell({
         <span className="text-ink-900">
           {fmtCurrency(value, { compact: true })}
         </span>
-        {yoyPct !== null && Math.abs(yoyPct) >= 0.005 && (
+        {yoyPct !== null && (
           <span className={cn('text-[10px] tabular-nums', trendTone)}>
             {yoyPct > 0 ? '+' : ''}
             {fmtPct(yoyPct, 1)}
           </span>
+        )}
+        {yoyPct === null && refusal !== null && (
+          <Refused
+            reason={refusal}
+            detail={detail}
+            className="text-[10px] text-ink-500"
+          />
         )}
         <AssumptionBadge
           source={source}

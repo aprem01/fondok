@@ -7,6 +7,10 @@ Pins the Wave 2 P2.6 contract:
 * Tie-break on duplicate-year docs — lowest USALI deviation count wins.
 * Derived RevPAR (occ × ADR) — institutional shorthand identity.
 * YoY walk — sorted by abs(yoy_pct) DESC, 0.5% noise floor.
+* Period comparability (FON-44 §4) — the prior is the previous FISCAL
+  YEAR, not the previous list element; a partial period, a gap or a
+  missing top line refuses the comparison with a reason instead of
+  reporting a four-digit percentage.
 * Tenant isolation on the GET endpoint — cross-tenant deal returns 404.
 * Endpoint happy path returns both baseline + walk.
 * Undistributed rollup combines A&G + sales/mkt + utilities + prop_ops + IT.
@@ -133,6 +137,16 @@ def _row(year: int, **kwargs) -> dict[str, object]:
         "deviation_count": kwargs.pop("deviations", 0),
         "fields": _baseline_fields(**kwargs),
     }
+
+
+def _typed_row(year: int, doc_type: str, **kwargs) -> dict[str, object]:
+    """``_row`` plus the ``doc_type`` the period basis resolves from.
+
+    The loader always carries it (``documents.doc_type`` is in the query and
+    the SQL only admits the P&L family); the pure entrypoint takes it as an
+    optional key, so a row without one keeps the annual default.
+    """
+    return dict(_row(year, **kwargs), doc_type=doc_type)
 
 
 # ────────────────────────── engine tests ──────────────────────────
@@ -343,6 +357,217 @@ def test_undistributed_rollup_combines_4_buckets() -> None:
     assert year.noi == pytest.approx(5_620_000.0)
 
 
+# ───────────────── period comparability (FON-44 §4) ─────────────────
+#
+# Sam, August 2026: "Fixed Expenses +11,170%, F&B Dept Expense +4,476% …
+# driven by incomplete/partial or inconsistently classified historical
+# periods." Two causes, both pinned below: the walk divided by the previous
+# ELEMENT of the list rather than the previous fiscal year, and it had no
+# idea what period any statement covered.
+
+
+#: The exact walk a contiguous FY→FY pair produced BEFORE the comparability
+#: gate existed, captured from the engine at c49f12d. Every one of these
+#: must survive unchanged — the gate may only remove comparisons that were
+#: never legitimate, never a real year-over-year move.
+#: ``(line, yoy_abs, yoy_pct)``, in the engine's own sort order.
+_CONTIGUOUS_FY_WALK_2023: list[tuple[str, float, float]] = [
+    ("fnb_revenue", 360_000.0, 0.2),
+    ("noi", -594_000.0, -0.10569395017793594),
+    ("gop", -594_000.0, -0.09068702290076336),
+    ("rooms_revenue", -960_000.0, -0.08),
+    ("total_revenue", -594_000.0, -0.04125),
+    ("other_revenue", 6_000.0, 0.01),
+]
+
+
+def test_contiguous_full_years_walk_exactly_as_before() -> None:
+    """THE no-regression assertion.
+
+    A 2022 → 2023 pair of full fiscal years is comparable by every rule the
+    gate applies, so it must produce precisely the growth figures it
+    produced before FON-44 §4 — same lines, same order, same numbers, and
+    no ``reason`` on any of them.
+    """
+    baseline = build_baseline_from_pnls(
+        [
+            _row(2022),
+            _row(2023, rooms_rev=11_040_000.0, fb_rev=2_160_000.0,
+                 other_rev=606_000.0),
+        ],
+        lookback_years=5,
+    )
+    walk = walk_yoy(baseline)
+
+    pct_bearing = [d for d in walk if d.yoy_pct is not None]
+    assert [d.line for d in pct_bearing] == [
+        line for line, _abs, _pct in _CONTIGUOUS_FY_WALK_2023
+    ]
+    assert [d.yoy_abs for d in pct_bearing] == pytest.approx(
+        [abs_ for _line, abs_, _pct in _CONTIGUOUS_FY_WALK_2023]
+    )
+    assert [d.yoy_pct for d in pct_bearing] == pytest.approx(
+        [pct for _line, _abs, pct in _CONTIGUOUS_FY_WALK_2023]
+    )
+    assert all(d.year == 2023 for d in pct_bearing)
+    # A produced percentage carries no refusal.
+    assert all(d.reason is None for d in pct_bearing)
+    # And the 2022 rows are value-only because 2022 is the first year of
+    # the series — that is not a refusal, so they carry no reason either.
+    assert all(
+        d.reason is None for d in walk if d.year == 2022
+    )
+
+
+def test_walk_refuses_a_gap_year_instead_of_dividing_by_the_last_one() -> None:
+    """Sam's deal: "Coverage 4/5 yrs · Missing 2020-2022".
+
+    2023's prior is 2022, which this deal does not have. The old walk took
+    the previous ELEMENT of the list — 2019 — and reported the four-year
+    move as a year-over-year growth rate. There is now no percentage at
+    all, and the row says why.
+    """
+    baseline = build_baseline_from_pnls(
+        [
+            _typed_row(2019, "PNL"),
+            _typed_row(2023, "PNL", rooms_rev=11_040_000.0),
+        ],
+        lookback_years=5,
+    )
+    walk = walk_yoy(baseline)
+
+    assert baseline.gaps == [2020, 2021, 2022]
+    # NOTHING in the walk carries a percentage — not one line.
+    assert [d for d in walk if d.yoy_pct is not None] == []
+    rows_2023 = [d for d in walk if d.year == 2023]
+    assert rows_2023, "2023 still renders its values, just without growth"
+    assert all(d.yoy_abs is None and d.yoy_pct is None for d in rows_2023)
+    assert {d.reason for d in rows_2023} == {"period_mismatch"}
+    # The line Sam quoted, specifically.
+    fixed_2023 = next(d for d in rows_2023 if d.line == "fixed_expenses")
+    assert fixed_2023.yoy_pct is None
+    assert fixed_2023.reason == "period_mismatch"
+
+
+def test_walk_refuses_year_to_date_against_a_full_year() -> None:
+    """A YTD stub divided by a full fiscal year is the four-digit-percent
+    artifact. The 2023 statement is classified ``PNL_YTD``; the registry
+    resolves that to the ``ytd`` scope, so the pair is refused even though
+    the two years are adjacent.
+    """
+    baseline = build_baseline_from_pnls(
+        [
+            _typed_row(2022, "PNL"),
+            _typed_row(2023, "PNL_YTD", rooms_rev=4_000_000.0),
+        ],
+        lookback_years=5,
+    )
+    walk = walk_yoy(baseline)
+
+    assert [y.period_basis for y in baseline.years] == ["FY", "YTD"]
+    assert [y.is_partial for y in baseline.years] == [False, True]
+    rows_2023 = [d for d in walk if d.year == 2023]
+    assert rows_2023
+    assert all(d.yoy_pct is None for d in rows_2023)
+    assert {d.reason for d in rows_2023} == {"period_mismatch"}
+    # Had it divided, rooms_revenue would have read -66.7%.
+    assert not any(d.yoy_pct is not None for d in walk)
+
+
+def test_a_stated_period_type_refuses_even_when_the_doc_type_says_annual() -> None:
+    """The basis comes from the statement, not only from its filing.
+
+    ``_doc_scope`` ranks a stated ``period_type`` above the doc-type
+    default (pinned in ``test_doc_scope_pnl_family.py``), so a document
+    classified ``PNL`` that says it covers a year-to-date is treated as
+    partial here too — one resolver, one answer.
+    """
+    ytd_fields = [
+        *_baseline_fields(rooms_rev=4_000_000.0),
+        {"field_name": "p_and_l_usali.period_type", "value": "ytd",
+         "source_page": 1, "confidence": 0.9},
+    ]
+    baseline = build_baseline_from_pnls(
+        [
+            _typed_row(2022, "PNL"),
+            {"fiscal_year": 2023, "document_id": "doc-2023",
+             "deviation_count": 0, "doc_type": "PNL", "fields": ytd_fields},
+        ],
+        lookback_years=5,
+    )
+    assert baseline.years[1].period_basis == "YTD"
+    assert baseline.years[1].is_partial is True
+    assert all(d.yoy_pct is None for d in walk_yoy(baseline))
+
+
+def test_walk_refuses_when_either_side_has_no_total_revenue() -> None:
+    """No top line → no way to know the statement covers the period it
+    claims to, so no line on it is compared. The refusal is ``no_source``
+    (the field never resolved), not ``period_mismatch``.
+    """
+    partial_fields = [
+        {"field_name": "rooms_revenue", "value": 11_000_000.0,
+         "source_page": 1, "confidence": 0.9},
+        {"field_name": "property_tax", "value": 360_000.0,
+         "source_page": 3, "confidence": 0.9},
+        {"field_name": "insurance_expense", "value": 210_000.0,
+         "source_page": 3, "confidence": 0.9},
+    ]
+    baseline = build_baseline_from_pnls(
+        [
+            _typed_row(2022, "PNL"),
+            {"fiscal_year": 2023, "document_id": "doc-2023",
+             "deviation_count": 0, "doc_type": "PNL",
+             "fields": partial_fields},
+        ],
+        lookback_years=5,
+    )
+    assert baseline.years[1].total_revenue is None
+
+    rows_2023 = [d for d in walk_yoy(baseline) if d.year == 2023]
+    # rooms_revenue WOULD have divided (-8.3%) — it is refused with it.
+    assert {d.line for d in rows_2023} == {"rooms_revenue", "fixed_expenses"}
+    assert all(d.yoy_pct is None for d in rows_2023)
+    assert {d.reason for d in rows_2023} == {"no_source"}
+
+
+def test_a_trailing_twelve_still_compares_against_a_fiscal_year() -> None:
+    """The standard hotel package is three annuals plus the current T-12.
+
+    A fiscal year and a trailing twelve are different periods but the same
+    LENGTH, so their magnitudes are commensurate and the walk keeps
+    producing the swing. This is the boundary of the gate: it refuses
+    incomparable MAGNITUDES, not every difference in filing.
+    """
+    baseline = build_baseline_from_pnls(
+        [_typed_row(2023, "PNL"), _typed_row(2024, "T12",
+                                             rooms_rev=13_200_000.0)],
+        lookback_years=5,
+    )
+    assert [y.period_basis for y in baseline.years] == ["FY", "T12"]
+    assert not any(y.is_partial for y in baseline.years)
+
+    rooms_2024 = [
+        d for d in walk_yoy(baseline)
+        if d.line == "rooms_revenue" and d.year == 2024
+    ]
+    assert len(rooms_2024) == 1
+    assert rooms_2024[0].yoy_pct == pytest.approx(0.10)
+    assert rooms_2024[0].reason is None
+
+
+def test_period_basis_defaults_to_annual_without_a_doc_type() -> None:
+    """A row the caller built by hand (no ``doc_type``, no ``period_type``)
+    keeps the annual default, so the pure entrypoint compares exactly as it
+    did before the gate. Nothing is guessed for the LOADER, which always
+    carries a doc type — the SQL admits no document without one.
+    """
+    baseline = build_baseline_from_pnls([_row(2023)], lookback_years=5)
+    year = baseline.years[0]
+    assert year.period_basis == "FY"
+    assert year.is_partial is False
+
+
 # ────────────────────────── API endpoint tests ──────────────────────────
 
 
@@ -548,6 +773,61 @@ async def test_endpoint_returns_walk_and_baseline() -> None:
         ]
         assert len(rooms_2023) == 1
         assert rooms_2023[0]["yoy_pct"] == pytest.approx(-0.30, rel=1e-2)
+
+
+@pytest.mark.asyncio
+async def test_endpoint_carries_the_period_basis_and_the_refusal() -> None:
+    """The comparability verdict has to reach the UI, not just the engine.
+
+    Seeds Sam's shape — a 2019 annual and a 2023 annual with the years
+    between them missing — and asserts the wire carries the per-year
+    ``period_basis`` plus a ``period_mismatch`` on every 2023 swing, with
+    no percentage anywhere. The panel filters ``yoy_pct === null`` out of
+    its chip row, so the four-digit swings simply stop being offered as
+    broker questions.
+    """
+    from httpx import ASGITransport, AsyncClient
+
+    from app.main import app
+
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://test"
+    ) as client:
+        r = await client.post(
+            "/deals",
+            json={"name": "Hist Hotel D", "city": "Tampa, FL"},
+            headers={"X-Tenant-Id": TENANT_A},
+        )
+        assert r.status_code == 201
+        deal_id = r.json()["id"]
+
+        await _seed_pnl(
+            deal_id=deal_id, tenant_id=TENANT_A, fiscal_year=2019,
+            doc_type="PNL", fields=_baseline_fields(),
+        )
+        await _seed_pnl(
+            deal_id=deal_id, tenant_id=TENANT_A, fiscal_year=2023,
+            doc_type="PNL", fields=_baseline_fields(rooms_rev=11_040_000.0),
+        )
+
+        r = await client.get(
+            f"/deals/{deal_id}/historical-baseline",
+            headers={"X-Tenant-Id": TENANT_A},
+        )
+        assert r.status_code == 200, r.text
+        body = r.json()
+
+        assert body["gaps"] == [2020, 2021, 2022]
+        assert [y["period_basis"] for y in body["years"]] == ["FY", "FY"]
+        assert [y["is_partial"] for y in body["years"]] == [False, False]
+
+        assert body["walk"], "values still render, only the growth is withheld"
+        assert all(d["yoy_pct"] is None for d in body["walk"])
+        refused = [d for d in body["walk"] if d["year"] == 2023]
+        assert refused
+        assert {d["reason"] for d in refused} == {"period_mismatch"}
+        # The first year of the series refuses nothing — it has no prior.
+        assert {d["reason"] for d in body["walk"] if d["year"] == 2019} == {None}
 
 
 @pytest.mark.asyncio

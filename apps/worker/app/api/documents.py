@@ -3093,6 +3093,12 @@ class HistoricalYearOut(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     fiscal_year: int
+    #: What period the source statement covers — ``FY`` / ``T12`` / ``YTD``
+    #: / ``QUARTERLY`` / ``MONTHLY`` (FON-44 §4). ``is_partial`` marks
+    #: anything short of twelve months; the YoY walk refuses to divide
+    #: across an incomparable pair.
+    period_basis: str = "FY"
+    is_partial: bool = False
     occupancy: float | None = None
     adr: float | None = None
     revpar: float | None = None
@@ -3114,8 +3120,9 @@ class YoYDeltaOut(BaseModel):
     """One above-noise YoY swing on a single line + year — wire shape.
 
     ``yoy_pct=None`` rows are first-year-of-series entries (no prior
-    year to compare against) or zero-prior-year divisions. The walk
-    is sorted by ``abs(yoy_pct) DESC`` with None entries last.
+    year to compare against), zero-prior-year divisions, or comparisons
+    the engine refused as incomparable. The walk is sorted by
+    ``abs(yoy_pct) DESC`` with None entries last.
     """
 
     model_config = ConfigDict(extra="forbid")
@@ -3125,6 +3132,11 @@ class YoYDeltaOut(BaseModel):
     value: float
     yoy_abs: float | None = None
     yoy_pct: float | None = None
+    #: Why there is no percentage, as a ``fondok_schemas.reasons.ReasonCode``
+    #: value (``period_mismatch`` / ``no_source``) — FON-44 §4. ``None``
+    #: whenever a percentage was produced, and for the first year of the
+    #: series, which refuses nothing.
+    reason: str | None = None
 
 
 class HistoricalBaselineResponse(BaseModel):

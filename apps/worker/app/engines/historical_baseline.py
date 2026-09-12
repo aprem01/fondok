@@ -53,6 +53,38 @@ list ordered by ``abs(yoy_pct) DESC`` so the biggest swings surface
 first. The 0.5% threshold (``_YOY_NOISE_FLOOR = 0.005``) is intentional
 — a 0.4% YoY drift on rooms revenue isn't analytical signal and would
 just clutter the UI's "Walk" chips.
+
+Comparability (FON-44 §4)
+-------------------------
+
+Sam, August 2026: *"Fixed Expenses +11,170%, F&B Dept Expense +4,476%
+… driven by incomplete/partial or inconsistently classified historical
+periods."* Two defects produced those numbers; both are closed here.
+
+1. The walk compared ``years_sorted[i]`` against ``years_sorted[i - 1]``
+   — the previous ELEMENT OF THE LIST, not the previous fiscal year. On
+   a deal whose coverage badge reads "Missing 2020-2022" that divides
+   2023 by 2019 and calls the result a year-over-year growth rate. The
+   prior is now looked up by ``fiscal_year - 1``; a gap yields no
+   percentage at all.
+2. Every year sat in one undifferentiated series regardless of the
+   period its statement covers. A year-to-date stub divided by a full
+   fiscal year is the four-digit-percent artifact Sam saw. Each
+   ``HistoricalYear`` now carries the ``period_basis`` its source
+   document declares (``FY`` / ``T12`` / ``YTD`` / ``QUARTERLY`` /
+   ``MONTHLY``) plus an ``is_partial`` flag, resolved through the SAME
+   ontology resolver the web mirrors — ``registry._doc_scope``, whose
+   worker/web parity is pinned by
+   ``apps/worker/tests/test_doc_scope_pnl_family.py`` and read on the
+   web by ``derivePeriodBasis``
+   (``apps/web/src/components/project/pl/HistoricalsSection.tsx``).
+
+A refused comparison is emitted as ``yoy_pct=None`` carrying a
+``reason`` from the shared refusal vocabulary
+(``fondok_schemas.reasons.ReasonCode``), so the UI renders a dash that
+knows why — never a zero, never a computed-anyway number. Note that the
+noise floor above suppresses SMALL swings: it was never a guard against
+this failure, which produces the LARGEST swings on the deal.
 """
 
 from __future__ import annotations
@@ -62,6 +94,7 @@ import logging
 from dataclasses import asdict, dataclass, field
 from typing import Any
 
+from fondok_schemas.reasons import ReasonCode
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -91,6 +124,43 @@ _PNL_FAMILY_DOC_TYPES = ("T12", "PNL", "PNL_MONTHLY", "PNL_YTD")
 _YOY_NOISE_FLOOR = 0.005
 
 
+# ─────────────────── period comparability (FON-44 §4) ───────────────────
+
+# The ontology's document scope (``registry._doc_scope``) projected onto the
+# period-basis vocabulary the Historicals worksheet already states in its
+# column headers. The mapping lives here; the RESOLUTION stays in the
+# registry — one resolver, not two, so whatever ``derivePeriodBasis`` shows
+# in the P&L tab is what the walk compares on.
+_SCOPE_TO_PERIOD_BASIS: dict[str, str] = {
+    "annual": "FY",
+    "ttm": "T12",
+    "ytd": "YTD",
+    "quarterly": "QUARTERLY",
+    "monthly": "MONTHLY",
+    "weekly": "WEEKLY",
+}
+
+# A statement covering less than a full twelve months. Dividing one of these
+# by a full year — or by a differently-truncated slice of another year — is
+# the +11,170% artifact, never a growth rate.
+_PARTIAL_BASES = frozenset({"YTD", "QUARTERLY", "MONTHLY", "WEEKLY"})
+
+# Bases that DO cover twelve months. A fiscal year and a trailing twelve are
+# not the same period, but they are the same LENGTH, so their magnitudes are
+# commensurate and the standard hotel document package (three annuals plus
+# the current T-12) still produces a walk. Anything outside this set is
+# refused.
+_FULL_YEAR_BASES = frozenset({"FY", "T12"})
+
+# Fallback when a document's own scope is unresolvable. The loader only
+# admits P&L-family documents already carrying a ``documents.fiscal_year``
+# (an annual tag), and every one of those doc types has a default scope in
+# the registry — so this is reachable only for a hand-built row (tests, and
+# direct callers of the pure entrypoint). Those keep comparing exactly as
+# they do today rather than losing a swing on no evidence at all.
+_DEFAULT_PERIOD_BASIS = "FY"
+
+
 # ────────────────────────── public dataclasses ──────────────────────────
 
 
@@ -106,6 +176,14 @@ class HistoricalYear:
     """
 
     fiscal_year: int
+    # What period the source statement actually covers — ``FY`` / ``T12`` /
+    # ``YTD`` / ``QUARTERLY`` / ``MONTHLY`` / ``WEEKLY``, resolved from the
+    # document's own ``period_type`` through the ontology registry and
+    # falling back to its doc-type default (FON-44 §4). ``is_partial`` is
+    # True for anything short of twelve months; the YoY walk refuses to
+    # divide across an incomparable pair rather than reporting the ratio.
+    period_basis: str = _DEFAULT_PERIOD_BASIS
+    is_partial: bool = False
     occupancy: float | None = None
     adr: float | None = None
     revpar: float | None = None
@@ -147,6 +225,13 @@ class YoYDelta:
     prior). ``yoy_pct`` is a signed decimal (-0.05 = down 5%); the walk
     is sorted by ``abs(yoy_pct) DESC`` so the biggest swing chips
     surface first.
+
+    ``reason`` says why there is no percentage when there is none: a
+    :class:`~fondok_schemas.reasons.ReasonCode` value — ``period_mismatch``
+    when the two periods are not comparable, ``no_source`` when the prior
+    year's statement does not carry the line. It is ``None`` both when a
+    percentage WAS produced and for the first year of the series, which
+    refuses nothing: it simply has no prior.
     """
 
     line: str
@@ -154,6 +239,7 @@ class YoYDelta:
     value: float
     yoy_abs: float | None
     yoy_pct: float | None
+    reason: str | None = None
 
 
 # ────────────────────────── line-item labels ──────────────────────────
@@ -279,8 +365,39 @@ def _flatten_fields(fields: list[dict[str, Any]] | str | None) -> dict[str, Any]
     return flat
 
 
+def _period_basis(fields: Any, doc_type: str | None) -> tuple[str, bool]:
+    """Resolve one statement's ``(period_basis, is_partial)`` — FON-44 §4.
+
+    Delegates to the ontology registry's ``_doc_scope``, which is the
+    resolver the web's ``derivePeriodBasis``
+    (``apps/web/src/components/project/pl/HistoricalsSection.tsx``) mirrors
+    and ``apps/worker/tests/test_doc_scope_pnl_family.py`` pins: the
+    document's own ``period_type`` through the registry's rank map first,
+    then the doc-type default. Writing a second resolver here is exactly
+    how the P&L tab and the baseline would come to disagree about what a
+    column covers, so this only PROJECTS that answer onto the period-basis
+    vocabulary.
+
+    Imported lazily for the same reason ``_resolve`` is — the engine stays
+    import-light, and the registry loads its YAML on first use.
+    """
+    from ..ontology.registry import _as_fields, _doc_scope, get_registry
+
+    # ``resolve()`` upper-cases the doc type before the scope lookup and the
+    # loader's SQL filters on ``UPPER(d.doc_type)``, so a lowercase tag must
+    # not silently fall through to "unknown" here either.
+    dt = (doc_type or "").strip().upper() or None
+    scope = _doc_scope(_as_fields(fields), dt, get_registry())
+    basis = _SCOPE_TO_PERIOD_BASIS.get(scope, _DEFAULT_PERIOD_BASIS)
+    return basis, basis in _PARTIAL_BASES
+
+
 def _build_year_from_flat(
-    flat: dict[str, Any], *, fiscal_year: int, doc_id: str | None
+    flat: dict[str, Any],
+    *,
+    fiscal_year: int,
+    doc_id: str | None,
+    doc_type: str | None = None,
 ) -> HistoricalYear:
     """Project a per-year flat extraction dict into ``HistoricalYear``.
 
@@ -301,6 +418,11 @@ def _build_year_from_flat(
       covers tax + insurance; institutional IC bundles mgmt fee
       into the fixed block).
     """
+    # Resolve the period basis BEFORE the rollup mutates ``flat`` — the
+    # statement's declared period is a property of the extraction, not of
+    # anything we synthesize from it.
+    period_basis, is_partial = _period_basis(flat, doc_type)
+
     # ``_derive_usali_rollups`` is a side-effecting helper that
     # populates total_revenue / gop / undistributed_expenses / noi
     # into ``flat`` in-place when the extractor didn't ship them.
@@ -368,6 +490,8 @@ def _build_year_from_flat(
 
     return HistoricalYear(
         fiscal_year=fiscal_year,
+        period_basis=period_basis,
+        is_partial=is_partial,
         occupancy=occ,
         adr=adr,
         revpar=revpar,
@@ -397,7 +521,9 @@ def build_baseline_from_pnls(
     """Pure-function variant of ``build_historical_baseline`` — no DB.
 
     Each entry in ``rows`` is ``{fiscal_year: int, document_id?: str,
-    deviation_count?: int, fields: list[dict] | dict}``. When the same
+    doc_type?: str, deviation_count?: int, fields: list[dict] | dict}``.
+    ``doc_type`` is what the period basis falls back to when the extraction
+    carries no ``period_type`` of its own (FON-44 §4). When the same
     ``fiscal_year`` appears twice, the entry with the LOWER
     ``deviation_count`` wins (cleaner USALI extraction). Ties break on
     insertion order (first wins).
@@ -430,11 +556,13 @@ def build_baseline_from_pnls(
             else (fields if isinstance(fields, dict) else {})
         )
         doc_id = row.get("document_id")
+        doc_type = row.get("doc_type")
         years.append(
             _build_year_from_flat(
                 flat,
                 fiscal_year=fy,
                 doc_id=str(doc_id) if doc_id else None,
+                doc_type=str(doc_type) if doc_type else None,
             )
         )
 
@@ -495,6 +623,7 @@ async def build_historical_baseline(
             SELECT er.fields,
                    d.fiscal_year,
                    d.id            AS document_id,
+                   d.doc_type,
                    d.usali_deviations,
                    er.created_at
               FROM extraction_results er
@@ -526,6 +655,9 @@ async def build_historical_baseline(
             {
                 "fiscal_year": fy,
                 "document_id": m.get("document_id"),
+                # The period-basis fallback when the extraction carries no
+                # ``period_type`` of its own (FON-44 §4).
+                "doc_type": m.get("doc_type"),
                 "fields": m.get("fields"),
                 "deviation_count": deviation_count,
             }
@@ -568,28 +700,90 @@ def _walk_value(year: HistoricalYear, line: str) -> float | None:
     return getattr(year, line, None)
 
 
+def _comparability_refusal(
+    year: HistoricalYear, prior: HistoricalYear | None
+) -> str | None:
+    """Why ``year`` cannot be divided by ``prior``, or ``None`` if it can.
+
+    The gate that closes FON-44 §4. It runs BEFORE any division, and it is
+    per-YEAR (not per-line): what is incomparable is the pair of periods,
+    so every line in the pair is refused together rather than a few
+    line-level ratios surviving on a statement that covers five months.
+
+    Refusals, in order:
+
+    * **No prior fiscal year.** ``prior`` is ``None`` because the year
+      before this one is a gap in the deal's history. This is the "2023
+      divided by 2019" case Sam hit.
+    * **Either side partial.** A YTD / quarterly / monthly statement
+      against anything, including another partial (a YTD through May
+      against a YTD through September is not a growth rate either).
+    * **Bases not both full-year.** After the partial check this is an
+      unrecognised basis on one side; nothing is assumed about it.
+    * **Either side has no total revenue.** With no top line there is no
+      way to establish the statement covers the period it claims to, so
+      the completeness of every other line is unknown too.
+
+    Callers must treat a non-``None`` return as "emit no percentage"; the
+    string is a ``ReasonCode`` value, never prose.
+    """
+    if prior is None:
+        return ReasonCode.PERIOD_MISMATCH.value
+    if year.is_partial or prior.is_partial:
+        return ReasonCode.PERIOD_MISMATCH.value
+    if (
+        year.period_basis not in _FULL_YEAR_BASES
+        or prior.period_basis not in _FULL_YEAR_BASES
+    ):
+        return ReasonCode.PERIOD_MISMATCH.value
+    if year.total_revenue is None or prior.total_revenue is None:
+        return ReasonCode.NO_SOURCE.value
+    return None
+
+
 def walk_yoy(baseline: HistoricalBaseline) -> list[YoYDelta]:
-    """Project consecutive-year deltas across every walk line.
+    """Project year-over-year deltas across every walk line.
 
     Sorted by ``abs(yoy_pct) DESC`` so the UI's "Walk" chips render
     biggest swings first. ``yoy_pct=None`` rows (first year of the
-    series, or zero-prior-year divisions) sort LAST.
+    series, a refused comparison, or a zero/absent prior value) sort
+    LAST, each carrying the ``reason`` it has one.
+
+    The prior is the year numbered ``fiscal_year - 1`` — NOT the previous
+    element of the list. A deal missing 2020-2022 gets no 2023 growth
+    figure at all instead of 2023 over 2019 (FON-44 §4), and the pair must
+    additionally clear :func:`_comparability_refusal` before anything is
+    divided.
 
     The noise floor (``_YOY_NOISE_FLOOR = 0.005``) drops swings whose
     magnitude is below 0.5% — those are extraction rounding artifacts,
-    not analytical signal.
+    not analytical signal. It has never been, and cannot be, a guard
+    against incomparable periods: those produce the biggest swings on the
+    deal, not the smallest.
     """
     deltas: list[YoYDelta] = []
     years_sorted = sorted(baseline.years, key=lambda y: y.fiscal_year)
-    for i, year in enumerate(years_sorted):
+    by_fiscal_year = {y.fiscal_year: y for y in years_sorted}
+    first_year = years_sorted[0].fiscal_year if years_sorted else None
+
+    for year in years_sorted:
+        prior = by_fiscal_year.get(year.fiscal_year - 1)
+        # The earliest year in the window refuses nothing — it simply has
+        # no prior, and says so with a bare value-only row (``reason`` stays
+        # None). Any LATER year without a prior is a gap in the history.
+        refusal = (
+            None
+            if prior is None and year.fiscal_year == first_year
+            else _comparability_refusal(year, prior)
+        )
         for line in WALK_LINES:
             val = _walk_value(year, line)
             if val is None:
                 continue
-            if i == 0:
-                # First year — no prior to compare; emit a "value only"
-                # entry so the panel can show a 2023 chip with no
-                # arrow. ``yoy_pct=None`` sorts these last.
+            if prior is None or refusal is not None:
+                # Value-only entry so the panel can still render the cell;
+                # ``yoy_pct=None`` sorts these last and ``reason`` tells the
+                # analyst why the arrow is missing.
                 deltas.append(
                     YoYDelta(
                         line=line,
@@ -597,11 +791,12 @@ def walk_yoy(baseline: HistoricalBaseline) -> list[YoYDelta]:
                         value=val,
                         yoy_abs=None,
                         yoy_pct=None,
+                        reason=refusal,
                     )
                 )
                 continue
-            prior = _walk_value(years_sorted[i - 1], line)
-            if prior is None or prior == 0:
+            prior_val = _walk_value(prior, line)
+            if prior_val is None or prior_val == 0:
                 deltas.append(
                     YoYDelta(
                         line=line,
@@ -609,11 +804,20 @@ def walk_yoy(baseline: HistoricalBaseline) -> list[YoYDelta]:
                         value=val,
                         yoy_abs=None,
                         yoy_pct=None,
+                        # A prior the statement never carried is a missing
+                        # source. A prior of exactly zero is a real number
+                        # the vocabulary has no code for — growth from zero
+                        # is undefined, not refused — so it stays unlabelled.
+                        reason=(
+                            ReasonCode.NO_SOURCE.value
+                            if prior_val is None
+                            else None
+                        ),
                     )
                 )
                 continue
-            yoy_abs = val - prior
-            yoy_pct = yoy_abs / prior
+            yoy_abs = val - prior_val
+            yoy_pct = yoy_abs / prior_val
             if abs(yoy_pct) < _YOY_NOISE_FLOOR:
                 # Below the noise floor — skip. The UI walk chips would
                 # be cluttered with sub-1% drifts that aren't signal.
@@ -656,7 +860,12 @@ def baseline_to_dict(baseline: HistoricalBaseline) -> dict[str, Any]:
 
 
 def walk_to_list(walk: list[YoYDelta]) -> list[dict[str, Any]]:
-    """Project YoY deltas into a list of dicts for the API response."""
+    """Project YoY deltas into a list of dicts for the API response.
+
+    Carries ``reason`` with every entry, so a consumer that drops the
+    ``yoy_pct is None`` rows (the exports do) and one that renders them
+    (the Historical Baseline panel) read the same list.
+    """
     return [asdict(d) for d in walk]
 
 
