@@ -357,17 +357,26 @@ async def test_override_emits_audit_entry_with_before_after() -> None:
     """PATCH /deals with field_overrides writes ``override.set`` with diff."""
     async with _client() as client:
         deal_id = await _create_deal_via_api(client)
-        # First override.
+        # First override. FON-74 — an override that changes an engine input
+        # carries the analyst's justification, so it travels as {value, note}.
         r = await client.patch(
             f"/deals/{deal_id}",
-            json={"field_overrides": {"exit_cap_rate": 0.075}},
+            json={
+                "field_overrides": {
+                    "exit_cap_rate": {"value": 0.075, "note": "comp set"}
+                }
+            },
         )
         assert r.status_code == 200, r.text
 
         # Second override changes value.
         r = await client.patch(
             f"/deals/{deal_id}",
-            json={"field_overrides": {"exit_cap_rate": 0.085}},
+            json={
+                "field_overrides": {
+                    "exit_cap_rate": {"value": 0.085, "note": "repriced"}
+                }
+            },
         )
         assert r.status_code == 200, r.text
 

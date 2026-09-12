@@ -73,6 +73,7 @@ import {
   type WhereThisCameFromProps,
 } from '@/components/design';
 import { isNoOpEdit } from '@/lib/fieldValue';
+import { overrideEnvelope, overrideNoteFor } from '@/lib/overrideNote';
 import {
   stabilizedYearBlock,
   stabilizationBadge,
@@ -191,12 +192,6 @@ function overrideText(overrides: Record<string, unknown>, path: string): string 
   const raw = overrides[path];
   const v = raw != null && typeof raw === 'object' && 'value' in (raw as object) ? (raw as { value?: unknown }).value : raw;
   return typeof v === 'string' && v.trim() ? v.trim() : null;
-}
-/** The analyst note stored alongside a structured override, if any. */
-function overrideNote(overrides: Record<string, unknown>, path: string): string | null {
-  const raw = overrides[path];
-  const n = raw != null && typeof raw === 'object' ? (raw as { note?: unknown }).note : null;
-  return typeof n === 'string' && n.trim() ? n.trim() : null;
 }
 
 interface PropertyMeta {
@@ -393,8 +388,14 @@ export default function OverviewTab({ projectId }: { projectId: number | string 
     }
     setSaving(true);
     try {
+      // FON-74 — the popover's `Note` line is a place for the ANALYST's reason.
+      // It used to be filled with `Analyst override — Overview · <label>`:
+      // software prose sitting where a justification belongs, which is exactly
+      // the inversion the founder's rule exists to prevent. Property Name is a
+      // name, not a number an engine runs on (`requiresNote` says so), so no
+      // justification is demanded — but a blank note, never an invented one.
       await api.deals.update(dealId, {
-        field_overrides: { ...overrides, [row.overridePath]: { value, note: `Analyst override — Overview · ${row.label}` } },
+        field_overrides: { ...overrides, [row.overridePath]: overrideEnvelope(row.overridePath, value, '') },
       });
       toast(`${row.label} overridden — the extracted value is kept so you can restore it`, { type: 'success' });
       setEditing(null);
@@ -1014,7 +1015,10 @@ export default function OverviewTab({ projectId }: { projectId: number | string 
     const originalLine = row.original
       ? `${row.original.value} · ${row.original.docName?.trim() || 'Offering Memorandum'}${row.original.page != null ? ` p.${row.original.page}` : ''}`
       : '— (awaiting the Offering Memorandum)';
-    const note = row.overridePath ? overrideNote(overrides, row.overridePath) : null;
+    // FON-74 — the ANALYST's justification, or nothing. The popover has
+    // rendered this line since FON-59; what changed is that the string in it
+    // is now written by a person.
+    const note = row.overridePath ? overrideNoteFor(overrides, row.overridePath) : null;
     const override: WhereThisCameFromProps['override'] = row.overridden && row.overridePath
       ? {
         orig: row.original?.value ?? '—', current: row.value,

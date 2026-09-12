@@ -49,6 +49,13 @@ import {
   inlineEditInputStyle,
 } from '@/components/design';
 import { isNoOpEdit } from '@/lib/fieldValue';
+import {
+  overrideEnvelope,
+  overrideNoteFor,
+  requiresNote,
+  NOTE_PLACEHOLDER,
+  NOTE_REQUIRED_MESSAGE,
+} from '@/lib/overrideNote';
 import { Button } from '@/components/ui/Button';
 import { useToast } from '@/components/ui/Toast';
 import { cn } from '@/lib/format';
@@ -233,7 +240,7 @@ const ASSUMPTION_DEFAULTS: Record<string, number> = {
 };
 
 // True when a field_overrides entry is a non-empty JSON list — raw (legacy
-// shape) or wrapped ``{value: [...], note}`` (the OverridePanel shape). The
+// shape) or wrapped ``{value: [...], note}`` (the structured shape). The
 // worker unwraps both (``_normalize_override_shape``) before the list guard.
 function hasListOverride(overrides: Record<string, unknown>, key: string): boolean {
   const raw = overrides[key];
@@ -298,7 +305,9 @@ export default function ProjectionsSection({
   const applyOverride = useCallback(
     async (key: string, value: number, note: string) => {
       try {
-        await api.deals.update(dealId, { field_overrides: { ...overrides, [key]: { value, note } } });
+        await api.deals.update(dealId, {
+          field_overrides: { ...overrides, [key]: overrideEnvelope(key, value, note) },
+        });
         refreshDeal();
         await run();
         toast('Override applied — re-modeled', { type: 'success' });
@@ -1599,6 +1608,7 @@ function AssumptionCell({
   const [saving, setSaving] = useState(false);
 
   const overridden = !!ctx && overrideKey in ctx.overrides;
+  const storedNote = ctx ? overrideNoteFor(ctx.overrides, overrideKey) : null;
   const src = overridden ? 'analyst_override' : resolved?.source;
   if (!ctx || !src) return <>{display}</>;
 
@@ -1642,9 +1652,17 @@ function AssumptionCell({
       toast(NO_OP_EDIT_MESSAGE, { type: 'info' });
       return;
     }
+    // FON-74 — the justification, asked for only once the edit is a real
+    // change (the no-op guard above has already exited otherwise). No
+    // software-authored fallback: a blank note, never an invented one.
+    const justification = note.trim();
+    if (!justification && requiresNote(overrideKey)) {
+      toast(NOTE_REQUIRED_MESSAGE, { type: 'error' });
+      return;
+    }
     setSaving(true);
     try {
-      await ctx.apply(overrideKey, next, note.trim() || 'Overridden on the Projections page');
+      await ctx.apply(overrideKey, next, justification);
       setOpen(false);
     } finally {
       setSaving(false);
@@ -1687,6 +1705,16 @@ function AssumptionCell({
               <span className="ml-auto text-[10px] uppercase tracking-wide text-ink-400">{label}</span>
             </span>
             <span className="block text-[11.5px] text-ink-600 leading-snug mb-2">{sourceExplanation(src)}</span>
+            {/* FON-74 — the analyst's own reason, where a reviewer reads the
+                number. Absent until one is stored; never a generated string. */}
+            {overridden && storedNote && (
+              <span
+                className="block text-[11.5px] text-ink-700 leading-snug mb-2 border-l-2 border-brand-200 pl-2"
+                data-testid={`assumption-why-${overrideKey}`}
+              >
+                <span className="font-semibold text-ink-900">Why: </span>{storedNote}
+              </span>
+            )}
             {resolved?.docId && kind === 'grounded' && (
               <button type="button" onClick={openDoc} className="mb-2 inline-flex items-center gap-1 text-[11px] font-medium text-brand-700 hover:text-brand-500">
                 View source document →
@@ -1722,7 +1750,13 @@ function AssumptionCell({
                 <input
                   value={note}
                   onChange={(e) => setNote(e.target.value)}
-                  placeholder="Why? (note, optional)"
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') { e.preventDefault(); void apply(); }
+                    if (e.key === 'Escape') { e.preventDefault(); cancelEdit(); }
+                  }}
+                  aria-label="Override justification"
+                  data-testid={`assumption-note-${overrideKey}`}
+                  placeholder={requiresNote(overrideKey) ? NOTE_PLACEHOLDER : 'Why? (note)'}
                   className="w-full rounded-md border border-border px-2 py-1 text-[11px] focus:outline-none focus:ring-2 focus:ring-brand-100 focus:border-brand-500"
                 />
                 <span className="flex items-center gap-2">
@@ -2045,31 +2079,49 @@ function ProjectionsControls({
 // One editable assumption row: label + right-aligned numeric input with affixes.
 // Commits on blur / Enter; pct fields store as a fraction (value/100).
 function AssumptionField({
-  label, value, unit, prefix, suffix, onCommit, disabled,
+  label, value, unit, prefix, suffix, onCommit, disabled, overrideKey,
 }: {
   label: string;
   value: number;
   unit: 'pct' | 'dollar';
   prefix?: string;
   suffix?: string;
-  onCommit: (engineValue: number) => void;
+  onCommit: (engineValue: number, note: string) => void;
   disabled?: boolean;
+  /** FON-74 — the `field_overrides` key; drives whether Save needs a reason. */
+  overrideKey: string;
 }) {
   const display = unit === 'pct' ? value * 100 : value;
   const fmt = (n: number) => (Number.isInteger(n) ? String(n) : String(Math.round(n * 10) / 10));
   const [draft, setDraft] = useState<string>(fmt(display));
+  // FON-74 — a real change parks here until the analyst justifies it. null =
+  // nothing pending; a number = the engine value waiting on a reason.
+  const [pending, setPending] = useState<number | null>(null);
+  const [note, setNote] = useState('');
+  const requireNote = requiresNote(overrideKey);
   useEffect(() => { setDraft(fmt(display)); }, [display]);
+  const revert = () => { setDraft(fmt(display)); setPending(null); setNote(''); };
   const commit = () => {
     const n = Number(draft.replace(/[$,%\s]/g, ''));
-    if (!Number.isFinite(n)) { setDraft(fmt(display)); return; }
+    if (!Number.isFinite(n)) { revert(); return; }
     const eng = unit === 'pct' ? n / 100 : n;
     // FON-63 — one comparison for every editor (no change → no re-run, no override).
-    if (isNoOpEdit(eng, value, unit === 'pct' ? 'pct_fraction' : 'usd')) return;
-    onCommit(eng);
+    // FON-74's gate sits strictly after it: an untouched field never asks why.
+    if (isNoOpEdit(eng, value, unit === 'pct' ? 'pct_fraction' : 'usd')) { setPending(null); setNote(''); return; }
+    if (!requireNote) { onCommit(eng, ''); return; }
+    setPending(eng);
+  };
+  const save = () => {
+    if (pending == null) return;
+    if (!note.trim()) return;
+    onCommit(pending, note.trim());
+    setPending(null);
+    setNote('');
   };
   return (
-    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10 }}>
-      <span style={{ fontSize: 12, color: '#6b6f76' }}>{label}</span>
+    <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 10 }}>
+      <span style={{ fontSize: 12, color: '#6b6f76', paddingTop: 5 }}>{label}</span>
+      <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 5 }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: 3 }}>
         {prefix && <span style={{ fontSize: 11, color: '#6b6f76' }}>{prefix}</span>}
         {/* FON-41b (Sam, 2026-09-09) — at 46px "4.5" clipped to "4.!" and "60" to
@@ -2079,15 +2131,42 @@ function AssumptionField({
           type="number"
           value={draft}
           disabled={disabled}
+          aria-label={label}
+          data-testid={`assumption-panel-input-${overrideKey}`}
           onChange={(e) => setDraft(e.target.value)}
           onBlur={commit}
           onKeyDown={(e) => {
             if (e.key === 'Enter') (e.target as HTMLInputElement).blur();
-            if (e.key === 'Escape') { setDraft(fmt(display)); (e.target as HTMLInputElement).blur(); }
+            if (e.key === 'Escape') { revert(); (e.target as HTMLInputElement).blur(); }
           }}
           style={{ fontSize: 13, fontWeight: 600, border: '1px solid #e2e1dc', borderRadius: 6, padding: '5px 7px', color: '#1a2233', width: 72, minWidth: 72, textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}
         />
         {suffix && <span style={{ fontSize: 11, color: '#6b6f76' }}>{suffix}</span>}
+      </div>
+      {/* FON-74 — the change is held until it is explained. Nothing is written
+          and nothing re-runs until Save; Cancel puts the field back. */}
+      {pending != null && (
+        <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'stretch', gap: 5, width: 210 }}>
+          <input
+            value={note}
+            autoFocus
+            aria-label={`${label} — override justification`}
+            data-testid={`assumption-panel-note-${overrideKey}`}
+            placeholder={NOTE_PLACEHOLDER}
+            onChange={(e) => setNote(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter') { e.preventDefault(); save(); }
+              if (e.key === 'Escape') { e.preventDefault(); revert(); }
+            }}
+            style={{ fontSize: 11, fontFamily: 'inherit', border: '1px solid #2f4a8c', borderRadius: 6, padding: '4px 7px', color: '#1a2233' }}
+          />
+          <InlineEditControls
+            onSave={save}
+            onCancel={revert}
+            saveTestId={`assumption-panel-save-${overrideKey}`}
+          />
+        </div>
+      )}
       </div>
     </div>
   );
@@ -2217,6 +2296,7 @@ function AssumptionsPanel({
 }: {
   dealId: string;
   overrides: Record<string, unknown>;
+  /** FON-74 — `note` is the ANALYST's justification, or '' on an exempt key. */
   onApply: (key: string, value: number, note: string) => Promise<void>;
   running: boolean;
   /** The worker's published stabilized-year block (null until a run carries one). */
@@ -2252,9 +2332,9 @@ function AssumptionsPanel({
           <div style={rowsWrap}>
             {/* FON-69 — a RevPAR-growth override derives adr_growth in the worker
                 (occupancy path held) so operating NOI moves; the label says so. */}
-            <AssumptionField label="RevPAR growth (drives ADR; occupancy path held)" unit="pct" suffix="%/yr" value={cur('revpar_growth')} disabled={running} onCommit={(v) => onApply('revpar_growth', v, 'RevPAR growth set on the Projections page')} />
-            <AssumptionField label="Dept. expense inflation" unit="pct" suffix="%/yr" value={cur('expense_growth')} disabled={running} onCommit={(v) => onApply('expense_growth', v, 'Dept. expense inflation set on the Projections page')} />
-            <AssumptionField label="Other expense inflation" unit="pct" suffix="%/yr" value={cur('other_expense_growth')} disabled={running} onCommit={(v) => onApply('other_expense_growth', v, 'Other expense inflation set on the Projections page')} />
+            <AssumptionField label="RevPAR growth (drives ADR; occupancy path held)" unit="pct" suffix="%/yr" overrideKey="revpar_growth" value={cur('revpar_growth')} disabled={running} onCommit={(v, note) => onApply('revpar_growth', v, note)} />
+            <AssumptionField label="Dept. expense inflation" unit="pct" suffix="%/yr" overrideKey="expense_growth" value={cur('expense_growth')} disabled={running} onCommit={(v, note) => onApply('expense_growth', v, note)} />
+            <AssumptionField label="Other expense inflation" unit="pct" suffix="%/yr" overrideKey="other_expense_growth" value={cur('other_expense_growth')} disabled={running} onCommit={(v, note) => onApply('other_expense_growth', v, note)} />
           </div>
         </div>
         {/* Stabilization Year — FON-41 / FON-59 #3. The analyst owns it; the
@@ -2270,9 +2350,11 @@ function AssumptionsPanel({
               modelYears={modelYears}
               calendarYears={calendarYears}
               disabled={running}
-              onCommit={(year) =>
-                onApply('stabilization_year', year, 'Stabilization Year set on the Projections page')
-              }
+              // FON-74 — display-only in the model (it selects which projection
+              // year the stabilized figures are read from and moves no return),
+              // so it carries no justification. The software-authored one it
+              // used to write is gone: a blank note, never an invented one.
+              onCommit={(year) => onApply('stabilization_year', year, '')}
             />
           </div>
         </div>
@@ -2280,7 +2362,7 @@ function AssumptionsPanel({
         <div style={cardStyle}>
           <div style={cardTitle}>Resort fee revenue</div>
           <div style={rowsWrap}>
-            <AssumptionField label="Resort fee" unit="dollar" prefix="$" suffix="/night" value={cur('resort_fee_per_night')} disabled={running} onCommit={(v) => onApply('resort_fee_per_night', v, 'Resort fee/night set on the Projections page')} />
+            <AssumptionField label="Resort fee" unit="dollar" prefix="$" suffix="/night" overrideKey="resort_fee_per_night" value={cur('resort_fee_per_night')} disabled={running} onCommit={(v, note) => onApply('resort_fee_per_night', v, note)} />
             {/* FON-41 — the three capture inputs are labelled by the COLUMN
                 they move, not by the engine's year index. The revenue engine
                 runs y = 1…hold_years and the statement heads y=1 as "Base
@@ -2290,9 +2372,9 @@ function AssumptionsPanel({
                 re-index the engine — so these labels (and the note below)
                 name the columns the analyst actually reads. Engine math and
                 the ``field_overrides`` keys are untouched. */}
-            <AssumptionField label="Capture — Base Year (Year 1)" unit="pct" suffix="%" value={cur('resort_fee_capture_y1')} disabled={running} onCommit={(v) => onApply('resort_fee_capture_y1', v, 'Resort-fee capture for the Base Year (Year 1) column set on the Projections page')} />
-            <AssumptionField label="Capture — Year 2" unit="pct" suffix="%" value={cur('resort_fee_capture_y2')} disabled={running} onCommit={(v) => onApply('resort_fee_capture_y2', v, 'Resort-fee capture for the Year 2 column set on the Projections page')} />
-            <AssumptionField label="Capture — Year 3+" unit="pct" suffix="%" value={cur('resort_fee_capture_y3')} disabled={running} onCommit={(v) => onApply('resort_fee_capture_y3', v, 'Resort-fee capture for the Year 3+ columns set on the Projections page')} />
+            <AssumptionField label="Capture — Base Year (Year 1)" unit="pct" suffix="%" overrideKey="resort_fee_capture_y1" value={cur('resort_fee_capture_y1')} disabled={running} onCommit={(v, note) => onApply('resort_fee_capture_y1', v, note)} />
+            <AssumptionField label="Capture — Year 2" unit="pct" suffix="%" overrideKey="resort_fee_capture_y2" value={cur('resort_fee_capture_y2')} disabled={running} onCommit={(v, note) => onApply('resort_fee_capture_y2', v, note)} />
+            <AssumptionField label="Capture — Year 3+" unit="pct" suffix="%" overrideKey="resort_fee_capture_y3" value={cur('resort_fee_capture_y3')} disabled={running} onCommit={(v, note) => onApply('resort_fee_capture_y3', v, note)} />
             <p style={{ fontSize: 11, color: '#6b6f76', lineHeight: 1.45, margin: 0 }}>
               Each capture applies to the column above it — Base Year (Year 1) is the model&apos;s
               first operating year, Year 2 is the one after it, and Year 3+ carries through every
@@ -2304,7 +2386,7 @@ function AssumptionsPanel({
         <div style={cardStyle}>
           <div style={cardTitle}>Deal economics</div>
           <div style={rowsWrap}>
-            <AssumptionField label="Management fee" unit="pct" suffix="% of rev" value={cur('mgmt_fee_pct')} disabled={running} onCommit={(v) => onApply('mgmt_fee_pct', v, 'Management fee set on the Projections page')} />
+            <AssumptionField label="Management fee" unit="pct" suffix="% of rev" overrideKey="mgmt_fee_pct" value={cur('mgmt_fee_pct')} disabled={running} onCommit={(v, note) => onApply('mgmt_fee_pct', v, note)} />
             {/* Exit cap rate is Investment-owned — linked / read-only reference. */}
             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10 }}>
               <span style={{ fontSize: 12, color: '#6b6f76' }}>Exit cap rate</span>

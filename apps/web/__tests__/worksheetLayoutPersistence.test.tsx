@@ -22,6 +22,11 @@
  *     `field_overrides` key (`worksheet_layout`), whose own keys are exactly the
  *     six layout fields; every other override on the deal is carried through
  *     untouched. Nothing on this path can become engine input.
+ *
+ *  5. FON-74 — AND THEREFORE IT NEEDS NO JUSTIFICATION. `worksheet_layout` is
+ *     the one key in the worker's `_OVERRIDE_NON_ENGINE_KEYS`: presentation
+ *     only. A reorder must not prompt for a reason and must not be rejected by
+ *     the API gate. The worksheet's VALUE cells, which are engine input, must.
  */
 import { describe, it, expect, vi, afterEach, beforeEach } from 'vitest';
 import { render, screen, cleanup, waitFor, fireEvent, within, act } from '@testing-library/react';
@@ -273,5 +278,9 @@ describe('Worksheet layout — the payload can never become engine input', () =>
     const layout = fo.worksheet_layout as Record<string, unknown>;
     expect(Object.keys(layout).sort()).toEqual([...WORKSHEET_LAYOUT_FIELDS].sort());
     expect(layout.v).toBe(1);
+    // FON-74 — and it is a bare layout blob, not a `{value, note}` envelope:
+    // a presentation key is never asked to justify itself.
+    expect('note' in layout).toBe(false);
+    expect(screen.queryByLabelText('Override justification')).not.toBeInTheDocument();
   }, 20000);
 });

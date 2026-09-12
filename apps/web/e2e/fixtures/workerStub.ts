@@ -91,6 +91,31 @@ const ENGINES: EngineOutputsResponse = {
       completed_at: null,
       run_id: 'e2e-run',
     },
+    /**
+     * FON-74 — `DebtTab` renders its "Debt Engine unavailable" empty state
+     * until `debt.outputs.loan_amount` exists, so none of its inline editors
+     * (and therefore none of the justification gate on them) ever mounts.
+     *
+     * Same rule as the expense block above: this is a GATE, not an
+     * expectation. `05-override-flow.spec.ts` asserts what the EDITOR does —
+     * that Save is refused without a reason and PATCHes `{value, note}` with
+     * one — and never asserts a debt figure. The amount matches the senior
+     * loan `__tests__/inlineEditIntegrity.test.tsx` drives, kept identical
+     * rather than re-picked so the two suites describe one deal.
+     */
+    debt: {
+      deal_id: LIVE_DEAL_ID,
+      engine: 'debt',
+      status: 'complete',
+      summary: '',
+      outputs: { loan_amount: 23_400_000 },
+      inputs: {},
+      error: null,
+      runtime_ms: 1,
+      started_at: null,
+      completed_at: null,
+      run_id: 'e2e-run',
+    },
   },
 } as unknown as EngineOutputsResponse;
 

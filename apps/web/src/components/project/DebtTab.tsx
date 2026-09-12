@@ -65,6 +65,12 @@ import EngineRunHistory from './EngineRunHistory';
 import WhatJustHappened from './WhatJustHappened';
 import { IntroCard } from '@/components/help/IntroCard';
 import { AssumptionBadge } from '@/components/help/AssumptionBadge';
+import {
+  applyOverridePatch,
+  patchRequiresNote,
+  requiresNote,
+  NOTE_REQUIRED_MESSAGE,
+} from '@/lib/overrideNote';
 import { useSource } from '@/lib/hooks/useDealProvenance';
 import {
   api,
@@ -267,15 +273,20 @@ const CG_OPTIONS: { key: string; label: string }[] = [
 const cgLabel = (v: string | undefined): string =>
   CG_OPTIONS.find((o) => o.key === v)?.label ?? '—';
 
+/** The scalar behind a `field_overrides` entry — `{value, note}` or bare. */
+function overrideScalar(overrides: Record<string, unknown>, path: string): unknown {
+  const raw = overrides[path];
+  return raw && typeof raw === 'object' && 'value' in raw
+    ? (raw as { value: unknown }).value
+    : raw;
+}
+
 function readOverrideNum(
   overrides: Record<string, unknown>,
   path: string,
   fallback: number,
 ): number {
-  const raw = overrides[path];
-  const val = raw && typeof raw === 'object' && 'value' in raw
-    ? (raw as { value: unknown }).value
-    : raw;
+  const val = overrideScalar(overrides, path);
   if (val == null || val === '') return fallback;
   const n = typeof val === 'number' ? val : Number(val);
   return Number.isFinite(n) ? n : fallback;
@@ -320,17 +331,22 @@ export default function DebtTab() {
   useEffect(() => () => {
     if (rerunTimerRef.current) clearTimeout(rerunTimerRef.current);
   }, []);
+  // FON-74 — one Save, one justification. `note` travels with every key in
+  // the patch, so a multi-key change (LTV → senior principal; Fixed → rate_type
+  // + rate_pct) is explained once and the reviewer sees the same reason on both
+  // sides of it. A key that needs a note and hasn't got one is refused here as
+  // well as by the API, so the analyst gets the message, not a 422.
   const onSaveOverride = useCallback(
-    async (patch: Record<string, number | string | null>) => {
+    async (patch: Record<string, number | string | null>, note = '') => {
       if (!liveMode) {
         toast('Editing is disabled on demo deals', { type: 'info' });
         return;
       }
-      const next = { ...overrides };
-      for (const [path, value] of Object.entries(patch)) {
-        if (value === null) delete next[path];
-        else next[path] = value;
+      if (!note.trim() && patchRequiresNote(patch)) {
+        toast(NOTE_REQUIRED_MESSAGE, { type: 'error' });
+        return;
       }
+      const next = applyOverridePatch(overrides, patch, note);
       setOverrides(next); // optimistic
       try {
         await api.deals.update(dealId, { field_overrides: next });
@@ -381,7 +397,7 @@ export default function DebtTab() {
   // engine echoes the saved override; before a re-run lands we read the pending
   // override optimistically so the control reflects the analyst's pick at once.
   const wCompletionGuarantee = getEngineField<string>(outputs, 'debt', 'completion_guarantee');
-  const cgOverride = overrides['debt.completion_guarantee'];
+  const cgOverride = overrideScalar(overrides, 'debt.completion_guarantee');
   const completionGuarantee: string | undefined =
     (typeof cgOverride === 'string' ? cgOverride : undefined) ??
     (wCompletionGuarantee ?? undefined);
@@ -411,7 +427,7 @@ export default function DebtTab() {
   const seniorTranche = wStack?.tranches?.find((t) => t.kind === 'senior') ?? wStack?.tranches?.[0];
   // Rate basis: the analyst's pick (optimistic, before the re-run lands) wins
   // over the engine echo, so the Loan Terms card re-shapes immediately.
-  const rateTypeOverride = overrides[tk(SENIOR, 'rate_type')];
+  const rateTypeOverride = overrideScalar(overrides, tk(SENIOR, 'rate_type'));
   const seniorRateType: string | undefined =
     (rateTypeOverride === 'fixed' || rateTypeOverride === 'floating' ? rateTypeOverride : undefined) ??
     seniorTranche?.rate_type;
@@ -525,7 +541,8 @@ export default function DebtTab() {
       display={money(seniorAmount)}
       draftValue={has(seniorAmount) ? String(Math.round(seniorAmount)) : ''}
       parse={parseDollars}
-      onSave={(v) => onSaveOverride({ [seniorPrincipalKey]: v })}
+      onSave={(v, note) => onSaveOverride({ [seniorPrincipalKey]: v }, note)}
+      noteKey={seniorPrincipalKey}
       editable={liveMode}
       suffix="$"
       color={valueColor('input', false, ltvOverridden)}
@@ -541,9 +558,10 @@ export default function DebtTab() {
       display={pctv(ltvN, 1)}
       draftValue={has(ltvN) ? (ltvN * 100).toFixed(1) : ''}
       parse={(s) => { const n = parseFloat(s); return Number.isFinite(n) && n > 0 ? n / 100 : null; }}
-      onSave={(frac) => onSaveOverride({
+      onSave={(frac, note) => onSaveOverride({
         [seniorPrincipalKey]: Math.max(0, Math.round(frac * (wPurchase as number) - (paceFunded ? paceAmount : 0))),
-      })}
+      }, note)}
+      noteKey={seniorPrincipalKey}
       editable={ltvEditable}
       suffix="%"
       color={valueColor('input', false, ltvOverridden)}
@@ -562,7 +580,8 @@ export default function DebtTab() {
       emptyLabel="Enter amount"
       draftValue={paceFunded ? String(Math.round(paceAmount)) : ''}
       parse={parseDollars}
-      onSave={(v) => onSaveOverride({ [paceAmountKey]: v > 0 ? v : null })}
+      onSave={(v, note) => onSaveOverride({ [paceAmountKey]: v > 0 ? v : null }, note)}
+      noteKey={paceAmountKey}
       editable={liveMode}
       suffix="$"
       color={valueColor('input', false, paceAmountOverridden)}
@@ -594,7 +613,8 @@ export default function DebtTab() {
       display={origFeeDisplay}
       draftValue={has(wOrigFeePct) ? wOrigFeePct.toFixed(2) : ''}
       parse={(s) => { const n = parseFloat(s); return Number.isFinite(n) && n >= 0 ? n : null; }}
-      onSave={(v) => onSaveOverride({ [tk(SENIOR, 'upfront_fee_pct')]: v })}
+      onSave={(v, note) => onSaveOverride({ [tk(SENIOR, 'upfront_fee_pct')]: v }, note)}
+      noteKey={tk(SENIOR, 'upfront_fee_pct')}
       editable={feeEditable}
       suffix="%"
       color={valueColor('input', false, feeOverridden)}
@@ -658,7 +678,8 @@ export default function DebtTab() {
       emptyLabel={opts.emptyLabel}
       draftValue={has(opts.value) ? (opts.value * 100).toFixed(2) : ''}
       parse={parsePctFrac}
-      onSave={(frac) => onSaveOverride({ [opts.key]: opts.clearOnZero && frac <= 0 ? null : frac })}
+      onSave={(frac, note) => onSaveOverride({ [opts.key]: opts.clearOnZero && frac <= 0 ? null : frac }, note)}
+      noteKey={opts.key}
       editable={liveMode}
       unit="pct_fraction"
       suffix={opts.suffix ?? '%'}
@@ -680,7 +701,8 @@ export default function DebtTab() {
                 emptyLabel="Enter index rate"
                 draftValue={has(benchmarkRate) ? (benchmarkRate * 100).toFixed(2) : ''}
                 parse={parsePctFrac}
-                onSave={(frac) => onSaveOverride({ [indexKey]: frac })}
+                onSave={(frac, note) => onSaveOverride({ [indexKey]: frac }, note)}
+                noteKey={indexKey}
                 editable={liveMode}
                 suffix="%"
                 color={valueColor('input', false, overridden(indexKey))}
@@ -724,7 +746,8 @@ export default function DebtTab() {
           emptyLabel="Enter amortization"
           draftValue={has(wAmortYears) ? String(wAmortYears) : ''}
           parse={parseIntMin(0)}
-          onSave={(yrs) => onSaveOverride({ [amortKey]: Math.round(yrs) * 12 })}
+          onSave={(yrs, note) => onSaveOverride({ [amortKey]: Math.round(yrs) * 12 }, note)}
+          noteKey={amortKey}
           editable={liveMode}
           suffix="years"
           color={valueColor('input', false, overridden(amortKey))}
@@ -742,7 +765,8 @@ export default function DebtTab() {
           emptyLabel="Enter term"
           draftValue={has(wTermYears) ? String(wTermYears) : ''}
           parse={parseIntMin(1)}
-          onSave={(yrs) => onSaveOverride({ [TERM_KEY]: Math.round(yrs) })}
+          onSave={(yrs, note) => onSaveOverride({ [TERM_KEY]: Math.round(yrs) }, note)}
+          noteKey={TERM_KEY}
           editable={liveMode}
           suffix="years"
           color={valueColor('input', false, overridden(TERM_KEY))}
@@ -761,7 +785,8 @@ export default function DebtTab() {
             emptyLabel="Enter IO period"
             draftValue={has(wIoMonths) ? String(wIoMonths) : ''}
             parse={parseIntMin(0)}
-            onSave={(m) => onSaveOverride({ [ioKey]: Math.round(m) })}
+            onSave={(m, note) => onSaveOverride({ [ioKey]: Math.round(m) }, note)}
+            noteKey={ioKey}
             editable={liveMode}
             suffix="months"
             color={valueColor('input', false, overridden(ioKey))}
@@ -801,7 +826,8 @@ export default function DebtTab() {
                 display={paceAmortYears === 0 ? 'Interest-only' : `${paceAmortYears} years`}
                 draftValue={String(paceAmortYears)}
                 parse={parseIntMin(0)}
-                onSave={(yrs) => onSaveOverride({ [paceAmortKey]: Math.round(yrs) * 12 })}
+                onSave={(yrs, note) => onSaveOverride({ [paceAmortKey]: Math.round(yrs) * 12 }, note)}
+                noteKey={paceAmortKey}
                 editable={liveMode}
                 suffix="years"
                 color={valueColor('input', false, overridden(paceAmortKey))}
@@ -819,7 +845,8 @@ export default function DebtTab() {
                     display={paceIoMonths > 0 ? `${paceIoMonths} months` : 'None'}
                     draftValue={String(paceIoMonths)}
                     parse={parseIntMin(0)}
-                    onSave={(m) => onSaveOverride({ [paceIoKey]: Math.round(m) })}
+                    onSave={(m, note) => onSaveOverride({ [paceIoKey]: Math.round(m) }, note)}
+                    noteKey={paceIoKey}
                     editable={liveMode}
                     suffix="months"
                     color={valueColor('input', false, overridden(paceIoKey))}
@@ -874,7 +901,7 @@ export default function DebtTab() {
       rateType={seniorFloating ? 'floating' : 'fixed'}
       editable={liveMode}
       currentRate={allInRate}
-      onSwitch={(patch) => onSaveOverride(patch)}
+      onSwitch={(patch, note) => onSaveOverride(patch, note)}
     />
   ) : 'Entered by you';
 
@@ -1181,7 +1208,8 @@ export default function DebtTab() {
                             draftValue={c.threshold == null ? '' : isDscr ? c.threshold.toFixed(2) : (c.threshold * 100).toFixed(1)}
                             parse={isDscr ? parseRatio : parsePctFrac}
                             unit={isDscr ? 'ratio' : 'pct_fraction'}
-                            onSave={(v) => onSaveOverride({ [key]: v > 0 ? v : null })}
+                            onSave={(v, note) => onSaveOverride({ [key]: v > 0 ? v : null }, note)}
+                            noteKey={key}
                             editable={liveMode}
                             suffix={isDscr ? 'x' : '%'}
                             color={valueColor('input', false, overridden(key))}
@@ -1342,7 +1370,7 @@ function DebtRow({ row }: { row: RowDef }) {
 // field_overrides + re-runs). Read-only when not editable.
 // ─────────────────────────────────────────────────────────────────────
 function EditableValue({
-  display, emptyLabel, draftValue, parse, onSave, editable, unit, suffix, bold, color, testId, title,
+  display, emptyLabel, draftValue, parse, onSave, editable, unit, suffix, bold, color, testId, title, noteKey,
 }: {
   display: string;
   /** Shown in place of a bare "—" when the value is missing and editable —
@@ -1350,8 +1378,11 @@ function EditableValue({
   emptyLabel?: string;
   draftValue: string;
   parse: (s: string) => number | null;
-  onSave: (v: number) => void | Promise<void>;
+  onSave: (v: number, note: string) => void | Promise<void>;
   editable: boolean;
+  /** FON-74 — the `field_overrides` key this editor writes. Given, the editor
+   *  demands a justification for any key that routes into engine input. */
+  noteKey?: string;
   /** How `parse` output is persisted — drives the no-op comparison. */
   unit: FieldUnit;
   suffix?: string;
@@ -1365,6 +1396,7 @@ function EditableValue({
   const current = parse(draftValue);
   const ed = useInlineEdit<number>({
     current, unit, parse, onSave, toDraft: () => draftValue,
+    requireNote: !!noteKey && requiresNote(noteKey),
   });
   const textColor = color ?? prov.blue;
   const isEmpty = display === '—' || display === '';
@@ -1397,7 +1429,14 @@ function EditableValue({
         style={{ ...inlineEditInputStyle, width: 120 }}
       />
       {suffix && <span style={{ fontSize: 11, color: palette.textMuted }}>{suffix}</span>}
-      <InlineEditControls onSave={() => void ed.submit()} onCancel={ed.cancel} saving={ed.saving} />
+      <InlineEditControls
+        onSave={() => void ed.submit()}
+        onCancel={ed.cancel}
+        saving={ed.saving}
+        note={ed.requireNote ? ed.note : undefined}
+        onNote={ed.requireNote ? ed.setNote : undefined}
+        noteTestId={ed.requireNote && testId ? `${testId}-note` : undefined}
+      />
     </span>
   );
 }
@@ -1453,7 +1492,7 @@ function RateTypeToggle({
   rateType: 'fixed' | 'floating';
   editable: boolean;
   currentRate?: number;
-  onSwitch: (patch: Record<string, number | string | null>) => void | Promise<void>;
+  onSwitch: (patch: Record<string, number | string | null>, note: string) => void | Promise<void>;
 }) {
   const { toast } = useToast();
   const [pending, setPending] = useState<'fixed' | 'floating' | null>(null);
@@ -1469,12 +1508,16 @@ function RateTypeToggle({
     invalidMessage: pending === 'floating'
       ? 'Enter the spread over the index to switch to floating.'
       : 'Enter the fixed rate to switch.',
-    onSave: async (frac) => {
+    // FON-74 — switching the basis re-prices the whole schedule, so the
+    // justification is mandatory on both keys the switch writes.
+    requireNote: true,
+    onSave: async (frac, note) => {
       if (!pending) return;
       await onSwitch(
         pending === 'floating'
           ? { [tk(SENIOR, 'rate_type')]: 'floating', [tk(SENIOR, 'spread_pct')]: frac }
           : { [tk(SENIOR, 'rate_type')]: 'fixed', [tk(SENIOR, 'rate_pct')]: frac },
+        note,
       );
       setPending(null);
     },
@@ -1514,6 +1557,9 @@ function RateTypeToggle({
             onCancel={cancel}
             saving={ed.saving}
             saveTestId="rate-basis-save"
+            note={ed.note}
+            onNote={ed.setNote}
+            noteTestId="rate-basis-note"
           />
         </span>
       )}
@@ -1588,7 +1634,7 @@ function RefinanceView({
   refiPayoff?: number;
   refiRate?: number;
   refiCosts?: number;
-  onSaveOverride: (patch: Record<string, number | string | null>) => void | Promise<void>;
+  onSaveOverride: (patch: Record<string, number | string | null>, note?: string) => void | Promise<void>;
   toast: ReturnType<typeof useToast>['toast'];
 }) {
   const bannerColor = active ? 'oklch(40% 0.12 155)' : palette.eyebrow;
@@ -1620,7 +1666,8 @@ function RefinanceView({
           display={refiYearOverride > 0 ? `Year ${Math.round(refiYearOverride)}` : '—'}
           draftValue={refiYearOverride > 0 ? String(Math.round(refiYearOverride)) : ''}
           parse={(s) => { const n = parseInt(s, 10); return Number.isFinite(n) && n >= 1 ? n : null; }}
-          onSave={(v) => onSaveOverride({ 'debt_stack.refi_test_year': Math.round(v) })}
+          onSave={(v, note) => onSaveOverride({ 'debt_stack.refi_test_year': Math.round(v) }, note)}
+          noteKey="debt_stack.refi_test_year"
           editable={liveMode}
           color={valueColor('input', false, refiYearOverride > 0)}
           unit="years"

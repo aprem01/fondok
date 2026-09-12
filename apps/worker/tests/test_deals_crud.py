@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import asyncio
 import io
+import json
 import os
 import shutil
 import tempfile
@@ -376,24 +377,37 @@ async def test_unchanged_field_overrides_emit_no_override_audit_row() -> None:
         r = await client.post("/deals", json={"name": "No-Op Save"})
         deal_id = r.json()["id"]
 
-        # 1 — the first override IS a change.
+        # 1 — the first override IS a change. FON-74: an engine input, so it
+        # carries the analyst's justification.
         r = await client.patch(
             f"/deals/{deal_id}",
-            json={"field_overrides": {"exit_cap_rate": {"value": 0.075}}},
+            json={
+                "field_overrides": {
+                    "exit_cap_rate": {"value": 0.075, "note": "comp set"}
+                }
+            },
         )
         assert r.status_code == 200, r.text
 
         # 2 — re-saving the same value (Sam's stray Save) changes nothing.
         r = await client.patch(
             f"/deals/{deal_id}",
-            json={"field_overrides": {"exit_cap_rate": {"value": 0.075}}},
+            json={
+                "field_overrides": {
+                    "exit_cap_rate": {"value": 0.075, "note": "comp set"}
+                }
+            },
         )
         assert r.status_code == 200, r.text
 
         # 3 — and a real edit is still audited.
         r = await client.patch(
             f"/deals/{deal_id}",
-            json={"field_overrides": {"exit_cap_rate": {"value": 0.08}}},
+            json={
+                "field_overrides": {
+                    "exit_cap_rate": {"value": 0.08, "note": "broker guidance"}
+                }
+            },
         )
         assert r.status_code == 200, r.text
 
@@ -412,3 +426,197 @@ async def test_unchanged_field_overrides_emit_no_override_audit_row() -> None:
     assert actions.count("override.set") == 2
     # Every PATCH still leaves the legacy trail.
     assert actions.count("deal.updated") == 3
+
+
+# ─────────────────────────────────────────────────────────────────────────
+# FON-74 — the analyst-justification gate on PATCH /deals/{id}
+#
+# The founder's June 2026 rule: an analyst who overrides a value must attach a
+# justification. It cannot live only in the browser — an API that can be talked
+# into an unjustified override is an API whose audit trail cannot be trusted.
+#
+# The rule: a note is required IFF the key routes into ENGINE INPUT, and only
+# for keys this PATCH actually CHANGES.
+# ─────────────────────────────────────────────────────────────────────────
+
+
+def _patch_client():
+    from httpx import ASGITransport, AsyncClient
+
+    from app.main import app
+
+    return AsyncClient(transport=ASGITransport(app=app), base_url="http://test")
+
+
+@pytest.mark.asyncio
+async def test_engine_input_override_without_a_note_is_422() -> None:
+    """A changed engine input with no justification is refused, by name."""
+    async with _patch_client() as client:
+        deal_id = (await client.post("/deals", json={"name": "Gate"})).json()["id"]
+
+        r = await client.patch(
+            f"/deals/{deal_id}", json={"field_overrides": {"exit_cap_rate": 0.075}}
+        )
+        assert r.status_code == 422, r.text
+        detail = r.json()["detail"]
+        assert detail["code"] == "override_note_required"
+        assert detail["keys"] == ["exit_cap_rate"]
+
+        # A structured entry whose note is absent / blank is the same refusal —
+        # whitespace is not a justification.
+        for entry in ({"value": 0.075}, {"value": 0.075, "note": "   "}):
+            r = await client.patch(
+                f"/deals/{deal_id}", json={"field_overrides": {"exit_cap_rate": entry}}
+            )
+            assert r.status_code == 422, r.text
+            assert r.json()["detail"]["code"] == "override_note_required"
+
+        # Nothing was written: the refusal is not a partial save.
+        got = (await client.get(f"/deals/{deal_id}")).json()["field_overrides"]
+        assert got == {}
+
+
+@pytest.mark.asyncio
+async def test_engine_input_override_with_a_note_is_200_and_stores_it() -> None:
+    async with _patch_client() as client:
+        deal_id = (await client.post("/deals", json={"name": "Gate OK"})).json()["id"]
+
+        r = await client.patch(
+            f"/deals/{deal_id}",
+            json={
+                "field_overrides": {
+                    "exit_cap_rate": {"value": 0.075, "note": "Comp set, Q3 trades"}
+                }
+            },
+        )
+        assert r.status_code == 200, r.text
+        stored = r.json()["field_overrides"]["exit_cap_rate"]
+        assert stored == {"value": 0.075, "note": "Comp set, Q3 trades"}
+
+
+@pytest.mark.asyncio
+async def test_every_changed_engine_key_is_named_in_the_refusal() -> None:
+    """The analyst is told WHICH keys need a reason, not just that one does."""
+    async with _patch_client() as client:
+        deal_id = (await client.post("/deals", json={"name": "Multi"})).json()["id"]
+        r = await client.patch(
+            f"/deals/{deal_id}",
+            json={
+                "field_overrides": {
+                    "gp_equity_pct": 0.12,
+                    "lp_equity_pct": 0.88,
+                    # ...and one that is fine, which must NOT be named.
+                    "stabilization_year": {"value": 3},
+                }
+            },
+        )
+        assert r.status_code == 422, r.text
+        assert r.json()["detail"]["keys"] == ["gp_equity_pct", "lp_equity_pct"]
+
+
+@pytest.mark.asyncio
+async def test_worksheet_layout_alone_is_200_with_no_note() -> None:
+    """The one key in the worker's ``_OVERRIDE_NON_ENGINE_KEYS``.
+
+    Presentation only — the worksheet's numbers come from the engines however
+    its rows are arranged. Without this exclusion every drag-to-reorder would
+    422, which is exactly the kind of collateral damage a rule like this dies of.
+    """
+    layout = {"rows": [{"id": "rooms", "label": "Rooms Revenue"}]}
+    async with _patch_client() as client:
+        deal_id = (await client.post("/deals", json={"name": "Layout"})).json()["id"]
+        r = await client.patch(
+            f"/deals/{deal_id}", json={"field_overrides": {"worksheet_layout": layout}}
+        )
+        assert r.status_code == 200, r.text
+        assert r.json()["field_overrides"]["worksheet_layout"] == layout
+
+
+@pytest.mark.asyncio
+async def test_keys_that_move_no_number_need_no_note() -> None:
+    """Exempt by name, each for a stated reason (see ``_NOTE_EXEMPT_KEYS``)."""
+    exempt = {
+        "stabilization_year": 3,
+        "property_overview.name": "The Angler's",
+        "debt.completion_guarantee": "in_place",
+        "partnership.waterfall.tier_count": 4,
+        "partnership.waterfall.2.removed": True,
+        "memo_thesis": "A long prose thesis the analyst wrote.",
+    }
+    async with _patch_client() as client:
+        deal_id = (await client.post("/deals", json={"name": "Exempt"})).json()["id"]
+        r = await client.patch(f"/deals/{deal_id}", json={"field_overrides": exempt})
+        assert r.status_code == 200, r.text
+
+
+@pytest.mark.asyncio
+async def test_a_shadow_override_is_not_a_change_and_needs_no_note() -> None:
+    """FON-63 — re-saving the value already stored is not an override.
+
+    This is what lets the gate ship against live deals: a legacy bare scalar
+    sitting on a deal keeps round-tripping, note or no note, until something
+    actually changes it.
+    """
+    from sqlalchemy import text as sql_text
+
+    from app.database import get_session_factory
+
+    async with _patch_client() as client:
+        deal_id = (await client.post("/deals", json={"name": "Shadow"})).json()["id"]
+
+        # Seed a LEGACY bare scalar straight into the column — a deal that
+        # predates the rule, exactly as production has them.
+        factory = get_session_factory()
+        async with factory() as session:
+            await session.execute(
+                sql_text("UPDATE deals SET field_overrides = :ov WHERE id = :id"),
+                {"id": deal_id, "ov": json.dumps({"exit_cap_rate": 0.07})},
+            )
+            await session.commit()
+
+        # Re-sending it unchanged is not a change, so it is not refused.
+        r = await client.patch(
+            f"/deals/{deal_id}", json={"field_overrides": {"exit_cap_rate": 0.07}}
+        )
+        assert r.status_code == 200, r.text
+
+        # The same value spelled as a string still reads as unchanged.
+        r = await client.patch(
+            f"/deals/{deal_id}", json={"field_overrides": {"exit_cap_rate": "0.07"}}
+        )
+        assert r.status_code == 200, r.text
+
+        # Changing it now DOES need a reason.
+        r = await client.patch(
+            f"/deals/{deal_id}", json={"field_overrides": {"exit_cap_rate": 0.08}}
+        )
+        assert r.status_code == 422, r.text
+
+
+@pytest.mark.asyncio
+async def test_clearing_an_override_is_a_revert_not_an_override() -> None:
+    """Dropping the key is a return to source — there is nothing to justify."""
+    async with _patch_client() as client:
+        deal_id = (await client.post("/deals", json={"name": "Revert"})).json()["id"]
+        r = await client.patch(
+            f"/deals/{deal_id}",
+            json={
+                "field_overrides": {
+                    "exit_cap_rate": {"value": 0.075, "note": "comp set"}
+                }
+            },
+        )
+        assert r.status_code == 200, r.text
+
+        r = await client.patch(f"/deals/{deal_id}", json={"field_overrides": {}})
+        assert r.status_code == 200, r.text
+        assert r.json()["field_overrides"] == {}
+
+
+@pytest.mark.asyncio
+async def test_a_patch_without_field_overrides_is_untouched_by_the_gate() -> None:
+    async with _patch_client() as client:
+        deal_id = (await client.post("/deals", json={"name": "Rename"})).json()["id"]
+        r = await client.patch(f"/deals/{deal_id}", json={"name": "Project Pelican"})
+        assert r.status_code == 200, r.text
+        assert r.json()["name"] == "Project Pelican"

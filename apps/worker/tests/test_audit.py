@@ -212,3 +212,55 @@ async def test_log_audit_non_deal_resource_leaves_deal_col_null() -> None:
     assert m["deal_id"] is None
     assert m["resource_id"] == doc
     assert m["resource_type"] == "document"
+
+
+@pytest.mark.asyncio
+async def test_override_audit_row_carries_the_analyst_note() -> None:
+    """FON-74 — the justification lands on the ``override.set`` row.
+
+    ``metadata`` is written into ``payload['metadata']`` and ``payload`` is
+    already on ``AuditEntry``, so the Activity Feed can render the reason with
+    no schema change. Only keys that HAVE a note appear — an exempt key
+    contributes nothing rather than an empty string.
+    """
+    from httpx import ASGITransport, AsyncClient
+    from sqlalchemy import text as sql_text
+
+    from app.database import get_session_factory
+    from app.main import app
+
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://test"
+    ) as client:
+        deal_id = (await client.post("/deals", json={"name": "Noted"})).json()["id"]
+        r = await client.patch(
+            f"/deals/{deal_id}",
+            json={
+                "field_overrides": {
+                    "exit_cap_rate": {"value": 0.075, "note": "Comp set, Q3 trades"},
+                    "stabilization_year": {"value": 3},
+                }
+            },
+        )
+        assert r.status_code == 200, r.text
+
+    factory = get_session_factory()
+    async with factory() as session:
+        row = (
+            await session.execute(
+                sql_text(
+                    "SELECT payload FROM audit_log "
+                    "WHERE resource_id = :rid AND action = 'override.set'"
+                ),
+                {"rid": deal_id},
+            )
+        ).first()
+
+    assert row is not None
+    payload = json.loads(row._mapping["payload"])
+    notes = payload["metadata"]["notes"]
+    assert notes == {"exit_cap_rate": "Comp set, Q3 trades"}
+    assert sorted(payload["metadata"]["changed_keys"]) == [
+        "exit_cap_rate",
+        "stabilization_year",
+    ]

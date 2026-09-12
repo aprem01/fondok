@@ -17,12 +17,14 @@ import { Tooltip } from './Tooltip';
  * see whether the value is a seed, extracted from a real doc, or an
  * analyst override.
  *
- * When ``onOverride`` is provided, the badge renders an extra small
- * "Override" button alongside the source label so the analyst can
- * hard-code the value with a mandatory justification note (roadmap
- * item #6 from the June 2026 call). The callback opens the
- * ``OverridePanel`` (right-anchored drawer); the page that owns the
- * data is responsible for the actual PATCH + re-render.
+ * FON-74 — this badge used to carry an ``onOverride`` pencil that opened the
+ * ``OverridePanel`` drawer, the one place the mandatory-justification rule was
+ * ever implemented. No caller in the app ever passed ``onOverride``, so the
+ * drawer never mounted and the rule was enforced nowhere an analyst could
+ * reach. The pencil, the callback and the drawer are gone: overriding is done
+ * inline on the tabs, and the justification gate lives in exactly one place
+ * (``@/lib/overrideNote`` + ``design/InlineEdit``). A second implementation of
+ * a rule is how this inverted in the first place.
  *
  * Use inline: `Net Operating Income $4.2M <AssumptionBadge source="t12_actual"/>`
  */
@@ -31,7 +33,6 @@ export function AssumptionBadge({
   documentId,
   dealId,
   className,
-  onOverride,
   overrideNote,
 }: {
   source: AssumptionSource | string | undefined;
@@ -44,10 +45,6 @@ export function AssumptionBadge({
    *  when omitted (badge still renders, just not clickable). */
   dealId?: string | null;
   className?: string;
-  /** When provided, renders an "Override" pencil button next to the
-   *  badge. The callback receives no args — the parent owns the field
-   *  identity and renders the modal. */
-  onOverride?: () => void;
   /** When the active source is ``analyst_override``, surface the note
    *  the analyst recorded in the badge tooltip. */
   overrideNote?: string | null;
@@ -105,26 +102,7 @@ export function AssumptionBadge({
     </Tooltip>
   );
 
-  if (!onOverride) return sourceEl;
-
-  return (
-    <span className="inline-flex items-center gap-1 align-middle">
-      {sourceEl}
-      <Tooltip content="Override this value with an analyst note" side="top">
-        <button
-          type="button"
-          onClick={(e) => {
-            e.stopPropagation();
-            onOverride();
-          }}
-          className="inline-flex items-center justify-center w-4 h-4 rounded text-ink-500 hover:text-blue-700 hover:bg-blue-50 transition-colors"
-          aria-label="Override value"
-        >
-          <Pencil size={9} aria-hidden="true" />
-        </button>
-      </Tooltip>
-    </span>
-  );
+  return sourceEl;
 }
 
 type SourceMeta = {

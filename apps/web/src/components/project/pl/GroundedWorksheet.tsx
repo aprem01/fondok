@@ -36,8 +36,14 @@ import type { ExtractionField, ExtractionResult, WorkerDocument, ValueState } fr
 import { getEngineField, useEngineOutputs } from '@/lib/hooks/useEngineOutputs';
 import { useEngineRun } from '@/lib/hooks/useEngineRun';
 import { useTrace } from '@/lib/hooks/useValueTrace';
-import { ProvenanceDot, NO_OP_EDIT_MESSAGE } from '@/components/design';
+import { ProvenanceDot, NO_OP_EDIT_MESSAGE, InlineEditControls, useCancelOnOutside } from '@/components/design';
 import { isNoOpEdit } from '@/lib/fieldValue';
+import {
+  overrideEnvelope,
+  requiresNote,
+  NOTE_PLACEHOLDER,
+  NOTE_REQUIRED_MESSAGE,
+} from '@/lib/overrideNote';
 import { useDeal } from '@/lib/hooks/useDeal';
 import { useDocuments } from '@/lib/hooks/useDocuments';
 import { isHistoricalSourceDoc, useHistoricals } from '@/lib/hooks/useHistoricals';
@@ -345,6 +351,9 @@ export default function GroundedWorksheet({
   });
   const [customize, setCustomize] = useState(false);
   const [draft, setDraft] = useState<Record<string, string>>({});
+  // FON-74 — the analyst's justification for the open cell, keyed the same way
+  // as the draft so opening a second cell never inherits the first's reason.
+  const [note, setNote] = useState<Record<string, string>>({});
   const [savingKey, setSavingKey] = useState<string | null>(null);
   const [inspect, setInspect] = useState<InspectTarget | null>(null);
   // Design rewire: year-pill filtering + line-item search.
@@ -619,17 +628,28 @@ export default function GroundedWorksheet({
       // the line keeps reporting the source it came from.
       if (isNoOpEdit(n, current, 'usd')) {
         setDraft((d) => { const { [key]: _d, ...rest } = d; return rest; });
+        setNote((d) => { const { [key]: _d, ...rest } = d; return rest; });
         toast(NO_OP_EDIT_MESSAGE, { type: 'info' });
+        return;
+      }
+      // FON-74 — a historical statement cell IS engine input, so the analyst
+      // says why their number replaces the extracted one. Asked only after the
+      // no-op guard, and never pre-filled ("Edited on the Financials worksheet"
+      // was software prose sitting where a justification belongs).
+      const justification = (note[key] ?? '').trim();
+      if (!justification && requiresNote(key)) {
+        toast(NOTE_REQUIRED_MESSAGE, { type: 'error' });
         return;
       }
       setSavingKey(key);
       try {
-        const next = { ...overrides, [key]: { value: n, note: 'Edited on the Financials worksheet' } };
+        const next = { ...overrides, [key]: overrideEnvelope(key, n, justification) };
         await api.deals.update(rawId, { field_overrides: next });
         await refreshDeal();
         await run();
         await refresh();
         setDraft((d) => { const { [key]: _d, ...rest } = d; return rest; });
+        setNote((d) => { const { [key]: _d, ...rest } = d; return rest; });
         toast('Saved + re-modeled', { type: 'success' });
       } catch (err) {
         toast(`Couldn’t save: ${err instanceof Error ? err.message : String(err)}`, { type: 'error' });
@@ -637,7 +657,7 @@ export default function GroundedWorksheet({
         setSavingKey(null);
       }
     },
-    [draft, overrides, rawId, refreshDeal, run, refresh, toast],
+    [draft, note, overrides, rawId, refreshDeal, run, refresh, toast],
   );
 
   const reset = useCallback(
@@ -1085,10 +1105,16 @@ export default function GroundedWorksheet({
                       overridden={!c.historical && isOverridden(row.overrideKey)}
                       review={reviewState.byCell.get(cellKey(row.id, c.year.year))}
                       draft={row.overrideKey ? draft[row.overrideKey] : undefined}
+                      note={row.overrideKey ? note[row.overrideKey] ?? '' : ''}
                       saving={!!row.overrideKey && savingKey === row.overrideKey}
                       onDraft={(s) => row.overrideKey && setDraft((d) => ({ ...d, [row.overrideKey!]: s }))}
+                      onNote={(s) => row.overrideKey && setNote((d) => ({ ...d, [row.overrideKey!]: s }))}
                       onSave={(current) => row.overrideKey && save(row.overrideKey, current)}
-                      onCancel={() => row.overrideKey && setDraft((d) => { const { [row.overrideKey!]: _x, ...rest } = d; return rest; })}
+                      onCancel={() => {
+                        if (!row.overrideKey) return;
+                        setDraft((d) => { const { [row.overrideKey!]: _x, ...rest } = d; return rest; });
+                        setNote((d) => { const { [row.overrideKey!]: _x, ...rest } = d; return rest; });
+                      }}
                       onInspect={(t) => setInspect(t)}
                       colLabel={c.label}
                       docNameById={docNameById}
@@ -1127,8 +1153,8 @@ export default function GroundedWorksheet({
 
 // ── One cell (historical read-only, model editable, computed) ──────────
 function WorksheetCell({
-  row, historical, histYear, modelLive, overridden, review, draft, saving, colLabel,
-  onDraft, onSave, onCancel, onInspect, docNameById,
+  row, historical, histYear, modelLive, overridden, review, draft, note, saving, colLabel,
+  onDraft, onNote, onSave, onCancel, onInspect, docNameById,
 }: {
   row: RowDef;
   historical: boolean;
@@ -1137,9 +1163,12 @@ function WorksheetCell({
   overridden: boolean;
   review?: { docId: string; field: string; confidence: number };
   draft: string | undefined;
+  /** FON-74 — the analyst justification typed for this cell. */
+  note: string;
   saving: boolean;
   colLabel: string;
   onDraft: (s: string) => void;
+  onNote: (s: string) => void;
   /** Save this cell — carries the value on screen so a no-op can be refused. */
   onSave: (current: number | null) => void;
   onCancel: () => void;
@@ -1147,6 +1176,12 @@ function WorksheetCell({
   docNameById: (id: string) => string | undefined;
 }) {
   const [hovered, setHovered] = useState(false);
+  const editing = draft != null;
+  // FON-74 — click-away discards, exactly as the input's blur used to, but from
+  // the WHOLE editor (value + justification + Save · Cancel). Declared here, and
+  // not beside `editable` below, because a cell with no value returns early and
+  // a hook may not sit behind a return.
+  const editorRef = useCancelOnOutside(editing, onCancel);
   const resolved = useSource(!historical ? row.overrideKey : undefined);
   // FON-65 — per-value grounding state from GET /deals/{id}/provenance, powering
   // the canonical 6-state dot for the Model (year-0) column. Historical columns
@@ -1225,8 +1260,9 @@ function WorksheetCell({
     return <td className="px-3 py-1.5 text-right text-ink-300">—</td>;
   }
 
-  const editing = draft != null;
   const editable = !historical && !!row.overrideKey;
+  // FON-74 — a statement cell is engine input, so Save asks for a reason.
+  const requireNote = !!row.overrideKey && requiresNote(row.overrideKey);
 
   // Custom source tooltip (canonical Financials design): a dark navy bubble
   // that NAMES the actual source document on hover. Supplements — never
@@ -1263,15 +1299,37 @@ function WorksheetCell({
           <ProvenanceDot state={dotState} review={dotReview} size={8} />
         </button>
         {editing ? (
-          <input
-            autoFocus
-            value={draft}
-            onChange={(e) => onDraft(e.target.value)}
-            onKeyDown={(e) => { if (e.key === 'Enter') onSave(value); if (e.key === 'Escape') onCancel(); }}
-            onBlur={onCancel}
-            title="Enter to save — Esc or clicking away discards the edit"
-            className="w-24 px-1.5 py-0.5 text-[12.5px] text-right tabular-nums border border-brand-500 rounded focus:outline-none focus:ring-2 focus:ring-brand-100"
-          />
+          // FON-74 — the value and its justification are one editor, so the
+          // blur that used to cancel would fire the moment the analyst reached
+          // for the reason. Clicking away still discards, through the shared
+          // `useCancelOnOutside` contract every other editor uses.
+          <span ref={editorRef} className="inline-flex flex-col items-stretch gap-1 w-56 text-left">
+            <input
+              autoFocus
+              value={draft}
+              onChange={(e) => onDraft(e.target.value)}
+              onKeyDown={(e) => { if (e.key === 'Enter') onSave(value); if (e.key === 'Escape') onCancel(); }}
+              title="Enter to save — Esc or clicking away discards the edit"
+              className="w-full px-1.5 py-0.5 text-[12.5px] text-right tabular-nums border border-brand-500 rounded focus:outline-none focus:ring-2 focus:ring-brand-100"
+            />
+            {requireNote && (
+              <input
+                value={note}
+                aria-label="Override justification"
+                data-testid={`worksheet-note-${row.overrideKey}`}
+                placeholder={NOTE_PLACEHOLDER}
+                onChange={(e) => onNote(e.target.value)}
+                onKeyDown={(e) => { if (e.key === 'Enter') onSave(value); if (e.key === 'Escape') onCancel(); }}
+                className="w-full px-1.5 py-0.5 text-[11px] text-left border border-brand-500 rounded focus:outline-none focus:ring-2 focus:ring-brand-100"
+              />
+            )}
+            <InlineEditControls
+              onSave={() => onSave(value)}
+              onCancel={onCancel}
+              saving={saving}
+              saveTestId={`worksheet-save-${row.overrideKey}`}
+            />
+          </span>
         ) : editable ? (
           <button
             type="button"

@@ -274,8 +274,9 @@ export default function MethodologyPage() {
               Industry benchmark margin from a HotStats-style P&L benchmark report applied as a USALI ratio override.
             </BadgeRow>
             <BadgeRow source="analyst_override" name="Analyst Override">
-              Set via an inline editor. Wins over every other source — but only a value that actually
-              changed is recorded as one; see &quot;What counts as an override&quot; below.
+              Set via an inline editor, and carrying the analyst&apos;s own written justification. Wins over
+              every other source — but only a value that actually changed is recorded as one; see
+              &quot;What counts as an override&quot; and &quot;Every override carries a justification&quot; below.
             </BadgeRow>
             <BadgeRow source="str_forecast" name="STR Forecast">
               Year-1 occupancy &amp; ADR seeded from STR — the Market tab&apos;s &quot;Use STR rates in the model&quot; writes the comp-set rates the card shows as explicit overrides (note: &quot;STR comp-set market rates (Market tab)&quot;), else the subject TTM or the BASE forward forecast. Financials → Projections shows &quot;Active basis: Market / STR · Revert&quot; only when the rates carry this tag, and the Market tab&apos;s STR card reads the same tags — &quot;STR rates active&quot;, &quot;STR rates unavailable — using T-12 base&quot;, or &quot;Pending re-run&quot; when the worker has not tagged the rates yet — never the request flag alone.
@@ -312,6 +313,42 @@ export default function MethodologyPage() {
             OM, benchmark or seed), not as an analyst override. The stored override is left exactly as the analyst
             wrote it and the engines still read it, so no number moves — only the claim about where the number came
             from. Use <b>Clear override</b> in the provenance popover to remove one.
+          </p>
+        </Card>
+
+        <Card className="p-5 mb-4">
+          <h4 className="text-[13px] font-semibold text-ink-900 mb-3">Every override carries a justification</h4>
+          <p className="text-[12.5px] text-ink-500 leading-relaxed">
+            An override that <span className="font-semibold text-ink-900">changes a number</span> carries an
+            analyst justification. It is required at the moment of the edit, stored with the value in the
+            deal&apos;s <code className="text-[11.5px]">field_overrides</code> as{' '}
+            <code className="text-[11.5px]">{'{ value, note }'}</code>, and shown to reviewers in the
+            provenance popover next to the number and on the override&apos;s row in the activity trail. The rule
+            is enforced in the API as well as in the editor: a save that changes an engine input without a
+            note is rejected (<code className="text-[11.5px]">422 override_note_required</code>), so there is
+            no path — UI, script or integration — that can record an unexplained number.
+          </p>
+          <p className="text-[12.5px] text-ink-500 leading-relaxed mt-2">
+            The justification is never written for you. Fondok stores what the analyst typed or nothing at all;
+            it never fills the field with a generated sentence about which page the edit was made on.
+          </p>
+          <p className="text-[12.5px] text-ink-500 leading-relaxed mt-2">
+            <span className="font-semibold text-ink-900">What is exempt, and why.</span> The requirement follows
+            one rule — a note is needed when the key routes into engine input. Edits that change no modelled
+            number need none: the Historicals worksheet&apos;s row layout (
+            <code className="text-[11.5px]">worksheet_layout</code>, presentation only), the{' '}
+            <span className="font-semibold text-ink-900">Stabilization Year</span> (it selects which projection
+            year the stabilized figures are read from and moves no return), the{' '}
+            <span className="font-semibold text-ink-900">Property Name</span> (a name, not a number), the
+            Completion Guarantee covenant status (qualitative — no covenant math), the number of promote tiers
+            in the waterfall (its shape, not a value in it), and the IC memo&apos;s prose. Clearing an override
+            is a revert to source, not an override, and needs no note either.
+          </p>
+          <p className="text-[12.5px] text-ink-500 leading-relaxed mt-2">
+            <span className="font-semibold text-ink-900">Target Levered IRR and Target MOIC are not overrides.</span>{' '}
+            They are stored on the deal as stated objectives — the benchmark the returns are read against and the
+            hurdle the Max Price Solver prices to — not replacements for a value Fondok sourced from a document.
+            They are editable without a justification, and a value that came from a source is never behind them.
           </p>
         </Card>
 
