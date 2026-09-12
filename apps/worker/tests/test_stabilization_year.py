@@ -289,12 +289,9 @@ def test_no_resolvable_year_publishes_nothing_rather_than_zero() -> None:
         is None
     )
     # An occupancy path that never reaches the assumption HANDS OFF to the NOI
-    # plateau rather than refusing (changed 2026-09-12 after finding it live on
-    # Sam MVP Test 2: occupancy projects 71.6% -> 73.9% against a higher target,
-    # so the whole block came back null and every Stabilization row on Overview,
-    # the IC memo and Scenario Analysis was a dash). The block still says WHICH
-    # signal answered, so an unmet occupancy assumption is visible rather than
-    # silently papered over.
+    # plateau rather than refusing (changed 2026-09-12). The block still says
+    # WHICH signal answered, so an unmet occupancy assumption stays visible
+    # rather than being silently papered over.
     block = build_stabilized_year(
         total_revenue_by_year=[10.0, 11.0],
         noi_before_reserve_by_year=[4.0, 5.0],
@@ -372,12 +369,16 @@ async def test_worksheet_layout_is_skipped_by_name_not_by_shape() -> None:
     assert "worksheet_layout" not in base.get("__sources__", {})
 
 
-# ── Found live on Sam MVP Test 2, 2026-09-12 ─────────────────────────────
-# The deal projects occupancy 71.6% → 73.9% against a higher stabilized
-# assumption, so the occupancy signal never fires. It used to return
-# (None, None) instead of handing off, which blanked every Stabilization row
-# on Overview, the IC memo and Scenario Analysis. The NOI plateau exists to
-# answer exactly this case.
+# ── Latent defect, 2026-09-12 ────────────────────────────────────────────
+# When a deal's stabilized-occupancy assumption sits above the ceiling of its
+# own projected ramp, the occupancy signal used to return (None, None) rather
+# than handing off, blanking every Stabilization row on Overview, the IC memo
+# and Scenario Analysis. The NOI plateau exists to answer exactly this case.
+#
+# Found while chasing a blank block on Sam MVP Test 2. That deal turned out
+# NOT to hit this path (its target is reached in Year 1; the blank there was a
+# stale engine run), so these cases are the defect's real reproduction rather
+# than a transcript of what was on screen.
 def test_unreached_occupancy_target_falls_through_to_the_noi_plateau() -> None:
     from app.engines.stabilization import resolve_stabilized_year
 

@@ -77,11 +77,17 @@ def resolve_stabilized_year(
         # Occupancy never reaches the target. That is not "there is no
         # stabilized year" — it is this signal declining to answer, so fall
         # through to the NOI plateau rather than refusing. Returning here
-        # blanked every Stabilization row on any deal whose ramp tops out
-        # below its own stabilized-occupancy assumption, which is the common
-        # case on a renovation deal (found live on Sam MVP Test 2: occupancy
-        # projects 71.6% -> 73.9% against a higher target, so the whole block
-        # came back null and Overview showed five dashes).
+        # blanks every Stabilization row on any deal whose ramp tops out below
+        # its own stabilized-occupancy assumption, which is an ordinary shape
+        # for a renovation deal.
+        #
+        # Provenance of this fix, stated honestly: it was written while
+        # chasing a blank Stabilization block on Sam MVP Test 2, and the
+        # commit first claimed this was the cause. It was not — that deal's
+        # occupancy assumption IS reached in Year 1, so this branch returned
+        # normally and the blank was a stale engine run from before the block
+        # existed. The defect below is real and reachable (any target above
+        # the ramp's ceiling), but it was not what was on screen.
 
     # Fallback — NOI plateau.
     n = len(noi_by_year)
