@@ -1,0 +1,226 @@
+name: Post-deploy smoke (live deal)
+
+# Why this exists — FON-76
+# ------------------------
+# On 2026-09-12 a live deal rendered every Stabilization row on Overview as a
+# dash while 1,537 worker tests and 606 web tests were green. The Playwright
+# suite runs the frontend against mocks, so it structurally could not see it,
+# and nothing in CI read persisted PRODUCTION data through the DEPLOYED app.
+#
+# This workflow is the check that closes that gap: it opens one pinned,
+# pre-existing deal in the deployed app, signed in as a real (test) user, and
+# asserts the figures are present. It asserts presence and structure and never
+# a value — see apps/web/e2e/README.md § "The post-deploy production smoke".
+#
+# IT WRITES NOTHING. No deal creation, no upload, no override, no re-run.
+#
+# WHY IT RUNS AFTER THE ALIAS, NOT AFTER THE DEPLOY
+# -------------------------------------------------
+# fondok-app.vercel.app is a plain alias over the Vercel project's
+# auto-managed domain; `alias-fondok-app.yml` promotes it AFTER a deployment
+# goes Ready. A smoke pointed at a raw fondok-<hash>-…vercel.app URL would
+# test a bundle no analyst is served. So the deploy-fired trigger is the
+# COMPLETION of the alias workflow, and the base URL is the alias — never a
+# deployment URL. `apps/web/e2e/prod/guard.ts` enforces the host, and the
+# spec re-asserts it at the end.
+#
+# ONE-TIME SETUP — repository secrets
+# -----------------------------------
+#   GitHub → repo → Settings → Secrets and variables → Actions → New secret
+#
+#   CLERK_PUBLISHABLE_KEY   Clerk DEVELOPMENT instance publishable key
+#                           (pk_test_…). Must be the same instance the
+#                           deployed app was built against.
+#   CLERK_SECRET_KEY        Clerk DEVELOPMENT instance secret key (sk_test_…).
+#                           Mints the Testing Token that disables bot
+#                           detection for the run. NEVER the production
+#                           instance — the smoke refuses sk_live_/pk_live_.
+#   FONDOK_SMOKE_EMAIL      A dedicated Clerk test user (a +clerk_test
+#                           address, so a dev instance skips real email
+#                           delivery). It must be a member of the org that
+#                           owns the smoke deal, and should own nothing else.
+#   FONDOK_SMOKE_PASSWORD   That user's password.
+#   FONDOK_SMOKE_DEAL_ID    The permanent deal the smoke reads. Pick one that
+#                           will never be archived or deleted.
+#
+# Until all five are set the smoke job NO-OPS with a warning rather than
+# failing every deploy. A "not configured" annotation is not a pass — check
+# the job summary.
+
+on:
+  # Run it by hand: GitHub → Actions → this workflow → Run workflow.
+  workflow_dispatch:
+
+  # Deploy-fired: the alias promotion finishing is the signal that
+  # fondok-app.vercel.app now serves the new bundle.
+  workflow_run:
+    workflows: ["Promote fondok-app alias"]
+    types: [completed]
+
+  # For an alias promoted by hand from a laptop (`vercel alias set …`):
+  #   gh api repos/:owner/:repo/dispatches -f event_type=prod-alias-promoted
+  repository_dispatch:
+    types: [prod-alias-promoted]
+
+  # PULL REQUESTS RUN THE GUARD, NEVER THE SMOKE. The `guard` job proves
+  # against the real Playwright config that the prod project cannot be
+  # selected without both opt-ins; the `smoke` job is excluded by `if:`.
+  pull_request:
+    branches: [main]
+    paths:
+      - "apps/web/playwright.config.ts"
+      - "apps/web/e2e/**"
+      - "apps/web/package.json"
+      - ".github/workflows/post-deploy-smoke.yml"
+
+concurrency:
+  group: post-deploy-smoke-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  # ── The test for the guard ──────────────────────────────────────────────
+  # The deliverable of FON-76 is itself a test, so what needs its own test is
+  # the thing that decides whether it runs. This asks the real config what it
+  # would select under five environments short of the opt-in (including the
+  # one a pull request presents) and fails if any of them selects a prod test
+  # — or if the ordinary suite selects nothing, which would make the check
+  # vacuously true.
+  guard:
+    name: Opt-in guard
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v3
+        with:
+          version: 9
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      # No browsers needed: `playwright test --list` resolves projects and
+      # loads specs without launching anything.
+      - name: Prove the prod project cannot be selected without the opt-in
+        run: cd apps/web && pnpm test:e2e:prod:guard
+
+  # ── The smoke ───────────────────────────────────────────────────────────
+  smoke:
+    name: Live deal smoke
+    # Never on a pull request. On a workflow_run, only when the alias
+    # promotion actually succeeded — aliasing a stale build and then smoking
+    # it would report on a bundle nobody is served.
+    if: >-
+      github.event_name != 'pull_request' &&
+      (github.event_name != 'workflow_run' ||
+       github.event.workflow_run.conclusion == 'success')
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Guard — smoke credentials present
+        id: creds
+        env:
+          CLERK_PUBLISHABLE_KEY: ${{ secrets.CLERK_PUBLISHABLE_KEY }}
+          CLERK_SECRET_KEY: ${{ secrets.CLERK_SECRET_KEY }}
+          FONDOK_SMOKE_EMAIL: ${{ secrets.FONDOK_SMOKE_EMAIL }}
+          FONDOK_SMOKE_PASSWORD: ${{ secrets.FONDOK_SMOKE_PASSWORD }}
+          FONDOK_SMOKE_DEAL_ID: ${{ secrets.FONDOK_SMOKE_DEAL_ID }}
+        run: |
+          set -u
+          missing=""
+          for name in CLERK_PUBLISHABLE_KEY CLERK_SECRET_KEY \
+                      FONDOK_SMOKE_EMAIL FONDOK_SMOKE_PASSWORD FONDOK_SMOKE_DEAL_ID; do
+            # Indirect expansion over a fixed list of names. Only the
+            # EMPTINESS of each value is inspected; no value is ever echoed.
+            if [ -z "${!name:-}" ]; then
+              missing="$missing $name"
+            fi
+          done
+          if [ -n "$missing" ]; then
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+            echo "::warning::Post-deploy smoke NOT configured — missing secrets:$missing"
+            {
+              echo "### Post-deploy smoke: NOT RUN"
+              echo ""
+              echo "Missing repository secrets:\`$missing\`"
+              echo ""
+              echo 'See the header of `.github/workflows/post-deploy-smoke.yml`.'
+              echo "**This job being green does not mean the deploy was smoked.**"
+            } >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "skip=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - uses: actions/checkout@v4
+        if: steps.creds.outputs.skip == 'false'
+
+      - uses: pnpm/action-setup@v3
+        if: steps.creds.outputs.skip == 'false'
+        with:
+          version: 9
+
+      - uses: actions/setup-node@v4
+        if: steps.creds.outputs.skip == 'false'
+        with:
+          node-version: 20
+          cache: pnpm
+
+      - name: Install dependencies
+        if: steps.creds.outputs.skip == 'false'
+        run: pnpm install --frozen-lockfile
+
+      - name: Install Playwright Chromium
+        if: steps.creds.outputs.skip == 'false'
+        run: cd apps/web && pnpm exec playwright install --with-deps chromium
+
+      # The alias flips a moment after the promotion workflow reports done.
+      # Wait for the alias host itself to answer before judging the app, so a
+      # propagation blip is never reported as a broken deal.
+      - name: Wait for the aliased host to answer
+        if: steps.creds.outputs.skip == 'false'
+        run: |
+          set -u
+          for i in $(seq 1 30); do
+            code=$(curl -s -o /dev/null -w '%{http_code}' \
+                     --max-time 20 https://fondok-app.vercel.app/ || echo 000)
+            if [ "$code" = "200" ]; then
+              echo "fondok-app.vercel.app answered 200 on attempt $i."
+              exit 0
+            fi
+            echo "[$i/30] fondok-app.vercel.app → $code, waiting…"
+            sleep 10
+          done
+          echo "::error::fondok-app.vercel.app never answered 200 — the alias is not serving."
+          exit 1
+
+      - name: Smoke the pinned live deal (read-only)
+        if: steps.creds.outputs.skip == 'false'
+        env:
+          # Both opt-ins. Without BOTH, apps/web/e2e/prod/guard.ts leaves the
+          # `prod` project out of the config entirely and this command fails
+          # with "Project(s) 'prod' not found" rather than silently passing.
+          FONDOK_E2E_PROD: "1"
+          PLAYWRIGHT_BASE_URL: https://fondok-app.vercel.app
+          CLERK_PUBLISHABLE_KEY: ${{ secrets.CLERK_PUBLISHABLE_KEY }}
+          CLERK_SECRET_KEY: ${{ secrets.CLERK_SECRET_KEY }}
+          FONDOK_SMOKE_EMAIL: ${{ secrets.FONDOK_SMOKE_EMAIL }}
+          FONDOK_SMOKE_PASSWORD: ${{ secrets.FONDOK_SMOKE_PASSWORD }}
+          FONDOK_SMOKE_DEAL_ID: ${{ secrets.FONDOK_SMOKE_DEAL_ID }}
+        run: cd apps/web && pnpm test:e2e:prod
+
+      - name: Upload Playwright report
+        if: failure() && steps.creds.outputs.skip == 'false'
+        uses: actions/upload-artifact@v4
+        with:
+          name: post-deploy-smoke-report
+          path: apps/web/e2e/.report/
+          retention-days: 7
