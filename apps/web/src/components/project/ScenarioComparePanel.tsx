@@ -15,8 +15,18 @@
  *
  * Base always reads the canonical run — the worker resolves it; nothing here
  * mutates the Base underwriting. Editing a scenario's overrides happens in the
- * ScenarioEditor drawer (opened from the ScenarioSelector pill row); this panel
- * is a read-only comparison lens.
+ * ScenarioEditor drawer, opened from this panel's own ••• action strip or the
+ * override table's "Edit overrides" button; the project page still owns the
+ * scenario API calls and the drawer's open/close state.
+ *
+ * ── FON-69 (canonical reconciliation) ────────────────────────────────────
+ * There is exactly ONE scenario chip row in the product and it lives here,
+ * inside Scenario Comparison (design/canonical/Scenarios Tab.dc.html:119-139).
+ * The former global ScenarioSelector above the sensitivity grid is gone. Its
+ * management actions were reachable only through a HOVER popover — the 4px gap
+ * plus the wrapper's mouseleave was the dead zone Sam reported. The canonical
+ * affordance is a persistent ••• that toggles on CLICK into a pinned action
+ * strip, which stays open until Escape, an outside click, or its own ✕.
  *
  * ── Add to memo persistence ──────────────────────────────────────────────
  * Membership of the IC-memo comparison set is DURABLE server-side: an
@@ -27,7 +37,7 @@
  * survives ONLY as the fallback for mock/preview deals (numeric id or no worker
  * configured), matching the app's liveMode gating.
  */
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { ArrowRight, Check, FileText, Loader2 } from 'lucide-react';
 import { Card } from '@/components/ui/Card';
 import { Button } from '@/components/ui/Button';
@@ -54,6 +64,18 @@ import {
 interface Props {
   dealId: string;
   scenarios: ScenarioRecord[];
+  /** FON-69 — scenario management lives in this panel now (canonical has one
+   *  chip row). The project page keeps ownership of the scenario API calls and
+   *  the ScenarioEditor drawer; these are the delegation hooks. Every one is
+   *  OPTIONAL so the panel still renders standalone (mock deals, unit tests)
+   *  with no management affordances at all. */
+  onCreate?: () => void;
+  onEdit?: (scenario: ScenarioRecord) => void;
+  onDuplicate?: (scenario: ScenarioRecord) => void;
+  onDelete?: (scenario: ScenarioRecord) => void;
+  /** Canonical per-row "Remove this override" ✕ (Scenarios Tab.dc.html:200).
+   *  The parent persists it (api.scenarios.update) and refreshes the list. */
+  onRemoveOverride?: (scenario: ScenarioRecord, fieldPath: string) => void;
 }
 
 // Canonical palette (Scenarios Tab.dc.html).
@@ -135,7 +157,15 @@ const KPI_ROWS: KpiRow[] = [
   },
 ];
 
-export default function ScenarioComparePanel({ dealId, scenarios }: Props) {
+export default function ScenarioComparePanel({
+  dealId,
+  scenarios,
+  onCreate,
+  onEdit,
+  onDuplicate,
+  onDelete,
+  onRemoveOverride,
+}: Props) {
   const { toast } = useToast();
   const { outputs } = useEngineOutputs(dealId);
 
@@ -150,6 +180,39 @@ export default function ScenarioComparePanel({ dealId, scenarios }: Props) {
     }
   }, [scenarios, base, focusedId]);
   const focused = scenarios.find((s) => s.id === focusedId) ?? base;
+
+  // FON-69 — canonical ••• scenario actions. CLICK-toggled, never hover: the
+  // old selector opened its menu on mouseenter and closed it on the wrapper's
+  // mouseleave, so the 4px gap under the chip swallowed the pointer before it
+  // reached "Edit overrides". This strip opens on click and stays open until
+  // Escape, a click outside the chip row, or its own ✕.
+  const [menuId, setMenuId] = useState<string | null>(null);
+  const chipRowRef = useRef<HTMLDivElement | null>(null);
+  const canManage = !!(onEdit || onDuplicate || onDelete);
+  const menuScenario = menuId ? named.find((s) => s.id === menuId) ?? null : null;
+
+  useEffect(() => {
+    if (!menuId) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setMenuId(null);
+    };
+    const onPointerDown = (e: MouseEvent) => {
+      const root = chipRowRef.current;
+      if (root && e.target instanceof Node && root.contains(e.target)) return;
+      setMenuId(null);
+    };
+    window.addEventListener('keydown', onKey);
+    document.addEventListener('mousedown', onPointerDown);
+    return () => {
+      window.removeEventListener('keydown', onKey);
+      document.removeEventListener('mousedown', onPointerDown);
+    };
+  }, [menuId]);
+
+  // A deleted scenario must not leave its action strip pinned open.
+  useEffect(() => {
+    if (menuId && !scenarios.some((s) => s.id === menuId)) setMenuId(null);
+  }, [scenarios, menuId]);
 
   // IC-memo comparison set. Durable server-side (`in_memo` on the scenario
   // record) for live deals; localStorage only for mock/preview deals.
@@ -253,37 +316,150 @@ export default function ScenarioComparePanel({ dealId, scenarios }: Props) {
         Scenario comparison — multi-variable saved cases
       </div>
 
-      {/* Focus chip row — Base carries the SOURCE OF TRUTH badge. */}
-      <div className="flex flex-wrap items-center gap-2">
-        <FocusChip
-          scenario={base}
-          label="Base"
-          isBase
-          active={focused?.id === base?.id}
-          onClick={() => base && setFocusedId(base.id)}
-        />
-        {named.map((s) => (
+      {/* THE scenario chip row — canonical has exactly one, and it is this one
+          (Scenarios Tab.dc.html:119-139). Base carries the SOURCE OF TRUTH
+          badge; each saved scenario carries its override count and a •••. */}
+      <div ref={chipRowRef}>
+        <div className="flex flex-wrap items-center gap-2">
           <FocusChip
-            key={s.id}
-            scenario={s}
-            label={s.name}
-            active={focused?.id === s.id}
-            onClick={() => setFocusedId(s.id)}
+            scenario={base}
+            label="Base"
+            isBase
+            active={focused?.id === base?.id}
+            onClick={() => base && setFocusedId(base.id)}
           />
-        ))}
-        <span
-          style={{ fontSize: 11, color: C.muted, marginLeft: 'auto' }}
-          className="whitespace-nowrap"
-        >
-          Comparing Base + {Math.max(0, selectedIds.length - 1)} of {named.length} saved
-        </span>
+          {named.map((s) => (
+            <FocusChip
+              key={s.id}
+              scenario={s}
+              label={s.name}
+              active={focused?.id === s.id}
+              onClick={() => setFocusedId(s.id)}
+              menuOpen={menuId === s.id}
+              onToggleMenu={
+                canManage
+                  ? () => {
+                      // Opening the strip also focuses the chip, so the action
+                      // strip and the detail card below it always agree about
+                      // which scenario is being managed.
+                      setFocusedId(s.id);
+                      setMenuId((cur) => (cur === s.id ? null : s.id));
+                    }
+                  : undefined
+              }
+            />
+          ))}
+          {onCreate && (
+            <button
+              type="button"
+              onClick={onCreate}
+              style={{
+                fontSize: 12.5,
+                fontFamily: 'inherit',
+                background: '#fff',
+                border: '1px dashed #d9d8d2',
+                color: C.link,
+                borderRadius: 6,
+                padding: '6px 12px',
+                fontWeight: 600,
+                cursor: 'pointer',
+                whiteSpace: 'nowrap',
+              }}
+            >
+              + New scenario
+            </button>
+          )}
+          <span
+            style={{ fontSize: 11, color: C.muted, marginLeft: 'auto' }}
+            className="whitespace-nowrap"
+          >
+            Comparing Base + {Math.max(0, selectedIds.length - 1)} of {named.length} saved
+          </span>
+        </div>
+
+        {/* Pinned action strip (Scenarios Tab.dc.html:141-149) — the canonical
+            replacement for the old hover popover. It is a sibling of the chip
+            row inside the same ref'd wrapper, so clicking another chip's •••
+            re-targets it instead of dismissing it. */}
+        {menuScenario && (
+          <div
+            data-testid="scenario-action-strip"
+            role="group"
+            aria-label={`${menuScenario.name} actions`}
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: 10,
+              flexWrap: 'wrap',
+              background: '#fff',
+              border: `1px solid ${C.cardBorder}`,
+              borderRadius: 6,
+              padding: '8px 12px',
+              marginTop: 10,
+              fontSize: 12,
+              color: '#6b6f76',
+            }}
+          >
+            <span style={{ fontWeight: 600, color: C.ink }}>{menuScenario.name}</span>
+            {onEdit && (
+              <button
+                type="button"
+                style={stripAction(C.link)}
+                onClick={() => {
+                  setMenuId(null);
+                  onEdit(menuScenario);
+                }}
+              >
+                Edit overrides
+              </button>
+            )}
+            {onDuplicate && (
+              <button
+                type="button"
+                style={stripAction(C.link)}
+                onClick={() => {
+                  setMenuId(null);
+                  onDuplicate(menuScenario);
+                }}
+              >
+                Duplicate
+              </button>
+            )}
+            {onDelete && (
+              <button
+                type="button"
+                style={stripAction('oklch(50% 0.15 30)')}
+                onClick={() => {
+                  setMenuId(null);
+                  onDelete(menuScenario);
+                }}
+              >
+                Delete
+              </button>
+            )}
+            <button
+              type="button"
+              aria-label="Close scenario actions"
+              onClick={() => setMenuId(null)}
+              style={{ ...stripAction(C.muted), marginLeft: 'auto', fontWeight: 400 }}
+            >
+              ✕
+            </button>
+          </div>
+        )}
       </div>
 
       {/* Detail: Base-case assumptions (read-only) OR override table. */}
       {focused?.is_base ? (
         <BaseCasePanel outputs={outputs} />
       ) : focused ? (
-        <OverrideTable scenario={focused} base={base} outputs={outputs} />
+        <OverrideTable
+          scenario={focused}
+          base={base}
+          outputs={outputs}
+          onEdit={onEdit}
+          onRemoveOverride={onRemoveOverride}
+        />
       ) : null}
 
       {/* Compare table. */}
@@ -333,15 +509,41 @@ export default function ScenarioComparePanel({ dealId, scenarios }: Props) {
 
 // ─────────────────────────── focus chips ───────────────────────────
 
+/** Canonical action-strip affordance: a text button, not a pill. */
+function stripAction(color: string): React.CSSProperties {
+  return {
+    color,
+    fontWeight: 600,
+    fontSize: 12,
+    fontFamily: 'inherit',
+    background: 'transparent',
+    border: 'none',
+    padding: 0,
+    cursor: 'pointer',
+  };
+}
+
 interface FocusChipProps {
   scenario: ScenarioRecord | null;
   label: string;
   isBase?: boolean;
   active: boolean;
   onClick: () => void;
+  /** FON-69 — canonical ••• (Scenarios Tab.dc.html:129-131). Click, not hover.
+   *  Absent on Base and whenever the host passes no management callbacks. */
+  onToggleMenu?: () => void;
+  menuOpen?: boolean;
 }
 
-function FocusChip({ scenario, label, isBase = false, active, onClick }: FocusChipProps) {
+function FocusChip({
+  scenario,
+  label,
+  isBase = false,
+  active,
+  onClick,
+  onToggleMenu,
+  menuOpen = false,
+}: FocusChipProps) {
   if (!scenario) return null;
   const count = scenario.overrides.length;
   return (
@@ -394,6 +596,27 @@ function FocusChip({ scenario, label, isBase = false, active, onClick }: FocusCh
         <span style={{ fontSize: 10.5, color: C.muted, whiteSpace: 'nowrap' }}>
           {count} override{count === 1 ? '' : 's'}
         </span>
+      )}
+      {onToggleMenu && (
+        <button
+          type="button"
+          onClick={onToggleMenu}
+          aria-label={`Scenario actions for ${label}`}
+          aria-expanded={menuOpen}
+          title="Scenario actions"
+          style={{
+            fontSize: 12,
+            lineHeight: 1,
+            color: menuOpen ? C.activeBorder : C.muted,
+            background: 'transparent',
+            border: 'none',
+            padding: '0 2px',
+            cursor: 'pointer',
+            fontFamily: 'inherit',
+          }}
+        >
+          •••
+        </button>
       )}
     </span>
   );
@@ -528,17 +751,23 @@ function OverrideTable({
   scenario,
   base,
   outputs,
+  onEdit,
+  onRemoveOverride,
 }: {
   scenario: ScenarioRecord;
   base: ScenarioRecord | null;
   outputs: EngineOutputsResponse | null;
+  onEdit?: (scenario: ScenarioRecord) => void;
+  onRemoveOverride?: (scenario: ScenarioRecord, fieldPath: string) => void;
 }) {
   const count = scenario.overrides.length;
   const subtitle =
     `${count} override${count === 1 ? '' : 's'} from Base` +
     (scenario.description ? ` · ${scenario.description}` : '');
+  // Canonical 6-column grid (Scenarios Tab.dc.html:187) — the trailing 30px is
+  // the per-row "Remove this override" ✕.
   const cols =
-    'minmax(150px,1.5fr) minmax(80px,1fr) minmax(80px,1fr) minmax(80px,1fr) minmax(90px,1fr)';
+    'minmax(150px,1.5fr) minmax(80px,1fr) minmax(80px,1fr) minmax(80px,1fr) minmax(90px,1fr) 30px';
 
   return (
     <div style={{ background: '#fff', border: `1px solid ${C.cardBorder}`, borderRadius: 8 }}>
@@ -547,12 +776,37 @@ function OverrideTable({
           padding: '12px 16px',
           borderBottom: `1px solid ${C.hairline}`,
           display: 'flex',
-          flexDirection: 'column',
-          gap: 2,
+          justifyContent: 'space-between',
+          alignItems: 'center',
+          gap: 12,
+          flexWrap: 'wrap',
         }}
       >
-        <span style={{ fontSize: 13.5, fontWeight: 700, color: C.ink }}>{scenario.name}</span>
-        <span style={{ fontSize: 11.5, color: C.muted }}>{subtitle}</span>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 2, minWidth: 0 }}>
+          <span style={{ fontSize: 13.5, fontWeight: 700, color: C.ink }}>{scenario.name}</span>
+          <span style={{ fontSize: 11.5, color: C.muted }}>{subtitle}</span>
+        </div>
+        {/* FON-69 — the canonical way into the editor (Scenarios Tab.dc.html:183).
+            Replaces the hover-popover-only path Sam could not reach. */}
+        {onEdit && (
+          <button
+            type="button"
+            onClick={() => onEdit(scenario)}
+            style={{
+              fontSize: 11.5,
+              fontFamily: 'inherit',
+              background: '#fff',
+              border: `1px solid ${C.chipBorder}`,
+              color: '#3a3f47',
+              borderRadius: 6,
+              padding: '5px 11px',
+              fontWeight: 600,
+              cursor: 'pointer',
+            }}
+          >
+            Edit overrides
+          </button>
+        )}
       </div>
       <div style={{ padding: '10px 16px 4px' }}>
         <div
@@ -573,11 +827,12 @@ function OverrideTable({
           <span style={{ textAlign: 'right' }}>Scenario</span>
           <span style={{ textAlign: 'right' }}>Change</span>
           <span style={{ textAlign: 'right' }}>Source</span>
+          <span />
         </div>
         {count === 0 && (
           <div style={{ padding: '14px 0', fontSize: 12.5, color: C.muted }}>
             No overrides yet — this scenario is identical to Base. Add one with “Edit
-            scenario” on the pill above.
+            overrides”.
           </div>
         )}
         {scenario.overrides.map((o) => {
@@ -630,6 +885,30 @@ function OverrideTable({
               <span style={{ textAlign: 'right', color: C.link, fontSize: 11.5 }}>
                 {(meta?.sourceLabel ?? o.source ?? '—') + ' →'}
               </span>
+              {/* Canonical per-row reset (Scenarios Tab.dc.html:200). Persisted
+                  by the host via api.scenarios.update with this override gone. */}
+              {onRemoveOverride ? (
+                <button
+                  type="button"
+                  title="Remove this override"
+                  aria-label={`Remove the ${labelForPath(o.field_path)} override`}
+                  onClick={() => onRemoveOverride(scenario, o.field_path)}
+                  style={{
+                    textAlign: 'right',
+                    color: C.faint,
+                    background: 'transparent',
+                    border: 'none',
+                    padding: 0,
+                    cursor: 'pointer',
+                    fontFamily: 'inherit',
+                    fontSize: 12.5,
+                  }}
+                >
+                  ✕
+                </button>
+              ) : (
+                <span />
+              )}
             </div>
           );
         })}

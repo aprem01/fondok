@@ -562,10 +562,11 @@ in a scenario id from another tenant returns 404.
   auto-base creation, tenant scoping, override routing through PIP /
   segment / capex paths, compare side-by-side, base-undeletable,
   unique-name-per-deal, last_run_id stamping.
-* `apps/web/src/components/project/ScenarioSelector.tsx` — pill row
-  at the top of the project workspace.
-* `apps/web/src/components/project/ScenarioComparePanel.tsx` —
-  side-by-side compare table on the Scenarios tab.
+* `apps/web/src/components/project/ScenarioComparePanel.tsx` — the
+  Scenario Comparison section on the Scenarios tab: the one scenario
+  chip row (Base + saved cases + "+ New scenario"), the ••• action
+  strip, the per-scenario override table and the side-by-side compare
+  table. FON-69 removed the former global `ScenarioSelector` pill row.
 * `apps/web/src/components/project/ScenarioEditor.tsx` — side panel
   for editing overrides (NO modal; Wave 1 no-popups rule).
 
