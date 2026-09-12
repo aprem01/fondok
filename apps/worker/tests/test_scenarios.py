@@ -975,6 +975,7 @@ async def test_revpar_and_adr_both_overridden_no_derivation() -> None:
     from app.main import app
     from app.services.engine_runner import (
         SOURCE_ANALYST_OVERRIDE,
+        SOURCE_SEED,
         _kimpton_assumptions,
         _load_engine_inputs,
     )
@@ -1000,7 +1001,13 @@ async def test_revpar_and_adr_both_overridden_no_derivation() -> None:
     async with factory() as session:
         base = await _load_engine_inputs(session, deal_id, scenario_id=sid)
     assert base["adr_growth"] == seed_adr_growth
-    assert base["__sources__"]["adr_growth"] == SOURCE_ANALYST_OVERRIDE
+    # FON-63 / FON-65 — ``adr_growth`` was overridden to the value it already
+    # had, so it is a SHADOW override: it still suppresses the RevPAR
+    # derivation (the NOI identity above is what proves it), but the badge
+    # reports the source the value really came from rather than claiming the
+    # analyst changed something. ``revpar_growth`` did move, so it keeps the
+    # analyst_override tag.
+    assert base["__sources__"]["adr_growth"] == SOURCE_SEED
     assert base["__sources__"]["revpar_growth"] == SOURCE_ANALYST_OVERRIDE
 
 

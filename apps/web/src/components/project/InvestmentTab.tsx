@@ -7,7 +7,7 @@ import {
   type ReactNode,
 } from 'react';
 import { useParams } from 'next/navigation';
-import { Briefcase, Pencil, Check, X } from 'lucide-react';
+import { Briefcase, Pencil } from 'lucide-react';
 import { Card } from '@/components/ui/Card';
 import { Button } from '@/components/ui/Button';
 import { useToast } from '@/components/ui/Toast';
@@ -33,7 +33,11 @@ import {
   ProvenanceDot,
   palette,
   prov,
+  useInlineEdit,
+  InlineEditControls,
+  inlineEditInputStyle,
 } from '@/components/design';
+import type { FieldUnit } from '@/lib/fieldValue';
 import {
   api,
   isWorkerConnected,
@@ -447,7 +451,7 @@ export default function InvestmentTab() {
                   <AssumptionField value={purchase} editable={liveMode} format={fmtCurrency}
                     toDraft={(v) => String(Math.round(v))}
                     parse={(s) => { const n = parseFloat(s.replace(/[,$\s]/g, '')); return Number.isFinite(n) && n > 0 ? n : null; }}
-                    onSave={(v) => onSaveAssumption('purchase_price', v)} width="w-36"
+                    unit="usd" onSave={(v) => onSaveAssumption('purchase_price', v)} width="w-36"
                     color={valueColor('input', true, overridden('purchase_price'))} bold />
                 ),
               },
@@ -460,7 +464,7 @@ export default function InvestmentTab() {
                   <AssumptionField value={closingPct} editable={liveMode} format={(v) => fmtPct(v, 2)}
                     toDraft={(v) => (v * 100).toFixed(2)} suffix="%"
                     parse={(s) => { const n = parseFloat(s); return Number.isFinite(n) && n >= 0 ? n / 100 : null; }}
-                    onSave={(v) => onSaveAssumption('closing_costs_pct', v)} width="w-20"
+                    unit="pct_fraction" onSave={(v) => onSaveAssumption('closing_costs_pct', v)} width="w-20"
                     color={valueColor('input', false, overridden('closing_costs_pct'))} />
                 ),
               },
@@ -480,7 +484,7 @@ export default function InvestmentTab() {
                   <AssumptionField value={holdYears} editable={liveMode} format={(v) => `${v} years`}
                     toDraft={(v) => String(v)} suffix="yrs"
                     parse={(s) => { const n = parseInt(s, 10); return Number.isFinite(n) && n > 0 && n <= 20 ? n : null; }}
-                    onSave={(v) => onSaveAssumption('hold_years', v)} width="w-16"
+                    unit="years" onSave={(v) => onSaveAssumption('hold_years', v)} width="w-16"
                     color={valueColor('input', false, overridden('hold_years'))} />
                 ),
               },
@@ -497,7 +501,7 @@ export default function InvestmentTab() {
                   <AssumptionField value={exitCap} editable={liveMode} format={(v) => fmtPct(v, 2)}
                     toDraft={(v) => (v * 100).toFixed(2)} suffix="%"
                     parse={(s) => { const n = parseFloat(s); return Number.isFinite(n) && n > 0 ? n / 100 : null; }}
-                    onSave={(v) => onSaveAssumption('exit_cap_rate', v)} width="w-20"
+                    unit="pct_fraction" onSave={(v) => onSaveAssumption('exit_cap_rate', v)} width="w-20"
                     color={valueColor('input', false, overridden('exit_cap_rate'))} />
                 ),
               },
@@ -532,7 +536,7 @@ export default function InvestmentTab() {
                   <AssumptionField value={renoBase} editable={liveMode} format={fmtCurrency}
                     toDraft={(v) => String(Math.round(v))}
                     parse={(s) => { const n = parseFloat(s.replace(/[,$\s]/g, '')); return Number.isFinite(n) && n >= 0 ? n : null; }}
-                    onSave={(v) => onSaveAssumption('renovation_budget', v)} width="w-36"
+                    unit="usd" onSave={(v) => onSaveAssumption('renovation_budget', v)} width="w-36"
                     color={valueColor('input', false, overridden('renovation_budget'))} />
                 ),
               },
@@ -553,7 +557,7 @@ export default function InvestmentTab() {
                   <AssumptionField value={renoContPct} editable={liveMode} format={(v) => fmtPct(v, 1)}
                     toDraft={(v) => (v * 100).toFixed(2)} suffix="%"
                     parse={(s) => { const n = parseFloat(s); return Number.isFinite(n) && n >= 0 ? n / 100 : null; }}
-                    onSave={(v) => onSaveAssumption('renovation_contingency_pct', v)} width="w-20"
+                    unit="pct_fraction" onSave={(v) => onSaveAssumption('renovation_contingency_pct', v)} width="w-20"
                     color={valueColor('input', false, overridden('renovation_contingency_pct'))} />
                 ),
               },
@@ -1059,7 +1063,7 @@ function TimelinePanel({
  * PATCHes field_overrides + re-runs). Read-only when not live.
  */
 function AssumptionField({
-  value, format, toDraft, parse, onSave, editable, suffix, width = 'w-32', color, bold,
+  value, format, toDraft, parse, onSave, editable, unit, suffix, width = 'w-32', color, bold,
 }: {
   value: number | undefined;
   format: (v: number) => string;
@@ -1067,63 +1071,45 @@ function AssumptionField({
   parse: (s: string) => number | null;
   onSave: (v: number) => void | Promise<void>;
   editable: boolean;
+  /** How the persisted value is stored — drives the no-op comparison. */
+  unit: FieldUnit;
   suffix?: string;
   width?: string;
   color?: string;
   bold?: boolean;
 }) {
-  const { toast } = useToast();
-  const [editing, setEditing] = useState(false);
-  const [draft, setDraft] = useState('');
-  const [saving, setSaving] = useState(false);
+  const ed = useInlineEdit<number>({
+    current: value ?? null, unit, parse, onSave, toDraft,
+  });
   const display = value != null ? format(value) : '—';
   const textColor = color ?? palette.ink;
 
   if (!editable) {
     return <span style={{ color: textColor, fontWeight: bold ? 700 : 400, fontVariantNumeric: 'tabular-nums' }}>{display}</span>;
   }
-  if (!editing) {
+  if (!ed.editing) {
     return (
       <span style={{
         color: textColor, fontWeight: bold ? 700 : 500, fontVariantNumeric: 'tabular-nums',
         textDecoration: 'underline dotted', cursor: 'pointer',
       }}
-        onClick={() => { setDraft(value != null ? toDraft(value) : ''); setEditing(true); }}
+        onClick={() => ed.start()}
         title="Click to change — Investment owns this assumption">
         {display}
       </span>
     );
   }
-  const submit = async () => {
-    const parsed = parse(draft);
-    if (parsed == null) { toast('Enter a valid number.', { type: 'error' }); return; }
-    setSaving(true);
-    try { await onSave(parsed); setEditing(false); } finally { setSaving(false); }
-  };
   return (
-    <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+    <span ref={ed.containerRef} style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
       <input
-        type="number" value={draft} autoFocus disabled={saving}
-        onChange={(e) => setDraft(e.target.value)}
-        onKeyDown={(e) => { if (e.key === 'Enter') void submit(); if (e.key === 'Escape') setEditing(false); }}
+        type="number" value={ed.draft} autoFocus disabled={ed.saving}
+        onChange={(e) => ed.setDraft(e.target.value)}
+        onKeyDown={ed.onKeyDown}
         className={cn(width)}
-        style={{
-          fontSize: 12.5, fontFamily: 'inherit', border: `1px solid ${palette.linkBlue}`,
-          borderRadius: 5, padding: '4px 7px', fontVariantNumeric: 'tabular-nums', textAlign: 'right',
-        }}
+        style={{ ...inlineEditInputStyle, textAlign: 'right' }}
       />
       {suffix && <span style={{ fontSize: 11, color: palette.textMuted }}>{suffix}</span>}
-      <button type="button" aria-label="Save" onClick={() => void submit()} disabled={saving}
-        style={{
-          background: palette.inkNavy, color: '#fff', border: 'none', borderRadius: 5,
-          padding: '5px 9px', fontSize: 11, fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit',
-        }}>
-        Save
-      </button>
-      <button type="button" aria-label="Cancel" onClick={() => setEditing(false)}
-        style={{ background: 'none', border: 'none', color: palette.textFaint, cursor: 'pointer' }}>
-        <X className="w-3.5 h-3.5" />
-      </button>
+      <InlineEditControls onSave={() => void ed.submit()} onCancel={ed.cancel} saving={ed.saving} />
     </span>
   );
 }
@@ -1153,46 +1139,39 @@ function CloseDateField({
   editable: boolean;
   onSave: (iso: string) => void | Promise<void>;
 }) {
-  const { toast } = useToast();
-  const [editing, setEditing] = useState(false);
-  const [draft, setDraft] = useState('');
-  const [saving, setSaving] = useState(false);
+  const current = iso ? iso.slice(0, 10) : null;
+  const ed = useInlineEdit<string>({
+    current,
+    unit: 'date',
+    parse: (s) => (/^\d{4}-\d{2}-\d{2}$/.test(s) ? s : null),
+    onSave,
+    toDraft: (v) => v,
+    invalidMessage: 'Pick a valid date.',
+  });
   const display = fmtISODate(iso);
 
   if (!editable) {
     return <span style={{ color: prov.blue, fontVariantNumeric: 'tabular-nums' }}>{display}</span>;
   }
-  if (!editing) {
+  if (!ed.editing) {
     return (
       <span
         style={{ color: prov.blue, fontWeight: 500, fontVariantNumeric: 'tabular-nums', textDecoration: 'underline dotted', cursor: 'pointer' }}
-        onClick={() => { setDraft(iso ? iso.slice(0, 10) : ''); setEditing(true); }}
+        onClick={() => ed.start()}
         title="Click to change — Investment owns this assumption">
         {iso ? display : <span style={{ color: palette.textFaint, fontWeight: 400 }}>Set date</span>}
       </span>
     );
   }
-  const submit = async () => {
-    if (!/^\d{4}-\d{2}-\d{2}$/.test(draft)) { toast('Pick a valid date.', { type: 'error' }); return; }
-    setSaving(true);
-    try { await onSave(draft); setEditing(false); } finally { setSaving(false); }
-  };
   return (
-    <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+    <span ref={ed.containerRef} style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
       <input
-        type="date" value={draft} autoFocus disabled={saving}
-        onChange={(e) => setDraft(e.target.value)}
-        onKeyDown={(e) => { if (e.key === 'Enter') void submit(); if (e.key === 'Escape') setEditing(false); }}
-        style={{ fontSize: 12.5, fontFamily: 'inherit', border: `1px solid ${palette.linkBlue}`, borderRadius: 5, padding: '4px 7px' }}
+        type="date" value={ed.draft} autoFocus disabled={ed.saving}
+        onChange={(e) => ed.setDraft(e.target.value)}
+        onKeyDown={ed.onKeyDown}
+        style={{ ...inlineEditInputStyle, textAlign: 'left' }}
       />
-      <button type="button" aria-label="Save" onClick={() => void submit()} disabled={saving}
-        style={{ background: palette.inkNavy, color: '#fff', border: 'none', borderRadius: 5, padding: '5px 9px', fontSize: 11, fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit' }}>
-        Save
-      </button>
-      <button type="button" aria-label="Cancel" onClick={() => setEditing(false)}
-        style={{ background: 'none', border: 'none', color: palette.textFaint, cursor: 'pointer' }}>
-        <X className="w-3.5 h-3.5" />
-      </button>
+      <InlineEditControls onSave={() => void ed.submit()} onCancel={ed.cancel} saving={ed.saving} />
     </span>
   );
 }
@@ -1210,61 +1189,52 @@ function KeysOverride({
 }) {
   const { toast } = useToast();
   const editable = isWorkerConnected() && !/^\d+$/.test(dealId) && dealId.length > 0;
-  const [editing, setEditing] = useState(false);
-  const [draft, setDraft] = useState<string>(currentKeys != null ? String(currentKeys) : '');
-  const [saving, setSaving] = useState(false);
   const display = currentKeys != null ? String(currentKeys) : '—';
+  const ed = useInlineEdit<number>({
+    current: currentKeys ?? null,
+    unit: 'count',
+    parse: (s) => {
+      const n = Number.parseInt(s, 10);
+      return Number.isFinite(n) && n > 0 ? n : null;
+    },
+    toDraft: (v) => String(v),
+    invalidMessage: 'Enter a positive whole number for room count.',
+    onSave: async (parsed) => {
+      try {
+        await api.deals.update(dealId, { keys: parsed });
+        toast(`Room count saved: ${parsed} keys. Re-run engines to recompute.`, { type: 'success' });
+        onSaved();
+      } catch (err) {
+        const detail = err instanceof WorkerError ? err.body : String(err);
+        toast(`Failed to save room count: ${detail || 'worker rejected update'}`, { type: 'error' });
+      }
+    },
+  });
 
   if (!editable) {
     return <span style={{ color: prov.green, fontVariantNumeric: 'tabular-nums' }}>{display}</span>;
   }
-  if (!editing) {
+  if (!ed.editing) {
     return (
       <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
         <span style={{ color: prov.green, fontVariantNumeric: 'tabular-nums' }}>{display}</span>
         <button type="button" aria-label="Override room count" title="Override room count"
-          onClick={() => { setDraft(currentKeys != null ? String(currentKeys) : ''); setEditing(true); }}
+          onClick={() => ed.start()}
           style={{ background: 'none', border: 'none', color: palette.textFaint, cursor: 'pointer' }}>
           <Pencil className="w-3 h-3" />
         </button>
       </span>
     );
   }
-  const submit = async () => {
-    const parsed = Number.parseInt(draft, 10);
-    if (!Number.isFinite(parsed) || parsed <= 0) {
-      toast('Enter a positive whole number for room count.', { type: 'error' });
-      return;
-    }
-    setSaving(true);
-    try {
-      await api.deals.update(dealId, { keys: parsed });
-      toast(`Room count saved: ${parsed} keys. Re-run engines to recompute.`, { type: 'success' });
-      setEditing(false);
-      onSaved();
-    } catch (err) {
-      const detail = err instanceof WorkerError ? err.body : String(err);
-      toast(`Failed to save room count: ${detail || 'worker rejected update'}`, { type: 'error' });
-    } finally {
-      setSaving(false);
-    }
-  };
   return (
-    <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+    <span ref={ed.containerRef} style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
       <input
-        type="number" min={1} value={draft} autoFocus disabled={saving}
-        onChange={(e) => setDraft(e.target.value)}
-        onKeyDown={(e) => { if (e.key === 'Enter') void submit(); if (e.key === 'Escape') setEditing(false); }}
-        style={{ width: 80, fontSize: 12.5, fontFamily: 'inherit', border: `1px solid ${palette.linkBlue}`, borderRadius: 5, padding: '4px 7px', textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}
+        type="number" min={1} value={ed.draft} autoFocus disabled={ed.saving}
+        onChange={(e) => ed.setDraft(e.target.value)}
+        onKeyDown={ed.onKeyDown}
+        style={{ ...inlineEditInputStyle, width: 80 }}
       />
-      <button type="button" aria-label="Save room count override" onClick={() => void submit()} disabled={saving}
-        style={{ background: palette.inkNavy, color: '#fff', border: 'none', borderRadius: 5, padding: '5px 9px', fontSize: 11, fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit' }}>
-        <Check className="w-3 h-3" />
-      </button>
-      <button type="button" aria-label="Cancel" onClick={() => setEditing(false)} disabled={saving}
-        style={{ background: 'none', border: 'none', color: palette.textFaint, cursor: 'pointer' }}>
-        <X className="w-3.5 h-3.5" />
-      </button>
+      <InlineEditControls onSave={() => void ed.submit()} onCancel={ed.cancel} saving={ed.saving} />
     </span>
   );
 }

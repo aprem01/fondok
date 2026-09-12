@@ -21,6 +21,7 @@
 
 import type { CSSProperties, ReactNode } from 'react';
 import { palette, shadow, popoverKind } from './tokens';
+import { InlineEditControls, useCancelOnOutside } from './InlineEdit';
 
 export interface ProvInput {
   name: string;
@@ -128,8 +129,14 @@ export function WhereThisCameFrom({
   className,
   style,
 }: WhereThisCameFromProps) {
+  // FON-66 §1 — an open editor is discarded by a click anywhere outside the
+  // popover, exactly like Esc. Clicking away must never save.
+  const onCancelEdit = editor?.onCancel;
+  const rootRef = useCancelOnOutside(!!editor && !!onCancelEdit, () => onCancelEdit?.());
+
   return (
     <div
+      ref={rootRef}
       role="dialog"
       aria-label={`Where ${label} came from`}
       className={className}
@@ -354,33 +361,14 @@ export function WhereThisCameFrom({
           {editor.hint != null && (
             <div style={{ fontSize: 10.5, color: '#9a9a95', lineHeight: 1.4 }}>{editor.hint}</div>
           )}
-          <div style={{ display: 'flex', gap: 7 }}>
-            <button
-              type="button"
-              onClick={editor.onSave}
-              disabled={editor.saving}
-              style={{
-                flex: 1, background: palette.inkNavy, color: '#fff', border: 'none', borderRadius: 6, padding: 8,
-                fontSize: 12, fontWeight: 600, cursor: editor.saving ? 'default' : 'pointer', fontFamily: 'inherit',
-                opacity: editor.saving ? 0.7 : 1,
-              }}
-            >
-              {editor.saving ? 'Saving…' : (editor.saveLabel ?? 'Save value')}
-            </button>
-            {editor.onCancel && (
-              <button
-                type="button"
-                onClick={editor.onCancel}
-                disabled={editor.saving}
-                style={{
-                  background: '#fff', border: `1px solid ${palette.buttonSecondaryBorder}`, color: palette.ink, borderRadius: 6,
-                  padding: '8px 11px', fontSize: 12, fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit',
-                }}
-              >
-                Cancel
-              </button>
-            )}
-          </div>
+          <InlineEditControls
+            block
+            onSave={editor.onSave}
+            onCancel={editor.onCancel ?? (() => {})}
+            saving={editor.saving}
+            saveLabel={editor.saveLabel ?? 'Save value'}
+            style={{ display: 'flex', gap: 7 }}
+          />
         </div>
       )}
 

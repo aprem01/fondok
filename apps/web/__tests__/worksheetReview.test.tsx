@@ -335,3 +335,40 @@ describe('Historicals worksheet — Accept decrements immediately', () => {
     expect(within(rowOf('Rooms')).getByRole('button', { name: RED_CELL })).toBeInTheDocument();
   });
 });
+
+// ── FON-63 — clicking away from a Model cell discards the edit ───────────
+// Sam, 2026-09-11: an editor you leave without saving must not write. The
+// worksheet cell used to SAVE on blur, so clicking anywhere else committed a
+// half-typed number (and, on an untouched cell, minted an override identical
+// to the value already there).
+
+// ── FON-63 — nothing in the Historicals grid writes an override ──────────
+// Sam, 2026-09-11: an editor you leave without saving must not write. The
+// worksheet's Model cell used to SAVE on blur (`onBlur={onSave}`), so clicking
+// away committed a half-typed number — and, on an untouched cell, minted an
+// override identical to the value already there. That cell now discards on
+// blur and refuses a no-op save (`isNoOpEdit` in `save`).
+//
+// The rendered grid is historical actuals ONLY (the forward model lives in
+// Projections), so the surface contract this test can honestly pin is the
+// stronger one: no cell in this grid writes a field override at all — every
+// column is a read-only fact, corrected at its source document.
+describe('Historicals worksheet — the grid never writes a field override', () => {
+  it('clicking every cell in the grid leaves field_overrides untouched', async () => {
+    const { api } = await import('@/lib/api');
+    const updateSpy = vi.mocked(api.deals.update);
+    updateSpy.mockClear();
+    render(<GroundedWorksheet dealId={DEAL_ID} />);
+
+    for (const cell of screen.getAllByRole('button')) {
+      fireEvent.click(cell);
+    }
+    // No inline editor opened inside the grid…
+    expect(document.querySelector('table input')).toBeNull();
+    // …and nothing was persisted.
+    expect(updateSpy).not.toHaveBeenCalled();
+    expect(
+      screen.getByText(/historical columns are read-only facts/i),
+    ).toBeInTheDocument();
+  });
+});

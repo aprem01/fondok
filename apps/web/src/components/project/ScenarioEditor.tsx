@@ -26,6 +26,8 @@ import {
   type ScenarioRecord,
 } from '@/lib/api';
 import { cn } from '@/lib/format';
+import { isNoOpEdit, type FieldUnit } from '@/lib/fieldValue';
+import { NO_OP_EDIT_MESSAGE } from '@/components/design';
 
 interface Props {
   open: boolean;
@@ -153,6 +155,41 @@ function fromDisplay(path: string, input: string): unknown {
   return coerceValue(t);
 }
 
+/**
+ * Did anything actually change? Name / description compared as text, every
+ * override row in its own unit against the stored scenario.
+ */
+function scenarioChanged(
+  scenario: ScenarioRecord,
+  name: string,
+  description: string,
+  rows: ScenarioOverride[],
+): boolean {
+  if (!isNoOpEdit(name.trim(), scenario.name ?? null, 'text')) return true;
+  if (!isNoOpEdit(description.trim(), scenario.description ?? '', 'text')) return true;
+  const stored = new Map(scenario.overrides.map((o) => [o.field_path, o.value]));
+  if (stored.size !== rows.length) return true;
+  for (const row of rows) {
+    if (!stored.has(row.field_path)) return true;
+    const before = stored.get(row.field_path);
+    const unit = compareUnit(row.field_path);
+    const comparable = (v: unknown): string | number | null =>
+      typeof v === 'number' || typeof v === 'string' ? v : v == null ? null : String(v);
+    if (!isNoOpEdit(comparable(row.value), comparable(before), unit)) return true;
+  }
+  return false;
+}
+
+/** The scenario catalog's unit → the shared no-op comparison unit. */
+function compareUnit(path: string): FieldUnit {
+  switch (unitFor(path)) {
+    case 'pct': return 'pct_fraction';
+    case 'usd': return 'usd';
+    case 'years': return 'years';
+    default: return 'ratio';
+  }
+}
+
 export default function ScenarioEditor({
   open,
   dealId,
@@ -260,6 +297,14 @@ export default function ScenarioEditor({
         'Name required — give the scenario a label (e.g. "downside").',
         { type: 'error' },
       );
+      return;
+    }
+    // FON-63 / FON-66 §1 — Save on an untouched scenario writes nothing. Every
+    // row is compared in its own unit, so "8.50" over a stored 0.085 is not an
+    // edit either.
+    if (scenario && !scenarioChanged(scenario, name, description, overridesPayload)) {
+      toast(NO_OP_EDIT_MESSAGE, { type: 'info' });
+      onClose();
       return;
     }
     setSaving(true);

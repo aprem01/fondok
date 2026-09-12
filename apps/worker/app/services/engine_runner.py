@@ -647,8 +647,68 @@ def _is_str_market_note(note: Any) -> bool:
     return any(m in n for m in ("comp-set", "compset", "comp set", "market"))
 
 
+def _is_shadow_override(prior: Any, new: Any) -> bool:
+    """Is this override a SHADOW — the same value the deal already resolved to?
+
+    FON-63 / FON-65. An analyst who opens a field to inspect it and clicks Save
+    writes an override whose value is identical to the value that was already on
+    screen. Presence of the key — not a changed value — is what used to stamp
+    ``analyst_override``, so the Data Key dot flipped blue on a deal nobody had
+    actually changed.
+
+    Deliberately NON-destructive: the caller still assigns ``base[path]``, so
+    every engine input (and therefore every engine output) is byte-identical.
+    Only the provenance label changes — a shadow override reports the source the
+    value really came from.
+
+    Numbers compare at ``math.isclose(rel_tol=1e-9, abs_tol=1e-6)`` (tight
+    enough that a genuinely changed assumption is never swallowed); strings
+    compare after ``strip()``; ``None`` on either side alone is a real change.
+    """
+    if prior is None or new is None:
+        return prior is None and new is None
+    if isinstance(prior, bool) or isinstance(new, bool):
+        return bool(prior) is bool(new)
+    if isinstance(prior, (int, float)) and isinstance(new, (int, float)):
+        return math.isclose(float(prior), float(new), rel_tol=1e-9, abs_tol=1e-6)
+    if isinstance(prior, str) and isinstance(new, str):
+        return prior.strip() == new.strip()
+    if isinstance(prior, str) != isinstance(new, str):
+        # One side is a string ("0.07") and the other a number — compare
+        # numerically when the string parses, else treat as a real change.
+        try:
+            return math.isclose(
+                float(prior), float(new), rel_tol=1e-9, abs_tol=1e-6  # type: ignore[arg-type]
+            )
+        except (TypeError, ValueError):
+            return False
+    return bool(prior == new)
+
+
+def _stamp_override_source(
+    sources: dict[str, str],
+    applied: set[str],
+    path: str,
+    prior: Any,
+    value: Any,
+) -> None:
+    """Record one applied analyst override.
+
+    ``applied`` ALWAYS gets the path: behaviour that keys off "the analyst
+    overrode this key" (the STR-seed re-badge, the FON-69 adr_growth
+    derivation) must not change just because the value happens to equal its
+    source. ``sources`` is stamped ``analyst_override`` only when the value
+    actually differs from what the deal had resolved to.
+    """
+    applied.add(path)
+    if not _is_shadow_override(prior, value):
+        sources[path] = SOURCE_ANALYST_OVERRIDE
+
+
 def _derive_adr_growth_from_revpar_override(
-    base: dict[str, Any], sources: dict[str, str]
+    base: dict[str, Any],
+    sources: dict[str, str],
+    override_paths: set[str] | None = None,
 ) -> None:
     """FON-69 — make an analyst ``revpar_growth`` override move operating NOI.
 
@@ -658,9 +718,16 @@ def _derive_adr_growth_from_revpar_override(
     double-apply). With no RevPAR override this returns without touching
     ``base`` / ``sources``, so every default run is byte-identical.
     """
-    if sources.get("revpar_growth") != SOURCE_ANALYST_OVERRIDE:
+    applied = override_paths or set()
+    # An override whose value equals its source keeps its source badge
+    # (``_stamp_override_source``) but is still an override for this purpose —
+    # ``applied`` carries every key the override loop actually applied.
+    if (
+        sources.get("revpar_growth") != SOURCE_ANALYST_OVERRIDE
+        and "revpar_growth" not in applied
+    ):
         return
-    if sources.get("adr_growth") == SOURCE_ANALYST_OVERRIDE:
+    if sources.get("adr_growth") == SOURCE_ANALYST_OVERRIDE or "adr_growth" in applied:
         return
     try:
         revpar_g = float(base.get("revpar_growth"))  # type: ignore[arg-type]
@@ -956,29 +1023,46 @@ async def _load_engine_inputs(
     # defaults — a user-edited purchase price on the deals row is never
     # clobbered by the broker's headline. Best-effort — partial
     # extraction degrades to Kimpton key-by-key.
+    # FON-63 / FON-65 — what each assumption resolved to WITHOUT the analyst
+    # override. The OM loaders apply the deal's overrides to their extracted
+    # actuals before handing them back, so ``base`` alone cannot answer "did
+    # this override change anything?" for the OM-aliased keys (purchase price,
+    # LTV, rate, term…). Populated only for keys the OM merge touches; every
+    # other key reads its prior straight off ``base``.
+    pre_override_values: dict[str, Any] = {}
+    om_capital_pre: dict[str, float] = {}
     capital_actuals, capital_prov = await _load_om_capital_actuals(
         session,
         deal_id=deal_id,
         tenant_id=effective_tenant,
         with_provenance=True,
+        pre_override=om_capital_pre,
     )
     for key, value in capital_actuals.items():
         if key in deals_table_keys:
             # The deals row wins — the OM row did NOT supply this number.
             continue
+        pre_override_values.setdefault(
+            key, om_capital_pre[key] if key in om_capital_pre else base.get(key)
+        )
         base[key] = value
         if key in capital_prov:
             source_fields[key] = capital_prov[key]
 
+    om_debt_pre: dict[str, float] = {}
     debt_actuals, debt_prov = await _load_om_debt_actuals(
         session,
         deal_id=deal_id,
         tenant_id=effective_tenant,
         with_provenance=True,
+        pre_override=om_debt_pre,
     )
     for key, value in debt_actuals.items():
         if key in deals_table_keys:
             continue
+        pre_override_values.setdefault(
+            key, om_debt_pre[key] if key in om_debt_pre else base.get(key)
+        )
         base[key] = value
         if key in debt_prov:
             source_fields[key] = debt_prov[key]
@@ -1247,10 +1331,16 @@ async def _load_engine_inputs(
 
     # Caller-supplied overrides from the API request body (the
     # ``assumptions`` payload on ``POST /deals/{id}/engines/run``).
+    # Every override path the loops below actually applied — including the ones
+    # whose value equalled their source (FON-65 shadow overrides, stamped under
+    # their true source). Behaviour that keys off "the analyst overrode this"
+    # reads this set, never the ``sources`` label.
+    analyst_override_paths: set[str] = set()
     if overrides:
         base.update(overrides)
         for k in overrides:
             sources[k] = SOURCE_ANALYST_OVERRIDE
+            analyst_override_paths.add(k)
 
     # Persisted analyst overrides from the deal's ``field_overrides``
     # JSONB column (Roadmap item #6, June 2026 — see
@@ -1306,20 +1396,29 @@ async def _load_engine_inputs(
             # list (NOI per year). Route it before the scalar guard would drop
             # it; the returns/debt builders read base['noi_override_by_year'].
             if path == "noi_override_by_year" and isinstance(value, list):
+                prior = base.get("noi_override_by_year")
                 base["noi_override_by_year"] = value
-                sources[path] = SOURCE_ANALYST_OVERRIDE
+                _stamp_override_source(
+                    sources, analyst_override_paths, path, prior, value
+                )
                 continue
             # FON-63 — a monthly SOFR forward curve (list of annualized rates).
             # Route it before the scalar guard drops it; the debt builder reads
             # base['sofr_curve'].
             if path == "sofr_curve" and isinstance(value, list):
+                prior = base.get("sofr_curve")
                 base["sofr_curve"] = value
-                sources[path] = SOURCE_ANALYST_OVERRIDE
+                _stamp_override_source(
+                    sources, analyst_override_paths, path, prior, value
+                )
                 continue
             # FON-67 — explicit per-month equity draw schedule (list of dollars).
             if path == "equity_draw_schedule" and isinstance(value, list):
+                prior = base.get("equity_draw_schedule")
                 base["equity_draw_schedule"] = value
-                sources[path] = SOURCE_ANALYST_OVERRIDE
+                _stamp_override_source(
+                    sources, analyst_override_paths, path, prior, value
+                )
                 continue
             # Wave 2 P2.4 — PIP-displacement overrides include a list field
             # (``pct_rooms_offline_by_month``). Accept it as JSON-array
@@ -1328,6 +1427,15 @@ async def _load_engine_inputs(
             # list field (``exclude_transaction_ids``); same exemption.
             is_pip_key = path in _OVERRIDE_PIP_KEYS
             is_comps_key = path in _OVERRIDE_COMPS_KEYS
+            # FON-63 / FON-65 — what the deal had ALREADY resolved to for this
+            # path, before this override was applied anywhere. Only the generic
+            # scalar branch writes ``base[path]``, so this is the prior for
+            # every branch below.
+            prior_value = (
+                pre_override_values[path]
+                if path in pre_override_values
+                else base.get(path)
+            )
             if (
                 not is_pip_key
                 and not is_comps_key
@@ -1427,7 +1535,10 @@ async def _load_engine_inputs(
                             )
                             if str_value in ("fixed", "floating"):
                                 tranche_overrides.setdefault(idx, {})[field] = str_value
-                                sources[path] = SOURCE_ANALYST_OVERRIDE
+                                _stamp_override_source(
+                                    sources, analyst_override_paths, path,
+                                    prior_value, str_value,
+                                )
                             continue
                         try:
                             num_value = float(value) if isinstance(value, (int, float, str)) else None
@@ -1435,7 +1546,10 @@ async def _load_engine_inputs(
                             num_value = None
                         if num_value is not None:
                             tranche_overrides.setdefault(idx, {})[field] = num_value
-                            sources[path] = SOURCE_ANALYST_OVERRIDE
+                            _stamp_override_source(
+                                sources, analyst_override_paths, path,
+                                prior_value, num_value,
+                            )
                     elif kind == "stack":
                         try:
                             num_value = float(value) if isinstance(value, (int, float, str)) else None
@@ -1443,7 +1557,10 @@ async def _load_engine_inputs(
                             num_value = None
                         if num_value is not None:
                             debt_overrides[field] = num_value
-                            sources[path] = SOURCE_ANALYST_OVERRIDE
+                            _stamp_override_source(
+                                sources, analyst_override_paths, path,
+                                prior_value, num_value,
+                            )
                 continue
             elif path == _PARTNERSHIP_TIER_COUNT_KEY:
                 # FON-66 Part A — analyst-controlled promote-tier COUNT. Sets
@@ -1462,7 +1579,9 @@ async def _load_engine_inputs(
                     n_tiers = None
                 if n_tiers is not None:
                     base["partnership_waterfall_tier_count"] = n_tiers
-                    sources[path] = SOURCE_ANALYST_OVERRIDE
+                    _stamp_override_source(
+                        sources, analyst_override_paths, path, prior_value, n_tiers
+                    )
                 continue
             elif (tomb_idx := _parse_partnership_tombstone_path(path)) is not None:
                 # FON-66 follow-up — per-index tier TOMBSTONE
@@ -1483,7 +1602,9 @@ async def _load_engine_inputs(
                     wf_overrides.setdefault(tomb_idx, {})[
                         _PARTNERSHIP_TIER_REMOVED_FIELD
                     ] = flag
-                    sources[path] = SOURCE_ANALYST_OVERRIDE
+                    _stamp_override_source(
+                        sources, analyst_override_paths, path, prior_value, flag
+                    )
                 continue
             elif _parse_partnership_override_path(path) is not None:
                 # FON-66 — partnership waterfall per-tier field override. Indexed
@@ -1509,11 +1630,19 @@ async def _load_engine_inputs(
                             "partnership_waterfall_overrides", {}
                         )
                         wf_overrides.setdefault(idx, {})[field] = num_value
-                        sources[path] = SOURCE_ANALYST_OVERRIDE
+                        _stamp_override_source(
+                            sources, analyst_override_paths, path,
+                            prior_value, num_value,
+                        )
                 continue
             else:
                 base[path] = value
-            sources[path] = SOURCE_ANALYST_OVERRIDE
+            # The generic scalar branch — this is where Sam's shadow overrides
+            # live (exit_cap_rate 0.07 re-saved as 0.07). ``base[path]`` still
+            # carries the value, so no engine input moves; only the badge does.
+            _stamp_override_source(
+                sources, analyst_override_paths, path, prior_value, value
+            )
 
     # FON-61 (D4) — an explicit Year-1 rate override whose note marks it as
     # the STR comp-set market rate IS the Market tab's "Use STR rates" seed
@@ -1525,7 +1654,10 @@ async def _load_engine_inputs(
         key
         for key in _STR_SEEDED_KEYS
         if key not in scenario_overrides
-        and sources.get(key) == SOURCE_ANALYST_OVERRIDE
+        and (
+            sources.get(key) == SOURCE_ANALYST_OVERRIDE
+            or key in analyst_override_paths
+        )
         and _is_str_market_note(override_notes.get(key))
     }
     for key in str_noted_keys:
@@ -1533,7 +1665,7 @@ async def _load_engine_inputs(
 
     # FON-69 — an analyst RevPAR-growth override (deal / scenario / request
     # body) derives adr_growth so operating NOI moves; no-op without one.
-    _derive_adr_growth_from_revpar_override(base, sources)
+    _derive_adr_growth_from_revpar_override(base, sources, analyst_override_paths)
 
     # Wave 3 W3.3 — optional STR forward-forecast seed. When the analyst
     # has flipped ``revenue_seed_from_str_forecast`` to True (default is
@@ -3332,6 +3464,7 @@ async def _load_om_capital_actuals(
     deal_id: str,
     tenant_id: str,
     with_provenance: bool = False,
+    pre_override: dict[str, float] | None = None,
 ) -> dict[str, float] | tuple[dict[str, float], dict[str, SourceField]]:
     """Read capital-side broker numbers off the deal's most recent OM.
 
@@ -3419,6 +3552,11 @@ async def _load_om_capital_actuals(
         session, deal_id=deal_id, tenant_id=tenant_id
     )
     before = dict(actuals) if with_provenance else None
+    if pre_override is not None:
+        # FON-63 — what the OM said BEFORE the analyst override landed. The
+        # runner compares an override against this, never against the value
+        # the override itself put on ``base``.
+        pre_override.update(actuals)
     _apply_overrides(
         actuals,
         overrides,
@@ -3905,6 +4043,7 @@ async def _load_om_debt_actuals(
     deal_id: str,
     tenant_id: str,
     with_provenance: bool = False,
+    pre_override: dict[str, float] | None = None,
 ) -> dict[str, float] | tuple[dict[str, float], dict[str, SourceField]]:
     """Read in-place debt terms off the deal's most recent OM extraction.
 
@@ -3991,6 +4130,9 @@ async def _load_om_debt_actuals(
         session, deal_id=deal_id, tenant_id=tenant_id
     )
     before = dict(actuals) if with_provenance else None
+    if pre_override is not None:
+        # FON-63 — see ``_load_om_capital_actuals``.
+        pre_override.update(actuals)
     _apply_overrides(
         actuals,
         overrides,

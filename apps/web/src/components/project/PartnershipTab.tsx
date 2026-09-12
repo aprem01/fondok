@@ -28,7 +28,12 @@ import {
   palette,
   prov,
   radius,
+  InlineEditControls,
+  inlineEditInputStyle,
+  useCancelOnOutside,
+  NO_OP_EDIT_MESSAGE,
 } from '@/components/design';
+import { isNoOpEdit } from '@/lib/fieldValue';
 
 // ─── Canonical structure (design/canonical/Partnership Tab.dc.html) ──────────
 // Three sub-tabs, exactly as the prototype: Summary · Waterfall · Cash Flows.
@@ -156,6 +161,9 @@ export default function PartnershipTab() {
   // Single inline-editor cursor (canonical `state.editing`) + its draft string.
   const [editing, setEditing] = useState<string | null>(null);
   const [draft, setDraft] = useState('');
+  // The value the open editor started on (a fraction), so Save can tell a real
+  // change from a re-save of what was already on screen. Null = not yet set.
+  const editStartRef = useRef<number | null>(null);
 
   // ─── FON-66: editable waterfall assumptions ────────────────────────
   // Live deals (real UUID + worker connected) can edit ownership, preferred
@@ -229,17 +237,33 @@ export default function PartnershipTab() {
       const p = Number(t.replace(/[^0-9.\-]/g, ''));
       if (!Number.isFinite(p)) return;
       const frac = round6(p / 100);
+      // FON-63 / FON-66 §1 — the guard runs on the PRIMARY key against the
+      // value the editor opened on. An unchanged GP ownership must write
+      // NEITHER gp nor lp: deriving the complement off a no-op was minting two
+      // phantom overrides per stray Save.
+      if (isNoOpEdit(frac, editStartRef.current, 'pct_fraction')) {
+        toast(NO_OP_EDIT_MESSAGE, { type: 'info' });
+        return;
+      }
       const patch: Record<string, number> = { [primaryKey]: frac };
       if (complementKey) patch[complementKey] = round6(1 - frac);
       void onSaveOverride(patch);
     },
-    [draft, onSaveOverride],
+    [draft, onSaveOverride, toast],
   );
-  const startEdit = useCallback((id: string, currentFraction: number) => {
+  const startEdit = useCallback((id: string, currentFraction: number | null) => {
+    editStartRef.current = currentFraction;
     setEditing(id);
-    setDraft((currentFraction * 100).toFixed(currentFraction * 100 % 1 === 0 ? 0 : 1));
+    setDraft(
+      currentFraction == null
+        ? ''
+        : (currentFraction * 100).toFixed(currentFraction * 100 % 1 === 0 ? 0 : 1),
+    );
   }, []);
   const cancelEdit = useCallback(() => {
+    // Exits edit mode with no network call — Cancel, Esc and click-outside
+    // all land here.
+    editStartRef.current = null;
     setEditing(null);
     setDraft('');
   }, []);
@@ -966,7 +990,9 @@ function CompoundingRow({ value, onChange }: { value: string; onChange: (v: stri
   );
 }
 
-// Shared inline percent editor (input + navy Save), canonical styling.
+// Shared inline percent editor — the canonical input + Save · Cancel pair.
+// FON-66 §1: Esc, Cancel and a click anywhere outside all discard the draft
+// without a network call; Save runs the no-op guard in `commitPct` first.
 function InlineEditor({
   draft, width, onDraft, onCommit, onCancel,
 }: {
@@ -976,8 +1002,9 @@ function InlineEditor({
   onCommit?: () => void;
   onCancel?: () => void;
 }) {
+  const outsideRef = useCancelOnOutside(true, () => onCancel?.());
   return (
-    <span style={{ display: 'flex', alignItems: 'center', gap: 6, flexShrink: 0 }}>
+    <span ref={outsideRef} style={{ display: 'flex', alignItems: 'center', gap: 6, flexShrink: 0 }}>
       <input
         autoFocus
         value={draft}
@@ -988,20 +1015,9 @@ function InlineEditor({
         }}
         inputMode="decimal"
         aria-label="percent"
-        style={{
-          width, fontSize: 12.5, fontFamily: 'inherit', border: `1px solid ${palette.linkBlue}`,
-          borderRadius: radius.control, padding: '4px 7px', textAlign: 'right', fontVariantNumeric: 'tabular-nums',
-        }}
+        style={{ ...inlineEditInputStyle, width }}
       />
-      <button
-        onClick={onCommit}
-        style={{
-          background: palette.inkNavy, color: '#fff', border: 'none', borderRadius: radius.control,
-          padding: '5px 9px', fontSize: 11, fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit',
-        }}
-      >
-        Save
-      </button>
+      <InlineEditControls onSave={() => onCommit?.()} onCancel={() => onCancel?.()} />
     </span>
   );
 }
@@ -1167,7 +1183,7 @@ function PromoteWaterfall({
   editing: string | null;
   draft: string;
   setDraft: (v: string) => void;
-  startEdit: (id: string, fraction: number) => void;
+  startEdit: (id: string, fraction: number | null) => void;
   cancelEdit: () => void;
   commitPct: (primaryKey: string, complementKey?: string) => void;
   // FON-66 Part A — variable tier count + add/remove controls. `tierCount` is
@@ -1248,9 +1264,6 @@ function PromoteWaterfall({
         : `Promote — to ${fmtPct(hurdleFrac, 0)} LP IRR`;
     const hurdleId = `t${i}-h`;
     const splitId = `t${i}-s`;
-    // Safe seed values for the inline editor when a value is not yet set.
-    const hurdleStart = hurdleComplete ? hurdleFrac : 0;
-    const gpStart = gpComplete ? gpFrac : 0;
     return (
       <div key={`promote-${i}`} style={{
         display: 'grid', gridTemplateColumns: TIER_GRID, fontSize: 12.5, padding: '8px 0',
@@ -1272,7 +1285,7 @@ function PromoteWaterfall({
             />
           ) : (
             <span
-              onClick={liveMode ? () => startEdit(hurdleId, hurdleStart) : undefined}
+              onClick={liveMode ? () => startEdit(hurdleId, hurdleComplete ? hurdleFrac : null) : undefined}
               style={{
                 textAlign: 'right', color: !hurdleComplete ? prov.amber : liveMode ? prov.blue : prov.gray,
                 textDecoration: liveMode ? 'underline dotted' : undefined,
@@ -1294,7 +1307,7 @@ function PromoteWaterfall({
             />
           ) : (
             <span
-              onClick={liveMode ? () => startEdit(splitId, gpStart) : undefined}
+              onClick={liveMode ? () => startEdit(splitId, gpComplete ? gpFrac : null) : undefined}
               style={{
                 textAlign: 'right', color: !gpComplete ? prov.amber : liveMode ? prov.blue : prov.gray,
                 textDecoration: liveMode ? 'underline dotted' : undefined,

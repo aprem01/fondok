@@ -83,8 +83,12 @@ import {
   ProvenanceDot,
   palette,
   prov,
+  useInlineEdit,
+  InlineEditControls,
+  inlineEditInputStyle,
   type StatementRow,
 } from '@/components/design';
+import type { FieldUnit } from '@/lib/fieldValue';
 
 // ─── Canonical sub-tabs (design/canonical/Debt Tab.dc.html) ─────────────
 const SUB_TABS = [
@@ -515,7 +519,8 @@ export default function DebtTab() {
       editable={liveMode}
       suffix="$"
       color={valueColor('input', false, ltvOverridden)}
-      testId="edit-senior-amount"
+      unit="usd"
+          testId="edit-senior-amount"
     />
   );
   // Editable LTV — Debt owns it (Investment dropped its LTV). LTV is total debt
@@ -532,7 +537,8 @@ export default function DebtTab() {
       editable={ltvEditable}
       suffix="%"
       color={valueColor('input', false, ltvOverridden)}
-      testId="edit-ltv"
+      unit="pct_fraction"
+          testId="edit-ltv"
     />
   );
 
@@ -550,7 +556,8 @@ export default function DebtTab() {
       editable={liveMode}
       suffix="$"
       color={valueColor('input', false, paceAmountOverridden)}
-      testId="edit-pace-amount"
+      unit="usd"
+          testId="edit-pace-amount"
       title="Click to change — enter 0 to remove PACE from the stack"
     />
   );
@@ -578,7 +585,8 @@ export default function DebtTab() {
       editable={feeEditable}
       suffix="%"
       color={valueColor('input', false, feeOverridden)}
-      testId="edit-orig-fee"
+      unit="pct_whole"
+          testId="edit-orig-fee"
     />
   );
 
@@ -639,6 +647,7 @@ export default function DebtTab() {
       parse={parsePctFrac}
       onSave={(frac) => onSaveOverride({ [opts.key]: opts.clearOnZero && frac <= 0 ? null : frac })}
       editable={liveMode}
+      unit="pct_fraction"
       suffix={opts.suffix ?? '%'}
       bold={opts.bold}
       color={valueColor('input', !!opts.bold, overridden(opts.key))}
@@ -662,7 +671,8 @@ export default function DebtTab() {
                 editable={liveMode}
                 suffix="%"
                 color={valueColor('input', false, overridden(indexKey))}
-                testId="edit-benchmark"
+                unit="pct_fraction"
+          testId="edit-benchmark"
               />
             ),
             note: benchmarkIsDefault
@@ -705,6 +715,7 @@ export default function DebtTab() {
           editable={liveMode}
           suffix="years"
           color={valueColor('input', false, overridden(amortKey))}
+          unit="years"
           testId="edit-amort"
           title="Click to change — 0 = interest-only for the full term"
         />
@@ -722,6 +733,7 @@ export default function DebtTab() {
           editable={liveMode}
           suffix="years"
           color={valueColor('input', false, overridden(TERM_KEY))}
+          unit="years"
           testId="edit-term"
         />
       ),
@@ -740,7 +752,8 @@ export default function DebtTab() {
             editable={liveMode}
             suffix="months"
             color={valueColor('input', false, overridden(ioKey))}
-            testId="edit-io"
+            unit="months"
+          testId="edit-io"
           />
         ),
       note: seniorIsFullIo
@@ -777,7 +790,8 @@ export default function DebtTab() {
                 editable={liveMode}
                 suffix="years"
                 color={valueColor('input', false, overridden(paceAmortKey))}
-                testId="edit-pace-amort"
+                unit="years"
+          testId="edit-pace-amort"
                 title="Click to change — 0 = interest-only for the full term"
               />
             ),
@@ -794,7 +808,8 @@ export default function DebtTab() {
                     editable={liveMode}
                     suffix="months"
                     color={valueColor('input', false, overridden(paceIoKey))}
-                    testId="edit-pace-io"
+                    unit="months"
+          testId="edit-pace-io"
                   />
                 ),
                 note: 'Interest-only stub before principal amortization begins' }]
@@ -1150,6 +1165,7 @@ export default function DebtTab() {
                             emptyLabel="Enter threshold"
                             draftValue={c.threshold == null ? '' : isDscr ? c.threshold.toFixed(2) : (c.threshold * 100).toFixed(1)}
                             parse={isDscr ? parseRatio : parsePctFrac}
+                            unit={isDscr ? 'ratio' : 'pct_fraction'}
                             onSave={(v) => onSaveOverride({ [key]: v > 0 ? v : null })}
                             editable={liveMode}
                             suffix={isDscr ? 'x' : '%'}
@@ -1311,7 +1327,7 @@ function DebtRow({ row }: { row: RowDef }) {
 // field_overrides + re-runs). Read-only when not editable.
 // ─────────────────────────────────────────────────────────────────────
 function EditableValue({
-  display, emptyLabel, draftValue, parse, onSave, editable, suffix, bold, color, testId, title,
+  display, emptyLabel, draftValue, parse, onSave, editable, unit, suffix, bold, color, testId, title,
 }: {
   display: string;
   /** Shown in place of a bare "—" when the value is missing and editable —
@@ -1321,28 +1337,32 @@ function EditableValue({
   parse: (s: string) => number | null;
   onSave: (v: number) => void | Promise<void>;
   editable: boolean;
+  /** How `parse` output is persisted — drives the no-op comparison. */
+  unit: FieldUnit;
   suffix?: string;
   bold?: boolean;
   color?: string;
   testId?: string;
   title?: string;
 }) {
-  const { toast } = useToast();
-  const [editing, setEditing] = useState(false);
-  const [draft, setDraft] = useState('');
-  const [saving, setSaving] = useState(false);
+  // The value on screen, in the SAME units `parse` emits — so Save compares
+  // like with like ("6.80" typed over a stored 0.068 is a no-op).
+  const current = parse(draftValue);
+  const ed = useInlineEdit<number>({
+    current, unit, parse, onSave, toDraft: () => draftValue,
+  });
   const textColor = color ?? prov.blue;
   const isEmpty = display === '—' || display === '';
 
   if (!editable) {
     return <span style={{ color: isEmpty ? prov.muted : textColor, fontWeight: bold ? 700 : 400, fontVariantNumeric: 'tabular-nums' }}>{display}</span>;
   }
-  if (!editing) {
+  if (!ed.editing) {
     const showAffordance = isEmpty && !!emptyLabel;
     return (
       <span
         data-testid={testId}
-        onClick={() => { setDraft(draftValue); setEditing(true); }}
+        onClick={() => ed.start(draftValue)}
         title={title ?? (showAffordance ? 'Required input — click to enter' : 'Click to change — Debt owns this term')}
         style={{
           color: showAffordance ? prov.blue : textColor, fontWeight: showAffordance ? 600 : bold ? 700 : 500,
@@ -1353,25 +1373,16 @@ function EditableValue({
       </span>
     );
   }
-  const submit = async () => {
-    const parsed = parse(draft);
-    if (parsed == null) { toast('Enter a valid number.', { type: 'error' }); return; }
-    setSaving(true);
-    try { await onSave(parsed); setEditing(false); } finally { setSaving(false); }
-  };
   return (
-    <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+    <span ref={ed.containerRef} style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
       <input
-        type="number" value={draft} autoFocus disabled={saving}
-        onChange={(e) => setDraft(e.target.value)}
-        onKeyDown={(e) => { if (e.key === 'Enter') void submit(); if (e.key === 'Escape') setEditing(false); }}
-        style={{ width: 120, fontSize: 12.5, fontFamily: 'inherit', border: `1px solid ${palette.linkBlue}`, borderRadius: 5, padding: '4px 7px', textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}
+        type="number" value={ed.draft} autoFocus disabled={ed.saving}
+        onChange={(e) => ed.setDraft(e.target.value)}
+        onKeyDown={ed.onKeyDown}
+        style={{ ...inlineEditInputStyle, width: 120 }}
       />
       {suffix && <span style={{ fontSize: 11, color: palette.textMuted }}>{suffix}</span>}
-      <button type="button" onClick={() => void submit()} disabled={saving}
-        style={{ background: palette.inkNavy, color: '#fff', border: 'none', borderRadius: 5, padding: '5px 9px', fontSize: 11, fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit' }}>
-        Save
-      </button>
+      <InlineEditControls onSave={() => void ed.submit()} onCancel={ed.cancel} saving={ed.saving} />
     </span>
   );
 }
@@ -1431,60 +1442,64 @@ function RateTypeToggle({
 }) {
   const { toast } = useToast();
   const [pending, setPending] = useState<'fixed' | 'floating' | null>(null);
-  const [draft, setDraft] = useState('');
-  const [saving, setSaving] = useState(false);
   const active = rateType === 'floating' ? 'Floating' : 'Fixed';
 
-  const begin = (option: string) => {
-    const next: 'fixed' | 'floating' = option === 'Floating' ? 'floating' : 'fixed';
-    if (next === rateType) { setPending(null); return; }
-    if (!editable) { toast('Editing is disabled on demo deals', { type: 'info' }); return; }
-    setDraft(next === 'fixed' && has(currentRate) ? (currentRate * 100).toFixed(2) : '');
-    setPending(next);
-  };
-  const submit = async () => {
-    if (!pending) return;
-    const frac = parsePctFrac(draft);
-    if (frac == null) {
-      toast(pending === 'floating' ? 'Enter the spread over the index to switch to floating.' : 'Enter the fixed rate to switch.', { type: 'error' });
-      return;
-    }
-    setSaving(true);
-    try {
+  // The rate BASIS is what changes here, so there is no prior value to compare
+  // against (`current: null` → never a no-op). The primitive is used for the
+  // Cancel / Esc / click-outside contract and the shared Save · Cancel pair.
+  const ed = useInlineEdit<number>({
+    current: null,
+    unit: 'pct_fraction',
+    parse: parsePctFrac,
+    invalidMessage: pending === 'floating'
+      ? 'Enter the spread over the index to switch to floating.'
+      : 'Enter the fixed rate to switch.',
+    onSave: async (frac) => {
+      if (!pending) return;
       await onSwitch(
         pending === 'floating'
           ? { [tk(SENIOR, 'rate_type')]: 'floating', [tk(SENIOR, 'spread_pct')]: frac }
           : { [tk(SENIOR, 'rate_type')]: 'fixed', [tk(SENIOR, 'rate_pct')]: frac },
       );
       setPending(null);
-    } finally {
-      setSaving(false);
-    }
+    },
+  });
+
+  const begin = (option: string) => {
+    const next: 'fixed' | 'floating' = option === 'Floating' ? 'floating' : 'fixed';
+    if (next === rateType) { setPending(null); ed.cancel(); return; }
+    if (!editable) { toast('Editing is disabled on demo deals', { type: 'info' }); return; }
+    setPending(next);
+    ed.start(next === 'fixed' && has(currentRate) ? (currentRate * 100).toFixed(2) : '');
   };
+  const cancel = () => { setPending(null); ed.cancel(); };
+  // Esc / click-outside cancel inside the primitive — drop the pending basis
+  // with it so the toggle returns to the live rate type.
+  useEffect(() => {
+    if (!ed.editing && pending) setPending(null);
+  }, [ed.editing, pending]);
 
   return (
     <span style={{ display: 'inline-flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
       <Pill options={['Floating', 'Fixed']} value={active} onSelect={begin} />
-      {pending && (
-        <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+      {pending && ed.editing && (
+        <span ref={ed.containerRef} style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
           <span style={{ fontSize: 11, color: palette.textSecondary, whiteSpace: 'nowrap' }}>
             {pending === 'floating' ? 'Spread over SOFR' : 'Fixed rate'}
           </span>
           <input
-            type="number" value={draft} autoFocus disabled={saving} data-testid="rate-basis-input"
-            onChange={(e) => setDraft(e.target.value)}
-            onKeyDown={(e) => { if (e.key === 'Enter') void submit(); if (e.key === 'Escape') setPending(null); }}
-            style={{ width: 90, fontSize: 12.5, fontFamily: 'inherit', border: `1px solid ${palette.linkBlue}`, borderRadius: 5, padding: '4px 7px', textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}
+            type="number" value={ed.draft} autoFocus disabled={ed.saving} data-testid="rate-basis-input"
+            onChange={(e) => ed.setDraft(e.target.value)}
+            onKeyDown={(e) => { if (e.key === 'Escape') cancel(); else ed.onKeyDown(e); }}
+            style={{ ...inlineEditInputStyle, width: 90 }}
           />
           <span style={{ fontSize: 11, color: palette.textMuted }}>%</span>
-          <button type="button" onClick={() => void submit()} disabled={saving} data-testid="rate-basis-save"
-            style={{ background: palette.inkNavy, color: '#fff', border: 'none', borderRadius: 5, padding: '5px 9px', fontSize: 11, fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit' }}>
-            Save
-          </button>
-          <button type="button" onClick={() => setPending(null)} disabled={saving}
-            style={{ background: 'none', color: palette.textSecondary, border: `1px solid ${palette.disabledBorder}`, borderRadius: 5, padding: '4px 8px', fontSize: 11, fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit' }}>
-            Cancel
-          </button>
+          <InlineEditControls
+            onSave={() => void ed.submit()}
+            onCancel={cancel}
+            saving={ed.saving}
+            saveTestId="rate-basis-save"
+          />
         </span>
       )}
     </span>
@@ -1593,6 +1608,7 @@ function RefinanceView({
           onSave={(v) => onSaveOverride({ 'debt_stack.refi_test_year': Math.round(v) })}
           editable={liveMode}
           color={valueColor('input', false, refiYearOverride > 0)}
+          unit="years"
           testId="edit-refi-year"
         />
       ),

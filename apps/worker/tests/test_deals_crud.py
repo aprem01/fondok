@@ -356,3 +356,59 @@ async def test_archive_does_not_delete() -> None:
         )
         actions = [r._mapping["action"] for r in audit_rows.fetchall()]
     assert "deal.archived" in actions
+
+
+@pytest.mark.asyncio
+async def test_unchanged_field_overrides_emit_no_override_audit_row() -> None:
+    """FON-63 — a PATCH whose ``field_overrides`` blob is unchanged writes no
+    ``override.set`` row, so the Activity Feed stops filling with phantom
+    "exit_cap_rate: 0.07 → 0.07" entries. The legacy ``deal.updated`` trail is
+    still written, and a real change still emits the override row."""
+    from httpx import ASGITransport, AsyncClient
+    from sqlalchemy import text
+
+    from app.database import get_session_factory
+    from app.main import app
+
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://test"
+    ) as client:
+        r = await client.post("/deals", json={"name": "No-Op Save"})
+        deal_id = r.json()["id"]
+
+        # 1 — the first override IS a change.
+        r = await client.patch(
+            f"/deals/{deal_id}",
+            json={"field_overrides": {"exit_cap_rate": {"value": 0.075}}},
+        )
+        assert r.status_code == 200, r.text
+
+        # 2 — re-saving the same value (Sam's stray Save) changes nothing.
+        r = await client.patch(
+            f"/deals/{deal_id}",
+            json={"field_overrides": {"exit_cap_rate": {"value": 0.075}}},
+        )
+        assert r.status_code == 200, r.text
+
+        # 3 — and a real edit is still audited.
+        r = await client.patch(
+            f"/deals/{deal_id}",
+            json={"field_overrides": {"exit_cap_rate": {"value": 0.08}}},
+        )
+        assert r.status_code == 200, r.text
+
+    factory = get_session_factory()
+    async with factory() as session:
+        rows = await session.execute(
+            text(
+                "SELECT action FROM audit_log WHERE resource_id = :rid "
+                "ORDER BY created_at ASC"
+            ),
+            {"rid": deal_id},
+        )
+        actions = [r._mapping["action"] for r in rows.fetchall()]
+
+    # Two real changes → two override rows; the no-op PATCH added none.
+    assert actions.count("override.set") == 2
+    # Every PATCH still leaves the legacy trail.
+    assert actions.count("deal.updated") == 3

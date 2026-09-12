@@ -658,3 +658,96 @@ async def test_default_run_emits_no_soft_cost_or_contingency_uses() -> None:
     expected = 36_400_000 * 1.02 + 5_280_000 + 500_000 + (36_400_000 * 0.65) * 0.015
     assert cap["total_capital"] == pytest.approx(expected)
     assert cap["total_capital"] == pytest.approx(43_262_900.0)
+
+
+# ── FON-63 / FON-65 — shadow-override suppression ──────────────────────
+# Sam, 2026-09-11: "clicking Save still causes Fondok to treat the value as an
+# analyst Override, even though the value itself was unchanged… simply opening a
+# field to inspect it should never change the model's data lineage."
+
+
+def test_is_shadow_override_compares_numbers_strings_and_nulls() -> None:
+    """The comparison the override loop and the audit trail share."""
+    from app.services.engine_runner import _is_shadow_override
+
+    # Same number, however it is spelled.
+    assert _is_shadow_override(0.07, 0.07)
+    assert _is_shadow_override(0.07, 0.07 + 1e-12)
+    assert _is_shadow_override(23_660_000, 23_660_000.0)
+    assert _is_shadow_override("0.07", 0.07)
+    # A real change — including one just outside the tolerance floor.
+    assert not _is_shadow_override(0.07, 0.075)
+    assert not _is_shadow_override(0.07, 0.0701)
+    assert not _is_shadow_override(23_660_000, 23_660_001)
+    # Strings compare after strip; None on one side alone is a real change.
+    assert _is_shadow_override("fixed", " fixed ")
+    assert not _is_shadow_override("fixed", "floating")
+    assert not _is_shadow_override(None, 0.07)
+    assert not _is_shadow_override(0.07, None)
+    assert _is_shadow_override(None, None)
+
+
+@pytest.mark.asyncio
+async def test_override_equal_to_its_source_keeps_the_underlying_badge() -> None:
+    """An override whose value equals the resolved base leaves
+    ``assumption_sources`` on the underlying source AND still feeds the engine.
+
+    This is the whole shape of the fix: NON-destructive. ``field_overrides`` is
+    untouched, ``base[path]`` still carries the value (so every engine output is
+    byte-identical), only the provenance label stops claiming the analyst
+    changed something. A neighbouring key that DID change still badges as an
+    analyst override — the guard must not over-suppress.
+    """
+    import json
+    from datetime import UTC, datetime
+
+    from app.database import get_session_factory
+    from app.services.engine_runner import (
+        SOURCE_ANALYST_OVERRIDE,
+        _kimpton_assumptions,
+        _load_engine_inputs,
+    )
+
+    seed = _kimpton_assumptions()
+    unchanged = seed["exit_cap_rate"]          # re-saved exactly as it was
+    changed = seed["hold_years"] + 2           # a real edit
+
+    deal_id = str(uuid4())
+    tenant_id = str(uuid4())
+    factory = get_session_factory()
+    async with factory() as session:
+        await session.execute(
+            text(
+                """
+                INSERT INTO deals (id, tenant_id, name, status, field_overrides,
+                                   created_at, updated_at)
+                VALUES (:id, :tenant, :name, 'Draft', :overrides, :now, :now)
+                """
+            ),
+            {
+                "id": deal_id,
+                "tenant": tenant_id,
+                "name": "Shadow Override Hotel",
+                "overrides": json.dumps(
+                    {
+                        "exit_cap_rate": {
+                            "value": unchanged,
+                            "note": "Opened the field to look at it",
+                        },
+                        "hold_years": changed,
+                    }
+                ),
+                "now": datetime.now(UTC),
+            },
+        )
+        await session.commit()
+        base = await _load_engine_inputs(session, deal_id, tenant_id=tenant_id)
+
+    sources = base["__sources__"]
+    # The shadow override is still APPLIED — the engine reads the same number.
+    assert base["exit_cap_rate"] == unchanged
+    # …but it no longer claims to be an analyst override.
+    assert sources.get("exit_cap_rate") != SOURCE_ANALYST_OVERRIDE
+    # The genuinely changed key is untouched by the guard.
+    assert base["hold_years"] == changed
+    assert sources["hold_years"] == SOURCE_ANALYST_OVERRIDE

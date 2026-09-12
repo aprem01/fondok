@@ -1023,20 +1023,34 @@ async def update_deal(
             k: (v.get("value") if isinstance(v, dict) else v)
             for k, v in new_overrides.items()
         }
-        await log_audit(
-            session,
-            tenant_id=tenant_id_str,
-            actor_id="system",
-            action="override.set",
-            resource_type="override",
-            resource_id=str(deal_id),
-            input_payload={"changes": changes},
-            output_payload={"field_overrides": new_overrides},
-            before=before_flat,
-            after=after_flat,
-            tags=["override", "wave1"],
-            metadata={"deal_id": str(deal_id)},
-        )
+        # FON-63 — a Save that changed nothing is not an override event. Without
+        # this the Activity Feed filled with phantom
+        # "exit_cap_rate: 0.07 → 0.07" rows every time an analyst opened a field
+        # to inspect it. Compared key by key with the same tolerance the engine
+        # loader uses, so a re-saved float never reads as a change.
+        # Lazy import — engine_runner imports this module's siblings.
+        from ..services.engine_runner import _is_shadow_override
+
+        changed_keys = [
+            k
+            for k in (set(before_flat) | set(after_flat))
+            if not _is_shadow_override(before_flat.get(k), after_flat.get(k))
+        ]
+        if changed_keys:
+            await log_audit(
+                session,
+                tenant_id=tenant_id_str,
+                actor_id="system",
+                action="override.set",
+                resource_type="override",
+                resource_id=str(deal_id),
+                input_payload={"changes": changes},
+                output_payload={"field_overrides": new_overrides},
+                before=before_flat,
+                after=after_flat,
+                tags=["override", "wave1"],
+                metadata={"deal_id": str(deal_id), "changed_keys": changed_keys},
+            )
         # Still emit the legacy deal.updated trail so existing dashboards
         # that filter on action='deal.updated' keep firing.
         await _write_audit(
