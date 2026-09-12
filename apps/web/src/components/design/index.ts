@@ -32,3 +32,11 @@ export type {
   ProvOverride,
   ProvAction,
 } from './WhereThisCameFrom';
+export {
+  useInlineEdit,
+  useCancelOnOutside,
+  InlineEditControls,
+  inlineEditInputStyle,
+  NO_OP_EDIT_MESSAGE,
+} from './InlineEdit';
+export type { UseInlineEditOptions, InlineEditApi, InlineEditControlsProps } from './InlineEdit';

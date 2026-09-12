@@ -211,7 +211,8 @@ export default function MethodologyPage() {
               Industry benchmark margin from a HotStats-style P&L benchmark report applied as a USALI ratio override.
             </BadgeRow>
             <BadgeRow source="analyst_override" name="Analyst Override">
-              Set via the Overview inline editor. Wins over every other source.
+              Set via an inline editor. Wins over every other source — but only a value that actually
+              changed is recorded as one; see &quot;What counts as an override&quot; below.
             </BadgeRow>
             <BadgeRow source="str_forecast" name="STR Forecast">
               Year-1 occupancy &amp; ADR seeded from STR — the Market tab&apos;s &quot;Use STR rates in the model&quot; writes the comp-set rates the card shows as explicit overrides (note: &quot;STR comp-set market rates (Market tab)&quot;), else the subject TTM or the BASE forward forecast. Financials → Projections shows &quot;Active basis: Market / STR · Revert&quot; only when the rates carry this tag, and the Market tab&apos;s STR card reads the same tags — &quot;STR rates active&quot;, &quot;STR rates unavailable — using T-12 base&quot;, or &quot;Pending re-run&quot; when the worker has not tagged the rates yet — never the request flag alone.
@@ -229,6 +230,26 @@ export default function MethodologyPage() {
               Sourced from the deals table (entered on the create-deal wizard or PATCHed via the API). Project name, city, brand, keys, service level. The Property Name is not a deal-row field — see below.
             </BadgeRow>
           </div>
+        </Card>
+
+        <Card className="p-5 mb-4">
+          <h4 className="text-[13px] font-semibold text-ink-900 mb-3">What counts as an override</h4>
+          <p className="text-[12.5px] text-ink-500 leading-relaxed">
+            Opening a field to inspect it never changes its lineage. An override is recorded only when
+            the saved value <span className="font-semibold text-ink-900">differs from the current effective value</span> after
+            normalisation — the draft you type and the value the engine stores are compared in the field&apos;s own
+            unit, so &quot;6.80&quot; typed over a stored 0.068, &quot;65&quot; over 0.65, and &quot;$23,660,000&quot; over 23660000
+            are all the same number and write nothing. Every editor exits without writing on{' '}
+            <span className="font-semibold text-ink-900">Cancel, Esc or a click outside</span>, and a Save that changed
+            nothing says so (&quot;No change — provenance unchanged&quot;) instead of persisting a duplicate.
+          </p>
+          <p className="text-[12.5px] text-ink-500 leading-relaxed mt-2">
+            The same rule holds server-side, for overrides already stored: a value equal to what the deal resolves
+            to on its own is reported under <span className="font-semibold text-ink-900">its source&apos;s badge</span> (T-12,
+            OM, benchmark or seed), not as an analyst override. The stored override is left exactly as the analyst
+            wrote it and the engines still read it, so no number moves — only the claim about where the number came
+            from. Use <b>Clear override</b> in the provenance popover to remove one.
+          </p>
         </Card>
 
         <Card className="p-5 mb-4">

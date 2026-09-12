@@ -23,7 +23,8 @@ import { useMemo, useState, useEffect, useCallback, useContext, createContext, t
 import Link from 'next/link';
 import { Sparkles, Download, FileText } from 'lucide-react';
 import { Card } from '@/components/ui/Card';
-import { ProvenanceDot } from '@/components/design';
+import { ProvenanceDot, NO_OP_EDIT_MESSAGE } from '@/components/design';
+import { isNoOpEdit } from '@/lib/fieldValue';
 import { Button } from '@/components/ui/Button';
 import { useToast } from '@/components/ui/Toast';
 import { cn } from '@/lib/format';
@@ -1282,6 +1283,7 @@ function AssumptionCell({
 }) {
   const ctx = useContext(AssumptionOverrideContext);
   const resolved = useSource(sourceKey);
+  const { toast } = useToast();
   const [open, setOpen] = useState(false);
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState('');
@@ -1299,6 +1301,12 @@ function AssumptionCell({
       : kind === 'override' ? 'decoration-brand-500'
         : 'decoration-warn-500';
 
+  // Cancel — restores the pre-fill and leaves the editor. No network call.
+  const cancelEdit = () => {
+    setDraft(unit === 'pct' ? editValue.toFixed(1) : editValue.toFixed(2));
+    setNote('');
+    setEditing(false);
+  };
   const openPanel = () => {
     setDraft(unit === 'pct' ? editValue.toFixed(1) : editValue.toFixed(2));
     setNote('');
@@ -1316,9 +1324,19 @@ function AssumptionCell({
   const apply = async () => {
     const n = Number(draft.replace(/[$,%\s]/g, ''));
     if (!Number.isFinite(n)) return;
+    const next = unit === 'pct' ? n / 100 : n;
+    // FON-63 — the panel opens pre-filled with the current value, so Apply on
+    // an untouched panel must write nothing (it was minting an identical
+    // override and flipping the dot to "Analyst override").
+    if (isNoOpEdit(next, unit === 'pct' ? editValue / 100 : editValue, unit === 'pct' ? 'pct_fraction' : 'usd')) {
+      setEditing(false);
+      setOpen(false);
+      toast(NO_OP_EDIT_MESSAGE, { type: 'info' });
+      return;
+    }
     setSaving(true);
     try {
-      await ctx.apply(overrideKey, unit === 'pct' ? n / 100 : n, note.trim() || 'Overridden on the Projections page');
+      await ctx.apply(overrideKey, next, note.trim() || 'Overridden on the Projections page');
       setOpen(false);
     } finally {
       setSaving(false);
@@ -1349,7 +1367,7 @@ function AssumptionCell({
       </button>
       {open && (
         <>
-          <span className="fixed inset-0 z-40" onClick={() => setOpen(false)} aria-hidden="true" />
+          <span className="fixed inset-0 z-40" onClick={() => { cancelEdit(); setOpen(false); }} aria-hidden="true" />
           <span
             role="dialog"
             aria-label={`${label} provenance`}
@@ -1384,6 +1402,10 @@ function AssumptionCell({
                   <input
                     value={draft}
                     onChange={(e) => setDraft(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter') { e.preventDefault(); void apply(); }
+                      if (e.key === 'Escape') { e.preventDefault(); cancelEdit(); }
+                    }}
                     inputMode="decimal"
                     autoFocus
                     className="w-24 rounded-md border border-border px-2 py-1 text-[12px] tabular-nums focus:outline-none focus:ring-2 focus:ring-brand-100 focus:border-brand-500"
@@ -1399,7 +1421,7 @@ function AssumptionCell({
                   <button type="button" onClick={apply} disabled={saving} className={cn(btn, 'text-white bg-brand-600 hover:bg-brand-700')}>
                     {saving ? 'Applying…' : 'Apply & re-model'}
                   </button>
-                  <button type="button" onClick={() => setEditing(false)} className={cn(btn, 'text-ink-500 hover:text-ink-900')}>
+                  <button type="button" onClick={cancelEdit} className={cn(btn, 'text-ink-500 hover:text-ink-900')}>
                     Cancel
                   </button>
                 </span>
@@ -1723,7 +1745,8 @@ function AssumptionField({
     const n = Number(draft.replace(/[$,%\s]/g, ''));
     if (!Number.isFinite(n)) { setDraft(fmt(display)); return; }
     const eng = unit === 'pct' ? n / 100 : n;
-    if (Math.abs(eng - value) < 1e-9) return; // no change — skip the re-run
+    // FON-63 — one comparison for every editor (no change → no re-run, no override).
+    if (isNoOpEdit(eng, value, unit === 'pct' ? 'pct_fraction' : 'usd')) return;
     onCommit(eng);
   };
   return (

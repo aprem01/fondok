@@ -539,3 +539,46 @@ describe('OverviewTab — a dash carries the worker\'s refusal code', () => {
   });
 });
 
+// ── FON-63 — the provenance popover's override editor ────────────────────
+describe('OverviewTab — an unchanged override is not an override', () => {
+  it('Save value on the value already on screen writes nothing', async () => {
+    overviewRef.value = OVERVIEW_EXTRACTED;
+    render(<OverviewTab projectId="deal-uuid-1" />);
+    expect(await screen.findByText(EXTRACTED)).toBeInTheDocument();
+
+    fireEvent.click(screen.getByText(EXTRACTED));
+    const dialog = screen.getByRole('dialog', { name: /Where Property Name came from/i });
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Override' }));
+    // The editor opens pre-filled with the extracted name — saving it back
+    // must not mint an override (it would flip the row's lineage to blue).
+    const input = within(dialog).getByRole('textbox', { name: /Property Name value/i });
+    expect((input as HTMLInputElement).value).toBe(EXTRACTED);
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Save value' }));
+
+    await waitFor(() =>
+      expect(within(dialog).queryByRole('textbox', { name: /Property Name value/i })).toBeNull(),
+    );
+    expect(updateSpy).not.toHaveBeenCalled();
+    // The row still reads as document-sourced.
+    expect(rowDotLabel('Property Name')).toMatch(/document/i);
+  });
+
+  it('Cancel exits the editor without writing', async () => {
+    overviewRef.value = OVERVIEW_EXTRACTED;
+    render(<OverviewTab projectId="deal-uuid-1" />);
+    expect(await screen.findByText(EXTRACTED)).toBeInTheDocument();
+
+    fireEvent.click(screen.getByText(EXTRACTED));
+    const dialog = screen.getByRole('dialog', { name: /Where Property Name came from/i });
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Override' }));
+    const input = within(dialog).getByRole('textbox', { name: /Property Name value/i });
+    fireEvent.change(input, { target: { value: 'The Anglers Hotel' } });
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Cancel' }));
+
+    await waitFor(() =>
+      expect(within(dialog).queryByRole('textbox', { name: /Property Name value/i })).toBeNull(),
+    );
+    expect(updateSpy).not.toHaveBeenCalled();
+    expect(rowValue('Property Name')).toBe(EXTRACTED);
+  });
+});

@@ -67,8 +67,10 @@ import {
   prov,
   popoverKind,
   fontStack,
+  NO_OP_EDIT_MESSAGE,
   type WhereThisCameFromProps,
 } from '@/components/design';
+import { isNoOpEdit } from '@/lib/fieldValue';
 import {
   api,
   isWorkerConnected,
@@ -354,6 +356,14 @@ export default function OverviewTab({ projectId }: { projectId: number | string 
     if (!liveMode) { toast('Editing is disabled on demo deals', { type: 'info' }); return; }
     const value = draft.trim();
     if (!value) { toast(`Enter a ${row.label.toLowerCase()}`, { type: 'error' }); return; }
+    // FON-63 — opening a field to inspect it must never mint an override.
+    // Re-saving the value already on screen writes nothing, so the row keeps
+    // reporting the source it actually came from.
+    if (isNoOpEdit(value, row.value === '\u2014' ? null : row.value, 'text')) {
+      setEditing(null);
+      toast(NO_OP_EDIT_MESSAGE, { type: 'info' });
+      return;
+    }
     setSaving(true);
     try {
       await api.deals.update(dealId, {
@@ -390,6 +400,12 @@ export default function OverviewTab({ projectId }: { projectId: number | string 
     if (!liveMode) { toast('Editing is disabled on demo deals', { type: 'info' }); return; }
     const name = draft.trim();
     if (!name) { toast('Enter a project name', { type: 'error' }); return; }
+    // FON-63 — the same guard on the deal column: an unchanged name is not an edit.
+    if (isNoOpEdit(name, deal?.name ?? null, 'text')) {
+      setEditing(null);
+      toast(NO_OP_EDIT_MESSAGE, { type: 'info' });
+      return;
+    }
     setSaving(true);
     try {
       await api.deals.update(dealId, { name });
@@ -401,7 +417,7 @@ export default function OverviewTab({ projectId }: { projectId: number | string 
     } finally {
       setSaving(false);
     }
-  }, [dealId, liveMode, toast, refreshDeal, saveFailed]);
+  }, [dealId, liveMode, toast, refreshDeal, saveFailed, deal?.name]);
 
   // ─── UI state ──────────────────────────────────────────────────────────
   const [reviewOnly, setReviewOnly] = useState(false);
@@ -1053,7 +1069,7 @@ export default function OverviewTab({ projectId }: { projectId: number | string 
       {/* Where this came from — anchored provenance popover */}
       {provProps && (
         <>
-          <div onClick={() => setPopover(null)} style={{ position: 'fixed', inset: 0, zIndex: 30 }} aria-hidden />
+          <div onClick={() => { setEditing(null); setPopover(null); }} style={{ position: 'fixed', inset: 0, zIndex: 30 }} aria-hidden />
           <WhereThisCameFrom {...provProps} style={{ zIndex: 31 }} />
         </>
       )}
@@ -1174,7 +1190,9 @@ function TargetField({
     const n = Number(t);
     if (!Number.isFinite(n)) { setDraft(shown); return; }
     const next = unit === '%' ? n / 100 : n;
-    if (value != null && Math.abs(next - value) < 1e-9) return;
+    // FON-63 — the shared no-op comparison (a percent target is stored as a
+    // fraction, a MOIC target as the multiple itself). Unchanged → no write.
+    if (isNoOpEdit(next, value, unit === '%' ? 'pct_fraction' : 'ratio')) return;
     onSave(next);
   };
   return (

@@ -36,7 +36,8 @@ import type { ExtractionField, ExtractionResult, WorkerDocument, ValueState } fr
 import { getEngineField, useEngineOutputs } from '@/lib/hooks/useEngineOutputs';
 import { useEngineRun } from '@/lib/hooks/useEngineRun';
 import { useTrace } from '@/lib/hooks/useValueTrace';
-import { ProvenanceDot } from '@/components/design';
+import { ProvenanceDot, NO_OP_EDIT_MESSAGE } from '@/components/design';
+import { isNoOpEdit } from '@/lib/fieldValue';
 import { useDeal } from '@/lib/hooks/useDeal';
 import { useDocuments } from '@/lib/hooks/useDocuments';
 import { isHistoricalSourceDoc, useHistoricals } from '@/lib/hooks/useHistoricals';
@@ -541,11 +542,18 @@ export default function GroundedWorksheet({
   }, [focusRowId, rendered]);
 
   const save = useCallback(
-    async (key: string) => {
+    async (key: string, current: number | null) => {
       const s = draft[key];
       if (s == null) return;
       const n = Number(s.replace(/[$,\s]/g, ''));
       if (!Number.isFinite(n)) { toast('Enter a number', { type: 'error' }); return; }
+      // FON-63 — re-saving the number already in the cell writes nothing, so
+      // the line keeps reporting the source it came from.
+      if (isNoOpEdit(n, current, 'usd')) {
+        setDraft((d) => { const { [key]: _d, ...rest } = d; return rest; });
+        toast(NO_OP_EDIT_MESSAGE, { type: 'info' });
+        return;
+      }
       setSavingKey(key);
       try {
         const next = { ...overrides, [key]: { value: n, note: 'Edited on the Financials worksheet' } };
@@ -897,7 +905,7 @@ export default function GroundedWorksheet({
                       draft={row.overrideKey ? draft[row.overrideKey] : undefined}
                       saving={!!row.overrideKey && savingKey === row.overrideKey}
                       onDraft={(s) => row.overrideKey && setDraft((d) => ({ ...d, [row.overrideKey!]: s }))}
-                      onSave={() => row.overrideKey && save(row.overrideKey)}
+                      onSave={(current) => row.overrideKey && save(row.overrideKey, current)}
                       onCancel={() => row.overrideKey && setDraft((d) => { const { [row.overrideKey!]: _x, ...rest } = d; return rest; })}
                       onInspect={(t) => setInspect(t)}
                       colLabel={c.label}
@@ -950,7 +958,8 @@ function WorksheetCell({
   saving: boolean;
   colLabel: string;
   onDraft: (s: string) => void;
-  onSave: () => void;
+  /** Save this cell — carries the value on screen so a no-op can be refused. */
+  onSave: (current: number | null) => void;
   onCancel: () => void;
   onInspect: (t: InspectTarget) => void;
   docNameById: (id: string) => string | undefined;
@@ -1068,8 +1077,9 @@ function WorksheetCell({
             autoFocus
             value={draft}
             onChange={(e) => onDraft(e.target.value)}
-            onKeyDown={(e) => { if (e.key === 'Enter') onSave(); if (e.key === 'Escape') onCancel(); }}
-            onBlur={onSave}
+            onKeyDown={(e) => { if (e.key === 'Enter') onSave(value); if (e.key === 'Escape') onCancel(); }}
+            onBlur={onCancel}
+            title="Enter to save — Esc or clicking away discards the edit"
             className="w-24 px-1.5 py-0.5 text-[12.5px] text-right tabular-nums border border-brand-500 rounded focus:outline-none focus:ring-2 focus:ring-brand-100"
           />
         ) : editable ? (
