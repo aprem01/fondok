@@ -288,18 +288,22 @@ def test_no_resolvable_year_publishes_nothing_rather_than_zero() -> None:
         )
         is None
     )
-    # An occupancy path that never reaches the assumption resolves no year
-    # either — the fallback is not consulted once the primary signal is present.
-    assert (
-        build_stabilized_year(
-            total_revenue_by_year=[10.0, 11.0],
-            noi_before_reserve_by_year=[4.0, 5.0],
-            cash_noi_by_year=[3.0, 4.0],
-            occupancy_by_year=[0.40, 0.45],
-            stabilized_occupancy=0.80,
-        )
-        is None
+    # An occupancy path that never reaches the assumption HANDS OFF to the NOI
+    # plateau rather than refusing (changed 2026-09-12 after finding it live on
+    # Sam MVP Test 2: occupancy projects 71.6% -> 73.9% against a higher target,
+    # so the whole block came back null and every Stabilization row on Overview,
+    # the IC memo and Scenario Analysis was a dash). The block still says WHICH
+    # signal answered, so an unmet occupancy assumption is visible rather than
+    # silently papered over.
+    block = build_stabilized_year(
+        total_revenue_by_year=[10.0, 11.0],
+        noi_before_reserve_by_year=[4.0, 5.0],
+        cash_noi_by_year=[3.0, 4.0],
+        occupancy_by_year=[0.40, 0.45],
+        stabilized_occupancy=0.80,
     )
+    assert block is not None
+    assert block.signal == "noi_plateau"
 
 
 def test_a_pre_upgrade_projection_reports_no_before_reserve_noi() -> None:
@@ -366,3 +370,42 @@ async def test_worksheet_layout_is_skipped_by_name_not_by_shape() -> None:
 
     assert "worksheet_layout" not in base
     assert "worksheet_layout" not in base.get("__sources__", {})
+
+
+# ── Found live on Sam MVP Test 2, 2026-09-12 ─────────────────────────────
+# The deal projects occupancy 71.6% → 73.9% against a higher stabilized
+# assumption, so the occupancy signal never fires. It used to return
+# (None, None) instead of handing off, which blanked every Stabilization row
+# on Overview, the IC memo and Scenario Analysis. The NOI plateau exists to
+# answer exactly this case.
+def test_unreached_occupancy_target_falls_through_to_the_noi_plateau() -> None:
+    from app.engines.stabilization import resolve_stabilized_year
+
+    index, signal = resolve_stabilized_year(
+        occupancy_by_year=[0.716, 0.722, 0.728, 0.733, 0.739],
+        stabilized_occupancy=0.762,  # never reached by the ramp above
+        noi_by_year=[2_000_000.0, 2_400_000.0, 2_500_000.0, 2_550_000.0, 2_600_000.0],
+    )
+    assert index is not None, "an unmet occupancy target must not blank the block"
+    assert signal == "noi_plateau"
+
+
+def test_a_reached_occupancy_target_still_wins_over_the_plateau() -> None:
+    """The fall-through must not demote the primary signal."""
+    from app.engines.stabilization import resolve_stabilized_year
+
+    index, signal = resolve_stabilized_year(
+        occupancy_by_year=[0.70, 0.76, 0.78],
+        stabilized_occupancy=0.76,
+        noi_by_year=[1_000_000.0, 1_500_000.0, 1_600_000.0],
+    )
+    assert (index, signal) == (1, "occupancy")
+
+
+def test_no_signal_at_all_still_refuses() -> None:
+    """With no occupancy series AND no NOI series there is nothing to derive."""
+    from app.engines.stabilization import resolve_stabilized_year
+
+    assert resolve_stabilized_year(
+        occupancy_by_year=None, stabilized_occupancy=None, noi_by_year=[]
+    ) == (None, None)

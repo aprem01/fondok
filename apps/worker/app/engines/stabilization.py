@@ -59,8 +59,10 @@ def resolve_stabilized_year(
     rate and the ramp is complete. A series with no ramp (growth never exceeds
     terminal) is stabilized from Year 1 (index 0).
 
-    Returns ``(None, None)`` when neither signal resolves — the caller renders
-    a dash with a reason, never a guessed year.
+    Returns ``(None, None)`` only when neither signal resolves — the caller
+    renders a dash with a reason, never a guessed year. An occupancy target
+    the projection never reaches is NOT a refusal: it hands off to the NOI
+    plateau.
     """
     # Primary — occupancy reaches the stabilized assumption.
     if (
@@ -72,7 +74,14 @@ def resolve_stabilized_year(
         for i, occ in enumerate(occupancy_by_year):
             if occ is not None and occ >= stabilized_occupancy - eps:
                 return i, "occupancy"
-        return None, None
+        # Occupancy never reaches the target. That is not "there is no
+        # stabilized year" — it is this signal declining to answer, so fall
+        # through to the NOI plateau rather than refusing. Returning here
+        # blanked every Stabilization row on any deal whose ramp tops out
+        # below its own stabilized-occupancy assumption, which is the common
+        # case on a renovation deal (found live on Sam MVP Test 2: occupancy
+        # projects 71.6% -> 73.9% against a higher target, so the whole block
+        # came back null and Overview showed five dashes).
 
     # Fallback — NOI plateau.
     n = len(noi_by_year)
