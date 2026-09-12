@@ -26,6 +26,8 @@ export interface SectionCardProps {
   className?: string;
   style?: CSSProperties;
   bodyStyle?: CSSProperties;
+  /** Stable hook for tests that need to scope assertions to one section. */
+  'data-testid'?: string;
 }
 
 export function SectionCard({
@@ -36,6 +38,7 @@ export function SectionCard({
   className,
   style,
   bodyStyle,
+  'data-testid': testId,
 }: SectionCardProps) {
   const shell: CSSProperties = {
     background: palette.cardWhite,
@@ -47,7 +50,7 @@ export function SectionCard({
   if (variant === 'title') {
     // Title header sits on a full-width bottom divider, body below (table cards).
     return (
-      <div className={className} style={{ ...shell, overflow: 'hidden' }}>
+      <div className={className} data-testid={testId} style={{ ...shell, overflow: 'hidden' }}>
         {(title != null || note != null) && (
           <div
             style={{
@@ -75,6 +78,7 @@ export function SectionCard({
   return (
     <div
       className={className}
+      data-testid={testId}
       style={{ ...shell, padding: '16px 18px', display: 'flex', flexDirection: 'column', ...bodyStyle }}
     >
       {(title != null || note != null) && (

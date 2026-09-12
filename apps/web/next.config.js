@@ -1,5 +1,13 @@
 /** @type {import('next').NextConfig} */
-const nextConfig = { reactStrictMode: true };
+const nextConfig = {
+  reactStrictMode: true,
+  // Build/dev output directory. Overridable so two Next servers can run from
+  // this one package directory at the same time without fighting over
+  // `.next/` — the E2E suite boots a second server whose only difference is
+  // `NEXT_PUBLIC_WORKER_URL` (see apps/web/playwright.config.ts). Unset
+  // everywhere else, so every real build still writes `.next`.
+  distDir: process.env.NEXT_DIST_DIR || '.next',
+};
 
 // @sentry/nextjs is in optionalDependencies — defensive load so envs that
 // skip optional deps don't break the build. `withSentryConfig` is what

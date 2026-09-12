@@ -4,3 +4,6 @@
 e2e/.report/
 test-results/
 playwright-report/
+
+# Second Next build dir used by the E2E worker-stub server (NEXT_DIST_DIR).
+.next-e2e-worker/

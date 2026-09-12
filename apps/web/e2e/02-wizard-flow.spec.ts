@@ -3,107 +3,115 @@ import { existsSync } from 'node:fs';
 import { resolve } from 'node:path';
 
 /**
- * Wizard end-to-end — verifies the Wave 1 financial gating story.
+ * Wizard end-to-end — the Wave 1 financial gating story.
  *
- * Locked product decision: Step 3 → Step 4 advance is gated on at least
- * one financial document (T-12 OR historical P&L) being staged. This
- * suite proves the Next button stays disabled before any upload and
- * enables after.
+ * Locked product decision: Step 3 → Step 4 is gated on at least one financial
+ * statement being staged. The Next button is deliberately NOT natively
+ * disabled — it takes the click and surfaces a WARN banner, because a button
+ * that silently refuses leaves the analyst wondering what broke.
+ *
+ * Hooks, not prose. These specs wait on `wizard-documents-step` and the
+ * `#wizard-financials-drop` input, never on step copy. The previous version
+ * waited on the words "Add documents" — a heading this step stopped rendering
+ * some waves ago — and failed on every push instead of being updated.
  */
-test.describe('wizard end-to-end', () => {
-  test.beforeEach(async ({ page }) => {
-    // Disable coach marks for predictable layout — their pulsing rings
-    // can swallow clicks on the active anchor.
-    await page.goto('/');
-    await page.evaluate(() => {
-      localStorage.setItem('fondok:coachmarks:disabled', 'true');
-    });
+
+const DEAL_NAME_PLACEHOLDER = 'Chicago Downtown Acquisition';
+
+/** Step 1 → 2 → 3, leaving the wizard on Documents with nothing staged. */
+async function openDocumentsStep(page: import('@playwright/test').Page, dealName: string) {
+  await page.goto('/projects/new');
+  // Coach-mark portals can intercept clicks on the active anchor.
+  await page.evaluate(() => {
+    localStorage.setItem('fondok:coachmarks:disabled', 'true');
   });
+  await page.reload();
 
-  test('Next is gated until at least one financial is uploaded', async ({ page }) => {
-    await page.goto('/projects/new');
+  await page.getByPlaceholder(DEAL_NAME_PLACEHOLDER).fill(dealName);
+  await page.getByRole('button', { name: /^next/i }).click();
+  // Step 2 (Return Profile) ships with a default selection — just advance.
+  await page.getByRole('button', { name: /^next/i }).click();
 
-    // Step 1 → fill required + advance.
-    await page.getByPlaceholder('Chicago Downtown Acquisition').fill('Gating Test Deal');
-    await page.getByPlaceholder('Chicago, IL').fill('New York, NY');
-    await page.getByRole('button', { name: /^next/i }).click();
+  await expect(page.getByTestId('wizard-documents-step')).toBeVisible();
+}
 
-    // Step 2 → already has a default selection; advance.
-    await page.getByRole('button', { name: /^next/i }).click();
+/** The stepper's own Next — the LAST one on the page (the other walks categories). */
+const stepNextButton = (page: import('@playwright/test').Page) =>
+  page.getByRole('button', { name: /^next$/i }).last();
 
-    // Step 3 — Documents. The Next button should now be disabled.
-    // There are two "Next" buttons (one for category nav, one for
-    // step nav) so target the one at the page bottom by its location
-    // — the stepper footer button is the LAST Next on the page.
-    const stepNext = page.getByRole('button', { name: /^next$/i }).last();
+/**
+ * Open the Financial Statements category and return its file input.
+ *
+ * Only the ACTIVE category renders a panel, so `#wizard-financials-drop`
+ * does not exist until Financial Statements is selected in the sidebar —
+ * Step 3 opens on Offering Memorandum. The old specs went straight for the
+ * input and timed out waiting for an element no one had asked for.
+ */
+async function openFinancialsDropzone(page: import('@playwright/test').Page) {
+  await page.getByRole('button', { name: /^Financial Statements/ }).first().click();
+  const input = page.locator('#wizard-financials-drop');
+  await expect(input).toBeAttached();
+  return input;
+}
+
+test.describe('wizard end-to-end', () => {
+  test('Next is gated until at least one financial is staged', async ({ page }) => {
+    await openDocumentsStep(page, 'Gating Test Deal');
+
+    const stepNext = stepNextButton(page);
+    // `aria-disabled` — the click still fires so the gate can explain itself.
     await expect(stepNext).toBeDisabled();
 
-    // The warn banner copy should be visible.
-    await expect(
-      page.getByText(/add at least one financial/i),
-    ).toBeVisible();
+    // Quiet until asked: the WARN banner appears only on an attempt.
+    const gateWarning = page.getByRole('alert').filter({ hasText: /at least one financial/i });
+    await expect(gateWarning).toBeHidden();
+
+    await stepNext.click({ force: true });
+    await expect(gateWarning).toBeVisible();
+    // And we are still on Step 3 — the gate held.
+    await expect(page.getByTestId('wizard-documents-step')).toBeVisible();
   });
 
-  test('uploading a financial enables Next', async ({ page }) => {
+  test('staging a financial enables Next', async ({ page }) => {
     const fixturePath = resolve(__dirname, 'fixtures', 'sample-t12.pdf');
     if (!existsSync(fixturePath)) {
       test.skip(true, 'Missing e2e/fixtures/sample-t12.pdf');
       return;
     }
 
-    await page.goto('/projects/new');
-    await page.getByPlaceholder('Chicago Downtown Acquisition').fill('Upload Enables Next');
-    await page.getByRole('button', { name: /^next/i }).click();
-    await page.getByRole('button', { name: /^next/i }).click();
+    await openDocumentsStep(page, 'Upload Enables Next');
 
-    // We should land on Step 3 with Financial Statements reachable.
-    await expect(page.getByText(/add documents/i)).toBeVisible();
+    // Each category panel renders its own hidden `<input id="wizard-{id}-drop">`.
+    // FON-34 merged the old `t12` and `pnl` buckets into `financials`.
+    const input = await openFinancialsDropzone(page);
+    await input.setInputFiles(fixturePath);
 
-    // Locate the file input scoped to the Financial Statements drop zone.
-    // Each category panel renders its own hidden <input id="wizard-{id}-drop">.
-    // FON-34 merged the old `t12` and `pnl` buckets into `financials`; this
-    // selector still named `t12` and had been failing in CI since.
-    const fileInput = page.locator('#wizard-financials-drop');
-    await fileInput.setInputFiles(fixturePath);
-
-    // Wait for the file row to appear — confirms the staged list updated.
+    // The staged-file row confirms the list updated.
     await expect(page.getByText('sample-t12.pdf').first()).toBeVisible();
-
-    // The bottom Next (step nav) should now be enabled.
-    const stepNext = page.getByRole('button', { name: /^next$/i }).last();
-    await expect(stepNext).toBeEnabled();
+    await expect(stepNextButton(page)).toBeEnabled();
   });
 
-  test('unsupported file type is rejected', async ({ page }) => {
+  test('unsupported file type is rejected and does not satisfy the gate', async ({ page }) => {
     const badFixture = resolve(__dirname, 'fixtures', 'tiny-unsupported.zip');
     if (!existsSync(badFixture)) {
       test.skip(true, 'Missing e2e/fixtures/tiny-unsupported.zip');
       return;
     }
 
-    await page.goto('/projects/new');
-    await page.getByPlaceholder('Chicago Downtown Acquisition').fill('Reject Bad Files');
-    await page.getByRole('button', { name: /^next/i }).click();
-    await page.getByRole('button', { name: /^next/i }).click();
+    await openDocumentsStep(page, 'Reject Bad Files');
 
-    const fileInput = page.locator('#wizard-financials-drop');
-    await fileInput.setInputFiles(badFixture);
+    const input = await openFinancialsDropzone(page);
+    await input.setInputFiles(badFixture);
 
-    // The rejection toast should fire — confirms the filter ran.
+    // The rejection toast fires — the extension allowlist ran.
+    await expect(page.getByText(/unsupported file type/i).first()).toBeVisible();
+
+    // The file is not staged: the "Selected … files" list never shows it.
     await expect(
-      page.getByText(/unsupported file type/i).first(),
-    ).toBeVisible({ timeout: 3000 });
-
-    // The wizard should NOT stage the file. The staged-files list is
-    // a <ul aria-label="Selected ..."> under the active category panel.
-    // Assert no list item under that list contains the bad filename.
-    const stagedList = page.getByRole('list', { name: /selected .* files/i });
-    await expect(
-      stagedList.getByText('tiny-unsupported.zip'),
+      page.getByRole('list', { name: /selected .* files/i }).getByText('tiny-unsupported.zip'),
     ).toHaveCount(0);
 
-    // Next stays disabled — financials still missing.
-    const stepNext = page.getByRole('button', { name: /^next$/i }).last();
-    await expect(stepNext).toBeDisabled();
+    // And the gate still holds — a rejected file is not a financial.
+    await expect(stepNextButton(page)).toBeDisabled();
   });
 });
