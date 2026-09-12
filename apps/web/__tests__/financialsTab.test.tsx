@@ -196,19 +196,24 @@ describe('Financials · Projections — Assumptions panel renders from engine ou
     // Resort fee card.
     expect(screen.getByText('Resort fee revenue')).toBeInTheDocument();
     expect(screen.getByText('Resort fee')).toBeInTheDocument();
-    // FON-41 — each capture input names the COLUMN it moves. The engine's
-    // y=1 is displayed as "Base Year", so "Capture Yr 1" was landing on the
-    // column the analyst reads as the Base Year (Sam, 2026-09-11).
-    expect(screen.getByText('Capture — Base Year')).toBeInTheDocument();
-    expect(screen.getByText('Capture — Year 1')).toBeInTheDocument();
-    expect(screen.getByText('Capture — Year 2+')).toBeInTheDocument();
+    // FON-41 — each capture input names the COLUMN it moves, and the column
+    // names moved in Wave 3: index 0 IS operating Year 1, so it heads
+    // "Base Year (Year 1)" and every later label is shifted up one. The
+    // capture labels and their explanatory note move WITH the header, or they
+    // contradict it (Sam, 2026-09-11).
+    expect(screen.getByText('Capture — Base Year (Year 1)')).toBeInTheDocument();
+    expect(screen.getByText('Capture — Year 2')).toBeInTheDocument();
+    expect(screen.getByText('Capture — Year 3+')).toBeInTheDocument();
     expect(
-      screen.getByText(/Base Year is projection year 1, Year 1 is projection year 2/),
+      screen.getByText(/Base Year \(Year 1\) is the model's first operating year/),
     ).toBeInTheDocument();
     // Every capture label names a column header the statement actually renders.
-    for (const name of ['Base Year', 'Year 1', 'Year 2']) {
+    for (const name of ['Base Year \\(Year 1\\)', 'Year 2', 'Year 3']) {
       expect(screen.getAllByText(new RegExp(`^${name}`)).length).toBeGreaterThan(0);
     }
+    // The Stabilization Year editor (FON-59 #3) lives here too.
+    expect(screen.getByText('Stabilization')).toBeInTheDocument();
+    expect(screen.getByText('Stabilization Year')).toBeInTheDocument();
     // Deal economics card.
     expect(screen.getByText('Deal economics')).toBeInTheDocument();
     expect(screen.getByText('Management fee')).toBeInTheDocument();
@@ -410,3 +415,123 @@ describe('Financials · Projections — NOI pin notice (FON-67 reconciliation le
   });
 });
 
+// ── FON-41 / FON-59 #3 — the editable Stabilization Year ─────────────
+// Sam: "Financials → Projections should own an explicit editable Stabilization
+// Year." It writes the deal's field_overrides and re-runs the WHOLE model (a
+// single-engine re-run would re-fragment the canonical snapshot), and it goes
+// through the shared inline-edit contract: Esc / click-away discard, and
+// re-saving the seeded value unchanged writes nothing.
+describe('Financials · Projections — the Stabilization Year', () => {
+  const withBlock = (source: 'fondok_derived' | 'analyst_override' = 'fondok_derived') => ({
+    ...OUTPUTS,
+    engines: {
+      ...OUTPUTS.engines,
+      revenue: {
+        ...OUTPUTS.engines.revenue,
+        outputs: {
+          ...(OUTPUTS.engines.revenue as { outputs: Record<string, unknown> }).outputs,
+          projection_calendar_years: [2025, 2026, 2027],
+          projection_start_year: 2025,
+        },
+      },
+      expense: {
+        ...OUTPUTS.engines.expense,
+        outputs: {
+          ...(OUTPUTS.engines.expense as { outputs: Record<string, unknown> }).outputs,
+          stabilization: {
+            stabilized_year_index: 1,
+            stabilized_year: 2,
+            source,
+            signal: 'occupancy',
+            derived_year: 2,
+            stabilized_occupancy: 0.75,
+            stabilized_adr: 300,
+            stabilized_revenue: 12_500_000,
+            stabilized_noi_before_reserve: 4_035_000,
+            stabilized_cash_noi: 3_535_000,
+            stabilized_noi_margin: 4_035_000 / 12_500_000,
+          },
+        },
+      },
+    },
+  }) as unknown as EngineOutputsResponse;
+
+  it('shows the seeded year with its calendar year and the Fondok-derived badge', () => {
+    OUTPUTS_OVERRIDE = withBlock();
+    render(<ProjectionsSection dealId="deal-uuid-1" />);
+
+    expect(screen.getByTestId('stabilization-year-value')).toHaveTextContent('Year 2 — 2026');
+    expect(screen.getByTestId('stabilization-year-badge')).toHaveTextContent('Fondok-derived — confirm');
+    // …and the selected column carries the STABILIZED badge.
+    expect(screen.getByTestId('stabilized-badge')).toBeInTheDocument();
+    OUTPUTS_OVERRIDE = undefined;
+  });
+
+  it('a change PATCHes field_overrides.stabilization_year and re-runs the whole model', async () => {
+    OUTPUTS_OVERRIDE = withBlock();
+    render(<ProjectionsSection dealId="deal-uuid-1" />);
+
+    fireEvent.click(screen.getByTestId('stabilization-year-value'));
+    const input = screen.getByLabelText('Stabilization Year') as HTMLInputElement;
+    expect(input.value).toBe('2');
+    fireEvent.change(input, { target: { value: '3' } });
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: 'Save' }));
+    });
+
+    await waitFor(() => expect(updateSpy).toHaveBeenCalled());
+    const body = updateSpy.mock.calls[0][1] as { field_overrides: Record<string, unknown> };
+    expect(body.field_overrides.stabilization_year).toEqual({
+      value: 3,
+      note: 'Stabilization Year set on the Projections page',
+    });
+    expect(engineRunSpy).toHaveBeenCalled();
+    OUTPUTS_OVERRIDE = undefined;
+  });
+
+  it('re-saving the seeded year unchanged writes nothing — it stays Fondok-derived', async () => {
+    OUTPUTS_OVERRIDE = withBlock();
+    render(<ProjectionsSection dealId="deal-uuid-1" />);
+
+    fireEvent.click(screen.getByTestId('stabilization-year-value'));
+    // No edit at all — just Save, the way an analyst confirms a seed.
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: 'Save' }));
+    });
+
+    expect(updateSpy).not.toHaveBeenCalled();
+    expect(engineRunSpy).not.toHaveBeenCalled();
+    expect(screen.getByTestId('stabilization-year-badge')).toHaveTextContent('Fondok-derived — confirm');
+    OUTPUTS_OVERRIDE = undefined;
+  });
+
+  it('Escape discards without writing', async () => {
+    OUTPUTS_OVERRIDE = withBlock();
+    render(<ProjectionsSection dealId="deal-uuid-1" />);
+
+    fireEvent.click(screen.getByTestId('stabilization-year-value'));
+    const input = screen.getByLabelText('Stabilization Year') as HTMLInputElement;
+    fireEvent.change(input, { target: { value: '3' } });
+    fireEvent.keyDown(input, { key: 'Escape' });
+
+    expect(updateSpy).not.toHaveBeenCalled();
+    expect(screen.getByTestId('stabilization-year-value')).toHaveTextContent('Year 2 — 2026');
+    OUTPUTS_OVERRIDE = undefined;
+  });
+
+  it('an analyst-selected year is badged as an override, not as derived', () => {
+    OUTPUTS_OVERRIDE = withBlock('analyst_override');
+    render(<ProjectionsSection dealId="deal-uuid-1" />);
+    expect(screen.getByTestId('stabilization-year-badge')).toHaveTextContent('Analyst override');
+    OUTPUTS_OVERRIDE = undefined;
+  });
+
+  it('with no published block the editor is an inert dash — never a guessed year', () => {
+    render(<ProjectionsSection dealId="deal-uuid-1" />);
+    const value = screen.getByTestId('stabilization-year-value');
+    expect(value).toHaveTextContent('—');
+    expect(value).toBeDisabled();
+    expect(screen.queryByTestId('stabilization-year-badge')).not.toBeInTheDocument();
+    expect(screen.queryByTestId('stabilized-badge')).not.toBeInTheDocument();
+  });
+});

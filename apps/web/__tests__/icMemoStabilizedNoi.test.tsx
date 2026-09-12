@@ -1,25 +1,29 @@
 /**
- * FON-54 #1 — IC Memo and Scenario Analysis must print the SAME stabilized NOI.
+ * FON-54 #1 / FON-59 #3 — IC Memo and Scenario Analysis print the SAME
+ * stabilized NOI, and it is the stabilized YEAR's NOI.
  *
  * They didn't. IC Memo's Scenario Summary read `expense.years[0].noi` (year
  * ONE, after the FF&E reserve → $1.45M) while Scenario Analysis read the last
  * element of `returns.noi_by_year` (the terminal year → $2.60M), and both
  * rows were labelled "Stabilized NOI". Same deal, same compare endpoint, two
- * numbers.
+ * numbers. Wave 1 collapsed them onto one selector; Wave 3 points that
+ * selector at the worker's published stabilization block, so the number is
+ * the stabilized year's — not the last hold year's and not the exit
+ * reversion's.
  *
- * Both now call `stabilizedCashNoi()` from `@/lib/engines/noi` and print
- * "Stabilized Cash NOI" (the series is net of the FF&E reserve). This test
- * feeds ONE `scenarios.compare` payload to both components and asserts the
- * Base column agrees.
+ * This test feeds ONE `scenarios.compare` payload to both components and
+ * asserts the Base column agrees.
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, cleanup, within } from '@testing-library/react';
+import { render, screen, cleanup } from '@testing-library/react';
 import React from 'react';
 import type { ScenarioRecord } from '@/lib/api';
-import { STABILIZED_CASH_NOI_LABEL } from '@/lib/engines/noi';
+import { STABILIZED_NOI_LABEL } from '@/lib/engines/noi';
 
-// The terminal-year (stabilized) Cash NOI both panels must land on.
-const STABILIZED = 2_604_118;
+// The stabilized YEAR's NOI before the FF&E reserve — what both panels print.
+const STABILIZED_NOI = 2_460_000;
+// The last hold year's Cash NOI — what Scenario Analysis used to show.
+const TERMINAL_CASH_NOI = 2_604_118;
 // Year-1 Cash NOI — what IC Memo used to show under the same label.
 const YEAR_ONE_CASH_NOI = 1_448_443;
 
@@ -31,7 +35,7 @@ const BASE_ENGINES = {
       equity_multiple: 2.5,
       avg_coc: 0.09,
       gross_sale_price: 52_000_000,
-      noi_by_year: [1_448_443, 1_900_000, 2_200_000, 2_400_000, STABILIZED],
+      noi_by_year: [1_448_443, 1_900_000, 2_200_000, 2_400_000, TERMINAL_CASH_NOI],
       cash_flows: [-17_000_000, 1_000_000, 1_200_000],
     },
   },
@@ -40,8 +44,22 @@ const BASE_ENGINES = {
     outputs: {
       years: [
         { year: 1, noi: YEAR_ONE_CASH_NOI, noi_institutional: 2_001_056, ffe_reserve: 552_613 },
-        { year: 2, noi: 1_900_000, noi_institutional: 2_460_000, ffe_reserve: 560_000 },
+        { year: 2, noi: 1_900_000, noi_institutional: STABILIZED_NOI, ffe_reserve: 560_000 },
       ],
+      // The worker's published block — projection Year 2 is the stabilized one.
+      stabilization: {
+        stabilized_year_index: 1,
+        stabilized_year: 2,
+        source: 'fondok_derived',
+        signal: 'occupancy',
+        derived_year: 2,
+        stabilized_occupancy: 0.77,
+        stabilized_adr: 401.0,
+        stabilized_revenue: 12_300_000,
+        stabilized_noi_before_reserve: STABILIZED_NOI,
+        stabilized_cash_noi: 1_900_000,
+        stabilized_noi_margin: STABILIZED_NOI / 12_300_000,
+      },
     },
   },
   debt: { status: 'complete', outputs: { avg_dscr: 1.6, year_one_dscr: 1.59 } },
@@ -139,29 +157,39 @@ beforeEach(() => cleanup());
 describe('FON-54 #1 — one stabilized-NOI definition across IC Memo and Scenario Analysis', () => {
   it('both read the same selector and print the same Base value from one compare payload', async () => {
     const { unmount } = render(<ICMemoTab project={PROJECT} />);
-    const memoLabel = await screen.findByText(STABILIZED_CASH_NOI_LABEL);
+    const memoLabel = await screen.findByText(STABILIZED_NOI_LABEL);
     const memoValue = baseCellText(memoLabel);
-    // $2.60M — the TERMINAL year, not year one.
-    expect(memoValue).toContain('$2.60M');
-    expect(memoValue).not.toContain('$1.45M');
+    // $2.46M — the STABILIZED year (2), before the FF&E reserve.
+    expect(memoValue).toContain('$2.46M');
+    expect(memoValue).not.toContain('$1.45M'); // year one
+    expect(memoValue).not.toContain('$2.60M'); // last hold year
     unmount();
     cleanup();
 
     render(<ScenarioComparePanel dealId="deal-uuid-1" scenarios={RECORDS} />);
-    const panelLabel = await screen.findByText(STABILIZED_CASH_NOI_LABEL);
+    const panelLabel = await screen.findByText(STABILIZED_NOI_LABEL);
     const panelValue = baseCellText(panelLabel);
 
-    expect(panelValue).toContain('$2.60M');
+    expect(panelValue).toContain('$2.46M');
     // The whole point: identical, off one payload.
     expect(memoValue).toBe(panelValue);
   });
 
-  it('the shared selector returns the terminal-year Cash NOI, not year one', async () => {
-    const { stabilizedCashNoi } = await import('@/lib/engines/noi');
-    expect(stabilizedCashNoi(BASE_ENGINES)).toBe(STABILIZED);
-    expect(stabilizedCashNoi(BASE_ENGINES)).not.toBe(YEAR_ONE_CASH_NOI);
-    // Falls back to the last expense year when returns published no series.
-    expect(stabilizedCashNoi({ expense: BASE_ENGINES.expense })).toBe(1_900_000);
-    expect(stabilizedCashNoi({})).toBeNull();
+  it('the shared selector reads the published block, not a year picked by position', async () => {
+    const { stabilizedNoiBeforeReserve, stabilizedYearFromEngines } =
+      await import('@/lib/engines/noi');
+
+    expect(stabilizedNoiBeforeReserve(BASE_ENGINES)).toBe(STABILIZED_NOI);
+    expect(stabilizedNoiBeforeReserve(BASE_ENGINES)).not.toBe(YEAR_ONE_CASH_NOI);
+    expect(stabilizedNoiBeforeReserve(BASE_ENGINES)).not.toBe(TERMINAL_CASH_NOI);
+    expect(stabilizedYearFromEngines(BASE_ENGINES)?.stabilized_year).toBe(2);
+
+    // No block published → null. It does NOT fall back to another year:
+    // a borrowed figure under a "stabilized" label is the bug this closes.
+    expect(
+      stabilizedNoiBeforeReserve({ returns: BASE_ENGINES.returns }),
+    ).toBeNull();
+    expect(stabilizedNoiBeforeReserve({})).toBeNull();
+    expect(stabilizedNoiBeforeReserve(null)).toBeNull();
   });
 });

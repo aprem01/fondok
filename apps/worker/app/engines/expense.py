@@ -24,6 +24,7 @@ from fondok_schemas.provenance import ValueInput, ValueTrace, apply_states
 
 from .base import BaseEngine
 from .fb_revenue import FBRevenueOutput
+from .stabilization import StabilizedYear, build_stabilized_year
 
 
 # Industry margin defaults (expense as % of *its* revenue category for departmental,
@@ -113,6 +114,26 @@ class ExpenseEngineInput(BaseModel):
             "utilities, insurance, property_taxes, mgmt_fee, ffe_reserve."
         ),
     )
+    # FON-41 / FON-59 #3 — the stabilized-year block. The expense engine is
+    # the only engine that holds a projection's revenue AND its NOI on the same
+    # year index, so it is where the stabilized year is published (see
+    # ``engines/stabilization.py``). These four inputs are what it cannot
+    # derive from its own output:
+    #   • ``occupancy_by_year`` / ``adr_by_year`` — the revenue engine's
+    #     projected paths, so the block can report the stabilized year's
+    #     occupancy and ADR rather than making the UI re-read another engine.
+    #   • ``stabilized_occupancy`` — the deal's post-ramp occupancy assumption
+    #     (``starting_occupancy``), the primary derivation signal. Exactly what
+    #     the debt engine is passed, so both resolve the SAME year.
+    #   • ``stabilization_year`` — the analyst's 1-based model year. Wins over
+    #     the derived signal; equal to it, it is not treated as an override.
+    # All four default to None, so a caller that omits them gets a projection
+    # byte-identical to before with ``stabilization`` resolved from the NOI
+    # plateau alone (or left ``None``).
+    occupancy_by_year: list[float] | None = None
+    adr_by_year: list[float] | None = None
+    stabilized_occupancy: Annotated[float, Field(ge=0.0, le=1.0)] | None = None
+    stabilization_year: Annotated[int, Field(ge=1)] | None = None
 
 
 class ExpenseYear(BaseModel):
@@ -152,6 +173,12 @@ class ExpenseEngineOutput(BaseModel):
     # FON-25 — per-value provenance sidecar (see provenance.py). Keyed by
     # dotted output path, e.g. "years[0].noi". Empty by default.
     provenance: dict[str, ValueTrace] = Field(default_factory=dict)
+    # FON-41 / FON-59 #3 — THE stabilized operating year. One block, read from
+    # one year index, so Overview, the IC memo and Scenario Analysis cannot
+    # print three different "stabilized" numbers. ``None`` when no year
+    # resolves — every consumer then renders a dash with a reason, never a zero
+    # and never the exit-year reversion.
+    stabilization: StabilizedYear | None = None
 
 
 class ExpenseEngine(BaseEngine[ExpenseEngineInput, ExpenseEngineOutput]):
@@ -462,12 +489,27 @@ class ExpenseEngine(BaseEngine[ExpenseEngineInput, ExpenseEngineOutput]):
         else:
             noi_cagr = 0.0
 
+        # FON-41 / FON-59 #3 — publish the stabilized year off THIS projection.
+        # Display-only: nothing below reads it, and no figure above depends on
+        # it, so setting or changing ``stabilization_year`` cannot move NOI,
+        # the exit, or any return.
+        stabilization = build_stabilized_year(
+            total_revenue_by_year=[y.total_revenue for y in years],
+            noi_before_reserve_by_year=[y.noi_institutional for y in years],
+            cash_noi_by_year=[y.noi for y in years],
+            occupancy_by_year=payload.occupancy_by_year,
+            adr_by_year=payload.adr_by_year,
+            stabilized_occupancy=payload.stabilized_occupancy,
+            stabilization_year=payload.stabilization_year,
+        )
+
         return ExpenseEngineOutput(
             deal_id=payload.deal_id,
             years=years,
             noi_cagr=noi_cagr,
             sourced_from_t12=sourced,
             provenance=apply_states(prov),
+            stabilization=stabilization,
         )
 
 

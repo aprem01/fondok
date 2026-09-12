@@ -154,6 +154,55 @@ export default function MethodologyPage() {
         </Card>
 
         <Card className="p-5 mb-4">
+          <h4 className="text-[13px] font-semibold text-ink-900 mb-3">The projection calendar, and what &quot;Base Year&quot; means</h4>
+          <p className="text-[12.5px] text-ink-500 leading-relaxed">
+            The revenue engine projects <strong>ordinals</strong> — operating year 1 through the hold period — not calendar years. The calendar is derived in one place: the <strong>acquisition close date</strong> on the deal, the same date the transaction timeline is built from. Operating Year 1 is the calendar year containing the first operating month (close + one month), so a 30 September 2025 close projects Year 1 in 2025 and a 15 December 2025 close projects it in 2026. Every later column is that year plus one.
+          </p>
+          <p className="text-[12.5px] text-ink-500 leading-relaxed mt-3">
+            <strong>With no acquisition close date the statement prints no year at all</strong> — the column shows its label and a dash. It never falls back to the wall clock or to the year a document happened to be extracted from; a guessed year is a fabricated number.
+          </p>
+          <p className="text-[12.5px] text-ink-500 leading-relaxed mt-3">
+            The first column is labelled <strong>Base Year (Year 1)</strong> because that is exactly what it is: <code className="text-[11.5px]">revenue.years[0]</code> IS the model&apos;s first operating year. It is the value the returns engine consumes as <code className="text-[11.5px]">year_one_noi</code> and the value the Cash Flow statement labels &quot;Year 1&quot;. Financials used to call it &quot;Base Year&quot; and then label the NEXT column &quot;Year 1&quot;, which put every column a year ahead of its own label. The labels were corrected; the engine was not re-indexed, so no figure moved. There is no separate pre-close base year in the model today.
+          </p>
+          <p className="text-[12.5px] text-ink-500 leading-relaxed mt-3">
+            The horizon is <strong>hold period + 1</strong> columns. The extra column is the <strong>Exit Year</strong>, and it is display-only: it carries the forward 12-month NOI the reversion is valued on and a dash on every other line. Year hold+1 is deliberately NOT run through the expense waterfall — see the exit-valuation note below.
+          </p>
+        </Card>
+
+        <Card className="p-5 mb-4">
+          <h4 className="text-[13px] font-semibold text-ink-900 mb-3">The Stabilization Year</h4>
+          <p className="text-[12.5px] text-ink-500 leading-relaxed">
+            &quot;Stabilized&quot; names one projection year, and every stabilized figure on every screen — Stabilized Occupancy, ADR, Revenue, NOI, NOI Margin, Yield on Cost, the IC memo&apos;s scenario summary and Scenario Analysis&apos; comparison row — is read from <em>that</em> year. It is published as a single block by the expense engine, so two surfaces cannot resolve it differently.
+          </p>
+          <p className="text-[12.5px] text-ink-500 leading-relaxed mt-3">
+            The year is an <strong>analyst assumption</strong>, editable in Financials → Projections → Assumptions and persisted on the deal. Fondok seeds it rather than leaving it blank, and always says so:
+          </p>
+          <Chain
+            steps={[
+              { label: 'Analyst selection', desc: 'The year set on the Projections panel wins. Badged "Analyst override", with Fondok\u2019s own signal shown beside it.' },
+              { label: 'Occupancy signal (seed)', desc: 'The first projected year occupancy reaches the deal\u2019s post-ramp stabilized-occupancy assumption. This is the primary signal, and the same one the Debt engine keys its stabilized DSCR and debt yield off.' },
+              { label: 'NOI plateau (seed fallback)', desc: 'With no occupancy signal, the first year year-over-year NOI growth settles to its terminal rate \u2014 i.e. the ramp is complete.' },
+            ]}
+          />
+          <p className="text-[12.5px] text-ink-500 leading-relaxed mt-3">
+            A seeded year is labelled <strong>&quot;Fondok-derived — confirm&quot;</strong> until the analyst moves it. Re-saving the seeded value unchanged is not an override: it keeps reporting as Fondok-derived, because nothing changed. It is deliberately <em>not</em> derived from renovation completion alone.
+          </p>
+          <p className="text-[12.5px] text-ink-500 leading-relaxed mt-3">
+            The Stabilization Year is a <strong>reporting</strong> assumption: it selects which projected year the stabilized figures are read from. It moves no cash flow. Setting or changing it leaves the gross sale price, the levered and unlevered IRRs, the equity multiple and the terminal NOI bit-identical — there is a regression test that asserts exactly that. When no year resolves, every stabilized figure renders as a dash with a reason; none of them falls back to another year.
+          </p>
+        </Card>
+
+        <Card className="p-5 mb-4">
+          <h4 className="text-[13px] font-semibold text-ink-900 mb-3">What the exit is valued on</h4>
+          <p className="text-[12.5px] text-ink-500 leading-relaxed">
+            The reversion capitalises the <strong>forward 12-month Cash NOI</strong> — the after-FF&amp;E-reserve basis — at the exit cap rate. That forward figure is the last modelled hold year&apos;s Cash NOI grown at the RevPAR growth rate; it is an extrapolation, not an operating year projected through the expense waterfall, and the Exit Year column says so by showing its formula and nothing else.
+          </p>
+          <p className="text-[12.5px] text-ink-500 leading-relaxed mt-3">
+            This matters because the entry cap rate is struck on NOI <em>before</em> the reserve while the exit is struck on Cash NOI <em>after</em> it. Both are defensible conventions and Fondok keeps both, but it names each one wherever it prints it — the Exit row reads &quot;Forward 12-Month Cash NOI (after FF&amp;E reserve)&quot;, never a bare &quot;NOI&quot;. Modelling a real year hold+1 through the waterfall instead would move the gross sale price, both IRRs and the equity multiple on every persisted deal; that is a deliberate post-MVP decision, not an oversight.
+          </p>
+        </Card>
+
+        <Card className="p-5 mb-4">
           <h4 className="text-[13px] font-semibold text-ink-900 mb-3">Year-1 PIP displacement</h4>
           <p className="text-[12.5px] text-ink-500 leading-relaxed mb-2">
             When the capital engine carries a renovation budget &gt; $5,000 per key, Year-1 occupancy is depressed 15% and Year-1 ADR is depressed 8% to reflect rooms out of service and disruption pricing. The thresholds are tunable per deal via field_overrides. Year-2 onwards snap back to the stabilized baseline — a heavy PIP affects only the construction year, not the underwriting trajectory.

@@ -63,52 +63,125 @@ export function noiBeforeReserve(year: ExpenseYearNoi | null | undefined): NoiBe
 }
 
 // ────────────────────────────────────────────────────────────────────
-// Stabilized Cash NOI — the single selector IC Memo and Scenario
-// Analysis share, so the two panels cannot drift again (FON-54 #1).
+// One scenario's engine result, as `scenarios.compare` returns it.
 // ────────────────────────────────────────────────────────────────────
 
-/** One scenario's engine result as the `scenarios.compare` endpoint returns it. */
+/** One engine's slot in the per-scenario map (`{ expense: { outputs }, … }`). */
 export interface EngineOutputsLike {
   outputs?: unknown;
 }
 
-/** Last finite number in a numeric array field on an engine output. */
-function lastNumInArray(obj: unknown, key: string): number | null {
-  if (!obj || typeof obj !== 'object') return null;
-  const arr = (obj as Record<string, unknown>)[key];
-  if (!Array.isArray(arr) || arr.length === 0) return null;
-  const v = arr[arr.length - 1];
-  return typeof v === 'number' && Number.isFinite(v) ? v : null;
+// ────────────────────────────────────────────────────────────────────
+// The stabilized YEAR — one block, one year index, every surface
+// (FON-41 / FON-59 #3).
+//
+// Before Wave 3 four different "stabilized" numbers shipped: the last element
+// of `returns.noi_by_year` (Scenario Analysis), `expense.years[0].noi` (IC
+// Memo), `returns.terminal_noi` — the year hold+1 reversion — (Overview), and
+// the debt engine's own occupancy/plateau signal. The worker now publishes ONE
+// block on the expense engine (`apps/worker/app/engines/stabilization.py`) and
+// every consumer reads it, so they cannot drift again.
+//
+// Nothing here falls back to another year. A run with no resolvable
+// stabilization year returns `null`, and the caller renders a dash with a
+// reason — never a zero, never a figure borrowed from the exit.
+// ────────────────────────────────────────────────────────────────────
+
+/** Who owns the stabilization year on a published block. */
+export type StabilizationSource = 'fondok_derived' | 'analyst_override';
+/** Which signal produced the Fondok-derived seed. */
+export type StabilizationSignal = 'occupancy' | 'noi_plateau';
+
+/** `expense.stabilization` as the worker emits it. */
+export interface StabilizedYearBlock {
+  stabilized_year_index: number;
+  /** 1-based model year — what the analyst reads ("Year 2"). */
+  stabilized_year: number;
+  source: StabilizationSource;
+  signal?: StabilizationSignal | null;
+  /** The Fondok-derived seed, kept alongside an analyst override. */
+  derived_year?: number | null;
+  stabilized_occupancy?: number | null;
+  stabilized_adr?: number | null;
+  stabilized_revenue?: number | null;
+  /** NOI before the FF&E reserve — the bare word "NOI" in Fondok. */
+  stabilized_noi_before_reserve?: number | null;
+  /** Cash NOI (after the FF&E reserve) of the SAME year. */
+  stabilized_cash_noi?: number | null;
+  stabilized_noi_margin?: number | null;
 }
 
-/** Field on the last element of an array-of-objects — e.g. expense.years[last].noi. */
-function lastYearField(obj: unknown, arrKey: string, field: string): number | null {
-  if (!obj || typeof obj !== 'object') return null;
-  const arr = (obj as Record<string, unknown>)[arrKey];
-  if (!Array.isArray(arr) || arr.length === 0) return null;
-  const last = arr[arr.length - 1];
-  if (!last || typeof last !== 'object') return null;
-  const v = (last as Record<string, unknown>)[field];
-  return typeof v === 'number' && Number.isFinite(v) ? v : null;
+const isFiniteNum = (v: unknown): v is number =>
+  typeof v === 'number' && Number.isFinite(v);
+
+/** Read the published block off one engine-outputs object, or `null`. */
+export function stabilizedYearBlock(
+  expenseOutputs: unknown,
+): StabilizedYearBlock | null {
+  if (!expenseOutputs || typeof expenseOutputs !== 'object') return null;
+  const raw = (expenseOutputs as Record<string, unknown>).stabilization;
+  if (!raw || typeof raw !== 'object') return null;
+  const block = raw as Record<string, unknown>;
+  if (!isFiniteNum(block.stabilized_year_index)) return null;
+  if (!isFiniteNum(block.stabilized_year)) return null;
+  return block as unknown as StabilizedYearBlock;
 }
 
 /**
- * Terminal-year (stabilized) Cash NOI for one scenario: the last element of
- * `returns.noi_by_year`, falling back to the last expense-engine operating
- * year's `noi`. Both series are net of the FF&E reserve, hence "Cash NOI".
- *
- * `engines` is the per-scenario map the compare endpoint returns
- * (`{ returns: { outputs }, expense: { outputs }, … }`).
+ * The stabilized block for one scenario's engine map (`{ expense: { outputs } }`
+ * — the shape `scenarios.compare` returns), or `null`.
  */
-export function stabilizedCashNoi(
+export function stabilizedYearFromEngines(
   engines: Record<string, EngineOutputsLike | undefined> | null | undefined,
-): number | null {
+): StabilizedYearBlock | null {
   if (!engines) return null;
-  return (
-    lastNumInArray(engines.returns?.outputs, 'noi_by_year') ??
-    lastYearField(engines.expense?.outputs, 'years', 'noi')
-  );
+  return stabilizedYearBlock(engines.expense?.outputs);
 }
 
-/** Display label for the stabilized figure above. */
-export const STABILIZED_CASH_NOI_LABEL = 'Stabilized Cash NOI';
+/**
+ * Stabilized NOI **before** the FF&E reserve, from the stabilized year — the
+ * figure Overview, the IC memo and Scenario Analysis all print. `null` when the
+ * run published no stabilization block, or published one whose projection
+ * never carried `noi_institutional`.
+ */
+export function stabilizedNoiBeforeReserve(
+  engines: Record<string, EngineOutputsLike | undefined> | null | undefined,
+): number | null {
+  const block = stabilizedYearFromEngines(engines);
+  const v = block?.stabilized_noi_before_reserve;
+  return isFiniteNum(v) ? v : null;
+}
+
+/** Display label for the figure above. "NOI" unqualified = before the reserve. */
+export const STABILIZED_NOI_LABEL = 'Stabilized NOI';
+
+/**
+ * How the stabilized year was arrived at, for the badge next to it.
+ * "Fondok-derived — confirm" until the analyst has moved it.
+ */
+export const STABILIZATION_DERIVED_BADGE = 'Fondok-derived — confirm';
+export const STABILIZATION_ANALYST_BADGE = 'Analyst override';
+
+export function stabilizationBadge(block: StabilizedYearBlock | null): string | null {
+  if (!block) return null;
+  return block.source === 'analyst_override'
+    ? STABILIZATION_ANALYST_BADGE
+    : STABILIZATION_DERIVED_BADGE;
+}
+
+/** One-line explanation of where the derived seed came from. */
+export function stabilizationSignalNote(block: StabilizedYearBlock | null): string | null {
+  if (!block) return null;
+  if (block.source === 'analyst_override') {
+    return block.derived_year != null
+      ? `Analyst-selected. Fondok's signal points at Year ${block.derived_year}.`
+      : 'Analyst-selected.';
+  }
+  if (block.signal === 'occupancy') {
+    return 'Derived — the first projected year occupancy reaches the stabilized assumption. Confirm or change it.';
+  }
+  if (block.signal === 'noi_plateau') {
+    return 'Derived — the first projected year NOI growth settles to its terminal rate. Confirm or change it.';
+  }
+  return 'Derived from the projection. Confirm or change it.';
+}

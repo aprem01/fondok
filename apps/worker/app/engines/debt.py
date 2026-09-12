@@ -34,6 +34,7 @@ from fondok_schemas.underwriting import (
 )
 
 from .base import BaseEngine
+from .stabilization import resolve_stabilized_year_index
 from .tranche_stack import DebtStackResult, LoanTranche, compute_debt_stack
 
 
@@ -313,59 +314,12 @@ def pmt(rate: float, nper: int, pv: float) -> float:
     return pv * (rate * factor) / (factor - 1.0)
 
 
-def _resolve_stabilized_year_index(
-    *,
-    occupancy_by_year: list[float] | None,
-    stabilized_occupancy: float | None,
-    noi_by_year: list[float],
-) -> int | None:
-    """0-based index of the first stabilized projection year, or None.
-
-    Primary signal (approved definition): the first year the projected
-    occupancy reaches the deal's post-ramp stabilized-occupancy assumption.
-    The revenue engine treats ``starting_occupancy`` as the stabilized
-    baseline and only Year 1 (and, under a PIP, its recovery) sits below it,
-    so an un-displaced deal stabilizes in Year 1.
-
-    Fallback (no occupancy signal): the NOI plateau — walk the NOI series and
-    take the year AFTER the last above-terminal growth step, i.e. the first
-    year year-over-year NOI growth has settled to the terminal (final-period)
-    rate and the ramp is complete. A series with no ramp (growth never exceeds
-    terminal) is stabilized from Year 1 (index 0).
-    """
-    # Primary — occupancy reaches the stabilized assumption.
-    if (
-        occupancy_by_year
-        and stabilized_occupancy is not None
-        and stabilized_occupancy > 0
-    ):
-        eps = 1e-9
-        for i, occ in enumerate(occupancy_by_year):
-            if occ is not None and occ >= stabilized_occupancy - eps:
-                return i
-        return None
-
-    # Fallback — NOI plateau.
-    n = len(noi_by_year)
-    if n == 0:
-        return None
-    if n == 1:
-        return 0
-    terminal_growth = (
-        (noi_by_year[-1] / noi_by_year[-2] - 1.0)
-        if noi_by_year[-2] > 0
-        else 0.0
-    )
-    tol = 0.005  # 0.5 percentage-point tolerance on the terminal rate
-    last_ramp_step = -1
-    for j in range(n - 1):
-        prev = noi_by_year[j]
-        growth = (noi_by_year[j + 1] / prev - 1.0) if prev > 0 else 0.0
-        if growth > terminal_growth + tol:
-            last_ramp_step = j
-    if last_ramp_step < 0:
-        return 0
-    return min(last_ramp_step + 1, n - 1)
+# FON-41 / FON-59 #3 — the stabilized-year signal now lives in ONE module
+# (``engines/stabilization.py``) so the debt engine's stabilized DSCR / debt
+# yield and the projection's published stabilized block resolve the same year
+# from the same code. Re-exported under its historical private name; the body
+# is unchanged, so every existing debt number is byte-identical.
+_resolve_stabilized_year_index = resolve_stabilized_year_index
 
 
 # FON-63 — a forward-SOFR assumption for any floating tranche the analyst

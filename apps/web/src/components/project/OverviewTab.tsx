@@ -73,6 +73,13 @@ import {
 } from '@/components/design';
 import { isNoOpEdit } from '@/lib/fieldValue';
 import {
+  stabilizedYearBlock,
+  stabilizationBadge,
+  stabilizationSignalNote,
+  STABILIZED_NOI_LABEL,
+  type StabilizedYearBlock,
+} from '@/lib/engines/noi';
+import {
   api,
   isWorkerConnected,
   WorkerError,
@@ -459,6 +466,23 @@ export default function OverviewTab({ projectId }: { projectId: number | string 
   const expYears = getEngineField<Array<{ noi?: number; noi_institutional?: number }>>(outputs, 'expense', 'years');
   const y1Noi = expYears && expYears.length > 0 ? (expYears[0].noi_institutional ?? expYears[0].noi) : undefined;
 
+  // FON-41 / FON-59 #3 — THE stabilized year. One block published by the
+  // expense engine (apps/worker/app/engines/stabilization.py), read here for
+  // every Stabilization row, the Yield on Cost and the KPI tile, so all of
+  // them reconcile to the same projection year. Absent (a run that predates
+  // the block, or a projection with no resolvable year) every one of them
+  // stays the reasoned dash it was — never a zero, never the exit reversion.
+  const stab: StabilizedYearBlock | null = stabilizedYearBlock(
+    getEngineField<unknown>(outputs, 'expense'),
+  );
+  // The calendar year of the stabilized model year, when the deal carries an
+  // acquisition close date (FON-41 #2). No close date → no year, ever.
+  const projectionCalendar = getEngineField<number[]>(outputs, 'revenue', 'projection_calendar_years');
+  const stabCalendarYear =
+    stab && Array.isArray(projectionCalendar) && projectionCalendar.length > stab.stabilized_year_index
+      ? projectionCalendar[stab.stabilized_year_index]
+      : undefined;
+
   const wPurchase = cap('purchase_price');
   const wPricePerKey = cap('price_per_key');
   const wEntryCap = cap('entry_cap_rate');
@@ -519,11 +543,28 @@ export default function OverviewTab({ projectId }: { projectId: number | string 
   const profFees = findUse(/profession/i);
   const contingency = findUse(/contingen/i);
 
+  // The stabilized figures, ALL off `stab.stabilized_year_index`. Each is
+  // undefined (→ '—') rather than 0 when the block did not publish it.
+  const stabNoi = has(stab?.stabilized_noi_before_reserve ?? undefined)
+    ? (stab!.stabilized_noi_before_reserve as number)
+    : undefined;
+  const stabMargin = has(stab?.stabilized_noi_margin ?? undefined)
+    ? (stab!.stabilized_noi_margin as number)
+    : undefined;
+  const stabRevPar =
+    has(stab?.stabilized_occupancy ?? undefined) && has(stab?.stabilized_adr ?? undefined)
+      ? (stab!.stabilized_occupancy as number) * (stab!.stabilized_adr as number)
+      : undefined;
+
   // Formatting helpers (mirror the canonical money / mm / pct).
   const money = (v: number | undefined): string => (has(v) ? fmtCurrency(v) : '—');
   const mm = (v: number | undefined): string => (has(v) ? fmtMillions(v, 2) : '—');
   const pctv = (v: number | undefined, d = 2): string => (has(v) ? fmtPct(v, d) : '—');
   const perKey = (v: number | undefined): string => (has(v) && has(keys) ? fmtCurrency(v / keys) : '—');
+  // Yield on Cost — the stabilized year's NOI over total development cost.
+  // Same numerator as the Stabilized NOI row; undefined until both exist.
+  const yieldOnCost =
+    has(stabNoi) && has(totalCapital) && totalCapital > 0 ? stabNoi / totalCapital : undefined;
 
   // ─── Row factory (resolves provenance state + review flag) ─────────────
   const mk = (r: Omit<RowDef, 'state'> & { state?: ValueState }): RowDef => {
@@ -637,18 +678,64 @@ export default function OverviewTab({ projectId }: { projectId: number | string 
       awa('refi', isDev ? 'Permanent Financing' : 'Planned Refinancing'),
     ];
 
+    // ── The stabilized year, rendered from the ONE published block ──
+    // Sam (FON-59 #3): "All metrics must reconcile to the same projection
+    // year." Every row below reads `stab` — the same year index — or renders
+    // its reasoned dash. `Renovation Impact` was removed per Sam's MVP call.
+    const stabYearRow = (): RowDef =>
+      stab
+        ? lnk(
+            'stabYear', 'Stabilization Year',
+            stabCalendarYear != null
+              ? `Year ${stab.stabilized_year} — ${stabCalendarYear}`
+              : `Year ${stab.stabilized_year}`,
+            '→ Financials (projections)', 'pl',
+            {
+              linkSub: 'projections',
+              where: stabilizationBadge(stab) ?? undefined,
+              sub: stabilizationSignalNote(stab) ?? undefined,
+            },
+          )
+        : awa('stabYear', 'Stabilization Year', { reason: 'awaiting_analyst' });
+    const stabOccRow = (): RowDef =>
+      lnk('stabOcc', 'Stabilized Occupancy', pctv(stab?.stabilized_occupancy ?? undefined, 1),
+        '→ Financials (projections)', 'pl',
+        { reasonKey: 'starting_occupancy', linkSub: 'projections' });
+    const stabAdrRow = (): RowDef =>
+      lnk('stabADR', 'Stabilized ADR', money(stab?.stabilized_adr ?? undefined),
+        '→ Financials (projections)', 'pl',
+        { reasonKey: 'starting_adr', linkSub: 'projections' });
+    const stabRevRow = (): RowDef =>
+      lnk('stabRev', 'Stabilized Revenue', money(stab?.stabilized_revenue ?? undefined),
+        '→ Financials (projections)', 'pl', { linkSub: 'projections' });
+    // FON-59 #1 / #3 — NOT `returns.terminal_noi`: that is the reversion NOI of
+    // year hold+1, a different year on a different basis. This is the
+    // stabilized year's NOI before the FF&E reserve, straight off the block.
+    const stabNoiRow = (): RowDef =>
+      stabNoi != null
+        ? lnk('stabNOI', STABILIZED_NOI_LABEL, money(stabNoi),
+            '→ Financials (projections)', 'pl',
+            {
+              bold: true, linkSub: 'projections',
+              sub: `NOI before the FF&E reserve, from projection Year ${stab?.stabilized_year}.`,
+            })
+        : awa('stabNOI', STABILIZED_NOI_LABEL, { bold: true, reason: 'awaiting_analyst' });
+    const stabMarginRow = (): RowDef =>
+      cal('stabMargin', 'Stabilized NOI Margin', pctv(stabMargin, 1), {
+        formula: 'Stabilized NOI ÷ Stabilized Revenue',
+        formulaNumbers:
+          stabNoi != null && has(stab?.stabilized_revenue ?? undefined)
+            ? `${fmtCurrency(stabNoi)} ÷ ${fmtCurrency(stab!.stabilized_revenue as number)}`
+            : undefined,
+      });
+
     const stabilizationRows = (): RowDef[] => [
-      ...(hasReno ? [lnk('renoImpact', 'Renovation Impact', '—', '→ Financials (disruption)', 'pl', { linkSub: 'projections' })] : []),
-      awa('stabDate', 'Stabilization Date'),
-      lnk('stabOcc', 'Stabilized Occupancy', '—', '→ Financials (projections)', 'pl', { reasonKey: 'starting_occupancy', linkSub: 'projections' }),
-      lnk('stabADR', 'Stabilized ADR', '—', '→ Financials (projections)', 'pl', { reasonKey: 'starting_adr', linkSub: 'projections' }),
-      lnk('stabRev', 'Stabilized Revenue', '—', '→ Financials (projections)', 'pl', { linkSub: 'projections' }),
-      // FON-59 #1 / #3 — `returns.terminal_noi` is the reversion NOI of year
-      // hold+1, not a stabilized year. Until the analyst's Stabilization Year
-      // exists (Wave 3) this is a dash with a reason, never a number borrowed
-      // from the exit.
-      awa('stabNOI', 'Stabilized NOI', { bold: true, reason: 'awaiting_analyst' }),
-      cal('stabMargin', 'Stabilized NOI Margin', '—', { formula: 'Stabilized NOI ÷ Stabilized Revenue' }),
+      stabYearRow(),
+      stabOccRow(),
+      stabAdrRow(),
+      stabRevRow(),
+      stabNoiRow(),
+      stabMarginRow(),
     ];
 
     const exitRows = (): RowDef[] => [
@@ -715,17 +802,17 @@ export default function OverviewTab({ projectId }: { projectId: number | string 
     const openingRows = (): RowDef[] => [
       cal('openDate', 'Opening Date', fmtISODate(timeline?.stabilization_date), { formula: 'Land Close + pre-construction + build' }),
       awa('ramp', 'Ramp-Up Period'),
-      awa('stabDate', 'Stabilization Date'),
-      lnk('stabOcc', 'Stabilized Occupancy', '—', '→ Financials (projections)', 'pl', { reasonKey: 'starting_occupancy', linkSub: 'projections' }),
-      lnk('stabADR', 'Stabilized ADR', '—', '→ Financials (projections)', 'pl', { reasonKey: 'starting_adr', linkSub: 'projections' }),
-      cal('stabRevPAR', 'Stabilized RevPAR', '—', { formula: 'Stabilized Occupancy × Stabilized ADR' }),
-      lnk('stabRev', 'Stabilized Revenue', '—', '→ Financials (projections)', 'pl', { linkSub: 'projections' }),
-      // FON-59 #1 / #3 — `returns.terminal_noi` is the reversion NOI of year
-      // hold+1, not a stabilized year. Until the analyst's Stabilization Year
-      // exists (Wave 3) this is a dash with a reason, never a number borrowed
-      // from the exit.
-      awa('stabNOI', 'Stabilized NOI', { bold: true, reason: 'awaiting_analyst' }),
-      awa('yieldOnCost', 'Yield on Cost', { reason: 'awaiting_analyst', formula: 'Stabilized NOI ÷ Total Development Cost' }),
+      stabYearRow(),
+      stabOccRow(),
+      stabAdrRow(),
+      cal('stabRevPAR', 'Stabilized RevPAR', money(stabRevPar), { formula: 'Stabilized Occupancy × Stabilized ADR' }),
+      stabRevRow(),
+      stabNoiRow(),
+      // Yield on Cost reads the SAME stabilized NOI the row above prints —
+      // one year, one numerator. A dash with a reason until the block exists.
+      yieldOnCost != null
+        ? cal('yieldOnCost', 'Yield on Cost', pctv(yieldOnCost), { formula: 'Stabilized NOI ÷ Total Development Cost' })
+        : awa('yieldOnCost', 'Yield on Cost', { reason: 'awaiting_analyst', formula: 'Stabilized NOI ÷ Total Development Cost' }),
     ];
 
     if (cfg === 'dev') {
@@ -781,11 +868,21 @@ export default function OverviewTab({ projectId }: { projectId: number | string 
 
   // ─── KPI tiles (deal-type-aware) ───────────────────────────────────────
   const kpis: { label: string; value: string; sub?: string }[] = useMemo(() => {
+    // One tile, one source: the published stabilized block. Until a run
+    // carries one it stays the refusal glyph — the exit-year reversion is a
+    // different year on a different basis and is never borrowed for it.
+    const stabNoiTile = stabNoi != null
+      ? {
+          label: STABILIZED_NOI_LABEL,
+          value: mm(stabNoi),
+          sub: `projection Year ${stab?.stabilized_year}${stabCalendarYear != null ? ` — ${stabCalendarYear}` : ''}`,
+        }
+      : { label: STABILIZED_NOI_LABEL, value: REFUSAL_GLYPH, sub: 'stabilization year not set' };
     if (cfg === 'dev') {
       return [
         { label: 'Total Dev. Cost', value: mm(totalCapital) },
         { label: 'Cost / Key', value: money(totalPerKey) },
-        { label: 'Stabilized NOI', value: REFUSAL_GLYPH, sub: 'stabilization year not set' },
+        stabNoiTile,
         { label: 'Exit Value', value: mm(grossExit), sub: has(exitCap) ? `${fmtPct(exitCap, 2)} exit cap` : undefined },
         { label: 'Levered IRR', value: pctv(leveredIrr, 1) },
       ];
@@ -803,11 +900,11 @@ export default function OverviewTab({ projectId }: { projectId: number | string 
       { label: 'Purchase Price', value: mm(purchase), sub: has(entryCap) ? `${fmtPct(entryCap, 2)} going-in` : undefined },
       { label: 'Total Capitalization', value: mm(totalCapital), sub: has(totalPerKey) ? `${fmtCurrency(totalPerKey)} / key` : undefined },
       { label: 'Renovation', value: mm(renoBudget), sub: hasReno && has(keys) ? `${fmtCurrency((renoBudget as number) / keys)} / key` : undefined },
-      { label: 'Stabilized NOI', value: REFUSAL_GLYPH, sub: 'stabilization year not set' },
+      stabNoiTile,
       { label: 'Levered IRR', value: pctv(leveredIrr, 1) },
     ];
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [cfg, purchase, entryCap, totalCapital, totalPerKey, equity, grossExit, exitCap, terminalNoi, renoBudget, hasReno, keys, leveredIrr]);
+  }, [cfg, purchase, entryCap, totalCapital, totalPerKey, equity, grossExit, exitCap, terminalNoi, renoBudget, hasReno, keys, leveredIrr, stabNoi, stab, stabCalendarYear]);
 
   // ─── Return targets + benchmark strip (FON-68) ─────────────────────────
   // The strip compares the CALCULATED levered IRR (canonical returns run)
