@@ -113,17 +113,32 @@ async function expectFigure(scope: Locator, label: string): Promise<void> {
  */
 async function expectSomeFigure(page: Page, labels: string[]): Promise<string> {
   const body = page.locator('body');
-  for (const label of labels) {
-    const el = body.getByText(new RegExp(`^${escapeRe(label)}$`, 'i')).first();
-    if ((await el.count()) > 0) {
-      await expectFigure(body, label);
-      return label;
-    }
-  }
-  throw new Error(
-    `None of these headline rows rendered: ${labels.join(', ')}. Either the tab `
-      + 'failed to render or every candidate label was renamed — check the tab by hand.',
-  );
+  let found = '';
+  // Polled: a tab's rows mount when its engine output arrives, so a one-shot
+  // sweep would report "every candidate was renamed" for a page that is
+  // simply still loading.
+  await expect
+    .poll(
+      async () => {
+        for (const label of labels) {
+          const el = body.getByText(new RegExp(`^${escapeRe(label)}$`, 'i')).first();
+          if ((await el.count()) > 0) {
+            found = label;
+            return label;
+          }
+        }
+        return '';
+      },
+      {
+        message:
+          `none of these headline rows rendered: ${labels.join(', ')} — either the tab `
+          + 'failed to render or every candidate label was renamed',
+        timeout: 45_000,
+      },
+    )
+    .not.toBe('');
+  await expectFigure(body, found);
+  return found;
 }
 
 /** Open a tab of the pinned deal and wait for the deal itself to resolve. */
