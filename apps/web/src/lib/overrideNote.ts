@@ -52,6 +52,12 @@ const NOTE_EXEMPT_KEYS: ReadonlySet<string> = new Set([
   // the worksheet's numbers come from the engines regardless of row order.
   // Excluding it is load-bearing: without it every drag-to-reorder would 422.
   'worksheet_layout',
+  // The worker's `_OVERRIDE_NON_ENGINE_KEYS` again — which transactions the
+  // analyst counts as comparable. Curation, not a number the engines run on;
+  // the worker skips it, and the Market tab writes it with its own standing
+  // note. Added 2026-09-12 when the mirror test caught it missing here after
+  // the Market slice extended the worker's list.
+  'market.selected_comps',
   // DISPLAY-ONLY in the model: it selects which projection year the stabilized
   // figures are read from. It moves no return — pinned by the worker's
   // `test_stabilization_year.py::test_stabilization_year_does_not_move_returns`.
