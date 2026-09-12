@@ -396,7 +396,7 @@ export const REASON_META: Record<ReasonCode, ReasonMeta> = {
     label: "Stale run",
     ui: REFUSAL_GLYPH,
     explanation:
-      "Inputs changed after the last engine run; re-run the model to refresh this figure.",
+      "Inputs changed after the last engine run, or the run predates a figure the model now publishes; re-run the model to refresh this figure.",
   },
   engine_skipped: {
     label: "Engine did not run",

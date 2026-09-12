@@ -16,10 +16,11 @@ from __future__ import annotations
 
 import logging
 from datetime import UTC, datetime
-from typing import Annotated, Any
+from typing import Annotated, Any, Literal
 from uuid import UUID, uuid4
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, status
+from fondok_schemas.reasons import ReasonCode
 from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -37,6 +38,7 @@ from ..services.engine_runner import (
     run_returns_preview,
     run_single_engine,
 )
+from ..services.run_freshness import stale_engines
 from .deals import _assert_deal_belongs_to_tenant, get_tenant_id
 
 logger = logging.getLogger(__name__)
@@ -162,6 +164,26 @@ class EngineOutputResponse(BaseModel):
     run_id: str | None = None
 
 
+class StaleRun(BaseModel):
+    """FON-75 — this snapshot predates part of the model that produced it.
+
+    ``missing_blocks`` maps an engine name to the dotted paths of output
+    fields the engine now publishes but this persisted run does not carry —
+    i.e. the run is older than the field. A field the run carries with value
+    ``null`` is NOT listed: the engine ran with it and honestly resolved no
+    value, which is a refusal, not staleness. See
+    ``app/services/run_freshness.py``.
+
+    The ``reason`` is the existing ``stale_run`` ReasonCode, so the UI prints
+    one vocabulary rather than inventing banner-specific copy.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    reason: Literal["stale_run"] = ReasonCode.STALE_RUN.value
+    missing_blocks: dict[str, list[str]]
+
+
 class EngineOutputsResponse(BaseModel):
     """Map of engine name → latest output for a deal."""
 
@@ -169,6 +191,10 @@ class EngineOutputsResponse(BaseModel):
 
     deal_id: str
     engines: dict[str, EngineOutputResponse]
+    # FON-75 — ``None`` whenever the snapshot is current, which is the
+    # overwhelmingly common case: a healthy deal's payload gains nothing but
+    # an explicit ``"stale_run": null``, and every existing field is untouched.
+    stale_run: StaleRun | None = None
 
 
 class EngineRunStatusResponse(BaseModel):
@@ -472,7 +498,17 @@ async def list_engine_outputs(
         session, deal_id=deal_id, tenant_id=str(tenant_id)
     )
     engines = {name: EngineOutputResponse(**row) for name, row in rows.items()}
-    return EngineOutputsResponse(deal_id=deal_id, engines=engines)
+    # FON-75 — staleness is a property of an OLD run read against a NEW
+    # engine, so it is derived here at read time rather than stamped at
+    # write time: a run written last month becomes stale the moment a new
+    # output field deploys, and nothing rewrites that row. Read-only — no
+    # engine output is computed, altered or persisted by this call.
+    missing = stale_engines(rows)
+    return EngineOutputsResponse(
+        deal_id=deal_id,
+        engines=engines,
+        stale_run=StaleRun(missing_blocks=missing) if missing else None,
+    )
 
 
 class TimelineResponse(BaseModel):

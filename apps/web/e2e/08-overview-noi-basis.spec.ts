@@ -110,4 +110,24 @@ test.describe('Overview — a Stabilization block with no published year', () =>
     // And it must not promise a number it does not have.
     await expect(banner).toContainText(/will not stand another projection year/i);
   });
+
+  /**
+   * FON-75 — the page-level stale-run banner must NOT fire here.
+   *
+   * This project runs with `NEXT_PUBLIC_WORKER_URL=''` against a mock deal id,
+   * so there is no engines payload and therefore no `stale_run`. A banner that
+   * appeared anyway would be a false positive — telling an analyst to re-run a
+   * model on a deal whose run nobody has even read. That is the one way the
+   * feature can do harm, so it is asserted on the screen where the section
+   * banner DOES fire: the two are independent.
+   *
+   * The positive half — both banners together on a genuinely stale run — needs
+   * a connected worker and cannot run in mock mode; it lives in
+   * `e2e/worker/04-stale-run-banner.spec.ts`.
+   */
+  test('the page-level stale-run banner stays silent with no engine payload', async ({ page }) => {
+    await page.goto(OVERVIEW);
+    await expect(page.getByTestId('overview-section-stabilization')).toBeVisible();
+    await expect(page.getByTestId('stale-run-banner')).toHaveCount(0);
+  });
 });

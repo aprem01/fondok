@@ -20,6 +20,7 @@ import { useDeal } from '@/lib/hooks/useDeal';
 import { ProvenanceProvider } from '@/lib/hooks/useDealProvenance';
 import { ValueTraceProvider } from '@/lib/hooks/useValueTrace';
 import { EngineFailuresBanner } from '@/components/project/EngineFailuresBanner';
+import { StaleRunBanner } from '@/components/project/StaleRunBanner';
 import { IntroCard } from '@/components/help/IntroCard';
 import { useDocuments } from '@/lib/hooks/useDocuments';
 import { isWorkerConnected } from '@/lib/api';
@@ -737,6 +738,10 @@ export default function ProjectDetailPage() {
       <div className="flex items-start">
       <div className="p-8 max-w-[1800px] w-full min-w-0 flex-1" role="tabpanel" aria-label={`${activeLabel} content`}>
         {!isMockId && <EngineFailuresBanner outputs={pageEngineOutputs} dealId={rawId} />}
+        {/* FON-75 — a model CRASHED is the banner above; a model MOVED ON is
+            this one. Page-level because a run that predates a block blanks a
+            section on whichever tab happens to read it. */}
+        {!isMockId && <StaleRunBanner outputs={pageEngineOutputs} dealId={rawId} />}
         {!isMockId && (
           <IntroCard
             dismissKey="trace-hint"

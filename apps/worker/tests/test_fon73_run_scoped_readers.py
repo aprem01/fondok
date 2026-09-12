@@ -303,3 +303,158 @@ async def test_timeline_falls_back_without_full_chain() -> None:
 
     assert resp.exit_date is not None
     assert resp.exit_date.startswith("2031")
+
+
+# ───────────── 4. FON-75 — staleness on the engine-outputs read ────────────
+
+
+@pytest.mark.asyncio
+async def test_engines_endpoint_reports_no_staleness_for_a_current_run() -> None:
+    """A run just produced by today's engines is fresh — ``stale_run`` is None.
+
+    A healthy deal's payload must be unchanged by FON-75: the only way this
+    feature can do harm is a false positive telling an analyst to re-run a
+    model that is already current.
+    """
+    from app.api.model import list_engine_outputs
+    from app.database import get_session_factory
+    from app.services.engine_runner import run_all_engines
+
+    deal_uuid = uuid4()
+    tenant_id = uuid4()
+
+    factory = get_session_factory()
+    async with factory() as session:
+        await _seed_deal(
+            session, deal_id=str(deal_uuid), tenant_id=str(tenant_id)
+        )
+        await run_all_engines(
+            session, deal_id=str(deal_uuid), tenant_id=str(tenant_id),
+            run_id=str(uuid4()),
+        )
+        await session.commit()
+
+        resp = await list_engine_outputs(
+            deal_id=str(deal_uuid), session=session, tenant_id=tenant_id
+        )
+
+    assert resp.engines, "fixture assumption: the run produced engine rows"
+    assert resp.stale_run is None
+    assert resp.model_dump()["stale_run"] is None
+
+
+@pytest.mark.asyncio
+async def test_engines_endpoint_reports_a_run_that_predates_a_block() -> None:
+    """FON-75 — the 2026-09-12 deal, reproduced by doctoring the stored row.
+
+    Deleting the ``stabilization`` KEY (not setting it to null) is exactly the
+    shape of a run written before that field existed. Detection is at read
+    time: nothing is recomputed and the row's numbers are untouched.
+    """
+    import json
+
+    from app.api.model import list_engine_outputs
+    from app.database import get_session_factory
+    from app.services.engine_runner import run_all_engines
+
+    deal_uuid = uuid4()
+    tenant_id = uuid4()
+
+    factory = get_session_factory()
+    async with factory() as session:
+        await _seed_deal(
+            session, deal_id=str(deal_uuid), tenant_id=str(tenant_id)
+        )
+        await run_all_engines(
+            session, deal_id=str(deal_uuid), tenant_id=str(tenant_id),
+            run_id=str(uuid4()),
+        )
+
+        row = (
+            await session.execute(
+                text(
+                    "SELECT id, outputs FROM engine_outputs "
+                    "WHERE deal_id = :deal AND tenant_id = :tenant "
+                    "AND engine_name = 'expense'"
+                ),
+                {"deal": str(deal_uuid), "tenant": str(tenant_id)},
+            )
+        ).first()
+        assert row is not None
+        stored = json.loads(row[1]) if isinstance(row[1], str) else dict(row[1])
+        noi_cagr_before = stored["noi_cagr"]
+        stored.pop("stabilization")
+        await session.execute(
+            text(
+                "UPDATE engine_outputs SET outputs = :out "
+                "WHERE id = :id AND tenant_id = :tenant"
+            ),
+            {"out": json.dumps(stored), "id": row[0], "tenant": str(tenant_id)},
+        )
+        await session.commit()
+
+        resp = await list_engine_outputs(
+            deal_id=str(deal_uuid), session=session, tenant_id=tenant_id
+        )
+
+    assert resp.stale_run is not None
+    assert resp.stale_run.reason == "stale_run"
+    assert resp.stale_run.missing_blocks == {"expense": ["stabilization"]}
+    # Read-only: every surviving figure is exactly what the run produced.
+    assert resp.engines["expense"].outputs is not None
+    assert resp.engines["expense"].outputs["noi_cagr"] == noi_cagr_before
+
+
+@pytest.mark.asyncio
+async def test_engines_endpoint_treats_a_null_block_as_fresh() -> None:
+    """``"stabilization": null`` is a refusal the engine made, not staleness.
+
+    Re-running would not fill it in, so the banner must stay silent — this is
+    the distinction the whole detector rests on.
+    """
+    import json
+
+    from app.api.model import list_engine_outputs
+    from app.database import get_session_factory
+    from app.services.engine_runner import run_all_engines
+
+    deal_uuid = uuid4()
+    tenant_id = uuid4()
+
+    factory = get_session_factory()
+    async with factory() as session:
+        await _seed_deal(
+            session, deal_id=str(deal_uuid), tenant_id=str(tenant_id)
+        )
+        await run_all_engines(
+            session, deal_id=str(deal_uuid), tenant_id=str(tenant_id),
+            run_id=str(uuid4()),
+        )
+
+        row = (
+            await session.execute(
+                text(
+                    "SELECT id, outputs FROM engine_outputs "
+                    "WHERE deal_id = :deal AND tenant_id = :tenant "
+                    "AND engine_name = 'expense'"
+                ),
+                {"deal": str(deal_uuid), "tenant": str(tenant_id)},
+            )
+        ).first()
+        assert row is not None
+        stored = json.loads(row[1]) if isinstance(row[1], str) else dict(row[1])
+        stored["stabilization"] = None
+        await session.execute(
+            text(
+                "UPDATE engine_outputs SET outputs = :out "
+                "WHERE id = :id AND tenant_id = :tenant"
+            ),
+            {"out": json.dumps(stored), "id": row[0], "tenant": str(tenant_id)},
+        )
+        await session.commit()
+
+        resp = await list_engine_outputs(
+            deal_id=str(deal_uuid), session=session, tenant_id=tenant_id
+        )
+
+    assert resp.stale_run is None
