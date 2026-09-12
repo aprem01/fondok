@@ -468,13 +468,18 @@ describe('a genuinely changed value still PATCHes the exact worker key', () => {
     });
   });
 
+  // FON-44 Slice C — Investment adopted the FON-74 contract, so its editors
+  // now ask for the justification too (`justify()`), and the stored entry is
+  // the `{value, note}` envelope every other engine-input key writes.
   it('Investment — the purchase price', async () => {
     render(<InvestmentTab />);
     const input = openInvestmentEditor('$36,000,000');
     fireEvent.change(input, { target: { value: '37000000' } });
+    justify();
     fireEvent.click(saveBtn());
     await waitFor(() => expect(updateSpy).toHaveBeenCalled());
     expect(patchedOverrides()['purchase_price']).toBe(37_000_000);
+    expect(patchedRaw()['purchase_price']).toEqual({ value: 37_000_000, note: WHY });
   });
 });
 

@@ -276,22 +276,85 @@ describe('InvestmentTab — Transaction Timeline', () => {
 });
 
 describe('InvestmentTab — canonical save path (field_overrides, not local store)', () => {
-  it('editing Purchase Price PATCHes field_overrides via api.deals.update', async () => {
-    render(<InvestmentTab />);
-
-    // The Acquisition row shows the editable Purchase Price ($34,000,000).
-    const cell = screen.getByText('$34,000,000');
-    fireEvent.click(cell);
-
-    // An input appears (draft prefilled) — change it and Save.
+  /** Open the Purchase Price editor and type `value` into it. */
+  function editPurchasePrice(value: string): HTMLInputElement {
+    fireEvent.click(screen.getByText('$34,000,000'));
     const input = document.querySelector('input[type="number"]') as HTMLInputElement;
     expect(input).toBeTruthy();
-    fireEvent.change(input, { target: { value: '35000000' } });
-    fireEvent.click(screen.getByText('Save'));
+    fireEvent.change(input, { target: { value } });
+    return input;
+  }
+
+  // ── FON-74 / Slice A adoption ────────────────────────────────────────
+  // Slice A's server gate 422s `override_note_required` on any engine-input
+  // key written as a bare scalar. Every Investment assumption is an engine
+  // input, so every Investment save writes the `{value, note}` envelope —
+  // without this the whole Deal Summary is un-saveable.
+  it('editing Purchase Price PATCHes field_overrides as {value, note}', async () => {
+    render(<InvestmentTab />);
+    editPurchasePrice('35000000');
+    fireEvent.change(screen.getByLabelText('Override justification'), {
+      target: { value: 'Broker confirmed the revised bid.' },
+    });
+    fireEvent.click(screen.getByLabelText('Save'));
 
     await waitFor(() => expect(updateSpy).toHaveBeenCalled());
     const [, body] = updateSpy.mock.calls[0] as unknown as [string, { field_overrides: Record<string, unknown> }];
-    expect(body.field_overrides.purchase_price).toBe(35_000_000);
+    expect(body.field_overrides.purchase_price).toEqual({
+      value: 35_000_000,
+      note: 'Broker confirmed the revised bid.',
+    });
+  });
+
+  it('refuses the save — and writes nothing — when no justification is typed', async () => {
+    render(<InvestmentTab />);
+    editPurchasePrice('35000000');
+    fireEvent.click(screen.getByLabelText('Save'));
+
+    await new Promise((r) => setTimeout(r, 0));
+    expect(updateSpy).not.toHaveBeenCalled();
+    // Still in edit mode with the draft intact — nothing was discarded.
+    expect((document.querySelector('input[type="number"]') as HTMLInputElement).value).toBe('35000000');
+  });
+
+  it('a no-op edit short-circuits BEFORE the note check — no request, no demand', async () => {
+    render(<InvestmentTab />);
+    // Re-save the same number. `isNoOpEdit` runs first, so Save exits quietly
+    // rather than asking the analyst to justify a change that isn't one.
+    editPurchasePrice('34000000');
+    fireEvent.click(screen.getByLabelText('Save'));
+
+    await new Promise((r) => setTimeout(r, 0));
+    expect(updateSpy).not.toHaveBeenCalled();
+    // Edit mode closed (the no-op path), so there is no editor left open.
+    expect(document.querySelector('input[type="number"]')).toBeNull();
+  });
+
+  it('the Acquisition Date is an engine input, so it carries a note too', async () => {
+    render(<InvestmentTab />);
+    await waitFor(() => expect(timelineSpy).toHaveBeenCalled());
+    fireEvent.click(await screen.findByText('3/31/2027'));
+    const input = document.querySelector('input[type="date"]') as HTMLInputElement;
+    fireEvent.change(input, { target: { value: '2027-06-30' } });
+    fireEvent.change(screen.getByLabelText('Override justification'), {
+      target: { value: 'PSA amended — close pushed to the quarter end.' },
+    });
+    fireEvent.click(screen.getByLabelText('Save'));
+
+    await waitFor(() => expect(updateSpy).toHaveBeenCalled());
+    const [, body] = updateSpy.mock.calls[0] as unknown as [string, { field_overrides: Record<string, unknown> }];
+    expect(body.field_overrides.acquisition_close_date).toEqual({
+      value: '2027-06-30',
+      note: 'PSA amended — close pushed to the quarter end.',
+    });
+  });
+
+  // The room count is a deal COLUMN, not an override of a sourced value, so
+  // `requiresNote` answers false and the editor must not grow a note row.
+  it('the Keys column override asks for no justification', () => {
+    render(<InvestmentTab />);
+    fireEvent.click(screen.getByLabelText('Override room count'));
+    expect(screen.queryByLabelText('Override justification')).toBeNull();
   });
 });
 

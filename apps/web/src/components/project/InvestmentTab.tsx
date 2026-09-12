@@ -40,6 +40,12 @@ import {
 } from '@/components/design';
 import type { FieldUnit } from '@/lib/fieldValue';
 import {
+  applyOverridePatch,
+  patchRequiresNote,
+  requiresNote,
+  NOTE_REQUIRED_MESSAGE,
+} from '@/lib/overrideNote';
+import {
   api,
   isWorkerConnected,
   WorkerError,
@@ -99,6 +105,18 @@ function kindToState(kind: ValueKind): ValueState {
   }
 }
 
+/**
+ * The scalar behind a `field_overrides` entry — `{value, note}` (FON-74) or a
+ * legacy bare value. Same helper `DebtTab` carries; an Investment row that
+ * reads an override back must not render the envelope.
+ */
+function overrideScalar(overrides: Record<string, unknown>, key: string): unknown {
+  const raw = overrides[key];
+  return raw && typeof raw === 'object' && 'value' in raw
+    ? (raw as { value: unknown }).value
+    : raw;
+}
+
 interface RowDef {
   id: string;
   label: string;
@@ -151,13 +169,22 @@ export default function InvestmentTab() {
   const invOverrides = (deal?.field_overrides ?? {}) as Record<string, unknown>;
   const invRun = useEngineRun(liveMode ? dealId : '', 'returns', { runMode: 'all' });
   const invRerunRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // FON-74 — every Investment assumption is an engine input, so the save
+  // carries the analyst's justification and writes the `{value, note}` envelope
+  // the API demands. Refused here as well as server-side so the analyst gets
+  // the message rather than a 422.
   const onSaveAssumption = useCallback(
-    async (key: string, value: number) => {
+    async (key: string, value: number, note = '') => {
       if (!liveMode) {
         toast('Editing is disabled on demo deals', { type: 'info' });
         return;
       }
-      const next = { ...invOverrides, [key]: value };
+      const patch = { [key]: value };
+      if (!note.trim() && patchRequiresNote(patch)) {
+        toast(NOTE_REQUIRED_MESSAGE, { type: 'error' });
+        return;
+      }
+      const next = applyOverridePatch(invOverrides, patch, note);
       try {
         await api.deals.update(dealId, { field_overrides: next });
         toast('Saved — re-running the model…', { type: 'success' });
@@ -187,12 +214,19 @@ export default function InvestmentTab() {
   // Acquisition close date drives every timeline date. It feeds no engine, so
   // we save it and just refetch the timeline — no full model re-run.
   const onSaveCloseDate = useCallback(
-    async (iso: string) => {
+    async (iso: string, note = '') => {
       if (!liveMode) {
         toast('Editing is disabled on demo deals', { type: 'info' });
         return;
       }
-      const next = { ...invOverrides, acquisition_close_date: iso };
+      // The close date IS an engine input — `revenue.py` reads it to set the
+      // projection start year — so it carries a justification like any other.
+      const patch = { acquisition_close_date: iso };
+      if (!note.trim() && patchRequiresNote(patch)) {
+        toast(NOTE_REQUIRED_MESSAGE, { type: 'error' });
+        return;
+      }
+      const next = applyOverridePatch(invOverrides, patch, note);
       try {
         await api.deals.update(dealId, { field_overrides: next });
         toast('Acquisition date saved', { type: 'success' });
@@ -435,9 +469,13 @@ export default function InvestmentTab() {
                 overridden: overridden('acquisition_close_date'),
                 value: (
                   <CloseDateField
-                    iso={(invOverrides['acquisition_close_date'] as string | undefined) ?? timeline?.close_date ?? null}
+                    iso={((): string | null => {
+                      const v = overrideScalar(invOverrides, 'acquisition_close_date');
+                      return (typeof v === 'string' ? v : null) ?? timeline?.close_date ?? null;
+                    })()}
                     editable={liveMode}
                     onSave={onSaveCloseDate}
+                    noteKey="acquisition_close_date"
                   />
                 ),
               },
@@ -458,7 +496,8 @@ export default function InvestmentTab() {
                   <AssumptionField value={purchase} editable={liveMode} format={fmtCurrency}
                     toDraft={(v) => String(Math.round(v))}
                     parse={(s) => { const n = parseFloat(s.replace(/[,$\s]/g, '')); return Number.isFinite(n) && n > 0 ? n : null; }}
-                    unit="usd" onSave={(v) => onSaveAssumption('purchase_price', v)} width="w-36"
+                    unit="usd" onSave={(v, note) => onSaveAssumption('purchase_price', v, note)}
+                    noteKey="purchase_price" testId="purchase-price" width="w-36"
                     color={valueColor('input', true, overridden('purchase_price'))} bold />
                 ),
               },
@@ -471,7 +510,8 @@ export default function InvestmentTab() {
                   <AssumptionField value={closingPct} editable={liveMode} format={(v) => fmtPct(v, 2)}
                     toDraft={(v) => (v * 100).toFixed(2)} suffix="%"
                     parse={(s) => { const n = parseFloat(s); return Number.isFinite(n) && n >= 0 ? n / 100 : null; }}
-                    unit="pct_fraction" onSave={(v) => onSaveAssumption('closing_costs_pct', v)} width="w-20"
+                    unit="pct_fraction" onSave={(v, note) => onSaveAssumption('closing_costs_pct', v, note)}
+                    noteKey="closing_costs_pct" testId="closing-costs-pct" width="w-20"
                     color={valueColor('input', false, overridden('closing_costs_pct'))} />
                 ),
               },
@@ -491,7 +531,8 @@ export default function InvestmentTab() {
                   <AssumptionField value={holdYears} editable={liveMode} format={(v) => `${v} years`}
                     toDraft={(v) => String(v)} suffix="yrs"
                     parse={(s) => { const n = parseInt(s, 10); return Number.isFinite(n) && n > 0 && n <= 20 ? n : null; }}
-                    unit="years" onSave={(v) => onSaveAssumption('hold_years', v)} width="w-16"
+                    unit="years" onSave={(v, note) => onSaveAssumption('hold_years', v, note)}
+                    noteKey="hold_years" testId="hold-years" width="w-16"
                     color={valueColor('input', false, overridden('hold_years'))} />
                 ),
               },
@@ -508,7 +549,8 @@ export default function InvestmentTab() {
                   <AssumptionField value={exitCap} editable={liveMode} format={(v) => fmtPct(v, 2)}
                     toDraft={(v) => (v * 100).toFixed(2)} suffix="%"
                     parse={(s) => { const n = parseFloat(s); return Number.isFinite(n) && n > 0 ? n / 100 : null; }}
-                    unit="pct_fraction" onSave={(v) => onSaveAssumption('exit_cap_rate', v)} width="w-20"
+                    unit="pct_fraction" onSave={(v, note) => onSaveAssumption('exit_cap_rate', v, note)}
+                    noteKey="exit_cap_rate" testId="exit-cap-rate" width="w-20"
                     color={valueColor('input', false, overridden('exit_cap_rate'))} />
                 ),
               },
@@ -543,7 +585,8 @@ export default function InvestmentTab() {
                   <AssumptionField value={renoBase} editable={liveMode} format={fmtCurrency}
                     toDraft={(v) => String(Math.round(v))}
                     parse={(s) => { const n = parseFloat(s.replace(/[,$\s]/g, '')); return Number.isFinite(n) && n >= 0 ? n : null; }}
-                    unit="usd" onSave={(v) => onSaveAssumption('renovation_budget', v)} width="w-36"
+                    unit="usd" onSave={(v, note) => onSaveAssumption('renovation_budget', v, note)}
+                    noteKey="renovation_budget" testId="renovation-budget" width="w-36"
                     color={valueColor('input', false, overridden('renovation_budget'))} />
                 ),
               },
@@ -564,7 +607,8 @@ export default function InvestmentTab() {
                   <AssumptionField value={renoContPct} editable={liveMode} format={(v) => fmtPct(v, 1)}
                     toDraft={(v) => (v * 100).toFixed(2)} suffix="%"
                     parse={(s) => { const n = parseFloat(s); return Number.isFinite(n) && n >= 0 ? n / 100 : null; }}
-                    unit="pct_fraction" onSave={(v) => onSaveAssumption('renovation_contingency_pct', v)} width="w-20"
+                    unit="pct_fraction" onSave={(v, note) => onSaveAssumption('renovation_contingency_pct', v, note)}
+                    noteKey="renovation_contingency_pct" testId="renovation-contingency-pct" width="w-20"
                     color={valueColor('input', false, overridden('renovation_contingency_pct'))} />
                 ),
               },
@@ -1071,12 +1115,13 @@ function TimelinePanel({
  */
 function AssumptionField({
   value, format, toDraft, parse, onSave, editable, unit, suffix, width = 'w-32', color, bold,
+  noteKey, testId,
 }: {
   value: number | undefined;
   format: (v: number) => string;
   toDraft: (v: number) => string;
   parse: (s: string) => number | null;
-  onSave: (v: number) => void | Promise<void>;
+  onSave: (v: number, note: string) => void | Promise<void>;
   editable: boolean;
   /** How the persisted value is stored — drives the no-op comparison. */
   unit: FieldUnit;
@@ -1084,9 +1129,14 @@ function AssumptionField({
   width?: string;
   color?: string;
   bold?: boolean;
+  /** FON-74 — the `field_overrides` key this editor writes. Given, the editor
+   *  demands a justification for any key that routes into engine input. */
+  noteKey?: string;
+  testId?: string;
 }) {
   const ed = useInlineEdit<number>({
     current: value ?? null, unit, parse, onSave, toDraft,
+    requireNote: !!noteKey && requiresNote(noteKey),
   });
   const display = value != null ? format(value) : '—';
   const textColor = color ?? palette.ink;
@@ -1116,7 +1166,14 @@ function AssumptionField({
         style={{ ...inlineEditInputStyle, textAlign: 'right' }}
       />
       {suffix && <span style={{ fontSize: 11, color: palette.textMuted }}>{suffix}</span>}
-      <InlineEditControls onSave={() => void ed.submit()} onCancel={ed.cancel} saving={ed.saving} />
+      <InlineEditControls
+        onSave={() => void ed.submit()}
+        onCancel={ed.cancel}
+        saving={ed.saving}
+        note={ed.requireNote ? ed.note : undefined}
+        onNote={ed.requireNote ? ed.setNote : undefined}
+        noteTestId={ed.requireNote && testId ? `${testId}-note` : undefined}
+      />
     </span>
   );
 }
@@ -1140,11 +1197,13 @@ function fmtLongDate(iso: string | null | undefined): string {
 
 /** The acquisition close date — an editable date cell that drives the Timeline. */
 function CloseDateField({
-  iso, editable, onSave,
+  iso, editable, onSave, noteKey,
 }: {
   iso: string | null;
   editable: boolean;
-  onSave: (iso: string) => void | Promise<void>;
+  onSave: (iso: string, note: string) => void | Promise<void>;
+  /** FON-74 — the `field_overrides` key this editor writes. */
+  noteKey?: string;
 }) {
   const current = iso ? iso.slice(0, 10) : null;
   const ed = useInlineEdit<string>({
@@ -1154,6 +1213,7 @@ function CloseDateField({
     onSave,
     toDraft: (v) => v,
     invalidMessage: 'Pick a valid date.',
+    requireNote: !!noteKey && requiresNote(noteKey),
   });
   const display = fmtISODate(iso);
 
@@ -1178,7 +1238,14 @@ function CloseDateField({
         onKeyDown={ed.onKeyDown}
         style={{ ...inlineEditInputStyle, textAlign: 'left' }}
       />
-      <InlineEditControls onSave={() => void ed.submit()} onCancel={ed.cancel} saving={ed.saving} />
+      <InlineEditControls
+        onSave={() => void ed.submit()}
+        onCancel={ed.cancel}
+        saving={ed.saving}
+        note={ed.requireNote ? ed.note : undefined}
+        onNote={ed.requireNote ? ed.setNote : undefined}
+        noteTestId={ed.requireNote ? 'acq-date-note' : undefined}
+      />
     </span>
   );
 }
