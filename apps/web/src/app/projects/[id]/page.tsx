@@ -27,7 +27,6 @@ import DataRoomTab from '@/components/project/DataRoomTab';
 import OverviewTab from '@/components/project/OverviewTab';
 import InvestmentTab from '@/components/project/InvestmentTab';
 import DebtTab from '@/components/project/DebtTab';
-import ScenarioSelector from '@/components/project/ScenarioSelector';
 import ScenarioComparePanel from '@/components/project/ScenarioComparePanel';
 import ScenarioAnalysisTab from '@/components/project/ScenarioAnalysisTab';
 import AtlasCopilot from '@/components/project/AtlasCopilot';
@@ -334,10 +333,9 @@ export default function ProjectDetailPage() {
     router.push(url, { scroll: false });
   };
 
-  // Wave 3 W3.2 — named scenarios. Only loaded for real (UUID) deals;
-  // mock deals get an empty list and the selector hides itself.
+  // Wave 3 W3.2 — named scenarios. Only loaded for real (UUID) deals; mock
+  // deals get an empty list and ScenarioComparePanel renders Base only.
   const [scenarios, setScenarios] = useState<ScenarioRecord[]>([]);
-  const [activeScenarioId, setActiveScenarioId] = useState<string | null>(null);
   const [scenarioEditor, setScenarioEditor] = useState<
     { open: boolean; scenario: ScenarioRecord | null }
   >({ open: false, scenario: null });
@@ -350,11 +348,6 @@ export default function ProjectDetailPage() {
       .then((list) => {
         if (cancelled) return;
         setScenarios(list);
-        // Default to base on first load.
-        if (!activeScenarioId) {
-          const base = list.find((s) => s.is_base);
-          if (base) setActiveScenarioId(base.id);
-        }
       })
       .catch(() => {
         /* worker not connected or older build — no-op */
@@ -386,7 +379,6 @@ export default function ProjectDetailPage() {
         overrides: s.overrides,
       });
       await refreshScenarios();
-      setActiveScenarioId(created.id);
       toast(`Duplicated "${s.name}" → ${created.name}`, { type: 'success' });
     } catch (e) {
       toast(
@@ -396,14 +388,34 @@ export default function ProjectDetailPage() {
     }
   };
 
+  // FON-69 G5 — the override table's per-row ✕ ("Remove this override").
+  // Persists through the same scenarios API the page already owns, then
+  // refreshes so the chip's override count and the table agree.
+  const handleRemoveScenarioOverride = async (
+    s: ScenarioRecord,
+    fieldPath: string,
+  ) => {
+    if (!liveMode) return;
+    try {
+      await workerApi.scenarios.update(rawId, s.id, {
+        overrides: s.overrides.filter((o) => o.field_path !== fieldPath),
+      });
+      await refreshScenarios();
+      toast(`Removed the override from "${s.name}".`, { type: 'info' });
+    } catch (e) {
+      toast(
+        `Couldn't remove that override: ${
+          e instanceof Error ? e.message : 'Unknown error'
+        }`,
+        { type: 'error' },
+      );
+    }
+  };
+
   const handleDeleteScenario = async (s: ScenarioRecord) => {
     if (!liveMode) return;
     try {
       await workerApi.scenarios.delete(rawId, s.id);
-      if (activeScenarioId === s.id) {
-        const base = scenarios.find((x) => x.is_base);
-        setActiveScenarioId(base ? base.id : null);
-      }
       await refreshScenarios();
       toast(`Deleted scenario "${s.name}"`, { type: 'info' });
     } catch (e) {
@@ -708,28 +720,12 @@ export default function ProjectDetailPage() {
         <DataKey />
       </div>
 
-      {/* Scenario selector — the active what-if pill sits below the tab nav on
-          the modeling tabs. FON-57 — hidden on the Data Room home screen (the
-          Base / New-scenario buttons don't belong on the document-intake view);
-          scenario management lives in Scenario Analysis. Hidden for mock deals
-          (no worker → no scenarios). */}
-      {/* FON-57 / FON-59 — scenario create/edit/select lives ONLY on the
-          Scenario Analysis tab. Every model tab (Overview, Financials,
-          Investment, Debt, Partnership, Cash Flow, Returns, Market, …) shows the
-          Base Case with no scenario controls, per Sam's 8/28 QA. */}
-      {liveMode && scenarios.length > 0 && activeTab === 'scenarios' && (
-        <ScenarioSelector
-          scenarios={scenarios}
-          activeScenarioId={activeScenarioId}
-          onSelect={(id) => setActiveScenarioId(id)}
-          onCreate={() =>
-            setScenarioEditor({ open: true, scenario: null })
-          }
-          onEdit={(s) => setScenarioEditor({ open: true, scenario: s })}
-          onDuplicate={(s) => void handleDuplicateScenario(s)}
-          onDelete={(s) => void handleDeleteScenario(s)}
-        />
-      )}
+      {/* FON-69 — there is NO global scenario bar. Base / saved scenarios /
+          + New scenario live inside the Scenario Comparison section of the
+          Scenario Analysis tab (design/canonical/Scenarios Tab.dc.html:119-139),
+          which is also the only place the SOURCE OF TRUTH badge renders. Model
+          tabs (Overview, Financials, Investment, Debt, Partnership, Cash Flow,
+          Returns, Market, …) always show the Base Case, per FON-57 / FON-59. */}
 
       {/* Tab content — wrapped in ProvenanceProvider (input assumptions →
           <Sourced>) and ValueTraceProvider (computed outputs → <Traced>) so
@@ -803,7 +799,21 @@ export default function ProjectDetailPage() {
                   Comparison section — the Base column always exists. The panel
                   self-guards live vs mock deals internally (compare API only
                   fires when ≥2 scenarios are saved). */}
-              <ScenarioComparePanel dealId={rawId} scenarios={scenarios} />
+              <ScenarioComparePanel
+                dealId={rawId}
+                scenarios={scenarios}
+                {...(liveMode
+                  ? {
+                      onCreate: () => setScenarioEditor({ open: true, scenario: null }),
+                      onEdit: (s: ScenarioRecord) =>
+                        setScenarioEditor({ open: true, scenario: s }),
+                      onDuplicate: (s: ScenarioRecord) => void handleDuplicateScenario(s),
+                      onDelete: (s: ScenarioRecord) => void handleDeleteScenario(s),
+                      onRemoveOverride: (s: ScenarioRecord, fieldPath: string) =>
+                        void handleRemoveScenarioOverride(s, fieldPath),
+                    }
+                  : {})}
+              />
             </div>
           </ErrorBoundary>
         )}
@@ -890,8 +900,10 @@ export default function ProjectDetailPage() {
           dealId={rawId}
           scenario={scenarioEditor.scenario}
           onClose={() => setScenarioEditor({ open: false, scenario: null })}
-          onSaved={(s) => {
-            setActiveScenarioId(s.id);
+          onSaved={() => {
+            // FON-69 — which scenario's detail card is shown is owned by
+            // ScenarioComparePanel's own chip row now; the page just refreshes
+            // the list so the new/edited scenario and its override count land.
             void refreshScenarios();
           }}
           onRan={() => {
