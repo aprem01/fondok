@@ -274,3 +274,105 @@ async def test_additive_blocks_are_invisible_to_sources_and_values() -> None:
         assert not [k for k in payload[block] if k.startswith("__")], (
             f"{block} leaked a dunder key"
         )
+
+
+# ═══════════ FON-61 (61.2) — the STR basis id the snapshot must carry ════════
+
+
+async def _add_str_trend_subject_ttm(deal_id: UUID) -> None:
+    """One STR_TREND extraction carrying the SUBJECT's own trailing twelve
+    months — the seed path Sam's deal takes."""
+    from app.database import get_session_factory
+
+    factory = get_session_factory()
+    ts = datetime(2026, 6, 2, 12, 0, tzinfo=UTC)
+    doc_id = uuid4()
+    async with factory() as s:
+        await s.execute(
+            text(
+                "INSERT INTO documents (id, deal_id, tenant_id, filename, "
+                "doc_type, status, uploaded_at) "
+                "VALUES (:id,:deal,:t,'STR Trend.pdf','STR_TREND','EXTRACTED',:ts)"
+            ),
+            {"id": str(doc_id), "deal": str(deal_id), "t": _TENANT, "ts": ts},
+        )
+        await s.execute(
+            text(
+                "INSERT INTO extraction_results (id, document_id, deal_id, "
+                "tenant_id, fields, confidence_report, agent_version, "
+                "created_at) VALUES (:id,:doc,:deal,:t,:f,'{}','v1',:ts)"
+            ),
+            {
+                "id": str(uuid4()),
+                "doc": str(doc_id),
+                "deal": str(deal_id),
+                "t": _TENANT,
+                "f": json.dumps(
+                    [
+                        {
+                            "field_name": "ttm_performance.subject.occupancy_pct",
+                            "value": 71.6,
+                            "source_page": 1,
+                            "confidence": 0.9,
+                        },
+                        {
+                            "field_name": "ttm_performance.subject.adr_usd",
+                            "value": 288.0,
+                            "source_page": 1,
+                            "confidence": 0.9,
+                        },
+                    ]
+                ),
+                "ts": ts,
+            },
+        )
+        await s.execute(
+            text("UPDATE deals SET field_overrides = :fo WHERE id = :id"),
+            {
+                "fo": json.dumps({"revenue_seed_from_str_forecast": True}),
+                "id": str(deal_id),
+            },
+        )
+        await s.commit()
+
+
+@pytest.mark.asyncio
+async def test_subject_ttm_seed_appears_in_the_sources_block_as_its_own_id() -> None:
+    """Sam (FON-61): "Clicking Base Year Occupancy = 71.6% shows `STR forecast
+    — From the STR / comp-set forecast`. 71.6% is the subject property's
+    TTM/Base Year occupancy."
+
+    The payload the hover reads now carries ``str_subject_ttm`` on the two rate
+    keys, and the id is one the ontology registry can label — an id the web
+    does not know renders as its own underscore-stripped name.
+    """
+    from app.ontology.registry import get_registry
+
+    deal_id = uuid4()
+    await _seed_fon54a_deal(deal_id)
+    await _add_str_trend_subject_ttm(deal_id)
+
+    payload = await _sources_and_values(deal_id)
+    sources = payload["sources"]
+
+    assert sources["starting_occupancy"] == "str_subject_ttm"
+    assert sources["starting_adr"] == "str_subject_ttm"
+    assert sources["revenue_seed_from_str_forecast"] == "str_subject_ttm"
+    # The value the hover is explaining is the subject's own TTM, unrounded.
+    assert payload["values"]["starting_occupancy"] == pytest.approx(0.716)
+    assert payload["values"]["starting_adr"] == pytest.approx(288.0)
+    assert "str_subject_ttm" in get_registry().sources
+
+
+@pytest.mark.asyncio
+async def test_the_id_split_moved_nothing_on_a_deal_without_an_str_seed() -> None:
+    """The golden corpus has no STR seed, so the split is invisible to it —
+    which is the whole claim: labels moved on the STR paths and nowhere else."""
+    deal_id = uuid4()
+    await _seed_fon54a_deal(deal_id)
+    payload = await _sources_and_values(deal_id)
+
+    expected = json.loads(_GOLDEN.read_text(encoding="utf-8"))
+    assert payload["sources"] == expected["sources"]
+    assert payload["values"] == expected["values"]
+    assert "str_subject_ttm" not in set(payload["sources"].values())

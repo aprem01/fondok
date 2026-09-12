@@ -8096,7 +8096,29 @@
         "STR",
         "STR_TREND"
       ],
-      "explanation": "Seeded from STR — the Market tab’s comp-set rates, the subject TTM, or the BASE forward-forecast scenario (Month 12).",
+      "explanation": "Seeded from the BASE STR forward-forecast scenario (the Month-12 point) — a projection, not an actual.",
+      "reason": null
+    },
+    "str_subject_ttm": {
+      "label": "STR · Subject TTM actual",
+      "badge": "STR TTM",
+      "kind": "grounded",
+      "doc_types": [
+        "STR",
+        "STR_TREND"
+      ],
+      "explanation": "The subject property’s own trailing-twelve-month performance as reported by STR — an actual, not a forecast.",
+      "reason": null
+    },
+    "str_comp_set": {
+      "label": "STR comp-set rates",
+      "badge": "STR Comp Set",
+      "kind": "grounded",
+      "doc_types": [
+        "STR",
+        "STR_TREND"
+      ],
+      "explanation": "The STR comp-set blended rates the Market tab displays, applied to the model by the analyst — the competitive set’s performance, not the subject’s own.",
       "reason": null
     },
     "str_forecast_unavailable": {

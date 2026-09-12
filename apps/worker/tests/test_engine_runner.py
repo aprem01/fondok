@@ -1102,3 +1102,237 @@ async def test_preview_that_does_not_move_ltv_keeps_the_pinned_senior() -> None:
     # LTV moved → the pin is released and the senior resizes end-to-end.
     assert moved_ltv["loan_amount"] == pytest.approx(0.70 * 36_400_000)
     assert moved_ltv["loan_amount"] == pytest.approx(moved_ltv["total_debt"])
+
+
+# ══════════════ FON-60 / FON-61 — analyst curation + STR provenance ══════════
+#
+# FON-60 (60.1): the Market tab persists which extracted transactions the
+# analyst has INCLUDED AS COMPS under ``field_overrides['market.selected_comps']``.
+# That is curation of a display set. It must never reach engine input — and the
+# guarantee is the NAMED skip list, not the incidental fact that a list fails
+# the scalar guard.
+#
+# FON-61 (61.2): ``str_forecast`` used to be stamped on three different
+# provenances. Each seed path now stamps the id it actually took, and the
+# VALUE is identical on every branch — labels and badges only.
+
+
+async def _str_deal(session, *, overrides: dict, fields: list[dict]) -> tuple[str, str]:
+    """A deal carrying ``overrides`` plus one STR_TREND extraction."""
+    import json
+    from datetime import UTC, datetime
+
+    deal_id, tenant_id, doc_id = str(uuid4()), str(uuid4()), str(uuid4())
+    now = datetime.now(UTC)
+    await session.execute(
+        text(
+            """
+            INSERT INTO deals (id, tenant_id, name, status, keys,
+                               field_overrides, created_at, updated_at)
+            VALUES (:id, :tenant, 'STR Provenance Hotel', 'Draft', 132,
+                    :ov, :now, :now)
+            """
+        ),
+        {"id": deal_id, "tenant": tenant_id, "ov": json.dumps(overrides), "now": now},
+    )
+    await session.execute(
+        text(
+            """
+            INSERT INTO documents (id, deal_id, tenant_id, filename, doc_type,
+                                   status, uploaded_at)
+            VALUES (:id, :deal, :tenant, 'str_trend.pdf', 'STR_TREND',
+                    'EXTRACTED', :now)
+            """
+        ),
+        {"id": doc_id, "deal": deal_id, "tenant": tenant_id, "now": now},
+    )
+    await session.execute(
+        text(
+            """
+            INSERT INTO extraction_results (id, document_id, deal_id, tenant_id,
+                                            fields, confidence_report,
+                                            agent_version, created_at)
+            VALUES (:id, :doc, :deal, :tenant, :f, '{}', 'test', :now)
+            """
+        ),
+        {
+            "id": str(uuid4()),
+            "doc": doc_id,
+            "deal": deal_id,
+            "tenant": tenant_id,
+            "f": json.dumps(fields),
+            "now": now,
+        },
+    )
+    await session.commit()
+    return deal_id, tenant_id
+
+
+# The subject property's OWN trailing twelve months — an actual.
+_SUBJECT_TTM_FIELDS = [
+    {"field_name": "ttm_performance.subject.occupancy_pct", "value": 78.5},
+    {"field_name": "ttm_performance.subject.adr_usd", "value": 412.0},
+]
+
+
+@pytest.mark.asyncio
+async def test_selected_comps_curation_never_reaches_engine_input() -> None:
+    """``market.selected_comps`` is analyst curation, not an assumption.
+
+    It is on ``_OVERRIDE_NON_ENGINE_KEYS`` so the skip is BY NAME: the day the
+    selection serializes as something the scalar guard would accept, it still
+    does not land on ``base``. A real assumption in the same blob still does.
+    """
+    from app.database import get_session_factory
+    from app.services.engine_runner import (
+        _OVERRIDE_NON_ENGINE_KEYS,
+        _load_engine_inputs,
+    )
+
+    assert "market.selected_comps" in _OVERRIDE_NON_ENGINE_KEYS
+    assert "worksheet_layout" in _OVERRIDE_NON_ENGINE_KEYS
+
+    factory = get_session_factory()
+    async with factory() as session:
+        deal_id, tenant_id = await _deal_with_overrides(
+            session,
+            {
+                "market.selected_comps": {
+                    "value": ["The Betsy Hotel|2025-06|25010000"],
+                    "note": "Included as comps",
+                },
+                "worksheet_layout": {"v": 1, "hidden": ["gop"]},
+                "exit_cap_rate": {"value": 0.081, "note": "Broker guidance"},
+            },
+        )
+        base = await _load_engine_inputs(session, deal_id, tenant_id=tenant_id)
+
+    assert "market.selected_comps" not in base
+    assert "worksheet_layout" not in base
+    assert base["__sources__"].get("market.selected_comps") is None
+    # The neighbouring real override still applies — the skip is by name only.
+    assert base["exit_cap_rate"] == 0.081
+
+
+@pytest.mark.asyncio
+async def test_subject_ttm_seed_is_tagged_as_an_actual_not_a_forecast() -> None:
+    """FON-61 (61.2) — Sam: clicking Base Year Occupancy said "STR forecast"
+    about the subject property's TTM ACTUAL. The seed branch that read
+    ``load_str_subject_ttm`` now stamps ``str_subject_ttm``; the seeded VALUE
+    is exactly what it was before the split."""
+    from app.database import get_session_factory
+    from app.services.engine_runner import (
+        SOURCE_STR_SUBJECT_TTM,
+        STR_BASIS_SOURCES,
+        _load_engine_inputs,
+    )
+
+    factory = get_session_factory()
+    async with factory() as session:
+        deal_id, tenant_id = await _str_deal(
+            session,
+            overrides={"revenue_seed_from_str_forecast": True},
+            fields=_SUBJECT_TTM_FIELDS,
+        )
+        base = await _load_engine_inputs(session, deal_id, tenant_id=tenant_id)
+
+    sources = base["__sources__"]
+    assert sources["starting_occupancy"] == SOURCE_STR_SUBJECT_TTM
+    assert sources["starting_adr"] == SOURCE_STR_SUBJECT_TTM
+    assert sources["revenue_seed_from_str_forecast"] == SOURCE_STR_SUBJECT_TTM
+    # …and it still reads as an STR basis to everything that asks that question.
+    assert sources["starting_adr"] in STR_BASIS_SOURCES
+    # THE VALUE DID NOT MOVE — the split is labels and badges only.
+    assert base["starting_adr"] == pytest.approx(412.0)
+    assert base["starting_occupancy"] == pytest.approx(0.785)
+
+
+@pytest.mark.asyncio
+async def test_seed_that_cannot_populate_stays_unavailable() -> None:
+    """No subject TTM and no usable forward forecast → neither STR id is
+    stamped; the flag key says ``str_forecast_unavailable`` exactly as before.
+    The forward-forecast id is never stamped on a seed that did not load."""
+    from app.database import get_session_factory
+    from app.services.engine_runner import (
+        SOURCE_STR_UNAVAILABLE,
+        STR_BASIS_SOURCES,
+        _load_engine_inputs,
+    )
+
+    factory = get_session_factory()
+    async with factory() as session:
+        deal_id, tenant_id = await _str_deal(
+            session,
+            overrides={"revenue_seed_from_str_forecast": True},
+            # An STR_TREND extraction with no subject TTM and no monthly
+            # history: the TTM read returns nothing and the forecast loader
+            # has no history to build from.
+            fields=[{"field_name": "comp_set.size", "value": 5}],
+        )
+        base = await _load_engine_inputs(session, deal_id, tenant_id=tenant_id)
+
+    sources = base["__sources__"]
+    assert sources["revenue_seed_from_str_forecast"] == SOURCE_STR_UNAVAILABLE
+    assert sources.get("starting_occupancy") not in STR_BASIS_SOURCES
+    assert sources.get("starting_adr") not in STR_BASIS_SOURCES
+
+
+@pytest.mark.asyncio
+async def test_market_tab_comp_set_rates_are_tagged_as_the_comp_set() -> None:
+    """The Market tab's "Use STR rates" writes the COMP SET's blended rates as
+    explicit overrides carrying ``STR_MARKET_OVERRIDE_NOTE``. Those are neither
+    the subject's actual nor the forward forecast, so they carry their own id —
+    and the value the analyst saw is the value the engines read."""
+    from app.database import get_session_factory
+    from app.services.engine_runner import (
+        SOURCE_STR_COMP_SET,
+        STR_BASIS_SOURCES,
+        STR_MARKET_OVERRIDE_NOTE,
+        _load_engine_inputs,
+    )
+
+    factory = get_session_factory()
+    async with factory() as session:
+        deal_id, tenant_id = await _str_deal(
+            session,
+            overrides={
+                "revenue_seed_from_str_forecast": {
+                    "value": True,
+                    "note": "STR market rates enabled from the Market tab",
+                },
+                "starting_occupancy": {
+                    "value": 0.692,
+                    "note": STR_MARKET_OVERRIDE_NOTE,
+                },
+                "starting_adr": {"value": 295, "note": STR_MARKET_OVERRIDE_NOTE},
+            },
+            # The subject TTM is extracted too — the explicit comp-set
+            # overrides must still win, and must not be re-badged as the
+            # subject's own performance.
+            fields=_SUBJECT_TTM_FIELDS,
+        )
+        base = await _load_engine_inputs(session, deal_id, tenant_id=tenant_id)
+
+    sources = base["__sources__"]
+    assert sources["starting_occupancy"] == SOURCE_STR_COMP_SET
+    assert sources["starting_adr"] == SOURCE_STR_COMP_SET
+    assert sources["revenue_seed_from_str_forecast"] == SOURCE_STR_COMP_SET
+    assert sources["starting_adr"] in STR_BASIS_SOURCES
+    assert base["starting_occupancy"] == pytest.approx(0.692)
+    assert base["starting_adr"] == pytest.approx(295)
+
+
+def test_every_str_basis_id_is_in_the_ontology_registry() -> None:
+    """A source id the web cannot label is a badge that renders as its own
+    underscore-stripped id. The three STR basis ids and the refusal sibling all
+    live in ``concepts.yaml``."""
+    from app.ontology.registry import get_registry
+    from app.services.engine_runner import (
+        SOURCE_STR_UNAVAILABLE,
+        STR_BASIS_SOURCES,
+    )
+
+    registry = get_registry()
+    known = set(registry.sources)
+    for source_id in {*STR_BASIS_SOURCES, SOURCE_STR_UNAVAILABLE}:
+        assert source_id in known, source_id

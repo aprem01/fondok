@@ -278,8 +278,14 @@ export default function MethodologyPage() {
               every other source — but only a value that actually changed is recorded as one; see
               &quot;What counts as an override&quot; and &quot;Every override carries a justification&quot; below.
             </BadgeRow>
-            <BadgeRow source="str_forecast" name="STR Forecast">
-              Year-1 occupancy &amp; ADR seeded from STR — the Market tab&apos;s &quot;Use STR rates in the model&quot; writes the comp-set rates the card shows as explicit overrides (note: &quot;STR comp-set market rates (Market tab)&quot;), else the subject TTM or the BASE forward forecast. Financials → Projections shows &quot;Active basis: Market / STR · Revert&quot; only when the rates carry this tag, and the Market tab&apos;s STR card reads the same tags — &quot;STR rates active&quot;, &quot;STR rates unavailable — using T-12 base&quot;, or &quot;Pending re-run&quot; when the worker has not tagged the rates yet — never the request flag alone.
+            <BadgeRow source="str_subject_ttm" name="STR · Subject TTM Actual">
+              The subject property&apos;s OWN trailing-twelve-month occupancy &amp; ADR as reported by STR — an actual, not a forecast. This is what the model seeds the Base Year from when the STR basis is on: the forward forecast&apos;s Month-12 point can land far below the subject&apos;s current performance, which would understate the deal. Because the Base Year is a TTM window, Index Analysis shows N/A for the first forecast year&apos;s growth whenever the last historical column is a full fiscal year — the two are not the same period basis.
+            </BadgeRow>
+            <BadgeRow source="str_comp_set" name="STR Comp-Set Rates">
+              The comp set&apos;s blended occupancy &amp; ADR shown on the Market tab, applied as the Year-1 input by &quot;Use STR rates in the model&quot; (explicit overrides carrying the note &quot;STR comp-set market rates (Market tab)&quot;). This is the competitive set&apos;s performance, not the subject&apos;s own — the Market tab states the comp-set benchmark and the model&apos;s Base Year as two separate figures and never claims the benchmark is the assumption.
+            </BadgeRow>
+            <BadgeRow source="str_forecast" name="STR Forward Forecast">
+              The BASE STR forward-forecast scenario&apos;s Month-12 point — a projection of the subject, used only when the subject&apos;s own TTM is not extracted. Financials → Projections shows &quot;Active basis: Market / STR · Revert&quot; when the rates carry any of these three tags, and the Market tab&apos;s STR card reads the same tags — &quot;STR / Market basis active&quot;, &quot;STR rates unavailable — using T-12 base&quot;, or &quot;Pending re-run&quot; when the worker has not tagged the rates yet — never the request flag alone.
             </BadgeRow>
             <BadgeRow source="str_forecast_unavailable" name="STR Unavailable">
               STR rates were requested but could not populate (no STR Trend extraction, coverage too low, or a loader failure). The model stays on the T-12 base and says so — the STR seed is never silently &quot;active&quot;. Reason code: <ReasonTag code="str_unavailable" />.

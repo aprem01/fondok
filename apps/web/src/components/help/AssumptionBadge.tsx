@@ -204,10 +204,25 @@ const SOURCE_STYLE: Record<AssumptionSource, SourceStyle> = {
   // (revenue_seed_from_str_forecast=True), starting_occupancy and
   // starting_adr are pulled from the BASE scenario's Month-12 forecast
   // point so the revenue engine inherits the forecast's bottom-up math.
+  // FON-61 (61.2) — three provenances used to share this one badge, so a Base
+  // Year that was the subject's own TTM ACTUAL was labelled a forecast. Each
+  // now has its own tooltip; the revert path is identical for all three.
   str_forecast: {
     tone: TONE.brand,
     tooltip:
-      'Seeded from STR — the Market tab’s comp-set rates (“Use STR rates in the model”), the subject TTM, or the BASE forward-forecast scenario (Month 12). Revert from the Market tab or Financials → Projections to fall back to T-12 / CBRE / seed defaults.',
+      'Seeded from the BASE STR forward-forecast scenario (the Month-12 point) — a projection of the subject, not an actual. Revert from the Market tab or Financials → Projections to fall back to T-12 / CBRE / seed defaults.',
+    Icon: BarChart3,
+  },
+  str_subject_ttm: {
+    tone: TONE.grounded,
+    tooltip:
+      'The subject property’s OWN trailing-twelve-month Occupancy / ADR as reported by STR — an actual, not a forecast and not the comp set. This is what the model seeds Year-1 from when the STR basis is on. Revert from the Market tab or Financials → Projections to fall back to T-12 / CBRE / seed defaults.',
+    Icon: BarChart3,
+  },
+  str_comp_set: {
+    tone: TONE.brand,
+    tooltip:
+      'The STR comp-set blended rates shown on the Market tab, applied as the Year-1 input by “Use STR rates in the model” — the competitive set’s performance, not the subject’s own. Revert from the Market tab or Financials → Projections to fall back to T-12 / CBRE / seed defaults.',
     Icon: BarChart3,
   },
   // FON-61 (D4) — the STR seed is never silent. The analyst asked for STR

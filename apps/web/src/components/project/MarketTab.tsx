@@ -23,6 +23,7 @@ import { MapPinned, Loader2 } from 'lucide-react';
 import {
   api,
   isWorkerConnected,
+  type TransactionCompEntry,
   type TransactionCompsResult,
   type ValueState,
   type EngineName,
@@ -34,7 +35,12 @@ import { useEngineOutputs, getEngineField } from '@/lib/hooks/useEngineOutputs';
 import { useSource, useProvenanceState } from '@/lib/hooks/useDealProvenance';
 import { useRefusal } from '@/components/help/Refused';
 import { useToast } from '@/components/ui/Toast';
-import { STR_MARKET_OVERRIDE_NOTE, isStrMarketOverride } from '@/lib/provenance';
+import {
+  STR_MARKET_OVERRIDE_NOTE,
+  isStrMarketOverride,
+  isStrBasisSource,
+  sourceLabel,
+} from '@/lib/provenance';
 import {
   palette,
   prov,
@@ -102,8 +108,10 @@ const SUB_TAB_IDS = SUB_TABS.map((t) => t.id) as readonly SubTab[];
  * tags (never inferred from the ``revenue_seed_from_str_forecast`` flag alone),
  * exactly like Financials → Projections' Year-1 basis chip:
  *   off         — flag not set → "Model input · Use STR rates in the model".
- *   active      — flag set AND starting_occupancy / starting_adr tagged
- *                 ``str_forecast`` → "STR rates active".
+ *   active      — flag set AND starting_occupancy / starting_adr carry one of
+ *                 the STR basis tags (``isStrBasisSource``: the subject's TTM
+ *                 actual, the comp-set rates, or the forward forecast) →
+ *                 "STR / Market basis active".
  *   unavailable — flag set but the worker tagged ``str_forecast_unavailable``
  *                 (no STR Trend extraction / coverage too low) → the model is
  *                 on the T-12 base and the card says so.
@@ -171,6 +179,52 @@ function deriveCompSet(t: StrTrend | null): DerivedComp {
 // STR penetration index → display points (109.8). ratio (1.098) or points both ok.
 const idxPoints = (idx: number | null): number | null =>
   idx == null || idx <= 0 ? null : idx > 3 ? idx : idx * 100;
+
+// ─── FON-60 (60.1) — extracted transactions vs SELECTED comps ───────────────
+//
+// Sam: "Add an Include as Comp control per row. Summary cards should calculate
+// from selected comps only and clearly show something like `6 of 28 selected`."
+//
+// An extracted transaction is not automatically a comparable — the analyst
+// decides. The selection is DEAL state (the IC reviewer must see the same comp
+// set the analyst built), so it rides ``field_overrides`` like the worksheet
+// layout does, and like the worksheet layout it is on the worker's
+// ``_OVERRIDE_NON_ENGINE_KEYS`` skip list: analyst curation never reaches
+// engine input. The default is ABSENT = all selected, so no existing deal's
+// Market tab changes the day this ships.
+export const SELECTED_COMPS_KEY = 'market.selected_comps';
+export const SELECTED_COMPS_NOTE = 'Transaction comps included in the Market tab summary';
+
+/** Stable per-row identity: the three fields that identify a sale. */
+export function compKey(c: TransactionCompEntry): string {
+  return [c.name ?? '', c.sale_date ?? '', c.sale_price_usd ?? ''].join('|');
+}
+
+/** The persisted selection, or ``null`` when the analyst has not curated. */
+export function readSelectedComps(
+  overrides: Record<string, unknown> | null | undefined,
+): string[] | null {
+  const raw = overrides?.[SELECTED_COMPS_KEY];
+  const list = Array.isArray(raw)
+    ? raw
+    : raw && typeof raw === 'object' && Array.isArray((raw as { value?: unknown }).value)
+      ? ((raw as { value: unknown[] }).value)
+      : null;
+  if (!list) return null;
+  return list.filter((k): k is string => typeof k === 'string');
+}
+
+/** The worker's median, to the digit — ``apps/worker/app/api/market.py``
+ *  ``_median``. The tiles recompute from the SELECTED subset, so they must
+ *  agree with the worker's whole-set figure when everything is selected. */
+export function medianOf(xs: number[]): number | null {
+  if (xs.length === 0) return null;
+  const s = [...xs].sort((a, b) => a - b);
+  const n = s.length;
+  return n % 2 ? s[(n - 1) / 2] : (s[n / 2 - 1] + s[n / 2]) / 2;
+}
+
+const plural = (n: number, one: string, many: string): string => (n === 1 ? one : many);
 
 // ─── small shared bits ──────────────────────────────────────────────────────
 function AwaitingPanel({ children }: { children: ReactNode }) {
@@ -376,7 +430,10 @@ function SubjectVsCompSet({
   derivedComp,
   compKeyCount,
   strBasis,
+  strBasisSource,
   strBasisSettled,
+  baseYearOccPct,
+  baseYearAdr,
   strRunning,
   onToggleStr,
   onRerun,
@@ -388,9 +445,19 @@ function SubjectVsCompSet({
   compKeyCount: number | null;
   /** Tag-honest card state — see ``StrBasis``. */
   strBasis: StrBasis;
+  /** FON-61 (61.2) — WHICH STR basis the worker tagged the Year-1 rates with
+   *  (``str_subject_ttm`` / ``str_comp_set`` / ``str_forecast``), so the card
+   *  can name the basis instead of a rate. Empty when the model has none. */
+  strBasisSource: string | null;
   /** False while the provenance map is still loading (pending card reads
    *  "checking" instead of "pending re-run"). */
   strBasisSettled: boolean;
+  /** FON-61 (61.1) — the Base Year Financials → Projections ACTUALLY shows
+   *  (revenue engine ``years[0]``, falling back to the resolved assumption).
+   *  Null until the model has run: the card then claims no Base Year rather
+   *  than printing the comp set's number in its place. */
+  baseYearOccPct: number | null;
+  baseYearAdr: number | null;
   strRunning: boolean;
   onToggleStr: () => void;
   onRerun: () => void;
@@ -434,6 +501,42 @@ function SubjectVsCompSet({
   const strAdr = derivedComp?.adr != null ? money0(derivedComp.adr) : '—';
   const t12Occ = subjOcc != null ? pct1(subjOcc) : '—';
   const t12Adr = subjAdr != null ? money0(subjAdr) : '—';
+
+  // ── FON-61 (61.1) — two different things, said separately ───────────────
+  //
+  // Sam: "Market Overview currently says the model is using 65.2% Occupancy /
+  // $383 ADR as Year-1 assumptions. However, Financials → Projections actually
+  // shows Base Year 71.6% / $288."
+  //
+  // Both numbers were right; the SENTENCE was wrong. The card was printing the
+  // comp-set blend (``derivedComp``, the same object behind the blended card
+  // above) and asserting it was the underwriting input. It is not: the worker
+  // deliberately seeds Year-1 from the SUBJECT's own STR trailing twelve months
+  // — using the forward forecast's Month-12 point instead could land far below
+  // the subject's actual and tank the deal (engine_runner.py, the −19% IRR
+  // foot-gun comment). So the card now names a BASIS rather than a rate, and
+  // states the comp-set benchmark and the model's Base Year as two separate
+  // facts, each from its own source.
+  const benchmarkClause = (
+    <>
+      Comp-set benchmark: <b>{strOcc}</b> Occ · <b>{strAdr}</b> ADR.
+    </>
+  );
+  const hasBaseYear = baseYearOccPct != null || baseYearAdr != null;
+  const baseYearClause = hasBaseYear ? (
+    <>
+      Financials → Projections Base Year:{' '}
+      <b>{baseYearOccPct != null ? pct1(baseYearOccPct) : '—'}</b> Occ ·{' '}
+      <b>{baseYearAdr != null ? money0(baseYearAdr) : '—'}</b> ADR.
+    </>
+  ) : (
+    <>The Base Year in Financials → Projections is not available until the model has run.</>
+  );
+  // Which basis the model is on, named — ``str_comp_set`` is the one case where
+  // the comp-set rates ARE the Year-1 input (the analyst applied them here as
+  // explicit overrides), so the card must not claim otherwise.
+  const basisIsCompSet = strBasisSource === 'str_comp_set';
+  const basisName = strBasisSource ? sourceLabel(strBasisSource) : null;
 
   const contextNote = `Trailing 12 months · STR${
     strTrend.comp_set_size ? ` · ${strTrend.comp_set_size}-property comp set` : ''
@@ -588,11 +691,16 @@ function SubjectVsCompSet({
             }}
           >
             <span style={{ fontSize: 10, fontWeight: 700, letterSpacing: '.05em', color: 'oklch(40% 0.12 155)', textTransform: 'uppercase' }}>
-              STR rates active
+              STR / Market basis active
             </span>
             <span style={{ fontSize: 12.5, color: palette.ink }}>
-              The model is using these STR market rates for Year-1 Occupancy &amp; ADR — <b>{strOcc}</b> and{' '}
-              <b>{strAdr}</b>, feeding Financials → Projections.
+              {benchmarkClause}{' '}
+              {basisIsCompSet
+                ? 'The analyst applied these comp-set rates as the Year-1 input.'
+                : `The model does not substitute these — it projects the subject off its own STR basis${
+                    basisName ? ` (${basisName})` : ''
+                  }.`}{' '}
+              {baseYearClause}
             </span>
             <span style={{ display: 'flex', gap: 8, marginLeft: 'auto', alignItems: 'center' }}>
               {strRunning && (
@@ -626,9 +734,8 @@ function SubjectVsCompSet({
               STR rates unavailable — using T-12 base
             </span>
             <span style={{ fontSize: 12.5, color: palette.ink }}>
-              STR rates were requested but could not populate (no STR Trend extraction or coverage too low).
-              Year-1 Occupancy &amp; ADR stay on the <b>T-12 actuals</b> ({t12Occ} · {t12Adr}) — the model is on
-              the T-12 base, not the STR rates.
+              STR rates were requested but could not populate (no STR Trend extraction or coverage too low),
+              so the model is on the T-12 base, not the STR rates. {baseYearClause}
             </span>
             <span style={{ display: 'flex', gap: 8, marginLeft: 'auto', alignItems: 'center' }}>
               {strRunning && (
@@ -662,9 +769,10 @@ function SubjectVsCompSet({
               {strBasisSettled ? 'Pending re-run' : 'Checking model basis…'}
             </span>
             <span style={{ fontSize: 12.5, color: palette.ink }}>
-              STR rates (<b>{strOcc}</b> · <b>{strAdr}</b>) were requested, but the model has not confirmed the
-              Year-1 basis yet
+              {benchmarkClause} An STR basis was requested, but the model has not confirmed which basis
+              Year-1 is on
               {strBasisSettled ? ' — the saved run predates the source tags. Re-run the model to apply and confirm them.' : '.'}
+              {' '}{baseYearClause}
             </span>
             <span style={{ display: 'flex', gap: 8, marginLeft: 'auto', alignItems: 'center' }}>
               {strRunning && (
@@ -699,8 +807,8 @@ function SubjectVsCompSet({
               Model input
             </span>
             <span style={{ fontSize: 12.5, color: palette.ink }}>
-              Year-1 Occupancy &amp; ADR are on <b>T-12 actuals</b> ({t12Occ} · {t12Adr}). STR market rates
-              would set <b>{strOcc}</b> · <b>{strAdr}</b>.
+              {baseYearClause} {benchmarkClause} Applying it would set Year-1 Occupancy &amp; ADR to those
+              comp-set figures. The subject&apos;s own STR trailing twelve months read {t12Occ} · {t12Adr}.
             </span>
             <span style={{ display: 'flex', gap: 8, marginLeft: 'auto', alignItems: 'center' }}>
               {strRunning && (
@@ -836,15 +944,25 @@ function TransactionCompsSection({
   entryPerKey,
   entryCapPct,
   exitCapPct,
+  storedSelection,
+  onPersistSelection,
 }: {
   workerComps: TransactionCompsResult | null;
   dealId: string;
   entryPerKey: number | null;
   entryCapPct: number | null;
   exitCapPct: number | null;
+  /** FON-60 (60.1) — the persisted comp selection, or ``null`` when the
+   *  analyst has not curated this deal (the default: everything counts). */
+  storedSelection: string[] | null;
+  onPersistSelection: (keys: string[]) => Promise<void>;
 }) {
   const [sort, setSort] = useState<SortKey>('Sale date');
   const [showAll, setShowAll] = useState(false);
+  // Local intent wins until the PATCH round-trips through the deal row, so a
+  // click lands immediately. ``undefined`` = untouched this session.
+  const [draftSelection, setDraftSelection] = useState<string[] | undefined>(undefined);
+  const [savingSelection, setSavingSelection] = useState(false);
 
   if (!workerComps) {
     return (
@@ -867,40 +985,153 @@ function TransactionCompsSection({
     );
   }
 
-  const perKeys = comps.map((c) => c.price_per_key_usd).filter((v): v is number => v != null);
-  const caps = comps.filter((c) => c.cap_rate_pct != null);
-  const median = workerComps.median_price_per_key;
-  const medianCap = workerComps.median_cap_rate_pct;
+  // ── FON-60 (60.1) — the summary is computed on the SELECTED comps ───────
+  const allKeys = comps.map(compKey);
+  const persisted = draftSelection ?? storedSelection;
+  // An analyst has curated this deal only once a selection exists. Absent →
+  // everything counts, which is exactly today's behaviour for every deal that
+  // ships before this change.
+  const curated = persisted != null;
+  const knownKeys = new Set(allKeys);
+  const selectedKeys = new Set(
+    persisted == null ? allKeys : persisted.filter((k) => knownKeys.has(k)),
+  );
+  const selectedComps = comps.filter((c) => selectedKeys.has(compKey(c)));
+  const selectedCount = selectedComps.length;
+  const isSubset = selectedCount !== comps.length;
+
+  const toggleComp = async (key: string) => {
+    const next = new Set(selectedKeys);
+    if (next.has(key)) next.delete(key);
+    else next.add(key);
+    const ordered = allKeys.filter((k) => next.has(k));
+    setDraftSelection(ordered);
+    setSavingSelection(true);
+    try {
+      await onPersistSelection(ordered);
+    } finally {
+      setSavingSelection(false);
+    }
+  };
+
+  const perKeys = selectedComps
+    .map((c) => c.price_per_key_usd)
+    .filter((v): v is number => v != null);
+  const caps = selectedComps
+    .map((c) => c.cap_rate_pct)
+    .filter((v): v is number => v != null);
+  // Same median convention as apps/worker/app/api/market.py, so an uncurated
+  // deal's tile is the worker's whole-set figure to the digit.
+  const median = medianOf(perKeys);
+  const medianCap = medianOf(caps);
+  // The worker's number over EVERY extracted transaction, kept so a curated
+  // deal can still see what it started from.
+  const allExtractedMedian = workerComps.median_price_per_key;
+  const allExtractedCap = workerComps.median_cap_rate_pct;
+  const subsetNote = `Computed on the ${selectedCount} selected ${plural(selectedCount, 'comp', 'comps')} of ${comps.length} extracted.`;
 
   // Context callouts — entry basis / cap from engine outputs (getEngineField),
   // never a placeholder. Falls back to a neutral anchor line when unavailable.
-  const perKeyContext =
+  //
+  // FON-60 (60.2) — the judgement clause ("supportive of the entry valuation")
+  // is an investment conclusion, and it was drawn from an UNCURATED set: every
+  // transaction the extractor found, comparable or not. While nothing has been
+  // curated the tile states the arithmetic fact and stops there; once the
+  // analyst has chosen a comp set, the conclusion returns and names the set it
+  // was computed on.
+  const perKeyFact =
     entryPerKey != null && median != null && median > 0
       ? `Underwritten entry basis of ${money0(entryPerKey)} / key sits ${Math.abs((1 - entryPerKey / median) * 100).toFixed(1)}% ${
           entryPerKey <= median ? 'below' : 'above'
-        } the median comp — ${entryPerKey <= median ? 'supportive of' : 'rich versus'} the entry valuation.`
-      : 'Anchor for entry / exit valuation.';
-  const capContext =
+        } the median of ${curated ? `the ${selectedCount} selected ${plural(selectedCount, 'comp', 'comps')}` : `all ${comps.length} extracted ${plural(comps.length, 'transaction', 'transactions')}`}.`
+      : null;
+  const perKeyContext =
+    perKeyFact == null
+      ? 'Anchor for entry / exit valuation.'
+      : curated
+        ? `${perKeyFact} ${entryPerKey != null && median != null && entryPerKey <= median ? 'Supportive of' : 'Rich versus'} the entry valuation on that set.`
+        : `${perKeyFact} Include the transactions that are genuinely comparable to draw a conclusion from them.`;
+  const capFact =
     entryCapPct != null && medianCap != null
       ? `Entry cap of ${entryCapPct.toFixed(2)}% is ${Math.abs(Math.round((entryCapPct - medianCap) * 100))} bps ${
           entryCapPct >= medianCap ? 'above' : 'below'
         } the median${exitCapPct != null ? `; the ${exitCapPct.toFixed(2)}% exit assumption anchors terminal value` : ''}.`
-      : 'Anchor for exit-cap rate selection.';
+      : null;
 
+  // ── FON-60 (60.3) — a "median" of one observation is not a median ────────
+  //
+  // Sam: "Current UI shows Median Cap Rate = 7.81% even though only 1 of 28
+  // transactions discloses a cap rate and calls it an `Anchor for exit-cap rate
+  // selection`." Two observations is the floor for the word median; the
+  // observation count is stated at every n; at n = 1 the tile says what the
+  // number is — one reported cap rate — and uses neither "median" nor
+  // "anchor"; at n = 0 it renders a dash and claims nothing at all.
+  const obs = (n: number): string => `${n} ${plural(n, 'observation', 'observations')}`;
+  const perKeyTile =
+    perKeys.length === 0
+      ? {
+          testId: 'per-key',
+          label: '$ / Key',
+          value: '—',
+          range: `${obs(0)} — no selected comp discloses a $ / key`,
+          context: null,
+        }
+      : perKeys.length === 1
+        ? {
+            testId: 'per-key',
+            label: 'Reported $ / Key',
+            value: money0(perKeys[0]),
+            range: obs(1),
+            context: `One disclosed $ / key — a single sale, not a distribution. ${subsetNote}`,
+          }
+        : {
+            testId: 'per-key',
+            label: 'Median $ / Key',
+            value: median != null ? money0(median) : '—',
+            range: `Range ${money0(Math.min(...perKeys))} – ${money0(Math.max(...perKeys))} · ${obs(perKeys.length)}`,
+            context: perKeyContext,
+          };
+  const capTile =
+    caps.length === 0
+      ? {
+          testId: 'cap-rate',
+          label: 'Cap Rate',
+          value: '—',
+          range: `${obs(0)} — no selected comp discloses a cap rate`,
+          context: null,
+        }
+      : caps.length === 1
+        ? {
+            testId: 'cap-rate',
+            label: 'Reported Cap Rate',
+            value: fmtCap2(caps[0]),
+            // Neither the word "median" nor the word "anchor" belongs on a
+            // single observation — Sam quoted both back at us. One disclosed
+            // cap rate is a fact about one sale, and the tile says only that.
+            range: obs(1),
+            context: `One disclosed cap rate — a single sale, too thin to carry the exit-cap selection on its own. ${subsetNote}`,
+          }
+        : {
+            testId: 'cap-rate',
+            label: 'Median Cap Rate',
+            value: fmtCap2(medianCap),
+            range: `${caps.length} of ${selectedCount} selected ${plural(selectedCount, 'comp', 'comps')} disclose a cap rate · ${obs(caps.length)}`,
+            context: capFact ?? 'Anchor for exit-cap rate selection.',
+          };
   const summary = [
     {
-      label: 'Median $ / Key',
-      value: median != null ? money0(median) : '—',
-      range: perKeys.length
-        ? `Range ${money0(Math.min(...perKeys))} – ${money0(Math.max(...perKeys))}`
-        : 'No $/key disclosed',
-      context: perKeyContext,
+      ...perKeyTile,
+      allExtracted:
+        isSubset && allExtractedMedian != null
+          ? `All ${comps.length} extracted: ${money0(allExtractedMedian)}`
+          : null,
     },
     {
-      label: 'Median Cap Rate',
-      value: fmtCap2(medianCap),
-      range: `${caps.length} of ${comps.length} comps disclose a cap rate`,
-      context: capContext,
+      ...capTile,
+      allExtracted:
+        isSubset && allExtractedCap != null
+          ? `All ${comps.length} extracted: ${fmtCap2(allExtractedCap)}`
+          : null,
     },
   ];
 
@@ -914,6 +1145,8 @@ function TransactionCompsSection({
   const compsCaption =
     'Extracted from Offering Memorandums and market reports in the Data Room';
   const columns: { label: string; align: 'left' | 'right' }[] = [
+    // FON-60 (60.1) — Sam: "Add an Include as Comp control per row."
+    { label: 'INCLUDE', align: 'left' },
     { label: 'PROPERTY', align: 'left' },
     { label: 'MARKET', align: 'left' },
     { label: 'SALE DATE', align: 'left' },
@@ -925,7 +1158,7 @@ function TransactionCompsSection({
     { label: 'SELLER', align: 'left' },
   ];
   const gridCols =
-    'minmax(210px,1.6fr) minmax(120px,1fr) 96px 62px 108px 100px 84px minmax(150px,1fr) minmax(150px,1fr)';
+    '76px minmax(210px,1.6fr) minmax(120px,1fr) 96px 62px 108px 100px 84px minmax(150px,1fr) minmax(150px,1fr)';
 
   const pill = (label: SortKey): CSSProperties => {
     const active = label === sort;
@@ -956,7 +1189,7 @@ function TransactionCompsSection({
       {/* Headline anchors */}
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(300px,1fr))', gap: 14 }}>
         {summary.map((c) => (
-          <div key={c.label} style={{ background: palette.cardWhite, border: `1px solid ${palette.border}`, borderRadius: 10, padding: '16px 18px' }}>
+          <div key={c.label} data-testid={`comp-tile-${c.testId}`} style={{ background: palette.cardWhite, border: `1px solid ${palette.border}`, borderRadius: 10, padding: '16px 18px' }}>
             <div style={{ fontSize: 10, fontWeight: 700, letterSpacing: '.04em', color: palette.eyebrow, textTransform: 'uppercase', marginBottom: 7 }}>
               {c.label}
             </div>
@@ -964,7 +1197,15 @@ function TransactionCompsSection({
               <span style={{ fontSize: 26, fontWeight: 700, color: palette.ink, fontVariantNumeric: 'tabular-nums' }}>{c.value}</span>
               <span style={{ fontSize: 11.5, color: palette.textMuted }}>{c.range}</span>
             </div>
-            <div style={{ fontSize: 12, color: '#3a3f47', lineHeight: 1.5, marginTop: 8 }}>{c.context}</div>
+            {/* FON-60 (60.3) — at n = 0 the tile makes no claim at all. */}
+            {c.context && (
+              <div style={{ fontSize: 12, color: '#3a3f47', lineHeight: 1.5, marginTop: 8 }}>{c.context}</div>
+            )}
+            {/* The worker's whole-set figure stays visible once the analyst
+                has narrowed the set, so the curation is legible. */}
+            {c.allExtracted && (
+              <div style={{ fontSize: 11.5, color: palette.textMuted, marginTop: 6 }}>{c.allExtracted}</div>
+            )}
           </div>
         ))}
       </div>
@@ -1012,8 +1253,24 @@ function TransactionCompsSection({
             {visible.map((c, i) => {
               const bg = i % 2 ? palette.surfaceTint : '#fff';
               const buyer = c.buyer_name ?? c.buyer_type ?? null;
+              const key = compKey(c);
+              const included = selectedKeys.has(key);
               return (
                 <div key={`${c.name}-${i}`} style={{ display: 'contents' }}>
+                  {/* FON-60 (60.1) — an extracted transaction is not a comp
+                      until the analyst says so. Unchecking one recomputes the
+                      tiles above and persists on the DEAL (never engine
+                      input), so the IC reviewer opens the same comp set. */}
+                  <div style={{ ...cellBase, background: bg, overflow: 'visible' }}>
+                    <input
+                      type="checkbox"
+                      checked={included}
+                      disabled={savingSelection}
+                      onChange={() => void toggleComp(key)}
+                      aria-label={`Include ${c.name} as a comp`}
+                      style={{ cursor: savingSelection ? 'progress' : 'pointer', margin: 0 }}
+                    />
+                  </div>
                   {/* FON-60 §4 — the property name is plain text. The old
                       source deep link was a raw worker download URL built from
                       an unvalidated `source_document_id`, which returned
@@ -1056,7 +1313,11 @@ function TransactionCompsSection({
         </div>
         <div style={{ padding: '11px 18px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
           <span style={{ fontSize: 11.5, color: palette.textMuted }}>
-            Showing {visible.length} of {comps.length} comps · sorted by {sort.toLowerCase()}
+            Showing {visible.length} of {comps.length} comps ·{' '}
+            <b style={{ color: palette.ink, fontWeight: 600 }}>
+              {selectedCount} of {comps.length} selected as comps
+            </b>{' '}
+            · sorted by {sort.toLowerCase()}
           </span>
           {comps.length > 14 && (
             <button
@@ -1173,7 +1434,7 @@ export default function MarketTab({ projectId }: { projectId: number | string })
     (typeof rawSeed === 'object' && rawSeed !== null && (rawSeed as { value?: unknown }).value === true);
   // Tag-honest card state — the same worker source tags Financials →
   // Projections reads for its Year-1 basis chip. The flag only says the seed
-  // was REQUESTED; only a ``str_forecast`` tag on the rate keys says it is
+  // was REQUESTED; only an STR basis tag on the rate keys says it is
   // what the model is actually using.
   const occSrc = useSource('starting_occupancy');
   const adrSrc = useSource('starting_adr');
@@ -1186,20 +1447,41 @@ export default function MarketTab({ projectId }: { projectId: number | string })
   // after the code ships. An ACTIVE tag still wins over either — a populated
   // model is never re-labelled as a refusal.
   const strSeedRefusal = useRefusal('revenue_seed_from_str_forecast');
+  // FON-61 (61.2) — ONE helper for "is this an STR basis", shared with
+  // Financials → Projections. The worker's single ``str_forecast`` id was split
+  // into the subject's TTM actual, the comp-set rates and the forward forecast;
+  // a hand-rolled equality here would have silently dropped two of the three.
+  const strBasisSource =
+    [occSrc?.source, adrSrc?.source].find((src) => isStrBasisSource(src)) ?? null;
   const strBasis: StrBasis = !strSeeded
     ? 'off'
-    : occSrc?.source === 'str_forecast' || adrSrc?.source === 'str_forecast'
+    : strBasisSource
       ? 'active'
       : strSeedRefusal === 'str_unavailable'
         || [seedSrc, occSrc, adrSrc].some((s) => s?.source === 'str_forecast_unavailable')
         ? 'unavailable'
         : 'pending';
+  // FON-61 (61.1) — the Base Year the model ACTUALLY uses. First choice is the
+  // revenue engine's ``years[0]``, which is the very row Financials →
+  // Projections renders as "Base Year (Year 1)"; the resolved assumption is the
+  // fallback before a run has landed. Never the comp set — that was the bug.
+  const revenueYears = getEngineField<{ occupancy?: number; adr?: number }[]>(
+    outputs,
+    'revenue',
+    'years',
+  );
+  const finiteOr = (v: unknown): number | null =>
+    typeof v === 'number' && Number.isFinite(v) ? v : null;
+  const baseYearOccRaw =
+    finiteOr(revenueYears?.[0]?.occupancy) ?? finiteOr(occSrc?.value);
+  const baseYearOccPct = baseYearOccRaw == null ? null : occPct(baseYearOccRaw);
+  const baseYearAdr = finiteOr(revenueYears?.[0]?.adr) ?? finiteOr(adrSrc?.value);
   // FON-61 (D4) — Market → Financials propagation is EXPLICIT. "Use STR rates"
   // writes ``starting_occupancy`` / ``starting_adr`` field_overrides carrying
   // exactly the comp-set values the card displays (occupancy at the card's
   // 0.1-pt precision as a fraction; ADR at the card's whole-dollar precision),
   // each with the exact ``STR_MARKET_OVERRIDE_NOTE`` so the worker badges
-  // them ``str_forecast`` rather than a generic analyst override. When the
+  // them ``str_comp_set`` rather than a generic analyst override. When the
   // comp set can't supply both values the card shows "—" and only the flag
   // is written — the worker then seeds from the subject TTM / forecast, or
   // tags the flag ``str_forecast_unavailable`` (never a silent "active").
@@ -1232,6 +1514,31 @@ export default function MarketTab({ projectId }: { projectId: number | string })
       );
     } catch {
       toast('Could not update the model', { type: 'error' });
+    }
+  };
+
+  // ── FON-60 (60.1) — the comp selection lives on the DEAL ────────────────
+  //
+  // Same ``field_overrides`` channel as the STR seed, and deliberately NOT the
+  // same consequence: this key is on the worker's ``_OVERRIDE_NON_ENGINE_KEYS``
+  // skip list, so it never reaches engine input and there is nothing to re-run.
+  // Curating the comp set moves the Market tab's summary tiles and nothing else
+  // in the model.
+  const selectedComps = readSelectedComps(overrides);
+  const persistSelectedComps = async (keys: string[]) => {
+    // The PATCH sends the WHOLE blob, so writing before the deal row has
+    // loaded would send ``{}`` plus this key and drop every other override.
+    // Refuse instead — the analyst re-clicks a moment later.
+    if (!deal) {
+      toast('Still loading this deal — try again in a moment', { type: 'error' });
+      return;
+    }
+    const next = { ...overrides, [SELECTED_COMPS_KEY]: { value: keys, note: SELECTED_COMPS_NOTE } };
+    try {
+      await api.deals.update(dealId, { field_overrides: next });
+      refreshDeal();
+    } catch {
+      toast('Could not save the comp selection', { type: 'error' });
     }
   };
 
@@ -1293,7 +1600,10 @@ export default function MarketTab({ projectId }: { projectId: number | string })
               derivedComp={derivedComp}
               compKeyCount={compKeyCount}
               strBasis={strBasis}
+              strBasisSource={strBasisSource}
               strBasisSettled={strBasisSettled}
+              baseYearOccPct={baseYearOccPct}
+              baseYearAdr={baseYearAdr}
               strRunning={strRunning}
               onToggleStr={toggleStrSeed}
               onRerun={() => void run()}
@@ -1368,6 +1678,8 @@ export default function MarketTab({ projectId }: { projectId: number | string })
           entryPerKey={entryPerKey}
           entryCapPct={entryCapPct}
           exitCapPct={exitCapPct}
+          storedSelection={selectedComps}
+          onPersistSelection={persistSelectedComps}
         />
       )}
 

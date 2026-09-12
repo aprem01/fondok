@@ -84,13 +84,36 @@ describe('ontology — generated concept registry', () => {
   it('provenance vocabulary covers every worker SOURCE_* label', () => {
     for (const s of [
       'seed', 'deal_row', 't12_actual', 'cbre_horizons', 'pnl_benchmark', 'portfolio_pnl', 'om_comps',
-      'om_broker', 'analyst_override', 'str_forecast', 'str_forecast_unavailable',
+      'om_broker', 'analyst_override', 'str_forecast', 'str_subject_ttm',
+      'str_comp_set', 'str_forecast_unavailable',
       'derived_from_revpar_growth', 'partnership_doc',
     ]) {
       expect(SOURCES[s as keyof typeof SOURCES], s).toBeDefined();
     }
     expect(SOURCES.str_forecast_unavailable.kind).toBe('refusal');
     expect(SOURCES.str_forecast_unavailable.reason).toBe('str_unavailable');
+  });
+
+  // FON-61 (61.2) — the worker splits the STR seed's provenance three ways
+  // (``STR_BASIS_SOURCES`` in engine_runner.py). The registry must be able to
+  // label and badge all three, or the hover renders the raw id.
+  it('carries a distinct label, badge and explanation for each STR basis', () => {
+    const ids = ['str_forecast', 'str_subject_ttm', 'str_comp_set'] as const;
+    for (const id of ids) {
+      const src = SOURCES[id];
+      expect(src, id).toBeDefined();
+      expect(src.label.trim().length, `${id} label`).toBeGreaterThan(0);
+      expect(src.badge.trim().length, `${id} badge`).toBeGreaterThan(0);
+      expect(src.doc_types, id).toContain('STR_TREND');
+      // Every one of them is this deal's own extracted data.
+      expect(src.kind, id).toBe('grounded');
+    }
+    // Three ids, three badges — nothing reads as the same provenance twice.
+    expect(new Set(ids.map((id) => SOURCES[id].badge)).size).toBe(3);
+    expect(new Set(ids.map((id) => SOURCES[id].explanation)).size).toBe(3);
+    // The narrowed id no longer claims to cover the subject TTM.
+    expect(SOURCES.str_forecast.explanation).not.toMatch(/subject TTM/i);
+    expect(SOURCES.str_subject_ttm.explanation).toMatch(/actual, not a forecast/);
   });
 });
 

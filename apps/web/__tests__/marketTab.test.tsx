@@ -92,7 +92,11 @@ const COMPS = {
       source_page: null,
     },
   ],
-  median_price_per_key: 337_000,
+  // The true median of the two rows above — the worker's `_median` averages
+  // the middle pair on an even count. The tiles recompute it from the selected
+  // subset, so a fixture that disagreed with its own rows would be testing the
+  // fixture rather than the code.
+  median_price_per_key: 337_500,
   median_cap_rate_pct: 6.2,
   note: null,
 };
@@ -153,15 +157,18 @@ vi.mock('@/lib/hooks/useDealProvenance', () => ({
   useProvenanceState: () => ({ ready: Object.keys(mockSources).length > 0, settled: mockProvSettled }),
 }));
 
-// Keep the REAL getEngineField; swap the hook to serve no outputs (context
-// callouts fall back to the neutral anchor line — never a fabricated number).
+// Keep the REAL getEngineField; swap the hook to serve no outputs by default
+// (context callouts fall back to the neutral anchor line — never a fabricated
+// number). FON-61 (61.1) sets real revenue-engine years so the card can quote
+// the Base Year Financials → Projections actually renders.
+let mockOutputs: unknown = null;
 vi.mock('@/lib/hooks/useEngineOutputs', async () => {
   const actual = await vi.importActual<typeof import('@/lib/hooks/useEngineOutputs')>(
     '@/lib/hooks/useEngineOutputs',
   );
   return {
     ...actual,
-    useEngineOutputs: () => ({ outputs: null, previous: null, loading: false, lastRunAt: null, refresh: vi.fn() }),
+    useEngineOutputs: () => ({ outputs: mockOutputs, previous: null, loading: false, lastRunAt: null, refresh: vi.fn() }),
   };
 });
 
@@ -177,6 +184,7 @@ beforeEach(() => {
   mockSources = {};
   mockReasons = {};
   mockProvSettled = true;
+  mockOutputs = null;
   engineRunSpy.mockClear();
   vi.mocked(api.deals.update).mockClear();
 });
@@ -222,7 +230,7 @@ describe('MarketTab — "Use STR rates in the model" writes explicit Year-1 over
     // ADR override ``analyst_override`` — occupancy on STR = basis is active.
     mockSources = { starting_occupancy: 'str_forecast', starting_adr: 'analyst_override' };
     render(<MarketTab projectId="deal-uuid-1" />);
-    expect(await screen.findByText('STR rates active')).toBeInTheDocument();
+    expect(await screen.findByText('STR / Market basis active')).toBeInTheDocument();
 
     fireEvent.click(screen.getByText('Revert to T-12 actuals'));
     await waitFor(() => expect(api.deals.update).toHaveBeenCalledTimes(1));
@@ -239,11 +247,11 @@ describe('MarketTab — "Use STR rates in the model" writes explicit Year-1 over
 // starting_occupancy / starting_adr (the same tags Financials → Projections
 // reads), never the ``revenue_seed_from_str_forecast`` flag alone.
 describe('MarketTab — the STR rates card reads the worker source tags, not the flag', () => {
-  it('flag on + str_forecast tag → "STR rates active"', async () => {
+  it('flag on + str_forecast tag → the active basis card', async () => {
     mockOverrides = { revenue_seed_from_str_forecast: STR_FLAG };
     mockSources = { starting_occupancy: 'str_forecast', starting_adr: 'str_forecast' };
     render(<MarketTab projectId="deal-uuid-1" />);
-    expect(await screen.findByTestId('str-card-active')).toHaveTextContent('STR rates active');
+    expect(await screen.findByTestId('str-card-active')).toHaveTextContent('STR / Market basis active');
     expect(screen.queryByTestId('str-card-unavailable')).not.toBeInTheDocument();
     expect(screen.queryByTestId('str-card-pending')).not.toBeInTheDocument();
   });
@@ -262,7 +270,7 @@ describe('MarketTab — the STR rates card reads the worker source tags, not the
     const card = await screen.findByTestId('str-card-unavailable');
     expect(card).toHaveTextContent('STR rates unavailable — using T-12 base');
     expect(card).toHaveTextContent('the model is on the T-12 base');
-    expect(screen.queryByText('STR rates active')).not.toBeInTheDocument();
+    expect(screen.queryByText('STR / Market basis active')).not.toBeInTheDocument();
 
     // Same write as Revert: the flag goes, unrelated overrides survive.
     fireEvent.click(screen.getByText('Clear STR request'));
@@ -277,7 +285,7 @@ describe('MarketTab — the STR rates card reads the worker source tags, not the
     render(<MarketTab projectId="deal-uuid-1" />);
     const card = await screen.findByTestId('str-card-pending');
     expect(card).toHaveTextContent('Pending re-run');
-    expect(screen.queryByText('STR rates active')).not.toBeInTheDocument();
+    expect(screen.queryByText('STR / Market basis active')).not.toBeInTheDocument();
 
     fireEvent.click(screen.getByText('Re-run model'));
     await waitFor(() => expect(engineRunSpy).toHaveBeenCalledTimes(1));
@@ -292,7 +300,7 @@ describe('MarketTab — the STR rates card reads the worker source tags, not the
     const card = await screen.findByTestId('str-card-pending');
     expect(card).toHaveTextContent('Checking model basis…');
     expect(screen.queryByText('Re-run model')).not.toBeInTheDocument();
-    expect(screen.queryByText('STR rates active')).not.toBeInTheDocument();
+    expect(screen.queryByText('STR / Market basis active')).not.toBeInTheDocument();
   });
 
   // Phase 4.4 — the card now reads the worker's REFUSAL CODE first and only
@@ -328,7 +336,7 @@ describe('MarketTab — the STR rates card reads the worker source tags, not the
     mockSources = { starting_occupancy: 'str_forecast', starting_adr: 'str_forecast' };
     mockReasons = { revenue_seed_from_str_forecast: 'str_unavailable' };
     render(<MarketTab projectId="deal-uuid-1" />);
-    expect(await screen.findByTestId('str-card-active')).toHaveTextContent('STR rates active');
+    expect(await screen.findByTestId('str-card-active')).toHaveTextContent('STR / Market basis active');
     expect(screen.queryByTestId('str-card-unavailable')).not.toBeInTheDocument();
   });
 
@@ -385,9 +393,14 @@ describe('MarketTab — Transaction Comps SELLER column (new backend field)', ()
     fireEvent.click(screen.getByText('Transaction Comps'));
     await screen.findByText('SELLER', undefined, { timeout: 5000 });
 
-    expect(screen.getByText('$337,000')).toBeInTheDocument(); // median $/key
+    // FON-60 (60.1) — an uncurated deal is all-selected, so the tiles are the
+    // worker's own whole-set medians to the digit: $337,500 = (265k + 410k)/2
+    // and 6.20% = (5.8 + 6.6)/2, the same convention as market.py `_median`.
+    expect(screen.getByText('$337,500')).toBeInTheDocument(); // median $/key
     expect(screen.getByText('6.20%')).toBeInTheDocument(); // median cap
-    expect(screen.getByText('2 of 2 comps disclose a cap rate')).toBeInTheDocument();
+    expect(
+      screen.getByText('2 of 2 selected comps disclose a cap rate · 2 observations'),
+    ).toBeInTheDocument();
     // Context falls back to the neutral anchor line when no engine basis exists.
     expect(screen.getByText('Anchor for entry / exit valuation.')).toBeInTheDocument();
   });
@@ -539,5 +552,298 @@ describe('MarketTab — `?tab=market&sub=<slug>` routing', () => {
     expect(written.get('focus')).toBe('noi');
     expect(written.get('reviewField')).toBe('noi_usd');
     expect(tabEl('Index Analysis')).toHaveAttribute('aria-selected', 'true');
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────
+// FON-61 §1 — the STR card states a BASIS, not a rate
+//
+// Sam: "Market Overview currently says the model is using 65.2% Occupancy /
+// $383 ADR as Year-1 assumptions. However, Financials → Projections actually
+// shows Base Year 71.6% / $288."
+//
+// Both numbers were right. The card was printing the COMP-SET blend and
+// asserting it was the underwriting input; the worker deliberately seeds Year-1
+// from the subject's own STR trailing twelve months. The methodology stays; the
+// sentence changes.
+// ─────────────────────────────────────────────────────────────────────────
+
+/** Revenue-engine years — ``years[0]`` is the row Financials → Projections
+ *  renders as "Base Year (Year 1)". Occupancy is a 0..1 fraction. */
+const REVENUE_OUTPUTS = {
+  deal_id: 'deal-uuid-1',
+  engines: {
+    revenue: {
+      outputs: {
+        years: [
+          { year: 1, occupancy: 0.716, adr: 288, revpar: 206.2 },
+          { year: 2, occupancy: 0.73, adr: 300, revpar: 219 },
+        ],
+      },
+    },
+  },
+};
+
+describe('MarketTab — the active card names the basis and the Base Year separately', () => {
+  it('states the comp-set benchmark and the Base Year as two different facts', async () => {
+    mockOverrides = { revenue_seed_from_str_forecast: STR_FLAG };
+    // The worker seeded from the subject's own TTM — an actual, not a forecast.
+    mockSources = { starting_occupancy: 'str_subject_ttm', starting_adr: 'str_subject_ttm' };
+    mockOutputs = REVENUE_OUTPUTS;
+    render(<MarketTab projectId="deal-uuid-1" />);
+
+    const card = await screen.findByTestId('str-card-active');
+    // The eyebrow names a basis, not a rate.
+    expect(card).toHaveTextContent('STR / Market basis active');
+    // Clause 1 — the comp-set benchmark, labelled as a benchmark.
+    expect(card).toHaveTextContent('Comp-set benchmark:');
+    expect(card).toHaveTextContent('69.2%'); // 71.4 ÷ 1.032
+    expect(card).toHaveTextContent('$295'); // 278 ÷ 0.942
+    // Clause 2 — the Base Year the model actually uses, from the engine.
+    expect(card).toHaveTextContent('Financials → Projections Base Year:');
+    expect(card).toHaveTextContent('71.6%');
+    expect(card).toHaveTextContent('$288');
+    // …and it names which STR basis the model is on.
+    expect(card).toHaveTextContent('STR · Subject TTM actual');
+  });
+
+  it('never asserts the comp-set number IS the Year-1 assumption', async () => {
+    mockOverrides = { revenue_seed_from_str_forecast: STR_FLAG };
+    mockSources = { starting_occupancy: 'str_subject_ttm', starting_adr: 'str_subject_ttm' };
+    mockOutputs = REVENUE_OUTPUTS;
+    render(<MarketTab projectId="deal-uuid-1" />);
+
+    const card = await screen.findByTestId('str-card-active');
+    expect(card).not.toHaveTextContent('The model is using these STR market rates for Year-1');
+    expect(card).toHaveTextContent('The model does not substitute these');
+  });
+
+  it('says so plainly when the comp-set rates ARE the applied Year-1 input', async () => {
+    // The analyst clicked "Use STR rates": the comp-set values were written as
+    // explicit overrides, and the worker badges them ``str_comp_set``.
+    mockOverrides = {
+      revenue_seed_from_str_forecast: STR_FLAG,
+      starting_occupancy: { value: 0.692, note: STR_MARKET_OVERRIDE_NOTE },
+      starting_adr: { value: 295, note: STR_MARKET_OVERRIDE_NOTE },
+    };
+    mockSources = { starting_occupancy: 'str_comp_set', starting_adr: 'str_comp_set' };
+    render(<MarketTab projectId="deal-uuid-1" />);
+
+    const card = await screen.findByTestId('str-card-active');
+    expect(card).toHaveTextContent('The analyst applied these comp-set rates as the Year-1 input.');
+    expect(card).not.toHaveTextContent('The model does not substitute these');
+  });
+
+  it('claims no Base Year at all before the model has run', async () => {
+    mockOverrides = { revenue_seed_from_str_forecast: STR_FLAG };
+    mockSources = { starting_occupancy: 'str_subject_ttm', starting_adr: 'str_subject_ttm' };
+    mockOutputs = null; // no engine outputs, and the provenance map carries no value
+    render(<MarketTab projectId="deal-uuid-1" />);
+
+    const card = await screen.findByTestId('str-card-active');
+    expect(card).toHaveTextContent(
+      'The Base Year in Financials → Projections is not available until the model has run.',
+    );
+    // The comp-set figures are still shown — as a benchmark, which they are.
+    expect(card).toHaveTextContent('Comp-set benchmark:');
+  });
+
+  it('the pending and model-input cards carry the same two-clause split', async () => {
+    mockOverrides = { revenue_seed_from_str_forecast: STR_FLAG };
+    mockSources = {};
+    mockOutputs = REVENUE_OUTPUTS;
+    const { unmount } = render(<MarketTab projectId="deal-uuid-1" />);
+    const pending = await screen.findByTestId('str-card-pending');
+    expect(pending).toHaveTextContent('Comp-set benchmark:');
+    expect(pending).toHaveTextContent('Financials → Projections Base Year:');
+    expect(pending).toHaveTextContent('71.6%');
+    unmount();
+
+    mockOverrides = {};
+    render(<MarketTab projectId="deal-uuid-1" />);
+    const off = await screen.findByText('Use STR rates in the model');
+    const card = off.closest('div')?.parentElement as HTMLElement;
+    expect(card).toHaveTextContent('Comp-set benchmark:');
+    expect(card).toHaveTextContent('Financials → Projections Base Year:');
+    expect(card).toHaveTextContent('71.6%');
+  });
+
+  it('an STR basis is still "active" under any of the three STR source ids', async () => {
+    for (const source of ['str_forecast', 'str_subject_ttm', 'str_comp_set']) {
+      cleanup();
+      mockOverrides = { revenue_seed_from_str_forecast: STR_FLAG };
+      mockSources = { starting_occupancy: source, starting_adr: source };
+      render(<MarketTab projectId="deal-uuid-1" />);
+      expect(await screen.findByTestId('str-card-active')).toBeInTheDocument();
+    }
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────
+// FON-60 §1/§2/§3 — extracted transactions are not selected comps
+// ─────────────────────────────────────────────────────────────────────────
+
+const openComps = async () => {
+  fireEvent.click(screen.getByText('Transaction Comps'));
+  await screen.findByText('SELLER', undefined, { timeout: 5000 });
+};
+
+describe('MarketTab — Include as Comp (FON-60 §1)', () => {
+  it('defaults to every comp selected, so an existing deal is unchanged', async () => {
+    render(<MarketTab projectId="deal-uuid-1" />);
+    await openComps();
+
+    expect(screen.getByText('2 of 2 selected as comps')).toBeInTheDocument();
+    const boxes = screen.getAllByRole('checkbox');
+    expect(boxes).toHaveLength(2);
+    for (const b of boxes) expect(b).toBeChecked();
+    // …and the tiles are the worker's whole-set figures to the digit.
+    expect(screen.getByText('$337,500')).toBeInTheDocument();
+    expect(screen.getByText('6.20%')).toBeInTheDocument();
+  });
+
+  it('unchecking a row recomputes the tiles from the selected subset and PATCHes the deal', async () => {
+    render(<MarketTab projectId="deal-uuid-1" />);
+    await openComps();
+
+    // Drop Z Ocean Hotel ($265,000 / 6.6%), leaving The Betsy ($410,000 / 5.8%).
+    fireEvent.click(screen.getByLabelText('Include Z Ocean Hotel as a comp'));
+
+    await waitFor(() => expect(api.deals.update).toHaveBeenCalledTimes(1));
+    const [, body] = vi.mocked(api.deals.update).mock.calls[0] as unknown as [
+      string,
+      { field_overrides: Record<string, { value: string[]; note: string }> },
+    ];
+    expect(body.field_overrides['market.selected_comps'].value).toEqual([
+      'The Betsy Hotel|Jun 2025|25010000',
+    ]);
+    expect(body.field_overrides['market.selected_comps'].note.length).toBeGreaterThan(0);
+
+    // One observation left on each tile — so neither is a median any more.
+    expect(await screen.findByText('1 of 2 selected as comps')).toBeInTheDocument();
+    const perKey = screen.getByTestId('comp-tile-per-key');
+    expect(within(perKey).getByText('Reported $ / Key')).toBeInTheDocument();
+    expect(within(perKey).getByText('$410,000')).toBeInTheDocument();
+    const cap = screen.getByTestId('comp-tile-cap-rate');
+    expect(within(cap).getByText('Reported Cap Rate')).toBeInTheDocument();
+    expect(within(cap).getByText('5.80%')).toBeInTheDocument();
+    // The worker's whole-set figure stays visible.
+    expect(within(perKey).getByText('All 2 extracted: $337,500')).toBeInTheDocument();
+  });
+
+  it('reads a persisted selection off the deal and computes on it', async () => {
+    mockOverrides = {
+      'market.selected_comps': {
+        value: ['Z Ocean Hotel|Aug 2024|18020000'],
+        note: 'Transaction comps included in the Market tab summary',
+      },
+    };
+    render(<MarketTab projectId="deal-uuid-1" />);
+    await openComps();
+
+    expect(screen.getByText('1 of 2 selected as comps')).toBeInTheDocument();
+    expect(screen.getByLabelText('Include Z Ocean Hotel as a comp')).toBeChecked();
+    expect(screen.getByLabelText('Include The Betsy Hotel as a comp')).not.toBeChecked();
+    expect(within(screen.getByTestId('comp-tile-per-key')).getByText('$265,000')).toBeInTheDocument();
+    expect(within(screen.getByTestId('comp-tile-cap-rate')).getByText('6.60%')).toBeInTheDocument();
+  });
+});
+
+describe('MarketTab — the commentary does not conclude from an uncurated set (FON-60 §2)', () => {
+  it('states the fact and drops the judgement while nothing has been curated', async () => {
+    mockOutputs = {
+      deal_id: 'deal-uuid-1',
+      engines: { capital: { outputs: { price_per_key: 280_000, entry_cap_rate: 0.07 } } },
+    };
+    render(<MarketTab projectId="deal-uuid-1" />);
+    await openComps();
+
+    const tile = screen.getByTestId('comp-tile-per-key');
+    expect(tile).toHaveTextContent('below the median of all 2 extracted transactions');
+    expect(tile).not.toHaveTextContent('Supportive of');
+    expect(tile).not.toHaveTextContent('supportive of');
+    expect(tile).toHaveTextContent('Include the transactions that are genuinely comparable');
+  });
+
+  it('restores the conclusion once a subset is selected, naming the subset', async () => {
+    mockOverrides = {
+      'market.selected_comps': {
+        value: ['The Betsy Hotel|Jun 2025|25010000', 'Z Ocean Hotel|Aug 2024|18020000'],
+        note: 'Transaction comps included in the Market tab summary',
+      },
+    };
+    mockOutputs = {
+      deal_id: 'deal-uuid-1',
+      engines: { capital: { outputs: { price_per_key: 280_000, entry_cap_rate: 0.07 } } },
+    };
+    render(<MarketTab projectId="deal-uuid-1" />);
+    await openComps();
+
+    const tile = screen.getByTestId('comp-tile-per-key');
+    expect(tile).toHaveTextContent('below the median of the 2 selected comps');
+    expect(tile).toHaveTextContent('Supportive of the entry valuation on that set.');
+  });
+});
+
+describe('MarketTab — a "median" of one observation is not a median (FON-60 §3)', () => {
+  it('at n = 1 the cap tile uses neither "median" nor "anchor", and states the count', async () => {
+    mockOverrides = {
+      'market.selected_comps': {
+        value: ['The Betsy Hotel|Jun 2025|25010000'],
+        note: 'Transaction comps included in the Market tab summary',
+      },
+    };
+    render(<MarketTab projectId="deal-uuid-1" />);
+    await openComps();
+
+    const tile = screen.getByTestId('comp-tile-cap-rate');
+    expect(tile).toHaveTextContent('Reported Cap Rate');
+    expect(tile).toHaveTextContent('5.80%');
+    expect(tile).toHaveTextContent('1 observation');
+    // Neither word appears anywhere on the tile — Sam quoted both back at us.
+    expect(tile.textContent ?? '').not.toMatch(/median/i);
+    expect(tile.textContent ?? '').not.toMatch(/anchor/i);
+    expect(screen.queryByText('Anchor for exit-cap rate selection.')).not.toBeInTheDocument();
+    // …and it says what the number IS.
+    expect(tile).toHaveTextContent('One disclosed cap rate');
+  });
+
+  it('at n = 0 it renders a dash and claims nothing', async () => {
+    mockOverrides = {
+      'market.selected_comps': {
+        value: [],
+        note: 'Transaction comps included in the Market tab summary',
+      },
+    };
+    render(<MarketTab projectId="deal-uuid-1" />);
+    await openComps();
+
+    expect(screen.getByText('0 of 2 selected as comps')).toBeInTheDocument();
+    const tile = screen.getByTestId('comp-tile-cap-rate');
+    expect(within(tile).getByText('Cap Rate')).toBeInTheDocument();
+    expect(tile).toHaveTextContent('—');
+    expect(tile).toHaveTextContent('0 observations');
+    expect(tile.textContent ?? '').not.toMatch(/median/i);
+    expect(tile.textContent ?? '').not.toMatch(/anchor/i);
+    const perKey = screen.getByTestId('comp-tile-per-key');
+    expect(within(perKey).getByText('$ / Key')).toBeInTheDocument();
+    expect(perKey).toHaveTextContent('—');
+    expect(perKey).toHaveTextContent('0 observations');
+    // No conclusion is drawn from nothing.
+    expect(perKey.textContent ?? '').not.toMatch(/supportive|rich versus/i);
+  });
+
+  it('at n >= 2 it is a median again, and says how many observations it is', async () => {
+    render(<MarketTab projectId="deal-uuid-1" />);
+    await openComps();
+
+    expect(screen.getByText('Median Cap Rate')).toBeInTheDocument();
+    expect(screen.getByText('Median $ / Key')).toBeInTheDocument();
+    expect(
+      screen.getByText('2 of 2 selected comps disclose a cap rate · 2 observations'),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText('Range $265,000 – $410,000 · 2 observations'),
+    ).toBeInTheDocument();
   });
 });

@@ -303,18 +303,32 @@ SOURCE_ROI_USER = "roi_user"
 # the forecast's bottom-up math (rather than the T-12 / Kimpton seed).
 # Default is OFF — no regression to existing deals.
 SOURCE_STR_FORECAST = "str_forecast"
+# FON-61 (61.2) — one id used to carry THREE provenances: the Market tab's
+# comp-set blended rates, the subject property's own TTM actual, and the BASE
+# forward forecast's Month-12 point. Clicking Base Year Occupancy therefore
+# said "STR forecast" about a figure that is the subject's TTM ACTUAL. The id
+# is split three ways and each seed path stamps the one it actually took;
+# ``SOURCE_STR_FORECAST`` now means the forward projection and nothing else.
+# The VALUE is untouched on every branch — this changes labels and badges only.
+SOURCE_STR_SUBJECT_TTM = "str_subject_ttm"
+SOURCE_STR_COMP_SET = "str_comp_set"
+# Every id that says "the Year-1 rates are on an STR basis". Read this, never a
+# single equality — the web has the matching ``isStrBasisSource`` helper.
+STR_BASIS_SOURCES: frozenset[str] = frozenset(
+    {SOURCE_STR_FORECAST, SOURCE_STR_SUBJECT_TTM, SOURCE_STR_COMP_SET}
+)
 # FON-61 (D4) — the STR seed is never silent. When the analyst has flipped
 # ``revenue_seed_from_str_forecast`` on but the seed cannot populate (no
 # STR_TREND extraction, coverage too low, or a loader failure) the flag key is
 # tagged with this label. The UI must never show the seed as "active" unless
-# ``starting_occupancy`` / ``starting_adr`` carry ``SOURCE_STR_FORECAST``.
+# ``starting_occupancy`` / ``starting_adr`` carry one of ``STR_BASIS_SOURCES``.
 SOURCE_STR_UNAVAILABLE = "str_forecast_unavailable"
 # FON-61 (D4) — the Market tab's "Use STR rates" writes EXPLICIT
 # ``starting_occupancy`` / ``starting_adr`` field_overrides (exactly the
 # numbers the Market card shows) carrying this note. The loader recognizes
-# the note and badges those keys ``SOURCE_STR_FORECAST`` rather than a
+# the note and badges those keys ``SOURCE_STR_COMP_SET`` rather than a
 # generic analyst override, so the provenance is honest about where the
-# Year-1 rates came from.
+# Year-1 rates came from — the comp set, not the subject's own performance.
 STR_MARKET_OVERRIDE_NOTE = "STR comp-set market rates (Market tab)"
 _STR_SEEDED_KEYS: tuple[str, ...] = ("starting_occupancy", "starting_adr")
 # FON-69 — ``adr_growth`` DERIVED from an analyst RevPAR-growth override. The
@@ -673,7 +687,16 @@ STABILIZATION_YEAR_KEY = "stabilization_year"
 # ``worksheet_layout`` — the Grounded Worksheet's per-deal row layout
 # (relabel / split / reorder / memo). Presentation only; the worksheet's
 # numbers come from the engines regardless of how its rows are arranged.
-_OVERRIDE_NON_ENGINE_KEYS: frozenset[str] = frozenset({"worksheet_layout"})
+#
+# ``market.selected_comps`` (FON-60 60.1) — which extracted transaction comps
+# the analyst has included as comps. It is analyst CURATION of a display set:
+# the Market tab recomputes its median $/key and cap-rate tiles from the
+# selection, and no engine consumes it. It is also a LIST, and the scalar
+# guard in the routing loop would drop it incidentally — which is exactly the
+# accident this named skip exists to replace.
+_OVERRIDE_NON_ENGINE_KEYS: frozenset[str] = frozenset(
+    {"worksheet_layout", "market.selected_comps"}
+)
 
 
 def _coerce_stabilization_year(value: Any) -> int | None:
@@ -1786,6 +1809,9 @@ async def _load_engine_inputs(
     # not a generic analyst override. A scenario override on the same key
     # wins and keeps its analyst label; a note on an override the loop did
     # not apply (non-scalar) tags nothing.
+    # FON-61 (61.2) — these are the COMP SET's blended rates, so they carry
+    # ``str_comp_set``. The subject's own TTM and the forward forecast each
+    # stamp their own id below; no id ever stands for more than one of them.
     str_noted_keys: set[str] = {
         key
         for key in _STR_SEEDED_KEYS
@@ -1797,7 +1823,7 @@ async def _load_engine_inputs(
         and _is_str_market_note(override_notes.get(key))
     }
     for key in str_noted_keys:
-        sources[key] = SOURCE_STR_FORECAST
+        sources[key] = SOURCE_STR_COMP_SET
 
     # FON-69 — an analyst RevPAR-growth override (deal / scenario / request
     # body) derives adr_growth so operating NOI moves; no-op without one.
@@ -1809,17 +1835,18 @@ async def _load_engine_inputs(
     # ``starting_occupancy`` + ``starting_adr`` from the BASE scenario's
     # Month-12 forecast point. The flag is False / absent by default (no
     # regression). FON-61 (D4): when the flag is ON the outcome is NEVER
-    # silent — the flag key is tagged ``SOURCE_STR_FORECAST`` when the seed
-    # landed (or the explicit STR-noted overrides above already carry it)
-    # and ``SOURCE_STR_UNAVAILABLE`` when it could not populate (STR Trend
+    # silent — the flag key is tagged with the STR basis the seed actually
+    # took (one of ``STR_BASIS_SOURCES``) when the seed landed, and
+    # ``SOURCE_STR_UNAVAILABLE`` when it could not populate (STR Trend
     # extraction missing / below coverage / loader failure), so the UI can
     # never claim the seed is active without the tag.
     if base.get("revenue_seed_from_str_forecast") is True:
         if len(str_noted_keys) == len(_STR_SEEDED_KEYS):
             # The explicit overrides ARE the STR seed (exactly what the Market
             # card shows) — the loader must not overwrite them with a
-            # differently-derived point.
-            sources["revenue_seed_from_str_forecast"] = SOURCE_STR_FORECAST
+            # differently-derived point. They are the COMP SET's rates, and
+            # the flag says so too (FON-61 61.2).
+            sources["revenue_seed_from_str_forecast"] = SOURCE_STR_COMP_SET
         else:
             # Sam QA 8/25: prefer the STR SUBJECT TTM (the current performance
             # the Market tab displays) over the forecast Month-12 point, which
@@ -1830,6 +1857,10 @@ async def _load_engine_inputs(
 
             str_prov: SourceField | None = None
             str_reason: ReasonCode | None = None
+            # FON-61 (61.2) — which STR basis the seed came from. Set on the
+            # branch that produced the value, so the source tag is a record of
+            # what happened rather than a re-derivation after the fact.
+            seed_source: str = SOURCE_STR_FORECAST
             try:
                 # As-of gate. The subject-TTM read lives in
                 # ``str_forecast_loader`` (which owns the STR field read), so
@@ -1857,11 +1888,16 @@ async def _load_engine_inputs(
                     seed = await load_str_subject_ttm(
                         session, deal_id=deal_id, tenant_id=effective_tenant
                     )
+                    if seed is not None:
+                        # The subject property's own trailing twelve months —
+                        # an ACTUAL. Never the forward forecast (FON-61 61.2).
+                        seed_source = SOURCE_STR_SUBJECT_TTM
                     if seed is not None and str_docs and not any(
                         _as_of_date(d.get("report_as_of")) for d in str_docs
                     ):
                         str_reason = ReasonCode.AS_OF_UNKNOWN
                     if seed is None:
+                        seed_source = SOURCE_STR_FORECAST
                         (
                             seed,
                             str_prov,
@@ -1885,9 +1921,13 @@ async def _load_engine_inputs(
                 seed_occ, seed_adr = seed
                 base["starting_occupancy"] = seed_occ
                 base["starting_adr"] = seed_adr
-                sources["starting_occupancy"] = SOURCE_STR_FORECAST
-                sources["starting_adr"] = SOURCE_STR_FORECAST
-                sources["revenue_seed_from_str_forecast"] = SOURCE_STR_FORECAST
+                # FON-61 (61.2) — the VALUE is whatever the branch above
+                # produced and is identical to what it was before the split;
+                # only the label distinguishes the subject's TTM actual from
+                # the forward forecast's Month-12 projection.
+                sources["starting_occupancy"] = seed_source
+                sources["starting_adr"] = seed_source
+                sources["revenue_seed_from_str_forecast"] = seed_source
                 if str_prov is not None:
                     source_fields["starting_occupancy"] = str_prov
                     source_fields["starting_adr"] = str_prov
