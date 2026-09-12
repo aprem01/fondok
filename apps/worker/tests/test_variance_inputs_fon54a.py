@@ -344,7 +344,12 @@ async def test_variance_endpoint_on_sams_deal_compares_like_with_like() -> None:
     # Rooms revenue / GOP / NOI: the OM's TTM claim vs the T-12's ANNUAL line.
     assert by["rooms_revenue"].actual == 9_332_100 and by["rooms_revenue"].broker == 9_541_537
     assert by["gop"].actual == 4_970_460 and by["gop"].broker == 5_088_268
-    assert by["noi"].actual == 1_794_100 and by["noi"].broker == 3_356_709
+    # FON-54 §2 — NOI is compared on the BEFORE-FF&E-reserve basis: the T-12's
+    # own EBITDA line ($2,346,710), not its after-reserve NOI ($1,794,100).
+    # That takes the flag from a Critical +87% artefact to a real +43%.
+    assert by["noi"].actual == 2_346_710 and by["noi"].broker == 3_356_709
+    assert by["noi"].delta_pct == pytest.approx(-0.430389, abs=1e-6)
+    assert "before-FF&E-reserve basis" in (by["noi"].unit_note or "")
     for f in resp.flags:
         assert f.actual not in (954_187, 514_931), f"monthly slice leaked into {f.concept}"
 
@@ -511,3 +516,226 @@ async def test_variance_reasons_say_no_document_when_a_side_is_missing() -> None
     assert len(resp.reasons) == 2
     assert any("T-12" in (r.detail or "") for r in resp.reasons)
     assert any("OM" in (r.detail or "") for r in resp.reasons)
+
+
+# ═══════════════ FON-54 §2 — unit compatibility before any comparison ═══════════════
+#
+# Sam 2026-09-11: ``broker_proforma.rooms_revenue_pct`` = 1.0 (a %-of-revenue
+# proforma column) was matched to the DOLLAR concept by the registry's
+# unit-suffix-stripped tier, read as $1, compared against a $9,332,100 T-12
+# line and reported as a 100% understatement. F&B and the management fee
+# reproduced it; the other 13 dollar concepts were latent. The gate refuses
+# the row instead — a percent is never reconstructed into dollars, because the
+# denominator would itself be an unverified broker claim.
+
+
+def _usd_variance_keys() -> list[str]:
+    """Every dollar-denominated concept the variance report names."""
+    from app.agents.variance import _registry
+
+    return sorted(
+        c.bindings.variance_concept.key
+        for c in _registry().concepts.values()
+        if c.bindings.variance_concept is not None and c.unit == "usd"
+    )
+
+
+def test_pct_path_on_a_usd_concept_is_refused_with_unit_unknown() -> None:
+    from fondok_schemas.reasons import ReasonCode
+
+    from app.agents.variance import (
+        VarianceBrokerField,
+        _broker_fields_from_extraction,
+        _build_flags,
+        exclusion_code,
+    )
+
+    rejected: list = []
+    out = _broker_fields_from_extraction(
+        [_ef("broker_proforma.rooms_revenue_pct", 1.0, page=14)],
+        doc_type="OM", strict=True, excluded=rejected,
+    )
+    # Never becomes a broker field, so ``_build_flags`` never sees it.
+    assert out == []
+    assert [f.field_name for (f, _r) in rejected] == ["broker_proforma.rooms_revenue_pct"]
+    reason = rejected[0][1]
+    assert exclusion_code(reason) is ReasonCode.UNIT_UNKNOWN
+    assert "rooms_revenue is measured in usd" in reason
+
+    # …and with a real T-12 line on the other side there is still no variance.
+    flags = _build_flags(
+        deal_uuid=uuid4(),
+        actuals=_actuals(rooms_revenue=9_332_100.0),
+        broker_fields=list(out),
+    )
+    assert flags == []
+
+    # The pre-fix behaviour, pinned as the thing that must NOT come back: had
+    # the row been admitted, 1.0 against 9,332,100 would have read as -100%.
+    would_have = _build_flags(
+        deal_uuid=uuid4(),
+        actuals=_actuals(rooms_revenue=9_332_100.0),
+        broker_fields=[VarianceBrokerField(field="broker_proforma.rooms_revenue_pct", value=1.0)],
+    )
+    assert would_have and abs(would_have[0].delta_pct or 0.0) > 0.99
+
+
+def test_the_dollar_sibling_on_the_same_concept_still_flags() -> None:
+    """Guards against over-refusal — the gate must only reject the percent."""
+    from app.agents.variance import _broker_fields_from_extraction, _build_flags
+
+    rejected: list = []
+    out = _broker_fields_from_extraction(
+        [_ef("broker_proforma.rooms_revenue_usd", 9_708_984, page=14)],
+        doc_type="OM", strict=True, excluded=rejected,
+    )
+    assert [b.field for b in out] == ["broker_proforma.rooms_revenue_usd"]
+    assert rejected == []
+
+    flags = _build_flags(
+        deal_uuid=uuid4(), actuals=_actuals(rooms_revenue=9_332_100.0), broker_fields=out
+    )
+    assert len(flags) == 1
+    assert flags[0].broker == 9_708_984
+    assert flags[0].actual == 9_332_100
+    assert flags[0].delta_pct == pytest.approx((9_332_100 - 9_708_984) / 9_332_100)
+
+
+@pytest.mark.parametrize("key", _usd_variance_keys())
+def test_a_pct_path_on_a_dollar_concept_never_produces_a_variance_number(key: str) -> None:
+    """All 16 dollar variance concepts — Sam confirmed 3, the rest were latent."""
+    from app.agents.variance import _broker_fields_from_extraction, _build_flags
+
+    path = f"broker_proforma.{key}_pct"
+    rejected: list = []
+    admitted = _broker_fields_from_extraction(
+        [_ef(path, 1.0, page=14)], doc_type="OM", strict=True, excluded=rejected,
+    )
+    flags = _build_flags(
+        deal_uuid=uuid4(), actuals=_actuals(), broker_fields=admitted
+    )
+    # Either refused outright, or admitted-but-never-comparable. Never a number.
+    assert flags == []
+    assert all(f.delta_pct is None for f in flags)
+
+
+def test_usd_variance_keys_is_the_expected_sixteen() -> None:
+    assert len(_usd_variance_keys()) == 16
+
+
+def test_occupancy_pct_on_the_ratio_concept_is_still_admitted() -> None:
+    """The registry's unit for occupancy is ``ratio``; ``_pct`` is its suffix."""
+    from app.agents.variance import _broker_fields_from_extraction, unit_gate_reason
+
+    assert unit_gate_reason("broker_proforma.occupancy_pct") is None
+    assert unit_gate_reason("ttm_summary_per_om.occupancy_pct") is None
+    assert unit_gate_reason("occupancy_pct") is None
+
+    rejected: list = []
+    out = _broker_fields_from_extraction(
+        [_ef("ttm_summary_per_om.occupancy_pct", 83.0, page=12)],
+        doc_type="OM", strict=True, excluded=rejected,
+    )
+    assert [b.field for b in out] == ["ttm_summary_per_om.occupancy_pct"]
+    assert out[0].value == 0.83
+    assert rejected == []
+
+
+def test_a_bare_path_declares_no_unit_and_stays_admissible() -> None:
+    from app.agents.variance import unit_gate_reason
+
+    for path in (
+        "broker_proforma.rooms_revenue",
+        "broker_proforma.noi",
+        "ttm_performance.subject.adr",
+        "p_and_l_usali.noi_per_key_usd",   # a per-key dollar alias, not a total
+    ):
+        assert unit_gate_reason(path) is None, path
+
+
+# ═══════════════ FON-54 §2 / FON-5 — the NOI reserve basis ═══════════════
+#
+# ``USALIFinancials.noi`` is the AFTER-FF&E-reserve line (USALI "EBITDA Less
+# Replacement Reserve"); a broker proforma states NOI BEFORE the reserve
+# (USALI "EBITDA"). On Sam's deal that read as a Critical +87% overstatement.
+
+
+def test_before_reserve_noi_reads_the_documents_ebitda_line() -> None:
+    from app.agents.variance import before_reserve_noi
+
+    fields = [
+        _ef("p_and_l_usali.net_operating_income.noi_usd", 1_794_100),
+        _ef("p_and_l_usali.net_operating_income.ebitda", 2_346_710),
+    ]
+    assert before_reserve_noi(fields, doc_type="T12") == 2_346_710
+    # A T-12 that states only the after-reserve line carries no before-reserve
+    # figure — and one is never reconstructed from ``noi + ffe_reserve``.
+    assert before_reserve_noi(fields[:1], doc_type="T12") is None
+
+
+def test_broker_noi_compares_against_the_t12_ebitda_when_the_document_states_one() -> None:
+    from app.agents.variance import VarianceBrokerField, _build_flags, before_reserve_noi
+
+    t12 = [
+        _ef("p_and_l_usali.net_operating_income.noi_usd", 1_794_100),
+        _ef("p_and_l_usali.net_operating_income.ebitda", 2_346_710),
+    ]
+    excluded: list = []
+    flags = _build_flags(
+        deal_uuid=uuid4(),
+        actuals=_actuals(noi=1_794_100.0),
+        broker_fields=[VarianceBrokerField(field="ttm_summary_per_om.noi_usd", value=3_356_709)],
+        actuals_before_reserve_noi=before_reserve_noi(t12, doc_type="T12"),
+        basis_excluded=excluded,
+    )
+    assert excluded == []
+    assert len(flags) == 1
+    f = flags[0]
+    assert f.actual == 2_346_710 and f.broker == 3_356_709
+    # +43% on a comparable basis, not the +87% the reserve difference produced.
+    assert f.delta_pct == pytest.approx(-0.430389, abs=1e-6)
+    assert abs(f.delta_pct or 0.0) < 0.871
+
+
+def test_broker_noi_against_an_after_reserve_only_t12_is_a_basis_mismatch() -> None:
+    from fondok_schemas.reasons import ReasonCode
+
+    from app.agents.variance import (
+        VarianceBrokerField,
+        _build_flags,
+        before_reserve_noi,
+        exclusion_code,
+    )
+
+    t12 = [_ef("p_and_l_usali.net_operating_income.noi_usd", 1_794_100)]
+    excluded: list = []
+    flags = _build_flags(
+        deal_uuid=uuid4(),
+        actuals=_actuals(noi=1_794_100.0),
+        broker_fields=[VarianceBrokerField(field="ttm_summary_per_om.noi_usd", value=3_356_709)],
+        actuals_before_reserve_noi=before_reserve_noi(t12, doc_type="T12"),
+        basis_excluded=excluded,
+    )
+    # No flag at all ⇒ no delta, no delta_pct, no severity.
+    assert flags == []
+    assert len(excluded) == 1
+    bf, reason = excluded[0]
+    assert bf.field == "ttm_summary_per_om.noi_usd"
+    assert exclusion_code(reason) is ReasonCode.BASIS_MISMATCH
+    # Both figures are disclosed.
+    assert "$3,356,709" in reason and "$1,794,100" in reason
+    assert reason.endswith("not on the same FF&E-reserve basis")
+
+
+def test_a_broker_noi_claim_with_no_t12_noi_at_all_is_still_no_source() -> None:
+    """The reserve-basis rule must not swallow the pre-existing no-source path."""
+    from app.agents.variance import VarianceBrokerField, _build_flags
+
+    excluded: list = []
+    flags = _build_flags(
+        deal_uuid=uuid4(),
+        actuals=_actuals(noi=0.0),
+        broker_fields=[VarianceBrokerField(field="ttm_summary_per_om.noi_usd", value=3_356_709)],
+        basis_excluded=excluded,
+    )
+    assert flags == [] and excluded == []

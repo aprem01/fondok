@@ -16,6 +16,31 @@ all — against the pin.
 Regenerate ONLY when a product decision deliberately changes the contract::
 
     python -m tests.test_ontology_variance_parity   # from apps/worker
+
+Deliberate re-pins, newest first
+-------------------------------
+
+**FON-54 §2 / §8 (unit gate + NOI reserve basis).** Two decisions moved the
+wire; nothing else did. Rows that dropped, and why:
+
+* ``fon54a_inputs__sams_deal`` — the ``noi`` flag stays, and its numbers move
+  from ``actual=1,794,100`` / ``delta_pct=-0.871`` to ``actual=2,346,710`` /
+  ``delta_pct=-0.430``. The T-12 states a before-FF&E-reserve line
+  (``p_and_l_usali.net_operating_income.ebitda``), so the broker's
+  before-reserve NOI claim is now compared like-for-like against it instead of
+  against the after-reserve ``noi_usd``. The flag also gains a ``unit_note``
+  naming the basis. Severity counts are unchanged (1 / 2 / 3).
+* ``fon54a_str_admission__sams_deal`` — the ``noi`` flag is GONE. That T-12
+  states only the after-reserve ``noi_usd``, so the pair straddles the reserve
+  and carries no severity; it is disclosed as a ``basis_mismatch`` refusal
+  naming both figures. Counts 1 / 2 / 1 → 0 / 2 / 1.
+* ``consolidation__duplicate_broker_paths`` — the ``noi`` flag is GONE, same
+  reason (a flat ``noi`` T-12 line only, no ``ebitda``). Counts 2 / 0 / 1 →
+  1 / 0 / 1.
+
+No row dropped because of the unit gate: none of these fixtures carries a
+``_pct`` path on a dollar concept. The gate is pinned directly in
+``test_ontology_unit_gate.py`` and ``test_variance_inputs_fon54a.py``.
 """
 
 from __future__ import annotations
@@ -310,6 +335,9 @@ if __name__ == "__main__":  # pragma: no cover - regeneration entry point
     import asyncio
 
     PIN_PATH.parent.mkdir(parents=True, exist_ok=True)
-    data = asyncio.run(capture())
+    # The pin holds the PRE-4.1 wire — the comparison above strips the reason
+    # channel off the live response before diffing, so the pin must be written
+    # stripped too or every regeneration would break its own test.
+    data = {k: _strip_phase4(v) for k, v in asyncio.run(capture()).items()}
     PIN_PATH.write_text(json.dumps(data, indent=2, ensure_ascii=False) + "\n")
     print(f"wrote {PIN_PATH} ({len(data)} fixtures)")

@@ -139,6 +139,18 @@ class VarianceInput(BaseModel):
         default_factory=list,
         description="Optional: raw broker-proforma fields from the Extractor.",
     )
+    actuals_extraction: list[ExtractionField] = Field(
+        default_factory=list,
+        description=(
+            "Optional: raw T-12 / P&L fields from the Extractor. Read only to "
+            "find the document's NOI BEFORE the FF&E replacement reserve, so "
+            "the NOI comparison is like-for-like (FON-54 §2)."
+        ),
+    )
+    actuals_doc_type: str | None = Field(
+        default=None,
+        description="Document type behind ``actuals_extraction`` (``T12`` / ``PNL``).",
+    )
 
 
 class VarianceOutput(BaseModel):
@@ -397,6 +409,33 @@ def _actual_for(field: str, actuals: USALIFinancials) -> float | None:
     return float(node)
 
 
+def unit_gate_reason(field: str) -> str | None:
+    """Why ``field``'s DECLARED unit cannot be compared to its concept's — or ``None``.
+
+    FON-54 §2. ``_broker_fields_from_extraction`` admits by path prefix, not
+    through :func:`registry.resolve`, so the registry's unit gate has to be
+    called here too. A proforma's %-of-revenue column declares a percent while
+    the rooms-revenue concept is measured in dollars: the row is refused,
+    never reinterpreted as ``$1``. A path that declares no unit is admissible.
+
+    The prose ends with :data:`UNIT_UNESTABLISHED` so :func:`exclusion_code`
+    maps it to ``unit_unknown`` unchanged.
+    """
+    from ..ontology.registry import path_unit_family, units_compatible
+
+    lower = field.strip().lower()
+    cid = _concept_for_field(field)
+    if cid is None:
+        return None
+    unit = _registry().concepts[cid].unit
+    if units_compatible(lower, unit):
+        return None
+    return (
+        f"{field} declares {path_unit_family(lower)} but {cid} is measured in "
+        f"{unit} — {UNIT_UNESTABLISHED}"
+    )
+
+
 def _rule_for_field(field: str) -> str:
     """Map a broker field onto the catalog rule_id used to flag it."""
     cid = _concept_for_field(field)
@@ -456,8 +495,19 @@ def _build_flags(
     deal_uuid: UUID,
     actuals: USALIFinancials,
     broker_fields: list[VarianceBrokerField],
+    actuals_before_reserve_noi: float | None = None,
+    basis_excluded: list[tuple[VarianceBrokerField, str]] | None = None,
 ) -> list[VarianceFlag]:
-    """Step 1 + 2: deterministic field match + severity assignment."""
+    """Step 1 + 2: deterministic field match + severity assignment.
+
+    ``actuals_before_reserve_noi`` is the actuals document's NOI BEFORE the
+    FF&E replacement reserve (:func:`before_reserve_noi`), when it states one.
+    A broker NOI claim is compared against THAT — like-for-like — rather than
+    against ``USALIFinancials.noi``, which is the after-reserve line. When the
+    document states no before-reserve line the pair is refused: the row is
+    appended to ``basis_excluded`` with both figures and never becomes a flag,
+    so no delta, delta_pct or severity is computed for it.
+    """
     idx = rule_index()
     flags: list[VarianceFlag] = []
 
@@ -466,7 +516,23 @@ def _build_flags(
     namespace = uuid5(UUID("00000000-0000-0000-0000-000000000000"), str(deal_uuid))
 
     for bf in broker_fields:
-        actual = _actual_for(bf.field, actuals)
+        if _concept_for_field(bf.field) == NOI_CONCEPT:
+            after_reserve = _actual_for(bf.field, actuals)
+            if actuals_before_reserve_noi is not None:
+                actual = actuals_before_reserve_noi
+            elif after_reserve:
+                # Only the after-reserve T-12 line exists. Refuse rather than
+                # assign a severity to a reserve difference (FON-54 §2).
+                if basis_excluded is not None:
+                    basis_excluded.append(
+                        (bf, reserve_basis_reason(bf.field, float(bf.value), float(after_reserve)))
+                    )
+                continue
+            else:
+                # No T-12 NOI at all — the existing no-source path.
+                actual = after_reserve
+        else:
+            actual = _actual_for(bf.field, actuals)
         if actual is None or actual == 0:
             continue
         delta = float(actual) - float(bf.value)
@@ -643,6 +709,61 @@ MARKET_DOC_TYPES: frozenset[str] = frozenset({"CBRE_HORIZONS", "CBRE", "PNL_BENC
 #: assert ``"not established" in reason`` and still do.
 UNIT_UNESTABLISHED = "unit not established"
 
+# ─── NOI reserve basis (FON-54 §2, FON-5) ───
+#
+# USALI 11th carries two profit lines and Fondok's registry names both:
+# ``ebitda`` is "EBITDA" — stated BEFORE the FF&E replacement reserve;
+# ``noi`` is "EBITDA Less Replacement Reserve" — after it
+# (``noi.identity = gop - mgmt_fee - ffe_reserve - fixed_charges``).
+# ``USALIFinancials.noi``, the T-12 side of every comparison, is the
+# after-reserve line by definition ("post mgmt fee, FF&E reserve, fixed
+# charges"), while a broker proforma / OM summary states NOI before the
+# reserve. Comparing the two is a basis difference, not a variance: on Sam's
+# deal it read as a Critical +87% overstatement.
+#
+# So the NOI comparison is made like-for-like on the BEFORE-reserve basis when
+# the actuals document states one (registry concept ``ebitda``, whose aliases
+# live in ``concepts.yaml``); when it states only the after-reserve line, the
+# pair is refused with ``basis_mismatch``, both figures disclosed and NO
+# severity. The before-reserve figure is only ever READ from the document —
+# never reconstructed from the after-reserve line plus the reserve.
+
+#: The after-reserve rollup concept — what a broker NOI claim resolves to.
+NOI_CONCEPT = "noi"
+
+#: The before-reserve rollup concept — the like-for-like basis.
+NOI_BEFORE_RESERVE_CONCEPT = "ebitda"
+
+#: Tail that makes :func:`exclusion_code` report ``basis_mismatch``.
+RESERVE_BASIS_UNMATCHED = "not on the same FF&E-reserve basis"
+
+
+def reserve_basis_reason(field: str, broker: float, actual: float) -> str:
+    """Prose for a NOI pair that straddles the FF&E reserve — both figures named."""
+    return (
+        f"{field}: broker ${broker:,.0f} is NOI before the FF&E replacement "
+        f"reserve; the only T-12 line is ${actual:,.0f} after it, and the "
+        f"document states no before-reserve (EBITDA) line — "
+        f"{RESERVE_BASIS_UNMATCHED}"
+    )
+
+
+def before_reserve_noi(fields: Any, *, doc_type: str | None = None) -> float | None:
+    """The document's NOI BEFORE the FF&E reserve, when it states one.
+
+    Straight through :func:`registry.resolve` on the ``ebitda`` concept, so
+    every alias stays in ``concepts.yaml`` and period slices / incompatible
+    units are filtered by the resolver rather than restated here.
+    """
+    from ..ontology.registry import resolve
+
+    value = resolve(
+        fields, NOI_BEFORE_RESERVE_CONCEPT, doc_type=doc_type, want="annual"
+    ).value
+    if isinstance(value, bool) or not isinstance(value, int | float):
+        return None
+    return float(value)
+
 
 def exclusion_code(reason: str) -> ReasonCode:
     """Machine-readable code for one prose ``excluded`` reason (Phase 4.1).
@@ -650,15 +771,17 @@ def exclusion_code(reason: str) -> ReasonCode:
     The prose stays exactly as FON-54a wrote it — an analyst reading the
     Technical detail sees the same sentence. This is the parallel channel:
     a row dropped because its unit could not be established is
-    ``unit_unknown``; every other rejection is a *source* rejection (an
+    ``unit_unknown``; a NOI pair that straddles the FF&E reserve is
+    ``basis_mismatch``; every other rejection is a *source* rejection (an
     actuals / STR / market document, a comp-set segment, the OM's history)
     and is ``basis_excluded`` — "not admitted as a broker claim".
     """
-    return (
-        ReasonCode.UNIT_UNKNOWN
-        if reason.strip().endswith(UNIT_UNESTABLISHED)
-        else ReasonCode.BASIS_EXCLUDED
-    )
+    text = reason.strip()
+    if text.endswith(UNIT_UNESTABLISHED):
+        return ReasonCode.UNIT_UNKNOWN
+    if text.endswith(RESERVE_BASIS_UNMATCHED):
+        return ReasonCode.BASIS_MISMATCH
+    return ReasonCode.BASIS_EXCLUDED
 
 
 def non_broker_source_reason(doc_type: str | None) -> str:
@@ -876,6 +999,15 @@ def _broker_fields_from_extraction(
             # market data; from anything else it is simply not broker material.
             _reject(f, non_broker_source_reason(dtype))
             continue
+        # Unit gate (FON-54 §2) — BEFORE any normalisation or comparison. A
+        # path that declares a unit its concept does not carry (the OM's
+        # %-of-revenue proforma column against a dollar T-12 line) is refused
+        # here, so it never becomes a ``VarianceBrokerField`` and no delta,
+        # delta_pct or severity is ever computed for it.
+        unit_reason = unit_gate_reason(name)
+        if unit_reason is not None:
+            _reject(f, unit_reason)
+            continue
         value, unit_note = normalize_broker_value(name, float(f.value), f.unit)
         if value is None:
             _reject(f, unit_note or UNIT_UNESTABLISHED)
@@ -941,6 +1073,13 @@ async def run_variance(payload: VarianceInput) -> VarianceOutput:
         deal_uuid=deal_uuid,
         actuals=payload.actuals,
         broker_fields=broker_fields,
+        actuals_before_reserve_noi=(
+            before_reserve_noi(
+                payload.actuals_extraction, doc_type=payload.actuals_doc_type
+            )
+            if payload.actuals_extraction
+            else None
+        ),
     )
 
     rule_problems = _validate_rule_ids(flags)

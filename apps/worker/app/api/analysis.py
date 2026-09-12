@@ -499,6 +499,68 @@ def consolidate_variance_flags(
     return out
 
 
+async def load_actuals_before_reserve_noi(
+    session: AsyncSession, *, deal_id: UUID | str, tenant_id: UUID | str
+) -> float | None:
+    """The deal's actuals NOI BEFORE the FF&E replacement reserve, if stated.
+
+    FON-54 §2. ``USALIFinancials.noi`` is the AFTER-reserve line while a broker
+    proforma states NOI before it, so every broker-vs-T-12 NOI comparison needs
+    the actuals document's own before-reserve figure to be like-for-like. This
+    is the one place that figure is loaded — the variance endpoint, the memo
+    payload, the dossier and the due-diligence summary all read it from here,
+    so no surface compares a different pair from another.
+
+    The T-12 is the reference document and a P&L the fallback (the same
+    preference ``_load_critic_inputs`` applies). ``None`` when no actuals
+    document states one: the figure is never reconstructed.
+    """
+    from ..agents.variance import ACTUALS_DOC_TYPES, before_reserve_noi
+
+    rows = await session.execute(
+        text(
+            # tenant-scope predicate required by tenant_middleware
+            """
+            SELECT er.fields, d.doc_type
+              FROM extraction_results er
+              JOIN documents d ON d.id = er.document_id
+             WHERE er.deal_id = :deal
+               AND er.tenant_id = :tenant
+               AND d.tenant_id = :tenant
+             ORDER BY er.created_at DESC
+            """
+        ),
+        {"deal": str(deal_id), "tenant": str(tenant_id)},
+    )
+    best: float | None = None
+    best_rank = 99
+    for r in rows.fetchall():
+        m = r._mapping
+        doc_type = (m.get("doc_type") or "").upper() or None
+        if doc_type not in ACTUALS_DOC_TYPES:
+            continue
+        rank = 0 if doc_type == "T12" else 1
+        if rank >= best_rank:
+            continue
+        raw = m["fields"]
+        if isinstance(raw, str):
+            try:
+                raw = json.loads(raw)
+            except json.JSONDecodeError:
+                continue
+        if not isinstance(raw, list):
+            continue
+        # The resolver normalises raw extraction dicts itself, so this reader
+        # stays tolerant of partially-populated rows (an older extraction
+        # without ``source_page`` / ``confidence`` still states its EBITDA).
+        stated = before_reserve_noi(
+            [f for f in raw if isinstance(f, dict)], doc_type=doc_type
+        )
+        if stated is not None:
+            best, best_rank = stated, rank
+    return best
+
+
 @router.post("/{deal_id}/analyze", response_model=AnalysisResponse)
 async def analyze(
     deal_id: UUID,
@@ -645,6 +707,12 @@ async def get_variance(
     # concept is absent rather than leaving it silently missing.
     candidate_refusals: list[Refusal] = []
     provenance: dict[tuple[str, float], tuple[str | None, str | None, str | None]] = {}
+    # FON-54 §2 — the actuals side's NOI BEFORE the FF&E replacement reserve,
+    # when a document states one. Loaded through the shared reader so the memo,
+    # the dossier and the due-diligence summary compare the same pair.
+    actuals_before_reserve = await load_actuals_before_reserve_noi(
+        session, deal_id=deal_id, tenant_id=tenant_id
+    )
     for r in rows.fetchall():
         m = r._mapping
         raw = m["fields"]
@@ -750,9 +818,42 @@ async def get_variance(
             ],
         )
 
+    noi_basis_excluded: list[tuple[Any, str]] = []
     flags = _build_flags(
-        deal_uuid=deal_id, actuals=actuals, broker_fields=broker_fields
+        deal_uuid=deal_id,
+        actuals=actuals,
+        broker_fields=broker_fields,
+        actuals_before_reserve_noi=actuals_before_reserve,
+        basis_excluded=noi_basis_excluded,
     )
+    # FON-54 §2 — a broker NOI claim the actuals could only be compared to
+    # across the FF&E reserve. Disclosed with BOTH figures under
+    # ``basis_mismatch``; it never becomes a flag, so it carries no severity.
+    for bf, reason in noi_basis_excluded:
+        src_doc_type, src_document, _note = provenance.get(
+            (bf.field, bf.value), (bf.source_doc_type, None, None)
+        )
+        code = exclusion_code(reason)
+        excluded_rows.append(
+            VarianceRawFieldOut(
+                field=bf.field,
+                severity="Info",
+                actual=_actual_for(bf.field, actuals),
+                broker=float(bf.value),
+                source_page=bf.source_page,
+                source_doc_type=src_doc_type,
+                source_document=src_document,
+                excluded_reason=reason,
+                reason=code,
+            )
+        )
+        candidate_refusals.append(
+            Refusal(
+                code=code,
+                detail=reason + (f" (from {src_document})" if src_document else ""),
+                concept=variance_concept(bf.field),
+            )
+        )
 
     raw_flags: list[VarianceFlagOut] = []
     for f in flags:
@@ -761,6 +862,14 @@ async def get_variance(
             (f.field, f.broker), (None, None, None)
         )
         mismatch = is_basis_mismatch(f.delta_pct)
+        if actuals_before_reserve is not None and variance_concept(f.field) == "noi":
+            # Say which T-12 line the broker's NOI was actually measured
+            # against — it is the EBITDA line, not the after-reserve NOI.
+            unit_note = (
+                "compared on the before-FF&E-reserve basis: the actuals "
+                f"document's EBITDA line (${actuals_before_reserve:,.0f}), "
+                "not its after-reserve NOI"
+            )
         raw_flags.append(
             VarianceFlagOut(
                 field=f.field,

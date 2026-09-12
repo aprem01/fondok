@@ -702,6 +702,10 @@ async def test_load_deal_payload_hydrates_real_spread_engines_variance() -> None
                         {"field_name": "fb_revenue", "value": 5_500_000.0},
                         {"field_name": "other_revenue", "value": 1_067_890.0},
                         {"field_name": "noi", "value": 7_890_123.0},
+                        # FON-54 §2: a real T-12 states BOTH profit lines. The
+                        # broker's NOI claim is stated before the FF&E reserve
+                        # and is compared against this one.
+                        {"field_name": "ebitda", "value": 8_500_000.0},
                         {"field_name": "occupancy", "value": 0.712},
                         {"field_name": "adr", "value": 241.0},
                     ]
@@ -827,10 +831,12 @@ async def test_load_deal_payload_hydrates_real_spread_engines_variance() -> None
     assert payload.variance_report is not None
     assert len(payload.variance_report.flags) > 0
     flag_fields = {f.field for f in payload.variance_report.flags}
-    # NOI variance should fire — broker $9.6M vs actual $7.89M is ~22% off.
+    # NOI variance should fire — and like-for-like on the before-FF&E-reserve
+    # basis (FON-54 §2): broker $9.6M vs the T-12's EBITDA $8.5M (~13% off),
+    # never vs the $7,890,123 after-reserve Cash NOI.
     assert "noi" in flag_fields, flag_fields
     noi_flag = next(f for f in payload.variance_report.flags if f.field == "noi")
-    assert noi_flag.actual == pytest.approx(7_890_123.0)
+    assert noi_flag.actual == pytest.approx(8_500_000.0)
     assert noi_flag.broker == pytest.approx(9_600_000.0)
     # Severity enum surfaces title-cased values ("Critical" / "Warn" / "Info").
     assert noi_flag.severity.value in ("Warn", "Critical")

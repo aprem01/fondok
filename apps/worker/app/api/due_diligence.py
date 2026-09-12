@@ -633,10 +633,18 @@ async def _summarize_variance(
     flags_summary: list[dict[str, Any]] = []
     if broker_fields:
         try:
+            # FON-54 §2 — a broker NOI claim is stated BEFORE the FF&E
+            # replacement reserve; compare it against the actuals document's
+            # own before-reserve line, or not at all.
+            from .analysis import load_actuals_before_reserve_noi
+
             flags = _build_flags(
                 deal_uuid=UUID(deal_id) if _is_uuid(deal_id) else uuid4(),
                 actuals=actuals,
                 broker_fields=broker_fields,
+                actuals_before_reserve_noi=await load_actuals_before_reserve_noi(
+                    session, deal_id=deal_id, tenant_id=tenant_id
+                ),
             )
         except Exception:  # noqa: BLE001
             flags = []

@@ -2431,10 +2431,18 @@ async def _build_real_analyst_fields(
                     continue
 
             deal_uuid = _variance_to_uuid(deal_id)
+            # FON-54 §2 — a broker NOI claim is stated BEFORE the FF&E
+            # replacement reserve; compare it against the actuals document's
+            # own before-reserve line, or not at all.
+            from .analysis import load_actuals_before_reserve_noi
+
             flags = _build_flags(
                 deal_uuid=deal_uuid,
                 actuals=actuals,
                 broker_fields=broker_fields,
+                actuals_before_reserve_noi=await load_actuals_before_reserve_noi(
+                    session, deal_id=deal_id, tenant_id=tenant_id
+                ),
             )
             variance_report = VarianceReport(deal_id=deal_uuid, flags=flags)
         except Exception as exc:  # noqa: BLE001 - variance is best-effort
