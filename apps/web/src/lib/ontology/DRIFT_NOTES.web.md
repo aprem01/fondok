@@ -30,6 +30,7 @@ below are to that file).
 | `provenance.GROUNDED_SOURCES` / `OVERRIDE_SOURCES` | `SOURCES[id].kind` + a 5→3 colour map | `SOURCE_REGISTRY_KIND` |
 | `AssumptionBadge.SOURCE_META[*].label` | `SOURCES[id].badge` | `SOURCE_BADGE_FROM_REGISTRY` |
 | `api.AssumptionSource` (12 labels) | `SourceId` (18) | direct type alias |
+| `HistoricalsSection.derivePeriodBasis` — the period-basis resolver (FON-41 #4) | `registry._doc_scope` = `period_types` rank map + `_DOC_DEFAULT_SCOPE` | `PERIOD_TYPES` (generated) + `docDefaultScope()` inline; the worker half is pinned by `apps/worker/tests/test_doc_scope_pnl_family.py` |
 
 Row ORDER, section grouping, labels, `compute` functions, tones, icons and
 tooltip copy stay hand-authored — they are layout and copy, not vocabulary.

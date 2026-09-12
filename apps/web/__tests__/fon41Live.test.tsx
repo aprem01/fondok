@@ -20,7 +20,7 @@
  *   Data Room badge (pure review state) == red cells in that column.
  */
 import { describe, it, expect, vi, afterEach, beforeEach } from 'vitest';
-import { render, screen, cleanup, waitFor } from '@testing-library/react';
+import { render, screen, cleanup, waitFor, fireEvent } from '@testing-library/react';
 import React from 'react';
 import type { EngineOutputsResponse } from '@/lib/api';
 import {
@@ -126,11 +126,14 @@ describe('FON-41 live — pure review state over live-shaped extractions (the Da
 });
 
 describe('FON-41 live — real loaders + worksheet: red cells == Data Room badge, per statement', () => {
+  // FON-41 #4 — pills (and column headers) read the column's PERIOD now:
+  // the March-2025 T-12 is "T12 Mar 2025", never a generic "2025", and the
+  // annual statements are "FY2024" / "FY2023" / "FY2019".
   const cases = [
-    { doc: DOC_T12_2025, pill: 'T-12', other: '2023' },
-    { doc: DOC_PNL_2024, pill: '2024', other: 'T-12' },
-    { doc: DOC_PNL_2023, pill: '2023', other: 'T-12' },
-    { doc: DOC_PNL_2019, pill: '2019', other: 'T-12' },
+    { doc: DOC_T12_2025, pill: 'T12 Mar 2025', other: 'FY2023' },
+    { doc: DOC_PNL_2024, pill: 'FY2024', other: 'T12 Mar 2025' },
+    { doc: DOC_PNL_2023, pill: 'FY2023', other: 'T12 Mar 2025' },
+    { doc: DOC_PNL_2019, pill: 'FY2019', other: 'T12 Mar 2025' },
   ];
 
   for (const c of cases) {
@@ -158,4 +161,49 @@ describe('FON-41 live — real loaders + worksheet: red cells == Data Room badge
       { timeout: 8000 },
     );
   }, 10000);
+});
+
+// ── FON-41 #4 — the column says WHAT PERIOD it is ────────────────────────
+// Sam, 2026-09-11: "the current generic 2025 column is too ambiguous when its
+// provenance points to March 2025 Financials.xlsx … Provenance should identify
+// the source period/basis in addition to the source document."
+describe('FON-41 #4 live — the period basis is on the column and in the panel', () => {
+  it('heads the March-2025 T-12 column "T12 Mar 2025", never a bare 2025', async () => {
+    render(<GroundedWorksheet dealId={LIVE_DEAL_ID} />);
+    await waitFor(
+      () => expect(screen.getByRole('columnheader', { name: /T12 Mar 2025/ })).toBeInTheDocument(),
+      { timeout: 8000 },
+    );
+    // The ambiguous header is gone: no column is headed by a bare year.
+    for (const th of screen.getAllByRole('columnheader')) {
+      expect(th.textContent?.trim()).not.toBe('2025');
+    }
+    // …and the annual statements read as full years.
+    expect(screen.getByRole('columnheader', { name: 'FY2024' })).toBeInTheDocument();
+    expect(screen.getByRole('columnheader', { name: 'FY2019' })).toBeInTheDocument();
+  }, 12000);
+
+  it('names the document AND the period basis in the SOURCE panel', async () => {
+    PARAMS = { doc: DOC_T12_2025.id };
+    render(<GroundedWorksheet dealId={LIVE_DEAL_ID} />);
+    await waitFor(
+      () => expect(screen.getAllByRole('button', { name: RED_CELL }).length).toBe(LIVE_BADGES.T12_2025),
+      { timeout: 8000 },
+    );
+    fireEvent.click(screen.getAllByRole('button', { name: RED_CELL })[0]);
+    expect(await screen.findByText(DOC_T12_2025.filename)).toBeInTheDocument();
+    expect(screen.getByText('T-12 ending Mar 31, 2025')).toBeInTheDocument();
+  }, 12000);
+
+  // The per-statement split is pinned so a labelling change can never move a
+  // review count: measured identical before and after this change (the
+  // planning doc's "9/6/6/21" predates the Wave-1 NOI row split).
+  it('keeps the Data Room ↔ Historicals badge parity (9 / 7 / 6 / 22)', () => {
+    const byDoc = dataRoomBadges();
+    expect(byDoc.get(DOC_T12_2025.id)).toBe(9);
+    expect(byDoc.get(DOC_PNL_2023.id)).toBe(7);
+    expect(byDoc.get(DOC_PNL_2019.id)).toBe(6);
+    expect(byDoc.get(DOC_PNL_2024.id) ?? 0).toBe(0);
+    expect([...byDoc.values()].reduce((a, b) => a + b, 0)).toBe(22);
+  });
 });

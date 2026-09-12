@@ -281,6 +281,16 @@ export interface AssumptionSourceField {
   page?: number | null;
   document_id?: string | null;
   filename?: string | null;
+  /** FON-41 #4 — the PERIOD behind the value, which the worker has always
+   *  sent (``SourceField.as_dict``: ``scope`` / ``basis`` / ``as_of``) and
+   *  this type used to drop on the floor. ``scope`` is ``registry.Scope``
+   *  (annual | ttm | ytd | quarterly | monthly | weekly | unknown),
+   *  ``as_of`` the ISO period end. Rendered as "T-12 ending Mar 31, 2025". */
+  scope?: string | null;
+  basis?: string | null;
+  as_of?: string | null;
+  /** The classified document type behind the value (``T12`` / ``PNL`` / …). */
+  doc_type?: string | null;
 }
 
 /** One named input that fed a modeled value's formula (FON-25/27).

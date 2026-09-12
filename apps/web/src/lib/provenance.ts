@@ -200,3 +200,56 @@ export function formatAssumptionValue(
   if (Number.isInteger(v)) return String(v);
   return v.toFixed(2);
 }
+
+// ───────────────── Period basis (FON-41 #4 / FON-61 §2) ─────────────────
+//
+// Sam: provenance must identify the source PERIOD/BASIS as well as the source
+// document — "T-12 ending Mar 31, 2025", "YTD through Mar 31, 2025", "FY2024".
+// Both halves of the app format it here: the worksheet passes the column's
+// resolved ``HistYear.periodBasis``, the ledger passes the worker's own
+// ``scope`` off ``__source_fields__``. Nothing is invented — a basis or a
+// date we were not given simply does not appear.
+
+/** The worker's ``Scope`` vocabulary (``registry.Scope``) plus the web's
+ *  ``PeriodBasis`` spellings, so either side can call this. */
+const SCOPE_ALIASES: Record<string, 'annual' | 'ttm' | 'ytd' | 'quarterly' | 'monthly'> = {
+  annual: 'annual', fy: 'annual', FY: 'annual',
+  ttm: 'ttm', t12: 'ttm', T12: 'ttm',
+  ytd: 'ytd', YTD: 'ytd',
+  quarterly: 'quarterly',
+  monthly: 'monthly', MONTHLY: 'monthly',
+};
+
+const MONTHS_SHORT = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+
+/** "Mar 31, 2025" from an ISO date. ``null`` when it is not one. */
+export function formatAsOfDate(iso: string | null | undefined): string | null {
+  if (!iso) return null;
+  const m = /^((?:19|20)\d{2})-(\d{2})-(\d{2})/.exec(iso.trim());
+  if (!m) return null;
+  const mon = MONTHS_SHORT[Number(m[2]) - 1];
+  if (!mon) return null;
+  return `${mon} ${Number(m[3])}, ${m[1]}`;
+}
+
+/**
+ * "T-12 ending Mar 31, 2025" / "YTD through Mar 31, 2025" / "FY2024".
+ * Returns ``null`` when the basis is unknown/absent — the caller then shows
+ * nothing rather than a guess.
+ */
+export function formatPeriodBasis(
+  scope: string | null | undefined,
+  asOf: string | null | undefined,
+): string | null {
+  const s = scope ? SCOPE_ALIASES[scope] ?? SCOPE_ALIASES[String(scope).toLowerCase()] : undefined;
+  if (!s) return null;
+  const when = formatAsOfDate(asOf);
+  if (s === 'annual') {
+    const yr = asOf ? /^((?:19|20)\d{2})/.exec(String(asOf).trim())?.[1] : null;
+    return yr ? `FY${yr}` : 'Full year';
+  }
+  if (s === 'ttm') return when ? `T-12 ending ${when}` : 'Trailing 12 months';
+  if (s === 'ytd') return when ? `YTD through ${when}` : 'Year to date';
+  if (s === 'quarterly') return when ? `Quarter ending ${when}` : 'Quarterly';
+  return when ? `Month ending ${when}` : 'Single month';
+}

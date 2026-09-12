@@ -29,6 +29,7 @@ import {
   actualsOnly,
   baseYearLabel,
   buildHistYear,
+  derivePeriodBasis,
   deriveYearLabel,
   emptyFiveYearSkeleton,
   labelOrdinal,
@@ -77,9 +78,16 @@ export function buildHistoricalYears(
       fields, doc.filename ?? '', doc.doc_type,
       doc.fiscal_year ?? doc.extracted_period_year,
     );
+    // FON-41 #4 — the same inputs also say WHAT PERIOD this is (FY / YTD /
+    // T12), which is what the column header renders. ``base`` stays the
+    // stable key the worksheet and reviewState pin on.
+    const period = derivePeriodBasis(
+      fields, doc.filename ?? '', doc.doc_type,
+      doc.fiscal_year ?? doc.extracted_period_year,
+    );
     // Build on the base label (day-count / leap-year logic keys off it), then
     // stamp the unique column label.
-    const built = buildHistYear(fields, keys, base, doc.id);
+    const built = buildHistYear(fields, keys, base, doc.id, period);
     if (!built) continue;
     const label = uniqueYearLabel(base, new Set(byLabel.keys()));
     built.year = label;
@@ -193,7 +201,10 @@ export function useHistoricals(
 
 function blankYear(year: string): HistYear {
   return {
-    year, days: 365, occupancyPct: 0, adr: 0, revpar: 0,
+    // No statement behind it — it states no basis (and claims no reason to
+    // refuse one: nothing was uploaded to mis-read).
+    year, periodBasis: 'UNKNOWN', periodEnd: null, periodLabel: year,
+    days: 365, occupancyPct: 0, adr: 0, revpar: 0,
     rooms: 0, fb: 0, misc: 0,
     rooms_dept_expense: null, fb_dept_expense: null, other_dept_expense: null,
     undistributed: null, gop: null, fixed_expenses: null, noi: null,
@@ -225,6 +236,12 @@ function omYearToHistYear(v: Record<string, number>, year: string): HistYear {
   const num = (x: unknown): number => n(x) ?? 0;
   return {
     year,
+    // An OM's embedded historical-year block is annual by construction
+    // (``concepts.yaml`` tags those aliases ``scope: annual``); the OM does
+    // not publish the period end, so none is claimed.
+    periodBasis: 'FY',
+    periodEnd: null,
+    periodLabel: `FY${year}`,
     days: 365,
     occupancyPct: num(v.occupancy_pct),
     adr: num(v.adr_usd),

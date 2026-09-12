@@ -177,6 +177,8 @@ beforeEach(() => {
 });
 afterEach(cleanup);
 
+// FON-41 #4 — a year pill reads the column's PERIOD ("FY2019"), not a bare
+// year. `pill` takes the period label the header now renders.
 const pill = (label: string) => screen.getByRole('button', { name: label });
 const rowOf = (label: string) => screen.getByText(label).closest('tr') as HTMLTableRowElement;
 
@@ -186,10 +188,10 @@ describe('Historicals worksheet — red cells come from the shared review state'
     expect(screen.getByText(String(EXPECTED.total))).toBeInTheDocument();
     expect(screen.getAllByRole('button', { name: RED_CELL })).toHaveLength(EXPECTED.total);
     // Per column: hide 2019 → only the 2023 column's 2 remain.
-    fireEvent.click(pill('2019'));
+    fireEvent.click(pill('FY2019'));
     expect(screen.getAllByRole('button', { name: RED_CELL })).toHaveLength(EXPECTED.byDoc.d2023);
-    fireEvent.click(pill('2019'));
-    fireEvent.click(pill('2023'));
+    fireEvent.click(pill('FY2019'));
+    fireEvent.click(pill('FY2023'));
     expect(screen.getAllByRole('button', { name: RED_CELL })).toHaveLength(EXPECTED.byDoc.d2019);
   });
 
@@ -208,8 +210,8 @@ describe('Historicals worksheet — ?doc=<id> pins the statement and lands on it
     PARAMS = { doc: 'd2023' };
     render(<GroundedWorksheet dealId={DEAL_ID} />);
     // 2023 pinned (active), 2019 hidden.
-    expect(pill('2023').className).toContain('bg-ink-900');
-    expect(pill('2019').className).toContain('text-ink-400');
+    expect(pill('FY2023').className).toContain('bg-ink-900');
+    expect(pill('FY2019').className).toContain('text-ink-400');
     // Only the 2023 column's cells are red; the banner agrees.
     expect(screen.getAllByRole('button', { name: RED_CELL })).toHaveLength(EXPECTED.byDoc.d2023);
     expect(screen.getByText(String(EXPECTED.byDoc.d2023))).toBeInTheDocument();
@@ -223,8 +225,8 @@ describe('Historicals worksheet — ?doc=<id> pins the statement and lands on it
     render(<GroundedWorksheet dealId={DEAL_ID} />);
     expect(screen.getByText(/has no extracted column here yet/)).toBeInTheDocument();
     // Nothing is hidden in that case.
-    expect(pill('2019').className).toContain('bg-ink-900');
-    expect(pill('2023').className).toContain('bg-ink-900');
+    expect(pill('FY2019').className).toContain('bg-ink-900');
+    expect(pill('FY2023').className).toContain('bg-ink-900');
   });
 });
 
@@ -243,7 +245,14 @@ describe('Historicals worksheet — SOURCE panel is pinned to the column’s own
     expect(screen.getByText((t) => t.includes('fb_revenue'))).toBeInTheDocument();
     expect(screen.getByText('50% confidence')).toBeInTheDocument();
     // The correction path targets the same document.
-    expect(screen.getByText(/Updates the extracted value on 2023 P&L\.xlsx/)).toBeInTheDocument();
+    // FON-41 §1 copy — correcting the EXTRACTED VALUE, not the document.
+    expect(screen.getByText('Correct extracted value')).toBeInTheDocument();
+    expect(
+      screen.getByText(/Updates the extracted value read from 2023 P&L\.xlsx/),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText(/The original source document will not be changed/),
+    ).toBeInTheDocument();
   });
 
   it('a flagged 2019 cell names the 2019 statement — even though 2023 carries the same field name', () => {
@@ -302,7 +311,7 @@ describe('Historicals worksheet — loading gate before any empty state (FON-41a
     render(<GroundedWorksheet dealId={DEAL_ID} />);
     expect(screen.queryByTestId('worksheet-loading')).not.toBeInTheDocument();
     expect(screen.queryByTestId('worksheet-empty')).not.toBeInTheDocument();
-    expect(pill('2019')).toBeInTheDocument();
+    expect(pill('FY2019')).toBeInTheDocument();
     expect(screen.getAllByRole('button', { name: RED_CELL })).toHaveLength(EXPECTED.total);
   });
 
@@ -360,7 +369,10 @@ describe('Historicals worksheet — the grid never writes a field override', () 
     updateSpy.mockClear();
     render(<GroundedWorksheet dealId={DEAL_ID} />);
 
-    for (const cell of screen.getAllByRole('button')) {
+    // Every button IN THE GRID (the toolbar's Customize toggle is not a cell —
+    // it is the structure-editing affordance and is asserted separately).
+    const grid = document.querySelector('table') as HTMLElement;
+    for (const cell of within(grid).getAllByRole('button')) {
       fireEvent.click(cell);
     }
     // No inline editor opened inside the grid…

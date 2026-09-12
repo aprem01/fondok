@@ -196,9 +196,19 @@ describe('Financials · Projections — Assumptions panel renders from engine ou
     // Resort fee card.
     expect(screen.getByText('Resort fee revenue')).toBeInTheDocument();
     expect(screen.getByText('Resort fee')).toBeInTheDocument();
-    expect(screen.getByText('Capture Yr 1')).toBeInTheDocument();
-    expect(screen.getByText('Capture Yr 2')).toBeInTheDocument();
-    expect(screen.getByText('Capture Yr 3+')).toBeInTheDocument();
+    // FON-41 — each capture input names the COLUMN it moves. The engine's
+    // y=1 is displayed as "Base Year", so "Capture Yr 1" was landing on the
+    // column the analyst reads as the Base Year (Sam, 2026-09-11).
+    expect(screen.getByText('Capture — Base Year')).toBeInTheDocument();
+    expect(screen.getByText('Capture — Year 1')).toBeInTheDocument();
+    expect(screen.getByText('Capture — Year 2+')).toBeInTheDocument();
+    expect(
+      screen.getByText(/Base Year is projection year 1, Year 1 is projection year 2/),
+    ).toBeInTheDocument();
+    // Every capture label names a column header the statement actually renders.
+    for (const name of ['Base Year', 'Year 1', 'Year 2']) {
+      expect(screen.getAllByText(new RegExp(`^${name}`)).length).toBeGreaterThan(0);
+    }
     // Deal economics card.
     expect(screen.getByText('Deal economics')).toBeInTheDocument();
     expect(screen.getByText('Management fee')).toBeInTheDocument();

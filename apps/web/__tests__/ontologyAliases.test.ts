@@ -171,7 +171,8 @@ describe('ontology adapters — histValue', () => {
 
   it('reads the same values off a HistYear as the hand-written switch', () => {
     const h: HistYear = {
-      year: '2024', days: 366,
+      year: '2024', periodBasis: 'FY', periodEnd: '2024-12-31', periodLabel: 'FY2024',
+      days: 366,
       occupancyPct: 0.75, adr: 250, revpar: 187.5,
       rooms: 9_000_000, fb: 3_000_000, misc: 1_000_000,
       rooms_dept_expense: 2_000_000, fb_dept_expense: 2_400_000,

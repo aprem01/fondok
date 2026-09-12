@@ -42,10 +42,10 @@ import { useDeal } from '@/lib/hooks/useDeal';
 import { useDocuments } from '@/lib/hooks/useDocuments';
 import { isHistoricalSourceDoc, useHistoricals } from '@/lib/hooks/useHistoricals';
 import TabLoadingSkeleton from '@/components/project/TabLoadingSkeleton';
-import { baseYearLabel, type HistYear } from '@/components/project/pl/HistoricalsSection';
+import { baseYearLabel, type HistYear, type PeriodBasis } from '@/components/project/pl/HistoricalsSection';
 import { buildReviewState, cellKey, cellsForYear, histHasData, histValue, type ReviewRow } from '@/lib/reviewState';
 import { useSource } from '@/lib/hooks/useDealProvenance';
-import { sourceKind, sourceExplanation } from '@/lib/provenance';
+import { sourceKind, sourceExplanation, formatPeriodBasis } from '@/lib/provenance';
 import { useWorksheetLayout } from '@/lib/hooks/useWorksheetLayout';
 import type { SplitChild, CuratedLine } from '@/lib/hooks/useWorksheetLayout';
 import { worksheetBinding } from '@/lib/ontology/adapters';
@@ -222,7 +222,10 @@ const COVER_TITLE: Record<CoverState, string> = {
 // Build the ordered year → status list from the deal's financial docs, folding
 // in years already populated in the worksheet (incl. OM-embedded history) and
 // filling interior gaps so a missing middle year reads as "not uploaded".
-function buildCoverage(docs: WorkerDocument[], populatedYears: HistYear[]): { year: string; state: CoverState }[] {
+function buildCoverage(
+  docs: WorkerDocument[],
+  populatedYears: HistYear[],
+): { year: string; state: CoverState; label: string }[] {
   const byYear = new Map<string, CoverState>();
   const bump = (yr: string, s: CoverState) => {
     const prev = byYear.get(yr);
@@ -253,8 +256,42 @@ function buildCoverage(docs: WorkerDocument[], populatedYears: HistYear[]): { ye
     if (b === 'T-12') return -1;
     return Number(a) - Number(b);
   });
-  return order.map((year) => ({ year, state: byYear.get(year)! }));
+  // FON-41 #4 — the chip says what the period IS ("T12 Mar 2025", "FY2024")
+  // whenever exactly one column covers that year. The COUNTING above is
+  // unchanged and still keys on the bare year, so a "YTD Mar 2025" column
+  // still counts as 2025 coverage and interior gaps still fill.
+  const labelByYear = new Map<string, string>();
+  for (const y of populatedYears) {
+    const base = baseYearLabel(y.year);
+    const prev = labelByYear.get(base);
+    if (prev === undefined) labelByYear.set(base, y.periodLabel);
+    else if (prev !== y.periodLabel) labelByYear.set(base, base); // two statements disagree — stay neutral
+  }
+  return order.map((year) => ({ year, state: byYear.get(year)!, label: labelByYear.get(year) ?? year }));
 }
+
+// What the Period control can select. ``ALL`` is the DEFAULT and is not a
+// basis: it is "don't filter". It exists because filtering by default would
+// hide a low-confidence statement whose "N to review" badge the Data Room is
+// still showing — the exact badge-vs-grid split FON-41 closed, which
+// ``evidenceAblation`` guards. The analyst opts into a basis.
+type PeriodFilter = PeriodBasis | 'ALL';
+
+// The three bases the MVP models, in the canonical Financials order. The
+// wording is the design's ("Trailing 12 (month-end)"); the ids are the
+// resolved ``HistYear.periodBasis``.
+const PERIOD_OPTIONS: { id: PeriodBasis; label: string }[] = [
+  { id: 'FY', label: 'Full Year' },
+  { id: 'YTD', label: 'Year-to-date' },
+  { id: 'T12', label: 'Trailing 12 (month-end)' },
+];
+// Not MVP bases — offered ONLY when a statement actually resolved to one, so
+// a monthly or unstated-basis column is never left unreachable behind the
+// filter. (Annual / Monthly GRANULARITY is the separate toggle below.)
+const EXTRA_BASIS_OPTIONS: { id: PeriodBasis; label: string }[] = [
+  { id: 'MONTHLY', label: 'Single month' },
+  { id: 'UNKNOWN', label: 'Basis not stated' },
+];
 
 interface InspectTarget {
   rowLabel: string;
@@ -267,6 +304,10 @@ interface InspectTarget {
   formula?: string;
   review?: { docId: string; field: string; confidence: number };
   fmt?: RowFmt;
+  /** FON-41 #4 — the column's period, already formatted ("T-12 ending
+   *  Mar 31, 2025"). Absent on the Model column and on columns whose basis
+   *  could not be established. */
+  periodText?: string | null;
 }
 
 type RenderItem =
@@ -291,9 +332,10 @@ export default function GroundedWorksheet({
 
   const searchParams = useSearchParams();
   const wl = useWorksheetLayout(rawId);
-  // Design rewire: structure-editing (Customize) removed from Historicals —
-  // the layout hooks stay wired but the mode is never entered.
-  const customize = false;
+  // FON-41 §3 — structure editing (add / move / rename / hide / split) is an
+  // analyst affordance again. It is PRESENTATION-ONLY: the layout lives in
+  // ``useWorksheetLayout`` (device-local) and never reaches the engines.
+  const [customize, setCustomize] = useState(false);
   const [draft, setDraft] = useState<Record<string, string>>({});
   const [savingKey, setSavingKey] = useState<string | null>(null);
   const [inspect, setInspect] = useState<InspectTarget | null>(null);
@@ -301,15 +343,15 @@ export default function GroundedWorksheet({
   const [hiddenYears, setHiddenYears] = useState<Set<string>>(new Set());
   const [search, setSearch] = useState('');
   // Canonical Historicals toolbar toggles (design/canonical/Financials Tab.dc.html):
-  //   period      → Full Year / Trailing 12 (month-end) / Monthly
+  //   period      → Full Year / Year-to-date / Trailing 12 (month-end)
   //   format      → Summary (subtotals only) / Detailed (every line)
   //   granularity → Annual / Monthly
-  // Format drives real filtering (Summary collapses detail lines to the
-  // canonical subtotals + computed anchors). Period + Granularity are the
-  // design's view chrome; the worksheet renders normalized annual actuals, so
-  // they are presentational until monthly/T-12 series are wired through the
-  // historicals loader (flagged for follow-up).
-  const [periodType, setPeriodType] = useState<'FY' | 'T12' | 'Monthly'>('FY');
+  // Format and Period both drive REAL filtering: Summary collapses detail
+  // lines to the canonical subtotals + computed anchors, and Period selects
+  // the columns whose resolved basis matches (FON-41 #4 — it used to be
+  // chrome that changed nothing). Granularity stays a view toggle until
+  // monthly series are wired through the historicals loader.
+  const [periodBasis, setPeriodBasis] = useState<PeriodFilter>('ALL');
   const [format, setFormat] = useState<'summary' | 'detailed'>('detailed');
   const [granularity, setGranularity] = useState<'annual' | 'monthly'>('annual');
 
@@ -336,6 +378,20 @@ export default function GroundedWorksheet({
   // year-pill filter lets the reviewer hide any period they don't want.
   const histYears = populatedHistYears;
   const coverage = useMemo(() => buildCoverage(documents, populatedHistYears), [documents, populatedHistYears]);
+  // How many columns each basis has — drives the Period options (a basis with
+  // no columns is DISABLED rather than blanking the grid) and keeps the count
+  // visible so nothing is silently filtered away.
+  const basisCounts = useMemo(() => {
+    const m = new Map<PeriodBasis, number>();
+    for (const y of histYears) m.set(y.periodBasis, (m.get(y.periodBasis) ?? 0) + 1);
+    return m;
+  }, [histYears]);
+  const effectiveBasis: PeriodFilter = useMemo(() => {
+    if (periodBasis === 'ALL') return 'ALL';
+    // A basis whose last column just disappeared (a statement removed, a
+    // re-classification) falls back to "all" rather than blanking the grid.
+    return (basisCounts.get(periodBasis) ?? 0) > 0 ? periodBasis : 'ALL';
+  }, [basisCounts, periodBasis]);
   // Resolve a source docId → its filename for the per-cell source tooltip
   // (canonical Financials design). Same documents list the SourcePanel resolves
   // against (d.filename); unresolved ids fall back to a generic label.
@@ -505,20 +561,23 @@ export default function GroundedWorksheet({
   // column is scrolled into view, so the badge count and the red cells in the
   // grid line up 1:1. The analyst can re-enable the other pills afterwards.
   const docParam = searchParams?.get('doc') ?? null;
-  const pinnedYear = useMemo(
-    () => (docParam ? histYears.find((y) => y.docId === docParam)?.year ?? null : null),
+  const pinnedCol = useMemo(
+    () => (docParam ? histYears.find((y) => y.docId === docParam) ?? null : null),
     [docParam, histYears],
   );
+  const pinnedYear = pinnedCol?.year ?? null;
   const pinnedRef = useRef<string | null>(null);
   useEffect(() => {
     // Pin only once the historicals have settled: extractions stream in from
     // the shared store one document at a time, and pinning on the first
     // column to appear would leave later columns un-hidden.
-    if (!pinnedYear || histLoading || pinnedRef.current === pinnedYear) return;
-    pinnedRef.current = pinnedYear;
-    setHiddenYears(new Set(histYears.filter((y) => y.year !== pinnedYear).map((y) => y.year)));
+    if (!pinnedCol || histLoading || pinnedRef.current === pinnedCol.year) return;
+    pinnedRef.current = pinnedCol.year;
+    setHiddenYears(new Set(histYears.filter((y) => y.year !== pinnedCol.year).map((y) => y.year)));
     setFormat('detailed');
-  }, [pinnedYear, histYears, histLoading]);
+    // A deep-link must land ON the statement it names, whatever its basis.
+    setPeriodBasis(pinnedCol.periodBasis);
+  }, [pinnedCol, histYears, histLoading]);
   const focusRowId = useMemo(() => {
     if (focusField) {
       for (const r of ROWS) {
@@ -617,11 +676,17 @@ export default function GroundedWorksheet({
   }
 
   // Design rewire: Historicals shows historical actuals only — the forward
-  // model lives in Projections. Year pills filter which years render.
-  const shownYears = histYears.filter((y) => !hiddenYears.has(y.year));
+  // model lives in Projections. Two filters stack: the Period control selects
+  // the basis (FY / YTD / T12), the year pills hide individual columns.
+  const basisYears = effectiveBasis === 'ALL'
+    ? histYears
+    : histYears.filter((y) => y.periodBasis === effectiveBasis);
+  const shownYears = basisYears.filter((y) => !hiddenYears.has(y.year));
   const cols = shownYears.map((y, i) => ({
     id: `h${y.year}-${i}`,
-    label: y.year,
+    // The column says WHAT PERIOD it is ("FY2024" / "T12 Mar 2025"); `y.year`
+    // stays the stable key everything else pins on.
+    label: y.periodLabel,
     historical: true as const,
     year: y,
   }));
@@ -651,14 +716,29 @@ export default function GroundedWorksheet({
             </p>
           </div>
           <select
-            value={periodType}
-            onChange={(e) => setPeriodType(e.target.value as 'FY' | 'T12' | 'Monthly')}
-            title="View period"
+            value={effectiveBasis}
+            onChange={(e) => setPeriodBasis(e.target.value as PeriodFilter)}
+            aria-label="Period basis"
+            title="Show the columns that are on this period basis"
             style={{ fontSize: 12, border: '1px solid #e2e1dc', borderRadius: 6, padding: '6px 9px', color: '#3a3f47', background: '#fff' }}
           >
-            <option value="FY">Full Year</option>
-            <option value="T12">Trailing 12 (month-end)</option>
-            <option value="Monthly">Monthly</option>
+            <option value="ALL">All periods · {histYears.length}</option>
+            {PERIOD_OPTIONS.map((o) => {
+              const n = basisCounts.get(o.id) ?? 0;
+              // A basis with no columns is disabled — never a blank grid.
+              return (
+                <option key={o.id} value={o.id} disabled={n === 0}>
+                  {o.label} · {n}
+                </option>
+              );
+            })}
+            {/* Bases outside the three MVP options only appear when a column
+                actually has one, so no statement is unreachable. */}
+            {EXTRA_BASIS_OPTIONS.filter((o) => (basisCounts.get(o.id) ?? 0) > 0).map((o) => (
+              <option key={o.id} value={o.id}>
+                {o.label} · {basisCounts.get(o.id)}
+              </option>
+            ))}
           </select>
         </div>
         <div className="flex items-center gap-2">
@@ -669,7 +749,7 @@ export default function GroundedWorksheet({
           )}
         </div>
       </div>
-      {/* Canonical row 2 — Format + Granularity view toggles + confidence chip. */}
+      {/* Canonical row 2 — Format + Granularity view toggles, structure editing, confidence chip. */}
       <div className="flex flex-wrap items-center gap-4 px-5 py-2.5 border-b border-border" style={{ background: '#fbfbf9' }}>
         <div className="flex items-center gap-2">
           <span className="text-[11.5px] text-ink-500">Format:</span>
@@ -687,6 +767,30 @@ export default function GroundedWorksheet({
             onChange={setGranularity}
           />
         </div>
+        <div className="flex items-center gap-2">
+          <button
+            type="button"
+            onClick={() => setCustomize((v) => !v)}
+            aria-pressed={customize}
+            title="Add, rename, reorder, split or hide lines. Presentation only — the engines read the canonical lines either way."
+            className={cn(
+              'inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md text-[11.5px] font-medium border transition-colors',
+              customize ? 'border-ink-900 bg-ink-900 text-white' : 'border-border text-ink-600 hover:text-ink-900',
+            )}
+          >
+            <SlidersHorizontal size={11} aria-hidden="true" /> Customize structure
+          </button>
+          {wl.isCustomized && (
+            <button
+              type="button"
+              onClick={() => wl.reset()}
+              title="Drop every structure edit and restore the canonical statement order."
+              className="inline-flex items-center gap-1 text-[11.5px] text-ink-500 hover:text-ink-900"
+            >
+              <RotateCcw size={11} aria-hidden="true" /> Reset layout
+            </button>
+          )}
+        </div>
         <span className="text-[11px]" style={{ color: '#c3c2bd' }}>Budget / prior-year comparison shown in annual view</span>
         {avgConfidence != null && (
           <span
@@ -697,30 +801,59 @@ export default function GroundedWorksheet({
           </span>
         )}
       </div>
+      {customize && (
+        <div className="px-5 py-2 bg-ink-100/60 border-b border-border text-[11.5px] text-ink-600 flex items-center gap-1.5">
+          <Info size={11} className="shrink-0" aria-hidden="true" />
+          <span>
+            Structure editing is on — rename, reorder, hide or split a line, or add your own.
+            It changes how this statement <span className="font-medium text-ink-900">reads</span>, never what the model computes,
+            and a line you add is an analyst line, not a document-sourced one.
+          </span>
+        </div>
+      )}
       {histYears.length > 0 && (
         <div className="flex flex-wrap items-center gap-3 px-5 py-2 border-b border-border">
           <span className="text-[10px] uppercase tracking-wider text-ink-500 font-semibold">Years</span>
           <div className="flex items-center gap-1">
             {histYears.map((y) => {
-              const hidden = hiddenYears.has(y.year);
+              const offBasis = effectiveBasis !== 'ALL' && y.periodBasis !== effectiveBasis;
+              const hidden = offBasis || hiddenYears.has(y.year);
               return (
                 <button
                   key={y.year}
                   type="button"
-                  onClick={() =>
+                  title={
+                    offBasis
+                      ? `${y.periodLabel} is on a different period basis — show it`
+                      : y.basisReason
+                        ? 'This statement never stated its period basis, so only its year is shown (period_mismatch).'
+                        : y.periodLabel
+                  }
+                  onClick={() => {
+                    // Off-basis pill: switch the Period control to it rather
+                    // than toggling a column the current filter excludes.
+                    if (offBasis) {
+                      setPeriodBasis(y.periodBasis);
+                      setHiddenYears((prev) => {
+                        const n = new Set(prev);
+                        n.delete(y.year);
+                        return n;
+                      });
+                      return;
+                    }
                     setHiddenYears((prev) => {
                       const n = new Set(prev);
                       if (n.has(y.year)) n.delete(y.year);
                       else n.add(y.year);
                       return n;
-                    })
-                  }
+                    });
+                  }}
                   className={cn(
                     'px-2.5 py-1 rounded-md text-[11.5px] font-medium tabular-nums border transition-colors',
                     hidden ? 'border-border text-ink-400' : 'border-ink-900 bg-ink-900 text-white',
                   )}
                 >
-                  {y.year}
+                  {y.periodLabel}
                 </button>
               );
             })}
@@ -761,7 +894,7 @@ export default function GroundedWorksheet({
               className={cn('inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-[11px] font-medium border tabular-nums', COVER_TONE[c.state])}
             >
               <span className={cn('w-1.5 h-1.5 rounded-full', COVER_DOT[c.state])} />
-              {c.year}
+              {c.label}
             </span>
           ))}
           {collidedPeriods.length > 0 && (
@@ -794,6 +927,14 @@ export default function GroundedWorksheet({
               {cols.map((c) => (
                 <th key={c.id} className={cn('text-right font-semibold px-3 py-2.5', !c.historical && 'text-brand-200')}>
                   {c.label}
+                  {c.year.basisReason && (
+                    <span
+                      className="block text-[9px] font-medium normal-case tracking-normal text-warn-200"
+                      title="This statement never stated its period basis (full year / YTD / trailing 12), so only its year is shown — period_mismatch. Nothing is assumed."
+                    >
+                      basis unknown
+                    </span>
+                  )}
                 </th>
               ))}
             </tr>
@@ -1028,6 +1169,14 @@ function WorksheetCell({
       formula: row.kind === 'computed' || row.kind === 'subtotal' ? formulaFor(row.id) : undefined,
       review: effReview,
       fmt: row.fmt,
+      // FON-41 #4 — the panel names the document AND the period it covers.
+      // A full year is named by the column's own resolved label ("FY2019");
+      // the dated bases spell their end out ("T-12 ending Mar 31, 2025").
+      periodText: !historical || !histYear
+        ? null
+        : histYear.periodBasis === 'FY'
+          ? histYear.periodLabel
+          : formatPeriodBasis(histYear.periodBasis, histYear.periodEnd),
     });
   };
 
@@ -1253,7 +1402,10 @@ function SplitChildRow({
   );
 }
 
-// A curated memo line — the analyst's own annotation. Informational only.
+// A curated line — the analyst's own, not the document's. Founder decision
+// (FON-41 §3): manual rows are presentation-only for the MVP and never feed
+// the engines, so they carry the ASSUMPTION dot and an "Analyst line" chip —
+// never the green document-sourced dot.
 function CuratedRow({
   line, colCount, customize, onLabel, onValue, onRemove,
 }: {
@@ -1264,7 +1416,7 @@ function CuratedRow({
     <tr className="border-t border-border/60">
       <td className="pl-9 pr-5 py-1 sticky left-0 bg-bg z-10">
         <span className="inline-flex items-center gap-1.5">
-          <span className="w-1.5 h-1.5 rounded-full bg-ink-400" />
+          <ProvenanceDot state="assumption" size={8} title="Analyst line — entered here, not read from a document." />
           {customize ? (
             <input
               key={line.label}
@@ -1275,7 +1427,12 @@ function CuratedRow({
           ) : (
             <span className="text-[12px] text-ink-700">{line.label}</span>
           )}
-          <span className="text-[9px] uppercase tracking-wide px-1 py-0.5 rounded bg-ink-100 text-ink-500">memo</span>
+          <span
+            className="text-[9px] uppercase tracking-wide px-1 py-0.5 rounded bg-ink-100 text-ink-500"
+            title="Entered by an analyst. It is not extracted from any statement and no engine reads it."
+          >
+            Analyst line
+          </span>
           {customize && <IconBtn title="Remove" onClick={onRemove}><Trash2 size={12} /></IconBtn>}
         </span>
       </td>
@@ -1291,7 +1448,10 @@ function CuratedRow({
             className="w-24 px-1.5 py-0.5 text-[12px] text-right tabular-nums border border-border rounded bg-bg focus:outline-none focus:ring-2 focus:ring-brand-100"
           />
         ) : (
-          <span className="tabular-nums text-ink-700">{fmtCurrency(line.value, { compact: true })}</span>
+          <span className="inline-flex items-center gap-1.5 justify-end">
+            <ProvenanceDot state="assumption" size={8} title="Analyst line — entered here, not read from a document." />
+            <span className="tabular-nums text-ink-700">{fmtCurrency(line.value, { compact: true })}</span>
+          </span>
         )}
       </td>
     </tr>
@@ -1418,6 +1578,9 @@ function SourcePanel({
                     <div className="min-w-0">
                       <div className="text-[12px] text-ink-900 truncate">{d.filename}</div>
                       {d.doc_type && <div className="text-[10.5px] text-ink-500">{d.doc_type}</div>}
+                      {target.periodText && (
+                        <div className="text-[10.5px] text-ink-700">{target.periodText}</div>
+                      )}
                     </div>
                   </div>
                 ))}
@@ -1463,14 +1626,14 @@ function SourcePanel({
 
           {field && onEdit && (
             <div className="rounded-lg border border-border px-3 py-2.5 space-y-2">
-              <div className="text-[10.5px] uppercase tracking-wide text-ink-500 font-semibold">Correct at source</div>
+              <div className="text-[10.5px] uppercase tracking-wide text-ink-500 font-semibold">Correct extracted value</div>
               {editVal == null ? (
                 <button
                   type="button"
                   onClick={() => setEditVal(String(typeof field.value === 'number' ? Math.round(field.value) : Math.round(target.value)))}
                   className="text-[12px] text-brand-700 hover:text-brand-500 font-medium"
                 >
-                  Fix this value on the document →
+                  Correct this value →
                 </button>
               ) : (
                 <div className="flex flex-wrap items-center gap-2">
@@ -1491,7 +1654,10 @@ function SourcePanel({
                   <button type="button" onClick={() => setEditVal(null)} className="text-[12px] text-ink-500 hover:text-ink-900">Cancel</button>
                 </div>
               )}
-              <p className="text-[11px] text-ink-500 leading-relaxed">Updates the extracted value on {field.docName} and re-grounds the model.</p>
+              <p className="text-[11px] text-ink-500 leading-relaxed">
+                Updates the extracted value read from {field.docName} and re-grounds the model.
+                The original source document will not be changed.
+              </p>
             </div>
           )}
 
