@@ -160,3 +160,48 @@ def test_milestones_are_chronologically_ordered_with_durations():
     finishes = [e.finish for e in events if e.finish is not None]
     exit_ev = next(e for e in events if e.event.startswith("Disposition"))
     assert exit_ev.finish == max(finishes)
+
+
+# ── FON-44 §2 — Hotel Purchase is LINKED, not calculated ──────────────────
+#
+# Sam (9/11): "Hotel Purchase 6/1/2021 on Timeline is currently labeled
+# Calculated. This milestone is consuming the editable Acquisition Date."
+# It is: the event's date IS ``close_date``, unmodified. Everything else here
+# is arithmetic on it and stays 'derived' — Sam named the Exit explicitly.
+
+
+def test_hotel_purchase_is_linked_when_a_close_date_is_set():
+    events = build_timeline(
+        close_date=date(2025, 9, 30),
+        hold_years=5,
+        term_years=5,
+        interest_only_months=24,
+        refi_month=30,
+        renovation_budget=5_280_000,
+    )
+    by = _by_event(events)
+    assert by["Hotel Purchase"].basis == "linked"
+    # The one editable-assumption milestone; the rest keep their own basis.
+    assert by["Disposition / Exit"].basis == "derived"
+    assert by["Investment Hold Period"].basis == "derived"
+    assert by["Senior Loan Maturity"].basis == "derived"
+    assert by["Senior Loan Refi"].basis == "derived"
+    assert by["Senior Loan Interest-Only Period"].basis == "derived"
+    # The renovation window stays the per-deal assumption it already was.
+    assert by["Renovation"].basis == "assumption"
+    # Exactly one linked row.
+    assert [e.event for e in events if e.basis == "linked"] == ["Hotel Purchase"]
+
+
+def test_hotel_purchase_is_pending_without_a_close_date():
+    events = build_timeline(
+        close_date=None,
+        hold_years=5,
+        term_years=5,
+        renovation_budget=5_280_000,
+    )
+    by = _by_event(events)
+    # Nothing is linked until there is a date to link to.
+    assert by["Hotel Purchase"].basis == "pending"
+    assert by["Hotel Purchase"].start is None
+    assert all(e.basis == "pending" for e in events)

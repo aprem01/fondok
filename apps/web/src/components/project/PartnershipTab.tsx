@@ -8,6 +8,7 @@ import {
   type ReactNode,
 } from 'react';
 import { useParams } from 'next/navigation';
+import { Plus, Trash2 } from 'lucide-react';
 import { useSubTab } from '@/lib/hooks/useSubTab';
 import { api, isWorkerConnected, type ValueState } from '@/lib/api';
 import { useEngineRun } from '@/lib/hooks/useEngineRun';
@@ -586,15 +587,42 @@ export default function PartnershipTab() {
             <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
               {/* Equity Structure + Waterfall Terms */}
               <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(430px,1fr))', gap: 14 }}>
-                <SectionCard title="Equity Structure" note="Total equity comes from the deal financing">
+                {/* FON-66 §1 (Sam, 9/11): the Summary showed ONE "Total Equity
+                    → Investment" row whose number included the deficit-period
+                    capital calls, while the Investment page it links to shows
+                    the close draw — "the Summary label is simply conflating
+                    initial equity with subsequent capital calls." The bridge
+                    already existed on Cash Flows; the Summary now carries it
+                    too, and the "→ Investment" link sits on the INITIAL row,
+                    the one number Investment actually owns. */}
+                <SectionCard title="Equity Structure" note="Initial equity comes from the deal financing; later calls come from the waterfall">
                   <KeyRow
-                    label="Total Equity"
+                    label="Initial Equity Required"
                     dot={dotState('total_equity_usd', 'linked')}
-                    value={money(totalEquity)}
+                    value={money(initialEquity)}
                     valueColor={prov.green}
-                    bold
                     link={{ label: '→ Investment', tab: 'investment', sub: 'sources-and-uses' }}
-                    note="Total uses less senior debt and key money — set by the deal financing, not here"
+                    note="Drawn at close — this is the equity line in Investment › Sources & Uses"
+                  />
+                  <KeyRow
+                    label="Additional Contributions"
+                    dot="calculated"
+                    value={money(additionalTotal)}
+                    valueColor={prov.gray}
+                    link={{ label: '→ Partner Cash Flows', tab: 'partnership', sub: 'cash-flows' }}
+                    note={
+                      hasAdditional
+                        ? 'Deficit periods funded as dated pro-rata GP/LP capital calls — the preferred return accrues on them'
+                        : 'This run predates additional-contribution tracking — re-run the Partnership engine to report deficit-period capital calls (funded pro-rata GP/LP; the preferred return accrues on them).'
+                    }
+                  />
+                  <KeyRow
+                    label="Total Invested Equity"
+                    dot="calculated"
+                    value={money(totalContributions)}
+                    valueColor={prov.black}
+                    bold
+                    note="Initial equity plus every later call — the basis the equity multiple is struck on"
                   />
                   <KeyRow
                     label="GP / Sponsor Ownership"
@@ -618,8 +646,23 @@ export default function PartnershipTab() {
                     value={pctv(lpPct, 0)}
                     valueColor={prov.gray}
                   />
-                  <KeyRow label="GP Contribution" dot="calculated" value={money(gpEquity)} valueColor={prov.gray} />
-                  <KeyRow label="LP Contribution" dot="calculated" value={money(lpEquity)} valueColor={prov.gray} />
+                  {/* Totals, so GP + LP ties to Total Invested Equity above;
+                      the sub-line names the close draw so the split reconciles
+                      against Initial Equity Required as well. */}
+                  <KeyRow
+                    label="GP Contribution"
+                    dot="calculated"
+                    value={money(gpEquity)}
+                    valueColor={prov.gray}
+                    note={hasAdditional ? `${money(gpInitialEquity)} at close` : undefined}
+                  />
+                  <KeyRow
+                    label="LP Contribution"
+                    dot="calculated"
+                    value={money(lpEquity)}
+                    valueColor={prov.gray}
+                    note={hasAdditional ? `${money(lpInitialEquity)} at close` : undefined}
+                  />
                 </SectionCard>
 
                 <SectionCard title="Waterfall Terms" note="Your inputs — manual entry, or JV-agreement terms confirmed on the document page">
@@ -1240,7 +1283,23 @@ function AllocationTable({
 // Catch-Up) are derived read-only; the promote bands are the editable seed
 // mapped 1:1 to the worker override indices (existing save path preserved).
 // ─────────────────────────────────────────────────────────────────────
-const TIER_GRID = '38px minmax(180px,1.5fr) minmax(120px,1fr) 90px 90px minmax(210px,1.5fr)';
+// FON-66 §2 (Sam, 9/11) — waterfall table polish.
+//
+//  · De-emphasise Description: it is context, not a number. The column loses
+//    a third of its width to the numeric columns and drops to the faint ink,
+//    so the eye lands on Hurdle / GP / LP first.
+//  · The Remove control is revealed on row hover / keyboard focus and is an
+//    icon with its label on `aria-label`, instead of a bordered button shouting
+//    on every row.
+//  · "+ Add tier" renders INSIDE the grid as a full-width dashed row under a
+//    hairline, so it reads as adding a row to this table.
+//
+// DECLINED, deliberately — Sam's optional sixth: *"consider presenting each
+// economic split together (20% GP / 80% LP)"*. Two right-aligned numeric
+// columns scan down a table better than a combined string, and both halves are
+// independently editable; collapsing them would cost an edit target to save a
+// column. Recorded here so the decision is visible where the table is.
+const TIER_GRID = '38px minmax(180px,1.5fr) minmax(120px,1fr) 90px 90px minmax(150px,1fr)';
 
 function PromoteWaterfall({
   prefRate, hasCatchUp, liveMode, overrides, editing, draft, setDraft, note, setNote,
@@ -1271,6 +1330,10 @@ function PromoteWaterfall({
   // FON-74 — null: the "+ Add tier" button. A string: the justification row is
   // open and holds what the analyst has typed so far.
   const [addNote, setAddNote] = useState<string | null>(null);
+  // FON-66 §2 — which promote row is hovered or keyboard-focused, so its Remove
+  // control can reveal itself instead of shouting on every row. Focus counts:
+  // a control that only appears on :hover is unreachable by keyboard.
+  const [revealed, setRevealed] = useState<number | null>(null);
   // Structural (read-only) rows first, then the editable promote bands.
   const structural: Array<{ name: string; hurdle: string; gp: string; lp: string; desc: string; dot: ValueState }> = [
     {
@@ -1305,7 +1368,7 @@ function PromoteWaterfall({
         <span style={{ textAlign: 'right', color: prov.gray, fontVariantNumeric: 'tabular-nums' }}>{s.hurdle}</span>
         <span style={{ textAlign: 'right', color: prov.gray, fontVariantNumeric: 'tabular-nums' }}>{s.gp}</span>
         <span style={{ textAlign: 'right', color: prov.gray, fontVariantNumeric: 'tabular-nums', paddingRight: 16 }}>{s.lp}</span>
-        <span style={{ color: palette.textMuted, lineHeight: 1.4, fontSize: 11.5 }}>{s.desc}</span>
+        <span style={{ color: palette.textFaint, lineHeight: 1.4, fontSize: 11 }}>{s.desc}</span>
       </div>
     );
   });
@@ -1342,10 +1405,17 @@ function PromoteWaterfall({
     const hurdleId = `t${i}-h`;
     const splitId = `t${i}-s`;
     return (
-      <div key={`promote-${i}`} style={{
-        display: 'grid', gridTemplateColumns: TIER_GRID, fontSize: 12.5, padding: '8px 0',
-        borderBottom: `1px solid ${palette.hairlineRow}`, alignItems: 'center',
-      }}>
+      <div
+        key={`promote-${i}`}
+        onMouseEnter={() => setRevealed(i)}
+        onMouseLeave={() => setRevealed((cur) => (cur === i ? null : cur))}
+        onFocus={() => setRevealed(i)}
+        onBlur={() => setRevealed((cur) => (cur === i ? null : cur))}
+        style={{
+          display: 'grid', gridTemplateColumns: TIER_GRID, fontSize: 12.5, padding: '8px 0',
+          borderBottom: `1px solid ${palette.hairlineRow}`, alignItems: 'center',
+        }}
+      >
         <span style={{ color: palette.textMuted, fontVariantNumeric: 'tabular-nums' }}>{idx}</span>
         <span style={{ display: 'flex', alignItems: 'center', gap: 7, minWidth: 0 }}>
           <ProvenanceDot state="assumption" size={8} />
@@ -1405,7 +1475,7 @@ function PromoteWaterfall({
           {gpComplete ? fmtPct(1 - gpFrac, 0) : '—'}
         </span>
         <span style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8, minWidth: 0 }}>
-          <span style={{ color: incomplete ? prov.amber : palette.textMuted, lineHeight: 1.4, fontSize: 11.5, minWidth: 0 }}>
+          <span style={{ color: incomplete ? prov.amber : palette.textFaint, lineHeight: 1.4, fontSize: 11, minWidth: 0 }}>
             {incomplete
               ? 'Set the hurdle and GP split to activate this tier'
               : last ? 'All remaining proceeds above the final hurdle' : 'Residual split until LP IRR reaches the hurdle'}
@@ -1415,13 +1485,18 @@ function PromoteWaterfall({
               onClick={() => onRemoveTier(i)}
               aria-label={`Remove promote tier ${pos + 1}`}
               title="Remove this tier — the other tiers keep their own hurdles and splits"
+              // FON-66 §2 — revealed on row hover / focus. It stays in the DOM
+              // and in the tab order at all times, so the keyboard and the
+              // screen reader never lose it; only the ink comes and goes.
               style={{
-                flexShrink: 0, background: 'transparent', border: `1px solid ${palette.border}`,
-                borderRadius: radius.control, color: palette.textSecondary, cursor: 'pointer',
-                fontSize: 11, fontWeight: 600, padding: '2px 8px', fontFamily: 'inherit', lineHeight: 1.4,
+                flexShrink: 0, background: 'transparent', border: 'none', padding: 3,
+                borderRadius: radius.control, color: palette.textMuted, cursor: 'pointer',
+                display: 'inline-flex', alignItems: 'center', lineHeight: 1,
+                opacity: revealed === i ? 1 : 0,
+                transition: 'opacity 120ms ease-out',
               }}
             >
-              Remove
+              <Trash2 size={13} aria-hidden="true" />
             </button>
           )}
         </span>
@@ -1441,52 +1516,70 @@ function PromoteWaterfall({
         <span style={{ textAlign: 'right' }}>Hurdle</span>
         <span style={{ textAlign: 'right' }}>GP split</span>
         <span style={{ textAlign: 'right', paddingRight: 16 }}>LP split</span>
-        <span>Description</span>
+        <span style={{ fontWeight: 600, opacity: 0.7 }}>Description</span>
       </div>
       {structuralRows}
       {promoteRows}
+      {/* FON-66 §2 — the add affordance is a ROW of this table, not a button
+          parked beneath it: full width across the same grid, under the same
+          hairline every tier row carries. */}
       {liveMode && addNote !== null && (
-        <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 10, flexWrap: 'wrap' }}>
-          <InlineEditControls
-            onSave={() => {
-              if (!addNote.trim()) { toast(NOTE_REQUIRED_MESSAGE, { type: 'error' }); return; }
-              onAddTier(addNote);
-              setAddNote(null);
-            }}
-            onCancel={() => setAddNote(null)}
-            saveLabel="Add tier"
-            saveTestId="add-tier-save"
-            note={addNote}
-            onNote={setAddNote}
-            noteTestId="add-tier-note"
-          />
-          <span style={{ fontSize: 11, color: palette.textMuted }}>
-            A new tier seeds a hurdle and a 100% LP / 0% GP split — say why it belongs in the waterfall.
+        <div style={{
+          display: 'grid', gridTemplateColumns: TIER_GRID,
+          borderTop: `1px solid ${palette.border}`, padding: '10px 0',
+        }}>
+          <span />
+          <span style={{ gridColumn: '2 / -1', display: 'flex', alignItems: 'flex-start', gap: 10, flexWrap: 'wrap' }}>
+            <InlineEditControls
+              onSave={() => {
+                if (!addNote.trim()) { toast(NOTE_REQUIRED_MESSAGE, { type: 'error' }); return; }
+                onAddTier(addNote);
+                setAddNote(null);
+              }}
+              onCancel={() => setAddNote(null)}
+              saveLabel="Add tier"
+              saveTestId="add-tier-save"
+              note={addNote}
+              onNote={setAddNote}
+              noteTestId="add-tier-note"
+            />
+            <span style={{ fontSize: 11, color: palette.textMuted, maxWidth: 320, lineHeight: 1.45 }}>
+              A new tier seeds a hurdle and a 100% LP / 0% GP split — say why it belongs in the waterfall.
+            </span>
           </span>
         </div>
       )}
       {liveMode && addNote === null && (
-        <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginTop: 10, flexWrap: 'wrap' }}>
-          <button
-            onClick={() => setAddNote('')}
-            disabled={tierCount >= MAX_TIERS}
-            style={{
-              display: 'inline-flex', alignItems: 'center', gap: 6,
-              background: 'transparent', border: `1px dashed ${palette.linkBlue}`, borderRadius: radius.button,
-              color: tierCount >= MAX_TIERS ? palette.textMuted : palette.linkBlue,
-              cursor: tierCount >= MAX_TIERS ? 'default' : 'pointer',
-              fontSize: 11.5, fontWeight: 600, padding: '6px 12px', fontFamily: 'inherit',
-              opacity: tierCount >= MAX_TIERS ? 0.55 : 1,
-            }}
-          >
-            + Add tier
-          </button>
-          <span style={{ fontSize: 11, color: palette.textMuted }}>
-            {tierCount >= MAX_TIERS
-              ? `Maximum ${MAX_TIERS} tiers`
-              : 'New tiers start at 100% LP / 0% GP — set the GP split to create a promote.'}
+        <button
+          type="button"
+          onClick={() => setAddNote('')}
+          disabled={tierCount >= MAX_TIERS}
+          title={tierCount >= MAX_TIERS
+            ? `Maximum ${MAX_TIERS} tiers`
+            : 'New tiers start at 100% LP / 0% GP — set the GP split to create a promote.'}
+          style={{
+            display: 'grid', gridTemplateColumns: TIER_GRID, width: '100%', textAlign: 'left',
+            alignItems: 'center', gap: 0, padding: '9px 0', fontFamily: 'inherit',
+            background: 'transparent', borderTop: `1px solid ${palette.border}`,
+            borderLeft: 'none', borderRight: 'none',
+            borderBottom: `1px dashed ${tierCount >= MAX_TIERS ? palette.border : palette.linkBlue}`,
+            color: tierCount >= MAX_TIERS ? palette.textMuted : palette.linkBlue,
+            cursor: tierCount >= MAX_TIERS ? 'default' : 'pointer',
+            opacity: tierCount >= MAX_TIERS ? 0.55 : 1,
+          }}
+        >
+          <span style={{ display: 'inline-flex', justifyContent: 'center', alignItems: 'center' }}>
+            <Plus size={13} aria-hidden="true" />
           </span>
-        </div>
+          <span style={{ gridColumn: '2 / -1', fontSize: 11.5, fontWeight: 600 }}>
+            Add tier
+            <span style={{ fontWeight: 400, color: palette.textMuted, marginLeft: 8 }}>
+              {tierCount >= MAX_TIERS
+                ? `Maximum ${MAX_TIERS} tiers`
+                : 'starts at 100% LP / 0% GP — set the GP split to create a promote'}
+            </span>
+          </span>
+        </button>
       )}
       <div style={{ fontSize: 11, color: palette.textMuted, marginTop: 9, lineHeight: 1.5 }}>
         LP split is always 100% − GP split. Hurdles are LP IRR thresholds; the final tier takes everything

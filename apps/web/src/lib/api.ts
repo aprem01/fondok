@@ -770,7 +770,11 @@ export interface TimelineEvent {
   start: string | null;          // ISO date, null until close date is set
   duration_months: number | null;
   finish: string | null;
-  basis: 'derived' | 'assumption' | 'pending';
+  /** Mirrors ``apps/worker/app/engines/timeline.py::TimelineEvent.basis``.
+   *  FON-44 §2 added ``linked``: the milestone CONSUMES an editable Investment
+   *  assumption (Hotel Purchase is the Acquisition Date itself) rather than
+   *  being computed from one. */
+  basis: 'derived' | 'linked' | 'assumption' | 'pending';
 }
 
 export interface TimelineResponse {

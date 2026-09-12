@@ -27,6 +27,8 @@ import { useEngineRun } from '@/lib/hooks/useEngineRun';
 import { useTraceGraph } from '@/lib/hooks/useValueTrace';
 import { IntroCard } from '@/components/help/IntroCard';
 import { Refused, useRefusal, REFUSAL_GLYPH } from '@/components/help/Refused';
+import { useSource } from '@/lib/hooks/useDealProvenance';
+import { sourceKind } from '@/lib/provenance';
 import {
   KpiTile,
   SectionCard,
@@ -240,6 +242,37 @@ export default function InvestmentTab() {
     [invOverrides, dealId, liveMode, toast, refreshDeal, refreshTimeline],
   );
 
+  // FON-44 §2 — the renovation WINDOW. `apps/worker/app/api/model.py` reads
+  // `renovation_start_offset_months` and `renovation_duration_months` out of
+  // `field_overrides` and hands them to `build_timeline`; there has simply been
+  // no UI for either, so both rows badged "Linked" as if another engine owned
+  // them. Like the close date they shape the timeline, not an engine result, so
+  // the save refetches the timeline instead of re-running the model.
+  const onSaveWindowMonths = useCallback(
+    async (key: string, months: number, note = '') => {
+      if (!liveMode) {
+        toast('Editing is disabled on demo deals', { type: 'info' });
+        return;
+      }
+      const patch = { [key]: months };
+      if (!note.trim() && patchRequiresNote(patch)) {
+        toast(NOTE_REQUIRED_MESSAGE, { type: 'error' });
+        return;
+      }
+      const next = applyOverridePatch(invOverrides, patch, note);
+      try {
+        await api.deals.update(dealId, { field_overrides: next });
+        toast('Saved — updating the timeline…', { type: 'success' });
+        void refreshDeal?.();
+        refreshTimeline();
+      } catch (err) {
+        const detail = err instanceof WorkerError ? err.body : String(err);
+        toast(`Save failed: ${detail || 'worker rejected update'}`, { type: 'error' });
+      }
+    },
+    [invOverrides, dealId, liveMode, toast, refreshDeal, refreshTimeline],
+  );
+
   // Wave 2 P2.5 — local capex plan state (worker capex_plan output not wired yet).
   const [capexPlan, setCapexPlan] = useState<CapexPlanState>(DEFAULT_CAPEX_PLAN);
 
@@ -387,6 +420,24 @@ export default function InvestmentTab() {
   const grossExit = wGrossSale;
   const exitPerKey = (has(grossExit) && has(keys)) ? grossExit / keys : undefined;
   const sellingCosts = wSellingCosts;
+  // FON-44 §1 (Sam, 9/11) — "the underlying 2.00% is currently hidden; only the
+  // calculated dollar amount is displayed." The rate is a real, routed engine
+  // assumption (`engine_runner` seeds `selling_costs_pct: 0.02`, `returns.py`
+  // consumes it); it simply had no row. Read it from the returns engine's own
+  // declared input for `selling_costs` — the SAME run the dollar figure below
+  // comes from, so the two can never disagree — falling back to the ratio of
+  // the two engine outputs (`selling_costs = gross_sale_price ×
+  // selling_costs_pct`, returns.py:484) on a run whose provenance sidecar
+  // predates the trace. Never a hard-coded 2%.
+  const sellingPct = ((): number | undefined => {
+    const traced = returnsTrace
+      .get('selling_costs')
+      ?.inputs?.find((i) => i.assumption_key === 'selling_costs_pct' || i.name === 'selling_costs_pct');
+    if (typeof traced?.value === 'number') return traced.value;
+    return (has(sellingCosts) && has(grossExit) && grossExit > 0)
+      ? sellingCosts / grossExit
+      : undefined;
+  })();
   const netExit = has(grossExit)
     ? grossExit - (sellingCosts ?? 0)
     : undefined;
@@ -560,6 +611,22 @@ export default function InvestmentTab() {
               },
               { id: 'exitPerKey', label: 'Exit Value / Key', kind: 'calc', state: 'calculated', value: money(exitPerKey) },
               {
+                id: 'sellingCostsPct', label: 'Disposition Cost %', kind: 'input',
+                // Always an analyst assumption — seeded or overridden, never
+                // calculated; the OVERRIDDEN flag is what turns the value blue.
+                state: 'assumption',
+                overridden: overridden('selling_costs_pct'),
+                note: 'Blended cost of SELLING the asset — brokerage, legal, transfer. Separate from the acquisition Closing Costs % above.',
+                value: (
+                  <AssumptionField value={sellingPct} editable={liveMode} format={(v) => fmtPct(v, 2)}
+                    toDraft={(v) => (v * 100).toFixed(2)} suffix="%"
+                    parse={(s) => { const n = parseFloat(s); return Number.isFinite(n) && n >= 0 ? n / 100 : null; }}
+                    unit="pct_fraction" onSave={(v, note) => onSaveAssumption('selling_costs_pct', v, note)}
+                    noteKey="selling_costs_pct" testId="disposition-cost-pct" width="w-20"
+                    color={valueColor('input', false, overridden('selling_costs_pct'))} />
+                ),
+              },
+              {
                 id: 'sellingCosts', label: 'Disposition Costs', kind: 'calc',
                 state: tracedState('returns', 'selling_costs') ?? 'calculated', value: money(sellingCosts),
               },
@@ -577,6 +644,16 @@ export default function InvestmentTab() {
             const renoEvent = (timeline?.events ?? []).find((ev) => /renov/i.test(ev.event));
             const renoStartAvail = !!renoEvent?.start;
             const renoDurAvail = !!(renoEvent && (renoEvent.duration_months ?? 0) > 0);
+            // Renovation Start is PERSISTED as a month offset from close, so the
+            // editor edits months while the row displays the date the worker
+            // resolved — no fabricated calendar picker, and no second copy of
+            // the worker's default offset in the browser: the effective offset
+            // is read back out of the dates the timeline endpoint returned.
+            const renoStartOffset = monthsBetween(timeline?.close_date, renoEvent?.start)
+              ?? numericOverride(invOverrides, 'renovation_start_offset_months');
+            const renoDurationMonths = renoEvent?.duration_months
+              ?? numericOverride(invOverrides, 'renovation_duration_months');
+            const closeDateLabel = fmtISODate(timeline?.close_date);
             const renovation: RowDef[] = [
               { id: 'renoBudget', label: 'Renovation Budget', kind: 'input', bold: false,
                 state: overridden('renovation_budget') ? 'assumption' : 'assumption',
@@ -616,14 +693,47 @@ export default function InvestmentTab() {
               { id: 'renoTotal', label: 'Total Renovation / PIP', kind: 'calc', bold: true, state: 'calculated', value: money(renoTotal) },
               { id: 'renoTotalKey', label: '$ / Key', kind: 'calc', state: 'calculated', value: (has(renoTotal) && has(keys)) ? money(renoTotal / keys) : '—' },
               { id: 'renoSf', label: '$ / SF', kind: 'awaiting', state: 'awaiting_data', value: '—' },
-              { id: 'renoStart', label: 'Renovation Start',
-                kind: renoStartAvail ? 'linked' : 'awaiting',
-                state: renoStartAvail ? 'linked' : 'awaiting_data',
-                value: renoStartAvail ? fmtISODate(renoEvent!.start) : '—' },
-              { id: 'renoDuration', label: 'Duration',
-                kind: renoDurAvail ? 'linked' : 'awaiting',
-                state: renoDurAvail ? 'linked' : 'awaiting_data',
-                value: renoDurAvail ? `${renoEvent!.duration_months} months` : '—' },
+              // FON-44 §2 (Sam, 9/11): "Renovation Start and Duration show the
+              // green linked indicator … Timeline identifies these as Investment
+              // assumptions." They are — and the worker has always accepted both
+              // as overrides. Blue dot, editable, owned here.
+              { id: 'renoStart', label: 'Renovation Start', kind: 'input',
+                state: overridden('renovation_start_offset_months') ? 'assumption'
+                  : renoStartOffset != null ? 'assumption' : 'awaiting_data',
+                overridden: overridden('renovation_start_offset_months'),
+                note: renoStartAvail
+                  ? `Months after the acquisition close (${closeDateLabel}) — edit the offset, the date follows`
+                  : 'Set the Acquisition Date above to resolve this to a calendar date',
+                value: (
+                  <AssumptionField
+                    value={renoStartOffset}
+                    editable={liveMode}
+                    format={(v) => (renoStartAvail ? fmtISODate(renoEvent!.start) : `${v} months after close`)}
+                    toDraft={(v) => String(v)} suffix="months after close"
+                    parse={(s) => { const n = parseInt(s, 10); return Number.isFinite(n) && n >= 0 && n <= 120 ? n : null; }}
+                    unit="months"
+                    onSave={(v, note) => onSaveWindowMonths('renovation_start_offset_months', v, note)}
+                    noteKey="renovation_start_offset_months" testId="renovation-start-offset" width="w-16"
+                    color={valueColor('input', false, overridden('renovation_start_offset_months'))} />
+                ),
+              },
+              { id: 'renoDuration', label: 'Duration', kind: 'input',
+                state: overridden('renovation_duration_months') ? 'assumption'
+                  : renoDurAvail ? 'assumption' : 'awaiting_data',
+                overridden: overridden('renovation_duration_months'),
+                value: (
+                  <AssumptionField
+                    value={renoDurationMonths}
+                    editable={liveMode}
+                    format={(v) => `${v} months`}
+                    toDraft={(v) => String(v)} suffix="months"
+                    parse={(s) => { const n = parseInt(s, 10); return Number.isFinite(n) && n > 0 && n <= 120 ? n : null; }}
+                    unit="months"
+                    onSave={(v, note) => onSaveWindowMonths('renovation_duration_months', v, note)}
+                    noteKey="renovation_duration_months" testId="renovation-duration" width="w-16"
+                    color={valueColor('input', false, overridden('renovation_duration_months'))} />
+                ),
+              },
             ];
 
             // ─── Ongoing Capex section (hold-period, funded from operations) ──
@@ -651,7 +761,14 @@ export default function InvestmentTab() {
                   ? `Forward NOI ${fmtCurrency(terminalNoi)} ÷ Exit Cap ${fmtPct(exitCap, 2)} → Gross Exit ${fmtCurrency(grossExit)} − costs → Net ${fmtCurrency(netExit)}`
                   : undefined,
               },
-              { title: 'Initial Renovation / PIP', note: 'Day-one capital · sits in total uses', rows: renovation },
+              // FON-44 §3 — the two PIPs are different buckets, named for what
+              // each is. This one funds AT CLOSE and is already a line in
+              // Sources & Uses; the Hold-Period Capex Plan below is funded from
+              // operations and never appears there. Naming and copy only.
+              {
+                title: 'Initial Renovation / PIP', note: 'Day-one capital, funded at close', rows: renovation,
+                formula: 'Already counted once in Sources & Uses, as the Renovation use line — the Hold-Period Capex Plan below is a different bucket, not a duplicate of this one.',
+              },
               {
                 title: 'Ongoing Capex', note: 'Hold-period capital · funded from operations', rows: ongoing,
                 formula: 'Ongoing capex never enters Sources & Uses — only the day-one renovation above does.',
@@ -805,16 +922,72 @@ interface CapitalLine { label: string; amount: number; pct?: number | null; is_t
 interface SURow {
   label: string; amount: number | null; total: boolean; kind: ValueKind;
   state: ValueState; note?: string; link?: { label: string; tab: string };
+  /** The canonical assumption key the worker says this line IS, when it is one. */
+  assumptionKey?: string;
 }
 
-function classifySU(label: string): { kind: ValueKind; note?: string; link?: { label: string; tab: string } } {
+/**
+ * FON-44 §2 (Sam, 9/11) — *"Working Capital $500K … is shown with the gray
+ * Calculated indicator, but Atlas confirms it is stored as an analyst
+ * `working_capital` assumption."* It was right: `classifySU` had no case for it
+ * and fell through to the catch-all.
+ *
+ * This MIRRORS the worker's own `_USE_LABEL_ASSUMPTIONS`
+ * (`apps/worker/app/engines/capital.py`) — the same exact-label map the capital
+ * engine uses to stamp each Sources & Uses line with the assumption it IS —
+ * rather than re-deriving the split from a label regex the worker knows
+ * nothing about. Add a use line there and it lands here by name.
+ *
+ * `Closing Costs` is deliberately absent from both: the worker's own comment
+ * calls it *"a calculation, not an assumption"*, so it keeps the grey dot.
+ */
+const SU_LABEL_ASSUMPTION: Record<string, { key: string; note: string }> = {
+  'Purchase Price': { key: 'purchase_price', note: 'Investment assumption — edit it on Deal Summary' },
+  Renovation: { key: 'renovation_budget', note: 'Investment assumption — edit the budget on Deal Summary' },
+  'Working Capital': { key: 'working_capital', note: 'Analyst assumption, not a calculated line' },
+  'Insurance Reserve': { key: 'insurance_reserve', note: 'Analyst assumption, not a calculated line' },
+  'Soft Costs': { key: 'soft_costs', note: 'Analyst assumption, not a calculated line' },
+  Contingency: { key: 'contingency', note: 'Analyst assumption, not a calculated line' },
+};
+
+function classifySU(label: string, renoHasContingency: boolean): {
+  kind: ValueKind;
+  note?: string;
+  link?: { label: string; tab: string };
+  assumptionKey?: string;
+} {
   if (/senior loan|senior debt/i.test(label)) {
     return { kind: 'linked', link: { label: '→ Debt', tab: 'debt' }, note: 'Sized in Debt — Investment consumes the result' };
   }
   if (/lender fee|loan fee|loan cost/i.test(label)) return { kind: 'linked', link: { label: '→ Debt', tab: 'debt' } };
   if (/key money/i.test(label)) return { kind: 'linked', link: { label: '→ Partnership', tab: 'partnership' } };
+  // The worker's own carve-out (`capital._property_line_input`): once a
+  // contingency is folded in, the Renovation line "is no longer the
+  // `renovation_budget` assumption — it is this engine's own
+  // `renovation_total_usd`". So it is a calculation, and says so.
+  if (label === 'Renovation' && renoHasContingency) {
+    return { kind: 'calc', note: 'Renovation budget plus contingency — calculated, edit the budget on Deal Summary' };
+  }
+  const mapped = SU_LABEL_ASSUMPTION[label];
+  if (mapped) return { kind: 'input', note: mapped.note, assumptionKey: mapped.key };
   if (/equity/i.test(label)) return { kind: 'calc', note: 'Allocated between sponsor and LP in Partnership' };
   return { kind: 'calc' };
+}
+
+/**
+ * The provenance badge for a Sources & Uses line that the worker names as an
+ * assumption. Reads the state the WORKER reports for that key
+ * (`/deals/{id}/assumption_sources`) rather than re-deriving it: a purchase
+ * price lifted from the OM badges as document-sourced, a seed or an analyst
+ * override as an assumption. With no tag — an older run, or no provider — it
+ * falls back to `assumption`, which is what the worker's map already says the
+ * line is. It never falls back to `calculated`; that was the bug.
+ */
+function useSUState(assumptionKey: string | undefined, fallback: ValueState): ValueState {
+  const resolved = useSource(assumptionKey);
+  if (!assumptionKey) return fallback;
+  if (!resolved?.source) return 'assumption';
+  return sourceKind(resolved.source) === 'grounded' ? 'document_sourced' : 'assumption';
 }
 
 function SourcesUses({
@@ -826,11 +999,13 @@ function SourcesUses({
 }) {
   const wSources = getEngineField<CapitalLine[]>(outputs, 'capital', 'sources') ?? [];
   const wUses = getEngineField<CapitalLine[]>(outputs, 'capital', 'uses') ?? [];
+  const renoHasContingency =
+    (getEngineField<number>(outputs, 'capital', 'renovation_contingency_usd') ?? 0) > 0;
 
   const toRows = (lines: CapitalLine[], side: 'uses' | 'sources'): SURow[] =>
     lines.map((l) => {
       const total = !!l.is_total;
-      const c = classifySU(l.label);
+      const c = classifySU(l.label, renoHasContingency);
       return {
         label: l.label,
         amount: typeof l.amount === 'number' ? l.amount : null,
@@ -839,6 +1014,7 @@ function SourcesUses({
         state: total ? 'calculated' : kindToState(c.kind),
         note: total ? undefined : c.note,
         link: total ? undefined : c.link,
+        assumptionKey: total ? undefined : c.assumptionKey,
       };
     });
 
@@ -895,42 +1071,15 @@ function SourcesUses({
               <span style={{ textAlign: 'right' }}>/ Key</span>
               <span style={{ textAlign: 'right' }}>%</span>
             </div>
-            {col.rows.map((r, i) => {
-              const perKey = (r.amount != null && keys && keys > 0 && !r.total) ? fmtCurrency(r.amount / keys) : (r.total ? '' : '—');
-              const pct = r.amount != null && usesTotal ? `${((r.amount / (col.title === 'Uses' ? usesTotal : sourcesTotal)) * 100).toFixed(1)}%` : '—';
-              const color = valueColor(r.total ? 'calc' : r.kind, r.total, false);
-              return (
-                <div key={`${r.label}-${i}`}>
-                  <div style={{
-                    display: 'grid', gridTemplateColumns: suGrid, fontSize: 12.5, padding: '6px 0',
-                    borderBottom: `1px solid ${palette.hairlineRow}`, alignItems: 'center',
-                  }}>
-                    <span style={{ display: 'flex', alignItems: 'center', gap: 7, minWidth: 0 }}>
-                      <ProvenanceDot state={r.state} size={8} />
-                      <span style={{ color: palette.textSecondary, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                        {r.label}
-                      </span>
-                      {r.link && (
-                        <a href={`?tab=${r.link.tab}`}
-                          style={{ fontSize: 10.5, color: palette.linkBlue, cursor: 'pointer', fontWeight: 600, whiteSpace: 'nowrap', textDecoration: 'none' }}>
-                          {r.link.label}
-                        </a>
-                      )}
-                    </span>
-                    <span style={{ textAlign: 'right', color, fontWeight: r.total ? 700 : 400, fontVariantNumeric: 'tabular-nums' }}>
-                      {r.amount != null ? fmtCurrency(r.amount) : '—'}
-                    </span>
-                    <span style={{ textAlign: 'right', color: palette.textMuted, fontVariantNumeric: 'tabular-nums' }}>{perKey}</span>
-                    <span style={{ textAlign: 'right', color: palette.textMuted, fontVariantNumeric: 'tabular-nums' }}>{r.total ? '100.0%' : pct}</span>
-                  </div>
-                  {r.note && (
-                    <div style={{ fontSize: 10.5, color: palette.textMuted, padding: '0 0 6px 15px', lineHeight: 1.45 }}>
-                      {r.note}
-                    </div>
-                  )}
-                </div>
-              );
-            })}
+            {col.rows.map((r, i) => (
+              <SULineRow
+                key={`${r.label}-${i}`}
+                row={r}
+                grid={suGrid}
+                keys={keys}
+                columnTotal={col.title === 'Uses' ? usesTotal : sourcesTotal}
+              />
+            ))}
             {col.rows.length === 0 && (
               <div style={{ fontSize: 12.5, color: palette.textMuted, padding: '10px 0' }}>
                 Run the model to populate {col.title.toLowerCase()}.
@@ -940,6 +1089,57 @@ function SourcesUses({
           </SectionCard>
         ))}
       </div>
+    </div>
+  );
+}
+
+/** One Sources & Uses line. Its own component so the row can read the worker's
+ *  provenance for the assumption it is (FON-44 §2) — one hook, one row. */
+function SULineRow({
+  row, grid, keys, columnTotal,
+}: {
+  row: SURow;
+  grid: string;
+  keys: number | undefined;
+  columnTotal: number;
+}) {
+  const state = useSUState(row.assumptionKey, row.state);
+  const perKey = (row.amount != null && keys && keys > 0 && !row.total)
+    ? fmtCurrency(row.amount / keys)
+    : (row.total ? '' : '—');
+  const pct = (row.amount != null && columnTotal)
+    ? `${((row.amount / columnTotal) * 100).toFixed(1)}%`
+    : '—';
+  const color = valueColor(row.total ? 'calc' : row.kind, row.total, false);
+  return (
+    <div>
+      <div style={{
+        display: 'grid', gridTemplateColumns: grid, fontSize: 12.5, padding: '6px 0',
+        borderBottom: `1px solid ${palette.hairlineRow}`, alignItems: 'center',
+      }}>
+        <span style={{ display: 'flex', alignItems: 'center', gap: 7, minWidth: 0 }}>
+          <ProvenanceDot state={state} size={8} />
+          <span style={{ color: palette.textSecondary, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+            {row.label}
+          </span>
+          {row.link && (
+            <a href={`?tab=${row.link.tab}`}
+              style={{ fontSize: 10.5, color: palette.linkBlue, cursor: 'pointer', fontWeight: 600, whiteSpace: 'nowrap', textDecoration: 'none' }}>
+              {row.link.label}
+            </a>
+          )}
+        </span>
+        <span style={{ textAlign: 'right', color, fontWeight: row.total ? 700 : 400, fontVariantNumeric: 'tabular-nums' }}>
+          {row.amount != null ? fmtCurrency(row.amount) : '—'}
+        </span>
+        <span style={{ textAlign: 'right', color: palette.textMuted, fontVariantNumeric: 'tabular-nums' }}>{perKey}</span>
+        <span style={{ textAlign: 'right', color: palette.textMuted, fontVariantNumeric: 'tabular-nums' }}>{row.total ? '100.0%' : pct}</span>
+      </div>
+      {row.note && (
+        <div style={{ fontSize: 10.5, color: palette.textMuted, padding: '0 0 6px 15px', lineHeight: 1.45 }}>
+          {row.note}
+        </div>
+      )}
     </div>
   );
 }
@@ -972,13 +1172,20 @@ function TimelinePanel({
     ? `${holdYears != null ? `${holdYears}-year hold` : 'Hold'} · ${fmtLongDate(timeline.close_date)} → ${fmtLongDate(timeline.exit_date)}`
     : 'Set the Acquisition Date on Deal Summary to populate dates';
 
+  // FON-44 §2 — `linked` joined the worker's basis vocabulary so a milestone
+  // that CONSUMES an editable Investment assumption (Hotel Purchase is the
+  // Acquisition Date itself) stops claiming Fondok calculated it. Anything
+  // genuinely arithmetic on that date — the Exit included — stays 'derived'.
   const ownerFor = (basis: string): string => {
     if (basis === 'assumption') return 'Investment assumption';
+    if (basis === 'linked') return 'Linked from Deal Summary';
     if (basis === 'pending') return 'Awaiting acquisition date';
     return 'Calculated';
   };
   const stateForBasis = (basis: string): ValueState =>
-    basis === 'assumption' ? 'assumption' : basis === 'pending' ? 'awaiting_data' : 'calculated';
+    basis === 'assumption' ? 'assumption'
+      : basis === 'linked' ? 'linked'
+        : basis === 'pending' ? 'awaiting_data' : 'calculated';
 
   const phaseColor = (label: string): string =>
     /renov/i.test(label) ? 'oklch(55% 0.12 260)'
@@ -1176,6 +1383,25 @@ function AssumptionField({
       />
     </span>
   );
+}
+
+/** Whole months from `fromIso` to `toIso` (both ISO dates), or null. The
+ *  worker builds every timeline date by adding whole months to the close date
+ *  (`timeline._add_months`), so this reads its offset back exactly. */
+function monthsBetween(fromIso: string | null | undefined, toIso: string | null | undefined): number | null {
+  const a = fromIso ? /^(\d{4})-(\d{2})-(\d{2})/.exec(fromIso) : null;
+  const b = toIso ? /^(\d{4})-(\d{2})-(\d{2})/.exec(toIso) : null;
+  if (!a || !b) return null;
+  const months = (Number(b[1]) - Number(a[1])) * 12 + (Number(b[2]) - Number(a[2]));
+  return months >= 0 ? months : null;
+}
+
+/** A numeric `field_overrides` entry (envelope or legacy scalar), or undefined. */
+function numericOverride(overrides: Record<string, unknown>, key: string): number | undefined {
+  const v = overrideScalar(overrides, key);
+  if (v == null || v === '') return undefined;
+  const n = typeof v === 'number' ? v : Number(v);
+  return Number.isFinite(n) ? n : undefined;
 }
 
 /** Format an ISO date (YYYY-MM-DD) as M/D/YYYY without a timezone shift. */

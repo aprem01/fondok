@@ -2,15 +2,27 @@
 /**
  * CapexPlanPanel - Wave 2 P2.5
  *
- * Three-bucket capex split (PIP / Non-PIP / ROI projects) with timing
- * phasing. Mounts on the Investment tab. No modals - all edits are
+ * Three-bucket capex split (hold-period PIP / Non-PIP / ROI projects) with
+ * timing phasing. Mounts on the Investment tab. No modals - all edits are
  * inline-edit-in-place per the Wave 1 no-modals rule.
  *
+ * FON-44 §3 (Sam, 9/11) — "two things are called PIP". FOUNDER DECISION: they
+ * are genuinely different buckets, and only the naming was lying.
+ *
+ *   INITIAL renovation / PIP  (Investment > Deal Summary)  funds AT CLOSE and
+ *      sits in Sources & Uses as the `Renovation` use line
+ *      (`capital.py` -> `reno_total`).
+ *   HOLD-PERIOD PIP           (this panel)                 phases capital OUT
+ *      OF OPERATIONS across the hold and NEVER enters Sources & Uses.
+ *
+ * Nothing here is a second copy of the day-one renovation, and no number moved
+ * to make that true - the sections are simply named for what each one is.
+ *
  * Bucket semantics:
- *   PIP        - total $ + per-year %, sum-to-100% (auto-rebalances).
- *   Non-PIP    - % of revenue + per-key per-year floor.
- *   ROI        - list of projects: name, invest year, invest $, lift $,
- *                ramp months. Add / delete inline.
+ *   Hold-period PIP - total $ + per-year %, sum-to-100% (auto-rebalances).
+ *   Non-PIP         - % of revenue + per-key per-year floor.
+ *   ROI             - list of projects: name, invest year, invest $, lift $,
+ *                     ramp months. Add / delete inline.
  */
 import { useState, useMemo } from 'react';
 import { ChevronDown, ChevronUp, Plus, X } from 'lucide-react';
@@ -170,14 +182,24 @@ export default function CapexPlanPanel({ keys, revenueByYear, holdYears, state, 
 
   return (
     <Card className="p-5">
-      <div className="flex items-center justify-between mb-3">
-        <h3 className="text-[13px] font-semibold text-ink-900">Capex Plan</h3>
+      <div className="flex items-center justify-between mb-1">
+        <h3 className="text-[13px] font-semibold text-ink-900">Hold-Period Capex Plan</h3>
         <span className="text-[11px] text-ink-500 tabular-nums">Total {holdYears}-yr capex {fmtCurrency(totalCapexAcrossHold)}</span>
       </div>
+      {/* FON-44 §3 — say which PIP this is. The day-one renovation above is a
+          different bucket, funded at close and already in Sources & Uses. */}
+      <p className="text-[11px] text-ink-500 leading-relaxed mb-3">
+        Capital spent <span className="font-medium">during the hold and funded from operations</span>.
+        None of it enters Sources &amp; Uses — the day-one Initial Renovation / PIP above does, once.
+      </p>
 
-      <Section title="PIP (Property Improvement Plan)" open={openPIP} onToggle={() => setOpenPIP(o => !o)}>
+      <Section title="Additional / Hold-Period PIP" open={openPIP} onToggle={() => setOpenPIP(o => !o)}>
+        <p className="text-[11px] text-ink-500 leading-relaxed mb-2">
+          Property improvements phased across the hold — separate from, and not a re-statement of,
+          the initial renovation funded at close.
+        </p>
         <div className="grid grid-cols-2 gap-3">
-          <NumberField label="Total PIP" value={state.pip.total_usd} onChange={updatePIPTotal} step={50_000} format={v => fmtCurrency(v)} />
+          <NumberField label="Total hold-period PIP" value={state.pip.total_usd} onChange={updatePIPTotal} step={50_000} format={v => fmtCurrency(v)} />
           <NumberField label="Per Key" value={state.pip.per_key_usd} onChange={updatePIPPerKey} step={500} format={v => `$${v.toFixed(0)}/key`} />
         </div>
         <div className="mt-3">

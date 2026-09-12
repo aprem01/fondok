@@ -40,8 +40,15 @@ class TimelineEvent(BaseModel):
     start: str | None = None  # ISO date (YYYY-MM-DD), None until close date set
     duration_months: int | None = None
     finish: str | None = None
-    # 'derived' = from a real engine value; 'assumption' = default reno/ramp
-    # window; 'pending' = awaiting the acquisition close date.
+    # 'derived'    = computed from a real engine value (hold_years, term_years,
+    #                interest_only, refi_month);
+    # 'linked'     = the event IS an editable Investment assumption the analyst
+    #                owns elsewhere on the tab — it is consumed here, not
+    #                computed (FON-44 §2: Hotel Purchase is the Acquisition
+    #                Date, and calling it "Calculated" made the analyst's own
+    #                entry look like Fondok's arithmetic);
+    # 'assumption' = default reno/ramp window;
+    # 'pending'    = awaiting the acquisition close date.
     basis: str = "derived"
 
 
@@ -107,13 +114,19 @@ def build_timeline(
         return _iso(_add_months(close_date, offset_months))
 
     # 1. Hotel Purchase — the acquisition close (point event).
+    #    FON-44 §2 (Sam, 9/11): *"Hotel Purchase … is currently labeled
+    #    Calculated. This milestone is consuming the editable Acquisition
+    #    Date."* It is: this date is ``close_date`` itself, unmodified. It is
+    #    linked from the analyst's own assumption, not derived from one.
+    #    Every other date here really is arithmetic on it and stays 'derived'
+    #    — the Exit date included, which Sam called out explicitly.
     events.append(
         TimelineEvent(
             event="Hotel Purchase",
             start=_iso(close_date),
             duration_months=0,
             finish=_iso(close_date),
-            basis=dbasis,
+            basis="pending" if pending else "linked",
         )
     )
 
