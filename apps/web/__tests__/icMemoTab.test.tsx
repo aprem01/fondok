@@ -283,8 +283,11 @@ describe('ICMemoTab — editable investment thesis', () => {
     // Edit → the affordance flips to "Done editing".
     fireEvent.click(screen.getByText('Edit'));
     expect(screen.getByText('Done editing')).toBeInTheDocument();
-    // A Regenerate affordance is present alongside.
-    expect(screen.getByText('Regenerate')).toBeInTheDocument();
+    // A Regenerate affordance is present alongside. FON-54: it regenerates
+    // the whole AI-drafted narrative — thesis, highlights AND risks — so the
+    // memo can never hold two underwritings at once. `icMemoStaleNarrative`
+    // pins that contract; this only pins that the affordance is here.
+    expect(screen.getByText('Regenerate all')).toBeInTheDocument();
   });
 });
 

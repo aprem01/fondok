@@ -44,11 +44,44 @@
  *     "Pending analyst decision" until the analyst selects a verdict AND
  *     confirms it (`memo_recommendation_confirmed`). The Model Assessment card
  *     keeps showing the model's inferred verdict, labelled as such.
+ *
+ * FON-54 (Sam, 2026-09-14 — "IC Memo stale AI content"): after a Base Case
+ * change the model-driven figures updated, Regenerate refreshed the Investment
+ * Thesis to the current 32.2% IRR / 3.44x EM, and Key Highlights went on
+ * quoting the old -2.5% IRR / 0.88x EM / 0.78x DSCR. One memo, two
+ * underwritings.
+ *
+ * Two causes, both here:
+ *   1. `regenThesis` regenerated the THESIS ONLY. Highlights and risks had no
+ *      regenerate path at all. There is now ONE action — `applyRegenerate` —
+ *      that redrafts thesis + highlights + risks in a single `persist()` patch,
+ *      so the three can never be anchored to different runs.
+ *   2. Any list interaction (add / edit / delete / reorder / drag) called
+ *      `commitList`, which snapshotted the WHOLE generated list — the
+ *      `rec.highlights` draft included — into `field_overrides.memo_highlights`.
+ *      From then on `effHighlights = highlights ?? rec.highlights` served the
+ *      frozen copy for ever, and nothing recorded which run had produced it.
+ *
+ * So the prose is now STAMPED with the engine run it was drafted against
+ * (`memo_thesis_run_id` / `memo_highlights_run_id` / `memo_risks_run_id`) and
+ * compared on read against the live run (`runSignature`). A section that
+ * cannot be shown to match the current run is FLAGGED — never silently
+ * relabelled as fresh — using the shipped FON-75 vocabulary: the `stale_run`
+ * ReasonCode and `StaleRunBanner`'s anatomy (warn Card, one-click action, the
+ * affected sections listed by name).
+ *
+ * Analyst prose is never quietly destroyed: `memo_thesis_edited` (and its new
+ * siblings `memo_highlights_edited` / `memo_risks_edited`) mark a section as
+ * the analyst's, and regenerating one asks first — "Replace my edits" or
+ * "Keep my edits". A kept section keeps its OLD stamp and stays flagged,
+ * because keeping the analyst's words does not make their figures current.
  */
 
 import Link from 'next/link';
 import { useParams } from 'next/navigation';
 import { useState, useEffect, useMemo, useRef, useCallback } from 'react';
+import { History, RefreshCw, Loader2 } from 'lucide-react';
+import { Card } from '@/components/ui/Card';
 import { fmtCurrency, fmtPct } from '@/lib/format';
 import { stabilizedNoiBeforeReserve, STABILIZED_NOI_LABEL } from '@/lib/engines/noi';
 import { useEngineOutputs, getEngineField } from '@/lib/hooks/useEngineOutputs';
@@ -62,7 +95,7 @@ import { ProvenanceDot, palette } from '@/components/design';
 import { useToast } from '@/components/ui/Toast';
 import { openLineage } from '@/components/project/LineageDrawer';
 import { Refused } from '@/components/help/Refused';
-import { type ReasonCode } from '@/lib/ontology/reasons.generated';
+import { REASONS, type ReasonCode } from '@/lib/ontology/reasons.generated';
 
 // ── canonical colours (design/canonical/IC Memo Tab.dc.html) ───────────────
 const GREEN = 'oklch(45% 0.12 155)';
@@ -332,6 +365,103 @@ function asPoints(v: unknown): MemoPoint[] | null {
   return out;
 }
 
+// ──────────────────── AI-drafted narrative freshness (FON-54) ─────────────
+// The memo's three AI-drafted sections. They are regenerated as ONE SET and
+// each carries the engine run it was drafted against, so the memo can never
+// hold two underwritings at once without saying so.
+
+type AiSectionKey = 'thesis' | 'highlights' | 'risks';
+
+const AI_SECTION_ORDER: readonly AiSectionKey[] = ['thesis', 'highlights', 'risks'];
+
+const AI_SECTION_LABEL: Record<AiSectionKey, string> = {
+  thesis: 'Investment Thesis',
+  highlights: 'Key highlights',
+  risks: 'Key risks & considerations',
+};
+
+/** `field_overrides` key holding each section's prose. */
+const AI_CONTENT_KEY: Record<AiSectionKey, string> = {
+  thesis: 'memo_thesis',
+  highlights: 'memo_highlights',
+  risks: 'memo_risks',
+};
+
+/** `field_overrides` key marking the section as the ANALYST's writing. */
+const AI_EDITED_KEY: Record<AiSectionKey, string> = {
+  thesis: 'memo_thesis_edited',
+  highlights: 'memo_highlights_edited',
+  risks: 'memo_risks_edited',
+};
+
+/** `field_overrides` key stamping the run the section was drafted against. */
+const AI_RUN_KEY: Record<AiSectionKey, string> = {
+  thesis: 'memo_thesis_run_id',
+  highlights: 'memo_highlights_run_id',
+  risks: 'memo_risks_run_id',
+};
+
+/**
+ * The engine run the figures on screen came from — the stamp a drafted
+ * section carries so a later read can PROVE the prose and the numbers describe
+ * the same underwriting rather than assume it.
+ *
+ * FON-73 serves one canonical run, so in the normal case this is that run's
+ * id. A deal that has never completed a full chain falls back to the worker's
+ * legacy per-engine latest, where rows can carry different ids; the signature
+ * is then the sorted set of them. Either way it is READ from what the worker
+ * published (`engine_runner` owns minting run ids) — nothing is invented here.
+ */
+function runSignature(
+  outputs: { engines?: Record<string, { run_id?: string | null } | null> } | null,
+): string | null {
+  const ids = new Set<string>();
+  for (const row of Object.values(outputs?.engines ?? {})) {
+    const id = row?.run_id;
+    if (typeof id === 'string' && id.trim()) ids.add(id.trim());
+  }
+  return ids.size ? [...ids].sort().join('|') : null;
+}
+
+/**
+ * How current one AI-drafted section is.
+ *
+ *   `derived`  nothing is pinned — the section renders live from this run's
+ *              outputs, so it cannot disagree with them.
+ *   `current`  pinned prose whose stamp IS this run.
+ *   `stale`    pinned prose stamped with a DIFFERENT run — Sam's defect.
+ *   `unknown`  pinned prose with no stamp (written before this shipped), or a
+ *              run that cannot be named. Not provably stale, and not provably
+ *              current either — so it is disclosed, never assumed fresh.
+ */
+type Freshness = 'derived' | 'current' | 'stale' | 'unknown';
+
+function freshnessOf(pinned: boolean, stamp: string | null, runSig: string | null): Freshness {
+  if (!pinned) return 'derived';
+  if (!stamp || !runSig) return 'unknown';
+  return stamp === runSig ? 'current' : 'stale';
+}
+
+/** A section whose currency cannot be demonstrated must be shown as such. */
+const isFlagged = (f: Freshness): boolean => f === 'stale' || f === 'unknown';
+
+/** The chip each flagged state wears — neither claims more than it knows. */
+const FRESHNESS_CHIP: Record<'stale' | 'unknown', string> = {
+  stale: 'Earlier model run',
+  unknown: 'Run not recorded',
+};
+
+/** How each flagged state is spelled out in the banner's section list. */
+const FRESHNESS_NOTE: Record<'stale' | 'unknown', string> = {
+  stale: 'drafted against an earlier model run',
+  unknown: 'the run it was drafted against was never recorded',
+};
+
+/** A persisted run stamp, or null — blank/non-string reads as unstamped. */
+function asStamp(v: unknown): string | null {
+  return typeof v === 'string' && v.trim() ? v.trim() : null;
+}
+
 // ─────────────────────────── decision + diligence model ───────────────────
 // Canonical wording while no verdict has been selected AND confirmed. Must
 // match the worker's `app/memo_overrides.py::PENDING_DECISION` — the memo body
@@ -386,6 +516,157 @@ interface Sections {
   dil: boolean;
 }
 type MemoFormat = 'Condensed' | 'Standard' | 'Expanded';
+
+// ══════════════════ narrative-freshness surfaces (FON-54) ═════════════════
+
+/**
+ * The memo's narrative cannot be shown to describe the run its figures came
+ * from.
+ *
+ * Deliberately the FON-75 `StaleRunBanner` anatomy — warn Card, `History`
+ * glyph, the `stale_run` ontology explanation, the affected sections listed
+ * by name, one action that fixes it — because it is the same fact about a
+ * different artifact: there an old RUN read against a newer model, here older
+ * PROSE read against a newer run. Same vocabulary, not a second mechanism.
+ *
+ * Renders nothing when every section is provably current, which is the
+ * ordinary case.
+ */
+function MemoNarrativeStaleBanner({
+  sections,
+  freshness,
+  regenerating,
+  onRegenerate,
+}: {
+  sections: readonly AiSectionKey[];
+  freshness: Record<AiSectionKey, Freshness>;
+  regenerating: boolean;
+  onRegenerate: () => void;
+}) {
+  if (sections.length === 0) return null;
+  const many = sections.length > 1;
+  return (
+    <Card
+      className="p-4 mb-4 border-warn-500/40 bg-warn-50"
+      role="status"
+      data-testid="memo-narrative-stale"
+    >
+      <div className="flex items-start gap-3">
+        <History size={18} className="text-warn-700 flex-shrink-0 mt-0.5" aria-hidden="true" />
+        <div className="flex-1 min-w-0">
+          <div className="text-[13.5px] font-semibold text-warn-700">
+            {many
+              ? `${sections.length} narrative sections cannot be shown to match the current model run`
+              : `${AI_SECTION_LABEL[sections[0]]} cannot be shown to match the current model run`}
+          </div>
+          <p className="text-[12px] text-warn-700/80 mt-0.5">{REASONS.stale_run.explanation}</p>
+          <p className="text-[12px] text-warn-700/80 mt-1.5">
+            Every figure below comes from the current Base Case run.{' '}
+            {many ? 'These sections were written' : 'This section was written'} earlier and can still
+            quote the underwriting as it stood then — an IC memo must never show two different numbers
+            for the same deal. Regenerating redrafts the Investment Thesis, Key highlights and Key risks
+            together, from this run.
+          </p>
+          <ul className="mt-2 space-y-1" data-testid="memo-narrative-stale-sections">
+            {sections.map((k) => (
+              <li key={k} className="text-[12px] font-semibold text-warn-700">
+                {AI_SECTION_LABEL[k]} — {FRESHNESS_NOTE[freshness[k] as 'stale' | 'unknown']}
+              </li>
+            ))}
+          </ul>
+        </div>
+        <button
+          type="button"
+          onClick={onRegenerate}
+          disabled={regenerating}
+          className="inline-flex items-center gap-1.5 rounded-md bg-warn-700 px-3 py-1.5 text-[12px] font-medium text-white hover:bg-warn-600 disabled:opacity-60 flex-shrink-0"
+        >
+          {regenerating ? <Loader2 size={12} className="animate-spin" /> : <RefreshCw size={12} />}
+          {regenerating ? 'Regenerating…' : 'Regenerate all'}
+        </button>
+      </div>
+    </Card>
+  );
+}
+
+/**
+ * Regenerating would overwrite prose the analyst wrote themselves, so it asks
+ * first. There is no third path where the words vanish quietly.
+ *
+ * "Keep my edits" is not a free pass: the kept section keeps its original run
+ * stamp and goes on being flagged, because keeping someone's wording does not
+ * certify the figures inside it.
+ */
+function RegenerateConfirm({
+  sections,
+  busy,
+  onReplace,
+  onKeep,
+  onCancel,
+}: {
+  sections: readonly AiSectionKey[];
+  busy: boolean;
+  onReplace: () => void;
+  onKeep: () => void;
+  onCancel: () => void;
+}) {
+  const names = sections.map((k) => AI_SECTION_LABEL[k]);
+  const list =
+    names.length === 1
+      ? names[0]
+      : `${names.slice(0, -1).join(', ')} and ${names[names.length - 1]}`;
+  const many = names.length > 1;
+  return (
+    <Card
+      className="p-4 mb-4 border-brand-500/40 bg-surface"
+      role="alertdialog"
+      aria-label="Regenerate the memo narrative"
+      data-testid="memo-regen-confirm"
+    >
+      <div className="text-[13.5px] font-semibold text-ink-900">
+        {list} {many ? 'are' : 'is'} your own writing
+      </div>
+      <p className="text-[12px] text-ink-500 mt-1">
+        Regenerating redrafts the Investment Thesis, Key highlights and Key risks together from the
+        current model run, so the memo carries one underwriting. {list} {many ? 'were' : 'was'} edited
+        by hand — a redraft replaces {many ? 'those words' : 'that wording'}.
+      </p>
+      <div className="flex items-center gap-3 mt-3 flex-wrap">
+        <button
+          type="button"
+          disabled={busy}
+          onClick={onReplace}
+          data-testid="memo-regen-replace"
+          className="inline-flex items-center gap-1.5 rounded-md bg-ink-900 px-3 py-1.5 text-[12px] font-medium text-white disabled:opacity-60"
+        >
+          Replace my edits
+        </button>
+        <button
+          type="button"
+          disabled={busy}
+          onClick={onKeep}
+          data-testid="memo-regen-keep"
+          className="inline-flex items-center gap-1.5 rounded-md border border-border px-3 py-1.5 text-[12px] font-medium text-ink-900 disabled:opacity-60"
+        >
+          Keep my edits
+        </button>
+        <button
+          type="button"
+          disabled={busy}
+          onClick={onCancel}
+          data-testid="memo-regen-cancel"
+          className="text-[12px] font-medium text-ink-500 disabled:opacity-60"
+        >
+          Cancel
+        </button>
+      </div>
+      <p className="text-[11.5px] text-ink-500 mt-2">
+        Keeping {many ? 'them' : 'it'} leaves {many ? 'those sections' : 'that section'} flagged as not
+        matching this run — your wording is preserved, its figures are not certified.
+      </p>
+    </Card>
+  );
+}
 
 // ═══════════════════════════════ view ═════════════════════════════════════
 
@@ -471,6 +752,18 @@ export default function ICMemoTab({ project }: { project: Project }) {
   const [regenerating, setRegenerating] = useState(false);
   const [highlights, setHighlights] = useState<MemoPoint[] | null>(null);
   const [risks, setRisks] = useState<MemoPoint[] | null>(null);
+  // FON-54 — analyst authorship of the two curated lists, the twin of
+  // `memo_thesis_edited`. A list the analyst has touched is the analyst's.
+  const [highlightsEdited, setHighlightsEdited] = useState(false);
+  const [risksEdited, setRisksEdited] = useState(false);
+  // FON-54 — the engine run each drafted section was written against.
+  const [stamps, setStamps] = useState<Record<AiSectionKey, string | null>>({
+    thesis: null, highlights: null, risks: null,
+  });
+  // Open while a regenerate is waiting on the analyst's answer about their
+  // own writing — never resolved silently.
+  const [regenPrompt, setRegenPrompt] = useState(false);
+  const regenPromptRef = useRef<HTMLDivElement | null>(null);
   const [rowMenu, setRowMenu] = useState<string | null>(null);
   const [drag, setDrag] = useState<{ list: ListKey; index: number } | null>(null);
 
@@ -510,6 +803,13 @@ export default function ICMemoTab({ project }: { project: Project }) {
       // legacy row with a verdict but no `_confirmed` flag reads as pending.
       setVerdictConfirmed(ov.memo_recommendation_confirmed === true);
     }
+    setHighlightsEdited(ov.memo_highlights_edited === true);
+    setRisksEdited(ov.memo_risks_edited === true);
+    setStamps({
+      thesis: asStamp(ov.memo_thesis_run_id),
+      highlights: asStamp(ov.memo_highlights_run_id),
+      risks: asStamp(ov.memo_risks_run_id),
+    });
     const persistedDil = asDiligence(ov.memo_diligence);
     if (persistedDil) setDil(persistedDil);
     hydratedRef.current = true;
@@ -517,11 +817,15 @@ export default function ICMemoTab({ project }: { project: Project }) {
 
   // Persist a patch into deal.field_overrides (durable round-trip; the worker
   // reads these memo_* keys back via app/memo_overrides.py).
+  //
+  // Returns the write's promise so a caller that must not report "done" before
+  // the round-trip lands (the regenerate affordance) can await it. Callers
+  // that fire and forget simply ignore it.
   const persist = useCallback(
-    (patch: Record<string, unknown>) => {
-      if (!liveMode) return; // mock / preview deals edit locally only
+    (patch: Record<string, unknown>): Promise<void> => {
+      if (!liveMode) return Promise.resolve(); // mock / preview deals edit locally only
       const next = { ...((deal?.field_overrides ?? {}) as Record<string, unknown>), ...patch };
-      api.deals
+      return api.deals
         .update(dealId, { field_overrides: next })
         .then(() => refresh())
         .catch(() => {});
@@ -563,19 +867,69 @@ export default function ICMemoTab({ project }: { project: Project }) {
   const effHighlights: MemoPoint[] = highlights ?? (rec ? rec.highlights.map((t) => ({ t, ai: true })) : []);
   const effRisks: MemoPoint[] = risks ?? (rec ? rec.risks.map((t) => ({ t, ai: true })) : []);
 
+  // ── FON-54: is each drafted section provably the CURRENT underwriting? ──
+  // `runSig` is read from the outputs the figures above came from, so the
+  // comparison is between the prose and the very numbers on screen.
+  const runSig = useMemo(() => runSignature(outputs), [outputs]);
+  // "Pinned" = prose persisted on the deal, which from that moment wins over
+  // the live `rec` synthesis for ever. Empty prose pins nothing (it renders
+  // no figure, and the worker's `has_memo_overrides` ignores it too).
+  const pinned: Record<AiSectionKey, boolean> = {
+    thesis: thesisText != null && thesisText.trim() !== '',
+    highlights: highlights != null && highlights.length > 0,
+    risks: risks != null && risks.length > 0,
+  };
+  const edited: Record<AiSectionKey, boolean> = {
+    thesis: thesisEdited,
+    highlights: highlightsEdited,
+    risks: risksEdited,
+  };
+  const fresh: Record<AiSectionKey, Freshness> = {
+    thesis: freshnessOf(pinned.thesis, stamps.thesis, runSig),
+    highlights: freshnessOf(pinned.highlights, stamps.highlights, runSig),
+    risks: freshnessOf(pinned.risks, stamps.risks, runSig),
+  };
+  const flaggedSections = AI_SECTION_ORDER.filter((k) => isFlagged(fresh[k]));
+
+  /**
+   * The stamp a section should carry after the analyst edits it.
+   *
+   * Curating a section that is derived-or-current snapshots THIS run's draft,
+   * so the snapshot is anchored here. Curating one that is already flagged
+   * does NOT make its figures current — editing a word in prose that quotes
+   * last week's IRR leaves it quoting last week's IRR — so the old stamp
+   * stands and the section stays flagged.
+   */
+  const anchorStamp = (k: AiSectionKey): string | null =>
+    fresh[k] === 'derived' || fresh[k] === 'current' ? runSig : stamps[k];
+
   // ── list editing ───────────────────────────────────────────────────────
   const current = useCallback(
     (list: ListKey): MemoPoint[] => (list === 'highlights' ? effHighlights : effRisks),
     [effHighlights, effRisks],
   );
-  const commitList = useCallback(
-    (list: ListKey, next: MemoPoint[]) => {
-      if (list === 'highlights') setHighlights(next);
-      else setRisks(next);
-      persist({ [list === 'highlights' ? 'memo_highlights' : 'memo_risks']: next });
-    },
-    [persist],
-  );
+  /**
+   * Commit one curated list.
+   *
+   * FON-54 root cause #2: this used to persist the list and nothing else. The
+   * FIRST add / edit / delete / reorder froze the whole generated draft into
+   * `field_overrides`, where `effHighlights = highlights ?? rec.highlights`
+   * served it for ever — with no record of which run had produced it, so
+   * nothing could ever notice it had gone out of date. The commit now carries
+   * both facts: this is the analyst's list, and this is the run it describes.
+   */
+  const commitList = (list: ListKey, next: MemoPoint[]) => {
+    const key: AiSectionKey = list;
+    if (list === 'highlights') { setHighlights(next); setHighlightsEdited(true); }
+    else { setRisks(next); setRisksEdited(true); }
+    const stamp = anchorStamp(key);
+    setStamps((s) => ({ ...s, [key]: stamp }));
+    void persist({
+      [AI_CONTENT_KEY[key]]: next,
+      [AI_EDITED_KEY[key]]: true,
+      [AI_RUN_KEY[key]]: stamp,
+    });
+  };
   const moveItem = (list: ListKey, i: number, dir: -1 | 1) => {
     const arr = current(list).slice();
     const j = i + dir;
@@ -632,22 +986,84 @@ export default function ICMemoTab({ project }: { project: Project }) {
     if (thesisEditing) {
       const text = thesisRef.current?.textContent?.trim() ?? effThesis;
       setThesisText(text);
-      persist({ memo_thesis: text, memo_thesis_edited: thesisEdited });
+      const stamp = anchorStamp('thesis');
+      setStamps((s) => ({ ...s, thesis: stamp }));
+      void persist({ memo_thesis: text, memo_thesis_edited: thesisEdited, memo_thesis_run_id: stamp });
     }
     setThesisEditing((e) => !e);
   };
   const onThesisInput = () => {
     if (!thesisEdited) setThesisEdited(true);
   };
-  const regenThesis = () => {
+
+  // ── FON-54: regenerate the AI-drafted narrative as ONE SET ─────────────
+  //
+  // The defect this replaces: `regenThesis` redrafted the thesis alone, so a
+  // regenerate left the memo holding a current thesis beside highlights and
+  // risks from the previous underwriting. There is now a single action over
+  // all three sections, applied in a single `persist()` patch — they cannot
+  // half-land, and they cannot end up anchored to different runs.
+
+  /** Sections whose prose is the analyst's own writing, not a draft. */
+  const analystOwned = AI_SECTION_ORDER.filter((k) => edited[k] && pinned[k]);
+
+  /**
+   * Redraft the narrative from the current run.
+   *
+   * `keep-edits` leaves analyst-owned sections exactly as they are — with
+   * their ORIGINAL stamp, so they keep being flagged. Keeping someone's words
+   * is not the same as certifying their figures.
+   */
+  const applyRegenerate = async (mode: 'replace' | 'keep-edits'): Promise<void> => {
+    if (!rec) return;
+    setRegenPrompt(false);
     setRegenerating(true);
-    setTimeout(() => {
-      setRegenerating(false);
-      setThesisText(null);
+    const keep = (k: AiSectionKey): boolean => mode === 'keep-edits' && edited[k] && pinned[k];
+    const patch: Record<string, unknown> = {};
+    const nextStamps = { ...stamps };
+    const stampSection = (k: AiSectionKey, content: unknown) => {
+      nextStamps[k] = runSig;
+      patch[AI_CONTENT_KEY[k]] = content;
+      patch[AI_EDITED_KEY[k]] = false;
+      patch[AI_RUN_KEY[k]] = runSig;
+    };
+    if (!keep('thesis')) {
+      setThesisText(rec.thesis);
       setThesisEdited(false);
       setThesisEditing(false);
-      persist({ memo_thesis: rec?.thesis ?? '', memo_thesis_edited: false });
-    }, 500);
+      stampSection('thesis', rec.thesis);
+    }
+    if (!keep('highlights')) {
+      const next = rec.highlights.map((t) => ({ t, ai: true }));
+      setHighlights(next);
+      setHighlightsEdited(false);
+      stampSection('highlights', next);
+    }
+    if (!keep('risks')) {
+      const next = rec.risks.map((t) => ({ t, ai: true }));
+      setRisks(next);
+      setRisksEdited(false);
+      stampSection('risks', next);
+    }
+    setStamps(nextStamps);
+    try {
+      await persist(patch);
+    } finally {
+      setRegenerating(false);
+    }
+  };
+
+  /** The Regenerate affordance — asks first when it would destroy prose. */
+  const regenerateNarrative = () => {
+    if (!rec || regenerating) return;
+    if (analystOwned.length) {
+      setRegenPrompt(true);
+      // Opened from the thesis card, the prompt renders above the fold — take
+      // the reader to the question rather than appearing to do nothing.
+      requestAnimationFrame(() => regenPromptRef.current?.scrollIntoView?.({ block: 'center' }));
+      return;
+    }
+    void applyRegenerate('replace');
   };
 
   // ── verdict — select, then confirm; both persisted ─────────────────────
@@ -892,6 +1308,25 @@ export default function ICMemoTab({ project }: { project: Project }) {
         <PendingBanner metrics={metrics} />
       ) : (
         <>
+          {/* ── FON-54: the narrative and the figures must describe one run ── */}
+          <MemoNarrativeStaleBanner
+            sections={flaggedSections}
+            freshness={fresh}
+            regenerating={regenerating}
+            onRegenerate={regenerateNarrative}
+          />
+          {regenPrompt && (
+            <div ref={regenPromptRef}>
+              <RegenerateConfirm
+                sections={analystOwned}
+                busy={regenerating}
+                onReplace={() => { void applyRegenerate('replace'); }}
+                onKeep={() => { void applyRegenerate('keep-edits'); }}
+                onCancel={() => setRegenPrompt(false)}
+              />
+            </div>
+          )}
+
           {/* ── Navy banner: identity · model assessment · IC recommendation ── */}
           <div
             style={{
@@ -1027,13 +1462,28 @@ export default function ICMemoTab({ project }: { project: Project }) {
                   <span style={{ fontSize: 9.5, fontWeight: 700, letterSpacing: '.06em', color: LINK, background: '#eef2fb', border: '1px solid #dbe3f5', borderRadius: 4, padding: '2px 6px' }}>
                     {thesisEdited ? 'Analyst edited' : 'AI drafted'}
                   </span>
+                  {isFlagged(fresh.thesis) && (
+                    <span
+                      data-testid="memo-stale-thesis"
+                      title={REASONS.stale_run.explanation}
+                      style={staleChip()}
+                    >
+                      {FRESHNESS_CHIP[fresh.thesis as 'stale' | 'unknown']}
+                    </span>
+                  )}
                 </span>
                 <span style={{ display: 'flex', gap: 14, alignItems: 'center' }}>
                   <span role="button" tabIndex={0} onClick={toggleThesisEdit} style={{ fontSize: 11.5, color: LINK, fontWeight: 600, cursor: 'pointer' }}>
                     {thesisEditing ? 'Done editing' : 'Edit'}
                   </span>
-                  <span role="button" tabIndex={0} onClick={regenThesis} style={{ fontSize: 11.5, color: palette.textSecondary, cursor: 'pointer' }}>
-                    {regenerating ? 'Regenerating…' : 'Regenerate'}
+                  <span
+                    role="button"
+                    tabIndex={0}
+                    onClick={regenerateNarrative}
+                    title="Redrafts the Investment Thesis, Key highlights and Key risks together, from the current model run"
+                    style={{ fontSize: 11.5, color: palette.textSecondary, cursor: 'pointer' }}
+                  >
+                    {regenerating ? 'Regenerating…' : 'Regenerate all'}
                   </span>
                 </span>
               </div>
@@ -1066,6 +1516,7 @@ export default function ICMemoTab({ project }: { project: Project }) {
                 title="Key highlights"
                 titleColor={GREEN}
                 items={effHighlights}
+                freshness={fresh.highlights}
                 listKey="highlights"
                 rowMenu={rowMenu}
                 setRowMenu={setRowMenu}
@@ -1083,6 +1534,7 @@ export default function ICMemoTab({ project }: { project: Project }) {
                 title="Key risks & considerations"
                 titleColor={AMBER}
                 items={effRisks}
+                freshness={fresh.risks}
                 listKey="risks"
                 rowMenu={rowMenu}
                 setRowMenu={setRowMenu}
@@ -1272,6 +1724,12 @@ export default function ICMemoTab({ project }: { project: Project }) {
                     ? 'Deliverables render from the latest completed Base Case model run.'
                     : 'Run the model to generate deliverables from the completed Base Case run.'}
                 </span>
+                {flaggedSections.length > 0 && (
+                  <span data-testid="memo-export-stale-note" style={{ fontSize: 11.5, color: AMBER, fontWeight: 600 }}>
+                    The narrative does not: {flaggedSections.map((k) => AI_SECTION_LABEL[k]).join(', ')} cannot be
+                    shown to match this run. Regenerate before you send a deliverable out.
+                  </span>
+                )}
               </span>
               <span style={{ fontSize: 10.5, color: palette.textFaint }}>
                 {canExport ? 'Base Case · Latest model run' : 'Awaiting model run'}
@@ -1509,6 +1967,8 @@ interface MemoListProps {
   title: string;
   titleColor: string;
   items: MemoPoint[];
+  /** FON-54 — whether this list is provably the current run's (see `Freshness`). */
+  freshness: Freshness;
   listKey: ListKey;
   rowMenu: string | null;
   setRowMenu: (v: string | null) => void;
@@ -1524,11 +1984,22 @@ interface MemoListProps {
 }
 
 function MemoList(props: MemoListProps) {
-  const { title, titleColor, items, listKey, rowMenu, setRowMenu, rowRefs, onMove, onRemove, onAdd, onEditText, onFocusRow, drag, setDrag, onDropAt } = props;
+  const { title, titleColor, items, freshness, listKey, rowMenu, setRowMenu, rowRefs, onMove, onRemove, onAdd, onEditText, onFocusRow, drag, setDrag, onDropAt } = props;
   return (
     <div style={{ ...card(), display: 'flex', flexDirection: 'column' }}>
       <div style={{ padding: '11px 16px', borderBottom: '1px solid #f2f1ec', display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12 }}>
-        <span style={{ fontSize: 10.5, fontWeight: 700, letterSpacing: '.06em', color: titleColor, textTransform: 'uppercase' }}>{title}</span>
+        <span style={{ display: 'flex', alignItems: 'center', gap: 8, minWidth: 0 }}>
+          <span style={{ fontSize: 10.5, fontWeight: 700, letterSpacing: '.06em', color: titleColor, textTransform: 'uppercase' }}>{title}</span>
+          {isFlagged(freshness) && (
+            <span
+              data-testid={`memo-stale-${listKey}`}
+              title={REASONS.stale_run.explanation}
+              style={staleChip()}
+            >
+              {FRESHNESS_CHIP[freshness as 'stale' | 'unknown']}
+            </span>
+          )}
+        </span>
         <span style={{ fontSize: 10.5, color: palette.textFaint }}>{items.length} points</span>
       </div>
       <div style={{ padding: '4px 16px 10px', flex: 1 }}>
@@ -1601,6 +2072,14 @@ function MemoList(props: MemoListProps) {
 }
 function menuItem(): React.CSSProperties {
   return { fontSize: 12, color: palette.ink, padding: '7px 9px', borderRadius: 5, cursor: 'pointer' };
+}
+/** Warn-toned chip on a section whose currency cannot be demonstrated. */
+function staleChip(): React.CSSProperties {
+  return {
+    fontSize: 9.5, fontWeight: 700, letterSpacing: '.06em', color: AMBER,
+    background: 'oklch(97% 0.03 75)', border: '1px solid oklch(90% 0.05 75)',
+    borderRadius: 4, padding: '2px 6px', whiteSpace: 'nowrap', textTransform: 'none',
+  };
 }
 
 // ─────────────────────────── scenario summary ─────────────────────────────

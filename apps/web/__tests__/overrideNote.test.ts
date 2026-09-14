@@ -132,6 +132,15 @@ describe('requiresNote — a note is required iff the key routes into engine inp
     'memo_risks',
     'memo_recommendation_override',
     'memo_recommendation_confirmed',
+    // FON-54 — which analyst owns a section, and which engine run its prose
+    // was drafted against. Provenance OF an override, not an override; there
+    // is nothing to justify, and a 422 here would block the regenerate that
+    // stops the memo carrying two underwritings.
+    'memo_highlights_edited',
+    'memo_risks_edited',
+    'memo_thesis_run_id',
+    'memo_highlights_run_id',
+    'memo_risks_run_id',
   ];
   it.each(exempt)('%s does not', (key) => {
     expect(requiresNote(key)).toBe(false);

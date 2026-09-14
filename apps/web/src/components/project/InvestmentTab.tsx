@@ -171,6 +171,15 @@ export default function InvestmentTab() {
   const invOverrides = (deal?.field_overrides ?? {}) as Record<string, unknown>;
   const invRun = useEngineRun(liveMode ? dealId : '', 'returns', { runMode: 'all' });
   const invRerunRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // The debounce below schedules a run-all 1.2s after a save. Cancel it on
+  // unmount: a tab the analyst has already left must not kick a model run out
+  // of a timer nobody owns any more. (Surfaced by FON-54 — with the memo's new
+  // tests in the same parallel run, `investmentTab.test.tsx` could take longer
+  // than 1.2s per case and a previous case's timer fired into the next one's
+  // assertions. The leak was real either way.)
+  useEffect(() => () => {
+    if (invRerunRef.current) clearTimeout(invRerunRef.current);
+  }, []);
   // FON-74 — every Investment assumption is an engine input, so the save
   // carries the analyst's justification and writes the `{value, note}` envelope
   // the API demands. Refused here as well as server-side so the analyst gets
