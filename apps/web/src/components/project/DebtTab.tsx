@@ -328,6 +328,9 @@ export default function DebtTab() {
   }, [deal?.field_overrides]);
   const fullRun = useEngineRun(liveMode ? dealId : '', 'returns', { runMode: 'all' });
   const rerunTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // Same contract as OverviewTab and InvestmentTab: a debounced re-run must
+  // not survive the tab that scheduled it.
+  useEffect(() => () => { if (rerunTimerRef.current) clearTimeout(rerunTimerRef.current); }, []);
   useEffect(() => () => {
     if (rerunTimerRef.current) clearTimeout(rerunTimerRef.current);
   }, []);

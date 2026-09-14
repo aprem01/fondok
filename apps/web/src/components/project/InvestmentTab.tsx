@@ -171,6 +171,12 @@ export default function InvestmentTab() {
   const invOverrides = (deal?.field_overrides ?? {}) as Record<string, unknown>;
   const invRun = useEngineRun(liveMode ? dealId : '', 'returns', { runMode: 'all' });
   const invRerunRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // A save schedules the re-run 1.2s later. Without this, navigating away
+  // inside that window leaves the timer armed and the run fires from an
+  // unmounted tab — an engine run the analyst never asked for and cannot
+  // see. It also leaked across test files, which is how it was found.
+  // OverviewTab has carried this cleanup since it was written.
+  useEffect(() => () => { if (invRerunRef.current) clearTimeout(invRerunRef.current); }, []);
   // FON-74 — every Investment assumption is an engine input, so the save
   // carries the analyst's justification and writes the `{value, note}` envelope
   // the API demands. Refused here as well as server-side so the analyst gets
