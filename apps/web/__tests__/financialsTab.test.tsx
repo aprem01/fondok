@@ -18,7 +18,7 @@
  * Write-only — not part of the run set for this change.
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, fireEvent, cleanup, waitFor, act } from '@testing-library/react';
+import { render, screen, fireEvent, cleanup, waitFor, act, within } from '@testing-library/react';
 import React from 'react';
 import type { EngineOutputsResponse } from '@/lib/api';
 
@@ -272,7 +272,9 @@ describe('Financials · Projections — Exit cap is Investment-owned (read-only)
     expect(exitRow.querySelector('input')).toBeNull();
 
     // A "sourced from Investment →" reference deep-links to the Investment tab.
-    const ref = screen.getByText('Investment →');
+    // Scoped to the exit-cap row: FON-41 added a second Investment reference on
+    // the control bar (the derived Base year names its owner the same way).
+    const ref = within(exitRow).getByText('Investment →');
     expect(ref).toBeInTheDocument();
     expect(ref.closest('a')?.getAttribute('href')).toContain('tab=investment');
   });

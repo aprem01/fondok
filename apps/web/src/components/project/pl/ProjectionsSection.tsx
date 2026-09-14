@@ -452,6 +452,14 @@ export default function ProjectionsSection({
     getEngineField<number>(outputs, 'returns', 'revpar_growth') ??
     ovValue(overrides, 'revpar_growth') ??
     ASSUMPTION_DEFAULTS.revpar_growth;
+  // FON-41 — the deal's hold, which IS the projection period. Override first
+  // (analyst intent shows the moment it is saved, before the re-run lands),
+  // then the returns engine's published value. `years.length` is the same
+  // number from the revenue engine's own horizon and is the last resort.
+  const holdYearsAssumption =
+    ovValue(overrides, HOLD_YEARS_KEY) ??
+    getEngineField<number>(outputs, 'returns', 'hold_years') ??
+    null;
   const hasWorker =
     Array.isArray(revenueYears) && revenueYears.length > 0 &&
     Array.isArray(expenseYears) && expenseYears.length > 0;
@@ -479,13 +487,12 @@ export default function ProjectionsSection({
   // grounded Q&A endpoint (`/deals/{id}/ask`) is untouched; only this entry
   // point (button, handler, modal, prompt builder) is gone.
 
-  // Canonical Projections view controls. Period trims the forecast horizon
-  // shown in the table (real behaviour, capped at the engine-provided years);
-  // Base year + View are the design's chrome — the projection horizon and the
-  // Monthly breakout come from the engine, so they are presentational until a
-  // base-year override + monthly series are wired through (flagged follow-up).
+  // Canonical Projections view controls. This is the ONLY view state left on
+  // the bar: how many columns render, capped at the engine-provided years.
+  // FON-41 (2026-09-14) — Base year is derived and now says so, the projection
+  // period is a real `hold_years` edit, and the dead Annual/Monthly `projView`
+  // state is gone (nothing ever read it). See ``ProjectionsControls``.
   const [projYearsSel, setProjYearsSel] = useState<number | null>(null);
-  const [projView, setProjView] = useState<'annual' | 'monthly'>('annual');
 
   // FON-41 #2 — the acquisition close date. This is the deal assumption the
   // TIMELINE engine is built on (``engine_runner`` reads
@@ -665,8 +672,9 @@ export default function ProjectionsSection({
     toast('Projections exported', { type: 'success' });
   };
 
-  // Period control trims the forecast horizon shown (base year + N forecast
-  // years), capped at the engine-provided years.
+  // The "Show" control trims the columns RENDERED (base year + N forecast
+  // years), capped at the engine-provided years. It is a view filter, not an
+  // assumption — the modelled horizon is `hold_years` (the Projection period).
   const forecastCount = Math.max(1, years.length - 1);
   const shownForecast = projYearsSel == null ? forecastCount : Math.max(1, Math.min(projYearsSel, forecastCount));
   const visibleYears = years.slice(0, shownForecast + 1);
@@ -745,14 +753,19 @@ export default function ProjectionsSection({
       </div>
 
       <ProjectionsControls
+        dealId={dealId}
         years={years}
         closeDateIso={closeDateIso}
+        // The projection period the editor compares Save against. Falls back to
+        // the rendered horizon, which IS hold_years (the revenue engine emits
+        // one row per modelled year) — never a guess.
+        holdYears={holdYearsAssumption ?? years.length}
+        onSaveHoldYears={(v, note) => applyOverride(HOLD_YEARS_KEY, v, note)}
+        running={overrideCtx.running}
         shownForecast={shownForecast}
         forecastCount={forecastCount}
         onDec={() => setProjYearsSel(Math.max(1, shownForecast - 1))}
         onInc={() => setProjYearsSel(Math.min(forecastCount, shownForecast + 1))}
-        view={projView}
-        onView={setProjView}
       />
 
       <AssumptionsPanel
@@ -771,7 +784,7 @@ export default function ProjectionsSection({
           exitCapRate={exitCapRate}
           closeDateIso={closeDateIso}
           exitColumn={
-            // The Exit Year belongs to the FULL horizon. When the Period
+            // The Exit Year belongs to the FULL horizon. When the "Show"
             // control trims the view to a sub-window, hide it rather than let
             // an exit-year figure sit next to "Year 3" — the exit does not
             // move because fewer operating columns are on screen.
@@ -1992,90 +2005,254 @@ function SubCells({
 // tokens (inline styles + oklch/hex from the source).
 // ────────────────────────────────────────────────────────────────────
 
-// Canonical segmented control (#f0efeb track, white active pill).
-function SegControl<T extends string>({
-  options, value, onChange,
+/**
+ * The Projections control bar — FON-41 (Sam's MVP QA, 2026-09-14).
+ *
+ * Sam: *"Base Year / Period still appear non-editable. We should confirm
+ * whether this is intentional for MVP. If analysts are expected to control the
+ * projection period/base year, this needs to be resolved; otherwise we should
+ * remove/disable the appearance of editability."*
+ *
+ * Three controls lived on this bar and every one of them was in the third
+ * state — carrying an input's affordance while being something else. Each is
+ * now in exactly one of two states: genuinely editable, or plainly not a
+ * control.
+ *
+ *  • BASE YEAR — DERIVED. There is no ``base_year`` assumption anywhere in the
+ *    model: ``revenue.projection_start_year`` is computed from the acquisition
+ *    close date alone (``engines/revenue.py::projection_start_year`` — Year 1
+ *    is the calendar year of the FIRST OPERATING MONTH, close + 1 month, so a
+ *    December close starts Year 1 in the following year). A year-only editor
+ *    here would have to invent a month and a day to write that key back, and
+ *    the timeline engine anchors on the very same date. So the white boxed
+ *    chip — 1px border, 6px radius, white ground, i.e. this file's own text
+ *    input — is gone. The value now renders as a LINKED figure that names its
+ *    owner, exactly like Exit cap rate in the Assumptions panel below.
+ *
+ *  • PROJECTION PERIOD — a REAL assumption the worker already accepts, so it is
+ *    now genuinely editable. The key is ``hold_years``: the persisted-override
+ *    loop in ``engine_runner._load_engine_inputs`` lands it on
+ *    ``base['hold_years']`` (the generic scalar branch), and revenue / expense /
+ *    returns all size their horizon from it. It edits through the shared
+ *    ``useInlineEdit`` primitive with the FON-74 justification gate
+ *    (``requiresNote('hold_years')`` is true — it moves every engine number),
+ *    writing the SAME ``field_overrides.hold_years`` key the Investment tab
+ *    writes. One key, one contract, two surfaces — not one number with two
+ *    names.
+ *
+ *  • VIEW (Annual / Monthly) — REMOVED. ``projView`` was set by the toggle and
+ *    read by nothing: it moved a pill and changed no column. Unlike the
+ *    Grounded Worksheet's Granularity toggle (disabled with a reason until a
+ *    monthly statement is extracted) this one could never become live — the
+ *    revenue and expense engines project 365-day ANNUAL periods
+ *    (``engines/revenue.py::DAYS_PER_YEAR``), so there is no monthly proforma
+ *    series for it to show. The basis is stated in words instead.
+ *
+ * The −/+ stepper survives, relabelled for what it actually does: it trims the
+ * columns ON SCREEN. It is not an assumption and never was, so it no longer
+ * sits under a heading ("Period") that reads like the model's horizon.
+ *
+ * DELIBERATE DEVIATION from `design/canonical/Financials Tab.dc.html` (CLAUDE.md
+ * conflict rule 1 — an explicit product clarification outranks the canonical
+ * look — and rule 3, prototype values are never wired as data). The prototype
+ * draws Base year as a `<select>` whose options are a hard-coded 2021 / 2022 /
+ * 2023 / 2024: four fabricated years with nothing behind them, and no
+ * ``base_year`` key for the chosen one to be written to. It also draws the
+ * Annual / Monthly pair with no monthly series behind it. Do not "restore"
+ * either from the prototype.
+ */
+
+/** The ``field_overrides`` key the Projection period edits — the deal's hold. */
+const HOLD_YEARS_KEY = 'hold_years';
+
+/** The widest hold the editor accepts, mirroring the Investment tab's parser. */
+const MAX_HOLD_YEARS = 20;
+
+/**
+ * The editable Projection period (FON-41).
+ *
+ * ``field_overrides.hold_years`` — the same key, the same envelope and the same
+ * justification gate as the Investment tab's Hold Period field. It goes through
+ * ``useInlineEdit`` so Esc / click-away discard, and re-saving the current value
+ * unchanged writes nothing and re-runs nothing (``isNoOpEdit``).
+ */
+function ProjectionPeriodField({
+  holdYears, disabled, onCommit,
 }: {
-  options: { id: T; label: string }[];
-  value: T;
-  onChange: (v: T) => void;
+  /** The deal's hold. Always a real number — the section early-returns before
+   *  this bar renders when the projection has no years at all. */
+  holdYears: number;
+  disabled?: boolean;
+  onCommit: (years: number, note: string) => void | Promise<void>;
 }) {
+  const parse = (draft: string): number | null => {
+    const n = Number(draft.replace(/[^\d.-]/g, ''));
+    if (!Number.isFinite(n)) return null;
+    const years = Math.round(n);
+    // No clamping — a silent clamp persists a hold the analyst never chose.
+    return years >= 1 && years <= MAX_HOLD_YEARS ? years : null;
+  };
+  const ed = useInlineEdit<number>({
+    current: holdYears,
+    unit: 'years',
+    parse,
+    onSave: onCommit,
+    toDraft: (v) => String(v),
+    invalidMessage: `Enter a hold period between 1 and ${MAX_HOLD_YEARS} years.`,
+    // FON-74 — this one DOES move every engine number, so it is gated. Resolved
+    // from the shared contract, never hard-coded.
+    requireNote: requiresNote(HOLD_YEARS_KEY),
+  });
+
+  if (!ed.editing) {
+    return (
+      <button
+        type="button"
+        data-testid="projection-period-value"
+        disabled={disabled}
+        title="Click to change the projection period. Writes the deal’s hold period (field_overrides.hold_years) and re-runs the model."
+        onClick={() => ed.start(String(holdYears))}
+        style={{
+          fontSize: 12.5, fontWeight: 600, color: '#1a2233',
+          background: 'none', border: 'none', padding: 0, fontFamily: 'inherit',
+          cursor: disabled ? 'default' : 'pointer',
+          textDecoration: 'underline dotted',
+          fontVariantNumeric: 'tabular-nums',
+        }}
+      >
+        {`${holdYears} years`}
+      </button>
+    );
+  }
   return (
-    <div style={{ display: 'flex', background: '#f0efeb', borderRadius: 6, padding: 2 }}>
-      {options.map((o) => {
-        const active = o.id === value;
-        return (
-          <button
-            key={o.id}
-            type="button"
-            onClick={() => onChange(o.id)}
-            style={{
-              padding: '5px 11px', fontSize: 11.5, fontWeight: 600, cursor: 'pointer',
-              borderRadius: 5, border: 'none', fontFamily: 'inherit',
-              background: active ? '#fff' : 'transparent',
-              color: active ? '#1a2233' : '#6b6f76',
-              boxShadow: active ? '0 1px 2px rgba(0,0,0,.08)' : 'none',
-            }}
-          >
-            {o.label}
-          </button>
-        );
-      })}
-    </div>
+    <span ref={ed.containerRef} style={{ display: 'inline-flex', alignItems: 'flex-start', gap: 6 }}>
+      <input
+        type="number" min={1} max={MAX_HOLD_YEARS} value={ed.draft} autoFocus disabled={ed.saving}
+        aria-label="Projection period"
+        data-testid="projection-period-input"
+        onChange={(e) => ed.setDraft(e.target.value)}
+        onKeyDown={ed.onKeyDown}
+        style={{ ...inlineEditInputStyle, width: 64 }}
+      />
+      <InlineEditControls
+        onSave={() => void ed.submit()}
+        onCancel={ed.cancel}
+        saving={ed.saving}
+        saveTestId="projection-period-save"
+        cancelTestId="projection-period-cancel"
+        noteTestId="projection-period-note"
+        noteLabel="Projection period — override justification"
+        {...(ed.requireNote ? { note: ed.note, onNote: ed.setNote } : null)}
+      />
+    </span>
   );
 }
 
-// The Base year / Period / View control bar above the Assumptions panel.
+// The Base year / Projection period / Show control bar above the Assumptions panel.
 function ProjectionsControls({
-  years, closeDateIso, shownForecast, forecastCount, onDec, onInc, view, onView,
+  dealId, years, closeDateIso, holdYears, onSaveHoldYears, running,
+  shownForecast, forecastCount, onDec, onInc,
 }: {
+  dealId: string;
   years: ProjYear[];
   closeDateIso: string | null;
+  /** The deal's hold, override-first — what the editor compares Save against. */
+  holdYears: number;
+  onSaveHoldYears: (years: number, note: string) => Promise<void>;
+  running: boolean;
   shownForecast: number;
   forecastCount: number;
   onDec: () => void;
   onInc: () => void;
-  view: 'annual' | 'monthly';
-  onView: (v: 'annual' | 'monthly') => void;
 }) {
-  // The FIRST column's calendar year, derived from the acquisition close date
-  // by the revenue engine. `years[0].year` is the ordinal 1 — showing it here
+  // The FIRST column's calendar year, derived by the revenue engine from the
+  // acquisition close date. `years[0].year` is the ordinal 1 — showing it here
   // printed a literal "1" in the Base year chip.
   const baseYear = years[0]?.calendarYear;
   const ctrlLabel: CSSProperties = { fontSize: 11, color: '#6b6f76', fontWeight: 600 };
+  const group: CSSProperties = { display: 'flex', alignItems: 'center', gap: 6 };
+  const ownerLink: CSSProperties = {
+    fontSize: 10.5, color: '#2f4a8c', textDecoration: 'none', whiteSpace: 'nowrap',
+  };
   const stepBtn: CSSProperties = {
     width: 24, height: 26, border: '1px solid #e2e1dc', background: '#fff',
     borderRadius: 6, cursor: 'pointer', fontSize: 14, color: '#3a3f47', lineHeight: 1,
   };
+  const baseYearTitle = baseYear != null
+    ? `Base Year (Year 1) is calendar ${baseYear} — derived from the acquisition close date${closeDateIso ? ` (${fmtIsoDate(closeDateIso)})` : ''}, whose first operating month starts the projection. It is not an input here; edit the Acquisition Date on the Investment tab.`
+    : 'No acquisition close date on this deal, so the projection has no calendar year. The base year is derived from that date — set the Acquisition Date on the Investment tab.';
   return (
-    <div style={{ padding: '12px 22px', borderBottom: '1px solid #eee', background: '#fbfbf9', display: 'flex', alignItems: 'center', gap: 16, flexWrap: 'wrap' }}>
-      <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+    <div
+      data-testid="projections-controls"
+      style={{ padding: '12px 22px', borderBottom: '1px solid #eee', background: '#fbfbf9', display: 'flex', alignItems: 'center', gap: 16, flexWrap: 'wrap' }}
+    >
+      {/* Base year — DERIVED. No box, no cursor, no editor: a linked figure
+          that names the input it comes from. */}
+      <div style={group}>
         <span style={ctrlLabel}>Base year</span>
         <span
-          title={
-            baseYear != null
-              ? `Base Year (Year 1) is calendar ${baseYear}, derived from the acquisition close date${closeDateIso ? ` (${fmtIsoDate(closeDateIso)})` : ''}.`
-              : 'No acquisition close date on this deal, so the projection has no calendar year. Set it on the Overview tab.'
-          }
-          style={{ fontSize: 12.5, fontWeight: 600, border: '1px solid #e2e1dc', borderRadius: 6, padding: '6px 8px', color: baseYear != null ? '#1a2233' : '#9a9a95', background: '#fff' }}
+          data-testid="projection-base-year"
+          title={baseYearTitle}
+          style={{
+            display: 'inline-flex', alignItems: 'center', gap: 5,
+            fontSize: 12.5, fontWeight: 600,
+            color: baseYear != null ? '#1a2233' : '#9a9a95',
+            fontVariantNumeric: 'tabular-nums',
+          }}
         >
+          <ProvenanceDot state="linked" size={8} title="Derived from the acquisition close date" />
           {baseYear ?? '—'}
         </span>
+        <Link
+          href={`/projects/${dealId}?tab=investment`}
+          data-testid="projection-base-year-owner"
+          title="The acquisition close date — the only input the base year is derived from — is owned by the Investment tab"
+          style={ownerLink}
+        >
+          Investment →
+        </Link>
       </div>
-      <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-        <span style={ctrlLabel}>Period</span>
-        <button type="button" onClick={onDec} disabled={shownForecast <= 1} style={{ ...stepBtn, opacity: shownForecast <= 1 ? 0.5 : 1 }}>−</button>
-        <span style={{ fontSize: 12.5, fontWeight: 700, color: '#1a2233', minWidth: 56, textAlign: 'center' }}>{shownForecast} years</span>
-        <button type="button" onClick={onInc} disabled={shownForecast >= forecastCount} style={{ ...stepBtn, opacity: shownForecast >= forecastCount ? 0.5 : 1 }}>+</button>
-      </div>
-      <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-        <span style={ctrlLabel}>View</span>
-        <SegControl
-          options={[{ id: 'annual', label: 'Annual' }, { id: 'monthly', label: 'Monthly' }]}
-          value={view}
-          onChange={onView}
+
+      {/* Projection period — a real assumption (field_overrides.hold_years),
+          genuinely editable here with the FON-74 justification. */}
+      <div style={{ ...group, alignItems: 'flex-start' }}>
+        <span style={{ ...ctrlLabel, paddingTop: 3 }}>Projection period</span>
+        <ProjectionPeriodField
+          holdYears={holdYears}
+          disabled={running}
+          onCommit={onSaveHoldYears}
         />
       </div>
+
+      {/* Show — a VIEW trim, labelled as one. It changes which columns render
+          and nothing else; the modelled horizon is the Projection period. */}
+      <div
+        style={group}
+        title="View only — trims the columns shown below. The model is unchanged; the modelled horizon is the Projection period."
+      >
+        <span style={ctrlLabel}>Show</span>
+        <button type="button" aria-label="Show one fewer year" onClick={onDec} disabled={shownForecast <= 1} style={{ ...stepBtn, opacity: shownForecast <= 1 ? 0.5 : 1 }}>−</button>
+        {/* Counted off the RENDERED columns, not off `forecastCount` — on a
+            one-year projection `forecastCount` floors at 1 while there is only
+            one column, and "2 of 2 years" would be a number nothing backs. */}
+        <span data-testid="projection-columns-shown" style={{ fontSize: 12.5, fontWeight: 700, color: '#1a2233', minWidth: 78, textAlign: 'center', fontVariantNumeric: 'tabular-nums' }}>
+          {Math.min(shownForecast + 1, years.length)} of {years.length} {years.length === 1 ? 'year' : 'years'}
+        </span>
+        <button type="button" aria-label="Show one more year" onClick={onInc} disabled={shownForecast >= forecastCount} style={{ ...stepBtn, opacity: shownForecast >= forecastCount ? 0.5 : 1 }}>+</button>
+        <span style={{ fontSize: 10.5, color: '#9a9a95', fontStyle: 'italic' }}>view only</span>
+      </div>
+
+      {/* What replaced the dead Annual / Monthly toggle: the basis, stated. */}
+      <span
+        data-testid="projection-basis-note"
+        title="The revenue and expense engines project 365-day annual periods (apps/worker/app/engines/revenue.py, DAYS_PER_YEAR), so this statement has no monthly series to show. Monthly detail exists for the debt schedule on the Debt tab."
+        style={{
+          fontSize: 11, color: '#6b6f76', cursor: 'help',
+          textDecoration: 'underline dotted', textUnderlineOffset: 3,
+        }}
+      >
+        Annual periods
+      </span>
     </div>
   );
 }
