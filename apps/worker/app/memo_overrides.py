@@ -13,9 +13,25 @@ thesis, curated highlights, curated risks — and those edits persist into
       consumer (memo body, live export header) says
       :data:`PENDING_DECISION` — never the model's inferred verdict.
     * ``memo_thesis``                   — the investment-thesis prose.
-    * ``memo_thesis_edited``            — bookkeeping flag (not consumed here).
     * ``memo_highlights``               — list of ``{"t": str, "ai": bool}``.
     * ``memo_risks``                    — list of ``{"t": str, "ai": bool}``.
+    * ``memo_thesis_edited`` /
+      ``memo_highlights_edited`` /
+      ``memo_risks_edited``             — bookkeeping: this section is the
+      ANALYST's writing, not a draft. The tab asks before a regenerate
+      replaces one (FON-54); nothing here consumes them.
+    * ``memo_thesis_run_id`` /
+      ``memo_highlights_run_id`` /
+      ``memo_risks_run_id``             — bookkeeping: the engine run each
+      section was drafted against, stamped by the IC Memo tab and compared on
+      read against the live run so prose that predates the current
+      underwriting is FLAGGED rather than shown as current (FON-54, Sam
+      2026-09-14 — an IC memo that quoted a 32.2% IRR in the thesis and a
+      -2.5% IRR in the highlights). They are UI bookkeeping in exactly the
+      sense ``*_edited`` is: never memo content, never layered into a body,
+      and never enough on their own to make :func:`has_memo_overrides` true —
+      a deal carrying only a stamp still gets the generator's memo verbatim.
+      ``apps/worker/tests/test_memo_run_stamps.py`` pins that.
     * ``memo_diligence``                — FON-54a diligence status keyed by the
       variance *concept* (``rooms_revenue``, ``noi`` … — the ``concept`` on
       ``GET /analysis/{id}/variance`` flags):
@@ -96,8 +112,9 @@ _THESIS_SECTION = "investment_thesis"
 _RECOMMENDATION_SECTION = "recommendation"
 _RISK_SECTION = "risk_factors"
 
-# The override keys this layer consumes. ``memo_thesis_edited`` is
-# intentionally excluded — it is UI bookkeeping, not memo content.
+# The override keys this layer consumes. The ``memo_*_edited`` flags and the
+# ``memo_*_run_id`` stamps are intentionally excluded — they are UI
+# bookkeeping, not memo content.
 _OVERRIDE_KEYS: tuple[str, ...] = (
     "memo_thesis",
     "memo_highlights",
