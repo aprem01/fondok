@@ -411,6 +411,232 @@ describe('DebtTab — Refinance', () => {
   });
 });
 
+// ─────────────────────────────────────────────────────────────────────
+// FON-63 — the Refinance sub-tab is an assumptions workspace.
+//
+// Sam, 2026-09-14 MVP QA: *"Once refinance is enabled, the key sizing
+// assumptions were not editable in my testing … If refinance is explicitly out
+// of scope, I'd rather clearly label/disable it than expose a workflow users
+// cannot complete."*
+//
+// What is locked below is the first of the two outcomes she named: every
+// sizing assumption is a real editor on the exact worker key, the derived
+// figures stay derived and cannot be typed into, and there is NO THIRD STATE —
+// no row that carries the look of an editable assumption with nothing behind
+// it (which is exactly what "New Interest Rate" was).
+// ─────────────────────────────────────────────────────────────────────
+
+/** The seven editors the section offers, and nothing else. */
+const REFI_EDITOR_IDS = [
+  'edit-refi-year',
+  'edit-refi-value',
+  'edit-refi-ltv',
+  'edit-refi-rate',
+  'edit-refi-fee',
+  'edit-refi-debt-yield',
+  'edit-refi-dscr',
+] as const;
+
+/** A refinance an analyst has fully sized: LTV × value, priced, with a fee. */
+const SIZED_REFI = {
+  refi_year: 3,
+  refi_cash_out: 4_500_000,
+  balance_at_exit: 21_000_000,
+  refi_value_at_refinance: 50_000_000,
+  refi_ltv: 0.6,
+  refi_new_loan_proceeds: 30_000_000,
+  refi_existing_balance_repaid: 22_500_000,
+  refi_new_interest_rate: 0.06,
+  refi_financing_costs: 300_000,
+  refi_fee_pct: 0.01,
+  refi_debt_yield_min: 0.1,
+  refi_dscr_min: 1.25,
+  refi_sizing_basis: 'ltv',
+  refi_rate_basis: 'input',
+};
+
+/** A deal with no refinance at all — every refi output null / zero. */
+const NO_REFI = {
+  refi_year: null,
+  refi_cash_out: 0,
+  refi_value_at_refinance: null,
+  refi_ltv: null,
+  refi_new_loan_proceeds: null,
+  refi_existing_balance_repaid: null,
+  refi_new_interest_rate: null,
+  refi_financing_costs: null,
+  refi_fee_pct: null,
+  refi_debt_yield_min: null,
+  refi_dscr_min: null,
+  refi_sizing_basis: null,
+  refi_rate_basis: null,
+};
+
+function openRefinance(debtPatch: Record<string, unknown> = SIZED_REFI): void {
+  currentOutputs = makeOutputs(debtPatch);
+  render(<DebtTab />);
+  fireEvent.click(screen.getByText('Refinance'));
+}
+
+describe('DebtTab — Refinance sizing assumptions are editable (FON-63)', () => {
+  // Each row: the editor, what the analyst types, the EXACT worker key, and the
+  // value in the worker's own units (fractions for rates and ratios, dollars
+  // and years raw). A mismatch here is a control that writes the wrong number.
+  const EDITS: ReadonlyArray<readonly [string, string, string, number]> = [
+    ['edit-refi-year', '4', 'debt_stack.refi_test_year', 4],
+    ['edit-refi-value', '60000000', 'debt_stack.refi_stabilized_value', 60_000_000],
+    ['edit-refi-ltv', '65', 'debt_stack.refi_market_ltv_pct', 0.65],
+    ['edit-refi-rate', '7.50', 'debt_stack.refi_market_rate_pct', 0.075],
+    ['edit-refi-fee', '2.00', 'debt_stack.refi_fee_pct', 0.02],
+    ['edit-refi-debt-yield', '12.00', 'debt_stack.refi_market_debt_yield_pct', 0.12],
+    ['edit-refi-dscr', '1.60', 'debt_stack.refi_market_dscr_min', 1.6],
+  ];
+
+  it.each(EDITS)(
+    '%s PATCHes %s in the worker unit convention',
+    async (testId, typed, key, expected) => {
+      openRefinance();
+      const body = await editAndSave(testId, typed);
+      expect(body[key]).toBeCloseTo(expected, 6);
+    },
+  );
+
+  it('stores the analyst justification alongside the value', async () => {
+    openRefinance();
+    await editAndSave('edit-refi-ltv', '65');
+    expect(patchedRaw()['debt_stack.refi_market_ltv_pct']).toEqual({
+      value: 0.65,
+      note: WHY,
+    });
+  });
+
+  it('refuses a sizing edit that carries no justification', async () => {
+    openRefinance();
+    fireEvent.click(screen.getByTestId('edit-refi-rate'));
+    const input = document.querySelector('input[type="number"]') as HTMLInputElement;
+    fireEvent.change(input, { target: { value: '7.50' } });
+    // The note field is rendered (the key routes into engine input) — leave it
+    // empty and Save.
+    expect(screen.getByTestId('edit-refi-rate-note')).toBeTruthy();
+    fireEvent.click(screen.getByText('Save'));
+    await act(async () => {});
+    // Nothing was written and the editor is still open with the typed value —
+    // the analyst is asked for a reason, not handed a 422.
+    expect(updateSpy).not.toHaveBeenCalled();
+    expect((document.querySelector('input[type="number"]') as HTMLInputElement).value).toBe('7.50');
+    // …and it saves once a justification is given.
+    fireEvent.change(screen.getByTestId('edit-refi-rate-note'), { target: { value: WHY } });
+    fireEvent.click(screen.getByText('Save'));
+    await waitFor(() => expect(updateSpy).toHaveBeenCalled());
+    expect(flatten(patchedRaw())['debt_stack.refi_market_rate_pct']).toBeCloseTo(0.075, 6);
+  });
+
+  it('re-runs the model after a sizing edit so Cash Flow and Returns follow', async () => {
+    vi.useFakeTimers();
+    try {
+      openRefinance();
+      fireEvent.click(screen.getByTestId('edit-refi-ltv'));
+      const input = document.querySelector('input[type="number"]') as HTMLInputElement;
+      fireEvent.change(input, { target: { value: '65' } });
+      fireEvent.change(screen.getByTestId('edit-refi-ltv-note'), { target: { value: WHY } });
+      fireEvent.click(screen.getByText('Save'));
+      await act(async () => { await vi.advanceTimersByTimeAsync(1500); });
+      expect(updateSpy).toHaveBeenCalled();
+      expect(engineRunSpy).toHaveBeenCalled();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+});
+
+describe('DebtTab — Refinance has no third state (FON-63)', () => {
+  it('offers exactly the seven sizing editors, each one a real input', () => {
+    openRefinance();
+    const ids = Array.from(document.querySelectorAll('[data-testid^="edit-refi"]'))
+      .map((el) => el.getAttribute('data-testid'))
+      .sort();
+    expect(ids).toEqual([...REFI_EDITOR_IDS].sort());
+    for (const id of REFI_EDITOR_IDS) {
+      fireEvent.click(screen.getByTestId(id));
+      const input = document.querySelector('input[type="number"]') as HTMLInputElement;
+      expect(input).toBeTruthy();
+      fireEvent.keyDown(input, { key: 'Escape' });
+    }
+  });
+
+  it('renders the model-derived figures as calculated text that opens nothing', () => {
+    openRefinance();
+    expect(screen.getByText('Sizing Basis')).toBeInTheDocument();
+    expect(screen.getByText('LTV × Value at Refinance')).toBeInTheDocument();
+    expect(screen.getByText('New Loan Proceeds')).toBeInTheDocument();
+    expect(screen.getByText('$30,000,000')).toBeInTheDocument();
+    expect(screen.getByText('Existing Balance Repaid')).toBeInTheDocument();
+    expect(screen.getByText('$22,500,000')).toBeInTheDocument();
+    expect(screen.getByText('Financing Costs')).toBeInTheDocument();
+    expect(screen.getByText('$300,000')).toBeInTheDocument();
+    // Clicking a derived figure opens no editor — it is not an affordance.
+    fireEvent.click(screen.getByText('$30,000,000'));
+    fireEvent.click(screen.getByText('$22,500,000'));
+    fireEvent.click(screen.getByText('$300,000'));
+    expect(document.querySelector('input[type="number"]')).toBeNull();
+  });
+
+  it('never presents the IMPLIED LTV as the analyst’s sizing input', () => {
+    // Sized off the debt-yield / DSCR limits: `refi_ltv` is then proceeds ÷
+    // value, a display ratio. Showing it in the LTV editor would report a
+    // derived number as an assumption the analyst set.
+    openRefinance({ ...SIZED_REFI, refi_sizing_basis: 'debt_yield_dscr', refi_ltv: 0.45 });
+    expect(screen.getByTestId('edit-refi-ltv')).toHaveTextContent('Enter LTV');
+    expect(screen.queryByText('45.0%')).toBeNull();
+    expect(screen.getByText('Lower of the debt-yield and DSCR limits')).toBeInTheDocument();
+  });
+
+  it('shows the seeds the model actually ran on, on the editors that change them', () => {
+    // No override set, so these are Fondok seeds — reported from the engine,
+    // never typed into the tab, and each sits on the editor that replaces it.
+    openRefinance({ ...SIZED_REFI, refi_sizing_basis: 'debt_yield_dscr' });
+    expect(screen.getByTestId('edit-refi-rate')).toHaveTextContent('6.00%');
+    expect(screen.getByTestId('edit-refi-debt-yield')).toHaveTextContent('10.00%');
+    expect(screen.getByTestId('edit-refi-dscr')).toHaveTextContent('1.25x');
+    expect(screen.getByTestId('edit-refi-fee')).toHaveTextContent('1.00%');
+  });
+
+  it('states a curve-priced rate instead of an editor the next run would overwrite', () => {
+    openRefinance({ ...SIZED_REFI, refi_rate_basis: 'sofr_curve' });
+    expect(screen.queryByTestId('edit-refi-rate')).toBeNull();
+    expect(screen.getByText('New Interest Rate')).toBeInTheDocument();
+    expect(screen.getByText('6.00%')).toBeInTheDocument();
+    expect(screen.getByText(/SOFR forward curve/)).toBeInTheDocument();
+    expect(screen.getByText(/not editable here/)).toBeInTheDocument();
+  });
+
+  it('labels the one deferred field — month-precision refinance timing', () => {
+    openRefinance();
+    expect(screen.getByText('Refinance Timing')).toBeInTheDocument();
+    expect(screen.getByText('End of Year 3')).toBeInTheDocument();
+    expect(screen.getByText(/Month-precision timing is not editable in this release/)).toBeInTheDocument();
+  });
+
+  it('reports a reconciled mid-year refinance month rather than hiding it', () => {
+    mockDeal.field_overrides = { 'debt_stack.refi_month': { value: 30, note: 'Sam model' } };
+    openRefinance();
+    expect(screen.getByText('Month 30 from close')).toBeInTheDocument();
+  });
+
+  it('an untouched refinance renders the inputs to provide and writes nothing', () => {
+    openRefinance(NO_REFI);
+    expect(screen.getByText('Excluded from the model')).toBeInTheDocument();
+    expect(screen.getByTestId('edit-refi-year')).toHaveTextContent('Enter year');
+    expect(screen.getByTestId('edit-refi-value')).toHaveTextContent('Enter value');
+    expect(screen.getByTestId('edit-refi-ltv')).toHaveTextContent('Enter LTV');
+    expect(screen.getByTestId('edit-refi-rate')).toHaveTextContent('Enter rate');
+    // Nothing is written just by looking at the section — the canonical run is
+    // untouched until the analyst saves an assumption.
+    expect(updateSpy).not.toHaveBeenCalled();
+    expect(engineRunSpy).not.toHaveBeenCalled();
+  });
+});
+
 describe('DebtTab — canonical edit path (field_overrides + full run)', () => {
   it('editing the origination fee PATCHes the senior upfront-fee percent', async () => {
     render(<DebtTab />);

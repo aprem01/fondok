@@ -284,6 +284,31 @@ class DebtEngineOutputExt(DebtEngineOutput):
     refi_existing_balance_repaid: Annotated[float, Field(ge=0)] | None = None
     refi_new_interest_rate: Annotated[float, Field(ge=0)] | None = None
     refi_financing_costs: Annotated[float, Field(ge=0)] | None = None
+    # FON-63 (Sam's 2026-09-14 MVP blocker) — the refinance SIZING assumptions,
+    # RESOLVED. The Refinance tab has to render the value the model actually
+    # ran on (the analyst's override, or the ``_refi_params`` seed it silently
+    # fell back to) next to the editor that changes it; without these the tab
+    # would have to print the seeds from its own head, which is exactly the
+    # invented-number rule. Each is an echo of a value ``_refi_params`` already
+    # resolved — none is newly derived, and all are None on a no-refi deal.
+    #   ``refi_fee_pct``         the loan fee as a FRACTION (0.01 = 1.00%);
+    #                            ``refi_financing_costs`` is this × proceeds.
+    #   ``refi_debt_yield_min``  the lender's minimum debt yield (fraction) and
+    #   ``refi_dscr_min``        minimum DSCR (ratio) — the pair that SIZES the
+    #                            new loan whenever no LTV / value is set.
+    #   ``refi_sizing_basis``    which of the two methods actually sized it:
+    #                            "ltv" (LTV × value at refinance) or
+    #                            "debt_yield_dscr" (the lower of the two limits).
+    #   ``refi_rate_basis``      where the new rate came from: "input" (the
+    #                            analyst's / seed flat rate) or "sofr_curve"
+    #                            (index average + refi spread), in which case a
+    #                            flat-rate edit would be overwritten and the tab
+    #                            must say so rather than offer the editor.
+    refi_fee_pct: Annotated[float, Field(ge=0)] | None = None
+    refi_debt_yield_min: Annotated[float, Field(ge=0)] | None = None
+    refi_dscr_min: Annotated[float, Field(ge=0)] | None = None
+    refi_sizing_basis: str | None = None
+    refi_rate_basis: str | None = None
     # FON-72 follow-up — entry-vs-stabilized credit split. The entry_* pair are
     # explicit aliases of the existing Year-1 metrics (byte-identical). The
     # stabilized_* pair are the stabilized-year metrics: stabilized-year NOI ÷
@@ -517,7 +542,7 @@ def _compute_refi(
     noi_by_year: list[float],
     horizon: int,
     senior_ds_by_year: list[float],
-) -> tuple[list[float], float, float, int, dict[str, float]] | None:
+) -> tuple[list[float], float, float, int, dict[str, Any]] | None:
     """Model a mid-hold refinance: size the new loan off the refi-year NOI
     (min of the debt-yield and DSCR limits), retire the senior balance, and
     return the phased debt service, the net cash-out to equity, the (interest-
@@ -547,7 +572,9 @@ def _compute_refi(
         stabilized_value = refi["stabilized_noi"] / refi["exit_cap"]
     if refi.get("ltv", 0.0) > 0 and stabilized_value > 0:
         refi_proceeds = refi["ltv"] * stabilized_value
+        sizing_basis = "ltv"
     else:
+        sizing_basis = "debt_yield_dscr"
         by_dy = noi_k / refi["debt_yield"] if refi["debt_yield"] > 0 else 0.0
         by_dscr = (
             noi_k / (refi["dscr_min"] * rate)
@@ -571,13 +598,20 @@ def _compute_refi(
             )
         else:
             ds_by_year.append(refi_ds)
-    detail = {
+    detail: dict[str, Any] = {
         "value_at_refinance": stabilized_value,
         "ltv": refi.get("ltv", 0.0),
         "new_loan_proceeds": refi_proceeds,
         "existing_balance_repaid": senior_balance_at_k,
         "new_interest_rate": rate,
         "financing_costs": refi_fee,
+        # FON-63 — the RESOLVED sizing assumptions, echoed for the Refinance
+        # tab so it never prints a seed from its own head. Read-only additions;
+        # none of the four values above depends on them.
+        "fee_pct": refi.get("fee_pct", 0.0),
+        "debt_yield_min": refi.get("debt_yield", 0.0),
+        "dscr_min": refi.get("dscr_min", 0.0),
+        "sizing_basis": sizing_basis,
     }
     return ds_by_year, refi_cash_out, refi_proceeds, k, detail
 
@@ -806,6 +840,10 @@ class DebtEngine(BaseEngine[DebtEngineInputExt, DebtEngineOutputExt]):
         # refi spread. For IO debt the period average reproduces the exact
         # total interest month-by-month would, and keeps the flat-rate refi
         # path unchanged when no curve/spread is set.
+        # FON-63 — the Refinance tab must know WHERE the new rate came from: a
+        # flat rate the analyst can edit, or the curve, which would overwrite
+        # such an edit on the next run. "input" until the curve claims it.
+        refi_rate_basis: str | None = "input" if refi is not None else None
         if refi is not None and payload.sofr_curve:
             _refi_spread = (payload.debt_stack_overrides or {}).get("refi_spread_pct")
             if _refi_spread is not None:
@@ -813,10 +851,11 @@ class DebtEngine(BaseEngine[DebtEngineInputExt, DebtEngineOutputExt]):
                 _post = payload.sofr_curve[_k * 12 : horizon * 12] or payload.sofr_curve[-1:]
                 _avg = sum(_post) / len(_post) if _post else 0.0
                 refi["rate"] = _avg + float(_refi_spread)
+                refi_rate_basis = "sofr_curve"
         debt_service_by_year: list[float] = []
         refi_cash_out = 0.0
         refi_year_out: int | None = None
-        refi_detail: dict[str, float] | None = None
+        refi_detail: dict[str, Any] | None = None
         balance_at_exit_out: float | None = (
             schedule[-1].ending_balance if schedule else None
         )
@@ -848,6 +887,10 @@ class DebtEngine(BaseEngine[DebtEngineInputExt, DebtEngineOutputExt]):
         refi_existing_balance_repaid: float | None = None
         refi_new_interest_rate: float | None = None
         refi_financing_costs: float | None = None
+        refi_fee_pct_out: float | None = None
+        refi_debt_yield_min: float | None = None
+        refi_dscr_min: float | None = None
+        refi_sizing_basis: str | None = None
         if refi_detail is not None:
             _val = refi_detail.get("value_at_refinance") or 0.0
             _proceeds = refi_detail.get("new_loan_proceeds") or 0.0
@@ -857,6 +900,12 @@ class DebtEngine(BaseEngine[DebtEngineInputExt, DebtEngineOutputExt]):
             refi_existing_balance_repaid = refi_detail.get("existing_balance_repaid")
             refi_new_interest_rate = refi_detail.get("new_interest_rate")
             refi_financing_costs = refi_detail.get("financing_costs")
+            # FON-63 — the RESOLVED sizing assumptions (override or seed) the
+            # Refinance tab renders beside their editors. Echoes, not new math.
+            refi_fee_pct_out = refi_detail.get("fee_pct")
+            refi_debt_yield_min = refi_detail.get("debt_yield_min")
+            refi_dscr_min = refi_detail.get("dscr_min")
+            refi_sizing_basis = refi_detail.get("sizing_basis")
             if _in_ltv > 0:
                 refi_ltv_out = _in_ltv
             elif _val > 0:
@@ -1021,6 +1070,11 @@ class DebtEngine(BaseEngine[DebtEngineInputExt, DebtEngineOutputExt]):
             refi_existing_balance_repaid=refi_existing_balance_repaid,
             refi_new_interest_rate=refi_new_interest_rate,
             refi_financing_costs=refi_financing_costs,
+            refi_fee_pct=refi_fee_pct_out,
+            refi_debt_yield_min=refi_debt_yield_min,
+            refi_dscr_min=refi_dscr_min,
+            refi_sizing_basis=refi_sizing_basis,
+            refi_rate_basis=refi_rate_basis if refi_detail is not None else None,
             # Entry credit metrics = the existing Year-1 metrics (explicit
             # aliases). Stabilized = the stabilized-year metrics (or None when
             # no stabilized year can be determined).

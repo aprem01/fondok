@@ -45,6 +45,16 @@
  * A required assumption that is missing is rendered as the input to provide
  * (with its consequence stated) — never a bare "—". Fees stay display-only
  * (nothing downstream consumes them yet) and say so.
+ *
+ * FON-63 (Sam, 2026-09-14 MVP QA) — the REFINANCE sub-tab is an assumptions
+ * workspace on the same terms. Every assumption the refi model reads is an
+ * editor bound to its exact worker key (`debt_stack.refi_test_year` ·
+ * `refi_stabilized_value` · `refi_market_ltv_pct` · `refi_market_rate_pct` ·
+ * `refi_fee_pct` · `refi_market_debt_yield_pct` · `refi_market_dscr_min`), and
+ * everything the model derives from them (proceeds, payoff, financing costs,
+ * cash-out, exit balance) is calculated text in its own card. Month-precision
+ * refinance timing (`debt_stack.refi_month`) is the one field held back, and
+ * it is reported as such rather than offered. See `RefinanceView` below.
  */
 import {
   useState,
@@ -394,6 +404,14 @@ export default function DebtTab() {
   const wRefiPayoff = getEngineField<number>(outputs, 'debt', 'refi_existing_balance_repaid');
   const wRefiRate = getEngineField<number>(outputs, 'debt', 'refi_new_interest_rate');
   const wRefiCosts = getEngineField<number>(outputs, 'debt', 'refi_financing_costs');
+  // FON-63 (Sam, 2026-09-14) — the RESOLVED refinance sizing assumptions. The
+  // Refinance section renders these beside the editors that change them, so the
+  // seed the model silently fell back to is on screen instead of in the engine.
+  const wRefiFeePct = getEngineField<number>(outputs, 'debt', 'refi_fee_pct');
+  const wRefiDyMin = getEngineField<number>(outputs, 'debt', 'refi_debt_yield_min');
+  const wRefiDscrMin = getEngineField<number>(outputs, 'debt', 'refi_dscr_min');
+  const wRefiSizingBasis = getEngineField<string>(outputs, 'debt', 'refi_sizing_basis');
+  const wRefiRateBasis = getEngineField<string>(outputs, 'debt', 'refi_rate_basis');
   const wStabDy = getEngineField<number>(outputs, 'debt', 'stabilized_debt_yield');
   const wStabDscr = getEngineField<number>(outputs, 'debt', 'stabilized_dscr');
   // FON-72 follow-up — Completion Guarantee covenant status (qualitative). The
@@ -1282,6 +1300,12 @@ export default function DebtTab() {
               refiPayoff={wRefiPayoff}
               refiRate={wRefiRate}
               refiCosts={wRefiCosts}
+              refiFeePct={wRefiFeePct}
+              refiDebtYieldMin={wRefiDyMin}
+              refiDscrMin={wRefiDscrMin}
+              refiSizingBasis={wRefiSizingBasis}
+              refiRateBasis={wRefiRateBasis}
+              overrides={overrides}
               onSaveOverride={onSaveOverride}
               toast={toast}
             />
@@ -1615,14 +1639,51 @@ function CompletionGuaranteeControl({
 }
 
 // ─────────────────────────────────────────────────────────────────────
-// Refinance view — banner + include/remove toggle · assumptions · impact.
-// Reads refi fields from the debt output; values the engine doesn't emit
-// render as canonical "awaiting data" em-dashes (never fabricated).
+// Refinance view — banner + include/remove toggle · assumptions · sized
+// loan · impact.
+//
+// FON-63 (Sam's 2026-09-14 MVP QA): *"Once refinance is enabled, the key
+// sizing assumptions were not editable in my testing. If refinance is intended
+// to be supported in this MVP, I consider that a functional gap."*
+//
+// The engine has accepted every one of those assumptions as a
+// `debt_stack.refi_*` field_override since FON-67 (`_OVERRIDE_DEBT_KEYS` in
+// `engine_runner.py` → `_refi_params` in `engines/debt.py`); only this tab
+// never offered them. Refinance Year was the sole editor. Everything else was
+// a read of the engine's output — and "New Interest Rate" was worse than
+// read-only: it carried the blue `kind: 'input'` styling of an editable
+// assumption with nothing behind it, while the model quietly ran on the 6.80%
+// seed. So the section now has exactly two kinds of row and no third:
+//
+//   • an ASSUMPTION — an `EditableValue` bound to the exact worker key, gated
+//     by the FON-74 justification contract (`noteKey`), or
+//   • a DERIVED figure — plain calculated text, in its own card.
+//
+// The one thing the engine supports that this release still does not let an
+// analyst set is month-precision refinance TIMING (`debt_stack.refi_month`,
+// the mid-year cash-out placement used in the FON-67 reconciliation). It is
+// rendered as the derived "Refinance Timing" row, which states what the model
+// used and that it is not editable here — not as a control that does nothing.
 // ─────────────────────────────────────────────────────────────────────
+
+/** The `field_overrides` keys the refinance model reads (worker-exact). */
+const REFI_KEYS = {
+  year: 'debt_stack.refi_test_year',
+  value: 'debt_stack.refi_stabilized_value',
+  ltv: 'debt_stack.refi_market_ltv_pct',
+  rate: 'debt_stack.refi_market_rate_pct',
+  fee: 'debt_stack.refi_fee_pct',
+  debtYield: 'debt_stack.refi_market_debt_yield_pct',
+  dscr: 'debt_stack.refi_market_dscr_min',
+  /** Read-only in this release — see the "Refinance Timing" row. */
+  month: 'debt_stack.refi_month',
+} as const;
+
 function RefinanceView({
   active, liveMode, refiYear, refiYearOverride, refiCashOut, balanceAtExit, leveredIrr,
   refiValue, refiLtv, refiProceeds, refiPayoff, refiRate, refiCosts,
-  onSaveOverride, toast,
+  refiFeePct, refiDebtYieldMin, refiDscrMin, refiSizingBasis, refiRateBasis,
+  overrides, onSaveOverride, toast,
 }: {
   active: boolean;
   liveMode: boolean;
@@ -1637,6 +1698,12 @@ function RefinanceView({
   refiPayoff?: number;
   refiRate?: number;
   refiCosts?: number;
+  refiFeePct?: number;
+  refiDebtYieldMin?: number;
+  refiDscrMin?: number;
+  refiSizingBasis?: string;
+  refiRateBasis?: string;
+  overrides: Record<string, unknown>;
   onSaveOverride: (patch: Record<string, number | string | null>, note?: string) => void | Promise<void>;
   toast: ReturnType<typeof useToast>['toast'];
 }) {
@@ -1646,47 +1713,173 @@ function RefinanceView({
 
   const toggle = () => {
     if (!liveMode) { toast('Editing is disabled on demo deals', { type: 'info' }); return; }
-    if (active) { void onSaveOverride({ 'debt_stack.refi_test_year': null }); return; }
-    if (refiYearOverride > 0) { void onSaveOverride({ 'debt_stack.refi_test_year': Math.round(refiYearOverride) }); return; }
+    if (active) { void onSaveOverride({ [REFI_KEYS.year]: null }); return; }
+    if (refiYearOverride > 0) { void onSaveOverride({ [REFI_KEYS.year]: Math.round(refiYearOverride) }); return; }
     toast('Set a refinance year below to include the refinance.', { type: 'info' });
   };
 
-  const detailRow = (
-    id: string, label: string, present: boolean, value: string,
-    opts: { kind?: ValueKind; state?: ValueState; bold?: boolean } = {},
-  ): RowDef =>
-    present
-      ? { id, label, kind: opts.kind ?? 'calc', state: opts.state ?? 'calculated', value, bold: opts.bold }
-      : { id, label, kind: 'awaiting', state: 'awaiting_data', value: '—' };
+  const isSet = (key: string): boolean => overrides[key] !== undefined;
+  /** What the model RAN on: the engine's resolved figure, else an override
+   *  saved but not yet re-run, else undefined — "not set", never a guess. */
+  const resolved = (engineValue: number | undefined, key: string): number | undefined => {
+    if (has(engineValue)) return engineValue;
+    if (!isSet(key)) return undefined;
+    const n = readOverrideNum(overrides, key, Number.NaN);
+    return has(n) ? n : undefined;
+  };
 
-  const refiRows: RowDef[] = [
-    {
-      id: 'refiYear', label: 'Refinance Year', kind: 'input',
-      state: refiYearOverride > 0 ? 'assumption' : 'awaiting_data',
-      overridden: refiYearOverride > 0,
+  const ltvSized = refiSizingBasis === 'ltv';
+  const dySized = refiSizingBasis === 'debt_yield_dscr';
+  const vYear = resolved(refiYear, REFI_KEYS.year);
+  const vValue = resolved(refiValue, REFI_KEYS.value);
+  // `refi_ltv` doubles as the IMPLIED ratio (proceeds ÷ value) when the loan
+  // was sized off the debt-yield / DSCR limits, so it only speaks for this
+  // INPUT when the engine says LTV is what sized the loan.
+  const vLtv = resolved(ltvSized ? refiLtv : undefined, REFI_KEYS.ltv);
+  const vRate = resolved(refiRate, REFI_KEYS.rate);
+  const vFee = resolved(refiFeePct, REFI_KEYS.fee);
+  const vDy = resolved(refiDebtYieldMin, REFI_KEYS.debtYield);
+  const vDscr = resolved(refiDscrMin, REFI_KEYS.dscr);
+  const curvePriced = refiRateBasis === 'sofr_curve';
+
+  /** One editable refinance assumption, wired to the worker key it writes. */
+  const assumption = (o: {
+    id: string; label: string; key: string; value?: number;
+    fmt: (n: number) => string; toDraft: (n: number) => string;
+    parse: (s: string) => number | null; toPersist?: (n: number) => number;
+    unit: FieldUnit; suffix: string; emptyLabel: string; testId: string;
+    note: ReactNode; seedWhenUnset?: boolean;
+  }): RowDef => {
+    const set = isSet(o.key);
+    const present = has(o.value);
+    const persist = o.toPersist ?? ((n: number) => n);
+    return {
+      id: o.id,
+      label: o.label,
+      kind: 'input',
+      state: present ? 'assumption' : 'awaiting_data',
+      overridden: set,
+      source: !set && present && o.seedWhenUnset ? 'seed' : undefined,
       value: (
         <EditableValue
-          display={refiYearOverride > 0 ? `Year ${Math.round(refiYearOverride)}` : '—'}
-          draftValue={refiYearOverride > 0 ? String(Math.round(refiYearOverride)) : ''}
-          parse={(s) => { const n = parseInt(s, 10); return Number.isFinite(n) && n >= 1 ? n : null; }}
-          onSave={(v, note) => onSaveOverride({ 'debt_stack.refi_test_year': Math.round(v) }, note)}
-          noteKey="debt_stack.refi_test_year"
+          display={present ? o.fmt(o.value as number) : '—'}
+          emptyLabel={o.emptyLabel}
+          draftValue={present ? o.toDraft(o.value as number) : ''}
+          parse={o.parse}
+          onSave={(v, note) => onSaveOverride({ [o.key]: persist(v) }, note)}
+          noteKey={o.key}
           editable={liveMode}
-          color={valueColor('input', false, refiYearOverride > 0)}
-          unit="years"
-          testId="edit-refi-year"
+          suffix={o.suffix}
+          color={valueColor('input', false, set)}
+          unit={o.unit}
+          testId={o.testId}
         />
       ),
-      note: 'Blank = single-phase deal. Sets the mid-hold refinance year the engine sizes off.',
-    },
-    // Canonical refinance detail — every value the refi model already computes.
-    // Absent (no-refi deal) → canonical "awaiting data" em-dashes, never faked.
-    detailRow('refiValue', 'Value at Refinance', has(refiValue), money(refiValue)),
-    detailRow('refiLtv', 'Refinance LTV', has(refiLtv), pctv(refiLtv, 1)),
-    detailRow('refiProceeds', 'New Loan Proceeds', has(refiProceeds), money(refiProceeds), { bold: true }),
-    detailRow('refiPayoff', 'Existing Balance Repaid', has(refiPayoff), money(refiPayoff)),
-    detailRow('refiRate', 'New Interest Rate', has(refiRate), pctv(refiRate, 2), { kind: 'input', state: 'assumption' }),
-    detailRow('refiCost', 'Financing Costs', has(refiCosts), money(refiCosts)),
+      note: o.note,
+    };
+  };
+
+  /** One figure the refinance model DERIVES — calculated, never editable. */
+  const derived = (
+    id: string, label: string, present: boolean, value: ReactNode,
+    note?: ReactNode, bold = false,
+  ): RowDef =>
+    present
+      ? { id, label, kind: 'calc', state: 'calculated', value, bold, note }
+      : { id, label, kind: 'awaiting', state: 'awaiting_data', value: '—', note };
+
+  // Each note says what the assumption is doing RIGHT NOW — the engine reports
+  // which of its two sizing methods ran, so the tab never has to guess.
+  const sizingNote = ltvSized
+    ? 'Sizing the loan — proceeds = this LTV × Value at Refinance.'
+    : dySized
+      ? 'Not set, so the loan is sized at the lower of the debt-yield and DSCR limits below. Enter an LTV and a Value at Refinance to size it yourself.'
+      : 'With a Value at Refinance, this sizes the new loan (proceeds = LTV × value). Left blank, the loan is sized at the lower of the debt-yield and DSCR limits below.';
+  const limitNote = ltvSized
+    ? 'Not applied on this deal — the LTV above is sizing the loan.'
+    : dySized
+      ? 'Sizing the loan: proceeds are capped at the lower of the two limits.'
+      : 'Applies only when no refinance LTV and value are set — the loan is then capped at the lower of the two limits.';
+
+  const assumptionRows: RowDef[] = [
+    assumption({
+      id: 'refiYear', label: 'Refinance Year', key: REFI_KEYS.year, value: vYear,
+      fmt: (n) => `Year ${Math.round(n)}`, toDraft: (n) => String(Math.round(n)),
+      parse: parseIntMin(1), toPersist: Math.round, unit: 'years', suffix: 'years',
+      emptyLabel: 'Enter year', testId: 'edit-refi-year',
+      note: 'Blank = single-phase deal. The loan is sized off that year’s NOI and the senior balance at that year-end is repaid.',
+    }),
+    assumption({
+      id: 'refiValue', label: 'Value at Refinance', key: REFI_KEYS.value, value: vValue,
+      fmt: (n) => fmtCurrency(n), toDraft: (n) => String(Math.round(n)),
+      parse: parseDollars, unit: 'usd', suffix: '$',
+      emptyLabel: 'Enter value', testId: 'edit-refi-value',
+      note: 'The LTV sizing base. Derived from a stabilized NOI and exit cap when those are set on the deal; an entry here wins.',
+    }),
+    assumption({
+      id: 'refiLtv', label: 'Refinance LTV', key: REFI_KEYS.ltv, value: vLtv,
+      fmt: (n) => fmtPct(n, 1), toDraft: (n) => (n * 100).toFixed(1),
+      parse: parsePctFrac, unit: 'pct_fraction', suffix: '%',
+      emptyLabel: 'Enter LTV', testId: 'edit-refi-ltv',
+      note: sizingNote,
+    }),
+    curvePriced
+      ? derived(
+          'refiRate', 'New Interest Rate', has(refiRate), pctv(refiRate, 2),
+          'Priced off the SOFR forward curve — the average index over the post-refinance months plus the refinance spread. A flat rate is not used on this deal, so it is not editable here.',
+        )
+      : assumption({
+          id: 'refiRate', label: 'New Interest Rate', key: REFI_KEYS.rate, value: vRate,
+          fmt: (n) => fmtPct(n, 2), toDraft: (n) => (n * 100).toFixed(2),
+          parse: parsePctFrac, unit: 'pct_fraction', suffix: '%',
+          emptyLabel: 'Enter rate', testId: 'edit-refi-rate', seedWhenUnset: true,
+          note: 'Prices the interest-only refinance: debt service after the refinance year is proceeds × this rate.',
+        }),
+    assumption({
+      id: 'refiFee', label: 'Refinance Loan Fee', key: REFI_KEYS.fee, value: vFee,
+      fmt: (n) => fmtPct(n, 2), toDraft: (n) => (n * 100).toFixed(2),
+      parse: parsePctFrac, unit: 'pct_fraction', suffix: '%',
+      emptyLabel: 'Enter fee', testId: 'edit-refi-fee', seedWhenUnset: true,
+      note: 'Charged on the new loan proceeds and netted out of the cash-out to equity.',
+    }),
+    assumption({
+      id: 'refiDy', label: 'Minimum Debt Yield', key: REFI_KEYS.debtYield, value: vDy,
+      fmt: (n) => fmtPct(n, 2), toDraft: (n) => (n * 100).toFixed(2),
+      parse: parsePctFrac, unit: 'pct_fraction', suffix: '%',
+      emptyLabel: 'Enter minimum', testId: 'edit-refi-debt-yield', seedWhenUnset: true,
+      note: limitNote,
+    }),
+    assumption({
+      id: 'refiDscr', label: 'Minimum DSCR', key: REFI_KEYS.dscr, value: vDscr,
+      fmt: (n) => `${n.toFixed(2)}x`, toDraft: (n) => n.toFixed(2),
+      parse: parseRatio, unit: 'ratio', suffix: 'x',
+      emptyLabel: 'Enter minimum', testId: 'edit-refi-dscr', seedWhenUnset: true,
+      note: limitNote,
+    }),
+  ];
+
+  // Month-precision timing is the ONE refinance field this release does not
+  // make editable. It is reported, with that stated, rather than offered.
+  const refiMonth = isSet(REFI_KEYS.month)
+    ? Math.round(readOverrideNum(overrides, REFI_KEYS.month, Number.NaN))
+    : Number.NaN;
+  const timingValue = has(refiMonth) && refiMonth > 0
+    ? `Month ${refiMonth} from close`
+    : has(vYear) ? `End of Year ${Math.round(vYear)}` : '—';
+
+  const derivedRows: RowDef[] = [
+    derived(
+      'refiBasis', 'Sizing Basis', !!refiSizingBasis,
+      ltvSized ? 'LTV × Value at Refinance' : dySized ? 'Lower of the debt-yield and DSCR limits' : '—',
+      'Which method produced the proceeds below.',
+    ),
+    derived('refiProceeds', 'New Loan Proceeds', has(refiProceeds), money(refiProceeds), undefined, true),
+    derived('refiPayoff', 'Existing Balance Repaid', has(refiPayoff), money(refiPayoff),
+      'The senior balance at the end of the refinance year.'),
+    derived('refiCost', 'Financing Costs', has(refiCosts), money(refiCosts),
+      'The loan fee above applied to the new proceeds.'),
+    derived('refiTiming', 'Refinance Timing', has(vYear), timingValue,
+      'Month-precision timing is not editable in this release — the cash-out is placed at the end of the refinance year unless a month was set during reconciliation.'),
   ];
 
   const impact = [
@@ -1722,7 +1915,18 @@ function RefinanceView({
 
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(430px,1fr))', gap: 14, opacity: active ? 1 : 0.85 }}>
         <SectionCard title="Refinance Assumptions">
-          {refiRows.map((r) => <DebtRow key={r.id} row={r} />)}
+          {assumptionRows.map((r) => <DebtRow key={r.id} row={r} />)}
+          <div style={{ fontSize: 11, color: palette.textMuted, marginTop: 9, lineHeight: 1.5 }}>
+            Every assumption here is an input the refinance model runs on — an edit re-sizes the refinance and flows
+            through to Cash Flow and Returns. Each change is saved with your justification.
+          </div>
+        </SectionCard>
+        <SectionCard title="Sized Refinance">
+          {derivedRows.map((r) => <DebtRow key={r.id} row={r} />)}
+          <div style={{ fontSize: 11, color: palette.textMuted, marginTop: 9, lineHeight: 1.5 }}>
+            Calculated from the assumptions alongside — proceeds, payoff and costs are outputs of the debt engine and
+            are not entered here.
+          </div>
         </SectionCard>
         <SectionCard title="Refinance Impact">
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(160px,1fr))', gap: 12, marginTop: 4 }}>
