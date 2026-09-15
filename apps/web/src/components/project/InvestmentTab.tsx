@@ -231,8 +231,15 @@ export default function InvestmentTab() {
         toast('Editing is disabled on demo deals', { type: 'info' });
         return;
       }
-      // The close date IS an engine input — `revenue.py` reads it to set the
-      // projection start year — so it carries a justification like any other.
+      // The close date IS an engine input — `revenue.py::projection_start_year`
+      // reads it to set the projection start year — so it carries a
+      // justification like any other, AND the model has to re-run for the
+      // change to land. Financials → Projections renders the Base year from
+      // `revenue.projection_start_year`, an ENGINE OUTPUT: refetching the deal
+      // and the timeline cannot move it, because nothing recomputes the engine
+      // output until a run. Saving a new close date and watching the Base year
+      // sit unchanged is exactly what Sam reported (2026-09-15, "base year /
+      // acquisition date ... not propagating").
       const patch = { acquisition_close_date: iso };
       if (!note.trim() && patchRequiresNote(patch)) {
         toast(NOTE_REQUIRED_MESSAGE, { type: 'error' });
@@ -241,15 +248,20 @@ export default function InvestmentTab() {
       const next = applyOverridePatch(invOverrides, patch, note);
       try {
         await api.deals.update(dealId, { field_overrides: next });
-        toast('Acquisition date saved', { type: 'success' });
+        toast('Acquisition date saved — re-running the model…', { type: 'success' });
         void refreshDeal?.();
+        // The timeline is computed on read, so it can refresh immediately.
         refreshTimeline();
+        // The projection calendar is not: it needs the engines. Same debounce
+        // as every other engine-input save on this tab.
+        if (invRerunRef.current) clearTimeout(invRerunRef.current);
+        invRerunRef.current = setTimeout(() => { void invRun.run(); }, 1200);
       } catch (err) {
         const detail = err instanceof WorkerError ? err.body : String(err);
         toast(`Save failed: ${detail || 'worker rejected update'}`, { type: 'error' });
       }
     },
-    [invOverrides, dealId, liveMode, toast, refreshDeal, refreshTimeline],
+    [invOverrides, dealId, liveMode, toast, refreshDeal, refreshTimeline, invRun],
   );
 
   // FON-44 §2 — the renovation WINDOW. `apps/worker/app/api/model.py` reads

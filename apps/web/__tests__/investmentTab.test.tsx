@@ -703,3 +703,44 @@ describe('InvestmentTab — `?tab=investment&sub=<slug>` routing', () => {
     expect(written.get('reviewField')).toBe('noi_usd');
   });
 });
+
+// ── Sam, 2026-09-15: "base year / acquisition date ... not propagating" ──
+// The close date is an engine input: `revenue.py::projection_start_year` reads
+// it, and Financials → Projections renders the Base year from
+// `revenue.projection_start_year` — an ENGINE OUTPUT. The save used to refetch
+// the deal and the timeline only, so the Base year could never move until
+// something else happened to re-run the model.
+describe('InvestmentTab — saving the acquisition date re-runs the model', () => {
+  it('schedules a run so the projection calendar can follow the new close date', async () => {
+    vi.useFakeTimers();
+    try {
+      render(<InvestmentTab />);
+      await vi.waitFor(() => expect(timelineSpy).toHaveBeenCalled());
+
+      const cell = rowValueCell('Acquisition Date');
+      fireEvent.click(cell.querySelector('span[style*="underline"]') ?? cell);
+      const input = document.querySelector('input[type="date"]') as HTMLInputElement;
+      fireEvent.change(input, { target: { value: '2028-03-31' } });
+      fireEvent.change(screen.getByLabelText(/justification/i), {
+        target: { value: 'Closing pushed to Q1 2028.' },
+      });
+      fireEvent.click(screen.getByLabelText('Save'));
+
+      await vi.waitFor(() => expect(updateSpy).toHaveBeenCalled());
+      const [, body] = updateSpy.mock.calls[0] as unknown as [
+        string, { field_overrides: Record<string, unknown> },
+      ];
+      expect(body.field_overrides.acquisition_close_date).toEqual({
+        value: '2028-03-31',
+        note: 'Closing pushed to Q1 2028.',
+      });
+
+      // The engine run is debounced, exactly as the other assumption saves are.
+      expect(engineRunSpy).not.toHaveBeenCalled();
+      await vi.advanceTimersByTimeAsync(1300);
+      expect(engineRunSpy).toHaveBeenCalled();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+});
