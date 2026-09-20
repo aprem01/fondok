@@ -6829,6 +6829,35 @@ async def _sync_deal_metadata_from_extraction(
 # ─────────────────────────── verification ───────────────────────────
 
 
+async def _rollback_after_best_effort(session: AsyncSession, what: str) -> None:
+    """Return a session to a usable state after a best-effort write failed.
+
+    Every ``_persist_*`` helper in this module is deliberately best-effort:
+    it logs and returns rather than failing the upload, because dating a
+    document or scoring it against USALI is additive intelligence on top of
+    extraction, never a gate on it.
+
+    That contract only holds if the session survives. On Postgres a failed
+    statement ABORTS the whole transaction, and every later statement on
+    that connection raises ``InFailedSQLTransactionError`` until someone
+    rolls back. Four of these helpers run in a row on ONE session during an
+    upload, so a single failure in the first silently broke the other three
+    — and the LAST one in the chain got the blame.
+
+    That is exactly what production showed (Sentry d8d48c7, 2026-09-20): the
+    as-of writer reported ``current transaction is aborted`` while writing
+    ``(None, None)``, a statement that cannot fail on its own. Something
+    earlier had poisoned the transaction and swallowed its own error.
+
+    Swallowing an exception is a choice about the CALLER. It is not licence
+    to hand the next caller a broken connection.
+    """
+    try:
+        await session.rollback()
+    except Exception:  # noqa: BLE001 — a failed rollback must not mask the original
+        logger.exception("rollback after %s failed; session may be unusable", what)
+
+
 async def _persist_verification_report(
     session: AsyncSession,
     *,
@@ -6956,6 +6985,7 @@ async def _persist_verification_report(
                 exc,
             )
     except Exception as exc:
+        await _rollback_after_best_effort(session, "verification report persist")
         logger.warning(
             "verification: failed to persist report for doc=%s: %s",
             doc_id,
@@ -7199,6 +7229,14 @@ async def _persist_usali_score(
         # The OVERALL extraction stays EXTRACTED (this is a post-extraction
         # scoring pass, not the extraction itself) — we just annotate
         # the doc with the additional failure signal.
+        #
+        # Roll back FIRST. If the crash came from the database the
+        # transaction is already aborted, and the annotation UPDATE below
+        # would fail too — which is precisely what the "also failed to
+        # persist error annotation" branch was catching. The annotation is
+        # the one thing an operator has to find this document by; it must
+        # not be lost to the error it is describing.
+        await _rollback_after_best_effort(session, "usali score persist")
         logger.exception(
             "usali_score: scoring crashed for doc=%s deal=%s",
             doc_id,
@@ -7306,6 +7344,7 @@ async def _persist_report_as_of(
         )
         return (as_of, precision)
     except Exception:  # noqa: BLE001 — dating is additive, never a gate
+        await _rollback_after_best_effort(session, "report_as_of persist")
         logger.exception(
             "report_as_of: derivation/persist failed for doc=%s deal=%s",
             doc_id,
@@ -7427,6 +7466,7 @@ async def _persist_critic_report(
             report.info_count,
         )
     except Exception as exc:
+        await _rollback_after_best_effort(session, "critic report persist")
         logger.warning(
             "critic: failed to persist report for deal=%s: %s", deal_id, exc
         )

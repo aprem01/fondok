@@ -566,3 +566,95 @@ async def test_persist_report_as_of_writes_null_when_nothing_stated() -> None:
     assert row is not None
     assert row._mapping["report_as_of"] is None
     assert row._mapping["report_as_of_precision"] is None
+
+
+# ── Sentry d8d48c7, 2026-09-20 — production, document upload ──────────────
+# InFailedSQLTransactionError raised by `_persist_report_as_of` while writing
+# (None, None) — a statement that cannot fail on its own merits.
+#
+# Cause: four `_persist_*` helpers run in a row on ONE session during an
+# upload. Each is best-effort and swallows its own exception. None of them
+# rolled back. On Postgres a failed statement aborts the transaction, so the
+# first failure silently broke every helper after it, and the LAST one in the
+# chain reported the error. The as-of writer was the victim, not the culprit.
+#
+# Swallowing an exception is a choice about the caller. It is not licence to
+# hand the next caller a broken connection.
+async def test_a_failed_best_effort_persist_rolls_back_so_the_next_one_survives() -> None:
+    """The contract these helpers rely on: the session outlives their failure."""
+    from app.api import documents as docs
+    from app.database import get_session_factory
+
+    deal_id, doc_id, tenant_id = await _seed_doc("T12")
+    factory = get_session_factory()
+
+    rolled_back: list[str] = []
+
+    async with factory() as session:
+        real_rollback = session.rollback
+
+        async def _spy() -> None:
+            rolled_back.append("yes")
+            await real_rollback()
+
+        session.rollback = _spy  # type: ignore[method-assign]
+
+        # Make the derivation blow up the way a DB error would.
+        def _boom(*_a: object, **_k: object) -> None:
+            raise RuntimeError("simulated failure inside a best-effort persist")
+
+        import app.services.as_of as as_of_mod
+
+        original = as_of_mod.derive_report_as_of
+        as_of_mod.derive_report_as_of = _boom  # type: ignore[assignment]
+        try:
+            result = await docs._persist_report_as_of(
+                session,
+                deal_id=deal_id,
+                doc_id=doc_id,
+                tenant_id=tenant_id,
+                doc_type="T12",
+                fields=_fields(("p_and_l_usali.period_ending", "2025-05-31")),
+            )
+        finally:
+            as_of_mod.derive_report_as_of = original  # type: ignore[assignment]
+
+        # Still best-effort: the caller is told nothing was dated.
+        assert result == (None, None)
+        # But the session was handed back usable, not poisoned.
+        assert rolled_back == ["yes"], "a swallowed failure must roll back"
+
+        # The proof that matters: the NEXT statement on this session works.
+        # Before the fix this is where InFailedSQLTransactionError surfaced.
+        ok = await docs._persist_report_as_of(
+            session,
+            deal_id=deal_id,
+            doc_id=doc_id,
+            tenant_id=tenant_id,
+            doc_type="T12",
+            fields=_fields(("p_and_l_usali.period_ending", "2025-05-31")),
+        )
+        assert ok == (date(2025, 5, 31), "day")
+
+
+async def test_every_best_effort_persister_rolls_back_on_failure() -> None:
+    """Whichever one fails first, the session must survive it.
+
+    Pinned as a sweep rather than four separate cases so a fifth helper
+    added to this chain cannot quietly reintroduce the defect.
+    """
+    import inspect
+
+    from app.api import documents as docs
+
+    for name in (
+        "_persist_verification_report",
+        "_persist_usali_score",
+        "_persist_report_as_of",
+        "_persist_critic_report",
+    ):
+        src = inspect.getsource(getattr(docs, name))
+        assert "_rollback_after_best_effort" in src, (
+            f"{name} swallows exceptions on a shared session but never rolls "
+            "back — a failure here poisons every later statement on Postgres"
+        )
