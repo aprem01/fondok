@@ -303,6 +303,31 @@ let _cachedTokenExpiryMs: number | null = null;
  *  before expiry without letting an already-expired token slip out. */
 const TOKEN_EXPIRY_BUFFER_MS = 30_000;
 
+/**
+ * Resolve once the Clerk token getter has been installed by
+ * ``ClerkTokenBridge``, or after ``maxMs`` if it never is.
+ *
+ * Why this exists: the worker now refuses any tenant-scoped request that
+ * carries no verified JWT (2026-10-06 — a forged ``X-Tenant-Id`` with no
+ * credentials was reading every deal in a tenant from the public URL).
+ * Before that, a request that raced ahead of the bridge went out with only
+ * ``X-Tenant-Id`` and quietly succeeded on the header path. That path is
+ * closed, so the same race would now surface as a 401. Waiting for the
+ * getter — bounded, so a broken Clerk load can never hang the app — turns
+ * the race into a short delay instead of an error.
+ */
+export function waitForClerkTokenFn(maxMs = 3000, stepMs = 50): Promise<void> {
+  if (!isClerkConfigured || _clerkGetToken) return Promise.resolve();
+  return new Promise((resolve) => {
+    const started = Date.now();
+    const tick = () => {
+      if (_clerkGetToken || Date.now() - started >= maxMs) resolve();
+      else setTimeout(tick, stepMs);
+    };
+    tick();
+  });
+}
+
 export function setClerkGetTokenFn(fn: ClerkGetTokenFn | null): void {
   _clerkGetToken = fn;
   // Any handoff — sign-in, sign-out, org switch — invalidates the

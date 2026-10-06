@@ -20,6 +20,11 @@ Usage::
     # Custom tenant:
     WORKER_URL=... TENANT_ID=<uuid> python scripts/e2e_smoke.py
 
+    NOTE (2026-10-06): the worker refuses a bare X-Tenant-Id with no JWT by
+    default. Run this against a worker started with
+    ALLOW_TENANT_HEADER_WITHOUT_JWT=1 (local/dev only), or send a real
+    Clerk Bearer instead of TENANT_ID. Never enable the flag on Railway.
+
 Exit codes:
     0  — all checks passed (or the only failures are documented thin
          spots like the mock OM not carrying a comp-sales table)

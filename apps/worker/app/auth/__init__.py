@@ -144,7 +144,31 @@ async def get_current_auth(
             email=str(email) if email else None,
         )
 
-    # No JWT — try the header path.
+    # No JWT. Before 2026-10-06 the request fell through to the header
+    # path and then to DEFAULT_TENANT_ID, and both were SERVED. The header
+    # path was designed for callers inside the worker's own perimeter —
+    # ``require_role`` even treats it as a trusted admin — but the worker
+    # is on the public internet, so a forged ``X-Tenant-Id`` read (and
+    # could write) any tenant's deals with no credentials at all. Verified
+    # live, read-only, during the Eshan/Rani feedback review.
+    #
+    # Now: refuse unless the operator has explicitly opted in. The web app
+    # always sends a Bearer when Clerk is configured, so real users never
+    # reach this branch; the test suite and local dev set the flag.
+    if not settings.ALLOW_TENANT_HEADER_WITHOUT_JWT:
+        logger.warning(
+            "get_current_auth: no verified JWT (x_tenant_id=%s) — refusing "
+            "the header/default tenant path (ALLOW_TENANT_HEADER_WITHOUT_JWT "
+            "is off)",
+            "present" if x_tenant_id else "absent",
+        )
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="authentication required",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+
+    # Header path — explicitly enabled (dev / tests / trusted scripts).
     if x_tenant_id:
         coerced = _coerce_tenant_id(x_tenant_id)
         if coerced is not None:

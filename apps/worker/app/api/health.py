@@ -10,6 +10,7 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from .. import __version__
+from ..config import get_settings
 from ..database import get_session
 
 logger = logging.getLogger(__name__)
@@ -136,5 +137,17 @@ async def health(
         },
         "extraction_cache": extraction_cache,
         "semantic_search": semantic_search,
+        # Auth posture. A public worker that honours a bare X-Tenant-Id is a
+        # cross-tenant hole (2026-10-06); this says, at a glance, whether
+        # that path is open. It should read false on every deployed
+        # environment and true only on a developer's machine.
+        "auth": {
+            "header_tenant_path_enabled": bool(
+                getattr(get_settings(), "ALLOW_TENANT_HEADER_WITHOUT_JWT", False)
+            ),
+            "jwt_required": not bool(
+                getattr(get_settings(), "ALLOW_TENANT_HEADER_WITHOUT_JWT", False)
+            ),
+        },
         "degraded_reasons": degraded_reasons,
     }

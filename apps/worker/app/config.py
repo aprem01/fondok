@@ -319,6 +319,19 @@ class Settings(BaseSettings):
     OTEL_EXPORTER_OTLP_ENDPOINT: str | None = Field(default=None)
     DEPLOYMENT_ENVIRONMENT: str = Field(default="development")
 
+    # ── Auth: the no-JWT tenant path ─────────────────────────────────
+    # 2026-10-06 — found during the Eshan/Rani feedback review. With no
+    # credentials at all, a forged ``X-Tenant-Id`` header returned the
+    # full deal list for that tenant from the public worker URL, and
+    # ``require_role`` treats that path as a trusted caller, so it also
+    # passed every admin gate. The header path was designed for callers
+    # inside the worker's own network perimeter; the worker is public.
+    #
+    # OFF by default: every tenant-scoped request must carry a verified
+    # Clerk JWT. Turn it on ONLY for local dev, the test suite (conftest
+    # sets it), and scripts run from a trusted shell — never on Railway.
+    ALLOW_TENANT_HEADER_WITHOUT_JWT: bool = Field(default=False)
+
     # ── Analyst memo streaming ──────────────────────────────────────
     # When true, ``run_analyst`` drafts the memo section-by-section
     # and publishes each completed section to the in-process

@@ -25,6 +25,10 @@ process.env.NEXT_PUBLIC_WORKER_URL = 'http://test-worker.local';
 vi.mock('@/lib/auth', () => ({
   getCurrentOrgId: () => null,
   getClerkSessionToken: async () => null,
+  // request() now waits for the Clerk token bridge before sending
+  // (2026-10-06, the worker refuses tokenless tenant requests). Demo mode
+  // resolves immediately, which is what this mock models.
+  waitForClerkTokenFn: async () => {},
 }));
 
 import { api, TimeoutError } from '@/lib/api';

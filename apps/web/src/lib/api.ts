@@ -4,7 +4,7 @@
 // When NEXT_PUBLIC_WORKER_URL is unset, `isWorkerConnected()` returns false
 // and consumers should fall back to `lib/mockData.ts`.
 
-import { getCurrentOrgId, getClerkSessionToken } from './auth';
+import { getCurrentOrgId, getClerkSessionToken, waitForClerkTokenFn } from './auth';
 import type { ReasonCode } from './ontology/reasons.generated';
 import type { SourceId } from './ontology/concepts.generated';
 
@@ -1090,6 +1090,11 @@ async function request<T>(
   // org-id lookup so both headers travel together when Clerk is
   // active. Returns null in demo mode (no Clerk) — the worker's
   // header-trust fallback keeps the demo flow working.
+  // Do not race the token bridge: the worker refuses tenant-scoped requests
+  // without a verified JWT (2026-10-06), so a request fired before the bridge
+  // installs the getter must wait for it (bounded) rather than go out
+  // tokenless and 401. No-op in demo mode and once the getter exists.
+  await waitForClerkTokenFn();
   const token = await getClerkSessionToken();
   if (token) headers['Authorization'] = `Bearer ${token}`;
   // Multi-tenant header: when an active Clerk org is set, scope every
@@ -1182,6 +1187,11 @@ async function requestBlob(
   }
   const url = `${BASE}${path}`;
   const headers: Record<string, string> = {};
+  // Do not race the token bridge: the worker refuses tenant-scoped requests
+  // without a verified JWT (2026-10-06), so a request fired before the bridge
+  // installs the getter must wait for it (bounded) rather than go out
+  // tokenless and 401. No-op in demo mode and once the getter exists.
+  await waitForClerkTokenFn();
   const token = await getClerkSessionToken();
   if (token) headers['Authorization'] = `Bearer ${token}`;
   const orgId = getCurrentOrgId();

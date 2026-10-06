@@ -1,6 +1,15 @@
 """Pytest configuration and fixtures for Fondok worker tests."""
 
 import asyncio
+import os
+
+# 35 test modules exercise tenant scoping through a bare ``X-Tenant-Id``
+# header with no Clerk JWT — that is the header path the worker now refuses
+# by default (2026-10-06: it was reachable from the public internet with a
+# forged header). The suite opts in explicitly. This MUST precede any
+# ``app`` import below, because ``get_settings()`` is lru-cached on first
+# use and ``app.database`` reads it at import.
+os.environ.setdefault("ALLOW_TENANT_HEADER_WITHOUT_JWT", "1")
 
 import pytest
 from sqlalchemy import text
