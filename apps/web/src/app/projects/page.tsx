@@ -338,7 +338,7 @@ export default function ProjectsPage() {
                   </>
                 ) : (
                   <>
-                    <div className="grid grid-cols-3 gap-2 mb-4">
+                    <div className="grid grid-cols-2 gap-2 mb-4">
                       <div>
                         <div className="text-[10px] text-ink-500 uppercase tracking-wide">RevPAR</div>
                         <div className="text-[14px] font-semibold tabular-nums">{p.revpar != null ? `$${p.revpar}` : '—'}</div>
@@ -346,12 +346,6 @@ export default function ProjectsPage() {
                       <div>
                         <div className="text-[10px] text-ink-500 uppercase tracking-wide">IRR</div>
                         <div className="text-[14px] font-semibold tabular-nums">{p.irr != null ? `${p.irr.toFixed(2)}%` : '—'}</div>
-                      </div>
-                      <div>
-                        <div className="text-[10px] text-ink-500 uppercase tracking-wide">Risk</div>
-                        <div className={cn('text-[12px] font-medium px-1.5 py-0.5 rounded inline-block', riskTone(p.risk))}>
-                          {p.risk ?? '—'}
-                        </div>
                       </div>
                     </div>
                     <div>
@@ -395,9 +389,6 @@ export default function ProjectsPage() {
             <div className="w-16 flex justify-end">
               <MetricLabel label="IRR" tip="Internal Rate of Return — the annualized return on equity over the hold period. The headline return metric." />
             </div>
-            <div className="w-16 flex justify-center">
-              <MetricLabel label="Risk" tip="Fondok's overall risk grade for the deal — combines market, brand, debt, and execution risk." />
-            </div>
             <div className="w-24 flex justify-end">
               <MetricLabel label="AI Conf." tip="How confident the AI is in the model, based on document completeness and extraction quality. Climbs toward 100% as you upload the full doc set." />
             </div>
@@ -430,9 +421,6 @@ export default function ProjectsPage() {
               <div className="text-[12.5px] tabular-nums w-20 text-right">{p.revpar != null ? `$${p.revpar}` : '—'}</div>
               <div className="text-[12.5px] tabular-nums w-24 text-right">{p.noi != null ? `$${(p.noi / 1e6).toFixed(2)}M` : '—'}</div>
               <div className="text-[12.5px] tabular-nums w-16 text-right font-medium">{p.irr != null ? `${p.irr.toFixed(2)}%` : '—'}</div>
-              <div className="w-16 flex justify-center">
-                <span className={cn('text-[11.5px] font-medium px-2 py-0.5 rounded text-center', riskTone(p.risk))}>{p.risk ?? '—'}</span>
-              </div>
               <div className="w-24">
                 <div className="flex items-center gap-1.5">
                   <div className="flex-1 h-1.5 bg-ink-300/30 rounded-full overflow-hidden">
