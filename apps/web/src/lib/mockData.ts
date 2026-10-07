@@ -184,10 +184,17 @@ export const engines = [
 // shorter mockData aliases retained as substring-matchable prefixes for legacy deal
 // records that store just the short brand (e.g., kimptonAnglerOverview.general.brand = "Kimpton").
 export type Brand = { name: string; tier: string };
-export type BrandFamily = { family: string; count: number; brands: Brand[] };
+export type BrandFamily = {
+  family: string;
+  count: number;
+  brands: Brand[];
+  /** Short parent-chain label shown as secondary text next to a brand
+   *  ("IHG" for "IHG Hotels & Resorts"). Falls back to `family`. */
+  short?: string;
+};
 
 export const brandFamilies: BrandFamily[] = [
-  { family: 'Hilton', count: 18, brands: [
+  { family: 'Hilton', short: 'Hilton', count: 18, brands: [
     { name: 'Hampton by Hilton', tier: 'Upper Midscale' },
     { name: 'Hilton Hotels & Resorts', tier: 'Upper Upscale' },
     { name: 'Hilton Garden Inn', tier: 'Upscale' },
@@ -207,7 +214,7 @@ export const brandFamilies: BrandFamily[] = [
     { name: 'Conrad Hotels & Resorts', tier: 'Luxury' },
     { name: 'Waldorf Astoria Hotels & Resorts', tier: 'Luxury' },
   ]},
-  { family: 'Marriott International', count: 28, brands: [
+  { family: 'Marriott International', short: 'Marriott', count: 28, brands: [
     { name: 'Courtyard by Marriott', tier: 'Upscale' },
     { name: 'Marriott Hotels', tier: 'Upper Upscale' },
     { name: 'Fairfield by Marriott', tier: 'Upper Midscale' },
@@ -237,7 +244,7 @@ export const brandFamilies: BrandFamily[] = [
     { name: 'City Express by Marriott', tier: 'Midscale' },
     { name: 'Marriott Executive Apartments', tier: 'Upper Upscale' },
   ]},
-  { family: 'IHG Hotels & Resorts', count: 17, brands: [
+  { family: 'IHG Hotels & Resorts', short: 'IHG', count: 17, brands: [
     { name: 'Holiday Inn Express', tier: 'Upper Midscale' },
     { name: 'Holiday Inn', tier: 'Upscale' },
     { name: 'Candlewood Suites', tier: 'Midscale' },
@@ -256,7 +263,7 @@ export const brandFamilies: BrandFamily[] = [
     { name: 'Regent Hotels & Resorts', tier: 'Luxury' },
     { name: 'Six Senses', tier: 'Luxury' },
   ]},
-  { family: 'Hyatt Hotels Corp.', count: 18, brands: [
+  { family: 'Hyatt Hotels Corp.', short: 'Hyatt', count: 18, brands: [
     { name: 'Hyatt Place', tier: 'Upscale' },
     { name: 'Hyatt House', tier: 'Upscale' },
     { name: 'Hyatt Regency', tier: 'Upper Upscale' },
@@ -276,7 +283,7 @@ export const brandFamilies: BrandFamily[] = [
     { name: 'UrCove', tier: 'Upper Midscale' },
     { name: 'Miraval Resorts', tier: 'Luxury' },
   ]},
-  { family: 'Wyndham Hotels & Resorts', count: 21, brands: [
+  { family: 'Wyndham Hotels & Resorts', short: 'Wyndham', count: 21, brands: [
     { name: 'Super 8 by Wyndham', tier: 'Economy' },
     { name: 'Days Inn by Wyndham', tier: 'Economy' },
     { name: 'Ramada by Wyndham', tier: 'Midscale' },
@@ -299,7 +306,7 @@ export const brandFamilies: BrandFamily[] = [
     { name: 'Esplendor by Wyndham', tier: 'Upscale' },
     { name: 'Vienna House by Wyndham', tier: 'Upscale' },
   ]},
-  { family: 'Choice Hotels International', count: 19, brands: [
+  { family: 'Choice Hotels International', short: 'Choice', count: 19, brands: [
     { name: 'Comfort Inn', tier: 'Upper Midscale' },
     { name: 'Comfort Suites', tier: 'Upper Midscale' },
     { name: 'Quality Inn', tier: 'Midscale' },
@@ -320,7 +327,7 @@ export const brandFamilies: BrandFamily[] = [
     { name: 'Park Plaza', tier: 'Upper Upscale' },
     { name: 'Country Inn & Suites by Radisson', tier: 'Upper Midscale' },
   ]},
-  { family: 'BWH Hotels (Best Western)', count: 17, brands: [
+  { family: 'BWH Hotels (Best Western)', short: 'Best Western', count: 17, brands: [
     { name: 'Best Western', tier: 'Midscale' },
     { name: 'Best Western Plus', tier: 'Upper Midscale' },
     { name: 'Best Western Premier', tier: 'Upscale' },
@@ -339,7 +346,7 @@ export const brandFamilies: BrandFamily[] = [
     { name: 'SureStay Plus by Best Western', tier: 'Midscale' },
     { name: 'SureStay Studio by Best Western', tier: 'Economy' },
   ]},
-  { family: 'Sonesta International Hotels', count: 12, brands: [
+  { family: 'Sonesta International Hotels', short: 'Sonesta', count: 12, brands: [
     { name: 'Sonesta Hotels & Resorts', tier: 'Upper Upscale' },
     { name: 'Royal Sonesta', tier: 'Upper Upscale' },
     { name: 'Sonesta Select', tier: 'Upscale' },
@@ -353,7 +360,7 @@ export const brandFamilies: BrandFamily[] = [
     { name: 'Americas Best Value Inn', tier: 'Economy' },
     { name: 'Knights Inn', tier: 'Economy' },
   ]},
-  { family: 'G6 Hospitality', count: 2, brands: [
+  { family: 'G6 Hospitality', short: 'G6', count: 2, brands: [
     { name: 'Motel 6', tier: 'Economy' },
     { name: 'Studio 6', tier: 'Economy' },
   ]},
@@ -427,6 +434,23 @@ export function findBrand(name: string | null | undefined): { brand: Brand; fami
     if (partial) return { brand: partial, family: fam.family };
   }
   return null;
+}
+
+/** Short parent-chain label for a family ("IHG" for "IHG Hotels & Resorts"). */
+export function brandFamilyShort(fam: BrandFamily): string {
+  return fam.short ?? fam.family;
+}
+
+/**
+ * R-019 — parent chain (short label) of a brand name, for the wizard's
+ * "Kimpton Hotels & Restaurants · IHG" secondary text. Null when the name
+ * is not in the catalog (e.g. "agnostic" or a free-text legacy brand).
+ */
+export function brandChain(name: string | null | undefined): string | null {
+  const hit = findBrand(name);
+  if (!hit) return null;
+  const fam = brandFamilies.find(f => f.family === hit.family);
+  return fam ? brandFamilyShort(fam) : hit.family;
 }
 
 // Project 7 — Kimpton Angler — Deep data for the IC Ready demo deal
