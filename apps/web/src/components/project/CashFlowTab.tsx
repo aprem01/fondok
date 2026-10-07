@@ -108,7 +108,7 @@ const STATEMENT_LABEL_CANONICAL: Record<string, string> = {
 // the NOI path is on Financials → Projections, and the proceeds / interest /
 // amortization / payoff series is Debt → Debt Schedule.
 const CROSS_TAB_LINKS: { label: string; tab: string; sub: string }[] = [
-  { label: 'Financials →', tab: 'pl', sub: 'projections' },
+  { label: 'P&L →', tab: 'pl', sub: 'projections' },
   { label: 'Investment →', tab: 'investment', sub: 'sources-and-uses' },
   { label: 'Debt →', tab: 'debt', sub: 'debt-schedule' },
   { label: 'Partnership →', tab: 'partnership', sub: 'cash-flows' },

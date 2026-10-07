@@ -707,15 +707,15 @@ export default function OverviewTab({ projectId }: { projectId: number | string 
         (meta.trailingOcc != null && Number.isFinite(meta.trailingOcc) && meta.trailingAdr != null && Number.isFinite(meta.trailingAdr))
           ? `${fmtPct(meta.trailingOcc, 1)} / ${fmtCurrency(meta.trailingAdr)}`
           : '—',
-        '→ Financials (historicals)', 'pl'),
+        '→ Historical P&L', 'pl'),
       lnk('brand', 'Brand', brand || '—', '→ Investment Profile', ''),
       lnk('positioning', 'Positioning', positioningTiers.find((p) => p.id === positioningId)?.label ?? '—', '→ Investment Profile', ''),
     ];
 
     const entryRows = (): RowDef[] => [
-      lnk('entryNOI', 'Run-Rate / Entry NOI (before FF&E reserve)', money(y1Noi), '→ Financials', 'pl', { linkSub: 'historicals' }),
-      cal('entryCap', 'Entry Cap Rate', pctv(entryCap), { trace: { engine: 'capital', path: 'entry_cap_rate' }, formula: 'Entry NOI ÷ Purchase Price', inputs: [{ name: 'Entry NOI', from: 'Financials → Historicals', kind: 'linked' }, { name: 'Purchase Price', from: 'Calculated', kind: 'calc' }] }),
-      cal('purchase', 'Purchase Price', money(purchase), { bold: true, trace: { engine: 'capital', path: 'purchase_price' }, formula: 'Entry NOI ÷ Entry Cap Rate', inputs: [{ name: 'Entry NOI', from: 'Financials → Historicals', kind: 'linked' }, { name: 'Entry Cap Rate', from: 'Calculated', kind: 'calc' }] }),
+      lnk('entryNOI', 'Run-Rate / Entry NOI (before FF&E reserve)', money(y1Noi), '→ P&L', 'pl', { linkSub: 'historicals' }),
+      cal('entryCap', 'Entry Cap Rate', pctv(entryCap), { trace: { engine: 'capital', path: 'entry_cap_rate' }, formula: 'Entry NOI ÷ Purchase Price', inputs: [{ name: 'Entry NOI', from: 'P&L → Historical P&L', kind: 'linked' }, { name: 'Purchase Price', from: 'Calculated', kind: 'calc' }] }),
+      cal('purchase', 'Purchase Price', money(purchase), { bold: true, trace: { engine: 'capital', path: 'purchase_price' }, formula: 'Entry NOI ÷ Entry Cap Rate', inputs: [{ name: 'Entry NOI', from: 'P&L → Historical P&L', kind: 'linked' }, { name: 'Entry Cap Rate', from: 'Calculated', kind: 'calc' }] }),
       cal('pricePerKey', 'Price / Key', money(pricePerKey), { trace: { engine: 'capital', path: 'price_per_key' }, formula: 'Purchase Price ÷ Keys', inputs: [{ name: 'Purchase Price', from: 'Calculated', kind: 'calc' }, { name: 'Keys', from: 'OM · Room Mix', kind: 'doc' }] }),
       lnk('acqDate', 'Acquisition Date', fmtISODate(timeline?.close_date), '→ Timeline (drives the schedule)', ''),
       awa('closingPct', 'Closing Costs %'),
@@ -758,7 +758,7 @@ export default function OverviewTab({ projectId }: { projectId: number | string 
             stabCalendarYear != null
               ? `Year ${stab.stabilized_year} — ${stabCalendarYear}`
               : `Year ${stab.stabilized_year}`,
-            '→ Financials (projections)', 'pl',
+            '→ Future P&L', 'pl',
             {
               linkSub: 'projections',
               where: stabilizationBadge(stab) ?? undefined,
@@ -768,22 +768,22 @@ export default function OverviewTab({ projectId }: { projectId: number | string 
         : awa('stabYear', 'Stabilization Year', { reason: 'awaiting_analyst' });
     const stabOccRow = (): RowDef =>
       lnk('stabOcc', 'Stabilized Occupancy', pctv(stab?.stabilized_occupancy ?? undefined, 1),
-        '→ Financials (projections)', 'pl',
+        '→ Future P&L', 'pl',
         { reasonKey: 'starting_occupancy', linkSub: 'projections' });
     const stabAdrRow = (): RowDef =>
       lnk('stabADR', 'Stabilized ADR', money(stab?.stabilized_adr ?? undefined),
-        '→ Financials (projections)', 'pl',
+        '→ Future P&L', 'pl',
         { reasonKey: 'starting_adr', linkSub: 'projections' });
     const stabRevRow = (): RowDef =>
       lnk('stabRev', 'Stabilized Revenue', money(stab?.stabilized_revenue ?? undefined),
-        '→ Financials (projections)', 'pl', { linkSub: 'projections' });
+        '→ Future P&L', 'pl', { linkSub: 'projections' });
     // FON-59 #1 / #3 — NOT `returns.terminal_noi`: that is the reversion NOI of
     // year hold+1, a different year on a different basis. This is the
     // stabilized year's NOI before the FF&E reserve, straight off the block.
     const stabNoiRow = (): RowDef =>
       stabNoi != null
         ? lnk('stabNOI', STABILIZED_NOI_LABEL, money(stabNoi),
-            '→ Financials (projections)', 'pl',
+            '→ Future P&L', 'pl',
             {
               bold: true, linkSub: 'projections',
               sub: `NOI before the FF&E reserve, from projection Year ${stab?.stabilized_year}.`,
@@ -838,12 +838,12 @@ export default function OverviewTab({ projectId }: { projectId: number | string 
       // forward 12-month cash NOI the reversion capitalizes
       // (`returns.terminal_noi_usd` ?? `terminal_noi`, the year hold+1 figure),
       // so it is ONE row carrying both names — never the same number twice.
-      lnk('exitNOI', EXIT_NOI_LABEL, money(terminalNoi), '→ Financials (projections)', 'pl', {
+      lnk('exitNOI', EXIT_NOI_LABEL, money(terminalNoi), '→ Future P&L', 'pl', {
         linkSub: 'projections',
         sub: 'The NOI the exit value capitalizes — the 12 months after the hold, after the FF&E reserve. Not the stabilized year.',
       }),
       lnk('exitCap', 'Exit Cap Rate', pctv(exitCap), '→ Investment (exit)', 'investment', { reasonKey: 'exit_cap_rate' }),
-      cal('exitValue', 'Gross Exit Value', money(grossExit), { bold: true, trace: { engine: 'returns', path: 'gross_sale_price' }, formula: 'Exit NOI ÷ Exit Cap Rate', inputs: [{ name: 'Exit NOI (forward 12-month)', from: 'Financials → Projections', kind: 'linked' }, { name: 'Exit Cap Rate', from: 'Investment assumption', kind: 'input' }] }),
+      cal('exitValue', 'Gross Exit Value', money(grossExit), { bold: true, trace: { engine: 'returns', path: 'gross_sale_price' }, formula: 'Exit NOI ÷ Exit Cap Rate', inputs: [{ name: 'Exit NOI (forward 12-month)', from: 'P&L → Future P&L', kind: 'linked' }, { name: 'Exit Cap Rate', from: 'Investment assumption', kind: 'input' }] }),
       cal('exitPerKey', 'Exit Value / Key', money(exitPerKey), { formula: 'Gross Exit Value ÷ Keys' }),
       lnk('salesPct', 'Disposition Costs', money(sellingCosts), '→ Returns', 'returns', { trace: { engine: 'returns', path: 'selling_costs' } }),
       awa('transferPct', 'Transfer Tax'),

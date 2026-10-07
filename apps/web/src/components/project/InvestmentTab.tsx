@@ -613,7 +613,7 @@ export default function InvestmentTab() {
               },
               {
                 id: 'entryNoi', label: `Entry / Run-Rate ${wEntryNoi.label}`, kind: 'linked', state: 'linked',
-                value: money(entryNoi), link: { label: '→ Financials', tab: 'pl' },
+                value: money(entryNoi), link: { label: '→ P&L', tab: 'pl' },
               },
               {
                 id: 'entryCap', label: 'Entry Cap Rate', kind: 'calc',
@@ -681,7 +681,7 @@ export default function InvestmentTab() {
               { id: 'exitDate', label: 'Exit Date', kind: 'calc', state: 'calculated', value: timeline?.exit_date ? fmtISODate(timeline.exit_date) : '—' },
               {
                 id: 'fwdNoi', label: 'Forward 12-Month NOI', kind: 'linked', state: 'linked',
-                value: money(terminalNoi), link: { label: '→ Financials', tab: 'pl' },
+                value: money(terminalNoi), link: { label: '→ P&L', tab: 'pl' },
               },
               {
                 id: 'exitCap', label: 'Exit Cap Rate', kind: 'input',
@@ -833,7 +833,7 @@ export default function InvestmentTab() {
               // The reserve is the operating model's ``ffe_reserve_pct``
               // assumption — the one Ongoing-Capex dash whose absence the
               // worker can actually explain.
-              { id: 'ffee', label: 'FF&E Reserve', kind: 'linked', state: 'linked', value: '—', reasonKey: 'ffe_reserve_pct', link: { label: '→ Financials', tab: 'pl' } },
+              { id: 'ffee', label: 'FF&E Reserve', kind: 'linked', state: 'linked', value: '—', reasonKey: 'ffe_reserve_pct', link: { label: '→ P&L', tab: 'pl' } },
               { id: 'roi', label: 'ROI Projects', kind: 'awaiting', state: 'awaiting_data', value: '—', note: 'Funded from operations — never appears in Sources & Uses' },
               { id: 'otherCapex', label: 'Other Recurring Capex', kind: 'awaiting', state: 'awaiting_data', value: '—', note: 'Awaiting the property condition assessment' },
             ];

@@ -302,7 +302,7 @@ describe('CashFlowTab — `?tab=cash-flow&sub=<slug>` routing', () => {
       { scroll: false },
     );
 
-    fireEvent.click(screen.getByRole('button', { name: 'Financials →' }));
+    fireEvent.click(screen.getByRole('button', { name: 'P&L →' }));
     expect(nav.push).toHaveBeenLastCalledWith(
       '/projects/deal-1?tab=pl&sub=projections',
       { scroll: false },

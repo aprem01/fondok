@@ -837,12 +837,12 @@ function SubjectVsCompSet({
   const hasBaseYear = baseYearOccPct != null || baseYearAdr != null;
   const baseYearClause = hasBaseYear ? (
     <>
-      Financials → Projections Base Year:{' '}
+      P&L → Future P&L Base Year:{' '}
       <b>{baseYearOccPct != null ? pct1(baseYearOccPct) : '—'}</b> Occ ·{' '}
       <b>{baseYearAdr != null ? money0(baseYearAdr) : '—'}</b> ADR.
     </>
   ) : (
-    <>The Base Year in Financials → Projections is not available until the model has run.</>
+    <>The Base Year in P&L → Future P&L is not available until the model has run.</>
   );
   // Which basis the model is on, named — ``str_comp_set`` is the one case where
   // the comp-set rates ARE the Year-1 input (the analyst applied them here as
