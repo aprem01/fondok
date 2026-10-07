@@ -1342,12 +1342,29 @@ async def _load_engine_inputs(
         else 0.0
     )
 
-    if fb_rev and occupied_room_nights > 0:
+    if (
+        fb_rev
+        and occupied_room_nights > 0
+        and not _is_sub_period_source(revenue_prov.get("fb_revenue"))
+    ):
         base["fb_revenue_per_occupied_room"] = fb_rev / occupied_room_nights
         # The ratio is derived, but ONE extracted line (F&B revenue) is its
         # numerator — that is the row an analyst wants to click through to.
         _ground("fb_revenue_per_occupied_room", "fb_revenue")
-    if other_pool and rooms_rev and rooms_rev > 0:
+    # A monthly rooms line (the loader's last-resort fallback, provenance
+    # scope "monthly") must never be the denominator of an annual ratio —
+    # one month of rooms under a year of other revenue read 135% and hit
+    # the 30% cap on a 14% hotel (2026-10).
+    if (
+        other_pool
+        and rooms_rev
+        and rooms_rev > 0
+        and not _is_sub_period_source(revenue_prov.get("rooms_revenue"))
+        and not any(
+            _is_sub_period_source(revenue_prov.get(k))
+            for k in ("other_revenue", "misc_revenue", "resort_fees")
+        )
+    ):
         # Cap the ratio at a sane upper bound so a partial extraction
         # (rooms revenue missing, all other_pool present) can't blow up.
         base["other_revenue_pct_of_rooms"] = min(0.30, other_pool / rooms_rev)
@@ -3324,6 +3341,63 @@ async def _load_source_documents(
     return out
 
 
+#: Path segments that scope a line to something other than the statement's
+#: own full period. The loaders accept a field by its LAST segment when the
+#: full path has no alias (partial extractions), which let
+#: ``p_and_l_usali.monthly.apr_2024.rooms_revenue`` ($954K, one month) satisfy
+#: the ``rooms_revenue`` canonical ahead of
+#: ``p_and_l_usali.operating_revenue.rooms_revenue`` ($9.33M) simply because
+#: the monthly block came first in the field list — other revenue then read
+#: 135% of rooms and hit the 30% cap (2026-10, two testers' deals).
+_SUB_PERIOD_PATH_SEGMENTS: frozenset[str] = frozenset(
+    {
+        "monthly",
+        "months",
+        "by_month",
+        "quarterly",
+        "quarters",
+        "weekly",
+        "prior_year",
+        "prior_period",
+        "budget",
+        "forecast",
+        "seasonality",
+        "variance",
+    }
+)
+
+
+def _is_sub_period_path(name: str) -> bool:
+    """True when a dotted field path is scoped to a month / quarter / prior
+    period / budget rather than the statement's own period."""
+    return any(seg in _SUB_PERIOD_PATH_SEGMENTS for seg in str(name or "").lower().split("."))
+
+
+def _full_period_lines_first(fields: list[Any]) -> list[Any]:
+    """The row's fields with every sub-period line moved AFTER the
+    full-period ones, so a canonical resolves to the statement's own line
+    whenever it has one and falls back to a monthly / prior-period slice
+    only when it does not (that fallback is pinned by
+    ``test_with_provenance_classifies_scope_and_basis`` and is what the
+    ``resolution.scope == "monthly"`` provenance tag reports)."""
+    full: list[Any] = []
+    sub: list[Any] = []
+    for f in fields:
+        name = (f.get("field_name") or "") if isinstance(f, dict) else ""
+        (sub if _is_sub_period_path(name) else full).append(f)
+    return full + sub
+
+
+def _is_sub_period_source(prov: Any) -> bool:
+    """True when a canonical's provenance row is a sub-period slice (its
+    field path carries a monthly / prior-period / budget segment). A ratio
+    anchored on such a line would be a month over a year."""
+    try:
+        return _is_sub_period_path(prov.resolution.field_name)
+    except AttributeError:
+        return False
+
+
 class _ActualCandidate(NamedTuple):
     """One extraction row that can supply a canonical Year-1 actual."""
 
@@ -3500,7 +3574,7 @@ async def _load_t12_revenue_actuals(
             ranked_fields, ranked_doc_type, shim
         )
         seen_in_row: set[str] = set()
-        for f in ranked_fields:
+        for f in _full_period_lines_first(ranked_fields):
             if not isinstance(f, dict):
                 continue
             name = (f.get("field_name") or "").strip().lower()
@@ -3648,7 +3722,7 @@ async def _load_t12_expense_actuals(
             ranked_fields, ranked_doc_type, shim
         )
         seen_in_row: set[str] = set()
-        for f in ranked_fields:
+        for f in _full_period_lines_first(ranked_fields):
             if not isinstance(f, dict):
                 continue
             name = (f.get("field_name") or "").strip().lower()

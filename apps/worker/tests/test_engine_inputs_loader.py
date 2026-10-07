@@ -1014,3 +1014,93 @@ async def test_year_one_actuals_come_from_the_primary_statement_only() -> None:
     for canonical in ("rooms_revenue", "fb_revenue", "misc_revenue"):
         assert str(rev_prov[canonical].document_id) == str(t12_doc), canonical
     assert str(exp_prov["fb_dept_expense"].document_id) == str(t12_doc)
+
+
+@pytest.mark.asyncio
+async def test_monthly_sub_period_lines_never_supply_year_one_actuals() -> None:
+    """The live T-12 lists its monthly block BEFORE the annual operating
+    revenue lines. The last-segment alias fallback let
+    ``monthly.apr_2024.rooms_revenue`` ($954K) win the ``rooms_revenue``
+    canonical (first seen in the row), so other revenue / rooms came out at
+    135% and hit the 30% cap. Sub-period paths are skipped outright; the
+    annual line is the actual, in both loaders.
+    """
+    from app.database import get_session_factory
+    from app.services.engine_runner import (
+        _load_t12_expense_actuals,
+        _load_t12_revenue_actuals,
+    )
+
+    deal_id = uuid4()
+    await _insert_deal(deal_id, name="Monthly Guard Deal", keys=132, purchase=36_400_000)
+    await _insert_t12_extraction(
+        deal_id,
+        fields=[
+            {"field_name": "p_and_l_usali.monthly.apr_2024.rooms_revenue", "value": 954_187.0},
+            {"field_name": "p_and_l_usali.monthly.apr_2024.total_revenues", "value": 1_319_410.0},
+            {"field_name": "p_and_l_usali.monthly.apr_2024.insurance", "value": 119_000.0},
+            {"field_name": "p_and_l_usali.prior_year.occupancy", "value": 0.0},
+            {"field_name": "p_and_l_usali.budget.rooms_revenue", "value": 9_900_000.0},
+            {"field_name": "p_and_l_usali.operating_revenue.rooms_revenue", "value": 9_332_100.0},
+            {"field_name": "p_and_l_usali.operating_revenue.misc_revenue", "value": 1_266_603.0},
+            {"field_name": "p_and_l_usali.operating_revenue.other_revenue", "value": 18_986.9},
+            {"field_name": "occupancy_pct", "value": 0.83},
+            {"field_name": "p_and_l_usali.fixed_charges.insurance", "value": 1_429_573.0},
+        ],
+    )
+    factory = get_session_factory()
+    async with factory() as session:
+        rev = await _load_t12_revenue_actuals(session, deal_id=str(deal_id), tenant_id=_TENANT)
+        exp = await _load_t12_expense_actuals(session, deal_id=str(deal_id), tenant_id=_TENANT)
+    assert rev["rooms_revenue"] == pytest.approx(9_332_100.0)
+    assert rev["occupancy"] == pytest.approx(0.83)
+    assert rev["misc_revenue"] == pytest.approx(1_266_603.0)
+    assert exp["insurance"] == pytest.approx(1_429_573.0)
+    # The ratio the revenue engine derives from these is the real ~13.8%.
+    assert (rev["misc_revenue"] + rev["other_revenue"]) / rev["rooms_revenue"] == pytest.approx(0.1378, abs=0.001)
+
+
+@pytest.mark.asyncio
+async def test_annual_ratios_never_anchor_on_a_monthly_rooms_line() -> None:
+    """When the only rooms-revenue line a statement carries is a monthly
+    slice (the loader's last-resort fallback, provenance scope "monthly"),
+    the other-revenue ratio stays on the seed instead of dividing a year
+    of other revenue by one month of rooms (135% → capped 30%). With the
+    annual line present the ratio is the real ~13.8%.
+    """
+    from app.database import get_session_factory
+    from app.services.engine_runner import _load_engine_inputs
+
+    # Case 1 — monthly rooms only → seed ratio kept.
+    deal_a = uuid4()
+    await _insert_deal(deal_a, name="Monthly Rooms Only", keys=132, purchase=36_400_000)
+    await _insert_t12_extraction(
+        deal_a,
+        fields=[
+            {"field_name": "occupancy_pct", "value": 0.83},
+            {"field_name": "adr_usd", "value": 232.77},
+            {"field_name": "p_and_l_usali.monthly.apr_2024.rooms_revenue", "value": 954_187.0},
+            {"field_name": "p_and_l_usali.operating_revenue.misc_revenue", "value": 1_266_603.0},
+            {"field_name": "p_and_l_usali.operating_revenue.other_revenue", "value": 18_986.9},
+        ],
+    )
+    # Case 2 — the same statement with its annual rooms line → real ratio.
+    deal_b = uuid4()
+    await _insert_deal(deal_b, name="Annual Rooms Present", keys=132, purchase=36_400_000)
+    await _insert_t12_extraction(
+        deal_b,
+        fields=[
+            {"field_name": "occupancy_pct", "value": 0.83},
+            {"field_name": "adr_usd", "value": 232.77},
+            {"field_name": "p_and_l_usali.monthly.apr_2024.rooms_revenue", "value": 954_187.0},
+            {"field_name": "p_and_l_usali.operating_revenue.rooms_revenue", "value": 9_332_100.0},
+            {"field_name": "p_and_l_usali.operating_revenue.misc_revenue", "value": 1_266_603.0},
+            {"field_name": "p_and_l_usali.operating_revenue.other_revenue", "value": 18_986.9},
+        ],
+    )
+    factory = get_session_factory()
+    async with factory() as session:
+        base_a = await _load_engine_inputs(session, str(deal_a), tenant_id=_TENANT)
+        base_b = await _load_engine_inputs(session, str(deal_b), tenant_id=_TENANT)
+    assert base_a["other_revenue_pct_of_rooms"] == pytest.approx(0.065)  # seed, not 0.30
+    assert base_b["other_revenue_pct_of_rooms"] == pytest.approx(0.1378, abs=0.001)
