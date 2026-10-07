@@ -207,13 +207,17 @@ vi.mock('@/components/ui/Toast', () => ({ useToast: () => ({ toast: vi.fn() }) }
 // before, so every pre-existing expectation below is untouched.
 let mockReasons: Record<string, string> = {};
 let mockSources: Record<string, string> = {};
+// E-021 — the `assumption_sources.source_fields[key]` row behind a
+// document-grounded key (field path, page, doc_type). EMPTY unless a test
+// sets one.
+let mockFields: Record<string, { field?: string | null; page?: number | null; doc_type?: string | null; filename?: string | null }> = {};
 vi.mock('@/lib/hooks/useDealProvenance', () => ({
   useSource: (key: string | undefined) => {
     if (!key) return null;
     const source = mockSources[key];
     const reason = mockReasons[key];
     if (!source && !reason) return null;
-    return { source: source ?? '', value: null, reason: reason ?? null };
+    return { source: source ?? '', value: null, reason: reason ?? null, field: mockFields[key] ?? null };
   },
 }));
 
@@ -240,6 +244,7 @@ beforeEach(() => {
   mockSources = {};
   mockTraces = {};
   mockOverrides = {};
+  mockFields = {};
 });
 
 describe('InvestmentTab — engine-sourced KPI tiles (no provider present)', () => {
@@ -808,5 +813,88 @@ describe('InvestmentTab — Hold Period reads the saved override first (E-022 / 
     render(<InvestmentTab />);
     expect(rowValueCell('Hold Period').textContent).toBe('—');
     expect(screen.queryByTestId('hold-years-note')).toBeNull();
+  });
+});
+
+// ── E-021 (FON-44) — "the renovation placeholder could be adjusted, but the
+// basis for the initial amount was unclear." A "Basis · …" line under the
+// Renovation Budget states, from RECORDED data only, where the amount came
+// from; clicking it opens the lineage drawer on `assumption:renovation_budget`.
+describe('InvestmentTab — Renovation Budget states its basis (E-021 / FON-44)', () => {
+  const basis = () => screen.getByTestId('renovation-basis');
+
+  it('seed: reads the flat seed per key over THIS deal’s key count — engine use line ÷ deal-row keys, nothing invented', () => {
+    mockSources = { renovation_budget: 'seed' };
+    render(<InvestmentTab />);
+    // $4.62M Renovation use line (capital engine) ÷ 132 keys (deal row).
+    expect(basis().textContent).toContain('Basis · Per-key assumption · $35,000 / key × 132 keys (seed)');
+    expect(basis().getAttribute('data-basis-kind')).toBe('seed');
+  });
+
+  it('OM: names the extracted field and page off the recorded source row — even though the worker leaves the label at "seed"', () => {
+    mockSources = { renovation_budget: 'seed' };
+    mockFields = { renovation_budget: { field: 'broker_proforma.renovation_budget_usd', page: 14, doc_type: 'OM', filename: 'OM.pdf' } };
+    render(<InvestmentTab />);
+    expect(basis().textContent).toContain('Basis · OM · broker_proforma.renovation_budget_usd p.14');
+    expect(basis().getAttribute('data-basis-kind')).toBe('document');
+  });
+
+  it('CapEx document: a non-OM source document is named as such', () => {
+    mockSources = { renovation_budget: 'seed' };
+    mockFields = { renovation_budget: { field: 'capex.renovation_budget_usd', page: 3, doc_type: 'CAPEX', filename: 'PIP.pdf' } };
+    render(<InvestmentTab />);
+    expect(basis().textContent).toContain('Basis · CapEx document · capex.renovation_budget_usd p.3');
+  });
+
+  it('override: shows the analyst’s own note off the deal row’s {value, note} envelope', () => {
+    mockOverrides = { renovation_budget: { value: 5_000_000, note: 'GC bid 2026-09' } };
+    mockSources = { renovation_budget: 'analyst_override' };
+    render(<InvestmentTab />);
+    expect(basis().textContent).toContain('Basis · Your override (GC bid 2026-09)');
+    expect(basis().getAttribute('data-basis-kind')).toBe('override');
+  });
+
+  it('nothing recorded: says so rather than guessing', () => {
+    render(<InvestmentTab />);
+    expect(basis().textContent).toContain('Basis · basis not recorded');
+    expect(basis().getAttribute('data-basis-kind')).toBe('unrecorded');
+  });
+
+  it('appends the contingency % when the run carried one', () => {
+    const capital = (OUTPUTS as unknown as {
+      engines: { capital: { outputs: Record<string, unknown> } };
+    }).engines.capital.outputs;
+    capital.renovation_contingency_pct = 0.1;
+    try {
+      mockSources = { renovation_budget: 'seed' };
+      render(<InvestmentTab />);
+      expect(basis().textContent).toContain('· contingency 10.0%');
+    } finally {
+      delete capital.renovation_contingency_pct;
+    }
+  });
+
+  it('clicking the basis opens the existing lineage drawer on assumption:renovation_budget', () => {
+    mockSources = { renovation_budget: 'seed' };
+    const onOpen = vi.fn();
+    window.addEventListener('fondok:lineage-open', onOpen);
+    try {
+      render(<InvestmentTab />);
+      fireEvent.click(basis());
+      expect(onOpen).toHaveBeenCalledTimes(1);
+      const detail = (onOpen.mock.calls[0][0] as CustomEvent<{ dealId: string; rootId: string[]; title: string }>).detail;
+      expect(detail.dealId).toBe('deal-uuid-1');
+      expect(detail.rootId).toContain('assumption:renovation_budget');
+      expect(detail.title).toBe('Renovation Budget');
+    } finally {
+      window.removeEventListener('fondok:lineage-open', onOpen);
+    }
+  });
+
+  it('keeps the manual adjustment working — the budget row still shows the engine amount as an editable assumption', () => {
+    mockSources = { renovation_budget: 'seed' };
+    render(<InvestmentTab />);
+    expect(rowValueCell('Renovation Budget').textContent).toContain('$4,620,000');
+    expect(rowDot('Renovation Budget').getAttribute('aria-label')).toBe('Assumption');
   });
 });

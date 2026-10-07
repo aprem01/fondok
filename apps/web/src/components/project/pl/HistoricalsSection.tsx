@@ -29,7 +29,7 @@ import {
 import { useDeal } from '@/lib/hooks/useDeal';
 import { downloadXlsx, type XlsxCell } from '@/lib/exportXlsx';
 import {
-  HISTORICALS_ALIASES, PERIOD_ALIASES, isSubordinatePath,
+  HISTORICALS_ALIASES, PERIOD_ALIASES, isSubordinatePath, pnlAliases,
 } from '@/lib/ontology/adapters';
 import { PERIOD_TYPES } from '@/lib/ontology/concepts.generated';
 import type { ReasonCode } from '@/lib/ontology/reasons.generated';
@@ -93,6 +93,12 @@ export interface HistYear {
   mgmt_fee?: number | null;
   property_tax?: number | null;
   insurance?: number | null;
+  /** E-012 — the statement's OWN Total Revenue line, when it publishes one.
+   *  The worksheet's Total Revenue cell is a client-side SUM of the lines
+   *  (``histValue('total_rev')``); this is what the statement SAYS the total
+   *  is, kept apart so the footing check can compare the two. Never rendered
+   *  as the cell value and never flaggable (no ``meta`` is recorded for it). */
+  total_revenue_stated?: number | null;
   /** The statement this column was built from (absent for OM-embedded years).
    *  Lets a Data Room deep-link (?doc=<id>) pin the column without scanning
    *  meta. */
@@ -653,6 +659,10 @@ export function buildHistYear(
   // those paths are on the ``noi`` concept in the registry
   // (DRIFT_NOTES.md §3.4).
   const noi = pick('noi');
+  // E-012 — the statement's own stated Total Revenue, for the footing check.
+  // Read with ``findField`` directly (not ``pick``) so no review meta is
+  // recorded: the Total Revenue cell stays a computed, unflaggable sum.
+  const totalRevStated = num(findField(fields, pnlAliases('total_revenue')));
 
   // Need at least one of {rooms, occupancy, adr} to render anything.
   if (rooms == null && occ == null && adr == null) return null;
@@ -693,6 +703,7 @@ export function buildHistYear(
     mgmt_fee: mgmtFee,
     property_tax: propTax,
     insurance,
+    total_revenue_stated: totalRevStated,
     noi,
     populated: true,
     docId,

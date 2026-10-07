@@ -16,6 +16,8 @@ import EngineHeader from './EngineHeader';
 import EngineRightRail from './EngineRightRail';
 import EngineRunHistory from './EngineRunHistory';
 import WhatJustHappened from './WhatJustHappened';
+import { openLineage } from './LineageDrawer';
+import { renovationBasis, type RenovationBasis } from '@/lib/renovationBasis';
 import CapexPlanPanel, { DEFAULT_CAPEX_PLAN, type CapexPlanState } from './CapexPlanPanel';
 import HistoricalBaselinePanel from './HistoricalBaselinePanel';
 import { useHistoricalBaseline } from '@/lib/hooks/useHistoricalBaseline';
@@ -128,6 +130,11 @@ interface RowDef {
   bold?: boolean;
   overridden?: boolean;
   note?: string;
+  /**
+   * E-021 (FON-44) — a "Basis · …" line under the value stating, from
+   * recorded data only, what the number is based on. Rendered below `note`.
+   */
+  basis?: ReactNode;
   link?: { label: string; tab: string };
   /**
    * Phase 4.4 — the canonical assumption key whose refusal explains this
@@ -154,6 +161,10 @@ export default function InvestmentTab() {
   // for capital / returns outputs, falling back to the canonical semantic kind.
   const capitalTrace = useTraceGraph('capital');
   const returnsTrace = useTraceGraph('returns');
+  // E-021 (FON-44) — where the renovation budget came from, off the deal's
+  // provenance map (`assumption_sources`). Resolved here, above the
+  // engine-unavailable early return, so the hook order is stable.
+  const renoSource = useSource('renovation_budget');
   const tracedState = useCallback(
     (engine: 'capital' | 'returns', path: string): ValueState | null => {
       const g = engine === 'capital' ? capitalTrace : returnsTrace;
@@ -439,6 +450,37 @@ export default function InvestmentTab() {
   const renoTotal = has(renoTotalW) ? renoTotalW : renoBudget;
   const renoContPct = renoContPctW;
   const renoCont = renoContUsdW;
+  // E-021 (FON-44) — "the renovation placeholder could be adjusted, but the
+  // basis for the initial amount was unclear." State the basis from RECORDED
+  // data only (lib/renovationBasis): the analyst's override note off the deal
+  // row's `{value, note}` envelope, the OM row the worker read it off
+  // (`assumption_sources.source_fields.renovation_budget` — the runner never
+  // flips the `seed` label for OM capital keys, so the recorded row is the
+  // document signal), the seed read per key over this deal's key count, or
+  // "basis not recorded". Nothing here is invented.
+  const renoOverrideRaw = invOverrides['renovation_budget'];
+  const renoOverrideNote =
+    renoOverrideRaw && typeof renoOverrideRaw === 'object' && 'note' in renoOverrideRaw
+      ? String((renoOverrideRaw as { note?: unknown }).note ?? '')
+      : null;
+  const renoBasis = renovationBasis({
+    amount: renoBase,
+    keys,
+    source: renoSource?.source ?? null,
+    field: renoSource?.field ?? null,
+    overridden: overridden('renovation_budget'),
+    overrideNote: renoOverrideNote,
+    contingencyPct: renoContPct,
+  });
+  // Clicking the basis walks the assumption to its source in the existing
+  // lineage drawer — the same `assumption:` / `override:` / `seed:` root
+  // candidates `help/Sourced` offers, so an overridden or seeded value lands
+  // on its own node.
+  const traceRenovation = () => openLineage({
+    dealId,
+    rootId: ['assumption:renovation_budget', 'override:renovation_budget', 'seed:renovation_budget'],
+    title: 'Renovation Budget',
+  });
 
   const totalUses = wTotalCapital;
   const totalUsesPerKey = has(wTotalCapitalPerKey)
@@ -707,6 +749,7 @@ export default function InvestmentTab() {
               { id: 'renoBudget', label: 'Renovation Budget', kind: 'input', bold: false,
                 state: overridden('renovation_budget') ? 'assumption' : 'assumption',
                 overridden: overridden('renovation_budget'),
+                basis: <RenovationBasisLine basis={renoBasis} onTrace={traceRenovation} />,
                 value: (
                   <AssumptionField value={renoBase} editable={liveMode} format={fmtCurrency}
                     toDraft={(v) => String(Math.round(v))}
@@ -958,7 +1001,37 @@ function SectionRow({ row }: { row: RowDef }) {
           {row.note}
         </div>
       )}
+      {row.basis && (
+        <div style={{ padding: '0 0 6px 15px' }}>{row.basis}</div>
+      )}
     </>
+  );
+}
+
+/**
+ * E-021 (FON-44) — the "Basis" line under the Renovation Budget: what the
+ * amount is based on (from recorded data only — see lib/renovationBasis) plus
+ * the contingency % when the run carried one. Clicking it opens the existing
+ * lineage drawer on `assumption:renovation_budget`.
+ */
+function RenovationBasisLine({ basis, onTrace }: { basis: RenovationBasis; onTrace: () => void }) {
+  return (
+    <button
+      type="button"
+      onClick={onTrace}
+      data-testid="renovation-basis"
+      data-basis-kind={basis.kind}
+      title="Where the renovation budget comes from — click to walk it to its source"
+      style={{
+        fontSize: 10.5, color: palette.textMuted, lineHeight: 1.45, background: 'none',
+        border: 'none', padding: 0, cursor: 'pointer', textAlign: 'left', fontFamily: 'inherit',
+      }}
+    >
+      <span style={{ fontWeight: 600, color: palette.textSecondary }}>Basis</span>
+      {' · '}{basis.text}
+      {basis.contingency ? ` · ${basis.contingency}` : ''}
+      <span style={{ color: palette.linkBlue, fontWeight: 600, marginLeft: 6 }}>Trace →</span>
+    </button>
   );
 }
 
