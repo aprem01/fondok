@@ -18,7 +18,7 @@
  *     already used — NOT the local assumptionsStore. This fixes the dual-store
  *     data-integrity bug.
  */
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, fireEvent, cleanup, waitFor } from '@testing-library/react';
 import React from 'react';
 import type { EngineOutputsResponse, TimelineResponse } from '@/lib/api';
@@ -149,9 +149,12 @@ vi.mock('@/lib/hooks/useEngineOutputs', async () => {
 });
 
 const refreshDealSpy = vi.fn();
+// The deal's saved `field_overrides` — EMPTY unless a test sets one, which is
+// exactly what every pre-existing expectation rendered against.
+let mockOverrides: Record<string, unknown> = {};
 vi.mock('@/lib/hooks/useDeal', () => ({
   useDeal: () => ({
-    deal: { id: 'deal-uuid-1', keys: 132, field_overrides: {} },
+    deal: { id: 'deal-uuid-1', keys: 132, field_overrides: mockOverrides },
     status: null,
     loading: false,
     error: null,
@@ -236,6 +239,7 @@ beforeEach(() => {
   mockReasons = {};
   mockSources = {};
   mockTraces = {};
+  mockOverrides = {};
 });
 
 describe('InvestmentTab — engine-sourced KPI tiles (no provider present)', () => {
@@ -742,5 +746,67 @@ describe('InvestmentTab — saving the acquisition date re-runs the model', () =
     } finally {
       vi.useRealTimers();
     }
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────
+// E-022 (FON-44) — Hold Period is the analyst's input, not the engine's echo
+//
+// A tester saved 5, Debt failed, Returns was skipped, and the row kept
+// showing the last good run's `returns.hold_years`. The audit log proved the
+// override had been saved; the screen said otherwise. The saved override
+// wins; the engine value is the fallback; neither → a dash, never a default.
+// ─────────────────────────────────────────────────────────────────────────
+
+describe('InvestmentTab — Hold Period reads the saved override first (E-022 / FON-44)', () => {
+  type ReturnsRow = { status: string; outputs: Record<string, unknown> | null };
+  const engines = (OUTPUTS as unknown as { engines: Record<string, ReturnsRow | undefined> }).engines;
+  const originalReturns = engines.returns as ReturnsRow;
+  const withReturns = (patch: Partial<ReturnsRow>) => {
+    engines.returns = { ...originalReturns, ...patch };
+  };
+  const SAVED_FIVE = { hold_years: { value: 5, note: 'IC asked for the five-year case.' } };
+
+  afterEach(() => {
+    engines.returns = originalReturns;
+  });
+
+  it('shows the saved 5 — not the stale 7 — and says Returns did not run when it failed', () => {
+    mockOverrides = SAVED_FIVE;
+    withReturns({ status: 'failed', outputs: { ...originalReturns.outputs, hold_years: 7 } });
+    render(<InvestmentTab />);
+    const cell = rowValueCell('Hold Period');
+    expect(cell.textContent).toContain('5 years');
+    expect(cell.textContent).not.toContain('7 years');
+    expect(screen.getByTestId('hold-years-note').textContent).toBe('saved · Returns not run');
+  });
+
+  it('…and when Returns was skipped with no output at all (Debt failed → Returns skipped)', () => {
+    mockOverrides = SAVED_FIVE;
+    withReturns({ status: 'skipped', outputs: null });
+    render(<InvestmentTab />);
+    expect(rowValueCell('Hold Period').textContent).toContain('5 years');
+    expect(screen.getByTestId('hold-years-note').textContent).toBe('saved · Returns not run');
+  });
+
+  it('drops the note once Returns has completed with the override in place', () => {
+    mockOverrides = SAVED_FIVE;
+    render(<InvestmentTab />); // fixture Returns: status complete, hold_years 5
+    expect(rowValueCell('Hold Period').textContent).toContain('5 years');
+    expect(screen.queryByTestId('hold-years-note')).toBeNull();
+  });
+
+  it('reads the engine value with no override, and carries no note', () => {
+    withReturns({ outputs: { ...originalReturns.outputs, hold_years: 7 } });
+    render(<InvestmentTab />);
+    expect(rowValueCell('Hold Period').textContent).toContain('7 years');
+    expect(screen.queryByTestId('hold-years-note')).toBeNull();
+  });
+
+  it('renders a dash with neither an override nor a Returns output — never a default', () => {
+    delete engines.returns;
+    render(<InvestmentTab />);
+    expect(rowValueCell('Hold Period').textContent).toBe('—');
+    expect(screen.queryByTestId('hold-years-note')).toBeNull();
   });
 });

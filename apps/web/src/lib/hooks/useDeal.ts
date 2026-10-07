@@ -10,6 +10,10 @@ import {
 import { projects as mockProjects, Project } from '@/lib/mockData';
 
 const POLL_MS = 3000;
+// E-003 (FON-59) — while a deal is still extracting, re-read the deal row
+// (not just /status) this often, so keys / brand / city the worker fills in
+// from the OM reach the header before extraction finishes.
+const DEAL_REFRESH_MS = 15_000;
 const POLL_STATUSES = new Set([
   'extracting',
   'processing',
@@ -59,6 +63,8 @@ export function useDeal(id: string | number | null | undefined): DealState {
   const [loading, setLoading] = useState<boolean>(false);
   const [error, setError] = useState<string | null>(null);
   const tick = useRef(0);
+  // Wall-clock time of the last deal-row read — gates the in-flight refresh.
+  const lastDealFetch = useRef(0);
 
   const idStr = id == null ? '' : String(id);
   const fromMock = !isWorkerConnected() || /^\d+$/.test(idStr);
@@ -85,6 +91,7 @@ export function useDeal(id: string | number | null | undefined): DealState {
           api.deals.get(idStr, signal),
           api.deals.status(idStr, signal).catch(() => null),
         ]);
+        lastDealFetch.current = Date.now();
         setDeal(d);
         setStatus(s);
         setError(null);
@@ -126,22 +133,54 @@ export function useDeal(id: string | number | null | undefined): DealState {
   }, [refresh]);
 
   // Poll status while deal is processing/extracting.
+  //
+  // E-003 (FON-59) — the wizard creates the deal with keys / brand / city
+  // unset and the worker fills them from the OM extraction a minute later.
+  // Status polling alone never re-read the deal row, so the header kept the
+  // creation-time nulls ("0 keys") while Overview, reading engine output,
+  // showed 132. Two refetch rules now: the deal row is re-read every
+  // DEAL_REFRESH_MS while extraction runs, and once more the moment the
+  // status leaves the polling set. Mock / numeric ids are untouched.
+  const pollable = isWorkerConnected() && !!idStr && !/^\d+$/.test(idStr);
+  const dealStatus = status?.status ?? deal?.status;
+  const polling = pollable && !!dealStatus && POLL_STATUSES.has(dealStatus);
+
   useEffect(() => {
-    if (!isWorkerConnected() || !idStr || /^\d+$/.test(idStr)) return;
-    const dealStatus = status?.status ?? deal?.status;
-    if (!dealStatus || !POLL_STATUSES.has(dealStatus)) return;
+    if (!polling) return;
     const ctrl = new AbortController();
     const t = setInterval(() => {
       api.deals
         .status(idStr, ctrl.signal)
         .then((s) => setStatus(s))
         .catch(() => {});
+      if (Date.now() - lastDealFetch.current >= DEAL_REFRESH_MS) {
+        lastDealFetch.current = Date.now();
+        api.deals
+          .get(idStr, ctrl.signal)
+          .then((d) => setDeal(d))
+          .catch(() => {});
+      }
     }, POLL_MS);
     return () => {
       clearInterval(t);
       ctrl.abort();
     };
-  }, [idStr, status?.status, deal?.status]);
+  }, [idStr, polling]);
+
+  // Leaving the polling set → one more full fetch, so keys, brand and city
+  // reflect what the worker extracted. A deal that loads already settled
+  // never passes through here, and a status-only poll cannot carry those
+  // fields, so this is the only place the header's final values can land.
+  const wasPolling = useRef(false);
+  useEffect(() => {
+    if (wasPolling.current && !polling && pollable) {
+      wasPolling.current = false;
+      const ctrl = new AbortController();
+      void fetchOnce(ctrl.signal);
+      return () => ctrl.abort();
+    }
+    wasPolling.current = polling;
+  }, [polling, pollable, fetchOnce]);
 
   return { deal, status, loading, error, fromMock, refresh };
 }
