@@ -26,6 +26,7 @@ import {
   WorkerError,
 } from '@/lib/api';
 import { useDocuments } from '@/lib/hooks/useDocuments';
+import { openDocumentInNewTab, shortReason } from '@/lib/openDocument';
 import { useEngineOutputs } from '@/lib/hooks/useEngineOutputs';
 import { useEngineRun } from '@/lib/hooks/useEngineRun';
 import { useToast } from '@/components/ui/Toast';
@@ -1161,16 +1162,22 @@ export default function DataRoomTab({ projectId }: { projectId: number | string 
             }
           }}
           onOpenInNewTab={(docId) => {
-            const u = api.documents.downloadUrl(rawId, docId);
-            if (u) window.open(u, '_blank', 'noopener,noreferrer');
+            // FON-41 / R-040: a new tab can't carry the session JWT, so the
+            // tab is sent to a short-lived signed link (lib/openDocument)
+            // instead of the authenticated /download route. Failures toast a
+            // short reason, never the raw backend body.
+            void openDocumentInNewTab({
+              dealId: rawId,
+              docId,
+              filename: docs.find((d) => d.id === docId)?.name,
+              toast,
+            });
           }}
           onDownload={(docId) => {
-            const u = api.documents.downloadUrl(rawId, docId);
-            if (!u) return;
-            const a = document.createElement('a');
-            a.href = u;
-            a.rel = 'noopener';
-            a.click();
+            const name = docs.find((d) => d.id === docId)?.name || 'document';
+            api.documents.download(rawId, docId, name).catch((err: unknown) => {
+              toast(`Couldn't download ${name}: ${shortReason(err)}`, { type: 'error' });
+            });
           }}
           busyDocId={reclassifyingDoc}
         />

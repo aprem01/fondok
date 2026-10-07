@@ -5,9 +5,11 @@
  *
  * Mounted once in AppShell. Listens for window-level
  * ``fondok:citation-focus`` events and slides in from the right with:
- *   • the document filename + page number
+ *   • the document filename + PDF page index ("PDF p.N" — the extractor
+ *     reports the index into the PDF, not the number printed on the page)
  *   • the cited excerpt highlighted
- *   • a deep-link to the worker's PDF preview route (when configured)
+ *   • "See PDF p.N" — opens the source in a new tab at the cited page via a
+ *     short-lived signed link (lib/openDocument; FON-41 / R-040)
  *
  * State is fully local. ESC and outside-click both close. The pane
  * overlays page content but leaves the sidebar untouched.
@@ -18,7 +20,9 @@ import { useParams } from 'next/navigation';
 import { FileText, X, ExternalLink, Loader2 } from 'lucide-react';
 import { cn } from '@/lib/format';
 import { useDocuments } from '@/lib/hooks/useDocuments';
-import { api, isWorkerConnected, workerUrl } from '@/lib/api';
+import { isWorkerConnected } from '@/lib/api';
+import { openDocumentInNewTab } from '@/lib/openDocument';
+import { useToast } from '@/components/ui/Toast';
 
 type FocusDetail = {
   documentId: string;
@@ -35,6 +39,7 @@ export default function SourceDocPane() {
   const [open, setOpen] = useState(false);
   const [focus, setFocus] = useState<FocusDetail | null>(null);
   const paneRef = useRef<HTMLDivElement>(null);
+  const { toast } = useToast();
 
   // Try to infer the active deal from the URL — works on /projects/:id.
   // When we're elsewhere the pane still opens; we just lack live extraction.
@@ -102,14 +107,22 @@ export default function SourceDocPane() {
   const filename =
     focus?.documentName ?? matchedDoc?.filename ?? focus?.documentId ?? '';
 
-  // Deep-link straight to the raw uploaded PDF, anchored to the cited
-  // page. Browsers honor ``#page=N`` on application/pdf URLs and the
-  // worker's /download route serves with inline disposition so the
-  // built-in viewer renders rather than forcing a save dialog.
-  const previewUrl =
-    focus && rawId && workerUrl() && focus.documentId
-      ? api.documents.downloadUrl(rawId, focus.documentId, focus.page)
-      : null;
+  // E-029 / FON-41: open the raw PDF in a new tab at the cited page. A new
+  // tab can't carry the session JWT, so this goes through a short-lived
+  // signed link (lib/openDocument) rather than a bare href to /download.
+  // ``focus.page`` is the PDF page index, which is exactly what ``#page=N``
+  // means to the viewer.
+  const canOpenPdf = Boolean(focus && rawId && isWorkerConnected() && focus.documentId);
+  const openPdf = useCallback(() => {
+    if (!focus || !rawId) return;
+    void openDocumentInNewTab({
+      dealId: rawId,
+      docId: focus.documentId,
+      filename: matchedDoc?.filename ?? focus.documentName ?? null,
+      page: focus.page,
+      toast,
+    });
+  }, [focus, rawId, matchedDoc, toast]);
 
   if (!open || !focus) return null;
 
@@ -149,7 +162,7 @@ export default function SourceDocPane() {
                 {filename || 'Unknown document'}
               </div>
               <div className="text-[11px] text-ink-500 mt-0.5 tabular-nums font-mono">
-                page {focus.page}
+                PDF p.{focus.page}
                 {focus.field ? ` · ${focus.field}` : ''}
               </div>
             </div>
@@ -218,21 +231,20 @@ export default function SourceDocPane() {
           ) : null}
         </div>
 
-        {/* Footer — open in PDF */}
-        {previewUrl ? (
+        {/* Footer — open in PDF (new tab, at the cited PDF page) */}
+        {canOpenPdf ? (
           <div className="border-t border-border px-4 py-3 bg-bg/60">
-            <a
-              href={previewUrl}
-              target="_blank"
-              rel="noopener noreferrer"
+            <button
+              type="button"
+              onClick={openPdf}
               className={cn(
                 'inline-flex items-center gap-1.5 text-[12px] font-medium',
                 'text-brand-700 hover:text-brand-500 transition-colors',
               )}
             >
               <ExternalLink size={12} />
-              See PDF page {focus.page}
-            </a>
+              See PDF p.{focus.page}
+            </button>
           </div>
         ) : null}
       </aside>

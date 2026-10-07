@@ -95,15 +95,23 @@ class LocalRawStore(RawStore):
 
 
 def _file_uri_to_path(uri: str) -> Path:
-    """Coerce a ``file://`` URI (or bare path) to a ``Path``."""
-    from urllib.parse import urlparse
+    """Coerce a ``file://`` URI (or bare path) to a ``Path``.
+
+    ``put`` returns ``Path.as_uri()``, which percent-encodes spaces and
+    other reserved characters in the filename segment, so the inverse
+    MUST ``unquote`` — otherwise any upload named like
+    ``"Miami Beach OM.pdf"`` is written fine and then reads back as
+    "missing key" (FON-41 QA: the local-store ``/download`` 404'd on
+    exactly those files).
+    """
+    from urllib.parse import unquote, urlparse
 
     parsed = urlparse(uri)
     if parsed.scheme not in ("file", ""):
         raise StorageError(
             f"LocalRawStore cannot resolve non-file URI: {uri}"
         )
-    return Path(parsed.path) if parsed.scheme == "file" else Path(uri)
+    return Path(unquote(parsed.path)) if parsed.scheme == "file" else Path(uri)
 
 
 # ──────────────────────────── s3 ────────────────────────────
@@ -219,6 +227,43 @@ class S3RawStore(RawStore):
                 return False
 
         return await asyncio.to_thread(_head)
+
+    async def presigned_get_url(
+        self,
+        key: str,
+        *,
+        expires_in: int,
+        content_disposition: str | None = None,
+        content_type: str | None = None,
+    ) -> str:
+        """Presigned GET for ``key`` (an ``s3://`` URI this store wrote).
+
+        FON-41 / R-040 — backs ``GET …/documents/{doc}/download-url`` so a
+        browser tab can fetch the object straight from S3 without a worker
+        session. ``content_disposition`` / ``content_type`` become
+        ``response-*`` overrides baked into the signature, so the tab renders
+        the object inline under its original filename regardless of what the
+        PUT recorded. Signing is local (no network round-trip). Never log the
+        returned URL — it is a bearer credential for ``expires_in`` seconds.
+        """
+        bucket, object_key = _parse_s3_uri(key)
+        if bucket != self.bucket:
+            raise StorageError(
+                f"refusing to sign a read from foreign bucket: {bucket}"
+            )
+        params: dict[str, Any] = {"Bucket": bucket, "Key": object_key}
+        if content_disposition:
+            params["ResponseContentDisposition"] = content_disposition
+        if content_type:
+            params["ResponseContentType"] = content_type
+
+        def _sign() -> str:
+            client = self._client()
+            return client.generate_presigned_url(
+                "get_object", Params=params, ExpiresIn=int(expires_in)
+            )
+
+        return await asyncio.to_thread(_sign)
 
 
 def _parse_s3_uri(uri: str) -> tuple[str, str]:

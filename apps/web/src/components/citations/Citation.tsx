@@ -19,6 +19,9 @@ export type CitationData = {
   documentId: string;
   /** Optional human-readable filename — shown in the side pane header. */
   documentName?: string;
+  /** 1-based PDF page INDEX as the extractor reports it — not the number
+   *  printed on the page (there is no printed-page field). Labelled
+   *  "PDF p.N" so reviewers know which numbering to follow (R-044). */
   page: number;
   field?: string;
   region?: { x0: number; y0: number; x1: number; y1: number };
@@ -53,8 +56,8 @@ export function Citation({ data, label, children, className }: CitationProps) {
         onClick={onClick}
         title={
           data.excerpt
-            ? `${data.excerpt} — p.${data.page}`
-            : `Source p.${data.page}`
+            ? `${data.excerpt} — PDF p.${data.page}`
+            : `Source PDF p.${data.page}`
         }
         className={cn(
           'inline cursor-pointer bg-transparent p-0 m-0 border-0',
@@ -76,8 +79,8 @@ export function Citation({ data, label, children, className }: CitationProps) {
       onClick={onClick}
       title={
         data.excerpt
-          ? `${data.excerpt} — p.${data.page}`
-          : `Source p.${data.page}`
+          ? `${data.excerpt} — PDF p.${data.page}`
+          : `Source PDF p.${data.page}`
       }
       className={cn(
         'inline-flex items-baseline gap-0.5 px-1 py-0 rounded',
