@@ -5468,6 +5468,24 @@ async def _run_extraction_pipeline(
         )
 
 
+#: Document types that have a DETERMINISTIC template extractor
+#: (``extraction.template_extractors.try_template_extract`` dispatches on
+#: these). A learned sibling cell-mapping must never pre-empt them: on
+#: 2026-10-07 two STR monthly trend workbooks on a tester's deal were
+#: served by ``template:sibling`` (32 fields, "Hotel 1/2/3" placeholder
+#: names, no TTM block) instead of ``template:str_trend`` (74 fields),
+#: which inflated the comp set to 22 hotels and blanked the TTM blend.
+_TEMPLATE_HANDLED_DOC_TYPES: frozenset[str] = frozenset(
+    {"STR", "STR_TREND", "STR_SEGMENTATION", "CBRE_HORIZONS", "PARTNERSHIP"}
+)
+
+
+def _sibling_reuse_allowed(doc_type: str | None) -> bool:
+    """False when ``doc_type`` is handled by a deterministic template, so
+    sibling reuse is neither attempted for it nor learned from it."""
+    return (doc_type or "").strip().upper() not in _TEMPLATE_HANDLED_DOC_TYPES
+
+
 async def _run_extraction_pipeline_inner(
     *, deal_id: str, doc_id: str, tenant_id: str
 ) -> None:
@@ -5641,7 +5659,9 @@ async def _run_extraction_pipeline_inner(
                 # schema drift, because the sibling reuses the source
                 # doc's exact field names.
                 sibling_hit = None
-                if settings.SIBLING_TEMPLATE_REUSE_ENABLED:
+                if settings.SIBLING_TEMPLATE_REUSE_ENABLED and _sibling_reuse_allowed(
+                    user_provided_doc_type
+                ):
                     from ..services.sibling_template import (
                         SIBLING_AGENT_VERSION_BASE,
                         try_sibling_reuse,
@@ -5653,6 +5673,14 @@ async def _run_extraction_pipeline_inner(
                         doc_id=doc_id,
                         extraction_data=extraction_data,
                     )
+                    if sibling_hit is not None and not _sibling_reuse_allowed(sibling_hit[2]):
+                        logger.info(
+                            "sibling reuse REJECTED: doc=%s source_doc_type=%s "
+                            "is template-handled; running the template/router path",
+                            doc_id,
+                            sibling_hit[2],
+                        )
+                        sibling_hit = None
                 if sibling_hit is not None:
                     fields, confidence, sibling_doc_type = sibling_hit
                     classified_doc_type = sibling_doc_type
@@ -5680,7 +5708,7 @@ async def _run_extraction_pipeline_inner(
                     # extraction so the NEXT same-template sibling can
                     # skip the LLM. Best-effort + idempotent (one
                     # mapping per tenant+fingerprint); never raises.
-                    if fields:
+                    if fields and _sibling_reuse_allowed(classified_doc_type):
                         from ..services.sibling_template import (
                             maybe_learn_mapping,
                         )
