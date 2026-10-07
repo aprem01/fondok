@@ -11,15 +11,31 @@
  *
  * DEAL-TYPE-AWARE (v3): the section set + KPI tiles switch on the deal's
  * `deal_type` (+ `return_profile`):
- *   development         → Project · Land/Site · Development Budget ·
- *                         Construction Financing · Opening & Stabilization ·
- *                         Exit · Sources & Uses · Development Timeline
- *   acquisition · core  → Property · Entry Valuation · Capitalization · Exit ·
- *                         Sources & Uses · Transaction Timeline
- *   acquisition · value-add → Property · Entry Valuation · Renovation/CapEx ·
- *                         Capitalization · Stabilization · Exit ·
- *                         Sources & Uses · Transaction Timeline
+ *   development         → Project · Sources & Uses · Land/Site ·
+ *                         Development Budget · Construction Financing ·
+ *                         Opening & Stabilization · Exit · Development Timeline
+ *   acquisition · core  → Property · Sources & Uses · Entry · Capitalization ·
+ *                         Exit · Transaction Timeline
+ *   acquisition · value-add → Property · Sources & Uses · Entry Valuation ·
+ *                         Renovation/CapEx · Capitalization · Stabilization ·
+ *                         Exit · Transaction Timeline
  * Fields an engine doesn't emit render as "awaiting data" em-dashes.
+ *
+ * FON-59 TESTER ROUND (Eshan / Rani):
+ *   R-052 — an Unlevered IRR tile (`returns.unlevered_irr`) sits beside
+ *           Levered IRR in every KPI set; testers are told not to upload
+ *           debt, so the unlevered figure is their stable basis.
+ *   R-053 — KPI tiles reserve a fixed label slot (`KpiTile alignValues`) so a
+ *           wrapped label never shifts its number off the row's baseline.
+ *   R-054 — Property Type reads the OM's `property_overview.property_type`
+ *           off the market overview payload; Floors is a reasoned dash — the
+ *           extraction catalog has no floors / stories field.
+ *   R-055 — Management Fee / Franchise Fee left the Property summary (they
+ *           stay in the P&L and the model).
+ *   R-056 — Sources & Uses sits directly under Property, Sources left /
+ *           Uses right.
+ *   R-058 — the Exit section's reversion row is labelled Exit NOI
+ *           (`returns.terminal_noi_usd` ?? `terminal_noi`).
  *
  * OWNERSHIP (design + DESIGN_MAP): Acquisition / Reversion / Financing rows are
  * READ-ONLY / linked — operating overrides stay owned by Financials, debt by
@@ -182,6 +198,12 @@ interface RowDef {
    * worker does tag it.
    */
   reason?: ReasonCode;
+  /**
+   * Case-specific prose shown under the reason's own explanation (the
+   * `Refused` `detail` line) — for a structural dash whose cause this row can
+   * name precisely (Floors: the catalog has no such field).
+   */
+  reasonDetail?: string;
 }
 
 /** FON-59 — the field_overrides key the worker's market_overview honors as the Property Name. */
@@ -201,12 +223,29 @@ interface PropertyMeta {
   year_built: number | null;
   gba_sf: number | null;
   labor: string | null;
+  /** FON-59 R-054 — the OM's own classification (`property_overview.property_type`). */
+  property_type: string | null;
   trailingOcc: number | null;
   trailingAdr: number | null;
 }
 const EMPTY_META: PropertyMeta = {
-  name: null, nameOriginal: null, nameSource: null, year_built: null, gba_sf: null, labor: null, trailingOcc: null, trailingAdr: null,
+  name: null, nameOriginal: null, nameSource: null, year_built: null, gba_sf: null, labor: null, property_type: null, trailingOcc: null, trailingAdr: null,
 };
+
+/**
+ * FON-59 R-054 — why the Floors row is a dash. The extraction catalog
+ * (apps/worker/app/ontology/concepts.yaml) has no floors / stories concept,
+ * so no document on any deal can populate it; `number_of_buildings` is a
+ * different fact and is never shown in its place.
+ */
+const FLOORS_NOT_IN_OM =
+  'Not stated in the OM — the extraction catalog has no floors / stories field, so this row cannot be read from documents.';
+
+/** FON-59 R-058 — the Exit section's reversion-NOI row: one row, both names. */
+export const EXIT_NOI_LABEL = 'Exit NOI (forward 12-month, after FF&E reserve)';
+
+/** Slug of a title — the stable test hook for one section / tile. */
+const slug = (s: string): string => s.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
 
 interface RowsSection {
   kind: 'rows';
@@ -236,15 +275,15 @@ const DEAL_TYPES: { label: string; id: 'acquisition' | 'development' }[] = [
 /** Section titles for the deal-type-change confirmation ("Sections after the change"). */
 function sectionTitles(cfg: Cfg): string {
   if (cfg === 'dev') {
-    return ['Project', 'Land / Site Acquisition', 'Development Budget', 'Construction Financing',
-      'Opening & Stabilization', 'Exit', 'Sources & Uses', 'Development Timeline'].join(' · ');
+    return ['Project', 'Sources & Uses', 'Land / Site Acquisition', 'Development Budget',
+      'Construction Financing', 'Opening & Stabilization', 'Exit', 'Development Timeline'].join(' · ');
   }
   if (cfg === 'core') {
-    return ['Property', 'Entry', 'Capitalization', 'Exit',
-      'Sources & Uses', 'Transaction Timeline'].join(' · ');
+    return ['Property', 'Sources & Uses', 'Entry', 'Capitalization',
+      'Exit', 'Transaction Timeline'].join(' · ');
   }
-  return ['Property', 'Entry Valuation', 'Renovation / CapEx', 'Capitalization', 'Stabilization',
-    'Exit', 'Sources & Uses', 'Transaction Timeline'].join(' · ');
+  return ['Property', 'Sources & Uses', 'Entry Valuation', 'Renovation / CapEx', 'Capitalization',
+    'Stabilization', 'Exit', 'Transaction Timeline'].join(' · ');
 }
 
 export default function OverviewTab({ projectId }: { projectId: number | string }) {
@@ -309,6 +348,7 @@ export default function OverviewTab({ projectId }: { projectId: number | string 
           nameOriginal: o.property_name_original?.value ? o.property_name_original : null,
           nameSource: o.property_name_source ?? null,
           year_built: o.year_built ?? null, gba_sf: o.gba_sf ?? null, labor: o.labor_type ?? null,
+          property_type: o.property_type?.trim() || null,
           trailingOcc: o.trailing_12_occupancy ?? null, trailingAdr: o.trailing_12_adr ?? null,
         });
       })
@@ -509,6 +549,9 @@ export default function OverviewTab({ projectId }: { projectId: number | string 
   const wSellingCosts = ret('selling_costs');
   const wHoldYears = ret('hold_years');
   const wLeveredIrr = ret('levered_irr');
+  // FON-59 R-052 — the asset return before debt. Testers are told not to
+  // upload debt, so this is the figure they can hold steady across runs.
+  const wUnleveredIrr = ret('unlevered_irr');
 
   // Derived (all engine-sourced or engine-arithmetic — never fabricated).
   const purchase = wPurchase ?? findUse(/purchase/i);
@@ -545,6 +588,7 @@ export default function OverviewTab({ projectId }: { projectId: number | string 
   const sellingCosts = wSellingCosts;
   const holdYears = wHoldYears;
   const leveredIrr = wLeveredIrr;
+  const unleveredIrr = wUnleveredIrr;
   // Development-specific budget lines (read by label where the engine emits them).
   const landPrice = findUse(/land/i);
   const hardCosts = findUse(/hard/i);
@@ -629,13 +673,29 @@ export default function OverviewTab({ projectId }: { projectId: number | string 
       ];
     };
 
+    // FON-59 R-054 — Property Type is the OM's own classification
+    // (`property_overview.property_type` off the market overview), falling
+    // back to the deal row's `service` column (set at creation) only when the
+    // OM did not state one. Never a positioning tier dressed up as a type.
+    const propertyType = meta.property_type ?? (deal?.service?.trim() || null);
+    const propertyTypeRow = (): RowDef =>
+      doc('pType', 'Property Type', propertyType ?? '—', 'Offering Memorandum', 'Property Overview', {
+        sub: 'The asset classification as stated in the offering documents (e.g. "Boutique Lifestyle Full-Service").',
+      });
+    // Floors: a structural dash — no floors / stories field exists in the
+    // extraction catalog, so the row says so on hover instead of looking broken.
+    const floorsRow = (): RowDef =>
+      awa('pFloors', isDev ? 'Planned Floors' : 'Floors', { reason: 'no_source', reasonDetail: FLOORS_NOT_IN_OM });
+
+    // R-055 — Management Fee / Franchise Fee are NOT Property facts; they
+    // stay in the P&L (Financials) and the model, off this summary.
     const propertyRows = (): RowDef[] => [
       ...identityRows(),
-      doc('pType', 'Property Type', deal?.service ?? '—', 'Offering Memorandum', 'Property Overview'),
+      propertyTypeRow(),
       doc('pLoc', 'Location', deal?.city ?? '—', 'Offering Memorandum', 'Location'),
       doc('pYear', 'Year Built', meta.year_built != null ? String(Math.round(meta.year_built)) : '—', 'Offering Memorandum', 'Property History'),
       doc('pKeys', isDev ? 'Planned Keys' : 'Keys', keys != null ? String(keys) : '—', 'Offering Memorandum', 'Room Mix', { reasonKey: 'keys' }),
-      awa('pFloors', isDev ? 'Planned Floors' : 'Floors'),
+      floorsRow(),
       doc('pSF', isDev ? 'Planned SF' : 'Total SF', meta.gba_sf != null ? `${Math.round(meta.gba_sf).toLocaleString('en-US')} SF` : '—', 'Offering Memorandum', 'Building Summary'),
       awa('pTitle', 'Title / Ownership'),
       doc('pLabor', 'Labor / Union Status', meta.labor ?? '—', 'Offering Memorandum', 'Operations'),
@@ -649,8 +709,6 @@ export default function OverviewTab({ projectId }: { projectId: number | string 
         '→ Financials (historicals)', 'pl'),
       lnk('brand', 'Brand', brand || '—', '→ Investment Profile', ''),
       lnk('positioning', 'Positioning', positioningTiers.find((p) => p.id === positioningId)?.label ?? '—', '→ Investment Profile', ''),
-      lnk('mgmtFee', 'Management Fee', '—', '→ Financials', 'pl', { reasonKey: 'mgmt_fee_pct', linkSub: 'historicals' }),
-      lnk('franchiseFee', 'Franchise / Brand Fee', '—', '→ Financials', 'pl', { linkSub: 'historicals' }),
     ];
 
     const entryRows = (): RowDef[] => [
@@ -775,9 +833,16 @@ export default function OverviewTab({ projectId }: { projectId: number | string 
     const exitRows = (): RowDef[] => [
       lnk('hold', 'Hold Period', has(holdYears) ? `${holdYears} years` : '—', '→ Investment (exit)', 'investment', { reasonKey: 'hold_years' }),
       cal('exitDate', 'Exit Date', fmtISODate(timeline?.exit_date), { formula: 'Acquisition Date + Hold Period' }),
-      lnk('fwdNOI', 'Forward 12-Month Cash NOI (after FF&E reserve)', money(terminalNoi), '→ Financials (projections)', 'pl', { linkSub: 'projections' }),
+      // FON-59 R-058 — testers asked for "Exit NOI" in this section. It IS the
+      // forward 12-month cash NOI the reversion capitalizes
+      // (`returns.terminal_noi_usd` ?? `terminal_noi`, the year hold+1 figure),
+      // so it is ONE row carrying both names — never the same number twice.
+      lnk('exitNOI', EXIT_NOI_LABEL, money(terminalNoi), '→ Financials (projections)', 'pl', {
+        linkSub: 'projections',
+        sub: 'The NOI the exit value capitalizes — the 12 months after the hold, after the FF&E reserve. Not the stabilized year.',
+      }),
       lnk('exitCap', 'Exit Cap Rate', pctv(exitCap), '→ Investment (exit)', 'investment', { reasonKey: 'exit_cap_rate' }),
-      cal('exitValue', 'Gross Exit Value', money(grossExit), { bold: true, trace: { engine: 'returns', path: 'gross_sale_price' }, formula: 'Forward NOI ÷ Exit Cap Rate', inputs: [{ name: 'Forward NOI', from: 'Financials → Projections', kind: 'linked' }, { name: 'Exit Cap Rate', from: 'Investment assumption', kind: 'input' }] }),
+      cal('exitValue', 'Gross Exit Value', money(grossExit), { bold: true, trace: { engine: 'returns', path: 'gross_sale_price' }, formula: 'Exit NOI ÷ Exit Cap Rate', inputs: [{ name: 'Exit NOI (forward 12-month)', from: 'Financials → Projections', kind: 'linked' }, { name: 'Exit Cap Rate', from: 'Investment assumption', kind: 'input' }] }),
       cal('exitPerKey', 'Exit Value / Key', money(exitPerKey), { formula: 'Gross Exit Value ÷ Keys' }),
       lnk('salesPct', 'Disposition Costs', money(sellingCosts), '→ Returns', 'returns', { trace: { engine: 'returns', path: 'selling_costs' } }),
       awa('transferPct', 'Transfer Tax'),
@@ -790,11 +855,9 @@ export default function OverviewTab({ projectId }: { projectId: number | string 
       lnk('brand', 'Brand', brand || '—', '→ Investment Profile', ''),
       lnk('positioning', 'Positioning', positioningTiers.find((p) => p.id === positioningId)?.label ?? '—', '→ Investment Profile', ''),
       lnk('pKeys', 'Planned Keys', keys != null ? String(keys) : '—', '→ Investment Profile', '', { reasonKey: 'keys' }),
-      awa('pFloors', 'Planned Floors'),
+      floorsRow(),
       awa('pSF', 'Planned SF'),
       doc('pZoning', 'Zoning / Entitlement', '—', 'Zoning Report', 'Entitlement Status'),
-      lnk('mgmtFee', 'Management Fee', '—', '→ Financials', 'pl', { reasonKey: 'mgmt_fee_pct', linkSub: 'historicals' }),
-      lnk('franchiseFee', 'Franchise / Brand Fee', '—', '→ Financials', 'pl', { linkSub: 'historicals' }),
     ];
     const landRows = (): RowDef[] => [
       doc('landPrice', 'Land Purchase Price', money(landPrice), 'Land Purchase & Sale Agreement', 'Purchase Price'),
@@ -849,37 +912,39 @@ export default function OverviewTab({ projectId }: { projectId: number | string 
         : awa('yieldOnCost', 'Yield on Cost', { reason: 'awaiting_analyst', formula: 'Stabilized NOI ÷ Total Development Cost' }),
     ];
 
+    // FON-59 R-056 — Sources & Uses sits directly under the Property /
+    // Project section, before the valuation sections.
     if (cfg === 'dev') {
       return [
         { kind: 'rows', title: 'Project', rows: projectRows() },
+        { kind: 'su', title: 'Transaction Sources & Uses' },
         { kind: 'rows', title: 'Land / Site Acquisition', rows: landRows() },
         { kind: 'rows', title: 'Development Budget', action: { label: 'View development details →', tab: 'investment' }, rows: devBudgetRows() },
         { kind: 'rows', title: 'Construction Financing', action: { label: 'View Debt details →', tab: 'debt' }, rows: constFinRows() },
         { kind: 'rows', title: 'Opening & Stabilization', action: { label: 'View Projections →', tab: 'pl', sub: 'projections' }, banner: stabilizationBanner(), rows: openingRows() },
         { kind: 'rows', title: 'Exit', rows: exitRows() },
-        { kind: 'su', title: 'Transaction Sources & Uses' },
         { kind: 'timeline', title: 'Development Timeline' },
       ];
     }
     if (cfg === 'core') {
       return [
         { kind: 'rows', title: 'Property', note: 'Extracted from diligence documents — override where needed', rows: propertyRows() },
+        { kind: 'su', title: 'Transaction Sources & Uses' },
         { kind: 'rows', title: 'Entry', rows: entryRows() },
         { kind: 'rows', title: 'Capitalization', action: { label: 'View Debt details →', tab: 'debt' }, rows: capitalizationRows() },
         { kind: 'rows', title: 'Exit', rows: exitRows() },
-        { kind: 'su', title: 'Transaction Sources & Uses' },
         { kind: 'timeline', title: 'Transaction Timeline' },
       ];
     }
     // value-add
     return [
       { kind: 'rows', title: 'Property', note: 'Extracted from diligence documents — override where needed', rows: propertyRows() },
+      { kind: 'su', title: 'Transaction Sources & Uses' },
       { kind: 'rows', title: 'Entry Valuation', rows: entryRows() },
       { kind: 'rows', title: 'Renovation / CapEx', action: { label: 'View renovation details →', tab: 'investment' }, rows: renovationRows() },
       { kind: 'rows', title: 'Capitalization', action: { label: 'View Debt details →', tab: 'debt' }, rows: capitalizationRows() },
       { kind: 'rows', title: 'Stabilization', action: { label: 'View Projections →', tab: 'pl', sub: 'projections' }, banner: stabilizationBanner(), rows: stabilizationRows() },
       { kind: 'rows', title: 'Exit', rows: exitRows() },
-      { kind: 'su', title: 'Transaction Sources & Uses' },
       { kind: 'timeline', title: 'Transaction Timeline' },
     ];
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -912,13 +977,18 @@ export default function OverviewTab({ projectId }: { projectId: number | string 
           sub: `projection Year ${stab?.stabilized_year}${stabCalendarYear != null ? ` — ${stabCalendarYear}` : ''}`,
         }
       : { label: STABILIZED_NOI_LABEL, value: REFUSAL_GLYPH, sub: 'stabilization year not set' };
+    // FON-59 R-052 — the two IRRs sit side by side, each saying which stack
+    // it returns to, so a tester who never uploaded debt reads the right one.
+    const leveredTile = { label: 'Levered IRR', value: pctv(leveredIrr, 1), sub: 'equity return, after debt' };
+    const unleveredTile = { label: 'Unlevered IRR', value: pctv(unleveredIrr, 1), sub: 'asset return, before debt' };
     if (cfg === 'dev') {
       return [
         { label: 'Total Dev. Cost', value: mm(totalCapital) },
         { label: 'Cost / Key', value: money(totalPerKey) },
         stabNoiTile,
         { label: 'Exit Value', value: mm(grossExit), sub: has(exitCap) ? `${fmtPct(exitCap, 2)} exit cap` : undefined },
-        { label: 'Levered IRR', value: pctv(leveredIrr, 1) },
+        leveredTile,
+        unleveredTile,
       ];
     }
     if (cfg === 'core') {
@@ -927,7 +997,8 @@ export default function OverviewTab({ projectId }: { projectId: number | string 
         { label: 'Going-In Cap', value: pctv(entryCap) },
         { label: 'Equity', value: mm(equity), sub: has(equity) && has(totalCapital) && totalCapital > 0 ? `${fmtPct(equity / totalCapital, 1)} of total uses` : undefined },
         { label: 'Exit Value', value: mm(grossExit), sub: has(exitCap) ? `${fmtPct(exitCap, 2)} exit cap` : undefined },
-        { label: 'Levered IRR', value: pctv(leveredIrr, 1) },
+        leveredTile,
+        unleveredTile,
       ];
     }
     return [
@@ -935,10 +1006,11 @@ export default function OverviewTab({ projectId }: { projectId: number | string 
       { label: 'Total Capitalization', value: mm(totalCapital), sub: has(totalPerKey) ? `${fmtCurrency(totalPerKey)} / key` : undefined },
       { label: 'Renovation', value: mm(renoBudget), sub: hasReno && has(keys) ? `${fmtCurrency((renoBudget as number) / keys)} / key` : undefined },
       stabNoiTile,
-      { label: 'Levered IRR', value: pctv(leveredIrr, 1) },
+      leveredTile,
+      unleveredTile,
     ];
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [cfg, purchase, entryCap, totalCapital, totalPerKey, equity, grossExit, exitCap, terminalNoi, renoBudget, hasReno, keys, leveredIrr, stabNoi, stab, stabCalendarYear]);
+  }, [cfg, purchase, entryCap, totalCapital, totalPerKey, equity, grossExit, exitCap, terminalNoi, renoBudget, hasReno, keys, leveredIrr, unleveredIrr, stabNoi, stab, stabCalendarYear]);
 
   // ─── Return targets + benchmark strip (FON-68) ─────────────────────────
   // The strip compares the CALCULATED levered IRR (canonical returns run)
@@ -1205,10 +1277,10 @@ export default function OverviewTab({ projectId }: { projectId: number | string 
         </div>
       </div>
 
-      {/* KPI tiles */}
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(150px,1fr))', gap: 12 }}>
+      {/* KPI tiles — R-053: one baseline for every primary number in the row */}
+      <div data-testid="overview-kpis" style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(150px,1fr))', gap: 12 }}>
         {kpis.map((k) => (
-          <KpiTile key={k.label} label={k.label} value={k.value} sub={k.sub} />
+          <KpiTile key={k.label} label={k.label} value={k.value} sub={k.sub} alignValues data-testid={`overview-kpi-${slug(k.label)}`} />
         ))}
       </div>
 
@@ -1231,7 +1303,7 @@ export default function OverviewTab({ projectId }: { projectId: number | string 
             // Slug of the section title — a stable hook so a test can scope to
             // one section instead of guessing at a text match that also hits
             // the KPI tiles ("Stabilized NOI" is both a tile and a row).
-            data-testid={`overview-section-${s.title.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '')}`}
+            data-testid={`overview-section-${slug(s.title)}`}
           >
             {s.banner && (
               <div
@@ -1320,7 +1392,7 @@ function OverviewRow({ row, onClick }: { row: RowDef; onClick: (e: React.MouseEv
       <span style={{ display: 'flex', alignItems: 'center', gap: 6, flexShrink: 0 }}>
         {showDot && <ProvenanceDot state={row.state} size={8} review={row.state === 'needs_review'} />}
         <span style={{ color, fontWeight: row.bold ? 700 : 400, textDecoration: underline, fontVariantNumeric: 'tabular-nums', whiteSpace: 'nowrap' }}>
-          {refusable ? <Refused reason={reason} /> : row.value}
+          {refusable ? <Refused reason={reason} detail={row.reasonDetail} /> : row.value}
         </span>
       </span>
     </div>
@@ -1429,8 +1501,10 @@ function TargetField({
 }
 
 // ─────────────────────────────────────────────────────────────────────────
-// Sources & Uses — single section, Uses / Sources columns (Amount / Key / %)
-// + "Equity is the calculated plug" note. From the capital engine arrays.
+// Sources & Uses — single section, Sources (left) / Uses (right) columns
+// (Amount / Key / %) + "Equity is the calculated plug" note. From the capital
+// engine arrays. FON-59 R-056 fixed the column order and moved the section
+// directly under Property.
 // ─────────────────────────────────────────────────────────────────────────
 interface CapitalLine { label: string; amount: number; pct?: number | null; is_total?: boolean }
 
@@ -1469,12 +1543,12 @@ function SourcesUsesSection({
   };
 
   const columns: { heading: string; rows: CapitalLine[]; total: number; footnote?: ReactNode }[] = [
-    { heading: 'Uses', rows: uses, total: usesTotal },
     { heading: 'Sources', rows: sources, total: sourcesTotal, footnote: 'Equity is the calculated plug — total uses less all other sources.' },
+    { heading: 'Uses', rows: uses, total: usesTotal },
   ];
 
   return (
-    <SectionCard title={title}>
+    <SectionCard title={title} data-testid={`overview-section-${slug(title)}`}>
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(340px,1fr))', gap: '14px 36px' }}>
         {columns.map((col) => (
           <div key={col.heading}>
