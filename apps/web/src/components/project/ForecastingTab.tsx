@@ -59,20 +59,20 @@ export default function ForecastingTab({ projectId }: ForecastingTabProps) {
   if (isMockId) {
     return (
       <div className="text-[12.5px] text-ink-500">
-        STR Forward Forecast is available on live deals only. Connect this
+        STR Trend Forecast is available on live deals only. Connect this
         project to a worker-backed deal to see the 24-month forecast.
       </div>
     );
   }
 
   if (loading && !forecast) {
-    return <div className="text-[12.5px] text-ink-500">Loading STR forecast…</div>;
+    return <div className="text-[12.5px] text-ink-500">Loading STR trend forecast…</div>;
   }
 
   if (error && !forecast) {
     return (
       <div className="text-[12.5px] text-ink-500">
-        STR forecast unavailable for this deal. Upload an STR Trend report to
+        STR trend forecast unavailable for this deal. Upload an STR Trend report to
         enable the 24-month forward forecast.
       </div>
     );

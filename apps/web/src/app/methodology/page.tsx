@@ -296,7 +296,7 @@ export default function MethodologyPage() {
             <BadgeRow source="str_comp_set" name="STR Comp-Set Rates">
               The comp set&apos;s blended occupancy &amp; ADR shown on the Market tab, applied as the Year-1 input by &quot;Use STR rates in the model&quot; (explicit overrides carrying the note &quot;STR comp-set market rates (Market tab)&quot;). This is the competitive set&apos;s performance, not the subject&apos;s own — the Market tab states the comp-set benchmark and the model&apos;s Base Year as two separate figures and never claims the benchmark is the assumption.
             </BadgeRow>
-            <BadgeRow source="str_forecast" name="STR Forward Forecast">
+            <BadgeRow source="str_forecast" name="STR Trend Forecast">
               The BASE STR forward-forecast scenario&apos;s Month-12 point — a projection of the subject, used only when the subject&apos;s own TTM is not extracted. Financials → Projections shows &quot;Active basis: Market / STR · Revert&quot; when the rates carry any of these three tags, and the Market tab&apos;s STR card reads the same tags — &quot;STR / Market basis active&quot;, &quot;STR rates unavailable — using T-12 base&quot;, or &quot;Pending re-run&quot; when the worker has not tagged the rates yet — never the request flag alone.
             </BadgeRow>
             <BadgeRow source="str_forecast_unavailable" name="STR Unavailable">

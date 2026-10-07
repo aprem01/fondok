@@ -74,7 +74,7 @@ export default function STRForecastPanel({
       <Card className="p-4">
         <div className="flex items-center justify-between mb-2">
           <span className="text-[11px] uppercase tracking-wide text-ink-500 font-medium">
-            STR Forward Forecast
+            STR Trend Forecast
           </span>
           <span className="inline-flex items-center px-2 py-0.5 rounded text-[10.5px] font-medium border bg-warn-50 text-warn-700 border-warn-500/30">
             Coverage: low ({forecast.historical_months.length} months)
@@ -132,7 +132,7 @@ function STRForecastPanelInner({
       <div className="flex items-center justify-between mb-3">
         <div className="flex items-center gap-3">
           <span className="text-[11px] uppercase tracking-wide text-ink-500 font-medium">
-            STR Forward Forecast
+            STR Trend Forecast
           </span>
           <span className="text-[12.5px] text-ink-700 tabular-nums">
             Trailing-12 RevPAR: <strong>{fmtCurrency(t12Revpar)}</strong>
