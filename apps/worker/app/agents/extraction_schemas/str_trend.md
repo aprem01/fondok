@@ -65,6 +65,12 @@ source for `keys`.
 - `ttm_performance.compset.<n>.occupancy_pct`
 - `ttm_performance.compset.<n>.adr_usd`
 - `ttm_performance.compset.<n>.revpar_usd`
+- `ttm_performance.compset.<n>.status` — `closed` ONLY when the report
+  itself marks the hotel closed. STR prints closed competitors as
+  `Closed - <name>` in the Response-tab roster (usually with 0 rooms);
+  surface that label here. Never infer closure from a 0-room row; omit
+  the field when the report says nothing. The Market tab excludes
+  `closed` hotels from the comp-set count AND the keys (FON-61 E-009).
 
 ### Penetration indices (subject vs comp set; 1.00 = parity)
 - `ttm_performance.indices.rgi_revpar_index`
