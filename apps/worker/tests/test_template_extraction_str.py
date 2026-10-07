@@ -184,6 +184,91 @@ def _weekly_star_xlsx_bytes() -> bytes:
     return buf.getvalue()
 
 
+def _daily_star_xlsx_bytes() -> bytes:
+    """Daily STAR export (FON-61: the tester's ``56387-20250713-USD-E.xlsx``).
+
+    Response sheet header ``STR ID | Name | City, State | Zip | Phone |
+    Rooms | Open Date | <dates…>``; no Glance tab, no "For the Week of:"
+    line, no "Response Report" title and no Help tab — the shape that used
+    to fall into the monthly branch and return None. The roster carries
+    STR's closed marker: ``34401 | Closed - Blue Moon Hotel | … | 0``.
+    """
+    from openpyxl import Workbook
+
+    wb = Workbook()
+    toc = wb.active
+    toc.title = "Table of Contents"
+    toc.cell(row=1, column=2, value="Table of Contents")
+
+    resp = wb.create_sheet("Response")
+    resp.cell(row=1, column=2, value="Tab 2 - Daily Report")
+    resp.cell(row=2, column=3, value="Kimpton Angler's Hotel        600 Washington Ave")
+    resp.cell(row=3, column=3, value="STR # 56387")
+    resp.cell(row=4, column=3, value="For the Day of: July 13, 2025")
+    for c, label in enumerate(
+        ["STR ID", "Name", "City, State", "Zip", "Phone", "Rooms", "Open Date", "7/7/2025", "7/8/2025"],
+        start=3,
+    ):
+        resp.cell(row=6, column=c, value=label)
+    roster = [
+        (56387, "Kimpton Angler's Hotel", "Miami Beach, FL", 132, "199901"),
+        (44401, "Z Ocean Hotel", "Miami Beach, FL", 40, "200006"),
+        (34401, "Closed - Blue Moon Hotel", "Miami Beach, FL", 0, "193406"),
+        (44117, "The Betsy South Beach", "Miami Beach, FL", 129, "200904"),
+        (55512, "The Tony Hotel of South Beach", "Miami Beach, FL", 68, "201501"),
+        (33931, "Dream South Beach", "Miami Beach, FL", 107, "201106"),
+    ]
+    for r, (sid, name, city, rooms, opened) in enumerate(roster, start=7):
+        resp.cell(row=r, column=3, value=sid)
+        resp.cell(row=r, column=4, value=name)
+        resp.cell(row=r, column=5, value=city)
+        resp.cell(row=r, column=6, value="33139")
+        resp.cell(row=r, column=8, value=rooms)
+        resp.cell(row=r, column=9, value=opened)
+
+    wb.create_sheet("Glossary").cell(row=1, column=1, value="Glossary")
+    buf = io.BytesIO()
+    wb.save(buf)
+    return buf.getvalue()
+
+
+async def test_xlsx_daily_star_roster_with_closed_marker_and_str_ids() -> None:
+    parsed = await parse_document(
+        file_bytes=_daily_star_xlsx_bytes(), filename="56387-20250713-USD-E.xlsx"
+    )
+    result = try_template_extract(parsed, "STR_TREND")
+    assert result is not None, "daily STAR layout must not fall through to the LLM"
+    assert "daily_star_xlsx" in result.coverage_note
+
+    values = _by_name(result)
+    # Subject skipped; five competitors in report order, STR id + rooms each.
+    assert values["comp_set.comp_set_size"] == 5
+    assert values["comp_set.total_keys"] == 40 + 0 + 129 + 68 + 107 == 344
+    assert values["ttm_performance.compset.2.name"] == "Closed - Blue Moon Hotel"
+    assert values["ttm_performance.compset.2.keys"] == 0
+    assert values["ttm_performance.compset.2.str_id"] == "34401"
+    # STR's closed label → an explicit status field; nothing else gets one.
+    assert values["ttm_performance.compset.2.status"] == "closed"
+    assert not any(n.endswith(".status") and n != "ttm_performance.compset.2.status" for n in values)
+    assert values["ttm_performance.compset.1.str_id"] == "44401"
+    assert "ttm_performance.compset.6.name" not in values
+    assert values["str_trend.report_year"] == 2025
+    # A daily file has no trailing-twelve data.
+    assert "ttm_performance.subject.occupancy_pct" not in values
+    assert not any(".monthly." in n for n in values)
+
+
+async def test_xlsx_weekly_star_emits_str_ids() -> None:
+    parsed = await parse_document(
+        file_bytes=_weekly_star_xlsx_bytes(), filename="56387-20250525-USD-E.xlsx"
+    )
+    result = try_template_extract(parsed, "STR_TREND")
+    assert result is not None
+    values = _by_name(result)
+    assert values["ttm_performance.compset.1.str_id"] == "33931"
+    assert values["ttm_performance.compset.2.str_id"] == "44117"
+
+
 # ── legacy .xls Custom Trend (real golden-set fixture) ───────────────
 
 

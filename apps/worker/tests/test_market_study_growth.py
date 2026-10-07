@@ -90,10 +90,12 @@ def test_demand_growth_tolerates_loose_llm_names_and_percent_strings() -> None:
     assert g.value_pct == 4.2 and g.period_label == "as reported"
 
 
-def test_demand_growth_only_forecast_is_labelled_forecast() -> None:
+def test_demand_growth_only_forecast_is_surfaced_as_forecast_never_as_the_value() -> None:
     rows = [_row("market_study.trend.2027.demand_change_pct", 0.05, period="forecast")]
     g = read_demand_growth(rows, has_documents=True, as_of_year=AS_OF)
-    assert g.value_pct == 5.0 and g.period_label == "2027 forecast"
+    assert g.value_pct is None and g.reason == REASON_NO_SOURCE
+    assert g.forecast_pct == 5.0 and g.forecast_label == "2027 forecast"
+    assert g.forecast_input is not None and g.forecast_input.field_name == "market_study.trend.2027.demand_change_pct"
 
 
 def test_demand_growth_derived_from_room_night_series_names_both_rows() -> None:

@@ -141,7 +141,7 @@ def _row(name: str, value: Any, *, ext: str = "e1", doc: str = "STR Trend Jun-20
     )
 
 
-def test_roster_comes_from_one_extraction_and_status_field_is_read() -> None:
+def test_rosters_are_kept_per_extraction_and_unioned_by_hotel_not_by_index() -> None:
     rows = [
         # Newest extraction: roster with an explicit status field.
         _row("ttm_performance.compset.1.name", "Z Ocean Hotel"),
@@ -150,20 +150,136 @@ def test_roster_comes_from_one_extraction_and_status_field_is_read() -> None:
         _row("ttm_performance.compset.2.keys", 0),
         _row("ttm_performance.compset.2.status", "closed"),
         _row("comp_set.comp_set_size", 2),
-        # An older extraction's roster must NOT be merged in by index.
+        # An older extraction's row 3 is ANOTHER hotel — it joins the union
+        # as its own hotel (by name), never merged into row 3 of the newest.
         _row("ttm_performance.compset.3.name", "Ghost Hotel", ext="e0", doc="old.xlsx"),
         _row("ttm_performance.compset.3.keys", 500, ext="e0", doc="old.xlsx"),
     ]
     inputs = build_str_inputs(rows)
-    assert set(inputs.roster) == {1, 2}
+    assert set(inputs.roster) == {1, 2}  # the newest roster, as before
     assert inputs.roster_doc_name == "STR Trend Jun-2026.xlsx"
     assert inputs.roster_page == 22
+    assert [s.doc_name for s in inputs.rosters] == ["STR Trend Jun-2026.xlsx", "old.xlsx"]
     d = derive_comp_set_from_inputs(inputs)
-    assert d.active_count == 1 and d.active_keys == 40
+    assert d.active_count == 2 and d.active_keys == 540
     assert d.closed_names == ["Blue Moon Hotel"]
     assert d.hotels[1].status_source == "extracted_status_field"
+    assert d.hotels[1].status_doc_name == "STR Trend Jun-2026.xlsx"
     assert d.source_doc_name == "STR Trend Jun-2026.xlsx"
+    assert d.documents == ["STR Trend Jun-2026.xlsx", "old.xlsx"]
     assert d.reported_comp_set_size == 2
+
+
+# ─────────────────────────── union across STR reports ───────────────────────────
+#
+# The live deal: the NEWEST STR extraction is the May 2025 trend report
+# ("ANG-20250500-USD-E.xlsx": "34401 | Blue Moon Hotel | … | 75") and the
+# older one is the July 2025 daily report ("56387-20250713-USD-E.xlsx":
+# "34401 | Closed - Blue Moon Hotel | … | 0"). Reading the newest roster
+# alone can never see the closure.
+
+MAY_DOC = "ANG-20250500-USD-E.xlsx"
+JULY_DOC = "56387-20250713-USD-E.xlsx"
+
+
+def _roster_rows(doc: str, ext: str, roster: list[tuple[str, str, int, str | None]]) -> list[FieldRow]:
+    out: list[FieldRow] = []
+    for i, (sid, name, keys, status) in enumerate(roster, start=1):
+        out.append(_row(f"ttm_performance.compset.{i}.name", name, ext=ext, doc=doc))
+        out.append(_row(f"ttm_performance.compset.{i}.keys", keys, ext=ext, doc=doc))
+        out.append(_row(f"ttm_performance.compset.{i}.str_id", sid, ext=ext, doc=doc))
+        if status:
+            out.append(_row(f"ttm_performance.compset.{i}.status", status, ext=ext, doc=doc))
+    return out
+
+
+MAY_ROSTER = [
+    ("44401", "Z Ocean Hotel", 40, None),
+    ("34401", "Blue Moon Hotel", 75, None),
+    ("44117", "The Betsy South Beach", 129, None),
+    ("55512", "The Tony Hotel of South Beach", 68, None),
+    ("33931", "Dream South Beach", 107, None),
+]
+JULY_ROSTER = [
+    ("44401", "Z Ocean Hotel", 40, None),
+    ("34401", "Closed - Blue Moon Hotel", 0, "closed"),
+    ("44117", "The Betsy South Beach", 129, None),
+    ("55512", "The Tony Hotel of South Beach", 68, None),
+    ("33931", "Dream South Beach", 107, None),
+]
+
+
+def test_union_marks_blue_moon_closed_from_the_older_july_report() -> None:
+    rows = [
+        *_roster_rows(MAY_DOC, "e-may", MAY_ROSTER),  # newest first
+        *[_row("comp_set.comp_set_size", 5, ext="e-may", doc=MAY_DOC)],
+        *[_row("comp_set.total_keys", 419, ext="e-may", doc=MAY_DOC)],
+        *_roster_rows(JULY_DOC, "e-july", JULY_ROSTER),
+    ]
+    inputs = build_str_inputs(rows)
+    assert [s.doc_name for s in inputs.rosters] == [MAY_DOC, JULY_DOC]
+    d = derive_comp_set_from_inputs(inputs)
+    assert d.active_count == 4
+    assert d.active_keys == 344
+    assert d.closed_count == 1 and d.closed_names == ["Blue Moon Hotel"]
+    assert d.status_available is True
+    assert d.documents == [MAY_DOC, JULY_DOC]
+    assert d.source_doc_name == MAY_DOC  # newest roster
+    assert d.reported_comp_set_size == 5 and d.reported_total_keys == 419
+    assert len(d.hotels) == 5  # one hotel per STR id, not 10
+    bm = next(h for h in d.hotels if h.name == "Blue Moon Hotel")
+    assert bm.status == "closed"
+    assert bm.str_id == "34401"
+    assert bm.status_source == "extracted_status_field"  # the July extraction's status field
+    assert bm.status_doc_name == JULY_DOC
+    assert bm.name_as_reported == "Closed - Blue Moon Hotel"
+    # Keys come from the newest report listing a positive count (May, 75) —
+    # kept for display, excluded from the active totals.
+    assert bm.keys == 75 and bm.keys_doc_name == MAY_DOC
+    assert bm.reports == (MAY_DOC, JULY_DOC)
+    assert JULY_DOC in d.note and "Blue Moon Hotel" in d.note
+    assert "unioned across 2 STR reports" in d.note
+
+
+def test_union_closed_by_str_label_alone_when_no_status_field_was_extracted() -> None:
+    """An older July extraction (before the template emitted ``status``) that
+    carries only STR's "Closed - " name still marks the hotel closed."""
+    july = [(sid, name, keys, None) for sid, name, keys, _ in JULY_ROSTER]
+    rows = [*_roster_rows(MAY_DOC, "e-may", MAY_ROSTER), *_roster_rows(JULY_DOC, "e-july", july)]
+    d = derive_comp_set_from_inputs(build_str_inputs(rows))
+    bm = next(h for h in d.hotels if h.name == "Blue Moon Hotel")
+    assert bm.status == "closed" and bm.status_source == "str_closed_label"
+    assert bm.status_doc_name == JULY_DOC
+    assert d.active_count == 4 and d.active_keys == 344
+
+
+def test_union_keys_by_normalised_name_when_no_str_id_was_extracted() -> None:
+    may = [(None, name, keys, None) for _, name, keys, _ in MAY_ROSTER]
+    july = [(None, name, keys, status) for _, name, keys, status in JULY_ROSTER]
+    rows = [
+        *[r for r in _roster_rows(MAY_DOC, "e-may", may) if not r.field_name.endswith(".str_id")],
+        *[r for r in _roster_rows(JULY_DOC, "e-july", july) if not r.field_name.endswith(".str_id")],
+    ]
+    d = derive_comp_set_from_inputs(build_str_inputs(rows))
+    assert len(d.hotels) == 5
+    assert d.active_count == 4 and d.active_keys == 344
+    assert d.closed_names == ["Blue Moon Hotel"]
+
+
+def test_union_zero_rooms_without_a_marker_never_closes_a_hotel() -> None:
+    july = [(sid, display, 0 if sid == "34401" else keys, None) for sid, display, keys, _ in MAY_ROSTER]
+    rows = [*_roster_rows(MAY_DOC, "e-may", MAY_ROSTER), *_roster_rows(JULY_DOC, "e-july", july)]
+    d = derive_comp_set_from_inputs(build_str_inputs(rows))
+    assert d.active_count == 5 and d.active_keys == 419
+    assert d.closed_count == 0 and d.status_available is False
+
+
+def test_union_a_hotel_listed_only_in_the_older_report_still_counts() -> None:
+    older = [*JULY_ROSTER, ("99999", "New Comp Hotel", 50, None)]
+    rows = [*_roster_rows(MAY_DOC, "e-may", MAY_ROSTER), *_roster_rows(JULY_DOC, "e-july", older)]
+    d = derive_comp_set_from_inputs(build_str_inputs(rows))
+    assert d.active_count == 5 and d.active_keys == 344 + 50
+    assert next(h for h in d.hotels if h.name == "New Comp Hotel").reports == (JULY_DOC,)
 
 
 def test_parse_extraction_records_keeps_document_identity() -> None:

@@ -33,6 +33,7 @@ import {
   type MarketTtmBlendBlock,
   type MarketGrowthBlock,
   type MarketSupplyGrowthBlock,
+  type MarketPipelineHotel,
 } from '@/lib/api';
 import { useDeal } from '@/lib/hooks/useDeal';
 import { useEngineRun } from '@/lib/hooks/useEngineRun';
@@ -375,14 +376,27 @@ function refusedTile(reason: string | null | undefined, detail: string | null | 
   };
 }
 
+/** "· 2026 forecast +5.0%" when the report also states a forecast — labelled, never the value. */
+const forecastSuffix = (pct: number | null | undefined, label: string | null | undefined): string =>
+  pct != null ? ` · ${label ?? 'forecast'} ${signedPct1(pct)}` : '';
+
 export function demandGrowthTile(block: MarketGrowthBlock | null | undefined): GrowthTile {
   if (!block) return refusedTile(null, null);
-  if (block.value_pct == null) return refusedTile(block.reason, block.detail);
+  if (block.value_pct == null) {
+    const refused = refusedTile(block.reason, block.detail);
+    // A forecast is never promoted to the value; when it is all the report
+    // states, the dash stays and the sub-line says what the report forecasts.
+    if (block.forecast_pct != null) {
+      const doc = block.forecast_input?.doc_name ?? 'market study';
+      return { ...refused, sub: `no actual in the uploaded reports · ${block.forecast_label ?? 'forecast'} ${signedPct1(block.forecast_pct)} · ${doc}` };
+    }
+    return refused;
+  }
   const doc = block.inputs[0]?.doc_name ?? 'market study';
   const basis = block.basis === 'derived_from_series' ? ' · derived from the demand series' : '';
   return {
     value: signedPct1(block.value_pct),
-    sub: `${block.period_label ?? 'as reported'} · ${doc}${basis}`,
+    sub: `${block.period_label ?? 'as reported'} · ${doc}${basis}${forecastSuffix(block.forecast_pct, block.forecast_label)}`,
     color: block.basis === 'derived_from_series' ? GRAY : GREEN,
     awaiting: false,
   };
@@ -391,13 +405,24 @@ export function demandGrowthTile(block: MarketGrowthBlock | null | undefined): G
 export function supplyGrowthTile(block: MarketSupplyGrowthBlock | null | undefined): GrowthTile {
   if (!block) return refusedTile(null, null);
   if (block.under_construction_pct == null) return refusedTile(block.reason, block.detail);
-  const uc = block.under_construction_rooms?.toLocaleString('en-US') ?? '—';
-  const existing = block.existing_rooms?.toLocaleString('en-US') ?? '—';
+  const uc = block.under_construction_rooms?.toLocaleString('en-US') ?? null;
   const fp =
     block.final_planning_pct != null ? ` · final planning ${signedPct1(block.final_planning_pct)}` : '';
+  // The report's own "% of inventory" row vs. rooms ÷ existing inventory —
+  // the sub-line says which, because the two are different claims.
+  if (block.under_construction_pct_basis === 'reported') {
+    const rooms = uc ? `${uc} rooms under construction · ` : '';
+    return {
+      value: signedPct1(block.under_construction_pct),
+      sub: `${rooms}${block.under_construction_pct.toFixed(1)}% of inventory as reported${fp}`,
+      color: GREEN,
+      awaiting: false,
+    };
+  }
+  const existing = block.existing_rooms?.toLocaleString('en-US') ?? '—';
   return {
     value: signedPct1(block.under_construction_pct),
-    sub: `${uc} rooms under construction ÷ ${existing} existing${fp}`,
+    sub: `${uc ?? '—'} rooms under construction ÷ ${existing} existing${fp}`,
     color: GRAY,
     awaiting: false,
   };
@@ -594,17 +619,24 @@ export function CompSetRoster({
     name: string;
     keys: number | null;
     closed: boolean;
+    closedDoc: string | null;
     perf: StrCompRow | undefined;
   };
+  // The worker's roster is a UNION across STR reports; the `/market-data`
+  // perf rows come from one. Match on the name with STR's "Closed - " label
+  // stripped and case / whitespace normalised (the worker's own union key).
+  const norm = (s: string): string =>
+    s.replace(/^\s*closed\s*[-–—:]\s*/i, '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
   const rows: Row[] = hotels
     ? hotels.map((h) => ({
         key: `${h.index}-${h.name_as_reported}`,
         name: h.name,
         keys: h.keys ?? null,
         closed: h.status === 'closed',
-        perf: perf.find((p) => p.name === h.name_as_reported) ?? perf[h.index - 1],
+        closedDoc: h.status_doc_name ?? null,
+        perf: perf.find((p) => norm(p.name) === norm(h.name)),
       }))
-    : perf.map((p, i) => ({ key: `${p.name}-${i}`, name: p.name, keys: p.keys, closed: false, perf: p }));
+    : perf.map((p, i) => ({ key: `${p.name}-${i}`, name: p.name, keys: p.keys, closed: false, closedDoc: null, perf: p }));
   if (rows.length === 0) return null;
   const anonymized = rows.every(
     (r) => !r.perf || (r.perf.occupancy_pct == null && r.perf.adr_usd == null && r.perf.revpar_usd == null),
@@ -660,7 +692,11 @@ export function CompSetRoster({
           <span style={{ color: palette.ink, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
             {r.name}
             {r.closed && (
-              <span data-testid="comp-set-closed-chip" style={chip} title="Closed per the STR report — excluded from the comp-set count and keys">
+              <span
+                data-testid="comp-set-closed-chip"
+                style={chip}
+                title={`Closed per ${r.closedDoc ?? 'the STR report'} — excluded from the comp-set count and keys`}
+              >
                 closed · excluded
               </span>
             )}
@@ -1130,8 +1166,13 @@ export function SupplyPipeline({
     supply?.reported_supply_change_pct != null
       ? `${signedPct1(supply.reported_supply_change_pct)}${
           supply.reported_supply_change_period ? ` · ${supply.reported_supply_change_period}` : ''
-        }`
+        }${forecastSuffix(supply.forecast_supply_change_pct, supply.forecast_supply_change_period)}`
       : null;
+  // A share stated by the report ("5.7% of inventory") renders GREEN
+  // (document-sourced); one Fondok computed from rooms ÷ inventory renders
+  // GRAY (calculated) — the Data Key distinction.
+  const shareColor = (basis: 'reported' | 'computed' | null | undefined): string =>
+    basis === 'reported' ? GREEN : GRAY;
   const rows: { label: string; value: ReactNode; color: string; weight: number; awaiting?: boolean }[] = [
     {
       label: 'Existing comp set supply',
@@ -1144,13 +1185,35 @@ export function SupplyPipeline({
       'Submarket inventory',
       rooms(supply?.existing_rooms, null, supply?.existing_period_label ? ` · ${supply.existing_period_label}` : ''),
     ),
-    row('Under construction', rooms(supply?.under_construction_rooms, supply?.under_construction_pct), GRAY),
-    row('Final planning', rooms(supply?.final_planning_rooms, supply?.final_planning_pct), GRAY),
+    row(
+      'Under construction',
+      rooms(supply?.under_construction_rooms, supply?.under_construction_pct),
+      shareColor(supply?.under_construction_pct_basis),
+    ),
+    row(
+      'Final planning',
+      rooms(supply?.final_planning_rooms, supply?.final_planning_pct),
+      shareColor(supply?.final_planning_pct_basis),
+    ),
     row('Planned / unentitled', rooms(supply?.planned_rooms)),
     { label: 'Expected deliveries', value: '—', color: MUTED, weight: 400, awaiting: true },
     row('Submarket supply growth', reported),
   ];
   const sourceDoc = supply?.inputs.find((i) => i.doc_name)?.doc_name ?? null;
+  const anyReported =
+    supply?.under_construction_pct_basis === 'reported' || supply?.final_planning_pct_basis === 'reported';
+  const anyComputed =
+    supply?.under_construction_pct_basis === 'computed' || supply?.final_planning_pct_basis === 'computed';
+  const shareNote = anyReported && anyComputed
+    ? 'Shares: the report’s own "% of inventory" where it states one, otherwise rooms ÷ existing submarket inventory.'
+    : anyReported
+      ? 'Shares are the report’s own "% of inventory" figures (no inventory room count is stated).'
+      : 'Pipeline shares = rooms ÷ existing submarket inventory.';
+  const hotels = supply?.pipeline_hotels ?? [];
+  const filter = supply?.pipeline_filter ?? null;
+  const bucketLabel = (b: MarketPipelineHotel['bucket'], status: string | null | undefined): string =>
+    status?.trim() ||
+    (b === 'under_construction' ? 'Under construction' : b === 'final_planning' ? 'Final planning' : b === 'planned' ? 'Planned' : '—');
   return (
     <SectionCard title="Supply Pipeline" note="CoStar Hospitality">
       <div style={{ marginTop: 10 }}>
@@ -1176,11 +1239,72 @@ export function SupplyPipeline({
       </div>
       <div style={{ fontSize: 11, color: palette.textMuted, marginTop: 8, lineHeight: 1.45 }}>
         {sourceDoc
-          ? `Pipeline shares = rooms ÷ existing submarket inventory. Source: ${sourceDoc}.`
+          ? `${shareNote} Source: ${sourceDoc}.`
           : supply?.detail
             ? supply.detail
             : 'Submarket inventory and pipeline populate from a CoStar submarket report (Market Study).'}
       </div>
+      {/* FON-61 (E-008) — the pipeline projects IN the deal's market. A
+          multi-market export is filtered to the deal's market / submarket
+          before anything is listed or summed; the filter line says how many
+          of its rows matched, or that none did. */}
+      {(hotels.length > 0 || (filter && filter.total > 0)) && (
+        <div data-testid="pipeline-hotels" style={{ marginTop: 10 }}>
+          <div
+            style={{
+              fontSize: 10,
+              fontWeight: 700,
+              letterSpacing: '.05em',
+              color: palette.textFaint,
+              textTransform: 'uppercase',
+              paddingBottom: 6,
+              borderBottom: `1px solid ${palette.border}`,
+              display: 'grid',
+              gridTemplateColumns: 'minmax(160px,2fr) 60px minmax(110px,1fr) minmax(80px,1fr)',
+              gap: 8,
+            }}
+          >
+            <span>Pipeline hotel</span>
+            <span style={{ textAlign: 'right' }}>Keys</span>
+            <span>Status</span>
+            <span>Opens</span>
+          </div>
+          {hotels.map((h, i) => (
+            <div
+              key={`${h.doc_id ?? ''}-${h.name ?? i}-${i}`}
+              data-testid="pipeline-hotel"
+              style={{
+                display: 'grid',
+                gridTemplateColumns: 'minmax(160px,2fr) 60px minmax(110px,1fr) minmax(80px,1fr)',
+                gap: 8,
+                fontSize: 12,
+                padding: '5px 0',
+                borderBottom: `1px solid ${palette.hairlineRow}`,
+                alignItems: 'center',
+              }}
+            >
+              <span style={{ color: palette.ink, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                {h.name ?? '—'}
+                {h.submarket && (
+                  <span style={{ color: palette.textFaint, marginLeft: 6, fontSize: 10.5 }}>{h.submarket}</span>
+                )}
+              </span>
+              <span style={{ textAlign: 'right', color: '#3a3f47', fontVariantNumeric: 'tabular-nums' }}>{h.keys ?? '—'}</span>
+              <span style={{ color: '#3a3f47' }}>{bucketLabel(h.bucket, h.status)}</span>
+              <span style={{ color: h.expected_open ? '#3a3f47' : palette.textFaint }}>{h.expected_open ?? '—'}</span>
+            </div>
+          ))}
+          {filter && (
+            <div data-testid="pipeline-filter" style={{ fontSize: 11, color: palette.textMuted, marginTop: 6, lineHeight: 1.45 }}>
+              {filter.note
+                ? filter.note
+                : `${filter.matched} of ${filter.total} rows in ${filter.doc_name ?? 'the pipeline export'} are in ${
+                    filter.terms.length ? filter.terms.join(' / ') : 'the deal market'
+                  }; the rest were not counted.`}
+            </div>
+          )}
+        </div>
+      )}
     </SectionCard>
   );
 }

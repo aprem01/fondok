@@ -136,6 +136,17 @@ def _grid_contains(grid: list[list[str]], needle: str, *, max_rows: int = 6) -> 
     return False
 
 
+def _roster_header_has(grid: list[list[str]], label: str, *, max_rows: int = 40) -> bool:
+    """Whether the roster header row (the one carrying an STR-id label)
+    also carries ``label`` — e.g. the daily layout's ``Open Date`` column."""
+    low = label.lower()
+    for row in grid[:max_rows]:
+        cells = [c.strip().lower() for c in row]
+        if any(c in _ROSTER_ID_LABELS for c in cells) and any(c == low for c in cells):
+            return True
+    return False
+
+
 # ── roster (Response tab) ────────────────────────────────────────────
 
 
@@ -224,7 +235,7 @@ def _subject_name_from_header(grid: list[list[str]]) -> str | None:
 def _report_year_from_headers(sheets: list[_Sheet]) -> int | None:
     """Year of the report's period-ending, from ``For the Month of:
     December 2024`` / ``For the Week of: … 2025`` header lines."""
-    pat = re.compile(r"For the (?:Month|Week) of:.*?((?:19|20)\d{2})")
+    pat = re.compile(r"For the (?:Month|Week|Day|Date|Period) of:.*?((?:19|20)\d{2})")
     for sheet in sheets:
         for row in sheet.grid[:6]:
             for cell in row:
@@ -501,23 +512,28 @@ def _try_str_trend(parsed: ParsedDocument) -> TemplateExtractResult | None:
         return None
 
     lower_names = [s.name.lower() for s in sheets]
-    # Every STR trend workbook ships a Table of Contents, a Help tab
-    # and at least one Response tab. Anything missing → not ours.
-    if not any("table of contents" in n for n in lower_names):
-        return None
-    if not any(n == "help" or n.endswith(") help") for n in lower_names):
+    # Every STR workbook ships a Table of Contents and/or a Help tab plus
+    # at least one Response tab. The daily STAR export (FON-61: the July
+    # "56387-20250713-USD-E.xlsx") carries the Response roster but not
+    # always both front/back tabs, so either one is enough — the roster
+    # header below is the real gate.
+    has_toc = any("table of contents" in n for n in lower_names)
+    has_help = any(n == "help" or n.endswith(") help") for n in lower_names)
+    if not (has_toc or has_help):
         return None
 
     # Primary Response tab = first sheet (report order) whose name
     # contains "response" (not "segmentation") and whose first header
-    # line says "Response Report".
+    # line says "Response Report" — or, failing that title (the daily
+    # layout titles it differently), whose grid carries the STR roster
+    # header (STR ID | Name | … | Rooms).
     response = next(
         (
             s
             for s in sheets
             if "response" in s.name.lower()
             and "segmentation" not in s.name.lower()
-            and _grid_contains(s.grid, "response report", max_rows=2)
+            and (_grid_contains(s.grid, "response report", max_rows=2) or _parse_roster(s.grid))
         ),
         None,
     )
@@ -545,6 +561,10 @@ def _try_str_trend(parsed: ParsedDocument) -> TemplateExtractResult | None:
         fields.append(
             _field(f"ttm_performance.compset.{i}.keys", comp.rooms, unit="rooms", page=page)
         )
+        # FON-61 E-009 — STR's property id (first roster column) is the key
+        # the Market tab unions the roster on across reports ("Blue Moon
+        # Hotel" in May, "Closed - Blue Moon Hotel" in July = one hotel).
+        fields.append(_field(f"ttm_performance.compset.{i}.str_id", comp.str_id, page=page))
         # FON-61 E-009 — STR labels a closed competitor "Closed - <name>" in
         # the roster. Surface that label as an explicit status field so the
         # Market tab can exclude the hotel from the count and the keys
@@ -569,6 +589,12 @@ def _try_str_trend(parsed: ParsedDocument) -> TemplateExtractResult | None:
 
     is_custom_trend = any("by measure" in n for n in lower_names)
     is_weekly = _grid_contains(response.grid, "for the week of:", max_rows=6)
+    # Daily STAR: the Response roster header carries an "Open Date" column
+    # followed by the day columns; the file has no Glance tab and no
+    # "For the Week of:" line, so without this it fell into the monthly
+    # branch and returned None (the July 2025 file was then LLM-extracted
+    # with no roster — FON-61).
+    is_daily = (not is_weekly) and _roster_header_has(response.grid, "open date")
 
     if is_custom_trend:
         # Legacy .xls Custom Trend.
@@ -606,21 +632,22 @@ def _try_str_trend(parsed: ParsedDocument) -> TemplateExtractResult | None:
             "revpar_usd} and MPI/ARI/RGI are not emitted"
         )
         variant = "custom_trend_xls"
-    elif is_weekly:
-        # Weekly STAR: no trailing-twelve data exists in the file.
+    elif is_weekly or is_daily:
+        # Weekly / daily STAR: no trailing-twelve data exists in the file.
         subject_name = _subject_name_from_header(response.grid)
         if subject_name:
             fields.append(_field("ttm_performance.subject.name", subject_name, page=page))
         year = _report_year_from_headers(sheets)
         if year is not None:
             fields.append(_field("str_trend.report_year", year))
+        kind = "weekly" if is_weekly else "daily"
         notes.append(
-            "weekly STAR report: comp-set roster + rollups extracted; the "
+            f"{kind} STAR report: comp-set roster + rollups extracted; the "
             "file carries daily/weekly data only (no Running 12 Month "
             "block), so TTM subject metrics, penetration indices and the "
             "monthly series are not emitted"
         )
-        variant = "weekly_star_xlsx"
+        variant = f"{kind}_star_xlsx"
     else:
         # Monthly STAR: Glance tab is mandatory for a template hit.
         glance = next(
