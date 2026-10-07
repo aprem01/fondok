@@ -127,7 +127,11 @@ DOC_STATUS_FAILED = "FAILED"
 # rows stay in place (they're still real extractions) but they no
 # longer satisfy the ``LIKE '%;pv=vN'`` filter and every doc runs the
 # full pipeline once against the new agents.
-EXTRACTION_PIPELINE_VERSION = "v1"
+# v2 (2026-10-07): the STR template now emits ``compset.<n>.str_id`` /
+# ``.status`` and classifies monthly vs daily/weekly by the report's own
+# period line; the market-study reader expects those rows. Every STR
+# extraction cached under v1 must re-run once.
+EXTRACTION_PIPELINE_VERSION = "v2"
 
 
 # Phase 0.2 provenance stamps. Every persisted ``agent_version`` now reads

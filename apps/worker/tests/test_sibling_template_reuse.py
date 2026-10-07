@@ -25,6 +25,8 @@ from uuid import uuid4
 
 import pytest
 
+from app.api import documents as docs_module
+
 # Force SQLite + a temp DB before app imports (same pattern as
 # test_documents.py) — keeps tests isolated from any local fondok.db.
 _TMP_DB = Path(tempfile.gettempdir()) / "fondok-tests-sibling-template.db"
@@ -715,7 +717,7 @@ async def test_dispatch_flag_off_passthrough_and_flag_on_hit(
     # Phase 0.2 stamps ``;ps=<prompt sha>;reg=<registry v>`` in front of
     # the ``;pv=`` suffix; the base token and the suffix are the contract.
     assert sibling_av.startswith("template:sibling:v1;")
-    assert sibling_av.endswith(";pv=v1")
+    assert sibling_av.endswith(f";pv={docs_module.EXTRACTION_PIPELINE_VERSION}")
     fields = json.loads(row._mapping["fields"])
     got = {f["field_name"]: f["value"] for f in fields}
     assert got["p_and_l_usali.revenues.total_revenues_usd"] == 588000
