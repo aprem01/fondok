@@ -60,6 +60,12 @@ export interface LineageOpenDetail {
   rootId: string | string[];
   /** Headline for the drawer — the label of the number being traced. */
   title?: string;
+  /** One line under the headline — e.g. the engine field key the walk starts
+   *  from (`revenue.years[1].adr`). Defaults to the generic explainer. */
+  subtitle?: string;
+  /** What to say when the record carries NO walk for this root (FON-41
+   *  E-015: "no trace available for this cell"). Never a fabricated formula. */
+  emptyMessage?: string;
 }
 
 /** Ask the globally mounted drawer to trace a value. No-op server-side. */
@@ -298,6 +304,10 @@ export interface LineageDrawerProps {
   /** Candidate root ids, tried in order. */
   rootId: string | string[];
   title?: string;
+  /** See `LineageOpenDetail.subtitle`. */
+  subtitle?: string;
+  /** See `LineageOpenDetail.emptyMessage`. */
+  emptyMessage?: string;
   onClose: () => void;
   /** Pin the walk to one run; omit for the run the worker serves. */
   runId?: string | null;
@@ -308,6 +318,8 @@ export function LineageDrawer({
   dealId,
   rootId,
   title,
+  subtitle,
+  emptyMessage,
   onClose,
   runId,
 }: LineageDrawerProps) {
@@ -370,8 +382,8 @@ export function LineageDrawer({
             <h2 className="mt-0.5 truncate text-[14px] font-semibold text-ink-900">
               {title ?? candidates[0] ?? 'Trace to source'}
             </h2>
-            <p className="mt-0.5 text-[11.5px] text-ink-500">
-              Every step from this number down to the page it came from.
+            <p className="mt-0.5 text-[11.5px] text-ink-500" data-testid="lineage-subtitle">
+              {subtitle ?? 'Every step from this number down to the page it came from.'}
             </p>
           </div>
           <button
@@ -403,15 +415,25 @@ export function LineageDrawer({
           )}
 
           {settled && !error && !record && (
-            <div className="px-5 py-6 text-[12.5px] leading-relaxed text-ink-500">
-              No lineage recorded for this deal yet. Nothing else on this screen changes —
-              every number still reads from the latest model run.
+            <div className="px-5 py-6 text-[12.5px] leading-relaxed text-ink-500" data-testid="lineage-empty">
+              {emptyMessage ? (
+                <>
+                  {emptyMessage}{' '}
+                  Nothing else on this screen changes — every number still reads from the
+                  latest model run.
+                </>
+              ) : (
+                <>
+                  No lineage recorded for this deal yet. Nothing else on this screen changes —
+                  every number still reads from the latest model run.
+                </>
+              )}
             </div>
           )}
 
           {settled && !error && record && !resolved && (
-            <div className="px-5 py-6 text-[12.5px] leading-relaxed text-ink-500">
-              No lineage recorded for this value yet.
+            <div className="px-5 py-6 text-[12.5px] leading-relaxed text-ink-500" data-testid="lineage-empty">
+              {emptyMessage ?? 'No lineage recorded for this value yet.'}
             </div>
           )}
 
@@ -495,6 +517,8 @@ export function LineageDrawerHost() {
       dealId={req.dealId}
       rootId={req.rootId}
       title={req.title}
+      subtitle={req.subtitle}
+      emptyMessage={req.emptyMessage}
       onClose={() => setReq(null)}
     />
   );

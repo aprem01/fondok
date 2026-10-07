@@ -91,6 +91,7 @@ import {
 import { isNoOpEdit } from '@/lib/fieldValue';
 import { overrideEnvelope, overrideNoteFor } from '@/lib/overrideNote';
 import {
+  noiBeforeReserveLabel,
   stabilizedYearBlock,
   stabilizationBadge,
   stabilizationSignalNote,
@@ -1284,6 +1285,11 @@ export default function OverviewTab({ projectId }: { projectId: number | string 
         ))}
       </div>
 
+      {/* FON-41 R-060 — the Future P&L at a glance: Total Revenue and NOI
+          (before FF&E reserve) per projected year, straight from the revenue
+          and expense engines, with the deep link to P&L → Future P&L. */}
+      <FuturePLSummaryCard outputs={outputs} onOpen={() => navigate('pl', 'projections')} />
+
       {/* Deal-type-aware sections */}
       {displaySections.map((s, i) => {
         if (s.kind === 'su') return <SourcesUsesSection key={`su-${i}`} title={s.title} outputs={outputs} keys={keys} money={money} onRowClick={openProv} tracedState={tracedState} />;
@@ -1636,6 +1642,124 @@ function TimelineSectionCard({
               <span style={{ fontSize: 10.5, color: palette.textFaint }}>{(m.duration_months ?? 0) > 0 ? `${m.duration_months} months` : ''}</span>
             </div>
           ))}
+        </div>
+      )}
+    </SectionCard>
+  );
+}
+
+// ─── Future P&L summary (FON-41 R-060) ───────────────────────────────────
+
+/** How many projected years the Overview summary shows at most. */
+export const FUTURE_PL_YEARS = 5;
+
+/** The row labels the summary prints — exported so a test pins the exact text. */
+export const FUTURE_PL_REVENUE_LABEL = 'Total revenue';
+export const FUTURE_PL_LINK_LABEL = '→ P&L';
+
+/**
+ * One compact card: "Future P&L · Years 1–N" with Total Revenue and NOI
+ * (before FF&E reserve) per projected year. Every figure is an engine output —
+ * `revenue.years[i].total_revenue`, `expense.years[i].noi_institutional`
+ * (the legacy after-reserve `noi` only on a pre-upgrade run, and then the row
+ * label says so via `noiBeforeReserveLabel`) — and the heading carries the
+ * calendar year from `revenue.projection_calendar_years` when the deal has an
+ * acquisition close date. A dash for anything the engines have not emitted;
+ * nothing here is a placeholder.
+ */
+function FuturePLSummaryCard({
+  outputs,
+  onOpen,
+}: {
+  outputs: EngineOutputsResponse | null;
+  onOpen: () => void;
+}) {
+  const revYears =
+    getEngineField<Array<{ total_revenue?: number | null }>>(outputs, 'revenue', 'years') ?? [];
+  const expYears =
+    getEngineField<Array<{ noi?: number | null; noi_institutional?: number | null }>>(outputs, 'expense', 'years') ?? [];
+  const calendar = getEngineField<number[]>(outputs, 'revenue', 'projection_calendar_years') ?? [];
+  const n = Math.min(FUTURE_PL_YEARS, Math.max(revYears.length, expYears.length));
+  const cols = Array.from({ length: n }, (_, i) => i);
+  const basisConfirmed = expYears.slice(0, n).some((y) => typeof y?.noi_institutional === 'number');
+  const noiLabel = noiBeforeReserveLabel(basisConfirmed);
+  const title = n === 0 ? 'Future P&L' : n === 1 ? 'Future P&L · Year 1' : `Future P&L · Years 1–${n}`;
+
+  const num = (v: unknown): number | undefined =>
+    typeof v === 'number' && Number.isFinite(v) ? v : undefined;
+  // Full dollars with thousands separators — `toLocaleString` never prints
+  // scientific notation, and the same string rides the cell's title so the
+  // figure is never abbreviated away (FON-41 E-025).
+  const money = (v: number | undefined): string =>
+    v == null ? '—' : v.toLocaleString('en-US', { style: 'currency', currency: 'USD', maximumFractionDigits: 0 });
+  const heading = (i: number): string =>
+    typeof calendar[i] === 'number' ? `Year ${i + 1} · ${calendar[i]}` : `Year ${i + 1}`;
+
+  const th: CSSProperties = {
+    fontSize: 10.5, fontWeight: 700, letterSpacing: '.04em', textTransform: 'uppercase',
+    color: palette.eyebrow, textAlign: 'right', padding: '9px 14px 7px', whiteSpace: 'nowrap',
+    borderBottom: `1px solid ${palette.hairlineSection}`,
+  };
+  const tdLabel: CSSProperties = { fontSize: 12, color: palette.textSecondary, padding: '8px 18px', whiteSpace: 'nowrap' };
+  const tdVal: CSSProperties = {
+    fontSize: 12.5, fontWeight: 600, color: palette.ink, textAlign: 'right', padding: '8px 14px',
+    fontVariantNumeric: 'tabular-nums', whiteSpace: 'nowrap',
+  };
+
+  return (
+    <SectionCard
+      variant="title"
+      title={title}
+      data-testid="overview-future-pl"
+      note={
+        <button
+          type="button"
+          onClick={onOpen}
+          data-testid="overview-future-pl-link"
+          title="Open P&L → Future P&L — the full projected statement these figures summarize"
+          style={{ fontSize: 11.5, fontWeight: 600, color: palette.linkBlue, background: 'none', border: 'none', padding: 0, cursor: 'pointer', fontFamily: 'inherit', whiteSpace: 'nowrap' }}
+        >
+          {FUTURE_PL_LINK_LABEL}
+        </button>
+      }
+    >
+      {n === 0 ? (
+        <div data-testid="overview-future-pl-empty" style={{ padding: '12px 18px', fontSize: 12, color: palette.textMuted, display: 'flex', alignItems: 'center', gap: 8 }}>
+          <ProvenanceDot state="awaiting_data" size={8} />
+          <span>
+            <span style={{ color: palette.textFaint }}>—</span>{' '}
+            Awaiting a model run — Total Revenue and NOI fill in once the revenue and expense engines have run.
+          </span>
+        </div>
+      ) : (
+        <div style={{ overflowX: 'auto' }}>
+          <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+            <thead>
+              <tr>
+                <th style={{ ...th, textAlign: 'left', padding: '9px 18px 7px' }}>Line</th>
+                {cols.map((i) => (
+                  <th key={i} style={th} data-testid={`overview-future-pl-col-${i}`}>{heading(i)}</th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              <tr data-testid="overview-future-pl-revenue" style={{ borderBottom: `1px solid ${palette.hairlineRow}` }}>
+                <td style={tdLabel}>{FUTURE_PL_REVENUE_LABEL}</td>
+                {cols.map((i) => {
+                  const v = num(revYears[i]?.total_revenue);
+                  return <td key={i} style={{ ...tdVal, color: v == null ? palette.textFaint : palette.ink }} title={v == null ? undefined : money(v)}>{money(v)}</td>;
+                })}
+              </tr>
+              <tr data-testid="overview-future-pl-noi">
+                <td style={tdLabel}>{noiLabel}</td>
+                {cols.map((i) => {
+                  const y = expYears[i];
+                  const v = num(y?.noi_institutional) ?? num(y?.noi);
+                  return <td key={i} style={{ ...tdVal, color: v == null ? palette.textFaint : palette.ink }} title={v == null ? undefined : money(v)}>{money(v)}</td>;
+                })}
+              </tr>
+            </tbody>
+          </table>
         </div>
       )}
     </SectionCard>

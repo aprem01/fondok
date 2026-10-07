@@ -149,6 +149,33 @@ select {
 .scrollbar-thin::-webkit-scrollbar-thumb { background: #d0d5dd; border-radius: 3px; }
 .scrollbar-thin::-webkit-scrollbar-thumb:hover { background: #98a2b3; }
 
+/* Discoverable horizontal scroll (FON-41 E-026) — components/project/pl/HScroll.
+   The bar is ALWAYS drawn (not the OS overlay that hides until a gesture) and
+   the gutter is reserved so the table never jumps when the bar appears. */
+.fondok-hscroll {
+  overflow-x: auto;
+  scrollbar-gutter: stable;
+  scrollbar-width: thin;                 /* Firefox */
+  scrollbar-color: #b8bcc6 #f1f0eb;      /* Firefox: thumb track */
+}
+.fondok-hscroll::-webkit-scrollbar { height: 10px; }
+.fondok-hscroll::-webkit-scrollbar-track { background: #f1f0eb; border-top: 1px solid #e6e5e0; }
+.fondok-hscroll::-webkit-scrollbar-thumb { background: #b8bcc6; border-radius: 5px; border: 2px solid #f1f0eb; }
+.fondok-hscroll::-webkit-scrollbar-thumb:hover { background: #8f95a3; }
+.fondok-hscroll-fade {
+  position: absolute; top: 0; bottom: 10px; width: 36px; pointer-events: none;
+}
+.fondok-hscroll-fade-right { right: 0; background: linear-gradient(to right, rgba(255,255,255,0), rgba(255,255,255,.92)); }
+.fondok-hscroll-fade-left  { left: 0;  background: linear-gradient(to left,  rgba(255,255,255,0), rgba(255,255,255,.92)); }
+.fondok-hscroll-cue {
+  position: absolute; right: 10px; top: 8px;
+  font-size: 10.5px; font-weight: 600; line-height: 1; font-family: inherit;
+  color: #2f4a8c; background: #fff; border: 1px solid #dbe3f5; border-radius: 999px;
+  padding: 5px 9px; cursor: pointer; box-shadow: 0 1px 2px rgba(16,24,40,.08);
+  white-space: nowrap;
+}
+.fondok-hscroll-cue:hover { background: #eef2fb; }
+
 /* Respect reduced motion. */
 @media (prefers-reduced-motion: reduce) {
   *,

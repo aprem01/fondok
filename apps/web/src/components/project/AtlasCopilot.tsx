@@ -53,7 +53,7 @@ const TAB_GUIDE: Record<string, { title: string; guide: string; suggestions: str
     ],
   },
   pl: {
-    title: 'Financials',
+    title: 'P&L',
     guide: 'The USALI operating statement — historicals from your T-12 and the forward projections. Click any cell for its source and confidence.',
     suggestions: [
       'What is the broker NOI vs the T-12 actual NOI?',

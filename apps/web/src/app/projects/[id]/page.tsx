@@ -108,7 +108,7 @@ const tabs: Tab[] = [
   { id: '', label: 'Data Room', icon: FolderOpen },
   { id: 'overview', label: 'Overview', icon: FileText },
   { id: 'market', label: 'Market', icon: MapPinned },
-  { id: 'pl', label: 'Financials', icon: BarChart3 },
+  { id: 'pl', label: 'P&L', icon: BarChart3 },
   { id: 'investment', label: 'Investment', icon: Briefcase },
   { id: 'debt', label: 'Debt', icon: DollarSign },
   { id: 'partnership', label: 'Partnership', icon: Users },

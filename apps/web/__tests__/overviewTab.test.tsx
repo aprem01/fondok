@@ -197,7 +197,7 @@ vi.mock('@/lib/hooks/useDealProvenance', () => ({
     key && mockReasons[key] ? { source: '', value: null, reason: mockReasons[key] } : null,
 }));
 
-import OverviewTab, { EXIT_NOI_LABEL } from '@/components/project/OverviewTab';
+import OverviewTab, { EXIT_NOI_LABEL, FUTURE_PL_REVENUE_LABEL, FUTURE_PL_LINK_LABEL } from '@/components/project/OverviewTab';
 import { REASONS } from '@/lib/ontology/reasons.generated';
 
 beforeEach(() => {
@@ -960,5 +960,107 @@ describe('OverviewTab — R-058 Exit NOI in the Exit section', () => {
     fireEvent.click(within(screen.getByTestId('overview-section-exit')).getByText('$52,000,000'));
     const dialog = screen.getByRole('dialog', { name: /Where Gross Exit Value came from/i });
     expect(within(dialog).getByText('Exit NOI ÷ Exit Cap Rate')).toBeInTheDocument();
+  });
+});
+
+// ── FON-41 R-060 — the Future P&L summary card ───────────────────────
+// One compact card: Total revenue and NOI (before FF&E reserve) per projected
+// year, read from `revenue.years` / `expense.years`, with a "→ P&L" link to the
+// Future P&L sub-tab. A dash for anything the engines have not emitted.
+
+/** OUTPUTS with one or more engines' outputs replaced (an engine not in the
+ *  base fixture is added; `null` removes one). */
+function withEngines(patch: Record<string, Record<string, unknown> | null>): EngineOutputsResponse {
+  const base = OUTPUTS as unknown as { engines: Record<string, Record<string, unknown>> };
+  const engines: Record<string, Record<string, unknown>> = { ...base.engines };
+  for (const [name, outputs] of Object.entries(patch)) {
+    if (outputs === null) { delete engines[name]; continue; }
+    engines[name] = {
+      deal_id: 'deal-uuid-1', engine: name, status: 'complete', summary: '',
+      outputs, inputs: {}, error: null, runtime_ms: 1, started_at: null, completed_at: null, run_id: 'run-1',
+    };
+  }
+  return { ...(OUTPUTS as unknown as Record<string, unknown>), engines } as unknown as EngineOutputsResponse;
+}
+
+const futurePlCells = (rowTestId: string): HTMLTableCellElement[] =>
+  Array.from(screen.getByTestId(rowTestId).querySelectorAll<HTMLTableCellElement>('td')).slice(1);
+
+describe('OverviewTab — Future P&L summary card (R-060)', () => {
+  it('reads Total revenue and NOI (before FF&E reserve) per year from the engines, a dash where absent', () => {
+    render(<OverviewTab projectId="deal-uuid-1" />);
+    const card = screen.getByTestId('overview-future-pl');
+
+    // The base fixture has ONE expense year and no revenue engine.
+    expect(within(card).getByText('Future P&L · Year 1')).toBeInTheDocument();
+    expect(within(card).getByTestId('overview-future-pl-col-0')).toHaveTextContent('Year 1');
+    expect(within(card).getByTestId('overview-future-pl-revenue')).toHaveTextContent(FUTURE_PL_REVENUE_LABEL);
+    expect(futurePlCells('overview-future-pl-revenue').map((c) => c.textContent)).toEqual(['—']);
+    expect(within(card).getByTestId('overview-future-pl-noi')).toHaveTextContent('NOI (before FF&E reserve)');
+    const noi = futurePlCells('overview-future-pl-noi');
+    expect(noi.map((c) => c.textContent)).toEqual(['$3,100,000']);
+    // E-025 — the full value rides the title too.
+    expect(noi[0].getAttribute('title')).toBe('$3,100,000');
+    // Never zeros for missing data.
+    expect(card.textContent).not.toContain('$0');
+  });
+
+  it('with revenue + expense years and a calendar it heads "Years 1–N" and "Year N · <calendar>"', () => {
+    outputsRef.value = withEngines({
+      revenue: {
+        years: [{ year: 1, total_revenue: 13_600_000 }, { year: 2, total_revenue: 1_200_000_000 }],
+        projection_calendar_years: [2027, 2028],
+      },
+      expense: {
+        years: [
+          { year: 1, noi: 2_550_000, noi_institutional: 3_100_000 },
+          { year: 2, noi: 2_700_000, noi_institutional: 3_300_000 },
+        ],
+      },
+    });
+    render(<OverviewTab projectId="deal-uuid-1" />);
+    const card = screen.getByTestId('overview-future-pl');
+
+    expect(within(card).getByText('Future P&L · Years 1–2')).toBeInTheDocument();
+    expect(within(card).getByTestId('overview-future-pl-col-0')).toHaveTextContent('Year 1 · 2027');
+    expect(within(card).getByTestId('overview-future-pl-col-1')).toHaveTextContent('Year 2 · 2028');
+    // Full dollars with separators — never scientific notation (E-025).
+    expect(futurePlCells('overview-future-pl-revenue').map((c) => c.textContent)).toEqual(['$13,600,000', '$1,200,000,000']);
+    expect(futurePlCells('overview-future-pl-noi').map((c) => c.textContent)).toEqual(['$3,100,000', '$3,300,000']);
+    expect(card.textContent).not.toMatch(/\d[eE][+-]?\d/);
+  });
+
+  it('caps at five years and names the basis honestly on a pre-upgrade run', () => {
+    outputsRef.value = withEngines({
+      revenue: { years: Array.from({ length: 7 }, (_, i) => ({ year: i + 1, total_revenue: 10_000_000 + i })) },
+      // Legacy rows: after-reserve `noi` only → the label must not claim "before".
+      expense: { years: Array.from({ length: 7 }, (_, i) => ({ year: i + 1, noi: 2_000_000 + i })) },
+    });
+    render(<OverviewTab projectId="deal-uuid-1" />);
+    const card = screen.getByTestId('overview-future-pl');
+    expect(within(card).getByText('Future P&L · Years 1–5')).toBeInTheDocument();
+    expect(futurePlCells('overview-future-pl-revenue')).toHaveLength(5);
+    expect(within(card).queryByTestId('overview-future-pl-col-5')).toBeNull();
+    expect(within(card).getByTestId('overview-future-pl-noi')).toHaveTextContent('basis unconfirmed');
+  });
+
+  it('with no revenue or expense output the card is a reasoned dash, not zeros', () => {
+    outputsRef.value = withEngines({ expense: null });
+    render(<OverviewTab projectId="deal-uuid-1" />);
+    const card = screen.getByTestId('overview-future-pl');
+    expect(within(card).getByText('Future P&L')).toBeInTheDocument();
+    const empty = within(card).getByTestId('overview-future-pl-empty');
+    expect(empty).toHaveTextContent('—');
+    expect(empty).toHaveTextContent(/awaiting a model run/i);
+    expect(within(card).queryByTestId('overview-future-pl-revenue')).toBeNull();
+    expect(card.textContent).not.toContain('$');
+  });
+
+  it('"→ P&L" opens P&L → Future P&L (?tab=pl&sub=projections)', () => {
+    render(<OverviewTab projectId="deal-uuid-1" />);
+    const link = screen.getByTestId('overview-future-pl-link');
+    expect(link).toHaveTextContent(FUTURE_PL_LINK_LABEL);
+    fireEvent.click(link);
+    expect(nav.push).toHaveBeenCalledWith('/projects/deal-uuid-1?tab=pl&sub=projections');
   });
 });

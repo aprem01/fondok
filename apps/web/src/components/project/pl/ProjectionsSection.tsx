@@ -14,13 +14,21 @@
  *    the same value "Year 1". This statement used to call it "Base Year" and
  *    then label index 1 "Year 1" — one number with two names, and every later
  *    column a year ahead of its own label (Sam: *"Base Year and Year 1 are
- *    both 2025"*). The first column is now **Base Year (Year 1)** and the rest
+ *    both 2025"*). The first column is now **Base year (Year 1)** and the rest
  *    are shifted, so index 1 heads "Year 2". No engine value moved: the labels
  *    were wrong, not the math.
  *  • ``RevenueProjectionYear.year`` is an ORDINAL (1..hold_years), never a
  *    calendar year. The calendar comes from ``revenue.projection_calendar_years``
- *    (anchored on the acquisition close date). With no close date the column
- *    shows its label alone — never a guessed year.
+ *    (anchored on the acquisition close date). FON-41 E-014: every column
+ *    header carries its calendar year inline — "Year 2 · 2026" — and the base
+ *    column names the primary statement's period on its basis line ("T12 Mar
+ *    2025") when the Data Room exposes one. With no close date the column shows
+ *    its label alone and a one-line note says where the date is set — never a
+ *    guessed year.
+ *  • FON-41 E-015: every projected Occupancy / ADR / RevPAR / revenue cell is a
+ *    click-through to the lineage drawer for its engine field
+ *    (``revenue.years[i].adr``). A cell the lineage record does not cover says
+ *    "No trace available for this cell." — this file never invents a formula.
  *  • The horizon is ``hold_years + 1`` columns: every modelled year plus the
  *    **Exit Year**, which is display-only. It carries the Forward 12-Month
  *    Cash NOI the reversion is valued on (``returns.terminal_noi``) and dashes
@@ -60,6 +68,7 @@ import { Button } from '@/components/ui/Button';
 import { useToast } from '@/components/ui/Toast';
 import { cn } from '@/lib/format';
 import {
+  CASH_NOI_LABEL,
   noiBeforeReserveLabel,
   stabilizedYearBlock,
   stabilizationBadge,
@@ -67,6 +76,8 @@ import {
   type StabilizedYearBlock,
 } from '@/lib/engines/noi';
 import { Traced } from '@/components/help/Traced';
+import { openLineage, type LineageOpenDetail } from '@/components/project/LineageDrawer';
+import { HScroll } from './HScroll';
 import { Sourced } from '@/components/help/Sourced';
 import { useRefusal } from '@/components/help/Refused';
 import { useSource } from '@/lib/hooks/useDealProvenance';
@@ -206,11 +217,56 @@ const DAYS_PER_PROJECTION_YEAR = 365;
  * model year it is (founder decision, FON-41 #2). The engine is NOT re-indexed.
  */
 export function projectionColumnLabel(i: number): string {
-  return i === 0 ? 'Base Year (Year 1)' : `Year ${i + 1}`;
+  return i === 0 ? 'Base year (Year 1)' : `Year ${i + 1}`;
+}
+
+/**
+ * The FULL column header (FON-41 E-014): the label with its calendar year
+ * inline — "Year 2 · 2026", "Base year (Year 1) · 2025" — or the bare label
+ * when the deal carries no acquisition close date. The calendar year is the
+ * revenue engine's ``projection_calendar_years[i]``; nothing here derives one.
+ */
+export function projectionColumnHeading(i: number, calendarYear?: number): string {
+  const label = projectionColumnLabel(i);
+  return calendarYear != null && Number.isFinite(calendarYear)
+    ? `${label} · ${calendarYear}`
+    : label;
 }
 
 /** The Exit Year column's header — display-only, never a modelled year. */
 export const EXIT_COLUMN_LABEL = 'Exit Year';
+
+/** The Exit Year heading with its calendar year inline, when there is one. */
+export function exitColumnHeading(calendarYear?: number): string {
+  return calendarYear != null && Number.isFinite(calendarYear)
+    ? `${EXIT_COLUMN_LABEL} · ${calendarYear}`
+    : EXIT_COLUMN_LABEL;
+}
+
+/**
+ * The base column's BASIS line: the primary statement's period ("T12 Mar
+ * 2025", "FY2024") exactly as the Historical P&L column heads it, when the
+ * Data Room has flagged a primary financial statement and its extraction
+ * carries a period. A dash otherwise — never an inferred period.
+ */
+export function baseYearBasisLabel(basePeriodLabel?: string | null): string {
+  const t = basePeriodLabel?.trim();
+  return t ? t : '—';
+}
+
+/** The basis line under every projected column. */
+export const PROJECTED_COLUMN_BASIS = 'projected';
+/** The basis line under the Exit Year column. */
+export const EXIT_COLUMN_BASIS = 'display-only';
+
+/** The one-line note shown when the deal has no acquisition close date. */
+export const NO_CLOSE_DATE_NOTE =
+  'Set the acquisition date on Investment to map years to calendar years';
+/** The help line under the controls — why the columns carry the years they do. */
+export const CALENDAR_MAPPING_HELP =
+  'The acquisition close date sets the year mapping: Year 1 is the calendar year of the first operating month after close, and each later year is that year plus one.';
+/** What the lineage drawer says for a cell the record does not cover. */
+export const NO_TRACE_MESSAGE = 'No trace available for this cell.';
 
 /** The row the Exit Year column exists for. */
 export const FORWARD_NOI_LABEL = 'Forward 12-Month Cash NOI (after FF&E reserve)';
@@ -286,8 +342,14 @@ function fmtIsoDate(iso: string | null | undefined): string {
 
 export default function ProjectionsSection({
   dealId,
+  basePeriodLabel = null,
 }: {
   dealId: string;
+  /** FON-41 E-014 — the primary financial statement's period ("T12 Mar 2025"),
+   *  resolved by the host tab from the Data Room's primary-source flag + that
+   *  document's extraction. Null when the worker exposes no primary statement
+   *  or its period is not stated; the base column then shows a dash. */
+  basePeriodLabel?: string | null;
 }) {
   const { toast } = useToast();
   const { outputs } = useEngineOutputs(dealId);
@@ -493,6 +555,11 @@ export default function ProjectionsSection({
   // period is a real `hold_years` edit, and the dead Annual/Monthly `projView`
   // state is gone (nothing ever read it). See ``ProjectionsControls``.
   const [projYearsSel, setProjYearsSel] = useState<number | null>(null);
+  // R-068 — the "% Rev" sub-column (share of Total Revenue; departmental
+  // expenses as a share of their own department's revenue). View-only, on by
+  // default; every ratio is computed from the same engine year values the
+  // Amount cells print.
+  const [showPct, setShowPct] = useState(true);
 
   // FON-41 #2 — the acquisition close date. This is the deal assumption the
   // TIMELINE engine is built on (``engine_runner`` reads
@@ -529,12 +596,10 @@ export default function ProjectionsSection({
     // or the Excel column mapping shifts against what the analyst reviewed.
     // ``y.year`` (the ordinal) is NEVER printed as a year; the calendar year
     // is appended only when the deal carries an acquisition close date.
-    const colHeader = (label: string, calendarYear?: number) =>
-      calendarYear != null ? `${label} ${calendarYear}` : label;
     const headers: XlsxCell[] = [
       'Metric',
       ...years.flatMap((y, i) => {
-        const label = colHeader(projectionColumnLabel(i), y.calendarYear);
+        const label = projectionColumnHeading(i, y.calendarYear);
         return [
           `${label} Amount`,
           `${label} % Rev`,
@@ -543,7 +608,7 @@ export default function ProjectionsSection({
         ];
       }),
       ...(() => {
-        const label = colHeader(EXIT_COLUMN_LABEL, exitCalendarYear);
+        const label = exitColumnHeading(exitCalendarYear);
         return [
           `${label} Amount`,
           `${label} % Rev`,
@@ -766,6 +831,8 @@ export default function ProjectionsSection({
         forecastCount={forecastCount}
         onDec={() => setProjYearsSel(Math.max(1, shownForecast - 1))}
         onInc={() => setProjYearsSel(Math.min(forecastCount, shownForecast + 1))}
+        showPct={showPct}
+        onTogglePct={() => setShowPct((v) => !v)}
       />
 
       <AssumptionsPanel
@@ -779,10 +846,13 @@ export default function ProjectionsSection({
       />
 
       <AssumptionOverrideContext.Provider value={overrideCtx}>
+        <DealIdContext.Provider value={dealId}>
         <ProjectionsTable
           years={visibleYears}
           exitCapRate={exitCapRate}
           closeDateIso={closeDateIso}
+          showPct={showPct}
+          basePeriodLabel={basePeriodLabel}
           exitColumn={
             // The Exit Year belongs to the FULL horizon. When the "Show"
             // control trims the view to a sub-window, hide it rather than let
@@ -799,6 +869,7 @@ export default function ProjectionsSection({
           }
           stabilizedYearIndex={stabilization?.stabilized_year_index}
         />
+        </DealIdContext.Provider>
       </AssumptionOverrideContext.Provider>
     </Card>
   );
@@ -896,27 +967,128 @@ interface ExitColumnSpec {
   formula: string;
 }
 
-/** Present-ness of the Exit Year column, so every row can close itself out
- *  with one extra cell without prop-drilling through six row components. */
-const ExitColumnContext = createContext<boolean>(false);
+/** Present-ness of the Exit Year column and how many sub-columns one year
+ *  group spans (4 with "% Rev" shown, 3 with it hidden), so every row can
+ *  size its cells without prop-drilling through six row components. */
+interface ColumnLayout {
+  hasExit: boolean;
+  subCols: number;
+  showPct: boolean;
+}
+const ColumnLayoutContext = createContext<ColumnLayout>({ hasExit: true, subCols: 4, showPct: true });
+
+/** The deal under the table — what a cell's trace click needs to open the
+ *  lineage drawer for the right deal. Empty on a mock / unmounted host, in
+ *  which case the cells render plain. */
+const DealIdContext = createContext<string>('');
 
 /** The Exit Year cell for an ordinary row: a dash. Year hold+1 is not modelled
  *  through the expense waterfall, so there is nothing honest to print. */
 function ExitCells({ children }: { children?: ReactNode }) {
-  const present = useContext(ExitColumnContext);
-  if (!present) return null;
+  const { hasExit, subCols } = useContext(ColumnLayoutContext);
+  if (!hasExit) return null;
   return (
     <td
-      colSpan={4}
-      className="px-2 py-2 text-center text-[11px] text-ink-400 tabular-nums border-l-2 border-border"
+      colSpan={subCols}
+      className="px-2 py-2 text-center text-[11px] text-ink-400 tabular-nums border-l-2 border-ink-300/70"
     >
       {children ?? '—'}
     </td>
   );
 }
 
+/**
+ * FON-41 E-018 — year-group separation. A 2px rule opens every year group and
+ * odd groups carry a faint tint, so five projected years read as five columns
+ * rather than one twenty-cell smear. The tint is deliberately light so the
+ * side-by-side comparison across years is undisturbed.
+ */
+export function yearGroupClass(i: number, groupStart: boolean): string {
+  return cn(
+    groupStart ? 'border-l-2 border-ink-300/70' : 'border-l border-border',
+    i % 2 === 1 && 'bg-ink-100/45',
+  );
+}
+
+/**
+ * FON-41 E-015 — the lineage request behind one projected cell. The engine
+ * field key is the root (``engine:revenue.years[1].adr``), offered as a
+ * ``kpi:`` node too in case the graph published it as a headline figure. The
+ * drawer walks whatever the worker recorded — the starting value, growth and
+ * index / penetration inputs where the engine asserted them, down to the
+ * source rows. When the record carries no walk for the key the drawer says
+ * "No trace available for this cell." — nothing here invents a formula.
+ */
+export function lineageRequestFor(
+  dealId: string,
+  engine: string,
+  path: string,
+  label: string,
+  columnLabel: string,
+): LineageOpenDetail {
+  return {
+    dealId,
+    rootId: [`kpi:${engine}.${path}`, `engine:${engine}.${path}`],
+    title: `${label} — ${columnLabel}`,
+    subtitle: `${engine}.${path} · the inputs, growth and source rows behind this cell`,
+    emptyMessage: NO_TRACE_MESSAGE,
+  };
+}
+
+/** A projected value that opens the lineage drawer for its engine field. */
+function LineageCell({
+  engine,
+  path,
+  label,
+  columnLabel,
+  note,
+  children,
+}: {
+  engine: string;
+  path: string;
+  label: string;
+  columnLabel: string;
+  /** A derivation hint shown on hover (RevPAR = Occupancy × ADR). */
+  note?: string;
+  children: ReactNode;
+}) {
+  const dealId = useContext(DealIdContext);
+  if (!dealId) return <>{children}</>;
+  return (
+    <button
+      type="button"
+      data-testid={`lineage-cell-${engine}.${path}`}
+      data-lineage-root={`engine:${engine}.${path}`}
+      aria-label={`Trace ${label} (${columnLabel}) to its inputs`}
+      title={note ? `${note} — click to trace this cell to its inputs` : 'Click to trace this projected value to its inputs and source rows'}
+      onClick={(e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        openLineage(lineageRequestFor(dealId, engine, path, label, columnLabel));
+      }}
+      className="cursor-pointer rounded-sm border-0 bg-transparent p-0 px-0.5 -mx-0.5 tabular-nums underline decoration-dotted decoration-2 decoration-ink-300 underline-offset-[3px] hover:bg-brand-50 hover:decoration-brand-500"
+    >
+      {children}
+    </button>
+  );
+}
+
+/** A full-width section band inside the statement. */
+function SectionBand({ label, span }: { label: string; span: number }) {
+  return (
+    <tr className="bg-brand-500/95">
+      <td
+        colSpan={span}
+        className="px-3 py-1.5 text-[10.5px] font-semibold uppercase tracking-[0.12em] text-white"
+      >
+        {label}
+      </td>
+    </tr>
+  );
+}
+
 function ProjectionsTable({
-  years, exitCapRate, closeDateIso, exitColumn, stabilizedYearIndex,
+  years, exitCapRate, closeDateIso, exitColumn, stabilizedYearIndex, showPct, basePeriodLabel,
 }: {
   years: ProjYear[];
   exitCapRate: number;
@@ -924,20 +1096,31 @@ function ProjectionsTable({
   exitColumn: ExitColumnSpec | null;
   /** 0-based index of the published stabilized year — badges that column. */
   stabilizedYearIndex?: number;
+  /** R-068 — render the "% Rev" sub-column. */
+  showPct: boolean;
+  /** E-014 — the primary statement's period for the base column's basis line. */
+  basePeriodLabel: string | null;
 }) {
   // Hotel Delivery — the deal's acquisition close date, or a dash. It used to
   // be `'9/30/' + years[0].year`, which printed "9/30/1" because `year` is an
   // ordinal: a fabricated date under the no-invented-numbers rule (FON-41 #2).
   const hotelDelivery = fmtIsoDate(closeDateIso);
   const hasExit = exitColumn != null;
+  const subCols = showPct ? 4 : 3;
+  const layout = useMemo<ColumnLayout>(() => ({ hasExit, subCols, showPct }), [hasExit, subCols, showPct]);
   // Total year columns = every modelled year + the Exit Year (hold_years + 1).
   const columnCount = years.length + (hasExit ? 1 : 0);
+  const bandSpan = 2 + columnCount * subCols;
 
   // The forward statement below Total Revenue only renders when the expense
   // engine emitted its waterfall (real worker runs). Demo / revenue-only
   // output leaves these undefined, so the table stays topline-only — same
   // gate the xlsx export uses.
   const hasExpenseDetail = years.some((y) => y.deptTotalExpense != null);
+  const hasFixedDetail = years.some((y) => y.fixedTotal != null);
+  // FON-59 #1 / FON-67 #2 — name the NOI basis honestly: a pre-upgrade run
+  // with no `noi_institutional` is an after-reserve number.
+  const noiLabel = noiBeforeReserveLabel(years.some((y) => y.noiBasisConfirmed));
 
   // Annual RevPAR growth — Y0 N/A, Y1+ vs prior.
   const revparGrowth = years.map((y, i) => {
@@ -946,7 +1129,8 @@ function ProjectionsTable({
     return prev > 0 ? (y.revpar - prev) / prev : null;
   });
 
-  // Helpers for sub-columns.
+  // Helpers for sub-columns. `toLocaleString` never emits scientific
+  // notation (FON-41 E-025) — a 1.2e9 total prints as 1,200,000,000.
   const fmtAmount = (v: number, opts?: { decimals?: number; prefix?: string }) => {
     const decimals = opts?.decimals ?? 0;
     const prefix = opts?.prefix ?? '';
@@ -973,12 +1157,15 @@ function ProjectionsTable({
     return '';
   };
 
+  const columnHeading = (i: number) => projectionColumnHeading(i, years[i]?.calendarYear);
+  const rowShared = { fmtAmount, pctRev, par, por, columnHeading };
+
   return (
-    <ExitColumnContext.Provider value={hasExit}>
-    <div className="overflow-x-auto">
-      <table className="w-full text-[11.5px] min-w-[1100px] border-collapse">
+    <ColumnLayoutContext.Provider value={layout}>
+    <HScroll unit="year" data-testid="projections-hscroll">
+      <table className="w-full text-[11.5px] min-w-[1100px] border-collapse" data-testid="projections-table">
         <thead>
-          {/* Top header row — BASE YEAR / YEAR N */}
+          {/* Top header row — the FULL heading: label · calendar year (E-014). */}
           <tr className="border-b border-border">
             <th
               rowSpan={3}
@@ -995,14 +1182,26 @@ function ProjectionsTable({
             {years.map((y, i) => (
               <th
                 key={`yh-${i}`}
-                colSpan={4}
+                colSpan={subCols}
+                data-year-col
+                data-testid={`projection-col-header-${i}`}
+                title={
+                  i === 0
+                    ? `Base year (Year 1) is the model's first operating year — revenue.years[0]. ${
+                        y.calendarYear != null
+                          ? `Calendar ${y.calendarYear}, from the acquisition close date.`
+                          : 'No acquisition close date on this deal, so it carries no calendar year.'
+                      }`
+                    : y.calendarYear != null
+                      ? `Operating Year ${i + 1} — calendar ${y.calendarYear}, from the acquisition close date.`
+                      : `Operating Year ${i + 1}. No acquisition close date on this deal, so it carries no calendar year.`
+                }
                 className={cn(
-                  'text-center text-[10.5px] font-semibold uppercase tracking-wider px-2 pt-2 pb-0',
+                  'text-center text-[10.5px] font-semibold uppercase tracking-wider px-2 pt-2 pb-0 border-l-2 border-ink-300/70',
                   i === 0 ? 'bg-ink-300/10 text-ink-700' : 'bg-brand-50/40 text-brand-700',
-                  'border-l border-border',
                 )}
               >
-                {projectionColumnLabel(i)}
+                {columnHeading(i)}
                 {i === stabilizedYearIndex && (
                   <span
                     data-testid="stabilized-badge"
@@ -1017,55 +1216,64 @@ function ProjectionsTable({
             {hasExit && (
               <th
                 key="yh-exit"
-                colSpan={4}
+                colSpan={subCols}
+                data-year-col
+                data-testid="projection-col-header-exit"
                 title="Display-only. Year hold+1 is not run through the expense waterfall — it is the forward NOI the reversion is valued on."
-                className="text-center text-[10.5px] font-semibold uppercase tracking-wider px-2 pt-2 pb-0 bg-ink-300/10 text-ink-700 border-l-2 border-border"
+                className="text-center text-[10.5px] font-semibold uppercase tracking-wider px-2 pt-2 pb-0 bg-ink-300/10 text-ink-700 border-l-2 border-ink-300/70"
               >
-                {EXIT_COLUMN_LABEL}
+                {exitColumnHeading(exitColumn?.calendarYear)}
               </th>
             )}
           </tr>
-          {/* Subtitle — the CALENDAR year, or an em dash. Never the ordinal:
-              printing `y.year` here is what produced "Base Year 1 / Year 1 2". */}
+          {/* Basis row — what each column IS. The base column names the primary
+              statement's period ("T12 Mar 2025") when the Data Room exposes
+              one, else a dash; projected columns say so; the exit column says
+              display-only. Never the ordinal: printing `y.year` here is what
+              produced "Base Year 1 / Year 1 2". */}
           <tr className="border-b border-border">
-            {years.map((y, i) => (
-              <th
-                key={`ys-${i}`}
-                colSpan={4}
-                className={cn(
-                  'text-center text-[11px] font-semibold tabular-nums px-2 pb-1',
-                  i === 0 ? 'bg-ink-300/10 text-ink-900' : 'bg-brand-50/40 text-ink-900',
-                  y.calendarYear == null && 'text-ink-400',
-                  'border-l border-border',
-                )}
-                title={
-                  y.calendarYear == null
-                    ? 'No acquisition close date on this deal, so the projection has no calendar year.'
-                    : undefined
-                }
-              >
-                {projectionColumnSubtitle(y.calendarYear)}
-              </th>
-            ))}
+            {years.map((y, i) => {
+              const basis = i === 0 ? baseYearBasisLabel(basePeriodLabel) : PROJECTED_COLUMN_BASIS;
+              return (
+                <th
+                  key={`ys-${i}`}
+                  colSpan={subCols}
+                  data-testid={`projection-col-basis-${i}`}
+                  className={cn(
+                    'text-center text-[10.5px] font-medium tabular-nums px-2 pb-1 border-l-2 border-ink-300/70',
+                    i === 0 ? 'bg-ink-300/10' : 'bg-brand-50/40',
+                    i === 0 && basis === '—' ? 'text-ink-400' : 'text-ink-600',
+                    i > 0 && 'normal-case italic',
+                  )}
+                  title={
+                    i === 0
+                      ? basis === '—'
+                        ? 'The period of the primary financial statement is not exposed for this run — upload or flag a primary T-12 / P&L in the Data Room.'
+                        : `Year-1 actuals are anchored on the primary statement's ${basis} period — the same column heading Historical P&L uses.`
+                      : 'Projected from the base year at the growth assumptions above.'
+                  }
+                >
+                  {basis}
+                </th>
+              );
+            })}
             {hasExit && (
               <th
                 key="ys-exit"
-                colSpan={4}
-                className={cn(
-                  'text-center text-[11px] font-semibold tabular-nums px-2 pb-1 bg-ink-300/10 border-l-2 border-border',
-                  exitColumn?.calendarYear == null ? 'text-ink-400' : 'text-ink-900',
-                )}
+                colSpan={subCols}
+                data-testid="projection-col-basis-exit"
+                className="text-center text-[10.5px] font-medium italic px-2 pb-1 bg-ink-300/10 border-l-2 border-ink-300/70 text-ink-500"
               >
-                {projectionColumnSubtitle(exitColumn?.calendarYear)}
+                {EXIT_COLUMN_BASIS}
               </th>
             )}
           </tr>
           {/* Sub-column headers */}
           <tr className="border-b border-border text-[9.5px] uppercase tracking-wider text-ink-500">
             {years.map((_, i) => (
-              <SubHeaderGroup key={`sh-${i}`} dim={i === 0} />
+              <SubHeaderGroup key={`sh-${i}`} dim={i === 0} showPct={showPct} />
             ))}
-            {hasExit && <SubHeaderGroup key="sh-exit" dim />}
+            {hasExit && <SubHeaderGroup key="sh-exit" dim showPct={showPct} />}
           </tr>
         </thead>
         <tbody>
@@ -1080,8 +1288,8 @@ function ProjectionsTable({
             {years.map((_, i) => (
               <td
                 key={`hd-${i}`}
-                colSpan={4}
-                className="px-2 py-2 text-center text-[11px] text-ink-400 border-l border-border"
+                colSpan={subCols}
+                className={cn('px-2 py-2 text-center text-[11px] text-ink-400', yearGroupClass(i, true))}
               >
                 —
               </td>
@@ -1097,6 +1305,7 @@ function ProjectionsTable({
             years={years}
             value={(y) => y.days}
             fmt={(v) => v.toLocaleString()}
+            columnHeading={columnHeading}
           />
 
           {/* Number of Rooms */}
@@ -1107,6 +1316,7 @@ function ProjectionsTable({
             years={years}
             value={(y) => y.rooms}
             fmt={(v) => v.toLocaleString()}
+            columnHeading={columnHeading}
           />
 
           {/* Available Rooms */}
@@ -1117,6 +1327,7 @@ function ProjectionsTable({
             years={years}
             value={(y) => y.availableRooms}
             fmt={(v) => v.toLocaleString()}
+            columnHeading={columnHeading}
           />
 
           {/* Occupied Rooms */}
@@ -1127,10 +1338,12 @@ function ProjectionsTable({
             years={years}
             value={(y) => y.occupiedRooms}
             fmt={(v) => v.toLocaleString()}
+            columnHeading={columnHeading}
           />
 
           {/* Occupancy — base-year driver grounded in the T-12/historical
-              actual (starting_occupancy); later years grow at occupancy_growth. */}
+              actual (starting_occupancy); later years grow at occupancy_growth.
+              Every column is a click-through to revenue.years[i].occupancy. */}
           <SimpleRow
             label="Occupancy"
             indexLabel={indexLabel('occupancy')}
@@ -1141,31 +1354,41 @@ function ProjectionsTable({
             sourceKey="starting_occupancy"
             overrideKey="starting_occupancy"
             overrideUnit="pct"
+            traceEngine="revenue"
+            tracePath={(i) => `years[${i}].occupancy`}
+            columnHeading={columnHeading}
           />
 
           {/* Average Rate (ADR) — base-year driver grounded in the T-12/detailed
-              P&L actual (starting_adr); later years grow at adr_growth. */}
+              P&L actual (starting_adr); later years grow at adr_growth. Printed
+              to the cent (E-025). */}
           <SimpleRow
             label="Average Rate"
             indexLabel={indexLabel('adr')}
             unit="$"
             years={years}
             value={(y) => y.adr}
-            fmt={(v) => `$${v.toFixed(2)}`}
+            fmt={(v) => fmtAmount(v, { decimals: 2, prefix: '$' })}
             sourceKey="starting_adr"
             overrideKey="starting_adr"
             overrideUnit="dollar"
+            traceEngine="revenue"
+            tracePath={(i) => `years[${i}].adr`}
+            columnHeading={columnHeading}
           />
 
-          {/* RevPAR — derived, not sourced: Occupancy × ADR. */}
+          {/* RevPAR — derived, not sourced: Occupancy × ADR. To the cent. */}
           <SimpleRow
             label="RevPAR"
             indexLabel={indexLabel('revpar')}
             unit="$"
             years={years}
             value={(y) => y.revpar}
-            fmt={(v) => `$${v.toFixed(2)}`}
+            fmt={(v) => fmtAmount(v, { decimals: 2, prefix: '$' })}
             computedNote="Calculated: RevPAR = Occupancy × ADR"
+            traceEngine="revenue"
+            tracePath={(i) => `years[${i}].revpar`}
+            columnHeading={columnHeading}
           />
 
           {/* Annual RevPAR Growth */}
@@ -1181,9 +1404,10 @@ function ProjectionsTable({
               return (
                 <td
                   key={`rg-${i}`}
-                  colSpan={4}
+                  colSpan={subCols}
                   className={cn(
-                    'px-2 py-2 text-center text-[11px] tabular-nums border-l border-border',
+                    'px-2 py-2 text-center text-[11px] tabular-nums',
+                    yearGroupClass(i, true),
                     g === null ? 'text-ink-400' : 'text-ink-900',
                   )}
                 >
@@ -1195,14 +1419,7 @@ function ProjectionsTable({
           </tr>
 
           {/* REVENUES section header */}
-          <tr className="bg-brand-500/95">
-            <td
-              colSpan={2 + columnCount * 4}
-              className="px-3 py-1.5 text-[10.5px] font-semibold uppercase tracking-[0.12em] text-white"
-            >
-              Revenues
-            </td>
-          </tr>
+          <SectionBand label="Revenues" span={bandSpan} />
 
           {/* Rooms */}
           <FullRow
@@ -1211,10 +1428,7 @@ function ProjectionsTable({
             unit="$"
             years={years}
             amountOf={(y) => y.roomsRevenue}
-            fmtAmount={fmtAmount}
-            pctRev={pctRev}
-            par={par}
-            por={por}
+            {...rowShared}
             traceEngine="revenue"
             tracePath={(i) => `years[${i}].rooms_revenue`}
           />
@@ -1225,10 +1439,9 @@ function ProjectionsTable({
             unit="$"
             years={years}
             amountOf={(y) => y.fbRevenue}
-            fmtAmount={fmtAmount}
-            pctRev={pctRev}
-            par={par}
-            por={por}
+            {...rowShared}
+            traceEngine="revenue"
+            tracePath={(i) => `years[${i}].fb_revenue`}
           />
           {/* Other Operated Departments — USALI 11th line (spa, golf,
               parking, rentals, ancillary departments that run as their
@@ -1240,10 +1453,9 @@ function ProjectionsTable({
             unit="$"
             years={years}
             amountOf={(y) => y.otherOperatedRevenue}
-            fmtAmount={fmtAmount}
-            pctRev={pctRev}
-            par={par}
-            por={por}
+            {...rowShared}
+            traceEngine="revenue"
+            tracePath={(i) => `years[${i}].other_revenue`}
           />
           {/* Resort Fees — distinct from rooms and from OOD. Hidden
               when zero across every year (most deals don't carry them). */}
@@ -1254,10 +1466,9 @@ function ProjectionsTable({
               unit="$"
               years={years}
               amountOf={(y) => y.resortFees}
-              fmtAmount={fmtAmount}
-              pctRev={pctRev}
-              par={par}
-              por={por}
+              {...rowShared}
+              traceEngine="revenue"
+              tracePath={(i) => `years[${i}].resort_fees`}
             />
           )}
           {/* Misc. Income — only renders when present so the table
@@ -1269,10 +1480,7 @@ function ProjectionsTable({
               unit="$"
               years={years}
               amountOf={(y) => y.miscRevenue}
-              fmtAmount={fmtAmount}
-              pctRev={pctRev}
-              par={par}
-              por={por}
+              {...rowShared}
             />
           )}
           {/* Total Revenue */}
@@ -1282,10 +1490,7 @@ function ProjectionsTable({
             unit="$"
             years={years}
             amountOf={(y) => y.totalRevenue}
-            fmtAmount={fmtAmount}
-            pctRev={pctRev}
-            par={par}
-            por={por}
+            {...rowShared}
             bold
             traceEngine="revenue"
             tracePath={(i) => `years[${i}].total_revenue`}
@@ -1294,50 +1499,54 @@ function ProjectionsTable({
           {/* ── Forward statement below Total Revenue (canonical Projections
               statement: Financials Tab.dc.html → projDefs). Every figure comes
               from the expense engine (apps/worker/app/engines/expense.py) that
-              ProjYear already carries; subtotals foot to the visible rows. ── */}
+              ProjYear already carries; subtotals foot to the visible rows.
+              FON-41 E-030 — the waterfall runs all the way down: GOP →
+              Management Fees → EBITDA → Fixed Charges → NOI (before FF&E
+              reserve) → FF&E Reserve → Cash NOI (after FF&E reserve), each
+              line labelled with its basis. The engine deducts the reserve
+              AFTER fixed charges, so the reserve sits between the two NOI
+              lines — not above the first one. ── */}
           {hasExpenseDetail && (
             <>
-              {/* DEPARTMENTAL EXPENSE */}
-              <tr className="bg-brand-500/95">
-                <td
-                  colSpan={2 + columnCount * 4}
-                  className="px-3 py-1.5 text-[10.5px] font-semibold uppercase tracking-[0.12em] text-white"
-                >
-                  Departmental Expense
-                </td>
-              </tr>
+              {/* DEPARTMENTAL EXPENSE — R-068: each department's expense is
+                  shown as a share of ITS OWN department's revenue (the USALI
+                  departmental ratio), marked "dept" in the % cell. */}
+              <SectionBand label="Departmental Expense" span={bandSpan} />
               <FullRow
                 label="Rooms"
                 indexLabel=""
                 unit="$"
                 years={years}
-                amountOf={(y) => y.deptRoomsExpense ?? 0}
-                fmtAmount={fmtAmount}
-                pctRev={pctRev}
-                par={par}
-                por={por}
+                amountOf={(y) => y.deptRoomsExpense}
+                ratioOf={(y) => y.roomsRevenue}
+                ratioBasis="Rooms revenue"
+                {...rowShared}
+                traceEngine="expense"
+                tracePath={(i) => `years[${i}].dept_expenses.rooms`}
               />
               <FullRow
                 label="Food & Beverage"
                 indexLabel=""
                 unit="$"
                 years={years}
-                amountOf={(y) => y.deptFbExpense ?? 0}
-                fmtAmount={fmtAmount}
-                pctRev={pctRev}
-                par={par}
-                por={por}
+                amountOf={(y) => y.deptFbExpense}
+                ratioOf={(y) => y.fbRevenue}
+                ratioBasis="Food & Beverage revenue"
+                {...rowShared}
+                traceEngine="expense"
+                tracePath={(i) => `years[${i}].dept_expenses.food_beverage`}
               />
               <FullRow
                 label="Other Operated Departments"
                 indexLabel=""
                 unit="$"
                 years={years}
-                amountOf={(y) => y.deptOtherExpense ?? 0}
-                fmtAmount={fmtAmount}
-                pctRev={pctRev}
-                par={par}
-                por={por}
+                amountOf={(y) => y.deptOtherExpense}
+                ratioOf={(y) => y.otherOperatedRevenue}
+                ratioBasis="Other Operated Departments revenue"
+                {...rowShared}
+                traceEngine="expense"
+                tracePath={(i) => `years[${i}].dept_expenses.other_operated`}
               />
               {/* Total Departmental Expense = Σ departmental expense lines
                   (worker dept_expenses.total). */}
@@ -1346,11 +1555,8 @@ function ProjectionsTable({
                 indexLabel=""
                 unit="$"
                 years={years}
-                amountOf={(y) => y.deptTotalExpense ?? 0}
-                fmtAmount={fmtAmount}
-                pctRev={pctRev}
-                par={par}
-                por={por}
+                amountOf={(y) => y.deptTotalExpense}
+                {...rowShared}
                 bold
               />
               {/* Total Departmental Profit = Total Revenue − Total Departmental
@@ -1360,77 +1566,62 @@ function ProjectionsTable({
                 indexLabel=""
                 unit="$"
                 years={years}
-                amountOf={(y) => y.totalRevenue - (y.deptTotalExpense ?? 0)}
-                fmtAmount={fmtAmount}
-                pctRev={pctRev}
-                par={par}
-                por={por}
+                amountOf={(y) => (y.deptTotalExpense == null ? undefined : y.totalRevenue - y.deptTotalExpense)}
+                {...rowShared}
                 bold
               />
 
               {/* UNDISTRIBUTED EXPENSES */}
-              <tr className="bg-brand-500/95">
-                <td
-                  colSpan={2 + columnCount * 4}
-                  className="px-3 py-1.5 text-[10.5px] font-semibold uppercase tracking-[0.12em] text-white"
-                >
-                  Undistributed Expenses
-                </td>
-              </tr>
+              <SectionBand label="Undistributed Expenses" span={bandSpan} />
               <FullRow
                 label="Administrative & General"
                 indexLabel=""
                 unit="$"
                 years={years}
-                amountOf={(y) => y.undistAdminGeneral ?? 0}
-                fmtAmount={fmtAmount}
-                pctRev={pctRev}
-                par={par}
-                por={por}
+                amountOf={(y) => y.undistAdminGeneral}
+                {...rowShared}
+                traceEngine="expense"
+                tracePath={(i) => `years[${i}].undistributed.administrative_general`}
               />
               <FullRow
                 label="Information & Telecom Systems"
                 indexLabel=""
                 unit="$"
                 years={years}
-                amountOf={(y) => y.undistInfoTelecom ?? 0}
-                fmtAmount={fmtAmount}
-                pctRev={pctRev}
-                par={par}
-                por={por}
+                amountOf={(y) => y.undistInfoTelecom}
+                {...rowShared}
+                traceEngine="expense"
+                tracePath={(i) => `years[${i}].undistributed.information_telecom`}
               />
               <FullRow
                 label="Sales & Marketing"
                 indexLabel=""
                 unit="$"
                 years={years}
-                amountOf={(y) => y.undistSalesMarketing ?? 0}
-                fmtAmount={fmtAmount}
-                pctRev={pctRev}
-                par={par}
-                por={por}
+                amountOf={(y) => y.undistSalesMarketing}
+                {...rowShared}
+                traceEngine="expense"
+                tracePath={(i) => `years[${i}].undistributed.sales_marketing`}
               />
               <FullRow
                 label="Property Operation & Maintenance"
                 indexLabel=""
                 unit="$"
                 years={years}
-                amountOf={(y) => y.undistPropertyOps ?? 0}
-                fmtAmount={fmtAmount}
-                pctRev={pctRev}
-                par={par}
-                por={por}
+                amountOf={(y) => y.undistPropertyOps}
+                {...rowShared}
+                traceEngine="expense"
+                tracePath={(i) => `years[${i}].undistributed.property_operations`}
               />
               <FullRow
                 label="Utilities"
                 indexLabel=""
                 unit="$"
                 years={years}
-                amountOf={(y) => y.undistUtilities ?? 0}
-                fmtAmount={fmtAmount}
-                pctRev={pctRev}
-                par={par}
-                por={por}
+                amountOf={(y) => y.undistUtilities}
+                {...rowShared}
+                traceEngine="expense"
+                tracePath={(i) => `years[${i}].undistributed.utilities`}
               />
               {/* Total Undistributed Expenses = Σ undistributed lines
                   (worker undistributed.total). */}
@@ -1439,11 +1630,8 @@ function ProjectionsTable({
                 indexLabel=""
                 unit="$"
                 years={years}
-                amountOf={(y) => y.undistTotal ?? 0}
-                fmtAmount={fmtAmount}
-                pctRev={pctRev}
-                par={par}
-                por={por}
+                amountOf={(y) => y.undistTotal}
+                {...rowShared}
                 bold
               />
               {/* Gross Operating Profit = Total Departmental Profit − Total
@@ -1453,14 +1641,12 @@ function ProjectionsTable({
                 indexLabel=""
                 unit="$"
                 years={years}
-                amountOf={(y) => y.gop ?? 0}
-                fmtAmount={fmtAmount}
-                pctRev={pctRev}
-                par={par}
-                por={por}
+                amountOf={(y) => y.gop}
+                {...rowShared}
                 bold
                 traceEngine="expense"
                 tracePath={(i) => `years[${i}].gop`}
+                rowTestId="row-gop"
               />
               {/* Management Fees — % of total revenue (worker mgmt_fee). */}
               <FullRow
@@ -1468,11 +1654,11 @@ function ProjectionsTable({
                 indexLabel=""
                 unit="$"
                 years={years}
-                amountOf={(y) => y.mgmtFee ?? 0}
-                fmtAmount={fmtAmount}
-                pctRev={pctRev}
-                par={par}
-                por={por}
+                amountOf={(y) => y.mgmtFee}
+                {...rowShared}
+                traceEngine="expense"
+                tracePath={(i) => `years[${i}].mgmt_fee`}
+                rowTestId="row-mgmt-fee"
               />
               {/* EBITDA = Gross Operating Profit − Management Fees (canonical
                   Projections definition; foots to the two rows above). */}
@@ -1481,12 +1667,10 @@ function ProjectionsTable({
                 indexLabel=""
                 unit="$"
                 years={years}
-                amountOf={(y) => (y.gop ?? 0) - (y.mgmtFee ?? 0)}
-                fmtAmount={fmtAmount}
-                pctRev={pctRev}
-                par={par}
-                por={por}
+                amountOf={(y) => (y.gop == null || y.mgmtFee == null ? undefined : y.gop - y.mgmtFee)}
+                {...rowShared}
                 bold
+                rowTestId="row-ebitda"
               />
               {/* Implied Exit Value — each year's EBITDA capitalised at the
                   exit cap rate (canonical: ExitValue = EBITDA ÷ exit_cap_rate).
@@ -1505,9 +1689,9 @@ function ProjectionsTable({
                   return (
                     <td
                       key={`ev-${i}`}
-                      colSpan={4}
-                      title={`Implied Exit Value = EBITDA ÷ exit cap rate (${(exitCapRate * 100).toFixed(1)}%)`}
-                      className="px-2 py-2 text-center text-[11px] text-ink-900 font-semibold tabular-nums border-l border-border"
+                      colSpan={subCols}
+                      title={`Implied Exit Value = EBITDA ÷ exit cap rate (${(exitCapRate * 100).toFixed(1)}%) — ${fmtAmount(exitVal, { decimals: 2, prefix: '$' })}`}
+                      className={cn('px-2 py-2 text-center text-[11px] text-ink-900 font-semibold tabular-nums', yearGroupClass(i, true))}
                     >
                       {exitCapRate > 0 ? fmtAmount(exitVal, { prefix: '$' }) : '—'}
                     </td>
@@ -1515,6 +1699,102 @@ function ProjectionsTable({
                 })}
                 <ExitCells />
               </tr>
+
+              {/* FIXED CHARGES — the engine deducts these BEFORE the FF&E
+                  reserve (noi_institutional = gop − mgmt_fee − fixed). */}
+              {hasFixedDetail && (
+                <>
+                  <SectionBand label="Fixed Charges" span={bandSpan} />
+                  <FullRow
+                    label="Property Taxes"
+                    indexLabel=""
+                    unit="$"
+                    years={years}
+                    amountOf={(y) => y.fixedPropertyTaxes}
+                    {...rowShared}
+                    traceEngine="expense"
+                    tracePath={(i) => `years[${i}].fixed_charges.property_taxes`}
+                  />
+                  <FullRow
+                    label="Insurance"
+                    indexLabel=""
+                    unit="$"
+                    years={years}
+                    amountOf={(y) => y.fixedInsurance}
+                    {...rowShared}
+                    traceEngine="expense"
+                    tracePath={(i) => `years[${i}].fixed_charges.insurance`}
+                  />
+                  <FullRow
+                    label="Equipment Lease / Rent"
+                    indexLabel=""
+                    unit="$"
+                    years={years}
+                    amountOf={(y) => y.fixedRent}
+                    {...rowShared}
+                    traceEngine="expense"
+                    tracePath={(i) => `years[${i}].fixed_charges.rent`}
+                  />
+                  <FullRow
+                    label="Other Fixed Charges"
+                    indexLabel=""
+                    unit="$"
+                    years={years}
+                    amountOf={(y) => y.fixedOther}
+                    {...rowShared}
+                    traceEngine="expense"
+                    tracePath={(i) => `years[${i}].fixed_charges.other_fixed`}
+                  />
+                  <FullRow
+                    label="Total Fixed Charges"
+                    indexLabel=""
+                    unit="$"
+                    years={years}
+                    amountOf={(y) => y.fixedTotal}
+                    {...rowShared}
+                    bold
+                    rowTestId="row-fixed-total"
+                  />
+                </>
+              )}
+
+              {/* NET OPERATING INCOME — both bases, named (E-030). */}
+              <SectionBand label="Net Operating Income" span={bandSpan} />
+              <FullRow
+                label={noiLabel}
+                indexLabel=""
+                unit="$"
+                years={years}
+                amountOf={(y) => y.noiInstitutional}
+                {...rowShared}
+                bold
+                traceEngine="expense"
+                tracePath={(i) => `years[${i}].noi_institutional`}
+                rowTestId="row-noi-before-reserve"
+              />
+              <FullRow
+                label="FF&E Reserve"
+                indexLabel=""
+                unit="$"
+                years={years}
+                amountOf={(y) => y.ffeReserve}
+                {...rowShared}
+                traceEngine="expense"
+                tracePath={(i) => `years[${i}].ffe_reserve`}
+                rowTestId="row-ffe-reserve"
+              />
+              <FullRow
+                label={CASH_NOI_LABEL}
+                indexLabel=""
+                unit="$"
+                years={years}
+                amountOf={(y) => y.netCashFlow}
+                {...rowShared}
+                bold
+                traceEngine="expense"
+                tracePath={(i) => `years[${i}].noi`}
+                rowTestId="row-cash-noi"
+              />
             </>
           )}
           {/* FON-41 #2 — the exit's forward 12-month Cash NOI. It is NOT a
@@ -1537,8 +1817,8 @@ function ProjectionsTable({
               {years.map((_, i) => (
                 <td
                   key={`fnoi-${i}`}
-                  colSpan={4}
-                  className="px-2 py-2 text-center text-[11px] text-ink-400 border-l border-border"
+                  colSpan={subCols}
+                  className={cn('px-2 py-2 text-center text-[11px] text-ink-400', yearGroupClass(i, true))}
                 >
                   —
                 </td>
@@ -1556,25 +1836,30 @@ function ProjectionsTable({
           )}
         </tbody>
       </table>
-      <div className="px-5 py-3 border-t border-border text-[11px] text-ink-500 flex items-center gap-1.5">
-        <FileText size={11} />
-        PAR = $/available room. POR = $/occupied room. % Rev = share of Total Revenue.
-      </div>
+    </HScroll>
+    <div className="px-5 py-3 border-t border-border text-[11px] text-ink-500 flex items-start gap-1.5" data-testid="projections-legend">
+      <FileText size={11} className="mt-0.5 shrink-0" />
+      <span>
+        PAR = $/available room. POR = $/occupied room. % Rev = share of Total Revenue;
+        departmental expense rows (marked <span className="text-[9px] uppercase tracking-wide text-ink-400">dept</span>)
+        show the USALI ratio — expense ÷ that department&apos;s own revenue.
+        Click any projected Occupancy, ADR, RevPAR or statement amount to trace it to its inputs.
+      </span>
     </div>
-    </ExitColumnContext.Provider>
+    </ColumnLayoutContext.Provider>
   );
 }
 
 // Sub-column header group: Amount | % Rev | PAR | POR.
-function SubHeaderGroup({ dim }: { dim: boolean }) {
+function SubHeaderGroup({ dim, showPct }: { dim: boolean; showPct: boolean }) {
   const cls = cn(
     'px-2 py-1.5 text-right font-semibold border-l border-border',
     dim ? 'bg-ink-300/10' : 'bg-brand-50/40',
   );
   return (
     <>
-      <th className={cls}>Amount</th>
-      <th className={cls}>% Rev</th>
+      <th className={cn(cls, 'border-l-2 border-ink-300/70')}>Amount</th>
+      {showPct && <th className={cls}>% Rev</th>}
       <th className={cls}>PAR</th>
       <th className={cls}>POR</th>
     </>
@@ -1582,7 +1867,7 @@ function SubHeaderGroup({ dim }: { dim: boolean }) {
 }
 
 // Simple single-cell row (Days, Rooms, Occupancy, ADR, etc.) — value
-// is rendered once per year, spanning all 4 sub-columns.
+// is rendered once per year, spanning all sub-columns.
 // FON-27: shared context so the deep-nested driver cells can persist an
 // override + re-run without prop-drilling through ProjectionsTable/SimpleRow.
 interface OverrideCtx {
@@ -1607,6 +1892,7 @@ function AssumptionCell({
   display,
   editValue,
   unit,
+  trace,
 }: {
   sourceKey: string;
   overrideKey: string;
@@ -1614,6 +1900,9 @@ function AssumptionCell({
   display: ReactNode;
   editValue: number;
   unit: 'pct' | 'dollar';
+  /** E-015 — the lineage walk for this base-year cell, offered inside the
+   *  panel (the cell itself is already the override button). */
+  trace?: LineageOpenDetail;
 }) {
   const ctx = useContext(AssumptionOverrideContext);
   const resolved = useSource(sourceKey);
@@ -1737,6 +2026,16 @@ function AssumptionCell({
                 View source document →
               </button>
             )}
+            {trace && (
+              <button
+                type="button"
+                data-testid={`lineage-cell-${trace.rootId instanceof Array ? trace.rootId[1]?.replace(/^engine:/, '') : trace.rootId}`}
+                onClick={(e) => { e.preventDefault(); e.stopPropagation(); openLineage(trace); }}
+                className="mb-2 ml-3 inline-flex items-center gap-1 text-[11px] font-medium text-brand-700 hover:text-brand-500"
+              >
+                Trace to source →
+              </button>
+            )}
             {!editing ? (
               <span className="flex items-center gap-2 border-t border-border pt-2">
                 <button type="button" onClick={() => setEditing(true)} className={cn(btn, 'text-brand-700 bg-brand-50 hover:bg-brand-100')}>
@@ -1839,6 +2138,9 @@ function SimpleRow({
   overrideKey,
   overrideUnit,
   computedNote,
+  traceEngine,
+  tracePath,
+  columnHeading,
 }: {
   label: string;
   indexLabel: string;
@@ -1854,7 +2156,14 @@ function SimpleRow({
   overrideKey?: string;
   overrideUnit?: 'pct' | 'dollar';
   computedNote?: string;
+  // E-015 — the engine field behind column i (`years[i].adr`); every column
+  // becomes a click-through to the lineage drawer for that key.
+  traceEngine?: string;
+  tracePath?: (i: number) => string;
+  columnHeading: (i: number) => string;
 }) {
+  const { subCols } = useContext(ColumnLayoutContext);
+  const dealId = useContext(DealIdContext);
   return (
     <tr className="border-b border-border/60 hover:bg-ink-300/5">
       <td className="px-3 py-2 text-[11px] text-ink-700 font-medium border-r border-border bg-bg/30">
@@ -1865,6 +2174,23 @@ function SimpleRow({
       </td>
       {years.map((y, i) => {
         const shown = fmt(value(y));
+        const traced = traceEngine && tracePath;
+        const trace =
+          traced && dealId
+            ? lineageRequestFor(dealId, traceEngine, tracePath(i), label, columnHeading(i))
+            : undefined;
+        const lineageWrap = (node: ReactNode) =>
+          traced ? (
+            <LineageCell
+              engine={traceEngine}
+              path={tracePath(i)}
+              label={label}
+              columnLabel={columnHeading(i)}
+              note={computedNote}
+            >
+              {node}
+            </LineageCell>
+          ) : node;
         const cell =
           i === 0 && sourceKey && overrideKey ? (
             <AssumptionCell
@@ -1874,19 +2200,20 @@ function SimpleRow({
               label={label}
               display={shown}
               editValue={value(y)}
+              trace={trace}
             />
           ) : i === 0 && sourceKey ? (
-            <DriverValue sourceKey={sourceKey}>{shown}</DriverValue>
-          ) : i === 0 && computedNote ? (
+            <DriverValue sourceKey={sourceKey}>{lineageWrap(shown)}</DriverValue>
+          ) : i === 0 && computedNote && !traced ? (
             <ComputedValue note={computedNote}>{shown}</ComputedValue>
           ) : (
-            shown
+            lineageWrap(shown)
           );
         return (
           <td
             key={`sr-${i}`}
-            colSpan={4}
-            className="px-2 py-2 text-center text-[11px] text-ink-900 tabular-nums border-l border-border"
+            colSpan={subCols}
+            className={cn('px-2 py-2 text-center text-[11px] text-ink-900 tabular-nums', yearGroupClass(i, true))}
           >
             {cell}
           </td>
@@ -1897,13 +2224,15 @@ function SimpleRow({
   );
 }
 
-// Full Amount/%Rev/PAR/POR row — used for revenue lines.
+// Full Amount/%Rev/PAR/POR row — used for revenue + expense lines.
 function FullRow({
   label,
   indexLabel,
   unit,
   years,
   amountOf,
+  ratioOf,
+  ratioBasis,
   fmtAmount,
   pctRev,
   par,
@@ -1911,23 +2240,34 @@ function FullRow({
   bold = false,
   traceEngine,
   tracePath,
+  columnHeading,
+  rowTestId,
 }: {
   label: string;
   indexLabel: string;
   unit: string;
   years: ProjYear[];
-  amountOf: (y: ProjYear) => number;
+  /** Undefined when the engine did not emit the line for that year → a dash. */
+  amountOf: (y: ProjYear) => number | undefined;
+  /** R-068 — the denominator for the % cell when it is NOT Total Revenue
+   *  (departmental expense ÷ that department's own revenue, per USALI). */
+  ratioOf?: (y: ProjYear) => number | undefined;
+  /** What `ratioOf` is, for the % cell's tooltip ("Rooms revenue"). */
+  ratioBasis?: string;
   fmtAmount: (v: number, opts?: { decimals?: number; prefix?: string }) => string;
   pctRev: (v: number, total: number) => number;
   par: (v: number, available: number) => number;
   por: (v: number, occupied: number) => number;
   bold?: boolean;
   // Provenance: when set, the Amount cell for column i is wrapped in
-  // <Traced> so hovering shows the formula behind the computed value.
+  // <Traced> so hovering shows the formula behind the computed value, and
+  // (E-015) becomes a click-through to the lineage drawer for that field.
   // `tracePath(i)` maps the column index to the engine's dotted output
   // path (ProjYear[i] ↔ engine years[i], 1:1 from buildFromWorker).
   traceEngine?: string;
   tracePath?: (i: number) => string;
+  columnHeading: (i: number) => string;
+  rowTestId?: string;
 }) {
   return (
     <tr
@@ -1935,6 +2275,7 @@ function FullRow({
         'border-b border-border/60 hover:bg-ink-300/5',
         bold && 'bg-brand-50/30 font-semibold',
       )}
+      data-testid={rowTestId}
     >
       <td
         className={cn(
@@ -1949,19 +2290,32 @@ function FullRow({
       </td>
       {years.map((y, i) => {
         const amt = amountOf(y);
+        const shown = amt == null ? '—' : fmtAmount(amt, { prefix: '$' });
+        const lineageWrapped =
+          traceEngine && tracePath && amt != null ? (
+            <LineageCell engine={traceEngine} path={tracePath(i)} label={label} columnLabel={columnHeading(i)}>
+              {shown}
+            </LineageCell>
+          ) : (
+            shown
+          );
         const tracedAmount =
-          traceEngine && tracePath ? (
+          traceEngine && tracePath && amt != null ? (
             <Traced engine={traceEngine} path={tracePath(i)}>
-              {fmtAmount(amt, { prefix: '$' })}
+              {lineageWrapped}
             </Traced>
           ) : undefined;
+        const denom = ratioOf ? ratioOf(y) : y.totalRevenue;
+        const pct = amt == null || denom == null || denom <= 0 ? null : pctRev(amt, denom);
         return (
           <SubCells
             key={`fr-${label}-${i}`}
+            columnIndex={i}
             amount={amt}
-            pctRev={pctRev(amt, y.totalRevenue)}
-            par={par(amt, y.availableRooms)}
-            por={por(amt, y.occupiedRooms)}
+            pct={pct}
+            pctBasis={ratioOf ? ratioBasis ?? 'department revenue' : undefined}
+            par={amt == null ? null : par(amt, y.availableRooms)}
+            por={amt == null ? null : por(amt, y.occupiedRooms)}
             fmtAmount={fmtAmount}
             tracedAmount={tracedAmount}
           />
@@ -1973,28 +2327,68 @@ function FullRow({
 }
 
 function SubCells({
+  columnIndex,
   amount,
-  pctRev,
+  pct,
+  pctBasis,
   par,
   por,
   fmtAmount,
   tracedAmount,
 }: {
-  amount: number;
-  pctRev: number;
-  par: number;
-  por: number;
+  columnIndex: number;
+  amount: number | undefined;
+  /** Percent (0..100) or null when the denominator is missing / zero. */
+  pct: number | null;
+  /** Set when the ratio is a DEPARTMENTAL ratio rather than % of Total Revenue. */
+  pctBasis?: string;
+  par: number | null;
+  por: number | null;
   fmtAmount: (v: number, opts?: { decimals?: number; prefix?: string }) => string;
   /** Provenance-wrapped Amount cell content; falls back to plain text. */
   tracedAmount?: ReactNode;
 }) {
-  const td = 'px-2 py-2 text-right text-[11px] text-ink-900 tabular-nums border-l border-border';
+  const { showPct } = useContext(ColumnLayoutContext);
+  const base = 'px-2 py-2 text-right text-[11px] text-ink-900 tabular-nums';
+  const tint = columnIndex % 2 === 1 ? 'bg-ink-100/45' : '';
+  const td = cn(base, 'border-l border-border', tint);
+  // E-025 — the full value, with cents and thousands separators, on hover.
+  const fullAmount = amount == null ? undefined : fmtAmount(amount, { decimals: 2, prefix: '$' });
   return (
     <>
-      <td className={td}>{tracedAmount ?? fmtAmount(amount, { prefix: '$' })}</td>
-      <td className={cn(td, 'text-ink-500')}>{pctRev > 0 ? `${pctRev.toFixed(1)}%` : '—'}</td>
-      <td className={cn(td, 'text-ink-700')}>{par > 0 ? fmtAmount(par, { decimals: 0, prefix: '$' }) : '—'}</td>
-      <td className={cn(td, 'text-ink-700')}>{por > 0 ? fmtAmount(por, { decimals: 0, prefix: '$' }) : '—'}</td>
+      <td className={cn(base, yearGroupClass(columnIndex, true))} title={fullAmount}>
+        {tracedAmount ?? (amount == null ? '—' : fmtAmount(amount, { prefix: '$' }))}
+      </td>
+      {showPct && (
+        <td
+          className={cn(td, 'text-ink-500')}
+          data-ratio-basis={pctBasis ? 'department' : 'total_revenue'}
+          title={
+            pct == null
+              ? undefined
+              : pctBasis
+                ? `${pct.toFixed(2)}% of ${pctBasis} — the USALI departmental ratio (expense ÷ that department's revenue)`
+                : `${pct.toFixed(2)}% of Total Revenue`
+          }
+        >
+          {pct == null ? '—' : (
+            <>
+              {`${pct.toFixed(1)}%`}
+              {pctBasis && (
+                <span className="ml-0.5 text-[8.5px] uppercase tracking-wide text-ink-400" aria-label={`of ${pctBasis}`}>
+                  dept
+                </span>
+              )}
+            </>
+          )}
+        </td>
+      )}
+      <td className={cn(td, 'text-ink-700')} title={par != null && par > 0 ? fmtAmount(par, { decimals: 2, prefix: '$' }) : undefined}>
+        {par != null && par > 0 ? fmtAmount(par, { decimals: 0, prefix: '$' }) : '—'}
+      </td>
+      <td className={cn(td, 'text-ink-700')} title={por != null && por > 0 ? fmtAmount(por, { decimals: 2, prefix: '$' }) : undefined}>
+        {por != null && por > 0 ? fmtAmount(por, { decimals: 0, prefix: '$' }) : '—'}
+      </td>
     </>
   );
 }
@@ -2151,7 +2545,7 @@ function ProjectionPeriodField({
 // The Base year / Projection period / Show control bar above the Assumptions panel.
 function ProjectionsControls({
   dealId, years, closeDateIso, holdYears, onSaveHoldYears, running,
-  shownForecast, forecastCount, onDec, onInc,
+  shownForecast, forecastCount, onDec, onInc, showPct, onTogglePct,
 }: {
   dealId: string;
   years: ProjYear[];
@@ -2164,6 +2558,9 @@ function ProjectionsControls({
   forecastCount: number;
   onDec: () => void;
   onInc: () => void;
+  /** R-068 — the "% Rev" sub-column switch (view only). */
+  showPct: boolean;
+  onTogglePct: () => void;
 }) {
   // The FIRST column's calendar year, derived by the revenue engine from the
   // acquisition close date. `years[0].year` is the ordinal 1 — showing it here
@@ -2179,7 +2576,7 @@ function ProjectionsControls({
     borderRadius: 6, cursor: 'pointer', fontSize: 14, color: '#3a3f47', lineHeight: 1,
   };
   const baseYearTitle = baseYear != null
-    ? `Base Year (Year 1) is calendar ${baseYear} — derived from the acquisition close date${closeDateIso ? ` (${fmtIsoDate(closeDateIso)})` : ''}, whose first operating month starts the projection. It is not an input here; edit the Acquisition Date on the Investment tab.`
+    ? `Base year (Year 1) is calendar ${baseYear} — derived from the acquisition close date${closeDateIso ? ` (${fmtIsoDate(closeDateIso)})` : ''}, whose first operating month starts the projection. It is not an input here; edit the Acquisition Date on the Investment tab.`
     : 'No acquisition close date on this deal, so the projection has no calendar year. The base year is derived from that date — set the Acquisition Date on the Investment tab.';
   return (
     <div
@@ -2242,6 +2639,26 @@ function ProjectionsControls({
         <span style={{ fontSize: 10.5, color: '#9a9a95', fontStyle: 'italic' }}>view only</span>
       </div>
 
+      {/* R-068 — Show %: the "% Rev" sub-column. A real control (it changes
+          which cells render) and labelled as view-only; the ratios are
+          computed from the same engine year values the Amount cells print. */}
+      <label
+        style={{ ...group, gap: 5 }}
+        title="Show each line as a share of Total Revenue — departmental expenses as a share of their own department's revenue (USALI). View only; nothing is re-modelled."
+      >
+        <input
+          type="checkbox"
+          role="switch"
+          aria-checked={showPct}
+          checked={showPct}
+          onChange={onTogglePct}
+          aria-label="Show % of revenue"
+          data-testid="projection-show-pct"
+          style={{ margin: 0, cursor: 'pointer' }}
+        />
+        <span style={ctrlLabel}>Show %</span>
+      </label>
+
       {/* What replaced the dead Annual / Monthly toggle: the basis, stated. */}
       <span
         data-testid="projection-basis-note"
@@ -2253,6 +2670,30 @@ function ProjectionsControls({
       >
         Annual periods
       </span>
+
+      {/* FON-41 E-014 — why the columns carry the years they do, and (when
+          they carry none) the one line that says where the date is set. */}
+      <div style={{ flexBasis: '100%', display: 'flex', flexDirection: 'column', gap: 3 }}>
+        {baseYear == null && (
+          <span
+            data-testid="projection-no-close-date-note"
+            role="note"
+            style={{ fontSize: 11.5, color: '#7a5c17', fontWeight: 600, lineHeight: 1.45 }}
+          >
+            {NO_CLOSE_DATE_NOTE}
+            {' — '}
+            <Link
+              href={`/projects/${dealId}?tab=investment`}
+              style={{ color: '#2f4a8c', textDecoration: 'none', fontWeight: 600 }}
+            >
+              Investment →
+            </Link>
+          </span>
+        )}
+        <span data-testid="projection-calendar-help" style={{ fontSize: 11, color: '#6b6f76', lineHeight: 1.45 }}>
+          {CALENDAR_MAPPING_HELP}
+        </span>
+      </div>
     </div>
   );
 }
@@ -2553,11 +2994,11 @@ function AssumptionsPanel({
                 re-index the engine — so these labels (and the note below)
                 name the columns the analyst actually reads. Engine math and
                 the ``field_overrides`` keys are untouched. */}
-            <AssumptionField label="Capture — Base Year (Year 1)" unit="pct" suffix="%" overrideKey="resort_fee_capture_y1" value={cur('resort_fee_capture_y1')} disabled={running} onCommit={(v, note) => onApply('resort_fee_capture_y1', v, note)} />
+            <AssumptionField label="Capture — Base year (Year 1)" unit="pct" suffix="%" overrideKey="resort_fee_capture_y1" value={cur('resort_fee_capture_y1')} disabled={running} onCommit={(v, note) => onApply('resort_fee_capture_y1', v, note)} />
             <AssumptionField label="Capture — Year 2" unit="pct" suffix="%" overrideKey="resort_fee_capture_y2" value={cur('resort_fee_capture_y2')} disabled={running} onCommit={(v, note) => onApply('resort_fee_capture_y2', v, note)} />
             <AssumptionField label="Capture — Year 3+" unit="pct" suffix="%" overrideKey="resort_fee_capture_y3" value={cur('resort_fee_capture_y3')} disabled={running} onCommit={(v, note) => onApply('resort_fee_capture_y3', v, note)} />
             <p style={{ fontSize: 11, color: '#6b6f76', lineHeight: 1.45, margin: 0 }}>
-              Each capture applies to the column above it — Base Year (Year 1) is the model&apos;s
+              Each capture applies to the column above it — Base year (Year 1) is the model&apos;s
               first operating year, Year 2 is the one after it, and Year 3+ carries through every
               later year.
             </p>

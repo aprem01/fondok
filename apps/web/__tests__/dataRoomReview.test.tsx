@@ -131,9 +131,11 @@ describe('Data Room — "N to review" reconciles to the Historicals column (FON-
     );
   });
 
-  it('"View Financials" carries the same document pin', () => {
+  it('"View P&L" carries the same document pin', () => {
     render(<DataRoomTab projectId={DEAL_ID} />);
-    const buttons = screen.getAllByRole('button', { name: 'View Financials' });
+    // FON-41 R-066 — the CTA names the tab it opens ("P&L", not "Financials").
+    const buttons = screen.getAllByRole('button', { name: 'View P&L' });
+    expect(screen.queryByRole('button', { name: 'View Financials' })).toBeNull();
     // Files list in upload order → 2019 first.
     fireEvent.click(buttons[0]);
     expect(pushSpy).toHaveBeenLastCalledWith(

@@ -22,7 +22,7 @@ const items = [
   { icon: Building2, label: 'Property' },
   { icon: Lightbulb, label: 'Insights' },
   { icon: MessageSquare, label: 'Comments' },
-  { icon: DollarSign, label: 'Financials' },
+  { icon: DollarSign, label: 'P&L' },
 ];
 
 export default function EngineRightRail({ className }: { className?: string }) {

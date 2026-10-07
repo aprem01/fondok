@@ -109,17 +109,20 @@ beforeEach(() => {
 });
 
 describe('useSubTab — `?tab=pl&sub=<subtab>` deep links', () => {
-  it('lands on Historicals with no sub param (the declared fallback)', () => {
+  it('lands on Historical P&L with no sub param (the declared fallback)', () => {
     render(<PLTab />);
-    expect(tab('Historicals')).toHaveAttribute('aria-selected', 'true');
-    expect(tab('Projections')).toHaveAttribute('aria-selected', 'false');
+    // FON-41 R-066 — the labels name the views; the ids (URL slugs) are unchanged.
+    expect(tab('Historical P&L')).toHaveAttribute('aria-selected', 'true');
+    expect(tab('Future P&L')).toHaveAttribute('aria-selected', 'false');
+    expect(screen.queryByRole('tab', { name: 'Historicals' })).toBeNull();
+    expect(screen.queryByRole('tab', { name: 'Projections' })).toBeNull();
     expect(screen.getByTestId('historicals-panel')).toBeInTheDocument();
   });
 
   it('opens Projections on ?sub=projections (FON-59 #4 / FON-61 §3)', () => {
     nav.params = new URLSearchParams('tab=pl&sub=projections');
     render(<PLTab />);
-    expect(tab('Projections')).toHaveAttribute('aria-selected', 'true');
+    expect(tab('Future P&L')).toHaveAttribute('aria-selected', 'true');
     expect(screen.getByTestId('projections-panel')).toBeInTheDocument();
     expect(screen.queryByTestId('historicals-panel')).not.toBeInTheDocument();
   });
@@ -127,26 +130,26 @@ describe('useSubTab — `?tab=pl&sub=<subtab>` deep links', () => {
   it('ignores an unknown sub value and falls back to Historicals', () => {
     nav.params = new URLSearchParams('tab=pl&sub=not-a-sub-tab');
     render(<PLTab />);
-    expect(tab('Historicals')).toHaveAttribute('aria-selected', 'true');
+    expect(tab('Historical P&L')).toHaveAttribute('aria-selected', 'true');
   });
 
   it('follows a param change while already mounted (Defect 3 regression)', () => {
     nav.params = new URLSearchParams('tab=pl&sub=projections');
     const { rerender } = render(<PLTab />);
-    expect(tab('Projections')).toHaveAttribute('aria-selected', 'true');
+    expect(tab('Future P&L')).toHaveAttribute('aria-selected', 'true');
 
     // Same-tab link followed without a remount — the old `useState` read
     // happened once, so this used to stay on Projections.
     nav.params = new URLSearchParams('tab=pl&sub=historicals');
     rerender(<PLTab />);
-    expect(tab('Historicals')).toHaveAttribute('aria-selected', 'true');
+    expect(tab('Historical P&L')).toHaveAttribute('aria-selected', 'true');
     expect(screen.getByTestId('historicals-panel')).toBeInTheDocument();
   });
 
   it('accepts the legacy ?fin= alias for one release (Data Room bookmarks)', () => {
     nav.params = new URLSearchParams('tab=pl&fin=projections');
     render(<PLTab />);
-    expect(tab('Projections')).toHaveAttribute('aria-selected', 'true');
+    expect(tab('Future P&L')).toHaveAttribute('aria-selected', 'true');
   });
 });
 
@@ -154,9 +157,9 @@ describe('useSubTab — setSub reflects the click back into the URL', () => {
   it('replaces with sub= while preserving every other param (doc, focus)', () => {
     nav.params = new URLSearchParams('tab=pl&fin=historicals&doc=doc-9&focus=noi');
     render(<PLTab />);
-    expect(tab('Historicals')).toHaveAttribute('aria-selected', 'true');
+    expect(tab('Historical P&L')).toHaveAttribute('aria-selected', 'true');
 
-    fireEvent.click(tab('Projections'));
+    fireEvent.click(tab('Future P&L'));
 
     expect(nav.replace).toHaveBeenCalledTimes(1);
     const [url, opts] = nav.replace.mock.calls[0] as [string, { scroll: boolean }];
@@ -172,6 +175,6 @@ describe('useSubTab — setSub reflects the click back into the URL', () => {
     expect(written.get('fin')).toBeNull();
 
     // …and the click is reflected in the UI without waiting for the router.
-    expect(tab('Projections')).toHaveAttribute('aria-selected', 'true');
+    expect(tab('Future P&L')).toHaveAttribute('aria-selected', 'true');
   });
 });

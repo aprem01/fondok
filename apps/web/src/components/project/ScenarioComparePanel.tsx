@@ -582,7 +582,7 @@ function FocusChip({
       </button>
       {isBase ? (
         <span
-          title="The canonical underwriting — edited in Financials, Investment, Debt and Partnership"
+          title="The canonical underwriting — edited in P&L, Investment, Debt and Partnership"
           style={{
             fontSize: 9,
             fontWeight: 700,
@@ -632,7 +632,7 @@ function BaseCasePanel({ outputs }: { outputs: EngineOutputsResponse | null }) {
   const groups = [
     {
       title: 'Operating',
-      link: 'Financials →',
+      link: 'P&L →',
       rows: [
         { label: 'RevPAR Growth', value: dash('revpar_growth', baseValueFor('revpar_growth', outputs)) },
         { label: 'Expense Growth', value: dash('expense_growth', baseValueFor('expense_growth', outputs)) },
