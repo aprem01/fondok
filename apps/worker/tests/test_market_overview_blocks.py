@@ -440,17 +440,164 @@ async def test_comp_set_unions_the_may_and_july_str_reports_and_blue_moon_is_clo
     cs = body["comp_set"]
     assert cs["active_count"] == 4 and cs["active_keys"] == 344
     assert cs["closed_names"] == ["Blue Moon Hotel"] and cs["status_available"] is True
-    assert cs["reported_comp_set_size"] == 5 and cs["reported_total_keys"] == 419  # the old "5 hotels / 419"
-    assert cs["documents"] == [MAY_STR_DOC, JULY_STR_DOC]
+    # The rollups are read from the most recent REPORT (May is the only one
+    # carrying them here) — the old "5 hotels / 419".
+    assert cs["reported_comp_set_size"] == 5 and cs["reported_total_keys"] == 419
+    # Report-period order (July 2025-07-13 before May 2025-05, both from the
+    # filenames) — not extraction order (May was extracted last here).
+    assert cs["documents"] == [JULY_STR_DOC, MAY_STR_DOC]
+    assert [(o["doc_name"], o["period_end"], o["period_end_basis"]) for o in cs["ordering"]] == [
+        (JULY_STR_DOC, "2025-07-13", "filename_token"),
+        (MAY_STR_DOC, "2025-05", "filename_token"),
+    ]
+    assert all(o["created_at"] for o in cs["ordering"])
     bm = next(h for h in cs["hotels"] if h["name"] == "Blue Moon Hotel")
     assert bm["status"] == "closed"
     assert bm["status_doc_name"] == JULY_STR_DOC and bm["status_page"] == 2
     assert bm["str_id"] == "34401"
     assert bm["merged_names"] == []  # same name in both reports — no alias to show
     assert bm["keys"] == 75 and bm["keys_doc_name"] == MAY_STR_DOC
-    assert bm["reports"] == [MAY_STR_DOC, JULY_STR_DOC]
+    assert bm["reports"] == [JULY_STR_DOC, MAY_STR_DOC]
     assert JULY_STR_DOC in cs["note"]
     assert len(cs["hotels"]) == 5
+
+
+# ────────── live 2026-10-07: three re-extractions, the Dec 2023 report won ──────────
+
+DEC_2023_STR_DOC = "ANG-20231200-USD-E.xlsx"
+
+
+def _ttm_fields(
+    *, occ: float, adr: float, revpar: float, mpi: float, ari: float, rgi: float,
+    first_month: tuple[int, int], months: int, report_year: int, page: int,
+) -> list[dict[str, Any]]:
+    out = [
+        {"field_name": "ttm_performance.subject.occupancy_pct", "value": occ, "source_page": page},
+        {"field_name": "ttm_performance.subject.adr_usd", "value": adr, "source_page": page},
+        {"field_name": "ttm_performance.subject.revpar_usd", "value": revpar, "source_page": page},
+        {"field_name": "ttm_performance.indices.mpi_occupancy_index", "value": mpi, "source_page": page},
+        {"field_name": "ttm_performance.indices.ari_adr_index", "value": ari, "source_page": page},
+        {"field_name": "ttm_performance.indices.rgi_revpar_index", "value": rgi, "source_page": page},
+        {"field_name": "str_trend.report_year", "value": report_year, "source_page": 1},
+    ]
+    year, month = first_month
+    for _ in range(months):
+        out.append({
+            "field_name": f"ttm_performance.subject.monthly.{year}_{month:02d}.occupancy_pct",
+            "value": 0.7, "source_page": page,
+        })
+        month += 1
+        if month > 12:
+            year, month = year + 1, 1
+    return out
+
+
+@pytest.mark.asyncio
+async def test_ttm_blend_follows_the_report_period_when_files_were_re_extracted_out_of_order() -> None:
+    """The live defect: May 2025 trend, Dec 2023 trend and July 2025 daily
+    re-extracted within seconds with the Dec 2023 one created LAST → the
+    blend showed Dec 2023 (82.39% / $247.08) under ``report_year`` 2025. The
+    blend must read the report whose PERIOD is most recent (May 2025, series
+    through 2025-05) and describe that document."""
+    dec_fields = [
+        *_ttm_fields(
+            occ=82.391, adr=247.078, revpar=203.57, mpi=1.141, ari=0.836, rgi=0.954,
+            first_month=(2022, 7), months=18, report_year=2023, page=2,
+        ),
+        *_roster_fields(
+            [
+                ("", "Dream South Beach", 107, None),
+                ("", "Blue Moon Hotel", 75, None),
+                ("", "The Tony Hotel of South Beach", 73, None),
+                ("", "The Betsy Hotel", 129, None),
+                ("", "Z Ocean Hotel, Classico A Sonesta Collection", 35, None),
+            ],
+            page=22,
+        ),
+    ]
+    july_fields = [
+        {"field_name": "str_trend.report_year", "value": 2025, "source_page": 1},
+        {"field_name": "comp_set.comp_set_size", "value": 5, "source_page": 2},
+        {"field_name": "comp_set.total_keys", "value": 344, "unit": "rooms", "source_page": 2},
+        *_roster_fields(
+            [
+                ("33931", "Dream South Beach", 107, None),
+                ("34401", "Closed - Blue Moon Hotel", 0, "closed"),
+                ("39070", "The Tony Hotel of South Beach", 73, None),
+                ("44117", "The Betsy South Beach", 129, None),
+                ("53909", "Z Ocean Hotel, Classico A Sonesta Collection", 35, None),
+            ],
+            page=2,
+        ),
+    ]
+    may_fields = [
+        *_ttm_fields(
+            occ=71.4, adr=278.0, revpar=198.5, mpi=1.032, ari=0.942, rgi=0.972,
+            first_month=(2024, 6), months=12, report_year=2025, page=3,
+        ),
+        {"field_name": "comp_set.comp_set_size", "value": 5, "source_page": 22},
+        {"field_name": "comp_set.total_keys", "value": 419, "unit": "rooms", "source_page": 22},
+        *_roster_fields(
+            [
+                ("53909", "Z Ocean Hotel, Classico A Sonesta Collection", 35, None),
+                ("34401", "Blue Moon Hotel", 75, None),
+                ("44117", "The Betsy South Beach", 129, None),
+                ("39070", "The Tony Hotel of South Beach", 73, None),
+                ("33931", "Dream South Beach", 107, None),
+            ],
+            page=22,
+        ),
+    ]
+    tenant_id, deal_id = await _seed(str_fields=None, ms_fields=None)
+    template = "template:str_trend;dt:STR_TREND"
+    # created_at in the WRONG order: Dec 2023 newest, then July, then May.
+    await _add_document(
+        deal_id=deal_id, tenant_id=tenant_id, filename=DEC_2023_STR_DOC, doc_type="STR_TREND",
+        fields=dec_fields, agent_version=template, minutes_ago=0,
+    )
+    await _add_document(
+        deal_id=deal_id, tenant_id=tenant_id, filename=JULY_STR_DOC, doc_type="STR_TREND",
+        fields=july_fields, agent_version=template, minutes_ago=1,
+    )
+    await _add_document(
+        deal_id=deal_id, tenant_id=tenant_id, filename=MAY_STR_DOC, doc_type="STR_TREND",
+        fields=may_fields, agent_version=template, minutes_ago=2,
+    )
+    body = await _overview(tenant_id, deal_id)
+
+    b = body["ttm_blend"]
+    assert b["source_doc_name"] == MAY_STR_DOC
+    assert b["period_end_used"] == "2025-05" and b["ordering_basis"] == "subject_monthly_series"
+    assert b["period_basis"] == "subject_monthly_series"
+    assert (b["period_start"], b["period_end"], b["months"]) == ("2024-06", "2025-05", 12)
+    assert b["subject_occupancy_pct"] == 71.4 and b["subject_adr_usd"] == 278.0
+    assert (b["mpi"], b["ari"], b["rgi"]) == (1.032, 0.942, 0.972)
+    assert abs(b["occupancy_pct"] - 71.4 / 1.032) < 1e-3
+    assert abs(b["adr_usd"] - 278.0 / 0.942) < 1e-3
+    assert b["report_year"] == 2025
+    assert b["documents"] == [MAY_STR_DOC]
+    assert all(r["doc_name"] == MAY_STR_DOC for r in b["inputs"])
+    assert [(o["doc_name"], o["period_end"], o["period_end_basis"]) for o in b["ordering"]] == [
+        (JULY_STR_DOC, "2025-07-13", "filename_token"),
+        (MAY_STR_DOC, "2025-05", "subject_monthly_series"),
+        (DEC_2023_STR_DOC, "2023-12", "subject_monthly_series"),
+    ]
+    assert b["source_extraction_id"] == next(
+        o["extraction_id"] for o in b["ordering"] if o["doc_name"] == MAY_STR_DOC
+    )
+
+    cs = body["comp_set"]
+    assert cs["active_count"] == 4 and cs["active_keys"] == 344
+    assert cs["closed_names"] == ["Blue Moon Hotel"]
+    assert cs["documents"] == [JULY_STR_DOC, MAY_STR_DOC, DEC_2023_STR_DOC]
+    assert cs["ordering"] == b["ordering"]
+    assert len(cs["hotels"]) == 5  # the Betsy once, under its May/July name
+    bm = next(h for h in cs["hotels"] if h["name"] == "Blue Moon Hotel")
+    assert bm["status"] == "closed" and bm["status_doc_name"] == JULY_STR_DOC
+    assert bm["keys"] == 75 and bm["keys_doc_name"] == MAY_STR_DOC
+    betsy = next(h for h in cs["hotels"] if h["name"] == "The Betsy South Beach")
+    assert betsy["keys"] == 129 and betsy["keys_doc_name"] == JULY_STR_DOC
+    assert betsy["merged_names"] == ["The Betsy Hotel"]
 
 
 @pytest.mark.asyncio

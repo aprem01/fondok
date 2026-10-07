@@ -16,6 +16,7 @@ from __future__ import annotations
 import json
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
+from datetime import date, datetime
 from typing import Any
 
 
@@ -38,6 +39,14 @@ class FieldRow:
     doc_type: str | None = None
     # The extractor's optional period tag (CBRE-style ``actual`` / ``forecast``).
     period: str | None = None
+    # Record-level provenance the STR reader orders extractions by (see
+    # ``market_comp_set.resolve_report_period_end``): the extraction's
+    # ``created_at`` (ISO text) and the document's ``report_as_of`` date with
+    # its ``report_as_of_precision`` (``day`` / ``month`` / ``quarter`` /
+    # ``year``). None for callers that don't carry them.
+    created_at: str | None = None
+    report_as_of: str | None = None
+    report_as_of_precision: str | None = None
 
     @property
     def lname(self) -> str:
@@ -175,10 +184,13 @@ def parse_extraction_records(records: Iterable[Mapping[str, Any]]) -> list[Field
     """Flatten DB extraction records (newest first) into ``FieldRow``s.
 
     Each record carries ``fields`` (JSON text or list), ``document_id``,
-    ``filename``, ``doc_type`` and ``extraction_id``. Malformed JSON or a
-    non-list payload skips that record rather than failing the overview.
-    Row order is preserved, so "first hit wins" over the result equals
-    "newest extraction wins".
+    ``filename``, ``doc_type`` and ``extraction_id``, optionally the
+    extraction's ``created_at`` and the document's ``report_as_of`` /
+    ``report_as_of_precision``. Malformed JSON or a non-list payload skips
+    that record rather than failing the overview. Row order is preserved,
+    so "first hit wins" over the result equals "newest extraction wins" —
+    the STR reader re-orders by report period before it reads
+    (``market_comp_set.build_str_inputs``).
     """
     out: list[FieldRow] = []
     for rec in records:
@@ -194,6 +206,9 @@ def parse_extraction_records(records: Iterable[Mapping[str, Any]]) -> list[Field
         ext_id = rec.get("extraction_id")
         doc_name = rec.get("filename")
         doc_type = rec.get("doc_type")
+        created_at = _iso_text(rec.get("created_at"))
+        report_as_of = _iso_text(rec.get("report_as_of"))
+        precision = rec.get("report_as_of_precision")
         for f in raw:
             if not isinstance(f, dict):
                 continue
@@ -213,9 +228,24 @@ def parse_extraction_records(records: Iterable[Mapping[str, Any]]) -> list[Field
                     extraction_id=str(ext_id) if ext_id is not None else None,
                     doc_type=str(doc_type).upper() if isinstance(doc_type, str) else None,
                     period=str(period).strip().lower() if isinstance(period, str) and period.strip() else None,
+                    created_at=created_at,
+                    report_as_of=report_as_of,
+                    report_as_of_precision=(
+                        str(precision).strip().lower() if isinstance(precision, str) and precision.strip() else None
+                    ),
                 )
             )
     return out
+
+
+def _iso_text(v: Any) -> str | None:
+    """A DB date / datetime / text column as ISO text; None when empty."""
+    if v is None or isinstance(v, bool):
+        return None
+    if isinstance(v, (date, datetime)):
+        return v.isoformat()
+    text = str(v).strip()
+    return text or None
 
 
 __all__ = [

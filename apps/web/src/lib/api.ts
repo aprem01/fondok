@@ -1388,8 +1388,35 @@ export interface MarketCompSetBlock {
   source_doc_id?: string | null;
   source_page?: number | null;
   note: string;
-  /** Every STR roster document unioned, newest first. */
+  /** Every STR roster document unioned, most recent report period first. */
   documents?: string[];
+  /** Every STR extraction in the order the union read them (most recent
+   *  report period first) with the period end each resolved to. */
+  ordering?: MarketStrReportOrder[];
+}
+
+/** How one STR extraction's report period end was resolved — mirrors
+ *  apps/worker/app/services/market_comp_set.StrReportOrder. The Market blocks
+ *  order STR reports by this, never by upload / extraction time. */
+export type MarketPeriodEndBasis =
+  | 'extracted_period_end'
+  | 'subject_monthly_series'
+  | 'period_start_plus_months'
+  | 'document_report_as_of'
+  | 'filename_token'
+  | 'report_year'
+  | 'created_at';
+
+export interface MarketStrReportOrder {
+  extraction_id?: string | null;
+  doc_name?: string | null;
+  doc_id?: string | null;
+  /** ISO period end at the precision the source stated: YYYY-MM-DD / YYYY-MM / YYYY. */
+  period_end?: string | null;
+  period_end_basis: MarketPeriodEndBasis;
+  /** The field path / document attribute / filename the period end came from. */
+  period_end_source?: string | null;
+  created_at?: string | null;
 }
 
 /** FON-61 E-007 — what "TTM · comp-set blend" is: the rows and period behind it. */
@@ -1407,10 +1434,21 @@ export interface MarketTtmBlendBlock {
   period_end?: string | null;
   months?: number | null;
   period_basis: 'subject_monthly_series' | 'report_year' | 'none';
+  /** `str_trend.report_year` of the report that supplied the inputs. */
   report_year?: number | null;
   inputs: MarketFieldRef[];
+  /** The document that supplied the inputs — one report, never a per-field mix. */
   documents: string[];
   method: string;
+  /** Which STR report supplied the subject TTM and the indices, the period
+   *  end it resolved to and how; `ordering` is every STR extraction in the
+   *  order the worker read them (most recent report period first). */
+  source_doc_name?: string | null;
+  source_doc_id?: string | null;
+  source_extraction_id?: string | null;
+  period_end_used?: string | null;
+  ordering_basis?: MarketPeriodEndBasis | null;
+  ordering?: MarketStrReportOrder[];
 }
 
 /** FON-61 E-008 — Demand Growth read off the MARKET_STUDY extraction. */

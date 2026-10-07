@@ -36,6 +36,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from ..database import get_session
 from ..services.market_comp_set import (
     CompSetDerivation,
+    StrReportOrder,
     TtmBlend,
     build_str_inputs,
     derive_comp_set_from_inputs,
@@ -113,6 +114,43 @@ class CompSetHotelOut(BaseModel):
     merged_names: list[str] = Field(default_factory=list)
 
 
+PeriodEndBasisOut = Literal[
+    "extracted_period_end",
+    "subject_monthly_series",
+    "period_start_plus_months",
+    "document_report_as_of",
+    "filename_token",
+    "report_year",
+    "created_at",
+]
+
+
+class StrReportOrderOut(BaseModel):
+    """One STR extraction's place in the report-period ordering the Market
+    blocks read in — most recent report period first, never upload time.
+    Mirrors ``services.market_comp_set.StrReportOrder``."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    extraction_id: str | None = None
+    doc_name: str | None = None
+    doc_id: str | None = None
+    # ISO period end at the precision the source stated: YYYY-MM-DD / YYYY-MM / YYYY.
+    period_end: str | None = None
+    period_end_basis: PeriodEndBasisOut = "created_at"
+    # The field path / document attribute / filename the period end came from.
+    period_end_source: str | None = None
+    created_at: str | None = None
+
+    @classmethod
+    def of(cls, o: StrReportOrder) -> StrReportOrderOut:
+        return cls(
+            extraction_id=o.extraction_id, doc_name=o.doc_name, doc_id=o.doc_id,
+            period_end=o.period_end, period_end_basis=o.period_end_basis,
+            period_end_source=o.period_end_source, created_at=o.created_at,
+        )
+
+
 class MarketCompSetBlock(BaseModel):
     """ONE derivation feeds the hotel count and the keys (active hotels)."""
 
@@ -132,8 +170,11 @@ class MarketCompSetBlock(BaseModel):
     source_doc_id: str | None = None
     source_page: int | None = None
     note: str = ""
-    # Every STR roster document unioned, newest first.
+    # Every STR roster document unioned, most recent report period first.
     documents: list[str] = Field(default_factory=list)
+    # Every STR extraction in the order the union read them, with the period
+    # end each resolved to and how — the audit trail for "most recent".
+    ordering: list[StrReportOrderOut] = Field(default_factory=list)
 
     @classmethod
     def of(cls, d: CompSetDerivation) -> MarketCompSetBlock:
@@ -150,6 +191,7 @@ class MarketCompSetBlock(BaseModel):
                 for h in d.hotels
             ],
             documents=list(d.documents),
+            ordering=[StrReportOrderOut.of(o) for o in d.ordering],
             active_count=d.active_count,
             active_keys=d.active_keys,
             closed_count=d.closed_count,
@@ -184,10 +226,21 @@ class MarketTtmBlendBlock(BaseModel):
     period_end: str | None = None
     months: int | None = None
     period_basis: Literal["subject_monthly_series", "report_year", "none"] = "none"
+    # ``str_trend.report_year`` of the report that supplied the inputs.
     report_year: int | None = None
     inputs: list[FieldRefOut] = Field(default_factory=list)
+    # The document that supplied the inputs — one report, never a per-field mix.
     documents: list[str] = Field(default_factory=list)
     method: str = ""
+    # Which STR report supplied the subject TTM and the indices, the period
+    # end it resolved to (``period_end_used``) and how (``ordering_basis``);
+    # ``ordering`` lists every STR extraction in the order the reader used.
+    source_doc_name: str | None = None
+    source_doc_id: str | None = None
+    source_extraction_id: str | None = None
+    period_end_used: str | None = None
+    ordering_basis: PeriodEndBasisOut | None = None
+    ordering: list[StrReportOrderOut] = Field(default_factory=list)
 
     @classmethod
     def of(cls, b: TtmBlend) -> MarketTtmBlendBlock:
@@ -199,6 +252,10 @@ class MarketTtmBlendBlock(BaseModel):
             period_basis=b.period_basis, report_year=b.report_year,
             inputs=[FieldRefOut.of(r) for r in b.inputs], documents=list(b.documents),
             method=b.method,
+            source_doc_name=b.source_doc_name, source_doc_id=b.source_doc_id,
+            source_extraction_id=b.source_extraction_id,
+            period_end_used=b.period_end_used, ordering_basis=b.ordering_basis,
+            ordering=[StrReportOrderOut.of(o) for o in b.ordering],
         )
 
 
@@ -341,9 +398,12 @@ _EXTRACTION_ROWS_SQL = """
            er.fields,
            er.agent_version,
            er.document_id,
+           er.created_at,
            d.filename,
            d.doc_type,
-           d.ai_proposed_doc_type
+           d.ai_proposed_doc_type,
+           d.report_as_of,
+           d.report_as_of_precision
       FROM extraction_results er
       JOIN documents d ON d.id = er.document_id
      WHERE er.deal_id = :deal
@@ -362,7 +422,12 @@ _MARKET_DOC_TYPES = ("STR", "STR_TREND", "MARKET_STUDY")
 async def _extraction_records(
     session: AsyncSession, *, deal_id: UUID, tenant_id: UUID, doc_types: tuple[str, ...]
 ) -> list[dict[str, Any]]:
-    """Extraction rows (newest first) for the given doc types, tenant-scoped."""
+    """Extraction rows (newest first) for the given doc types, tenant-scoped.
+
+    ``created_at`` and the document's ``report_as_of`` ride along so the STR
+    reader can order reports by REPORT PERIOD (``market_comp_set``) — the
+    ``created_at DESC`` order here is only its final tiebreak.
+    """
     types_sql = ", ".join(f"'{t}'" for t in doc_types)  # fixed literals, never user input
     rows = await session.execute(
         text(_EXTRACTION_ROWS_SQL.format(types=types_sql)),

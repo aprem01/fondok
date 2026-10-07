@@ -51,18 +51,50 @@ Hotels are matched across reports in this order (first rule that applies):
    the union listed it twice). Every other name the hotel was listed under
    is recorded in ``merged_names`` so the UI can show the alias.
 
-A hotel is closed if ANY report marks it; its keys come from the newest
-report that lists a positive room count and are excluded from the active
-totals when closed.
+A hotel is closed if ANY report marks it; its keys come from the most
+recent report (by report period, below) that lists a positive room count
+and are excluded from the active totals when closed.
+
+Which STR report is "most recent" — by REPORT PERIOD, never by upload
+----------------------------------------------------------------------
+Live (2026-10-07): three STR files were re-extracted within three seconds
+(the May 2025 trend at 21:03:31, the Dec 2023 trend at 21:03:33, the July
+2025 daily at 21:03:34) and the TTM blend switched to the Dec 2023 report,
+because "newest" meant ``extraction_results.created_at`` — whichever file
+was re-extracted last won. :func:`build_str_inputs` now orders the STR
+extractions by the REPORT's period end, resolved per extraction from, in
+order (:func:`resolve_report_period_end`):
+
+1. an extracted period-end field (``ttm_performance.period_end``,
+   ``*.period_ending``, ``str_trend.report_date`` …);
+2. the last month of the subject monthly series
+   (``ttm_performance.subject.monthly.<YYYY_MM>.*``);
+3. an extracted ``period_start`` plus ``months``;
+4. the document's ``report_as_of`` date (``documents.report_as_of``);
+5. a date token in the filename (``ANG-20250500`` → 2025-05,
+   ``56387-20250713`` → 2025-07-13, ``… Jun-2026.xlsx`` → 2026-06);
+6. a YEAR-ONLY answer any of the above gave (a year-precision
+   ``report_as_of`` — the STR family's "31 December of report_year" — a bare
+   year in the filename, ``str_trend.report_year``), kept behind every
+   month-precise answer because it cannot order within a year;
+7. and only then ``created_at`` (the rows' arrival order, newest first).
+
+The subject TTM and the penetration indices of the blend come from ONE
+report — the first in that order carrying them — and the blend's
+``report_year`` / ``documents`` describe that report. The resolved period
+end and its basis are exposed per report (``ordering``) and for the blend
+(``period_end_used`` / ``ordering_basis``) so the choice is auditable.
 
 Pure functions — no DB, no I/O.
 """
 
 from __future__ import annotations
 
+import calendar
 import re
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
+from datetime import date, datetime
 from typing import Any, Literal
 
 from .market_fields import FieldRef, FieldRow, coerce_float, coerce_int
@@ -124,9 +156,10 @@ class CompSetHotel:
     status_doc_name: str | None = None
     status_doc_id: str | None = None
     status_page: int | None = None
-    #: The (newest) document the key count was read from.
+    #: The document the key count was read from — the most recent report (by
+    #: report period) listing a positive count.
     keys_doc_name: str | None = None
-    #: Every roster document that lists this hotel, newest first.
+    #: Every roster document that lists this hotel, most recent report first.
     reports: tuple[str, ...] = ()
     #: Other names this hotel was listed under in older reports and merged
     #: here (by STR id or the alias rule) — the UI shows them as "also
@@ -154,8 +187,11 @@ class CompSetDerivation:
     source_doc_id: str | None
     source_page: int | None
     note: str
-    #: Every STR roster document unioned, newest first.
+    #: Every STR roster document unioned, most recent report period first.
     documents: list[str] = field(default_factory=list)
+    #: Every STR extraction on the deal in the order the union read them
+    #: (most recent report period first) with the period end each resolved to.
+    ordering: list[StrReportOrder] = field(default_factory=list)
 
 
 @dataclass(frozen=True)
@@ -285,18 +321,19 @@ def derive_comp_set_union(
     """The ONE comp-set derivation: count AND keys over the active roster,
     unioned across every STR report on the deal.
 
-    ``snapshots`` are newest first. Each carries ``{n: {"name", "keys",
-    "status", "str_id"}}`` as bucketed from ``ttm_performance.compset.<n>.*``
-    rows of ONE extraction. A row joins a unioned hotel by (1) ``str_id``
-    when both carry one, else (2) the normalised name, else (3) the alias
-    rule — same positive key count and the shorter name's first two tokens
-    prefix the other's (see :func:`names_are_aliases`); names a hotel was
-    merged under are kept in ``merged_names``. A hotel is closed if ANY
-    report marks it (status field or STR's "Closed - " label — a 0-room
-    row alone never does); keys come from the newest report listing a
-    positive count. Rows with neither a name nor a positive key count are
-    ignored. Falls back to the report's rollups only when no roster was
-    extracted at all, and says so.
+    ``snapshots`` are most-recent-report-period first (``build_str_inputs``
+    orders them; see the module docstring). Each carries ``{n: {"name",
+    "keys", "status", "str_id"}}`` as bucketed from
+    ``ttm_performance.compset.<n>.*`` rows of ONE extraction. A row joins a
+    unioned hotel by (1) ``str_id`` when both carry one, else (2) the
+    normalised name, else (3) the alias rule — same positive key count and
+    the shorter name's first two tokens prefix the other's (see
+    :func:`names_are_aliases`); names a hotel was merged under are kept in
+    ``merged_names``. A hotel is closed if ANY report marks it (status field
+    or STR's "Closed - " label — a 0-room row alone never does); keys come
+    from the first report in that order listing a positive count. Rows with
+    neither a name nor a positive key count are ignored. Falls back to the
+    report's rollups only when no roster was extracted at all, and says so.
     """
     size_reported = coerce_int(reported_comp_set_size)
     keys_reported = coerce_int(reported_total_keys)
@@ -384,6 +421,7 @@ def derive_comp_set_union(
     closed = [h for h in hotels if h.status == "closed"]
     active = [h for h in hotels if h.status == "active"]
     status_available = any(h.explicit_marker for h in union)
+    # The first roster in report-period order is the derivation's source.
     newest = next((s for s in snapshots if s.rows), None) or (snapshots[0] if snapshots else None)
     source_doc_name = newest.doc_name if newest else None
     source_doc_id = newest.doc_id if newest else None
@@ -477,6 +515,301 @@ def derive_comp_set_union(
     )
 
 
+# ───────────────────────── report period (ordering) ─────────────────────────
+
+PeriodEndBasis = Literal[
+    "extracted_period_end",
+    "subject_monthly_series",
+    "period_start_plus_months",
+    "document_report_as_of",
+    "filename_token",
+    "report_year",
+    "created_at",
+]
+
+#: Leaf names of an extracted period-end field, matched on the last path
+#: segment of any STR namespace outside the roster and the monthly series
+#: (``ttm_performance.period_end``, ``ttm_performance.subject.period_ending``,
+#: ``str_trend.report_date`` …).
+PERIOD_END_LEAVES = frozenset(
+    {
+        "period_end", "period_ending", "period_end_date", "period_to",
+        "report_date", "report_period_end", "as_of_date", "as_of",
+    }
+)
+PERIOD_START_LEAVES = frozenset({"period_start", "period_beginning", "period_start_date", "period_from"})
+PERIOD_MONTHS_LEAVES = frozenset({"months", "period_months", "months_covered"})
+
+#: The six rows the blend reads — the report that supplies them is the
+#: first in report-period order that carries at least one.
+BLEND_FIELDS = frozenset({SUBJECT_OCC, SUBJECT_ADR, SUBJECT_REVPAR, INDEX_MPI, INDEX_ARI, INDEX_RGI})
+
+_MONTHS: dict[str, int] = {m.lower(): i for i, m in enumerate(calendar.month_abbr) if m}
+_MONTHS.update({m.lower(): i for i, m in enumerate(calendar.month_name) if m})
+_MONTHS["sept"] = 9
+
+_YEAR = r"((?:19|20)\d{2})"
+_MON = r"(0[1-9]|1[0-2])"
+_DAY = r"(0[1-9]|[12]\d|3[01])"
+# Stated values: ISO / compact dates, ISO months, US dates, month names.
+_VALUE_ISO_DATE_RE = re.compile(rf"^\s*{_YEAR}[-/._]?{_MON}[-/._]?{_DAY}(?:[T\s].*)?$")
+_VALUE_ISO_MONTH_RE = re.compile(rf"^\s*{_YEAR}[-/._]?{_MON}(?:[-/._]?00)?\s*$")
+_VALUE_US_DATE_RE = re.compile(rf"^\s*(0?[1-9]|1[0-2])/(0?[1-9]|[12]\d|3[01])/{_YEAR}\s*$")
+_VALUE_US_MONTH_RE = re.compile(rf"^\s*(0?[1-9]|1[0-2])/{_YEAR}\s*$")
+_VALUE_MONTH_DAY_YEAR_RE = re.compile(
+    rf"^\s*([A-Za-z]{{3,9}})\.?\s+(\d{{1,2}})(?:st|nd|rd|th)?,?\s+{_YEAR}\s*$"
+)
+_VALUE_DAY_MONTH_YEAR_RE = re.compile(rf"^\s*(\d{{1,2}})\s+([A-Za-z]{{3,9}})\.?,?\s+{_YEAR}\s*$")
+_VALUE_MONTH_YEAR_RE = re.compile(rf"^\s*([A-Za-z]{{3,9}})\.?,?[\s\-_/]+{_YEAR}\s*$")
+_VALUE_YEAR_RE = re.compile(rf"^\s*{_YEAR}\s*$")
+# Filename tokens: ``20250713`` / ``20250500`` (STR's month-only day 00) /
+# ``202505`` / ``2025-05`` / ``Jun-2026`` / a bare year.
+_FILE_YMD_RE = re.compile(rf"(?<!\d){_YEAR}{_MON}(\d{{2}})(?!\d)")
+_FILE_YM_RE = re.compile(rf"(?<!\d){_YEAR}[-_.]?{_MON}(?!\d)")
+_FILE_MONTH_NAME_RE = re.compile(rf"(?<![A-Za-z])([A-Za-z]{{3,9}})\.?[\s\-_/]*{_YEAR}(?!\d)")
+_FILE_YEAR_RE = re.compile(rf"(?<!\d){_YEAR}(?!\d)")
+
+
+@dataclass(frozen=True)
+class StrReportOrder:
+    """One STR extraction's place in the report-period ordering."""
+
+    extraction_id: str | None
+    doc_name: str | None
+    doc_id: str | None
+    #: ISO period end — ``YYYY-MM-DD``, ``YYYY-MM`` or ``YYYY`` by how much
+    #: the source stated; None when nothing dated the report.
+    period_end: str | None
+    period_end_basis: PeriodEndBasis
+    #: The field path / document attribute / filename the period end was read from.
+    period_end_source: str | None = None
+    #: The extraction's ``created_at`` (the final tiebreak), when known.
+    created_at: str | None = None
+
+
+def _fmt_period(year: int, month: int | None = None, day: int | None = None) -> str | None:
+    if not 1900 <= year <= 2100:
+        return None
+    if month is None:
+        return f"{year:04d}"
+    if day is None:
+        return f"{year:04d}-{month:02d}"
+    try:
+        return date(year, month, day).isoformat()
+    except ValueError:
+        return None
+
+
+def _month_number(name: str) -> int | None:
+    return _MONTHS.get(name.strip().lower())
+
+
+def parse_period_end(value: Any) -> str | None:
+    """A stated period end → ISO ``YYYY-MM-DD`` / ``YYYY-MM`` / ``YYYY``.
+
+    Accepts dates (``2025-05-31``, ``20250531``, ``5/31/2025``, ``May 31,
+    2025``, ``31 May 2025``), months (``2025-05``, ``2025_05``, ``202505``,
+    ``05/2025``, ``May 2025``) and bare years; None otherwise. The result
+    keeps the precision the source stated — a year-only answer is kept
+    behind every month-precise one by :func:`resolve_report_period_end`.
+    """
+    if value is None or isinstance(value, bool):
+        return None
+    if isinstance(value, datetime):
+        return value.date().isoformat()
+    if isinstance(value, date):
+        return value.isoformat()
+    if isinstance(value, (int, float)):
+        year = int(value)
+        return _fmt_period(year) if float(value) == year else None
+    text = str(value).strip()
+    if not text:
+        return None
+    if m := _VALUE_ISO_DATE_RE.match(text):
+        return _fmt_period(int(m[1]), int(m[2]), int(m[3]))
+    if m := _VALUE_ISO_MONTH_RE.match(text):
+        return _fmt_period(int(m[1]), int(m[2]))
+    if m := _VALUE_US_DATE_RE.match(text):
+        return _fmt_period(int(m[3]), int(m[1]), int(m[2]))
+    if m := _VALUE_US_MONTH_RE.match(text):
+        return _fmt_period(int(m[2]), int(m[1]))
+    if m := _VALUE_MONTH_DAY_YEAR_RE.match(text):
+        month = _month_number(m[1])
+        return _fmt_period(int(m[3]), month, int(m[2])) if month else None
+    if m := _VALUE_DAY_MONTH_YEAR_RE.match(text):
+        month = _month_number(m[2])
+        return _fmt_period(int(m[3]), month, int(m[1])) if month else None
+    if m := _VALUE_MONTH_YEAR_RE.match(text):
+        month = _month_number(m[1])
+        return _fmt_period(int(m[2]), month) if month else None
+    if m := _VALUE_YEAR_RE.match(text):
+        return _fmt_period(int(m[1]))
+    return None
+
+
+def period_end_from_filename(filename: str | None) -> str | None:
+    """The report period a filename states: ``ANG-20250500-USD-E.xlsx`` →
+    ``2025-05`` (STR's month-only ``00`` day), ``56387-20250713-USD-E.xlsx``
+    → ``2025-07-13``, ``STR Trend Jun-2026.xlsx`` → ``2026-06``, ``… 2025
+    …`` → ``2025``; None when the name carries no date token."""
+    if not filename:
+        return None
+    name = filename.rsplit("/", 1)[-1]
+    for m in _FILE_YMD_RE.finditer(name):
+        year, month, day = int(m[1]), int(m[2]), int(m[3])
+        if day == 0:
+            return _fmt_period(year, month)
+        parsed = _fmt_period(year, month, day)
+        if parsed:
+            return parsed
+    if m := _FILE_YM_RE.search(name):
+        return _fmt_period(int(m[1]), int(m[2]))
+    for m in _FILE_MONTH_NAME_RE.finditer(name):
+        month = _month_number(m[1])
+        if month:
+            return _fmt_period(int(m[2]), month)
+    if m := _FILE_YEAR_RE.search(name):
+        return _fmt_period(int(m[1]))
+    return None
+
+
+def _period_sort_key(period_end: str | None) -> tuple[int, int, int, int]:
+    """Most recent first; undated last; a known month beats an unknown one."""
+    if not period_end:
+        return (1, 0, 0, 0)
+    parts = period_end.split("-")
+    year = int(parts[0])
+    month = int(parts[1]) if len(parts) > 1 else 0
+    day = int(parts[2]) if len(parts) > 2 else 0
+    return (0, -year, -month, -day)
+
+
+def _add_months(period: str, months: int) -> str | None:
+    """``YYYY-MM`` plus ``months - 1`` → the last month covered."""
+    year, month = int(period[:4]), int(period[5:7])
+    idx = year * 12 + (month - 1) + (months - 1)
+    return _fmt_period(idx // 12, idx % 12 + 1)
+
+
+def _outside_roster_and_series(row: FieldRow) -> bool:
+    return not row.lname.startswith((COMPSET_PREFIX, SUBJECT_MONTHLY_PREFIX))
+
+
+def _leaf(row: FieldRow) -> str:
+    return row.lname.rsplit(".", 1)[-1]
+
+
+def resolve_report_period_end(
+    rows: Sequence[FieldRow],
+) -> tuple[str | None, PeriodEndBasis, str | None]:
+    """``(period_end, basis, source)`` of ONE STR extraction's rows.
+
+    The precedence is the module docstring's: an extracted period-end field,
+    the last month of the subject monthly series, ``period_start`` +
+    ``months``, the document's ``report_as_of``, a filename token — the
+    first MONTH-precise answer wins; a year-only answer from any of them
+    (incl. ``str_trend.report_year``) is kept only when nothing finer
+    exists; ``(None, "created_at", None)`` when nothing dated the report.
+    """
+    year_only: list[tuple[str, PeriodEndBasis, str]] = []
+
+    def month_or_finer(parsed: str | None, basis: PeriodEndBasis, source: str) -> str | None:
+        if parsed is None:
+            return None
+        if len(parsed) == 4:
+            year_only.append((parsed, basis, source))
+            return None
+        return parsed
+
+    # 1. An extracted period-end field.
+    for r in rows:
+        if _outside_roster_and_series(r) and _leaf(r) in PERIOD_END_LEAVES:
+            parsed = month_or_finer(parse_period_end(r.value), "extracted_period_end", r.field_name)
+            if parsed:
+                return parsed, "extracted_period_end", r.field_name
+    # 2. The subject monthly series.
+    periods: set[str] = set()
+    for r in rows:
+        if r.lname.startswith(SUBJECT_MONTHLY_PREFIX):
+            rest = r.lname[len(SUBJECT_MONTHLY_PREFIX):]
+            period = _normalize_period(rest.split(".", 1)[0]) if rest else None
+            if period:
+                periods.add(period)
+    if periods:
+        return max(periods), "subject_monthly_series", SUBJECT_MONTHLY_PREFIX + "<YYYY_MM>"
+    # 3. period_start + months.
+    start_row = next(
+        (r for r in rows if _outside_roster_and_series(r) and _leaf(r) in PERIOD_START_LEAVES), None
+    )
+    months_row = next(
+        (r for r in rows if _outside_roster_and_series(r) and _leaf(r) in PERIOD_MONTHS_LEAVES), None
+    )
+    if start_row is not None and months_row is not None:
+        start = parse_period_end(start_row.value)
+        months = coerce_int(months_row.value)
+        if start and len(start) >= 7 and months and months > 0:
+            end = _add_months(start[:7], months)
+            if end:
+                source = f"{start_row.field_name} + {months_row.field_name}"
+                return end, "period_start_plus_months", source
+    # 4. The document's report_as_of (a year-precision one only orders years).
+    as_of_row = next((r for r in rows if r.report_as_of), None)
+    if as_of_row is not None:
+        parsed = parse_period_end(as_of_row.report_as_of)
+        if parsed and (as_of_row.report_as_of_precision or "") == "year":
+            parsed = parsed[:4]
+        parsed = month_or_finer(parsed, "document_report_as_of", "documents.report_as_of")
+        if parsed:
+            return parsed, "document_report_as_of", "documents.report_as_of"
+    # 5. A date token in the filename.
+    doc_name = next((r.doc_name for r in rows if r.doc_name), None)
+    if doc_name:
+        parsed = month_or_finer(period_end_from_filename(doc_name), "filename_token", doc_name)
+        if parsed:
+            return parsed, "filename_token", doc_name
+    # 6. Year-only answers, in the precedence order they were found.
+    report_year_row = next((r for r in rows if r.lname == REPORT_YEAR), None)
+    if report_year_row is not None:
+        year = coerce_int(report_year_row.value)
+        if year and (parsed := _fmt_period(year)):
+            year_only.append((parsed, "report_year", report_year_row.field_name))
+    if year_only:
+        return year_only[0]
+    return None, "created_at", None
+
+
+def order_str_extractions(rows: Sequence[FieldRow]) -> list[StrReportOrder]:
+    """Every extraction in ``rows`` ordered most-recent-report-period first.
+
+    Ties (same period end, or no period end at all) keep the rows' arrival
+    order — the DB read is ``created_at DESC``, so that is the newest
+    extraction first: the only place upload time still decides.
+    """
+    by_ext: dict[str | None, list[FieldRow]] = {}
+    for r in rows:
+        by_ext.setdefault(r.extraction_id, []).append(r)
+    orders: list[tuple[int, StrReportOrder]] = []
+    for arrival, (ext, ext_rows) in enumerate(by_ext.items()):
+        period_end, basis, source = resolve_report_period_end(ext_rows)
+        first = ext_rows[0]
+        orders.append(
+            (
+                arrival,
+                StrReportOrder(
+                    extraction_id=ext,
+                    doc_name=first.doc_name,
+                    doc_id=first.doc_id,
+                    period_end=period_end,
+                    period_end_basis=basis,
+                    period_end_source=source,
+                    created_at=first.created_at,
+                ),
+            )
+        )
+    orders.sort(key=lambda t: (_period_sort_key(t[1].period_end), t[0]))
+    return [o for _, o in orders]
+
+
 # ───────────────────────────── STR inputs ─────────────────────────────
 
 
@@ -484,11 +817,16 @@ def derive_comp_set_union(
 class StrMarketInputs:
     """What the Market overview reads off the deal's STR extractions.
 
-    ``flat`` is first-hit-wins over newest-first rows (the same precedence
-    the ``/market-data`` block uses, so the blend here is the blend the
-    tiles show). ``rosters`` holds EVERY extraction's
-    ``ttm_performance.compset.<n>.*`` rows, newest first — the comp set is
-    their union; ``roster`` (+ ``roster_doc_*``) is the newest one.
+    ``extractions`` is every STR extraction on the deal ordered by REPORT
+    PERIOD (most recent first; see the module docstring), each with the
+    period end it resolved to. ``flat`` is first-hit-wins over the rows in
+    that order (rollups read from it); ``fields_by_extraction`` keeps each
+    report's rows apart so the blend reads ONE report. ``rosters`` holds
+    EVERY extraction's ``ttm_performance.compset.<n>.*`` rows in the same
+    order — the comp set is their union; ``roster`` (+ ``roster_doc_*``) is
+    the first one. ``blend_extraction`` is the first report in the order
+    carrying a blend row (subject TTM or an index); ``monthly_periods`` are
+    the ``YYYY-MM`` periods of ITS subject monthly series.
     """
 
     flat: dict[str, FieldRef] = field(default_factory=dict)
@@ -497,9 +835,10 @@ class StrMarketInputs:
     roster_doc_id: str | None = None
     roster_page: int | None = None
     rosters: list[RosterSnapshot] = field(default_factory=list)
-    #: ``YYYY-MM`` periods of the subject monthly series (from the extraction
-    #: that supplied the subject TTM, else the newest with a monthly series).
     monthly_periods: set[str] = field(default_factory=set)
+    extractions: list[StrReportOrder] = field(default_factory=list)
+    fields_by_extraction: dict[str | None, dict[str, FieldRef]] = field(default_factory=dict)
+    blend_extraction: StrReportOrder | None = None
 
 
 def _normalize_period(raw: str) -> str | None:
@@ -519,12 +858,17 @@ def _normalize_period(raw: str) -> str | None:
 
 def build_str_inputs(rows: list[FieldRow]) -> StrMarketInputs:
     out = StrMarketInputs()
+    out.extractions = order_str_extractions(rows)
+    by_ext: dict[str | None, list[FieldRow]] = {}
+    for r in rows:
+        by_ext.setdefault(r.extraction_id, []).append(r)
+    ordered_rows = [r for o in out.extractions for r in by_ext.get(o.extraction_id, [])]
+
     roster_rows: dict[str | None, dict[int, dict[str, Any]]] = {}
     roster_meta: dict[str | None, tuple[str | None, str | None, int | None]] = {}
     roster_order: list[str | None] = []
     monthly_by_ext: dict[str | None, set[str]] = {}
-    subject_ext: str | None = None
-    for r in rows:
+    for r in ordered_rows:
         lname = r.lname
         if lname.startswith(COMPSET_PREFIX):
             rest = lname[len(COMPSET_PREFIX):]
@@ -547,26 +891,37 @@ def build_str_inputs(rows: list[FieldRow]) -> StrMarketInputs:
             continue
         if lname not in out.flat:
             out.flat[lname] = FieldRef.of(r)
-            if lname == SUBJECT_OCC:
-                subject_ext = r.extraction_id
-    if subject_ext in monthly_by_ext:
-        out.monthly_periods = monthly_by_ext[subject_ext]
-    elif monthly_by_ext:
-        # Newest extraction with a monthly series (rows are newest-first).
-        for r in rows:
-            if r.extraction_id in monthly_by_ext:
-                out.monthly_periods = monthly_by_ext[r.extraction_id]
+        per_ext = out.fields_by_extraction.setdefault(r.extraction_id, {})
+        if lname not in per_ext:
+            per_ext[lname] = FieldRef.of(r)
+    # The blend reads ONE report: the first in report-period order carrying
+    # a subject TTM figure or a penetration index.
+    out.blend_extraction = next(
+        (
+            o for o in out.extractions
+            if any(name in out.fields_by_extraction.get(o.extraction_id, {}) for name in BLEND_FIELDS)
+        ),
+        None,
+    )
+    if out.blend_extraction is not None:
+        out.monthly_periods = set(monthly_by_ext.get(out.blend_extraction.extraction_id, set()))
+    else:
+        # No blend row anywhere: keep the first monthly series in report-period
+        # order for callers that only want the period.
+        for o in out.extractions:
+            if o.extraction_id in monthly_by_ext:
+                out.monthly_periods = set(monthly_by_ext[o.extraction_id])
                 break
-    # Rosters, newest first (rows arrive newest-first, so first seen = newest).
+    # Rosters, most recent report period first.
     for ext in roster_order:
         doc_name, doc_id, page = roster_meta[ext]
         out.rosters.append(
             RosterSnapshot(rows=roster_rows[ext], doc_name=doc_name, doc_id=doc_id, page=page, extraction_id=ext)
         )
     if out.rosters:
-        newest = out.rosters[0]
-        out.roster = dict(newest.rows)
-        out.roster_doc_name, out.roster_doc_id, out.roster_page = newest.doc_name, newest.doc_id, newest.page
+        first = out.rosters[0]
+        out.roster = dict(first.rows)
+        out.roster_doc_name, out.roster_doc_id, out.roster_page = first.doc_name, first.doc_id, first.page
     return out
 
 
@@ -582,11 +937,12 @@ def derive_comp_set_from_inputs(inputs: StrMarketInputs) -> CompSetDerivation:
             page=rollup_ref.page if rollup_ref else None,
         )
     ]
-    return derive_comp_set_union(
+    derived = derive_comp_set_union(
         snapshots,
         reported_comp_set_size=size.value if size else None,
         reported_total_keys=keys.value if keys else None,
     )
+    return replace(derived, ordering=list(inputs.extractions))
 
 
 # ───────────────────────────── TTM blend (E-007) ─────────────────────────────
@@ -609,12 +965,22 @@ class TtmBlend:
     period_end: str | None
     months: int | None
     period_basis: Literal["subject_monthly_series", "report_year", "none"]
+    #: ``str_trend.report_year`` of the report that supplied the inputs.
     report_year: int | None
     #: Every extraction row the blend read, in the order it was used.
     inputs: list[FieldRef]
-    #: Distinct source documents, in input order.
+    #: The document that supplied the inputs (one report; see module docstring).
     documents: list[str]
     method: str
+    #: Which STR report supplied the subject TTM and the indices …
+    source_doc_name: str | None = None
+    source_doc_id: str | None = None
+    source_extraction_id: str | None = None
+    #: … and why it ranked first: the period end it resolved to and how.
+    period_end_used: str | None = None
+    ordering_basis: PeriodEndBasis | None = None
+    #: Every STR extraction on the deal in report-period order.
+    ordering: list[StrReportOrder] = field(default_factory=list)
 
 
 def _ratio(idx: float | None) -> float | None:
@@ -634,14 +1000,23 @@ def _occ_points(occ: float | None) -> float | None:
 def derive_ttm_blend(inputs: StrMarketInputs) -> TtmBlend | None:
     """The blend the Market tiles show, with the rows and period behind it.
 
-    Returns None when the STR extraction carries neither a subject TTM nor
-    an index (nothing to define). A blend metric is None when its subject
-    figure or its index is missing — never substituted.
+    Every input comes from ONE STR report — ``inputs.blend_extraction``, the
+    first in report-period order carrying a subject TTM figure or an index —
+    so a subject figure is never divided by another report's index, and
+    ``report_year`` / ``documents`` describe that report. Returns None when
+    no STR extraction carries a subject TTM or an index (nothing to
+    define). A blend metric is None when its subject figure or its index is
+    missing from that report — never substituted from an older one.
     """
     refs: list[FieldRef] = []
+    source = inputs.blend_extraction
+    fields = (
+        inputs.flat if source is None
+        else inputs.fields_by_extraction.get(source.extraction_id, inputs.flat)
+    )
 
     def take(name: str) -> float | None:
-        ref = inputs.flat.get(name)
+        ref = fields.get(name)
         if ref is None:
             return None
         v = coerce_float(ref.value)
@@ -669,7 +1044,7 @@ def derive_ttm_blend(inputs: StrMarketInputs) -> TtmBlend | None:
         revpar = occ / 100.0 * adr
 
     periods = sorted(inputs.monthly_periods)
-    report_year_ref = inputs.flat.get(REPORT_YEAR)
+    report_year_ref = fields.get(REPORT_YEAR)
     report_year = coerce_int(report_year_ref.value) if report_year_ref else None
     if periods:
         period_basis: Literal["subject_monthly_series", "report_year", "none"] = "subject_monthly_series"
@@ -684,7 +1059,7 @@ def derive_ttm_blend(inputs: StrMarketInputs) -> TtmBlend | None:
         period_start = period_end = None
         months = None
 
-    documents: list[str] = []
+    documents: list[str] = [source.doc_name] if source is not None and source.doc_name else []
     for ref in refs:
         if ref.doc_name and ref.doc_name not in documents:
             documents.append(ref.doc_name)
@@ -707,17 +1082,27 @@ def derive_ttm_blend(inputs: StrMarketInputs) -> TtmBlend | None:
         inputs=refs,
         documents=documents,
         method=TTM_BLEND_METHOD,
+        source_doc_name=source.doc_name if source else refs[0].doc_name,
+        source_doc_id=source.doc_id if source else refs[0].doc_id,
+        source_extraction_id=source.extraction_id if source else None,
+        period_end_used=source.period_end if source else None,
+        ordering_basis=source.period_end_basis if source else None,
+        ordering=list(inputs.extractions),
     )
 
 
 __all__ = [
+    "BLEND_FIELDS",
     "COMPSET_PREFIX",
+    "PERIOD_END_LEAVES",
     "STR_CLOSED_LABEL_RE",
     "TTM_BLEND_METHOD",
     "CompSetDerivation",
     "CompSetHotel",
+    "PeriodEndBasis",
     "RosterSnapshot",
     "StrMarketInputs",
+    "StrReportOrder",
     "TtmBlend",
     "build_str_inputs",
     "classify_hotel_status",
@@ -728,4 +1113,8 @@ __all__ = [
     "display_name",
     "names_are_aliases",
     "normalized_hotel_name",
+    "order_str_extractions",
+    "parse_period_end",
+    "period_end_from_filename",
+    "resolve_report_period_end",
 ]

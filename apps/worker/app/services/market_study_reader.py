@@ -111,6 +111,8 @@ FORECAST_TOKENS = frozenset(
     {"forecast", "forecasted", "forecasts", "projected", "projection", "projections", "proj", "outlook", "f"}
 )
 TTM_TOKENS = frozenset({"ttm", "t12", "trailing", "trailing12", "12mo", "12m", "l12m", "last12", "current"})
+# Year-to-date path tokens (``2025_ytd``) — a partial year, labelled "2025 YTD".
+YTD_TOKENS = frozenset({"ytd", "yeartodate"})
 PIPELINE_TOKENS = frozenset(
     {
         "under", "construction", "uc", "planning", "planned", "proposed", "pipeline",
@@ -315,13 +317,25 @@ def _rank(is_ttm: bool, year: int | None, quarter: int | None, is_forecast: bool
     return (2, 0, 0)
 
 
-def _label(is_ttm: bool, year: int | None, quarter: int | None, is_forecast: bool) -> str:
+def _label(
+    is_ttm: bool, year: int | None, quarter: int | None, is_forecast: bool, is_ytd: bool = False
+) -> str:
+    """``TTM`` / ``2025 Q1`` / ``2025 YTD`` / ``2025`` (+ `` forecast``) / ``as reported``.
+
+    A year-to-date row (``cbre_horizons.overall_supply.2025_ytd.demand_pct_change``)
+    is a partial year and must never be labelled as the full year.
+    """
     if is_ttm:
         return "TTM"
+    suffix = " forecast" if is_forecast else ""
     if year is not None and quarter is not None:
-        return f"{year} Q{quarter}{' forecast' if is_forecast else ''}"
+        return f"{year} Q{quarter}{suffix}"
+    if year is not None and is_ytd:
+        return f"{year} YTD{suffix}"
     if year is not None:
-        return f"{year} forecast" if is_forecast else str(year)
+        return f"{year}{suffix}"
+    if is_ytd:
+        return f"YTD{suffix}"
     return "forecast" if is_forecast else "as reported"
 
 
@@ -374,13 +388,14 @@ def _growth_candidates(
         if raw is None:
             continue
         is_ttm = bool(tokset & TTM_TOKENS)
+        is_ytd = bool(tokset & YTD_TOKENS)
         year = _year_of(toks)
         quarter = _quarter_of(toks)
         fc = _is_forecast(r, toks, tags, as_of_year)
         cand = _GrowthCandidate(
             rank=_rank(is_ttm, year, quarter, fc), order=order,
             value=points if points is not None else raw,
-            label=_label(is_ttm, year, quarter, fc), ref=FieldRef.of(r), is_forecast=fc,
+            label=_label(is_ttm, year, quarter, fc, is_ytd), ref=FieldRef.of(r), is_forecast=fc,
         )
         (rates if points is not None else deltas).append(cand)
     key = lambda c: (c.rank, c.order)  # noqa: E731

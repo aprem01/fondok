@@ -26,6 +26,10 @@ from app.services.market_comp_set import (
     derive_comp_set_from_inputs,
     derive_ttm_blend,
     names_are_aliases,
+    order_str_extractions,
+    parse_period_end,
+    period_end_from_filename,
+    resolve_report_period_end,
 )
 from app.services.market_fields import FieldRow, parse_extraction_records
 
@@ -173,11 +177,12 @@ def test_rosters_are_kept_per_extraction_and_unioned_by_hotel_not_by_index() -> 
 
 # ─────────────────────────── union across STR reports ───────────────────────────
 #
-# The live deal: the NEWEST STR extraction is the May 2025 trend report
-# ("ANG-20250500-USD-E.xlsx": "34401 | Blue Moon Hotel | … | 75") and the
-# older one is the July 2025 daily report ("56387-20250713-USD-E.xlsx":
-# "34401 | Closed - Blue Moon Hotel | … | 0"). Reading the newest roster
-# alone can never see the closure.
+# The live deal: the May 2025 trend report ("ANG-20250500-USD-E.xlsx":
+# "34401 | Blue Moon Hotel | … | 75") and the July 2025 daily report
+# ("56387-20250713-USD-E.xlsx": "34401 | Closed - Blue Moon Hotel | … | 0").
+# Reading one roster alone can never see the closure. Reports are ordered by
+# REPORT PERIOD (here from the filenames: July 2025-07-13 ahead of May
+# 2025-05), never by which file was extracted last.
 
 MAY_DOC = "ANG-20250500-USD-E.xlsx"
 JULY_DOC = "56387-20250713-USD-E.xlsx"
@@ -210,22 +215,29 @@ JULY_ROSTER = [
 ]
 
 
-def test_union_marks_blue_moon_closed_from_the_older_july_report() -> None:
+def test_union_marks_blue_moon_closed_from_the_july_report() -> None:
     rows = [
-        *_roster_rows(MAY_DOC, "e-may", MAY_ROSTER),  # newest first
+        *_roster_rows(MAY_DOC, "e-may", MAY_ROSTER),  # extracted last (arrives first) …
         *[_row("comp_set.comp_set_size", 5, ext="e-may", doc=MAY_DOC)],
         *[_row("comp_set.total_keys", 419, ext="e-may", doc=MAY_DOC)],
-        *_roster_rows(JULY_DOC, "e-july", JULY_ROSTER),
+        *_roster_rows(JULY_DOC, "e-july", JULY_ROSTER),  # … but July is the later REPORT
     ]
     inputs = build_str_inputs(rows)
-    assert [s.doc_name for s in inputs.rosters] == [MAY_DOC, JULY_DOC]
+    # Report-period order from the filenames: 56387-20250713 → 2025-07-13
+    # ahead of ANG-20250500 → 2025-05, whatever the extraction order was.
+    assert [s.doc_name for s in inputs.rosters] == [JULY_DOC, MAY_DOC]
+    assert [(o.doc_name, o.period_end, o.period_end_basis) for o in inputs.extractions] == [
+        (JULY_DOC, "2025-07-13", "filename_token"),
+        (MAY_DOC, "2025-05", "filename_token"),
+    ]
     d = derive_comp_set_from_inputs(inputs)
     assert d.active_count == 4
     assert d.active_keys == 344
     assert d.closed_count == 1 and d.closed_names == ["Blue Moon Hotel"]
     assert d.status_available is True
-    assert d.documents == [MAY_DOC, JULY_DOC]
-    assert d.source_doc_name == MAY_DOC  # newest roster
+    assert d.documents == [JULY_DOC, MAY_DOC]
+    assert d.source_doc_name == JULY_DOC  # the most recent report's roster
+    assert d.ordering == inputs.extractions
     assert d.reported_comp_set_size == 5 and d.reported_total_keys == 419
     assert len(d.hotels) == 5  # one hotel per STR id, not 10
     bm = next(h for h in d.hotels if h.name == "Blue Moon Hotel")
@@ -234,10 +246,12 @@ def test_union_marks_blue_moon_closed_from_the_older_july_report() -> None:
     assert bm.status_source == "extracted_status_field"  # the July extraction's status field
     assert bm.status_doc_name == JULY_DOC
     assert bm.name_as_reported == "Closed - Blue Moon Hotel"
-    # Keys come from the newest report listing a positive count (May, 75) —
-    # kept for display, excluded from the active totals.
+    # Keys come from the most recent report listing a POSITIVE count — July
+    # lists 0, so May's 75 — kept for display, excluded from the active totals.
     assert bm.keys == 75 and bm.keys_doc_name == MAY_DOC
-    assert bm.reports == (MAY_DOC, JULY_DOC)
+    assert bm.reports == (JULY_DOC, MAY_DOC)
+    betsy = next(h for h in d.hotels if h.name == "The Betsy South Beach")
+    assert betsy.keys == 129 and betsy.keys_doc_name == JULY_DOC
     assert JULY_DOC in d.note and "Blue Moon Hotel" in d.note
     assert "unioned across 2 STR reports" in d.note
 
@@ -500,11 +514,226 @@ def test_ttm_blend_never_substitutes_a_missing_index() -> None:
     assert derive_ttm_blend(build_str_inputs([_row("comp_set.total_keys", 344)])) is None
 
 
-def test_ttm_blend_newest_extraction_wins_per_field() -> None:
+def test_ttm_blend_reads_one_report_and_never_pairs_a_subject_with_another_reports_index() -> None:
+    """Two undated reports fall back to arrival order (newest extraction
+    first). The blend reads THAT report only: its subject occupancy is shown,
+    and with no MPI in the same report the comp-set occupancy is None — the
+    older report's index is never borrowed."""
     newest = _row("ttm_performance.subject.occupancy_pct", 0.70, ext="e2", doc="new.xlsx")
     older = _row("ttm_performance.subject.occupancy_pct", 0.60, ext="e1", doc="old.xlsx")
     index = _row("ttm_performance.indices.mpi_occupancy_index", 1.0, ext="e1", doc="old.xlsx")
     b = derive_ttm_blend(build_str_inputs([newest, older, index]))
     assert b is not None
-    assert b.occupancy_pct == 70.0
-    assert b.documents == ["new.xlsx", "old.xlsx"]
+    assert b.subject_occupancy_pct == 70.0
+    assert b.occupancy_pct is None
+    assert b.documents == ["new.xlsx"]
+    assert b.source_doc_name == "new.xlsx" and b.source_extraction_id == "e2"
+    assert b.period_end_used is None and b.ordering_basis == "created_at"
+    assert [(o.doc_name, o.period_end_basis) for o in b.ordering] == [
+        ("new.xlsx", "created_at"), ("old.xlsx", "created_at"),
+    ]
+
+
+# ────────────── report-period ordering (live 2026-10-07: Dec 2023 won) ──────────────
+#
+# Three STR files were re-extracted within three seconds — May 2025 trend,
+# Dec 2023 trend, July 2025 daily — and the blend switched to the Dec 2023
+# report because "newest" meant ``extraction_results.created_at``. The blend
+# must follow the report with the most recent PERIOD (May 2025, series
+# through 2025-05); the union takes keys from July / May and the closure
+# from July.
+
+
+def _live_blend_rows(
+    doc: str, ext: str, *, occ: float, adr: float, revpar: float, mpi: float, ari: float, rgi: float,
+    first_month: tuple[int, int], months: int, report_year: int | None,
+) -> list[FieldRow]:
+    rows = [
+        _row("ttm_performance.subject.occupancy_pct", occ, ext=ext, doc=doc, page=2),
+        _row("ttm_performance.subject.adr_usd", adr, ext=ext, doc=doc, page=2),
+        _row("ttm_performance.subject.revpar_usd", revpar, ext=ext, doc=doc, page=2),
+        _row("ttm_performance.indices.mpi_occupancy_index", mpi, ext=ext, doc=doc, page=2),
+        _row("ttm_performance.indices.ari_adr_index", ari, ext=ext, doc=doc, page=2),
+        _row("ttm_performance.indices.rgi_revpar_index", rgi, ext=ext, doc=doc, page=2),
+    ]
+    if report_year is not None:
+        rows.append(_row("str_trend.report_year", report_year, ext=ext, doc=doc, page=1))
+    year, month = first_month
+    for _ in range(months):
+        rows.append(_row(f"ttm_performance.subject.monthly.{year}_{month:02d}.occupancy_pct", 0.7, ext=ext, doc=doc))
+        month += 1
+        if month > 12:
+            year, month = year + 1, 1
+    return rows
+
+
+def _live_three_extractions_dec_newest() -> list[FieldRow]:
+    """Rows as the DB hands them over — newest ``created_at`` first — with the
+    Dec 2023 trend re-extracted last (the wrong one to follow)."""
+    return [
+        # 1. Dec 2023 trend: the live blend's wrong source (82.39% / $247.08,
+        #    MPI 1.141 …, 18 months 2022-07 → 2023-12).
+        *_live_blend_rows(
+            DEC_2023_DOC, "e-dec", occ=82.391, adr=247.078, revpar=203.57, mpi=1.141, ari=0.836, rgi=0.954,
+            first_month=(2022, 7), months=18, report_year=2023,
+        ),
+        *_live_rows(DEC_2023_DOC, "e-dec", LIVE_DEC_2023_ROSTER),
+        # 2. July 2025 daily STAR: roster + rollups only, no TTM block.
+        _row("str_trend.report_year", 2025, ext="e-july", doc=JULY_DOC, page=1),
+        _row("comp_set.comp_set_size", 5, ext="e-july", doc=JULY_DOC, page=2),
+        _row("comp_set.total_keys", 344, ext="e-july", doc=JULY_DOC, page=2),
+        *_live_rows(JULY_DOC, "e-july", LIVE_JULY_ROSTER),
+        # 3. May 2025 trend: the report that must feed the blend.
+        *_live_blend_rows(
+            MAY_DOC, "e-may", occ=71.4, adr=278.0, revpar=198.5, mpi=1.032, ari=0.942, rgi=0.972,
+            first_month=(2024, 6), months=12, report_year=2025,
+        ),
+        _row("comp_set.comp_set_size", 5, ext="e-may", doc=MAY_DOC, page=22),
+        _row("comp_set.total_keys", 419, ext="e-may", doc=MAY_DOC, page=22),
+        *_live_rows(MAY_DOC, "e-may", LIVE_MAY_ROSTER),
+    ]
+
+
+def test_blend_follows_the_most_recent_report_period_not_the_newest_extraction() -> None:
+    inputs = build_str_inputs(_live_three_extractions_dec_newest())
+    # The ordering, and why: July from its filename (no series in a daily
+    # report), May and Dec from the last month of their subject series.
+    assert [(o.doc_name, o.period_end, o.period_end_basis) for o in inputs.extractions] == [
+        (JULY_DOC, "2025-07-13", "filename_token"),
+        (MAY_DOC, "2025-05", "subject_monthly_series"),
+        (DEC_2023_DOC, "2023-12", "subject_monthly_series"),
+    ]
+    b = derive_ttm_blend(inputs)
+    assert b is not None
+    assert b.source_doc_name == MAY_DOC and b.source_extraction_id == "e-may"
+    assert b.period_end_used == "2025-05" and b.ordering_basis == "subject_monthly_series"
+    assert (b.period_start, b.period_end, b.months) == ("2024-06", "2025-05", 12)
+    assert b.period_basis == "subject_monthly_series"
+    assert b.subject_occupancy_pct == 71.4 and b.subject_adr_usd == 278.0
+    assert (b.mpi, b.ari, b.rgi) == (1.032, 0.942, 0.972)
+    assert abs(b.occupancy_pct - 71.4 / 1.032) < 1e-3
+    assert abs(b.adr_usd - 278.0 / 0.942) < 1e-3
+    # report_year and documents describe the report that supplied the inputs.
+    assert b.report_year == 2025
+    assert b.documents == [MAY_DOC]
+    assert all(r.doc_name == MAY_DOC for r in b.inputs)
+    assert b.ordering == inputs.extractions
+    # The union: Blue Moon's 75 keys from May (July lists 0), the Betsy's 129
+    # from July, the closure from July; 4 active / 344 keys.
+    d = derive_comp_set_from_inputs(inputs)
+    assert d.active_count == 4 and d.active_keys == 344
+    assert d.documents == [JULY_DOC, MAY_DOC, DEC_2023_DOC]
+    assert d.source_doc_name == JULY_DOC
+    bm = next(h for h in d.hotels if h.name == "Blue Moon Hotel")
+    assert bm.status == "closed" and bm.status_doc_name == JULY_DOC
+    assert bm.keys == 75 and bm.keys_doc_name == MAY_DOC
+    betsy = next(h for h in d.hotels if h.name == "The Betsy South Beach")
+    assert betsy.keys == 129 and betsy.keys_doc_name == JULY_DOC
+    assert betsy.merged_names == ("The Betsy Hotel",)
+    assert d.ordering == inputs.extractions
+
+
+def test_blend_source_is_the_same_whatever_the_extraction_order() -> None:
+    rows = _live_three_extractions_dec_newest()
+    by_ext: dict[str | None, list[FieldRow]] = {}
+    for r in rows:
+        by_ext.setdefault(r.extraction_id, []).append(r)
+    for order in (["e-may", "e-dec", "e-july"], ["e-july", "e-dec", "e-may"], ["e-dec", "e-may", "e-july"]):
+        b = derive_ttm_blend(build_str_inputs([r for ext in order for r in by_ext[ext]]))
+        assert b is not None and b.source_doc_name == MAY_DOC and b.period_end_used == "2025-05", order
+
+
+def test_period_end_from_filename_tokens() -> None:
+    assert period_end_from_filename("56387-20250713-USD-E.xlsx") == "2025-07-13"
+    assert period_end_from_filename("ANG-20250500-USD-E.xlsx") == "2025-05"  # STR's month-only "00" day
+    assert period_end_from_filename("ANG-20231200-USD-E.xlsx") == "2023-12"
+    assert period_end_from_filename("STR Trend Jun-2026.xlsx") == "2026-06"
+    assert period_end_from_filename("Anglers STR 2025-05.xlsx") == "2025-05"
+    assert period_end_from_filename("Anglers STR 202505.xlsx") == "2025-05"
+    assert period_end_from_filename("reports/Anglers STR Trend 2025.xlsx") == "2025"  # year only
+    assert period_end_from_filename("old.xlsx") is None
+    assert period_end_from_filename(None) is None
+
+
+def test_filename_only_fallback_dates_a_daily_report_to_the_day() -> None:
+    """A daily STAR (no monthly series, no period field, no report_as_of)
+    is dated by its filename alone: ``56387-20250713`` → 2025-07-13."""
+    rows = _live_rows(JULY_DOC, "e-july", LIVE_JULY_ROSTER)
+    assert resolve_report_period_end(rows) == ("2025-07-13", "filename_token", JULY_DOC)
+    may = _live_rows(MAY_DOC, "e-may", LIVE_MAY_ROSTER)
+    assert resolve_report_period_end(may) == ("2025-05", "filename_token", MAY_DOC)
+    assert [o.doc_name for o in order_str_extractions([*may, *rows])] == [JULY_DOC, MAY_DOC]
+
+
+def test_parse_period_end_accepts_the_shapes_str_reports_state() -> None:
+    assert parse_period_end("2025-05-31") == "2025-05-31"
+    assert parse_period_end("20250531") == "2025-05-31"
+    assert parse_period_end("2025-05") == "2025-05"
+    assert parse_period_end("2025_05") == "2025-05"
+    assert parse_period_end("202505") == "2025-05"
+    assert parse_period_end("05/2025") == "2025-05"
+    assert parse_period_end("5/31/2025") == "2025-05-31"
+    assert parse_period_end("May 2025") == "2025-05"
+    assert parse_period_end("December, 2023") == "2023-12"
+    assert parse_period_end("July 13, 2025") == "2025-07-13"
+    assert parse_period_end("13 July 2025") == "2025-07-13"
+    assert parse_period_end(2025) == "2025"
+    assert parse_period_end("2025") == "2025"
+    assert parse_period_end("2025-13") is None
+    assert parse_period_end("n/a") is None and parse_period_end(None) is None and parse_period_end(True) is None
+
+
+def _dated(name: str, value: Any, *, as_of: str | None = None, precision: str | None = None,
+           doc: str = "undated.xlsx") -> FieldRow:
+    return FieldRow(
+        field_name=name, value=value, unit=None, page=1, doc_name=doc, doc_id="doc-x",
+        extraction_id="e-x", doc_type="STR_TREND", report_as_of=as_of, report_as_of_precision=precision,
+    )
+
+
+def test_resolve_report_period_end_precedence() -> None:
+    series = [_dated(f"ttm_performance.subject.monthly.2025_{m:02d}.occupancy_pct", 0.7) for m in (3, 4, 5)]
+    # 1. An extracted period-end field beats the series …
+    rows = [_dated("ttm_performance.period_end", "2025-06-30"), *series]
+    assert resolve_report_period_end(rows) == ("2025-06-30", "extracted_period_end", "ttm_performance.period_end")
+    rows = [_dated("str_trend.report_date", "June 2025"), *series]
+    assert resolve_report_period_end(rows)[:2] == ("2025-06", "extracted_period_end")
+    # … unless it only states a year — then the series' month wins.
+    rows = [_dated("ttm_performance.period_ending", "2025"), *series]
+    assert resolve_report_period_end(rows)[:2] == ("2025-05", "subject_monthly_series")
+    # 2. The series beats report_as_of and the filename.
+    rows = [_dated("comp_set.total_keys", 344, as_of="2025-06-30", precision="day", doc="ANG-20250700.xlsx"), *series]
+    assert resolve_report_period_end(rows)[:2] == ("2025-05", "subject_monthly_series")
+    # 3. period_start + months when there is no series.
+    rows = [_dated("ttm_performance.period_start", "2024-06"), _dated("ttm_performance.months", 12)]
+    assert resolve_report_period_end(rows)[:2] == ("2025-05", "period_start_plus_months")
+    # 4. A day/month-precision report_as_of beats the filename …
+    rows = [_dated("comp_set.total_keys", 344, as_of="2025-06-30", precision="day", doc="ANG-20250500.xlsx")]
+    assert resolve_report_period_end(rows) == ("2025-06-30", "document_report_as_of", "documents.report_as_of")
+    # … but a YEAR-precision one (the STR family's "31 December of
+    # report_year") cannot order within the year: the filename's month wins.
+    rows = [_dated("comp_set.total_keys", 344, as_of="2025-12-31", precision="year", doc="ANG-20250500.xlsx")]
+    assert resolve_report_period_end(rows) == ("2025-05", "filename_token", "ANG-20250500.xlsx")
+    # 5. With nothing finer, the year-precision as-of is still a year …
+    rows = [_dated("comp_set.total_keys", 344, as_of="2025-12-31", precision="year")]
+    assert resolve_report_period_end(rows) == ("2025", "document_report_as_of", "documents.report_as_of")
+    # … and str_trend.report_year is the last dated answer.
+    rows = [_dated("str_trend.report_year", 2025)]
+    assert resolve_report_period_end(rows) == ("2025", "report_year", "str_trend.report_year")
+    # 6. Nothing dates the report → created_at (arrival order) decides.
+    assert resolve_report_period_end([_dated("comp_set.total_keys", 344)]) == (None, "created_at", None)
+    # Roster / series rows never supply a period-end field.
+    rows = [_dated("ttm_performance.compset.1.period_end", "2030-01-31")]
+    assert resolve_report_period_end(rows) == (None, "created_at", None)
+
+
+def test_ordering_year_only_sorts_behind_a_known_month_of_the_same_year_and_undated_last() -> None:
+    rows = [
+        _row("comp_set.total_keys", 1, ext="e-undated", doc="roster.xlsx"),
+        _row("str_trend.report_year", 2025, ext="e-year", doc="report.xlsx"),
+        _row("ttm_performance.subject.monthly.2025_01.occupancy_pct", 0.7, ext="e-jan", doc="jan.xlsx"),
+        _row("ttm_performance.subject.monthly.2024_12.occupancy_pct", 0.7, ext="e-dec24", doc="dec24.xlsx"),
+    ]
+    assert [(o.extraction_id, o.period_end) for o in order_str_extractions(rows)] == [
+        ("e-jan", "2025-01"), ("e-year", "2025"), ("e-dec24", "2024-12"), ("e-undated", None),
+    ]
