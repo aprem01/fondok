@@ -10,7 +10,7 @@ import {
 import { Card } from '@/components/ui/Card';
 import { Button } from '@/components/ui/Button';
 import { Badge } from '@/components/ui/Badge';
-import { dealStages, returnProfiles, positioningTiers, brandFamilies, sourcingChannels } from '@/lib/mockData';
+import { dealStages, returnProfiles, positioningTiers, brandFamilies, sourcingChannels, brandChain, brandFamilyShort } from '@/lib/mockData';
 import { cn } from '@/lib/format';
 import { api, isWorkerConnected, WizardFile } from '@/lib/api';
 import { useToast } from '@/components/ui/Toast';
@@ -366,6 +366,8 @@ function Step1({ data, update }: StepProps) {
         — key count, year built, gross building area, brand — is extracted from the Offering
         Memorandum when uploaded. All fields remain editable.
       </div>
+      {/* R-013 — legend for the starred labels below; unstarred = optional. */}
+      <p className="text-[11px] text-ink-500 leading-relaxed mb-3">* Required field</p>
 
       <div className="space-y-4">
         <div>
@@ -395,21 +397,21 @@ function Step1({ data, update }: StepProps) {
         <Field label="Deal Name *" value={data.dealName} onChange={v => update({ dealName: v })} placeholder="Chicago Downtown Acquisition" />
         <Field label="City / Submarket *" value={data.city} onChange={v => update({ city: v })} placeholder="Chicago, IL" />
         <div className="grid grid-cols-2 gap-4">
-          <Field label="Keys (optional)" value={data.keys} onChange={v => update({ keys: v })} placeholder="auto-detected from OM" type="number"
+          <Field label="Keys" value={data.keys} onChange={v => update({ keys: v })} placeholder="auto-detected from OM" type="number"
             help="Guest room count. Leave blank to source from the OM's `property_overview.keys` field on extraction." />
           <Select label="How far along are you in the acquisition process? *" value={data.stage} onChange={v => update({ stage: v })} options={dealStages}
             help="Teaser — pre-NDA screening. Under NDA — accessing the data room. LOI — letter of intent submitted. PSA — under purchase & sale agreement." />
         </div>
         <div className="grid grid-cols-2 gap-4">
-          <Field label="Hotel Name (Optional)" value={data.hotelName} onChange={v => update({ hotelName: v })} placeholder="Marriott Chicago Downtown" />
-          <Field label="Indicative Price (Optional)" value={data.price} onChange={v => update({ price: v })} placeholder="$120-140M" />
+          <Field label="Hotel Name" value={data.hotelName} onChange={v => update({ hotelName: v })} placeholder="Marriott Chicago Downtown" />
+          <Field label="Indicative Price" value={data.price} onChange={v => update({ price: v })} placeholder="$120-140M" />
         </div>
         <CoachMark
           anchorId="wizard-step1-sourcing"
           viewKey="wizard-step1"
           order={0}
           title="Why we ask for sourcing channel"
-          body="Sourcing channel tracks deal origin (broker, lender, franchisor, capital partner, proprietary) so we can analyze your pipeline by source over time. Pick the closest match — Fondok rolls these up on the Dashboard."
+          body="Sourcing channel tracks deal origin (broker, lender, franchisor, capital partner, direct) so we can analyze your pipeline by source over time. Pick the closest match — Fondok rolls these up on the Dashboard."
           side="right"
           learnMoreHref="/methodology#sources"
         >
@@ -417,7 +419,7 @@ function Step1({ data, update }: StepProps) {
             value={data.sourcing}
             onChange={v => update({ sourcing: v })}
             options={sourcingChannels.map(s => s.label)}
-            help="Deal origination channel for pipeline attribution — broker network, lender relationship, franchisor direct, operator, capital partner, or proprietary." />
+            help="Deal origination channel for pipeline attribution — broker network, lender relationship, franchisor direct, operator, capital partner, or direct." />
         </CoachMark>
       </div>
 
@@ -457,9 +459,9 @@ function Step2({ data, update }: StepProps) {
         viewKey="wizard-step2"
         title="What this picks"
         body={<>
-          Return profile sets target IRR thresholds and the default capital structure.
+          Return profile sets target LIRR thresholds and the default capital structure.
           <span className="block mt-1.5"><b>Core</b> 8–12% · <b>Value-Add</b> 12–18% · <b>Opportunistic</b> 18%+.</span>
-          You can fine-tune leverage and exit cap on the Returns tab.
+          You can calibrate leverage and exit cap on the Returns tab.
         </>}
         side="top"
         learnMoreHref="/methodology#engines"
@@ -481,7 +483,7 @@ function Step2({ data, update }: StepProps) {
                 {selected && <Check size={18} className="text-brand-500" />}
               </div>
               <div className="text-[14px] font-semibold text-ink-900">{p.label}</div>
-              <div className="text-[12px] text-brand-700 font-medium mt-1">Target IRR: {p.target}</div>
+              <div className="text-[12px] text-brand-700 font-medium mt-1">Target LIRR: {p.target}</div>
               <p className="text-[11.5px] text-ink-500 mt-2 leading-relaxed">{p.desc}</p>
               {example[p.id] && (
                 <p className="text-[11px] text-ink-700 mt-2 leading-relaxed">
@@ -548,11 +550,22 @@ function Step3Documents({
 function Step4({ data, update }: StepProps) {
   const isAgnostic = data.brand === 'agnostic';
   const q = data.brandSearch.toLowerCase().trim();
+  // R-019 — a search must surface the SPECIFIC brand, never just its
+  // collapsed parent chain. A family-name hit keeps every brand in that
+  // family; a brand-name hit keeps the matches; and any family with
+  // results stays expanded while a query is active, so "Kimpton" shows
+  // the Kimpton card (· IHG) instead of a closed "IHG Hotels & Resorts"
+  // row. The submitted value is unchanged: always the specific brand.
   const filtered = q
     ? brandFamilies
-        .map(f => ({ ...f, brands: f.brands.filter(b => b.name.toLowerCase().includes(q)) }))
-        .filter(f => f.family.toLowerCase().includes(q) || f.brands.length > 0)
+        .map(f =>
+          f.family.toLowerCase().includes(q)
+            ? f
+            : { ...f, brands: f.brands.filter(b => b.name.toLowerCase().includes(q)) },
+        )
+        .filter(f => f.brands.length > 0)
     : brandFamilies;
+  const selectedChain = isAgnostic ? null : brandChain(data.brand);
 
   // Re-clicking the active brand drops back to the agnostic default.
   // Keeps the wizard recoverable without a separate "Clear" affordance.
@@ -601,6 +614,7 @@ function Step4({ data, update }: StepProps) {
           <Check size={14} className="text-brand-500" />
           <div className="text-[12px] text-ink-900">
             Selected: <span className="font-semibold">{data.brand}</span>
+            {selectedChain && <span className="text-ink-500"> · {selectedChain}</span>}
           </div>
           <button
             type="button"
@@ -623,7 +637,7 @@ function Step4({ data, update }: StepProps) {
 
       <div className="space-y-2 max-h-[400px] overflow-y-auto scrollbar-thin">
         {filtered.map(fam => {
-          const expanded = data.expandedFamilies.includes(fam.family);
+          const expanded = q.length > 0 || data.expandedFamilies.includes(fam.family);
           return (
             <div key={fam.family} className="border border-border rounded-md">
               <button
@@ -659,7 +673,7 @@ function Step4({ data, update }: StepProps) {
                           <Check size={12} className="absolute top-1.5 right-1.5 text-brand-500" />
                         )}
                         <div className="text-[12px] font-medium text-ink-900 pr-3">{b.name}</div>
-                        <div className="text-[10px] text-ink-500 mt-0.5">{b.tier}</div>
+                        <div className="text-[10px] text-ink-500 mt-0.5">{b.tier} · {brandFamilyShort(fam)}</div>
                       </button>
                     );
                   })}
@@ -774,7 +788,13 @@ function Step6({ data, jumpTo }: { data: WizardData; jumpTo: (step: number) => v
     { label: 'Deal Stage', value: data.stage, step: 1 },
     { label: 'Return Requirements', value: profile ? `${profile.label} (${profile.target})` : '—', step: 2 },
     { label: 'Documents', value: docsSummary, step: 3 },
-    { label: 'Brand', value: data.brand === 'agnostic' ? 'Brand Agnostic' : data.brand, step: 4 },
+    {
+      label: 'Brand',
+      value: data.brand === 'agnostic'
+        ? 'Brand Agnostic'
+        : <>{data.brand}{brandChain(data.brand) && <span className="text-ink-500 font-normal"> · {brandChain(data.brand)}</span>}</>,
+      step: 4,
+    },
     { label: 'Positioning', value: positioning?.label || '—', step: 5 },
   ];
 

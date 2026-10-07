@@ -66,6 +66,13 @@ const ALLOWED_EXTENSIONS = new Set([
 ]);
 const ACCEPT = '.pdf,.xls,.xlsx,.xlsm,.csv,.doc,.docx,application/pdf';
 
+// R-029 — the drop prompts name the document exactly as labelled
+// ("Offering Memorandum", not "offering memorandum"), so the article has
+// to follow the label's first letter.
+function indefiniteArticle(label: string): 'a' | 'an' {
+  return /^[aeiou]/i.test(label) ? 'an' : 'a';
+}
+
 function getExtension(name: string): string {
   const dot = name.lastIndexOf('.');
   return dot >= 0 ? name.slice(dot).toLowerCase() : '';
@@ -121,7 +128,7 @@ export const WIZARD_CATEGORIES: WizardCategorySpec[] = [
     multiFile: false,
     Icon: FileText,
     description:
-      'Broker pitch deck. Fondok pulls property metadata (keys, brand, year built, address) plus the broker pro forma. Every extracted field is editable downstream.',
+      'Seller pitch deck. Fondok pulls property metadata (keys, brand, year built, address) plus the seller pro forma. Every extracted field is editable downstream.',
     exampleChip: 'e.g. teaser deck, confidential offering memorandum, executive summary',
     defaultDocType: 'OM',
     emptyState:
@@ -732,7 +739,7 @@ function CategoryPanel({
         // Quiet empty-state — one line, no callout. The dropzone above
         // already explains "what to do here".
         <p className="mt-3 text-[11px] text-ink-500">
-          Drop a {spec.label.toLowerCase()} here or skip for now.
+          Drop {indefiniteArticle(spec.label)} {spec.label} here or skip for now.
         </p>
       ) : (
         <ul
@@ -850,7 +857,7 @@ function DropZone({
           aria-hidden="true"
         />
         <div className="text-[13px] font-medium text-ink-900">
-          {drag ? 'Drop to add' : `Drop ${spec.label.toLowerCase()} here`}
+          {drag ? 'Drop to add' : `Drop ${spec.label} here`}
         </div>
         <div className="text-[11.5px] text-ink-500 mt-1">{spec.dropHint}</div>
       </div>
