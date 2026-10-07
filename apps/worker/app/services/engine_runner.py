@@ -29,10 +29,11 @@ import time
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from datetime import UTC, date, datetime
+from decimal import ROUND_HALF_UP, Decimal
 from typing import Any
 from uuid import UUID, uuid4
 
-from pydantic import BaseModel
+from pydantic import BaseModel, ValidationError
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -197,6 +198,224 @@ ENGINE_DEPS: dict[str, list[str]] = {
     # Move 2 — a composed view over the canonical outputs; runs LAST.
     "cash_flow": ["capital", "expense", "debt", "returns", "partnership"],
 }
+
+
+# ──────── Plain-language engine failure messages (E-023, FON-63) ────────
+#
+# When an engine's typed input fails pydantic validation the raw validator
+# text ("Input should be greater than or equal to 0 [type=...]") used to land
+# on the engine row, and the UI could not say WHICH input, WHICH year or WHAT
+# range. The helpers below turn each ``ValidationError`` entry into a sentence
+# an analyst can act on, name the engines that consequently did not run
+# (derived from ``ENGINE_DEPS`` — never hard-coded), and say that the saved
+# assumptions survived (they live in ``deals.field_overrides`` and a failed
+# run never touches them). The raw pydantic text is appended verbatim after
+# ``Technical detail:`` so nothing is lost. Message-only: no validator, engine
+# math or numeric behaviour changes here.
+
+# Reader-facing engine names used INSIDE the stored error text. The web
+# banner recognises these at the head of a runner-formatted error
+# (``EngineFailuresBanner.tsx`` → ``RUNNER_ENGINE_LABELS``); keep in sync.
+_ENGINE_LABELS: dict[str, str] = {
+    "revenue": "Revenue",
+    "fb": "F&B",
+    "expense": "Expense",
+    "capital": "Capital",
+    "debt": "Debt",
+    "returns": "Returns",
+    "sensitivity": "Sensitivity",
+    "partnership": "Partnership",
+    "cash_flow": "Cash Flow",
+}
+
+# Literal that separates the human sentence from the raw validator text.
+_TECHNICAL_DETAIL_PREFIX = "Technical detail:"
+
+# What an analyst can actually change when a given (engine, field) rejects a
+# value. The Debt NOI series is the expense engine's NOI path, so a negative
+# year is an upstream revenue / expense / occupancy problem, not a debt one.
+_VALIDATION_HINTS: dict[tuple[str, str], str] = {
+    ("debt", "noi_by_year"): (
+        "Check key count, revenue base, expense base, or a starting-occupancy "
+        "override, then re-run."
+    ),
+}
+
+# pydantic ``ctx`` bound keys → the symbol shown in the generic sentence.
+_CTX_BOUND_SYMBOLS: tuple[tuple[str, str], ...] = (
+    ("ge", "≥"),
+    ("gt", ">"),
+    ("le", "≤"),
+    ("lt", "<"),
+)
+
+
+def _downstream_engines(engine_name: str) -> list[str]:
+    """Engines that cannot run once ``engine_name`` fails.
+
+    The transitive dependants per :data:`ENGINE_DEPS`, in :data:`ENGINE_NAMES`
+    (registry) order — e.g. ``debt`` → ``returns``, ``sensitivity``,
+    ``partnership``, ``cash_flow``. Fixed-point so it does not rely on the
+    registry being topologically sorted.
+    """
+    blocked = {engine_name}
+    changed = True
+    while changed:
+        changed = False
+        for name, deps in ENGINE_DEPS.items():
+            if name not in blocked and any(d in blocked for d in deps):
+                blocked.add(name)
+                changed = True
+    return [n for n in ENGINE_NAMES if n in blocked and n != engine_name]
+
+
+def _join_labels(labels: list[str]) -> str:
+    """``["A", "B", "C"]`` → ``"A, B and C"``."""
+    if len(labels) <= 1:
+        return "".join(labels)
+    return f"{', '.join(labels[:-1])} and {labels[-1]}"
+
+
+def _format_usd(value: float) -> str:
+    """``-4879452.5`` → ``−$4,879,453``.
+
+    Whole dollars, rounded half away from zero (``round()`` is banker's and
+    would give 4,879,452), thousands separators, a leading U+2212 minus sign
+    for negatives.
+    """  # noqa: RUF002 - the U+2212 glyph IS the documented output
+    whole = Decimal(str(value)).quantize(Decimal("1"), rounding=ROUND_HALF_UP)
+    sign = "−" if whole < 0 else ""  # noqa: RUF001 - U+2212 per the E-023 message spec
+    return f"{sign}${abs(int(whole)):,}"
+
+
+def _format_plain_number(value: Any) -> str:
+    """Thousands-separated number for the generic sentence; non-numbers as-is."""
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return str(value)
+    if isinstance(value, float) and value.is_integer():
+        return f"{int(value):,}"
+    return f"{value:,}"
+
+
+def _format_loc(loc: tuple[Any, ...]) -> str:
+    """``("noi_by_year", 0)`` → ``noi_by_year[0]``; ``("a", "b")`` → ``a.b``."""
+    out = ""
+    for part in loc:
+        if isinstance(part, int):
+            out += f"[{part}]"
+        else:
+            out = f"{out}.{part}" if out else str(part)
+    return out or "input"
+
+
+def _format_bound(ctx: Mapping[str, Any]) -> str:
+    """``{"ge": 0.0}`` → ``≥ 0``; empty when the entry carries no bound."""
+    return ", ".join(
+        f"{symbol} {_format_plain_number(ctx[key])}"
+        for key, symbol in _CTX_BOUND_SYMBOLS
+        if key in ctx
+    )
+
+
+def _describe_validation_entry(label: str, err: Mapping[str, Any]) -> str:
+    """One plain sentence for one ``ValidationError.errors()`` entry."""
+    loc = tuple(err.get("loc") or ())
+    etype = str(err.get("type") or "")
+    ctx: Mapping[str, Any] = err.get("ctx") or {}
+    value = err.get("input")
+    is_number = isinstance(value, (int, float)) and not isinstance(value, bool)
+
+    # The E-023 case: one year of the NOI series below the model's floor.
+    # ``loc[1]`` is the 0-based list index → 1-based projection year.
+    if (
+        len(loc) >= 2
+        and loc[0] == "noi_by_year"
+        and isinstance(loc[1], int)
+        and etype == "greater_than_equal"
+        and is_number
+        and "ge" in ctx
+    ):
+        return (
+            f"NOI for year {loc[1] + 1} is {_format_usd(value)}, below the "
+            f"{_format_usd(ctx['ge'])} minimum the {label} model accepts."
+        )
+
+    path = _format_loc(loc)
+    bound = _format_bound(ctx)
+    if bound and is_number:
+        return (
+            f"{path} = {_format_plain_number(value)} is outside the allowed "
+            f"range ({bound})."
+        )
+    msg = str(err.get("msg") or etype or "failed validation").rstrip(".")
+    return f"{path}: {msg}."
+
+
+def _humanize_engine_validation_error(engine_name: str, exc: ValidationError) -> str:
+    """The ``error`` text stored for an engine whose input failed validation.
+
+    Shape (E-023)::
+
+        Debt: NOI for year 1 is −$4,879,453, below the $0 minimum the Debt
+        model accepts. The model stops here and Returns, Sensitivity,
+        Partnership and Cash Flow were not run. Your saved assumptions were
+        kept. Check key count, revenue base, expense base, or a
+        starting-occupancy override, then re-run.
+
+        Technical detail: 1 validation error for DebtEngineInputExt ...
+
+    One sentence per error entry (from ``loc`` / ``type`` / ``input`` /
+    ``ctx``); the downstream list is the transitive dependants of
+    ``engine_name`` in ``ENGINE_DEPS``; the raw pydantic text follows a blank
+    line and ``Technical detail:`` verbatim.
+    """  # noqa: RUF002 - the U+2212 glyph IS the documented output
+    label = _ENGINE_LABELS.get(engine_name, engine_name)
+    problems: list[str] = []
+    hints: list[str] = []
+    for err in exc.errors():
+        problems.append(_describe_validation_entry(label, err))
+        loc = tuple(err.get("loc") or ())
+        hint = _VALIDATION_HINTS.get((engine_name, str(loc[0]))) if loc else None
+        if hint and hint not in hints:
+            hints.append(hint)
+    if not problems:  # pragma: no cover - a ValidationError always has entries
+        problems.append("An input failed validation.")
+
+    downstream = [_ENGINE_LABELS.get(n, n) for n in _downstream_engines(engine_name)]
+    if downstream:
+        verb = "were" if len(downstream) > 1 else "was"
+        stops = f"The model stops here and {_join_labels(downstream)} {verb} not run."
+    else:
+        stops = "The model stops here; no other model depends on it."
+    if not hints:
+        hints.append(f"Check the assumptions feeding the {label} model, then re-run.")
+
+    human = " ".join(
+        [
+            f"{label}: {' '.join(problems)}",
+            stops,
+            "Your saved assumptions were kept.",
+            *hints,
+        ]
+    )
+    return f"{human}\n\n{_TECHNICAL_DETAIL_PREFIX} {exc}"
+
+
+def _engine_error_text(engine_name: str, exc: BaseException) -> str:
+    """The ``error`` string persisted on a failed engine row.
+
+    pydantic ``ValidationError`` → the plain-language form above; every other
+    exception keeps ``str(exc)`` exactly as before. A bug in the formatter
+    itself must never mask the engine failure, so it falls back to ``str``.
+    """
+    if isinstance(exc, ValidationError):
+        try:
+            return _humanize_engine_validation_error(engine_name, exc)
+        except Exception:  # message-only path; never mask the engine failure
+            logger.exception(
+                "could not humanize validation error for engine %s", engine_name
+            )
+    return str(exc)
 
 
 # ──────────────────────────── Kimpton fallback ────────────────────────
@@ -6311,13 +6530,18 @@ async def run_single_engine(
             )
         except Exception:
             pass
+        # E-023 — a pydantic ValidationError lands as a sentence the analyst
+        # can act on (which input, which year, what range, what did not run,
+        # assumptions kept) with the raw text after "Technical detail:".
+        # Every other exception is stored exactly as before.
+        error_text = _engine_error_text(engine_name, exc)
         await _persist_failed(
-            session, row_id=row_id, tenant_id=tenant_id, error=str(exc)
+            session, row_id=row_id, tenant_id=tenant_id, error=error_text
         )
         return {
             "engine": engine_name,
             "status": "failed",
-            "error": str(exc),
+            "error": error_text,
             "runtime_ms": runtime_ms,
         }
 
