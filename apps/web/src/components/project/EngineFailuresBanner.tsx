@@ -9,6 +9,12 @@
  * already returns (EngineOutputResponse.status/error) and, when any engine is
  * `failed`, surfaces a prominent, plain-language explanation with a one-click
  * Re-run. Renders nothing when every engine is healthy.
+ *
+ * E-023 (FON-63): for validation failures the worker now writes the sentence
+ * itself — "Debt: NOI for year 1 is −$4,879,453, below the $0 minimum …" —
+ * with the raw pydantic text after "Technical detail:". Those are shown
+ * VERBATIM; the keyword heuristics in `humanizeEngineError` apply only to
+ * errors the worker did not already phrase.
  */
 
 import { AlertTriangle, RefreshCw, Loader2 } from 'lucide-react';
@@ -26,22 +32,83 @@ const ENGINE_LABEL: Record<string, string> = {
   partnership: 'Partnership waterfall',
   sensitivity: 'Sensitivity',
   cashflow: 'Cash flow',
+  cash_flow: 'Cash flow',
 };
 
+/**
+ * Engine names the worker writes at the head of a runner-formatted error
+ * ("Debt: …"). Mirror of `_ENGINE_LABELS` in
+ * apps/worker/app/services/engine_runner.py — keep the two in sync.
+ */
+const RUNNER_ENGINE_LABELS = [
+  'Revenue',
+  'F&B',
+  'Expense',
+  'Capital',
+  'Debt',
+  'Returns',
+  'Sensitivity',
+  'Partnership',
+  'Cash Flow',
+] as const;
+
+const escapeRegExp = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+const RUNNER_LABEL_PREFIX = new RegExp(
+  `^(${RUNNER_ENGINE_LABELS.map(escapeRegExp).join('|')}): `,
+);
+/** Literal the worker puts between the human sentence and the raw text. */
+const TECHNICAL_DETAIL_MARKER = 'Technical detail:';
+
+export interface HumanizedEngineError {
+  /** What the analyst reads inline. Verbatim when the worker phrased it. */
+  message: string;
+  /** What goes under the "Technical detail" disclosure; null when there is none. */
+  technical: string | null;
+  /** True when `message` came from the worker's plain-language formatter. */
+  runnerFormatted: boolean;
+}
+
+const FALLBACK_MESSAGE = 'The model hit an unexpected error.';
+
 /** Turn a raw engine error into something an analyst can act on. */
-function humanizeEngineError(raw: string | null | undefined): string {
-  if (!raw) return 'The model hit an unexpected error.';
+export function humanizeEngineError(raw: string | null | undefined): HumanizedEngineError {
+  if (!raw) return { message: FALLBACK_MESSAGE, technical: null, runnerFormatted: false };
+
+  // Runner-formatted (E-023): "<Engine>: <sentence>\n\nTechnical detail: <raw>".
+  // Show the sentence verbatim; everything after the marker is the detail.
+  const markerAt = raw.indexOf(TECHNICAL_DETAIL_MARKER);
+  if (markerAt >= 0 || RUNNER_LABEL_PREFIX.test(raw)) {
+    const message = (markerAt >= 0 ? raw.slice(0, markerAt) : raw).trim();
+    const technical =
+      markerAt >= 0 ? raw.slice(markerAt + TECHNICAL_DETAIL_MARKER.length).trim() : '';
+    return {
+      message: message || FALLBACK_MESSAGE,
+      technical: technical.length > 0 ? technical : null,
+      runnerFormatted: true,
+    };
+  }
+
+  // Legacy heuristics — only for errors the worker did not phrase itself.
   const r = raw.toLowerCase();
+  let message: string;
   if (r.includes('greater_than_equal') || r.includes('validation error')) {
-    return 'The model computed a value outside its expected range — usually a deeply negative-return (underwater) scenario. Re-run to recompute with the loosened guard.';
+    message =
+      'The model computed a value outside its expected range — usually a deeply negative-return (underwater) scenario. Re-run to recompute with the loosened guard.';
+  } else if (r.includes('division') || r.includes('zero') || r.includes('divide')) {
+    message =
+      'A required input was zero (e.g. equity, key count, or a revenue base). Check the deal’s purchase price, key count, and financing, then re-run.';
+  } else if (
+    r.includes('missing') ||
+    r.includes('required') ||
+    r.includes('none') ||
+    r.includes('null')
+  ) {
+    message =
+      'A required input was missing. Upload the outstanding financials or set the assumption, then re-run.';
+  } else {
+    message = raw.length > 220 ? `${raw.slice(0, 220)}…` : raw;
   }
-  if (r.includes('division') || r.includes('zero') || r.includes('divide')) {
-    return 'A required input was zero (e.g. equity, key count, or a revenue base). Check the deal’s purchase price, key count, and financing, then re-run.';
-  }
-  if (r.includes('missing') || r.includes('required') || r.includes('none') || r.includes('null')) {
-    return 'A required input was missing. Upload the outstanding financials or set the assumption, then re-run.';
-  }
-  return raw.length > 220 ? `${raw.slice(0, 220)}…` : raw;
+  return { message, technical: raw, runnerFormatted: false };
 }
 
 export function EngineFailuresBanner({
@@ -75,24 +142,38 @@ export function EngineFailuresBanner({
             These numbers are showing as “—” because the model errored, not because data is missing.
           </p>
           <ul className="mt-2 space-y-2">
-            {failed.map(([engine, row]) => (
-              <li key={engine} className="text-[12px]">
-                <span className="font-semibold text-danger-700">
-                  {ENGINE_LABEL[engine] ?? engine}:
-                </span>{' '}
-                <span className="text-danger-700/90">{humanizeEngineError(row?.error)}</span>
-                {row?.error && (
-                  <details className="mt-1">
-                    <summary className="text-[11px] text-danger-700/60 cursor-pointer select-none">
-                      Technical detail
-                    </summary>
-                    <pre className="mt-1 text-[10.5px] text-danger-700/70 whitespace-pre-wrap break-words">
-                      {row.error}
-                    </pre>
-                  </details>
-                )}
-              </li>
-            ))}
+            {failed.map(([engine, row]) => {
+              const { message, technical, runnerFormatted } = humanizeEngineError(row?.error);
+              // A runner-formatted sentence already opens with its own
+              // "<Engine>: " — bold that opener instead of prefixing the row
+              // label a second time ("Debt: Debt: …"). The text stays verbatim.
+              const opener = runnerFormatted ? RUNNER_LABEL_PREFIX.exec(message) : null;
+              const lead = opener ? `${opener[1]}:` : `${ENGINE_LABEL[engine] ?? engine}:`;
+              const body = opener ? message.slice(opener[0].length) : message;
+              return (
+                <li key={engine} className="text-[12px]" data-testid={`engine-failure-${engine}`}>
+                  <span className="font-semibold text-danger-700" data-testid="engine-failure-lead">
+                    {lead}
+                  </span>{' '}
+                  <span className="text-danger-700/90" data-testid="engine-failure-message">
+                    {body}
+                  </span>
+                  {technical && (
+                    <details className="mt-1">
+                      <summary className="text-[11px] text-danger-700/60 cursor-pointer select-none">
+                        Technical detail
+                      </summary>
+                      <pre
+                        className="mt-1 text-[10.5px] text-danger-700/70 whitespace-pre-wrap break-words"
+                        data-testid="engine-failure-technical"
+                      >
+                        {technical}
+                      </pre>
+                    </details>
+                  )}
+                </li>
+              );
+            })}
           </ul>
         </div>
         <button
