@@ -89,16 +89,25 @@ jobs:
             # diagnosable from the workflow logs.
             if [ "$i" -le 2 ]; then
               echo "── vercel ls output (attempt $i) ──"
-              printf '%s\n' "$CLEAN" | head -10
+              # sed reads all of stdin; `head` closes the pipe early and
+              # the runner's default `-e` shell turns printf's resulting
+              # SIGPIPE into a failed step (10/06 run).
+              printf '%s\n' "$CLEAN" | sed -n '1,10p'
               echo "────────────────────────────────────"
             fi
 
-            # Find the URL on any line that contains "Ready" anywhere
-            # (status column, with or without the bullet glyph).
-            URL=$(printf '%s\n' "$CLEAN" \
+            # Take the NEWEST deployment row (first URL line) and require
+            # it to be Ready. Matching "any Ready line" grabbed the
+            # previous deployment while the new one was still Building,
+            # then no-op'd because fondok-app already pointed at it
+            # (10/07 run) — so the alias never moved.
+            NEWEST=$(printf '%s\n' "$CLEAN" \
+                     | grep -E 'https://fondok-[a-z0-9]+-aprem01s-projects\.vercel\.app' \
+                     | sed -n '1p' || true)
+            URL=$(printf '%s\n' "$NEWEST" \
                   | awk '/[Rr]eady/ {print}' \
                   | grep -oE 'https://fondok-[a-z0-9]+-aprem01s-projects\.vercel\.app' \
-                  | head -1 || true)
+                  | sed -n '1p' || true)
 
             if [ -n "${URL:-}" ]; then
               CURRENT_RAW=$(vercel inspect fondok-app.vercel.app \
