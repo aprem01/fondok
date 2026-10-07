@@ -50,6 +50,14 @@ from fondok_schemas.reasons import ReasonCode
 # used only to DESCRIBE the row the legacy matcher already picked.
 from ..ontology.registry import Resolution, concept_for_path
 
+# 2026-10 — ONE primary-financial-source key, shared with the Data Room
+# badge (``api.documents._mark_primary_financial``). See the module
+# docstring for the order of preference and the live bug that forced it.
+from .financial_source_rank import (
+    FULL_YEAR_PERIOD_TYPES as _SHARED_FULL_YEAR_PERIOD_TYPES,
+    financial_source_sort_key,
+)
+
 # Phase 2.1 — run lineage. ``services/lineage.py`` is landing on a sibling
 # branch; guard the import so this branch is mergeable before it does. When
 # the module is absent the hook in ``run_all_engines`` is a no-op.
@@ -3040,15 +3048,9 @@ def _extract_period_type(raw_fields: list[Any]) -> str:
 # are BOTH complete operating years — neither is a partial period — so they
 # share the top ranking tier and are separated by RECENCY of period, not by
 # type. Partial periods (YTD / quarterly / monthly) always rank below.
-_FULL_YEAR_PERIOD_TYPES = {
-    "annual",
-    "fiscal_year",
-    "full_year",
-    "trailing_twelve",
-    "ttm",
-    "t12",
-    "rolling_twelve",
-}
+# Defined once in ``services.financial_source_rank`` (the shared ranking
+# key); re-exported here for the corroboration gate below and the tests.
+_FULL_YEAR_PERIOD_TYPES = _SHARED_FULL_YEAR_PERIOD_TYPES
 
 
 def _extract_period_ending(raw_fields: list[Any]) -> str:
@@ -3063,14 +3065,6 @@ def _extract_period_ending(raw_fields: list[Any]) -> str:
         if isinstance(v, str) and v.strip():
             return v.strip()
     return ""
-
-
-def _period_end_sortkey(period_ending: str) -> int:
-    """``'2025-06-30'`` → ``20250630`` for recency comparison; 0 when absent
-    or unparseable (sorts oldest, so a dated period always beats an undated
-    one within the same tier)."""
-    digits = "".join(ch for ch in period_ending if ch.isdigit())[:8]
-    return int(digits) if len(digits) == 8 else 0
 
 
 def _pnl_completeness_score(raw_fields: list[Any]) -> int:
@@ -3117,19 +3111,34 @@ def _rank_pnl_shims(rows: list[Any]) -> list[tuple[list[Any], str, Any]]:
     Ranking is byte-identical — this is the same function body; the caller
     just gets a handle on the source row as well.
 
-    Preference order:
+    Preference order — ONE key, ``financial_source_rank.financial_source_sort_key``,
+    shared with the Data Room's "Primary source" badge so the document the UI
+    calls primary is the one that drives Year-1 actuals:
       1. **Period tier** — full-year sources (annual + trailing-twelve) rank
-         above partial periods (YTD / quarterly / monthly).
+         above partial periods (YTD / quarterly / monthly). From the extracted
+         ``period_type`` when labelled; otherwise from ``doc_type`` (``T12``
+         and ``PNL`` are full-year by definition — 2026-10: an unlabelled
+         T-12 fell to the unknown tier, BELOW a monthly, and a 2024 P&L with a
+         mis-mapped $96K F&B line drove a $13.8M deal to $9.6M / IRR -100%).
       2. **Period recency** — within full-year, the most recent period wins,
          so a current TTM (period_ending 2025-06-30) beats a stale calendar
          annual (2023-12-31) as the underwriting base. This fixes a real
          mis-grounding: uploading last year's annual alongside a current
          T-12 had the older annual drive Year-1 occupancy/ADR/expenses.
-      3. **Completeness** (FON-22) — a Detailed P&L beats a Summary of the
+         Falls through ``period_ending`` → ``report_as_of`` →
+         ``extracted_period_year`` → ``fiscal_year``; an undated T-12 is the
+         current period.
+      3. **T12 before PNL** on an equal period.
+      4. **Completeness** (FON-22) — a Detailed P&L beats a Summary of the
          same period.
-      4. **Upload recency** — final tiebreaker (idx; SQL sorted newest-first).
+      5. **Upload recency** — final tiebreaker (idx; SQL sorted newest-first).
+
+    Rows are dict shims or SQLAlchemy rows; the ``documents`` columns
+    (``report_as_of`` / ``fiscal_year`` / ``extracted_period_year``) are read
+    with ``.get`` so a caller that only carries ``fields`` + ``doc_type``
+    (``tests/test_pnl_ranking_completeness.py``) ranks exactly as before.
     """
-    parsed: list[tuple[int, int, int, int, list[Any], str, Any]] = []
+    parsed: list[tuple[tuple[int, int, int, float, int], list[Any], str, Any]] = []
     for idx, r in enumerate(rows):
         # Accept both SQLAlchemy Row objects and plain dict shims —
         # the terse-expansion call sites pre-process rows (await the
@@ -3145,20 +3154,19 @@ def _rank_pnl_shims(rows: list[Any]) -> list[tuple[list[Any], str, Any]]:
                 continue
         if not isinstance(raw_fields, list):
             continue
-        period_type = _extract_period_type(raw_fields)
-        # Full-year sources collapse into one top tier so recency (not the
-        # annual-vs-TTM label) decides between them; partial periods keep
-        # their existing lower ranks so a full year always beats them.
-        tier = 0 if period_type in _FULL_YEAR_PERIOD_TYPES else _PERIOD_TYPE_RANK.get(
-            period_type, 50
+        key = financial_source_sort_key(
+            doc_type=m.get("doc_type"),
+            period_type=_extract_period_type(raw_fields),
+            period_ending=_extract_period_ending(raw_fields),
+            report_as_of=m.get("report_as_of"),
+            extracted_period_year=m.get("extracted_period_year"),
+            fiscal_year=m.get("fiscal_year"),
+            completeness=_pnl_completeness_score(raw_fields),
+            upload_order=idx,
         )
-        recency = _period_end_sortkey(_extract_period_ending(raw_fields))
-        completeness = _pnl_completeness_score(raw_fields)
-        parsed.append(
-            (tier, -recency, -completeness, idx, raw_fields, m.get("doc_type") or "", m)
-        )
-    parsed.sort(key=lambda t: (t[0], t[1], t[2], t[3]))
-    return [(p[4], p[5], p[6]) for p in parsed]
+        parsed.append((key, raw_fields, m.get("doc_type") or "", m))
+    parsed.sort(key=lambda t: t[0])
+    return [(p[1], p[2], p[3]) for p in parsed]
 
 
 # Source-label → list of doc_types that produce that label. Used by
@@ -3341,7 +3349,12 @@ async def _load_t12_revenue_actuals(
         UUID(deal_id)
     except (ValueError, TypeError):
         return ({}, {}) if with_provenance else {}
-    as_of_expr = await _report_as_of_expr(session) if with_provenance else _NO_AS_OF_COLS
+    # The as-of columns feed the shared ranking key (period recency falls
+    # through ``period_ending`` → ``report_as_of`` → …), so they are read
+    # regardless of ``with_provenance`` — the winner must not depend on the
+    # provenance flag. ``_report_as_of_expr`` is schema-probed (NULL
+    # stand-ins on a schema without the columns) and memoised per session.
+    as_of_expr = await _report_as_of_expr(session)
     try:
         rows = await session.execute(
             text(
@@ -3349,7 +3362,8 @@ async def _load_t12_revenue_actuals(
                 f"""
                 SELECT er.fields, d.doc_type, er.catalog_version,
                        er.id AS extraction_result_id, er.document_id,
-                       {as_of_expr}
+                       {as_of_expr},
+                       d.fiscal_year, d.extracted_period_year
                   FROM extraction_results er
                   JOIN documents d ON d.id = er.document_id
                  WHERE er.deal_id = :deal
@@ -3393,6 +3407,10 @@ async def _load_t12_revenue_actuals(
                 "document_id": row[4] if len(row) > 4 else None,
                 "report_as_of": row[5] if len(row) > 5 else None,
                 "report_as_of_precision": row[6] if len(row) > 6 else None,
+                # 2026-10 — ``documents`` period columns for the shared
+                # ranking key (an unlabelled T-12 dates itself off these).
+                "fiscal_year": row[7] if len(row) > 7 else None,
+                "extracted_period_year": row[8] if len(row) > 8 else None,
             }
         )
 
@@ -3498,7 +3516,12 @@ async def _load_t12_expense_actuals(
         UUID(deal_id)
     except (ValueError, TypeError):
         return ({}, {}) if with_provenance else {}
-    as_of_expr = await _report_as_of_expr(session) if with_provenance else _NO_AS_OF_COLS
+    # The as-of columns feed the shared ranking key (period recency falls
+    # through ``period_ending`` → ``report_as_of`` → …), so they are read
+    # regardless of ``with_provenance`` — the winner must not depend on the
+    # provenance flag. ``_report_as_of_expr`` is schema-probed (NULL
+    # stand-ins on a schema without the columns) and memoised per session.
+    as_of_expr = await _report_as_of_expr(session)
     try:
         rows = await session.execute(
             text(
@@ -3506,7 +3529,8 @@ async def _load_t12_expense_actuals(
                 f"""
                 SELECT er.fields, d.doc_type, er.catalog_version,
                        er.id AS extraction_result_id, er.document_id,
-                       {as_of_expr}
+                       {as_of_expr},
+                       d.fiscal_year, d.extracted_period_year
                   FROM extraction_results er
                   JOIN documents d ON d.id = er.document_id
                  WHERE er.deal_id = :deal
@@ -3544,6 +3568,9 @@ async def _load_t12_expense_actuals(
                 "document_id": row[4] if len(row) > 4 else None,
                 "report_as_of": row[5] if len(row) > 5 else None,
                 "report_as_of_precision": row[6] if len(row) > 6 else None,
+                # 2026-10 — see the revenue loader.
+                "fiscal_year": row[7] if len(row) > 7 else None,
+                "extracted_period_year": row[8] if len(row) > 8 else None,
             }
         )
 

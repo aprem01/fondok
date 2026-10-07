@@ -22,7 +22,7 @@ from __future__ import annotations
 import json
 import os
 import tempfile
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from uuid import UUID, uuid4
 
@@ -758,3 +758,170 @@ async def test_lineage_hook_failure_never_fails_a_run() -> None:
         engine_runner.persist_for_run = original
 
     assert results["revenue"]["status"] == "complete"
+
+
+# ── 2026-10 — the unlabelled T-12 must be the base year ──────────────────────
+
+
+async def _insert_financial_extraction(
+    deal_id: UUID,
+    *,
+    doc_type: str,
+    filename: str,
+    fields: list[dict[str, object]],
+    fiscal_year: int | None = None,
+    ts: datetime,
+) -> tuple[UUID, UUID]:
+    """Insert an EXTRACTED financial document of any P&L-family ``doc_type``
+    with an optional analyst-pinned ``fiscal_year``; return ``(doc_id, er_id)``.
+    ``ts`` is both ``uploaded_at`` and the extraction ``created_at`` so a
+    test controls upload order explicitly."""
+    from app.database import get_session_factory
+
+    factory = get_session_factory()
+    doc_id = uuid4()
+    er_id = uuid4()
+    async with factory() as session:
+        await session.execute(
+            text(
+                """
+                INSERT INTO documents (
+                    id, deal_id, tenant_id, filename, doc_type, status,
+                    uploaded_at, page_count, fiscal_year
+                ) VALUES (
+                    :id, :deal, :tenant, :filename, :doc_type, 'EXTRACTED',
+                    :ts, 1, :fiscal_year
+                )
+                """
+            ),
+            {
+                "id": str(doc_id),
+                "deal": str(deal_id),
+                "tenant": _TENANT,
+                "filename": filename,
+                "doc_type": doc_type,
+                "ts": ts,
+                "fiscal_year": fiscal_year,
+            },
+        )
+        await session.execute(
+            text(
+                """
+                INSERT INTO extraction_results (
+                    id, document_id, deal_id, tenant_id, fields,
+                    confidence_report, agent_version, created_at
+                ) VALUES (
+                    :id, :doc, :deal, :tenant, :fields, '{}', 'test', :ts
+                )
+                """
+            ),
+            {
+                "id": str(er_id),
+                "doc": str(doc_id),
+                "deal": str(deal_id),
+                "tenant": _TENANT,
+                "fields": json.dumps(fields),
+                "ts": ts,
+            },
+        )
+        await session.commit()
+    return doc_id, er_id
+
+
+# Tester 1 pinned fiscal_year 2025 on the T-12 row; tester 2's row has it
+# NULL (and extracted_period_year NULL). Both must ground on the T-12.
+@pytest.mark.parametrize("t12_fiscal_year", [2025, None], ids=["fy2025", "fy_null"])
+@pytest.mark.asyncio
+async def test_unlabelled_t12_outranks_dated_annual_pnl(t12_fiscal_year: int | None) -> None:
+    """Live bug (2026-10, two external testers' deals). The deal's T-12
+    ("The Angler's - March 2025 Financials.xlsx", sibling-template path)
+    emits NO ``period_type`` and NO ``period_ending``, so the old ranking
+    put it in the unknown tier (below a monthly) with recency 0, and the
+    "Angler's 2024 Full Year Detailed P&L" — whose extractor mapped one
+    restaurant concession to the F&B totals — drove Year-1: $9.6M revenue
+    instead of $13.8M, NOI $858K, levered IRR -100%.
+
+    With the shared ``financial_source_sort_key`` a T-12 is full-year by
+    doc_type and the current period when undated, so it ranks first and
+    first-wins grounds Year-1 on it. The T-12 is uploaded FIRST (older), so
+    upload recency would still favour the P&L — tier + recency must decide.
+    """
+    from app.database import get_session_factory
+    from app.services.engine_runner import (
+        _load_t12_expense_actuals,
+        _load_t12_revenue_actuals,
+    )
+
+    deal_id = uuid4()
+    await _insert_deal(deal_id, name="The Angler's", keys=132, purchase=36_400_000)
+    t0 = datetime.now(UTC) - timedelta(minutes=10)
+
+    t12_doc, t12_er = await _insert_financial_extraction(
+        deal_id,
+        doc_type="T12",
+        filename="The Angler's - March 2025 Financials.xlsx",
+        fiscal_year=t12_fiscal_year,
+        ts=t0,
+        fields=[
+            # No period_type, no period_ending — exactly what the live row carries.
+            {
+                "field_name": "p_and_l_usali.operating_revenue.food_beverage_revenue",
+                "value": 3_216_620.0,
+                "confidence": 1.0,
+            },
+            {"field_name": "p_and_l_usali.operational_kpis.adr_usd", "value": 232.77},
+            {"field_name": "p_and_l_usali.operational_kpis.occupancy_pct", "value": 0.83},
+            {"field_name": "p_and_l_usali.operating_revenue.rooms_revenue", "value": 9_332_100.0},
+            {"field_name": "p_and_l_usali.operating_revenue.total_revenues", "value": 13_815_324.0},
+            {"field_name": "p_and_l_usali.departmental_expenses.food_beverage", "value": 2_533_250.0},
+        ],
+    )
+    pnl_doc, _pnl_er = await _insert_financial_extraction(
+        deal_id,
+        doc_type="PNL",
+        filename="Angler's 2024 Full Year Detailed P&L.xlsx",
+        ts=t0 + timedelta(minutes=5),  # newer upload
+        fields=[
+            {"field_name": "p_and_l_usali.period_type", "value": "annual"},
+            {"field_name": "p_and_l_usali.period_ending", "value": "2024-12-31"},
+            {
+                "field_name": "p_and_l_usali.operating_revenue.food_beverage_revenue",
+                "value": 96_528.1,
+            },
+            {"field_name": "p_and_l_usali.operational_kpis.adr_usd", "value": 236.094},
+            {"field_name": "p_and_l_usali.operational_kpis.occupancy_pct", "value": 0.81},
+            {"field_name": "p_and_l_usali.operating_revenue.rooms_revenue", "value": 9_000_000.0},
+            {"field_name": "p_and_l_usali.departmental_expenses.food_beverage", "value": 55_358.5},
+        ],
+    )
+
+    factory = get_session_factory()
+    async with factory() as session:
+        plain = await _load_t12_revenue_actuals(
+            session, deal_id=str(deal_id), tenant_id=_TENANT
+        )
+        actuals, provenance = await _load_t12_revenue_actuals(
+            session, deal_id=str(deal_id), tenant_id=_TENANT, with_provenance=True
+        )
+        expenses, expense_prov = await _load_t12_expense_actuals(
+            session, deal_id=str(deal_id), tenant_id=_TENANT, with_provenance=True
+        )
+
+    assert actuals["fb_revenue"] == pytest.approx(3_216_620.0)
+    assert actuals["adr"] == pytest.approx(232.77)
+    assert actuals["occupancy"] == pytest.approx(0.83)
+    assert actuals["rooms_revenue"] == pytest.approx(9_332_100.0)
+    # The plain call ranks identically — the winner never depends on the
+    # provenance flag.
+    assert plain == actuals
+    # Provenance names the T-12 row, not the P&L.
+    for canonical in ("fb_revenue", "adr", "occupancy", "rooms_revenue"):
+        sf = provenance[canonical]
+        assert sf.document_id == str(t12_doc), canonical
+        assert sf.extraction_result_id == str(t12_er), canonical
+        assert sf.resolution.doc_type == "T12", canonical
+        assert sf.document_id != str(pnl_doc)
+    # The expense twin grounds on the same document.
+    assert expenses["fb_dept_expense"] == pytest.approx(2_533_250.0)
+    assert expense_prov["fb_dept_expense"].document_id == str(t12_doc)
+

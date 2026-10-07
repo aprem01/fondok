@@ -56,6 +56,10 @@ from ..services.comp_set_drift import (
     compute_comp_set_drift,
     drift_report_to_pydantic,
 )
+from ..services.financial_source_rank import (
+    FULL_YEAR_DOC_TYPES as _SHARED_FULL_YEAR_DOC_TYPES,
+    financial_source_sort_key,
+)
 from ..storage import StorageError, get_raw_store
 from ..auth import AuthContext, get_current_auth, require_role
 from .deals import _assert_deal_belongs_to_tenant, get_tenant_id
@@ -499,18 +503,28 @@ class DocumentRecord(BaseModel):
 # doc_type families for the FON-22 primary-source ranking. Full-year
 # sources (annual T-12 / annual P&L) outrank partial-period statements
 # (monthly / YTD); everything else is not a financial-history source.
+# The full-year set is the shared ranking module's — one definition.
 _FINANCIAL_DOC_TYPES = {"T12", "PNL", "PNL_MONTHLY", "PNL_YTD"}
-_FULL_YEAR_DOC_TYPES = {"T12", "PNL"}
+_FULL_YEAR_DOC_TYPES = _SHARED_FULL_YEAR_DOC_TYPES
 
 
 def _mark_primary_financial(records: list["DocumentRecord"]) -> None:
     """Flag the primary financial source in-place (FON-22).
 
-    Mirrors ``engine_runner._rank_pnl_rows`` using the columns the list
-    endpoint already loads: prefer full-year sources, then the most
-    recent period, then the most complete/detailed statement, then the
-    most recently uploaded. Only EXTRACTED financial docs are eligible;
-    nothing is flagged when the deal has no financials yet.
+    Sorts by the SAME key the engine loaders use
+    (``services.financial_source_rank.financial_source_sort_key`` — also
+    behind ``engine_runner._rank_pnl_shims``), so the document this badge
+    calls primary is the one that drives Year-1 revenue / expense actuals.
+    2026-10: the two had drifted (this used doc_type + fiscal_year, the
+    engines used the extracted period labels) and on two testers' deals the
+    badge sat on the T-12 while the model ran off a 2024 P&L.
+
+    The list endpoint carries no extraction fields, so ``period_type`` /
+    ``period_ending`` are ``None`` here and recency falls through to
+    ``report_as_of`` → ``extracted_period_year`` → ``fiscal_year`` — which
+    for a P&L are derived from the very ``period_ending`` the engines read.
+    Only EXTRACTED financial docs are eligible; nothing is flagged when the
+    deal has no financials yet.
     """
     eligible = [
         r
@@ -521,17 +535,22 @@ def _mark_primary_financial(records: list["DocumentRecord"]) -> None:
     if not eligible:
         return
 
-    def sort_key(r: "DocumentRecord") -> tuple[int, int, float]:
-        dt = (r.doc_type or "").upper()
-        tier = 0 if dt in _FULL_YEAR_DOC_TYPES else 1
-        year = r.extracted_period_year or r.fiscal_year or 0
-        score = r.structural_pnl_score or 0.0
-        # tier ascending (full-year first); year + score descending.
-        return (tier, -year, -score)
+    def sort_key(indexed: tuple[int, DocumentRecord]) -> tuple[int, int, int, float, int]:
+        idx, r = indexed
+        return financial_source_sort_key(
+            doc_type=r.doc_type,
+            period_type=None,
+            period_ending=None,
+            report_as_of=r.report_as_of,
+            extracted_period_year=r.extracted_period_year,
+            fiscal_year=r.fiscal_year,
+            completeness=r.structural_pnl_score or 0.0,
+            # ``records`` is uploaded_at DESC — lower index = newer upload,
+            # the key's final tiebreaker.
+            upload_order=idx,
+        )
 
-    # ``records`` is already uploaded_at DESC, so a stable sort keeps the
-    # newest upload as the final tiebreaker.
-    winner = min(eligible, key=sort_key)
+    _, winner = min(enumerate(eligible), key=sort_key)
     winner.primary_financial_source = True
 
 
