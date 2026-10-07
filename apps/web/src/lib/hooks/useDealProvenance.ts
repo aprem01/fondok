@@ -16,7 +16,7 @@ import {
 } from 'react';
 import { createElement } from 'react';
 import { api, isWorkerConnected } from '@/lib/api';
-import type { AssumptionSourcesResponse } from '@/lib/api';
+import type { AssumptionSourcesResponse, AssumptionSourceField } from '@/lib/api';
 import { isReasonCode, type ReasonCode } from '@/lib/ontology/reasons.generated';
 
 export interface ResolvedSource {
@@ -28,6 +28,13 @@ export interface ResolvedSource {
   source: string;
   value: number | string | boolean | null;
   docId?: string;
+  /**
+   * FON-63 (R-070) — the worker's ``source_fields`` locator for this key
+   * (field label + 1-based page in the source document), so a tab can print
+   * "OM · in-place debt p.4" beside a value. Absent on worker builds that
+   * predate lineage; additive — no existing consumer reads it.
+   */
+  field?: AssumptionSourceField | null;
   /**
    * Phase 4.4 — why this key has no usable value, when the worker says so
    * (`assumption_sources.reasons`, a bare ``ReasonCode``). Absent on older
@@ -93,6 +100,7 @@ export function ProvenanceProvider({
           source: src == null ? '' : typeof src === 'string' ? src : String(src),
           value: data.values?.[key] ?? null,
           docId: data.source_documents?.[key],
+          field: data.source_fields?.[key] ?? null,
           reason,
         };
       },

@@ -743,10 +743,15 @@ describe('DebtTab — canonical edit path (field_overrides + full run)', () => {
     expect(updateSpy).not.toHaveBeenCalled();
   });
 
-  it('an overridden term carries the analyst-override provenance badge', () => {
+  // FON-63 (R-070) — the AssumptionBadge ("Override") is superseded by the
+  // source chip, which names the origin in words: "Your override".
+  it('an overridden term carries the "Your override" source chip', () => {
     mockDeal.field_overrides = { 'debt_stack.tranches.0.rate_pct': 0.0725 };
     render(<DebtTab />);
-    expect(screen.getAllByText('Override').length).toBeGreaterThan(0);
+    const row = screen.getByText('Fixed Interest Rate').parentElement!.parentElement as HTMLElement;
+    const chip = row.querySelector('[data-source-chip]');
+    expect(chip).toHaveTextContent('Your override');
+    expect(chip).toHaveAttribute('data-source-chip', 'override');
   });
 });
 

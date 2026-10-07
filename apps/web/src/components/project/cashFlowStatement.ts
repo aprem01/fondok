@@ -180,6 +180,23 @@ export function buildSummary(cf: CashFlowStatementOutput): CashFlowSummary {
   return { kpis, bridge, foots };
 }
 
+/**
+ * FON-67 (R-072) — the ONE browser-side sum on the Cash Flow tab: the running
+ * total of the canonical ``levered_cash_flow`` series, for the Summary
+ * statement's "Cumulative levered cash flow (calculated)" row. ``null`` for
+ * any period the series does not cover (renders "—", never zero).
+ */
+export function cumulativeLevered(cf: CashFlowStatementOutput, n: number): (number | null)[] {
+  const lev = cf.levered_cash_flow ?? [];
+  let running = 0;
+  return Array.from({ length: n }, (_, i) => {
+    const v = lev[i];
+    if (typeof v !== 'number') return null;
+    running += v;
+    return running;
+  });
+}
+
 /** Fallback guard — a deal whose canonical run predates the cash_flow engine
  *  has no usable statement, so the tab shows the "Run Model" placeholder. */
 export function hasCashFlowStatement(

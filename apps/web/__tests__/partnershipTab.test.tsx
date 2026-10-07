@@ -550,3 +550,74 @@ describe('PartnershipTab — `?tab=partnership&sub=<slug>` routing', () => {
     expect(a.getAttribute('href')).toBe('?tab=investment&sub=sources-and-uses');
   });
 });
+
+// ─────────────────────────────────────────────────────────────────────────
+// FON-66 (R-071) — "Partnership should address the equity distribution
+// waterfall between the equity partners and the sponsor"
+//
+// The Summary now says plainly that this is the EQUITY partnership and shows
+// the tier table (hurdle, LP / GP split per tier) ABOVE the partner-return
+// KPIs, so the waterfall is visible without switching sub-tabs. Layout and
+// copy only: the same PromoteWaterfall component, mounted read-only, over the
+// same overrides and seed — no calculation or override path changes.
+// ─────────────────────────────────────────────────────────────────────────
+
+describe('PartnershipTab — Summary shows the distribution waterfall (FON-66 / R-071)', () => {
+  beforeEach(() => {
+    cleanup();
+    nav.params = new URLSearchParams('');
+  });
+
+  it('states plainly that this is the equity partnership between the partners and the sponsor', () => {
+    render(<PartnershipTab />);
+    const header = screen.getByTestId('summary-equity-partnership-header');
+    expect(header).toHaveTextContent(/equity partnership/i);
+    expect(header).toHaveTextContent(/between the equity partners \(the LP investors\) and the sponsor \(the GP\)/);
+    expect(header).toHaveTextContent(/LP \/ GP equity split, the preferred return, the promote tiers and the distribution waterfall/);
+    // The sub-tab caption says it too.
+    expect(
+      screen.getAllByText(/distribution waterfall between the equity partners and the sponsor/i).length,
+    ).toBeGreaterThan(0);
+  });
+
+  it('renders the tier table (hurdle, LP / GP split) on the Summary, above the partner-return KPIs', () => {
+    render(<PartnershipTab />);
+    const tiers = screen.getByTestId('summary-waterfall-tiers');
+
+    // Column heads + the typed structural tiers.
+    expect(within(tiers).getByText('Hurdle')).toBeInTheDocument();
+    expect(within(tiers).getByText('GP split')).toBeInTheDocument();
+    expect(within(tiers).getByText('LP split')).toBeInTheDocument();
+    expect(within(tiers).getByText('Tier I — Return of Capital')).toBeInTheDocument();
+    expect(within(tiers).getByText('Tier II — Preferred Return')).toBeInTheDocument();
+    expect(within(tiers).getByText('Tier III — GP Catch-Up')).toBeInTheDocument();
+    // The promote bands — same seed the Waterfall sub-tab edits.
+    expect(within(tiers).getByText('Promote — to 10% LP IRR')).toBeInTheDocument();
+    expect(within(tiers).getByText('Promote — above 50% LP IRR')).toBeInTheDocument();
+    expect(within(tiers).getByText('Until 15% LP IRR')).toBeInTheDocument();
+    expect(within(tiers).getAllByText('20%').length).toBeGreaterThan(0); // GP split
+    expect(within(tiers).getAllByText('80%').length).toBeGreaterThan(0); // LP split = 100% − GP
+
+    // ABOVE the partner-return KPIs.
+    const partnerReturns = screen.getByText('Partner Returns');
+    // eslint-disable-next-line no-bitwise
+    expect(tiers.compareDocumentPosition(partnerReturns) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  });
+
+  it('is read-only on the Summary — editing stays on the Waterfall sub-tab', () => {
+    render(<PartnershipTab />);
+    const tiers = screen.getByTestId('summary-waterfall-tiers');
+    expect(within(tiers).queryByRole('button', { name: /Add tier/ })).toBeNull();
+    expect(within(tiers).queryByRole('button', { name: /Remove promote tier/ })).toBeNull();
+    expect(within(tiers).getByText(/Hurdles and splits are edited on the Waterfall sub-tab/)).toBeInTheDocument();
+    // Clicking a hurdle on the Summary opens no editor and PATCHes nothing.
+    fireEvent.click(within(tiers).getByText('Until 15% LP IRR'));
+    expect(tiers.querySelector('input')).toBeNull();
+    expect(updateSpy).not.toHaveBeenCalled();
+
+    // The Waterfall sub-tab keeps its editors and controls.
+    fireEvent.click(screen.getByRole('tab', { name: 'Waterfall' }));
+    expect(screen.getByRole('button', { name: /Add tier/ })).toBeInTheDocument();
+    expect(screen.getAllByRole('button', { name: /Remove promote tier/ }).length).toBeGreaterThan(0);
+  });
+});

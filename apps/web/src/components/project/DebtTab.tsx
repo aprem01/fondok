@@ -74,7 +74,8 @@ import EngineRightRail from './EngineRightRail';
 import EngineRunHistory from './EngineRunHistory';
 import WhatJustHappened from './WhatJustHappened';
 import { IntroCard } from '@/components/help/IntroCard';
-import { AssumptionBadge } from '@/components/help/AssumptionBadge';
+import { sourceKind } from '@/lib/provenance';
+import { SOURCE_BADGE_FROM_REGISTRY, SOURCE_LABEL_FROM_REGISTRY } from '@/lib/ontology/adapters';
 import {
   applyOverridePatch,
   patchRequiresNote,
@@ -89,6 +90,7 @@ import {
   type EngineOutputsResponse,
   type ValueState,
   type DebtCovenantStatus,
+  type AssumptionSourceField,
 } from '@/lib/api';
 import { fmtCurrency, fmtPct, fmtMillions, cn } from '@/lib/format';
 import { getEngineField, useEngineOutputs } from '@/lib/hooks/useEngineOutputs';
@@ -100,6 +102,7 @@ import {
   SubTabNav,
   StatementTable,
   ProvenanceDot,
+  StateBadge,
   palette,
   prov,
   useInlineEdit,
@@ -226,9 +229,15 @@ interface RowDef {
   value: ReactNode;       // formatted string or a custom editor node
   bold?: boolean;
   overridden?: boolean;
-  /** Live assumption source (seed / deal_row / …) for the provenance badge;
-   *  an overridden row always badges `analyst_override`. */
+  /** Live assumption source (seed / deal_row / om_broker / …) for the source
+   *  chip; an overridden row always reads "Your override". */
   source?: string | null;
+  /** FON-63 (R-070) — the worker's field/page locator behind `source`, so a
+   *  document chip can say "OM · in-place debt p.4". */
+  sourceField?: AssumptionSourceField | null;
+  /** FON-63 (R-070) — the input this value was sized from when it carries no
+   *  tag of its own (the senior amount is sized from the LTV seed). */
+  sourceVia?: string;
   note?: ReactNode;
   /** FON-66 / FON-67 §1 — `sub` names the target's sub-tab, so "→ Investment"
    *  lands on Sources & Uses, the view that actually holds the figure. */
@@ -325,9 +334,17 @@ export default function DebtTab() {
   );
   // Live assumption sources for the senior seed terms (seed / deal_row / …) so
   // an untouched term badges where it came from; null without a provider.
+  // FON-63 (R-070) — the OM's ``in_place_debt.*`` lands on these same keys
+  // (loan_amount · interest_rate · amortization_years · term_years · ltv, see
+  // extraction/field_catalog.yaml ``om_debt``), so a term the broker quoted
+  // chips as "OM · in-place debt p.N" rather than as a seed.
   const srcRate = useSource('interest_rate');
   const srcTerm = useSource('term_years');
   const srcAmort = useSource('amortization_years');
+  const srcLoan = useSource('loan_amount');
+  const srcLtv = useSource('ltv');
+  const srcIo = useSource('interest_only_years');
+  const srcOrigFee = useSource(tk(SENIOR, 'upfront_fee_pct'));
 
   // ─── Editable overrides (canonical path: field_overrides + full run) ──
   const isMockId = /^\d+$/.test(dealId);
@@ -654,6 +671,11 @@ export default function DebtTab() {
       note: 'Purchase plus renovation, closing costs and reserves — the LTC denominator' },
     { id: 'loan', label: 'Senior Loan Amount', kind: 'input',
       state: 'assumption', value: seniorAmountNode, overridden: ltvOverridden,
+      // No tag of its own → it was sized from the LTV, so it carries the LTV's
+      // origin and says so ("… · via LTV").
+      source: srcLoan?.source || srcLtv?.source,
+      sourceField: srcLoan?.source ? srcLoan.field : srcLtv?.field,
+      sourceVia: !srcLoan?.source && srcLtv?.source ? 'LTV' : undefined,
       note: 'Enter the amount or the LTV below — either one resizes the senior loan' },
     { id: 'pace', label: 'PACE Loan Amount', kind: 'input',
       state: paceFunded ? 'assumption' : 'awaiting_data',
@@ -666,6 +688,7 @@ export default function DebtTab() {
     { id: 'ltv', label: 'LTV', kind: 'input',
       state: ltvOverridden ? 'assumption' : (tracedState('debt', 'ltv') ?? 'calculated'),
       value: ltvNode, overridden: ltvOverridden,
+      source: srcLtv?.source, sourceField: srcLtv?.field,
       note: 'Total debt ÷ property value — editing resizes the senior loan' },
     { id: 'ltc', label: 'LTC', kind: 'calc',
       state: tracedState('capital', 'ltc') ?? 'calculated', value: pctv(ltcN, 1) },
@@ -716,6 +739,9 @@ export default function DebtTab() {
       ? [
           { id: 'benchmark', label: 'Benchmark', kind: 'input' as const, state: 'assumption' as const,
             overridden: overridden(indexKey),
+            // The engine flags its own flat-SOFR default; anything else is
+            // whatever the curve / override supplied and is reported as such.
+            source: benchmarkIsDefault ? 'seed' : undefined,
             value: (
               <EditableValue
                 display={has(benchmarkRate) ? `${benchmarkName ?? 'SOFR'} · ${pctv(benchmarkRate, 2)}` : '—'}
@@ -755,12 +781,12 @@ export default function DebtTab() {
         ]
       : [
           { id: 'rate', label: 'Fixed Interest Rate', kind: 'input' as const, state: 'assumption' as const,
-            overridden: rateOverridden, source: srcRate?.source,
+            overridden: rateOverridden, source: srcRate?.source, sourceField: srcRate?.field,
             value: pctEditor({ key: rateKey, value: allInRate, emptyLabel: 'Enter rate', testId: 'edit-rate', bold: true }),
             note: 'All-in fixed coupon the schedule runs on' },
         ]),
     { id: 'amort', label: 'Amortization', kind: 'input', state: 'assumption',
-      overridden: overridden(amortKey), source: srcAmort?.source,
+      overridden: overridden(amortKey), source: srcAmort?.source, sourceField: srcAmort?.field,
       value: (
         <EditableValue
           display={has(wAmortYears) ? (wAmortYears === 0 ? 'Interest-only' : `${wAmortYears} years`) : '—'}
@@ -779,7 +805,7 @@ export default function DebtTab() {
       ),
       note: '0 = interest-only for the full term' },
     { id: 'term', label: 'Maturity', kind: 'input', state: 'assumption',
-      overridden: overridden(TERM_KEY), source: srcTerm?.source,
+      overridden: overridden(TERM_KEY), source: srcTerm?.source, sourceField: srcTerm?.field,
       value: (
         <EditableValue
           display={has(wTermYears) ? `${wTermYears} years` : '—'}
@@ -798,6 +824,7 @@ export default function DebtTab() {
       note: 'The schedule runs to maturity — include a refinance (Refinance tab) to model a take-out before exit' },
     { id: 'io', label: 'Interest-Only Period', kind: seniorIsFullIo ? 'calc' : 'input',
       state: seniorIsFullIo ? 'calculated' : 'assumption', overridden: overridden(ioKey),
+      source: srcIo?.source,
       value: seniorIsFullIo
         ? 'Full term'
         : (
@@ -820,6 +847,9 @@ export default function DebtTab() {
         : 'Interest-only stub before principal amortization begins' },
     { id: 'orig', label: 'Origination Fee', kind: 'input',
       state: 'assumption', value: origFeeNode, overridden: feeOverridden,
+      // The worker tags this key SOURCE_SEED until overridden (engine_runner
+      // SENIOR_ORIGINATION_FEE_KEY) — the note below already says so.
+      source: srcOrigFee?.source || (feeOverridden ? undefined : 'seed'),
       note: feeOverridden
         ? 'Charged at close — the Sources & Uses "Senior Loan Origination Fee" line and Overview Financing Costs read this number'
         : 'Fondok seed of 1.50% of the senior loan — charged at close as the Sources & Uses "Senior Loan Origination Fee" line and Overview Financing Costs. Click to change.' },
@@ -1089,6 +1119,9 @@ export default function DebtTab() {
           </div>
         </div>
 
+        {/* FON-63 (R-070) — what the dots and chips mean on this tab. */}
+        <DebtSourceLegend />
+
         <SubTabNav
           items={SUB_TABS.map((t) => ({ id: t.id, label: t.label }))}
           activeId={tab}
@@ -1354,14 +1387,151 @@ export default function DebtTab() {
 }
 
 // ─────────────────────────────────────────────────────────────────────
+// Source chips + legend (FON-63 / R-070).
+//
+// Sam's testers: "Where does the Debt tab's populated information originate?"
+// — they read the seeded numbers as extracted. The dot carries the STATE
+// (document / linked / assumption / calculated / awaiting); the chip names
+// the ORIGIN of an assumption in words, from the row's existing `source` /
+// `overridden` / `state` data and the /assumption_sources locator. No new
+// data: an origin the model did not tag reads "source not recorded".
+// ─────────────────────────────────────────────────────────────────────
+type SourceChipTone = 'seed' | 'document' | 'override' | 'deal' | 'other' | 'unknown';
+
+interface SourceChipSpec {
+  text: string;
+  tone: SourceChipTone;
+  title: string;
+}
+
+const CHIP_TITLE: Record<SourceChipTone, string> = {
+  seed: 'Fondok’s institutional default — NOT extracted from this deal’s documents. Enter the term, or upload the term sheet / OM, to replace it.',
+  document: 'Read by Fondok from a document in the Data Room — the chip names the document and page.',
+  override: 'You changed this value here. It wins over every other source and carries your justification.',
+  deal: 'Entered on the deal record (the create-deal wizard or the API).',
+  other: 'Tagged by the model with the source shown.',
+  unknown: 'The model recorded no origin for this value.',
+};
+
+/** Which chip a row shows, or null for rows that are not a populated input
+ *  (linked / calculated rows carry their dot, note and "→" link instead). */
+function sourceChipFor(
+  row: Pick<RowDef, 'kind' | 'state' | 'overridden' | 'source' | 'sourceField' | 'sourceVia'>,
+): SourceChipSpec | null {
+  if (row.state === 'awaiting_data') return null;
+  if (row.kind !== 'input' && row.kind !== 'doc') return null;
+  const via = row.sourceVia ? ` · via ${row.sourceVia}` : '';
+  if (row.overridden || row.source === 'analyst_override') {
+    return { text: 'Your override', tone: 'override', title: CHIP_TITLE.override };
+  }
+  const src = row.source;
+  if (!src) return { text: 'source not recorded', tone: 'unknown', title: CHIP_TITLE.unknown };
+  if (src === 'seed') {
+    return { text: `Seed · institutional default${via}`, tone: 'seed', title: CHIP_TITLE.seed };
+  }
+  if (src === 'deal_row') return { text: `Deal record${via}`, tone: 'deal', title: CHIP_TITLE.deal };
+  const page = row.sourceField?.page;
+  const pageText = page != null && Number.isFinite(page) ? ` p.${page}` : '';
+  if (sourceKind(src) === 'grounded') {
+    const badge = SOURCE_BADGE_FROM_REGISTRY[src] ?? src;
+    const where = src === 'om_broker' ? 'in-place debt' : (row.sourceField?.field || 'document');
+    return { text: `${badge} · ${where}${pageText}${via}`, tone: 'document', title: CHIP_TITLE.document };
+  }
+  return { text: `${SOURCE_LABEL_FROM_REGISTRY[src] ?? src}${via}`, tone: 'other', title: CHIP_TITLE.other };
+}
+
+const CHIP_STYLE: Record<SourceChipTone, { color: string; bg: string; border: string }> = {
+  seed: { color: palette.textSecondary, bg: '#f5f4f0', border: palette.buttonSecondaryBorder },
+  document: { color: 'oklch(40% 0.12 155)', bg: 'oklch(96.5% 0.03 155)', border: 'oklch(88% 0.05 155)' },
+  override: { color: palette.linkBlue, bg: 'oklch(97.5% 0.015 250)', border: '#dbe3f5' },
+  deal: { color: palette.textSecondary, bg: '#f5f4f0', border: palette.buttonSecondaryBorder },
+  other: { color: palette.textSecondary, bg: palette.surfaceTint, border: palette.border },
+  unknown: { color: palette.textMuted, bg: 'transparent', border: palette.textFaint },
+};
+
+function SourceChip({ spec }: { spec: SourceChipSpec }) {
+  const s = CHIP_STYLE[spec.tone];
+  return (
+    <span
+      data-source-chip={spec.tone}
+      title={spec.title}
+      style={{
+        display: 'inline-flex', alignItems: 'center', fontSize: 9.5, fontWeight: 600, lineHeight: 1,
+        padding: '3px 6px', borderRadius: 4, whiteSpace: 'nowrap',
+        color: s.color, background: s.bg,
+        border: `1px ${spec.tone === 'unknown' ? 'dashed' : 'solid'} ${s.border}`,
+      }}
+    >
+      {spec.text}
+    </span>
+  );
+}
+
+/** The legend at the top of the tab: what each dot state means on Debt, and
+ *  the chip vocabulary that names an input's origin. */
+const LEGEND_ORIGINS: { state: ValueState; means: string }[] = [
+  { state: 'document_sourced', means: 'read from a document in the Data Room (e.g. the OM’s in-place debt)' },
+  { state: 'linked', means: 'owned by another tab and mirrored here (Investment, Returns)' },
+  { state: 'assumption', means: 'an input — a Fondok seed, the deal record or your override; the chip says which' },
+  { state: 'calculated', means: 'derived by the Debt engine from the inputs above' },
+  { state: 'awaiting_data', means: 'not entered yet — shown as —, never zero' },
+  { state: 'needs_review', means: 'extracted at low confidence, or an override that conflicts with its source' },
+];
+
+const LEGEND_CHIPS: { spec: SourceChipSpec; means: string }[] = [
+  { spec: { text: 'Seed · institutional default', tone: 'seed', title: CHIP_TITLE.seed }, means: 'Fondok’s default — not extracted from your documents' },
+  { spec: { text: 'OM · in-place debt p.N', tone: 'document', title: CHIP_TITLE.document }, means: 'read from the offering memorandum, page N' },
+  { spec: { text: 'Deal record', tone: 'deal', title: CHIP_TITLE.deal }, means: 'entered when the deal was created' },
+  { spec: { text: 'Your override', tone: 'override', title: CHIP_TITLE.override }, means: 'you changed it here' },
+  { spec: { text: 'source not recorded', tone: 'unknown', title: CHIP_TITLE.unknown }, means: 'the model tagged no origin' },
+];
+
+function DebtSourceLegend() {
+  const eyebrow = {
+    fontSize: 10, fontWeight: 700, letterSpacing: '.05em', color: palette.eyebrow,
+    textTransform: 'uppercase' as const, whiteSpace: 'nowrap' as const,
+  };
+  return (
+    <div
+      data-testid="debt-source-legend"
+      style={{
+        background: palette.surfaceTint, border: `1px solid ${palette.border}`, borderRadius: 8,
+        padding: '9px 14px', marginBottom: 14, display: 'flex', flexDirection: 'column', gap: 7,
+        fontSize: 11, color: palette.textSecondary,
+      }}
+    >
+      <div style={{ display: 'flex', alignItems: 'center', gap: 14, flexWrap: 'wrap' }}>
+        <span style={eyebrow}>Source</span>
+        {LEGEND_ORIGINS.map((o) => (
+          <span key={o.state} title={o.means} style={{ display: 'inline-flex', alignItems: 'center', gap: 5 }}>
+            <StateBadge state={o.state} />
+            <span style={{ color: palette.textMuted }}>— {o.means}</span>
+          </span>
+        ))}
+      </div>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap', borderTop: `1px solid ${palette.hairlineSection}`, paddingTop: 7 }}>
+        <span style={eyebrow}>Chips</span>
+        {LEGEND_CHIPS.map((c) => (
+          <span key={c.spec.text} style={{ display: 'inline-flex', alignItems: 'center', gap: 5 }}>
+            <SourceChip spec={c.spec} />
+            <span style={{ color: palette.textMuted }}>{c.means}</span>
+          </span>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────────
 // Row — canonical dot · label · link · value.
 // ─────────────────────────────────────────────────────────────────────
 function DebtRow({ row }: { row: RowDef }) {
   const color = valueColor(row.kind, !!row.bold, !!row.overridden);
   const valueIsNode = typeof row.value !== 'string' && typeof row.value !== 'number';
-  // Provenance badge (shared AssumptionBadge vocabulary): an analyst edit
-  // always reads "Override"; an untouched seed / deal-row term says which.
-  const badgeSource = row.overridden ? 'analyst_override' : row.source ?? undefined;
+  // FON-63 (R-070) — every populated input names its origin in words (a seed
+  // says it is a seed; a document says which and the page; an analyst edit
+  // reads "Your override"; no tag reads "source not recorded").
+  const chip = sourceChipFor(row);
   return (
     <>
       <div style={{
@@ -1376,7 +1546,7 @@ function DebtRow({ row }: { row: RowDef }) {
           )}
         </span>
         <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6, flexShrink: 0 }}>
-          {badgeSource && <AssumptionBadge source={badgeSource} />}
+          {chip && <SourceChip spec={chip} />}
           {valueIsNode ? (
             <span>{row.value}</span>
           ) : (
