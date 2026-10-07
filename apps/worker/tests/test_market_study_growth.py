@@ -84,6 +84,32 @@ def test_demand_growth_reads_the_llm_named_cbre_style_rows_in_a_market_study() -
     assert g.inputs[0].field_name == "cbre_horizons.segment_all.2025.demand_change_pct"
 
 
+def test_demand_growth_year_to_date_row_is_labelled_ytd_not_the_full_year() -> None:
+    """Live: ``cbre_horizons.overall_supply.2025_ytd.demand_pct_change`` was
+    shown as "2025" — a partial year labelled as the full year."""
+    rows = [_row("cbre_horizons.overall_supply.2025_ytd.demand_pct_change", 2.1, unit="pct", page=4)]
+    g = read_demand_growth(rows, has_documents=True, as_of_year=AS_OF)
+    assert g.value_pct == 2.1 and g.period_label == "2025 YTD"
+    assert g.inputs[0].field_name == "cbre_horizons.overall_supply.2025_ytd.demand_pct_change"
+    # Quarterly rows are labelled with their quarter; forecasts say so.
+    g = read_demand_growth([_row("market_study.trend.2025_q1.demand_change_pct", 0.031)],
+                           has_documents=True, as_of_year=AS_OF)
+    assert g.period_label == "2025 Q1"
+    g = read_demand_growth([_row("cbre_horizons.overall_supply.2027_ytd.demand_pct_change", 3.0, unit="pct")],
+                           has_documents=True, as_of_year=AS_OF)
+    assert g.value_pct is None and g.forecast_label == "2027 YTD forecast"
+    # Supply growth shares the label.
+    s = read_supply_growth(
+        [
+            _row("market_study.supply.existing_rooms", 12000, unit="rooms"),
+            _row("under_construction.total_rooms", 600, unit="rooms"),
+            _row("cbre_horizons.overall_supply.2025_ytd.supply_pct_change", 1.2, unit="pct"),
+        ],
+        has_documents=True, as_of_year=AS_OF,
+    )
+    assert s.reported_supply_change_pct == 1.2 and s.reported_supply_change_period == "2025 YTD"
+
+
 def test_demand_growth_tolerates_loose_llm_names_and_percent_strings() -> None:
     rows = [_row("market_study.demand_growth_yoy", "4.2%")]
     g = read_demand_growth(rows, has_documents=True, as_of_year=AS_OF)

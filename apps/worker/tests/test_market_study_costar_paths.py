@@ -345,7 +345,8 @@ def test_room_night_deltas_are_levels_never_the_growth_rate() -> None:
     assert g.demand_room_nights_change.field_name == "cbre_horizons.overall_supply.2025_ytd.demand_change"
     assert g.demand_room_nights_change.value == -35997
     assert g.demand_room_nights_change.page == 24 and g.demand_room_nights_change.doc_name == DOC_A
-    assert g.demand_room_nights_change_period == "2025"
+    # A ``2025_ytd`` row is a partial year — labelled "2025 YTD", never "2025".
+    assert g.demand_room_nights_change_period == "2025 YTD"
 
     s = read_supply_growth(rows, has_documents=True, as_of_year=AS_OF, market_terms=["Miami Beach"])
     assert s.reported_supply_change_pct == 15.0 and s.reported_supply_change_period == "2022"
@@ -353,7 +354,7 @@ def test_room_night_deltas_are_levels_never_the_growth_rate() -> None:
     assert s.supply_rooms_change is not None
     assert s.supply_rooms_change.field_name == "cbre_horizons.overall_supply.2025_ytd.supply_change"
     assert s.supply_rooms_change.value == 48998 and s.supply_rooms_change.page == 24
-    assert s.supply_rooms_change_period == "2025"
+    assert s.supply_rooms_change_period == "2025 YTD"
     # The delta row is never one of the rate's inputs.
     assert all(r.field_name != "cbre_horizons.overall_supply.2025_ytd.supply_change" for r in s.inputs)
     assert any(r.field_name == "pnl_benchmark.market.supply_change_2022_annual" for r in s.inputs)
