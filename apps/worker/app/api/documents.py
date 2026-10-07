@@ -5753,17 +5753,24 @@ async def _run_extraction_pipeline_inner(
             )
 
             # Source-of-truth hierarchy (May 7 scope): documents >
-            # wizard. When the OM / T-12 surfaces a property metadata
-            # value (keys, brand, year_built, address) that contradicts
-            # the deals row, prefer the document and write the change
-            # to audit_log so a reviewer can see what shifted. The
-            # wizard input is treated as a stale guess once a real
-            # document arrives.
+            # wizard — but ONLY for documents that describe the subject
+            # property (FON-84). A CoStar / STR market report also emits
+            # a ``property_overview`` block, and on two tester deals it
+            # described a COMP hotel ("Rosewood The Raleigh", 60 keys)
+            # and silently rewrote the deal's keys / brand / city. The
+            # sync is therefore gated on ``classified_doc_type``: only
+            # OM / T12 / PNL-family / ROOM_MIX / PROPERTY_INFO may write,
+            # the OM alone may overwrite ``keys``, ``brand`` is
+            # fill-if-empty (the analyst's wizard brand is the PROPOSED
+            # brand), and ``city`` is fill-if-empty from the OM's
+            # submarket / location only. Every applied change is written
+            # to audit_log with doc_type + mode for provenance.
             await _sync_deal_metadata_from_extraction(
                 session,
                 deal_id=deal_id,
                 tenant_id=tenant_id,
                 fields=fields,
+                doc_type=classified_doc_type,
             )
 
             # Chain-of-verification — re-read each cited number against the
@@ -6669,13 +6676,46 @@ def _mock_extraction_payload() -> tuple[list[dict[str, Any]], dict[str, Any]]:
 # 1:1 column mapping are listed; ad-hoc property attributes (year
 # built, GBA) live on the extraction row rather than the deals row
 # until they justify a column.
+#
+# FON-84: ``property_overview.address`` is deliberately NOT mapped. It
+# carries a full street address and used to land verbatim in ``city``.
+# Only the submarket / location tokens may feed ``city``, and only to
+# fill an empty value from the OM (see ``_METADATA_SYNC_OM_ONLY_COLS``).
 _PROPERTY_METADATA_FIELD_TO_COL: dict[str, str] = {
     "property_overview.keys": "keys",
     "property_overview.brand": "brand",
-    "property_overview.address": "city",
     "property_overview.submarket": "city",
     "property_overview.location": "city",
 }
+
+# Subject-property document types that are allowed to write deal
+# metadata at all (FON-84). Compared in ``_canonical_doc_type`` form so
+# ``PNL_MONTHLY`` / ``pnl-monthly`` / ``PNL MONTHLY`` all match. Market
+# reports (MARKET_STUDY, STR_TREND, CBRE_HORIZONS, PNL_BENCHMARK, ...),
+# comps, CAPEX, INSURANCE, LEASES and the Router's UNKNOWN sentinel are
+# all excluded: their ``property_overview`` block (when present) tends
+# to describe a comp or the market, not the subject hotel.
+_METADATA_SYNC_SOURCE_DOC_TYPES: frozenset[str] = frozenset(
+    _canonical_doc_type(t)
+    for t in (
+        "OM",
+        "T12",
+        "PNL",
+        "PNL_MONTHLY",
+        "PNL_YTD",
+        "ROOM_MIX",
+        "PROPERTY_INFO",
+    )
+)
+_OM_CANONICAL_DOC_TYPE = _canonical_doc_type("OM")
+
+# Columns that only the OM may populate (even in fill mode). A P&L's
+# ``property_overview.location`` is not a reliable city source.
+_METADATA_SYNC_OM_ONLY_COLS: frozenset[str] = frozenset({"city"})
+
+# Columns the OM may OVERWRITE when the extracted value differs from the
+# deals row. Everything else is fill-if-empty only, for every doc type.
+_METADATA_SYNC_OM_OVERWRITE_COLS: frozenset[str] = frozenset({"keys"})
 
 
 async def _sync_deal_metadata_from_extraction(
@@ -6684,24 +6724,62 @@ async def _sync_deal_metadata_from_extraction(
     deal_id: str,
     tenant_id: str,
     fields: list[dict[str, Any]],
+    doc_type: str | None = None,
 ) -> None:
-    """When an extracted document carries property-metadata values that
-    differ from the deals-table row, prefer the document. Best-effort.
+    """Copy subject-property metadata from an extracted document onto the
+    ``deals`` row, under the FON-84 provenance rules. Best-effort.
 
-    Implements the May 7 scope rule: docs > wizard. The wizard input
-    is a stale guess; the OM / T-12 carries the property's actual
-    keys / brand / address. We update the deals row in place and
-    write an ``audit_log`` entry per change so a reviewer can see
-    what shifted. UUID guard, exception-tolerant — never blocks
-    extraction completion.
+    Implements the May 7 scope rule (docs > wizard) *narrowly*. The
+    original version ran for every document type and let the last
+    extraction win, so a CoStar market report describing a comp hotel
+    overwrote a 132-key deal to 60 keys / "Rosewood Hotel Group", and
+    an OM street address landed in ``city``. The rules now are:
+
+    * **Doc-type gate** — only subject-property documents may write:
+      ``OM``, ``T12``, ``PNL``, ``PNL_MONTHLY``, ``PNL_YTD``,
+      ``ROOM_MIX``, ``PROPERTY_INFO`` (``_METADATA_SYNC_SOURCE_DOC_TYPES``,
+      compared via ``_canonical_doc_type``). Any other type — market
+      studies, STR reports, comps, CAPEX, insurance, leases, the Router's
+      ``UNKNOWN`` sentinel, or ``None`` — returns early and writes
+      nothing.
+    * **keys** — the OM may overwrite a differing value (docs > wizard).
+      Non-OM allowlisted types may only FILL an empty / zero ``keys``,
+      never overwrite a non-empty one.
+    * **brand** — fill-if-empty ONLY, for every document type including
+      the OM. A brand already on the deal is the analyst's intent (their
+      PROPOSED brand, e.g. "Thompson Hotels" on a Kimpton-flagged asset)
+      until a dedicated proposed-brand column exists.
+    * **city** — ``property_overview.address`` is never mapped (a street
+      address must not land in ``city``). ``submarket`` / ``location``
+      may fill an empty ``city`` only, and only from the OM.
+
+    Every applied change is written to ``audit_log`` as
+    ``deal.metadata_synced_from_extraction`` with ``doc_type`` and
+    ``mode`` (``"fill"`` | ``"overwrite"``) in ``input_payload`` so a
+    reviewer can see where a value came from. UUID guard, single atomic
+    UPDATE, exception-tolerant — never blocks extraction completion.
     """
     try:
         UUID(deal_id)
     except (TypeError, ValueError):
         return
 
+    # FON-84 doc-type gate — see docstring. Evaluated before the SELECT
+    # so a skipped document costs nothing.
+    canonical_doc_type = _canonical_doc_type(doc_type)
+    if canonical_doc_type not in _METADATA_SYNC_SOURCE_DOC_TYPES:
+        logger.info(
+            "deal_metadata_sync: skipped doc_type=%s deal=%s "
+            "(not a subject-property document; allowlist=%s)",
+            doc_type,
+            deal_id,
+            sorted(_METADATA_SYNC_SOURCE_DOC_TYPES),
+        )
+        return
+    is_om = canonical_doc_type == _OM_CANONICAL_DOC_TYPE
+
     # Read the current deals row so we only UPDATE columns whose
-    # extracted value actually contradicts what's there.
+    # extracted value is actually allowed to land there.
     try:
         row = (
             await session.execute(
@@ -6718,6 +6796,10 @@ async def _sync_deal_metadata_from_extraction(
         return
     current = row._mapping
     proposed: dict[str, Any] = {}
+    # Per-column provenance for the audit row: "fill" when the deals
+    # column was empty, "overwrite" when the OM replaced a differing
+    # value. Keyed identically to ``proposed``.
+    modes: dict[str, str] = {}
 
     for f in fields:
         if not isinstance(f, dict):
@@ -6725,6 +6807,8 @@ async def _sync_deal_metadata_from_extraction(
         name = (f.get("field_name") or "").strip().lower()
         col = _PROPERTY_METADATA_FIELD_TO_COL.get(name)
         if col is None:
+            continue
+        if col in _METADATA_SYNC_OM_ONLY_COLS and not is_om:
             continue
         value = f.get("value")
         if value in (None, "", 0):
@@ -6749,15 +6833,31 @@ async def _sync_deal_metadata_from_extraction(
                 existing_int = int(existing) if existing is not None else None
             except (TypeError, ValueError):
                 existing_int = None
-            if existing_int == value:
+            is_empty = existing_int is None or existing_int <= 0
+            if not is_empty and existing_int == value:
                 continue
         else:
-            if existing and str(existing).strip().lower() == value.lower():
+            existing_str = str(existing).strip() if existing is not None else ""
+            is_empty = not existing_str
+            if not is_empty and existing_str.lower() == value.lower():
                 continue
 
-        # First write wins per column — if the OM and T-12 disagree
-        # the OM's value lands first (loop order = SELECT order).
-        proposed.setdefault(col, value)
+        if is_empty:
+            mode = "fill"
+        elif is_om and col in _METADATA_SYNC_OM_OVERWRITE_COLS:
+            mode = "overwrite"
+        else:
+            # Non-empty and this doc type may not overwrite it — the
+            # value already on the deal is the analyst's (or the OM's)
+            # intent and stays.
+            continue
+
+        # First write wins per column within a single document — if the
+        # same extraction emits both a submarket and a location token,
+        # the earlier one (loop order = field order) lands.
+        if col not in proposed:
+            proposed[col] = value
+            modes[col] = mode
 
     if not proposed:
         return
@@ -6791,8 +6891,8 @@ async def _sync_deal_metadata_from_extraction(
         return
 
     # Audit log — one entry per column change so reviewers see
-    # provenance ("we changed keys from 200 → 132 because the OM
-    # said so").
+    # provenance ("the PNL filled keys=132" / "the OM overwrote keys
+    # 132 → 140"). ``doc_type`` + ``mode`` are the FON-84 additions.
     try:
         from ..audit import log_audit
 
@@ -6808,7 +6908,9 @@ async def _sync_deal_metadata_from_extraction(
                     "column": col,
                     "old_value": (str(old_val) if old_val is not None else None),
                     "new_value": (str(new_val) if new_val is not None else None),
-                    "rule": "docs > wizard (May 7 scope)",
+                    "doc_type": doc_type,
+                    "mode": modes.get(col, "fill"),
+                    "rule": "docs > wizard (May 7 scope); FON-84 doc-type gate",
                 },
             )
         await session.commit()
@@ -6820,9 +6922,10 @@ async def _sync_deal_metadata_from_extraction(
         )
 
     logger.info(
-        "deal_metadata_sync: deal=%s applied=%s",
+        "deal_metadata_sync: deal=%s doc_type=%s applied=%s",
         deal_id,
-        list(proposed.keys()),
+        doc_type,
+        {col: modes.get(col) for col in proposed},
     )
 
 
