@@ -16,7 +16,7 @@ import {
 } from 'react';
 import { createElement } from 'react';
 import { api, isWorkerConnected } from '@/lib/api';
-import type { AssumptionSourcesResponse } from '@/lib/api';
+import type { AssumptionSourcesResponse, AssumptionSourceField } from '@/lib/api';
 import { isReasonCode, type ReasonCode } from '@/lib/ontology/reasons.generated';
 
 export interface ResolvedSource {
@@ -34,6 +34,16 @@ export interface ResolvedSource {
    * worker builds; `useRefusal` in `components/help/Refused` reads it.
    */
   reason?: ReasonCode | null;
+  /**
+   * Phase 2.4 ``assumption_sources.source_fields[key]`` — the extraction row
+   * the worker read this key off (field path, page, document, doc_type).
+   * This is the authoritative "document-grounded" signal: the runner keeps
+   * the row even where the ``source`` label is a stale ``seed`` (OM capital
+   * keys never flip their label — engine_runner: "a key that names a real
+   * extraction row is grounded, whatever its (possibly stale) source label
+   * says"). ``null`` when the key came off no row.
+   */
+  field?: AssumptionSourceField | null;
 }
 
 interface ProvCtx {
@@ -94,6 +104,7 @@ export function ProvenanceProvider({
           value: data.values?.[key] ?? null,
           docId: data.source_documents?.[key],
           reason,
+          field: data.source_fields?.[key] ?? null,
         };
       },
     }),

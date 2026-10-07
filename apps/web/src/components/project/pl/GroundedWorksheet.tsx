@@ -53,6 +53,10 @@ import { buildReviewState, cellKey, cellsForYear, histHasData, histValue, type R
 import { useSource } from '@/lib/hooks/useDealProvenance';
 import { sourceKind, sourceExplanation, formatPeriodBasis } from '@/lib/provenance';
 import { useWorksheetLayout } from '@/lib/hooks/useWorksheetLayout';
+import {
+  diffHistColumn, footGop, footRevenue, footingSentence, fmtSignedCurrency,
+  FOOTING_REASON_TEXT, type CellChange, type FootingResult,
+} from '@/lib/worksheetFooting';
 import type { SplitChild, CuratedLine } from '@/lib/hooks/useWorksheetLayout';
 import { worksheetBinding } from '@/lib/ontology/adapters';
 
@@ -314,6 +318,36 @@ interface InspectTarget {
    *  Mar 31, 2025"). Absent on the Model column and on columns whose basis
    *  could not be established. */
   periodText?: string | null;
+  /** E-012 — the worksheet row + column behind the cell, so a "correct at
+   *  source" save can snapshot the column and report what it changed. */
+  rowId?: string;
+  year?: string;
+}
+
+/** E-012 — a "correct at source" save awaiting its refreshed column. */
+interface PendingPropagation {
+  docId: string;
+  year: string;
+  colLabel: string;
+  rowId: string;
+  rowLabel: string;
+  /** Every row's historical value in that column BEFORE the save. */
+  before: Record<string, number | null>;
+  /** The extraction the column was built from at save time — its identity
+   *  changes when the refetched statement lands in the shared store. */
+  prevExtraction: ExtractionResult | undefined;
+}
+
+/** E-012 — what a "correct at source" save changed in its column. */
+interface Propagation {
+  year: string;
+  colLabel: string;
+  rowId: string;
+  rowLabel: string;
+  /** The edited line's own move (null when the worker stored the same value). */
+  edited: CellChange | null;
+  /** Client-derived totals that re-summed from it (Total Revenue, Total Fees & Fixed). */
+  derived: CellChange[];
 }
 
 type RenderItem =
@@ -356,6 +390,14 @@ export default function GroundedWorksheet({
   const [note, setNote] = useState<Record<string, string>>({});
   const [savingKey, setSavingKey] = useState<string | null>(null);
   const [inspect, setInspect] = useState<InspectTarget | null>(null);
+  // E-012 (FON-41) — "after changing a source line it was not clear whether
+  // the adjustment flowed through the rest of the P&L." `pendingProp` holds
+  // the column's values BEFORE a correct-at-source save; the effect below
+  // resolves it into a `propagation` note once the refetched statement has
+  // rebuilt the column, and lights every cell that moved for a few seconds.
+  const [pendingProp, setPendingProp] = useState<PendingPropagation | null>(null);
+  const [propagation, setPropagation] = useState<Propagation | null>(null);
+  const [changedCells, setChangedCells] = useState<Set<string>>(() => new Set());
   // Design rewire: year-pill filtering + line-item search.
   const [hiddenYears, setHiddenYears] = useState<Set<string>>(new Set());
   const [search, setSearch] = useState('');
@@ -493,20 +535,82 @@ export default function GroundedWorksheet({
   // Correct a wrong extracted value AT SOURCE (reviewField edit) — the fix path
   // for read-only cells like revenue, whose model value is computed and can't be
   // inline-overridden. Re-runs so the grounded model reflects the correction.
+  //
+  // E-012 — what the worker does with an edit (documents.py
+  // `review_extraction_field`): it replaces THAT field's value and recomputes
+  // the confidence report. It does not re-foot the statement — a stated GOP /
+  // NOI / Total Revenue stays what was extracted. In this grid Total Revenue
+  // and Total Fees & Fixed are client-side sums of the lines, so they move
+  // with the edit; GOP and NOI are the statement's own stated lines, so they
+  // do not. The note this schedules says exactly that, with the numbers.
   const editExtraction = useCallback(
-    async (docId: string, field: string, value: number) => {
+    async (
+      docId: string,
+      field: string,
+      value: number,
+      ctx?: Pick<InspectTarget, 'rowId' | 'year' | 'rowLabel' | 'colLabel'>,
+    ) => {
+      // Snapshot the column BEFORE the save so the note can state exactly
+      // what moved — the edited line and every client-derived total.
+      const col = ctx?.year != null ? histYears.find((y) => y.year === ctx.year) : undefined;
+      const before: Record<string, number | null> = {};
+      if (col) for (const r of ROWS) if (r.kind !== 'section') before[r.id] = histValue(r.id, col);
       try {
         await api.documents.reviewField(rawId, docId, { field_name: field, action: 'edit', value });
+        // Refetch THIS statement's extraction: the shared store broadcasts it,
+        // `useHistoricals` rebuilds the column from the live extractions, and
+        // the grid shows the corrected value without a reload.
         await refreshExtraction(docId);
+        if (col && ctx?.rowId) {
+          setPendingProp({
+            docId, year: col.year, colLabel: ctx.colLabel, rowId: ctx.rowId, rowLabel: ctx.rowLabel,
+            before, prevExtraction: extractions[docId],
+          });
+        }
+        toast('Corrected — re-running the model…', { type: 'success' });
+        // The Model column and every downstream engine read the corrected
+        // line only through a run — the same run-all every other save kicks.
         await run();
         await refresh();
-        toast('Corrected + re-modeled', { type: 'success' });
       } catch (err) {
         toast(`Couldn’t update: ${err instanceof Error ? err.message : String(err)}`, { type: 'error' });
       }
     },
-    [rawId, refreshExtraction, run, refresh, toast],
+    [rawId, refreshExtraction, run, refresh, toast, histYears, extractions],
   );
+
+  // E-012 — resolve the pending save once the refetched statement has rebuilt
+  // its column: diff every row against the pre-save snapshot, light what
+  // moved, and write the note. Waits for the extraction's identity to change
+  // (or for a visible move) so it never reports off a column that has not
+  // refreshed yet.
+  useEffect(() => {
+    if (!pendingProp) return;
+    const col = histYears.find((y) => y.year === pendingProp.year);
+    if (!col) return;
+    const rowIds = ROWS.filter((r) => r.kind !== 'section').map((r) => r.id);
+    const changes = diffHistColumn(pendingProp.before, col, rowIds);
+    const landed = extractions[pendingProp.docId] !== pendingProp.prevExtraction;
+    if (!landed && changes.length === 0) return;
+    setPropagation({
+      year: col.year,
+      colLabel: pendingProp.colLabel,
+      rowId: pendingProp.rowId,
+      rowLabel: pendingProp.rowLabel,
+      edited: changes.find((c) => c.rowId === pendingProp.rowId) ?? null,
+      derived: changes.filter((c) => c.rowId !== pendingProp.rowId),
+    });
+    setChangedCells(new Set(changes.map((c) => cellKey(c.rowId, col.year))));
+    setPendingProp(null);
+  }, [pendingProp, histYears, extractions]);
+
+  // The highlight is transient — it points at what just moved, then gets out
+  // of the way. The note stays until dismissed.
+  useEffect(() => {
+    if (changedCells.size === 0) return;
+    const t = setTimeout(() => setChangedCells(new Set()), 6000);
+    return () => clearTimeout(t);
+  }, [changedCells]);
 
   const labelOf = useCallback(
     (id: string, fallback: string) => wl.layout.relabels[id] ?? fallback,
@@ -939,6 +1043,15 @@ export default function GroundedWorksheet({
           </span>
         </div>
       )}
+      {propagation && (
+        <PropagationNote
+          p={propagation}
+          col={histYears.find((y) => y.year === propagation.year) ?? null}
+          runStatus={status}
+          labelOf={labelOf}
+          onDismiss={() => setPropagation(null)}
+        />
+      )}
       {docParam && histYears.length > 0 && !pinnedYear && (
         <div className="px-5 py-2 bg-warn-50 border-b border-warn-500/30 text-[11.5px] text-warn-800 flex items-center gap-1.5">
           <AlertTriangle size={11} className="shrink-0" />
@@ -1104,6 +1217,7 @@ export default function GroundedWorksheet({
                       modelLive={modelLive}
                       overridden={!c.historical && isOverridden(row.overrideKey)}
                       review={reviewState.byCell.get(cellKey(row.id, c.year.year))}
+                      changed={changedCells.has(cellKey(row.id, c.year.year))}
                       draft={row.overrideKey ? draft[row.overrideKey] : undefined}
                       note={row.overrideKey ? note[row.overrideKey] ?? '' : ''}
                       saving={!!row.overrideKey && savingKey === row.overrideKey}
@@ -1124,6 +1238,14 @@ export default function GroundedWorksheet({
               );
             })}
           </tbody>
+          {/* E-012 — the worker never re-foots a statement after a line is
+              corrected (GOP / NOI / a stated total stay as extracted), so the
+              grid shows whether each column's lines still sum to what the
+              statement says. Computed here, labelled as such. */}
+          <tfoot>
+            <FootingRow id="revenue" label="Revenue footing" foot={footRevenue} cols={cols} />
+            <FootingRow id="gop" label="GOP footing" foot={footGop} cols={cols} />
+          </tfoot>
         </table>
       </div>
 
@@ -1141,7 +1263,7 @@ export default function GroundedWorksheet({
           onAccept={inspect.review
             ? () => { const r = inspect.review!; acceptReview(r.docId, r.field); setInspect(null); }
             : undefined}
-          onEdit={(docId, field, value) => { editExtraction(docId, field, value); setInspect(null); }}
+          onEdit={(docId, field, value) => { editExtraction(docId, field, value, inspect); setInspect(null); }}
           onReset={inspect.overrideKey && isOverridden(inspect.overrideKey)
             ? () => { reset(inspect.overrideKey!); setInspect(null); }
             : undefined}
@@ -1153,7 +1275,7 @@ export default function GroundedWorksheet({
 
 // ── One cell (historical read-only, model editable, computed) ──────────
 function WorksheetCell({
-  row, historical, histYear, modelLive, overridden, review, draft, note, saving, colLabel,
+  row, historical, histYear, modelLive, overridden, review, changed, draft, note, saving, colLabel,
   onDraft, onNote, onSave, onCancel, onInspect, docNameById,
 }: {
   row: RowDef;
@@ -1162,6 +1284,8 @@ function WorksheetCell({
   modelLive: Record<string, number>;
   overridden: boolean;
   review?: { docId: string; field: string; confidence: number };
+  /** E-012 — this cell just moved because of a correct-at-source save. */
+  changed?: boolean;
   draft: string | undefined;
   /** FON-74 — the analyst justification typed for this cell. */
   note: string;
@@ -1245,6 +1369,8 @@ function WorksheetCell({
       formula: row.kind === 'computed' || row.kind === 'subtotal' ? formulaFor(row.id) : undefined,
       review: effReview,
       fmt: row.fmt,
+      rowId: row.id,
+      year: historical ? histYear?.year : undefined,
       // FON-41 #4 — the panel names the document AND the period it covers.
       // A full year is named by the column's own resolved label ("FY2019");
       // the dated bases spell their end out ("T-12 ending Mar 31, 2025").
@@ -1277,7 +1403,11 @@ function WorksheetCell({
 
   return (
     <td
-      className="relative px-3 py-1.5 text-right whitespace-nowrap"
+      className={cn(
+        'relative px-3 py-1.5 text-right whitespace-nowrap transition-colors',
+        changed && 'bg-amber-100 ring-2 ring-inset ring-amber-400',
+      )}
+      data-changed={changed ? 'true' : undefined}
       onMouseEnter={() => setHovered(true)}
       onMouseLeave={() => setHovered(false)}
     >
@@ -1381,6 +1511,135 @@ function WorksheetCell({
         )}
       </span>
     </td>
+  );
+}
+
+// ── E-012 — propagation note + footing rows ───────────────────────────
+/** "Saved · FY2023 · Rooms Revenue +$5 ($11,000,000 → $11,000,005) → Total
+ *  Revenue +$5 (…) (calculated) · GOP and NOI are stated lines … · model
+ *  re-running…" — plus the column's footing check spelled out in full. */
+function PropagationNote({
+  p, col, runStatus, labelOf, onDismiss,
+}: {
+  p: Propagation;
+  col: HistYear | null;
+  runStatus: string;
+  labelOf: (id: string, fallback: string) => string;
+  onDismiss: () => void;
+}) {
+  const label = (id: string) => labelOf(id, ROWS.find((r) => r.id === id)?.label ?? id);
+  const exact = (c: CellChange) =>
+    `${c.before == null ? '—' : fmtCurrency(c.before)} → ${c.after == null ? '—' : fmtCurrency(c.after)}`;
+  const moved = (c: CellChange) => (
+    <>
+      {label(c.rowId)} <span className="font-semibold tabular-nums">{fmtSignedCurrency(c.delta)}</span>
+      <span className="text-amber-800/70 tabular-nums"> ({exact(c)})</span>
+    </>
+  );
+  // GOP and NOI are stated lines; the note only needs to say so when the edit
+  // was to a line they are built from, not to GOP / NOI themselves.
+  const statedNote = p.rowId !== 'gop' && p.rowId !== 'noi';
+  const runNote =
+    runStatus === 'running' || runStatus === 'queued' ? 'model re-running…'
+    : runStatus === 'complete' ? 'model re-run complete — the Model column reads the corrected line'
+    : runStatus === 'failed' ? 'model re-run failed — run it again from the header'
+    : 'model re-run queued';
+  const footings = col ? [footRevenue(col), footGop(col)] : [];
+  return (
+    <div
+      role="status"
+      data-testid="worksheet-propagation"
+      className="px-5 py-2 bg-amber-50 border-b border-amber-500/30 text-[11.5px] text-amber-900 flex flex-wrap items-start gap-x-2 gap-y-1"
+    >
+      <Check size={11} className="shrink-0 mt-0.5" aria-hidden="true" />
+      <span className="min-w-0 flex-1">
+        <span className="font-semibold">Saved · {p.colLabel}</span>
+        {' · '}
+        {p.edited ? moved(p.edited) : <span>{p.rowLabel} unchanged — the worker stored the same value</span>}
+        {p.derived.length > 0 ? (
+          <>
+            {p.derived.map((c) => (
+              <span key={c.rowId}>{' → '}{moved(c)}</span>
+            ))}
+            <span className="text-amber-800/80"> (calculated)</span>
+          </>
+        ) : (
+          <span className="text-amber-800/80"> · no derived total in this column re-sums from this line</span>
+        )}
+        {statedNote && (
+          <span className="text-amber-800/80">
+            {' · GOP and NOI are the statement’s own stated lines — they do not re-foot from this edit'}
+          </span>
+        )}
+        <span className="text-amber-800/80">{' · '}{runNote}</span>
+        {footings.some((f) => f.ok) && (
+          <span className="block mt-0.5 text-amber-900/90" data-testid="worksheet-propagation-footing">
+            <span className="font-semibold">Footing (calculated)</span>
+            {footings.map((f, i) => f.ok ? (
+              <span key={f.footing.id}>
+                {' · '}{i === 0 ? 'Revenue' : 'GOP'}: {footingSentence(f.footing)}
+              </span>
+            ) : null)}
+          </span>
+        )}
+      </span>
+      <button
+        type="button"
+        onClick={onDismiss}
+        className="ml-auto text-amber-800 hover:text-amber-950 underline underline-offset-2 shrink-0"
+      >
+        Dismiss
+      </button>
+    </div>
+  );
+}
+
+/** One footing row: per column, do the extracted lines sum to the statement's
+ *  own stated figure? "✓ foots" / "Δ +$5" with the full sentence on hover; a
+ *  dash (with why) where the statement states no total or a line is missing. */
+function FootingRow({
+  id, label, foot, cols,
+}: {
+  id: string;
+  label: string;
+  foot: (h: HistYear) => FootingResult;
+  cols: { id: string; year: HistYear }[];
+}) {
+  return (
+    <tr className="border-t border-border bg-surface-2/40 text-[11px]" data-testid={`footing-${id}`}>
+      <td className="px-5 py-1.5 sticky left-0 bg-surface-2/40 z-10 text-ink-600">
+        <span className="inline-flex items-center gap-1.5">
+          {label}
+          <span
+            className="text-[9px] uppercase tracking-wide px-1 py-0.5 rounded bg-ink-100 text-ink-500"
+            title="Σ of the extracted lines vs the statement’s own stated figure — computed here in the browser. The worker does not re-foot a statement after a line is corrected."
+          >
+            calculated
+          </span>
+        </span>
+      </td>
+      {cols.map((c) => {
+        const r = foot(c.year);
+        if (!r.ok) {
+          return (
+            <td key={c.id} className="px-3 py-1.5 text-right text-ink-300" title={FOOTING_REASON_TEXT[r.reason]}>—</td>
+          );
+        }
+        const f = r.footing;
+        return (
+          <td
+            key={c.id}
+            className="px-3 py-1.5 text-right whitespace-nowrap"
+            title={footingSentence(f)}
+            data-foots={f.foots ? 'true' : 'false'}
+          >
+            <span className={cn('tabular-nums px-1 rounded', f.foots ? 'text-success-700 bg-success-50' : 'text-warn-700 bg-warn-50')}>
+              {f.foots ? '✓ foots' : `Δ ${fmtSignedCurrency(f.difference)}`}
+            </span>
+          </td>
+        );
+      })}
+    </tr>
   );
 }
 
@@ -1757,6 +2016,8 @@ function SourcePanel({
               )}
               <p className="text-[11px] text-ink-500 leading-relaxed">
                 Updates the extracted value read from {field.docName} and re-grounds the model.
+                Totals this column derives (Total Revenue, Total Fees &amp; Fixed) re-sum here at once;
+                the statement’s own stated lines (GOP, NOI) do not — the footing check under the grid shows the difference.
                 The original source document will not be changed.
               </p>
             </div>

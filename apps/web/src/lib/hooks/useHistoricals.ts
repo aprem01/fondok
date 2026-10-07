@@ -249,6 +249,8 @@ function omYearToHistYear(v: Record<string, number>, year: string): HistYear {
     rooms: num(v.rooms_revenue_usd),
     fb: num(v.fb_revenue_usd),
     misc: num(v.other_operated_depts_revenue_usd) + num(v.miscellaneous_revenue_usd),
+    // E-012 — the OM's own stated total for that year, when it prints one.
+    total_revenue_stated: n(v.total_revenue_usd),
     rooms_dept_expense: n(v.rooms_dept_expense_usd),
     fb_dept_expense: n(v.fb_dept_expense_usd),
     other_dept_expense: n(v.other_operated_depts_expense_usd),
