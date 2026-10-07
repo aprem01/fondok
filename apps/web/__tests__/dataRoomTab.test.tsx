@@ -124,11 +124,15 @@ describe('Data Room — inline document review (isDetailView)', () => {
     expect(reviewed.textContent).toContain('2');
   });
 
-  it('shows a plain-language review reason on a flagged field', () => {
+  it('explains a flagged field with its data only: confidence %, PDF page, and source text', () => {
     render(<DataRoomTab projectId="deal-uuid-1" />);
-    expect(
-      screen.getByText((t) => /Low extraction confidence \(62%\)/.test(t)),
-    ).toBeInTheDocument();
+    // FON-41 testers (R-043): no synthesized cause — the field's own
+    // confidence + page, and "no source text captured" when raw_text is null.
+    expect(screen.getByText('62% confidence · PDF p.3')).toBeInTheDocument();
+    expect(screen.getByText('source text')).toBeInTheDocument();
+    expect(screen.getByText('no source text captured')).toBeInTheDocument();
+    // 62% is not a chart / table read (that tag is exactly 0.5 with raw text).
+    expect(screen.queryByText('chart / table read')).toBeNull();
   });
 
   it('filters to only flagged rows when "Needs Review" is selected', () => {

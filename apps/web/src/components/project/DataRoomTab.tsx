@@ -44,6 +44,16 @@ import { WORKSHEET_ROWS } from './pl/GroundedWorksheet';
 import { useDeal } from '@/lib/hooks/useDeal';
 import { useHistoricals } from '@/lib/hooks/useHistoricals';
 import { buildReviewState, histHasData } from '@/lib/reviewState';
+import {
+  buildReviewReason,
+  fieldExplanation,
+  flaggedFieldsForDoc,
+  humanizeReviewField,
+  isChartTableRead,
+  CHART_TABLE_READ_TAG,
+  NO_SOURCE_TEXT,
+  type FlaggedField,
+} from '@/lib/reviewReasons';
 
 // FON-41 — doc types whose data lands in the Financials historical view. Their
 // "to review" count IS that view's flagged-cell count for the document (one
@@ -237,6 +247,9 @@ export default function DataRoomTab({ projectId }: { projectId: number | string 
   // FON-24: field name a validation finding deep-linked to (via
   // ?reviewField=…). The matching review row highlights + scrolls into view.
   const [highlightField, setHighlightField] = useState<string | null>(null);
+  // FON-41 testers (E-002): the reason line's click-through opens the field
+  // review pre-filtered to "Needs Review"; Back resets it to "All".
+  const [reviewFocus, setReviewFocus] = useState<'all' | 'review'>('all');
   // Browse Templates popover — anchored to whichever button the user clicked.
   const [templatesAnchor, setTemplatesAnchor] = useState<'empty' | 'inline' | null>(null);
   const { toast } = useToast();
@@ -529,6 +542,39 @@ export default function DataRoomTab({ projectId }: { projectId: number | string 
   const reviewDocRow = useMemo(
     () => docs.find((d) => d.id === reviewDocId) ?? null,
     [docs, reviewDocId],
+  );
+
+  // FON-41 testers (E-002 / R-041 / R-042): ONE flagged list per document
+  // feeds the "Review Recommended" count, the reason line under it, and the
+  // field review's flagged set (lib/reviewReasons.flaggedFieldsForDoc) —
+  // financial statements from the shared worksheet review state, every other
+  // type from its own sub-85% unreviewed fields. Strictly per-document:
+  // another upload can never add a field to this document's list.
+  const flaggedByDoc = useMemo(() => {
+    const m = new Map<string, FlaggedField[]>();
+    for (const d of docs) {
+      m.set(
+        d.id,
+        flaggedFieldsForDoc({
+          docId: d.id,
+          financial: FINANCIAL_DOC_TYPES.has(d.type),
+          fields: d.fieldList ?? [],
+          reviewState,
+        }),
+      );
+    }
+    return m;
+  }, [docs, reviewState]);
+
+  // The reason line's click-through: open the document's field review
+  // pre-filtered to "Needs Review", landing on its first flagged field.
+  const openFlaggedReview = useCallback(
+    (docId: string) => {
+      setReviewDocId(docId);
+      setReviewFocus('review');
+      setHighlightField(flaggedByDoc.get(docId)?.[0]?.field ?? null);
+    },
+    [flaggedByDoc],
   );
 
   // Coverage vs. inline detail-review sub-view (canonical Data Room v2
@@ -1083,20 +1129,19 @@ export default function DataRoomTab({ projectId }: { projectId: number | string 
               docType: d.type === '—' ? '' : d.type,
               fields: d.fields,
               confidence: d.confidence,
-              // FON-41 — on financial statements the badge IS the number of
-              // flagged cells in that document's column of the Financials
-              // historical view (shared review state), so it reconciles by
-              // construction. Non-financial docs keep their full
-              // low-confidence count (reviewed via the document-detail panel).
-              toReview: FINANCIAL_DOC_TYPES.has(d.type)
-                ? (reviewState.byDoc.get(d.id) ?? 0)
-                : (d.fieldList ?? []).filter(
-                    (f) => !(Math.round((f.confidence ?? 0) * 100) >= 85 || f.reviewed),
-                  ).length,
+              // FON-41 — ONE flagged list per document (flaggedByDoc): on
+              // financial statements it is the flagged cells of that
+              // document's column in Financials → Historicals (shared review
+              // state), so the badge reconciles by construction; other docs
+              // keep their own low-confidence count. The reason line under
+              // "Review Recommended" is built from the SAME list (E-002).
+              toReview: flaggedByDoc.get(d.id)?.length ?? 0,
+              reviewReason: buildReviewReason(flaggedByDoc.get(d.id) ?? [])?.text ?? null,
               fiscalYear: d.fiscalYear ?? null,
               status: d.rawStatus,
             }),
           )}
+          onOpenReview={openFlaggedReview}
           onReclassify={handleReclassify}
           onOpenDoc={(docId, financial) => {
             // Sam QA 8/21: Financial Statements' "View data" jumps straight to
@@ -1238,10 +1283,13 @@ export default function DataRoomTab({ projectId }: { projectId: number | string 
 
       {view === 'detail' && reviewDocRow && (
         <InlineDocumentReview
+          key={reviewDocRow.id}
           doc={reviewDocRow}
           liveMode={liveMode}
           highlightField={highlightField}
-          onBack={() => { setReviewDocId(null); setHighlightField(null); }}
+          flaggedFields={flaggedByDoc.get(reviewDocRow.id) ?? []}
+          initialPill={reviewFocus}
+          onBack={() => { setReviewDocId(null); setHighlightField(null); setReviewFocus('all'); }}
           onReview={handleReviewField}
         />
       )}
@@ -1290,16 +1338,10 @@ function confStyle(conf: number): { color: string; bg: string } {
   return { color: 'oklch(50% 0.14 40)', bg: 'oklch(56% 0.12 40 / .12)' };
 }
 
-// Plain-language "why is this flagged" line. Production extraction carries no
-// free-text reason, so we synthesize one from the signal we do have — the
-// confidence band + the source page the analyst can verify against.
-function reviewReasonFor(conf: number, sourcePage: number | null | undefined): string {
-  const where = sourcePage != null && sourcePage > 0 ? ` (source p.${sourcePage})` : '';
-  if (conf < 70) {
-    return `Low extraction confidence (${conf}%) — the source is ambiguous; verify against the document${where}.`;
-  }
-  return `Below the review threshold (${conf}%) — confirm this value against the source document${where}.`;
-}
+// The per-row "why is this flagged" explanation is data only — the field's
+// confidence, its source page, the extractor's verbatim raw_text, and the
+// chart / table tag at exactly 0.5 (lib/reviewReasons; FON-41 testers
+// R-043). Nothing is synthesized: no raw text → "no source text captured".
 
 // Needs-review gate — the 85% threshold used across the app, so the per-doc
 // "N to review" counts reconcile with the coverage card.
@@ -1315,18 +1357,31 @@ type ReviewField = {
   resolved: boolean;
   needsReview: boolean;
   sourcePage: number | null;
+  /** "62% confidence · PDF p.3" — data-derived (lib/reviewReasons). */
+  explanation: string;
+  /** Verbatim extractor raw_text; null / blank → "no source text captured". */
+  rawText: string | null;
+  /** Exactly 0.5 with raw text present — a chart / multi-column table read. */
+  chartTableRead: boolean;
 };
 
 function InlineDocumentReview({
   doc,
   liveMode,
   highlightField,
+  flaggedFields,
+  initialPill = 'all',
   onBack,
   onReview,
 }: {
   doc: { id: string; name: string; type: string; confidence: number; fieldList?: ExtractionField[] };
   liveMode: boolean;
   highlightField?: string | null;
+  /** The document's flagged list from the SAME rule as its "N to review" and
+   *  reason line (lib/reviewReasons). Absent → the local 85% gate. */
+  flaggedFields?: ReadonlyArray<FlaggedField>;
+  /** Pill to open on — the reason line's click-through opens on "review". */
+  initialPill?: 'all' | 'review' | 'reviewed';
   onBack: () => void;
   onReview: (
     docId: string,
@@ -1335,7 +1390,7 @@ function InlineDocumentReview({
     value?: string,
   ) => Promise<void>;
 }) {
-  const [pill, setPill] = useState<'all' | 'review' | 'reviewed'>('all');
+  const [pill, setPill] = useState<'all' | 'review' | 'reviewed'>(initialPill);
   const [q, setQ] = useState('');
   const [confFacet, setConfFacet] = useState<'all' | 'lt90' | 'mid' | 'high'>('all');
   const [sectionFacet, setSectionFacet] = useState<string>('all');
@@ -1348,6 +1403,10 @@ function InlineDocumentReview({
   const sections = useMemo(() => {
     const order: string[] = [];
     const map = new Map<string, ReviewField[]>();
+    // FON-41 — one predicate: when the caller hands us the document's flagged
+    // list, membership IS "needs review" (so a financial statement's review
+    // flags exactly its worksheet cells); otherwise the local 85% gate.
+    const flaggedSet = flaggedFields ? new Set(flaggedFields.map((f) => f.field)) : null;
     for (const f of fields) {
       const label = sectionLabelFor(f.field_name);
       if (!map.has(label)) {
@@ -1357,20 +1416,27 @@ function InlineDocumentReview({
       const conf = Math.round((f.confidence ?? 0) * 100);
       const reviewed = f.reviewed ?? null;
       const resolved = reviewed === 'verified' || reviewed === 'edited' || reviewed === 'accepted';
+      const needsReview = flaggedSet
+        ? flaggedSet.has(f.field_name) && !resolved
+        : !resolved && conf < REVIEW_THRESHOLD;
       map.get(label)!.push({
         key: f.field_name,
         fieldName: f.field_name,
-        label: humanizeFieldName(f.field_name),
+        // R-045 — pipeline-stage paths keep their stage word in the label.
+        label: humanizeReviewField(f.field_name),
         value: formatValue(f.value, f.unit, f.field_name),
         conf,
         reviewed,
         resolved,
-        needsReview: !resolved && conf < REVIEW_THRESHOLD,
+        needsReview,
         sourcePage: f.source_page ?? null,
+        explanation: fieldExplanation(f.confidence, f.source_page, doc.name),
+        rawText: f.raw_text ?? null,
+        chartTableRead: isChartTableRead(f.confidence, f.raw_text),
       });
     }
     return order.map((label) => ({ label, fields: map.get(label)! }));
-  }, [fields]);
+  }, [fields, flaggedFields, doc.name]);
 
   const sectionNames = useMemo(() => sections.map((s) => s.label), [sections]);
   const fieldTotal = fields.length;
@@ -1869,9 +1935,50 @@ function ReviewFieldRow({
           {field.label}
         </span>
         {flagged && (
-          <span style={{ fontSize: 11, color: 'oklch(50% 0.14 40)', lineHeight: 1.45 }}>
-            {reviewReasonFor(field.conf, field.sourcePage)}
-          </span>
+          <>
+            <span
+              style={{
+                fontSize: 11,
+                color: 'oklch(50% 0.14 40)',
+                lineHeight: 1.45,
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: 6,
+                flexWrap: 'wrap',
+              }}
+            >
+              {field.explanation}
+              {field.chartTableRead && (
+                <span
+                  title="Confidence is exactly 50% with source text present — the extractor's read of a chart or a multi-column table row"
+                  style={{
+                    fontSize: 10,
+                    fontWeight: 600,
+                    padding: '1px 6px',
+                    borderRadius: 10,
+                    background: 'oklch(56% 0.1 55 / .14)',
+                    color: 'oklch(45% 0.12 55)',
+                    whiteSpace: 'nowrap',
+                  }}
+                >
+                  {CHART_TABLE_READ_TAG}
+                </span>
+              )}
+            </span>
+            <span
+              style={{
+                fontSize: 11,
+                color: palette.textMuted,
+                lineHeight: 1.45,
+                wordBreak: 'break-word',
+              }}
+            >
+              <span style={{ fontWeight: 600, marginRight: 6 }}>source text</span>
+              <span style={{ fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Consolas, monospace' }}>
+                {field.rawText && field.rawText.trim() ? field.rawText : NO_SOURCE_TEXT}
+              </span>
+            </span>
+          </>
         )}
       </div>
 

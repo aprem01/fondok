@@ -41,6 +41,11 @@ export interface CoverageFile {
   confidence: number;
   /** Count of fields still needing review (<85%, not yet accepted). */
   toReview: number;
+  /** FON-41 testers (E-002 / R-041): the one-line, data-derived reason the
+   *  document is "Review Recommended" — built by lib/reviewReasons from the
+   *  SAME flagged list `toReview` counts. Null / absent when nothing is
+   *  flagged (no line is rendered). */
+  reviewReason?: string | null;
   fiscalYear: number | null;
   /** Upstream doc status (UPLOADED / EXTRACTED / FAILED / …) — drives the
    *  processing-state badge (FON-40). */
@@ -71,6 +76,9 @@ export interface DocumentCoverageProps {
   ) => void;
   /** Open a file's extracted-data / review panel. */
   onOpenDoc: (docId: string, financial?: boolean) => void;
+  /** Open the document's field review focused on its flagged fields — the
+   *  reason line's click-through (FON-41 E-002). Falls back to `onOpenDoc`. */
+  onOpenReview?: (docId: string) => void;
   /** Open the raw uploaded file in a new browser tab (↗). */
   onOpenInNewTab?: (docId: string) => void;
   /** Download the raw uploaded file (⬇). */
@@ -178,6 +186,7 @@ export function DocumentCoverage({
   files,
   onReclassify,
   onOpenDoc,
+  onOpenReview,
   onOpenInNewTab,
   onDownload,
   busyDocId,
@@ -369,6 +378,7 @@ export function DocumentCoverage({
                       onDragEnd={() => setDragDocId(null)}
                       onReclassify={onReclassify}
                       onOpenDoc={onOpenDoc}
+                      onOpenReview={onOpenReview}
                       onOpenInNewTab={onOpenInNewTab}
                       onDownload={onDownload}
                     />
@@ -402,6 +412,7 @@ export function DocumentCoverage({
                 busy={busyDocId === f.id}
                 onReclassify={onReclassify}
                 onOpenDoc={onOpenDoc}
+                onOpenReview={onOpenReview}
                 onOpenInNewTab={onOpenInNewTab}
                 onDownload={onDownload}
               />
@@ -455,11 +466,38 @@ function FileActions({
   );
 }
 
+// FON-41 testers (E-002 / R-041 / R-042): "Review Recommended" beside 97%
+// overall confidence never said WHY. The reason is built upstream
+// (lib/reviewReasons) from the SAME flagged list `toReview` counts — never a
+// second heuristic — and clicking it lands on those fields in the document's
+// field review. Renders nothing when the document has no flagged field.
+function ReviewReasonLine({
+  file,
+  onOpen,
+}: {
+  file: CoverageFile;
+  onOpen: (docId: string) => void;
+}) {
+  if (!(file.toReview > 0) || !file.reviewReason) return null;
+  return (
+    <button
+      type="button"
+      onClick={() => onOpen(file.id)}
+      data-testid="review-reason"
+      title={`${file.reviewReason} — open these fields`}
+      className="basis-full text-left text-[11px] leading-snug text-warn-700 hover:underline underline-offset-2 truncate"
+    >
+      {file.reviewReason}
+    </button>
+  );
+}
+
 function UnclassifiedRow({
   file,
   busy,
   onReclassify,
   onOpenDoc,
+  onOpenReview,
   onOpenInNewTab,
   onDownload,
 }: {
@@ -467,6 +505,7 @@ function UnclassifiedRow({
   busy: boolean;
   onReclassify: DocumentCoverageProps['onReclassify'];
   onOpenDoc: DocumentCoverageProps['onOpenDoc'];
+  onOpenReview?: DocumentCoverageProps['onOpenReview'];
   onOpenInNewTab?: (docId: string) => void;
   onDownload?: (docId: string) => void;
 }) {
@@ -528,6 +567,10 @@ function UnclassifiedRow({
           View
         </button>
       </div>
+      <ReviewReasonLine
+        file={file}
+        onOpen={(id) => (onOpenReview ? onOpenReview(id) : onOpenDoc(id))}
+      />
     </li>
   );
 }
@@ -541,6 +584,7 @@ function CoverageFileRow({
   onDragEnd,
   onReclassify,
   onOpenDoc,
+  onOpenReview,
   onOpenInNewTab,
   onDownload,
 }: {
@@ -552,6 +596,7 @@ function CoverageFileRow({
   onDragEnd?: () => void;
   onReclassify: DocumentCoverageProps['onReclassify'];
   onOpenDoc: DocumentCoverageProps['onOpenDoc'];
+  onOpenReview?: DocumentCoverageProps['onOpenReview'];
   onOpenInNewTab?: (docId: string) => void;
   onDownload?: (docId: string) => void;
 }) {
@@ -717,6 +762,10 @@ function CoverageFileRow({
           {financial ? 'View Financials' : 'View data'}
         </button>
       </div>
+      <ReviewReasonLine
+        file={file}
+        onOpen={(id) => (onOpenReview ? onOpenReview(id) : onOpenDoc(id, financial))}
+      />
     </li>
   );
 }

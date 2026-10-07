@@ -31,6 +31,9 @@ import {
   KEYS,
 } from './helpers/fon41Fixture';
 
+// jsdom has no scrollIntoView; the field review scrolls the highlighted row.
+if (!Element.prototype.scrollIntoView) Element.prototype.scrollIntoView = () => {};
+
 const pushSpy = vi.fn();
 vi.mock('next/navigation', () => ({
   useParams: () => ({ id: 'deal-uuid-1' }),
@@ -142,5 +145,46 @@ describe('Data Room — "N to review" reconciles to the Historicals column (FON-
     expect(badgeFor(1, '2019 P&L.xlsx')).toBeInTheDocument();
     expect(screen.getByText('2 financial values need your review')).toBeInTheDocument();
     expect(screen.queryByText(/3 financial values/)).not.toBeInTheDocument();
+  });
+});
+
+// FON-41 testers (E-002 / E-004): the reason line under "Review Recommended"
+// names a statement's OWN flagged worksheet cells — the same list the badge
+// counts — so a status can never be explained by another document's fields.
+describe('Data Room — reason line on financial statements (FON-41 testers)', () => {
+  const REASON_2023 = '2 fields at 50–70% · F&B Revenue (p.2), Rooms Dept Expense (p.2)';
+  const REASON_2019 = '1 field at 60% · Rooms Revenue (p.2)';
+
+  it('each statement’s reason lists exactly its own flagged cells, in worksheet order', () => {
+    render(<DataRoomTab projectId={DEAL_ID} />);
+    expect(screen.getByText(REASON_2023)).toBeInTheDocument();
+    expect(screen.getByText(REASON_2019)).toBeInTheDocument();
+  });
+
+  it('clicking the reason opens the inline field review on those cells (count == badge), not the Financials deep link', () => {
+    render(<DataRoomTab projectId={DEAL_ID} />);
+    fireEvent.click(screen.getByText(REASON_2023));
+    expect(pushSpy).not.toHaveBeenCalled();
+    expect(screen.getByText('2023 P&L.xlsx')).toBeInTheDocument();
+    // The inline review flags the SAME two cells the badge counted — not every
+    // sub-85% field the document happens to carry.
+    expect(screen.getByText('2 need review')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /Needs Review/ })).toHaveAttribute('aria-pressed', 'true');
+    expect(screen.getByText('F&B Revenue')).toBeInTheDocument();
+    expect(screen.getByText('Rooms Dept Expense')).toBeInTheDocument();
+    expect(screen.queryByText('Occupancy')).toBeNull();
+    // Spreadsheet source → "p.N" (not "PDF p.N"); fixture has no raw text.
+    expect(screen.getByText('50% confidence · p.2')).toBeInTheDocument();
+    expect(screen.getByText('70% confidence · p.2')).toBeInTheDocument();
+    expect(screen.getAllByText('no source text captured')).toHaveLength(2);
+    // The correction path is reachable from here.
+    expect(screen.getAllByRole('button', { name: 'Accept' })).toHaveLength(2);
+  });
+
+  it('an accepted field drops out of the reason from the same state as the badge', () => {
+    LIVE_EXTRACTIONS = { ...EXTRACTIONS, d2023: EX_2023_AFTER_ACCEPT_FB };
+    render(<DataRoomTab projectId={DEAL_ID} />);
+    expect(screen.getByText('1 field at 70% · Rooms Dept Expense (p.2)')).toBeInTheDocument();
+    expect(screen.queryByText(REASON_2023)).toBeNull();
   });
 });
