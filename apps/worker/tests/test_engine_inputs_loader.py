@@ -925,3 +925,92 @@ async def test_unlabelled_t12_outranks_dated_annual_pnl(t12_fiscal_year: int | N
     assert expenses["fb_dept_expense"] == pytest.approx(2_533_250.0)
     assert expense_prov["fb_dept_expense"].document_id == str(t12_doc)
 
+
+
+@pytest.mark.asyncio
+async def test_year_one_actuals_come_from_the_primary_statement_only() -> None:
+    """One statement, one basis (2026-10, two testers' deals).
+
+    A current T-12 (no period label, no period_ending — the sibling-template
+    path emits neither) sits beside labelled 2022–2024 annual P&Ls. Before
+    this fix every line that two or more labelled annuals carried was the
+    cross-year MEDIAN of those annuals while ADR / occupancy / F&B came from
+    the T-12: other revenue hit the 30% cap on a 14% hotel and total revenue
+    read $15.3M against the T-12's $13.8M. The corroboration median now only
+    spans full-year statements of the SAME period as the top-ranked one, so
+    every Year-1 actual here is the T-12's own line.
+    """
+    from app.database import get_session_factory
+    from app.services.engine_runner import (
+        _load_t12_expense_actuals,
+        _load_t12_revenue_actuals,
+    )
+
+    deal_id = uuid4()
+    await _insert_deal(deal_id, name="One Basis Deal", keys=132, purchase=36_400_000)
+    base = datetime(2026, 9, 20, 5, 0, tzinfo=UTC)
+    # The T-12 is the OLDEST upload and carries no period fields at all.
+    t12_doc, t12_er = await _insert_financial_extraction(
+        deal_id,
+        doc_type="T12",
+        filename="The Angler_s - March 2025 Financials.xlsx",
+        fiscal_year=2025,
+        ts=base,
+        fields=[
+            {"field_name": "adr_usd", "value": 232.77},
+            {"field_name": "occupancy_pct", "value": 0.83},
+            {"field_name": "p_and_l_usali.operating_revenue.rooms_revenue", "value": 9_332_100.0},
+            {"field_name": "p_and_l_usali.operating_revenue.food_beverage_revenue", "value": 3_216_620.0},
+            {"field_name": "p_and_l_usali.operating_revenue.misc_revenue", "value": 1_266_603.0},
+            {"field_name": "p_and_l_usali.operating_revenue.other_revenue", "value": 18_986.9},
+            {"field_name": "p_and_l_usali.departmental_expenses.food_beverage", "value": 2_533_250.0},
+            {"field_name": "p_and_l_usali.fixed_charges.insurance", "value": 1_429_573.0},
+        ],
+    )
+    annuals = {
+        2024: (8_000_000.0, 96_528.1, 2_900_000.0, 55_358.5, 1_500_000.0),
+        2023: (7_000_000.0, 2_111_540.0, 3_000_000.0, 2_040_345.0, 1_400_000.0),
+        2022: (6_500_000.0, 2_460_440.0, 3_100_000.0, 2_446_510.0, 1_300_000.0),
+    }
+    for i, (year, (rooms, fb, misc, fb_exp, ins)) in enumerate(annuals.items(), start=1):
+        await _insert_financial_extraction(
+            deal_id,
+            doc_type="PNL",
+            filename=f"Angler_s {year} P&L.xlsx",
+            fiscal_year=year,
+            ts=base + timedelta(minutes=i),
+            fields=[
+                {"field_name": "p_and_l_usali.period_type", "value": "annual"},
+                {"field_name": "p_and_l_usali.period_ending", "value": f"{year}-12-31"},
+                {"field_name": "adr_usd", "value": 236.094},
+                {"field_name": "p_and_l_usali.operating_revenue.rooms_revenue", "value": rooms},
+                {"field_name": "p_and_l_usali.operating_revenue.food_beverage_revenue", "value": fb},
+                {"field_name": "p_and_l_usali.operating_revenue.misc_revenue", "value": misc},
+                {"field_name": "p_and_l_usali.departmental_expenses.food_beverage", "value": fb_exp},
+                {"field_name": "p_and_l_usali.fixed_charges.insurance", "value": ins},
+            ],
+        )
+
+    factory = get_session_factory()
+    async with factory() as session:
+        rev, rev_prov = await _load_t12_revenue_actuals(
+            session, deal_id=str(deal_id), tenant_id=_TENANT, with_provenance=True
+        )
+        exp, exp_prov = await _load_t12_expense_actuals(
+            session, deal_id=str(deal_id), tenant_id=_TENANT, with_provenance=True
+        )
+
+    # Every revenue line is the T-12's own — no six-year blend.
+    assert rev["adr"] == pytest.approx(232.77)
+    assert rev["occupancy"] == pytest.approx(0.83)
+    assert rev["rooms_revenue"] == pytest.approx(9_332_100.0)
+    assert rev["fb_revenue"] == pytest.approx(3_216_620.0)
+    assert rev["misc_revenue"] == pytest.approx(1_266_603.0)
+    assert rev["other_revenue"] == pytest.approx(18_986.9)
+    # And so is every expense line (the old median gave 2,040,345 / 1,400,000).
+    assert exp["fb_dept_expense"] == pytest.approx(2_533_250.0)
+    assert exp["insurance"] == pytest.approx(1_429_573.0)
+    # Provenance names the T-12 row, not a derived cross-document record.
+    for canonical in ("rooms_revenue", "fb_revenue", "misc_revenue"):
+        assert str(rev_prov[canonical].document_id) == str(t12_doc), canonical
+    assert str(exp_prov["fb_dept_expense"].document_id) == str(t12_doc)

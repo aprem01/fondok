@@ -30,7 +30,7 @@ from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from datetime import UTC, date, datetime
 from decimal import ROUND_HALF_UP, Decimal
-from typing import Any
+from typing import Any, NamedTuple
 from uuid import UUID, uuid4
 
 from pydantic import BaseModel, ValidationError
@@ -56,6 +56,8 @@ from ..ontology.registry import Resolution, concept_for_path
 from .financial_source_rank import (
     FULL_YEAR_PERIOD_TYPES as _SHARED_FULL_YEAR_PERIOD_TYPES,
     financial_source_sort_key,
+    period_recency,
+    period_tier,
 )
 
 # Phase 2.1 — run lineage. ``services/lineage.py`` is landing on a sibling
@@ -3322,6 +3324,66 @@ async def _load_source_documents(
     return out
 
 
+class _ActualCandidate(NamedTuple):
+    """One extraction row that can supply a canonical Year-1 actual."""
+
+    value: float
+    is_full_year: bool
+    provenance: "SourceField | None"
+    #: ``(tier, recency)`` of the row's statement — the period identity the
+    #: corroboration median is scoped to.
+    period_key: tuple[int, int]
+
+
+def _pnl_period_identity(
+    ranked_fields: list[Any], doc_type: str, shim: Any
+) -> tuple[bool, tuple[int, int]]:
+    """``(is_full_year, (tier, recency))`` for one ranked P&L row.
+
+    Full-year is decided by the same tier the ranking uses — an unlabelled
+    T-12 is full-year by doc_type, not "unknown" — and the recency is the
+    statement's period (``period_ending`` → ``report_as_of`` → year
+    columns → undated-T12-is-current), so two rows share a period key only
+    when they describe the same period.
+    """
+    m = shim if isinstance(shim, Mapping) else {}
+    period_type = _extract_period_type(ranked_fields)
+    tier = period_tier(period_type, doc_type)
+    recency = period_recency(
+        doc_type=doc_type,
+        period_ending=_extract_period_ending(ranked_fields),
+        report_as_of=m.get("report_as_of"),
+        extracted_period_year=m.get("extracted_period_year"),
+        fiscal_year=m.get("fiscal_year"),
+    )
+    return tier == 0, (tier, recency)
+
+
+def _pick_corroborated_actual(
+    cands: list[_ActualCandidate],
+) -> tuple[float, "SourceField | None"]:
+    """The Year-1 actual for one canonical line from its ranked candidates.
+
+    The top-ranked statement (the Data Room's primary source) supplies the
+    value. The corroboration median (real deal 7a9928e0 — a mis-read F&B
+    line frozen as Year-1) still applies, but ONLY across full-year
+    statements that describe the SAME period as the top-ranked one: two
+    uploads of the same T-12, or a summary and a detailed P&L of the same
+    year, corroborate each other. Statements of other years never blend
+    in — before 2026-10 a deal with a current T-12 plus 2019–2024 annual
+    P&Ls got the six-year median of other / misc / rooms revenue (COVID
+    years included) as its "Year-1 actual", 30% other-revenue on a 14%
+    hotel, while F&B came from the T-12. One statement, one basis.
+    """
+    top = cands[0]
+    same_period = [c for c in cands if c.is_full_year and c.period_key == top.period_key]
+    if top.is_full_year and len(same_period) >= 2:
+        chosen = float(statistics.median([c.value for c in same_period]))
+        picked = next((c.provenance for c in same_period if c.value == chosen), None)
+        return chosen, picked
+    return top.value, top.provenance
+
+
 async def _load_t12_revenue_actuals(
     session: AsyncSession,
     *,
@@ -3432,9 +3494,11 @@ async def _load_t12_revenue_actuals(
     # ``_extract_period_type`` — the cleanest read that leaves the shared
     # ``_rank_pnl_rows`` signature (also used by the provenance loader)
     # untouched.
-    candidates: dict[str, list[tuple[float, bool, SourceField | None]]] = {}
+    candidates: dict[str, list[_ActualCandidate]] = {}
     for ranked_fields, ranked_doc_type, shim in _rank_pnl_shims(shims):
-        is_full_year = _extract_period_type(ranked_fields) in _FULL_YEAR_PERIOD_TYPES
+        is_full_year, period_key = _pnl_period_identity(
+            ranked_fields, ranked_doc_type, shim
+        )
         seen_in_row: set[str] = set()
         for f in ranked_fields:
             if not isinstance(f, dict):
@@ -3469,18 +3533,14 @@ async def _load_t12_revenue_actuals(
                 if with_provenance
                 else None
             )
-            candidates.setdefault(canonical, []).append((v, is_full_year, prov))
+            candidates.setdefault(canonical, []).append(
+                _ActualCandidate(v, is_full_year, prov, period_key)
+            )
 
     actuals: dict[str, float] = {}
     provenance: dict[str, SourceField] = {}
     for canonical, cands in candidates.items():
-        full_year = [(v, p) for v, is_fy, p in cands if is_fy]
-        if len(full_year) >= 2:
-            chosen = float(statistics.median([v for v, _ in full_year]))
-            picked = next((p for v, p in full_year if v == chosen), None)
-        else:
-            chosen = cands[0][0]
-            picked = cands[0][2]
+        chosen, picked = _pick_corroborated_actual(cands)
         actuals[canonical] = chosen
         if with_provenance:
             provenance[canonical] = picked or _derived_provenance(
@@ -3582,9 +3642,11 @@ async def _load_t12_expense_actuals(
     # applies — non-positive values never enter the candidate pool, so the
     # median is taken over real positive lines only and the USALI ratio
     # fallback still supplies any dropped line.
-    candidates: dict[str, list[tuple[float, bool, SourceField | None]]] = {}
+    candidates: dict[str, list[_ActualCandidate]] = {}
     for ranked_fields, ranked_doc_type, shim in _rank_pnl_shims(shims):
-        is_full_year = _extract_period_type(ranked_fields) in _FULL_YEAR_PERIOD_TYPES
+        is_full_year, period_key = _pnl_period_identity(
+            ranked_fields, ranked_doc_type, shim
+        )
         seen_in_row: set[str] = set()
         for f in ranked_fields:
             if not isinstance(f, dict):
@@ -3625,18 +3687,14 @@ async def _load_t12_expense_actuals(
                 if with_provenance
                 else None
             )
-            candidates.setdefault(canonical, []).append((v, is_full_year, prov))
+            candidates.setdefault(canonical, []).append(
+                _ActualCandidate(v, is_full_year, prov, period_key)
+            )
 
     actuals: dict[str, float] = {}
     provenance: dict[str, SourceField] = {}
     for canonical, cands in candidates.items():
-        full_year = [(v, p) for v, is_fy, p in cands if is_fy]
-        if len(full_year) >= 2:
-            chosen = float(statistics.median([v for v, _ in full_year]))
-            picked = next((p for v, p in full_year if v == chosen), None)
-        else:
-            chosen = cands[0][0]
-            picked = cands[0][2]
+        chosen, picked = _pick_corroborated_actual(cands)
         actuals[canonical] = chosen
         if with_provenance:
             provenance[canonical] = picked or _derived_provenance(
