@@ -146,7 +146,7 @@ export default function MethodologyPage() {
           <Chain
             steps={[
               { label: 'Analyst override', desc: 'Set via the Overview inline editor — wins over every other source.' },
-              { label: 'T-12 actual', desc: "Extracted from the deal's annual T-12 (ranked above YTD/monthly by period_type)." },
+              { label: 'T-12 actual', desc: "Extracted from the deal's primary financial statement — the same document the Data Room badges as Primary source (full-year statements first, most recent period first, a T-12 ahead of a calendar-year P&L of the same year)." },
               { label: 'CBRE Horizons Y1 forecast', desc: 'When the deal has no T-12 but a CBRE Horizons report is uploaded, the segmented Y1 forecast feeds the anchor.' },
               { label: 'Kimpton seed default', desc: 'Last-resort fallback used only on deals with no extracted data. Surfaced as a Seed badge.' },
             ]}
@@ -369,6 +369,13 @@ export default function MethodologyPage() {
           <h4 className="text-[13px] font-semibold text-ink-900 mb-3">Which documents set the deal&apos;s key count, brand and city</h4>
           <p className="text-[12.5px] text-ink-500 leading-relaxed">
             Only documents about the subject property — the Offering Memorandum, a T-12, P&amp;Ls, a Room Mix or a Property Information sheet — can set the deal&apos;s key count, and when more than one of them states a room count the Offering Memorandum wins. A brand chosen on the create-deal wizard is never overwritten by a document. Market reports, STR reports, comparable sets, CapEx budgets, insurance documents and leases describe other things, so they never change the key count, brand or city. The city is filled only while it is empty, and never from a street address. Until a qualifying document has been extracted the deal header shows &quot;—&quot; for keys rather than a count of zero.
+          </p>
+        </Card>
+
+        <Card className="p-5 mb-4">
+          <h4 className="text-[13px] font-semibold text-ink-900 mb-3">Which statement is the Year-1 basis</h4>
+          <p className="text-[12.5px] text-ink-500 leading-relaxed">
+            Year-1 occupancy, ADR, revenue lines and expense lines all come from one statement: the document the Data Room badges as <span className="font-semibold text-ink-900">Primary source</span>. The engines and the badge now share one ranking — full-year statements before partial ones, the most recent period first, and a T-12 ahead of a calendar-year P&amp;L of the same year. A T-12 whose extraction carries no period label is still treated as a trailing-twelve, and when it carries no date at all it is taken as the current period, because an analyst uploads a T-12 as the latest statement. Older annual P&amp;Ls never blend into Year-1: a line is only corroborated across statements that describe the same period (two uploads of the same T-12, or a summary and a detailed P&amp;L of one year), so every Year-1 number traces to a single row of the primary statement. The earlier years still feed the Historicals grid and the variance checks.
           </p>
         </Card>
 
