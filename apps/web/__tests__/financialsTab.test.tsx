@@ -17,7 +17,7 @@
  *
  * Write-only — not part of the run set for this change.
  */
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, fireEvent, cleanup, waitFor, act, within } from '@testing-library/react';
 import React from 'react';
 import type { EngineOutputsResponse } from '@/lib/api';
@@ -149,6 +149,8 @@ vi.mock('@/lib/hooks/useDealProvenance', () => ({
 
 // api surface — spy on the field_overrides PATCH (the canonical edit path).
 const updateSpy = vi.fn(async (_id: string, _body: unknown) => ({ id: 'deal-uuid-1' }));
+// E-015 — what GET /deals/{id}/lineage serves (null = nothing recorded).
+const lineageSpy = vi.fn(async (_id: string): Promise<unknown> => null);
 vi.mock('@/lib/api', async () => {
   const actual = await vi.importActual<typeof import('@/lib/api')>('@/lib/api');
   return {
@@ -159,14 +161,27 @@ vi.mock('@/lib/api', async () => {
       // Lazy-wrapped: a direct `update: updateSpy` is read when the hoisted
       // vi.mock factory builds this object (before `updateSpy`'s const is
       // initialized) → "Cannot access 'updateSpy' before initialization".
-      deals: { ...actual.api.deals, update: (...a: unknown[]) => updateSpy(...(a as Parameters<typeof updateSpy>)) },
+      deals: {
+        ...actual.api.deals,
+        update: (...a: unknown[]) => updateSpy(...(a as Parameters<typeof updateSpy>)),
+        // E-015 — the lineage endpoint. Serves whatever a test parks here; the
+        // default (null) is the "no lineage recorded" state.
+        lineage: async (id: string) => lineageSpy(id),
+      },
     },
   };
 });
 
 vi.mock('@/components/ui/Toast', () => ({ useToast: () => ({ toast: vi.fn() }) }));
 
-import ProjectionsSection from '@/components/project/pl/ProjectionsSection';
+import ProjectionsSection, {
+  NO_CLOSE_DATE_NOTE,
+  NO_TRACE_MESSAGE,
+  PROJECTED_COLUMN_BASIS,
+} from '@/components/project/pl/ProjectionsSection';
+import { LINEAGE_OPEN_EVENT, LineageDrawerHost, type LineageOpenDetail } from '@/components/project/LineageDrawer';
+import { clearLineageCache } from '@/lib/hooks/useLineage';
+import { CASH_NOI_LABEL, NOI_BEFORE_RESERVE_LABEL } from '@/lib/engines/noi';
 import { STR_MARKET_OVERRIDE_NOTE } from '@/lib/provenance';
 
 beforeEach(() => {
@@ -201,14 +216,14 @@ describe('Financials · Projections — Assumptions panel renders from engine ou
     // "Base Year (Year 1)" and every later label is shifted up one. The
     // capture labels and their explanatory note move WITH the header, or they
     // contradict it (Sam, 2026-09-11).
-    expect(screen.getByText('Capture — Base Year (Year 1)')).toBeInTheDocument();
+    expect(screen.getByText('Capture — Base year (Year 1)')).toBeInTheDocument();
     expect(screen.getByText('Capture — Year 2')).toBeInTheDocument();
     expect(screen.getByText('Capture — Year 3+')).toBeInTheDocument();
     expect(
-      screen.getByText(/Base Year \(Year 1\) is the model's first operating year/),
+      screen.getByText(/Base year \(Year 1\) is the model's first operating year/),
     ).toBeInTheDocument();
     // Every capture label names a column header the statement actually renders.
-    for (const name of ['Base Year \\(Year 1\\)', 'Year 2', 'Year 3']) {
+    for (const name of ['Base year \\(Year 1\\)', 'Year 2', 'Year 3']) {
       expect(screen.getAllByText(new RegExp(`^${name}`)).length).toBeGreaterThan(0);
     }
     // The Stabilization Year editor (FON-59 #3) lives here too.
@@ -573,5 +588,351 @@ describe('Financials · Projections — the Stabilization Year', () => {
     expect(value).toBeDisabled();
     expect(screen.queryByTestId('stabilization-year-badge')).not.toBeInTheDocument();
     expect(screen.queryByTestId('stabilized-badge')).not.toBeInTheDocument();
+  });
+});
+
+// ════════════════════════════════════════════════════════════════════
+// FON-41 — external tester round on the P&L tab (Linear FON-41).
+//
+//  E-014  every projected column header names its calendar year
+//         ("Year 2 · 2026"), the base column is explicit and names the
+//         primary statement's period, and a one-line note says where the
+//         acquisition date is set when there is none.
+//  E-015  every projected Occupancy / ADR / RevPAR / revenue cell opens the
+//         lineage drawer for ITS engine field; an uncovered cell says "No
+//         trace available for this cell." — never a fabricated formula.
+//  E-025  no scientific notation anywhere; ADR / RevPAR to the cent; every
+//         amount cell carries its full value in a title.
+//  E-026  the statement sits in a persistent, discoverable scroll container.
+//  E-030  the waterfall runs GOP → Management Fees → EBITDA → Fixed Charges
+//         → NOI (before FF&E reserve) → FF&E Reserve → Cash NOI (after).
+//  R-068  "% Rev" beside every amount — % of Total Revenue, departmental
+//         expenses as % of their own department (USALI) — behind a "Show %"
+//         switch that defaults on.
+// ════════════════════════════════════════════════════════════════════
+
+type RevPatch = Partial<ReturnType<typeof revYear>>;
+type ExpPatch = Partial<ReturnType<typeof expYear>>;
+
+/** The base fixture with the projection calendar and/or a per-year patch. */
+function withProjection(patch: { calendar?: number[]; rev?: RevPatch; exp?: ExpPatch } = {}): EngineOutputsResponse {
+  const base = OUTPUTS as unknown as {
+    engines: Record<string, { outputs: Record<string, unknown> } & Record<string, unknown>>;
+  };
+  return {
+    ...(OUTPUTS as unknown as Record<string, unknown>),
+    engines: {
+      ...base.engines,
+      revenue: {
+        ...base.engines.revenue,
+        outputs: {
+          years: [2025, 2026, 2027].map((y) => ({ ...revYear(y), ...(patch.rev ?? {}) })),
+          projection_calendar_years: patch.calendar ?? [],
+          projection_start_year: patch.calendar?.[0] ?? null,
+        },
+      },
+      expense: {
+        ...base.engines.expense,
+        outputs: {
+          years: [2025, 2026, 2027].map((y) => ({ ...expYear(y), ...(patch.exp ?? {}) })),
+        },
+      },
+    },
+  } as unknown as EngineOutputsResponse;
+}
+
+const header = (i: number) => screen.getByTestId(`projection-col-header-${i}`);
+const basis = (i: number) => screen.getByTestId(`projection-col-basis-${i}`);
+/** The statement row whose label cell reads exactly `label` (nth match). */
+function rowLabelled(label: string, nth = 0): HTMLTableRowElement {
+  const table = screen.getByTestId('projections-table');
+  const rows = Array.from(table.querySelectorAll<HTMLTableRowElement>('tbody tr')).filter(
+    (r) => (r.cells[0]?.textContent ?? '').trim() === label,
+  );
+  const row = rows[nth];
+  if (!row) throw new Error(`no statement row labelled "${label}" (#${nth})`);
+  return row;
+}
+/** The order of statement rows, by their label cell. */
+function rowLabels(): string[] {
+  const table = screen.getByTestId('projections-table');
+  return Array.from(table.querySelectorAll<HTMLTableRowElement>('tbody tr')).map(
+    (r) => (r.cells[0]?.textContent ?? '').trim(),
+  );
+}
+
+describe('P&L · Future P&L — column headings carry the calendar year (E-014)', () => {
+  afterEach(() => { OUTPUTS_OVERRIDE = undefined; });
+
+  it('with an acquisition close date every header reads "Year N · <calendar>", and the base column names its period', () => {
+    OUTPUTS_OVERRIDE = withProjection({ calendar: [2026, 2027, 2028] });
+    mockFieldOverrides = { acquisition_close_date: { value: '2025-11-15', note: 'PSA' } };
+    render(<ProjectionsSection dealId="deal-uuid-1" basePeriodLabel="T12 Mar 2025" />);
+
+    expect(header(0)).toHaveTextContent('Base year (Year 1) · 2026');
+    expect(header(1)).toHaveTextContent('Year 2 · 2027');
+    expect(header(2)).toHaveTextContent('Year 3 · 2028');
+    expect(screen.getByTestId('projection-col-header-exit')).toHaveTextContent('Exit Year · 2029');
+    // The base column's basis line is the primary statement's period, exactly
+    // as Historical P&L heads that column; projected columns say so.
+    expect(basis(0)).toHaveTextContent('T12 Mar 2025');
+    expect(basis(1)).toHaveTextContent(PROJECTED_COLUMN_BASIS);
+    expect(basis(2)).toHaveTextContent(PROJECTED_COLUMN_BASIS);
+    // No "set the acquisition date" note when there IS one; the help line always.
+    expect(screen.queryByTestId('projection-no-close-date-note')).toBeNull();
+    expect(screen.getByTestId('projection-calendar-help')).toHaveTextContent(
+      /acquisition close date sets the year mapping/i,
+    );
+  });
+
+  it('without a close date the headers are bare "Year N", the base basis is a dash, and the note says where to set it', () => {
+    render(<ProjectionsSection dealId="deal-uuid-1" />);
+
+    expect(header(0).textContent?.trim()).toBe('Base year (Year 1)');
+    expect(header(1).textContent?.trim()).toBe('Year 2');
+    expect(header(2).textContent?.trim()).toBe('Year 3');
+    // No period exposed → a dash, never an inferred one.
+    expect(basis(0).textContent?.trim()).toBe('—');
+    expect(screen.getByTestId('projection-no-close-date-note')).toHaveTextContent(NO_CLOSE_DATE_NOTE);
+    // Never the wall-clock year.
+    expect(screen.queryByText(String(new Date().getFullYear()))).toBeNull();
+  });
+
+  it('a blank period label still renders the plain base-year heading (never "undefined")', () => {
+    render(<ProjectionsSection dealId="deal-uuid-1" basePeriodLabel="   " />);
+    expect(header(0).textContent?.trim()).toBe('Base year (Year 1)');
+    expect(basis(0).textContent?.trim()).toBe('—');
+    expect(document.body.textContent).not.toContain('undefined');
+  });
+});
+
+describe('P&L · Future P&L — number rendering (E-025)', () => {
+  afterEach(() => { OUTPUTS_OVERRIDE = undefined; });
+
+  it('never renders scientific notation — a $1.2B total prints with thousands separators', () => {
+    OUTPUTS_OVERRIDE = withProjection({
+      rev: { total_revenue: 1_200_000_000, rooms_revenue: 1_000_000_000 },
+      exp: { total_revenue: 1_200_000_000 },
+    });
+    render(<ProjectionsSection dealId="deal-uuid-1" />);
+    const table = screen.getByTestId('projections-table');
+    expect(table.textContent).not.toMatch(/\d[eE][+-]?\d/);
+    const total = rowLabelled('Total Revenue');
+    expect(within(total).getAllByText('$1,200,000,000')).toHaveLength(3);
+    // …and the title carries the full value with cents.
+    expect(total.cells[2].getAttribute('title')).toBe('$1,200,000,000.00');
+  });
+
+  it('ADR and RevPAR print to the cent', () => {
+    OUTPUTS_OVERRIDE = withProjection({ rev: { adr: 287.456, revpar: 215.592 } });
+    render(<ProjectionsSection dealId="deal-uuid-1" />);
+    expect(within(rowLabelled('Average Rate')).getAllByText('$287.46')).toHaveLength(3);
+    expect(within(rowLabelled('RevPAR')).getAllByText('$215.59')).toHaveLength(3);
+    // The fixture's round $300 ADR still shows its cents.
+    cleanup();
+    OUTPUTS_OVERRIDE = undefined;
+    render(<ProjectionsSection dealId="deal-uuid-1" />);
+    expect(within(rowLabelled('Average Rate')).getAllByText('$300.00')).toHaveLength(3);
+    expect(within(rowLabelled('RevPAR')).getAllByText('$225.00')).toHaveLength(3);
+  });
+
+  it('the statement sits in a persistent, discoverable horizontal scroll container (E-026)', () => {
+    render(<ProjectionsSection dealId="deal-uuid-1" />);
+    const scroller = screen.getByTestId('projections-hscroll-scroller');
+    expect(scroller.className).toContain('fondok-hscroll');
+    expect(scroller.contains(screen.getByTestId('projections-table'))).toBe(true);
+    // Every year column header opts into the "N more years →" count.
+    expect(scroller.querySelectorAll('[data-year-col]').length).toBe(4); // 3 modelled + Exit
+  });
+});
+
+describe('P&L · Future P&L — ratios beside every amount (R-068)', () => {
+  it('shows % of Total Revenue, departmental expenses as % of their own department, computed from the engine years', () => {
+    render(<ProjectionsSection dealId="deal-uuid-1" />);
+
+    // Rooms revenue 10,000,000 ÷ Total 12,500,000 = 80.0% (× 3 years).
+    const roomsRevenue = rowLabelled('Rooms', 0);
+    expect(within(roomsRevenue).getAllByText('80.0%')).toHaveLength(3);
+    expect(roomsRevenue.querySelectorAll('[data-ratio-basis="total_revenue"]')).toHaveLength(3);
+    expect(within(rowLabelled('Total Revenue')).getAllByText('100.0%')).toHaveLength(3);
+    // GOP 5,310,000 ÷ 12,500,000 = 42.5%.
+    expect(within(rowLabelled('Gross Operating Profit')).getAllByText('42.5%')).toHaveLength(3);
+
+    // Rooms DEPARTMENTAL expense 2,500,000 ÷ Rooms revenue 10,000,000 = 25.0%
+    // — the USALI departmental ratio, marked "dept", NOT 20.0% of total.
+    const roomsDept = rowLabelled('Rooms', 1);
+    const deptCells = Array.from(roomsDept.querySelectorAll<HTMLElement>('[data-ratio-basis="department"]'));
+    expect(deptCells).toHaveLength(3);
+    for (const c of deptCells) {
+      expect(c.textContent).toContain('25.0%');
+      expect(c.textContent).toContain('dept');
+      expect(c.getAttribute('title')).toMatch(/of Rooms revenue/);
+    }
+    expect(within(roomsDept).queryByText('20.0%')).toBeNull();
+    // F&B dept 1,500,000 ÷ F&B revenue 2,000,000 = 75.0%.
+    const fbDept = rowLabelled('Food & Beverage', 1);
+    expect(Array.from(fbDept.querySelectorAll('[data-ratio-basis="department"]')).map((c) => c.textContent)).toEqual(
+      ['75.0%dept', '75.0%dept', '75.0%dept'],
+    );
+  });
+
+  it('the "Show %" switch defaults on and hides / restores the % Rev sub-column', () => {
+    render(<ProjectionsSection dealId="deal-uuid-1" />);
+    const toggle = screen.getByTestId('projection-show-pct') as HTMLInputElement;
+    expect(toggle.checked).toBe(true);
+    expect(screen.getAllByText('% Rev').length).toBeGreaterThan(0);
+    expect(document.querySelectorAll('[data-ratio-basis]').length).toBeGreaterThan(0);
+
+    fireEvent.click(toggle);
+    expect(toggle.checked).toBe(false);
+    expect(screen.queryAllByText('% Rev')).toHaveLength(0);
+    expect(document.querySelectorAll('[data-ratio-basis]')).toHaveLength(0);
+    // The amounts are untouched by the view switch.
+    expect(within(rowLabelled('Total Revenue')).getAllByText('$12,500,000')).toHaveLength(3);
+
+    fireEvent.click(toggle);
+    expect(screen.getAllByText('% Rev').length).toBeGreaterThan(0);
+  });
+});
+
+describe('P&L · Future P&L — the NOI waterfall is complete and in order (E-030)', () => {
+  it('runs GOP → Management Fees → EBITDA → Fixed Charges → NOI (before FF&E reserve) → FF&E Reserve → Cash NOI (after)', () => {
+    render(<ProjectionsSection dealId="deal-uuid-1" />);
+    const labels = rowLabels();
+    const order = [
+      'Gross Operating Profit',
+      'Management Fees',
+      'EBITDA',
+      'Fixed Charges',
+      'Property Taxes',
+      'Insurance',
+      'Total Fixed Charges',
+      'Net Operating Income',
+      NOI_BEFORE_RESERVE_LABEL,
+      'FF&E Reserve',
+      CASH_NOI_LABEL,
+    ];
+    const idx = order.map((l) => labels.indexOf(l));
+    expect(idx.every((i) => i >= 0), `missing rows: ${order.filter((_, k) => idx[k] < 0).join(', ')}`).toBe(true);
+    for (let k = 1; k < idx.length; k++) expect(idx[k]).toBeGreaterThan(idx[k - 1]);
+
+    // The figures are the engine's: gop 5,310,000 − mgmt 375,000 = EBITDA
+    // 4,935,000; − fixed 900,000 = 4,035,000 before reserve; − FF&E 500,000 =
+    // 3,535,000 Cash NOI.
+    expect(within(rowLabelled('EBITDA')).getAllByText('$4,935,000')).toHaveLength(3);
+    expect(within(rowLabelled('Total Fixed Charges')).getAllByText('$900,000')).toHaveLength(3);
+    expect(within(rowLabelled(NOI_BEFORE_RESERVE_LABEL)).getAllByText('$4,035,000')).toHaveLength(3);
+    expect(within(rowLabelled('FF&E Reserve')).getAllByText('$500,000')).toHaveLength(3);
+    expect(within(rowLabelled(CASH_NOI_LABEL)).getAllByText('$3,535,000')).toHaveLength(3);
+    // No element is labelled with the bare, unqualified word "NOI".
+    const bare = screen.queryAllByText((_c, el) => (el?.textContent ?? '').trim() === 'NOI');
+    expect(bare).toEqual([]);
+  });
+});
+
+describe('P&L · Future P&L — click-through to the lineage drawer (E-015)', () => {
+  const seen: LineageOpenDetail[] = [];
+  const onOpen = (e: Event) => { seen.push((e as CustomEvent<LineageOpenDetail>).detail); };
+  beforeEach(() => {
+    seen.length = 0;
+    clearLineageCache();
+    lineageSpy.mockReset();
+    lineageSpy.mockResolvedValue(null);
+    window.addEventListener(LINEAGE_OPEN_EVENT, onOpen);
+  });
+  afterEach(() => { window.removeEventListener(LINEAGE_OPEN_EVENT, onOpen); });
+
+  it('a projected ADR cell asks the drawer for revenue.years[i].adr — and every metric resolves to its own field', () => {
+    render(<ProjectionsSection dealId="deal-uuid-1" />);
+    fireEvent.click(screen.getByTestId('lineage-cell-revenue.years[1].adr'));
+
+    expect(seen).toHaveLength(1);
+    expect(seen[0].dealId).toBe('deal-uuid-1');
+    expect(seen[0].rootId).toEqual(['kpi:revenue.years[1].adr', 'engine:revenue.years[1].adr']);
+    expect(seen[0].title).toBe('Average Rate — Year 2');
+    expect(seen[0].subtitle).toContain('revenue.years[1].adr');
+    expect(seen[0].emptyMessage).toBe(NO_TRACE_MESSAGE);
+
+    fireEvent.click(screen.getByTestId('lineage-cell-revenue.years[2].occupancy'));
+    fireEvent.click(screen.getByTestId('lineage-cell-revenue.years[1].revpar'));
+    fireEvent.click(screen.getByTestId('lineage-cell-revenue.years[2].rooms_revenue'));
+    fireEvent.click(screen.getByTestId('lineage-cell-revenue.years[1].total_revenue'));
+    fireEvent.click(screen.getByTestId('lineage-cell-expense.years[1].noi_institutional'));
+    expect(seen.slice(1).map((d) => (d.rootId as string[])[1])).toEqual([
+      'engine:revenue.years[2].occupancy',
+      'engine:revenue.years[1].revpar',
+      'engine:revenue.years[2].rooms_revenue',
+      'engine:revenue.years[1].total_revenue',
+      'engine:expense.years[1].noi_institutional',
+    ]);
+    // The column label travels with the request so the drawer says WHICH year.
+    expect(seen[1].title).toBe('Occupancy — Year 3');
+  });
+
+  it('a cell the lineage record does not cover opens the drawer saying "No trace available for this cell." — no invented formula', async () => {
+    render(
+      <>
+        <LineageDrawerHost />
+        <ProjectionsSection dealId="deal-uuid-1" />
+      </>,
+    );
+    fireEvent.click(screen.getByTestId('lineage-cell-revenue.years[1].adr'));
+
+    const dialog = await screen.findByRole('dialog', { name: 'Value lineage' });
+    expect(within(dialog).getByRole('heading', { level: 2 })).toHaveTextContent('Average Rate — Year 2');
+    expect(within(dialog).getByTestId('lineage-subtitle')).toHaveTextContent('revenue.years[1].adr');
+    await waitFor(() =>
+      expect(within(dialog).getByTestId('lineage-empty')).toHaveTextContent(NO_TRACE_MESSAGE),
+    );
+    expect(lineageSpy).toHaveBeenCalledWith('deal-uuid-1');
+    // Nothing that reads like a formula was made up for the empty state.
+    expect(dialog.textContent).not.toMatch(/[=×÷]/);
+  });
+
+  it('a covered cell renders the recorded walk — the engine value, its inputs and the source page', async () => {
+    const ROOT = 'engine:revenue.years[1].rooms_revenue';
+    const node = (id: string, kind: string, label: string, value: number | null, unit: string | null, source: string | null, state: string | null, meta: Record<string, unknown> = {}) =>
+      ({ id, kind, label, value, unit, concept: null, source, state, reason: null, meta });
+    lineageSpy.mockResolvedValue({
+      deal_id: 'deal-uuid-1', run_id: 'run-1', registry_version: 3, pipeline_version: '2026.10', generated_at: '2026-10-07T00:00:00Z',
+      roots: [ROOT],
+      nodes: [
+        node(ROOT, 'engine_value', 'revenue.years[1].rooms_revenue', 10_000_000, 'USD', null, 'calculated'),
+        node('assumption:starting_adr', 'assumption', 'Starting ADR', 300, 'USD', 't12_actual', 'document_sourced'),
+        node('assumption:revpar_growth', 'assumption', 'RevPAR growth', 0.045, 'ratio', null, 'assumption'),
+        node('page:doc-1:4', 'page', 'Statement of Operations', null, null, 't12_actual', 'document_sourced', { filename: 'T12.pdf', page: 4 }),
+      ],
+      edges: [
+        { src: ROOT, dst: 'assumption:starting_adr', rel: 'computed_from', formula: 'rooms_revenue = occupancy × ADR × available rooms' },
+        { src: ROOT, dst: 'assumption:revpar_growth', rel: 'computed_from', formula: null },
+        { src: 'assumption:starting_adr', dst: 'page:doc-1:4', rel: 'located_on', formula: null },
+      ],
+      unresolved: [],
+      stale: false,
+    });
+    render(
+      <>
+        <LineageDrawerHost />
+        <ProjectionsSection dealId="deal-uuid-1" />
+      </>,
+    );
+    fireEvent.click(screen.getByTestId('lineage-cell-revenue.years[1].rooms_revenue'));
+
+    const dialog = await screen.findByRole('dialog', { name: 'Value lineage' });
+    await within(dialog).findByTestId(`lineage-step-${ROOT}`);
+    // Inputs (starting value, growth) and the source row, in walk order.
+    const steps = Array.from(dialog.querySelectorAll('[data-testid^="lineage-step-"]')).map(
+      (el) => el.getAttribute('data-testid'),
+    );
+    expect(steps).toEqual([
+      `lineage-step-${ROOT}`,
+      'lineage-step-assumption:starting_adr',
+      'lineage-step-page:doc-1:4',
+      'lineage-step-assumption:revpar_growth',
+    ]);
+    // The formula shown is the RECORDED one, verbatim.
+    expect(within(dialog).getByText('rooms_revenue = occupancy × ADR × available rooms')).toBeInTheDocument();
+    expect(within(dialog).getByText('T12.pdf')).toBeInTheDocument();
+    expect(within(dialog).queryByText(NO_TRACE_MESSAGE)).toBeNull();
   });
 });

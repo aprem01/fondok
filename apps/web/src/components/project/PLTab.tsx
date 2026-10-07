@@ -31,6 +31,7 @@ import { MetricLabel } from '@/components/help/MetricLabel';
 import { GLOSSARY } from '@/lib/glossary';
 import ProjectionsSection from './pl/ProjectionsSection';
 import GroundedWorksheet, { fieldMatchesKey } from './pl/GroundedWorksheet';
+import { actualsOnly, derivePeriodBasis } from './pl/HistoricalsSection';
 import { SubTabNav } from '@/components/design';
 import { useDocuments } from '@/lib/hooks/useDocuments';
 
@@ -44,9 +45,13 @@ import { useDocuments } from '@/lib/hooks/useDocuments';
 // Diligence removed from Financials for now too.
 // FON-59 #4 / FON-61 §3 — the sub-tab *id* is the URL slug (`?tab=pl&sub=…`);
 // the label is display only. Ids are what `useSubTab` matches against.
+// FON-41 R-066 — testers could not find the future business-plan P&L under
+// "Financials → Projections". The tab is now "P&L" and the two views are
+// named for what they are: the Historical P&L and the Future P&L. The ids
+// (and every deep link) are unchanged.
 const subTabs = [
-  { id: 'historicals', label: 'Historicals' },
-  { id: 'projections', label: 'Projections' },
+  { id: 'historicals', label: 'Historical P&L' },
+  { id: 'projections', label: 'Future P&L' },
 ] as const;
 type SubTab = typeof subTabs[number]['id'];
 const subTabIds = subTabs.map((t) => t.id) as readonly SubTab[];
@@ -318,8 +323,27 @@ export default function PLTab() {
   const showArrival = (arrivedFromDataRoom || !!focusField) && !arrivalDismissed;
   const subTabCaption =
     tab === 'projections'
-      ? 'The forward model — assumptions, growth and projected performance'
-      : 'Actual operating history, normalized and traceable to the P&L';
+      ? 'The forward business plan — assumptions, growth and projected performance'
+      : 'Actual operating history, normalized and traceable to the source statement';
+  // FON-41 E-014 — the primary financial statement's period ("T12 Mar 2025")
+  // for the Future P&L's base-year column. The worker flags ONE document as
+  // the primary financial source (``_mark_primary_financial``, the Data
+  // Room's "Primary source" badge); its extraction states the period exactly
+  // the way the Historical P&L column heads it (``derivePeriodBasis``). Null
+  // when nothing is flagged or the period is not stated — never a guess.
+  const basePeriodLabel = useMemo<string | null>(() => {
+    const primary = documents.find((d) => d.primary_financial_source);
+    if (!primary) return null;
+    const ex = extractions[primary.id];
+    if (!ex?.fields) return null;
+    const period = derivePeriodBasis(
+      actualsOnly(ex.fields),
+      primary.filename ?? '',
+      primary.doc_type,
+      primary.fiscal_year ?? primary.extracted_period_year,
+    );
+    return period.periodBasis === 'UNKNOWN' ? null : period.periodLabel;
+  }, [documents, extractions]);
   const [runToken, setRunToken] = useState<number | null>(null);
   // Per-Key / Departmental dividers must use the real deal's room count.
   // Sam QA re-test: when ``useDeal`` was still loading we silently fell
@@ -513,17 +537,18 @@ export default function PLTab() {
         runToken={runToken}
       />
 
-      {/* Canonical section header card — "Financials" + the two-sided framing. */}
+      {/* Canonical section header card — "P&L" + the two-sided framing. */}
       <div
         style={{
           background: '#fff', border: '1px solid #eae9e4', borderRadius: 10,
           padding: '12px 16px', marginBottom: 14, display: 'flex', flexDirection: 'column', gap: 3,
         }}
       >
-        <span style={{ fontSize: 13.5, fontWeight: 700, color: '#1a2233' }}>Financials</span>
+        <span style={{ fontSize: 13.5, fontWeight: 700, color: '#1a2233' }}>P&amp;L</span>
         <span style={{ fontSize: 12.5, color: '#6b6f76', lineHeight: 1.55, maxWidth: 960 }}>
-          Verify and shape this deal&apos;s P&amp;L — normalized operating history on one
-          side, the forward model that drives value on the other.
+          Verify and shape this deal&apos;s P&amp;L — the Historical P&amp;L (normalized
+          operating actuals) on one side, the Future P&amp;L (the forward business plan that
+          drives value) on the other.
         </span>
       </div>
 
@@ -545,7 +570,7 @@ export default function PLTab() {
           <GroundedWorksheet dealId={dealId} />
         )}
         {tab === 'projections' && (
-          <ProjectionsSection dealId={dealId} />
+          <ProjectionsSection dealId={dealId} basePeriodLabel={basePeriodLabel} />
         )}
         {computing && (
           <div className="absolute inset-0 bg-bg/60 backdrop-blur-[1px] flex items-start justify-center pt-12 rounded-md">

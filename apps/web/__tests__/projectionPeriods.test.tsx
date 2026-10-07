@@ -216,9 +216,15 @@ vi.mock('@/lib/api', async (importOriginal) => {
 
 import ProjectionsSection, {
   projectionColumnLabel,
+  projectionColumnHeading,
   projectionColumnSubtitle,
+  exitColumnHeading,
+  baseYearBasisLabel,
+  PROJECTED_COLUMN_BASIS,
+  EXIT_COLUMN_BASIS,
   EXIT_COLUMN_LABEL,
   FORWARD_NOI_LABEL,
+  NO_CLOSE_DATE_NOTE,
 } from '@/components/project/pl/ProjectionsSection';
 import CashFlowTab from '@/components/project/CashFlowTab';
 
@@ -229,7 +235,8 @@ beforeEach(() => {
   FIELD_OVERRIDES = { acquisition_close_date: { value: '2025-09-30', note: 'PSA' } };
 });
 
-/** The two header rows of the projections table: labels, then subtitles. */
+/** The two header rows of the projections table: headings (label · calendar
+ *  year, FON-41 E-014), then the basis line under each. */
 function headerRows(): { labels: string[]; subtitles: string[] } {
   const table = document.querySelector('table') as HTMLTableElement;
   const rows = Array.from(table.tHead!.rows);
@@ -241,50 +248,76 @@ function headerRows(): { labels: string[]; subtitles: string[] } {
 
 // ── 1. the calendar ──────────────────────────────────────────────────
 describe('Projections — the column calendar', () => {
-  it('renders "Year N" over its calendar year, with Base Year named as Year 1', () => {
+  it('every heading reads "Year N · <calendar year>", with Base year named as Year 1 (E-014)', () => {
     render(<ProjectionsSection dealId="deal-uuid-1" />);
     const { labels, subtitles } = headerRows();
 
-    expect(labels[0]).toContain('Base Year (Year 1)');
-    expect(labels[1]).toBe('Year 2');
-    expect(labels[2]).toBe('Year 3');
-    expect(labels[3]).toBe('Year 4');
-    expect(labels[4]).toBe('Year 5');
-    expect(labels[5]).toBe(EXIT_COLUMN_LABEL);
-
-    expect(subtitles.slice(0, 5)).toEqual(['2025', '2026', '2027', '2028', '2029']);
+    expect(labels[0]).toContain('Base year (Year 1) · 2025');
+    expect(labels[1]).toBe('Year 2 · 2026');
+    expect(labels[2]).toBe('Year 3 · 2027');
+    expect(labels[3]).toBe('Year 4 · 2028');
+    expect(labels[4]).toBe('Year 5 · 2029');
     // The Exit Year is the year AFTER the last modelled year.
-    expect(subtitles[5]).toBe('2030');
+    expect(labels[5]).toBe('Exit Year · 2030');
+
+    // The basis line: the base column names the primary statement's period
+    // (none in this fixture → a dash), projected columns say so, the exit
+    // column says display-only.
+    expect(subtitles).toEqual(['—', PROJECTED_COLUMN_BASIS, PROJECTED_COLUMN_BASIS, PROJECTED_COLUMN_BASIS, PROJECTED_COLUMN_BASIS, EXIT_COLUMN_BASIS]);
+    // With a close date there is no "set the acquisition date" note.
+    expect(screen.queryByTestId('projection-no-close-date-note')).toBeNull();
+    // …but the help line that explains the mapping is always there.
+    expect(screen.getByTestId('projection-calendar-help')).toHaveTextContent(/acquisition close date sets the year mapping/i);
   });
 
-  it('NO column subtitle is a bare ordinal — this is the "Base Year 1" regression', () => {
+  it('NO column prints a bare ordinal — this is the "Base Year 1" regression', () => {
     render(<ProjectionsSection dealId="deal-uuid-1" />);
-    const { subtitles } = headerRows();
+    const { labels, subtitles } = headerRows();
     for (const sub of subtitles) {
       expect(sub).not.toMatch(/^\d{1,3}$/); // 1, 2, 3… — an ordinal, not a year
-      expect(sub === '—' || /^\d{4}$/.test(sub)).toBe(true);
+      expect(['—', PROJECTED_COLUMN_BASIS, EXIT_COLUMN_BASIS]).toContain(sub);
+    }
+    // A heading's trailing number is always a 4-digit calendar year.
+    for (const label of labels) {
+      const m = /· (\S+)/.exec(label);
+      expect(m, label).not.toBeNull();
+      expect(m![1]).toMatch(/^\d{4}$/);
     }
   });
 
-  it('with no close date the columns keep their labels and show NO year', () => {
+  it('with no close date the headings are the bare labels, and a note says where the date is set', () => {
     CALENDAR_YEARS = undefined;
     FIELD_OVERRIDES = {};
     render(<ProjectionsSection dealId="deal-uuid-1" />);
     const { labels, subtitles } = headerRows();
 
-    expect(labels[0]).toContain('Base Year (Year 1)');
+    expect(labels[0]).toContain('Base year (Year 1)');
     expect(labels[1]).toBe('Year 2');
-    // Never the wall-clock year, never the ordinal — nothing.
-    for (const sub of subtitles) expect(sub).toBe('—');
+    expect(labels[5]).toBe(EXIT_COLUMN_LABEL);
+    // Never the wall-clock year, never the ordinal — no "·" at all.
+    for (const label of labels) expect(label).not.toContain('·');
+    expect(subtitles[0]).toBe('—');
     expect(screen.queryByText(String(new Date().getFullYear()))).toBeNull();
+    // The one-line note (E-014) and its link to the owner of the date.
+    const note = screen.getByTestId('projection-no-close-date-note');
+    expect(note).toHaveTextContent(NO_CLOSE_DATE_NOTE);
+    expect(note.querySelector('a')?.getAttribute('href')).toContain('tab=investment');
   });
 
-  it('the subtitle helper never prints an ordinal', () => {
+  it('the heading helpers never print an ordinal', () => {
     expect(projectionColumnSubtitle(2026)).toBe('2026');
     expect(projectionColumnSubtitle(undefined)).toBe('—');
-    expect(projectionColumnLabel(0)).toBe('Base Year (Year 1)');
+    expect(projectionColumnLabel(0)).toBe('Base year (Year 1)');
     expect(projectionColumnLabel(1)).toBe('Year 2');
     expect(projectionColumnLabel(4)).toBe('Year 5');
+    expect(projectionColumnHeading(0, 2025)).toBe('Base year (Year 1) · 2025');
+    expect(projectionColumnHeading(1, 2026)).toBe('Year 2 · 2026');
+    expect(projectionColumnHeading(1)).toBe('Year 2');
+    expect(exitColumnHeading(2030)).toBe('Exit Year · 2030');
+    expect(exitColumnHeading(undefined)).toBe('Exit Year');
+    expect(baseYearBasisLabel('T12 Mar 2025')).toBe('T12 Mar 2025');
+    expect(baseYearBasisLabel(null)).toBe('—');
+    expect(baseYearBasisLabel('  ')).toBe('—');
   });
 });
 
@@ -312,7 +345,10 @@ describe('Projections — the horizon is derived from the hold, not capped at 6'
     render(<ProjectionsSection dealId="deal-uuid-1" />);
     const { labels } = headerRows();
     expect(labels).toHaveLength(HOLD_YEARS + 1);
-    expect(labels[labels.length - 1]).toBe(EXIT_COLUMN_LABEL);
+    // The Exit Year heading carries its calendar year inline like every other
+    // column (E-014): the year AFTER the last modelled year.
+    expect(labels[labels.length - 1]).toBe(exitColumnHeading(2030));
+    expect(labels[labels.length - 1].startsWith(EXIT_COLUMN_LABEL)).toBe(true);
   });
 
   it('the Exit Year column carries returns.terminal_noi and nothing else', () => {
@@ -365,8 +401,9 @@ describe('Projections — Base Year IS Year 1, and Cash Flow agrees', () => {
     await waitFor(() => expect(fx.xlsxRows.length).toBeGreaterThan(0));
 
     const headers = fx.xlsxRows[0].map((c) => String(c));
-    expect(headers[1]).toBe('Base Year (Year 1) 2025 Amount');
-    expect(headers[5]).toBe('Year 2 2026 Amount');
+    // The export header IS the table heading (label · calendar year).
+    expect(headers[1]).toBe('Base year (Year 1) · 2025 Amount');
+    expect(headers[5]).toBe('Year 2 · 2026 Amount');
     // No column claims to be "Year 1" twice.
     expect(headers.filter((h) => h.startsWith('Year 1 '))).toHaveLength(0);
 
@@ -388,7 +425,7 @@ describe('Projections — Base Year IS Year 1, and Cash Flow agrees', () => {
     await waitFor(() => expect(fx.xlsxRows.length).toBeGreaterThan(0));
     const headers = fx.xlsxRows[0].map((c) => String(c));
     expect(headers).toHaveLength(1 + (HOLD_YEARS + 1) * 4);
-    expect(headers[headers.length - 4]).toBe('Exit Year 2030 Amount');
+    expect(headers[headers.length - 4]).toBe('Exit Year · 2030 Amount');
     const fwd = fx.xlsxRows.find((r) => String(r[0]) === FORWARD_NOI_LABEL)!;
     expect(fwd[1 + HOLD_YEARS * 4]).toBe(TERMINAL_NOI);
   });

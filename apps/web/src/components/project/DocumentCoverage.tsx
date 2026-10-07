@@ -827,7 +827,7 @@ function CoverageFileRow({
             type="button"
             onClick={() => onOpenDoc(file.id, financial)}
             aria-label={`Review ${file.toReview} flagged value${file.toReview === 1 ? '' : 's'} in ${file.name}`}
-            title={financial ? 'Open Financials → Historicals at this statement’s flagged cells' : 'Open this document’s field review'}
+            title={financial ? 'Open P&L → Historical P&L at this statement’s flagged cells' : 'Open this document’s field review'}
             className="inline-flex items-center gap-1 text-danger-700 hover:underline underline-offset-2"
           >
             <AlertCircle size={11} /> {file.toReview} to review
@@ -838,7 +838,7 @@ function CoverageFileRow({
           onClick={() => onOpenDoc(file.id, financial)}
           className="text-[10.5px] font-medium px-2.5 py-1 rounded bg-brand-600 text-white hover:bg-brand-700"
         >
-          {financial ? 'View Financials' : 'View data'}
+          {financial ? 'View P&L' : 'View data'}
         </button>
       </div>
       <ReviewReasonLine

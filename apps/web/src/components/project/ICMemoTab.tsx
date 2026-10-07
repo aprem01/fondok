@@ -1227,11 +1227,11 @@ export default function ICMemoTab({ project }: { project: Project }) {
   const snapshot: Snap[] = [
     { label: 'Purchase Price', value: mm(metrics.purchasePrice), state: provState('capital', 'purchase_price', overriddenPP ? 'assumption' : 'linked'), src: 'Investment', engine: 'capital', path: 'purchase_price' },
     { label: 'Price / Key', value: perKeyK(metrics.pricePerKey), state: provState('capital', 'price_per_key', 'calculated'), src: 'Investment', engine: 'capital', path: 'price_per_key' },
-    { label: 'RevPAR', value: whole$(metrics.revpar), state: provState('revenue', 'years.0.revpar', 'linked'), src: 'Financials / Projections', engine: 'revenue', path: 'years.0.revpar' },
+    { label: 'RevPAR', value: whole$(metrics.revpar), state: provState('revenue', 'years.0.revpar', 'linked'), src: 'P&L / Future P&L', engine: 'revenue', path: 'years.0.revpar' },
     // FON-59 #1 — `metrics.noi` reads `noi_institutional` first (NOI before the
     // FF&E reserve, the canonical bare-"NOI" basis), so the provenance popover
     // must point at THAT field, not the after-reserve `noi` it used to explain.
-    { label: 'NOI (Y1)', value: mm(metrics.noi), state: provState('expense', 'years.0.noi_institutional', 'calculated'), src: 'Financials / Projections', engine: 'expense', path: 'years.0.noi_institutional' },
+    { label: 'NOI (Y1)', value: mm(metrics.noi), state: provState('expense', 'years.0.noi_institutional', 'calculated'), src: 'P&L / Future P&L', engine: 'expense', path: 'years.0.noi_institutional' },
     { label: 'Going-In Cap Rate', value: pctOr(metrics.capRate, 2), state: provState('capital', 'entry_cap_rate', 'calculated'), src: 'Investment', engine: 'capital', path: 'entry_cap_rate' },
     { label: 'Levered IRR', value: pctOr(metrics.leveredIrr), state: provState('returns', 'levered_irr', 'calculated'), src: 'Returns', engine: 'returns', path: 'levered_irr' },
     { label: 'Equity Multiple', value: xMult(metrics.equityMultiple), state: provState('returns', 'equity_multiple', 'calculated'), src: 'Returns', engine: 'returns', path: 'equity_multiple' },
@@ -1244,7 +1244,7 @@ export default function ICMemoTab({ project }: { project: Project }) {
   // figures it summarizes (`?tab=<tab>&sub=<slug>`), not just the module.
   const uwGroups: { title: string; link: string; tab: string; sub: string; rows: [string, string][] }[] = [
     {
-      title: 'Operating', link: 'View Financials →', tab: 'pl', sub: 'projections',
+      title: 'Operating', link: 'View P&L →', tab: 'pl', sub: 'projections',
       rows: [
         ['RevPAR', whole$(metrics.revpar)],
         ['Revenue (Y1)', mm(metrics.totalRevenue)],

@@ -72,16 +72,16 @@ export interface AssumptionMeta {
   dec?: number;
 }
 export const ASSUMPTION_CATALOG: AssumptionMeta[] = [
-  { path: 'starting_occupancy', label: 'Year-1 Occupancy', unit: 'pct', group: 'Revenue', source: 'financials', sourceLabel: 'Financials' },
-  { path: 'starting_adr', label: 'Year-1 ADR', unit: 'usd', group: 'Revenue', source: 'financials', sourceLabel: 'Financials' },
+  { path: 'starting_occupancy', label: 'Year-1 Occupancy', unit: 'pct', group: 'Revenue', source: 'financials', sourceLabel: 'P&L' },
+  { path: 'starting_adr', label: 'Year-1 ADR', unit: 'usd', group: 'Revenue', source: 'financials', sourceLabel: 'P&L' },
   // FON-69 — a RevPAR-growth override derives adr_growth (occupancy path
   // held) so operating NOI moves; the label says what the lever does.
-  { path: 'revpar_growth', label: 'RevPAR growth (drives ADR; occupancy path held)', unit: 'pct', group: 'Revenue', source: 'financials', sourceLabel: 'Financials' },
-  { path: 'adr_growth', label: 'ADR Growth', unit: 'pct', group: 'Revenue', source: 'financials', sourceLabel: 'Financials' },
-  { path: 'occupancy_growth', label: 'Occupancy Growth', unit: 'pct', group: 'Revenue', source: 'financials', sourceLabel: 'Financials' },
-  { path: 'expense_growth', label: 'Expense Growth', unit: 'pct', group: 'Expenses', source: 'financials', sourceLabel: 'Financials' },
-  { path: 'mgmt_fee_pct', label: 'Management Fee', unit: 'pct', group: 'Expenses', source: 'financials', sourceLabel: 'Financials' },
-  { path: 'ffe_reserve_pct', label: 'FF&E Reserve', unit: 'pct', group: 'Expenses', source: 'financials', sourceLabel: 'Financials' },
+  { path: 'revpar_growth', label: 'RevPAR growth (drives ADR; occupancy path held)', unit: 'pct', group: 'Revenue', source: 'financials', sourceLabel: 'P&L' },
+  { path: 'adr_growth', label: 'ADR Growth', unit: 'pct', group: 'Revenue', source: 'financials', sourceLabel: 'P&L' },
+  { path: 'occupancy_growth', label: 'Occupancy Growth', unit: 'pct', group: 'Revenue', source: 'financials', sourceLabel: 'P&L' },
+  { path: 'expense_growth', label: 'Expense Growth', unit: 'pct', group: 'Expenses', source: 'financials', sourceLabel: 'P&L' },
+  { path: 'mgmt_fee_pct', label: 'Management Fee', unit: 'pct', group: 'Expenses', source: 'financials', sourceLabel: 'P&L' },
+  { path: 'ffe_reserve_pct', label: 'FF&E Reserve', unit: 'pct', group: 'Expenses', source: 'financials', sourceLabel: 'P&L' },
   { path: 'purchase_price', label: 'Purchase Price', unit: 'usd', group: 'Acquisition', source: 'investment', sourceLabel: 'Investment' },
   { path: 'exit_cap_rate', label: 'Exit Cap Rate', unit: 'pct', group: 'Exit', source: 'investment', sourceLabel: 'Investment', dec: 2 },
   { path: 'hold_years', label: 'Hold Period', unit: 'years', group: 'Exit', source: 'investment', sourceLabel: 'Investment' },

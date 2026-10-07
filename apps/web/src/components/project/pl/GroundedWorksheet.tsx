@@ -49,6 +49,7 @@ import { useDocuments } from '@/lib/hooks/useDocuments';
 import { isHistoricalSourceDoc, useHistoricals } from '@/lib/hooks/useHistoricals';
 import TabLoadingSkeleton from '@/components/project/TabLoadingSkeleton';
 import { baseYearLabel, type HistYear, type PeriodBasis } from '@/components/project/pl/HistoricalsSection';
+import { HScroll } from '@/components/project/pl/HScroll';
 import { buildReviewState, cellKey, cellsForYear, histHasData, histValue, type ReviewRow } from '@/lib/reviewState';
 import { useSource } from '@/lib/hooks/useDealProvenance';
 import { sourceKind, sourceExplanation, formatPeriodBasis } from '@/lib/provenance';
@@ -843,7 +844,7 @@ export default function GroundedWorksheet({
       <div className="flex flex-wrap items-center justify-between gap-3 px-5 py-3 border-b border-border bg-surface-2/40">
         <div className="flex items-center gap-3 flex-wrap">
           <div>
-            <h3 className="text-[14px] font-semibold text-ink-900">Financials</h3>
+            <h3 className="text-[14px] font-semibold text-ink-900">Historical P&amp;L</h3>
             <p className="text-[11.5px] text-ink-500 mt-0.5">
               Historical operating actuals — click any cell’s dot to see its source, or a red-flagged value to review it.
             </p>
@@ -1089,7 +1090,9 @@ export default function GroundedWorksheet({
         </div>
       )}
 
-      <div className="overflow-x-auto">
+      {/* FON-41 E-026 — a persistent scrollbar + a right-edge fade and a
+          "N more years →" cue whenever year columns sit off-screen. */}
+      <HScroll unit="year" data-testid="historicals-hscroll">
         <table className="w-full table-fixed text-[12.5px]" style={{ minWidth: 300 + cols.length * 96 }}>
           <colgroup>
             <col style={{ width: 300 }} />
@@ -1099,7 +1102,7 @@ export default function GroundedWorksheet({
             <tr className="bg-ink-900 text-white text-[10px] uppercase tracking-wider">
               <th className="text-left font-semibold px-5 py-2.5 sticky left-0 bg-ink-900 z-10">Line item</th>
               {cols.map((c) => (
-                <th key={c.id} className={cn('text-right font-semibold px-3 py-2.5', !c.historical && 'text-brand-200')}>
+                <th key={c.id} data-year-col className={cn('text-right font-semibold px-3 py-2.5', !c.historical && 'text-brand-200')}>
                   {c.label}
                   {c.year.basisReason && (
                     <span
@@ -1247,7 +1250,7 @@ export default function GroundedWorksheet({
             <FootingRow id="gop" label="GOP footing" foot={footGop} cols={cols} />
           </tfoot>
         </table>
-      </div>
+      </HScroll>
 
       <div className="px-5 py-2.5 border-t border-border text-[11px] text-ink-500 flex items-center gap-1.5">
         <Info size={11} /> Editable lines are the operating-expense actuals in the Model column. Revenue &amp; subtotals are derived; historical columns are read-only facts — correct them at their source document.
