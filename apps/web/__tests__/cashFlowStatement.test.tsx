@@ -13,11 +13,12 @@
  *     never an empty tab or a crash.
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, fireEvent, cleanup } from '@testing-library/react';
+import { render, screen, fireEvent, cleanup, within } from '@testing-library/react';
 import type { EngineOutputsResponse, CashFlowStatementOutput } from '@/lib/api';
 import { getEngineField } from '@/lib/hooks/useEngineOutputs';
 import {
   buildSummary,
+  cumulativeLevered,
   hasCashFlowStatement,
   periodHeaders,
   rowState,
@@ -312,5 +313,175 @@ describe('CashFlowTab — `?tab=cash-flow&sub=<slug>` routing', () => {
       '/projects/deal-1?tab=debt&sub=debt-schedule',
       { scroll: false },
     );
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────
+// FON-67 (R-072) — the Summary statement
+//
+// Sam's tester: "Cash Flow shows only two line items under Cash Flow Bridge;
+// I expect P&L, debt, equity distributions, NOI and IRR by year visible
+// together." The Summary now leads with the full year-by-year statement read
+// from the worker's lines BY LABEL, "—" for any line the engine did not emit,
+// the cumulative levered series as the one labelled browser-side sum, and the
+// whole-hold IRR / multiple from the returns engine shown ONCE beside it.
+// ─────────────────────────────────────────────────────────────────────────
+
+/** The same 2-year deal, carrying the labels ``cash_flow.py`` emits today
+ *  ("NOI (before FF&E reserve)") rather than the legacy "Net Operating Income". */
+const CF_WORKER: CashFlowStatementOutput = {
+  ...CF,
+  unlevered: [
+    { label: 'Acquisition Uses at Close', values: [-1000, null, null], kind: 'linked' },
+    { label: 'NOI (before FF&E reserve)', values: [null, 100, 120], kind: 'linked' },
+    { label: 'FF&E Reserve', values: [null, -10, -12], kind: 'linked' },
+    { label: 'Gross Sale Proceeds', values: [null, null, 1500], kind: 'linked' },
+    { label: 'Selling & Disposition Costs', values: [null, null, -60], kind: 'linked' },
+    { label: 'Unlevered Cash Flow', values: [-1000, 90, 1548], kind: 'calc' },
+  ],
+  provenance: {},
+};
+
+function envelopeWithReturns(
+  cf: CashFlowStatementOutput,
+  returns: Record<string, unknown> | null,
+): EngineOutputsResponse {
+  const env = envelope(cf);
+  if (returns) {
+    env.engines.returns = {
+      deal_id: 'deal-1',
+      engine: 'returns',
+      status: 'complete',
+      summary: '',
+      outputs: returns,
+      inputs: null,
+      error: null,
+      runtime_ms: 1,
+      started_at: null,
+      completed_at: null,
+      run_id: null,
+    };
+  }
+  return env;
+}
+
+/** The sticky label cell of the statement row labelled `label`. (The cell's
+ *  accessible NAME also carries its provenance dot — "Linked NOI …" — so the
+ *  row is found by its visible label text, not by role + name.) */
+function statementRowHeader(card: HTMLElement, label: string): HTMLElement {
+  return within(card).getByText(label).closest('[role="rowheader"]') as HTMLElement;
+}
+
+/** Text of every data cell on the statement row whose sticky label is `label`. */
+function statementRowCells(card: HTMLElement, label: string): string[] {
+  const row = statementRowHeader(card, label).parentElement as HTMLElement;
+  return within(row).getAllByRole('cell').map((c) => c.textContent ?? '');
+}
+
+describe('cumulativeLevered — the one browser-side sum', () => {
+  it('runs the canonical levered series forward, null past its end', () => {
+    expect(cumulativeLevered(CF, 3)).toEqual([-400, -360, 578]);
+    expect(cumulativeLevered(CF, 4)).toEqual([-400, -360, 578, null]);
+  });
+});
+
+describe('CashFlowTab — Summary statement (FON-67 / R-072)', () => {
+  beforeEach(() => {
+    cleanup();
+    nav.params = new URLSearchParams('');
+  });
+
+  it('renders the engine lines by label, year by year, with — for a line the engine did not emit', () => {
+    hoisted.outputs = envelopeWithReturns(CF_WORKER, { levered_irr: 0.198, unlevered_irr: 0.123, equity_multiple: 1.66 });
+    render(<CashFlowTab />);
+    const card = screen.getByTestId('cash-flow-summary-statement');
+
+    // Columns are the canonical period headers (Close = Year 0).
+    expect(within(card).getByRole('columnheader', { name: 'Close' })).toBeInTheDocument();
+    expect(within(card).getByRole('columnheader', { name: 'Year 2 / Exit' })).toBeInTheDocument();
+
+    // Property lines, read from `unlevered` by the worker's own label.
+    expect(statementRowCells(card, 'NOI (before FF&E reserve)')).toEqual(['—', '$100', '$120']);
+    // Canonical display relabel of the worker's "FF&E Reserve" line.
+    expect(statementRowCells(card, 'FF&E Reserve / CapEx')).toEqual(['—', '($10)', '($12)']);
+    expect(statementRowCells(card, 'Unlevered Cash Flow')).toEqual(['($1,000)', '$90', '$1,548']);
+    // A required line the engine did not emit is visible as — in every period.
+    expect(statementRowCells(card, 'Deferred Capital Deployed')).toEqual(['—', '—', '—']);
+    expect(statementRowHeader(card, 'Deferred Capital Deployed')).toHaveAttribute(
+      'title',
+      'Not emitted by the cash_flow engine for this deal',
+    );
+
+    // Debt lines from `levered`.
+    expect(statementRowCells(card, 'Debt Proceeds')).toEqual(['$600', '—', '—']);
+    expect(statementRowCells(card, 'Interest Expense')).toEqual(['—', '($30)', '($30)']);
+    expect(statementRowCells(card, 'Principal Amortization')).toEqual(['—', '($20)', '($20)']);
+    expect(statementRowCells(card, 'Exit Debt Payoff')).toEqual(['—', '—', '($560)']);
+    expect(statementRowCells(card, 'Net Cash Flow to Equity')).toEqual(['($400)', '$40', '$938']);
+    // Deal-conditional lines (no refinance on this deal) are not shown at all.
+    expect(within(card).queryByText('Net refinance cash-out')).toBeNull();
+    expect(within(card).queryByText('Refinance / Junior Debt Service')).toBeNull();
+
+    // Distributions are per operating period → shifted right of the close column.
+    expect(statementRowCells(card, 'LP Distributions')).toEqual(['—', '$30', '$700']);
+    expect(statementRowCells(card, 'GP Distributions')).toEqual(['—', '$10', '$238']);
+    expect(statementRowCells(card, 'Total Distributions')).toEqual(['—', '$40', '$938']);
+
+    // The ONE browser-side sum, labelled as such.
+    expect(statementRowCells(card, 'Cumulative levered cash flow (calculated)')).toEqual(['($400)', '($360)', '$578']);
+  });
+
+  it('shows the whole-hold IRR figures ONCE beside the table, never per year', () => {
+    hoisted.outputs = envelopeWithReturns(CF_WORKER, { levered_irr: 0.198, unlevered_irr: 0.123, equity_multiple: 1.66 });
+    render(<CashFlowTab />);
+    const block = screen.getByTestId('cash-flow-irr-block');
+
+    expect(within(block).getAllByText('Levered IRR')).toHaveLength(1);
+    expect(within(block).getByText('19.8%')).toBeInTheDocument();
+    expect(within(block).getAllByText('Unlevered IRR')).toHaveLength(1);
+    expect(within(block).getByText('12.3%')).toBeInTheDocument();
+    expect(within(block).getAllByText('Equity multiple')).toHaveLength(1);
+    expect(within(block).getByText('1.66x')).toBeInTheDocument();
+    expect(within(block).getByText(/IRR is a whole-hold figure/)).toBeInTheDocument();
+    // No IRR row sneaks into the year-by-year grid.
+    const card = screen.getByTestId('cash-flow-summary-statement');
+    const grid = within(card).getByRole('table');
+    expect(within(grid).queryByText(/IRR/)).toBeNull();
+  });
+
+  it('reads — for the IRR figures when the returns engine has not run', () => {
+    hoisted.outputs = envelopeWithReturns(CF_WORKER, null);
+    render(<CashFlowTab />);
+    const block = screen.getByTestId('cash-flow-irr-block');
+    expect(within(block).getAllByText('—')).toHaveLength(3);
+  });
+
+  it('keeps the Cash Flow Bridge card, below the statement', () => {
+    hoisted.outputs = envelopeWithReturns(CF_WORKER, null);
+    render(<CashFlowTab />);
+    const statement = screen.getByTestId('cash-flow-summary-statement');
+    const bridge = screen.getByText('Cash Flow Bridge');
+    expect(bridge).toBeInTheDocument();
+    // eslint-disable-next-line no-bitwise
+    expect(statement.compareDocumentPosition(bridge) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  });
+
+  it('still reads the NOI row from a run that carries the legacy "Net Operating Income" label', () => {
+    hoisted.outputs = envelopeWithReturns(CF, null);
+    render(<CashFlowTab />);
+    const card = screen.getByTestId('cash-flow-summary-statement');
+    expect(statementRowCells(card, 'Net Operating Income')).toEqual(['—', '$100', '$120']);
+    expect(within(card).queryByText('NOI (before FF&E reserve)')).toBeNull();
+  });
+
+  it('the Unlevered and Levered sub-tabs are untouched', () => {
+    hoisted.outputs = envelopeWithReturns(CF_WORKER, null);
+    render(<CashFlowTab />);
+    fireEvent.click(screen.getByRole('tab', { name: 'Unlevered' }));
+    expect(screen.queryByTestId('cash-flow-summary-statement')).toBeNull();
+    expect(screen.getByText('Property level · before financing')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('tab', { name: 'Levered / Equity' }));
+    expect(screen.getByText('Levered / Equity Cash Flow')).toBeInTheDocument();
+    expect(screen.queryByTestId('cash-flow-irr-block')).toBeNull();
   });
 });

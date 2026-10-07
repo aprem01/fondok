@@ -54,11 +54,19 @@ const SUB_TABS = [
 ] as const;
 type SubTab = (typeof SUB_TABS)[number]['id'];
 const SUB_TAB_IDS = SUB_TABS.map((t) => t.id) as readonly SubTab[];
+// FON-66 (R-071) — the Summary caption says what this tab is: the EQUITY
+// partnership, i.e. the distribution waterfall between the equity partners
+// (LP investors) and the sponsor (GP).
 const SUB_CAPTION: Record<SubTab, string> = {
-  summary: 'Equity split, waterfall terms and partner returns',
+  summary: 'Equity partnership — LP / GP split, preferred return, promote tiers and the distribution waterfall between the equity partners and the sponsor',
   waterfall: 'The partnership assumption workspace',
   'cash-flows': 'Contributions and distributions through exit',
 };
+
+/** One plain statement of what the Partnership tab models, reused by the
+ *  intro card and the Summary header so the two never drift. */
+const EQUITY_PARTNERSHIP_STATEMENT =
+  'This is the equity partnership: how every dollar of equity cash flow is split between the equity partners (the LP investors) and the sponsor (the GP) — the LP / GP equity split, the preferred return, the promote tiers and the distribution waterfall that allocates each distribution between them.';
 
 const COMPOUNDING_OPTIONS = [
   'Annual / cumulative',
@@ -531,13 +539,14 @@ export default function PartnershipTab() {
       <div className="flex-1 min-w-0">
         <IntroCard
           dismissKey="partnership-intro"
-          title="The Partnership Engine"
+          title="The Partnership Engine — equity distribution waterfall"
           body={
             <>
-              How the deal&apos;s profits split between the sponsor (you, the
-              <span className="font-semibold"> GP</span>) and outside investors
-              (<span className="font-semibold">LPs</span>). The waterfall pays LPs their preferred
-              return first, then promotes the GP on the upside.
+              {EQUITY_PARTNERSHIP_STATEMENT}{' '}
+              The waterfall returns capital and pays the
+              <span className="font-semibold"> LP investors</span> their preferred return first, then
+              promotes the <span className="font-semibold">GP / sponsor</span> on the upside above each
+              hurdle.
             </>
           }
         />
@@ -585,6 +594,28 @@ export default function PartnershipTab() {
         <div className={cn(computing && 'relative pointer-events-none opacity-60')}>
           {tab === 'summary' && (
             <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+              {/* FON-66 (R-071) — Summary header: say plainly what this tab is.
+                  Sam's tester: "Partnership should address the equity
+                  distribution waterfall between the equity partners and the
+                  sponsor." The intro card is dismissable; this line is not. */}
+              <div
+                data-testid="summary-equity-partnership-header"
+                style={{
+                  background: palette.surfaceTint, border: `1px solid ${palette.border}`, borderRadius: 9,
+                  padding: '10px 14px', display: 'flex', gap: 12, alignItems: 'baseline', flexWrap: 'wrap',
+                }}
+              >
+                <span style={{
+                  fontSize: 10, fontWeight: 700, letterSpacing: '.05em', color: palette.eyebrow,
+                  textTransform: 'uppercase', whiteSpace: 'nowrap',
+                }}>
+                  Equity partnership
+                </span>
+                <span style={{ fontSize: 12.5, color: palette.ink, lineHeight: 1.5, flex: '1 1 420px' }}>
+                  {EQUITY_PARTNERSHIP_STATEMENT}
+                </span>
+              </div>
+
               {/* Equity Structure + Waterfall Terms */}
               <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(430px,1fr))', gap: 14 }}>
                 {/* FON-66 §1 (Sam, 9/11): the Summary showed ONE "Total Equity
@@ -722,6 +753,50 @@ export default function PartnershipTab() {
                   />
                 </SectionCard>
               </div>
+
+              {/* FON-66 (R-071) — the distribution waterfall itself (each tier's
+                  hurdle and LP / GP split) sits ABOVE the partner-return KPIs,
+                  so the waterfall between the equity partners and the sponsor
+                  is visible without switching sub-tabs. Read-only here: the
+                  SAME tiers, overrides and seed as the Waterfall sub-tab (one
+                  component, one override path) — edits happen there. */}
+              <SectionCard
+                title="Distribution Waterfall — equity partners and sponsor"
+                note={
+                  <span
+                    onClick={() => setTab('waterfall')}
+                    style={{ fontSize: 11.5, color: palette.linkBlue, fontWeight: 600, cursor: 'pointer' }}
+                  >
+                    Edit tiers on Waterfall →
+                  </span>
+                }
+                data-testid="summary-waterfall-tiers"
+              >
+                <div style={{ fontSize: 11.5, color: palette.textSecondary, lineHeight: 1.5, marginBottom: 6 }}>
+                  Each distribution is allocated tier by tier between the LP investors and the GP / sponsor:
+                  capital back first, then the {pctv(prefRate, 0)} preferred return, then the promote splits
+                  below as LP IRR clears each hurdle.
+                </div>
+                <PromoteWaterfall
+                  readOnly
+                  prefRate={prefRate}
+                  hasCatchUp={hasCatchUp}
+                  liveMode={liveMode}
+                  overrides={overrides}
+                  editing={editing}
+                  draft={draft}
+                  setDraft={setDraft}
+                  note={note}
+                  setNote={setNote}
+                  startEdit={startEdit}
+                  cancelEdit={cancelEdit}
+                  commitPct={commitPct}
+                  tierCount={tierCount}
+                  tierIndices={visibleTierIndices}
+                  onAddTier={onAddTier}
+                  onRemoveTier={onRemoveTier}
+                />
+              </SectionCard>
 
               {/* Partner Returns — deal, LP, GP cards */}
               <SectionCard title="Partner Returns" note="Deal-level economics, then what each partner receives after the waterfall">
@@ -1302,13 +1377,17 @@ function AllocationTable({
 const TIER_GRID = '38px minmax(180px,1.5fr) minmax(120px,1fr) 90px 90px minmax(150px,1fr)';
 
 function PromoteWaterfall({
-  prefRate, hasCatchUp, liveMode, overrides, editing, draft, setDraft, note, setNote,
+  prefRate, hasCatchUp, liveMode: liveModeProp, readOnly = false, overrides, editing, draft, setDraft, note, setNote,
   startEdit, cancelEdit, commitPct,
   tierCount, tierIndices, onAddTier, onRemoveTier,
 }: {
   prefRate: number;
   hasCatchUp: boolean;
   liveMode: boolean;
+  /** FON-66 (R-071) — the Summary mounts this table read-only so the waterfall
+   *  is visible there without a second edit surface; hurdles and splits are
+   *  edited on the Waterfall sub-tab. Same tiers, same overrides, same seed. */
+  readOnly?: boolean;
   overrides: Record<string, unknown>;
   editing: string | null;
   draft: string;
@@ -1327,6 +1406,9 @@ function PromoteWaterfall({
   onRemoveTier: (idx: number) => void;
 }) {
   const { toast } = useToast();
+  // Read-only mount (Summary) renders exactly the non-live look: no editors,
+  // no add / remove controls. The override path is untouched.
+  const liveMode = liveModeProp && !readOnly;
   // FON-74 — null: the "+ Add tier" button. A string: the justification row is
   // open and holds what the analyst has typed so far.
   const [addNote, setAddNote] = useState<string | null>(null);
@@ -1584,7 +1666,9 @@ function PromoteWaterfall({
       <div style={{ fontSize: 11, color: palette.textMuted, marginTop: 9, lineHeight: 1.5 }}>
         LP split is always 100% − GP split. Hurdles are LP IRR thresholds; the final tier takes everything
         above the last hurdle. Any tier can be removed; the remaining tiers keep their own hurdles and splits.
-        {!liveMode && ' Waterfall editing is available on live deals.'}
+        {readOnly
+          ? ' Hurdles and splits are edited on the Waterfall sub-tab.'
+          : !liveMode && ' Waterfall editing is available on live deals.'}
       </div>
     </>
   );

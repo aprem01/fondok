@@ -9,7 +9,7 @@ import { useToast } from '@/components/ui/Toast';
 import EngineHeader from './EngineHeader';
 import EngineRightRail from './EngineRightRail';
 import EngineRunHistory from './EngineRunHistory';
-import { fmtCurrency, fmtMillions, cn } from '@/lib/format';
+import { fmtCurrency, fmtMillions, fmtPct, cn } from '@/lib/format';
 import { getEngineField, useEngineOutputs } from '@/lib/hooks/useEngineOutputs';
 import { useFlash } from '@/lib/hooks/useFlash';
 import { IntroCard } from '@/components/help/IntroCard';
@@ -31,6 +31,7 @@ import type {
 } from '@/lib/api';
 import {
   buildSummary,
+  cumulativeLevered,
   hasCashFlowStatement,
   lineByLabel,
   periodHeaders,
@@ -161,6 +162,15 @@ export default function CashFlowTab() {
   const cfOut = getEngineField<CashFlowStatementOutput>(outputs, 'cash_flow');
   const cf = useMemo(() => (hasCashFlowStatement(cfOut) ? cfOut : null), [cfOut]);
 
+  // FON-67 (R-072) — the whole-hold return figures the Summary statement sets
+  // beside the year-by-year table. They are the ``returns`` engine's own
+  // outputs (levered / unlevered IRR, equity multiple); null renders "—".
+  const returns: ReturnsFigures = {
+    leveredIrr: getEngineField<number>(outputs, 'returns', 'levered_irr') ?? null,
+    unleveredIrr: getEngineField<number>(outputs, 'returns', 'unlevered_irr') ?? null,
+    equityMultiple: getEngineField<number>(outputs, 'returns', 'equity_multiple') ?? null,
+  };
+
   // Cross-tab navigation for the output-only banner chips — mirrors the project
   // page's ?tab= routing without touching page.tsx.
   const go = (tabId: string, sub?: string) => {
@@ -260,7 +270,7 @@ export default function CashFlowTab() {
         />
 
         <div className={cn(computing && 'relative pointer-events-none opacity-60')}>
-          {tab === 'summary' && <SummaryView cf={cf} />}
+          {tab === 'summary' && <SummaryView cf={cf} returns={returns} />}
           {tab === 'unlevered' && (
             <CashFlowStatement
               cf={cf}
@@ -431,7 +441,7 @@ function EquityFundingReference({ cf }: { cf: CashFlowStatementOutput }) {
   );
 }
 
-function SummaryView({ cf }: { cf: CashFlowStatementOutput }) {
+function SummaryView({ cf, returns }: { cf: CashFlowStatementOutput; returns: ReturnsFigures }) {
   const { kpis, bridge } = buildSummary(cf);
   const headers = periodHeaders(cf);
 
@@ -457,10 +467,17 @@ function SummaryView({ cf }: { cf: CashFlowStatementOutput }) {
         ))}
       </div>
 
+      {/* FON-67 (R-072) — the full year-by-year statement sits FIRST: property
+          P&L lines, debt, equity cash flow and the partner distributions in one
+          grid, with the whole-hold IRR figures beside it. The Bridge below is
+          the three-line reconciliation of the same series. */}
+      <SummaryStatement cf={cf} returns={returns} />
+
       <SectionCard
         variant="title"
         title="Cash Flow Bridge"
         note="Property cash flow → financing → equity"
+        style={{ marginTop: 14 }}
       >
         <StatementTable
           lineItemHeader="LINE ITEM"
@@ -487,6 +504,178 @@ function SummaryView({ cf }: { cf: CashFlowStatementOutput }) {
         {summaryNote}
       </div>
     </>
+  );
+}
+
+// ── Summary statement (FON-67 / R-072) ──────────────────────────────────────
+// Sam's tester saw only the two Bridge lines on the Summary and asked for
+// "P&L, debt, equity distributions, NOI and IRR by year visible together".
+// This grid reads the worker's statement lines BY LABEL from the three
+// ``cash_flow`` sections — nothing is re-derived in the browser except the
+// cumulative levered cash flow, which is labelled "calculated" — and sets the
+// whole-hold IRR / equity multiple from the ``returns`` engine beside it,
+// once. A per-year IRR is not an engine output and is not invented here.
+
+/** Whole-hold return figures from the ``returns`` engine (null → "—"). */
+interface ReturnsFigures {
+  leveredIrr: number | null;
+  unleveredIrr: number | null;
+  equityMultiple: number | null;
+}
+
+interface SummaryRowSpec {
+  section: 'unlevered' | 'levered' | 'distributions';
+  /** Worker labels this row reads — first match wins (a run from before the
+   *  NOI basis relabel still carries "Net Operating Income"). */
+  labels: string[];
+  /** Label shown when the engine emitted none of ``labels`` (the row then
+   *  reads "—" in every period so the gap is visible, never zero). */
+  display: string;
+  /** Emphasised bottom line (the worker's ``calc`` rows). */
+  total?: boolean;
+  /** Deal-conditional worker line (refinance, junior debt, key money, deferred
+   *  capital held at close): shown only when the engine emitted it. */
+  optional?: boolean;
+}
+
+/** Row order mirrors the worker's own statement: property → debt → equity →
+ *  distributions. Every ``labels`` entry is a label ``cash_flow.py`` emits. */
+const SUMMARY_ROWS: SummaryRowSpec[] = [
+  // Property (unlevered)
+  { section: 'unlevered', labels: ['Acquisition Uses at Close'], display: 'Acquisition Uses at Close' },
+  { section: 'unlevered', labels: ['Deferred Capital Held at Close'], display: 'Deferred Capital Held at Close', optional: true },
+  { section: 'unlevered', labels: ['NOI (before FF&E reserve)', 'Net Operating Income'], display: 'NOI (before FF&E reserve)' },
+  { section: 'unlevered', labels: ['FF&E Reserve'], display: 'FF&E Reserve / CapEx' },
+  { section: 'unlevered', labels: ['Deferred Capital Deployed'], display: 'Deferred Capital Deployed' },
+  { section: 'unlevered', labels: ['Gross Sale Proceeds'], display: 'Gross Sale Proceeds' },
+  { section: 'unlevered', labels: ['Selling & Disposition Costs'], display: 'Selling & Disposition Costs' },
+  { section: 'unlevered', labels: ['Unlevered Cash Flow'], display: 'Unlevered Cash Flow', total: true },
+  // Debt (levered)
+  { section: 'levered', labels: ['Debt Proceeds'], display: 'Debt Proceeds' },
+  { section: 'levered', labels: ['Key Money'], display: 'Key Money', optional: true },
+  { section: 'levered', labels: ['Interest Expense'], display: 'Interest Expense' },
+  { section: 'levered', labels: ['Principal Amortization'], display: 'Principal Amortization' },
+  { section: 'levered', labels: ['Refinance / Junior Debt Service'], display: 'Refinance / Junior Debt Service', optional: true },
+  { section: 'levered', labels: ['Net Refinance Cash-Out'], display: 'Net refinance cash-out', optional: true },
+  { section: 'levered', labels: ['Exit Debt Payoff'], display: 'Exit Debt Payoff' },
+  { section: 'levered', labels: ['Net Cash Flow to Equity'], display: 'Net Cash Flow to Equity', total: true },
+  // Equity distributions (Partnership allocation, per operating period)
+  { section: 'distributions', labels: ['LP Distributions'], display: 'LP Distributions' },
+  { section: 'distributions', labels: ['GP Distributions'], display: 'GP Distributions' },
+  { section: 'distributions', labels: ['Total Distributions'], display: 'Total Distributions', total: true },
+];
+
+/** Map the row specs onto StatementTable rows, reading each worker line by
+ *  label. Distribution lines are indexed by operating period (Year 1..N), so
+ *  they are shifted one column right of the close column. */
+function summaryStatementRows(cf: CashFlowStatementOutput, n: number): StatementRow[] {
+  const absentCells = (): StatementCell[] =>
+    Array.from({ length: n }, () => ({ text: '—', color: prov.muted }));
+
+  const rows: StatementRow[] = [];
+  for (const spec of SUMMARY_ROWS) {
+    const lines = cf[spec.section] ?? [];
+    let line: CashFlowStatementLine | undefined;
+    for (const l of spec.labels) {
+      line = lineByLabel(lines, l);
+      if (line) break;
+    }
+    if (!line) {
+      if (spec.optional) continue;
+      rows.push({
+        label: spec.display,
+        title: 'Not emitted by the cash_flow engine for this deal',
+        state: 'awaiting_data',
+        total: spec.total,
+        bg: spec.total ? palette.surfaceTint : undefined,
+        cells: absentCells(),
+      });
+      continue;
+    }
+    const total = line.kind === 'calc' || !!spec.total;
+    const values = spec.section === 'distributions' ? [null, ...line.values] : line.values;
+    rows.push({
+      // Display-only canonical relabel; provenance + lookups key off the
+      // worker's own ``line.label``.
+      label: STATEMENT_LABEL_CANONICAL[line.label] ?? line.label,
+      title: line.note ?? undefined,
+      state: rowState(cf, spec.section, line),
+      total,
+      bg: total ? palette.surfaceTint : undefined,
+      cells: statementCells(values, n, { total, linked: line.kind === 'linked' }),
+    });
+  }
+
+  rows.push({
+    label: 'Cumulative levered cash flow (calculated)',
+    title: 'Running sum of Net Cash Flow to Equity — the only figure summed in the browser',
+    state: 'calculated',
+    total: true,
+    bg: palette.surfaceTint,
+    cells: statementCells(cumulativeLevered(cf, n), n, { total: true, linked: false }),
+  });
+  return rows;
+}
+
+function SummaryStatement({ cf, returns }: { cf: CashFlowStatementOutput; returns: ReturnsFigures }) {
+  const headers = periodHeaders(cf);
+  const n = headers.length;
+  const linkedSub = (
+    <span style={{ display: 'inline-flex', alignItems: 'center', gap: 5 }}>
+      <ProvenanceDot state="linked" size={8} />
+      Whole-hold · Returns engine
+    </span>
+  );
+  const irrTiles: { label: string; value: string; present: boolean }[] = [
+    { label: 'Levered IRR', value: returns.leveredIrr == null ? '—' : fmtPct(returns.leveredIrr, 1), present: returns.leveredIrr != null },
+    { label: 'Unlevered IRR', value: returns.unleveredIrr == null ? '—' : fmtPct(returns.unleveredIrr, 1), present: returns.unleveredIrr != null },
+    { label: 'Equity multiple', value: returns.equityMultiple == null ? '—' : `${returns.equityMultiple.toFixed(2)}x`, present: returns.equityMultiple != null },
+  ];
+
+  return (
+    <SectionCard
+      variant="title"
+      title="Cash Flow Statement"
+      note="Year by year · property → debt → equity → distributions · Close is Year 0"
+      data-testid="cash-flow-summary-statement"
+    >
+      <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'stretch' }}>
+        <div style={{ flex: '1 1 520px', minWidth: 0 }}>
+          <StatementTable
+            lineItemHeader="LINE ITEM"
+            columns={headers}
+            gridTemplateColumns={statementGridCols(n)}
+            rows={summaryStatementRows(cf, n)}
+            footnote="Every row is a cash_flow engine statement line read by label — a line the engine did not emit shows —. Nothing is re-derived here except the cumulative levered cash flow, which is labelled calculated. Distributions are the Partnership allocation of Net Cash Flow to Equity."
+          />
+        </div>
+        <div
+          data-testid="cash-flow-irr-block"
+          style={{
+            flex: '0 0 200px',
+            display: 'flex',
+            flexDirection: 'column',
+            gap: 10,
+            padding: '14px 14px 14px 12px',
+            borderLeft: `1px solid ${palette.hairlineSection}`,
+          }}
+        >
+          {irrTiles.map((t) => (
+            <KpiTile
+              key={t.label}
+              label={t.label}
+              value={t.value}
+              valueColor={t.present ? prov.green : prov.muted}
+              sub={linkedSub}
+            />
+          ))}
+          <div style={{ fontSize: 11, color: palette.textMuted, lineHeight: 1.5 }}>
+            IRR is a whole-hold figure — the Returns engine reports one levered and one unlevered IRR
+            for the hold period. There is no per-year IRR output, so none is shown.
+          </div>
+        </div>
+      </div>
+    </SectionCard>
   );
 }
 
