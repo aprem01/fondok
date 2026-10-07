@@ -135,7 +135,7 @@ describe('Data Room — "N to review" reconciles to the Historicals column (FON-
     render(<DataRoomTab projectId={DEAL_ID} />);
     // FON-41 R-066 — the CTA names the tab it opens ("P&L", not "Financials").
     const buttons = screen.getAllByRole('button', { name: 'View P&L' });
-    expect(screen.queryByRole('button', { name: 'View P&L' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'View Financials' })).toBeNull();
     // Files list in upload order → 2019 first.
     fireEvent.click(buttons[0]);
     expect(pushSpy).toHaveBeenLastCalledWith(

@@ -600,7 +600,7 @@ describe('MarketTab — the active card names the basis and the Base Year separa
     expect(card).toHaveTextContent('69.2%'); // 71.4 ÷ 1.032
     expect(card).toHaveTextContent('$295'); // 278 ÷ 0.942
     // Clause 2 — the Base Year the model actually uses, from the engine.
-    expect(card).toHaveTextContent('Financials → Projections Base Year:');
+    expect(card).toHaveTextContent('P&L → Future P&L Base Year:');
     expect(card).toHaveTextContent('71.6%');
     expect(card).toHaveTextContent('$288');
     // …and it names which STR basis the model is on.
@@ -642,7 +642,7 @@ describe('MarketTab — the active card names the basis and the Base Year separa
 
     const card = await screen.findByTestId('str-card-active');
     expect(card).toHaveTextContent(
-      'The Base Year in Financials → Projections is not available until the model has run.',
+      'The Base Year in P&L → Future P&L is not available until the model has run.',
     );
     // The comp-set figures are still shown — as a benchmark, which they are.
     expect(card).toHaveTextContent('Comp-set benchmark:');
@@ -655,7 +655,7 @@ describe('MarketTab — the active card names the basis and the Base Year separa
     const { unmount } = render(<MarketTab projectId="deal-uuid-1" />);
     const pending = await screen.findByTestId('str-card-pending');
     expect(pending).toHaveTextContent('Comp-set benchmark:');
-    expect(pending).toHaveTextContent('Financials → Projections Base Year:');
+    expect(pending).toHaveTextContent('P&L → Future P&L Base Year:');
     expect(pending).toHaveTextContent('71.6%');
     unmount();
 
@@ -664,7 +664,7 @@ describe('MarketTab — the active card names the basis and the Base Year separa
     const off = await screen.findByText('Use STR rates in the model');
     const card = off.closest('div')?.parentElement as HTMLElement;
     expect(card).toHaveTextContent('Comp-set benchmark:');
-    expect(card).toHaveTextContent('Financials → Projections Base Year:');
+    expect(card).toHaveTextContent('P&L → Future P&L Base Year:');
     expect(card).toHaveTextContent('71.6%');
   });
 
