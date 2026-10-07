@@ -304,4 +304,89 @@ describe('pure helpers', () => {
     expect(supplyGrowthTile({ ...SUPPLY, final_planning_pct: null }).sub).toBe('600 rooms under construction ÷ 12,000 existing');
     expect(supplyGrowthTile({ ...SUPPLY, under_construction_pct: -0.4 }).value).toBe('−0.4%');
   });
+
+  it('a forecast rides the sub-line as forecast; a reported share says "as reported"', () => {
+    // The live CoStar submarket report: latest annual actual + a 2026 forecast.
+    const live = demandGrowthTile({ ...DEMAND, value_pct: 25, period_label: '2022', forecast_pct: 5, forecast_label: '2026 forecast' });
+    expect(live.value).toBe('+25.0%');
+    expect(live.sub).toBe(`2022 · ${MS_DOC} · 2026 forecast +5.0%`);
+    // The report states "5.7% of inventory" but no inventory room count.
+    const reported = supplyGrowthTile({
+      ...SUPPLY,
+      existing_rooms: null,
+      under_construction_rooms: 1300,
+      under_construction_pct: 5.7,
+      under_construction_pct_basis: 'reported',
+      final_planning_pct: null,
+    });
+    expect(reported.value).toBe('+5.7%');
+    expect(reported.sub).toBe('1,300 rooms under construction · 5.7% of inventory as reported');
+    // Forecast only: the value stays a dash; the sub-line carries the forecast.
+    const forecastOnly = demandGrowthTile({
+      ...NO_SOURCE,
+      forecast_pct: 5,
+      forecast_label: '2026 forecast',
+      forecast_input: { field_name: 'pnl_benchmark.market.demand_change_2026_forecast', value: 0.05, doc_name: MS_DOC, doc_id: 'doc-ms', page: 6 },
+    });
+    expect(forecastOnly.awaiting).toBe(true);
+    expect(forecastOnly.sub).toBe(`no actual in the uploaded reports · 2026 forecast +5.0% · ${MS_DOC}`);
+  });
+});
+
+describe('SupplyPipeline — live CoStar shape: reported share, forecast, filtered export list', () => {
+  const LIVE_SUPPLY: MarketSupplyGrowthBlock = {
+    existing_rooms: null,
+    existing_period_label: null,
+    under_construction_rooms: 1300,
+    final_planning_rooms: 1300,
+    planned_rooms: null,
+    under_construction_pct: 5.7,
+    final_planning_pct: null,
+    under_construction_pct_basis: 'reported',
+    final_planning_pct_basis: null,
+    reported_supply_change_pct: 15,
+    reported_supply_change_period: '2022',
+    forecast_supply_change_pct: 5,
+    forecast_supply_change_period: '2026 forecast',
+    inputs: [
+      { field_name: 'property_overview.rooms_under_construction_count', value: 1300, doc_name: 'Miami Beach-Hospitality-Submarket-2025-12-10', doc_id: 'doc-a', page: 3 },
+    ],
+    pipeline_hotels: [
+      { name: 'Shore Club', keys: 100, status: 'Under Construction', bucket: 'under_construction', market: 'Miami, FL', submarket: 'Miami Beach', expected_open: null, doc_name: 'Miami Beach Supply 12.10.25.xlsx', doc_id: 'doc-b', page: 1 },
+      { name: 'The Raleigh', keys: 60, status: 'Final Planning', bucket: 'final_planning', market: 'Miami, FL', submarket: 'Miami Beach', expected_open: '2027', doc_name: 'Miami Beach Supply 12.10.25.xlsx', doc_id: 'doc-b', page: 1 },
+    ],
+    pipeline_filter: { terms: ['miami beach'], matched: 2, total: 7, doc_name: 'Miami Beach Supply 12.10.25.xlsx', note: null },
+    reason: null,
+    detail: null,
+  };
+
+  it('renders the reported share, the forecast apart, and only the matched hotels', () => {
+    render(<SupplyPipeline compKeyCount={344} supply={LIVE_SUPPLY} />);
+    expect(screen.getByText('1,300 rooms (+5.7%)')).toBeInTheDocument();
+    expect(screen.getByText('+15.0% · 2022 · 2026 forecast +5.0%')).toBeInTheDocument();
+    expect(screen.getByText(/Shares are the report’s own "% of inventory" figures/)).toBeInTheDocument();
+    const list = screen.getByTestId('pipeline-hotels');
+    expect(within(list).getAllByTestId('pipeline-hotel')).toHaveLength(2);
+    expect(within(list).getByText('Shore Club')).toBeInTheDocument();
+    expect(within(list).getByText('Final Planning')).toBeInTheDocument();
+    expect(screen.getByTestId('pipeline-filter')).toHaveTextContent(
+      '2 of 7 rows in Miami Beach Supply 12.10.25.xlsx are in miami beach; the rest were not counted.',
+    );
+    expect(screen.queryByText('Seaport Hotel')).not.toBeInTheDocument();
+  });
+
+  it('says when no export row matched the deal market', () => {
+    render(
+      <SupplyPipeline
+        compKeyCount={344}
+        supply={{
+          ...LIVE_SUPPLY,
+          pipeline_hotels: [],
+          pipeline_filter: { terms: ['austin'], matched: 0, total: 7, doc_name: 'Miami Beach Supply 12.10.25.xlsx', note: 'no pipeline rows for Austin in Miami Beach Supply 12.10.25.xlsx' },
+        }}
+      />,
+    );
+    expect(screen.getByTestId('pipeline-filter')).toHaveTextContent('no pipeline rows for Austin in Miami Beach Supply 12.10.25.xlsx');
+    expect(screen.queryAllByTestId('pipeline-hotel')).toHaveLength(0);
+  });
 });

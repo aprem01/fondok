@@ -219,6 +219,238 @@ async def test_market_study_without_the_series_reports_no_source() -> None:
     assert body["supply_growth"]["under_construction_pct"] is None
 
 
+# The LIVE shape of the tester's two CoStar extractions (verbatim paths):
+# the submarket report under pnl_benchmark.market.* / property_overview.*,
+# and the multi-market pipeline export under market_study.pipeline.<slug>.*.
+COSTAR_SUBMARKET_FIELDS: list[dict[str, Any]] = [
+    {"field_name": "property_overview.submarket", "value": "Miami Beach", "source_page": 1},
+    {"field_name": "pnl_benchmark.market.demand_change_2022_annual", "value": 0.25, "source_page": 6},
+    {"field_name": "pnl_benchmark.market.demand_change_2026_forecast", "value": 0.05, "source_page": 6},
+    {"field_name": "pnl_benchmark.market.supply_change_2022_annual", "value": 0.15, "source_page": 6},
+    {"field_name": "property_overview.rooms_under_construction_count", "value": 1300, "source_page": 3},
+    {"field_name": "property_overview.under_construction_pct_of_inventory", "value": 0.057, "source_page": 3},
+    {"field_name": "property_overview.final_planning_rooms", "value": 1300, "source_page": 3},
+]
+COSTAR_EXPORT_FIELDS: list[dict[str, Any]] = [
+    {"field_name": f"market_study.pipeline.{slug}.{attr}", "value": value, "source_page": 1}
+    for slug, fields in (
+        ("shore_club", {"name": "Shore Club", "market": "Miami, FL", "submarket": "Miami Beach", "keys": 100, "status": "Under Construction"}),
+        ("boston_seaport", {"name": "Seaport Hotel", "market": "Boston, MA", "submarket": "Seaport", "keys": 400, "status": "Under Construction"}),
+        ("tampa_water", {"name": "Water Street", "market": "Tampa Bay, FL", "submarket": "Downtown Tampa", "keys": 250, "status": "Final Planning"}),
+    )
+    for attr, value in fields.items()
+]
+
+
+@pytest.mark.asyncio
+async def test_live_costar_paths_feed_the_tiles_and_the_export_is_filtered_to_the_deal_city() -> None:
+    tenant_id, deal_id = await _seed(str_fields=None, ms_fields=COSTAR_SUBMARKET_FIELDS)
+    # Add the export as a second MARKET_STUDY document on the same deal.
+    from sqlalchemy import text
+
+    from app.database import get_session_factory
+
+    factory = get_session_factory()
+    async with factory() as session:
+        document_id = uuid4()
+        await session.execute(
+            text(
+                "INSERT INTO documents (id, deal_id, tenant_id, filename, doc_type, status, storage_key, size_bytes) "
+                "VALUES (:id, :deal, :tenant, 'Miami Beach Supply 12.10.25.xlsx', 'MARKET_STUDY', 'EXTRACTED', 'x.xlsx', 100)"
+            ),
+            {"id": str(document_id), "deal": str(deal_id), "tenant": str(tenant_id)},
+        )
+        await session.execute(
+            text(
+                "INSERT INTO extraction_results (id, deal_id, document_id, tenant_id, fields, created_at) "
+                "VALUES (:id, :deal, :doc, :tenant, :fields, :created)"
+            ),
+            {
+                "id": str(uuid4()), "deal": str(deal_id), "doc": str(document_id), "tenant": str(tenant_id),
+                "fields": json.dumps(COSTAR_EXPORT_FIELDS),
+                "created": (datetime.now(UTC) - timedelta(minutes=5)).isoformat(sep=" "),
+            },
+        )
+        await session.commit()
+
+    body = await _overview(tenant_id, deal_id)
+    d = body["demand_growth"]
+    assert d["value_pct"] == 25.0 and d["period_label"] == "2022" and d["basis"] == "reported"
+    assert d["forecast_pct"] == 5.0 and d["forecast_label"] == "2026 forecast"
+    assert d["inputs"][0]["field_name"] == "pnl_benchmark.market.demand_change_2022_annual"
+    assert d["inputs"][0]["doc_name"] == MS_DOC
+    s = body["supply_growth"]
+    assert s["under_construction_rooms"] == 1300
+    assert s["under_construction_pct"] == 5.7 and s["under_construction_pct_basis"] == "reported"
+    assert s["existing_rooms"] is None
+    assert s["final_planning_rooms"] == 1300 and s["final_planning_pct"] is None
+    assert s["reported_supply_change_pct"] == 15.0 and s["reported_supply_change_period"] == "2022"
+    assert s["reason"] is None
+    # The deal's city ("Miami Beach") + the report's own submarket filter the export.
+    assert [h["name"] for h in s["pipeline_hotels"]] == ["Shore Club"]
+    assert s["pipeline_hotels"][0]["doc_name"] == "Miami Beach Supply 12.10.25.xlsx"
+    assert s["pipeline_filter"]["matched"] == 1 and s["pipeline_filter"]["total"] == 3
+    assert s["pipeline_filter"]["terms"] == ["miami beach"]
+
+
+async def _add_document(
+    *,
+    deal_id: Any,
+    tenant_id: Any,
+    filename: str,
+    doc_type: str,
+    fields: list[dict[str, Any]],
+    agent_version: str | None = None,
+    minutes_ago: int = 0,
+) -> None:
+    """Insert one more document + extraction on an existing deal."""
+    from sqlalchemy import text
+
+    from app.database import get_session_factory
+
+    factory = get_session_factory()
+    async with factory() as session:
+        document_id = uuid4()
+        await session.execute(
+            text(
+                "INSERT INTO documents (id, deal_id, tenant_id, filename, doc_type, status, storage_key, size_bytes) "
+                "VALUES (:id, :deal, :tenant, :filename, :doc_type, 'EXTRACTED', :key, 100)"
+            ),
+            {
+                "id": str(document_id), "deal": str(deal_id), "tenant": str(tenant_id),
+                "filename": filename, "doc_type": doc_type, "key": f"{document_id}.bin",
+            },
+        )
+        await session.execute(
+            text(
+                "INSERT INTO extraction_results (id, deal_id, document_id, tenant_id, fields, agent_version, created_at) "
+                "VALUES (:id, :deal, :doc, :tenant, :fields, :agent_version, :created)"
+            ),
+            {
+                "id": str(uuid4()), "deal": str(deal_id), "doc": str(document_id), "tenant": str(tenant_id),
+                "fields": json.dumps(fields), "agent_version": agent_version,
+                "created": (datetime.now(UTC) - timedelta(minutes=minutes_ago)).isoformat(sep=" "),
+            },
+        )
+        await session.commit()
+
+
+# The LIVE tagging on the tester's deal: both CoStar reports carry the
+# analyst's ``doc_type = 'STR_TREND'`` tag while their extraction ran in the
+# MARKET_STUDY lane (``agent_version`` ``dt:MARKET_STUDY``).
+MS_LANE_AGENT_VERSION = "router:extractor;dt:MARKET_STUDY;extractor;pv=v1"
+
+
+@pytest.mark.asyncio
+async def test_market_study_lane_is_read_even_when_the_document_is_tagged_str_trend() -> None:
+    tenant_id, deal_id = await _seed(str_fields=None, ms_fields=None)
+    await _add_document(
+        deal_id=deal_id, tenant_id=tenant_id, filename=MS_DOC, doc_type="STR_TREND",
+        fields=[
+            *COSTAR_SUBMARKET_FIELDS,
+            # The CoStar report also states a MARKET occupancy under the
+            # subject namespace — it must never feed the STR comp-set blend.
+            {"field_name": "ttm_performance.subject.occupancy_pct", "value": 0.652, "source_page": 2},
+            {"field_name": "ttm_performance.indices.mpi_occupancy_index", "value": 1.0, "source_page": 2},
+        ],
+        agent_version=MS_LANE_AGENT_VERSION,
+    )
+    await _add_document(
+        deal_id=deal_id, tenant_id=tenant_id, filename="Miami Beach Supply 12.10.25.xlsx", doc_type="STR_TREND",
+        fields=COSTAR_EXPORT_FIELDS, agent_version=None, minutes_ago=5,  # no dt: stamp → lane by its field paths
+    )
+    body = await _overview(tenant_id, deal_id)
+    assert body["demand_growth"]["reason"] is None
+    assert body["demand_growth"]["value_pct"] == 25.0
+    assert body["supply_growth"]["under_construction_rooms"] == 1300
+    assert body["supply_growth"]["under_construction_pct"] == 5.7
+    assert [h["name"] for h in body["supply_growth"]["pipeline_hotels"]] == ["Shore Club"]
+    # Neither STR_TREND-tagged CoStar extraction is an STR report: no comp
+    # set and no TTM blend come out of them.
+    assert body["comp_set"] is None
+    assert body["ttm_blend"] is None
+
+
+@pytest.mark.asyncio
+async def test_no_document_only_when_no_extraction_is_in_the_market_study_lane() -> None:
+    tenant_id, deal_id = await _seed(str_fields=STR_FIELDS, ms_fields=None)
+    body = await _overview(tenant_id, deal_id)
+    assert body["demand_growth"]["reason"] == "no_document"
+    assert body["supply_growth"]["reason"] == "no_document"
+    assert body["comp_set"]["active_count"] == 4  # the real STR report still reads as STR
+
+
+# The live comp-set case: the NEWEST STR extraction is the May trend report
+# (Blue Moon 75 rooms, no marker) and the older one the July daily report
+# ("Closed - Blue Moon Hotel", 0 rooms, STR id 34401 in both).
+MAY_STR_DOC = "ANG-20250500-USD-E.xlsx"
+JULY_STR_DOC = "56387-20250713-USD-E.xlsx"
+
+
+def _roster_fields(roster: list[tuple[str, str, int, str | None]], *, page: int) -> list[dict[str, Any]]:
+    out: list[dict[str, Any]] = []
+    for i, (sid, name, keys, status) in enumerate(roster, start=1):
+        out.append({"field_name": f"ttm_performance.compset.{i}.name", "value": name, "source_page": page})
+        out.append({"field_name": f"ttm_performance.compset.{i}.keys", "value": keys, "unit": "rooms", "source_page": page})
+        out.append({"field_name": f"ttm_performance.compset.{i}.str_id", "value": sid, "source_page": page})
+        if status:
+            out.append({"field_name": f"ttm_performance.compset.{i}.status", "value": status, "source_page": page})
+    return out
+
+
+@pytest.mark.asyncio
+async def test_comp_set_unions_the_may_and_july_str_reports_and_blue_moon_is_closed_per_july() -> None:
+    may_fields = [
+        {"field_name": "ttm_performance.subject.occupancy_pct", "value": 0.714, "source_page": 3},
+        {"field_name": "ttm_performance.indices.mpi_occupancy_index", "value": 103.2, "source_page": 4},
+        {"field_name": "comp_set.comp_set_size", "value": 5, "source_page": 22},
+        {"field_name": "comp_set.total_keys", "value": 419, "unit": "rooms", "source_page": 22},
+        *_roster_fields(
+            [
+                ("44401", "Z Ocean Hotel", 40, None),
+                ("34401", "Blue Moon Hotel", 75, None),
+                ("44117", "The Betsy South Beach", 129, None),
+                ("55512", "The Tony Hotel of South Beach", 68, None),
+                ("33931", "Dream South Beach", 107, None),
+            ],
+            page=22,
+        ),
+    ]
+    july_fields = _roster_fields(
+        [
+            ("44401", "Z Ocean Hotel", 40, None),
+            ("34401", "Closed - Blue Moon Hotel", 0, "closed"),
+            ("44117", "The Betsy South Beach", 129, None),
+            ("55512", "The Tony Hotel of South Beach", 68, None),
+            ("33931", "Dream South Beach", 107, None),
+        ],
+        page=2,
+    )
+    tenant_id, deal_id = await _seed(str_fields=None, ms_fields=None)
+    await _add_document(
+        deal_id=deal_id, tenant_id=tenant_id, filename=MAY_STR_DOC, doc_type="STR_TREND",
+        fields=may_fields, agent_version="router:extractor;dt:STR_TREND;extractor;pv=v1", minutes_ago=0,
+    )
+    await _add_document(
+        deal_id=deal_id, tenant_id=tenant_id, filename=JULY_STR_DOC, doc_type="STR_TREND",
+        fields=july_fields, agent_version="template:str_trend;dt:STR_TREND", minutes_ago=30,
+    )
+    body = await _overview(tenant_id, deal_id)
+    cs = body["comp_set"]
+    assert cs["active_count"] == 4 and cs["active_keys"] == 344
+    assert cs["closed_names"] == ["Blue Moon Hotel"] and cs["status_available"] is True
+    assert cs["reported_comp_set_size"] == 5 and cs["reported_total_keys"] == 419  # the old "5 hotels / 419"
+    assert cs["documents"] == [MAY_STR_DOC, JULY_STR_DOC]
+    bm = next(h for h in cs["hotels"] if h["name"] == "Blue Moon Hotel")
+    assert bm["status"] == "closed"
+    assert bm["status_doc_name"] == JULY_STR_DOC and bm["status_page"] == 2
+    assert bm["str_id"] == "34401"
+    assert bm["keys"] == 75 and bm["keys_doc_name"] == MAY_STR_DOC
+    assert bm["reports"] == [MAY_STR_DOC, JULY_STR_DOC]
+    assert JULY_STR_DOC in cs["note"]
+    assert len(cs["hotels"]) == 5
+
+
 @pytest.mark.asyncio
 async def test_blocks_are_tenant_scoped() -> None:
     tenant_id, deal_id = await _seed(str_fields=STR_FIELDS, ms_fields=MS_FIELDS)

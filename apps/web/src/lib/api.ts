@@ -1355,6 +1355,16 @@ export interface MarketCompSetHotel {
   keys?: number | null;
   status: 'active' | 'closed';
   status_source?: 'extracted_status_field' | 'str_closed_label' | null;
+  /** STR's property id when extracted — the union key across reports. */
+  str_id?: string | null;
+  /** The document that carried the closed marker. */
+  status_doc_name?: string | null;
+  status_doc_id?: string | null;
+  status_page?: number | null;
+  /** The (newest) document the key count was read from. */
+  keys_doc_name?: string | null;
+  /** Every STR roster document that lists this hotel, newest first. */
+  reports?: string[];
 }
 
 /** The ONE comp-set derivation: `active_count` and `active_keys` are both over
@@ -1375,6 +1385,8 @@ export interface MarketCompSetBlock {
   source_doc_id?: string | null;
   source_page?: number | null;
   note: string;
+  /** Every STR roster document unioned, newest first. */
+  documents?: string[];
 }
 
 /** FON-61 E-007 — what "TTM · comp-set blend" is: the rows and period behind it. */
@@ -1407,9 +1419,38 @@ export interface MarketGrowthBlock {
   /** Shared ReasonCode (`no_document` / `no_source`) when there is no value. */
   reason?: string | null;
   detail?: string | null;
+  /** The report's forecast for the same series — shown as forecast, never as the value. */
+  forecast_pct?: number | null;
+  forecast_label?: string | null;
+  forecast_input?: MarketFieldRef | null;
 }
 
-/** FON-61 E-008 — Supply Growth = pipeline rooms ÷ existing inventory. */
+/** One pipeline project in the deal's market (export row filtered to the
+ *  market, canonical row, or the submarket report's own list). */
+export interface MarketPipelineHotel {
+  name?: string | null;
+  keys?: number | null;
+  status?: string | null;
+  bucket?: 'under_construction' | 'final_planning' | 'planned' | null;
+  market?: string | null;
+  submarket?: string | null;
+  expected_open?: string | null;
+  doc_name?: string | null;
+  doc_id?: string | null;
+  page?: number | null;
+}
+
+/** How a multi-market pipeline export was narrowed to the deal's market. */
+export interface MarketPipelineFilter {
+  terms: string[];
+  matched: number;
+  total: number;
+  doc_name?: string | null;
+  note?: string | null;
+}
+
+/** FON-61 E-008 — Supply Growth = pipeline rooms ÷ existing inventory, or the
+ *  report's own "% of inventory" when it states one (`*_pct_basis`). */
 export interface MarketSupplyGrowthBlock {
   existing_rooms?: number | null;
   existing_period_label?: string | null;
@@ -1423,6 +1464,12 @@ export interface MarketSupplyGrowthBlock {
   inputs: MarketFieldRef[];
   reason?: string | null;
   detail?: string | null;
+  under_construction_pct_basis?: 'reported' | 'computed' | null;
+  final_planning_pct_basis?: 'reported' | 'computed' | null;
+  forecast_supply_change_pct?: number | null;
+  forecast_supply_change_period?: string | null;
+  pipeline_hotels?: MarketPipelineHotel[];
+  pipeline_filter?: MarketPipelineFilter | null;
 }
 
 export const api = {

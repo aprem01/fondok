@@ -120,6 +120,57 @@ def pct_points(v: Any) -> float | None:
     return f * 100.0 if abs(f) <= 1.0 else f
 
 
+def doc_type_from_agent_version(agent_version: str | None) -> str | None:
+    """The ``dt:<doc_type>`` segment of an ``extraction_results.agent_version``.
+
+    Mirrors ``api.documents._parse_doc_type_from_agent_version`` (format
+    ``router:{route};dt:{doc_type};extractor;ps=…;reg=…;pv=vN``) without
+    importing the documents router. None for legacy / mock rows.
+    """
+    if not agent_version:
+        return None
+    for segment in str(agent_version).split(";"):
+        segment = segment.strip()
+        if segment.startswith("dt:"):
+            return segment[len("dt:"):].strip().upper() or None
+    return None
+
+
+MARKET_STUDY_FIELD_PREFIXES = ("market_study.", "pnl_benchmark.market.")
+
+
+def extraction_lane(
+    *,
+    doc_type: str | None,
+    agent_version: str | None,
+    ai_proposed_doc_type: str | None = None,
+    field_names: Iterable[str] = (),
+) -> str | None:
+    """Which Market-tab reader an extraction belongs to — by the LANE it was
+    extracted in, not the analyst's document tag.
+
+    Live case (FON-61): the tester's CoStar reports carry the analyst's
+    ``doc_type = 'STR_TREND'`` tag while their extraction ran in the
+    MARKET_STUDY lane (``agent_version`` ``dt:MARKET_STUDY``, fields
+    ``market_study.*`` / ``pnl_benchmark.market.*``). Selecting by the tag
+    answered ``no_document`` for a deal that had both reports.
+
+    ``"MARKET_STUDY"`` when the tag, the ``dt:`` stamp, the router's
+    proposal or the field namespaces say so; ``"STR"`` for an STR /
+    STR_TREND tag or stamp that is NOT a market study; None otherwise.
+    """
+    tag = (doc_type or "").strip().upper()
+    stamp = doc_type_from_agent_version(agent_version)
+    proposed = (ai_proposed_doc_type or "").strip().upper()
+    if "MARKET_STUDY" in {tag, stamp, proposed}:
+        return "MARKET_STUDY"
+    if any(str(n).strip().lower().startswith(MARKET_STUDY_FIELD_PREFIXES) for n in field_names):
+        return "MARKET_STUDY"
+    if tag in {"STR", "STR_TREND"} or stamp in {"STR", "STR_TREND"}:
+        return "STR"
+    return None
+
+
 def parse_extraction_records(records: Iterable[Mapping[str, Any]]) -> list[FieldRow]:
     """Flatten DB extraction records (newest first) into ``FieldRow``s.
 
@@ -168,11 +219,14 @@ def parse_extraction_records(records: Iterable[Mapping[str, Any]]) -> list[Field
 
 
 __all__ = [
+    "MARKET_STUDY_FIELD_PREFIXES",
     "FieldRef",
     "FieldRow",
     "coerce_float",
     "coerce_int",
     "coerce_page",
+    "doc_type_from_agent_version",
+    "extraction_lane",
     "parse_extraction_records",
     "pct_points",
 ]

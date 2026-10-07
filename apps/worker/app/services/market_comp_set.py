@@ -30,8 +30,18 @@ explicitly:
 
 A 0-room row without either marker is NOT treated as closed — it stays an
 active hotel contributing 0 keys. No other heuristic exists, and the
-derivation says which marker it used (``status_source``) or that it found
-none (``status_available=False``).
+derivation says which marker it used (``status_source``), which document
+carried it (``status_doc_name``), or that it found none
+(``status_available=False``).
+
+The roster is the UNION of every STR / STR_TREND extraction on the deal
+(live case: the May trend report lists "Blue Moon Hotel · 75 rooms" with
+no marker while the July daily report lists "Closed - Blue Moon Hotel · 0
+rooms" — reading only the newest report could never see the closure).
+Hotels are keyed by STR ID when extracted, else by the name with the
+closed label stripped and case / whitespace normalised; a hotel is closed
+if ANY report marks it; its keys come from the newest report that lists a
+positive room count and are excluded from the active totals when closed.
 
 Pure functions — no DB, no I/O.
 """
@@ -39,7 +49,7 @@ Pure functions — no DB, no I/O.
 from __future__ import annotations
 
 import re
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from typing import Any, Literal
 
@@ -89,12 +99,23 @@ class CompSetHotel:
     index: int
     #: Display name — STR's ``"Closed - "`` label stripped when present.
     name: str
-    #: The roster name exactly as extracted (keeps STR's label visible).
+    #: The roster name exactly as extracted (keeps STR's label visible). When
+    #: a report marks the hotel closed this is THAT report's name.
     name_as_reported: str
     keys: int | None
     status: HotelStatus
     #: Which explicit marker said "closed"; None when none was found (active).
     status_source: StatusSource | None
+    #: STR's property id (``ttm_performance.compset.<n>.str_id``) when extracted.
+    str_id: str | None = None
+    #: The document that carried the closed marker.
+    status_doc_name: str | None = None
+    status_doc_id: str | None = None
+    status_page: int | None = None
+    #: The (newest) document the key count was read from.
+    keys_doc_name: str | None = None
+    #: Every roster document that lists this hotel, newest first.
+    reports: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -117,6 +138,19 @@ class CompSetDerivation:
     source_doc_id: str | None
     source_page: int | None
     note: str
+    #: Every STR roster document unioned, newest first.
+    documents: list[str] = field(default_factory=list)
+
+
+@dataclass(frozen=True)
+class RosterSnapshot:
+    """One extraction's ``ttm_performance.compset.<n>.*`` rows."""
+
+    rows: Mapping[int, Mapping[str, Any]]
+    doc_name: str | None = None
+    doc_id: str | None = None
+    page: int | None = None
+    extraction_id: str | None = None
 
 
 def classify_hotel_status(
@@ -138,6 +172,50 @@ def display_name(name_as_reported: str) -> str:
     return STR_CLOSED_LABEL_RE.sub("", name_as_reported or "").strip() or (name_as_reported or "").strip()
 
 
+_NAME_NOISE_RE = re.compile(r"[^a-z0-9]+")
+
+
+def normalized_hotel_name(name_as_reported: str) -> str:
+    """Union key for a hotel without an STR id: the closed label stripped,
+    lower-cased, punctuation and whitespace collapsed."""
+    return _NAME_NOISE_RE.sub(" ", display_name(name_as_reported).lower()).strip()
+
+
+def _str_id(raw: Any) -> str | None:
+    if raw is None or isinstance(raw, bool):
+        return None
+    if isinstance(raw, float) and raw.is_integer():
+        raw = int(raw)
+    s = str(raw).strip()
+    return s if s and s.lower() not in {"none", "nan"} else None
+
+
+@dataclass
+class _UnionHotel:
+    index: int
+    name: str
+    name_as_reported: str
+    str_id: str | None = None
+    keys: int | None = None
+    keys_doc_name: str | None = None
+    status: HotelStatus = "active"
+    status_source: StatusSource | None = None
+    status_doc_name: str | None = None
+    status_doc_id: str | None = None
+    status_page: int | None = None
+    explicit_marker: bool = False
+    reports: list[str] = field(default_factory=list)
+
+    def freeze(self) -> CompSetHotel:
+        return CompSetHotel(
+            index=self.index, name=self.name, name_as_reported=self.name_as_reported,
+            keys=self.keys, status=self.status, status_source=self.status_source,
+            str_id=self.str_id, status_doc_name=self.status_doc_name,
+            status_doc_id=self.status_doc_id, status_page=self.status_page,
+            keys_doc_name=self.keys_doc_name, reports=tuple(self.reports),
+        )
+
+
 def derive_comp_set(
     roster: Mapping[int, Mapping[str, Any]],
     *,
@@ -147,13 +225,33 @@ def derive_comp_set(
     source_doc_id: str | None = None,
     source_page: int | None = None,
 ) -> CompSetDerivation:
-    """The ONE comp-set derivation: count AND keys over the active roster.
+    """The ONE comp-set derivation for a single roster — see
+    :func:`derive_comp_set_union` for the multi-report form."""
+    return derive_comp_set_union(
+        [RosterSnapshot(rows=roster, doc_name=source_doc_name, doc_id=source_doc_id, page=source_page)],
+        reported_comp_set_size=reported_comp_set_size,
+        reported_total_keys=reported_total_keys,
+    )
 
-    ``roster`` is ``{n: {"name": ..., "keys": ..., "status": ...}}`` as
-    bucketed from ``ttm_performance.compset.<n>.<attr>`` rows of ONE
-    extraction. Rows with neither a name nor a positive key count are
-    ignored (same rule as the ``/market-data`` block). Falls back to the
-    report's rollups only when no roster was extracted at all, and says so.
+
+def derive_comp_set_union(
+    snapshots: Sequence[RosterSnapshot],
+    *,
+    reported_comp_set_size: Any = None,
+    reported_total_keys: Any = None,
+) -> CompSetDerivation:
+    """The ONE comp-set derivation: count AND keys over the active roster,
+    unioned across every STR report on the deal.
+
+    ``snapshots`` are newest first. Each carries ``{n: {"name", "keys",
+    "status", "str_id"}}`` as bucketed from ``ttm_performance.compset.<n>.*``
+    rows of ONE extraction. Hotels are keyed by ``str_id`` when extracted,
+    else by the normalised name; a hotel is closed if ANY report marks it
+    (status field or STR's "Closed - " label — a 0-room row alone never
+    does); keys come from the newest report listing a positive count.
+    Rows with neither a name nor a positive key count are ignored. Falls
+    back to the report's rollups only when no roster was extracted at all,
+    and says so.
     """
     size_reported = coerce_int(reported_comp_set_size)
     keys_reported = coerce_int(reported_total_keys)
@@ -162,31 +260,66 @@ def derive_comp_set(
     if keys_reported is not None and keys_reported <= 0:
         keys_reported = None
 
-    hotels: list[CompSetHotel] = []
-    for idx in sorted(roster):
-        entry = roster[idx]
-        raw_name = entry.get("name")
-        name_as_reported = str(raw_name).strip() if raw_name is not None else ""
-        keys = coerce_int(entry.get("keys"))
-        if keys is not None and keys < 0:
-            keys = None
-        if not name_as_reported and not (keys and keys > 0):
-            continue
-        status, source = classify_hotel_status(name_as_reported, entry.get("status"))
-        hotels.append(
-            CompSetHotel(
-                index=idx,
-                name=display_name(name_as_reported) if name_as_reported else f"Hotel {idx}",
-                name_as_reported=name_as_reported,
-                keys=keys,
-                status=status,
-                status_source=source,
-            )
-        )
+    union: list[_UnionHotel] = []
+    by_id: dict[str, _UnionHotel] = {}
+    by_name: dict[str, _UnionHotel] = {}
+    documents: list[str] = []
+    for snap in snapshots:
+        if snap.doc_name and snap.doc_name not in documents and snap.rows:
+            documents.append(snap.doc_name)
+        for idx in sorted(snap.rows):
+            entry = snap.rows[idx]
+            raw_name = entry.get("name")
+            name_as_reported = str(raw_name).strip() if raw_name is not None else ""
+            keys = coerce_int(entry.get("keys"))
+            if keys is not None and keys < 0:
+                keys = None
+            sid = _str_id(entry.get("str_id"))
+            if not name_as_reported and not (keys and keys > 0):
+                continue
+            norm = normalized_hotel_name(name_as_reported) if name_as_reported else ""
+            hotel = by_id.get(sid) if sid else None
+            if hotel is None and norm:
+                hotel = by_name.get(norm)
+            if hotel is None:
+                hotel = _UnionHotel(
+                    index=len(union) + 1,
+                    name=display_name(name_as_reported) if name_as_reported else f"Hotel {idx}",
+                    name_as_reported=name_as_reported,
+                    str_id=sid,
+                )
+                union.append(hotel)
+            if sid and sid not in by_id:
+                by_id[sid] = hotel
+                hotel.str_id = hotel.str_id or sid
+            if norm and norm not in by_name:
+                by_name[norm] = hotel
+            if snap.doc_name and snap.doc_name not in hotel.reports:
+                hotel.reports.append(snap.doc_name)
+            status, source = classify_hotel_status(name_as_reported, entry.get("status"))
+            if source is not None:
+                hotel.explicit_marker = True
+            if status == "closed" and hotel.status != "closed":
+                hotel.status = "closed"
+                hotel.status_source = source
+                hotel.status_doc_name = snap.doc_name
+                hotel.status_doc_id = snap.doc_id
+                hotel.status_page = snap.page
+                hotel.name_as_reported = name_as_reported or hotel.name_as_reported
+            elif status == "active" and hotel.status == "active" and source is not None:
+                hotel.status_source = hotel.status_source or source
+            if keys and keys > 0 and hotel.keys is None:
+                hotel.keys = keys
+                hotel.keys_doc_name = snap.doc_name
 
+    hotels = [h.freeze() for h in union]
     closed = [h for h in hotels if h.status == "closed"]
     active = [h for h in hotels if h.status == "active"]
-    status_available = any(h.status_source is not None for h in hotels)
+    status_available = any(h.explicit_marker for h in union)
+    newest = next((s for s in snapshots if s.rows), None) or (snapshots[0] if snapshots else None)
+    source_doc_name = newest.doc_name if newest else None
+    source_doc_id = newest.doc_id if newest else None
+    source_page = newest.page if newest else None
 
     if not hotels:
         note = (
@@ -209,6 +342,7 @@ def derive_comp_set(
             source_doc_id=source_doc_id,
             source_page=source_page,
             note=note,
+            documents=documents,
         )
 
     active_keys_sum = sum(h.keys for h in active if h.keys and h.keys > 0)
@@ -226,15 +360,18 @@ def derive_comp_set(
         keys_basis = "none"
 
     if closed:
-        marker = (
-            "an explicit status field"
-            if any(h.status_source == "extracted_status_field" for h in closed)
-            else "STR's \"Closed - \" roster label"
-        )
+        def _marker(h: CompSetHotel) -> str:
+            kind = (
+                "an explicit status field"
+                if h.status_source == "extracted_status_field"
+                else "STR's \"Closed - \" roster label"
+            )
+            return f"{h.name}: {kind}{f' in {h.status_doc_name}' if h.status_doc_name else ''}"
+
         note = (
             f"{len(closed)} closed hotel{'s' if len(closed) != 1 else ''} "
             f"({', '.join(h.name for h in closed)}) excluded from the count and "
-            f"the keys — marked closed by {marker}."
+            f"the keys — marked closed by {'; '.join(_marker(h) for h in closed)}."
         )
     elif status_available:
         note = "Every hotel in the roster is marked open; all are counted."
@@ -243,6 +380,8 @@ def derive_comp_set(
             "No hotel in the roster carries a closed marker (status field or "
             "STR \"Closed - \" label), so every listed hotel is counted as active."
         )
+    if len(documents) > 1:
+        note += f" Roster unioned across {len(documents)} STR reports ({', '.join(documents)})."
     if keys_basis == "reported_rollup":
         note += " Keys are the report's rollup (the roster carried no room counts)."
 
@@ -261,6 +400,7 @@ def derive_comp_set(
         source_doc_id=source_doc_id,
         source_page=source_page,
         note=note,
+        documents=documents,
     )
 
 
@@ -273,8 +413,9 @@ class StrMarketInputs:
 
     ``flat`` is first-hit-wins over newest-first rows (the same precedence
     the ``/market-data`` block uses, so the blend here is the blend the
-    tiles show). ``roster`` comes from ONE extraction — the newest one that
-    carries any ``ttm_performance.compset.<n>.*`` row.
+    tiles show). ``rosters`` holds EVERY extraction's
+    ``ttm_performance.compset.<n>.*`` rows, newest first — the comp set is
+    their union; ``roster`` (+ ``roster_doc_*``) is the newest one.
     """
 
     flat: dict[str, FieldRef] = field(default_factory=dict)
@@ -282,6 +423,7 @@ class StrMarketInputs:
     roster_doc_name: str | None = None
     roster_doc_id: str | None = None
     roster_page: int | None = None
+    rosters: list[RosterSnapshot] = field(default_factory=list)
     #: ``YYYY-MM`` periods of the subject monthly series (from the extraction
     #: that supplied the subject TTM, else the newest with a monthly series).
     monthly_periods: set[str] = field(default_factory=set)
@@ -304,7 +446,9 @@ def _normalize_period(raw: str) -> str | None:
 
 def build_str_inputs(rows: list[FieldRow]) -> StrMarketInputs:
     out = StrMarketInputs()
-    roster_ext: str | None = None
+    roster_rows: dict[str | None, dict[int, dict[str, Any]]] = {}
+    roster_meta: dict[str | None, tuple[str | None, str | None, int | None]] = {}
+    roster_order: list[str | None] = []
     monthly_by_ext: dict[str | None, set[str]] = {}
     subject_ext: str | None = None
     for r in rows:
@@ -316,14 +460,11 @@ def build_str_inputs(rows: list[FieldRow]) -> StrMarketInputs:
                 idx = int(idx_str)
             except (ValueError, IndexError):
                 continue
-            if roster_ext is None:
-                roster_ext = r.extraction_id
-                out.roster_doc_name = r.doc_name
-                out.roster_doc_id = r.doc_id
-                out.roster_page = r.page
-            if r.extraction_id != roster_ext:
-                continue
-            out.roster.setdefault(idx, {}).setdefault(attr, r.value)
+            if r.extraction_id not in roster_rows:
+                roster_rows[r.extraction_id] = {}
+                roster_meta[r.extraction_id] = (r.doc_name, r.doc_id, r.page)
+                roster_order.append(r.extraction_id)
+            roster_rows[r.extraction_id].setdefault(idx, {}).setdefault(attr, r.value)
             continue
         if lname.startswith(SUBJECT_MONTHLY_PREFIX):
             rest = lname[len(SUBJECT_MONTHLY_PREFIX):]
@@ -343,6 +484,16 @@ def build_str_inputs(rows: list[FieldRow]) -> StrMarketInputs:
             if r.extraction_id in monthly_by_ext:
                 out.monthly_periods = monthly_by_ext[r.extraction_id]
                 break
+    # Rosters, newest first (rows arrive newest-first, so first seen = newest).
+    for ext in roster_order:
+        doc_name, doc_id, page = roster_meta[ext]
+        out.rosters.append(
+            RosterSnapshot(rows=roster_rows[ext], doc_name=doc_name, doc_id=doc_id, page=page, extraction_id=ext)
+        )
+    if out.rosters:
+        newest = out.rosters[0]
+        out.roster = dict(newest.rows)
+        out.roster_doc_name, out.roster_doc_id, out.roster_page = newest.doc_name, newest.doc_id, newest.page
     return out
 
 
@@ -350,13 +501,18 @@ def derive_comp_set_from_inputs(inputs: StrMarketInputs) -> CompSetDerivation:
     size = inputs.flat.get(ROLLUP_SIZE)
     keys = inputs.flat.get(ROLLUP_KEYS)
     rollup_ref = size or keys
-    return derive_comp_set(
-        inputs.roster,
+    snapshots = list(inputs.rosters) or [
+        RosterSnapshot(
+            rows={},
+            doc_name=rollup_ref.doc_name if rollup_ref else None,
+            doc_id=rollup_ref.doc_id if rollup_ref else None,
+            page=rollup_ref.page if rollup_ref else None,
+        )
+    ]
+    return derive_comp_set_union(
+        snapshots,
         reported_comp_set_size=size.value if size else None,
         reported_total_keys=keys.value if keys else None,
-        source_doc_name=inputs.roster_doc_name or (rollup_ref.doc_name if rollup_ref else None),
-        source_doc_id=inputs.roster_doc_id or (rollup_ref.doc_id if rollup_ref else None),
-        source_page=inputs.roster_page or (rollup_ref.page if rollup_ref else None),
     )
 
 
@@ -487,12 +643,15 @@ __all__ = [
     "TTM_BLEND_METHOD",
     "CompSetDerivation",
     "CompSetHotel",
+    "RosterSnapshot",
     "StrMarketInputs",
     "TtmBlend",
     "build_str_inputs",
     "classify_hotel_status",
     "derive_comp_set",
     "derive_comp_set_from_inputs",
+    "derive_comp_set_union",
     "derive_ttm_blend",
     "display_name",
+    "normalized_hotel_name",
 ]

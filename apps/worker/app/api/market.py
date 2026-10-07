@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import json
 import logging
+from dataclasses import replace
 from datetime import date
 from typing import Annotated, Any, Literal
 from uuid import UUID
@@ -40,10 +41,18 @@ from ..services.market_comp_set import (
     derive_comp_set_from_inputs,
     derive_ttm_blend,
 )
-from ..services.market_fields import FieldRef, parse_extraction_records
+from ..services.market_fields import (
+    FieldRef,
+    FieldRow,
+    extraction_lane,
+    parse_extraction_records,
+)
 from ..services.market_study_reader import (
     GrowthReading,
+    PipelineFilter,
+    PipelineHotel,
     SupplyReading,
+    market_terms_from_rows,
     read_demand_growth,
     read_supply_growth,
 )
@@ -89,6 +98,16 @@ class CompSetHotelOut(BaseModel):
     keys: int | None = None
     status: Literal["active", "closed"]
     status_source: Literal["extracted_status_field", "str_closed_label"] | None = None
+    # STR's property id — the key the roster is unioned on across reports.
+    str_id: str | None = None
+    # The document that carried the closed marker.
+    status_doc_name: str | None = None
+    status_doc_id: str | None = None
+    status_page: int | None = None
+    # The (newest) document the key count was read from.
+    keys_doc_name: str | None = None
+    # Every STR roster document that lists this hotel, newest first.
+    reports: list[str] = Field(default_factory=list)
 
 
 class MarketCompSetBlock(BaseModel):
@@ -110,6 +129,8 @@ class MarketCompSetBlock(BaseModel):
     source_doc_id: str | None = None
     source_page: int | None = None
     note: str = ""
+    # Every STR roster document unioned, newest first.
+    documents: list[str] = Field(default_factory=list)
 
     @classmethod
     def of(cls, d: CompSetDerivation) -> MarketCompSetBlock:
@@ -118,9 +139,13 @@ class MarketCompSetBlock(BaseModel):
                 CompSetHotelOut(
                     index=h.index, name=h.name, name_as_reported=h.name_as_reported,
                     keys=h.keys, status=h.status, status_source=h.status_source,
+                    str_id=h.str_id, status_doc_name=h.status_doc_name,
+                    status_doc_id=h.status_doc_id, status_page=h.status_page,
+                    keys_doc_name=h.keys_doc_name, reports=list(h.reports),
                 )
                 for h in d.hotels
             ],
+            documents=list(d.documents),
             active_count=d.active_count,
             active_keys=d.active_keys,
             closed_count=d.closed_count,
@@ -184,13 +209,62 @@ class MarketGrowthBlock(BaseModel):
     inputs: list[FieldRefOut] = Field(default_factory=list)
     reason: str | None = None
     detail: str | None = None
+    # The report's forecast for the same series — shown AS forecast, never
+    # in place of an actual.
+    forecast_pct: float | None = None
+    forecast_label: str | None = None
+    forecast_input: FieldRefOut | None = None
 
     @classmethod
     def of(cls, g: GrowthReading) -> MarketGrowthBlock:
         return cls(
             value_pct=g.value_pct, period_label=g.period_label, basis=g.basis,
             inputs=[FieldRefOut.of(r) for r in g.inputs], reason=g.reason, detail=g.detail,
+            forecast_pct=g.forecast_pct, forecast_label=g.forecast_label,
+            forecast_input=FieldRefOut.of(g.forecast_input) if g.forecast_input else None,
         )
+
+
+class PipelineHotelOut(BaseModel):
+    """One pipeline project in the deal's market (export row, canonical row,
+    or the submarket report's own list)."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    name: str | None = None
+    keys: int | None = None
+    status: str | None = None
+    bucket: Literal["under_construction", "final_planning", "planned"] | None = None
+    market: str | None = None
+    submarket: str | None = None
+    expected_open: str | None = None
+    doc_name: str | None = None
+    doc_id: str | None = None
+    page: int | None = None
+
+    @classmethod
+    def of(cls, h: PipelineHotel) -> PipelineHotelOut:
+        return cls(
+            name=h.name, keys=h.keys, status=h.status, bucket=h.bucket, market=h.market,
+            submarket=h.submarket, expected_open=h.expected_open, doc_name=h.doc_name,
+            doc_id=h.doc_id, page=h.page,
+        )
+
+
+class PipelineFilterOut(BaseModel):
+    """How a multi-market pipeline export was narrowed to the deal's market."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    terms: list[str] = Field(default_factory=list)
+    matched: int = 0
+    total: int = 0
+    doc_name: str | None = None
+    note: str | None = None
+
+    @classmethod
+    def of(cls, f: PipelineFilter) -> PipelineFilterOut:
+        return cls(terms=list(f.terms), matched=f.matched, total=f.total, doc_name=f.doc_name, note=f.note)
 
 
 class MarketSupplyGrowthBlock(BaseModel):
@@ -210,6 +284,14 @@ class MarketSupplyGrowthBlock(BaseModel):
     inputs: list[FieldRefOut] = Field(default_factory=list)
     reason: str | None = None
     detail: str | None = None
+    # "reported" = the report's own "% of inventory" row; "computed" = rooms ÷
+    # existing inventory. None when the share is unavailable.
+    under_construction_pct_basis: Literal["reported", "computed"] | None = None
+    final_planning_pct_basis: Literal["reported", "computed"] | None = None
+    forecast_supply_change_pct: float | None = None
+    forecast_supply_change_period: str | None = None
+    pipeline_hotels: list[PipelineHotelOut] = Field(default_factory=list)
+    pipeline_filter: PipelineFilterOut | None = None
 
     @classmethod
     def of(cls, s: SupplyReading) -> MarketSupplyGrowthBlock:
@@ -221,15 +303,23 @@ class MarketSupplyGrowthBlock(BaseModel):
             reported_supply_change_pct=s.reported_supply_change_pct,
             reported_supply_change_period=s.reported_supply_change_period,
             inputs=[FieldRefOut.of(r) for r in s.inputs], reason=s.reason, detail=s.detail,
+            under_construction_pct_basis=s.under_construction_pct_basis,
+            final_planning_pct_basis=s.final_planning_pct_basis,
+            forecast_supply_change_pct=s.forecast_supply_change_pct,
+            forecast_supply_change_period=s.forecast_supply_change_period,
+            pipeline_hotels=[PipelineHotelOut.of(h) for h in (s.pipeline_hotels or [])],
+            pipeline_filter=PipelineFilterOut.of(s.pipeline_filter) if s.pipeline_filter else None,
         )
 
 
 _EXTRACTION_ROWS_SQL = """
     SELECT er.id AS extraction_id,
            er.fields,
+           er.agent_version,
            er.document_id,
            d.filename,
-           d.doc_type
+           d.doc_type,
+           d.ai_proposed_doc_type
       FROM extraction_results er
       JOIN documents d ON d.id = er.document_id
      WHERE er.deal_id = :deal
@@ -238,6 +328,11 @@ _EXTRACTION_ROWS_SQL = """
        AND UPPER(COALESCE(d.doc_type, '')) IN ({types})
      ORDER BY er.created_at DESC, er.id DESC
 """
+
+# Every document tag an STR report or a market study can arrive under. The
+# lane each extraction actually ran in (``extraction_lane``) decides which
+# reader gets it — the tag alone does not.
+_MARKET_DOC_TYPES = ("STR", "STR_TREND", "MARKET_STUDY")
 
 
 async def _extraction_records(
@@ -252,39 +347,84 @@ async def _extraction_records(
     return [dict(r._mapping) for r in rows.fetchall()]
 
 
+def _partition_by_lane(records: list[dict[str, Any]]) -> dict[str, list[FieldRow]]:
+    """Split extraction records into the STR and MARKET_STUDY readers' rows.
+
+    FON-61 live fact: the tester's CoStar reports are tagged ``STR_TREND``
+    on the document row while their extraction ran in the MARKET_STUDY
+    lane (``agent_version`` ``dt:MARKET_STUDY``, ``market_study.*`` /
+    ``pnl_benchmark.market.*`` fields). Selecting by the tag answered
+    ``no_document`` for a deal that had both reports — and would have let
+    a market report's "subject" occupancy pollute the STR comp-set blend.
+    """
+    lanes: dict[str, list[FieldRow]] = {"STR": [], "MARKET_STUDY": []}
+    for rec in records:
+        rows = parse_extraction_records([rec])
+        lane = _lane_of(rec, rows)
+        if lane == "MARKET_STUDY":
+            # Tag the rows with the lane's doc type so downstream filters
+            # (``market_study_rows``) see the lane, not the analyst's tag.
+            lanes[lane].extend(replace(r, doc_type="MARKET_STUDY") for r in rows)
+        elif lane == "STR":
+            lanes[lane].extend(rows)
+    return lanes
+
+
+def _lane_of(rec: dict[str, Any], rows: list[FieldRow]) -> str | None:
+    return extraction_lane(
+        doc_type=rec.get("doc_type"),
+        agent_version=rec.get("agent_version"),
+        ai_proposed_doc_type=rec.get("ai_proposed_doc_type"),
+        field_names=(r.field_name for r in rows),
+    )
+
+
 async def _market_blocks(
-    session: AsyncSession, *, deal_id: UUID, tenant_id: UUID
+    session: AsyncSession, *, deal_id: UUID, tenant_id: UUID, city: str | None = None
 ) -> dict[str, Any]:
-    """The four Market-tab blocks; each is None on any failure (never a 500)."""
+    """The four Market-tab blocks; each is None on any failure (never a 500).
+
+    Extractions are routed to the STR reader (comp set, TTM blend) or the
+    MARKET_STUDY reader (demand / supply growth) by the lane they were
+    extracted in. ``city`` (the deal row) plus the submarket the market
+    studies name for themselves are the terms a multi-market pipeline export
+    is filtered by before anything is summed — never the national list.
+    """
     out: dict[str, Any] = {
         "comp_set": None, "ttm_blend": None, "demand_growth": None, "supply_growth": None,
     }
     try:
-        str_rows = parse_extraction_records(
-            await _extraction_records(
-                session, deal_id=deal_id, tenant_id=tenant_id, doc_types=("STR", "STR_TREND")
-            )
+        records = await _extraction_records(
+            session, deal_id=deal_id, tenant_id=tenant_id, doc_types=_MARKET_DOC_TYPES
         )
+    except Exception:  # overview must never fail on this read
+        logger.exception("market_overview: extraction read failed")
+        return out
+    lanes = _partition_by_lane(records)
+    try:
+        str_rows = lanes["STR"]
         if str_rows:
             inputs = build_str_inputs(str_rows)
             out["comp_set"] = MarketCompSetBlock.of(derive_comp_set_from_inputs(inputs))
             blend = derive_ttm_blend(inputs)
             out["ttm_blend"] = MarketTtmBlendBlock.of(blend) if blend else None
-    except Exception:  # noqa: BLE001 — overview must never fail on the STR read
+    except Exception:
         logger.exception("market_overview: comp-set / TTM blend read failed")
     try:
-        records = await _extraction_records(
-            session, deal_id=deal_id, tenant_id=tenant_id, doc_types=("MARKET_STUDY",)
+        ms_rows = lanes["MARKET_STUDY"]
+        # ``no_document`` only when NO extraction on the deal is in the lane
+        # (an extraction with zero parsable fields still counts as present).
+        has_docs = any(
+            _lane_of(rec, parse_extraction_records([rec])) == "MARKET_STUDY" for rec in records
         )
-        ms_rows = parse_extraction_records(records)
-        has_docs = bool(records)
         out["demand_growth"] = MarketGrowthBlock.of(
             read_demand_growth(ms_rows, has_documents=has_docs)
         )
+        market_terms = [t for t in [city, *market_terms_from_rows(ms_rows)] if isinstance(t, str) and t.strip()]
         out["supply_growth"] = MarketSupplyGrowthBlock.of(
-            read_supply_growth(ms_rows, has_documents=has_docs)
+            read_supply_growth(ms_rows, has_documents=has_docs, market_terms=market_terms)
         )
-    except Exception:  # noqa: BLE001
+    except Exception:
         logger.exception("market_overview: MARKET_STUDY growth read failed")
     return out
 
@@ -538,7 +678,9 @@ async def market_overview(
             trailing_12_occupancy, trailing_12_adr = trailing
     except Exception:  # noqa: BLE001 — overview must never fail on the STR read
         logger.exception("market_overview: trailing-12 STR read failed")
-    blocks = await _market_blocks(session, deal_id=deal_id, tenant_id=tenant_id)
+    blocks = await _market_blocks(
+        session, deal_id=deal_id, tenant_id=tenant_id, city=m.get("city")
+    )
     # FON-59 — Property Name resolution: analyst override > extracted (OM
     # first) > null. The deal row's ``name`` (the confidential project name)
     # is deliberately NOT a fallback here.
