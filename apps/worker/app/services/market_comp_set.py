@@ -38,10 +38,22 @@ The roster is the UNION of every STR / STR_TREND extraction on the deal
 (live case: the May trend report lists "Blue Moon Hotel · 75 rooms" with
 no marker while the July daily report lists "Closed - Blue Moon Hotel · 0
 rooms" — reading only the newest report could never see the closure).
-Hotels are keyed by STR ID when extracted, else by the name with the
-closed label stripped and case / whitespace normalised; a hotel is closed
-if ANY report marks it; its keys come from the newest report that lists a
-positive room count and are excluded from the active totals when closed.
+Hotels are matched across reports in this order (first rule that applies):
+
+1. **STR id** — when BOTH the row and a unioned hotel carry one, that id
+   decides (two different ids never merge, whatever the names say);
+2. **normalised name** — the closed label stripped, lower-cased,
+   punctuation / whitespace collapsed;
+3. **alias rule** (conservative) — the row has the SAME positive key
+   count as the hotel AND the shorter normalised name's first two tokens
+   are a prefix of the other's ("the betsy hotel" ≡ "the betsy south
+   beach"; live case: the Dec 2023 report named the Betsy differently and
+   the union listed it twice). Every other name the hotel was listed under
+   is recorded in ``merged_names`` so the UI can show the alias.
+
+A hotel is closed if ANY report marks it; its keys come from the newest
+report that lists a positive room count and are excluded from the active
+totals when closed.
 
 Pure functions — no DB, no I/O.
 """
@@ -116,6 +128,10 @@ class CompSetHotel:
     keys_doc_name: str | None = None
     #: Every roster document that lists this hotel, newest first.
     reports: tuple[str, ...] = ()
+    #: Other names this hotel was listed under in older reports and merged
+    #: here (by STR id or the alias rule) — the UI shows them as "also
+    #: listed as …". Empty when every report used the same name.
+    merged_names: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -181,6 +197,23 @@ def normalized_hotel_name(name_as_reported: str) -> str:
     return _NAME_NOISE_RE.sub(" ", display_name(name_as_reported).lower()).strip()
 
 
+def names_are_aliases(norm_a: str, norm_b: str) -> bool:
+    """The conservative alias rule for two DIFFERENT normalised roster names
+    (the caller has already checked key counts match): the shorter name's
+    first two tokens are a prefix of the other's. ``"the betsy hotel"`` ≡
+    ``"the betsy south beach"``; ``"the tony hotel of south beach"`` is
+    not an alias of ``"the betsy south beach"`` (second token differs); a
+    one-token name never aliases anything.
+    """
+    if not norm_a or not norm_b or norm_a == norm_b:
+        return False
+    a, b = norm_a.split(), norm_b.split()
+    shorter, longer = (a, b) if len(a) <= len(b) else (b, a)
+    if len(shorter) < 2:
+        return False
+    return longer[:2] == shorter[:2]
+
+
 def _str_id(raw: Any) -> str | None:
     if raw is None or isinstance(raw, bool):
         return None
@@ -205,6 +238,9 @@ class _UnionHotel:
     status_page: int | None = None
     explicit_marker: bool = False
     reports: list[str] = field(default_factory=list)
+    #: Every normalised name this hotel has been listed under.
+    norms: set[str] = field(default_factory=set)
+    merged_names: list[str] = field(default_factory=list)
 
     def freeze(self) -> CompSetHotel:
         return CompSetHotel(
@@ -213,7 +249,13 @@ class _UnionHotel:
             str_id=self.str_id, status_doc_name=self.status_doc_name,
             status_doc_id=self.status_doc_id, status_page=self.status_page,
             keys_doc_name=self.keys_doc_name, reports=tuple(self.reports),
+            merged_names=tuple(self.merged_names),
         )
+
+
+def _ids_compatible(sid: str | None, hotel: _UnionHotel) -> bool:
+    """Two different STR ids are two hotels, whatever the names say."""
+    return not (sid and hotel.str_id and hotel.str_id != sid)
 
 
 def derive_comp_set(
@@ -245,13 +287,16 @@ def derive_comp_set_union(
 
     ``snapshots`` are newest first. Each carries ``{n: {"name", "keys",
     "status", "str_id"}}`` as bucketed from ``ttm_performance.compset.<n>.*``
-    rows of ONE extraction. Hotels are keyed by ``str_id`` when extracted,
-    else by the normalised name; a hotel is closed if ANY report marks it
-    (status field or STR's "Closed - " label — a 0-room row alone never
-    does); keys come from the newest report listing a positive count.
-    Rows with neither a name nor a positive key count are ignored. Falls
-    back to the report's rollups only when no roster was extracted at all,
-    and says so.
+    rows of ONE extraction. A row joins a unioned hotel by (1) ``str_id``
+    when both carry one, else (2) the normalised name, else (3) the alias
+    rule — same positive key count and the shorter name's first two tokens
+    prefix the other's (see :func:`names_are_aliases`); names a hotel was
+    merged under are kept in ``merged_names``. A hotel is closed if ANY
+    report marks it (status field or STR's "Closed - " label — a 0-room
+    row alone never does); keys come from the newest report listing a
+    positive count. Rows with neither a name nor a positive key count are
+    ignored. Falls back to the report's rollups only when no roster was
+    extracted at all, and says so.
     """
     size_reported = coerce_int(reported_comp_set_size)
     keys_reported = coerce_int(reported_total_keys)
@@ -278,9 +323,24 @@ def derive_comp_set_union(
             if not name_as_reported and not (keys and keys > 0):
                 continue
             norm = normalized_hotel_name(name_as_reported) if name_as_reported else ""
+            # 1. STR id on both sides.
             hotel = by_id.get(sid) if sid else None
+            # 2. Normalised name (unless the ids contradict it).
             if hotel is None and norm:
-                hotel = by_name.get(norm)
+                candidate = by_name.get(norm)
+                if candidate is not None and _ids_compatible(sid, candidate):
+                    hotel = candidate
+            # 3. Alias rule: same positive key count + two-token prefix.
+            if hotel is None and norm and keys and keys > 0:
+                hotel = next(
+                    (
+                        h for h in union
+                        if h.keys == keys
+                        and _ids_compatible(sid, h)
+                        and any(names_are_aliases(norm, n) for n in h.norms)
+                    ),
+                    None,
+                )
             if hotel is None:
                 hotel = _UnionHotel(
                     index=len(union) + 1,
@@ -289,11 +349,19 @@ def derive_comp_set_union(
                     str_id=sid,
                 )
                 union.append(hotel)
+            elif norm and norm not in hotel.norms:
+                # Merged under another name (by id or by the alias rule):
+                # keep the alias visible.
+                alias = display_name(name_as_reported)
+                if alias and alias != hotel.name and alias not in hotel.merged_names:
+                    hotel.merged_names.append(alias)
             if sid and sid not in by_id:
                 by_id[sid] = hotel
                 hotel.str_id = hotel.str_id or sid
-            if norm and norm not in by_name:
-                by_name[norm] = hotel
+            if norm:
+                hotel.norms.add(norm)
+                if norm not in by_name:
+                    by_name[norm] = hotel
             if snap.doc_name and snap.doc_name not in hotel.reports:
                 hotel.reports.append(snap.doc_name)
             status, source = classify_hotel_status(name_as_reported, entry.get("status"))
@@ -382,6 +450,11 @@ def derive_comp_set_union(
         )
     if len(documents) > 1:
         note += f" Roster unioned across {len(documents)} STR reports ({', '.join(documents)})."
+    aliased = [h for h in hotels if h.merged_names]
+    if aliased:
+        note += " Same hotel under different roster names: " + "; ".join(
+            f"{h.name} (also listed as {', '.join(h.merged_names)})" for h in aliased
+        ) + "."
     if keys_basis == "reported_rollup":
         note += " Keys are the report's rollup (the roster carried no room counts)."
 
@@ -653,5 +726,6 @@ __all__ = [
     "derive_comp_set_union",
     "derive_ttm_blend",
     "display_name",
+    "names_are_aliases",
     "normalized_hotel_name",
 ]

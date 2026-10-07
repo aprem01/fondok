@@ -22,6 +22,7 @@ contract:
 from __future__ import annotations
 
 import io
+import os
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
@@ -126,7 +127,10 @@ def _monthly_star_xlsx_bytes() -> bytes:
     resp.cell(row=1, column=2, value="Tab 22 - Response Report - Performance Set")
     for r2, text in enumerate(header[1:], start=2):
         resp.cell(row=r2, column=2, value=text)
-    roster_header = ["STR#", "Name", "City, State", "Zip", "Phone", "Rooms"]
+    # The real monthly roster header carries an "Open Date" column too (the
+    # same column the daily export has) — the layout must come from the
+    # "For the Month of:" line, not from this column.
+    roster_header = ["STR#", "Name", "City, State", "Zip", "Phone", "Rooms", "Open Date"]
     for c, label in enumerate(roster_header, start=3):
         resp.cell(row=6, column=c, value=label)
     roster = [
@@ -142,6 +146,7 @@ def _monthly_star_xlsx_bytes() -> bytes:
         resp.cell(row=r2, column=4, value=name)
         resp.cell(row=r2, column=5, value="Miami Beach, FL")
         resp.cell(row=r2, column=8, value=rooms)
+        resp.cell(row=r2, column=9, value="193406")
     resp.cell(row=13, column=8, value=556)  # roster total incl. subject
 
     wb.create_sheet("Help").cell(row=1, column=1, value="Help")
@@ -184,7 +189,17 @@ def _weekly_star_xlsx_bytes() -> bytes:
     return buf.getvalue()
 
 
-def _daily_star_xlsx_bytes() -> bytes:
+_DAILY_ROSTER = [
+    (56387, "Kimpton Angler's Hotel", "Miami Beach, FL", 132, "199901"),
+    (44401, "Z Ocean Hotel", "Miami Beach, FL", 40, "200006"),
+    (34401, "Closed - Blue Moon Hotel", "Miami Beach, FL", 0, "193406"),
+    (44117, "The Betsy South Beach", "Miami Beach, FL", 129, "200904"),
+    (55512, "The Tony Hotel of South Beach", "Miami Beach, FL", 68, "201501"),
+    (33931, "Dream South Beach", "Miami Beach, FL", 107, "201106"),
+]
+
+
+def _daily_star_xlsx_bytes(roster: list[tuple[Any, ...]] | None = None) -> bytes:
     """Daily STAR export (FON-61: the tester's ``56387-20250713-USD-E.xlsx``).
 
     Response sheet header ``STR ID | Name | City, State | Zip | Phone |
@@ -210,14 +225,7 @@ def _daily_star_xlsx_bytes() -> bytes:
         start=3,
     ):
         resp.cell(row=6, column=c, value=label)
-    roster = [
-        (56387, "Kimpton Angler's Hotel", "Miami Beach, FL", 132, "199901"),
-        (44401, "Z Ocean Hotel", "Miami Beach, FL", 40, "200006"),
-        (34401, "Closed - Blue Moon Hotel", "Miami Beach, FL", 0, "193406"),
-        (44117, "The Betsy South Beach", "Miami Beach, FL", 129, "200904"),
-        (55512, "The Tony Hotel of South Beach", "Miami Beach, FL", 68, "201501"),
-        (33931, "Dream South Beach", "Miami Beach, FL", 107, "201106"),
-    ]
+    roster = roster if roster is not None else _DAILY_ROSTER
     for r, (sid, name, city, rooms, opened) in enumerate(roster, start=7):
         resp.cell(row=r, column=3, value=sid)
         resp.cell(row=r, column=4, value=name)
@@ -267,6 +275,114 @@ async def test_xlsx_weekly_star_emits_str_ids() -> None:
     values = _by_name(result)
     assert values["ttm_performance.compset.1.str_id"] == "33931"
     assert values["ttm_performance.compset.2.str_id"] == "44117"
+
+
+async def test_closed_status_needs_str_marker_prefix_or_zero_rooms_with_the_word_closed() -> None:
+    """``Closed - <name>`` → closed; ``<name> (Closed)`` with 0 rooms →
+    closed; a bare 0-room row (not yet open / missing count) gets NO status."""
+    roster = [
+        (56387, "Kimpton Angler's Hotel", "Miami Beach, FL", 132, "199901"),
+        (34401, "Closed - Blue Moon Hotel", "Miami Beach, FL", 0, "193406"),
+        (34402, "Blue Lagoon Hotel (Closed)", "Miami Beach, FL", 0, "195001"),
+        (34403, "Blue Sky Hotel", "Miami Beach, FL", 0, "202612"),
+        (34404, "Closed Loop Inn", "Miami Beach, FL", 80, "200101"),  # word, 80 rooms → open
+    ]
+    parsed = await parse_document(
+        file_bytes=_daily_star_xlsx_bytes(roster), filename="56387-20250713-USD-E.xlsx"
+    )
+    result = try_template_extract(parsed, "STR_TREND")
+    assert result is not None
+    values = _by_name(result)
+    assert values["ttm_performance.compset.1.status"] == "closed"
+    assert values["ttm_performance.compset.2.status"] == "closed"
+    assert "ttm_performance.compset.3.status" not in values
+    assert "ttm_performance.compset.4.status" not in values
+    assert values["comp_set.total_keys"] == 80
+
+
+# ── the tester's REAL STR workbooks (local scratchpad only, never committed) ──
+#
+# ``56387-20250713-USD-E.xlsx`` — the July 2025 daily/weekly export whose
+# Response roster says ``34401 | Closed - Blue Moon Hotel | … | 0``;
+# ``ANG-20250500-USD-E.xlsx`` — the May 2025 monthly trend whose Response_1
+# says ``34401 | Blue Moon Hotel | … | 75``. Both carry the ``Open Date``
+# roster column, so the monthly file used to be read as "daily" and lose
+# its TTM block (FON-61 follow-up). Skipped cleanly when the files are not
+# on this machine; ``FONDOK_REAL_STR_DIR`` points at another copy.
+
+_REAL_STR_DIR = Path(
+    os.environ.get(
+        "FONDOK_REAL_STR_DIR",
+        "/private/tmp/claude-501/-Users-prem/ad779c64-5909-4f75-970d-e0b15c63dfda/scratchpad",
+    )
+)
+REAL_JULY_2025_DAILY = _REAL_STR_DIR / "56387-20250713-USD-E.xlsx"
+REAL_MAY_2025_MONTHLY = _REAL_STR_DIR / "ANG-20250500-USD-E.xlsx"
+
+_needs_real_july = pytest.mark.skipif(
+    not REAL_JULY_2025_DAILY.exists(), reason=f"real STR workbook not present: {REAL_JULY_2025_DAILY}"
+)
+_needs_real_may = pytest.mark.skipif(
+    not REAL_MAY_2025_MONTHLY.exists(), reason=f"real STR workbook not present: {REAL_MAY_2025_MONTHLY}"
+)
+
+
+def _roster_by_str_id(values: dict[str, Any]) -> dict[str, int]:
+    out: dict[str, int] = {}
+    for name, value in values.items():
+        if name.startswith("ttm_performance.compset.") and name.endswith(".str_id"):
+            out[str(value)] = int(name.split(".")[2])
+    return out
+
+
+@_needs_real_july
+async def test_real_july_2025_export_emits_str_ids_and_blue_moon_closed() -> None:
+    parsed = await _parse(REAL_JULY_2025_DAILY)
+    result = try_template_extract(parsed, "STR_TREND")
+    assert result is not None, "the real July file must not fall through to the LLM"
+    # The file's own period line says "For the Week of: July 13, 2025 - …".
+    assert "weekly_star_xlsx" in result.coverage_note
+    values = _by_name(result)
+    by_id = _roster_by_str_id(values)
+    assert set(by_id) == {"33931", "34401", "39070", "44117", "53909"}
+    i = by_id["34401"]
+    assert values[f"ttm_performance.compset.{i}.name"] == "Closed - Blue Moon Hotel"
+    assert values[f"ttm_performance.compset.{i}.keys"] == 0
+    assert values[f"ttm_performance.compset.{i}.status"] == "closed"
+    assert [n for n in values if n.endswith(".status")] == [f"ttm_performance.compset.{i}.status"]
+    assert values[f"ttm_performance.compset.{by_id['44117']}.name"] == "The Betsy South Beach"
+    assert values["comp_set.comp_set_size"] == 5
+    assert values["comp_set.total_keys"] == 107 + 0 + 73 + 129 + 35 == 344
+    assert values["ttm_performance.subject.name"] == "Kimpton Angler's Hotel"
+    assert values["str_trend.report_year"] == 2025
+    # No trailing-twelve data in a weekly file.
+    assert "ttm_performance.subject.occupancy_pct" not in values
+
+
+@_needs_real_may
+async def test_real_may_2025_monthly_trend_keeps_its_ttm_block_and_emits_str_ids() -> None:
+    parsed = await _parse(REAL_MAY_2025_MONTHLY)
+    result = try_template_extract(parsed, "STR_TREND")
+    assert result is not None
+    # Was "daily_star_xlsx" on the Open Date column alone — the TTM block
+    # and the monthly series were dropped.
+    assert "monthly_star_xlsx" in result.coverage_note
+    values = _by_name(result)
+    by_id = _roster_by_str_id(values)
+    assert set(by_id) == {"33931", "34401", "39070", "44117", "53909"}
+    i = by_id["34401"]
+    assert values[f"ttm_performance.compset.{i}.name"] == "Blue Moon Hotel"
+    assert values[f"ttm_performance.compset.{i}.keys"] == 75
+    assert not any(n.endswith(".status") for n in values)  # open in May
+    assert values["comp_set.comp_set_size"] == 5
+    assert values["comp_set.total_keys"] == 419
+    assert 0 < values["ttm_performance.subject.occupancy_pct"] <= 100
+    assert values["ttm_performance.subject.adr_usd"] > 0
+    assert values["ttm_performance.subject.revpar_usd"] > 0
+    assert values["ttm_performance.indices.mpi_occupancy_index"] > 0
+    assert any(".monthly.2025_05." in n for n in values)
+    assert values["ttm_performance.subject.name"] == "Kimpton Angler's Hotel"
+    assert values["str_trend.report_year"] == 2025
 
 
 # ── legacy .xls Custom Trend (real golden-set fixture) ───────────────

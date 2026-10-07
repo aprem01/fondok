@@ -1365,6 +1365,9 @@ export interface MarketCompSetHotel {
   keys_doc_name?: string | null;
   /** Every STR roster document that lists this hotel, newest first. */
   reports?: string[];
+  /** Other roster names this hotel was merged under across reports (by STR
+   *  id or the worker's alias rule) — "The Betsy Hotel" for "The Betsy South Beach". */
+  merged_names?: string[];
 }
 
 /** The ONE comp-set derivation: `active_count` and `active_keys` are both over
@@ -1423,6 +1426,10 @@ export interface MarketGrowthBlock {
   forecast_pct?: number | null;
   forecast_label?: string | null;
   forecast_input?: MarketFieldRef | null;
+  /** An absolute demand change the report states (room nights, as printed) that the
+   *  worker's unit guard kept out of `value_pct` — a level, never a rate. */
+  demand_room_nights_change?: MarketFieldRef | null;
+  demand_room_nights_change_period?: string | null;
 }
 
 /** One pipeline project in the deal's market (export row filtered to the
@@ -1447,6 +1454,8 @@ export interface MarketPipelineFilter {
   total: number;
   doc_name?: string | null;
   note?: string | null;
+  /** Export rows with neither a market nor a submarket — counted neither way. */
+  market_unknown_rows?: number;
 }
 
 /** FON-61 E-008 — Supply Growth = pipeline rooms ÷ existing inventory, or the
@@ -1470,6 +1479,10 @@ export interface MarketSupplyGrowthBlock {
   forecast_supply_change_period?: string | null;
   pipeline_hotels?: MarketPipelineHotel[];
   pipeline_filter?: MarketPipelineFilter | null;
+  /** An absolute supply change the report states (rooms, as printed) that the
+   *  worker's unit guard kept out of `reported_supply_change_pct`. */
+  supply_rooms_change?: MarketFieldRef | null;
+  supply_rooms_change_period?: string | null;
 }
 
 export const api = {

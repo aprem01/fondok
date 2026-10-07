@@ -291,6 +291,7 @@ async def test_live_costar_paths_feed_the_tiles_and_the_export_is_filtered_to_th
     assert s["pipeline_hotels"][0]["doc_name"] == "Miami Beach Supply 12.10.25.xlsx"
     assert s["pipeline_filter"]["matched"] == 1 and s["pipeline_filter"]["total"] == 3
     assert s["pipeline_filter"]["terms"] == ["miami beach"]
+    assert s["pipeline_filter"]["market_unknown_rows"] == 0  # every export row carries a market
 
 
 async def _add_document(
@@ -445,6 +446,7 @@ async def test_comp_set_unions_the_may_and_july_str_reports_and_blue_moon_is_clo
     assert bm["status"] == "closed"
     assert bm["status_doc_name"] == JULY_STR_DOC and bm["status_page"] == 2
     assert bm["str_id"] == "34401"
+    assert bm["merged_names"] == []  # same name in both reports — no alias to show
     assert bm["keys"] == 75 and bm["keys_doc_name"] == MAY_STR_DOC
     assert bm["reports"] == [MAY_STR_DOC, JULY_STR_DOC]
     assert JULY_STR_DOC in cs["note"]

@@ -617,6 +617,8 @@ export function CompSetRoster({
   type Row = {
     key: string;
     name: string;
+    /** Other roster names the worker merged into this hotel ("The Betsy Hotel"). */
+    aliases: string[];
     keys: number | null;
     closed: boolean;
     closedDoc: string | null;
@@ -628,15 +630,28 @@ export function CompSetRoster({
   const norm = (s: string): string =>
     s.replace(/^\s*closed\s*[-–—:]\s*/i, '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
   const rows: Row[] = hotels
-    ? hotels.map((h) => ({
-        key: `${h.index}-${h.name_as_reported}`,
-        name: h.name,
-        keys: h.keys ?? null,
-        closed: h.status === 'closed',
-        closedDoc: h.status_doc_name ?? null,
-        perf: perf.find((p) => norm(p.name) === norm(h.name)),
-      }))
-    : perf.map((p, i) => ({ key: `${p.name}-${i}`, name: p.name, keys: p.keys, closed: false, closedDoc: null, perf: p }));
+    ? hotels.map((h) => {
+        const aliases = h.merged_names ?? [];
+        const names = [h.name, ...aliases].map(norm);
+        return {
+          key: `${h.index}-${h.name_as_reported}`,
+          name: h.name,
+          aliases,
+          keys: h.keys ?? null,
+          closed: h.status === 'closed',
+          closedDoc: h.status_doc_name ?? null,
+          perf: perf.find((p) => names.includes(norm(p.name))),
+        };
+      })
+    : perf.map((p, i) => ({
+        key: `${p.name}-${i}`,
+        name: p.name,
+        aliases: [],
+        keys: p.keys,
+        closed: false,
+        closedDoc: null,
+        perf: p,
+      }));
   if (rows.length === 0) return null;
   const anonymized = rows.every(
     (r) => !r.perf || (r.perf.occupancy_pct == null && r.perf.adr_usd == null && r.perf.revpar_usd == null),
@@ -691,6 +706,15 @@ export function CompSetRoster({
         >
           <span style={{ color: palette.ink, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
             {r.name}
+            {r.aliases.length > 0 && (
+              <span
+                data-testid="comp-set-alias"
+                title={`Listed as ${r.aliases.join(', ')} in another STR report — the same hotel, counted once`}
+                style={{ color: palette.textFaint, marginLeft: 6, fontSize: 10.5 }}
+              >
+                also listed as {r.aliases.join(', ')}
+              </span>
+            )}
             {r.closed && (
               <span
                 data-testid="comp-set-closed-chip"

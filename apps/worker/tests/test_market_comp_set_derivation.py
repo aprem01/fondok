@@ -25,6 +25,7 @@ from app.services.market_comp_set import (
     derive_comp_set,
     derive_comp_set_from_inputs,
     derive_ttm_blend,
+    names_are_aliases,
 )
 from app.services.market_fields import FieldRow, parse_extraction_records
 
@@ -280,6 +281,142 @@ def test_union_a_hotel_listed_only_in_the_older_report_still_counts() -> None:
     d = derive_comp_set_from_inputs(build_str_inputs(rows))
     assert d.active_count == 5 and d.active_keys == 344 + 50
     assert next(h for h in d.hotels if h.name == "New Comp Hotel").reports == (JULY_DOC,)
+
+
+# ───────────── the three LIVE rosters: July 2025 / May 2025 / Dec 2023 ─────────────
+#
+# Live (2026-10-07, after re-extracting the July file): the union listed SIX
+# hotels / 473 keys — "The Betsy South Beach" (May / July) and "The Betsy
+# Hotel" (the Dec 2023 trend report, ``ANG-20231200-USD-E.xlsx``) side by
+# side, because the roster was keyed on the normalised name and no row
+# carried a str_id. Expected: 4 active / 344 keys, Blue Moon closed, the
+# Betsy once (with the Dec 2023 name kept as an alias).
+
+DEC_2023_DOC = "ANG-20231200-USD-E.xlsx"
+
+LIVE_JULY_ROSTER = [  # the re-extracted July file: str_id + STR's closed label
+    ("33931", "Dream South Beach", 107, None),
+    ("34401", "Closed - Blue Moon Hotel", 0, "closed"),
+    ("39070", "The Tony Hotel of South Beach", 73, None),
+    ("44117", "The Betsy South Beach", 129, None),
+    ("53909", "Z Ocean Hotel, Classico A Sonesta Collection", 35, None),
+]
+LIVE_MAY_ROSTER = [
+    ("53909", "Z Ocean Hotel, Classico A Sonesta Collection", 35, None),
+    ("34401", "Blue Moon Hotel", 75, None),
+    ("44117", "The Betsy South Beach", 129, None),
+    ("39070", "The Tony Hotel of South Beach", 73, None),
+    ("33931", "Dream South Beach", 107, None),
+]
+LIVE_DEC_2023_ROSTER = [  # older extraction: no str_id, the Betsy under its former name
+    (None, "Dream South Beach", 107, None),
+    (None, "Blue Moon Hotel", 75, None),
+    (None, "The Tony Hotel of South Beach", 73, None),
+    (None, "The Betsy Hotel", 129, None),
+    (None, "Z Ocean Hotel, Classico A Sonesta Collection", 35, None),
+]
+
+
+def _live_rows(doc: str, ext: str, roster: list[tuple[str | None, str, int, str | None]]) -> list[FieldRow]:
+    """``_roster_rows`` without a ``str_id`` row for rosters that never had one."""
+    return [
+        r for r in _roster_rows(doc, ext, roster)
+        if not (r.field_name.endswith(".str_id") and r.value is None)
+    ]
+
+
+def _without_ids(roster: list[tuple[str | None, str, int, str | None]]) -> list[tuple[str | None, str, int, str | None]]:
+    return [(None, name, keys, status) for _, name, keys, status in roster]
+
+
+def test_union_three_live_rosters_count_the_betsy_once_via_the_alias_rule() -> None:
+    rows = [
+        *_live_rows(JULY_DOC, "e-july", LIVE_JULY_ROSTER),  # newest extraction
+        *_live_rows(MAY_DOC, "e-may", LIVE_MAY_ROSTER),
+        *_live_rows(DEC_2023_DOC, "e-dec", LIVE_DEC_2023_ROSTER),
+    ]
+    d = derive_comp_set_from_inputs(build_str_inputs(rows))
+    assert d.active_count == 4
+    assert d.active_keys == 107 + 73 + 129 + 35 == 344
+    assert d.closed_count == 1 and d.closed_names == ["Blue Moon Hotel"]
+    assert len(d.hotels) == 5  # not six
+    assert d.documents == [JULY_DOC, MAY_DOC, DEC_2023_DOC]
+    betsy = [h for h in d.hotels if "betsy" in h.name.lower()]
+    assert len(betsy) == 1
+    assert betsy[0].name == "The Betsy South Beach" and betsy[0].str_id == "44117"
+    assert betsy[0].merged_names == ("The Betsy Hotel",)
+    assert betsy[0].reports == (JULY_DOC, MAY_DOC, DEC_2023_DOC)
+    assert betsy[0].keys == 129
+    assert "The Betsy South Beach (also listed as The Betsy Hotel)" in d.note
+    # Every other hotel was listed under one name only.
+    assert all(h.merged_names == () for h in d.hotels if h is not betsy[0])
+    bm = next(h for h in d.hotels if h.name == "Blue Moon Hotel")
+    assert bm.status == "closed" and bm.status_doc_name == JULY_DOC and bm.str_id == "34401"
+
+
+def test_union_three_live_rosters_without_any_str_id_still_count_the_betsy_once() -> None:
+    """The live state before the template fix shipped: no str_id anywhere."""
+    rows = [
+        *_live_rows(JULY_DOC, "e-july", _without_ids(LIVE_JULY_ROSTER)),
+        *_live_rows(MAY_DOC, "e-may", _without_ids(LIVE_MAY_ROSTER)),
+        *_live_rows(DEC_2023_DOC, "e-dec", _without_ids(LIVE_DEC_2023_ROSTER)),
+    ]
+    d = derive_comp_set_from_inputs(build_str_inputs(rows))
+    assert d.active_count == 4 and d.active_keys == 344
+    assert d.closed_names == ["Blue Moon Hotel"]
+    assert len(d.hotels) == 5
+    betsy = next(h for h in d.hotels if h.name == "The Betsy South Beach")
+    assert betsy.merged_names == ("The Betsy Hotel",) and betsy.str_id is None
+
+
+def test_alias_rule_is_two_token_prefix_and_same_positive_key_count() -> None:
+    assert names_are_aliases("the betsy hotel", "the betsy south beach")
+    assert names_are_aliases("z ocean hotel", "z ocean hotel classico a sonesta collection")
+    assert not names_are_aliases("the tony hotel of south beach", "the betsy south beach")
+    assert not names_are_aliases("betsy", "the betsy south beach")  # one-token names never alias
+    assert not names_are_aliases("the betsy south beach", "the betsy south beach")  # equality is rule 2
+    # Same prefix but a different key count → two hotels, no alias.
+    rows = [
+        *_live_rows(JULY_DOC, "e-july", [("44117", "The Betsy South Beach", 129, None)]),
+        *_live_rows(DEC_2023_DOC, "e-dec", [(None, "The Betsy Hotel", 100, None)]),
+    ]
+    d = derive_comp_set_from_inputs(build_str_inputs(rows))
+    assert [h.name for h in d.hotels] == ["The Betsy South Beach", "The Betsy Hotel"]
+    assert d.active_count == 2 and d.active_keys == 229
+    assert all(h.merged_names == () for h in d.hotels)
+    # Same key count, same first token only ("the") → two hotels.
+    rows = [
+        *_live_rows(JULY_DOC, "e-july", [("44117", "The Betsy South Beach", 129, None)]),
+        *_live_rows(DEC_2023_DOC, "e-dec", [(None, "The Tony Hotel", 129, None)]),
+    ]
+    d = derive_comp_set_from_inputs(build_str_inputs(rows))
+    assert d.active_count == 2 and d.active_keys == 258
+
+
+def test_union_str_id_beats_names_and_two_ids_never_merge() -> None:
+    # Same STR id under two names (a rebrand) → one hotel, the other name kept.
+    rows = [
+        *_live_rows(JULY_DOC, "e-july", [("26819", "Park Central South Beach", 132, None)]),
+        *_live_rows(MAY_DOC, "e-may", [("26819", "The Gabriel South Beach, Curio Collection by Hilton", 132, None)]),
+    ]
+    d = derive_comp_set_from_inputs(build_str_inputs(rows))
+    assert len(d.hotels) == 1 and d.active_keys == 132
+    assert d.hotels[0].name == "Park Central South Beach"
+    assert d.hotels[0].merged_names == ("The Gabriel South Beach, Curio Collection by Hilton",)
+    # Two different ids with the SAME name → two hotels, whatever the name says.
+    rows = [
+        *_live_rows(JULY_DOC, "e-july", [("11111", "Ocean Hotel", 50, None)]),
+        *_live_rows(MAY_DOC, "e-may", [("22222", "Ocean Hotel", 50, None)]),
+    ]
+    d = derive_comp_set_from_inputs(build_str_inputs(rows))
+    assert len(d.hotels) == 2 and d.active_keys == 100
+    # A row with an id never joins a hotel carrying a different id by alias either.
+    rows = [
+        *_live_rows(JULY_DOC, "e-july", [("44117", "The Betsy South Beach", 129, None)]),
+        *_live_rows(DEC_2023_DOC, "e-dec", [("99999", "The Betsy Hotel", 129, None)]),
+    ]
+    d = derive_comp_set_from_inputs(build_str_inputs(rows))
+    assert len(d.hotels) == 2
 
 
 def test_parse_extraction_records_keeps_document_identity() -> None:

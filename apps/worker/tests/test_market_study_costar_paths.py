@@ -33,6 +33,7 @@ from app.services.market_fields import FieldRow
 from app.services.market_study_reader import (
     REASON_NO_SOURCE,
     market_terms_from_rows,
+    multi_market_export_docs,
     read_demand_growth,
     read_supply_growth,
 )
@@ -316,6 +317,162 @@ def test_both_documents_report_total_wins_and_export_rows_are_listed() -> None:
     assert {"Shore Club", "Aman Miami Beach", "The Raleigh", "Shore Club Miami Beach"} <= names
     assert "Seaport Hotel" not in names and "Downtown Miami Hotel" not in names
     assert s.pipeline_filter is not None and (s.pipeline_filter.matched, s.pipeline_filter.total) == (3, 7)
+
+
+# ─────────────────────── unit guard: deltas are not rates ───────────────────────
+#
+# Live (2026-10-07): Demand growth showed "-35,997 · reported, 2025" from
+# ``cbre_horizons.overall_supply.2025_ytd.demand_change = -35997`` (p.24) —
+# a room-night delta ranked as the latest annual actual; supply change
+# likewise showed 48,998. With the guard the document resolves to the 2022
+# annual fractions and the deltas are surfaced as levels with provenance.
+
+CBRE_DELTA_ROWS: list[FieldRow] = [
+    _row("cbre_horizons.overall_supply.2025_ytd.demand_change", -35997, page=24),
+    _row("cbre_horizons.overall_supply.2025_ytd.supply_change", 48998, page=24),
+]
+
+
+def test_room_night_deltas_are_levels_never_the_growth_rate() -> None:
+    rows = [*DOC_A_ROWS, *CBRE_DELTA_ROWS]
+    g = read_demand_growth(rows, has_documents=True, as_of_year=AS_OF)
+    assert g.value_pct == 25.0 and g.period_label == "2022" and g.basis == "reported"
+    assert g.inputs[0].field_name == "pnl_benchmark.market.demand_change_2022_annual"
+    assert g.forecast_pct == 5.0 and g.forecast_label == "2026 forecast"
+    assert g.forecast_input is not None
+    assert g.forecast_input.field_name == "pnl_benchmark.market.demand_change_2026_forecast"
+    assert g.demand_room_nights_change is not None
+    assert g.demand_room_nights_change.field_name == "cbre_horizons.overall_supply.2025_ytd.demand_change"
+    assert g.demand_room_nights_change.value == -35997
+    assert g.demand_room_nights_change.page == 24 and g.demand_room_nights_change.doc_name == DOC_A
+    assert g.demand_room_nights_change_period == "2025"
+
+    s = read_supply_growth(rows, has_documents=True, as_of_year=AS_OF, market_terms=["Miami Beach"])
+    assert s.reported_supply_change_pct == 15.0 and s.reported_supply_change_period == "2022"
+    assert s.forecast_supply_change_pct == 5.0 and s.forecast_supply_change_period == "2026 forecast"
+    assert s.supply_rooms_change is not None
+    assert s.supply_rooms_change.field_name == "cbre_horizons.overall_supply.2025_ytd.supply_change"
+    assert s.supply_rooms_change.value == 48998 and s.supply_rooms_change.page == 24
+    assert s.supply_rooms_change_period == "2025"
+    # The delta row is never one of the rate's inputs.
+    assert all(r.field_name != "cbre_horizons.overall_supply.2025_ytd.supply_change" for r in s.inputs)
+    assert any(r.field_name == "pnl_benchmark.market.supply_change_2022_annual" for r in s.inputs)
+
+
+def test_unit_guard_fraction_percent_hint_and_delta_boundaries() -> None:
+    def demand(row: FieldRow) -> Any:
+        return read_demand_growth([row], has_documents=True, as_of_year=AS_OF)
+
+    # A fraction (|v| ≤ 1.5) is always a rate.
+    assert demand(_row("pnl_benchmark.market.demand_change_2024_annual", 0.48)).value_pct == 48.0
+    assert demand(_row("pnl_benchmark.market.demand_change_2024_annual", -0.35)).value_pct == -35.0
+    # A percent-sized number is a rate only with a % / pct hint — unit, path or raw text.
+    for row in (
+        _row("pnl_benchmark.market.demand_change_2024_annual", 48, unit="pct"),
+        _row("pnl_benchmark.market.demand_change_pct_2024_annual", 48),
+        _row("pnl_benchmark.market.demand_change_2024_annual", "48%"),
+    ):
+        assert demand(row).value_pct == 48.0, row.field_name
+    # Without a hint it is an absolute delta: no rate, the level surfaced instead.
+    g = demand(_row("pnl_benchmark.market.demand_change_2024_annual", 48))
+    assert g.value_pct is None and g.reason == REASON_NO_SOURCE
+    assert g.demand_room_nights_change is not None and g.demand_room_nights_change.value == 48
+    assert g.demand_room_nights_change_period == "2024"
+    # Above 150 a hint does not rescue it.
+    g = demand(_row("pnl_benchmark.market.demand_change_2024_annual", 480, unit="pct"))
+    assert g.value_pct is None and g.demand_room_nights_change is not None
+    # A forecast-tagged delta is not surfaced as the actual level either.
+    g = demand(_row("pnl_benchmark.market.demand_change_2027_forecast", -35997))
+    assert g.value_pct is None and g.forecast_pct is None and g.demand_room_nights_change is None
+
+
+# ─────────────── the LIVE export: 30 rows, 3 with a market, 27 unknown ───────────────
+#
+# ``pipeline_filter.terms`` was ["miami beach", "miami beach hospitality
+# capital submarket", "miami airport"] — "miami airport" came from the Supply
+# export's OWN ``property_overview.submarket`` (a mis-read header on a
+# multi-market file). Only 3 of its 30 rows carry a ``market`` ('Boston, MA',
+# 'Tampa Bay, FL', 'Miami') / ``submarket`` ('Cambridge/Waltham', 'St
+# Petersburg', 'Miami Airport'); the other 27 carry neither.
+
+
+def _export_hotel_without_geo(slug: str, *, name: str, keys: int, status: str) -> list[FieldRow]:
+    p = f"market_study.pipeline.{slug}"
+    return [
+        _row(f"{p}.name", name, doc=DOC_B, page=1),
+        _row(f"{p}.keys", keys, doc=DOC_B, unit="keys", page=1),
+        _row(f"{p}.status", status, doc=DOC_B, page=1),
+    ]
+
+
+LIVE_SUBMARKET_HEADER: list[FieldRow] = [
+    _row("property_overview.submarket", "Miami Beach Hospitality Capital Submarket", page=1),
+]
+LIVE_EXPORT_ROWS: list[FieldRow] = [
+    _row("property_overview.submarket", "Miami Airport", doc=DOC_B, page=1),  # the export's own header
+    *_export_hotel("cambridge_x", name="Cambridge Hotel", market="Boston, MA", submarket="Cambridge/Waltham", keys=200, status="Under Construction"),
+    *_export_hotel("st_pete_x", name="St Pete Hotel", market="Tampa Bay, FL", submarket="St Petersburg", keys=150, status="Final Planning"),
+    *_export_hotel("airport_x", name="Airport Hotel", market="Miami", submarket="Miami Airport", keys=180, status="Under Construction"),
+    *[
+        r
+        for i in range(27)
+        for r in _export_hotel_without_geo(f"row_{i}", name=f"Project {i}", keys=100 + i, status="Under Construction")
+    ],
+]
+
+
+def test_live_export_unknown_rows_are_reported_and_miami_airport_never_matches_miami_beach() -> None:
+    rows = [*LIVE_SUBMARKET_HEADER, *LIVE_EXPORT_ROWS]
+    # The export's self-stated submarket is NOT a term (multi-market file).
+    assert multi_market_export_docs(rows) == {"doc-b"}
+    assert market_terms_from_rows(rows) == ["Miami Beach Hospitality Capital Submarket"]
+    terms = ["Miami Beach", *market_terms_from_rows(rows)]
+    s = read_supply_growth(rows, has_documents=True, as_of_year=AS_OF, market_terms=terms)
+    f = s.pipeline_filter
+    assert f is not None
+    assert f.terms == ["miami beach", "miami beach hospitality capital submarket"]
+    assert (f.matched, f.total, f.market_unknown_rows) == (0, 30, 27)
+    assert f.doc_name == DOC_B
+    assert f.note == (
+        f"no pipeline rows for Miami Beach in {DOC_B} "
+        "(27 of 30 rows carry no market or submarket and were not counted)"
+    )
+    assert s.pipeline_hotels == [] and s.under_construction_rooms is None
+    assert s.reason == REASON_NO_SOURCE
+    assert f"no pipeline rows for Miami Beach in {DOC_B}" in (s.detail or "") and "27 of 30" in (s.detail or "")
+
+
+def test_live_export_unknown_rows_stay_uncounted_when_another_market_matches() -> None:
+    s = read_supply_growth(LIVE_EXPORT_ROWS, has_documents=True, as_of_year=AS_OF, market_terms=["Boston, MA"])
+    f = s.pipeline_filter
+    assert f is not None and (f.matched, f.total, f.market_unknown_rows) == (1, 30, 27)
+    assert [h.name for h in (s.pipeline_hotels or [])] == ["Cambridge Hotel"]
+    assert s.under_construction_rooms == 200  # the 27 unknown rows are never summed
+    assert f.note == f"27 of 30 rows carry no market or submarket and were not counted in {DOC_B}."
+
+
+def test_single_market_export_keeps_its_own_submarket_as_a_term() -> None:
+    rows = [
+        _row("property_overview.submarket", "Miami Beach", doc=DOC_B, page=1),
+        *_export_hotel("a", name="A", market="Miami, FL", submarket="Miami Beach", keys=10, status="Under Construction"),
+        *_export_hotel("b", name="B", market="Miami, FL", submarket="Downtown Miami", keys=20, status="Under Construction"),
+    ]
+    assert multi_market_export_docs(rows) == set()
+    assert market_terms_from_rows(rows) == ["Miami Beach"]
+
+
+def test_filter_matches_the_whole_term_or_the_submarket_never_a_shared_token() -> None:
+    rows = [
+        *_export_hotel("airport", name="Airport Hotel", market="Miami", submarket="Miami Airport", keys=180, status="Under Construction"),
+        *_export_hotel("plain", name="Plain Miami Hotel", market="Miami", submarket="", keys=70, status="Under Construction"),
+        *_export_hotel("beach", name="Beach Hotel", market="Miami", submarket="Miami Beach/South Beach", keys=90, status="Under Construction"),
+        *_export_hotel("exact", name="Exact Hotel", market="Miami, FL", submarket="Miami Beach", keys=60, status="Final Planning"),
+    ]
+    s = read_supply_growth(rows, has_documents=True, as_of_year=AS_OF, market_terms=["Miami Beach"])
+    assert sorted(h.name for h in (s.pipeline_hotels or [])) == ["Beach Hotel", "Exact Hotel"]
+    assert s.under_construction_rooms == 90 and s.final_planning_rooms == 60
+    f = s.pipeline_filter
+    assert f is not None and (f.matched, f.total, f.market_unknown_rows) == (2, 4, 0)
 
 
 def test_canonical_paths_still_win_over_the_live_names() -> None:

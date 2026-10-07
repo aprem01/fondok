@@ -12,11 +12,17 @@ same tabs, same labels, every report):
    monthly series; ``Response_1`` carries the authoritative comp-set
    roster (STR# / Name / Rooms).
 
-2. **Weekly STAR** (modern .xlsx, e.g. ``56387-20250525-USD-E.xlsx``):
-   same family but "For the Week of:" — daily/weekly data only, no
-   trailing-twelve rollup exists in the file. We extract the roster
-   (the ground truth downstream Available-Rooms math needs) and leave
-   TTM metrics unset rather than mislabel weekly numbers as TTM.
+2. **Weekly / Daily STAR** (modern .xlsx, e.g. ``56387-20250713-USD-E.xlsx``):
+   same family but "For the Week of:" / "For the Day of:" — daily/weekly
+   data only, no trailing-twelve rollup exists in the file. We extract
+   the roster (the ground truth downstream Available-Rooms math needs)
+   and leave TTM metrics unset rather than mislabel weekly numbers as
+   TTM. These files ship a ``Glance`` tab too ("Weekly Performance at a
+   Glance"), and EVERY modern layout's roster header carries an ``Open
+   Date`` column — so the layout is decided by the report's own period
+   line, never by the presence of a Glance tab or that column (FON-61:
+   the May 2025 monthly file was read as "daily" on the column alone
+   and lost its TTM block).
 
 3. **Legacy Custom Trend** (.xls parsed via xlrd, e.g. the golden-set
    ``sample_str_trend.xls``): numbered tabs ``2) By Measure`` …
@@ -70,6 +76,17 @@ _YEAR_RE = re.compile(r"^(19|20)\d{2}$")
 _ROSTER_ID_LABELS = {"str#", "str id", "str code"}
 _ROSTER_NAME_LABELS = {"name", "name of establishment"}
 _ROSTER_ROOMS_LABEL = "rooms"
+
+# The report's own period line — the ONE thing that tells the modern
+# layouts apart: ``For the Month of: May 2025`` (monthly STAR, TTM block
+# present), ``For the Week of: July 13, 2025 - …`` (weekly) or ``For the
+# Day of: …`` (daily).
+_PERIOD_LINE_RE = re.compile(r"For the (Week|Month|Day|Date) of:", re.IGNORECASE)
+_PERIOD_KIND = {"week": "week", "month": "month", "day": "day", "date": "day"}
+
+# The word "closed" anywhere in a roster name (``<name> (Closed)``) — only
+# meaningful together with a 0-room count; see ``_roster_row_is_closed``.
+_CLOSED_WORD_RE = re.compile(r"\bclosed\b", re.IGNORECASE)
 
 
 def try_template_extract(
@@ -199,6 +216,20 @@ def _parse_roster(grid: list[list[str]]) -> list[_RosterRow]:
     return rows
 
 
+def _roster_row_is_closed(name: str, rooms: int | None) -> bool:
+    """STR's explicit closed marker on a roster row — and nothing else.
+
+    True when the name carries STR's ``Closed - <name>`` prefix, or when
+    a 0-room row carries the word "closed" elsewhere in its name
+    (``<name> (Closed)``). A bare 0-room row with no such word is NOT
+    closed (a not-yet-open hotel or a missing count): the Market tab
+    never infers closure from a room count alone.
+    """
+    if STR_CLOSED_LABEL_RE.match(name):
+        return True
+    return rooms == 0 and bool(_CLOSED_WORD_RE.search(name))
+
+
 def _find_subject_id(sheets: list[_Sheet]) -> str | None:
     """Subject property's STR id from the standardized header block
     (``Property ID: 56387`` on monthly reports, ``STR # 56387`` on
@@ -229,6 +260,19 @@ def _subject_name_from_header(grid: list[list[str]]) -> str | None:
             if name:
                 return name
         break  # only the first non-empty header line
+    return None
+
+
+def _period_kind(sheets: list[_Sheet]) -> str | None:
+    """``"month"`` / ``"week"`` / ``"day"`` from the report's own period
+    line (``For the Month of:`` …) in any sheet's header block; None when
+    no sheet states one (legacy Custom Trend)."""
+    for sheet in sheets:
+        for row in sheet.grid[:6]:
+            for cell in row:
+                m = _PERIOD_LINE_RE.search(cell)
+                if m:
+                    return _PERIOD_KIND[m.group(1).lower()]
     return None
 
 
@@ -566,11 +610,12 @@ def _try_str_trend(parsed: ParsedDocument) -> TemplateExtractResult | None:
         # Hotel" in May, "Closed - Blue Moon Hotel" in July = one hotel).
         fields.append(_field(f"ttm_performance.compset.{i}.str_id", comp.str_id, page=page))
         # FON-61 E-009 — STR labels a closed competitor "Closed - <name>" in
-        # the roster. Surface that label as an explicit status field so the
-        # Market tab can exclude the hotel from the count and the keys
-        # without inferring anything from a 0-room row. Emitted ONLY when
-        # STR says so; an unlabelled row carries no status.
-        if STR_CLOSED_LABEL_RE.match(comp.name):
+        # the roster (0 rooms alongside). Surface that label as an explicit
+        # status field so the Market tab can exclude the hotel from the
+        # count and the keys without inferring anything from a 0-room row.
+        # Emitted ONLY when STR says so (``_roster_row_is_closed``); an
+        # unlabelled row carries no status. Same rule for every layout.
+        if _roster_row_is_closed(comp.name, comp.rooms):
             fields.append(
                 _field(f"ttm_performance.compset.{i}.status", "closed", page=page)
             )
@@ -588,13 +633,25 @@ def _try_str_trend(parsed: ParsedDocument) -> TemplateExtractResult | None:
     )
 
     is_custom_trend = any("by measure" in n for n in lower_names)
-    is_weekly = _grid_contains(response.grid, "for the week of:", max_rows=6)
-    # Daily STAR: the Response roster header carries an "Open Date" column
-    # followed by the day columns; the file has no Glance tab and no
-    # "For the Week of:" line, so without this it fell into the monthly
-    # branch and returned None (the July 2025 file was then LLM-extracted
-    # with no roster — FON-61).
-    is_daily = (not is_weekly) and _roster_header_has(response.grid, "open date")
+    # The modern layouts are told apart by the report's OWN period line
+    # ("For the Month / Week / Day of:"). The ``Open Date`` roster column
+    # and a ``Glance`` tab exist in all of them (the weekly file's is
+    # "Weekly Performance at a Glance"), so neither can pick the layout:
+    # keying "daily" off the column read the May 2025 monthly file as
+    # daily and dropped its TTM block (FON-61). Without a period line, a
+    # "Monthly Performance at a Glance" tab means monthly; a roster with
+    # the ``Open Date`` column and no such tab is the daily export.
+    period = _period_kind(sheets)
+    has_monthly_glance = any(
+        _grid_contains(s.grid, "monthly performance at a glance", max_rows=1) for s in sheets
+    )
+    is_weekly = period == "week"
+    is_monthly = period == "month" or (period is None and has_monthly_glance)
+    is_daily = (
+        not is_weekly
+        and not is_monthly
+        and (period == "day" or _roster_header_has(response.grid, "open date"))
+    )
 
     if is_custom_trend:
         # Legacy .xls Custom Trend.

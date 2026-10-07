@@ -108,6 +108,9 @@ class CompSetHotelOut(BaseModel):
     keys_doc_name: str | None = None
     # Every STR roster document that lists this hotel, newest first.
     reports: list[str] = Field(default_factory=list)
+    # Other roster names this hotel was merged under (by STR id or the
+    # alias rule) — "The Betsy Hotel" for "The Betsy South Beach".
+    merged_names: list[str] = Field(default_factory=list)
 
 
 class MarketCompSetBlock(BaseModel):
@@ -142,6 +145,7 @@ class MarketCompSetBlock(BaseModel):
                     str_id=h.str_id, status_doc_name=h.status_doc_name,
                     status_doc_id=h.status_doc_id, status_page=h.status_page,
                     keys_doc_name=h.keys_doc_name, reports=list(h.reports),
+                    merged_names=list(h.merged_names),
                 )
                 for h in d.hotels
             ],
@@ -214,6 +218,10 @@ class MarketGrowthBlock(BaseModel):
     forecast_pct: float | None = None
     forecast_label: str | None = None
     forecast_input: FieldRefOut | None = None
+    # An absolute demand change the report states (room nights, as printed)
+    # that the unit guard kept out of ``value_pct`` — a level, never a rate.
+    demand_room_nights_change: FieldRefOut | None = None
+    demand_room_nights_change_period: str | None = None
 
     @classmethod
     def of(cls, g: GrowthReading) -> MarketGrowthBlock:
@@ -222,6 +230,10 @@ class MarketGrowthBlock(BaseModel):
             inputs=[FieldRefOut.of(r) for r in g.inputs], reason=g.reason, detail=g.detail,
             forecast_pct=g.forecast_pct, forecast_label=g.forecast_label,
             forecast_input=FieldRefOut.of(g.forecast_input) if g.forecast_input else None,
+            demand_room_nights_change=(
+                FieldRefOut.of(g.demand_room_nights_change) if g.demand_room_nights_change else None
+            ),
+            demand_room_nights_change_period=g.demand_room_nights_change_period,
         )
 
 
@@ -261,10 +273,16 @@ class PipelineFilterOut(BaseModel):
     total: int = 0
     doc_name: str | None = None
     note: str | None = None
+    # Export rows with neither a market nor a submarket — counted neither
+    # as matched nor as unmatched.
+    market_unknown_rows: int = 0
 
     @classmethod
     def of(cls, f: PipelineFilter) -> PipelineFilterOut:
-        return cls(terms=list(f.terms), matched=f.matched, total=f.total, doc_name=f.doc_name, note=f.note)
+        return cls(
+            terms=list(f.terms), matched=f.matched, total=f.total, doc_name=f.doc_name, note=f.note,
+            market_unknown_rows=f.market_unknown_rows,
+        )
 
 
 class MarketSupplyGrowthBlock(BaseModel):
@@ -292,6 +310,10 @@ class MarketSupplyGrowthBlock(BaseModel):
     forecast_supply_change_period: str | None = None
     pipeline_hotels: list[PipelineHotelOut] = Field(default_factory=list)
     pipeline_filter: PipelineFilterOut | None = None
+    # An absolute supply change the report states (rooms, as printed) that
+    # the unit guard kept out of ``reported_supply_change_pct``.
+    supply_rooms_change: FieldRefOut | None = None
+    supply_rooms_change_period: str | None = None
 
     @classmethod
     def of(cls, s: SupplyReading) -> MarketSupplyGrowthBlock:
@@ -309,6 +331,8 @@ class MarketSupplyGrowthBlock(BaseModel):
             forecast_supply_change_period=s.forecast_supply_change_period,
             pipeline_hotels=[PipelineHotelOut.of(h) for h in (s.pipeline_hotels or [])],
             pipeline_filter=PipelineFilterOut.of(s.pipeline_filter) if s.pipeline_filter else None,
+            supply_rooms_change=FieldRefOut.of(s.supply_rooms_change) if s.supply_rooms_change else None,
+            supply_rooms_change_period=s.supply_rooms_change_period,
         )
 
 

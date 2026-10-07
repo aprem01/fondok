@@ -50,6 +50,26 @@ detail; when the export has rows but none match the deal's market the
 detail says "no pipeline rows for <market> in <file>". ``no_document`` when
 the deal has no MARKET_STUDY at all.
 
+Export filter rules (live export: 30 rows, 3 with a ``market`` /
+``submarket``, 27 with neither):
+* a row matches when the FULL normalised term equals its market or
+  submarket, or appears in one as a whole phrase — never on a shared token
+  ("Miami" / "Miami Airport" rows do not match a "Miami Beach" deal);
+* a row with neither a market nor a submarket is ``market_unknown_rows``
+  in the filter record and is not counted either way;
+* a report's own ``submarket`` is a filter term only when the report is the
+  subject's submarket report — a multi-market export (rows carrying ≥ 2
+  distinct ``market`` values) mis-reads its own header ("Miami Airport"),
+  so its self-stated submarket is never a term.
+
+Unit guard on growth (``*_change*``) candidates: a value is a rate only when
+it is a fraction (|v| ≤ 1.5) or a plausible percent (|v| ≤ 150 with a
+``%`` / ``pct`` hint on the unit, in the path or in the raw text). Anything
+larger is an absolute delta (live: ``cbre_horizons.overall_supply.2025_ytd.
+demand_change = -35997`` room nights) — surfaced as
+``demand_room_nights_change`` / ``supply_rooms_change`` with provenance,
+never as the rate.
+
 Pure functions — no DB, no I/O.
 """
 
@@ -59,7 +79,7 @@ import re
 from collections.abc import Iterable, Sequence
 from dataclasses import dataclass, replace
 from datetime import date
-from typing import Literal
+from typing import Any, Literal
 
 from .market_fields import FieldRef, FieldRow, coerce_float, coerce_int, pct_points
 
@@ -115,6 +135,20 @@ NOT_PIPELINE_STATUS_TOKENS = frozenset(
 
 Bucket = Literal["under_construction", "final_planning", "planned"]
 ShareBasis = Literal["reported", "computed"]
+
+# Unit guard for ``*_change*`` growth candidates. The live CBRE Horizons
+# rows ``cbre_horizons.overall_supply.2025_ytd.demand_change = -35997`` and
+# ``…supply_change = 48998`` are room-night / room DELTAS, not rates — and,
+# ranked as the latest annual actual, they were shown as "-35,997%" demand
+# growth. A candidate is a rate only when it is a fraction (|v| ≤ 1.5) or a
+# plausible percent (|v| ≤ 150 with a % / pct hint on the unit, in the path
+# or in the raw text); anything larger is an absolute change, surfaced as a
+# level with provenance, never as a rate.
+RATE_FRACTION_MAX = 1.5
+RATE_PERCENT_MAX = 150.0
+_PCT_HINT_TOKENS = frozenset({"pct", "percent", "percentage"})
+_PCT_UNITS = frozenset({"pct", "percent", "%"})
+_SUBJECTS = frozenset({"demand", "supply"})
 
 
 def _tokens(name: str) -> list[str]:
@@ -184,6 +218,11 @@ class GrowthReading:
     forecast_pct: float | None = None
     forecast_label: str | None = None
     forecast_input: FieldRef | None = None
+    #: An absolute demand change the report states (room nights, as
+    #: printed) that the unit guard kept OUT of the rate — a level with
+    #: provenance, never shown as a percentage.
+    demand_room_nights_change: FieldRef | None = None
+    demand_room_nights_change_period: str | None = None
 
 
 @dataclass(frozen=True)
@@ -214,6 +253,9 @@ class PipelineFilter:
     total: int
     doc_name: str | None
     note: str | None
+    #: Export rows carrying neither a ``market`` nor a ``submarket`` — not
+    #: counted as matched or unmatched (live: 27 of 30).
+    market_unknown_rows: int = 0
 
 
 @dataclass(frozen=True)
@@ -240,6 +282,10 @@ class SupplyReading:
     #: filter, canonical rows, and the submarket report's own list).
     pipeline_hotels: list[PipelineHotel] | None = None
     pipeline_filter: PipelineFilter | None = None
+    #: An absolute supply change the report states (rooms, as printed) that
+    #: the unit guard kept OUT of ``reported_supply_change_pct``.
+    supply_rooms_change: FieldRef | None = None
+    supply_rooms_change_period: str | None = None
 
 
 # ───────────────────────────── growth candidates ─────────────────────────────
@@ -279,9 +325,36 @@ def _label(is_ttm: bool, year: int | None, quarter: int | None, is_forecast: boo
     return "forecast" if is_forecast else "as reported"
 
 
-def _growth_candidates(rows: Sequence[FieldRow], subject: str, *, as_of_year: int) -> list[_GrowthCandidate]:
+def _rate_points(row: FieldRow, tokset: set[str]) -> tuple[float | None, float | None]:
+    """``(percent points, raw value)`` for a ``*_change*`` candidate.
+
+    Points are None when the unit guard says the value is an absolute
+    delta (|v| > 1.5 without a % / pct hint, or |v| > 150 regardless);
+    the raw value is None when the cell isn't numeric at all.
+    """
+    raw = coerce_float(row.value)
+    if raw is None:
+        return None, None
+    if abs(raw) <= RATE_FRACTION_MAX:
+        return pct_points(row.value), raw
+    hinted = (
+        row.unit in _PCT_UNITS
+        or bool(tokset & _PCT_HINT_TOKENS)
+        or (isinstance(row.value, str) and "%" in row.value)
+    )
+    if abs(raw) <= RATE_PERCENT_MAX and hinted:
+        return raw, raw
+    return None, raw
+
+
+def _growth_candidates(
+    rows: Sequence[FieldRow], subject: str, *, as_of_year: int
+) -> tuple[list[_GrowthCandidate], list[_GrowthCandidate]]:
+    """``(rates, absolute changes)`` for ``demand`` / ``supply``, each
+    sorted best-first. Absolute changes carry the raw value as printed."""
     tags = _period_tags(rows)
-    out: list[_GrowthCandidate] = []
+    rates: list[_GrowthCandidate] = []
+    deltas: list[_GrowthCandidate] = []
     for order, r in enumerate(rows):
         if not r.lname.startswith(GROWTH_PREFIXES) or r.lname.startswith(PIPELINE_EXPORT_PREFIX):
             continue
@@ -289,32 +362,41 @@ def _growth_candidates(rows: Sequence[FieldRow], subject: str, *, as_of_year: in
         tokset = set(toks)
         if subject not in tokset or not (tokset & GROWTH_TOKENS):
             continue
+        # When the leaf names a subject it must be THIS one: the CBRE row
+        # ``overall_supply.2025_ytd.demand_change`` is a demand figure even
+        # though "supply" sits in its parent path.
+        leaf_subjects = set(_tokens(r.lname.rsplit(".", 1)[-1])) & _SUBJECTS
+        if leaf_subjects and subject not in leaf_subjects:
+            continue
         if tokset & (NOT_SUBMARKET_TOKENS - SHARE_TOKENS):
             continue
-        v = pct_points(r.value)
-        if v is None:
+        points, raw = _rate_points(r, tokset)
+        if raw is None:
             continue
         is_ttm = bool(tokset & TTM_TOKENS)
         year = _year_of(toks)
         quarter = _quarter_of(toks)
         fc = _is_forecast(r, toks, tags, as_of_year)
-        out.append(
-            _GrowthCandidate(
-                rank=_rank(is_ttm, year, quarter, fc), order=order, value=v,
-                label=_label(is_ttm, year, quarter, fc), ref=FieldRef.of(r), is_forecast=fc,
-            )
+        cand = _GrowthCandidate(
+            rank=_rank(is_ttm, year, quarter, fc), order=order,
+            value=points if points is not None else raw,
+            label=_label(is_ttm, year, quarter, fc), ref=FieldRef.of(r), is_forecast=fc,
         )
-    return sorted(out, key=lambda c: (c.rank, c.order))
+        (rates if points is not None else deltas).append(cand)
+    key = lambda c: (c.rank, c.order)  # noqa: E731
+    return sorted(rates, key=key), sorted(deltas, key=key)
 
 
 def _pick_reported_growth(
     rows: Sequence[FieldRow], subject: str, *, as_of_year: int
-) -> tuple[_GrowthCandidate | None, _GrowthCandidate | None]:
-    """(best actual, earliest forecast) for ``demand`` / ``supply``."""
-    cands = _growth_candidates(rows, subject, as_of_year=as_of_year)
-    actual = next((c for c in cands if not c.is_forecast), None)
-    forecast = next((c for c in cands if c.is_forecast), None)
-    return actual, forecast
+) -> tuple[_GrowthCandidate | None, _GrowthCandidate | None, _GrowthCandidate | None]:
+    """(best actual rate, earliest forecast rate, best actual absolute
+    change) for ``demand`` / ``supply``."""
+    rates, deltas = _growth_candidates(rows, subject, as_of_year=as_of_year)
+    actual = next((c for c in rates if not c.is_forecast), None)
+    forecast = next((c for c in rates if c.is_forecast), None)
+    level = next((c for c in deltas if not c.is_forecast), None)
+    return actual, forecast, level
 
 
 def _pick_year_series(
@@ -352,12 +434,15 @@ def read_demand_growth(
             reason=REASON_NO_DOCUMENT,
             detail="No market study / CoStar submarket report is on the deal.",
         )
-    actual, forecast = _pick_reported_growth(rows, "demand", as_of_year=as_of)
-    fc_kwargs = (
+    actual, forecast, level = _pick_reported_growth(rows, "demand", as_of_year=as_of)
+    fc_kwargs: dict[str, Any] = (
         {"forecast_pct": round(forecast.value, 4), "forecast_label": forecast.label, "forecast_input": forecast.ref}
         if forecast
         else {}
     )
+    if level is not None:
+        fc_kwargs["demand_room_nights_change"] = level.ref
+        fc_kwargs["demand_room_nights_change_period"] = level.label
     if actual is not None:
         return GrowthReading(
             value_pct=round(actual.value, 4), period_label=actual.label, basis="reported",
@@ -539,12 +624,24 @@ _OPEN_ATTRS = frozenset(
 
 
 def _norm_term(s: str) -> str:
-    return " ".join(s.lower().replace(",", " ").split())
+    """Lower-cased, commas and slashes read as separators ("Boston, MA" →
+    "boston ma", "Miami Beach/South Beach" → "miami beach south beach")."""
+    return " ".join(s.lower().replace(",", " ").replace("/", " ").split())
+
+
+def _geo_matches(term: str, geo: str) -> bool:
+    """The FULL normalised term equals the geo or appears in it as a whole
+    phrase (token-aligned) — never a shared token: "miami beach" does not
+    match "miami airport" or "miami"."""
+    if term == geo:
+        return True
+    t, g = term.split(), geo.split()
+    return bool(t) and any(g[i:i + len(t)] == t for i in range(len(g) - len(t) + 1))
 
 
 def _matches_market(hotel_market: str | None, hotel_submarket: str | None, terms: Sequence[str]) -> bool:
     geo = [_norm_term(g) for g in (hotel_submarket, hotel_market) if isinstance(g, str) and g.strip()]
-    return any(t and t in g for t in terms for g in geo)
+    return any(_geo_matches(t, g) for t in terms if t for g in geo)
 
 
 def _collect_pipeline_hotels(
@@ -602,6 +699,7 @@ def _collect_pipeline_hotels(
     hotels: list[PipelineHotel] = []
     export_total = 0
     export_matched = 0
+    export_unknown = 0
     export_docs: list[str] = []
     export_has_geo = any(
         g["kind"] == "export" and (g.get("market") or g.get("submarket")) for g in grouped.values()
@@ -629,6 +727,11 @@ def _collect_pipeline_hotels(
         export_total += 1
         if hotel.doc_name and hotel.doc_name not in export_docs:
             export_docs.append(hotel.doc_name)
+        if export_has_geo and not (hotel.market or hotel.submarket):
+            # The export has a market column but this row left it blank —
+            # unknown market, counted neither as matched nor as unmatched.
+            export_unknown += 1
+            continue
         matched = (not export_has_geo) or _matches_market(hotel.market, hotel.submarket, terms)
         if matched:
             export_matched += 1
@@ -637,17 +740,27 @@ def _collect_pipeline_hotels(
     pfilter: PipelineFilter | None = None
     if export_total:
         doc_label = ", ".join(export_docs) if export_docs else "the pipeline export"
+        unknown_note = (
+            f"{export_unknown} of {export_total} rows carry no market or submarket and were not counted"
+            if export_unknown
+            else None
+        )
         if not export_has_geo:
             note = f"{doc_label} carries no market column; all {export_total} rows were taken as the deal's market."
         elif not terms:
             note = f"No deal market to filter {doc_label} by — its {export_total} rows were not summed."
         elif export_matched == 0:
             note = f"no pipeline rows for {market_terms[0]} in {doc_label}"
+            if unknown_note:
+                note += f" ({unknown_note})"
+        elif unknown_note:
+            note = f"{unknown_note} in {doc_label}."
         else:
             note = None
         pfilter = PipelineFilter(
             terms=list(terms), matched=export_matched, total=export_total,
             doc_name=export_docs[0] if export_docs else None, note=note,
+            market_unknown_rows=export_unknown,
         )
     return hotels, pfilter
 
@@ -662,16 +775,39 @@ def _sum_by_bucket(hotels: Sequence[PipelineHotel]) -> dict[str, tuple[int, list
     return out
 
 
+def multi_market_export_docs(rows: Sequence[FieldRow]) -> set[str | None]:
+    """Documents whose ``market_study.pipeline.<slug>.market`` rows carry
+    ≥ 2 distinct values — multi-market pipeline exports."""
+    markets_by_doc: dict[str | None, set[str]] = {}
+    for r in rows:
+        lname = r.lname
+        if not lname.startswith(PIPELINE_EXPORT_PREFIX) or lname.rsplit(".", 1)[-1] != "market":
+            continue
+        if isinstance(r.value, str) and r.value.strip():
+            markets_by_doc.setdefault(r.doc_id, set()).add(_norm_term(r.value))
+    return {doc for doc, markets in markets_by_doc.items() if len(markets) >= 2}
+
+
 def market_terms_from_rows(rows: Sequence[FieldRow]) -> list[str]:
     """Submarket names the MARKET_STUDY reports state about themselves
-    (``property_overview.submarket``, ``market_study.submarket``, …) — the
-    export's own per-row ``market`` / ``submarket`` columns are excluded."""
+    (``property_overview.submarket``, ``market_study.submarket``, …).
+
+    A report's own submarket is a term only when the report IS the
+    subject's submarket report: a multi-market pipeline export (its rows
+    carry ≥ 2 distinct ``market`` values) mis-reads its own header — the
+    live Supply export filed ``property_overview.submarket = "Miami
+    Airport"`` — so its self-stated submarket is never a term. The export's
+    per-row ``market`` / ``submarket`` columns are never terms either.
+    """
+    skip_docs = multi_market_export_docs(rows)
     out: list[str] = []
     for r in rows:
         lname = r.lname
         if lname.startswith(PIPELINE_EXPORT_PREFIX) or not lname.startswith(GROWTH_PREFIXES):
             continue
         if lname.rsplit(".", 1)[-1] not in {"submarket", "submarket_name"}:
+            continue
+        if r.doc_id in skip_docs:
             continue
         if isinstance(r.value, str) and r.value.strip() and r.value.strip() not in out:
             out.append(r.value.strip())
@@ -782,7 +918,7 @@ def read_supply_growth(
         fp_pct = share(fp_rooms)
         fp_basis = "computed" if fp_pct is not None else None
 
-    actual, forecast = _pick_reported_growth(rows, "supply", as_of_year=as_of)
+    actual, forecast, level = _pick_reported_growth(rows, "supply", as_of_year=as_of)
     if actual:
         inputs.append(actual.ref)
     if forecast:
@@ -820,6 +956,8 @@ def read_supply_growth(
         forecast_supply_change_period=forecast.label if forecast else None,
         pipeline_hotels=hotels,
         pipeline_filter=pfilter,
+        supply_rooms_change=level.ref if level else None,
+        supply_rooms_change_period=level.label if level else None,
     )
 
 
@@ -832,6 +970,8 @@ __all__ = [
     "GROWTH_PREFIXES",
     "MARKET_STUDY_PREFIXES",
     "PIPELINE_EXPORT_PREFIX",
+    "RATE_FRACTION_MAX",
+    "RATE_PERCENT_MAX",
     "REASON_NO_DOCUMENT",
     "REASON_NO_SOURCE",
     "GrowthReading",
@@ -840,6 +980,7 @@ __all__ = [
     "SupplyReading",
     "market_study_rows",
     "market_terms_from_rows",
+    "multi_market_export_docs",
     "read_demand_growth",
     "read_supply_growth",
 ]
