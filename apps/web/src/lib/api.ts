@@ -977,6 +977,20 @@ interface RequestOpts {
   timeoutMs?: number;
 }
 
+/** ``GET /deals/{deal}/documents/{doc}/download-url`` — a short-lived link a
+ *  browser tab can open with no session (FON-41 / R-040). ``url`` is absolute
+ *  for ``s3_presigned`` and root-relative for ``signed_path``. ``filename`` +
+ *  ``content_type`` are echoed so callers can decide whether a ``#page=N``
+ *  PDF fragment applies without guessing from the id. */
+export interface DocumentDownloadUrl {
+  url: string;
+  /** Seconds the link stays valid (300 today). */
+  expires_in: number;
+  kind: 's3_presigned' | 'signed_path';
+  filename: string;
+  content_type: string;
+}
+
 export class WorkerError extends Error {
   status: number;
   body: string;
@@ -1565,12 +1579,40 @@ export const api = {
         `/deals/${dealId}/documents/${docId}/classification`,
         body,
       ),
-    /** Direct URL to the raw uploaded file — citation deep-links use ``#page=N``. */
-    downloadUrl: (dealId: string, docId: string, page?: number): string => {
-      const base = workerUrl();
-      if (!base) return '';
-      const url = `${base}/deals/${dealId}/documents/${docId}/download`;
-      return page && page > 0 ? `${url}#page=${page}` : url;
+    /** FON-41 / R-040: mint a short-lived link for opening the raw file in a
+     *  NEW TAB. A top-level navigation carries no Authorization header, so a
+     *  tab can't hit ``/download`` directly any more (the worker refuses
+     *  header-only tenant requests). This authenticated call returns a link
+     *  the tab can follow on its own: a presigned S3 GET in production
+     *  (``kind: 's3_presigned'``, absolute) or an HMAC-signed worker path on
+     *  the local store (``kind: 'signed_path'``, root-relative — resolve it
+     *  against ``workerUrl()``). See ``lib/openDocument`` for the open flow. */
+    downloadUrlSigned: (dealId: string, docId: string) =>
+      request<DocumentDownloadUrl>(
+        'GET',
+        `/deals/${dealId}/documents/${docId}/download-url`,
+      ),
+    /** Authenticated save-to-disk of the raw uploaded file (Data Room ⬇).
+     *  Streams ``/download`` with the session JWT and hands the bytes to the
+     *  browser under the original filename — no unauthenticated navigation.
+     *  Throws WorkerError/TimeoutError so the caller can toast it. */
+    download: async (
+      dealId: string,
+      docId: string,
+      filename: string,
+    ): Promise<void> => {
+      const blob = await requestBlob(`/deals/${dealId}/documents/${docId}/download`);
+      const objectUrl = URL.createObjectURL(blob);
+      try {
+        const a = document.createElement('a');
+        a.href = objectUrl;
+        a.download = filename;
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+      } finally {
+        setTimeout(() => URL.revokeObjectURL(objectUrl), 1_000);
+      }
     },
     /** Hard-delete one document. Cascades extraction_results + object-
      *  store blob (best-effort on storage). Audit-logged. Irreversible. */

@@ -43,7 +43,11 @@ vi.mock('@/lib/api', () => ({
   workerUrl: () => 'http://worker.test',
   api: {
     documents: {
-      downloadUrl: (_deal: string, _doc: string) => 'http://worker.test/dl',
+      downloadUrlSigned: vi.fn().mockResolvedValue({
+        url: 'http://worker.test/dl', expires_in: 300, kind: 'signed_path',
+        filename: 'doc.pdf', content_type: 'application/pdf',
+      }),
+      download: vi.fn().mockResolvedValue(undefined),
       reviewField: vi.fn().mockResolvedValue(undefined),
       reclassify: vi.fn().mockResolvedValue(undefined),
       acceptClassification: vi.fn().mockResolvedValue(undefined),

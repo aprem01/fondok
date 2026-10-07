@@ -6,6 +6,9 @@ POST   /deals/{deal_id}/documents/upload                — multi-file PDF uploa
 POST   /deals/{deal_id}/documents/{doc_id}/extract       — kick off extraction
 GET    /deals/{deal_id}/documents/{doc_id}/extraction    — latest extraction result
 GET    /deals/{deal_id}/documents                        — list documents on deal
+GET    /deals/{deal_id}/documents/{doc_id}/download     — raw bytes (authenticated)
+GET    /deals/{deal_id}/documents/{doc_id}/download-url — short-lived link for a new tab
+GET    /deals/{deal_id}/documents/{doc_id}/download/signed — HMAC-signed bytes (no session)
 
 The upload route hashes each file, persists to the configured raw
 store (local FS or S3), parses the PDF (LlamaParse or PyMuPDF), and
@@ -19,12 +22,17 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import hmac
 import json
 import logging
+import mimetypes
 import os
+import secrets
+import time
 from dataclasses import dataclass
 from datetime import UTC, date, datetime
 from typing import Annotated, Any, Literal
+from urllib.parse import quote, urlencode
 from uuid import UUID, uuid4
 
 from fastapi import (
@@ -60,7 +68,7 @@ from ..services.financial_source_rank import (
     FULL_YEAR_DOC_TYPES as _SHARED_FULL_YEAR_DOC_TYPES,
     financial_source_sort_key,
 )
-from ..storage import StorageError, get_raw_store
+from ..storage import S3RawStore, StorageError, get_raw_store
 from ..auth import AuthContext, get_current_auth, require_role
 from .deals import _assert_deal_belongs_to_tenant, get_tenant_id
 
@@ -3689,6 +3697,312 @@ async def download_document(
             # Inline so the browser's PDF viewer renders it (and honors
             # the ``#page=N`` anchor) instead of forcing a save dialog.
             "Content-Disposition": f'inline; filename="{filename}"',
+            "Cache-Control": "private, max-age=300",
+        },
+    )
+
+
+# ───────────────── signed download links (FON-41 / R-040) ─────────────────
+#
+# "Open document in new tab" is a top-level browser navigation, and a
+# navigation never carries the Clerk ``Authorization`` header. The moment the
+# worker started refusing header-only tenant requests (2026-10-06) every new
+# tab 401'd and the tester saw a raw "document not found on deal". The
+# authenticated ``/download`` route above is untouched; the web app now asks
+# ``/download-url`` for a short-lived link and sends the *tab* there instead:
+#
+#   * S3 raw store   → presigned GET (``kind="s3_presigned"``, absolute URL).
+#                      AWS checks the signature; the worker never sees the
+#                      tab's request. This is what production runs.
+#   * local store    → ``/download/signed?token=…&exp=…``
+#                      (``kind="signed_path"``, root-relative — the worker sits
+#                      behind a proxy and does not reliably know its public
+#                      scheme/host, so the client resolves it against the
+#                      worker base it already talks to). ``token`` is an
+#                      HMAC-SHA256 over ``deal_id|doc_id|exp`` keyed by
+#                      ``DOCUMENT_URL_SIGNING_SECRET``. The signature binds the
+#                      document, so the route needs no tenant header — but it
+#                      still scopes by ``deal_id`` + ``doc_id`` and joins
+#                      ``deals`` on ``tenant_id`` for the tenant listener.
+#
+# Links live ``_DOWNLOAD_URL_TTL_S`` seconds. Tokens and presigned URLs are
+# bearer credentials: never log or echo them.
+
+_DOWNLOAD_URL_TTL_S = 300
+_DOWNLOAD_URL_KINDS = Literal["s3_presigned", "signed_path"]
+
+# Per-process fallback key for non-production workers without an explicit
+# ``DOCUMENT_URL_SIGNING_SECRET`` (see config.py). Generated once, lazily.
+_DEV_SIGNING_KEY: bytes | None = None
+
+
+class DocumentDownloadUrl(BaseModel):
+    """A short-lived, unauthenticated-navigable link to a document's bytes.
+
+    ``url`` is absolute for ``s3_presigned`` and root-relative (``/deals/…``)
+    for ``signed_path``. ``filename`` / ``content_type`` are echoed so the
+    client can decide whether a ``#page=N`` PDF fragment makes sense without
+    guessing from the id.
+    """
+
+    url: str
+    expires_in: int
+    kind: _DOWNLOAD_URL_KINDS
+    filename: str
+    content_type: str
+
+
+def _download_signing_key() -> bytes:
+    """Resolve the HMAC key for signed download paths.
+
+    Explicit ``DOCUMENT_URL_SIGNING_SECRET`` wins. Without one, production
+    refuses (503 — set the secret), everything else uses a random key
+    generated once per process. The dev key is held outside ``Settings`` so a
+    ``get_settings.cache_clear()`` (tests) does not silently rotate it.
+    """
+    global _DEV_SIGNING_KEY
+    settings = get_settings()
+    secret = settings.DOCUMENT_URL_SIGNING_SECRET
+    if secret is not None and secret.get_secret_value():
+        return secret.get_secret_value().encode("utf-8")
+    if settings.DEPLOYMENT_ENVIRONMENT.strip().lower() in {"production", "prod"}:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=(
+                "signed document links are not configured on this worker "
+                "(set DOCUMENT_URL_SIGNING_SECRET)"
+            ),
+        )
+    if _DEV_SIGNING_KEY is None:
+        _DEV_SIGNING_KEY = secrets.token_bytes(32)
+        logger.warning(
+            "download-url: DOCUMENT_URL_SIGNING_SECRET is unset — using a "
+            "random per-process key; signed links will not survive a restart"
+        )
+    return _DEV_SIGNING_KEY
+
+
+def _download_token(deal_id: UUID, doc_id: UUID, exp: int, key: bytes) -> str:
+    """``hex(HMAC-SHA256(key, "deal_id|doc_id|exp"))``."""
+    message = f"{deal_id}|{doc_id}|{exp}".encode()
+    return hmac.new(key, message, hashlib.sha256).hexdigest()
+
+
+def _inline_content_disposition(filename: str) -> str:
+    """RFC 6266 ``inline`` disposition carrying the original filename.
+
+    ASCII names go in the plain ``filename=`` quoted-string; anything else
+    gets the ASCII-stripped fallback plus an RFC 5987 ``filename*`` so the
+    browser's PDF viewer / save dialog still shows the real name.
+    """
+    from pathlib import Path as _Path
+
+    name = _Path(filename or "").name or "document"
+    fallback = "".join(
+        ch for ch in name if 32 <= ord(ch) < 127 and ch not in '"\\'
+    ) or "document"
+    if fallback == name:
+        return f'inline; filename="{fallback}"'
+    return f"inline; filename=\"{fallback}\"; filename*=UTF-8''{quote(name, safe='')}"
+
+
+def _media_type_for(filename: str) -> str:
+    guessed, _enc = mimetypes.guess_type(filename or "")
+    return guessed or "application/octet-stream"
+
+
+async def _read_document_bytes(storage_key: str, doc_id: UUID) -> bytes:
+    """Fetch stored bytes for the signed route with the same error mapping
+    the authenticated ``/download`` route uses (missing → 404, else 500)."""
+    settings = get_settings()
+    store = get_raw_store(settings)
+    try:
+        return await store.get(storage_key)
+    except FileNotFoundError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"stored bytes missing for document {doc_id}",
+        ) from exc
+    except StorageError as exc:
+        if "missing" in str(exc).lower():
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"stored bytes missing for document {doc_id}",
+            ) from exc
+        logger.exception("download/signed: store.get failed for doc=%s", doc_id)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="raw store read failed",
+        ) from exc
+    except Exception as exc:
+        logger.exception("download/signed: store.get failed for doc=%s", doc_id)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="raw store read failed",
+        ) from exc
+
+
+@router.get(
+    "/{deal_id}/documents/{doc_id}/download-url",
+    response_model=DocumentDownloadUrl,
+)
+async def get_document_download_url(
+    deal_id: UUID,
+    doc_id: UUID,
+    session: Annotated[AsyncSession, Depends(get_session)],
+    tenant_id: Annotated[UUID, Depends(get_tenant_id)],
+) -> DocumentDownloadUrl:
+    """Mint a short-lived link the browser can open in a NEW TAB.
+
+    Same auth and the same ``id AND deal_id AND tenant_id`` lookup as
+    ``/download`` (cross-deal / cross-tenant → 404). Returns a presigned S3
+    GET when the raw store is S3, else an HMAC-signed worker path. Either way
+    the link is valid for ``expires_in`` seconds and is served inline under
+    the original filename with the right content type.
+    """
+    row = (
+        await session.execute(
+            text(
+                """
+                SELECT filename, storage_key
+                  FROM documents
+                 WHERE id = :id
+                   AND deal_id = :deal
+                   AND tenant_id = :tenant
+                """
+            ),
+            {"id": str(doc_id), "deal": str(deal_id), "tenant": str(tenant_id)},
+        )
+    ).first()
+    if row is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"document {doc_id} not found on deal {deal_id}",
+        )
+    storage_key = row._mapping["storage_key"]
+    filename = row._mapping["filename"] or "document.pdf"
+    if not storage_key:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"document {doc_id} has no stored bytes",
+        )
+    content_type = _media_type_for(filename)
+
+    settings = get_settings()
+    store = get_raw_store(settings)
+    if isinstance(store, S3RawStore):
+        try:
+            url = await store.presigned_get_url(
+                storage_key,
+                expires_in=_DOWNLOAD_URL_TTL_S,
+                content_disposition=_inline_content_disposition(filename),
+                content_type=content_type,
+            )
+        except Exception as exc:
+            # Log the failure, never the URL.
+            logger.exception(
+                "download-url: presign failed for doc=%s (%s)",
+                doc_id,
+                type(exc).__name__,
+            )
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="could not sign a download link for this document",
+            ) from exc
+        return DocumentDownloadUrl(
+            url=url,
+            expires_in=_DOWNLOAD_URL_TTL_S,
+            kind="s3_presigned",
+            filename=filename,
+            content_type=content_type,
+        )
+
+    key = _download_signing_key()
+    exp = int(time.time()) + _DOWNLOAD_URL_TTL_S
+    token = _download_token(deal_id, doc_id, exp, key)
+    path = (
+        f"/deals/{deal_id}/documents/{doc_id}/download/signed?"
+        + urlencode({"token": token, "exp": exp})
+    )
+    return DocumentDownloadUrl(
+        url=path,
+        expires_in=_DOWNLOAD_URL_TTL_S,
+        kind="signed_path",
+        filename=filename,
+        content_type=content_type,
+    )
+
+
+@router.get("/{deal_id}/documents/{doc_id}/download/signed")
+async def download_document_signed(
+    deal_id: UUID,
+    doc_id: UUID,
+    session: Annotated[AsyncSession, Depends(get_session)],
+    token: str = "",
+    exp: str = "",
+) -> Response:
+    """Serve a document's bytes to a tab holding a valid signed link.
+
+    No session and no tenant header: the HMAC (``deal_id|doc_id|exp``) is the
+    credential and it already binds the document. Malformed, tampered, or
+    expired → 403; signature valid but the document is gone → 404. Only ever
+    minted when the raw store is local (S3 gets presigned URLs instead).
+    """
+    key = _download_signing_key()
+    if not exp.isdigit() or not token:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN, detail="invalid download link"
+        )
+    exp_at = int(exp)
+    expected = _download_token(deal_id, doc_id, exp_at, key)
+    if not hmac.compare_digest(expected, token):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN, detail="invalid download link"
+        )
+    if exp_at < int(time.time()):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN, detail="download link expired"
+        )
+
+    # Scoped by deal + doc; the join on deals carries the tenant predicate
+    # (a document must belong to its deal's tenant) without needing a header.
+    row = (
+        await session.execute(
+            text(
+                """
+                SELECT d.filename, d.storage_key
+                  FROM documents d
+                  JOIN deals x
+                    ON x.id = d.deal_id
+                   AND x.tenant_id = d.tenant_id
+                 WHERE d.id = :id
+                   AND d.deal_id = :deal
+                """
+            ),
+            {"id": str(doc_id), "deal": str(deal_id)},
+        )
+    ).first()
+    if row is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"document {doc_id} not found on deal {deal_id}",
+        )
+    storage_key = row._mapping["storage_key"]
+    filename = row._mapping["filename"] or "document.pdf"
+    if not storage_key:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"document {doc_id} has no stored bytes",
+        )
+
+    body = await _read_document_bytes(storage_key, doc_id)
+    return Response(
+        content=body,
+        media_type=_media_type_for(filename),
+        headers={
+            # Inline so the browser's PDF viewer renders it (and honors the
+            # ``#page=N`` fragment) instead of forcing a save dialog.
+            "Content-Disposition": _inline_content_disposition(filename),
             "Cache-Control": "private, max-age=300",
         },
     )

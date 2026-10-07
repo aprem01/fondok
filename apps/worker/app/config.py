@@ -332,6 +332,27 @@ class Settings(BaseSettings):
     # sets it), and scripts run from a trusted shell — never on Railway.
     ALLOW_TENANT_HEADER_WITHOUT_JWT: bool = Field(default=False)
 
+    # ── Signed document links (FON-41 / R-040) ───────────────────────
+    # "Open document in new tab" is a top-level browser navigation, and a
+    # navigation never carries the Clerk ``Authorization`` header — so once
+    # the no-JWT path closed (above) every new tab 401'd. The web app now
+    # asks the authenticated ``GET /deals/{deal}/documents/{doc}/download-url``
+    # for a short-lived link first. On S3 that is a presigned GET (AWS
+    # checks the signature). On the local store it is
+    # ``.../download/signed?token=…&exp=…`` where ``token`` is an
+    # HMAC-SHA256 over ``deal_id|doc_id|exp`` keyed by THIS secret.
+    #
+    # Unset: a non-production worker generates a random per-process key at
+    # first use (links only outlive the process that minted them — fine for
+    # local dev; it is random, never a hard-coded default). A worker with
+    # ``DEPLOYMENT_ENVIRONMENT=production`` refuses to mint signed paths
+    # (503) until the secret is set, so a prod local-store deploy fails
+    # loudly instead of silently breaking across restarts / replicas.
+    # Production uses S3 today, so this only matters if the raw store is
+    # ever pointed back at local disk. Any long random string works:
+    #   python -c "import secrets; print(secrets.token_urlsafe(48))"
+    DOCUMENT_URL_SIGNING_SECRET: SecretStr | None = Field(default=None)
+
     # ── Analyst memo streaming ──────────────────────────────────────
     # When true, ``run_analyst`` drafts the memo section-by-section
     # and publishes each completed section to the in-process
