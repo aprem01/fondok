@@ -16,6 +16,7 @@ import KebabMenu from '@/components/ui/KebabMenu';
 import { useToast } from '@/components/ui/Toast';
 import { projects } from '@/lib/mockData';
 import { cn, fmtDate } from '@/lib/format';
+import { formatKeys } from '@/lib/formatKeys';
 import { useDeal } from '@/lib/hooks/useDeal';
 import { ProvenanceProvider } from '@/lib/hooks/useDealProvenance';
 import { ValueTraceProvider } from '@/lib/hooks/useValueTrace';
@@ -247,6 +248,10 @@ export default function ProjectDetailPage() {
     id: 0,
     name: deal.name,
     city: deal.city ?? '—',
+    // E-003 (FON-59) — the header does NOT read this. The wizard sends keys
+    // as null and the worker fills it from the OM a minute later, so `?? 0`
+    // here would be a fabricated room count; it only satisfies the `Project`
+    // shape ICMemoTab takes. The meta line renders `formatKeys(deal?.keys)`.
     keys: deal.keys ?? 0,
     service: deal.service ?? '—',
     status: (deal.status as typeof projects[number]['status']) || 'Draft',
@@ -654,7 +659,7 @@ export default function ProjectDetailPage() {
         <div className="flex items-center gap-5 text-[12.5px] text-ink-600 py-3">
           <div className="flex items-center gap-1.5"><MapPin size={12} className="text-ink-400" aria-hidden="true" /> {project.city}</div>
           <div className="w-px h-3 bg-ink-200" aria-hidden="true" />
-          <div className="flex items-center gap-1.5"><Building2 size={12} className="text-ink-400" aria-hidden="true" /> <span className="tabular-nums">{project.keys}</span> keys · {project.service}</div>
+          <div className="flex items-center gap-1.5"><Building2 size={12} className="text-ink-400" aria-hidden="true" /> <span className="tabular-nums">{formatKeys(deal?.keys ?? mockMatch?.keys)}</span> keys · {project.service}</div>
           <div className="w-px h-3 bg-ink-200" aria-hidden="true" />
           <div className="flex items-center gap-1.5"><Calendar size={12} className="text-ink-400" aria-hidden="true" /> Created {project.createdAt || 'Apr 2026'}</div>
         </div>

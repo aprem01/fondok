@@ -366,6 +366,13 @@ export default function MethodologyPage() {
         </Card>
 
         <Card className="p-5 mb-4">
+          <h4 className="text-[13px] font-semibold text-ink-900 mb-3">Which documents set the deal&apos;s key count, brand and city</h4>
+          <p className="text-[12.5px] text-ink-500 leading-relaxed">
+            Only documents about the subject property — the Offering Memorandum, a T-12, P&amp;Ls, a Room Mix or a Property Information sheet — can set the deal&apos;s key count, and when more than one of them states a room count the Offering Memorandum wins. A brand chosen on the create-deal wizard is never overwritten by a document. Market reports, STR reports, comparable sets, CapEx budgets, insurance documents and leases describe other things, so they never change the key count, brand or city. The city is filled only while it is empty, and never from a street address. Until a qualifying document has been extracted the deal header shows &quot;—&quot; for keys rather than a count of zero.
+          </p>
+        </Card>
+
+        <Card className="p-5 mb-4">
           <h4 className="text-[13px] font-semibold text-ink-900 mb-3">Hover any number to trace it</h4>
           <p className="text-[12.5px] text-ink-500 leading-relaxed mb-3">
             Provenance runs on two levels, and every figure on the platform carries one or the other:

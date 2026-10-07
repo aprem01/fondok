@@ -325,6 +325,18 @@ export default function InvestmentTab() {
     getEngineField<number>(outputs, 'returns', 'terminal_noi');
   const wSellingCosts = getEngineField<number>(outputs, 'returns', 'selling_costs');
   const wHoldYears = getEngineField<number>(outputs, 'returns', 'hold_years');
+  // E-022 (FON-44) — Hold Period is the analyst's INPUT; the engine's
+  // `returns.hold_years` is only its echo. When Returns fails or is skipped
+  // (Debt failed → Returns skipped), that echo is the LAST GOOD run's value,
+  // so a freshly saved 5 kept reading as the old 7 and looked lost — the
+  // audit log said saved, the row said otherwise. The saved override is the
+  // analyst's own number: read it first. Never a fabricated default.
+  const holdYearsOverride = numericOverride(invOverrides, 'hold_years');
+  const returnsRow = outputs?.engines?.returns;
+  // `skipped` is a worker status the TS union does not list — compare as text.
+  const returnsStatus = returnsRow?.status as string | undefined;
+  const returnsRan =
+    returnsRow?.outputs != null && returnsStatus !== 'failed' && returnsStatus !== 'skipped';
 
   const wCapitalUses = getEngineField<Array<{ label?: string; amount?: number }>>(
     outputs, 'capital', 'uses',
@@ -463,7 +475,12 @@ export default function InvestmentTab() {
   const netExit = has(grossExit)
     ? grossExit - (sellingCosts ?? 0)
     : undefined;
-  const holdYears = wHoldYears;
+  const holdYears = holdYearsOverride ?? wHoldYears;
+  // The note rides beside the field ONLY while the analyst's saved value is
+  // standing in for a Returns run that never completed. Once Returns runs,
+  // engine and override agree and the note goes.
+  const holdYearsNote =
+    holdYearsOverride != null && !returnsRan ? 'saved · Returns not run' : null;
 
   // Formatting helpers matching the canonical (money / mm / pct).
   const money = (v: number | undefined): ReactNode => (has(v) ? fmtCurrency(v) : '—');
@@ -601,12 +618,22 @@ export default function InvestmentTab() {
                 state: overridden('hold_years') ? 'assumption' : 'assumption',
                 overridden: overridden('hold_years'),
                 value: (
-                  <AssumptionField value={holdYears} editable={liveMode} format={(v) => `${v} years`}
-                    toDraft={(v) => String(v)} suffix="yrs"
-                    parse={(s) => { const n = parseInt(s, 10); return Number.isFinite(n) && n > 0 && n <= 20 ? n : null; }}
-                    unit="years" onSave={(v, note) => onSaveAssumption('hold_years', v, note)}
-                    noteKey="hold_years" testId="hold-years" width="w-16"
-                    color={valueColor('input', false, overridden('hold_years'))} />
+                  <span style={{ display: 'inline-flex', alignItems: 'center', gap: 8 }}>
+                    {holdYearsNote && (
+                      <span
+                        data-testid="hold-years-note"
+                        style={{ fontSize: 10.5, color: palette.textMuted, whiteSpace: 'nowrap' }}
+                      >
+                        {holdYearsNote}
+                      </span>
+                    )}
+                    <AssumptionField value={holdYears} editable={liveMode} format={(v) => `${v} years`}
+                      toDraft={(v) => String(v)} suffix="yrs"
+                      parse={(s) => { const n = parseInt(s, 10); return Number.isFinite(n) && n > 0 && n <= 20 ? n : null; }}
+                      unit="years" onSave={(v, note) => onSaveAssumption('hold_years', v, note)}
+                      noteKey="hold_years" testId="hold-years" width="w-16"
+                      color={valueColor('input', false, overridden('hold_years'))} />
+                  </span>
                 ),
               },
               { id: 'exitDate', label: 'Exit Date', kind: 'calc', state: 'calculated', value: timeline?.exit_date ? fmtISODate(timeline.exit_date) : '—' },
