@@ -276,7 +276,12 @@ include:
            ``ttm_performance.compset.<n>.keys``,
            ``ttm_performance.compset.<n>.occupancy_pct``,
            ``ttm_performance.compset.<n>.adr_usd``,
-           ``ttm_performance.compset.<n>.revpar_usd``.
+           ``ttm_performance.compset.<n>.revpar_usd``,
+           ``ttm_performance.compset.<n>.status`` — emit ``closed`` ONLY
+             when the report itself marks the hotel closed (STR prints
+             closed competitors as "Closed - <name>" in the roster,
+             usually with 0 rooms). Never infer closure from a 0-room
+             row; omit the field when the report says nothing.
        * Penetration indices (subject vs comp set; 1.00 = parity):
            ``ttm_performance.indices.rgi_revpar_index``,
            ``ttm_performance.indices.ari_adr_index``,
@@ -427,6 +432,49 @@ include:
            ``pnl_benchmark.noi_par``,
            ``pnl_benchmark.rooms_revenue_por``,
            ``pnl_benchmark.fb_revenue_por``.
+   * **MARKET_STUDY (CoStar submarket / market report, feasibility or
+     third-party market study).** Carries the submarket's existing room
+     inventory, the supply pipeline (under construction / final planning
+     / planned), and a supply-and-demand trend table by year with YoY
+     changes. The Market tab reads these EXACT paths for Demand Growth
+     and Supply Growth, so use them (percentages as 0..1 decimals):
+       * Header:
+           ``market_study.market``, ``market_study.submarket``,
+           ``market_study.report_date`` — ISO date of the report,
+           ``market_study.period_label`` — the trend-table period as
+             printed (e.g. "12 Mo Ending Jun 2026").
+       * Inventory + pipeline rollups (rooms, ``unit`` ``rooms``):
+           ``market_study.supply.existing_rooms`` — the submarket's
+             current room inventory,
+           ``market_study.supply.under_construction_rooms``,
+           ``market_study.supply.final_planning_rooms``,
+           ``market_study.supply.planned_rooms`` — proposed / early
+             planning / unentitled,
+           ``market_study.supply.delivered_12mo_rooms``.
+       * Pipeline projects (one row per listed project, ``<n>``
+         1-indexed in report order):
+           ``under_construction.<n>.name``,
+           ``under_construction.<n>.rooms``,
+           ``under_construction.<n>.status`` — one of
+             ``under_construction`` / ``final_planning`` / ``planned``,
+           ``under_construction.<n>.expected_open`` — ISO date or
+             quarter as printed,
+           ``under_construction.total_rooms`` — the report's
+             under-construction total.
+       * Supply & demand trend (``<YYYY>`` calendar year; the trailing
+         twelve months as ``ttm``):
+           ``market_study.trend.<YYYY>.supply_rooms``,
+           ``market_study.trend.<YYYY>.supply_change_pct``,
+           ``market_study.trend.<YYYY>.demand_room_nights``,
+           ``market_study.trend.<YYYY>.demand_change_pct``,
+           ``market_study.trend.<YYYY>.occupancy_pct``,
+           ``market_study.trend.<YYYY>.adr_usd``,
+           ``market_study.trend.<YYYY>.revpar_usd``,
+           ``market_study.trend.<YYYY>.revpar_change_pct``,
+           ``market_study.trend.<YYYY>.period`` — ``actual`` or
+             ``forecast`` (forecast years are shown only as forecast),
+           ``market_study.trend.ttm.demand_change_pct``,
+           ``market_study.trend.ttm.supply_change_pct``.
    * **PARTNERSHIP (operating agreement / JV / equity waterfall).**
      A prose legal document — an LLC operating agreement, a joint-
      venture agreement, or an equity term sheet — that lays out the

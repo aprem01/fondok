@@ -33,10 +33,260 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..database import get_session
+from ..services.market_comp_set import (
+    CompSetDerivation,
+    TtmBlend,
+    build_str_inputs,
+    derive_comp_set_from_inputs,
+    derive_ttm_blend,
+)
+from ..services.market_fields import FieldRef, parse_extraction_records
+from ..services.market_study_reader import (
+    GrowthReading,
+    SupplyReading,
+    read_demand_growth,
+    read_supply_growth,
+)
 from .deals import _assert_deal_belongs_to_tenant, _coerce_overrides, get_tenant_id
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
+
+
+# ─────────────────────────── Market tab blocks (FON-61) ───────────────────────────
+#
+# E-009 / E-007 / E-008 — the comp-set roster, the TTM comp-set blend's
+# definition, and demand / supply growth from MARKET_STUDY extractions. All
+# additive and nullable: an older web bundle ignores them, and any read
+# failure leaves the block None rather than failing the overview.
+
+
+class FieldRefOut(BaseModel):
+    """One extraction row a Market figure was read from."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    field_name: str
+    value: float | int | str | bool | None = None
+    doc_name: str | None = None
+    doc_id: str | None = None
+    page: int | None = None
+
+    @classmethod
+    def of(cls, ref: FieldRef) -> FieldRefOut:
+        v = ref.value
+        if not isinstance(v, (int, float, str, bool)) and v is not None:
+            v = str(v)
+        return cls(field_name=ref.field_name, value=v, doc_name=ref.doc_name, doc_id=ref.doc_id, page=ref.page)
+
+
+class CompSetHotelOut(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    index: int
+    name: str
+    name_as_reported: str
+    keys: int | None = None
+    status: Literal["active", "closed"]
+    status_source: Literal["extracted_status_field", "str_closed_label"] | None = None
+
+
+class MarketCompSetBlock(BaseModel):
+    """ONE derivation feeds the hotel count and the keys (active hotels)."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    hotels: list[CompSetHotelOut] = Field(default_factory=list)
+    active_count: int | None = None
+    active_keys: int | None = None
+    closed_count: int = 0
+    closed_names: list[str] = Field(default_factory=list)
+    count_basis: Literal["active_roster", "reported_rollup", "none"] = "none"
+    keys_basis: Literal["active_roster", "reported_rollup", "none"] = "none"
+    status_available: bool = False
+    reported_comp_set_size: int | None = None
+    reported_total_keys: int | None = None
+    source_doc_name: str | None = None
+    source_doc_id: str | None = None
+    source_page: int | None = None
+    note: str = ""
+
+    @classmethod
+    def of(cls, d: CompSetDerivation) -> MarketCompSetBlock:
+        return cls(
+            hotels=[
+                CompSetHotelOut(
+                    index=h.index, name=h.name, name_as_reported=h.name_as_reported,
+                    keys=h.keys, status=h.status, status_source=h.status_source,
+                )
+                for h in d.hotels
+            ],
+            active_count=d.active_count,
+            active_keys=d.active_keys,
+            closed_count=d.closed_count,
+            closed_names=list(d.closed_names),
+            count_basis=d.count_basis,
+            keys_basis=d.keys_basis,
+            status_available=d.status_available,
+            reported_comp_set_size=d.reported_comp_set_size,
+            reported_total_keys=d.reported_total_keys,
+            source_doc_name=d.source_doc_name,
+            source_doc_id=d.source_doc_id,
+            source_page=d.source_page,
+            note=d.note,
+        )
+
+
+class MarketTtmBlendBlock(BaseModel):
+    """The "TTM · comp-set blend" with the rows and period that define it."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    occupancy_pct: float | None = None
+    adr_usd: float | None = None
+    revpar_usd: float | None = None
+    subject_occupancy_pct: float | None = None
+    subject_adr_usd: float | None = None
+    subject_revpar_usd: float | None = None
+    mpi: float | None = None
+    ari: float | None = None
+    rgi: float | None = None
+    period_start: str | None = None
+    period_end: str | None = None
+    months: int | None = None
+    period_basis: Literal["subject_monthly_series", "report_year", "none"] = "none"
+    report_year: int | None = None
+    inputs: list[FieldRefOut] = Field(default_factory=list)
+    documents: list[str] = Field(default_factory=list)
+    method: str = ""
+
+    @classmethod
+    def of(cls, b: TtmBlend) -> MarketTtmBlendBlock:
+        return cls(
+            occupancy_pct=b.occupancy_pct, adr_usd=b.adr_usd, revpar_usd=b.revpar_usd,
+            subject_occupancy_pct=b.subject_occupancy_pct, subject_adr_usd=b.subject_adr_usd,
+            subject_revpar_usd=b.subject_revpar_usd, mpi=b.mpi, ari=b.ari, rgi=b.rgi,
+            period_start=b.period_start, period_end=b.period_end, months=b.months,
+            period_basis=b.period_basis, report_year=b.report_year,
+            inputs=[FieldRefOut.of(r) for r in b.inputs], documents=list(b.documents),
+            method=b.method,
+        )
+
+
+class MarketGrowthBlock(BaseModel):
+    """Demand growth — a reported figure or two years of the demand series."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    value_pct: float | None = None
+    period_label: str | None = None
+    basis: Literal["reported", "derived_from_series"] | None = None
+    inputs: list[FieldRefOut] = Field(default_factory=list)
+    reason: str | None = None
+    detail: str | None = None
+
+    @classmethod
+    def of(cls, g: GrowthReading) -> MarketGrowthBlock:
+        return cls(
+            value_pct=g.value_pct, period_label=g.period_label, basis=g.basis,
+            inputs=[FieldRefOut.of(r) for r in g.inputs], reason=g.reason, detail=g.detail,
+        )
+
+
+class MarketSupplyGrowthBlock(BaseModel):
+    """Pipeline rooms over existing inventory (under construction / final planning)."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    existing_rooms: int | None = None
+    existing_period_label: str | None = None
+    under_construction_rooms: int | None = None
+    final_planning_rooms: int | None = None
+    planned_rooms: int | None = None
+    under_construction_pct: float | None = None
+    final_planning_pct: float | None = None
+    reported_supply_change_pct: float | None = None
+    reported_supply_change_period: str | None = None
+    inputs: list[FieldRefOut] = Field(default_factory=list)
+    reason: str | None = None
+    detail: str | None = None
+
+    @classmethod
+    def of(cls, s: SupplyReading) -> MarketSupplyGrowthBlock:
+        return cls(
+            existing_rooms=s.existing_rooms, existing_period_label=s.existing_period_label,
+            under_construction_rooms=s.under_construction_rooms,
+            final_planning_rooms=s.final_planning_rooms, planned_rooms=s.planned_rooms,
+            under_construction_pct=s.under_construction_pct, final_planning_pct=s.final_planning_pct,
+            reported_supply_change_pct=s.reported_supply_change_pct,
+            reported_supply_change_period=s.reported_supply_change_period,
+            inputs=[FieldRefOut.of(r) for r in s.inputs], reason=s.reason, detail=s.detail,
+        )
+
+
+_EXTRACTION_ROWS_SQL = """
+    SELECT er.id AS extraction_id,
+           er.fields,
+           er.document_id,
+           d.filename,
+           d.doc_type
+      FROM extraction_results er
+      JOIN documents d ON d.id = er.document_id
+     WHERE er.deal_id = :deal
+       AND er.tenant_id = :tenant
+       AND d.tenant_id = :tenant
+       AND UPPER(COALESCE(d.doc_type, '')) IN ({types})
+     ORDER BY er.created_at DESC, er.id DESC
+"""
+
+
+async def _extraction_records(
+    session: AsyncSession, *, deal_id: UUID, tenant_id: UUID, doc_types: tuple[str, ...]
+) -> list[dict[str, Any]]:
+    """Extraction rows (newest first) for the given doc types, tenant-scoped."""
+    types_sql = ", ".join(f"'{t}'" for t in doc_types)  # fixed literals, never user input
+    rows = await session.execute(
+        text(_EXTRACTION_ROWS_SQL.format(types=types_sql)),
+        {"deal": str(deal_id), "tenant": str(tenant_id)},
+    )
+    return [dict(r._mapping) for r in rows.fetchall()]
+
+
+async def _market_blocks(
+    session: AsyncSession, *, deal_id: UUID, tenant_id: UUID
+) -> dict[str, Any]:
+    """The four Market-tab blocks; each is None on any failure (never a 500)."""
+    out: dict[str, Any] = {
+        "comp_set": None, "ttm_blend": None, "demand_growth": None, "supply_growth": None,
+    }
+    try:
+        str_rows = parse_extraction_records(
+            await _extraction_records(
+                session, deal_id=deal_id, tenant_id=tenant_id, doc_types=("STR", "STR_TREND")
+            )
+        )
+        if str_rows:
+            inputs = build_str_inputs(str_rows)
+            out["comp_set"] = MarketCompSetBlock.of(derive_comp_set_from_inputs(inputs))
+            blend = derive_ttm_blend(inputs)
+            out["ttm_blend"] = MarketTtmBlendBlock.of(blend) if blend else None
+    except Exception:  # noqa: BLE001 — overview must never fail on the STR read
+        logger.exception("market_overview: comp-set / TTM blend read failed")
+    try:
+        records = await _extraction_records(
+            session, deal_id=deal_id, tenant_id=tenant_id, doc_types=("MARKET_STUDY",)
+        )
+        ms_rows = parse_extraction_records(records)
+        has_docs = bool(records)
+        out["demand_growth"] = MarketGrowthBlock.of(
+            read_demand_growth(ms_rows, has_documents=has_docs)
+        )
+        out["supply_growth"] = MarketSupplyGrowthBlock.of(
+            read_supply_growth(ms_rows, has_documents=has_docs)
+        )
+    except Exception:  # noqa: BLE001
+        logger.exception("market_overview: MARKET_STUDY growth read failed")
+    return out
 
 
 class PropertyNameOriginal(BaseModel):
@@ -98,6 +348,16 @@ class MarketOverview(BaseModel):
     occupancy_index: float | None = None
     adr_index: float | None = None
     revpar_index: float | None = None
+    # FON-61 Market tab blocks (E-009 / E-007 / E-008). Additive + nullable.
+    # ``comp_set``: the ONE derivation behind "N hotels / N keys" (active
+    # hotels of the STR roster; closed ones listed and excluded).
+    # ``ttm_blend``: the rows + period that define "TTM · comp-set blend".
+    # ``demand_growth`` / ``supply_growth``: read off MARKET_STUDY
+    # extractions, with provenance, or a reason code when absent.
+    comp_set: MarketCompSetBlock | None = None
+    ttm_blend: MarketTtmBlendBlock | None = None
+    demand_growth: MarketGrowthBlock | None = None
+    supply_growth: MarketSupplyGrowthBlock | None = None
 
 
 class Comp(BaseModel):
@@ -278,6 +538,7 @@ async def market_overview(
             trailing_12_occupancy, trailing_12_adr = trailing
     except Exception:  # noqa: BLE001 — overview must never fail on the STR read
         logger.exception("market_overview: trailing-12 STR read failed")
+    blocks = await _market_blocks(session, deal_id=deal_id, tenant_id=tenant_id)
     # FON-59 — Property Name resolution: analyst override > extracted (OM
     # first) > null. The deal row's ``name`` (the confidential project name)
     # is deliberately NOT a fallback here.
@@ -312,6 +573,10 @@ async def market_overview(
         property_type=meta.get("property_type"),
         trailing_12_occupancy=trailing_12_occupancy,
         trailing_12_adr=trailing_12_adr,
+        comp_set=blocks["comp_set"],
+        ttm_blend=blocks["ttm_blend"],
+        demand_growth=blocks["demand_growth"],
+        supply_growth=blocks["supply_growth"],
     )
 
 

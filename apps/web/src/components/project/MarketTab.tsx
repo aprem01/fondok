@@ -28,12 +28,17 @@ import {
   type ValueState,
   type EngineName,
   type DealProvenanceResponse,
+  type MarketCompSetBlock,
+  type MarketCompSetHotel,
+  type MarketTtmBlendBlock,
+  type MarketGrowthBlock,
+  type MarketSupplyGrowthBlock,
 } from '@/lib/api';
 import { useDeal } from '@/lib/hooks/useDeal';
 import { useEngineRun } from '@/lib/hooks/useEngineRun';
 import { useEngineOutputs, getEngineField } from '@/lib/hooks/useEngineOutputs';
 import { useSource, useProvenanceState } from '@/lib/hooks/useDealProvenance';
-import { useRefusal } from '@/components/help/Refused';
+import { Refused, asReasonCode, useRefusal } from '@/components/help/Refused';
 import { useToast } from '@/components/ui/Toast';
 import {
   STR_MARKET_OVERRIDE_NOTE,
@@ -91,6 +96,14 @@ interface WorkerMarketOverview {
   occupancy_index: number | null;
   adr_index: number | null;
   revpar_index: number | null;
+  // FON-61 (E-009 / E-007 / E-008) — the worker's single comp-set derivation,
+  // the definition of the TTM comp-set blend, and demand / supply growth read
+  // off the MARKET_STUDY extractions. Absent on an older worker → the tab
+  // falls back to its `/market-data` roster read (count = roster rows).
+  comp_set?: MarketCompSetBlock | null;
+  ttm_blend?: MarketTtmBlendBlock | null;
+  demand_growth?: MarketGrowthBlock | null;
+  supply_growth?: MarketSupplyGrowthBlock | null;
 }
 
 // FON-59 #4 / FON-61 §3 — the sub-tab *id* is the URL slug
@@ -288,26 +301,148 @@ function SeasonalityBars({ data }: { data: number[] }) {
   );
 }
 
+// ─── FON-61 (E-007) — what "TTM · comp-set blend" means, from the inputs ────
+const MONTHS_SHORT = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+/** `2025-07` → `Jul 2025`; anything else is returned as-is. */
+export function monthLabel(ym: string): string {
+  const m = /^(\d{4})-(\d{2})$/.exec(ym);
+  if (!m) return ym;
+  const idx = Number(m[2]) - 1;
+  return idx >= 0 && idx < 12 ? `${MONTHS_SHORT[idx]} ${m[1]}` : ym;
+}
+
+/**
+ * The one-line methodology for the Market Occupancy / ADR / RevPAR tiles,
+ * composed ONLY from the worker's `ttm_blend` + `comp_set` blocks (the rows,
+ * the period and the hotels actually used) — never from prose defaults. Null
+ * when the worker has not supplied the blend (older worker / no STR), so the
+ * card shows nothing rather than a generic claim.
+ */
+export function ttmBlendMethodology(
+  blend: MarketTtmBlendBlock | null | undefined,
+  compSet: MarketCompSetBlock | null | undefined,
+): string | null {
+  if (!blend || (blend.occupancy_pct == null && blend.adr_usd == null && blend.revpar_usd == null)) {
+    return null;
+  }
+  const formula =
+    'Comp-set blend = subject TTM ÷ STR penetration index (Occupancy ÷ MPI, ADR ÷ ARI, RevPAR ÷ RGI)';
+  const docs = blend.documents.length ? blend.documents.join(', ') : 'STR report';
+  const period =
+    blend.period_basis === 'subject_monthly_series' && blend.period_start && blend.period_end
+      ? `${monthLabel(blend.period_start)} – ${monthLabel(blend.period_end)}${
+          blend.months ? ` (${blend.months} months, subject monthly series)` : ''
+        }`
+      : blend.period_basis === 'report_year' && blend.report_year
+        ? `trailing twelve months of the ${blend.report_year} report`
+        : 'trailing twelve months as reported';
+  let hotels = 'the comp set as reported';
+  if (compSet && compSet.active_count != null) {
+    const active = compSet.hotels.filter((h) => h.status === 'active').map((h) => h.name);
+    const names = active.length ? `: ${active.join(', ')}` : '';
+    const keys = compSet.active_keys != null ? `; ${compSet.active_keys.toLocaleString('en-US')} keys` : '';
+    const closed = compSet.closed_count
+      ? `; ${compSet.closed_names.join(', ')} closed — excluded`
+      : '';
+    hotels = `${compSet.active_count} active ${plural(compSet.active_count, 'hotel', 'hotels')}${names}${keys}${closed}`;
+  }
+  return (
+    `${formula}. Source: ${docs}; period ${period}; comp set: ${hotels}. ` +
+    "STR's comp-set figures are room-night totals across those hotels (larger hotels weigh more); " +
+    'Fondok applies no weighting of its own.'
+  );
+}
+
+// ─── FON-61 (E-008) — Demand / Supply Growth tiles from MARKET_STUDY ────────
+const signedPct1 = (v: number): string => `${v > 0 ? '+' : v < 0 ? '−' : ''}${Math.abs(v).toFixed(1)}%`;
+
+type GrowthTile = { value: ReactNode; sub: string; color: string; awaiting: boolean };
+
+/** The dash + reason for a growth tile the worker could not populate. */
+function refusedTile(reason: string | null | undefined, detail: string | null | undefined): GrowthTile {
+  const code = asReasonCode(reason);
+  const sub =
+    code === 'no_source'
+      ? `not in the uploaded reports (${code})`
+      : code
+        ? `awaiting CoStar submarket report (${code})`
+        : 'awaiting CoStar submarket report';
+  return {
+    value: code ? <Refused reason={code} detail={detail ?? undefined}>—</Refused> : '—',
+    sub,
+    color: MUTED,
+    awaiting: true,
+  };
+}
+
+export function demandGrowthTile(block: MarketGrowthBlock | null | undefined): GrowthTile {
+  if (!block) return refusedTile(null, null);
+  if (block.value_pct == null) return refusedTile(block.reason, block.detail);
+  const doc = block.inputs[0]?.doc_name ?? 'market study';
+  const basis = block.basis === 'derived_from_series' ? ' · derived from the demand series' : '';
+  return {
+    value: signedPct1(block.value_pct),
+    sub: `${block.period_label ?? 'as reported'} · ${doc}${basis}`,
+    color: block.basis === 'derived_from_series' ? GRAY : GREEN,
+    awaiting: false,
+  };
+}
+
+export function supplyGrowthTile(block: MarketSupplyGrowthBlock | null | undefined): GrowthTile {
+  if (!block) return refusedTile(null, null);
+  if (block.under_construction_pct == null) return refusedTile(block.reason, block.detail);
+  const uc = block.under_construction_rooms?.toLocaleString('en-US') ?? '—';
+  const existing = block.existing_rooms?.toLocaleString('en-US') ?? '—';
+  const fp =
+    block.final_planning_pct != null ? ` · final planning ${signedPct1(block.final_planning_pct)}` : '';
+  return {
+    value: signedPct1(block.under_construction_pct),
+    sub: `${uc} rooms under construction ÷ ${existing} existing${fp}`,
+    color: GRAY,
+    awaiting: false,
+  };
+}
+
 // ─── §1 Submarket Snapshot ──────────────────────────────────────────────────
-function SubmarketSnapshot({
+export function SubmarketSnapshot({
   derivedComp,
-  compSetSize,
+  compSet,
+  rosterCount,
   compKeyCount,
+  blend,
+  demand,
+  supply,
   submarketLabel,
 }: {
   derivedComp: DerivedComp;
-  compSetSize: number | null;
+  /** FON-61 (E-009) — the worker's ONE comp-set derivation (count AND keys
+   *  over the active hotels). Null on an older worker. */
+  compSet: MarketCompSetBlock | null;
+  /** Fallback hotel count when the worker block is absent: the number of
+   *  roster rows the keys are summed over — never the report's rollup, which
+   *  counts closed hotels the keys exclude. */
+  rosterCount: number | null;
   compKeyCount: number | null;
+  blend: MarketTtmBlendBlock | null;
+  demand: MarketGrowthBlock | null;
+  supply: MarketSupplyGrowthBlock | null;
   submarketLabel: string | null;
 }) {
+  const hotelCount = compSet?.active_count ?? rosterCount;
+  const keyCount = compSet?.active_keys ?? compKeyCount;
   const inventory =
-    compSetSize && compKeyCount
-      ? `${compSetSize} hotels`
-      : compKeyCount
-        ? `${compKeyCount.toLocaleString()} keys`
+    hotelCount && keyCount
+      ? `${hotelCount} ${plural(hotelCount, 'hotel', 'hotels')}`
+      : keyCount
+        ? `${keyCount.toLocaleString()} keys`
         : '—';
-  const invSub = compKeyCount ? `${compKeyCount.toLocaleString()} keys in comp set` : 'competitive set';
-  const tiles: { label: string; value: string; sub: string; color: string; awaiting?: boolean }[] = [
+  const closedNote = compSet?.closed_count
+    ? ` · ${compSet.closed_count} closed excluded`
+    : '';
+  const invSub = keyCount ? `${keyCount.toLocaleString()} keys in comp set${closedNote}` : 'competitive set';
+  const demandTile = demandGrowthTile(demand);
+  const supplyTile = supplyGrowthTile(supply);
+  const tiles: { label: string; value: ReactNode; sub: string; color: string; awaiting?: boolean }[] = [
     { label: 'Inventory', value: inventory, sub: invSub, color: GREEN },
     {
       label: 'Market Occupancy',
@@ -330,12 +465,13 @@ function SubmarketSnapshot({
       color: derivedComp?.revpar != null ? GRAY : MUTED,
       awaiting: derivedComp?.revpar == null,
     },
-    { label: 'Demand Growth', value: '—', sub: 'awaiting CoStar submarket report', color: MUTED, awaiting: true },
-    { label: 'Supply Growth', value: '—', sub: 'awaiting CoStar submarket report', color: MUTED, awaiting: true },
+    { label: 'Demand Growth', ...demandTile },
+    { label: 'Supply Growth', ...supplyTile },
   ];
   const context = submarketLabel
     ? `${submarketLabel} · competitive-set aggregate`
     : "Subject's local competitive set";
+  const methodology = ttmBlendMethodology(blend, compSet);
   return (
     <SectionCard title="Submarket Snapshot" note={context}>
       <div
@@ -357,6 +493,14 @@ function SubmarketSnapshot({
           />
         ))}
       </div>
+      {methodology && (
+        <div
+          data-testid="ttm-blend-methodology"
+          style={{ fontSize: 11, color: palette.textMuted, marginTop: 10, lineHeight: 1.5 }}
+        >
+          {methodology}
+        </div>
+      )}
     </SectionCard>
   );
 }
@@ -424,10 +568,138 @@ function MonthlyTtmCard({ seasonality }: { seasonality: number[] | null }) {
   );
 }
 
+// ─── FON-61 (E-009) — the comp-set roster, closed hotels marked + excluded ──
+/**
+ * Renders the worker's roster (`comp_set.hotels`) when present — each hotel
+ * with its status; a closed one carries a "closed · excluded" chip and its
+ * reported keys struck through, because the count and the keys above are
+ * both over the ACTIVE hotels. "Closed" is never inferred here: it is the
+ * worker's explicit marker (extracted status field or STR's own "Closed - "
+ * roster label), and the worker's note says which. On an older worker
+ * (`hotels` null) the `/market-data` rows render as before, all active.
+ * Per-property Occ / ADR / RevPAR still come from the `/market-data` rows
+ * (STR anonymizes them, so they are usually "—").
+ */
+export function CompSetRoster({
+  hotels,
+  perf,
+  note,
+}: {
+  hotels: MarketCompSetHotel[] | null;
+  perf: StrCompRow[];
+  note: string | null;
+}) {
+  type Row = {
+    key: string;
+    name: string;
+    keys: number | null;
+    closed: boolean;
+    perf: StrCompRow | undefined;
+  };
+  const rows: Row[] = hotels
+    ? hotels.map((h) => ({
+        key: `${h.index}-${h.name_as_reported}`,
+        name: h.name,
+        keys: h.keys ?? null,
+        closed: h.status === 'closed',
+        perf: perf.find((p) => p.name === h.name_as_reported) ?? perf[h.index - 1],
+      }))
+    : perf.map((p, i) => ({ key: `${p.name}-${i}`, name: p.name, keys: p.keys, closed: false, perf: p }));
+  if (rows.length === 0) return null;
+  const anonymized = rows.every(
+    (r) => !r.perf || (r.perf.occupancy_pct == null && r.perf.adr_usd == null && r.perf.revpar_usd == null),
+  );
+  const compGrid = 'minmax(200px,2fr) 68px repeat(3,minmax(72px,1fr))';
+  const chip: CSSProperties = {
+    marginLeft: 8,
+    fontSize: 9.5,
+    fontWeight: 700,
+    letterSpacing: '.05em',
+    textTransform: 'uppercase',
+    color: AMBER,
+    border: `1px solid ${AMBER}`,
+    borderRadius: 4,
+    padding: '1px 5px',
+    verticalAlign: 'middle',
+  };
+  return (
+    <div data-testid="comp-set-roster">
+      <div
+        style={{
+          display: 'grid',
+          gridTemplateColumns: compGrid,
+          fontSize: 10,
+          fontWeight: 700,
+          letterSpacing: '.05em',
+          color: palette.textFaint,
+          textTransform: 'uppercase',
+          paddingBottom: 6,
+          borderBottom: `1px solid ${palette.border}`,
+        }}
+      >
+        <span>Competitive set hotel</span>
+        <span style={{ textAlign: 'right' }}>Keys</span>
+        <span style={{ textAlign: 'right' }}>Occ</span>
+        <span style={{ textAlign: 'right' }}>ADR</span>
+        <span style={{ textAlign: 'right' }}>RevPAR</span>
+      </div>
+      {rows.map((r) => (
+        <div
+          key={r.key}
+          data-testid={r.closed ? 'comp-set-hotel-closed' : 'comp-set-hotel'}
+          style={{
+            display: 'grid',
+            gridTemplateColumns: compGrid,
+            fontSize: 12.5,
+            padding: '6px 0',
+            borderBottom: `1px solid ${palette.hairlineRow}`,
+            alignItems: 'center',
+            opacity: r.closed ? 0.65 : 1,
+          }}
+        >
+          <span style={{ color: palette.ink, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+            {r.name}
+            {r.closed && (
+              <span data-testid="comp-set-closed-chip" style={chip} title="Closed per the STR report — excluded from the comp-set count and keys">
+                closed · excluded
+              </span>
+            )}
+          </span>
+          <span style={{ textAlign: 'right', color: '#3a3f47', fontVariantNumeric: 'tabular-nums' }}>
+            {r.keys == null ? '—' : r.closed ? <s title="Excluded from the comp-set keys">{r.keys}</s> : r.keys}
+          </span>
+          <span style={{ textAlign: 'right', color: r.perf?.occupancy_pct != null ? '#3a3f47' : palette.textFaint }}>
+            {r.perf?.occupancy_pct != null ? pct1(occPct(r.perf.occupancy_pct)) : '—'}
+          </span>
+          <span style={{ textAlign: 'right', color: r.perf?.adr_usd != null ? '#3a3f47' : palette.textFaint }}>
+            {r.perf?.adr_usd != null ? money0(r.perf.adr_usd) : '—'}
+          </span>
+          <span style={{ textAlign: 'right', color: r.perf?.revpar_usd != null ? '#3a3f47' : palette.textFaint }}>
+            {r.perf?.revpar_usd != null ? money0(r.perf.revpar_usd) : '—'}
+          </span>
+        </div>
+      ))}
+      {note && (
+        <div data-testid="comp-set-note" style={{ fontSize: 11, color: palette.textMuted, marginTop: 8, lineHeight: 1.45 }}>
+          {note}
+        </div>
+      )}
+      {anonymized && (
+        <div style={{ fontSize: 11, color: palette.textMuted, marginTop: 8, lineHeight: 1.45 }}>
+          STR does not publish per-property Occupancy, ADR or RevPAR for the comp set — only the blended
+          figures above. Individual rows show key counts only.
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ─── §4 Subject vs. Comp Set ────────────────────────────────────────────────
 function SubjectVsCompSet({
   strTrend,
   derivedComp,
+  compSet,
+  activeCount,
   compKeyCount,
   strBasis,
   strBasisSource,
@@ -442,6 +714,10 @@ function SubjectVsCompSet({
 }: {
   strTrend: StrTrend;
   derivedComp: DerivedComp;
+  /** FON-61 (E-009) — the worker's comp-set block (roster with statuses). */
+  compSet: MarketCompSetBlock | null;
+  /** Hotels counted in the comp set — the same set the keys are summed over. */
+  activeCount: number | null;
   compKeyCount: number | null;
   /** Tag-honest card state — see ``StrBasis``. */
   strBasis: StrBasis;
@@ -538,13 +814,11 @@ function SubjectVsCompSet({
   const basisIsCompSet = strBasisSource === 'str_comp_set';
   const basisName = strBasisSource ? sourceLabel(strBasisSource) : null;
 
+  // FON-61 (E-009) — the caption counts the SAME hotels the keys are summed
+  // over (active roster), never the report's rollup.
   const contextNote = `Trailing 12 months · STR${
-    strTrend.comp_set_size ? ` · ${strTrend.comp_set_size}-property comp set` : ''
+    activeCount ? ` · ${activeCount}-property comp set` : ''
   }${compKeyCount ? ` · ${compKeyCount.toLocaleString()} keys` : ''}`;
-
-  const compset = strTrend.compset ?? [];
-  const anonymized = compset.length > 0 && compset.every((c) => c.occupancy_pct == null && c.adr_usd == null && c.revpar_usd == null);
-  const compGrid = 'minmax(200px,2fr) 68px repeat(3,minmax(72px,1fr))';
 
   const secBtn: CSSProperties = {
     background: '#fff',
@@ -618,61 +892,9 @@ function SubjectVsCompSet({
           </div>
         </div>
 
-        {/* Comp-set roster (per-property perf anonymized by STR) */}
-        {compset.length > 0 && (
-          <div>
-            <div
-              style={{
-                display: 'grid',
-                gridTemplateColumns: compGrid,
-                fontSize: 10,
-                fontWeight: 700,
-                letterSpacing: '.05em',
-                color: palette.textFaint,
-                textTransform: 'uppercase',
-                paddingBottom: 6,
-                borderBottom: `1px solid ${palette.border}`,
-              }}
-            >
-              <span>Competitive set hotel</span>
-              <span style={{ textAlign: 'right' }}>Keys</span>
-              <span style={{ textAlign: 'right' }}>Occ</span>
-              <span style={{ textAlign: 'right' }}>ADR</span>
-              <span style={{ textAlign: 'right' }}>RevPAR</span>
-            </div>
-            {compset.map((h, i) => (
-              <div
-                key={`${h.name}-${i}`}
-                style={{
-                  display: 'grid',
-                  gridTemplateColumns: compGrid,
-                  fontSize: 12.5,
-                  padding: '6px 0',
-                  borderBottom: `1px solid ${palette.hairlineRow}`,
-                  alignItems: 'center',
-                }}
-              >
-                <span style={{ color: palette.ink, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{h.name}</span>
-                <span style={{ textAlign: 'right', color: '#3a3f47', fontVariantNumeric: 'tabular-nums' }}>{h.keys ?? '—'}</span>
-                <span style={{ textAlign: 'right', color: h.occupancy_pct != null ? '#3a3f47' : palette.textFaint }}>
-                  {h.occupancy_pct != null ? pct1(occPct(h.occupancy_pct)) : '—'}
-                </span>
-                <span style={{ textAlign: 'right', color: h.adr_usd != null ? '#3a3f47' : palette.textFaint }}>
-                  {h.adr_usd != null ? money0(h.adr_usd) : '—'}
-                </span>
-                <span style={{ textAlign: 'right', color: h.revpar_usd != null ? '#3a3f47' : palette.textFaint }}>
-                  {h.revpar_usd != null ? money0(h.revpar_usd) : '—'}
-                </span>
-              </div>
-            ))}
-            {anonymized && (
-              <div style={{ fontSize: 11, color: palette.textMuted, marginTop: 8, lineHeight: 1.45 }}>
-                STR does not publish per-property Occupancy, ADR or RevPAR for the comp set — only the blended
-                figures above. Individual rows show key counts only.
-              </div>
-            )}
-          </div>
-        )}
+        {/* Comp-set roster (per-property perf anonymized by STR); closed
+            hotels marked and excluded (FON-61 E-009). */}
+        <CompSetRoster hotels={compSet?.hotels ?? null} perf={strTrend.compset ?? []} note={compSet?.note ?? null} />
 
         {/* STR-rate model input toggle — the card state is the WORKER's
             source tag (see ``StrBasis``), never the flag alone. */}
@@ -880,8 +1102,37 @@ function IndexSummary({ strTrend, onOpenIndex, state }: { strTrend: StrTrend; on
 }
 
 // ─── §6 Supply Pipeline ─────────────────────────────────────────────────────
-function SupplyPipeline({ compKeyCount }: { compKeyCount: number | null }) {
-  const rows: { label: string; value: string; color: string; weight: number; awaiting?: boolean }[] = [
+// FON-61 (E-008) — the submarket rows read the worker's `supply_growth` block
+// (MARKET_STUDY extraction): inventory, under construction and final planning
+// (each as rooms and as a share of inventory), planned, and the report's own
+// supply change. A row the reports do not carry shows the dash with the
+// worker's reason; "Expected deliveries" is not extracted and stays awaiting.
+export function SupplyPipeline({
+  compKeyCount,
+  supply,
+}: {
+  compKeyCount: number | null;
+  supply: MarketSupplyGrowthBlock | null;
+}) {
+  const reason = asReasonCode(supply?.reason);
+  const dash = (): ReactNode =>
+    reason ? <Refused reason={reason} detail={supply?.detail ?? undefined}>—</Refused> : '—';
+  const rooms = (n: number | null | undefined, pct?: number | null, suffix = ''): string | null =>
+    n == null ? null : `${n.toLocaleString('en-US')} rooms${pct != null ? ` (${signedPct1(pct)})` : ''}${suffix}`;
+  const row = (label: string, text: string | null, color: string = GREEN) => ({
+    label,
+    value: text ?? dash(),
+    color: text ? color : MUTED,
+    weight: 400,
+    awaiting: !text,
+  });
+  const reported =
+    supply?.reported_supply_change_pct != null
+      ? `${signedPct1(supply.reported_supply_change_pct)}${
+          supply.reported_supply_change_period ? ` · ${supply.reported_supply_change_period}` : ''
+        }`
+      : null;
+  const rows: { label: string; value: ReactNode; color: string; weight: number; awaiting?: boolean }[] = [
     {
       label: 'Existing comp set supply',
       value: compKeyCount != null ? `${compKeyCount.toLocaleString()} keys` : '—',
@@ -889,11 +1140,17 @@ function SupplyPipeline({ compKeyCount }: { compKeyCount: number | null }) {
       weight: 400,
       awaiting: compKeyCount == null,
     },
-    { label: 'Under construction', value: '—', color: MUTED, weight: 400, awaiting: true },
+    row(
+      'Submarket inventory',
+      rooms(supply?.existing_rooms, null, supply?.existing_period_label ? ` · ${supply.existing_period_label}` : ''),
+    ),
+    row('Under construction', rooms(supply?.under_construction_rooms, supply?.under_construction_pct), GRAY),
+    row('Final planning', rooms(supply?.final_planning_rooms, supply?.final_planning_pct), GRAY),
+    row('Planned / unentitled', rooms(supply?.planned_rooms)),
     { label: 'Expected deliveries', value: '—', color: MUTED, weight: 400, awaiting: true },
-    { label: 'Comp set growth', value: '—', color: MUTED, weight: 400, awaiting: true },
-    { label: 'Planned / unentitled', value: '—', color: MUTED, weight: 400, awaiting: true },
+    row('Submarket supply growth', reported),
   ];
+  const sourceDoc = supply?.inputs.find((i) => i.doc_name)?.doc_name ?? null;
   return (
     <SectionCard title="Supply Pipeline" note="CoStar Hospitality">
       <div style={{ marginTop: 10 }}>
@@ -916,6 +1173,13 @@ function SupplyPipeline({ compKeyCount }: { compKeyCount: number | null }) {
             <span style={{ color: r.color, fontWeight: r.weight, fontVariantNumeric: 'tabular-nums' }}>{r.value}</span>
           </div>
         ))}
+      </div>
+      <div style={{ fontSize: 11, color: palette.textMuted, marginTop: 8, lineHeight: 1.45 }}>
+        {sourceDoc
+          ? `Pipeline shares = rooms ÷ existing submarket inventory. Source: ${sourceDoc}.`
+          : supply?.detail
+            ? supply.detail
+            : 'Submarket inventory and pipeline populate from a CoStar submarket report (Market Study).'}
       </div>
     </SectionCard>
   );
@@ -1419,10 +1683,17 @@ export default function MarketTab({ projectId }: { projectId: number | string })
   const strTrend = marketData?.str_trend ?? null;
   const hasStr = !!(strTrend && (strTrend.subject_occupancy_pct != null || strTrend.subject_adr_usd != null));
   const derivedComp = deriveCompSet(strTrend);
-  // Comp-set room count = sum of the named roster's keys (the extracted
-  // total_keys rollup has proven unreliable). Shown consistently across the tab.
-  const compKeyCount =
+  // FON-61 (E-009) — ONE derivation for the hotel count AND the keys: the
+  // worker's `comp_set` block (active hotels of the STR roster; closed ones
+  // listed and excluded from both). Fallback on an older worker = the roster
+  // rows the keys are summed over — never `comp_set_size`, the report's
+  // rollup, which counts closed hotels the keys exclude (344 keys / "5 hotels").
+  const compSetBlock = workerMarket?.comp_set ?? null;
+  const rosterKeySum =
     strTrend?.compset?.reduce((s, c) => s + (c.keys && c.keys > 0 ? c.keys : 0), 0) || null;
+  const rosterCount = strTrend?.compset?.length || null;
+  const compKeyCount = compSetBlock?.active_keys ?? rosterKeySum;
+  const activeHotelCount = compSetBlock?.active_count ?? rosterCount;
 
   // STR-rate model seed — same field_overrides mechanism as the FON-27 overrides.
   const { run, status: runStatus } = useEngineRun(dealId, 'returns', { runMode: 'all' });
@@ -1546,7 +1817,7 @@ export default function MarketTab({ projectId }: { projectId: number | string })
   const compCount = workerComps?.comps.length ?? null;
   const tabCaption =
     tab === 'market-overview'
-      ? `STR · CoStar Hospitality${strTrend?.comp_set_size ? ` — ${strTrend.comp_set_size}-property comp set` : ''}`
+      ? `STR · CoStar Hospitality${activeHotelCount ? ` — ${activeHotelCount}-property comp set` : ''}`
       : tab === 'transaction-comps'
         ? compCount != null
           ? `${compCount} comp${compCount === 1 ? '' : 's'} extracted from OMs`
@@ -1587,8 +1858,12 @@ export default function MarketTab({ projectId }: { projectId: number | string })
           <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
             <SubmarketSnapshot
               derivedComp={derivedComp}
-              compSetSize={strTrend.comp_set_size ?? null}
+              compSet={compSetBlock}
+              rosterCount={rosterCount}
               compKeyCount={compKeyCount}
+              blend={workerMarket?.ttm_blend ?? null}
+              demand={workerMarket?.demand_growth ?? null}
+              supply={workerMarket?.supply_growth ?? null}
               submarketLabel={submarketLabel}
             />
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(430px,1fr))', gap: 14 }}>
@@ -1598,6 +1873,8 @@ export default function MarketTab({ projectId }: { projectId: number | string })
             <SubjectVsCompSet
               strTrend={strTrend}
               derivedComp={derivedComp}
+              compSet={compSetBlock}
+              activeCount={activeHotelCount}
               compKeyCount={compKeyCount}
               strBasis={strBasis}
               strBasisSource={strBasisSource}
@@ -1616,7 +1893,7 @@ export default function MarketTab({ projectId }: { projectId: number | string })
               state={stateOf('revenue', 'rgi_revpar_index', 'document_sourced')}
             />
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(400px,1fr))', gap: 14 }}>
-              <SupplyPipeline compKeyCount={compKeyCount} />
+              <SupplyPipeline compKeyCount={compKeyCount} supply={workerMarket?.supply_growth ?? null} />
               <DemandDrivers />
             </div>
           </div>

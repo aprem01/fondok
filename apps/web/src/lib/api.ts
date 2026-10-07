@@ -1327,6 +1327,102 @@ export interface MarketOverviewResult {
   occupancy_index?: number | null;
   adr_index?: number | null;
   revpar_index?: number | null;
+  /** FON-61 Market-tab blocks (E-009 / E-007 / E-008). Additive — older
+   *  workers omit them, and the tab falls back to its `/market-data` read. */
+  comp_set?: MarketCompSetBlock | null;
+  ttm_blend?: MarketTtmBlendBlock | null;
+  demand_growth?: MarketGrowthBlock | null;
+  supply_growth?: MarketSupplyGrowthBlock | null;
+}
+
+/** One extraction row a Market figure was read from — mirrors
+ *  apps/worker/app/api/market.py FieldRefOut. */
+export interface MarketFieldRef {
+  field_name: string;
+  value?: number | string | boolean | null;
+  doc_name?: string | null;
+  doc_id?: string | null;
+  page?: number | null;
+}
+
+/** FON-61 E-009 — one STR comp-set hotel. `status` is "closed" ONLY when the
+ *  extraction says so (`status_source`: an explicit status field, or STR's own
+ *  "Closed - <name>" roster label); a 0-key row with no marker stays active. */
+export interface MarketCompSetHotel {
+  index: number;
+  name: string;
+  name_as_reported: string;
+  keys?: number | null;
+  status: 'active' | 'closed';
+  status_source?: 'extracted_status_field' | 'str_closed_label' | null;
+}
+
+/** The ONE comp-set derivation: `active_count` and `active_keys` are both over
+ *  the active hotels of the roster — never the report's rollup when a roster
+ *  exists (`reported_*` are surfaced for transparency only). */
+export interface MarketCompSetBlock {
+  hotels: MarketCompSetHotel[];
+  active_count?: number | null;
+  active_keys?: number | null;
+  closed_count: number;
+  closed_names: string[];
+  count_basis: 'active_roster' | 'reported_rollup' | 'none';
+  keys_basis: 'active_roster' | 'reported_rollup' | 'none';
+  status_available: boolean;
+  reported_comp_set_size?: number | null;
+  reported_total_keys?: number | null;
+  source_doc_name?: string | null;
+  source_doc_id?: string | null;
+  source_page?: number | null;
+  note: string;
+}
+
+/** FON-61 E-007 — what "TTM · comp-set blend" is: the rows and period behind it. */
+export interface MarketTtmBlendBlock {
+  occupancy_pct?: number | null;
+  adr_usd?: number | null;
+  revpar_usd?: number | null;
+  subject_occupancy_pct?: number | null;
+  subject_adr_usd?: number | null;
+  subject_revpar_usd?: number | null;
+  mpi?: number | null;
+  ari?: number | null;
+  rgi?: number | null;
+  period_start?: string | null;
+  period_end?: string | null;
+  months?: number | null;
+  period_basis: 'subject_monthly_series' | 'report_year' | 'none';
+  report_year?: number | null;
+  inputs: MarketFieldRef[];
+  documents: string[];
+  method: string;
+}
+
+/** FON-61 E-008 — Demand Growth read off the MARKET_STUDY extraction. */
+export interface MarketGrowthBlock {
+  value_pct?: number | null;
+  period_label?: string | null;
+  basis?: 'reported' | 'derived_from_series' | null;
+  inputs: MarketFieldRef[];
+  /** Shared ReasonCode (`no_document` / `no_source`) when there is no value. */
+  reason?: string | null;
+  detail?: string | null;
+}
+
+/** FON-61 E-008 — Supply Growth = pipeline rooms ÷ existing inventory. */
+export interface MarketSupplyGrowthBlock {
+  existing_rooms?: number | null;
+  existing_period_label?: string | null;
+  under_construction_rooms?: number | null;
+  final_planning_rooms?: number | null;
+  planned_rooms?: number | null;
+  under_construction_pct?: number | null;
+  final_planning_pct?: number | null;
+  reported_supply_change_pct?: number | null;
+  reported_supply_change_period?: string | null;
+  inputs: MarketFieldRef[];
+  reason?: string | null;
+  detail?: string | null;
 }
 
 export const api = {

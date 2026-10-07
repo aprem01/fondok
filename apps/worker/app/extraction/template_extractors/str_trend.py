@@ -44,6 +44,7 @@ import re
 from dataclasses import dataclass
 from typing import Any
 
+from ...services.market_comp_set import STR_CLOSED_LABEL_RE
 from ..models import ParsedDocument
 from ..numeric import coerce_cell_number
 from ._common import TemplateExtractResult, _field, _Sheet, _to_int, sheets_of
@@ -544,6 +545,18 @@ def _try_str_trend(parsed: ParsedDocument) -> TemplateExtractResult | None:
         fields.append(
             _field(f"ttm_performance.compset.{i}.keys", comp.rooms, unit="rooms", page=page)
         )
+        # FON-61 E-009 — STR labels a closed competitor "Closed - <name>" in
+        # the roster. Surface that label as an explicit status field so the
+        # Market tab can exclude the hotel from the count and the keys
+        # without inferring anything from a 0-room row. Emitted ONLY when
+        # STR says so; an unlabelled row carries no status.
+        if STR_CLOSED_LABEL_RE.match(comp.name):
+            fields.append(
+                _field(f"ttm_performance.compset.{i}.status", "closed", page=page)
+            )
+    # The report's own roster count (closed rows included, as STR lists
+    # them). The Market tab derives its headline count from the active
+    # roster rows — see ``services.market_comp_set.derive_comp_set``.
     fields.append(_field("comp_set.comp_set_size", len(comps), page=page))
     fields.append(
         _field(
