@@ -79,6 +79,14 @@ class MarketOverview(BaseModel):
     year_built: int | None = None
     gba_sf: int | None = None
     labor_type: str | None = None
+    # FON-59 R-054 — the OM's own classification of the asset
+    # (``property_overview.property_type``, e.g. "Boutique Lifestyle
+    # Full-Service"). Read-only from the extraction; None when no document
+    # carried it so the Overview's Property Type row shows a dash rather than
+    # the deal row's ``service`` column dressed up as a document value. There
+    # is deliberately NO ``floors`` field: the extraction catalog has no
+    # floors / stories concept, so the row stays a reasoned dash on the web.
+    property_type: str | None = None
     # Trailing-12 average subject occupancy (0-1 fraction) and ADR (USD) — the
     # SAME trailing-12 the STR forward-forecast uses as its baseline (read via
     # ``str_forecast.trailing_12_occ_adr`` off the deal's STR_TREND
@@ -116,7 +124,7 @@ async def _extracted_property_meta(
     """Descriptive property metadata extracted from the documents (OM wins).
 
     Returns a dict with any of ``name`` / ``year_built`` / ``gba_sf`` /
-    ``labor_type`` that a document carried; absent keys mean nothing extracted
+    ``labor_type`` / ``property_type`` that a document carried; absent keys mean nothing extracted
     it (so the UI shows a blank rather than a fabricated value). Name is
     ``property_overview.name`` (or the STR subject name); the rest are
     ``property_overview.*`` from the OM (FON-59 / FON-70). Rows are OM-first, so
@@ -183,6 +191,9 @@ async def _extracted_property_meta(
             elif fn == "property_overview.labor_type":
                 if "labor_type" not in out and isinstance(val, str) and val.strip():
                     out["labor_type"] = val.strip()
+            elif fn == "property_overview.property_type":
+                if "property_type" not in out and isinstance(val, str) and val.strip():
+                    out["property_type"] = val.strip()
     return out
 
 
@@ -298,6 +309,7 @@ async def market_overview(
         year_built=meta.get("year_built"),
         gba_sf=meta.get("gba_sf"),
         labor_type=meta.get("labor_type"),
+        property_type=meta.get("property_type"),
         trailing_12_occupancy=trailing_12_occupancy,
         trailing_12_adr=trailing_12_adr,
     )

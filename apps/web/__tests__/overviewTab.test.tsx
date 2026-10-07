@@ -30,7 +30,13 @@
  *     cites the original + Restore deletes the key; Rename writes
  *     `api.deals.update({ name })` and never touches property_overview.name.
  *
- * NOTE: authored per the task but NOT run here (vitest is executed centrally).
+ *  6. FON-59 TESTER ROUND (Eshan / Rani) — R-052 Unlevered IRR tile beside
+ *     Levered IRR (every KPI set, '—' when absent); R-053 KPI tiles share one
+ *     baseline (fixed label slot + pinned value metrics); R-054 Property Type
+ *     from the market overview's `property_type`, Floors a reasoned dash;
+ *     R-055 no Management / Franchise Fee rows in the Property summary;
+ *     R-056 Sources & Uses directly under Property (Sources left, Uses right);
+ *     R-058 Exit NOI on the Exit section (`terminal_noi_usd` ?? `terminal_noi`).
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, fireEvent, cleanup, waitFor, within } from '@testing-library/react';
@@ -82,6 +88,7 @@ const OUTPUTS = {
         selling_costs: 520_000,
         hold_years: 5,
         levered_irr: 0.198,
+        unlevered_irr: 0.142,
       },
       inputs: {}, error: null, runtime_ms: 9, started_at: null, completed_at: null, run_id: 'run-1',
     },
@@ -111,6 +118,23 @@ const TIMELINE = {
   ],
 } as unknown as TimelineResponse;
 
+// Mutable engine outputs so a test can add / drop one returns field.
+const outputsRef: { value: EngineOutputsResponse } = { value: OUTPUTS };
+
+/** OUTPUTS with the returns engine's outputs patched (`undefined` drops a key). */
+function withReturns(patch: Record<string, number | undefined>): EngineOutputsResponse {
+  const base = OUTPUTS as unknown as { engines: { returns: { outputs: Record<string, unknown> } } };
+  const outputs: Record<string, unknown> = { ...base.engines.returns.outputs };
+  for (const [k, v] of Object.entries(patch)) {
+    if (v === undefined) delete outputs[k];
+    else outputs[k] = v;
+  }
+  return {
+    ...(OUTPUTS as unknown as Record<string, unknown>),
+    engines: { ...base.engines, returns: { ...base.engines.returns, outputs } },
+  } as unknown as EngineOutputsResponse;
+}
+
 // Mutable deal so tests can flip the deal type between renders.
 const mockDealRef: { deal: Record<string, unknown> } = {
   deal: {
@@ -127,7 +151,7 @@ vi.mock('@/lib/hooks/useEngineOutputs', async () => {
   return {
     ...actual,
     useEngineOutputs: () => ({
-      outputs: OUTPUTS, previous: null, loading: false, lastRunAt: null, refresh: vi.fn(async () => {}),
+      outputs: outputsRef.value, previous: null, loading: false, lastRunAt: null, refresh: vi.fn(async () => {}),
     }),
   };
 });
@@ -173,7 +197,7 @@ vi.mock('@/lib/hooks/useDealProvenance', () => ({
     key && mockReasons[key] ? { source: '', value: null, reason: mockReasons[key] } : null,
 }));
 
-import OverviewTab from '@/components/project/OverviewTab';
+import OverviewTab, { EXIT_NOI_LABEL } from '@/components/project/OverviewTab';
 import { REASONS } from '@/lib/ontology/reasons.generated';
 
 beforeEach(() => {
@@ -185,6 +209,7 @@ beforeEach(() => {
   nav.replace.mockClear();
   mockReasons = {};
   overviewRef.value = {};
+  outputsRef.value = OUTPUTS;
   mockDealRef.deal = {
     id: 'deal-uuid-1', keys: 132, deal_type: 'acquisition', return_profile: 'value-add',
     positioning: 'default', brand: 'Kimpton Hotels & Restaurants', field_overrides: {},
@@ -219,12 +244,14 @@ function rowDotLabel(label: string): string | null {
 }
 
 describe('OverviewTab — engine-sourced KPI tiles (value-add)', () => {
-  it('renders the 5 deal-type-aware KPI tiles from the mocked engine outputs', () => {
+  it('renders the 6 deal-type-aware KPI tiles from the mocked engine outputs', () => {
     render(<OverviewTab projectId="deal-uuid-1" />);
 
     expect(screen.getByText('Total Capitalization')).toBeInTheDocument();
     expect(screen.getByText('Renovation')).toBeInTheDocument();
     expect(screen.getByText('Levered IRR')).toBeInTheDocument();
+    expect(screen.getByText('Unlevered IRR')).toBeInTheDocument(); // R-052
+    expect(screen.getByText('14.2%')).toBeInTheDocument();         // returns.unlevered_irr
     // KPI labels also appear elsewhere → assert at least one match.
     expect(screen.getAllByText('Purchase Price').length).toBeGreaterThan(0);
     expect(screen.getAllByText('Stabilized NOI').length).toBeGreaterThan(0);
@@ -352,11 +379,10 @@ describe('OverviewTab — "Where this came from" popover', () => {
     render(<OverviewTab projectId="deal-uuid-1" />);
 
     // The Entry Valuation "Purchase Price" row shows the full-dollar value.
-    // It also appears in the Transaction Sources & Uses table, which renders
-    // AFTER Entry Valuation (see section order above), so the first match in
-    // DOM order is the Entry Valuation cell this test means to open.
-    const [cell] = screen.getAllByText('$34,000,000');
-    fireEvent.click(cell);
+    // It also appears in the Transaction Sources & Uses table — which (R-056)
+    // now renders BEFORE Entry Valuation — so scope to the section itself.
+    const entry = screen.getByTestId('overview-section-entry-valuation');
+    fireEvent.click(within(entry).getByText('$34,000,000'));
 
     // The shared WhereThisCameFrom popover (role=dialog, aria-labelled by field).
     expect(screen.getByRole('dialog', { name: /Where Purchase Price came from/i })).toBeInTheDocument();
@@ -507,9 +533,9 @@ describe('OverviewTab — a dash carries the worker\'s refusal code', () => {
   // Rows the engine fixture leaves empty — a dash today, and the key that
   // explains it. (Hold Period / Exit Cap Rate / LTV are wired too, but this
   // fixture gives them values, so they are exercised by the "never turned
-  // into a refusal" case below instead.)
+  // into a refusal" case below instead. Management Fee left the Property
+  // summary in R-055, so it is no longer an Overview row at all.)
   const WIRED: [label: string, key: string][] = [
-    ['Management Fee', 'mgmt_fee_pct'],
     ['Stabilized Occupancy', 'starting_occupancy'],
     ['Stabilized ADR', 'starting_adr'],
   ];
@@ -547,13 +573,13 @@ describe('OverviewTab — a dash carries the worker\'s refusal code', () => {
   });
 
   it('an unwired dash row is left exactly as it was — no code is invented for it', () => {
-    // Franchise / Brand Fee has no single attributable assumption key, so it
-    // stays a bare dash even while other keys are refused.
+    // Benchmark (Capitalization) has no single attributable assumption key,
+    // so it stays a bare dash even while other keys are refused.
     mockReasons = { mgmt_fee_pct: 'no_source', starting_adr: 'no_source' };
     render(<OverviewTab projectId="deal-uuid-1" />);
-    const cell = rowFor('Franchise / Brand Fee').lastElementChild as HTMLElement;
+    const cell = rowFor('Benchmark').lastElementChild as HTMLElement;
     expect(cell.querySelector('[data-refused]')).toBeNull();
-    expect(rowValue('Franchise / Brand Fee')).toBe('—');
+    expect(rowValue('Benchmark')).toBe('—');
   });
 });
 
@@ -592,12 +618,12 @@ describe('OverviewTab — deep links name the target sub-tab', () => {
     expect(nav.push).toHaveBeenCalledWith('/projects/deal-uuid-1?tab=pl&sub=projections');
   });
 
-  it('the Forward 12-Month Cash NOI popover (Exit) names Projections', () => {
+  it('the Exit NOI popover (Exit) names Projections', () => {
     render(<OverviewTab projectId="deal-uuid-1" />);
 
     const cells = screen.getAllByText('$3,640,000');
     fireEvent.click(cells[cells.length - 1]);
-    const dialog = screen.getByRole('dialog', { name: /Where Forward 12-Month Cash NOI \(after FF&E reserve\) came from/i });
+    const dialog = screen.getByRole('dialog', { name: /Where Exit NOI \(forward 12-month, after FF&E reserve\) came from/i });
 
     fireEvent.click(within(dialog).getByRole('button', { name: 'Open module →' }));
     expect(nav.push).toHaveBeenCalledWith('/projects/deal-uuid-1?tab=pl&sub=projections');
@@ -606,8 +632,9 @@ describe('OverviewTab — deep links name the target sub-tab', () => {
   it('a Financials row that belongs on Historicals says so explicitly', () => {
     render(<OverviewTab projectId="deal-uuid-1" />);
 
-    fireEvent.click(rowFor('Management Fee').lastElementChild as HTMLElement);
-    const dialog = screen.getByRole('dialog', { name: /Where Management Fee came from/i });
+    const label = 'Run-Rate / Entry NOI (before FF&E reserve)';
+    fireEvent.click(rowFor(label).lastElementChild as HTMLElement);
+    const dialog = screen.getByRole('dialog', { name: /Where Run-Rate \/ Entry NOI \(before FF&E reserve\) came from/i });
 
     fireEvent.click(within(dialog).getByRole('button', { name: 'Open module →' }));
     expect(nav.push).toHaveBeenCalledWith('/projects/deal-uuid-1?tab=pl&sub=historicals');
@@ -703,5 +730,235 @@ describe('OverviewTab — FON-74 provenance note', () => {
     const dialog = screen.getByRole('dialog', { name: /Where Property Name came from/i });
     expect(within(dialog).getByText('Overridden')).toBeInTheDocument();
     expect(within(dialog).queryByText('Note')).not.toBeInTheDocument();
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────
+// FON-59 tester round (Eshan / Rani) — R-052 · R-053 · R-054 · R-055 · R-056 · R-058
+// ─────────────────────────────────────────────────────────────────────────
+
+/** DOM-order helper: does `a` come before `b`? */
+const precedes = (a: Element, b: Element): boolean =>
+  !!(a.compareDocumentPosition(b) & Node.DOCUMENT_POSITION_FOLLOWING);
+
+describe('OverviewTab — R-052 Unlevered IRR beside Levered IRR', () => {
+  it('renders returns.unlevered_irr on its own clearly labelled tile, directly after Levered IRR (value-add)', () => {
+    render(<OverviewTab projectId="deal-uuid-1" />);
+    const levered = screen.getByTestId('overview-kpi-levered-irr');
+    const unlevered = screen.getByTestId('overview-kpi-unlevered-irr');
+    expect(within(unlevered).getByText('Unlevered IRR')).toBeInTheDocument();
+    expect(within(unlevered).getByText('14.2%')).toBeInTheDocument();
+    expect(within(unlevered).getByText('asset return, before debt')).toBeInTheDocument();
+    expect(within(levered).getByText('19.8%')).toBeInTheDocument();
+    expect(within(levered).getByText('equity return, after debt')).toBeInTheDocument();
+    // Side by side, in the KPI strip.
+    expect(levered.nextElementSibling).toBe(unlevered);
+    expect(screen.getByTestId('overview-kpis')).toContainElement(unlevered);
+  });
+
+  it.each([
+    ['core', 'acquisition', 'core'],
+    ['development', 'development', 'value-add'],
+  ])('is present in the %s KPI set too', (_name, dealType, profile) => {
+    mockDealRef.deal = { ...mockDealRef.deal, deal_type: dealType, return_profile: profile };
+    render(<OverviewTab projectId="deal-uuid-1" />);
+    const levered = screen.getByTestId('overview-kpi-levered-irr');
+    const unlevered = screen.getByTestId('overview-kpi-unlevered-irr');
+    expect(levered.nextElementSibling).toBe(unlevered);
+    expect(within(unlevered).getByText('14.2%')).toBeInTheDocument();
+  });
+
+  it('renders the refusal glyph — never a number — when the engine did not emit unlevered_irr', () => {
+    outputsRef.value = withReturns({ unlevered_irr: undefined });
+    render(<OverviewTab projectId="deal-uuid-1" />);
+    const unlevered = screen.getByTestId('overview-kpi-unlevered-irr');
+    expect(within(unlevered).getByText('—')).toBeInTheDocument();
+    expect(within(unlevered).queryByText('14.2%')).toBeNull();
+    // Levered IRR is untouched.
+    expect(within(screen.getByTestId('overview-kpi-levered-irr')).getByText('19.8%')).toBeInTheDocument();
+  });
+});
+
+describe('OverviewTab — R-053 KPI numbers share one baseline', () => {
+  it('every tile reserves the same two-line label slot and pins the value metrics', () => {
+    render(<OverviewTab projectId="deal-uuid-1" />);
+    const tiles = Array.from(screen.getByTestId('overview-kpis').children) as HTMLElement[];
+    expect(tiles).toHaveLength(6);
+    const labelSlots = tiles.map((t) => t.querySelector('[data-kpi-label]') as HTMLElement);
+    const values = tiles.map((t) => t.querySelector('[data-kpi-value]') as HTMLElement);
+    // One reserved slot height for all six labels — a label that wraps
+    // ("Total Capitalization") sits in the same box as one that does not.
+    const slotHeights = new Set(labelSlots.map((l) => l.style.minHeight));
+    expect(slotHeights).toEqual(new Set(['26px']));
+    for (const l of labelSlots) {
+      expect(l.style.display).toBe('flex');
+      expect(l.style.alignItems).toBe('flex-end');
+      expect(l.style.lineHeight).toBe('1.3');
+    }
+    // Identical size / weight / line-height on every primary number.
+    for (const v of values) {
+      expect(v.style.fontSize).toBe('19px');
+      expect(v.style.fontWeight).toBe('700');
+      expect(v.style.lineHeight).toBe('1.15');
+      expect(v.style.whiteSpace).toBe('nowrap');
+    }
+  });
+});
+
+describe('OverviewTab — R-055 fee rows left the Property summary', () => {
+  it('Property shows neither Management Fee nor Franchise / Brand Fee (they stay in the P&L)', () => {
+    render(<OverviewTab projectId="deal-uuid-1" />);
+    const property = screen.getByTestId('overview-section-property');
+    expect(within(property).queryByText('Management Fee')).toBeNull();
+    expect(within(property).queryByText('Franchise / Brand Fee')).toBeNull();
+    expect(screen.queryByText('Management Fee')).toBeNull();
+    expect(screen.queryByText(/Franchise/)).toBeNull();
+    // The rest of the summary is intact.
+    for (const label of ['Project Name', 'Property Name', 'Property Type', 'Location', 'Year Built', 'Keys', 'Floors', 'Total SF', 'Brand', 'Positioning']) {
+      expect(within(property).getByText(label)).toBeInTheDocument();
+    }
+  });
+
+  it('nor does the development Project section', () => {
+    mockDealRef.deal = { ...mockDealRef.deal, deal_type: 'development' };
+    render(<OverviewTab projectId="deal-uuid-1" />);
+    const project = screen.getByTestId('overview-section-project');
+    expect(within(project).queryByText('Management Fee')).toBeNull();
+    expect(within(project).queryByText('Franchise / Brand Fee')).toBeNull();
+    expect(screen.queryByText('Management Fee')).toBeNull();
+  });
+});
+
+describe('OverviewTab — R-056 Sources & Uses directly under Property', () => {
+  const SU = 'overview-section-transaction-sources-uses';
+
+  it('is the section right after Property and before Entry Valuation; Sources left, Uses right', () => {
+    render(<OverviewTab projectId="deal-uuid-1" />);
+    const property = screen.getByTestId('overview-section-property');
+    const su = screen.getByTestId(SU);
+    const entry = screen.getByTestId('overview-section-entry-valuation');
+    expect(property.nextElementSibling).toBe(su);
+    expect(precedes(su, entry)).toBe(true);
+    // Column order: Sources, then Uses.
+    const headings = within(su).getAllByText(/^(Sources|Uses)$/);
+    expect(headings.map((h) => h.textContent)).toEqual(['Sources', 'Uses']);
+    expect(within(su).getByText(/Equity is the calculated plug/)).toBeInTheDocument();
+    // Both columns still carry the engine lines.
+    expect(within(su).getByText('Senior Loan')).toBeInTheDocument();
+    expect(within(su).getByText('Renovation Budget')).toBeInTheDocument();
+  });
+
+  it('the core and development sets follow the same rule', () => {
+    mockDealRef.deal = { ...mockDealRef.deal, return_profile: 'core' };
+    const { unmount } = render(<OverviewTab projectId="deal-uuid-1" />);
+    expect(screen.getByTestId('overview-section-property').nextElementSibling).toBe(screen.getByTestId(SU));
+    expect(precedes(screen.getByTestId(SU), screen.getByTestId('overview-section-entry'))).toBe(true);
+    unmount();
+
+    mockDealRef.deal = { ...mockDealRef.deal, deal_type: 'development' };
+    render(<OverviewTab projectId="deal-uuid-1" />);
+    expect(screen.getByTestId('overview-section-project').nextElementSibling).toBe(screen.getByTestId(SU));
+    expect(precedes(screen.getByTestId(SU), screen.getByTestId('overview-section-land-site-acquisition'))).toBe(true);
+  });
+
+  it('the deal-type confirmation lists the new order', () => {
+    render(<OverviewTab projectId="deal-uuid-1" />);
+    fireEvent.click(screen.getByRole('button', { name: 'Development' }));
+    const dialog = screen.getByRole('dialog', { name: 'Change deal type' });
+    expect(within(dialog).getByText(
+      'Project · Sources & Uses · Land / Site Acquisition · Development Budget · Construction Financing · Opening & Stabilization · Exit · Development Timeline',
+    )).toBeInTheDocument();
+  });
+});
+
+describe('OverviewTab — R-054 Property Type from the OM, Floors a reasoned dash', () => {
+  const OM_TYPE = 'Boutique Lifestyle Full-Service';
+
+  it('renders property_overview.property_type off the market overview payload as a document-sourced row', async () => {
+    overviewRef.value = { ...OVERVIEW_EXTRACTED, property_type: OM_TYPE };
+    render(<OverviewTab projectId="deal-uuid-1" />);
+    expect(await screen.findByText(OM_TYPE)).toBeInTheDocument();
+    expect(rowValue('Property Type')).toBe(OM_TYPE);
+    expect(rowDotLabel('Property Type')).toMatch(/document/i);
+    // The popover cites the OM.
+    fireEvent.click(screen.getByText(OM_TYPE));
+    const dialog = screen.getByRole('dialog', { name: /Where Property Type came from/i });
+    expect(within(dialog).getByText('Document sourced')).toBeInTheDocument();
+  });
+
+  it("the OM value wins over the deal row's service column", async () => {
+    mockDealRef.deal = { ...mockDealRef.deal, service: 'Full Service' };
+    overviewRef.value = { ...OVERVIEW_EXTRACTED, property_type: OM_TYPE };
+    render(<OverviewTab projectId="deal-uuid-1" />);
+    expect(await screen.findByText(OM_TYPE)).toBeInTheDocument();
+    expect(screen.queryByText('Full Service')).toBeNull();
+  });
+
+  it('falls back to deal.service when the OM did not state a type, and to a dash when neither exists', async () => {
+    mockDealRef.deal = { ...mockDealRef.deal, service: 'Full Service' };
+    overviewRef.value = OVERVIEW_EXTRACTED;
+    const { unmount } = render(<OverviewTab projectId="deal-uuid-1" />);
+    expect(await screen.findByText(EXTRACTED)).toBeInTheDocument();
+    expect(rowValue('Property Type')).toBe('Full Service');
+    unmount();
+
+    mockDealRef.deal = { ...mockDealRef.deal, service: null };
+    overviewRef.value = {};
+    render(<OverviewTab projectId="deal-uuid-1" />);
+    await waitFor(() => expect(timelineSpy).toHaveBeenCalled());
+    expect(rowValue('Property Type')).toBe('—');
+    // Nothing is borrowed for it — the brand on the deal is not a type.
+    expect(rowValue('Property Type')).not.toContain('Kimpton');
+  });
+
+  it('Floors is a dash that says why — the OM does not state it', async () => {
+    overviewRef.value = { ...OVERVIEW_EXTRACTED, property_type: OM_TYPE };
+    render(<OverviewTab projectId="deal-uuid-1" />);
+    expect(await screen.findByText(OM_TYPE)).toBeInTheDocument();
+    expect(rowValue('Floors')).toBe('—');
+    const cell = rowFor('Floors').lastElementChild as HTMLElement;
+    const refusal = cell.querySelector('[data-refused]') as HTMLElement;
+    expect(refusal).toBeTruthy();
+    expect(refusal.getAttribute('data-refused')).toBe('no_source');
+    expect(refusal.getAttribute('aria-label')).toBe(REASONS.no_source.label);
+    // The tooltip carries the structural reason verbatim.
+    fireEvent.focus(refusal);
+    const tip = await screen.findByRole('tooltip');
+    expect(tip).toHaveTextContent(/not stated in the OM/i);
+    expect(tip).toHaveTextContent(/no floors \/ stories field/i);
+    // Buildings are not floors — the OM's number_of_buildings is never shown here.
+    expect(screen.queryByText(/buildings/i)).toBeNull();
+  });
+});
+
+describe('OverviewTab — R-058 Exit NOI in the Exit section', () => {
+  it('renders returns.terminal_noi_usd on the Exit NOI row, inside the Exit section', () => {
+    outputsRef.value = withReturns({ terminal_noi_usd: 3_900_000, terminal_noi: 3_640_000 });
+    render(<OverviewTab projectId="deal-uuid-1" />);
+    const exit = screen.getByTestId('overview-section-exit');
+    expect(within(exit).getByText(EXIT_NOI_LABEL)).toBeInTheDocument();
+    expect(rowValue(EXIT_NOI_LABEL)).toBe('$3,900,000');
+    // ONE row carries the reversion figure — it is not shown twice under two names.
+    expect(screen.getAllByText('$3,900,000')).toHaveLength(1);
+    expect(screen.queryByText('$3,640,000')).toBeNull();
+    expect(screen.queryByText(/Forward 12-Month Cash NOI/)).toBeNull();
+  });
+
+  it('falls back to returns.terminal_noi when the run predates terminal_noi_usd', () => {
+    render(<OverviewTab projectId="deal-uuid-1" />);
+    expect(rowValue(EXIT_NOI_LABEL)).toBe('$3,640,000');
+  });
+
+  it('is a dash when the returns engine emitted neither', () => {
+    outputsRef.value = withReturns({ terminal_noi: undefined, terminal_noi_usd: undefined });
+    render(<OverviewTab projectId="deal-uuid-1" />);
+    expect(rowValue(EXIT_NOI_LABEL)).toBe('—');
+  });
+
+  it('Gross Exit Value explains itself as Exit NOI ÷ Exit Cap Rate', () => {
+    render(<OverviewTab projectId="deal-uuid-1" />);
+    fireEvent.click(within(screen.getByTestId('overview-section-exit')).getByText('$52,000,000'));
+    const dialog = screen.getByRole('dialog', { name: /Where Gross Exit Value came from/i });
+    expect(within(dialog).getByText('Exit NOI ÷ Exit Cap Rate')).toBeInTheDocument();
   });
 });

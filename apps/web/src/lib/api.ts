@@ -1303,6 +1303,11 @@ export interface MarketOverviewResult {
   year_built?: number | null;
   gba_sf?: number | null;
   labor_type?: string | null;
+  /** FON-59 R-054 — the OM's own asset classification
+   *  (`property_overview.property_type`, e.g. "Boutique Lifestyle Full-Service").
+   *  Read-only from the extraction; null when no document stated it. There is
+   *  no `floors` field — the extraction catalog has no floors / stories concept. */
+  property_type?: string | null;
   trailing_12_occupancy?: number | null;
   trailing_12_adr?: number | null;
   occupancy_index?: number | null;
