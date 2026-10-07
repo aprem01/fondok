@@ -18,8 +18,8 @@
  *
  * The tab reads exclusively from mocked hooks / api — no prototype numbers.
  */
-import { describe, it, expect, vi, afterEach } from 'vitest';
-import { render, screen, fireEvent, cleanup } from '@testing-library/react';
+import { describe, it, expect, vi, afterEach, beforeEach } from 'vitest';
+import { render, screen, fireEvent, cleanup, act } from '@testing-library/react';
 import React from 'react';
 
 // ── Shared mocks ──────────────────────────────────────────────────────────
@@ -102,7 +102,11 @@ vi.mock('@/components/help/CoachMark', () => ({
 import DataRoomTab from '@/components/project/DataRoomTab';
 // The coverage card is exported and light (Card / Badge / lucide only) — it is
 // intentionally NOT mocked, so it is exercised for real in its own describe.
-import { DocumentCoverage, type CoverageFile } from '@/components/project/DocumentCoverage';
+import {
+  DocumentCoverage,
+  type CoverageDocMeta,
+  type CoverageFile,
+} from '@/components/project/DocumentCoverage';
 
 afterEach(cleanup);
 
@@ -217,5 +221,109 @@ describe('Data Room — document coverage card', () => {
     const pnlDownload = screen.getByLabelText('Download November 2024 Financials.xlsx');
     fireEvent.click(pnlDownload);
     expect(onDownload).toHaveBeenCalledWith('pnl1');
+  });
+});
+
+// ── E-001 / R-032 / E-004 — processing stage + elapsed, detected year, and
+// the "Loading fields…" hold before a review verdict ─────────────────────────
+describe('Data Room — processing stage, elapsed timer, detected year', () => {
+  const T0 = Date.parse('2026-10-07T10:00:00Z');
+  beforeEach(() => {
+    vi.useFakeTimers();
+    vi.setSystemTime(T0);
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  const pnl = (over: Partial<CoverageFile>): CoverageFile => ({
+    id: 'p1',
+    name: 'FY2024 P&L.xlsx',
+    docType: 'PNL',
+    fields: 0,
+    confidence: 0,
+    toReview: 0,
+    fiscalYear: null,
+    status: 'PARSING',
+    ...over,
+  });
+
+  const renderCard = (files: CoverageFile[], docMeta?: Record<string, CoverageDocMeta>) =>
+    render(
+      <DocumentCoverage
+        files={files}
+        docMeta={docMeta}
+        onReclassify={vi.fn()}
+        onOpenDoc={vi.fn()}
+      />,
+    );
+
+  it('names the pipeline stage and ticks a measured elapsed timer since upload', () => {
+    renderCard([pnl({ status: 'PARSING' })], {
+      p1: { uploadedAt: new Date(T0 - 252_000).toISOString() },
+    });
+    // Stage word + m:ss elapsed, both from the worker row — not "Processing".
+    expect(screen.getByTitle('Parsing · 4:12 since upload')).toBeInTheDocument();
+    expect(screen.queryByText('Processing')).not.toBeInTheDocument();
+    act(() => {
+      vi.advanceTimersByTime(3_000);
+    });
+    expect(screen.getByTitle('Parsing · 4:15 since upload')).toBeInTheDocument();
+  });
+
+  it('shows each stage word, and no timer once the document is terminal', () => {
+    const { unmount } = renderCard([pnl({ status: 'EXTRACTING' })], {
+      p1: { uploadedAt: new Date(T0 - 61_000).toISOString() },
+    });
+    expect(screen.getByTitle('Extracting · 1:01 since upload')).toBeInTheDocument();
+    unmount();
+    renderCard([pnl({ status: 'EXTRACTED', fields: 12 })], {
+      p1: { uploadedAt: new Date(T0 - 61_000).toISOString(), extractionLoaded: true },
+    });
+    expect(screen.getByText('Ready for Review')).toBeInTheDocument();
+    expect(screen.queryByTitle(/since upload/)).not.toBeInTheDocument();
+  });
+
+  it('shows the detected year as the year and the analyst’s differing tag beside it', () => {
+    renderCard([pnl({ status: 'EXTRACTED', fields: 12, fiscalYear: 2025 })], {
+      p1: { extractedPeriodYear: 2024, yearMismatch: true, extractionLoaded: true },
+    });
+    const year = screen.getByLabelText('Year for FY2024 P&L.xlsx') as HTMLSelectElement;
+    expect(year.value).toBe('2024');
+    expect(screen.getByText('FY 2024 (you said 2025)')).toBeInTheDocument();
+  });
+
+  it('never shows a default year — blank until the document or the analyst supplies one', () => {
+    renderCard([pnl({ status: 'EXTRACTED', fields: 12, fiscalYear: null })], {
+      p1: { extractedPeriodYear: null, extractionLoaded: true },
+    });
+    const year = screen.getByLabelText('Year for FY2024 P&L.xlsx') as HTMLSelectElement;
+    expect(year.value).toBe('');
+    expect(screen.queryByText(/you said/)).not.toBeInTheDocument();
+  });
+
+  it('holds "Loading fields…" until the extraction is present, then shows the verdict (E-004)', () => {
+    const file = pnl({ status: 'EXTRACTED', fields: 0, toReview: 4 });
+    const { rerender } = render(
+      <DocumentCoverage
+        files={[file]}
+        docMeta={{ p1: { extractionLoaded: false } }}
+        onReclassify={vi.fn()}
+        onOpenDoc={vi.fn()}
+      />,
+    );
+    expect(screen.getByText('Loading fields…')).toBeInTheDocument();
+    expect(screen.queryByText('Ready for Review')).not.toBeInTheDocument();
+    expect(screen.queryByText('Review Recommended')).not.toBeInTheDocument();
+    rerender(
+      <DocumentCoverage
+        files={[{ ...file, fields: 156 }]}
+        docMeta={{ p1: { extractionLoaded: true } }}
+        onReclassify={vi.fn()}
+        onOpenDoc={vi.fn()}
+      />,
+    );
+    expect(screen.queryByText('Loading fields…')).not.toBeInTheDocument();
+    expect(screen.getByText('Review Recommended')).toBeInTheDocument();
   });
 });

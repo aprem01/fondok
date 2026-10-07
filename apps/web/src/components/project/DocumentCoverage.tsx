@@ -26,10 +26,19 @@ import {
   GripVertical,
   ExternalLink,
   Download,
+  Loader2,
 } from 'lucide-react';
 import { Card } from '@/components/ui/Card';
 import { Badge } from '@/components/ui/Badge';
 import { cn } from '@/lib/format';
+import { useNow } from '@/lib/hooks/useNow';
+import {
+  describeDocYear,
+  docStageLabel,
+  elapsedSince,
+  formatElapsed,
+  isProcessingStatus,
+} from '@/lib/progress';
 
 export interface CoverageFile {
   id: string;
@@ -52,17 +61,45 @@ export interface CoverageFile {
   status?: string;
 }
 
+/** E-001 / R-032 — per-document provenance the host passes alongside the
+ *  file list (keyed by document id): when it was uploaded, so an in-flight
+ *  row can show a measured elapsed timer, and the year the Extractor read
+ *  vs the analyst's tag. */
+export interface CoverageDocMeta {
+  /** ISO ``uploaded_at`` from the worker row. */
+  uploadedAt?: string | null;
+  /** Year the Extractor read off the statement's period ending. */
+  extractedPeriodYear?: number | null;
+  /** Worker's unresolved analyst-vs-detected year disagreement flag. */
+  yearMismatch?: boolean;
+  /** E-004 — whether this document's extraction record has been fetched
+   *  yet. ``useDocuments`` lazy-loads extractions one per doc after the
+   *  list says EXTRACTED, so for a moment a row is EXTRACTED with no fields
+   *  and no review count; ``false`` holds the row in "Loading fields…"
+   *  instead of flashing "Ready for Review" and then flipping. Omit (or
+   *  ``true``) when the host has no lazy extraction step. */
+  extractionLoaded?: boolean;
+}
+
 // FON-40 — a single processing state per document, so a parsing file reads
 // "Processing" rather than "0 fields", and a done file tells the user whether
 // review is recommended.
 function docStatusState(
   file: CoverageFile,
+  meta?: CoverageDocMeta,
 ): { label: string; tone: 'gray' | 'blue' | 'amber' | 'green' | 'red' } {
   const s = (file.status ?? '').toUpperCase();
   if (s === 'FAILED' || s === 'PARSE_FAILED') return { label: 'Processing Failed', tone: 'red' };
   if (s === 'UPLOADING') return { label: 'Uploading', tone: 'gray' };
+  // E-004 — never render a review verdict before the extraction is here.
+  if (s === 'EXTRACTED' && meta?.extractionLoaded === false) {
+    return { label: 'Loading fields…', tone: 'gray' };
+  }
   const extracted = s === 'EXTRACTED' || file.fields > 0;
-  if (!extracted) return { label: 'Processing', tone: 'blue' };
+  // E-001 — name the pipeline stage (Uploaded → Parsing → Classifying →
+  // Extracting) instead of a flat "Processing", so the analyst can see
+  // which files are still moving and where each one is.
+  if (!extracted) return { label: docStageLabel(s) ?? 'Processing', tone: 'blue' };
   if (file.toReview > 0) return { label: 'Review Recommended', tone: 'amber' };
   return { label: 'Ready for Review', tone: 'green' };
 }
@@ -85,6 +122,8 @@ export interface DocumentCoverageProps {
   onDownload?: (docId: string) => void;
   /** Doc id whose reclassify is in flight (disables its controls). */
   busyDocId?: string | null;
+  /** Per-document provenance (upload time, detected year) keyed by id. */
+  docMeta?: Record<string, CoverageDocMeta>;
   className?: string;
 }
 
@@ -190,8 +229,14 @@ export function DocumentCoverage({
   onOpenInNewTab,
   onDownload,
   busyDocId,
+  docMeta,
   className,
 }: DocumentCoverageProps) {
+  // E-001 — one 1 Hz ticker for the whole card, only while something is
+  // still in the pipeline; rows read the sampled ``now`` to render their
+  // elapsed-since-upload timer. Idle cards never tick.
+  const anyProcessing = files.some((f) => isProcessingStatus(f.status));
+  const now = useNow(anyProcessing);
   const byCategory = new Map<string, CoverageFile[]>();
   for (const c of CATEGORIES) byCategory.set(c.id, []);
   const unclassified: CoverageFile[] = [];
@@ -376,6 +421,8 @@ export function DocumentCoverage({
                       dragging={dragDocId === f.id}
                       onDragStart={() => setDragDocId(f.id)}
                       onDragEnd={() => setDragDocId(null)}
+                      meta={docMeta?.[f.id]}
+                      now={now}
                       onReclassify={onReclassify}
                       onOpenDoc={onOpenDoc}
                       onOpenReview={onOpenReview}
@@ -410,6 +457,8 @@ export function DocumentCoverage({
                 key={f.id}
                 file={f}
                 busy={busyDocId === f.id}
+                meta={docMeta?.[f.id]}
+                now={now}
                 onReclassify={onReclassify}
                 onOpenDoc={onOpenDoc}
                 onOpenReview={onOpenReview}
@@ -495,6 +544,8 @@ function ReviewReasonLine({
 function UnclassifiedRow({
   file,
   busy,
+  meta,
+  now,
   onReclassify,
   onOpenDoc,
   onOpenReview,
@@ -503,6 +554,8 @@ function UnclassifiedRow({
 }: {
   file: CoverageFile;
   busy: boolean;
+  meta?: CoverageDocMeta;
+  now: number;
   onReclassify: DocumentCoverageProps['onReclassify'];
   onOpenDoc: DocumentCoverageProps['onOpenDoc'];
   onOpenReview?: DocumentCoverageProps['onOpenReview'];
@@ -551,9 +604,7 @@ function UnclassifiedRow({
         ))}
       </select>
       <div className="ml-auto flex items-center gap-3 text-[11px] tabular-nums">
-        <Badge tone={docStatusState(file).tone} className="text-[10px]">
-          {docStatusState(file).label}
-        </Badge>
+        <StageBadge file={file} meta={meta} now={now} />
         {file.fields > 0 && (
           <span className="text-ink-500">
             {file.fields} field{file.fields === 1 ? '' : 's'}
@@ -587,10 +638,14 @@ function CoverageFileRow({
   onOpenReview,
   onOpenInNewTab,
   onDownload,
+  meta,
+  now,
 }: {
   file: CoverageFile;
   financial: boolean;
   busy: boolean;
+  meta?: CoverageDocMeta;
+  now: number;
   dragging?: boolean;
   onDragStart?: () => void;
   onDragEnd?: () => void;
@@ -602,7 +657,21 @@ function CoverageFileRow({
 }) {
   const family = familyOf(file.docType);
   const period = periodOf(file.docType);
-  const state = docStatusState(file);
+  // R-032 — the year shown is the one the Extractor read from the
+  // statement; the analyst's tag only takes over when nothing was detected
+  // or they resolved a mismatch in their favour. A differing tag is shown
+  // beside it, never silently dropped — and never a default.
+  const yearView = describeDocYear({
+    fiscalYear: file.fiscalYear,
+    extractedPeriodYear: meta?.extractedPeriodYear,
+    yearMismatch: meta?.yearMismatch,
+  });
+  // Keep a detected year selectable even when it falls outside the default
+  // window — the dropdown must never blank a year that came from the document.
+  const yearOptions =
+    yearView.year != null && !YEARS.includes(yearView.year)
+      ? [yearView.year, ...YEARS].sort((a, b) => b - a)
+      : YEARS;
   const confTone =
     file.confidence >= 95 ? 'text-success-700' : file.confidence >= 85 ? 'text-warn-700' : 'text-danger-700';
 
@@ -689,8 +758,9 @@ function CoverageFileRow({
           </select>
           <select
             aria-label={`Year for ${file.name}`}
+            title={yearView.label ?? undefined}
             className={selectCls}
-            value={file.fiscalYear ?? ''}
+            value={yearView.year ?? ''}
             disabled={busy}
             onChange={(e) => {
               const y = parseInt(e.target.value, 10);
@@ -698,12 +768,23 @@ function CoverageFileRow({
             }}
           >
             <option value="">Year</option>
-            {YEARS.map((y) => (
+            {yearOptions.map((y) => (
               <option key={y} value={y}>
                 {y}
               </option>
             ))}
           </select>
+          {yearView.note && (
+            // "FY 2024 (you said 2025)" — the detected year is the row's
+            // year; the analyst's differing wizard tag stays visible beside it.
+            <span
+              className="text-[10.5px] text-warn-700 whitespace-nowrap"
+              title={yearView.label ?? undefined}
+            >
+              <span className="sr-only">{yearView.label}</span>
+              <span aria-hidden="true">({yearView.note})</span>
+            </span>
+          )}
         </div>
       ) : (
         // FON-58 — any classified document can be re-typed inline (e.g. an OM
@@ -729,9 +810,7 @@ function CoverageFileRow({
       )}
 
       <div className="ml-auto flex items-center gap-3 text-[11px] tabular-nums">
-        <Badge tone={state.tone} className="text-[10px]">
-          {state.label}
-        </Badge>
+        <StageBadge file={file} meta={meta} now={now} />
         {file.fields > 0 && (
           <span className="text-ink-500">
             {file.fields} field{file.fields === 1 ? '' : 's'}
@@ -767,5 +846,50 @@ function CoverageFileRow({
         onOpen={(id) => (onOpenReview ? onOpenReview(id) : onOpenDoc(id, financial))}
       />
     </li>
+  );
+}
+
+/** E-001 — the per-row status pill. While a document is still in the
+ *  pipeline it names the stage AND a live elapsed timer measured from the
+ *  worker's ``uploaded_at`` ("Parsing · 4:12"); terminal rows keep the
+ *  FON-40 states. No timer when the row isn't processing. */
+function StageBadge({
+  file,
+  meta,
+  now,
+}: {
+  file: CoverageFile;
+  meta?: CoverageDocMeta;
+  now: number;
+}) {
+  const state = docStatusState(file, meta);
+  const processing = state.tone === 'blue' && isProcessingStatus(file.status);
+  // E-004 — EXTRACTED but the extraction record hasn't been fetched yet.
+  const loadingFields = state.label === 'Loading fields…';
+  const elapsed = processing ? elapsedSince(meta?.uploadedAt, now) : null;
+  const title =
+    elapsed != null
+      ? `${state.label} · ${formatElapsed(elapsed)} since upload`
+      : loadingFields
+        ? 'Extraction finished — fetching its fields and review count'
+        : undefined;
+  return (
+    <span className="inline-flex" title={title}>
+      <Badge tone={state.tone} className={cn('text-[10px]', loadingFields && 'opacity-70')}>
+        {(processing || loadingFields) && (
+          <Loader2
+            size={10}
+            className="mr-1 animate-spin inline-block align-[-1px]"
+            aria-hidden="true"
+          />
+        )}
+        {state.label}
+        {elapsed != null && (
+          <span className="ml-1 tabular-nums font-normal opacity-80">
+            · {formatElapsed(elapsed)}
+          </span>
+        )}
+      </Badge>
+    </span>
   );
 }

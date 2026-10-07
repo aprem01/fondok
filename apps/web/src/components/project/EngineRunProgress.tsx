@@ -19,18 +19,13 @@ import {
   EngineStatus,
 } from '@/lib/api';
 import { cn } from '@/lib/format';
-
-const ENGINE_LABEL: Record<EngineName, string> = {
-  revenue: 'Revenue',
-  fb: 'F&B',
-  expense: 'Expense',
-  capital: 'Capital',
-  debt: 'Debt',
-  returns: 'Returns',
-  sensitivity: 'Sensitivity',
-  partnership: 'Partnership',
-  cash_flow: 'Cash Flow',
-};
+import { useNow } from '@/lib/hooks/useNow';
+import {
+  deriveEngineStage,
+  engineLabel,
+  formatElapsed,
+  formatLastRunTook,
+} from '@/lib/progress';
 
 interface EngineRunProgressProps {
   /** When null, the strip is hidden. */
@@ -46,6 +41,11 @@ interface EngineRunProgressProps {
   /** Auto-dismiss after this many ms post-completion (default 2000). */
   dismissAfterMs?: number;
   onClose?: () => void;
+  /** E-024 — measured wall time of the LAST COMPLETED run (sum of the
+   *  worker's ``runtime_ms``). Rendered as "last run took 1m 58s" so the
+   *  analyst has a real reference point; omitted when nothing was measured.
+   *  Never an estimate of the current run. */
+  lastRunTookMs?: number | null;
 }
 
 export default function EngineRunProgress({
@@ -56,6 +56,7 @@ export default function EngineRunProgress({
   runNumber,
   dismissAfterMs = 2000,
   onClose,
+  lastRunTookMs = null,
 }: EngineRunProgressProps) {
   const [hidden, setHidden] = useState(false);
 
@@ -70,10 +71,22 @@ export default function EngineRunProgress({
     return m;
   }, [rows]);
 
-  const completed = rows.filter((r) => r.status === 'complete').length;
-  const failed = rows.filter((r) => r.status === 'failed').length;
-  const total = expectedEngines.length;
-  const allDone = total > 0 && completed + failed === total;
+  // E-024 — stage, k-of-n and elapsed are derived from the polled rows and
+  // a 1 Hz wall-clock sample that ticks only while the run is in flight
+  // (the poll itself re-renders every 750 ms, but a stalled poll must not
+  // freeze the clock). Once everything is terminal the sample stops and
+  // the final elapsed stays put.
+  const terminal = rows.filter(
+    (r) => r.status === 'complete' || r.status === 'failed',
+  ).length;
+  const inFlight =
+    Boolean(runId) &&
+    !hidden &&
+    !(expectedEngines.length > 0 && terminal >= expectedEngines.length);
+  const now = useNow(inFlight);
+  const stage = deriveEngineStage({ expected: expectedEngines, rows, startedAt, now });
+  const { completed, failed, total, allDone } = stage;
+  const lastRunTook = formatLastRunTook(lastRunTookMs);
 
   // Auto-dismiss 2 seconds after completion.
   useEffect(() => {
@@ -86,8 +99,6 @@ export default function EngineRunProgress({
   }, [allDone, dismissAfterMs, onClose]);
 
   if (!runId || hidden) return null;
-
-  const elapsed = startedAt ? ((Date.now() - startedAt) / 1000).toFixed(1) : '0.0';
 
   return (
     <div
@@ -109,11 +120,14 @@ export default function EngineRunProgress({
             <X size={14} className="text-danger-700" />
           )}
           <div className="text-[12.5px] font-semibold text-ink-900">
+            {/* E-024 — "Running Revenue · 2 of 9 complete · 0:42": the
+                engine the worker is on, how many are done, and a measured
+                clock. No ETA. */}
             {allDone
               ? failed > 0
                 ? 'Underwriting finished with errors'
                 : 'Underwriting complete'
-              : 'Running underwriting model'}
+              : stage.copy}
             {runNumber ? (
               <span className="ml-1 text-ink-500 font-medium">· Run #{runNumber}</span>
             ) : null}
@@ -153,7 +167,12 @@ export default function EngineRunProgress({
           )}
         </span>
         <span className="tabular-nums">
-          {elapsed}s · $0.00 spent
+          {formatElapsed(stage.elapsedSeconds)} · $0.00 spent
+          {lastRunTook && (
+            // Measured from the previous run's runtime_ms — a reference
+            // point, not a prediction.
+            <span className="ml-1 text-ink-400">· {lastRunTook}</span>
+          )}
         </span>
       </div>
     </div>
@@ -169,7 +188,7 @@ function EngineRow({
   status: EngineStatus | 'queued';
   row: EngineOutputResponse | undefined;
 }) {
-  const label = ENGINE_LABEL[name];
+  const label = engineLabel(name);
   const summary = row?.summary || '';
   const runtime = row?.runtime_ms;
 

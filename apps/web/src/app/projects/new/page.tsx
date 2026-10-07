@@ -17,6 +17,8 @@ import { useToast } from '@/components/ui/Toast';
 import { DocumentsStep } from '@/components/project/wizard/DocumentsStep';
 import { DocumentsChecklist } from '@/components/project/wizard/DocumentsChecklist';
 import { CoachMark } from '@/components/help/CoachMark';
+import { useNow } from '@/lib/hooks/useNow';
+import { formatElapsed } from '@/lib/progress';
 
 const steps = [
   { n: 1, label: 'Deal Details' },
@@ -48,6 +50,17 @@ export default function NewProjectPage() {
   const [submitting, setSubmitting] = useState(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
   const [savedLocally, setSavedLocally] = useState(false);
+  // R-039 — the upload is the long part of "Create Deal". Track when it
+  // started and how many files are in flight so the loading state shows a
+  // measured elapsed counter ("Uploading 12 files · 2:37") instead of an
+  // anonymous spinner. Cleared the moment the upload settles.
+  const [uploadStartedAt, setUploadStartedAt] = useState<number | null>(null);
+  const [uploadingCount, setUploadingCount] = useState(0);
+  const now = useNow(uploadStartedAt != null);
+  const uploadCopy =
+    uploadStartedAt != null
+      ? `Uploading ${uploadingCount} file${uploadingCount === 1 ? '' : 's'} · ${formatElapsed((now - uploadStartedAt) / 1000)}`
+      : null;
   const [data, setData] = useState({
     dealName: '', city: '', keys: '', stage: 'Teaser', hotelName: '', price: '',
     dealType: 'acquisition',
@@ -158,6 +171,8 @@ export default function NewProjectPage() {
           `Uploading ${data.docs.length} document${data.docs.length === 1 ? '' : 's'}…`,
           { type: 'info' },
         );
+        setUploadingCount(data.docs.length);
+        setUploadStartedAt(Date.now());
         try {
           // Send the wizard payload — the worker reads
           // ``user_doc_types[]`` + ``fiscal_years[]`` index-aligned with
@@ -176,6 +191,8 @@ export default function NewProjectPage() {
         } catch (uErr) {
           const uMsg = uErr instanceof Error ? uErr.message : String(uErr);
           toast(`Deal created, but upload failed: ${uMsg}`, { type: 'error' });
+        } finally {
+          setUploadStartedAt(null);
         }
       }
 
@@ -268,6 +285,23 @@ export default function NewProjectPage() {
         </Card>
       )}
 
+      {/* R-039 — visible elapsed counter for the whole upload, measured
+          from the moment the files started leaving the browser. The deal
+          page opens as soon as the upload settles. */}
+      {submitting && uploadCopy && (
+        <Card className="mt-4 p-4 border-brand-100 bg-brand-50">
+          <div
+            role="status"
+            aria-live="polite"
+            className="flex items-center gap-2 text-[12.5px] text-ink-700"
+          >
+            <Loader2 size={14} className="animate-spin text-brand-500" aria-hidden="true" />
+            <span className="font-medium tabular-nums">{uploadCopy}</span>
+            <span className="text-ink-500">· the deal opens when the upload finishes</span>
+          </div>
+        </Card>
+      )}
+
       {/* Footer */}
       <div className="flex items-center justify-between mt-5">
         <Button variant="secondary" onClick={back} disabled={step === 1 || submitting}>
@@ -294,7 +328,7 @@ export default function NewProjectPage() {
         ) : (
           <Button variant="primary" onClick={onCreate} disabled={submitting}>
             {submitting && <Loader2 size={13} className="animate-spin" />}
-            {submitting ? 'Creating…' : 'Create Deal'}
+            {submitting ? (uploadCopy ?? 'Creating…') : 'Create Deal'}
           </Button>
         )}
       </div>

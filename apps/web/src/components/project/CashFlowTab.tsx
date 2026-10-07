@@ -210,7 +210,7 @@ export default function CashFlowTab() {
               variant="primary"
               size="sm"
               className="mt-4"
-              onClick={() => toast('Engine queued — check back shortly', { type: 'info' })}
+              onClick={() => toast('Nothing is queued yet — add the missing document in the Data Room and the model runs automatically once extraction finishes', { type: 'info' })}
             >
               Run Model
             </Button>
