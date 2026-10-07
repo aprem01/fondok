@@ -12,6 +12,7 @@ import {
 import { useEngineRun } from '@/lib/hooks/useEngineRun';
 import EngineRunProgress from './EngineRunProgress';
 import { cn } from '@/lib/format';
+import { lastRunTookMs } from '@/lib/progress';
 
 // Browsers don't expose .env to client without the NEXT_PUBLIC_ prefix.
 // Same gating ExportTab uses — when unset we surface a toast instead of
@@ -44,6 +45,7 @@ export default function EngineHeader({
   onExport,
   onRunComplete,
   onRunStart,
+  lastRunRows,
 }: {
   name: string;
   desc: string;
@@ -65,10 +67,19 @@ export default function EngineHeader({
   /** Called when the user kicks off a run — tabs use this to dim
       content / disable interaction while computing. */
   onRunStart?: () => void;
+  /** E-024 — persisted rows of the last completed run (e.g. the values of
+      ``useEngineOutputs().outputs.engines``). Their measured ``runtime_ms``
+      feed the strip's "last run took" reference; without them the header
+      falls back to the previous run it saw in this session, and shows
+      nothing otherwise. */
+  lastRunRows?: EngineOutputResponse[];
 }) {
   const { toast } = useToast();
-  // Stub spinner used only when neither `engineName` nor `onRun` is supplied.
-  const [stubRunning, setStubRunning] = useState(false);
+  // E-024 — final rows of the previous run-all this header saw, so the
+  // strip can show a measured "last run took" even when the caller didn't
+  // pass persisted rows.
+  const [sessionLastRunRows, setSessionLastRunRows] =
+    useState<EngineOutputResponse[] | null>(null);
 
   // Run-all progress streaming state.
   const [runId, setRunId] = useState<string | null>(null);
@@ -105,6 +116,7 @@ export default function EngineHeader({
     },
     onAllComplete: (rows) => {
       setRunRows(rows);
+      setSessionLastRunRows(rows);
       const okCount = rows.filter((r) => r.status === 'complete').length;
       if (okCount > 0) {
         setGlowing(true);
@@ -119,7 +131,9 @@ export default function EngineHeader({
   });
   const isWired = Boolean(engineName && dealId);
 
-  const running = isWired ? wired.status === 'running' : stubRunning;
+  // Only a wired engine can genuinely be running — unwired tabs no longer
+  // fake a spinner (E-024).
+  const running = isWired && wired.status === 'running';
   const justFailed = isWired && wired.status === 'failed';
   const complete = isWired
     ? wired.complete || initialComplete
@@ -150,11 +164,13 @@ export default function EngineHeader({
       void wired.run();
       return;
     }
-    // Pure stub fallback — preserves the original click affordance for
-    // tabs that haven't been threaded yet.
-    setStubRunning(true);
-    toast('Engine queued — check back shortly', { type: 'info' });
-    window.setTimeout(() => setStubRunning(false), 2000);
+    // Unwired tab: nothing is actually queued, so say so instead of faking
+    // a spinner (E-024 — the old "check back shortly" stub read as a real
+    // run with no stage and no sense of time).
+    toast(
+      'Nothing is queued yet — run the model from the Data Room to see live per-engine progress',
+      { type: 'info' },
+    );
   };
 
   const handleExport = () => {
@@ -284,6 +300,7 @@ export default function EngineHeader({
           startedAt={runStartedAt}
           runNumber={runNumber}
           onClose={() => setRunId(null)}
+          lastRunTookMs={lastRunTookMs(lastRunRows ?? sessionLastRunRows)}
         />
       )}
     </>

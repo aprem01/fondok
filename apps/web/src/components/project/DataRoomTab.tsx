@@ -28,6 +28,15 @@ import {
 import { useDocuments } from '@/lib/hooks/useDocuments';
 import { useEngineOutputs } from '@/lib/hooks/useEngineOutputs';
 import { useEngineRun } from '@/lib/hooks/useEngineRun';
+import { useNow } from '@/lib/hooks/useNow';
+import {
+  deriveEngineStage,
+  formatLastRunTook,
+  formatProcessingSummary,
+  isProcessingStatus,
+  lastRunTookMs,
+  summarizeDocProcessing,
+} from '@/lib/progress';
 import { useToast } from '@/components/ui/Toast';
 import { useCurrentRole } from '@/lib/auth';
 import { cn, fmtDate } from '@/lib/format';
@@ -39,7 +48,7 @@ import { UsaliDeviationsAccordion } from './validation/UsaliDeviationsAccordion'
 import { GapChipsStrip } from './validation/GapChipsStrip';
 import { MisclassificationBanner } from './wizard/MisclassificationBanner';
 import { YearMismatchBanner } from './wizard/YearMismatchBanner';
-import { DocumentCoverage, type CoverageFile } from './DocumentCoverage';
+import { DocumentCoverage, type CoverageDocMeta, type CoverageFile } from './DocumentCoverage';
 import { WORKSHEET_ROWS } from './pl/GroundedWorksheet';
 import { useDeal } from '@/lib/hooks/useDeal';
 import { useHistoricals } from '@/lib/hooks/useHistoricals';
@@ -453,6 +462,26 @@ export default function DataRoomTab({ projectId }: { projectId: number | string 
     return { processingFinancialsCount: processing, failedFinancialsCount: failed };
   }, [documents]);
 
+  // E-001 / R-032 / E-004 — per-document provenance for the coverage rows,
+  // keyed by id so DocumentCoverage can look it up without widening its
+  // file mapping: when the file was uploaded (stage timer), the year the
+  // Extractor read vs the analyst's tag, and whether the lazy extraction
+  // fetch has landed (holds "Loading fields…" instead of a premature
+  // review verdict).
+  const docMeta = useMemo(() => {
+    const m: Record<string, CoverageDocMeta> = {};
+    for (const d of documents) {
+      m[d.id] = {
+        uploadedAt: d.uploaded_at ?? null,
+        extractedPeriodYear: d.extracted_period_year ?? null,
+        yearMismatch: d.year_mismatch,
+        extractionLoaded: Boolean(extractions[d.id]),
+      };
+    }
+    return m;
+  }, [documents, extractions]);
+  const anyDocProcessing = documents.some((d) => isProcessingStatus(d.status));
+
   // Build the unified doc rows the UI renders.
   type Row = {
     id: string;
@@ -667,6 +696,25 @@ export default function DataRoomTab({ projectId }: { projectId: number | string 
     (d) => d.rawStatus === 'EXTRACTED' || d.rawStatus === 'Extracted',
   );
   const fullRunRunning = fullRun.status === 'running';
+  // E-001 / E-024 — one 1 Hz wall-clock sample for both progress strips;
+  // ticks only while a document or the engine run is actually in flight.
+  const now = useNow(fullRunRunning || anyDocProcessing);
+  const processingSummary = anyDocProcessing
+    ? formatProcessingSummary(summarizeDocProcessing(documents, now))
+    : null;
+  const engineStage = fullRunRunning
+    ? deriveEngineStage({
+        expected: fullRunExpected,
+        rows: fullRunRows,
+        startedAt: fullRunStartedAt,
+        now,
+      })
+    : null;
+  // Measured from the persisted outputs' runtime_ms — the previous run's
+  // real wall time, never a prediction of this one.
+  const lastRunTook = formatLastRunTook(
+    lastRunTookMs(engineOutputs ? Object.values(engineOutputs.engines ?? {}) : null),
+  );
   // Gate the button on liveMode so the Kimpton demo deal (numeric id)
   // doesn't trigger the "Deal id missing — open the deal page first"
   // toast: useEngineRun is constructed with an empty dealId in non-live
@@ -929,16 +977,33 @@ export default function DataRoomTab({ projectId }: { projectId: number | string 
           tab nav already labels the surface, the Document Checklist
           carries the "X extracted of Y required" progress, and the
           per-row pills carry per-doc status. */}
-      {fullRunRunning && (
+      {/* E-001 — "Processing 3 of 17 · longest 4:12": how many files are
+          still in the pipeline and how long the slowest has been there,
+          measured from uploaded_at. Per-row stage words + timers live on
+          the coverage rows below. */}
+      {(processingSummary || engineStage) && (
         <div className="flex items-center justify-between gap-3 -mb-1">
-          <span />
-          {fullRunRunning && (
-            <span className="inline-flex items-center gap-2 text-[12px] text-ink-500">
+          {processingSummary ? (
+            <span
+              role="status"
+              className="inline-flex items-center gap-2 text-[12px] text-ink-500 tabular-nums"
+            >
               <span className="inline-block w-2 h-2 rounded-full bg-brand-500 animate-pulse" />
-              Running underwriting · {fullRunRows.filter((r) => r.status === 'complete').length}/{fullRunExpected.length || 8} complete
-              {fullRunStartedAt
-                ? ` · ${((Date.now() - fullRunStartedAt) / 1000).toFixed(0)}s`
-                : ''}
+              {processingSummary}
+            </span>
+          ) : (
+            <span />
+          )}
+          {/* E-024 — "Running Revenue · 2 of 9 complete · 0:42", plus the
+              previous run's measured wall time when the worker reported it. */}
+          {engineStage && (
+            <span
+              role="status"
+              className="inline-flex items-center gap-2 text-[12px] text-ink-500 tabular-nums"
+            >
+              <span className="inline-block w-2 h-2 rounded-full bg-brand-500 animate-pulse" />
+              {engineStage.copy}
+              {lastRunTook && <span className="text-ink-400">· {lastRunTook}</span>}
             </span>
           )}
         </div>
@@ -1128,6 +1193,7 @@ export default function DataRoomTab({ projectId }: { projectId: number | string 
             a.click();
           }}
           busyDocId={reclassifyingDoc}
+          docMeta={docMeta}
         />
       )}
 

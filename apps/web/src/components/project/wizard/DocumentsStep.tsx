@@ -979,7 +979,7 @@ function YearField({
         type="number"
         min={1900}
         max={2100}
-        placeholder="2025"
+        placeholder="detected from the statement"
         value={draft}
         onChange={(e) => setDraft(e.target.value)}
         onBlur={commit}
@@ -989,7 +989,8 @@ function YearField({
             commit();
           }
         }}
-        className="w-20 px-2 py-1 text-[12px] tabular-nums bg-white border border-border rounded-md focus:outline-none focus:ring-2 focus:ring-brand-100 focus:border-brand-500"
+        title="Leave blank — Fondok reads the year from the statement. Type a year only to override it."
+        className="w-48 px-2 py-1 text-[12px] tabular-nums bg-white border border-border rounded-md placeholder:text-ink-400 placeholder:text-[11px] focus:outline-none focus:ring-2 focus:ring-brand-100 focus:border-brand-500"
       />
       {value !== null && (
         <button
