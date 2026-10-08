@@ -1440,8 +1440,16 @@ async def _load_engine_inputs(
             key, om_debt_pre[key] if key in om_debt_pre else base.get(key)
         )
         base[key] = value
-        if key in debt_prov:
-            source_fields[key] = debt_prov[key]
+        prov = debt_prov.get(key)
+        if prov is None:
+            # Override changed the OM figure; the override loop labels it.
+            continue
+        source_fields[key] = prov
+        # FON-85 / R-070 — the same label rule as the capital loop above:
+        # an in-place-debt figure read off the OM is the broker's, so the
+        # Debt tab's source chip reads "OM · in-place debt", not "Seed".
+        if (prov.resolution.doc_type or "OM").upper() == "OM":
+            sources[key] = SOURCE_OM_BROKER
 
     # External market reports (May 7 scope): when CBRE Horizons has
     # been extracted, derive ADR + RevPAR growth from its 5-year

@@ -1326,3 +1326,87 @@ async def test_seed_and_immaterial_om_pips_keep_displacement_off() -> None:
     assert base["__sources__"]["renovation_budget"] == "om_broker"
     assert base["y1_occupancy_displacement_pct"] == 0.0
     assert base["y1_adr_displacement_pct"] == 0.0
+
+
+# ═════════ FON-85 / R-070 — OM in-place debt keys carry ``om_broker`` too ═════════
+
+_OM_DEBT_ROWS: list[dict[str, object]] = [
+    {"field_name": "in_place_debt.loan_balance_usd", "value": 24_000_000.0, "source_page": 44},
+    {"field_name": "in_place_debt.interest_rate_pct", "value": 0.0725, "source_page": 44},
+    {"field_name": "in_place_debt.ltv_pct", "value": 0.62, "source_page": 44},
+    {"field_name": "in_place_debt.amortization_years", "value": 25, "source_page": 44},
+    {"field_name": "in_place_debt.term_years", "value": 7, "source_page": 44},
+]
+_OM_DEBT_KEYS = ("loan_amount", "interest_rate", "ltv", "amortization_years", "term_years")
+
+
+@pytest.mark.asyncio
+async def test_om_in_place_debt_rows_are_labelled_om_broker() -> None:
+    """R-070: the Debt tab renders a source chip per input from the label, so
+    an OM-grounded loan reading "Seed" was the mislabel testers hit. Every
+    in-place-debt key the OM supplies is ``om_broker`` and names its row."""
+    from app.services.engine_runner import SOURCE_OM_BROKER
+
+    deal_id = uuid4()
+    await _insert_deal(deal_id, name="OM debt", keys=132, purchase=36_400_000)
+    await _insert_om_extraction(deal_id, fields=_OM_DEBT_ROWS)
+
+    base = await _base_for(deal_id)
+    assert base["loan_amount"] == pytest.approx(24_000_000.0)
+    assert base["interest_rate"] == pytest.approx(0.0725)
+    assert base["ltv"] == pytest.approx(0.62)
+    assert base["amortization_years"] == 25
+    assert base["term_years"] == 7
+    for key, row in zip(_OM_DEBT_KEYS, _OM_DEBT_ROWS, strict=True):
+        assert base["__sources__"][key] == SOURCE_OM_BROKER, key
+        sf = base["__source_fields__"][key]
+        assert sf["field_name"] == row["field_name"], key
+        assert sf["doc_type"] == "OM"
+        assert sf["source_page"] == 44
+        assert key not in base["__reasons__"]
+
+
+@pytest.mark.asyncio
+async def test_no_om_debt_rows_keep_the_debt_keys_on_the_seed() -> None:
+    from fondok_schemas.reasons import ReasonCode
+
+    from app.services.engine_runner import SOURCE_SEED
+
+    deal_id = uuid4()
+    await _insert_deal(deal_id, name="No OM debt", keys=132, purchase=36_400_000)
+    # An OM with no in-place-debt block changes nothing on the debt side.
+    await _insert_om_extraction(deal_id, fields=[_OM_RENO_ROW])
+
+    base = await _base_for(deal_id)
+    assert base["ltv"] == pytest.approx(0.65)
+    assert base["interest_rate"] == pytest.approx(0.068)
+    assert "loan_amount" not in base
+    for key in ("interest_rate", "ltv", "amortization_years", "term_years"):
+        assert base["__sources__"][key] == SOURCE_SEED, key
+        assert key not in base["__source_fields__"]
+        assert base["__reasons__"][key]["code"] is ReasonCode.NO_SOURCE
+
+
+@pytest.mark.asyncio
+async def test_analyst_override_still_wins_over_the_om_in_place_debt() -> None:
+    """A changed override wins on value and label and the OM row is not
+    claimed for it; the sibling keys the analyst left alone stay the broker's."""
+    from app.services.engine_runner import SOURCE_ANALYST_OVERRIDE, SOURCE_OM_BROKER
+
+    deal_id = uuid4()
+    await _insert_deal(
+        deal_id,
+        name="Refi quote",
+        keys=132,
+        purchase=36_400_000,
+        field_overrides={"interest_rate": {"value": 0.08, "note": "lender term sheet"}},
+    )
+    await _insert_om_extraction(deal_id, fields=_OM_DEBT_ROWS)
+
+    base = await _base_for(deal_id)
+    assert base["interest_rate"] == pytest.approx(0.08)
+    assert base["__sources__"]["interest_rate"] == SOURCE_ANALYST_OVERRIDE
+    assert "interest_rate" not in base["__source_fields__"]
+    assert base["__sources__"]["ltv"] == SOURCE_OM_BROKER
+    assert base["__sources__"]["loan_amount"] == SOURCE_OM_BROKER
+    assert base["__source_fields__"]["ltv"]["field_name"] == "in_place_debt.ltv_pct"
