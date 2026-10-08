@@ -15,7 +15,12 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, cleanup, within } from '@testing-library/react';
 import React from 'react';
 import type { ScenarioRecord } from '@/lib/api';
-import { STABILIZED_NOI_LABEL } from '@/lib/engines/noi';
+import {
+  STABILIZED_NOI_LABEL,
+  stabilizationDetectedHint,
+  stabilizationYearLabel,
+  type StabilizedYearBlock,
+} from '@/lib/engines/noi';
 
 // ── The stabilized year: projection Year 2 (index 1) ─────────────────
 const STAB_INDEX = 1;
@@ -52,7 +57,7 @@ function expenseOutputs(withBlock: boolean) {
       { year: 3, total_revenue: 13_100_000, noi: 3_900_000, noi_institutional: 4_452_613, ffe_reserve: 552_613 },
     ],
     noi_cagr: 0.05,
-    ...(withBlock ? { stabilization: STABILIZATION_BLOCK } : {}),
+    ...(withBlock ? { stabilization: { ...STABILIZATION_BLOCK, ...BLOCK_PATCH } } : {}),
   };
 }
 
@@ -97,6 +102,8 @@ function engines(withBlock: boolean) {
 }
 
 let WITH_BLOCK = true;
+// FON-59 R-057 — per-test overrides of the published block's ownership fields.
+let BLOCK_PATCH: Record<string, unknown> = {};
 
 // Two records — ScenarioComparePanel only builds the KPI table when there is
 // something to compare the Base against.
@@ -206,6 +213,7 @@ function baseCellText(labelEl: HTMLElement): string {
 beforeEach(() => {
   cleanup();
   WITH_BLOCK = true;
+  BLOCK_PATCH = {};
   nav.push.mockClear();
 });
 
@@ -262,7 +270,7 @@ describe('one stabilized NOI across Overview, IC Memo and Scenario Analysis', ()
   it('the KPI tile reads the block, not the reversion', () => {
     render(<OverviewTab projectId="deal-uuid-1" />);
     expect(screen.getByText('$4.36M')).toBeInTheDocument();
-    expect(screen.getByText(/projection Year 2/)).toBeInTheDocument();
+    expect(screen.getByText(/Stabilization: Year 2/)).toBeInTheDocument();
     expect(screen.queryByText('stabilization year not set')).toBeNull();
   });
 
@@ -339,5 +347,64 @@ describe('with no stabilization block every row is a dash, and no row is $0', ()
     expect(panelValue).not.toContain('$3.64M');
     expect(within(screen.getByText(STABILIZED_NOI_LABEL).closest('tr') ?? document.body)
       .queryByText('$0.00M')).toBeNull();
+  });
+});
+
+// ── FON-59 R-057 — Year 3 after close (default), analyst-overridable ────
+describe('Overview Stabilization card copy (default / override / clamped)', () => {
+  const block = (patch: Partial<StabilizedYearBlock>): StabilizedYearBlock => ({
+    stabilized_year_index: 2,
+    stabilized_year: 3,
+    source: 'default_year_3',
+    anchor: 'acquisition_close',
+    default_year: 3,
+    clamped: false,
+    detected_year: 1,
+    detected_signal: 'occupancy',
+    ...patch,
+  });
+
+  it('labels the three cases', () => {
+    expect(stabilizationYearLabel(block({}))).toBe('Year 3 after close (default)');
+    expect(
+      stabilizationYearLabel(block({ source: 'analyst_override', stabilized_year: 4, stabilized_year_index: 3 })),
+    ).toBe('Year 4 (your override)');
+    expect(
+      stabilizationYearLabel(block({ clamped: true, stabilized_year: 2, stabilized_year_index: 1 })),
+    ).toBe('Year 2 (default Year 3 is past the 2-year hold)');
+    expect(stabilizationDetectedHint(block({}))).toMatch(
+      /^Model-detected: Year 1 \(occupancy reaches the stabilized assumption\)/,
+    );
+    expect(stabilizationDetectedHint(block({ detected_year: null }))).toBeNull();
+  });
+
+  it('default: "Year 3 after close (default)" with the detected hint beneath', () => {
+    BLOCK_PATCH = {
+      stabilized_year_index: 2, stabilized_year: 3, source: 'default_year_3',
+      anchor: 'acquisition_close', default_year: 3, clamped: false,
+      detected_year: 1, detected_signal: 'occupancy',
+    };
+    render(<OverviewTab projectId="deal-uuid-1" />);
+    expect(rowValue('Stabilization Year')).toBe('Year 3 after close (default)');
+    expect(screen.getByText(/Stabilization: Year 3 after close \(default\)/)).toBeInTheDocument();
+    // The model-detected year sits directly beneath, as a hint.
+    expect(rowValue('Model-detected Year')).toBe('Year 1 — hint only');
+    // Stabilized NOI is the block's figure for that year.
+    expect(rowValue(STABILIZED_NOI_LABEL)).toBe('$4,355,000');
+  });
+
+  it('override: "Year N (your override)"', () => {
+    BLOCK_PATCH = { source: 'analyst_override', default_year: 3, clamped: false, detected_year: 1, detected_signal: 'occupancy' };
+    render(<OverviewTab projectId="deal-uuid-1" />);
+    expect(rowValue('Stabilization Year')).toBe('Year 2 (your override) — 2026');
+    expect(rowValue('Model-detected Year')).toBe('Year 1 — hint only');
+  });
+
+  it('clamped: says the default is past the hold', () => {
+    BLOCK_PATCH = { source: 'default_year_3', default_year: 3, clamped: true, detected_year: 1, detected_signal: 'occupancy' };
+    render(<OverviewTab projectId="deal-uuid-1" />);
+    expect(rowValue('Stabilization Year')).toBe(
+      'Year 2 (default Year 3 is past the 2-year hold) — 2026',
+    );
   });
 });

@@ -8,23 +8,36 @@ was analyst-selectable, and no two agreed.
 
 This module is the single source. It publishes:
 
-* :func:`resolve_stabilized_year` — the Fondok-derived signal, returning both
-  the 0-based projection-year index and WHICH signal found it, so a surface can
-  say *how* the year was derived rather than asserting it.
-* :func:`resolve_stabilized_year_index` — the index alone. This is the exact
-  function that used to live in ``engines/debt.py`` as
-  ``_resolve_stabilized_year_index``; debt re-exports it so its stabilized DSCR
-  / debt yield keep resolving byte-identically.
+* :func:`resolve_stabilized_year_index` — THE stabilized year index: the
+  analyst's year, else the Year-3-after-close default clamped to the hold.
+  Debt re-exports it as ``_resolve_stabilized_year_index`` for its stabilized
+  DSCR / debt yield.
+* :func:`resolve_stabilized_year` — the model-DETECTED hint (occupancy signal,
+  NOI-plateau fallback), returning the 0-based index and WHICH signal found
+  it. Published on the block; it no longer selects the year.
 * :class:`StabilizedYear` — the coherent block every consumer reads: one year
   index and the occupancy / ADR / revenue / NOI / margin OF THAT YEAR, so
   Overview, the IC memo and Scenario Analysis cannot drift apart again.
 
-The analyst owns the year (``stabilization_year``, 1-based). Absent one, the
-block reports the derived seed and labels itself ``fondok_derived`` so the UI
-can badge it "Fondok-derived — confirm". An analyst value that EQUALS the
-derived seed stays ``fondok_derived`` — re-saving a seed unchanged is not an
+FON-59 R-057 (Sam's decision 1). The stabilized year is a FIXED DEFAULT —
+**Year 3 after acquisition close** (:data:`DEFAULT_STABILIZATION_YEAR`,
+anchored at :data:`DEFAULT_STABILIZATION_ANCHOR`) — that the analyst may
+override (``stabilization_year``, 1-based). It is no longer derived from the
+projection: an un-displaced deal's occupancy reaches its own stabilized
+assumption in Year 1, so the old occupancy/NOI-plateau seed told testers the
+asset "stabilizes" in Year 1. That detection still runs, but only as a hint
+(``detected_year`` / ``detected_signal``) — it never selects the year.
+
+A hold shorter than three projected years clamps the default to the last
+projected year and says so (``clamped``). An analyst value equal to the
+default stays ``default_year_3`` — re-saving the default unchanged is not an
 override (the same rule ``engine_runner._is_shadow_override`` applies to every
-scalar assumption).
+scalar assumption). Stabilized NOI here is the operating NOI of that year; the
+exit NOI (the year hold+1 reversion) is a separate concept owned by Returns.
+
+Rani is still confirming whether the anchor is acquisition close or the
+re-flag date. The anchor is this ONE constant; projection Year 1 is the first
+year after close, so "Year 3 after close" is projection index 2.
 """
 
 from __future__ import annotations
@@ -33,10 +46,39 @@ from typing import Annotated, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
-# How the derived year was found.
+# FON-59 R-057 — the default stabilized year (1-based) and what it counts
+# from. Change the anchor HERE only if Rani lands on the re-flag date.
+DEFAULT_STABILIZATION_YEAR = 3
+DEFAULT_STABILIZATION_ANCHOR = "acquisition_close"
+
+# How the model-detected hint was found.
 StabilizationSignal = Literal["occupancy", "noi_plateau"]
 # Who owns the year on the block.
-StabilizationSource = Literal["fondok_derived", "analyst_override"]
+StabilizationSource = Literal["default_year_3", "analyst_override"]
+StabilizationAnchor = Literal["acquisition_close"]
+
+
+def default_stabilized_year_index(n_years: int) -> int | None:
+    """0-based index of the default stabilized year, clamped to the projection.
+
+    ``DEFAULT_STABILIZATION_YEAR - 1``, or the last projected year when the
+    projection is shorter. ``None`` only when there is no projection at all.
+    """
+    if n_years <= 0:
+        return None
+    return min(DEFAULT_STABILIZATION_YEAR - 1, n_years - 1)
+
+
+def _analyst_index(stabilization_year: object, n_years: int) -> int | None:
+    """The analyst's 1-based year as a 0-based index, or ``None`` when absent
+    or outside the projection (a year the projection does not have)."""
+    if stabilization_year is None or isinstance(stabilization_year, bool):
+        return None
+    try:
+        index = int(stabilization_year) - 1  # type: ignore[call-overload]
+    except (TypeError, ValueError):
+        return None
+    return index if 0 <= index < n_years else None
 
 
 def resolve_stabilized_year(
@@ -45,7 +87,13 @@ def resolve_stabilized_year(
     stabilized_occupancy: float | None,
     noi_by_year: list[float],
 ) -> tuple[int | None, StabilizationSignal | None]:
-    """0-based index of the first stabilized projection year + the signal used.
+    """MODEL-DETECTED hint: the first stabilized projection year + its signal.
+
+    FON-59 R-057 — this no longer selects the stabilized year (that is the
+    Year-3 default or the analyst's override, see
+    :func:`resolve_stabilized_year_index`). It is published on the block as
+    ``detected_year`` / ``detected_signal`` so the analyst can see what the
+    projection shape suggests.
 
     Primary signal (approved definition): the first year the projected
     occupancy reaches the deal's post-ramp stabilized-occupancy assumption.
@@ -117,14 +165,23 @@ def resolve_stabilized_year_index(
     occupancy_by_year: list[float] | None,
     stabilized_occupancy: float | None,
     noi_by_year: list[float],
+    stabilization_year: int | None = None,
 ) -> int | None:
-    """The index alone — the debt engine's historical entry point."""
-    index, _signal = resolve_stabilized_year(
-        occupancy_by_year=occupancy_by_year,
-        stabilized_occupancy=stabilized_occupancy,
-        noi_by_year=noi_by_year,
-    )
-    return index
+    """0-based index of THE stabilized year — the debt engine's entry point.
+
+    FON-59 R-057: the analyst's ``stabilization_year`` when it names a
+    projected year, else the Year-3-after-close default clamped to the last
+    projected year. ``occupancy_by_year`` / ``stabilized_occupancy`` are kept
+    in the signature so every caller stays source-compatible; they feed only
+    the detected-year hint (:func:`resolve_stabilized_year`), never this index.
+    ``None`` only when ``noi_by_year`` is empty.
+    """
+    del occupancy_by_year, stabilized_occupancy  # hint inputs, not selectors
+    n = len(noi_by_year)
+    analyst = _analyst_index(stabilization_year, n)
+    if analyst is not None:
+        return analyst
+    return default_stabilized_year_index(n)
 
 
 class StabilizedYear(BaseModel):
@@ -142,15 +199,19 @@ class StabilizedYear(BaseModel):
     # 1-based model year the analyst sees ("Year 2").
     stabilized_year_index: Annotated[int, Field(ge=0)]
     stabilized_year: Annotated[int, Field(ge=1)]
-    # Who owns the year. ``fondok_derived`` covers both "nobody set one, this
-    # is the signal" and "the analyst confirmed the signal unchanged".
+    # Who owns the year. ``default_year_3`` covers both "nobody set one" and
+    # "the analyst re-saved the default unchanged".
     source: StabilizationSource
-    # Which signal produced the derived seed (None when no seed resolved and
-    # the analyst supplied the year outright).
-    signal: StabilizationSignal | None = None
-    # The derived seed itself, kept alongside an analyst override so the UI can
-    # say what Fondok would have picked.
-    derived_year: Annotated[int, Field(ge=1)] | None = None
+    # The rule the default follows: ``default_year`` years after ``anchor``.
+    anchor: StabilizationAnchor = DEFAULT_STABILIZATION_ANCHOR
+    default_year: Annotated[int, Field(ge=1)] = DEFAULT_STABILIZATION_YEAR
+    # True when the default was pulled back to the last projected year because
+    # the hold is shorter than ``default_year`` (only ever on the default).
+    clamped: bool = False
+    # The model-detected hint (occupancy reaches its stabilized assumption,
+    # else the NOI plateau) — 1-based, shown beneath the year, never selects it.
+    detected_year: Annotated[int, Field(ge=1)] | None = None
+    detected_signal: StabilizationSignal | None = None
     stabilized_occupancy: float | None = None
     stabilized_adr: float | None = None
     stabilized_revenue: float | None = None
@@ -176,35 +237,31 @@ def build_stabilized_year(
     """Assemble the block for one projection, or ``None`` when no year resolves.
 
     ``stabilization_year`` is the analyst's 1-based model year. Out of range
-    (or absent) falls back to the derived signal; equal to the derived signal
-    it stays ``fondok_derived`` — re-confirming a seed is not an override.
+    (or absent) falls back to the Year-3 default (clamped to the hold); equal
+    to the default it stays ``default_year_3`` — re-confirming is not an
+    override.
     """
     n = len(total_revenue_by_year)
-    derived_index, signal = resolve_stabilized_year(
+    detected_index, detected_signal = resolve_stabilized_year(
         occupancy_by_year=occupancy_by_year,
         stabilized_occupancy=stabilized_occupancy,
         noi_by_year=cash_noi_by_year,
     )
-
-    analyst_index: int | None = None
-    if stabilization_year is not None:
-        try:
-            analyst_index = int(stabilization_year) - 1
-        except (TypeError, ValueError):
-            analyst_index = None
-        if analyst_index is not None and not (0 <= analyst_index < n):
-            analyst_index = None
-
-    if analyst_index is not None:
-        index = analyst_index
-        source: StabilizationSource = (
-            "fondok_derived" if index == derived_index else "analyst_override"
-        )
-    elif derived_index is not None and 0 <= derived_index < n:
-        index = derived_index
-        source = "fondok_derived"
-    else:
+    default_index = default_stabilized_year_index(n)
+    if default_index is None:
         return None
+
+    analyst_index = _analyst_index(stabilization_year, n)
+    if analyst_index is not None and analyst_index != default_index:
+        index = analyst_index
+        source: StabilizationSource = "analyst_override"
+    else:
+        index = default_index
+        source = "default_year_3"
+    clamped = (
+        source == "default_year_3"
+        and index < DEFAULT_STABILIZATION_YEAR - 1
+    )
 
     revenue = total_revenue_by_year[index]
     # A pre-upgrade projection never carried ``noi_institutional``; the block
@@ -225,8 +282,17 @@ def build_stabilized_year(
         stabilized_year_index=index,
         stabilized_year=index + 1,
         source=source,
-        signal=signal,
-        derived_year=(derived_index + 1) if derived_index is not None else None,
+        clamped=clamped,
+        detected_year=(
+            detected_index + 1
+            if detected_index is not None and 0 <= detected_index < n
+            else None
+        ),
+        detected_signal=(
+            detected_signal
+            if detected_index is not None and 0 <= detected_index < n
+            else None
+        ),
         stabilized_occupancy=(
             occupancy_by_year[index]
             if occupancy_by_year and index < len(occupancy_by_year)
@@ -247,10 +313,14 @@ def build_stabilized_year(
 
 
 __all__ = [
+    "DEFAULT_STABILIZATION_ANCHOR",
+    "DEFAULT_STABILIZATION_YEAR",
+    "StabilizationAnchor",
     "StabilizationSignal",
     "StabilizationSource",
     "StabilizedYear",
     "build_stabilized_year",
+    "default_stabilized_year_index",
     "resolve_stabilized_year",
     "resolve_stabilized_year_index",
 ]

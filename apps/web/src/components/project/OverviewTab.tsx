@@ -94,7 +94,9 @@ import {
   noiBeforeReserveLabel,
   stabilizedYearBlock,
   stabilizationBadge,
+  stabilizationDetectedHint,
   stabilizationSignalNote,
+  stabilizationYearLabel,
   STABILIZED_NOI_LABEL,
   type StabilizedYearBlock,
 } from '@/lib/engines/noi';
@@ -533,6 +535,8 @@ export default function OverviewTab({ projectId }: { projectId: number | string 
     stab && Array.isArray(projectionCalendar) && projectionCalendar.length > stab.stabilized_year_index
       ? projectionCalendar[stab.stabilized_year_index]
       : undefined;
+  // "Year 3 after close (default)" / "Year N (your override)" / clamped.
+  const stabYearLabel = stabilizationYearLabel(stab);
 
   const wPurchase = cap('purchase_price');
   const wPricePerKey = cap('price_per_key');
@@ -751,13 +755,16 @@ export default function OverviewTab({ projectId }: { projectId: number | string 
     // Sam (FON-59 #3): "All metrics must reconcile to the same projection
     // year." Every row below reads `stab` — the same year index — or renders
     // its reasoned dash. `Renovation Impact` was removed per Sam's MVP call.
+    // FON-59 R-057 — the year is Year 3 after acquisition close by default
+    // (or the analyst's override, or the default clamped to a short hold);
+    // the model-detected year is a hint beneath it, never the selector.
     const stabYearRow = (): RowDef =>
       stab
         ? lnk(
             'stabYear', 'Stabilization Year',
             stabCalendarYear != null
-              ? `Year ${stab.stabilized_year} — ${stabCalendarYear}`
-              : `Year ${stab.stabilized_year}`,
+              ? `${stabYearLabel} — ${stabCalendarYear}`
+              : (stabYearLabel ?? `Year ${stab.stabilized_year}`),
             '→ Future P&L', 'pl',
             {
               linkSub: 'projections',
@@ -766,6 +773,20 @@ export default function OverviewTab({ projectId }: { projectId: number | string 
             },
           )
         : awa('stabYear', 'Stabilization Year', { reason: 'awaiting_analyst' });
+    // The model-detected year, directly beneath — a hint, never the selector.
+    // Omitted when the projection yields no detection signal.
+    const stabYearRows = (): RowDef[] =>
+      stab?.detected_year != null
+        ? [
+            stabYearRow(),
+            cal('stabDetected', 'Model-detected Year', `Year ${stab.detected_year} — hint only`, {
+              formula: stab.detected_signal === 'noi_plateau'
+                ? 'First projected year NOI growth settles to its terminal rate'
+                : 'First projected year occupancy reaches the stabilized assumption',
+              sub: stabilizationDetectedHint(stab) ?? undefined,
+            }),
+          ]
+        : [stabYearRow()];
     const stabOccRow = (): RowDef =>
       lnk('stabOcc', 'Stabilized Occupancy', pctv(stab?.stabilized_occupancy ?? undefined, 1),
         '→ Future P&L', 'pl',
@@ -823,7 +844,7 @@ export default function OverviewTab({ projectId }: { projectId: number | string 
           };
 
     const stabilizationRows = (): RowDef[] => [
-      stabYearRow(),
+      ...stabYearRows(),
       stabOccRow(),
       stabAdrRow(),
       stabRevRow(),
@@ -900,7 +921,7 @@ export default function OverviewTab({ projectId }: { projectId: number | string 
     const openingRows = (): RowDef[] => [
       cal('openDate', 'Opening Date', fmtISODate(timeline?.stabilization_date), { formula: 'Land Close + pre-construction + build' }),
       awa('ramp', 'Ramp-Up Period'),
-      stabYearRow(),
+      ...stabYearRows(),
       stabOccRow(),
       stabAdrRow(),
       cal('stabRevPAR', 'Stabilized RevPAR', money(stabRevPar), { formula: 'Stabilized Occupancy × Stabilized ADR' }),
@@ -975,7 +996,7 @@ export default function OverviewTab({ projectId }: { projectId: number | string 
       ? {
           label: STABILIZED_NOI_LABEL,
           value: mm(stabNoi),
-          sub: `projection Year ${stab?.stabilized_year}${stabCalendarYear != null ? ` — ${stabCalendarYear}` : ''}`,
+          sub: `Stabilization: ${stabYearLabel ?? `Year ${stab?.stabilized_year}`}${stabCalendarYear != null ? ` — ${stabCalendarYear}` : ''}`,
         }
       : { label: STABILIZED_NOI_LABEL, value: REFUSAL_GLYPH, sub: 'stabilization year not set' };
     // FON-59 R-052 — the two IRRs sit side by side, each saying which stack
@@ -1011,7 +1032,7 @@ export default function OverviewTab({ projectId }: { projectId: number | string 
       unleveredTile,
     ];
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [cfg, purchase, entryCap, totalCapital, totalPerKey, equity, grossExit, exitCap, terminalNoi, renoBudget, hasReno, keys, leveredIrr, unleveredIrr, stabNoi, stab, stabCalendarYear]);
+  }, [cfg, purchase, entryCap, totalCapital, totalPerKey, equity, grossExit, exitCap, terminalNoi, renoBudget, hasReno, keys, leveredIrr, unleveredIrr, stabNoi, stab, stabCalendarYear, stabYearLabel]);
 
   // ─── Return targets + benchmark strip (FON-68) ─────────────────────────
   // The strip compares the CALCULATED levered IRR (canonical returns run)
